@@ -1,0 +1,312 @@
+import React, { useEffect, useState, useCallback } from "react";
+import {
+  Table, Button, Space, Tag, Input, Popconfirm, Modal, Form,
+  Select, InputNumber, App as AntApp, Typography,
+} from "antd";
+import { ReloadOutlined, TeamOutlined, SearchOutlined } from "@ant-design/icons";
+import { API } from "../services/api";
+import { useApp } from "../context/AppContext";
+import { fmtDate, fmtOd, unitsPerOd } from "../services/format";
+import PageHeader from "../components/PageHeader";
+import StatCard from "../components/StatCard";
+
+const { Text } = Typography;
+
+export default function AdminUsersPage() {
+  const { status } = useApp();
+  const { message } = AntApp.useApp();
+  const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [keyword, setKeyword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [quotaOpen, setQuotaOpen] = useState(false);
+  const [quotaTarget, setQuotaTarget] = useState(null);
+  const [form] = Form.useForm();
+  const [quotaForm] = Form.useForm();
+
+  const perUnit = unitsPerOd(status);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await API.get("/users/", { params: { p: page, page_size: pageSize, keyword } });
+      setItems(data.items);
+      setTotal(data.total);
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, pageSize, keyword, message]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const openEdit = (u) => {
+    setEditing(u);
+    form.setFieldsValue({ display_name: u.display_name, email: u.email, role: u.role, status: u.status });
+    setEditOpen(true);
+  };
+
+  const saveEdit = async () => {
+    const v = await form.validateFields();
+    try {
+      await API.put(`/users/${editing.id}`, v);
+      message.success("已保存");
+      setEditOpen(false);
+      load();
+    } catch (e) {
+      message.error(e.message);
+    }
+  };
+
+  const submitQuota = async () => {
+    const v = await quotaForm.validateFields();
+    try {
+      await API.post(`/users/${quotaTarget.id}/quota`, { quota: v.quota });
+      message.success("额度已调整");
+      setQuotaOpen(false);
+      quotaForm.resetFields();
+      load();
+    } catch (e) {
+      message.error(e.message);
+    }
+  };
+
+  const remove = async (u) => {
+    try {
+      await API.del(`/users/${u.id}`);
+      message.success("用户已删除");
+      load();
+    } catch (e) {
+      message.error(e.message);
+    }
+  };
+
+  const toggle = async (u) => {
+    try {
+      await API.put(`/users/${u.id}`, { status: u.status === 1 ? 2 : 1 });
+      load();
+    } catch (e) {
+      message.error(e.message);
+    }
+  };
+
+  const admins = items.filter((u) => u.role >= 100).length;
+  const disabled = items.filter((u) => u.status !== 1).length;
+  const totalUsed = items.reduce((s, u) => s + Number(u.used_quota || 0), 0);
+
+  const columns = [
+    {
+      title: "ID",
+      dataIndex: "id",
+      width: 64,
+      render: (v) => <span className="oo-num" style={{ color: "var(--oo-text-muted)" }}>{v}</span>,
+    },
+    {
+      title: "用户",
+      dataIndex: "username",
+      width: 190,
+      render: (v, r) => (
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 560 }}>{r.display_name || v}</div>
+          {r.display_name && r.display_name !== v ? (
+            <div style={{ fontSize: 12, color: "var(--oo-text-muted)" }}>{v}</div>
+          ) : null}
+        </div>
+      ),
+    },
+    { title: "邮箱", dataIndex: "email", width: 180, ellipsis: true, render: (v) => v || <Text type="secondary">-</Text> },
+    {
+      title: "角色",
+      dataIndex: "role",
+      width: 96,
+      render: (r) => (r >= 100 ? <Tag color="gold">管理员</Tag> : <Tag>普通用户</Tag>),
+    },
+    {
+      title: "状态",
+      dataIndex: "status",
+      width: 88,
+      render: (s) =>
+        s === 1 ? (
+          <span className="oo-flex oo-gap-2" style={{ fontSize: 13 }}>
+            <span className="oo-dot oo-dot--ok" /> 启用
+          </span>
+        ) : (
+          <span className="oo-flex oo-gap-2" style={{ fontSize: 13, color: "var(--oo-text-muted)" }}>
+            <span className="oo-dot oo-dot--err" /> 禁用
+          </span>
+        ),
+    },
+    {
+      title: "剩余额度",
+      dataIndex: "quota",
+      width: 116,
+      sorter: (a, b) => a.quota - b.quota,
+      render: (q) => <span className="oo-num">{fmtOd(q, perUnit, 2)}</span>,
+    },
+    {
+      title: "已用额度",
+      dataIndex: "used_quota",
+      width: 116,
+      render: (q) => <span className="oo-num" style={{ color: "var(--oo-text-muted)" }}>{fmtOd(q, perUnit, 4)}</span>,
+    },
+    {
+      title: "调用",
+      dataIndex: "request_count",
+      width: 84,
+      sorter: (a, b) => a.request_count - b.request_count,
+      render: (v) => <span className="oo-num">{v ?? 0}</span>,
+    },
+    { title: "注册时间", dataIndex: "created_time", width: 156, render: (v) => <span className="oo-num">{fmtDate(v)}</span> },
+    {
+      title: "操作",
+      width: 190,
+      fixed: "right",
+      render: (_, u) => (
+        <Space size={2}>
+          <Button type="link" size="small" onClick={() => openEdit(u)}>
+            编辑
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            onClick={() => {
+              setQuotaTarget(u);
+              quotaForm.setFieldsValue({ quota: 100000 });
+              setQuotaOpen(true);
+            }}
+          >
+            额度
+          </Button>
+          <Button type="link" size="small" onClick={() => toggle(u)}>
+            {u.status === 1 ? "禁用" : "启用"}
+          </Button>
+          <Popconfirm title={`确定删除用户 ${u.username}？`} onConfirm={() => remove(u)}>
+            <Button type="link" size="small" danger>
+              删除
+            </Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
+
+  return (
+    <div>
+      <PageHeader
+        title="用户管理"
+        desc="管理平台用户的角色、状态与可用额度"
+        extra={
+          <>
+            <Input
+              placeholder="搜索用户名 / 邮箱"
+              allowClear
+              prefix={<SearchOutlined style={{ color: "var(--oo-text-muted)" }} />}
+              style={{ width: 220 }}
+              onPressEnter={(e) => {
+                setKeyword(e.target.value);
+                setPage(1);
+              }}
+              onChange={(e) => {
+                if (!e.target.value) {
+                  setKeyword("");
+                  setPage(1);
+                }
+              }}
+            />
+            <Button icon={<ReloadOutlined />} onClick={load} />
+          </>
+        }
+      />
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16, marginBottom: 16 }}>
+        <StatCard label="用户总数" value={total} icon={<TeamOutlined />} />
+        <StatCard label="管理员" value={admins} foot={<span>本页统计</span>} />
+        <StatCard label="已禁用" value={disabled} tone={disabled ? "danger" : undefined} foot={<span>本页统计</span>} />
+        <StatCard label="累计消费" value={fmtOd(totalUsed, perUnit, 2)} foot={<span>本页统计</span>} />
+      </div>
+
+      <div className="oo-panel">
+        <Table
+          className="oo-table"
+          rowKey="id"
+          loading={loading}
+          columns={columns}
+          dataSource={items}
+          scroll={{ x: 1420 }}
+          pagination={{
+            current: page,
+            pageSize,
+            total,
+            showSizeChanger: true,
+            showTotal: (t) => `共 ${t} 位用户`,
+            onChange: (p, ps) => {
+              setPage(p);
+              setPageSize(ps);
+            },
+          }}
+        />
+      </div>
+
+      <Modal
+        title={`编辑用户：${editing?.username || ""}`}
+        open={editOpen}
+        onOk={saveEdit}
+        onCancel={() => setEditOpen(false)}
+        destroyOnClose
+        okText="保存"
+      >
+        <Form form={form} layout="vertical" requiredMark={false}>
+          <Form.Item name="display_name" label="显示名称">
+            <Input maxLength={64} />
+          </Form.Item>
+          <Form.Item name="email" label="邮箱" rules={[{ type: "email", message: "邮箱格式不正确" }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="role" label="角色" extra="管理员可管理渠道、用户与系统设置">
+            <Select
+              options={[
+                { value: 1, label: "普通用户" },
+                { value: 100, label: "管理员" },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="status" label="状态">
+            <Select
+              options={[
+                { value: 1, label: "启用" },
+                { value: 2, label: "禁用" },
+              ]}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={`调整额度：${quotaTarget?.username || ""}`}
+        open={quotaOpen}
+        onOk={submitQuota}
+        onCancel={() => setQuotaOpen(false)}
+        destroyOnClose
+        okText="确认调整"
+      >
+        <Form form={quotaForm} layout="vertical" requiredMark={false}>
+          <Form.Item
+            name="quota"
+            label="额度变化量"
+            extra={`正数为补充，负数为扣除；100,000 额度 ≈ ${fmtOd(100000, perUnit, 2)}`}
+            rules={[{ required: true, message: "请输入额度变化量" }]}
+          >
+            <InputNumber style={{ width: "100%" }} step={100000} />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </div>
+  );
+}

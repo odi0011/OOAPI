@@ -1,0 +1,31 @@
+# 依赖
+node_modules/
+package-lock.json.bak
+
+# 环境与密钥（务必不要提交）
+.env
+.env.local
+.jwt-secret
+*.pem
+*.key
+
+# 运行时数据
+data/
+*.log
+logs/
+
+# 前端构建产物（部署时由 npm run build 生成）
+dist/
+web/
+
+# 在线更新产生的备份与版本戳
+.backup-*/
+.update-stamp.json
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc

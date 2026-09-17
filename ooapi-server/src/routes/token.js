@@ -1,0 +1,125 @@
+import { Router } from "express";
+import { pool } from "../db.js";
+import { ok, fail, asyncHandler, now, genApiKey, tokenToResponse, randomString } from "../utils.js";
+import { authRequired } from "../middleware/auth.js";
+import { writeLog, LOG_TYPE } from "../services/log.js";
+
+const router = Router();
+router.use(authRequired);
+
+function getSetting(user) {
+  return user?.setting ?? {};
+}
+
+// 列表（不返回完整 key）
+router.get(
+  "/",
+  asyncHandler(async (req, res) => {
+    const [rows] = await pool.query("SELECT * FROM tokens WHERE user_id = ? ORDER BY id DESC", [req.user.id]);
+    const items = rows.map((t) => {
+      const r = tokenToResponse(t);
+      return { ...r, key: r.key.slice(0, 6) + "******************" + r.key.slice(-4) };
+    });
+    return ok(res, items);
+  })
+);
+
+// 获取单个令牌的完整 key
+router.get(
+  "/:id/key",
+  asyncHandler(async (req, res) => {
+    const [rows] = await pool.query("SELECT * FROM tokens WHERE id = ? AND user_id = ?", [
+      Number(req.params.id),
+      req.user.id,
+    ]);
+    if (!rows.length) return fail(res, "令牌不存在", 404);
+    return ok(res, { key: rows[0].key_str });
+  })
+);
+
+// 新建
+router.post(
+  "/",
+  asyncHandler(async (req, res) => {
+    const {
+      name = "",
+      remain_quota = 0,
+      unlimited_quota = true,
+      expired_time = -1,
+      model_limits = [],
+      group_name = "",
+    } = req.body || {};
+    if (String(name).length > 64) return fail(res, "名称过长");
+    const key = genApiKey();
+    await pool.query(
+      `INSERT INTO tokens (user_id, name, key_str, status, created_time, accessed_time, expired_time,
+        remain_quota, unlimited_quota, used_quota, model_limits, group_name)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        req.user.id,
+        String(name).trim() || `令牌 ${randomString(4)}`,
+        key,
+        1,
+        now(),
+        0,
+        Number(expired_time) || -1,
+        Number(remain_quota) || 0,
+        unlimited_quota ? 1 : 0,
+        0,
+        Array.isArray(model_limits) ? model_limits.join(",") : "",
+        group_name || "",
+      ]
+    );
+    const [rows] = await pool.query(
+      "SELECT * FROM tokens WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+      [req.user.id]
+    );
+    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `新建令牌「${rows[0].name}」` });
+    return ok(res, tokenToResponse(rows[0]), "令牌创建成功");
+  })
+);
+
+// 更新
+router.put(
+  "/",
+  asyncHandler(async (req, res) => {
+    const { id, name, status, remain_quota, unlimited_quota, expired_time, model_limits, group_name } =
+      req.body || {};
+    const token = Number(id);
+    if (!token) return fail(res, "缺少令牌 id");
+    const [rows] = await pool.query("SELECT * FROM tokens WHERE id = ? AND user_id = ?", [token, req.user.id]);
+    if (!rows.length) return fail(res, "令牌不存在", 404);
+    const cur = rows[0];
+    await pool.query(
+      `UPDATE tokens SET name = ?, status = ?, remain_quota = ?, unlimited_quota = ?, expired_time = ?,
+        model_limits = ?, group_name = ? WHERE id = ? AND user_id = ?`,
+      [
+        name !== undefined ? String(name).trim() : cur.name,
+        status !== undefined ? Math.max(1, Number(status)) : cur.status,
+        remain_quota !== undefined ? Math.max(0, Number(remain_quota)) : cur.remain_quota,
+        unlimited_quota !== undefined ? (unlimited_quota ? 1 : 0) : cur.unlimited_quota,
+        expired_time !== undefined ? Number(expired_time) : cur.expired_time,
+        Array.isArray(model_limits) ? model_limits.join(",") : cur.model_limits,
+        group_name !== undefined ? group_name : cur.group_name,
+        token,
+        req.user.id,
+      ]
+    );
+    const [fresh] = await pool.query("SELECT * FROM tokens WHERE id = ?", [token]);
+    return ok(res, tokenToResponse(fresh[0]), "令牌已更新");
+  })
+);
+
+// 删除
+router.delete(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    const token = Number(req.params.id);
+    const [ret] = await pool.query("DELETE FROM tokens WHERE id = ? AND user_id = ?", [token, req.user.id]);
+    if (!ret.affectedRows) return fail(res, "令牌不存在", 404);
+    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `删除令牌 #${token}` });
+    return ok(res, null, "令牌已删除");
+  })
+);
+
+export default router;

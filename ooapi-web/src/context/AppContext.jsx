@@ -1,0 +1,87 @@
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from "react";
+import { API, getToken, setToken } from "../services/api";
+
+const AppContext = createContext(null);
+
+export function AppProvider({ children }) {
+  const [status, setStatus] = useState(null); // 系统公开配置
+  const [user, setUser] = useState(null); // 当前登录用户
+  const [loading, setLoading] = useState(true);
+
+  const refreshStatus = useCallback(async () => {
+    try {
+      const s = await API.get("/status");
+      setStatus(s);
+      if (s?.system_name) document.title = s.system_name;
+      if (s?.logo) {
+        const link = document.querySelector("link[rel='icon']");
+        if (link) link.href = s.logo;
+      }
+    } catch {
+      /* 状态接口失败不阻塞 */
+    }
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    if (!getToken()) {
+      setUser(null);
+      return;
+    }
+    try {
+      const u = await API.get("/user/self");
+      setUser(u);
+    } catch (e) {
+      // 仅在服务端明确判定登录失效（401）时清除登录态；
+      // 网络抖动、5xx 等临时错误保留当前用户，避免误退出。
+      if (e?.status === 401) {
+        setToken("");
+        setUser(null);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      await Promise.all([refreshStatus(), refreshUser()]);
+      setLoading(false);
+    })();
+  }, [refreshStatus, refreshUser]);
+
+  // 登录成功后写入 token 并刷新用户
+  const login = useCallback(async (username, password) => {
+    const data = await API.post("/user/login", { username, password });
+    setToken(data.token);
+    setUser(data.user);
+    return data.user;
+  }, []);
+
+  const register = useCallback(async (username, password) => {
+    const data = await API.post("/user/register", { username, password });
+    setToken(data.token);
+    setUser(data.user);
+    return data.user;
+  }, []);
+
+  const logout = useCallback(async () => {
+    try {
+      await API.post("/user/logout");
+    } catch {
+      /* ignore */
+    }
+    setToken("");
+    setUser(null);
+  }, []);
+
+  const value = useMemo(
+    () => ({ status, user, loading, refreshUser, refreshStatus, login, register, logout }),
+    [status, user, loading, refreshUser, refreshStatus, login, register, logout]
+  );
+
+  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+}
+
+export function useApp() {
+  const ctx = useContext(AppContext);
+  if (!ctx) throw new Error("useApp 必须在 AppProvider 内使用");
+  return ctx;
+}
