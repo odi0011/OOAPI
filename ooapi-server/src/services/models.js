@@ -111,7 +111,14 @@ export async function modelRegistry() {
   for (const t of Object.keys(VENDOR_MODEL_MODULES)) {
     try {
       const mod = await VENDOR_MODEL_MODULES[t]();
-      if (typeof mod.publicModels === "function") for (const m of mod.publicModels()) put(m.id, t);
+      // 只登记真实模型：兼容别名（deprecated/aliasOf）可以继续被调用，
+      // 但不作为独立模型出现在定价表/导入白名单里（否则历史别名会一直被当成"合法垃圾"）。
+      if (typeof mod.publicModels === "function") {
+        for (const m of mod.publicModels()) {
+          if (m.deprecated || m.aliasOf) continue;
+          put(m.id, t);
+        }
+      }
     } catch {
       /* 模块不可用时跳过 */
     }

@@ -122,8 +122,12 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 8. **新渠道类型**：在 `services/channel-types.js` 注册 + `router.js` 的 `ADAPTERS` 注册适配器；
    适配器导出 `verify/chat/loginModes`，relay 方式还要 `release`。
 9. **定价数据**：只允许平台已注册模型（`services/models.js` 的 `modelRegistry`）；
+   **兼容别名（deprecated/aliasOf）不单独定价**，定价只登记真实模型；
    新增模型必须先由渠道 `models` 字段声明；`remark` 必须写官方来源，禁止「同上」；
    批量维护走「模型定价 → 上传文件更新」（`POST /api/pricing/import`，逐行严格校验）。
+10. **一次性迁移**：`migrate*.mjs` 每次在线更新都会被执行，**禁止写非幂等逻辑**
+    （历史事故：migrate2 重复除 50 导致用户余额被反复缩小；价格被重复覆盖）。
+    需要"只做一次"的操作用 options 表打标或按已生效状态判断后再执行。
 10. **登录态抓取**：需要「粘贴登录态」的 relay 接入方式，在 `channel-types.js` 配置
     `entryUrl` + `captureHint` 即自动获得「打开登录页自动抓取」按钮（`/api/channel/capture/*`）。
 
