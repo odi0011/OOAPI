@@ -174,7 +174,8 @@ export async function chat({
       patchSet["features.enable_thinking"] = true;
       patchSet["features.reasoning_effort"] = "high";
     }
-    if (search) patchSet["features.auto_web_search"] = true;
+    // 请求参数或模型后缀（-search）任一命中都开联网
+    if (search || resolved.search) patchSet["features.auto_web_search"] = true;
 
     await setPatch(page, { set: patchSet });
     mark("patch");

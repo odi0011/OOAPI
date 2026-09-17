@@ -6,7 +6,6 @@ import HomePage from "./pages/HomePage";
 import AuthPage from "./pages/AuthPage";
 import ConsolePage from "./pages/ConsolePage";
 import ChatPage from "./pages/ChatPage";
-import AgentPage from "./pages/AgentPage";
 import TokenPage from "./pages/TokenPage";
 import LogPage from "./pages/LogPage";
 import ProfilePage from "./pages/ProfilePage";

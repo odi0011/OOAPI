@@ -277,6 +277,9 @@ router.post(
 
   const prompt = messagesToPrompt(body.messages);
   let streamStarted = false;
+  // 已流出的内容：上游中途失败时按实际产出结算，避免「答了一半却零计费」
+  let partialOut = "";
+  let settledOnce = false;
 
   // 客户端断开（关页面/断网）时中止上游请求，避免上游继续跑到自身超时
   const clientCtrl = new AbortController();
@@ -321,12 +324,14 @@ router.post(
       groupName: user.group_name,
       signal: clientCtrl.signal,
       onDelta: (t) => {
+        partialOut += t;
         if (wantStream) {
           startStream();
           sendChunk({ content: t });
         }
       },
       onReasoning: (t) => {
+        partialOut += t;
         if (wantStream) {
           startStream();
           sendChunk({ reasoning_content: t });
@@ -345,6 +350,7 @@ router.post(
       requestId,
       channel: result.channel,
     });
+    settledOnce = true;
 
     if (wantStream) {
       if (!streamStarted) {
@@ -386,6 +392,24 @@ router.post(
   } catch (err) {
     const code = err.code || "UPSTREAM_ERROR";
     console.error(`[gateway] ${requestId} 失败：${code} ${err.message}`);
+    // 已产生内容：按已产出部分结算（客户端已收到这些内容，不能零计费）
+    if (!settledOnce && streamStarted && partialOut) {
+      try {
+        await settle({
+          token,
+          user,
+          model,
+          prompt,
+          output: partialOut,
+          usage: null,
+          ip,
+          requestId,
+          channel: null,
+        });
+      } catch (e2) {
+        console.error(`[gateway] ${requestId} 部分结算失败：${e2.message}`);
+      }
+    }
     await writeLog({
       user,
       type: LOG_TYPE.ERROR,

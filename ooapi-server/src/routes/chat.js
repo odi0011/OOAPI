@@ -202,6 +202,10 @@ router.post(
       if (!res.writableEnded) clientCtrl.abort();
     });
 
+    // 已流出的内容：上游中途失败时按实际产出计费（客户端已看到部分回答）
+    let partialOut = "";
+    let settledOnce = false;
+
     try {
       const result = await runCompletion({
         model: matchModel,
@@ -214,9 +218,15 @@ router.post(
         groupName: req.user.group_name,
         signal: clientCtrl.signal,
         onChannelTry: (ch) => send({ type: "channel", name: ch.name }),
-        onReasoning: (t) => send({ type: "reasoning", delta: t }),
+        onReasoning: (t) => {
+          partialOut += t;
+          send({ type: "reasoning", delta: t });
+        },
         onSearchStatus: (s) => send({ type: "search", status: s }),
-        onDelta: (t) => send({ type: "delta", delta: t }),
+        onDelta: (t) => {
+          partialOut += t;
+          send({ type: "delta", delta: t });
+        },
       });
 
       const billed = await chargeUser({
@@ -228,6 +238,7 @@ router.post(
         channel: result.channel,
         kind: "chat",
       });
+      settledOnce = true;
 
       send({
         type: "done",
@@ -243,6 +254,21 @@ router.post(
       res.end();
     } catch (err) {
       console.error("[chat] 失败：", err.code, err.message);
+      if (!settledOnce && partialOut) {
+        try {
+          await chargeUser({
+            user: req.user,
+            model: matchModel,
+            prompt,
+            output: partialOut,
+            usage: null,
+            channel: null,
+            kind: "chat",
+          });
+        } catch (e2) {
+          console.error("[chat] 部分计费失败：", e2.message);
+        }
+      }
       send({ type: "error", code: err.code || "ERROR", message: err.message });
       res.write("data: [DONE]\n\n");
       res.end();
@@ -282,6 +308,7 @@ router.post(
     let totalOutput = "";
     const totalUsage = { prompt_tokens: 0, completion_tokens: 0, cached_tokens: 0 };
     let firstChannel = null;
+    let settledOnce = false;
 
     // 单步调用（复用执行器，自带渠道切换）
     const call = async ({ system, user: userMsg, thinking, onDelta }) => {
@@ -376,6 +403,7 @@ router.post(
         channel: firstChannel,
         kind: "agent",
       });
+      settledOnce = true;
 
       send({
         type: "done",
@@ -390,6 +418,22 @@ router.post(
       res.end();
     } catch (err) {
       console.error("[agent] 失败：", err.code, err.message);
+      // 已完成步骤真实消耗了上游额度：按已累计的 usage 结算，避免整单漏计费
+      if (!settledOnce && (totalUsage.prompt_tokens || totalUsage.completion_tokens)) {
+        try {
+          await chargeUser({
+            user: req.user,
+            model,
+            prompt: totalPrompt,
+            output: totalOutput,
+            usage: totalUsage,
+            channel: firstChannel,
+            kind: "agent",
+          });
+        } catch (e2) {
+          console.error("[agent] 部分计费失败：", e2.message);
+        }
+      }
       send({ type: "error", code: err.code || "ERROR", message: err.message });
       res.write("data: [DONE]\n\n");
       res.end();
