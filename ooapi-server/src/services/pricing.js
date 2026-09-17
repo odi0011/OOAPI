@@ -19,30 +19,30 @@ export const CURRENCY = "OD币";
 // ---------------------------------------------------------------------------
 // 维护规则（重要）：
 //   · 每条 remark 必须写清【官方来源】，禁止「同上」「官方定价页」这类无意义描述；
-//   · 只收录真实存在的模型 ID（以官方文档为准）。能力（思考/联网/看图）是请求参数，
+//   · 只收录真实存在的模型 ID（以官方文档为准），且与各厂商模型注册表
+//     （services/upstream/*-models.js）严格一一对应。能力（思考/联网/看图）是请求参数，
 //     不是模型，禁止再造 deepseek-vision 之类的"能力模型"；
-//   · 官方只公布人民币价的（qwen/kimi），按固定汇率折算 USD 并写明折算口径；
+//   · 官方只公布人民币价的（GLM/千问/豆包），按固定汇率折算 USD 并写明折算口径；
+//     官方直接给美元价的（DeepSeek/Kimi/OpenAI/Anthropic/Google）直接使用；
 //   · 本表只用于「缺该模型时插入」，绝不覆盖管理员改过的价格。
 // 来源（2026-09 复核）：
-//   · DeepSeek 官方定价页 https://api-docs.deepseek.com/quick_start/pricing/
-//       deepseek-flash  高峰 $0.30 输入 / $1.20 输出 / $0.006 缓存命中（闲时减半）
-//       deepseek-v4-pro 高峰 $1.32 / $3.96 / $0.044（闲时减半）
-//   · OpenAI https://openai.com/api/pricing/（官方页对爬虫 403，价格需人工复核）
-//   · Anthropic https://www.anthropic.com/pricing
+//   · DeepSeek https://api-docs.deepseek.com/quick_start/pricing/（美元，高峰价）
+//   · 智谱 https://open.bigmodel.cn/pricing（人民币）
+//   · Kimi https://platform.kimi.com/docs/pricing/chat（美元）
+//   · 阿里云百炼 https://help.aliyun.com/zh/model-studio/（人民币）
+//   · 火山方舟 https://ai.volcengine.com/model（人民币）
+//   · OpenAI https://openai.com/api/pricing/ · Anthropic https://www.anthropic.com/pricing
 //   · Google https://ai.google.dev/gemini-api/docs/pricing
-//   · 阿里云百炼 https://help.aliyun.com/zh/model-studio/models（人民币价）
-//   · Moonshot https://platform.moonshot.cn/docs/pricing（人民币价）
-//   · 智谱 https://docs.z.ai/guides/overview/pricing（美元价）
 const CNY_PER_USD = 7.2; // 官方人民币价折算美元用（平台币制固定 1 OD = 1 USD）
 export const DEFAULT_PRICES = [
-  // --- DeepSeek（当前只有这两个真实模型，网页反代输出的也是 flash）---
+  // --- DeepSeek：官方当前只有这两个模型（网页反代输出的也是 flash）---
   {
     model: "deepseek-flash",
     input: 0.30,
     output: 1.20,
     cache: 0.006,
     type: "deepseek",
-    remark: "官方高峰价（闲时半价）；来源 api-docs.deepseek.com/quick_start/pricing/",
+    remark: "官方高峰价，闲时半价；来源 api-docs.deepseek.com/quick_start/pricing/",
   },
   {
     model: "deepseek-v4-pro",
@@ -50,27 +50,33 @@ export const DEFAULT_PRICES = [
     output: 3.96,
     cache: 0.044,
     type: "deepseek",
-    remark: "官方高峰价（闲时半价）；来源 api-docs.deepseek.com/quick_start/pricing/",
-  },
-  // --- DeepSeek 旧 ID 兼容别名（2026-07-24 官方停用，自动映射到 flash）---
-  {
-    model: "deepseek-chat",
-    input: 0.30,
-    output: 1.20,
-    cache: 0.006,
-    type: "deepseek",
-    remark: "官方已停用的旧 ID，实际由 deepseek-flash 承接；价格随 flash",
-  },
-  {
-    model: "deepseek-reasoner",
-    input: 0.30,
-    output: 1.20,
-    cache: 0.006,
-    type: "deepseek",
-    remark: "官方已停用的旧 ID，实际由 deepseek-flash + 深度思考承接；价格随 flash",
+    remark: "官方高峰价，闲时半价；来源 api-docs.deepseek.com/quick_start/pricing/",
   },
 
-  // --- OpenAI（价格需对照官方页人工复核）---
+  // --- 智谱 GLM（官方人民币价 ÷ 7.2；来源 open.bigmodel.cn/pricing）---
+  { model: "glm-5.3", input: 1.111, output: 3.889, cache: 0.278, type: "glm", remark: `官方 ¥8/¥28/缓存 ¥2 ÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
+  { model: "glm-5.3-flash", input: 0.111, output: 0.389, cache: 0.032, type: "glm", remark: `官方 ¥0.8/¥2.8/缓存 ¥0.23 ÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
+  { model: "glm-5.2", input: 1.111, output: 3.889, cache: 0.278, type: "glm", remark: `官方 ¥8/¥28/缓存 ¥2 ÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
+  { model: "glm-5v-turbo", input: 0.694, output: 3.056, cache: 0.167, type: "glm", remark: `官方 ≤32K 档 ¥5/¥22/缓存 ¥1.2 ÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
+  { model: "glm-4.7", input: 0.278, output: 1.111, cache: 0.056, type: "glm", remark: `官方 ¥2/¥8/缓存 ¥0.4 ÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
+  { model: "glm-4.5", input: 0.111, output: 0.278, cache: 0, type: "glm", remark: `官方 ¥0.8/¥2（官方公告即将下线）÷ ${CNY_PER_USD}；来源 docs.bigmodel.cn` },
+  { model: "glm-4.5-air", input: 0.111, output: 0.278, cache: 0.022, type: "glm", remark: `官方 ¥0.8/¥2/缓存 ¥0.16 ÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
+
+  // --- Kimi（官方美元价；来源 platform.kimi.com/docs/pricing/chat）---
+  { model: "kimi-k3", input: 3.00, output: 15.00, cache: 0.30, type: "kimi", remark: "官方定价，1M 上下文；来源 platform.kimi.com/docs/pricing/chat-k3" },
+  { model: "kimi-k2.6", input: 0.95, output: 4.00, cache: 0.16, type: "kimi", remark: "官方定价；来源 platform.kimi.com/docs/pricing/chat" },
+
+  // --- 通义千问（官方人民币价 ÷ 7.2；来源 help.aliyun.com/zh/model-studio）---
+  { model: "qwen3.8-max", input: 1.667, output: 5.000, cache: 0.208, type: "qwen", remark: `官方 ¥12/¥36/缓存 ¥1.5 ÷ ${CNY_PER_USD}；来源 help.aliyun.com/zh/model-studio/qwen3-8-max` },
+  { model: "qwen3.7-plus", input: 0.278, output: 1.111, cache: 0.044, type: "qwen", remark: `官方 ¥2/¥8/缓存 ¥0.32 ÷ ${CNY_PER_USD}；来源 help.aliyun.com/zh/model-studio` },
+  { model: "qwen3-max", input: 0.347, output: 1.389, cache: 0, type: "qwen", remark: `官方 ¥2.5/¥10（未公布缓存档）÷ ${CNY_PER_USD}；来源 help.aliyun.com/zh/model-studio` },
+  { model: "qwen-plus", input: 0.111, output: 0.278, cache: 0, type: "qwen", remark: `官方 ¥0.8/¥2（≤128K 档）÷ ${CNY_PER_USD}；来源 help.aliyun.com/zh/model-studio` },
+
+  // --- 豆包（本平台 doubao-pro/lite 为通用档位，价格对应官方 Seed 2.0 Pro/Lite ≤32K 档）---
+  { model: "doubao-pro", input: 0.444, output: 2.222, cache: 0.089, type: "doubao", remark: `对应官方 Seed-2.0-Pro ≤32K：¥3.2/¥16/缓存 ¥0.64 ÷ ${CNY_PER_USD}；来源 ai.volcengine.com/model` },
+  { model: "doubao-lite", input: 0.083, output: 0.500, cache: 0.017, type: "doubao", remark: `对应官方 Seed-2.0-Lite ≤32K：¥0.6/¥3.6/缓存 ¥0.12 ÷ ${CNY_PER_USD}；来源 ai.volcengine.com/model` },
+
+  // --- OpenAI（美元牌价；官方页对爬虫 403，录入后需人工复核）---
   { model: "gpt-4o", input: 2.50, output: 10.00, cache: 1.25, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
   { model: "gpt-4o-mini", input: 0.15, output: 0.60, cache: 0.075, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
   { model: "gpt-5", input: 1.25, output: 10.00, cache: 0.125, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
@@ -79,30 +85,15 @@ export const DEFAULT_PRICES = [
   { model: "o3", input: 2.00, output: 8.00, cache: 0.50, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
   { model: "o4-mini", input: 1.10, output: 4.40, cache: 0.275, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
 
-  // --- Anthropic ---
+  // --- Anthropic（美元牌价）---
   { model: "claude-opus-5", input: 5.00, output: 25.00, cache: 0.50, type: "claude", remark: "官方定价；来源 anthropic.com/pricing" },
   { model: "claude-sonnet-5", input: 2.00, output: 10.00, cache: 0.20, type: "claude", remark: "官方定价；来源 anthropic.com/pricing" },
   { model: "claude-haiku-4.5", input: 1.00, output: 5.00, cache: 0.10, type: "claude", remark: "官方定价；来源 anthropic.com/pricing" },
 
-  // --- Google ---
+  // --- Google（美元牌价）---
   { model: "gemini-3.5-flash", input: 1.50, output: 9.00, cache: 0.15, type: "gemini", remark: "官方牌价录入；来源 ai.google.dev/gemini-api/docs/pricing" },
   { model: "gemini-2.5-pro", input: 1.25, output: 10.00, cache: 0.125, type: "gemini", remark: "官方牌价录入；来源 ai.google.dev/gemini-api/docs/pricing" },
   { model: "gemini-2.5-flash", input: 0.30, output: 2.50, cache: 0.03, type: "gemini", remark: "官方牌价录入；来源 ai.google.dev/gemini-api/docs/pricing" },
-
-  // --- 阿里通义（官方人民币价 ÷ 7.2 折算）---
-  { model: "qwen3-max", input: 0.347, output: 1.389, cache: 0.035, type: "qwen", remark: `官方 ¥2.5/¥10（百万 token）÷ ${CNY_PER_USD} 折算；来源 help.aliyun.com/zh/model-studio/models` },
-  { model: "qwen-max", input: 0.333, output: 1.333, cache: 0, type: "qwen", remark: `官方 ¥2.4/¥9.6 ÷ ${CNY_PER_USD} 折算；来源 help.aliyun.com/zh/model-studio/models` },
-  { model: "qwen-plus", input: 0.111, output: 0.278, cache: 0, type: "qwen", remark: `官方 ¥0.8/¥2 ÷ ${CNY_PER_USD} 折算；来源 help.aliyun.com/zh/model-studio/models` },
-  { model: "qwen-turbo", input: 0.042, output: 0.083, cache: 0, type: "qwen", remark: `官方 ¥0.3/¥0.6 ÷ ${CNY_PER_USD} 折算；来源 help.aliyun.com/zh/model-studio/models` },
-
-  // --- 月之暗面（官方人民币价 ÷ 7.2 折算）---
-  { model: "kimi-k3", input: 2.778, output: 13.889, cache: 0.278, type: "custom", remark: `官方 ¥20/¥100 ÷ ${CNY_PER_USD} 折算；来源 platform.moonshot.cn/docs/pricing` },
-  { model: "kimi-k2.6", input: 0.903, output: 3.750, cache: 0.153, type: "custom", remark: `官方 ¥6.5/¥27 ÷ ${CNY_PER_USD} 折算；来源 platform.moonshot.cn/docs/pricing` },
-
-  // --- 智谱（官方美元价）---
-  { model: "glm-5.3", input: 1.40, output: 4.40, cache: 0.26, type: "custom", remark: "官方定价；来源 docs.z.ai/guides/overview/pricing" },
-  { model: "glm-5.3-flash", input: 0.15, output: 0.50, cache: 0.03, type: "custom", remark: "官方定价；来源 docs.z.ai/guides/overview/pricing" },
-  { model: "glm-4.7", input: 0.60, output: 2.20, cache: 0.11, type: "custom", remark: "官方定价；来源 docs.z.ai/guides/overview/pricing" },
 ];
 
 // 价格缓存（避免每请求查库）

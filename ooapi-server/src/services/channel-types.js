@@ -48,11 +48,12 @@ export const PROVIDERS = [
         desc: "填开放平台的 API Key",
         baseUrl: "https://api.deepseek.com",
         keyHint: "sk-...",
+        // 官方当前只有这两个模型（旧 ID deepseek-chat/reasoner 已停用，不再登记）
         defaultModels: [
-          { id: "deepseek-chat", name: "DeepSeek Chat" },
-          { id: "deepseek-reasoner", name: "DeepSeek Reasoner" },
+          { id: "deepseek-flash", name: "DeepSeek V4.1 Flash" },
+          { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
         ],
-        testModel: "deepseek-chat",
+        testModel: "deepseek-flash",
       },
     ],
   },

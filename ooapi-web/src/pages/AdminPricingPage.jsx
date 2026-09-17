@@ -19,15 +19,18 @@ const priceTitle = (label) => (
   </span>
 );
 
-// 渠道类型显示名。注意：不存在「DeepSeek 网页版」这种独立类型 ——
-// DeepSeek 只有两个真实模型（flash / v4-pro），网页反代与官方 API 出来的模型完全一致。
+// 渠道类型显示名：与各厂商注册表一一对应。
+// 注意：不存在「DeepSeek 网页版/官方」这种区分 —— 网页反代与官方 API 是同一批模型。
 const TYPE_LABEL = {
+  deepseek: "DeepSeek",
+  glm: "智谱 GLM",
+  kimi: "Kimi",
+  doubao: "豆包",
+  qwen: "通义千问",
   openai: "OpenAI",
   claude: "Anthropic",
   gemini: "Google",
-  qwen: "阿里通义",
-  deepseek: "DeepSeek",
-  custom: "其他",
+  custom: "其他（历史）",
 };
 
 // 导入模板（JSON）：模型 ID 必须与平台登记表严格一致

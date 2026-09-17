@@ -10,7 +10,9 @@
 // 因此本平台的设计是：
 //   模型 = 真实的 2 个（flash / v4-pro）
 //   能力 = 请求参数（thinking / search），可任意组合，不占用模型名
-//   同时保留对旧模型名的兼容映射，避免已有客户端直接报错。
+//   旧的 deepseek-chat / deepseek-reasoner 等名字不再作为模型登记，
+//   调用时会经 resolveModel 的兜底逻辑自动落到 flash（reasoner 类名称自动开思考），
+//   因此老客户端不改代码也能继续用，但平台对外只暴露 2 个真实模型。
 
 // 真实模型（网页版 model_type → 平台模型）
 export const REAL_MODELS = [
@@ -37,25 +39,12 @@ export const REAL_MODELS = [
   },
 ];
 
-// 兼容别名：官方已停用的旧 id → 映射到当前真实模型 + 能力
-// 目的：老客户端不改代码也能继续用
-export const ALIASES = {
-  "deepseek-chat": { model: "deepseek-flash", thinking: false },
-  "deepseek-reasoner": { model: "deepseek-flash", thinking: true },
-  "deepseek-r1": { model: "deepseek-flash", thinking: true },
-  "deepseek-thinker": { model: "deepseek-flash", thinking: true },
-  "deepseek-flash": { model: "deepseek-flash" },
-  "deepseek-v4-pro": { model: "deepseek-v4-pro" },
-  "deepseek-v4-flash": { model: "deepseek-flash" },
-  "deepseek-v4-flash-vision-exp": { model: "deepseek-flash" },
-};
-
 /**
  * 解析请求的模型名 → 执行参数
  * 支持：
  *   1. 真实模型名：deepseek-flash / deepseek-v4-pro
- *   2. 旧别名：deepseek-chat / deepseek-reasoner …（自动映射 + 设定思考）
- *   3. 能力后缀：任意模型名 + -search（联网）
+ *   2. 历史旧名（deepseek-chat / deepseek-reasoner / r1 / thinker …）：
+ *      不在注册表里，走下方兜底逻辑落到 flash，并按名字推断是否开思考
  * 返回 { model, thinking, search, vision, isReal }
  */
 export function resolveModel(requested) {
@@ -65,25 +54,13 @@ export function resolveModel(requested) {
   const search = /-search$/i.test(raw);
   const base = raw.replace(/-search$/i, "").toLowerCase();
 
-  const alias = ALIASES[base];
-  if (alias) {
-    const real = REAL_MODELS.find((m) => m.id === alias.model) || REAL_MODELS[0];
-    return {
-      model: real.id,
-      thinking: alias.thinking !== undefined ? alias.thinking : Boolean(real.thinkingDefault),
-      search,
-      vision: real.vision,
-      isReal: base === real.id,
-    };
-  }
-
   // 未知模型：按前缀猜测能力（保持宽容，避免直接报错）
   const real = REAL_MODELS.find((m) => base.startsWith(m.id) || m.id.startsWith(base.slice(0, 12)));
   if (real) {
     return { model: real.id, thinking: Boolean(real.thinkingDefault), search, vision: real.vision, isReal: false };
   }
 
-  // 完全未知：落到 flash，并按名字推断思考
+  // 完全未知（含历史旧名）：落到 flash，并按名字推断思考
   return {
     model: "deepseek-flash",
     thinking: /reason|think|r1|pro|expert/i.test(base),
@@ -93,9 +70,9 @@ export function resolveModel(requested) {
   };
 }
 
-// 平台对外暴露的模型名（/v1/models 与前端选择器）
+// 平台对外暴露的模型名（/v1/models 与前端选择器）—— 只有真实的 2 个
 export function publicModels() {
-  const list = REAL_MODELS.map((m) => ({
+  return REAL_MODELS.map((m) => ({
     id: m.id,
     label: m.label,
     desc: m.desc,
@@ -104,19 +81,6 @@ export function publicModels() {
     context: m.context,
     maxOutput: m.maxOutput,
   }));
-  // 兼容别名也列出，便于老客户端平迁移
-  for (const [alias, cfg] of Object.entries(ALIASES)) {
-    if (REAL_MODELS.some((m) => m.id === alias)) continue;
-    list.push({
-      id: alias,
-      label: `${alias}（兼容别名）`,
-      desc: `官方已停用，自动映射到 ${cfg.model}`,
-      aliasOf: cfg.model,
-      vision: REAL_MODELS.find((m) => m.id === cfg.model)?.vision ?? false,
-      deprecated: true,
-    });
-  }
-  return list;
 }
 
 // 渠道应声明的模型（供渠道管理默认值）
