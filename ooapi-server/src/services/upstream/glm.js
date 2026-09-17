@@ -243,12 +243,13 @@ export async function chat({
       });
     }
 
-    if (parser.error && !parser.finished) {
+    if (parser.error) {
+      // 错误帧与 FINISHED 同到也要报错，避免半截回答被当成功计费
       throw Object.assign(new Error(`上游返回错误：${parser.error}`), { code: "CHANNEL_STREAM_ERROR" });
     }
-    if (!parser.answer && !parser.thinking) {
-      // 空内容通常意味着页面层失败（如未登录、模型不可用）
-      throw Object.assign(new Error("该账号返回空内容（可能未登录或被风控限制）"), {
+    if (!parser.answer) {
+      // 空内容通常意味着页面层失败（如未登录、模型不可用）；只有思考没有正文也不能算成功
+      throw Object.assign(new Error(parser.thinking ? "上游只返回了思考内容，没有正文" : "该账号返回空内容（可能未登录或被风控限制）"), {
         code: "CHANNEL_EMPTY",
       });
     }

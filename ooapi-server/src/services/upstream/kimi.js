@@ -212,18 +212,17 @@ export async function chat({
   const decoder = createFrameDecoder();
   const parser = createKimiParser();
   const reader = resp.body.getReader();
-  let got = false;
+  let gotContent = false;
 
   const consume = (events) => {
     for (const ev of events) {
       const d = parser.handle(ev);
       if (!d) continue;
       if (d.reasoning) {
-        got = true;
         if (onReasoning) onReasoning(d.reasoning);
       }
       if (d.content) {
-        got = true;
+        gotContent = true;
         if (onDelta) onDelta(d.content);
       }
     }
@@ -245,7 +244,7 @@ export async function chat({
   if (parser.error) {
     throw Object.assign(new Error(`上游返回错误：${parser.error}`), { code: "CHANNEL_STREAM_ERROR" });
   }
-  if (!got) {
+  if (!gotContent) {
     throw Object.assign(new Error("该账号返回空内容（可能未登录或被风控限制）"), { code: "CHANNEL_EMPTY" });
   }
 

@@ -51,6 +51,11 @@ router.post(
       group_name = "",
     } = req.body || {};
     if (String(name).length > 64) return fail(res, "名称过长");
+    // 数值严格校验：NaN/Infinity/负数一律拒绝（strict 模式下写库会直接 500）
+    const remainVal = Number(remain_quota);
+    const expiredVal = Number(expired_time);
+    if (!Number.isFinite(remainVal) || remainVal < 0) return fail(res, "额度无效");
+    if (!Number.isFinite(expiredVal)) return fail(res, "过期时间无效");
     const key = genApiKey();
     await pool.query(
       `INSERT INTO tokens (user_id, name, key_str, status, created_time, accessed_time, expired_time,
@@ -63,8 +68,8 @@ router.post(
         1,
         now(),
         0,
-        Number(expired_time) || -1,
-        Number(remain_quota) || 0,
+        Number(expiredVal),
+        Number(remainVal),
         unlimited_quota ? 1 : 0,
         0,
         Array.isArray(model_limits) ? model_limits.join(",") : "",
@@ -91,15 +96,31 @@ router.put(
     const [rows] = await pool.query("SELECT * FROM tokens WHERE id = ? AND user_id = ?", [token, req.user.id]);
     if (!rows.length) return fail(res, "令牌不存在", 404);
     const cur = rows[0];
+    // status 只能 1(启用)/2(禁用)/3(过期)；额度与过期时间必须为有限数字
+    let statusVal = cur.status;
+    if (status !== undefined) {
+      statusVal = Number(status);
+      if (![1, 2, 3].includes(statusVal)) return fail(res, "状态无效");
+    }
+    let remainVal = cur.remain_quota;
+    if (remain_quota !== undefined) {
+      remainVal = Number(remain_quota);
+      if (!Number.isFinite(remainVal) || remainVal < 0) return fail(res, "额度无效");
+    }
+    let expiredVal = cur.expired_time;
+    if (expired_time !== undefined) {
+      expiredVal = Number(expired_time);
+      if (!Number.isFinite(expiredVal)) return fail(res, "过期时间无效");
+    }
     await pool.query(
       `UPDATE tokens SET name = ?, status = ?, remain_quota = ?, unlimited_quota = ?, expired_time = ?,
         model_limits = ?, group_name = ? WHERE id = ? AND user_id = ?`,
       [
         name !== undefined ? String(name).trim() : cur.name,
-        status !== undefined ? Math.max(1, Number(status)) : cur.status,
-        remain_quota !== undefined ? Math.max(0, Number(remain_quota)) : cur.remain_quota,
+        statusVal,
+        remainVal,
         unlimited_quota !== undefined ? (unlimited_quota ? 1 : 0) : cur.unlimited_quota,
-        expired_time !== undefined ? Number(expired_time) : cur.expired_time,
+        expiredVal,
         Array.isArray(model_limits) ? model_limits.join(",") : cur.model_limits,
         group_name !== undefined ? group_name : cur.group_name,
         token,

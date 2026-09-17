@@ -168,6 +168,7 @@ export function publicModels() {
     vision: m.vision,
     thinkingDefault: m.thinkingDefault,
     supportsSearch: m.search,
+    supportsThinking: true,
   }));
   for (const [alias, target] of Object.entries(ALIASES)) {
     if (REAL_MODELS.some((m) => m.id === alias)) continue;

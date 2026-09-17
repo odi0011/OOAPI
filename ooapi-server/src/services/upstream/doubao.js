@@ -84,6 +84,13 @@ export async function chat({
   if (images.length) {
     throw Object.assign(new Error("豆包渠道暂不支持图片输入，请改用文本"), { code: "VISION_NOT_SUPPORTED" });
   }
+  // 适配器暂未实现这两个参数注入，显式报错好于静默忽略（前端已按能力标记隐藏开关）
+  if (search) {
+    throw Object.assign(new Error("豆包渠道暂不支持联网搜索，请去掉 search 参数"), { code: "CHANNEL_UNSUPPORTED" });
+  }
+  if (thinkingOverride === true && !resolved.thinking) {
+    throw Object.assign(new Error("豆包渠道暂不支持深度思考开关"), { code: "CHANNEL_UNSUPPORTED" });
+  }
   if (signal?.aborted) {
     throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
   }
@@ -160,8 +167,11 @@ export async function chat({
             : "CHANNEL_STREAM_ERROR";
       throw Object.assign(new Error(`上游返回错误：${parser.error}`), { code });
     }
-    if (!parser.content && !parser.reasoning) {
-      throw Object.assign(new Error("该账号返回空内容（可能未登录或被风控限制）"), { code: "CHANNEL_EMPTY" });
+    if (!parser.content) {
+      throw Object.assign(
+        new Error(parser.reasoning ? "上游只返回了思考内容，没有正文" : "该账号返回空内容（可能未登录或被风控限制）"),
+        { code: "CHANNEL_EMPTY" }
+      );
     }
 
     return {

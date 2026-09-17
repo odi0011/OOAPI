@@ -2,11 +2,9 @@
 // 按模型路由到渠道，OD 币 1:1 计费。
 import express from "express";
 import crypto from "node:crypto";
-import dns from "node:dns/promises";
-import net from "node:net";
 import { pool } from "../db.js";
 import { getBoolOption } from "../config.js";
-import { now, clientIp, asyncHandler } from "../utils.js";
+import { now, clientIp, asyncHandler, assertPublicUrl } from "../utils.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { runCompletion } from "../services/execute.js";
 import { getPrice, computeCost, splitTokens, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
@@ -116,37 +114,7 @@ function messagesToPrompt(messages) {
   return prompt || "你好";
 }
 
-// ---------- SSRF 防护：图片外链只允许公网 http(s) ----------
-function isPrivateIp(ip) {
-  if (!ip) return true;
-  if (net.isIPv6(ip)) {
-    const v = ip.toLowerCase();
-    if (v === "::" || v === "::1") return true;
-    if (v.startsWith("fe80:") || v.startsWith("fc") || v.startsWith("fd")) return true;
-    if (v.startsWith("::ffff:")) return isPrivateIp(v.slice(7));
-    return false;
-  }
-  const p = String(ip).split(".").map(Number);
-  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
-  const [a, b] = p;
-  if (a === 0 || a === 10 || a === 127) return true; // 保留 / 内网 / 回环
-  if (a === 169 && b === 254) return true; // 链路本地（含云元数据 169.254.169.254）
-  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
-  if (a === 192 && b === 168) return true; // 192.168.0.0/16
-  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
-  if (a >= 224) return true; // 组播 / 保留
-  return false;
-}
-
-async function assertPublicUrl(raw) {
-  const u = new URL(raw);
-  if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("协议不允许");
-  if (u.username || u.password) throw new Error("不允许携带凭据");
-  const addrs = await dns.lookup(u.hostname, { all: true });
-  if (!addrs.length || addrs.some((a) => isPrivateIp(a.address))) throw new Error("目标为内网地址");
-  return u;
-}
-
+// ---------- SSRF 防护：图片外链只允许公网 http(s)（isPrivateIp/assertPublicUrl 在 utils.js）----------
 // 抓取远程图片：逐跳校验（防重定向 SSRF），限制类型与大小
 async function fetchRemoteImage(rawUrl) {
   let target = rawUrl;
@@ -403,15 +371,16 @@ router.post(
           },
         ],
         usage: {
+          // 严格遵循 OpenAI usage 结构，扩展字段放到顶层 x_* （严格 SDK 会校验 usage 子字段）
           prompt_tokens: settled.promptTokens,
           completion_tokens: settled.completionTokens,
           total_tokens: settled.promptTokens + settled.completionTokens,
           ...(settled.cacheTokens ? { prompt_tokens_details: { cached_tokens: settled.cacheTokens } } : {}),
-          od_cost: Number((settled.units / UNITS_PER_OD).toFixed(6)),
-          currency: CURRENCY,
-          channel: result.channel?.name,
-          latency_ms: result.elapsed,
         },
+        x_od_cost: Number((settled.units / UNITS_PER_OD).toFixed(6)),
+        x_currency: CURRENCY,
+        x_channel: result.channel?.name,
+        x_latency_ms: result.elapsed,
       });
     }
   } catch (err) {

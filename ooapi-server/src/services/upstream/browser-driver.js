@@ -167,16 +167,6 @@ export async function closeSession(vendor, channelId) {
   return true;
 }
 
-export function sessionStatus(vendor, channelId) {
-  const s = sessions.get(`${vendor}:${channelId}`);
-  if (!s) return { active: false };
-  return { active: true, lastUsed: s.lastUsed, url: s.page?.url?.() || "" };
-}
-
-export function allSessions() {
-  return [...sessions].map(([key, s]) => ({ key, lastUsed: s.lastUsed, url: s.page?.url?.() || "" }));
-}
-
 export async function closeAll() {
   // 等待所有首建中的会话落地，避免漏关
   await Promise.allSettled([...pending.values()]);
@@ -297,13 +287,6 @@ export async function credentials(vendor, channelId) {
   });
 }
 
-/** 在页面里执行一段 JS（仅用于登录辅助，例如读取登录态是否存在） */
-export async function evalInPage(vendor, channelId, fn) {
-  const s = sessions.get(`${vendor}:${channelId}`);
-  if (!s) return null;
-  return withLock(s, () => s.page.evaluate(fn));
-}
-
 // ---------- 请求钩子 ----------
 /**
  * 安装 fetch 钩子：按 __ooPatch 改写请求 body，并捕获响应流
@@ -417,17 +400,6 @@ export async function resetHook(page) {
     window.__ooCap = { chunks: [], done: false, error: null, startedAt: 0 };
     window.__ooPatchError = null;
   });
-}
-
-/** 读取捕获结果 */
-export async function readCapture(page) {
-  return page.evaluate(() => ({
-    chunks: [...(window.__ooCap?.chunks || [])],
-    done: Boolean(window.__ooCap?.done),
-    error: window.__ooCap?.error || null,
-    patchError: window.__ooPatchError || null,
-    lastBody: window.__ooLastBody || null,
-  }));
 }
 
 // ---------- UI 交互 ----------
@@ -561,32 +533,6 @@ export async function submit(page, { sendSelector } = {}) {
   return false;
 }
 
-/** 等待流结束（done 标记，或帧数连续稳定） */
-export async function waitForStream(page, { timeoutMs = 180_000, pollMs = 1000 } = {}) {
-  const t0 = Date.now();
-  let last = -1;
-  let stable = 0;
-  while (Date.now() - t0 < timeoutMs) {
-    await page.waitForTimeout(pollMs);
-    const st = await page.evaluate(() => ({
-      done: window.__ooCap?.done,
-      n: window.__ooCap?.chunks?.length || 0,
-      err: window.__ooCap?.error,
-      started: window.__ooCap?.startedAt || 0,
-    }));
-    if (st.err) return { ok: false, error: st.err };
-    if (st.done && st.n > 0) return { ok: true, frames: st.n, ms: Date.now() - t0 };
-    if (st.started && st.n === last && st.n > 0) {
-      stable++;
-      if (stable >= 5) return { ok: true, frames: st.n, ms: Date.now() - t0, endedByStable: true };
-    } else {
-      stable = 0;
-    }
-    last = st.n;
-  }
-  return { ok: false, error: "TIMEOUT" };
-}
-
 /**
  * 边收边读：等待流结束的同时，把新到的帧立刻交给 onChunk。
  *
@@ -607,7 +553,11 @@ export async function streamCapture(page, {
   // 次数会随 pollMs 变化而失真（pollMs 从 1000 调到 120 时，
   // 5 次的含义会从 5 秒变成 0.6 秒，导致模型思考间隙被误判成结束、
   // 答案还没吐出来就收工，返回空内容。这个坑踩过一次，别再改回计数）。
-  idleMs = 4000,
+  // 兜底：流没标记结束，但帧数已经静止 idleMs，视为已结束。
+  // 必须先从「首帧到达」开始算，否则等待首帧的那几秒会被当成静止。
+  // idleMs 默认 15s：深度思考的停顿可能很长，宁可多等，也不要把长回答截断
+  // （截断会被当成成功计费，用户拿到半截答案还照样扣钱）。
+  idleMs = 15_000,
   onChunk,
   shouldStop,
   signal,

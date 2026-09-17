@@ -274,6 +274,7 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
     }
 
     step("执行数据库迁移…");
+    const migrationErrors = [];
     for (const m of ["migrate2.mjs", "migrate3.mjs", "migrate5.mjs"]) {
       const f = path.join(SERVER_ROOT, m);
       if (!existsSync(f)) continue;
@@ -281,8 +282,14 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
         await run("node", [f], { cwd: SERVER_ROOT });
         step(`  ${m} 完成`);
       } catch (e) {
-        step(`  ${m} 跳过：${String(e.message).slice(0, 160)}`);
+        step(`  ${m} 失败：${String(e.message).slice(0, 160)}`);
+        migrationErrors.push(`${m}: ${e.message}`);
       }
+    }
+    if (migrationErrors.length) {
+      // 迁移失败不能算更新成功：新代码可能与旧库结构不兼容，
+      // 若继续写版本戳并重启，会把服务拉到起不来的状态。交给 catch 回滚源码。
+      throw new Error(`数据库迁移失败（已回滚源码，未重启）：${migrationErrors.join("；").slice(0, 400)}`);
     }
 
     // 写入版本戳，供「检查更新」比对

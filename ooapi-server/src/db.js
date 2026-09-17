@@ -17,7 +17,9 @@ export const pool = mysql.createPool({
   password,
   database,
   waitForConnections: true,
-  connectionLimit: 10,
+  // 上游请求常达分钟级，连接会被长时间占用；10 个连接在高并发下容易排队。
+  // 可用 DB_POOL_SIZE 覆盖（默认 50）。
+  connectionLimit: Math.max(2, Number(process.env.DB_POOL_SIZE) || 50),
   charset: "utf8mb4_unicode_ci",
   timezone: "Z",
 });

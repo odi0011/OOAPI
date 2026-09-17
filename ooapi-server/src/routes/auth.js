@@ -57,10 +57,17 @@ router.post(
     const ts = now();
     const quota = getNumberOption("quota_for_new_user");
     const aff = genAffCode();
-    const [ret] = await pool.query(
-      "INSERT INTO users (username, password, display_name, role, status, quota, aff_code, group_name, created_time, last_login_time, last_login_ip) VALUES (?,?,?,1,1,?,?,?, ?, ?, ?)",
-      [name, hash, name, quota, aff, "default", ts, ts, clientIp(req)]
-    );
+    let ret;
+    try {
+      [ret] = await pool.query(
+        "INSERT INTO users (username, password, display_name, role, status, quota, aff_code, group_name, created_time, last_login_time, last_login_ip) VALUES (?,?,?,1,1,?,?,?, ?, ?, ?)",
+        [name, hash, name, quota, aff, "default", ts, ts, clientIp(req)]
+      );
+    } catch (e) {
+      // 并发注册同名用户：唯一键冲突返回 409，而不是把 500 抛给用户
+      if (e?.code === "ER_DUP_ENTRY") return fail(res, "用户名已被占用", 409);
+      throw e;
+    }
     const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [ret.insertId]);
     const user = rows[0];
     await writeLog({ user, type: LOG_TYPE.MANAGE, content: `新用户注册，赠送额度 ${quota}`, ip: clientIp(req) });

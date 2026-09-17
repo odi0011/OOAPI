@@ -283,8 +283,10 @@ export async function chat({
     reader.cancel().catch(() => {});
   }
 
-  if (!content && !reasoning) {
-    throw Object.assign(new Error("上游返回空内容"), { code: "CHANNEL_EMPTY" });
+  // 只返回思维链、没有正文的响应按失败处理：
+  // 否则用户拿到空回答还会被正常计费（思考 token 已经产生，但答案缺失）。
+  if (!content) {
+    throw Object.assign(new Error(reasoning ? "上游只返回了思考内容，没有正文" : "上游返回空内容"), { code: "CHANNEL_EMPTY" });
   }
 
   return {

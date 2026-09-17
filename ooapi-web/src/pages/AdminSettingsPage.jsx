@@ -111,6 +111,9 @@ function GeneralTab() {
       <Form.Item name="footer" label="页脚文案">
         <Input.TextArea rows={2} />
       </Form.Item>
+      <Form.Item name="log_retention_days" label="日志保留天数" extra="0 = 永久保留；大于 0 时每 6 小时自动清理过期日志">
+        <InputNumber style={{ width: "100%" }} min={0} step={30} />
+      </Form.Item>
     </SettingsPanel>
   );
 }

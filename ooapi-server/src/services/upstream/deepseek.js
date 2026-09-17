@@ -375,7 +375,7 @@ export async function chat({
   let buffer = "";
   let reasoning = "";
   let content = "";
-  let got = false;
+  let gotContent = false;
 
   const handleLine = (line) => {
     const t = line.replace(/\r$/, "");
@@ -383,12 +383,11 @@ export async function chat({
     const d = parser.push(t.slice(5).trim());
     if (!d) return;
     if (d.reasoning) {
-      got = true;
       reasoning += d.reasoning;
       if (onReasoning) onReasoning(d.reasoning);
     }
     if (d.content) {
-      got = true;
+      gotContent = true;
       content += d.content;
       if (onDelta) onDelta(d.content);
     }
@@ -408,10 +407,11 @@ export async function chat({
 
   if (parser.searchStatus && onSearchStatus) onSearchStatus(parser.searchStatus);
 
-  if (parser.error && !parser.finished) {
+  if (parser.error) {
+    // 错误帧即使与 FINISHED 同到也要报错：吞掉会把半截回答当成功计费
     throw Object.assign(new Error(`上游返回错误：${parser.error}`), { code: "CHANNEL_STREAM_ERROR" });
   }
-  if (!got) {
+  if (!gotContent) {
     throw Object.assign(new Error("该账号返回空内容（可能被风控限制）"), { code: "CHANNEL_EMPTY" });
   }
 

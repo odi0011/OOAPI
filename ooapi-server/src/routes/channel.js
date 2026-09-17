@@ -21,11 +21,11 @@
 //   GET    /api/channel/:id/key        查看完整 Key
 import { Router } from "express";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, now } from "../utils.js";
+import { ok, fail, asyncHandler, now, assertPublicUrl } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getProvider, getMethod, providerKeys, publicProviders } from "../services/channel-types.js";
-import { getAdapter, resetChannelState, channelRuntimeState, rowToChannel } from "../services/router.js";
+import { getAdapter, resetChannelState, forgetChannel, channelRuntimeState, rowToChannel } from "../services/router.js";
 import {
   isReady as browserReady,
   removeProfile,
@@ -787,6 +787,12 @@ router.post(
     }
     if (!key) return fail(res, "请先填写 API Key");
     if (!base) base = getMethod(type, "api")?.baseUrl || "";
+    // 管理员可填任意地址，这里必须做 SSRF 校验，避免借「拉取模型」探测内网/云元数据
+    try {
+      await assertPublicUrl(base);
+    } catch (e) {
+      return fail(res, `接口地址不可用：${e.message}`);
+    }
     const mod = await import("../services/upstream/openai-compat.js");
     try {
       const list = await mod.fetchUpstreamModels({ base_url: base, api_key: key });
@@ -812,7 +818,7 @@ router.delete(
     if (getMethod(rows[0].type, "relay")?.needsBrowser) await removeProfile(rows[0].type, id).catch(() => {});
 
     await pool.query("DELETE FROM channels WHERE id = ?", [id]);
-    resetChannelState(id);
+    forgetChannel(id);
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `删除渠道「${rows[0].name}」` });
     return ok(res, null, "渠道已删除");
   })
@@ -842,7 +848,7 @@ router.post(
         }
       }
       await pool.query(`DELETE FROM channels WHERE id IN (${ph})`, list);
-      list.forEach((id) => resetChannelState(id));
+      list.forEach((id) => forgetChannel(id));
     } else if (action === "set_priority") {
       const p = Number(payload?.priority) || 0;
       await pool.query(`UPDATE channels SET priority = ? WHERE id IN (${ph})`, [p, ...list]);

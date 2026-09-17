@@ -133,6 +133,15 @@ export function resetChannelState(channelId) {
   }
 }
 
+/**
+ * 渠道被删除时清掉运行时痕迹（冷却状态、串行链），
+ * 避免 state/chains 长期只增不减造成内存泄漏。
+ */
+export function forgetChannel(channelId) {
+  state.delete(Number(channelId));
+  chains.delete(Number(channelId));
+}
+
 export function channelRuntimeState(channelId) {
   const s = state.get(Number(channelId));
   return {
@@ -252,8 +261,9 @@ export async function selectChannels({ model, excludeIds = null, groupName = nul
       ordered.push(group[0]);
       continue;
     }
-    // 组内轮询：游标按「优先级 + 模型」维度推进，避免不同模型互相干扰
-    const key = `p${p}:${model}`;
+    // 组内轮询：游标按优先级推进。
+    // 注意不能把模型名拼进 key —— 模型名来自请求，任意字符串会让 Map 无限增长。
+    const key = `p${p}`;
     const cursor = (SELECT_CURSOR.get(key) || 0) % group.length;
     SELECT_CURSOR.set(key, cursor + 1);
     // 从游标处开始环形展开

@@ -96,6 +96,9 @@ export function publicModels() {
     desc: m.desc,
     vision: m.vision,
     thinkingDefault: m.thinkingDefault,
+    // 通义适配器暂未实现搜索/思考参数注入：显式标记，前端不再显示无效开关
+    supportsSearch: false,
+    supportsThinking: false,
   }));
   for (const [alias, target] of Object.entries(ALIASES)) {
     if (REAL_MODELS.some((m) => m.id === alias)) continue;

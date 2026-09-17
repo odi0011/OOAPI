@@ -287,8 +287,13 @@ export default function ChatPage() {
           toggles={
             mode === "chat"
               ? [
-                  { key: "thinking", label: "思考", title: "深度思考", icon: <BulbOutlined />, on: thinkingOn, onClick: () => setThinking(!thinkingOn) },
-                  { key: "search", label: "联网", title: "联网搜索", icon: <GlobalOutlined />, on: search, onClick: () => setSearch(!search) },
+                  // 按模型能力渲染：不支持搜索/思考的渠道不再显示无效开关
+                  ...(curModel?.supportsThinking !== false
+                    ? [{ key: "thinking", label: "思考", title: "深度思考", icon: <BulbOutlined />, on: thinkingOn, onClick: () => setThinking(!thinkingOn) }]
+                    : []),
+                  ...(curModel?.supportsSearch !== false
+                    ? [{ key: "search", label: "联网", title: "联网搜索", icon: <GlobalOutlined />, on: search, onClick: () => setSearch(!search) }]
+                    : []),
                 ]
               : []
           }
@@ -296,8 +301,12 @@ export default function ChatPage() {
           commands={[
             { key: "clear", name: "clear", desc: "清空当前对话", run: () => { if (busy) return; setMsgs([]); setInput(""); setImages([]); } },
             ...(mode === "chat" ? [
-              { key: "think", name: "think", desc: thinkingOn ? "关闭深度思考" : "开启深度思考", run: () => { if (!busy) setThinking(!thinkingOn); } },
-              { key: "search", name: "search", desc: search ? "关闭联网搜索" : "开启联网搜索", run: () => { if (!busy) setSearch(!search); } },
+              ...(curModel?.supportsThinking !== false
+                ? [{ key: "think", name: "think", desc: thinkingOn ? "关闭深度思考" : "开启深度思考", run: () => { if (!busy) setThinking(!thinkingOn); } }]
+                : []),
+              ...(curModel?.supportsSearch !== false
+                ? [{ key: "search", name: "search", desc: search ? "关闭联网搜索" : "开启联网搜索", run: () => { if (!busy) setSearch(!search); } }]
+                : []),
             ] : []),
             { key: "agent", name: "agent", desc: "切换到 Agent 模式", run: () => { if (!busy) setParams({ mode: "agent" }, { replace: true }); } },
           ]}

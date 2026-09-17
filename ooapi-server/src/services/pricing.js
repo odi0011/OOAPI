@@ -219,22 +219,7 @@ export function formatOd(units, digits = 4) {
   return `${unitsToOd(units).toFixed(digits)} ${CURRENCY}`;
 }
 
-// 扣费：用户额度 + 令牌额度 + 计数 + 日志
-export async function charge({ user, token, units, model, meta = {}, ip = "", requestId = "" }) {
-  await pool.query(
-    "UPDATE users SET quota = GREATEST(0, quota - ?), used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ?",
-    [units, units, user.id]
-  );
-  if (!token.unlimited_quota) {
-    await pool.query("UPDATE tokens SET remain_quota = GREATEST(0, remain_quota - ?) WHERE id = ?", [units, token.id]);
-  }
-  await pool.query("UPDATE tokens SET used_quota = used_quota + ?, accessed_time = ? WHERE id = ?", [
-    units,
-    now(),
-    token.id,
-  ]);
-  return units;
-}
+// 扣费：用户额度 + 令牌额度 + 计数。（历史函数已删除：路由统一用各自的原子扣费逻辑）
 
 /**
  * 写入内置默认价格（仅在 model_prices 缺该模型时插入，绝不覆盖管理员改过的价格）。

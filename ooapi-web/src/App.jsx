@@ -35,6 +35,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
+      {/* 侧边栏「返回首页」的兼容路由：跳出控制台布局回公开首页 */}
+      <Route path="/home" element={<Navigate to="/" replace />} />
       <Route path="/login" element={<AuthPage initialTab="login" />} />
       <Route path="/register" element={<AuthPage initialTab="register" />} />
       <Route element={<RequireAuth><MainLayout /></RequireAuth>}>

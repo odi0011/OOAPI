@@ -88,36 +88,47 @@ export async function runCompletion({
       if (signal.aborted) attemptCtrl.abort();
       else signal.addEventListener("abort", onOuterAbort, { once: true });
     }
-    const timer = setTimeout(() => {
-      timedOut = true;
-      attemptCtrl.abort();
-    }, timeoutMs);
 
     try {
       const adapter = await getAdapter(channel);
-      const result = await withChannelLimit(channel, () =>
-        adapter.chat({
-          channel,
-          model,
-          prompt,
-          messages,
-          thinkingOverride: thinking,
-          search,
-          images,
-          signal: attemptCtrl.signal,
-          onDelta: (t) => {
-            sawOutput = true;
-            if (onDelta) onDelta(t);
-          },
-          onReasoning: (t) => {
-            sawOutput = true;
-            if (onReasoning) onReasoning(t);
-          },
-          onSearchStatus: (s) => {
-            if (onSearchStatus) onSearchStatus(s);
-          },
-        })
-      );
+      let hardTimer;
+      // 硬截止：Playwright 内部调用（evaluate/fill 等）不一定响应 abort，
+      // 只靠 signal 会让请求在适配器里无限悬挂。这里用 Promise.race 保证
+      // 到点一定推进到下一个渠道（底层任务随后自行 abort 收尾）。
+      const result = await Promise.race([
+        withChannelLimit(channel, () =>
+          adapter.chat({
+            channel,
+            model,
+            prompt,
+            messages,
+            thinkingOverride: thinking,
+            search,
+            images,
+            signal: attemptCtrl.signal,
+            onDelta: (t) => {
+              sawOutput = true;
+              if (onDelta) onDelta(t);
+            },
+            onReasoning: (t) => {
+              sawOutput = true;
+              if (onReasoning) onReasoning(t);
+            },
+            onSearchStatus: (s) => {
+              if (onSearchStatus) onSearchStatus(s);
+            },
+          })
+        ),
+        new Promise((_, reject) => {
+          hardTimer = setTimeout(() => {
+            timedOut = true;
+            attemptCtrl.abort();
+            reject(
+              Object.assign(new Error(`渠道「${channel.name}」响应超时（${timeoutMs}ms）`), { code: "CHANNEL_TIMEOUT" })
+            );
+          }, timeoutMs);
+        }),
+      ]).finally(() => clearTimeout(hardTimer));
 
       await markChannelOk(channel, Date.now() - started);
       await persistProfile(channel, result);
@@ -148,7 +159,6 @@ export async function runCompletion({
       await markChannelError(channel, lastError.message, cooldown);
       console.warn(`[execute] 渠道「${channel.name}」失败（${code}），切换下一渠道：${lastError.message}`);
     } finally {
-      clearTimeout(timer);
       if (signal) signal.removeEventListener("abort", onOuterAbort);
     }
   }

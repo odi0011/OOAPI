@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pool, migrate } from "./db.js";
-import { loadOptions, publicStatus } from "./config.js";
+import { loadOptions, publicStatus, getNumberOption } from "./config.js";
 import { seedDefaultPrices } from "./services/pricing.js";
 import { ok } from "./utils.js";
 import authRoutes from "./routes/auth.js";
@@ -17,8 +17,7 @@ import channelRoutes from "./routes/channel.js";
 import gatewayRoutes from "./routes/gateway.js";
 import chatRoutes from "./routes/chat.js";
 import pricingRoutes from "./routes/pricing.js";
-// 旧的账号管理接口已并入 /api/channel，前端无引用，保留文件但不挂载
-// import deepseekRoutes from "./routes/deepseek.js";
+// 旧的账号管理接口已并入 /api/channel（routes/deepseek.js 与 services/deepseek/ 已删除）
 import updateRoutes from "./routes/update.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -52,7 +51,6 @@ app.use("/api/option", optionRoutes);
 app.use("/api/channel", channelRoutes);
 app.use("/api/chat", chatRoutes); // 站内对话 + 智能体
 app.use("/api/pricing", pricingRoutes); // 管理端：模型定价
-// app.use("/api/deepseek", deepseekRoutes); // 已由 /api/channel 取代
 app.use("/api/update", updateRoutes); // 管理端：从 GitHub 拉取最新代码在线更新
 app.use("/v1", gatewayRoutes); // 对外网关：OpenAI 兼容
 
@@ -85,6 +83,26 @@ process.on("uncaughtException", (err) => {
 
 const PORT = Number(process.env.PORT || 3001);
 
+// 日志自动清理：log_retention_days > 0 时，每 6 小时删一次过期日志（0 = 永久保留）。
+// 后台「一键清空日志」是手动兜底，这里补上自动策略，避免 logs 表无限增长。
+function scheduleLogCleanup() {
+  const run = async () => {
+    const days = getNumberOption("log_retention_days");
+    if (!days || days <= 0) return;
+    try {
+      const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
+      const [ret] = await pool.query("DELETE FROM logs WHERE created_at < ?", [cutoff]);
+      if (ret.affectedRows) {
+        console.log(`[cleanup] 已清理 ${ret.affectedRows} 条超期日志（保留 ${days} 天）`);
+      }
+    } catch (e) {
+      console.error("[cleanup] 日志清理失败：", e.message);
+    }
+  };
+  run();
+  setInterval(run, 6 * 3600 * 1000).unref?.();
+}
+
 async function bootstrap() {
   // 等待数据库就绪（systemd 启动顺序兜底）
   for (let i = 0; i < 30; i++) {
@@ -114,13 +132,15 @@ async function bootstrap() {
     const now = Math.floor(Date.now() / 1000);
     await pool.query(
       "INSERT INTO users (username, password, display_name, role, status, quota, aff_code, group_name, created_time) VALUES (?,?,?,100,1,?,?,?,?)",
-      ["root", hash, "超级管理员", 500000000, "ROOT0001", "default", now]
+      ["root", hash, "超级管理员", 10000000, "ROOT0001", "default", now]
     );
     console.log(
       `[init] 已创建默认管理员 root / ${pwd}${generated ? "（随机生成，请立即到「个人设置」修改）" : ""}`
     );
   }
   app.listen(PORT, "127.0.0.1", () => console.log(`[ooapi-server] listening on 127.0.0.1:${PORT}`));
+
+  scheduleLogCleanup();
 
   // 退出时关闭浏览器驱动会话，避免残留进程
   for (const sig of ["SIGTERM", "SIGINT"]) {

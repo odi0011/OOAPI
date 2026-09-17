@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import dns from "node:dns/promises";
+import net from "node:net";
 
 // 统一响应格式，与 new-api 风格一致
 export function ok(res, data = undefined, message = "") {
@@ -36,6 +38,18 @@ export function now() {
   return Math.floor(Date.now() / 1000);
 }
 
+/**
+ * 安全分页参数：防 NaN / Infinity / 超大页码。
+ * 注意 Number("Infinity") 是合法数字，直接算 OFFSET 会让 mysql2 转义报错（500）。
+ */
+export function pageParams(query = {}, defaultSize = 20) {
+  const rawP = Number(query.p);
+  const rawS = Number(query.page_size);
+  const p = Number.isSafeInteger(rawP) && rawP > 0 ? Math.min(rawP, 1_000_000) : 1;
+  const size = Number.isSafeInteger(rawS) && rawS > 0 ? Math.min(rawS, 100) : defaultSize;
+  return { p, size, offset: (p - 1) * size };
+}
+
 export function safeJSONParse(str, fallback) {
   try {
     const v = JSON.parse(str);
@@ -43,6 +57,38 @@ export function safeJSONParse(str, fallback) {
   } catch {
     return fallback;
   }
+}
+
+// ---------- SSRF 防护（网关图片外链 / 渠道“拉取上游模型”共用）----------
+export function isPrivateIp(ip) {
+  if (!ip) return true;
+  if (net.isIPv6(ip)) {
+    const v = ip.toLowerCase();
+    if (v === "::" || v === "::1") return true;
+    if (v.startsWith("fe80:") || v.startsWith("fc") || v.startsWith("fd")) return true;
+    if (v.startsWith("::ffff:")) return isPrivateIp(v.slice(7));
+    return false;
+  }
+  const p = String(ip).split(".").map(Number);
+  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  const [a, b] = p;
+  if (a === 0 || a === 10 || a === 127) return true; // 保留 / 内网 / 回环
+  if (a === 169 && b === 254) return true; // 链路本地（含云元数据 169.254.169.254）
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+  if (a === 192 && b === 168) return true; // 192.168.0.0/16
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+  if (a >= 224) return true; // 组播 / 保留
+  return false;
+}
+
+/** 校验 URL 为公网 http(s)，拒绝内网/凭据/非 http 协议 */
+export async function assertPublicUrl(raw) {
+  const u = new URL(raw);
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("协议不允许");
+  if (u.username || u.password) throw new Error("不允许携带凭据");
+  const addrs = await dns.lookup(u.hostname, { all: true });
+  if (!addrs.length || addrs.some((a) => isPrivateIp(a.address))) throw new Error("目标为内网地址");
+  return u;
 }
 
 // 返回给前端的用户对象（去除敏感字段）

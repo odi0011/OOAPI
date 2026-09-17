@@ -23,16 +23,19 @@ router.put(
   adminRequired,
   asyncHandler(async (req, res) => {
     const body = req.body || {};
+    // 用 hasOwnProperty 而不是 in：in 会命中原型链（constructor/toString/__proto__ 等），
+    // 可能把非白名单键写进 options 表
+    const isKnown = (k) => Object.prototype.hasOwnProperty.call(DEFAULT_OPTIONS, k);
     if (body.key !== undefined && body.value !== undefined) {
       // 单个更新
       const key = String(body.key);
-      if (!(key in DEFAULT_OPTIONS)) return fail(res, `未知设置项：${key}`);
+      if (!isKnown(key)) return fail(res, `未知设置项：${key}`);
       await setOption(key, body.value);
     } else {
       // 批量更新
       const changed = [];
       for (const [key, value] of Object.entries(body)) {
-        if (!(key in DEFAULT_OPTIONS)) continue;
+        if (!isKnown(key)) continue;
         const v = typeof value === "boolean" ? String(value) : String(value ?? "");
         await setOption(key, v);
         changed.push(key);

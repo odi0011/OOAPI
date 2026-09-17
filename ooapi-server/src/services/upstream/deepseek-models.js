@@ -80,6 +80,8 @@ export function publicModels() {
     thinkingDefault: m.thinkingDefault,
     context: m.context,
     maxOutput: m.maxOutput,
+    supportsSearch: true,
+    supportsThinking: true,
   }));
 }
 

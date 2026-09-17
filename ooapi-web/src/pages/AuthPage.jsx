@@ -44,7 +44,9 @@ export default function AuthPage({ initialTab = "login" }) {
         await register(values.username, values.password);
         message.success("注册成功");
       }
-      const to = location.state?.from?.pathname || "/console";
+      // 回跳保留 query/hash：仅用 pathname 会丢掉筛选条件、深链接参数
+      const from = location.state?.from;
+      const to = from ? `${from.pathname || "/console"}${from.search || ""}${from.hash || ""}` : "/console";
       navigate(to, { replace: true });
     } catch (e) {
       message.error(e.message || "操作失败");

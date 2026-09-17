@@ -33,6 +33,7 @@ export const DEFAULT_OPTIONS = {
   currency_symbol: "OD币",
   units_per_od: "10000", // 1 OD 币 = 10000 额度单位（支持 0.0001 精度）
   request_timeout_ms: "600000", // 单次上游请求超时（毫秒）
+  log_retention_days: "0", // 日志保留天数（0 = 永久保留；>0 时每 6 小时自动清理）
   chat_enabled: "true", // 是否开放站内对话
   agent_enabled: "true", // 是否开放智能体
   // --- 兼容旧键（前端历史版本可能读取，保留避免报错）---

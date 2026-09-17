@@ -1,7 +1,7 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, now, safeJSONParse, userToResponse } from "../utils.js";
+import { ok, fail, asyncHandler, now, safeJSONParse, userToResponse, pageParams } from "../utils.js";
 import { authRequired, adminRequired, signToken } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 
@@ -91,8 +91,7 @@ router.get(
   "/",
   adminRequired,
   asyncHandler(async (req, res) => {
-    const p = Math.max(1, Number(req.query.p) || 1);
-    const size = Math.min(100, Math.max(1, Number(req.query.page_size) || 20));
+    const { p, size, offset } = pageParams(req.query);
     const kw = String(req.query.keyword || "").trim();
     let where = "";
     const args = [];
@@ -104,7 +103,7 @@ router.get(
     const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total FROM users ${where}`, args);
     const [rows] = await pool.query(
       `SELECT * FROM users ${where} ORDER BY id DESC LIMIT ? OFFSET ?`,
-      [...args, size, (p - 1) * size]
+      [...args, size, offset]
     );
     return ok(res, { items: rows.map(userToResponse), total, page: p, page_size: size });
   })
