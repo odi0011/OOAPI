@@ -247,8 +247,18 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
 
     step("构建前端…");
     try {
-      await run("npm", ["install", "--no-audit", "--no-fund"], { cwd: WEB_ROOT });
-      await run("npm", ["run", "build"], { cwd: WEB_ROOT });
+      // 关键坑：systemd 单元里设了 NODE_ENV=production，而更新器是服务进程的子进程
+      // 会继承这个变量 —— npm 在 NODE_ENV=production 下 **默认跳过 devDependencies**，
+      // 而 vite 正是 devDependency，被跳过后构建必然报 "vite: not found"。
+      // 所以这里必须 --include=dev 显式带上，并把 NODE_ENV 覆盖掉。
+      const frontEnv = { ...process.env, NODE_ENV: "development" };
+      const needDeps =
+        !existsSync(path.join(WEB_ROOT, "node_modules")) ||
+        !existsSync(path.join(WEB_ROOT, "node_modules", ".bin")) ||
+        !existsSync(path.join(WEB_ROOT, "node_modules", ".bin", "vite"));
+      step(needDeps ? "  前端依赖缺失，正在安装（含 devDependencies）…" : "  同步前端依赖…");
+      await run("npm", ["install", "--include=dev", "--no-audit", "--no-fund"], { cwd: WEB_ROOT, env: frontEnv });
+      await run("npm", ["run", "build"], { cwd: WEB_ROOT, env: frontEnv });
       // 清空旧产物再拷贝，避免旧哈希文件残留导致白屏
       await fs.rm(path.join(STATIC_WEB, "assets"), { recursive: true, force: true });
       await fs.mkdir(STATIC_WEB, { recursive: true });
