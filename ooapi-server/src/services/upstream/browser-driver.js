@@ -28,6 +28,8 @@ const NAV_TIMEOUT = 60_000;
 const READY_MARKER = ".ooapi-logged-in";
 
 const sessions = new Map();
+// 正在首建的会话（key -> Promise），用于合并并发启动请求
+const pending = new Map();
 
 function profileDir(vendor, channelId) {
   const d = path.join(PROFILE_ROOT, `${vendor}-${channelId}`);
@@ -75,8 +77,21 @@ export async function getSession({ vendor, channelId, entryUrl, profile }) {
     return exist;
   }
 
-  const ctx = await chromium.launchPersistentContext(profileDir(vendor, channelId), {
-    headless: false,
+  // 并发首建保护：两个请求同时打来且会话还没建好时，若各建各的，
+  // 会对同一个 profile 目录启动两个 Chromium（Chromium 直接报「正在使用」）。
+  // 这里让后来者复用第一个启动 Promise，等它完成即可。
+  const inflight = pending.get(key);
+  if (inflight) return inflight;
+
+  const p = createSession({ vendor, channelId, key, entryUrl, profile }).finally(() => {
+    if (pending.get(key) === p) pending.delete(key);
+  });
+  pending.set(key, p);
+  return p;
+}
+
+async function createSession({ vendor, channelId, key, entryUrl, profile }) {
+  const ctx = await chromium.launchPersistentContext(profileDir(vendor, channelId), {    headless: false,
     viewport: { width: 1440, height: 900 },
     locale: profile?.locale || "zh-CN",
     ...(profile?.timezone ? { timezoneId: profile.timezone } : {}),
@@ -91,12 +106,24 @@ export async function getSession({ vendor, channelId, entryUrl, profile }) {
     ],
   });
 
-  const page = ctx.pages()[0] || (await ctx.newPage());
-  await page.goto(entryUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT }).catch(() => {});
-  await page.waitForTimeout(4000);
+  let page;
+  try {
+    page = ctx.pages()[0] || (await ctx.newPage());
+    await page.goto(entryUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT }).catch(() => {});
+    await page.waitForTimeout(4000);
+  } catch (e) {
+    // 中途失败必须关掉已启动的浏览器，否则进程泄漏（profile 目录保留即可）
+    await ctx.close().catch(() => {});
+    throw e;
+  }
 
   const s = { ctx, page, lastUsed: Date.now(), queue: Promise.resolve(), vendor, channelId };
   sessions.set(key, s);
+  // Chromium 崩溃/被系统关闭时 sessions 里的引用会变成死 context：
+  // 监听 close 事件主动摘除，后续请求会重新建会话（否则该渠道会一直失败到重启）。
+  ctx.on("close", () => {
+    if (sessions.get(key) === s) sessions.delete(key);
+  });
   scheduleIdleCleanup();
   return s;
 }
@@ -127,6 +154,8 @@ function scheduleIdleCleanup() {
 
 export async function closeSession(vendor, channelId) {
   const key = `${vendor}:${channelId}`;
+  // 若首次启动还在进行中（pending），先等它落地，否则会漏关刚启动的浏览器
+  if (pending.has(key)) await pending.get(key).catch(() => {});
   const s = sessions.get(key);
   if (!s) return false;
   try {
@@ -149,6 +178,8 @@ export function allSessions() {
 }
 
 export async function closeAll() {
+  // 等待所有首建中的会话落地，避免漏关
+  await Promise.allSettled([...pending.values()]);
   for (const [, s] of sessions) {
     try {
       await s.ctx.close();
@@ -168,6 +199,101 @@ export async function screenshot(vendor, channelId, { fullPage = false, quality 
   return withLock(s, async () => {
     const buf = await s.page.screenshot({ type: "jpeg", quality, fullPage });
     return { dataUrl: `data:image/jpeg;base64,${buf.toString("base64")}`, url: s.page.url() };
+  });
+}
+
+// ---------- 远程人工登录：交互与凭据抓取 ----------
+// 用途：添加渠道时不想让管理员自己开控制台翻 localStorage。这里在服务器端
+// 打开厂商登录页截图回传，管理员在弹窗里点选/输入完成登录（支持扫码），
+// 然后由 credentials() 直接把登录态读出来回填表单。
+/**
+ * 在会话页面上执行一次远程操作，返回操作后的截图。
+ * @param {object} op { action: "click"|"type"|"key"|"scroll"|"goto", x?, y?, text?, key?, dx?, dy?, url? }
+ */
+export async function act(vendor, channelId, op = {}) {
+  const s = sessions.get(`${vendor}:${channelId}`);
+  if (!s) return null;
+  return withLock(s, async () => {
+    const page = s.page;
+    const action = String(op.action || "");
+    if (action === "click") {
+      await page.mouse.click(Number(op.x) || 0, Number(op.y) || 0);
+    } else if (action === "type") {
+      await page.keyboard.type(String(op.text ?? ""), { delay: 25 });
+    } else if (action === "key") {
+      await page.keyboard.press(String(op.key || "Enter"));
+    } else if (action === "scroll") {
+      await page.mouse.wheel(Number(op.dx) || 0, Number(op.dy) || 0);
+    } else if (action === "goto") {
+      const url = String(op.url || "");
+      if (!/^https:\/\//i.test(url)) throw Object.assign(new Error("只允许跳转 https 地址"), { code: "BAD_URL" });
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT }).catch(() => {});
+    } else {
+      throw new Error("未知的远程操作");
+    }
+    await page.waitForTimeout(400);
+    const buf = await page.screenshot({ type: "jpeg", quality: 70 });
+    return { dataUrl: `data:image/jpeg;base64,${buf.toString("base64")}`, url: page.url() };
+  });
+}
+
+/**
+ * 抓取当前登录态：cookies 串 + localStorage 候选 token（按与 token/auth 的相关性排序）。
+ * 注意：不同厂商存放字段不同（deepseek 是 userToken、GLM 是 token…），
+ * 所以这里返回候选列表交给管理员确认，不擅自假设某一个键。
+ */
+export async function credentials(vendor, channelId) {
+  const s = sessions.get(`${vendor}:${channelId}`);
+  if (!s) return null;
+  return withLock(s, async () => {
+    const cookies = await s.ctx.cookies();
+    const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+    const entries = await s.page
+      .evaluate(() => {
+        const out = [];
+        try {
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            out.push([k, localStorage.getItem(k) || ""]);
+          }
+        } catch {
+          /* 页面跨域/未就绪时忽略 */
+        }
+        return out;
+      })
+      .catch(() => []);
+    const scoreOf = (k) => {
+      const s1 = String(k || "");
+      let n = 0;
+      if (/token|auth|access|session|credential/i.test(s1)) n += 2;
+      if (/^(userToken|token|access_token|auth_token)$/i.test(s1)) n += 2;
+      return n;
+    };
+    const tokens = [];
+    for (const [k, raw] of entries) {
+      const v = String(raw || "");
+      if (!v || v.length < 8 || v.length > 4096) continue;
+      // 有些站点把 token 包在 JSON 里（如 {"value":"..."}），展开 value 作为候选
+      let plain = v;
+      if (/^\{/.test(v.trim())) {
+        try {
+          const obj = JSON.parse(v);
+          if (typeof obj?.value === "string" && obj.value.length >= 8) plain = obj.value;
+        } catch {
+          continue; // 无法解析的 JSON 不是凭据
+        }
+      }
+      if (plain.length < 8 || plain.length > 4096) continue;
+      tokens.push({ key: k, value: plain, score: scoreOf(k) });
+    }
+    tokens.sort((a, b) => b.score - a.score);
+    // Cookie 也可能是登录态本体（例如 Kimi 的 kimi-auth 就是 JWT），
+    // 一并作为候选返回，前端优先展示 localStorage 命中，其次 cookie 命中。
+    const cookieCandidates = cookies
+      .filter((c) => c.value && c.value.length >= 8 && c.value.length <= 4096 && /token|auth|session/i.test(c.name))
+      .map((c) => ({ key: `cookie:${c.name}`, value: c.value, score: scoreOf(c.name) + 1 }));
+    cookieCandidates.sort((a, b) => b.score - a.score);
+    return { cookies: cookieStr, url: s.page.url(), tokens: [...tokens.slice(0, 20), ...cookieCandidates.slice(0, 10)] };
   });
 }
 

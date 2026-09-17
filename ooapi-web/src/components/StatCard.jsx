@@ -2,9 +2,11 @@ import React from "react";
 
 // 统一统计卡片：标签 + 数值 + 图标 + 底部说明
 // glow 用于右上角氛围色（跟随语义色，保持克制）
+// 语义色走全局 CSS 变量，暗色主题下与全站状态色一致
+const TONE = { success: "var(--green)", warning: "var(--orange)", danger: "var(--red)" };
+
 export default function StatCard({ label, value, suffix, icon, foot, glow, tone }) {
-  const toneColor =
-    tone === "success" ? "#22c55e" : tone === "warning" ? "#f59e0b" : tone === "danger" ? "#ef4444" : null;
+  const toneColor = TONE[tone] || null;
 
   return (
     <div

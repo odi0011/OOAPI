@@ -8,6 +8,7 @@ import dayjs from "dayjs";
 import { API } from "../services/api";
 import { copyText, fmtDate, fmtOd, odOf, unitsPerOd, CURRENCY_NAME } from "../services/format";
 import { useApp } from "../context/AppContext";
+import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import { ModelLabel } from "../components/VendorIcon";
 
@@ -21,19 +22,23 @@ export default function TokenPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form] = Form.useForm();
+  const { begin, isLatest } = useLatest();
 
   const perUnit = unitsPerOd(status); // 1 OD = 10000 额度单位
 
   const load = useCallback(async () => {
+    const token = begin();
     setLoading(true);
     try {
-      setItems(await API.get("/token/"));
+      const data = await API.get("/token/");
+      if (!isLatest(token)) return;
+      setItems(data);
     } catch (e) {
-      message.error(e.message);
+      if (isLatest(token)) message.error(e.message);
     } finally {
-      setLoading(false);
+      if (isLatest(token)) setLoading(false);
     }
-  }, [message]);
+  }, [message, begin, isLatest]);
 
   useEffect(() => {
     load();
@@ -216,7 +221,7 @@ export default function TokenPage() {
   ];
 
   return (
-    <div>
+    <div className="oo-page">
       <PageHeader
         title="令牌管理"
         desc="为不同应用签发独立密钥，可限制额度上限、可用模型与有效期"

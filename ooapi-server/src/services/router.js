@@ -80,12 +80,12 @@ export async function markChannelOk(channel, elapsedMs) {
   s.lastError = "";
   // 只更新运行指标，不改 status —— status 是管理员开关（手动启停），
   // 写 status=1 会复活管理员刚禁用的渠道。
+  // used_count/last_used_time 供管理端展示渠道使用情况（此前从未累加）。
   await pool
-    .query("UPDATE channels SET response_time = ?, tested_time = ?, last_error = '' WHERE id = ?", [
-      elapsedMs,
-      now(),
-      channel.id,
-    ])
+    .query(
+      "UPDATE channels SET response_time = ?, tested_time = ?, last_error = '', used_count = used_count + 1, last_used_time = ? WHERE id = ?",
+      [elapsedMs, now(), now(), channel.id]
+    )
     .catch(() => {});
 }
 

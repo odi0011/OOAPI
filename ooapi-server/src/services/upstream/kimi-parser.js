@@ -97,6 +97,8 @@ export function createKimiParser() {
  */
 export function createFrameDecoder() {
   let buf = Buffer.alloc(0);
+  // 帧长度上限：损坏/恶意流不能让缓冲区无限增长（内存 DoS）
+  const MAX_FRAME = 16 * 1024 * 1024;
 
   return {
     push(chunk) {
@@ -105,6 +107,11 @@ export function createFrameDecoder() {
       while (buf.length >= 5) {
         const flags = buf[0];
         const len = buf.readUInt32BE(1);
+        if (len > MAX_FRAME) {
+          // 长度明显非法：丢弃已缓冲数据，避免越等越坏
+          buf = Buffer.alloc(0);
+          throw Object.assign(new Error(`上游帧长度异常（${len} 字节）`), { code: "CHANNEL_BAD_RESPONSE" });
+        }
         if (buf.length < 5 + len) break;
         const payload = buf.subarray(5, 5 + len);
         buf = buf.subarray(5 + len);

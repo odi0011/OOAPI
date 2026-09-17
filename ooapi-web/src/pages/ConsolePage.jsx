@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Row, Col, Button, Grid, App as AntApp } from "antd";
 import {
   WalletOutlined,
@@ -12,6 +12,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";
 import { API } from "../services/api";
+import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
 import { copyText, fmtOd, odOf, odRateText, unitsPerOd } from "../services/format";
@@ -73,29 +74,34 @@ function UsageBars({ daily, perUnit }) {
 }
 
 export default function ConsolePage() {
-  const { user, status } = useApp();
+  const { user, status, refreshUser } = useApp();
   const { message } = AntApp.useApp();
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.lg;
   const [data, setData] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const { begin, isLatest } = useLatest();
 
-  const loadData = async () => {
+  // alsoUser=true 时顺带刷新全局用户信息（刷新按钮用），保证余额卡不是缓存的旧值
+  const loadData = useCallback(async ({ alsoUser = false } = {}) => {
+    const token = begin();
     setRefreshing(true);
     try {
-      setData(await API.get("/users/data/self"));
+      const d = await API.get("/users/data/self");
+      if (!isLatest(token)) return;
+      setData(d);
+      if (alsoUser) await refreshUser();
     } catch (e) {
-      message.error(e.message);
+      if (isLatest(token)) message.error(e.message);
     } finally {
-      setRefreshing(false);
+      if (isLatest(token)) setRefreshing(false);
     }
-  };
+  }, [message, refreshUser, begin, isLatest]);
 
   useEffect(() => {
     loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadData]);
 
   const perUnit = unitsPerOd(status); // 1 OD币 = 10,000 额度单位（固定 1 OD = $1）
   // 额度展示统一走 fmtOd：全站货币只能是 OD币（1 OD = 1 美元）
@@ -115,13 +121,13 @@ export default function ConsolePage() {
   };
 
   return (
-    <div>
+    <div className="oo-page">
       <PageHeader
         title={`你好，${user?.display_name || user?.username}`}
         desc="这是你的账户概览与近期用量"
         extra={
           <>
-            <Button icon={<ReloadOutlined />} loading={refreshing} onClick={loadData}>
+            <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => loadData({ alsoUser: true })}>
               刷新
             </Button>
             <Button type="primary" icon={<KeyOutlined />} onClick={() => navigate("/token")}>
@@ -187,7 +193,7 @@ export default function ConsolePage() {
       </Row>
 
       {/* 用量趋势 + 账户信息 */}
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+      <Row gutter={[16, 16]}>
         <Col xs={24} lg={14}>
           <div className="oo-panel" style={{ height: "100%" }}>
             <div className="oo-panel-head">
@@ -230,7 +236,7 @@ export default function ConsolePage() {
       </Row>
 
       {/* 快速开始 */}
-      <div className="oo-panel" style={{ marginTop: 16 }}>
+      <div className="oo-panel">
         <div className="oo-panel-head">
           <span className="oo-panel-title">接入信息</span>
           <Button size="small" type="text" icon={<CopyOutlined />} onClick={copyEndpoint}>

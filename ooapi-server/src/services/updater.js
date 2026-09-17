@@ -84,6 +84,9 @@ async function syncTree(src, dest, exclude) {
   if (await has("rsync")) {
     const args = ["-a", "--delete"];
     for (const e of exclude) args.push(`--exclude=${e}`);
+    // 保护点文件（.env/.jwt-secret 之外的隐藏配置、证书等）：
+    // --delete 不会删除被 --exclude 命中的文件，避免运行时文件被清掉
+    args.push("--exclude=.*");
     args.push(`${src}/`, `${dest}/`);
     await run("rsync", args);
     return "rsync";
@@ -215,7 +218,7 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
   if (!(await has("git"))) throw new Error("服务端未安装 git，无法在线更新");
 
   const tmp = path.join(process.env.TMPDIR || "/tmp", `ooapi-update-${Date.now()}`);
-  const result = { ok: false, steps: log, backup: "", frontendBuilt: false };
+  const result = { ok: false, steps: log, backup: "", frontendBuilt: false, rolledBack: false };
 
   try {
     step("拉取仓库最新代码…");
@@ -312,6 +315,26 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
     }
     return result;
   } catch (e) {
+    // 源码一旦开始覆盖，之后任何一步失败（npm install / 前端构建 / 迁移）都会留下
+    // 半新半旧的代码，重启可能直接起不来。这里用更新前的备份自动回滚。
+    if (result.backup && log.some((s) => String(s).includes("同步"))) {
+      step("检测到失败，正在回滚源码…");
+      try {
+        await syncTree(result.backup, SERVER_ROOT, [
+          "node_modules",
+          "data",
+          "web",
+          ".env",
+          ".jwt-secret",
+          ".backup-*",
+          ".update-stamp.json",
+        ]);
+        result.rolledBack = true;
+        step(`已回滚到更新前源码（备份仍保留在 ${result.backup}）`);
+      } catch (re) {
+        step(`回滚失败，请手工从 ${result.backup} 恢复：${re.message}`);
+      }
+    }
     await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
     step(`更新失败：${e.message}`);
     result.error = e.message;

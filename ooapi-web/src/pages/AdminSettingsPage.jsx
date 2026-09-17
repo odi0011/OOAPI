@@ -6,6 +6,7 @@ import {
   SettingOutlined, DollarOutlined, SafetyCertificateOutlined, ApiOutlined, SaveOutlined, CloudDownloadOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
+import { useApp } from "../context/AppContext";
 import PageHeader from "../components/PageHeader";
 
 const { Text } = Typography;
@@ -39,6 +40,7 @@ function useSettingsForm() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const { message } = AntApp.useApp();
+  const { refreshStatus } = useApp();
 
   const load = async () => {
     try {
@@ -64,6 +66,8 @@ function useSettingsForm() {
         payload[k] = typeof v === "boolean" ? String(v) : String(v);
       }
       await API.put("/option/", payload);
+      // 改站点名/汇率/额度换算后必须刷新全局 status，否则全站展示仍用旧值
+      await refreshStatus();
       message.success("设置已保存");
     } catch (e) {
       message.error(e.message);
@@ -405,7 +409,7 @@ function UpdateTab() {
 
 export default function AdminSettingsPage() {
   return (
-    <div>
+    <div className="oo-page">
       <PageHeader title="系统设置" desc="站点信息、认证策略、计费规则与模型列表" />
       <Tabs
         items={[

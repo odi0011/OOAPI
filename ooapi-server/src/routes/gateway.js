@@ -6,7 +6,7 @@ import dns from "node:dns/promises";
 import net from "node:net";
 import { pool } from "../db.js";
 import { getBoolOption } from "../config.js";
-import { now, clientIp } from "../utils.js";
+import { now, clientIp, asyncHandler } from "../utils.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { runCompletion } from "../services/execute.js";
 import { getPrice, computeCost, splitTokens, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
@@ -17,31 +17,34 @@ router.use(express.json({ limit: "50mb" }));
 
 // ---------- 对外可用模型列表（平台真实模型 + 兼容别名）----------
 // 与 OpenAI 一致需要鉴权，避免匿名枚举全量模型目录
-router.get("/models", async (req, res) => {
-  const auth = await authorize(req, res);
-  if (!auth) return;
-  const [rows] = await pool.query("SELECT models FROM channels WHERE status = 1");
-  const available = new Set();
-  for (const r of rows) {
-    for (const m of String(r.models || "").split(",")) {
-      const t = m.trim();
-      if (t && t !== "*") available.add(t);
+router.get(
+  "/models",
+  asyncHandler(async (req, res) => {
+    const auth = await authorize(req, res);
+    if (!auth) return;
+    const [rows] = await pool.query("SELECT models FROM channels WHERE status = 1");
+    const available = new Set();
+    for (const r of rows) {
+      for (const m of String(r.models || "").split(",")) {
+        const t = m.trim();
+        if (t && t !== "*") available.add(t);
+      }
     }
-  }
-  const all = await allPublicModels();
-  const list = all.filter((m) => available.has(m.id) || available.size === 0);
-  res.json({
-    object: "list",
-    data: list.map((m) => ({
-      id: m.id,
-      object: "model",
-      // owned_by 用厂商类型，便于客户端区分模型来源
-      owned_by: m.aliasOf ? m.vendor : m.vendor || m.aliasOf || "unknown",
-      ...(m.vendorName ? { vendor_name: m.vendorName } : {}),
-      ...(m.aliasOf ? { alias_of: m.aliasOf, deprecated: true } : {}),
-    })),
-  });
-});
+    const all = await allPublicModels();
+    const list = all.filter((m) => available.has(m.id) || available.size === 0);
+    res.json({
+      object: "list",
+      data: list.map((m) => ({
+        id: m.id,
+        object: "model",
+        // owned_by 用厂商类型，便于客户端区分模型来源
+        owned_by: m.aliasOf ? m.vendor : m.vendor || m.aliasOf || "unknown",
+        ...(m.vendorName ? { vendor_name: m.vendorName } : {}),
+        ...(m.aliasOf ? { alias_of: m.aliasOf, deprecated: true } : {}),
+      })),
+    });
+  })
+);
 
 // ---------- 令牌鉴权 ----------
 async function authorize(req, res) {
@@ -201,10 +204,18 @@ async function settle({ token, user, model, prompt, output, usage, ip, requestId
   const units = computeCost({ price, promptTokens, completionTokens, cacheTokens });
   const od = (units / UNITS_PER_OD).toFixed(4);
 
-  await pool.query(
-    "UPDATE users SET quota = GREATEST(0, quota - ?), used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ?",
-    [units, units, user.id]
+  // 条件扣费：quota >= units 才扣。并发场景下「先读余额再写回」会超额透支，
+  // 这里用单条 SQL 保证原子性；余额不足（并发透支）时兜底扣到 0，避免负余额。
+  const [ret] = await pool.query(
+    "UPDATE users SET quota = quota - ?, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ? AND quota >= ?",
+    [units, units, user.id, units]
   );
+  if (!ret.affectedRows) {
+    await pool.query(
+      "UPDATE users SET quota = 0, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ?",
+      [units, user.id]
+    );
+  }
   if (!token.unlimited_quota) {
     await pool.query("UPDATE tokens SET remain_quota = GREATEST(0, remain_quota - ?) WHERE id = ?", [units, token.id]);
   }
@@ -224,7 +235,9 @@ async function settle({ token, user, model, prompt, output, usage, ip, requestId
 }
 
 // ---------- 聊天补全 ----------
-router.post("/chat/completions", async (req, res) => {
+router.post(
+  "/chat/completions",
+  asyncHandler(async (req, res) => {
   const requestId = "chatcmpl-" + crypto.randomBytes(12).toString("hex");
   const ip = clientIp(req);
   const body = req.body || {};
@@ -424,6 +437,7 @@ router.post("/chat/completions", async (req, res) => {
       res.end();
     }
   }
-});
+  })
+);
 
 export default router;

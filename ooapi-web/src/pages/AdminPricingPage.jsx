@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from "react";
-import { Table, Input, Select, App as AntApp, Typography } from "antd";
-import { ReloadOutlined, SearchOutlined, DollarOutlined } from "@ant-design/icons";
+import React, { useCallback, useEffect, useState } from "react";
+import { Table, Input, Select, App as AntApp, Typography, Modal, Upload, Alert, Space, Button, Popconfirm, Tag } from "antd";
+import { ReloadOutlined, SearchOutlined, DollarOutlined, UploadOutlined, ClearOutlined, CloudDownloadOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
+import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
 import { ModelLabel } from "../components/VendorIcon";
@@ -18,14 +19,23 @@ const priceTitle = (label) => (
   </span>
 );
 
+// 渠道类型显示名。注意：不存在「DeepSeek 网页版」这种独立类型 ——
+// DeepSeek 只有两个真实模型（flash / v4-pro），网页反代与官方 API 出来的模型完全一致。
 const TYPE_LABEL = {
-  "deepseek-web": "DeepSeek 网页版",
   openai: "OpenAI",
   claude: "Anthropic",
   gemini: "Google",
   qwen: "阿里通义",
-  deepseek: "DeepSeek 官方",
+  deepseek: "DeepSeek",
   custom: "其他",
+};
+
+// 导入模板（JSON）：模型 ID 必须与平台登记表严格一致
+const importTemplate = {
+  prices: [
+    { model: "deepseek-flash", input: 0.3, output: 1.2, cache: 0.006, remark: "官方高峰价；来源 api-docs.deepseek.com/quick_start/pricing/" },
+    { model: "deepseek-v4-pro", input: 1.32, output: 3.96, cache: 0.044, remark: "官方高峰价；来源 api-docs.deepseek.com/quick_start/pricing/" },
+  ],
 };
 
 export default function AdminPricingPage() {
@@ -34,22 +44,31 @@ export default function AdminPricingPage() {
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState("");
   const [type, setType] = useState("");
+  const { begin, isLatest } = useLatest();
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const [cleaning, setCleaning] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    const token = begin();
     setLoading(true);
     try {
-      setItems(await API.get("/pricing/", { params: { keyword, type } }));
+      const data = await API.get("/pricing/", { params: { keyword, type } });
+      if (!isLatest(token)) return;
+      setItems(data);
     } catch (e) {
-      message.error(e.message);
+      if (isLatest(token)) message.error(e.message);
     } finally {
-      setLoading(false);
+      if (isLatest(token)) setLoading(false);
     }
-  };
+  }, [keyword, type, message, begin, isLatest]);
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keyword, type]);
+  }, [load]);
 
   const columns = [
     {
@@ -97,19 +116,111 @@ export default function AdminPricingPage() {
     ? items.reduce((a, b) => (Number(a.input_price) <= Number(b.input_price) ? a : b))
     : null;
 
+  const openImport = () => {
+    setImportText("");
+    setImportResult(null);
+    setImportOpen(true);
+  };
+
+  // 文件在浏览器端读成文本，再整段提交（无需 multipart，便于统一 JSON 响应与校验）
+  const readFile = (file) => {
+    const isJson = /\.json$/i.test(file.name);
+    const isCsv = /\.(csv|txt)$/i.test(file.name);
+    if (!isJson && !isCsv) {
+      message.error("只支持 .json / .csv 文件");
+      return Upload.LIST_IGNORE;
+    }
+    if (file.size > 1024 * 1024) {
+      message.error("文件不能超过 1 MB");
+      return Upload.LIST_IGNORE;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setImportText(String(reader.result || ""));
+      setImportResult(null);
+    };
+    reader.onerror = () => message.error("文件读取失败");
+    reader.readAsText(file);
+    return false; // 阻止自动上传
+  };
+
+  const downloadTemplate = () => {
+    const blob = new Blob([JSON.stringify(importTemplate, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "ooapi-pricing-template.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const submitImport = async () => {
+    if (!importText.trim()) return message.warning("请先选择文件");
+    setImporting(true);
+    try {
+      const r = await API.post("/pricing/import", { text: importText });
+      setImportResult(r);
+      message.success(`导入完成：新增 ${r.inserted}，更新 ${r.updated}，拒绝 ${r.rejected?.length || 0}`);
+      load();
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const prune = async () => {
+    setCleaning(true);
+    try {
+      const r = await API.post("/pricing/prune");
+      message.success(r.removed?.length ? `已删除 ${r.removed.length} 条无效定价` : "没有发现无效定价");
+      load();
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setCleaning(false);
+    }
+  };
+
+  const syncDefaults = async () => {
+    setSyncing(true);
+    try {
+      const r = await API.post("/pricing/sync-defaults");
+      message.success(`已同步内置价目表 ${r.updated} 条`);
+      load();
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
-    <div>
+    <div className="oo-page">
       <PageHeader
         title="模型定价"
         desc={`${CURRENCY_NAME}计价（1 ${CURRENCY_NAME} = 1 美元），单位为「${CURRENCY_NAME} / 百万 token」`}
         extra={
-          <button className="bui-btn" onClick={load}>
-            <ReloadOutlined /> 刷新
-          </button>
+          <>
+            <Button icon={<UploadOutlined />} onClick={openImport}>
+              上传文件更新
+            </Button>
+            <Popconfirm title="按内置官方价目表覆盖更新？" description="会同步价格与来源说明；管理员手改的价格也会被覆盖。" onConfirm={syncDefaults} okText="同步" cancelText="取消">
+              <Button icon={<CloudDownloadOutlined />} loading={syncing}>
+                同步官方价目
+              </Button>
+            </Popconfirm>
+            <Popconfirm title="清理无效定价？" description="删除所有「模型 ID 未在平台注册」的垃圾数据（含历史遗留的错误模型）。" onConfirm={prune} okText="清理" cancelText="取消">
+              <Button icon={<ClearOutlined />} loading={cleaning} danger>
+                清理无效数据
+              </Button>
+            </Popconfirm>
+            <Button icon={<ReloadOutlined />} onClick={load} />
+          </>
         }
       />
 
-      <div className="oo-grid" style={{ marginBottom: 16 }}>
+      <div className="oo-grid">
         <StatCard label="已配置模型" value={items.length} icon={<DollarOutlined />} foot={<span>计价条目</span>} />
         <StatCard
           label="渠道类型"
@@ -126,7 +237,7 @@ export default function AdminPricingPage() {
       </div>
 
       <div className="oo-panel">
-        <div className="oo-panel-head" style={{ gap: 10, justifyContent: "flex-start", flexWrap: "wrap" }}>
+        <div className="oo-toolbar">
           <Input
             placeholder="搜索模型"
             allowClear
@@ -157,7 +268,7 @@ export default function AdminPricingPage() {
         />
       </div>
 
-      <div className="oo-panel" style={{ marginTop: 16 }}>
+      <div className="oo-panel">
         <div className="oo-panel-head">
           <span className="oo-panel-title">计费说明</span>
         </div>
@@ -175,15 +286,81 @@ export default function AdminPricingPage() {
           <div className="bui-kv">
             <span className="bui-kv-k">数据来源</span>
             <span className="bui-kv-v">
-              各厂商官方定价页（2026-09）；官方页不可达的采用公开挂牌价，已在「价格来源」列标注
+              每条来源写在「价格来源」列（官方定价页地址）；人民币计价的厂商按固定汇率折算为美元。
+              禁止填写「同上」等无意义说明。
             </span>
           </div>
           <div className="bui-kv">
             <span className="bui-kv-k">DeepSeek</span>
-            <span className="bui-kv-v">取官方高峰时段价；非高峰时段官方减半，本表未区分</span>
+            <span className="bui-kv-v">取官方高峰时段价；非高峰时段官方减半，本表未区分。网页反代与官方 API 是同一批模型</span>
           </div>
         </div>
       </div>
+
+      <Modal
+        title="上传文件更新定价"
+        open={importOpen}
+        onCancel={() => setImportOpen(false)}
+        onOk={submitImport}
+        okText={importResult ? "继续导入" : "开始导入"}
+        confirmLoading={importing}
+        width={640}
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="文件约束（不符合的行会被拒绝并逐条列出）"
+          description={
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18, lineHeight: 1.9 }}>
+              <li>支持 JSON（数组或 <Text code>{"{ prices: [...] }"}</Text>）与 CSV（首行表头）</li>
+              <li>必填：<Text code>model</Text>（模型 ID）、<Text code>input</Text>、<Text code>output</Text>；可选 <Text code>cache</Text>、<Text code>remark</Text></li>
+              <li>
+                <b>模型 ID 必须与平台已注册模型严格一致</b>（渠道里声明过的模型），否则视为垃圾数据拒绝；
+                渠道类型如填写也须与厂商一致
+              </li>
+              <li>价格单位：{CURRENCY_NAME} / 百万 token，0 ≤ 单价 ≤ 100000；文件 ≤ 1 MB、单次 ≤ 2000 行</li>
+            </ul>
+          }
+        />
+        <Space style={{ marginBottom: 12 }}>
+          <Upload beforeUpload={readFile} showUploadList={false} accept=".json,.csv,.txt">
+            <Button icon={<UploadOutlined />}>选择 JSON / CSV 文件</Button>
+          </Upload>
+          <Button type="link" onClick={downloadTemplate}>
+            下载模板
+          </Button>
+          {importText ? <Tag color="blue">已读取 {importText.length} 字符</Tag> : null}
+        </Space>
+
+        {importResult && (
+          <div style={{ marginTop: 4 }}>
+            <Space size={8} wrap style={{ marginBottom: 8 }}>
+              <Tag color="green">新增 {importResult.inserted}</Tag>
+              <Tag color="blue">更新 {importResult.updated}</Tag>
+              <Tag color={importResult.rejected?.length ? "red" : "default"}>拒绝 {importResult.rejected?.length || 0}</Tag>
+              <Tag>共 {importResult.total} 行</Tag>
+            </Space>
+            {importResult.rejected?.length ? (
+              <div className="oo-scroll" style={{ maxHeight: 220 }}>
+                <Table
+                  size="small"
+                  rowKey={(r) => `${r.line}-${r.model}`}
+                  pagination={false}
+                  dataSource={importResult.rejected}
+                  columns={[
+                    { title: "行", dataIndex: "line", width: 56 },
+                    { title: "模型", dataIndex: "model", width: 160, ellipsis: true },
+                    { title: "拒绝原因", dataIndex: "reason" },
+                  ]}
+                />
+              </div>
+            ) : (
+              <Text type="success">全部通过校验</Text>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

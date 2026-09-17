@@ -18,6 +18,7 @@ const RETRYABLE = new Set([
   "CHANNEL_RATE_LIMIT",   // 频率限制
   "CHANNEL_TIMEOUT",      // 上游超时
   "CHANNEL_NOT_READY",    // 页面/会话未就绪
+  "CHANNEL_BIZ_ERROR",    // 上游业务错误（多为风控/过载，瞬时性问题换渠道可解）
 ]);
 
 export function isRetryable(code) {
@@ -136,8 +137,11 @@ export async function runCompletion({
       // 已经流式输出过内容就不能换渠道了（否则客户端会收到拼接错乱的内容）
       if (sawOutput) throw lastError;
 
-      // 参数类错误（模型不支持看图等）不重试，直接抛给用户
-      if (!isRetryable(code)) throw lastError;
+      // 参数类错误（模型不支持看图等）不重试，直接抛给用户。
+      // 但没带 code 的异常（Playwright 原生报错、TypeError 等）无法判断性质，
+      // 按基础设施故障处理：换下一个渠道往往就能成功，比直接 500 更合理。
+      const judgeable = Boolean(lastError.code);
+      if (judgeable && !isRetryable(code)) throw lastError;
 
       // 标记渠道异常并冷却，尝试下一个
       const cooldown = code === "CHANNEL_MUTED" ? 1800 : code === "CHANNEL_AUTH_EXPIRED" ? 21600 : 300;

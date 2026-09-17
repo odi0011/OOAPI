@@ -6,14 +6,15 @@ import {
 import { ReloadOutlined, TeamOutlined, SearchOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
-import { fmtDate, fmtOd, unitsPerOd } from "../services/format";
+import { fmtDate, fmtOd, unitsPerOd, CURRENCY_NAME } from "../services/format";
+import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
 
 const { Text } = Typography;
 
 export default function AdminUsersPage() {
-  const { status } = useApp();
+  const { status, user: me, refreshUser } = useApp();
   const { message } = AntApp.useApp();
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
@@ -27,21 +28,24 @@ export default function AdminUsersPage() {
   const [quotaTarget, setQuotaTarget] = useState(null);
   const [form] = Form.useForm();
   const [quotaForm] = Form.useForm();
+  const { begin, isLatest } = useLatest();
 
   const perUnit = unitsPerOd(status);
 
   const load = useCallback(async () => {
+    const token = begin();
     setLoading(true);
     try {
       const data = await API.get("/users/", { params: { p: page, page_size: pageSize, keyword } });
+      if (!isLatest(token)) return;
       setItems(data.items);
       setTotal(data.total);
     } catch (e) {
-      message.error(e.message);
+      if (isLatest(token)) message.error(e.message);
     } finally {
-      setLoading(false);
+      if (isLatest(token)) setLoading(false);
     }
-  }, [page, pageSize, keyword, message]);
+  }, [page, pageSize, keyword, message, begin, isLatest]);
 
   useEffect(() => {
     load();
@@ -49,16 +53,25 @@ export default function AdminUsersPage() {
 
   const openEdit = (u) => {
     setEditing(u);
+    // 先清残留再赋值：避免上一次编辑未提交的字段（如上一次改过的邮箱）带进这一位用户
+    form.resetFields();
     form.setFieldsValue({ display_name: u.display_name, email: u.email, role: u.role, status: u.status });
     setEditOpen(true);
   };
 
   const saveEdit = async () => {
-    const v = await form.validateFields();
+    let v;
+    try {
+      v = await form.validateFields();
+    } catch {
+      return; // 校验未通过：antd 已在表单上标红，无需打扰
+    }
     try {
       await API.put(`/users/${editing.id}`, v);
       message.success("已保存");
       setEditOpen(false);
+      // 改的是自己：同步刷新全局用户（降级后管理菜单应立刻消失）
+      if (editing.id === me?.id) await refreshUser?.();
       load();
     } catch (e) {
       message.error(e.message);
@@ -66,9 +79,15 @@ export default function AdminUsersPage() {
   };
 
   const submitQuota = async () => {
-    const v = await quotaForm.validateFields();
+    let v;
     try {
-      await API.post(`/users/${quotaTarget.id}/quota`, { quota: v.quota });
+      v = await quotaForm.validateFields();
+    } catch {
+      return;
+    }
+    try {
+      // 输入框单位是 OD 币，提交时换算成额度单位（与令牌页口径一致）
+      await API.post(`/users/${quotaTarget.id}/quota`, { quota: Math.round(Number(v.quota) * perUnit) });
       message.success("额度已调整");
       setQuotaOpen(false);
       quotaForm.resetFields();
@@ -178,27 +197,35 @@ export default function AdminUsersPage() {
             size="small"
             onClick={() => {
               setQuotaTarget(u);
-              quotaForm.setFieldsValue({ quota: 100000 });
+              quotaForm.resetFields();
+              quotaForm.setFieldsValue({ quota: 10 }); // 默认补充 10 OD
               setQuotaOpen(true);
             }}
           >
             额度
           </Button>
-          <Button type="link" size="small" onClick={() => toggle(u)}>
-            {u.status === 1 ? "禁用" : "启用"}
-          </Button>
-          <Popconfirm title={`确定删除用户 ${u.username}？`} onConfirm={() => remove(u)}>
-            <Button type="link" size="small" danger>
-              删除
-            </Button>
-          </Popconfirm>
+          {/* 自己的账号不允许在此禁用/删除（需换管理员操作），避免把自己锁在门外 */}
+          {u.id === me?.id ? (
+            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>当前账号</span>
+          ) : (
+            <>
+              <Button type="link" size="small" onClick={() => toggle(u)}>
+                {u.status === 1 ? "禁用" : "启用"}
+              </Button>
+              <Popconfirm title={`确定删除用户 ${u.username}？`} onConfirm={() => remove(u)}>
+                <Button type="link" size="small" danger>
+                  删除
+                </Button>
+              </Popconfirm>
+            </>
+          )}
         </Space>
       ),
     },
   ];
 
   return (
-    <div>
+    <div className="oo-page">
       <PageHeader
         title="用户管理"
         desc="管理平台用户的角色、状态与可用额度"
@@ -225,7 +252,7 @@ export default function AdminUsersPage() {
         }
       />
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16, marginBottom: 16 }}>
+      <div className="oo-grid">
         <StatCard label="用户总数" value={total} icon={<TeamOutlined />} />
         <StatCard label="管理员" value={admins} foot={<span>本页统计</span>} />
         <StatCard label="已禁用" value={disabled} tone={disabled ? "danger" : undefined} foot={<span>本页统计</span>} />
@@ -299,11 +326,11 @@ export default function AdminUsersPage() {
         <Form form={quotaForm} layout="vertical" requiredMark={false}>
           <Form.Item
             name="quota"
-            label="额度变化量"
-            extra={`正数为补充，负数为扣除；100,000 额度 ≈ ${fmtOd(100000, perUnit, 2)}`}
+            label={`额度变化量（${CURRENCY_NAME}）`}
+            extra={`正数为补充，负数为扣除；当前余额 ${fmtOd(quotaTarget?.quota || 0, perUnit, 2)} ${CURRENCY_NAME}`}
             rules={[{ required: true, message: "请输入额度变化量" }]}
           >
-            <InputNumber style={{ width: "100%" }} step={100000} />
+            <InputNumber style={{ width: "100%" }} step={10} precision={4} />
           </Form.Item>
         </Form>
       </Modal>

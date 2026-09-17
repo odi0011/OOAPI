@@ -5,6 +5,8 @@
 //   各厂商的别名映射由各自适配器内部完成。
 //   这样新增厂商时无需改动网关代码。
 import { VENDORS } from "./vendors.js";
+import { DEFAULT_PRICES } from "./pricing.js";
+import { pool } from "../db.js";
 
 // 各厂商的模型定义（懒加载，避免循环依赖）
 const VENDOR_MODEL_MODULES = {
@@ -12,6 +14,7 @@ const VENDOR_MODEL_MODULES = {
   glm: () => import("./upstream/glm-models.js"),
   kimi: () => import("./upstream/kimi-models.js"),
   doubao: () => import("./upstream/doubao-models.js"),
+  qwen: () => import("./upstream/qwen-models.js"),
 };
 
 /**
@@ -70,4 +73,60 @@ export async function modelBelongsToVendor(model, channelType) {
 /** 已注册的厂商类型 */
 export function supportedVendorTypes() {
   return Object.keys(VENDOR_MODEL_MODULES);
+}
+
+// ---------------------------------------------------------------------------
+// 模型登记表（用于定价导入的严格校验）
+// ---------------------------------------------------------------------------
+// 判定「真实存在」的口径（三者并集）：
+//   1. 内置价目表里的模型（DEFAULT_PRICES，含各家官方模型与官方旧 ID 别名）
+//   2. 各厂商模型模块 publicModels() 暴露的模型
+//   3. 现有渠道 models 字段里声明的模型（覆盖 openai-compat 等自定义渠道）
+// 不在登记表里的 = 垃圾数据，定价导入必须拒绝。
+let registryCache = { at: 0, map: null };
+const REGISTRY_TTL_MS = 60_000;
+
+/** 拆分渠道 models 字段（逗号/换行/空格分隔，去空去重） */
+function splitModelList(raw) {
+  return String(raw || "")
+    .split(/[\s,，]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * 返回 { modelLower: { model, type } } 的登记表。
+ * type 为渠道类型（deepseek/openai/qwen…），供导入时校验/补全。
+ */
+export async function modelRegistry() {
+  if (registryCache.map && Date.now() - registryCache.at < REGISTRY_TTL_MS) return registryCache.map;
+  const map = new Map();
+  const put = (id, type) => {
+    const k = String(id || "").toLowerCase().trim();
+    if (!k || map.has(k)) return;
+    map.set(k, { model: String(id).trim(), type: String(type || "") });
+  };
+
+  for (const p of DEFAULT_PRICES) put(p.model, p.type);
+  for (const t of Object.keys(VENDOR_MODEL_MODULES)) {
+    try {
+      const mod = await VENDOR_MODEL_MODULES[t]();
+      if (typeof mod.publicModels === "function") for (const m of mod.publicModels()) put(m.id, t);
+    } catch {
+      /* 模块不可用时跳过 */
+    }
+  }
+  try {
+    const [rows] = await pool.query("SELECT type, models FROM channels");
+    for (const r of rows) for (const m of splitModelList(r.models)) put(m, r.type);
+  } catch {
+    /* 表不存在/查询失败时不影响前两类 */
+  }
+
+  registryCache = { at: Date.now(), map };
+  return map;
+}
+
+export function invalidateModelRegistry() {
+  registryCache = { at: 0, map: null };
 }

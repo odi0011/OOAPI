@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Tabs, Form, Input, Button, App as AntApp, Space } from "antd";
+import { Tabs, Form, Input, Button, App as AntApp, Space, Alert } from "antd";
 import {
   UserOutlined,
   LockOutlined,
@@ -81,20 +81,37 @@ export default function AuthPage({ initialTab = "login" }) {
   ];
 
   const loginFormEl = (
-    <Form form={loginForm} layout="vertical" onFinish={(v) => onFinish("login", v)} disabled={busy} requiredMark={false}>
-      {nameInput}
-      <Form.Item name="password" label="密码" rules={loginPwdRules}>
-        <Input.Password
-          prefix={<LockOutlined style={{ color: "var(--oo-text-muted)" }} />}
-          placeholder="密码"
-          size="large"
-          autoComplete="current-password"
+    <>
+      {status?.password_login_enabled === false ? (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 14 }}
+          message="管理员已关闭密码登录"
+          description="如有需要请联系管理员开启，或使用其他管理员提供的登录方式。"
         />
-      </Form.Item>
-      <Button type="primary" htmlType="submit" size="large" block loading={busy} style={{ marginTop: 4 }}>
-        登录
-      </Button>
-    </Form>
+      ) : null}
+      <Form
+        form={loginForm}
+        layout="vertical"
+        onFinish={(v) => onFinish("login", v)}
+        disabled={busy || status?.password_login_enabled === false}
+        requiredMark={false}
+      >
+        {nameInput}
+        <Form.Item name="password" label="密码" rules={loginPwdRules}>
+          <Input.Password
+            prefix={<LockOutlined style={{ color: "var(--oo-text-muted)" }} />}
+            placeholder="密码"
+            size="large"
+            autoComplete="current-password"
+          />
+        </Form.Item>
+        <Button type="primary" htmlType="submit" size="large" block loading={busy} style={{ marginTop: 4 }}>
+          登录
+        </Button>
+      </Form>
+    </>
   );
 
   const registerFormEl = (

@@ -69,6 +69,25 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
 | `src/components/Markdown.jsx` | 模型输出渲染 | 链接必须过 `safeHref` 协议白名单 |
 | `src/pages/*` | 业务页 | 页面结构统一：`PageHeader` + `oo-panel`；表单校验必须 catch |
 
+### 1.3 线上测试环境（2026-09-17 起）
+
+| 项 | 值 |
+|---|---|
+| 服务器 | `root@47.79.85.60`（阿里云 Ubuntu；本机已配置 SSH 免密，可直接 `ssh root@47.79.85.60`） |
+| 生产目录 | `/opt/ooapi`（`ooapi-server` + `ooapi-web`），非 git 仓库 |
+| 运行方式 | systemd `ooapi.service`：`xvfb-run` + `node src/index.js`，监听 `127.0.0.1:3001`，nginx 反代 |
+| 在线更新 | 管理员 → 系统设置 → 更新；接口 `GET /api/update/check`、`POST /api/update/apply`、`GET /api/update/status` |
+| 更新流程 | GitHub 拉取 → 备份源码 → rsync 覆盖（保护 `.env/.jwt-secret/data/node_modules/web`）→ npm install → 前端构建 → 复制 `dist` 到 `web/` → 迁移 → 写 `.update-stamp.json` → 延迟重启 |
+| 版本戳 | `/opt/ooapi/ooapi-server/.update-stamp.json`（与 GitHub main 的 commit 比对） |
+| 已验证 | 服务器 git / rsync / xvfb-run 齐备；能直连 GitHub API 与 codeload（无需代理） |
+
+**验证命令**（改完代码后热验证）：
+```powershell
+ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl is-active ooapi; curl -s http://127.0.0.1:3001/api/status | head -c 200'
+```
+
+**注意事项**：不要在 `/opt/ooapi` 里直接 `git pull`（不是仓库，且会污染运行目录）；前端构建必须带 devDependencies（更新器已处理 NODE_ENV 坑）；`.env` 里保存线上配置，任何操作都不得覆盖。
+
 ---
 
 ## 2. 统一规范（强制）
@@ -102,6 +121,11 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
    `rowToResp` 中返回给前端。
 8. **新渠道类型**：在 `services/channel-types.js` 注册 + `router.js` 的 `ADAPTERS` 注册适配器；
    适配器导出 `verify/chat/loginModes`，relay 方式还要 `release`。
+9. **定价数据**：只允许平台已注册模型（`services/models.js` 的 `modelRegistry`）；
+   新增模型必须先由渠道 `models` 字段声明；`remark` 必须写官方来源，禁止「同上」；
+   批量维护走「模型定价 → 上传文件更新」（`POST /api/pricing/import`，逐行严格校验）。
+10. **登录态抓取**：需要「粘贴登录态」的 relay 接入方式，在 `channel-types.js` 配置
+    `entryUrl` + `captureHint` 即自动获得「打开登录页自动抓取」按钮（`/api/channel/capture/*`）。
 
 ### 2.3 前端
 
@@ -192,34 +216,39 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
 
 ### P1（建议下一批）
 
-- [ ] **U1（UI/UX，最高优先）**：`ChatPage` 流式渲染重构：
-      - 消息组件抽成 `React.memo` 的 `MessageItem`，流式消息独立组件（只重渲染当前消息）；
-      - 输入框状态与消息列表隔离（输入态下沉到子组件或独立 context），避免每次按键全量重渲染；
-      - 长会话下 Markdown 解析缓存（按消息 id + 内容 hash 缓存解析结果）。
-      验收：连续 30 轮对话 + 中途输入不卡顿；React DevTools 中非当前消息不重渲染。
-- [ ] **U2（UI/UX）**：列表页请求竞态防护（`TokenPage / LogPage / AdminPricingPage`），
-      封装 `useLatest` 或请求序号，快速切页/搜索时旧响应不得覆盖新数据。
-- [ ] **U3（UI/UX）**：统一弹窗表单校验流程（`validateFields` 必须 try/catch + 首个错误字段聚焦），
-      清点 `AdminUsersPage / AdminPricingPage` 等页面的同类问题；统一 `message.error` 文案风格。
-- [ ] `execute.js`：无 `code` 的未知异常按可重试处理（目前 GLM/Kimi/Doubao 的 Playwright 原生异常仍直接 500）。
-- [ ] `browser-driver.getSession` 并发首建竞态：用 pending Promise 缓存，避免同 profile 启动两个 Chromium。
-- [ ] `pow.js` 兜底求解器：同步阻塞事件循环（最多 10M 次 wasm 调用）且内存不释放，改分批 + 让步。
-- [ ] 渠道链路统计 `used_count/last_used_time` 从未更新（字段已存在），在 `execute.js` 成功后累加。
+- [x] **U1（UI/UX）**：`ChatPage` 流式渲染重构（2026-09-17 第 2 批）：
+      `Message` 已 `React.memo`、`onCopy/onRetry` 经 ref 稳定化、`Markdown` 双层缓存（memo + useMemo），
+      滚动 `setAway` 仅在状态翻转时触发；图片上限改为服务端真实的 20MB 口径。
+- [x] **U2（UI/UX）**：竞态防护 `hooks/useLatest.js`，已接入 Token / Log / AdminPricing / AdminUsers。
+- [x] **U3（UI/UX）**：`AdminUsersPage`、`AdminChannelsPage` 的 `validateFields` 补 try/catch；
+      `AdminUsersPage` 额度调整统一为 OD 输入（提交时 ×unitsPerOd）。
+- [x] `execute.js`：无 `code` 的未知异常按可重试处理（有 `code` 的仍走白名单）。
+- [x] `browser-driver.getSession` 并发首建竞态：`pending` Promise 合并；`closeSession/closeAll` 会等待首建落地。
+- [x] 渠道链路统计 `used_count/last_used_time`：`markChannelOk` 成功后累加。
+- [x] 整体排版布局：新增 `.oo-page` 骨架、`.oo-toolbar`、移动端统一压缩，9 个内页全部套用。
+- [x] 第 2 批审查（10 轮）修复：定价数据治理（官方来源/删除虚构模型/文件导入）、登录态远程抓取、
+      渠道创建 SQL 对齐、密码旧密码强制、手动禁用不可复活、额度原子更新、401/403 处理、
+      SSE 释放、适配器超时与帧长上限、计费 clamp、更新器失败回滚。详见根目录《审查报告.md》。
+- [ ] `updater.js`：迁移失败仍写版本戳（建议迁移失败即中止并回滚）。
+- [ ] `execute.js` 硬截止：Playwright 内部调用不响应 abort 时仍可能悬挂（建议 Promise.race）。
+- [ ] `router.js` 内存表只增不减（state/SELECT_CURSOR 按模型名累积），删渠道时清理。
+- [ ] 浏览器流 `streamCapture` 的 4 秒静止判定会截断长思考；仅 reasoning 无 content 仍按成功计费。
+- [ ] GLM/Doubao/Qwen：search/thinking 静默忽略；`vision:true` 与实现不一致（能力表与实现二选一）。
+- [ ] 网关/站内流式失败后不结算已产出部分（营收漏损）。
 - [ ] `logs` 表清理策略（TTL/归档/后台一键清理已有但无自动策略）。
 - [ ] `connectionLimit: 10` 偏小（上游请求常达分钟级），按并发压测调整（建议 50）。
-- [ ] 列表请求竞态防护（Token/Log/AdminPricing 页）；建议统一 `useLatest` hook。
-- [ ] `AdminChannelsPage` 其余 `validateFields` 未 catch；`AdminUsersPage` 同类问题。
 - [ ] `AuthPage` 登录回跳丢失 query/hash；`MainLayout` 的 `/home` 无路由。
 
 ### P2（清理与加固）
 
-- [ ] 删除死代码：`routes/deepseek.js`（未挂载）、`services/deepseek/client.js`、`services/deepseek/accounts.js`
-      （引用已被 DROP 的 `deepseek_accounts` 表）、`pricing.js` 中重复的 `charge()`、
+- [ ] 删除死代码：`routes/deepseek.js`（未挂载）、`services/deepseek/`（`client.js` / `accounts.js` / `pow.js`，
+      其中 `pow.js` 存在同步阻塞求解器；全部随本次清理一并删除）、`pricing.js` 中重复的 `charge()`、
       `browser-driver.js` 的 `evalInPage/waitForStream`、前端未使用导入。
 - [ ] `AgentPage` 已不被路由使用（`/agent` 重定向到 `/chat?mode=agent`）：确认产品意图后删除或合并进 `ChatPage`。
 - [ ] `GET /api/channel/login/batch` 串行 50 账号可阻塞数分钟：改异步任务 + 进度查询。
 - [ ] GLM `search` 开关应使用解析后的 `resolved.search`。
 - [ ] Doubao/Qwen 的 thinking/search 目前静默忽略（适配器未实现注入），要么实现要么显式报错。
+- [ ] `option.js` 白名单用 `in` 命中原型链键；`token.js` 数值/分页校验缺失；`auth.js` 并发注册可能 500。
 - [ ] CORS 默认放开：生产建议 `CORS_ORIGIN` 白名单（已在 `index.js` 支持）。
 - [ ] 在线更新无签名校验（供应链风险），考虑固定 commit 或校验发布哈希。
 - [ ] `--no-sandbox` 浏览器驱动：文档化部署前提（非 root 用户 + 容器隔离）。
@@ -261,3 +290,9 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
 |---|---|
 | 2026-09-17 | 第 1 批修复：P0 功能 5 项、P1 计费/安全/稳定性 18 项、前端 12 项（见第 3 节）；新增本文件 |
 | 2026-09-17 | 币制统一：移除"美元汇率"设置项，明确 `1 OD币 = 1 美元`（仅作展示与计费口径，无汇率换算）；同步 README 与本文档规范 |
+| 2026-09-17 | 线上环境接入：`/opt/ooapi` 手动执行在线更新至 `98464bd`，确认为可用测试环境；详见 1.3 节 |
+| 2026-09-17 | 第 2 批：U1 ChatPage 流式渲染重构、U2 `useLatest` 竞态防护（4 页）、U3 表单校验与额度口径；
+      `execute.js` 未知异常可重试、`browser-driver` 并发首建保护、`used_count/last_used_time` 累加、
+      整体排版布局骨架（`.oo-page/.oo-toolbar/移动端压缩`）；10 轮审查整改见《审查报告.md》 |
+| 2026-09-17 | 第 2 批（续）：定价数据治理（删除虚构模型、官方来源、JSON/CSV 导入+清理+同步）、
+      登录态远程抓取、渠道 SQL/权限/并发修复；三路并行审查发现 48 项按级别处理，详见《审查报告.md》 |

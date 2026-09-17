@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
   Table, Space, Typography, Input, Popconfirm, Modal, Form, Select, Switch,
-  InputNumber, App as AntApp, Tooltip, Row, Col, Alert, Radio, Divider,
+  InputNumber, App as AntApp, Tooltip, Row, Col, Alert, Radio, Divider, Button, Spin,
 } from "antd";
 import {
   PlusOutlined, ReloadOutlined, ThunderboltOutlined, DeleteOutlined, EditOutlined,
@@ -10,6 +10,7 @@ import {
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { fmtDate } from "../services/format";
+import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
 import { VendorIcon, ModelLabel } from "../components/VendorIcon";
@@ -133,33 +134,53 @@ export default function AdminChannelsPage() {
   const [browserTarget, setBrowserTarget] = useState(null);
   const [browserShot, setBrowserShot] = useState(null);
   const [browserBusy, setBrowserBusy] = useState(false);
+  // 登录态远程抓取（粘贴登录态的厂商：打开登录页 → 登录 → 自动回填 token/cookies）
+  const [capOpen, setCapOpen] = useState(false);
+  const [capSid, setCapSid] = useState("");
+  const [capShot, setCapShot] = useState(null);
+  const [capBusy, setCapBusy] = useState(false);
+  const [capCands, setCapCands] = useState(null);
+  const [capPick, setCapPick] = useState("");
+  const [capText, setCapText] = useState("");
+  const capImgRef = useRef(null);
   const [addForm] = Form.useForm();
   const [editForm] = Form.useForm();
   const [batchForm] = Form.useForm();
+  const { begin, isLatest } = useLatest();
 
   const load = useCallback(async () => {
+    const token = begin();
     setLoading(true);
     try {
-      const [list, st, ps, gs] = await Promise.all([
+      // allSettled：某一个接口失败（如 stats 表未建好）不应让整页停在旧数据
+      const [list, st, ps, gs] = await Promise.allSettled([
         API.get("/channel/", { params: { keyword, type: filterProvider } }),
         API.get("/channel/stats"),
         API.get("/channel/providers"),
         API.get("/channel/groups"),
       ]);
-      setItems(list);
-      setStats(st);
-      setProviders(ps);
-      setGroups(gs);
+      if (!isLatest(token)) return;
+      if (list.status === "fulfilled") setItems(list.value);
+      if (st.status === "fulfilled") setStats(st.value);
+      if (ps.status === "fulfilled") setProviders(ps.value);
+      if (gs.status === "fulfilled") setGroups(gs.value);
+      const failed = [list, st, ps, gs].find((r) => r.status === "rejected");
+      if (failed) message.error(failed.reason?.message || "部分数据加载失败");
     } catch (e) {
-      message.error(e.message);
+      if (isLatest(token)) message.error(e.message);
     } finally {
-      setLoading(false);
+      if (isLatest(token)) setLoading(false);
     }
-  }, [keyword, filterProvider, message]);
+  }, [keyword, filterProvider, message, begin, isLatest]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // 切换筛选/搜索时清空已选：否则批量操作会作用到当前不可见的渠道
+  useEffect(() => {
+    setSelectedKeys([]);
+  }, [keyword, filterProvider]);
 
   const visibleItems = items;
 
@@ -230,7 +251,12 @@ export default function AdminChannelsPage() {
 
   const submitAdd = async () => {
     if (!pickProvider || !pickMethod) return message.warning("请先选择厂商与接入方式");
-    const v = await addForm.validateFields();
+    let v;
+    try {
+      v = await addForm.validateFields();
+    } catch {
+      return; // 校验未通过：antd 已在表单上标红
+    }
 
     try {
       if (isRelay) {
@@ -311,9 +337,12 @@ export default function AdminChannelsPage() {
         priority: v.priority,
         weight: v.weight,
         remark: v.remark,
-        status: v.status ? 1 : 2,
         auto_ban: v.auto_ban,
       };
+      // status 只在开关真正变化时提交：服务端收到 status 会清冷却/重置运行状态，
+      // 只改备注不该顺手把「冷却中」的渠道重置。
+      const nextStatus = v.status ? 1 : 2;
+      if (nextStatus !== editing.status) payload.status = nextStatus;
       if (editing.method === "api" && v.api_key) payload.api_key = v.api_key;
       await API.put("/channel/", payload);
       message.success("已保存");
@@ -395,8 +424,93 @@ export default function AdminChannelsPage() {
     }
   };
 
-  const doDelete = async (r) => {
+  // ---------- 登录态远程抓取 ----------
+  const startCapture = async () => {
+    if (!pickProvider) return;
+    setCapCands(null);
+    setCapPick("");
+    setCapText("");
+    setCapShot(null);
+    setCapBusy(true);
     try {
+      const res = await API.post("/channel/capture/start", { type: pickProvider.key });
+      setCapSid(res.sid);
+      setCapShot({ dataUrl: res.dataUrl, url: res.url, hint: res.hint });
+      setCapOpen(true);
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setCapBusy(false);
+    }
+  };
+
+  // 未抓取完成前每 4 秒刷新一次截图（登录过程可见；二维码也能跟着刷新）
+  useEffect(() => {
+    if (!capOpen || !capSid || capCands) return undefined;
+    const timer = setInterval(async () => {
+      try {
+        const res = await API.get(`/channel/capture/${capSid}/shot`);
+        setCapShot((old) => ({ ...old, dataUrl: res.dataUrl, url: res.url }));
+      } catch {
+        /* 会话过期时由用户重新打开，无需打断 */
+      }
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [capOpen, capSid, capCands]);
+
+  const capAct = async (op) => {
+    if (!capSid) return;
+    try {
+      const res = await API.post(`/channel/capture/${capSid}/act`, op);
+      setCapShot((old) => ({ ...old, dataUrl: res.dataUrl, url: res.url }));
+    } catch (e) {
+      message.error(e.message);
+    }
+  };
+
+  // 截图按原始分辨率换算坐标：页面显示宽度 ≠ 真实视口宽度
+  const onCapShotClick = (e) => {
+    const img = capImgRef.current;
+    if (!img || !img.naturalWidth) return;
+    const rect = img.getBoundingClientRect();
+    const x = Math.round((e.clientX - rect.left) * (img.naturalWidth / rect.width));
+    const y = Math.round((e.clientY - rect.top) * (img.naturalHeight / rect.height));
+    capAct({ action: "click", x, y });
+  };
+
+  const finishCapture = async () => {
+    if (!capSid) return;
+    setCapBusy(true);
+    try {
+      const res = await API.post(`/channel/capture/${capSid}/capture`);
+      setCapCands({ cookies: res.cookies, tokens: res.tokens || [] });
+      setCapPick(res.tokens?.[0]?.value || "");
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setCapBusy(false);
+    }
+  };
+
+  const applyCapture = () => {
+    if (!capCands) return;
+    addForm.setFieldsValue({ token: capPick, cookies: capCands.cookies || "" });
+    message.success("已回填登录态，请继续完善其他字段");
+    closeCapture(true);
+  };
+
+  const closeCapture = async (keep) => {
+    const sid = capSid;
+    setCapOpen(false);
+    setCapSid("");
+    setCapShot(null);
+    setCapCands(null);
+    setCapPick("");
+    setCapText("");
+    if (sid && !keep) await API.post(`/channel/capture/${sid}/close`).catch(() => {});
+  };
+
+  const doDelete = async (r) => {    try {
       await API.del(`/channel/${r.id}`);
       message.success("已删除");
       load();
@@ -557,7 +671,7 @@ export default function AdminChannelsPage() {
   ];
 
   return (
-    <div>
+    <div className="oo-page">
       <PageHeader
         title="渠道管理"
         desc="一个渠道绑定一个厂商；同一个厂商可以建多个渠道，各用各的账号或 Key"
@@ -592,7 +706,7 @@ export default function AdminChannelsPage() {
         }
       />
 
-      <div className="oo-grid" style={{ marginBottom: 16 }}>
+      <div className="oo-grid">
         <StatCard label="渠道总数" value={stats?.total ?? 0} icon={<ApiOutlined />} foot={<span>{providers.length} 个厂商可选</span>} />
         <StatCard
           label="已启用" value={stats?.enabled ?? 0} tone="success" glow="rgba(34,197,94,0.14)"
@@ -695,6 +809,18 @@ export default function AdminChannelsPage() {
                         </>
                       ) : addMode === "paste" ? (
                         <>
+                          {pickMethod.canCapture ? (
+                            <Form.Item label="快捷登录（推荐）">
+                              <Space wrap>
+                                <Button icon={<GlobalOutlined />} onClick={startCapture} loading={capBusy}>
+                                  打开登录页自动抓取
+                                </Button>
+                                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                                  {pickMethod.captureHint || "在服务器端登录页完成登录后，自动读取登录态回填下面"}
+                                </span>
+                              </Space>
+                            </Form.Item>
+                          ) : null}
                           <Form.Item name="token" label="登录态" rules={[{ required: true, message: "请粘贴登录态" }]} extra={pickMethod.pasteHint}>
                             <Input.TextArea rows={3} placeholder="粘贴登录态值" />
                           </Form.Item>
@@ -888,6 +1014,130 @@ export default function AdminChannelsPage() {
             {browserShot.url}
           </div>
         ) : null}
+      </Modal>
+
+      {/* ============ 登录态远程抓取 ============ */}
+      <Modal
+        title="登录并自动抓取登录态"
+        open={capOpen}
+        onCancel={() => closeCapture(false)}
+        footer={null}
+        destroyOnClose
+        width={720}
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="操作说明"
+          description={
+            <span style={{ fontSize: 12 }}>
+              {capShot?.hint || "在下方页面里完成登录（可扫码），然后点「抓取登录态」。"}
+              截图每 4 秒自动刷新；可直接在截图上点击（如同意条款、切换登录方式）。
+            </span>
+          }
+        />
+
+        <div
+          style={{
+            background: "var(--canvas)",
+            borderRadius: 8,
+            padding: 8,
+            minHeight: 260,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {capShot?.dataUrl ? (
+            <img
+              ref={capImgRef}
+              src={capShot.dataUrl}
+              alt="登录页截图"
+              onClick={onCapShotClick}
+              style={{ maxWidth: "100%", borderRadius: 6, display: "block", cursor: "crosshair" }}
+            />
+          ) : (
+            <Spin tip="正在打开登录页…" />
+          )}
+        </div>
+        {capShot?.url ? (
+          <div style={{ marginTop: 8, fontSize: 12, color: "var(--ink-3)", fontFamily: "var(--font-mono)" }} className="oo-truncate">
+            {capShot.url}
+          </div>
+        ) : null}
+
+        {!capCands ? (
+          <Space direction="vertical" style={{ width: "100%", marginTop: 12 }} size={8}>
+            <Space wrap>
+              <Input
+                style={{ width: 220 }}
+                placeholder="输入验证码 / 账号（可选）"
+                value={capText}
+                onChange={(e) => setCapText(e.target.value)}
+                onPressEnter={() => {
+                  if (capText) {
+                    capAct({ action: "type", text: capText });
+                    setCapText("");
+                  }
+                }}
+              />
+              <Button
+                onClick={() => {
+                  if (capText) {
+                    capAct({ action: "type", text: capText });
+                    setCapText("");
+                  }
+                }}
+              >
+                输入到页面
+              </Button>
+              <Button onClick={() => capAct({ action: "key", key: "Enter" })}>回车</Button>
+              <Button onClick={() => capAct({ action: "key", key: "Tab" })}>Tab</Button>
+              <Button onClick={() => capAct({ action: "key", key: "Backspace" })}>退格</Button>
+              <Button onClick={() => capAct({ action: "scroll", dy: 600 })}>向下滚</Button>
+              <Button onClick={() => capAct({ action: "scroll", dy: -600 })}>向上滚</Button>
+            </Space>
+            <Space>
+              <Button type="primary" onClick={finishCapture} loading={capBusy}>
+                我已登录，抓取登录态
+              </Button>
+              <Button onClick={() => closeCapture(false)}>放弃</Button>
+            </Space>
+          </Space>
+        ) : (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+              选择要填入表单的登录态（共 {capCands.tokens.length} 个候选）
+            </div>
+            {capCands.tokens.length ? (
+              <Radio.Group
+                value={capPick}
+                onChange={(e) => setCapPick(e.target.value)}
+                style={{ display: "flex", flexDirection: "column", gap: 6 }}
+              >
+                {capCands.tokens.map((t) => (
+                  <Radio key={t.key} value={t.value}>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
+                      {t.key} = {t.value.slice(0, 24)}…{t.value.slice(-6)}
+                    </span>
+                  </Radio>
+                ))}
+              </Radio.Group>
+            ) : (
+              <div style={{ fontSize: 12, color: "var(--orange)" }}>没有抓到 token 类登录态，只回填 cookies。</div>
+            )}
+            <div style={{ marginTop: 6, fontSize: 12, color: "var(--ink-3)" }}>
+              Cookies：{capCands.cookies ? `${capCands.cookies.slice(0, 60)}…` : "（空）"}
+            </div>
+            <Space style={{ marginTop: 12 }}>
+              <Button type="primary" onClick={applyCapture} disabled={!capPick && !capCands.cookies}>
+                填入表单
+              </Button>
+              <Button onClick={() => closeCapture(false)}>取消</Button>
+            </Space>
+          </div>
+        )}
       </Modal>
 
       {/* ============ 批量修改 ============ */}

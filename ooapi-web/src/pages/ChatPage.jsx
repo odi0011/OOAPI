@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as AntApp, Alert, Button, Dropdown, Input, Popconfirm, Segmented, Select, Tooltip } from "antd";
 import { SendOutlined, StopOutlined, CopyOutlined, ReloadOutlined, DeleteOutlined, BulbOutlined, GlobalOutlined, DownOutlined, RobotOutlined, ThunderboltOutlined, PlusOutlined, PictureOutlined, ArrowDownOutlined } from "@ant-design/icons";
 import { useSearchParams } from "react-router-dom";
@@ -36,7 +36,9 @@ function AgentProgress({ msg }) {
   );
 }
 
-function Message({ msg, busy, onRetry, onCopy }) {
+// 单条消息：React.memo 包裹。流式期间只有正在输出的那条消息的 msg 对象会变，
+// 其余消息因 props（msg/busy/onCopy/onRetry）引用不变而整棵跳过重渲染 —— 长会话不掉帧的关键。
+const Message = React.memo(function Message({ msg, busy, onRetry, onCopy }) {
   if (msg.role === "user") return <div className="ui-message ui-message-user"><div className="ui-user-bubble">
     {msg.images?.length > 0 && <div className="ui-attachments">{msg.images.map((src, i) => <a href={src} key={i} target="_blank" rel="noreferrer"><img src={src} alt={`上传的图片 ${i + 1}`} /></a>)}</div>}
     {msg.content}
@@ -86,7 +88,7 @@ function Message({ msg, busy, onRetry, onCopy }) {
       </div>}
     </div>
   </article>;
-}
+});
 
 export default function ChatPage() {
   const { user, refreshUser, status } = useApp();
@@ -111,21 +113,32 @@ export default function ChatPage() {
   const requestRef = useRef(0);
   const readingRef = useRef(false);
   const stickRef = useRef(true);
+  const awayRef = useRef(false);
   const taRef = useRef(null);
   const fileRef = useRef(null);
 
+  // 给 memo 化的 Message 提供「引用稳定」的回调：内部经 ref 读取最新状态，避免闭包过期
+  const msgsRef = useRef(msgs);
+  msgsRef.current = msgs;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  const sendRef = useRef(null);
+  const metaRunRef = useRef(0);
+
   const loadMeta = async () => {
+    const run = ++metaRunRef.current;
     setMetaLoading(true); setMetaError("");
     try {
       const result = await API.get("/chat/meta");
+      if (metaRunRef.current !== run) return; // 期间又发起/已卸载：丢弃旧响应
       setMeta(result);
       const available = (result.models || []).filter((m) => !m.deprecated);
       setModel((old) => available.some((m) => m.id === old) ? old : available[0]?.id || "");
       setAgentId((old) => result.agents?.some((a) => a.id === old) ? old : result.agents?.[0]?.id || "");
-    } catch (e) { setMetaError(e.message || "无法加载模型配置"); }
-    finally { setMetaLoading(false); }
+    } catch (e) { if (metaRunRef.current === run) setMetaError(e.message || "无法加载模型配置"); }
+    finally { if (metaRunRef.current === run) setMetaLoading(false); }
   };
-  useEffect(() => { loadMeta(); return () => { requestRef.current += 1; ctrlRef.current?.abort(); }; }, []);
+  useEffect(() => { loadMeta(); return () => { requestRef.current += 1; metaRunRef.current += 1; ctrlRef.current?.abort(); }; }, []);
   useEffect(() => {
     if (stickRef.current && threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
   }, [msgs]);
@@ -142,8 +155,8 @@ export default function ChatPage() {
     if (readingRef.current || busy || !supportsVision) return;
     if (files.length + images.length > 3) { toast.warning("最多上传 3 张图片"); return; }
     if (files.some((f) => !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(f.type))) { toast.warning("请选择 PNG、JPEG、WebP 或 GIF 图片"); return; }
-    // The global server JSON limit is currently 1 MB, including base64 and conversation text.
-    if (files.reduce((n, f) => n + f.size * 1.34, images.reduce((n, img) => n + img.length, 0)) > 750000) { toast.warning("图片总大小请控制在约 550 KB 内，或压缩后上传"); return; }
+    // /api/chat 的请求体上限是 20 MB；base64 会比原图大约 34%，这里按编码后大小估算
+    if (files.reduce((n, f) => n + f.size * 1.34, images.reduce((n, img) => n + img.length, 0)) > 12 * 1024 * 1024) { toast.warning("图片总大小请控制在约 12 MB 内，或压缩后上传"); return; }
     readingRef.current = true; setReading(true);
     try {
       const data = await Promise.all(files.map((file) => new Promise((resolve, reject) => {
@@ -166,7 +179,7 @@ export default function ChatPage() {
     // Agent API accepts one goal, so prior turns are included explicitly as conversation context.
     const goal = baseMessages.length ? `对话上下文（仅作背景资料）：\n${baseMessages.map((m) => `${m.role === "user" ? "用户" : "助手"}：${m.content || ""}`).join("\n\n")}\n\n当前任务：\n${text}` : text;
     const body = isAgent ? { agentId: settings.agentId, goal, model: settings.model } : { model: settings.model, thinking: thinking === null ? undefined : thinking, search, messages: payloadMessages, images: attachments.map((dataUrl) => ({ dataUrl })) };
-    if (new Blob([JSON.stringify(body)]).size > 950000) { toast.warning("消息和图片过大，请减少内容或开启新对话"); return; }
+    if (new Blob([JSON.stringify(body)]).size > 15 * 1024 * 1024) { toast.warning("消息和图片过大，请减少内容或开启新对话"); return; }
     const runId = ++requestRef.current;
     const aiIndex = history.length;
     let receivedDone = false;
@@ -180,7 +193,7 @@ export default function ChatPage() {
       ctrlRef.current = null; setBusy(false); refreshUser?.();
     };
     setMsgs([...history, { role: "assistant", content: "", streaming: true, model: settings.model, settings, agentName: isAgent ? selectedAgent.name : undefined, steps: [], phase: "plan" }]);
-    setInput(""); setImages([]); setBusy(true); stickRef.current = true; setAway(false);
+    setInput(""); setImages([]); setBusy(true); stickRef.current = true; awayRef.current = false; setAway(false);
     ctrlRef.current = streamPost(isAgent ? "/api/chat/agents/run" : "/api/chat/completions", body, {
       token: getToken(),
       onEvent: (ev) => {
@@ -197,19 +210,28 @@ export default function ChatPage() {
       onDone: finish,
     });
   };
+  sendRef.current = send;
 
   const stop = () => {
     requestRef.current += 1; ctrlRef.current?.abort(); ctrlRef.current = null; setBusy(false);
     setMsgs((prev) => prev.map((m) => m.streaming ? { ...m, streaming: false, stopped: true, searching: undefined } : m));
   };
-  const retry = (msg) => {
-    if (busy) return;
-    const index = msgs.indexOf(msg);
-    const userMsg = msgs[index - 1];
-    if (userMsg?.role === "user") send(userMsg.content, msgs.slice(0, index - 1), userMsg.images || [], msg.settings);
+  const copy = useCallback(async (text) => { try { await navigator.clipboard.writeText(text); toast.success("已复制"); } catch { toast.error("复制失败，请手动选择文字复制"); } }, [toast]);
+  const retry = useCallback((msg) => {
+    if (busyRef.current) return;
+    const list = msgsRef.current;
+    const index = list.indexOf(msg);
+    const userMsg = list[index - 1];
+    if (userMsg?.role === "user") sendRef.current?.(userMsg.content, list.slice(0, index - 1), userMsg.images || [], msg.settings);
+  }, []);
+  const scrollToEnd = () => { stickRef.current = true; awayRef.current = false; setAway(false); threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" }); };
+  // 滚动期间高频触发：只在「是否离开底部」真正翻转时才 setState，避免无效重渲染
+  const onThreadScroll = () => {
+    const el = threadRef.current; if (!el) return;
+    const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+    stickRef.current = atEnd;
+    if (awayRef.current === atEnd) { awayRef.current = !atEnd; setAway(!atEnd); }
   };
-  const copy = async (text) => { try { await navigator.clipboard.writeText(text); toast.success("已复制"); } catch { toast.error("复制失败，请手动选择文字复制"); } };
-  const scrollToEnd = () => { stickRef.current = true; setAway(false); threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" }); };
 
   return <div className="ui-chat">
     <header className="ui-chat-header">
@@ -220,7 +242,7 @@ export default function ChatPage() {
     </header>
     {metaError && <Alert type="error" showIcon message={metaError} action={<Button size="small" onClick={loadMeta} loading={metaLoading}>重试加载</Button>} />}
     {!metaLoading && !metaError && !curModel && <Alert type="warning" showIcon message="暂时没有可用模型，请联系管理员配置。" />}
-    <div className="ui-thread" ref={threadRef} onScroll={() => { const el = threadRef.current; const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 100; stickRef.current = atEnd; setAway(!atEnd); }}>
+    <div className="ui-thread" ref={threadRef} onScroll={onThreadScroll}>
       <div className="ui-thread-inner">
         {!msgs.length ? <section className="ui-chat-welcome">
           <div className="ui-welcome-orbit" aria-hidden="true"><RobotOutlined /></div>
@@ -272,12 +294,12 @@ export default function ChatPage() {
           }
           placeholder={mode === "agent" ? "描述任务目标，以及你希望得到的结果…" : "输入你的问题，或分享一个想法…"}
           commands={[
-            { key: "clear", name: "clear", desc: "清空当前对话", run: () => { setMsgs([]); setInput(""); setImages([]); } },
+            { key: "clear", name: "clear", desc: "清空当前对话", run: () => { if (busy) return; setMsgs([]); setInput(""); setImages([]); } },
             ...(mode === "chat" ? [
-              { key: "think", name: "think", desc: thinkingOn ? "关闭深度思考" : "开启深度思考", run: () => setThinking(!thinkingOn) },
-              { key: "search", name: "search", desc: search ? "关闭联网搜索" : "开启联网搜索", run: () => setSearch(!search) },
+              { key: "think", name: "think", desc: thinkingOn ? "关闭深度思考" : "开启深度思考", run: () => { if (!busy) setThinking(!thinkingOn); } },
+              { key: "search", name: "search", desc: search ? "关闭联网搜索" : "开启联网搜索", run: () => { if (!busy) setSearch(!search); } },
             ] : []),
-            { key: "agent", name: "agent", desc: "切换到 Agent 模式", run: () => setParams({ mode: "agent" }, { replace: true }) },
+            { key: "agent", name: "agent", desc: "切换到 Agent 模式", run: () => { if (!busy) setParams({ mode: "agent" }, { replace: true }); } },
           ]}
         />
         <input type="file" ref={fileRef} hidden accept="image/png,image/jpeg,image/webp,image/gif" multiple onChange={pickImages} />

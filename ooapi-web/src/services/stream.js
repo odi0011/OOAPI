@@ -1,5 +1,7 @@
 // SSE 流式客户端：POST + 鉴权头 + 逐行解析（EventSource 不支持自定义头）
 // 返回 { abort() }，通过 handlers 回调派发事件。
+import { getToken, setToken } from "./api";
+
 export function streamPost(url, body, { onEvent, onDone, onError, token } = {}) {
   const ctrl = new AbortController();
 
@@ -9,13 +11,23 @@ export function streamPost(url, body, { onEvent, onDone, onError, token } = {}) 
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...((token ?? getToken()) ? { Authorization: `Bearer ${token ?? getToken()}` } : {}),
         },
         body: JSON.stringify(body),
         signal: ctrl.signal,
       });
 
       if (!res.ok) {
+        // 401 与 api.js 行为对齐：清理登录态并广播，App 层统一跳登录页。
+        // 否则流式请求过期后只会停在错误态，不会退出。
+        if (res.status === 401) {
+          setToken("");
+          try {
+            window.dispatchEvent(new CustomEvent("ooapi:unauthorized"));
+          } catch {
+            /* ignore */
+          }
+        }
         let msg = `请求失败（HTTP ${res.status}）`;
         let data = null;
         try {
@@ -53,17 +65,22 @@ export function streamPost(url, body, { onEvent, onDone, onError, token } = {}) 
         }
       };
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let idx;
-        while ((idx = buf.indexOf("\n")) !== -1) {
-          handle(buf.slice(0, idx));
-          buf = buf.slice(idx + 1);
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx;
+          while ((idx = buf.indexOf("\n")) !== -1) {
+            handle(buf.slice(0, idx));
+            buf = buf.slice(idx + 1);
+          }
         }
+        if (buf.trim()) handle(buf.trim());
+      } finally {
+        // 客户端 abort / 回调抛错时归还连接
+        reader.cancel().catch(() => {});
       }
-      if (buf.trim()) handle(buf.trim());
       onDone?.();
     } catch (e) {
       if (e.name === "AbortError") {

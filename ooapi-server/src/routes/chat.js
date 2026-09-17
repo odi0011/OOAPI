@@ -128,10 +128,17 @@ async function chargeUser({ user, model, prompt, output, usage, channel, kind })
   if (Number(uRows[0]?.quota || 0) <= 0) {
     throw Object.assign(new Error(`${CURRENCY} 币余额不足，请联系管理员充值`), { code: "INSUFFICIENT_QUOTA" });
   }
-  await pool.query(
-    "UPDATE users SET quota = GREATEST(0, quota - ?), used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ?",
-    [units, units, user.id]
+  // 与网关同一套原子扣费：条件更新避免并发透支；不足时兜底扣到 0
+  const [ret] = await pool.query(
+    "UPDATE users SET quota = quota - ?, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ? AND quota >= ?",
+    [units, units, user.id, units]
   );
+  if (!ret.affectedRows) {
+    await pool.query(
+      "UPDATE users SET quota = 0, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ?",
+      [units, user.id]
+    );
+  }
   await writeLog({
     user,
     type: LOG_TYPE.CONSUME,

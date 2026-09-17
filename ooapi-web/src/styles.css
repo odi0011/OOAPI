@@ -1887,3 +1887,63 @@ h1, h2, h3, h4 {
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 14px;
 }
+
+/* ---------------------------------------------------------------------------
+   14. 页面骨架（所有内页遵循同一垂直节奏）
+   --------------------------------------------------------------------------- */
+/* 页面骨架：PageHeader + 若干区块，间距统一由 gap 控制，页面内不再写内联 margin */
+.oo-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.oo-page > .oo-page-head { margin-bottom: 0; }
+
+/* 面板工具条（筛选 / 搜索 / 刷新）：与面板头同节奏，左对齐可换行 */
+.oo-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.oo-toolbar--plain { border-bottom: 0; padding: 0; }
+.oo-toolbar-spacer { flex: 1; }
+
+/* 区块小标题（面板内分组） */
+.oo-section-title {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  letter-spacing: var(--ls-title);
+  color: var(--ink);
+}
+
+.oo-desc { font-size: var(--fs-desc); color: var(--ink-3); }
+
+/* ---------------------------------------------------------------------------
+   15. 移动端统一压缩（页面内边距 / 头部 / 表格密度 / 弹窗宽度）
+   --------------------------------------------------------------------------- */
+@media (max-width: 767px) {
+  .oo-content { padding: var(--sp-4) var(--sp-3); }
+
+  .oo-page-head { gap: var(--sp-3); }
+  .oo-page-title { font-size: var(--fs-xl); }
+  .oo-page-desc { font-size: var(--fs-micro); }
+  .oo-page-actions { width: 100%; }
+
+  .oo-panel-head,
+  .oo-toolbar { padding: 10px 12px; }
+  .oo-panel-body { padding: 12px; }
+
+  .oo-table .ant-table-thead > tr > th { padding: 8px 10px !important; }
+  .oo-table .ant-table-tbody > tr > td { padding: 9px 10px !important; }
+  .oo-table .ant-pagination { padding: 10px 12px !important; }
+
+  .oo-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .oo-stat { padding: 12px 13px; }
+
+  .ant-modal { max-width: calc(100vw - 24px); }
+  .ant-drawer-content-wrapper { max-width: 88vw; }
+}

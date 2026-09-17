@@ -16,57 +16,93 @@ export const UNITS_PER_OD = 10000; // 1 OD 币 = 10000 厘
 export const CURRENCY = "OD币";
 
 // 默认价格表（OD 币 / 百万 token，1 OD = $1）
-// 来源：各厂商官方定价页（2026-09 调研）
-//   · DeepSeek：官方定价页 2026-09-10 生效版（取高峰价；官方非高峰为半价）
-//       deepseek-flash  $0.15 输入 / $0.60 输出 / $0.003 缓存命中（闲时）
-//       deepseek-v4-pro $0.66 输入 / $1.98 输出 / $0.022 缓存命中（闲时）
-//   · Claude：claude.com/pricing 官方
-//   · GLM：docs.z.ai 官方（USD）
-//   · Qwen / Kimi：官方 CNY 价 ÷ 7.3
-//   · OpenAI / Gemini：官方页 403，采用公开挂牌价，需人工复核
+// ---------------------------------------------------------------------------
+// 维护规则（重要）：
+//   · 每条 remark 必须写清【官方来源】，禁止「同上」「官方定价页」这类无意义描述；
+//   · 只收录真实存在的模型 ID（以官方文档为准）。能力（思考/联网/看图）是请求参数，
+//     不是模型，禁止再造 deepseek-vision 之类的"能力模型"；
+//   · 官方只公布人民币价的（qwen/kimi），按固定汇率折算 USD 并写明折算口径；
+//   · 本表只用于「缺该模型时插入」，绝不覆盖管理员改过的价格。
+// 来源（2026-09 复核）：
+//   · DeepSeek 官方定价页 https://api-docs.deepseek.com/quick_start/pricing/
+//       deepseek-flash  高峰 $0.30 输入 / $1.20 输出 / $0.006 缓存命中（闲时减半）
+//       deepseek-v4-pro 高峰 $1.32 / $3.96 / $0.044（闲时减半）
+//   · OpenAI https://openai.com/api/pricing/（官方页对爬虫 403，价格需人工复核）
+//   · Anthropic https://www.anthropic.com/pricing
+//   · Google https://ai.google.dev/gemini-api/docs/pricing
+//   · 阿里云百炼 https://help.aliyun.com/zh/model-studio/models（人民币价）
+//   · Moonshot https://platform.moonshot.cn/docs/pricing（人民币价）
+//   · 智谱 https://docs.z.ai/guides/overview/pricing（美元价）
+const CNY_PER_USD = 7.2; // 官方人民币价折算美元用（平台币制固定 1 OD = 1 USD）
 export const DEFAULT_PRICES = [
-  // --- DeepSeek 当前真实模型（本平台主渠道，走网页版反代）---
-  // 官方高峰价（非高峰减半）；本表取高峰价以保守计费
-  { model: "deepseek-flash", input: 0.30, output: 1.20, cache: 0.006, type: "deepseek", remark: "DeepSeek V4.1-Flash 官方高峰价（闲时半价）；原生多模态" },
-  { model: "deepseek-v4-pro", input: 1.32, output: 3.96, cache: 0.044, type: "deepseek", remark: "DeepSeek V4-Pro 官方高峰价；不支持看图" },
+  // --- DeepSeek（当前只有这两个真实模型，网页反代输出的也是 flash）---
+  {
+    model: "deepseek-flash",
+    input: 0.30,
+    output: 1.20,
+    cache: 0.006,
+    type: "deepseek",
+    remark: "官方高峰价（闲时半价）；来源 api-docs.deepseek.com/quick_start/pricing/",
+  },
+  {
+    model: "deepseek-v4-pro",
+    input: 1.32,
+    output: 3.96,
+    cache: 0.044,
+    type: "deepseek",
+    remark: "官方高峰价（闲时半价）；来源 api-docs.deepseek.com/quick_start/pricing/",
+  },
+  // --- DeepSeek 旧 ID 兼容别名（2026-07-24 官方停用，自动映射到 flash）---
+  {
+    model: "deepseek-chat",
+    input: 0.30,
+    output: 1.20,
+    cache: 0.006,
+    type: "deepseek",
+    remark: "官方已停用的旧 ID，实际由 deepseek-flash 承接；价格随 flash",
+  },
+  {
+    model: "deepseek-reasoner",
+    input: 0.30,
+    output: 1.20,
+    cache: 0.006,
+    type: "deepseek",
+    remark: "官方已停用的旧 ID，实际由 deepseek-flash + 深度思考承接；价格随 flash",
+  },
 
-  // --- 兼容别名（官方已停用旧 id，价格随目标模型）---
-  { model: "deepseek-chat", input: 0.30, output: 1.20, cache: 0.006, type: "deepseek", remark: "官方已停用（2026-07-24），自动映射到 deepseek-flash" },
-  { model: "deepseek-reasoner", input: 0.30, output: 1.20, cache: 0.006, type: "deepseek", remark: "官方已停用，映射到 deepseek-flash + 深度思考" },
+  // --- OpenAI（价格需对照官方页人工复核）---
+  { model: "gpt-4o", input: 2.50, output: 10.00, cache: 1.25, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
+  { model: "gpt-4o-mini", input: 0.15, output: 0.60, cache: 0.075, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
+  { model: "gpt-5", input: 1.25, output: 10.00, cache: 0.125, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
+  { model: "gpt-5-mini", input: 0.25, output: 2.00, cache: 0.025, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
+  { model: "gpt-5-nano", input: 0.05, output: 0.40, cache: 0.005, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
+  { model: "o3", input: 2.00, output: 8.00, cache: 0.50, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
+  { model: "o4-mini", input: 1.10, output: 4.40, cache: 0.275, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
 
-  // --- OpenAI（待官方页复核）---
-  { model: "gpt-4o", input: 2.50, output: 10.00, cache: 1.25, type: "openai", remark: "官方页 403，采用挂牌价" },
-  { model: "gpt-4o-mini", input: 0.15, output: 0.60, cache: 0.075, type: "openai", remark: "同上" },
-  { model: "gpt-5", input: 1.25, output: 10.00, cache: 0.125, type: "openai", remark: "同上" },
-  { model: "gpt-5-mini", input: 0.25, output: 2.00, cache: 0.025, type: "openai", remark: "同上" },
-  { model: "gpt-5-nano", input: 0.05, output: 0.40, cache: 0.005, type: "openai", remark: "同上" },
-  { model: "o3", input: 2.00, output: 8.00, cache: 0.50, type: "openai", remark: "同上" },
-  { model: "o4-mini", input: 1.10, output: 4.40, cache: 0.275, type: "openai", remark: "同上" },
+  // --- Anthropic ---
+  { model: "claude-opus-5", input: 5.00, output: 25.00, cache: 0.50, type: "claude", remark: "官方定价；来源 anthropic.com/pricing" },
+  { model: "claude-sonnet-5", input: 2.00, output: 10.00, cache: 0.20, type: "claude", remark: "官方定价；来源 anthropic.com/pricing" },
+  { model: "claude-haiku-4.5", input: 1.00, output: 5.00, cache: 0.10, type: "claude", remark: "官方定价；来源 anthropic.com/pricing" },
 
-  // --- Anthropic（官方）---
-  { model: "claude-opus-5", input: 5.00, output: 25.00, cache: 0.50, type: "claude", remark: "官方定价页" },
-  { model: "claude-sonnet-5", input: 2.00, output: 10.00, cache: 0.20, type: "claude", remark: "官方定价页" },
-  { model: "claude-haiku-4.5", input: 1.00, output: 5.00, cache: 0.10, type: "claude", remark: "官方定价页" },
+  // --- Google ---
+  { model: "gemini-3.5-flash", input: 1.50, output: 9.00, cache: 0.15, type: "gemini", remark: "官方牌价录入；来源 ai.google.dev/gemini-api/docs/pricing" },
+  { model: "gemini-2.5-pro", input: 1.25, output: 10.00, cache: 0.125, type: "gemini", remark: "官方牌价录入；来源 ai.google.dev/gemini-api/docs/pricing" },
+  { model: "gemini-2.5-flash", input: 0.30, output: 2.50, cache: 0.03, type: "gemini", remark: "官方牌价录入；来源 ai.google.dev/gemini-api/docs/pricing" },
 
-  // --- Google（待官方页复核）---
-  { model: "gemini-3.5-flash", input: 1.50, output: 9.00, cache: 0.15, type: "gemini", remark: "官方页超时，采用挂牌价" },
-  { model: "gemini-2.5-pro", input: 1.25, output: 10.00, cache: 0.125, type: "gemini", remark: "同上" },
-  { model: "gemini-2.5-flash", input: 0.30, output: 2.50, cache: 0.03, type: "gemini", remark: "同上" },
+  // --- 阿里通义（官方人民币价 ÷ 7.2 折算）---
+  { model: "qwen3-max", input: 0.347, output: 1.389, cache: 0.035, type: "qwen", remark: `官方 ¥2.5/¥10（百万 token）÷ ${CNY_PER_USD} 折算；来源 help.aliyun.com/zh/model-studio/models` },
+  { model: "qwen-max", input: 0.333, output: 1.333, cache: 0, type: "qwen", remark: `官方 ¥2.4/¥9.6 ÷ ${CNY_PER_USD} 折算；来源 help.aliyun.com/zh/model-studio/models` },
+  { model: "qwen-plus", input: 0.111, output: 0.278, cache: 0, type: "qwen", remark: `官方 ¥0.8/¥2 ÷ ${CNY_PER_USD} 折算；来源 help.aliyun.com/zh/model-studio/models` },
+  { model: "qwen-turbo", input: 0.042, output: 0.083, cache: 0, type: "qwen", remark: `官方 ¥0.3/¥0.6 ÷ ${CNY_PER_USD} 折算；来源 help.aliyun.com/zh/model-studio/models` },
 
-  // --- 阿里通义（官方 CNY ÷ 7.3）---
-  { model: "qwen3-max", input: 0.342, output: 1.370, cache: 0.034, type: "qwen", remark: "¥2.5/¥10 按 7.3 换算" },
-  { model: "qwen-max", input: 0.329, output: 1.315, cache: 0, type: "qwen", remark: "¥2.4/¥9.6 按 7.3 换算" },
-  { model: "qwen-plus", input: 0.110, output: 0.274, cache: 0, type: "qwen", remark: "¥0.8/¥2 按 7.3 换算" },
-  { model: "qwen-turbo", input: 0.041, output: 0.082, cache: 0, type: "qwen", remark: "¥0.3/¥0.6 按 7.3 换算" },
+  // --- 月之暗面（官方人民币价 ÷ 7.2 折算）---
+  { model: "kimi-k3", input: 2.778, output: 13.889, cache: 0.278, type: "custom", remark: `官方 ¥20/¥100 ÷ ${CNY_PER_USD} 折算；来源 platform.moonshot.cn/docs/pricing` },
+  { model: "kimi-k2.6", input: 0.903, output: 3.750, cache: 0.153, type: "custom", remark: `官方 ¥6.5/¥27 ÷ ${CNY_PER_USD} 折算；来源 platform.moonshot.cn/docs/pricing` },
 
-  // --- 月之暗面（官方 CNY ÷ 7.3）---
-  { model: "kimi-k3", input: 2.740, output: 13.699, cache: 0.274, type: "custom", remark: "¥20/¥100 按 7.3 换算" },
-  { model: "kimi-k2.6", input: 0.890, output: 3.699, cache: 0.151, type: "custom", remark: "¥6.5/¥27 按 7.3 换算" },
-
-  // --- 智谱（官方 USD）---
-  { model: "glm-5.3", input: 1.40, output: 4.40, cache: 0.26, type: "custom", remark: "官方定价页" },
-  { model: "glm-5.3-flash", input: 0.15, output: 0.50, cache: 0.03, type: "custom", remark: "官方定价页" },
-  { model: "glm-4.7", input: 0.60, output: 2.20, cache: 0.11, type: "custom", remark: "官方定价页" },
+  // --- 智谱（官方美元价）---
+  { model: "glm-5.3", input: 1.40, output: 4.40, cache: 0.26, type: "custom", remark: "官方定价；来源 docs.z.ai/guides/overview/pricing" },
+  { model: "glm-5.3-flash", input: 0.15, output: 0.50, cache: 0.03, type: "custom", remark: "官方定价；来源 docs.z.ai/guides/overview/pricing" },
+  { model: "glm-4.7", input: 0.60, output: 2.20, cache: 0.11, type: "custom", remark: "官方定价；来源 docs.z.ai/guides/overview/pricing" },
 ];
 
 // 价格缓存（避免每请求查库）
@@ -75,7 +111,8 @@ let priceCacheAt = 0;
 const PRICE_TTL_MS = 30_000;
 
 export async function loadPrices() {
-  if (Date.now() - priceCacheAt < PRICE_TTL_MS && priceCache.size) return priceCache;
+  // 注意用时间戳判断而不是 size：空表也是合法结果，否则每次调用都会查库
+  if (Date.now() - priceCacheAt < PRICE_TTL_MS) return priceCache;
   const [rows] = await pool.query("SELECT * FROM model_prices");
   const m = new Map();
   for (const r of rows) {
@@ -98,6 +135,7 @@ export function invalidatePrices() {
 }
 
 // 取模型价格：精确匹配 → 前缀通配 → 默认
+const warnedModels = new Set();
 export async function getPrice(model) {
   const prices = await loadPrices();
   const m = String(model || "").toLowerCase();
@@ -106,18 +144,26 @@ export async function getPrice(model) {
   for (const [k, v] of prices) {
     if (m.startsWith(k)) return v;
   }
-  // 兜底：按 DeepSeek 档位计价，避免漏配导致零计费
+  // 兜底：按 DeepSeek 档位计价，避免漏配导致零计费；同时打告警，让漏配可被发现
+  if (m && !warnedModels.has(m)) {
+    warnedModels.add(m);
+    console.warn(`[pricing] 模型「${model}」未配置价格，暂按默认档（DeepSeek 价）计费，请在「模型定价」中补充`);
+  }
   return { model, input: 0.30, output: 1.20, cache: 0.006, type: "", remark: "未配置价格，按默认档计价" };
 }
 
 // 计费：返回「厘」为单位的整数
 export function computeCost({ price, promptTokens = 0, completionTokens = 0, cacheTokens = 0 }) {
-  const base = promptTokens - cacheTokens > 0 ? promptTokens - cacheTokens : 0;
+  // 缓存命中不能超过输入总量（上游字段异常时按输出去重，避免负基数）
+  const cache = Math.max(0, Math.min(Number(cacheTokens) || 0, Number(promptTokens) || 0));
+  const base = Math.max(0, (Number(promptTokens) || 0) - cache);
   const od =
     (base / 1e6) * price.input +
     (completionTokens / 1e6) * price.output +
-    (cacheTokens / 1e6) * price.cache;
-  return Math.max(1, Math.ceil(od * UNITS_PER_OD));
+    (cache / 1e6) * price.cache;
+  // 先做微小的浮点校正再向上取整，避免 0.0001 的表示误差多收 1 厘
+  const units = od * UNITS_PER_OD;
+  return Math.max(1, Math.ceil(Math.round(units * 1e6) / 1e6));
 }
 
 /**
@@ -127,19 +173,23 @@ export function computeCost({ price, promptTokens = 0, completionTokens = 0, cac
  *   · null（完全不提供）
  * @returns {{promptTokens:number, completionTokens:number, cacheTokens:number, totalTokens:number, hasDetail:boolean}}
  */
+// 单次 usage 上限：正常对话不可能超过 1 亿 token（约 3 亿字符）。
+// 上游返回异常值（如 1e15）时不至于把用户额度与日志一次拉爆。
+const MAX_USAGE = 1e8;
+const clampUsage = (n) => Math.max(0, Math.min(MAX_USAGE, Math.round(Number(n) || 0)));
+
 export function normalizeUsage(u) {
   if (!u) return { promptTokens: 0, completionTokens: 0, cacheTokens: 0, totalTokens: 0, hasDetail: false };
   if (typeof u === "object") {
-    const p = Math.max(0, Math.round(Number(u.prompt_tokens ?? u.input_tokens) || 0));
-    const c = Math.max(0, Math.round(Number(u.completion_tokens ?? u.output_tokens) || 0));
-    const cache = Math.max(
-      0,
-      Math.round(Number(u.cached_tokens ?? u.cache_tokens ?? u.prompt_tokens_details?.cached_tokens) || 0)
+    const p = clampUsage(u.prompt_tokens ?? u.input_tokens);
+    const c = clampUsage(u.completion_tokens ?? u.output_tokens);
+    const cache = clampUsage(
+      u.cached_tokens ?? u.cache_tokens ?? u.prompt_cache_hit_tokens ?? u.prompt_tokens_details?.cached_tokens
     );
-    const total = Math.max(0, Math.round(Number(u.total_tokens) || 0)) || p + c;
+    const total = clampUsage(u.total_tokens) || p + c;
     return { promptTokens: p, completionTokens: c, cacheTokens: Math.min(cache, p), totalTokens: total, hasDetail: p + c > 0 };
   }
-  const t = Math.max(0, Math.round(Number(u) || 0));
+  const t = clampUsage(u);
   return { promptTokens: 0, completionTokens: 0, cacheTokens: 0, totalTokens: t, hasDetail: false };
 }
 

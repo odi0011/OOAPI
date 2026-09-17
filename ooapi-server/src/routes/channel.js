@@ -26,10 +26,31 @@ import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getProvider, getMethod, providerKeys, publicProviders } from "../services/channel-types.js";
 import { getAdapter, resetChannelState, channelRuntimeState, rowToChannel } from "../services/router.js";
-import { isReady as browserReady, removeProfile, screenshot as browserShot } from "../services/upstream/browser-driver.js";
+import {
+  isReady as browserReady,
+  removeProfile,
+  screenshot as browserShot,
+  getSession as browserSession,
+  act as browserAct,
+  credentials as browserCreds,
+  closeSession as browserClose,
+} from "../services/upstream/browser-driver.js";
+import { invalidateModelRegistry } from "../services/models.js";
+import { randomBytes } from "node:crypto";
 
 const router = Router();
 router.use(adminRequired);
+
+// 渠道写操作会改变「平台已注册模型」集合（models 字段），写成功后让登记表缓存失效，
+// 避免紧接着的定价导入/校验还按 60 秒前的旧集合判断。
+router.use((req, res, next) => {
+  if (req.method !== "GET") {
+    res.on("finish", () => {
+      if (res.statusCode < 400) invalidateModelRegistry();
+    });
+  }
+  next();
+});
 
 const VALID_PROVIDERS = providerKeys();
 
@@ -280,7 +301,8 @@ router.post(
 
     try {
       const ms = await adapter.verify(rowToChannel(rows[0]));
-      await pool.query("UPDATE channels SET response_time = ?, tested_time = ?, status = 1, last_error = '' WHERE id = ?", [
+      // 不写 status：status 是管理员开关，运行期/检查流程不得复活手动禁用的渠道
+      await pool.query("UPDATE channels SET response_time = ?, tested_time = ?, last_error = '' WHERE id = ?", [
         ms,
         now(),
         id,
@@ -292,6 +314,118 @@ router.post(
       await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), id]);
       return ok(res, { success: false, message: e.message, code: e.code }, `尚未就绪：${e.message}`);
     }
+  })
+);
+
+// ---------- 远程登录抓取（添加渠道的快捷入口）----------
+// 场景：DeepSeek / Kimi 这类「粘贴登录态」的接入方式，以前要管理员自己在浏览器
+// 打开控制台翻 localStorage / Cookie。这里把登录页搬到服务器端截图上：
+//   start   → 打开厂商登录页并返回截图
+//   act     → 管理员在截图上点击 / 输入验证码（远程操作真实页面）
+//   capture → 读取 cookies 与 localStorage 登录态候选，回填表单
+//   close   → 放弃登录，关闭会话
+// 会话使用临时 profile（capture-<sid>），抓取/关闭后立即删除目录，不占用磁盘。
+const CAPTURES = new Map(); // sid -> { type, channelId, at }
+const CAPTURE_TTL_MS = 15 * 60 * 1000;
+
+function sweepCaptures() {
+  const cutoff = Date.now() - CAPTURE_TTL_MS;
+  for (const [sid, c] of CAPTURES) {
+    if (c.at < cutoff) {
+      CAPTURES.delete(sid);
+      browserClose(c.type, c.channelId).catch(() => {});
+      removeProfile(c.type, c.channelId).catch(() => {});
+    }
+  }
+}
+
+function captureOf(req) {
+  const c = CAPTURES.get(String(req.params.sid || ""));
+  if (!c) return null;
+  c.at = Date.now();
+  return c;
+}
+
+router.post(
+  "/capture/start",
+  asyncHandler(async (req, res) => {
+    sweepCaptures();
+    const { type } = req.body || {};
+    const provider = getProvider(type);
+    if (!provider) return fail(res, "未知厂商");
+    const mCfg = getMethod(type, "relay");
+    if (!mCfg?.entryUrl) return fail(res, `${provider.name} 不支持远程登录抓取，请按提示手动填写登录态`);
+
+    const sid = randomBytes(8).toString("hex");
+    const channelId = `capture-${sid}`;
+    try {
+      await browserSession({ vendor: type, channelId, entryUrl: mCfg.entryUrl, profile: {} });
+    } catch (e) {
+      await removeProfile(type, channelId).catch(() => {});
+      return fail(res, `登录页打开失败：${e.message}`);
+    }
+    CAPTURES.set(sid, { type, channelId, at: Date.now() });
+    const shot = await browserShot(type, channelId);
+    if (!shot) return fail(res, "浏览器会话未就绪，请重试");
+    return ok(res, { sid, ...shot, hint: mCfg.captureHint || "请在登录页完成登录，然后点「抓取登录态」" });
+  })
+);
+
+router.get(
+  "/capture/:sid/shot",
+  asyncHandler(async (req, res) => {
+    const c = captureOf(req);
+    if (!c) return fail(res, "会话已过期，请重新打开登录页", 404);
+    const shot = await browserShot(c.type, c.channelId);
+    if (!shot) return fail(res, "会话已结束，请重新打开登录页", 404);
+    return ok(res, shot);
+  })
+);
+
+router.post(
+  "/capture/:sid/act",
+  asyncHandler(async (req, res) => {
+    const c = captureOf(req);
+    if (!c) return fail(res, "会话已过期，请重新打开登录页", 404);
+    try {
+      const shot = await browserAct(c.type, c.channelId, req.body || {});
+      if (!shot) return fail(res, "会话已结束，请重新打开登录页", 404);
+      return ok(res, shot);
+    } catch (e) {
+      return fail(res, `远程操作失败：${e.message}`);
+    }
+  })
+);
+
+router.post(
+  "/capture/:sid/capture",
+  asyncHandler(async (req, res) => {
+    const c = captureOf(req);
+    if (!c) return fail(res, "会话已过期，请重新打开登录页", 404);
+    const data = await browserCreds(c.type, c.channelId);
+    // 抓取完成即回收：关闭浏览器 + 删除临时 profile
+    CAPTURES.delete(String(req.params.sid));
+    await browserClose(c.type, c.channelId).catch(() => {});
+    await removeProfile(c.type, c.channelId).catch(() => {});
+    if (!data) return fail(res, "会话已结束，请重新打开登录页", 404);
+    if (!data.tokens?.length && !data.cookies) {
+      return fail(res, "没有抓到任何登录态，请确认已成功登录后再试");
+    }
+    return ok(res, data, "已抓取登录态，请确认要填入的字段");
+  })
+);
+
+router.post(
+  "/capture/:sid/close",
+  asyncHandler(async (req, res) => {
+    const sid = String(req.params.sid || "");
+    const c = CAPTURES.get(sid);
+    if (c) {
+      CAPTURES.delete(sid);
+      await browserClose(c.type, c.channelId).catch(() => {});
+      await removeProfile(c.type, c.channelId).catch(() => {});
+    }
+    return ok(res, null, "已关闭");
   })
 );
 
@@ -379,7 +513,7 @@ router.post(
       const prevOther = parseOther(exists[0]);
       const merged = { ...prevOther, ...other };
       await pool.query(
-        "UPDATE channels SET name = ?, api_key = ?, other = ?, status = 1, last_error = '' WHERE id = ?",
+        "UPDATE channels SET name = ?, api_key = ?, other = ?, last_error = '' WHERE id = ?",
         [String(name || provider.name).slice(0, 64), token || "", JSON.stringify(merged), targetId]
       );
       resetChannelState(targetId);
@@ -402,9 +536,10 @@ router.post(
     // 新建
     let insertId;
     if (mode === "browser") {
+      // 列与值必须严格一一对应（11 列 / 7 个参数：name,type,base_url,models,priority,other,created_time）
       const [ret] = await pool.query(
         `INSERT INTO channels (name, type, base_url, api_key, models, group_name, status, priority, weight, other, created_time)
-         VALUES (?,?,?, '', ?,?, 'default', 1, ?, 1, ?, ?)`,
+         VALUES (?,?,?, '', ?, 'default', 1, ?, 1, ?, ?)`,
         [String(name || `${provider.name} 渠道`).slice(0, 64), type, mCfg.baseUrl || "", models, Number(priority) || 0, JSON.stringify(other), now()]
       );
       insertId = ret.insertId;

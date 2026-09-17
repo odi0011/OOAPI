@@ -4,7 +4,8 @@ import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
-import { invalidatePrices, UNITS_PER_OD, CURRENCY, loadPrices } from "../services/pricing.js";
+import { invalidatePrices, UNITS_PER_OD, CURRENCY, loadPrices, DEFAULT_PRICES } from "../services/pricing.js";
+import { modelRegistry, invalidateModelRegistry } from "../services/models.js";
 
 const router = Router();
 router.use(adminRequired);
@@ -45,23 +46,41 @@ router.get(
   })
 );
 
-// 新增或更新
+// 新增或更新（单条，管理员手动）
 router.put(
   "/",
   asyncHandler(async (req, res) => {
     const { model, input_price, output_price, cache_price, channel_type, remark } = req.body || {};
     const m = String(model || "").trim();
     if (!m) return fail(res, "缺少模型 ID");
-    const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
-    if (num(input_price) < 0 || num(output_price) < 0 || num(cache_price) < 0) {
-      return fail(res, "价格不能为负数");
+    // 与导入同一套严格口径：只允许平台已注册的模型
+    invalidateModelRegistry();
+    const registry = await modelRegistry();
+    const reg = registry.get(m.toLowerCase());
+    if (!reg) return fail(res, `模型「${m}」未在平台注册（请先在渠道中声明该模型）`);
+    const num = (v, name) => {
+      const n = Number(v);
+      if (String(v ?? "").trim() === "") return null;
+      if (!Number.isFinite(n)) throw new Error(`${name} 不是有效数字`);
+      if (n < 0) throw new Error(`${name} 不能为负数`);
+      if (n > MAX_PRICE) throw new Error(`${name} 超出上限（${MAX_PRICE}）`);
+      return Number(n.toFixed(6));
+    };
+    let input; let output; let cache;
+    try {
+      input = num(input_price, "input");
+      output = num(output_price, "output");
+      cache = num(cache_price, "cache");
+    } catch (e) {
+      return fail(res, e.message);
     }
+    if (input == null || output == null) return fail(res, "输入/输出价格不能为空");
     await pool.query(
       `INSERT INTO model_prices (model, input_price, output_price, cache_price, channel_type, remark, updated_time)
        VALUES (?,?,?,?,?,?,?)
        ON DUPLICATE KEY UPDATE input_price=VALUES(input_price), output_price=VALUES(output_price),
         cache_price=VALUES(cache_price), channel_type=VALUES(channel_type), remark=VALUES(remark), updated_time=VALUES(updated_time)`,
-      [m, num(input_price), num(output_price), num(cache_price), String(channel_type || ""), String(remark || ""), now()]
+      [reg.model, input, output, cache ?? 0, String(channel_type || reg.type || ""), String(remark || ""), now()]
     );
     invalidatePrices();
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `保存模型定价「${m}」` });
@@ -73,12 +92,241 @@ router.put(
 router.delete(
   "/:model",
   asyncHandler(async (req, res) => {
-    const m = decodeURIComponent(req.params.model);
+    const m = String(req.params.model || "");
+    if (!m) return fail(res, "缺少模型 ID");
     const [ret] = await pool.query("DELETE FROM model_prices WHERE model = ?", [m]);
     if (!ret.affectedRows) return fail(res, "模型不存在", 404);
     invalidatePrices();
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `删除模型定价「${m}」` });
     return ok(res, null, "已删除");
+  })
+);
+
+// ---------------------------------------------------------------------------
+// 一键导入（管理员上传文件 → 前端读取文本 → POST 到这里）
+// ---------------------------------------------------------------------------
+// 严格校验（垃圾数据零容忍）：
+//   1. 模型 ID 必须存在于「模型登记表」（内置价目表 ∪ 厂商模型模块 ∪ 现有渠道声明）；
+//   2. 渠道类型若填写，必须与登记表推断出的厂商一致；
+//   3. 价格必须为有限数字且 0 ≤ 价格 ≤ 100000；
+//   4. 同一文件内重复模型以最后一条为准。
+// 支持 JSON（数组或 {prices:[]}）与 CSV（含表头，逗号分隔）。
+const MAX_PRICE = 100000;
+
+/** 极简 CSV 解析（支持双引号包裹、逗号与换行） */
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { cell += '"'; i++; }
+        else quoted = false;
+      } else cell += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ",") { row.push(cell); cell = ""; }
+    else if (ch === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else if (ch !== "\r") cell += ch;
+  }
+  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter((r) => r.some((c) => String(c).trim() !== ""));
+}
+
+const HEADER_ALIASES = {
+  model: "model", model_id: "model", 模型: "model", 模型id: "model", 模型_id: "model",
+  input: "input", input_price: "input", 输入: "input", 输入价: "input",
+  output: "output", output_price: "output", 输出: "output", 输出价: "output",
+  cache: "cache", cache_price: "cache", cached: "cache", 缓存: "cache", 缓存价: "cache",
+  type: "type", channel_type: "type", 类型: "type",
+  remark: "remark", source: "remark", 来源: "remark", 备注: "remark",
+};
+
+function parseEntries(raw) {
+  const text = String(raw || "").trim();
+  if (!text) throw new Error("文件内容为空");
+  if (text.startsWith("[") || text.startsWith("{")) {
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error("JSON 解析失败，请检查文件格式");
+    }
+    const arr = Array.isArray(data) ? data : Array.isArray(data?.prices) ? data.prices : null;
+    if (!arr) throw new Error("JSON 必须是价格数组，或形如 { \"prices\": [...] }");
+    return arr.map((e, i) => ({ line: i + 1, entry: e || {} }));
+  }
+  const rows = parseCsv(text);
+  if (rows.length < 2) throw new Error("CSV 至少需要表头 + 1 行数据");
+  const header = rows[0].map((h) => HEADER_ALIASES[String(h).trim().toLowerCase()] || null);
+  if (!header.includes("model")) throw new Error("CSV 表头缺少 model（模型 ID）列");
+  return rows.slice(1).map((r, i) => {
+    const o = {};
+    header.forEach((key, idx) => {
+      if (key) o[key] = r[idx];
+    });
+    return { line: i + 2, entry: o };
+  });
+}
+
+router.post(
+  "/import",
+  asyncHandler(async (req, res) => {
+    const { text } = req.body || {};
+    if (!text) return fail(res, "缺少文件内容");
+
+    let parsed;
+    try {
+      parsed = parseEntries(text);
+    } catch (e) {
+      return fail(res, e.message);
+    }
+    if (!parsed.length) return fail(res, "文件里没有任何数据行");
+    if (parsed.length > 2000) return fail(res, "单次最多导入 2000 条");
+
+    // 登记表现查（渠道可能刚改过）
+    invalidateModelRegistry();
+    const registry = await modelRegistry();
+
+    const accepted = new Map(); // modelLower -> row
+    const rejected = [];
+    for (const { line, entry } of parsed) {
+      const model = String(entry.model ?? entry.model_id ?? "").trim();
+      if (!model) {
+        rejected.push({ line, model: "", reason: "缺少模型 ID" });
+        continue;
+      }
+      const reg = registry.get(model.toLowerCase());
+      if (!reg) {
+        rejected.push({ line, model, reason: "模型未注册（垃圾数据）：平台内无此模型 ID" });
+        continue;
+      }
+      const type = String(entry.type ?? entry.channel_type ?? "").trim();
+      if (type && reg.type && type.toLowerCase() !== reg.type.toLowerCase()) {
+        rejected.push({ line, model, reason: `渠道类型不匹配：登记为 ${reg.type}，文件写的是 ${type}` });
+        continue;
+      }
+      const num = (v, name, required) => {
+        if (v === undefined || v === null || String(v).trim() === "") {
+          if (required) throw new Error(`${name} 不能为空`);
+          return 0;
+        }
+        const n = Number(v);
+        if (!Number.isFinite(n)) throw new Error(`${name} 不是有效数字`);
+        if (n < 0) throw new Error(`${name} 不能为负数`);
+        if (n > MAX_PRICE) throw new Error(`${name} 超出上限（${MAX_PRICE}）`);
+        return Number(n.toFixed(6));
+      };
+      try {
+        accepted.set(model.toLowerCase(), {
+          model: reg.model,
+          input: num(entry.input ?? entry.input_price, "input", true),
+          output: num(entry.output ?? entry.output_price, "output", true),
+          cache: num(entry.cache ?? entry.cache_price, "cache", false),
+          type: reg.type || type,
+          remark: String(entry.remark ?? entry.source ?? "").slice(0, 300),
+        });
+      } catch (e) {
+        rejected.push({ line, model, reason: e.message });
+      }
+    }
+
+    if (!accepted.size) {
+      return fail(res, `全部 ${rejected.length} 条均未通过校验，请检查文件（模型 ID 必须与平台已注册模型严格一致）`);
+    }
+
+    const ts = now();
+    const conn = await pool.getConnection();
+    let inserted = 0;
+    let updated = 0;
+    try {
+      await conn.beginTransaction();
+      for (const p of accepted.values()) {
+        const [ret] = await conn.query(
+          `INSERT INTO model_prices (model, input_price, output_price, cache_price, channel_type, remark, updated_time)
+           VALUES (?,?,?,?,?,?,?)
+           ON DUPLICATE KEY UPDATE input_price=VALUES(input_price), output_price=VALUES(output_price),
+            cache_price=VALUES(cache_price), channel_type=VALUES(channel_type), remark=VALUES(remark), updated_time=VALUES(updated_time)`,
+          [p.model, p.input, p.output, p.cache, p.type, p.remark, ts]
+        );
+        if (ret.affectedRows === 1) inserted += 1;
+        else updated += 1;
+      }
+      await conn.commit();
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally {
+      conn.release();
+    }
+
+    invalidatePrices();
+    await writeLog({
+      user: req.user,
+      type: LOG_TYPE.MANAGE,
+      content: `导入模型定价：新增 ${inserted} 条、更新 ${updated} 条、拒绝 ${rejected.length} 条`,
+    });
+    return ok(res, { total: parsed.length, inserted, updated, rejected }, `导入完成：新增 ${inserted}，更新 ${updated}，拒绝 ${rejected.length}`);
+  })
+);
+
+// ---------------------------------------------------------------------------
+// 清理无效定价：模型不在登记表里的行直接删除（一键清垃圾）
+// ---------------------------------------------------------------------------
+router.post(
+  "/prune",
+  asyncHandler(async (req, res) => {
+    invalidateModelRegistry();
+    const registry = await modelRegistry();
+    const [rows] = await pool.query("SELECT model FROM model_prices");
+    const dead = rows.map((r) => r.model).filter((m) => !registry.has(String(m).toLowerCase()));
+    if (dead.length) {
+      await pool.query(`DELETE FROM model_prices WHERE model IN (${dead.map(() => "?").join(",")})`, dead);
+      invalidatePrices();
+    }
+    await writeLog({
+      user: req.user,
+      type: LOG_TYPE.MANAGE,
+      content: `清理无效定价 ${dead.length} 条${dead.length ? `：${dead.slice(0, 10).join("、")}` : ""}`,
+    });
+    return ok(res, { removed: dead }, dead.length ? `已删除 ${dead.length} 条无效定价` : "没有发现无效定价");
+  })
+);
+
+// ---------------------------------------------------------------------------
+// 同步内置价目表：按 DEFAULT_PRICES 覆盖更新（仅管理员主动点击时执行）
+// ---------------------------------------------------------------------------
+// 与启动时 seed 不同：这里会覆盖价格与来源说明，用于把被改乱/写错的历史数据拉回官方口径。
+router.post(
+  "/sync-defaults",
+  asyncHandler(async (req, res) => {
+    const ts = now();
+    let updated = 0;
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      for (const p of DEFAULT_PRICES) {
+        await conn.query(
+          `INSERT INTO model_prices (model, input_price, output_price, cache_price, channel_type, remark, updated_time)
+           VALUES (?,?,?,?,?,?,?)
+           ON DUPLICATE KEY UPDATE input_price=VALUES(input_price), output_price=VALUES(output_price),
+            cache_price=VALUES(cache_price), channel_type=VALUES(channel_type), remark=VALUES(remark), updated_time=VALUES(updated_time)`,
+          [p.model, p.input, p.output, p.cache, p.type, p.remark, ts]
+        );
+        updated += 1;
+      }
+      await conn.commit();
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally {
+      conn.release();
+    }
+    invalidatePrices();
+    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `同步内置价目表 ${updated} 条` });
+    return ok(res, { updated }, `已按内置价目表同步 ${updated} 条（来源均为官方页面）`);
   })
 );
 

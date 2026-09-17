@@ -76,6 +76,8 @@ export default function HomePage() {
   const navigate = useNavigate();
   const endpoint = status?.api_endpoint || "https://your-domain/v1";
   const systemName = status?.system_name || "OOAPI";
+  // 管理员关闭注册后，首页不再引导用户去 /register（否则点进去只会看到关闭提示）
+  const registerOpen = status?.password_register_enabled !== false;
   const quotaLabel = status?.units_per_od || status?.quota_per_unit
     ? odRateText(unitsPerOd(status))
     : "额度换算以控制台配置为准";
@@ -126,7 +128,7 @@ export default function HomePage() {
           <nav className="hr-nav" aria-label="首页导航"><a href="#hr-features">平台能力</a><a href="#hr-quickstart">快速接入</a></nav>
           <Space size={8} className="hr-header-actions">
             <ThemeSwitch size="small" />
-            {user ? <Button type="primary" onClick={() => navigate("/console")}>控制台</Button> : <><Button onClick={() => navigate("/login")}>登录</Button><Button type="primary" onClick={() => navigate("/register")}>开始使用</Button></>}
+            {user ? <Button type="primary" onClick={() => navigate("/console")}>控制台</Button> : <><Button onClick={() => navigate("/login")}>登录</Button>{registerOpen ? <Button type="primary" onClick={() => navigate("/register")}>开始使用</Button> : null}</>}
           </Space>
         </div>
       </header>
@@ -138,7 +140,7 @@ export default function HomePage() {
             <h1 id="hr-title">连接模型的能力，<br /><span>专注创造的可能。</span></h1>
             <p className="hr-hero-description">{status?.about || "从第一段对话，到你的下一个 AI 应用。统一接入大模型，集中管理令牌、用量与账单，让想法更快进入实践。"}</p>
             <div className="hr-hero-actions">
-              <Button type="primary" size="large" icon={<ArrowRightOutlined />} onClick={() => navigate(user ? "/console" : "/register")}>{user ? "进入控制台" : "开始构建"}</Button>
+              <Button type="primary" size="large" icon={<ArrowRightOutlined />} onClick={() => navigate(user ? "/console" : registerOpen ? "/register" : "/login")}>{user ? "进入控制台" : registerOpen ? "开始构建" : "登录使用"}</Button>
               <Button size="large" href="#hr-quickstart">查看接入示例</Button>
               {!user && <a className="hr-login-link" href="/login" onClick={(event) => { if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey && event.button === 0) { event.preventDefault(); navigate("/login"); } }}>已有账号？登录</a>}
             </div>

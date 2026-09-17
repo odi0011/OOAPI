@@ -1,8 +1,11 @@
 // 轻量 Markdown 渲染（对话与智能体输出用）
 // 仅覆盖模型常用输出：代码块、行内代码、标题、粗体、列表、引用、链接。
 // 输出为 React 节点，避免 dangerouslySetInnerHTML 带来的注入风险。
-
-import React from "react";
+//
+// 性能约定：本组件被 React.memo 包裹，且解析结果按 text 做 useMemo 缓存。
+// 流式对话里每个 token 都会携带新的 text，只有当前这条消息会重新解析；
+// 其余消息因 props 未变而整棵跳过重渲染（长会话不掉帧的关键）。
+import React, { useMemo } from "react";
 
 // 只允许安全协议的链接，避免模型输出 javascript:/data: 等危险 href
 function safeHref(href) {
@@ -45,10 +48,7 @@ function renderInline(text, keyPrefix) {
   return nodes;
 }
 
-export default function Markdown({ text }) {
-  const src = String(text || "");
-  if (!src) return null;
-
+function parseMarkdown(src) {
   const lines = src.split("\n");
   const blocks = [];
   let i = 0;
@@ -148,3 +148,15 @@ export default function Markdown({ text }) {
 
   return <div className="bui-prose">{blocks}</div>;
 }
+
+// memo + useMemo 双层缓存：
+//   · memo：text 未变时整个组件不重渲染（父级因输入框等状态刷新时大量命中）
+//   · useMemo：组件确实重渲染（流式中）时，仍复用同一 text 的解析结果
+function MarkdownView({ text }) {
+  const src = String(text || "");
+  const nodes = useMemo(() => (src ? parseMarkdown(src) : null), [src]);
+  if (!nodes) return null;
+  return nodes;
+}
+
+export default React.memo(MarkdownView);

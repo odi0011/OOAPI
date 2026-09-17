@@ -32,6 +32,9 @@ export const PROVIDERS = [
           { key: "password", label: "密码", type: "password", required: true },
         ],
         pasteHint: "浏览器登录 chat.deepseek.com 后，控制台执行 localStorage.getItem('userToken') 取 value 字段",
+        // 远程抓取：服务器端打开登录页，管理员扫码/输验证码后自动读 localStorage.userToken
+        entryUrl: "https://chat.deepseek.com/",
+        captureHint: "登录 DeepSeek 网页版（可用手机 App 扫码），完成后点「抓取登录态」自动填表",
         needsBrowser: false,
         defaultModels: [
           { id: "deepseek-flash", name: "DeepSeek V4.1 Flash" },
@@ -98,6 +101,9 @@ export const PROVIDERS = [
         loginModes: ["paste"],
         loginFields: [],
         pasteHint: "浏览器登录 kimi.com 后，复制 Cookie 中 kimi-auth 的值（JWT，以 eyJ 开头）",
+        // 远程抓取：与适配器 ENTRY_URL 保持一致（www.kimi.com）
+        entryUrl: "https://www.kimi.com/",
+        captureHint: "登录 Kimi 网页版（手机号验证码/扫码），完成后点「抓取登录态」自动填表",
         needsBrowser: false,
         defaultModels: [
           { id: "kimi-k3", name: "Kimi K3" },
@@ -315,6 +321,9 @@ export function publicProviders() {
       loginFields: m.loginFields || [],
       pasteHint: m.pasteHint || "",
       browserHint: m.browserHint || "",
+      // 远程登录抓取能力：有 entryUrl 就说明支持「打开登录页自动抓取」
+      captureHint: m.captureHint || "",
+      canCapture: Boolean(m.entryUrl),
       needsBrowser: Boolean(m.needsBrowser),
       baseUrl: m.baseUrl || "",
       keyHint: m.keyHint || "",

@@ -31,9 +31,11 @@ export function AppProvider({ children }) {
       const u = await API.get("/user/self");
       setUser(u);
     } catch (e) {
-      // 仅在服务端明确判定登录失效（401）时清除登录态；
+      // 明确判定登录失效时清除登录态：401（过期/撤销）；
+      // 403 且消息是「账号已被禁用」时同样退出，否则页面会一直 403 却不跳登录。
       // 网络抖动、5xx 等临时错误保留当前用户，避免误退出。
-      if (e?.status === 401) {
+      const disabled = e?.status === 403 && /禁用/.test(e?.message || "");
+      if (e?.status === 401 || disabled) {
         setToken("");
         setUser(null);
       }

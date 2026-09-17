@@ -49,11 +49,18 @@ export default function AgentPage() {
   const ctrlRef = useRef(null);
   const timerRef = useRef(null);
   const outRef = useRef(null);
+  const runIdRef = useRef(0);
 
   useEffect(() => {
+    let alive = true;
     API.get("/chat/meta")
-      .then(setMeta)
+      .then((m) => {
+        if (alive) setMeta(m);
+      })
       .catch(() => {});
+    return () => {
+      alive = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -61,9 +68,11 @@ export default function AgentPage() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [steps, answer]);
 
-  // 卸载清理：中止流并清掉计时器，避免路由离开后继续请求/空转
+  // 卸载清理：中止流、清计时器，并让 runId 作废
+  // （abort 会让 streamPost 回调 onDone，若不挡住会卸载后 setState）
   useEffect(() => {
     return () => {
+      runIdRef.current += 1;
       ctrlRef.current?.abort();
       if (timerRef.current) clearInterval(timerRef.current);
     };
@@ -87,12 +96,15 @@ export default function AgentPage() {
     timerRef.current = setInterval(() => setElapsed(Date.now() - t0), 200);
 
     let buf = "";
+    const runId = ++runIdRef.current;
+    const stale = () => runIdRef.current !== runId;
     ctrlRef.current = streamPost(
       "/api/chat/agents/run",
       { agentId, goal: goal.trim(), model: effectiveModel },
       {
         token: getToken(),
         onEvent: (ev) => {
+          if (stale()) return;
           if (ev.type === "plan_start") {
             setPhase("plan");
           } else if (ev.type === "plan") {
@@ -122,6 +134,7 @@ export default function AgentPage() {
           }
         },
         onError: (e) => {
+          if (stale()) return;
           // 出错也要收尾：清计时器、恢复按钮，否则页面永远停在「运行中」
           setError(e.message);
           if (timerRef.current) clearInterval(timerRef.current);
@@ -129,6 +142,7 @@ export default function AgentPage() {
           ctrlRef.current = null;
         },
         onDone: () => {
+          if (stale()) return;
           if (timerRef.current) clearInterval(timerRef.current);
           setRunning(false);
           setPhase((p) => (p === "done" ? p : "done"));

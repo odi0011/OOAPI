@@ -29,11 +29,11 @@ router.put(
   authRequired,
   asyncHandler(async (req, res) => {
     const { new_password, old_password } = req.body || {};
-    // 修改密码必须校验旧密码：仅有会话（或 CSRF）不足以永久接管账号
-    if (old_password !== undefined) {
-      const okOld = await bcrypt.compare(String(old_password || ""), req.user.password);
-      if (!okOld) return fail(res, "当前密码不正确", 403);
-    }
+    // 修改密码必须校验旧密码：仅有会话（或 CSRF）不足以永久接管账号。
+    // 注意这里**始终**要求旧密码，不能因为字段缺省就跳过校验。
+    if (!old_password) return fail(res, "请输入当前密码", 400);
+    const okOld = await bcrypt.compare(String(old_password), req.user.password);
+    if (!okOld) return fail(res, "当前密码不正确", 403);
     const pwd = String(new_password || "");
     if (pwd.length < 8) return fail(res, "新密码长度至少 8 位");
     if (/^[0-9]+$/.test(pwd) || /^[a-zA-Z]+$/.test(pwd)) return fail(res, "密码需同时包含字母和数字");
@@ -158,15 +158,17 @@ router.post(
     const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
     const user = rows[0];
     if (!user) return fail(res, "用户不存在", 404);
-    const newQuota = Math.max(0, Number(user.quota) + quota);
-    await pool.query("UPDATE users SET quota = ? WHERE id = ?", [newQuota, id]);
+    // 单条原子更新：查询→计算→写回会在并发调整时丢更新
+    await pool.query("UPDATE users SET quota = GREATEST(0, quota + ?) WHERE id = ?", [quota, id]);
+    const [fresh] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
+    const newQuota = Number(fresh[0].quota);
     await writeLog({
       user: req.user,
-      type: LOG_TYPE.TOPUP,
+      // 扣除用「管理」类型、充值用「充值」类型：日志页按类型显示 +/- 符号
+      type: quota > 0 ? LOG_TYPE.TOPUP : LOG_TYPE.MANAGE,
       content: `${quota > 0 ? "补充" : "扣除"} ${Math.abs(quota)} 额度给 ${user.username}（${user.display_name || user.username} 当前 ${newQuota}）`,
       quota: Math.abs(quota),
     });
-    const [fresh] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
     return ok(res, userToResponse(fresh[0]), "额度已调整");
   })
 );

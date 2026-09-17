@@ -229,13 +229,18 @@ export async function chat({
     }
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    consume(decoder.push(value));
-    if (parser.finished) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      consume(decoder.push(value));
+      if (parser.finished) break;
+    }
+    consume(decoder.flush());
+  } finally {
+    // 提前 break（finished）或回调抛错时都要归还连接，否则响应体悬挂
+    reader.cancel().catch(() => {});
   }
-  consume(decoder.flush());
 
   if (parser.error) {
     throw Object.assign(new Error(`上游返回错误：${parser.error}`), { code: "CHANNEL_STREAM_ERROR" });

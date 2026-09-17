@@ -4,6 +4,7 @@ import { ReloadOutlined, FileTextOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import { fmtDate, fmtOd, unitsPerOd, CURRENCY_NAME } from "../services/format";
 import { useApp } from "../context/AppContext";
+import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import { VendorIcon } from "../components/VendorIcon";
 
@@ -37,20 +38,23 @@ export default function LogPage() {
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState("");
   const [type, setType] = useState(0);
+  const { begin, isLatest } = useLatest();
 
   const load = useCallback(async () => {
+    const token = begin();
     setLoading(true);
     try {
       const path = isAdmin ? "/log/" : "/log/self";
       const data = await API.get(path, { params: { p: page, page_size: pageSize, keyword, type } });
+      if (!isLatest(token)) return;
       setItems(data.items);
       setTotal(data.total);
     } catch (e) {
-      message.error(e.message);
+      if (isLatest(token)) message.error(e.message);
     } finally {
-      setLoading(false);
+      if (isLatest(token)) setLoading(false);
     }
-  }, [isAdmin, page, pageSize, keyword, type, message]);
+  }, [isAdmin, page, pageSize, keyword, type, message, begin, isLatest]);
 
   useEffect(() => {
     load();
@@ -127,7 +131,7 @@ export default function LogPage() {
   ];
 
   return (
-    <div>
+    <div className="oo-page">
       <PageHeader
         title="使用记录"
         desc={isAdmin ? "全平台调用与操作日志" : "你的调用明细与消费记录"}

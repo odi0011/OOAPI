@@ -164,10 +164,20 @@ async function dsFetch(channel, path, { method = "GET", body, maxRetries = 2, si
 
   const c = ctx(channel);
   let lastErr = null;
+  // 单次请求硬超时：execute 的超时只会 abort 传入的 signal，而创建会话/PoW 等
+  // 子请求如果不带 signal 就会无限挂起。这里每个子请求都要有自己的时限。
+  const SUB_TIMEOUT = 60_000;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) await sleep(1000 * Math.pow(2, attempt - 1) + Math.random() * 500);
     let resp;
+    const ctrl = new AbortController();
+    const sub = setTimeout(() => ctrl.abort(), SUB_TIMEOUT);
+    const onOuter = () => ctrl.abort();
+    if (signal) {
+      if (signal.aborted) ctrl.abort();
+      else signal.addEventListener("abort", onOuter, { once: true });
+    }
     try {
       const h = c.headers(token);
       if (body !== undefined) h["content-type"] = "application/json";
@@ -175,14 +185,19 @@ async function dsFetch(channel, path, { method = "GET", body, maxRetries = 2, si
         method,
         headers: h,
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal,
+        signal: ctrl.signal,
       });
     } catch (e) {
+      if (signal?.aborted) throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
       if (e.name === "AbortError") {
-        throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
+        lastErr = Object.assign(new Error(`上游请求超时（${SUB_TIMEOUT}ms）`), { code: "CHANNEL_TIMEOUT" });
+        continue;
       }
       lastErr = Object.assign(new Error(`网络错误：${e.message}`), { code: "CHANNEL_NETWORK" });
       continue;
+    } finally {
+      clearTimeout(sub);
+      if (signal) signal.removeEventListener("abort", onOuter);
     }
     const text = await resp.text();
     if (wafBlocked(resp, text)) {

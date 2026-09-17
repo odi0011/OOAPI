@@ -213,12 +213,16 @@ export async function chat({
     } catch {
       /* 保留原始文本 */
     }
+    // 400/404/409/422 是请求本身的问题（模型名错、上下文超长等），换渠道也没用；
+    // 这类错误不可重试，直接抛给调用方，避免把健康渠道全部冷却。
     const code =
       resp.status === 401 || resp.status === 403
         ? "CHANNEL_AUTH_EXPIRED"
         : resp.status === 429
           ? "CHANNEL_RATE_LIMIT"
-          : "CHANNEL_HTTP_ERROR";
+          : [400, 404, 409, 413, 422].includes(resp.status)
+            ? "CHANNEL_BAD_REQUEST"
+            : "CHANNEL_HTTP_ERROR";
     throw Object.assign(new Error(`上游返回 HTTP ${resp.status}：${msg}`), { code });
   }
   if (!resp.body) {
@@ -244,6 +248,8 @@ export async function chat({
     } catch {
       return;
     }
+    // data: null / data: 123 等也是合法 JSON，直接读属性会抛 TypeError 打断整个流
+    if (!ev || typeof ev !== "object") return;
     if (ev.model) upstreamModel = ev.model;
     if (ev.usage) usage = ev.usage;
     const d = ev.choices?.[0]?.delta;
@@ -260,17 +266,22 @@ export async function chat({
     }
   };
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let i;
-    while ((i = buf.indexOf("\n")) !== -1) {
-      handleLine(buf.slice(0, i));
-      buf = buf.slice(i + 1);
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n")) !== -1) {
+        handleLine(buf.slice(0, i));
+        buf = buf.slice(i + 1);
+      }
     }
+    if (buf.trim()) handleLine(buf);
+  } finally {
+    // 提前结束（空内容抛错、回调抛错、客户端断开）都要归还连接，否则响应体悬挂
+    reader.cancel().catch(() => {});
   }
-  if (buf.trim()) handleLine(buf);
 
   if (!content && !reasoning) {
     throw Object.assign(new Error("上游返回空内容"), { code: "CHANNEL_EMPTY" });
@@ -284,7 +295,10 @@ export async function chat({
           prompt_tokens: Number(usage.prompt_tokens) || 0,
           completion_tokens: Number(usage.completion_tokens) || 0,
           total_tokens: Number(usage.total_tokens) || 0,
-          cached_tokens: Number(usage.prompt_tokens_details?.cached_tokens) || 0,
+          // 缓存命中字段各家写法不一：OpenAI/新版兼容用 prompt_tokens_details.cached_tokens，
+          // DeepSeek 官方用 prompt_cache_hit_tokens，部分厂商直接给 cached_tokens
+          cached_tokens:
+            Number(usage.prompt_tokens_details?.cached_tokens ?? usage.prompt_cache_hit_tokens ?? usage.cached_tokens) || 0,
         }
       : null,
     upstreamModel,

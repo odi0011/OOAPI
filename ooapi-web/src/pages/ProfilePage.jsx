@@ -221,7 +221,7 @@ export default function ProfilePage() {
   const { user } = useApp();
 
   return (
-    <div>
+    <div className="oo-page">
       <PageHeader title="个人设置" desc={`${user?.username} · ${user?.role >= 100 ? "管理员" : "普通用户"}`} />
       <Tabs
         items={[
