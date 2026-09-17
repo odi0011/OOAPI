@@ -1,10 +1,12 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pool, migrate } from "./db.js";
 import { loadOptions, publicStatus } from "./config.js";
+import { seedDefaultPrices } from "./services/pricing.js";
 import { ok } from "./utils.js";
 import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/user.js";
@@ -22,9 +24,22 @@ import updateRoutes from "./routes/update.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
-app.use(cors());
-app.use(express.json({ limit: "1mb" }));
-app.set("trust proxy", true);
+// 只信任本机反代（nginx 与后端同机，见 README）。跨机部署时用 TRUST_PROXY 显式配置，
+// 避免客户端伪造 X-Forwarded-For 影响 IP 风控与审计。
+app.set("trust proxy", process.env.TRUST_PROXY || "loopback");
+
+// CORS：默认放开（对外 API 需要），可用 CORS_ORIGIN 收敛为逗号分隔的白名单
+const corsOrigin = (process.env.CORS_ORIGIN || "").trim();
+app.use(cors(corsOrigin ? { origin: corsOrigin.split(",").map((s) => s.trim()).filter(Boolean) } : {}));
+
+// 请求体解析：普通后台接口 1MB。
+// 注意 /v1（多模态 base64，50MB）与 /api/chat（20MB）在各自路由内单独解析 ——
+// 之前这两条路径的 1MB 全局中间件先生效，导致大图请求 413/500。
+const jsonSmall = express.json({ limit: "1mb" });
+app.use(
+  ["/api/user", "/api/users", "/api/token", "/api/log", "/api/option", "/api/channel", "/api/pricing", "/api/update"],
+  jsonSmall
+);
 
 app.get("/api/status", (req, res) => ok(res, publicStatus()));
 app.get("/health", (req, res) => res.send("ok"));
@@ -50,8 +65,12 @@ app.get(/^(?!\/api|\/health|\/v1).*/, (req, res, next) => {
 });
 
 app.use((err, req, res, next) => {
+  const status = Number(err.status || err.statusCode) || 500;
   console.error("[error]", err);
-  res.status(500).json({ success: false, message: err.message || "服务器内部错误" });
+  if (res.headersSent) return next(err);
+  // 4xx 保留可读信息（如 413 request entity too large），5xx 不向客户端泄露内部细节
+  const message = status >= 500 ? "服务器内部错误" : err.message || "请求错误";
+  res.status(status).json({ success: false, message });
 });
 
 // 全局异常兜底：上游适配器（浏览器驱动、流式回调）的异常绝不能让进程退出。
@@ -79,18 +98,27 @@ async function bootstrap() {
   }
   await migrate();
   await loadOptions();
+  await seedDefaultPrices();
   // 首次启动创建默认管理员
   const [[{ c }]] = await pool.query("SELECT COUNT(*) AS c FROM users WHERE role >= 100");
   if (!c) {
     const bcrypt = (await import("bcryptjs")).default;
-    const pwd = process.env.ADMIN_PASSWORD || "Ooapi@Admin2026";
+    // 未显式设置 ADMIN_PASSWORD 时随机生成并打印一次，避免公开的硬编码默认密码
+    let pwd = process.env.ADMIN_PASSWORD || "";
+    let generated = false;
+    if (!pwd) {
+      pwd = crypto.randomBytes(12).toString("base64url");
+      generated = true;
+    }
     const hash = await bcrypt.hash(pwd, 10);
     const now = Math.floor(Date.now() / 1000);
     await pool.query(
       "INSERT INTO users (username, password, display_name, role, status, quota, aff_code, group_name, created_time) VALUES (?,?,?,100,1,?,?,?,?)",
       ["root", hash, "超级管理员", 500000000, "ROOT0001", "default", now]
     );
-    console.log(`[init] 已创建默认管理员 root / ${process.env.ADMIN_PASSWORD || "Ooapi@Admin2026"}`);
+    console.log(
+      `[init] 已创建默认管理员 root / ${pwd}${generated ? "（随机生成，请立即到「个人设置」修改）" : ""}`
+    );
   }
   app.listen(PORT, "127.0.0.1", () => console.log(`[ooapi-server] listening on 127.0.0.1:${PORT}`));
 

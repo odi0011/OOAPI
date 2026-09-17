@@ -56,7 +56,15 @@ async function request(method, path, { body, params, silent } = {}) {
   }
 
   if (!res.ok || json?.success === false) {
-    // 401：清理登录态，交由 App 处理跳转
+    // 401：清理登录态并广播，App 层统一跳转登录页
+    if (res.status === 401) {
+      setToken("");
+      try {
+        window.dispatchEvent(new CustomEvent("ooapi:unauthorized"));
+      } catch {
+        /* ignore */
+      }
+    }
     throw new ApiError(json?.message || `请求失败（HTTP ${res.status}）`, res.status, json?.data);
   }
   return json?.data;

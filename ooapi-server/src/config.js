@@ -11,14 +11,14 @@ export const DEFAULT_OPTIONS = {
   server_address: "",
 
   // 计费 / 额度
-  quota_per_unit: "500000", // 500,000 额度 = $1（与 new-api 一致）
-  usd_rate: "7.3", // 美元兑人民币汇率
+  quota_per_unit: "500000", // 旧键（保留兼容，计费不读它）
+  usd_rate: "1", // 旧键（保留兼容）；OD币固定 1 OD = 1 美元，无汇率换算
   general_setting_quota_display: "true",
-  quota_for_new_user: "100000000", // 新用户初始额度（$200）
+  quota_for_new_user: "2000000", // 新用户初始额度（1 OD = 10000 单位 → 200 OD = $200）
   topup_link: "",
 
-  // 认证
-  password_register_enabled: "true",
+  // 认证（注册默认关闭：公开注册 + 赠送额度易被刷，需要管理员显式开启）
+  password_register_enabled: "false",
   password_login_enabled: "true",
 
   // 模型（用于令牌模型限制的下拉列表）

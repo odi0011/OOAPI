@@ -8,7 +8,7 @@ import { ok, fail, asyncHandler, now } from "../utils.js";
 import { authRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { runCompletion } from "../services/execute.js";
-import { getPrice, computeCost, splitTokens, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
+import { getPrice, computeCost, splitTokens, normalizeUsage, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { allPublicModels, modelForChannelMatch } from "../services/models.js";
 
 const router = express.Router();
@@ -120,9 +120,9 @@ router.get(
 
 // ---------- 计费（用户额度）----------
 async function chargeUser({ user, model, prompt, output, usage, channel, kind }) {
-  const { promptTokens, completionTokens } = splitTokens({ prompt, output, upstreamTotal: usage });
+  const { promptTokens, completionTokens, cacheTokens } = splitTokens({ prompt, output, upstreamTotal: usage });
   const price = await getPrice(model);
-  const units = computeCost({ price, promptTokens, completionTokens });
+  const units = computeCost({ price, promptTokens, completionTokens, cacheTokens });
 
   const [uRows] = await pool.query("SELECT quota FROM users WHERE id = ?", [user.id]);
   if (Number(uRows[0]?.quota || 0) <= 0) {
@@ -135,11 +135,13 @@ async function chargeUser({ user, model, prompt, output, usage, channel, kind })
   await writeLog({
     user,
     type: LOG_TYPE.CONSUME,
-    content: `${kind === "agent" ? "智能体" : "站内对话"} · ${model} · 提示 ${promptTokens} / 补全 ${completionTokens} tokens · ${(units / UNITS_PER_OD).toFixed(4)} ${CURRENCY}`,
+    content: `${kind === "agent" ? "智能体" : "站内对话"} · ${model} · 提示 ${promptTokens} / 补全 ${completionTokens} tokens${
+      cacheTokens ? ` / 缓存 ${cacheTokens}` : ""
+    } · ${(units / UNITS_PER_OD).toFixed(4)} ${CURRENCY}`,
     detail: JSON.stringify({ channel: channel?.name, kind }),
     quota: units,
   });
-  return { units, promptTokens, completionTokens };
+  return { units, promptTokens, completionTokens, cacheTokens };
 }
 
 // ---------- 站内对话（流式）----------
@@ -147,7 +149,7 @@ router.post(
   "/completions",
   authRequired,
   asyncHandler(async (req, res) => {
-    const { messages = [], model = "deepseek-chat", thinking = false, search = false, images = [] } = req.body || {};
+    const { messages = [], model = "deepseek-chat", thinking, search = false, images = [] } = req.body || {};
 
     if (!Array.isArray(messages) || !messages.length) return fail(res, "messages 不能为空");
     if (Number(req.user.quota) <= 0) return fail(res, `${CURRENCY} 币余额不足，请联系管理员充值`, 403);
@@ -187,6 +189,12 @@ router.post(
 
     const matchModel = modelForChannelMatch(model) || model;
 
+    // 客户端断开时中止上游，避免继续消耗额度/浏览器会话
+    const clientCtrl = new AbortController();
+    req.on("close", () => {
+      if (!res.writableEnded) clientCtrl.abort();
+    });
+
     try {
       const result = await runCompletion({
         model: matchModel,
@@ -197,7 +205,7 @@ router.post(
         search,
         images: imgs,
         groupName: req.user.group_name,
-        signal: AbortSignal.timeout(Number(process.env.REQUEST_TIMEOUT_MS || 600000)),
+        signal: clientCtrl.signal,
         onChannelTry: (ch) => send({ type: "channel", name: ch.name }),
         onReasoning: (t) => send({ type: "reasoning", delta: t }),
         onSearchStatus: (s) => send({ type: "search", status: s }),
@@ -257,9 +265,15 @@ router.post(
 
     const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
 
+    // 客户端断开时中止当前步骤的上游请求
+    const clientCtrl = new AbortController();
+    req.on("close", () => {
+      if (!res.writableEnded) clientCtrl.abort();
+    });
+
     let totalPrompt = "";
     let totalOutput = "";
-    let totalUsage = 0;
+    const totalUsage = { prompt_tokens: 0, completion_tokens: 0, cached_tokens: 0 };
     let firstChannel = null;
 
     // 单步调用（复用执行器，自带渠道切换）
@@ -276,12 +290,15 @@ router.post(
         search: agent.id === "research",
         images: [],
         groupName: req.user.group_name,
-        signal: AbortSignal.timeout(Number(process.env.REQUEST_TIMEOUT_MS || 600000)),
+        signal: clientCtrl.signal,
         onDelta,
       });
+      const u = normalizeUsage(r.usage);
       totalPrompt += prompt;
       totalOutput += r.content + (r.reasoning || "");
-      totalUsage += r.usage || 0;
+      totalUsage.prompt_tokens += u.promptTokens;
+      totalUsage.completion_tokens += u.completionTokens;
+      totalUsage.cached_tokens += u.cacheTokens;
       if (!firstChannel) firstChannel = r.channel;
       return r.content;
     };

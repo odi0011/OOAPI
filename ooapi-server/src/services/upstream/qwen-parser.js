@@ -35,6 +35,7 @@ export function createQwenParser() {
       } catch {
         return null;
       }
+      if (!j || typeof j !== "object") return null;
 
       // ---------- 国际版 ----------
       if (Array.isArray(j.choices)) {

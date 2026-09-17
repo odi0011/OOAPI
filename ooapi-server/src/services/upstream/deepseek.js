@@ -158,7 +158,7 @@ function assertBiz(json, what) {
   );
 }
 
-async function dsFetch(channel, path, { method = "GET", body, maxRetries = 2 } = {}) {
+async function dsFetch(channel, path, { method = "GET", body, maxRetries = 2, signal } = {}) {
   const token = channel.api_key;
   if (!token) throw Object.assign(new Error("渠道未配置登录态"), { code: "CHANNEL_AUTH_EXPIRED" });
 
@@ -175,14 +175,32 @@ async function dsFetch(channel, path, { method = "GET", body, maxRetries = 2 } =
         method,
         headers: h,
         body: body === undefined ? undefined : JSON.stringify(body),
+        signal,
       });
     } catch (e) {
+      if (e.name === "AbortError") {
+        throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
+      }
       lastErr = Object.assign(new Error(`网络错误：${e.message}`), { code: "CHANNEL_NETWORK" });
       continue;
     }
     const text = await resp.text();
     if (wafBlocked(resp, text)) {
       lastErr = Object.assign(new Error(`请求被上游拦截（HTTP ${resp.status}）`), { code: "CHANNEL_WAF" });
+      continue;
+    }
+    // 按 HTTP 状态映射为可重试错误（否则 429/5xx 会被当成业务错误而不换渠道）
+    if (resp.status === 401 || resp.status === 403) {
+      throw Object.assign(new Error(`上游拒绝鉴权（HTTP ${resp.status}），请在渠道管理中重新登录该账号`), {
+        code: "CHANNEL_AUTH_EXPIRED",
+      });
+    }
+    if (resp.status === 429) {
+      lastErr = Object.assign(new Error("上游频率限制（HTTP 429）"), { code: "CHANNEL_RATE_LIMIT" });
+      continue;
+    }
+    if (resp.status >= 500) {
+      lastErr = Object.assign(new Error(`上游异常（HTTP ${resp.status}）`), { code: "CHANNEL_HTTP_ERROR" });
       continue;
     }
     let json;

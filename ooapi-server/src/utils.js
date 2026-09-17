@@ -14,13 +14,10 @@ export function asyncHandler(fn) {
 }
 
 export function clientIp(req) {
-  const fwd = req.headers["x-forwarded-for"];
-  if (fwd) return String(fwd).split(",")[0].trim();
-  return (
-    req.socket?.remoteAddress === "::1" || req.socket?.remoteAddress === "::ffff:127.0.0.1"
-      ? "127.0.0.1"
-      : (req.socket?.remoteAddress || "").replace("::ffff:", "")
-  );
+  // 统一走 req.ip（由 Express 依据 trust proxy 计算），
+  // 不能直接信任客户端可伪造的 X-Forwarded-For 首值。
+  const ip = req.ip || req.socket?.remoteAddress || "";
+  return String(ip).replace("::ffff:", "").replace(/^::1$/, "127.0.0.1");
 }
 
 export function randomString(len = 16) {

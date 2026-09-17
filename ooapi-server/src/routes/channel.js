@@ -99,6 +99,7 @@ function rowToResp(r, { withKey = false } = {}) {
     // 状态
     status: r.status,
     status_label: r.status === 2 ? "已禁用" : cooling ? "冷却中" : r.status === 1 ? "已启用" : "自动禁用",
+    auto_ban: r.auto_ban === 0 ? false : true,
     cooling,
     cooldown_text: rt.cooldown_until
       ? new Date(rt.cooldown_until).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })

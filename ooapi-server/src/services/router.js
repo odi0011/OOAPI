@@ -40,6 +40,8 @@ export function supportedTypes() {
 // 运行时状态（不落盘）：channelId -> { lastAt, window[], cooldownUntil, lastError }
 const state = new Map();
 const chains = new Map();
+// 同优先级轮询游标（模块级，进程存活期间有效）
+const SELECT_CURSOR = new Map();
 
 // 单渠道限速（保护上游账号，降低风控概率）
 const RATE = { minGapMs: 1200, jitterMs: 900, maxPerMin: 20 };
@@ -76,8 +78,10 @@ export async function markChannelOk(channel, elapsedMs) {
   const s = st(channel.id);
   s.cooldownUntil = 0;
   s.lastError = "";
+  // 只更新运行指标，不改 status —— status 是管理员开关（手动启停），
+  // 写 status=1 会复活管理员刚禁用的渠道。
   await pool
-    .query("UPDATE channels SET status = 1, response_time = ?, tested_time = ?, last_error = '' WHERE id = ?", [
+    .query("UPDATE channels SET response_time = ?, tested_time = ?, last_error = '' WHERE id = ?", [
       elapsedMs,
       now(),
       channel.id,
@@ -113,7 +117,9 @@ export function withChannelLimit(channel, taskFn) {
   const prev = chains.get(key) || Promise.resolve();
   const next = prev.then(run, run);
   chains.set(key, next);
-  next.finally(() => {
+  // 注意：next.finally() 会派生一个新 Promise，任务失败时无人消费会产生
+  // unhandledRejection 噪音，所以先 catch 再挂 finally。
+  next.catch(() => {}).finally(() => {
     if (chains.get(key) === next) chains.delete(key);
   });
   return next;
@@ -258,9 +264,6 @@ export async function selectChannels({ model, excludeIds = null, groupName = nul
 
   return ordered;
 }
-
-// 轮询游标（模块级，进程存活期间有效）
-const SELECT_CURSOR = new Map();
 
 // 取适配器
 /**

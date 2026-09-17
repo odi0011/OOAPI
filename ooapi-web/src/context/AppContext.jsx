@@ -47,6 +47,14 @@ export function AppProvider({ children }) {
     })();
   }, [refreshStatus, refreshUser]);
 
+  // 任意请求遇到 401（token 过期/被撤销）时，api.js 会广播事件，这里统一清空登录态，
+  // RequireAuth 随即自动跳转登录页，无需刷新页面。
+  useEffect(() => {
+    const onUnauthorized = () => setUser(null);
+    window.addEventListener("ooapi:unauthorized", onUnauthorized);
+    return () => window.removeEventListener("ooapi:unauthorized", onUnauthorized);
+  }, []);
+
   // 登录成功后写入 token 并刷新用户
   const login = useCallback(async (username, password) => {
     const data = await API.post("/user/login", { username, password });

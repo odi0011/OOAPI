@@ -4,6 +4,14 @@
 
 import React from "react";
 
+// 只允许安全协议的链接，避免模型输出 javascript:/data: 等危险 href
+function safeHref(href) {
+  const v = String(href || "").trim();
+  if (/^(https?:|mailto:)/i.test(v)) return v;
+  if (/^(\/|#)/.test(v)) return v;
+  return null;
+}
+
 // 行内标记：`code` **bold** [text](url)
 function renderInline(text, keyPrefix) {
   const nodes = [];
@@ -20,10 +28,15 @@ function renderInline(text, keyPrefix) {
       nodes.push(<strong key={`${keyPrefix}-b${i++}`}>{tok.slice(2, -2)}</strong>);
     } else {
       const mm = /\[([^\]]+)\]\(([^)]+)\)/.exec(tok);
+      const href = safeHref(mm[2]);
       nodes.push(
-        <a key={`${keyPrefix}-a${i++}`} href={mm[2]} target="_blank" rel="noreferrer">
-          {mm[1]}
-        </a>
+        href ? (
+          <a key={`${keyPrefix}-a${i++}`} href={href} target="_blank" rel="noreferrer">
+            {mm[1]}
+          </a>
+        ) : (
+          <span key={`${keyPrefix}-a${i++}`}>{mm[1]}</span>
+        )
       );
     }
     last = m.index + tok.length;

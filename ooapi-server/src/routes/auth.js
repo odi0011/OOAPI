@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { pool } from "../db.js";
 import { ok, fail, asyncHandler, clientIp, now, genAffCode, userToResponse } from "../utils.js";
 import { authRequired, signToken } from "../middleware/auth.js";
+import { rateLimit } from "../middleware/ratelimit.js";
 import { getOption, getBoolOption, getNumberOption } from "../config.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 
@@ -10,8 +11,13 @@ const router = Router();
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{2,32}$/;
 
+// 登录/注册限流：防暴力破解与批量刷号
+const loginLimit = rateLimit({ windowMs: 60_000, max: 20, keyPrefix: "login" });
+const registerLimit = rateLimit({ windowMs: 300_000, max: 5, keyPrefix: "register" });
+
 router.post(
   "/login",
+  loginLimit,
   asyncHandler(async (req, res) => {
     const { username, password } = req.body || {};
     if (!username || !password) return fail(res, "请输入用户名和密码");
@@ -35,9 +41,10 @@ router.post(
 
 router.post(
   "/register",
+  registerLimit,
   asyncHandler(async (req, res) => {
     const { username, password } = req.body || {};
-    if (!getOption("password_register_enabled")) return fail(res, "系统未开放注册", 403);
+    if (!getBoolOption("password_register_enabled")) return fail(res, "系统未开放注册", 403);
     const name = String(username || "").trim();
     if (!USERNAME_RE.test(name)) return fail(res, "用户名需为 2-32 位字母、数字或下划线");
     const pwd = String(password || "");

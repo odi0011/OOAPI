@@ -25,13 +25,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------- 设备标识（19 位数字，持久化在 profile 里）----------
 function deviceIds(profile) {
+  // 由 profile.deviceId 确定性派生：同一账号每次请求设备号固定（随机变化是强风控信号）
+  const seedHash = crypto.createHash("sha256").update(String(profile.deviceId || profile.userAgent || "kimi")).digest();
+  const digits = (offset, prefix) => {
+    let n = 0n;
+    for (let i = 0; i < 8; i++) n = (n << 8n) | BigInt(seedHash[offset + i]);
+    return prefix + (n % 10n ** 18n).toString().padStart(18, "0");
+  };
   // 首次生成后写入 profile，之后复用（同一账号设备不变）
-  if (!profile.mshDeviceId) {
-    profile.mshDeviceId = "7" + String(Math.floor(Math.random() * 1e18)).padStart(18, "0").slice(0, 18);
-  }
-  if (!profile.mshSessionId) {
-    profile.mshSessionId = "1" + String(Math.floor(Math.random() * 1e18)).padStart(18, "0").slice(0, 18);
-  }
+  if (!profile.mshDeviceId) profile.mshDeviceId = digits(0, "7");
+  if (!profile.mshSessionId) profile.mshSessionId = digits(8, "1");
   return { deviceId: profile.mshDeviceId, sessionId: profile.mshSessionId };
 }
 

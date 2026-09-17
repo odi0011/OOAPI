@@ -61,6 +61,14 @@ export default function AgentPage() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [steps, answer]);
 
+  // 卸载清理：中止流并清掉计时器，避免路由离开后继续请求/空转
+  useEffect(() => {
+    return () => {
+      ctrlRef.current?.abort();
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
+
   const agent = meta?.agents?.find((a) => a.id === agentId);
   const effectiveModel = model || agent?.model || "deepseek-chat";
 
@@ -113,9 +121,15 @@ export default function AgentPage() {
             setError(ev.message);
           }
         },
-        onError: (e) => setError(e.message),
+        onError: (e) => {
+          // 出错也要收尾：清计时器、恢复按钮，否则页面永远停在「运行中」
+          setError(e.message);
+          if (timerRef.current) clearInterval(timerRef.current);
+          setRunning(false);
+          ctrlRef.current = null;
+        },
         onDone: () => {
-          clearInterval(timerRef.current);
+          if (timerRef.current) clearInterval(timerRef.current);
           setRunning(false);
           setPhase((p) => (p === "done" ? p : "done"));
           ctrlRef.current = null;
@@ -127,7 +141,7 @@ export default function AgentPage() {
 
   const stop = () => {
     ctrlRef.current?.abort();
-    clearInterval(timerRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
     setRunning(false);
   };
 

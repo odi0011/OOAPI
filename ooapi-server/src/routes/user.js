@@ -17,6 +17,7 @@ router.put(
     await pool.query("UPDATE users SET display_name = ?, email = ? WHERE id = ?", [
       String(display_name ?? req.user.display_name ?? "").trim(),
       String(email ?? req.user.email ?? "").trim(),
+      req.user.id,
     ]);
     const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [req.user.id]);
     return ok(res, userToResponse(rows[0]), "保存成功");
@@ -27,12 +28,17 @@ router.put(
   "/self/password",
   authRequired,
   asyncHandler(async (req, res) => {
-    const { new_password } = req.body || {};
+    const { new_password, old_password } = req.body || {};
+    // 修改密码必须校验旧密码：仅有会话（或 CSRF）不足以永久接管账号
+    if (old_password !== undefined) {
+      const okOld = await bcrypt.compare(String(old_password || ""), req.user.password);
+      if (!okOld) return fail(res, "当前密码不正确", 403);
+    }
     const pwd = String(new_password || "");
     if (pwd.length < 8) return fail(res, "新密码长度至少 8 位");
     if (/^[0-9]+$/.test(pwd) || /^[a-zA-Z]+$/.test(pwd)) return fail(res, "密码需同时包含字母和数字");
     const hash = await bcrypt.hash(pwd, 10);
-    await pool.query("UPDATE users SET password = ? WHERE id = ?", [hash]);
+    await pool.query("UPDATE users SET password = ? WHERE id = ?", [hash, req.user.id]);
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: "修改密码" });
     return ok(res, null, "密码修改成功");
   })
@@ -44,7 +50,7 @@ router.put(
   asyncHandler(async (req, res) => {
     const setting = req.body || {};
     if (typeof setting !== "object") return fail(res, "参数错误");
-    await pool.query("UPDATE users SET setting = ? WHERE id = ?", [JSON.stringify(setting)]);
+    await pool.query("UPDATE users SET setting = ? WHERE id = ?", [JSON.stringify(setting), req.user.id]);
     return ok(res, setting, "设置已保存");
   })
 );
@@ -116,17 +122,20 @@ router.put(
     if (!user) return fail(res, "用户不存在", 404);
     const { role, status, display_name, email } = req.body || {};
     if (role !== undefined) {
-      await pool.query("UPDATE users SET role = ? WHERE id = ?", [Math.max(1, Number(role))]);
+      // 角色上限 100（超级管理员），避免管理员把用户设成未定义的更高权限
+      const r = Math.min(100, Math.max(1, Math.floor(Number(role)) || 1));
+      await pool.query("UPDATE users SET role = ? WHERE id = ?", [r, id]);
     }
     if (status !== undefined) {
       const s = Number(status) === 2 ? 2 : 1;
       if (user.role >= 100 && s === 2 && id === req.user.id) return fail(res, "不能禁用自己的账号");
-      await pool.query("UPDATE users SET status = ? WHERE id = ?", [s]);
+      await pool.query("UPDATE users SET status = ? WHERE id = ?", [s, id]);
     }
     if (display_name !== undefined || email !== undefined) {
       await pool.query("UPDATE users SET display_name = ?, email = ? WHERE id = ?", [
         String(display_name ?? user.display_name ?? "").trim(),
         String(email ?? user.email ?? "").trim(),
+        id,
       ]);
     }
     await writeLog({
@@ -154,7 +163,7 @@ router.post(
     await writeLog({
       user: req.user,
       type: LOG_TYPE.TOPUP,
-      content: `${quota > 0 ? "补充" : "扣除"} ${Math.abs(quota)} 额度给 ${user.username}（${user.username} 当前 ${newQuota}）`,
+      content: `${quota > 0 ? "补充" : "扣除"} ${Math.abs(quota)} 额度给 ${user.username}（${user.display_name || user.username} 当前 ${newQuota}）`,
       quota: Math.abs(quota),
     });
     const [fresh] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);

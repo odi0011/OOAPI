@@ -80,8 +80,8 @@ export function generateProfile(seed) {
     timezoneOffset: loc.tzOffset,
     hardwareConcurrency: pick(env.hardwareConcurrency, rnd(3)),
     deviceMemory: pick(env.deviceMemory, rnd(4)),
-    // DeepSeek 登录接口必填的设备标识
-    deviceId: crypto.randomBytes(16).toString("base64").replace(/[^A-Za-z0-9+/=]/g, "").slice(0, 24),
+    // DeepSeek 登录接口必填的设备标识：由 seed 确定性派生，保证同账号固定
+    deviceId: crypto.createHash("sha256").update(hash).digest("base64").replace(/[^A-Za-z0-9+/=]/g, "").slice(0, 24),
     // 屏幕尺寸（部分上报接口会带）
     screen: pick(["1920x1080", "2560x1440", "1536x864", "1440x900"], rnd(5)),
     createdAt: Date.now(),

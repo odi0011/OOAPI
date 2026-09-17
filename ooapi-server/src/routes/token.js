@@ -18,7 +18,8 @@ router.get(
     const [rows] = await pool.query("SELECT * FROM tokens WHERE user_id = ? ORDER BY id DESC", [req.user.id]);
     const items = rows.map((t) => {
       const r = tokenToResponse(t);
-      return { ...r, key: r.key.slice(0, 6) + "******************" + r.key.slice(-4) };
+      // 掩码只留前缀与后 4 位，避免泄露可用密钥
+      return { ...r, key: r.key.slice(0, 3) + "******************" + r.key.slice(-4) };
     });
     return ok(res, items);
   })

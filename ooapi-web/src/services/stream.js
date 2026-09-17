@@ -39,9 +39,18 @@ export function streamPost(url, body, { onEvent, onDone, onError, token } = {}) 
         if (!t.startsWith("data:")) return;
         const payload = t.slice(5).trim();
         if (payload === "[DONE]") return;
+        let ev;
         try {
-          onEvent?.(JSON.parse(payload));
-        } catch { /* 忽略非 JSON 行 */ }
+          ev = JSON.parse(payload);
+        } catch {
+          return; // 非 JSON 行（心跳/注释）直接忽略
+        }
+        try {
+          onEvent?.(ev);
+        } catch (e) {
+          // 业务回调异常不能被当成"非 JSON 行"静默吞掉
+          console.error("[stream] onEvent 处理失败：", e);
+        }
       };
 
       while (true) {

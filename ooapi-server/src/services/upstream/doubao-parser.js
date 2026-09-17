@@ -53,6 +53,7 @@ export function createDoubaoParser() {
       } catch {
         return null;
       }
+      if (!outer || typeof outer !== "object") return null;
 
       const eventType = Number(outer.event_type ?? outer.eventType ?? 0);
       const inner = parseMaybe(outer.event_data ?? outer.eventData);

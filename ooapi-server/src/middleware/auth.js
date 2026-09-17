@@ -18,20 +18,26 @@ function parseAuth(req) {
 }
 
 // 需要登录
+// 注意：Express 4 不捕获 async 中间件的 rejection，这里必须自行 try/catch，
+// 否则数据库抖动时请求会永久挂起（客户端无响应 + 仅剩一条 unhandledRejection 日志）。
 export async function authRequired(req, res, next) {
-  const payload = parseAuth(req);
-  if (!payload) return fail(res, "未登录或登录已过期", 401);
-  const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [payload.id]);
-  const user = rows[0];
-  if (!user) return fail(res, "用户不存在", 401);
-  if (user.status !== 1) return fail(res, "账号已被禁用", 403);
-  req.user = user;
-  next();
+  try {
+    const payload = parseAuth(req);
+    if (!payload) return fail(res, "未登录或登录已过期", 401);
+    const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [payload.id]);
+    const user = rows[0];
+    if (!user) return fail(res, "用户不存在", 401);
+    if (user.status !== 1) return fail(res, "账号已被禁用", 403);
+    req.user = user;
+    next();
+  } catch (e) {
+    next(e);
+  }
 }
 
 // 需要管理员
-export async function adminRequired(req, res, next) {
-  await authRequired(req, res, (err) => {
+export function adminRequired(req, res, next) {
+  authRequired(req, res, (err) => {
     if (err) return next(err);
     if (req.user.role < 100) return fail(res, "需要管理员权限", 403);
     next();

@@ -85,7 +85,7 @@ export default function LogPage() {
       ellipsis: true,
       render: (text) => {
         // 从日志内容里提取模型名（形如 "调用 deepseek-flash · ..."）
-        const m = /(?:调用|对话|智能体)s*[·•]?s*([a-zA-Z0-9._-]+)/.exec(String(text || ""));
+        const m = /(?:调用|对话|智能体)\s*[·•]?\s*([a-zA-Z0-9._-]+)/.exec(String(text || ""));
         const modelName = m && /^(deepseek|gpt|o[0-9]|claude|gemini|qwen|glm|kimi|doubao)/i.test(m[1]) ? m[1] : null;
         if (!modelName) return <span>{normalizeCurrency(text)}</span>;
 
@@ -103,14 +103,19 @@ export default function LogPage() {
       title: "额度",
       dataIndex: "quota",
       width: 110,
-      render: (q) =>
-        Number(q) > 0 ? (
-          <span className="oo-num" style={{ color: "var(--oo-text)" }}>
-            -{fmtOd(q, perUnit, 4)}
+      render: (q, r) => {
+        const n = Number(q);
+        if (!n) return <span style={{ color: "var(--oo-text-disabled)" }}>-</span>;
+        // 充值/补充是「+」，消费/错误是「-」；旧实现把所有正数都显示成负数
+        const sign = r.type === 1 ? "+" : "-";
+        const color = r.type === 1 ? "var(--oo-green, var(--oo-text))" : "var(--oo-text)";
+        return (
+          <span className="oo-num" style={{ color }}>
+            {sign}
+            {fmtOd(n, perUnit, 4)}
           </span>
-        ) : (
-          <span style={{ color: "var(--oo-text-disabled)" }}>-</span>
-        ),
+        );
+      },
     },
     {
       title: "IP",
@@ -139,15 +144,17 @@ export default function LogPage() {
                 options={TYPE_OPTIONS}
               />
             )}
-            <Input.Search
-              placeholder="搜索用户 / 内容"
-              allowClear
-              style={{ width: 240 }}
-              onSearch={(v) => {
-                setKeyword(v);
-                setPage(1);
-              }}
-            />
+            {isAdmin && (
+              <Input.Search
+                placeholder="搜索用户 / 内容"
+                allowClear
+                style={{ width: 240 }}
+                onSearch={(v) => {
+                  setKeyword(v);
+                  setPage(1);
+                }}
+              />
+            )}
             <Button icon={<ReloadOutlined />} onClick={load} />
           </>
         }

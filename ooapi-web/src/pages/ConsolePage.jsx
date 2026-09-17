@@ -79,24 +79,39 @@ export default function ConsolePage() {
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.lg;
   const [data, setData] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadData = async () => {
+    setRefreshing(true);
+    try {
+      setData(await API.get("/users/data/self"));
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   useEffect(() => {
-    API.get("/users/data/self")
-      .then(setData)
-      .catch(() => {});
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const perUnit = unitsPerOd(status); // 1 OD = 10000 额度单位
-  // 额度展示统一走 fmtOd：全站货币只能是 OD（1 OD = 1 美元）
-  const usd = (q) => fmtOd(q, perUnit, 2);
+  const perUnit = unitsPerOd(status); // 1 OD币 = 10,000 额度单位（固定 1 OD = $1）
+  // 额度展示统一走 fmtOd：全站货币只能是 OD币（1 OD = 1 美元）
+  const od = (q) => fmtOd(q, perUnit, 2);
   const endpoint = status?.api_endpoint || "https://your-domain/v1";
 
   const totalQuota = Number(user?.quota || 0) + Number(user?.used_quota || 0);
   const usedPct = totalQuota > 0 ? Math.min(100, (Number(user?.used_quota || 0) / totalQuota) * 100) : 0;
 
   const copyEndpoint = async () => {
-    await copyText(endpoint);
-    message.success("接口地址已复制");
+    try {
+      await copyText(endpoint);
+      message.success("接口地址已复制");
+    } catch {
+      message.error("复制失败，请手动选择复制");
+    }
   };
 
   return (
@@ -106,7 +121,7 @@ export default function ConsolePage() {
         desc="这是你的账户概览与近期用量"
         extra={
           <>
-            <Button icon={<ReloadOutlined />} onClick={() => window.location.reload()}>
+            <Button icon={<ReloadOutlined />} loading={refreshing} onClick={loadData}>
               刷新
             </Button>
             <Button type="primary" icon={<KeyOutlined />} onClick={() => navigate("/token")}>
@@ -124,7 +139,7 @@ export default function ConsolePage() {
             value={<OdStatValue od={odOf(user?.quota, perUnit)} />}
             icon={<WalletOutlined />}
             glow="color-mix(in srgb, var(--oo-primary) 32%, transparent)"
-            foot={<span>共 {usd(totalQuota)} 额度</span>}
+            foot={<span>共 {od(totalQuota)} 额度</span>}
           />
         </Col>
         <Col xs={12} lg={6}>
@@ -163,7 +178,7 @@ export default function ConsolePage() {
         <Col xs={12} lg={6}>
           <StatCard
             label="近 30 天消费"
-            value={usd(data?.consume_in_logs)}
+            value={od(data?.consume_in_logs)}
             icon={<RiseOutlined />}
             glow="color-mix(in srgb, var(--oo-primary) 32%, transparent)"
             foot={<span>{data?.daily?.length || 0} 天有调用</span>}

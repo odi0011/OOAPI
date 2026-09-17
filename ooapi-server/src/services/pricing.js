@@ -120,7 +120,30 @@ export function computeCost({ price, promptTokens = 0, completionTokens = 0, cac
   return Math.max(1, Math.ceil(od * UNITS_PER_OD));
 }
 
-// token 估算（上游仅给总量时用于拆分）
+/**
+ * 归一化上游 usage：
+ *   · 对象（OpenAI 兼容渠道返回 {prompt_tokens, completion_tokens, cached_tokens}）
+ *   · 数字（反代适配器只给总量）
+ *   · null（完全不提供）
+ * @returns {{promptTokens:number, completionTokens:number, cacheTokens:number, totalTokens:number, hasDetail:boolean}}
+ */
+export function normalizeUsage(u) {
+  if (!u) return { promptTokens: 0, completionTokens: 0, cacheTokens: 0, totalTokens: 0, hasDetail: false };
+  if (typeof u === "object") {
+    const p = Math.max(0, Math.round(Number(u.prompt_tokens ?? u.input_tokens) || 0));
+    const c = Math.max(0, Math.round(Number(u.completion_tokens ?? u.output_tokens) || 0));
+    const cache = Math.max(
+      0,
+      Math.round(Number(u.cached_tokens ?? u.cache_tokens ?? u.prompt_tokens_details?.cached_tokens) || 0)
+    );
+    const total = Math.max(0, Math.round(Number(u.total_tokens) || 0)) || p + c;
+    return { promptTokens: p, completionTokens: c, cacheTokens: Math.min(cache, p), totalTokens: total, hasDetail: p + c > 0 };
+  }
+  const t = Math.max(0, Math.round(Number(u) || 0));
+  return { promptTokens: 0, completionTokens: 0, cacheTokens: 0, totalTokens: t, hasDetail: false };
+}
+
+// token 估算（仅在拿不到上游明细时使用）
 export function estimateTokens(text) {
   if (!text) return 0;
   const s = String(text);
@@ -128,16 +151,22 @@ export function estimateTokens(text) {
   return Math.max(1, Math.ceil(s.length / 3));
 }
 
-// 用上游总量校准估算，按比例拆分出提示/补全
+// 拆分计费 token：
+//   有上游明细 → 直接精确计费（含缓存命中）
+//   只有总量   → 按估算比例拆分
+//   什么都没有 → 全按估算
 export function splitTokens({ prompt, output, upstreamTotal }) {
+  const u = normalizeUsage(upstreamTotal);
+  if (u.hasDetail) {
+    return { promptTokens: u.promptTokens, completionTokens: u.completionTokens, cacheTokens: u.cacheTokens };
+  }
   const estP = estimateTokens(prompt);
   const estC = estimateTokens(output);
-  const total = Number(upstreamTotal) || 0;
-  if (total > 0 && estP + estC > 0) {
-    const p = Math.max(1, Math.round((total * estP) / (estP + estC)));
-    return { promptTokens: p, completionTokens: Math.max(1, total - p) };
+  if (u.totalTokens > 0 && estP + estC > 0) {
+    const p = Math.max(1, Math.round((u.totalTokens * estP) / (estP + estC)));
+    return { promptTokens: p, completionTokens: Math.max(1, u.totalTokens - p), cacheTokens: 0 };
   }
-  return { promptTokens: estP, completionTokens: estC };
+  return { promptTokens: estP, completionTokens: estC, cacheTokens: 0 };
 }
 
 // 金额展示（OD 币）
@@ -164,4 +193,26 @@ export async function charge({ user, token, units, model, meta = {}, ip = "", re
     token.id,
   ]);
   return units;
+}
+
+/**
+ * 写入内置默认价格（仅在 model_prices 缺该模型时插入，绝不覆盖管理员改过的价格）。
+ * 全新安装由启动流程调用，避免所有模型都落到「未配置价格」兜底档导致漏计费。
+ */
+export async function seedDefaultPrices() {
+  const ts = now();
+  let added = 0;
+  for (const p of DEFAULT_PRICES) {
+    const [ret] = await pool.query(
+      `INSERT INTO model_prices (model, input_price, output_price, cache_price, channel_type, remark, updated_time)
+       VALUES (?,?,?,?,?,?,?)
+       ON DUPLICATE KEY UPDATE model = model`,
+      [p.model, p.input, p.output, p.cache, p.type, p.remark, ts]
+    );
+    if (ret.affectedRows === 1) added += 1;
+  }
+  if (added) {
+    invalidatePrices();
+    console.log(`[init] 已写入默认模型价格 ${added} 条（可在「模型定价」中调整）`);
+  }
 }

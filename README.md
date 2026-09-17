@@ -93,8 +93,9 @@ DB_USER=ooapi
 DB_PASSWORD=你刚设置的数据库密码
 DB_NAME=ooapi
 
-# 超级管理员初始密码 —— 强烈建议首次启动前就改掉
-ADMIN_PASSWORD=换成一个强密码
+# 超级管理员初始密码（首次启动创建 root 账号时使用）
+# 不设置则随机生成，并在首次启动日志中打印一次，登录后请立即修改
+ADMIN_PASSWORD=
 
 # JWT 签名密钥，留空会自动生成并保存到 .jwt-secret（该文件不要提交）
 JWT_SECRET=
@@ -194,7 +195,7 @@ server {
 |---|---|
 | 地址 | `http://<你的域名或IP>:3001/login` |
 | 用户名 | `root` |
-| 密码 | `.env` 里的 `ADMIN_PASSWORD`（未设置时为 `Ooapi@Admin2026`） |
+| 密码 | `.env` 里的 `ADMIN_PASSWORD`；未设置时首次启动随机生成并打印在启动日志里 |
 
 创建时机：**首次启动**时，若 `users` 表中不存在 `role >= 100` 的用户，自动创建 `root`。
 
@@ -332,8 +333,8 @@ print(resp.choices[0].message.content)
 | `system_name` | OOAPI | 站点名称 |
 | `logo` | /logo.jpg | 站点图标 |
 | `api_endpoint` | 空 | 首页展示的接口地址 |
-| `quota_for_new_user` | 100000000 | 新用户赠送额度（单位） |
-| `password_register_enabled` | true | 是否开放注册 |
+| `quota_for_new_user` | 2000000 | 新用户赠送额度（单位，200 OD = $200） |
+| `password_register_enabled` | false | 是否开放注册（默认关闭，防止被刷号） |
 | `password_login_enabled` | true | 是否开放密码登录 |
 | `units_per_od` | 10000 | 1 OD 等于多少额度单位 |
 | `currency_name` | OD币 | 货币名称 |
@@ -342,9 +343,10 @@ print(resp.choices[0].message.content)
 ## 数据库迁移
 
 `migrate2.mjs` / `migrate3.mjs` / `migrate5.mjs` 是**增量**脚本（幂等，可重复执行），
-用于给老库补字段。**全新部署不需要跑**，`db.js` 建表时已含全部字段。
+用于给老库补字段与迁移历史数据。**全新部署不需要手动跑**：
+`db.js` 建表时已含全部字段，启动时还会自动补齐缺失的列。
 
-老版本升级时按需执行：
+老版本升级时按需执行（数据迁移部分：历史账号/额度换算）：
 
 ```bash
 cd ooapi-server

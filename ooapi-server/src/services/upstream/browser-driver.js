@@ -185,11 +185,15 @@ export async function evalInPage(vendor, channelId, fn) {
  */
 export async function installHook(page, matchPath) {
   await page.evaluate((match) => {
-    if (window.__ooHookInstalled) return;
-    window.__ooHookInstalled = true;
-    window.__ooPatch = null;
-    window.__ooCap = { chunks: [], done: false, error: null, startedAt: 0 };
+    // 支持多条匹配路径：路径注册表 + fetch 只包装一次，
+    // 否则第二个 MATCH_PATHS 永远不会被挂钩。
+    window.__ooHookedPaths = window.__ooHookedPaths || [];
+    if (!window.__ooHookedPaths.includes(match)) window.__ooHookedPaths.push(match);
+    window.__ooPatch = window.__ooPatch || null;
+    if (!window.__ooCap) window.__ooCap = { chunks: [], done: false, error: null, startedAt: 0 };
     window.__ooLastBody = null;
+    if (window.__ooFetchWrapped) return;
+    window.__ooFetchWrapped = true;
 
     // 按 "a.b.c" 路径原地写值。
     // 关键：必须原地修改，不能整体替换子对象 —— 上游签名覆盖了 body 的
@@ -210,7 +214,7 @@ export async function installHook(page, matchPath) {
     const origFetch = window.fetch;
     window.fetch = async function (input, init) {
       const url = typeof input === "string" ? input : input?.url || "";
-      if (!url.includes(match)) return origFetch.call(this, input, init);
+      if (!(window.__ooHookedPaths || []).some((m) => url.includes(m))) return origFetch.call(this, input, init);
 
       // 改写 body
       let finalInit = init;
@@ -518,7 +522,8 @@ export async function streamCapture(page, {
     lastTotal = st.total;
 
     if (shouldStop?.()) return { ok: true, frames: cursor, stopped: true, lastBody, patchError };
-    if (st.done && cursor > 0) return { ok: true, frames: cursor, lastBody, patchError };
+    // 流已结束就立即返回；0 帧说明上游返回了空流（如错误体），不能死等到超时
+    if (st.done) return { ok: cursor > 0, frames: cursor, empty: cursor === 0, lastBody, patchError };
 
     // 兜底：流没标记结束，但帧数已经静止 idleMs，视为已结束。
     // 必须先从「首帧到达」开始算，否则等待首帧的那几秒会被当成静止。

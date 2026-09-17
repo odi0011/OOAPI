@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Form, Input, Button, Switch, InputNumber, App as AntApp, Tabs, Typography,
 } from "antd";
@@ -155,16 +155,13 @@ function QuotaTab() {
       saving={s.saving}
     >
       <Form.Item
-        name="quota_per_unit"
-        label="单位额度"
-        extra="多少额度单位等于 1 OD，默认 10,000"
+        name="units_per_od"
+        label="额度换算"
+        extra="多少额度单位等于 1 OD币，默认 10,000；计费与展示均以此为准"
       >
-        <InputNumber style={{ width: "100%" }} min={1} step={100000} />
+        <InputNumber style={{ width: "100%" }} min={1} step={1000} />
       </Form.Item>
-      <Form.Item name="usd_rate" label="美元汇率" extra="用于人民币展示">
-        <InputNumber style={{ width: "100%" }} min={0} step={0.1} />
-      </Form.Item>
-      <Form.Item name="quota_for_new_user" label="新用户初始额度" extra="注册时自动赠送">
+      <Form.Item name="quota_for_new_user" label="新用户初始额度" extra="注册时自动赠送（单位：额度，10,000 单位 = 1 OD币 = $1）">
         <InputNumber style={{ width: "100%" }} min={0} step={100000} />
       </Form.Item>
       <Form.Item name="general_setting_quota_display" label="前台展示额度" valuePropName="checked">
@@ -206,6 +203,16 @@ function UpdateTab() {
   const [applying, setApplying] = useState(false);
   const [steps, setSteps] = useState([]);
   const [stamp, setStamp] = useState(null);
+  const timersRef = useRef([]);
+
+  useEffect(() => {
+    return () => {
+      for (const t of timersRef.current) {
+        clearInterval(t);
+        clearTimeout(t);
+      }
+    };
+  }, []);
 
   const loadStamp = async () => {
     try {
@@ -255,10 +262,11 @@ function UpdateTab() {
           if (tries > 30) clearInterval(timer);
         }
       }, 2000);
+      timersRef.current.push(timer);
     } catch (e) {
       // 重启可能中断本次响应，属正常情况
       message.warning(`更新已提交：${e.message}`);
-      setTimeout(loadStamp, 8000);
+      timersRef.current.push(setTimeout(loadStamp, 8000));
     } finally {
       setApplying(false);
     }

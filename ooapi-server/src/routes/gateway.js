@@ -2,6 +2,8 @@
 // 按模型路由到渠道，OD 币 1:1 计费。
 import express from "express";
 import crypto from "node:crypto";
+import dns from "node:dns/promises";
+import net from "node:net";
 import { pool } from "../db.js";
 import { getBoolOption } from "../config.js";
 import { now, clientIp } from "../utils.js";
@@ -14,7 +16,10 @@ const router = express.Router();
 router.use(express.json({ limit: "50mb" }));
 
 // ---------- 对外可用模型列表（平台真实模型 + 兼容别名）----------
+// 与 OpenAI 一致需要鉴权，避免匿名枚举全量模型目录
 router.get("/models", async (req, res) => {
+  const auth = await authorize(req, res);
+  if (!auth) return;
   const [rows] = await pool.query("SELECT models FROM channels WHERE status = 1");
   const available = new Set();
   for (const r of rows) {
@@ -108,6 +113,59 @@ function messagesToPrompt(messages) {
   return prompt || "你好";
 }
 
+// ---------- SSRF 防护：图片外链只允许公网 http(s) ----------
+function isPrivateIp(ip) {
+  if (!ip) return true;
+  if (net.isIPv6(ip)) {
+    const v = ip.toLowerCase();
+    if (v === "::" || v === "::1") return true;
+    if (v.startsWith("fe80:") || v.startsWith("fc") || v.startsWith("fd")) return true;
+    if (v.startsWith("::ffff:")) return isPrivateIp(v.slice(7));
+    return false;
+  }
+  const p = String(ip).split(".").map(Number);
+  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  const [a, b] = p;
+  if (a === 0 || a === 10 || a === 127) return true; // 保留 / 内网 / 回环
+  if (a === 169 && b === 254) return true; // 链路本地（含云元数据 169.254.169.254）
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+  if (a === 192 && b === 168) return true; // 192.168.0.0/16
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+  if (a >= 224) return true; // 组播 / 保留
+  return false;
+}
+
+async function assertPublicUrl(raw) {
+  const u = new URL(raw);
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("协议不允许");
+  if (u.username || u.password) throw new Error("不允许携带凭据");
+  const addrs = await dns.lookup(u.hostname, { all: true });
+  if (!addrs.length || addrs.some((a) => isPrivateIp(a.address))) throw new Error("目标为内网地址");
+  return u;
+}
+
+// 抓取远程图片：逐跳校验（防重定向 SSRF），限制类型与大小
+async function fetchRemoteImage(rawUrl) {
+  let target = rawUrl;
+  for (let hop = 0; hop < 4; hop++) {
+    const u = await assertPublicUrl(target);
+    const r = await fetch(u, { signal: AbortSignal.timeout(30000), redirect: "manual" });
+    if (r.status >= 300 && r.status < 400) {
+      const loc = r.headers.get("location");
+      if (!loc) return null;
+      target = new URL(loc, u).toString();
+      continue;
+    }
+    if (!r.ok) return null;
+    const ab = await r.arrayBuffer();
+    if (ab.byteLength > 20 * 1024 * 1024) return null;
+    const mimeType = (r.headers.get("content-type") || "image/jpeg").split(";")[0].trim().toLowerCase();
+    if (!mimeType.startsWith("image/")) return null;
+    return { buffer: Buffer.from(ab), mimeType, filename: mimeType.includes("png") ? "image.png" : "image.jpg" };
+  }
+  return null;
+}
+
 async function extractImages(messages) {
   const images = [];
   for (const m of messages || []) {
@@ -125,14 +183,11 @@ async function extractImages(messages) {
         });
       } else if (/^https?:/i.test(url)) {
         try {
-          const r = await fetch(url, { signal: AbortSignal.timeout(30000) });
-          if (!r.ok) continue;
-          const ab = await r.arrayBuffer();
-          if (ab.byteLength > 20 * 1024 * 1024) continue;
-          const mimeType = (r.headers.get("content-type") || "image/jpeg").split(";")[0];
-          if (!mimeType.startsWith("image/")) continue;
-          images.push({ buffer: Buffer.from(ab), mimeType, filename: "image.jpg" });
-        } catch { /* 忽略 */ }
+          const img = await fetchRemoteImage(url);
+          if (img) images.push(img);
+        } catch {
+          /* 忽略非法/不可达图片 */
+        }
       }
     }
   }
@@ -141,9 +196,9 @@ async function extractImages(messages) {
 
 // 计费 + 日志
 async function settle({ token, user, model, prompt, output, usage, ip, requestId, channel }) {
-  const { promptTokens, completionTokens } = splitTokens({ prompt, output, upstreamTotal: usage });
+  const { promptTokens, completionTokens, cacheTokens } = splitTokens({ prompt, output, upstreamTotal: usage });
   const price = await getPrice(model);
-  const units = computeCost({ price, promptTokens, completionTokens });
+  const units = computeCost({ price, promptTokens, completionTokens, cacheTokens });
   const od = (units / UNITS_PER_OD).toFixed(4);
 
   await pool.query(
@@ -157,13 +212,15 @@ async function settle({ token, user, model, prompt, output, usage, ip, requestId
   await writeLog({
     user,
     type: LOG_TYPE.CONSUME,
-    content: `调用 ${model} · 提示 ${promptTokens} / 补全 ${completionTokens} tokens · ${od} ${CURRENCY}`,
-    detail: JSON.stringify({ channel: channel?.name, price: { in: price.input, out: price.output }, requestId }),
+    content: `调用 ${model} · 提示 ${promptTokens} / 补全 ${completionTokens} tokens${
+      cacheTokens ? ` / 缓存 ${cacheTokens}` : ""
+    } · ${od} ${CURRENCY}`,
+    detail: JSON.stringify({ channel: channel?.name, price: { in: price.input, out: price.output, cache: price.cache }, requestId }),
     quota: units,
     ip,
     requestId,
   });
-  return { units, promptTokens, completionTokens };
+  return { units, promptTokens, completionTokens, cacheTokens };
 }
 
 // ---------- 聊天补全 ----------
@@ -240,6 +297,12 @@ router.post("/chat/completions", async (req, res) => {
   const prompt = messagesToPrompt(body.messages);
   let streamStarted = false;
 
+  // 客户端断开（关页面/断网）时中止上游请求，避免上游继续跑到自身超时
+  const clientCtrl = new AbortController();
+  req.on("close", () => {
+    if (!res.writableEnded) clientCtrl.abort();
+  });
+
   const sendChunk = (delta, finishReason = null) => {
     res.write(
       `data: ${JSON.stringify({
@@ -275,7 +338,7 @@ router.post("/chat/completions", async (req, res) => {
       search: wantSearch,
       images,
       groupName: user.group_name,
-      signal: AbortSignal.timeout(Number(process.env.REQUEST_TIMEOUT_MS || 600000)),
+      signal: clientCtrl.signal,
       onDelta: (t) => {
         if (wantStream) {
           startStream();
@@ -330,6 +393,7 @@ router.post("/chat/completions", async (req, res) => {
           prompt_tokens: settled.promptTokens,
           completion_tokens: settled.completionTokens,
           total_tokens: settled.promptTokens + settled.completionTokens,
+          ...(settled.cacheTokens ? { prompt_tokens_details: { cached_tokens: settled.cacheTokens } } : {}),
           od_cost: Number((settled.units / UNITS_PER_OD).toFixed(6)),
           currency: CURRENCY,
           channel: result.channel?.name,

@@ -1,5 +1,7 @@
 // 统一执行器：模型 → 渠道选择 → 失败切换 → 返回结果
 // 网关（/v1）与站内对话/智能体共用此逻辑，保证行为一致。
+import { pool } from "../db.js";
+import { getNumberOption } from "../config.js";
 import { selectChannels, getAdapter, markChannelError, markChannelOk, withChannelLimit, explainNoChannel } from "./router.js";
 
 // 渠道异常码 → 是否需要换渠道重试
@@ -66,12 +68,29 @@ export async function runCompletion({
 
   let lastError = null;
 
+  // 单渠道超时：取后台设置（request_timeout_ms），而不是整条重试链共用一个时限。
+  // 否则第一个渠道耗掉大部分预算后，后续渠道会「秒败」。
+  const timeoutMs = Math.max(1000, getNumberOption("request_timeout_ms") || 600000);
+
   for (const channel of channels) {
     tried.add(channel.id);
     if (onChannelTry) onChannelTry(channel);
 
     const started = Date.now();
     let sawOutput = false;
+    let timedOut = false;
+
+    // 组合「客户端断开」与「单渠道超时」两个中止源
+    const attemptCtrl = new AbortController();
+    const onOuterAbort = () => attemptCtrl.abort();
+    if (signal) {
+      if (signal.aborted) attemptCtrl.abort();
+      else signal.addEventListener("abort", onOuterAbort, { once: true });
+    }
+    const timer = setTimeout(() => {
+      timedOut = true;
+      attemptCtrl.abort();
+    }, timeoutMs);
 
     try {
       const adapter = await getAdapter(channel);
@@ -84,7 +103,7 @@ export async function runCompletion({
           thinkingOverride: thinking,
           search,
           images,
-          signal,
+          signal: attemptCtrl.signal,
           onDelta: (t) => {
             sawOutput = true;
             if (onDelta) onDelta(t);
@@ -100,23 +119,50 @@ export async function runCompletion({
       );
 
       await markChannelOk(channel, Date.now() - started);
+      await persistProfile(channel, result);
       return { ...result, channel, elapsed: Date.now() - started };
     } catch (err) {
       lastError = err;
-      const code = err.code || "CHANNEL_ERROR";
+      // 客户端主动断开：不再换渠道，直接结束
+      if (signal?.aborted) throw err;
+      // 本渠道超时：转换为可重试错误，换下一个渠道
+      if (timedOut) {
+        lastError = Object.assign(new Error(`渠道「${channel.name}」响应超时（${timeoutMs}ms）`), {
+          code: "CHANNEL_TIMEOUT",
+        });
+      }
+      const code = lastError.code || "CHANNEL_ERROR";
 
       // 已经流式输出过内容就不能换渠道了（否则客户端会收到拼接错乱的内容）
-      if (sawOutput) throw err;
+      if (sawOutput) throw lastError;
 
       // 参数类错误（模型不支持看图等）不重试，直接抛给用户
-      if (!isRetryable(code)) throw err;
+      if (!isRetryable(code)) throw lastError;
 
       // 标记渠道异常并冷却，尝试下一个
       const cooldown = code === "CHANNEL_MUTED" ? 1800 : code === "CHANNEL_AUTH_EXPIRED" ? 21600 : 300;
-      await markChannelError(channel, err.message, cooldown);
-      console.warn(`[execute] 渠道「${channel.name}」失败（${code}），切换下一渠道：${err.message}`);
+      await markChannelError(channel, lastError.message, cooldown);
+      console.warn(`[execute] 渠道「${channel.name}」失败（${code}），切换下一渠道：${lastError.message}`);
+    } finally {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener("abort", onOuterAbort);
     }
   }
 
   throw lastError || Object.assign(new Error("所有渠道均不可用"), { code: "NO_CHANNEL" });
+}
+
+/**
+ * 指纹持久化闭环：适配器首次生成指纹后返回 profileNeedPersist=true，
+ * 这里把它写回 channels.other.profile，保证同一账号后续请求指纹固定。
+ */
+async function persistProfile(channel, result) {
+  if (!result?.profileNeedPersist || !result?.profile) return;
+  try {
+    const other = { ...(channel.other || {}), profile: result.profile };
+    await pool.query("UPDATE channels SET other = ? WHERE id = ?", [JSON.stringify(other), channel.id]);
+    channel.other = other;
+  } catch (e) {
+    console.warn(`[execute] 渠道「${channel.name}」指纹持久化失败：${e.message}`);
+  }
 }

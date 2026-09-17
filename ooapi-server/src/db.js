@@ -106,6 +106,12 @@ const TABLES = [
     response_time INT NOT NULL DEFAULT 0 COMMENT '最近测试耗时 ms',
     tested_time BIGINT NOT NULL DEFAULT 0 COMMENT '最近测试时间戳',
     other TEXT COMMENT '扩展配置 JSON',
+    remark VARCHAR(255) NOT NULL DEFAULT '' COMMENT '备注',
+    auto_ban TINYINT NOT NULL DEFAULT 1 COMMENT '1=测试失败自动禁用',
+    test_model VARCHAR(128) NOT NULL DEFAULT '' COMMENT '测试用模型',
+    last_error VARCHAR(500) NOT NULL DEFAULT '' COMMENT '最近错误信息',
+    used_count INT NOT NULL DEFAULT 0 COMMENT '累计调用次数',
+    last_used_time BIGINT NOT NULL DEFAULT 0 COMMENT '最近调用时间',
     created_time BIGINT NOT NULL DEFAULT 0
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   `CREATE TABLE IF NOT EXISTS deepseek_accounts (
@@ -144,6 +150,31 @@ function resolveJwtSecret() {
 
 export const JWT_SECRET = resolveJwtSecret();
 
+// 增量列补齐（与 migrate2/3/5.mjs 等价，幂等）——全新安装直接由 db.js 建全，
+// 老库启动时自动补列，不再依赖手动跑迁移脚本。
+const COLUMN_MIGRATIONS = [
+  { table: "channels", column: "last_error", ddl: "VARCHAR(500) NOT NULL DEFAULT ''" },
+  { table: "channels", column: "used_count", ddl: "INT NOT NULL DEFAULT 0" },
+  { table: "channels", column: "last_used_time", ddl: "BIGINT NOT NULL DEFAULT 0" },
+  { table: "channels", column: "remark", ddl: "VARCHAR(255) NOT NULL DEFAULT ''" },
+  { table: "channels", column: "auto_ban", ddl: "TINYINT NOT NULL DEFAULT 1" },
+  { table: "channels", column: "test_model", ddl: "VARCHAR(128) NOT NULL DEFAULT ''" },
+];
+
+async function ensureColumns() {
+  for (const m of COLUMN_MIGRATIONS) {
+    const [rows] = await pool.query(
+      "SELECT COUNT(*) AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+      [m.table, m.column]
+    );
+    if (!rows[0].c) {
+      await pool.query(`ALTER TABLE ${m.table} ADD COLUMN ${m.column} ${m.ddl}`);
+      console.log(`[migrate] ${m.table}.${m.column} 已添加`);
+    }
+  }
+}
+
 export async function migrate() {
   for (const sql of TABLES) await pool.query(sql);
+  await ensureColumns();
 }

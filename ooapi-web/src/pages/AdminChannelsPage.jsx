@@ -277,22 +277,30 @@ export default function AdminChannelsPage() {
   // ---------- 编辑 ----------
   const openEdit = (r) => {
     setEditing(r);
+    // resetFields：清掉上一次编辑残留（尤其 API Key），避免把 A 渠道的 Key 写进 B 渠道
+    editForm.resetFields();
     editForm.setFieldsValue({
       name: r.name,
       base_url: r.base_url,
+      api_key: "",
       models: r.models,
       group_name: r.group_name,
       priority: r.priority,
       weight: r.weight,
       remark: r.remark,
-      auto_ban: true,
+      auto_ban: r.auto_ban !== false,
       status: r.status === 1,
     });
     setEditOpen(true);
   };
 
   const submitEdit = async () => {
-    const v = await editForm.validateFields();
+    let v;
+    try {
+      v = await editForm.validateFields();
+    } catch {
+      return;
+    }
     try {
       const payload = {
         id: editing.id,

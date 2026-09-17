@@ -6,7 +6,7 @@ import {
 import { PlusOutlined, CopyOutlined, ReloadOutlined, KeyOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
 import { API } from "../services/api";
-import { copyText, fmtDate, fmtOd, unitsPerOd, CURRENCY_NAME } from "../services/format";
+import { copyText, fmtDate, fmtOd, odOf, unitsPerOd, CURRENCY_NAME } from "../services/format";
 import { useApp } from "../context/AppContext";
 import PageHeader from "../components/PageHeader";
 import { ModelLabel } from "../components/VendorIcon";
@@ -41,10 +41,12 @@ export default function TokenPage() {
 
   const openCreate = () => {
     setEditing(null);
+    form.resetFields();
     form.setFieldsValue({
       name: "",
       unlimited_quota: true,
-      remain_quota: 500000,
+      // 输入框单位是 OD 币，默认 50 OD（提交时再乘 perUnit 转成额度单位）
+      remain_quota: 50,
       never_expire: true,
       expired_time: null,
       model_limits: [],
@@ -54,10 +56,12 @@ export default function TokenPage() {
 
   const openEdit = (record) => {
     setEditing(record);
+    form.resetFields();
     form.setFieldsValue({
       name: record.name,
       unlimited_quota: record.unlimited_quota,
-      remain_quota: record.remain_quota,
+      // 后端存的是额度单位，展示/编辑统一换算成 OD 币
+      remain_quota: odOf(record.remain_quota, perUnit),
       never_expire: record.expired_time === -1,
       expired_time: record.expired_time > 0 ? dayjs(record.expired_time * 1000) : null,
       model_limits: record.model_limits || [],
@@ -66,10 +70,15 @@ export default function TokenPage() {
   };
 
   const submit = async () => {
-    const v = await form.validateFields();
+    let v;
+    try {
+      v = await form.validateFields();
+    } catch {
+      return;
+    }
     const payload = {
       name: v.name,
-      remain_quota: v.unlimited_quota ? 0 : v.remain_quota,
+      remain_quota: v.unlimited_quota ? 0 : Math.round(Number(v.remain_quota) * perUnit),
       unlimited_quota: v.unlimited_quota,
       expired_time: v.never_expire ? -1 : Math.floor(v.expired_time.valueOf() / 1000),
       model_limits: v.model_limits || [],
@@ -266,8 +275,9 @@ export default function TokenPage() {
                     style={{ width: "100%" }}
                     min={0}
                     step={1}
+                    precision={4}
                     formatter={(v) => `${v} ${CURRENCY_NAME}`}
-                    parser={(v) => String(v).replace(/\s*OD\s*|(,*)/g, "")}
+                    parser={(v) => String(v).replace(/[^\d.]/g, "")}
                   />
                 </Form.Item>
               )

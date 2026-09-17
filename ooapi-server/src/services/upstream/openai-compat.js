@@ -35,8 +35,24 @@ export function endpoints(baseUrl) {
   return { chat: `${raw}/v1/chat/completions`, models: `${raw}/v1/models` };
 }
 
-function authHeaders(channel) {
-  const key = String(channel.api_key || "").split("\n")[0].trim();
+// 多 Key 轮换：api_key 支持多行，按请求轮换（put 到 Map 的游标自增）
+const keyCursor = new Map();
+function listKeys(channel) {
+  return String(channel.api_key || "")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+function nextKey(channel) {
+  const keys = listKeys(channel);
+  if (!keys.length) return "";
+  const i = (keyCursor.get(channel.id) || 0) % keys.length;
+  keyCursor.set(channel.id, i + 1);
+  return keys[i];
+}
+
+function authHeaders(channel, keyOverride) {
+  const key = keyOverride || listKeys(channel)[0] || "";
   return {
     "Content-Type": "application/json",
     Authorization: `Bearer ${key}`,
@@ -165,22 +181,22 @@ export async function chat({
     stream_options: { include_usage: true },
   };
 
-  // 深度思考开关：不同厂商字段名不同，按已声明的方式下发
+  // 深度思考开关：不同厂商字段名不同。
+  // 默认**不下发**厂商私有字段 —— OpenAI 等对未知请求字段直接 400。
+  // 需要的渠道在 other.thinking_mode 声明：thinking | enable_thinking | both
   if (thinkingOverride !== undefined) {
     const on = Boolean(thinkingOverride);
     const m = String(model || "").toLowerCase();
-    if (/reasoner|thinking|r1/.test(m)) {
-      // 思考型模型本身自带，无需开关
-    } else {
-      // 兼容两种常见写法
-      body.thinking = on ? { type: "enabled" } : { type: "disabled" };
-      body.enable_thinking = on;
+    const mode = String(channel?.other?.thinkingMode ?? channel?.other?.thinking_mode ?? "").toLowerCase();
+    if (!/reasoner|thinking|r1/.test(m) && mode) {
+      if (mode === "thinking" || mode === "both") body.thinking = on ? { type: "enabled" } : { type: "disabled" };
+      if (mode === "enable_thinking" || mode === "both") body.enable_thinking = on;
     }
   }
 
   const resp = await fetch(url, {
     method: "POST",
-    headers: { ...authHeaders(channel), Accept: "text/event-stream" },
+    headers: { ...authHeaders(channel, nextKey(channel)), Accept: "text/event-stream" },
     body: JSON.stringify(body),
     signal,
   }).catch((e) => {

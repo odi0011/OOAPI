@@ -104,7 +104,7 @@ function PasswordTab() {
   const save = async (v) => {
     setBusy(true);
     try {
-      await API.put("/users/self/password", { new_password: v.new_password });
+      await API.put("/users/self/password", { old_password: v.old_password, new_password: v.new_password });
       message.success("密码修改成功");
       form.resetFields();
     } catch (e) {
@@ -117,6 +117,13 @@ function PasswordTab() {
   return (
     <Section title="修改密码" desc="建议使用字母与数字组合，长度至少 8 位">
       <Form form={form} layout="vertical" onFinish={save} requiredMark={false}>
+        <Form.Item
+          name="old_password"
+          label="当前密码"
+          rules={[{ required: true, message: "请输入当前密码" }]}
+        >
+          <Input.Password placeholder="当前登录密码" autoComplete="current-password" />
+        </Form.Item>
         <Form.Item
           name="new_password"
           label="新密码"
