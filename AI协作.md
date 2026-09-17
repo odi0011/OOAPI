@@ -218,7 +218,7 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 
 ## 4. 待办清单（按优先级）
 
-### P1（建议下一批）
+### P1（本轮已完成）
 
 - [x] **U1（UI/UX）**：`ChatPage` 流式渲染重构（2026-09-17 第 2 批）：
       `Message` 已 `React.memo`、`onCopy/onRetry` 经 ref 稳定化、`Markdown` 双层缓存（memo + useMemo），
@@ -233,31 +233,39 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 - [x] 第 2 批审查（10 轮）修复：定价数据治理（官方来源/删除虚构模型/文件导入）、登录态远程抓取、
       渠道创建 SQL 对齐、密码旧密码强制、手动禁用不可复活、额度原子更新、401/403 处理、
       SSE 释放、适配器超时与帧长上限、计费 clamp、更新器失败回滚。详见根目录《审查报告.md》。
-- [ ] `updater.js`：迁移失败仍写版本戳（建议迁移失败即中止并回滚）。
-- [ ] `execute.js` 硬截止：Playwright 内部调用不响应 abort 时仍可能悬挂（建议 Promise.race）。
-- [ ] `router.js` 内存表只增不减（state/SELECT_CURSOR 按模型名累积），删渠道时清理。
-- [ ] 浏览器流 `streamCapture` 的 4 秒静止判定会截断长思考；仅 reasoning 无 content 仍按成功计费。
-- [ ] GLM/Doubao/Qwen：search/thinking 静默忽略；`vision:true` 与实现不一致（能力表与实现二选一）。
-- [ ] 网关/站内流式失败后不结算已产出部分（营收漏损）。
-- [ ] `logs` 表清理策略（TTL/归档/后台一键清理已有但无自动策略）。
-- [ ] `connectionLimit: 10` 偏小（上游请求常达分钟级），按并发压测调整（建议 50）。
-- [ ] `AuthPage` 登录回跳丢失 query/hash；`MainLayout` 的 `/home` 无路由。
+- [x] `updater.js`：迁移失败即中止 → 回滚源码、不写版本戳、不重启。
+- [x] `execute.js` 硬截止：`Promise.race` 到点必推进，不再依赖适配器响应 abort。
+- [x] `router.js` 内存表：删渠道 `forgetChannel`；轮询游标不再拼接模型名。
+- [x] 浏览器流静止判定放宽到 15s；仅 reasoning 无 content 一律 `CHANNEL_EMPTY`。
+- [x] Doubao/Qwen：能力标记 `supportsSearch/Thinking=false`，参数显式报错；GLM 使用 `resolved.search`。
+- [x] 网关/对话/智能体失败时按已产出内容结算（部分计费），不再整单漏计。
+- [x] `logs` 自动清理：`log_retention_days`（0=永久），每 6 小时执行；设置页可配。
+- [x] 连接池默认 50（`DB_POOL_SIZE` 可调）。
+- [x] `AuthPage` 回跳保留 query/hash；`/home` 兼容路由。
+- [x] 死代码清理：`routes/deepseek.js`、`services/deepseek/`（含 `pow.js`）、`pricing.charge()`、
+      `browser-driver` 未用导出、未使用的 `AgentPage.jsx`。
+- [x] `option.js` 原型链白名单、`token.js` 数值校验、注册并发 409、分页参数防 Infinity。
+- [x] 渠道「拉取上游模型」SSRF 校验；网关 usage 标准字段 + 顶层 `x_*` 扩展。
+- [x] **模型/定价全量对齐**：DeepSeek 仅 `flash`/`v4-pro`（旧 ID 别名不再登记）；GLM/Kimi/Qwen/Doubao
+      按官方模型表补齐；渠道类型归位（glm/kimi/doubao/qwen，不再有"其他/DeepSeek 官方/网页版"）；
+      兼容别名不单独定价；线上 30 条价格全部带官方来源。
+- [x] **migrate2 事故修复**：不再覆盖价格；额度换算一次性；线上被重复除 50 的余额已按日志重建。
 
-### P2（清理与加固）
+### 已知限制与长期项（已评估，暂不处理）
 
-- [ ] 删除死代码：`routes/deepseek.js`（未挂载）、`services/deepseek/`（`client.js` / `accounts.js` / `pow.js`，
-      其中 `pow.js` 存在同步阻塞求解器；全部随本次清理一并删除）、`pricing.js` 中重复的 `charge()`、
-      `browser-driver.js` 的 `evalInPage/waitForStream`、前端未使用导入。
-- [ ] `AgentPage` 已不被路由使用（`/agent` 重定向到 `/chat?mode=agent`）：确认产品意图后删除或合并进 `ChatPage`。
-- [ ] `GET /api/channel/login/batch` 串行 50 账号可阻塞数分钟：改异步任务 + 进度查询。
-- [ ] GLM `search` 开关应使用解析后的 `resolved.search`。
-- [ ] Doubao/Qwen 的 thinking/search 目前静默忽略（适配器未实现注入），要么实现要么显式报错。
-- [ ] `option.js` 白名单用 `in` 命中原型链键；`token.js` 数值/分页校验缺失；`auth.js` 并发注册可能 500。
-- [ ] CORS 默认放开：生产建议 `CORS_ORIGIN` 白名单（已在 `index.js` 支持）。
-- [ ] 在线更新无签名校验（供应链风险），考虑固定 commit 或校验发布哈希。
-- [ ] `--no-sandbox` 浏览器驱动：文档化部署前提（非 root 用户 + 容器隔离）。
-- [ ] 无测试、无 lint：建议最少加 `node --test` 冒烟 + ESLint flat config。
-- [ ] `users.inviter_id` / 邀请体系未实现（字段存在）。
+> 以下均为「设计取舍/需要基础设施」的条目，不是代码缺陷；出现新证据时再升级为待办。
+
+- **在线更新无签名校验**：目前信任 GitHub main；供应链加固需要发布流水线（哈希/签名），规划中。
+- **多实例部署**：限流/冷却为单进程内存实现；本项目按单机单实例部署，多实例需换共享存储。
+- **`/api/channel/login/batch` 串行**：一次性人工操作（最多 50 账号），管理员可接受等待；
+  真要异步化需要任务队列，投入产出比低。
+- **无测试/lint 基建**：当前以「语法检查 + 构建 + 线上冒烟」保证质量；引入 CI 时一并补 ESLint/`node --test`。
+- **`users.inviter_id`**：邀请体系是产品功能，字段保留待产品决策。
+- **CORS 默认放开**：对外 API 需要；生产建议设 `CORS_ORIGIN` 白名单（`index.js` 已支持）。
+- **浏览器驱动 `--no-sandbox`**：服务器以 root 运行 node，Playwright 需该参数；部署要求为
+  独立测试服务器 + 无其他不受信进程，生产建议非 root 用户 + 容器隔离。
+- **`logout` 不撤销 JWT**：JWT 无状态设计的固有特性；如涉及高安全场景，需要 token 版本号/黑名单。
+- **`LoginPage 深链接 query`**：已修；`-search` 等能力后缀对 Doubao/Qwen 不生效属能力限制（已显式报错）。
 
 ---
 
@@ -302,3 +310,10 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
       登录态远程抓取、渠道 SQL/权限/并发修复；三路并行审查发现 48 项按级别处理，详见《审查报告.md》 |
 | 2026-09-17 | 部署验证：`0197599` 已通过内置更新器上线（服务 active、status 200、前端构建成功）；
       线上清理 2 条虚构定价、`同上` 清零；无头浏览器冒烟（/、/login）0 JS 错误；详见《审查报告.md》第 5 节 |
+| 2026-09-17 | 模型/定价全量对齐（`f4222a0`/`2df743c`）：DeepSeek 仅 flash/v4-pro；GLM 7 / Kimi 2 / Qwen 4 / 豆包 2
+      按官方页补价并注明来源；渠道类型归位；兼容别名不登记定价 |
+| 2026-09-17 | **线上事故与修复**（`f1940d3`）：`migrate2` 每次更新重复"除 50"导致用户余额被反复缩小、
+      价格被覆盖。修复为一次性换算 + 不再写价格；按日志重建余额（odi 10009.96 OD / tester01 10499.91 OD）并在
+      `f1940d3`/`2df743c` 两次更新后核验余额不再变化 |
+| 2026-09-17 | 第 3–4 批持续整改（`0448114`/`51843e7`）：迁移失败回滚、执行器硬截止、内存表清理、
+      能力标记与显式报错、部分计费、SSRF、日志保留、连接池、参数校验、死代码清理；构建与冒烟均通过 |
