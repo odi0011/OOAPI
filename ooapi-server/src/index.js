@@ -149,6 +149,14 @@ async function bootstrap() {
 
   scheduleLogCleanup();
 
+  // 渠道定时检测（按渠道 auto_test/间隔执行真实探针）
+  try {
+    const { scheduleChannelAutoTest } = await import("./services/autotest.js");
+    scheduleChannelAutoTest();
+  } catch (e) {
+    console.error("[init] 定时检测启动失败：", e.message);
+  }
+
   // 退出时关闭浏览器驱动会话与 PoW worker，避免残留进程
   for (const sig of ["SIGTERM", "SIGINT"]) {
     process.on(sig, async () => {

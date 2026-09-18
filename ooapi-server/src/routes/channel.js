@@ -37,6 +37,7 @@ import {
 } from "../services/upstream/browser-driver.js";
 import { invalidateModelRegistry } from "../services/models.js";
 import { parseCredentialFile } from "../services/upstream/auth-import.js";
+import { probeChannel } from "../services/channel-probe.js";
 import { randomBytes } from "node:crypto";
 
 const router = Router();
@@ -126,6 +127,10 @@ function rowToResp(r, { withKey = false } = {}) {
     auto_ban: r.auto_ban === 0 ? false : true,
       cooling,
       recent: rt.recent,
+      test_model: r.test_model || "",
+      test_prompt: r.test_prompt || "hi",
+      auto_test: Number(r.auto_test) === 1,
+      auto_test_interval: Number(r.auto_test_interval) || 3600,
       cooldown_text: rt.cooldown_until
       ? new Date(rt.cooldown_until).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })
       : "",
@@ -861,6 +866,19 @@ router.put(
     }
     setIf("remark", b.remark !== undefined ? String(b.remark).slice(0, 255) : undefined);
     setIf("auto_ban", b.auto_ban !== undefined ? (b.auto_ban ? 1 : 0) : undefined);
+    // 定时检测与检测提示词（编辑弹窗里挨着启用开关）
+    if (b.auto_test !== undefined) setIf("auto_test", b.auto_test ? 1 : 0);
+    if (b.auto_test_interval !== undefined) {
+      const iv = safeInt(b.auto_test_interval, { min: 60, max: 86400 });
+      if (iv === null) return fail(res, "检测间隔需在 60~86400 秒之间");
+      setIf("auto_test_interval", iv);
+    }
+    if (b.test_prompt !== undefined) {
+      const tp = String(b.test_prompt).trim().slice(0, 255);
+      if (!tp) return fail(res, "检测提示词不能为空");
+      setIf("test_prompt", tp);
+    }
+    if (b.test_model !== undefined) setIf("test_model", String(b.test_model).trim().slice(0, 128));
 
     if (!fields.length) return fail(res, "没有需要更新的字段");
     args.push(id);
@@ -885,32 +903,33 @@ router.post(
     const channel = rowToChannel(row);
     const adapter = await adapterOf(row.type, method);
     const startedAt = Date.now();
+    const prompt = String(row.test_prompt || "hi").trim() || "hi";
 
     try {
-      if (!adapter?.verify) return fail(res, `${providerName} 适配器未实现测试`);
-      const ms = await adapter.verify(channel);
+      if (!adapter?.verify && !adapter?.probe && !adapter?.chat) return fail(res, `${providerName} 适配器未实现测试`);
+      // 通用探针：真实发送检测提示词（默认 hi），API / 反代 / 订阅渠道都适用
+      const probe = await probeChannel(adapter, channel, prompt);
       // 只写运行指标，绝不写 status：status 是管理员开关，
       // 测试成功不能把管理员手动禁用的渠道复活（与 markChannelOk 约定一致）
       await pool.query("UPDATE channels SET response_time = ?, tested_time = ?, last_error = '' WHERE id = ?", [
-        ms,
+        probe.ms,
         now(),
         id,
       ]);
-      // 测试结果也计入「最近调用」小绿条（成功；tip 里带测试提示词与结论）
-      await recordChannelCall(id, true, ms, "", {
-        prompt: "(渠道测试) ping",
-        reply: `(健康检查通过 ${ms}ms)`,
+      // 测试结果计入「最近调用」小绿条（tip 里带提示词、AI 回复与降智状态）
+      await recordChannelCall(id, true, probe.ms, "", {
+        prompt,
+        reply: probe.reply,
+        degraded: probe.degraded,
+        state: probe.state,
       });
       resetChannelState(id);
-      await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `测试渠道「${row.name}」通过（${ms}ms）` });
-      return ok(res, { success: true, time: ms }, `渠道可用（${ms}ms）`);
+      await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `测试渠道「${row.name}」通过（${probe.ms}ms）` });
+      return ok(res, { success: true, time: probe.ms, reply: probe.reply, prompt }, `渠道可用（${probe.ms}ms）`);
     } catch (e) {
       await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), id]);
-      // 测试失败计入「最近调用」小绿条（失败 → 橙色；tip 里带失败原因）
-      await recordChannelCall(id, false, Date.now() - startedAt, e.message, {
-        prompt: "(渠道测试) ping",
-        reply: e.message,
-      });
+      // 测试失败计入「最近调用」小绿条（失败 → 红色；tip 里带失败原因）
+      await recordChannelCall(id, false, Date.now() - startedAt, e.message, { prompt, reply: e.message });
       await writeLog({ user: req.user, type: LOG_TYPE.ERROR, content: `测试渠道「${row.name}」失败：${e.message}` });
       return ok(res, { success: false, message: e.message, code: e.code }, `测试失败：${e.message}`);
     }

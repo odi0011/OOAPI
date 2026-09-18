@@ -458,8 +458,7 @@ export async function verify(channel) {
   return Date.now() - started;
 }
 
-/** 拉取上游可用模型（管理端「获取模型」用） */
-export async function fetchUpstreamModels(channel) {
+/** 拉取上游可用模型（管理端「获取模型」用） */export async function fetchUpstreamModels(channel) {
   const token = await ensureToken(channel);
   const project = String(channel?.other?.project_id || "").trim();
   const resp = await fetch(MODELS_URL, {
@@ -482,4 +481,20 @@ export async function fetchUpstreamModels(channel) {
 
 export function loginModes() {
   return ["paste"];
+}
+
+/** 测试探针：真实发送自定义提示词（默认 hi），返回 AI 回复供管理端 tip 展示 */
+export async function probe(channel, prompt = "hi") {
+  const started = Date.now();
+  const model = channel?.test_model || channel?.other?.test_model || "gemini-2.5-flash";
+  const r = await chat({
+    channel,
+    model,
+    prompt,
+    messages: [{ role: "user", content: prompt }],
+    images: [],
+    onDelta: () => {},
+    onReasoning: () => {},
+  });
+  return { ms: Date.now() - started, reply: r.content || "", model, usage: r.usage };
 }

@@ -36,12 +36,23 @@ function UptimeTip({ c }) {
           <div className="oo-tip-snippet">{c.r}</div>
         </div>
       ) : null}
+      {c.d !== undefined || c.st !== undefined ? (
+        <div className="oo-uptime-tip-row">
+          <span className="oo-uptime-tip-label">降智状态</span>
+          <div>
+            <span style={{ color: c.d ? "var(--red)" : "var(--green)" }}>{c.d ? "是（命中降智/截断）" : "否"}</span>
+            {c.st !== undefined ? <span style={{ opacity: 0.75 }}>{` · 292 通行证${c.st ? "已注入" : "未注入"}`}</span> : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-// 最近调用记录：小竖条（绿=成功 / 橙=失败 / 灰=无记录），悬浮显示时间与耗时。
-// 样式参考 aceternity 的 uptime bars：只保留小绿条与 hover 放大效果。
+// 最近调用记录：小竖条（绿=快 / 黄=慢 / 红=失败），悬浮显示提示词与 AI 回复。
+// 样式参考 aceternity 的 uptime bars：只保留小竖条与 hover 放大效果。
+const UPTIME_SLOW_MS = 3000; // 超过该耗时视为「慢」（黄色）
+
 function UptimeBars({ calls = [], count = 20 }) {
   const list = (calls || []).slice(-count);
   const bars = Array.from({ length: count }, (_, i) => {
@@ -54,7 +65,7 @@ function UptimeBars({ calls = [], count = 20 }) {
       {bars.map((c, i) =>
         c ? (
           <Tooltip key={i} title={<UptimeTip c={c} />}>
-            <i className={`oo-uptime-bar ${c.ok ? "is-ok" : "is-fail"}`} />
+            <i className={`oo-uptime-bar ${!c.ok ? "is-fail" : c.ms >= UPTIME_SLOW_MS ? "is-slow" : "is-ok"}`} />
           </Tooltip>
         ) : (
           <i key={i} className="oo-uptime-bar is-empty" />
@@ -230,6 +241,10 @@ export default function AdminChannelsPage() {
   const [addForm] = Form.useForm();
   const [editForm] = Form.useForm();
   const [batchForm] = Form.useForm();
+  // 定时检测开关（关闭时禁用间隔与提示词输入）
+  const editAutoTestOn = Form.useWatch("auto_test", editForm);
+  // 检测模型下拉：用当前渠道声明的模型列表
+  const editModels = Form.useWatch("models", editForm);
   const { begin, isLatest } = useLatest();
 
   const load = useCallback(async () => {
@@ -466,6 +481,11 @@ export default function AdminChannelsPage() {
       remark: r.remark,
       auto_ban: r.auto_ban !== false,
       status: r.status === 1,
+      // 定时检测（间隔以分钟展示，提交时换算成秒；检测模型留空=渠道第一个模型）
+      auto_test: r.auto_test === true,
+      auto_test_minutes: Math.max(1, Math.round((Number(r.auto_test_interval) || 3600) / 60)),
+      test_model: r.test_model || undefined,
+      test_prompt: r.test_prompt || "hi",
     });
     setEditOpen(true);
   };
@@ -490,6 +510,11 @@ export default function AdminChannelsPage() {
         weight: v.weight,
         remark: v.remark,
         auto_ban: v.auto_ban,
+        // 定时检测与检测提示词
+        auto_test: v.auto_test === true,
+        auto_test_interval: Math.max(60, Math.round(Number(v.auto_test_minutes || 60) * 60)),
+        test_model: String(v.test_model || "").trim(),
+        test_prompt: String(v.test_prompt || "hi").trim() || "hi",
       };
       // status 只在开关真正变化时提交：服务端收到 status 会清冷却/重置运行状态，
       // 只改备注不该顺手把「冷却中」的渠道重置。
@@ -1221,12 +1246,39 @@ export default function AdminChannelsPage() {
           </Row>
           <Form.Item name="remark" label="备注"><Input maxLength={255} placeholder="可选" /></Form.Item>
           <Row gutter={12}>
-            <Col span={12}>
+            <Col span={8}>
               <Form.Item name="status" label="启用状态" valuePropName="checked">
                 <Switch checkedChildren="启用" unCheckedChildren="禁用" />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col span={8}>
+              <Form.Item name="auto_test" label="定时检测" valuePropName="checked">
+                <Switch checkedChildren="开" unCheckedChildren="关" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="auto_test_minutes" label="检测间隔（分钟）" extra="到点自动发检测提示词">
+                <InputNumber style={{ width: "100%" }} min={1} max={1440} disabled={!editAutoTestOn} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={8}>
+              <Form.Item name="test_model" label="检测模型" extra="默认用渠道第一个模型">
+                <Select
+                  allowClear
+                  placeholder="默认第一个模型"
+                  disabled={!editAutoTestOn}
+                  options={(editModels || []).filter((m) => m && m !== "*").map((m) => ({ value: m, label: m }))}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="test_prompt" label="检测提示词" extra="默认 hi；tip 会展示 AI 的回复">
+                <Input maxLength={200} placeholder="hi" disabled={!editAutoTestOn} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
               <Form.Item name="auto_ban" label="失败自动禁用" valuePropName="checked"><Switch /></Form.Item>
             </Col>
           </Row>

@@ -1336,8 +1336,12 @@ h1, h2, h3, h4 {
   cursor: default;
 }
 
-.oo-uptime-bar.is-fail {
+.oo-uptime-bar.is-slow {
   background: var(--orange);
+}
+
+.oo-uptime-bar.is-fail {
+  background: var(--red);
 }
 
 .oo-uptime-bar.is-empty {

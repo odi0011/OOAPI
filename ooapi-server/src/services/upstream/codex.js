@@ -312,6 +312,8 @@ export async function chat({
   const bodyStateValue = stateHdr.__stateBodyField || "";
   delete stateHdr.__stateBodyField;
   if (bodyStateValue) body.current_turn_state = bodyStateValue;
+  // 本轮是否带上了 292 通行证（tip 里展示用）
+  const stateUsed = Boolean(stateHdr["x-codex-turn-state"]) || Boolean(bodyStateValue);
 
   let injectState = true;
   const buildInit = (token) => ({
@@ -498,6 +500,7 @@ export async function chat({
     reasoning,
     usage,
     upstreamModel,
+    stateUsed,
     ...(degradeSignal.degraded
       ? { rotateNext: true, rotateCooldownSec: degradeSignal.cooldownSec, rotateReason: degradeSignal.message }
       : {}),
@@ -508,7 +511,7 @@ export async function chat({
 export async function verify(channel) {
   const started = Date.now();
   const identity = codexIdentity(channel);
-  const testModel = channel?.other?.test_model || "gpt-5.6-luna";
+  const testModel = channel?.test_model || channel?.other?.test_model || "gpt-5.6-luna";
   const buildInit = (token) => ({
     method: "POST",
     headers: {
@@ -566,6 +569,30 @@ export async function verify(channel) {
 /** 该适配器支持的登录方式：订阅渠道统一用「粘贴凭据 JSON」 */
 export function loginModes() {
   return ["paste"];
+}
+
+/** 测试探针：真实发送自定义提示词（默认 hi），返回 AI 回复供管理端 tip 展示 */
+export async function probe(channel, prompt = "hi") {
+  const started = Date.now();
+  const model = channel?.test_model || channel?.other?.test_model || "gpt-5.6-luna";
+  const r = await chat({
+    channel,
+    model,
+    prompt,
+    messages: [{ role: "user", content: prompt }],
+    images: [],
+    onDelta: () => {},
+    onReasoning: () => {},
+  });
+  return {
+    ms: Date.now() - started,
+    reply: r.content || "",
+    model,
+    usage: r.usage,
+    // tip 展示：本轮是否降智（516 截断等）、是否注入了 292 通行证
+    degraded: r.rotateNext ? 1 : 0,
+    state: r.stateUsed ? 1 : 0,
+  };
 }
 
 /** 可选的官方 OAuth 授权地址（管理端提示管理员在官方 CLI 登录后复制 auth.json） */

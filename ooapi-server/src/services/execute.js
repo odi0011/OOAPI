@@ -140,6 +140,9 @@ export async function runCompletion({
       await markChannelOk(channel, Date.now() - started, {
         prompt,
         reply: result.content || result.reasoning || "",
+        // codex-state-kit：记录本轮是否降智 / 是否携带 292 通行证（tip 展示）
+        degraded: result.rotateNext ? 1 : 0,
+        state: result.stateUsed === undefined ? undefined : result.stateUsed ? 1 : 0,
       });
       await persistProfile(channel, result);
       // codex-state-kit：命中「思考截断/降智」指纹时内容照常返回，但给渠道一个短冷却，

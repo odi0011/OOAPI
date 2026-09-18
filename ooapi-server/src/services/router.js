@@ -82,6 +82,11 @@ function pushRecent(id, entry) {
 
 // 记录里保存的提示词/回复摘要上限（长对话只留开头，避免把列撑大）
 const clip = (text, max) => String(text ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+// 降智/通行证标记（仅订阅渠道会带）：d=本轮降智，st=注入了 292 通行证
+const flagsOf = (meta = {}) => ({
+  ...(meta.degraded !== undefined ? { d: meta.degraded ? 1 : 0 } : {}),
+  ...(meta.state !== undefined ? { st: meta.state ? 1 : 0 } : {}),
+});
 
 /** 只记录一次调用结果（不累加 used_count；测试/检查等非生产调用用） */
 export async function recordChannelCall(channelId, ok, ms, error = "", meta = {}) {
@@ -91,6 +96,7 @@ export async function recordChannelCall(channelId, ok, ms, error = "", meta = {}
     ms: Math.max(0, Math.round(Number(ms) || 0)),
     p: clip(meta.prompt, 160),
     r: clip(meta.reply || error, 240),
+    ...flagsOf(meta),
   });
   await pool
     .query("UPDATE channels SET recent_calls = ? WHERE id = ?", [recentJson, Number(channelId)])
@@ -121,6 +127,7 @@ export async function markChannelError(channel, message, cooldownSec = 300, meta
     ms: 0,
     p: clip(meta.prompt, 160),
     r: clip(meta.reply || message, 240),
+    ...flagsOf(meta),
   });
   await pool
     .query("UPDATE channels SET last_error = ?, recent_calls = ? WHERE id = ?", [s.lastError, recentJson, channel.id])
@@ -140,6 +147,7 @@ export async function markChannelOk(channel, elapsedMs, meta = {}) {
     ms: Math.max(0, Math.round(Number(elapsedMs) || 0)),
     p: clip(meta.prompt, 160),
     r: clip(meta.reply, 240),
+    ...flagsOf(meta),
   });
   await pool
     .query(
@@ -257,6 +265,10 @@ export function rowToChannel(r) {
     priority: Number(r.priority) || 0,
     weight: Number(r.weight) || 0,
     response_time: r.response_time || 0,
+    test_model: r.test_model || "",
+    test_prompt: r.test_prompt || "hi",
+    auto_test: Number(r.auto_test) === 1,
+    auto_test_interval: Number(r.auto_test_interval) || 3600,
     recent: rs.recent,
     other,
   };

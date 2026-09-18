@@ -111,6 +111,9 @@ const TABLES = [
     remark VARCHAR(255) NOT NULL DEFAULT '' COMMENT '备注',
     auto_ban TINYINT NOT NULL DEFAULT 1 COMMENT '1=测试失败自动禁用',
     test_model VARCHAR(128) NOT NULL DEFAULT '' COMMENT '测试用模型',
+    test_prompt VARCHAR(255) NOT NULL DEFAULT 'hi' COMMENT '测试/定时检测发送的提示词',
+    auto_test TINYINT NOT NULL DEFAULT 0 COMMENT '1=定时检测开启',
+    auto_test_interval INT NOT NULL DEFAULT 3600 COMMENT '定时检测间隔（秒，60~86400）',
     last_error VARCHAR(500) NOT NULL DEFAULT '' COMMENT '最近错误信息',
     used_count INT NOT NULL DEFAULT 0 COMMENT '累计调用次数',
     last_used_time BIGINT NOT NULL DEFAULT 0 COMMENT '最近调用时间',
@@ -129,6 +132,43 @@ const TABLES = [
     last_error VARCHAR(500) NOT NULL DEFAULT '',
     created_time BIGINT NOT NULL DEFAULT 0,
     INDEX idx_ds_status (status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // 对话工作台（opencode 风格）：session 容器 + message（消息体内是 parts JSON 数组）。
+  // 拆两张表而不是一张大 JSON：会话列表只读 session（分页/排序快），
+  // 消息按 seq 追加写，流式过程中不会被整体重写。
+  `CREATE TABLE IF NOT EXISTS chat_sessions (
+    id VARCHAR(32) NOT NULL PRIMARY KEY COMMENT '会话 id（短随机串）',
+    user_id INT NOT NULL,
+    title VARCHAR(120) NOT NULL DEFAULT '',
+    agent VARCHAR(32) NOT NULL DEFAULT 'general' COMMENT '智能体 id',
+    model VARCHAR(128) NOT NULL DEFAULT '',
+    settings TEXT COMMENT 'JSON：{thinking,search,tools,maxSteps,instructions}',
+    todo TEXT COMMENT 'JSON：待办清单（todowrite 工具维护）',
+    message_count INT NOT NULL DEFAULT 0,
+    cost_units BIGINT NOT NULL DEFAULT 0,
+    prompt_tokens BIGINT NOT NULL DEFAULT 0,
+    completion_tokens BIGINT NOT NULL DEFAULT 0,
+    created_time BIGINT NOT NULL DEFAULT 0,
+    updated_time BIGINT NOT NULL DEFAULT 0,
+    INDEX idx_chat_sessions_user (user_id, updated_time)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  `CREATE TABLE IF NOT EXISTS chat_messages (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    session_id VARCHAR(32) NOT NULL,
+    user_id INT NOT NULL,
+    seq INT NOT NULL COMMENT '会话内序号，从 1 递增',
+    role VARCHAR(16) NOT NULL COMMENT 'user/assistant',
+    parts MEDIUMTEXT COMMENT 'JSON 数组：text/reasoning/tool/todo/image/error',
+    agent VARCHAR(32) NOT NULL DEFAULT '',
+    model VARCHAR(128) NOT NULL DEFAULT '',
+    cost DECIMAL(14,6) NOT NULL DEFAULT 0,
+    prompt_tokens INT NOT NULL DEFAULT 0,
+    completion_tokens INT NOT NULL DEFAULT 0,
+    created_time BIGINT NOT NULL DEFAULT 0,
+    UNIQUE KEY uniq_chat_msg_seq (session_id, seq),
+    INDEX idx_chat_msg_session (session_id, seq)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 ];
 
@@ -162,6 +202,9 @@ const COLUMN_MIGRATIONS = [
   { table: "channels", column: "remark", ddl: "VARCHAR(255) NOT NULL DEFAULT ''" },
   { table: "channels", column: "auto_ban", ddl: "TINYINT NOT NULL DEFAULT 1" },
   { table: "channels", column: "test_model", ddl: "VARCHAR(128) NOT NULL DEFAULT ''" },
+  { table: "channels", column: "test_prompt", ddl: "VARCHAR(255) NOT NULL DEFAULT 'hi'" },
+  { table: "channels", column: "auto_test", ddl: "TINYINT NOT NULL DEFAULT 0" },
+  { table: "channels", column: "auto_test_interval", ddl: "INT NOT NULL DEFAULT 3600" },
   { table: "channels", column: "recent_calls", ddl: "TEXT" },
 ];
 

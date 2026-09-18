@@ -383,7 +383,7 @@ export async function verify(channel) {
   const started = Date.now();
   const identity = grokIdentity(channel);
   const base = chatBase(channel);
-  const model = channel?.other?.test_model || "grok-4.5";
+  const model = channel?.test_model || channel?.other?.test_model || "grok-4.5";
   const buildInit = (token) => ({
     method: "POST",
     headers: buildHeaders(channel, token, identity, base),
@@ -439,6 +439,22 @@ export async function importAuth(input = {}) {
 
 export function loginModes() {
   return ["paste"];
+}
+
+/** 测试探针：真实发送自定义提示词（默认 hi），返回 AI 回复供管理端 tip 展示 */
+export async function probe(channel, prompt = "hi") {
+  const started = Date.now();
+  const model = channel?.test_model || channel?.other?.test_model || "grok-4.5";
+  const r = await chat({
+    channel,
+    model,
+    prompt,
+    messages: [{ role: "user", content: prompt }],
+    images: [],
+    onDelta: () => {},
+    onReasoning: () => {},
+  });
+  return { ms: Date.now() - started, reply: r.content || "", model, usage: r.usage };
 }
 
 export function authHint() {
