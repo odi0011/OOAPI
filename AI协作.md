@@ -168,22 +168,8 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 
 ### 第 7 批审查发现（待处理）
 
-- [ ] **`channel.js`/`log.js` 仍有 `Number()` 直通 SQL**（P1）：`Number("Infinity") || 0` 结果仍是
-  `Infinity`，mysql2 对 number 不加引号拼接 → `WHERE id = Infinity` 直接 500。
-  涉及 `channel.js`（body 的 id/priority/weight、批量作业、保留列表）、`log.js`（query.type）、
-  `token.js`（PUT 的 body id）。修法：统一 `Number.isSafeInteger` + 范围钳制。
-- [ ] **VARCHAR 溢出直接 500**（P1）：`channel.js` 多 Key `next.join("\n")` 写 `api_key VARCHAR(255)`
-  （约 3 个 Key 就超长）；`token.js` PUT 的 `name` 未限长；`channel` 的 `base_url/group_name`、
-  `user` 的 `display_name/email`、`setting`（TEXT 64KB）同理。修法：按列宽校验/截断或扩列。
-- [ ] **修改密码接口无限流**（P1）：`user.js` `/self/password` 只校验旧密码且无 `rateLimit`，
-  JWT 泄露后可无限撞库。修法：按用户加限流（如 5 次/分钟）。
 - [ ] **PoW 求解同步阻塞**（P2）：已加 difficulty 上限（1<<24），但 `wasm_solve`/预言机仍是同步调用，
   大难度会卡住事件循环。彻底解决需 `worker_threads` 或时间片让出。
-- [ ] **更新器已知缺口**（P2）：迁移列表硬编码 `migrate2/3/5`（新增 `migrateN.mjs` 不会被执行）；
-  失败回滚只覆盖后端源码，不恢复前端 `WEB_ROOT`。
-- [ ] **Agent 多步跨渠道 usage 混合**（观察项）：成功步骤里 API 渠道（结构化 usage）与反代渠道
-  （usage=null）混用时，结构化部分会让 `splitTokens` 忽略估算，反代步骤的输入/输出仍可能少计。
-  修法：按每次 call 记录 `{prompt, output, usage}` 逐条结算后求和。
 - [ ] **审查方式可复用**：后续批次继续用「三路并行子代理（前端 / 后端路由 / 服务适配器）+ 人工核实」，
   发现的问题先登记在此节，修完删除并写入变更记录。
 
@@ -278,3 +264,10 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
   （更新 apply 关闭超时）、会话代际防「退出后被写回」、非法主题值归一化、dayjs 中文 locale、
   ChatPage 复制降级/切模型重置搜索、Console curl 去尾斜杠、在线更新轮询清理与超时提示、
   编辑渠道/调整额度/令牌启停删除等防重入。遗留项已登记到第 3 节「第 7 批审查发现」。 |
+| 2026-09-18 | **第 8 批（清第 7 批遗留）**：`utils.safeInt` 收口所有 `Number()` 直通 SQL 的入口
+  （channel 的 id/priority/weight/批量/拉模型、log 的 type、token 的 body id）；
+  `channels.api_key` 由 `VARCHAR(255)` 扩容为 `TEXT`（启动时类型迁移，多 Key 不再约 3 个就溢出）
+  + 所有写入按列宽校验/截断（name/base_url/group/models/display_name/email/setting 等）；
+  改密接口按用户维度限流（5 次/分钟）；更新器改为扫描 `migrate*.mjs` 按序执行（新增迁移不再漏跑）
+  + 前端源码一并备份与回滚；智能体计费改为「逐次 call 分别 splitTokens 后求和」，
+  彻底解决跨渠道 usage 混合少计，失败步骤的 prompt/输出也纳入估算。 |
