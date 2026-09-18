@@ -2274,11 +2274,6 @@ h1, h2, h3, h4 {
   padding: 2px 8px 8px 0;
 }
 
-/* 字段说明（extra）在添加弹窗里要显示：隐藏它们会让「怎么填」完全靠猜 */
-.oo-channel-add-config .ant-form-item-extra {
-  display: block !important;
-}
-
 .oo-channel-add-step {
   margin: 0 0 10px;
   color: var(--ink);
@@ -2356,6 +2351,20 @@ h1, h2, h3, h4 {
   border-radius: var(--r-card) !important;
   box-shadow: var(--shadow-overlay) !important;
   padding: 4px !important;
+}
+
+/* 弹窗垂直居中：antd 默认贴顶（top:100px），在视口高于弹窗时显得偏上。
+   flex + margin:auto 是「安全居中」——内容超出视口时自动退化为可滚动、顶部不丢。 */
+.ant-modal-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ant-modal {
+  top: 0;
+  margin: auto;
+  padding-bottom: 0;
 }
 
 .ant-dropdown .ant-dropdown-menu-item,

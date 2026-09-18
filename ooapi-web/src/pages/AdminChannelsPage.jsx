@@ -1809,11 +1809,6 @@ export default function AdminChannelsPage() {
                                   </Typography.Link>
                                 ) : null}
                               </Space>
-                              <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 6, lineHeight: 1.7 }}>
-                                {oauthUrl
-                                  ? "登录后会跳到一个打不开的 localhost 页面（正常现象）—— 把地址栏那一整串 URL 复制到下面的输入框，点「添加」即可。"
-                                  : "「一键登录」在服务器浏览器里完成登录，凭据会自动填到下面；也可以直接粘贴凭据文件。"}
-                              </div>
                             </Form.Item>
                           ) : null}
                           <Form.Item
@@ -1848,9 +1843,6 @@ export default function AdminChannelsPage() {
                                     />
                                     导入凭据文件
                                   </label>
-                                  <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                                    支持 Codex auth.json、CPA、sub2api 导出；多账号请用顶部「导入凭据」批量添加
-                                  </span>
                                 </Space>
                               </Form.Item>
                               <Row gutter={12}>
@@ -1894,11 +1886,6 @@ export default function AdminChannelsPage() {
                               <Button icon={<GlobalOutlined />} onClick={startCapture} loading={capBusy}>
                                 {onboardReady ? "重新登录" : "打开登录页"}
                               </Button>
-                              {onboardReady ? (
-                                <span style={{ fontSize: 12, color: "var(--green)" }}>已登录，可以添加</span>
-                              ) : (
-                                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>登录完成后会自动记录登录态</span>
-                              )}
                             </Space>
                           </Form.Item>
                         </>
