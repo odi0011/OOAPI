@@ -135,6 +135,7 @@ export const TOOLS = {
         output: `${r.content || ""}${r.reasoning || ""}`,
         usage: r.usage,
         channel: r.channel?.name || "",
+        channelId: Number(r.channel?.id) || 0,
       });
       const text = clip(r.content || r.reasoning || "", 6000);
       if (!text) return { ok: false, output: "检索没有返回内容" };

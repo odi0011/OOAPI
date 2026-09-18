@@ -100,12 +100,26 @@ export async function runCompletion({
     try {
       const adapter = await getAdapter(channel);
       let hardTimer;
-      // 硬截止：Playwright 内部调用（evaluate/fill 等）不一定响应 abort，
-      // 只靠 signal 会让请求在适配器里无限悬挂。这里用 Promise.race 保证
-      // 到点一定推进到下一个渠道（底层任务随后自行 abort 收尾）。
+      let callStarted = 0;
+      let armDeadline = () => {};
+      // 硬截止只覆盖真正的上游调用：计时在 withChannelLimit 回调里才启动（排到队才计时），
+      // 否则排队等限速的时间也算进耗时（黄条失真），甚至请求还没发出去就先超时冷却渠道。
+      const deadline = new Promise((_, reject) => {
+        armDeadline = () => {
+          hardTimer = setTimeout(() => {
+            timedOut = true;
+            attemptCtrl.abort();
+            reject(
+              Object.assign(new Error(`渠道「${channel.name}」响应超时（${timeoutMs}ms）`), { code: "CHANNEL_TIMEOUT" })
+            );
+          }, timeoutMs);
+        };
+      });
       const result = await Promise.race([
-        withChannelLimit(channel, () =>
-          adapter.chat({
+        withChannelLimit(channel, () => {
+          callStarted = Date.now();
+          armDeadline();
+          return adapter.chat({
             channel,
             model,
             prompt,
@@ -125,20 +139,12 @@ export async function runCompletion({
             onSearchStatus: (s) => {
               if (onSearchStatus) onSearchStatus(s);
             },
-          })
-        ),
-        new Promise((_, reject) => {
-          hardTimer = setTimeout(() => {
-            timedOut = true;
-            attemptCtrl.abort();
-            reject(
-              Object.assign(new Error(`渠道「${channel.name}」响应超时（${timeoutMs}ms）`), { code: "CHANNEL_TIMEOUT" })
-            );
-          }, timeoutMs);
+          });
         }),
+        deadline,
       ]).finally(() => clearTimeout(hardTimer));
 
-      await markChannelOk(channel, Date.now() - started, {
+      await markChannelOk(channel, Date.now() - (callStarted || started), {
         prompt,
         reply: result.content || result.reasoning || "",
         // codex-state-kit：记录本轮是否降智 / 是否携带 292 通行证（tip 展示）

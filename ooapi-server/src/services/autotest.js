@@ -18,9 +18,16 @@ async function runOne(row) {
   return probeChannel(adapter, channel, prompt);
 }
 
+let running = false;
+
 export async function runDueChannelTests() {
-  const [rows] = await pool.query("SELECT * FROM channels WHERE auto_test = 1 AND status = 1");
-  for (const row of rows) {
+  // 单轮遍历可能超过一个 tick（渠道多/浏览器探针慢）：不排队重复跑，
+  // 否则 last_test_time 还没更新，下一 tick 会重复探测同一渠道、重复消耗上游额度。
+  if (running) return;
+  running = true;
+  try {
+    const [rows] = await pool.query("SELECT * FROM channels WHERE auto_test = 1 AND status = 1");
+    for (const row of rows) {
     const interval = Math.max(60, Number(row.auto_test_interval) || 3600);
     // 用「检测专用时间戳」判断到期：生产调用会更新 tested_time，不能用它，
     // 否则繁忙渠道的定时检测会被每次真实调用不断推迟（等于几乎不检测）
@@ -56,6 +63,9 @@ export async function runDueChannelTests() {
     }
     // 渠道之间留间隔，避免同一时刻并发打上游
     await new Promise((r) => setTimeout(r, 1500));
+    }
+  } finally {
+    running = false;
   }
 }
 

@@ -81,6 +81,19 @@ function pushRecent(id, entry) {
   return JSON.stringify(s.recent);
 }
 
+// 同一渠道的「最近调用」写回必须串行：三个写函数都是整列 UPDATE recent_calls，
+// 生产调用与定时检测/手动测试并发时，后完成的旧快照会覆盖掉新记录。
+const recentWrites = new Map();
+function chainRecentWrite(channelId, fn) {
+  const key = Number(channelId) || 0;
+  const prev = recentWrites.get(key) || Promise.resolve();
+  const next = prev.then(fn, fn).finally(() => {
+    if (recentWrites.get(key) === next) recentWrites.delete(key);
+  });
+  recentWrites.set(key, next.catch(() => {}));
+  return next;
+}
+
 // 记录里保存的提示词/回复摘要上限（长对话只留开头，避免把列撑大）
 // 同时剥掉网页版多轮 prompt 的 ChatML 角色标记（<｜User｜> / <｜Assistant｜> / <｜end▁of▁sentence｜>），
 // 它们只对上游有意义，展示给管理员会把「最近调用」弄脏。
@@ -111,21 +124,23 @@ const flagsOf = (meta = {}) => ({
  * 同时更新 last_test_time：这是「检测」专用时间戳，生产调用不会碰它，
  * 否则繁忙渠道的定时检测会被每次生产调用不断推迟。 */
 export async function recordChannelCall(channelId, ok, ms, error = "", meta = {}) {
-  const recentJson = pushRecent(channelId, {
-    t: now(),
-    ok: ok ? 1 : 0,
-    ms: Math.max(0, Math.round(Number(ms) || 0)),
-    p: clip(meta.prompt, 160),
-    r: clip(meta.reply || error, 240),
-    ...flagsOf(meta),
+  await chainRecentWrite(channelId, async () => {
+    const recentJson = pushRecent(channelId, {
+      t: now(),
+      ok: ok ? 1 : 0,
+      ms: Math.max(0, Math.round(Number(ms) || 0)),
+      p: clip(meta.prompt, 160),
+      r: clip(meta.reply || error, 240),
+      ...flagsOf(meta),
+    });
+    await pool
+      .query("UPDATE channels SET recent_calls = ?, last_test_time = ? WHERE id = ?", [
+        recentJson,
+        now(),
+        Number(channelId),
+      ])
+      .catch(() => {});
   });
-  await pool
-    .query("UPDATE channels SET recent_calls = ?, last_test_time = ? WHERE id = ?", [
-      recentJson,
-      now(),
-      Number(channelId),
-    ])
-    .catch(() => {});
 }
 
 export function isCoolingDown(channel) {
@@ -146,17 +161,19 @@ export async function markChannelError(channel, message, cooldownSec = 300, meta
   s.cooldownUntil = Date.now() + cooldownSec * 1000;
   s.lastError = String(message).slice(0, 400);
   // 最近调用记录与 last_error 一起写回（只记录错误信息，便于管理端展示"异常"原因）
-  const recentJson = pushRecent(channel.id, {
-    t: now(),
-    ok: 0,
-    ms: 0,
-    p: clip(meta.prompt, 160),
-    r: clip(meta.reply || message, 240),
-    ...flagsOf(meta),
+  await chainRecentWrite(channel.id, async () => {
+    const recentJson = pushRecent(channel.id, {
+      t: now(),
+      ok: 0,
+      ms: 0,
+      p: clip(meta.prompt, 160),
+      r: clip(meta.reply || message, 240),
+      ...flagsOf(meta),
+    });
+    await pool
+      .query("UPDATE channels SET last_error = ?, recent_calls = ? WHERE id = ?", [s.lastError, recentJson, channel.id])
+      .catch(() => {});
   });
-  await pool
-    .query("UPDATE channels SET last_error = ?, recent_calls = ? WHERE id = ?", [s.lastError, recentJson, channel.id])
-    .catch(() => {});
 }
 
 export async function markChannelOk(channel, elapsedMs, meta = {}) {
@@ -166,20 +183,22 @@ export async function markChannelOk(channel, elapsedMs, meta = {}) {
   // 只更新运行指标，不改 status —— status 是管理员开关（手动启停），
   // 写 status=1 会复活管理员刚禁用的渠道。
   // used_count/last_used_time 供管理端展示渠道使用情况（此前从未累加）。
-  const recentJson = pushRecent(channel.id, {
-    t: now(),
-    ok: 1,
-    ms: Math.max(0, Math.round(Number(elapsedMs) || 0)),
-    p: clip(meta.prompt, 160),
-    r: clip(meta.reply, 240),
-    ...flagsOf(meta),
+  await chainRecentWrite(channel.id, async () => {
+    const recentJson = pushRecent(channel.id, {
+      t: now(),
+      ok: 1,
+      ms: Math.max(0, Math.round(Number(elapsedMs) || 0)),
+      p: clip(meta.prompt, 160),
+      r: clip(meta.reply, 240),
+      ...flagsOf(meta),
+    });
+    await pool
+      .query(
+        "UPDATE channels SET response_time = ?, tested_time = ?, last_error = '', used_count = used_count + 1, last_used_time = ?, recent_calls = ? WHERE id = ?",
+        [elapsedMs, now(), now(), recentJson, channel.id]
+      )
+      .catch(() => {});
   });
-  await pool
-    .query(
-      "UPDATE channels SET response_time = ?, tested_time = ?, last_error = '', used_count = used_count + 1, last_used_time = ?, recent_calls = ? WHERE id = ?",
-      [elapsedMs, now(), now(), recentJson, channel.id]
-    )
-    .catch(() => {});
 }
 
 function delayFor(channel) {

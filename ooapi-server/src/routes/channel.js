@@ -435,7 +435,7 @@ router.get(
       byModel: [...byModel.values()].sort((a, b) => b.units - a.units).slice(0, 20),
       byDay: dayList,
       series,
-      recent: channelRuntimeState(id).recent,
+      recent: channelRecent(id, channel.recent_calls),
     });
   })
 );
