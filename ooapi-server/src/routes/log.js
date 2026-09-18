@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, pageParams } from "../utils.js";
+import { ok, fail, asyncHandler, pageParams, safeInt } from "../utils.js";
 import { authRequired, adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE_LABEL } from "../services/log.js";
 
@@ -43,7 +43,8 @@ router.get(
   adminRequired,
   asyncHandler(async (req, res) => {
     const { p, size, offset } = pageParams(req.query);
-    const type = Number(req.query.type) || 0;
+    // Infinity/NaN 会被 mysql2 原样拼进 SQL 导致 500；非法值按「不过滤」处理
+    const type = safeInt(req.query.type, { min: 1, max: 999, fallback: 0 });
     const kw = String(req.query.keyword || "").trim();
     const conds = [];
     const args = [];

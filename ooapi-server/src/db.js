@@ -99,7 +99,7 @@ const TABLES = [
     name VARCHAR(64) NOT NULL DEFAULT '',
     type VARCHAR(32) NOT NULL DEFAULT 'openai' COMMENT 'openai/claude/gemini/deepseek/qwen/custom',
     base_url VARCHAR(255) NOT NULL DEFAULT '' COMMENT '上游接口地址',
-    api_key VARCHAR(255) NOT NULL DEFAULT '' COMMENT '上游密钥',
+    api_key TEXT COMMENT '上游密钥（多 Key 用换行分隔）',
     models TEXT COMMENT '支持的模型，逗号分隔',
     group_name VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '用户分组',
     status INT NOT NULL DEFAULT 1 COMMENT '1=启用 2=手动禁用 3=自动禁用',
@@ -163,6 +163,23 @@ const COLUMN_MIGRATIONS = [
   { table: "channels", column: "test_model", ddl: "VARCHAR(128) NOT NULL DEFAULT ''" },
 ];
 
+// 列类型扩容（老库）：列宽不足时 ALTER。
+// 历史问题：channels.api_key 是 VARCHAR(255)，「多 Key 用换行分隔」约 3 个 Key 就溢出 500。
+const TYPE_MIGRATIONS = [{ table: "channels", column: "api_key", dataType: "text", ddl: "TEXT" }];
+
+async function ensureColumnTypes() {
+  for (const m of TYPE_MIGRATIONS) {
+    const [rows] = await pool.query(
+      "SELECT data_type AS t FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+      [m.table, m.column]
+    );
+    if (rows.length && String(rows[0].t).toLowerCase() !== m.dataType) {
+      await pool.query(`ALTER TABLE ${m.table} MODIFY ${m.column} ${m.ddl}`);
+      console.log(`[migrate] ${m.table}.${m.column} 已扩容为 ${m.dataType}`);
+    }
+  }
+}
+
 async function ensureColumns() {
   for (const m of COLUMN_MIGRATIONS) {
     const [rows] = await pool.query(
@@ -179,4 +196,5 @@ async function ensureColumns() {
 export async function migrate() {
   for (const sql of TABLES) await pool.query(sql);
   await ensureColumns();
+  await ensureColumnTypes();
 }

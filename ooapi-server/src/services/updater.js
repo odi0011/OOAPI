@@ -229,7 +229,7 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
   if (!(await has("git"))) throw new Error("服务端未安装 git，无法在线更新");
 
   const tmp = path.join(process.env.TMPDIR || "/tmp", `ooapi-update-${Date.now()}`);
-  const result = { ok: false, steps: log, backup: "", frontendBuilt: false, rolledBack: false };
+  const result = { ok: false, steps: log, backup: "", webBackup: "", frontendBuilt: false, rolledBack: false };
 
   try {
     step("拉取仓库最新代码…");
@@ -252,6 +252,18 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
 
     step("同步前端源码（保留 node_modules）…");
     if (existsSync(path.join(tmp, "ooapi-web"))) {
+      // 先备份前端源码：回滚必须连同前端一起恢复，否则会留下半新半旧的前端
+      const webBackup = path.join(SERVER_ROOT, `.backup-web-${Date.now()}`);
+      try {
+        await fs.mkdir(webBackup, { recursive: true });
+        for (const entry of await fs.readdir(WEB_ROOT)) {
+          if (["node_modules", "dist", ".env"].includes(entry)) continue;
+          await fs.cp(path.join(WEB_ROOT, entry), path.join(webBackup, entry), { recursive: true });
+        }
+        result.webBackup = webBackup;
+      } catch (e) {
+        step(`  前端备份失败（不阻断更新）：${e.message}`);
+      }
       await fs.mkdir(WEB_ROOT, { recursive: true });
       await syncTree(path.join(tmp, "ooapi-web"), WEB_ROOT, ["node_modules", "dist", ".env"]);
     }
@@ -286,9 +298,12 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
 
     step("执行数据库迁移…");
     const migrationErrors = [];
-    for (const m of ["migrate2.mjs", "migrate3.mjs", "migrate5.mjs"]) {
+    // 扫描而不是硬编码列表：以后新增 migrateN.mjs 必须自动被执行（此前写死 2/3/5 会被漏掉）
+    const migFiles = (await fs.readdir(SERVER_ROOT))
+      .filter((n) => /^migrate\d+\.mjs$/.test(n))
+      .sort((a, b) => Number(a.match(/\d+/)[0]) - Number(b.match(/\d+/)[0]));
+    for (const m of migFiles) {
       const f = path.join(SERVER_ROOT, m);
-      if (!existsSync(f)) continue;
       try {
         await run("node", [f], { cwd: SERVER_ROOT });
         step(`  ${m} 完成`);
@@ -347,6 +362,11 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
           ".backup-*",
           ".update-stamp.json",
         ]);
+        // 前端源码同步过就必须一起回滚（否则后端回滚了、前端还是新版本）
+        if (result.webBackup && existsSync(result.webBackup)) {
+          await syncTree(result.webBackup, WEB_ROOT, ["node_modules", "dist", ".env"]);
+          step("前端源码已回滚");
+        }
         result.rolledBack = true;
         step(`已回滚到更新前源码（备份仍保留在 ${result.backup}）`);
       } catch (re) {

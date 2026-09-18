@@ -39,6 +39,16 @@ export function now() {
 }
 
 /**
+ * 解析整数并限定范围；非法（NaN/Infinity/超界/非整数）返回 fallback（默认 null）。
+ * mysql2 对 number 不加引号拼接，Infinity 会变成 `WHERE id = Infinity` 直接 500。
+ */
+export function safeInt(value, { min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER, fallback = null } = {}) {
+  const n = Number(value);
+  if (!Number.isSafeInteger(n) || n < min || n > max) return fallback;
+  return n;
+}
+
+/**
  * 解析路径参数中的正整数 id。
  * 非数字（/api/token/abc）时 mysql2 会把 NaN 转义成字面量 NaN，SQL 语法错误 → 500；
  * 返回 null 让调用方回 404。

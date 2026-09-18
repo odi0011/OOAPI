@@ -7,10 +7,11 @@
 //   · 超限时返回 429 与 Retry-After。
 const buckets = new Map();
 
-export function rateLimit({ windowMs = 60_000, max = 20, keyPrefix = "" } = {}) {
+export function rateLimit({ windowMs = 60_000, max = 20, keyPrefix = "", keyFn } = {}) {
   return (req, res, next) => {
-    const ip = req.ip || req.socket?.remoteAddress || "unknown";
-    const key = `${keyPrefix}:${ip}`;
+    // 默认按 IP 计数；需要按用户维度（如改密）可通过 keyFn 指定
+    const who = keyFn ? keyFn(req) : req.ip || req.socket?.remoteAddress || "unknown";
+    const key = `${keyPrefix}:${who}`;
     const t = Date.now();
 
     let hits = buckets.get(key);

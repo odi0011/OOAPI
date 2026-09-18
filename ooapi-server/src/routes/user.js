@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now, safeJSONParse, userToResponse, pageParams, idParam } from "../utils.js";
 import { authRequired, adminRequired, signToken } from "../middleware/auth.js";
+import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 
 const router = Router();
@@ -14,9 +15,10 @@ router.put(
   authRequired,
   asyncHandler(async (req, res) => {
     const { display_name, email } = req.body || {};
+    // 按列宽截断（display_name 64 / email 128）：超长写库会 500
     await pool.query("UPDATE users SET display_name = ?, email = ? WHERE id = ?", [
-      String(display_name ?? req.user.display_name ?? "").trim(),
-      String(email ?? req.user.email ?? "").trim(),
+      String(display_name ?? req.user.display_name ?? "").trim().slice(0, 64),
+      String(email ?? req.user.email ?? "").trim().slice(0, 128),
       req.user.id,
     ]);
     const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [req.user.id]);
@@ -27,6 +29,8 @@ router.put(
 router.put(
   "/self/password",
   authRequired,
+  // 防撞库：拿到 JWT 后也不能无限试旧密码（按用户维度限流）
+  rateLimit({ windowMs: 60_000, max: 5, keyPrefix: "self-pwd", keyFn: (req) => req.user?.id || req.ip }),
   asyncHandler(async (req, res) => {
     const { new_password, old_password } = req.body || {};
     // 修改密码必须校验旧密码：仅有会话（或 CSRF）不足以永久接管账号。
@@ -49,8 +53,11 @@ router.put(
   authRequired,
   asyncHandler(async (req, res) => {
     const setting = req.body || {};
-    if (typeof setting !== "object") return fail(res, "参数错误");
-    await pool.query("UPDATE users SET setting = ? WHERE id = ?", [JSON.stringify(setting), req.user.id]);
+    if (typeof setting !== "object" || Array.isArray(setting)) return fail(res, "参数错误");
+    // setting 列是 TEXT(64KB)：限制体积防写库报错
+    const json = JSON.stringify(setting);
+    if (json.length > 16_000) return fail(res, "设置内容过大");
+    await pool.query("UPDATE users SET setting = ? WHERE id = ?", [json, req.user.id]);
     return ok(res, setting, "设置已保存");
   })
 );
@@ -149,8 +156,8 @@ router.put(
     }
     if (display_name !== undefined || email !== undefined) {
       await pool.query("UPDATE users SET display_name = ?, email = ? WHERE id = ?", [
-        String(display_name ?? user.display_name ?? "").trim(),
-        String(email ?? user.email ?? "").trim(),
+        String(display_name ?? user.display_name ?? "").trim().slice(0, 64),
+        String(email ?? user.email ?? "").trim().slice(0, 128),
         id,
       ]);
     }

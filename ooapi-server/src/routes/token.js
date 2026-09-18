@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, now, genApiKey, tokenToResponse, randomString, idParam } from "../utils.js";
+import { ok, fail, asyncHandler, now, genApiKey, tokenToResponse, randomString, idParam, safeInt } from "../utils.js";
 import { authRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 
@@ -76,8 +76,8 @@ router.post(
         Number(remainVal),
         unlimited_quota ? 1 : 0,
         0,
-        Array.isArray(model_limits) ? model_limits.join(",") : "",
-        group_name || "",
+        Array.isArray(model_limits) ? model_limits.join(",").slice(0, 2000) : "",
+        String(group_name || "").slice(0, 32),
       ]
     );
     // 用 insertId 精确回查：按 user_id ORDER BY id DESC 并发时会返回别人刚建的令牌（含完整 Key）
@@ -93,7 +93,8 @@ router.put(
   asyncHandler(async (req, res) => {
     const { id, name, status, remain_quota, unlimited_quota, expired_time, model_limits, group_name } =
       req.body || {};
-    const token = Number(id);
+    // Infinity/NaN 会被 mysql2 原样拼进 SQL；这里必须是安全整数
+    const token = safeInt(id, { min: 1 });
     if (!token) return fail(res, "缺少令牌 id");
     const [rows] = await pool.query("SELECT * FROM tokens WHERE id = ? AND user_id = ?", [token, req.user.id]);
     if (!rows.length) return fail(res, "令牌不存在", 404);
@@ -118,13 +119,13 @@ router.put(
       `UPDATE tokens SET name = ?, status = ?, remain_quota = ?, unlimited_quota = ?, expired_time = ?,
         model_limits = ?, group_name = ? WHERE id = ? AND user_id = ?`,
       [
-        name !== undefined ? String(name).trim() : cur.name,
+        name !== undefined ? String(name).trim().slice(0, 64) : cur.name,
         statusVal,
         remainVal,
         unlimited_quota !== undefined ? (unlimited_quota ? 1 : 0) : cur.unlimited_quota,
         expiredVal,
-        Array.isArray(model_limits) ? model_limits.join(",") : cur.model_limits,
-        group_name !== undefined ? group_name : cur.group_name,
+        Array.isArray(model_limits) ? model_limits.join(",").slice(0, 2000) : cur.model_limits,
+        group_name !== undefined ? String(group_name).slice(0, 32) : cur.group_name,
         token,
         req.user.id,
       ]

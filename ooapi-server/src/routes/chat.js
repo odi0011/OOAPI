@@ -8,7 +8,7 @@ import { ok, fail, asyncHandler, now } from "../utils.js";
 import { authRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { runCompletion } from "../services/execute.js";
-import { getPrice, computeCost, splitTokens, normalizeUsage, estimateTokens, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
+import { getPrice, computeCost, splitTokens, estimateTokens, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { allPublicModels, modelForChannelMatch, resolveAliasSync } from "../services/models.js";
 import { getBoolOption } from "../config.js";
 
@@ -129,8 +129,12 @@ router.get(
 );
 
 // ---------- 计费（用户额度）----------
-async function chargeUser({ user, model, prompt, output, usage, channel, kind }) {
-  const { promptTokens, completionTokens, cacheTokens } = splitTokens({ prompt, output, upstreamTotal: usage });
+async function chargeUser({ user, model, prompt, output, usage, channel, kind, tokens }) {
+  // tokens 由调用方按「每次 call 分别结算」预先算好时直接使用（智能体多步）：
+  // 混用 API 渠道（结构化 usage）与反代渠道（usage=null）时，合并成一个 usage 对象
+  // 会让 splitTokens 只认结构化部分，反代步骤的输入/输出漏计。
+  const { promptTokens, completionTokens, cacheTokens } =
+    tokens || splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
   const price = await getPrice(resolveAliasSync(model));
   const units = computeCost({ price, promptTokens, completionTokens, cacheTokens });
@@ -322,11 +326,25 @@ router.post(
       if (!res.writableEnded) clientCtrl.abort();
     });
 
+    // 每次 call 单独记录 { prompt, output, usage }：结算时逐条 splitTokens 后求和，
+    // 避免 API 渠道（结构化 usage）与反代渠道（usage=null）混合时互相覆盖口径
+    const calls = [];
     let totalPrompt = "";
     let totalOutput = "";
-    const totalUsage = { prompt_tokens: 0, completion_tokens: 0, cached_tokens: 0 };
     let firstChannel = null;
     let settledOnce = false;
+
+    // 逐条结算 → 汇总 token 数（供 chargeUser 使用）
+    const aggregateTokens = () => {
+      const sum = { promptTokens: 0, completionTokens: 0, cacheTokens: 0 };
+      for (const c of calls) {
+        const s = splitTokens({ prompt: c.prompt, output: c.output, upstreamTotal: c.usage });
+        sum.promptTokens += s.promptTokens;
+        sum.completionTokens += s.completionTokens;
+        sum.cacheTokens += s.cacheTokens;
+      }
+      return sum;
+    };
 
     // 单步调用（复用执行器，自带渠道切换）
     const call = async ({ system, user: userMsg, thinking, onDelta }) => {
@@ -359,16 +377,14 @@ router.post(
             streamed += t;
           },
         });
-        const u = normalizeUsage(r.usage);
         totalPrompt += prompt;
         totalOutput += r.content + (r.reasoning || "");
-        totalUsage.prompt_tokens += u.promptTokens;
-        totalUsage.completion_tokens += u.completionTokens;
-        totalUsage.cached_tokens += u.cacheTokens;
+        calls.push({ prompt, output: r.content + (r.reasoning || ""), usage: r.usage });
         if (!firstChannel) firstChannel = r.channel;
         return r.content;
       } catch (e) {
         e.partialOutput = streamed;
+        e.callPrompt = prompt;
         throw e;
       }
     };
@@ -429,13 +445,14 @@ router.post(
       });
       if (!answer) answer = finalText;
 
-      // 计费
+      // 计费：逐次 call 的 token 汇总（见 aggregateTokens）
       const billed = await chargeUser({
         user: req.user,
         model,
         prompt: totalPrompt,
         output: totalOutput,
-        usage: totalUsage,
+        usage: null,
+        tokens: aggregateTokens(),
         channel: firstChannel,
         kind: "agent",
       });
@@ -454,25 +471,24 @@ router.post(
       res.end();
     } catch (err) {
       console.error("[agent] 失败：", err.code, err.message);
-      // 已完成步骤 + 失败步骤已推送的内容都真实消耗了上游额度：按累计输出结算，避免整单漏计费。
-      // 注意条件不能只看 usage：反代渠道 usage 常为 null（全 0），要按内容兜底。
+      // 已完成步骤 + 失败步骤已推送的内容都真实消耗了上游额度：逐次 call 结算后求和，
+      // 再为失败步骤补上估算（它没有成功的 r.usage，按 prompt/输出字符数折算）
       const partial = err?.partialOutput || "";
       const billOutput = totalOutput + partial;
-      // 有结构化 usage 时 splitTokens 会忽略 output（按上游 token 计费），
-      // 失败步骤已推送的内容必须折算补进去，否则 API 渠道会漏计这部分
-      let usage = null;
-      if (totalUsage.prompt_tokens || totalUsage.completion_tokens) {
-        usage = { ...totalUsage };
-        if (partial) usage.completion_tokens += estimateTokens(partial);
+      const tokens = aggregateTokens();
+      if (partial) {
+        tokens.completionTokens += estimateTokens(partial);
+        tokens.promptTokens += estimateTokens(err?.callPrompt || "");
       }
-      if (!settledOnce && (billOutput || totalPrompt || usage)) {
+      if (!settledOnce && (tokens.promptTokens || tokens.completionTokens)) {
         try {
           await chargeUser({
             user: req.user,
             model,
             prompt: totalPrompt,
             output: billOutput,
-            usage,
+            usage: null,
+            tokens,
             channel: firstChannel,
             kind: "agent",
           });

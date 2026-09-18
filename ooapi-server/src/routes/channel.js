@@ -21,7 +21,7 @@
 //   GET    /api/channel/:id/key        查看完整 Key
 import { Router } from "express";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, now, assertPublicUrl, idParam } from "../utils.js";
+import { ok, fail, asyncHandler, now, assertPublicUrl, idParam, safeInt } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getProvider, getMethod, providerKeys, publicProviders } from "../services/channel-types.js";
@@ -251,7 +251,10 @@ router.post(
       return fail(res, "不支持的操作（add / delete / replace）");
     }
 
-    await pool.query("UPDATE channels SET api_key = ? WHERE id = ?", [next.join("\n"), id]);
+    // api_key 列是 TEXT（64KB）：多 Key 拼接后必须有上限，否则 MySQL 报错 500
+    const joined = next.join("\n");
+    if (joined.length > 60_000) return fail(res, "Key 总长度超出上限，请减少 Key 数量");
+    await pool.query("UPDATE channels SET api_key = ? WHERE id = ?", [joined, id]);
     await writeLog({
       user: req.user,
       type: LOG_TYPE.MANAGE,
@@ -454,14 +457,18 @@ router.post(
     // 表单里的模型/分组/优先级/权重/自动禁用必须真正落库（此前 relay 提交被全部丢弃，
     // 用户改了等于没改）；未提交的字段在更新时保持原值
     const defaultModels = (mCfg.defaultModels || []).map((m) => m.id).join(",");
-    const models = Array.isArray(modelsInput)
-      ? modelsInput.map((s) => String(s).trim()).filter(Boolean).join(",") || defaultModels
-      : String(modelsInput || "").trim() || defaultModels;
-    const groupName = String(group_name || "default").trim().slice(0, 32) || "default";
+    const models = (
+      Array.isArray(modelsInput)
+        ? modelsInput.map((s) => String(s).trim()).filter(Boolean).join(",") || defaultModels
+        : String(modelsInput || "").trim() || defaultModels
+    ).slice(0, 20_000);
+    const groupName = String(group_name || "default").trim().slice(0, 64) || "default";
     const weightVal =
       Number.isFinite(Number(weight)) && Number(weight) > 0 ? Math.min(10000, Math.floor(Number(weight))) : 1;
     const autoBanVal = auto_ban === undefined ? 1 : auto_ban ? 1 : 0;
-    const targetId = Number(id);
+    const priorityVal = safeInt(priority, { min: 0, max: 1_000_000, fallback: 0 });
+    const targetId = id === undefined ? null : safeInt(id, { min: 1 });
+    if (id !== undefined && !targetId) return fail(res, "渠道 id 无效");
     let token = "";
     let other = { method: "relay" };
     let accountLabel = null;
@@ -573,7 +580,7 @@ router.post(
           mCfg.baseUrl || "",
           models,
           groupName,
-          Number(priority) || 0,
+          priorityVal,
           weightVal,
           autoBanVal,
           JSON.stringify(other),
@@ -602,7 +609,7 @@ router.post(
           token,
           models,
           groupName,
-          Number(priority) || 0,
+          priorityVal,
           weightVal,
           autoBanVal,
           JSON.stringify(other),
@@ -634,7 +641,8 @@ router.post(
     if (!lines.length) return fail(res, "请粘贴账号列表，每行一个：账号----密码");
     if (lines.length > 50) return fail(res, "单次最多 50 个");
 
-    const models = (mCfg.defaultModels || []).map((m) => m.id).join(",");
+    const models = (mCfg.defaultModels || []).map((m) => m.id).join(",").slice(0, 20_000);
+    const priorityVal = safeInt(priority, { min: 0, max: 1_000_000, fallback: 0 });
     const results = [];
 
     for (const line of lines) {
@@ -668,7 +676,7 @@ router.post(
         await pool.query(
           `INSERT INTO channels (name, type, base_url, api_key, models, group_name, status, priority, weight, other, created_time)
            VALUES (?,?,?,?,?, 'default', 1, ?, 1, ?, ?)`,
-          [account, type, mCfg.baseUrl || "", r.token, models, Number(priority) || 0, JSON.stringify(other), now()]
+          [account, type, mCfg.baseUrl || "", r.token, models, priorityVal, JSON.stringify(other), now()]
         );
         results.push({ account, ok: true });
       } catch (e) {
@@ -705,8 +713,13 @@ router.post(
     if (!apiKey) return fail(res, "请填写 API Key");
     const models = Array.isArray(b.models) ? b.models.join(",") : String(b.models || "");
     if (!models.trim()) return fail(res, "请至少选择一个模型");
-    const baseUrl = String(b.base_url || mCfg.baseUrl || "").trim();
+    const baseUrl = String(b.base_url || mCfg.baseUrl || "").trim().slice(0, 255);
     if (!baseUrl) return fail(res, "请填写接口地址（Base URL）");
+    // 数值字段显式校验：Number("Infinity") || 0 仍是 Infinity，会拼出非法 SQL（500）
+    const priority = safeInt(b.priority ?? 0, { min: 0, max: 1_000_000 });
+    if (priority === null) return fail(res, "优先级无效");
+    const weight = safeInt(b.weight ?? 0, { min: 0, max: 10_000 });
+    if (weight === null) return fail(res, "权重无效");
 
     const other = { method: "api" };
     const [ret] = await pool.query(
@@ -716,12 +729,12 @@ router.post(
         name.slice(0, 64),
         type,
         baseUrl,
-        apiKey,
-        models,
-        String(b.group_name || "default").trim() || "default",
+        apiKey.slice(0, 60_000),
+        models.slice(0, 20_000),
+        String(b.group_name || "default").trim().slice(0, 64) || "default",
         Number(b.status) === 2 ? 2 : 1,
-        Number(b.priority) || 0,
-        Number(b.weight) || 0,
+        priority,
+        weight,
         String(b.remark || "").slice(0, 255),
         b.auto_ban === false ? 0 : 1,
         JSON.stringify(other),
@@ -739,7 +752,7 @@ router.put(
   "/",
   asyncHandler(async (req, res) => {
     const b = req.body || {};
-    const id = Number(b.id);
+    const id = safeInt(b.id, { min: 1 });
     if (!id) return fail(res, "缺少渠道 id");
     const [rows] = await pool.query("SELECT * FROM channels WHERE id = ?", [id]);
     const cur = rows[0];
@@ -754,20 +767,28 @@ router.put(
     };
 
     setIf("name", b.name !== undefined ? String(b.name).trim().slice(0, 64) : undefined);
-    setIf("base_url", b.base_url !== undefined ? String(b.base_url).trim() : undefined);
-    if (b.api_key !== undefined && String(b.api_key).trim()) setIf("api_key", String(b.api_key).trim());
+    setIf("base_url", b.base_url !== undefined ? String(b.base_url).trim().slice(0, 255) : undefined);
+    if (b.api_key !== undefined && String(b.api_key).trim()) setIf("api_key", String(b.api_key).trim().slice(0, 60_000));
     if (b.models !== undefined) {
       const m = Array.isArray(b.models) ? b.models.join(",") : String(b.models);
-      if (m.trim()) setIf("models", m);
+      if (m.trim()) setIf("models", m.slice(0, 20_000));
     }
-    setIf("group_name", b.group_name !== undefined ? String(b.group_name).trim() || "default" : undefined);
+    setIf("group_name", b.group_name !== undefined ? String(b.group_name).trim().slice(0, 64) || "default" : undefined);
     if (b.status !== undefined) {
       const s = Number(b.status) === 2 ? 2 : 1;
       setIf("status", s);
       if (s === 1) resetChannelState(id);
     }
-    setIf("priority", b.priority !== undefined ? Number(b.priority) || 0 : undefined);
-    setIf("weight", b.weight !== undefined ? Number(b.weight) || 0 : undefined);
+    if (b.priority !== undefined) {
+      const p = safeInt(b.priority, { min: 0, max: 1_000_000 });
+      if (p === null) return fail(res, "优先级无效");
+      setIf("priority", p);
+    }
+    if (b.weight !== undefined) {
+      const w = safeInt(b.weight, { min: 0, max: 10_000 });
+      if (w === null) return fail(res, "权重无效");
+      setIf("weight", w);
+    }
     setIf("remark", b.remark !== undefined ? String(b.remark).slice(0, 255) : undefined);
     setIf("auto_ban", b.auto_ban !== undefined ? (b.auto_ban ? 1 : 0) : undefined);
 
@@ -825,7 +846,9 @@ router.post(
     // 只补「请求里缺失的部分」：同时传 id+key 但没传 base_url 时，
     // 之前会落到厂商默认地址，可能把该渠道的 Key 发给错误的上游
     if (id && (!key || !base)) {
-      const [rows] = await pool.query("SELECT api_key, base_url FROM channels WHERE id = ?", [Number(id)]);
+      const cid = safeInt(id, { min: 1 });
+      if (!cid) return fail(res, "渠道 id 无效");
+      const [rows] = await pool.query("SELECT api_key, base_url FROM channels WHERE id = ?", [cid]);
       if (rows.length) {
         if (!key) key = splitKeys(rows[0].api_key)[0] || "";
         if (!base) base = rows[0].base_url || "";
@@ -876,8 +899,10 @@ router.post(
   "/batch",
   asyncHandler(async (req, res) => {
     const { ids, action, payload } = req.body || {};
-    const list = (Array.isArray(ids) ? ids : []).map(Number).filter(Boolean);
+    // 显式整数校验：Infinity/NaN 会被 mysql2 原样拼进 IN 列表导致 500
+    const list = [...new Set((Array.isArray(ids) ? ids : []).map((v) => safeInt(v, { min: 1 })).filter(Boolean))];
     if (!list.length) return fail(res, "请先选择渠道");
+    if (list.length > 500) return fail(res, "单次最多操作 500 个渠道");
     const ph = list.map(() => "?").join(",");
 
     if (action === "enable") {
@@ -897,21 +922,23 @@ router.post(
       await pool.query(`DELETE FROM channels WHERE id IN (${ph})`, list);
       list.forEach((id) => forgetChannel(id));
     } else if (action === "set_priority") {
-      const p = Number(payload?.priority) || 0;
+      const p = safeInt(payload?.priority, { min: 0, max: 1_000_000 });
+      if (p === null) return fail(res, "优先级无效");
       await pool.query(`UPDATE channels SET priority = ? WHERE id IN (${ph})`, [p, ...list]);
     } else if (action === "set_group") {
-      const g = String(payload?.group_name || "default").trim() || "default";
+      const g = String(payload?.group_name || "default").trim().slice(0, 64) || "default";
       await pool.query(`UPDATE channels SET group_name = ? WHERE id IN (${ph})`, [g, ...list]);
     } else if (action === "add_models") {
       const add = (Array.isArray(payload?.models) ? payload.models : String(payload?.models || "").split(","))
-        .map((s) => s.trim())
-        .filter(Boolean);
+        .map((s) => String(s).trim())
+        .filter(Boolean)
+        .slice(0, 500);
       if (!add.length) return fail(res, "请提供要添加的模型");
       const [rows] = await pool.query(`SELECT id, models FROM channels WHERE id IN (${ph})`, list);
       for (const r of rows) {
         const cur = String(r.models || "").split(",").map((s) => s.trim()).filter(Boolean);
         const merged = [...new Set([...cur, ...add])];
-        await pool.query("UPDATE channels SET models = ? WHERE id = ?", [merged.join(","), r.id]);
+        await pool.query("UPDATE channels SET models = ? WHERE id = ?", [merged.join(",").slice(0, 20_000), r.id]);
       }
     } else {
       return fail(res, "不支持的操作");
