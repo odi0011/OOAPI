@@ -493,38 +493,53 @@ router.post(
     }
     if (docs.length > MAX_UPLOAD_FILES) return fail(res, `最多同时上传 ${MAX_UPLOAD_FILES} 个文件`);
 
-    const history = await getSessionMessages(session.id);
-
-    // 用户消息先落库再跑：即使执行失败，对话历史也是完整的
-    const userParts = [{ id: `u${Date.now().toString(36)}`, type: "text", text: content }];
-    for (const img of Array.isArray(images) ? images : []) {
-      if (typeof img?.dataUrl === "string" && img.dataUrl.startsWith("data:image/")) {
-        userParts.push({ id: `i${Math.random().toString(36).slice(2, 8)}`, type: "image", url: img.dataUrl });
-      }
-    }
-    for (const d of docs) {
-      userParts.push({ id: `f${Math.random().toString(36).slice(2, 8)}`, type: "file", name: d.name, kind: d.kind, bytes: d.bytes, text: d.text });
-    }
-    await appendMessage({ sessionId: session.id, userId: req.user.id, role: "user", parts: userParts });
-
-    // 首条消息直接当标题（比再调一次模型便宜；用户之后可手动改名）
-    if (session.message_count === 0 && session.title === "新对话") {
-      await updateSession(req.user.id, session.id, { title: titleFromText(content || docs[0]?.name || "图片对话") });
-    }
-
-    const models = await availableModels(req.user, keyId);
-    const modelCaps = models.find((m) => m.id === model) || null;
-    // 路由分组：必须通过密钥路由（分组决定渠道/模型/倍率），没有可用密钥不开跑
-    const usableKey = await activeKeyOf(req.user, keyId);
-    if (!usableKey) {
-      return fail(res, "请先在「令牌管理」创建可用密钥，并在对话页选择它（密钥的分组决定可用模型与倍率）", 403);
-    }
-    const routeGroup = usableKey.group_name || null;
-    if (!models.some((m) => m.id === model)) {
-      return fail(res, `模型「${model}」在当前密钥下不可用，请重新选择模型`);
-    }
+    // 先原子占位、再做落库等副作用：并发提交的第二个请求会在这里直接 409，
+    // 不会留下重复的用户消息或被改错的标题（原实现先落库后占位，存在这个竞态）。
     const run = startRun(session.id, { userId: req.user.id });
     if (!run) return fail(res, "这个会话正在生成中，请稍候或先停止", 409);
+
+    let history;
+    let models;
+    let modelCaps;
+    let routeGroup;
+    try {
+      history = await getSessionMessages(session.id);
+
+      // 用户消息先落库再跑：即使执行失败，对话历史也是完整的
+      const userParts = [{ id: `u${Date.now().toString(36)}`, type: "text", text: content }];
+      for (const img of Array.isArray(images) ? images : []) {
+        if (typeof img?.dataUrl === "string" && img.dataUrl.startsWith("data:image/")) {
+          userParts.push({ id: `i${Math.random().toString(36).slice(2, 8)}`, type: "image", url: img.dataUrl });
+        }
+      }
+      for (const d of docs) {
+        userParts.push({ id: `f${Math.random().toString(36).slice(2, 8)}`, type: "file", name: d.name, kind: d.kind, bytes: d.bytes, text: d.text });
+      }
+      await appendMessage({ sessionId: session.id, userId: req.user.id, role: "user", parts: userParts });
+
+      // 首条消息直接当标题（比再调一次模型便宜；用户之后可手动改名）
+      if (session.message_count === 0 && session.title === "新对话") {
+        await updateSession(req.user.id, session.id, { title: titleFromText(content || docs[0]?.name || "图片对话") });
+      }
+
+      models = await availableModels(req.user, keyId);
+      modelCaps = models.find((m) => m.id === model) || null;
+      // 路由分组：必须通过密钥路由（分组决定渠道/模型/倍率），没有可用密钥不开跑
+      const usableKey = await activeKeyOf(req.user, keyId);
+      if (!usableKey) {
+        finishRun(run);
+        return fail(res, "请先在「令牌管理」创建可用密钥，并在对话页选择它（密钥的分组决定可用模型与倍率）", 403);
+      }
+      routeGroup = usableKey.group_name || null;
+      if (!models.some((m) => m.id === model)) {
+        finishRun(run);
+        return fail(res, `模型「${model}」在当前密钥下不可用，请重新选择模型`);
+      }
+    } catch (e) {
+      // 占位后到真正开跑前的任何异常都要释放，否则会话会永远显示"生成中"
+      finishRun(run);
+      throw e;
+    }
     const ctrl = new AbortController();
     run.abort = () => ctrl.abort();
     publish(run, { type: "start", sessionId: session.id, startedAt: run.startedAt });
@@ -661,6 +676,8 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
     const runChannelIds = [...new Set(runCalls.map((c) => Number(c.channelId) || 0).filter(Boolean))];
 
     const tokens = aggregate(runCalls);
+    // 与 gateway 同规则：先置位再 await，避免「已扣费但抛错」时 catch 里再补一次
+    settled = true;
     const billed = await chargeUser({
       user,
       model,
@@ -674,7 +691,6 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       keyId,
       kind: "对话",
     });
-    settled = true;
 
     const message = {
       seq: 0,

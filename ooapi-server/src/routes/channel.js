@@ -728,6 +728,11 @@ router.post(
 const CAPTURES = new Map(); // sid -> { type, channelId, at }
 const CAPTURE_TTL_MS = 15 * 60 * 1000;
 
+// 浏览器 onboarding 完成后的临时 profile（登录态在目录里，提交渠道时复制过去）。
+// 注意：必须声明在模块顶层 —— sweeper/close/login 都要访问，声明在处理函数里会直接 ReferenceError。
+const PENDING_PROFILES = new Map(); // channelId -> { vendor, at }
+const PENDING_PROFILE_TTL_MS = 30 * 60 * 1000;
+
 function sweepCaptures() {
   const cutoff = Date.now() - CAPTURE_TTL_MS;
   for (const [sid, c] of CAPTURES) {
@@ -926,9 +931,6 @@ router.post(
 
     // 浏览器 onboarding：登录态就在 profile 目录里，保留它，等提交时复制给渠道。
 // 抓取完成后 CAPTURES 条目会被删（sid 生命周期结束），这里把 profile 登记进
-// PENDING_PROFILES，交给 sweeper 兜底清理（放弃提交/重新登录都不会永久残留）。
-const PENDING_PROFILES = new Map(); // channelId -> { vendor, at }
-const PENDING_PROFILE_TTL_MS = 30 * 60 * 1000;
     if (c.kind === "browser") {
       CAPTURES.delete(sid);
       await browserClose(c.type, c.channelId).catch(() => {});

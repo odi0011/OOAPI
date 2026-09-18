@@ -414,8 +414,11 @@ export async function explainNoChannel({ model, groupName = null } = {}) {
 // 加短 TTL 缓存；渠道变更（resetChannelState/forgetChannel）立即失效，最坏只落后 TTL。
 let channelsCache = null;
 let channelsCacheAt = 0;
+let channelsCacheEpoch = 0;
 const CHANNELS_TTL_MS = 5000;
 export function invalidateChannelCache() {
+  // epoch：失效前已发出的查询返回后不能把旧快照写回缓存（否则被删/禁用渠道还能参与调度）
+  channelsCacheEpoch++;
   channelsCacheAt = 0;
 }
 
@@ -434,11 +437,16 @@ export async function selectChannels({ model, excludeIds = null, groupName = nul
     }
   }
   if (!channelsCache || Date.now() - channelsCacheAt > CHANNELS_TTL_MS) {
+    const epoch = channelsCacheEpoch;
     const [rows] = await pool.query(
       "SELECT * FROM channels WHERE status = 1 ORDER BY priority DESC, id ASC"
     );
-    channelsCache = rows;
-    channelsCacheAt = Date.now();
+    if (epoch === channelsCacheEpoch) {
+      channelsCache = rows;
+      channelsCacheAt = Date.now();
+    } else {
+      return selectChannels({ model, excludeIds, groupName }); // 查询期间有变更：重查一次
+    }
   }
   const rows = channelsCache;
   const excluded = excludeIds instanceof Set ? excludeIds : new Set();

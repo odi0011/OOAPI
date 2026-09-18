@@ -409,6 +409,9 @@ router.post(
       },
     });
 
+    // 先把「已结算」置位再 await：若扣费 SQL 已提交但连接层报错，catch 里的部分结算
+    // 不会再扣一次（宁可极端情况下少扣，也不能重复扣费）
+    settledOnce = true;
     const settled = await settle({
       token,
       user,
@@ -420,7 +423,6 @@ router.post(
       requestId,
       channel: result.channel,
     });
-    settledOnce = true;
 
     if (wantStream) {
       if (!streamStarted) {
