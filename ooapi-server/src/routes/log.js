@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, pageParams, safeInt } from "../utils.js";
+import { ok, asyncHandler, pageParams, safeInt } from "../utils.js";
 import { authRequired, adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE_LABEL } from "../services/log.js";
 

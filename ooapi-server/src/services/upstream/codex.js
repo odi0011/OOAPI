@@ -25,7 +25,6 @@ import {
   detectSignal,
   clearState,
   DEGRADED_CODE,
-  DEGRADED_COOLDOWN_SEC,
 } from "./codex-state-kit.js";
 
 const AUTH_BASE = "https://auth.openai.com";

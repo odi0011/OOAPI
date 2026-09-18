@@ -10,7 +10,7 @@ import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
 import { PRIMARY_PRESETS, DEFAULT_PRIMARY } from "../theme/presets";
 import { useTheme } from "../theme/ThemeContext";
-import { fmtDate, fmtOd, odOf, unitsPerOd } from "../services/format";
+import { fmtDate, odOf, unitsPerOd } from "../services/format";
 import { OdStatValue } from "../components/OdCoin";
 
 const { Text } = Typography;

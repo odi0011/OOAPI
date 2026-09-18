@@ -94,7 +94,7 @@ DB_PASSWORD=你刚设置的数据库密码
 DB_NAME=ooapi
 
 # 超级管理员初始密码（首次启动创建 root 账号时使用）
-# 不设置则随机生成，并在首次启动日志中打印一次，登录后请立即修改
+# 不设置则随机生成并写入 ooapi-server/.admin-password（0600），日志只提示文件路径
 ADMIN_PASSWORD=
 
 # JWT 签名密钥，留空会自动生成并保存到 .jwt-secret（该文件不要提交）
@@ -111,7 +111,9 @@ npm start          # 前台运行，确认无误
 首次启动的日志里会出现：
 
 ```
-[init] 已创建默认管理员 root / <你设置的 ADMIN_PASSWORD>
+[init] 已创建默认管理员 root（密码来自 ADMIN_PASSWORD 环境变量）。
+# 或（未设置 ADMIN_PASSWORD 时）：
+[init] 已创建默认管理员 root；随机密码已写入 .../ooapi-server/.admin-password（0600）。登录后请立即改密并删除该文件。
 [ooapi-server] listening on 127.0.0.1:3001
 ```
 
@@ -195,7 +197,7 @@ server {
 |---|---|
 | 地址 | `http://<你的域名或IP>:3001/login` |
 | 用户名 | `root` |
-| 密码 | `.env` 里的 `ADMIN_PASSWORD`；未设置时首次启动随机生成并打印在启动日志里 |
+| 密码 | `.env` 里的 `ADMIN_PASSWORD`；未设置时首次启动随机生成并写入 `ooapi-server/.admin-password` |
 
 创建时机：**首次启动**时，若 `users` 表中不存在 `role >= 100` 的用户，自动创建 `root`。
 
@@ -207,7 +209,7 @@ server {
 DELETE FROM users WHERE role >= 100;
 ```
 
-然后重启后端，日志里会再次打印初始密码。
+然后重启后端，未设置 `ADMIN_PASSWORD` 时会重新生成随机密码并写入 `.admin-password` 文件。
 
 ## 使用说明
 

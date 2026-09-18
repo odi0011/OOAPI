@@ -5,8 +5,8 @@ import {
 } from "antd";
 import {
   PlusOutlined, ReloadOutlined, ThunderboltOutlined, DeleteOutlined, EditOutlined,
-  UndoOutlined, KeyOutlined, LoginOutlined, ApiOutlined, GlobalOutlined,
-  InfoCircleOutlined, SafetyCertificateOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined,
+  UndoOutlined, KeyOutlined, LoginOutlined, GlobalOutlined,
+  InfoCircleOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { fmtDate, CURRENCY_NAME, copyText } from "../services/format";

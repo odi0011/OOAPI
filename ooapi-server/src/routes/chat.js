@@ -8,7 +8,7 @@
 //     这里逐条 splitTokens 后求和 —— 与网关/旧智能体同一套口径，禁止自行折算。
 import express from "express";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, now, safeInt, safeJSONParse } from "../utils.js";
+import { ok, fail, asyncHandler, now, safeInt } from "../utils.js";
 import { authRequired, preAuthJwt } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getPrice, computeCost, splitTokens, estimateTokens, loadPrices, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
