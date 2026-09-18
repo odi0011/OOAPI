@@ -394,6 +394,7 @@
 .bui-cbtn.is-narrow-b { grid-column: 5; grid-row: 1; }
 .bui-cbtn.is-wide-a { grid-column: 4; grid-row: 2; }
 .bui-cbtn.is-wide-b { grid-column: 5; grid-row: 2; }
+.bui-cbtn.is-wide-send { grid-column: 6; grid-row: 2; }
 
 /* 附件 chips */
 .bui-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 2px 0; }

@@ -25,7 +25,7 @@ import { ok, fail, asyncHandler, now, assertPublicUrl, idParam, safeInt } from "
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod } from "../services/channel-types.js";
-import { getAdapter, resetChannelState, forgetChannel, channelRuntimeState, rowToChannel } from "../services/router.js";
+import { getAdapter, resetChannelState, forgetChannel, channelRuntimeState, rowToChannel, recordChannelCall } from "../services/router.js";
 import {
   isReady as browserReady,
   removeProfile,
@@ -124,8 +124,9 @@ function rowToResp(r, { withKey = false } = {}) {
     status: r.status,
     status_label: r.status === 2 ? "已禁用" : cooling ? "冷却中" : r.status === 1 ? "已启用" : "自动禁用",
     auto_ban: r.auto_ban === 0 ? false : true,
-    cooling,
-    cooldown_text: rt.cooldown_until
+      cooling,
+      recent: rt.recent,
+      cooldown_text: rt.cooldown_until
       ? new Date(rt.cooldown_until).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })
       : "",
     last_error: rt.last_error || r.last_error || "",
@@ -883,6 +884,7 @@ router.post(
     const method = methodOf(row);
     const channel = rowToChannel(row);
     const adapter = await adapterOf(row.type, method);
+    const startedAt = Date.now();
 
     try {
       if (!adapter?.verify) return fail(res, `${providerName} 适配器未实现测试`);
@@ -894,11 +896,15 @@ router.post(
         now(),
         id,
       ]);
+      // 测试结果也计入「最近调用」小绿条（成功）
+      await recordChannelCall(id, true, ms);
       resetChannelState(id);
       await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `测试渠道「${row.name}」通过（${ms}ms）` });
       return ok(res, { success: true, time: ms }, `渠道可用（${ms}ms）`);
     } catch (e) {
       await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), id]);
+      // 测试失败计入「最近调用」小绿条（失败 → 橙色）
+      await recordChannelCall(id, false, Date.now() - startedAt);
       await writeLog({ user: req.user, type: LOG_TYPE.ERROR, content: `测试渠道「${row.name}」失败：${e.message}` });
       return ok(res, { success: false, message: e.message, code: e.code }, `测试失败：${e.message}`);
     }

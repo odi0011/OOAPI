@@ -55,8 +55,37 @@ const SELECT_CURSOR = new Map();
 const RATE = { minGapMs: 1200, jitterMs: 900, maxPerMin: 20 };
 
 function st(id) {
-  if (!state.has(id)) state.set(id, { lastAt: 0, window: [], cooldownUntil: 0, lastError: "" });
+  if (!state.has(id)) state.set(id, { lastAt: 0, window: [], cooldownUntil: 0, lastError: "", recent: null });
   return state.get(id);
+}
+
+// 最近调用记录（环形 20 条）：运行时为准，首次从数据库行回填，之后随每次成功/失败写回。
+// 落库是为了重启后不丢历史；写库与 markChannelOk/Error 合并成同一条 UPDATE。
+const RECENT_MAX = 20;
+
+function parseRecent(raw) {
+  try {
+    const arr = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return Array.isArray(arr) ? arr.slice(-RECENT_MAX) : [];
+  } catch {
+    return [];
+  }
+}
+
+function pushRecent(id, entry) {
+  const s = st(Number(id));
+  if (!s.recent) s.recent = [];
+  s.recent.push(entry);
+  if (s.recent.length > RECENT_MAX) s.recent = s.recent.slice(-RECENT_MAX);
+  return JSON.stringify(s.recent);
+}
+
+/** 只记录一次调用结果（不累加 used_count；测试/检查等非生产调用用） */
+export async function recordChannelCall(channelId, ok, ms, error = "") {
+  const recentJson = pushRecent(channelId, { t: now(), ok: ok ? 1 : 0, ms: Math.max(0, Math.round(Number(ms) || 0)) });
+  await pool
+    .query("UPDATE channels SET recent_calls = ? WHERE id = ?", [recentJson, Number(channelId)])
+    .catch(() => {});
 }
 
 export function isCoolingDown(channel) {
@@ -76,9 +105,10 @@ export async function markChannelError(channel, message, cooldownSec = 300) {
   const s = st(channel.id);
   s.cooldownUntil = Date.now() + cooldownSec * 1000;
   s.lastError = String(message).slice(0, 400);
-  // 仅记录错误信息，便于管理端展示"异常"原因
+  // 最近调用记录与 last_error 一起写回（只记录错误信息，便于管理端展示"异常"原因）
+  const recentJson = pushRecent(channel.id, { t: now(), ok: 0, ms: 0 });
   await pool
-    .query("UPDATE channels SET last_error = ? WHERE id = ?", [s.lastError, channel.id])
+    .query("UPDATE channels SET last_error = ?, recent_calls = ? WHERE id = ?", [s.lastError, recentJson, channel.id])
     .catch(() => {});
 }
 
@@ -89,10 +119,11 @@ export async function markChannelOk(channel, elapsedMs) {
   // 只更新运行指标，不改 status —— status 是管理员开关（手动启停），
   // 写 status=1 会复活管理员刚禁用的渠道。
   // used_count/last_used_time 供管理端展示渠道使用情况（此前从未累加）。
+  const recentJson = pushRecent(channel.id, { t: now(), ok: 1, ms: Math.max(0, Math.round(Number(elapsedMs) || 0)) });
   await pool
     .query(
-      "UPDATE channels SET response_time = ?, tested_time = ?, last_error = '', used_count = used_count + 1, last_used_time = ? WHERE id = ?",
-      [elapsedMs, now(), now(), channel.id]
+      "UPDATE channels SET response_time = ?, tested_time = ?, last_error = '', used_count = used_count + 1, last_used_time = ?, recent_calls = ? WHERE id = ?",
+      [elapsedMs, now(), now(), recentJson, channel.id]
     )
     .catch(() => {});
 }
@@ -155,6 +186,7 @@ export function channelRuntimeState(channelId) {
   return {
     cooldown_until: s?.cooldownUntil || 0,
     last_error: s?.lastError || "",
+    recent: s?.recent || [],
   };
 }
 
@@ -188,6 +220,9 @@ export function rowToChannel(r) {
   // 接入方式：api / relay / 订阅 OAuth（codex、claude-oauth、antigravity）
   const rawMethod = String(other.method || "relay");
   const method = rawMethod === "api" || isOAuthMethod(rawMethod) ? rawMethod : "relay";
+  // 最近调用记录：运行时已有则用运行时的（更新），否则从数据库行回填
+  const rs = st(Number(r.id));
+  if (!rs.recent) rs.recent = parseRecent(r.recent_calls);
   return {
     id: r.id,
     name: r.name,
@@ -201,6 +236,7 @@ export function rowToChannel(r) {
     priority: Number(r.priority) || 0,
     weight: Number(r.weight) || 0,
     response_time: r.response_time || 0,
+    recent: rs.recent,
     other,
   };
 }

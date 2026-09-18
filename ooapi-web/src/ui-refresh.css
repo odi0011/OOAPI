@@ -7,3 +7,158 @@
 @media(min-width:1500px){.ui-chat-welcome{margin-top:9vh}.ui-suggestions{margin-top:36px}}
 @media(max-width:767px){.oo-content.ui-chat-content{padding:16px 12px}.ui-chat{height:calc(100dvh - var(--header-h) - 32px);min-height:400px}.ui-chat-header{padding:0 4px 12px}.ui-chat-header h1{font-size:16px}.ui-chat-header h1 span{display:none}.ui-thread-inner{padding:20px 4px}.ui-chat-welcome{margin:22px auto}.ui-chat-welcome h2{font-size:25px}.ui-chat-welcome>p{font-size:12px;max-width:290px;margin:auto}.ui-welcome-orbit{width:44px;height:44px;font-size:20px;margin-bottom:20px}.ui-suggestions{gap:8px;margin-top:20px}.ui-suggestion.ant-btn{padding:12px 10px;grid-template-columns:20px 1fr;gap:4px}.ui-suggestion strong{font-size:11px}.ui-suggestion small{font-size:10px}.ui-suggest-arrow{display:none}.ui-composer-area{padding:8px 0 0}.ui-composer{padding:10px;border-radius:16px}.ui-mode-caption{display:none}.ui-composer textarea.ant-input{font-size:14px}.ui-composer-footer{font-size:9px;justify-content:center}.ui-composer-footer>span:last-child{display:none}.ui-composer-controls{gap:2px}.ui-composer-controls .ant-btn{padding-inline:7px}.ui-model-select.ant-btn{max-width:185px}.ui-message-ai{gap:8px}.ui-ai-avatar{width:25px;height:25px}.ui-user-bubble{max-width:90%}.ui-agent-progress-head>span:last-child{margin-left:0}.ui-ai-content .bui-prose{font-size:13px}}
 @media(prefers-reduced-motion:reduce){.ui-chat *,.ui-chat *:before{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+/* Chat editor refresh: a quiet, desktop-style writing surface. The message
+   column and composer use the available page width instead of a floating
+   narrow card, while the assistant response remains plain document text. */
+.ui-thread-inner {
+  width: 100%;
+  max-width: none;
+  padding: 32px clamp(18px, 4vw, 56px);
+}
+
+.ui-composer-area {
+  width: 100%;
+  max-width: none;
+  padding: 12px clamp(18px, 4vw, 56px) 0;
+}
+
+.ui-composer {
+  padding: 6px 10px 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 2px 12px color-mix(in srgb, var(--ink) 4%, transparent);
+}
+
+.ui-composer:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.ui-mode-bar {
+  min-height: 30px;
+  padding: 0 2px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.ui-mode-bar .ant-segmented {
+  background: transparent;
+  padding: 2px;
+}
+
+.ui-mode-bar .ant-segmented-item {
+  min-height: 25px;
+  line-height: 25px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.ui-mode-caption {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.ui-composer > .bui-promptbar,
+.ui-composer > .bui-promptbar > div,
+.ui-composer > .bui-promptbar .bui-composer {
+  width: 100%;
+}
+
+.ui-composer > .bui-promptbar .bui-composer {
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ui-composer > .bui-promptbar .bui-composer-row {
+  gap: 4px;
+  grid-template-columns: 30px auto minmax(0, 1fr) 30px 30px 34px;
+}
+
+.ui-composer > .bui-promptbar .bui-composer-input.is-wide {
+  min-height: 42px;
+  padding: 10px 4px 12px;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.ui-composer > .bui-promptbar .bui-cbtn,
+.ui-composer > .bui-promptbar .bui-modelbtn {
+  height: 30px;
+}
+
+.ui-composer > .bui-promptbar .bui-cbtn {
+  width: 30px;
+  border-radius: 7px;
+}
+
+.ui-composer > .bui-promptbar .bui-modelbtn {
+  max-width: min(260px, 32vw);
+  padding-inline: 6px;
+  font-size: 11px;
+}
+
+.ui-composer > .bui-promptbar .bui-cbtn.is-send,
+.ui-composer > .bui-promptbar .bui-cbtn.is-stop {
+  width: 32px;
+  border-radius: 8px;
+}
+
+.ui-message-ai {
+  display: block;
+  margin-bottom: 36px;
+}
+
+.ui-message-ai .ui-ai-content {
+  width: 100%;
+}
+
+.ui-message-ai .bui-prose,
+.ui-message-ai .bui-stream-text {
+  max-width: 88ch;
+  font-size: 14px;
+  line-height: 1.85;
+}
+
+.ui-message-ai .ui-message-actions {
+  margin-top: 14px;
+}
+
+/* Keep legacy identity selectors inert if an older rendered message is still
+   mounted during a client-side navigation. */
+.ui-message-ai .ui-ai-avatar,
+.ui-message-ai .ui-answer-label {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .ui-thread-inner {
+    padding: 20px 12px;
+  }
+
+  .ui-composer-area {
+    padding: 8px 12px 0;
+  }
+
+  .ui-composer {
+    padding-inline: 8px;
+  }
+
+  .ui-composer > .bui-promptbar .bui-composer-row {
+    grid-template-columns: 28px auto minmax(0, 1fr) 28px 28px 32px;
+  }
+
+  .ui-composer > .bui-promptbar .bui-modelbtn {
+    max-width: 44vw;
+  }
+
+  .ui-message-ai .bui-prose,
+  .ui-message-ai .bui-stream-text {
+    max-width: none;
+    font-size: 13.5px;
+  }
+}

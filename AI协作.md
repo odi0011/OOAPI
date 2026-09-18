@@ -373,6 +373,14 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   适配器级深度测试：统一指纹确定性（Codex session 36 位、Claude device_id 64 hex、Grok session）、
   响应头捕获 `x-codex-turn-state`（**值长 292**、剩余 TTL≈55min）、注入后上游接受并复用、
   312 信号判定（作废 state + 90s 冷却）、渠道 `last_error` 为空。Codex 默认模型对齐线上型号。 |
+| 2026-09-18 | **第 13 批（渠道管理页 UI/UX）**：去掉标题下的说明小字（只留页面标题）；
+  原四张统计卡改为标题旁的横向小标签（渠道/启用/冷却/模型，失败时显 `—`），释放纵向空间；
+  新增「列表 / 宫格」形态切换按钮（位于厂商筛选与刷新之间，偏好记 localStorage）；
+  新增 `channels.recent_calls`（环形 20 条，随 `markChannelOk/markChannelError` 与渠道测试写回，
+  运行时缓存 + 落库，重启不丢），列表与宫格统一渲染「最近调用」小绿条（绿=成功 / 橙=失败 /
+  灰=无记录，悬浮显示时间、结果、耗时，hover 放大加亮，样式参考 aceternity uptime bars）；
+  宫格卡片含厂商图标、名称/账号、状态、分组、模型与行内操作，独立分页（24/页）。
+  `PageHeader` 组件新增 `tags` 插槽；移动端宫格单列与更细的小绿条。 |
 | 2026-09-18 | **第 11 批 UX 修复**：登录/注册切换保留受保护页面回跳；有效 JWT 遇到首屏网络异常时保留会话并提供认证重试；
   首页状态未知时隐藏注册入口；控制台增加加载中、错误和重试状态。令牌、日志、用户、定价、渠道列表增加
   持久错误提示与重试，日志清除搜索回到第一页，刷新按钮补齐无障碍名称；渠道添加补 providers 空/失败态，
@@ -380,3 +388,8 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   显示切换提示，重试回答沿用原模型、Agent、思考和联网设置；Agent 的无动作按钮明确禁用。系统设置增加
   加载指示、失败重试并仅在活动 Tab 加载；侧边栏导航、折叠按钮、个人设置主题色支持键盘操作；管理员编辑自己时
   禁止修改启用状态；异步保存/刷新完成前等待列表刷新。涉及 `ooapi-web/src`，并通过 `npm run build`。 |
+| 2026-09-18 | **第 11 批视觉与对话体验修复**：后台 `.oo-content` 改为铺满主区域，减少大屏左右空白；
+  所有 Ant 表格统一表头、行高、边界线、固定列不透明背景、固定列阴影与底部滚动条，修复右侧固定操作列
+  穿透底层列名的问题。对话页复用 Beautiful UI 的 Prompt Bar、Thinking、Streaming Text、Task Rows
+  原语，输入框固定为正文区 + 工具栏的桌面编辑器布局，移除 AI 头像、名称和模型标签，AI 回复改为无气泡正文，
+  聊天消息与输入区改为响应式全宽。参考组件范围：Beautiful UI 官方 Prompt Bar/Chat/Thinking/Streaming Text/Task Rows。 |

@@ -1275,9 +1275,10 @@ h1, h2, h3, h4 {
 
 .oo-content {
   padding: 24px;
-  max-width: var(--content-max);
+  /* 后台页面默认铺满主区域，避免大屏下出现两侧大块空白。 */
+  max-width: 100%;
   width: 100%;
-  margin: 0 auto;
+  margin: 0;
 }
 
 /* ---------------------------------------------------------------------------
@@ -1299,6 +1300,101 @@ h1, h2, h3, h4 {
   letter-spacing: var(--ls-title);
   line-height: 1.25;
   color: var(--ink);
+}
+
+/* 标题 + 统计小标签同一行（省掉整排数据卡的空间） */
+.oo-page-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.oo-page-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* 最近调用：小竖条（绿=成功 / 橙=失败 / 灰=无记录），hover 放大并加亮 */
+.oo-uptime {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 18px;
+}
+
+.oo-uptime-bar {
+  display: inline-block;
+  width: 4px;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--green);
+  transition: transform 140ms ease, filter 140ms ease;
+  transform-origin: bottom center;
+  cursor: default;
+}
+
+.oo-uptime-bar.is-fail {
+  background: var(--orange);
+}
+
+.oo-uptime-bar.is-empty {
+  background: var(--line);
+}
+
+.oo-uptime-bar:hover {
+  transform: scaleY(1.25) scaleX(1.2);
+  filter: brightness(1.1) saturate(1.1);
+}
+
+/* 渠道宫格形态 */
+.oo-channel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.oo-channel-card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.oo-channel-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+  box-shadow: var(--shadow-1, 0 2px 10px rgba(0, 0, 0, 0.06));
+}
+
+.oo-channel-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.oo-channel-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.oo-channel-card-models {
+  min-height: 22px;
+}
+
+.oo-channel-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: auto;
 }
 
 .oo-page-desc {
@@ -1723,6 +1819,101 @@ h1, h2, h3, h4 {
 
 .oo-table .ant-table-thead > tr > th::before { display: none !important; }
 
+/* 固定列必须是不透明的表面层，否则横向滚动时底层列会穿透到右侧操作列。 */
+.oo-table .ant-table-container,
+.oo-table .ant-table-content,
+.oo-table .ant-table-body {
+  background: var(--surface);
+}
+
+.oo-table .ant-table-thead > tr > th.ant-table-cell-fix-left,
+.oo-table .ant-table-thead > tr > th.ant-table-cell-fix-right,
+.oo-table .ant-table-tbody > tr > td.ant-table-cell-fix-left,
+.oo-table .ant-table-tbody > tr > td.ant-table-cell-fix-right {
+  background: var(--surface) !important;
+  z-index: 2;
+}
+
+.oo-table .ant-table-tbody > tr:hover > td.ant-table-cell-fix-left,
+.oo-table .ant-table-tbody > tr:hover > td.ant-table-cell-fix-right {
+  background: var(--hover) !important;
+}
+
+.oo-table .ant-table-cell-fix-right-first,
+.oo-table .ant-table-cell-fix-left-last {
+  box-shadow: inset 8px 0 8px -8px color-mix(in srgb, var(--ink) 18%, transparent);
+}
+
+.oo-table .ant-table-sticky-scroll,
+.oo-table .rc-table-sticky-scroll {
+  background: var(--surface) !important;
+  border-top: 1px solid var(--line-soft);
+}
+
+.oo-table .ant-table-sticky-scroll-bar,
+.oo-table .rc-table-sticky-scroll-bar {
+  background: var(--ink-3) !important;
+  opacity: 0.55;
+}
+
+/* 所有 Ant 表格共用同一套密度、表头和固定列规则；页面表格可继续使用
+   .oo-table 作为语义类名，嵌套/小型表格也不会退回默认视觉。 */
+.ant-table-wrapper .ant-table {
+  background: transparent;
+  font-size: var(--fs-body);
+}
+
+.ant-table-wrapper .ant-table-thead > tr > th {
+  background: var(--surface) !important;
+  border-bottom: 1px solid var(--line) !important;
+  color: var(--ink-3) !important;
+  font-size: var(--fs-desc);
+  font-weight: 500;
+  letter-spacing: var(--ls-body);
+  padding: 9px 12px !important;
+  white-space: nowrap;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr > td {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line-soft) !important;
+  font-weight: 450;
+  padding: 10px 12px !important;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr:hover > td {
+  background: var(--hover) !important;
+}
+
+.ant-table-wrapper .ant-table-thead > tr > th.ant-table-cell-fix-left,
+.ant-table-wrapper .ant-table-thead > tr > th.ant-table-cell-fix-right,
+.ant-table-wrapper .ant-table-tbody > tr > td.ant-table-cell-fix-left,
+.ant-table-wrapper .ant-table-tbody > tr > td.ant-table-cell-fix-right {
+  background: var(--surface) !important;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr:hover > td.ant-table-cell-fix-left,
+.ant-table-wrapper .ant-table-tbody > tr:hover > td.ant-table-cell-fix-right {
+  background: var(--hover) !important;
+}
+
+.ant-table-wrapper .ant-table-cell-fix-right-first,
+.ant-table-wrapper .ant-table-cell-fix-left-last {
+  box-shadow: inset 8px 0 8px -8px color-mix(in srgb, var(--ink) 18%, transparent);
+}
+
+.ant-table-wrapper .ant-table-sticky-scroll,
+.ant-table-wrapper .rc-table-sticky-scroll {
+  background: var(--surface) !important;
+  border-top: 1px solid var(--line-soft);
+}
+
+.ant-table-wrapper .ant-table-sticky-scroll-bar,
+.ant-table-wrapper .rc-table-sticky-scroll-bar {
+  background: var(--ink-3) !important;
+  opacity: 0.55;
+}
+
 .oo-table .ant-table-tbody > tr > td {
   padding: 10px 12px !important;
   border-bottom: 1px solid var(--line-soft) !important;
@@ -1943,6 +2134,11 @@ h1, h2, h3, h4 {
 
   .oo-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
   .oo-stat { padding: 12px 13px; }
+
+  /* 移动端：宫格单列、小绿条略缩 */
+  .oo-channel-grid { grid-template-columns: 1fr; }
+  .oo-uptime { height: 16px; }
+  .oo-uptime-bar { width: 3px; }
 
   .ant-modal { max-width: calc(100vw - 24px); }
   .ant-drawer-content-wrapper { max-width: 88vw; }

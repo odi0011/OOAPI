@@ -114,6 +114,7 @@ const TABLES = [
     last_error VARCHAR(500) NOT NULL DEFAULT '' COMMENT '最近错误信息',
     used_count INT NOT NULL DEFAULT 0 COMMENT '累计调用次数',
     last_used_time BIGINT NOT NULL DEFAULT 0 COMMENT '最近调用时间',
+    recent_calls TEXT COMMENT '最近调用记录 JSON 数组（环形，最多 20 条：{t,ok,ms}）',
     created_time BIGINT NOT NULL DEFAULT 0
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   `CREATE TABLE IF NOT EXISTS deepseek_accounts (
@@ -161,6 +162,7 @@ const COLUMN_MIGRATIONS = [
   { table: "channels", column: "remark", ddl: "VARCHAR(255) NOT NULL DEFAULT ''" },
   { table: "channels", column: "auto_ban", ddl: "TINYINT NOT NULL DEFAULT 1" },
   { table: "channels", column: "test_model", ddl: "VARCHAR(128) NOT NULL DEFAULT ''" },
+  { table: "channels", column: "recent_calls", ddl: "TEXT" },
 ];
 
 // 列类型扩容（老库）：列宽不足时 ALTER。

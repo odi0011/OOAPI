@@ -451,7 +451,9 @@ export function PromptBar({
     else if (!value.startsWith("/")) setCmdOpen(false);
   }, [value, commands.length]);
 
-  const sizeClass = wide ? "is-wide" : "is-narrow";
+  // 对话编辑器固定为「正文在上、工具栏在下」的两行结构，避免输入区
+  // 因文字长度在两种形态之间跳动，视觉上更接近桌面端编辑器。
+  const sizeClass = "is-wide";
 
   return (
     <div className="bui-promptbar" data-promptbar>
@@ -536,7 +538,7 @@ export function PromptBar({
                 title={visionOk ? "添加图片，最多 3 张" : "当前模型不支持图片"}
                 disabled={!visionOk || busy}
                 onClick={onPickImage}
-                className={`bui-cbtn ${wide ? "is-wide-plus" : "is-narrow-plus"}`}
+                className="bui-cbtn is-wide-plus"
               >
                 {ImageIcon}
               </button>
@@ -546,7 +548,7 @@ export function PromptBar({
                 aria-label="更多"
                 title={moreDisabled ? "当前模式暂不支持附件" : "更多"}
                 disabled={moreDisabled || disabled || busy}
-                className={`bui-cbtn ${wide ? "is-wide-plus" : "is-narrow-plus"}`}
+                className="bui-cbtn is-wide-plus"
               >
                 {PlusIcon}
               </button>
@@ -598,7 +600,7 @@ export function PromptBar({
                 aria-pressed={t.on}
                 disabled={busy}
                 onClick={t.onClick}
-                className={`bui-cbtn ${t.on ? "is-accent" : ""} ${i === 0 ? (wide ? "is-wide-a" : "is-narrow-a") : wide ? "is-wide-b" : "is-narrow-b"}`}
+                className={`bui-cbtn ${t.on ? "is-accent" : ""} ${i === 0 ? "is-wide-a" : "is-wide-b"}`}
               >
                 {t.icon}
               </button>
@@ -609,7 +611,7 @@ export function PromptBar({
                 type="button"
                 aria-label="停止生成"
                 onClick={onStop}
-                className={`bui-cbtn is-stop ${wide ? "is-wide-b" : "is-narrow-b"}`}
+                className="bui-cbtn is-stop is-wide-send"
               >
                 {StopIcon}
               </button>
@@ -619,7 +621,7 @@ export function PromptBar({
                 aria-label="发送消息"
                 disabled={!canSend}
                 onClick={() => onSend?.()}
-                className={`bui-cbtn is-send ${wide ? "is-wide-b" : "is-narrow-b"}`}
+                className="bui-cbtn is-send is-wide-send"
               >
                 {SendIcon}
               </button>

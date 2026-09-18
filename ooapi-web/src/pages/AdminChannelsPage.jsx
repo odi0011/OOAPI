@@ -1,21 +1,47 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
   Table, Space, Typography, Input, Popconfirm, Modal, Form, Select, Switch,
-  InputNumber, App as AntApp, Tooltip, Row, Col, Alert, Radio, Divider, Button, Spin,
+  InputNumber, App as AntApp, Tooltip, Row, Col, Alert, Radio, Divider, Button, Spin, Pagination,
 } from "antd";
 import {
   PlusOutlined, ReloadOutlined, ThunderboltOutlined, DeleteOutlined, EditOutlined,
   UndoOutlined, KeyOutlined, LoginOutlined, ApiOutlined, GlobalOutlined,
-  InfoCircleOutlined, SafetyCertificateOutlined,
+  InfoCircleOutlined, SafetyCertificateOutlined, AppstoreOutlined, UnorderedListOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { fmtDate } from "../services/format";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
-import StatCard from "../components/StatCard";
 import { VendorIcon, ModelLabel } from "../components/VendorIcon";
 
 const { Text } = Typography;
+
+// 最近调用记录：小竖条（绿=成功 / 橙=失败 / 灰=无记录），悬浮显示时间与耗时。
+// 样式参考 aceternity 的 uptime bars：只保留小绿条与 hover 放大效果。
+function UptimeBars({ calls = [], count = 20 }) {
+  const list = (calls || []).slice(-count);
+  const bars = Array.from({ length: count }, (_, i) => {
+    const idx = i - (count - list.length);
+    return idx >= 0 ? list[idx] : null;
+  });
+  if (!list.length) return <Text type="secondary" style={{ fontSize: 12 }}>暂无调用</Text>;
+  return (
+    <span className="oo-uptime" aria-label={`最近 ${list.length} 次调用`}>
+      {bars.map((c, i) =>
+        c ? (
+          <Tooltip
+            key={i}
+            title={`${fmtDate(c.t, "MM-DD HH:mm")} · ${c.ok ? "成功" : "失败"}${c.ms ? ` · ${c.ms}ms` : ""}`}
+          >
+            <i className={`oo-uptime-bar ${c.ok ? "is-ok" : "is-fail"}`} />
+          </Tooltip>
+        ) : (
+          <i key={i} className="oo-uptime-bar is-empty" />
+        )
+      )}
+    </span>
+  );
+}
 
 // 状态单元格
 function StatusCell({ r }) {
@@ -128,6 +154,25 @@ export default function AdminChannelsPage() {
   const [selectedKeys, setSelectedKeys] = useState([]);
   const [testingId, setTestingId] = useState(null);
   const [actionBusyId, setActionBusyId] = useState(null);
+  // 列表 / 宫格两种形态（记住偏好；宫格有自己的分页）
+  const [viewMode, setViewMode] = useState(() => {
+    try {
+      return localStorage.getItem("ooapi-channels-view") === "grid" ? "grid" : "list";
+    } catch {
+      return "list";
+    }
+  });
+  const [gridPage, setGridPage] = useState(1);
+  const toggleView = () =>
+    setViewMode((m) => {
+      const next = m === "grid" ? "list" : "grid";
+      try {
+        localStorage.setItem("ooapi-channels-view", next);
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
 
   const [keyword, setKeyword] = useState("");
   const [filterProvider, setFilterProvider] = useState("");
@@ -204,6 +249,7 @@ export default function AdminChannelsPage() {
   // 切换筛选/搜索时清空已选：否则批量操作会作用到当前不可见的渠道
   useEffect(() => {
     setSelectedKeys([]);
+    setGridPage(1);
   }, [keyword, filterProvider]);
 
   const visibleItems = items;
@@ -724,62 +770,78 @@ export default function AdminChannelsPage() {
     },
     { title: "调用", dataIndex: "used_count", width: 78, sorter: (a, b) => a.used_count - b.used_count, render: (v) => <span className="oo-num">{v}</span> },
     {
-      title: "最近测试",
-      dataIndex: "tested_time",
-      width: 138,
-      render: (v) => <span className="oo-num" style={{ fontSize: 12 }}>{v ? fmtDate(v, "MM-DD HH:mm") : "-"}</span>,
+      title: "最近调用",
+      dataIndex: "recent",
+      width: 150,
+      render: (list) => <UptimeBars calls={list} />,
     },
     {
       title: "操作",
       width: 150,
       fixed: "right",
-      render: (_, r) => (
-        <Space size={2}>
-          {r.needsBrowser ? (
-            <Tooltip title={r.browserReady ? "浏览器登录（已就绪）" : "浏览器登录（未完成）"}>
-              <button
-                className="bui-icon-btn"
-                style={r.browserReady ? undefined : { color: "var(--orange)" }}
-                aria-label={`${r.name} 浏览器登录`}
-                disabled={Boolean(actionBusyId) || browserBusy}
-                onClick={() => { setBrowserOpen(true); openBrowser(r); }}
-              >
-                <GlobalOutlined />
-              </button>
-            </Tooltip>
-          ) : null}
-          <Tooltip title="测试">
-            <button className="bui-icon-btn" aria-label={`${r.name} 测试`} onClick={() => doTest(r)} disabled={Boolean(actionBusyId) || testingId === r.id} aria-busy={testingId === r.id}>
-              {testingId === r.id ? <Spin size="small" /> : <ThunderboltOutlined />}
-            </button>
-          </Tooltip>
-          {r.cooling ? (
-            <Tooltip title="恢复">
-              <button className="bui-icon-btn" aria-label={`${r.name} 恢复`} onClick={() => doReset(r)} disabled={Boolean(actionBusyId) || testingId === r.id} aria-busy={actionBusyId === r.id}>
-                {actionBusyId === r.id ? <Spin size="small" /> : <UndoOutlined />}
-              </button>
-            </Tooltip>
-          ) : null}
-          <Tooltip title="编辑">
-            <button className="bui-icon-btn" aria-label={`${r.name} 编辑`} onClick={() => openEdit(r)} disabled={Boolean(actionBusyId) || testingId === r.id}><EditOutlined /></button>
-          </Tooltip>
-          <Popconfirm title={`确认删除「${r.name}」？`} onConfirm={() => doDelete(r)}>
-            <Tooltip title="删除">
-              <button className="bui-icon-btn" aria-label={`${r.name} 删除`} disabled={Boolean(actionBusyId) || testingId === r.id} aria-busy={actionBusyId === r.id} style={{ color: "var(--red)" }}>
-                {actionBusyId === r.id ? <Spin size="small" /> : <DeleteOutlined />}
-              </button>
-            </Tooltip>
-          </Popconfirm>
-        </Space>
-      ),
+      render: (_, r) => renderActions(r),
     },
   ];
+
+  // 行内操作（列表与宫格共用）
+  const renderActions = (r) => (
+    <Space size={2}>
+      {r.needsBrowser ? (
+        <Tooltip title={r.browserReady ? "浏览器登录（已就绪）" : "浏览器登录（未完成）"}>
+          <button
+            className="bui-icon-btn"
+            style={r.browserReady ? undefined : { color: "var(--orange)" }}
+            aria-label={`${r.name} 浏览器登录`}
+            disabled={Boolean(actionBusyId) || browserBusy}
+            onClick={() => { setBrowserOpen(true); openBrowser(r); }}
+          >
+            <GlobalOutlined />
+          </button>
+        </Tooltip>
+      ) : null}
+      <Tooltip title="测试">
+        <button className="bui-icon-btn" aria-label={`${r.name} 测试`} onClick={() => doTest(r)} disabled={Boolean(actionBusyId) || testingId === r.id} aria-busy={testingId === r.id}>
+          {testingId === r.id ? <Spin size="small" /> : <ThunderboltOutlined />}
+        </button>
+      </Tooltip>
+      {r.cooling ? (
+        <Tooltip title="恢复">
+          <button className="bui-icon-btn" aria-label={`${r.name} 恢复`} onClick={() => doReset(r)} disabled={Boolean(actionBusyId) || testingId === r.id} aria-busy={actionBusyId === r.id}>
+            {actionBusyId === r.id ? <Spin size="small" /> : <UndoOutlined />}
+          </button>
+        </Tooltip>
+      ) : null}
+      <Tooltip title="编辑">
+        <button className="bui-icon-btn" aria-label={`${r.name} 编辑`} onClick={() => openEdit(r)} disabled={Boolean(actionBusyId) || testingId === r.id}><EditOutlined /></button>
+      </Tooltip>
+      <Popconfirm title={`确认删除「${r.name}」？`} onConfirm={() => doDelete(r)}>
+        <Tooltip title="删除">
+          <button className="bui-icon-btn" aria-label={`${r.name} 删除`} disabled={Boolean(actionBusyId) || testingId === r.id} aria-busy={actionBusyId === r.id} style={{ color: "var(--red)" }}>
+            {actionBusyId === r.id ? <Spin size="small" /> : <DeleteOutlined />}
+          </button>
+        </Tooltip>
+      </Popconfirm>
+    </Space>
+  );
 
   return (
     <div className="oo-page">
       <PageHeader
         title="渠道管理"
-        desc="一个渠道绑定一个厂商；同一个厂商可以建多个渠道，各用各的账号或 Key"
+        tags={
+          <>
+            <span className="bui-chip" title="渠道总数">渠道 {statsError ? "—" : stats?.total ?? items.length}</span>
+            <span className="bui-chip" style={statsError || !(stats?.enabled > 0) ? undefined : { color: "var(--green)" }} title="已启用">
+              启用 {statsError ? "—" : stats?.enabled ?? 0}
+            </span>
+            <span className="bui-chip" style={!statsError && (stats?.cooling ?? 0) > 0 ? { color: "var(--orange)" } : undefined} title="冷却中（自动恢复）">
+              冷却 {statsError ? "—" : stats?.cooling ?? 0}
+            </span>
+            <span className="bui-chip" title="全部渠道合计的可用模型数">
+              模型 {loadError ? "—" : new Set(items.flatMap((x) => x.models || [])).size}
+            </span>
+          </>
+        }
         extra={
           <>
             <Input
@@ -795,6 +857,11 @@ export default function AdminChannelsPage() {
               value={filterProvider || undefined} onChange={(v) => setFilterProvider(v || "")}
               options={providers.map((p) => ({ value: p.key, label: p.name }))}
             />
+            <Tooltip title={viewMode === "grid" ? "切换为列表形态" : "切换为宫格形态"}>
+              <button className="bui-icon-btn" aria-label="切换列表 / 宫格形态" onClick={toggleView}>
+                {viewMode === "grid" ? <UnorderedListOutlined /> : <AppstoreOutlined />}
+              </button>
+            </Tooltip>
             {selectedKeys.length ? (
               <>
                 <button className="bui-btn" onClick={() => doBatch("enable")}>批量启用</button>
@@ -812,42 +879,92 @@ export default function AdminChannelsPage() {
         }
       />
 
-      <div className="oo-grid">
-        <StatCard label="渠道总数" value={statsError ? "—" : stats?.total ?? 0} icon={<ApiOutlined />} foot={<span>{statsError ? "统计加载失败" : `${providers.length} 个厂商可选`}</span>} />
-        <StatCard
-          label="已启用" value={statsError ? "—" : stats?.enabled ?? 0} tone="success" glow="color-mix(in srgb, var(--green) 18%, transparent)"
-          foot={<span className="oo-flex oo-gap-2">{statsError ? "统计加载失败" : <><span className="bui-dot bui-dot--ok" />调度正常</>}</span>}
-        />
-        <StatCard label="冷却中" value={statsError ? "—" : stats?.cooling ?? 0} tone={!statsError && (stats?.cooling ?? 0) > 0 ? "warning" : undefined} foot={<span>自动恢复</span>} />
-        <StatCard
-          label="可用模型"
-          value={loadError ? "—" : new Set(items.flatMap((x) => x.models || [])).size}
-          foot={<span>全部渠道合计</span>}
-        />
-      </div>
-
-      <div className="oo-panel">
-        {loadError ? (
-          <Alert
-            type="error"
-            showIcon
-            message="渠道列表加载失败"
-            description={loadError}
-            action={<Button size="small" onClick={load} loading={loading}>重试</Button>}
-            style={{ marginBottom: 12 }}
+      {viewMode === "grid" ? (
+        <div className="oo-panel">
+          {loadError ? (
+            <Alert
+              type="error"
+              showIcon
+              message="渠道列表加载失败"
+              description={loadError}
+              action={<Button size="small" onClick={load} loading={loading}>重试</Button>}
+              style={{ marginBottom: 12 }}
+            />
+          ) : null}
+          <div className="oo-channel-grid">
+            {visibleItems.slice((gridPage - 1) * 24, gridPage * 24).map((r) => (
+              <article className="oo-channel-card" key={r.id}>
+                <div className="oo-channel-card-head">
+                  <VendorIcon type={r.type} size={20} />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="oo-truncate" style={{ fontWeight: 550 }}>{r.name}</div>
+                    <div className="oo-truncate" style={{ fontSize: 11.5, color: "var(--ink-3)" }}>
+                      {r.account || r.remark || r.typeName}
+                    </div>
+                  </div>
+                  <StatusCell r={r} />
+                </div>
+                <div className="oo-channel-card-meta">
+                  <span className="bui-chip">{r.typeName}</span>
+                  <span className="bui-chip" title={r.methodLabel}>
+                    {r.method === "api" ? (r.key_count > 1 ? `${r.key_count} 个 Key` : "Key") : "账号"}
+                  </span>
+                  <span className="bui-chip">{r.group_name}</span>
+                </div>
+                <div className="oo-channel-card-models">
+                  <Tooltip
+                    title={
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        {(r.models || []).map((m) => <ModelLabel key={m} model={m} size={13} />)}
+                      </div>
+                    }
+                  >
+                    <span style={{ display: "flex", gap: 8, alignItems: "center", overflow: "hidden" }}>
+                      {(r.models || []).slice(0, 3).map((m) => <ModelLabel key={m} model={m} size={14} />)}
+                      {(r.models?.length || 0) > 3 ? <span className="bui-chip">+{r.models.length - 3}</span> : null}
+                    </span>
+                  </Tooltip>
+                </div>
+                <div className="oo-channel-card-foot">
+                  <UptimeBars calls={r.recent} count={16} />
+                  <div>{renderActions(r)}</div>
+                </div>
+              </article>
+            ))}
+          </div>
+          <Pagination
+            current={gridPage}
+            pageSize={24}
+            total={visibleItems.length}
+            onChange={setGridPage}
+            showSizeChanger={false}
+            style={{ marginTop: 12, textAlign: "right" }}
           />
-        ) : null}
-        <Table
-          className="oo-table"
-          rowKey="id"
-          loading={loading}
-          dataSource={visibleItems}
-          columns={columns}
-          scroll={{ x: 1660 }}
-          rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
-          pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (t) => `共 ${t} 个渠道` }}
-        />
-      </div>
+        </div>
+      ) : (
+        <div className="oo-panel">
+          {loadError ? (
+            <Alert
+              type="error"
+              showIcon
+              message="渠道列表加载失败"
+              description={loadError}
+              action={<Button size="small" onClick={load} loading={loading}>重试</Button>}
+              style={{ marginBottom: 12 }}
+            />
+          ) : null}
+          <Table
+            className="oo-table"
+            rowKey="id"
+            loading={loading}
+            dataSource={visibleItems}
+            columns={columns}
+            scroll={{ x: 1660 }}
+            rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
+            pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (t) => `共 ${t} 个渠道` }}
+          />
+        </div>
+      )}
 
       {/* ============ 添加渠道（中心弹窗）============ */}
       <Modal

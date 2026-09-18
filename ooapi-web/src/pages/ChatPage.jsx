@@ -50,9 +50,7 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy }) {
   const finished = !msg.streaming;
 
   return <article className="ui-message ui-message-ai">
-    <div className="ui-ai-avatar"><RobotOutlined /></div>
     <div className="ui-ai-content">
-      <div className="ui-answer-label">{msg.agentName ? "Agent" : "OOAPI"}<span>{msg.model}</span></div>
       <AgentProgress msg={msg} />
 
       {hasReasoning ? (
