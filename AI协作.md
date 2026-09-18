@@ -3,6 +3,10 @@
 > 本文件是本仓库的**唯一协作规范与问题台账**。
 > 任何 AI（或人）在修改本项目之前，必须先完整阅读本文件；
 > 修改完成后，必须回写「变更记录」与「待办清单」。
+>
+> **文档约束（强制）**：本仓库只允许存在**一个**协作文档，即本文件 `AI协作.md`。
+> **禁止** AI 自作主张创建其他 `.md` 文档（如审查报告、设计文档、会议纪要等）。
+> 所有问题、待办、变更记录、审查结果，一律写在本文档内。如需拆分章节，只在本文档内用 `##` 分节。
 
 最后更新：2026-09-17
 
@@ -14,15 +18,9 @@
    全站展示只用 `fmtOd / odOf / unitsPerOd`；**不要**引入人民币汇率、美元汇率、其他币名。
 2. **先读第 2 节规范再动手**；改动完成后必须：后端 `node --check` 全部改动文件、前端 `npm run build`、
    回写本文档「变更记录」。
-3. **下一批工作按此顺序**（详细见第 4 节待办）：
-   - **U1（最高优先，UI/UX）**：`ChatPage` 流式渲染重构（消息 memo、输入隔离、长会话不掉帧），
-     然后统一列表页请求竞态防护。
-   - P1：`execute.js` 无 `code` 异常按可重试处理；`browser-driver.getSession` 并发首建竞态；
-     `pow.js` 同步阻塞拆分。
-   - P2：死代码清理（`routes/deepseek.js`、`services/deepseek/`）、UI 视觉统一。
-4. 数据库结构改动必须同时改 `db.js` 的建表 SQL **和** `COLUMN_MIGRATIONS`（老库自动补列），
+3. 数据库结构改动必须同时改 `db.js` 的建表 SQL **和** `COLUMN_MIGRATIONS`（老库自动补列），
    并在 `channel.js` 的 `rowToResp` 里返回新字段。
-5. 不要提交 `.env` / `.jwt-secret`；不要绕过 `services/pricing.js` 自行计费；
+4. 不要提交 `.env` / `.jwt-secret`；不要绕过 `services/pricing.js` 自行计费；
    不要再犯「SQL `?` 与参数数量不匹配」的历史错误。
 
 ---
@@ -128,7 +126,7 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 10. **一次性迁移**：`migrate*.mjs` 每次在线更新都会被执行，**禁止写非幂等逻辑**
     （历史事故：migrate2 重复除 50 导致用户余额被反复缩小；价格被重复覆盖）。
     需要"只做一次"的操作用 options 表打标或按已生效状态判断后再执行。
-10. **登录态抓取**：需要「粘贴登录态」的 relay 接入方式，在 `channel-types.js` 配置
+11. **登录态抓取**：需要「粘贴登录态」的 relay 接入方式，在 `channel-types.js` 配置
     `entryUrl` + `captureHint` 即自动获得「打开登录页自动抓取」按钮（`/api/channel/capture/*`）。
 
 ### 2.3 前端
@@ -151,7 +149,6 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 
 - 交互正确性（必须）：
   - 任何异步操作要有 loading / disabled / 失败提示；
-  - 长列表必须做流式渲染隔离（见待办 U1）；
   - 错误提示统一 `message.error(e.message)`，禁止空 catch；
   - 危险操作（删除、更新、清空）必须二次确认。
 - 视觉统一（进行中）：
@@ -162,116 +159,32 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 
 ---
 
-## 3. 本次已修复（2026-09-17，第 1 批）
+## 3. 待办清单（按优先级）
 
-### P0 功能
+> 以下为尚未完成的待办项。已修复的问题见「变更记录」。
 
-| # | 问题 | 修复 |
-|---|---|---|
-| 1 | `routes/user.js` 6 条 SQL 缺参（改资料/改密码/个人设置/管理员改角色、状态、资料全部 500） | 补全 `id` 参数；密码修改新增旧密码校验 |
-| 2 | 全局 1MB JSON 限制先于路由级 50MB/20MB 生效，多模态大图必 413/500 | 改为按路径分层解析（`index.js`）；错误处理器正确返回 413 |
-| 3 | 全新安装 `channels` 表缺列（remark/auto_ban/last_error/used_count/last_used_time/test_model） | `db.js` 建表补全 + 启动时 `COLUMN_MIGRATIONS` 自动补列 |
-| 4 | `password_register_enabled` 用 `getOption` 判断，字符串 "false" 为真 → 注册开关失效 | 改 `getBoolOption` + 注册限流（5 次/5 分钟） |
-| 5 | 新用户赠送额度默认 1 亿单位（=10000 美元）+ 默认开放注册 | 默认改为 2000000（200 美元），注册默认关闭 |
+### 待改进项
 
-### P1 计费 / 安全 / 稳定性
-
-| # | 问题 | 修复 |
-|---|---|---|
-| 6 | API 渠道返回的 usage 是对象，`Number(object)=NaN` → 全部按字符估算计费，缓存价从未生效 | 新增 `normalizeUsage`；`splitTokens` 支持对象并返回 `cacheTokens`；网关/站内/智能体全部接入 |
-| 7 | 指纹 `needPersist` 无人消费，同一账号每次请求换设备号 | `execute.js` 成功后写回 `channels.other.profile`；DeepSeek `deviceId`、Kimi 设备号改为 seed 确定性派生 |
-| 8 | 图片外链可 SSRF（探测内网/元数据） | `gateway.js` 新增 `isPrivateIp` + `assertPublicUrl` + 逐跳重定向校验 |
-| 9 | `clientIp` 信任可伪造的 XFF | 改用 `req.ip`，`trust proxy` 默认 `loopback`（可用 `TRUST_PROXY` 覆盖） |
-| 10 | `/v1/models` 无鉴权、泄露全量模型 | 与 `/chat/completions` 一致要求 Bearer 鉴权 |
-| 11 | 管理员密码硬编码 `Ooapi@Admin2026` | 未设置 `ADMIN_PASSWORD` 时随机生成并打印一次 |
-| 12 | 认证中间件 async 异常导致请求挂起 | `authRequired/adminRequired` 加 try/catch → `next(err)` |
-| 13 | `markChannelOk` 把管理员手动禁用的渠道重置为启用 | 只更新 response_time/tested_time/last_error |
-| 14 | `withChannelLimit` 的 `finally` 派生 unhandledRejection | 先 `catch(()=>{})` 再 `finally` |
-| 15 | `openai-compat` 无条件下发 `thinking/enable_thinking`，会让不支持该字段的上游 400 | 默认不下发，渠道 `other.thinking_mode` 显式声明（thinking/enable_thinking/both） |
-| 16 | 多 Key 渠道只用第一个 Key | `openai-compat` 请求按渠道轮换 Key |
-| 17 | Doubao/Qwen 解析器遇 `data: null` 抛 TypeError | 加对象类型守卫 |
-| 18 | `installHook` 全局守卫导致第二个 MATCH_PATH 永不生效 | 改为路径注册表 + fetch 只包装一次 |
-| 19 | 浏览器流 `done` 但 0 帧时死等 180s | `st.done` 立即返回，`ok: cursor>0` |
-| 20 | DeepSeek `dsFetch` 不检查 HTTP 状态 | 401/403→AUTH_EXPIRED、429→RATE_LIMIT、5xx→HTTP_ERROR，支持 `signal` |
-| 21 | 客户端断开不中止上游；重试链共用一个超时预算 | 网关/站内/智能体监听 `req.close` 中止；`execute.js` 每渠道独立超时（读 `request_timeout_ms`） |
-| 22 | 无登录/注册限流 | 新增 `middleware/ratelimit.js`（登录 20/分，注册 5/5 分） |
-| 23 | 默认价格表 `DEFAULT_PRICES` 从未落库，全新安装全按兜底价计费 | 启动时 `seedDefaultPrices()`（只补缺失，不覆盖管理员改价） |
-
-### 前端
-
-| # | 问题 | 修复 |
-|---|---|---|
-| 24 | 令牌额度输入框单位错位 10000 倍 | `TokenPage` 全面按 OD 换算（创建/编辑/提交），parser 重写 |
-| 25 | 编辑渠道残留上一个渠道的 API Key + 硬编码 `auto_ban: true` | `openEdit` 先 `resetFields`、清空 `api_key`、读取真实 `auto_ban`（后端 `rowToResp` 已返回） |
-| 26 | 401 无全局处理，token 过期后不跳登录 | `api.js` 广播事件，`AppContext` 清用户，`RequireAuth` 自动跳转 |
-| 27 | `stream.js` 把业务回调异常当非 JSON 行吞掉 | 解析与回调分开 try/catch，回调异常打日志 |
-| 28 | `LogPage` 模型正则 `s*`（应为 `\s*`）、充值日志显示为负数、非管理员看到无效搜索框 | 三处均已修 |
-| 29 | Markdown 链接未限制协议 | 新增 `safeHref` 白名单（http/https/mailto/相对路径） |
-| 30 | `AgentPage` 出错后永久运行中、卸载不清理定时器/流 | `onError`/卸载统一收尾 |
-| 31 | `ConsolePage` 刷新整页 reload、复制无 try/catch | 改为重新拉取 + 错误提示 |
-| 32 | 设置页「单位额度」编辑的是死键 `quota_per_unit` | 改为编辑真正生效的 `units_per_od` |
-| 33 | 在线更新轮询定时器无清理 | `timersRef` + 卸载清理 |
-| 34 | 令牌列表掩码泄露前 6 字符 | 只保留 `sk-` 前缀 + 后 4 位 |
-| 35 | 修改密码不校验旧密码 | 前端新增「当前密码」字段，后端比对 `bcrypt` |
-
----
-
-## 4. 待办清单（按优先级）
-
-### P1（本轮已完成）
-
-- [x] **U1（UI/UX）**：`ChatPage` 流式渲染重构（2026-09-17 第 2 批）：
-      `Message` 已 `React.memo`、`onCopy/onRetry` 经 ref 稳定化、`Markdown` 双层缓存（memo + useMemo），
-      滚动 `setAway` 仅在状态翻转时触发；图片上限改为服务端真实的 20MB 口径。
-- [x] **U2（UI/UX）**：竞态防护 `hooks/useLatest.js`，已接入 Token / Log / AdminPricing / AdminUsers。
-- [x] **U3（UI/UX）**：`AdminUsersPage`、`AdminChannelsPage` 的 `validateFields` 补 try/catch；
-      `AdminUsersPage` 额度调整统一为 OD 输入（提交时 ×unitsPerOd）。
-- [x] `execute.js`：无 `code` 的未知异常按可重试处理（有 `code` 的仍走白名单）。
-- [x] `browser-driver.getSession` 并发首建竞态：`pending` Promise 合并；`closeSession/closeAll` 会等待首建落地。
-- [x] 渠道链路统计 `used_count/last_used_time`：`markChannelOk` 成功后累加。
-- [x] 整体排版布局：新增 `.oo-page` 骨架、`.oo-toolbar`、移动端统一压缩，9 个内页全部套用。
-- [x] 第 2 批审查（10 轮）修复：定价数据治理（官方来源/删除虚构模型/文件导入）、登录态远程抓取、
-      渠道创建 SQL 对齐、密码旧密码强制、手动禁用不可复活、额度原子更新、401/403 处理、
-      SSE 释放、适配器超时与帧长上限、计费 clamp、更新器失败回滚。详见根目录《审查报告.md》。
-- [x] `updater.js`：迁移失败即中止 → 回滚源码、不写版本戳、不重启。
-- [x] `execute.js` 硬截止：`Promise.race` 到点必推进，不再依赖适配器响应 abort。
-- [x] `router.js` 内存表：删渠道 `forgetChannel`；轮询游标不再拼接模型名。
-- [x] 浏览器流静止判定放宽到 15s；仅 reasoning 无 content 一律 `CHANNEL_EMPTY`。
-- [x] Doubao/Qwen：能力标记 `supportsSearch/Thinking=false`，参数显式报错；GLM 使用 `resolved.search`。
-- [x] 网关/对话/智能体失败时按已产出内容结算（部分计费），不再整单漏计。
-- [x] `logs` 自动清理：`log_retention_days`（0=永久），每 6 小时执行；设置页可配。
-- [x] 连接池默认 50（`DB_POOL_SIZE` 可调）。
-- [x] `AuthPage` 回跳保留 query/hash；`/home` 兼容路由。
-- [x] 死代码清理：`routes/deepseek.js`、`services/deepseek/`（含 `pow.js`）、`pricing.charge()`、
-      `browser-driver` 未用导出、未使用的 `AgentPage.jsx`。
-- [x] `option.js` 原型链白名单、`token.js` 数值校验、注册并发 409、分页参数防 Infinity。
-- [x] 渠道「拉取上游模型」SSRF 校验；网关 usage 标准字段 + 顶层 `x_*` 扩展。
-- [x] **模型/定价全量对齐**：DeepSeek 仅 `flash`/`v4-pro`（旧 ID 别名不再登记）；GLM/Kimi/Qwen/Doubao
-      按官方模型表补齐；渠道类型归位（glm/kimi/doubao/qwen，不再有"其他/DeepSeek 官方/网页版"）；
-      兼容别名不单独定价；线上 30 条价格全部带官方来源。
-- [x] **migrate2 事故修复**：不再覆盖价格；额度换算一次性；线上被重复除 50 的余额已按日志重建。
-
-### 已知限制与长期项（已评估，暂不处理）
-
-> 以下均为「设计取舍/需要基础设施」的条目，不是代码缺陷；出现新证据时再升级为待办。
-
-- **在线更新无签名校验**：目前信任 GitHub main；供应链加固需要发布流水线（哈希/签名），规划中。
-- **多实例部署**：限流/冷却为单进程内存实现；本项目按单机单实例部署，多实例需换共享存储。
-- **`/api/channel/login/batch` 串行**：一次性人工操作（最多 50 账号），管理员可接受等待；
+- [ ] **在线更新无签名校验**：目前信任 GitHub main；供应链加固需要发布流水线（哈希/签名），规划中。
+- [ ] **多实例部署**：限流/冷却为单进程内存实现；本项目按单机单实例部署，多实例需换共享存储。
+- [ ] **`/api/channel/login/batch` 串行**：一次性人工操作（最多 50 账号），管理员可接受等待；
   真要异步化需要任务队列，投入产出比低。
-- **无测试/lint 基建**：当前以「语法检查 + 构建 + 线上冒烟」保证质量；引入 CI 时一并补 ESLint/`node --test`。
-- **`users.inviter_id`**：邀请体系是产品功能，字段保留待产品决策。
-- **CORS 默认放开**：对外 API 需要；生产建议设 `CORS_ORIGIN` 白名单（`index.js` 已支持）。
-- **浏览器驱动 `--no-sandbox`**：服务器以 root 运行 node，Playwright 需该参数；部署要求为
+- [ ] **无测试/lint 基建**：当前以「语法检查 + 构建 + 线上冒烟」保证质量；引入 CI 时一并补 ESLint/`node --test`。
+- [ ] **`users.inviter_id`**：邀请体系是产品功能，字段保留待产品决策。
+- [ ] **CORS 默认放开**：对外 API 需要；生产建议设 `CORS_ORIGIN` 白名单（`index.js` 已支持）。
+- [ ] **浏览器驱动 `--no-sandbox`**：服务器以 root 运行 node，Playwright 需该参数；部署要求为
   独立测试服务器 + 无其他不受信进程，生产建议非 root 用户 + 容器隔离。
-- **`logout` 不撤销 JWT**：JWT 无状态设计的固有特性；如涉及高安全场景，需要 token 版本号/黑名单。
-- **`LoginPage 深链接 query`**：已修；`-search` 等能力后缀对 Doubao/Qwen 不生效属能力限制（已显式报错）。
+- [ ] **`logout` 不撤销 JWT**：JWT 无状态设计的固有特性；如涉及高安全场景，需要 token 版本号/黑名单。
+- [ ] **DNS rebinding TOCTOU**：`assertPublicUrl` 解析与 fetch 之间理论上存在窗口，
+  彻底修复需 IP 直连 + 自定义 lookup；当前风险面已收窄（外链图片、拉取模型均需管理员/用户显式触发）。
+- [ ] **`vision:true` 能力表**：GLM/Doubao/Qwen 渠道暂不支持图片，`channel-types` 中相关模型未标 vision，
+  浏览器适配器对图片请求会显式报 `VISION_NOT_SUPPORTED`（不再静默忽略）。
 
 ---
 
-## 5. AI 工作流（每次修改必须执行）
+## 4. AI 工作流（每次修改必须执行）
 
-1. **读规范**：阅读本文件第 2 节；确认改动是否触碰第 4 节待办。
+1. **读规范**：阅读本文件第 2 节；确认改动是否触碰第 3 节待办。
 2. **改代码**：小步提交，一次只解决一类问题；保持现有注释与风格。
 3. **自检**：
    ```powershell
@@ -285,6 +198,7 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 4. **验证行为**（有环境时）：启动后端 `npm start`（需 MySQL），至少覆盖改动接口的正反用例。
 5. **回写文档**：更新本文件「变更记录」，勾选/新增待办，保持行号引用不过期。
 6. **不要**：提交 `.env`、改 `ADMIN_PASSWORD`、在没跑构建前就说"完成"。
+7. **禁止**：创建新的 `.md` 文档；所有内容只写在本文件内。
 
 ### 环境备注（本机）
 
@@ -296,24 +210,16 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 
 ---
 
-## 6. 变更记录
+## 5. 变更记录
 
 | 日期 | 内容 |
 |---|---|
-| 2026-09-17 | 第 1 批修复：P0 功能 5 项、P1 计费/安全/稳定性 18 项、前端 12 项（见第 3 节）；新增本文件 |
-| 2026-09-17 | 币制统一：移除"美元汇率"设置项，明确 `1 OD币 = 1 美元`（仅作展示与计费口径，无汇率换算）；同步 README 与本文档规范 |
-| 2026-09-17 | 线上环境接入：`/opt/ooapi` 手动执行在线更新至 `98464bd`，确认为可用测试环境；详见 1.3 节 |
-| 2026-09-17 | 第 2 批：U1 ChatPage 流式渲染重构、U2 `useLatest` 竞态防护（4 页）、U3 表单校验与额度口径；
-      `execute.js` 未知异常可重试、`browser-driver` 并发首建保护、`used_count/last_used_time` 累加、
-      整体排版布局骨架（`.oo-page/.oo-toolbar/移动端压缩`）；10 轮审查整改见《审查报告.md》 |
-| 2026-09-17 | 第 2 批（续）：定价数据治理（删除虚构模型、官方来源、JSON/CSV 导入+清理+同步）、
-      登录态远程抓取、渠道 SQL/权限/并发修复；三路并行审查发现 48 项按级别处理，详见《审查报告.md》 |
-| 2026-09-17 | 部署验证：`0197599` 已通过内置更新器上线（服务 active、status 200、前端构建成功）；
-      线上清理 2 条虚构定价、`同上` 清零；无头浏览器冒烟（/、/login）0 JS 错误；详见《审查报告.md》第 5 节 |
-| 2026-09-17 | 模型/定价全量对齐（`f4222a0`/`2df743c`）：DeepSeek 仅 flash/v4-pro；GLM 7 / Kimi 2 / Qwen 4 / 豆包 2
-      按官方页补价并注明来源；渠道类型归位；兼容别名不登记定价 |
-| 2026-09-17 | **线上事故与修复**（`f1940d3`）：`migrate2` 每次更新重复"除 50"导致用户余额被反复缩小、
-      价格被覆盖。修复为一次性换算 + 不再写价格；按日志重建余额（odi 10009.96 OD / tester01 10499.91 OD）并在
-      `f1940d3`/`2df743c` 两次更新后核验余额不再变化 |
-| 2026-09-17 | 第 3–4 批持续整改（`0448114`/`51843e7`）：迁移失败回滚、执行器硬截止、内存表清理、
-      能力标记与显式报错、部分计费、SSRF、日志保留、连接池、参数校验、死代码清理；构建与冒烟均通过 |
+| 2026-09-17 | 第 1 批修复：P0 功能 5 项、P1 计费/安全/稳定性 18 项、前端 12 项 |
+| 2026-09-17 | 币制统一：移除"美元汇率"设置项，明确 `1 OD币 = 1 美元` |
+| 2026-09-17 | 线上环境接入：`/opt/ooapi` 手动执行在线更新至 `98464bd`，确认为可用测试环境 |
+| 2026-09-17 | 第 2 批：U1 ChatPage 流式渲染重构、U2 `useLatest` 竞态防护、U3 表单校验与额度口径；10 轮审查整改 |
+| 2026-09-17 | 定价数据治理（删除虚构模型、官方来源、JSON/CSV 导入+清理+同步）、登录态远程抓取、渠道 SQL/权限/并发修复 |
+| 2026-09-17 | 模型/定价全量对齐：DeepSeek 仅 flash/v4-pro；GLM 7 / Kimi 2 / Qwen 4 / 豆包 2 按官方页补价 |
+| 2026-09-17 | **线上事故与修复**：migrate2 重复除 50 导致余额缩小；修复为一次性换算 + 不再写价格；余额已重建 |
+| 2026-09-17 | 第 3–4 批持续整改：迁移失败回滚、执行器硬截止、内存表清理、能力标记、部分计费、SSRF、死代码清理 |
+| 2026-09-17 | 文档整理：删除审查报告.md，合并待办至本文档；约束只允许存在一个协作文档 |
