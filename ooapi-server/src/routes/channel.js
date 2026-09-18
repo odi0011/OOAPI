@@ -25,6 +25,7 @@ import { ok, fail, asyncHandler, now, assertPublicUrl, idParam, safeInt } from "
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod } from "../services/channel-types.js";
+import { buildLoginUrl, exchangeCodeForCredential, interactiveLoginInfo } from "../services/upstream/oauth-login.js";
 import { getAdapter, resetChannelState, forgetChannel, channelRuntimeState, channelRecent, rowToChannel, recordChannelCall } from "../services/router.js";
 import { clearGroupConfigCache } from "../services/group-rate.js";
 import {
@@ -802,6 +803,108 @@ router.post(
       await removeProfile(c.type, c.channelId).catch(() => {});
     }
     return ok(res, null, "已关闭");
+  })
+);
+
+// ---------- 订阅 OAuth：交互式登录（点一下跳官方页面，回来粘贴回调地址）----------
+// 为什么不做自动回调：官方客户端的 redirect_uri 固定指向用户本机 localhost，
+// 服务器收不到；所以采用「复制地址栏 URL 回来」的方式（与 gcloud --no-launch-browser 同理）。
+router.post(
+  "/oauth/start",
+  asyncHandler(async (req, res) => {
+    const { type } = req.body || {};
+    const provider = getProvider(type);
+    if (!provider) return fail(res, "未知厂商");
+    try {
+      const r = buildLoginUrl(type);
+      return ok(res, { url: r.url, state: r.state, redirect_uri: r.redirectUri });
+    } catch (e) {
+      return fail(res, e.message, e.code === "CHANNEL_CONFIG_ERROR" ? 400 : 500);
+    }
+  })
+);
+
+// 用粘贴回来的回调地址换 token，并直接创建/更新渠道（一步到位，管理员不用再手抄凭据）
+router.post(
+  "/oauth/exchange",
+  asyncHandler(async (req, res) => {
+    const { type, name, priority, state, callback, id } = req.body || {};
+    const provider = getProvider(type);
+    if (!provider) return fail(res, "未知厂商");
+    const methodCfg = getMethod(type, "antigravity");
+    const adapterKey = methodCfg?.adapter || "antigravity";
+    let adapter;
+    try {
+      adapter = await getAdapter(adapterKey);
+    } catch {
+      return fail(res, `适配器 ${adapterKey} 不可用`);
+    }
+    if (!adapter?.importAuth) return fail(res, `${provider.name} 适配器未实现凭据导入`);
+
+    let credential;
+    let accountLabel = "";
+    try {
+      const r = await exchangeCodeForCredential(type, callback, String(state || ""));
+      credential = r.credential;
+      accountLabel = r.accountLabel;
+    } catch (e) {
+      return fail(res, e.message, 400);
+    }
+
+    // 交给适配器解析成它自己的凭据结构（各适配器的字段命名不同）
+    let token = "";
+    let other = {};
+    try {
+      const r = await adapter.importAuth(credential);
+      token = String(r.token || "").slice(0, 60_000);
+      other = { method: adapterKey, ...(r.other || {}) };
+      accountLabel = r.accountLabel || accountLabel;
+    } catch (e) {
+      return fail(res, `凭据解析失败：${e.message}`, 400);
+    }
+
+    // 创建或更新渠道（与 /login 保持同一套落库逻辑）
+    const targetId = id === undefined ? null : safeInt(id, { min: 1 });
+    const priorityVal = safeInt(priority, { min: 0, max: 1_000_000, fallback: 0 });
+    const displayName = String(name || accountLabel || `${provider.name} 订阅`).slice(0, 64);
+
+    if (targetId) {
+      const [rows] = await pool.query("SELECT * FROM channels WHERE id = ?", [targetId]);
+      if (!rows.length) return fail(res, "渠道不存在", 404);
+      await pool.query("UPDATE channels SET name = ?, api_key = ?, other = ?, priority = ?, status = 1 WHERE id = ?", [
+        displayName,
+        token,
+        JSON.stringify(other),
+        priorityVal,
+        targetId,
+      ]);
+      await resetChannelState(targetId);
+      return ok(res, { id: targetId, name: displayName, account: accountLabel }, "登录成功，凭据已更新");
+    }
+
+    const [exist] = await pool.query("SELECT id FROM channels WHERE type = ? AND api_key = ?", [type, token]);
+    if (exist.length) {
+      await pool.query("UPDATE channels SET other = ?, status = 1 WHERE id = ?", [JSON.stringify(other), exist[0].id]);
+      await resetChannelState(exist[0].id);
+      return ok(res, { id: exist[0].id, name: displayName, account: accountLabel }, "该账号已存在，凭据已更新");
+    }
+
+    const [ret] = await pool.query(
+      "INSERT INTO channels (name, type, base_url, api_key, models, group_name, status, priority, other, created_time) VALUES (?,?,?,?,?,?,?,?,?,?)",
+      [displayName, type, "", token, (methodCfg?.defaultModels || []).map((m) => m.id).join(","), "default", 1, priorityVal, JSON.stringify(other), now()]
+    );
+    await resetChannelState(ret.insertId);
+    return ok(res, { id: ret.insertId, name: displayName, account: accountLabel }, "登录成功，渠道已创建");
+  })
+);
+
+// 该厂商是否支持交互式登录（前端据此决定显示「登录账号」还是只能「粘贴凭据」）
+router.get(
+  "/oauth/info",
+  asyncHandler(async (req, res) => {
+    const type = String(req.query.type || "");
+    if (!getProvider(type)) return fail(res, "未知厂商");
+    return ok(res, interactiveLoginInfo(type));
   })
 );
 

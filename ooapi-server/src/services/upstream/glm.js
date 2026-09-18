@@ -166,9 +166,14 @@ export async function chat({
     // 注入参数。
     // 实测约束（重要）：
     //   · 改 features 的子字段 ✅ 有效
-    //   · 改顶层 model ❌ 上游返回 0 帧（页面默认档位即 GLM-5.3-Flash）
-    //   · 整体替换 features 对象 ❌ 破坏签名
-    // 所以只做 features 子字段的原地修改；模型档位交给页面默认值。
+    //   · 整体替换 features 对象 ❌ 破坏签名（必须原地改子字段）
+    //   · 改顶层 model ⚠️ 曾观测到上游返回 0 帧，因此**默认不改**，只作为可选开关
+    //
+    // 关于 model：Z.ai 的签名载荷只覆盖 requestId/timestamp/user_id/prompt（不含 model），
+    // 所以从签名角度改 model 是安全的；当初「0 帧」更可能是模型 id 或账号档位不匹配。
+    // 但无法在本机验证，为避免把「能用但档位不对」的渠道改成「完全不能用」，
+    // 这里做成渠道级开关：other.patch_model=true 时才注入 model。
+    // 无论是否注入，都会在流结束后用 lastBody.model 核对实际档位并告警（见下方 actualModel）。
     const patchSet = {};
     if (thinking) {
       patchSet["features.enable_thinking"] = true;
@@ -176,6 +181,8 @@ export async function chat({
     }
     // 请求参数或模型后缀（-search）任一命中都开联网
     if (search || resolved.search) patchSet["features.auto_web_search"] = true;
+    const wantPatchModel = channel?.other?.patch_model === true;
+    if (wantPatchModel) patchSet.model = upstreamId;
 
     await setPatch(page, { set: patchSet });
     mark("patch");
@@ -255,8 +262,20 @@ export async function chat({
       });
     }
 
-    // 若上游实际用了别的模型（页面默认），记录以便排查
+    // 上游实际使用的档位。
+    // 这是本适配器最容易出问题的地方：默认不改 model 时，页面用的是**它自己的默认档**，
+    // 与用户选的模型可能不一致（例如用户选 GLM-5.3，实际跑的是 GLM-5.3-Flash）。
+    // 不一致时：
+    //   · 必须告警（否则管理员永远不知道计费档位与实际不符）；
+    //   · 把实际档位回传，供调度/计费侧核对（见 execute 透传的 upstreamModel）。
     const actualModel = res.lastBody?.model || upstreamId;
+    const mismatch = Boolean(res.lastBody?.model) && String(res.lastBody.model) !== String(upstreamId);
+    if (mismatch) {
+      console.warn(
+        `[glm] 渠道#${channel.id} 模型档位不一致：请求「${upstreamId}」→ 上游实际「${res.lastBody.model}」` +
+          `${wantPatchModel ? "（已开启 patch_model，说明注入未生效）" : "（未开启 patch_model，用的是页面默认档；可在渠道 other 里设 patch_model=true 尝试）"}`
+      );
+    }
 
     // 本轮用的页面已经被消耗掉，趁空闲把下一轮的干净页面准备好（省下一轮 1.8s）
     prewarm(session, ENTRY_URL, MATCH_PATH);
@@ -267,6 +286,7 @@ export async function chat({
       usage: parser.usage,
       upstreamModel: actualModel,
       upstreamModelFriendly: friendlyId(actualModel),
+      modelMismatch: mismatch,
       firstTokenMs: firstFrameAt ? firstFrameAt - T.submit : 0,
     };
   });

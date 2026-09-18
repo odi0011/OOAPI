@@ -158,6 +158,12 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 | `harness/sessions.js` | 会话/消息存储（`chat_sessions` / `chat_messages`） | 会话设定入参一律走 `sanitizeSettings` 归一化；消息 seq 由 SQL 端 `MAX(seq)+1` 计算，避免并发撞号 |
 | `harness/runs.js` | 进行中运行的环形缓冲与订阅（断线续传） | 事件必须存快照；只有 `/stop` 才 abort；`MAX_EVENTS` 超出丢最早 |
 | `harness/files.js` | 附件文本提取（文本/代码 / PDF / DOCX / XLSX） | 无第三方依赖：PDF 用 zlib 解流抽文本算子，Office 走手写 zip；解析失败必须给出明确原因 |
+| `upstream/cli-profile.js` · `shared-profile.js` · `deepseek-profile.js` | 指纹/身份派生（订阅渠道 + 网页反代） | 种子只用稳定字段；`sec-ch-ua` 品牌顺序与 grease 串必须两个模块一致；UA/平台/`--lang`/`navigator.languages` 要自洽 |
+| `upstream/browser-driver.js` | Playwright 常驻会话（GLM/豆包/通义反代） | 禁止 `--window-position=-32000` 与 `--enable-automation`；同账号串行 + 15 分钟看门狗 |
+| `services/channel-probe.js` | 渠道探针（测试 / 定时检测共用） | 必须走 `withChannelLimit`（历史上绕过限速会并发打同一账号） |
+| `upstream/*-parser.js` | 各厂商流式解析 | 风控响应禁止原地重试；未知帧/未知 contentType 尽量当正文输出，不要静默丢内容 |
+| `upstream/oauth-login.js` | 订阅渠道交互式登录（Google 已支持） | 手动粘贴回调地址是设计取舍（官方 redirect_uri 指向用户本机 localhost）；state 必须校验；缺 refresh_token 直接拒绝 |
+| `upstream/glm.js` 的 `patch_model` | 渠道级开关：是否向上游注入 model | 默认关（保守）；无论开关如何都要核对 `lastBody.model` 并在不一致时告警 —— 计费按用户选的模型算 |
 | `components/ArtifactPreview.jsx` | 产出物预览（HTML/SVG/React 沙盒运行） | **绝不能加 `allow-same-origin`**；保留 CSP `connect-src 'none'`；默认不渲染 |
 | `components/PromptBar.jsx` | 输入栏（独立于 `beautifului.jsx`） | 尺寸取自组件库官网实测值；`styles.css` 里**不要**再写 `.bui-composer*` 同名规则（曾覆盖导致样式不一致） |
 
@@ -190,6 +196,34 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 **产出物预览的安全边界（第 21 批）**：`ArtifactPreview` 的 iframe 必须保持
 `sandbox="allow-scripts"` **且绝不能加 `allow-same-origin`** —— 加了就等于把本站的 localStorage（含登录令牌）交给模型生成的代码；
 同时保留 CSP 的 `connect-src 'none'`。这是本项目唯一会执行"模型生成代码"的地方，改动前务必想清楚。
+
+### 1.7 反代适配器的风控红线（第 22 批）
+
+反代渠道（网页版 / 订阅 OAuth）最大的风险不是「请求失败」，而是**被上游识别成脚本后封号**。
+以下几条是审查后确立的硬约束，改适配器时必须遵守：
+
+**一、风控响应禁止原地重试。** 401/403/202/405/风控文案/429 都代表「这个账号已经被盯上」，
+连续重试只会把临时限制升级为封禁。正确做法是**立即隔离**（抛带 `cooldownSec` 的错误，交给 `execute` 换号）。
+只有 5xx 这类瞬时故障才允许重试。
+（历史事故：`deepseek.js` 的 `wafBlocked()` 包含 403，使 `403 → AUTH_EXPIRED` 分支永远不可达，
+风控响应被重试 3 次、只冷却 300s。）
+
+**二、冷却时长要与「能否自愈」匹配。** `execute.js` 的默认档：风控 WAF 6h、验证码 1h、
+登录失效 6h、其余 5 分钟。适配器能用 `err.cooldownSec` 覆盖（如 grok 免费额度 24h、codex 降智 90s）。
+
+**三、探针/检测必须过限速闸门。** 一切向上游发消息的入口都要走 `withChannelLimit`
+（`probeChannel` 已统一包住）。否则「批量检测」会并发打同一账号。
+
+**四、指纹必须确定性派生且内部自洽。** 种子只用稳定字段（渠道 type + id，见 `cli-profile.profileSeed`）；
+`sec-ch-ua` 的品牌顺序与 grease 串、UA 里的平台、`--lang` 与 `navigator.languages` 必须互相一致 ——
+不自洽比「版本旧」更容易被标记。
+
+**五、浏览器渠道不要留自动化特征。** 窗口坐标不能用 -32000 这类魔法值（页面可读 `window.screenX`）；
+必须忽略 `--enable-automation`（否则 `navigator.webdriver === true`）。
+
+**六、解析器不能静默丢内容。** 未知帧类型/未知 contentType 一律尽量当正文输出，
+实在无法处理也要留痕；「上游有输出但网关报空」是最难排查的一类线上问题。
+（历史 bug：Kimi `done !== undefined` 提前收流、`0x80` 误判压缩位丢弃帧、Qwen role 过滤失效回放用户提问、Doubao 纯字符串丢文本。）
 
 ## 2. 统一规范（强制）
 
@@ -318,6 +352,32 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   若要支持，注意导出内容同样属于模型生成物，落地前应提示用户自行检查。
 - [ ] **密钥与用户分组的关系**：现在「账户默认」= 用户分组（老行为），
   管理端建的分组要绑到密钥上才生效；这一层关系建议在「令牌管理」页面补一句说明，避免用户困惑。
+
+### 第 22 批遗留（反代风控）
+
+- [ ] **浏览器渠道的出口 IP 未隔离**：所有账号共用服务器同一出口 IP，是厂商侧最容易命中的聚类特征。
+  要真正缓解需要给每个渠道配置代理（`browser-driver` 加 `proxy` 参数 + 渠道字段），当前未做。
+- [ ] **`--no-sandbox`**：服务器以 root 运行 Node，Playwright 需要该参数；
+  这是自动化特征之一，生产建议非 root 用户 + 容器隔离（已在长期待办里）。
+- [ ] **DeepSeek 每轮新建会话**：`chat()` 每轮都 `createSession`，真实网页用户是在同一会话里多轮。
+  改为复用会话需要处理上游会话过期与上下文投喂，改动较大，需单独评估。
+- [ ] **Cookie 只写不回读**：除登录外没有从 `Set-Cookie` 回写，上游轮换 cookie 后只能人工重登。
+  实现要点：在 `dsFetch` 里捕获 `set-cookie` 并合并进 `other.cookies`。
+- [ ] **`channels.other` 读改写非原子**：`execute.js` 与 `channel.js` 都是「读→合并→整列 UPDATE」，
+  并发时存在覆盖窗口（当前靠写前重读降低概率）。多实例部署前需要换成原子更新或加版本号。
+- [ ] **国产适配器的风控文案表可能过期**：Doubao/Qwen 的错误码是硬编码，上游改码段后会落到通用错误。
+  建议线上出现未知码时把它记进日志并定期回捞补充。
+
+### 第 23 批遗留（GLM / 谷歌）
+
+- [ ] **GLM 档位需线上实测**：`patch_model` 默认关闭（保守）。上线后建议逐个模型试一次并看 `[glm] 模型档位不一致` 告警：
+  若注入 model 确实有效，把 `patch_model` 打开即可让档位与计费一致；若仍 0 帧，则说明模型 id 需按上游实际值调整。
+- [ ] **GLM 的验证码仍是浏览器方案**：开源项目用纯 HTTP 复刻了阿里云验证码 SDK（含 wasm 反编译），
+  我们能跑通浏览器就不必复刻（维护成本高、上游改动即失效）。若将来必须去掉浏览器，需要单独评估。
+- [ ] **交互式登录目前只覆盖 Google**：Codex / Claude 也可按同样模式加（各自 redirect_uri 与 client_id 不同），
+  当前仍走「粘贴凭据」；如需补上，复刻 `oauth-login.js` 的 `oauthConfigFor` 分支即可。
+- [ ] **Google 客户端凭据来源**：从 `.env` 读（`GOOGLE_OAUTH_CLIENT_ID/SECRET`），
+  用的是官方 Antigravity 客户端的公开凭据；若上游轮换或封禁该客户端，需要替换成自建 OAuth 客户端（并注册对应 redirect_uri）。
 
 ### 长期/设计取舍项（已评估，暂不处理）
 
@@ -716,3 +776,48 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   （密钥分组过滤、错误密钥拒绝、文件解析落库、不支持类型报错、只发文件可发送）；
   files.js 单测覆盖 文本/PDF(含压缩流)/DOCX(构造 zip)/不支持类型；github 工具真实拉取 nodejs/node README 成功；
   前端 `npm run build` 通过；浏览器实测预览可交互（按钮生效、柱子由 JS 渲染）、沙盒隔离与 CSP 均生效。 |
+| 2026-09-18 | **第 22 批（反代适配器风控审查与修复）**：对照开源参考 CLIProxyAPI（router-for-me/CLIProxyAPI）
+  逐项核对各厂商适配器的身份构造、指纹一致性、错误归类与冷却策略，修复 9 处（含 2 处「封号放大器」）。详见第 1.7 节。
+  · **DeepSeek（最严重）**：`wafBlocked()` 里含 403，导致 `403 → CHANNEL_AUTH_EXPIRED` 分支**永远不可达** ——
+  本该「重新登录 + 6h 冷却」的风控响应，实际被当成可重试错误在同一账号上打了 3 次、只冷却 300s。
+  现改为：401/403 优先判定并隔离（6h），202/405/风控文案 → `CHANNEL_WAF` + 6h 冷却，429 → 15 分钟冷却，
+  三者均**不再原地重试**（只有 5xx 保留重试）；`is_muted` 按其 `mute_until` 冷却（上限 24h）。
+  实测确认：403 命中路径从「3 次请求」降到「1 次」。
+  · **探针/定时检测绕过限速**：`probeChannel` 直接调 `adapter.chat()`，没有包 `withChannelLimit` ——
+  批量检测会并发打同一账号（HTTP 渠道没有任何串行保护），是实打实的风控触发点。现已统一并入渠道限速闸门。
+  · **Kimi 解析器两处**：① `ev.done !== undefined` → 任何带 `done:false` 的阶段帧/心跳帧都会**提前结束流**，
+  回答被截断却按成功计费；改为 `done === true`。② 帧 flags 判的是 `0x80`（并非 Connect 规范里的位）且命中后直接丢弃，
+  上游一旦启用压缩就静默丢内容；按规范改为 `0x01 = 压缩`并真正 gunzip 解压（损坏帧跳过，不中断整条流）。
+  · **Qwen role 过滤失效**：CN 版写成 `role === "assistant" || typeof content === "string"`，后半句对任何文本都成立
+  → 等于没过滤，差分从 0 开始吐会把**用户提问当成模型回答**输出。改为只取 assistant（缺 role 时按助手处理）。
+  · **Doubao 丢文本**：未知 `content_type` 且 content 是纯字符串时，兜底分支要求必须是对象 → 文本被静默丢弃，
+  表现为「上游有输出但网关报空」。补上纯字符串与 `content.think` 两条分支。
+  · **浏览器指纹可检测**：`--window-position=-32000,-32000` 是自动化环境教科书特征（页面 JS 可读 `window.screenX`），
+  改为屏幕外但数值正常的坐标并按账号散布；补 `ignoreDefaultArgs: ["--enable-automation"]`（否则 `navigator.webdriver === true`）、
+  `--lang` 与 locale 对齐（避免 UA 与 navigator.languages 冲突）。
+  · **sec-ch-ua 内部不自洽**：两个指纹模块的 grease 串不一致（`Not?A_Brand` vs `Not_A Brand`）、品牌顺序是 Chrome 100 时代写法；
+  统一为 Chromium 在前、grease 在中间、真实品牌在后的现行顺序。
+  · **冷却分档**：`execute.js` 默认冷却此前风控只给 300s、验证码 300s（等于冷却一过继续去撞）；
+  改为 WAF 6h、验证码 1h、登录失效 6h、其余 5 分钟。
+  自检：改动文件全部 `node --check` 通过；新增 13 项解析器回归（Kimi 提前收流/压缩帧/损坏帧/trailer、
+  Qwen role 过滤(含无 role 兼容)、Doubao 未知类型）全绿；用桩 fetch 验证 DeepSeek 四种状态码的重试与冷却策略；
+  前端 `npm run build` 通过。 |
+| 2026-09-18 | **第 23 批（GLM 档位错配修复 + 谷歌交互式登录）**：
+  · **GLM 模型档位**：适配器此前**完全忽略用户选的模型**（代码注释称「改顶层 model 上游返回 0 帧」，于是把档位交给页面默认值）——
+  后果是「用户选 GLM-5.3、实际跑 GLM-5.3-Flash」，而**计费按用户选的模型算**，属于静默错配。
+  对照开源实现（izaart95-jpg/GLM-Free-API 的 `zai.go`）确认：Z.ai 的签名载荷只覆盖
+  `requestId/timestamp/user_id/prompt`，**不含 model**，从签名角度改 model 是安全的；当初「0 帧」更可能是模型 id 或账号档位不匹配。
+  改法：新增渠道级开关 `other.patch_model=true` 时才注入 model（无法在本机验证，不把「能用但档位不对」改成「完全不能用」）；
+  无论是否注入，都在流结束后用 `lastBody.model` 核对实际档位，不一致就告警并回传 `modelMismatch`。
+  · **谷歌交互式登录**（`services/upstream/oauth-login.js` + `/channel/oauth/{start,exchange,info}`）：
+  此前订阅渠道只能「先在自己电脑上装官方 CLI、登录、再把凭据文件抄过来」，门槛高。
+  现在支持在平台里点「打开授权页面」→ 官方页面登录 → 把浏览器地址栏那串 URL 复制回来 → 一步完成换令牌 + 建渠道。
+  **为什么是手动粘贴而不是自动回调**：官方客户端注册的 `redirect_uri` 固定是 `http://localhost:51121`，
+  浏览器登录完会跳到**用户本机**的 localhost（服务器收不到），这是标准现象 ——
+  与 `gcloud auth login --no-launch-browser` 同理；好处是不需要公网回调地址、不需要备案域名。
+  安全：state 随机生成且 15 分钟过期（防 CSRF）；缺 `refresh_token` 时**当场报错拒绝**（否则收下一个一小时后必然失效的渠道）；
+  常见错误（redirect_uri_mismatch / invalid_grant / invalid_client）翻译成可操作提示；client_secret 从 `.env` 读不硬编码。
+  前端：选到订阅方式且后端支持时显示「打开授权页面」，粘贴框自动切换为「回调地址 / 授权码」，
+  可识别完整 URL、纯 code、URL 编码三种粘贴形态；未配置 OAuth 客户端时给出配置指引并保留「粘贴凭据」老路径。
+  自检：7 项登录逻辑用例全绿（是否支持/授权地址参数/三种粘贴形态解析/缺 refresh_token 拒绝/正常换取/state 校验/未配置提示）；
+  改动文件 `node --check` 通过；前端 `npm run build` 通过。 |

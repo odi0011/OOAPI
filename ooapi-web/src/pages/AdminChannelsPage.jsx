@@ -670,6 +670,11 @@ export default function AdminChannelsPage() {
   const [capSid, setCapSid] = useState("");
   const [capShot, setCapShot] = useState(null);
   const [capBusy, setCapBusy] = useState(false);
+  // 订阅 OAuth 交互式登录：oauthUrl 有值表示「已发起登录，等待用户粘贴回调地址」
+  const [oauthSupported, setOauthSupported] = useState(false);
+  const [oauthUrl, setOauthUrl] = useState("");
+  const [oauthState, setOauthState] = useState("");
+  const [oauthBusy, setOauthBusy] = useState(false);
   const [capCands, setCapCands] = useState(null);
   const [capPick, setCapPick] = useState("");
   const [capText, setCapText] = useState("");
@@ -842,6 +847,23 @@ export default function AdminChannelsPage() {
           payload.password = v.password;
           payload.areaCode = v.areaCode || "+86";
         } else if (addMode === "paste") {
+          // 已发起交互式登录（oauthUrl 有值）时，粘贴的是回调地址 → 走换 token 接口，
+          // 一步完成「换令牌 + 建渠道」，管理员不用再手抄凭据 JSON。
+          if (pickMethod.oauth && oauthUrl) {
+            const r = await API.post("/channel/oauth/exchange", {
+              type: pickProvider.key,
+              name: v.name,
+              priority: v.priority,
+              state: oauthState,
+              callback: v.token,
+            });
+            message.success(`渠道「${r.name}」已添加${r.account ? `（${r.account}）` : ""}`);
+            setAddOpen(false);
+            setOauthUrl("");
+            setOauthState("");
+            await load();
+            return;
+          }
           payload.token = v.token;
           payload.cookies = v.cookies;
         }
@@ -1059,6 +1081,48 @@ export default function AdminChannelsPage() {
   };
 
   // ---------- 登录态远程抓取 ----------
+  // 选到订阅 OAuth 方式时问一下后端：这个厂商支不支持交互式登录（gemini 支持，codex/claude 目前只能粘贴凭据）
+  useEffect(() => {
+    const type = pickProvider?.key;
+    const isOauth = Boolean(pickMethod?.oauth);
+    setOauthUrl("");
+    setOauthState("");
+    if (!type || !isOauth) {
+      setOauthSupported(false);
+      return undefined;
+    }
+    let alive = true;
+    API.get("/channel/oauth/info", { params: { type } })
+      .then((r) => {
+        if (alive) setOauthSupported(Boolean(r?.supported));
+      })
+      .catch(() => {
+        if (alive) setOauthSupported(false); // 查询失败就退化成「粘贴凭据」，不挡流程
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickProvider?.key, pickMethod?.oauth]);
+
+  const startOAuth = async () => {
+    const type = pickProvider?.key;
+    if (!type) return;
+    setOauthBusy(true);
+    try {
+      const r = await API.post("/channel/oauth/start", { type });
+      setOauthUrl(r.url);
+      setOauthState(r.state || "");
+      // 新窗口打开授权页（被拦截时页面上还有可点的链接兜底）
+      window.open(r.url, "_blank", "noopener");
+    } catch (e) {
+      // 未配置 OAuth 客户端等：说清怎么解决，而不是只丢报错
+      message.error(e.message || "发起登录失败");
+    } finally {
+      setOauthBusy(false);
+    }
+  };
+
   const startCapture = async () => {
     if (!pickProvider) return;
     setCapCands(null);
@@ -1641,11 +1705,37 @@ export default function AdminChannelsPage() {
                               </Space>
                             </Form.Item>
                           ) : null}
+                          {/* 订阅 OAuth 支持交互式登录：跳官方页面登录 → 复制回调地址回来。
+                              比「先用官方 CLI 登录再抄凭据文件」省一步，且不需要公网回调地址。 */}
+                          {pickMethod.oauth && oauthSupported ? (
+                            <Form.Item label="登录账号（推荐）">
+                              <Space wrap>
+                                <Button icon={<GlobalOutlined />} onClick={startOAuth} loading={oauthBusy}>
+                                  打开授权页面
+                                </Button>
+                                {oauthUrl ? (
+                                  <Typography.Link href={oauthUrl} target="_blank" rel="noreferrer">
+                                    或点这里在新窗口打开
+                                  </Typography.Link>
+                                ) : null}
+                              </Space>
+                              <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 6, lineHeight: 1.7 }}>
+                                {oauthUrl
+                                  ? "登录后会跳到一个打不开的 localhost 页面（正常现象）—— 把地址栏那一整串 URL 复制到下面的输入框即可。"
+                                  : "点按钮后会打开官方授权页；也可以直接用下面「粘贴凭据」的方式添加。"}
+                              </div>
+                            </Form.Item>
+                          ) : null}
                           <Form.Item
                             name="token"
-                            label={pickMethod.oauth ? "凭据 JSON" : "登录态"}
-                            rules={[{ required: true, message: pickMethod.oauth ? "请粘贴凭据 JSON" : "请粘贴登录态" }]}
-                            extra={pickMethod.pasteHint}
+                            label={pickMethod.oauth ? (oauthUrl ? "回调地址 / 授权码" : "凭据 JSON") : "登录态"}
+                            rules={[
+                              {
+                                required: true,
+                                message: pickMethod.oauth ? (oauthUrl ? "请粘贴登录后地址栏里的完整 URL" : "请粘贴凭据 JSON") : "请粘贴登录态",
+                              },
+                            ]}
+                            extra={oauthUrl ? "粘贴形如 http://localhost:51121/oauth-callback?code=... 的完整地址" : pickMethod.pasteHint}
                           >
                             <Input.TextArea
                               rows={pickMethod.oauth ? 6 : 3}
