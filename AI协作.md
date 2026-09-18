@@ -156,6 +156,8 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 | `harness/tools.js` | 工具集：`search` / `fetch` / `task` / `todowrite` | 全部只读或无副作用（不碰文件系统）；`fetch` 必须逐跳过 `assertPublicUrl`（SSRF）；工具失败返回原因而不是抛错 |
 | `harness/loop.js` | 运行循环 + 工具调用嗅探（`StepStream`） | 步数上限兜底（默认 6，上限 16）；子代理深度上限 `MAX_DEPTH=1`；嗅探改动务必重跑自测用例（切开的标签、未闭合、正文含花括号、代码块写法） |
 | `harness/sessions.js` | 会话/消息存储（`chat_sessions` / `chat_messages`） | 会话设定入参一律走 `sanitizeSettings` 归一化；消息 seq 由 SQL 端 `MAX(seq)+1` 计算，避免并发撞号 |
+| `harness/runs.js` | 进行中运行的环形缓冲与订阅（断线续传） | 事件必须存快照；只有 `/stop` 才 abort；`MAX_EVENTS` 超出丢最早 |
+| `components/PromptBar.jsx` | 输入栏（独立于 `beautifului.jsx`） | 尺寸取自组件库官网实测值；`styles.css` 里**不要**再写 `.bui-composer*` 同名规则（曾覆盖导致样式不一致） |
 
 **数据流**：`POST /api/chat/run` → 落库用户消息 → `runHarness`（每步一次上游调用，工具结果以 `<tool_result>` 回灌）→
 逐次调用 `splitTokens` 求和后按 `pricing.js` 计费 → 助手消息（parts JSON）落库 → 更新会话 `todo` 与统计。
@@ -165,6 +167,15 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 
 **计费约束**：每轮里**每一次**上游调用（主回答、工具检索、子代理）都要 `record()` 进 `calls`，
 失败时用 `err.calls` 带出并部分计费；禁止只按最后一次调用的 usage 计费。
+
+**断线续传（第 19 批）**：运行跑在服务端、与 HTTP 连接解绑（`harness/runs.js` 的环形缓冲 + 订阅）。
+改动 `/run`、`/stream` 时务必守住三条：① 客户端断开**不能** abort 上游（只有 `/stop` 才能）；
+② 事件必须是**快照**（part/patch 浅拷贝），否则回放会把累积文本当初始事件再叠加 delta → 界面内容重复；
+③ 同一会话并发只允许一个运行（409），否则双跑双计费。
+
+**模型列表（第 19 批）**：`/meta` 的模型必须是**该用户实际能调用的**，不是后台渠道全量 ——
+渠道层（用户分组可路由）∩ 密钥层（普通用户的 `tokens.model_limits`，与网关 `modelAllowed` 同语义），管理员不受密钥层约束。
+改这里要保证「页面上能选」与「实际能调用」一致，否则用户选了却报 NO_CHANNEL。
 
 ## 2. 统一规范（强制）
 
@@ -271,6 +282,17 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   若将来要做配额，建议放在「用户删除会话」之外单独设计（历史额度扣减已计入 `used_quota`，删消息不回滚）。
 - [ ] **前端长会话性能**：消息按 parts 渲染，流式期间只重写最后一条；若单会话消息数达到数百条，
   需补虚拟滚动（当前未做，实测百条内无压力）。
+
+### 第 19 批遗留（对话页二轮重构）
+
+- [ ] **断线续传的进程内限制**：运行缓冲只在内存（进程重启即丢，那一轮按已产出内容照常计费）；
+  如需跨重启恢复，需要把 runs 落库或引入外部缓存，当前按单机单实例部署可接受。
+- [ ] **长会话侧栏分页**：会话列表当前一次拉 200 条（`limit` 上限 500），
+  对话量很大时需要虚拟滚动 + 分页/无限加载。
+- [ ] **项目资产**：ChatGPT 的项目还能挂「项目说明/文件」，当前只做了分类与归档；
+  若要支持，需在 `chat_projects` 加字段并在系统提示词里注入项目上下文。
+- [ ] **续传的移动端表现**：移动端切后台再回来会重新订阅（已实测可用），
+  但切后台期间没有系统通知；如需「跑完了提醒」要接 Notification API。
 
 ### 长期/设计取舍项（已评估，暂不处理）
 
@@ -545,3 +567,55 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   悬浮十字线与明细 tooltip、自动图例、Y 轴紧凑刻度）；「最近调用」保留为底部区块。
   后端 `GET /api/channel/:id/stats`：窗口上限 90→366 天、新增 `allTime`（不限窗口累计，SQL 对 detail JSON 求和）
   与 `series`（按天按模型 Token Top8 + 其他，供趋势图）；前端一次拉 365 天，范围开关在前端切片。 |
+| 2026-09-18 | **第 20 批（分组体系按 sub2api 重构 + 两个线上 bug 修复）**：
+  · **修复「刷新后最近调用丢失」**：列表接口 `rowToResp` 只读运行时内存态，服务重启后不回填
+  `channels.recent_calls`；新增 `router.channelRecent(id, raw)`（运行时为空则从库回填并缓存）
+  并接入列表与调度两条路径（`router.js`/`routes/channel.js`）。
+  · **修复「统计弹窗白屏」**：`smoothPath` 的点来自 `toFixed()` 字符串，`+` 变成字符串拼接后
+  `c1x.toFixed is not a function`；先 `Number()` 归一化。已用 SSR 复现并回归。
+  · **分组重构（sub2api 语义）**：`channel_groups` 新增 `rate`（倍率）/`models`（分组支持的模型）；
+  分组**只由管理员创建**（不再按厂商自动生成 default 行；本升级一次性清理旧的种子行）；
+  POST/PUT/DELETE `/api/channel/groups` 支持厂商/名称/备注/倍率/模型/成员账号，
+  成员与渠道编辑双向同步（渠道 `groups` 可多选，含隐式 default 池）；
+  `GET /api/token/groups` 返回 type/name/remark/rate/models；
+  · **路由与计费**：`selectChannels`/`explainNoChannel` 按分组模型限制（空=不限，支持通配）；
+  网关与站内对话按分组倍率计费（`services/group-rate.js` 30s 缓存 + `applyGroupRate`）；
+  删除分组时同时解绑 Key（回落默认池）；
+  · **前端**：令牌创建/编辑的分组下拉改为**单一选择**，选项显示厂商图标 + 分组名 + 备注 + 倍率；
+  渠道管理「分组管理」弹窗改为完整编辑器（建组/编辑/成员多选/模型 tags/倍率），
+  渠道表单分组选择改 multiple（分组由管理端创建，不再回车即建）；
+  · **布局细节**：侧边栏字体显式统一为 `--font-sans`；侧栏「返回首页」从菜单移到底部，
+  替代原来的「收起侧边栏」（收起按钮内容区顶部已有）。 |
+| 2026-09-18 | **GPT 速度排查（实测结论）**：同一真实账号在测试服务器（node fetch 直连）实测：
+  裸调 `chatgpt.com/backend-api/codex/responses`（store:false + client_metadata + prompt_cache_key，
+  与线上同参）TTFB 0.6~1.4s / 完成 1.3~2.1s；`gpt-5.6-luna`/`gpt-5.6-terra`/`gpt-5.5` 均同量级；
+  reasoning low/none/medium、store:true（被拒）、image_generation 工具、encrypted reasoning、
+  有无 292 通行证注入（适配器内 probe 连跑 4 次 1.6~1.9s）**均无显著差异**；
+  上游 `gpt-5` 不支持、要求 `store=false`。结论：不是 state 注入/适配器问题，
+  截图里的 11.4s 是部署构建抢 CPU / 网络抖动期间的旧样本；
+  交互变慢的路径只有「开启思考」时 codex 适配器强制 `reasoning.effort=medium`（默认关，不影响）。 |
+| 2026-09-18 | **第 19 批（对话页二轮重构：断线续传 / 项目与归档 / 按用户可用模型 / 输入栏对齐官方）**：
+  · **断线续传**（`services/harness/runs.js` + `/run`、`/sessions/:id/stream`、`/sessions/:id/stop`、`/running`）：
+  运行与 HTTP 连接解绑 —— 用户切页/刷新时只退订事件流，后台继续跑完并落库计费；事件进环形缓冲（上限 4000），
+  重连先回放再续播，界面无缝恢复（实测：流到一半刷新，回来后继续输出且无重复）；
+  **只有显式点「停止」才真的中止上游**；同一会话并发提交返回 409（防双份计费）；
+  事件里的 part 一律存**快照**（`{...part}`），否则回放会把累积后的文本当初始 part 再叠加 delta 造成内容重复；
+  前端按 part id 幂等合并，杜绝重连与实时事件交错的重复。
+  · **项目 / 归档 / 批量**（新表 `chat_projects` + `chat_sessions.project_id/archived/pinned`）：
+  侧栏改为 ChatGPT 结构 —— 顶部「新建对话」，对话/已归档 视图切换，项目分组（可建/改名/删除，删项目不删对话而是退回未归类），
+  对话行支持置顶/归档/删除，多选模式批量归档、取消归档、移动到项目、删除；列表按「置顶优先 + 最近更新」排序。
+  · **按用户实际可用性给模型**（修正「普通用户看到后台全量模型」）：三层过滤 —— ① 用户分组能路由到的启用渠道所声明的模型；
+  ② 普通用户再受自己 API Key 的 `model_limits` 白名单约束（上限 3 个 Key 取并集，空白名单=不限，与网关 `modelAllowed` 同一套前缀语义，保证「能选」=「能调」）；
+  ③ 管理员不受密钥层约束。一个 Key 都没有的普通用户退回渠道层（站内对话走账户额度、不经 Key）；`/meta` 同时返回按厂商归类的 `vendors`。
+  · **输入栏对齐组件库官方实现**（逐个量取官网真实数值后重写 `components/PromptBar.jsx`）：
+  容器 `p-[6px] rounded-[14px] border-line bg-surface shadow-card`、控制行 `grid-cols-[28px_minmax(0,1fr)_auto_28px_28px]`、
+  输入框透明底 `13px/18px` 自增高、按钮一律 `28×28 rounded-lg`；
+  **输入区外层改回完全透明**（此前整条有底色和上边框，与官方「悬空浮岛」不符），提示文字紧贴输入框正下方；
+  **删除顶部编排栏里重复的模型选择器**（模型只在输入栏选）；
+  模型下拉按**厂商分组**（图标 + 厂商名 + 数量，组头 sticky），行内显示友好名称而非裸 id；
+  菜单挂到触发按钮上而不是输入框，修掉「输入框自增高时菜单漂移」。
+  · **顺带清理**：删除 `styles.css` 里第一版移植遗留的 `.bui-composer/.bui-composer-input/.bui-send/.bui-composer-wrap` 等 160 余行死规则 ——
+  它们以相同选择器覆盖了新的 PromptBar 样式（表现为输入框字体/行高、容器圆角与官方不一致），是本次「样式不生效」的真实原因。
+  自检：后端改动文件 `node --check` 通过；用「真实路由 + 真实 harness、只桩 DB/上游/鉴权」的本地服务实测
+  （断线续传无重复、归档计数正确、批量 affected 正确、模型按分组与密钥过滤）；
+  前端 `npm run build` 通过；浏览器逐项量取样式数值与官网一致，浅色/深色、桌面/移动均已复核。 |

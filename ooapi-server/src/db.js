@@ -70,7 +70,7 @@ const TABLES = [
     unlimited_quota TINYINT NOT NULL DEFAULT 1,
     used_quota BIGINT NOT NULL DEFAULT 0,
     model_limits TEXT,
-    group_name VARCHAR(32) DEFAULT '',
+    group_name VARCHAR(64) DEFAULT '',
     INDEX idx_tokens_user (user_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
@@ -188,13 +188,16 @@ const TABLES = [
     INDEX idx_chat_msg_session (session_id, seq)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
-  // 渠道分组（sub2api 风格）：分组按厂商隔离（同名的 GLM 分组与 OpenAI 分组互不相干），
-  // 账号（channel）可通过 channels.groups 加入多个分组；API Key 绑定分组后只路由到该分组的账号。
+  // 渠道分组（sub2api 风格）：由管理员创建，绑定厂商；可设备注、计费倍率与支持的模型；
+  // 账号（channel）通过 channels.groups 加入分组（双向：渠道编辑也能改）；
+  // API Key 绑定一个分组后只路由到该分组的账号，并按分组倍率计费。
   `CREATE TABLE IF NOT EXISTS channel_groups (
     id INT AUTO_INCREMENT PRIMARY KEY,
     type VARCHAR(32) NOT NULL COMMENT '厂商类型（分组按厂商隔离）',
     name VARCHAR(32) NOT NULL COMMENT '分组名',
-    remark VARCHAR(255) NOT NULL DEFAULT '',
+    remark VARCHAR(255) NOT NULL DEFAULT '' COMMENT '备注（可为空）',
+    rate DECIMAL(10,4) NOT NULL DEFAULT 1 COMMENT '计费倍率',
+    models TEXT COMMENT '分组支持的模型 JSON 数组，空=不限',
     created_time BIGINT NOT NULL DEFAULT 0,
     UNIQUE KEY uniq_group_type_name (type, name)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
@@ -236,6 +239,8 @@ const COLUMN_MIGRATIONS = [
   { table: "channels", column: "last_test_time", ddl: "BIGINT NOT NULL DEFAULT 0" },
   { table: "channels", column: "group_list", ddl: "TEXT" },
   { table: "channels", column: "recent_calls", ddl: "TEXT" },
+  { table: "channel_groups", column: "rate", ddl: "DECIMAL(10,4) NOT NULL DEFAULT 1" },
+  { table: "channel_groups", column: "models", ddl: "TEXT" },
   { table: "chat_sessions", column: "project_id", ddl: "VARCHAR(32) NOT NULL DEFAULT ''" },
   { table: "chat_sessions", column: "archived", ddl: "TINYINT NOT NULL DEFAULT 0" },
   { table: "chat_sessions", column: "pinned", ddl: "TINYINT NOT NULL DEFAULT 0" },
@@ -243,17 +248,24 @@ const COLUMN_MIGRATIONS = [
 
 // 列类型扩容（老库）：列宽不足时 ALTER。
 // 历史问题：channels.api_key 是 VARCHAR(255)，「多 Key 用换行分隔」约 3 个 Key 就溢出 500。
-const TYPE_MIGRATIONS = [{ table: "channels", column: "api_key", dataType: "text", ddl: "TEXT" }];
+const TYPE_MIGRATIONS = [
+  { table: "channels", column: "api_key", dataType: "text", ddl: "TEXT" },
+  // 令牌分组绑定值是 "厂商:分组名"，VARCHAR(32) 装不下长厂商名（如 claude-oauth）
+  { table: "tokens", column: "group_name", dataType: "varchar", minLen: 64, ddl: "VARCHAR(64) DEFAULT ''" },
+];
 
 async function ensureColumnTypes() {
   for (const m of TYPE_MIGRATIONS) {
     const [rows] = await pool.query(
-      "SELECT data_type AS t FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+      "SELECT data_type AS t, character_maximum_length AS len FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
       [m.table, m.column]
     );
-    if (rows.length && String(rows[0].t).toLowerCase() !== m.dataType) {
+    if (!rows.length) continue;
+    const typeChanged = String(rows[0].t).toLowerCase() !== m.dataType;
+    const tooShort = m.minLen && Number(rows[0].len || 0) < m.minLen;
+    if (typeChanged || tooShort) {
       await pool.query(`ALTER TABLE ${m.table} MODIFY ${m.column} ${m.ddl}`);
-      console.log(`[migrate] ${m.table}.${m.column} 已扩容为 ${m.dataType}`);
+      console.log(`[migrate] ${m.table}.${m.column} 已扩容为 ${m.ddl}`);
     }
   }
 }
@@ -273,7 +285,8 @@ async function ensureColumns() {
 
 // 分组数据迁移（幂等）：
 //   · 老库 channels.groups 为空 → 用 group_name 回填（保持既有行为）
-//   · channel_groups 补齐现有 group_name 去重后的分组行
+//   · 分组行只由管理员在「分组管理」里创建；历史上按厂商自动生成的 default 行
+//     在本升级（首次新增 rate 列）时清理一次，之后不再自动删（避免误删管理员建的组）。
 async function ensureGroups() {
   const [rows] = await pool.query("SELECT id, type, group_name, group_list FROM channels");
   for (const r of rows) {
@@ -282,23 +295,24 @@ async function ensureGroups() {
     const groups = [r.group_name && String(r.group_name).trim() ? String(r.group_name).trim() : "default"];
     await pool.query("UPDATE channels SET group_list = ? WHERE id = ?", [JSON.stringify(groups), r.id]);
   }
-  const seen = new Set();
-  for (const r of rows) {
-    const g = r.group_name && String(r.group_name).trim() ? String(r.group_name).trim() : "default";
-    const key = `${r.type}:${g}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    await pool.query("INSERT IGNORE INTO channel_groups (type, name, created_time) VALUES (?,?,?)", [
-      r.type,
-      g,
-      Math.floor(Date.now() / 1000),
-    ]);
-  }
+}
+
+async function columnExists(table, column) {
+  const [rows] = await pool.query(
+    "SELECT COUNT(*) AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+    [table, column]
+  );
+  return rows[0].c > 0;
 }
 
 export async function migrate() {
   for (const sql of TABLES) await pool.query(sql);
+  const hadGroupRate = await columnExists("channel_groups", "rate");
   await ensureColumns();
   await ensureColumnTypes();
   await ensureGroups();
+  if (!hadGroupRate) {
+    // 本升级独有的清理：旧版按厂商自动种子出来的 default 分组行（非管理员创建）
+    await pool.query("DELETE FROM channel_groups WHERE name = 'default'").catch(() => {});
+  }
 }

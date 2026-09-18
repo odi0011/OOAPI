@@ -8,6 +8,7 @@ import { now, clientIp, asyncHandler, assertPublicUrl } from "../utils.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { runCompletion } from "../services/execute.js";
 import { getPrice, computeCost, splitTokens, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
+import { groupConfigOf, applyGroupRate } from "../services/group-rate.js";
 import { allPublicModels, modelForChannelMatch, resolveAliasSync } from "../services/models.js";
 
 const router = express.Router();
@@ -198,7 +199,9 @@ async function settle({ token, user, model, prompt, output, usage, ip, requestId
   const { promptTokens, completionTokens, cacheTokens } = splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
   const price = await getPrice(resolveAliasSync(model));
-  const units = computeCost({ price, promptTokens, completionTokens, cacheTokens });
+  // 分组倍率：Key 绑定分组后按分组倍率计费（rate=1 时不变）
+  const gcfg = await groupConfigOf(token?.group_name || user?.group_name);
+  const units = applyGroupRate(computeCost({ price, promptTokens, completionTokens, cacheTokens }), gcfg?.rate);
   const od = (units / UNITS_PER_OD).toFixed(4);
 
   // 条件扣费：quota >= units 才扣。并发场景下「先读余额再写回」会超额透支，

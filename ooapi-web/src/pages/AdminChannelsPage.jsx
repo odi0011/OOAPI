@@ -201,8 +201,10 @@ function StatCard({ label, value, hint }) {
 }
 
 // 平滑折线路径（Catmull-Rom → 三次贝塞尔）
-function smoothPath(pts) {
-  if (!pts.length) return "";
+function smoothPath(rawPts) {
+  if (!rawPts.length) return "";
+  // 先统一转成数字：点可能来自 toFixed() 的字符串，字符串 + 数字会变成拼接
+  const pts = rawPts.map((it) => [Number(it[0]), Number(it[1])]);
   if (pts.length === 1) return `M ${pts[0][0]} ${pts[0][1]}`;
   let d = `M ${pts[0][0]} ${pts[0][1]}`;
   for (let i = 0; i < pts.length - 1; i += 1) {
@@ -554,10 +556,15 @@ export default function AdminChannelsPage() {
   const [testingIds, setTestingIds] = useState(() => new Set());
   const [batchTesting, setBatchTesting] = useState(false);
   const [actionBusyId, setActionBusyId] = useState(null);
-  // 分组管理弹窗
+  // 分组管理弹窗（管理员建组：厂商 / 名称 / 备注 / 倍率 / 支持模型 / 包含哪些账号）
   const [groupOpen, setGroupOpen] = useState(false);
-  const [newGroupType, setNewGroupType] = useState("");
-  const [newGroupName, setNewGroupName] = useState("");
+  const [editingGroup, setEditingGroup] = useState(null);
+  const [gType, setGType] = useState("");
+  const [gName, setGName] = useState("");
+  const [gRemark, setGRemark] = useState("");
+  const [gRate, setGRate] = useState(1);
+  const [gModels, setGModels] = useState([]);
+  const [gChannels, setGChannels] = useState([]);
   const [groupBusy, setGroupBusy] = useState(false);
   // 用量统计弹窗
   const [statsOpen, setStatsOpen] = useState(false);
@@ -585,22 +592,52 @@ export default function AdminChannelsPage() {
       return next;
     });
 
-  // 某厂商可选的分组名（分组按厂商隔离）
-  const groupNamesOf = (type) =>
-    groups.filter((g) => !type || g.type === type).map((g) => g.name);
+  // 某厂商可选的分组（管理员在「分组管理」创建；default 为隐式默认池，供未绑定分组的 Key 使用）
+  const groupNamesOf = (type) => {
+    const names = groups.filter((g) => !type || g.type === type).map((g) => g.name);
+    return [...new Set(["default", ...names])];
+  };
+
+  const groupSelectOptions = (type) =>
+    groupNamesOf(type).map((g) => ({
+      value: g,
+      label: g === "default" ? <span style={{ color: "var(--ink-3)" }}>default（默认池）</span> : g,
+    }));
 
   // ---------- 分组管理 ----------
+  const resetGroupForm = (type = "") => {
+    setEditingGroup(null);
+    setGType(type || "");
+    setGName("");
+    setGRemark("");
+    setGRate(1);
+    setGModels([]);
+    setGChannels([]);
+  };
+
+  const openGroupEditor = (g) => {
+    setEditingGroup(g);
+    setGType(g.type);
+    setGName(g.name);
+    setGRemark(g.remark || "");
+    setGRate(Number(g.rate) || 1);
+    setGModels(Array.isArray(g.models) ? g.models : []);
+    setGChannels(Array.isArray(g.channel_ids) ? g.channel_ids.map(Number) : []);
+  };
+
   const submitGroup = async () => {
     if (groupBusy) return;
-    const type = newGroupType;
-    const name = String(newGroupName || "").trim();
+    const type = gType;
+    const name = String(gName || "").trim();
     if (!type) return message.warning("请选择厂商");
     if (!name) return message.warning("请填写分组名");
     setGroupBusy(true);
     try {
-      await API.post("/channel/groups", { type, name });
-      message.success("分组已创建");
-      setNewGroupName("");
+      const payload = { type, name, remark: gRemark, rate: Number(gRate) || 1, models: gModels, channel_ids: gChannels };
+      if (editingGroup) await API.put(`/channel/groups/${editingGroup.id}`, payload);
+      else await API.post("/channel/groups", payload);
+      message.success(editingGroup ? "分组已更新" : "分组已创建");
+      resetGroupForm(type);
       await load({ silent: true });
     } catch (e) {
       message.error(e.message);
@@ -608,12 +645,14 @@ export default function AdminChannelsPage() {
       setGroupBusy(false);
     }
   };
+
   const removeGroup = async (g) => {
     if (groupBusy) return;
     setGroupBusy(true);
     try {
       await API.del(`/channel/groups/${g.id}`);
       message.success("分组已删除");
+      if (editingGroup?.id === g.id) resetGroupForm();
       await load({ silent: true });
     } catch (e) {
       message.error(e.message);
@@ -621,6 +660,17 @@ export default function AdminChannelsPage() {
       setGroupBusy(false);
     }
   };
+
+  // 分组编辑器的可选项：账号=该厂商渠道；模型=所选账号模型的并集（tags 允许手输）
+  const groupChannelOptions = items
+    .filter((c) => c.type === gType)
+    .map((c) => ({ value: c.id, label: `${c.name}${c.account ? ` · ${c.account}` : ""}` }));
+  const groupModelOptions = [
+    ...new Set(
+      (gChannels.length ? items.filter((c) => gChannels.includes(c.id)) : items.filter((c) => c.type === gType))
+        .flatMap((c) => c.models || [])
+    ),
+  ].map((m) => ({ value: m, label: m }));
 
   // ---------- 用量统计 ----------
   const openStats = async (r) => {
@@ -1435,7 +1485,7 @@ export default function AdminChannelsPage() {
             ) : null}
             <button className="bui-btn" onClick={load}><ReloadOutlined /> 刷新</button>
             <button className="bui-btn" onClick={openImport}>导入凭据</button>
-            <button className="bui-btn" onClick={() => setGroupOpen(true)}>分组管理</button>
+            <button className="bui-btn" onClick={() => { resetGroupForm(); setGroupOpen(true); }}>分组管理</button>
             <button className="bui-btn bui-btn--primary" onClick={openAdd}><PlusOutlined /> 添加渠道</button>
           </>
         }
@@ -1699,12 +1749,11 @@ export default function AdminChannelsPage() {
 
                     <Row gutter={12}>
                       <Col span={8}>
-                        <Form.Item name="groups" label="分组" extra="可多选；回车可新建（按厂商隔离）">
+                        <Form.Item name="groups" label="分组" extra="可多选（分组由「分组管理」创建）">
                           <Select
-                            mode="tags"
+                            mode="multiple"
                             placeholder="default"
-                            tokenSeparators={[","]}
-                            options={groupNamesOf(pickProvider?.key).map((g) => ({ value: g, label: g }))}
+                            options={groupSelectOptions(pickProvider?.key)}
                           />
                         </Form.Item>
                       </Col>
@@ -1785,12 +1834,11 @@ export default function AdminChannelsPage() {
           </Form.Item>
             <Row gutter={12}>
               <Col span={8}>
-                <Form.Item name="groups" label="分组" extra="可多选；回车可新建（按厂商隔离）">
+                <Form.Item name="groups" label="分组" extra="可多选（分组由「分组管理」创建）">
                   <Select
-                    mode="tags"
+                    mode="multiple"
                     placeholder="default"
-                    tokenSeparators={[","]}
-                    options={groupNamesOf(editing?.type).map((g) => ({ value: g, label: g }))}
+                    options={groupSelectOptions(editing?.type)}
                   />
                 </Form.Item>
               </Col>
@@ -2160,40 +2208,113 @@ export default function AdminChannelsPage() {
         open={groupOpen}
         onCancel={() => setGroupOpen(false)}
         footer={null}
-        width={640}
+        width={780}
         destroyOnClose
       >
         <Alert
           type="info"
           showIcon
           style={{ marginBottom: 12 }}
-          message="分组按厂商隔离：同名分组在不同厂商下互不相干；渠道可同时属于多个分组，API Key 绑定分组后只路由到该分组的渠道。"
+          message="分组由管理员创建并绑定厂商：选择包含哪些账号、支持哪些模型、计费倍率；渠道编辑里也能挂到分组（双向）。API Key 只能绑定一个分组，绑定后只路由到该分组的账号。"
         />
-        <Space wrap style={{ marginBottom: 12 }}>
-          <Select
-            placeholder="选择厂商"
-            style={{ width: 170 }}
-            value={newGroupType || undefined}
-            onChange={setNewGroupType}
-            options={providers.map((p) => ({ value: p.key, label: p.name }))}
-          />
-          <Input
-            placeholder="分组名（如 vip）"
-            style={{ width: 190 }}
-            maxLength={32}
-            value={newGroupName}
-            onChange={(e) => setNewGroupName(e.target.value)}
-            onPressEnter={submitGroup}
-          />
-          <button className="bui-btn bui-btn--primary" onClick={submitGroup} disabled={groupBusy}>新增分组</button>
-        </Space>
-        <div className="oo-group-list">
+        <div className="oo-group-editor">
+          <Row gutter={10}>
+            <Col span={6}>
+              <Select
+                placeholder="选择厂商"
+                style={{ width: "100%" }}
+                value={gType || undefined}
+                onChange={(v) => { setGType(v); setGChannels([]); }}
+                disabled={Boolean(editingGroup)}
+                options={providers.map((p) => ({ value: p.key, label: p.name }))}
+              />
+            </Col>
+            <Col span={6}>
+              <Input
+                placeholder="分组名（如 vip）"
+                maxLength={32}
+                value={gName}
+                onChange={(e) => setGName(e.target.value)}
+              />
+            </Col>
+            <Col span={5}>
+              <InputNumber
+                addonBefore="倍率"
+                min={0.0001}
+                max={1000}
+                step={0.1}
+                style={{ width: "100%" }}
+                value={gRate}
+                onChange={(v) => setGRate(v ?? 1)}
+              />
+            </Col>
+            <Col span={7}>
+              <Input
+                placeholder="备注（可为空）"
+                maxLength={64}
+                value={gRemark}
+                onChange={(e) => setGRemark(e.target.value)}
+              />
+            </Col>
+          </Row>
+          <Row gutter={10} style={{ marginTop: 8 }}>
+            <Col span={12}>
+              <Select
+                mode="tags"
+                placeholder={gType ? "支持的模型（留空=不限，可输入通配如 gpt-5.6-*）" : "先选择厂商"}
+                style={{ width: "100%" }}
+                value={gModels}
+                onChange={setGModels}
+                options={groupModelOptions}
+                disabled={!gType}
+              />
+            </Col>
+            <Col span={12}>
+              <Select
+                mode="multiple"
+                placeholder={gType ? "包含哪些账号（可多选）" : "先选择厂商"}
+                style={{ width: "100%" }}
+                value={gChannels}
+                onChange={setGChannels}
+                options={groupChannelOptions}
+                optionFilterProp="label"
+                disabled={!gType}
+              />
+            </Col>
+          </Row>
+          <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
+            <button className="bui-btn bui-btn--primary" onClick={submitGroup} disabled={groupBusy}>
+              {editingGroup ? "保存修改" : "新增分组"}
+            </button>
+            {editingGroup ? (
+              <button className="bui-btn" onClick={() => resetGroupForm(editingGroup.type)} disabled={groupBusy}>
+                取消编辑
+              </button>
+            ) : null}
+            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+              倍率影响绑定该分组 Key 的计费（×{Number(gRate) || 1}）
+            </span>
+          </div>
+        </div>
+        <div className="oo-group-list" style={{ marginTop: 14 }}>
           {groups.length ? (
             groups.map((g) => (
-              <div className="oo-group-row" key={g.id}>
-                <span className="bui-chip">{g.typeName}</span>
-                <span style={{ flex: 1, fontWeight: 550 }} className="oo-truncate">{g.name}</span>
-                <span style={{ color: "var(--ink-3)", fontSize: 12 }}>{g.count} 个渠道</span>
+              <div className={`oo-group-row${editingGroup?.id === g.id ? " is-editing" : ""}`} key={g.id}>
+                <VendorIcon type={g.type} size={15} />
+                <span style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontWeight: 550 }} className="oo-truncate">{g.name}</span>
+                  {g.remark ? (
+                    <span className="oo-truncate" style={{ color: "var(--ink-3)", fontSize: 12 }}>{g.remark}</span>
+                  ) : null}
+                </span>
+                <span className="bui-chip">×{Number(g.rate) || 1}</span>
+                <span style={{ color: "var(--ink-3)", fontSize: 12, whiteSpace: "nowrap" }}>
+                  {g.models?.length ? `${g.models.length} 个模型` : "不限模型"}
+                </span>
+                <span style={{ color: "var(--ink-3)", fontSize: 12, whiteSpace: "nowrap" }}>{g.count} 个账号</span>
+                <button className="bui-icon-btn" aria-label={`编辑分组 ${g.name}`} onClick={() => openGroupEditor(g)}>
+                  <EditOutlined />
+                </button>
                 <Popconfirm title={`删除分组「${g.name}」？`} onConfirm={() => removeGroup(g)}>
                   <button className="bui-icon-btn" style={{ color: "var(--red)" }} aria-label={`删除分组 ${g.name}`}>
                     <DeleteOutlined />
@@ -2202,7 +2323,9 @@ export default function AdminChannelsPage() {
               </div>
             ))
           ) : (
-            <Text type="secondary" style={{ fontSize: 12 }}>暂无分组</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              暂无分组：上方选择厂商后创建，Key 不绑定分组时走默认池
+            </Text>
           )}
         </div>
       </Modal>

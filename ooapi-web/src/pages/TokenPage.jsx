@@ -11,7 +11,7 @@ import { copyText, fmtDate, fmtOd, odOf, unitsPerOd, CURRENCY_NAME } from "../se
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
-import { ModelLabel } from "../components/VendorIcon";
+import { VendorIcon, ModelLabel } from "../components/VendorIcon";
 
 const { Text } = Typography;
 
@@ -30,15 +30,31 @@ export default function TokenPage() {
   const [form] = Form.useForm();
   const { begin, isLatest } = useLatest();
 
-  // 分组下拉：按厂商分组展示（值用 type:name，绑定后该 Key 只路由到该分组的渠道）
-  const groupOptions = React.useMemo(() => {
-    const byType = new Map();
-    for (const g of groupList) {
-      if (!byType.has(g.type)) byType.set(g.type, { label: g.typeName || g.type, options: [] });
-      byType.get(g.type).options.push({ value: `${g.type}:${g.name}`, label: g.name });
-    }
-    return [...byType.values()];
-  }, [groupList]);
+  // 分组下拉（sub2api 风格）：一个 Key 只能绑定一个分组，选项显示厂商图标 / 分组名 / 备注 / 倍率
+  const groupOptions = React.useMemo(
+    () =>
+      groupList.map((g) => ({
+        value: `${g.type}:${g.name}`,
+        search: `${g.name} ${g.remark || ""} ${g.typeName || g.type}`.toLowerCase(),
+        label: (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 320 }}>
+            <VendorIcon type={g.type} size={13} />
+            <span className="oo-truncate" style={{ fontWeight: 500 }}>{g.name}</span>
+            {g.remark ? (
+              <span className="oo-truncate" style={{ color: "var(--ink-3)", fontSize: 12 }}>{g.remark}</span>
+            ) : null}
+            <span className="bui-chip" style={{ marginLeft: "auto", flexShrink: 0 }}>×{Number(g.rate) || 1}</span>
+          </span>
+        ),
+      })),
+    [groupList]
+  );
+
+  const groupMetaOf = (value) => {
+    const [type, name] = String(value || "").split(":");
+    if (!type || !name) return null;
+    return groupList.find((g) => g.type === type && g.name === name) || { type, name, rate: 1 };
+  };
 
   const perUnit = unitsPerOd(status); // 1 OD = 10000 额度单位
 
@@ -225,8 +241,22 @@ export default function TokenPage() {
       {
         title: "分组",
         dataIndex: "group",
-        width: 150,
-        render: (g) => (g ? <Tag color="blue">{g}</Tag> : <Text type="secondary" style={{ fontSize: 12 }}>不限</Text>),
+        width: 170,
+        render: (g) => {
+          if (!g) return <Text type="secondary" style={{ fontSize: 12 }}>默认池</Text>;
+          const meta = groupMetaOf(g);
+          const rate = Number(meta?.rate) || 1;
+          const tip = `${meta?.typeName || meta?.type || ""} / ${meta?.name || g}${meta?.remark ? ` · ${meta.remark}` : ""} · 倍率 ×${rate}`;
+          return (
+            <Tooltip title={tip}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, maxWidth: "100%" }}>
+                <VendorIcon type={meta?.type} size={13} />
+                <span className="oo-truncate">{meta?.name || g}</span>
+                {rate !== 1 ? <span className="bui-chip">×{rate}</span> : null}
+              </span>
+            </Tooltip>
+          );
+        },
       },
       {
         title: "模型限制",
@@ -371,13 +401,17 @@ export default function TokenPage() {
             />
           </Form.Item>
 
-          <Form.Item name="group_name" label="分组" extra="可选；绑定后该 Key 只路由到该分组的渠道（分组按厂商隔离）">
+          <Form.Item
+            name="group_name"
+            label="分组"
+            extra="一个 Key 只能绑定一个分组（由管理员创建）；留空使用默认池（全部渠道）"
+          >
             <Select
               allowClear
               showSearch
-              optionFilterProp="label"
-              placeholder="不限制（跟随账号分组）"
+              placeholder="不绑定（默认池）"
               options={groupOptions}
+              filterOption={(input, option) => (option?.search || "").includes(input.toLowerCase())}
             />
           </Form.Item>
         </Form>

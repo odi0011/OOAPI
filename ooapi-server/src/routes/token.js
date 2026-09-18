@@ -7,12 +7,32 @@ import { writeLog, LOG_TYPE } from "../services/log.js";
 const router = Router();
 router.use(authRequired);
 
-// 可选分组列表（用户创建令牌时选；分组按厂商隔离，返回 type:name 作为绑定值）
+// 可选分组列表（用户创建令牌时选；分组由管理员创建、按厂商隔离，返回 type:name 作为绑定值）
 router.get(
   "/groups",
   asyncHandler(async (req, res) => {
-    const [rows] = await pool.query("SELECT type, name FROM channel_groups ORDER BY type, name");
-    return ok(res, rows.map((g) => ({ type: g.type, name: g.name })));
+    const [rows] = await pool.query(
+      "SELECT type, name, remark, rate, models FROM channel_groups ORDER BY type, name"
+    );
+    return ok(
+      res,
+      rows.map((g) => {
+        let models = [];
+        try {
+          const arr = g.models ? JSON.parse(g.models) : [];
+          if (Array.isArray(arr)) models = arr.map((s) => String(s)).filter(Boolean);
+        } catch {
+          /* ignore */
+        }
+        return {
+          type: g.type,
+          name: g.name,
+          remark: g.remark || "",
+          rate: Number(g.rate) || 1,
+          models,
+        };
+      })
+    );
   })
 );
 
@@ -86,7 +106,7 @@ router.post(
         unlimited_quota ? 1 : 0,
         0,
         Array.isArray(model_limits) ? model_limits.join(",").slice(0, 2000) : "",
-        String(group_name || "").slice(0, 32),
+        String(group_name || "").slice(0, 64),
       ]
     );
     // 用 insertId 精确回查：按 user_id ORDER BY id DESC 并发时会返回别人刚建的令牌（含完整 Key）
@@ -134,7 +154,7 @@ router.put(
         unlimited_quota !== undefined ? (unlimited_quota ? 1 : 0) : cur.unlimited_quota,
         expiredVal,
         Array.isArray(model_limits) ? model_limits.join(",").slice(0, 2000) : cur.model_limits,
-        group_name !== undefined ? String(group_name).slice(0, 32) : cur.group_name,
+        group_name !== undefined ? String(group_name).slice(0, 64) : cur.group_name,
         token,
         req.user.id,
       ]

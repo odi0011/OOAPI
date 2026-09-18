@@ -42,10 +42,7 @@ const NAV_USER = [
   },
   {
     title: "账户",
-    items: [
-      { key: "/profile", icon: <UserOutlined />, label: "个人设置" },
-      { key: "/home", icon: <HomeOutlined />, label: "返回首页" },
-    ],
+    items: [{ key: "/profile", icon: <UserOutlined />, label: "个人设置" }],
   },
 ];
 
@@ -183,22 +180,24 @@ export default function MainLayout() {
           {brand}
           {nav}
           <div className="oo-sider-foot">
+            {/* 收起/展开在内容区顶部已有按钮，这里放「返回首页」更合适 */}
             <div
               className="oo-nav-item"
               role="button"
               tabIndex={0}
-              aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
-              onClick={() => setCollapsed(!collapsed)}
+              aria-label="返回首页"
+              title={collapsed ? "返回首页" : undefined}
+              onClick={() => navigate("/home")}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
-                  setCollapsed((value) => !value);
+                  navigate("/home");
                 }
               }}
               style={{ margin: 0 }}
             >
-              {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-              {!collapsed && <span>收起侧边栏</span>}
+              <HomeOutlined />
+              {!collapsed && <span>返回首页</span>}
             </div>
           </div>
         </Sider>

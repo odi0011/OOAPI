@@ -794,168 +794,6 @@ h1, h2, h3, h4 {
   font-variant-numeric: tabular-nums;
 }
 
-/* --- 输入区（beautifului Composer / Prompt Bar）--- */
-.bui-composer-wrap {
-  padding: 0 var(--sp-4) var(--sp-5);
-  background: linear-gradient(to top, var(--page) 62%, transparent);
-}
-
-.bui-composer {
-  max-width: 760px;
-  margin: 0 auto;
-  background: var(--surface);
-  border-radius: var(--r-window);
-  box-shadow: var(--shadow-raised);
-  transition: box-shadow var(--dur) var(--ease);
-}
-
-.bui-composer:focus-within {
-  box-shadow: var(--shadow-raised), 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
-}
-
-.bui-composer-input {
-  width: 100%;
-  border: none;
-  outline: none;
-  resize: none;
-  background: transparent;
-  padding: 12px 14px 4px;
-  font-family: var(--font-sans);
-  font-size: var(--fs-base);
-  line-height: 1.6;
-  letter-spacing: var(--ls-body);
-  color: var(--ink);
-  max-height: 220px;
-}
-
-.bui-composer-input::placeholder { color: var(--ink-3); }
-
-.bui-composer-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-2);
-  padding: 6px 8px 8px;
-}
-
-.bui-composer-tools {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-
-/* 发送按钮 */
-.bui-send {
-  width: 30px;
-  height: 30px;
-  border-radius: var(--r-btn);
-  border: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--accent);
-  color: oklch(100% 0 0);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background var(--dur) var(--ease), opacity var(--dur) var(--ease);
-}
-.bui-send:hover:not(:disabled) { background: var(--accent-ink); }
-.bui-send:disabled {
-  background: var(--field);
-  color: var(--ink-3);
-  cursor: not-allowed;
-}
-
-/* 停止按钮 */
-.bui-send--stop { background: var(--ink); }
-.bui-send--stop:hover { background: var(--ink-2); }
-
-/* 模型选择器（beautifului 用 chip + 下拉） */
-.bui-model-pick {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 8px;
-  border-radius: var(--r-chip);
-  background: var(--field);
-  color: var(--ink-2);
-  font-size: var(--fs-micro);
-  font-weight: 500;
-  letter-spacing: var(--ls-body);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
-}
-.bui-model-pick:hover { background: var(--hover-2); color: var(--ink); }
-
-/* 空状态（对话初始） */
-.bui-empty-chat {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 56px 24px;
-  gap: 10px;
-}
-
-.bui-empty-title {
-  font-size: var(--fs-2xl);
-  font-weight: 600;
-  letter-spacing: var(--ls-title);
-  color: var(--ink);
-  margin: 0;
-}
-
-/* 建议提示卡（beautifului Recommendation Card） */
-.bui-suggests {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  width: 100%;
-  max-width: 560px;
-  margin-top: var(--sp-4);
-}
-
-@media (max-width: 640px) {
-  .bui-suggests { grid-template-columns: 1fr; }
-}
-
-.bui-suggest {
-  text-align: left;
-  padding: 10px 12px;
-  border: none;
-  border-radius: var(--r-card);
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
-  cursor: pointer;
-  font-family: var(--font-sans);
-  transition: background var(--dur) var(--ease), transform var(--dur) var(--ease);
-}
-
-.bui-suggest:hover {
-  background: var(--hover);
-  transform: translateY(-1px);
-}
-
-.bui-suggest-t {
-  font-size: var(--fs-body);
-  font-weight: 500;
-  color: var(--ink);
-  margin: 0 0 2px;
-  letter-spacing: var(--ls-body);
-}
-
-.bui-suggest-d {
-  font-size: var(--fs-micro);
-  color: var(--ink-3);
-  margin: 0;
-  letter-spacing: var(--ls-body);
-}
-
 /* ---------------------------------------------------------------------------
    7. 智能体（beautifului Agent Screen / Task Rows / Tool Chips）
    --------------------------------------------------------------------------- */
@@ -1119,6 +957,8 @@ h1, h2, h3, h4 {
   top: 0;
   height: 100vh;
   overflow: hidden;
+  /* 与页面正文统一字体：避免 antd 布局层字体栈覆盖导致菜单字形不一致 */
+  font-family: var(--font-sans);
 }
 
 .oo-brand {
@@ -1426,6 +1266,18 @@ h1, h2, h3, h4 {
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--surface);
+}
+
+.oo-group-row.is-editing {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: var(--accent-tint);
+}
+
+.oo-group-editor {
+  border: 1px solid var(--line);
+  background: var(--inset);
+  border-radius: var(--r-sm);
+  padding: 10px 12px 12px;
 }
 
 /* 用量统计弹窗 */

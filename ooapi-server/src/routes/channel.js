@@ -25,7 +25,8 @@ import { ok, fail, asyncHandler, now, assertPublicUrl, idParam, safeInt } from "
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod } from "../services/channel-types.js";
-import { getAdapter, resetChannelState, forgetChannel, channelRuntimeState, rowToChannel, recordChannelCall } from "../services/router.js";
+import { getAdapter, resetChannelState, forgetChannel, channelRuntimeState, channelRecent, rowToChannel, recordChannelCall } from "../services/router.js";
+import { clearGroupConfigCache } from "../services/group-rate.js";
 import {
   isReady as browserReady,
   removeProfile,
@@ -80,7 +81,7 @@ function splitKeys(apiKey) {
 }
 
 /** 该渠道的接入方式（缺省 relay，兼容没有 other.method 的老数据） */
-// ---------- 分组工具（sub2api 风格：分组按厂商隔离，账号可属多个分组） ----------
+// ---------- 分组工具（sub2api 风格：分组由管理员创建、绑定厂商；账号可属多个分组） ----------
 /** 归一化分组数组：去空、去重、限长；空则回退 [fallback] */
 function normalizeGroups(input, fallback = "default") {
   let list = [];
@@ -90,12 +91,30 @@ function normalizeGroups(input, fallback = "default") {
   return out.length ? out : [String(fallback || "default").trim().slice(0, 32) || "default"];
 }
 
-/** 确保分组行存在（渠道提交了新分组名时自动建行） */
-async function ensureGroupRows(type, groups) {
-  const ts = Math.floor(Date.now() / 1000);
-  for (const g of groups) {
-    await pool.query("INSERT IGNORE INTO channel_groups (type, name, created_time) VALUES (?,?,?)", [type, g, ts]);
+/** 分组模型的 JSON 解析 / 归一化 */
+function parseGroupModels(raw) {
+  try {
+    const arr = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(arr)) return arr.map((s) => String(s).trim()).filter(Boolean);
+  } catch {
+    /* ignore */
   }
+  return [];
+}
+
+function normalizeModels(input) {
+  const list = Array.isArray(input)
+    ? input
+    : typeof input === "string" && input.trim()
+      ? input.split(",")
+      : [];
+  return [...new Set(list.map((s) => String(s).trim().slice(0, 128)).filter(Boolean))].slice(0, 100);
+}
+
+function normalizeRate(input) {
+  const n = Number(input);
+  if (!Number.isFinite(n) || n <= 0) return 1;
+  return Math.min(1000, Math.max(0.0001, Math.round(n * 10000) / 10000));
 }
 
 /** 渠道行的分组解析（兼容老数据：空则回退 group_name；列名 group_list 避开 MySQL 保留字） */
@@ -109,54 +128,147 @@ function parseGroups(row) {
   return [row?.group_name || "default"];
 }
 
+/** 分组列表行 → 前端结构 */
+function groupResp(g, memberMap) {
+  const ids = memberMap.get(`${g.type}:${g.name}`) || [];
+  return {
+    id: g.id,
+    type: g.type,
+    name: g.name,
+    typeName: getProvider(g.type)?.name || g.type,
+    remark: g.remark || "",
+    rate: Number(g.rate) || 1,
+    models: parseGroupModels(g.models),
+    channel_ids: ids,
+    count: ids.length,
+  };
+}
+
+async function groupMemberMap() {
+  const [chans] = await pool.query("SELECT id, type, group_list, group_name FROM channels");
+  const memberMap = new Map();
+  for (const c of chans) {
+    for (const g of parseGroups(c)) {
+      const key = `${c.type}:${g}`;
+      if (!memberMap.has(key)) memberMap.set(key, []);
+      memberMap.get(key).push(Number(c.id));
+    }
+  }
+  return memberMap;
+}
+
+/** 双向同步「分组包含哪些账号」：勾选的渠道加入分组，未勾选的从分组移除 */
+async function syncGroupMembers(type, name, channelIds) {
+  const want = new Set(
+    (Array.isArray(channelIds) ? channelIds : []).map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0)
+  );
+  const [chans] = await pool.query("SELECT id, group_list, group_name FROM channels WHERE type = ?", [type]);
+  for (const c of chans) {
+    const cur = parseGroups(c);
+    const has = cur.includes(name);
+    const should = want.has(Number(c.id));
+    let next = null;
+    if (should && !has) next = [...cur, name];
+    else if (!should && has) next = cur.filter((g) => g !== name);
+    if (!next) continue;
+    const final = next.length ? next : ["default"];
+    await pool.query("UPDATE channels SET group_list = ?, group_name = ? WHERE id = ?", [
+      JSON.stringify(final),
+      final[0],
+      c.id,
+    ]);
+  }
+}
+
 // ---------- 分组列表（前端分组下拉/管理用）----------
 router.get(
   "/groups",
   asyncHandler(async (req, res) => {
     const [rows] = await pool.query("SELECT * FROM channel_groups ORDER BY type, name");
-    const [chans] = await pool.query("SELECT type, group_list, group_name FROM channels");
-    const counts = new Map();
-    for (const c of chans) {
-      for (const g of parseGroups(c)) {
-        const key = `${c.type}:${g}`;
-        counts.set(key, (counts.get(key) || 0) + 1);
-      }
-    }
-    return ok(
-      res,
-      rows.map((g) => ({
-        id: g.id,
-        type: g.type,
-        name: g.name,
-        typeName: getProvider(g.type)?.name || g.type,
-        remark: g.remark || "",
-        count: counts.get(`${g.type}:${g.name}`) || 0,
-      }))
-    );
+    const memberMap = await groupMemberMap();
+    return ok(res, rows.map((g) => groupResp(g, memberMap)));
   })
 );
 
-// ---------- 新建分组 ----------
+// ---------- 新建分组（管理员选择包含哪些账号 + 支持哪些模型 + 倍率）----------
 router.post(
   "/groups",
   asyncHandler(async (req, res) => {
-    const { type, name, remark } = req.body || {};
+    const { type, name, remark, rate, models, channel_ids } = req.body || {};
     const provider = getProvider(type);
     if (!provider) return fail(res, "未知厂商");
     const gname = String(name || "").trim().slice(0, 32);
     if (!gname) return fail(res, "请填写分组名");
-    await pool.query("INSERT IGNORE INTO channel_groups (type, name, remark, created_time) VALUES (?,?,?,?)", [
-      type,
-      gname,
-      String(remark || "").slice(0, 255),
-      now(),
-    ]);
+    const [exist] = await pool.query("SELECT id FROM channel_groups WHERE type = ? AND name = ?", [type, gname]);
+    if (exist.length) return fail(res, "该厂商下已存在同名分组");
+    await pool.query(
+      "INSERT INTO channel_groups (type, name, remark, rate, models, created_time) VALUES (?,?,?,?,?,?)",
+      [type, gname, String(remark || "").slice(0, 255), normalizeRate(rate), JSON.stringify(normalizeModels(models)), now()]
+    );
+    await syncGroupMembers(type, gname, channel_ids);
+    clearGroupConfigCache();
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `新建分组「${provider.name} / ${gname}」` });
-    return ok(res, null, "分组已创建");
+    const memberMap = await groupMemberMap();
+    const [created] = await pool.query("SELECT * FROM channel_groups WHERE type = ? AND name = ?", [type, gname]);
+    return ok(res, created.length ? groupResp(created[0], memberMap) : null, "分组已创建");
   })
 );
 
-// ---------- 删除分组（同时从该厂商渠道的 groups 里摘掉）----------
+// ---------- 编辑分组（名称 / 备注 / 倍率 / 模型 / 成员账号）----------
+router.put(
+  "/groups/:id",
+  asyncHandler(async (req, res) => {
+    const gid = idParam(req);
+    if (!gid) return fail(res, "分组不存在", 404);
+    const [rows] = await pool.query("SELECT * FROM channel_groups WHERE id = ?", [gid]);
+    if (!rows.length) return fail(res, "分组不存在", 404);
+    const group = rows[0];
+    const { name, remark, rate, models, channel_ids } = req.body || {};
+    const gname = name === undefined ? group.name : String(name || "").trim().slice(0, 32);
+    if (!gname) return fail(res, "请填写分组名");
+    if (gname !== group.name) {
+      const [dup] = await pool.query("SELECT id FROM channel_groups WHERE type = ? AND name = ? AND id != ?", [
+        group.type,
+        gname,
+        gid,
+      ]);
+      if (dup.length) return fail(res, "该厂商下已存在同名分组");
+      // 改名传播：渠道 group_list 与已绑定 Key 都跟着换，避免改名后绑定失效
+      const [chans] = await pool.query("SELECT id, group_list, group_name FROM channels WHERE type = ?", [group.type]);
+      for (const c of chans) {
+        const cur = parseGroups(c);
+        if (!cur.includes(group.name)) continue;
+        const next = [...new Set(cur.map((g) => (g === group.name ? gname : g)))];
+        await pool.query("UPDATE channels SET group_list = ?, group_name = ? WHERE id = ?", [
+          JSON.stringify(next),
+          next[0],
+          c.id,
+        ]);
+      }
+      await pool
+        .query("UPDATE tokens SET group_name = ? WHERE group_name = ?", [
+          `${group.type}:${gname}`,
+          `${group.type}:${group.name}`,
+        ])
+        .catch(() => {});
+    }
+    await pool.query("UPDATE channel_groups SET name = ?, remark = ?, rate = ?, models = ? WHERE id = ?", [
+      gname,
+      remark === undefined ? group.remark || "" : String(remark || "").slice(0, 255),
+      rate === undefined ? group.rate : normalizeRate(rate),
+      models === undefined ? group.models : JSON.stringify(normalizeModels(models)),
+      gid,
+    ]);
+    if (channel_ids !== undefined) await syncGroupMembers(group.type, gname, channel_ids);
+    clearGroupConfigCache();
+    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `编辑分组「${group.type} / ${gname}」` });
+    const memberMap = await groupMemberMap();
+    const [updated] = await pool.query("SELECT * FROM channel_groups WHERE id = ?", [gid]);
+    return ok(res, updated.length ? groupResp(updated[0], memberMap) : null, "分组已更新");
+  })
+);
+
+// ---------- 删除分组（同时从该厂商渠道的 groups 里摘掉、解绑 Key）----------
 router.delete(
   "/groups/:id",
   asyncHandler(async (req, res) => {
@@ -176,6 +288,11 @@ router.delete(
         c.id,
       ]);
     }
+    // 解绑 Key：置空后回落到默认池，而不是留下永远 503 的死绑定
+    await pool
+      .query("UPDATE tokens SET group_name = '' WHERE group_name = ?", [`${group.type}:${group.name}`])
+      .catch(() => {});
+    clearGroupConfigCache();
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `删除分组「${group.type} / ${group.name}」` });
     return ok(res, null, "分组已删除");
   })
@@ -371,7 +488,7 @@ function rowToResp(r, { withKey = false } = {}) {
     status_label: r.status === 2 ? "已禁用" : cooling ? "冷却中" : r.status === 1 ? "已启用" : "自动禁用",
     auto_ban: r.auto_ban === 0 ? false : true,
       cooling,
-      recent: rt.recent,
+      recent: channelRecent(r.id, r.recent_calls),
       test_model: r.test_model || "",
       test_prompt: r.test_prompt || "hi",
       auto_test: Number(r.auto_test) === 1,
@@ -733,9 +850,8 @@ router.post(
         : String(modelsInput || "").trim() || defaultModels
     ).slice(0, 20_000);
     const groupName = String(group_name || "default").trim().slice(0, 64) || "default";
-    // 分组（可多选）：优先 groups 数组，否则沿用 group_name；并确保分组行存在
+    // 分组（可多选）：优先 groups 数组，否则沿用 group_name；分组行只由「分组管理」创建
     const groupsList = normalizeGroups(groupsInput !== undefined ? groupsInput : group_name, groupName);
-    await ensureGroupRows(type, groupsList);
     const weightVal =
       Number.isFinite(Number(weight)) && Number(weight) > 0 ? Math.min(10000, Math.floor(Number(weight))) : 1;
     const autoBanVal = auto_ban === undefined ? 1 : auto_ban ? 1 : 0;
@@ -1050,9 +1166,8 @@ router.post(
     if (weight === null) return fail(res, "权重无效");
 
     const other = { method: "api" };
-    // 分组（可多选）：优先 groups 数组，否则沿用 group_name；并确保分组行存在
+    // 分组（可多选）：优先 groups 数组，否则沿用 group_name；分组行只由「分组管理」创建
     const groups = normalizeGroups(b.groups !== undefined ? b.groups : b.group_name);
-    await ensureGroupRows(type, groups);
     const [ret] = await pool.query(
       `INSERT INTO channels (name, type, base_url, api_key, models, group_name, group_list, status, priority, weight, remark, auto_ban, other, created_time)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -1108,7 +1223,6 @@ router.put(
     // 分组（可多选）：提交 groups 或 group_name 都接受；同步 group_name=第一个（兼容旧逻辑）
     if (b.groups !== undefined || b.group_name !== undefined) {
       const groups = normalizeGroups(b.groups !== undefined ? b.groups : b.group_name);
-      await ensureGroupRows(cur.type, groups);
       setIf("group_list", JSON.stringify(groups));
       setIf("group_name", groups[0]);
     }
@@ -1311,9 +1425,6 @@ router.post(
       await pool.query(`UPDATE channels SET priority = ? WHERE id IN (${ph})`, [p, ...list]);
     } else if (action === "set_group") {
       const g = String(payload?.group_name || "default").trim().slice(0, 64) || "default";
-      // 分组按厂商隔离：给选中的各厂商补齐分组行后再绑定
-      const [types] = await pool.query(`SELECT DISTINCT type FROM channels WHERE id IN (${ph})`, list);
-      for (const t of types) await ensureGroupRows(t.type, [g]).catch(() => {});
       await pool.query(`UPDATE channels SET group_name = ?, group_list = ? WHERE id IN (${ph})`, [
         g,
         JSON.stringify([g]),

@@ -4,6 +4,7 @@
 import { pool } from "../db.js";
 import { now } from "../utils.js";
 import { isOAuthMethod } from "./channel-types.js";
+import { groupConfigOf } from "./group-rate.js";
 
 // 适配器表（懒加载，避免未用到的适配器被引入）
 //
@@ -226,6 +227,14 @@ export function channelRuntimeState(channelId) {
   };
 }
 
+/** 读取最近调用：运行时没有就從数据库行回填并缓存（列表接口与调度共用同一份）。
+ * 修复：列表页只读运行时导致服务重启后刷新显示「暂无调用」。 */
+export function channelRecent(channelId, rawRecentCalls) {
+  const s = st(Number(channelId));
+  if (!s.recent || !s.recent.length) s.recent = parseRecent(rawRecentCalls);
+  return s.recent;
+}
+
 // 渠道是否属于某请求分组。
 // groupName 支持两种形态：
 //   · 纯名字（用户分组/历史数据，如 "vip"）→ 只按名字匹配
@@ -290,8 +299,7 @@ export function rowToChannel(r) {
   const rawMethod = String(other.method || "relay");
   const method = rawMethod === "api" || isOAuthMethod(rawMethod) ? rawMethod : "relay";
   // 最近调用记录：运行时已有则用运行时的（更新），否则从数据库行回填
-  const rs = st(Number(r.id));
-  if (!rs.recent) rs.recent = parseRecent(r.recent_calls);
+  const recent = channelRecent(r.id, r.recent_calls);
   return {
     id: r.id,
     name: r.name,
@@ -310,7 +318,7 @@ export function rowToChannel(r) {
     test_prompt: r.test_prompt || "hi",
     auto_test: Number(r.auto_test) === 1,
     auto_test_interval: Number(r.auto_test_interval) || 3600,
-    recent: rs.recent,
+    recent,
     other,
   };
 }
@@ -320,6 +328,17 @@ export function rowToChannel(r) {
 // 无可用渠道时，说明到底卡在哪一步。
 // 只看「没有可用渠道」很容易被误判成模型不支持，实际多数是账号在冷却。
 export async function explainNoChannel({ model, groupName = null } = {}) {
+  // 分组模型限制：直接给出明确原因，而不是让用户误以为没有渠道支持该模型
+  if (groupName) {
+    const cfg = await groupConfigOf(groupName);
+    if (cfg?.models?.length) {
+      const m = String(model || "").toLowerCase();
+      const allowed = cfg.models.some((p) => p === "*" || (p.endsWith("*") ? m.startsWith(p.slice(0, -1)) : p === m));
+      if (!allowed) {
+        return { reason: "GROUP_MODEL", message: `当前分组的 Key 不可调用模型「${model}」（分组限制了可用模型）` };
+      }
+    }
+  }
   const [rows] = await pool.query("SELECT * FROM channels WHERE status = 1");
   const all = rows.map(rowToChannel);
   const inGroup = all.filter((c) => channelInGroup(c, groupName));
@@ -350,6 +369,19 @@ export async function explainNoChannel({ model, groupName = null } = {}) {
 
 //          而不是永远打在第一个账号上（那会让单账号迅速触发风控）。
 export async function selectChannels({ model, excludeIds = null, groupName = null } = {}) {
+  // 分组模型限制：分组配置了「支持的模型」时，请求模型不在列表内直接无渠道
+  if (groupName) {
+    const cfg = await groupConfigOf(groupName);
+    if (cfg?.models?.length) {
+      const m = String(model || "").toLowerCase();
+      const allowed = cfg.models.some((p) => {
+        if (p === "*") return true;
+        if (p.endsWith("*")) return m.startsWith(p.slice(0, -1));
+        return p === m;
+      });
+      if (!allowed) return [];
+    }
+  }
   const [rows] = await pool.query(
     "SELECT * FROM channels WHERE status = 1 ORDER BY priority DESC, id ASC"
   );
