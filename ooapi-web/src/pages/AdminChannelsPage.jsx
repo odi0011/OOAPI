@@ -696,20 +696,27 @@ export default function AdminChannelsPage() {
     {
       title: "名称",
       dataIndex: "name",
-      width: 210,
+      width: 150,
       render: (v, r) => (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0, maxWidth: "100%" }}>
           <VendorIcon type={r.type} size={18} />
-          <span style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 550 }} className="oo-truncate">{v}</div>
+          <span style={{ minWidth: 0, overflow: "hidden" }}>
+            <div style={{ fontWeight: 550 }} className="oo-truncate" title={v}>{v}</div>
             {r.account ? (
-              <div style={{ fontSize: 11.5, color: "var(--ink-3)", fontFamily: "var(--font-mono)" }}>{r.account}</div>
+              <div className="oo-truncate" style={{ fontSize: 11.5, color: "var(--ink-3)", fontFamily: "var(--font-mono)" }} title={r.account}>{r.account}</div>
             ) : r.remark ? (
-              <div style={{ fontSize: 11.5, color: "var(--ink-3)" }} className="oo-truncate">{r.remark}</div>
+              <div style={{ fontSize: 11.5, color: "var(--ink-3)" }} className="oo-truncate" title={r.remark}>{r.remark}</div>
             ) : null}
           </span>
         </span>
       ),
+    },
+    {
+      // 数据重要：紧挨名称展示，方便快速判断账号健康度
+      title: "最近调用",
+      dataIndex: "recent",
+      width: 150,
+      render: (list) => <UptimeBars calls={list} />,
     },
     {
       title: "厂商",
@@ -769,12 +776,6 @@ export default function AdminChannelsPage() {
         ),
     },
     { title: "调用", dataIndex: "used_count", width: 78, sorter: (a, b) => a.used_count - b.used_count, render: (v) => <span className="oo-num">{v}</span> },
-    {
-      title: "最近调用",
-      dataIndex: "recent",
-      width: 150,
-      render: (list) => <UptimeBars calls={list} />,
-    },
     {
       title: "操作",
       width: 150,
