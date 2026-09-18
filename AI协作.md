@@ -538,3 +538,10 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   检测中按钮与行内测试按钮显示 Spin 并禁用（新增 `testingIds`/`batchTesting` 状态），
   完成后 toast 汇总「N 个可用 / M 个失败（失败渠道名）」并刷新列表（小绿条同步更新）。
   后端测试接口无状态，可安全并行；`AdminChannelsPage.jsx` 单文件改动，`npm run build` 通过。 |
+| 2026-09-18 | **第 19 批（渠道用量统计弹窗重做）**：参考主流「Token 统计」的布局重做弹窗（颜色/控件沿用自有设计令牌，
+  不引入图表库）：顶部统计卡（累计调用 / 累计 Token / 峰值单日 Token / 累计消费 / 当前连续 / 最长连续）；
+  「Token 活动」贡献图式热力图（近 365 天、行=星期列=周、月份标签、少→多色阶，口径可切 每日/每周/累计）；
+  「时间范围」近 7/30/90 日胶囊开关 + 「每日 Token 趋势图」（按模型多线 SVG 折线、Catmull-Rom 平滑、
+  悬浮十字线与明细 tooltip、自动图例、Y 轴紧凑刻度）；「最近调用」保留为底部区块。
+  后端 `GET /api/channel/:id/stats`：窗口上限 90→366 天、新增 `allTime`（不限窗口累计，SQL 对 detail JSON 求和）
+  与 `series`（按天按模型 Token Top8 + 其他，供趋势图）；前端一次拉 365 天，范围开关在前端切片。 |

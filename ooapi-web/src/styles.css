@@ -1508,6 +1508,214 @@ h1, h2, h3, h4 {
   height: 14px;
 }
 
+/* ---------------------------------------------------------------------------
+   用量统计弹窗 v2：统计卡 + Token 活动热力图 + 每日趋势折线
+   --------------------------------------------------------------------------- */
+.oo-stats-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.oo-stat-card {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  min-width: 0;
+}
+
+.oo-stat-card-num {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.oo-stat-card-label {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.oo-stats-card {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: var(--r-sm);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.oo-stats-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.oo-stats-card-title {
+  font-size: 13.5px;
+  font-weight: 550;
+}
+
+.oo-heat-scroll {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.oo-heat-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, 11px);
+  gap: 3px;
+  width: max-content;
+}
+
+.oo-heat-cell {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  background: var(--line-soft);
+  transition: filter 100ms ease;
+}
+
+.oo-heat-cell:hover {
+  filter: brightness(1.25);
+}
+
+.oo-heat-cell.lv1 { background: color-mix(in srgb, var(--green) 26%, transparent); }
+.oo-heat-cell.lv2 { background: color-mix(in srgb, var(--green) 50%, transparent); }
+.oo-heat-cell.lv3 { background: color-mix(in srgb, var(--green) 74%, transparent); }
+.oo-heat-cell.lv4 { background: var(--green); }
+
+.oo-heat-months {
+  display: grid;
+  gap: 3px;
+  width: max-content;
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.oo-heat-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.oo-heat-scale {
+  display: inline-flex;
+  gap: 3px;
+  margin: 0 2px;
+}
+
+.oo-trend-wrap {
+  position: relative;
+}
+
+.oo-trend-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.oo-trend-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-2);
+  max-width: 200px;
+}
+
+.oo-trend-legend-item i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.oo-trend-tip {
+  position: absolute;
+  top: 2px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  background: var(--tooltip-bg);
+  color: var(--tooltip-fg);
+  border: 1px solid var(--tooltip-border);
+  border-radius: var(--r-sm);
+  padding: 7px 9px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  box-shadow: 0 4px 14px oklch(0% 0 0 / 0.18);
+  z-index: 5;
+  min-width: 130px;
+}
+
+.oo-trend-tip-date {
+  opacity: 0.8;
+  margin-bottom: 3px;
+}
+
+.oo-trend-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.oo-trend-tip-row i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.oo-trend-tip-row span:last-child {
+  margin-left: auto;
+  opacity: 0.9;
+  padding-left: 8px;
+}
+
+.oo-trend-empty {
+  padding: 28px 0;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.oo-seg.ant-segmented {
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: 9999px;
+  padding: 2px;
+  font-size: 12px;
+}
+
+.oo-seg .ant-segmented-item {
+  border-radius: 9999px;
+  color: var(--ink-2);
+}
+
+.oo-seg .ant-segmented-item-selected {
+  background: var(--surface);
+  box-shadow: var(--shadow-btn);
+  color: var(--ink);
+}
+
 .oo-uptime-tip-head {
   opacity: 0.85;
   margin-bottom: 6px;

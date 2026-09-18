@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
   Table, Space, Typography, Input, Popconfirm, Modal, Form, Select, Switch,
-  InputNumber, App as AntApp, Tooltip, Row, Col, Alert, Radio, Button, Spin, Pagination,
+  InputNumber, App as AntApp, Tooltip, Row, Col, Alert, Radio, Button, Spin, Pagination, Segmented,
 } from "antd";
 import {
   PlusOutlined, ReloadOutlined, ThunderboltOutlined, DeleteOutlined, EditOutlined,
@@ -146,12 +146,360 @@ function StatusCell({ r }) {
   );
 }
 
+// ============================================================================
+// 用量统计弹窗的图表组件（统计卡 / Token 活动热力图 / 每日 Token 趋势）
+// 全部用原生 div + SVG 实现，不引入图表库；颜色取自现有设计令牌。
+// ============================================================================
+
+// 折线图分类色（明亮/黑暗主题下都保持可辨识）
+const SERIES_COLORS = [
+  "#3b82f6", "#22c55e", "#f59e0b", "#ef4444",
+  "#a855f7", "#06b6d4", "#ec4899", "#64748b",
+];
+
+// 数字紧凑格式：亿 / 万（统计卡与坐标轴用；详情 tooltip 用完整千分位）
+function fmtCompact(n) {
+  const v = Number(n) || 0;
+  if (v >= 1e8) return `${(v / 1e8).toFixed(2)} 亿`;
+  if (v >= 1e4) return `${(v / 1e4).toFixed(1)} 万`;
+  return v.toLocaleString();
+}
+
+function fmtFull(n) {
+  return (Number(n) || 0).toLocaleString();
+}
+
+// 连续使用天数：当前连续（今天没调用则从昨天往前算）/ 窗口内最长连续
+function computeStreaks(byDay = []) {
+  let longest = 0;
+  let run = 0;
+  for (const d of byDay) {
+    if ((d.calls || 0) > 0) {
+      run += 1;
+      if (run > longest) longest = run;
+    } else {
+      run = 0;
+    }
+  }
+  let i = byDay.length - 1;
+  if (i >= 0 && (byDay[i].calls || 0) === 0) i -= 1;
+  let current = 0;
+  while (i >= 0 && (byDay[i].calls || 0) > 0) {
+    current += 1;
+    i -= 1;
+  }
+  return { current, longest };
+}
+
+function StatCard({ label, value, hint }) {
+  return (
+    <div className="oo-stat-card" title={hint || undefined}>
+      <div className="oo-stat-card-num">{value}</div>
+      <div className="oo-stat-card-label">{label}</div>
+    </div>
+  );
+}
+
+// 平滑折线路径（Catmull-Rom → 三次贝塞尔）
+function smoothPath(pts) {
+  if (!pts.length) return "";
+  if (pts.length === 1) return `M ${pts[0][0]} ${pts[0][1]}`;
+  let d = `M ${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 0; i < pts.length - 1; i += 1) {
+    const p0 = pts[i - 1] || pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] || p2;
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6;
+    const c1y = p1[1] + (p2[1] - p0[1]) / 6;
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6;
+    const c2y = p2[1] - (p3[1] - p1[1]) / 6;
+    d += ` C ${c1x.toFixed(2)} ${c1y.toFixed(2)}, ${c2x.toFixed(2)} ${c2y.toFixed(2)}, ${p2[0]} ${p2[1]}`;
+  }
+  return d;
+}
+
+/**
+ * Token 活动热力图（GitHub 贡献图样式）：近 365 天，行为星期、列为周。
+ * 三种口径：每日 / 每周（该周合计）/ 累计（截至当天）。
+ */
+function TokenActivity({ byDay = [] }) {
+  const [mode, setMode] = useState("day");
+
+  const view = useMemo(() => {
+    if (!byDay.length) return { cells: [], months: [], cols: 0, hasData: false };
+    const perDay = new Map();
+    const weekSum = new Map();
+    const cumMap = new Map();
+    let cum = 0;
+    for (const d of byDay) {
+      const tokens = d.tokens || 0;
+      perDay.set(d.day, { tokens, calls: d.calls || 0 });
+      cum += tokens;
+      cumMap.set(d.day, cum);
+      const dt = new Date(`${d.day}T00:00:00Z`);
+      dt.setUTCDate(dt.getUTCDate() - dt.getUTCDay());
+      const wk = dt.toISOString().slice(0, 10);
+      weekSum.set(wk, (weekSum.get(wk) || 0) + tokens);
+    }
+    const firstIso = byDay[0].day;
+    const end = new Date(`${byDay[byDay.length - 1].day}T00:00:00Z`);
+    const gridStart = new Date(end);
+    gridStart.setUTCDate(gridStart.getUTCDate() - 364);
+    gridStart.setUTCDate(gridStart.getUTCDate() - gridStart.getUTCDay());
+
+    const cells = [];
+    const months = [];
+    let cur = new Date(gridStart);
+    let i = 0;
+    let prevMonth = -1;
+    let max = 0;
+    while (cur <= end) {
+      const iso = cur.toISOString().slice(0, 10);
+      const inRange = iso >= firstIso;
+      const rec = perDay.get(iso);
+      let value = 0;
+      if (inRange) {
+        if (mode === "day") value = rec?.tokens || 0;
+        else if (mode === "week") {
+          const wk = new Date(cur);
+          wk.setUTCDate(wk.getUTCDate() - wk.getUTCDay());
+          value = weekSum.get(wk.toISOString().slice(0, 10)) || 0;
+        } else value = cumMap.get(iso) || 0;
+      }
+      if (value > max) max = value;
+      if (i % 7 === 0) {
+        const m = cur.getUTCMonth();
+        if (m !== prevMonth) {
+          months.push({ col: Math.floor(i / 7) + 1, label: `${m + 1}月` });
+          prevMonth = m;
+        }
+      }
+      cells.push({ i, iso, inRange, value, calls: rec?.calls || 0 });
+      cur = new Date(cur);
+      cur.setUTCDate(cur.getUTCDate() + 1);
+      i += 1;
+    }
+    const withLevel = cells.map((c) => ({
+      ...c,
+      level: c.value > 0 && max > 0 ? Math.max(1, Math.ceil((c.value / max) * 4)) : 0,
+    }));
+    return { cells: withLevel, months, cols: Math.ceil(cells.length / 7), hasData: max > 0 };
+  }, [byDay, mode]);
+
+  const tip = (c) => {
+    if (!c.inRange) return `${c.iso} · 无数据`;
+    if (mode === "week") return `${c.iso} 所在周合计 · ${fmtFull(c.value)} tokens`;
+    if (mode === "cum") return `截至 ${c.iso} 累计 · ${fmtFull(c.value)} tokens`;
+    return `${c.iso} · ${fmtFull(c.value)} tokens · ${c.calls} 次调用`;
+  };
+
+  return (
+    <div className="oo-stats-card">
+      <div className="oo-stats-card-head">
+        <div className="oo-stats-card-title">Token 活动</div>
+        <Segmented
+          className="oo-seg"
+          size="small"
+          value={mode}
+          onChange={setMode}
+          options={[
+            { label: "每日", value: "day" },
+            { label: "每周", value: "week" },
+            { label: "累计", value: "cum" },
+          ]}
+        />
+      </div>
+      <div className="oo-heat-scroll">
+        <div className="oo-heat-grid" style={{ gridTemplateColumns: `repeat(${view.cols}, 11px)` }}>
+          {view.cells.map((c) => (
+            <Tooltip key={c.i} title={tip(c)}>
+              <i className={`oo-heat-cell${c.level ? ` lv${c.level}` : ""}`} style={{ opacity: c.inRange ? 1 : 0.45 }} />
+            </Tooltip>
+          ))}
+        </div>
+        <div className="oo-heat-months" style={{ gridTemplateColumns: `repeat(${view.cols}, 11px)` }}>
+          {view.months.map((m) => (
+            <span key={`${m.col}-${m.label}`} style={{ gridColumn: m.col, gridRow: 1 }}>{m.label}</span>
+          ))}
+        </div>
+      </div>
+      <div className="oo-heat-foot">
+        <span>少</span>
+        <span className="oo-heat-scale">
+          <i className="oo-heat-cell" />
+          <i className="oo-heat-cell lv1" />
+          <i className="oo-heat-cell lv2" />
+          <i className="oo-heat-cell lv3" />
+          <i className="oo-heat-cell lv4" />
+        </span>
+        <span>多</span>
+      </div>
+      {!view.hasData ? <div className="oo-trend-empty">所选窗口内暂无 Token 消耗记录</div> : null}
+    </div>
+  );
+}
+
+/**
+ * 每日 Token 趋势图：按模型多线（SVG 折线 + 悬浮十字线 + 明细 tooltip）。
+ * 时间范围与顶部「时间范围」开关联动（7 / 30 / 90 天）。
+ */
+function TokenTrend({ byDay = [], series = [], range, onRangeChange }) {
+  const n = Math.max(1, Math.min(range, byDay.length));
+  const days = byDay.slice(-n);
+  const W = 780;
+  const H = 210;
+  const PAD = { l: 46, r: 12, t: 12, b: 26 };
+  const plotW = W - PAD.l - PAD.r;
+  const plotH = H - PAD.t - PAD.b;
+
+  const lines = useMemo(
+    () =>
+      series
+        .map((s, i) => ({
+          model: s.model,
+          color: SERIES_COLORS[i % SERIES_COLORS.length],
+          values: (s.values || []).slice(-n),
+        }))
+        .filter((s) => s.values.some((v) => v > 0)),
+    [series, n]
+  );
+
+  const max = useMemo(() => {
+    let m = 0;
+    for (const s of lines) for (const v of s.values) if (v > m) m = v;
+    return m || 1;
+  }, [lines]);
+
+  const x = (i) => PAD.l + (i * plotW) / Math.max(1, n - 1);
+  const y = (v) => PAD.t + (1 - v / max) * plotH;
+
+  const [hover, setHover] = useState(null);
+  const onMove = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (!rect.width) return;
+    const xv = ((e.clientX - rect.left) / rect.width) * W;
+    const idx = Math.round(((xv - PAD.l) / plotW) * Math.max(1, n - 1));
+    setHover(Math.max(0, Math.min(n - 1, idx)));
+  };
+
+  const yTicks = [0, 0.25, 0.5, 0.75, 1];
+  const xTickStep = Math.max(1, Math.ceil(n / 6));
+  const hoverDay = hover !== null ? days[hover] : null;
+  const hoverRows = hoverDay
+    ? lines
+        .map((s) => ({ model: s.model, color: s.color, v: s.values[hover] || 0 }))
+        .filter((r) => r.v > 0)
+        .sort((a, b) => b.v - a.v)
+    : [];
+
+  return (
+    <>
+      <div className="oo-stats-card-head">
+        <div className="oo-stats-card-title">时间范围</div>
+        <Segmented
+          className="oo-seg"
+          size="small"
+          value={range}
+          onChange={onRangeChange}
+          options={[
+            { label: "近 7 日", value: 7 },
+            { label: "近 30 日", value: 30 },
+            { label: "近 90 日", value: 90 },
+          ]}
+        />
+      </div>
+      <div className="oo-stats-card">
+        <div className="oo-stats-card-head">
+          <div className="oo-stats-card-title">每日 Token 趋势图</div>
+        </div>
+        {!lines.length ? (
+          <div className="oo-trend-empty">近 {n} 天暂无 Token 消耗记录（统计从功能上线后开始累计）</div>
+        ) : (
+          <>
+            <div className="oo-trend-legend">
+              {lines.map((s) => (
+                <span className="oo-trend-legend-item" key={s.model}>
+                  <i style={{ background: s.color }} />
+                  <span className="oo-truncate">{s.model}</span>
+                </span>
+              ))}
+            </div>
+            <div className="oo-trend-wrap">
+              {hoverDay && hoverRows.length ? (
+                <div className="oo-trend-tip" style={{ left: `${(x(hover) / W) * 100}%` }}>
+                  <div className="oo-trend-tip-date">{hoverDay.day}</div>
+                  {hoverRows.slice(0, 7).map((r) => (
+                    <div className="oo-trend-tip-row" key={r.model}>
+                      <i style={{ background: r.color }} />
+                      <span className="oo-truncate" style={{ maxWidth: 150 }}>{r.model}</span>
+                      <span>{fmtCompact(r.v)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <svg
+                viewBox={`0 0 ${W} ${H}`}
+                width="100%"
+                height={H}
+                role="img"
+                aria-label="每日 Token 趋势图"
+                onMouseMove={onMove}
+                onMouseLeave={() => setHover(null)}
+              >
+                {yTicks.map((f) => (
+                  <g key={f}>
+                    <line
+                      x1={PAD.l} x2={W - PAD.r}
+                      y1={PAD.t + (1 - f) * plotH} y2={PAD.t + (1 - f) * plotH}
+                      stroke="var(--line-soft)" strokeDasharray={f === 0 ? "0" : "3 4"}
+                    />
+                    <text x={PAD.l - 8} y={PAD.t + (1 - f) * plotH + 3.5} textAnchor="end" fontSize="10" fill="var(--ink-3)">
+                      {fmtCompact(max * f)}
+                    </text>
+                  </g>
+                ))}
+                {days.map((d, i) =>
+                  i % xTickStep === 0 || i === n - 1 ? (
+                    <text key={d.day} x={x(i)} y={H - 8} textAnchor="middle" fontSize="10" fill="var(--ink-3)">
+                      {d.day.slice(5)}
+                    </text>
+                  ) : null
+                )}
+                {lines.map((s) => (
+                  <path
+                    key={s.model}
+                    d={smoothPath(s.values.map((v, i) => [x(i).toFixed(2), y(v).toFixed(2)]))}
+                    fill="none"
+                    stroke={s.color}
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  />
+                ))}
+                {hover !== null ? (
+                  <line x1={x(hover)} x2={x(hover)} y1={PAD.t} y2={PAD.t + plotH} stroke="var(--line-strong)" strokeDasharray="3 3" />
+                ) : null}
+                {hover !== null
+                  ? lines.map((s) => (
+                      <circle key={s.model} cx={x(hover)} cy={y(s.values[hover] || 0)} r="3" fill="var(--surface)" stroke={s.color} strokeWidth="1.6" />
+                    ))
+                  : null}
+              </svg>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
 /**
  * 厂商选择：一行一个厂商卡片（图标 + 名称 + 支持的接入方式）。
  * 刻意不做分类。厂商就是厂商，接入方式是它内部的属性，
  * 拆成「反代渠道 / API 渠道」两栏只会让同一个厂商出现两次。
  */
 function ProviderPicker({ providers, activeKey, onPick }) {
+
   return (
     <div className="oo-provider-picker">
       {providers.map((p) => {
@@ -216,6 +564,7 @@ export default function AdminChannelsPage() {
   const [statsTarget, setStatsTarget] = useState(null);
   const [statsData, setStatsData] = useState(null);
   const [statsBusy, setStatsBusy] = useState(false);
+  const [trendRange, setTrendRange] = useState(30);
   // 列表 / 宫格两种形态（记住偏好；宫格有自己的分页）
   const [viewMode, setViewMode] = useState(() => {
     try {
@@ -280,7 +629,8 @@ export default function AdminChannelsPage() {
     setStatsOpen(true);
     setStatsBusy(true);
     try {
-      const d = await API.get(`/channel/${r.id}/stats`, { params: { days: 30 } });
+      // 热力图 / 趋势图共用一份 365 天数据，切「近 7 / 30 / 90 日」在前端切片
+      const d = await API.get(`/channel/${r.id}/stats`, { params: { days: 365 } });
       setStatsData(d);
     } catch (e) {
       message.error(e.message);
@@ -1023,6 +1373,14 @@ export default function AdminChannelsPage() {
       </Popconfirm>
     </Space>
   );
+
+  // 用量统计弹窗的派生指标（累计 / 峰值单日 / 连续天数）
+  const statsAll = statsData?.allTime || statsData?.totals || { calls: 0, tokens: 0, units: 0, od: 0 };
+  let statsPeak = { tokens: 0, day: "" };
+  for (const d of statsData?.byDay || []) {
+    if ((d.tokens || 0) > statsPeak.tokens) statsPeak = { tokens: d.tokens, day: d.day };
+  }
+  const statsStreaks = computeStreaks(statsData?.byDay || []);
 
   return (
     <div className="oo-page">
@@ -1855,62 +2213,41 @@ export default function AdminChannelsPage() {
         open={statsOpen}
         onCancel={() => setStatsOpen(false)}
         footer={null}
-        width={780}
+        width={880}
         destroyOnClose
       >
         {statsBusy ? (
           <div style={{ padding: 36, textAlign: "center" }}><Spin /></div>
         ) : statsData ? (
           <>
-            <div className="oo-stats-chips">
-              <span className="bui-chip">近 {statsData.days} 天调用 {statsData.totals.calls}</span>
-              <span className="bui-chip">Tokens {(statsData.totals.tokens || 0).toLocaleString()}</span>
-              <span className="bui-chip" style={{ color: "var(--green)" }}>
-                消费 {statsData.totals.od} {CURRENCY_NAME}
+            <div className="oo-stats-cards">
+              <StatCard label="累计调用" value={fmtCompact(statsAll.calls)} hint={`累计 ${fmtFull(statsAll.calls)} 次`} />
+              <StatCard label="累计 Token 数" value={fmtCompact(statsAll.tokens)} hint={`${fmtFull(statsAll.tokens)} tokens`} />
+              <StatCard
+                label="峰值单日 Token"
+                value={fmtCompact(statsPeak.tokens)}
+                hint={statsPeak.day ? `${statsPeak.day} · ${fmtFull(statsPeak.tokens)} tokens` : "暂无数据"}
+              />
+              <StatCard label={`累计消费（${CURRENCY_NAME}）`} value={statsAll.od} hint={`${fmtFull(statsAll.units)} 额度单位`} />
+              <StatCard label="当前连续天数" value={`${statsStreaks.current} 天`} />
+              <StatCard label="最长连续天数" value={`${statsStreaks.longest} 天`} />
+            </div>
+
+            <TokenActivity byDay={statsData.byDay} />
+
+            <TokenTrend
+              byDay={statsData.byDay}
+              series={statsData.series || []}
+              range={trendRange}
+              onRangeChange={setTrendRange}
+            />
+
+            <div className="oo-stats-card-head">
+              <div className="oo-stats-card-title">最近调用</div>
+              <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                近 {statsData.days} 天：调用 {statsData.totals.calls} · Tokens {fmtFull(statsData.totals.tokens)} · 消费 {statsData.totals.od} {CURRENCY_NAME}
               </span>
-              <span className="bui-chip">累计调用 {statsData.channel?.used_count ?? 0}</span>
-              {(statsData.channel?.groups || []).map((g) => <span className="bui-chip" key={g}>分组 {g}</span>)}
             </div>
-
-            <div className="oo-section-title">按天消费（{CURRENCY_NAME}）</div>
-            <div className="oo-chart-bars">
-              {statsData.byDay.map((d) => {
-                const max = Math.max(...statsData.byDay.map((x) => x.units), 1);
-                const h = Math.max(2, Math.round((d.units / max) * 72));
-                return (
-                  <Tooltip key={d.day} title={`${d.day} · 调用 ${d.calls} · ${(d.units / 10000).toFixed(4)} ${CURRENCY_NAME} · ${d.tokens} tokens`}>
-                    <span className="oo-chart-bar" style={{ height: h }} />
-                  </Tooltip>
-                );
-              })}
-            </div>
-            <div className="oo-chart-axis">
-              <span>{statsData.byDay[0]?.day}</span>
-              <span>{statsData.byDay[statsData.byDay.length - 1]?.day}</span>
-            </div>
-
-            <div className="oo-section-title">按模型</div>
-            {statsData.byModel.length ? (
-              statsData.byModel.map((m) => {
-                const max = Math.max(...statsData.byModel.map((x) => x.units), 1);
-                return (
-                  <div className="oo-model-row" key={m.model}>
-                    <span style={{ width: 180 }} className="oo-truncate"><ModelLabel model={m.model} size={13} /></span>
-                    <div className="oo-model-bar"><div style={{ width: `${Math.max(2, (m.units / max) * 100)}%` }} /></div>
-                    <span className="oo-num" style={{ width: 96, textAlign: "right" }}>{(m.units / 10000).toFixed(4)} {CURRENCY_NAME}</span>
-                    <span className="oo-num" style={{ width: 110, textAlign: "right", color: "var(--ink-3)", fontSize: 12 }}>
-                      {(m.promptTokens + m.completionTokens).toLocaleString()} tk
-                    </span>
-                  </div>
-                );
-              })
-            ) : (
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                近 {statsData.days} 天暂无归属到该渠道的消费记录（统计从本功能上线后开始累计）
-              </Text>
-            )}
-
-            <div className="oo-section-title">最近调用</div>
             <div className="oo-stats-recent">
               {(statsData.recent || []).slice(-10).reverse().map((c, i) => (
                 <div className="oo-stats-recent-row" key={i}>

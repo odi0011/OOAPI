@@ -192,7 +192,7 @@ router.get(
     const [rows] = await pool.query("SELECT * FROM channels WHERE id = ?", [id]);
     if (!rows.length) return fail(res, "渠道不存在", 404);
     const channel = rows[0];
-    const days = safeInt(req.query.days, { min: 1, max: 90, fallback: 30 }) || 30;
+    const days = safeInt(req.query.days, { min: 1, max: 366, fallback: 30 }) || 30;
     const since = now() - days * 86400;
 
     let logs = [];
@@ -214,6 +214,8 @@ router.get(
     const totals = { calls: logs.length, units: 0, promptTokens: 0, completionTokens: 0, cacheTokens: 0 };
     const byModel = new Map();
     const byDay = new Map();
+    // 模型 × 天 的 Token 矩阵（趋势图多线序列用）
+    const modelDay = new Map();
     for (const l of logs) {
       let d = {};
       try {
@@ -242,11 +244,56 @@ router.get(
       dd.units += units;
       dd.tokens += pt + ct;
       byDay.set(day, dd);
+      const md = modelDay.get(model) || new Map();
+      md.set(day, (md.get(day) || 0) + pt + ct);
+      modelDay.set(model, md);
     }
     const dayList = [];
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date((now() - i * 86400) * 1000).toISOString().slice(0, 10);
       dayList.push(byDay.get(d) || { day: d, calls: 0, units: 0, tokens: 0 });
+    }
+
+    // 累计（不限窗口）：卡片区展示「累计 Token / 累计调用 / 累计消费」
+    let allTime = { calls: 0, units: 0, promptTokens: 0, completionTokens: 0 };
+    try {
+      const [[at]] = await pool.query(
+        `SELECT COUNT(*) AS calls,
+                COALESCE(SUM(quota), 0) AS units,
+                COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(detail, '$.prompt_tokens')) AS UNSIGNED)), 0) AS pt,
+                COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(detail, '$.completion_tokens')) AS UNSIGNED)), 0) AS ct
+           FROM logs
+          WHERE type = ?
+            AND JSON_VALID(detail)
+            AND (JSON_UNQUOTE(JSON_EXTRACT(detail, '$.channel_id')) = ?
+                 OR JSON_CONTAINS(JSON_EXTRACT(detail, '$.channel_ids'), ?))`,
+        [LOG_TYPE.CONSUME, String(id), String(id)]
+      );
+      allTime = {
+        calls: Number(at.calls) || 0,
+        units: Number(at.units) || 0,
+        promptTokens: Number(at.pt) || 0,
+        completionTokens: Number(at.ct) || 0,
+      };
+    } catch (e) {
+      console.warn("[channel] 累计用量查询失败：", e.message);
+    }
+
+    // 趋势图序列：Token 量 Top 8 模型 + 其他（values 与 byDay 一一对应）
+    const dayKeys = dayList.map((d) => d.day);
+    const tokenRanked = [...byModel.values()].sort(
+      (a, b) => b.promptTokens + b.completionTokens - (a.promptTokens + a.completionTokens)
+    );
+    const series = tokenRanked.slice(0, 8).map((m) => ({
+      model: m.model,
+      values: dayKeys.map((k) => modelDay.get(m.model)?.get(k) || 0),
+    }));
+    if (tokenRanked.length > 8) {
+      const rest = tokenRanked.slice(8);
+      series.push({
+        model: "其他",
+        values: dayKeys.map((k) => rest.reduce((s, m) => s + (modelDay.get(m.model)?.get(k) || 0), 0)),
+      });
     }
 
     return ok(res, {
@@ -264,8 +311,14 @@ router.get(
         od: Number((totals.units / 10000).toFixed(6)),
         tokens: totals.promptTokens + totals.completionTokens,
       },
+      allTime: {
+        ...allTime,
+        tokens: allTime.promptTokens + allTime.completionTokens,
+        od: Number((allTime.units / 10000).toFixed(6)),
+      },
       byModel: [...byModel.values()].sort((a, b) => b.units - a.units).slice(0, 20),
       byDay: dayList,
+      series,
       recent: channelRuntimeState(id).recent,
     });
   })
