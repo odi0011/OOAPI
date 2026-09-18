@@ -79,7 +79,12 @@ function ProviderPicker({ providers, activeKey, onPick }) {
             tabIndex={0}
             aria-pressed={active}
             aria-label={`选择厂商 ${p.name}`}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onPick(p); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onPick(p);
+              }
+            }}
             style={{
               display: "flex",
               alignItems: "center",
@@ -119,6 +124,7 @@ export default function AdminChannelsPage() {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [providersError, setProvidersError] = useState("");
+  const [statsError, setStatsError] = useState("");
   const [selectedKeys, setSelectedKeys] = useState([]);
   const [testingId, setTestingId] = useState(null);
   const [actionBusyId, setActionBusyId] = useState(null);
@@ -165,6 +171,7 @@ export default function AdminChannelsPage() {
     setLoading(true);
     setLoadError("");
     setProvidersError("");
+    setStatsError("");
     try {
       // allSettled：某一个接口失败（如 stats 表未建好）不应让整页停在旧数据
       const [list, st, ps, gs] = await Promise.allSettled([
@@ -177,6 +184,7 @@ export default function AdminChannelsPage() {
       if (list.status === "fulfilled") setItems(list.value);
       else setLoadError(list.reason?.message || "渠道列表加载失败");
       if (st.status === "fulfilled") setStats(st.value);
+      else setStatsError(st.reason?.message || "渠道统计加载失败");
       if (ps.status === "fulfilled") setProviders(ps.value);
       else setProvidersError(ps.reason?.message || "厂商列表加载失败");
       if (gs.status === "fulfilled") setGroups(gs.value);
@@ -805,15 +813,15 @@ export default function AdminChannelsPage() {
       />
 
       <div className="oo-grid">
-        <StatCard label="渠道总数" value={stats?.total ?? 0} icon={<ApiOutlined />} foot={<span>{providers.length} 个厂商可选</span>} />
+        <StatCard label="渠道总数" value={statsError ? "—" : stats?.total ?? 0} icon={<ApiOutlined />} foot={<span>{statsError ? "统计加载失败" : `${providers.length} 个厂商可选`}</span>} />
         <StatCard
-          label="已启用" value={stats?.enabled ?? 0} tone="success" glow="color-mix(in srgb, var(--green) 18%, transparent)"
-          foot={<span className="oo-flex oo-gap-2"><span className="bui-dot bui-dot--ok" />调度正常</span>}
+          label="已启用" value={statsError ? "—" : stats?.enabled ?? 0} tone="success" glow="color-mix(in srgb, var(--green) 18%, transparent)"
+          foot={<span className="oo-flex oo-gap-2">{statsError ? "统计加载失败" : <><span className="bui-dot bui-dot--ok" />调度正常</>}</span>}
         />
-        <StatCard label="冷却中" value={stats?.cooling ?? 0} tone={(stats?.cooling ?? 0) > 0 ? "warning" : undefined} foot={<span>自动恢复</span>} />
+        <StatCard label="冷却中" value={statsError ? "—" : stats?.cooling ?? 0} tone={!statsError && (stats?.cooling ?? 0) > 0 ? "warning" : undefined} foot={<span>自动恢复</span>} />
         <StatCard
           label="可用模型"
-          value={new Set(items.flatMap((x) => x.models || [])).size}
+          value={loadError ? "—" : new Set(items.flatMap((x) => x.models || [])).size}
           foot={<span>全部渠道合计</span>}
         />
       </div>

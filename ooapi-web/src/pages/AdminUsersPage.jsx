@@ -211,12 +211,13 @@ export default function AdminUsersPage() {
       fixed: "right",
       render: (_, u) => (
         <Space size={2}>
-          <Button type="link" size="small" onClick={() => openEdit(u)}>
+          <Button type="link" size="small" disabled={acting} onClick={() => openEdit(u)}>
             编辑
           </Button>
           <Button
             type="link"
             size="small"
+            disabled={acting}
             onClick={() => {
               setQuotaTarget(u);
               quotaForm.resetFields();
@@ -231,11 +232,11 @@ export default function AdminUsersPage() {
             <span style={{ fontSize: 12, color: "var(--ink-3)" }}>当前账号</span>
           ) : (
             <>
-              <Button type="link" size="small" onClick={() => toggle(u)}>
+              <Button type="link" size="small" loading={acting} disabled={acting} onClick={() => toggle(u)}>
                 {u.status === 1 ? "禁用" : "启用"}
               </Button>
               <Popconfirm title={`确定删除用户 ${u.username}？`} onConfirm={() => remove(u)}>
-                <Button type="link" size="small" danger>
+                <Button type="link" size="small" danger disabled={acting}>
                   删除
                 </Button>
               </Popconfirm>
@@ -275,10 +276,10 @@ export default function AdminUsersPage() {
       />
 
       <div className="oo-grid">
-        <StatCard label="用户总数" value={total} icon={<TeamOutlined />} />
-        <StatCard label="管理员" value={admins} foot={<span>本页统计</span>} />
-        <StatCard label="已禁用" value={disabled} tone={disabled ? "danger" : undefined} foot={<span>本页统计</span>} />
-        <StatCard label="累计消费" value={fmtOd(totalUsed, perUnit, 2)} foot={<span>本页统计</span>} />
+        <StatCard label="用户总数" value={loadError ? "—" : total} icon={<TeamOutlined />} />
+        <StatCard label="管理员" value={loadError ? "—" : admins} foot={<span>本页统计</span>} />
+        <StatCard label="已禁用" value={loadError ? "—" : disabled} tone={!loadError && disabled ? "danger" : undefined} foot={<span>本页统计</span>} />
+        <StatCard label="累计消费" value={loadError ? "—" : fmtOd(totalUsed, perUnit, 2)} foot={<span>本页统计</span>} />
       </div>
 
       <div className="oo-panel">
@@ -288,7 +289,7 @@ export default function AdminUsersPage() {
             showIcon
             message="用户列表加载失败"
             description={loadError}
-            action={<Button size="small" onClick={load}>重试</Button>}
+            action={<Button size="small" onClick={load} loading={loading}>重试</Button>}
             style={{ marginBottom: 12 }}
           />
         ) : null}

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Form, Input, Button, Tabs, App as AntApp, Space, ColorPicker, Typography, Divider,
 } from "antd";
@@ -37,6 +37,10 @@ function ProfileTab() {
   const [form] = Form.useForm();
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    form.setFieldsValue({ display_name: user?.display_name || "", email: user?.email || "" });
+  }, [form, user?.display_name, user?.email]);
+
   const save = async (v) => {
     setBusy(true);
     try {
@@ -74,7 +78,6 @@ function ProfileTab() {
         <Form
           form={form}
           layout="vertical"
-          initialValues={{ display_name: user?.display_name, email: user?.email }}
           onFinish={save}
           requiredMark={false}
         >
@@ -180,8 +183,17 @@ function AppearanceTab() {
             const active = primary.toLowerCase() === p.color.toLowerCase();
             return (
               <div key={p.key} style={{ textAlign: "center" }}>
-                <div
+                <button
+                  type="button"
                   onClick={() => setPrimary(p.color)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setPrimary(p.color);
+                    }
+                  }}
+                  aria-label={`选择主题色：${p.label}`}
+                  aria-pressed={active}
                   title={p.label}
                   style={{
                     width: 30,
@@ -196,10 +208,12 @@ function AppearanceTab() {
                     fontSize: 13,
                     boxShadow: active ? `0 0 0 2px var(--oo-bg-surface), 0 0 0 4px ${p.color}` : "none",
                     transition: "box-shadow 140ms ease",
+                    border: 0,
+                    padding: 0,
                   }}
                 >
                   {active ? <CheckOutlined /> : null}
-                </div>
+                </button>
                 <div style={{ fontSize: 11, color: "var(--oo-text-muted)", marginTop: 6 }}>{p.label}</div>
               </div>
             );

@@ -182,7 +182,7 @@ export default function LogPage() {
             showIcon
             message="日志加载失败"
             description={loadError}
-            action={<Button size="small" onClick={load}>重试</Button>}
+            action={<Button size="small" onClick={load} loading={loading}>重试</Button>}
             style={{ marginBottom: 12 }}
           />
         ) : null}

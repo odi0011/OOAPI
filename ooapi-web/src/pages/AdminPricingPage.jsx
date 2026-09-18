@@ -229,17 +229,17 @@ export default function AdminPricingPage() {
       />
 
       <div className="oo-grid">
-        <StatCard label="已配置模型" value={items.length} icon={<DollarOutlined />} foot={<span>计价条目</span>} />
+        <StatCard label="已配置模型" value={loadError ? "—" : items.length} icon={<DollarOutlined />} foot={<span>计价条目</span>} />
         <StatCard
           label="渠道类型"
-          value={new Set(items.map((i) => i.channel_type).filter(Boolean)).size}
+          value={loadError ? "—" : new Set(items.map((i) => i.channel_type).filter(Boolean)).size}
           foot={<span>覆盖厂商数</span>}
         />
         <StatCard
           label="最低输入价"
-          value={cheapest ? Number(cheapest.input_price).toFixed(4) : "-"}
+          value={loadError ? "—" : cheapest ? Number(cheapest.input_price).toFixed(4) : "-"}
           suffix={CURRENCY_NAME}
-          foot={<span>{cheapest?.model || "—"}</span>}
+          foot={<span>{loadError ? "加载失败" : cheapest?.model || "—"}</span>}
         />
         <StatCard label="币种" value={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><OdCoin size={22} />{CURRENCY_NAME}</span>} foot={<span>1 {CURRENCY_NAME} = 1 美元（1:1）</span>} />
       </div>
@@ -251,7 +251,7 @@ export default function AdminPricingPage() {
             showIcon
             message="定价列表加载失败"
             description={loadError}
-            action={<Button size="small" onClick={load}>重试</Button>}
+            action={<Button size="small" onClick={load} loading={loading}>重试</Button>}
             style={{ marginBottom: 12 }}
           />
         ) : null}

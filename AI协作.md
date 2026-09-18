@@ -356,6 +356,13 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   与 `grok-models.js`；新增统一导入器 `auth-import.js` + `POST /api/channel/import` + 前端
   「导入凭据」弹窗（sub2api 导出 / CPA auth / 多文件拼接 / API Key，自动识别厂商与去重）；
   codex/claude/antigravity 解析兼容 sub2api `credentials` 结构。 |
+| 2026-09-18 | **第 12 批（UI/UX 体验修复，另一 AI 窗口提交）**：列表页错误态不再显示旧数据——
+  `AdminChannels/AdminUsers/AdminPricing` 加载失败时统计卡显示 `—` 并给「统计加载失败」提示
+  （新增 `statsError` 独立区分）；重试按钮统一带 `loading`；行内操作在 `acting/actionBusyId`
+  期间禁用（编辑/额度/启停/删除），测试按钮防并发；`ProfilePage` 资料表单改为 `useEffect`
+  同步异步到达的用户数据（修复首次打开时资料为空）；主题色选择、厂商选择卡等可点击 `div`
+  改为原生 `button` 并补 `aria-pressed/aria-label` 与键盘（Enter/Space `preventDefault`）
+  支持。构建通过；随最新版本部署到测试服务器。 |
 | 2026-09-18 | **第 11 批 UX 修复**：登录/注册切换保留受保护页面回跳；有效 JWT 遇到首屏网络异常时保留会话并提供认证重试；
   首页状态未知时隐藏注册入口；控制台增加加载中、错误和重试状态。令牌、日志、用户、定价、渠道列表增加
   持久错误提示与重试，日志清除搜索回到第一页，刷新按钮补齐无障碍名称；渠道添加补 providers 空/失败态，
