@@ -131,8 +131,15 @@ export function createDoubaoParser() {
         state.inThinking = state.thinkDelimCount % 2 === 1;
       } else if (contentType === 2002) {
         // 推荐问题，忽略
+      } else if (typeof content === "string") {
+        // 未知 contentType 但内容是纯字符串：当正文输出。
+        // 历史 bug：兜底分支要求 content 必须是对象，纯字符串会被静默丢弃，
+        // 表现为「上游有输出，网关却报空内容」。
+        emitText(content);
       } else if (content && typeof content === "object" && typeof content.text === "string") {
         emitText(content.text);
+      } else if (content && typeof content === "object" && typeof content.think === "string") {
+        emitThink(content.think);
       }
 
       return out;

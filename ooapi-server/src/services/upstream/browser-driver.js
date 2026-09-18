@@ -95,18 +95,31 @@ export async function getSession({ vendor, channelId, entryUrl, profile }) {
 }
 
 async function createSession({ vendor, channelId, key, entryUrl, profile }) {
-  const ctx = await chromium.launchPersistentContext(profileDir(vendor, channelId), {    headless: false,
+  // 窗口位置：把窗口放到屏幕可视区之外，但**不要**用 -32000。
+  // 原因是页面 JS 能读到 window.screenX/screenY —— 恰好 -32000 是自动化环境的
+  // 教科书级特征，真实用户不可能把窗口拖到那个坐标。
+  // 这里改为「常见分辨率下位于屏幕右下方之外」的坐标（数值本身不异常），
+  // 并按账号做小幅散布，避免所有账号共用同一个窗口坐标。
+  const spread = (n, base, span) => base + (Math.abs(Number(n) || 0) % span);
+  const winX = spread(channelId, 1600, 400);
+  const winY = spread((Number(channelId) || 0) * 7 + 3, 900, 200);
+  const ctx = await chromium.launchPersistentContext(profileDir(vendor, channelId), {
+    headless: false,
     viewport: { width: 1440, height: 900 },
     locale: profile?.locale || "zh-CN",
     ...(profile?.timezone ? { timezoneId: profile.timezone } : {}),
     ...(profile?.userAgent ? { userAgent: profile.userAgent } : {}),
+    // 去掉 Playwright 默认注入的 --enable-automation：它会让页面看到
+    // navigator.webdriver === true，是最容易被识别的自动化信号。
+    ignoreDefaultArgs: ["--enable-automation"],
     args: [
       "--disable-blink-features=AutomationControlled",
       "--no-sandbox",
       "--disable-dev-shm-usage",
-      // 窗口移到屏幕外，避免干扰用户桌面 / 服务器无桌面时的干扰
-      "--window-position=-32000,-32000",
+      `--window-position=${winX},${winY}`,
       "--window-size=1440,900",
+      // 语言与 UA/navigator.languages 保持一致，避免三者互相矛盾
+      `--lang=${String(profile?.locale || "zh-CN").replace("_", "-")}`,
     ],
   });
 

@@ -108,10 +108,15 @@ export function createQwenParser() {
       }
       if (Array.isArray(j.contents)) {
         state.mode = "cn";
-        // 全量快照 → 差分
+        // 全量快照 → 差分。
+        // 必须只取**助手**产出的内容：contents 里同时含用户提问，
+        // 而差分是从 0 开始逐字吐的，混进用户提问就会把问题当成回答输出。
+        // 历史 bug：这里写成 `role === "assistant" || typeof content === "string"`，
+        // 后半句对任何文本片段都成立 → 等于没过滤。
+        // 兼容：个别版本不带 role 字段，此时按"没有 role 就算助手内容"处理。
         const full = j.contents
           .filter((p) => p && (p.contentType === "text" || p.contentType === "text2image"))
-          .filter((p) => p.role === "assistant" || typeof p.content === "string")
+          .filter((p) => !p.role || p.role === "assistant")
           .map((p) => p.content || "")
           .join("");
 

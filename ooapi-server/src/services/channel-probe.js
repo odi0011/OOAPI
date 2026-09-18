@@ -7,6 +7,7 @@
 //
 // 测试模型解析顺序：渠道 test_model → 接入方式的 testModel → 渠道声明的第一个模型（跳过 *）。
 import { getMethod, isOAuthMethod } from "./channel-types.js";
+import { withChannelLimit } from "./router.js";
 
 export function methodKeyOf(channel) {
   const m = String(channel?.other?.method || "relay");
@@ -35,6 +36,13 @@ export function resolveTestModel(channel) {
  *   degraded：1=本轮命中降智/截断信号（目前仅 codex 有）；state：1=注入了通行证（292）
  */
 export async function probeChannel(adapter, channel, prompt = "hi") {
+  // 走渠道限速闸门：测试/定时检测此前完全绕过 withChannelLimit，
+  // 批量检测会并发打同一个账号（HTTP 渠道没有任何串行保护），是实打实的风控触发点。
+  // 浏览器渠道靠会话锁侥幸串行，但不能依赖这种巧合。
+  return withChannelLimit(channel, () => probeChannelInner(adapter, channel, prompt));
+}
+
+async function probeChannelInner(adapter, channel, prompt = "hi") {
   const model = resolveTestModel(channel);
   if (adapter?.probe) {
     // 把解析出的模型显式传给适配器（适配器内部优先读 channel.test_model）

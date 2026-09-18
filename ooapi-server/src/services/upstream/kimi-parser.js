@@ -11,6 +11,8 @@
 //
 // 增量规则：按 mask 判断落在思考还是正文。
 // 注意：Kimi 的 text/think.content 是**增量片段**（非全量），直接拼接。
+import { gunzipSync } from "node:zlib";
+
 export function createKimiParser() {
   const state = {
     reasoning: "",
@@ -30,7 +32,9 @@ export function createKimiParser() {
 
       if (ev.chat?.id) state.chatId = ev.chat.id;
       if (ev.message?.id && ev.message.role === "assistant") state.messageId = ev.message.id;
-      if (ev.done !== undefined) state.finished = true;
+      // 只有 done === true 才算结束。历史 bug：`!== undefined` 会让任何带 done:false 的
+      // 阶段帧/心跳帧直接结束流，回答被截断却按成功计费。
+      if (ev.done === true) state.finished = true;
       if (ev.error) {
         state.error = ev.error.message || ev.error.msg || JSON.stringify(ev.error).slice(0, 200);
       }
@@ -116,10 +120,20 @@ export function createFrameDecoder() {
         const payload = buf.subarray(5, 5 + len);
         buf = buf.subarray(5 + len);
 
-        // flags & 0x80 = 压缩位（跳过）；0x02 = 结束 trailer（跳过）
-        if (flags & 0x80) continue;
+        // Connect 协议信封：flags 位 0x01 = 压缩（gzip），0x02 = 结束 trailer。
+        // 历史 bug：这里判的是 0x80（并非 Connect 规范里的位），命中后直接丢弃 ——
+        // 上游一旦启用压缩就是静默丢内容，表现为「上游有输出但网关报空」。
+        // 正确做法是按规范解压；解压失败才跳过该帧，不中断整条流。
         if (flags & 0x02) continue; // Connect end-of-stream trailer
-        const text = payload.toString("utf8").trim();
+        let body = payload;
+        if (flags & 0x01) {
+          try {
+            body = gunzipSync(payload);
+          } catch {
+            continue;
+          }
+        }
+        const text = body.toString("utf8").trim();
         if (!text) continue;
         try {
           events.push(JSON.parse(text));

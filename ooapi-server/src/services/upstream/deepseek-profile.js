@@ -14,7 +14,7 @@ const ENVIRONMENTS = [
   {
     platform: "Windows",
     ua: (v) => `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${v}.0.0.0 Safari/537.36`,
-    chUa: (v) => `"Chromium";v="${v}", "Google Chrome";v="${v}", "Not?A_Brand";v="24"`,
+    chUa: (v) => `"Chromium";v="${v}", "Not_A Brand";v="24", "Google Chrome";v="${v}"`,
     chUaPlatform: '"Windows"',
     chUaMobile: "?0",
     hardwareConcurrency: [8, 12, 16],
@@ -23,7 +23,7 @@ const ENVIRONMENTS = [
   {
     platform: "Windows",
     ua: (v) => `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${v}.0.0.0 Safari/537.36 Edg/${v}.0.0.0`,
-    chUa: (v) => `"Microsoft Edge";v="${v}", "Chromium";v="${v}", "Not?A_Brand";v="24"`,
+    chUa: (v) => `"Chromium";v="${v}", "Not_A Brand";v="24", "Microsoft Edge";v="${v}"`,
     chUaPlatform: '"Windows"',
     chUaMobile: "?0",
     hardwareConcurrency: [8, 12, 16],
@@ -32,7 +32,7 @@ const ENVIRONMENTS = [
   {
     platform: "macOS",
     ua: (v) => `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${v}.0.0.0 Safari/537.36`,
-    chUa: (v) => `"Chromium";v="${v}", "Google Chrome";v="${v}", "Not?A_Brand";v="24"`,
+    chUa: (v) => `"Chromium";v="${v}", "Not_A Brand";v="24", "Google Chrome";v="${v}"`,
     chUaPlatform: '"macOS"',
     chUaMobile: "?0",
     hardwareConcurrency: [8, 10, 12],

@@ -183,6 +183,11 @@ export async function runCompletion({
       // 标记渠道异常并冷却，尝试下一个。
       // 适配器可自带 cooldownSec（如 grok 免费额度用尽要冷却 24h、codex 降智只冷却 90s）
       const requestedCooldown = Number(lastError?.cooldownSec);
+      // 默认冷却按「这个渠道还能不能自己恢复」分档：
+      //   · 风控（WAF）：需要人工处理或等待较久，冷却太短等于反复去撞，会把临时限制升级成封禁；
+      //   · 验证码：通常要人过，给 1 小时；
+      //   · 登录态失效：6 小时（等管理员重新登录，期间不再浪费请求）；
+      //   · 其余瞬时错误：5 分钟。
       const cooldown =
         Number.isFinite(requestedCooldown) && requestedCooldown > 0
           ? Math.min(86400, Math.max(30, Math.floor(requestedCooldown)))
@@ -190,7 +195,11 @@ export async function runCompletion({
             ? 1800
             : code === "CHANNEL_AUTH_EXPIRED"
               ? 21600
-              : 300;
+              : code === "CHANNEL_WAF"
+                ? 21600
+                : code === "CHANNEL_CAPTCHA"
+                  ? 3600
+                  : 300;
       await markChannelError(channel, lastError.message, cooldown, { prompt, reply: lastError.message, user });
       console.warn(`[execute] 渠道「${channel.name}」失败（${code}），切换下一渠道：${lastError.message}`);
     } finally {

@@ -31,6 +31,11 @@ function wafBlocked(resp, text) {
   );
 }
 
+// 风控/限流的冷却时长：风控通常需要人工处理（等待或换号），
+// 给足时间让它真正"冷下来"，避免冷却一过就再撞一次把临时限制升级成封禁。
+const WAF_COOLDOWN_SEC = 6 * 3600;      // 6 小时
+const RATE_LIMIT_COOLDOWN_SEC = 15 * 60; // 15 分钟
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // 指纹上下文
@@ -152,10 +157,13 @@ function assertBiz(json, what) {
     const untilStr = untilSec
       ? new Date(untilSec * 1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })
       : "未知";
+    // 冷却到上游解禁为止（上限 24h）；拿到 mute_until 时按它来，避免过早重试
+    const waitSec = untilSec ? Math.max(60, untilSec - Math.floor(Date.now() / 1000)) : WAF_COOLDOWN_SEC;
     throw Object.assign(new Error(`该账号被风控限制，预计恢复 ${untilStr}`), {
       code: "CHANNEL_MUTED",
       bizCode,
       muteUntil: untilSec,
+      cooldownSec: Math.min(24 * 3600, waitSec),
     });
   }
   throw Object.assign(
@@ -206,19 +214,30 @@ async function dsFetch(channel, path, { method = "GET", body, maxRetries = 2, si
       if (signal) signal.removeEventListener("abort", onOuter);
     }
     const text = await resp.text();
-    if (wafBlocked(resp, text)) {
-      lastErr = Object.assign(new Error(`请求被上游拦截（HTTP ${resp.status}）`), { code: "CHANNEL_WAF" });
-      continue;
-    }
-    // 按 HTTP 状态映射为可重试错误（否则 429/5xx 会被当成业务错误而不换渠道）
+    // WAF / 鉴权类响应必须在重试判断**之前**处理：
+    // 它们代表「这个账号现在被上游盯上了」，连续重试只会加速封号。
+    // 历史 bug：wafBlocked() 里含 403，导致下面的 403 → AUTH_EXPIRED 分支永远不可达，
+    // 风控响应被当成可重试错误打了 3 次（冷却还只有 300s）。这里改成：命中即隔离。
     if (resp.status === 401 || resp.status === 403) {
       throw Object.assign(new Error(`上游拒绝鉴权（HTTP ${resp.status}），请在渠道管理中重新登录该账号`), {
         code: "CHANNEL_AUTH_EXPIRED",
+        upstream: text.slice(0, 500),
+      });
+    }
+    if (wafBlocked(resp, text)) {
+      // 202/405/风控文案：不重试，交给 execute 换账号并长时间冷却
+      throw Object.assign(new Error(`请求被上游风控拦截（HTTP ${resp.status}），该账号已暂停使用`), {
+        code: "CHANNEL_WAF",
+        cooldownSec: WAF_COOLDOWN_SEC,
+        upstream: text.slice(0, 500),
       });
     }
     if (resp.status === 429) {
-      lastErr = Object.assign(new Error("上游频率限制（HTTP 429）"), { code: "CHANNEL_RATE_LIMIT" });
-      continue;
+      // 限流同样不原地重试：同一账号连续打只会让限流升级为封禁
+      throw Object.assign(new Error("上游频率限制（HTTP 429），该账号已临时冷却"), {
+        code: "CHANNEL_RATE_LIMIT",
+        cooldownSec: RATE_LIMIT_COOLDOWN_SEC,
+      });
     }
     if (resp.status >= 500) {
       lastErr = Object.assign(new Error(`上游异常（HTTP ${resp.status}）`), { code: "CHANNEL_HTTP_ERROR" });
