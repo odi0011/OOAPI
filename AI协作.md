@@ -567,6 +567,18 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   悬浮十字线与明细 tooltip、自动图例、Y 轴紧凑刻度）；「最近调用」保留为底部区块。
   后端 `GET /api/channel/:id/stats`：窗口上限 90→366 天、新增 `allTime`（不限窗口累计，SQL 对 detail JSON 求和）
   与 `series`（按天按模型 Token Top8 + 其他，供趋势图）；前端一次拉 365 天，范围开关在前端切片。 |
+| 2026-09-18 | **第 20 批线上验证**（`b24df43`）：`RECENT_HYDRATE` 渠道 #10 重启后回填 20 条最近调用；
+  迁移后旧自动种子分组已清空（`[]`）；建组 `openai/smoke20`（备注/倍率2/模型 gpt-5.5/成员 #10）成功，
+  渠道 `groups` 变 `["default","smoke20"]`（双向）；用户侧 `/api/token/groups` 返回备注/倍率/模型；
+  **倍率计费实测**：同一 `hi` 调用，未绑定 Key 扣 2 单位、绑定倍率 2 Key 扣 4 单位（比值精确 2×）；
+  **分组模型限制实测**：绑定 Key 调 `gpt-5.6-luna` 返回 503「当前分组的 Key 不可调用模型…」；
+  清理完成（删组自动解绑渠道与 Key）。 |
+| 2026-09-18 | **事故与修复记录**：第 20 批首次提交（`af02211`）时 `git add` 误带上另一窗口未提交的
+  `routes/chat.js` WIP（依赖尚未提交的 `harness/sessions.js` 新导出）与 `styles.css` WIP（删除输入区旧样式），
+  导致线上启动崩溃（`SyntaxError: does not provide an export named 'batchSessions'`）。
+  处置：`git checkout 570a1bb -- routes/chat.js styles.css` 回退这两个文件后仅重放本批改动（`b24df43`），
+  服务恢复；另一窗口的 WIP 已还原到工作区（仍未提交，后续由其窗口自行提交）。
+  **教训：`git add <目录/大批文件>` 前必须逐个确认 diff 归属，跨窗口协作只 `git add` 明确属于本批的文件。** |
 | 2026-09-18 | **第 20 批（分组体系按 sub2api 重构 + 两个线上 bug 修复）**：
   · **修复「刷新后最近调用丢失」**：列表接口 `rowToResp` 只读运行时内存态，服务重启后不回填
   `channels.recent_calls`；新增 `router.channelRecent(id, raw)`（运行时为空则从库回填并缓存）
