@@ -23,6 +23,7 @@ function UptimeTip({ c }) {
       <div className="oo-uptime-tip-head">
         {fmtDate(c.t, "MM-DD HH:mm")} · {c.ok ? "成功" : "失败"}
         {c.ms ? ` · ${c.ms}ms` : ""}
+        {c.k === "auto" ? " · 定时检测" : c.k === "test" ? " · 手动测试" : c.k === "chat" ? " · 对话调用" : ""}
       </div>
       {c.p ? (
         <div className="oo-uptime-tip-row">
@@ -48,6 +49,32 @@ function UptimeTip({ c }) {
     </div>
   );
 }
+
+// 模型多选标签：左侧带厂商图标（编辑/新增渠道共用）
+const modelTagRender = (vendor) => ({ label, closable, onClose }) => (
+  <span className="bui-chip" style={{ marginInlineEnd: 4, display: "inline-flex", alignItems: "center", gap: 4, maxWidth: 190 }}>
+    <VendorIcon type={vendor} size={13} />
+    <span className="oo-truncate">{label}</span>
+    {closable ? (
+      <span
+        role="button"
+        aria-label={`移除 ${label}`}
+        onClick={onClose}
+        style={{ cursor: "pointer", opacity: 0.55, paddingInline: 2 }}
+      >
+        ×
+      </span>
+    ) : null}
+  </span>
+);
+
+// 下拉选项同样带厂商图标
+const modelOptionRender = (vendor) => (opt) => (
+  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+    <VendorIcon type={vendor} size={13} />
+    {opt.label}
+  </span>
+);
 
 // 最近调用记录：小竖条（绿=快 / 黄=慢 / 红=失败），悬浮显示提示词与 AI 回复。
 // 样式参考 aceternity 的 uptime bars：只保留小竖条与 hover 放大效果。
@@ -247,12 +274,15 @@ export default function AdminChannelsPage() {
   const editModels = Form.useWatch("models", editForm);
   const { begin, isLatest } = useLatest();
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ silent = false } = {}) => {
     const token = begin();
-    setLoading(true);
-    setLoadError("");
-    setProvidersError("");
-    setStatsError("");
+    // silent：轮询刷新时不要闪表格 loading，也不要清错误提示
+    if (!silent) {
+      setLoading(true);
+      setLoadError("");
+      setProvidersError("");
+      setStatsError("");
+    }
     try {
       // allSettled：某一个接口失败（如 stats 表未建好）不应让整页停在旧数据
       const [list, st, ps, gs] = await Promise.allSettled([
@@ -274,9 +304,18 @@ export default function AdminChannelsPage() {
     } catch (e) {
       if (isLatest(token)) message.error(e.message);
     } finally {
-      if (isLatest(token)) setLoading(false);
+      if (isLatest(token) && !silent) setLoading(false);
     }
   }, [keyword, filterProvider, message, begin, isLatest]);
+
+  // 定时检测会在后台不断写入新记录：静默轮询刷新列表（页面不可见时跳过），
+  // 这样小绿条会自己长出来，不需要手动刷新。
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (!document.hidden) load({ silent: true });
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, [load]);
 
   useEffect(() => {
     load();
@@ -503,7 +542,6 @@ export default function AdminChannelsPage() {
       const payload = {
         id: editing.id,
         name: v.name,
-        base_url: v.base_url,
         models: v.models,
         group_name: v.group_name,
         priority: v.priority,
@@ -516,6 +554,8 @@ export default function AdminChannelsPage() {
         test_model: String(v.test_model || "").trim(),
         test_prompt: String(v.test_prompt || "hi").trim() || "hi",
       };
+      // 只有 API 渠道有 Base URL（反代/订阅不展示也不提交，避免把空串写回）
+      if (editing.method === "api") payload.base_url = v.base_url;
       // status 只在开关真正变化时提交：服务端收到 status 会清冷却/重置运行状态，
       // 只改备注不该顺手把「冷却中」的渠道重置。
       const nextStatus = v.status ? 1 : 2;
@@ -1036,6 +1076,7 @@ export default function AdminChannelsPage() {
             <Alert
               type="error"
               showIcon
+              className="oo-alert-compact"
               message="厂商列表加载失败"
               description={providersError}
               action={<Button size="small" onClick={load} loading={loading}>重试</Button>}
@@ -1046,6 +1087,7 @@ export default function AdminChannelsPage() {
             <Alert
               type="info"
               showIcon
+              className="oo-alert-compact"
               message="暂无可用厂商"
               description="请先配置厂商，或点击刷新重新加载列表。"
               action={<Button size="small" onClick={load} loading={loading}>刷新</Button>}
@@ -1138,6 +1180,7 @@ export default function AdminChannelsPage() {
                         <Alert
                           type="warning"
                           showIcon
+                          className="oo-alert-compact"
                           style={{ marginBottom: 16 }}
                           message="需要浏览器登录"
                           description={
@@ -1162,14 +1205,20 @@ export default function AdminChannelsPage() {
                     </>
                   )}
 
-                  <Form.Item
-                    name="models"
-                    label="支持的模型"
-                    rules={[{ required: true, message: "请至少选择一个模型" }]}
-                    extra={isRelay ? "已按该厂商默认填入，可增删" : "输入模型名后回车"}
-                  >
-                    <Select mode="tags" placeholder="输入模型名后回车" tokenSeparators={[","]} />
-                  </Form.Item>
+                    <Form.Item
+                      name="models"
+                      label="支持的模型"
+                      rules={[{ required: true, message: "请至少选择一个模型" }]}
+                      extra={isRelay ? "已按该厂商默认填入，可增删" : "输入模型名后回车"}
+                    >
+                      <Select
+                        mode="tags"
+                        placeholder="输入模型名后回车"
+                        tokenSeparators={[","]}
+                        tagRender={modelTagRender(pickProvider?.key)}
+                        optionRender={modelOptionRender(pickProvider?.key)}
+                      />
+                    </Form.Item>
 
                   <Row gutter={12}>
                     <Col span={8}>
@@ -1214,22 +1263,31 @@ export default function AdminChannelsPage() {
           <Form.Item name="name" label="渠道名称" rules={[{ required: true, message: "请填写名称" }]}>
             <Input maxLength={64} />
           </Form.Item>
-          <Form.Item name="base_url" label="接口地址（Base URL）">
-            <Input placeholder="https://..." />
-          </Form.Item>
+          {/* 只有 API 渠道有 Base URL；反代/订阅渠道不展示也不提交 */}
+          {editing?.method === "api" ? (
+            <Form.Item name="base_url" label="接口地址（Base URL）">
+              <Input placeholder="https://..." />
+            </Form.Item>
+          ) : null}
           {editing?.method === "api" ? (
             <Form.Item name="api_key" label="API Key" extra="留空表示不修改">
               <Input.Password placeholder="留空不修改" autoComplete="new-password" />
             </Form.Item>
           ) : (
             <Alert
-              type="info" showIcon style={{ marginBottom: 16 }}
+              type="info" showIcon className="oo-alert-compact" style={{ marginBottom: 16 }}
               message="凭据修改"
               description={<span style={{ fontSize: 12 }}>登录态不支持直接编辑；如需重新登录，请删除后重新添加。</span>}
             />
           )}
           <Form.Item name="models" label="支持的模型" rules={[{ required: true, message: "请至少选择一个模型" }]}>
-            <Select mode="tags" placeholder="输入模型名后回车" tokenSeparators={[","]} />
+            <Select
+              mode="tags"
+              placeholder="输入模型名后回车"
+              tokenSeparators={[","]}
+              tagRender={modelTagRender(editing?.type)}
+              optionRender={modelOptionRender(editing?.type)}
+            />
           </Form.Item>
           <Row gutter={12}>
             <Col span={8}>
@@ -1307,6 +1365,7 @@ export default function AdminChannelsPage() {
         <Alert
           type="info"
           showIcon
+          className="oo-alert-compact"
           style={{ marginBottom: 12 }}
           message="服务器上没有桌面，请先在这个页面里完成登录"
           description={
@@ -1317,7 +1376,7 @@ export default function AdminChannelsPage() {
           }
         />
         {browserShot?.error ? (
-          <Alert type="warning" showIcon style={{ marginBottom: 12 }} message={browserShot.error} />
+          <Alert type="warning" showIcon className="oo-alert-compact" style={{ marginBottom: 12 }} message={browserShot.error} />
         ) : null}
         <div
           style={{
@@ -1362,6 +1421,7 @@ export default function AdminChannelsPage() {
         <Alert
           type="info"
           showIcon
+          className="oo-alert-compact"
           style={{ marginBottom: 12 }}
           message="操作说明"
           description={
@@ -1550,6 +1610,7 @@ export default function AdminChannelsPage() {
         <Alert
           type="info"
           showIcon
+          className="oo-alert-compact"
           style={{ marginBottom: 12 }}
           message="支持格式"
           description={

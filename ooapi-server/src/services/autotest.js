@@ -22,8 +22,10 @@ export async function runDueChannelTests() {
   const [rows] = await pool.query("SELECT * FROM channels WHERE auto_test = 1 AND status = 1");
   for (const row of rows) {
     const interval = Math.max(60, Number(row.auto_test_interval) || 3600);
-    const last = Number(row.tested_time) || 0;
-    if (Math.floor(Date.now() / 1000) - last < interval) continue;
+    // 用「检测专用时间戳」判断到期：生产调用会更新 tested_time，不能用它，
+    // 否则繁忙渠道的定时检测会被每次真实调用不断推迟（等于几乎不检测）
+    const last = Math.max(Number(row.last_test_time) || 0, 0);
+    if (last && Math.floor(Date.now() / 1000) - last < interval) continue;
     const t0 = Date.now();
     const prompt = String(row.test_prompt || "hi").trim() || "hi";
     try {
@@ -38,6 +40,7 @@ export async function runDueChannelTests() {
         reply: r.reply,
         degraded: r.degraded,
         state: r.state,
+        kind: "auto",
       });
       resetChannelState(row.id);
       console.log(`[autotest] #${row.id}「${row.name}」通过（${r.ms}ms）`);
@@ -48,7 +51,7 @@ export async function runDueChannelTests() {
         now(),
         row.id,
       ]);
-      await recordChannelCall(row.id, false, ms, e.message, { prompt, reply: e.message });
+      await recordChannelCall(row.id, false, ms, e.message, { prompt, reply: e.message, kind: "auto" });
       console.warn(`[autotest] #${row.id}「${row.name}」失败：${e.message}`);
     }
     // 渠道之间留间隔，避免同一时刻并发打上游

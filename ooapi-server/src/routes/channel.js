@@ -922,6 +922,7 @@ router.post(
         reply: probe.reply,
         degraded: probe.degraded,
         state: probe.state,
+        kind: "test",
       });
       resetChannelState(id);
       await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `测试渠道「${row.name}」通过（${probe.ms}ms）` });
@@ -929,7 +930,7 @@ router.post(
     } catch (e) {
       await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), id]);
       // 测试失败计入「最近调用」小绿条（失败 → 红色；tip 里带失败原因）
-      await recordChannelCall(id, false, Date.now() - startedAt, e.message, { prompt, reply: e.message });
+      await recordChannelCall(id, false, Date.now() - startedAt, e.message, { prompt, reply: e.message, kind: "test" });
       await writeLog({ user: req.user, type: LOG_TYPE.ERROR, content: `测试渠道「${row.name}」失败：${e.message}` });
       return ok(res, { success: false, message: e.message, code: e.code }, `测试失败：${e.message}`);
     }

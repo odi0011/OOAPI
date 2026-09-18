@@ -82,13 +82,16 @@ function pushRecent(id, entry) {
 
 // 记录里保存的提示词/回复摘要上限（长对话只留开头，避免把列撑大）
 const clip = (text, max) => String(text ?? "").replace(/\s+/g, " ").trim().slice(0, max);
-// 降智/通行证标记（仅订阅渠道会带）：d=本轮降智，st=注入了 292 通行证
+// 降智/通行证标记（仅订阅渠道会带）：d=本轮降智，st=注入了 292 通行证；k=来源(chat/test/auto)
 const flagsOf = (meta = {}) => ({
   ...(meta.degraded !== undefined ? { d: meta.degraded ? 1 : 0 } : {}),
   ...(meta.state !== undefined ? { st: meta.state ? 1 : 0 } : {}),
+  ...(meta.kind ? { k: meta.kind } : {}),
 });
 
-/** 只记录一次调用结果（不累加 used_count；测试/检查等非生产调用用） */
+/** 只记录一次调用结果（不累加 used_count；测试/检查等非生产调用用）。
+ * 同时更新 last_test_time：这是「检测」专用时间戳，生产调用不会碰它，
+ * 否则繁忙渠道的定时检测会被每次生产调用不断推迟。 */
 export async function recordChannelCall(channelId, ok, ms, error = "", meta = {}) {
   const recentJson = pushRecent(channelId, {
     t: now(),
@@ -99,7 +102,11 @@ export async function recordChannelCall(channelId, ok, ms, error = "", meta = {}
     ...flagsOf(meta),
   });
   await pool
-    .query("UPDATE channels SET recent_calls = ? WHERE id = ?", [recentJson, Number(channelId)])
+    .query("UPDATE channels SET recent_calls = ?, last_test_time = ? WHERE id = ?", [
+      recentJson,
+      now(),
+      Number(channelId),
+    ])
     .catch(() => {});
 }
 

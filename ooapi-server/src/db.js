@@ -114,6 +114,7 @@ const TABLES = [
     test_prompt VARCHAR(255) NOT NULL DEFAULT 'hi' COMMENT '测试/定时检测发送的提示词',
     auto_test TINYINT NOT NULL DEFAULT 0 COMMENT '1=定时检测开启',
     auto_test_interval INT NOT NULL DEFAULT 3600 COMMENT '定时检测间隔（秒，60~86400）',
+    last_test_time BIGINT NOT NULL DEFAULT 0 COMMENT '最近一次检测（手动/定时）时间戳；生产调用不更新',
     last_error VARCHAR(500) NOT NULL DEFAULT '' COMMENT '最近错误信息',
     used_count INT NOT NULL DEFAULT 0 COMMENT '累计调用次数',
     last_used_time BIGINT NOT NULL DEFAULT 0 COMMENT '最近调用时间',
@@ -205,6 +206,7 @@ const COLUMN_MIGRATIONS = [
   { table: "channels", column: "test_prompt", ddl: "VARCHAR(255) NOT NULL DEFAULT 'hi'" },
   { table: "channels", column: "auto_test", ddl: "TINYINT NOT NULL DEFAULT 0" },
   { table: "channels", column: "auto_test_interval", ddl: "INT NOT NULL DEFAULT 3600" },
+  { table: "channels", column: "last_test_time", ddl: "BIGINT NOT NULL DEFAULT 0" },
   { table: "channels", column: "recent_calls", ddl: "TEXT" },
 ];
 
