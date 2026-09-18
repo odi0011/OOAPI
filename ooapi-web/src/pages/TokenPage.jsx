@@ -266,7 +266,7 @@ export default function TokenPage() {
         width: 170,
         render: (g) => {
           const list = groupMetaOf(g)?.models || [];
-          if (!g) return <Text type="secondary" style={{ fontSize: 12 }}>跟随默认池</Text>;
+          if (!g) return <Text type="secondary" style={{ fontSize: 12 }}>公共池</Text>;
           if (!list.length) return <Text type="secondary" style={{ fontSize: 12 }}>不限（跟随账号）</Text>;
           return (
             <Tooltip
@@ -403,12 +403,12 @@ export default function TokenPage() {
           <Form.Item
             name="group_name"
             label="分组"
-            extra="一个 Key 只能绑定一个分组（由管理员创建）；可用模型与计费倍率均由分组决定，留空使用默认池"
+            extra="一个 Key 只能绑定一个分组（由管理员创建）；可用模型与计费倍率均由分组决定，不绑定则走公共池（未分组渠道）"
           >
             <Select
               allowClear
               showSearch
-              placeholder="不绑定（默认池）"
+              placeholder="不绑定（公共池）"
               options={groupOptions}
               filterOption={(input, option) => (option?.search || "").includes(input.toLowerCase())}
             />
@@ -419,7 +419,7 @@ export default function TokenPage() {
               ? pickedGroupMeta?.models?.length
                 ? pickedGroupMeta.models.join("、")
                 : "不限（跟随账号可用模型）"
-              : "默认池（跟随账号可用模型）"}
+              : "公共池（未分组渠道，跟随账号可用模型）"}
           </div>
         </Form>
       </Modal>

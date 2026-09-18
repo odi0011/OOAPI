@@ -163,8 +163,8 @@ html[data-theme="dark"] {
   --header-h: 52px;
   --content-max: 1400px;
 
-  /* 字体：Inter 优先，回退系统 UI 字体 */
-  --font-sans: Inter, "Inter Fallback", ui-sans-serif, system-ui, -apple-system,
+  /* 字体：Noto Sans SC（本地打包）优先，系统 UI 字体兜底 */
+  --font-sans: "Noto Sans SC", "Noto Sans", ui-sans-serif, system-ui, -apple-system,
     BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
     "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo,
@@ -1358,6 +1358,32 @@ h1, h2, h3, h4 {
 
 .oo-stats-recent-row .oo-uptime-bar {
   height: 14px;
+}
+
+/* 最近调用：小绿条可点（复制原始返回结果），用户标签可点（复制邮箱） */
+.oo-uptime-bar.is-clickable {
+  cursor: copy;
+}
+
+.bui-user-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 118px;
+  padding: 1px 7px 1px 3px;
+  border: 1px solid var(--line);
+  border-radius: 9999px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 120ms, color 120ms;
+}
+
+.bui-user-tag:hover {
+  background: var(--hover);
+  color: var(--ink);
 }
 
 /* ---------------------------------------------------------------------------

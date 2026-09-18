@@ -47,6 +47,10 @@ const CHANNEL_ICON = {
   qwen: "qwen.png",
   alibaba: "alibaba.svg",
   bytedance: "bytedance.svg",
+  // xAI Grok（官方 X 标识，Simple Icons 收录）
+  grok: "grok.svg",
+  "grok-oauth": "grok.svg",
+  xai: "grok.svg",
   // 自定义渠道 → 使用平台 logo
   custom: PLATFORM_LOGO,
 };
@@ -61,6 +65,7 @@ const MODEL_ICON = [
   [/^glm|^zhipu|^chatglm/i, "zhipu.svg"],
   [/^kimi|^moonshot/i, "kimi.png"],
   [/^doubao|^ep-/i, "doubao.png"],
+  [/^grok/i, "grok.svg"],
 ];
 
 export function iconFileForChannel(type) {
@@ -85,6 +90,7 @@ export function vendorNameForModel(model) {
   if (/^glm|^zhipu/i.test(m)) return "智谱";
   if (/^kimi|^moonshot/i.test(m)) return "Kimi";
   if (/^doubao/i.test(m)) return "豆包";
+  if (/^grok/i.test(m)) return "Grok";
   return "其他";
 }
 

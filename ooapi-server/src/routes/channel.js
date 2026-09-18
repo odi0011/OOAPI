@@ -82,13 +82,12 @@ function splitKeys(apiKey) {
 
 /** 该渠道的接入方式（缺省 relay，兼容没有 other.method 的老数据） */
 // ---------- 分组工具（sub2api 风格：分组由管理员创建、绑定厂商；账号可属多个分组） ----------
-/** 归一化分组数组：去空、去重、限长；空则回退 [fallback] */
-function normalizeGroups(input, fallback = "default") {
+/** 归一化分组数组：去空、去重、限长；空数组 = 公共池（default 是历史值，直接剔除） */
+function normalizeGroups(input) {
   let list = [];
   if (Array.isArray(input)) list = input;
   else if (typeof input === "string" && input.trim()) list = input.split(",");
-  const out = [...new Set(list.map((s) => String(s).trim().slice(0, 32)).filter(Boolean))];
-  return out.length ? out : [String(fallback || "default").trim().slice(0, 32) || "default"];
+  return [...new Set(list.map((s) => String(s).trim().slice(0, 32)).filter((s) => s && s !== "default"))];
 }
 
 /** 分组模型的 JSON 解析 / 归一化 */
@@ -117,15 +116,15 @@ function normalizeRate(input) {
   return Math.min(1000, Math.max(0.0001, Math.round(n * 10000) / 10000));
 }
 
-/** 渠道行的分组解析（兼容老数据：空则回退 group_name；列名 group_list 避开 MySQL 保留字） */
+/** 渠道行的分组解析：空数组 = 公共池（不再回退 default） */
 function parseGroups(row) {
   try {
     const arr = row?.group_list ? JSON.parse(row.group_list) : [];
-    if (Array.isArray(arr) && arr.length) return arr.map((s) => String(s)).filter(Boolean);
+    if (Array.isArray(arr)) return arr.map((s) => String(s)).filter((s) => s && s !== "default");
   } catch {
     /* ignore */
   }
-  return [row?.group_name || "default"];
+  return [];
 }
 
 /** 分组列表行 → 前端结构 */
@@ -171,10 +170,9 @@ async function syncGroupMembers(type, name, channelIds) {
     if (should && !has) next = [...cur, name];
     else if (!should && has) next = cur.filter((g) => g !== name);
     if (!next) continue;
-    const final = next.length ? next : ["default"];
     await pool.query("UPDATE channels SET group_list = ?, group_name = ? WHERE id = ?", [
-      JSON.stringify(final),
-      final[0],
+      JSON.stringify(next),
+      next[0] || "",
       c.id,
     ]);
   }
@@ -281,10 +279,9 @@ router.delete(
     const [chans] = await pool.query("SELECT id, group_list, group_name FROM channels WHERE type = ?", [group.type]);
     for (const c of chans) {
       const next = parseGroups(c).filter((g) => g !== group.name);
-      const final = next.length ? next : ["default"];
       await pool.query("UPDATE channels SET group_list = ?, group_name = ? WHERE id = ?", [
-        JSON.stringify(final),
-        final[0],
+        JSON.stringify(next),
+        next[0] || "",
         c.id,
       ]);
     }
@@ -479,7 +476,7 @@ function rowToResp(r, { withKey = false } = {}) {
     // 配置
     base_url: r.base_url || mCfg?.baseUrl || "",
     models: String(r.models || "").split(",").map((s) => s.trim()).filter(Boolean),
-      group_name: r.group_name || "default",
+      group_name: r.group_name || "",
       groups: parseGroups(r),
     priority: Number(r.priority) || 0,
     weight: Number(r.weight) || 0,
@@ -849,9 +846,9 @@ router.post(
         ? modelsInput.map((s) => String(s).trim()).filter(Boolean).join(",") || defaultModels
         : String(modelsInput || "").trim() || defaultModels
     ).slice(0, 20_000);
-    const groupName = String(group_name || "default").trim().slice(0, 64) || "default";
-    // 分组（可多选）：优先 groups 数组，否则沿用 group_name；分组行只由「分组管理」创建
-    const groupsList = normalizeGroups(groupsInput !== undefined ? groupsInput : group_name, groupName);
+    const groupName = String(group_name || "").trim().slice(0, 64);
+    // 分组（可多选）：优先 groups 数组，否则沿用 group_name；空数组 = 公共池
+    const groupsList = normalizeGroups(groupsInput !== undefined ? groupsInput : group_name);
     const weightVal =
       Number.isFinite(Number(weight)) && Number(weight) > 0 ? Math.min(10000, Math.floor(Number(weight))) : 1;
     const autoBanVal = auto_ban === undefined ? 1 : auto_ban ? 1 : 0;
@@ -942,7 +939,7 @@ router.post(
           token || "",
           JSON.stringify(merged),
           modelsInput !== undefined ? models : null,
-          groupsInput !== undefined || group_name !== undefined ? groupsList[0] : null,
+          groupsInput !== undefined || group_name !== undefined ? groupsList[0] || "" : null,
           groupsInput !== undefined || group_name !== undefined ? JSON.stringify(groupsList) : null,
           weight !== undefined ? weightVal : null,
           auto_ban !== undefined ? autoBanVal : null,
@@ -1027,7 +1024,7 @@ router.post(
           mCfg.baseUrl || "",
           token,
           models,
-          groupsList[0],
+          groupsList[0] || "",
           JSON.stringify(groupsList),
           priorityVal,
           weightVal,
@@ -1166,7 +1163,7 @@ router.post(
     if (weight === null) return fail(res, "权重无效");
 
     const other = { method: "api" };
-    // 分组（可多选）：优先 groups 数组，否则沿用 group_name；分组行只由「分组管理」创建
+    // 分组（可多选）：优先 groups 数组，否则沿用 group_name；空数组 = 公共池
     const groups = normalizeGroups(b.groups !== undefined ? b.groups : b.group_name);
     const [ret] = await pool.query(
       `INSERT INTO channels (name, type, base_url, api_key, models, group_name, group_list, status, priority, weight, remark, auto_ban, other, created_time)
@@ -1177,7 +1174,7 @@ router.post(
         baseUrl,
         apiKey.slice(0, 60_000),
         models.slice(0, 20_000),
-        groups[0],
+        groups[0] || "",
         JSON.stringify(groups),
         Number(b.status) === 2 ? 2 : 1,
         priority,
@@ -1224,7 +1221,7 @@ router.put(
     if (b.groups !== undefined || b.group_name !== undefined) {
       const groups = normalizeGroups(b.groups !== undefined ? b.groups : b.group_name);
       setIf("group_list", JSON.stringify(groups));
-      setIf("group_name", groups[0]);
+      setIf("group_name", groups[0] || "");
     }
     if (b.status !== undefined) {
       const s = Number(b.status) === 2 ? 2 : 1;
@@ -1424,10 +1421,12 @@ router.post(
       if (p === null) return fail(res, "优先级无效");
       await pool.query(`UPDATE channels SET priority = ? WHERE id IN (${ph})`, [p, ...list]);
     } else if (action === "set_group") {
-      const g = String(payload?.group_name || "default").trim().slice(0, 64) || "default";
+      // 批量设置分组：只接受管理员创建的分组名；default/空 = 移出所有分组（公共池）
+      const raw = String(payload?.group_name || "").trim();
+      const single = normalizeGroups(raw ? [raw] : []);
       await pool.query(`UPDATE channels SET group_name = ?, group_list = ? WHERE id IN (${ph})`, [
-        g,
-        JSON.stringify([g]),
+        single[0] || "",
+        JSON.stringify(single),
         ...list,
       ]);
     } else if (action === "add_models") {
@@ -1537,14 +1536,7 @@ router.post(
 );
 
 // ---------- 分组列表（供筛选）----------
-router.get(
-  "/groups",
-  asyncHandler(async (req, res) => {
-    const [rows] = await pool.query("SELECT DISTINCT group_name FROM channels WHERE group_name != ''");
-    const groups = rows.map((r) => r.group_name).filter(Boolean);
-    if (!groups.includes("default")) groups.unshift("default");
-    return ok(res, groups);
-  })
-);
+// 注意：管理员分组列表在文件前部的 GET /channel/groups（channel_groups 表）；
+// 这里不再返回 group_name 去重列表，避免与前者同名路由互相遮蔽。
 
 export default router;

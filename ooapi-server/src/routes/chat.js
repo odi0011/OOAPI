@@ -80,31 +80,36 @@ export async function listUserKeys(user) {
 }
 
 /**
+ * 取「当前可用的密钥」：站内对话必须通过密钥路由（分组→模型/渠道/倍率），
+ * 没有可用密钥时不给模型、也不允许开跑。禁用/过期/不属于该用户的密钥一律视为不可用。
+ */
+async function activeKeyOf(user, keyId = 0) {
+  const id = Number(keyId) || 0;
+  if (!id) return null;
+  const [rows] = await pool.query("SELECT * FROM tokens WHERE id = ? AND user_id = ?", [id, user.id]);
+  if (!rows.length) return null;
+  const t = rows[0];
+  const nowSec = Math.floor(Date.now() / 1000);
+  const expired = Number(t.expired_time) !== -1 && Number(t.expired_time) <= nowSec;
+  if (Number(t.status) !== 1 || expired) return null;
+  return t;
+}
+
+/**
  * 用户可用的模型。
  *
- * 核心口径：**按「这个用户 + 这个密钥」实际能调用什么来算**，而不是把后台渠道里的模型全列出来。
- *   · 选了密钥  → 用该密钥绑定的分组（type:name）路由：分组限制的模型、分组成员渠道声明的模型
- *   · 没选密钥  → 回退到用户分组（老行为）
- * 再叠加密钥自身的 model_limits 白名单；管理员不受密钥白名单约束（要能管全平台）。
- *
- * 这样保证「页面上能选的」= 「实际能调用的」：两边用同一套 channelInGroup + groupConfigOf 判断。
+ * 核心口径：**按「这个用户 + 这个密钥」实际能调用什么来算**。
+ *   · 必须选中一个可用密钥；没有密钥 → 返回空（前端引导去创建密钥）
+ *   · 密钥绑定的分组（type:name）决定：分组限制的模型 ∩ 分组成员渠道声明的模型
+ *   · 额度是账户额度，但路由身份完全挂在密钥上（与网关 /v1 同一口径）
  */
 async function availableModels(user, keyId = 0) {
   const isAdmin = Number(user?.role) >= 100;
 
-  // 1) 解析本次请求用的密钥与路由分组
-  let key = null;
-  if (keyId) {
-    const [rows] = await pool.query("SELECT * FROM tokens WHERE id = ? AND user_id = ?", [Number(keyId) || 0, user.id]);
-    if (rows.length) {
-      const t = rows[0];
-      const nowSec = Math.floor(Date.now() / 1000);
-      const expired = Number(t.expired_time) !== -1 && Number(t.expired_time) <= nowSec;
-      // 禁用/过期的密钥不参与路由：宁可回退也不静默用错分组
-      if (Number(t.status) === 1 && !expired) key = t;
-    }
-  }
-  const groupName = key?.group_name || user?.group_name || null;
+  // 1) 解析本次请求用的密钥与路由分组；没有可用密钥 → 没有可选模型
+  const key = await activeKeyOf(user, keyId);
+  if (!key) return [];
+  const groupName = key.group_name || null;
 
   // 2) 分组限制的模型（分组配了 models 就只给这些）
   const gcfg = groupName ? await groupConfigOf(groupName) : null;
@@ -166,21 +171,10 @@ async function availableModels(user, keyId = 0) {
     });
 }
 
-/** 解析密钥的路由分组（/run 用；与 availableModels 同一套优先级） */
+/** 解析密钥的路由分组（/run 用；与 availableModels 同一套优先级；没有可用密钥返回 null） */
 async function routeGroupOf(user, keyId = 0) {
-  if (keyId) {
-    const [rows] = await pool.query("SELECT group_name, status, expired_time FROM tokens WHERE id = ? AND user_id = ?", [
-      Number(keyId) || 0,
-      user.id,
-    ]);
-    if (rows.length) {
-      const t = rows[0];
-      const nowSec = Math.floor(Date.now() / 1000);
-      const expired = Number(t.expired_time) !== -1 && Number(t.expired_time) <= nowSec;
-      if (Number(t.status) === 1 && !expired && t.group_name) return t.group_name;
-    }
-  }
-  return user?.group_name || null;
+  const key = await activeKeyOf(user, keyId);
+  return key ? key.group_name || null : null;
 }
 
 /** 把模型按厂商归类（前端下拉要按厂商分组，不是一长条平铺） */
@@ -387,7 +381,7 @@ router.post(
   const price = await getPrice(resolveAliasSync(model));
   // 分组倍率：用户绑定分组后按分组倍率计费（rate=1 时不变）
   // 倍率按本次实际路由的分组（选了密钥就是密钥的分组），与网关 /v1 口径一致
-  const gcfg = await groupConfigOf(groupName || user?.group_name);
+  const gcfg = await groupConfigOf(groupName);
   const units = applyGroupRate(computeCost({ price, promptTokens, completionTokens, cacheTokens }), gcfg?.rate);
 
   const [uRows] = await pool.query("SELECT quota FROM users WHERE id = ?", [user.id]);
@@ -523,11 +517,14 @@ router.post(
 
     const models = await availableModels(req.user, keyId);
     const modelCaps = models.find((m) => m.id === model) || null;
-    // 路由分组：选了密钥就用密钥绑定的分组（决定可走哪些渠道、按什么倍率计费），
-    // 没选则回退账户默认分组 —— 与 availableModels 同一套优先级，保证"能选"就能跑。
-    const routeGroup = await routeGroupOf(req.user, keyId);
+    // 路由分组：必须通过密钥路由（分组决定渠道/模型/倍率），没有可用密钥不开跑
+    const usableKey = await activeKeyOf(req.user, keyId);
+    if (!usableKey) {
+      return fail(res, "请先在「令牌管理」创建可用密钥，并在对话页选择它（密钥的分组决定可用模型与倍率）", 403);
+    }
+    const routeGroup = usableKey.group_name || null;
     if (!models.some((m) => m.id === model)) {
-      return fail(res, `模型「${model}」在当前${keyId ? "密钥" : "账户"}下不可用，请重新选择模型`);
+      return fail(res, `模型「${model}」在当前密钥下不可用，请重新选择模型`);
     }
     const run = startRun(session.id, { userId: req.user.id });
     if (!run) return fail(res, "这个会话正在生成中，请稍候或先停止", 409);
@@ -648,6 +645,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       images: imgs,
       docs,
       groupName: routeGroup,
+      user,
       signal: ctrl.signal,
       modelCaps,
       emit: (ev) => {

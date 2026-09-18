@@ -7,6 +7,14 @@ import "dayjs/locale/zh-cn";
 import { ThemeProvider } from "./theme/ThemeContext";
 import { AppProvider } from "./context/AppContext";
 import App from "./App";
+// 正文字体：Noto Sans SC（本地打包，避免依赖外网字体 CDN）
+// 按语种导入（chinese-simplified + latin），避免引入上百个未用子集
+import "@fontsource/noto-sans-sc/chinese-simplified-400.css";
+import "@fontsource/noto-sans-sc/latin-400.css";
+import "@fontsource/noto-sans-sc/chinese-simplified-500.css";
+import "@fontsource/noto-sans-sc/latin-500.css";
+import "@fontsource/noto-sans-sc/chinese-simplified-700.css";
+import "@fontsource/noto-sans-sc/latin-700.css";
 import "./styles.css";
 
 // antd 的日期组件（rc-picker）直接用 dayjs 取星期/周首日，不注册中文 locale
@@ -21,21 +29,6 @@ try {
     (mode === "system" && window.matchMedia?.("(prefers-color-scheme: dark)").matches);
   document.documentElement.dataset.theme = dark ? "dark" : "light";
   document.documentElement.style.colorScheme = dark ? "dark" : "light";
-} catch {
-  /* ignore */
-}
-
-// Inter 字体（beautifului 使用 Inter；国内网络优先走系统字体回退）
-try {
-  const link = document.createElement("link");
-  link.rel = "preconnect";
-  link.href = "https://rsms.me/";
-  document.head.appendChild(link);
-
-  const css = document.createElement("link");
-  css.rel = "stylesheet";
-  css.href = "https://rsms.me/inter/inter.css";
-  document.head.appendChild(css);
 } catch {
   /* ignore */
 }

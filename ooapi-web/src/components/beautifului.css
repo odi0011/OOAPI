@@ -320,10 +320,11 @@
 }
 
 .bui-composer-input {
-  min-height: 28px;
+  /* 输入框略高一点，首屏打字更舒展 */
+  min-height: 36px;
   width: 100%;
   min-width: 0;
-  padding: 5px 4px;
+  padding: 8px 4px 7px;
   border: 0;
   background: transparent;
   color: var(--ink);

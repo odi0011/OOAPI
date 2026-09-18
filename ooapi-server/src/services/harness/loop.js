@@ -256,7 +256,7 @@ async function loop(opts, billing, depth = 0) {
   }
 }
 
-async function loopInner({ session, agent, model, settings = {}, history = [], userText = "", images = [], docs = [], groupName = null, signal, emit, onTodo, onCall, modelCaps = null }, billing, depth, sink) {
+async function loopInner({ session, agent, model, settings = {}, history = [], userText = "", images = [], docs = [], groupName = null, user = null, signal, emit, onTodo, onCall, modelCaps = null }, billing, depth, sink) {
   const record = (c) => {
     billing.push(c);
     if (onCall) onCall(c);
@@ -294,6 +294,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
               userText: prompt,
               images: [],
               groupName,
+              user,
               signal,
               emit: null, // 子代理过程不直接展示，结果通过 task 工具返回
               onTodo: null,
@@ -359,6 +360,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       search: typeof settings.search === "boolean" ? settings.search : Boolean(agent.search),
       images: step === 1 ? images : [],
       groupName,
+      user,
       signal,
       onDelta: (t) => appendText(stream.push(t)),
       onReasoning: appendReasoning,

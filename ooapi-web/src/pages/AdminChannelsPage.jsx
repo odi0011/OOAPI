@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
   Table, Space, Typography, Input, Popconfirm, Modal, Form, Select, Switch,
-  InputNumber, App as AntApp, Tooltip, Row, Col, Alert, Radio, Button, Spin, Pagination, Segmented,
+  InputNumber, App as AntApp, Tooltip, Row, Col, Alert, Radio, Button, Spin, Pagination, Segmented, Avatar,
 } from "antd";
 import {
   PlusOutlined, ReloadOutlined, ThunderboltOutlined, DeleteOutlined, EditOutlined,
@@ -9,7 +9,7 @@ import {
   InfoCircleOutlined, SafetyCertificateOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
-import { fmtDate, CURRENCY_NAME } from "../services/format";
+import { fmtDate, CURRENCY_NAME, copyText } from "../services/format";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import { VendorIcon, ModelLabel } from "../components/VendorIcon";
@@ -43,6 +43,15 @@ function UptimeTip({ c }) {
           <div>
             <span style={{ color: c.d ? "var(--red)" : "var(--green)" }}>{c.d ? "是（命中降智/截断）" : "否"}</span>
             {c.st !== undefined ? <span style={{ opacity: 0.75 }}>{` · 292 通行证${c.st ? "已注入" : "未注入"}`}</span> : null}
+          </div>
+        </div>
+      ) : null}
+      {c.u ? (
+        <div className="oo-uptime-tip-row">
+          <span className="oo-uptime-tip-label">调用者</span>
+          <div>
+            {c.u.n || "用户"}
+            {c.u.e ? <span style={{ opacity: 0.75 }}>{` · ${c.u.e}`}</span> : null}
           </div>
         </div>
       ) : null}
@@ -80,7 +89,7 @@ const modelOptionRender = (vendor) => (opt) => (
 // 样式参考 aceternity 的 uptime bars：只保留小竖条与 hover 放大效果。
 const UPTIME_SLOW_MS = 3000; // 超过该耗时视为「慢」（黄色）
 
-function UptimeBars({ calls = [], count = 20 }) {
+function UptimeBars({ calls = [], count = 20, onCopy }) {
   const list = (calls || []).slice(-count);
   const bars = Array.from({ length: count }, (_, i) => {
     const idx = i - (count - list.length);
@@ -92,7 +101,19 @@ function UptimeBars({ calls = [], count = 20 }) {
       {bars.map((c, i) =>
         c ? (
           <Tooltip key={i} title={<UptimeTip c={c} />}>
-            <i className={`oo-uptime-bar ${!c.ok ? "is-fail" : c.ms >= UPTIME_SLOW_MS ? "is-slow" : "is-ok"}`} />
+            <i
+              className={`oo-uptime-bar is-clickable ${!c.ok ? "is-fail" : c.ms >= UPTIME_SLOW_MS ? "is-slow" : "is-ok"}`}
+              role="button"
+              tabIndex={0}
+              title="点击复制原始返回结果"
+              onClick={() => onCopy?.(c)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onCopy?.(c);
+                }
+              }}
+            />
           </Tooltip>
         ) : (
           <i key={i} className="oo-uptime-bar is-empty" />
@@ -582,19 +603,29 @@ export default function AdminChannelsPage() {
       return next;
     });
 
-  // 某厂商可选的分组（管理员在「分组管理」创建；default 为隐式默认池，供未绑定分组的 Key 使用）
-  const groupNamesOf = (type) => {
-    const names = groups.filter((g) => !type || g.type === type).map((g) => g.name);
-    return [...new Set(["default", ...names])];
-  };
+  // 某厂商可选的分组（管理员在「分组管理」创建；不选 = 公共池，供未绑定分组的 Key 使用）
+  const groupNamesOf = (type) => groups.filter((g) => !type || g.type === type).map((g) => g.name);
 
   const groupSelectOptions = (type) =>
-    groupNamesOf(type).map((g) => ({
-      value: g,
-      label: g === "default" ? <span style={{ color: "var(--ink-3)" }}>default（默认池）</span> : g,
-    }));
+    groupNamesOf(type).map((g) => ({ value: g, label: g }));
 
   // ---------- 用量统计 ----------
+  // 最近调用：点小绿条复制「原始返回结果」；点用户标签复制邮箱
+  const copyCallResult = (c) => {
+    const text = String(c?.r || c?.p || "").trim();
+    if (!text) return message.warning("这条记录没有可复制的返回内容");
+    copyText(text)
+      .then(() => message.success("已复制返回结果"))
+      .catch(() => message.error("复制失败，请手动复制"));
+  };
+  const copyUserContact = (u) => {
+    const text = String(u?.e || u?.n || "").trim();
+    if (!text) return message.warning("这条记录没有可复制的联系方式");
+    copyText(text)
+      .then(() => message.success(u?.e ? `已复制邮箱：${u.e}` : "已复制用户名"))
+      .catch(() => message.error("复制失败，请手动复制"));
+  };
+
   const openStats = async (r) => {
     setStatsTarget(r);
     setStatsData(null);
@@ -771,7 +802,7 @@ export default function AdminChannelsPage() {
       priority: 0,
       // 非 API 方式（反代/订阅）后端会把 <=0 的权重归一到 1，表单默认值保持一致
       weight: m.key === "api" ? 0 : 1,
-      groups: ["default"],
+      groups: [],
       auto_ban: true,
     };
     for (const f of m.loginFields || []) {
@@ -802,7 +833,7 @@ export default function AdminChannelsPage() {
           name: v.name,
           priority: v.priority,
           models: v.models,
-          groups: Array.isArray(v.groups) && v.groups.length ? v.groups : ["default"],
+          groups: Array.isArray(v.groups) ? v.groups : [],
           weight: v.weight,
           auto_ban: v.auto_ban,
         };
@@ -824,7 +855,7 @@ export default function AdminChannelsPage() {
           base_url: v.base_url,
           api_key: v.api_key,
           models: v.models,
-          groups: Array.isArray(v.groups) && v.groups.length ? v.groups : ["default"],
+          groups: Array.isArray(v.groups) ? v.groups : [],
           priority: v.priority,
           weight: v.weight,
           auto_ban: v.auto_ban,
@@ -892,7 +923,7 @@ export default function AdminChannelsPage() {
       base_url: r.base_url,
       api_key: "",
       models: r.models,
-      groups: Array.isArray(r.groups) && r.groups.length ? r.groups : [r.group_name || "default"],
+        groups: Array.isArray(r.groups) ? r.groups : r.group_name ? [r.group_name] : [],
       priority: r.priority,
       weight: r.weight,
       remark: r.remark,
@@ -921,7 +952,7 @@ export default function AdminChannelsPage() {
         id: editing.id,
         name: v.name,
         models: v.models,
-        groups: Array.isArray(v.groups) && v.groups.length ? v.groups : ["default"],
+        groups: Array.isArray(v.groups) ? v.groups : [],
         priority: v.priority,
         weight: v.weight,
         remark: v.remark,
@@ -1213,7 +1244,7 @@ export default function AdminChannelsPage() {
       title: "最近调用",
       dataIndex: "recent",
       width: 150,
-      render: (list) => <UptimeBars calls={list} />,
+      render: (list) => <UptimeBars calls={list} onCopy={copyCallResult} />,
     },
     {
       title: "厂商",
@@ -1262,8 +1293,9 @@ export default function AdminChannelsPage() {
       title: "分组",
       dataIndex: "groups",
       width: 120,
-      render: (list, r) => {
-        const gs = Array.isArray(list) && list.length ? list : [r.group_name || "default"];
+      render: (list) => {
+        const gs = Array.isArray(list) ? list : [];
+        if (!gs.length) return <Text type="secondary" style={{ fontSize: 12 }}>公共</Text>;
         return (
           <Tooltip title={gs.join("、")}>
             <span style={{ display: "inline-flex", gap: 4, alignItems: "center", overflow: "hidden" }}>
@@ -1442,7 +1474,9 @@ export default function AdminChannelsPage() {
                   <span className="bui-chip" title={r.methodLabel}>
                     {r.method === "api" ? (r.key_count > 1 ? `${r.key_count} 个 Key` : "Key") : "账号"}
                   </span>
-                  <span className="bui-chip">{r.group_name}</span>
+                  <span className="bui-chip" title={(r.groups || []).join("、")}>
+                    {Array.isArray(r.groups) && r.groups.length ? r.groups[0] : "公共"}
+                  </span>
                 </div>
                 <div className="oo-channel-card-models">
                   <Tooltip
@@ -1459,7 +1493,7 @@ export default function AdminChannelsPage() {
                   </Tooltip>
                 </div>
                 <div className="oo-channel-card-foot">
-                  <UptimeBars calls={r.recent} count={16} />
+                  <UptimeBars calls={r.recent} count={16} onCopy={copyCallResult} />
                   <div>{renderActions(r)}</div>
                 </div>
               </article>
@@ -1670,10 +1704,10 @@ export default function AdminChannelsPage() {
 
                     <Row gutter={12}>
                       <Col span={8}>
-                        <Form.Item name="groups" label="分组" extra="可多选（分组由「分组管理」创建）">
+                        <Form.Item name="groups" label="分组" extra="可多选（分组由「分组管理」创建；不选 = 公共池）">
                           <Select
                             mode="multiple"
-                            placeholder="default"
+                            placeholder="不选 = 公共池"
                             options={groupSelectOptions(pickProvider?.key)}
                           />
                         </Form.Item>
@@ -1755,10 +1789,10 @@ export default function AdminChannelsPage() {
           </Form.Item>
             <Row gutter={12}>
               <Col span={8}>
-                <Form.Item name="groups" label="分组" extra="可多选（分组由「分组管理」创建）">
+                <Form.Item name="groups" label="分组" extra="可多选（分组由「分组管理」创建；不选 = 公共池）">
                   <Select
                     mode="multiple"
-                    placeholder="default"
+                    placeholder="不选 = 公共池"
                     options={groupSelectOptions(editing?.type)}
                   />
                 </Form.Item>
@@ -2167,9 +2201,34 @@ export default function AdminChannelsPage() {
             <div className="oo-stats-recent">
               {(statsData.recent || []).slice(-10).reverse().map((c, i) => (
                 <div className="oo-stats-recent-row" key={i}>
-                  <span className={`oo-uptime-bar ${!c.ok ? "is-fail" : c.ms >= UPTIME_SLOW_MS ? "is-slow" : "is-ok"}`} />
+                  <span
+                    className={`oo-uptime-bar is-clickable ${!c.ok ? "is-fail" : c.ms >= UPTIME_SLOW_MS ? "is-slow" : "is-ok"}`}
+                    role="button"
+                    tabIndex={0}
+                    title="点击复制原始返回结果"
+                    onClick={() => copyCallResult(c)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        copyCallResult(c);
+                      }
+                    }}
+                  />
                   <span style={{ width: 92, color: "var(--ink-3)", fontSize: 12 }}>{fmtDate(c.t, "MM-DD HH:mm")}</span>
-                  <span className="bui-chip">{c.k === "auto" ? "定时" : c.k === "test" ? "测试" : c.k === "chat" ? "调用" : "记录"}</span>
+                  {c.u ? (
+                    <Tooltip title={c.u.e ? `点击复制邮箱：${c.u.e}` : "点击复制用户名"}>
+                      <button type="button" className="bui-user-tag" onClick={() => copyUserContact(c.u)}>
+                        <Avatar size={16} style={{ background: "var(--accent)", fontSize: 10 }}>
+                          {String(c.u.n || "?").slice(0, 1)}
+                        </Avatar>
+                        <span className="oo-truncate" style={{ maxWidth: 88 }}>{c.u.n || "用户"}</span>
+                      </button>
+                    </Tooltip>
+                  ) : c.k === "auto" ? (
+                    <span className="bui-chip">定时</span>
+                  ) : c.k === "test" ? (
+                    <span className="bui-chip">测试</span>
+                  ) : null}
                   <span className="oo-num" style={{ width: 56, textAlign: "right", fontSize: 12 }}>{c.ms ? `${c.ms}ms` : "-"}</span>
                   <span className="oo-truncate" style={{ flex: 1, fontSize: 12 }} title={`${c.p || ""} → ${c.r || ""}`}>
                     {c.p ? `${c.p} → ${c.r || ""}` : c.r || ""}

@@ -244,7 +244,7 @@ export function OrchestrationBar({ agent, agents, settings, tools, onAgent, onSe
 
   const menu = (key, items, onPick) =>
     openMenu === key ? (
-      <div className="bui-orch-menu">
+      <div className={`bui-orch-menu is-${key}`}>
         {items.map((it) => (
           <button
             key={it.value}
@@ -257,6 +257,7 @@ export function OrchestrationBar({ agent, agents, settings, tools, onAgent, onSe
             }}
           >
             <span className="nm">{it.label}</span>
+            {it.desc ? <span className="ds">{it.desc}</span> : null}
             <span className={`tick ${it.value === it.current ? "" : "is-off"}`}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M20 6L9 17l-5-5" />
@@ -285,45 +286,32 @@ export function OrchestrationBar({ agent, agents, settings, tools, onAgent, onSe
         </button>
         {menu(
           "agent",
-          agents.map((a) => ({ value: a.id, label: `${a.name} · ${a.desc}`, current: agent?.id })),
+          agents.map((a) => ({ value: a.id, label: a.name, desc: a.desc, current: agent?.id })),
           onAgent
         )}
       </div>
 
       <span className="bui-orch-sep" />
 
-      {/* 密钥：站内对话扣账户额度，但路由配置挂在密钥上（分组决定可用模型与计费倍率），
-          所以要能在这里选。0 = 账户默认分组。 */}
+      {/* 密钥：站内对话扣账户额度，但路由配置挂在密钥上（分组决定可用模型与计费倍率）。
+          对话必须通过密钥路由：没有可用密钥时禁用并提供「去创建」提示。 */}
       <div className="bui-orch-slot">
         <button
           type="button"
           className="bui-orch-btn is-key"
           disabled={disabled || !keys.length}
           aria-expanded={openMenu === "key"}
-          title={keys.length ? "选择用于本次对话的密钥（决定可用模型与计费分组）" : "还没有创建密钥，可在「令牌管理」里新建"}
+          title={keys.length ? "选择用于本次对话的密钥（决定可用模型与计费分组）" : "还没有可用密钥，请先到「令牌管理」创建"}
           onClick={() => setOpenMenu(openMenu === "key" ? null : "key")}
         >
           <span className="k">密钥</span>
-          <span className="v">{keys.find((k) => k.id === keyId)?.name || "账户默认"}</span>
+          <span className="v">{keys.find((k) => k.id === keyId)?.name || (keys.length ? "选择密钥" : "无可用密钥")}</span>
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
             <path d="M6 9l6 6 6-6" />
           </svg>
         </button>
         {openMenu === "key" ? (
           <div className="bui-orch-menu is-key">
-            <button
-              type="button"
-              className={`bui-upmenu-row is-model ${keyId === 0 ? "is-on" : ""}`}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                setOpenMenu(null);
-                onKey?.(0);
-              }}
-            >
-              <span className="nm">账户默认</span>
-              <span className="ds">按用户分组路由</span>
-              <span className={`tick ${keyId === 0 ? "" : "is-off"}`}>{TickIcon}</span>
-            </button>
             {keys.map((k) => (
               <button
                 key={k.id}
@@ -336,10 +324,7 @@ export function OrchestrationBar({ agent, agents, settings, tools, onAgent, onSe
                 }}
               >
                 <span className="nm">{k.name}</span>
-                <span className="ds">
-                  {k.group ? k.group : "未绑定分组"}
-                  {k.status !== 1 ? " · 已停用" : ""}
-                </span>
+                <span className="ds">{k.group ? k.group : "公共池（未分组渠道）"}</span>
                 <span className={`tick ${k.id === keyId ? "" : "is-off"}`}>{TickIcon}</span>
               </button>
             ))}

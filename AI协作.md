@@ -619,6 +619,21 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   · **合并其他窗口 WIP 一并推送**：对话 harness（`sessions`/`loop`/`tools`/`agents`/`files`、
     项目与批量会话）、前端 `PromptBar`/`ArtifactPreview`/`Markdown`/beautifului/chat 样式与
     `ChatPage`、README。合并前通过「命名导出静态检查 + 全量 `node --check` + `vite build`」三重校验。 |
+| 2026-09-18 | **第 21 批（对话密钥化 + 编排/细节修复 + 公共池 + 官方图标 + Noto 字体）**：
+  · **对话必须通过密钥**：没有可用密钥时 `/api/chat/meta` 不返回任何模型（前端自动选中第一个可用
+    密钥并按分组重算模型），`/run` 直接 403 并提示「先去创建密钥」；编排栏密钥菜单移除「账户默认」，
+    无密钥时禁用并给「去创建密钥」入口。
+  · **编排栏**：智能体菜单名称/说明拆两行（原来挤一行被截断）；密钥显示分组名或「公共池」。
+  · **default 分组彻底移除**：迁移清理渠道 `group_list`、`users`、`tokens` 上的历史 default；
+    `channelInGroup` 新语义——未分组渠道 = 公共池（未绑定分组的 Key 只能走公共池，分组 Key 只走本组）；
+    渠道/令牌表单与列表同步（「公共」/「公共池」文案），新建渠道不再默认挂 default。
+  · **最近调用增强**：记录携带发起用户（管理端以「头像 + 名字」tag 展示，点击复制邮箱；去掉「调用/记录」
+    tag）；列表与弹窗的小绿条/条目点击复制「原始返回结果」（`c.r`）。
+  · **细节**：会话侧栏多选图标由对号改为选择图标（`SelectOutlined`）；对话输入框 `min-height` 28→36px；
+    Grok 换官方 X 标（`public/icons/grok.svg`，覆盖 `grok`/`grok-oauth` 渠道与 `grok-*` 模型）；
+    正文字体 Inter → **Noto Sans SC**（本地打包 chinese-simplified+latin 400/500/700，移除 rsms.me 外链）。
+  · **降智/过载透传**：codex 适配器三处（HTTP 非 2xx / SSE error / 健康检查）把上游实际响应拼进错误
+    （`…：<上游原文>`）并附 `err.upstream`。 |
 | 2026-09-18 | **第 20 批（分组体系按 sub2api 重构 + 两个线上 bug 修复）**：
   · **修复「刷新后最近调用丢失」**：列表接口 `rowToResp` 只读运行时内存态，服务重启后不回填
   `channels.recent_calls`；新增 `router.channelRecent(id, raw)`（运行时为空则从库回填并缓存）

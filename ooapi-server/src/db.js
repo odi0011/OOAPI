@@ -49,7 +49,7 @@ const TABLES = [
     request_count INT NOT NULL DEFAULT 0,
     aff_code VARCHAR(32) UNIQUE,
     inviter_id INT NOT NULL DEFAULT 0,
-    group_name VARCHAR(32) NOT NULL DEFAULT 'default',
+    group_name VARCHAR(32) NOT NULL DEFAULT '',
     setting TEXT,
     created_time BIGINT NOT NULL DEFAULT 0,
     last_login_time BIGINT NOT NULL DEFAULT 0,
@@ -101,7 +101,7 @@ const TABLES = [
     base_url VARCHAR(255) NOT NULL DEFAULT '' COMMENT '上游接口地址',
     api_key TEXT COMMENT '上游密钥（多 Key 用换行分隔）',
     models TEXT COMMENT '支持的模型，逗号分隔',
-    group_name VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '用户分组',
+    group_name VARCHAR(64) NOT NULL DEFAULT '' COMMENT '用户分组',
     group_list TEXT COMMENT '所属分组 JSON 数组（一个账号可属多个分组，分组按厂商隔离；列名避开 MySQL 保留字 groups）',
     status INT NOT NULL DEFAULT 1 COMMENT '1=启用 2=手动禁用 3=自动禁用',
     priority INT NOT NULL DEFAULT 0 COMMENT '调度优先级，越大越优先',
@@ -284,17 +284,37 @@ async function ensureColumns() {
 }
 
 // 分组数据迁移（幂等）：
-//   · 老库 channels.groups 为空 → 用 group_name 回填（保持既有行为）
-//   · 分组行只由管理员在「分组管理」里创建；历史上按厂商自动生成的 default 行
-//     在本升级（首次新增 rate 列）时清理一次，之后不再自动删（避免误删管理员建的组）。
+//   · 老库 channels.groups 为空 → 用 group_name 回填（group_name 为 default 时视为未分组）
+//   · **default 不再是分组**：公共池用「空数组」表达，渠道/用户/密钥上的历史 default 一并清理
 async function ensureGroups() {
   const [rows] = await pool.query("SELECT id, type, group_name, group_list FROM channels");
   for (const r of rows) {
-    const need = !r.group_list || String(r.group_list).trim() === "";
-    if (!need) continue;
-    const groups = [r.group_name && String(r.group_name).trim() ? String(r.group_name).trim() : "default"];
-    await pool.query("UPDATE channels SET group_list = ? WHERE id = ?", [JSON.stringify(groups), r.id]);
+    let list = [];
+    try {
+      const arr = r.group_list ? JSON.parse(r.group_list) : [];
+      if (Array.isArray(arr)) list = arr.map((s) => String(s).trim()).filter(Boolean);
+    } catch {
+      list = [];
+    }
+    const legacy = String(r.group_name || "").trim();
+    if (!list.length && legacy && legacy !== "default") list = [legacy];
+    const next = [...new Set(list.filter((g) => g !== "default"))];
+    if (JSON.stringify(next) !== String(r.group_list || "[]")) {
+      await pool.query("UPDATE channels SET group_list = ?, group_name = ? WHERE id = ?", [
+        JSON.stringify(next),
+        next[0] || "",
+        r.id,
+      ]);
+    }
   }
+  // 历史 default 绑定清空：用户分组与密钥绑定（default 已改为「公共池」语义）
+  await pool.query("UPDATE users SET group_name = '' WHERE group_name = 'default'").catch(() => {});
+  await pool
+    .query("UPDATE tokens SET group_name = '' WHERE group_name = 'default' OR group_name LIKE '%:default'")
+    .catch(() => {});
+  // 旧库列默认值同步（新渠道/新用户默认就是「未分组」）
+  await pool.query("ALTER TABLE channels ALTER COLUMN group_name SET DEFAULT ''").catch(() => {});
+  await pool.query("ALTER TABLE users ALTER COLUMN group_name SET DEFAULT ''").catch(() => {});
 }
 
 async function columnExists(table, column) {

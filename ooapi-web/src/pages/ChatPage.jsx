@@ -10,7 +10,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { App as AntApp, Button, Dropdown, Popconfirm, Tooltip } from "antd";
 import {
   CopyOutlined,
-  CheckOutlined,
+  SelectOutlined,
   InboxOutlined,
   PushpinOutlined,
   FileTextOutlined,
@@ -29,7 +29,7 @@ import {
   AudioOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { getToken } from "../services/api";
 import { chatApi, runChatStream, resumeChatStream } from "../services/chat";
 import { useApp } from "../context/AppContext";
@@ -360,6 +360,7 @@ function SettingsSheet({ open, onClose, meta, session, settings, onSettings, sav
 export default function ChatPage() {
   const { user, status, refreshUser } = useApp();
   const { message: toast } = AntApp.useApp();
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const requestedSession = params.get("s") || "";
 
@@ -427,7 +428,10 @@ export default function ChatPage() {
     [settings, agent, meta]
   );
   const quota = user?.quota != null ? fmtOd(user.quota, unitsPerOd(status), 4) : "—";
-  const unavailable = !session || !curModel;
+  // 对话必须通过密钥路由：没有可用密钥就没有可用模型，输入区与编排栏一并禁用
+  const usableKeys = (meta?.keys || []).filter((k) => k.status === 1);
+  const needKey = Boolean(meta) && !usableKeys.length;
+  const unavailable = !session || !curModel || needKey;
 
   /* ---------- 加载：元信息 + 会话列表 ---------- */
   const loadMeta = useCallback(async (forKeyId = 0) => {
@@ -435,6 +439,20 @@ export default function ChatPage() {
     try {
       const data = await chatApi.meta(forKeyId);
       setMeta(data);
+      const keys = data.keys || [];
+      // 对话必须通过密钥路由（分组 → 模型/渠道/倍率）：
+      //   · 没显式选密钥时，自动选中第一个可用密钥并按其能力重算模型
+      //   · 当前密钥被禁用/删除时回到自动选择
+      if (forKeyId === 0) {
+        const first = keys.find((k) => k.status === 1);
+        if (first) {
+          setKeyId(first.id);
+          return loadMeta(first.id);
+        }
+      } else if (!keys.some((k) => k.id === forKeyId && k.status === 1)) {
+        setKeyId(0);
+        return loadMeta(0);
+      }
       // 切密钥后模型集合会变：当前模型不在新集合里就自动换到第一个可用模型
       setSession((prev) => {
         if (!prev) return prev;
@@ -1206,7 +1224,7 @@ export default function ChatPage() {
                   setSelected(new Set());
                 }}
               >
-                <CheckOutlined />
+                <SelectOutlined />
               </button>
             ) : null
           }
@@ -1373,8 +1391,8 @@ export default function ChatPage() {
           settings={effective}
           tools={meta?.tools || []}
           modelCaps={curModel}
-          disabled={busy || !session}
-          keys={meta?.keys || []}
+          disabled={busy || !session || needKey}
+          keys={usableKeys}
           keyId={keyId}
           onKey={(id) => {
             // 切密钥 = 换一套路由身份：可用模型会变，重新拉 meta 并校正当前模型
@@ -1401,9 +1419,26 @@ export default function ChatPage() {
             </Notice>
           </div>
         ) : null}
-        {!metaError && meta && !models.length ? (
+        {!metaError && meta && needKey ? (
           <div style={{ padding: "10px 16px" }}>
-            <Notice tone="warn" title="暂时没有可用模型">请联系管理员在渠道管理里启用至少一个渠道。</Notice>
+            <Notice
+              tone="warn"
+              title="请先创建并选择密钥"
+              actions={
+                <Button size="small" type="primary" onClick={() => navigate("/token")}>
+                  去创建密钥
+                </Button>
+              }
+            >
+              对话通过密钥路由：密钥绑定的分组决定可用模型、渠道与计费倍率（没有密钥时无法选择模型）。
+            </Notice>
+          </div>
+        ) : null}
+        {!metaError && meta && !needKey && !models.length ? (
+          <div style={{ padding: "10px 16px" }}>
+            <Notice tone="warn" title="当前密钥没有可用模型">
+              该密钥绑定的分组下没有可用渠道/模型，请让管理员检查「分组管理」与「渠道管理」。
+            </Notice>
           </div>
         ) : null}
 

@@ -84,10 +84,19 @@ function pushRecent(id, entry) {
 // 记录里保存的提示词/回复摘要上限（长对话只留开头，避免把列撑大）
 const clip = (text, max) => String(text ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 // 降智/通行证标记（仅订阅渠道会带）：d=本轮降智，st=注入了 292 通行证；k=来源(chat/test/auto)
+// u=发起本次调用的用户（管理端最近调用里显示头像+名字，点击复制邮箱）
 const flagsOf = (meta = {}) => ({
   ...(meta.degraded !== undefined ? { d: meta.degraded ? 1 : 0 } : {}),
   ...(meta.state !== undefined ? { st: meta.state ? 1 : 0 } : {}),
   ...(meta.kind ? { k: meta.kind } : {}),
+  ...(meta.user
+    ? {
+        u: {
+          n: clip(meta.user.display_name || meta.user.username, 40),
+          e: clip(meta.user.email, 80),
+        },
+      }
+    : {}),
 });
 
 /** 只记录一次调用结果（不累加 used_count；测试/检查等非生产调用用）。
@@ -235,12 +244,12 @@ export function channelRecent(channelId, rawRecentCalls) {
   return s.recent;
 }
 
-// 渠道是否属于某请求分组。
-// groupName 支持两种形态：
-//   · 纯名字（用户分组/历史数据，如 "vip"）→ 只按名字匹配
+// 渠道是否属于某请求分组（sub2api 语义：分组由管理员创建，未分组渠道 = 公共池）。
+//   · groupName 为空 / "default"（历史值）→ 只有「未分组」的渠道可用（公共池）
 //   · "type:name"（API Key 绑定的厂商分组）→ 先按厂商过滤，再按名字匹配
 export function channelInGroup(channel, groupName) {
-  if (!groupName) return true;
+  const groups = Array.isArray(channel?.groups) ? channel.groups : [];
+  if (!groupName) return groups.length === 0;
   let type = "";
   let name = String(groupName);
   const idx = name.indexOf(":");
@@ -248,13 +257,9 @@ export function channelInGroup(channel, groupName) {
     type = name.slice(0, idx);
     name = name.slice(idx + 1);
   }
+  if (name === "default") return groups.length === 0;
   if (type && String(channel?.type) !== type) return false;
-  const groups = Array.isArray(channel?.groups) ? channel.groups : [];
-  if (groups.includes(name)) return true;
-  if (String(channel?.group_name || "") === name) return true;
-  // 未绑定任何分组的渠道只服务默认池
-  if (!groups.length && name === "default") return true;
-  return false;
+  return groups.includes(name);
 }
 
 function parseModels(modelsStr) {
@@ -294,8 +299,7 @@ export function rowToChannel(r) {
   groups = (Array.isArray(groups) ? groups : [])
     .map((g) => String(g).trim())
     .filter(Boolean);
-  if (!groups.length) groups = [r.group_name || "default"];
-  // 接入方式：api / relay / 订阅 OAuth（codex、claude-oauth、antigravity）
+  // 未分组渠道 = 公共池（groups 为空数组）；group_name 仅作显示/兼容
   const rawMethod = String(other.method || "relay");
   const method = rawMethod === "api" || isOAuthMethod(rawMethod) ? rawMethod : "relay";
   // 最近调用记录：运行时已有则用运行时的（更新），否则从数据库行回填
@@ -308,7 +312,7 @@ export function rowToChannel(r) {
     base_url: r.base_url || "",
     api_key: r.api_key || "",
     models: r.models || "",
-    group_name: r.group_name || "default",
+    group_name: r.group_name || "",
     groups,
     status: r.status,
     priority: Number(r.priority) || 0,

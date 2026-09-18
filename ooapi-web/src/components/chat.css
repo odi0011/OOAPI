@@ -411,6 +411,11 @@
 .bui-orch-menu.is-tools { min-width: 320px; }
 .bui-orch-menu .bui-upmenu-row.is-model { height: 34px; }
 .bui-orch-menu .bui-upmenu-row.is-on .nm { font-weight: 650; }
+/* 智能体：名称 + 说明两行展示（原名与说明挤在一行会被截断，且看不出编排差异） */
+.bui-orch-menu.is-agent { min-width: 300px; }
+.bui-orch-menu.is-agent .bui-upmenu-row.is-model { height: auto; min-height: 40px; padding: 6px 8px; }
+.bui-orch-menu.is-agent .bui-upmenu-row .nm { flex-shrink: 0; }
+.bui-orch-menu.is-agent .bui-upmenu-row .ds { min-width: 0; color: var(--ink-3); font-size: 11.5px; }
 .bui-orch-tool {
   display: flex;
   align-items: center;

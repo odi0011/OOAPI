@@ -380,7 +380,8 @@ router.post(
       thinking: thinkingOverride,
       search: wantSearch,
       images,
-      groupName: token.group_name || user.group_name,
+      groupName: token.group_name || null,
+      user,
       signal: clientCtrl.signal,
       onDelta: (t) => {
         partialOut += t;

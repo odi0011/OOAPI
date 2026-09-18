@@ -58,6 +58,7 @@ export async function runCompletion({
   groupName = null,
   excludeChannelIds = null,
   onChannelTry,
+  user = null,
 }) {
   const tried = new Set(excludeChannelIds instanceof Set ? excludeChannelIds : []);
   // 渠道声明的是真实模型名：先把兼容别名归一化再匹配，
@@ -144,6 +145,8 @@ export async function runCompletion({
         degraded: result.rotateNext ? 1 : 0,
         state: result.stateUsed === undefined ? undefined : result.stateUsed ? 1 : 0,
         kind: "chat",
+        // 最近调用里显示调用方（管理端头像+名字，点击复制邮箱）
+        user,
       });
       await persistProfile(channel, result);
       // codex-state-kit：命中「思考截断/降智」指纹时内容照常返回，但给渠道一个短冷却，
@@ -188,7 +191,7 @@ export async function runCompletion({
             : code === "CHANNEL_AUTH_EXPIRED"
               ? 21600
               : 300;
-      await markChannelError(channel, lastError.message, cooldown, { prompt, reply: lastError.message });
+      await markChannelError(channel, lastError.message, cooldown, { prompt, reply: lastError.message, user });
       console.warn(`[execute] 渠道「${channel.name}」失败（${code}），切换下一渠道：${lastError.message}`);
     } finally {
       if (signal) signal.removeEventListener("abort", onOuterAbort);
