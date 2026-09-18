@@ -821,3 +821,26 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   可识别完整 URL、纯 code、URL 编码三种粘贴形态；未配置 OAuth 客户端时给出配置指引并保留「粘贴凭据」老路径。
   自检：7 项登录逻辑用例全绿（是否支持/授权地址参数/三种粘贴形态解析/缺 refresh_token 拒绝/正常换取/state 校验/未配置提示）；
   改动文件 `node --check` 通过；前端 `npm run build` 通过。 |
+| 2026-09-18 | **第 24 批（渠道添加体验 + 最近调用清洗 + 登录抓取升级）**（线上 `2618597`）：
+  · **最近调用清洗**：网页版多轮 prompt 的 ChatML 角色标记（`<｜User｜>`/`<｜Assistant｜>`/`<｜end▁of▁sentence｜>`）
+  在**存储侧**（`router.js clip()`）与**展示侧**（前端 `cleanSummary()`，覆盖老数据）统一剥除。
+  · **来源 tag / 用户名缺失根因**：降智轮换记录（`execute.js` `markChannelError` 未带 meta）、换渠道失败记录（无 `kind`）、
+  harness 检索工具内层调用（未传 `user`）三处补齐；前端对 `chat`/无来源记录增加「对话 / 其他」兜底 chip。
+  · **用户名省略**：统计弹窗来源列固定 84px，用户名只显示前 2 字 + `…`（完整名字/邮箱放悬浮提示，点击复制不变）。
+  · **添加渠道弹窗**：底部按钮统一为「添加」（不再叫「登录并添加/创建渠道」）；登录变成表单内的独立操作按钮。
+  · **浏览器登录（GLM/豆包/通义）**：relay 配置补 `entryUrl`，新增 onboarding profile 机制 ——
+  `capture/start` 在共享 `vendor-onboarding` profile 里打开登录页，登录完成后 `capture` 保留 profile，
+  提交时 `copyProfile()` 复制给新渠道再 `verify`；省掉「先建渠道再回列表登录」的来回。
+  · **OAuth 一键登录（gemini/openai/anthropic）**：`oauth-login.js` 扩展三家配置并支持 **PKCE(S256)**；
+  capture 流程在服务器浏览器里打开官方授权页，检测到 localhost 回调后自动换 token 并回填凭据 JSON；
+  手动「打开授权页 + 粘贴回调」路径保留；Grok 为 device-code，暂只支持粘贴/导入。
+  · **凭据录入增强**：订阅表单内新增**导入凭据文件**（auth.json / CPA / sub2api 导出，自动取 credentials 对象）、
+  Access Token / Refresh Token 直填；**RT-only 导入会自动调适配器刷新换 AT** 再落库；
+  顶部批量导入支持多文件/目录一次拼接。
+  · **弹窗裁剪修复**：body 由 `overflow:hidden` 改为整体滚动、厂商列表不再内部裁剪焦点环、右栏高度约束统一、
+  添加弹窗内恢复显示字段说明（extra）。
+  验证：线上部署 `2618597`，无头浏览器实测 —— 统计弹窗最近调用正常（`定时` chip、提示词已无 `<｜User｜>`）、
+  GLM 登录弹窗真实打开 chat.z.ai、OpenAI 一键登录打开 auth.openai.com（PKCE 参数被接受）、
+  Anthropic 打开 claude.ai 授权页；Python 无，JS 控制台除 2 条 antd 既有告警外 0 错误。
+  待办：Google 一键登录需在服务器 `.env` 配置 `GOOGLE_OAUTH_CLIENT_ID/SECRET`（未配置时有明确提示）；
+  Grok device-code 交互式登录未实现（粘贴/导入可用）。 |
