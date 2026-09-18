@@ -68,6 +68,20 @@ function parseOther(row) {
   }
 }
 
+// 账号稳定标识（任一相同即视为同一账号）：不同来源可能只带其中一部分字段，
+// 只比较「第一个非空」会漏判重复 —— 两条渠道共享同一个 refresh_token 会互相刷废。
+const identityKeysOf = (o = {}) =>
+  [o.account_id, o.account_uuid, o.email, o.sub, o.project_id]
+    .map((x) => String(x || "").trim().toLowerCase())
+    .filter(Boolean);
+
+function isSameAccount(a, b) {
+  const x = identityKeysOf(a);
+  if (!x.length) return false;
+  const y = new Set(identityKeysOf(b));
+  return x.some((k) => y.has(k));
+}
+
 function mask(s, head = 8, tail = 4) {
   const v = String(s || "");
   if (v.length <= head + tail) return v ? "****" : "";
@@ -943,7 +957,8 @@ router.post(
     // 按请求里的 method 找该厂商的订阅方式（不写死 antigravity，gemini/openai/anthropic 都走这里）
     const methodCfg =
       (method && getMethod(type, String(method))) || (provider.methods || []).find((m) => isOAuthMethod(m.key));
-    if (!methodCfg?.oauth) return fail(res, `${provider.name} 不支持订阅登录`);
+    // 注意：raw 配置上没有 oauth 字段（那是 publicProviders 下发时才生成的），这里要按方法名判断
+    if (!methodCfg || !isOAuthMethod(methodCfg.key)) return fail(res, `${provider.name} 不支持订阅登录`);
     const adapterKey = methodCfg.adapter || methodCfg.key;
     let adapter;
     try {
@@ -994,21 +1009,12 @@ router.post(
       return ok(res, { id: targetId, name: displayName, account: accountLabel }, "登录成功，凭据已更新");
     }
 
-    // 去重与 /login 同口径：优先稳定账号标识（access_token 每次登录都变，拿它当键会漏检重复）
-    const stableKey = other.account_id || other.account_uuid || other.email || other.project_id || "";
+    // 去重与 /login 同口径：按账号标识集合判重（access_token 每次登录都变，拿它当键会漏检重复）
     let existId = 0;
-    if (stableKey) {
-      const [rows] = await pool.query("SELECT id, other FROM channels WHERE type = ?", [type]);
-      const dup = rows.find((r) => {
-        try {
-          const o = JSON.parse(r.other || "{}");
-          return (o.account_id || o.account_uuid || o.email || o.project_id) === stableKey;
-        } catch {
-          return false;
-        }
-      });
-      if (dup) existId = dup.id;
-    } else {
+    const [rows] = await pool.query("SELECT id, other FROM channels WHERE type = ?", [type]);
+    const dup = rows.find((r) => isSameAccount(parseOther(r), other));
+    if (dup) existId = dup.id;
+    else {
       const [exist] = await pool.query("SELECT id FROM channels WHERE type = ? AND api_key = ?", [type, token]);
       if (exist.length) existId = exist[0].id;
     }
@@ -1116,12 +1122,25 @@ router.post(
             const normalized = { ...credObj, access_token: "", refresh_token: rt };
             let fresh;
             try {
-              fresh = await adapter.refreshAuth({ id: 0, name: "import", type, other: normalized }, { force: true });
+              // 临时渠道 id 必须唯一：withRefreshLock 按 id 加锁，共用一个 id 会把不同账号的
+              // 并发导入刷新合并成同一次请求（access_token 串号）。负数 id 落库时不命中任何行。
+              const tempId = -Date.now() - Math.floor(Math.random() * 1000) - 1;
+              fresh = await adapter.refreshAuth({ id: tempId, name: "import", type, other: normalized }, { force: true });
             } catch (e) {
               return fail(res, `刷新令牌失败：${e.message}`, 400);
             }
             if (!fresh?.access_token) return fail(res, "刷新令牌没有返回 access_token，请重新登录获取完整凭据", 400);
-            authInput = JSON.stringify({ ...normalized, ...fresh, access_token: fresh.access_token });
+            // 刷新可能轮换 refresh_token：结果要覆盖旧的 camelCase 字段，
+            // 否则 claude 之类「camelCase 优先」的解析器会拿旧值覆盖新 RT，下次刷新直接失效
+            const merged = {
+              ...normalized,
+              ...fresh,
+              access_token: fresh.access_token,
+              refresh_token: fresh.refresh_token || rt,
+            };
+            delete merged.accessToken;
+            delete merged.refreshToken;
+            authInput = JSON.stringify(merged);
           }
         }
         const r = await adapter.importAuth({ ...rest, token: authInput, mode: "paste" });
@@ -1285,19 +1304,9 @@ router.post(
       if (isOAuthMethod(methodKey)) {
         // OAuth 渠道按稳定账号标识去重：access_token 会轮换，不能拿它当唯一键，
         // 否则同一账号二次导入检不出重复，两条渠道共享 refresh_token 会互相刷废
-        const stableKey = other.account_id || other.account_uuid || other.email || other.project_id || "";
-        if (stableKey) {
-          const [rows] = await pool.query("SELECT id, other FROM channels WHERE type = ?", [type]);
-          const dup = rows.find((r) => {
-            try {
-              const o = JSON.parse(r.other || "{}");
-              return (o.account_id || o.account_uuid || o.email || o.project_id) === stableKey;
-            } catch {
-              return false;
-            }
-          });
-          if (dup) return fail(res, "该账号已存在（凭据重复）");
-        }
+        const [rows] = await pool.query("SELECT id, other FROM channels WHERE type = ?", [type]);
+        const dup = rows.find((r) => isSameAccount(parseOther(r), other));
+        if (dup) return fail(res, "该账号已存在（凭据重复）");
       } else {
         const [dup] = await pool.query("SELECT id FROM channels WHERE type = ? AND api_key = ? LIMIT 1", [type, token]);
         if (dup.length) return fail(res, "该账号已存在（登录态重复）");
@@ -1766,22 +1775,8 @@ router.post(
         const mCfg = getMethod(a.type, a.method) || {};
         const defaultModels = (mCfg.defaultModels || []).map((m) => m.id).join(",");
         const oauth = isOAuthMethod(a.method);
-        const stable = oauth
-          ? a.other.account_id || a.other.account_uuid || a.other.email || a.other.sub || a.other.project_id || ""
-          : "";
         const rows = await loadExisting(a.type);
-        const dup = rows.find((r) => {
-          if (oauth) {
-            if (!stable) return false;
-            try {
-              const o = JSON.parse(r.other || "{}");
-              return (o.account_id || o.account_uuid || o.email || o.sub || o.project_id) === stable;
-            } catch {
-              return false;
-            }
-          }
-          return r.api_key === a.token;
-        });
+        const dup = rows.find((r) => (oauth && isSameAccount(parseOther(r), a.other)) || r.api_key === a.token);
         if (dup) {
           skipped++;
           results.push({ name: a.name, ok: false, skipped: true, reason: "账号已存在（跳过）" });

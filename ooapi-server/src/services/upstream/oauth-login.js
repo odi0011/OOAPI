@@ -195,17 +195,21 @@ export async function exchangeCodeForCredential(type, pastedInput, expectedState
       code: "LOGIN_BAD_PARAMS",
     });
   }
-  // state 校验：只在用户回传了 state 时校验（有些用户只复制了 code 片段）
-  if (state && expectedState && state !== expectedState) {
+  // 必须是平台发起的登录会话：state 必填且能在 pending 命中（防 CSRF —— 别人的授权码不能绑进本平台）。
+  // 命中同时还校验厂商一致，避免把 A 厂商的登录上下文用于 B 厂商。
+  if (!expectedState) {
+    throw Object.assign(new Error("缺少 state：请回到表单点「一键登录 / 打开授权页」重新发起登录"), {
+      code: "LOGIN_BAD_PARAMS",
+    });
+  }
+  if (state && state !== expectedState) {
     throw Object.assign(new Error("state 不匹配，这次登录可能已过期或被篡改，请重新发起登录"), {
       code: "LOGIN_BAD_PARAMS",
     });
   }
-  // 取出本次登录的上下文（PKCE verifier / 回调地址）；带上 expectedState 时必须命中
-  const lookup = expectedState || state;
-  const hit = lookup ? consumeState(lookup) : null;
-  if (expectedState && !hit) {
-    throw Object.assign(new Error("这次登录已超时（超过 15 分钟），请重新点击「登录账号」"), {
+  const hit = consumeState(expectedState);
+  if (!hit || hit.type !== cfg.type) {
+    throw Object.assign(new Error("这次登录已超时或与当前厂商不匹配，请重新点击「登录」"), {
       code: "LOGIN_BAD_PARAMS",
     });
   }
