@@ -166,10 +166,24 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 > 以下为尚未完成的待办项。已修复的问题见「变更记录」。
 > 工作方式：每轮审查发现的问题先登记在此，修好后**删除对应条目**并写入变更记录。
 
-### 第 5 批审查发现（待处理）
+### 第 7 批审查发现（待处理）
 
-- [ ] **Agent 计费条件与部分输出的 `usage` 形态**（观察项）：本轮已改为按内容兜底 + 结构化 usage，
-  上线后观察计费是否与上游一致。
+- [ ] **`channel.js`/`log.js` 仍有 `Number()` 直通 SQL**（P1）：`Number("Infinity") || 0` 结果仍是
+  `Infinity`，mysql2 对 number 不加引号拼接 → `WHERE id = Infinity` 直接 500。
+  涉及 `channel.js`（body 的 id/priority/weight、批量作业、保留列表）、`log.js`（query.type）、
+  `token.js`（PUT 的 body id）。修法：统一 `Number.isSafeInteger` + 范围钳制。
+- [ ] **VARCHAR 溢出直接 500**（P1）：`channel.js` 多 Key `next.join("\n")` 写 `api_key VARCHAR(255)`
+  （约 3 个 Key 就超长）；`token.js` PUT 的 `name` 未限长；`channel` 的 `base_url/group_name`、
+  `user` 的 `display_name/email`、`setting`（TEXT 64KB）同理。修法：按列宽校验/截断或扩列。
+- [ ] **修改密码接口无限流**（P1）：`user.js` `/self/password` 只校验旧密码且无 `rateLimit`，
+  JWT 泄露后可无限撞库。修法：按用户加限流（如 5 次/分钟）。
+- [ ] **PoW 求解同步阻塞**（P2）：已加 difficulty 上限（1<<24），但 `wasm_solve`/预言机仍是同步调用，
+  大难度会卡住事件循环。彻底解决需 `worker_threads` 或时间片让出。
+- [ ] **更新器已知缺口**（P2）：迁移列表硬编码 `migrate2/3/5`（新增 `migrateN.mjs` 不会被执行）；
+  失败回滚只覆盖后端源码，不恢复前端 `WEB_ROOT`。
+- [ ] **Agent 多步跨渠道 usage 混合**（观察项）：成功步骤里 API 渠道（结构化 usage）与反代渠道
+  （usage=null）混用时，结构化部分会让 `splitTokens` 忽略估算，反代步骤的输入/输出仍可能少计。
+  修法：按每次 call 记录 `{prompt, output, usage}` 逐条结算后求和。
 - [ ] **审查方式可复用**：后续批次继续用「三路并行子代理（前端 / 后端路由 / 服务适配器）+ 人工核实」，
   发现的问题先登记在此节，修完删除并写入变更记录。
 
@@ -187,8 +201,8 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 - [ ] **`logout` 不撤销 JWT**：JWT 无状态设计的固有特性；如涉及高安全场景，需要 token 版本号/黑名单。
 - [ ] **DNS rebinding TOCTOU**：`assertPublicUrl` 解析与 fetch 之间理论上存在窗口，
   彻底修复需 IP 直连 + 自定义 lookup；当前风险面已收窄（外链图片、拉取模型均需管理员/用户显式触发）。
-- [ ] **`vision:true` 能力表**：GLM/Doubao/Qwen 渠道暂不支持图片，`channel-types` 中相关模型未标 vision，
-  浏览器适配器对图片请求会显式报 `VISION_NOT_SUPPORTED`（不再静默忽略）。
+- [ ] **反代图片上传未实现**：GLM/Kimi/豆包/通义适配器暂不支持图片（能力声明已统一为 `vision:false`，
+  不会再展示无效开关）；实现图片上传后再把对应模型改回 `vision:true`。
 
 ---
 
@@ -252,3 +266,15 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
   `fetchUpstreamModels` 改为 `redirect:"manual"` 逐跳 SSRF 校验；`token/user` 额度与过期时间加上限
   （防 BIGINT 越界 500）；前端 `ConsolePage/AdminChannelsPage` 硬编码色改 CSS 变量、
   创建令牌/新增渠道加提交防重入。文档：代理地址不再写入仓库（每台机器不同）。 |
+| 2026-09-18 | **第 7 批（复审+新问题）**：兼容别名归一（`kimi-latest`/`qwen-turbo`/`glm-4-flash`/
+  `deepseek-chat` 等按真实模型计费与匹配，此前落到默认档偏差 3~10 倍且别名请求 NO_CHANNEL）；
+  浏览器看门狗改为从「真正持有会话」起算（排队时间不再计入）；`migrate2` 设置项改 `INSERT IGNORE`
+  （不再覆盖管理员自定义）+ 老库 cookies 解析容错；网关非流式失败也按已产出部分计费；
+  `settle` 扣费后令牌更新改 best-effort（防 catch 再次结算导致双扣）；白名单过滤 `messages` 非对象元素
+  （防 TypeError 冷却全部渠道）+ 匿名大包先鉴权头预检再解析请求体；`thinking:null` 不再 500；
+  管理员不能改自己角色 + 保留最后一个启用管理员；`units_per_od` 固定 10000（前端只读、后端拒绝修改）；
+  GLM/Kimi/豆包/通义模型能力声明统一 `vision:false`（与适配器实现一致）+ PoW difficulty 上限；
+  Kimi 健康检查/拉模型加超时；Qwen 思考摘要按「段下标+偏移」差分；前端：`api.js` 默认 30s 超时
+  （更新 apply 关闭超时）、会话代际防「退出后被写回」、非法主题值归一化、dayjs 中文 locale、
+  ChatPage 复制降级/切模型重置搜索、Console curl 去尾斜杠、在线更新轮询清理与超时提示、
+  编辑渠道/调整额度/令牌启停删除等防重入。遗留项已登记到第 3 节「第 7 批审查发现」。 |
