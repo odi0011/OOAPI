@@ -634,6 +634,11 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
     正文字体 Inter → **Noto Sans SC**（本地打包 chinese-simplified+latin 400/500/700，移除 rsms.me 外链）。
   · **降智/过载透传**：codex 适配器三处（HTTP 非 2xx / SSE error / 健康检查）把上游实际响应拼进错误
     （`…：<上游原文>`）并附 `err.upstream`。 |
+| 2026-09-18 | **第 21 批线上验证**（`ea230e0`）：历史 default 清理 0 残留（渠道/用户/密钥）；
+  无密钥 `/chat/meta` 返回 0 模型，创建公共池 Key 后 12 个模型可选且 `/v1` 调用成功；
+  最近调用记录带 `u:{n,e}`（管理端显示用户标签，点击复制邮箱）；分组 Key 仅见 `gpt-5.5`，
+  调 `gpt-5.6-luna` 返回 503「分组限制了可用模型」；dist 产物含 Noto Sans SC 字体文件与
+  `icons/grok.svg`；测试 Key 与测试分组已清理。 |
 | 2026-09-18 | **第 20 批（分组体系按 sub2api 重构 + 两个线上 bug 修复）**：
   · **修复「刷新后最近调用丢失」**：列表接口 `rowToResp` 只读运行时内存态，服务重启后不回填
   `channels.recent_calls`；新增 `router.channelRecent(id, raw)`（运行时为空则从库回填并缓存）
