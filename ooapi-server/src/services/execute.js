@@ -137,7 +137,10 @@ export async function runCompletion({
         }),
       ]).finally(() => clearTimeout(hardTimer));
 
-      await markChannelOk(channel, Date.now() - started);
+      await markChannelOk(channel, Date.now() - started, {
+        prompt,
+        reply: result.content || result.reasoning || "",
+      });
       await persistProfile(channel, result);
       // codex-state-kit：命中「思考截断/降智」指纹时内容照常返回，但给渠道一个短冷却，
       // 让后续请求优先换号（避免连续拿到降智/过载响应）。
@@ -181,7 +184,7 @@ export async function runCompletion({
             : code === "CHANNEL_AUTH_EXPIRED"
               ? 21600
               : 300;
-      await markChannelError(channel, lastError.message, cooldown);
+      await markChannelError(channel, lastError.message, cooldown, { prompt, reply: lastError.message });
       console.warn(`[execute] 渠道「${channel.name}」失败（${code}），切换下一渠道：${lastError.message}`);
     } finally {
       if (signal) signal.removeEventListener("abort", onOuterAbort);

@@ -1349,6 +1349,37 @@ h1, h2, h3, h4 {
   filter: brightness(1.1) saturate(1.1);
 }
 
+/* 小绿条悬浮 tip：提示词 / 回复摘要（最多 4 行） */
+.oo-uptime-tip {
+  max-width: 360px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.oo-uptime-tip-head {
+  opacity: 0.85;
+  margin-bottom: 6px;
+}
+
+.oo-uptime-tip-row + .oo-uptime-tip-row {
+  margin-top: 6px;
+}
+
+.oo-uptime-tip-label {
+  display: block;
+  opacity: 0.65;
+  margin-bottom: 2px;
+}
+
+.oo-tip-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
 /* 渠道宫格形态 */
 .oo-channel-grid {
   display: grid;

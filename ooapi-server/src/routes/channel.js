@@ -896,15 +896,21 @@ router.post(
         now(),
         id,
       ]);
-      // 测试结果也计入「最近调用」小绿条（成功）
-      await recordChannelCall(id, true, ms);
+      // 测试结果也计入「最近调用」小绿条（成功；tip 里带测试提示词与结论）
+      await recordChannelCall(id, true, ms, "", {
+        prompt: "(渠道测试) ping",
+        reply: `(健康检查通过 ${ms}ms)`,
+      });
       resetChannelState(id);
       await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `测试渠道「${row.name}」通过（${ms}ms）` });
       return ok(res, { success: true, time: ms }, `渠道可用（${ms}ms）`);
     } catch (e) {
       await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), id]);
-      // 测试失败计入「最近调用」小绿条（失败 → 橙色）
-      await recordChannelCall(id, false, Date.now() - startedAt);
+      // 测试失败计入「最近调用」小绿条（失败 → 橙色；tip 里带失败原因）
+      await recordChannelCall(id, false, Date.now() - startedAt, e.message, {
+        prompt: "(渠道测试) ping",
+        reply: e.message,
+      });
       await writeLog({ user: req.user, type: LOG_TYPE.ERROR, content: `测试渠道「${row.name}」失败：${e.message}` });
       return ok(res, { success: false, message: e.message, code: e.code }, `测试失败：${e.message}`);
     }

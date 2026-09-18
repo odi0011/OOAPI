@@ -16,6 +16,30 @@ import { VendorIcon, ModelLabel } from "../components/VendorIcon";
 
 const { Text } = Typography;
 
+// 小绿条悬浮 tip：时间/结果/耗时 + 本次的提示词与回复摘要
+function UptimeTip({ c }) {
+  return (
+    <div className="oo-uptime-tip">
+      <div className="oo-uptime-tip-head">
+        {fmtDate(c.t, "MM-DD HH:mm")} · {c.ok ? "成功" : "失败"}
+        {c.ms ? ` · ${c.ms}ms` : ""}
+      </div>
+      {c.p ? (
+        <div className="oo-uptime-tip-row">
+          <span className="oo-uptime-tip-label">提示词</span>
+          <div className="oo-tip-snippet">{c.p}</div>
+        </div>
+      ) : null}
+      {c.r ? (
+        <div className="oo-uptime-tip-row">
+          <span className="oo-uptime-tip-label">{c.ok ? "回复" : "错误"}</span>
+          <div className="oo-tip-snippet">{c.r}</div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // 最近调用记录：小竖条（绿=成功 / 橙=失败 / 灰=无记录），悬浮显示时间与耗时。
 // 样式参考 aceternity 的 uptime bars：只保留小绿条与 hover 放大效果。
 function UptimeBars({ calls = [], count = 20 }) {
@@ -29,10 +53,7 @@ function UptimeBars({ calls = [], count = 20 }) {
     <span className="oo-uptime" aria-label={`最近 ${list.length} 次调用`}>
       {bars.map((c, i) =>
         c ? (
-          <Tooltip
-            key={i}
-            title={`${fmtDate(c.t, "MM-DD HH:mm")} · ${c.ok ? "成功" : "失败"}${c.ms ? ` · ${c.ms}ms` : ""}`}
-          >
+          <Tooltip key={i} title={<UptimeTip c={c} />}>
             <i className={`oo-uptime-bar ${c.ok ? "is-ok" : "is-fail"}`} />
           </Tooltip>
         ) : (

@@ -80,9 +80,18 @@ function pushRecent(id, entry) {
   return JSON.stringify(s.recent);
 }
 
+// 记录里保存的提示词/回复摘要上限（长对话只留开头，避免把列撑大）
+const clip = (text, max) => String(text ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+
 /** 只记录一次调用结果（不累加 used_count；测试/检查等非生产调用用） */
-export async function recordChannelCall(channelId, ok, ms, error = "") {
-  const recentJson = pushRecent(channelId, { t: now(), ok: ok ? 1 : 0, ms: Math.max(0, Math.round(Number(ms) || 0)) });
+export async function recordChannelCall(channelId, ok, ms, error = "", meta = {}) {
+  const recentJson = pushRecent(channelId, {
+    t: now(),
+    ok: ok ? 1 : 0,
+    ms: Math.max(0, Math.round(Number(ms) || 0)),
+    p: clip(meta.prompt, 160),
+    r: clip(meta.reply || error, 240),
+  });
   await pool
     .query("UPDATE channels SET recent_calls = ? WHERE id = ?", [recentJson, Number(channelId)])
     .catch(() => {});
@@ -101,25 +110,37 @@ export function isCoolingDown(channel) {
 // 标记渠道运行异常：只做运行时冷却，不改数据库 status。
 // 原因：status 是管理员开关（手动启停/测试结果），运行期错误若直接写 status=3，
 // 会导致 token 更新后渠道仍被永久排除在调度外。冷却结束后自动恢复调度。
-export async function markChannelError(channel, message, cooldownSec = 300) {
+export async function markChannelError(channel, message, cooldownSec = 300, meta = {}) {
   const s = st(channel.id);
   s.cooldownUntil = Date.now() + cooldownSec * 1000;
   s.lastError = String(message).slice(0, 400);
   // 最近调用记录与 last_error 一起写回（只记录错误信息，便于管理端展示"异常"原因）
-  const recentJson = pushRecent(channel.id, { t: now(), ok: 0, ms: 0 });
+  const recentJson = pushRecent(channel.id, {
+    t: now(),
+    ok: 0,
+    ms: 0,
+    p: clip(meta.prompt, 160),
+    r: clip(meta.reply || message, 240),
+  });
   await pool
     .query("UPDATE channels SET last_error = ?, recent_calls = ? WHERE id = ?", [s.lastError, recentJson, channel.id])
     .catch(() => {});
 }
 
-export async function markChannelOk(channel, elapsedMs) {
+export async function markChannelOk(channel, elapsedMs, meta = {}) {
   const s = st(channel.id);
   s.cooldownUntil = 0;
   s.lastError = "";
   // 只更新运行指标，不改 status —— status 是管理员开关（手动启停），
   // 写 status=1 会复活管理员刚禁用的渠道。
   // used_count/last_used_time 供管理端展示渠道使用情况（此前从未累加）。
-  const recentJson = pushRecent(channel.id, { t: now(), ok: 1, ms: Math.max(0, Math.round(Number(elapsedMs) || 0)) });
+  const recentJson = pushRecent(channel.id, {
+    t: now(),
+    ok: 1,
+    ms: Math.max(0, Math.round(Number(elapsedMs) || 0)),
+    p: clip(meta.prompt, 160),
+    r: clip(meta.reply, 240),
+  });
   await pool
     .query(
       "UPDATE channels SET response_time = ?, tested_time = ?, last_error = '', used_count = used_count + 1, last_used_time = ?, recent_calls = ? WHERE id = ?",
