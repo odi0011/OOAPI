@@ -11,7 +11,7 @@ import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now, safeJSONParse } from "../utils.js";
 import { authRequired, preAuthJwt } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
-import { getPrice, computeCost, splitTokens, estimateTokens, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
+import { getPrice, computeCost, splitTokens, estimateTokens, loadPrices, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { groupConfigOf, applyGroupRate } from "../services/group-rate.js";
 import { allPublicModels, resolveAliasSync } from "../services/models.js";
 import { rowToChannel, channelInGroup } from "../services/router.js";
@@ -139,15 +139,15 @@ async function availableModels(user, keyId = 0) {
     return limits.some((l) => id === l || id.startsWith(l));
   };
 
-  const [prices] = await pool.query("SELECT model, input_price, output_price, cache_price FROM model_prices");
-  const priceMap = new Map(prices.map((p) => [p.model, p]));
+  // 复用带 TTL 的价格缓存（此前这里每次 /meta 都全表查一次 model_prices）
+  const priceMap = await loadPrices();
 
   return (await allPublicModels())
     .filter((m) => supported.size === 0 || supported.has(m.id))
     .filter((m) => groupAllows(m.id))
     .filter((m) => keyAllows(m.id))
     .map((m) => {
-      const p = priceMap.get(m.id);
+      const p = priceMap.get(String(m.id).toLowerCase());
       return {
         id: m.id,
         label: m.label,

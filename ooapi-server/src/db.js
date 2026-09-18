@@ -284,6 +284,24 @@ async function ensureColumns() {
   }
 }
 
+// 索引迁移：老库补索引，热路径（渠道选择/日志聚合）在大表上不再全表扫
+const INDEX_MIGRATIONS = [
+  "CREATE INDEX idx_channels_status_priority ON channels (status, priority)",
+  "CREATE INDEX idx_logs_type_created ON logs (type, created_at)",
+  "CREATE INDEX idx_logs_user_type_created ON logs (user_id, type, created_at)",
+];
+
+async function ensureIndexes() {
+  for (const ddl of INDEX_MIGRATIONS) {
+    try {
+      await pool.query(ddl);
+      console.log(`[migrate] 索引已创建：${ddl.match(/idx_\w+/)?.[0] || ddl}`);
+    } catch (e) {
+      if (e?.code !== "ER_DUP_KEYNAME") console.warn(`[migrate] 索引创建失败（忽略）：${e.message}`);
+    }
+  }
+}
+
 // 分组数据迁移（幂等）：
 //   · 老库 channels.groups 为空 → 用 group_name 回填（group_name 为 default 时视为未分组）
 //   · **default 不再是分组**：公共池用「空数组」表达，渠道/用户/密钥上的历史 default 一并清理
@@ -330,6 +348,7 @@ export async function migrate() {
   for (const sql of TABLES) await pool.query(sql);
   const hadGroupRate = await columnExists("channel_groups", "rate");
   await ensureColumns();
+  await ensureIndexes();
   await ensureColumnTypes();
   await ensureGroups();
   if (!hadGroupRate) {

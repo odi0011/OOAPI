@@ -246,6 +246,7 @@ export function withChannelLimit(channel, taskFn) {
 }
 
 export function resetChannelState(channelId) {
+  invalidateChannelCache();
   const s = state.get(Number(channelId));
   if (s) {
     s.cooldownUntil = 0;
@@ -258,6 +259,7 @@ export function resetChannelState(channelId) {
  * 避免 state/chains 长期只增不减造成内存泄漏。
  */
 export function forgetChannel(channelId) {
+  invalidateChannelCache();
   state.delete(Number(channelId));
   chains.delete(Number(channelId));
   forgetRecentWrites(channelId);
@@ -408,6 +410,15 @@ export async function explainNoChannel({ model, groupName = null } = {}) {
 }
 
 //          而不是永远打在第一个账号上（那会让单账号迅速触发风控）。
+// 渠道列表在热路径被频繁读取（每次模型调用、agent 每一步、每次工具调用），
+// 加短 TTL 缓存；渠道变更（resetChannelState/forgetChannel）立即失效，最坏只落后 TTL。
+let channelsCache = null;
+let channelsCacheAt = 0;
+const CHANNELS_TTL_MS = 5000;
+export function invalidateChannelCache() {
+  channelsCacheAt = 0;
+}
+
 export async function selectChannels({ model, excludeIds = null, groupName = null } = {}) {
   // 分组模型限制：分组配置了「支持的模型」时，请求模型不在列表内直接无渠道
   if (groupName) {
@@ -422,9 +433,14 @@ export async function selectChannels({ model, excludeIds = null, groupName = nul
       if (!allowed) return [];
     }
   }
-  const [rows] = await pool.query(
-    "SELECT * FROM channels WHERE status = 1 ORDER BY priority DESC, id ASC"
-  );
+  if (!channelsCache || Date.now() - channelsCacheAt > CHANNELS_TTL_MS) {
+    const [rows] = await pool.query(
+      "SELECT * FROM channels WHERE status = 1 ORDER BY priority DESC, id ASC"
+    );
+    channelsCache = rows;
+    channelsCacheAt = Date.now();
+  }
+  const rows = channelsCache;
   const excluded = excludeIds instanceof Set ? excludeIds : new Set();
 
   const usable = rows

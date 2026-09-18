@@ -73,10 +73,8 @@ router.get(
   "/data/self",
   authRequired,
   asyncHandler(async (req, res) => {
-    const [[sum]] = await pool.query(
-      "SELECT COALESCE(SUM(CASE WHEN type = 2 THEN quota ELSE 0 END),0) AS consume FROM logs WHERE user_id = ?",
-      [req.user.id]
-    );
+    // 累计消费直接取 users.used_quota（与计费同源），不再全量扫该用户历史日志
+    const consume = Number(req.user.used_quota) || 0;
     // 近 30 天按天聚合消费
     const [daily] = await pool.query(
       `SELECT FROM_UNIXTIME(created_at, '%Y-%m-%d') AS day,
@@ -91,7 +89,7 @@ router.get(
       quota: Number(req.user.quota),
       used_quota: Number(req.user.used_quota),
       request_count: req.user.request_count,
-      consume_in_logs: Number(sum.consume),
+      consume_in_logs: consume,
       daily,
     });
   })

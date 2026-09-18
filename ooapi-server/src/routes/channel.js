@@ -26,7 +26,7 @@ import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod } from "../services/channel-types.js";
 import { buildLoginUrl, exchangeCodeForCredential, interactiveLoginInfo, supportsInteractiveLogin } from "../services/upstream/oauth-login.js";
-import { getAdapter, resetChannelState, forgetChannel, channelRuntimeState, channelRecent, rowToChannel, recordChannelCall } from "../services/router.js";
+import { getAdapter, resetChannelState, forgetChannel, invalidateChannelCache, channelRuntimeState, channelRecent, rowToChannel, recordChannelCall } from "../services/router.js";
 import { clearGroupConfigCache } from "../services/group-rate.js";
 import {
   isReady as browserReady,
@@ -587,8 +587,9 @@ router.get(
   asyncHandler(async (req, res) => {
     const rows = await listRows();
     const items = rows.map((r) => rowToResp(r));
+    // 站点累计用量直接取 users 累计列：logs 全表 SUM 会随日志量线性变慢，口径相同
     const [[usage]] = await pool.query(
-      "SELECT COUNT(*) AS calls, COALESCE(SUM(quota),0) AS quota FROM logs WHERE type = 2"
+      "SELECT COALESCE(SUM(request_count),0) AS calls, COALESCE(SUM(used_quota),0) AS quota FROM users"
     );
     return ok(res, {
       total: items.length,
@@ -1325,6 +1326,7 @@ router.post(
         ]
       );
       insertId = ret.insertId;
+      invalidateChannelCache();
       if (mode === "browser" && String(rest.profileFrom || "").startsWith("onboarding")) {
         const src = String(rest.profileFrom || "");
         if (!/^onboarding-[0-9a-f]{16}$/.test(src)) {
@@ -1377,6 +1379,7 @@ router.post(
         ]
       );
       insertId = ret.insertId;
+      invalidateChannelCache();
     }
 
     // 订阅 OAuth：入池前做一次凭据健康检查（失败禁用而不是带着坏凭据参与调度）
@@ -1465,6 +1468,7 @@ router.post(
     }
 
     const okCount = results.filter((r) => r.ok).length;
+    if (okCount) invalidateChannelCache();
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `批量导入 ${provider.name}：成功 ${okCount} / ${results.length}` });
     return ok(res, { results, ok: okCount, total: results.length }, `成功 ${okCount} 个，失败 ${results.length - okCount} 个`);
   })
@@ -1528,6 +1532,7 @@ router.post(
         now(),
       ]
     );
+    invalidateChannelCache();
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `新增 ${provider.name} 渠道「${name}」（官方 API）` });
     const all = await listRows();
     return ok(res, rowToResp(all.find((r) => r.id === ret.insertId)), "渠道已创建");
@@ -1851,6 +1856,7 @@ router.post(
         results.push({ name: a.name, ok: false, reason: e.message });
       }
     }
+    if (created) invalidateChannelCache();
     await writeLog({
       user: req.user,
       type: LOG_TYPE.MANAGE,
