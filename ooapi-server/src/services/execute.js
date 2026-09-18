@@ -100,20 +100,27 @@ export async function runCompletion({
     try {
       const adapter = await getAdapter(channel);
       let hardTimer;
+      let backstopTimer;
       let callStarted = 0;
       let armDeadline = () => {};
-      // 硬截止只覆盖真正的上游调用：计时在 withChannelLimit 回调里才启动（排到队才计时），
-      // 否则排队等限速的时间也算进耗时（黄条失真），甚至请求还没发出去就先超时冷却渠道。
+      // 两段计时：
+      //   · hardTimer 只包住真正的上游调用（排队不算，避免黄条失真/没发请求就超时）；
+      //   · backstopTimer 覆盖「排队 + 调用」，防止同渠道前序任务悬挂导致本请求永远排不到队头。
       const deadline = new Promise((_, reject) => {
+        const timeoutError = () =>
+          Object.assign(new Error(`渠道「${channel.name}」响应超时（${timeoutMs}ms）`), { code: "CHANNEL_TIMEOUT" });
         armDeadline = () => {
           hardTimer = setTimeout(() => {
             timedOut = true;
             attemptCtrl.abort();
-            reject(
-              Object.assign(new Error(`渠道「${channel.name}」响应超时（${timeoutMs}ms）`), { code: "CHANNEL_TIMEOUT" })
-            );
+            reject(timeoutError());
           }, timeoutMs);
         };
+        backstopTimer = setTimeout(() => {
+          timedOut = true;
+          attemptCtrl.abort();
+          reject(timeoutError());
+        }, timeoutMs + 5 * 60 * 1000);
       });
       const result = await Promise.race([
         withChannelLimit(channel, () => {
@@ -142,7 +149,10 @@ export async function runCompletion({
           });
         }),
         deadline,
-      ]).finally(() => clearTimeout(hardTimer));
+      ]).finally(() => {
+        clearTimeout(hardTimer);
+        clearTimeout(backstopTimer);
+      });
 
       await markChannelOk(channel, Date.now() - (callStarted || started), {
         prompt,

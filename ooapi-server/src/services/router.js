@@ -87,11 +87,19 @@ const recentWrites = new Map();
 function chainRecentWrite(channelId, fn) {
   const key = Number(channelId) || 0;
   const prev = recentWrites.get(key) || Promise.resolve();
-  const next = prev.then(fn, fn).finally(() => {
-    if (recentWrites.get(key) === next) recentWrites.delete(key);
+  // set 与比较必须用同一个 promise 对象（存 catch 后的尾链会让删除条件永远不成立）
+  const run = prev.then(fn, fn);
+  const tail = run.catch(() => {});
+  tail.finally(() => {
+    if (recentWrites.get(key) === tail) recentWrites.delete(key);
   });
-  recentWrites.set(key, next.catch(() => {}));
-  return next;
+  recentWrites.set(key, tail);
+  return run;
+}
+
+/** 删除渠道时清掉串行写回表的条目，避免 Map 常驻累积 */
+export function forgetRecentWrites(channelId) {
+  recentWrites.delete(Number(channelId) || 0);
 }
 
 // 记录里保存的提示词/回复摘要上限（长对话只留开头，避免把列撑大）
@@ -252,6 +260,7 @@ export function resetChannelState(channelId) {
 export function forgetChannel(channelId) {
   state.delete(Number(channelId));
   chains.delete(Number(channelId));
+  forgetRecentWrites(channelId);
 }
 
 export function channelRuntimeState(channelId) {

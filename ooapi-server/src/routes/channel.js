@@ -68,18 +68,25 @@ function parseOther(row) {
   }
 }
 
-// 账号稳定标识（任一相同即视为同一账号）：不同来源可能只带其中一部分字段，
-// 只比较「第一个非空」会漏判重复 —— 两条渠道共享同一个 refresh_token 会互相刷废。
-const identityKeysOf = (o = {}) =>
-  [o.account_id, o.account_uuid, o.email, o.sub, o.project_id]
-    .map((x) => String(x || "").trim().toLowerCase())
-    .filter(Boolean);
-
+// 账号稳定标识判重：强标识按同字段比较；project_id 是弱标识（同项目多账号常见），
+// 只有双方都没有强标识时才认为同一账号 —— 否则不同邮箱会被误判成重复并覆盖凭据。
+const STRONG_ID_KEYS = ["account_id", "account_uuid", "email", "sub"];
 function isSameAccount(a, b) {
-  const x = identityKeysOf(a);
-  if (!x.length) return false;
-  const y = new Set(identityKeysOf(b));
-  return x.some((k) => y.has(k));
+  const strongOf = (o = {}) => {
+    const set = new Set();
+    for (const k of STRONG_ID_KEYS) {
+      const v = String(o?.[k] || "").trim().toLowerCase();
+      if (v) set.add(`${k}:${v}`);
+    }
+    return set;
+  };
+  const xa = strongOf(a);
+  const xb = strongOf(b);
+  for (const k of xa) if (xb.has(k)) return true;
+  if (xa.size || xb.size) return false;
+  const pa = String(a?.project_id || "").trim().toLowerCase();
+  const pb = String(b?.project_id || "").trim().toLowerCase();
+  return Boolean(pa) && pa === pb;
 }
 
 function mask(s, head = 8, tail = 4) {
@@ -732,7 +739,17 @@ function sweepCaptures() {
   }
 }
 // 会话过期回收不能只靠「下一次 start 时才扫」：没有任何后续请求时浏览器会一直挂着
-const captureSweeper = setInterval(sweepCaptures, 5 * 60 * 1000);
+const captureSweeper = setInterval(() => {
+  sweepCaptures();
+  // onboarding 临时 profile 兜底清理：提交成功会立即删，放弃/失败也不会永久残留
+  const cutoff = Date.now() - PENDING_PROFILE_TTL_MS;
+  for (const [channelId, info] of PENDING_PROFILES) {
+    if (info.at < cutoff) {
+      PENDING_PROFILES.delete(channelId);
+      removeProfile(info.vendor, channelId).catch(() => {});
+    }
+  }
+}, 5 * 60 * 1000);
 captureSweeper.unref?.();
 
 function captureOf(req) {
@@ -906,10 +923,15 @@ router.post(
       );
     }
 
-    // 浏览器 onboarding：登录态就在 profile 目录里，保留它，等提交时复制给渠道
+    // 浏览器 onboarding：登录态就在 profile 目录里，保留它，等提交时复制给渠道。
+// 抓取完成后 CAPTURES 条目会被删（sid 生命周期结束），这里把 profile 登记进
+// PENDING_PROFILES，交给 sweeper 兜底清理（放弃提交/重新登录都不会永久残留）。
+const PENDING_PROFILES = new Map(); // channelId -> { vendor, at }
+const PENDING_PROFILE_TTL_MS = 30 * 60 * 1000;
     if (c.kind === "browser") {
       CAPTURES.delete(sid);
       await browserClose(c.type, c.channelId).catch(() => {});
+      PENDING_PROFILES.set(c.channelId, { vendor: c.type, at: Date.now() });
       return ok(res, { browserReady: true, cookies: "", tokens: [] }, "已记录浏览器登录状态，请点「添加」保存渠道");
     }
 
@@ -933,6 +955,7 @@ router.post(
     const c = CAPTURES.get(sid);
     if (c) {
       CAPTURES.delete(sid);
+      PENDING_PROFILES.delete(c.channelId);
       await browserClose(c.type, c.channelId).catch(() => {});
       // 放弃登录：profile 直接清掉（完成登录后的提交走 /capture，不在清理范围）
       await removeProfile(c.type, c.channelId).catch(() => {});
@@ -1261,6 +1284,7 @@ router.post(
         if (!/^onboarding-[0-9a-f]{16}$/.test(src)) return fail(res, "浏览器登录态标识无效，请重新登录后再提交", 400);
         const copied = await copyProfile(type, src, String(targetId));
         if (!copied) return fail(res, "浏览器登录态已失效，请重新打开登录页登录后再提交", 400);
+        PENDING_PROFILES.delete(src);
         await removeProfile(type, src).catch(() => {});
       }
 
@@ -1312,6 +1336,7 @@ router.post(
           await pool.query("DELETE FROM channels WHERE id = ?", [insertId]).catch(() => {});
           return fail(res, "浏览器登录态已失效：请重新点「登录」完成登录后再提交", 400);
         }
+        PENDING_PROFILES.delete(src);
         await removeProfile(type, src).catch(() => {});
       }
       const [fresh] = await pool.query("SELECT * FROM channels WHERE id = ?", [insertId]);

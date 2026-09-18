@@ -149,7 +149,9 @@ async function bootstrap() {
   // 上次在线更新若被强杀（systemd 超时/OOM/手动 kill），会留下哨兵文件：
   // 源码可能处于半新半旧状态，必须在日志里显式告警，避免静默运行混合代码。
   try {
-    const sentinel = path.join(process.cwd(), ".update-in-progress");
+    // 路径必须与 updater.js 的 SERVER_ROOT 一致（这里 __dirname 是 src/，上一级即 ooapi-server/），
+    // 不能用 process.cwd()：WorkingDirectory 不当时会永远检测不到哨兵
+    const sentinel = path.resolve(__dirname, "..", ".update-in-progress");
     if (fs.existsSync(sentinel)) {
       const info = fs.readFileSync(sentinel, "utf8");
       console.error(
