@@ -315,7 +315,8 @@ function UpdateTab() {
     } catch (e) {
       // 重启可能中断本次响应，属正常情况
       message.warning(`更新已提交：${e.message}`);
-      timersRef.current.push(setTimeout(loadStamp, 8000));
+      // 组件已卸载时不能再创建定时器（cleanup 已经跑过，之后没人清）
+      if (aliveRef.current) timersRef.current.push(setTimeout(loadStamp, 8000));
     } finally {
       setApplying(false);
     }

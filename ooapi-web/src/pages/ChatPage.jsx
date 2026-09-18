@@ -434,10 +434,14 @@ export default function ChatPage() {
   const unavailable = !session || !curModel || needKey;
 
   /* ---------- 加载：元信息 + 会话列表 ---------- */
+  const metaGenRef = useRef(0);
   const loadMeta = useCallback(async (forKeyId = 0) => {
+    // 快速切换密钥会连发多次 meta：旧响应后到会把新密钥的模型/能力覆盖掉
+    const gen = ++metaGenRef.current;
     setMetaError("");
     try {
       const data = await chatApi.meta(forKeyId);
+      if (gen !== metaGenRef.current) return;
       setMeta(data);
       const keys = data.keys || [];
       // 对话必须通过密钥路由（分组 → 模型/渠道/倍率）：
@@ -486,15 +490,25 @@ export default function ChatPage() {
     [toast, view]
   );
 
+  /* 元信息只在挂载时加载一次；会话列表随视图变化；卸载时才中止流。
+     三者分开写：如果都挂在 [loadMeta, loadSessions] 的 effect 上，
+     切换「已归档/项目」视图会触发 cleanup，把正在接收的流误杀。 */
   useEffect(() => {
     loadMeta();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
     loadSessions();
-    // 卸载/离开页面时中止正在跑的流，避免回来后状态错乱
-    return () => {
+  }, [loadSessions]);
+
+  useEffect(
+    () => () => {
       genRef.current += 1;
       runningRef.current?.abort();
-    };
-  }, [loadMeta, loadSessions]);
+    },
+    []
+  );
 
   /* ---------- 打开会话 ---------- */
   const openSession = useCallback(
@@ -933,6 +947,9 @@ export default function ChatPage() {
   sendRef.current = send;
 
   const stop = useCallback(() => {
+    // 必须先通知服务端真正中止：断线不会中止后端运行，否则界面显示已停止、后台还在跑并计费
+    const sid = sessionRef.current?.id;
+    if (sid) chatApi.stop(sid).catch(() => {});
     runningRef.current?.abort();
     runningRef.current = null;
     setBusy(false);

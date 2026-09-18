@@ -44,6 +44,15 @@ function streamRequest(url, { method, body }, { onEvent, onDone, onError, token 
           data = j;
           msg = j?.message || j?.error?.message || msg;
         } catch { /* ignore */ }
+        // 403 且账号被禁用：与 401 同等处理（清登录态 + 广播），否则界面只会反复报错
+        if (res.status === 403 && /禁用/.test(msg)) {
+          setToken("");
+          try {
+            window.dispatchEvent(new CustomEvent("ooapi:unauthorized"));
+          } catch {
+            /* ignore */
+          }
+        }
         const err = new Error(msg);
         err.status = res.status;
         err.data = data;

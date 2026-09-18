@@ -70,8 +70,11 @@ async function request(method, path, { body, params, silent, timeoutMs = 30000 }
   }
 
   if (!res.ok || json?.success === false) {
+    const errMsg = json?.message || `请求失败（HTTP ${res.status}）`;
     // 401：清理登录态并广播，App 层统一跳转登录页
-    if (res.status === 401) {
+    // 403 且账号被禁用：与 401 同等处理，否则被禁用户会停在页面反复报错
+    const disabled = res.status === 403 && /禁用/.test(errMsg);
+    if (res.status === 401 || disabled) {
       setToken("");
       try {
         window.dispatchEvent(new CustomEvent("ooapi:unauthorized"));
@@ -79,7 +82,7 @@ async function request(method, path, { body, params, silent, timeoutMs = 30000 }
         /* ignore */
       }
     }
-    throw new ApiError(json?.message || `请求失败（HTTP ${res.status}）`, res.status, json?.data);
+    throw new ApiError(errMsg, res.status, json?.data);
   }
   return json?.data;
 }
