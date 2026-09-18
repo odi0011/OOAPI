@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, now, genApiKey, tokenToResponse, randomString } from "../utils.js";
+import { ok, fail, asyncHandler, now, genApiKey, tokenToResponse, randomString, idParam } from "../utils.js";
 import { authRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 
@@ -29,10 +29,9 @@ router.get(
 router.get(
   "/:id/key",
   asyncHandler(async (req, res) => {
-    const [rows] = await pool.query("SELECT * FROM tokens WHERE id = ? AND user_id = ?", [
-      Number(req.params.id),
-      req.user.id,
-    ]);
+    const id = idParam(req);
+    if (!id) return fail(res, "令牌不存在", 404);
+    const [rows] = await pool.query("SELECT * FROM tokens WHERE id = ? AND user_id = ?", [id, req.user.id]);
     if (!rows.length) return fail(res, "令牌不存在", 404);
     return ok(res, { key: rows[0].key_str });
   })
@@ -57,7 +56,7 @@ router.post(
     if (!Number.isFinite(remainVal) || remainVal < 0) return fail(res, "额度无效");
     if (!Number.isFinite(expiredVal)) return fail(res, "过期时间无效");
     const key = genApiKey();
-    await pool.query(
+    const [ins] = await pool.query(
       `INSERT INTO tokens (user_id, name, key_str, status, created_time, accessed_time, expired_time,
         remain_quota, unlimited_quota, used_quota, model_limits, group_name)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -76,10 +75,8 @@ router.post(
         group_name || "",
       ]
     );
-    const [rows] = await pool.query(
-      "SELECT * FROM tokens WHERE user_id = ? ORDER BY id DESC LIMIT 1",
-      [req.user.id]
-    );
+    // 用 insertId 精确回查：按 user_id ORDER BY id DESC 并发时会返回别人刚建的令牌（含完整 Key）
+    const [rows] = await pool.query("SELECT * FROM tokens WHERE id = ?", [ins.insertId]);
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `新建令牌「${rows[0].name}」` });
     return ok(res, tokenToResponse(rows[0]), "令牌创建成功");
   })
@@ -136,7 +133,8 @@ router.put(
 router.delete(
   "/:id",
   asyncHandler(async (req, res) => {
-    const token = Number(req.params.id);
+    const token = idParam(req);
+    if (!token) return fail(res, "令牌不存在", 404);
     const [ret] = await pool.query("DELETE FROM tokens WHERE id = ? AND user_id = ?", [token, req.user.id]);
     if (!ret.affectedRows) return fail(res, "令牌不存在", 404);
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `删除令牌 #${token}` });

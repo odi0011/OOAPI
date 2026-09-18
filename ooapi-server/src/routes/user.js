@@ -1,7 +1,7 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, now, safeJSONParse, userToResponse, pageParams } from "../utils.js";
+import { ok, fail, asyncHandler, now, safeJSONParse, userToResponse, pageParams, idParam } from "../utils.js";
 import { authRequired, adminRequired, signToken } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 
@@ -115,7 +115,8 @@ router.put(
   "/:id",
   adminRequired,
   asyncHandler(async (req, res) => {
-    const id = Number(req.params.id);
+    const id = idParam(req);
+    if (!id) return fail(res, "用户不存在", 404);
     const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
     const user = rows[0];
     if (!user) return fail(res, "用户不存在", 404);
@@ -151,7 +152,8 @@ router.post(
   "/:id/quota",
   adminRequired,
   asyncHandler(async (req, res) => {
-    const id = Number(req.params.id);
+    const id = idParam(req);
+    if (!id) return fail(res, "用户不存在", 404);
     const quota = Math.floor(Number(req.body?.quota));
     if (!Number.isFinite(quota) || quota === 0) return fail(res, "额度变化量无效");
     const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
@@ -176,7 +178,8 @@ router.delete(
   "/:id",
   adminRequired,
   asyncHandler(async (req, res) => {
-    const id = Number(req.params.id);
+    const id = idParam(req);
+    if (!id) return fail(res, "用户不存在", 404);
     if (id === req.user.id) return fail(res, "不能删除自己的账号");
     const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
     const user = rows[0];
@@ -193,7 +196,8 @@ router.post(
   "/:id/token",
   adminRequired,
   asyncHandler(async (req, res) => {
-    const id = Number(req.params.id);
+    const id = idParam(req);
+    if (!id) return fail(res, "用户不存在", 404);
     const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
     if (!rows[0]) return fail(res, "用户不存在", 404);
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `以用户 #${id} 身份签发临时令牌` });

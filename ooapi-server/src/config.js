@@ -11,7 +11,8 @@ export const DEFAULT_OPTIONS = {
   server_address: "",
 
   // 计费 / 额度
-  quota_per_unit: "500000", // 旧键（保留兼容，计费不读它）
+  quota_per_unit: "10000", // 旧键（保留兼容，计费不读它）；默认值必须与新币制一致，
+  // 否则设置页会把 500000 写回库，migrate2 误判为旧库再次换算（历史事故根因之一）
   usd_rate: "1", // 旧键（保留兼容）；OD币固定 1 OD = 1 美元，无汇率换算
   general_setting_quota_display: "true",
   quota_for_new_user: "2000000", // 新用户初始额度（1 OD = 10000 单位 → 200 OD = $200）

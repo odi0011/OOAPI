@@ -23,7 +23,7 @@ export function createDoubaoParser() {
     messageId: null,
     finished: false,
     error: null,
-    usage: 0,
+    usage: null, // 结构化 usage（对象），交给 normalizeUsage 精确计费
     // 思考链状态：遇到 10040 两次切换
     thinkDelimCount: 0,
     inThinking: false,
@@ -87,8 +87,14 @@ export function createDoubaoParser() {
       if (msg.conversation_id) state.conversationId = msg.conversation_id;
       if (msg.message_id) state.messageId = msg.message_id;
       if (msg.ext) {
-        const n = Number(msg.ext.output_tokens || msg.ext.total_tokens || 0);
-        if (Number.isFinite(n) && n > 0) state.usage = n;
+        // 结构化上报：只上报 output_tokens 会被当成 total_tokens 导致少计费
+        const ext = msg.ext;
+        const p = Number(ext.input_tokens ?? ext.prompt_tokens) || 0;
+        const c = Number(ext.output_tokens ?? ext.completion_tokens) || 0;
+        const total = Number(ext.total_tokens) || 0;
+        if (p || c || total) {
+          state.usage = { prompt_tokens: p, completion_tokens: c, total_tokens: total };
+        }
       }
 
       const contentType = Number(msg.content_type ?? 0);

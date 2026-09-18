@@ -39,6 +39,16 @@ export function now() {
 }
 
 /**
+ * 解析路径参数中的正整数 id。
+ * 非数字（/api/token/abc）时 mysql2 会把 NaN 转义成字面量 NaN，SQL 语法错误 → 500；
+ * 返回 null 让调用方回 404。
+ */
+export function idParam(req, name = "id") {
+  const n = Number(req.params?.[name]);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
+/**
  * 安全分页参数：防 NaN / Infinity / 超大页码。
  * 注意 Number("Infinity") 是合法数字，直接算 OFFSET 会让 mysql2 转义报错（500）。
  */
@@ -65,7 +75,11 @@ export function isPrivateIp(ip) {
   if (net.isIPv6(ip)) {
     const v = ip.toLowerCase();
     if (v === "::" || v === "::1") return true;
-    if (v.startsWith("fe80:") || v.startsWith("fc") || v.startsWith("fd")) return true;
+    // 按首 16 位数值判断网段：fe80::/10（链路本地，字符串匹配 "fe80:" 会漏掉 fe90:: 等）、
+    // fc00::/7（唯一本地地址，仅匹配 "fc"/"fd" 开头会误判部分主机名式写法）
+    const first = parseInt(v.split(":")[0] || "0", 16) || 0;
+    if ((first & 0xffc0) === 0xfe80) return true;
+    if ((first & 0xfe00) === 0xfc00) return true;
     if (v.startsWith("::ffff:")) return isPrivateIp(v.slice(7));
     return false;
   }

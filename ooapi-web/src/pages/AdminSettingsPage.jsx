@@ -62,7 +62,9 @@ function useSettingsForm() {
     try {
       const payload = {};
       for (const [k, v] of Object.entries(values)) {
-        if (v === undefined) continue;
+        // null 是 InputNumber 清空后的值：String(null) = "null" 写库后
+        // getNumberOption 会得到 0（如新用户初始额度被清成 0），必须跳过
+        if (v === undefined || v === null || v === "") continue;
         payload[k] = typeof v === "boolean" ? String(v) : String(v);
       }
       await API.put("/option/", payload);

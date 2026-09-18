@@ -10,6 +10,7 @@ import { writeLog, LOG_TYPE } from "../services/log.js";
 import { runCompletion } from "../services/execute.js";
 import { getPrice, computeCost, splitTokens, normalizeUsage, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { allPublicModels, modelForChannelMatch } from "../services/models.js";
+import { getBoolOption } from "../config.js";
 
 const router = express.Router();
 router.use(express.json({ limit: "20mb" }));
@@ -159,11 +160,13 @@ router.post(
     const { messages = [], model = "deepseek-chat", thinking, search = false, images = [] } = req.body || {};
 
     if (!Array.isArray(messages) || !messages.length) return fail(res, "messages 不能为空");
+    if (!getBoolOption("chat_enabled")) return fail(res, "站内对话功能已关闭", 403);
     if (Number(req.user.quota) <= 0) return fail(res, `${CURRENCY} 币余额不足，请联系管理员充值`, 403);
 
-    // 拼装 prompt
+    // 拼装 prompt（元素可能是 null/字符串，跳过而不是抛 500）
     let prompt = "";
     for (const m of messages) {
+      if (!m || typeof m !== "object") continue;
       const c = String(m.content ?? "");
       if (m.role === "system") prompt += c + "\n";
       else if (m.role === "assistant") prompt += "<｜Assistant｜>" + c + "<｜end▁of▁sentence｜>";
@@ -196,9 +199,11 @@ router.post(
 
     const matchModel = modelForChannelMatch(model) || model;
 
-    // 客户端断开时中止上游，避免继续消耗额度/浏览器会话
+    // 客户端断开时中止上游，避免继续消耗额度/浏览器会话。
+    // 注意必须监听 res 而不是 req：Node 16+ 的 req "close" 在请求体读完（express.json 解析完）
+    // 后就会立即触发，与客户端是否断线无关，会把正常请求的上游全部误杀。
     const clientCtrl = new AbortController();
-    req.on("close", () => {
+    res.on("close", () => {
       if (!res.writableEnded) clientCtrl.abort();
     });
 
@@ -284,6 +289,7 @@ router.post(
     const { agentId = "general", goal = "", model: modelOverride } = req.body || {};
     const agent = AGENTS.find((a) => a.id === agentId);
     if (!agent) return fail(res, "智能体不存在");
+    if (!getBoolOption("agent_enabled")) return fail(res, "智能体功能已关闭", 403);
     if (!String(goal).trim()) return fail(res, "请输入任务目标");
     if (Number(req.user.quota) <= 0) return fail(res, `${CURRENCY} 币余额不足，请联系管理员充值`, 403);
 
@@ -298,9 +304,9 @@ router.post(
 
     const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
 
-    // 客户端断开时中止当前步骤的上游请求
+    // 客户端断开时中止当前步骤的上游请求（同样监听 res，原因见 /completions）
     const clientCtrl = new AbortController();
-    req.on("close", () => {
+    res.on("close", () => {
       if (!res.writableEnded) clientCtrl.abort();
     });
 
@@ -313,28 +319,46 @@ router.post(
     // 单步调用（复用执行器，自带渠道切换）
     const call = async ({ system, user: userMsg, thinking, onDelta }) => {
       const prompt = system ? `${system}\n\n${userMsg}` : userMsg;
-      const r = await runCompletion({
-        model: modelForChannelMatch(model) || model,
-        prompt: `<｜User｜>${prompt}`,
-        // API 渠道按角色下发；反代渠道仍用上面的 prompt
-        messages: system
-          ? [{ role: "system", content: system }, { role: "user", content: userMsg }]
-          : [{ role: "user", content: userMsg }],
-        thinking: typeof thinking === "boolean" ? thinking : agent.thinking,
-        search: agent.id === "research",
-        images: [],
-        groupName: req.user.group_name,
-        signal: clientCtrl.signal,
-        onDelta,
-      });
-      const u = normalizeUsage(r.usage);
-      totalPrompt += prompt;
-      totalOutput += r.content + (r.reasoning || "");
-      totalUsage.prompt_tokens += u.promptTokens;
-      totalUsage.completion_tokens += u.completionTokens;
-      totalUsage.cached_tokens += u.cacheTokens;
-      if (!firstChannel) firstChannel = r.channel;
-      return r.content;
+      // 本次调用已流出的内容：失败时挂到 error 上用于部分计费。
+      // 反代渠道的 usage 常为 null（normalizeUsage 后全 0），只看 usage 会整单漏计。
+      let streamed = "";
+      const wrappedDelta = onDelta
+        ? (t) => {
+            streamed += t;
+            onDelta(t);
+          }
+        : null;
+      try {
+        const r = await runCompletion({
+          model: modelForChannelMatch(model) || model,
+          prompt: `<｜User｜>${prompt}`,
+          // API 渠道按角色下发；反代渠道仍用上面的 prompt
+          messages: system
+            ? [{ role: "system", content: system }, { role: "user", content: userMsg }]
+            : [{ role: "user", content: userMsg }],
+          thinking: typeof thinking === "boolean" ? thinking : agent.thinking,
+          search: agent.id === "research",
+          images: [],
+          groupName: req.user.group_name,
+          signal: clientCtrl.signal,
+          onDelta: wrappedDelta,
+          // 思考链不推给步骤面板，但要计入部分计费
+          onReasoning: (t) => {
+            streamed += t;
+          },
+        });
+        const u = normalizeUsage(r.usage);
+        totalPrompt += prompt;
+        totalOutput += r.content + (r.reasoning || "");
+        totalUsage.prompt_tokens += u.promptTokens;
+        totalUsage.completion_tokens += u.completionTokens;
+        totalUsage.cached_tokens += u.cacheTokens;
+        if (!firstChannel) firstChannel = r.channel;
+        return r.content;
+      } catch (e) {
+        e.partialOutput = streamed;
+        throw e;
+      }
     };
 
     try {
@@ -418,15 +442,18 @@ router.post(
       res.end();
     } catch (err) {
       console.error("[agent] 失败：", err.code, err.message);
-      // 已完成步骤真实消耗了上游额度：按已累计的 usage 结算，避免整单漏计费
-      if (!settledOnce && (totalUsage.prompt_tokens || totalUsage.completion_tokens)) {
+      // 已完成步骤 + 失败步骤已推送的内容都真实消耗了上游额度：按累计输出结算，避免整单漏计费。
+      // 注意条件不能只看 usage：反代渠道 usage 常为 null（全 0），要按内容兜底。
+      const partial = err?.partialOutput || "";
+      const billOutput = totalOutput + partial;
+      if (!settledOnce && (billOutput || totalPrompt || totalUsage.prompt_tokens || totalUsage.completion_tokens)) {
         try {
           await chargeUser({
             user: req.user,
             model,
             prompt: totalPrompt,
-            output: totalOutput,
-            usage: totalUsage,
+            output: billOutput,
+            usage: totalUsage.prompt_tokens || totalUsage.completion_tokens ? totalUsage : null,
             channel: firstChannel,
             kind: "agent",
           });

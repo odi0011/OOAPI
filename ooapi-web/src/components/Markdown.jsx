@@ -8,7 +8,8 @@
 import React, { useMemo } from "react";
 
 // 只允许安全协议的链接，避免模型输出 javascript:/data: 等危险 href
-function safeHref(href) {
+// （HomePage 的 docs_link 等管理员可写字段也复用此函数）
+export function safeHref(href) {
   const v = String(href || "").trim();
   if (/^(https?:|mailto:)/i.test(v)) return v;
   if (/^(\/|#)/.test(v)) return v;

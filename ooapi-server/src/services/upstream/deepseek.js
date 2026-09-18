@@ -11,7 +11,7 @@
 //   · thinking_enabled 深度思考开关
 //   · search_enabled   联网搜索开关
 // ---------------------------------------------------------------------------
-import { solvePow, buildPowHeader } from "../deepseek/pow.js";
+import { solvePow, buildPowHeader } from "./deepseek-pow.js";
 import { createDeepSeekParser } from "./deepseek-parser.js";
 import { resolveModel } from "./deepseek-models.js";
 import { resolveProfile, buildHeaders, buildCookie, generateProfile } from "./deepseek-profile.js";
@@ -72,7 +72,13 @@ export async function loginWithPassword({ mobile, email, password, areaCode = "+
 
   let resp;
   try {
-    resp = await fetch(`${API}/users/login`, { method: "POST", headers, body: JSON.stringify(body) });
+    // 登录是管理员一次性操作，但也不能无限挂起占住请求
+    resp = await fetch(`${API}/users/login`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60000),
+    });
   } catch (e) {
     throw Object.assign(new Error(`登录请求失败：${e.message}`), { code: "LOGIN_NETWORK" });
   }
@@ -260,7 +266,7 @@ export async function warmup(channel) {
   }
 }
 
-export async function uploadImage(channel, { buffer, filename, mimeType }) {
+export async function uploadImage(channel, { buffer, filename, mimeType }, signal) {
   const pow = await powHeader(channel, "/api/v0/file/upload_file");
   const c = ctx(channel);
   const h = c.headers(channel.api_key);
@@ -270,7 +276,26 @@ export async function uploadImage(channel, { buffer, filename, mimeType }) {
   const form = new FormData();
   form.append("file", new Blob([buffer], { type: mimeType }), filename);
 
-  const resp = await fetch(API + "/file/upload_file", { method: "POST", headers: h, body: form });
+  // 上传必须有自己的时限并透传外层 signal，否则 execute 硬超时后子请求仍会挂住 socket
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 120_000);
+  const onOuter = () => ctrl.abort();
+  if (signal) {
+    if (signal.aborted) ctrl.abort();
+    else signal.addEventListener("abort", onOuter, { once: true });
+  }
+  let resp;
+  try {
+    resp = await fetch(API + "/file/upload_file", { method: "POST", headers: h, body: form, signal: ctrl.signal });
+  } catch (e) {
+    if (e.name === "AbortError") {
+      throw Object.assign(new Error("图片上传超时或被取消"), { code: signal?.aborted ? "CHANNEL_ABORTED" : "CHANNEL_TIMEOUT" });
+    }
+    throw Object.assign(new Error(`图片上传失败：${e.message}`), { code: "CHANNEL_NETWORK" });
+  } finally {
+    clearTimeout(timer);
+    if (signal) signal.removeEventListener("abort", onOuter);
+  }
   const text = await resp.text();
   if (wafBlocked(resp, text)) {
     throw Object.assign(new Error("图片上传被上游拦截"), { code: "CHANNEL_WAF" });
@@ -318,7 +343,7 @@ export async function chat({
 
   const refFileIds = [];
   for (const img of images) {
-    refFileIds.push(await uploadImage(channel, img));
+    refFileIds.push(await uploadImage(channel, img, signal));
   }
 
   const pow = await powHeader(channel, "/api/v0/chat/completion");
@@ -393,17 +418,26 @@ export async function chat({
     }
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let i;
-    while ((i = buffer.indexOf("\n")) !== -1) {
-      handleLine(buffer.slice(0, i));
-      buffer = buffer.slice(i + 1);
+  const MAX_SSE_BUF = 8 * 1024 * 1024; // 单行缓冲上限，防异常上游撑爆内存
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      if (buffer.length > MAX_SSE_BUF) {
+        throw Object.assign(new Error("上游数据帧异常（单行超过 8MB）"), { code: "CHANNEL_BAD_RESPONSE" });
+      }
+      let i;
+      while ((i = buffer.indexOf("\n")) !== -1) {
+        handleLine(buffer.slice(0, i));
+        buffer = buffer.slice(i + 1);
+      }
     }
+    if (buffer.trim()) handleLine(buffer.trim());
+  } finally {
+    // 回调抛错/客户端断开都要归还连接，否则响应体悬挂
+    reader.cancel().catch(() => {});
   }
-  if (buffer.trim()) handleLine(buffer.trim());
 
   if (parser.searchStatus && onSearchStatus) onSearchStatus(parser.searchStatus);
 

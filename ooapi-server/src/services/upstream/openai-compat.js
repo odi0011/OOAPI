@@ -151,6 +151,23 @@ export async function fetchUpstreamModels(channel) {
 }
 
 /**
+ * 把上游 usage 归一为网关口径（兼容 OpenAI 标准字段、输入/输出字段别名与各家缓存字段）
+ * @returns {{prompt_tokens,completion_tokens,total_tokens,cached_tokens}|null}
+ */
+function pickUsage(u) {
+  if (!u || typeof u !== "object") return null;
+  return {
+    prompt_tokens: Number(u.prompt_tokens ?? u.input_tokens) || 0,
+    completion_tokens: Number(u.completion_tokens ?? u.output_tokens) || 0,
+    total_tokens: Number(u.total_tokens) || 0,
+    // 缓存命中字段各家写法不一：OpenAI/新版兼容用 prompt_tokens_details.cached_tokens，
+    // DeepSeek 官方用 prompt_cache_hit_tokens，部分厂商直接给 cached_tokens
+    cached_tokens:
+      Number(u.prompt_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens ?? u.cached_tokens) || 0,
+  };
+}
+
+/**
  * 执行一次对话（流式）
  * @returns {Promise<{content, reasoning, usage, upstreamModel}>}
  */
@@ -229,8 +246,38 @@ export async function chat({
     throw Object.assign(new Error("上游未返回内容流"), { code: "CHANNEL_BAD_RESPONSE" });
   }
 
+  // 兼容忽略 stream:true 的一次性 JSON 响应：只认 SSE 会把健康渠道误判为
+  // CHANNEL_EMPTY（execute 会冷却渠道 300s），部分中转/自建网关就是这种返回
+  const ctype = (resp.headers.get("content-type") || "").toLowerCase();
+  if (ctype.includes("application/json")) {
+    const text = await resp.text().catch(() => "");
+    let j = null;
+    try {
+      j = JSON.parse(text);
+    } catch {
+      throw Object.assign(new Error("上游返回了非法的 JSON"), { code: "CHANNEL_BAD_RESPONSE" });
+    }
+    const msg = j?.choices?.[0]?.message || {};
+    const content = typeof msg.content === "string" ? msg.content : "";
+    const reasoning = typeof msg.reasoning_content === "string" ? msg.reasoning_content : "";
+    if (reasoning && onReasoning) onReasoning(reasoning);
+    if (content && onDelta) onDelta(content);
+    if (!content) {
+      throw Object.assign(new Error(reasoning ? "上游只返回了思考内容，没有正文" : "上游返回空内容"), {
+        code: "CHANNEL_EMPTY",
+      });
+    }
+    return {
+      content,
+      reasoning,
+      usage: pickUsage(j?.usage),
+      upstreamModel: j?.model || model,
+    };
+  }
+
   const reader = resp.body.getReader();
   const dec = new TextDecoder();
+  const MAX_SSE_BUF = 8 * 1024 * 1024; // 单行（未遇到换行的缓冲）上限，防异常上游撑爆内存
   let buf = "";
   let content = "";
   let reasoning = "";
@@ -271,6 +318,10 @@ export async function chat({
       const { done, value } = await reader.read();
       if (done) break;
       buf += dec.decode(value, { stream: true });
+      // 异常上游持续发送不含换行的数据会无限撑大 buf（Kimi/DeepSeek 适配器已有同样上限）
+      if (buf.length > MAX_SSE_BUF) {
+        throw Object.assign(new Error("上游数据帧异常（单行超过 8MB）"), { code: "CHANNEL_BAD_RESPONSE" });
+      }
       let i;
       while ((i = buf.indexOf("\n")) !== -1) {
         handleLine(buf.slice(0, i));
@@ -292,17 +343,7 @@ export async function chat({
   return {
     content,
     reasoning,
-    usage: usage
-      ? {
-          prompt_tokens: Number(usage.prompt_tokens) || 0,
-          completion_tokens: Number(usage.completion_tokens) || 0,
-          total_tokens: Number(usage.total_tokens) || 0,
-          // 缓存命中字段各家写法不一：OpenAI/新版兼容用 prompt_tokens_details.cached_tokens，
-          // DeepSeek 官方用 prompt_cache_hit_tokens，部分厂商直接给 cached_tokens
-          cached_tokens:
-            Number(usage.prompt_tokens_details?.cached_tokens ?? usage.prompt_cache_hit_tokens ?? usage.cached_tokens) || 0,
-        }
-      : null,
+    usage: pickUsage(usage),
     upstreamModel,
   };
 }

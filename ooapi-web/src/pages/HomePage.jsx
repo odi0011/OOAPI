@@ -15,6 +15,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";
 import ThemeSwitch from "../components/ThemeSwitch";
+import { safeHref } from "../components/Markdown";
 import "../home-refresh.css";
 import { odRateText, unitsPerOd } from "../services/format";
 
@@ -78,6 +79,8 @@ export default function HomePage() {
   const systemName = status?.system_name || "OOAPI";
   // 管理员关闭注册后，首页不再引导用户去 /register（否则点进去只会看到关闭提示）
   const registerOpen = status?.password_register_enabled !== false;
+  // docs_link 是管理员可写项：必须过协议白名单，防 javascript: 之类注入
+  const docsHref = safeHref(status?.docs_link);
   const quotaLabel = status?.units_per_od || status?.quota_per_unit
     ? odRateText(unitsPerOd(status))
     : "额度换算以控制台配置为准";
@@ -178,10 +181,10 @@ export default function HomePage() {
               </div>
             </div>
           </section>
-          <section className="hr-closing" aria-labelledby="hr-closing-title"><div><span className="hr-kicker">把想法变成下一步</span><h2 id="hr-closing-title">准备好，开始你的构建。</h2><p>从一次对话或一条 API 请求开始。</p></div><Button size="large" type="primary" icon={<ArrowRightOutlined />} onClick={() => navigate(user ? "/console" : "/register")}>{user ? "打开控制台" : "创建账号"}</Button></section>
+          <section className="hr-closing" aria-labelledby="hr-closing-title"><div><span className="hr-kicker">把想法变成下一步</span><h2 id="hr-closing-title">准备好，开始你的构建。</h2><p>从一次对话或一条 API 请求开始。</p></div><Button size="large" type="primary" icon={<ArrowRightOutlined />} onClick={() => navigate(user ? "/console" : registerOpen ? "/register" : "/login")}>{user ? "打开控制台" : registerOpen ? "创建账号" : "登录使用"}</Button></section>
         </div>
       </main>
-      <footer className="hr-footer hr-container"><span>{status?.footer || `© ${new Date().getFullYear()} ${systemName}`}</span><Space size={20}>{status?.docs_link && <a href={status.docs_link} target="_blank" rel="noreferrer">文档 <ArrowRightOutlined /></a>}<span>v{status?.version || "0.1.0"}</span></Space></footer>
+      <footer className="hr-footer hr-container"><span>{status?.footer || `© ${new Date().getFullYear()} ${systemName}`}</span><Space size={20}>{docsHref && <a href={docsHref} target="_blank" rel="noreferrer">文档 <ArrowRightOutlined /></a>}<span>v{status?.version || "0.1.0"}</span></Space></footer>
     </div>
   );
 }

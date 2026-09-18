@@ -10,18 +10,19 @@
 //   content                   → 全量替换
 //   delta_content             → 纯增量追加
 //
-// 对外统一转成"增量"输出：内部维护完整文本 + 已发送游标，每帧 diff 出新增部分。
+// 对外统一转成"增量"输出：内部维护完整文本 + 「客户端已收到文本」，
+// 每帧按两者关系 diff 出新增部分（不靠游标回退，见 diffDelta 注释）。
 // edit_index 是 UTF-16 码元偏移（JS slice 语义一致），Node 无需转换。
 export function createGlmParser() {
   const state = {
-    thinking: "",   // 思考链完整文本
-    answer: "",     // 正文完整文本
-    sentThink: 0,   // 已输出的思考字符数
-    sentAnswer: 0,
+    thinking: "",       // 思考链完整文本
+    answer: "",         // 正文完整文本
+    emittedThink: "",   // 客户端已收到的思考文本（只追加）
+    emittedAnswer: "",  // 客户端已收到的正文文本（只追加）
     phase: null,
     finished: false,
     error: null,
-    usage: 0,
+    usage: null, // 结构化 usage（对象），交给 normalizeUsage 精确计费
     chatId: null,
     messageId: null,
   };
@@ -35,6 +36,20 @@ export function createGlmParser() {
     if (typeof d.content === "string") return d.content;
     if (typeof d.delta_content === "string") return target + d.delta_content;
     return target;
+  }
+
+  // 计算增量。以「客户端已收到文本 emitted」为基准，而不是可回退的游标：
+  //   1. next 以 emitted 开头 → 正常增长，delta = next 的尾巴；
+  //   2. emitted 以 next 开头 → 上游回退（内容变短），客户端已多出的部分无法撤回，跳过；
+  //   3. 两者都在中间分叉 → 只发公共前缀之后的修正内容（协议只支持追加，无法完美撤回）。
+  // 旧实现把游标直接设成新长度：回退后再增长会把已经发过的内容整段重发（显示重复、计费重复）。
+  function diffDelta(emitted, next) {
+    if (next.startsWith(emitted)) return next.slice(emitted.length);
+    if (emitted.startsWith(next)) return "";
+    let cp = 0;
+    const max = Math.min(emitted.length, next.length);
+    while (cp < max && emitted[cp] === next[cp]) cp++;
+    return next.slice(cp);
   }
 
   return {
@@ -57,8 +72,13 @@ export function createGlmParser() {
       if (d.message_id) state.messageId = d.message_id;
       if (d.done === true || d.phase === "done") state.finished = true;
       if (d.usage) {
-        const n = Number(d.usage.total_tokens ?? d.usage.completion_tokens ?? 0);
-        if (Number.isFinite(n) && n > 0) state.usage = n;
+        // 结构化上报，避免只拿部分字段被当成 total_tokens 导致少计费
+        const u = d.usage;
+        state.usage = {
+          prompt_tokens: Number(u.prompt_tokens ?? u.input_tokens) || 0,
+          completion_tokens: Number(u.completion_tokens ?? u.output_tokens) || 0,
+          total_tokens: Number(u.total_tokens) || 0,
+        };
       }
       const errObj = d.error || (frame?.error ?? null);
       if (errObj) {
@@ -75,14 +95,14 @@ export function createGlmParser() {
         else state.answer = update(state.answer, d);
       }
 
-      // diff 出增量
-      const newThink = state.thinking.slice(state.sentThink);
-      const newAnswer = state.answer.slice(state.sentAnswer);
-      state.sentThink = state.thinking.length;
-      state.sentAnswer = state.answer.length;
+      // diff 出增量，并把真正发出的部分计入「客户端已收到」
+      const thinkDelta = diffDelta(state.emittedThink, state.thinking);
+      const answerDelta = diffDelta(state.emittedAnswer, state.answer);
+      state.emittedThink += thinkDelta;
+      state.emittedAnswer += answerDelta;
 
-      if (!newThink && !newAnswer) return null;
-      return { reasoning: newThink, content: newAnswer };
+      if (!thinkDelta && !answerDelta) return null;
+      return { reasoning: thinkDelta, content: answerDelta };
     },
     get finished() { return state.finished; },
     get error() { return state.error; },

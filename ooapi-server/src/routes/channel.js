@@ -21,7 +21,7 @@
 //   GET    /api/channel/:id/key        查看完整 Key
 import { Router } from "express";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, now, assertPublicUrl } from "../utils.js";
+import { ok, fail, asyncHandler, now, assertPublicUrl, idParam } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getProvider, getMethod, providerKeys, publicProviders } from "../services/channel-types.js";
@@ -216,7 +216,9 @@ router.get(
 router.get(
   "/:id/key",
   asyncHandler(async (req, res) => {
-    const [rows] = await pool.query("SELECT api_key, name FROM channels WHERE id = ?", [Number(req.params.id)]);
+    const id = idParam(req);
+    if (!id) return fail(res, "渠道不存在", 404);
+    const [rows] = await pool.query("SELECT api_key, name FROM channels WHERE id = ?", [id]);
     if (!rows.length) return fail(res, "渠道不存在", 404);
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `查看渠道「${rows[0].name}」的凭据` });
     return ok(res, { api_key: rows[0].api_key });
@@ -227,7 +229,8 @@ router.get(
 router.post(
   "/:id/keys",
   asyncHandler(async (req, res) => {
-    const id = Number(req.params.id);
+    const id = idParam(req);
+    if (!id) return fail(res, "渠道不存在", 404);
     const { action, keys, keyIndex } = req.body || {};
     const [rows] = await pool.query("SELECT * FROM channels WHERE id = ?", [id]);
     if (!rows.length) return fail(res, "渠道不存在", 404);
@@ -265,7 +268,8 @@ router.post(
 router.post(
   "/:id/browser/open",
   asyncHandler(async (req, res) => {
-    const id = Number(req.params.id);
+    const id = idParam(req);
+    if (!id) return fail(res, "渠道不存在", 404);
     const [rows] = await pool.query("SELECT * FROM channels WHERE id = ?", [id]);
     if (!rows.length) return fail(res, "渠道不存在", 404);
     if (methodOf(rows[0]) !== "relay") return fail(res, "只有网页版反代渠道需要浏览器登录");
@@ -292,7 +296,8 @@ router.post(
 router.post(
   "/:id/browser/check",
   asyncHandler(async (req, res) => {
-    const id = Number(req.params.id);
+    const id = idParam(req);
+    if (!id) return fail(res, "渠道不存在", 404);
     const [rows] = await pool.query("SELECT * FROM channels WHERE id = ?", [id]);
     if (!rows.length) return fail(res, "渠道不存在", 404);
     if (methodOf(rows[0]) !== "relay") return fail(res, "只有网页版反代渠道需要浏览器登录");
@@ -743,7 +748,8 @@ router.put(
 router.post(
   "/:id/test",
   asyncHandler(async (req, res) => {
-    const id = Number(req.params.id);
+    const id = idParam(req);
+    if (!id) return fail(res, "渠道不存在", 404);
     const [rows] = await pool.query("SELECT * FROM channels WHERE id = ?", [id]);
     if (!rows.length) return fail(res, "渠道不存在", 404);
     const row = rows[0];
@@ -755,7 +761,9 @@ router.post(
     try {
       if (!adapter?.verify) return fail(res, `${providerName} 适配器未实现测试`);
       const ms = await adapter.verify(channel);
-      await pool.query("UPDATE channels SET response_time = ?, tested_time = ?, status = 1, last_error = '' WHERE id = ?", [
+      // 只写运行指标，绝不写 status：status 是管理员开关，
+      // 测试成功不能把管理员手动禁用的渠道复活（与 markChannelOk 约定一致）
+      await pool.query("UPDATE channels SET response_time = ?, tested_time = ?, last_error = '' WHERE id = ?", [
         ms,
         now(),
         id,
@@ -778,11 +786,13 @@ router.post(
     const { base_url, api_key, id, type } = req.body || {};
     let key = String(api_key || "").trim();
     let base = String(base_url || "").trim();
-    if (id && !key) {
+    // 只补「请求里缺失的部分」：同时传 id+key 但没传 base_url 时，
+    // 之前会落到厂商默认地址，可能把该渠道的 Key 发给错误的上游
+    if (id && (!key || !base)) {
       const [rows] = await pool.query("SELECT api_key, base_url FROM channels WHERE id = ?", [Number(id)]);
       if (rows.length) {
-        key = splitKeys(rows[0].api_key)[0] || "";
-        base = base || rows[0].base_url;
+        if (!key) key = splitKeys(rows[0].api_key)[0] || "";
+        if (!base) base = rows[0].base_url || "";
       }
     }
     if (!key) return fail(res, "请先填写 API Key");
@@ -807,7 +817,8 @@ router.post(
 router.delete(
   "/:id",
   asyncHandler(async (req, res) => {
-    const id = Number(req.params.id);
+    const id = idParam(req);
+    if (!id) return fail(res, "渠道不存在", 404);
     const [rows] = await pool.query("SELECT name, type FROM channels WHERE id = ?", [id]);
     if (!rows.length) return fail(res, "渠道不存在", 404);
 

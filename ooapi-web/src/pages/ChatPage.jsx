@@ -193,7 +193,9 @@ export default function ChatPage() {
       ctrlRef.current = null; setBusy(false); refreshUser?.();
     };
     setMsgs([...history, { role: "assistant", content: "", streaming: true, model: settings.model, settings, agentName: isAgent ? selectedAgent.name : undefined, steps: [], phase: "plan" }]);
-    setInput(""); setImages([]); setBusy(true); stickRef.current = true; awayRef.current = false; setAway(false);
+    // 仅手动发送时清空输入；「重新生成」传入 overrideText，不能把用户正在写的草稿清掉
+    if (overrideText == null) { setInput(""); setImages([]); }
+    setBusy(true); stickRef.current = true; awayRef.current = false; setAway(false);
     ctrlRef.current = streamPost(isAgent ? "/api/chat/agents/run" : "/api/chat/completions", body, {
       token: getToken(),
       onEvent: (ev) => {
@@ -215,6 +217,8 @@ export default function ChatPage() {
   const stop = () => {
     requestRef.current += 1; ctrlRef.current?.abort(); ctrlRef.current = null; setBusy(false);
     setMsgs((prev) => prev.map((m) => m.streaming ? { ...m, streaming: false, stopped: true, searching: undefined } : m));
+    // 服务端在断开后仍会对已产出内容补计费：稍后刷新余额，避免界面一直显示旧值
+    setTimeout(() => refreshUser?.(), 1500);
   };
   const copy = useCallback(async (text) => { try { await navigator.clipboard.writeText(text); toast.success("已复制"); } catch { toast.error("复制失败，请手动选择文字复制"); } }, [toast]);
   const retry = useCallback((msg) => {
@@ -308,7 +312,7 @@ export default function ChatPage() {
                 ? [{ key: "search", name: "search", desc: search ? "关闭联网搜索" : "开启联网搜索", run: () => { if (!busy) setSearch(!search); } }]
                 : []),
             ] : []),
-            { key: "agent", name: "agent", desc: "切换到 Agent 模式", run: () => { if (!busy) setParams({ mode: "agent" }, { replace: true }); } },
+            { key: "agent", name: "agent", desc: "切换到 Agent 模式", run: () => { if (busy) return; if (images.length) { toast.warning("请先移除图片再切换 Agent"); return; } setParams({ mode: "agent" }, { replace: true }); } },
           ]}
         />
         <input type="file" ref={fileRef} hidden accept="image/png,image/jpeg,image/webp,image/gif" multiple onChange={pickImages} />

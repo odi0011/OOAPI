@@ -16,8 +16,9 @@ export function createQwenParser() {
     reasoning: "",
     finished: false,
     error: null,
-    usage: 0,
+    usage: null, // 结构化 usage（对象），交给 normalizeUsage 精确计费
     mode: null, // "intl" | "cn"
+    _summaryLen: 0, // 思考摘要已发送长度（初值必须是 0，undefined 比较恒 false 会吞掉整段思考）
   };
 
   return {
@@ -46,8 +47,14 @@ export function createQwenParser() {
         if (d.status === "finished") state.finished = true;
         if (ch.finish_reason) state.finished = true;
         if (j.usage) {
-          const n = Number(j.usage.output_tokens ?? j.usage.completion_tokens ?? 0);
-          if (Number.isFinite(n) && n > 0) state.usage = n;
+          // 必须上报结构化 usage：只上报 output_tokens 会被当成 total_tokens，
+          // 输入侧只能用估算值兜底，系统性少计费
+          const u = j.usage;
+          state.usage = {
+            prompt_tokens: Number(u.input_tokens ?? u.prompt_tokens) || 0,
+            completion_tokens: Number(u.output_tokens ?? u.completion_tokens) || 0,
+            total_tokens: Number(u.total_tokens) || 0,
+          };
         }
 
         let reasoning = "";
@@ -64,7 +71,7 @@ export function createQwenParser() {
           const last = summary[summary.length - 1];
           const txt = last?.content || "";
           if (txt.length > state._summaryLen) {
-            reasoning += txt.slice(state._summaryLen || 0);
+            reasoning += txt.slice(state._summaryLen);
             state._summaryLen = txt.length;
           }
         }

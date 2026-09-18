@@ -76,9 +76,9 @@ if (hasOld[0].c > 0) {
 const UNITS_PER_OD = 10000;
 const OLD_PER_USD = 500000;
 const [[curUnit]] = await pool.query("SELECT value FROM options WHERE key_str = 'quota_per_unit' LIMIT 1");
-if (String(curUnit?.value || "") === String(UNITS_PER_OD)) {
-  log.push("SKIP  额度已是 OD 币制（10000/OD），一次性换算不再重复执行");
-} else {
+// 只有明确读到旧值 500000 才换算；读到 10000 / 其他值 / 没有该行（全新安装）一律跳过。
+// 反向条件（"不等于 10000 就换算"）会在全新安装的首个更新里把新库余额错误除以 50。
+if (String(curUnit?.value || "") === String(OLD_PER_USD)) {
   const [[{ converted }]] = await pool.query(`SELECT COUNT(*) AS converted FROM users WHERE quota > 0`);
   await pool.query(
     `UPDATE users SET quota = ROUND(quota / ? * ?), used_quota = ROUND(used_quota / ? * ?)`,
@@ -91,6 +91,8 @@ if (String(curUnit?.value || "") === String(UNITS_PER_OD)) {
     [OLD_PER_USD, UNITS_PER_OD, OLD_PER_USD, UNITS_PER_OD]
   );
   log.push(`OK    额度已换算为 OD 币（1 OD = ${UNITS_PER_OD} 单位），涉及 ${converted} 个用户；令牌已同步`);
+} else {
+  log.push("SKIP  未检测到旧币制（quota_per_unit=500000），一次性换算不执行");
 }
 
 // ---------- 4. 系统设置：币种与换算 ----------

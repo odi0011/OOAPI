@@ -100,6 +100,8 @@ function modelAllowed(token, model) {
 function messagesToPrompt(messages) {
   let prompt = "";
   for (const m of messages || []) {
+    // 元素可能为 null/字符串（调用方伪造）：跳过而不是抛 500
+    if (!m || typeof m !== "object") continue;
     const content =
       typeof m.content === "string"
         ? m.content
@@ -116,6 +118,7 @@ function messagesToPrompt(messages) {
 
 // ---------- SSRF 防护：图片外链只允许公网 http(s)（isPrivateIp/assertPublicUrl 在 utils.js）----------
 // 抓取远程图片：逐跳校验（防重定向 SSRF），限制类型与大小
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 async function fetchRemoteImage(rawUrl) {
   let target = rawUrl;
   for (let hop = 0; hop < 4; hop++) {
@@ -128,8 +131,11 @@ async function fetchRemoteImage(rawUrl) {
       continue;
     }
     if (!r.ok) return null;
+    // 先看 Content-Length 再决定下不下载：超大图直接跳过，避免白耗带宽
+    const cl = Number(r.headers.get("content-length") || 0);
+    if (cl > MAX_IMAGE_BYTES) return null;
     const ab = await r.arrayBuffer();
-    if (ab.byteLength > 20 * 1024 * 1024) return null;
+    if (ab.byteLength > MAX_IMAGE_BYTES) return null;
     const mimeType = (r.headers.get("content-type") || "image/jpeg").split(";")[0].trim().toLowerCase();
     if (!mimeType.startsWith("image/")) return null;
     return { buffer: Buffer.from(ab), mimeType, filename: mimeType.includes("png") ? "image.png" : "image.jpg" };
@@ -137,16 +143,30 @@ async function fetchRemoteImage(rawUrl) {
   return null;
 }
 
+// 只数图片数量，不抓取（用于超限时快速拒绝，避免对上白张外链发请求）
+function countImageParts(messages) {
+  let count = 0;
+  for (const m of messages || []) {
+    if (!m || typeof m !== "object" || !Array.isArray(m.content)) continue;
+    for (const part of m.content) {
+      if (part?.type === "image_url") count += 1;
+    }
+  }
+  return count;
+}
+
 async function extractImages(messages) {
   const images = [];
   for (const m of messages || []) {
-    if (!Array.isArray(m.content)) continue;
+    if (!m || typeof m !== "object" || !Array.isArray(m.content)) continue;
     for (const part of m.content) {
       if (part?.type !== "image_url") continue;
       const url = part.image_url?.url ?? "";
       if (!url) continue;
       const mm = /^data:([^;]+);base64,(.+)$/s.exec(url);
       if (mm) {
+        // base64 长度约等于字节数 ×4/3，先用字符串长度挡掉超大图再解码
+        if (mm[2].length > MAX_IMAGE_BYTES * 1.4) continue;
         images.push({
           buffer: Buffer.from(mm[2], "base64"),
           mimeType: mm[1],
@@ -212,6 +232,14 @@ router.post(
   const model = String(body.model || "");
   const wantStream = body.stream === true;
 
+  // 客户端断开时中止上游（提前注册：authorize/图片抓取阶段断线也能感知）。
+  // 必须监听 res 而不是 req：req "close" 在请求体读完后立即触发（Node 16+），
+  // 会把正常请求的上游全部误杀；res "close" + writableEnded 才能区分「断线」与「正常结束」。
+  const clientCtrl = new AbortController();
+  res.on("close", () => {
+    if (!res.writableEnded) clientCtrl.abort();
+  });
+
   const auth = await authorize(req, res);
   if (!auth) return;
   const { token, user } = auth;
@@ -230,7 +258,9 @@ router.post(
   // 是否支持视觉也由适配器判断，网关不预设能力
   const matchModel = modelForChannelMatch(model) || model;
   const wantSearch = /-search$/i.test(String(model || ""));
-  const images = await extractImages(body.messages);
+  // 先数图片数量：超 3 张走「不支持」分支，绝不先抓取（防外链 DoS）
+  const imageCount = countImageParts(body.messages);
+  const images = imageCount > 3 ? [] : await extractImages(body.messages);
 
   // 客户端可显式覆盖深度思考（兼容官方 thinking / reasoning_effort 语义）
   let thinkingOverride;
@@ -242,7 +272,7 @@ router.post(
   }
 
   // 超 3 张图：以正常回复形式告知，避免打断调用方
-  if (images.length > 3) {
+  if (imageCount > 3) {
     const notice = "不支持三张以上图片，请修改问题或切换对话窗口！";
     if (wantStream) {
       res.status(200).setHeader("content-type", "text/event-stream; charset=utf-8");
@@ -280,12 +310,6 @@ router.post(
   // 已流出的内容：上游中途失败时按实际产出结算，避免「答了一半却零计费」
   let partialOut = "";
   let settledOnce = false;
-
-  // 客户端断开（关页面/断网）时中止上游请求，避免上游继续跑到自身超时
-  const clientCtrl = new AbortController();
-  req.on("close", () => {
-    if (!res.writableEnded) clientCtrl.abort();
-  });
 
   const sendChunk = (delta, finishReason = null) => {
     res.write(

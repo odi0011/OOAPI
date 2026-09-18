@@ -19,6 +19,7 @@ const RETRYABLE = new Set([
   "CHANNEL_TIMEOUT",      // 上游超时
   "CHANNEL_NOT_READY",    // 页面/会话未就绪
   "CHANNEL_BIZ_ERROR",    // 上游业务错误（多为风控/过载，瞬时性问题换渠道可解）
+  "UNSUPPORTED_CHANNEL",  // 渠道类型未注册/配置错误：属于该渠道自身问题，应跳过换下一个
 ]);
 
 export function isRetryable(code) {
@@ -173,9 +174,18 @@ export async function runCompletion({
 async function persistProfile(channel, result) {
   if (!result?.profileNeedPersist || !result?.profile) return;
   try {
-    const other = { ...(channel.other || {}), profile: result.profile };
-    await pool.query("UPDATE channels SET other = ? WHERE id = ?", [JSON.stringify(other), channel.id]);
-    channel.other = other;
+    // 不能直接用选渠道时的旧快照整体覆盖：请求耗时期间管理员可能更新了
+    // cookies/登录态，旧快照写回会把那次变更静默回滚。写前重读一次最新值再合并。
+    const [rows] = await pool.query("SELECT other FROM channels WHERE id = ?", [channel.id]);
+    let latest = {};
+    try {
+      latest = rows[0]?.other ? JSON.parse(rows[0].other) : {};
+    } catch {
+      latest = {};
+    }
+    latest.profile = result.profile;
+    await pool.query("UPDATE channels SET other = ? WHERE id = ?", [JSON.stringify(latest), channel.id]);
+    channel.other = latest;
   } catch (e) {
     console.warn(`[execute] 渠道「${channel.name}」指纹持久化失败：${e.message}`);
   }

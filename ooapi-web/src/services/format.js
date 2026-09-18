@@ -57,7 +57,10 @@ export function copyText(text) {
   ta.value = text;
   document.body.appendChild(ta);
   ta.select();
-  document.execCommand("copy");
+  // execCommand 失败（非安全上下文/旧浏览器）时必须 reject，
+  // 否则页面会误报「已复制」，用户拿到的是空剪贴板
+  const okFlag = document.execCommand("copy");
   document.body.removeChild(ta);
+  if (!okFlag) return Promise.reject(new Error("复制失败，请手动复制"));
   return Promise.resolve();
 }

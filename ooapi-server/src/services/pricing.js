@@ -125,18 +125,28 @@ export function invalidatePrices() {
   priceCacheAt = 0;
 }
 
-// 取模型价格：精确匹配 → 前缀通配 → 默认
+// 取模型价格：精确匹配 → 最长前缀匹配 → 默认
 const warnedModels = new Set();
+const MAX_WARNED_MODELS = 500;
 export async function getPrice(model) {
   const prices = await loadPrices();
   const m = String(model || "").toLowerCase();
   if (prices.has(m)) return prices.get(m);
-  // 模糊匹配：deepseek-chat-search → deepseek-chat
+  // 模糊匹配：deepseek-chat-search → deepseek-chat。
+  // 必须取「命中长度最长」的前缀，不能取 Map 里第一个命中的：
+  // 短前缀可能贵 10 倍（如 glm-5.3-flash-search 先命中 glm-5.3 而不是 glm-5.3-flash）。
+  let best = null;
+  let bestLen = -1;
   for (const [k, v] of prices) {
-    if (m.startsWith(k)) return v;
+    if (k.length > bestLen && m.startsWith(k)) {
+      best = v;
+      bestLen = k.length;
+    }
   }
-  // 兜底：按 DeepSeek 档位计价，避免漏配导致零计费；同时打告警，让漏配可被发现
-  if (m && !warnedModels.has(m)) {
+  if (best) return best;
+  // 兜底：按 DeepSeek 档位计价，避免漏配导致零计费；同时打告警，让漏配可被发现。
+  // 告警集合设上限：渠道声明 models="*" 时，调用方可用任意模型名无限撑大内存。
+  if (m && !warnedModels.has(m) && warnedModels.size < MAX_WARNED_MODELS) {
     warnedModels.add(m);
     console.warn(`[pricing] 模型「${model}」未配置价格，暂按默认档（DeepSeek 价）计费，请在「模型定价」中补充`);
   }
