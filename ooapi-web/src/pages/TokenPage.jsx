@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import {
   Button, Table, Modal, Form, Input, Switch, InputNumber, DatePicker,
   Select, Tag, Space, Typography, App as AntApp, Popconfirm, Tooltip, Empty,
+  Alert,
 } from "antd";
 import { PlusOutlined, CopyOutlined, ReloadOutlined, KeyOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
@@ -19,10 +20,12 @@ export default function TokenPage() {
   const { status } = useApp();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
   const [actingId, setActingId] = useState(null); // 行内操作（启停/删除）防重入
+  const [copyingId, setCopyingId] = useState(null);
   const [form] = Form.useForm();
   const { begin, isLatest } = useLatest();
 
@@ -31,12 +34,16 @@ export default function TokenPage() {
   const load = useCallback(async () => {
     const token = begin();
     setLoading(true);
+    setLoadError("");
     try {
       const data = await API.get("/token/");
       if (!isLatest(token)) return;
       setItems(data);
     } catch (e) {
-      if (isLatest(token)) message.error(e.message);
+      if (isLatest(token)) {
+        setLoadError(e.message || "令牌列表加载失败");
+        message.error(e.message || "令牌列表加载失败");
+      }
     } finally {
       if (isLatest(token)) setLoading(false);
     }
@@ -101,7 +108,7 @@ export default function TokenPage() {
         message.success("令牌创建成功");
       }
       setModalOpen(false);
-      load();
+      await load();
     } catch (e) {
       message.error(e.message);
     } finally {
@@ -114,7 +121,7 @@ export default function TokenPage() {
     setActingId(record.id);
     try {
       await API.put("/token/", { id: record.id, status: record.status === 1 ? 2 : 1 });
-      load();
+      await load();
     } catch (e) {
       message.error(e.message);
     } finally {
@@ -128,7 +135,7 @@ export default function TokenPage() {
     try {
       await API.del(`/token/${record.id}`);
       message.success("令牌已删除");
-      load();
+      await load();
     } catch (e) {
       message.error(e.message);
     } finally {
@@ -137,12 +144,16 @@ export default function TokenPage() {
   };
 
   const copyKey = async (record) => {
+    if (copyingId) return;
+    setCopyingId(record.id);
     try {
       const { key } = await API.get(`/token/${record.id}/key`);
       await copyText(key);
       message.success("已复制完整密钥");
     } catch (e) {
       message.error(e.message);
+    } finally {
+      setCopyingId(null);
     }
   };
 
@@ -171,7 +182,7 @@ export default function TokenPage() {
         <Space size={2}>
           <span className="oo-mono">{k}</span>
           <Tooltip title="复制完整密钥">
-            <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copyKey(r)} />
+            <Button type="text" size="small" icon={<CopyOutlined />} loading={copyingId === r.id} disabled={Boolean(actingId)} onClick={() => copyKey(r)} />
           </Tooltip>
         </Space>
       ),
@@ -221,11 +232,11 @@ export default function TokenPage() {
           <Button type="link" size="small" onClick={() => openEdit(r)}>
             编辑
           </Button>
-          <Button type="link" size="small" onClick={() => toggleStatus(r)}>
+          <Button type="link" size="small" loading={actingId === r.id} disabled={Boolean(actingId) && actingId !== r.id} onClick={() => toggleStatus(r)}>
             {r.status === 1 ? "禁用" : "启用"}
           </Button>
           <Popconfirm title="确定删除该令牌？" onConfirm={() => remove(r)}>
-            <Button type="link" size="small" danger>
+            <Button type="link" size="small" danger loading={actingId === r.id} disabled={Boolean(actingId) && actingId !== r.id}>
               删除
             </Button>
           </Popconfirm>
@@ -241,7 +252,7 @@ export default function TokenPage() {
         desc="为不同应用签发独立密钥，可限制额度上限、可用模型与有效期"
         extra={
           <>
-            <Button icon={<ReloadOutlined />} onClick={load} />
+            <Button icon={<ReloadOutlined />} onClick={load} title="刷新令牌列表" aria-label="刷新令牌列表" />
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
               创建令牌
             </Button>
@@ -250,6 +261,16 @@ export default function TokenPage() {
       />
 
       <div className="oo-panel">
+        {loadError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="令牌列表加载失败"
+            description={loadError}
+            action={<Button size="small" onClick={load}>重试</Button>}
+            style={{ marginBottom: 12 }}
+          />
+        ) : null}
         <Table
           className="oo-table"
           rowKey="id"

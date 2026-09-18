@@ -210,7 +210,11 @@ export default function AuthPage({ initialTab = "login" }) {
             activeKey={tab}
             onChange={(k) => {
               setTab(k);
-              navigate(k === "register" ? "/register" : "/login", { replace: true });
+              const from = location.state?.from;
+              navigate(k === "register" ? "/register" : "/login", {
+                replace: true,
+                state: from ? { from } : undefined,
+              });
             }}
             items={[
               { key: "login", label: "登录", children: loginFormEl },

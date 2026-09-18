@@ -77,6 +77,8 @@ function ProviderPicker({ providers, activeKey, onPick }) {
             onClick={() => onPick(p)}
             role="button"
             tabIndex={0}
+            aria-pressed={active}
+            aria-label={`选择厂商 ${p.name}`}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onPick(p); }}
             style={{
               display: "flex",
@@ -115,8 +117,11 @@ export default function AdminChannelsPage() {
   const [stats, setStats] = useState(null);
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [providersError, setProvidersError] = useState("");
   const [selectedKeys, setSelectedKeys] = useState([]);
   const [testingId, setTestingId] = useState(null);
+  const [actionBusyId, setActionBusyId] = useState(null);
 
   const [keyword, setKeyword] = useState("");
   const [filterProvider, setFilterProvider] = useState("");
@@ -125,6 +130,11 @@ export default function AdminChannelsPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  // 批量导入（CPA / sub2api 凭据文件）
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
+  const [importResult, setImportResult] = useState(null);
 
   // 添加流程：先选厂商，再选该厂商的接入方式
   const [pickProvider, setPickProvider] = useState(null);
@@ -153,6 +163,8 @@ export default function AdminChannelsPage() {
   const load = useCallback(async () => {
     const token = begin();
     setLoading(true);
+    setLoadError("");
+    setProvidersError("");
     try {
       // allSettled：某一个接口失败（如 stats 表未建好）不应让整页停在旧数据
       const [list, st, ps, gs] = await Promise.allSettled([
@@ -163,8 +175,10 @@ export default function AdminChannelsPage() {
       ]);
       if (!isLatest(token)) return;
       if (list.status === "fulfilled") setItems(list.value);
+      else setLoadError(list.reason?.message || "渠道列表加载失败");
       if (st.status === "fulfilled") setStats(st.value);
       if (ps.status === "fulfilled") setProviders(ps.value);
+      else setProvidersError(ps.reason?.message || "厂商列表加载失败");
       if (gs.status === "fulfilled") setGroups(gs.value);
       const failed = [list, st, ps, gs].find((r) => r.status === "rejected");
       if (failed) message.error(failed.reason?.message || "部分数据加载失败");
@@ -311,7 +325,7 @@ export default function AdminChannelsPage() {
         message.success(`渠道「${v.name}」已创建`);
       }
       setAddOpen(false);
-      load();
+      await load();
     } catch (e) {
       // 浏览器登录类：渠道已入库但还没登录，引导管理员去完成人工登录
       if (pickMethod.needsBrowser && /已创建/.test(e.message || "")) {
@@ -323,6 +337,41 @@ export default function AdminChannelsPage() {
       message.error(e.message);
     } finally {
       setAddSubmitting(false);
+    }
+  };
+
+  // ---------- 批量导入（CPA / sub2api） ----------
+  const openImport = () => {
+    setImportText("");
+    setImportResult(null);
+    setImportOpen(true);
+  };
+  const readImportFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) return message.warning("文件过大（上限 2MB）");
+    try {
+      setImportText(await file.text());
+    } catch {
+      message.error("读取文件失败");
+    }
+  };
+  const submitImport = async () => {
+    if (importBusy) return;
+    if (!importText.trim()) return message.warning("请粘贴或选择要导入的 JSON 文件");
+    setImportBusy(true);
+    try {
+      const r = await API.post("/channel/import", { text: importText });
+      setImportResult(r);
+      const bad = (r?.results || []).filter((x) => !x.ok && !x.skipped).length + (r?.parseErrors || []).length;
+      if (bad) message.warning(`导入完成：成功 ${r?.created ?? 0}，跳过 ${r?.skipped ?? 0}，失败 ${bad}`);
+      else message.success(`导入完成：成功 ${r?.created ?? 0}，跳过 ${r?.skipped ?? 0}`);
+      load();
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setImportBusy(false);
     }
   };
 
@@ -375,7 +424,7 @@ export default function AdminChannelsPage() {
       await API.put("/channel/", payload);
       message.success("已保存");
       setEditOpen(false);
-      load();
+      await load();
     } catch (e) {
       message.error(e.message);
     } finally {
@@ -392,7 +441,7 @@ export default function AdminChannelsPage() {
       const res = await API.post(`/channel/${r.id}/test`, undefined, { timeoutMs: 90_000 });
       if (res?.success) message.success(`「${r.name}」可用（${res.time}ms）`);
       else message.warning(res?.message || "测试失败");
-      load();
+      await load();
     } catch (e) {
       message.error(e.message);
     } finally {
@@ -401,12 +450,16 @@ export default function AdminChannelsPage() {
   };
 
   const doReset = async (r) => {
+    if (actionBusyId) return;
+    setActionBusyId(r.id);
     try {
       await API.post("/channel/batch", { ids: [r.id], action: "enable" });
       message.success("已恢复");
-      load();
+      await load();
     } catch (e) {
       message.error(e.message);
+    } finally {
+      setActionBusyId(null);
     }
   };
 
@@ -445,7 +498,7 @@ export default function AdminChannelsPage() {
       if (res?.success) {
         message.success(`「${browserTarget.name}」登录就绪，渠道可用`);
         setBrowserOpen(false);
-        load();
+        await load();
       } else {
         message.warning(res?.message || "尚未就绪，请先完成登录");
       }
@@ -542,12 +595,18 @@ export default function AdminChannelsPage() {
     if (sid && !keep) await API.post(`/channel/capture/${sid}/close`).catch(() => {});
   };
 
-  const doDelete = async (r) => {    try {
+  const doDelete = async (r) => {
+    if (actionBusyId) return;
+    setActionBusyId(r.id);
+    try {
       await API.del(`/channel/${r.id}`);
       message.success("已删除");
-      load();
+      setSelectedKeys((prev) => prev.filter((id) => id !== r.id));
+      await load();
     } catch (e) {
       message.error(e.message);
+    } finally {
+      setActionBusyId(null);
     }
   };
 
@@ -557,7 +616,7 @@ export default function AdminChannelsPage() {
       await API.post("/channel/batch", { ids: selectedKeys, action, payload });
       message.success("操作成功");
       setSelectedKeys([]);
-      load();
+      await load();
     } catch (e) {
       message.error(e.message);
     }
@@ -673,6 +732,8 @@ export default function AdminChannelsPage() {
               <button
                 className="bui-icon-btn"
                 style={r.browserReady ? undefined : { color: "var(--orange)" }}
+                aria-label={`${r.name} 浏览器登录`}
+                disabled={Boolean(actionBusyId) || browserBusy}
                 onClick={() => { setBrowserOpen(true); openBrowser(r); }}
               >
                 <GlobalOutlined />
@@ -680,21 +741,25 @@ export default function AdminChannelsPage() {
             </Tooltip>
           ) : null}
           <Tooltip title="测试">
-            <button className="bui-icon-btn" onClick={() => doTest(r)} disabled={testingId === r.id}>
-              <ThunderboltOutlined />
+            <button className="bui-icon-btn" aria-label={`${r.name} 测试`} onClick={() => doTest(r)} disabled={Boolean(actionBusyId) || testingId === r.id} aria-busy={testingId === r.id}>
+              {testingId === r.id ? <Spin size="small" /> : <ThunderboltOutlined />}
             </button>
           </Tooltip>
           {r.cooling ? (
             <Tooltip title="恢复">
-              <button className="bui-icon-btn" onClick={() => doReset(r)}><UndoOutlined /></button>
+              <button className="bui-icon-btn" aria-label={`${r.name} 恢复`} onClick={() => doReset(r)} disabled={Boolean(actionBusyId) || testingId === r.id} aria-busy={actionBusyId === r.id}>
+                {actionBusyId === r.id ? <Spin size="small" /> : <UndoOutlined />}
+              </button>
             </Tooltip>
           ) : null}
           <Tooltip title="编辑">
-            <button className="bui-icon-btn" onClick={() => openEdit(r)}><EditOutlined /></button>
+            <button className="bui-icon-btn" aria-label={`${r.name} 编辑`} onClick={() => openEdit(r)} disabled={Boolean(actionBusyId) || testingId === r.id}><EditOutlined /></button>
           </Tooltip>
           <Popconfirm title={`确认删除「${r.name}」？`} onConfirm={() => doDelete(r)}>
             <Tooltip title="删除">
-              <button className="bui-icon-btn" style={{ color: "var(--red)" }}><DeleteOutlined /></button>
+              <button className="bui-icon-btn" aria-label={`${r.name} 删除`} disabled={Boolean(actionBusyId) || testingId === r.id} aria-busy={actionBusyId === r.id} style={{ color: "var(--red)" }}>
+                {actionBusyId === r.id ? <Spin size="small" /> : <DeleteOutlined />}
+              </button>
             </Tooltip>
           </Popconfirm>
         </Space>
@@ -733,6 +798,7 @@ export default function AdminChannelsPage() {
               </>
             ) : null}
             <button className="bui-btn" onClick={load}><ReloadOutlined /> 刷新</button>
+            <button className="bui-btn" onClick={openImport}>导入凭据</button>
             <button className="bui-btn bui-btn--primary" onClick={openAdd}><PlusOutlined /> 添加渠道</button>
           </>
         }
@@ -753,6 +819,16 @@ export default function AdminChannelsPage() {
       </div>
 
       <div className="oo-panel">
+        {loadError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="渠道列表加载失败"
+            description={loadError}
+            action={<Button size="small" onClick={load} loading={loading}>重试</Button>}
+            style={{ marginBottom: 12 }}
+          />
+        ) : null}
         <Table
           className="oo-table"
           rowKey="id"
@@ -784,11 +860,27 @@ export default function AdminChannelsPage() {
       >
         <div style={{ marginBottom: 14 }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 9 }}>1. 选择厂商</div>
-          <ProviderPicker
-            providers={providers}
-            activeKey={pickProvider?.key}
-            onPick={chooseProvider}
-          />
+          {providersError ? (
+            <Alert
+              type="error"
+              showIcon
+              message="厂商列表加载失败"
+              description={providersError}
+              action={<Button size="small" onClick={load} loading={loading}>重试</Button>}
+              style={{ marginBottom: 10 }}
+            />
+          ) : null}
+          {!providersError && !providers.length ? (
+            <Alert
+              type="info"
+              showIcon
+              message="暂无可用厂商"
+              description="请先配置厂商，或点击刷新重新加载列表。"
+              action={<Button size="small" onClick={load} loading={loading}>刷新</Button>}
+              style={{ marginBottom: 10 }}
+            />
+          ) : null}
+          <ProviderPicker providers={providers} activeKey={pickProvider?.key} onPick={chooseProvider} />
         </div>
 
         {pickProvider ? (
@@ -1244,6 +1336,63 @@ export default function AdminChannelsPage() {
           </Form.Item>
           <button className="bui-btn bui-btn--primary" type="submit">执行</button>
         </Form>
+      </Modal>
+
+      {/* ============ 导入凭据（CPA / sub2api） ============ */}
+      <Modal
+        title="导入凭据（CPA / sub2api）"
+        open={importOpen}
+        onCancel={() => setImportOpen(false)}
+        onOk={submitImport}
+        confirmLoading={importBusy}
+        okText="开始导入"
+        width={680}
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="支持格式"
+          description={
+            <span style={{ fontSize: 12 }}>
+              sub2api 导出文件（accounts 数组）、CPA auth 文件（type=codex/claude/antigravity/gemini/xai）；
+              可一次选择或粘贴多个文件内容，自动识别厂商与接入方式，重复账号自动跳过。
+            </span>
+          }
+        />
+        <input type="file" accept=".json,application/json" onChange={readImportFile} style={{ marginBottom: 10 }} />
+        <Input.TextArea
+          rows={10}
+          value={importText}
+          onChange={(e) => setImportText(e.target.value)}
+          placeholder="粘贴 JSON 文件内容（例如 sub2api 导出、CPA auths/*.json）"
+        />
+        {importResult ? (
+          <pre
+            style={{
+              marginTop: 12,
+              maxHeight: 220,
+              overflow: "auto",
+              fontSize: 12,
+              background: "var(--surface-2, #f6f6f6)",
+              padding: 10,
+              borderRadius: 8,
+            }}
+          >
+            {JSON.stringify(
+              {
+                成功: importResult.created,
+                跳过: importResult.skipped,
+                明细: (importResult.results || []).map(
+                  (x) => `${x.ok ? "[OK]" : x.skipped ? "[SKIP]" : "[FAIL]"} ${x.name}${x.reason ? `（${x.reason}）` : ""}`
+                ),
+                解析失败: (importResult.parseErrors || []).map((x) => `${x.name}：${x.reason}`),
+              },
+              null,
+              2
+            )}
+          </pre>
+        ) : null}
       </Modal>
     </div>
   );

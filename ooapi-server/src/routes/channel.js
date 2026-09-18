@@ -36,6 +36,7 @@ import {
   closeSession as browserClose,
 } from "../services/upstream/browser-driver.js";
 import { invalidateModelRegistry } from "../services/models.js";
+import { parseCredentialFile } from "../services/upstream/auth-import.js";
 import { randomBytes } from "node:crypto";
 
 const router = Router();
@@ -1034,6 +1035,91 @@ router.post(
 
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `批量操作渠道 ${list.join(",")}：${action}` });
     return ok(res, null, "操作成功");
+  })
+);
+
+// ---------- 批量导入凭据（兼容 CPA / sub2api 导出文件）----------
+router.post(
+  "/import",
+  asyncHandler(async (req, res) => {
+    const text = String(req.body?.text || "");
+    if (!text.trim()) return fail(res, "请粘贴要导入的文件内容");
+    if (text.length > 2_000_000) return fail(res, "文件过大（上限 2MB）");
+    const { accounts, errors } = await parseCredentialFile(text);
+    if (!accounts.length && !errors.length) return fail(res, "没有可导入的账号");
+
+    // 去重：OAuth 用稳定账号指纹（account_id/email/sub/project_id），API Key 用 key。
+    // 按 type 缓存现有渠道，避免每个账号都查一次库。
+    const existingByType = new Map();
+    const loadExisting = async (type) => {
+      if (!existingByType.has(type)) {
+        const [rows] = await pool.query("SELECT id, api_key, other FROM channels WHERE type = ?", [type]);
+        existingByType.set(type, rows);
+      }
+      return existingByType.get(type);
+    };
+
+    const results = [];
+    let created = 0;
+    let skipped = 0;
+    for (const a of accounts) {
+      try {
+        const mCfg = getMethod(a.type, a.method) || {};
+        const defaultModels = (mCfg.defaultModels || []).map((m) => m.id).join(",");
+        const oauth = isOAuthMethod(a.method);
+        const stable = oauth
+          ? a.other.account_id || a.other.account_uuid || a.other.email || a.other.sub || a.other.project_id || ""
+          : "";
+        const rows = await loadExisting(a.type);
+        const dup = rows.find((r) => {
+          if (oauth) {
+            if (!stable) return false;
+            try {
+              const o = JSON.parse(r.other || "{}");
+              return (o.account_id || o.account_uuid || o.email || o.sub || o.project_id) === stable;
+            } catch {
+              return false;
+            }
+          }
+          return r.api_key === a.token;
+        });
+        if (dup) {
+          skipped++;
+          results.push({ name: a.name, ok: false, skipped: true, reason: "账号已存在（跳过）" });
+          continue;
+        }
+        const baseUrl = String(a.base_url || mCfg.baseUrl || "").slice(0, 255);
+        const [ret] = await pool.query(
+          `INSERT INTO channels (name, type, base_url, api_key, models, group_name, status, priority, weight, auto_ban, other, created_time)
+           VALUES (?,?,?,?,?, 'default', 1, ?, 1, 1, ?, ?)`,
+          [
+            String(a.name || `${a.type} 渠道`).slice(0, 64),
+            a.type,
+            baseUrl,
+            a.token,
+            defaultModels.slice(0, 20_000),
+            Number(a.priority) || 0,
+            JSON.stringify(a.other),
+            now(),
+          ]
+        );
+        rows.push({ id: ret.insertId, api_key: a.token, other: JSON.stringify(a.other) });
+        created++;
+        results.push({ name: a.name, ok: true, id: ret.insertId, type: a.type, method: a.method });
+      } catch (e) {
+        results.push({ name: a.name, ok: false, reason: e.message });
+      }
+    }
+    await writeLog({
+      user: req.user,
+      type: LOG_TYPE.MANAGE,
+      content: `批量导入凭据：成功 ${created} / 跳过 ${skipped} / 解析失败 ${errors.length}`,
+    });
+    return ok(
+      res,
+      { created, skipped, results, parseErrors: errors },
+      `导入完成：成功 ${created}，跳过 ${skipped}，失败 ${results.length - created - skipped + errors.length}`
+    );
   })
 );
 

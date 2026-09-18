@@ -22,6 +22,7 @@ const RETRYABLE = new Set([
   "CHANNEL_BIZ_ERROR",    // 上游业务错误（多为风控/过载，瞬时性问题换渠道可解）
   "UNSUPPORTED_CHANNEL",  // 渠道类型未注册/配置错误：属于该渠道自身问题，应跳过换下一个
   "CHANNEL_CONFIG_ERROR", // 订阅渠道的部署配置缺失（如 Google OAuth 密钥未配置）：跳过该渠道
+  "CHANNEL_DEGRADED",     // 上游降智/过载信号（codex-state-kit）：立即换号，短冷却后重试
 ]);
 
 export function isRetryable(code) {
@@ -138,6 +139,15 @@ export async function runCompletion({
 
       await markChannelOk(channel, Date.now() - started);
       await persistProfile(channel, result);
+      // codex-state-kit：命中「思考截断/降智」指纹时内容照常返回，但给渠道一个短冷却，
+      // 让后续请求优先换号（避免连续拿到降智/过载响应）。
+      if (result?.rotateNext) {
+        await markChannelError(
+          channel,
+          String(result.rotateReason || "上游降智信号").slice(0, 400),
+          Math.min(3600, Math.max(30, Number(result.rotateCooldownSec) || 90))
+        );
+      }
       return { ...result, channel, elapsed: Date.now() - started };
     } catch (err) {
       lastError = err;
@@ -160,8 +170,17 @@ export async function runCompletion({
       const judgeable = Boolean(lastError.code);
       if (judgeable && !isRetryable(code)) throw lastError;
 
-      // 标记渠道异常并冷却，尝试下一个
-      const cooldown = code === "CHANNEL_MUTED" ? 1800 : code === "CHANNEL_AUTH_EXPIRED" ? 21600 : 300;
+      // 标记渠道异常并冷却，尝试下一个。
+      // 适配器可自带 cooldownSec（如 grok 免费额度用尽要冷却 24h、codex 降智只冷却 90s）
+      const requestedCooldown = Number(lastError?.cooldownSec);
+      const cooldown =
+        Number.isFinite(requestedCooldown) && requestedCooldown > 0
+          ? Math.min(86400, Math.max(30, Math.floor(requestedCooldown)))
+          : code === "CHANNEL_MUTED"
+            ? 1800
+            : code === "CHANNEL_AUTH_EXPIRED"
+              ? 21600
+              : 300;
       await markChannelError(channel, lastError.message, cooldown);
       console.warn(`[execute] 渠道「${channel.name}」失败（${code}），切换下一渠道：${lastError.message}`);
     } finally {

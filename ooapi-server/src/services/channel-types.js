@@ -18,8 +18,9 @@
 //   codex        ChatGPT 订阅（Codex OAuth，responses 协议）
 //   claude-oauth Claude 订阅（Claude Code OAuth，messages 协议）
 //   antigravity  Google 订阅（Antigravity/Code Assist OAuth）
-// 与 relay 的区别：不需要浏览器，凭据是 OAuth 令牌（粘贴官方 CLI 的凭据文件）
-export const OAUTH_METHODS = ["codex", "claude-oauth", "antigravity"];
+//   grok-oauth   xAI Grok 订阅（device-code OAuth，responses 协议）
+// 与 relay 的区别：不需要浏览器，凭据是 OAuth 令牌（粘贴官方 CLI / CPA / sub2api 的凭据文件）
+export const OAUTH_METHODS = ["codex", "claude-oauth", "antigravity", "grok-oauth"];
 
 export function isOAuthMethod(key) {
   return OAUTH_METHODS.includes(String(key || ""));
@@ -332,6 +333,41 @@ export const PROVIDERS = [
         desc: "自行填写 Base URL、API Key 与模型",
         baseUrl: "",
         keyHint: "sk-...",
+        defaultModels: [],
+        testModel: "",
+      },
+    ],
+  },
+  {
+    key: "grok",
+    name: "xAI Grok",
+    vendor: "grok",
+    desc: "Grok 系列：订阅 OAuth（device-code）或官方 API Key",
+    methods: [
+      {
+        key: "grok-oauth",
+        adapter: "grok",
+        label: "Grok 订阅（xAI OAuth）",
+        desc: "粘贴 CPA/sub2api 导出的 Grok 凭据",
+        loginModes: ["paste"],
+        loginFields: oauthCredentialField(
+          '{ "type": "xai", "access_token": "...", "refresh_token": "...", "auth_kind": "oauth" }',
+          "支持 CPA 的 xai auth 文件、sub2api 导出的 grok 凭据；含 refresh_token 即可自动续期"
+        ),
+        pasteHint: "Grok 订阅凭据：走 cli-chat-proxy.grok.com 的 Responses 通道，平台自动续期并保持官方 CLI 指纹",
+        defaultModels: [
+          { id: "grok-4.6", name: "Grok 4.6" },
+          { id: "grok-4.5", name: "Grok 4.5" },
+          { id: "grok-4.3", name: "Grok 4.3" },
+        ],
+        testModel: "grok-4.5",
+      },
+      {
+        key: "api",
+        label: "API Key",
+        desc: "xAI 官方 API Key（api.x.ai）",
+        baseUrl: "https://api.x.ai/v1",
+        keyHint: "xai-...",
         defaultModels: [],
         testModel: "",
       },

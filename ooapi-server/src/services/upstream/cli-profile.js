@@ -65,6 +65,7 @@ export const CLI_VERSIONS = {
   antigravity: "2.9.1",
   antigravityNodeApi: "10.3.0",
   antigravityGoogApi: "gl-node/22.21.1",
+  grok: "0.2.120",
 };
 
 export function codexUserAgent(channel) {
@@ -123,5 +124,16 @@ export function antigravityIdentity(channel) {
     requestId: `agent-${seededUuid(seed, "ag-request")}`,
     sessionId: `-${sessionInt}`,
     userAgent: antigravityUserAgent(channel),
+  };
+}
+
+/** Grok（xAI）：会话 id 同时用于 x-grok-conv-id 头与 prompt_cache_key */
+export function grokIdentity(channel) {
+  const seed = profileSeed(channel);
+  const v = String(channel?.other?.client_version || "").trim() || CLI_VERSIONS.grok;
+  return {
+    sessionId: seededUuid(seed, "grok-session"),
+    clientVersion: v,
+    userAgent: `xai-grok-workspace/${v}`,
   };
 }

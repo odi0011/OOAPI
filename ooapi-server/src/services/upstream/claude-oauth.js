@@ -61,7 +61,8 @@ export function parseAuthJson(raw) {
       code: "LOGIN_BAD_PARAMS",
     });
   }
-  const t = j.claudeAiOauth || j.oauth || j.token || j;
+  // 兼容官方凭据文件（claudeAiOauth）、裸对象与 sub2api 导出（credentials 对象）
+  const t = j.claudeAiOauth || j.oauth || j.credentials || j.token || j;
   // 官方 CLI 是 camelCase（accessToken/refreshToken/expiresAt），也兼容 snake_case 与整体凭据文件
   const access_token = String(t.accessToken || t.access_token || j.accessToken || j.access_token || "").trim();
   const refresh_token = String(t.refreshToken || t.refresh_token || j.refreshToken || j.refresh_token || "").trim();

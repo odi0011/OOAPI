@@ -23,6 +23,7 @@ const ADAPTERS = {
   codex: () => import("./upstream/codex.js"),
   "claude-oauth": () => import("./upstream/claude-oauth.js"),
   antigravity: () => import("./upstream/antigravity.js"),
+  "grok-oauth": () => import("./upstream/grok.js"),
 };
 
 /**

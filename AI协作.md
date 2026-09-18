@@ -61,6 +61,8 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
 | `src/services/upstream/antigravity.js` | Google 订阅（Antigravity OAuth） | 私有信封 `{model,project,request}`；首次自动 loadCodeAssist 引导 project_id；client_id/secret 从 `.env` 读（`GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`，禁止提交） |
 | `src/services/upstream/cli-profile.js` | **统一指纹模块**（订阅渠道共用） | 所有身份按「渠道 id+账号」种子确定性派生；换号即换身份；禁止各适配器自己 random |
 | `src/services/upstream/auth-store.js` | OAuth 凭据写回 | 写前重读合并，防覆盖并发修改；`access_token` 同步更新 `channels.api_key` |
+| `src/services/upstream/grok.js` | xAI Grok 订阅（device-code OAuth） | Responses 协议：OAuth 走 `cli-chat-proxy.grok.com/v1` 必须带 CLI 身份头；403 bad-credentials 按 401 刷新重试；免费额度耗尽冷却 24h |
+| `src/services/upstream/auth-import.js` | **统一凭据导入**（CPA / sub2api） | 识别 `accounts[]`、CPA auth `type`、多文件拼接、裸凭据；映射到已有接入方式，不直接写库 |
 
 ### 1.2 前端关键模块地图
 
@@ -92,6 +94,39 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 ```
 
 **注意事项**：不要在 `/opt/ooapi` 里直接 `git pull`（不是仓库，且会污染运行目录）；前端构建必须带 devDependencies（更新器已处理 NODE_ENV 坑）；`.env` 里保存线上配置，任何操作都不得覆盖。
+
+### 1.4 codex-state-kit（ChatGPT/Codex 反代的回合态与降智防护）
+
+模块：`services/upstream/codex-state-kit.js`（`codex.js` 接入，`execute.js` 消费轮换信号）。
+
+```
+① 注入健康态            ② 捕获            ③ 监控              ④ 轮换
+x-codex-turn-state  ─▶ response header ─▶ detectSignal() ─▶ execute 短冷却换号
+（按渠道+账号+TTL）      / SSE metadata     312 / 过载 / 516 指纹
+```
+
+| 概念 | 说明 |
+|---|---|
+| 健康态凭据 | 响应头 `x-codex-turn-state`（官方 Codex 协议确有该头：响应下发、同回合回填、新回合清空） |
+| 292 语义 | 社区观测：携带 `current_turn_state` 的响应视为「未降智」，我们按此把该 state 缓存为健康态并在后续请求注入 |
+| 312 信号 | 服务端主动下发的降智/过载信号 → 抛 `CHANNEL_DEGRADED` + `cooldownSec=90`，execute 立即换下一个账号 |
+| 516 指纹 | `reasoning_tokens == 518n−2`（516/1034…）= 思考被截断的降智指纹；命中后本轮内容照常返回，但给渠道短冷却，下次优先换号 |
+| 隔离与失效 | state 按「渠道 id + 账号指纹」存储，TTL 20 分钟；换号/过期/显式清空即失效，绝不跨账号携带 |
+| 可配置 | 渠道 `other.state_kit=false` 关闭；`CODEX_DEGRADED_STATUS_CODES`（默认 `312`）覆盖信号状态码 |
+| 降级策略 | 上游不认注入的 state（400/404 且提到 turn_state）→ 清除后重试一次；协议变化时退化为普通透传，不影响主链路 |
+
+**设计边界**：state kit 只做「健康态选择 + 快速止损」，不伪造协议字段、不改写计费；292/312 的语义来自社区观测（非官方文档），因此全部做成可配置，出现新证据时只改常量。
+
+**2026-09-18 线上实测结论**（真实 ChatGPT 账号，本地代理出口）：
+- 不注入 state 请求 → HTTP 200 且响应头下发 `x-codex-turn-state`（**值长度正好 292**，社区所称「292」即该 state 的格式/长度，而非 HTTP 状态码）；
+- 注入该 state 再请求 → HTTP 200、上游**不再重复下发** state（视为已接受、复用中）；对话流式与 usage 均正常；
+- state 与账号绑定（本平台已按渠道+账号指纹隔离）；按**模型**隔离也已生效（社区要求采集与使用模型一致）。
+
+**CPA / sub2api 凭据导入（第 11 批）**：管理端「渠道管理 → 导入凭据」支持
+sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antigravity/gemini/xai`）、
+多文件拼接与裸凭据；自动映射到 `codex / claude-oauth / antigravity / grok-oauth` 或 API Key 接入，
+重复账号自动跳过。映射表与扩展点见 `services/upstream/auth-import.js`；Grok 接入方式为
+`grok-oauth`（订阅）+ `api`（xAI 官方 Key）。
 
 ---
 
@@ -313,3 +348,18 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
   OAuth 渠道按稳定账号去重 + 入池前凭据校验（失败禁用不再带病调度）；`fetch-models` 订阅兜底
   默认模型并统一返回 id 数组；`/login` 更新渠道补 `priority`；`POST /channel` 拒绝非 api 方法；
   删除路径带 `other` 解析真实 method；前端测试超时 90s、凭据 id 命名空间化、非 API 权重默认 1。 |
+| 2026-09-18 | **第 11 批（codex-state-kit 实测校正 + CPA/sub2api 导入 + Grok 接入）**：
+  按社区机制重写 state kit（292=通行证、312=撤销、TTL≈55min、按渠道+**模型**隔离、支持响应头/响应体/SSE
+  三路捕获、312 立即作废并换号）；**真实账号实测**确认：未注入时下发 292 长度的
+  `x-codex-turn-state`，注入后被接受且不重复下发；新增 `grok.js`（device-code OAuth，
+  `cli-chat-proxy` Responses 协议 + CLI 身份头 + 403 bad-credentials 刷新重试 + 免费额度 24h 冷却）
+  与 `grok-models.js`；新增统一导入器 `auth-import.js` + `POST /api/channel/import` + 前端
+  「导入凭据」弹窗（sub2api 导出 / CPA auth / 多文件拼接 / API Key，自动识别厂商与去重）；
+  codex/claude/antigravity 解析兼容 sub2api `credentials` 结构。 |
+| 2026-09-18 | **第 11 批 UX 修复**：登录/注册切换保留受保护页面回跳；有效 JWT 遇到首屏网络异常时保留会话并提供认证重试；
+  首页状态未知时隐藏注册入口；控制台增加加载中、错误和重试状态。令牌、日志、用户、定价、渠道列表增加
+  持久错误提示与重试，日志清除搜索回到第一页，刷新按钮补齐无障碍名称；渠道添加补 providers 空/失败态，
+  删除渠道同步清除选中项，测试/恢复/编辑/删除等行操作增加禁用、忙碌和 `aria-label`。Agent 无可用能力时
+  显示切换提示，重试回答沿用原模型、Agent、思考和联网设置；Agent 的无动作按钮明确禁用。系统设置增加
+  加载指示、失败重试并仅在活动 Tab 加载；侧边栏导航、折叠按钮、个人设置主题色支持键盘操作；管理员编辑自己时
+  禁止修改启用状态；异步保存/刷新完成前等待列表刷新。涉及 `ooapi-web/src`，并通过 `npm run build`。 |

@@ -112,6 +112,19 @@ export const VENDORS = [
     supportsVision: true,
     hint: "粘贴 Antigravity/Gemini CLI 的 OAuth 凭据；首次请求自动引导 project_id",
   },
+  {
+    key: "grok",
+    name: "xAI Grok（订阅）",
+    channelType: "grok",
+    desc: "Grok OAuth：xAI 订阅转 API",
+    loginModes: ["paste"],
+    fields: [],
+    models: ["grok-4.6", "grok-4.5", "grok-4.3", "grok-3-mini"],
+    baseUrl: "https://cli-chat-proxy.grok.com/v1",
+    supportsBatch: false,
+    supportsVision: true,
+    hint: "粘贴 CPA/sub2api 导出的 Grok 凭据；平台自动续期并保持官方 CLI 指纹",
+  },
 ];
 
 export function getVendor(key) {

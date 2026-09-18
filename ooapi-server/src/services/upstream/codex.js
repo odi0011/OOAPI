@@ -17,6 +17,16 @@
 // ---------------------------------------------------------------------------
 import { codexIdentity } from "./cli-profile.js";
 import { persistOtherPatch, loadOther, withRefreshLock } from "./auth-store.js";
+import {
+  stateHeaders,
+  captureFromHeaders,
+  captureFromBody,
+  captureFromEvent,
+  detectSignal,
+  clearState,
+  DEGRADED_CODE,
+  DEGRADED_COOLDOWN_SEC,
+} from "./codex-state-kit.js";
 
 const AUTH_BASE = "https://auth.openai.com";
 const TOKEN_URL = `${AUTH_BASE}/oauth/token`;
@@ -61,16 +71,24 @@ export function parseAuthJson(raw) {
       code: "LOGIN_BAD_PARAMS",
     });
   }
-  const t = j.tokens || j.token || j.token_data || j;
+  // 兼容多种导出：Codex CLI auth.json / CPA auth 文件 / sub2api 导出（credentials 对象）
+  const t = j.tokens || j.token || j.token_data || j.credentials || j;
   const access_token = String(t.access_token || j.access_token || "").trim();
   const refresh_token = String(t.refresh_token || j.refresh_token || "").trim();
   const id_token = String(t.id_token || j.id_token || "").trim();
   const fromJwt = parseIdToken(id_token);
-  const account_id = String(t.account_id || j.account_id || fromJwt.account_id || "").trim();
+  const account_id = String(t.account_id || t.chatgpt_account_id || j.account_id || j.chatgpt_account_id || fromJwt.account_id || "").trim();
   const email = String(j.email || t.email || fromJwt.email || "").trim();
   if (!access_token) throw Object.assign(new Error("缺少 access_token"), { code: "LOGIN_BAD_PARAMS" });
   if (!refresh_token) throw Object.assign(new Error("缺少 refresh_token（订阅渠道必须能自动续期）"), { code: "LOGIN_BAD_PARAMS" });
-  return { access_token, refresh_token, id_token, account_id, email, plan_type: fromJwt.plan_type || "" };
+  return {
+    access_token,
+    refresh_token,
+    id_token,
+    account_id,
+    email,
+    plan_type: String(t.plan_type || j.plan_type || fromJwt.plan_type || "").trim(),
+  };
 }
 
 /** 刷新 access_token（表单请求，无需 client_secret）。
@@ -220,6 +238,45 @@ function extractInstructions(messages) {
   return sys.join("\n\n");
 }
 
+/** 把 /responses 的 JSON（非流式）响应转成统一结果（292 路径/兼容网关用） */
+function parseJsonCompletion(text) {
+  let j;
+  try {
+    j = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!j || typeof j !== "object") return null;
+  let content = "";
+  let reasoning = "";
+  const msg = j.choices?.[0]?.message;
+  if (typeof msg?.content === "string") content = msg.content;
+  if (typeof msg?.reasoning_content === "string") reasoning = msg.reasoning_content;
+  if (!content && typeof j.output_text === "string") content = j.output_text;
+  if (!content && Array.isArray(j.output)) {
+    const parts = [];
+    for (const item of j.output) {
+      for (const c of item?.content || []) {
+        if (typeof c?.text === "string") parts.push(c.text);
+      }
+    }
+    content = parts.join("");
+  }
+  if (!content) return null;
+  const u = j.usage || {};
+  return {
+    content,
+    reasoning,
+    usage: {
+      prompt_tokens: Number(u.input_tokens ?? u.prompt_tokens) || 0,
+      completion_tokens: Number(u.output_tokens ?? u.completion_tokens) || 0,
+      total_tokens: Number(u.total_tokens) || 0,
+      cached_tokens: Number(u.input_tokens_details?.cached_tokens ?? u.prompt_tokens_details?.cached_tokens) || 0,
+    },
+    upstreamModel: j.model || "",
+  };
+}
+
 export async function chat({
   channel,
   model,
@@ -250,6 +307,13 @@ export async function chat({
   // 深度思考：显式开启时请求推理摘要（默认交给上游模型默认档）
   if (thinkingOverride === true) body.reasoning = { effort: "medium", summary: "auto" };
 
+  // state kit：注入当前「渠道+模型」的通行证；需要 body 字段的网关走 state_in_body 开关
+  const stateHdr = stateHeaders(channel, model);
+  const bodyStateValue = stateHdr.__stateBodyField || "";
+  delete stateHdr.__stateBodyField;
+  if (bodyStateValue) body.current_turn_state = bodyStateValue;
+
+  let injectState = true;
   const buildInit = (token) => ({
     method: "POST",
     headers: {
@@ -260,31 +324,66 @@ export async function chat({
       "user-agent": identity.userAgent,
       session_id: identity.sessionId,
       ...(channel?.other?.account_id ? { "chatgpt-account-id": String(channel.other.account_id) } : {}),
+      ...(injectState ? stateHdr : {}),
     },
     body: JSON.stringify(body),
     signal,
   });
-  const resp = await fetchWithAuthRetry(channel, buildInit, `${API_BASE}/responses`);
+  let resp = await fetchWithAuthRetry(channel, buildInit, `${API_BASE}/responses`);
+  // 响应头里的通行证视为有效，缓存给后续请求
+  captureFromHeaders(channel, model, resp.headers);
+
+  // 292：通行证签发（非标准状态码，resp.ok 仍为 true）。JSON 体里带 current_turn_state。
+  if (resp.status === 292) {
+    const ctype = (resp.headers.get("content-type") || "").toLowerCase();
+    if (!ctype.includes("text/event-stream")) {
+      const text = await resp.text().catch(() => "");
+      captureFromBody(channel, model, text);
+      const parsed = parseJsonCompletion(text);
+      if (parsed) return parsed;
+      throw Object.assign(new Error("上游返回 292 但响应体无法解析"), { code: "CHANNEL_BAD_RESPONSE" });
+    }
+  }
 
   if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    let msg = text.slice(0, 300);
-    try {
-      const j = JSON.parse(text);
-      msg = j?.error?.message || j?.message || msg;
-    } catch {
-      /* 保留原始文本 */
+    let text = await resp.text().catch(() => "");
+    captureFromBody(channel, model, text);
+    // 兜底：上游不认我们注入的 state 时，清除后重试一次（fail-open，不影响主链路）
+    if (injectState && [400, 404].includes(resp.status) && /turn[_-]?state/i.test(text)) {
+      console.warn("[codex] 上游拒绝 turn state，清除后重试一次");
+      clearState(channel.id, model);
+      injectState = false;
+      resp = await fetchWithAuthRetry(channel, buildInit, `${API_BASE}/responses`);
+      captureFromHeaders(channel, model, resp.headers);
+      if (!resp.ok) text = await resp.text().catch(() => "");
     }
-    const code =
-      resp.status === 401
-        ? "CHANNEL_AUTH_EXPIRED"
-        : resp.status === 429
-          ? "CHANNEL_RATE_LIMIT"
-          : [400, 404, 409, 413, 422].includes(resp.status)
-            ? "CHANNEL_BAD_REQUEST"
-            : "CHANNEL_HTTP_ERROR";
-    throw Object.assign(new Error(`Codex 上游 HTTP ${resp.status}：${msg}`), { code });
+    if (!resp.ok) {
+      captureFromBody(channel, model, text);
+      const sig = detectSignal({ status: resp.status, text });
+      if (sig.degraded) {
+        // 312 语义：当前通行证被服务端撤销，立即作废，调度器换到持有有效 state 的账号
+        if (sig.invalidatesState) clearState(channel.id, model);
+        throw Object.assign(new Error(sig.message), { code: DEGRADED_CODE, cooldownSec: sig.cooldownSec });
+      }
+      let msg = text.slice(0, 300);
+      try {
+        const j = JSON.parse(text);
+        msg = j?.error?.message || j?.message || msg;
+      } catch {
+        /* 保留原始文本 */
+      }
+      const code =
+        resp.status === 401
+          ? "CHANNEL_AUTH_EXPIRED"
+          : resp.status === 429
+            ? "CHANNEL_RATE_LIMIT"
+            : [400, 404, 409, 413, 422].includes(resp.status)
+              ? "CHANNEL_BAD_REQUEST"
+              : "CHANNEL_HTTP_ERROR";
+      throw Object.assign(new Error(`Codex 上游 HTTP ${resp.status}：${msg}`), { code });
+    }
   }
+
   if (!resp.body) throw Object.assign(new Error("Codex 上游未返回内容流"), { code: "CHANNEL_BAD_RESPONSE" });
 
   const reader = resp.body.getReader();
@@ -298,6 +397,8 @@ export async function chat({
 
   const handleEvent = (obj) => {
     if (!obj || typeof obj !== "object") return;
+    // state kit：从 SSE metadata/headers 捕获通行证（网页协议下走事件而非响应头）
+    captureFromEvent(channel, model, obj);
     const type = String(obj.type || "");
     if (obj.response?.model) upstreamModel = obj.response.model;
     if (type === "response.output_text.delta") {
@@ -339,6 +440,11 @@ export async function chat({
     }
     if (type === "response.failed" || type === "error") {
       const msg = obj.response?.error?.message || obj.error?.message || obj.message || "Codex 上游返回错误事件";
+      const sig = detectSignal({ text: msg });
+      if (sig.degraded) {
+        if (sig.invalidatesState) clearState(channel.id, model);
+        throw Object.assign(new Error(sig.message), { code: DEGRADED_CODE, cooldownSec: sig.cooldownSec });
+      }
       throw Object.assign(new Error(msg), { code: "CHANNEL_BIZ_ERROR" });
     }
   };
@@ -384,13 +490,25 @@ export async function chat({
       code: "CHANNEL_EMPTY",
     });
   }
-  return { content: finalContent, reasoning, usage, upstreamModel };
+  // state kit：本轮内容照常返回，但命中「思考截断/降智」指纹时给渠道短冷却，
+  // 让后续请求优先轮换到其他账号（execute 会消费 rotateNext/rotateCooldownSec）
+  const degradeSignal = detectSignal({ usage });
+  return {
+    content: finalContent,
+    reasoning,
+    usage,
+    upstreamModel,
+    ...(degradeSignal.degraded
+      ? { rotateNext: true, rotateCooldownSec: degradeSignal.cooldownSec, rotateReason: degradeSignal.message }
+      : {}),
+  };
 }
 
 /** 健康检查：确认能取到凭据并完成一次最小请求 */
 export async function verify(channel) {
   const started = Date.now();
   const identity = codexIdentity(channel);
+  const testModel = channel?.other?.test_model || "gpt-5.6-luna";
   const buildInit = (token) => ({
     method: "POST",
     headers: {
@@ -401,9 +519,10 @@ export async function verify(channel) {
       "user-agent": identity.userAgent,
       session_id: identity.sessionId,
       ...(channel?.other?.account_id ? { "chatgpt-account-id": String(channel.other.account_id) } : {}),
+      ...stateHeaders(channel, testModel),
     },
     body: JSON.stringify({
-      model: channel?.other?.test_model || "gpt-5-mini",
+      model: testModel,
       instructions: "",
       input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "ping" }] }],
       stream: true,
@@ -413,11 +532,23 @@ export async function verify(channel) {
     signal: AbortSignal.timeout(60_000),
   });
   const resp = await fetchWithAuthRetry(channel, buildInit, `${API_BASE}/responses`);
+  captureFromHeaders(channel, testModel, resp.headers);
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
+    captureFromBody(channel, testModel, text);
+    const sig = detectSignal({ status: resp.status, text });
+    if (sig.degraded) {
+      if (sig.invalidatesState) clearState(channel.id, testModel);
+      throw Object.assign(new Error(sig.message), { code: DEGRADED_CODE, cooldownSec: sig.cooldownSec });
+    }
     const code =
       resp.status === 401 ? "CHANNEL_AUTH_EXPIRED" : resp.status === 429 ? "CHANNEL_RATE_LIMIT" : "CHANNEL_HTTP_ERROR";
     throw Object.assign(new Error(`Codex 健康检查失败（HTTP ${resp.status}）：${text.slice(0, 200)}`), { code });
+  }
+  // 292 且为 JSON 体：读取并捕获通行证（此时没有 SSE 流可读）
+  if (resp.status === 292 && !(resp.headers.get("content-type") || "").toLowerCase().includes("text/event-stream")) {
+    captureFromBody(channel, testModel, await resp.text().catch(() => ""));
+    return Date.now() - started;
   }
   // 读掉首帧即可确认凭据有效，然后立即断开
   try {

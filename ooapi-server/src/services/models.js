@@ -15,10 +15,11 @@ const VENDOR_MODEL_MODULES = {
   kimi: () => import("./upstream/kimi-models.js"),
   doubao: () => import("./upstream/doubao-models.js"),
   qwen: () => import("./upstream/qwen-models.js"),
-  // 订阅型 OAuth 厂商（Codex / Claude Code / Antigravity）
+  // 订阅型 OAuth 厂商（Codex / Claude Code / Antigravity / Grok）
   openai: () => import("./upstream/openai-models.js"),
   anthropic: () => import("./upstream/anthropic-models.js"),
   gemini: () => import("./upstream/gemini-models.js"),
+  grok: () => import("./upstream/grok-models.js"),
 };
 
 /**

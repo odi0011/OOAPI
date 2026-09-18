@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import {
   Table, Button, Space, Tag, Input, Popconfirm, Modal, Form,
-  Select, InputNumber, App as AntApp, Typography,
+  Select, InputNumber, App as AntApp, Typography, Alert,
 } from "antd";
 import { ReloadOutlined, TeamOutlined, SearchOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
@@ -22,6 +22,7 @@ export default function AdminUsersPage() {
   const [pageSize, setPageSize] = useState(20);
   const [keyword, setKeyword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [quotaOpen, setQuotaOpen] = useState(false);
@@ -36,13 +37,17 @@ export default function AdminUsersPage() {
   const load = useCallback(async () => {
     const token = begin();
     setLoading(true);
+    setLoadError("");
     try {
       const data = await API.get("/users/", { params: { p: page, page_size: pageSize, keyword } });
       if (!isLatest(token)) return;
       setItems(data.items);
       setTotal(data.total);
     } catch (e) {
-      if (isLatest(token)) message.error(e.message);
+      if (isLatest(token)) {
+        setLoadError(e.message || "用户列表加载失败");
+        message.error(e.message || "用户列表加载失败");
+      }
     } finally {
       if (isLatest(token)) setLoading(false);
     }
@@ -75,7 +80,7 @@ export default function AdminUsersPage() {
       setEditOpen(false);
       // 改的是自己：同步刷新全局用户（降级后管理菜单应立刻消失）
       if (editing.id === me?.id) await refreshUser?.();
-      load();
+      await load();
     } catch (e) {
       message.error(e.message);
     } finally {
@@ -98,7 +103,7 @@ export default function AdminUsersPage() {
       message.success("额度已调整");
       setQuotaOpen(false);
       quotaForm.resetFields();
-      load();
+      await load();
     } catch (e) {
       message.error(e.message);
     } finally {
@@ -112,7 +117,7 @@ export default function AdminUsersPage() {
     try {
       await API.del(`/users/${u.id}`);
       message.success("用户已删除");
-      load();
+      await load();
     } catch (e) {
       message.error(e.message);
     } finally {
@@ -121,11 +126,15 @@ export default function AdminUsersPage() {
   };
 
   const toggle = async (u) => {
+    if (acting) return;
+    setActing(true);
     try {
       await API.put(`/users/${u.id}`, { status: u.status === 1 ? 2 : 1 });
-      load();
+      await load();
     } catch (e) {
       message.error(e.message);
+    } finally {
+      setActing(false);
     }
   };
 
@@ -260,7 +269,7 @@ export default function AdminUsersPage() {
                 }
               }}
             />
-            <Button icon={<ReloadOutlined />} onClick={load} />
+            <Button icon={<ReloadOutlined />} onClick={load} title="刷新用户列表" aria-label="刷新用户列表" />
           </>
         }
       />
@@ -273,6 +282,16 @@ export default function AdminUsersPage() {
       </div>
 
       <div className="oo-panel">
+        {loadError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="用户列表加载失败"
+            description={loadError}
+            action={<Button size="small" onClick={load}>重试</Button>}
+            style={{ marginBottom: 12 }}
+          />
+        ) : null}
         <Table
           className="oo-table"
           rowKey="id"
@@ -322,6 +341,7 @@ export default function AdminUsersPage() {
           </Form.Item>
           <Form.Item name="status" label="状态">
             <Select
+              disabled={editing?.id === me?.id}
               options={[
                 { value: 1, label: "启用" },
                 { value: 2, label: "禁用" },

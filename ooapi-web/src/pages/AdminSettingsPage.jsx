@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
-  Form, Input, Button, Switch, InputNumber, App as AntApp, Tabs, Typography,
+  Form, Input, Button, Switch, InputNumber, App as AntApp, Tabs, Typography, Alert, Spin,
 } from "antd";
 import {
   SettingOutlined, DollarOutlined, SafetyCertificateOutlined, ApiOutlined, SaveOutlined, CloudDownloadOutlined,
@@ -12,9 +12,9 @@ import PageHeader from "../components/PageHeader";
 const { Text } = Typography;
 
 // 统一设置面板：标题 + 说明 + 表单 + 保存按钮
-function SettingsPanel({ title, desc, children, form, onFinish, loading, saving }) {
+function SettingsPanel({ title, desc, children, form, onFinish, loading, saving, error, onRetry }) {
   return (
-    <div className="oo-panel" style={{ maxWidth: 720, opacity: loading ? 0.6 : 1 }}>
+    <div className="oo-panel" style={{ maxWidth: 720, opacity: loading || error ? 0.72 : 1 }}>
       <div className="oo-panel-head">
         <div>
           <div className="oo-panel-title">{title}</div>
@@ -23,13 +23,25 @@ function SettingsPanel({ title, desc, children, form, onFinish, loading, saving 
           ) : null}
         </div>
       </div>
+      {error ? (
+        <Alert
+          type="error"
+          showIcon
+          message="设置加载失败"
+          description={error}
+          action={<Button size="small" onClick={onRetry} loading={loading}>重试</Button>}
+          style={{ margin: "0 24px 16px" }}
+        />
+      ) : null}
       <div className="oo-panel-body">
-        <Form form={form} layout="vertical" onFinish={onFinish} disabled={loading} requiredMark={false}>
-          {children}
-          <Button type="primary" htmlType="submit" loading={saving} icon={<SaveOutlined />} style={{ marginTop: 4 }}>
-            保存设置
-          </Button>
-        </Form>
+        <Spin spinning={loading} tip="正在加载设置…">
+          <Form form={form} layout="vertical" onFinish={onFinish} disabled={loading || Boolean(error)} requiredMark={false}>
+            {children}
+            <Button type="primary" htmlType="submit" loading={saving} icon={<SaveOutlined />} style={{ marginTop: 4 }}>
+              保存设置
+            </Button>
+          </Form>
+        </Spin>
       </div>
     </div>
   );
@@ -39,10 +51,13 @@ function useSettingsForm() {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   const { message } = AntApp.useApp();
   const { refreshStatus } = useApp();
 
   const load = async () => {
+    setLoading(true);
+    setError("");
     try {
       const data = await API.get("/option/");
       const norm = { ...data };
@@ -51,6 +66,7 @@ function useSettingsForm() {
       }
       form.setFieldsValue(norm);
     } catch (e) {
+      setError(e.message || "无法加载设置");
       message.error(e.message);
     } finally {
       setLoading(false);
@@ -80,7 +96,7 @@ function useSettingsForm() {
     }
   };
 
-  return { form, loading, saving, load, save };
+  return { form, loading, saving, error, load, save };
 }
 
 function GeneralTab() {
@@ -96,6 +112,8 @@ function GeneralTab() {
       onFinish={s.save}
       loading={s.loading}
       saving={s.saving}
+      error={s.error}
+      onRetry={s.load}
     >
       <Form.Item name="system_name" label="系统名称">
         <Input placeholder="OOAPI" />
@@ -135,6 +153,8 @@ function AuthTab() {
       onFinish={s.save}
       loading={s.loading}
       saving={s.saving}
+      error={s.error}
+      onRetry={s.load}
     >
       <Form.Item
         name="password_register_enabled"
@@ -164,6 +184,8 @@ function QuotaTab() {
       onFinish={s.save}
       loading={s.loading}
       saving={s.saving}
+      error={s.error}
+      onRetry={s.load}
     >
       <Form.Item
         name="units_per_od"
@@ -195,6 +217,8 @@ function ModelsTab() {
       onFinish={s.save}
       loading={s.loading}
       saving={s.saving}
+      error={s.error}
+      onRetry={s.load}
     >
       <Form.Item name="model_list" label="可用模型" extra="多个模型用英文逗号分隔">
         <Input.TextArea rows={5} placeholder="deepseek-chat,deepseek-reasoner,deepseek-vision" />
@@ -433,6 +457,7 @@ export default function AdminSettingsPage() {
     <div className="oo-page">
       <PageHeader title="系统设置" desc="站点信息、认证策略、计费规则与模型列表" />
       <Tabs
+        destroyInactiveTabPane
         items={[
           {
             key: "general",

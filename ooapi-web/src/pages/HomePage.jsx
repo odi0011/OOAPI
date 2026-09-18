@@ -78,7 +78,8 @@ export default function HomePage() {
   const endpoint = status?.api_endpoint || "https://your-domain/v1";
   const systemName = status?.system_name || "OOAPI";
   // 管理员关闭注册后，首页不再引导用户去 /register（否则点进去只会看到关闭提示）
-  const registerOpen = status?.password_register_enabled !== false;
+  // 状态接口尚未返回时不展示注册入口，避免未知状态下把用户引导到关闭的注册页。
+  const registerOpen = Boolean(status) && status.password_register_enabled !== false;
   // docs_link 是管理员可写项：必须过协议白名单，防 javascript: 之类注入
   const docsHref = safeHref(status?.docs_link);
   const quotaLabel = status?.units_per_od || status?.quota_per_unit

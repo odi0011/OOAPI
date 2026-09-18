@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Row, Col, Button, Grid, App as AntApp } from "antd";
+import { Row, Col, Button, Grid, App as AntApp, Alert } from "antd";
 import {
   WalletOutlined,
   ThunderboltOutlined,
@@ -19,7 +19,21 @@ import { copyText, fmtOd, odOf, odRateText, unitsPerOd } from "../services/forma
 import { OdStatValue } from "../components/OdCoin";
 
 // 近 30 天用量柱状图（纯 CSS，无额外依赖）
-function UsageBars({ daily, perUnit }) {
+function UsageBars({ daily, perUnit, loading, error }) {
+  if (loading) {
+    return (
+      <div style={{ padding: "28px 0", textAlign: "center", color: "var(--oo-text-muted)", fontSize: 13 }}>
+        正在加载用量记录…
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div style={{ padding: "28px 0", textAlign: "center", color: "var(--oo-text-muted)", fontSize: 13 }}>
+        用量记录加载失败，请点击上方重试
+      </div>
+    );
+  }
   const max = Math.max(1, ...daily.map((d) => Number(d.quota) || 0));
   if (!daily.length) {
     return (
@@ -80,6 +94,8 @@ export default function ConsolePage() {
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.lg;
   const [data, setData] = useState(null);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [dataError, setDataError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const { begin, isLatest } = useLatest();
 
@@ -87,15 +103,23 @@ export default function ConsolePage() {
   const loadData = useCallback(async ({ alsoUser = false } = {}) => {
     const token = begin();
     setRefreshing(true);
+    setDataLoading(true);
+    setDataError(null);
     try {
       const d = await API.get("/users/data/self");
       if (!isLatest(token)) return;
       setData(d);
       if (alsoUser) await refreshUser();
     } catch (e) {
-      if (isLatest(token)) message.error(e.message);
+      if (isLatest(token)) {
+        setDataError(e.message || "数据加载失败，请重试");
+        message.error(e.message || "数据加载失败，请重试");
+      }
     } finally {
-      if (isLatest(token)) setRefreshing(false);
+      if (isLatest(token)) {
+        setRefreshing(false);
+        setDataLoading(false);
+      }
     }
   }, [message, refreshUser, begin, isLatest]);
 
@@ -129,7 +153,7 @@ export default function ConsolePage() {
         desc="这是你的账户概览与近期用量"
         extra={
           <>
-            <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => loadData({ alsoUser: true })}>
+            <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => loadData({ alsoUser: true })} title="刷新控制台数据" aria-label="刷新控制台数据">
               刷新
             </Button>
             <Button type="primary" icon={<KeyOutlined />} onClick={() => navigate("/token")}>
@@ -138,6 +162,18 @@ export default function ConsolePage() {
           </>
         }
       />
+
+      {dataError ? (
+        <Alert
+          type="error"
+          showIcon
+          closable={false}
+          style={{ marginBottom: 16 }}
+          message="控制台数据加载失败"
+          description={dataError}
+          action={<Button size="small" onClick={() => loadData({ alsoUser: true })}>重试</Button>}
+        />
+      ) : null}
 
       {/* 指标卡 */}
       <Row gutter={[16, 16]}>
@@ -186,10 +222,10 @@ export default function ConsolePage() {
         <Col xs={12} lg={6}>
           <StatCard
             label="近 30 天消费"
-            value={od(data?.consume_in_logs)}
+            value={data ? od(data.consume_in_logs) : dataLoading ? "加载中…" : "—"}
             icon={<RiseOutlined />}
             glow="color-mix(in srgb, var(--oo-primary) 32%, transparent)"
-            foot={<span>{data?.daily?.length || 0} 天有调用</span>}
+            foot={<span>{data ? `${data.daily?.length || 0} 天有调用` : dataLoading ? "正在加载" : "—"}</span>}
           />
         </Col>
       </Row>
@@ -203,7 +239,7 @@ export default function ConsolePage() {
               <span style={{ fontSize: 12, color: "var(--oo-text-muted)" }}>按日消费（OD）</span>
             </div>
             <div className="oo-panel-body">
-              <UsageBars daily={data?.daily || []} perUnit={perUnit} />
+              <UsageBars daily={data?.daily || []} perUnit={perUnit} loading={dataLoading} error={dataError} />
             </div>
           </div>
         </Col>

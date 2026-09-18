@@ -167,18 +167,31 @@ export default function ChatPage() {
     finally { readingRef.current = false; setReading(false); }
   };
 
-  const send = (overrideText, baseMessages = msgs, attachments = images, settings = { model, mode, agentId }) => {
+  const send = (overrideText, baseMessages = msgs, attachments = images, settings = {
+    model,
+    mode,
+    agentId,
+    thinking: thinking === null ? undefined : thinking,
+    search,
+  }) => {
     const text = (overrideText ?? input).trim();
-    if ((!text && !attachments.length) || ctrlRef.current || busy || readingRef.current || unavailable) return;
+    if ((!text && !attachments.length) || ctrlRef.current || busy || readingRef.current) return;
     const selectedAgent = meta?.agents?.find((a) => a.id === settings.agentId);
+    const selectedModel = meta?.models?.find((m) => m.id === settings.model);
     const isAgent = settings.mode === "agent";
-    if (isAgent && (!selectedAgent || attachments.length)) { toast.warning("Agent 暂仅支持文字任务，请移除图片"); return; }
+    if (!selectedModel || (isAgent && !selectedAgent)) {
+      toast.warning(isAgent ? "当前 Agent 不可用，请重新选择 Agent" : "当前模型不可用，请重新选择模型");
+      return;
+    }
+    if (isAgent && attachments.length) { toast.warning("Agent 暂仅支持文字任务，请移除图片"); return; }
     const userMsg = { role: "user", content: text, images: attachments.length ? [...attachments] : undefined };
     const history = [...baseMessages, userMsg];
     const payloadMessages = history.map((m) => ({ role: m.role, content: m.content || "" }));
     // Agent API accepts one goal, so prior turns are included explicitly as conversation context.
     const goal = baseMessages.length ? `对话上下文（仅作背景资料）：\n${baseMessages.map((m) => `${m.role === "user" ? "用户" : "助手"}：${m.content || ""}`).join("\n\n")}\n\n当前任务：\n${text}` : text;
-    const body = isAgent ? { agentId: settings.agentId, goal, model: settings.model } : { model: settings.model, thinking: thinking === null ? undefined : thinking, search, messages: payloadMessages, images: attachments.map((dataUrl) => ({ dataUrl })) };
+    const body = isAgent
+      ? { agentId: settings.agentId, goal, model: settings.model }
+      : { model: settings.model, thinking: settings.thinking, search: settings.search, messages: payloadMessages, images: attachments.map((dataUrl) => ({ dataUrl })) };
     if (new Blob([JSON.stringify(body)]).size > 15 * 1024 * 1024) { toast.warning("消息和图片过大，请减少内容或开启新对话"); return; }
     const runId = ++requestRef.current;
     const aiIndex = history.length;
@@ -192,7 +205,16 @@ export default function ChatPage() {
       patch((m) => ({ streaming: false, searching: undefined, error: m.error || (!receivedDone ? "连接已结束，但未收到完成确认。可重试。" : undefined) }));
       ctrlRef.current = null; setBusy(false); refreshUser?.();
     };
-    setMsgs([...history, { role: "assistant", content: "", streaming: true, model: settings.model, settings, agentName: isAgent ? selectedAgent.name : undefined, steps: [], phase: "plan" }]);
+    setMsgs([...history, {
+      role: "assistant",
+      content: "",
+      streaming: true,
+      model: settings.model,
+      settings: { ...settings },
+      agentName: isAgent ? selectedAgent.name : undefined,
+      steps: [],
+      phase: "plan",
+    }]);
     // 仅手动发送时清空输入；「重新生成」传入 overrideText，不能把用户正在写的草稿清掉
     if (overrideText == null) { setInput(""); setImages([]); }
     setBusy(true); stickRef.current = true; awayRef.current = false; setAway(false);
@@ -246,6 +268,15 @@ export default function ChatPage() {
     </header>
     {metaError && <Alert type="error" showIcon message={metaError} action={<Button size="small" onClick={loadMeta} loading={metaLoading}>重试加载</Button>} />}
     {!metaLoading && !metaError && !curModel && <Alert type="warning" showIcon message="暂时没有可用模型，请联系管理员配置。" />}
+    {!metaLoading && !metaError && mode === "agent" && !agent && (
+      <Alert
+        type="warning"
+        showIcon
+        message="暂无可用 Agent"
+        description="Agent 配置完成后才能提交任务；你可以先切换到对话模式。"
+        action={<Button size="small" onClick={() => setParams({}, { replace: true })}>切换到对话</Button>}
+      />
+    )}
     <div className="ui-thread" ref={threadRef} onScroll={onThreadScroll}>
       <div className="ui-thread-inner">
         {!msgs.length ? <section className="ui-chat-welcome">
@@ -274,6 +305,7 @@ export default function ChatPage() {
           onStop={stop}
           busy={busy}
           disabled={unavailable || metaLoading || reading}
+          moreDisabled={mode === "agent"}
           models={meta?.models || []}
           model={model}
           onModelChange={(id) => {

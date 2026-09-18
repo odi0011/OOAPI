@@ -45,6 +45,7 @@ export default function AdminPricingPage() {
   const { message } = AntApp.useApp();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [keyword, setKeyword] = useState("");
   const [type, setType] = useState("");
   const { begin, isLatest } = useLatest();
@@ -58,12 +59,16 @@ export default function AdminPricingPage() {
   const load = useCallback(async () => {
     const token = begin();
     setLoading(true);
+    setLoadError("");
     try {
       const data = await API.get("/pricing/", { params: { keyword, type } });
       if (!isLatest(token)) return;
       setItems(data);
     } catch (e) {
-      if (isLatest(token)) message.error(e.message);
+      if (isLatest(token)) {
+        setLoadError(e.message || "定价列表加载失败");
+        message.error(e.message || "定价列表加载失败");
+      }
     } finally {
       if (isLatest(token)) setLoading(false);
     }
@@ -164,7 +169,7 @@ export default function AdminPricingPage() {
       const r = await API.post("/pricing/import", { text: importText });
       setImportResult(r);
       message.success(`导入完成：新增 ${r.inserted}，更新 ${r.updated}，拒绝 ${r.rejected?.length || 0}`);
-      load();
+      await load();
     } catch (e) {
       message.error(e.message);
     } finally {
@@ -177,7 +182,7 @@ export default function AdminPricingPage() {
     try {
       const r = await API.post("/pricing/prune");
       message.success(r.removed?.length ? `已删除 ${r.removed.length} 条无效定价` : "没有发现无效定价");
-      load();
+      await load();
     } catch (e) {
       message.error(e.message);
     } finally {
@@ -190,7 +195,7 @@ export default function AdminPricingPage() {
     try {
       const r = await API.post("/pricing/sync-defaults");
       message.success(`已同步内置价目表 ${r.updated} 条`);
-      load();
+      await load();
     } catch (e) {
       message.error(e.message);
     } finally {
@@ -218,7 +223,7 @@ export default function AdminPricingPage() {
                 清理无效数据
               </Button>
             </Popconfirm>
-            <Button icon={<ReloadOutlined />} onClick={load} />
+            <Button icon={<ReloadOutlined />} onClick={load} title="刷新定价列表" aria-label="刷新定价列表" />
           </>
         }
       />
@@ -240,6 +245,16 @@ export default function AdminPricingPage() {
       </div>
 
       <div className="oo-panel">
+        {loadError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="定价列表加载失败"
+            description={loadError}
+            action={<Button size="small" onClick={load}>重试</Button>}
+            style={{ marginBottom: 12 }}
+          />
+        ) : null}
         <div className="oo-toolbar">
           <Input
             placeholder="搜索模型"

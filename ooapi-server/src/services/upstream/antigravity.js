@@ -55,7 +55,8 @@ export function parseAuthJson(raw) {
       code: "LOGIN_BAD_PARAMS",
     });
   }
-  const t = j.token || j.tokens || j;
+  // 兼容裸凭据、{token:{...}} 与 sub2api 导出（credentials 对象）
+  const t = j.token || j.tokens || j.credentials || j;
   const access_token = String(t.access_token || t.accessToken || j.access_token || "").trim();
   const refresh_token = String(t.refresh_token || t.refreshToken || j.refresh_token || "").trim();
   if (!access_token) throw Object.assign(new Error("缺少 access_token"), { code: "LOGIN_BAD_PARAMS" });

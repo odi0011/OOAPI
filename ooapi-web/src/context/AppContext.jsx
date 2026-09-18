@@ -7,6 +7,7 @@ export function AppProvider({ children }) {
   const [status, setStatus] = useState(null); // 系统公开配置
   const [user, setUser] = useState(null); // 当前登录用户
   const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState(null); // 有 token 但暂时无法确认用户时保留可重试状态
   // 会话代际：登出/401 时自增。在途的 refreshUser 响应回来时若代际已变，
   // 不允许再把用户写回来（否则刚退出又被弹回控制台）
   const sessionEpoch = useRef(0);
@@ -28,6 +29,7 @@ export function AppProvider({ children }) {
   const refreshUser = useCallback(async () => {
     if (!getToken()) {
       setUser(null);
+      setAuthError(null);
       return;
     }
     const epoch = sessionEpoch.current;
@@ -36,7 +38,10 @@ export function AppProvider({ children }) {
       // 请求期间发生了登出/401（token 已被清）：丢弃这个迟到的响应
       if (epoch !== sessionEpoch.current || !getToken()) return;
       setUser(u);
+      setAuthError(null);
     } catch (e) {
+      // 退出或切换账号后，丢弃旧请求的迟到错误，避免把新会话覆盖成错误态。
+      if (epoch !== sessionEpoch.current || !getToken()) return;
       // 明确判定登录失效时清除登录态：401（过期/撤销）；
       // 403 且消息是「账号已被禁用」时同样退出，否则页面会一直 403 却不跳登录。
       // 网络抖动、5xx 等临时错误保留当前用户，避免误退出。
@@ -45,6 +50,11 @@ export function AppProvider({ children }) {
         sessionEpoch.current += 1;
         setToken("");
         setUser(null);
+        setAuthError(null);
+      } else {
+        // 保留有效 token 和已有用户信息；首屏没有用户时由 RequireAuth 展示重试入口，
+        // 避免网络抖动把用户误判为未登录并丢失当前深链。
+        setAuthError(e);
       }
     }
   }, []);
@@ -61,6 +71,7 @@ export function AppProvider({ children }) {
   useEffect(() => {
     const onUnauthorized = () => {
       sessionEpoch.current += 1;
+      setAuthError(null);
       setUser(null);
     };
     window.addEventListener("ooapi:unauthorized", onUnauthorized);
@@ -73,6 +84,7 @@ export function AppProvider({ children }) {
     sessionEpoch.current += 1;
     setToken(data.token);
     setUser(data.user);
+    setAuthError(null);
     return data.user;
   }, []);
 
@@ -81,6 +93,7 @@ export function AppProvider({ children }) {
     sessionEpoch.current += 1;
     setToken(data.token);
     setUser(data.user);
+    setAuthError(null);
     return data.user;
   }, []);
 
@@ -93,11 +106,12 @@ export function AppProvider({ children }) {
     }
     setToken("");
     setUser(null);
+    setAuthError(null);
   }, []);
 
   const value = useMemo(
-    () => ({ status, user, loading, refreshUser, refreshStatus, login, register, logout }),
-    [status, user, loading, refreshUser, refreshStatus, login, register, logout]
+    () => ({ status, user, loading, authError, refreshUser, refreshStatus, login, register, logout }),
+    [status, user, loading, authError, refreshUser, refreshStatus, login, register, logout]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

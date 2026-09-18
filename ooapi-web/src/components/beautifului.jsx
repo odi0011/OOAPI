@@ -396,6 +396,7 @@ export function PromptBar({
   toggles = [],
   placeholder = "输入你的问题，或分享一个想法…",
   disabled = false,
+  moreDisabled = false,
   commands = [],
   textareaRef,
 }) {
@@ -540,7 +541,13 @@ export function PromptBar({
                 {ImageIcon}
               </button>
             ) : (
-              <button type="button" aria-label="更多" className={`bui-cbtn ${wide ? "is-wide-plus" : "is-narrow-plus"}`}>
+              <button
+                type="button"
+                aria-label="更多"
+                title={moreDisabled ? "当前模式暂不支持附件" : "更多"}
+                disabled={moreDisabled || disabled || busy}
+                className={`bui-cbtn ${wide ? "is-wide-plus" : "is-narrow-plus"}`}
+              >
                 {PlusIcon}
               </button>
             )}

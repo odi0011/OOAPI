@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { Table, Tag, Input, Select, Space, Button, App as AntApp } from "antd";
+import { Table, Tag, Input, Select, Space, Button, Alert, App as AntApp } from "antd";
 import { ReloadOutlined, FileTextOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import { fmtDate, fmtOd, unitsPerOd, CURRENCY_NAME } from "../services/format";
@@ -36,6 +36,7 @@ export default function LogPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [keyword, setKeyword] = useState("");
   const [type, setType] = useState(0);
   const { begin, isLatest } = useLatest();
@@ -43,6 +44,7 @@ export default function LogPage() {
   const load = useCallback(async () => {
     const token = begin();
     setLoading(true);
+    setLoadError("");
     try {
       const path = isAdmin ? "/log/" : "/log/self";
       const data = await API.get(path, { params: { p: page, page_size: pageSize, keyword, type } });
@@ -50,7 +52,10 @@ export default function LogPage() {
       setItems(data.items);
       setTotal(data.total);
     } catch (e) {
-      if (isLatest(token)) message.error(e.message);
+      if (isLatest(token)) {
+        setLoadError(e.message || "日志加载失败");
+        message.error(e.message || "日志加载失败");
+      }
     } finally {
       if (isLatest(token)) setLoading(false);
     }
@@ -153,18 +158,34 @@ export default function LogPage() {
                 placeholder="搜索用户 / 内容"
                 allowClear
                 style={{ width: 240 }}
+                onChange={(e) => {
+                  if (!e.target.value) {
+                    setKeyword("");
+                    setPage(1);
+                  }
+                }}
                 onSearch={(v) => {
                   setKeyword(v);
                   setPage(1);
                 }}
               />
             )}
-            <Button icon={<ReloadOutlined />} onClick={load} />
+            <Button icon={<ReloadOutlined />} onClick={load} title="刷新日志" aria-label="刷新日志" />
           </>
         }
       />
 
       <div className="oo-panel">
+        {loadError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="日志加载失败"
+            description={loadError}
+            action={<Button size="small" onClick={load}>重试</Button>}
+            style={{ marginBottom: 12 }}
+          />
+        ) : null}
         <Table
           className="oo-table"
           rowKey="id"

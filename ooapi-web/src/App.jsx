@@ -1,6 +1,6 @@
 import React from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
-import { Spin } from "antd";
+import { Alert, Button, Spin } from "antd";
 import MainLayout from "./components/MainLayout";
 import HomePage from "./pages/HomePage";
 import AuthPage from "./pages/AuthPage";
@@ -16,12 +16,41 @@ import AdminPricingPage from "./pages/AdminPricingPage";
 import { useApp } from "./context/AppContext";
 
 function RequireAuth({ children, admin = false }) {
-  const { user, loading } = useApp();
+  const { user, loading, authError, refreshUser } = useApp();
   const location = useLocation();
+  const [retrying, setRetrying] = React.useState(false);
   if (loading) {
     return (
       <div style={{ display: "flex", justifyContent: "center", paddingTop: 120 }}>
         <Spin size="large" />
+      </div>
+    );
+  }
+  if (!user && authError) {
+    return (
+      <div style={{ maxWidth: 480, margin: "96px auto", padding: "0 20px" }}>
+        <Alert
+          type="warning"
+          showIcon
+          message="暂时无法确认登录状态"
+          description={authError.message || "网络连接失败，请稍后重试"}
+          action={
+            <Button
+              size="small"
+              loading={retrying}
+              onClick={async () => {
+                setRetrying(true);
+                try {
+                  await refreshUser();
+                } finally {
+                  setRetrying(false);
+                }
+              }}
+            >
+              重试
+            </Button>
+          }
+        />
       </div>
     );
   }

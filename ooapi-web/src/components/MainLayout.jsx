@@ -125,9 +125,19 @@ export default function MainLayout() {
           <div
             key={it.key}
             className={`oo-nav-item${selectedKey === it.key ? " is-active" : ""}`}
+            role="button"
+            tabIndex={0}
+            aria-current={selectedKey === it.key ? "page" : undefined}
             onClick={() => {
               navigate(it.key);
               if (isMobile) setDrawer(false);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                navigate(it.key);
+                if (isMobile) setDrawer(false);
+              }
             }}
             title={collapsed ? it.label : undefined}
           >
@@ -173,7 +183,20 @@ export default function MainLayout() {
           {brand}
           {nav}
           <div className="oo-sider-foot">
-            <div className="oo-nav-item" onClick={() => setCollapsed(!collapsed)} style={{ margin: 0 }}>
+            <div
+              className="oo-nav-item"
+              role="button"
+              tabIndex={0}
+              aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
+              onClick={() => setCollapsed(!collapsed)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setCollapsed((value) => !value);
+                }
+              }}
+              style={{ margin: 0 }}
+            >
               {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
               {!collapsed && <span>收起侧边栏</span>}
             </div>
@@ -202,6 +225,8 @@ export default function MainLayout() {
               type="text"
               size="small"
               icon={isMobile ? <MenuOutlined /> : collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              aria-label={isMobile ? "打开导航" : collapsed ? "展开侧边栏" : "收起侧边栏"}
+              title={isMobile ? "打开导航" : collapsed ? "展开侧边栏" : "收起侧边栏"}
               onClick={() => (isMobile ? setDrawer(true) : setCollapsed(!collapsed))}
             />
             <div className="oo-crumb">
