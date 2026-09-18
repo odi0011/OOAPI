@@ -93,8 +93,10 @@ async function syncTree(src, dest, exclude) {
   }
   await fs.mkdir(dest, { recursive: true });
   const entries = await fs.readdir(src, { withFileTypes: true });
+  const srcNames = new Set();
   for (const ent of entries) {
     if (exclude.includes(ent.name)) continue;
+    srcNames.add(ent.name);
     const s = path.join(src, ent.name);
     const d = path.join(dest, ent.name);
     if (ent.isDirectory()) {
@@ -103,6 +105,15 @@ async function syncTree(src, dest, exclude) {
     } else {
       await fs.cp(s, d);
     }
+  }
+  // 复制路径也要有「删除语义」（与 rsync --delete 对齐）：
+  // 否则更新失败回滚后，新版本新增的文件（如新的 migrate*.mjs）会残留在运行目录，
+  // 形成半新半旧状态，下次更新还会被执行。点文件跳过（保护 .env/.jwt-secret 等运行时文件）。
+  for (const ent of await fs.readdir(dest, { withFileTypes: true })) {
+    if (exclude.includes(ent.name)) continue;
+    if (ent.name.startsWith(".")) continue;
+    if (srcNames.has(ent.name)) continue;
+    await fs.rm(path.join(dest, ent.name), { recursive: true, force: true });
   }
   return "copy";
 }

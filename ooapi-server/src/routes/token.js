@@ -7,6 +7,11 @@ import { writeLog, LOG_TYPE } from "../services/log.js";
 const router = Router();
 router.use(authRequired);
 
+// 额度/时间上限：BIGINT 本身能存到 9e18，但应用层允许的额度远超实际意义，
+// 上限校验防的是 1e20 这类会让写库直接越界 500 的值（expired_time 上限约到 2286 年）
+const MAX_QUOTA = 1e15;
+const MAX_EXPIRED = 9_999_999_999;
+
 function getSetting(user) {
   return user?.setting ?? {};
 }
@@ -53,8 +58,8 @@ router.post(
     // 数值严格校验：NaN/Infinity/负数一律拒绝（strict 模式下写库会直接 500）
     const remainVal = Number(remain_quota);
     const expiredVal = Number(expired_time);
-    if (!Number.isFinite(remainVal) || remainVal < 0) return fail(res, "额度无效");
-    if (!Number.isFinite(expiredVal)) return fail(res, "过期时间无效");
+    if (!Number.isFinite(remainVal) || remainVal < 0 || remainVal > MAX_QUOTA) return fail(res, "额度无效");
+    if (!Number.isFinite(expiredVal) || expiredVal > MAX_EXPIRED) return fail(res, "过期时间无效");
     const key = genApiKey();
     const [ins] = await pool.query(
       `INSERT INTO tokens (user_id, name, key_str, status, created_time, accessed_time, expired_time,
@@ -102,12 +107,12 @@ router.put(
     let remainVal = cur.remain_quota;
     if (remain_quota !== undefined) {
       remainVal = Number(remain_quota);
-      if (!Number.isFinite(remainVal) || remainVal < 0) return fail(res, "额度无效");
+      if (!Number.isFinite(remainVal) || remainVal < 0 || remainVal > MAX_QUOTA) return fail(res, "额度无效");
     }
     let expiredVal = cur.expired_time;
     if (expired_time !== undefined) {
       expiredVal = Number(expired_time);
-      if (!Number.isFinite(expiredVal)) return fail(res, "过期时间无效");
+      if (!Number.isFinite(expiredVal) || expiredVal > MAX_EXPIRED) return fail(res, "过期时间无效");
     }
     await pool.query(
       `UPDATE tokens SET name = ?, status = ?, remain_quota = ?, unlimited_quota = ?, expired_time = ?,

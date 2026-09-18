@@ -156,6 +156,8 @@ router.post(
     if (!id) return fail(res, "用户不存在", 404);
     const quota = Math.floor(Number(req.body?.quota));
     if (!Number.isFinite(quota) || quota === 0) return fail(res, "额度变化量无效");
+    // 上限：BIGINT 越界会直接 500，且这种量级的调整没有实际意义
+    if (Math.abs(quota) > 1e15) return fail(res, "额度变化量无效");
     const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
     const user = rows[0];
     if (!user) return fail(res, "用户不存在", 404);

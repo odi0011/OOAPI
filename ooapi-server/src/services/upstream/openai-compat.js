@@ -14,7 +14,7 @@
 //     https://open.bigmodel.cn/api/paas/v4        → /api/paas/v4/chat/completions
 //     https://ark.cn-beijing.volces.com/api/v3    → /api/v3/chat/completions
 //     https://dashscope.aliyuncs.com/compatible-mode → /compatible-mode/v1/chat/completions
-import { now } from "../../utils.js";
+import { now, assertPublicUrl } from "../../utils.js";
 
 /** 把 Base URL 归一化成 chat/completions 与 models 两个端点 */
 export function endpoints(baseUrl) {
@@ -140,7 +140,22 @@ export async function fetchUpstreamModels(channel) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 15000);
   try {
-    const resp = await fetch(models, { headers: authHeaders(channel), signal: ac.signal });
+    // 手动逐跳重定向：调用方虽已做过一次 assertPublicUrl，但 fetch 默认跟随 302，
+    // 上游只要重定向到内网地址就能绕过校验（SSRF）。每跳都校验后才继续。
+    let target = models;
+    let resp = null;
+    for (let hop = 0; hop < 4; hop++) {
+      await assertPublicUrl(target);
+      resp = await fetch(target, { headers: authHeaders(channel), signal: ac.signal, redirect: "manual" });
+      if (resp.status >= 300 && resp.status < 400) {
+        const loc = resp.headers.get("location");
+        if (!loc) throw new Error("上游返回了空重定向");
+        target = new URL(loc, target).toString();
+        continue;
+      }
+      break;
+    }
+    if (!resp || (resp.status >= 300 && resp.status < 400)) throw new Error("重定向次数过多");
     const data = await resp.json().catch(() => null);
     return (data?.data || data?.models || []).map((m) => m.id || m.name).filter(Boolean);
   } catch (e) {

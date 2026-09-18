@@ -154,7 +154,7 @@ export default function ConsolePage() {
             value={<OdStatValue od={odOf(user?.used_quota, perUnit)} />}
             icon={<ThunderboltOutlined />}
             tone="warning"
-            glow="rgba(245,158,11,0.16)"
+            glow="color-mix(in srgb, var(--orange) 20%, transparent)"
             foot={
               <div style={{ width: "100%" }}>
                 <div className="oo-bar" style={{ marginBottom: 6 }}>
@@ -162,7 +162,7 @@ export default function ConsolePage() {
                     className="oo-bar-fill"
                     style={{
                       width: `${usedPct}%`,
-                      background: "linear-gradient(90deg, #f59e0b, #ef4444)",
+                      background: "linear-gradient(90deg, var(--orange), var(--red))",
                     }}
                   />
                 </div>
@@ -177,7 +177,7 @@ export default function ConsolePage() {
             value={(user?.request_count ?? 0).toLocaleString()}
             icon={<ApiOutlined />}
             tone="success"
-            glow="rgba(34,197,94,0.14)"
+            glow="color-mix(in srgb, var(--green) 18%, transparent)"
             foot={<span>累计成功请求</span>}
           />
         </Col>

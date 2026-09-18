@@ -22,6 +22,10 @@ const PROFILE_ROOT = path.join(__dirname, "..", "..", "..", "data", "browser-pro
 
 const IDLE_MS = 10 * 60 * 1000;
 const NAV_TIMEOUT = 60_000;
+// 单个请求持有会话锁的硬上限：正常一次对话远小于它（execute 默认 10 分钟硬截止）。
+// Playwright 的 evaluate/fill 不响应 abort，底层调用一旦挂死，队列头永远不 settle，
+// 后续请求会全部堵在这个渠道上。看门狗到点强关 context 强制解除并在下次重建会话。
+const QUEUE_STUCK_MS = 15 * 60 * 1000;
 
 // 浏览器登录成功标记。profile 目录在首次 open 时就会被创建，
 // 所以「目录存在」不能代表已登录；用显式标记文件判断。
@@ -609,11 +613,33 @@ export async function streamCapture(page, {
   }
 }
 
-/** 同账号串行执行 */
+/** 同账号串行执行（带卡死看门狗，见 QUEUE_STUCK_MS 注释） */
 export function withLock(session, task) {
-  const run = () => task();
-  session.queue = (session.queue || Promise.resolve()).then(run, run);
-  return session.queue;
+  const prev = session.queue || Promise.resolve();
+  let watchdog = null;
+  const guarded = (async () => {
+    watchdog = setTimeout(() => {
+      console.warn("[browser-driver] 会话队列超时未释放，强制重建会话以恢复该渠道可用性");
+      try {
+        session.ctx?.close?.().catch?.(() => {});
+      } catch {
+        /* ignore */
+      }
+      for (const [k, s] of sessions) {
+        if (s === session) sessions.delete(k);
+      }
+    }, QUEUE_STUCK_MS);
+    watchdog.unref?.();
+    try {
+      // 前一个任务失败（或被看门狗强关）都不能阻断后续任务
+      await prev.catch(() => {});
+      return await task();
+    } finally {
+      if (watchdog) clearTimeout(watchdog);
+    }
+  })();
+  session.queue = guarded;
+  return guarded;
 }
 
 /**

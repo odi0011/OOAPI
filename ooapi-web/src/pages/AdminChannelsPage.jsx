@@ -130,6 +130,7 @@ export default function AdminChannelsPage() {
   const [pickProvider, setPickProvider] = useState(null);
   const [pickMethod, setPickMethod] = useState(null);
   const [addMode, setAddMode] = useState("password");
+  const [addSubmitting, setAddSubmitting] = useState(false);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [browserTarget, setBrowserTarget] = useState(null);
   const [browserShot, setBrowserShot] = useState(null);
@@ -251,6 +252,7 @@ export default function AdminChannelsPage() {
 
   const submitAdd = async () => {
     if (!pickProvider || !pickMethod) return message.warning("请先选择厂商与接入方式");
+    if (addSubmitting) return; // 防重入：登录/创建耗时，双击会建出两条渠道
     let v;
     try {
       v = await addForm.validateFields();
@@ -258,9 +260,20 @@ export default function AdminChannelsPage() {
       return; // 校验未通过：antd 已在表单上标红
     }
 
+    setAddSubmitting(true);
     try {
       if (isRelay) {
-        const payload = { type: pickProvider.key, mode: addMode, name: v.name, priority: v.priority };
+        // relay 也要提交这些字段：后端 /channel/login 已支持落库（此前被丢弃，编辑无效）
+        const payload = {
+          type: pickProvider.key,
+          mode: addMode,
+          name: v.name,
+          priority: v.priority,
+          models: v.models,
+          group_name: v.group_name,
+          weight: v.weight,
+          auto_ban: v.auto_ban,
+        };
         if (addMode === "password") {
           payload.account = v.account;
           payload.password = v.password;
@@ -297,6 +310,8 @@ export default function AdminChannelsPage() {
         return;
       }
       message.error(e.message);
+    } finally {
+      setAddSubmitting(false);
     }
   };
 
@@ -709,7 +724,7 @@ export default function AdminChannelsPage() {
       <div className="oo-grid">
         <StatCard label="渠道总数" value={stats?.total ?? 0} icon={<ApiOutlined />} foot={<span>{providers.length} 个厂商可选</span>} />
         <StatCard
-          label="已启用" value={stats?.enabled ?? 0} tone="success" glow="rgba(34,197,94,0.14)"
+          label="已启用" value={stats?.enabled ?? 0} tone="success" glow="color-mix(in srgb, var(--green) 18%, transparent)"
           foot={<span className="oo-flex oo-gap-2"><span className="bui-dot bui-dot--ok" />调度正常</span>}
         />
         <StatCard label="冷却中" value={stats?.cooling ?? 0} tone={(stats?.cooling ?? 0) > 0 ? "warning" : undefined} foot={<span>自动恢复</span>} />
@@ -744,7 +759,7 @@ export default function AdminChannelsPage() {
         footer={
           <Space>
             <button className="bui-btn" onClick={() => setAddOpen(false)}>取消</button>
-            <button className="bui-btn bui-btn--primary" onClick={submitAdd} disabled={!pickMethod}>
+            <button className="bui-btn bui-btn--primary" onClick={submitAdd} disabled={!pickMethod || addSubmitting}>
               {isRelay ? "登录并添加" : "创建渠道"}
             </button>
           </Space>

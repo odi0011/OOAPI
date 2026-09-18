@@ -438,7 +438,8 @@ router.post(
 router.post(
   "/login",
   asyncHandler(async (req, res) => {
-    const { type, name, priority = 0, id, mode = "password", ...rest } = req.body || {};
+    const { type, name, priority = 0, id, mode = "password", models: modelsInput, group_name, weight, auto_ban, ...rest } =
+      req.body || {};
     const provider = getProvider(type);
     if (!provider) return fail(res, "未知厂商");
     const mCfg = getMethod(type, "relay");
@@ -450,7 +451,16 @@ router.post(
     const adapter = await adapterOf(type, "relay");
     if (!adapter) return fail(res, `${provider.name} 适配器不可用`);
 
-    const models = (mCfg.defaultModels || []).map((m) => m.id).join(",");
+    // 表单里的模型/分组/优先级/权重/自动禁用必须真正落库（此前 relay 提交被全部丢弃，
+    // 用户改了等于没改）；未提交的字段在更新时保持原值
+    const defaultModels = (mCfg.defaultModels || []).map((m) => m.id).join(",");
+    const models = Array.isArray(modelsInput)
+      ? modelsInput.map((s) => String(s).trim()).filter(Boolean).join(",") || defaultModels
+      : String(modelsInput || "").trim() || defaultModels;
+    const groupName = String(group_name || "default").trim().slice(0, 32) || "default";
+    const weightVal =
+      Number.isFinite(Number(weight)) && Number(weight) > 0 ? Math.min(10000, Math.floor(Number(weight))) : 1;
+    const autoBanVal = auto_ban === undefined ? 1 : auto_ban ? 1 : 0;
     const targetId = Number(id);
     let token = "";
     let other = { method: "relay" };
@@ -518,8 +528,20 @@ router.post(
       const prevOther = parseOther(exists[0]);
       const merged = { ...prevOther, ...other };
       await pool.query(
-        "UPDATE channels SET name = ?, api_key = ?, other = ?, last_error = '' WHERE id = ?",
-        [String(name || provider.name).slice(0, 64), token || "", JSON.stringify(merged), targetId]
+        `UPDATE channels SET name = ?, api_key = ?, other = ?, last_error = '',
+           models = COALESCE(?, models), group_name = COALESCE(?, group_name),
+           weight = COALESCE(?, weight), auto_ban = COALESCE(?, auto_ban)
+         WHERE id = ?`,
+        [
+          String(name || provider.name).slice(0, 64),
+          token || "",
+          JSON.stringify(merged),
+          modelsInput !== undefined ? models : null,
+          group_name !== undefined ? groupName : null,
+          weight !== undefined ? weightVal : null,
+          auto_ban !== undefined ? autoBanVal : null,
+          targetId,
+        ]
       );
       resetChannelState(targetId);
 
@@ -541,11 +563,22 @@ router.post(
     // 新建
     let insertId;
     if (mode === "browser") {
-      // 列与值必须严格一一对应（11 列 / 7 个参数：name,type,base_url,models,priority,other,created_time）
+      // 列与值必须严格一一对应（11 列 / 参数：name,type,base_url,models,group,priority,weight,auto_ban,other,created_time）
       const [ret] = await pool.query(
-        `INSERT INTO channels (name, type, base_url, api_key, models, group_name, status, priority, weight, other, created_time)
-         VALUES (?,?,?, '', ?, 'default', 1, ?, 1, ?, ?)`,
-        [String(name || `${provider.name} 渠道`).slice(0, 64), type, mCfg.baseUrl || "", models, Number(priority) || 0, JSON.stringify(other), now()]
+        `INSERT INTO channels (name, type, base_url, api_key, models, group_name, status, priority, weight, auto_ban, other, created_time)
+         VALUES (?,?,?, '', ?, ?, 1, ?, ?, ?, ?, ?)`,
+        [
+          String(name || `${provider.name} 渠道`).slice(0, 64),
+          type,
+          mCfg.baseUrl || "",
+          models,
+          groupName,
+          Number(priority) || 0,
+          weightVal,
+          autoBanVal,
+          JSON.stringify(other),
+          now(),
+        ]
       );
       insertId = ret.insertId;
       const [fresh] = await pool.query("SELECT * FROM channels WHERE id = ?", [insertId]);
@@ -560,15 +593,18 @@ router.post(
       const [dup] = await pool.query("SELECT id FROM channels WHERE type = ? AND api_key = ? LIMIT 1", [type, token]);
       if (dup.length) return fail(res, "该账号已存在（登录态重复）");
       const [ret] = await pool.query(
-        `INSERT INTO channels (name, type, base_url, api_key, models, group_name, status, priority, weight, other, created_time)
-         VALUES (?,?,?,?,?, 'default', 1, ?, 1, ?, ?)`,
+        `INSERT INTO channels (name, type, base_url, api_key, models, group_name, status, priority, weight, auto_ban, other, created_time)
+         VALUES (?,?,?,?,?,?, 1, ?, ?, ?, ?, ?)`,
         [
           String(name || accountLabel || `${provider.name} 渠道`).slice(0, 64),
           type,
           mCfg.baseUrl || "",
           token,
           models,
+          groupName,
           Number(priority) || 0,
+          weightVal,
+          autoBanVal,
           JSON.stringify(other),
           now(),
         ]

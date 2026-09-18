@@ -21,6 +21,7 @@ export default function TokenPage() {
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [saving, setSaving] = useState(false);
   const [form] = Form.useForm();
   const { begin, isLatest } = useLatest();
 
@@ -75,6 +76,7 @@ export default function TokenPage() {
   };
 
   const submit = async () => {
+    if (saving) return;
     let v;
     try {
       v = await form.validateFields();
@@ -88,6 +90,7 @@ export default function TokenPage() {
       expired_time: v.never_expire ? -1 : Math.floor(v.expired_time.valueOf() / 1000),
       model_limits: v.model_limits || [],
     };
+    setSaving(true);
     try {
       if (editing) {
         await API.put("/token/", { id: editing.id, ...payload });
@@ -100,6 +103,8 @@ export default function TokenPage() {
       load();
     } catch (e) {
       message.error(e.message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -259,6 +264,7 @@ export default function TokenPage() {
         title={editing ? "编辑令牌" : "创建令牌"}
         open={modalOpen}
         onOk={submit}
+        confirmLoading={saving}
         onCancel={() => setModalOpen(false)}
         destroyOnClose
         okText="保存"
