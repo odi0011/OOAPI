@@ -403,6 +403,8 @@ export default function ChatPage() {
   msgsRef.current = msgs;
   const sessionRef = useRef(session);
   sessionRef.current = session;
+  const activeIdRef = useRef("");
+  activeIdRef.current = session?.id || "";
   const sendRef = useRef(null);
   const attachRunningRef = useRef(null);
   const attachedRef = useRef(""); // 已经接上事件流的会话 id（防重复订阅导致内容重放叠加）
@@ -431,7 +433,7 @@ export default function ChatPage() {
   // 对话必须通过密钥路由：没有可用密钥就没有可用模型，输入区与编排栏一并禁用
   const usableKeys = (meta?.keys || []).filter((k) => k.status === 1);
   const needKey = Boolean(meta) && !usableKeys.length;
-  const unavailable = !session || !curModel || needKey;
+  const unavailable = !session || !curModel || needKey || loadingSession;
 
   /* ---------- 加载：元信息 + 会话列表 ---------- */
   const metaGenRef = useRef(0);
@@ -658,7 +660,12 @@ export default function ChatPage() {
         const list = await loadSessions();
         if (sessionRef.current?.id === id) {
           if (list[0]) openSession(list[0].id);
-          else setSession(null);
+          else {
+            // 与 deleteSession 对齐：清空消息与地址栏参数，否则页面还在渲染已归档会话
+            setSession(null);
+            setMsgs([]);
+            setParams({}, { replace: true });
+          }
         }
       } catch (e) {
         toast.error(e.message || "归档失败");
@@ -833,11 +840,24 @@ export default function ChatPage() {
   );
 
   /* ---------- 运行一轮 ---------- */
+  // 重新生成时把原消息里的附件（已解析文本）带回来：文件内容不再经过 dataUrl，
+  // 由服务端 /run 的 docs 参数直接接收（否则重发会丢掉附件上下文）
+  const retryDocsRef = useRef([]);
   const send = useCallback(
     (overrideText) => {
+      const extraDocs = retryDocsRef.current;
+      retryDocsRef.current = [];
+      const docsToSend = extraDocs.length ? extraDocs : docs;
       const text = String(overrideText ?? input).trim();
       const current = sessionRef.current;
-      if ((!text && !images.length && !docs.length) || busyRef.current || !current) return;
+      if (
+        (!text && !images.length && !docsToSend.length) ||
+        busyRef.current ||
+        !current ||
+        loadingSession ||
+        (activeIdRef.current && current.id !== activeIdRef.current)
+      )
+        return;
       if (current.settings?.tools?.length && curModel?.supportsSearch === false) {
         // 搜索工具在部分模型上不可用：不阻断，只提示（工具本身也会返回失败原因）
         // eslint-disable-next-line no-console
@@ -852,7 +872,7 @@ export default function ChatPage() {
           { id: uid(), type: "text", text },
           ...images.map((url) => ({ id: uid(), type: "image", url })),
           // 文件只放元信息，正文由服务端解析后回填（避免把大段文本塞进前端状态）
-          ...docs.map((d) => ({ id: uid(), type: "file", name: d.name, bytes: d.size })),
+          ...docsToSend.map((d) => ({ id: uid(), type: "file", name: d.name, bytes: d.size ?? d.bytes })),
         ],
       };
       const aiMsg = { key: `a-${uid()}`, seq: 0, role: "assistant", parts: [], streaming: true, agent: current.agent, model: current.model };
@@ -886,6 +906,8 @@ export default function ChatPage() {
       const finish = () => {
         if (finished) return;
         finished = true;
+        // 卸载/切会话/登出触发的 abort 也会走到这里：gen 已变就不再写状态、不再发请求
+        if (genRef.current !== myGen) return;
         attachedRef.current = "";
         patchAi((m) => ({ ...m, streaming: false }));
         runningRef.current = null;
@@ -899,7 +921,9 @@ export default function ChatPage() {
           sessionId: current.id,
           text,
           images: images.map((dataUrl) => ({ dataUrl })),
-          files: docs.map((d) => ({ name: d.name, type: d.type, dataUrl: d.dataUrl })),
+          files: docsToSend.map((d) => ({ name: d.name, type: d.type, dataUrl: d.dataUrl })).filter((f) => f.dataUrl),
+          // 重发历史消息时附件没有 dataUrl，用已解析文本走 docs 通道
+          docs: docsToSend.some((d) => !d.dataUrl) ? docsToSend.map((d) => ({ name: d.name, kind: d.kind, bytes: d.bytes, text: d.text })) : undefined,
           keyId,
           model: current.model,
           agent: current.agent,
@@ -942,7 +966,7 @@ export default function ChatPage() {
       );
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [input, images, docs, keyId, curModel, refreshUser, loadSessions]
+    [input, images, docs, keyId, curModel, refreshUser, loadSessions, loadingSession]
   );
   sendRef.current = send;
 
@@ -952,15 +976,37 @@ export default function ChatPage() {
     if (sid) chatApi.stop(sid).catch(() => {});
     runningRef.current?.abort();
     runningRef.current = null;
-    setBusy(false);
     setMsgs((prev) =>
       prev.map((m, i) =>
         i === prev.length - 1 && m.streaming ? { ...m, streaming: false, parts: [...m.parts, { id: uid(), type: "error", message: "已停止接收。本轮已产生的用量照常计费。" }] } : m
       )
     );
-    // 服务端在断开后仍会对已产出内容补计费：稍后刷新余额，避免界面一直显示旧值
-    setTimeout(() => refreshUser?.(), 1500);
-    loadSessions();
+    // 服务端收尾（部分结算/消息落库）需要一点时间：轮询到 isRunning=false 再解锁，
+    // 否则立刻发送会拿到 409，且本地新消息不会被服务端保存
+    if (!sid) {
+      setBusy(false);
+      setTimeout(() => refreshUser?.(), 1500);
+      loadSessions();
+      return;
+    }
+    let tries = 0;
+    const timer = setInterval(async () => {
+      tries++;
+      try {
+        const r = await chatApi.running(sid);
+        if (!r?.running || tries > 20) {
+          clearInterval(timer);
+          setBusy(false);
+          refreshUser?.();
+          loadSessions();
+        }
+      } catch {
+        if (tries > 20) {
+          clearInterval(timer);
+          setBusy(false);
+        }
+      }
+    }, 500);
   }, [refreshUser, loadSessions]);
 
   const retry = useCallback(
@@ -972,6 +1018,11 @@ export default function ChatPage() {
       if (!userMsg || userMsg.role !== "user") return;
       const text = (userMsg.parts || []).filter((p) => p.type === "text").map((p) => p.text).join("\n");
       const imgs = (userMsg.parts || []).filter((p) => p.type === "image").map((p) => p.url);
+      // 附件正文已在历史消息里（file part 带 text）：重新生成时按 docs 通道带回，
+      // 否则 rewind 删掉原消息后附件上下文永久丢失
+      retryDocsRef.current = (userMsg.parts || [])
+        .filter((p) => p.type === "file" && p.text)
+        .map((p) => ({ name: p.name, kind: p.kind, bytes: p.bytes, text: p.text }));
       // 服务端回退：这一轮问答要从库里删掉，否则重发后上下文里同一个问题会出现两遍
       if (userMsg.seq) {
         try {

@@ -503,6 +503,20 @@ router.post(
     }
     if (docs.length > MAX_UPLOAD_FILES) return fail(res, `最多同时上传 ${MAX_UPLOAD_FILES} 个文件`);
 
+    // 「重新生成」重发历史消息时附件没有 dataUrl：前端把已解析文本走 docs 通道带回来。
+    // 这里做和 files 相同的上限与剪裁，逻辑保持单一入口。
+    for (const d of Array.isArray(req.body?.docs) ? req.body.docs.slice(0, MAX_UPLOAD_FILES) : []) {
+      if (!d || typeof d !== "object") continue;
+      const text = String(d.text || "");
+      if (!text) continue;
+      docs.push({
+        name: String(d.name || "未命名文件").slice(0, 120),
+        kind: String(d.kind || "text").slice(0, 20),
+        bytes: Math.min(Number(d.bytes) || text.length, 50 * 1024 * 1024),
+        text: clipFileText(text),
+      });
+    }
+
     // 先原子占位、再做落库等副作用：并发提交的第二个请求会在这里直接 409，
     // 不会留下重复的用户消息或被改错的标题（原实现先落库后占位，存在这个竞态）。
     const run = startRun(session.id, { userId: req.user.id });
