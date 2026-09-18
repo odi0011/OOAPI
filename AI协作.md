@@ -168,24 +168,10 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 
 ### 第 5 批审查发现（待处理）
 
-- [ ] **`browser-driver` 卡死会永久占用渠道（P1）**：`page.evaluate` 无超时，一次挂起后
-  `withLock` 队列永不 settle，该渠道在进程重启前不可用（`lastUsed` 被刷新，闲置回收不触发）。
-  修法：evaluate 加时限；检测队列超时后 `ctx.close()` 重建会话。
-- [ ] **无 rsync 时的回退复制无删除语义（P2）**：`updater.js` 复制回退只覆盖同名文件，
-  新版新增的 `migrate*.mjs`/模块会残留，形成半新半旧状态。
-- [ ] **反代渠道表单字段被静默丢弃（P1，前端）**：新增 relay 渠道时 `AdminChannelsPage` 不提交
-  `models/group_name/weight/auto_ban`，后端固定写 `defaultModels/default/1`，用户编辑无效。
-  修法：让 `/channel/login` 落库这些字段，或在表单里对 relay 隐藏/置灰。
-- [ ] **前端硬编码颜色（P2）**：`ConsolePage`（第 157/165/180 行附近）、`AdminChannelsPage`（第 712 行附近）
-  使用 `rgba(...)`/`#f59e0b` 等固定色，必须改 CSS 变量/`color-mix`。
-- [ ] **提交类操作无防重入（P2，前端）**：创建令牌、新增渠道无 `submitting/confirmLoading`，
-  双击会重复创建。
-- [ ] **数值上限缺失（P2）**：`token.js`/`user.js` 的额度只校验 `Number.isFinite`，
-  1e20 等值会 BIGINT 越界报 500；`expired_time = 0` 与 `-1` 的语义未统一。
-- [ ] **`fetchUpstreamModels` 可被重定向绕过 SSRF 校验（P2）**：`assertPublicUrl` 后 fetch 默认跟随
-  302，需 `redirect:"manual"` 并逐跳校验（与网关图片抓取一致）。
 - [ ] **Agent 计费条件与部分输出的 `usage` 形态**（观察项）：本轮已改为按内容兜底 + 结构化 usage，
   上线后观察计费是否与上游一致。
+- [ ] **审查方式可复用**：后续批次继续用「三路并行子代理（前端 / 后端路由 / 服务适配器）+ 人工核实」，
+  发现的问题先登记在此节，修完删除并写入变更记录。
 
 ### 长期/设计取舍项（已评估，暂不处理）
 
@@ -229,7 +215,7 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 
 - Git 未加入 PATH，可用 GitHub Desktop 自带的：
   `& "$env:LOCALAPPDATA\GitHubDesktop\app-3.6.3\resources\app\git\cmd\git.exe"`
-- 拉取/推送如需代理：`-c http.proxy=http://127.0.0.1:7892`（代理未启动时两个 npm 镜像可直连）。
+- 网络受限时自行配置本机代理（每台机器的代理不同，**不要把代理地址写进本仓库**）。
 - 运行 `ooapi-web` 的 `npm install` / `npm run build` 前确认 `node_modules` 存在；构建产物在 `dist/`，
   生产需复制到 `ooapi-server/web/`。
 
@@ -260,3 +246,9 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
   DeepSeek 子请求/流读取超时与释放；前端设置 null 值不再写成 "null"、docs_link 过协议白名单、
   停止生成后刷新余额、重新生成不清空草稿、`/agent` 切换保留图片校验、复制失败正确报错。
   遗留项已登记到第 3 节「第 5 批审查发现」。 |
+| 2026-09-18 | **第 6 批（清第 5 批遗留）**：`browser-driver` 会话锁加 15 分钟看门狗（卡死强关 context
+  并下次重建，渠道不再永久不可用）；`updater.js` 复制路径补齐删除语义（防回滚后半新半旧）；
+  反代渠道 `models/group_name/weight/auto_ban` 真正落库（新增与更新均支持）；
+  `fetchUpstreamModels` 改为 `redirect:"manual"` 逐跳 SSRF 校验；`token/user` 额度与过期时间加上限
+  （防 BIGINT 越界 500）；前端 `ConsolePage/AdminChannelsPage` 硬编码色改 CSS 变量、
+  创建令牌/新增渠道加提交防重入。文档：代理地址不再写入仓库（每台机器不同）。 |
