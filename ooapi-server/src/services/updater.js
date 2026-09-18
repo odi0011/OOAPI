@@ -240,6 +240,10 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
     step("备份当前源码…");
     result.backup = await backupSource();
 
+    // 哨兵：覆盖源码期间进程若被强杀（systemd 超时/OOM），启动时能发现「半新半旧」状态
+    const sentinel = path.join(SERVER_ROOT, ".update-in-progress");
+    await fs.writeFile(sentinel, JSON.stringify({ at: new Date().toISOString(), from: result.backup, to: newShort }));
+
     // 依赖变化要在覆盖之前判断（覆盖后两边就一样了，比较必然相等）
     const pkgChanged = !(await sameFile(
       path.join(tmp, "ooapi-server", "package.json"),
@@ -285,10 +289,17 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
       step(needDeps ? "  前端依赖缺失，正在安装（含 devDependencies）…" : "  同步前端依赖…");
       await run("npm", ["install", "--include=dev", "--no-audit", "--no-fund"], { cwd: WEB_ROOT, env: frontEnv });
       await run("npm", ["run", "build"], { cwd: WEB_ROOT, env: frontEnv });
-      // 清空旧产物再拷贝，避免旧哈希文件残留导致白屏
-      await fs.rm(path.join(STATIC_WEB, "assets"), { recursive: true, force: true });
+      // 原子切换构建产物：先拷到 stage 目录再逐项 rename，中途失败/被杀时旧产物仍可用
+      // （旧实现先删 assets 再拷贝，失败会留下白屏且回滚不覆盖 web/）
       await fs.mkdir(STATIC_WEB, { recursive: true });
-      await fs.cp(WEB_DIST, STATIC_WEB, { recursive: true });
+      const stage = path.join(STATIC_WEB, `.stage-${Date.now()}`);
+      await fs.cp(WEB_DIST, stage, { recursive: true });
+      for (const ent of await fs.readdir(stage)) {
+        const to = path.join(STATIC_WEB, ent);
+        await fs.rm(to, { recursive: true, force: true });
+        await fs.rename(path.join(stage, ent), to);
+      }
+      await fs.rm(stage, { recursive: true, force: true });
       result.frontendBuilt = true;
       step("前端构建完成");
     } catch (e) {
@@ -335,6 +346,7 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
     );
 
     await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(sentinel, { force: true }).catch(() => {});
 
     result.ok = true;
     result.commit = newShort;
@@ -374,6 +386,7 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
       }
     }
     await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(path.join(SERVER_ROOT, ".update-in-progress"), { force: true }).catch(() => {});
     step(`更新失败：${e.message}`);
     result.error = e.message;
     return result;

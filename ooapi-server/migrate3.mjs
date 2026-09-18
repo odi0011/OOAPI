@@ -87,7 +87,12 @@ for (const c of chans) {
     continue;
   }
   other.profile = genProfile(`${c.id}:${(other.cookies?.[0]?.value || c.id).toString().slice(0, 24)}`);
-  await pool.query("UPDATE channels SET other = ? WHERE id = ?", [JSON.stringify(other), c.id]);
+  // 只写 profile 子字段（JSON_SET + JSON_EXTRACT 解析参数）：整列读-改-写会在迁移窗口内
+  // 覆盖掉服务进程并发写入的 cookies/登录态
+  await pool.query(
+    "UPDATE channels SET other = JSON_SET(COALESCE(other, '{}'), '$.profile', JSON_EXTRACT(?, '$')) WHERE id = ?",
+    [JSON.stringify(other.profile), c.id]
+  );
   log.push(`OK    渠道 #${c.id}「${c.name}」已生成指纹（${other.profile.platform} / Chrome ${other.profile.chromeVersion}）`);
 }
 

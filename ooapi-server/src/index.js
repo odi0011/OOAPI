@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pool, migrate } from "./db.js";
@@ -145,7 +146,22 @@ async function bootstrap() {
       `[init] 已创建默认管理员 root / ${pwd}${generated ? "（随机生成，请立即到「个人设置」修改）" : ""}`
     );
   }
-  app.listen(PORT, "127.0.0.1", () => console.log(`[ooapi-server] listening on 127.0.0.1:${PORT}`));
+  // 上次在线更新若被强杀（systemd 超时/OOM/手动 kill），会留下哨兵文件：
+  // 源码可能处于半新半旧状态，必须在日志里显式告警，避免静默运行混合代码。
+  try {
+    const sentinel = path.join(process.cwd(), ".update-in-progress");
+    if (fs.existsSync(sentinel)) {
+      const info = fs.readFileSync(sentinel, "utf8");
+      console.error(
+        "[init] 警告：检测到上次在线更新未完成！当前代码可能半新半旧，请重新执行更新或从备份目录恢复。",
+        info.slice(0, 300)
+      );
+    }
+  } catch {
+    /* ignore */
+  }
+
+  const server = app.listen(PORT, "127.0.0.1", () => console.log(`[ooapi-server] listening on 127.0.0.1:${PORT}`));
 
   scheduleLogCleanup();
 
@@ -157,9 +173,20 @@ async function bootstrap() {
     console.error("[init] 定时检测启动失败：", e.message);
   }
 
-  // 退出时关闭浏览器驱动会话与 PoW worker，避免残留进程
+  // 退出：先停接收新连接排空在途请求（分钟级上游/日志写入不能被硬截断），
+  // 再关浏览器、PoW worker 与数据库连接池；10s 兜底强制退出。
+  let shuttingDown = false;
   for (const sig of ["SIGTERM", "SIGINT"]) {
     process.on(sig, async () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      try {
+        server.close();
+      } catch {
+        /* ignore */
+      }
+      const force = setTimeout(() => process.exit(0), 10_000);
+      force.unref?.();
       try {
         const { closeAll } = await import("./services/upstream/browser-driver.js");
         await closeAll();
@@ -169,6 +196,11 @@ async function bootstrap() {
       try {
         const { closePowWorker } = await import("./services/upstream/deepseek-pow.js");
         closePowWorker();
+      } catch {
+        /* ignore */
+      }
+      try {
+        await pool.end();
       } catch {
         /* ignore */
       }
