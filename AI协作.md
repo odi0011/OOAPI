@@ -856,3 +856,15 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   R9 样式：补 `--r-sm/--r-md`、ConsolePage 类名对齐 `bui-*`、导入结果背景变量、趋势提示边界收敛；
   R10 部署：更新哨兵+启动告警、前端产物原子切换、migrate3 子字段写入、退出排空请求并关连接池。
   验证：线上部署 `496f41a`，渠道页/统计弹窗（10 条最近调用）/添加弹窗（OAuth 一键登录按钮）实测正常，0 控制台错误。 |
+| 2026-09-19 | **第 26 批（第二轮十轮审查 → 逐轮修复，线上 `f45e515`）**：
+  R11 回归：onboarding 临时 profile 兜底清理（PENDING_PROFILES）、账号标识强/弱分级判重（project_id 不再跨字段误判）、排队+调用双段超时、部分计费收敛回「整轮无 usage 才估算」、写回串行表可回收、哨兵路径对齐；
+  R12 性能：渠道选择 5s TTL 缓存 + epoch 失效、channels/logs 复合索引迁移（status,priority / type,created_at / user_id,type,created_at）、站点累计改 users 汇总列、/data/self 复用 used_quota、/meta 复用价格缓存；
+  R13 竞态：PENDING_PROFILES 声明位置（会 ReferenceError 的致命错误）、同会话并发提交先原子占位后落库、结算「先置位」防重复扣费、渠道缓存旧快照回写防护；
+  R14 边界：keyId/fromSeq/status 严格整数（fromSeq 非法不再清空会话）、导入畸形元素跳过、定价字段按列宽截断；
+  R15 安全：渠道 base_url 写入公网校验、浏览器 goto SSRF 校验、zlib 解压限长（压缩炸弹）、图片/网页有界读取、root 随机密码改写入 0600 文件（不再进日志）；
+  R16 一致性：扣费「结果不确定(BILLING_UNCERTAIN)」与「确定未扣」区分处理、oauth/exchange 合并 other、删分组/删用户事务化、更新哨兵仅回滚成功才清除；
+  R17 前端：切会话期间禁发与串话防护、finish 代际校验、重新生成保留附件上下文（新增 /run docs 通道）、停止后轮询服务端收尾再解锁、归档清空残留状态；
+  R18 适配器：Kimi Connect trailer 错误识别、codex reasoning_tokens（516 降智指纹恢复可触发）、GLM/豆包/通义 finished 提前收流（每轮省 15s 静止等待）、Claude/Grok/Antigravity 尾帧收尾、GLM 回退重写不再重发已输出片段；
+  R19 清理：未使用导入删除、README 管理员密码流程改为 `.admin-password` 说明。
+  验证：全量 66 个后端文件 `node --check` 通过、前端构建通过；线上部署 `f45e515` 后渠道页/统计弹窗/添加弹窗/网关鉴权（0 额度 Key 正确 403）实测正常，无哨兵残留。
+  已知取舍（评估后接受）：渠道创建并发去重仍是「先查后插」（单管理员操作，双并发概率极低）；`other` 列多处读改写未统一原子化（涉及面广，改动风险大于收益）；DNS rebinding 出站 TOCTOU 仍存在（已收窄触发面）。 |
