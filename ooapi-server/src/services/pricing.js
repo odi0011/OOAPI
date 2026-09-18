@@ -85,10 +85,11 @@ export const DEFAULT_PRICES = [
   { model: "o3", input: 2.00, output: 8.00, cache: 0.50, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
   { model: "o4-mini", input: 1.10, output: 4.40, cache: 0.275, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
 
-  // --- Anthropic（美元牌价）---
-  { model: "claude-opus-5", input: 5.00, output: 25.00, cache: 0.50, type: "claude", remark: "官方定价；来源 anthropic.com/pricing" },
-  { model: "claude-sonnet-5", input: 2.00, output: 10.00, cache: 0.20, type: "claude", remark: "官方定价；来源 anthropic.com/pricing" },
-  { model: "claude-haiku-4.5", input: 1.00, output: 5.00, cache: 0.10, type: "claude", remark: "官方定价；来源 anthropic.com/pricing" },
+  // --- Anthropic（美元牌价）--- 渠道类型统一用 anthropic（与 channel-types 的接入方式一致，
+  // 之前写 "claude" 会和模型登记表/定价导入校验打架）
+  { model: "claude-opus-5", input: 5.00, output: 25.00, cache: 0.50, type: "anthropic", remark: "官方定价；来源 anthropic.com/pricing" },
+  { model: "claude-sonnet-5", input: 2.00, output: 10.00, cache: 0.20, type: "anthropic", remark: "官方定价；来源 anthropic.com/pricing" },
+  { model: "claude-haiku-4.5", input: 1.00, output: 5.00, cache: 0.10, type: "anthropic", remark: "官方定价；来源 anthropic.com/pricing" },
 
   // --- Google（美元牌价）---
   { model: "gemini-3.5-flash", input: 1.50, output: 9.00, cache: 0.15, type: "gemini", remark: "官方牌价录入；来源 ai.google.dev/gemini-api/docs/pricing" },

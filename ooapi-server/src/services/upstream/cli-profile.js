@@ -45,12 +45,11 @@ export function seededInt63(seed, tag = "session") {
   return Number(BigInt(`0x${h}`) & 0x7fffffffffffffffn);
 }
 
-/** 渠道身份种子：换账号即换整套身份 */
+/** 渠道身份种子：只取稳定字段（渠道类型 + id）。
+ * 不能带 account/email 等「刷新后才补齐」的字段：否则刷新一次凭据就把整套
+ * device/session 换掉，反而触发上游「身份乱跳」风控。 */
 export function profileSeed(channel) {
-  const other = channel?.other || {};
-  const account =
-    other.account_id || other.account_uuid || other.email || other.project_id || other.account || channel?.id || "unknown";
-  return `${channel?.type || "unknown"}:${channel?.id || 0}:${account}`;
+  return `${channel?.type || "unknown"}:${channel?.id || 0}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -69,17 +68,17 @@ export const CLI_VERSIONS = {
 };
 
 export function codexUserAgent(channel) {
-  const v = String(channel?.other?.client_version || CLI_VERSIONS.codex);
+  const v = String(channel?.other?.client_version || "").trim() || CLI_VERSIONS.codex;
   return `codex-tui/${v} (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; ${v})`;
 }
 
 export function claudeUserAgent(channel) {
-  const v = String(channel?.other?.client_version || CLI_VERSIONS.claude);
+  const v = String(channel?.other?.client_version || "").trim() || CLI_VERSIONS.claude;
   return `claude-cli/${v} (external, cli)`;
 }
 
 export function antigravityUserAgent(channel, { withNodeClient = false } = {}) {
-  const v = String(channel?.other?.client_version || CLI_VERSIONS.antigravity);
+  const v = String(channel?.other?.client_version || "").trim() || CLI_VERSIONS.antigravity;
   return withNodeClient
     ? `antigravity/hub/${v} darwin/arm64 google-api-nodejs-client/${CLI_VERSIONS.antigravityNodeApi}`
     : `antigravity/hub/${v} darwin/arm64`;

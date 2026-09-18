@@ -446,7 +446,7 @@ router.post(
     const {
       type,
       name,
-      priority = 0,
+      priority,
       id,
       mode = "password",
       method: methodInput,
@@ -459,6 +459,7 @@ router.post(
     const provider = getProvider(type);
     if (!provider) return fail(res, "未知厂商");
     const methodKey = String(methodInput || "relay");
+    const priorityProvided = priority !== undefined;
     const mCfg = getMethod(type, methodKey);
     if (!mCfg) return fail(res, `${provider.name} 不支持该接入方式（${methodKey}）`);
     if (methodKey === "api") return fail(res, "API 接入方式请使用渠道创建表单（POST /api/channel/）");
@@ -494,7 +495,7 @@ router.post(
         // 订阅型 OAuth：粘贴官方 CLI 的凭据 JSON，由适配器解析并落库
         if (!adapter.importAuth) return fail(res, `${provider.name} 适配器未实现凭据导入`);
         const r = await adapter.importAuth({ ...rest, mode: "paste" });
-        token = String(r.token || "");
+        token = String(r.token || "").slice(0, 60_000);
         other = { method: methodKey, ...(r.other || {}) };
         accountLabel = r.accountLabel || null;
       } else if (mode === "password") {
@@ -519,7 +520,7 @@ router.post(
         };
         accountLabel = other.account;
       } else if (mode === "paste") {
-        const t = String(rest.token || "").trim();
+        const t = String(rest.token || "").trim().slice(0, 60_000);
         if (!t) return fail(res, "请填写登录态");
         if (adapter.verifyPastedToken) {
           const v = await adapter.verifyPastedToken({ token: t, cookies: rest.cookies });
@@ -560,7 +561,8 @@ router.post(
       await pool.query(
         `UPDATE channels SET name = ?, api_key = ?, other = ?, last_error = '',
            models = COALESCE(?, models), group_name = COALESCE(?, group_name),
-           weight = COALESCE(?, weight), auto_ban = COALESCE(?, auto_ban)
+           weight = COALESCE(?, weight), auto_ban = COALESCE(?, auto_ban),
+           priority = COALESCE(?, priority)
          WHERE id = ?`,
         [
           String(name || provider.name).slice(0, 64),
@@ -570,6 +572,7 @@ router.post(
           group_name !== undefined ? groupName : null,
           weight !== undefined ? weightVal : null,
           auto_ban !== undefined ? autoBanVal : null,
+          priorityProvided ? priorityVal : null,
           targetId,
         ]
       );
@@ -620,8 +623,26 @@ router.post(
         return fail(res, `渠道已创建但未就绪：${e.message}。请在渠道列表点「浏览器登录」完成人工登录`, 400);
       }
     } else {
-      const [dup] = await pool.query("SELECT id FROM channels WHERE type = ? AND api_key = ? LIMIT 1", [type, token]);
-      if (dup.length) return fail(res, "该账号已存在（登录态重复）");
+      if (isOAuthMethod(methodKey)) {
+        // OAuth 渠道按稳定账号标识去重：access_token 会轮换，不能拿它当唯一键，
+        // 否则同一账号二次导入检不出重复，两条渠道共享 refresh_token 会互相刷废
+        const stableKey = other.account_id || other.account_uuid || other.email || other.project_id || "";
+        if (stableKey) {
+          const [rows] = await pool.query("SELECT id, other FROM channels WHERE type = ?", [type]);
+          const dup = rows.find((r) => {
+            try {
+              const o = JSON.parse(r.other || "{}");
+              return (o.account_id || o.account_uuid || o.email || o.project_id) === stableKey;
+            } catch {
+              return false;
+            }
+          });
+          if (dup) return fail(res, "该账号已存在（凭据重复）");
+        }
+      } else {
+        const [dup] = await pool.query("SELECT id FROM channels WHERE type = ? AND api_key = ? LIMIT 1", [type, token]);
+        if (dup.length) return fail(res, "该账号已存在（登录态重复）");
+      }
       const [ret] = await pool.query(
         `INSERT INTO channels (name, type, base_url, api_key, models, group_name, status, priority, weight, auto_ban, other, created_time)
          VALUES (?,?,?,?,?,?, 1, ?, ?, ?, ?, ?)`,
@@ -640,6 +661,25 @@ router.post(
         ]
       );
       insertId = ret.insertId;
+    }
+
+    // 订阅 OAuth：入池前做一次凭据健康检查（失败禁用而不是带着坏凭据参与调度）
+    if (isOAuthMethod(methodKey) && adapter.verify) {
+      try {
+        const [fresh] = await pool.query("SELECT * FROM channels WHERE id = ?", [insertId]);
+        const ms = await adapter.verify(rowToChannel(fresh[0]));
+        await writeLog({
+          user: req.user,
+          type: LOG_TYPE.MANAGE,
+          content: `订阅渠道 ${provider.name} 凭据校验通过（${ms}ms）`,
+        });
+      } catch (e) {
+        await pool.query("UPDATE channels SET status = 2, last_error = ? WHERE id = ?", [
+          String(e.message).slice(0, 480),
+          insertId,
+        ]);
+        return fail(res, `渠道已创建但凭据校验失败（已禁用，可修复后手动启用）：${e.message}`, 400);
+      }
     }
 
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `新增 ${provider.name} 渠道「${name || ""}」` });
@@ -721,12 +761,17 @@ router.post(
     const b = req.body || {};
     const type = VALID_PROVIDERS.includes(b.type) ? b.type : "custom";
     const provider = getProvider(type);
-    const method = b.method === "relay" ? "relay" : "api";
-
-    // 反代方式走 /login（需要登录流程），这里只处理 API 方式
-    if (method === "relay") {
-      return fail(res, `${provider.name} 的网页版反代请使用账号登录方式添加`);
+    // 本接口只处理 API 方式；relay/订阅 OAuth 都必须走 /channel/login（有登录/校验流程）
+    const methodInput = String(b.method || "api");
+    if (methodInput !== "api") {
+      return fail(
+        res,
+        isOAuthMethod(methodInput)
+          ? `${provider.name} 的订阅接入请使用「粘贴凭据」方式创建（/api/channel/login）`
+          : `${provider.name} 的网页版反代请使用账号登录方式添加`
+      );
     }
+    const method = "api";
     const mCfg = getMethod(type, "api");
     if (!mCfg) return fail(res, `${provider.name} 不支持官方 API 接入`);
 
@@ -879,6 +924,9 @@ router.post(
             return fail(res, e.message);
           }
         }
+        // 没有模型接口的订阅方式：返回该接入方式的默认模型列表（不要拿 OAuth token 去撞 API 端点）
+        const mCfg = getMethod(crows[0].type, method);
+        return ok(res, (mCfg?.defaultModels || []).map((m) => m.id));
       }
     }
     let key = String(api_key || "").trim();
@@ -918,7 +966,7 @@ router.delete(
   asyncHandler(async (req, res) => {
     const id = idParam(req);
     if (!id) return fail(res, "渠道不存在", 404);
-    const [rows] = await pool.query("SELECT name, type FROM channels WHERE id = ?", [id]);
+    const [rows] = await pool.query("SELECT name, type, other FROM channels WHERE id = ?", [id]);
     if (!rows.length) return fail(res, "渠道不存在", 404);
 
     // 反代渠道：关闭浏览器会话并清掉 profile 目录（避免残留占磁盘）
@@ -952,7 +1000,7 @@ router.post(
       await pool.query(`UPDATE channels SET status = 2 WHERE id IN (${ph})`, list);
     } else if (action === "delete") {
       for (const id of list) {
-        const [r] = await pool.query("SELECT type FROM channels WHERE id = ?", [id]);
+        const [r] = await pool.query("SELECT type, other FROM channels WHERE id = ?", [id]);
         if (r.length) {
           const ad = await adapterOf(r[0].type, "relay");
           if (ad?.release) await ad.release(id).catch(() => {});

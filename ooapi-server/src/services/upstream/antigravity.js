@@ -14,7 +14,7 @@
 //      身份用统一指纹模块派生的 requestId / sessionId，UA 用官方 antigravity/hub/<ver>。
 // ---------------------------------------------------------------------------
 import { antigravityIdentity, antigravityUserAgent, CLI_VERSIONS } from "./cli-profile.js";
-import { persistOtherPatch } from "./auth-store.js";
+import { persistOtherPatch, loadOther, withRefreshLock } from "./auth-store.js";
 
 const AUTH_URL = "https://oauth2.googleapis.com/token";
 // Google OAuth 客户端凭据不写进仓库（GitHub 密钥扫描会拦截；也符合「不提交密钥」的规范）。
@@ -32,8 +32,17 @@ const MAX_SSE_BUF = 8 * 1024 * 1024;
 
 function tokenExpiredSoon(other) {
   const exp = Number(other?.expires_at || 0);
-  if (!exp) return false;
+  if (!exp) return Boolean(other?.refresh_token); // 无过期信息：先刷一次拿真实过期时间
   return exp - REFRESH_LEAD_S <= Math.floor(Date.now() / 1000);
+}
+
+/** 时间戳统一成秒：毫秒（>1e12）、ISO/RFC3339 字符串都兼容 */
+function toEpochSeconds(raw) {
+  if (!raw) return 0;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return Math.floor(n > 1e12 ? n / 1000 : n);
+  const parsed = Date.parse(String(raw));
+  return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : 0;
 }
 
 export function parseAuthJson(raw) {
@@ -47,74 +56,83 @@ export function parseAuthJson(raw) {
     });
   }
   const t = j.token || j.tokens || j;
-  const access_token = String(t.access_token || j.access_token || "").trim();
-  const refresh_token = String(t.refresh_token || j.refresh_token || "").trim();
+  const access_token = String(t.access_token || t.accessToken || j.access_token || "").trim();
+  const refresh_token = String(t.refresh_token || t.refreshToken || j.refresh_token || "").trim();
   if (!access_token) throw Object.assign(new Error("缺少 access_token"), { code: "LOGIN_BAD_PARAMS" });
   if (!refresh_token) throw Object.assign(new Error("缺少 refresh_token（订阅渠道必须能自动续期）"), { code: "LOGIN_BAD_PARAMS" });
-  const project = j.project_id || j.projectId || j.cloudaicompanionProject || "";
-  let expires_at = 0;
-  const exp = t.expiry || t.expires_at || 0;
-  if (exp) {
-    const ms = typeof exp === "number" ? exp : Date.parse(exp);
-    if (Number.isFinite(ms)) expires_at = Math.floor(ms / 1000);
-  }
+  const project = j.project_id || j.projectId || j.cloudaicompanionProject || t.project_id || "";
   return {
     access_token,
     refresh_token,
-    expires_at,
+    // 兼容 expired(RFC3339) / expiry_date(ms) / expiry / expires_at
+    expires_at: toEpochSeconds(t.expired || t.expiry_date || t.expiry || t.expires_at),
     project_id: String(project || "").trim(),
     email: String(j.email || t.email || "").trim(),
   };
 }
 
-export async function refreshAuth(channel) {
-  const other = channel?.other || {};
-  const refreshToken = String(other.refresh_token || "").trim();
-  if (!refreshToken) {
-    throw Object.assign(new Error("缺少 refresh_token，请重新导入 Google 凭据"), { code: "CHANNEL_AUTH_EXPIRED" });
-  }
-  if (!CLIENT_ID || !CLIENT_SECRET) {
-    throw Object.assign(
-      new Error("未配置 GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET（.env），无法自动续期"),
-      { code: "CHANNEL_AUTH_EXPIRED" }
-    );
-  }
-  const body = new URLSearchParams({
-    client_id: CLIENT_ID,
-    client_secret: CLIENT_SECRET,
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-  });
-  const resp = await fetch(AUTH_URL, {
-    method: "POST",
-    headers: {
-      host: "oauth2.googleapis.com",
-      "content-type": "application/x-www-form-urlencoded",
-      "user-agent": "Go-http-client/2.0", // 与参考实现一致：模仿真实客户端
-    },
-    body,
-    signal: AbortSignal.timeout(30_000),
-  });
-  const text = await resp.text();
-  if (!resp.ok) {
-    throw Object.assign(new Error(`刷新 Google 登录态失败（HTTP ${resp.status}）：${text.slice(0, 160)}`), {
-      code: "CHANNEL_AUTH_EXPIRED",
+/** 刷新登录态；并发用 withRefreshLock 合并，刷新前重读 DB */
+export async function refreshAuth(channel, { force = false } = {}) {
+  return withRefreshLock(channel.id, async () => {
+    const fresh = await loadOther(channel.id);
+    if (fresh) {
+      const freshExp = Number(fresh.expires_at || 0);
+      const valid = fresh.access_token && freshExp - REFRESH_LEAD_S > Math.floor(Date.now() / 1000);
+      if (!force && valid) {
+        channel.other = { ...(channel.other || {}), ...fresh };
+        return { access_token: fresh.access_token, expires_at: freshExp };
+      }
+      channel.other = { ...(channel.other || {}), ...fresh };
+    }
+    const other = channel?.other || {};
+    const refreshToken = String(other.refresh_token || "").trim();
+    if (!refreshToken) {
+      throw Object.assign(new Error("缺少 refresh_token，请重新导入 Google 凭据"), { code: "CHANNEL_AUTH_EXPIRED" });
+    }
+    if (!CLIENT_ID || !CLIENT_SECRET) {
+      // 这是部署配置问题，不是账号失效：独立错误码，避免按 6 小时账号级冷却处理
+      throw Object.assign(
+        new Error("未配置 GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET（.env），无法自动续期"),
+        { code: "CHANNEL_CONFIG_ERROR" }
+      );
+    }
+    const body = new URLSearchParams({
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
     });
-  }
-  let j;
-  try {
-    j = JSON.parse(text);
-  } catch {
-    throw Object.assign(new Error("刷新响应不是 JSON"), { code: "CHANNEL_BAD_RESPONSE" });
-  }
-  const patch = {
-    access_token: j.access_token || other.access_token,
-    refresh_token: j.refresh_token || refreshToken,
-    expires_at: Math.floor(Date.now() / 1000) + (Number(j.expires_in) || 3600),
-  };
-  await persistOtherPatch(channel.id, patch);
-  channel.other = { ...other, ...patch };
-  return patch;
+    const resp = await fetch(AUTH_URL, {
+      method: "POST",
+      headers: {
+        host: "oauth2.googleapis.com",
+        "content-type": "application/x-www-form-urlencoded",
+        "user-agent": "Go-http-client/2.0", // 与参考实现一致：模仿真实客户端
+      },
+      body,
+      signal: AbortSignal.timeout(30_000),
+    });
+    const text = await resp.text();
+    if (!resp.ok) {
+      throw Object.assign(new Error(`刷新 Google 登录态失败（HTTP ${resp.status}）：${text.slice(0, 160)}`), {
+        code: "CHANNEL_AUTH_EXPIRED",
+      });
+    }
+    let j;
+    try {
+      j = JSON.parse(text);
+    } catch {
+      throw Object.assign(new Error("刷新响应不是 JSON"), { code: "CHANNEL_BAD_RESPONSE" });
+    }
+    const patch = {
+      access_token: j.access_token || other.access_token,
+      refresh_token: j.refresh_token || refreshToken,
+      expires_at: Math.floor(Date.now() / 1000) + (Number(j.expires_in) || 3600),
+    };
+    await persistOtherPatch(channel.id, patch);
+    channel.other = { ...other, ...patch };
+    return patch;
+  });
 }
 
 async function ensureToken(channel) {
@@ -125,6 +143,24 @@ async function ensureToken(channel) {
     });
   }
   return String(channel.other?.access_token || "");
+}
+
+/** 带 401 自动刷新重试的请求包装（401 时强刷一次再重放） */
+async function fetchWithAuthRetry(channel, buildInit, url, extraInit = {}) {
+  const token = await ensureToken(channel);
+  const doFetch = (t) =>
+    fetch(url, { ...extraInit, ...buildInit(t) }).catch((e) => {
+      if (e.name === "AbortError") throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
+      throw Object.assign(new Error(`无法连接 Antigravity 上游：${e.message}`), { code: "CHANNEL_NETWORK" });
+    });
+  let resp = await doFetch(token);
+  if (resp.status === 401 && channel?.other?.refresh_token) {
+    console.warn("[antigravity] 上游 401，刷新登录态后重试一次");
+    await refreshAuth(channel, { force: true }).catch(() => {});
+    const retryToken = String(channel?.other?.access_token || token);
+    if (retryToken && retryToken !== token) resp = await doFetch(retryToken);
+  }
+  return resp;
 }
 
 export async function importAuth(input = {}) {
@@ -238,7 +274,12 @@ function toContents(messages, images, fallbackPrompt) {
   for (const m of use) {
     if (!m || typeof m !== "object" || m.role === "system") continue;
     const role = m.role === "assistant" ? "model" : "user";
-    contents.push({ role, parts: [{ text: String(m.content ?? "") }] });
+    const text = String(m.content ?? "");
+    // Google 要求首条为 user，合并连续同角色
+    if (!contents.length && role !== "user") continue;
+    const prev = contents[contents.length - 1];
+    if (prev && prev.role === role) prev.parts[0].text += `\n\n${text}`;
+    else contents.push({ role, parts: [{ text }] });
   }
   if (images?.length) {
     for (let i = contents.length - 1; i >= 0; i--) {
@@ -252,7 +293,7 @@ function toContents(messages, images, fallbackPrompt) {
     }
   }
   if (!contents.length) contents.push({ role: "user", parts: [{ text: fallbackPrompt || "你好" }] });
-  // 补 leading user turn（Google 要求 contents 以 user 开头）
+  // 补 leading user turn（前一条逻辑已处理，这里兜底空 user 文本）
   if (contents[0].role !== "user") contents.unshift({ role: "user", parts: [{ text: "" }] });
   return contents;
 }
@@ -294,19 +335,20 @@ export async function chat({
     request,
   };
 
-  const resp = await fetch(CHAT_URL, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-      "user-agent": identity.userAgent,
-    },
-    body: JSON.stringify(envelope),
-    signal,
-  }).catch((e) => {
-    if (e.name === "AbortError") throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
-    throw Object.assign(new Error(`无法连接 Antigravity 上游：${e.message}`), { code: "CHANNEL_NETWORK" });
-  });
+  const resp = await fetchWithAuthRetry(
+    channel,
+    (token) => ({
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+        "user-agent": identity.userAgent,
+      },
+      body: JSON.stringify(envelope),
+      signal,
+    }),
+    CHAT_URL
+  );
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
@@ -351,10 +393,13 @@ export async function chat({
       if (!r || typeof r !== "object") continue;
       if (r.modelVersion) upstreamModel = r.modelVersion;
       if (r.usageMetadata) {
+        const p = Number(r.usageMetadata.promptTokenCount) || 0;
+        // 思考 token 也属于补全消耗，漏掉会少计费
+        const c = (Number(r.usageMetadata.candidatesTokenCount) || 0) + (Number(r.usageMetadata.thoughtsTokenCount) || 0);
         usage = {
-          prompt_tokens: Number(r.usageMetadata.promptTokenCount) || 0,
-          completion_tokens: Number(r.usageMetadata.candidatesTokenCount) || 0,
-          total_tokens: Number(r.usageMetadata.totalTokenCount) || 0,
+          prompt_tokens: p,
+          completion_tokens: c,
+          total_tokens: Number(r.usageMetadata.totalTokenCount) || p + c,
           cached_tokens: Number(r.usageMetadata.cachedContentTokenCount) || 0,
         };
       }
@@ -428,9 +473,10 @@ export async function fetchUpstreamModels(channel) {
   }
   const j = await resp.json().catch(() => null);
   const models = j?.models || {};
+  // 统一返回 id 字符串数组（前端模型选择器直接写入，不能给对象）
   return Object.keys(models)
     .filter((id) => !/^(chat_|tab_)/.test(id) && !/^gemini-2\.5/.test(id))
-    .map((id) => ({ id, name: models[id]?.displayName || id }));
+    .sort();
 }
 
 export function loginModes() {

@@ -21,6 +21,7 @@ const RETRYABLE = new Set([
   "CHANNEL_NOT_READY",    // 页面/会话未就绪
   "CHANNEL_BIZ_ERROR",    // 上游业务错误（多为风控/过载，瞬时性问题换渠道可解）
   "UNSUPPORTED_CHANNEL",  // 渠道类型未注册/配置错误：属于该渠道自身问题，应跳过换下一个
+  "CHANNEL_CONFIG_ERROR", // 订阅渠道的部署配置缺失（如 Google OAuth 密钥未配置）：跳过该渠道
 ]);
 
 export function isRetryable(code) {

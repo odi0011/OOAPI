@@ -230,6 +230,9 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 - Git 未加入 PATH，可用 GitHub Desktop 自带的：
   `& "$env:LOCALAPPDATA\GitHubDesktop\app-3.6.3\resources\app\git\cmd\git.exe"`
 - 网络受限时自行配置本机代理（每台机器的代理不同，**不要把代理地址写进本仓库**）。
+- `antigravity`（Google 订阅）需要在本机 `.env` 配置 `GOOGLE_OAUTH_CLIENT_ID` /
+  `GOOGLE_OAUTH_CLIENT_SECRET`（**不提交仓库**）；未配置时该渠道会以 `CHANNEL_CONFIG_ERROR`
+  跳过并提示，不影响其他渠道。
 - 运行 `ooapi-web` 的 `npm install` / `npm run build` 前确认 `node_modules` 存在；构建产物在 `dist/`，
   生产需复制到 `ooapi-server/web/`。
 
@@ -301,3 +304,12 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
     `/channel/login` 支持凭据导入；`/fetch-models` 支持适配器自定义模型接口；
   · 前端「添加渠道」订阅方式渲染为「粘贴凭据 JSON」并提交 method；
   · 模型注册新增 openai/anthropic/gemini 三个模型表。实盘验证见第 3 节待办。 |
+| 2026-09-18 | **第 10.1 批（订阅渠道三路复审修复）**：过期刷新兜底（`expires_at` 未知先刷一次，
+  且 401 时强制刷新后重放一次，解决「首个 token 过期即渠道永久失效」）；Claude 兼容官方
+  camelCase 字段与毫秒 `expiresAt`；刷新改为「同渠道合并 + 刷新前重读 DB」（防并发双刷
+  refresh_token 作废）；Claude/Antigravity 消息角色规范化（首条 user、合并连续同角色）；
+  Claude usage 把缓存读/写计入 prompt（防缓存上下文少计费）；Antigravity 思考 token 计入补全；
+  指纹种子只用渠道 id（刷新补齐 account 字段不再换身份）；Google OAuth 密钥移出仓库改 `.env`；
+  OAuth 渠道按稳定账号去重 + 入池前凭据校验（失败禁用不再带病调度）；`fetch-models` 订阅兜底
+  默认模型并统一返回 id 数组；`/login` 更新渠道补 `priority`；`POST /channel` 拒绝非 api 方法；
+  删除路径带 `other` 解析真实 method；前端测试超时 90s、凭据 id 命名空间化、非 API 权重默认 1。 |

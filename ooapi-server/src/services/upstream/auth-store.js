@@ -4,6 +4,33 @@
 // 写前重读最新 other 再合并，避免覆盖管理员同时改动的内容（与 execute.persistProfile 同思路）。
 import { pool } from "../../db.js";
 
+/** 读取渠道最新 other（刷新前重读，避免用陈旧快照里的旧 refresh_token 再刷） */
+export async function loadOther(channelId) {
+  try {
+    const [rows] = await pool.query("SELECT other FROM channels WHERE id = ?", [channelId]);
+    if (!rows.length) return null;
+    return rows[0].other ? JSON.parse(rows[0].other) : {};
+  } catch {
+    return null;
+  }
+}
+
+// 同一渠道的刷新合并为一次：并发请求共享同一个 Promise，避免用同一 refresh_token 双刷
+const refreshLocks = new Map();
+export function withRefreshLock(channelId, fn) {
+  const existing = refreshLocks.get(channelId);
+  if (existing) return existing;
+  const p = (async () => {
+    try {
+      return await fn();
+    } finally {
+      refreshLocks.delete(channelId);
+    }
+  })();
+  refreshLocks.set(channelId, p);
+  return p;
+}
+
 export async function persistOtherPatch(channelId, patch) {
   if (!channelId || !patch || !Object.keys(patch).length) return;
   try {

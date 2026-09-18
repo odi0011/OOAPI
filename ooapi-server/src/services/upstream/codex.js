@@ -16,7 +16,7 @@
 //   SSE 事件：response.output_text.delta、response.reasoning_summary_text.delta、response.completed
 // ---------------------------------------------------------------------------
 import { codexIdentity } from "./cli-profile.js";
-import { persistOtherPatch } from "./auth-store.js";
+import { persistOtherPatch, loadOther, withRefreshLock } from "./auth-store.js";
 
 const AUTH_BASE = "https://auth.openai.com";
 const TOKEN_URL = `${AUTH_BASE}/oauth/token`;
@@ -28,7 +28,8 @@ const MAX_SSE_BUF = 8 * 1024 * 1024;
 
 function tokenExpiredSoon(other) {
   const exp = Number(other?.expires_at || 0);
-  if (!exp) return false; // 没有过期信息就不主动刷新，交给 401 兜底
+  // 无过期信息：有 refresh_token 就先刷一次（刷新后会写入真实 expires_at）
+  if (!exp) return Boolean(other?.refresh_token);
   return exp - REFRESH_LEAD_S <= Math.floor(Date.now() / 1000);
 }
 
@@ -72,52 +73,67 @@ export function parseAuthJson(raw) {
   return { access_token, refresh_token, id_token, account_id, email, plan_type: fromJwt.plan_type || "" };
 }
 
-/** 刷新 access_token（表单请求，无需 client_secret） */
-export async function refreshAuth(channel) {
-  const other = channel?.other || {};
-  const refreshToken = String(other.refresh_token || "").trim();
-  if (!refreshToken) {
-    throw Object.assign(new Error("缺少 refresh_token，请重新导入 Codex 凭据"), { code: "CHANNEL_AUTH_EXPIRED" });
-  }
-  const body = new URLSearchParams({
-    client_id: CLIENT_ID,
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-    scope: "openid profile email",
-  });
-  const resp = await fetch(TOKEN_URL, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-    body,
-    signal: AbortSignal.timeout(30_000),
-  });
-  const text = await resp.text();
-  if (!resp.ok) {
-    const reused = /refresh_token_reused/.test(text);
-    throw Object.assign(new Error(reused ? "刷新令牌已被使用，请重新登录 Codex" : `刷新 Codex 登录态失败（HTTP ${resp.status}）`), {
-      code: "CHANNEL_AUTH_EXPIRED",
+/** 刷新 access_token（表单请求，无需 client_secret）。
+ * 并发说明：同一渠道的刷新用 withRefreshLock 合并；刷新前重读 DB 复用别人的结果。 */
+export async function refreshAuth(channel, { force = false } = {}) {
+  return withRefreshLock(channel.id, async () => {
+    const fresh = await loadOther(channel.id);
+    if (fresh) {
+      const freshExp = Number(fresh.expires_at || 0);
+      const valid = fresh.access_token && freshExp - REFRESH_LEAD_S > Math.floor(Date.now() / 1000);
+      if (!force && valid) {
+        channel.other = { ...(channel.other || {}), ...fresh };
+        return { access_token: fresh.access_token, expires_at: freshExp };
+      }
+      // 用最新的 refresh_token（旧快照可能导致 refresh_token_reused）
+      channel.other = { ...(channel.other || {}), ...fresh };
+    }
+    const other = channel?.other || {};
+    const refreshToken = String(other.refresh_token || "").trim();
+    if (!refreshToken) {
+      throw Object.assign(new Error("缺少 refresh_token，请重新导入 Codex 凭据"), { code: "CHANNEL_AUTH_EXPIRED" });
+    }
+    const body = new URLSearchParams({
+      client_id: CLIENT_ID,
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      scope: "openid profile email",
     });
-  }
-  let j;
-  try {
-    j = JSON.parse(text);
-  } catch {
-    throw Object.assign(new Error("刷新响应不是 JSON"), { code: "CHANNEL_BAD_RESPONSE" });
-  }
-  const patch = {
-    access_token: j.access_token || other.access_token,
-    refresh_token: j.refresh_token || refreshToken,
-    expires_at: Math.floor(Date.now() / 1000) + (Number(j.expires_in) || 3600),
-  };
-  if (j.id_token) {
-    const info = parseIdToken(j.id_token);
-    patch.id_token = j.id_token;
-    if (info.account_id) patch.account_id = info.account_id;
-    if (info.email) patch.email = info.email;
-  }
-  await persistOtherPatch(channel.id, patch);
-  channel.other = { ...other, ...patch };
-  return patch;
+    const resp = await fetch(TOKEN_URL, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+      body,
+      signal: AbortSignal.timeout(30_000),
+    });
+    const text = await resp.text();
+    if (!resp.ok) {
+      const reused = /refresh_token_reused|invalid_grant/.test(text);
+      throw Object.assign(
+        new Error(reused ? "刷新令牌已被使用或失效，请重新登录 Codex" : `刷新 Codex 登录态失败（HTTP ${resp.status}）`),
+        { code: "CHANNEL_AUTH_EXPIRED" }
+      );
+    }
+    let j;
+    try {
+      j = JSON.parse(text);
+    } catch {
+      throw Object.assign(new Error("刷新响应不是 JSON"), { code: "CHANNEL_BAD_RESPONSE" });
+    }
+    const patch = {
+      access_token: j.access_token || other.access_token,
+      refresh_token: j.refresh_token || refreshToken,
+      expires_at: Math.floor(Date.now() / 1000) + (Number(j.expires_in) || 3600),
+    };
+    if (j.id_token) {
+      const info = parseIdToken(j.id_token);
+      patch.id_token = j.id_token;
+      if (info.account_id) patch.account_id = info.account_id;
+      if (info.email) patch.email = info.email;
+    }
+    await persistOtherPatch(channel.id, patch);
+    channel.other = { ...other, ...patch };
+    return patch;
+  });
 }
 
 async function ensureToken(channel) {
@@ -129,6 +145,27 @@ async function ensureToken(channel) {
     });
   }
   return String(channel.other?.access_token || "");
+}
+
+/** 带 401 自动刷新重试的请求包装 */
+async function fetchWithAuthRetry(channel, buildInit, url) {
+  const token = await ensureToken(channel);
+  let resp = await fetch(url, buildInit(token)).catch((e) => {
+    if (e.name === "AbortError") throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
+    throw Object.assign(new Error(`无法连接 Codex 上游：${e.message}`), { code: "CHANNEL_NETWORK" });
+  });
+  if (resp.status === 401 && channel?.other?.refresh_token) {
+    console.warn("[codex] 上游 401，刷新登录态后重试一次");
+    await refreshAuth(channel, { force: true }).catch(() => {});
+    const retryToken = String(channel?.other?.access_token || token);
+    if (retryToken && retryToken !== token) {
+      resp = await fetch(url, buildInit(retryToken)).catch((e) => {
+        if (e.name === "AbortError") throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
+        throw Object.assign(new Error(`无法连接 Codex 上游：${e.message}`), { code: "CHANNEL_NETWORK" });
+      });
+    }
+  }
+  return resp;
 }
 
 /** 导入凭据（管理端「粘贴凭据」）：返回 { token, other, accountLabel } */
@@ -194,7 +231,6 @@ export async function chat({
   onReasoning,
   signal,
 }) {
-  const token = await ensureToken(channel);
   const identity = codexIdentity(channel);
   const input = messages?.length
     ? toResponsesInput(messages, images)
@@ -214,7 +250,7 @@ export async function chat({
   // 深度思考：显式开启时请求推理摘要（默认交给上游模型默认档）
   if (thinkingOverride === true) body.reasoning = { effort: "medium", summary: "auto" };
 
-  const resp = await fetch(`${API_BASE}/responses`, {
+  const buildInit = (token) => ({
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -227,10 +263,8 @@ export async function chat({
     },
     body: JSON.stringify(body),
     signal,
-  }).catch((e) => {
-    if (e.name === "AbortError") throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
-    throw Object.assign(new Error(`无法连接 Codex 上游：${e.message}`), { code: "CHANNEL_NETWORK" });
   });
+  const resp = await fetchWithAuthRetry(channel, buildInit, `${API_BASE}/responses`);
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
@@ -356,10 +390,8 @@ export async function chat({
 /** 健康检查：确认能取到凭据并完成一次最小请求 */
 export async function verify(channel) {
   const started = Date.now();
-  const token = await ensureToken(channel);
-  if (!token) throw Object.assign(new Error("渠道未配置 Codex 凭据"), { code: "CHANNEL_AUTH_EXPIRED" });
   const identity = codexIdentity(channel);
-  const resp = await fetch(`${API_BASE}/responses`, {
+  const buildInit = (token) => ({
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -379,9 +411,8 @@ export async function verify(channel) {
       prompt_cache_key: identity.sessionId,
     }),
     signal: AbortSignal.timeout(60_000),
-  }).catch((e) => {
-    throw Object.assign(new Error(`无法连接 Codex 上游：${e.message}`), { code: "CHANNEL_NETWORK" });
   });
+  const resp = await fetchWithAuthRetry(channel, buildInit, `${API_BASE}/responses`);
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     const code =

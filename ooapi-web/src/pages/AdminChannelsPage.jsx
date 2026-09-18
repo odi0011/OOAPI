@@ -197,7 +197,8 @@ export default function AdminChannelsPage() {
       } else {
         for (const lm of m.loginModes || []) {
           out.push({
-            id: lm,
+            // id 必须带 method 前缀：同一厂商出现多个 paste 方式时不能撞车
+            id: `${m.key}:${lm}`,
             method: m.key, // relay / codex / claude-oauth / antigravity
             mode: lm,
             label: m.oauth
@@ -219,7 +220,7 @@ export default function AdminChannelsPage() {
   const isRelay = Boolean(pickMethod) && !isApi;
 
   // 当前选中的凭据项（注意：必须放在 isApi 声明之后，否则 const 的暂时性死区会直接白屏）
-  const credId = isApi ? "api" : addMode;
+  const credId = isApi ? "api" : pickMethod ? `${pickMethod.key}:${addMode}` : "";
 
   // ---------- 添加 ----------
   const openAdd = () => {
@@ -247,7 +248,8 @@ export default function AdminChannelsPage() {
       api_key: "",
       models: (m.defaultModels || []).map((x) => x.id),
       priority: 0,
-      weight: 0,
+      // 非 API 方式（反代/订阅）后端会把 <=0 的权重归一到 1，表单默认值保持一致
+      weight: m.key === "api" ? 0 : 1,
       group_name: "default",
       auto_ban: true,
     };
@@ -383,9 +385,11 @@ export default function AdminChannelsPage() {
 
   // ---------- 操作 ----------
   const doTest = async (r) => {
+    if (testingId) return; // 防并发：单值状态被覆盖会让前一个按钮提前恢复可点
     setTestingId(r.id);
     try {
-      const res = await API.post(`/channel/${r.id}/test`);
+      // 订阅渠道 verify 内部可能先刷新 token，服务端超时 60s；前端必须留足余量
+      const res = await API.post(`/channel/${r.id}/test`, undefined, { timeoutMs: 90_000 });
       if (res?.success) message.success(`「${r.name}」可用（${res.time}ms）`);
       else message.warning(res?.message || "测试失败");
       load();
