@@ -220,8 +220,23 @@ router.delete(
       );
       if (!admins) return fail(res, "必须至少保留一个管理员");
     }
-    await pool.query("DELETE FROM users WHERE id = ?", [id]);
-    await pool.query("DELETE FROM tokens WHERE user_id = ?", [id]);
+    // 事务级联删除：用户、令牌、对话数据要么一起删掉，要么一起保留。
+    // 之前只删 users+tokens 且无事务，崩溃会留下孤儿令牌，会话/消息正文永久残留。
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.query("DELETE FROM chat_messages WHERE user_id = ?", [id]).catch(() => {});
+      await conn.query("DELETE FROM chat_sessions WHERE user_id = ?", [id]);
+      await conn.query("DELETE FROM chat_projects WHERE user_id = ?", [id]);
+      await conn.query("DELETE FROM tokens WHERE user_id = ?", [id]);
+      await conn.query("DELETE FROM users WHERE id = ?", [id]);
+      await conn.commit();
+    } catch (e) {
+      await conn.rollback().catch(() => {});
+      return fail(res, `删除用户失败（已回滚）：${e.message}`, 500);
+    } finally {
+      conn.release();
+    }
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `删除用户 #${id}（${user.username}）` });
     return ok(res, null, "用户已删除");
   })

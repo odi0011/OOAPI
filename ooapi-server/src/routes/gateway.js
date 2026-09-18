@@ -235,15 +235,21 @@ async function settle({ token, user, model, prompt, output, usage, ip, requestId
 
   // 条件扣费：quota >= units 才扣。并发场景下「先读余额再写回」会超额透支，
   // 这里用单条 SQL 保证原子性；余额不足（并发透支）时兜底扣到 0，避免负余额。
-  const [ret] = await pool.query(
-    "UPDATE users SET quota = quota - ?, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ? AND quota >= ?",
-    [units, units, user.id, units]
-  );
-  if (!ret.affectedRows) {
-    await pool.query(
-      "UPDATE users SET quota = 0, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ?",
-      [units, user.id]
+  let ret;
+  try {
+    [ret] = await pool.query(
+      "UPDATE users SET quota = quota - ?, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ? AND quota >= ?",
+      [units, units, user.id, units]
     );
+    if (!ret.affectedRows) {
+      await pool.query(
+        "UPDATE users SET quota = 0, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ?",
+        [units, user.id]
+      );
+    }
+  } catch (e) {
+    // 扣费是否已提交无法确认：调用方据此跳过部分结算，避免重复扣费
+    throw Object.assign(new Error(`扣费结果不确定：${e.message}`), { code: "BILLING_UNCERTAIN" });
   }
   // 扣费后的令牌/日志更新是 best-effort：如果这里抛错，调用方 catch 会因
   // settledOnce 还没置位而再次结算，导致用户额度被扣两次。
@@ -428,9 +434,7 @@ router.post(
       },
     });
 
-    // 先把「已结算」置位再 await：若扣费 SQL 已提交但连接层报错，catch 里的部分结算
-    // 不会再扣一次（宁可极端情况下少扣，也不能重复扣费）
-    settledOnce = true;
+    // 扣费函数内部已区分：确定未扣（余额不足等）走 catch 部分结算；结果不确定（BILLING_UNCERTAIN）跳过
     const settled = await settle({
       token,
       user,
@@ -442,6 +446,7 @@ router.post(
       requestId,
       channel: result.channel,
     });
+    settledOnce = true;
 
     if (wantStream) {
       if (!streamStarted) {
@@ -483,6 +488,8 @@ router.post(
   } catch (err) {
     const code = err.code || "UPSTREAM_ERROR";
     console.error(`[gateway] ${requestId} 失败：${code} ${err.message}`);
+    // 扣费结果不确定时跳过部分结算（防重复扣费）
+    if (code === "BILLING_UNCERTAIN") settledOnce = true;
     // 已产生内容：按已产出部分结算（客户端已收到这些内容，不能零计费）。
     // 条件不能只看 streamStarted：非流式请求（stream:false）适配器同样边流边回调，
     // 中途失败时 partialOut 也有内容，却会漏计费。

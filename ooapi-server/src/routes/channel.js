@@ -305,22 +305,40 @@ router.delete(
     const [rows] = await pool.query("SELECT * FROM channel_groups WHERE id = ?", [gid]);
     if (!rows.length) return fail(res, "分组不存在", 404);
     const group = rows[0];
-    await pool.query("DELETE FROM channel_groups WHERE id = ?", [gid]);
-    const [chans] = await pool.query("SELECT id, group_list, group_name FROM channels WHERE type = ?", [group.type]);
-    for (const c of chans) {
-      const next = parseGroups(c).filter((g) => g !== group.name);
-      await pool.query("UPDATE channels SET group_list = ?, group_name = ? WHERE id = ?", [
-        JSON.stringify(next),
-        next[0] || "",
-        c.id,
+    // 删组 + 渠道摘除 + Key 解绑必须在同一事务里：任何一步失败都回滚，
+    // 否则会留下「Key 绑定已删分组」的死绑定（该 Key 永远匹配不到渠道、持续 503）
+    let unbound = 0;
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.query("DELETE FROM channel_groups WHERE id = ?", [gid]);
+      const [chans] = await conn.query("SELECT id, group_list, group_name FROM channels WHERE type = ?", [group.type]);
+      for (const c of chans) {
+        const next = parseGroups(c).filter((g) => g !== group.name);
+        await conn.query("UPDATE channels SET group_list = ?, group_name = ? WHERE id = ?", [
+          JSON.stringify(next),
+          next[0] || "",
+          c.id,
+        ]);
+      }
+      // 解绑 Key：置空后回落到公共池，而不是留下永远 503 的死绑定
+      const [un] = await conn.query("UPDATE tokens SET group_name = '' WHERE group_name = ?", [
+        `${group.type}:${group.name}`,
       ]);
+      unbound = un.affectedRows || 0;
+      await conn.commit();
+    } catch (e) {
+      await conn.rollback().catch(() => {});
+      return fail(res, `删除分组失败（已回滚）：${e.message}`, 500);
+    } finally {
+      conn.release();
     }
-    // 解绑 Key：置空后回落到默认池，而不是留下永远 503 的死绑定
-    await pool
-      .query("UPDATE tokens SET group_name = '' WHERE group_name = ?", [`${group.type}:${group.name}`])
-      .catch(() => {});
     clearGroupConfigCache();
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `删除分组「${group.type} / ${group.name}」` });
+    await writeLog({
+      user: req.user,
+      type: LOG_TYPE.MANAGE,
+      content: `删除分组「${group.type} / ${group.name}」（解绑 ${unbound} 个密钥）`,
+    });
     return ok(res, null, "分组已删除");
   })
 );
@@ -1047,10 +1065,12 @@ router.post(
     if (targetId) {
       const [rows] = await pool.query("SELECT * FROM channels WHERE id = ?", [targetId]);
       if (!rows.length) return fail(res, "渠道不存在", 404);
+      // 与 /login 同语义：合并旧 other（保留 state_kit 等适配器不产出的字段），不整列覆盖
+      const merged = { ...parseOther(rows[0]), ...other };
       await pool.query("UPDATE channels SET name = ?, api_key = ?, other = ?, priority = ?, status = 1 WHERE id = ?", [
         displayName,
         token,
-        JSON.stringify(other),
+        JSON.stringify(merged),
         priorityVal,
         targetId,
       ]);
@@ -1068,8 +1088,9 @@ router.post(
       if (exist.length) existId = exist[0].id;
     }
     if (existId) {
+      const merged = { ...parseOther(rows.find((r) => r.id === existId) || {}), ...other };
       await pool.query("UPDATE channels SET other = ?, api_key = ?, status = 1 WHERE id = ?", [
-        JSON.stringify(other),
+        JSON.stringify(merged),
         token,
         existId,
       ]);
@@ -1078,8 +1099,20 @@ router.post(
     }
 
     const [ret] = await pool.query(
-      "INSERT INTO channels (name, type, base_url, api_key, models, group_name, status, priority, other, created_time) VALUES (?,?,?,?,?,?,?,?,?,?)",
-      [displayName, type, "", token, (methodCfg?.defaultModels || []).map((m) => m.id).join(","), "default", 1, priorityVal, JSON.stringify(other), now()]
+      "INSERT INTO channels (name, type, base_url, api_key, models, group_name, group_list, status, priority, other, created_time) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+      [
+        displayName,
+        type,
+        "",
+        token,
+        (methodCfg?.defaultModels || []).map((m) => m.id).join(","),
+        "",
+        "[]",
+        1,
+        priorityVal,
+        JSON.stringify(other),
+        now(),
+      ]
     );
     await resetChannelState(ret.insertId);
     return ok(res, { id: ret.insertId, name: displayName, account: accountLabel }, "登录成功，渠道已创建");

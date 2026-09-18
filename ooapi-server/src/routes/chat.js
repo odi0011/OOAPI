@@ -389,15 +389,21 @@ router.post(
   if (Number(uRows[0]?.quota || 0) <= 0) {
     throw Object.assign(new Error(`${CURRENCY} 币余额不足，请联系管理员充值`), { code: "INSUFFICIENT_QUOTA" });
   }
-  const [ret] = await pool.query(
-    "UPDATE users SET quota = quota - ?, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ? AND quota >= ?",
-    [units, units, user.id, units]
-  );
-  if (!ret.affectedRows) {
-    await pool.query(
-      "UPDATE users SET quota = 0, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ?",
-      [units, user.id]
+  let ret;
+  try {
+    [ret] = await pool.query(
+      "UPDATE users SET quota = quota - ?, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ? AND quota >= ?",
+      [units, units, user.id, units]
     );
+    if (!ret.affectedRows) {
+      await pool.query(
+        "UPDATE users SET quota = 0, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ?",
+        [units, user.id]
+      );
+    }
+  } catch (e) {
+    // 扣费是否已提交无法确认：抛专用错误，调用方不得再次结算（宁可少扣不可重复扣）
+    throw Object.assign(new Error(`扣费结果不确定：${e.message}`), { code: "BILLING_UNCERTAIN" });
   }
   await writeLog({
     user,
@@ -680,8 +686,6 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
     const runChannelIds = [...new Set(runCalls.map((c) => Number(c.channelId) || 0).filter(Boolean))];
 
     const tokens = aggregate(runCalls);
-    // 与 gateway 同规则：先置位再 await，避免「已扣费但抛错」时 catch 里再补一次
-    settled = true;
     const billed = await chargeUser({
       user,
       model,
@@ -695,6 +699,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       keyId,
       kind: "对话",
     });
+    settled = true;
 
     const message = {
       seq: 0,
@@ -724,6 +729,8 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
     console.error("[chat] 运行失败：", err.code || "", err.message);
     if (Array.isArray(err.parts) && err.parts.length) runParts = err.parts;
     const stopped = ctrl.signal.aborted || err.code === "ABORTED";
+    // 扣费结果不确定时不再补结算（防重复扣费）；余额不足等“确定未扣”的错误才走部分结算
+    if (err?.code === "BILLING_UNCERTAIN") settled = true;
 
     // 已消耗的部分照常计费（用户确实为这些 token 付了上游成本）：
     // 失败/中止时最后一次调用没有 usage，按 prompt/输出字符数估算补上。

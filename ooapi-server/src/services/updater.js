@@ -386,7 +386,21 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
       }
     }
     await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
-    await fs.rm(path.join(SERVER_ROOT, ".update-in-progress"), { force: true }).catch(() => {});
+    // 哨兵只在「成功」或「回滚成功」时清除：回滚失败说明源码半新半旧，
+    // 必须保留哨兵让下次启动继续告警（否则静默带着混合代码运行）
+    if (result.rolledBack || !result.backup) {
+      // 回滚成功，或失败发生在覆盖源码之前（备份都没建立）：清除哨兵，没有半新半旧风险
+      await fs.rm(path.join(SERVER_ROOT, ".update-in-progress"), { force: true }).catch(() => {});
+    } else {
+      try {
+        await fs.writeFile(
+          path.join(SERVER_ROOT, ".update-in-progress"),
+          JSON.stringify({ at: new Date().toISOString(), failed: e.message.slice(0, 300), backup: result.backup, steps: log.slice(-5) })
+        );
+      } catch {
+        /* ignore */
+      }
+    }
     step(`更新失败：${e.message}`);
     result.error = e.message;
     return result;
