@@ -166,10 +166,8 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 > 以下为尚未完成的待办项。已修复的问题见「变更记录」。
 > 工作方式：每轮审查发现的问题先登记在此，修好后**删除对应条目**并写入变更记录。
 
-### 第 7 批审查发现（待处理）
+### 持续审查（待处理）
 
-- [ ] **PoW 求解同步阻塞**（P2）：已加 difficulty 上限（1<<24），但 `wasm_solve`/预言机仍是同步调用，
-  大难度会卡住事件循环。彻底解决需 `worker_threads` 或时间片让出。
 - [ ] **审查方式可复用**：后续批次继续用「三路并行子代理（前端 / 后端路由 / 服务适配器）+ 人工核实」，
   发现的问题先登记在此节，修完删除并写入变更记录。
 
@@ -271,3 +269,6 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
   改密接口按用户维度限流（5 次/分钟）；更新器改为扫描 `migrate*.mjs` 按序执行（新增迁移不再漏跑）
   + 前端源码一并备份与回滚；智能体计费改为「逐次 call 分别 splitTokens 后求和」，
   彻底解决跨渠道 usage 混合少计，失败步骤的 prompt/输出也纳入估算。 |
+| 2026-09-18 | **第 9 批（PoW worker 化）**：DeepSeek PoW 求解从主线程移到 `worker_threads`
+  （`deepseek-pow-worker.mjs`）；60s 超时可终止卡死 worker，空闲 5 分钟自动回收，
+  SIGTERM/SIGINT 退出时 `closePowWorker()` 清理；保留 worker 启动失败回退主线程的兜底。 |
