@@ -4,7 +4,8 @@ import { JWT_SECRET } from "../db.js";
 import { fail } from "../utils.js";
 
 export function signToken(user) {
-  return jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: "30d" });
+  // tv=令牌版本：改密时 +1，旧令牌立即失效（无状态 JWT 的最小吊销手段）
+  return jwt.sign({ id: user.id, role: user.role, tv: Number(user.token_version) || 0 }, JWT_SECRET, { expiresIn: "30d" });
 }
 
 function parseAuth(req) {
@@ -15,6 +16,12 @@ function parseAuth(req) {
   } catch {
     return null;
   }
+}
+
+/** 轻量预鉴权：只验 JWT 签名、不查库。放在 express.json 之前挡掉匿名/伪造请求的大包解析。 */
+export function preAuthJwt(req, res, next) {
+  if (!parseAuth(req)) return fail(res, "未登录或登录已过期", 401);
+  next();
 }
 
 // 需要登录
@@ -28,6 +35,10 @@ export async function authRequired(req, res, next) {
     const user = rows[0];
     if (!user) return fail(res, "用户不存在", 401);
     if (user.status !== 1) return fail(res, "账号已被禁用", 403);
+    // 令牌版本不一致（改密/主动吊销后）→ 旧令牌全部失效
+    if ((Number(payload.tv) || 0) !== (Number(user.token_version) || 0)) {
+      return fail(res, "登录状态已失效，请重新登录", 401);
+    }
     req.user = user;
     next();
   } catch (e) {

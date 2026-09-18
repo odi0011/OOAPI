@@ -10,6 +10,14 @@ import { writeLog, LOG_TYPE } from "../services/log.js";
 const router = Router();
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{2,32}$/;
+// 不存在的账号也做一次 bcrypt 比对：否则响应时间差可枚举用户名。
+// 固定 dummy hash 在启动时算一次，开销可接受。
+const DUMMY_HASH = bcrypt.hashSync("ooapi-dummy-password", 10);
+
+// bcryptjs 对超过 72 字节的输入会静默截断：超长密码只要前 72 字节相同即等价
+function passwordTooLong(pwd) {
+  return Buffer.byteLength(String(pwd || ""), "utf8") > 72;
+}
 
 // 登录/注册限流：防暴力破解与批量刷号
 const loginLimit = rateLimit({ windowMs: 60_000, max: 20, keyPrefix: "login" });
@@ -24,7 +32,8 @@ router.post(
     if (!getBoolOption("password_login_enabled")) return fail(res, "系统未开启密码登录", 403);
     const [rows] = await pool.query("SELECT * FROM users WHERE username = ?", [String(username).trim()]);
     const user = rows[0];
-    if (!user || !(await bcrypt.compare(String(password), user.password))) {
+    const passOk = await bcrypt.compare(String(password), user?.password || DUMMY_HASH);
+    if (!user || !passOk) {
       return fail(res, "用户名或密码错误", 401);
     }
     if (user.status !== 1) return fail(res, "账号已被禁用", 403);
@@ -49,6 +58,7 @@ router.post(
     if (!USERNAME_RE.test(name)) return fail(res, "用户名需为 2-32 位字母、数字或下划线");
     const pwd = String(password || "");
     if (pwd.length < 8) return fail(res, "密码长度至少 8 位");
+    if (passwordTooLong(pwd)) return fail(res, "密码过长（最多 72 字节）");
     if (/^[0-9]+$/.test(pwd) || /^[a-zA-Z]+$/.test(pwd))
       return fail(res, "密码需同时包含字母和数字");
     const [dup] = await pool.query("SELECT id FROM users WHERE username = ?", [name]);

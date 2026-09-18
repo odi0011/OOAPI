@@ -40,11 +40,16 @@ router.put(
     if (!okOld) return fail(res, "当前密码不正确", 403);
     const pwd = String(new_password || "");
     if (pwd.length < 8) return fail(res, "新密码长度至少 8 位");
+    if (Buffer.byteLength(pwd, "utf8") > 72) return fail(res, "密码过长（最多 72 字节）");
     if (/^[0-9]+$/.test(pwd) || /^[a-zA-Z]+$/.test(pwd)) return fail(res, "密码需同时包含字母和数字");
     const hash = await bcrypt.hash(pwd, 10);
-    await pool.query("UPDATE users SET password = ? WHERE id = ?", [hash, req.user.id]);
+    // token_version +1：改密后所有旧令牌（含可能被盗的）立即失效
+    await pool.query("UPDATE users SET password = ?, token_version = token_version + 1 WHERE id = ?", [
+      hash,
+      req.user.id,
+    ]);
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: "修改密码" });
-    return ok(res, null, "密码修改成功");
+    return ok(res, null, "密码修改成功，请重新登录");
   })
 );
 

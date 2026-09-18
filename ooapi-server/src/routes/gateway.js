@@ -12,14 +12,16 @@ import { groupConfigOf, applyGroupRate } from "../services/group-rate.js";
 import { allPublicModels, modelForChannelMatch, resolveAliasSync } from "../services/models.js";
 
 const router = express.Router();
-// 鉴权头预检必须放在 express.json 之前：否则匿名请求也会被完整缓冲/解析（最大 50MB），
-// 几十个并发大包就能显著抬高内存与 CPU。这里只查头存在性，真正鉴权仍在 authorize。
-router.use((req, res, next) => {
-  if (!req.headers.authorization) {
-    return res.status(401).json({ error: { message: "缺少 Authorization Bearer", type: "invalid_request_error" } });
-  }
-  next();
-});
+// 必须在 express.json 之前完成真实鉴权：旧实现只查 Authorization 头存在性，
+// 伪造任意 Bearer 就能让匿名请求先被缓冲/解析 50MB 大包（内存/CPU DoS）。
+router.use(
+  asyncHandler(async (req, res, next) => {
+    const auth = await authorize(req, res);
+    if (!auth) return; // authorize 已写出 401/403
+    req.auth = auth;
+    next();
+  })
+);
 router.use(express.json({ limit: "50mb" }));
 
 // ---------- 对外可用模型列表（平台真实模型 + 兼容别名）----------
@@ -27,7 +29,7 @@ router.use(express.json({ limit: "50mb" }));
 router.get(
   "/models",
   asyncHandler(async (req, res) => {
-    const auth = await authorize(req, res);
+    const auth = req.auth;
     if (!auth) return;
     const [rows] = await pool.query("SELECT models FROM channels WHERE status = 1");
     const available = new Set();
@@ -267,7 +269,7 @@ router.post(
     if (!res.writableEnded) clientCtrl.abort();
   });
 
-  const auth = await authorize(req, res);
+  const auth = req.auth;
   if (!auth) return;
   const { token, user } = auth;
 

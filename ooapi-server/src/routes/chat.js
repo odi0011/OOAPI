@@ -9,7 +9,7 @@
 import express from "express";
 import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now, safeJSONParse } from "../utils.js";
-import { authRequired } from "../middleware/auth.js";
+import { authRequired, preAuthJwt } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getPrice, computeCost, splitTokens, estimateTokens, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { groupConfigOf, applyGroupRate } from "../services/group-rate.js";
@@ -45,12 +45,9 @@ import {
 } from "../services/harness/sessions.js";
 
 const router = express.Router();
-// 鉴权头预检放在 express.json 之前：站内接口全部要求 JWT，匿名请求没必要先缓冲 20MB 大包。
-// 只查头存在性（api.js/stream.js 均以 Bearer 发送），真正的 authRequired 仍在各路由上。
-router.use((req, res, next) => {
-  if (!req.headers.authorization) return fail(res, "未登录或登录已过期", 401);
-  next();
-});
+// 轻量预鉴权放在 express.json 之前：匿名/伪造请求没必要先被缓冲 20MB 大包。
+// 只验 JWT 签名（不查库），完整 authRequired 仍在各路由上。
+router.use(preAuthJwt);
 router.use(express.json({ limit: "20mb" }));
 
 /**

@@ -227,6 +227,7 @@ export const JWT_SECRET = resolveJwtSecret();
 // 增量列补齐（与 migrate2/3/5.mjs 等价，幂等）——全新安装直接由 db.js 建全，
 // 老库启动时自动补列，不再依赖手动跑迁移脚本。
 const COLUMN_MIGRATIONS = [
+  { table: "users", column: "token_version", ddl: "INT NOT NULL DEFAULT 0" },
   { table: "channels", column: "last_error", ddl: "VARCHAR(500) NOT NULL DEFAULT ''" },
   { table: "channels", column: "used_count", ddl: "INT NOT NULL DEFAULT 0" },
   { table: "channels", column: "last_used_time", ddl: "BIGINT NOT NULL DEFAULT 0" },
