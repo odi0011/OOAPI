@@ -677,8 +677,10 @@ export default function AdminChannelsPage() {
   const [browserTarget, setBrowserTarget] = useState(null);
   const [browserShot, setBrowserShot] = useState(null);
   const [browserBusy, setBrowserBusy] = useState(false);
-  // 添加表单里已完成「浏览器登录」（GLM/豆包/通义）：profile 存在服务器 onboarding 目录，提交时复制给渠道
+  // 添加表单里已完成「浏览器登录」（GLM/豆包/通义）：profile 存在服务器临时目录，
+  // 提交时按 profileId 复制给渠道（每次登录一个独立目录，避免并发/复用串号）
   const [onboardReady, setOnboardReady] = useState(false);
+  const [onboardProfile, setOnboardProfile] = useState("");
   // 登录态远程抓取（粘贴登录态的厂商：打开登录页 → 登录 → 自动回填 token/cookies）
   const [capOpen, setCapOpen] = useState(false);
   const [capSid, setCapSid] = useState("");
@@ -799,6 +801,7 @@ export default function AdminChannelsPage() {
     setPickMethod(null);
     setAddMode("password");
     setOnboardReady(false);
+    setOnboardProfile("");
     setOauthUrl("");
     setOauthState("");
     addForm.resetFields();
@@ -816,6 +819,7 @@ export default function AdminChannelsPage() {
     setPickMethod(m);
     // 换厂商/换凭据方式时清掉上一轮的登录态标记，避免把 A 的登录结果带给 B
     setOnboardReady(false);
+    setOnboardProfile("");
     setOauthUrl("");
     setOauthState("");
     const mode = forceMode || (m.loginModes && m.loginModes[0]) || "apikey";
@@ -904,8 +908,8 @@ export default function AdminChannelsPage() {
           payload.token = token;
           payload.cookies = v.cookies;
         } else if (addMode === "browser") {
-          // 在表单里已通过 onboarding 完成浏览器登录：带上标记，后端把登录 profile 复制给新渠道
-          if (onboardReady) payload.profileFrom = "onboarding";
+          // 在表单里已通过 onboarding 完成浏览器登录：带上临时 profile id，后端复制给新渠道
+          if (onboardReady && onboardProfile) payload.profileFrom = onboardProfile;
         }
         const r = await API.post("/channel/login", payload, { timeoutMs: 90_000 });
         message.success(`渠道「${r.name}」已添加`);
@@ -1186,7 +1190,12 @@ export default function AdminChannelsPage() {
         { timeoutMs: 90_000 } // 服务端要启动浏览器并等首个页面加载，默认 30s 不够
       );
       // 浏览器登录类：重新登录时先清掉旧的「已登录」标记
-      if (res.kind === "browser") setOnboardReady(false);
+      if (res.kind === "browser") {
+        setOnboardReady(false);
+        setOnboardProfile(res.profileId || "");
+      } else {
+        setOnboardProfile("");
+      }
       setCapSid(res.sid);
       setCapShot({ dataUrl: res.dataUrl, url: res.url, hint: res.hint, kind: res.kind });
       setCapOpen(true);

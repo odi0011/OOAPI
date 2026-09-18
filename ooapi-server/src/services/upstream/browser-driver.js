@@ -13,7 +13,7 @@
 //   2. 同账号请求串行，不并发（并发是非人类特征）
 //   3. 闲置自动回收，避免长期占用内存
 import { chromium } from "playwright";
-import { mkdirSync, existsSync, writeFileSync, rmSync, cpSync } from "node:fs";
+import { mkdirSync, existsSync, writeFileSync, rmSync, cpSync, renameSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -70,18 +70,23 @@ export async function removeProfile(vendor, channelId) {
 }
 
 /** 把「引导登录」用的 profile 复制成某个渠道的 profile。
- * 添加浏览器登录类渠道时：先在共享的 onboarding 会话里完成登录（扫码/验证码），
- * 落库拿到渠道 id 后再把这份已登录的 profile 复制过去，渠道即可直接使用。 */
+ * 添加浏览器登录类渠道时：先在独立的 onboarding 会话里完成登录（扫码/验证码），
+ * 落库拿到渠道 id 后再把这份已登录的 profile 复制过去，渠道即可直接使用。
+ * 复制走「临时目录 + rename」：覆盖目标时不会出现半份 profile；目标会话先关掉，避免 EBUSY。 */
 export async function copyProfile(vendor, fromId, toId) {
   await closeSession(vendor, fromId).catch(() => {});
+  await closeSession(vendor, toId).catch(() => {});
   const src = path.join(PROFILE_ROOT, `${vendor}-${fromId}`);
   const dst = path.join(PROFILE_ROOT, `${vendor}-${toId}`);
+  const tmp = `${dst}.copying-${Date.now()}`;
   if (!existsSync(src)) return false;
   try {
-    rmSync(dst, { recursive: true, force: true });
-    cpSync(src, dst, { recursive: true });
+    cpSync(src, tmp, { recursive: true });
+    if (existsSync(dst)) rmSync(dst, { recursive: true, force: true });
+    renameSync(tmp, dst);
     return true;
   } catch {
+    rmSync(tmp, { recursive: true, force: true });
     return false;
   }
 }
@@ -168,6 +173,8 @@ function scheduleIdleCleanup() {
   cleanupTimer = setInterval(async () => {
     const now = Date.now();
     for (const [key, s] of sessions) {
+      // 有任务正在跑/排队时不能回收：lastUsed 可能停在入队那刻，会把流式中的会话腰斩
+      if (s.inFlight) continue;
       if (now - s.lastUsed > IDLE_MS) {
         try {
           await s.ctx.close();
@@ -650,10 +657,19 @@ export function withLock(session, task) {
   const guarded = (async () => {
     // 前一个任务失败（或被看门狗强关）都不能阻断后续任务
     await prev.catch(() => {});
+    // 看门狗触发后旧会话已被判定不可用：排队的任务直接失败，等下一个请求重建会话，
+    // 否则它们会继续在一个已经没人持有的队列上执行，HTTP 请求无限悬挂。
+    if (session.failed) {
+      throw Object.assign(new Error("会话已因超时被重建，请重试"), { code: "CHANNEL_TIMEOUT" });
+    }
+    // 真正开始干活才刷新空闲时间（排队期间不算活跃）
+    session.lastUsed = Date.now();
+    session.inFlight = (session.inFlight || 0) + 1;
     // 看门狗从「真正持有会话」开始计时：如果从入队就算，排队等待会被算进硬上限，
     // 后面的请求还没开始干活就会被强关（上一版实现的回归）
     watchdog = setTimeout(() => {
       console.warn("[browser-driver] 会话任务超时未释放，强制重建会话以恢复该渠道可用性");
+      session.failed = true;
       try {
         session.ctx?.close?.().catch?.(() => {});
       } catch {
@@ -668,6 +684,8 @@ export function withLock(session, task) {
       return await task();
     } finally {
       if (watchdog) clearTimeout(watchdog);
+      session.inFlight = Math.max(0, (session.inFlight || 1) - 1);
+      session.lastUsed = Date.now();
     }
   })();
   session.queue = guarded;

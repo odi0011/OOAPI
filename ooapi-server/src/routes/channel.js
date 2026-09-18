@@ -726,8 +726,8 @@ function sweepCaptures() {
     if (c.at < cutoff) {
       CAPTURES.delete(sid);
       browserClose(c.type, c.channelId).catch(() => {});
-      // 浏览器 onboarding 的 profile 要保留（用户可能重新打开继续登录）
-      if (c.kind !== "browser") removeProfile(c.type, c.channelId).catch(() => {});
+      // onboarding 现在也是每会话独立的临时 profile：过期即清，避免目录泄漏
+      removeProfile(c.type, c.channelId).catch(() => {});
     }
   }
 }
@@ -767,7 +767,12 @@ router.post(
         await removeProfile(type, channelId).catch(() => {});
         return fail(res, `授权页打开失败：${e.message}`);
       }
-      const shot = await browserShot(type, channelId);
+      let shot = null;
+      try {
+        shot = await browserShot(type, channelId);
+      } catch {
+        shot = null;
+      }
       if (!shot) {
         // 截图拿不到说明会话没起来：立即回收，别留下拿不到 sid 的僵尸会话
         await browserClose(type, channelId).catch(() => {});
@@ -794,21 +799,27 @@ router.post(
     const mCfg = getMethod(type, String(method || "relay")) || getMethod(type, "relay");
     if (!mCfg?.entryUrl) return fail(res, `${provider.name} 不支持远程登录抓取，请按提示手动填写登录态`);
 
-    // 浏览器登录类（GLM/豆包/通义）：用共享的 onboarding profile，
-    // 登录完成后 profile 会复制给新建的渠道，省掉「先建渠道再回来登录」。
+    // 浏览器登录类（GLM/豆包/通义）：每次会话独立 onboarding profile
+    // （共享同一个目录会让并发/后续登录互相覆盖，甚至把别人的账号复制进渠道）。
+    // 登录完成后由 /capture 保留 profile，提交渠道时复制过去。
     const onboard = Boolean(mCfg.needsBrowser);
     const sid = randomBytes(8).toString("hex");
-    const channelId = onboard ? "onboarding" : `capture-${sid}`;
+    const channelId = onboard ? `onboarding-${sid}` : `capture-${sid}`;
     try {
       await browserSession({ vendor: type, channelId, entryUrl: mCfg.entryUrl, profile: {} });
     } catch (e) {
       if (!onboard) await removeProfile(type, channelId).catch(() => {});
       return fail(res, `登录页打开失败：${e.message}`);
     }
-    const shot = await browserShot(type, channelId);
+    let shot = null;
+    try {
+      shot = await browserShot(type, channelId);
+    } catch {
+      shot = null;
+    }
     if (!shot) {
       await browserClose(type, channelId).catch(() => {});
-      if (!onboard) await removeProfile(type, channelId).catch(() => {});
+      await removeProfile(type, channelId).catch(() => {});
       return fail(res, "浏览器会话未就绪，请重试");
     }
     CAPTURES.set(sid, { type, channelId, at: Date.now(), kind: onboard ? "browser" : "paste" });
@@ -816,6 +827,7 @@ router.post(
       sid,
       ...shot,
       kind: onboard ? "browser" : "paste",
+      profileId: onboard ? channelId : "",
       hint: mCfg.captureHint || "请在登录页完成登录，然后点「抓取登录态」",
     });
   })
@@ -922,8 +934,8 @@ router.post(
     if (c) {
       CAPTURES.delete(sid);
       await browserClose(c.type, c.channelId).catch(() => {});
-      // onboarding 的 profile 保留，方便用户再次打开继续/复用登录
-      if (c.kind !== "browser") await removeProfile(c.type, c.channelId).catch(() => {});
+      // 放弃登录：profile 直接清掉（完成登录后的提交走 /capture，不在清理范围）
+      await removeProfile(c.type, c.channelId).catch(() => {});
     }
     return ok(res, null, "已关闭");
   })
@@ -1242,10 +1254,14 @@ router.post(
       );
       resetChannelState(targetId);
 
-      // 表单里已完成「浏览器登录」（onboarding）：把那份已登录 profile 复制给渠道
-      if (mode === "browser" && String(rest.profileFrom || "") === "onboarding") {
-        const copied = await copyProfile(type, "onboarding", String(targetId));
+      // 表单里已完成「浏览器登录」（onboarding）：把那份已登录 profile 复制给渠道，
+      // 复制成功后清掉临时 profile（每会话独立，不复用）
+      if (mode === "browser" && String(rest.profileFrom || "").startsWith("onboarding")) {
+        const src = String(rest.profileFrom || "");
+        if (!/^onboarding-[0-9a-f]{16}$/.test(src)) return fail(res, "浏览器登录态标识无效，请重新登录后再提交", 400);
+        const copied = await copyProfile(type, src, String(targetId));
         if (!copied) return fail(res, "浏览器登录态已失效，请重新打开登录页登录后再提交", 400);
+        await removeProfile(type, src).catch(() => {});
       }
 
       if (mode === "browser") {
@@ -1285,12 +1301,18 @@ router.post(
         ]
       );
       insertId = ret.insertId;
-      if (mode === "browser" && String(rest.profileFrom || "") === "onboarding") {
-        const copied = await copyProfile(type, "onboarding", String(insertId));
+      if (mode === "browser" && String(rest.profileFrom || "").startsWith("onboarding")) {
+        const src = String(rest.profileFrom || "");
+        if (!/^onboarding-[0-9a-f]{16}$/.test(src)) {
+          await pool.query("DELETE FROM channels WHERE id = ?", [insertId]).catch(() => {});
+          return fail(res, "浏览器登录态标识无效，请重新登录后再提交", 400);
+        }
+        const copied = await copyProfile(type, src, String(insertId));
         if (!copied) {
           await pool.query("DELETE FROM channels WHERE id = ?", [insertId]).catch(() => {});
           return fail(res, "浏览器登录态已失效：请重新点「登录」完成登录后再提交", 400);
         }
+        await removeProfile(type, src).catch(() => {});
       }
       const [fresh] = await pool.query("SELECT * FROM channels WHERE id = ?", [insertId]);
       try {
