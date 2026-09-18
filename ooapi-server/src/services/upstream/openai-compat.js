@@ -16,6 +16,42 @@
 //     https://dashscope.aliyuncs.com/compatible-mode → /compatible-mode/v1/chat/completions
 import { now, assertPublicUrl } from "../../utils.js";
 
+// 一次性文本读取必须有上限：SSE 路径有单行 8MB 限制，JSON/错误兜底却直接 resp.text()，
+// 异常或恶意上游可以用超大响应把内存打爆。分块读取并在超限时取消响应体。
+const MAX_TEXT_BUF = 8 * 1024 * 1024;
+async function readTextCapped(resp, max = MAX_TEXT_BUF) {
+  const cl = Number(resp.headers.get("content-length") || 0);
+  if (cl && cl > max) {
+    await resp.body?.cancel().catch(() => {});
+    throw Object.assign(new Error("上游响应体过大"), { code: "CHANNEL_BAD_RESPONSE" });
+  }
+  if (!resp.body) return "";
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let size = 0;
+  let text = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > max) {
+        await reader.cancel().catch(() => {});
+        throw Object.assign(new Error("上游响应体过大"), { code: "CHANNEL_BAD_RESPONSE" });
+      }
+      text += dec.decode(value, { stream: true });
+    }
+    text += dec.decode();
+  } finally {
+    try {
+      reader.releaseLock?.();
+    } catch {
+      /* ignore */
+    }
+  }
+  return text;
+}
+
 /** 把 Base URL 归一化成 chat/completions 与 models 两个端点 */
 export function endpoints(baseUrl) {
   const raw = String(baseUrl || "").trim().replace(/\/+$/, "");
@@ -240,7 +276,7 @@ export async function chat({
   });
 
   if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
+    const text = await readTextCapped(resp).catch(() => "");
     let msg = text.slice(0, 200);
     try {
       const j = JSON.parse(text);
@@ -268,7 +304,7 @@ export async function chat({
   // CHANNEL_EMPTY（execute 会冷却渠道 300s），部分中转/自建网关就是这种返回
   const ctype = (resp.headers.get("content-type") || "").toLowerCase();
   if (ctype.includes("application/json")) {
-    const text = await resp.text().catch(() => "");
+    const text = await readTextCapped(resp).catch(() => "");
     let j = null;
     try {
       j = JSON.parse(text);

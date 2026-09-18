@@ -391,17 +391,28 @@ export async function installHook(page, matchPath) {
         }
       }
 
-      window.__ooCap = { chunks: [], done: false, error: null, startedAt: Date.now(), url };
+      // 每次请求用独立闭包持有自己的捕获对象：旧请求的读取循环即使没停，
+      // 也只能写进它自己的 cap，不会污染下一轮（以前写 window.__ooCap 会串轮）。
+      const cap = { chunks: [], done: false, error: null, startedAt: Date.now(), url, stop: false };
+      window.__ooCap = cap;
 
       const resp = await origFetch.call(this, input, finalInit);
       try {
         const clone = resp.clone();
         (async () => {
+          let reader = null;
           try {
-            const reader = clone.body.getReader();
+            reader = clone.body.getReader();
             const dec = new TextDecoder();
             let buf = "";
+            let total = 0;
+            const MAX_CHUNKS = 20000;
+            const MAX_CHARS = 8 * 1024 * 1024;
             for (;;) {
+              if (cap.stop) {
+                await reader.cancel().catch(() => {});
+                return;
+              }
               const { done, value } = await reader.read();
               if (done) break;
               buf += dec.decode(value, { stream: true });
@@ -409,19 +420,28 @@ export async function installHook(page, matchPath) {
               while ((i = buf.indexOf("\n")) !== -1) {
                 const line = buf.slice(0, i).trim();
                 buf = buf.slice(i + 1);
-                if (line.startsWith("data:")) window.__ooCap.chunks.push(line.slice(5).trim());
+                if (line.startsWith("data:")) {
+                  const data = line.slice(5).trim();
+                  total += data.length;
+                  cap.chunks.push(data);
+                }
+              }
+              if (cap.chunks.length >= MAX_CHUNKS || total >= MAX_CHARS) {
+                cap.error = "捕获缓冲超过上限，已截断";
+                await reader.cancel().catch(() => {});
+                break;
               }
             }
-            if (buf.trim().startsWith("data:")) window.__ooCap.chunks.push(buf.trim().slice(5).trim());
-            window.__ooCap.done = true;
+            if (buf.trim().startsWith("data:")) cap.chunks.push(buf.trim().slice(5).trim());
+            cap.done = true;
           } catch (e) {
-            window.__ooCap.error = String(e?.message || e);
-            window.__ooCap.done = true;
+            cap.error = String(e?.message || e);
+            cap.done = true;
           }
         })();
       } catch (e) {
-        window.__ooCap.error = String(e);
-        window.__ooCap.done = true;
+        cap.error = String(e);
+        cap.done = true;
       }
       return resp;
     };
@@ -438,7 +458,9 @@ export async function setPatch(page, patch) {
 /** 清空捕获缓冲（每次对话前调用） */
 export async function resetHook(page) {
   await page.evaluate(() => {
-    window.__ooCap = { chunks: [], done: false, error: null, startedAt: 0 };
+    // 通知上一轮可能仍在跑的读取循环停止，避免它继续把帧推进新对象
+    if (window.__ooCap) window.__ooCap.stop = true;
+    window.__ooCap = { chunks: [], done: false, error: null, startedAt: 0, stop: false };
     window.__ooPatchError = null;
   });
 }

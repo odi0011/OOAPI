@@ -135,16 +135,24 @@ async function fetchRemoteImage(rawUrl) {
   for (let hop = 0; hop < 4; hop++) {
     const u = await assertPublicUrl(target);
     const r = await fetch(u, { signal: AbortSignal.timeout(30000), redirect: "manual" });
+    // 所有提前返回都要取消响应体：否则 undici 连接一直挂着，反复触发会耗尽连接池
     if (r.status >= 300 && r.status < 400) {
       const loc = r.headers.get("location");
+      await r.body?.cancel().catch(() => {});
       if (!loc) return null;
       target = new URL(loc, u).toString();
       continue;
     }
-    if (!r.ok) return null;
+    if (!r.ok) {
+      await r.body?.cancel().catch(() => {});
+      return null;
+    }
     // 先看 Content-Length 再决定下不下载：超大图直接跳过，避免白耗带宽
     const cl = Number(r.headers.get("content-length") || 0);
-    if (cl > MAX_IMAGE_BYTES) return null;
+    if (cl > MAX_IMAGE_BYTES) {
+      await r.body?.cancel().catch(() => {});
+      return null;
+    }
     const ab = await r.arrayBuffer();
     if (ab.byteLength > MAX_IMAGE_BYTES) return null;
     const mimeType = (r.headers.get("content-type") || "image/jpeg").split(";")[0].trim().toLowerCase();
@@ -482,7 +490,22 @@ router.post(
       ip,
       requestId,
     });
-    const status = code === "NO_CHANNEL" ? 503 : code === "CHANNEL_MUTED" || code === "CHANNEL_EMPTY" ? 503 : 502;
+    // 错误码 → HTTP 状态要能区分「调用方请求错」与「网关/上游故障」，
+    // 否则客户端会把 400/429 当成 502 盲目重试。
+    const status =
+      code === "CHANNEL_BAD_REQUEST" || code === "LOGIN_BAD_PARAMS"
+        ? 400
+        : code === "CHANNEL_AUTH_EXPIRED"
+          ? 401
+          : code === "CHANNEL_RATE_LIMIT"
+            ? 429
+            : code === "NO_CHANNEL" ||
+                code === "CHANNEL_MUTED" ||
+                code === "CHANNEL_EMPTY" ||
+                code === "CHANNEL_BIZ_ERROR" ||
+                code === "CHANNEL_UNSUPPORTED"
+              ? 503
+              : 502;
     if (streamStarted) {
       sendChunk({}, null);
       res.write(`data: ${JSON.stringify({ error: { message: err.message, type: code } })}\n\n`);

@@ -185,8 +185,17 @@ export async function runCompletion({
       }
       const code = lastError.code || "CHANNEL_ERROR";
 
-      // 已经流式输出过内容就不能换渠道了（否则客户端会收到拼接错乱的内容）
-      if (sawOutput) throw lastError;
+      // 已经流式输出过内容就不能换渠道了（否则客户端会收到拼接错乱的内容），
+      // 但故障渠道仍要冷却与记录，否则下一请求还会优先命中它、反复失败。
+      if (sawOutput) {
+        await markChannelError(channel, lastError.message, 300, {
+          prompt,
+          reply: lastError.message,
+          kind: "chat",
+          user,
+        }).catch(() => {});
+        throw lastError;
+      }
 
       // 参数类错误（模型不支持看图等）不重试，直接抛给用户。
       // 但没带 code 的异常（Playwright 原生报错、TypeError 等）无法判断性质，
