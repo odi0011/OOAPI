@@ -17,6 +17,7 @@
 // 恢复时移到 upstream/ 下并改名为 deepseek-pow.js（勿再删）。
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 import path from "node:path";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -93,6 +94,87 @@ export async function solvePowOracle(challenge) {
 // difficulty 来自上游 JSON：不设上限时，异常/恶意上游可以要求 1e9 次同步哈希，
 // 阻塞整个 Node 事件循环（连 execute 的超时定时器都无法触发）。正常 challenge 远小于此。
 const MAX_DIFFICULTY = 1 << 24;
+const POW_TIMEOUT_MS = 60_000;
+
+// ---------- worker 池（单 worker，串行处理求解任务）----------
+// 求解是同步 CPU 密集操作：放主线程会阻塞事件循环，放 worker 后超时可强制终止。
+let powWorker = null;
+let powSeq = 0;
+const powJobs = new Map();
+let powIdleTimer = null;
+
+/** 终止 worker（进程退出时调用；也用于空闲回收），未完成任务全部拒绝 */
+export function closePowWorker() {
+  if (powIdleTimer) {
+    clearTimeout(powIdleTimer);
+    powIdleTimer = null;
+  }
+  const w = powWorker;
+  powWorker = null;
+  for (const job of powJobs.values()) job.reject(new Error("PoW worker 已关闭"));
+  powJobs.clear();
+  if (w) w.terminate().catch(() => {});
+}
+
+// 空闲回收：worker 的 MessagePort 在部分执行路径下会持有事件循环，
+// 长期空闲时主动终止，避免脚本/测试场景进程无法退出。next solve 会自动重建。
+function schedulePowIdleClose(worker) {
+  if (powIdleTimer) clearTimeout(powIdleTimer);
+  powIdleTimer = setTimeout(() => {
+    if (powJobs.size === 0 && powWorker === worker) closePowWorker();
+  }, 5 * 60 * 1000);
+  powIdleTimer.unref?.();
+}
+
+function getPowWorker() {
+  if (powWorker) return powWorker;
+  const w = new Worker(new URL("./deepseek-pow-worker.mjs", import.meta.url));
+  w.unref?.(); // 空闲 worker 不阻止进程退出
+  w.on("message", (m) => {
+    const job = powJobs.get(m.id);
+    if (!job) return;
+    powJobs.delete(m.id);
+    if (m.ok) job.resolve(m.answer);
+    else job.reject(new Error(m.error || "PoW worker 求解失败"));
+    schedulePowIdleClose(w);
+  });
+  w.on("error", (e) => {
+    for (const job of powJobs.values()) job.reject(e);
+    powJobs.clear();
+    if (powWorker === w) powWorker = null; // 下次请求重建
+  });
+  w.on("exit", () => {
+    if (powWorker === w) powWorker = null;
+  });
+  powWorker = w;
+  schedulePowIdleClose(w);
+  return w;
+}
+
+function solvePowInWorker(challenge) {
+  const w = getPowWorker();
+  const id = ++powSeq;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      powJobs.delete(id);
+      // 卡死的 worker 无法自愈：终止并让下次重建
+      w.terminate().catch(() => {});
+      if (powWorker === w) powWorker = null;
+      reject(Object.assign(new Error(`PoW 求解超时（${POW_TIMEOUT_MS}ms）`), { code: "CHANNEL_TIMEOUT" }));
+    }, POW_TIMEOUT_MS);
+    powJobs.set(id, {
+      resolve: (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      reject: (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    });
+    w.postMessage({ id, challenge });
+  });
+}
 
 export async function solvePow(challenge) {
   if (!challenge || !challenge.challenge || !challenge.salt || !challenge.difficulty) {
@@ -105,10 +187,17 @@ export async function solvePow(challenge) {
     });
   }
   try {
-    return await solvePowWasm(challenge);
+    return await solvePowInWorker(challenge);
   } catch (err) {
-    console.warn("[deepseek/pow] wasm_solve 失败，改用预言机兜底:", err.message);
-    return solvePowOracle(challenge);
+    // 超时/取消类错误直接抛出；worker 启动失败等基础设施问题回退主线程求解
+    if (err.code) throw err;
+    console.warn("[deepseek/pow] worker 求解失败，回退主线程：", err.message);
+    try {
+      return await solvePowWasm(challenge);
+    } catch (e2) {
+      console.warn("[deepseek/pow] wasm_solve 失败，改用预言机兜底:", e2.message);
+      return solvePowOracle(challenge);
+    }
   }
 }
 

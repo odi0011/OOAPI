@@ -149,12 +149,18 @@ async function bootstrap() {
 
   scheduleLogCleanup();
 
-  // 退出时关闭浏览器驱动会话，避免残留进程
+  // 退出时关闭浏览器驱动会话与 PoW worker，避免残留进程
   for (const sig of ["SIGTERM", "SIGINT"]) {
     process.on(sig, async () => {
       try {
         const { closeAll } = await import("./services/upstream/browser-driver.js");
         await closeAll();
+      } catch {
+        /* ignore */
+      }
+      try {
+        const { closePowWorker } = await import("./services/upstream/deepseek-pow.js");
+        closePowWorker();
       } catch {
         /* ignore */
       }
