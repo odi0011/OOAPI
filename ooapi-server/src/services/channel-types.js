@@ -229,13 +229,15 @@ export const PROVIDERS = [
           "本机运行 Codex CLI 登录后，复制 ~/.codex/auth.json 的完整内容"
         ),
         pasteHint: "Codex CLI 登录凭据（auth.json）：访问 chatgpt.com 订阅额度，平台自动用 refresh_token 续期并定期写回",
+        // 线上账号实测可用的 Codex 模型（免费档含 luna/terra/5.5；付费档另有 sol/astra 等）
         defaultModels: [
-          { id: "gpt-5", name: "GPT-5" },
-          { id: "gpt-5-mini", name: "GPT-5 mini" },
-          { id: "o3", name: "o3" },
-          { id: "o4-mini", name: "o4-mini" },
+          { id: "gpt-5.6-luna", name: "GPT-5.6 Luna" },
+          { id: "gpt-5.6-terra", name: "GPT-5.6 Terra" },
+          { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
+          { id: "gpt-5.5", name: "GPT-5.5" },
+          { id: "codex-auto-review", name: "Codex Auto Review" },
         ],
-        testModel: "gpt-5-mini",
+        testModel: "gpt-5.6-luna",
       },
       {
         key: "api",

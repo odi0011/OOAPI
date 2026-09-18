@@ -80,7 +80,7 @@ export const VENDORS = [
     desc: "Codex OAuth：ChatGPT 订阅转 API",
     loginModes: ["paste"],
     fields: [],
-    models: ["gpt-5", "gpt-5-mini", "o3", "o4-mini"],
+    models: ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.5", "codex-auto-review"],
     baseUrl: "https://chatgpt.com/backend-api/codex",
     supportsBatch: false,
     supportsVision: true,
