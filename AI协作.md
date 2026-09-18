@@ -215,10 +215,12 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 
 ### 持续审查（待处理）
 
-- [ ] **订阅 OAuth 渠道实盘验证**（第 10 批新增 capability）：`codex` / `claude-oauth` / `antigravity`
-  三个适配器已按 CLIProxyAPI 协议实现（凭据导入、自动刷新、流式解析、健康检查），但本机没有真实
-  订阅账号，**尚未完成端到端实盘验证**。上线后需用真实凭据各跑一次「测试渠道 + 对话」，核对
-  流式输出、usage 与计费。
+- [ ] **订阅 OAuth 渠道实盘验证**（第 12 批进展）：**Codex 已完成全链路实盘验证**
+  （sub2api 文件导入 → 渠道测试 → 站内对话 → 精确计费 → 292 state 捕获/注入 → 312 判定）；
+  Claude / Gemini / Grok 目前没有真实订阅凭据，待补各跑一次「测试渠道 + 对话」。
+- [ ] **新模型定价待补录**：Codex（`gpt-5.6-luna/terra/sol`、`gpt-5.5`、`codex-auto-review`）与
+  Grok（`grok-4.6/4.5/4.3`、`grok-3-mini`）尚未收录官方价，当前走兜底价（0.30/1.20 并打告警）；
+  补录时按规范在 `remark` 写官方来源（openai.com/api/pricing、x.ai 定价页）。
 - [ ] **审查方式可复用**：后续批次继续用「三路并行子代理（前端 / 后端路由 / 服务适配器）+ 人工核实」，
   发现的问题先登记在此节，修完删除并写入变更记录。
 
@@ -363,6 +365,14 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   同步异步到达的用户数据（修复首次打开时资料为空）；主题色选择、厂商选择卡等可点击 `div`
   改为原生 `button` 并补 `aria-pressed/aria-label` 与键盘（Enter/Space `preventDefault`）
   支持。构建通过；随最新版本部署到测试服务器。 |
+| 2026-09-18 | **第 12 批线上验证**（测试服务器 47.79.85.60，版本 `4df4355`）：内置更新器连续部署
+  `f50efba → 671315a → 4df4355`（均服务 active / status 200 / 前端构建成功 / 迁移幂等）；
+  用 sub2api 导出的**真实 ChatGPT 账号**走完整链路：
+  `POST /api/channel/import` 创建渠道（openai/codex）→ 渠道测试 2.7s 通过（服务器可直连 ChatGPT）
+  → 站内对话返回 PONG（tokens 12/6，扣费精确 0.0001 OD）→ 二次对话正常；
+  适配器级深度测试：统一指纹确定性（Codex session 36 位、Claude device_id 64 hex、Grok session）、
+  响应头捕获 `x-codex-turn-state`（**值长 292**、剩余 TTL≈55min）、注入后上游接受并复用、
+  312 信号判定（作废 state + 90s 冷却）、渠道 `last_error` 为空。Codex 默认模型对齐线上型号。 |
 | 2026-09-18 | **第 11 批 UX 修复**：登录/注册切换保留受保护页面回跳；有效 JWT 遇到首屏网络异常时保留会话并提供认证重试；
   首页状态未知时隐藏注册入口；控制台增加加载中、错误和重试状态。令牌、日志、用户、定价、渠道列表增加
   持久错误提示与重试，日志清除搜索回到第一页，刷新按钮补齐无障碍名称；渠道添加补 providers 空/失败态，
