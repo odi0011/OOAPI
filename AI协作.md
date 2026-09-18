@@ -10,7 +10,7 @@
 > **分支约束（强制）**：仓库**只使用 `main` 一个分支**。禁止新建/推送 `master` 或其他长期分支；
 > 临时分支用完即删。提交永远只推到 `origin/main`。
 
-最后更新：2026-09-17
+最后更新：2026-09-18
 
 ---
 
@@ -164,8 +164,30 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 ## 3. 待办清单（按优先级）
 
 > 以下为尚未完成的待办项。已修复的问题见「变更记录」。
+> 工作方式：每轮审查发现的问题先登记在此，修好后**删除对应条目**并写入变更记录。
 
-### 待改进项
+### 第 5 批审查发现（待处理）
+
+- [ ] **`browser-driver` 卡死会永久占用渠道（P1）**：`page.evaluate` 无超时，一次挂起后
+  `withLock` 队列永不 settle，该渠道在进程重启前不可用（`lastUsed` 被刷新，闲置回收不触发）。
+  修法：evaluate 加时限；检测队列超时后 `ctx.close()` 重建会话。
+- [ ] **无 rsync 时的回退复制无删除语义（P2）**：`updater.js` 复制回退只覆盖同名文件，
+  新版新增的 `migrate*.mjs`/模块会残留，形成半新半旧状态。
+- [ ] **反代渠道表单字段被静默丢弃（P1，前端）**：新增 relay 渠道时 `AdminChannelsPage` 不提交
+  `models/group_name/weight/auto_ban`，后端固定写 `defaultModels/default/1`，用户编辑无效。
+  修法：让 `/channel/login` 落库这些字段，或在表单里对 relay 隐藏/置灰。
+- [ ] **前端硬编码颜色（P2）**：`ConsolePage`（第 157/165/180 行附近）、`AdminChannelsPage`（第 712 行附近）
+  使用 `rgba(...)`/`#f59e0b` 等固定色，必须改 CSS 变量/`color-mix`。
+- [ ] **提交类操作无防重入（P2，前端）**：创建令牌、新增渠道无 `submitting/confirmLoading`，
+  双击会重复创建。
+- [ ] **数值上限缺失（P2）**：`token.js`/`user.js` 的额度只校验 `Number.isFinite`，
+  1e20 等值会 BIGINT 越界报 500；`expired_time = 0` 与 `-1` 的语义未统一。
+- [ ] **`fetchUpstreamModels` 可被重定向绕过 SSRF 校验（P2）**：`assertPublicUrl` 后 fetch 默认跟随
+  302，需 `redirect:"manual"` 并逐跳校验（与网关图片抓取一致）。
+- [ ] **Agent 计费条件与部分输出的 `usage` 形态**（观察项）：本轮已改为按内容兜底 + 结构化 usage，
+  上线后观察计费是否与上游一致。
+
+### 长期/设计取舍项（已评估，暂不处理）
 
 - [ ] **在线更新无签名校验**：目前信任 GitHub main；供应链加固需要发布流水线（哈希/签名），规划中。
 - [ ] **多实例部署**：限流/冷却为单进程内存实现；本项目按单机单实例部署，多实例需换共享存储。
@@ -226,3 +248,15 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 | 2026-09-17 | **线上事故与修复**：migrate2 重复除 50 导致余额缩小；修复为一次性换算 + 不再写价格；余额已重建 |
 | 2026-09-17 | 第 3–4 批持续整改：迁移失败回滚、执行器硬截止、内存表清理、能力标记、部分计费、SSRF、死代码清理 |
 | 2026-09-17 | 文档整理：删除审查报告.md，合并待办至本文档；约束只允许存在一个协作文档 |
+| 2026-09-18 | **第 5 批（三路并行审查）**：恢复被误删的 `deepseek-pow.js`（DeepSeek 适配器加载失败，P0）；
+  `req.on("close")` → `res.on("close")`（Node 16+ 会立即触发导致站内/网关误杀上游，P0）；
+  定价最长前缀匹配（短前缀可多收 10 倍）；Qwen/Doubao/GLM usage 结构化（只报 output_tokens 被当 total 导致少计费）；
+  GLM 回退重写不再重复输出；OpenAI 兼容流加 8MB 单行上限 + 非 SSE JSON 兼容；网关图片先数后抓（防外链 DoS）
+  + Content-Length 预检；migrate2 仅在明确读到旧值 500000 时换算（防新库被除 50）+ `quota_per_unit` 默认值修正；
+  设置项数值范围校验（防 Infinity 超时）；非数字路径 id 统一 404（防 mysql2 NaN 500）；
+  渠道测试不再复活手动禁用渠道；fetch-models 缺 base_url 时回退渠道真实地址；令牌创建用 insertId 回查；
+  `chat_enabled/agent_enabled` 真正生效；智能体失败按内容兜底部分计费；`fe80::/10` 网段判断修正；
+  指纹持久化改为写前重读合并（防覆盖并发变更）；`UNSUPPORTED_CHANNEL` 可重试；
+  DeepSeek 子请求/流读取超时与释放；前端设置 null 值不再写成 "null"、docs_link 过协议白名单、
+  停止生成后刷新余额、重新生成不清空草稿、`/agent` 切换保留图片校验、复制失败正确报错。
+  遗留项已登记到第 3 节「第 5 批审查发现」。 |
