@@ -14,12 +14,17 @@ export function methodKeyOf(channel) {
 }
 
 /** 给渠道解析一个可用的测试模型（可能为空字符串，交给适配器兜底）。
- * 顺序：渠道显式 test_model → 渠道声明的第一个模型（用户口径：默认第一个）→ 接入方式 testModel。 */
+ * 顺序：渠道显式 test_model → 渠道声明的第一个模型（用户口径：默认第一个）→ 接入方式 testModel。
+ * 注意：rowToChannel 的 models 是逗号字符串（不是数组），必须兼容两种形态。 */
 export function resolveTestModel(channel) {
   const explicit = String(channel?.test_model || channel?.other?.test_model || "").trim();
   if (explicit) return explicit;
-  const first = (channel?.models || []).find((m) => m && m !== "*");
-  if (first) return String(first);
+  const raw = channel?.models;
+  const list = Array.isArray(raw)
+    ? raw.map((m) => String(m).trim())
+    : String(raw || "").split(/[\s,，]+/).map((s) => s.trim());
+  const first = list.find((m) => m && m !== "*");
+  if (first) return first;
   const mCfg = getMethod(channel?.type, methodKeyOf(channel));
   return String(mCfg?.testModel || "").trim();
 }
