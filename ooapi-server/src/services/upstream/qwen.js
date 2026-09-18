@@ -152,7 +152,7 @@ export async function chat({
       timeoutMs: 180_000,
       signal,
       onChunk: pump,
-      shouldStop: () => Boolean(parser.error),
+      shouldStop: () => Boolean(parser.error || parser.finished),
     });
 
     if (res.error === "ABORTED" || signal?.aborted) {

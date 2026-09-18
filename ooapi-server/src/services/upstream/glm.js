@@ -224,7 +224,7 @@ export async function chat({
         if (d.reasoning && onReasoning) onReasoning(d.reasoning);
         if (d.content && onDelta) onDelta(d.content);
       },
-      shouldStop: () => Boolean(earlyError),
+      shouldStop: () => Boolean(earlyError || parser.finished),
     });
     mark("streamEnd");
 

@@ -365,6 +365,18 @@ export async function chat({ channel, model, prompt, messages, thinkingOverride,
         handleEvent(ev);
       }
     }
+    // 收尾：末尾不带换行符的残帧不能丢（可能是最后一个文本增量或 usage）
+    const tail = buf.trim();
+    if (tail.startsWith("data:")) {
+      const payload = tail.slice(5).trim();
+      if (payload && payload !== "[DONE]") {
+        try {
+          handleEvent(JSON.parse(payload));
+        } catch {
+          /* ignore */
+        }
+      }
+    }
   } finally {
     reader.cancel().catch(() => {});
   }

@@ -402,6 +402,18 @@ export async function chat({
         handleEvent(ev);
       }
     }
+    // 收尾：最后一段不带换行符的残帧（常见于 message_delta 的 usage）不能丢，否则少计费
+    const tail = buf.trim();
+    if (tail.startsWith("data:")) {
+      const payload = tail.slice(5).trim();
+      if (payload && payload !== "[DONE]") {
+        try {
+          handleEvent(JSON.parse(payload));
+        } catch {
+          /* 非 JSON 残帧忽略 */
+        }
+      }
+    }
   } finally {
     reader.cancel().catch(() => {});
   }

@@ -124,7 +124,6 @@ export function createFrameDecoder() {
         // 历史 bug：这里判的是 0x80（并非 Connect 规范里的位），命中后直接丢弃 ——
         // 上游一旦启用压缩就是静默丢内容，表现为「上游有输出但网关报空」。
         // 正确做法是按规范解压；解压失败才跳过该帧，不中断整条流。
-        if (flags & 0x02) continue; // Connect end-of-stream trailer
         let body = payload;
         if (flags & 0x01) {
           try {
@@ -135,11 +134,19 @@ export function createFrameDecoder() {
         }
         const text = body.toString("utf8").trim();
         if (!text) continue;
+        let obj = null;
         try {
-          events.push(JSON.parse(text));
+          obj = JSON.parse(text);
         } catch {
-          // 非 JSON（如 trailer 元数据）忽略
+          continue; // 非 JSON（如纯文本 trailer）忽略
         }
+        // 0x02 结束 trailer：Connect 规范中「流中途错误」只放在这里（error 字段），
+        // 整帧 continue 会把上游错误当正常结束（有半截内容还按成功计费）
+        if (flags & 0x02) {
+          if (obj?.error) events.push({ error: obj.error });
+          continue;
+        }
+        events.push(obj);
       }
       return events;
     },

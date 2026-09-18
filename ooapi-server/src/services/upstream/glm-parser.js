@@ -46,10 +46,9 @@ export function createGlmParser() {
   function diffDelta(emitted, next) {
     if (next.startsWith(emitted)) return next.slice(emitted.length);
     if (emitted.startsWith(next)) return "";
-    let cp = 0;
-    const max = Math.min(emitted.length, next.length);
-    while (cp < max && emitted[cp] === next[cp]) cp++;
-    return next.slice(cp);
+    // 中间分叉（edit 回退重写）：客户端只能追加、无法撤回已显示内容，
+    // 因此只补「净新增的尾巴」，绝不重发已发过的片段（否则输出膨胀错乱）
+    return next.length > emitted.length ? next.slice(emitted.length) : "";
   }
 
   return {

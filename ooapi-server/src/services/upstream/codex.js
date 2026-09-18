@@ -272,6 +272,8 @@ function parseJsonCompletion(text) {
       completion_tokens: Number(u.output_tokens ?? u.completion_tokens) || 0,
       total_tokens: Number(u.total_tokens) || 0,
       cached_tokens: Number(u.input_tokens_details?.cached_tokens ?? u.prompt_tokens_details?.cached_tokens) || 0,
+      // 思考 token：state-kit 的 516 截断指纹依赖它，漏了该字段会永不触发
+      reasoning_tokens: Number(u.output_tokens_details?.reasoning_tokens ?? u.reasoning_tokens) || 0,
     },
     upstreamModel: j.model || "",
   };
@@ -436,6 +438,8 @@ export async function chat({
           completion_tokens: Number(r.usage.output_tokens) || 0,
           total_tokens: Number(r.usage.total_tokens) || 0,
           cached_tokens: Number(r.usage.input_tokens_details?.cached_tokens) || 0,
+          // state-kit 516 截断指纹依赖该字段
+          reasoning_tokens: Number(r.usage.output_tokens_details?.reasoning_tokens) || 0,
         };
       }
       // 兜底：某些中转/网关不发 delta，只在 completed 里带完整 output
