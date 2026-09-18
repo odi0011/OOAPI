@@ -48,6 +48,15 @@ if (hasOld[0].c > 0) {
       [a.token]
     );
     if (dup.length) continue;
+    // 老库 cookies 列可能是非法 JSON：解析失败必须降级为空数组，
+    // 否则整个迁移抛错 → 在线更新被判定失败并回滚
+    let legacyCookies = [];
+    try {
+      legacyCookies = a.cookies ? JSON.parse(a.cookies) : [];
+      if (!Array.isArray(legacyCookies)) legacyCookies = [];
+    } catch {
+      legacyCookies = [];
+    }
     await pool.query(
       `INSERT INTO channels (name, type, base_url, api_key, models, group_name, status, priority, weight, other, created_time)
        VALUES (?, 'deepseek', 'https://chat.deepseek.com', ?, ?, 'default', ?, 0, 1, ?, ?)`,
@@ -56,7 +65,7 @@ if (hasOld[0].c > 0) {
         a.token,
         "deepseek-chat,deepseek-reasoner,deepseek-vision,deepseek-vision-thinker,deepseek-chat-search,deepseek-reasoner-search",
         a.status === 2 ? 2 : 1,
-        JSON.stringify({ cookies: a.cookies ? JSON.parse(a.cookies || "[]") : [] }),
+        JSON.stringify({ cookies: legacyCookies }),
         a.created_time || now,
       ]
     );
@@ -96,6 +105,9 @@ if (String(curUnit?.value || "") === String(OLD_PER_USD)) {
 }
 
 // ---------- 4. 系统设置：币种与换算 ----------
+// 用 INSERT IGNORE：只补「缺失」的键，绝不覆盖已有值。
+// 之前用 ON DUPLICATE KEY UPDATE 每次更新都会把 currency_name/currency_symbol 等
+// 强制改回 "OD"，管理员的自定义设置被反复抹掉。
 const opts = [
   ["quota_per_unit", String(UNITS_PER_OD)],
   ["currency_name", "OD"],
@@ -104,12 +116,9 @@ const opts = [
   ["general_setting_quota_display", "true"],
 ];
 for (const [k, v] of opts) {
-  await pool.query(
-    "INSERT INTO options (key_str, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)",
-    [k, v]
-  );
+  await pool.query("INSERT IGNORE INTO options (key_str, value) VALUES (?, ?)", [k, v]);
 }
-log.push("OK    系统设置已更新为 OD 币 1:1");
+log.push("OK    系统设置缺失项已补齐为 OD 币 1:1（已有值不覆盖）");
 
 console.log(log.join("\n"));
 await pool.end();

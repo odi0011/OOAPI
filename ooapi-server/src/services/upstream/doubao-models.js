@@ -7,6 +7,8 @@
 //   · 凭据：cookie sessionid（必需）+ passport_csrf_token
 //   · 模型由 bot_id 决定，非 model 字段
 //   · 深度思考：completion_option.use_deep_think / use_auto_cot
+// 能力声明必须与适配器实现一致：豆包适配器尚未实现图片上传，
+// 所有模型 vision 必须为 false（否则前端会展示看图能力，调用却报 VISION_NOT_SUPPORTED）
 export const REAL_MODELS = [
   {
     id: "doubao-pro",
@@ -14,7 +16,7 @@ export const REAL_MODELS = [
     desc: "字节豆包主力模型（Seed 系列）",
     botId: "7338286299411103781",
     thinkingDefault: false,
-    vision: true,
+    vision: false,
   },
   {
     id: "doubao-lite",
@@ -22,7 +24,7 @@ export const REAL_MODELS = [
     desc: "轻量快速版",
     botId: "7338286299411103781",
     thinkingDefault: false,
-    vision: true,
+    vision: false,
   },
 ];
 
@@ -61,7 +63,7 @@ export function resolveModel(requested) {
   }
 
   const d = REAL_MODELS[0];
-  return { model: d.id, botId: d.botId, thinking: /think|reason/i.test(base), search, vision: true };
+  return { model: d.id, botId: d.botId, thinking: /think|reason/i.test(base), search, vision: false };
 }
 
 export const CHANNEL_MODELS = REAL_MODELS.map((m) => m.id).join(",");

@@ -20,8 +20,14 @@ function load(key, fallback) {
   }
 }
 
+// 非法主题值（脏数据/被篡改）会让 SURFACES[resolved] 取到 undefined 而白屏，
+// 且坏值留在 localStorage 里刷新也无法自愈，这里统一归一化
+function safeMode(m) {
+  return ["light", "dark", "system"].includes(m) ? m : "system";
+}
+
 export function ThemeProvider({ children }) {
-  const [mode, setModeState] = useState(() => load(MODE_KEY, "system"));
+  const [mode, setModeState] = useState(() => safeMode(load(MODE_KEY, "system")));
   const [primary, setPrimaryState] = useState(() => load(PRIMARY_KEY, DEFAULT_PRIMARY));
   const [systemDark, setSystemDark] = useState(() => systemResolved() === "dark");
 
@@ -39,9 +45,10 @@ export function ThemeProvider({ children }) {
   }, [resolved, primary]);
 
   const setMode = useCallback((m) => {
-    setModeState(m);
+    const safe = safeMode(m);
+    setModeState(safe);
     try {
-      localStorage.setItem(MODE_KEY, m);
+      localStorage.setItem(MODE_KEY, safe);
     } catch { /* ignore */ }
   }, []);
 
@@ -54,7 +61,7 @@ export function ThemeProvider({ children }) {
 
   // antd 主题：与 beautifului 令牌同构（13px 正文、8px 圆角、环形阴影）
   const antdConfig = useMemo(() => {
-    const s = SURFACES[resolved];
+    const s = SURFACES[resolved] || SURFACES.light;
     const isDark = resolved === "dark";
 
     return {

@@ -3,13 +3,15 @@
 // 协议：Connect RPC over HTTP（Content-Type: application/connect+json）
 //   body 是 JSON（非 protobuf），帧格式 = [1B flags][4B BE length][JSON]
 // 模型：上游用 scenario 选择（SCENARIO_K2D5 等），对外暴露友好 id
+// 能力声明必须与适配器实现一致：Kimi 适配器尚未实现图片上传，
+// 所有模型 vision 必须为 false（否则前端会展示看图能力，调用却报 VISION_NOT_SUPPORTED）
 export const REAL_MODELS = [
   {
     id: "kimi-k3",
     label: "Kimi K3",
     desc: "最新旗舰，支持深度思考与联网",
     scenario: "SCENARIO_K2D5",
-    vision: true,
+    vision: false,
     thinkingDefault: false,
   },
   {
@@ -17,7 +19,7 @@ export const REAL_MODELS = [
     label: "Kimi K2.6",
     desc: "高性价比通用模型",
     scenario: "SCENARIO_K2D5",
-    vision: true,
+    vision: false,
     thinkingDefault: false,
   },
   {
@@ -81,7 +83,7 @@ export function resolveModel(requested) {
     scenario: d.scenario,
     thinking: thinking || /think|reason/i.test(base),
     search: search || /search/i.test(base),
-    vision: true,
+    vision: false,
   };
 }
 

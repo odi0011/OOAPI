@@ -90,9 +90,19 @@ export async function solvePowOracle(challenge) {
   throw new Error(`PoW 求解失败：nonce 超出上限 ${limit}`);
 }
 
+// difficulty 来自上游 JSON：不设上限时，异常/恶意上游可以要求 1e9 次同步哈希，
+// 阻塞整个 Node 事件循环（连 execute 的超时定时器都无法触发）。正常 challenge 远小于此。
+const MAX_DIFFICULTY = 1 << 24;
+
 export async function solvePow(challenge) {
   if (!challenge || !challenge.challenge || !challenge.salt || !challenge.difficulty) {
     throw new Error("PoW challenge 字段不完整: " + JSON.stringify(challenge));
+  }
+  const difficulty = Number(challenge.difficulty);
+  if (!Number.isFinite(difficulty) || difficulty <= 0 || difficulty > MAX_DIFFICULTY) {
+    throw Object.assign(new Error(`PoW difficulty 异常（${challenge.difficulty}），拒绝求解`), {
+      code: "CHANNEL_BAD_RESPONSE",
+    });
   }
   try {
     return await solvePowWasm(challenge);

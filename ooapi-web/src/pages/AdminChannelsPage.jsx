@@ -131,6 +131,7 @@ export default function AdminChannelsPage() {
   const [pickMethod, setPickMethod] = useState(null);
   const [addMode, setAddMode] = useState("password");
   const [addSubmitting, setAddSubmitting] = useState(false);
+  const [editSubmitting, setEditSubmitting] = useState(false);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [browserTarget, setBrowserTarget] = useState(null);
   const [browserShot, setBrowserShot] = useState(null);
@@ -336,12 +337,14 @@ export default function AdminChannelsPage() {
   };
 
   const submitEdit = async () => {
+    if (editSubmitting) return; // 防重入
     let v;
     try {
       v = await editForm.validateFields();
     } catch {
       return;
     }
+    setEditSubmitting(true);
     try {
       const payload = {
         id: editing.id,
@@ -365,6 +368,8 @@ export default function AdminChannelsPage() {
       load();
     } catch (e) {
       message.error(e.message);
+    } finally {
+      setEditSubmitting(false);
     }
   };
 
@@ -914,6 +919,7 @@ export default function AdminChannelsPage() {
         open={editOpen}
         onCancel={() => setEditOpen(false)}
         onOk={submitEdit}
+        confirmLoading={editSubmitting}
         destroyOnClose
         okText="保存"
         width={580}

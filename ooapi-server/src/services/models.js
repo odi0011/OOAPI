@@ -53,6 +53,46 @@ export function modelForChannelMatch(requested) {
   return raw.replace(/-(search|thinking|agent|agent-swarm)$/i, "");
 }
 
+// ---------------------------------------------------------------------------
+// 兼容别名解析（计费 / 渠道匹配共用）
+// ---------------------------------------------------------------------------
+// 历史问题：别名（kimi-latest、qwen-turbo、glm-4-flash…）由适配器 resolveModel
+// 映射到真实模型，但计费与渠道匹配用的是请求原名 → 价格落到默认兜底档（偏差 3~10 倍），
+// 别名请求也会因为渠道没声明别名而 NO_CHANNEL。
+// 别名表从各厂商 *-models.js 的 ALIASES 汇总，启动时预热；未就绪时原样返回。
+let aliasCache = null;
+const LEGACY_ALIASES = {
+  // DeepSeek 官方旧 ID 已停用，适配器兜底把这类名字落到 flash（见 deepseek-models.js）
+  "deepseek-chat": "deepseek-flash",
+  "deepseek-reasoner": "deepseek-flash",
+};
+
+export async function warmAliasMap() {
+  const map = new Map();
+  for (const t of Object.keys(VENDOR_MODEL_MODULES)) {
+    try {
+      const mod = await VENDOR_MODEL_MODULES[t]();
+      for (const [alias, target] of Object.entries(mod.ALIASES || {})) {
+        const k = String(alias).toLowerCase();
+        if (!map.has(k)) map.set(k, String(target));
+      }
+    } catch {
+      /* 该厂商模型模块不可用时跳过 */
+    }
+  }
+  for (const [alias, target] of Object.entries(LEGACY_ALIASES)) map.set(alias, target);
+  aliasCache = map;
+  return map;
+}
+
+/** 同步解析兼容别名 → 真实模型（结果不带能力后缀）；未命中/未预热时原样返回 */
+export function resolveAliasSync(requested) {
+  const raw = String(requested || "").trim();
+  if (!raw || !aliasCache) return raw;
+  const base = raw.toLowerCase().replace(/-(search|thinking|agent|agent-swarm)$/i, "");
+  return aliasCache.get(base) || raw;
+}
+
 /**
  * 校验模型是否属于某个厂商（用于管理端提示，不用于调度）
  */

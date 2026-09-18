@@ -8,12 +8,14 @@
 //
 // 国际版模型（实测 /api/models）：
 //   qwen3.8-max、qwen3.7-plus（含 vision/thinking/search 能力）
+// 能力声明必须与适配器实现一致：通义适配器尚未实现图片上传，
+// 所有模型 vision 必须为 false（否则前端会展示看图能力，调用却报 VISION_NOT_SUPPORTED）
 export const REAL_MODELS = [
   {
     id: "qwen3.8-max",
     label: "通义千问 3.8 Max",
     desc: "旗舰模型，支持深度思考、联网与视觉",
-    vision: true,
+    vision: false,
     thinkingDefault: false,
     upstream: "qwen3.8-max",
   },
@@ -21,7 +23,7 @@ export const REAL_MODELS = [
     id: "qwen3.7-plus",
     label: "通义千问 3.7 Plus",
     desc: "高性价比通用模型",
-    vision: true,
+    vision: false,
     thinkingDefault: false,
     upstream: "qwen3.7-plus",
   },
@@ -84,7 +86,7 @@ export function resolveModel(requested) {
   }
 
   const d = REAL_MODELS[0];
-  return { model: d.id, upstream: d.upstream, thinking: /think|reason/i.test(base), search, vision: true };
+  return { model: d.id, upstream: d.upstream, thinking: /think|reason/i.test(base), search, vision: false };
 }
 
 export const CHANNEL_MODELS = REAL_MODELS.map((m) => m.id).join(",");

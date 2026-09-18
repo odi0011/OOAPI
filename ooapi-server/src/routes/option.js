@@ -20,7 +20,16 @@ const NUMERIC_OPTIONS = {
   ds_request_timeout_ms: { min: 1000, max: 86_400_000, int: true },
 };
 
+// 固定值设置项：额度换算由计费代码硬编码（pricing.UNITS_PER_OD = 10000），
+// 允许修改只会造成「展示口径 vs 实际扣费」漂移，直接拒绝。
+const FIXED_OPTIONS = new Set(["units_per_od"]);
+
 function validateOptionValue(key, raw) {
+  if (FIXED_OPTIONS.has(key)) {
+    // 表单会把当前值原样回传：等于固定值视为无操作，其他值拒绝
+    if (Number(raw) === 10000) return null;
+    return "该设置固定为 10000（1 OD币 = 10,000 额度单位），不可修改";
+  }
   const spec = NUMERIC_OPTIONS[key];
   if (!spec) return null;
   const v = Number(raw);

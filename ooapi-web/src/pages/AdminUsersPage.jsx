@@ -26,6 +26,7 @@ export default function AdminUsersPage() {
   const [editing, setEditing] = useState(null);
   const [quotaOpen, setQuotaOpen] = useState(false);
   const [quotaTarget, setQuotaTarget] = useState(null);
+  const [acting, setActing] = useState(false); // 编辑/额度/删除 防重入
   const [form] = Form.useForm();
   const [quotaForm] = Form.useForm();
   const { begin, isLatest } = useLatest();
@@ -60,12 +61,14 @@ export default function AdminUsersPage() {
   };
 
   const saveEdit = async () => {
+    if (acting) return;
     let v;
     try {
       v = await form.validateFields();
     } catch {
       return; // 校验未通过：antd 已在表单上标红，无需打扰
     }
+    setActing(true);
     try {
       await API.put(`/users/${editing.id}`, v);
       message.success("已保存");
@@ -75,16 +78,20 @@ export default function AdminUsersPage() {
       load();
     } catch (e) {
       message.error(e.message);
+    } finally {
+      setActing(false);
     }
   };
 
   const submitQuota = async () => {
+    if (acting) return;
     let v;
     try {
       v = await quotaForm.validateFields();
     } catch {
       return;
     }
+    setActing(true);
     try {
       // 输入框单位是 OD 币，提交时换算成额度单位（与令牌页口径一致）
       await API.post(`/users/${quotaTarget.id}/quota`, { quota: Math.round(Number(v.quota) * perUnit) });
@@ -94,16 +101,22 @@ export default function AdminUsersPage() {
       load();
     } catch (e) {
       message.error(e.message);
+    } finally {
+      setActing(false);
     }
   };
 
   const remove = async (u) => {
+    if (acting) return;
+    setActing(true);
     try {
       await API.del(`/users/${u.id}`);
       message.success("用户已删除");
       load();
     } catch (e) {
       message.error(e.message);
+    } finally {
+      setActing(false);
     }
   };
 
@@ -286,6 +299,7 @@ export default function AdminUsersPage() {
         open={editOpen}
         onOk={saveEdit}
         onCancel={() => setEditOpen(false)}
+        confirmLoading={acting}
         destroyOnClose
         okText="保存"
       >
@@ -298,6 +312,8 @@ export default function AdminUsersPage() {
           </Form.Item>
           <Form.Item name="role" label="角色" extra="管理员可管理渠道、用户与系统设置">
             <Select
+              // 不能改自己的角色（后端也拒绝）：唯一管理员把自己降级后将失去后台入口
+              disabled={editing?.id === me?.id}
               options={[
                 { value: 1, label: "普通用户" },
                 { value: 100, label: "管理员" },
@@ -320,6 +336,7 @@ export default function AdminUsersPage() {
         open={quotaOpen}
         onOk={submitQuota}
         onCancel={() => setQuotaOpen(false)}
+        confirmLoading={acting}
         destroyOnClose
         okText="确认调整"
       >

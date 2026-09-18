@@ -62,6 +62,8 @@ function useSettingsForm() {
     try {
       const payload = {};
       for (const [k, v] of Object.entries(values)) {
+        // 固定值不提交（units_per_od 由计费代码写死；后端也拒绝修改）
+        if (k === "units_per_od") continue;
         // null 是 InputNumber 清空后的值：String(null) = "null" 写库后
         // getNumberOption 会得到 0（如新用户初始额度被清成 0），必须跳过
         if (v === undefined || v === null || v === "") continue;
@@ -166,9 +168,9 @@ function QuotaTab() {
       <Form.Item
         name="units_per_od"
         label="额度换算"
-        extra="多少额度单位等于 1 OD币，默认 10,000；计费与展示均以此为准"
+        extra="固定 1 OD币 = 10,000 额度单位（计费代码写死，不可修改，避免展示与实际扣费漂移）"
       >
-        <InputNumber style={{ width: "100%" }} min={1} step={1000} />
+        <InputNumber style={{ width: "100%" }} disabled />
       </Form.Item>
       <Form.Item name="quota_for_new_user" label="新用户初始额度" extra="注册时自动赠送（单位：额度，10,000 单位 = 1 OD币 = $1）">
         <InputNumber style={{ width: "100%" }} min={0} step={100000} />
@@ -213,9 +215,11 @@ function UpdateTab() {
   const [steps, setSteps] = useState([]);
   const [stamp, setStamp] = useState(null);
   const timersRef = useRef([]);
+  const aliveRef = useRef(true);
 
   useEffect(() => {
     return () => {
+      aliveRef.current = false;
       for (const t of timersRef.current) {
         clearInterval(t);
         clearTimeout(t);
@@ -255,23 +259,35 @@ function UpdateTab() {
     setApplying(true);
     setSteps([]);
     try {
-      const r = await API.post("/update/apply");
+      // apply 在后端是同步完成的（拉代码/装依赖/构建/迁移，可能数分钟）：关闭超时
+      const r = await API.post("/update/apply", undefined, { timeoutMs: 0 });
       setSteps(r?.steps || []);
       message.success("更新完成，服务正在重启…");
       // 重启期间后端会短暂不可用，轮询等它回来
       let tries = 0;
       const timer = setInterval(async () => {
         tries++;
+        if (!aliveRef.current) {
+          clearInterval(timer);
+          return;
+        }
         try {
           await API.get("/status");
           clearInterval(timer);
+          if (!aliveRef.current) return;
           await loadStamp();
           message.success("服务已重启完成，请刷新页面");
         } catch {
-          if (tries > 30) clearInterval(timer);
+          if (tries > 30) {
+            clearInterval(timer);
+            // 超时不能静默放弃，否则管理员一直在等“服务已重启”提示
+            message.warning("未能确认服务重启，请手动刷新页面查看");
+          }
         }
       }, 2000);
-      timersRef.current.push(timer);
+      // 请求期间组件可能已卸载：cleanup 已经跑过，不能再 push 泄漏的定时器
+      if (aliveRef.current) timersRef.current.push(timer);
+      else clearInterval(timer);
     } catch (e) {
       // 重启可能中断本次响应，属正常情况
       message.warning(`更新已提交：${e.message}`);

@@ -28,7 +28,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request(method, path, { body, params, silent } = {}) {
+async function request(method, path, { body, params, silent, timeoutMs = 30000 } = {}) {
   let url = `/api${path}`;
   if (params) {
     const qs = new URLSearchParams();
@@ -42,11 +42,25 @@ async function request(method, path, { body, params, silent } = {}) {
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  // 默认 30s 超时：后端/代理半开连接时 fetch 可能永不落定，
+  // 各页 finally 里的 setLoading(false) 就永远不执行（只能刷新整页）。
+  // 长耗时接口（如在线更新 apply）传 timeoutMs: 0 关闭超时。
+  const ctrl = new AbortController();
+  const timer = timeoutMs > 0 ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+  let res;
+  try {
+    res = await fetch(url, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: ctrl.signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") throw new ApiError("请求超时，请稍后重试", 408);
+    throw new ApiError("网络连接失败，请检查网络后重试", 0);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 
   let json = null;
   try {

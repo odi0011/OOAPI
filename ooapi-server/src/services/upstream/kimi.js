@@ -92,10 +92,12 @@ export async function verify(channel) {
   }
 
   const { profile, ids, cookie } = ctx(channel);
+  // 健康检查必须有超时：否则管理端点「测试」会无限期挂住请求
   const resp = await fetch(BASE + MODELS_PATH, {
     method: "POST",
     headers: headers(channel, profile, ids, cookie, { token }),
     body: encodeFrame({}),
+    signal: AbortSignal.timeout(30_000),
   });
   const buf = Buffer.from(await resp.arrayBuffer());
   const text = buf.toString("utf8");
@@ -121,6 +123,7 @@ export async function fetchUpstreamModels(channel) {
     method: "POST",
     headers: headers(channel, profile, ids, cookie, { token: channel.api_key }),
     body: encodeFrame({}),
+    signal: AbortSignal.timeout(30_000),
   });
   const buf = Buffer.from(await resp.arrayBuffer());
   const dec = createFrameDecoder();

@@ -22,6 +22,7 @@ export default function TokenPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [actingId, setActingId] = useState(null); // 行内操作（启停/删除）防重入
   const [form] = Form.useForm();
   const { begin, isLatest } = useLatest();
 
@@ -109,21 +110,29 @@ export default function TokenPage() {
   };
 
   const toggleStatus = async (record) => {
+    if (actingId) return; // 防重入：连点会重复提交状态切换
+    setActingId(record.id);
     try {
       await API.put("/token/", { id: record.id, status: record.status === 1 ? 2 : 1 });
       load();
     } catch (e) {
       message.error(e.message);
+    } finally {
+      setActingId(null);
     }
   };
 
   const remove = async (record) => {
+    if (actingId) return;
+    setActingId(record.id);
     try {
       await API.del(`/token/${record.id}`);
       message.success("令牌已删除");
       load();
     } catch (e) {
       message.error(e.message);
+    } finally {
+      setActingId(null);
     }
   };
 

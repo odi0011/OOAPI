@@ -18,7 +18,9 @@ export function createQwenParser() {
     error: null,
     usage: null, // 结构化 usage（对象），交给 normalizeUsage 精确计费
     mode: null, // "intl" | "cn"
-    _summaryLen: 0, // 思考摘要已发送长度（初值必须是 0，undefined 比较恒 false 会吞掉整段思考）
+    // 思考摘要游标：段下标 + 段内偏移（数组是多段累积；只记最后一个元素的长度会错位/丢内容）
+    _sumIdx: 0,
+    _sumOff: 0,
   };
 
   return {
@@ -67,13 +69,22 @@ export function createQwenParser() {
         }
         const summary = d.extra?.summary_thought;
         if (Array.isArray(summary) && summary.length) {
-          // 增长数组：取新增段（按长度差）
-          const last = summary[summary.length - 1];
-          const txt = last?.content || "";
-          if (txt.length > state._summaryLen) {
-            reasoning += txt.slice(state._summaryLen);
-            state._summaryLen = txt.length;
+          // 按「段下标 + 段内偏移」差量输出（见 state 注释）
+          let idx = Number.isInteger(state._sumIdx) ? state._sumIdx : 0;
+          let off = Number.isInteger(state._sumOff) ? state._sumOff : 0;
+          if (idx >= summary.length) {
+            // 数组被重置（罕见）：从头开始；协议只支持追加，无法撤回已发内容
+            idx = 0;
+            off = 0;
           }
+          for (let i = idx; i < summary.length; i++) {
+            const txt = String(summary[i]?.content || "");
+            const start = i === idx ? off : 0;
+            if (txt.length > start) reasoning += txt.slice(start);
+          }
+          const lastIdx = summary.length - 1;
+          state._sumIdx = lastIdx;
+          state._sumOff = String(summary[lastIdx]?.content || "").length;
         }
 
         if (typeof d.content === "string" && d.content) {

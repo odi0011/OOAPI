@@ -7,7 +7,7 @@ import { streamPost } from "../services/stream";
 import { useApp } from "../context/AppContext";
 import Markdown from "../components/Markdown";
 import { ModelLabel } from "../components/VendorIcon";
-import { fmtOd, odOf, unitsPerOd, CURRENCY_NAME } from "../services/format";
+import { fmtOd, odOf, unitsPerOd, CURRENCY_NAME, copyText } from "../services/format";
 import { OdCoin } from "../components/OdCoin";
 import { LoadingState, ThinkingState, TaskRows, StreamingText, PromptBar } from "../components/beautifului";
 import "../ui-refresh.css";
@@ -220,7 +220,7 @@ export default function ChatPage() {
     // 服务端在断开后仍会对已产出内容补计费：稍后刷新余额，避免界面一直显示旧值
     setTimeout(() => refreshUser?.(), 1500);
   };
-  const copy = useCallback(async (text) => { try { await navigator.clipboard.writeText(text); toast.success("已复制"); } catch { toast.error("复制失败，请手动选择文字复制"); } }, [toast]);
+  const copy = useCallback(async (text) => { try { await copyText(text); toast.success("已复制"); } catch { toast.error("复制失败，请手动选择文字复制"); } }, [toast]);
   const retry = useCallback((msg) => {
     if (busyRef.current) return;
     const list = msgsRef.current;
@@ -283,6 +283,9 @@ export default function ChatPage() {
             }
             setModel(id);
             setThinking(null);
+            // 切到不支持联网的模型时关掉搜索，避免继续带着无效参数请求上游
+            const next = meta?.models?.find((m) => m.id === id);
+            if (next?.supportsSearch === false) setSearch(false);
           }}
           chips={images.map((src, i) => ({ src, label: `图片 ${i + 1}` }))}
           onRemoveChip={(i) => setImages((prev) => prev.filter((_, j) => j !== i))}

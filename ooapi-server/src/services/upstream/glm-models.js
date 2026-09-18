@@ -3,6 +3,8 @@
 // 模型 id 来自实测（GET https://chat.z.ai/api/models，2026-09）。
 // 注意：上游 id 与展示名不一致（如 GLM-5.3-Flash 的真实 id 是 x-preview-l），
 //      本文件维护映射，对外暴露友好的模型名。
+// 能力声明必须与适配器实现一致：GLM 适配器尚未实现图片上传，
+// 所有模型 vision 必须为 false（否则前端会展示看图能力，调用却报 VISION_NOT_SUPPORTED）
 export const REAL_MODELS = [
   {
     id: "glm-5.3",
@@ -19,7 +21,7 @@ export const REAL_MODELS = [
     upstream: "x-preview-l",
     label: "GLM-5.3 Flash",
     desc: "轻量旗舰（原生多模态、支持看图）",
-    vision: true,
+    vision: false,
     thinkingDefault: false,
     search: true,
     caps: ["agent_mode", "file_qa", "reasoning_effort", "returnFc", "returnThink", "think", "vision", "web_search"],
@@ -49,7 +51,7 @@ export const REAL_MODELS = [
     upstream: "GLM-5v-Turbo",
     label: "GLM-5V Turbo",
     desc: "视觉模型，适合图像理解",
-    vision: true,
+    vision: false,
     thinkingDefault: false,
     search: true,
     caps: ["agent_mode", "citations", "file_qa", "think", "vision", "vlm_tools_enable", "web_search"],
@@ -151,7 +153,7 @@ export function resolveModel(requested) {
     upstream: d.upstream,
     thinking: thinking || /think|reason/i.test(base),
     search,
-    vision: /v|vision/i.test(base),
+    vision: false, // 适配器不支持图片，不能按名字推断（否则声明与实现不一致）
     isReal: false,
   };
 }

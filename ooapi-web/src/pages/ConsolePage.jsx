@@ -106,7 +106,9 @@ export default function ConsolePage() {
   const perUnit = unitsPerOd(status); // 1 OD币 = 10,000 额度单位（固定 1 OD = $1）
   // 额度展示统一走 fmtOd：全站货币只能是 OD币（1 OD = 1 美元）
   const od = (q) => fmtOd(q, perUnit, 2);
-  const endpoint = status?.api_endpoint || "https://your-domain/v1";
+  // 去掉结尾斜杠：api_endpoint 以 / 结尾时 curl 示例会生成 `//chat/completions`
+  // （HomePage 已是这个口径，两处保持一致）
+  const endpoint = (status?.api_endpoint || "https://your-domain/v1").replace(/\/+$/, "");
 
   const totalQuota = Number(user?.quota || 0) + Number(user?.used_quota || 0);
   const usedPct = totalQuota > 0 ? Math.min(100, (Number(user?.used_quota || 0) / totalQuota) * 100) : 0;

@@ -81,7 +81,10 @@ function imageContent(images, text) {
  */
 function buildMessages({ messages, prompt, images }) {
   if (Array.isArray(messages) && messages.length) {
-    const out = messages.map((m) => ({ role: m.role, content: m.content ?? "" }));
+    // 过滤非对象元素（防御性）：调用方已过滤，这里兜底避免 TypeError 打断整条渠道链
+    const out = messages
+      .filter((m) => m && typeof m === "object")
+      .map((m) => ({ role: m.role, content: m.content ?? "" }));
     // 图片挂在最后一条 user 消息上
     if (images?.length) {
       for (let i = out.length - 1; i >= 0; i--) {

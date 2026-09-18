@@ -91,7 +91,9 @@ export function publicStatus() {
     // 货币信息下发给前端，避免各页面自己硬编码符号（曾出现有的地方还写 $）
     currency_name: getOption("currency_name") || "OD币",
     currency_symbol: getOption("currency_symbol") || "OD币",
-    units_per_od: getNumberOption("units_per_od") || 10000,
+    // 额度换算固定 10000：计费代码（pricing.UNITS_PER_OD）是硬编码的，
+    // 这里若读库可能和实际扣费漂移（历史：设置页可改该值 → 展示缩水但扣费不变）
+    units_per_od: 10000,
     general_setting_quota_display: getBoolOption("general_setting_quota_display"),
     quota_for_new_user: getNumberOption("quota_for_new_user"),
     password_register_enabled: getBoolOption("password_register_enabled"),

@@ -8,11 +8,17 @@ import { ok, fail, asyncHandler, now } from "../utils.js";
 import { authRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { runCompletion } from "../services/execute.js";
-import { getPrice, computeCost, splitTokens, normalizeUsage, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
-import { allPublicModels, modelForChannelMatch } from "../services/models.js";
+import { getPrice, computeCost, splitTokens, normalizeUsage, estimateTokens, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
+import { allPublicModels, modelForChannelMatch, resolveAliasSync } from "../services/models.js";
 import { getBoolOption } from "../config.js";
 
 const router = express.Router();
+// 鉴权头预检放在 express.json 之前：站内接口全部要求 JWT，匿名请求没必要先缓冲 20MB 大包。
+// 只查头存在性（api.js/stream.js 均以 Bearer 发送），真正的 authRequired 仍在各路由上。
+router.use((req, res, next) => {
+  if (!req.headers.authorization) return fail(res, "未登录或登录已过期", 401);
+  next();
+});
 router.use(express.json({ limit: "20mb" }));
 
 // ---------- 智能体预设 ----------
@@ -91,6 +97,9 @@ async function availableModels(user) {
         desc: m.desc,
         vision: m.vision,
         thinkingDefault: m.thinkingDefault,
+        // 能力标记必须透传：前端据此隐藏无效开关（缺失时前端按“支持”处理）
+        supportsSearch: m.supportsSearch,
+        supportsThinking: m.supportsThinking,
         deprecated: Boolean(m.deprecated),
         vendor: m.vendor,
         vendorName: m.vendorName,
@@ -122,7 +131,8 @@ router.get(
 // ---------- 计费（用户额度）----------
 async function chargeUser({ user, model, prompt, output, usage, channel, kind }) {
   const { promptTokens, completionTokens, cacheTokens } = splitTokens({ prompt, output, upstreamTotal: usage });
-  const price = await getPrice(model);
+  // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
+  const price = await getPrice(resolveAliasSync(model));
   const units = computeCost({ price, promptTokens, completionTokens, cacheTokens });
 
   const [uRows] = await pool.query("SELECT quota FROM users WHERE id = ?", [user.id]);
@@ -160,13 +170,15 @@ router.post(
     const { messages = [], model = "deepseek-chat", thinking, search = false, images = [] } = req.body || {};
 
     if (!Array.isArray(messages) || !messages.length) return fail(res, "messages 不能为空");
+    // 过滤非对象元素：null 会让适配器 `.map(m => m.role)` 抛 TypeError（无 code 异常会冷却全部渠道）
+    const safeMessages = messages.filter((m) => m && typeof m === "object");
+    if (!safeMessages.length) return fail(res, "messages 不能为空");
     if (!getBoolOption("chat_enabled")) return fail(res, "站内对话功能已关闭", 403);
     if (Number(req.user.quota) <= 0) return fail(res, `${CURRENCY} 币余额不足，请联系管理员充值`, 403);
 
-    // 拼装 prompt（元素可能是 null/字符串，跳过而不是抛 500）
+    // 拼装 prompt
     let prompt = "";
-    for (const m of messages) {
-      if (!m || typeof m !== "object") continue;
+    for (const m of safeMessages) {
       const c = String(m.content ?? "");
       if (m.role === "system") prompt += c + "\n";
       else if (m.role === "assistant") prompt += "<｜Assistant｜>" + c + "<｜end▁of▁sentence｜>";
@@ -215,7 +227,7 @@ router.post(
       const result = await runCompletion({
         model: matchModel,
         prompt,
-        messages,
+        messages: safeMessages,
         // 未显式指定时用模型默认（V4.1-Flash 默认开启思考）
         thinking: typeof thinking === "boolean" ? thinking : undefined,
         search,
@@ -446,14 +458,21 @@ router.post(
       // 注意条件不能只看 usage：反代渠道 usage 常为 null（全 0），要按内容兜底。
       const partial = err?.partialOutput || "";
       const billOutput = totalOutput + partial;
-      if (!settledOnce && (billOutput || totalPrompt || totalUsage.prompt_tokens || totalUsage.completion_tokens)) {
+      // 有结构化 usage 时 splitTokens 会忽略 output（按上游 token 计费），
+      // 失败步骤已推送的内容必须折算补进去，否则 API 渠道会漏计这部分
+      let usage = null;
+      if (totalUsage.prompt_tokens || totalUsage.completion_tokens) {
+        usage = { ...totalUsage };
+        if (partial) usage.completion_tokens += estimateTokens(partial);
+      }
+      if (!settledOnce && (billOutput || totalPrompt || usage)) {
         try {
           await chargeUser({
             user: req.user,
             model,
             prompt: totalPrompt,
             output: billOutput,
-            usage: totalUsage.prompt_tokens || totalUsage.completion_tokens ? totalUsage : null,
+            usage,
             channel: firstChannel,
             kind: "agent",
           });

@@ -3,6 +3,7 @@
 import { pool } from "../db.js";
 import { getNumberOption } from "../config.js";
 import { selectChannels, getAdapter, markChannelError, markChannelOk, withChannelLimit, explainNoChannel } from "./router.js";
+import { resolveAliasSync } from "./models.js";
 
 // 渠道异常码 → 是否需要换渠道重试
 const RETRYABLE = new Set([
@@ -57,11 +58,14 @@ export async function runCompletion({
   onChannelTry,
 }) {
   const tried = new Set(excludeChannelIds instanceof Set ? excludeChannelIds : []);
-  const channels = await selectChannels({ model, excludeIds: tried, groupName });
+  // 渠道声明的是真实模型名：先把兼容别名归一化再匹配，
+  // 否则 kimi-latest / qwen-turbo 这类别名请求会直接 NO_CHANNEL
+  const matchName = resolveAliasSync(model);
+  const channels = await selectChannels({ model: matchName, excludeIds: tried, groupName });
 
   if (!channels.length) {
     // 区分「没有渠道支持这个模型」和「渠道都在冷却」，否则排查方向会完全跑偏
-    const why = await explainNoChannel({ model, groupName }).catch(() => null);
+    const why = await explainNoChannel({ model: matchName, groupName }).catch(() => null);
     throw Object.assign(
       new Error(why?.message || `没有可用渠道支持模型「${model}」，请在渠道管理中添加或启用对应渠道`),
       { code: "NO_CHANNEL", reason: why?.reason }

@@ -2,10 +2,16 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { App as AntApp } from "antd";
+import dayjs from "dayjs";
+import "dayjs/locale/zh-cn";
 import { ThemeProvider } from "./theme/ThemeContext";
 import { AppProvider } from "./context/AppContext";
 import App from "./App";
 import "./styles.css";
+
+// antd 的日期组件（rc-picker）直接用 dayjs 取星期/周首日，不注册中文 locale
+// 会显示英文缩写且周首日为周日
+dayjs.locale("zh-cn");
 
 // 启动前先应用持久化主题，避免首帧闪烁
 try {

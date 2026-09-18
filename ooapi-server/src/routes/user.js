@@ -122,13 +122,29 @@ router.put(
     if (!user) return fail(res, "用户不存在", 404);
     const { role, status, display_name, email } = req.body || {};
     if (role !== undefined) {
+      // 不能改自己的角色：唯一管理员把自己降级后会永久失去后台入口（无 API 恢复路径）
+      if (id === req.user.id) return fail(res, "不能修改自己的角色");
       // 角色上限 100（超级管理员），避免管理员把用户设成未定义的更高权限
       const r = Math.min(100, Math.max(1, Math.floor(Number(role)) || 1));
+      if (user.role >= 100 && r < 100) {
+        const [[{ admins }]] = await pool.query(
+          "SELECT COUNT(*) AS admins FROM users WHERE role >= 100 AND status = 1 AND id <> ?",
+          [id]
+        );
+        if (!admins) return fail(res, "必须至少保留一个启用的管理员");
+      }
       await pool.query("UPDATE users SET role = ? WHERE id = ?", [r, id]);
     }
     if (status !== undefined) {
       const s = Number(status) === 2 ? 2 : 1;
-      if (user.role >= 100 && s === 2 && id === req.user.id) return fail(res, "不能禁用自己的账号");
+      if (s === 2 && user.role >= 100) {
+        if (id === req.user.id) return fail(res, "不能禁用自己的账号");
+        const [[{ admins }]] = await pool.query(
+          "SELECT COUNT(*) AS admins FROM users WHERE role >= 100 AND status = 1 AND id <> ?",
+          [id]
+        );
+        if (!admins) return fail(res, "必须至少保留一个启用的管理员");
+      }
       await pool.query("UPDATE users SET status = ? WHERE id = ?", [s, id]);
     }
     if (display_name !== undefined || email !== undefined) {
@@ -186,6 +202,14 @@ router.delete(
     const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
     const user = rows[0];
     if (!user) return fail(res, "用户不存在", 404);
+    // 不能删掉最后一个启用的管理员（否则后台失联、只能改库恢复）
+    if (user.role >= 100) {
+      const [[{ admins }]] = await pool.query(
+        "SELECT COUNT(*) AS admins FROM users WHERE role >= 100 AND id <> ?",
+        [id]
+      );
+      if (!admins) return fail(res, "必须至少保留一个管理员");
+    }
     await pool.query("DELETE FROM users WHERE id = ?", [id]);
     await pool.query("DELETE FROM tokens WHERE user_id = ?", [id]);
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `删除用户 #${id}（${user.username}）` });

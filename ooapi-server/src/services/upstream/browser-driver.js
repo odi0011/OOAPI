@@ -618,8 +618,12 @@ export function withLock(session, task) {
   const prev = session.queue || Promise.resolve();
   let watchdog = null;
   const guarded = (async () => {
+    // 前一个任务失败（或被看门狗强关）都不能阻断后续任务
+    await prev.catch(() => {});
+    // 看门狗从「真正持有会话」开始计时：如果从入队就算，排队等待会被算进硬上限，
+    // 后面的请求还没开始干活就会被强关（上一版实现的回归）
     watchdog = setTimeout(() => {
-      console.warn("[browser-driver] 会话队列超时未释放，强制重建会话以恢复该渠道可用性");
+      console.warn("[browser-driver] 会话任务超时未释放，强制重建会话以恢复该渠道可用性");
       try {
         session.ctx?.close?.().catch?.(() => {});
       } catch {
@@ -631,8 +635,6 @@ export function withLock(session, task) {
     }, QUEUE_STUCK_MS);
     watchdog.unref?.();
     try {
-      // 前一个任务失败（或被看门狗强关）都不能阻断后续任务
-      await prev.catch(() => {});
       return await task();
     } finally {
       if (watchdog) clearTimeout(watchdog);

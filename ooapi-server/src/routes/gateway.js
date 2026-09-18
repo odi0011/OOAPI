@@ -8,9 +8,17 @@ import { now, clientIp, asyncHandler, assertPublicUrl } from "../utils.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { runCompletion } from "../services/execute.js";
 import { getPrice, computeCost, splitTokens, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
-import { allPublicModels, modelForChannelMatch } from "../services/models.js";
+import { allPublicModels, modelForChannelMatch, resolveAliasSync } from "../services/models.js";
 
 const router = express.Router();
+// 鉴权头预检必须放在 express.json 之前：否则匿名请求也会被完整缓冲/解析（最大 50MB），
+// 几十个并发大包就能显著抬高内存与 CPU。这里只查头存在性，真正鉴权仍在 authorize。
+router.use((req, res, next) => {
+  if (!req.headers.authorization) {
+    return res.status(401).json({ error: { message: "缺少 Authorization Bearer", type: "invalid_request_error" } });
+  }
+  next();
+});
 router.use(express.json({ limit: "50mb" }));
 
 // ---------- 对外可用模型列表（平台真实模型 + 兼容别名）----------
@@ -188,7 +196,8 @@ async function extractImages(messages) {
 // 计费 + 日志
 async function settle({ token, user, model, prompt, output, usage, ip, requestId, channel }) {
   const { promptTokens, completionTokens, cacheTokens } = splitTokens({ prompt, output, upstreamTotal: usage });
-  const price = await getPrice(model);
+  // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
+  const price = await getPrice(resolveAliasSync(model));
   const units = computeCost({ price, promptTokens, completionTokens, cacheTokens });
   const od = (units / UNITS_PER_OD).toFixed(4);
 
@@ -204,10 +213,16 @@ async function settle({ token, user, model, prompt, output, usage, ip, requestId
       [units, user.id]
     );
   }
+  // 扣费后的令牌/日志更新是 best-effort：如果这里抛错，调用方 catch 会因
+  // settledOnce 还没置位而再次结算，导致用户额度被扣两次。
   if (!token.unlimited_quota) {
-    await pool.query("UPDATE tokens SET remain_quota = GREATEST(0, remain_quota - ?) WHERE id = ?", [units, token.id]);
+    await pool
+      .query("UPDATE tokens SET remain_quota = GREATEST(0, remain_quota - ?) WHERE id = ?", [units, token.id])
+      .catch((e) => console.error("[gateway] 令牌额度更新失败：", e.message));
   }
-  await pool.query("UPDATE tokens SET used_quota = used_quota + ?, accessed_time = ? WHERE id = ?", [units, now(), token.id]);
+  await pool
+    .query("UPDATE tokens SET used_quota = used_quota + ?, accessed_time = ? WHERE id = ?", [units, now(), token.id])
+    .catch((e) => console.error("[gateway] 令牌用量更新失败：", e.message));
   await writeLog({
     user,
     type: LOG_TYPE.CONSUME,
@@ -253,20 +268,28 @@ router.post(
   if (!Array.isArray(body.messages) || !body.messages.length) {
     return res.status(400).json({ error: { message: "messages 不能为空", type: "invalid_request_error" } });
   }
+  // 过滤非对象元素：null/字符串会让适配器 `.map(m => m.role)` 抛 TypeError；
+  // 无 code 的异常会被 execute 当成渠道故障并冷却所有渠道（可被构造的 DoS）
+  const messages = body.messages.filter((m) => m && typeof m === "object");
+  if (!messages.length) {
+    return res.status(400).json({ error: { message: "messages 不能为空", type: "invalid_request_error" } });
+  }
 
   // 模型名归一化后透传给渠道层匹配（各厂商别名在适配器内部处理）；
   // 是否支持视觉也由适配器判断，网关不预设能力
   const matchModel = modelForChannelMatch(model) || model;
   const wantSearch = /-search$/i.test(String(model || ""));
   // 先数图片数量：超 3 张走「不支持」分支，绝不先抓取（防外链 DoS）
-  const imageCount = countImageParts(body.messages);
-  const images = imageCount > 3 ? [] : await extractImages(body.messages);
+  const imageCount = countImageParts(messages);
+  const images = imageCount > 3 ? [] : await extractImages(messages);
 
   // 客户端可显式覆盖深度思考（兼容官方 thinking / reasoning_effort 语义）
   let thinkingOverride;
   if (body.thinking !== undefined) {
     thinkingOverride =
-      typeof body.thinking === "object" ? String(body.thinking.type).toLowerCase() !== "disabled" : Boolean(body.thinking);
+      body.thinking && typeof body.thinking === "object"
+        ? String(body.thinking.type).toLowerCase() !== "disabled"
+        : Boolean(body.thinking);
   } else if (body.reasoning_effort !== undefined) {
     thinkingOverride = String(body.reasoning_effort).toLowerCase() !== "none";
   }
@@ -305,7 +328,7 @@ router.post(
   // 图片校验交由各厂商适配器判断（不同厂商支持的模型不同），
   // 网关只做「超 3 张」的通用限制（见上）。
 
-  const prompt = messagesToPrompt(body.messages);
+  const prompt = messagesToPrompt(messages);
   let streamStarted = false;
   // 已流出的内容：上游中途失败时按实际产出结算，避免「答了一半却零计费」
   let partialOut = "";
@@ -341,7 +364,7 @@ router.post(
       prompt,
       // API 接入方式需要保留消息角色（system/user/assistant）；
       // 反代适配器忽略它，仍用拼好的 prompt
-      messages: body.messages,
+      messages,
       thinking: thinkingOverride,
       search: wantSearch,
       images,
@@ -416,8 +439,10 @@ router.post(
   } catch (err) {
     const code = err.code || "UPSTREAM_ERROR";
     console.error(`[gateway] ${requestId} 失败：${code} ${err.message}`);
-    // 已产生内容：按已产出部分结算（客户端已收到这些内容，不能零计费）
-    if (!settledOnce && streamStarted && partialOut) {
+    // 已产生内容：按已产出部分结算（客户端已收到这些内容，不能零计费）。
+    // 条件不能只看 streamStarted：非流式请求（stream:false）适配器同样边流边回调，
+    // 中途失败时 partialOut 也有内容，却会漏计费。
+    if (!settledOnce && partialOut) {
       try {
         await settle({
           token,

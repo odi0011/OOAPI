@@ -117,6 +117,13 @@ async function bootstrap() {
   await migrate();
   await loadOptions();
   await seedDefaultPrices();
+  // 预热兼容别名表（计费与渠道匹配共用；失败不影响启动）
+  try {
+    const { warmAliasMap } = await import("./services/models.js");
+    await warmAliasMap();
+  } catch (e) {
+    console.error("[init] 别名表预热失败：", e.message);
+  }
   // 首次启动创建默认管理员
   const [[{ c }]] = await pool.query("SELECT COUNT(*) AS c FROM users WHERE role >= 100");
   if (!c) {
