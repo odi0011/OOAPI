@@ -202,6 +202,9 @@ export default function AdminChannelsPage() {
   const [statsError, setStatsError] = useState("");
   const [selectedKeys, setSelectedKeys] = useState([]);
   const [testingId, setTestingId] = useState(null);
+  // 批量检测：正在并发测试的渠道 id 集合 + 批次进行中标记（防重复点击）
+  const [testingIds, setTestingIds] = useState(() => new Set());
+  const [batchTesting, setBatchTesting] = useState(false);
   const [actionBusyId, setActionBusyId] = useState(null);
   // 分组管理弹窗
   const [groupOpen, setGroupOpen] = useState(false);
@@ -627,7 +630,7 @@ export default function AdminChannelsPage() {
 
   // ---------- 操作 ----------
   const doTest = async (r) => {
-    if (testingId) return; // 防并发：单值状态被覆盖会让前一个按钮提前恢复可点
+    if (testingId || batchTesting) return; // 防并发：单值状态被覆盖会让前一个按钮提前恢复可点；批量检测中也不允许单测
     setTestingId(r.id);
     try {
       // 订阅渠道 verify 内部可能先刷新 token，服务端超时 60s；前端必须留足余量
@@ -815,6 +818,39 @@ export default function AdminChannelsPage() {
     }
   };
 
+  // 批量检测：选中渠道一起并发发起检测（后端 /channel/:id/test 无状态，可安全并行）
+  const doBatchTest = async () => {
+    if (!selectedKeys.length) return message.warning("请先选择渠道");
+    if (batchTesting) return;
+    const targets = items.filter((r) => selectedKeys.includes(r.id));
+    if (!targets.length) return message.warning("请先选择渠道");
+    setBatchTesting(true);
+    setTestingIds(new Set(targets.map((r) => r.id)));
+    const hide = message.loading(`正在检测 ${targets.length} 个渠道…`, 0);
+    try {
+      const results = await Promise.allSettled(
+        targets.map((r) => API.post(`/channel/${r.id}/test`, undefined, { timeoutMs: 90_000 }))
+      );
+      const failed = [];
+      results.forEach((ret, i) => {
+        const passed = ret.status === "fulfilled" && ret.value?.success;
+        if (!passed) failed.push(targets[i].name);
+      });
+      const okCount = targets.length - failed.length;
+      if (failed.length) {
+        const names = failed.slice(0, 3).join("、") + (failed.length > 3 ? ` 等 ${failed.length} 个` : "");
+        message.warning(`批量检测：${okCount} 个可用，${failed.length} 个失败（${names}）`);
+      } else {
+        message.success(`批量检测：${okCount} 个渠道全部可用`);
+      }
+    } finally {
+      hide();
+      setTestingIds(new Set());
+      setBatchTesting(false);
+      await load();
+    }
+  };
+
   const fetchModels = async () => {
     const { base_url, api_key } = addForm.getFieldsValue(["base_url", "api_key"]);
     if (!api_key) return message.warning("请先填写 API Key");
@@ -955,8 +991,8 @@ export default function AdminChannelsPage() {
         </Tooltip>
       ) : null}
       <Tooltip title="测试">
-        <button className="bui-icon-btn" aria-label={`${r.name} 测试`} onClick={() => doTest(r)} disabled={Boolean(actionBusyId) || testingId === r.id} aria-busy={testingId === r.id}>
-          {testingId === r.id ? <Spin size="small" /> : <ThunderboltOutlined />}
+        <button className="bui-icon-btn" aria-label={`${r.name} 测试`} onClick={() => doTest(r)} disabled={Boolean(actionBusyId) || batchTesting || testingId === r.id} aria-busy={testingId === r.id || testingIds.has(r.id)}>
+          {testingId === r.id || testingIds.has(r.id) ? <Spin size="small" /> : <ThunderboltOutlined />}
         </button>
       </Tooltip>
       {r.cooling ? (
@@ -1031,6 +1067,9 @@ export default function AdminChannelsPage() {
                 <button className="bui-btn" onClick={() => doBatch("enable")}>批量启用</button>
                 <button className="bui-btn" onClick={() => doBatch("disable")}>批量禁用</button>
                 <button className="bui-btn" onClick={() => setBatchOpen(true)}>批量修改</button>
+                <button className="bui-btn" onClick={doBatchTest} disabled={batchTesting || Boolean(testingId)}>
+                  {batchTesting ? <Spin size="small" style={{ marginInlineEnd: 6 }} /> : null}批量检测
+                </button>
                 <Popconfirm title="确认批量删除？" onConfirm={() => doBatch("delete")}>
                   <button className="bui-btn" style={{ color: "var(--red)" }}>批量删除</button>
                 </Popconfirm>

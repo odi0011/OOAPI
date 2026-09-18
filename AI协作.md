@@ -533,3 +533,8 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   返回三厂商 default；清理完成（#10 恢复 `["default"]`、smoke 分组与测试令牌删除）。
   备注：本次 `git add ooapi-server/src` 顺带纳入了另一窗口新建的 `services/harness/runs.js`
   （当前无引用，不影响运行）。**教训：新增表/列前必须核对 MySQL 保留字清单。** |
+| 2026-09-18 | **第 18 批（渠道批量检测）**：勾选渠道后批量操作区在「批量修改」后新增**批量检测**按钮——
+  对全部选中渠道并发 `POST /api/channel/:id/test`（`Promise.allSettled`，单个超时 90s），
+  检测中按钮与行内测试按钮显示 Spin 并禁用（新增 `testingIds`/`batchTesting` 状态），
+  完成后 toast 汇总「N 个可用 / M 个失败（失败渠道名）」并刷新列表（小绿条同步更新）。
+  后端测试接口无状态，可安全并行；`AdminChannelsPage.jsx` 单文件改动，`npm run build` 通过。 |
