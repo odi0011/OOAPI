@@ -518,3 +518,18 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   按模型条形榜（消费+Tokens）、最近调用（来源/耗时/提示词→回复）；
   消费日志 `detail` 增强（`channel_id`/`channel_ids`/`model`/token 明细），网关、站内对话（含部分计费）
   全部接入；`GET /api/channel/:id/stats?days=30` 兼容老库（无 JSON 函数时降级为基础信息）。 |
+| 2026-09-18 | **第 17 批线上验证与紧急修复**：部署 `2e37b70` 后服务启动崩溃循环（restart 30+ 次）——
+  根因：`channels.groups` 撞 MySQL 8 保留字（GROUPS，窗口函数关键字），CREATE TABLE / ALTER 均报
+  `ER_PARSE_ERROR 1064`，`migrate` 抛错导致进程退出；服务不可用又使内置更新器的 HTTP 触发路径失效
+  （鸡生蛋问题）。处置：**列名改 `group_list`**（commit `62eee2e`，涉及 db.js 建表/自动迁移/回填、
+  channel.js 全部 SQL 与解析、router.js rowToChannel；前端响应字段名 `groups` 不变）；
+  服务器上直跑 `services/updater.js#performUpdate`（绕过 HTTP）强制更新到 `62eee2e`。
+  线上验证（全部通过）：迁移（`channel_groups` 表 + `group_list` 列 + 3 个种子分组 + 4 渠道回填）；
+  渠道 #10 绑定 `["default","smoke"]`；`GET /api/channel/groups` 分组计数正确；
+  创建令牌 `smoke-ok`（绑定 `openai:smoke`）与 `smoke-none`（绑定 `openai:no-such-group`）；
+  网关实测：绑定存在分组的 Key 流式返回 `group-test`（命中 #10），绑定不存在分组的 Key 返回
+  `503 NO_CHANNEL`（分组隔离生效）；`GET /api/channel/10/stats` 返回 1 次调用 / 46 tokens /
+  0.0004 OD / byModel `gpt-5.6-luna` / recent 来源 `chat`；`GET /api/token/groups`（用户侧）200
+  返回三厂商 default；清理完成（#10 恢复 `["default"]`、smoke 分组与测试令牌删除）。
+  备注：本次 `git add ooapi-server/src` 顺带纳入了另一窗口新建的 `services/harness/runs.js`
+  （当前无引用，不影响运行）。**教训：新增表/列前必须核对 MySQL 保留字清单。** |
