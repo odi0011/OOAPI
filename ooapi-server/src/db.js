@@ -102,7 +102,7 @@ const TABLES = [
     api_key TEXT COMMENT '上游密钥（多 Key 用换行分隔）',
     models TEXT COMMENT '支持的模型，逗号分隔',
     group_name VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '用户分组',
-    groups TEXT COMMENT '所属分组 JSON 数组（一个账号可属多个分组，分组按厂商隔离）',
+    group_list TEXT COMMENT '所属分组 JSON 数组（一个账号可属多个分组，分组按厂商隔离；列名避开 MySQL 保留字 groups）',
     status INT NOT NULL DEFAULT 1 COMMENT '1=启用 2=手动禁用 3=自动禁用',
     priority INT NOT NULL DEFAULT 0 COMMENT '调度优先级，越大越优先',
     weight INT NOT NULL DEFAULT 0 COMMENT '同优先级负载权重',
@@ -145,6 +145,9 @@ const TABLES = [
     title VARCHAR(120) NOT NULL DEFAULT '',
     agent VARCHAR(32) NOT NULL DEFAULT 'general' COMMENT '智能体 id',
     model VARCHAR(128) NOT NULL DEFAULT '',
+    project_id VARCHAR(32) NOT NULL DEFAULT '' COMMENT '所属项目（空=未归类）',
+    archived TINYINT NOT NULL DEFAULT 0 COMMENT '1=已归档',
+    pinned TINYINT NOT NULL DEFAULT 0 COMMENT '1=置顶',
     settings TEXT COMMENT 'JSON：{thinking,search,tools,maxSteps,instructions}',
     todo TEXT COMMENT 'JSON：待办清单（todowrite 工具维护）',
     message_count INT NOT NULL DEFAULT 0,
@@ -154,6 +157,18 @@ const TABLES = [
     created_time BIGINT NOT NULL DEFAULT 0,
     updated_time BIGINT NOT NULL DEFAULT 0,
     INDEX idx_chat_sessions_user (user_id, updated_time)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // 对话项目（ChatGPT 式的「项目」概念）：把会话归档到一个项目下便于分类。
+  // 项目只是组织手段，不影响计费与路由；一个会话最多属于一个项目（可随时移出）。
+  `CREATE TABLE IF NOT EXISTS chat_projects (
+    id VARCHAR(32) NOT NULL PRIMARY KEY COMMENT '项目 id（短随机串）',
+    user_id INT NOT NULL,
+    name VARCHAR(64) NOT NULL DEFAULT '',
+    remark VARCHAR(255) NOT NULL DEFAULT '',
+    created_time BIGINT NOT NULL DEFAULT 0,
+    updated_time BIGINT NOT NULL DEFAULT 0,
+    INDEX idx_chat_projects_user (user_id, updated_time)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
   `CREATE TABLE IF NOT EXISTS chat_messages (
@@ -219,8 +234,11 @@ const COLUMN_MIGRATIONS = [
   { table: "channels", column: "auto_test", ddl: "TINYINT NOT NULL DEFAULT 0" },
   { table: "channels", column: "auto_test_interval", ddl: "INT NOT NULL DEFAULT 3600" },
   { table: "channels", column: "last_test_time", ddl: "BIGINT NOT NULL DEFAULT 0" },
-  { table: "channels", column: "groups", ddl: "TEXT" },
+  { table: "channels", column: "group_list", ddl: "TEXT" },
   { table: "channels", column: "recent_calls", ddl: "TEXT" },
+  { table: "chat_sessions", column: "project_id", ddl: "VARCHAR(32) NOT NULL DEFAULT ''" },
+  { table: "chat_sessions", column: "archived", ddl: "TINYINT NOT NULL DEFAULT 0" },
+  { table: "chat_sessions", column: "pinned", ddl: "TINYINT NOT NULL DEFAULT 0" },
 ];
 
 // 列类型扩容（老库）：列宽不足时 ALTER。
@@ -257,12 +275,12 @@ async function ensureColumns() {
 //   · 老库 channels.groups 为空 → 用 group_name 回填（保持既有行为）
 //   · channel_groups 补齐现有 group_name 去重后的分组行
 async function ensureGroups() {
-  const [rows] = await pool.query("SELECT id, type, group_name, groups FROM channels");
+  const [rows] = await pool.query("SELECT id, type, group_name, group_list FROM channels");
   for (const r of rows) {
-    const need = !r.groups || String(r.groups).trim() === "";
+    const need = !r.group_list || String(r.group_list).trim() === "";
     if (!need) continue;
     const groups = [r.group_name && String(r.group_name).trim() ? String(r.group_name).trim() : "default"];
-    await pool.query("UPDATE channels SET groups = ? WHERE id = ?", [JSON.stringify(groups), r.id]);
+    await pool.query("UPDATE channels SET group_list = ? WHERE id = ?", [JSON.stringify(groups), r.id]);
   }
   const seen = new Set();
   for (const r of rows) {

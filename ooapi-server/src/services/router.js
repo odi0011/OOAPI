@@ -278,7 +278,7 @@ export function rowToChannel(r) {
   // 所属分组（一个账号可属多个；空则退回 group_name，保证老数据行为不变）
   let groups = [];
   try {
-    groups = r.groups ? JSON.parse(r.groups) : [];
+    groups = r.group_list ? JSON.parse(r.group_list) : [];
   } catch {
     groups = [];
   }

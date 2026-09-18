@@ -98,10 +98,10 @@ async function ensureGroupRows(type, groups) {
   }
 }
 
-/** 渠道行的 groups 解析（兼容老数据：空则回退 group_name） */
+/** 渠道行的分组解析（兼容老数据：空则回退 group_name；列名 group_list 避开 MySQL 保留字） */
 function parseGroups(row) {
   try {
-    const arr = row?.groups ? JSON.parse(row.groups) : [];
+    const arr = row?.group_list ? JSON.parse(row.group_list) : [];
     if (Array.isArray(arr) && arr.length) return arr.map((s) => String(s)).filter(Boolean);
   } catch {
     /* ignore */
@@ -114,7 +114,7 @@ router.get(
   "/groups",
   asyncHandler(async (req, res) => {
     const [rows] = await pool.query("SELECT * FROM channel_groups ORDER BY type, name");
-    const [chans] = await pool.query("SELECT type, groups, group_name FROM channels");
+    const [chans] = await pool.query("SELECT type, group_list, group_name FROM channels");
     const counts = new Map();
     for (const c of chans) {
       for (const g of parseGroups(c)) {
@@ -166,11 +166,11 @@ router.delete(
     if (!rows.length) return fail(res, "分组不存在", 404);
     const group = rows[0];
     await pool.query("DELETE FROM channel_groups WHERE id = ?", [gid]);
-    const [chans] = await pool.query("SELECT id, groups, group_name FROM channels WHERE type = ?", [group.type]);
+    const [chans] = await pool.query("SELECT id, group_list, group_name FROM channels WHERE type = ?", [group.type]);
     for (const c of chans) {
       const next = parseGroups(c).filter((g) => g !== group.name);
       const final = next.length ? next : ["default"];
-      await pool.query("UPDATE channels SET groups = ?, group_name = ? WHERE id = ?", [
+      await pool.query("UPDATE channels SET group_list = ?, group_name = ? WHERE id = ?", [
         JSON.stringify(final),
         final[0],
         c.id,
@@ -764,7 +764,7 @@ router.post(
       await pool.query(
         `UPDATE channels SET name = ?, api_key = ?, other = ?, last_error = '',
            models = COALESCE(?, models),
-           group_name = COALESCE(?, group_name), groups = COALESCE(?, groups),
+           group_name = COALESCE(?, group_name), group_list = COALESCE(?, group_list),
            weight = COALESCE(?, weight), auto_ban = COALESCE(?, auto_ban),
            priority = COALESCE(?, priority)
          WHERE id = ?`,
@@ -803,7 +803,7 @@ router.post(
     if (mode === "browser") {
       // 列与值必须严格一一对应（name,type,base_url,models,group_name,groups,priority,weight,auto_ban,other,created_time）
       const [ret] = await pool.query(
-        `INSERT INTO channels (name, type, base_url, api_key, models, group_name, groups, status, priority, weight, auto_ban, other, created_time)
+        `INSERT INTO channels (name, type, base_url, api_key, models, group_name, group_list, status, priority, weight, auto_ban, other, created_time)
          VALUES (?,?,?, '', ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
         [
           String(name || `${provider.name} 渠道`).slice(0, 64),
@@ -850,7 +850,7 @@ router.post(
         if (dup.length) return fail(res, "该账号已存在（登录态重复）");
       }
       const [ret] = await pool.query(
-        `INSERT INTO channels (name, type, base_url, api_key, models, group_name, groups, status, priority, weight, auto_ban, other, created_time)
+        `INSERT INTO channels (name, type, base_url, api_key, models, group_name, group_list, status, priority, weight, auto_ban, other, created_time)
          VALUES (?,?,?,?,?,?,?, 1, ?, ?, ?, ?, ?)`,
         [
           String(name || accountLabel || `${provider.name} 渠道`).slice(0, 64),
@@ -944,7 +944,7 @@ router.post(
           continue;
         }
         await pool.query(
-          `INSERT INTO channels (name, type, base_url, api_key, models, group_name, groups, status, priority, weight, other, created_time)
+          `INSERT INTO channels (name, type, base_url, api_key, models, group_name, group_list, status, priority, weight, other, created_time)
            VALUES (?,?,?,?,?, 'default', '["default"]', 1, ?, 1, ?, ?)`,
           [account, type, mCfg.baseUrl || "", r.token, models, priorityVal, JSON.stringify(other), now()]
         );
@@ -1001,7 +1001,7 @@ router.post(
     const groups = normalizeGroups(b.groups !== undefined ? b.groups : b.group_name);
     await ensureGroupRows(type, groups);
     const [ret] = await pool.query(
-      `INSERT INTO channels (name, type, base_url, api_key, models, group_name, groups, status, priority, weight, remark, auto_ban, other, created_time)
+      `INSERT INTO channels (name, type, base_url, api_key, models, group_name, group_list, status, priority, weight, remark, auto_ban, other, created_time)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         name.slice(0, 64),
@@ -1056,7 +1056,7 @@ router.put(
     if (b.groups !== undefined || b.group_name !== undefined) {
       const groups = normalizeGroups(b.groups !== undefined ? b.groups : b.group_name);
       await ensureGroupRows(cur.type, groups);
-      setIf("groups", JSON.stringify(groups));
+      setIf("group_list", JSON.stringify(groups));
       setIf("group_name", groups[0]);
     }
     if (b.status !== undefined) {
@@ -1261,7 +1261,7 @@ router.post(
       // 分组按厂商隔离：给选中的各厂商补齐分组行后再绑定
       const [types] = await pool.query(`SELECT DISTINCT type FROM channels WHERE id IN (${ph})`, list);
       for (const t of types) await ensureGroupRows(t.type, [g]).catch(() => {});
-      await pool.query(`UPDATE channels SET group_name = ?, groups = ? WHERE id IN (${ph})`, [
+      await pool.query(`UPDATE channels SET group_name = ?, group_list = ? WHERE id IN (${ph})`, [
         g,
         JSON.stringify([g]),
         ...list,
@@ -1339,7 +1339,7 @@ router.post(
         }
         const baseUrl = String(a.base_url || mCfg.baseUrl || "").slice(0, 255);
           const [ret] = await pool.query(
-            `INSERT INTO channels (name, type, base_url, api_key, models, group_name, groups, status, priority, weight, auto_ban, other, created_time)
+            `INSERT INTO channels (name, type, base_url, api_key, models, group_name, group_list, status, priority, weight, auto_ban, other, created_time)
              VALUES (?,?,?,?,?, 'default', '["default"]', 1, ?, 1, 1, ?, ?)`,
           [
             String(a.name || `${a.type} 渠道`).slice(0, 64),
