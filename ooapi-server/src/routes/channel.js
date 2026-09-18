@@ -25,12 +25,13 @@ import { ok, fail, asyncHandler, now, assertPublicUrl, idParam, safeInt } from "
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod } from "../services/channel-types.js";
-import { buildLoginUrl, exchangeCodeForCredential, interactiveLoginInfo } from "../services/upstream/oauth-login.js";
+import { buildLoginUrl, exchangeCodeForCredential, interactiveLoginInfo, supportsInteractiveLogin } from "../services/upstream/oauth-login.js";
 import { getAdapter, resetChannelState, forgetChannel, channelRuntimeState, channelRecent, rowToChannel, recordChannelCall } from "../services/router.js";
 import { clearGroupConfigCache } from "../services/group-rate.js";
 import {
   isReady as browserReady,
   removeProfile,
+  copyProfile,
   screenshot as browserShot,
   getSession as browserSession,
   act as browserAct,
@@ -711,7 +712,8 @@ function sweepCaptures() {
     if (c.at < cutoff) {
       CAPTURES.delete(sid);
       browserClose(c.type, c.channelId).catch(() => {});
-      removeProfile(c.type, c.channelId).catch(() => {});
+      // 浏览器 onboarding 的 profile 要保留（用户可能重新打开继续登录）
+      if (c.kind !== "browser") removeProfile(c.type, c.channelId).catch(() => {});
     }
   }
 }
@@ -727,24 +729,69 @@ router.post(
   "/capture/start",
   asyncHandler(async (req, res) => {
     sweepCaptures();
-    const { type } = req.body || {};
+    const { type, method } = req.body || {};
     const provider = getProvider(type);
     if (!provider) return fail(res, "未知厂商");
-    const mCfg = getMethod(type, "relay");
+
+    // 订阅 OAuth（gemini / openai / anthropic）：打开官方授权页，
+    // 在服务器浏览器里登录（截图操作），页面跳到 localhost 回调后由 /capture 换 token 回填表单。
+    if (supportsInteractiveLogin(type)) {
+      let login;
+      try {
+        login = buildLoginUrl(type);
+      } catch (e) {
+        return fail(res, e.message, e.code === "CHANNEL_CONFIG_ERROR" ? 400 : 500);
+      }
+      const sid = randomBytes(8).toString("hex");
+      const channelId = `capture-${sid}`;
+      try {
+        await browserSession({ vendor: type, channelId, entryUrl: login.url, profile: {} });
+      } catch (e) {
+        await removeProfile(type, channelId).catch(() => {});
+        return fail(res, `授权页打开失败：${e.message}`);
+      }
+      CAPTURES.set(sid, {
+        type,
+        method: String(method || ""),
+        channelId,
+        at: Date.now(),
+        kind: "oauth",
+        oauthState: login.state,
+        redirectUri: login.redirectUri,
+      });
+      const shot = await browserShot(type, channelId);
+      if (!shot) return fail(res, "浏览器会话未就绪，请重试");
+      return ok(res, {
+        sid,
+        ...shot,
+        kind: "oauth",
+        hint: `在截图里完成登录；页面会跳到 ${login.redirectUri}（页面打不开是正常的），再点「抓取凭据」`,
+      });
+    }
+
+    const mCfg = getMethod(type, String(method || "relay")) || getMethod(type, "relay");
     if (!mCfg?.entryUrl) return fail(res, `${provider.name} 不支持远程登录抓取，请按提示手动填写登录态`);
 
+    // 浏览器登录类（GLM/豆包/通义）：用共享的 onboarding profile，
+    // 登录完成后 profile 会复制给新建的渠道，省掉「先建渠道再回来登录」。
+    const onboard = Boolean(mCfg.needsBrowser);
     const sid = randomBytes(8).toString("hex");
-    const channelId = `capture-${sid}`;
+    const channelId = onboard ? "onboarding" : `capture-${sid}`;
     try {
       await browserSession({ vendor: type, channelId, entryUrl: mCfg.entryUrl, profile: {} });
     } catch (e) {
-      await removeProfile(type, channelId).catch(() => {});
+      if (!onboard) await removeProfile(type, channelId).catch(() => {});
       return fail(res, `登录页打开失败：${e.message}`);
     }
-    CAPTURES.set(sid, { type, channelId, at: Date.now() });
+    CAPTURES.set(sid, { type, channelId, at: Date.now(), kind: onboard ? "browser" : "paste" });
     const shot = await browserShot(type, channelId);
     if (!shot) return fail(res, "浏览器会话未就绪，请重试");
-    return ok(res, { sid, ...shot, hint: mCfg.captureHint || "请在登录页完成登录，然后点「抓取登录态」" });
+    return ok(res, {
+      sid,
+      ...shot,
+      kind: onboard ? "browser" : "paste",
+      hint: mCfg.captureHint || "请在登录页完成登录，然后点「抓取登录态」",
+    });
   })
 );
 
@@ -779,9 +826,58 @@ router.post(
   asyncHandler(async (req, res) => {
     const c = captureOf(req);
     if (!c) return fail(res, "会话已过期，请重新打开登录页", 404);
+    const sid = String(req.params.sid);
+
+    // OAuth：读当前页面 URL，捕获 localhost 回调地址后换 token，凭据直接回填表单
+    if (c.kind === "oauth") {
+      const shot = await browserShot(c.type, c.channelId);
+      const url = String(shot?.url || "");
+      if (!url.startsWith(c.redirectUri) || !/[?&]code=/.test(url)) {
+        return fail(
+          res,
+          `还没检测到授权回调：请在截图里完成登录，页面跳到 ${c.redirectUri}（打不开正常）后再点一次「抓取凭据」`
+        );
+      }
+      let result;
+      try {
+        result = await exchangeCodeForCredential(c.type, url, c.oauthState);
+      } catch (e) {
+        return fail(res, e.message, 400);
+      }
+      const token = JSON.stringify(result.credential, null, 2);
+      let accountLabel = result.accountLabel || "";
+      // 顺手交给适配器解析一次：能拿到更友好的账号标签；解析失败不影响提交（login 时会再解析）
+      try {
+        const provider = getProvider(c.type);
+        const mCfg = (provider?.methods || []).find((m) => isOAuthMethod(m.key)) || null;
+        const adapter = mCfg ? await getAdapter(mCfg.adapter || mCfg.key) : null;
+        if (adapter?.importAuth) {
+          const r = await adapter.importAuth(result.credential);
+          accountLabel = r.accountLabel || accountLabel;
+        }
+      } catch {
+        /* ignore */
+      }
+      CAPTURES.delete(sid);
+      await browserClose(c.type, c.channelId).catch(() => {});
+      await removeProfile(c.type, c.channelId).catch(() => {});
+      return ok(
+        res,
+        { oauth: true, accountLabel, cookies: "", tokens: [{ key: "凭据 JSON", value: token, score: 100 }] },
+        "已抓到登录凭据，请确认回填"
+      );
+    }
+
+    // 浏览器 onboarding：登录态就在 profile 目录里，保留它，等提交时复制给渠道
+    if (c.kind === "browser") {
+      CAPTURES.delete(sid);
+      await browserClose(c.type, c.channelId).catch(() => {});
+      return ok(res, { browserReady: true, cookies: "", tokens: [] }, "已记录浏览器登录状态，请点「添加」保存渠道");
+    }
+
     const data = await browserCreds(c.type, c.channelId);
     // 抓取完成即回收：关闭浏览器 + 删除临时 profile
-    CAPTURES.delete(String(req.params.sid));
+    CAPTURES.delete(sid);
     await browserClose(c.type, c.channelId).catch(() => {});
     await removeProfile(c.type, c.channelId).catch(() => {});
     if (!data) return fail(res, "会话已结束，请重新打开登录页", 404);
@@ -800,7 +896,8 @@ router.post(
     if (c) {
       CAPTURES.delete(sid);
       await browserClose(c.type, c.channelId).catch(() => {});
-      await removeProfile(c.type, c.channelId).catch(() => {});
+      // onboarding 的 profile 保留，方便用户再次打开继续/复用登录
+      if (c.kind !== "browser") await removeProfile(c.type, c.channelId).catch(() => {});
     }
     return ok(res, null, "已关闭");
   })
@@ -828,11 +925,14 @@ router.post(
 router.post(
   "/oauth/exchange",
   asyncHandler(async (req, res) => {
-    const { type, name, priority, state, callback, id } = req.body || {};
+    const { type, name, priority, state, callback, id, method } = req.body || {};
     const provider = getProvider(type);
     if (!provider) return fail(res, "未知厂商");
-    const methodCfg = getMethod(type, "antigravity");
-    const adapterKey = methodCfg?.adapter || "antigravity";
+    // 按请求里的 method 找该厂商的订阅方式（不写死 antigravity，gemini/openai/anthropic 都走这里）
+    const methodCfg =
+      (method && getMethod(type, String(method))) || (provider.methods || []).find((m) => isOAuthMethod(m.key));
+    if (!methodCfg?.oauth) return fail(res, `${provider.name} 不支持订阅登录`);
+    const adapterKey = methodCfg.adapter || methodCfg.key;
     let adapter;
     try {
       adapter = await getAdapter(adapterKey);
@@ -966,7 +1066,21 @@ router.post(
       if (isOAuthMethod(methodKey)) {
         // 订阅型 OAuth：粘贴官方 CLI 的凭据 JSON，由适配器解析并落库
         if (!adapter.importAuth) return fail(res, `${provider.name} 适配器未实现凭据导入`);
-        const r = await adapter.importAuth({ ...rest, mode: "paste" });
+        let authInput = String(rest.token || "");
+        // 只填了 refresh_token（在别处登录过、手上只有 RT）：先用适配器刷出 access_token 再解析。
+        // 刷新函数需要 channel 形状：用 id=0 的临时对象，持久化写不到任何行（不会污染数据）。
+        try {
+          const obj = JSON.parse(authInput);
+          const hasAt = Boolean(obj && (obj.access_token || obj.accessToken));
+          const hasRt = Boolean(obj && (obj.refresh_token || obj.refreshToken));
+          if (obj && !hasAt && hasRt && adapter.refreshAuth) {
+            const fresh = await adapter.refreshAuth({ id: 0, name: "import", type, other: obj }, { force: true });
+            if (fresh?.access_token) authInput = JSON.stringify({ ...obj, ...fresh, access_token: fresh.access_token });
+          }
+        } catch {
+          /* 不是 JSON / 无需刷新：交给 importAuth 报错 */
+        }
+        const r = await adapter.importAuth({ ...rest, token: authInput, mode: "paste" });
         token = String(r.token || "").slice(0, 60_000);
         other = { method: methodKey, ...(r.other || {}) };
         accountLabel = r.accountLabel || null;
@@ -1052,6 +1166,12 @@ router.post(
       );
       resetChannelState(targetId);
 
+      // 表单里已完成「浏览器登录」（onboarding）：把那份已登录 profile 复制给渠道
+      if (mode === "browser" && String(rest.profileFrom || "") === "onboarding") {
+        const copied = await copyProfile(type, "onboarding", String(targetId));
+        if (!copied) return fail(res, "浏览器登录态已失效，请重新打开登录页登录后再提交", 400);
+      }
+
       if (mode === "browser") {
         const [fresh] = await pool.query("SELECT * FROM channels WHERE id = ?", [targetId]);
         try {
@@ -1089,6 +1209,13 @@ router.post(
         ]
       );
       insertId = ret.insertId;
+      if (mode === "browser" && String(rest.profileFrom || "") === "onboarding") {
+        const copied = await copyProfile(type, "onboarding", String(insertId));
+        if (!copied) {
+          await pool.query("DELETE FROM channels WHERE id = ?", [insertId]).catch(() => {});
+          return fail(res, "浏览器登录态已失效：请重新点「登录」完成登录后再提交", 400);
+        }
+      }
       const [fresh] = await pool.query("SELECT * FROM channels WHERE id = ?", [insertId]);
       try {
         const ms = await adapter.verify(rowToChannel(fresh[0]));

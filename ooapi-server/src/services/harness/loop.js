@@ -406,6 +406,8 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
           record,
           runAgent: childRunAgent,
           todo,
+          // 最近调用里显示调用方（工具触发的上游请求也归属到同一次对话的用户）
+          user,
           // 某些上游（如网页版反代）不支持联网搜索：工具要据此拒绝，而不是发一次必定失败的请求
           searchSupported: modelCaps?.supportsSearch !== false,
         })

@@ -13,7 +13,7 @@
 //   2. 同账号请求串行，不并发（并发是非人类特征）
 //   3. 闲置自动回收，避免长期占用内存
 import { chromium } from "playwright";
-import { mkdirSync, existsSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, existsSync, writeFileSync, rmSync, cpSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -66,6 +66,23 @@ export async function removeProfile(vendor, channelId) {
     rmSync(path.join(PROFILE_ROOT, `${vendor}-${channelId}`), { recursive: true, force: true });
   } catch {
     /* ignore */
+  }
+}
+
+/** 把「引导登录」用的 profile 复制成某个渠道的 profile。
+ * 添加浏览器登录类渠道时：先在共享的 onboarding 会话里完成登录（扫码/验证码），
+ * 落库拿到渠道 id 后再把这份已登录的 profile 复制过去，渠道即可直接使用。 */
+export async function copyProfile(vendor, fromId, toId) {
+  await closeSession(vendor, fromId).catch(() => {});
+  const src = path.join(PROFILE_ROOT, `${vendor}-${fromId}`);
+  const dst = path.join(PROFILE_ROOT, `${vendor}-${toId}`);
+  if (!existsSync(src)) return false;
+  try {
+    rmSync(dst, { recursive: true, force: true });
+    cpSync(src, dst, { recursive: true });
+    return true;
+  } catch {
+    return false;
   }
 }
 

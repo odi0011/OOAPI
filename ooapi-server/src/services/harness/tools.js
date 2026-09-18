@@ -127,6 +127,7 @@ export const TOOLS = {
         search: true,
         images: [],
         groupName: ctx.groupName,
+        user: ctx.user,
         signal: ctx.signal,
       });
       ctx.record({

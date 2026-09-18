@@ -22,14 +22,14 @@ import crypto from "node:crypto";
 // state 是给「同一个登录会话」用的临时凭据，这里用一个短 TTL 的内存表；
 // 服务重启会丢失进行中的登录（用户重新点一次即可），这是可接受的取舍。
 const PENDING_TTL_MS = 15 * 60 * 1000;
-const pending = new Map(); // state -> { type, createdAt }
+const pending = new Map(); // state -> { type, createdAt, verifier, redirectUri }
 
-function rememberState(state, type) {
+function rememberState(state, type, extra = {}) {
   const now = Date.now();
   for (const [k, v] of pending) {
     if (now - v.createdAt > PENDING_TTL_MS) pending.delete(k);
   }
-  pending.set(state, { type, createdAt: now });
+  pending.set(state, { type, createdAt: now, ...extra });
 }
 
 function consumeState(state) {
@@ -40,7 +40,33 @@ function consumeState(state) {
   return hit;
 }
 
-/** 各厂商的 OAuth 配置。google 用 Antigravity/Code Assist 的公开客户端凭据（从 .env 读）。 */
+// PKCE（RFC 7636）：codex / claude 的公开客户端要求 S256 challenge，换 token 时回传 verifier
+function b64url(buf) {
+  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function makePkce() {
+  const verifier = b64url(crypto.randomBytes(32));
+  const challenge = b64url(crypto.createHash("sha256").update(verifier).digest());
+  return { verifier, challenge };
+}
+
+/** 解码 JWT payload（不验签）：各厂商 id_token 里带着账号标识，用于展示与去重 */
+function decodeJwtPayload(token) {
+  try {
+    const p = String(token || "").split(".")[1];
+    if (!p) return {};
+    return JSON.parse(Buffer.from(p.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"));
+  } catch {
+    return {};
+  }
+}
+
+/** 各厂商的 OAuth 配置。
+ *  gemini    → Google（Antigravity/Code Assist 公开客户端，凭据从 .env 读）
+ *  openai    → Codex（ChatGPT 订阅，PKCE，公开 client_id）
+ *  anthropic → Claude Code（订阅，PKCE，公开 client_id）
+ *  redirect_uri 都固定指向用户本机 localhost：我们不需要真的监听，只要能把回调 URL 拿回来换 token。
+ */
 function oauthConfigFor(type) {
   if (type === "gemini") {
     const clientId = String(process.env.GOOGLE_OAUTH_CLIENT_ID || "").trim();
@@ -74,6 +100,34 @@ function oauthConfigFor(type) {
       extraAuth: { access_type: "offline", prompt: "consent" },
     };
   }
+  if (type === "openai") {
+    // Codex CLI 使用的公开客户端；换 token 走表单 + PKCE verifier，不需要 client_secret
+    return {
+      type,
+      clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
+      clientSecret: "",
+      authUrl: "https://auth.openai.com/oauth/authorize",
+      tokenUrl: "https://auth.openai.com/oauth/token",
+      scopes: ["openid", "profile", "email", "offline_access"],
+      redirectUri: "http://localhost:1455/auth/callback",
+      pkce: true,
+      extraAuth: { id_token_add_organizations: "true", codex_cli_simplified_flow: "true", originator: "codex_cli_rs" },
+    };
+  }
+  if (type === "anthropic") {
+    // Claude Code 使用的公开客户端；token 端点是 JSON 请求体 + PKCE
+    return {
+      type,
+      clientId: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+      clientSecret: "",
+      authUrl: "https://claude.ai/oauth/authorize",
+      tokenUrl: "https://platform.claude.com/v1/oauth/token",
+      scopes: ["user:profile", "user:inference", "user:sessions:claude_code", "user:mcp_servers", "user:file_upload"],
+      redirectUri: "http://localhost:54545/callback",
+      pkce: true,
+      exchangeStyle: "json",
+    };
+  }
   throw Object.assign(new Error("这个接入方式暂不支持交互式登录，请使用「粘贴凭据」"), {
     code: "LOGIN_BAD_PARAMS",
   });
@@ -81,8 +135,7 @@ function oauthConfigFor(type) {
 
 /** 该厂商是否支持交互式登录（前端据此显示「登录账号」按钮） */
 export function supportsInteractiveLogin(type) {
-  if (type !== "gemini") return false;
-  return true;
+  return ["gemini", "openai", "anthropic"].includes(String(type || ""));
 }
 
 /**
@@ -92,7 +145,7 @@ export function supportsInteractiveLogin(type) {
 export function buildLoginUrl(type) {
   const cfg = oauthConfigFor(type);
   const state = crypto.randomBytes(16).toString("hex");
-  rememberState(state, type);
+  const extra = { redirectUri: cfg.redirectUri };
   const params = new URLSearchParams({
     client_id: cfg.clientId,
     redirect_uri: cfg.redirectUri,
@@ -101,6 +154,13 @@ export function buildLoginUrl(type) {
     state,
     ...cfg.extraAuth,
   });
+  if (cfg.pkce) {
+    const { verifier, challenge } = makePkce();
+    extra.verifier = verifier;
+    params.set("code_challenge", challenge);
+    params.set("code_challenge_method", "S256");
+  }
+  rememberState(state, type, extra);
   return { url: `${cfg.authUrl}?${params.toString()}`, state, redirectUri: cfg.redirectUri };
 }
 
@@ -141,23 +201,30 @@ export async function exchangeCodeForCredential(type, pastedInput, expectedState
       code: "LOGIN_BAD_PARAMS",
     });
   }
-  if (expectedState && !consumeState(expectedState)) {
+  // 取出本次登录的上下文（PKCE verifier / 回调地址）；带上 expectedState 时必须命中
+  const lookup = expectedState || state;
+  const hit = lookup ? consumeState(lookup) : null;
+  if (expectedState && !hit) {
     throw Object.assign(new Error("这次登录已超时（超过 15 分钟），请重新点击「登录账号」"), {
       code: "LOGIN_BAD_PARAMS",
     });
   }
 
-  const body = new URLSearchParams({
+  const params = new URLSearchParams({
     code,
     client_id: cfg.clientId,
-    client_secret: cfg.clientSecret,
     redirect_uri: cfg.redirectUri,
     grant_type: "authorization_code",
   });
+  if (cfg.clientSecret) params.set("client_secret", cfg.clientSecret);
+  if (hit?.verifier) params.set("code_verifier", hit.verifier);
+  const asJson = cfg.exchangeStyle === "json";
   const resp = await fetch(cfg.tokenUrl, {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-    body,
+    headers: asJson
+      ? { "content-type": "application/json", accept: "application/json" }
+      : { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    body: asJson ? JSON.stringify(Object.fromEntries(params)) : params,
     signal: AbortSignal.timeout(30_000),
   });
   const text = await resp.text();
@@ -180,23 +247,28 @@ export async function exchangeCodeForCredential(type, pastedInput, expectedState
   }
   if (!j.refresh_token) {
     // 没有 refresh_token 意味着访问令牌一小时后失效、无法续期 —— 对订阅渠道等于废号，
-    // 与其收下一个「一小时后必然失效」的渠道，不如当场告诉用户重来（通常是没带 prompt=consent）。
-    throw Object.assign(
-      new Error("上游没有返回 refresh_token（无法自动续期）。请重新点击「登录账号」，并在 Google 页面确认授权"),
-      { code: "LOGIN_FAILED" }
-    );
+    // 与其收下一个「一小时后必然失效」的渠道，不如当场告诉用户重来。
+    throw Object.assign(new Error("上游没有返回 refresh_token（无法自动续期）。请重新登录并在授权页确认授权"), {
+      code: "LOGIN_FAILED",
+    });
   }
 
-  // 顺手取一下邮箱，作为「账号标识」用于去重与展示
-  let email = "";
-  try {
-    const ui = await fetch("https://www.googleapis.com/oauth2/v2/userinfo?alt=json", {
-      headers: { authorization: `Bearer ${j.access_token}` },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (ui.ok) email = String((await ui.json())?.email || "");
-  } catch {
-    /* 取不到邮箱不影响登录本身 */
+  // id_token 里带账号标识（codex 的 account_id / 各家的 email）
+  const jwt = j.id_token ? decodeJwtPayload(j.id_token) : {};
+  let email = String(jwt.email || "");
+  const accountId = String(jwt["https://api.openai.com/auth"]?.chatgpt_account_id || jwt.chatgpt_account_id || "");
+
+  // Google 顺手取一下邮箱（id_token 里通常也有，这里兜底）
+  if (!email && cfg.type === "gemini") {
+    try {
+      const ui = await fetch("https://www.googleapis.com/oauth2/v2/userinfo?alt=json", {
+        headers: { authorization: `Bearer ${j.access_token}` },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (ui.ok) email = String((await ui.json())?.email || "");
+    } catch {
+      /* 取不到邮箱不影响登录本身 */
+    }
   }
 
   return {
@@ -205,9 +277,12 @@ export async function exchangeCodeForCredential(type, pastedInput, expectedState
       refresh_token: j.refresh_token,
       expires_at: Math.floor(Date.now() / 1000) + (Number(j.expires_in) || 3600),
       scope: j.scope || cfg.scopes.join(" "),
-      email,
+      token_type: j.token_type || "Bearer",
+      ...(j.id_token ? { id_token: j.id_token } : {}),
+      ...(email ? { email } : {}),
+      ...(accountId ? { account_id: accountId } : {}),
     },
-    accountLabel: email,
+    accountLabel: email || accountId,
   };
 }
 

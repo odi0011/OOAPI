@@ -16,8 +16,20 @@ import { VendorIcon, ModelLabel } from "../components/VendorIcon";
 
 const { Text } = Typography;
 
+// 网页版多轮 prompt 的角色标记（<｜User｜> / <｜Assistant｜> / <｜end▁of▁sentence｜>）：
+// 只对上游有用，展示前剥掉（老记录里也存了这些标记，渲染时统一清理）。
+const ROLE_TOKEN_RE = /<[｜|]\s*(?:User|Assistant|System)\s*[｜|]>|<[｜|]end[▁_\s]?of[▁_\s]?sentence[｜|]>/g;
+const cleanSummary = (s) => String(s ?? "").replace(ROLE_TOKEN_RE, "").replace(/\s+/g, " ").trim();
+// 用户名太长会把这一列撑开：只显示前两个字符 + …（完整名字放在悬浮提示里）
+const shortUser = (n) => {
+  const s = String(n || "用户");
+  return s.length > 2 ? `${Array.from(s).slice(0, 2).join("")}…` : s;
+};
+
 // 小绿条悬浮 tip：时间/结果/耗时 + 本次的提示词与回复摘要
 function UptimeTip({ c }) {
+  const p = cleanSummary(c.p);
+  const r = cleanSummary(c.r);
   return (
     <div className="oo-uptime-tip">
       <div className="oo-uptime-tip-head">
@@ -25,16 +37,16 @@ function UptimeTip({ c }) {
         {c.ms ? ` · ${c.ms}ms` : ""}
         {c.k === "auto" ? " · 定时检测" : c.k === "test" ? " · 手动测试" : c.k === "chat" ? " · 对话调用" : ""}
       </div>
-      {c.p ? (
+      {p ? (
         <div className="oo-uptime-tip-row">
           <span className="oo-uptime-tip-label">提示词</span>
-          <div className="oo-tip-snippet">{c.p}</div>
+          <div className="oo-tip-snippet">{p}</div>
         </div>
       ) : null}
-      {c.r ? (
+      {r ? (
         <div className="oo-uptime-tip-row">
           <span className="oo-uptime-tip-label">{c.ok ? "回复" : "错误"}</span>
-          <div className="oo-tip-snippet">{c.r}</div>
+          <div className="oo-tip-snippet">{r}</div>
         </div>
       ) : null}
       {c.d !== undefined || c.st !== undefined ? (
@@ -665,6 +677,8 @@ export default function AdminChannelsPage() {
   const [browserTarget, setBrowserTarget] = useState(null);
   const [browserShot, setBrowserShot] = useState(null);
   const [browserBusy, setBrowserBusy] = useState(false);
+  // 添加表单里已完成「浏览器登录」（GLM/豆包/通义）：profile 存在服务器 onboarding 目录，提交时复制给渠道
+  const [onboardReady, setOnboardReady] = useState(false);
   // 登录态远程抓取（粘贴登录态的厂商：打开登录页 → 登录 → 自动回填 token/cookies）
   const [capOpen, setCapOpen] = useState(false);
   const [capSid, setCapSid] = useState("");
@@ -784,6 +798,9 @@ export default function AdminChannelsPage() {
     setPickProvider(null);
     setPickMethod(null);
     setAddMode("password");
+    setOnboardReady(false);
+    setOauthUrl("");
+    setOauthState("");
     addForm.resetFields();
     setAddOpen(true);
   };
@@ -797,6 +814,10 @@ export default function AdminChannelsPage() {
   const applyMethod = (p, m, forceMode = null) => {
     if (!m) return;
     setPickMethod(m);
+    // 换厂商/换凭据方式时清掉上一轮的登录态标记，避免把 A 的登录结果带给 B
+    setOnboardReady(false);
+    setOauthUrl("");
+    setOauthState("");
     const mode = forceMode || (m.loginModes && m.loginModes[0]) || "apikey";
     setAddMode(mode);
     const init = {
@@ -850,8 +871,10 @@ export default function AdminChannelsPage() {
           // 已发起交互式登录（oauthUrl 有值）时，粘贴的是回调地址 → 走换 token 接口，
           // 一步完成「换令牌 + 建渠道」，管理员不用再手抄凭据 JSON。
           if (pickMethod.oauth && oauthUrl) {
+            if (!String(v.token || "").trim()) throw new Error("请粘贴登录后地址栏里的完整 URL");
             const r = await API.post("/channel/oauth/exchange", {
               type: pickProvider.key,
+              method: pickMethod.key,
               name: v.name,
               priority: v.priority,
               state: oauthState,
@@ -864,8 +887,21 @@ export default function AdminChannelsPage() {
             await load();
             return;
           }
-          payload.token = v.token;
+          // 订阅渠道允许三种输入：凭据 JSON / 手动填 RT+AT / 导入文件（文件也会填到 token）
+          let token = String(v.token || "").trim();
+          if (pickMethod.oauth && !token) {
+            const at = String(v.access_token || "").trim();
+            const rt = String(v.refresh_token || "").trim();
+            if (at || rt) token = JSON.stringify({ access_token: at, refresh_token: rt });
+          }
+          if (pickMethod.oauth && !token) {
+            throw new Error("请粘贴凭据 JSON、填写 Access/Refresh Token，或导入凭据文件");
+          }
+          payload.token = token;
           payload.cookies = v.cookies;
+        } else if (addMode === "browser") {
+          // 在表单里已通过 onboarding 完成浏览器登录：带上标记，后端把登录 profile 复制给新渠道
+          if (onboardReady) payload.profileFrom = "onboarding";
         }
         const r = await API.post("/channel/login", payload);
         message.success(`渠道「${r.name}」已添加`);
@@ -907,15 +943,24 @@ export default function AdminChannelsPage() {
     setImportOpen(true);
   };
   const readImportFile = async (e) => {
-    const file = e.target.files?.[0];
+    const files = Array.from(e.target.files || []);
     e.target.value = "";
-    if (!file) return;
-    if (file.size > 2 * 1024 * 1024) return message.warning("文件过大（上限 2MB）");
-    try {
-      setImportText(await file.text());
-    } catch {
-      message.error("读取文件失败");
+    if (!files.length) return;
+    // 支持多选/目录一次导入：每个文件的文本按行拼接，后端按多个 JSON 对象逐个解析
+    const chunks = [];
+    for (const file of files) {
+      if (file.size > 2 * 1024 * 1024) {
+        message.warning(`${file.name} 超过 2MB，已跳过`);
+        continue;
+      }
+      try {
+        chunks.push(await file.text());
+      } catch {
+        message.warning(`${file.name} 读取失败，已跳过`);
+      }
     }
+    if (!chunks.length) return;
+    setImportText((prev) => [prev, ...chunks].filter((s) => String(s || "").trim()).join("\n"));
   };
   const submitImport = async () => {
     if (importBusy) return;
@@ -1131,9 +1176,14 @@ export default function AdminChannelsPage() {
     setCapShot(null);
     setCapBusy(true);
     try {
-      const res = await API.post("/channel/capture/start", { type: pickProvider.key });
+      const res = await API.post("/channel/capture/start", {
+        type: pickProvider.key,
+        method: pickMethod?.key || "relay",
+      });
+      // 浏览器登录类：重新登录时先清掉旧的「已登录」标记
+      if (res.kind === "browser") setOnboardReady(false);
       setCapSid(res.sid);
-      setCapShot({ dataUrl: res.dataUrl, url: res.url, hint: res.hint });
+      setCapShot({ dataUrl: res.dataUrl, url: res.url, hint: res.hint, kind: res.kind });
       setCapOpen(true);
     } catch (e) {
       message.error(e.message);
@@ -1181,12 +1231,48 @@ export default function AdminChannelsPage() {
     setCapBusy(true);
     try {
       const res = await API.post(`/channel/capture/${capSid}/capture`);
+      // 浏览器登录类：登录态在服务器 profile 里，提交时复制给渠道
+      if (res.browserReady) {
+        setOnboardReady(true);
+        message.success("浏览器登录已完成，点「添加」保存渠道");
+        closeCapture(true);
+        return;
+      }
       setCapCands({ cookies: res.cookies, tokens: res.tokens || [] });
       setCapPick(res.tokens?.[0]?.value || "");
+      if (res.oauth) message.success("已抓到登录凭据，确认无误后点「添加」");
     } catch (e) {
       message.error(e.message);
     } finally {
       setCapBusy(false);
+    }
+  };
+
+  // 订阅凭据文件导入：Codex auth.json / CPA / sub2api 导出都能识别其中的凭据对象。
+  // 多账号导出（accounts 数组）取第一个；批量导入请用页面顶部的「导入凭据」。
+  const readOAuthFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) return message.warning("文件过大（上限 2MB）");
+    try {
+      const text = await file.text();
+      let payload = text;
+      try {
+        const j = JSON.parse(text);
+        const first = Array.isArray(j) ? j[0] : Array.isArray(j?.accounts) ? j.accounts[0] : j;
+        if (first && typeof first === "object" && first.credentials && typeof first.credentials === "object") {
+          payload = JSON.stringify(first.credentials, null, 2);
+        } else if (first && typeof first === "object") {
+          payload = JSON.stringify(first, null, 2);
+        }
+      } catch {
+        /* 非 JSON：原样填入，提交时由后端给出明确报错 */
+      }
+      addForm.setFieldsValue({ token: payload });
+      message.success("已读取凭据文件，点「添加」会自动校验");
+    } catch {
+      message.error("读取文件失败");
     }
   };
 
@@ -1610,7 +1696,7 @@ export default function AdminChannelsPage() {
           <Space>
             <button className="bui-btn" onClick={() => setAddOpen(false)}>取消</button>
             <button className="bui-btn bui-btn--primary" onClick={submitAdd} disabled={!pickMethod || addSubmitting}>
-              {isRelay ? "登录并添加" : "创建渠道"}
+              添加
             </button>
           </Space>
         }
@@ -1705,62 +1791,117 @@ export default function AdminChannelsPage() {
                               </Space>
                             </Form.Item>
                           ) : null}
-                          {/* 订阅 OAuth 支持交互式登录：跳官方页面登录 → 复制回调地址回来。
-                              比「先用官方 CLI 登录再抄凭据文件」省一步，且不需要公网回调地址。 */}
+                          {/* 订阅 OAuth：两种登录方式。
+                              · 一键登录：在服务器浏览器里打开官方授权页（截图操作），自动抓回调换 token；
+                              · 手动：打开授权页面，把打不开的 localhost 回调地址复制回来。 */}
                           {pickMethod.oauth && oauthSupported ? (
                             <Form.Item label="登录账号（推荐）">
                               <Space wrap>
-                                <Button icon={<GlobalOutlined />} onClick={startOAuth} loading={oauthBusy}>
-                                  打开授权页面
+                                <Button icon={<GlobalOutlined />} onClick={startCapture} loading={capBusy}>
+                                  一键登录（自动抓取）
+                                </Button>
+                                <Button type="link" onClick={startOAuth} loading={oauthBusy} style={{ padding: 0 }}>
+                                  或手动打开授权页
                                 </Button>
                                 {oauthUrl ? (
                                   <Typography.Link href={oauthUrl} target="_blank" rel="noreferrer">
-                                    或点这里在新窗口打开
+                                    在新窗口打开
                                   </Typography.Link>
                                 ) : null}
                               </Space>
                               <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 6, lineHeight: 1.7 }}>
                                 {oauthUrl
-                                  ? "登录后会跳到一个打不开的 localhost 页面（正常现象）—— 把地址栏那一整串 URL 复制到下面的输入框即可。"
-                                  : "点按钮后会打开官方授权页；也可以直接用下面「粘贴凭据」的方式添加。"}
+                                  ? "登录后会跳到一个打不开的 localhost 页面（正常现象）—— 把地址栏那一整串 URL 复制到下面的输入框，点「添加」即可。"
+                                  : "「一键登录」在服务器浏览器里完成登录，凭据会自动填到下面；也可以直接粘贴凭据文件。"}
                               </div>
                             </Form.Item>
                           ) : null}
                           <Form.Item
                             name="token"
                             label={pickMethod.oauth ? (oauthUrl ? "回调地址 / 授权码" : "凭据 JSON") : "登录态"}
-                            rules={[
-                              {
-                                required: true,
-                                message: pickMethod.oauth ? (oauthUrl ? "请粘贴登录后地址栏里的完整 URL" : "请粘贴凭据 JSON") : "请粘贴登录态",
-                              },
-                            ]}
-                            extra={oauthUrl ? "粘贴形如 http://localhost:51121/oauth-callback?code=... 的完整地址" : pickMethod.pasteHint}
+                            rules={
+                              pickMethod.oauth
+                                ? []
+                                : [{ required: true, message: "请粘贴登录态" }]
+                            }
+                            extra={
+                              oauthUrl
+                                ? "粘贴形如 http://localhost:51121/oauth-callback?code=... 的完整地址"
+                                : pickMethod.pasteHint
+                            }
                           >
                             <Input.TextArea
                               rows={pickMethod.oauth ? 6 : 3}
                               placeholder={pickMethod.oauth ? "粘贴官方 CLI 凭据文件的完整内容（JSON）" : "粘贴登录态值"}
                             />
                           </Form.Item>
-                          {!pickMethod.oauth && (
+                          {pickMethod.oauth ? (
+                            <>
+                              <Form.Item label="没有现成凭据？">
+                                <Space wrap>
+                                  <label className="bui-btn" style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                                    <input
+                                      type="file"
+                                      accept=".json,application/json,text/plain"
+                                      style={{ display: "none" }}
+                                      onChange={readOAuthFile}
+                                    />
+                                    导入凭据文件
+                                  </label>
+                                  <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                                    支持 Codex auth.json、CPA、sub2api 导出；多账号请用顶部「导入凭据」批量添加
+                                  </span>
+                                </Space>
+                              </Form.Item>
+                              <Row gutter={12}>
+                                <Col span={12}>
+                                  <Form.Item name="access_token" label="Access Token（可选）">
+                                    <Input.Password placeholder="eyJ... 或 at-..." autoComplete="off" />
+                                  </Form.Item>
+                                </Col>
+                                <Col span={12}>
+                                  <Form.Item name="refresh_token" label="Refresh Token（可选）">
+                                    <Input.Password placeholder="有 RT 才能自动续期" autoComplete="off" />
+                                  </Form.Item>
+                                </Col>
+                              </Row>
+                            </>
+                          ) : (
                             <Form.Item name="cookies" label="Cookies（可选，建议填写）" extra='JSON 数组，例如 [{"name":"ds_session_id","value":"..."}]'>
                               <Input.TextArea rows={2} placeholder='[{"name":"...","value":"..."}]' />
                             </Form.Item>
                           )}
                         </>
                       ) : addMode === "browser" ? (
-                        <Alert
-                          type="warning"
-                          showIcon
-                          className="oo-alert-compact"
-                          style={{ marginBottom: 16 }}
-                          message="需要浏览器登录"
-                          description={
-                            <span style={{ fontSize: 12 }}>
-                              {pickMethod.browserHint || "点击「登录并添加」后，平台会在服务器上打开浏览器完成登录，验证码与风控由页面自动处理。"}
-                            </span>
-                          }
-                        />
+                        <>
+                          <Alert
+                            type={onboardReady ? "success" : "info"}
+                            showIcon
+                            className="oo-alert-compact"
+                            style={{ marginBottom: 12 }}
+                            message={onboardReady ? "已完成浏览器登录" : "需要浏览器登录"}
+                            description={
+                              <span style={{ fontSize: 12 }}>
+                                {onboardReady
+                                  ? "登录态已就绪，点右下角「添加」保存渠道即可。"
+                                  : pickMethod.browserHint ||
+                                    "点下面的「打开登录页」，在服务器浏览器里完成登录（扫码/验证码），然后回到这里点「添加」。"}
+                              </span>
+                            }
+                          />
+                          <Form.Item label="登录（在服务器浏览器里完成）">
+                            <Space wrap>
+                              <Button icon={<GlobalOutlined />} onClick={startCapture} loading={capBusy}>
+                                {onboardReady ? "重新登录" : "打开登录页"}
+                              </Button>
+                              {onboardReady ? (
+                                <span style={{ fontSize: 12, color: "var(--green)" }}>已登录，可以添加</span>
+                              ) : (
+                                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>登录完成后会自动记录登录态</span>
+                              )}
+                            </Space>
+                          </Form.Item>
+                        </>
                       ) : null}
                     </>
                   ) : (
@@ -2003,7 +2144,7 @@ export default function AdminChannelsPage() {
 
       {/* ============ 登录态远程抓取 ============ */}
       <Modal
-        title="登录并自动抓取登录态"
+        title={capShot?.kind === "oauth" ? "登录并自动抓取凭据" : capShot?.kind === "browser" ? "浏览器登录" : "登录并自动抓取登录态"}
         open={capOpen}
         onCancel={() => closeCapture(false)}
         footer={null}
@@ -2018,7 +2159,10 @@ export default function AdminChannelsPage() {
           message="操作说明"
           description={
             <span style={{ fontSize: 12 }}>
-              {capShot?.hint || "在下方页面里完成登录（可扫码），然后点「抓取登录态」。"}
+              {capShot?.hint ||
+                (capShot?.kind === "oauth"
+                  ? "在下方截图里完成官方登录授权，然后点「完成授权，抓取凭据」。"
+                  : "在下方页面里完成登录（可扫码），然后点「抓取登录态」。")}
               截图每 4 秒自动刷新；可直接在截图上点击（如同意条款、切换登录方式）。
             </span>
           }
@@ -2086,7 +2230,7 @@ export default function AdminChannelsPage() {
             </Space>
             <Space>
               <Button type="primary" onClick={finishCapture} loading={capBusy}>
-                我已登录，抓取登录态
+                {capShot?.kind === "oauth" ? "完成授权，抓取凭据" : capShot?.kind === "browser" ? "我已登录，完成" : "我已登录，抓取登录态"}
               </Button>
               <Button onClick={() => closeCapture(false)}>放弃</Button>
             </Space>
@@ -2212,7 +2356,7 @@ export default function AdminChannelsPage() {
             </span>
           }
         />
-        <input type="file" accept=".json,application/json" onChange={readImportFile} style={{ marginBottom: 10 }} />
+                <input type="file" accept=".json,application/json,.txt,text/plain" multiple onChange={readImportFile} style={{ marginBottom: 10 }} />
         <Input.TextArea
           rows={10}
           value={importText}
@@ -2305,23 +2449,33 @@ export default function AdminChannelsPage() {
                     }}
                   />
                   <span style={{ width: 92, color: "var(--ink-3)", fontSize: 12 }}>{fmtDate(c.t, "MM-DD HH:mm")}</span>
-                  {c.u ? (
-                    <Tooltip title={c.u.e ? `点击复制邮箱：${c.u.e}` : "点击复制用户名"}>
-                      <button type="button" className="bui-user-tag" onClick={() => copyUserContact(c.u)}>
-                        <Avatar size={16} style={{ background: "var(--accent)", fontSize: 10 }}>
-                          {String(c.u.n || "?").slice(0, 1)}
-                        </Avatar>
-                        <span className="oo-truncate" style={{ maxWidth: 88 }}>{c.u.n || "用户"}</span>
-                      </button>
-                    </Tooltip>
-                  ) : c.k === "auto" ? (
-                    <span className="bui-chip">定时</span>
-                  ) : c.k === "test" ? (
-                    <span className="bui-chip">测试</span>
-                  ) : null}
+                  <span className="oo-stats-recent-src">
+                    {c.u ? (
+                      <Tooltip title={`${c.u.n || "用户"}${c.u.e ? ` · ${c.u.e}` : ""}（点击复制）`}>
+                        <button type="button" className="bui-user-tag" onClick={() => copyUserContact(c.u)}>
+                          <Avatar size={16} style={{ background: "var(--accent)", fontSize: 10 }}>
+                            {String(c.u.n || "?").slice(0, 1)}
+                          </Avatar>
+                          <span className="oo-truncate" style={{ maxWidth: 46 }}>{shortUser(c.u.n)}</span>
+                        </button>
+                      </Tooltip>
+                    ) : c.k === "auto" ? (
+                      <span className="bui-chip">定时</span>
+                    ) : c.k === "test" ? (
+                      <span className="bui-chip">测试</span>
+                    ) : c.k === "chat" ? (
+                      <span className="bui-chip">对话</span>
+                    ) : (
+                      <span className="bui-chip" style={{ opacity: 0.6 }}>其他</span>
+                    )}
+                  </span>
                   <span className="oo-num" style={{ width: 56, textAlign: "right", fontSize: 12 }}>{c.ms ? `${c.ms}ms` : "-"}</span>
-                  <span className="oo-truncate" style={{ flex: 1, fontSize: 12 }} title={`${c.p || ""} → ${c.r || ""}`}>
-                    {c.p ? `${c.p} → ${c.r || ""}` : c.r || ""}
+                  <span
+                    className="oo-truncate"
+                    style={{ flex: 1, fontSize: 12 }}
+                    title={`${cleanSummary(c.p)} → ${cleanSummary(c.r)}`}
+                  >
+                    {cleanSummary(c.p) ? `${cleanSummary(c.p)} → ${cleanSummary(c.r)}` : cleanSummary(c.r)}
                   </span>
                 </div>
               ))}

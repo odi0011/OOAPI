@@ -155,7 +155,15 @@ export async function runCompletion({
         await markChannelError(
           channel,
           String(result.rotateReason || "上游降智信号").slice(0, 400),
-          Math.min(3600, Math.max(30, Number(result.rotateCooldownSec) || 90))
+          Math.min(3600, Math.max(30, Number(result.rotateCooldownSec) || 90)),
+          // 与成功记录一样带上来源与调用者：否则这条在「最近调用」里既没有 tag 也没有用户名
+          {
+            prompt,
+            reply: String(result.rotateReason || "上游降智信号"),
+            degraded: 1,
+            kind: "chat",
+            user,
+          }
         );
       }
       return { ...result, channel, elapsed: Date.now() - started };
@@ -200,7 +208,12 @@ export async function runCompletion({
                 : code === "CHANNEL_CAPTCHA"
                   ? 3600
                   : 300;
-      await markChannelError(channel, lastError.message, cooldown, { prompt, reply: lastError.message, user });
+      await markChannelError(channel, lastError.message, cooldown, {
+        prompt,
+        reply: lastError.message,
+        kind: "chat",
+        user,
+      });
       console.warn(`[execute] 渠道「${channel.name}」失败（${code}），切换下一渠道：${lastError.message}`);
     } finally {
       if (signal) signal.removeEventListener("abort", onOuterAbort);

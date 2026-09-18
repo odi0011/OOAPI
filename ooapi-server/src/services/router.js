@@ -82,7 +82,15 @@ function pushRecent(id, entry) {
 }
 
 // 记录里保存的提示词/回复摘要上限（长对话只留开头，避免把列撑大）
-const clip = (text, max) => String(text ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+// 同时剥掉网页版多轮 prompt 的 ChatML 角色标记（<｜User｜> / <｜Assistant｜> / <｜end▁of▁sentence｜>），
+// 它们只对上游有意义，展示给管理员会把「最近调用」弄脏。
+const ROLE_TOKEN_RE = /<[｜|]\s*(?:User|Assistant|System)\s*[｜|]>|<[｜|]end[▁_\s]?of[▁_\s]?sentence[｜|]>/g;
+const clip = (text, max) =>
+  String(text ?? "")
+    .replace(ROLE_TOKEN_RE, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
 // 降智/通行证标记（仅订阅渠道会带）：d=本轮降智，st=注入了 292 通行证；k=来源(chat/test/auto)
 // u=发起本次调用的用户（管理端最近调用里显示头像+名字，点击复制邮箱）
 const flagsOf = (meta = {}) => ({

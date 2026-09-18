@@ -98,6 +98,9 @@ export const PROVIDERS = [
         loginFields: [],
         needsBrowser: true,
         browserHint: "该渠道需在服务器上打开浏览器登录一次（验证码由页面自动处理），之后长期有效",
+        // 远程抓取：与适配器 ENTRY_URL 保持一致（chat.z.ai）
+        entryUrl: "https://chat.z.ai",
+        captureHint: "登录 Z.ai（验证码由页面自动处理），完成后点「抓取登录态」",
         defaultModels: [
           { id: "glm-5.3", name: "GLM-5.3" },
           { id: "glm-5.3-flash", name: "GLM-5.3 Flash" },
@@ -164,6 +167,9 @@ export const PROVIDERS = [
         loginFields: [],
         needsBrowser: true,
         browserHint: "该渠道需在服务器上打开浏览器扫码登录一次，之后长期有效",
+        // 远程抓取：与适配器 ENTRY_URL 保持一致
+        entryUrl: "https://www.doubao.com/chat/",
+        captureHint: "用手机 App 扫码登录豆包，完成后点「抓取登录态」",
         defaultModels: [
           { id: "doubao-pro", name: "豆包 Pro" },
           { id: "doubao-lite", name: "豆包 Lite" },
@@ -195,6 +201,9 @@ export const PROVIDERS = [
         loginFields: [],
         needsBrowser: true,
         browserHint: "该渠道需在服务器上打开浏览器登录一次（阿里风控较重），之后长期有效",
+        // 远程抓取：与适配器 ENTRY_URL 保持一致
+        entryUrl: "https://chat.qwen.ai/",
+        captureHint: "登录通义千问（阿里风控较重，耐心完成验证），完成后点「抓取登录态」",
         defaultModels: [
           { id: "qwen3.8-max", name: "通义千问 3.8 Max" },
           { id: "qwen3.7-plus", name: "通义千问 3.7 Plus" },

@@ -1356,6 +1356,15 @@ h1, h2, h3, h4 {
   gap: 8px;
 }
 
+/* 来源列固定宽度：定时/测试/对话/用户名（省略显示）都对齐，长短用户不会把后面列挤歪 */
+.oo-stats-recent-src {
+  display: flex;
+  align-items: center;
+  width: 84px;
+  flex: none;
+  min-width: 0;
+}
+
 .oo-stats-recent-row .oo-uptime-bar {
   height: 14px;
 }
@@ -1369,7 +1378,7 @@ h1, h2, h3, h4 {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  max-width: 118px;
+  max-width: 84px;
   padding: 1px 7px 1px 3px;
   border: 1px solid var(--line);
   border-radius: 9999px;
@@ -2234,15 +2243,16 @@ h1, h2, h3, h4 {
   letter-spacing: var(--ls-title);
 }
 
-/* 添加渠道：厂商选择和配置并排，避免选择列表把弹窗纵向撑高。
-   两个区域各自控制滚动，卡片四周留出安全边距，避免焦点环和选中边框被裁掉。 */
+/* 添加渠道：厂商选择和配置并排。
+   不能再用 overflow:hidden —— 窗口矮/内容多时会把左栏底部与右栏表单直接裁掉；
+   统一由 body 滚动，两个区域自然展开，左右都不会被切。 */
 .oo-channel-add-modal {
   max-width: calc(100vw - 32px);
 }
 
 .oo-channel-add-modal .ant-modal-body {
   max-height: calc(100vh - 190px);
-  overflow: hidden;
+  overflow: auto;
 }
 
 .oo-channel-add-layout {
@@ -2261,10 +2271,12 @@ h1, h2, h3, h4 {
 
 .oo-channel-add-config {
   min-width: 0;
-  max-height: calc(100vh - 250px);
-  overflow: auto;
   padding: 2px 8px 8px 0;
-  scrollbar-gutter: stable;
+}
+
+/* 字段说明（extra）在添加弹窗里要显示：隐藏它们会让「怎么填」完全靠猜 */
+.oo-channel-add-config .ant-form-item-extra {
+  display: block !important;
 }
 
 .oo-channel-add-step {
@@ -2303,12 +2315,9 @@ h1, h2, h3, h4 {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: min(66vh, 560px);
-  overflow-x: hidden;
-  overflow-y: auto;
   box-sizing: border-box;
-  padding: 4px 10px 8px 4px;
-  scrollbar-gutter: stable;
+  /* 留出足够边距，焦点环/选中描边不再被 overflow 裁掉；滚动交给弹窗 body */
+  padding: 6px 12px 10px 6px;
 }
 
 .oo-provider-picker__item {
@@ -2574,5 +2583,8 @@ h1, h2, h3, h4 {
     overflow: visible;
     padding-right: 0;
   }
-  .oo-provider-picker { max-height: 250px; }
+  .oo-provider-picker {
+    max-height: 250px;
+    overflow-y: auto;
+  }
 }
