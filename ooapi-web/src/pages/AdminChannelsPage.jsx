@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
   Table, Space, Typography, Input, Popconfirm, Modal, Form, Select, Switch,
-  InputNumber, App as AntApp, Tooltip, Row, Col, Alert, Radio, Divider, Button, Spin, Pagination,
+  InputNumber, App as AntApp, Tooltip, Row, Col, Alert, Radio, Button, Spin, Pagination,
 } from "antd";
 import {
   PlusOutlined, ReloadOutlined, ThunderboltOutlined, DeleteOutlined, EditOutlined,
@@ -153,12 +153,13 @@ function StatusCell({ r }) {
  */
 function ProviderPicker({ providers, activeKey, onPick }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 330, overflowY: "auto", paddingRight: 2 }}>
+    <div className="oo-provider-picker">
       {providers.map((p) => {
         const active = activeKey === p.key;
         return (
           <div
             key={p.key}
+            className={`oo-provider-picker__item${active ? " is-active" : ""}`}
             onClick={() => onPick(p)}
             role="button"
             tabIndex={0}
@@ -169,17 +170,6 @@ function ProviderPicker({ providers, activeKey, onPick }) {
                 e.preventDefault();
                 onPick(p);
               }
-            }}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 11,
-              padding: "10px 13px",
-              borderRadius: "var(--r-card)",
-              cursor: "pointer",
-              background: active ? "var(--accent-tint)" : "var(--surface)",
-              boxShadow: active ? "0 0 0 1.5px var(--accent)" : "var(--shadow-hairline)",
-              transition: "background 120ms, box-shadow 120ms",
             }}
           >
             <VendorIcon type={p.vendor} size={22} />
@@ -1058,7 +1048,8 @@ export default function AdminChannelsPage() {
         title="添加渠道"
         open={addOpen}
         onCancel={() => setAddOpen(false)}
-        width={620}
+        width={960}
+        className="oo-channel-add-modal"
         destroyOnClose
         maskClosable={false}
         footer={
@@ -1070,8 +1061,9 @@ export default function AdminChannelsPage() {
           </Space>
         }
       >
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 9 }}>1. 选择厂商</div>
+        <div className="oo-channel-add-layout">
+          <section className="oo-channel-add-providers">
+            <div className="oo-channel-add-step">1. 选择厂商</div>
           {providersError ? (
             <Alert
               type="error"
@@ -1094,13 +1086,13 @@ export default function AdminChannelsPage() {
               style={{ marginBottom: 10 }}
             />
           ) : null}
-          <ProviderPicker providers={providers} activeKey={pickProvider?.key} onPick={chooseProvider} />
-        </div>
+            <ProviderPicker providers={providers} activeKey={pickProvider?.key} onPick={chooseProvider} />
+          </section>
 
-        {pickProvider ? (
-          <>
-            <Divider style={{ margin: "2px 0 14px" }} />
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>2. 填写配置</div>
+          <section className="oo-channel-add-config">
+            {pickProvider ? (
+              <>
+                <div className="oo-channel-add-step">2. 填写配置</div>
             {pickMethod ? (
               <>
                 <Form form={addForm} layout="vertical" requiredMark={false}>
@@ -1243,9 +1235,21 @@ export default function AdminChannelsPage() {
                   </Form.Item>
                 </Form>
               </>
-            ) : null}
-          </>
-        ) : null}
+                ) : (
+                  <div className="oo-channel-add-empty">
+                    <span className="oo-channel-add-empty-icon">2</span>
+                    <span>选择厂商后填写渠道配置</span>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="oo-channel-add-empty">
+                <span className="oo-channel-add-empty-icon">2</span>
+                <span>选择厂商后填写渠道配置</span>
+              </div>
+            )}
+          </section>
+        </div>
       </Modal>
 
       {/* ============ 编辑渠道 ============ */}

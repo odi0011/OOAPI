@@ -29,7 +29,7 @@ const NAV_USER = [
   {
     title: "工作台",
     items: [
-      { key: "/chat", icon: <MessageOutlined />, label: "对话工作台" },
+      { key: "/chat", icon: <MessageOutlined />, label: "对话" },
       { key: "/console", icon: <DashboardOutlined />, label: "数据看板" },
     ],
   },
@@ -251,7 +251,7 @@ export default function MainLayout() {
           </div>
         </Header>
 
-        <Content className="oo-content">
+        <Content className={`oo-content${location.pathname === "/chat" ? " ui-chat-content" : ""}`}>
           <Outlet />
         </Content>
       </Layout>

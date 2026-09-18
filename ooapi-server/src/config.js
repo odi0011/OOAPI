@@ -35,8 +35,9 @@ export const DEFAULT_OPTIONS = {
   units_per_od: "10000", // 1 OD 币 = 10000 额度单位（支持 0.0001 精度）
   request_timeout_ms: "600000", // 单次上游请求超时（毫秒）
   log_retention_days: "0", // 日志保留天数（0 = 永久保留；>0 时每 6 小时自动清理）
-  chat_enabled: "true", // 是否开放站内对话
-  agent_enabled: "true", // 是否开放智能体
+  chat_enabled: "true", // 是否开放站内对话（对话工作台合并了原智能体功能，一并由此开关控制）
+  // 历史键：智能体曾是独立开关，现已合并进对话；保留默认值只为了让老库里残留的设置项不报错
+  agent_enabled: "true",
   // --- 兼容旧键（前端历史版本可能读取，保留避免报错）---
   ds_enabled: "true",
   ds_price_1m_prompt: "0.3",

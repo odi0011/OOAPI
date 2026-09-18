@@ -49,6 +49,18 @@ function renderInline(text, keyPrefix) {
   return nodes;
 }
 
+// 表格：| a | b |  /  | --- | --- |  /  | 1 | 2 |
+// 模型很爱用表格做对比，之前会原样把竖线吐给用户，这里补上（样式见 styles.css 的 .md-table）
+const isTableRow = (line) => /^\s*\|.*\|\s*$/.test(line);
+const isTableSep = (line) => /^\s*\|(\s*:?-{2,}:?\s*\|)+\s*$/.test(line);
+const splitRow = (line) =>
+  line
+    .trim()
+    .replace(/^\||\|$/g, "")
+    .split("|")
+    .map((c) => c.trim());
+const alignOf = (cell) => (cell.startsWith(":") && cell.endsWith(":") ? "center" : cell.endsWith(":") ? "right" : cell.startsWith(":") ? "left" : undefined);
+
 function parseMarkdown(src) {
   const lines = src.split("\n");
   const blocks = [];
@@ -57,6 +69,43 @@ function parseMarkdown(src) {
 
   while (i < lines.length) {
     const line = lines[i];
+
+    // 表格（必须在段落之前判断，否则表头会被当成普通段落）
+    if (isTableRow(line) && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+      const head = splitRow(line);
+      const aligns = splitRow(lines[i + 1]).map(alignOf);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && isTableRow(lines[i]) && !isTableSep(lines[i])) {
+        rows.push(splitRow(lines[i]));
+        i++;
+      }
+      blocks.push(
+        <table className="md-table" key={`p${k++}`}>
+          <thead>
+            <tr>
+              {head.map((c, idx) => (
+                <th key={idx} style={{ textAlign: aligns[idx] }}>
+                  {renderInline(c, `p${k}-h${idx}`)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, r) => (
+              <tr key={r}>
+                {head.map((_, idx) => (
+                  <td key={idx} style={{ textAlign: aligns[idx] }}>
+                    {renderInline(row[idx] || "", `p${k}-${r}-${idx}`)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      );
+      continue;
+    }
 
     // 代码块
     if (/^\s*```/.test(line)) {

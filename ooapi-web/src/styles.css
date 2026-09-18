@@ -683,6 +683,30 @@ h1, h2, h3, h4 {
 }
 .bui-prose a:hover { border-bottom-color: var(--accent); }
 
+/* 表格（Markdown 解析出的对比表）：横向可滚动，避免长内容撑破对话列 */
+.bui-prose .md-table {
+  width: 100%;
+  margin: 10px 0;
+  border-collapse: collapse;
+  font-size: 13px;
+  display: block;
+  overflow-x: auto;
+}
+.bui-prose .md-table th,
+.bui-prose .md-table td {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+}
+.bui-prose .md-table th {
+  background: var(--inset);
+  font-weight: 600;
+  color: var(--ink);
+}
+.bui-prose .md-table tr:nth-child(even) td { background: color-mix(in srgb, var(--inset) 55%, transparent); }
+
 /* --- 思考过程（beautifului Thinking：可折叠 + 分段控件切换）--- */
 .bui-think {
   margin-bottom: var(--sp-3);
@@ -1185,6 +1209,30 @@ h1, h2, h3, h4 {
 }
 
 .oo-nav-item.is-active .anticon { opacity: 1; }
+
+/* 键盘可达性：导航项与页内按钮统一聚焦环 */
+.oo-nav-item:focus-visible,
+.ui-chat2 button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* antd Sider 的内层容器需要独立 flex 列，否则「导航滚动 + 底部固定」不生效 */
+.oo-shell .oo-sider .ant-layout-sider-children {
+  display: flex;
+  flex-direction: column;
+}
+
+.oo-shell .oo-sider .oo-nav {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+.oo-shell .oo-sider .oo-sider-foot { position: static; }
+
+/* 对话页整页锁定高度，内部各自滚动 */
+.oo-content.ui-chat-content { padding: 24px; overflow: hidden; }
 
 .oo-nav-badge {
   margin-left: auto;
@@ -2000,6 +2048,113 @@ h1, h2, h3, h4 {
   letter-spacing: var(--ls-title);
 }
 
+/* 添加渠道：厂商选择和配置并排，避免选择列表把弹窗纵向撑高。
+   两个区域各自控制滚动，卡片四周留出安全边距，避免焦点环和选中边框被裁掉。 */
+.oo-channel-add-modal {
+  max-width: calc(100vw - 32px);
+}
+
+.oo-channel-add-modal .ant-modal-body {
+  max-height: calc(100vh - 190px);
+  overflow: hidden;
+}
+
+.oo-channel-add-layout {
+  display: grid;
+  grid-template-columns: minmax(235px, 292px) minmax(0, 1fr);
+  gap: 22px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.oo-channel-add-providers {
+  min-width: 0;
+  padding-right: 18px;
+  border-right: 1px solid var(--line);
+}
+
+.oo-channel-add-config {
+  min-width: 0;
+  max-height: calc(100vh - 250px);
+  overflow: auto;
+  padding: 2px 8px 8px 0;
+  scrollbar-gutter: stable;
+}
+
+.oo-channel-add-step {
+  margin: 0 0 10px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.oo-channel-add-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  gap: 9px;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-card);
+  color: var(--ink-3);
+  font-size: 13px;
+}
+
+.oo-channel-add-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--field);
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.oo-provider-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(66vh, 560px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 4px 10px 8px 4px;
+  scrollbar-gutter: stable;
+}
+
+.oo-provider-picker__item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 10px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  cursor: pointer;
+  background: var(--surface);
+  box-shadow: var(--shadow-hairline);
+  transition: background 120ms, border-color 120ms, box-shadow 120ms;
+}
+
+.oo-provider-picker__item:hover,
+.oo-provider-picker__item:focus-visible {
+  background: var(--hover);
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--line));
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 1px;
+}
+
+.oo-provider-picker__item.is-active {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
 /* 下拉 */
 .ant-dropdown .ant-dropdown-menu,
 .ant-select-dropdown {
@@ -2085,6 +2240,45 @@ h1, h2, h3, h4 {
   border: none;
 }
 
+/* 表单说明文字会把每个控件撑成两层，造成弹窗过高且视觉噪声明显。
+   关键信息放在 label / placeholder / 校验错误中，统一收起 extra。 */
+.ant-form-item-extra {
+  display: none !important;
+}
+
+.ant-modal .ant-form-item {
+  margin-bottom: 12px;
+}
+
+.ant-modal .ant-form-vertical .ant-form-item-label {
+  padding-bottom: 3px;
+}
+
+/* 弹窗内的说明型提示：保留图标、标题和描述，但压缩成一行级信息块，
+   避免占用表单区域过多高度。页面级错误提示继续使用默认密度。 */
+.oo-alert-compact.ant-alert {
+  min-height: 0;
+  padding: 8px 10px !important;
+  border-radius: var(--r-btn) !important;
+}
+
+.oo-alert-compact .ant-alert-icon {
+  margin-inline-end: 8px;
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.oo-alert-compact .ant-alert-message {
+  margin-bottom: 2px;
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.oo-alert-compact .ant-alert-description {
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
 /* 消息提示 */
 .ant-message-notice-content {
   border-radius: var(--r-card) !important;
@@ -2153,6 +2347,7 @@ h1, h2, h3, h4 {
    --------------------------------------------------------------------------- */
 @media (max-width: 767px) {
   .oo-content { padding: var(--sp-4) var(--sp-3); }
+  .oo-content.ui-chat-content { padding: 16px 12px; }
 
   .oo-page-head { gap: var(--sp-3); }
   .oo-page-title { font-size: var(--fs-xl); }
@@ -2177,4 +2372,21 @@ h1, h2, h3, h4 {
 
   .ant-modal { max-width: calc(100vw - 24px); }
   .ant-drawer-content-wrapper { max-width: 88vw; }
+
+  /* 添加渠道在窄屏回到单栏，避免左右两栏挤压表单控件。 */
+  .oo-channel-add-modal .ant-modal-body {
+    max-height: calc(100vh - 170px);
+    overflow-y: auto;
+  }
+  .oo-channel-add-layout { grid-template-columns: 1fr; gap: 14px; }
+  .oo-channel-add-providers {
+    padding-right: 0;
+    border-right: 0;
+  }
+  .oo-channel-add-config {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+  .oo-provider-picker { max-height: 250px; }
 }

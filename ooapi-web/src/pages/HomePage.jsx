@@ -32,7 +32,7 @@ function ConversationPreview() {
       <div className="hr-window">
         <div className="hr-window-bar">
           <span className="hr-window-dots" aria-hidden="true"><i /><i /><i /></span>
-          <span><MessageOutlined /> 对话工作台</span>
+          <span><MessageOutlined /> 对话</span>
           <span className="hr-example">示例</span>
         </div>
         <div className="hr-workspace">

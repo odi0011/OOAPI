@@ -96,13 +96,15 @@ function extractCall(acc, start) {
   return { call: parseCall(acc.slice(start, end + 1)), end: end + 1, bad: false };
 }
 
-class StepStream {
+// 导出仅为自测（.tmp 脚本 / 后续单测）：正常调用请走 runHarness
+export class StepStream {
   constructor() {
     this.acc = "";
     this.emitted = 0;
     this.start = -1;
     this.call = null;
     this.bad = false;
+    this.scanFrom = 0;
   }
 
   push(delta) {
@@ -127,9 +129,13 @@ class StepStream {
     if (this.call || this.bad) return "";
 
     if (this.start < 0) {
-      const start = locateCallStart(this.acc, this.emitted);
+      // 只扫「还没扫过」的尾部窗口：调用标记最长约 40 字符，窗口取 64 足够，
+      // 每个字符因此只被检查一次（否则长回答逐字符 delta 会退化成 O(n²)）。
+      const from = Math.max(this.emitted, this.scanFrom);
+      const start = locateCallStart(this.acc, from);
       if (start < 0) {
-        // 末尾 9 个字符先扣住：可能正是被切开的 "<tool_call"
+        this.scanFrom = Math.max(this.scanFrom, this.acc.length - 64);
+        // 末尾 10 个字符先扣住：可能正是被切开的 "<tool_call"
         const safe = final ? this.acc.length : Math.max(this.emitted, this.acc.length - (OPEN_TAG.length - 1));
         return this.take(safe);
       }
@@ -234,7 +240,7 @@ async function loop(opts, billing, depth = 0) {
   }
 }
 
-async function loopInner({ session, agent, model, settings = {}, history = [], userText = "", images = [], groupName = null, signal, emit, onTodo, onCall }, billing, depth, sink) {
+async function loopInner({ session, agent, model, settings = {}, history = [], userText = "", images = [], groupName = null, signal, emit, onTodo, onCall, modelCaps = null }, billing, depth, sink) {
   const record = (c) => {
     billing.push(c);
     if (onCall) onCall(c);
@@ -273,6 +279,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
               emit: null, // 子代理过程不直接展示，结果通过 task 工具返回
               onTodo: null,
               onCall: record,
+              modelCaps,
             },
             billing,
             depth + 1
@@ -341,6 +348,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       prompt: flattenPrompt(system, messages),
       output: `${result.content || ""}${result.reasoning || ""}`,
       usage: result.usage,
+      channel: result.channel?.name || "",
     });
 
     const stepText = (textPart?.text || "").trim();
@@ -372,7 +380,8 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
           record,
           runAgent: childRunAgent,
           todo,
-          searchSupported: undefined,
+          // 某些上游（如网页版反代）不支持联网搜索：工具要据此拒绝，而不是发一次必定失败的请求
+          searchSupported: modelCaps?.supportsSearch !== false,
         })
       : { ok: false, output: `工具「${call.tool}」在本轮不可用；可用工具：${specs.map((s) => s.id).join("、") || "（无）"}` };
 

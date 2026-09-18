@@ -1,16 +1,38 @@
-// 站内对话与智能体（用户态，JWT 鉴权，按用户额度计费）
+// 对话（站内，JWT 鉴权，按用户额度计费）
 // ---------------------------------------------------------------------------
-// 与 /v1 网关共用同一个执行器（渠道选择 + 失败切换 + 计价），
-// 差别仅在鉴权方式（JWT 而非 sk- 令牌）与计费对象（直接扣用户额度）。
+// 本轮重构把「对话 / 智能体」两条链路合并成一条：**一次请求跑完整的 harness 循环**。
+//   · 会话与会话设定（智能体、模型、思考/联网、工具开关、最大步数、会话指令）落库，
+//     刷新页面不丢；历史消息以 parts 结构存储，前端直接渲染。
+//   · 工具调用、思考链、待办清单都在同一条 SSE 流里推送（事件见 /run 注释）。
+//   · 计费仍走 services/pricing.js：harness 把每次上游调用记为一条 {prompt,output,usage}，
+//     这里逐条 splitTokens 后求和 —— 与网关/旧智能体同一套口径，禁止自行折算。
 import express from "express";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, now } from "../utils.js";
+import { ok, fail, asyncHandler, now, safeJSONParse } from "../utils.js";
 import { authRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
-import { runCompletion } from "../services/execute.js";
 import { getPrice, computeCost, splitTokens, estimateTokens, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
-import { allPublicModels, modelForChannelMatch, resolveAliasSync } from "../services/models.js";
+import { allPublicModels, resolveAliasSync } from "../services/models.js";
 import { getBoolOption } from "../config.js";
+import { runHarness } from "../services/harness/loop.js";
+import { AGENTS, findAgent, publicAgents, PRIMARY_AGENTS } from "../services/harness/agents.js";
+import { toolSpecs } from "../services/harness/tools.js";
+import {
+  createSession,
+  listSessions,
+  getSession,
+  getSessionMessages,
+  appendMessage,
+  updateSession,
+  deleteSession,
+  rewindSession,
+  sessionWithMessages,
+  sanitizeSettings,
+  titleFromText,
+  TOOL_IDS,
+  MAX_STEPS_LIMIT,
+  DEFAULT_MAX_STEPS,
+} from "../services/harness/sessions.js";
 
 const router = express.Router();
 // 鉴权头预检放在 express.json 之前：站内接口全部要求 JWT，匿名请求没必要先缓冲 20MB 大包。
@@ -21,61 +43,8 @@ router.use((req, res, next) => {
 });
 router.use(express.json({ limit: "20mb" }));
 
-// ---------- 智能体预设 ----------
-// 每个智能体是一套多步流程提示词；步骤由模型自主规划，每一步都真实调用上游模型。
-export const AGENTS = [
-  {
-    id: "general",
-    name: "通用助手",
-    desc: "拆解目标、分步推理、给出结论。适合开放性问题与日常任务。",
-    icon: "sparkles",
-    model: "deepseek-flash",
-    thinking: false,
-    steps: ["理解目标", "分步分析", "给出结论"],
-    sysPlan: "你是一个任务规划专家。请把用户目标拆成 3-4 个可执行的步骤。只输出 JSON 数组，形如 [\"步骤1\",\"步骤2\"]，不要任何其他文字。",
-    sysStep: "你正在执行任务的其中一个步骤。请针对该步骤给出扎实、具体的内容，不要重复其他步骤。",
-    sysFinal: "请基于以上各步骤的分析，给出最终完整答案。要求结构清晰、结论明确。",
-  },
-  {
-    id: "research",
-    name: "深度研究",
-    desc: "多角度检索式分析，覆盖背景、现状、风险与机会。",
-    icon: "search",
-    model: "deepseek-flash",
-    thinking: true,
-    steps: ["界定问题", "多角度分析", "风险评估", "综合结论"],
-    sysPlan: "你是资深研究员。请把研究主题拆成 3-4 个研究角度。只输出 JSON 数组，形如 [\"角度1\",\"角度2\"]。",
-    sysStep: "你正在从某个特定角度分析研究主题，请给出有深度、有依据的分析。",
-    sysFinal: "请综合以上分析，输出一份结构化的研究结论，包含关键发现与建议。",
-  },
-  {
-    id: "writer",
-    name: "写作助手",
-    desc: "先立大纲，再成稿，最后润色。适合文章、文案与报告。",
-    icon: "edit",
-    model: "deepseek-flash",
-    thinking: false,
-    steps: ["拟定大纲", "撰写初稿", "润色优化"],
-    sysPlan: "你是专业编辑。请为写作任务拟定 3 个结构部分。只输出 JSON 数组，形如 [\"部分1\",\"部分2\"]。",
-    sysStep: "你正在撰写文章的某个部分，请写出完整、流畅的内容。",
-    sysFinal: "请把各部分整合成一篇连贯的完整文章，语言自然、逻辑顺畅。",
-  },
-  {
-    id: "coder",
-    name: "代码助手",
-    desc: "分析需求、给出实现、指出边界情况与改进点。",
-    icon: "code",
-    model: "deepseek-flash",
-    thinking: true,
-    steps: ["分析需求", "设计实现", "代码审查"],
-    sysPlan: "你是资深工程师。请把编程任务拆成 3 个阶段。只输出 JSON 数组，形如 [\"阶段1\",\"阶段2\"]。",
-    sysStep: "你正在处理编程任务的某个阶段，请给出具体、可落地的技术内容（含代码）。",
-    sysFinal: "请给出完整的最终实现方案，包含可运行的代码和关键说明。",
-  },
-];
-
 // 用户可用的模型：真实模型 + 兼容别名（聚合当前启用渠道支持的模型）
-async function availableModels(user) {
+async function availableModels() {
   const [rows] = await pool.query("SELECT models FROM channels WHERE status = 1");
   const supported = new Set();
   for (const r of rows) {
@@ -111,28 +80,107 @@ async function availableModels(user) {
     });
 }
 
-// ---------- 元信息 ----------
+// ---------- 元信息（模型 / 智能体 / 工具 / 默认值）----------
 router.get(
   "/meta",
   authRequired,
   asyncHandler(async (req, res) => {
-    const models = await availableModels(req.user);
+    const models = await availableModels();
     return ok(res, {
       currency: CURRENCY,
       units_per_od: UNITS_PER_OD,
       quota: Number(req.user.quota),
       used_quota: Number(req.user.used_quota),
       models,
-      agents: AGENTS.map(({ sysPlan, sysStep, sysFinal, ...pub }) => pub),
+      agents: publicAgents(AGENTS),
+      tools: toolSpecs(TOOL_IDS).map(({ id, name, desc }) => ({ id, name, desc })),
+      defaults: { agent: PRIMARY_AGENTS[0]?.id || "general", maxSteps: DEFAULT_MAX_STEPS, maxStepsLimit: MAX_STEPS_LIMIT },
+      chat_enabled: getBoolOption("chat_enabled"),
     });
   })
 );
 
+// ---------- 会话 CRUD ----------
+router.get(
+  "/sessions",
+  authRequired,
+  asyncHandler(async (req, res) => {
+    return ok(res, { sessions: await listSessions(req.user.id, { q: req.query.q, limit: req.query.limit }) });
+  })
+);
+
+router.post(
+  "/sessions",
+  authRequired,
+  asyncHandler(async (req, res) => {
+    if (!getBoolOption("chat_enabled")) return fail(res, "站内对话功能已关闭", 403);
+    const { agent = "general", model = "", settings = {} } = req.body || {};
+    if (!findAgent(agent)) return fail(res, "智能体不存在");
+    const session = await createSession({ userId: req.user.id, agent, model, settings });
+    return ok(res, session);
+  })
+);
+
+router.get(
+  "/sessions/:id",
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const session = await getSession(req.user.id, req.params.id);
+    if (!session) return fail(res, "会话不存在", 404);
+    return ok(res, { session, messages: await getSessionMessages(session.id) });
+  })
+);
+
+router.put(
+  "/sessions/:id",
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const session = await getSession(req.user.id, req.params.id);
+    if (!session) return fail(res, "会话不存在", 404);
+    const patch = {};
+    const body = req.body || {};
+    if (body.title !== undefined) patch.title = body.title;
+    if (body.agent !== undefined) {
+      if (!findAgent(body.agent)) return fail(res, "智能体不存在");
+      patch.agent = body.agent;
+    }
+    if (body.model !== undefined) patch.model = body.model;
+    if (body.todo !== undefined) patch.todo = body.todo;
+    if (body.settings !== undefined) {
+      const next = sanitizeSettings(body.settings, { previous: session.settings });
+      if (next.tools && next.tools.some((t) => !TOOL_IDS.includes(t))) return fail(res, "包含未知工具");
+      patch.settings = next;
+    }
+    return ok(res, await updateSession(req.user.id, session.id, patch));
+  })
+);
+
+router.delete(
+  "/sessions/:id",
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const removed = await deleteSession(req.user.id, req.params.id);
+    if (!removed) return fail(res, "会话不存在", 404);
+    return ok(res, { id: req.params.id });
+  })
+);
+
+// 重新生成：先回退到指定消息之前，再让前端重发（见 sessions.rewindSession 的注释）
+router.post(
+  "/sessions/:id/rewind",
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const { fromSeq } = req.body || {};
+    const result = await rewindSession(req.user.id, req.params.id, fromSeq);
+    if (!result) return fail(res, "会话不存在", 404);
+    return ok(res, await sessionWithMessages(req.user.id, req.params.id));
+  })
+);
+
 // ---------- 计费（用户额度）----------
-async function chargeUser({ user, model, prompt, output, usage, channel, kind, tokens }) {
-  // tokens 由调用方按「每次 call 分别结算」预先算好时直接使用（智能体多步）：
-  // 混用 API 渠道（结构化 usage）与反代渠道（usage=null）时，合并成一个 usage 对象
-  // 会让 splitTokens 只认结构化部分，反代步骤的输入/输出漏计。
+// 与网关同一套原子扣费；harness 传进来的 tokens 是「每次上游调用分别 splitTokens 后求和」，
+// 混用 API 渠道（结构化 usage）与反代渠道（usage=null）时不会互相覆盖口径。
+async function chargeUser({ user, model, prompt, output, usage, channel, tokens, kind }) {
   const { promptTokens, completionTokens, cacheTokens } =
     tokens || splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
@@ -143,7 +191,6 @@ async function chargeUser({ user, model, prompt, output, usage, channel, kind, t
   if (Number(uRows[0]?.quota || 0) <= 0) {
     throw Object.assign(new Error(`${CURRENCY} 币余额不足，请联系管理员充值`), { code: "INSUFFICIENT_QUOTA" });
   }
-  // 与网关同一套原子扣费：条件更新避免并发透支；不足时兜底扣到 0
   const [ret] = await pool.query(
     "UPDATE users SET quota = quota - ?, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ? AND quota >= ?",
     [units, units, user.id, units]
@@ -157,7 +204,7 @@ async function chargeUser({ user, model, prompt, output, usage, channel, kind, t
   await writeLog({
     user,
     type: LOG_TYPE.CONSUME,
-    content: `${kind === "agent" ? "智能体" : "站内对话"} · ${model} · 提示 ${promptTokens} / 补全 ${completionTokens} tokens${
+    content: `${kind} · ${model} · 提示 ${promptTokens} / 补全 ${completionTokens} tokens${
       cacheTokens ? ` / 缓存 ${cacheTokens}` : ""
     } · ${(units / UNITS_PER_OD).toFixed(4)} ${CURRENCY}`,
     detail: JSON.stringify({ channel: channel?.name, kind }),
@@ -166,28 +213,42 @@ async function chargeUser({ user, model, prompt, output, usage, channel, kind, t
   return { units, promptTokens, completionTokens, cacheTokens };
 }
 
-// ---------- 站内对话（流式）----------
+// 逐条调用 → 汇总 token（失败时也算出已消耗的部分）
+function aggregate(calls = []) {
+  const sum = { promptTokens: 0, completionTokens: 0, cacheTokens: 0 };
+  for (const c of calls) {
+    const s = splitTokens({ prompt: c.prompt, output: c.output, upstreamTotal: c.usage });
+    sum.promptTokens += s.promptTokens;
+    sum.completionTokens += s.completionTokens;
+    sum.cacheTokens += s.cacheTokens;
+  }
+  return sum;
+}
+
+// ---------- 运行一轮对话（SSE）----------
+// 事件：{type:"start", message}|{type:"part", part}|{type:"part_update", id, patch}
+//      {type:"delta", id, field, delta}|{type:"todo", todo}|{type:"done", message}|{type:"error"}
 router.post(
-  "/completions",
+  "/run",
   authRequired,
   asyncHandler(async (req, res) => {
-    const { messages = [], model = "deepseek-chat", thinking, search = false, images = [] } = req.body || {};
+    const { sessionId, text = "", model: modelOverride, agent: agentOverride, settings: settingsPatch, images = [] } = req.body || {};
 
-    if (!Array.isArray(messages) || !messages.length) return fail(res, "messages 不能为空");
-    // 过滤非对象元素：null 会让适配器 `.map(m => m.role)` 抛 TypeError（无 code 异常会冷却全部渠道）
-    const safeMessages = messages.filter((m) => m && typeof m === "object");
-    if (!safeMessages.length) return fail(res, "messages 不能为空");
+    const session = await getSession(req.user.id, sessionId);
+    if (!session) return fail(res, "会话不存在", 404);
     if (!getBoolOption("chat_enabled")) return fail(res, "站内对话功能已关闭", 403);
     if (Number(req.user.quota) <= 0) return fail(res, `${CURRENCY} 币余额不足，请联系管理员充值`, 403);
 
-    // 拼装 prompt
-    let prompt = "";
-    for (const m of safeMessages) {
-      const c = String(m.content ?? "");
-      if (m.role === "system") prompt += c + "\n";
-      else if (m.role === "assistant") prompt += "<｜Assistant｜>" + c + "<｜end▁of▁sentence｜>";
-      else prompt += "<｜User｜>" + c;
-    }
+    const content = String(text || "").trim();
+    const agentId = agentOverride || session.agent;
+    const agent = findAgent(agentId);
+    if (!agent) return fail(res, "智能体不存在");
+    const model = modelOverride || session.model;
+    if (!model) return fail(res, "请选择模型");
+    if (!content && !(Array.isArray(images) && images.length)) return fail(res, "请输入内容");
+
+    // 设定优先级：本轮显式传的 > 会话已存 > 智能体默认
+    const settings = sanitizeSettings(settingsPatch ?? {}, { previous: session.settings });
 
     // 图片（base64 data URL）
     const imgs = [];
@@ -201,9 +262,10 @@ router.post(
         });
       }
     }
-    if (imgs.length > 3) return fail(res, "不支持三张以上图片，请修改问题或切换对话窗口");
+    if (imgs.length > 3) return fail(res, "最多 3 张图片");
 
-    // SSE
+    const history = await getSessionMessages(session.id);
+
     res.status(200);
     res.setHeader("content-type", "text/event-stream; charset=utf-8");
     res.setHeader("cache-control", "no-cache");
@@ -211,9 +273,9 @@ router.post(
     res.setHeader("x-accel-buffering", "no");
     res.flushHeaders?.();
 
-    const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
-
-    const matchModel = modelForChannelMatch(model) || model;
+    const send = (obj) => {
+      if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`);
+    };
 
     // 客户端断开时中止上游，避免继续消耗额度/浏览器会话。
     // 注意必须监听 res 而不是 req：Node 16+ 的 req "close" 在请求体读完（express.json 解析完）
@@ -223,280 +285,146 @@ router.post(
       if (!res.writableEnded) clientCtrl.abort();
     });
 
-    // 已流出的内容：上游中途失败时按实际产出计费（客户端已看到部分回答）
-    let partialOut = "";
-    let settledOnce = false;
+    // 用户消息先落库再跑：即使执行失败，对话历史也是完整的
+    const userParts = [{ id: `u${Date.now().toString(36)}`, type: "text", text: content }];
+    for (const img of Array.isArray(images) ? images : []) {
+      if (typeof img?.dataUrl === "string" && img.dataUrl.startsWith("data:image/")) {
+        userParts.push({ id: `i${Math.random().toString(36).slice(2, 8)}`, type: "image", url: img.dataUrl });
+      }
+    }
+    await appendMessage({ sessionId: session.id, userId: req.user.id, role: "user", parts: userParts });
+
+    // 首条消息直接当标题（比再调一次模型便宜；用户之后可手动改名）
+    if (session.message_count === 0 && session.title === "新对话") {
+      await updateSession(req.user.id, session.id, { title: titleFromText(content || "图片对话") });
+    }
+
+    const runCalls = [];
+    let runParts = [];
+    let runTodo = session.todo || [];
+    let channelName = "";
+    let settled = false;
+
+    send({ type: "start", sessionId: session.id });
 
     try {
-      const result = await runCompletion({
-        model: matchModel,
-        prompt,
-        messages: safeMessages,
-        // 未显式指定时用模型默认（V4.1-Flash 默认开启思考）
-        thinking: typeof thinking === "boolean" ? thinking : undefined,
-        search,
+      const out = await runHarness({
+        session,
+        agent,
+        model,
+        settings,
+        history,
+        userText: content,
         images: imgs,
         groupName: req.user.group_name,
         signal: clientCtrl.signal,
-        onChannelTry: (ch) => send({ type: "channel", name: ch.name }),
-        onReasoning: (t) => {
-          partialOut += t;
-          send({ type: "reasoning", delta: t });
+        modelCaps: (await availableModels()).find((m) => m.id === model) || null,
+        emit: (ev) => {
+          if (ev.type === "todo") runTodo = ev.todo;
+          send(ev);
         },
-        onSearchStatus: (s) => send({ type: "search", status: s }),
-        onDelta: (t) => {
-          partialOut += t;
-          send({ type: "delta", delta: t });
+        onTodo: (todo) => {
+          runTodo = todo;
         },
+        onCall: (c) => runCalls.push(c),
       });
 
+      runParts = out.parts;
+      runTodo = out.todo;
+      channelName = runCalls.find((c) => c.channel)?.channel || "";
+
+      const tokens = aggregate(runCalls);
       const billed = await chargeUser({
         user: req.user,
-        model: matchModel,
-        prompt,
-        output: result.content + (result.reasoning || ""),
-        usage: result.usage,
-        channel: result.channel,
-        kind: "chat",
+        model,
+        prompt: "",
+        output: "",
+        usage: null,
+        tokens,
+        channel: channelName ? { name: channelName } : null,
+        kind: "对话",
       });
-      settledOnce = true;
+      settled = true;
 
-      send({
-        type: "done",
-        content: result.content,
-        reasoning: result.reasoning,
+      const message = {
+        seq: 0,
+        role: "assistant",
+        parts: runParts,
+        agent: agent.id,
+        model,
         cost: Number((billed.units / UNITS_PER_OD).toFixed(6)),
-        currency: CURRENCY,
         tokens: { prompt: billed.promptTokens, completion: billed.completionTokens },
-        channel: result.channel?.name,
-        latency_ms: result.elapsed,
+        created_time: now(),
+      };
+      message.seq = await appendMessage({
+        sessionId: session.id,
+        userId: req.user.id,
+        role: "assistant",
+        parts: runParts,
+        agent: agent.id,
+        model,
+        cost: message.cost,
+        promptTokens: billed.promptTokens,
+        completionTokens: billed.completionTokens,
       });
+      await updateSession(req.user.id, session.id, { todo: runTodo });
+
+      send({ type: "done", message, todo: runTodo, session: await getSession(req.user.id, session.id) });
       res.write("data: [DONE]\n\n");
       res.end();
     } catch (err) {
-      console.error("[chat] 失败：", err.code, err.message);
-      if (!settledOnce && partialOut) {
+      console.error("[chat] 运行失败：", err.code || "", err.message);
+      if (Array.isArray(err.parts) && err.parts.length) runParts = err.parts;
+      const aborted = clientCtrl.signal.aborted || err.code === "ABORTED";
+
+      // 已消耗的部分照常计费（用户确实为这些 token 付了上游成本）：
+      // 失败时最后一次调用没有 usage，按 prompt/输出字符数估算补上。
+      const tokens = aggregate(runCalls);
+      const partial = runParts.filter((p) => p.type === "text").map((p) => p.text).join("");
+      if (!settled && (tokens.promptTokens || tokens.completionTokens || partial)) {
+        if (partial && !tokens.completionTokens) {
+          tokens.completionTokens += estimateTokens(partial);
+          tokens.promptTokens += estimateTokens(content);
+        }
         try {
           await chargeUser({
             user: req.user,
-            model: matchModel,
-            prompt,
-            output: partialOut,
+            model,
+            prompt: "",
+            output: "",
             usage: null,
-            channel: null,
-            kind: "chat",
+            tokens,
+            channel: channelName ? { name: channelName } : null,
+            kind: "对话（部分）",
           });
         } catch (e2) {
           console.error("[chat] 部分计费失败：", e2.message);
         }
       }
-      send({ type: "error", code: err.code || "ERROR", message: err.message });
-      res.write("data: [DONE]\n\n");
-      res.end();
-    }
-  })
-);
 
-// ---------- 智能体：多步执行（流式推送每一步）----------
-router.post(
-  "/agents/run",
-  authRequired,
-  asyncHandler(async (req, res) => {
-    const { agentId = "general", goal = "", model: modelOverride } = req.body || {};
-    const agent = AGENTS.find((a) => a.id === agentId);
-    if (!agent) return fail(res, "智能体不存在");
-    if (!getBoolOption("agent_enabled")) return fail(res, "智能体功能已关闭", 403);
-    if (!String(goal).trim()) return fail(res, "请输入任务目标");
-    if (Number(req.user.quota) <= 0) return fail(res, `${CURRENCY} 币余额不足，请联系管理员充值`, 403);
-
-    const model = modelOverride || agent.model;
-
-    res.status(200);
-    res.setHeader("content-type", "text/event-stream; charset=utf-8");
-    res.setHeader("cache-control", "no-cache");
-    res.setHeader("connection", "keep-alive");
-    res.setHeader("x-accel-buffering", "no");
-    res.flushHeaders?.();
-
-    const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
-
-    // 客户端断开时中止当前步骤的上游请求（同样监听 res，原因见 /completions）
-    const clientCtrl = new AbortController();
-    res.on("close", () => {
-      if (!res.writableEnded) clientCtrl.abort();
-    });
-
-    // 每次 call 单独记录 { prompt, output, usage }：结算时逐条 splitTokens 后求和，
-    // 避免 API 渠道（结构化 usage）与反代渠道（usage=null）混合时互相覆盖口径
-    const calls = [];
-    let totalPrompt = "";
-    let totalOutput = "";
-    let firstChannel = null;
-    let settledOnce = false;
-
-    // 逐条结算 → 汇总 token 数（供 chargeUser 使用）
-    const aggregateTokens = () => {
-      const sum = { promptTokens: 0, completionTokens: 0, cacheTokens: 0 };
-      for (const c of calls) {
-        const s = splitTokens({ prompt: c.prompt, output: c.output, upstreamTotal: c.usage });
-        sum.promptTokens += s.promptTokens;
-        sum.completionTokens += s.completionTokens;
-        sum.cacheTokens += s.cacheTokens;
-      }
-      return sum;
-    };
-
-    // 单步调用（复用执行器，自带渠道切换）
-    const call = async ({ system, user: userMsg, thinking, onDelta }) => {
-      const prompt = system ? `${system}\n\n${userMsg}` : userMsg;
-      // 本次调用已流出的内容：失败时挂到 error 上用于部分计费。
-      // 反代渠道的 usage 常为 null（normalizeUsage 后全 0），只看 usage 会整单漏计。
-      let streamed = "";
-      const wrappedDelta = onDelta
-        ? (t) => {
-            streamed += t;
-            onDelta(t);
-          }
-        : null;
-      try {
-        const r = await runCompletion({
-          model: modelForChannelMatch(model) || model,
-          prompt: `<｜User｜>${prompt}`,
-          // API 渠道按角色下发；反代渠道仍用上面的 prompt
-          messages: system
-            ? [{ role: "system", content: system }, { role: "user", content: userMsg }]
-            : [{ role: "user", content: userMsg }],
-          thinking: typeof thinking === "boolean" ? thinking : agent.thinking,
-          search: agent.id === "research",
-          images: [],
-          groupName: req.user.group_name,
-          signal: clientCtrl.signal,
-          onDelta: wrappedDelta,
-          // 思考链不推给步骤面板，但要计入部分计费
-          onReasoning: (t) => {
-            streamed += t;
-          },
-        });
-        totalPrompt += prompt;
-        totalOutput += r.content + (r.reasoning || "");
-        calls.push({ prompt, output: r.content + (r.reasoning || ""), usage: r.usage });
-        if (!firstChannel) firstChannel = r.channel;
-        return r.content;
-      } catch (e) {
-        e.partialOutput = streamed;
-        e.callPrompt = prompt;
-        throw e;
-      }
-    };
-
-    try {
-      // ① 规划
-      send({ type: "plan_start" });
-      const planRaw = await call({
-        system: agent.sysPlan,
-        user: `任务目标：${goal}`,
-        onDelta: null,
-      });
-
-      let steps = [];
-      try {
-        const m = /\[[\s\S]*?\]/.exec(planRaw);
-        steps = m ? JSON.parse(m[0]) : [];
-      } catch {
-        steps = [];
-      }
-      if (!Array.isArray(steps) || !steps.length) steps = [...agent.steps];
-      steps = steps.slice(0, 5).map((s) => String(s).slice(0, 80));
-
-      send({ type: "plan", steps });
-
-      // ② 逐步执行
-      const results = [];
-      for (let i = 0; i < steps.length; i++) {
-        const title = steps[i];
-        send({ type: "step_start", index: i, title });
-        let buf = "";
-        const out = await call({
-          system: agent.sysStep,
-          user: `总体目标：${goal}\n\n当前步骤（${i + 1}/${steps.length}）：${title}\n\n已完成内容：\n${
-            results.map((r, j) => `【${steps[j]}】${r.slice(0, 400)}`).join("\n") || "（无）"
-          }`,
-          onDelta: (t) => {
-            buf += t;
-            send({ type: "step_delta", index: i, delta: t });
-          },
-        });
-        results.push(out);
-        send({ type: "step_done", index: i, title, content: out });
-      }
-
-      // ③ 汇总
-      send({ type: "final_start" });
-      let answer = "";
-      const finalText = await call({
-        system: agent.sysFinal,
-        user: `任务目标：${goal}\n\n各步骤产出：\n${steps
-          .map((s, i) => `【${s}】\n${results[i]}`)
-          .join("\n\n")}`,
-        onDelta: (t) => {
-          answer += t;
-          send({ type: "delta", delta: t });
-        },
-      });
-      if (!answer) answer = finalText;
-
-      // 计费：逐次 call 的 token 汇总（见 aggregateTokens）
-      const billed = await chargeUser({
-        user: req.user,
-        model,
-        prompt: totalPrompt,
-        output: totalOutput,
-        usage: null,
-        tokens: aggregateTokens(),
-        channel: firstChannel,
-        kind: "agent",
-      });
-      settledOnce = true;
-
-      send({
-        type: "done",
-        answer,
-        steps,
-        cost: Number((billed.units / UNITS_PER_OD).toFixed(6)),
-        currency: CURRENCY,
-        tokens: { prompt: billed.promptTokens, completion: billed.completionTokens },
-        channel: firstChannel?.name,
-      });
-      res.write("data: [DONE]\n\n");
-      res.end();
-    } catch (err) {
-      console.error("[agent] 失败：", err.code, err.message);
-      // 已完成步骤 + 失败步骤已推送的内容都真实消耗了上游额度：逐次 call 结算后求和，
-      // 再为失败步骤补上估算（它没有成功的 r.usage，按 prompt/输出字符数折算）
-      const partial = err?.partialOutput || "";
-      const billOutput = totalOutput + partial;
-      const tokens = aggregateTokens();
-      if (partial) {
-        tokens.completionTokens += estimateTokens(partial);
-        tokens.promptTokens += estimateTokens(err?.callPrompt || "");
-      }
-      if (!settledOnce && (tokens.promptTokens || tokens.completionTokens)) {
+      if (runParts.length) {
         try {
-          await chargeUser({
-            user: req.user,
+          await appendMessage({
+            sessionId: session.id,
+            userId: req.user.id,
+            role: "assistant",
+            parts: runParts,
+            agent: agent.id,
             model,
-            prompt: totalPrompt,
-            output: billOutput,
-            usage: null,
-            tokens,
-            channel: firstChannel,
-            kind: "agent",
           });
+          await updateSession(req.user.id, session.id, { todo: runTodo });
         } catch (e2) {
-          console.error("[agent] 部分计费失败：", e2.message);
+          console.error("[chat] 失败消息落库异常：", e2.message);
         }
       }
-      send({ type: "error", code: err.code || "ERROR", message: err.message });
+
+      if (!aborted) {
+        send({
+          type: "error",
+          code: err.code || "ERROR",
+          message: err.message,
+        });
+      }
       res.write("data: [DONE]\n\n");
       res.end();
     }

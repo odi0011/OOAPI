@@ -75,6 +75,8 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
 | `src/styles.css` | 设计令牌 + `oo-*` 组件类 | 新页面复用 `oo-panel/oo-kv/oo-bar/oo-table`，颜色只用 CSS 变量 |
 | `src/components/Markdown.jsx` | 模型输出渲染 | 链接必须过 `safeHref` 协议白名单 |
 | `src/pages/*` | 业务页 | 页面结构统一：`PageHeader` + `oo-panel`；表单校验必须 catch |
+| `src/pages/ChatPage.jsx` + `services/chat.js` | **对话页**（第 16 批重构） | 会话/消息/设定全部来自服务端；运行一轮走 `/api/chat/run`（SSE，事件见 services/chat.js 注释）；消息按 parts 渲染 |
+| `src/components/beautifului-chat.jsx` + `chat.css` | 对话页原语（Shelf/ToolChips/Notice/TodoPanel/OrchestrationBar） | 与 `beautifului.*` 同一来源（MIT），只把 Tailwind 换成本项目 OKLCH token；改动请同步两处 token |
 
 ### 1.3 线上测试环境（2026-09-17 起）
 
@@ -143,6 +145,26 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 | 「292 / 10 块」的 10 块含义 | 未知，未做处理 | ⚠️ 待考证 |
 
 ---
+
+### 1.6 对话 harness（第 16 批新增，`services/harness/`）
+
+对话页的「对话机制 + 智能体编排 + harness 设定」全部落在这四个文件里：
+
+| 文件 | 职责 | 改的时候注意 |
+|---|---|---|
+| `harness/agents.js` | 智能体定义（primary / subagent 两层）+ 系统提示词拼装 | primary 由用户选择、可用 `task` 派人与 `todowrite`；subagent 只能被派发且禁用 `task`；角色提示词只留服务端 |
+| `harness/tools.js` | 工具集：`search` / `fetch` / `task` / `todowrite` | 全部只读或无副作用（不碰文件系统）；`fetch` 必须逐跳过 `assertPublicUrl`（SSRF）；工具失败返回原因而不是抛错 |
+| `harness/loop.js` | 运行循环 + 工具调用嗅探（`StepStream`） | 步数上限兜底（默认 6，上限 16）；子代理深度上限 `MAX_DEPTH=1`；嗅探改动务必重跑自测用例（切开的标签、未闭合、正文含花括号、代码块写法） |
+| `harness/sessions.js` | 会话/消息存储（`chat_sessions` / `chat_messages`） | 会话设定入参一律走 `sanitizeSettings` 归一化；消息 seq 由 SQL 端 `MAX(seq)+1` 计算，避免并发撞号 |
+
+**数据流**：`POST /api/chat/run` → 落库用户消息 → `runHarness`（每步一次上游调用，工具结果以 `<tool_result>` 回灌）→
+逐次调用 `splitTokens` 求和后按 `pricing.js` 计费 → 助手消息（parts JSON）落库 → 更新会话 `todo` 与统计。
+
+**协议边界**：渠道里既有 OpenAI 兼容 API，也有网页版反代（不支持原生 `tools`），因此工具调用统一用
+「提示词 + 严格 JSON 调用块」文本协议，由 `StepStream` 嗅探。新增渠道类型无需改协议。
+
+**计费约束**：每轮里**每一次**上游调用（主回答、工具检索、子代理）都要 `record()` 进 `calls`，
+失败时用 `err.calls` 带出并部分计费；禁止只按最后一次调用的 usage 计费。
 
 ## 2. 统一规范（强制）
 
@@ -237,6 +259,18 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   补录时按规范在 `remark` 写官方来源（openai.com/api/pricing、x.ai 定价页）。
 - [ ] **审查方式可复用**：后续批次继续用「三路并行子代理（前端 / 后端路由 / 服务适配器）+ 人工核实」，
   发现的问题先登记在此节，修完删除并写入变更记录。
+
+### 第 16 批遗留（对话重构）
+
+- [ ] **对话 harness 线上实盘**：本地已用 mock 上游与浏览器验收（流式、工具 chip、待办、设定、移动端），
+  上线后需用真实渠道各跑一次：① 纯对话（无工具）② 触发联网检索 ③ 触发 `fetch` ④ 触发 `task` 子代理
+  ⑤ 步数上限兜底 ⑥ 中途停止生成的部分计费。
+- [ ] **工具调用的渠道兼容性**：`search` 工具依赖渠道的 `search` 能力（反代渠道部分不支持，工具会返回失败原因交给模型）；
+  若线上发现某些渠道「只知道调工具、不肯直接回答」，优先检查该渠道是否支持联网，其次考虑收敛 `tools` 默认开关。
+- [ ] **会话数据清理**：`chat_sessions` / `chat_messages` 目前不随日志保留策略清理（用户数据，按需保留）；
+  若将来要做配额，建议放在「用户删除会话」之外单独设计（历史额度扣减已计入 `used_quota`，删消息不回滚）。
+- [ ] **前端长会话性能**：消息按 parts 渲染，流式期间只重写最后一条；若单会话消息数达到数百条，
+  需补虚拟滚动（当前未做，实测百条内无压力）。
 
 ### 长期/设计取舍项（已评估，暂不处理）
 
@@ -445,3 +479,29 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   统一使用紧凑样式，保留图标、标题和描述，缩小内边距、字体与行距；页面级错误提示保持原有可读密度。 |
 | 2026-09-18 | **第 11 批表单密度与控件排列修复**：统一收起低价值 `Form.Item extra` 说明文本，保留字段标签、占位符和校验错误；
   弹窗表单收紧字段间距与垂直标签间距，减少无效留白，改善渠道编辑等三列控件的对齐和整体高度。 |
+| 2026-09-18 | **第 16 批（对话页整体重构：对话机制 + 智能体编排 + harness）**：原「对话工作台」改名**对话**（侧栏、面包屑、首页示例文案），
+  页面与后端对话链路全部重写，参考 opencode 的「session / message / parts / step / tool / subagent」分层。详见第 1.6 节。
+  · **对话机制**：会话与消息落库（新表 `chat_sessions` / `chat_messages`），一次请求跑完整的 harness 循环
+  （`services/harness/loop.js`）：拼系统提示词 → 调模型 → 嗅探工具调用 → 执行工具 → 结果回灌 → 下一步，直到产出最终回答或触达步数上限；
+  SSE 增量推送 `part` / `part_update` / `delta` / `todo`，前端按 parts 渲染（正文、思考链、工具 chip、待办、提示）；
+  · **智能体编排**（`services/harness/agents.js`）：primary（通用/研究/写作/代码，用户直接选择）与 subagent（检索员/审阅员/摘要员，只能由 `task` 工具派发）
+  两层，子代理禁止再派发（深度限制），角色提示词只走服务端不下发前端；
+  · **harness 设定**（前端编排栏 + 会话设定面板）：智能体、模型、思考、联网、工具开关（search/fetch/task/todowrite）、最大步数（1~16）、会话级系统提示词、会话统计；
+  设定随会话落库，刷新不丢；未显式设置时按「智能体默认」兜底且界面同样显示兜底值；
+  · **工具**（`services/harness/tools.js`）：全部只读或无副作用 —— 联网检索（复用执行器）、读取网页（逐跳 SSRF 校验 + 去标签转文本）、
+  派发子代理、维护待办清单；工具失败把原因交回模型（不终止整轮），每次工具/子代理调用都单独计入本轮账单；
+  · **协议**：因渠道里既有 OpenAI 兼容 API 也有网页版反代（不支持原生 tools），统一用「提示词 + 严格 JSON 调用块」协议，
+  由 `StepStream` 嗅探（支持 `<tool_call>`、裸 JSON、代码块三种写法，容忍被切开的标签；未闭合按正文吐出，不吞内容；逐字符 delta 下 O(n)）；
+  · **计费**：逐次上游调用记 `{prompt, output, usage}` → 逐条 `splitTokens` 求和（与网关同一口径），失败按已产出内容部分计费；
+  · **前端**：新增 Beautiful UI 原语 `beautifului-chat.jsx`（Shelf 侧栏 / ToolChips / Notice / SuggestionCard / TodoPanel / OrchestrationBar）
+  与 `chat.css`；会话侧栏（新建/切换/双击重命名/删除）、⌘K 命令面板、会话设定抽屉（改名/会话指令/统计）；
+  删除旧 `ui-refresh.css`（旧对话页样式），改名同步 `MainLayout` / `HomePage` / `App` 路由；
+  · **顺带修复**：移除智能体独立开关（`agent_enabled` 仅保留兼容，功能并入 `chat_enabled`）；
+  `Markdown.jsx` 支持表格渲染（见下方二次审查条目）。
+  · **顺带修复（二次审查）**：`Markdown.jsx` 支持表格渲染；重新生成改为服务端回退（`POST /sessions/:id/rewind`，删掉该轮问答并重算统计，
+  否则重发后上下文里同一个问题会出现两遍）；消息渲染 key 不再用 `seq`（流式期间 0 → done 后变真实值会让整条消息重挂载、动画重播）；
+  换会话/新建会话重置滚动状态（此前「回到最新」会跟着新会话错误显示）。
+  自检：后端全部改动文件 `node --check` 通过；harness 循环与路由层用 mock 上游/mock 池做端到端自测
+  （工具回灌、待办写回、子代理派发、步数上限、格式纠正、未知工具、部分计费、会话 CRUD、余额不足拒绝、
+  回退幂等与统计重算：删 2 条后 cost/token/消息数只保留第一轮）；
+  前端 `npm run build` 通过；浏览器实测浅色/深色、桌面/移动、流式（思考→工具 chip→正文）、设定面板与命令面板。 |

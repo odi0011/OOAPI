@@ -179,6 +179,36 @@ export async function deleteSession(userId, id) {
   return Boolean(ret.affectedRows);
 }
 
+/**
+ * 回退到某条消息之前（重新生成用）。
+ * 为什么必须由服务端做：如果只让前端把消息从界面删掉再重发，
+ * 数据库里那轮「用户提问 + 失败回答」仍在，下一轮的上下文就会出现同一问题问两遍。
+ * 同时重算会话统计 —— cost 是展示用的聚合值（用户额度早已实际扣除，这里只回滚统计口径）。
+ */
+export async function rewindSession(userId, id, fromSeq) {
+  const seq = Math.max(1, Number(fromSeq) || 1);
+  const session = await getSession(userId, id);
+  if (!session) return null;
+  await pool.query("DELETE FROM chat_messages WHERE session_id = ? AND seq >= ?", [String(id), seq]);
+  const [aggRows] = await pool.query(
+    "SELECT COUNT(*) AS c, COALESCE(SUM(cost),0) AS cost, COALESCE(SUM(prompt_tokens),0) AS pt, COALESCE(SUM(completion_tokens),0) AS ct FROM chat_messages WHERE session_id = ?",
+    [String(id)]
+  );
+  const a = aggRows[0] || {};
+  await pool.query(
+    "UPDATE chat_sessions SET message_count = ?, cost_units = ?, prompt_tokens = ?, completion_tokens = ?, updated_time = ? WHERE id = ? AND user_id = ?",
+    [Number(a.c) || 0, Math.round((Number(a.cost) || 0) * 10000), Number(a.pt) || 0, Number(a.ct) || 0, now(), String(id), userId]
+  );
+  return getSession(userId, id);
+}
+
+/** 会话完整返回（含消息），回退/重发后前端用它整体替换本地状态 */
+export async function sessionWithMessages(userId, id) {
+  const session = await getSession(userId, id);
+  if (!session) return null;
+  return { session, messages: await getSessionMessages(session.id) };
+}
+
 /** 首条用户消息直接当标题：比再调一次模型总结便宜得多，也够用（可手动重命名） */
 export function titleFromText(text) {
   const t = String(text || "").replace(/\s+/g, " ").trim();

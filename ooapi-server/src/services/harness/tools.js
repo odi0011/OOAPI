@@ -129,7 +129,12 @@ export const TOOLS = {
         groupName: ctx.groupName,
         signal: ctx.signal,
       });
-      ctx.record({ prompt: `${SEARCH_SYS}\n\n${query}`, output: `${r.content || ""}${r.reasoning || ""}`, usage: r.usage });
+      ctx.record({
+        prompt: `${SEARCH_SYS}\n\n${query}`,
+        output: `${r.content || ""}${r.reasoning || ""}`,
+        usage: r.usage,
+        channel: r.channel?.name || "",
+      });
       const text = clip(r.content || r.reasoning || "", 6000);
       if (!text) return { ok: false, output: "检索没有返回内容" };
       return { ok: true, output: text, meta: { channel: r.channel?.name, elapsed: r.elapsed } };

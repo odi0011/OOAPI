@@ -320,7 +320,10 @@ print(resp.choices[0].message.content)
 | GET | `/api/users/` | 用户管理（管理员） |
 | GET | `/api/log/` | 用量日志 |
 | GET/PUT | `/api/option/` | 系统设置（管理员） |
-| POST | `/api/chat/completions` | 站内对话 |
+| GET/POST/PUT/DELETE | `/api/chat/sessions` | 对话会话（列表/新建/改名设定/删除） |
+| GET | `/api/chat/meta` | 对话元信息（模型/智能体/工具） |
+| POST | `/api/chat/run` | 运行一轮对话（SSE：正文/思考/工具/待办） |
+| POST | `/api/chat/sessions/:id/rewind` | 重新生成前的回退（删除该轮问答并重算会话统计） |
 
 ---
 
