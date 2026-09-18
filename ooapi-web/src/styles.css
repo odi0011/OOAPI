@@ -127,6 +127,9 @@ html[data-theme="dark"] {
   --r-card: 10px;
   --r-btn: 8px;
   --r-chip: 6px;
+  /* 旧引用别名：--r-sm/--r-md 在部分组件里被使用，缺失会导致圆角失效（直角） */
+  --r-sm: var(--r-chip);
+  --r-md: var(--r-btn);
   --r-xs: 4px;
   --r-full: 9999px;
 

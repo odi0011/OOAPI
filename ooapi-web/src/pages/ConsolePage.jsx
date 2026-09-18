@@ -250,21 +250,21 @@ export default function ConsolePage() {
               <span className="oo-panel-title">账户信息</span>
             </div>
             <div className="oo-panel-body" style={{ paddingTop: 6 }}>
-              <div className="oo-kv">
-                <span className="oo-kv-k">用户名</span>
-                <span className="oo-kv-v">{user?.username}</span>
+              <div className="bui-kv">
+                <span className="bui-kv-k">用户名</span>
+                <span className="bui-kv-v">{user?.username}</span>
               </div>
-              <div className="oo-kv">
-                <span className="oo-kv-k">显示名称</span>
-                <span className="oo-kv-v">{user?.display_name || "-"}</span>
+              <div className="bui-kv">
+                <span className="bui-kv-k">显示名称</span>
+                <span className="bui-kv-v">{user?.display_name || "-"}</span>
               </div>
-              <div className="oo-kv">
-                <span className="oo-kv-k">用户分组</span>
-                <span className="oo-kv-v">{user?.group || "default"}</span>
+              <div className="bui-kv">
+                <span className="bui-kv-k">用户分组</span>
+                <span className="bui-kv-v">{user?.group || "default"}</span>
               </div>
-              <div className="oo-kv">
-                <span className="oo-kv-k">邀请码</span>
-                <span className="oo-kv-v">
+              <div className="bui-kv">
+                <span className="bui-kv-k">邀请码</span>
+                <span className="bui-kv-v">
                   <span className="oo-mono">{user?.aff_code || "-"}</span>
                 </span>
               </div>
@@ -284,27 +284,27 @@ export default function ConsolePage() {
         <div className="oo-panel-body">
           <Row gutter={[16, 12]}>
             <Col xs={24} md={12}>
-              <div className="oo-kv">
-                <span className="oo-kv-k">Base URL</span>
-                <span className="oo-kv-v">
+              <div className="bui-kv">
+                <span className="bui-kv-k">Base URL</span>
+                <span className="bui-kv-v">
                   <span className="oo-mono">{endpoint}</span>
                 </span>
               </div>
-              <div className="oo-kv">
-                <span className="oo-kv-k">鉴权</span>
-                <span className="oo-kv-v">
+              <div className="bui-kv">
+                <span className="bui-kv-k">鉴权</span>
+                <span className="bui-kv-v">
                   <span className="oo-mono">Authorization: Bearer sk-xxx</span>
                 </span>
               </div>
             </Col>
             <Col xs={24} md={12}>
-              <div className="oo-kv">
-                <span className="oo-kv-k">计费比例</span>
-                <span className="oo-kv-v">{odRateText(perUnit)}</span>
+              <div className="bui-kv">
+                <span className="bui-kv-k">计费比例</span>
+                <span className="bui-kv-v">{odRateText(perUnit)}</span>
               </div>
-              <div className="oo-kv">
-                <span className="oo-kv-k">可用模型</span>
-                <span className="oo-kv-v">
+              <div className="bui-kv">
+                <span className="bui-kv-k">可用模型</span>
+                <span className="bui-kv-v">
                   {(status?.model_list || []).slice(0, 4).join("、") || "-"}
                   {(status?.model_list?.length || 0) > 4 ? ` 等 ${status.model_list.length} 个` : ""}
                 </span>
@@ -315,7 +315,7 @@ export default function ConsolePage() {
           {!isMobile && (
             <div className="oo-code" style={{ marginTop: 14 }}>
               <div className="oo-code-head">
-                <span className="oo-dot oo-dot--ok" />
+                <span className="bui-dot bui-dot--ok" />
                 <span>快速测试</span>
               </div>
               <pre>

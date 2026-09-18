@@ -176,11 +176,11 @@ export default function AdminUsersPage() {
       render: (s) =>
         s === 1 ? (
           <span className="oo-flex oo-gap-2" style={{ fontSize: 13 }}>
-            <span className="oo-dot oo-dot--ok" /> 启用
+            <span className="bui-dot bui-dot--ok" /> 启用
           </span>
         ) : (
           <span className="oo-flex oo-gap-2" style={{ fontSize: 13, color: "var(--oo-text-muted)" }}>
-            <span className="oo-dot oo-dot--err" /> 禁用
+            <span className="bui-dot bui-dot--err" /> 禁用
           </span>
         ),
     },

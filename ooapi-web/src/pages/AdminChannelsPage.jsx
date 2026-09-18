@@ -462,7 +462,7 @@ function TokenTrend({ byDay = [], series = [], range, onRangeChange }) {
             </div>
             <div className="oo-trend-wrap">
               {hoverDay && hoverRows.length ? (
-                <div className="oo-trend-tip" style={{ left: `${(x(hover) / W) * 100}%` }}>
+                <div className="oo-trend-tip" style={{ left: `clamp(70px, ${(x(hover) / W) * 100}%, calc(100% - 70px))` }}>
                   <div className="oo-trend-tip-date">{hoverDay.day}</div>
                   {hoverRows.slice(0, 7).map((r) => (
                     <div className="oo-trend-tip-row" key={r.model}>
@@ -2371,7 +2371,7 @@ export default function AdminChannelsPage() {
               maxHeight: 220,
               overflow: "auto",
               fontSize: 12,
-              background: "var(--surface-2, #f6f6f6)",
+                background: "var(--inset)",
               padding: 10,
               borderRadius: 8,
             }}
