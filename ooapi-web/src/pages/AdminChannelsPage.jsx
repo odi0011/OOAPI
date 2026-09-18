@@ -872,14 +872,18 @@ export default function AdminChannelsPage() {
           // 一步完成「换令牌 + 建渠道」，管理员不用再手抄凭据 JSON。
           if (pickMethod.oauth && oauthUrl) {
             if (!String(v.token || "").trim()) throw new Error("请粘贴登录后地址栏里的完整 URL");
-            const r = await API.post("/channel/oauth/exchange", {
-              type: pickProvider.key,
-              method: pickMethod.key,
-              name: v.name,
-              priority: v.priority,
-              state: oauthState,
-              callback: v.token,
-            });
+            const r = await API.post(
+              "/channel/oauth/exchange",
+              {
+                type: pickProvider.key,
+                method: pickMethod.key,
+                name: v.name,
+                priority: v.priority,
+                state: oauthState,
+                callback: v.token,
+              },
+              { timeoutMs: 90_000 }
+            );
             message.success(`渠道「${r.name}」已添加${r.account ? `（${r.account}）` : ""}`);
             setAddOpen(false);
             setOauthUrl("");
@@ -903,7 +907,7 @@ export default function AdminChannelsPage() {
           // 在表单里已通过 onboarding 完成浏览器登录：带上标记，后端把登录 profile 复制给新渠道
           if (onboardReady) payload.profileFrom = "onboarding";
         }
-        const r = await API.post("/channel/login", payload);
+        const r = await API.post("/channel/login", payload, { timeoutMs: 90_000 });
         message.success(`渠道「${r.name}」已添加`);
       } else {
         await API.post("/channel/", {
@@ -1176,10 +1180,11 @@ export default function AdminChannelsPage() {
     setCapShot(null);
     setCapBusy(true);
     try {
-      const res = await API.post("/channel/capture/start", {
-        type: pickProvider.key,
-        method: pickMethod?.key || "relay",
-      });
+      const res = await API.post(
+        "/channel/capture/start",
+        { type: pickProvider.key, method: pickMethod?.key || "relay" },
+        { timeoutMs: 90_000 } // 服务端要启动浏览器并等首个页面加载，默认 30s 不够
+      );
       // 浏览器登录类：重新登录时先清掉旧的「已登录」标记
       if (res.kind === "browser") setOnboardReady(false);
       setCapSid(res.sid);
@@ -1230,7 +1235,7 @@ export default function AdminChannelsPage() {
     if (!capSid) return;
     setCapBusy(true);
     try {
-      const res = await API.post(`/channel/capture/${capSid}/capture`);
+      const res = await API.post(`/channel/capture/${capSid}/capture`, undefined, { timeoutMs: 90_000 });
       // 浏览器登录类：登录态在服务器 profile 里，提交时复制给渠道
       if (res.browserReady) {
         setOnboardReady(true);

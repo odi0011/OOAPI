@@ -717,6 +717,9 @@ function sweepCaptures() {
     }
   }
 }
+// 会话过期回收不能只靠「下一次 start 时才扫」：没有任何后续请求时浏览器会一直挂着
+const captureSweeper = setInterval(sweepCaptures, 5 * 60 * 1000);
+captureSweeper.unref?.();
 
 function captureOf(req) {
   const c = CAPTURES.get(String(req.params.sid || ""));
@@ -750,6 +753,13 @@ router.post(
         await removeProfile(type, channelId).catch(() => {});
         return fail(res, `授权页打开失败：${e.message}`);
       }
+      const shot = await browserShot(type, channelId);
+      if (!shot) {
+        // 截图拿不到说明会话没起来：立即回收，别留下拿不到 sid 的僵尸会话
+        await browserClose(type, channelId).catch(() => {});
+        await removeProfile(type, channelId).catch(() => {});
+        return fail(res, "浏览器会话未就绪，请重试");
+      }
       CAPTURES.set(sid, {
         type,
         method: String(method || ""),
@@ -759,8 +769,6 @@ router.post(
         oauthState: login.state,
         redirectUri: login.redirectUri,
       });
-      const shot = await browserShot(type, channelId);
-      if (!shot) return fail(res, "浏览器会话未就绪，请重试");
       return ok(res, {
         sid,
         ...shot,
@@ -783,9 +791,13 @@ router.post(
       if (!onboard) await removeProfile(type, channelId).catch(() => {});
       return fail(res, `登录页打开失败：${e.message}`);
     }
-    CAPTURES.set(sid, { type, channelId, at: Date.now(), kind: onboard ? "browser" : "paste" });
     const shot = await browserShot(type, channelId);
-    if (!shot) return fail(res, "浏览器会话未就绪，请重试");
+    if (!shot) {
+      await browserClose(type, channelId).catch(() => {});
+      if (!onboard) await removeProfile(type, channelId).catch(() => {});
+      return fail(res, "浏览器会话未就绪，请重试");
+    }
+    CAPTURES.set(sid, { type, channelId, at: Date.now(), kind: onboard ? "browser" : "paste" });
     return ok(res, {
       sid,
       ...shot,
@@ -982,11 +994,32 @@ router.post(
       return ok(res, { id: targetId, name: displayName, account: accountLabel }, "登录成功，凭据已更新");
     }
 
-    const [exist] = await pool.query("SELECT id FROM channels WHERE type = ? AND api_key = ?", [type, token]);
-    if (exist.length) {
-      await pool.query("UPDATE channels SET other = ?, status = 1 WHERE id = ?", [JSON.stringify(other), exist[0].id]);
-      await resetChannelState(exist[0].id);
-      return ok(res, { id: exist[0].id, name: displayName, account: accountLabel }, "该账号已存在，凭据已更新");
+    // 去重与 /login 同口径：优先稳定账号标识（access_token 每次登录都变，拿它当键会漏检重复）
+    const stableKey = other.account_id || other.account_uuid || other.email || other.project_id || "";
+    let existId = 0;
+    if (stableKey) {
+      const [rows] = await pool.query("SELECT id, other FROM channels WHERE type = ?", [type]);
+      const dup = rows.find((r) => {
+        try {
+          const o = JSON.parse(r.other || "{}");
+          return (o.account_id || o.account_uuid || o.email || o.project_id) === stableKey;
+        } catch {
+          return false;
+        }
+      });
+      if (dup) existId = dup.id;
+    } else {
+      const [exist] = await pool.query("SELECT id FROM channels WHERE type = ? AND api_key = ?", [type, token]);
+      if (exist.length) existId = exist[0].id;
+    }
+    if (existId) {
+      await pool.query("UPDATE channels SET other = ?, api_key = ?, status = 1 WHERE id = ?", [
+        JSON.stringify(other),
+        token,
+        existId,
+      ]);
+      await resetChannelState(existId);
+      return ok(res, { id: existId, name: displayName, account: accountLabel }, "该账号已存在，凭据已更新");
     }
 
     const [ret] = await pool.query(
@@ -1069,16 +1102,27 @@ router.post(
         let authInput = String(rest.token || "");
         // 只填了 refresh_token（在别处登录过、手上只有 RT）：先用适配器刷出 access_token 再解析。
         // 刷新函数需要 channel 形状：用 id=0 的临时对象，持久化写不到任何行（不会污染数据）。
+        let credObj = null;
         try {
-          const obj = JSON.parse(authInput);
-          const hasAt = Boolean(obj && (obj.access_token || obj.accessToken));
-          const hasRt = Boolean(obj && (obj.refresh_token || obj.refreshToken));
-          if (obj && !hasAt && hasRt && adapter.refreshAuth) {
-            const fresh = await adapter.refreshAuth({ id: 0, name: "import", type, other: obj }, { force: true });
-            if (fresh?.access_token) authInput = JSON.stringify({ ...obj, ...fresh, access_token: fresh.access_token });
-          }
+          credObj = JSON.parse(authInput);
         } catch {
-          /* 不是 JSON / 无需刷新：交给 importAuth 报错 */
+          /* 不是 JSON：原样交给 importAuth 报错 */
+        }
+        if (credObj && typeof credObj === "object") {
+          const at = String(credObj.access_token || credObj.accessToken || "").trim();
+          const rt = String(credObj.refresh_token || credObj.refreshToken || "").trim();
+          if (!at && rt && adapter.refreshAuth) {
+            // 适配器只认 snake_case：先归一化，否则会「刷新失败 → 报缺少 access_token」误导管理员
+            const normalized = { ...credObj, access_token: "", refresh_token: rt };
+            let fresh;
+            try {
+              fresh = await adapter.refreshAuth({ id: 0, name: "import", type, other: normalized }, { force: true });
+            } catch (e) {
+              return fail(res, `刷新令牌失败：${e.message}`, 400);
+            }
+            if (!fresh?.access_token) return fail(res, "刷新令牌没有返回 access_token，请重新登录获取完整凭据", 400);
+            authInput = JSON.stringify({ ...normalized, ...fresh, access_token: fresh.access_token });
+          }
         }
         const r = await adapter.importAuth({ ...rest, token: authInput, mode: "paste" });
         token = String(r.token || "").slice(0, 60_000);
@@ -1118,11 +1162,24 @@ router.post(
           let list = [];
           if (Array.isArray(rest.cookies)) list = rest.cookies;
           else {
+            const raw = String(rest.cookies).trim();
             try {
-              const p = JSON.parse(String(rest.cookies));
+              const p = JSON.parse(raw);
               list = Array.isArray(p) ? p : [];
             } catch {
-              return fail(res, 'Cookies 需为 JSON 数组，例如 [{"name":"kimi-auth","value":"..."}]');
+              // 兼容浏览器抓取回的 `name=value; name2=value2` 串（前端直接回填的就是这种）
+              list = raw
+                .split(";")
+                .map((s) => s.trim())
+                .filter(Boolean)
+                .map((pair) => {
+                  const i = pair.indexOf("=");
+                  return i > 0 ? { name: pair.slice(0, i), value: pair.slice(i + 1) } : null;
+                })
+                .filter(Boolean);
+            }
+            if (!list.length) {
+              return fail(res, 'Cookies 需为 JSON 数组或 name=value; ... 串，例如 [{"name":"kimi-auth","value":"..."}]');
             }
           }
           if (list.length) other.cookies = list;
