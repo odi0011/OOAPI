@@ -102,6 +102,7 @@ const TABLES = [
     api_key TEXT COMMENT '上游密钥（多 Key 用换行分隔）',
     models TEXT COMMENT '支持的模型，逗号分隔',
     group_name VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '用户分组',
+    groups TEXT COMMENT '所属分组 JSON 数组（一个账号可属多个分组，分组按厂商隔离）',
     status INT NOT NULL DEFAULT 1 COMMENT '1=启用 2=手动禁用 3=自动禁用',
     priority INT NOT NULL DEFAULT 0 COMMENT '调度优先级，越大越优先',
     weight INT NOT NULL DEFAULT 0 COMMENT '同优先级负载权重',
@@ -171,6 +172,17 @@ const TABLES = [
     UNIQUE KEY uniq_chat_msg_seq (session_id, seq),
     INDEX idx_chat_msg_session (session_id, seq)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // 渠道分组（sub2api 风格）：分组按厂商隔离（同名的 GLM 分组与 OpenAI 分组互不相干），
+  // 账号（channel）可通过 channels.groups 加入多个分组；API Key 绑定分组后只路由到该分组的账号。
+  `CREATE TABLE IF NOT EXISTS channel_groups (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    type VARCHAR(32) NOT NULL COMMENT '厂商类型（分组按厂商隔离）',
+    name VARCHAR(32) NOT NULL COMMENT '分组名',
+    remark VARCHAR(255) NOT NULL DEFAULT '',
+    created_time BIGINT NOT NULL DEFAULT 0,
+    UNIQUE KEY uniq_group_type_name (type, name)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 ];
 
 // 生成 / 持久化 JWT 密钥：环境变量 > .jwt-secret 文件 > 随机生成
@@ -207,6 +219,7 @@ const COLUMN_MIGRATIONS = [
   { table: "channels", column: "auto_test", ddl: "TINYINT NOT NULL DEFAULT 0" },
   { table: "channels", column: "auto_test_interval", ddl: "INT NOT NULL DEFAULT 3600" },
   { table: "channels", column: "last_test_time", ddl: "BIGINT NOT NULL DEFAULT 0" },
+  { table: "channels", column: "groups", ddl: "TEXT" },
   { table: "channels", column: "recent_calls", ddl: "TEXT" },
 ];
 
@@ -240,8 +253,34 @@ async function ensureColumns() {
   }
 }
 
+// 分组数据迁移（幂等）：
+//   · 老库 channels.groups 为空 → 用 group_name 回填（保持既有行为）
+//   · channel_groups 补齐现有 group_name 去重后的分组行
+async function ensureGroups() {
+  const [rows] = await pool.query("SELECT id, type, group_name, groups FROM channels");
+  for (const r of rows) {
+    const need = !r.groups || String(r.groups).trim() === "";
+    if (!need) continue;
+    const groups = [r.group_name && String(r.group_name).trim() ? String(r.group_name).trim() : "default"];
+    await pool.query("UPDATE channels SET groups = ? WHERE id = ?", [JSON.stringify(groups), r.id]);
+  }
+  const seen = new Set();
+  for (const r of rows) {
+    const g = r.group_name && String(r.group_name).trim() ? String(r.group_name).trim() : "default";
+    const key = `${r.type}:${g}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    await pool.query("INSERT IGNORE INTO channel_groups (type, name, created_time) VALUES (?,?,?)", [
+      r.type,
+      g,
+      Math.floor(Date.now() / 1000),
+    ]);
+  }
+}
+
 export async function migrate() {
   for (const sql of TABLES) await pool.query(sql);
   await ensureColumns();
   await ensureColumnTypes();
+  await ensureGroups();
 }

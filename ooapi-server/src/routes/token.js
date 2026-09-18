@@ -7,6 +7,15 @@ import { writeLog, LOG_TYPE } from "../services/log.js";
 const router = Router();
 router.use(authRequired);
 
+// 可选分组列表（用户创建令牌时选；分组按厂商隔离，返回 type:name 作为绑定值）
+router.get(
+  "/groups",
+  asyncHandler(async (req, res) => {
+    const [rows] = await pool.query("SELECT type, name FROM channel_groups ORDER BY type, name");
+    return ok(res, rows.map((g) => ({ type: g.type, name: g.name })));
+  })
+);
+
 // 额度/时间上限：BIGINT 本身能存到 9e18，但应用层允许的额度远超实际意义，
 // 上限校验防的是 1e20 这类会让写库直接越界 500 的值（expired_time 上限约到 2286 年）
 const MAX_QUOTA = 1e15;

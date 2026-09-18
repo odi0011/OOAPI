@@ -226,6 +226,28 @@ export function channelRuntimeState(channelId) {
   };
 }
 
+// 渠道是否属于某请求分组。
+// groupName 支持两种形态：
+//   · 纯名字（用户分组/历史数据，如 "vip"）→ 只按名字匹配
+//   · "type:name"（API Key 绑定的厂商分组）→ 先按厂商过滤，再按名字匹配
+export function channelInGroup(channel, groupName) {
+  if (!groupName) return true;
+  let type = "";
+  let name = String(groupName);
+  const idx = name.indexOf(":");
+  if (idx > 0) {
+    type = name.slice(0, idx);
+    name = name.slice(idx + 1);
+  }
+  if (type && String(channel?.type) !== type) return false;
+  const groups = Array.isArray(channel?.groups) ? channel.groups : [];
+  if (groups.includes(name)) return true;
+  if (String(channel?.group_name || "") === name) return true;
+  // 未绑定任何分组的渠道只服务默认池
+  if (!groups.length && name === "default") return true;
+  return false;
+}
+
 function parseModels(modelsStr) {
   return String(modelsStr || "")
     .split(",")
@@ -253,6 +275,17 @@ export function rowToChannel(r) {
   } catch {
     other = {};
   }
+  // 所属分组（一个账号可属多个；空则退回 group_name，保证老数据行为不变）
+  let groups = [];
+  try {
+    groups = r.groups ? JSON.parse(r.groups) : [];
+  } catch {
+    groups = [];
+  }
+  groups = (Array.isArray(groups) ? groups : [])
+    .map((g) => String(g).trim())
+    .filter(Boolean);
+  if (!groups.length) groups = [r.group_name || "default"];
   // 接入方式：api / relay / 订阅 OAuth（codex、claude-oauth、antigravity）
   const rawMethod = String(other.method || "relay");
   const method = rawMethod === "api" || isOAuthMethod(rawMethod) ? rawMethod : "relay";
@@ -268,6 +301,7 @@ export function rowToChannel(r) {
     api_key: r.api_key || "",
     models: r.models || "",
     group_name: r.group_name || "default",
+    groups,
     status: r.status,
     priority: Number(r.priority) || 0,
     weight: Number(r.weight) || 0,
@@ -288,7 +322,7 @@ export function rowToChannel(r) {
 export async function explainNoChannel({ model, groupName = null } = {}) {
   const [rows] = await pool.query("SELECT * FROM channels WHERE status = 1");
   const all = rows.map(rowToChannel);
-  const inGroup = all.filter((c) => (groupName ? c.group_name === groupName || c.group_name === "default" : true));
+  const inGroup = all.filter((c) => channelInGroup(c, groupName));
   const forModel = inGroup.filter((c) => channelSupportsModel(c, model));
   const cooling = forModel.filter((c) => isCoolingDown(c));
   const [[disabled]] = await pool.query("SELECT COUNT(*) AS c FROM channels WHERE status != 1");
@@ -326,7 +360,7 @@ export async function selectChannels({ model, excludeIds = null, groupName = nul
     .filter((c) => !excluded.has(c.id))
     .filter((c) => !isCoolingDown(c))
     .filter((c) => channelSupportsModel(c, model))
-    .filter((c) => (groupName ? c.group_name === groupName || c.group_name === "default" : true));
+    .filter((c) => channelInGroup(c, groupName));
 
   if (usable.length <= 1) return usable;
 

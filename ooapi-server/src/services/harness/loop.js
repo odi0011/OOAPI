@@ -349,6 +349,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       output: `${result.content || ""}${result.reasoning || ""}`,
       usage: result.usage,
       channel: result.channel?.name || "",
+      channelId: Number(result.channel?.id) || 0,
     });
 
     const stepText = (textPart?.text || "").trim();

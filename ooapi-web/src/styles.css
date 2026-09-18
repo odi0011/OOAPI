@@ -1408,6 +1408,106 @@ h1, h2, h3, h4 {
   line-height: 1.55;
 }
 
+/* 分组管理弹窗 */
+.oo-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.oo-group-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+
+/* 用量统计弹窗 */
+.oo-stats-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.oo-chart-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 76px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.oo-chart-bar {
+  flex: 1;
+  min-width: 3px;
+  border-radius: 2px 2px 0 0;
+  background: color-mix(in srgb, var(--accent) 72%, transparent);
+  transition: filter 120ms ease, transform 120ms ease;
+  transform-origin: bottom center;
+  cursor: default;
+}
+
+.oo-chart-bar:hover {
+  filter: brightness(1.12) saturate(1.1);
+  transform: scaleX(1.25);
+}
+
+.oo-chart-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--ink-3);
+  margin: 4px 0 2px;
+}
+
+.oo-model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.oo-model-bar {
+  flex: 1;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--line-soft, var(--line));
+  overflow: hidden;
+}
+
+.oo-model-bar > div {
+  height: 100%;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--accent) 68%, transparent);
+}
+
+.oo-stats-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.oo-stats-recent-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.oo-stats-recent-row .oo-uptime-bar {
+  height: 14px;
+}
+
 .oo-uptime-tip-head {
   opacity: 0.85;
   margin-bottom: 6px;

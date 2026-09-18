@@ -26,8 +26,19 @@ export default function TokenPage() {
   const [saving, setSaving] = useState(false);
   const [actingId, setActingId] = useState(null); // 行内操作（启停/删除）防重入
   const [copyingId, setCopyingId] = useState(null);
+  const [groupList, setGroupList] = useState([]); // 可选分组（厂商隔离）
   const [form] = Form.useForm();
   const { begin, isLatest } = useLatest();
+
+  // 分组下拉：按厂商分组展示（值用 type:name，绑定后该 Key 只路由到该分组的渠道）
+  const groupOptions = React.useMemo(() => {
+    const byType = new Map();
+    for (const g of groupList) {
+      if (!byType.has(g.type)) byType.set(g.type, { label: g.typeName || g.type, options: [] });
+      byType.get(g.type).options.push({ value: `${g.type}:${g.name}`, label: g.name });
+    }
+    return [...byType.values()];
+  }, [groupList]);
 
   const perUnit = unitsPerOd(status); // 1 OD = 10000 额度单位
 
@@ -51,6 +62,10 @@ export default function TokenPage() {
 
   useEffect(() => {
     load();
+    // 分组列表失败不影响页面主体（无分组时下拉为空）
+    API.get("/token/groups")
+      .then((list) => setGroupList(Array.isArray(list) ? list : []))
+      .catch(() => setGroupList([]));
   }, [load]);
 
   const openCreate = () => {
@@ -64,6 +79,7 @@ export default function TokenPage() {
       never_expire: true,
       expired_time: null,
       model_limits: [],
+      group_name: undefined,
     });
     setModalOpen(true);
   };
@@ -79,6 +95,7 @@ export default function TokenPage() {
       never_expire: record.expired_time === -1,
       expired_time: record.expired_time > 0 ? dayjs(record.expired_time * 1000) : null,
       model_limits: record.model_limits || [],
+      group_name: record.group || undefined,
     });
     setModalOpen(true);
   };
@@ -97,6 +114,7 @@ export default function TokenPage() {
       unlimited_quota: v.unlimited_quota,
       expired_time: v.never_expire ? -1 : Math.floor(v.expired_time.valueOf() / 1000),
       model_limits: v.model_limits || [],
+      group_name: v.group_name || "",
     };
     setSaving(true);
     try {
@@ -204,9 +222,15 @@ export default function TokenPage() {
       width: 110,
       render: (q) => <span className="oo-num">{fmtOd(q, perUnit, 4)}</span>,
     },
-    {
-      title: "模型限制",
-      dataIndex: "model_limits",
+      {
+        title: "分组",
+        dataIndex: "group",
+        width: 150,
+        render: (g) => (g ? <Tag color="blue">{g}</Tag> : <Text type="secondary" style={{ fontSize: 12 }}>不限</Text>),
+      },
+      {
+        title: "模型限制",
+        dataIndex: "model_limits",
       width: 160,
       render: (list) =>
         list?.length ? (
@@ -344,6 +368,16 @@ export default function TokenPage() {
               placeholder="输入或选择模型"
               options={(status?.model_list || []).map((m) => ({ value: m, label: m }))}
               tokenSeparators={[","]}
+            />
+          </Form.Item>
+
+          <Form.Item name="group_name" label="分组" extra="可选；绑定后该 Key 只路由到该分组的渠道（分组按厂商隔离）">
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder="不限制（跟随账号分组）"
+              options={groupOptions}
             />
           </Form.Item>
         </Form>

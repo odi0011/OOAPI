@@ -80,6 +80,197 @@ function splitKeys(apiKey) {
 }
 
 /** 该渠道的接入方式（缺省 relay，兼容没有 other.method 的老数据） */
+// ---------- 分组工具（sub2api 风格：分组按厂商隔离，账号可属多个分组） ----------
+/** 归一化分组数组：去空、去重、限长；空则回退 [fallback] */
+function normalizeGroups(input, fallback = "default") {
+  let list = [];
+  if (Array.isArray(input)) list = input;
+  else if (typeof input === "string" && input.trim()) list = input.split(",");
+  const out = [...new Set(list.map((s) => String(s).trim().slice(0, 32)).filter(Boolean))];
+  return out.length ? out : [String(fallback || "default").trim().slice(0, 32) || "default"];
+}
+
+/** 确保分组行存在（渠道提交了新分组名时自动建行） */
+async function ensureGroupRows(type, groups) {
+  const ts = Math.floor(Date.now() / 1000);
+  for (const g of groups) {
+    await pool.query("INSERT IGNORE INTO channel_groups (type, name, created_time) VALUES (?,?,?)", [type, g, ts]);
+  }
+}
+
+/** 渠道行的 groups 解析（兼容老数据：空则回退 group_name） */
+function parseGroups(row) {
+  try {
+    const arr = row?.groups ? JSON.parse(row.groups) : [];
+    if (Array.isArray(arr) && arr.length) return arr.map((s) => String(s)).filter(Boolean);
+  } catch {
+    /* ignore */
+  }
+  return [row?.group_name || "default"];
+}
+
+// ---------- 分组列表（前端分组下拉/管理用）----------
+router.get(
+  "/groups",
+  asyncHandler(async (req, res) => {
+    const [rows] = await pool.query("SELECT * FROM channel_groups ORDER BY type, name");
+    const [chans] = await pool.query("SELECT type, groups, group_name FROM channels");
+    const counts = new Map();
+    for (const c of chans) {
+      for (const g of parseGroups(c)) {
+        const key = `${c.type}:${g}`;
+        counts.set(key, (counts.get(key) || 0) + 1);
+      }
+    }
+    return ok(
+      res,
+      rows.map((g) => ({
+        id: g.id,
+        type: g.type,
+        name: g.name,
+        typeName: getProvider(g.type)?.name || g.type,
+        remark: g.remark || "",
+        count: counts.get(`${g.type}:${g.name}`) || 0,
+      }))
+    );
+  })
+);
+
+// ---------- 新建分组 ----------
+router.post(
+  "/groups",
+  asyncHandler(async (req, res) => {
+    const { type, name, remark } = req.body || {};
+    const provider = getProvider(type);
+    if (!provider) return fail(res, "未知厂商");
+    const gname = String(name || "").trim().slice(0, 32);
+    if (!gname) return fail(res, "请填写分组名");
+    await pool.query("INSERT IGNORE INTO channel_groups (type, name, remark, created_time) VALUES (?,?,?,?)", [
+      type,
+      gname,
+      String(remark || "").slice(0, 255),
+      now(),
+    ]);
+    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `新建分组「${provider.name} / ${gname}」` });
+    return ok(res, null, "分组已创建");
+  })
+);
+
+// ---------- 删除分组（同时从该厂商渠道的 groups 里摘掉）----------
+router.delete(
+  "/groups/:id",
+  asyncHandler(async (req, res) => {
+    const gid = idParam(req);
+    if (!gid) return fail(res, "分组不存在", 404);
+    const [rows] = await pool.query("SELECT * FROM channel_groups WHERE id = ?", [gid]);
+    if (!rows.length) return fail(res, "分组不存在", 404);
+    const group = rows[0];
+    await pool.query("DELETE FROM channel_groups WHERE id = ?", [gid]);
+    const [chans] = await pool.query("SELECT id, groups, group_name FROM channels WHERE type = ?", [group.type]);
+    for (const c of chans) {
+      const next = parseGroups(c).filter((g) => g !== group.name);
+      const final = next.length ? next : ["default"];
+      await pool.query("UPDATE channels SET groups = ?, group_name = ? WHERE id = ?", [
+        JSON.stringify(final),
+        final[0],
+        c.id,
+      ]);
+    }
+    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `删除分组「${group.type} / ${group.name}」` });
+    return ok(res, null, "分组已删除");
+  })
+);
+
+// ---------- 渠道用量统计（弹窗图表用）----------
+// 数据来自消费日志 detail（新日志带 channel_id/channel_ids + model + token 明细）；
+// 老日志没有这些字段，统计从本功能上线后开始累计。
+router.get(
+  "/:id/stats",
+  asyncHandler(async (req, res) => {
+    const id = idParam(req);
+    if (!id) return fail(res, "渠道不存在", 404);
+    const [rows] = await pool.query("SELECT * FROM channels WHERE id = ?", [id]);
+    if (!rows.length) return fail(res, "渠道不存在", 404);
+    const channel = rows[0];
+    const days = safeInt(req.query.days, { min: 1, max: 90, fallback: 30 }) || 30;
+    const since = now() - days * 86400;
+
+    let logs = [];
+    try {
+      const [ls] = await pool.query(
+        `SELECT created_at, quota, detail FROM logs
+          WHERE type = ? AND created_at >= ?
+            AND JSON_VALID(detail)
+            AND (JSON_UNQUOTE(JSON_EXTRACT(detail, '$.channel_id')) = ?
+                 OR JSON_CONTAINS(JSON_EXTRACT(detail, '$.channel_ids'), ?))`,
+        [LOG_TYPE.CONSUME, since, String(id), String(id)]
+      );
+      logs = ls;
+    } catch (e) {
+      // 老库不支持 JSON 函数时退化为「仅基础信息 + 最近调用」，不让整个弹窗报错
+      console.warn("[channel] 用量统计查询失败：", e.message);
+    }
+
+    const totals = { calls: logs.length, units: 0, promptTokens: 0, completionTokens: 0, cacheTokens: 0 };
+    const byModel = new Map();
+    const byDay = new Map();
+    for (const l of logs) {
+      let d = {};
+      try {
+        d = JSON.parse(l.detail || "{}");
+      } catch {
+        d = {};
+      }
+      const pt = Number(d.prompt_tokens) || 0;
+      const ct = Number(d.completion_tokens) || 0;
+      const cat = Number(d.cache_tokens) || 0;
+      const units = Number(l.quota) || 0;
+      totals.units += units;
+      totals.promptTokens += pt;
+      totals.completionTokens += ct;
+      totals.cacheTokens += cat;
+      const model = String(d.model || "-");
+      const m = byModel.get(model) || { model, calls: 0, units: 0, promptTokens: 0, completionTokens: 0 };
+      m.calls += 1;
+      m.units += units;
+      m.promptTokens += pt;
+      m.completionTokens += ct;
+      byModel.set(model, m);
+      const day = new Date(l.created_at * 1000).toISOString().slice(0, 10);
+      const dd = byDay.get(day) || { day, calls: 0, units: 0, tokens: 0 };
+      dd.calls += 1;
+      dd.units += units;
+      dd.tokens += pt + ct;
+      byDay.set(day, dd);
+    }
+    const dayList = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date((now() - i * 86400) * 1000).toISOString().slice(0, 10);
+      dayList.push(byDay.get(d) || { day: d, calls: 0, units: 0, tokens: 0 });
+    }
+
+    return ok(res, {
+      channel: {
+        id: channel.id,
+        name: channel.name,
+        type: channel.type,
+        used_count: Number(channel.used_count) || 0,
+        created_time: Number(channel.created_time) || 0,
+        groups: parseGroups(channel),
+      },
+      days,
+      totals: {
+        ...totals,
+        od: Number((totals.units / 10000).toFixed(6)),
+        tokens: totals.promptTokens + totals.completionTokens,
+      },
+      byModel: [...byModel.values()].sort((a, b) => b.units - a.units).slice(0, 20),
+      byDay: dayList,
+      recent: channelRuntimeState(id).recent,
+    });
+  })
+);
+
 function methodOf(row) {
   const other = parseOther(row);
   const m = String(other.method || "relay");
@@ -118,7 +309,8 @@ function rowToResp(r, { withKey = false } = {}) {
     // 配置
     base_url: r.base_url || mCfg?.baseUrl || "",
     models: String(r.models || "").split(",").map((s) => s.trim()).filter(Boolean),
-    group_name: r.group_name || "default",
+      group_name: r.group_name || "default",
+      groups: parseGroups(r),
     priority: Number(r.priority) || 0,
     weight: Number(r.weight) || 0,
     // 状态
@@ -459,6 +651,7 @@ router.post(
       method: methodInput,
       models: modelsInput,
       group_name,
+      groups: groupsInput,
       weight,
       auto_ban,
       ...rest
@@ -487,6 +680,9 @@ router.post(
         : String(modelsInput || "").trim() || defaultModels
     ).slice(0, 20_000);
     const groupName = String(group_name || "default").trim().slice(0, 64) || "default";
+    // 分组（可多选）：优先 groups 数组，否则沿用 group_name；并确保分组行存在
+    const groupsList = normalizeGroups(groupsInput !== undefined ? groupsInput : group_name, groupName);
+    await ensureGroupRows(type, groupsList);
     const weightVal =
       Number.isFinite(Number(weight)) && Number(weight) > 0 ? Math.min(10000, Math.floor(Number(weight))) : 1;
     const autoBanVal = auto_ban === undefined ? 1 : auto_ban ? 1 : 0;
@@ -567,7 +763,8 @@ router.post(
       const merged = { ...prevOther, ...other };
       await pool.query(
         `UPDATE channels SET name = ?, api_key = ?, other = ?, last_error = '',
-           models = COALESCE(?, models), group_name = COALESCE(?, group_name),
+           models = COALESCE(?, models),
+           group_name = COALESCE(?, group_name), groups = COALESCE(?, groups),
            weight = COALESCE(?, weight), auto_ban = COALESCE(?, auto_ban),
            priority = COALESCE(?, priority)
          WHERE id = ?`,
@@ -576,7 +773,8 @@ router.post(
           token || "",
           JSON.stringify(merged),
           modelsInput !== undefined ? models : null,
-          group_name !== undefined ? groupName : null,
+          groupsInput !== undefined || group_name !== undefined ? groupsList[0] : null,
+          groupsInput !== undefined || group_name !== undefined ? JSON.stringify(groupsList) : null,
           weight !== undefined ? weightVal : null,
           auto_ban !== undefined ? autoBanVal : null,
           priorityProvided ? priorityVal : null,
@@ -603,16 +801,17 @@ router.post(
     // 新建
     let insertId;
     if (mode === "browser") {
-      // 列与值必须严格一一对应（11 列 / 参数：name,type,base_url,models,group,priority,weight,auto_ban,other,created_time）
+      // 列与值必须严格一一对应（name,type,base_url,models,group_name,groups,priority,weight,auto_ban,other,created_time）
       const [ret] = await pool.query(
-        `INSERT INTO channels (name, type, base_url, api_key, models, group_name, status, priority, weight, auto_ban, other, created_time)
-         VALUES (?,?,?, '', ?, ?, 1, ?, ?, ?, ?, ?)`,
+        `INSERT INTO channels (name, type, base_url, api_key, models, group_name, groups, status, priority, weight, auto_ban, other, created_time)
+         VALUES (?,?,?, '', ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
         [
           String(name || `${provider.name} 渠道`).slice(0, 64),
           type,
           mCfg.baseUrl || "",
           models,
-          groupName,
+          groupsList[0],
+          JSON.stringify(groupsList),
           priorityVal,
           weightVal,
           autoBanVal,
@@ -651,15 +850,16 @@ router.post(
         if (dup.length) return fail(res, "该账号已存在（登录态重复）");
       }
       const [ret] = await pool.query(
-        `INSERT INTO channels (name, type, base_url, api_key, models, group_name, status, priority, weight, auto_ban, other, created_time)
-         VALUES (?,?,?,?,?,?, 1, ?, ?, ?, ?, ?)`,
+        `INSERT INTO channels (name, type, base_url, api_key, models, group_name, groups, status, priority, weight, auto_ban, other, created_time)
+         VALUES (?,?,?,?,?,?,?, 1, ?, ?, ?, ?, ?)`,
         [
           String(name || accountLabel || `${provider.name} 渠道`).slice(0, 64),
           type,
           mCfg.baseUrl || "",
           token,
           models,
-          groupName,
+          groupsList[0],
+          JSON.stringify(groupsList),
           priorityVal,
           weightVal,
           autoBanVal,
@@ -744,8 +944,8 @@ router.post(
           continue;
         }
         await pool.query(
-          `INSERT INTO channels (name, type, base_url, api_key, models, group_name, status, priority, weight, other, created_time)
-           VALUES (?,?,?,?,?, 'default', 1, ?, 1, ?, ?)`,
+          `INSERT INTO channels (name, type, base_url, api_key, models, group_name, groups, status, priority, weight, other, created_time)
+           VALUES (?,?,?,?,?, 'default', '["default"]', 1, ?, 1, ?, ?)`,
           [account, type, mCfg.baseUrl || "", r.token, models, priorityVal, JSON.stringify(other), now()]
         );
         results.push({ account, ok: true });
@@ -797,16 +997,20 @@ router.post(
     if (weight === null) return fail(res, "权重无效");
 
     const other = { method: "api" };
+    // 分组（可多选）：优先 groups 数组，否则沿用 group_name；并确保分组行存在
+    const groups = normalizeGroups(b.groups !== undefined ? b.groups : b.group_name);
+    await ensureGroupRows(type, groups);
     const [ret] = await pool.query(
-      `INSERT INTO channels (name, type, base_url, api_key, models, group_name, status, priority, weight, remark, auto_ban, other, created_time)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO channels (name, type, base_url, api_key, models, group_name, groups, status, priority, weight, remark, auto_ban, other, created_time)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         name.slice(0, 64),
         type,
         baseUrl,
         apiKey.slice(0, 60_000),
         models.slice(0, 20_000),
-        String(b.group_name || "default").trim().slice(0, 64) || "default",
+        groups[0],
+        JSON.stringify(groups),
         Number(b.status) === 2 ? 2 : 1,
         priority,
         weight,
@@ -848,7 +1052,13 @@ router.put(
       const m = Array.isArray(b.models) ? b.models.join(",") : String(b.models);
       if (m.trim()) setIf("models", m.slice(0, 20_000));
     }
-    setIf("group_name", b.group_name !== undefined ? String(b.group_name).trim().slice(0, 64) || "default" : undefined);
+    // 分组（可多选）：提交 groups 或 group_name 都接受；同步 group_name=第一个（兼容旧逻辑）
+    if (b.groups !== undefined || b.group_name !== undefined) {
+      const groups = normalizeGroups(b.groups !== undefined ? b.groups : b.group_name);
+      await ensureGroupRows(cur.type, groups);
+      setIf("groups", JSON.stringify(groups));
+      setIf("group_name", groups[0]);
+    }
     if (b.status !== undefined) {
       const s = Number(b.status) === 2 ? 2 : 1;
       setIf("status", s);
@@ -1048,7 +1258,14 @@ router.post(
       await pool.query(`UPDATE channels SET priority = ? WHERE id IN (${ph})`, [p, ...list]);
     } else if (action === "set_group") {
       const g = String(payload?.group_name || "default").trim().slice(0, 64) || "default";
-      await pool.query(`UPDATE channels SET group_name = ? WHERE id IN (${ph})`, [g, ...list]);
+      // 分组按厂商隔离：给选中的各厂商补齐分组行后再绑定
+      const [types] = await pool.query(`SELECT DISTINCT type FROM channels WHERE id IN (${ph})`, list);
+      for (const t of types) await ensureGroupRows(t.type, [g]).catch(() => {});
+      await pool.query(`UPDATE channels SET group_name = ?, groups = ? WHERE id IN (${ph})`, [
+        g,
+        JSON.stringify([g]),
+        ...list,
+      ]);
     } else if (action === "add_models") {
       const add = (Array.isArray(payload?.models) ? payload.models : String(payload?.models || "").split(","))
         .map((s) => String(s).trim())
@@ -1121,9 +1338,9 @@ router.post(
           continue;
         }
         const baseUrl = String(a.base_url || mCfg.baseUrl || "").slice(0, 255);
-        const [ret] = await pool.query(
-          `INSERT INTO channels (name, type, base_url, api_key, models, group_name, status, priority, weight, auto_ban, other, created_time)
-           VALUES (?,?,?,?,?, 'default', 1, ?, 1, 1, ?, ?)`,
+          const [ret] = await pool.query(
+            `INSERT INTO channels (name, type, base_url, api_key, models, group_name, groups, status, priority, weight, auto_ban, other, created_time)
+             VALUES (?,?,?,?,?, 'default', '["default"]', 1, ?, 1, 1, ?, ?)`,
           [
             String(a.name || `${a.type} 渠道`).slice(0, 64),
             a.type,

@@ -229,7 +229,16 @@ async function settle({ token, user, model, prompt, output, usage, ip, requestId
     content: `调用 ${model} · 提示 ${promptTokens} / 补全 ${completionTokens} tokens${
       cacheTokens ? ` / 缓存 ${cacheTokens}` : ""
     } · ${od} ${CURRENCY}`,
-    detail: JSON.stringify({ channel: channel?.name, price: { in: price.input, out: price.output, cache: price.cache }, requestId }),
+    detail: JSON.stringify({
+      channel: channel?.name,
+      channel_id: channel?.id,
+      model,
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      cache_tokens: cacheTokens,
+      price: { in: price.input, out: price.output, cache: price.cache },
+      requestId,
+    }),
     quota: units,
     ip,
     requestId,
@@ -368,7 +377,7 @@ router.post(
       thinking: thinkingOverride,
       search: wantSearch,
       images,
-      groupName: user.group_name,
+      groupName: token.group_name || user.group_name,
       signal: clientCtrl.signal,
       onDelta: (t) => {
         partialOut += t;

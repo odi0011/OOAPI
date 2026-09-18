@@ -505,3 +505,16 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   （工具回灌、待办写回、子代理派发、步数上限、格式纠正、未知工具、部分计费、会话 CRUD、余额不足拒绝、
   回退幂等与统计重算：删 2 条后 cost/token/消息数只保留第一轮）；
   前端 `npm run build` 通过；浏览器实测浅色/深色、桌面/移动、流式（思考→工具 chip→正文）、设定面板与命令面板。 |
+| 2026-09-18 | **第 17 批（分组 sub2api 化 + 渠道用量统计）**：
+  · **分组**：新增 `channel_groups` 表（分组**按厂商隔离**，同名分组跨厂商互不相干）；
+  `channels.groups` JSON 数组（一个账号可属多个分组，启动时自动用 `group_name` 回填并补齐分组行）；
+  渠道新增/编辑支持多选分组（回车即新建），列表按 chips 展示；新增「分组管理」弹窗（按厂商新建/删除，
+  删除时自动从该厂商渠道摘除）；`GET/POST /api/channel/groups`、`DELETE /api/channel/groups/:id`；
+  · **API Key 绑定分组**：令牌创建/编辑新增「分组」下拉（按厂商分组展示，值 `type:name`），
+  网关路由用 `token.group_name || user.group_name`，`channelInGroup` 支持「厂商:分组」严格匹配
+  （未绑定分组的渠道只服务 default 池）——即 sub2api 的「账号池 → 分组 → Key」流程；
+  用户侧新增 `GET /api/token/groups`（登录即可读，只回厂商+分组名）；
+  · **渠道用量统计**：操作列新增图表图标 → 弹窗展示：近 N 天调用/Token/消费概览、按天柱状图（悬浮明细）、
+  按模型条形榜（消费+Tokens）、最近调用（来源/耗时/提示词→回复）；
+  消费日志 `detail` 增强（`channel_id`/`channel_ids`/`model`/token 明细），网关、站内对话（含部分计费）
+  全部接入；`GET /api/channel/:id/stats?days=30` 兼容老库（无 JSON 函数时降级为基础信息）。 |

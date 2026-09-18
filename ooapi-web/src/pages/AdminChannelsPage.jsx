@@ -6,10 +6,10 @@ import {
 import {
   PlusOutlined, ReloadOutlined, ThunderboltOutlined, DeleteOutlined, EditOutlined,
   UndoOutlined, KeyOutlined, LoginOutlined, ApiOutlined, GlobalOutlined,
-  InfoCircleOutlined, SafetyCertificateOutlined, AppstoreOutlined, UnorderedListOutlined,
+  InfoCircleOutlined, SafetyCertificateOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
-import { fmtDate } from "../services/format";
+import { fmtDate, CURRENCY_NAME } from "../services/format";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import { VendorIcon, ModelLabel } from "../components/VendorIcon";
@@ -195,7 +195,7 @@ export default function AdminChannelsPage() {
   const [items, setItems] = useState([]);
   const [providers, setProviders] = useState([]);
   const [stats, setStats] = useState(null);
-  const [groups, setGroups] = useState([]);
+  const [groups, setGroups] = useState([]); // 结构化分组：[{id,type,typeName,name,count}]
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [providersError, setProvidersError] = useState("");
@@ -203,6 +203,16 @@ export default function AdminChannelsPage() {
   const [selectedKeys, setSelectedKeys] = useState([]);
   const [testingId, setTestingId] = useState(null);
   const [actionBusyId, setActionBusyId] = useState(null);
+  // 分组管理弹窗
+  const [groupOpen, setGroupOpen] = useState(false);
+  const [newGroupType, setNewGroupType] = useState("");
+  const [newGroupName, setNewGroupName] = useState("");
+  const [groupBusy, setGroupBusy] = useState(false);
+  // 用量统计弹窗
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [statsTarget, setStatsTarget] = useState(null);
+  const [statsData, setStatsData] = useState(null);
+  const [statsBusy, setStatsBusy] = useState(false);
   // 列表 / 宫格两种形态（记住偏好；宫格有自己的分页）
   const [viewMode, setViewMode] = useState(() => {
     try {
@@ -222,6 +232,59 @@ export default function AdminChannelsPage() {
       }
       return next;
     });
+
+  // 某厂商可选的分组名（分组按厂商隔离）
+  const groupNamesOf = (type) =>
+    groups.filter((g) => !type || g.type === type).map((g) => g.name);
+
+  // ---------- 分组管理 ----------
+  const submitGroup = async () => {
+    if (groupBusy) return;
+    const type = newGroupType;
+    const name = String(newGroupName || "").trim();
+    if (!type) return message.warning("请选择厂商");
+    if (!name) return message.warning("请填写分组名");
+    setGroupBusy(true);
+    try {
+      await API.post("/channel/groups", { type, name });
+      message.success("分组已创建");
+      setNewGroupName("");
+      await load({ silent: true });
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+  const removeGroup = async (g) => {
+    if (groupBusy) return;
+    setGroupBusy(true);
+    try {
+      await API.del(`/channel/groups/${g.id}`);
+      message.success("分组已删除");
+      await load({ silent: true });
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+
+  // ---------- 用量统计 ----------
+  const openStats = async (r) => {
+    setStatsTarget(r);
+    setStatsData(null);
+    setStatsOpen(true);
+    setStatsBusy(true);
+    try {
+      const d = await API.get(`/channel/${r.id}/stats`, { params: { days: 30 } });
+      setStatsData(d);
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setStatsBusy(false);
+    }
+  };
 
   const [keyword, setKeyword] = useState("");
   const [filterProvider, setFilterProvider] = useState("");
@@ -288,7 +351,7 @@ export default function AdminChannelsPage() {
       else setStatsError(st.reason?.message || "渠道统计加载失败");
       if (ps.status === "fulfilled") setProviders(ps.value);
       else setProvidersError(ps.reason?.message || "厂商列表加载失败");
-      if (gs.status === "fulfilled") setGroups(gs.value);
+      if (gs.status === "fulfilled") setGroups(Array.isArray(gs.value) ? gs.value : []);
       const failed = [list, st, ps, gs].find((r) => r.status === "rejected");
       if (failed) message.error(failed.reason?.message || "部分数据加载失败");
     } catch (e) {
@@ -383,7 +446,7 @@ export default function AdminChannelsPage() {
       priority: 0,
       // 非 API 方式（反代/订阅）后端会把 <=0 的权重归一到 1，表单默认值保持一致
       weight: m.key === "api" ? 0 : 1,
-      group_name: "default",
+      groups: ["default"],
       auto_ban: true,
     };
     for (const f of m.loginFields || []) {
@@ -414,7 +477,7 @@ export default function AdminChannelsPage() {
           name: v.name,
           priority: v.priority,
           models: v.models,
-          group_name: v.group_name,
+          groups: Array.isArray(v.groups) && v.groups.length ? v.groups : ["default"],
           weight: v.weight,
           auto_ban: v.auto_ban,
         };
@@ -436,7 +499,7 @@ export default function AdminChannelsPage() {
           base_url: v.base_url,
           api_key: v.api_key,
           models: v.models,
-          group_name: v.group_name,
+          groups: Array.isArray(v.groups) && v.groups.length ? v.groups : ["default"],
           priority: v.priority,
           weight: v.weight,
           auto_ban: v.auto_ban,
@@ -504,7 +567,7 @@ export default function AdminChannelsPage() {
       base_url: r.base_url,
       api_key: "",
       models: r.models,
-      group_name: r.group_name,
+      groups: Array.isArray(r.groups) && r.groups.length ? r.groups : [r.group_name || "default"],
       priority: r.priority,
       weight: r.weight,
       remark: r.remark,
@@ -533,7 +596,7 @@ export default function AdminChannelsPage() {
         id: editing.id,
         name: v.name,
         models: v.models,
-        group_name: v.group_name,
+        groups: Array.isArray(v.groups) && v.groups.length ? v.groups : ["default"],
         priority: v.priority,
         weight: v.weight,
         remark: v.remark,
@@ -837,7 +900,22 @@ export default function AdminChannelsPage() {
         );
       },
     },
-    { title: "分组", dataIndex: "group_name", width: 90 },
+    {
+      title: "分组",
+      dataIndex: "groups",
+      width: 120,
+      render: (list, r) => {
+        const gs = Array.isArray(list) && list.length ? list : [r.group_name || "default"];
+        return (
+          <Tooltip title={gs.join("、")}>
+            <span style={{ display: "inline-flex", gap: 4, alignItems: "center", overflow: "hidden" }}>
+              <span className="bui-chip">{gs[0]}</span>
+              {gs.length > 1 ? <span className="bui-chip">+{gs.length - 1}</span> : null}
+            </span>
+          </Tooltip>
+        );
+      },
+    },
     { title: "优先级", dataIndex: "priority", width: 86, sorter: (a, b) => a.priority - b.priority, render: (v) => <span className="oo-num">{v}</span> },
     { title: "权重", dataIndex: "weight", width: 74, render: (v) => <span className="oo-num">{v}</span> },
     {
@@ -888,6 +966,15 @@ export default function AdminChannelsPage() {
           </button>
         </Tooltip>
       ) : null}
+      <Tooltip title="用量统计">
+        <button
+          className="bui-icon-btn"
+          aria-label={`${r.name} 用量统计`}
+          onClick={() => openStats(r)}
+        >
+          <BarChartOutlined />
+        </button>
+      </Tooltip>
       <Tooltip title="编辑">
         <button className="bui-icon-btn" aria-label={`${r.name} 编辑`} onClick={() => openEdit(r)} disabled={Boolean(actionBusyId) || testingId === r.id}><EditOutlined /></button>
       </Tooltip>
@@ -951,6 +1038,7 @@ export default function AdminChannelsPage() {
             ) : null}
             <button className="bui-btn" onClick={load}><ReloadOutlined /> 刷新</button>
             <button className="bui-btn" onClick={openImport}>导入凭据</button>
+            <button className="bui-btn" onClick={() => setGroupOpen(true)}>分组管理</button>
             <button className="bui-btn bui-btn--primary" onClick={openAdd}><PlusOutlined /> 添加渠道</button>
           </>
         }
@@ -1212,12 +1300,17 @@ export default function AdminChannelsPage() {
                       />
                     </Form.Item>
 
-                  <Row gutter={12}>
-                    <Col span={8}>
-                      <Form.Item name="group_name" label="分组">
-                        <Select options={groups.map((g) => ({ value: g, label: g }))} placeholder="default" />
-                      </Form.Item>
-                    </Col>
+                    <Row gutter={12}>
+                      <Col span={8}>
+                        <Form.Item name="groups" label="分组" extra="可多选；回车可新建（按厂商隔离）">
+                          <Select
+                            mode="tags"
+                            placeholder="default"
+                            tokenSeparators={[","]}
+                            options={groupNamesOf(pickProvider?.key).map((g) => ({ value: g, label: g }))}
+                          />
+                        </Form.Item>
+                      </Col>
                     <Col span={8}>
                       <Form.Item name="priority" label="优先级" extra="越大越优先">
                         <InputNumber style={{ width: "100%" }} min={0} />
@@ -1293,12 +1386,17 @@ export default function AdminChannelsPage() {
               optionRender={modelOptionRender(editing?.type)}
             />
           </Form.Item>
-          <Row gutter={12}>
-            <Col span={8}>
-              <Form.Item name="group_name" label="分组">
-                <Select options={groups.map((g) => ({ value: g, label: g }))} />
-              </Form.Item>
-            </Col>
+            <Row gutter={12}>
+              <Col span={8}>
+                <Form.Item name="groups" label="分组" extra="可多选；回车可新建（按厂商隔离）">
+                  <Select
+                    mode="tags"
+                    placeholder="default"
+                    tokenSeparators={[","]}
+                    options={groupNamesOf(editing?.type).map((g) => ({ value: g, label: g }))}
+                  />
+                </Form.Item>
+              </Col>
             <Col span={8}>
               <Form.Item name="priority" label="优先级"><InputNumber style={{ width: "100%" }} min={0} /></Form.Item>
             </Col>
@@ -1580,13 +1678,13 @@ export default function AdminChannelsPage() {
                   </Form.Item>
                 );
               }
-              if (a === "set_group") {
-                return (
-                  <Form.Item name="group_name" label="分组" rules={[{ required: true, message: "请填写" }]}>
-                    <Select options={groups.map((g) => ({ value: g, label: g }))} />
-                  </Form.Item>
-                );
-              }
+                if (a === "set_group") {
+                  return (
+                    <Form.Item name="group_name" label="分组" rules={[{ required: true, message: "请填写" }]}>
+                      <Select options={[...new Set(groups.map((g) => g.name))].map((g) => ({ value: g, label: g }))} />
+                    </Form.Item>
+                  );
+                }
               if (a === "add_models") {
                 return (
                   <Form.Item name="models" label="要追加的模型" rules={[{ required: true, message: "请填写" }]}>
@@ -1657,6 +1755,141 @@ export default function AdminChannelsPage() {
             )}
           </pre>
         ) : null}
+      </Modal>
+
+      {/* ============ 分组管理（分组按厂商隔离，账号可属多个分组） ============ */}
+      <Modal
+        title="分组管理"
+        open={groupOpen}
+        onCancel={() => setGroupOpen(false)}
+        footer={null}
+        width={640}
+        destroyOnClose
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="分组按厂商隔离：同名分组在不同厂商下互不相干；渠道可同时属于多个分组，API Key 绑定分组后只路由到该分组的渠道。"
+        />
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Select
+            placeholder="选择厂商"
+            style={{ width: 170 }}
+            value={newGroupType || undefined}
+            onChange={setNewGroupType}
+            options={providers.map((p) => ({ value: p.key, label: p.name }))}
+          />
+          <Input
+            placeholder="分组名（如 vip）"
+            style={{ width: 190 }}
+            maxLength={32}
+            value={newGroupName}
+            onChange={(e) => setNewGroupName(e.target.value)}
+            onPressEnter={submitGroup}
+          />
+          <button className="bui-btn bui-btn--primary" onClick={submitGroup} disabled={groupBusy}>新增分组</button>
+        </Space>
+        <div className="oo-group-list">
+          {groups.length ? (
+            groups.map((g) => (
+              <div className="oo-group-row" key={g.id}>
+                <span className="bui-chip">{g.typeName}</span>
+                <span style={{ flex: 1, fontWeight: 550 }} className="oo-truncate">{g.name}</span>
+                <span style={{ color: "var(--ink-3)", fontSize: 12 }}>{g.count} 个渠道</span>
+                <Popconfirm title={`删除分组「${g.name}」？`} onConfirm={() => removeGroup(g)}>
+                  <button className="bui-icon-btn" style={{ color: "var(--red)" }} aria-label={`删除分组 ${g.name}`}>
+                    <DeleteOutlined />
+                  </button>
+                </Popconfirm>
+              </div>
+            ))
+          ) : (
+            <Text type="secondary" style={{ fontSize: 12 }}>暂无分组</Text>
+          )}
+        </div>
+      </Modal>
+
+      {/* ============ 用量统计（总计 / 按天 / 按模型 / 最近调用） ============ */}
+      <Modal
+        title={`用量统计：${statsTarget?.name || ""}`}
+        open={statsOpen}
+        onCancel={() => setStatsOpen(false)}
+        footer={null}
+        width={780}
+        destroyOnClose
+      >
+        {statsBusy ? (
+          <div style={{ padding: 36, textAlign: "center" }}><Spin /></div>
+        ) : statsData ? (
+          <>
+            <div className="oo-stats-chips">
+              <span className="bui-chip">近 {statsData.days} 天调用 {statsData.totals.calls}</span>
+              <span className="bui-chip">Tokens {(statsData.totals.tokens || 0).toLocaleString()}</span>
+              <span className="bui-chip" style={{ color: "var(--green)" }}>
+                消费 {statsData.totals.od} {CURRENCY_NAME}
+              </span>
+              <span className="bui-chip">累计调用 {statsData.channel?.used_count ?? 0}</span>
+              {(statsData.channel?.groups || []).map((g) => <span className="bui-chip" key={g}>分组 {g}</span>)}
+            </div>
+
+            <div className="oo-section-title">按天消费（{CURRENCY_NAME}）</div>
+            <div className="oo-chart-bars">
+              {statsData.byDay.map((d) => {
+                const max = Math.max(...statsData.byDay.map((x) => x.units), 1);
+                const h = Math.max(2, Math.round((d.units / max) * 72));
+                return (
+                  <Tooltip key={d.day} title={`${d.day} · 调用 ${d.calls} · ${(d.units / 10000).toFixed(4)} ${CURRENCY_NAME} · ${d.tokens} tokens`}>
+                    <span className="oo-chart-bar" style={{ height: h }} />
+                  </Tooltip>
+                );
+              })}
+            </div>
+            <div className="oo-chart-axis">
+              <span>{statsData.byDay[0]?.day}</span>
+              <span>{statsData.byDay[statsData.byDay.length - 1]?.day}</span>
+            </div>
+
+            <div className="oo-section-title">按模型</div>
+            {statsData.byModel.length ? (
+              statsData.byModel.map((m) => {
+                const max = Math.max(...statsData.byModel.map((x) => x.units), 1);
+                return (
+                  <div className="oo-model-row" key={m.model}>
+                    <span style={{ width: 180 }} className="oo-truncate"><ModelLabel model={m.model} size={13} /></span>
+                    <div className="oo-model-bar"><div style={{ width: `${Math.max(2, (m.units / max) * 100)}%` }} /></div>
+                    <span className="oo-num" style={{ width: 96, textAlign: "right" }}>{(m.units / 10000).toFixed(4)} {CURRENCY_NAME}</span>
+                    <span className="oo-num" style={{ width: 110, textAlign: "right", color: "var(--ink-3)", fontSize: 12 }}>
+                      {(m.promptTokens + m.completionTokens).toLocaleString()} tk
+                    </span>
+                  </div>
+                );
+              })
+            ) : (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                近 {statsData.days} 天暂无归属到该渠道的消费记录（统计从本功能上线后开始累计）
+              </Text>
+            )}
+
+            <div className="oo-section-title">最近调用</div>
+            <div className="oo-stats-recent">
+              {(statsData.recent || []).slice(-10).reverse().map((c, i) => (
+                <div className="oo-stats-recent-row" key={i}>
+                  <span className={`oo-uptime-bar ${!c.ok ? "is-fail" : c.ms >= UPTIME_SLOW_MS ? "is-slow" : "is-ok"}`} />
+                  <span style={{ width: 92, color: "var(--ink-3)", fontSize: 12 }}>{fmtDate(c.t, "MM-DD HH:mm")}</span>
+                  <span className="bui-chip">{c.k === "auto" ? "定时" : c.k === "test" ? "测试" : c.k === "chat" ? "调用" : "记录"}</span>
+                  <span className="oo-num" style={{ width: 56, textAlign: "right", fontSize: 12 }}>{c.ms ? `${c.ms}ms` : "-"}</span>
+                  <span className="oo-truncate" style={{ flex: 1, fontSize: 12 }} title={`${c.p || ""} → ${c.r || ""}`}>
+                    {c.p ? `${c.p} → ${c.r || ""}` : c.r || ""}
+                  </span>
+                </div>
+              ))}
+              {!(statsData.recent || []).length ? <Text type="secondary" style={{ fontSize: 12 }}>暂无记录</Text> : null}
+            </div>
+          </>
+        ) : (
+          <Text type="secondary">暂无数据</Text>
+        )}
       </Modal>
     </div>
   );

@@ -180,9 +180,9 @@ router.post(
 // ---------- 计费（用户额度）----------
 // 与网关同一套原子扣费；harness 传进来的 tokens 是「每次上游调用分别 splitTokens 后求和」，
 // 混用 API 渠道（结构化 usage）与反代渠道（usage=null）时不会互相覆盖口径。
-async function chargeUser({ user, model, prompt, output, usage, channel, tokens, kind }) {
-  const { promptTokens, completionTokens, cacheTokens } =
-    tokens || splitTokens({ prompt, output, upstreamTotal: usage });
+  async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind }) {
+    const { promptTokens, completionTokens, cacheTokens } =
+      tokens || splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
   const price = await getPrice(resolveAliasSync(model));
   const units = computeCost({ price, promptTokens, completionTokens, cacheTokens });
@@ -207,7 +207,16 @@ async function chargeUser({ user, model, prompt, output, usage, channel, tokens,
     content: `${kind} · ${model} · 提示 ${promptTokens} / 补全 ${completionTokens} tokens${
       cacheTokens ? ` / 缓存 ${cacheTokens}` : ""
     } · ${(units / UNITS_PER_OD).toFixed(4)} ${CURRENCY}`,
-    detail: JSON.stringify({ channel: channel?.name, kind }),
+    detail: JSON.stringify({
+      channel: channel?.name,
+      channel_id: channel?.id || (Array.isArray(channelIds) && channelIds.length === 1 ? channelIds[0] : undefined),
+      channel_ids: Array.isArray(channelIds) && channelIds.length ? channelIds : undefined,
+      model,
+      kind,
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      cache_tokens: cacheTokens,
+    }),
     quota: units,
   });
   return { units, promptTokens, completionTokens, cacheTokens };
@@ -332,6 +341,7 @@ router.post(
       runParts = out.parts;
       runTodo = out.todo;
       channelName = runCalls.find((c) => c.channel)?.channel || "";
+      const runChannelIds = [...new Set(runCalls.map((c) => Number(c.channelId) || 0).filter(Boolean))];
 
       const tokens = aggregate(runCalls);
       const billed = await chargeUser({
@@ -342,6 +352,7 @@ router.post(
         usage: null,
         tokens,
         channel: channelName ? { name: channelName } : null,
+        channelIds: runChannelIds,
         kind: "对话",
       });
       settled = true;
@@ -395,6 +406,7 @@ router.post(
             usage: null,
             tokens,
             channel: channelName ? { name: channelName } : null,
+            channelIds: [...new Set(runCalls.map((c) => Number(c.channelId) || 0).filter(Boolean))],
             kind: "对话（部分）",
           });
         } catch (e2) {
