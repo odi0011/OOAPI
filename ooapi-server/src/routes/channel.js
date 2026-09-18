@@ -71,8 +71,7 @@ function parseOther(row) {
 // 账号稳定标识判重：强标识按同字段比较；project_id 是弱标识（同项目多账号常见），
 // 只有双方都没有强标识时才认为同一账号 —— 否则不同邮箱会被误判成重复并覆盖凭据。
 const STRONG_ID_KEYS = ["account_id", "account_uuid", "email", "sub"];
-function isSameAccount(a, b) {
-  const strongOf = (o = {}) => {
+function isSameAccount(a, b) {  const strongOf = (o = {}) => {
     const set = new Set();
     for (const k of STRONG_ID_KEYS) {
       const v = String(o?.[k] || "").trim().toLowerCase();
@@ -87,6 +86,14 @@ function isSameAccount(a, b) {
   const pa = String(a?.project_id || "").trim().toLowerCase();
   const pb = String(b?.project_id || "").trim().toLowerCase();
   return Boolean(pa) && pa === pb;
+}
+
+// 渠道 base_url 是出站目标：写入前做公网校验（与图片/工具/拉模型同一套），
+// 防止填内网地址后在调用/测试时被用来探测内网。默认官方地址不用校验。
+async function assertSafeBaseUrl(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return;
+  await assertPublicUrl(s);
 }
 
 function mask(s, head = 8, tail = 4) {
@@ -1508,6 +1515,13 @@ router.post(
     const models = Array.isArray(b.models) ? b.models.join(",") : String(b.models || "");
     if (!models.trim()) return fail(res, "请至少选择一个模型");
     const baseUrl = String(b.base_url || mCfg.baseUrl || "").trim().slice(0, 255);
+    if (b.base_url) {
+      try {
+        await assertSafeBaseUrl(baseUrl);
+      } catch (e) {
+        return fail(res, `接口地址不可用：${e.message}`);
+      }
+    }
     if (!baseUrl) return fail(res, "请填写接口地址（Base URL）");
     // 数值字段显式校验：Number("Infinity") || 0 仍是 Infinity，会拼出非法 SQL（500）
     const priority = safeInt(b.priority ?? 0, { min: 0, max: 1_000_000 });
@@ -1565,6 +1579,13 @@ router.put(
     };
 
     setIf("name", b.name !== undefined ? String(b.name).trim().slice(0, 64) : undefined);
+    if (b.base_url !== undefined && String(b.base_url).trim()) {
+      try {
+        await assertSafeBaseUrl(String(b.base_url).trim());
+      } catch (e) {
+        return fail(res, `接口地址不可用：${e.message}`);
+      }
+    }
     setIf("base_url", b.base_url !== undefined ? String(b.base_url).trim().slice(0, 255) : undefined);
     if (b.api_key !== undefined && String(b.api_key).trim()) setIf("api_key", String(b.api_key).trim().slice(0, 60_000));
     if (b.models !== undefined) {
@@ -1841,6 +1862,14 @@ router.post(
           continue;
         }
         const baseUrl = String(a.base_url || mCfg.baseUrl || "").slice(0, 255);
+        if (a.base_url) {
+          try {
+            await assertSafeBaseUrl(baseUrl);
+          } catch (e) {
+            results.push({ name: a.name, ok: false, reason: `接口地址不可用：${e.message}` });
+            continue;
+          }
+        }
           const [ret] = await pool.query(
             `INSERT INTO channels (name, type, base_url, api_key, models, group_name, group_list, status, priority, weight, auto_ban, other, created_time)
              VALUES (?,?,?,?,?, 'default', '["default"]', 1, ?, 1, 1, ?, ?)`,

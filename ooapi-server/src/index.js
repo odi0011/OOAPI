@@ -142,9 +142,19 @@ async function bootstrap() {
       "INSERT INTO users (username, password, display_name, role, status, quota, aff_code, group_name, created_time) VALUES (?,?,?,100,1,?,?,?,?)",
       ["root", hash, "超级管理员", 10000000, "ROOT0001", "default", now]
     );
-    console.log(
-      `[init] 已创建默认管理员 root / ${pwd}${generated ? "（随机生成，请立即到「个人设置」修改）" : ""}`
-    );
+    // 随机密码绝不打印到 stdout/systemd 日志（能读日志的人就能接管后台）：
+    // 写入 0600 的一次性文件，提示路径即可（更新器不会碰点文件）
+    if (generated) {
+      try {
+        const f = path.resolve(__dirname, "..", ".admin-password");
+        fs.writeFileSync(f, pwd, { mode: 0o600 });
+        console.log(`[init] 已创建默认管理员 root；随机密码已写入 ${f}（0600）。登录后请立即改密并删除该文件。`);
+      } catch {
+        console.log("[init] 已创建默认管理员 root；未能写入密码文件，请设置 ADMIN_PASSWORD 后重启再登录。");
+      }
+    } else {
+      console.log("[init] 已创建默认管理员 root（密码来自 ADMIN_PASSWORD 环境变量）。");
+    }
   }
   // 上次在线更新若被强杀（systemd 超时/OOM/手动 kill），会留下哨兵文件：
   // 源码可能处于半新半旧状态，必须在日志里显式告警，避免静默运行混合代码。

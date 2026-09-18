@@ -57,11 +57,13 @@ function pdfStreams(buf) {
 }
 
 function inflateMaybe(chunk) {
+  // maxOutputLength：防止 deflate/zip 炸弹把 8MB 压缩流解成几 GB（解压即取消）
+  const opts = { maxOutputLength: 8 * 1024 * 1024 };
   try {
-    return zlib.inflateSync(chunk);
+    return zlib.inflateSync(chunk, opts);
   } catch {
     try {
-      return zlib.inflateRawSync(chunk);
+      return zlib.inflateRawSync(chunk, opts);
     } catch {
       return null; // 未压缩的流（少见）交给调用方按原文处理
     }

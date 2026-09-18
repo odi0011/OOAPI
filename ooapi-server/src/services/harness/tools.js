@@ -39,6 +39,26 @@ function htmlToText(html) {
 }
 
 /** 逐跳校验 SSRF 的手动重定向（与 /v1 图片外链同一套判断） */
+async function readCapped(res, max) {
+  // 不依赖 content-length：分块响应没有该头，必须边读边计数，超限立即取消
+  const reader = res.body?.getReader();
+  if (!reader) return "";
+  const dec = new TextDecoder();
+  let size = 0;
+  let text = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      break;
+    }
+    text += dec.decode(value, { stream: true });
+  }
+  return text;
+}
+
 async function safeFetch(rawUrl, signal) {
   let target = String(rawUrl || "").trim();
   for (let hop = 0; hop < 4; hop++) {
@@ -74,7 +94,7 @@ async function safeFetch(rawUrl, signal) {
     if (!/text\/|json|xml|javascript/i.test(type)) throw new Error(`不支持的内容类型：${type || "未知"}`);
     const len = Number(res.headers.get("content-length") || 0);
     if (len && len > FETCH_MAX_BYTES) throw new Error("页面过大，已放弃读取");
-    const body = (await res.text()).slice(0, FETCH_MAX_BYTES);
+    const body = (await readCapped(res, FETCH_MAX_BYTES)).slice(0, FETCH_MAX_BYTES);
     return { url: u.toString(), type, body };
   }
   throw new Error("重定向次数过多");

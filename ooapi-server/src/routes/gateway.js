@@ -130,6 +130,25 @@ function messagesToPrompt(messages) {
 // ---------- SSRF 防护：图片外链只允许公网 http(s)（isPrivateIp/assertPublicUrl 在 utils.js）----------
 // 抓取远程图片：逐跳校验（防重定向 SSRF），限制类型与大小
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+
+// 不依赖 content-length 的有界读取：分块响应没有该头，边读边计数，超限立即取消
+async function readBodyCapped(resp, max) {
+  const reader = resp.body?.getReader();
+  if (!reader) return null;
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks);
+}
 async function fetchRemoteImage(rawUrl) {
   let target = rawUrl;
   for (let hop = 0; hop < 4; hop++) {
@@ -153,11 +172,11 @@ async function fetchRemoteImage(rawUrl) {
       await r.body?.cancel().catch(() => {});
       return null;
     }
-    const ab = await r.arrayBuffer();
-    if (ab.byteLength > MAX_IMAGE_BYTES) return null;
+    const ab = await readBodyCapped(r, MAX_IMAGE_BYTES);
+    if (!ab) return null;
     const mimeType = (r.headers.get("content-type") || "image/jpeg").split(";")[0].trim().toLowerCase();
     if (!mimeType.startsWith("image/")) return null;
-    return { buffer: Buffer.from(ab), mimeType, filename: mimeType.includes("png") ? "image.png" : "image.jpg" };
+    return { buffer: ab, mimeType, filename: mimeType.includes("png") ? "image.png" : "image.jpg" };
   }
   return null;
 }

@@ -16,6 +16,7 @@ import { chromium } from "playwright";
 import { mkdirSync, existsSync, writeFileSync, rmSync, cpSync, renameSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { assertPublicUrl } from "../../utils.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROFILE_ROOT = path.join(__dirname, "..", "..", "..", "data", "browser-profiles");
@@ -258,6 +259,12 @@ export async function act(vendor, channelId, op = {}) {
     } else if (action === "goto") {
       const url = String(op.url || "");
       if (!/^https:\/\//i.test(url)) throw Object.assign(new Error("只允许跳转 https 地址"), { code: "BAD_URL" });
+      // 与出站抓取同一套 SSRF 校验：否则可把服务器浏览器导航到内网地址并截图回传
+      try {
+        await assertPublicUrl(url);
+      } catch (e) {
+        throw Object.assign(new Error(`不允许跳转到该地址：${e.message}`), { code: "BAD_URL" });
+      }
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT }).catch(() => {});
     } else {
       throw new Error("未知的远程操作");
