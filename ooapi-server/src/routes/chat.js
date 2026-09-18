@@ -8,7 +8,7 @@
 //     这里逐条 splitTokens 后求和 —— 与网关/旧智能体同一套口径，禁止自行折算。
 import express from "express";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, now, safeJSONParse } from "../utils.js";
+import { ok, fail, asyncHandler, now, safeInt, safeJSONParse } from "../utils.js";
 import { authRequired, preAuthJwt } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getPrice, computeCost, splitTokens, estimateTokens, loadPrices, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
@@ -81,7 +81,8 @@ export async function listUserKeys(user) {
  * 没有可用密钥时不给模型、也不允许开跑。禁用/过期/不属于该用户的密钥一律视为不可用。
  */
 async function activeKeyOf(user, keyId = 0) {
-  const id = Number(keyId) || 0;
+  // 必须用 safeInt：Number("Infinity") 是合法真值，会拼进 SQL 直接 500
+  const id = safeInt(keyId, { min: 1 }) || 0;
   if (!id) return null;
   const [rows] = await pool.query("SELECT * FROM tokens WHERE id = ? AND user_id = ?", [id, user.id]);
   if (!rows.length) return null;
@@ -362,7 +363,10 @@ router.post(
   authRequired,
   asyncHandler(async (req, res) => {
     const { fromSeq } = req.body || {};
-    const result = await rewindSession(req.user.id, req.params.id, fromSeq);
+    // 非法 fromSeq 绝不能兜底成 1：那会 DELETE seq>=1 清空整个会话（不可逆）
+    const seq = safeInt(fromSeq, { min: 1 });
+    if (!seq) return fail(res, "fromSeq 无效");
+    const result = await rewindSession(req.user.id, req.params.id, seq);
     if (!result) return fail(res, "会话不存在", 404);
     return ok(res, await sessionWithMessages(req.user.id, req.params.id));
   })

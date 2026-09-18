@@ -535,8 +535,12 @@ async function listRows({ type, keyword, status, method } = {}) {
     args.push(type);
   }
   if (status) {
-    conds.push("status = ?");
-    args.push(Number(status));
+    // 非法状态（如 "Infinity"）直接忽略，不能拼进 SQL
+    const statusVal = safeInt(status, { min: 1, max: 3 });
+    if (statusVal) {
+      conds.push("status = ?");
+      args.push(statusVal);
+    }
   }
   if (keyword) {
     conds.push("(name LIKE ? OR base_url LIKE ? OR models LIKE ?)");

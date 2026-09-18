@@ -80,7 +80,15 @@ router.put(
        VALUES (?,?,?,?,?,?,?)
        ON DUPLICATE KEY UPDATE input_price=VALUES(input_price), output_price=VALUES(output_price),
         cache_price=VALUES(cache_price), channel_type=VALUES(channel_type), remark=VALUES(remark), updated_time=VALUES(updated_time)`,
-      [reg.model, input, output, cache ?? 0, String(channel_type || reg.type || ""), String(remark || ""), now()]
+      [
+        String(reg.model).slice(0, 128),
+        input,
+        output,
+        cache ?? 0,
+        String(channel_type || reg.type || "").slice(0, 32),
+        String(remark || "").slice(0, 255),
+        now(),
+      ]
     );
     invalidatePrices();
     await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `保存模型定价「${m}」` });
@@ -226,7 +234,7 @@ router.post(
           output: num(entry.output ?? entry.output_price, "output", true),
           cache: num(entry.cache ?? entry.cache_price, "cache", false),
           type: reg.type || type,
-          remark: String(entry.remark ?? entry.source ?? "").slice(0, 300),
+          remark: String(entry.remark ?? entry.source ?? "").slice(0, 255),
         });
       } catch (e) {
         rejected.push({ line, model, reason: e.message });

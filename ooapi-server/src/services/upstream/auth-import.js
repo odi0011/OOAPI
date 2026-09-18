@@ -177,10 +177,12 @@ export async function parseCredentialFile(raw) {
   if (root && Array.isArray(root.accounts)) {
     // sub2api 导出
     for (const a of root.accounts) {
+      if (!a || typeof a !== "object") continue; // {"accounts":[null]} 不能让解析直接 500
       tasks.push({ platform: a.platform, kind: a.type, credentials: a.credentials || {}, name: a.name, priority: a.priority });
     }
   } else if (root && Array.isArray(root)) {
     for (const item of root) {
+      if (!item || typeof item !== "object") continue;
       tasks.push({
         platform: item.platform,
         kind: item.type,
