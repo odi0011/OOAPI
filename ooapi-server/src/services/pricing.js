@@ -159,10 +159,12 @@ export function computeCost({ price, promptTokens = 0, completionTokens = 0, cac
   // 缓存命中不能超过输入总量（上游字段异常时按输出去重，避免负基数）
   const cache = Math.max(0, Math.min(Number(cacheTokens) || 0, Number(promptTokens) || 0));
   const base = Math.max(0, (Number(promptTokens) || 0) - cache);
+  // 未配置缓存价（NULL/0）时回退输入价：直接按 0 计费等于对缓存命中部分免单
+  const cachePrice = Number(price.cache) > 0 ? Number(price.cache) : Number(price.input) || 0;
   const od =
     (base / 1e6) * price.input +
     (completionTokens / 1e6) * price.output +
-    (cache / 1e6) * price.cache;
+    (cache / 1e6) * cachePrice;
   // 先做微小的浮点校正再向上取整，避免 0.0001 的表示误差多收 1 厘
   const units = od * UNITS_PER_OD;
   return Math.max(1, Math.ceil(Math.round(units * 1e6) / 1e6));

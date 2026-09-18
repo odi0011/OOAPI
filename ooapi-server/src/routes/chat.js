@@ -713,9 +713,15 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
     const tokens = aggregate(runCalls);
     const partial = runParts.filter((p) => p.type === "text").map((p) => p.text).join("");
     if (!settled && (tokens.promptTokens || tokens.completionTokens || partial)) {
-      if (partial && !tokens.completionTokens) {
-        tokens.completionTokens += estimateTokens(partial);
-        tokens.promptTokens += estimateTokens(content);
+      if (partial) {
+        // 最后一次调用在被中断前没有 usage：按「已流出的正文 - 已计 completion」的差额补计，
+        // 而不是「completionTokens 为 0 才补」——多步对话只要前面计过就不能漏掉最后一次。
+        const missing = Math.max(0, estimateTokens(partial) - tokens.completionTokens);
+        if (missing > 0) {
+          tokens.completionTokens += missing;
+          // 最后一次调用把整轮对话重新发给了上游：补一份 prompt 估算（只补这一次）
+          tokens.promptTokens += estimateTokens(content);
+        }
       }
       try {
         await chargeUser({
@@ -727,6 +733,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           tokens,
           channel: channelName ? { name: channelName } : null,
           channelIds: [...new Set(runCalls.map((c) => Number(c.channelId) || 0).filter(Boolean))],
+          groupName: routeGroup,
           kind: stopped ? "对话（已停止）" : "对话（部分）",
         });
       } catch (e2) {

@@ -45,6 +45,19 @@ function getSetting(user) {
   return user?.setting ?? {};
 }
 
+// 分组绑定必须是存在的 "type:name"：防拼错，也避免绑定到不存在的分组后计费/路由都默默失败
+async function validGroupBinding(binding) {
+  const raw = String(binding || "").trim();
+  if (!raw) return true; // 空 = 公共池
+  const idx = raw.indexOf(":");
+  if (idx <= 0 || idx === raw.length - 1) return false;
+  const [rows] = await pool.query("SELECT id FROM channel_groups WHERE type = ? AND name = ? LIMIT 1", [
+    raw.slice(0, idx),
+    raw.slice(idx + 1),
+  ]);
+  return rows.length > 0;
+}
+
 // 列表（不返回完整 key）
 router.get(
   "/",
@@ -89,6 +102,7 @@ router.post(
     const expiredVal = Number(expired_time);
     if (!Number.isFinite(remainVal) || remainVal < 0 || remainVal > MAX_QUOTA) return fail(res, "额度无效");
     if (!Number.isFinite(expiredVal) || expiredVal > MAX_EXPIRED) return fail(res, "过期时间无效");
+    if (!(await validGroupBinding(group_name))) return fail(res, "分组不存在");
     const key = genApiKey();
     const [ins] = await pool.query(
       `INSERT INTO tokens (user_id, name, key_str, status, created_time, accessed_time, expired_time,
@@ -144,21 +158,23 @@ router.put(
       expiredVal = Number(expired_time);
       if (!Number.isFinite(expiredVal) || expiredVal > MAX_EXPIRED) return fail(res, "过期时间无效");
     }
-    await pool.query(
-      `UPDATE tokens SET name = ?, status = ?, remain_quota = ?, unlimited_quota = ?, expired_time = ?,
-        model_limits = ?, group_name = ? WHERE id = ? AND user_id = ?`,
-      [
-        name !== undefined ? String(name).trim().slice(0, 64) : cur.name,
-        statusVal,
-        remainVal,
-        unlimited_quota !== undefined ? (unlimited_quota ? 1 : 0) : cur.unlimited_quota,
-        expiredVal,
-        Array.isArray(model_limits) ? model_limits.join(",").slice(0, 2000) : cur.model_limits,
-        group_name !== undefined ? String(group_name).slice(0, 64) : cur.group_name,
-        token,
-        req.user.id,
-      ]
-    );
+    if (group_name !== undefined && !(await validGroupBinding(group_name))) return fail(res, "分组不存在");
+    const sets = ["name = ?", "status = ?", "unlimited_quota = ?", "expired_time = ?", "model_limits = ?", "group_name = ?"];
+    const vals = [
+      name !== undefined ? String(name).trim().slice(0, 64) : cur.name,
+      statusVal,
+      unlimited_quota !== undefined ? (unlimited_quota ? 1 : 0) : cur.unlimited_quota,
+      expiredVal,
+      Array.isArray(model_limits) ? model_limits.join(",").slice(0, 2000) : cur.model_limits,
+      group_name !== undefined ? String(group_name).slice(0, 64) : cur.group_name,
+    ];
+    // remain_quota 只有显式提交时才写：整行快照回写会覆盖并发扣费（丢更新）
+    if (remain_quota !== undefined) {
+      sets.push("remain_quota = ?");
+      vals.push(remainVal);
+    }
+    vals.push(token, req.user.id);
+    await pool.query(`UPDATE tokens SET ${sets.join(", ")} WHERE id = ? AND user_id = ?`, vals);
     const [fresh] = await pool.query("SELECT * FROM tokens WHERE id = ?", [token]);
     return ok(res, tokenToResponse(fresh[0]), "令牌已更新");
   })
