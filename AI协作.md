@@ -56,6 +56,11 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
 | `src/services/execute.js` | 统一执行器：选渠道→试错→换渠道 | 单渠道独立超时（读 `request_timeout_ms`）；已输出内容不换渠道；成功后持久化指纹 |
 | `src/services/pricing.js` | 价格缓存、计费公式、usage 归一化 | `splitTokens` 必须先走 `normalizeUsage`（对象/数字/null 三种形态） |
 | `src/services/upstream/openai-compat.js` | 所有「API Key」渠道 | 厂商私有字段（thinking 等）默认不下发，需渠道 `other.thinking_mode` 显式声明；多 Key 轮换 |
+| `src/services/upstream/codex.js` | ChatGPT 订阅（Codex OAuth） | responses 协议；`other.access_token/refresh_token/account_id`；刷新写回走 `auth-store` |
+| `src/services/upstream/claude-oauth.js` | Claude 订阅（Claude Code OAuth） | 必须注入 Claude Code 身份提示词 + `anthropic-beta`；`metadata.user_id` 用 JSON 三元组 |
+| `src/services/upstream/antigravity.js` | Google 订阅（Antigravity OAuth） | 私有信封 `{model,project,request}`；首次自动 loadCodeAssist 引导 project_id；client_id/secret 从 `.env` 读（`GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`，禁止提交） |
+| `src/services/upstream/cli-profile.js` | **统一指纹模块**（订阅渠道共用） | 所有身份按「渠道 id+账号」种子确定性派生；换号即换身份；禁止各适配器自己 random |
+| `src/services/upstream/auth-store.js` | OAuth 凭据写回 | 写前重读合并，防覆盖并发修改；`access_token` 同步更新 `channels.api_key` |
 
 ### 1.2 前端关键模块地图
 
@@ -130,6 +135,13 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
     需要"只做一次"的操作用 options 表打标或按已生效状态判断后再执行。
 11. **登录态抓取**：需要「粘贴登录态」的 relay 接入方式，在 `channel-types.js` 配置
     `entryUrl` + `captureHint` 即自动获得「打开登录页自动抓取」按钮（`/api/channel/capture/*`）。
+12. **订阅型 OAuth 渠道**（参考 CLIProxyAPI/sub2api）：接入方式 key 固定为
+    `codex` / `claude-oauth` / `antigravity`，在 `channel-types.js` 的方法上声明 `adapter` 字段，
+    在 `router.js` 的 `ADAPTERS` 注册同名适配器；适配器须导出
+    `importAuth / verify / chat / loginModes`（有模型接口再加 `fetchUpstreamModels`）。
+    凭据统一存 `other`（`access_token/refresh_token/expires_at`），刷新后必须经
+    `auth-store.persistOtherPatch` 写回；**所有客户端身份必须走 `cli-profile.js` 统一派生**，
+    禁止适配器内 `randomUUID()` 直出（重启后身份乱跳会被上游风控）。
 
 ### 2.3 前端
 
@@ -168,6 +180,10 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 
 ### 持续审查（待处理）
 
+- [ ] **订阅 OAuth 渠道实盘验证**（第 10 批新增 capability）：`codex` / `claude-oauth` / `antigravity`
+  三个适配器已按 CLIProxyAPI 协议实现（凭据导入、自动刷新、流式解析、健康检查），但本机没有真实
+  订阅账号，**尚未完成端到端实盘验证**。上线后需用真实凭据各跑一次「测试渠道 + 对话」，核对
+  流式输出、usage 与计费。
 - [ ] **审查方式可复用**：后续批次继续用「三路并行子代理（前端 / 后端路由 / 服务适配器）+ 人工核实」，
   发现的问题先登记在此节，修完删除并写入变更记录。
 
@@ -272,3 +288,16 @@ ssh root@47.79.85.60 'cat /opt/ooapi/ooapi-server/.update-stamp.json; systemctl 
 | 2026-09-18 | **第 9 批（PoW worker 化）**：DeepSeek PoW 求解从主线程移到 `worker_threads`
   （`deepseek-pow-worker.mjs`）；60s 超时可终止卡死 worker，空闲 5 分钟自动回收，
   SIGTERM/SIGINT 退出时 `closePowWorker()` 清理；保留 worker 启动失败回退主线程的兜底。 |
+| 2026-09-18 | **第 10 批（订阅 OAuth 反代：GPT/Claude/Gemini）**：学习
+  CLIProxyAPI（CPA）与 sub2api 的协议实现，新增三种接入方式
+  `codex`（ChatGPT 订阅）/`claude-oauth`（Claude 订阅）/`antigravity`（Google 订阅）：
+  · `cli-profile.js` 统一指纹模块：会话/设备/安装 id 全部按「渠道+账号」确定性派生；
+  · `codex.js`：responses 流式协议（Originator/chatgpt-account-id/session_id）、
+    token 表单刷新、id_token 解析 account_id；`claude-oauth.js`：messages 协议、
+    注入 Claude Code 身份提示词与 anthropic-beta 头、metadata.user_id 三元组、JSON 刷新；
+    `antigravity.js`：Cloud Code Assist 私有信封、loadCodeAssist 自动引导 project_id、
+    官方 UA、SSE（thought/正文/usageMetadata）；三者刷新后经 `auth-store` 写回；
+  · channel-types 新增 `adapter` 字段与订阅方法定义；router 支持新方法路由；
+    `/channel/login` 支持凭据导入；`/fetch-models` 支持适配器自定义模型接口；
+  · 前端「添加渠道」订阅方式渲染为「粘贴凭据 JSON」并提交 method；
+  · 模型注册新增 openai/anthropic/gemini 三个模型表。实盘验证见第 3 节待办。 |

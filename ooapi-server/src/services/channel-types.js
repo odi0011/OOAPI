@@ -14,6 +14,32 @@
 // 适配器解析规则（见 adapterFor）：
 //   relay → 用该厂商自己的适配器（各家签名/风控都不一样）
 //   api   → 统一走 openai-compat（绝大多数厂商都提供 OpenAI 兼容接口）
+// 订阅型 OAuth 接入方式（参考 CLIProxyAPI / sub2api 的反代协议）：
+//   codex        ChatGPT 订阅（Codex OAuth，responses 协议）
+//   claude-oauth Claude 订阅（Claude Code OAuth，messages 协议）
+//   antigravity  Google 订阅（Antigravity/Code Assist OAuth）
+// 与 relay 的区别：不需要浏览器，凭据是 OAuth 令牌（粘贴官方 CLI 的凭据文件）
+export const OAUTH_METHODS = ["codex", "claude-oauth", "antigravity"];
+
+export function isOAuthMethod(key) {
+  return OAUTH_METHODS.includes(String(key || ""));
+}
+
+// 订阅渠道的凭据粘贴表单（各厂商共用同一字段名 token，内容为凭据 JSON）
+function oauthCredentialField(placeholder, hint) {
+  return [
+    {
+      key: "token",
+      label: "凭据 JSON",
+      type: "textarea",
+      required: true,
+      rows: 6,
+      placeholder,
+      hint,
+    },
+  ];
+}
+
 export const PROVIDERS = [
   {
     key: "deepseek",
@@ -189,8 +215,27 @@ export const PROVIDERS = [
     key: "openai",
     name: "OpenAI",
     vendor: "openai",
-    desc: "官方接口，也适用于各类 OpenAI 格式中转",
+    desc: "官方接口、OpenAI 格式中转，或 ChatGPT 订阅（Codex OAuth）",
     methods: [
+      {
+        key: "codex",
+        adapter: "codex",
+        label: "ChatGPT 订阅（Codex OAuth）",
+        desc: "粘贴 Codex CLI 的凭据，走订阅用量",
+        loginModes: ["paste"],
+        loginFields: oauthCredentialField(
+          '{ "tokens": { "access_token": "...", "refresh_token": "...", "account_id": "..." } }',
+          "本机运行 Codex CLI 登录后，复制 ~/.codex/auth.json 的完整内容"
+        ),
+        pasteHint: "Codex CLI 登录凭据（auth.json）：访问 chatgpt.com 订阅额度，平台自动用 refresh_token 续期并定期写回",
+        defaultModels: [
+          { id: "gpt-5", name: "GPT-5" },
+          { id: "gpt-5-mini", name: "GPT-5 mini" },
+          { id: "o3", name: "o3" },
+          { id: "o4-mini", name: "o4-mini" },
+        ],
+        testModel: "gpt-5-mini",
+      },
       {
         key: "api",
         label: "API Key",
@@ -209,8 +254,26 @@ export const PROVIDERS = [
     key: "anthropic",
     name: "Anthropic",
     vendor: "claude",
-    desc: "Claude 系列",
+    desc: "Claude 系列：官方 API 或 Claude 订阅（Claude Code OAuth）",
     methods: [
+      {
+        key: "claude-oauth",
+        adapter: "claude-oauth",
+        label: "Claude 订阅（Claude Code OAuth）",
+        desc: "粘贴 Claude Code 凭据，走订阅用量",
+        loginModes: ["paste"],
+        loginFields: oauthCredentialField(
+          '{ "access_token": "...", "refresh_token": "...", "expires_at": 0 }',
+          "本机运行 Claude Code 登录后，复制 ~/.claude/.credentials.json 的 claudeAiOauth 字段内容"
+        ),
+        pasteHint: "Claude Code 登录凭据：访问 Claude 订阅额度，平台自动续期；请求会按官方 CLI 协议注入身份提示词",
+        defaultModels: [
+          { id: "claude-opus-5", name: "Claude Opus 5" },
+          { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
+          { id: "claude-haiku-4.5", name: "Claude Haiku 4.5" },
+        ],
+        testModel: "claude-haiku-4.5",
+      },
       {
         key: "api",
         label: "API Key",
@@ -226,8 +289,26 @@ export const PROVIDERS = [
     key: "gemini",
     name: "Google Gemini",
     vendor: "gemini",
-    desc: "Gemini 系列",
+    desc: "Gemini 系列：官方 API 或 Google 订阅（Antigravity OAuth）",
     methods: [
+      {
+        key: "antigravity",
+        adapter: "antigravity",
+        label: "Google 订阅（Antigravity OAuth）",
+        desc: "粘贴 Google OAuth 凭据，走订阅用量",
+        loginModes: ["paste"],
+        loginFields: oauthCredentialField(
+          '{ "access_token": "...", "refresh_token": "...", "project_id": "..." }',
+          "Antigravity / Gemini CLI 的 OAuth 凭据（access_token + refresh_token）；project_id 可留空自动引导"
+        ),
+        pasteHint: "Google 订阅凭据：访问 Antigravity/Gemini Code Assist 订阅额度，平台自动续期并引导 project_id",
+        defaultModels: [
+          { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
+          { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+          { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+        ],
+        testModel: "",
+      },
       {
         key: "api",
         label: "API Key",
@@ -291,12 +372,20 @@ export function supportsMethod(providerKey, methodKey) {
   return Boolean(getMethod(providerKey, methodKey));
 }
 
+/** 渠道是否走订阅 OAuth 接入 */
+export function isSubscriptionChannel(providerKey, methodKey) {
+  return isOAuthMethod(methodKey) && supportsMethod(providerKey, methodKey);
+}
+
 /**
  * 适配器 key 解析 —— 调度层的入口
  *   relay → 该厂商自己的适配器（各家签名/风控不同，必须专实现）
  *   api   → 统一 openai-compat（OpenAI 兼容协议）
+ *   订阅 OAuth → 方法上显式声明的 adapter（codex / claude-oauth / antigravity）
  */
 export function adapterFor(providerKey, methodKey) {
+  const m = getMethod(providerKey, methodKey);
+  if (m?.adapter) return m.adapter;
   if (methodKey === "api") return "openai-compat";
   return providerKey;
 }
@@ -318,6 +407,8 @@ export function publicProviders() {
       key: m.key,
       label: m.label,
       desc: m.desc,
+      // 订阅 OAuth 方式（codex / claude-oauth / antigravity）：前端按「粘贴凭据」渲染
+      oauth: isOAuthMethod(m.key),
       loginModes: m.loginModes || [],
       loginFields: m.loginFields || [],
       pasteHint: m.pasteHint || "",

@@ -3,6 +3,7 @@
 // 由 type 区分适配器，优先级/权重决定调度顺序 —— 与 new-api 一致。
 import { pool } from "../db.js";
 import { now } from "../utils.js";
+import { isOAuthMethod } from "./channel-types.js";
 
 // 适配器表（懒加载，避免未用到的适配器被引入）
 //
@@ -10,6 +11,7 @@ import { now } from "../utils.js";
 // 具体走哪个适配器由 厂商 + 接入方式 共同决定（见 adapterKeyFor）：
 //   relay（网页版反代）→ 该厂商自己的适配器，各家签名/风控都不同，必须专实现
 //   api  （官方 API）  → 统一 openai-compat，因为大家都提供 OpenAI 兼容协议
+//   codex / claude-oauth / antigravity（订阅 OAuth）→ 各自的 CLI 协议适配器
 const ADAPTERS = {
   deepseek: () => import("./upstream/deepseek.js"),
   glm: () => import("./upstream/glm.js"),
@@ -17,6 +19,10 @@ const ADAPTERS = {
   doubao: () => import("./upstream/doubao.js"),
   qwen: () => import("./upstream/qwen.js"),
   "openai-compat": () => import("./upstream/openai-compat.js"),
+  // 订阅型 OAuth（参考 CLIProxyAPI/sub2api 的协议实现）
+  codex: () => import("./upstream/codex.js"),
+  "claude-oauth": () => import("./upstream/claude-oauth.js"),
+  antigravity: () => import("./upstream/antigravity.js"),
 };
 
 /**
@@ -26,6 +32,7 @@ const ADAPTERS = {
 export function adapterKeyFor(channel) {
   const method = channel?.other?.method;
   if (method === "api") return "openai-compat";
+  if (isOAuthMethod(method)) return method;
   return channel?.type || "";
 }
 
@@ -177,7 +184,9 @@ export function rowToChannel(r) {
   } catch {
     other = {};
   }
-  const method = other.method === "api" ? "api" : "relay";
+  // 接入方式：api / relay / 订阅 OAuth（codex、claude-oauth、antigravity）
+  const rawMethod = String(other.method || "relay");
+  const method = rawMethod === "api" || isOAuthMethod(rawMethod) ? rawMethod : "relay";
   return {
     id: r.id,
     name: r.name,

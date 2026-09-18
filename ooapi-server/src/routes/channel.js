@@ -24,7 +24,7 @@ import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now, assertPublicUrl, idParam, safeInt } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
-import { getProvider, getMethod, providerKeys, publicProviders } from "../services/channel-types.js";
+import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod } from "../services/channel-types.js";
 import { getAdapter, resetChannelState, forgetChannel, channelRuntimeState, rowToChannel } from "../services/router.js";
 import {
   isReady as browserReady,
@@ -80,7 +80,9 @@ function splitKeys(apiKey) {
 /** 该渠道的接入方式（缺省 relay，兼容没有 other.method 的老数据） */
 function methodOf(row) {
   const other = parseOther(row);
-  return other.method === "api" ? "api" : "relay";
+  const m = String(other.method || "relay");
+  // 接入方式：relay（反代）/ api（官方 Key）/ 订阅 OAuth（codex、claude-oauth、antigravity）
+  return m === "api" || isOAuthMethod(m) ? m : "relay";
 }
 
 function rowToResp(r, { withKey = false } = {}) {
@@ -441,17 +443,31 @@ router.post(
 router.post(
   "/login",
   asyncHandler(async (req, res) => {
-    const { type, name, priority = 0, id, mode = "password", models: modelsInput, group_name, weight, auto_ban, ...rest } =
-      req.body || {};
+    const {
+      type,
+      name,
+      priority = 0,
+      id,
+      mode = "password",
+      method: methodInput,
+      models: modelsInput,
+      group_name,
+      weight,
+      auto_ban,
+      ...rest
+    } = req.body || {};
     const provider = getProvider(type);
     if (!provider) return fail(res, "未知厂商");
-    const mCfg = getMethod(type, "relay");
-    if (!mCfg) return fail(res, `${provider.name} 不支持网页版反代，请改用官方 API 方式`);
-    if (!mCfg.loginModes.includes(mode)) {
+    const methodKey = String(methodInput || "relay");
+    const mCfg = getMethod(type, methodKey);
+    if (!mCfg) return fail(res, `${provider.name} 不支持该接入方式（${methodKey}）`);
+    if (methodKey === "api") return fail(res, "API 接入方式请使用渠道创建表单（POST /api/channel/）");
+    // 订阅 OAuth 用粘贴凭据；relay 按 loginModes 校验
+    if (!isOAuthMethod(methodKey) && !mCfg.loginModes.includes(mode)) {
       return fail(res, `${provider.name} 不支持该登录方式（支持：${mCfg.loginModes.join("/")}）`);
     }
 
-    const adapter = await adapterOf(type, "relay");
+    const adapter = await adapterOf(type, methodKey);
     if (!adapter) return fail(res, `${provider.name} 适配器不可用`);
 
     // 表单里的模型/分组/优先级/权重/自动禁用必须真正落库（此前 relay 提交被全部丢弃，
@@ -474,7 +490,14 @@ router.post(
     let accountLabel = null;
 
     try {
-      if (mode === "password") {
+      if (isOAuthMethod(methodKey)) {
+        // 订阅型 OAuth：粘贴官方 CLI 的凭据 JSON，由适配器解析并落库
+        if (!adapter.importAuth) return fail(res, `${provider.name} 适配器未实现凭据导入`);
+        const r = await adapter.importAuth({ ...rest, mode: "paste" });
+        token = String(r.token || "");
+        other = { method: methodKey, ...(r.other || {}) };
+        accountLabel = r.accountLabel || null;
+      } else if (mode === "password") {
         if (!adapter.loginWithPassword) return fail(res, `${provider.name} 未实现账号密码登录`);
         const account = String(rest.account || "").trim();
         if (!account) return fail(res, "请填写手机号或邮箱");
@@ -841,6 +864,23 @@ router.post(
   "/fetch-models",
   asyncHandler(async (req, res) => {
     const { base_url, api_key, id, type } = req.body || {};
+    // 订阅 OAuth 渠道有各自的模型接口（如 Antigravity fetchAvailableModels），优先走适配器
+    if (id) {
+      const cid = safeInt(id, { min: 1 });
+      if (!cid) return fail(res, "渠道 id 无效");
+      const [crows] = await pool.query("SELECT * FROM channels WHERE id = ?", [cid]);
+      if (crows.length && isOAuthMethod(methodOf(crows[0]))) {
+        const method = methodOf(crows[0]);
+        const adapter = await adapterOf(crows[0].type, method);
+        if (adapter?.fetchUpstreamModels) {
+          try {
+            return ok(res, await adapter.fetchUpstreamModels(rowToChannel(crows[0])));
+          } catch (e) {
+            return fail(res, e.message);
+          }
+        }
+      }
+    }
     let key = String(api_key || "").trim();
     let base = String(base_url || "").trim();
     // 只补「请求里缺失的部分」：同时传 id+key 但没传 base_url 时，

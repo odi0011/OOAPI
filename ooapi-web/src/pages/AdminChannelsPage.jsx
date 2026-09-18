@@ -198,9 +198,15 @@ export default function AdminChannelsPage() {
         for (const lm of m.loginModes || []) {
           out.push({
             id: lm,
-            method: "relay",
+            method: m.key, // relay / codex / claude-oauth / antigravity
             mode: lm,
-            label: lm === "password" ? "账号密码" : lm === "paste" ? "粘贴登录态" : "浏览器登录",
+            label: m.oauth
+              ? "粘贴凭据"
+              : lm === "password"
+                ? "账号密码"
+                : lm === "paste"
+                  ? "粘贴登录态"
+                  : "浏览器登录",
           });
         }
       }
@@ -209,7 +215,8 @@ export default function AdminChannelsPage() {
   }, [pickProvider]);
 
   const isApi = pickMethod?.key === "api";
-  const isRelay = pickMethod?.key === "relay";
+  // 非 API 的接入方式（relay 反代 / 订阅 OAuth）走同一套「凭据登录」提交流程
+  const isRelay = Boolean(pickMethod) && !isApi;
 
   // 当前选中的凭据项（注意：必须放在 isApi 声明之后，否则 const 的暂时性死区会直接白屏）
   const credId = isApi ? "api" : addMode;
@@ -267,6 +274,7 @@ export default function AdminChannelsPage() {
         // relay 也要提交这些字段：后端 /channel/login 已支持落库（此前被丢弃，编辑无效）
         const payload = {
           type: pickProvider.key,
+          method: pickMethod.key, // relay / codex / claude-oauth / antigravity
           mode: addMode,
           name: v.name,
           priority: v.priority,
@@ -841,12 +849,22 @@ export default function AdminChannelsPage() {
                               </Space>
                             </Form.Item>
                           ) : null}
-                          <Form.Item name="token" label="登录态" rules={[{ required: true, message: "请粘贴登录态" }]} extra={pickMethod.pasteHint}>
-                            <Input.TextArea rows={3} placeholder="粘贴登录态值" />
+                          <Form.Item
+                            name="token"
+                            label={pickMethod.oauth ? "凭据 JSON" : "登录态"}
+                            rules={[{ required: true, message: pickMethod.oauth ? "请粘贴凭据 JSON" : "请粘贴登录态" }]}
+                            extra={pickMethod.pasteHint}
+                          >
+                            <Input.TextArea
+                              rows={pickMethod.oauth ? 6 : 3}
+                              placeholder={pickMethod.oauth ? "粘贴官方 CLI 凭据文件的完整内容（JSON）" : "粘贴登录态值"}
+                            />
                           </Form.Item>
-                          <Form.Item name="cookies" label="Cookies（可选，建议填写）" extra='JSON 数组，例如 [{"name":"ds_session_id","value":"..."}]'>
-                            <Input.TextArea rows={2} placeholder='[{"name":"...","value":"..."}]' />
-                          </Form.Item>
+                          {!pickMethod.oauth && (
+                            <Form.Item name="cookies" label="Cookies（可选，建议填写）" extra='JSON 数组，例如 [{"name":"ds_session_id","value":"..."}]'>
+                              <Input.TextArea rows={2} placeholder='[{"name":"...","value":"..."}]' />
+                            </Form.Item>
+                          )}
                         </>
                       ) : addMode === "browser" ? (
                         <Alert
