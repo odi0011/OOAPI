@@ -361,18 +361,23 @@ export async function chat({
     }
     if (!resp.ok) {
       captureFromBody(channel, model, text);
+      // 先解析上游实际返回的消息：降智/过载时也必须把原始响应带给用户，不能只给一句结论
+      let upstreamMsg = text.slice(0, 300);
+      try {
+        const j = JSON.parse(text);
+        upstreamMsg = j?.error?.message || j?.message || upstreamMsg;
+      } catch {
+        /* 保留原始文本 */
+      }
       const sig = detectSignal({ status: resp.status, text });
       if (sig.degraded) {
         // 312 语义：当前通行证被服务端撤销，立即作废，调度器换到持有有效 state 的账号
         if (sig.invalidatesState) clearState(channel.id, model);
-        throw Object.assign(new Error(sig.message), { code: DEGRADED_CODE, cooldownSec: sig.cooldownSec });
-      }
-      let msg = text.slice(0, 300);
-      try {
-        const j = JSON.parse(text);
-        msg = j?.error?.message || j?.message || msg;
-      } catch {
-        /* 保留原始文本 */
+        throw Object.assign(new Error(`${sig.message}：${upstreamMsg}`), {
+          code: DEGRADED_CODE,
+          cooldownSec: sig.cooldownSec,
+          upstream: text.slice(0, 2000),
+        });
       }
       const code =
         resp.status === 401
@@ -382,7 +387,10 @@ export async function chat({
             : [400, 404, 409, 413, 422].includes(resp.status)
               ? "CHANNEL_BAD_REQUEST"
               : "CHANNEL_HTTP_ERROR";
-      throw Object.assign(new Error(`Codex 上游 HTTP ${resp.status}：${msg}`), { code });
+      throw Object.assign(new Error(`Codex 上游 HTTP ${resp.status}：${upstreamMsg}`), {
+        code,
+        upstream: text.slice(0, 2000),
+      });
     }
   }
 
@@ -445,7 +453,11 @@ export async function chat({
       const sig = detectSignal({ text: msg });
       if (sig.degraded) {
         if (sig.invalidatesState) clearState(channel.id, model);
-        throw Object.assign(new Error(sig.message), { code: DEGRADED_CODE, cooldownSec: sig.cooldownSec });
+        throw Object.assign(new Error(`${sig.message}：${String(msg).slice(0, 300)}`), {
+          code: DEGRADED_CODE,
+          cooldownSec: sig.cooldownSec,
+          upstream: String(msg).slice(0, 2000),
+        });
       }
       throw Object.assign(new Error(msg), { code: "CHANNEL_BIZ_ERROR" });
     }
@@ -542,7 +554,11 @@ export async function verify(channel) {
     const sig = detectSignal({ status: resp.status, text });
     if (sig.degraded) {
       if (sig.invalidatesState) clearState(channel.id, testModel);
-      throw Object.assign(new Error(sig.message), { code: DEGRADED_CODE, cooldownSec: sig.cooldownSec });
+      throw Object.assign(new Error(`${sig.message}：${text.slice(0, 300)}`), {
+        code: DEGRADED_CODE,
+        cooldownSec: sig.cooldownSec,
+        upstream: text.slice(0, 2000),
+      });
     }
     const code =
       resp.status === 401 ? "CHANNEL_AUTH_EXPIRED" : resp.status === 429 ? "CHANNEL_RATE_LIMIT" : "CHANNEL_HTTP_ERROR";

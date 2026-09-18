@@ -2,18 +2,27 @@
 // 返回 { abort() }，通过 handlers 回调派发事件。
 import { getToken, setToken } from "./api";
 
-export function streamPost(url, body, { onEvent, onDone, onError, token } = {}) {
+export function streamPost(url, body, handlers = {}) {
+  return streamRequest(url, { method: "POST", body }, handlers);
+}
+
+// GET 版：用于「重新接上进行中的生成」（服务端回放缓冲后继续推）
+export function streamGet(url, handlers = {}) {
+  return streamRequest(url, { method: "GET" }, handlers);
+}
+
+function streamRequest(url, { method, body }, { onEvent, onDone, onError, token } = {}) {
   const ctrl = new AbortController();
 
   (async () => {
     try {
       const res = await fetch(url, {
-        method: "POST",
+        method,
         headers: {
-          "Content-Type": "application/json",
+          ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
           ...((token ?? getToken()) ? { Authorization: `Bearer ${token ?? getToken()}` } : {}),
         },
-        body: JSON.stringify(body),
+        body: method === "POST" ? JSON.stringify(body) : undefined,
         signal: ctrl.signal,
       });
 

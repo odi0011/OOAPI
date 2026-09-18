@@ -6,6 +6,7 @@
 // 流式对话里每个 token 都会携带新的 text，只有当前这条消息会重新解析；
 // 其余消息因 props 未变而整棵跳过重渲染（长会话不掉帧的关键）。
 import React, { useMemo } from "react";
+import { ArtifactPreview, canPreviewArtifact } from "./ArtifactPreview";
 
 // 只允许安全协议的链接，避免模型输出 javascript:/data: 等危险 href
 // （HomePage 的 docs_link 等管理员可写字段也复用此函数）
@@ -117,10 +118,16 @@ function parseMarkdown(src) {
         i++;
       }
       i++; // 跳过结束围栏
+      const body = buf.join("\n");
+      // 可运行的产出物（网页 / SVG / React）给「代码 | 预览」双视图，一键在线跑
       blocks.push(
-        <pre key={`p${k++}`} data-lang={lang || undefined}>
-          <code>{buf.join("\n")}</code>
-        </pre>
+        canPreviewArtifact(lang) ? (
+          <ArtifactPreview key={`p${k++}`} lang={lang} code={body} />
+        ) : (
+          <pre key={`p${k++}`} data-lang={lang || undefined}>
+            <code>{body}</code>
+          </pre>
+        )
       );
       continue;
     }

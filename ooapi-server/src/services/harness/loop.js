@@ -177,10 +177,26 @@ export function historyToMessages(history = []) {
     const tools = [...new Set(parts.filter((p) => p.type === "tool").map((p) => p.name || p.tool))];
     const images = parts.filter((p) => p.type === "image").length;
     let content = texts;
+    // 文档附件的正文要留在上下文里：用户上传后往往会追问「第几段什么意思」，
+    // 只在当轮 prompt 里给的话，下一轮模型就忘了。这里按总量预算截断，避免历史无限膨胀。
+    const fileParts = parts.filter((x) => x.type === "file" && x.text);
+    if (m.role === "user" && fileParts.length) {
+      let used = 0;
+      const chunks = [];
+      for (const f of fileParts) {
+        const body = String(f.text || "");
+        const room = Math.max(0, 12000 - used);
+        if (!room) break;
+        const slice = body.slice(0, room);
+        used += slice.length;
+        chunks.push(`【附件：${f.name}${f.kind ? `（${f.kind}）` : ""}${slice.length < body.length ? "，已截断" : ""}】\n${slice}`);
+      }
+      content = [content, chunks.join("\n\n")].filter(Boolean).join("\n\n").trim();
+    }
     if (m.role === "assistant" && tools.length) content = `${content}\n（本轮使用过工具：${tools.join("、")}）`.trim();
     if (m.role === "user" && images) content = `${content}\n（用户附了 ${images} 张图片）`.trim();
     if (!content) continue;
-    out.push({ role: m.role === "assistant" ? "assistant" : "user", content: content.slice(0, 6000) });
+    out.push({ role: m.role === "assistant" ? "assistant" : "user", content: content.slice(0, 20000) });
   }
   let total = out.reduce((n, m) => n + m.content.length, 0);
   while (out.length > HISTORY_KEEP_TAIL && total > HISTORY_MAX_CHARS) {
@@ -240,19 +256,22 @@ async function loop(opts, billing, depth = 0) {
   }
 }
 
-async function loopInner({ session, agent, model, settings = {}, history = [], userText = "", images = [], groupName = null, signal, emit, onTodo, onCall, modelCaps = null }, billing, depth, sink) {
+async function loopInner({ session, agent, model, settings = {}, history = [], userText = "", images = [], docs = [], groupName = null, signal, emit, onTodo, onCall, modelCaps = null }, billing, depth, sink) {
   const record = (c) => {
     billing.push(c);
     if (onCall) onCall(c);
   };
   const parts = sink.parts;
+  // 事件里必须放**快照**：part 对象在流式过程中会被就地追加（text += delta），
+  // 如果事件只存引用，断线续传回放时会把「最终文本」当成创建时的事件推一次，
+  // 再叠加后续 delta，界面上就出现内容重复。字符串不可变，浅拷贝即可定格当时状态。
   const emitPart = (part) => {
     parts.push(part);
-    emit?.({ type: "part", part });
+    emit?.({ type: "part", part: { ...part } });
   };
   const patchPart = (part, patch) => {
     Object.assign(part, patch);
-    emit?.({ type: "part_update", id: part.id, patch });
+    emit?.({ type: "part_update", id: part.id, patch: { ...patch } });
   };
 
   const tools = (settings.tools ?? agent.tools ?? []).filter((t) => (depth >= MAX_DEPTH ? t !== "task" : true));
@@ -288,7 +307,11 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
         }
       : null;
 
-  const messages = [...historyToMessages(history), { role: "user", content: userText }];
+  // 本轮上传的文档：正文随用户消息一起给模型（带文件名与类型，便于它引用来源）
+  const currentUserText = docs.length
+    ? [userText, ...docs.map((d) => `【附件：${d.name}${d.kind ? `（${d.kind}）` : ""}】\n${d.text}`)].filter(Boolean).join("\n\n").trim()
+    : userText;
+  const messages = [...historyToMessages(history), { role: "user", content: currentUserText }];
   let lastText = "";
   let hitLimit = false;
 

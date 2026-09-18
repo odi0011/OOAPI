@@ -12,6 +12,7 @@ import ProfilePage from "./pages/ProfilePage";
 import AdminUsersPage from "./pages/AdminUsersPage";
 import AdminSettingsPage from "./pages/AdminSettingsPage";
 import AdminChannelsPage from "./pages/AdminChannelsPage";
+import AdminGroupsPage from "./pages/AdminGroupsPage";
 import AdminPricingPage from "./pages/AdminPricingPage";
 import { useApp } from "./context/AppContext";
 
@@ -74,8 +75,9 @@ export default function App() {
         <Route path="/token" element={<TokenPage />} />
         <Route path="/log" element={<LogPage />} />
         <Route path="/profile" element={<ProfilePage />} />
-        <Route path="/admin/channel" element={<RequireAuth admin><AdminChannelsPage /></RequireAuth>} />
-        <Route path="/admin/pricing" element={<RequireAuth admin><AdminPricingPage /></RequireAuth>} />
+          <Route path="/admin/channel" element={<RequireAuth admin><AdminChannelsPage /></RequireAuth>} />
+          <Route path="/admin/groups" element={<RequireAuth admin><AdminGroupsPage /></RequireAuth>} />
+          <Route path="/admin/pricing" element={<RequireAuth admin><AdminPricingPage /></RequireAuth>} />
         <Route path="/admin/users" element={<RequireAuth admin><AdminUsersPage /></RequireAuth>} />
         <Route path="/admin/settings" element={<RequireAuth admin><AdminSettingsPage /></RequireAuth>} />
         <Route path="/admin" element={<Navigate to="/admin/channel" replace />} />

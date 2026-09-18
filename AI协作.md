@@ -157,6 +157,8 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 | `harness/loop.js` | 运行循环 + 工具调用嗅探（`StepStream`） | 步数上限兜底（默认 6，上限 16）；子代理深度上限 `MAX_DEPTH=1`；嗅探改动务必重跑自测用例（切开的标签、未闭合、正文含花括号、代码块写法） |
 | `harness/sessions.js` | 会话/消息存储（`chat_sessions` / `chat_messages`） | 会话设定入参一律走 `sanitizeSettings` 归一化；消息 seq 由 SQL 端 `MAX(seq)+1` 计算，避免并发撞号 |
 | `harness/runs.js` | 进行中运行的环形缓冲与订阅（断线续传） | 事件必须存快照；只有 `/stop` 才 abort；`MAX_EVENTS` 超出丢最早 |
+| `harness/files.js` | 附件文本提取（文本/代码 / PDF / DOCX / XLSX） | 无第三方依赖：PDF 用 zlib 解流抽文本算子，Office 走手写 zip；解析失败必须给出明确原因 |
+| `components/ArtifactPreview.jsx` | 产出物预览（HTML/SVG/React 沙盒运行） | **绝不能加 `allow-same-origin`**；保留 CSP `connect-src 'none'`；默认不渲染 |
 | `components/PromptBar.jsx` | 输入栏（独立于 `beautifului.jsx`） | 尺寸取自组件库官网实测值；`styles.css` 里**不要**再写 `.bui-composer*` 同名规则（曾覆盖导致样式不一致） |
 
 **数据流**：`POST /api/chat/run` → 落库用户消息 → `runHarness`（每步一次上游调用，工具结果以 `<tool_result>` 回灌）→
@@ -173,9 +175,21 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 ② 事件必须是**快照**（part/patch 浅拷贝），否则回放会把累积文本当初始事件再叠加 delta → 界面内容重复；
 ③ 同一会话并发只允许一个运行（409），否则双跑双计费。
 
-**模型列表（第 19 批）**：`/meta` 的模型必须是**该用户实际能调用的**，不是后台渠道全量 ——
-渠道层（用户分组可路由）∩ 密钥层（普通用户的 `tokens.model_limits`，与网关 `modelAllowed` 同语义），管理员不受密钥层约束。
-改这里要保证「页面上能选」与「实际能调用」一致，否则用户选了却报 NO_CHANNEL。
+**模型列表（第 19 / 21 批）**：`/meta` 的模型必须是**该用户 + 该密钥实际能调用的**，不是后台渠道全量 ——
+`分组模型限制（groupConfigOf）∩ 分组成员渠道声明（channelInGroup + channels.models）∩ 密钥 model_limits`，
+管理员豁免密钥层。**改了任一侧的过滤逻辑，另一侧必须同步**，否则「页面上能选」≠「实际能调用」。
+
+**密钥即路由身份（第 21 批）**：站内对话扣账户额度、不经 Key，但 `/run` 用**选中密钥绑定的分组**去路由与计费
+（`routeGroupOf` → `groupName` → `selectChannels` + `applyGroupRate`）。这与网关 `/v1` 用 `token.group_name` 是同一口径。
+新增入口若也要按密钥路由，复用 `routeGroupOf`，不要自己读 `user.group_name`。
+
+**文件附件（第 21 批）**：解析在服务端（`harness/files.js`，不引新依赖）。解析结果作为 `file` part **落库**并进历史上下文，
+所以：改 `historyToMessages` 时必须保留 file 分支（否则追问会"忘"附件）；上限是单文件 8MB / 5 个 / 正文 30k 字符，
+调整时同步 `/meta` 的 `upload` 字段（前端据此提示）。
+
+**产出物预览的安全边界（第 21 批）**：`ArtifactPreview` 的 iframe 必须保持
+`sandbox="allow-scripts"` **且绝不能加 `allow-same-origin`** —— 加了就等于把本站的 localStorage（含登录令牌）交给模型生成的代码；
+同时保留 CSP 的 `connect-src 'none'`。这是本项目唯一会执行"模型生成代码"的地方，改动前务必想清楚。
 
 ## 2. 统一规范（强制）
 
@@ -293,6 +307,17 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   若要支持，需在 `chat_projects` 加字段并在系统提示词里注入项目上下文。
 - [ ] **续传的移动端表现**：移动端切后台再回来会重新订阅（已实测可用），
   但切后台期间没有系统通知；如需「跑完了提醒」要接 Notification API。
+
+### 第 21 批遗留（对话能力扩展）
+
+- [ ] **GitHub 私有仓库 / 限流**：当前只读公开仓库，未登录时 60 次/小时；
+  如需私有仓库或更高限额，要加「用户绑定 GitHub Token」的设置项（服务端 `GITHUB_TOKEN` 已支持，但没做界面）。
+- [ ] **PDF 解析的边界**：只覆盖有文字层的 PDF（文本算子抽取），
+  扫描件、复杂排版（多栏/表格）会丢结构；如需更准要引 pdf 库或走模型 OCR（与「不引新依赖」冲突，需产品决策）。
+- [ ] **产出物的可下载性**：预览能跑起来，但没有「下载为 .html」按钮；
+  若要支持，注意导出内容同样属于模型生成物，落地前应提示用户自行检查。
+- [ ] **密钥与用户分组的关系**：现在「账户默认」= 用户分组（老行为），
+  管理端建的分组要绑到密钥上才生效；这一层关系建议在「令牌管理」页面补一句说明，避免用户困惑。
 
 ### 长期/设计取舍项（已评估，暂不处理）
 
@@ -579,6 +604,21 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   处置：`git checkout 570a1bb -- routes/chat.js styles.css` 回退这两个文件后仅重放本批改动（`b24df43`），
   服务恢复；另一窗口的 WIP 已还原到工作区（仍未提交，后续由其窗口自行提交）。
   **教训：`git add <目录/大批文件>` 前必须逐个确认 diff 归属，跨窗口协作只 `git add` 明确属于本批的文件。** |
+| 2026-09-18 | **第 20.1 批（分组独立页面 + 密钥只看分组 + 降智透传）**：
+  · **降智/过载透传上游原文**：codex 适配器三处降智判定（HTTP 非 2xx、SSE `response.failed/error`、
+    健康检查）不再只抛「上游返回过载/降智提示」，而是拼上解析后的**上游实际消息**
+    （`上游返回过载/降智提示：<上游原文>`）并附 `err.upstream` 原文；网关 SSE/JSON 与站内对话
+    错误链路都直接展示该消息，用户可见。
+  · **分组管理独立成页**：新增 `/admin/groups`（侧栏「平台管理 → 分组管理」）：
+    列表（厂商图标 / 分组名 / 备注 / 倍率 / 可用模型 / 账号数）+ 新建/编辑弹窗
+    （厂商、分组名、备注、倍率、包含账号多选、支持模型 tags）；渠道管理中的分组弹窗已移除，
+    渠道编辑仍可挂分组（双向）。
+  · **密钥不再选模型**：令牌创建/编辑移除「可用模型」输入，改为在选择分组后显示
+    「该分组可用模型」（留空=不限，跟随账号）；列表模型列按绑定分组展示可用模型；
+    提交固定 `model_limits=[]`；路由/计费口径不变（分组限制 + 分组倍率）。
+  · **合并其他窗口 WIP 一并推送**：对话 harness（`sessions`/`loop`/`tools`/`agents`/`files`、
+    项目与批量会话）、前端 `PromptBar`/`ArtifactPreview`/`Markdown`/beautifului/chat 样式与
+    `ChatPage`、README。合并前通过「命名导出静态检查 + 全量 `node --check` + `vite build`」三重校验。 |
 | 2026-09-18 | **第 20 批（分组体系按 sub2api 重构 + 两个线上 bug 修复）**：
   · **修复「刷新后最近调用丢失」**：列表接口 `rowToResp` 只读运行时内存态，服务重启后不回填
   `channels.recent_calls`；新增 `router.channelRecent(id, raw)`（运行时为空则从库回填并缓存）
@@ -631,3 +671,28 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   自检：后端改动文件 `node --check` 通过；用「真实路由 + 真实 harness、只桩 DB/上游/鉴权」的本地服务实测
   （断线续传无重复、归档计数正确、批量 affected 正确、模型按分组与密钥过滤）；
   前端 `npm run build` 通过；浏览器逐项量取样式数值与官网一致，浅色/深色、桌面/移动均已复核。 |
+| 2026-09-18 | **第 21 批（对话能力扩展：密钥路由 / 文档上传 / GitHub / 产出物在线预览）**：
+  · **模型按「选中的密钥」算**（配合另一窗口的分组体系）：站内对话扣账户额度、不经 Key，
+  但**路由配置挂在 Key 上**（Key 绑定分组 → 决定可用模型、可走渠道、计费倍率）。
+  编排栏新增「密钥」选择（默认=账户默认分组），切密钥会重新拉 `/meta?keyId=`：
+  模型 = 分组模型限制 ∩ 分组成员渠道声明 ∩ 密钥自身 `model_limits`（管理员豁免密钥层）；
+  两侧用同一套 `channelInGroup` + `groupConfigOf`，保证「页面能选」=「实际能调」；
+  `/run` 传了不可用模型直接拒绝（而不是等到 NO_CHANNEL）；计费倍率也按本次路由的分组算（与 /v1 口径一致）。
+  · **文档上传与解析**（`services/harness/files.js`，无新依赖）：文本/代码 57 种扩展名直读；
+  PDF 用内置 zlib 解 FlateDecode 后抽文本算子（识别 TJ 字距为空格、UTF-16BE 中文串）；
+  DOCX/XLSX 手写最小 zip 解析；旧版 .doc/.xls/.ppt 与扫描件 PDF 给出**明确**不可读原因而不是静默空内容。
+  解析结果作为 user 消息的 `file` part **落库**，并进历史上下文（追问不丢）；单文件 8MB、最多 5 个、正文 30k 字符上限。
+  附件入口合并成「+」菜单（图片 / 文档），消息里以文件 chip 展示。
+  · **GitHub 工具**（只读公开仓库）：list 目录 / file 读文件（缺 path 自动找 README）/ search 搜代码，
+  固定 host 走 api.github.com（可选 `GITHUB_TOKEN` 提高限额），404/403 给出人话提示；已分配给通用·研究·代码三个 primary 与检索子代理。
+  · **产出物在线预览**（`components/ArtifactPreview.jsx`）：模型回的 ```html / ```svg / ```react 代码块
+  从「一坨源码」变成「代码 | 预览」双视图，点预览直接在对话里跑；支持放大到全屏。
+  安全边界：iframe `sandbox="allow-scripts"`**且不加 allow-same-origin**（脚本读不到本站 localStorage/cookie，
+  实测取 `contentWindow.localStorage` 抛 SecurityError），并注入 CSP `connect-src 'none'` 阻断外发；
+  默认不渲染，用户点了才跑。
+  · **顺带**：编排栏「工具 4」改为「能力 联网检索·读取网页·读 GitHub·…」，一眼能看出这轮会用什么；
+  修复 `Markdown.jsx` 代码块此前无法区分的渲染路径。
+  自检：后端改动文件 `node --check` 通过；用「真实路由 + 真实 harness、只桩 DB/上游/鉴权」实测
+  （密钥分组过滤、错误密钥拒绝、文件解析落库、不支持类型报错、只发文件可发送）；
+  files.js 单测覆盖 文本/PDF(含压缩流)/DOCX(构造 zip)/不支持类型；github 工具真实拉取 nodejs/node README 成功；
+  前端 `npm run build` 通过；浏览器实测预览可交互（按钮生效、柱子由 JS 渲染）、沙盒隔离与 CSP 均生效。 |

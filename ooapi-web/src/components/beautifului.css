@@ -288,12 +288,13 @@
 .bui-message:hover .bui-msg-actions { opacity: 1; }
 
 /* ===========================================================================
-   PromptBar 原语 —— 移植自 beautifului.dev 的 PromptBar（MIT）
-   保留的设计：网格控制行、窄/宽两态切换、文本域自增高、
-                菜单从输入框上沿向上弹出（pop-in, transformOrigin: bottom）
+   PromptBar 原语 —— 按 beautifului.dev 官方实现（MIT）的结构与尺寸重写
+   官方实测：容器 p-[6px] rounded-[14px] border border-line bg-surface shadow-card；
+   控制行 grid-cols-[28px_minmax(0,1fr)_auto_28px_28px] gap-x-1 gap-y-[6px] items-end；
+   textarea 透明底 min-h-7 px-1 py-[5px] text-[13px] leading-[18px]；
+   按钮一律 28×28 rounded-lg；菜单 bottom-full mb-2 rounded-[10px] p-1。
    =========================================================================== */
-.bui-promptbar { position: relative; }
-.bui-promptbar.is-narrow-col { width: 100%; }
+.bui-promptbar { position: relative; width: 100%; }
 
 .bui-composer {
   position: relative;
@@ -306,19 +307,17 @@
   border-radius: 14px;
   background: var(--surface);
   box-shadow: var(--shadow-card);
-  transition: border-color 150ms, border-radius 150ms;
+  transition: border-color 150ms;
 }
 .bui-composer:focus-within { border-color: var(--line-strong); }
 
-/* 控制行：窄态 [加号][输入][模型][工具][发送] 一行；
-   宽态（换行或文本过长）输入独占一行，控件落到第二行 */
+/* 控制行：官方为单行网格；输入过长时 textarea 自增高，其余控件始终贴着底部 */
 .bui-composer-row {
   display: grid;
   align-items: end;
-  gap: 4px 4px;
+  gap: 6px 4px;
+  grid-template-columns: 28px minmax(0, 1fr) auto 28px 28px;
 }
-.bui-composer-row.is-narrow { grid-template-columns: 28px minmax(0, 1fr) auto 28px 28px; }
-.bui-composer-row.is-wide   { grid-template-columns: 28px auto minmax(0, 1fr) 28px 28px; }
 
 .bui-composer-input {
   min-height: 28px;
@@ -337,10 +336,8 @@
   overflow-y: hidden;
 }
 .bui-composer-input::placeholder { color: var(--ink-3); }
-.bui-composer-input.is-narrow { grid-column: 2; grid-row: 1; }
-.bui-composer-input.is-wide { grid-column: 1 / -1; grid-row: 1; }
 
-/* 28px 方形图标按钮 —— 原实现是 size-7 + active:scale-[0.94] */
+/* 28×28 方形图标按钮 —— 官方 size-7 + active:scale-[0.94] */
 .bui-cbtn {
   display: flex;
   align-items: center;
@@ -358,21 +355,20 @@
 .bui-cbtn:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
 .bui-cbtn:active:not(:disabled) { transform: scale(0.94); }
 .bui-cbtn:disabled { opacity: 0.4; cursor: not-allowed; }
-.bui-cbtn.is-on { background: var(--hover); color: var(--ink); }
 .bui-cbtn.is-accent { background: var(--accent-tint); color: var(--accent-ink); }
 .bui-cbtn.is-send { background: var(--accent); color: #fff; }
 .bui-cbtn.is-send:hover:not(:disabled) { background: var(--accent); color: #fff; filter: brightness(1.08); }
 .bui-cbtn.is-stop { background: var(--red); color: #fff; }
 .bui-cbtn.is-stop:hover:not(:disabled) { background: var(--red); color: #fff; }
-.bui-cbtn.is-narrow-plus { grid-column: 1; grid-row: 1; }
-.bui-cbtn.is-wide-plus { grid-column: 1; grid-row: 2; }
 
-/* 模型选择按钮 */
+/* 模型选择：外层是定位锚点，菜单跟着这个按钮而不是跟着整个输入框 */
+.bui-modelwrap { position: relative; display: flex; }
 .bui-modelbtn {
   display: flex;
   align-items: center;
   gap: 4px;
   height: 28px;
+  max-width: 190px;
   padding: 0 6px;
   flex-shrink: 0;
   border: 0;
@@ -386,15 +382,16 @@
   transition: background-color 150ms, color 150ms;
 }
 .bui-modelbtn:hover { background: var(--hover); color: var(--ink); }
-.bui-modelbtn .caret { color: var(--ink-3); display: flex; }
-.bui-modelbtn.is-narrow { grid-column: 3; grid-row: 1; }
-.bui-modelbtn.is-wide { grid-column: 2; grid-row: 2; justify-self: start; }
-
-.bui-cbtn.is-narrow-a { grid-column: 4; grid-row: 1; }
-.bui-cbtn.is-narrow-b { grid-column: 5; grid-row: 1; }
-.bui-cbtn.is-wide-a { grid-column: 4; grid-row: 2; }
-.bui-cbtn.is-wide-b { grid-column: 5; grid-row: 2; }
-.bui-cbtn.is-wide-send { grid-column: 6; grid-row: 2; }
+.bui-modelbtn .caret { color: var(--ink-3); display: flex; flex-shrink: 0; }
+/* 模型按钮：图标 + 名称；名称过长省略，整体不撑破控制行 */
+.bui-modelbtn > .nm2 {
+  min-width: 0;
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bui-modelbtn > img { flex-shrink: 0; }
 
 /* 附件 chips */
 .bui-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 2px 0; }
@@ -427,7 +424,7 @@
 .bui-chip-file button:hover { background: var(--line); color: var(--ink); }
 .bui-chip-file img { width: 20px; height: 20px; object-fit: cover; border-radius: 4px; }
 
-/* 上弹菜单：从输入框上沿向上长出来 */
+/* 上弹菜单：bottom-full mb-2 rounded-[10px] bg-surface p-1 */
 .bui-upmenu {
   position: absolute;
   inset-inline: 0;
@@ -440,19 +437,34 @@
   box-shadow: var(--shadow-card), 0 8px 24px oklch(0% 0 0 / 0.10);
   animation: bui-pop-in 180ms cubic-bezier(0.23, 1, 0.32, 1) both;
   transform-origin: bottom center;
-  max-height: 264px;
+  max-height: 320px;
   overflow-y: auto;
 }
-.bui-upmenu.is-model { inset-inline: auto; width: 200px; transform-origin: bottom left; }
-/* 滑动的单选高亮（跟着 hover 走） */
-.bui-upmenu-glide {
-  position: absolute;
-  left: 4px;
-  right: 4px;
-  border-radius: 6px;
-  background: var(--hover);
-  pointer-events: none;
-  transition: top 220ms cubic-bezier(0.23, 1, 0.32, 1), height 220ms cubic-bezier(0.23, 1, 0.32, 1), opacity 150ms ease;
+/* 模型菜单：挂在模型按钮上方，右对齐避免超出视口 */
+.bui-modelwrap > .bui-upmenu.is-model {
+  inset-inline: auto auto;
+  left: 0;
+  width: 300px;
+  max-width: min(300px, 86vw);
+  transform-origin: bottom left;
+}
+/* 模型行的第二列是名称，第三列是状态徽标；勾选图标固定在最右 */
+.bui-upmenu-row.is-model .nm2 {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.bui-upmenu-row.is-model .badge {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: var(--r-xs);
+  background: var(--orange-tint);
+  color: var(--orange);
+  font-size: 10px;
 }
 .bui-upmenu-row {
   position: relative;
@@ -470,12 +482,13 @@
   font-family: inherit;
   cursor: pointer;
 }
+.bui-upmenu-row:hover { background: var(--hover); }
 .bui-upmenu-row .nm { flex-shrink: 0; font-size: 12.5px; font-weight: 500; color: var(--ink); }
 .bui-upmenu-row .ds { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--ink-3); }
 .bui-upmenu-row .tick { flex-shrink: 0; color: var(--ink); display: flex; }
 .bui-upmenu-row .tick.is-off { visibility: hidden; }
-.bui-upmenu-row.is-model { height: 30px; }
-.bui-upmenu-row.is-model .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bui-upmenu-row.is-model { height: 32px; gap: 8px; }
+.bui-upmenu-row.is-model > span:nth-child(1) { min-width: 0; flex: 1; }
 .bui-upmenu-foot {
   margin-top: 4px;
   border-top: 1px solid var(--line);
@@ -484,6 +497,25 @@
   color: var(--ink-3);
 }
 .bui-upmenu-empty { display: flex; align-items: center; height: 36px; padding: 0 8px; font-size: 12px; color: var(--ink-3); }
+
+/* 模型菜单里的厂商分组：图标 + 名称 + 数量，粘性置顶便于长列表滚动 */
+.bui-modelgroup + .bui-modelgroup { margin-top: 2px; border-top: 1px solid var(--line-soft); padding-top: 2px; }
+.bui-modelgroup-head {
+  position: sticky;
+  top: -4px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 2px;
+  padding: 5px 8px 4px;
+  background: var(--surface);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+}
+.bui-modelgroup-head .ct { margin-left: auto; font-weight: 500; opacity: 0.7; }
 
 /* 语音波形（原实现的 eq-bounce） */
 @keyframes bui-eq-bounce { 0%, to { transform: scaleY(0.35); } 50% { transform: scaleY(1); } }

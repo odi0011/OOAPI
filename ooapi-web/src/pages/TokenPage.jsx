@@ -56,6 +56,10 @@ export default function TokenPage() {
     return groupList.find((g) => g.type === type && g.name === name) || { type, name, rate: 1 };
   };
 
+  // 当前选中的分组：密钥的可用模型完全由分组决定，表单不再单独选模型
+  const pickedGroupName = Form.useWatch("group_name", form);
+  const pickedGroupMeta = groupMetaOf(pickedGroupName);
+
   const perUnit = unitsPerOd(status); // 1 OD = 10000 额度单位
 
   const load = useCallback(async () => {
@@ -94,7 +98,6 @@ export default function TokenPage() {
       remain_quota: 50,
       never_expire: true,
       expired_time: null,
-      model_limits: [],
       group_name: undefined,
     });
     setModalOpen(true);
@@ -110,7 +113,6 @@ export default function TokenPage() {
       remain_quota: odOf(record.remain_quota, perUnit),
       never_expire: record.expired_time === -1,
       expired_time: record.expired_time > 0 ? dayjs(record.expired_time * 1000) : null,
-      model_limits: record.model_limits || [],
       group_name: record.group || undefined,
     });
     setModalOpen(true);
@@ -129,7 +131,7 @@ export default function TokenPage() {
       remain_quota: v.unlimited_quota ? 0 : Math.round(Number(v.remain_quota) * perUnit),
       unlimited_quota: v.unlimited_quota,
       expired_time: v.never_expire ? -1 : Math.floor(v.expired_time.valueOf() / 1000),
-      model_limits: v.model_limits || [],
+      model_limits: [],
       group_name: v.group_name || "",
     };
     setSaving(true);
@@ -259,23 +261,29 @@ export default function TokenPage() {
         },
       },
       {
-        title: "模型限制",
-        dataIndex: "model_limits",
-      width: 160,
-      render: (list) =>
-        list?.length ? (
-          <Tooltip title={<div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{list.map((m) => <ModelLabel key={m} model={m} size={13} mono />)}</div>}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-              <ModelLabel model={list[0]} size={13} />
-              {list.length > 1 ? <span className="bui-chip">+{list.length - 1}</span> : null}
-            </span>
-          </Tooltip>
-        ) : (
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            不限制
-          </Text>
-        ),
-    },
+        title: "可用模型",
+        dataIndex: "group",
+        width: 170,
+        render: (g) => {
+          const list = groupMetaOf(g)?.models || [];
+          if (!g) return <Text type="secondary" style={{ fontSize: 12 }}>跟随默认池</Text>;
+          if (!list.length) return <Text type="secondary" style={{ fontSize: 12 }}>不限（跟随账号）</Text>;
+          return (
+            <Tooltip
+              title={
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {list.map((m) => <ModelLabel key={m} model={m} size={13} mono />)}
+                </div>
+              }
+            >
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <ModelLabel model={list[0]} size={13} />
+                {list.length > 1 ? <span className="bui-chip">+{list.length - 1}</span> : null}
+              </span>
+            </Tooltip>
+          );
+        },
+      },
     { title: "创建时间", dataIndex: "created_time", width: 160, render: (v) => <span className="oo-num">{fmtDate(v)}</span> },
     {
       title: "操作",
@@ -392,19 +400,10 @@ export default function TokenPage() {
             }
           </Form.Item>
 
-          <Form.Item name="model_limits" label="可用模型" extra="留空表示不限制">
-            <Select
-              mode="tags"
-              placeholder="输入或选择模型"
-              options={(status?.model_list || []).map((m) => ({ value: m, label: m }))}
-              tokenSeparators={[","]}
-            />
-          </Form.Item>
-
           <Form.Item
             name="group_name"
             label="分组"
-            extra="一个 Key 只能绑定一个分组（由管理员创建）；留空使用默认池（全部渠道）"
+            extra="一个 Key 只能绑定一个分组（由管理员创建）；可用模型与计费倍率均由分组决定，留空使用默认池"
           >
             <Select
               allowClear
@@ -414,6 +413,14 @@ export default function TokenPage() {
               filterOption={(input, option) => (option?.search || "").includes(input.toLowerCase())}
             />
           </Form.Item>
+          <div style={{ marginTop: -10, marginBottom: 14, fontSize: 12, color: "var(--ink-3)", lineHeight: 1.6 }}>
+            可用模型：
+            {pickedGroupName
+              ? pickedGroupMeta?.models?.length
+                ? pickedGroupMeta.models.join("、")
+                : "不限（跟随账号可用模型）"
+              : "默认池（跟随账号可用模型）"}
+          </div>
         </Form>
       </Modal>
     </div>

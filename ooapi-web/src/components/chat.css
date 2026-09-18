@@ -148,6 +148,106 @@
   color: var(--ink-3);
 }
 
+/* 新建对话：侧栏里最显眼的入口（官方 Sidebar Nav 的 "New chat" 样式，加一点强调） */
+.bui-shelf-new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 36px;
+  margin-bottom: 6px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-btn);
+  background: var(--accent-tint);
+  color: var(--accent-ink);
+  font: inherit;
+  font-size: var(--fs-body);
+  font-weight: 550;
+  cursor: pointer;
+  transition: background-color 150ms;
+}
+.bui-shelf-new:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.bui-shelf-new:disabled { opacity: 0.5; cursor: not-allowed; }
+.bui-shelf-new .ic { display: flex; flex-shrink: 0; }
+
+/* 视图切换：对话 / 已归档 */
+.bui-shelf-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 8px;
+  padding: 2px;
+  border-radius: var(--r-btn);
+  background: var(--field);
+}
+.bui-shelf-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex: 1;
+  height: 26px;
+  border: 0;
+  border-radius: var(--r-chip);
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 150ms, color 150ms;
+}
+.bui-shelf-tab:hover { color: var(--ink-2); }
+.bui-shelf-tab.is-on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-card); }
+.bui-shelf-tab .ct { font-size: 10.5px; opacity: 0.65; font-variant-numeric: tabular-nums; }
+.bui-shelf-act.is-on { background: var(--accent-tint); color: var(--accent-ink); }
+
+/* 多选批量操作条 */
+.bui-shelf-batch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 2px 0 4px;
+  padding: 6px 8px;
+  border-radius: var(--r-chip);
+  background: var(--accent-tint);
+  font-size: var(--fs-label);
+  color: var(--accent-ink);
+}
+.bui-shelf-batch .acts { display: flex; align-items: center; gap: 4px; }
+.bui-shelf-batch button {
+  height: 22px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: var(--surface);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-label);
+  cursor: pointer;
+}
+.bui-shelf-batch button:hover { color: var(--ink); }
+.bui-shelf-batch button.is-danger:hover { background: var(--red-tint); color: var(--red); }
+
+/* 多选行 */
+.bui-shelf-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: var(--r-btn);
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.bui-shelf-pick:hover { background: var(--hover); color: var(--ink); }
+.bui-shelf-pick input { accent-color: var(--accent); flex-shrink: 0; margin: 0; }
+.bui-shelf-pick .tx { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bui-shelf-pick .hn { flex-shrink: 0; font-size: 10.5px; color: var(--ink-3); }
+
 /* ============================ 头部 ============================ */
 .ui-chat2-head {
   display: flex;
@@ -238,10 +338,19 @@
   color: var(--ink);
 }
 .bui-orch-btn.is-agent .v { max-width: 90px; }
+/* 能力按钮：显示工具名串联，过长省略（比只显示数字更可读） */
+.bui-orch-btn.is-tools .v { max-width: 200px; }
+.bui-orch-btn.is-tools .k { flex-shrink: 0; }
 .bui-orch-btn.is-agent,
 .bui-orch-btn.is-sys.is-on { background: var(--accent-tint); color: var(--accent-ink); }
 .bui-orch-btn.is-agent .k,
 .bui-orch-btn.is-agent .v { color: var(--accent-ink); }
+/* 密钥：与智能体区分开（智能体是蓝，密钥用中性强调），避免两个高亮抢视觉 */
+.bui-orch-btn.is-key .v { max-width: 110px; }
+.bui-orch-menu.is-key { min-width: 280px; }
+.bui-orch-menu.is-key .bui-upmenu-row.is-model { height: auto; min-height: 40px; padding: 6px 8px; }
+.bui-orch-menu.is-key .bui-upmenu-row .nm { flex-shrink: 0; }
+.bui-orch-menu.is-key .bui-upmenu-row .ds { min-width: 0; }
 .bui-orch-toggle {
   height: 26px;
   padding: 0 10px;
@@ -431,6 +540,148 @@
 }
 .ui-msg-actions .sp { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; }
 
+/* ============================ 产出物预览（Artifact） ============================ */
+/* 模型回的网页/SVG/React 代码：默认看代码，点「预览」在沙盒 iframe 里直接跑 */
+.bui-artifact {
+  margin: 10px 0;
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.bui-artifact-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.bui-artifact-bar .tag {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: var(--r-xs);
+  background: var(--accent-tint);
+  color: var(--accent-ink);
+  font-size: var(--fs-label);
+  font-weight: 600;
+}
+.bui-artifact-bar .tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-chip);
+  background: var(--field);
+}
+.bui-artifact-bar .tabs button {
+  height: 22px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: var(--fs-label);
+  cursor: pointer;
+  transition: background-color 120ms, color 120ms;
+}
+.bui-artifact-bar .tabs button.is-on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-card); }
+.bui-artifact-bar .acts { display: flex; gap: 4px; margin-left: auto; }
+.bui-artifact-bar .acts button {
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: var(--fs-label);
+  cursor: pointer;
+}
+.bui-artifact-bar .acts button:hover { background: var(--hover); color: var(--ink); }
+
+.bui-artifact-code {
+  margin: 0;
+  padding: 12px 14px;
+  max-height: 420px;
+  overflow: auto;
+  background: var(--canvas);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--ink-2);
+}
+.bui-artifact-frame {
+  display: block;
+  width: 100%;
+  height: 420px;
+  border: 0;
+  background: #fff;
+}
+.bui-artifact.is-preview .bui-artifact-frame { height: 460px; }
+
+/* 放大预览：占满视口，方便看响应式页面 */
+.bui-artifact-full {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: oklch(0% 0 0 / 0.55);
+  animation: bui-fade-in 140ms ease-out both;
+}
+.bui-artifact-full .box {
+  display: flex;
+  flex-direction: column;
+  width: min(1200px, 96vw);
+  height: min(860px, 92vh);
+  border-radius: var(--r-window);
+  background: var(--surface);
+  box-shadow: var(--shadow-overlay);
+  overflow: hidden;
+  animation: bui-pop-in 180ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+.bui-artifact-full .head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--ink);
+}
+.bui-artifact-full .head button {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.bui-artifact-full .head button:hover { background: var(--hover); color: var(--ink); }
+.bui-artifact-full iframe { flex: 1; width: 100%; border: 0; background: #fff; }
+
+/* ============================ 消息里的文件附件 ============================ */
+.ui-msg-user .files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ui-msg-user .file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: var(--r-chip);
+  background: var(--surface);
+  box-shadow: var(--shadow-hairline);
+  font-size: var(--fs-label);
+  color: var(--ink-2);
+}
+.ui-msg-user .file-chip .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-msg-user .file-chip .kb { flex-shrink: 0; color: var(--ink-3); }
+
 /* ============================ 工具 chip（Tool Chips） ============================ */
 .bui-toolchips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 .bui-toolchip {
@@ -526,17 +777,30 @@
 .bui-todos-list li .tx { min-width: 0; flex: 1; }
 
 /* ============================ 输入区 ============================ */
+/* 官方 PromptBar 是「悬空浮岛」：只有输入框本体有底色与描边，
+   外层区域完全透明（透出会话背景），提示文字紧贴输入框下方。 */
 .ui-chat2-composer {
   position: relative;
   flex-shrink: 0;
-  padding: 10px clamp(16px, 3.4vw, 44px) 12px;
-  border-top: 1px solid var(--line);
-  background: var(--surface);
+  padding: 8px clamp(16px, 3.4vw, 44px) 10px;
+  background: transparent;
+  border-top: 0;
 }
-.ui-chat2-composer .bui-composer { border-radius: var(--r-window); }
+.ui-chat2-composer-inner {
+  width: 100%;
+  max-width: 780px;
+  margin: 0 auto;
+}
+.ui-chat2-composer-foot {
+  display: flex;
+  justify-content: center;
+  padding: 6px 2px 0;
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+}
 .ui-chat2-jump {
   position: absolute;
-  top: -16px;
+  top: -14px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -552,14 +816,6 @@
   font: inherit;
   font-size: var(--fs-micro);
   cursor: pointer;
-}
-.ui-chat2-composer-foot {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 2px 0;
-  font-size: var(--fs-label);
-  color: var(--ink-3);
 }
 
 /* ============================ 遮罩层（会话指令 / 设定） ============================ */

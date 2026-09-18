@@ -324,6 +324,12 @@ print(resp.choices[0].message.content)
 | GET | `/api/chat/meta` | 对话元信息（模型/智能体/工具） |
 | POST | `/api/chat/run` | 运行一轮对话（SSE：正文/思考/工具/待办） |
 | POST | `/api/chat/sessions/:id/rewind` | 重新生成前的回退（删除该轮问答并重算会话统计） |
+| GET/POST/PUT/DELETE | `/api/chat/projects` | 对话项目（分类归档，删项目不删对话） |
+| POST | `/api/chat/sessions/batch` | 批量：归档/取消归档/置顶/移动项目/删除 |
+| GET | `/api/chat/sessions/:id/stream` | 重新接上进行中的生成（断线续传，先回放再续播） |
+| GET | `/api/chat/sessions/:id/running` | 该会话是否正在生成 |
+| GET | `/api/chat/meta?keyId=` | 元信息（按选中密钥算可用模型、厂商分组、密钥列表） |
+| POST | `/api/chat/sessions/:id/stop` | 显式停止生成（切页/刷新不会中断） |
 
 ---
 

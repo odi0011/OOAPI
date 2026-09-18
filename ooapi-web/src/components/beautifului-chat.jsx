@@ -10,6 +10,21 @@
 //   · Records/Insight   → TodoPanel（会话待办清单，todowrite 工具产出）
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 
+// 兜底名称：/meta 未返回某个工具时也不要在界面上暴露原始 id
+const TOOL_FALLBACK_NAMES = {
+  search: "联网检索",
+  fetch: "读取网页",
+  github: "读 GitHub",
+  task: "派发子代理",
+  todowrite: "待办清单",
+};
+
+const TickIcon = (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M20 6L9 17l-5-5" />
+  </svg>
+);
+
 /* ============================ Shelf（侧栏导航） ============================ */
 // 结构：可折叠分组 + 行。行的 padding 固定，选中态是「整行背景」而不是左边框，
 // 悬停时图标轻微位移（原站 sidebar-nav 的 micro-interaction）。
@@ -212,10 +227,10 @@ export function TodoPanel({ todo = [], className = "" }) {
 
 /* ============================ OrchestrationBar（智能体编排栏） ============================ */
 // 对话页顶部的一行编排控件：智能体 / 模型 / 思考 / 联网 / 工具 / 步数 / 会话指令。
-export function OrchestrationBar({ agent, agents, model, models, settings, tools, onAgent, onModel, onSetting, onOpenInstructions, disabled }) {
+export function OrchestrationBar({ agent, agents, settings, tools, onAgent, onSetting, onOpenInstructions, disabled, modelCaps, keys = [], keyId = 0, onKey }) {
   const [openMenu, setOpenMenu] = useState(null);
   const rootRef = useRef(null);
-  const caps = models.find((m) => m.id === model) || {};
+  const caps = modelCaps || {};
   const activeTools = settings.tools ?? agent?.tools ?? [];
 
   useEffect(() => {
@@ -277,25 +292,60 @@ export function OrchestrationBar({ agent, agents, model, models, settings, tools
 
       <span className="bui-orch-sep" />
 
+      {/* 密钥：站内对话扣账户额度，但路由配置挂在密钥上（分组决定可用模型与计费倍率），
+          所以要能在这里选。0 = 账户默认分组。 */}
       <div className="bui-orch-slot">
         <button
           type="button"
-          className="bui-orch-btn"
-          disabled={disabled}
-          aria-expanded={openMenu === "model"}
-          onClick={() => setOpenMenu(openMenu === "model" ? null : "model")}
+          className="bui-orch-btn is-key"
+          disabled={disabled || !keys.length}
+          aria-expanded={openMenu === "key"}
+          title={keys.length ? "选择用于本次对话的密钥（决定可用模型与计费分组）" : "还没有创建密钥，可在「令牌管理」里新建"}
+          onClick={() => setOpenMenu(openMenu === "key" ? null : "key")}
         >
-          <span className="k">模型</span>
-          <span className="v">{model || "选择"}</span>
+          <span className="k">密钥</span>
+          <span className="v">{keys.find((k) => k.id === keyId)?.name || "账户默认"}</span>
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
             <path d="M6 9l6 6 6-6" />
           </svg>
         </button>
-        {menu(
-          "model",
-          models.map((m) => ({ value: m.id, label: m.deprecated ? `${m.label}（即将下线）` : m.label, current: model })),
-          onModel
-        )}
+        {openMenu === "key" ? (
+          <div className="bui-orch-menu is-key">
+            <button
+              type="button"
+              className={`bui-upmenu-row is-model ${keyId === 0 ? "is-on" : ""}`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setOpenMenu(null);
+                onKey?.(0);
+              }}
+            >
+              <span className="nm">账户默认</span>
+              <span className="ds">按用户分组路由</span>
+              <span className={`tick ${keyId === 0 ? "" : "is-off"}`}>{TickIcon}</span>
+            </button>
+            {keys.map((k) => (
+              <button
+                key={k.id}
+                type="button"
+                className={`bui-upmenu-row is-model ${k.id === keyId ? "is-on" : ""}`}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  setOpenMenu(null);
+                  onKey?.(k.id);
+                }}
+              >
+                <span className="nm">{k.name}</span>
+                <span className="ds">
+                  {k.group ? k.group : "未绑定分组"}
+                  {k.status !== 1 ? " · 已停用" : ""}
+                </span>
+                <span className={`tick ${k.id === keyId ? "" : "is-off"}`}>{TickIcon}</span>
+              </button>
+            ))}
+            <div className="bui-upmenu-foot">密钥的分组决定可用模型、渠道与计费倍率</div>
+          </div>
+        ) : null}
       </div>
 
       <span className="bui-orch-sep" />
@@ -331,8 +381,12 @@ export function OrchestrationBar({ agent, agents, model, models, settings, tools
           aria-expanded={openMenu === "tools"}
           onClick={() => setOpenMenu(openMenu === "tools" ? null : "tools")}
         >
-          <span className="k">工具</span>
-          <span className="v">{activeTools.length ? activeTools.length : "关"}</span>
+          <span className="k">能力</span>
+          <span className="v">
+            {activeTools.length
+              ? activeTools.map((id) => tools.find((t) => t.id === id)?.name || TOOL_FALLBACK_NAMES[id] || id).join("·")
+              : "全关"}
+          </span>
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
             <path d="M6 9l6 6 6-6" />
           </svg>

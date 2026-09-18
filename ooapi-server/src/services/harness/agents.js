@@ -15,7 +15,7 @@ export const AGENTS = [
     desc: "直接回答，需要时自己查资料。日常问答与轻量任务。",
     icon: "sparkles",
     mode: "primary",
-    tools: ["search", "fetch", "task", "todowrite"],
+    tools: ["search", "fetch", "github", "task", "todowrite"],
     thinking: false,
     search: false,
     role: "你是一个通用助手：先给结论，再给必要的推导。问题复杂时可以先列待办再逐条推进。",
@@ -26,7 +26,7 @@ export const AGENTS = [
     desc: "多轮检索与交叉验证，输出带来源的结论。",
     icon: "search",
     mode: "primary",
-    tools: ["todowrite", "search", "fetch", "task"],
+    tools: ["todowrite", "search", "fetch", "github", "task"],
     thinking: true,
     search: true,
     role:
@@ -50,7 +50,7 @@ export const AGENTS = [
     desc: "给实现、讲取舍、指出边界情况。",
     icon: "code",
     mode: "primary",
-    tools: ["todowrite", "search", "fetch", "task"],
+    tools: ["todowrite", "search", "fetch", "github", "task"],
     thinking: true,
     search: false,
     role:
@@ -63,7 +63,7 @@ export const AGENTS = [
     desc: "快速检索并回报要点，不写长文。",
     icon: "compass",
     mode: "subagent",
-    tools: ["search", "fetch"],
+    tools: ["search", "fetch", "github"],
     thinking: false,
     search: true,
     role:
