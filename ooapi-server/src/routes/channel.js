@@ -1136,7 +1136,8 @@ router.get(
   asyncHandler(async (req, res) => {
     const p = String(process.env.VNC_PUBLIC_PATH || "").trim();
     if (!/^\/[A-Za-z0-9/_-]+\/$/.test(p)) return ok(res, { enabled: false });
-    const url = `${p}vnc.html?path=websockify&autoconnect=1&resize=scale&reconnect=1`;
+    // path 必须给绝对路径：vnc.html 在「带前缀的 location」下会把它当相对路径解析成根路径 /websockify
+    const url = `${p}vnc_lite.html?path=${encodeURIComponent(`${p}websockify`)}&autoconnect=1&resize=scale&reconnect=1`;
     return ok(res, { enabled: true, path: p, url });
   })
 );
