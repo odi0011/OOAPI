@@ -64,7 +64,9 @@ async function platformOverview() {
        FROM logs WHERE created_at >= ?`,
     [nowSec - 86400]
   );
-  const [[tbl]] = await pool.query(
+  // 注意这里是 `const [tbl]` 而不是 `const [[tbl]]`：
+  // pool.query 返回 [rows, fields]，再解一层就只剩第一行了，tbl.map 会直接抛。
+  const [tbl] = await pool.query(
     `SELECT table_name AS name,
             ROUND((data_length + index_length) / 1024 / 1024, 2) AS mb,
             table_rows AS approx_rows

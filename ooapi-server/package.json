@@ -8,7 +8,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node tests/static-check.mjs && node tests/device-ua.test.mjs && node tests/pricing-offpeak.test.mjs"
+    "test": "node tests/static-check.mjs && node tests/device-ua.test.mjs && node tests/pricing-offpeak.test.mjs && node tests/metrics-alert.test.mjs",
+    "test:smoke": "node tests/monitor-smoke.mjs"
   },
   "engines": {
     "node": ">=18"
