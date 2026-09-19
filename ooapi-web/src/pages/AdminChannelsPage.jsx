@@ -693,6 +693,7 @@ export default function AdminChannelsPage() {
   const [deviceInfo, setDeviceInfo] = useState(null);
   const deviceTimerRef = useRef(null);
   const autoCapRef = useRef(false);
+  const autoFailRef = useRef(0);
   const [oauthUrl, setOauthUrl] = useState("");
   const [oauthState, setOauthState] = useState("");
   const [oauthBusy, setOauthBusy] = useState(false);
@@ -1264,6 +1265,7 @@ export default function AdminChannelsPage() {
         setOnboardProfile("");
       }
       autoCapRef.current = false;
+      autoFailRef.current = 0;
       setCapSid(res.sid);
       setCapShot({ dataUrl: res.dataUrl, url: res.url, hint: res.hint, kind: res.kind, redirectUri: res.redirectUri || "" });
       setCapOpen(true);
@@ -1296,6 +1298,7 @@ export default function AdminChannelsPage() {
     if (capShot?.kind !== "oauth" || !capShot?.redirectUri) return undefined;
     const timer = setInterval(async () => {
       if (autoCapRef.current) return;
+      if (autoFailRef.current >= 3) return; // 连续失败就不再自动重试，留给手动按钮
       try {
         const r = await API.get(`/channel/capture/${capSid}/url`);
         const url = String(r?.url || "");
@@ -1304,12 +1307,17 @@ export default function AdminChannelsPage() {
         const res = await API.post(`/channel/capture/${capSid}/capture`, undefined, { timeoutMs: 90_000 });
         const val = res?.tokens?.[0]?.value || res?.credential || "";
         if (res?.oauth && val) {
+          autoFailRef.current = 0;
           addForm.setFieldsValue({ token: val });
           message.success(`已检测到授权完成，凭据自动填入${res.accountLabel ? `（${res.accountLabel}）` : ""}，请点「添加」`);
           closeCapture(true);
         }
       } catch {
-        /* 回调尚未到达或换取失败：继续轮询，也保留手动按钮 */
+        // 回调到达但换取失败（如授权码已被用过）：限次后停止，提示手动重试
+        autoFailRef.current += 1;
+        if (autoFailRef.current === 3) {
+          message.warning("自动换取凭据失败，请点「完成授权，抓取凭据」重试，或重新登录");
+        }
       } finally {
         autoCapRef.current = false;
       }
