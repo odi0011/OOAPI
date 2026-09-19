@@ -152,6 +152,24 @@ await check("health / diagnosis / alerts / thresholds 齐全", () => {
   assert.ok(snap.thresholds && typeof snap.thresholds === "object", "缺 thresholds");
 });
 
+await check("windows 窗口聚合结构完整（告警规则的 window_min 依赖它）", () => {
+  assert.ok(snap.windows, "缺 windows");
+  for (const k of ["m1", "m5", "m60"]) {
+    const w = snap.windows[k];
+    assert.ok(w, `缺 windows.${k}`);
+    assert.equal(w.windowMin, Number(k.slice(1)), `windows.${k}.windowMin 应为 ${k.slice(1)}`);
+    for (const f of ["calls", "errors", "tokens", "qps", "tps", "coveredMinutes"]) {
+      assert.ok(typeof w[f] === "number", `windows.${k} 缺 ${f}`);
+    }
+    assert.ok(typeof w.partial === "boolean", `windows.${k} 缺 partial`);
+    // 无样本时率必须是 null 而不是 0 —— 0% 会让「错误率 > 5%」的规则安静地不触发
+    if (w.calls === 0) {
+      assert.equal(w.errorRate, null, "无样本时 errorRate 必须是 null");
+      assert.equal(w.successRate, null, "无样本时 successRate 必须是 null");
+    }
+  }
+});
+
 console.log("告警接口");
 await check("GET /api/monitor/alert/metrics 返回指标目录", async () => {
   const r = await req("/api/monitor/alert/metrics");
@@ -159,6 +177,8 @@ await check("GET /api/monitor/alert/metrics 返回指标目录", async () => {
   assert.ok(Array.isArray(r.body.data.metrics) && r.body.data.metrics.length >= 15, "指标数应 >= 15");
   assert.ok(Array.isArray(r.body.data.operators), "缺 operators");
   assert.ok(Array.isArray(r.body.data.severities), "缺 severities");
+  // 每个指标的 key 必须真能取到值（否则规则会静默失效）
+  assert.ok(r.body.data.metrics.every((m) => m.key && m.label && m.unit !== undefined), "指标项字段不全");
 });
 
 await check("GET /api/monitor/alert/rules 返回规则数组", async () => {

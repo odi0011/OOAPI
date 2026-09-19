@@ -415,6 +415,51 @@ function trend() {
   };
 }
 
+/**
+ * 按时间窗口聚合分钟桶 —— 让告警规则的 window_min 真正生效。
+ *
+ * 为什么需要它：进程内累计计数器是「进程启动至今」，用它求值等于 window_min 摆设。
+ * minuteBuckets 保留了最近 180 分钟的分桶数据，按窗口求和即可得到真实窗口值
+ * （错误率、成功率、调用数）。窗口超过保留时长时按「有数据的桶」计算并标注 partial。
+ *
+ * @param {number} windowMin 窗口分钟数
+ */
+export function windowStats(windowMin = 5) {
+  const w = Math.max(1, Math.floor(windowMin));
+  const nowMin = Math.floor(Date.now() / 60000);
+  const from = nowMin - w + 1;
+  let calls = 0;
+  let errors = 0;
+  let tokens = 0;
+  let ttftSum = 0;
+  let ttftCount = 0;
+  let covered = 0;
+  for (const [min, b] of counters.buckets.entries()) {
+    if (min < from || min > nowMin) continue;
+    calls += b.calls;
+    errors += b.errors;
+    tokens += b.tokens;
+    ttftSum += b.ttftSum;
+    ttftCount += b.ttftCount;
+    covered += 1;
+  }
+  const oldest = Math.min(...counters.buckets.keys(), nowMin);
+  return {
+    windowMin: w,
+    // 覆盖是否完整：进程刚启动或窗口长于保留时长时为 false，前端可标注「样本不足」
+    partial: covered < w || oldest > from,
+    coveredMinutes: covered,
+    calls,
+    errors,
+    tokens,
+    successRate: calls ? Number((((calls - errors) / calls) * 100).toFixed(2)) : null,
+    errorRate: calls ? Number(((errors / calls) * 100).toFixed(2)) : null,
+    avgTtftMs: ttftCount ? Math.round(ttftSum / ttftCount) : 0,
+    qps: Number((calls / (w * 60)).toFixed(3)),
+    tps: Number((tokens / (w * 60)).toFixed(2)),
+  };
+}
+
 /** 汇总所有指标 */
 export function snapshot() {
   const cpus = os.cpus() || [];
@@ -517,6 +562,12 @@ export function snapshot() {
     },
     // ---- 时间桶趋势 ----
     trend: trend(),
+    // ---- 窗口聚合（让告警规则的 window_min 真正生效）----
+    windows: {
+      m1: windowStats(1),
+      m5: windowStats(5),
+      m60: windowStats(60),
+    },
     fetchedAt: Date.now(),
   };
 }

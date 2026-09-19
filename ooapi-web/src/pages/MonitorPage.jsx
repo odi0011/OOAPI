@@ -527,6 +527,10 @@ export default function MonitorPage() {
   const [live, setLive] = useState(null); // SSE 推送的实时值
   const [liveOk, setLiveOk] = useState(false);
   const [rankTab, setRankTab] = useState("model");
+  // 窗口口径（1/5/60 分钟）：告警规则按各自的「统计窗口」取值，这里让管理员能切着看
+  const [winKey, setWinKey] = useState("m5");
+  // 并发维度（对齐 sub2api 的多维度切换：它按 platform/group/account/user，我们按账号/厂商/模型）
+  const [concTab, setConcTab] = useState("channel");
   const timerRef = useRef(null);
   const esRef = useRef(null);
 
@@ -594,6 +598,11 @@ export default function MonitorPage() {
   const channels = data?.channels || {};
   const alerts = data?.alerts || {};
   const thresholds = data?.thresholds || {};
+  const win = data?.windows || {};
+
+  // 窗口口径说明：进程累计值（gateway.requests）随重启清零，
+  // 而 windows.m1/m5/m60 是分钟桶聚合的「真实窗口值」——告警规则用的就是后者。
+  const winStats = win[winKey] || null;
 
   // 实时值与轮询快照合并：SSE 有值优先（更细粒度），否则用快照
   const rt = live || {
@@ -718,6 +727,40 @@ export default function MonitorPage() {
           { label: "总请求", value: g.requests ?? 0 },
         ]}
       />
+
+      {/* ②b 窗口口径（告警规则实际使用的口径，与进程累计值区分开） */}
+      <div className="oo-panel" style={{ padding: "10px 14px", marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <Segmented
+            size="small"
+            value={winKey}
+            onChange={setWinKey}
+            options={[
+              { value: "m1", label: "近 1 分钟" },
+              { value: "m5", label: "近 5 分钟" },
+              { value: "m60", label: "近 60 分钟" },
+            ]}
+          />
+          <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>
+            窗口口径（告警规则按各自的「统计窗口」取这套值，不是进程累计）
+          </span>
+          {winStats?.partial ? <Tag color="gold">样本仅覆盖 {winStats.coveredMinutes}/{winStats.windowMin} 分钟</Tag> : null}
+        </div>
+        {winStats ? (
+          <Strip
+            items={[
+              { label: "请求", value: winStats.calls },
+              { label: "错误", value: winStats.errors, color: winStats.errors ? "var(--red)" : undefined },
+              { label: "成功率", value: winStats.successRate != null ? `${winStats.successRate}%` : "无样本" },
+              { label: "错误率", value: winStats.errorRate != null ? `${winStats.errorRate}%` : "无样本", color: winStats.errorRate > (thresholds.errorRateMax || 5) ? "var(--red)" : undefined },
+              { label: "Token", value: winStats.tokens },
+              { label: "平均 QPS", value: winStats.qps },
+              { label: "平均 TPS", value: winStats.tps },
+              { label: "平均首字", value: winStats.avgTtftMs ? `${winStats.avgTtftMs}ms` : "—" },
+            ]}
+          />
+        ) : null}
+      </div>
 
       {/* ③ 吞吐实时 + 趋势 */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, marginBottom: 12 }}>
@@ -917,49 +960,92 @@ export default function MonitorPage() {
       {/* ⑦ 并发与队列 */}
       <div className="oo-panel" style={{ padding: 14, marginBottom: 12 }}>
         <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
-          <div className="oo-stats-card-title">并发与队列（按账号）</div>
+          <div className="oo-stats-card-title">并发与队列</div>
           <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
             在途 {channels.inflight ?? 0} · 冷却中 {channels.cooling ?? 0} · 启用 {channels.enabled ?? 0} · 近期有错误 {channels.errors ?? 0}
           </span>
         </div>
-        <Table
-          rowKey="channelId"
+        <Segmented
           size="small"
-          dataSource={(channels.list || []).filter((c) => c.inflight > 0 || c.coolingDown || c.queued > 0 || c.lastError)}
-          pagination={false}
-          scroll={{ x: 720, y: 240 }}
-          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有在途请求，也没有冷却中的账号" /> }}
-          columns={[
-            { title: "#", dataIndex: "channelId", width: 54 },
-            { title: "账号", dataIndex: "name", ellipsis: true },
-            { title: "厂商", dataIndex: "type", width: 100 },
-            {
-              title: "在途",
-              dataIndex: "inflight",
-              width: 70,
-              render: (v) => <span className="oo-num">{v}</span>,
-            },
-            {
-              title: "排队",
-              dataIndex: "queued",
-              width: 70,
-              render: (v) => (v ? <Badge count={v} size="small" /> : <span style={{ color: "var(--ink-3)" }}>—</span>),
-            },
-            {
-              title: "冷却",
-              dataIndex: "cooldownRemainSec",
-              width: 90,
-              render: (v) => (v ? <Tag color="orange">{Math.ceil(v / 60)} 分钟</Tag> : <span style={{ color: "var(--ink-3)" }}>—</span>),
-            },
-            {
-              title: "最近调用",
-              dataIndex: "usedCount",
-              width: 90,
-              render: (v) => <span className="oo-num">{v}</span>,
-            },
-            { title: "最近错误", dataIndex: "lastError", ellipsis: true },
+          value={concTab}
+          onChange={setConcTab}
+          options={[
+            { value: "channel", label: "按账号" },
+            { value: "vendor", label: "按厂商" },
+            { value: "model", label: "按模型" },
           ]}
+          style={{ marginBottom: 8 }}
         />
+        {concTab === "channel" ? (
+          <Table
+            rowKey="channelId"
+            size="small"
+            dataSource={(channels.list || []).filter((c) => c.inflight > 0 || c.coolingDown || c.queued > 0 || c.lastError)}
+            pagination={false}
+            scroll={{ x: 720, y: 240 }}
+            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有在途请求，也没有冷却中的账号" /> }}
+            columns={[
+              { title: "#", dataIndex: "channelId", width: 54 },
+              { title: "账号", dataIndex: "name", ellipsis: true },
+              { title: "厂商", dataIndex: "type", width: 100 },
+              { title: "在途", dataIndex: "inflight", width: 70, render: (v) => <span className="oo-num">{v}</span> },
+              {
+                title: "排队",
+                dataIndex: "queued",
+                width: 70,
+                render: (v) => (v ? <Badge count={v} size="small" /> : <span style={{ color: "var(--ink-3)" }}>—</span>),
+              },
+              {
+                title: "冷却",
+                dataIndex: "cooldownRemainSec",
+                width: 90,
+                render: (v) => (v ? <Tag color="orange">{Math.ceil(v / 60)} 分钟</Tag> : <span style={{ color: "var(--ink-3)" }}>—</span>),
+              },
+              { title: "累计调用", dataIndex: "usedCount", width: 90, render: (v) => <span className="oo-num">{v}</span> },
+              { title: "最近错误", dataIndex: "lastError", ellipsis: true },
+            ]}
+          />
+        ) : (
+          <Table
+            rowKey={concTab === "vendor" ? "vendor" : "model"}
+            size="small"
+            dataSource={
+              concTab === "vendor"
+                ? (g.topVendors || []).map((v) => ({
+                    vendor: v.vendor || "未登记",
+                    calls: v.calls,
+                    errors: v.errors,
+                    successRate: v.successRate,
+                    avgMs: v.avgMs,
+                    avgTtftMs: v.avgTtftMs,
+                  }))
+                : (g.topModels || []).map((v) => ({
+                    model: v.model,
+                    calls: v.calls,
+                    errors: v.errors,
+                    successRate: v.successRate,
+                    avgMs: v.avgMs,
+                    avgTtftMs: v.avgTtftMs,
+                  }))
+            }
+            pagination={false}
+            scroll={{ x: 640, y: 240 }}
+            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="本进程还没有调用记录" /> }}
+            columns={[
+              { title: concTab === "vendor" ? "厂商" : "模型", dataIndex: concTab === "vendor" ? "vendor" : "model", ellipsis: true },
+              { title: "调用", dataIndex: "calls", width: 80, render: (v) => <span className="oo-num">{v}</span> },
+              { title: "错误", dataIndex: "errors", width: 70, render: (v) => (v ? <Tag color="red">{v}</Tag> : <span style={{ color: "var(--ink-3)" }}>0</span>) },
+              {
+                title: "成功率",
+                dataIndex: "successRate",
+                width: 90,
+                render: (v) => <span className="oo-num" style={{ color: v != null && v < 95 ? "var(--red)" : undefined }}>{v != null ? `${v}%` : "—"}</span>,
+              },
+              { title: "平均耗时", dataIndex: "avgMs", width: 100, render: (v) => <span className="oo-num">{v ?? 0} ms</span> },
+              { title: "平均首字", dataIndex: "avgTtftMs", width: 100, render: (v) => <span className="oo-num">{v ? `${v} ms` : "—"}</span> },
+            ]}
+          />
+        )}
       </div>
 
       {/* ⑧ 平台概览 */}

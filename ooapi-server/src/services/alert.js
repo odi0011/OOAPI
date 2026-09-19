@@ -18,7 +18,7 @@
 //   4. 规则求值复用进程内 metrics 快照，不额外查库（sub2api 每次求值都打 SQL）。
 import { pool } from "../db.js";
 import { now } from "../utils.js";
-import { snapshot, healthScore } from "./metrics.js";
+import { snapshot, healthScore, windowStats } from "./metrics.js";
 import { sendMail, sendWebhook, smtpConfig } from "./notify.js";
 import { getBoolOption, getOption, getNumberOption } from "../config.js";
 
@@ -32,13 +32,15 @@ export const METRICS = [
   { key: "disk_usage_percent", label: "磁盘使用率", unit: "%", source: "system", optional: true },
   { key: "event_loop_p99_ms", label: "事件循环延迟 P99", unit: "ms", source: "system", optional: true },
   // 业务级
-  { key: "error_rate", label: "请求错误率", unit: "%", source: "business" },
-  { key: "success_rate", label: "请求成功率", unit: "%", source: "business" },
+  { key: "error_rate", label: "请求错误率", unit: "%", source: "business", window: true },
+  { key: "success_rate", label: "请求成功率", unit: "%", source: "business", window: true },
   { key: "sla_rate", label: "SLA 成功率（排除业务限制）", unit: "%", source: "business" },
   { key: "upstream_error_rate", label: "上游错误率（排除 429/529）", unit: "%", source: "business" },
   { key: "ttft_p99_ms", label: "首 Token 延迟 P99", unit: "ms", source: "business", optional: true },
   { key: "p95_latency_ms", label: "请求延迟 P95", unit: "ms", source: "business" },
   { key: "p99_latency_ms", label: "请求延迟 P99", unit: "ms", source: "business" },
+  { key: "avg_ttft_ms_window", label: "窗口内平均首 Token 延迟", unit: "ms", source: "business", window: true, optional: true },
+  { key: "window_request_count", label: "窗口内请求数", unit: "次", source: "business", window: true },
   { key: "concurrency_inflight", label: "并发在途请求", unit: "个", source: "business" },
   { key: "concurrency_queue_depth", label: "数据库连接池排队", unit: "个", source: "business" },
   { key: "health_score", label: "健康分", unit: "分", source: "business" },
@@ -94,25 +96,21 @@ function st(id) {
   return ruleState.get(id);
 }
 
-/** 取「当前时刻」的指标值。窗口语义：进程内累计指标本身就是「本进程至今」，
- *  真正的窗口筛选靠日志表 —— 但每分钟求值一次时，进程内指标的变化量
- *  已经近似于窗口值，且不需要额外查询。 */
-async function metricValue(metric, filters = {}, ctx) {
+/** 取「当前时刻」的指标值。
+ *  窗口语义：率类指标（错误率/成功率/上游错误率）按 windowMin 从分钟桶里真实聚合，
+ *  window_min 不再是摆设；系统类指标（CPU/内存/磁盘）天生就是瞬时采样。
+ *  样本不足时（进程刚启动）返回 null，让规则跳过而不是误报。 */
+async function metricValue(metric, filters = {}, ctx, windowMin = 5) {
   const snap = ctx.snap;
   const h = ctx.health;
+  // 窗口化的率类指标：窗口内没有调用样本时返回 null（不是 0%）——
+  // 0% 错误率会让「错误率 > 5%」这种规则安静地不触发，看似正常实则没数据。
+  const win = ctx.window || { calls: 0, successRate: null, errorRate: null, avgTtftMs: 0 };
   switch (metric) {
-    case "cpu_usage_percent":
-      return snap.system.cpuPercent;
-    case "memory_usage_percent":
-      return snap.system.usedMemPercent;
-    case "disk_usage_percent":
-      return snap.system.disk?.usedPercent ?? null;
-    case "event_loop_p99_ms":
-      return snap.eventLoop?.p99Ms ?? null;
     case "error_rate":
-      return snap.gateway.errorRate;
+      return win.calls > 0 ? win.errorRate : null;
     case "success_rate":
-      return snap.gateway.successRate;
+      return win.calls > 0 ? win.successRate : null;
     case "sla_rate":
       return snap.gateway.sla;
     case "upstream_error_rate":
@@ -123,6 +121,18 @@ async function metricValue(metric, filters = {}, ctx) {
       return snap.gateway.latency?.p95Ms ?? null;
     case "p99_latency_ms":
       return snap.gateway.latency?.p99Ms ?? null;
+    case "avg_ttft_ms_window":
+      return win.calls > 0 && win.avgTtftMs ? win.avgTtftMs : null;
+    case "window_request_count":
+      return win.calls;
+    case "cpu_usage_percent":
+      return snap.system.cpuPercent;
+    case "memory_usage_percent":
+      return snap.system.usedMemPercent;
+    case "disk_usage_percent":
+      return snap.system.disk?.usedPercent ?? null;
+    case "event_loop_p99_ms":
+      return snap.eventLoop?.p99Ms ?? null;
     case "concurrency_inflight":
       return snap.gateway.inFlight;
     case "concurrency_queue_depth":
@@ -194,9 +204,13 @@ export async function evaluateAlerts({ force = false } = {}) {
   for (const rule of rules) {
     if (!rule.enabled) continue;
     const filters = safeJson(rule.filters) || {};
+    // 每个规则按自己的 window_min 聚合分钟桶：窗口不同取值就不同，
+    // 不能像以前那样所有规则共用一份「进程累计」值。
+    const win = windowStats(rule.window_min || 5);
+    ctx.window = win;
     let value;
     try {
-      value = await metricValue(rule.metric, filters, ctx);
+      value = await metricValue(rule.metric, filters, ctx, Number(rule.window_min) || 5);
     } catch (e) {
       lastError = e.message;
       continue;
@@ -355,7 +369,8 @@ export function engineStatus() {
       until: getNumberOption("alert_silence_until") || 0,
       reason: getOption("alert_silence_reason") || "",
     },
-    rules: ruleState.size,
+    // 有求值状态的规则数（指标不可用的规则会被跳过，所以可能少于规则总数）
+    trackedRules: ruleState.size,
   };
 }
 
