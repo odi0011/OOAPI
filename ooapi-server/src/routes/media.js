@@ -7,7 +7,7 @@ import express from "express";
 import { Router } from "express";
 import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now, pageParams } from "../utils.js";
-import { authRequired, adminRequired, preAuthJwt } from "../middleware/auth.js";
+import { authRequired, adminRequired, preAuthJwt, optionalAuth } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import {
   saveBuffer, getMedia, readBlob, verifyMediaSign, mediaUrl, stats, usedBytes,
@@ -22,9 +22,82 @@ const router = Router();
 // 大包缓冲进内存（与 /v1、/api/chat 同一处理，见 index.js 的注释）
 router.use(preAuthJwt);
 router.use(express.json({ limit: "32mb" }));
-router.use(authRequired);
+
+// 鉴权按端点分开挂，**不能**全局挂 authRequired：
+//   · GET /:id/raw        —— 聊天里的 <img> 带不了 Authorization，走签名 query
+//   · GET /avatar/:userId —— 头像要在任意页面展示（含未登录的公开页）
+// 这两条用 optionalAuth（带令牌就认身份、不带按匿名继续），处理器内部再校验签名/归属。
+// 曾经全局挂 authRequired：带合法签名也 401、头像永远显示不出来。
+// 其余端点（上传/列表/删除等）一律要求登录。
+//
+// 路由顺序也很关键：具名子路径必须写在 /:id 之前，
+// 否则 DELETE /avatar 会被 DELETE /:id 匹配（id 变成字符串 "avatar"）→ 头像永远删不掉。
 
 // ---------------------------------------------------------------------------
+// 公开端点（匿名可达，靠签名或归属校验）
+// ---------------------------------------------------------------------------
+
+// 原始文件流
+router.get(
+  "/:id/raw",
+  optionalAuth,
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id) || 0;
+    const row = await getMedia(id);
+    if (!row) return fail(res, "文件不存在", 404);
+    // 三种放行方式：签名有效 / 本人 / 管理员
+    const signed = await verifyMediaSign(id, req.query.s);
+    const authed = req.user && (Number(row.user_id) === req.user.id || req.user.role >= 100);
+    if (!signed && !authed) return fail(res, "无权访问", 403);
+    if (Number(row.status) === 2) return fail(res, "文件已删除", 410);
+    if (Number(row.status) === 3) return fail(res, "文件已被封禁", 451);
+
+    const buf = await readBlob(row);
+    if (!buf) return fail(res, "文件内容缺失（可能已被清理）", 404);
+
+    // 更新最近访问时间（用于识别冷数据；失败不影响下载）
+    pool.query("UPDATE media SET last_access_time = ? WHERE id = ?", [now(), id]).catch(() => {});
+
+    const mime = row.mime || "application/octet-stream";
+    res.setHeader("content-type", mime);
+    // 内容寻址 → 内容永不改变，可以长期强缓存
+    res.setHeader("cache-control", "private, max-age=31536000, immutable");
+    res.setHeader("x-content-type-options", "nosniff");
+    // 只有图片允许内联渲染；其余一律附件下载（防 HTML/脚本被当页面执行）
+    const inline = /^image\/(png|jpeg|gif|webp)$/.test(mime);
+    if (!inline || String(req.query.download || "") === "1") {
+      const name = String(row.orig_name || `${row.sha256.slice(0, 8)}.${row.ext || "bin"}`);
+      res.setHeader("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+    }
+    return res.end(buf);
+  })
+);
+
+// 公开头像流（无头像 → 404，前端回退首字母色块）
+router.get(
+  "/avatar/:userId",
+  optionalAuth,
+  asyncHandler(async (req, res) => {
+    const uid = Number(req.params.userId) || 0;
+    const [[u]] = await pool.query("SELECT avatar_media_id FROM users WHERE id = ?", [uid]);
+    const mid = Number(u?.avatar_media_id) || 0;
+    if (!mid) return fail(res, "无头像", 404);
+    const row = await getMedia(mid);
+    if (!row || Number(row.status) !== 1) return fail(res, "无头像", 404);
+    const buf = await readBlob(row);
+    if (!buf) return fail(res, "无头像", 404);
+    res.setHeader("content-type", row.mime || "image/jpeg");
+    // URL 里带 ?v=<mediaId>，换头像即换 URL，所以可以长期强缓存
+    res.setHeader("cache-control", "public, max-age=31536000, immutable");
+    res.setHeader("x-content-type-options", "nosniff");
+    return res.end(buf);
+  })
+);
+
+// ---------------------------------------------------------------------------
+// 以下全部需要登录
+// ---------------------------------------------------------------------------
+router.use(authRequired);
 // 上传
 // ---------------------------------------------------------------------------
 router.post(
@@ -214,46 +287,6 @@ router.get(
 );
 
 // ---------------------------------------------------------------------------
-// 原始文件流（签名 URL；<img> 带不了 Authorization，所以这里不走 authRequired）
-// ---------------------------------------------------------------------------
-router.get(
-  "/:id/raw",
-  asyncHandler(async (req, res) => {
-    const id = Number(req.params.id) || 0;
-    const row = await getMedia(id);
-    if (!row) return fail(res, "文件不存在", 404);
-    // 三种放行方式：签名有效 / 本人 / 管理员
-    const signed = await verifyMediaSign(id, req.query.s);
-    const authed = req.user && (Number(row.user_id) === req.user.id || req.user.role >= 100);
-    if (!signed && !authed) return fail(res, "无权访问", 403);
-    if (Number(row.status) === 2) return fail(res, "文件已删除", 410);
-    if (Number(row.status) === 3) return fail(res, "文件已被封禁", 451);
-
-    const buf = await readBlob(row);
-    if (!buf) return fail(res, "文件内容缺失（可能已被清理）", 404);
-
-    // 更新最近访问时间（用于识别冷数据；失败不影响下载）
-    pool.query("UPDATE media SET last_access_time = ? WHERE id = ?", [now(), id]).catch(() => {});
-
-    const mime = row.mime || "application/octet-stream";
-    res.setHeader("content-type", mime);
-    // 内容寻址 → 内容永不改变，可以长期强缓存
-    res.setHeader("cache-control", "private, max-age=31536000, immutable");
-    res.setHeader("x-content-type-options", "nosniff");
-    // 只有图片允许内联渲染；其余一律附件下载（防 HTML/脚本被当页面执行）
-    const inline = /^image\/(png|jpeg|gif|webp)$/.test(mime);
-    if (!inline || String(req.query.download || "") === "1") {
-      const name = String(row.orig_name || `${row.sha256.slice(0, 8)}.${row.ext || "bin"}`);
-      res.setHeader(
-        "content-disposition",
-        `attachment; filename*=UTF-8''${encodeURIComponent(name)}`
-      );
-    }
-    return res.end(buf);
-  })
-);
-
-// ---------------------------------------------------------------------------
 // 改名 / 删除
 // ---------------------------------------------------------------------------
 router.patch(
@@ -367,25 +400,7 @@ router.delete(
   })
 );
 
-// 公开的头像流（无头像 → 404，前端回退首字母色块）
-router.get(
-  "/avatar/:userId",
-  asyncHandler(async (req, res) => {
-    const uid = Number(req.params.userId) || 0;
-    const [[u]] = await pool.query("SELECT avatar_media_id FROM users WHERE id = ?", [uid]);
-    const mid = Number(u?.avatar_media_id) || 0;
-    if (!mid) return fail(res, "无头像", 404);
-    const row = await getMedia(mid);
-    if (!row || Number(row.status) !== 1) return fail(res, "无头像", 404);
-    const buf = await readBlob(row);
-    if (!buf) return fail(res, "无头像", 404);
-    res.setHeader("content-type", row.mime || "image/jpeg");
-    // URL 里带 ?v=<mediaId>，换头像即换 URL，所以可以长期强缓存
-    res.setHeader("cache-control", "public, max-age=31536000, immutable");
-    res.setHeader("x-content-type-options", "nosniff");
-    return res.end(buf);
-  })
-);
+// 公开的头像流已上移到文件顶部（必须匿名可达，见那里的注释）
 
 // ---------------------------------------------------------------------------
 // 回收（管理员）

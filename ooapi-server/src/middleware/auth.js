@@ -54,3 +54,25 @@ export function adminRequired(req, res, next) {
     next();
   });
 }
+
+/**
+ * 可选登录：带了合法令牌就填充 req.user，没带或无效就当匿名继续。
+ *
+ * 用在「既要支持登录访问、又要支持签名/公开访问」的端点上：
+ * 例如媒体文件的 raw 流（<img> 带不了 Authorization，走签名 query）
+ * 与公开头像。用 authRequired 会直接把匿名请求 401 掉，功能就废了。
+ */
+export async function optionalAuth(req, res, next) {
+  const payload = parseAuth(req);
+  if (!payload) return next(); // 匿名：交给端点自己的签名校验
+  try {
+    const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [payload.id]);
+    const user = rows[0];
+    if (user && user.status === 1 && (Number(payload.tv) || 0) === (Number(user.token_version) || 0)) {
+      req.user = user;
+    }
+  } catch {
+    /* 查库失败按匿名处理，由端点决定是否放行 */
+  }
+  next();
+}
