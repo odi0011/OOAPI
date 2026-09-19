@@ -14,6 +14,9 @@ import assert from "node:assert/strict";
 
 const { parseGroupKey, displayGroupName, applyGroupRate } = await import("../src/services/group-rate.js");
 
+// 注意：t() 现在是 async——等待它完成才能统计。
+// 顶层 await 在每个 t() 调用前（见下方 await t(...)），
+// 否则 console.log 会先执行、打印出 "0 通过" 的假象。
 let passed = 0;
 let failed = 0;
 async function t(name, fn) {
@@ -29,16 +32,16 @@ async function t(name, fn) {
 
 console.log("解析绑定值（parseGroupKey）");
 
-t("新格式：纯分组名", () => {
+await t("新格式：纯分组名", () => {
   assert.deepEqual(parseGroupKey("vip"), { name: "vip" });
 });
 
-t("旧格式：厂商:分组名 → 剥掉厂商前缀", () => {
+await t("旧格式：厂商:分组名 → 剥掉厂商前缀", () => {
   assert.deepEqual(parseGroupKey("openai:vip"), { name: "vip" });
   assert.deepEqual(parseGroupKey("glm:便宜档"), { name: "便宜档" });
 });
 
-t("空值 / default 一律视为「无分组」", () => {
+await t("空值 / default 一律视为「无分组」", () => {
   assert.equal(parseGroupKey(""), null);
   assert.equal(parseGroupKey(null), null);
   assert.equal(parseGroupKey(undefined), null);
@@ -46,18 +49,18 @@ t("空值 / default 一律视为「无分组」", () => {
   assert.equal(parseGroupKey("openai:default"), null, "带前缀的 default 也要归为无分组");
 });
 
-t("冒号在末尾（\"vip:\"）不会被误剥成空", () => {
+await t("冒号在末尾（\"vip:\"）不会被误剥成空", () => {
   // idx === length-1 时不剥前缀：整串作为分组名
   assert.deepEqual(parseGroupKey("vip:"), { name: "vip:" });
 });
 
-t("首尾空白被裁剪", () => {
+await t("首尾空白被裁剪", () => {
   assert.deepEqual(parseGroupKey("  vip  "), { name: "vip" });
 });
 
 console.log("\n展示用归一化（displayGroupName）");
 
-t("三种历史形态归一到同一个名字（避免日志里出现多个标签）", () => {
+await t("三种历史形态归一到同一个名字（避免日志里出现多个标签）", () => {
   const a = displayGroupName("vip");
   const b = displayGroupName("openai:vip");
   const c = displayGroupName("vip:vip");
@@ -68,7 +71,7 @@ t("三种历史形态归一到同一个名字（避免日志里出现多个标�
   assert.equal(b, c);
 });
 
-t("无分组时返回空串（不是 default）", () => {
+await t("无分组时返回空串（不是 default）", () => {
   assert.equal(displayGroupName(""), "");
   assert.equal(displayGroupName("default"), "");
   assert.equal(displayGroupName(null), "");
@@ -76,23 +79,23 @@ t("无分组时返回空串（不是 default）", () => {
 
 console.log("\n倍率应用");
 
-t("rate=1 原样返回", () => {
+await t("rate=1 原样返回", () => {
   assert.equal(applyGroupRate(1000, 1), 1000);
 });
 
-t("倍率按乘法换算，且至少有 1 单位（不产生 0 元白嫖）", () => {
+await t("倍率按乘法换算，且至少有 1 单位（不产生 0 元白嫖）", () => {
   assert.equal(applyGroupRate(1000, 2), 2000);
   assert.equal(applyGroupRate(1, 0.0001), 1, "极小倍率也要保底 1 单位");
 });
 
-t("无倍率/异常值按 1 处理", () => {
+await t("无倍率/异常值按 1 处理", () => {
   assert.equal(applyGroupRate(500, null), 500);
   assert.equal(applyGroupRate(500, 0), 500, "0 不是有效倍率，按 1 处理");
 });
 
 console.log("\n跨厂商分组语义（名称匹配不受厂商影响）");
 
-t("同一分组名对不同厂商的渠道都可匹配（channelInGroup 已去掉厂商前缀强制）", async () => {
+await t("同一分组名对不同厂商的渠道都可匹配（channelInGroup 已去掉厂商前缀强制）", async () => {
   const { channelInGroup } = await import("../src/services/router.js");
   const openaiCh = { id: 1, type: "openai", groups: ["vip"] };
   const glmCh = { id: 2, type: "glm", groups: ["vip"] };
@@ -103,7 +106,7 @@ t("同一分组名对不同厂商的渠道都可匹配（channelInGroup 已去�
   }
 });
 
-t("不在分组里的渠道不匹配；未分组渠道只在「公共池」请求下可用", async () => {
+await t("不在分组里的渠道不匹配；未分组渠道只在「公共池」请求下可用", async () => {
   const { channelInGroup } = await import("../src/services/router.js");
   const outsider = { id: 3, type: "openai", groups: [] };
   assert.equal(channelInGroup(outsider, "vip"), false);
