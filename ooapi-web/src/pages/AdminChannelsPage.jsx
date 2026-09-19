@@ -7,12 +7,14 @@ import {
   PlusOutlined, ReloadOutlined, ThunderboltOutlined, DeleteOutlined, EditOutlined,
   UndoOutlined, KeyOutlined, LoginOutlined, GlobalOutlined,
   InfoCircleOutlined, SafetyCertificateOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined,
+  ExclamationCircleOutlined, DashboardOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { fmtDate, CURRENCY_NAME, copyText } from "../services/format";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import { VendorIcon, ModelLabel } from "../components/VendorIcon";
+import QuotaPanel, { QuotaInline } from "../components/ChannelQuota";
 
 const { Text } = Typography;
 
@@ -681,12 +683,19 @@ export default function AdminChannelsPage() {
   // 提交时按 profileId 复制给渠道（每次登录一个独立目录，避免并发/复用串号）
   const [onboardReady, setOnboardReady] = useState(false);
   const [onboardProfile, setOnboardProfile] = useState("");
-  // 凭据找回（401/登录态失效后重新登录）：支持粘贴凭据、回调授权、Grok 设备码
+  // 凭据找回（401/登录态失效后重新登录）：能力由后端算（/channel/:id/recovery），
+  // 前端只负责把对应流程跑起来 —— 浏览器授权、网页版会话抓取、设备码、粘贴凭据都在这里。
   const [reloginTarget, setReloginTarget] = useState(null);
+  const [reloginInfo, setReloginInfo] = useState(null);
   const [reloginText, setReloginText] = useState("");
+  const [reloginAccount, setReloginAccount] = useState("");
+  const [reloginPassword, setReloginPassword] = useState("");
+  const [reloginMode, setReloginMode] = useState("");
   const [reloginBusy, setReloginBusy] = useState(false);
   const [reloginDevice, setReloginDevice] = useState(null);
   const reloginTimerRef = useRef(null);
+  // 找回指向的渠道 id：抓取界面成功后直接写回该渠道（而不是回填「添加渠道」表单）
+  const reloginIdRef = useRef(0);
   // 登录态远程抓取（粘贴登录态的厂商：打开登录页 → 登录 → 自动回填 token/cookies）
   const [capOpen, setCapOpen] = useState(false);
   const [capSid, setCapSid] = useState("");
@@ -1365,6 +1374,14 @@ export default function AdminChannelsPage() {
     setCapBusy(true);
     try {
       const res = await API.post(`/channel/capture/${capSid}/capture`, undefined, { timeoutMs: 90_000 });
+      // 找回流程：服务端已把凭据/登录态写回该渠道，这里只需刷新列表
+      if (res.updated) {
+        reloginIdRef.current = 0;
+        message.success(`凭据已写回${res.accountLabel ? `（${res.accountLabel}）` : ""}，渠道已恢复`);
+        closeCapture(true);
+        await load();
+        return;
+      }
       // 浏览器登录类：登录态在服务器 profile 里，提交时复制给渠道
       if (res.browserReady) {
         setOnboardReady(true);
@@ -1531,6 +1548,28 @@ export default function AdminChannelsPage() {
       render: (list) => <UptimeBars calls={list} onCopy={copyCallResult} />,
     },
     {
+      // 账号额度：订阅/网页版账号的窗口用量（点「查额度」写入，悬浮看全部窗口）
+      title: "额度",
+      dataIndex: "quota",
+      width: 116,
+      render: (q, r) =>
+        q?.windows?.length || q?.credits ? (
+          <span
+            role="button"
+            tabIndex={0}
+            style={{ cursor: "pointer" }}
+            onClick={() => doQuota(r, { openPanel: true })}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); doQuota(r, { openPanel: true }); } }}
+          >
+            <QuotaInline quota={q} />
+          </span>
+        ) : r.quota_supported ? (
+          <Text type="secondary" style={{ fontSize: 12 }}>未查询</Text>
+        ) : (
+          <Text type="secondary" style={{ fontSize: 12 }}>—</Text>
+        ),
+    },
+    {
       title: "厂商",
       dataIndex: "typeName",
       width: 120,
@@ -1612,23 +1651,66 @@ export default function AdminChannelsPage() {
     },
   ];
 
-  // 行内操作（列表与宫格共用）
-  const OAUTH_METHODS = ["codex", "claude-oauth", "antigravity", "grok-oauth"];
-  const openRelogin = (r) => {
+  // 打开找回弹窗：先问后端这个渠道支持哪些恢复方式（不再写死接入方式清单）
+  const openRelogin = async (r) => {
     setReloginTarget(r);
+    setReloginInfo(null);
     setReloginText("");
+    setReloginAccount("");
+    setReloginPassword("");
+    setReloginMode("");
     setReloginDevice(null);
+    setReloginBusy(true);
+    try {
+      const info = await API.get(`/channel/${r.id}/recovery`);
+      setReloginInfo(info);
+      // 默认选推荐方式（列表第一个）
+      setReloginMode(info?.modes?.[0]?.key || "paste");
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setReloginBusy(false);
+    }
   };
   const closeRelogin = () => {
     if (reloginTimerRef.current) clearInterval(reloginTimerRef.current);
     reloginTimerRef.current = null;
+    reloginIdRef.current = 0;
     setReloginTarget(null);
     setReloginDevice(null);
     setReloginText("");
+    setReloginAccount("");
+    setReloginPassword("");
+    setReloginInfo(null);
   };
-  // 粘贴凭据（官方 auth 文件 / 完整 JSON）→ 更新该渠道凭据
+  // 统一的凭据写回：粘贴凭据 / 设备码挂机 / 回调换来的凭据都走这里（含写回后自动校验）
+  const saveCredential = async (credential) => {
+    const r = await API.post(
+      `/channel/${reloginIdRef.current || reloginTarget.id}/credential`,
+      { credential },
+      { timeoutMs: 120_000 }
+    );
+    return r;
+  };
+  // 粘贴凭据（官方 auth 文件 / 完整 JSON / 网页版 accessToken）
   const submitReloginText = async () => {
     if (!reloginText.trim()) return message.warning("请粘贴凭据 JSON");
+    setReloginBusy(true);
+    try {
+      const r = await saveCredential(reloginText);
+      message.success(`凭据已更新${r?.account ? `（${r.account}）` : ""}，渠道已恢复`);
+      closeRelogin();
+      await load();
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setReloginBusy(false);
+    }
+  };
+  // 账密登录（DeepSeek 这类支持账密的接入方式）
+  const submitReloginPassword = async () => {
+    if (!reloginAccount.trim()) return message.warning("请填写手机号 / 邮箱");
+    if (!reloginPassword) return message.warning("请填写密码");
     setReloginBusy(true);
     try {
       const r = await API.post(
@@ -1637,15 +1719,38 @@ export default function AdminChannelsPage() {
           id: reloginTarget.id,
           type: reloginTarget.type,
           method: reloginTarget.method,
-          mode: "paste",
+          mode: "password",
           name: reloginTarget.name,
-          token: reloginText,
+          account: reloginAccount,
+          password: reloginPassword,
         },
         { timeoutMs: 90_000 }
       );
-      message.success(`凭据已更新${r?.account ? `（${r.account}）` : ""}`);
+      message.success(`登录成功${r?.account ? `（${r.account}）` : ""}，渠道已恢复`);
       closeRelogin();
       await load();
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setReloginBusy(false);
+    }
+  };
+  // 在服务器浏览器里重新登录（订阅渠道的官方授权页 / 网页版官网登录）：
+  // 掉登录态时上游常要求「再验证一次」，验证码在实时画面里人工完成，回调由服务端接管。
+  const reloginBrowserStart = async () => {
+    setReloginBusy(true);
+    try {
+      const res = await API.post(`/channel/${reloginTarget.id}/recover/start`, undefined, { timeoutMs: 90_000 });
+      reloginIdRef.current = reloginTarget.id;
+      autoCapRef.current = false;
+      autoFailRef.current = 0;
+      setCapSid(res.sid);
+      setCapShot({ dataUrl: res.dataUrl, url: res.url, hint: res.hint, kind: res.kind, redirectUri: res.redirectUri || "" });
+      setCapCands(null);
+      setCapPick("");
+      setCapText("");
+      setCapOpen(true);
+      closeRelogin();
     } catch (e) {
       message.error(e.message);
     } finally {
@@ -1713,19 +1818,8 @@ export default function AdminChannelsPage() {
           if (p.pending) return;
           clearInterval(reloginTimerRef.current);
           reloginTimerRef.current = null;
-          const saved = await API.post(
-            "/channel/login",
-            {
-              id: reloginTarget.id,
-              type: reloginTarget.type,
-              method: reloginTarget.method,
-              mode: "paste",
-              name: reloginTarget.name,
-              token: p.credential,
-            },
-            { timeoutMs: 90_000 }
-          );
-          message.success(`设备授权成功${saved?.account ? `（${saved.account}）` : ""}，凭据已更新`);
+          const saved = await saveCredential(p.credential);
+          message.success(`设备授权成功${saved?.account ? `（${saved.account}）` : ""}，渠道已恢复`);
           closeRelogin();
           await load();
         } catch (e) {
@@ -1741,13 +1835,41 @@ export default function AdminChannelsPage() {
     }
   };
 
+  // 查额度：显式触发（不进请求主链路、不做高频轮询 —— 额度接口本身就是风控信号）
+  const [quotaBusyId, setQuotaBusyId] = useState(null);
+  const [quotaOpen, setQuotaOpen] = useState(false);
+  const [quotaTarget, setQuotaTarget] = useState(null);
+  const [quotaData, setQuotaData] = useState(null);
+  const [quotaError, setQuotaError] = useState("");
+  const doQuota = async (r, { openPanel = false } = {}) => {
+    if (quotaBusyId) return;
+    setQuotaBusyId(r.id);
+    if (openPanel) {
+      setQuotaTarget(r);
+      setQuotaData(r.quota || null);
+      setQuotaError("");
+      setQuotaOpen(true);
+    }
+    try {
+      const q = await API.post(`/channel/${r.id}/quota`, undefined, { timeoutMs: 60_000 });
+      if (openPanel) setQuotaData(q);
+      else message.success(`额度已更新：${q.windows?.map((w) => `${w.label} ${w.usedPercent ?? w.remaining ?? "-"}${w.usedPercent !== undefined && w.usedPercent !== null ? "%" : ""}`).join(" · ") || "已获取"}`);
+      await load({ silent: true });
+    } catch (e) {
+      if (openPanel) setQuotaError(e.message);
+      else message.error(e.message);
+    } finally {
+      setQuotaBusyId(null);
+    }
+  };
+
   const renderActions = (r) => (
     <Space size={2}>
-      {OAUTH_METHODS.includes(r.method) ? (
-        <Tooltip title={/登录态失效|过期|401|认证|AUTH/i.test(String(r.last_error || "")) ? "凭据可能失效：点此重新登录" : "重新登录 / 找回凭据"}>
+      {r.canRecover !== false && r.method !== "api" ? (
+        <Tooltip title={r.needsRelogin ? "凭据可能失效：点此重新登录 / 找回" : "重新登录 / 找回凭据"}>
           <button
             className="bui-icon-btn"
-            style={/登录态失效|过期|401|认证|AUTH/i.test(String(r.last_error || "")) ? { color: "var(--red)" } : undefined}
+            style={r.needsRelogin ? { color: "var(--red)" } : undefined}
             aria-label={`${r.name} 重新登录`}
             onClick={() => openRelogin(r)}
             disabled={Boolean(actionBusyId) || testingId === r.id}
@@ -1778,6 +1900,18 @@ export default function AdminChannelsPage() {
         <Tooltip title="恢复">
           <button className="bui-icon-btn" aria-label={`${r.name} 恢复`} onClick={() => doReset(r)} disabled={Boolean(actionBusyId) || testingId === r.id} aria-busy={actionBusyId === r.id}>
             {actionBusyId === r.id ? <Spin size="small" /> : <UndoOutlined />}
+          </button>
+        </Tooltip>
+      ) : null}
+      {r.quota_supported ? (
+        <Tooltip title={r.quota_time ? `查额度（上次 ${new Date(r.quota_time).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}）` : "查额度"}>
+          <button
+            className="bui-icon-btn"
+            aria-label={`${r.name} 查额度`}
+            disabled={Boolean(actionBusyId) || quotaBusyId === r.id}
+            onClick={() => doQuota(r)}
+          >
+            {quotaBusyId === r.id ? <Spin size="small" /> : <DashboardOutlined />}
           </button>
         </Tooltip>
       ) : null}
@@ -2717,73 +2851,210 @@ export default function AdminChannelsPage() {
         ) : null}
       </Modal>
 
-      {/* ============ 重新登录 / 凭据找回 ============ */}
+      {/* ============ 账号额度 ============ */}
       <Modal
-        title={`重新登录：${reloginTarget?.name || ""}`}
+        title={`账号额度：${quotaTarget?.name || ""}`}
+        open={quotaOpen}
+        onCancel={() => setQuotaOpen(false)}
+        footer={<button type="button" className="bui-btn" onClick={() => setQuotaOpen(false)}>关闭</button>}
+        destroyOnClose
+        width={520}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <Alert
+            type="info"
+            showIcon
+            className="oo-alert-compact"
+            message="额度按需查询"
+            description={
+              <span style={{ fontSize: 12 }}>
+                额度接口是各厂商的额外请求，平台不会自动高频轮询。查询失败不影响渠道调用。
+              </span>
+            }
+          />
+          <QuotaPanel
+            quota={quotaData}
+            loading={quotaBusyId === quotaTarget?.id && !quotaError}
+            error={quotaError}
+            onRefresh={() => quotaTarget && doQuota(quotaTarget, { openPanel: true })}
+          />
+        </div>
+      </Modal>
+
+      {/* ============ 重新登录 / 凭据找回 ============ */}
+      {/* 方式由后端 /channel/:id/recovery 现算：订阅渠道可在服务器浏览器里走官方授权页
+          （掉验证/接码那一步在实时画面里人工完成），网页版渠道直接抓站点会话，账密型可重登。 */}
+      <Modal
+        title={`重新登录 / 找回凭据：${reloginTarget?.name || ""}`}
         open={Boolean(reloginTarget)}
         onCancel={closeRelogin}
         footer={null}
         destroyOnClose
-        width={560}
+        width={620}
       >
-        {reloginTarget?.method === "grok-oauth" ? (
-          <Space direction="vertical" style={{ width: "100%" }} size={10}>
-            <Button icon={<GlobalOutlined />} onClick={reloginDeviceStart} loading={reloginBusy}>
-              设备码登录
-            </Button>
-            {reloginDevice?.user_code ? (
-              <div style={{ fontSize: 13 }}>
-                在打开的页面输入代码：
-                <b style={{ letterSpacing: 2 }}>{reloginDevice.user_code}</b>
-                <Typography.Link
-                  href={reloginDevice.verification_uri_complete || reloginDevice.verification_uri}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ marginLeft: 8 }}
-                >
-                  打开授权页
-                </Typography.Link>
-                <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 4 }}>授权成功后凭据会自动更新到该渠道。</div>
-              </div>
-            ) : null}
-            {reloginDevice?.error ? <div style={{ fontSize: 12, color: "var(--red)" }}>{reloginDevice.error}</div> : null}
-          </Space>
+        {reloginBusy && !reloginInfo ? (
+          <div style={{ padding: 28, textAlign: "center" }}><Spin tip="正在检查该渠道可用的找回方式…" /></div>
         ) : (
           <Space direction="vertical" style={{ width: "100%" }} size={10}>
-            <Space wrap>
-              <Button icon={<GlobalOutlined />} onClick={reloginOauthStart} loading={reloginBusy}>
-                打开授权页
-              </Button>
-              {reloginDevice?.oauthUrl ? (
-                <Typography.Link href={reloginDevice.oauthUrl} target="_blank" rel="noreferrer">
-                  在新窗口打开
-                </Typography.Link>
-              ) : null}
-            </Space>
-            {reloginDevice?.oauthUrl ? (
+            {reloginInfo ? (
+              <div className="oo-kv" style={{ fontSize: 12 }}>
+                <span className="bui-chip">{reloginInfo.typeName}</span>
+                <span className="bui-chip">{reloginInfo.methodLabel}</span>
+                {reloginInfo.account ? <span className="bui-chip">账号 {reloginInfo.account}</span> : null}
+                {reloginInfo.planType ? <span className="bui-chip">订阅 {reloginInfo.planType}</span> : null}
+                {reloginInfo.needsRelogin ? (
+                  <span className="bui-chip bui-chip--orange"><ExclamationCircleOutlined /> 需要重新登录</span>
+                ) : null}
+              </div>
+            ) : null}
+            {reloginInfo?.lastError ? (
               <Alert
-                type="info"
+                type={reloginInfo.needsRelogin ? "warning" : "info"}
                 showIcon
                 className="oo-alert-compact"
-                message="登录后把回调地址粘到下面"
-                description={
-                  <span style={{ fontSize: 12 }}>
-                    登录后页面会停在打不开的 localhost 地址（正常），复制地址栏整串 URL 粘贴到下面输入框；也可以直接粘贴官方 auth 凭据文件。
-                  </span>
-                }
+                message="最近的失败原因"
+                description={<span style={{ fontSize: 12 }}>{reloginInfo.lastError}</span>}
               />
             ) : null}
-            <Input.TextArea
-              rows={6}
-              value={reloginText}
-              onChange={(e) => setReloginText(e.target.value)}
-              placeholder="粘贴官方凭据文件（JSON），或登录后的回调地址 / 授权码"
+
+            <div style={{ fontSize: 12, color: "var(--ink-3)" }}>选择找回方式</div>
+            <Select
+              value={reloginMode || undefined}
+              onChange={(v) => { setReloginMode(v); setReloginDevice(null); }}
+              style={{ width: "100%" }}
+              options={(reloginInfo?.modes || []).map((m) => ({ value: m.key, label: m.label }))}
             />
-            <Space>
-              <Button type="primary" loading={reloginBusy} onClick={reloginDevice?.state ? reloginOauthSubmit : submitReloginText}>
-                保存
+            {(() => {
+              const m = (reloginInfo?.modes || []).find((x) => x.key === reloginMode);
+              return m?.desc ? <div style={{ fontSize: 12, color: "var(--ink-3)" }}>{m.desc}</div> : null;
+            })()}
+
+            {/* 浏览器登录：服务器浏览器里打开官方页/官网，验证码人工完成，成功后自动写回 */}
+            {["oauth-browser", "session-capture", "capture", "browser-ready"].includes(reloginMode) ? (
+              <Button type="primary" icon={<GlobalOutlined />} onClick={reloginBrowserStart} loading={reloginBusy} block>
+                在服务器浏览器里打开登录页
               </Button>
+            ) : null}
+
+            {/* 设备码登录（Grok） */}
+            {reloginMode === "device" ? (
+              <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                <Button type="primary" icon={<GlobalOutlined />} onClick={reloginDeviceStart} loading={reloginBusy} block>
+                  发起设备码登录
+                </Button>
+                {reloginDevice?.user_code ? (
+                  <div style={{ fontSize: 13 }}>
+                    在打开的页面输入代码：<b style={{ letterSpacing: 2 }}>{reloginDevice.user_code}</b>
+                    <Typography.Link
+                      href={reloginDevice.verification_uri_complete || reloginDevice.verification_uri}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ marginLeft: 8 }}
+                    >
+                      打开授权页
+                    </Typography.Link>
+                    <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 4 }}>授权成功后凭据会自动写回该渠道并立即校验。</div>
+                  </div>
+                ) : null}
+                {reloginDevice?.error ? <div style={{ fontSize: 12, color: "var(--red)" }}>{reloginDevice.error}</div> : null}
+              </Space>
+            ) : null}
+
+            {/* 打开授权页 + 粘贴回调（自己电脑上登录） */}
+            {reloginMode === "oauth-callback" ? (
+              <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                <Space wrap>
+                  <Button icon={<GlobalOutlined />} onClick={reloginOauthStart} loading={reloginBusy}>打开授权页</Button>
+                  {reloginDevice?.oauthUrl ? (
+                    <Typography.Link href={reloginDevice.oauthUrl} target="_blank" rel="noreferrer">在新窗口打开</Typography.Link>
+                  ) : null}
+                </Space>
+                <Alert
+                  type="info"
+                  showIcon
+                  className="oo-alert-compact"
+                  message="登录后把回调地址粘到下面"
+                  description={
+                    <span style={{ fontSize: 12 }}>
+                      页面会停在打不开的 localhost 地址（正常），复制地址栏整串 URL 粘贴到下面。
+                    </span>
+                  }
+                />
+                <Input.TextArea
+                  rows={4}
+                  value={reloginText}
+                  onChange={(e) => setReloginText(e.target.value)}
+                  placeholder="粘贴回调地址 / 授权码"
+                />
+                <Button type="primary" loading={reloginBusy} onClick={reloginOauthSubmit}>保存</Button>
+              </Space>
+            ) : null}
+
+            {/* 账号密码登录 */}
+            {reloginMode === "password" ? (
+              <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                <Input
+                  placeholder="手机号 / 邮箱"
+                  value={reloginAccount}
+                  onChange={(e) => setReloginAccount(e.target.value)}
+                />
+                <Input.Password
+                  placeholder="密码"
+                  value={reloginPassword}
+                  onChange={(e) => setReloginPassword(e.target.value)}
+                  onPressEnter={submitReloginPassword}
+                />
+                <Button type="primary" loading={reloginBusy} onClick={submitReloginPassword}>登录并写回</Button>
+              </Space>
+            ) : null}
+
+            {/* 粘贴凭据（所有反代/订阅方式都保留这条兜底路径） */}
+            {["paste", "api-key"].includes(reloginMode) ? (
+              <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                <Input.TextArea
+                  rows={6}
+                  value={reloginText}
+                  onChange={(e) => setReloginText(e.target.value)}
+                  placeholder={
+                    reloginInfo?.method === "api"
+                      ? "API Key 渠道请关闭本弹窗，用「编辑」更换 Key"
+                      : "粘贴官方凭据文件（JSON）/ 登录态（token、cookie 串）"
+                  }
+                  disabled={reloginInfo?.method === "api"}
+                />
+                <Button
+                  type="primary"
+                  loading={reloginBusy}
+                  onClick={submitReloginText}
+                  disabled={reloginInfo?.method === "api"}
+                >
+                  保存凭据并校验
+                </Button>
+              </Space>
+            ) : null}
+
+            <Space>
               <Button onClick={closeRelogin}>取消</Button>
+              {reloginInfo?.canVerify ? (
+                <Button
+                  onClick={async () => {
+                    setReloginBusy(true);
+                    try {
+                      const r = await API.post(`/channel/${reloginTarget.id}/test`, undefined, { timeoutMs: 90_000 });
+                      if (r?.success) message.success(`渠道可用（${r.time}ms）`);
+                      else message.warning(r?.message || "渠道暂不可用");
+                      await load();
+                    } catch (e) {
+                      message.error(e.message);
+                    } finally {
+                      setReloginBusy(false);
+                    }
+                  }}
+                  loading={reloginBusy}
+                >
+                  仅检测当前凭据
+                </Button>
+              ) : null}
             </Space>
           </Space>
         )}

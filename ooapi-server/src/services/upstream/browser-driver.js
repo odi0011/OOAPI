@@ -348,6 +348,31 @@ export async function credentials(vendor, channelId) {
 
 // ---------- 请求钩子 ----------
 /**
+ * 在已登录的页面里请求指定同源接口（相对路径），返回响应文本。
+ * 用途：网页版渠道的凭据不在 localStorage，只能问站点自己的会话接口
+ * （如 chatgpt.com 的 /api/auth/session）；在页面内 fetch 天然带 cookie 与
+ * 正确的 CSRF/同源头，比在服务端拼 cookie 更稳，也不会泄露到外部。
+ */
+export async function apiFetch(vendor, channelId, apiPath) {
+  const s = sessions.get(`${vendor}:${channelId}`);
+  if (!s) return null;
+  const path = String(apiPath || "");
+  if (!path.startsWith("/")) return null;
+  return withLock(s, async () => {
+    return s.page
+      .evaluate(async (p) => {
+        try {
+          const r = await fetch(p, { credentials: "include", headers: { accept: "application/json" } });
+          return { ok: r.ok, status: r.status, text: (await r.text()).slice(0, 200_000) };
+        } catch (e) {
+          return { ok: false, status: 0, text: String(e?.message || e) };
+        }
+      }, path)
+      .catch(() => null);
+  });
+}
+
+/**
  * 安装 fetch 钩子：按 __ooPatch 改写请求 body，并捕获响应流
  * @param {string} matchPath 匹配的 URL 片段
  */

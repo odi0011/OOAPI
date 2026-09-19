@@ -56,9 +56,12 @@ const CHANNEL_ICON = {
 };
 
 // 模型名前缀 → 厂商图标（用于任何展示模型名的位置）
+// 注意：反代/工具渠道产出的模型与官方 API 是同一批模型（Kiro 的 Claude、ChatGPT 网页版的 GPT），
+// 因此这里只按**模型名**判定厂商，不按渠道 —— 工具只是通道，模型归属不变。
 const MODEL_ICON = [
   [/^deepseek/i, "deepseek.png"],
-  [/^(gpt|o1|o3|o4|chatgpt|text-|dall|openai)/i, "openai.svg"],
+  // codex-auto-review 也是 OpenAI 的模型（历史漏配会掉到平台 logo）
+  [/^(gpt|o1|o3|o4|chatgpt|text-|dall|openai|codex)/i, "openai.svg"],
   [/^claude/i, "claude.svg"],
   [/^gemini/i, "gemini.svg"],
   [/^qwen|^tongyi/i, "qwen.png"],
@@ -83,7 +86,7 @@ export function iconFileForModel(model) {
 export function vendorNameForModel(model) {
   const m = String(model || "");
   if (/^deepseek/i.test(m)) return "DeepSeek";
-  if (/^(gpt|o1|o3|o4|chatgpt)/i.test(m)) return "OpenAI";
+  if (/^(gpt|o1|o3|o4|chatgpt|codex)/i.test(m)) return "OpenAI";
   if (/^claude/i.test(m)) return "Claude";
   if (/^gemini/i.test(m)) return "Gemini";
   if (/^qwen|^tongyi/i.test(m)) return "通义千问";

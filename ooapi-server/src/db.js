@@ -120,6 +120,8 @@ const TABLES = [
     used_count INT NOT NULL DEFAULT 0 COMMENT '累计调用次数',
     last_used_time BIGINT NOT NULL DEFAULT 0 COMMENT '最近调用时间',
     recent_calls TEXT COMMENT '最近调用记录 JSON 数组（环形，最多 20 条：{t,ok,ms}）',
+    quota TEXT COMMENT '账号额度快照 JSON（订阅/网页版账号的窗口用量）',
+    quota_time BIGINT NOT NULL DEFAULT 0 COMMENT '额度快照抓取时间戳',
     created_time BIGINT NOT NULL DEFAULT 0
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   `CREATE TABLE IF NOT EXISTS deepseek_accounts (
@@ -240,6 +242,9 @@ const COLUMN_MIGRATIONS = [
   { table: "channels", column: "last_test_time", ddl: "BIGINT NOT NULL DEFAULT 0" },
   { table: "channels", column: "group_list", ddl: "TEXT" },
   { table: "channels", column: "recent_calls", ddl: "TEXT" },
+  // 账号额度快照（订阅/网页版账号的窗口用量）+ 抓取时间；由显式「查额度」或低频定时任务写入
+  { table: "channels", column: "quota", ddl: "TEXT" },
+  { table: "channels", column: "quota_time", ddl: "BIGINT NOT NULL DEFAULT 0" },
   { table: "channel_groups", column: "rate", ddl: "DECIMAL(10,4) NOT NULL DEFAULT 1" },
   { table: "channel_groups", column: "models", ddl: "TEXT" },
   { table: "chat_sessions", column: "project_id", ddl: "VARCHAR(32) NOT NULL DEFAULT ''" },

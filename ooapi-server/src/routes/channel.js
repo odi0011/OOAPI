@@ -25,7 +25,7 @@ import { ok, fail, asyncHandler, now, assertPublicUrl, idParam, safeInt } from "
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod } from "../services/channel-types.js";
-import { buildLoginUrl, exchangeCodeForCredential, interactiveLoginInfo, supportsInteractiveLogin, startDeviceLogin, pollDeviceLogin } from "../services/upstream/oauth-login.js";
+import { buildLoginUrl, exchangeCodeForCredential, interactiveLoginInfo, supportsInteractiveLogin, supportsDeviceLogin, startDeviceLogin, pollDeviceLogin } from "../services/upstream/oauth-login.js";
 import { getAdapter, resetChannelState, forgetChannel, invalidateChannelCache, channelRuntimeState, channelRecent, rowToChannel, recordChannelCall } from "../services/router.js";
 import { clearGroupConfigCache } from "../services/group-rate.js";
 import {
@@ -37,11 +37,13 @@ import {
   getSession as browserSession,
   act as browserAct,
   credentials as browserCreds,
+  apiFetch as browserApiFetch,
   closeSession as browserClose,
 } from "../services/upstream/browser-driver.js";
 import { invalidateModelRegistry } from "../services/models.js";
 import { parseCredentialFile } from "../services/upstream/auth-import.js";
 import { probeChannel } from "../services/channel-probe.js";
+import { fetchQuota, quotaSupportFor } from "../services/upstream/quota.js";
 import { randomBytes } from "node:crypto";
 
 const router = Router();
@@ -66,6 +68,17 @@ function parseOther(row) {
     return row.other ? JSON.parse(row.other) : {};
   } catch {
     return {};
+  }
+}
+
+/** 宽松解析 JSON 列（额度快照等外部写入的字段，坏数据不能 500） */
+function safeJson(raw) {
+  if (!raw) return null;
+  if (typeof raw === "object") return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
   }
 }
 
@@ -522,6 +535,12 @@ function rowToResp(r, { withKey = false } = {}) {
     account: other.account || null,
     needsBrowser: Boolean(mCfg?.needsBrowser),
     browserReady: brReady,
+    // 是否订阅 OAuth 接入 + 是否支持「找回凭据」（前端据此显示重新登录入口，不再写死方式清单）
+    oauth: isOAuthMethod(method),
+    canRecover: method !== "api",
+    canCaptureSession: Boolean(mCfg?.captureApi),
+    // 认证类错误 → 前端把找回按钮标红并按「需要重新登录」提示
+    needsRelogin: /AUTH|401|403|失效|过期|无效|重新登录|验证/i.test(String(rt.last_error || r.last_error || "")),
     // 配置
     base_url: r.base_url || mCfg?.baseUrl || "",
     models: String(r.models || "").split(",").map((s) => s.trim()).filter(Boolean),
@@ -543,6 +562,10 @@ function rowToResp(r, { withKey = false } = {}) {
       ? new Date(rt.cooldown_until).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })
       : "",
     last_error: rt.last_error || r.last_error || "",
+    // 账号额度快照（订阅/网页版账号）：只在管理员查过之后才有值
+    quota: safeJson(r.quota),
+    quota_time: Number(r.quota_time) || 0,
+    quota_supported: quotaSupportFor({ type: r.type, method, base_url: r.base_url }).supported,
     // 统计
     used_count: Number(r.used_count) || 0,
     last_used_time: Number(r.last_used_time) || 0,
@@ -631,6 +654,340 @@ router.get(
       total_calls: Number(usage.calls) || 0,
       total_quota: Number(usage.quota) || 0,
     });
+  })
+);
+
+// ---------- 凭据找回：该渠道实际支持哪些恢复方式 ----------
+// 「401 找回」不是只有「粘贴凭据文件」一条路。每种接入方式能用的恢复手段不同：
+//   · 订阅 OAuth：官方授权页换令牌（可在服务器浏览器里做，含邮箱/短信验证码那一步）、设备码、粘贴官方凭据
+//   · 网页版反代：在服务器浏览器里登录一次后抓取（扫码/验证码在同一画面里人工完成）
+//   · 账密型反代：直接重登
+// 这里把能力算清楚交给前端渲染，避免前端写死接入方式清单（历史上 kiro / openai-web 就没有入口）。
+// ---------- 凭据找回：把新凭据写回已有渠道 ----------
+// 找回流程的公共落点：解析凭据 → 必要时由适配器补齐/刷新 → 覆盖该渠道凭据 → 清冷却。
+// 与 /channel/login 的更新分支口径一致（合并 other，不丢 profile/cookies 等旧字段）。
+async function applyCredentialToChannel({ id, type, method, credential }) {
+  const [rows] = await pool.query("SELECT id, type, other FROM channels WHERE id = ?", [id]);
+  if (!rows.length) throw Object.assign(new Error("渠道不存在"), { code: "LOGIN_BAD_PARAMS" });
+  const methodKey = method || methodOf(rows[0]);
+  const adapter = await adapterOf(type || rows[0].type, methodKey);
+  if (!adapter?.importAuth) {
+    throw Object.assign(new Error("该接入方式不支持凭据写回"), { code: "LOGIN_BAD_PARAMS" });
+  }
+  const raw = typeof credential === "string" ? credential : JSON.stringify(credential || {});
+  const parsed = await adapter.importAuth({ token: raw, mode: "paste" });
+  const merged = { ...parseOther(rows[0]), ...(parsed.other || {}) };
+  await pool.query("UPDATE channels SET api_key = ?, other = ?, last_error = '' WHERE id = ?", [
+    String(parsed.token || "").slice(0, 60_000),
+    JSON.stringify(merged),
+    id,
+  ]);
+  resetChannelState(id);
+  invalidateChannelCache();
+  return { accountLabel: parsed.accountLabel || merged.account || merged.email || "" };
+}
+
+router.get(
+  "/:id/recovery",
+  asyncHandler(async (req, res) => {
+    const id = idParam(req);
+    if (!id) return fail(res, "渠道不存在", 404);
+    const [rows] = await pool.query("SELECT * FROM channels WHERE id = ?", [id]);
+    if (!rows.length) return fail(res, "渠道不存在", 404);
+    const r = rows[0];
+    const provider = getProvider(r.type);
+    const method = methodOf(r);
+    const mCfg = getMethod(r.type, method) || {};
+    const rt = channelRuntimeState(id);
+    const other = parseOther(r);
+
+    const modes = [];
+    if (method !== "api") {
+      // 服务器浏览器里的官方授权页：能覆盖「账号掉验证要接码」这一步（人工在实时画面里输验证码）
+      if (isOAuthMethod(method) && supportsInteractiveLogin(r.type)) {
+        modes.push({
+          key: "oauth-browser",
+          label: "浏览器登录（推荐）",
+          desc: "在服务器浏览器里打开官方登录页，验证码/接码人工完成，授权后自动写回凭据",
+        });
+        modes.push({
+          key: "oauth-callback",
+          label: "打开授权页 + 粘贴回调",
+          desc: "在自己电脑的浏览器里登录，把回调地址粘回来换令牌",
+        });
+      } else if (mCfg.captureApi) {
+        modes.push({
+          key: "session-capture",
+          label: "浏览器登录抓取（推荐）",
+          desc: "在服务器浏览器里登录官网，登录后自动读取会话凭据",
+        });
+      }
+      if (isOAuthMethod(method) && supportsDeviceLogin(r.type)) {
+        modes.push({ key: "device", label: "设备码登录", desc: "打开授权页输入设备码，适合无法回调的场景" });
+      }
+      if (mCfg.needsBrowser) {
+        modes.push({ key: "browser-ready", label: "浏览器登录", desc: "打开上游页面完成扫码/验证码登录" });
+      }
+      if (mCfg.entryUrl && !mCfg.captureApi && !mCfg.needsBrowser) {
+        modes.push({ key: "capture", label: "抓取登录态", desc: "在服务器浏览器里登录后自动抓取 cookies / token" });
+      }
+      if ((mCfg.loginModes || []).includes("password")) {
+        modes.push({ key: "password", label: "账号密码登录", desc: "用上游账号密码重新登录" });
+      }
+      modes.push({ key: "paste", label: "粘贴凭据", desc: "手工粘贴官方凭据文件或登录态" });
+    } else {
+      modes.push({ key: "api-key", label: "更新 API Key", desc: "到渠道编辑里换一个可用的 Key" });
+    }
+
+    const lastError = rt.last_error || r.last_error || "";
+    // 「需要人工重新登录」的判定：认证类错误 + 冷却中，或本来就缺凭据
+    const needsRelogin =
+      /AUTH|401|403|失效|过期|未配置|无效|重新登录|验证/i.test(String(lastError)) ||
+      (!r.api_key && !other.profile && method !== "api");
+
+    return ok(res, {
+      id: r.id,
+      name: r.name,
+      type: r.type,
+      typeName: provider?.name || r.type,
+      method,
+      methodLabel: mCfg.label || (method === "api" ? "API Key" : "登录账号"),
+      account: other.account || other.email || "",
+      // 订阅渠道的订阅档位（导入凭据时从 id_token 解析，用于展示）
+      planType: other.plan_type || "",
+      lastError,
+      cooling: rt.cooldown_until > Date.now(),
+      cooldownText: rt.cooldown_until ? new Date(rt.cooldown_until).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }) : "",
+      needsRelogin,
+      // 凭据时间线（展示「用了多久 / 什么时候续期」）
+      expiresAt: Number(other.expires_at) || 0,
+      refreshedAt: Number(other.refreshed_at) || 0,
+      canVerify: Boolean(mCfg.adapter) || method === "api",
+      modes,
+    });
+  })
+);
+
+// ---------- 凭据找回：在服务器浏览器里重新登录 ----------
+// 为什么必须有这条：订阅渠道掉登录态时，上游往往要求「再验证一次」（邮箱/短信验证码、
+// 甚至人机校验），纯粘贴凭据无法完成这一步 —— 用户手上已经没有可用的凭据文件了。
+// 这里把官方登录页搬到服务器浏览器，验证码那一步由人工在实时画面/截图里完成，
+// 授权回调/会话读取代理由服务端完成，成功后直接写回该渠道。
+router.post(
+  "/:id/recover/start",
+  asyncHandler(async (req, res) => {
+    sweepCaptures();
+    const id = idParam(req);
+    if (!id) return fail(res, "渠道不存在", 404);
+    const [rows] = await pool.query("SELECT * FROM channels WHERE id = ?", [id]);
+    if (!rows.length) return fail(res, "渠道不存在", 404);
+    const r = rows[0];
+    const provider = getProvider(r.type);
+    if (!provider) return fail(res, "未知厂商");
+    const method = methodOf(r);
+    if (method === "api") return fail(res, "API Key 渠道请直接编辑渠道更换 Key");
+
+    const mCfg = getMethod(r.type, method) || {};
+    const sid = randomBytes(8).toString("hex");
+    const channelId = `recover-${sid}`;
+
+    // 订阅 OAuth：走官方授权页（浏览器里完成登录 + 可能出现的验证码），回调后自动换令牌
+    if (isOAuthMethod(method) && supportsInteractiveLogin(r.type)) {
+      let login;
+      try {
+        login = buildLoginUrl(r.type);
+      } catch (e) {
+        return fail(res, e.message, e.code === "CHANNEL_CONFIG_ERROR" ? 400 : 500);
+      }
+      try {
+        await browserSession({ vendor: r.type, channelId, entryUrl: login.url, profile: {}, visible: true });
+      } catch (e) {
+        await removeProfile(r.type, channelId).catch(() => {});
+        return fail(res, `授权页打开失败：${e.message}`);
+      }
+      let shot = null;
+      try {
+        shot = await browserShot(r.type, channelId);
+      } catch {
+        shot = null;
+      }
+      if (!shot) {
+        await browserClose(r.type, channelId).catch(() => {});
+        await removeProfile(r.type, channelId).catch(() => {});
+        return fail(res, "浏览器会话未就绪，请重试");
+      }
+      CAPTURES.set(sid, {
+        type: r.type,
+        channelId,
+        at: Date.now(),
+        kind: "oauth",
+        targetId: id,
+        oauthState: login.state,
+        redirectUri: login.redirectUri,
+      });
+      return ok(res, {
+        sid,
+        ...shot,
+        kind: "oauth",
+        redirectUri: login.redirectUri,
+        hint: "在实时画面/截图里完成登录（含验证码）；页面跳到 "
+          + login.redirectUri
+          + " 后会自动换令牌并写回该渠道",
+      });
+    }
+
+    // 网页版渠道：打开官网登录页，登录后读取会话接口拿凭据
+    if (mCfg.captureApi && mCfg.entryUrl) {
+      try {
+        await browserSession({ vendor: r.type, channelId, entryUrl: mCfg.entryUrl, profile: {}, visible: true });
+      } catch (e) {
+        await removeProfile(r.type, channelId).catch(() => {});
+        return fail(res, `登录页打开失败：${e.message}`);
+      }
+      let shot = null;
+      try {
+        shot = await browserShot(r.type, channelId);
+      } catch {
+        shot = null;
+      }
+      if (!shot) {
+        await browserClose(r.type, channelId).catch(() => {});
+        await removeProfile(r.type, channelId).catch(() => {});
+        return fail(res, "浏览器会话未就绪，请重试");
+      }
+      CAPTURES.set(sid, {
+        type: r.type,
+        channelId,
+        at: Date.now(),
+        kind: "session",
+        targetId: id,
+        captureApi: mCfg.captureApi,
+      });
+      return ok(res, { sid, ...shot, kind: "session", hint: mCfg.captureHint || "登录完成后点「抓取登录态」" });
+    }
+
+    // 其余反代（扫码/验证码型）：登录态在 profile 里，完成登录后把 profile 覆盖给该渠道
+    if (mCfg.needsBrowser && mCfg.entryUrl) {
+      try {
+        await browserSession({ vendor: r.type, channelId, entryUrl: mCfg.entryUrl, profile: {}, visible: true });
+      } catch (e) {
+        await removeProfile(r.type, channelId).catch(() => {});
+        return fail(res, `登录页打开失败：${e.message}`);
+      }
+      let shot = null;
+      try {
+        shot = await browserShot(r.type, channelId);
+      } catch {
+        shot = null;
+      }
+      if (!shot) {
+        await browserClose(r.type, channelId).catch(() => {});
+        await removeProfile(r.type, channelId).catch(() => {});
+        return fail(res, "浏览器会话未就绪，请重试");
+      }
+      CAPTURES.set(sid, { type: r.type, channelId, at: Date.now(), kind: "browser", targetId: id });
+      return ok(res, { sid, ...shot, kind: "browser", hint: mCfg.captureHint || "登录完成后点「抓取登录态」" });
+    }
+
+    // 抓取型（DeepSeek / Kimi 等粘贴登录态）：抓完直接写回渠道
+    if (mCfg.entryUrl) {
+      try {
+        await browserSession({ vendor: r.type, channelId, entryUrl: mCfg.entryUrl, profile: {}, visible: true });
+      } catch (e) {
+        await removeProfile(r.type, channelId).catch(() => {});
+        return fail(res, `登录页打开失败：${e.message}`);
+      }
+      let shot = null;
+      try {
+        shot = await browserShot(r.type, channelId);
+      } catch {
+        shot = null;
+      }
+      if (!shot) {
+        await browserClose(r.type, channelId).catch(() => {});
+        await removeProfile(r.type, channelId).catch(() => {});
+        return fail(res, "浏览器会话未就绪，请重试");
+      }
+      CAPTURES.set(sid, { type: r.type, channelId, at: Date.now(), kind: "paste", targetId: id });
+      return ok(res, { sid, ...shot, kind: "paste", hint: mCfg.captureHint || "登录完成后点「抓取登录态」" });
+    }
+
+    return fail(res, `${provider.name} 该接入方式不支持浏览器重新登录，请用「粘贴凭据」`);
+  })
+);
+
+// ---------- 账号额度查询（显式触发）----------
+// 为什么不放进定时全量轮询：额度接口是各厂商的「额外请求」，高频轮询等于把账号
+// 标成脚本；而且额度变化以小时计，没必要秒级刷新。管理员点一次查一次，结果落库供列表展示。
+router.post(
+  "/:id/quota",
+  asyncHandler(async (req, res) => {
+    const id = idParam(req);
+    if (!id) return fail(res, "渠道不存在", 404);
+    const [rows] = await pool.query("SELECT * FROM channels WHERE id = ?", [id]);
+    if (!rows.length) return fail(res, "渠道不存在", 404);
+    const channel = rowToChannel(rows[0]);
+    const support = quotaSupportFor(channel);
+    if (!support.supported) {
+      return fail(res, "该接入方式上游没有可用的额度查询接口（网页版账号只能在用量统计里看平台侧统计）", 400);
+    }
+    try {
+      const quota = await fetchQuota(channel);
+      await pool.query("UPDATE channels SET quota = ?, quota_time = ? WHERE id = ?", [
+        JSON.stringify(quota),
+        now(),
+        id,
+      ]);
+      return ok(res, quota, "已获取账号额度");
+    } catch (e) {
+      // 额度查询失败不代表渠道不可用：只回错误，不写 last_error、不冷却
+      return fail(res, `额度查询失败：${e.message}`, 400);
+    }
+  })
+);
+
+// ---------- 凭据找回：直接写入该渠道的凭据 ----------
+// 粘贴凭据 / 设备码挂机 / 上游回调，最终都落到这里：解析 → 覆盖 → 清冷却 → 健康检查。
+router.post(
+  "/:id/credential",
+  asyncHandler(async (req, res) => {
+    const id = idParam(req);
+    if (!id) return fail(res, "渠道不存在", 404);
+    const credential = req.body?.credential ?? req.body?.token ?? "";
+    if (!String(credential).trim()) return fail(res, "请提供凭据");
+    const [rows] = await pool.query("SELECT type, name FROM channels WHERE id = ?", [id]);
+    if (!rows.length) return fail(res, "渠道不存在", 404);
+    let applied;
+    try {
+      applied = await applyCredentialToChannel({ id, type: rows[0].type, credential });
+    } catch (e) {
+      return fail(res, e.message, 400);
+    }
+    // 写回后立刻探一次，让管理员马上知道「找回是否真的可用」（失败只记 last_error，不影响写入结果）
+    let healthy = null;
+    try {
+      const [fresh] = await pool.query("SELECT * FROM channels WHERE id = ?", [id]);
+      const adapter = await adapterOf(fresh[0].type, methodOf(fresh[0]));
+      if (adapter?.verify) {
+        const ms = await adapter.verify(rowToChannel(fresh[0]));
+        await pool.query("UPDATE channels SET response_time = ?, tested_time = ?, last_error = '' WHERE id = ?", [ms, now(), id]);
+        healthy = true;
+      }
+    } catch (e) {
+      healthy = false;
+      await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), id]);
+    }
+    await writeLog({
+      user: req.user,
+      type: LOG_TYPE.MANAGE,
+      content: `渠道「${rows[0].name}」凭据已更新${applied.accountLabel ? `（${applied.accountLabel}）` : ""}`,
+    });
+    const all = await listRows();
+    return ok(
+      res,
+      { ...rowToResp(all.find((r) => r.id === id)), account: applied.accountLabel, healthy },
+      healthy === false ? "凭据已写入，但上游校验未通过，请检查凭据是否有效" : "凭据已更新，渠道已恢复"
+    );
   })
 );
 
@@ -805,7 +1162,9 @@ router.post(
 
     // 订阅 OAuth（gemini / openai / anthropic）：打开官方授权页，
     // 在服务器浏览器里登录（截图操作），页面跳到 localhost 回调后由 /capture 换 token 回填表单。
-    if (supportsInteractiveLogin(type)) {
+    // 注意必须同时看**接入方式**：openai 厂商下既有 codex（可交互登录）也有 openai-web（走网页登录），
+    // 只看厂商会把网页版渠道错送到 Codex 授权页。
+    if (isOAuthMethod(method) && supportsInteractiveLogin(type)) {
       let login;
       try {
         login = buildLoginUrl(type);
@@ -852,7 +1211,6 @@ router.post(
 
     const mCfg = getMethod(type, String(method || "relay")) || getMethod(type, "relay");
     if (!mCfg?.entryUrl) return fail(res, `${provider.name} 不支持远程登录抓取，请按提示手动填写登录态`);
-
     // 浏览器登录类（GLM/豆包/通义）：每次会话独立 onboarding profile
     // （共享同一个目录会让并发/后续登录互相覆盖，甚至把别人的账号复制进渠道）。
     // 登录完成后由 /capture 保留 profile，提交渠道时复制过去。
@@ -876,11 +1234,18 @@ router.post(
       await removeProfile(type, channelId).catch(() => {});
       return fail(res, "浏览器会话未就绪，请重试");
     }
-    CAPTURES.set(sid, { type, channelId, at: Date.now(), kind: onboard ? "browser" : "paste" });
+    CAPTURES.set(sid, {
+      type,
+      channelId,
+      at: Date.now(),
+      // session = 凭据要从站点会话接口取（网页版渠道），不读 localStorage/cookie
+      kind: onboard ? "browser" : mCfg.captureApi ? "session" : "paste",
+      captureApi: mCfg.captureApi || "",
+    });
     return ok(res, {
       sid,
       ...shot,
-      kind: onboard ? "browser" : "paste",
+      kind: onboard ? "browser" : mCfg.captureApi ? "session" : "paste",
       profileId: onboard ? channelId : "",
       hint: mCfg.captureHint || "请在登录页完成登录，然后点「抓取登录态」",
     });
@@ -963,6 +1328,16 @@ router.post(
       CAPTURES.delete(sid);
       await browserClose(c.type, c.channelId).catch(() => {});
       await removeProfile(c.type, c.channelId).catch(() => {});
+      // 找回流程（从某条渠道发起）：直接写回该渠道，不用再经过表单
+      if (c.targetId) {
+        try {
+          const applied = await applyCredentialToChannel({ id: c.targetId, type: c.type, credential: result.credential });
+          await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `${c.type} 渠道 #${c.targetId} 浏览器重新登录成功` });
+          return ok(res, { updated: true, accountLabel: applied.accountLabel }, "授权成功，凭据已写回该渠道");
+        } catch (e) {
+          return fail(res, `授权成功但写回失败：${e.message}`, 400);
+        }
+      }
       return ok(
         res,
         { oauth: true, accountLabel, cookies: "", tokens: [{ key: "凭据 JSON", value: token, score: 100 }] },
@@ -975,8 +1350,70 @@ router.post(
     if (c.kind === "browser") {
       CAPTURES.delete(sid);
       await browserClose(c.type, c.channelId).catch(() => {});
+      // 找回流程：把这份已登录 profile 直接覆盖给目标渠道（不再走「添加渠道」）
+      if (c.targetId) {
+        const copied = await copyProfile(c.type, c.channelId, String(c.targetId));
+        await removeProfile(c.type, c.channelId).catch(() => {});
+        if (!copied) return fail(res, "登录态写回失败，请重新打开登录页再试");
+        resetChannelState(c.targetId);
+        let ms = 0;
+        try {
+          const [fresh] = await pool.query("SELECT * FROM channels WHERE id = ?", [c.targetId]);
+          // 适配器按「该渠道真实的接入方式」取，不要猜 relay（openai-web / kiro 都挂在非 relay 上）
+          const adapter = await adapterOf(fresh[0].type, methodOf(fresh[0]));
+          if (!adapter?.verify) return ok(res, { updated: true }, "登录态已写回（该接入方式无健康检查）");
+          ms = await adapter.verify(rowToChannel(fresh[0]));
+          await pool.query("UPDATE channels SET response_time = ?, tested_time = ?, last_error = '' WHERE id = ?", [ms, now(), c.targetId]);
+        } catch (e) {
+          await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), c.targetId]);
+          return fail(res, `登录态已写回，但渠道未就绪：${e.message}`, 400);
+        }
+        await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `${c.type} 渠道 #${c.targetId} 浏览器重新登录成功（${ms}ms）` });
+        return ok(res, { updated: true }, "登录成功，渠道已恢复可用");
+      }
       PENDING_PROFILES.set(c.channelId, { vendor: c.type, at: Date.now() });
       return ok(res, { browserReady: true, cookies: "", tokens: [] }, "已记录浏览器登录状态，请点「添加」保存渠道");
+    }
+
+    // 网页版渠道：凭据只能问站点自己的会话接口（chatgpt.com/api/auth/session），
+    // 在已登录页面里 fetch 一次即可拿到 accessToken/refreshToken。
+    if (c.kind === "session") {
+      const r = await browserApiFetch(c.type, c.channelId, c.captureApi);
+      CAPTURES.delete(sid);
+      await browserClose(c.type, c.channelId).catch(() => {});
+      await removeProfile(c.type, c.channelId).catch(() => {});
+      if (!r?.ok) {
+        return fail(
+          res,
+          `还没登录：读取 ${c.captureApi} 失败（HTTP ${r?.status || 0}）。请在实时画面里完成登录后再点一次「抓取登录态」`
+        );
+      }
+      let j = null;
+      try {
+        j = JSON.parse(r.text);
+      } catch {
+        return fail(res, `${c.captureApi} 返回的不是 JSON，请重试`);
+      }
+      const accessToken = String(j?.accessToken || j?.access_token || "");
+      if (!accessToken) {
+        return fail(res, "会话接口里没有 accessToken：说明还没登录成功，请在实时画面里完成登录后再抓取");
+      }
+      const credential = {
+        accessToken,
+        ...(j?.refreshToken || j?.refresh_token ? { refreshToken: String(j.refreshToken || j.refresh_token) } : {}),
+        ...(j?.user?.email ? { email: String(j.user.email) } : {}),
+        ...(j?.expires ? { expires: String(j.expires) } : {}),
+      };
+      return ok(
+        res,
+        {
+          oauth: true,
+          accountLabel: credential.email || "",
+          cookies: "",
+          tokens: [{ key: "凭据 JSON", value: JSON.stringify(credential, null, 2), score: 100 }],
+        },
+        "已抓到登录凭据，请确认回填"
+      );
     }
 
     const data = await browserCreds(c.type, c.channelId);

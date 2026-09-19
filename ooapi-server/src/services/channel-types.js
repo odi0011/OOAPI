@@ -260,6 +260,11 @@ export const PROVIDERS = [
           "登录 chatgpt.com 后打开 /api/auth/session 复制 accessToken；带 refreshToken 可自动续期"
         ),
         pasteHint: "ChatGPT 网页版 access_token：走网页版对话额度；触发风控的账号会显式报错，请换号",
+        // 网页版凭据就在 chatgpt.com 自己的会话里：在服务器浏览器里登录一次即可抓取，
+        // 管理员不用自己开控制台翻 /api/auth/session（手机号/邮箱验证码在同一个页面里人工完成）。
+        entryUrl: "https://chatgpt.com/auth/login",
+        captureApi: "/api/auth/session",
+        captureHint: "在打开的页面里完成 ChatGPT 登录（含邮箱验证码），登录后点「抓取登录态」自动取 access_token",
         defaultModels: [
           { id: "gpt-5.6-luna", name: "GPT-5.6 Luna" },
           { id: "gpt-5.5", name: "GPT-5.5" },

@@ -28,8 +28,12 @@ const TYPE_LABEL = {
   doubao: "豆包",
   qwen: "通义千问",
   openai: "OpenAI",
+  // 渠道类型统一用 anthropic（官方 API / Claude 订阅 / Kiro 工具反代都归到这里），
+  // claude 只是历史遗留值，保留映射避免老数据展示成裸 id
+  anthropic: "Anthropic",
   claude: "Anthropic",
   gemini: "Google",
+  grok: "xAI Grok",
   custom: "其他（历史）",
 };
 

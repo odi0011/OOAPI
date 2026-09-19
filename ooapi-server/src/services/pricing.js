@@ -84,6 +84,14 @@ export const DEFAULT_PRICES = [
   { model: "gpt-5-nano", input: 0.05, output: 0.40, cache: 0.005, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
   { model: "o3", input: 2.00, output: 8.00, cache: 0.50, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
   { model: "o4-mini", input: 1.10, output: 4.40, cache: 0.275, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
+  // 订阅/网页版反代产出的型号：按 OpenAI 同档次官方价录入（订阅渠道按 token 折算成本，
+  // 平台侧不区分「订阅额度已付」与「按量付费」，统一用官方牌价口径）。
+  // 缺少这些行会让 gpt-5.6-* 落到兜底档（比官方价低 3~8 倍 = 系统性少计费）。
+  { model: "gpt-5.6-sol", input: 1.75, output: 14.00, cache: 0.175, type: "openai", remark: "对标 gpt-5.x 旗舰档官方价；来源 openai.com/api/pricing/" },
+  { model: "gpt-5.6-terra", input: 1.25, output: 10.00, cache: 0.125, type: "openai", remark: "对标 gpt-5.x 主力档官方价；来源 openai.com/api/pricing/" },
+  { model: "gpt-5.6-luna", input: 0.25, output: 2.00, cache: 0.025, type: "openai", remark: "对标 gpt-5.x mini 档官方价；来源 openai.com/api/pricing/" },
+  { model: "gpt-5.5", input: 1.25, output: 10.00, cache: 0.125, type: "openai", remark: "对标 gpt-5 官方价；来源 openai.com/api/pricing/" },
+  { model: "codex-auto-review", input: 0.25, output: 2.00, cache: 0.025, type: "openai", remark: "代码审查档，对标 gpt-5-mini 官方价；来源 openai.com/api/pricing/" },
 
   // --- Anthropic（美元牌价）--- 渠道类型统一用 anthropic（与 channel-types 的接入方式一致，
   // 之前写 "claude" 会和模型登记表/定价导入校验打架）
@@ -95,6 +103,13 @@ export const DEFAULT_PRICES = [
   { model: "gemini-3.5-flash", input: 1.50, output: 9.00, cache: 0.15, type: "gemini", remark: "官方牌价录入；来源 ai.google.dev/gemini-api/docs/pricing" },
   { model: "gemini-2.5-pro", input: 1.25, output: 10.00, cache: 0.125, type: "gemini", remark: "官方牌价录入；来源 ai.google.dev/gemini-api/docs/pricing" },
   { model: "gemini-2.5-flash", input: 0.30, output: 2.50, cache: 0.03, type: "gemini", remark: "官方牌价录入；来源 ai.google.dev/gemini-api/docs/pricing" },
+
+  // --- xAI Grok（美元牌价，取自 docs.x.ai 页面内嵌的 __XAI_PUBLIC_MODELS__ 官方价表；
+  //     价格为「每百万 token」，页面单位是 1e-4 美元）---
+  { model: "grok-4.6", input: 2.00, output: 6.00, cache: 0.50, type: "grok", remark: "官方价表（长上下文档 $2.2/$6.6）；来源 docs.x.ai/docs/models" },
+  { model: "grok-4.5", input: 2.00, output: 6.00, cache: 0.30, type: "grok", remark: "官方价表；来源 docs.x.ai/docs/models" },
+  { model: "grok-4.3", input: 1.25, output: 2.50, cache: 0.20, type: "grok", remark: "官方价表；来源 docs.x.ai/docs/models" },
+  { model: "grok-3-mini", input: 0.30, output: 0.50, cache: 0.03, type: "grok", remark: "轻量档，按官方 4.3 档一半估录入，待官方页复核；来源 docs.x.ai/docs/models" },
 ];
 
 // 价格缓存（避免每请求查库）
@@ -126,7 +141,7 @@ export function invalidatePrices() {
   priceCacheAt = 0;
 }
 
-// 取模型价格：精确匹配 → 最长前缀匹配 → 默认
+// 取模型价格：精确匹配 → 最长前缀匹配 → 同厂商兜底 → 全局兜底
 const warnedModels = new Set();
 const MAX_WARNED_MODELS = 500;
 export async function getPrice(model) {
@@ -145,13 +160,49 @@ export async function getPrice(model) {
     }
   }
   if (best) return best;
-  // 兜底：按 DeepSeek 档位计价，避免漏配导致零计费；同时打告警，让漏配可被发现。
+  // 兜底不能一律按 DeepSeek 价：反代/订阅渠道产出的模型（gpt-5.6-*、grok-* 等）单价是
+  // DeepSeek flash 的 3~10 倍，一律按它算等于系统性少计费。这里先按「同厂商最贵档」兜底
+  // （宁可高估不可漏收），真的连厂商都判定不出来才退回 DeepSeek 档。
+  const vendor = await vendorOfModel(model);
+  const vendorPrice = vendor ? priciestOfVendor(prices, vendor) : null;
   // 告警集合设上限：渠道声明 models="*" 时，调用方可用任意模型名无限撑大内存。
   if (m && !warnedModels.has(m) && warnedModels.size < MAX_WARNED_MODELS) {
     warnedModels.add(m);
-    console.warn(`[pricing] 模型「${model}」未配置价格，暂按默认档（DeepSeek 价）计费，请在「模型定价」中补充`);
+    console.warn(
+      `[pricing] 模型「${model}」未配置价格，暂按${vendor ? `同厂商（${vendor}）最高档` : "默认档（DeepSeek 价）"}计费，请在「模型定价」中补充`
+    );
+  }
+  if (vendorPrice) {
+    return { ...vendorPrice, model, remark: `未配置价格，按同厂商（${vendor}）最高档兜底` };
   }
   return { model, input: 0.30, output: 1.20, cache: 0.006, type: "", remark: "未配置价格，按默认档计价" };
+}
+
+/** 该模型归属的厂商（渠道类型）——复用模型登记表，避免定价与归属两处口径分裂 */
+async function vendorOfModel(model) {
+  try {
+    const { modelRegistry } = await import("./models.js");
+    const reg = await modelRegistry();
+    return reg.get(String(model || "").toLowerCase())?.type || "";
+  } catch {
+    return "";
+  }
+}
+
+/** 某厂商已登记的最贵档价格（按输出价排序；同价取输入价更高的） */
+function priciestOfVendor(prices, vendor) {
+  let best = null;
+  for (const v of prices.values()) {
+    if (String(v.type || "") !== String(vendor)) continue;
+    if (!best) {
+      best = v;
+      continue;
+    }
+    const out = Number(v.output) || 0;
+    const bestOut = Number(best.output) || 0;
+    if (out > bestOut || (out === bestOut && (Number(v.input) || 0) > (Number(best.input) || 0))) best = v;
+  }
+  return best;
 }
 
 // 计费：返回「厘」为单位的整数
