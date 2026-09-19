@@ -88,12 +88,17 @@ export function deviceFromUa(ua) {
   else if ((m = /Firefox\/([\d.]+)/.exec(s))) browser = `Firefox ${m[1].split(".")[0]}`;
   else if ((m = /Chrome\/([\d.]+)/.exec(s))) browser = `Chrome ${m[1].split(".")[0]}`;
   else if ((m = /Version\/([\d.]+).*Safari/.exec(s))) browser = `Safari ${m[1].split(".")[0]}`;
-  else if (/curl\//i.test(s)) browser = "curl";
+  // 非浏览器客户端：注意 Node 原生 fetch（undici）发的 UA 就是裸 "node"，
+  // 既没版本号也没斜杠，必须单独匹配，否则会掉到「未知设备」
+  else if (/curl/i.test(s)) browser = "curl";
   else if (/python-requests|python\/|httpx/i.test(s)) browser = "Python";
-  else if (/node-fetch|undici|axios|node\//i.test(s)) browser = "Node.js";
+  else if (/node-fetch|undici|axios|node\/|^node$/i.test(s)) browser = "Node.js";
   else if (/okhttp/i.test(s)) browser = "OkHttp";
   else if (/Go-http-client/i.test(s)) browser = "Go";
   else if (/PostmanRuntime/i.test(s)) browser = "Postman";
+  else if (/wget/i.test(s)) browser = "wget";
+  else if (/Java\//i.test(s)) browser = "Java";
+  else if (/libwww-perl/i.test(s)) browser = "Perl";
 
   // 系统
   let os = "";
