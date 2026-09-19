@@ -1542,6 +1542,43 @@ export default function AdminChannelsPage() {
     }
   };
 
+  // 上游模型探测：非 API 的反代/订阅渠道没法问「你有哪些模型」，只能让适配器去上游查一次。
+  // 结果缓存在内存（不落库）：它是「账号当前"实际"能用什么」的实时快照，
+  // 与渠道声明的 model 范围是两件事（后者是管理员限定的范围）。
+  //
+  // ⚠️ 这三个声明必须在 `columns` **之前**：columns 是数组字面量，
+  // 其中 `title` 里的 `{upstreamModelsBusy ? ... : ...}` 在数组创建时就会求值。
+  // 若把 useState 放在 columns 之后，会命中 const 的暂时性死区（TDZ）：
+  // 运行期抛 "Cannot access 'X' before initialization" → 整个页面白屏，
+  // 而 vite build 是成功的（它不做这种顺序检查），只有真打开页面才会暴露。
+  const [upstreamModels, setUpstreamModels] = useState({});
+  const [upstreamModelsBusy, setUpstreamModelsBusy] = useState(false);
+  const refreshAllUpstreamModels = async () => {
+    if (upstreamModelsBusy) return;
+    const targets = items.filter((r) => r.method !== "api");
+    if (!targets.length) return message.info("当前没有可探测的反代/订阅渠道");
+    setUpstreamModelsBusy(true);
+    const hide = message.loading(`正在从上游探测 ${targets.length} 个渠道的模型…`, 0);
+    try {
+      const results = await Promise.allSettled(
+        targets.map((r) => API.post(`/channel/${r.id}/upstream-models`, undefined, { timeoutMs: 90_000 }))
+      );
+      const next = { ...upstreamModels };
+      let okCount = 0;
+      results.forEach((res, i) => {
+        if (res.status === "fulfilled" && Array.isArray(res.value?.models)) {
+          next[targets[i].id] = res.value.models;
+          if (res.value.models.length) okCount += 1;
+        }
+      });
+      setUpstreamModels(next);
+      message.success(`探测完成：${okCount}/${targets.length} 个渠道返回了模型列表`);
+    } finally {
+      hide();
+      setUpstreamModelsBusy(false);
+    }
+  };
+
   // ---------- 表格列 ----------
   const columns = [
     { title: "ID", dataIndex: "id", width: 60, render: (v) => <span className="oo-num" style={{ color: "var(--ink-3)" }}>{v}</span> },
@@ -1908,36 +1945,8 @@ export default function AdminChannelsPage() {
     }
   };
 
-  // 上游模型探测：非 API 的反代/订阅渠道没法问「你有哪些模型」，只能让适配器去上游查一次。
-  // 结果缓存在内存（不落库）：它是「账号当前"实际"能用什么」的实时快照，
-  // 与渠道声明的 model 范围是两件事（后者是管理员限定的范围）。
-  const [upstreamModels, setUpstreamModels] = useState({});
-  const [upstreamModelsBusy, setUpstreamModelsBusy] = useState(false);
-  const refreshAllUpstreamModels = async () => {
-    if (upstreamModelsBusy) return;
-    const targets = items.filter((r) => r.method !== "api");
-    if (!targets.length) return message.info("当前没有可探测的反代/订阅渠道");
-    setUpstreamModelsBusy(true);
-    const hide = message.loading(`正在从上游探测 ${targets.length} 个渠道的模型…`, 0);
-    try {
-      const results = await Promise.allSettled(
-        targets.map((r) => API.post(`/channel/${r.id}/upstream-models`, undefined, { timeoutMs: 90_000 }))
-      );
-      const next = { ...upstreamModels };
-      let okCount = 0;
-      results.forEach((res, i) => {
-        if (res.status === "fulfilled" && Array.isArray(res.value?.models)) {
-          next[targets[i].id] = res.value.models;
-          if (res.value.models.length) okCount += 1;
-        }
-      });
-      setUpstreamModels(next);
-      message.success(`探测完成：${okCount}/${targets.length} 个渠道返回了模型列表`);
-    } finally {
-      hide();
-      setUpstreamModelsBusy(false);
-    }
-  };
+  // 上游模型探测的 state 与刷新函数已上移到 `columns` 之前（见那里的注释：
+  // columns 会立即求值，放后面会触发 TDZ 白屏）。这里不再重复声明。
 
   // 查额度：显式触发（不进请求主链路、不做高频轮询 —— 额度接口本身就是风控信号）
   const [quotaBusyId, setQuotaBusyId] = useState(null);
