@@ -8,6 +8,8 @@ import { API } from "../services/api";
 import ThemeSwitch from "../components/ThemeSwitch";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
+import UserAvatar from "../components/UserAvatar";
+import AvatarUploader from "../components/AvatarUploader";
 import { PRIMARY_PRESETS, DEFAULT_PRIMARY } from "../theme/presets";
 import { useTheme } from "../theme/ThemeContext";
 import { fmtDate, odOf, unitsPerOd } from "../services/format";
@@ -36,15 +38,28 @@ function ProfileTab() {
   const { message } = AntApp.useApp();
   const [form] = Form.useForm();
   const [busy, setBusy] = useState(false);
+  const [avatarOpen, setAvatarOpen] = useState(false);
 
   useEffect(() => {
-    form.setFieldsValue({ display_name: user?.display_name || "", email: user?.email || "" });
-  }, [form, user?.display_name, user?.email]);
+    form.setFieldsValue({
+      display_name: user?.display_name || "",
+      email: user?.email || "",
+      bio: user?.bio || "",
+      website: user?.website || "",
+      location: user?.location || "",
+    });
+  }, [form, user?.display_name, user?.email, user?.bio, user?.website, user?.location]);
 
   const save = async (v) => {
     setBusy(true);
     try {
-      await API.put("/users/self", { display_name: v.display_name, email: v.email });
+      await API.put("/users/self", {
+        display_name: v.display_name,
+        email: v.email,
+        bio: v.bio,
+        website: v.website,
+        location: v.location,
+      });
       message.success("保存成功");
       refreshUser();
     } catch (e) {
@@ -74,13 +89,23 @@ function ProfileTab() {
         />
       </div>
 
-      <Section title="个人信息">
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={save}
-          requiredMark={false}
-        >
+      <Section title="个人信息" width={620}>
+        {/* 头像：点击打开裁剪弹窗（纯 Canvas 处理，不引依赖） */}
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 18 }}>
+          <UserAvatar user={user} size={64} />
+          <div>
+            <Space size={8}>
+              <Button size="small" onClick={() => setAvatarOpen(true)}>
+                {user?.avatar_url ? "更换头像" : "上传头像"}
+              </Button>
+            </Space>
+            <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 6 }}>
+              支持 PNG / JPEG / GIF / WebP，会自动裁成正方形并压缩
+            </div>
+          </div>
+        </div>
+
+        <Form form={form} layout="vertical" onFinish={save} requiredMark={false}>
           <Form.Item label="用户名">
             <Input value={user?.username} disabled />
           </Form.Item>
@@ -90,11 +115,22 @@ function ProfileTab() {
           <Form.Item name="email" label="邮箱" rules={[{ type: "email", message: "邮箱格式不正确" }]}>
             <Input placeholder="用于接收通知（选填）" />
           </Form.Item>
+          <Form.Item name="bio" label="个人简介" tooltip="会在个人主页展示">
+            <Input.TextArea placeholder="一句话介绍自己（选填）" maxLength={255} rows={3} showCount />
+          </Form.Item>
+          <Form.Item name="website" label="个人链接">
+            <Input placeholder="https://（选填）" maxLength={255} />
+          </Form.Item>
+          <Form.Item name="location" label="所在地">
+            <Input placeholder="如：杭州（选填）" maxLength={64} />
+          </Form.Item>
           <Button type="primary" htmlType="submit" loading={busy}>
             保存修改
           </Button>
         </Form>
       </Section>
+
+      <AvatarUploader open={avatarOpen} onClose={() => setAvatarOpen(false)} onDone={refreshUser} />
     </Space>
   );
 }

@@ -14,13 +14,22 @@ router.put(
   "/self",
   authRequired,
   asyncHandler(async (req, res) => {
-    const { display_name, email } = req.body || {};
-    // 按列宽截断（display_name 64 / email 128）：超长写库会 500
-    await pool.query("UPDATE users SET display_name = ?, email = ? WHERE id = ?", [
-      String(display_name ?? req.user.display_name ?? "").trim().slice(0, 64),
-      String(email ?? req.user.email ?? "").trim().slice(0, 128),
-      req.user.id,
-    ]);
+    const { display_name, email, bio, website, location } = req.body || {};
+    // 按列宽截断（超长写库会 500）。
+    // bio/website/location 是媒体库那一批新增的资料字段，个人主页展示用。
+    // website 只做长度截断不做协议校验：它是纯展示文本，前端渲染时按普通链接处理，
+    // 真正的 XSS 防线在渲染层（Markdown 组件有 safeHref 白名单）。
+    await pool.query(
+      "UPDATE users SET display_name = ?, email = ?, bio = ?, website = ?, location = ? WHERE id = ?",
+      [
+        String(display_name ?? req.user.display_name ?? "").trim().slice(0, 64),
+        String(email ?? req.user.email ?? "").trim().slice(0, 128),
+        String(bio ?? req.user.bio ?? "").trim().slice(0, 255),
+        String(website ?? req.user.website ?? "").trim().slice(0, 255),
+        String(location ?? req.user.location ?? "").trim().slice(0, 64),
+        req.user.id,
+      ]
+    );
     const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [req.user.id]);
     return ok(res, userToResponse(rows[0]), "保存成功");
   })
