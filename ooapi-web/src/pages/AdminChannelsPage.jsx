@@ -694,6 +694,9 @@ export default function AdminChannelsPage() {
   const [capCands, setCapCands] = useState(null);
   const [capPick, setCapPick] = useState("");
   const [capText, setCapText] = useState("");
+  // noVNC 实时浏览器：可用时弹窗内直接嵌服务器浏览器画面（截图模式作为兜底）
+  const [vncInfo, setVncInfo] = useState(null);
+  const [vncOff, setVncOff] = useState(false);
   const capImgRef = useRef(null);
   const [addForm] = Form.useForm();
   const [editForm] = Form.useForm();
@@ -750,6 +753,15 @@ export default function AdminChannelsPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // 探测 noVNC 是否可用（只查一次；不可用时全部走原来的截图模式）
+  useEffect(() => {
+    API.get("/channel/vnc/info")
+      .then((r) => setVncInfo(r || { enabled: false }))
+      .catch(() => setVncInfo({ enabled: false }));
+  }, []);
+
+  const useVnc = Boolean(vncInfo?.enabled) && !vncOff && !capCands;
 
   // 切换筛选/搜索时清空已选：否则批量操作会作用到当前不可见的渠道
   useEffect(() => {
@@ -1206,9 +1218,10 @@ export default function AdminChannelsPage() {
     }
   };
 
-  // 未抓取完成前每 4 秒刷新一次截图（登录过程可见；二维码也能跟着刷新）
+  // 未抓取完成前每 4 秒刷新一次截图（登录过程可见；二维码也能跟着刷新）。
+  // noVNC 模式下有实时画面，不需要截图轮询。
   useEffect(() => {
-    if (!capOpen || !capSid || capCands) return undefined;
+    if (!capOpen || !capSid || capCands || useVnc) return undefined;
     const timer = setInterval(async () => {
       try {
         const res = await API.get(`/channel/capture/${capSid}/shot`);
@@ -1218,7 +1231,7 @@ export default function AdminChannelsPage() {
       }
     }, 4000);
     return () => clearInterval(timer);
-  }, [capOpen, capSid, capCands]);
+  }, [capOpen, capSid, capCands, useVnc]);
 
   const capAct = async (op) => {
     if (!capSid) return;
@@ -2169,37 +2182,59 @@ export default function AdminChannelsPage() {
           }
         />
 
-        <div
-          style={{
-            background: "var(--canvas)",
-            borderRadius: 8,
-            padding: 8,
-            minHeight: 260,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          {capShot?.dataUrl ? (
-            <img
-              ref={capImgRef}
-              src={capShot.dataUrl}
-              alt="登录页截图"
-              onClick={onCapShotClick}
-              style={{ maxWidth: "100%", borderRadius: 6, display: "block", cursor: "crosshair" }}
+        {useVnc ? (
+          <div>
+            <iframe
+              title="远程浏览器"
+              src={vncInfo.url}
+              style={{ width: "100%", height: 430, border: "1px solid var(--line)", borderRadius: 8, background: "#111" }}
             />
-          ) : (
-            <Spin tip="正在打开登录页…" />
-          )}
-        </div>
-        {capShot?.url ? (
-          <div style={{ marginTop: 8, fontSize: 12, color: "var(--ink-3)", fontFamily: "var(--font-mono)" }} className="oo-truncate">
-            {capShot.url}
+            <div style={{ marginTop: 6, fontSize: 12, color: "var(--ink-3)", display: "flex", alignItems: "center", gap: 8 }}>
+              <span>直接在画面里操作登录，登录态留在服务器。</span>
+              <button type="button" className="bui-btn" onClick={() => setVncOff(true)}>画面没反应？切回截图模式</button>
+            </div>
           </div>
-        ) : null}
+        ) : (
+          <>
+            <div
+              style={{
+                background: "var(--canvas)",
+                borderRadius: 8,
+                padding: 8,
+                minHeight: 260,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {capShot?.dataUrl ? (
+                <img
+                  ref={capImgRef}
+                  src={capShot.dataUrl}
+                  alt="登录页截图"
+                  onClick={onCapShotClick}
+                  style={{ maxWidth: "100%", borderRadius: 6, display: "block", cursor: "crosshair" }}
+                />
+              ) : (
+                <Spin tip="正在打开登录页…" />
+              )}
+            </div>
+            {capShot?.url ? (
+              <div style={{ marginTop: 8, fontSize: 12, color: "var(--ink-3)", fontFamily: "var(--font-mono)" }} className="oo-truncate">
+                {capShot.url}
+              </div>
+            ) : null}
+            {vncInfo?.enabled ? (
+              <div style={{ marginTop: 6 }}>
+                <button type="button" className="bui-btn" onClick={() => setVncOff(false)}>切回实时浏览器画面</button>
+              </div>
+            ) : null}
+          </>
+        )}
 
         {!capCands ? (
           <Space direction="vertical" style={{ width: "100%", marginTop: 12 }} size={8}>
+            {!useVnc ? (
             <Space wrap>
               <Input
                 style={{ width: 220 }}
@@ -2229,6 +2264,7 @@ export default function AdminChannelsPage() {
               <Button onClick={() => capAct({ action: "scroll", dy: 600 })}>向下滚</Button>
               <Button onClick={() => capAct({ action: "scroll", dy: -600 })}>向上滚</Button>
             </Space>
+            ) : null}
             <Space>
               <Button type="primary" onClick={finishCapture} loading={capBusy}>
                 {capShot?.kind === "oauth" ? "完成授权，抓取凭据" : capShot?.kind === "browser" ? "我已登录，完成" : "我已登录，抓取登录态"}

@@ -1129,6 +1129,18 @@ router.get(
   })
 );
 
+// noVNC 实时浏览器：把服务器浏览器画面嵌到管理端弹窗里，管理员直接操作（登录态仍留服务器）。
+// 路径带随机令牌且由 nginx 反代（见服务器部署说明）；未配置时前端退回截图模式。
+router.get(
+  "/vnc/info",
+  asyncHandler(async (req, res) => {
+    const p = String(process.env.VNC_PUBLIC_PATH || "").trim();
+    if (!/^\/[A-Za-z0-9/_-]+\/$/.test(p)) return ok(res, { enabled: false });
+    const url = `${p}vnc.html?path=websockify&autoconnect=1&resize=scale&reconnect=1`;
+    return ok(res, { enabled: true, path: p, url });
+  })
+);
+
 // ---------- 反代接入方式：账号登录 ----------
 router.post(
   "/login",
