@@ -235,6 +235,16 @@ export async function screenshot(vendor, channelId, { fullPage = false, quality 
   });
 }
 
+/** 只取当前页面 URL（给「检测 OAuth 回调是否到达」轮询用，比整页截图便宜得多） */
+export function currentUrl(vendor, channelId) {
+  const s = sessions.get(`${vendor}:${channelId}`);
+  try {
+    return s?.page?.url() || "";
+  } catch {
+    return "";
+  }
+}
+
 // ---------- 远程人工登录：交互与凭据抓取 ----------
 // 用途：添加渠道时不想让管理员自己开控制台翻 localStorage。这里在服务器端
 // 打开厂商登录页截图回传，管理员在弹窗里点选/输入完成登录（支持扫码），

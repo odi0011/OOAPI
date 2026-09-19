@@ -25,7 +25,7 @@ import { ok, fail, asyncHandler, now, assertPublicUrl, idParam, safeInt } from "
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod } from "../services/channel-types.js";
-import { buildLoginUrl, exchangeCodeForCredential, interactiveLoginInfo, supportsInteractiveLogin } from "../services/upstream/oauth-login.js";
+import { buildLoginUrl, exchangeCodeForCredential, interactiveLoginInfo, supportsInteractiveLogin, startDeviceLogin, pollDeviceLogin } from "../services/upstream/oauth-login.js";
 import { getAdapter, resetChannelState, forgetChannel, invalidateChannelCache, channelRuntimeState, channelRecent, rowToChannel, recordChannelCall } from "../services/router.js";
 import { clearGroupConfigCache } from "../services/group-rate.js";
 import {
@@ -33,6 +33,7 @@ import {
   removeProfile,
   copyProfile,
   screenshot as browserShot,
+  currentUrl as browserUrl,
   getSession as browserSession,
   act as browserAct,
   credentials as browserCreds,
@@ -844,7 +845,8 @@ router.post(
         sid,
         ...shot,
         kind: "oauth",
-        hint: `在截图里完成登录；页面会跳到 ${login.redirectUri}（页面打不开是正常的），再点「抓取凭据」`,
+        redirectUri: login.redirectUri,
+        hint: `在实时画面/截图里完成登录；页面跳到 ${login.redirectUri} 后会自动抓取凭据（也可以手动点按钮）`,
       });
     }
 
@@ -893,6 +895,16 @@ router.get(
     const shot = await browserShot(c.type, c.channelId);
     if (!shot) return fail(res, "会话已结束，请重新打开登录页", 404);
     return ok(res, shot);
+  })
+);
+
+// 轻量轮询：只回当前 URL（OAuth 回调检测用；截图接口太重，不适合每 2 秒调）
+router.get(
+  "/capture/:sid/url",
+  asyncHandler(async (req, res) => {
+    const c = captureOf(req);
+    if (!c) return fail(res, "会话已过期，请重新打开登录页", 404);
+    return ok(res, { url: browserUrl(c.type, c.channelId) });
   })
 );
 
@@ -1126,6 +1138,36 @@ router.get(
     const type = String(req.query.type || "");
     if (!getProvider(type)) return fail(res, "未知厂商");
     return ok(res, interactiveLoginInfo(type));
+  })
+);
+
+// 设备码登录（Grok/xAI）：服务端发起后返回 user_code，用户在任意浏览器完成授权，
+// 前端按 interval 轮询 poll 拿凭据（不需要回调地址，也不需要服务器浏览器）。
+router.post(
+  "/oauth/device/start",
+  asyncHandler(async (req, res) => {
+    const { type } = req.body || {};
+    if (!getProvider(type)) return fail(res, "未知厂商");
+    try {
+      return ok(res, await startDeviceLogin(type));
+    } catch (e) {
+      return fail(res, e.message, 400);
+    }
+  })
+);
+
+router.post(
+  "/oauth/device/poll",
+  asyncHandler(async (req, res) => {
+    const { type, device_code } = req.body || {};
+    if (!getProvider(type)) return fail(res, "未知厂商");
+    try {
+      const r = await pollDeviceLogin(type, device_code);
+      if (r.pending) return ok(res, { pending: true });
+      return ok(res, { pending: false, credential: JSON.stringify(r.credential, null, 2), accountLabel: r.accountLabel });
+    } catch (e) {
+      return fail(res, e.message, 400);
+    }
   })
 );
 

@@ -688,6 +688,11 @@ export default function AdminChannelsPage() {
   const [capBusy, setCapBusy] = useState(false);
   // 订阅 OAuth 交互式登录：oauthUrl 有值表示「已发起登录，等待用户粘贴回调地址」
   const [oauthSupported, setOauthSupported] = useState(false);
+  // 设备码登录（Grok/xAI）：返回 user_code 并在任意浏览器完成授权
+  const [oauthDevice, setOauthDevice] = useState(false);
+  const [deviceInfo, setDeviceInfo] = useState(null);
+  const deviceTimerRef = useRef(null);
+  const autoCapRef = useRef(false);
   const [oauthUrl, setOauthUrl] = useState("");
   const [oauthState, setOauthState] = useState("");
   const [oauthBusy, setOauthBusy] = useState(false);
@@ -1154,15 +1159,27 @@ export default function AdminChannelsPage() {
     setOauthState("");
     if (!type || !isOauth) {
       setOauthSupported(false);
+      setOauthDevice(false);
+      setDeviceInfo(null);
+      if (deviceTimerRef.current) {
+        clearInterval(deviceTimerRef.current);
+        deviceTimerRef.current = null;
+      }
       return undefined;
     }
     let alive = true;
     API.get("/channel/oauth/info", { params: { type } })
       .then((r) => {
-        if (alive) setOauthSupported(Boolean(r?.supported));
+        if (alive) {
+          setOauthSupported(Boolean(r?.supported));
+          setOauthDevice(Boolean(r?.device));
+        }
       })
       .catch(() => {
-        if (alive) setOauthSupported(false); // 查询失败就退化成「粘贴凭据」，不挡流程
+        if (alive) {
+          setOauthSupported(false); // 查询失败就退化成「粘贴凭据」，不挡流程
+          setOauthDevice(false);
+        }
       });
     return () => {
       alive = false;
@@ -1188,6 +1205,44 @@ export default function AdminChannelsPage() {
     }
   };
 
+  const startDevice = async () => {
+    setOauthBusy(true);
+    try {
+      const r = await API.post("/channel/oauth/device/start", { type: pickProvider.key });
+      setDeviceInfo(r);
+      const target = r.verification_uri_complete || r.verification_uri;
+      if (target) window.open(target, "_blank", "noopener");
+      if (deviceTimerRef.current) clearInterval(deviceTimerRef.current);
+      const iv = Math.max(3, Number(r.interval) || 5) * 1000;
+      const deadline = Date.now() + Math.min(900, Number(r.expires_in) || 900) * 1000;
+      deviceTimerRef.current = setInterval(async () => {
+        if (Date.now() > deadline) {
+          clearInterval(deviceTimerRef.current);
+          deviceTimerRef.current = null;
+          setDeviceInfo((d) => (d ? { ...d, error: "已超时，请重新发起" } : d));
+          return;
+        }
+        try {
+          const p = await API.post("/channel/oauth/device/poll", { type: pickProvider.key, device_code: r.device_code });
+          if (p.pending) return;
+          clearInterval(deviceTimerRef.current);
+          deviceTimerRef.current = null;
+          addForm.setFieldsValue({ token: p.credential });
+          message.success(`设备授权成功${p.accountLabel ? `（${p.accountLabel}）` : ""}，凭据已填入，点「添加」即可`);
+          setDeviceInfo(null);
+        } catch (e) {
+          clearInterval(deviceTimerRef.current);
+          deviceTimerRef.current = null;
+          setDeviceInfo((d) => (d ? { ...d, error: e.message } : d));
+        }
+      }, iv);
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setOauthBusy(false);
+    }
+  };
+
   const startCapture = async () => {
     if (!pickProvider) return;
     setCapCands(null);
@@ -1208,8 +1263,9 @@ export default function AdminChannelsPage() {
       } else {
         setOnboardProfile("");
       }
+      autoCapRef.current = false;
       setCapSid(res.sid);
-      setCapShot({ dataUrl: res.dataUrl, url: res.url, hint: res.hint, kind: res.kind });
+      setCapShot({ dataUrl: res.dataUrl, url: res.url, hint: res.hint, kind: res.kind, redirectUri: res.redirectUri || "" });
       setCapOpen(true);
     } catch (e) {
       message.error(e.message);
@@ -1232,6 +1288,43 @@ export default function AdminChannelsPage() {
     }, 4000);
     return () => clearInterval(timer);
   }, [capOpen, capSid, capCands, useVnc]);
+
+  // OAuth 回调自动检测：服务器浏览器跳到 localhost 回调页（连接被拒）时，
+  // 轮询当前 URL 一旦命中回调地址就自动换取凭据并填入表单，管理员不用再点按钮。
+  useEffect(() => {
+    if (!capOpen || !capSid || capCands) return undefined;
+    if (capShot?.kind !== "oauth" || !capShot?.redirectUri) return undefined;
+    const timer = setInterval(async () => {
+      if (autoCapRef.current) return;
+      try {
+        const r = await API.get(`/channel/capture/${capSid}/url`);
+        const url = String(r?.url || "");
+        if (!url.startsWith(capShot.redirectUri) || !/[?&]code=/.test(url)) return;
+        autoCapRef.current = true;
+        const res = await API.post(`/channel/capture/${capSid}/capture`, undefined, { timeoutMs: 90_000 });
+        const val = res?.tokens?.[0]?.value || res?.credential || "";
+        if (res?.oauth && val) {
+          addForm.setFieldsValue({ token: val });
+          message.success(`已检测到授权完成，凭据自动填入${res.accountLabel ? `（${res.accountLabel}）` : ""}，请点「添加」`);
+          closeCapture(true);
+        }
+      } catch {
+        /* 回调尚未到达或换取失败：继续轮询，也保留手动按钮 */
+      } finally {
+        autoCapRef.current = false;
+      }
+    }, 2500);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [capOpen, capSid, capCands, capShot?.kind, capShot?.redirectUri]);
+
+  // 卸载时清掉设备码轮询
+  useEffect(
+    () => () => {
+      if (deviceTimerRef.current) clearInterval(deviceTimerRef.current);
+    },
+    []
+  );
 
   const capAct = async (op) => {
     if (!capSid) return;
@@ -1836,6 +1929,32 @@ export default function AdminChannelsPage() {
                                   </Typography.Link>
                                 ) : null}
                               </Space>
+                            </Form.Item>
+                          ) : null}
+                          {/* 设备码登录（Grok）：服务端拿 user_code，用户在任意浏览器授权后自动回填 */}
+                          {pickMethod.oauth && !oauthSupported && oauthDevice ? (
+                            <Form.Item label="登录账号（推荐）">
+                              <Space wrap>
+                                <Button icon={<GlobalOutlined />} onClick={startDevice} loading={oauthBusy}>
+                                  设备码登录
+                                </Button>
+                                {deviceInfo?.user_code ? (
+                                  <span style={{ fontSize: 13 }}>
+                                    打开页面输入代码：<b style={{ letterSpacing: 2 }}>{deviceInfo.user_code}</b>
+                                    <Typography.Link
+                                      href={deviceInfo.verification_uri_complete || deviceInfo.verification_uri}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      style={{ marginLeft: 8 }}
+                                    >
+                                      打开授权页
+                                    </Typography.Link>
+                                  </span>
+                                ) : null}
+                              </Space>
+                              {deviceInfo?.error ? (
+                                <div style={{ fontSize: 12, color: "var(--red)", marginTop: 6 }}>{deviceInfo.error}</div>
+                              ) : null}
                             </Form.Item>
                           ) : null}
                           <Form.Item

@@ -144,6 +144,103 @@ export function supportsInteractiveLogin(type) {
   return ["gemini", "openai", "anthropic"].includes(String(type || ""));
 }
 
+// ---------- 设备码（device-code）授权：Grok / xAI ----------
+// 与重定向式 OAuth 不同：服务端拿 device_code 并轮询，用户在任意浏览器打开
+// verification_uri 输入 user_code 授权，成功后服务端直接拿到 token（无需回调地址）。
+const GROK_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
+const GROK_DEVICE_URL = "https://auth.x.ai/oauth2/device/code";
+const GROK_TOKEN_URL = "https://auth.x.ai/oauth2/token";
+const GROK_SCOPES = "openid profile email offline_access grok-cli:access api:access";
+const DEVICE_TTL_MS = 15 * 60 * 1000;
+const deviceSessions = new Map(); // device_code -> { at }
+
+export function supportsDeviceLogin(type) {
+  return String(type || "") === "grok";
+}
+
+export async function startDeviceLogin(type) {
+  if (!supportsDeviceLogin(type)) {
+    throw Object.assign(new Error("该厂商不支持设备码登录"), { code: "LOGIN_BAD_PARAMS" });
+  }
+  const resp = await fetch(GROK_DEVICE_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    body: new URLSearchParams({ client_id: GROK_CLIENT_ID, scope: GROK_SCOPES }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const text = await resp.text();
+  if (!resp.ok) {
+    throw Object.assign(new Error(`获取设备码失败（HTTP ${resp.status}）：${text.slice(0, 200)}`), { code: "LOGIN_FAILED" });
+  }
+  let j;
+  try {
+    j = JSON.parse(text);
+  } catch {
+    throw Object.assign(new Error("设备码响应不是 JSON"), { code: "LOGIN_BAD_RESPONSE" });
+  }
+  if (!j.device_code || !j.user_code) throw Object.assign(new Error("上游未返回设备码"), { code: "LOGIN_BAD_RESPONSE" });
+  const now = Date.now();
+  for (const [k, v] of deviceSessions) if (now - v.at > DEVICE_TTL_MS) deviceSessions.delete(k);
+  deviceSessions.set(String(j.device_code), { at: now });
+  return {
+    device_code: j.device_code,
+    user_code: j.user_code,
+    verification_uri: j.verification_uri || j.verification_uri_complete || "",
+    verification_uri_complete: j.verification_uri_complete || "",
+    interval: Math.max(3, Number(j.interval) || 5),
+    expires_in: Number(j.expires_in) || 900,
+  };
+}
+
+export async function pollDeviceLogin(type, deviceCode) {
+  const code = String(deviceCode || "");
+  const sess = deviceSessions.get(code);
+  if (!sess || Date.now() - sess.at > DEVICE_TTL_MS) {
+    throw Object.assign(new Error("设备码已过期，请重新点击「设备码登录」"), { code: "LOGIN_BAD_PARAMS" });
+  }
+  const resp = await fetch(GROK_TOKEN_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+      client_id: GROK_CLIENT_ID,
+      device_code: code,
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const text = await resp.text();
+  let j = null;
+  try {
+    j = JSON.parse(text);
+  } catch {
+    /* 保留原文用于报错 */
+  }
+  if (!resp.ok) {
+    const err = String(j?.error || text || "");
+    // 用户还没完成授权：继续轮询
+    if (/authorization_pending|slow_down/i.test(err)) return { pending: true };
+    throw Object.assign(new Error(`设备码授权失败：${err.slice(0, 200)}`), { code: "LOGIN_FAILED" });
+  }
+  if (!j?.access_token || !j?.refresh_token) {
+    throw Object.assign(new Error("上游未返回完整凭据（access/refresh token）"), { code: "LOGIN_BAD_RESPONSE" });
+  }
+  deviceSessions.delete(code);
+  const jwt = j.id_token ? decodeJwtPayload(j.id_token) : {};
+  return {
+    pending: false,
+    credential: {
+      auth_kind: "oauth",
+      access_token: j.access_token,
+      refresh_token: j.refresh_token,
+      expires_at: Math.floor(Date.now() / 1000) + (Number(j.expires_in) || 3600),
+      ...(j.id_token ? { id_token: j.id_token } : {}),
+      ...(jwt.email ? { email: jwt.email } : {}),
+      ...(jwt.sub ? { sub: jwt.sub } : {}),
+    },
+    accountLabel: jwt.email || jwt.sub || "",
+  };
+}
+
 /**
  * 生成授权地址。
  * @returns {{ url: string, state: string, redirectUri: string }}
@@ -296,15 +393,18 @@ export async function exchangeCodeForCredential(type, pastedInput, expectedState
   };
 }
 
-/** 给前端用的展示信息（哪些厂商支持、回调地址是什么） */
+/** 给前端用的展示信息（哪些厂商支持、回调地址是什么、是否走设备码） */
 export function interactiveLoginInfo(type) {
   const ok = supportsInteractiveLogin(type);
+  const device = supportsDeviceLogin(type);
   let redirectUri = "";
-  try {
-    redirectUri = oauthConfigFor(type).redirectUri;
-  } catch {
-    redirectUri = "";
+  if (ok) {
+    try {
+      redirectUri = oauthConfigFor(type).redirectUri;
+    } catch {
+      redirectUri = "";
+    }
   }
-  return { supported: ok, redirectUri };
+  return { supported: ok, device, redirectUri };
 }
 
