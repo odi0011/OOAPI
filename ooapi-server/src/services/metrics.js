@@ -582,7 +582,9 @@ export function healthScore(extra = {}) {
   const snap = snapshot();
   const g = snap.gateway;
   const { dbOk = true, jobOk = true, jobDetail = null } = extra;
-  const hasTraffic = g.requests >= 10;
+  // 「有流量」的判定不能只看请求数：哪怕只有 2 个请求、全失败了，
+  // 那也是有效信号，判成 idle(100 分) 会和诊断里的 critical 自相矛盾。
+  const hasTraffic = g.requests >= 3 || g.errors > 0;
 
   const clamp01 = (n) => Math.max(0, Math.min(1, n));
   // 错误率：1% → 100 分，10% → 0 分（线性）

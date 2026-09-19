@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 
 // ---- 只测纯函数：这些模块顶层不碰数据库（metrics 引 pool 但不查询） ----
-const { recordRequest, snapshot, classifyError, healthScore, diagnose, recordChannelSwitch } =
+const { recordRequest, snapshot, classifyError, healthScore, diagnose, recordChannelSwitch, windowStats } =
   await import("../src/services/metrics.js");
 const { buildWebhookPayload, webhookPlatform } = await import("../src/services/notify.js");
 
@@ -116,6 +116,34 @@ t("健康分在合理区间，且给出 idle 判定", () => {
   assert.ok(h.score >= 0 && h.score <= 100, `健康分应在 0-100，实际 ${h.score}`);
   assert.ok(["healthy", "degraded", "risk", "idle"].includes(h.level));
   assert.ok(h.parts && typeof h.parts.infra === "number");
+});
+
+t("有失败请求时不能判定为 idle（否则与诊断的 critical 自相矛盾）", () => {
+  // 上面已经记过失败请求，此时 errors > 0，必须进入业务评分
+  const h = healthScore({ dbOk: true, jobOk: true });
+  const g = snapshot().gateway;
+  if (g.errors > 0) {
+    assert.notEqual(h.level, "idle", `错误数 ${g.errors} > 0 时不应是 idle`);
+    assert.ok(h.parts.business != null, "有错误时业务分不应为 null");
+  }
+  // 错误率极高时业务分应该被显著拉低
+  if (g.errorRate > 50) {
+    assert.ok(h.parts.business < 60, `错误率 ${g.errorRate}% 时业务分应低于 60，实际 ${h.parts.business}`);
+    assert.notEqual(h.level, "healthy", "高错误率不应判为 healthy");
+  }
+});
+
+t("windowStats 无样本时率返回 null 而不是 0", () => {
+  const w = windowStats(1);
+  assert.equal(w.windowMin, 1);
+  for (const f of ["calls", "errors", "tokens", "qps", "tps", "coveredMinutes"]) {
+    assert.equal(typeof w[f], "number", `缺字段 ${f}`);
+  }
+  assert.equal(typeof w.partial, "boolean", "缺 partial");
+  if (w.calls === 0) {
+    assert.equal(w.errorRate, null, "无样本时 errorRate 必须是 null（0% 会让阈值规则静默失效）");
+    assert.equal(w.successRate, null, "无样本时 successRate 必须是 null");
+  }
 });
 
 t("DB 不可用时基础设施分归零", () => {
