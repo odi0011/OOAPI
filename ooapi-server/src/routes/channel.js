@@ -597,6 +597,13 @@ function rowToResp(r, { withKey = false } = {}) {
       ? new Date(rt.cooldown_until).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })
       : "",
     last_error: rt.last_error || r.last_error || "",
+    // 账号级运行参数（存 other）：编辑弹窗回填用；Default 值与 router/适配器保持一致
+    concurrency: Number(other.concurrency) || 1,
+    min_gap_ms: Number(other.min_gap_ms) || 0,
+    max_per_min: Number(other.max_per_min) || 0,
+    fingerprint_mode: String(other.fingerprint_mode || "stable"),
+    context_billing: String(other.context_billing || "auto"),
+    namespace: String(other.namespace || ""),
     // 账号额度快照（订阅/网页版账号）：只在管理员查过之后才有值
     quota: safeJson(r.quota),
     quota_time: Number(r.quota_time) || 0,
@@ -2361,6 +2368,48 @@ router.put(
       setIf("test_prompt", tp);
     }
     if (b.test_model !== undefined) setIf("test_model", String(b.test_model).trim().slice(0, 128));
+
+    // 账号级运行参数（存进 other，供 router/适配器读取）：
+    //   并发 / 最小间隔 / 每分钟上限 —— 按账号实际额度配置，保护上游不被我们自己打爆；
+    //   指纹模式 / 上下文计费 / namespace —— 反代与订阅渠道的兼容性开关。
+    const otherPatch = {};
+    if (b.concurrency !== undefined) {
+      const n = safeInt(b.concurrency, { min: 0, max: 64 });
+      if (n === null) return fail(res, "并发数需在 0~64 之间");
+      otherPatch.concurrency = n || 1;
+    }
+    if (b.min_gap_ms !== undefined) {
+      const n = safeInt(b.min_gap_ms, { min: 0, max: 600_000 });
+      if (n === null) return fail(res, "最小间隔无效");
+      otherPatch.min_gap_ms = n;
+    }
+    if (b.max_per_min !== undefined) {
+      const n = safeInt(b.max_per_min, { min: 0, max: 100_000 });
+      if (n === null) return fail(res, "每分钟上限无效");
+      otherPatch.max_per_min = n || 20;
+    }
+    if (b.fingerprint_mode !== undefined) {
+      const m = String(b.fingerprint_mode);
+      if (!["stable", "converge", "random"].includes(m)) return fail(res, "指纹模式无效");
+      otherPatch.fingerprint_mode = m;
+    }
+    if (b.context_billing !== undefined) {
+      const m = String(b.context_billing);
+      if (!["auto", "full", "input_only"].includes(m)) return fail(res, "上下文计费口径无效");
+      otherPatch.context_billing = m;
+    }
+    if (b.namespace !== undefined) otherPatch.namespace = String(b.namespace).trim().slice(0, 64);
+    if (Object.keys(otherPatch).length) {
+      // 与其它写 other 的路径一致：先解析当前 other 再合并，不整列覆盖
+      const [cur2] = await pool.query("SELECT other FROM channels WHERE id = ?", [id]);
+      let o = {};
+      try {
+        o = cur2[0]?.other ? JSON.parse(cur2[0].other) : {};
+      } catch {
+        o = {};
+      }
+      setIf("other", JSON.stringify({ ...o, ...otherPatch }));
+    }
 
     if (!fields.length) return fail(res, "没有需要更新的字段");
     args.push(id);

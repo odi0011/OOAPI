@@ -327,15 +327,27 @@ function priciestOfVendor(prices, vendor) {
 }
 
 // 计费：返回「厘」为单位的整数
-export function computeCost({ price, promptTokens = 0, completionTokens = 0, cacheTokens = 0 }) {
+/**
+ * @param {object} p
+ * @param {object} p.price            生效单价（已套峰谷）
+ * @param {number} p.promptTokens
+ * @param {number} p.completionTokens
+ * @param {number} p.cacheTokens
+ * @param {string} [p.contextBilling] 账号级计费口径（渠道 other.context_billing）：
+ *   auto/full  = 输入+输出 都计（默认）
+ *   input_only = 只计输入（上游按上下文长度计费、不按生成量计费的账号；
+ *                **会改变用户实际扣费**，仅在该账号确实如此计费时才设）
+ */
+export function computeCost({ price, promptTokens = 0, completionTokens = 0, cacheTokens = 0, contextBilling = "auto" }) {
   // 缓存命中不能超过输入总量（上游字段异常时按输出去重，避免负基数）
   const cache = Math.max(0, Math.min(Number(cacheTokens) || 0, Number(promptTokens) || 0));
   const base = Math.max(0, (Number(promptTokens) || 0) - cache);
   // 未配置缓存价（NULL/0）时回退输入价：直接按 0 计费等于对缓存命中部分免单
   const cachePrice = Number(price.cache) > 0 ? Number(price.cache) : Number(price.input) || 0;
+  const outTokens = contextBilling === "input_only" ? 0 : Number(completionTokens) || 0;
   const od =
     (base / 1e6) * price.input +
-    (completionTokens / 1e6) * price.output +
+    (outTokens / 1e6) * price.output +
     (cache / 1e6) * cachePrice;
   // 先做微小的浮点校正再向上取整，避免 0.0001 的表示误差多收 1 厘
   const units = od * UNITS_PER_OD;

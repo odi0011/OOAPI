@@ -306,6 +306,9 @@ export async function chat({
       "x-codex-window-id": identity.windowId,
     },
   };
+  // 账号级 namespace（部分账号/组织要求带上，否则上游按默认项目计）
+  const ns = String(channel?.other?.namespace || "").trim();
+  if (ns) body.client_metadata.namespace = ns;
   // 深度思考：显式开启时请求推理摘要（默认交给上游模型默认档）
   if (thinkingOverride === true) body.reasoning = { effort: "medium", summary: "auto" };
 

@@ -240,7 +240,18 @@ async function settle({
   // 分组倍率：Key 绑定分组后按分组倍率计费（rate=1 时不变）；
   // 与分时是两层独立乘数（时段决定单价，倍率决定加价倍数），顺序保持原样
   const gcfg = await groupConfigOf(token?.group_name || user?.group_name);
-  const units = applyGroupRate(computeCost({ price, promptTokens, completionTokens, cacheTokens }), gcfg?.rate);
+  const units = applyGroupRate(
+    computeCost({
+      price,
+      promptTokens,
+      completionTokens,
+      cacheTokens,
+      // 账号级计费口径（渠道 other.context_billing）：input_only 的账号不计输出
+      // （仅用于「上游按上下文长度计费、不按生成量计费」的账号，会改变用户实际扣费）
+      contextBilling: channel?.other?.context_billing || "auto",
+    }),
+    gcfg?.rate
+  );
   const od = (units / UNITS_PER_OD).toFixed(4);
 
   // 条件扣费：quota >= units 才扣。并发场景下「先读余额再写回」会超额透支，

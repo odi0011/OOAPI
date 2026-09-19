@@ -381,7 +381,9 @@ router.post(
   // 分组倍率：用户绑定分组后按分组倍率计费（rate=1 时不变）
   // 倍率按本次实际路由的分组（选了密钥就是密钥的分组），与网关 /v1 口径一致
   const gcfg = await groupConfigOf(groupName);
-  const units = applyGroupRate(computeCost({ price, promptTokens, completionTokens, cacheTokens }), gcfg?.rate);
+    // 站内对话一轮可能跨多个渠道（harness 多步），无法对单次调用套用账号级
+    // context_billing，这里保持既有的「全额」口径（与网关默认一致）。
+    const units = applyGroupRate(computeCost({ price, promptTokens, completionTokens, cacheTokens }), gcfg?.rate);
 
   const [uRows] = await pool.query("SELECT quota FROM users WHERE id = ?", [user.id]);
   if (Number(uRows[0]?.quota || 0) <= 0) {

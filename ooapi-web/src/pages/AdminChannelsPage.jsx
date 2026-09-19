@@ -1047,6 +1047,13 @@ export default function AdminChannelsPage() {
       auto_test_minutes: Math.max(1, Math.round((Number(r.auto_test_interval) || 3600) / 60)),
       test_model: r.test_model || undefined,
       test_prompt: r.test_prompt || "hi",
+      // 账号级运行参数
+      concurrency: Number(r.concurrency) || 1,
+      min_gap_ms: Number(r.min_gap_ms) || 0,
+      max_per_min: Number(r.max_per_min) || 0,
+      fingerprint_mode: r.fingerprint_mode || "stable",
+      context_billing: r.context_billing || "auto",
+      namespace: r.namespace || "",
     });
     setEditOpen(true);
   };
@@ -1075,6 +1082,13 @@ export default function AdminChannelsPage() {
         auto_test_interval: Math.max(60, Math.round(Number(v.auto_test_minutes || 60) * 60)),
         test_model: String(v.test_model || "").trim(),
         test_prompt: String(v.test_prompt || "hi").trim() || "hi",
+        // 账号级参数（并发/限速/指纹/计费口径）
+        concurrency: Number(v.concurrency) || 0,
+        min_gap_ms: Number(v.min_gap_ms) || 0,
+        max_per_min: Number(v.max_per_min) || 0,
+        fingerprint_mode: v.fingerprint_mode || "stable",
+        context_billing: v.context_billing || "auto",
+        namespace: String(v.namespace || "").trim(),
       };
       // 只有 API 渠道有 Base URL（反代/订阅不展示也不提交，避免把空串写回）
       if (editing.method === "api") payload.base_url = v.base_url;
@@ -2578,6 +2592,74 @@ export default function AdminChannelsPage() {
             </Col>
             <Col span={8}>
               <Form.Item name="auto_ban" label="失败自动禁用" valuePropName="checked"><Switch /></Form.Item>
+            </Col>
+          </Row>
+
+          {/* 账号级运行参数：按这个账号的实际情况配，保护上游不被我们自己打爆 */}
+          <Row gutter={12}>
+            <Col span={8}>
+              <Form.Item
+                name="concurrency"
+                label="并发数"
+                extra="同时允许几个在途请求；1 = 完全串行（最保守）"
+              >
+                <InputNumber style={{ width: "100%" }} min={1} max={64} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item
+                name="min_gap_ms"
+                label="最小间隔（毫秒）"
+                extra="两次请求之间的最小间隔，0 = 不限（用默认值）"
+              >
+                <InputNumber style={{ width: "100%" }} min={0} max={600000} step={100} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="max_per_min" label="每分钟上限" extra="0 = 用默认（20）">
+                <InputNumber style={{ width: "100%" }} min={0} max={100000} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={8}>
+              <Form.Item
+                name="fingerprint_mode"
+                label="指纹模式"
+                extra="收敛 = 与其它账号共用一套稳定指纹；随机 = 每次会话换"
+              >
+                <Select
+                  options={[
+                    { value: "stable", label: "稳定（每账号一套，推荐）" },
+                    { value: "converge", label: "收敛（多账号共用一套）" },
+                    { value: "random", label: "随机（每次变化）" },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item
+                name="context_billing"
+                label="上下文计费口径"
+                extra="auto = 跟随上游 usage；input_only = 只计输入（部分订阅号适合）"
+              >
+                <Select
+                  options={[
+                    { value: "auto", label: "自动（按上游 usage）" },
+                    { value: "full", label: "全额（输入+输出）" },
+                    { value: "input_only", label: "只计输入" },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item
+                name="namespace"
+                label="Namespace"
+                extra="OpenAI 组织/项目命名空间，部分上游要求"
+              >
+                <Input placeholder="留空 = 不发送" maxLength={64} />
+              </Form.Item>
             </Col>
           </Row>
         </Form>

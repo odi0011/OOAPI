@@ -56,7 +56,27 @@ const chains = new Map();
 const SELECT_CURSOR = new Map();
 
 // 单渠道限速（保护上游账号，降低风控概率）
+// 默认值偏保守；每个账号可以在渠道 `other` 里覆盖：
+//   other.min_gap_ms  两次请求最小间隔（默认 1200ms）
+//   other.max_per_min 每分钟上限（默认 20）
+//   other.concurrency 该账号允许的**并发**请求数（默认 1，串行；>1 时放开串行链）
 const RATE = { minGapMs: 1200, jitterMs: 900, maxPerMin: 20 };
+
+/** 该渠道生效的限速参数（账号级覆盖 > 全局默认） */
+function rateOf(channel) {
+  const o = channel?.other || {};
+  const num = (v, def, min, max) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= min && n <= max ? n : def;
+  };
+  return {
+    minGapMs: num(o.min_gap_ms, RATE.minGapMs, 0, 600_000),
+    maxPerMin: num(o.max_per_min, RATE.maxPerMin, 1, 100_000),
+    // 并发上限：1 = 完全串行（默认，最保守）；>1 允许同时在途
+    concurrency: Math.floor(num(o.concurrency, 1, 1, 64)),
+    jitterMs: RATE.jitterMs,
+  };
+}
 
 function st(id) {
   if (!state.has(id)) state.set(id, { lastAt: 0, window: [], cooldownUntil: 0, lastError: "", recent: null });
@@ -213,12 +233,13 @@ export async function markChannelOk(channel, elapsedMs, meta = {}) {
 }
 
 function delayFor(channel) {
+  const r = rateOf(channel);
   const s = st(channel.id);
   const t = Date.now();
   s.window = s.window.filter((x) => t - x < 60_000);
-  if (s.window.length >= RATE.maxPerMin) return 60_000 - (t - s.window[0]) + 400;
+  if (s.window.length >= r.maxPerMin) return 60_000 - (t - s.window[0]) + 400;
   const since = t - s.lastAt;
-  if (since < RATE.minGapMs) return RATE.minGapMs - since + Math.random() * RATE.jitterMs;
+  if (since < r.minGapMs) return r.minGapMs - since + Math.random() * r.jitterMs;
   return 0;
 }
 
@@ -228,20 +249,64 @@ function commitRate(channel) {
   s.window.push(Date.now());
 }
 
-// 同一渠道串行执行（含限速），避免并发打爆上游账号
+/**
+ * 渠道限速闸门：同一渠道的请求按账号配置串行/限并发执行。
+ *
+ * concurrency=1（默认）时行为与原先完全一致：整条链严格串行 —— 这是保护反代账号
+ * 最保守、也是风控最不敏感的方式。
+ * concurrency>1 时放开为信号量：最多 N 个在途，其余排队。用于官方 API 这类
+ * 明确支持并发的渠道（管理员按账号实际额度配置）。
+ *
+ * 为什么仍然保留「最小间隔」：即使放开并发，也按 min_gap_ms 给提交节奏留随机抖动，
+ * 避免 N 个请求在同一毫秒一起打出去（那是明显的脚本特征）。
+ */
 export function withChannelLimit(channel, taskFn) {
+  const r = rateOf(channel);
+  const key = channel.id;
+  const s = st(key);
+
   const run = async () => {
     const waitMs = delayFor(channel);
-    if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+    if (waitMs > 0) await new Promise((res) => setTimeout(res, waitMs));
     commitRate(channel);
-    return taskFn();
+    s.inflight = (s.inflight || 0) + 1;
+    try {
+      return await taskFn();
+    } finally {
+      s.inflight = Math.max(0, (s.inflight || 1) - 1);
+    }
   };
-  const key = channel.id;
-  const prev = chains.get(key) || Promise.resolve();
-  const next = prev.then(run, run);
-  chains.set(key, next);
-  // 注意：next.finally() 会派生一个新 Promise，任务失败时无人消费会产生
-  // unhandledRejection 噪音，所以先 catch 再挂 finally。
+
+  if (r.concurrency <= 1) {
+    // 串行链（原行为）
+    const prev = chains.get(key) || Promise.resolve();
+    const next = prev.then(run, run);
+    chains.set(key, next);
+    // 注意：next.finally() 会派生一个新 Promise，任务失败时无人消费会产生
+    // unhandledRejection 噪声，所以先 catch 再挂 finally。
+    next.catch(() => {}).finally(() => {
+      if (chains.get(key) === next) chains.delete(key);
+    });
+    return next;
+  }
+
+  // 并发模式：等「在途数 < concurrency」再进；等待者排成一条链保证 FIFO
+  const gate = chains.get(key) || Promise.resolve();
+  const next = gate.then(async () => {
+    // 轮询等待名额（每次等 50ms）：比自建信号量简单，且天然支持运行期改配置
+    for (;;) {
+      if ((s.inflight || 0) < r.concurrency) break;
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    return run();
+  }, async () => {
+    for (;;) {
+      if ((s.inflight || 0) < r.concurrency) break;
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    return run();
+  });
+  chains.set(key, next.catch(() => {}));
   next.catch(() => {}).finally(() => {
     if (chains.get(key) === next) chains.delete(key);
   });
