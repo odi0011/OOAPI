@@ -71,13 +71,16 @@ export function createGlmParser() {
       if (d.message_id) state.messageId = d.message_id;
       if (d.done === true || d.phase === "done") state.finished = true;
       if (d.usage) {
-        // 结构化上报，避免只拿部分字段被当成 total_tokens 导致少计费
+        // 整体透传，只补一个缺失的 total_tokens。
+        // 原先用白名单重建 usage 会把 cached_tokens / prompt_cache_hit_tokens /
+        // prompt_tokens_details 等缓存字段全部丢掉 —— 缓存部分于是一律按全额输入价
+        // 计费（多收），而缓存价通常只有输入价的 10%。normalizeUsage 已能识别各家别名。
         const u = d.usage;
-        state.usage = {
-          prompt_tokens: Number(u.prompt_tokens ?? u.input_tokens) || 0,
-          completion_tokens: Number(u.completion_tokens ?? u.output_tokens) || 0,
-          total_tokens: Number(u.total_tokens) || 0,
-        };
+        state.usage = { ...u };
+        if (u.total_tokens === undefined) {
+          state.usage.total_tokens =
+            Number(u.prompt_tokens ?? u.input_tokens ?? 0) + Number(u.completion_tokens ?? u.output_tokens ?? 0);
+        }
       }
       const errObj = d.error || (frame?.error ?? null);
       if (errObj) {

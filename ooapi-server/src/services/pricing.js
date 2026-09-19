@@ -290,13 +290,35 @@ export async function getPrice(model) {
   if (m && !warnedModels.has(m) && warnedModels.size < MAX_WARNED_MODELS) {
     warnedModels.add(m);
     console.warn(
-      `[pricing] 模型「${model}」未配置价格，暂按${vendor ? `同厂商（${vendor}）最高档` : "默认档（DeepSeek 价）"}计费，请在「模型定价」中补充`
+      `[pricing] 模型「${model}」未配置价格，暂按${vendorPrice ? `同厂商（${vendor}）最高档` : "全表最贵档"}计费，请在「模型定价」中补充`
     );
   }
   if (vendorPrice) {
     return { ...vendorPrice, model, remark: `未配置价格，按同厂商（${vendor}）最高档兜底` };
   }
+  // 判定不出厂商（custom/中转渠道的自定义模型名，例如挂在第三方聚合站上的 claude-opus）
+  // 时，绝不能退回 DeepSeek 最低档：那比真实成本低约 20 倍，等于系统性少收。
+  // 改为取「全表最贵档」——宁可高估后由管理员改价，也不要静默漏收。
+  const anyPrice = priciestOfAll(prices);
+  if (anyPrice) {
+    return { ...anyPrice, model, remark: `未配置价格且无法判定厂商，按全表最贵档（${anyPrice.model}）兜底` };
+  }
   return { model, input: 0.30, output: 1.20, cache: 0.006, type: "", remark: "未配置价格，按默认档计价" };
+}
+
+/** 全表最贵档（按输出价，其次输入价）——用于无法判定厂商时的兜底 */
+function priciestOfAll(prices) {
+  let best = null;
+  for (const v of prices.values()) {
+    if (!best) {
+      best = v;
+      continue;
+    }
+    const out = Number(v.output) || 0;
+    const bestOut = Number(best.output) || 0;
+    if (out > bestOut || (out === bestOut && (Number(v.input) || 0) > (Number(best.input) || 0))) best = v;
+  }
+  return best;
 }
 
 /** 该模型归属的厂商（渠道类型）——复用模型登记表，避免定价与归属两处口径分裂 */
@@ -367,18 +389,35 @@ const MAX_USAGE = 1e8;
 const clampUsage = (n) => Math.max(0, Math.min(MAX_USAGE, Math.round(Number(n) || 0)));
 
 export function normalizeUsage(u) {
-  if (!u) return { promptTokens: 0, completionTokens: 0, cacheTokens: 0, totalTokens: 0, hasDetail: false };
+  if (!u) return { promptTokens: 0, completionTokens: 0, cacheTokens: 0, totalTokens: 0, hasDetail: false, partial: false };
   if (typeof u === "object") {
+    // 用「字段是否存在」判断，而不是「取到的值是否非 0」——
+    // 有些上游只回 output_tokens（doubao-parser 的注释就写明过这种情况），
+    // 若把缺失的 prompt 当成 0，hasDetail 会因为 completion>0 而为真，
+    // 于是整个输入侧（可能是几万 token 的上下文）按 0 计费，系统性地少收。
+    const hasP = u.prompt_tokens !== undefined || u.input_tokens !== undefined;
+    const hasC = u.completion_tokens !== undefined || u.output_tokens !== undefined;
     const p = clampUsage(u.prompt_tokens ?? u.input_tokens);
     const c = clampUsage(u.completion_tokens ?? u.output_tokens);
     const cache = clampUsage(
       u.cached_tokens ?? u.cache_tokens ?? u.prompt_cache_hit_tokens ?? u.prompt_tokens_details?.cached_tokens
     );
     const total = clampUsage(u.total_tokens) || p + c;
-    return { promptTokens: p, completionTokens: c, cacheTokens: Math.min(cache, p), totalTokens: total, hasDetail: p + c > 0 };
+    // partial：只报了一半（缺 prompt 或缺 completion）→ 交给 splitTokens 估算补另一侧
+    const partial = (hasP || hasC) && !(hasP && hasC);
+    return {
+      promptTokens: p,
+      completionTokens: c,
+      cacheTokens: Math.min(cache, p),
+      totalTokens: total,
+      hasDetail: hasP && hasC,
+      partial,
+      hasPrompt: hasP,
+      hasCompletion: hasC,
+    };
   }
   const t = clampUsage(u);
-  return { promptTokens: 0, completionTokens: 0, cacheTokens: 0, totalTokens: t, hasDetail: false };
+  return { promptTokens: 0, completionTokens: 0, cacheTokens: 0, totalTokens: t, hasDetail: false, partial: false };
 }
 
 // token 估算（仅在拿不到上游明细时使用）
@@ -391,6 +430,7 @@ export function estimateTokens(text) {
 
 // 拆分计费 token：
 //   有上游明细 → 直接精确计费（含缓存命中）
+//   只报了一侧（partial）→ 已报的那侧用真实值，缺的那侧估算补齐
 //   只有总量   → 按估算比例拆分
 //   什么都没有 → 全按估算
 export function splitTokens({ prompt, output, upstreamTotal }) {
@@ -400,6 +440,15 @@ export function splitTokens({ prompt, output, upstreamTotal }) {
   }
   const estP = estimateTokens(prompt);
   const estC = estimateTokens(output);
+  if (u.partial) {
+    // 上游只给了 input_tokens 或只给了 output_tokens：缺的一侧按字符估算，
+    // 而不是当成 0（那会让这一侧完全不计费）。
+    return {
+      promptTokens: u.hasPrompt ? u.promptTokens : estP,
+      completionTokens: u.hasCompletion ? u.completionTokens : estC,
+      cacheTokens: u.cacheTokens,
+    };
+  }
   if (u.totalTokens > 0 && estP + estC > 0) {
     const p = Math.max(1, Math.round((u.totalTokens * estP) / (estP + estC)));
     return { promptTokens: p, completionTokens: Math.max(1, u.totalTokens - p), cacheTokens: 0 };

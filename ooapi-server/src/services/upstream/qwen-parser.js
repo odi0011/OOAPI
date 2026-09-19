@@ -49,14 +49,15 @@ export function createQwenParser() {
         if (d.status === "finished") state.finished = true;
         if (ch.finish_reason) state.finished = true;
         if (j.usage) {
-          // 必须上报结构化 usage：只上报 output_tokens 会被当成 total_tokens，
-          // 输入侧只能用估算值兜底，系统性少计费
+          // 整体透传 usage：只上报部分字段会被当成 total_tokens（输入侧只能估算，少计费），
+          // 而白名单重建又会丢掉缓存命中字段（缓存按全额输入价算，多收）。
+          // normalizeUsage 已能识别 input_tokens/output_tokens 与各家缓存字段别名。
           const u = j.usage;
-          state.usage = {
-            prompt_tokens: Number(u.input_tokens ?? u.prompt_tokens) || 0,
-            completion_tokens: Number(u.output_tokens ?? u.completion_tokens) || 0,
-            total_tokens: Number(u.total_tokens) || 0,
-          };
+          state.usage = { ...u };
+          if (u.total_tokens === undefined) {
+            state.usage.total_tokens =
+              Number(u.input_tokens ?? u.prompt_tokens ?? 0) + Number(u.output_tokens ?? u.completion_tokens ?? 0);
+          }
         }
 
         let reasoning = "";

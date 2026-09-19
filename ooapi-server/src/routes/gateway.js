@@ -8,6 +8,7 @@ import { now, clientIp, asyncHandler, assertPublicUrl } from "../utils.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { recordRequest, enterRequest, leaveRequest, classifyError } from "../services/metrics.js";
 import { runCompletion } from "../services/execute.js";
+import { acquire, estimateRequestTokens } from "../services/user-limit.js";
 import { getPrice, computeCost, splitTokens, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { groupConfigOf, applyGroupRate } from "../services/group-rate.js";
 import { allPublicModels, modelForChannelMatch, resolveAliasSync, modelRegistry } from "../services/models.js";
@@ -256,7 +257,14 @@ async function settle({
   const od = (units / UNITS_PER_OD).toFixed(4);
 
   // 条件扣费：quota >= units 才扣。并发场景下「先读余额再写回」会超额透支，
-  // 这里用单条 SQL 保证原子性；余额不足（并发透支）时兜底扣到 0，避免负余额。
+  // 这里用单条 SQL 保证原子性。
+  //
+  // 余额不足时**允许扣成负数**（quota 是 BIGINT，可以为负），而不是像以前那样
+  // 「扣到 0」——那是静默核销：请求已经被服务完了，把 quota 置 0 等于平台自己
+  // 把这笔钱一笔勾销，用户下次充值后债务凭空消失。
+  // 具体例子：用户余额 1 单位（0.0001 OD），跑了一个应收 52800 单位（5.28 OD）的
+  // 请求，旧逻辑实收 0.0001 OD，平台净亏 5.2799 OD。
+  // 现在记账成 -52799 单位：账目真实，且下一请求会被鉴权处的 `quota <= 0` 直接挡掉。
   let ret;
   try {
     [ret] = await pool.query(
@@ -265,8 +273,11 @@ async function settle({
     );
     if (!ret.affectedRows) {
       await pool.query(
-        "UPDATE users SET quota = 0, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ?",
-        [units, user.id]
+        "UPDATE users SET quota = quota - ?, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ?",
+        [units, units, user.id]
+      );
+      console.warn(
+        `[gateway] 用户 ${user.id} 余额不足仍完成请求，已记账为欠费 ${units} 单位（${od} ${CURRENCY}），后续请求将被拒绝直到充值`
       );
     }
   } catch (e) {
@@ -361,6 +372,22 @@ router.post(
   if (!messages.length) {
     return res.status(400).json({ error: { message: "messages 不能为空", type: "invalid_request_error" } });
   }
+
+  // 用户级限流（并发 / RPM / TPM）：这三个限额来自系统设置的 default_user_*，
+  // 也可被用户 setting.limits 覆盖。放在这里（鉴权后、抓图与调上游之前）：
+  // 越早拒绝越省资源，尤其避免大图抓取和上游调用被超额请求白白消耗。
+  const promptForLimit = messagesToPrompt(messages);
+  const estTokens = estimateRequestTokens(promptForLimit, body.max_tokens);
+  const slot = acquire(user, { estimatedTokens: estTokens });
+  if (!slot.ok) {
+    res.setHeader("retry-after", String(slot.retryAfterSec || 1));
+    return res.status(429).json({
+      error: { message: slot.message, type: "rate_limit_exceeded", code: slot.code },
+    });
+  }
+  // 请求结束（无论成功失败）都要释放名额；res "close" 与 finally 可能都触发，
+  // release() 内部做了幂等保护，不会把计数减成负数。
+  res.on("close", () => slot.release());
 
   // 模型名归一化后透传给渠道层匹配（各厂商别名在适配器内部处理）；
   // 是否支持视觉也由适配器判断，网关不预设能力
@@ -526,6 +553,12 @@ router.post(
       userAgent});
     settledOnce = true;
     finishMetric({ ok: true, status: 200, channelName: result.channel?.name || "", usage: result.usage });
+    // TPM 按真实用量记账（预占的是估算值），多退少补
+    slot.release({
+      tokens: result.usage
+        ? (Number(result.usage.prompt_tokens) || 0) + (Number(result.usage.completion_tokens) || 0)
+        : null,
+    });
 
     if (wantStream) {
       if (!streamStarted) {

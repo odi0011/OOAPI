@@ -27,6 +27,26 @@ const REFRESH_LEAD_S = 300;
 const MAX_SSE_BUF = 8 * 1024 * 1024;
 const FREE_USAGE_COOLDOWN_SEC = 86400; // 免费额度按 24h 滚动窗口恢复
 
+// base_url 白名单：这个字段来自「管理员粘贴的凭据文件」，是不可信输入。
+// 之前只做了「非 api.x.ai 就原样采用」，于是一份 base_url 指向攻击者主机的凭据
+// 就能让后续请求带着 Bearer access_token 打到任意地址（内网探测 + 凭据外泄）。
+// 与 Kiro 的 safeRegion() 同类加固：只允许 xAI 官方两个域，其余一律回落默认值。
+const ALLOWED_HOSTS = new Set(["cli-chat-proxy.grok.com", "api.x.ai"]);
+
+/** 校验并规范化 base_url；不合法返回空串（调用方回落到官方默认地址） */
+export function safeBaseUrl(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  try {
+    const u = new URL(s);
+    if (u.protocol !== "https:") return "";
+    if (!ALLOWED_HOSTS.has(u.hostname.toLowerCase())) return "";
+    return `${u.protocol}//${u.host}${u.pathname}`.replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+}
+
 function tokenExpiredSoon(other) {
   const exp = Number(other?.expires_at || 0);
   if (!exp) return Boolean(other?.refresh_token);
@@ -82,13 +102,14 @@ export function parseAuthJson(raw) {
     expires_at,
     email: String(t.email || j.email || fromJwt.email || "").trim(),
     sub: String(t.sub || j.sub || fromJwt.sub || "").trim(),
-    base_url: String(t.base_url || j.base_url || "").trim(),
+    // 导入时就过白名单：脏值不该进数据库（读取路径也校验，防的是存量数据）
+    base_url: safeBaseUrl(t.base_url || j.base_url || ""),
     using_api: t.using_api === true || j.using_api === true,
   };
 }
 
 export async function refreshAuth(channel, { force = false } = {}) {
-  return withRefreshLock(channel.id, async () => {
+  return withRefreshLock(channel.id, channel, async () => {
     const fresh = await loadOther(channel.id);
     if (fresh) {
       const freshExp = Number(fresh.expires_at || 0);
@@ -145,9 +166,11 @@ export async function refreshAuth(channel, { force = false } = {}) {
 
 function chatBase(channel) {
   const other = channel?.other || {};
-  if (other.using_api === true) return String(other.base_url || API_BASE).replace(/\/+$/, "");
-  const stored = String(other.base_url || "").trim();
-  if (stored && !/^https:\/\/api\.x\.ai\/?$/.test(stored)) return stored.replace(/\/+$/, "");
+  // 无论 API Key 还是 OAuth 模式，base_url 都必须过白名单 ——
+  // 两种模式都会带上 Authorization 头打这个地址。
+  const stored = safeBaseUrl(other.base_url);
+  if (other.using_api === true) return stored || API_BASE;
+  if (stored && !/^https:\/\/api\.x\.ai/.test(stored)) return stored;
   return CLI_BASE;
 }
 

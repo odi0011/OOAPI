@@ -27,7 +27,7 @@ function jwtExp(accessToken) {
 
 /** 刷新网页版 token（有 refresh_token 时）；失败抛 CHANNEL_AUTH_EXPIRED 交给找回流程 */
 export async function refreshAuth(channel, { force = false } = {}) {
-  return withRefreshLock(channel.id, async () => {
+  return withRefreshLock(channel.id, channel, async () => {
     const fresh = await loadOther(channel.id);
     if (fresh) channel.other = { ...(channel.other || {}), ...fresh };
     const other = channel?.other || {};
@@ -92,9 +92,12 @@ function headers(token, deviceId) {
 }
 
 export async function chat({ channel, model, prompt, messages, signal, onDelta }) {
-  const token = await ensureToken(channel);
-  const deviceId = String(channel?.other?.device_id || crypto.randomUUID());
+  let token = await ensureToken(channel);
+  let deviceId = String(channel?.other?.device_id || crypto.randomUUID());
   if (!channel?.other?.device_id) {
+    // 先写回内存快照再落库：DB 写失败或渠道缓存未过期的并发请求若各自
+    // randomUUID()，同一账号会出现多个 device_id（指纹漂移，是明显的异常特征）。
+    channel.other = { ...(channel.other || {}), device_id: deviceId };
     await persistOtherPatch(channel.id, { device_id: deviceId }).catch(() => {});
   }
 

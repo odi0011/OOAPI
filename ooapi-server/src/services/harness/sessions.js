@@ -133,10 +133,18 @@ export async function getSession(userId, id) {
 }
 
 export async function getSessionMessages(sessionId, { limit = 200 } = {}) {
+  // 必须取**最近** N 条并保持升序返回。
+  // 原先写的是 ORDER BY seq ASC LIMIT n —— 那是「最早的 n 条」：
+  // 会话超过 200 条消息（约 100 轮）后，界面打开只剩很久以前的对话、看不到最近内容，
+  // 更严重的是 /run 用同一份历史喂给模型，于是上下文是「远古对话 + 新问题」，
+  // 模型会答非所问、反复回到旧话题。
+  const n = clamp(Number(limit) || 200, 1, 500);
   const [rows] = await pool.query(
-    "SELECT seq, role, parts, agent, model, cost, prompt_tokens, completion_tokens, created_time FROM chat_messages WHERE session_id = ? ORDER BY seq ASC LIMIT ?",
-    [String(sessionId), clamp(Number(limit) || 200, 1, 500)]
+    "SELECT seq, role, parts, agent, model, cost, prompt_tokens, completion_tokens, created_time FROM chat_messages WHERE session_id = ? ORDER BY seq DESC LIMIT ?",
+    [String(sessionId), n]
   );
+  // 反转为升序：调用方（渲染与上下文构造）都按时间正序消费
+  rows.reverse();
   return rows.map((r) => ({
     seq: Number(r.seq),
     role: r.role,

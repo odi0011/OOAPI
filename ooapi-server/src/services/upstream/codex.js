@@ -93,7 +93,7 @@ export function parseAuthJson(raw) {
 /** 刷新 access_token（表单请求，无需 client_secret）。
  * 并发说明：同一渠道的刷新用 withRefreshLock 合并；刷新前重读 DB 复用别人的结果。 */
 export async function refreshAuth(channel, { force = false } = {}) {
-  return withRefreshLock(channel.id, async () => {
+  return withRefreshLock(channel.id, channel, async () => {
     const fresh = await loadOther(channel.id);
     if (fresh) {
       const freshExp = Number(fresh.expires_at || 0);

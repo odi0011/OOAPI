@@ -15,14 +15,48 @@ export async function loadOther(channelId) {
   }
 }
 
-// 同一渠道的刷新合并为一次：并发请求共享同一个 Promise，避免用同一 refresh_token 双刷
+// 同一渠道的刷新合并为一次：并发请求共享同一个 Promise，避免用同一 refresh_token 双刷。
+//
+// 为什么共享的必须是「结果」而不只是「等待」：
+// 旧实现下加入方 await 同一个 Promise 后把返回值丢掉了（各处写的是
+// `await refreshAuth(channel).catch(...)`，只为等待），于是加入方手里仍是**旧 token**：
+//   · 拿旧 token 打上游 → 401 → 触发一次强制刷新（白打一次上游 token 端点，
+//     对会轮换 refresh_token 的厂商等于连续轮换，反而更像异常客户端）；
+//   · 三方以上并发时更糟：C 的强制刷新"加入"了 B 正在飞的刷新，返回后 C 的
+//     channel.other 依旧没更新 → 重试用的还是同一个 token → 完全不重试，
+//     直接把 401 抛给上层，execute 按 CHANNEL_AUTH_EXPIRED 冷却 **6 小时**，
+//     前端还会显示「需要重新登录」——而凭据其实完全正常。
+// 所以这里额外做两件事：把持锁者写回的 other 同步给所有加入方的 channel 对象，
+// 并让加入方拿到同一个返回值。
 const refreshLocks = new Map();
-export function withRefreshLock(channelId, fn) {
+
+/**
+ * @param {number} channelId
+ * @param {Function} fn 持锁执行体，返回 { access_token, expires_at } 之类的刷新结果
+ * @param {object} [channel] 调用方的渠道对象；传入后，刷新结果会同步回它的 other
+ */
+export function withRefreshLock(channelId, fn, channel = null) {
   const existing = refreshLocks.get(channelId);
-  if (existing) return existing;
+  if (existing) {
+    // 加入方：等结果，并把结果（含写回的 other）同步到自己的 channel 上
+    return existing.then(async (result) => {
+      if (channel && (!channel.other?.access_token || channel.other.access_token !== result?.access_token)) {
+        const fresh = await loadOther(channelId);
+        if (fresh) channel.other = { ...(channel.other || {}), ...fresh };
+      }
+      return result;
+    });
+  }
   const p = (async () => {
     try {
-      return await fn();
+      const result = await fn();
+      // 持锁者也要把结果同步给其它可能持有同一渠道旧快照的调用方（他们是同一个对象引用时自然生效）
+      if (channel && result?.access_token && channel.other && channel.other.access_token !== result.access_token) {
+        // refreshAuth 内部一般已写过 channel.other；这里只兜底没写的情况
+        const fresh = await loadOther(channelId);
+        if (fresh) channel.other = { ...(channel.other || {}), ...fresh };
+      }
+      return result;
     } finally {
       refreshLocks.delete(channelId);
     }

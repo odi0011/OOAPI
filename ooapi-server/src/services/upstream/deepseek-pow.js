@@ -135,11 +135,18 @@ function getPowWorker() {
     if (!job) return;
     powJobs.delete(m.id);
     if (m.ok) job.resolve(m.answer);
-    else job.reject(new Error(m.error || "PoW worker 求解失败"));
+    // 必须带 code：此前这里抛的是无 code 的普通 Error，solvePow 会把它当成
+    // 「worker 基础设施故障」而回退到主线程求解 —— 主线程上的 wasm_solve 是同步调用、
+    // 预言机更是纯 JS 同步循环（上限千万次），会把整个 Node 事件循环阻塞几十秒，
+    // 期间所有用户请求、超时定时器、看门狗全部停摆。求解失败就该如实失败。
+    else job.reject(Object.assign(new Error(m.error || "PoW worker 求解失败"), { code: "CHANNEL_POW_FAILED" }));
     schedulePowIdleClose(w);
   });
   w.on("error", (e) => {
-    for (const job of powJobs.values()) job.reject(e);
+    // worker 自身崩溃（脚本加载失败/内存溢出）：这是真正的基础设施故障，
+    // 带上 code 让上层按可重试处理，而不是退回主线程同步求解。
+    const err = Object.assign(new Error(`PoW worker 异常：${e?.message || e}`), { code: "CHANNEL_POW_FAILED" });
+    for (const job of powJobs.values()) job.reject(err);
     powJobs.clear();
     if (powWorker === w) powWorker = null; // 下次请求重建
   });
@@ -186,19 +193,7 @@ export async function solvePow(challenge) {
       code: "CHANNEL_BAD_RESPONSE",
     });
   }
-  try {
-    return await solvePowInWorker(challenge);
-  } catch (err) {
-    // 超时/取消类错误直接抛出；worker 启动失败等基础设施问题回退主线程求解
-    if (err.code) throw err;
-    console.warn("[deepseek/pow] worker 求解失败，回退主线程：", err.message);
-    try {
-      return await solvePowWasm(challenge);
-    } catch (e2) {
-      console.warn("[deepseek/pow] wasm_solve 失败，改用预言机兜底:", e2.message);
-      return solvePowOracle(challenge);
-    }
-  }
+  return solvePowInWorker(challenge);
 }
 
 // 组装 X-DS-PoW-Response 请求头（字段与顺序与官方前端一致）

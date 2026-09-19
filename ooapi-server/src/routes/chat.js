@@ -370,25 +370,53 @@ router.post(
 // ---------- 计费（用户额度）----------
 // 与网关同一套原子扣费；harness 传进来的 tokens 是「每次上游调用分别 splitTokens 后求和」，
 // 混用 API 渠道（结构化 usage）与反代渠道（usage=null）时不会互相覆盖口径。
-  async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0, keyName = "", startedAt = 0, firstTokenAt = 0, userAgent = "", ip = "" }) {
+  async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0, keyName = "", startedAt = 0, firstTokenAt = 0, userAgent = "", ip = "", calls = null }) {
     const { promptTokens, completionTokens, cacheTokens } =
       tokens || splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
   const basePrice = await getPrice(resolveAliasSync(model));
-  // 分时（峰谷）定价：按整轮请求的发起时刻判档（与网关口径一致）
-  const eff = effectivePrice(basePrice, startedAt || Date.now());
-  const price = eff.price;
   // 分组倍率：用户绑定分组后按分组倍率计费（rate=1 时不变）
   // 倍率按本次实际路由的分组（选了密钥就是密钥的分组），与网关 /v1 口径一致
   const gcfg = await groupConfigOf(groupName);
+
+  // 分时（峰谷）定价。
+  // 站内对话一轮可能跑十几分钟（最多 16 步 + 子代理），跨过峰谷分界点时
+  // 「按整轮发起时刻判一次档」会把边界之后的所有用量都按旧档计价：
+  // 谷时开始跨入峰时系统性少收、峰时开始跨入谷时对用户多收，两边都是最多 2 倍。
+  // 因此这里改为**按每次上游调用各自的时刻分别判档**，再求和 ——
+  // loop.js 已经为每条调用记了 startedAt，正好可用（与网关的逐请求口径一致）。
+  let price;
+  let eff;
+  let units;
+  if (Array.isArray(calls) && calls.length) {
+    let sum = 0;
+    const phases = new Set();
+    for (const c of calls) {
+      const at = Number(c.startedAt) || startedAt || Date.now();
+      const e = effectivePrice(basePrice, at);
+      phases.add(e.phase);
+      const t =
+        c.tokens ||
+        splitTokens({ prompt: c.prompt || "", output: c.output || "", upstreamTotal: c.usage || null });
+      sum += computeCost({ price: e.price, promptTokens: t.promptTokens, completionTokens: t.completionTokens, cacheTokens: t.cacheTokens });
+    }
+    units = applyGroupRate(sum, gcfg?.rate);
+    // 审计用：跨档时记 "peak+offpeak"，单档时记该档位
+    eff = { phase: phases.size > 1 ? [...phases].join("+") : [...phases][0] || "peak", price: basePrice };
+    price = basePrice;
+  } else {
+    eff = effectivePrice(basePrice, startedAt || Date.now());
+    price = eff.price;
     // 站内对话一轮可能跨多个渠道（harness 多步），无法对单次调用套用账号级
     // context_billing，这里保持既有的「全额」口径（与网关默认一致）。
-    const units = applyGroupRate(computeCost({ price, promptTokens, completionTokens, cacheTokens }), gcfg?.rate);
-
-  const [uRows] = await pool.query("SELECT quota FROM users WHERE id = ?", [user.id]);
-  if (Number(uRows[0]?.quota || 0) <= 0) {
-    throw Object.assign(new Error(`${CURRENCY} 币余额不足，请联系管理员充值`), { code: "INSUFFICIENT_QUOTA" });
+    units = applyGroupRate(computeCost({ price, promptTokens, completionTokens, cacheTokens }), gcfg?.rate);
   }
+
+  // 注意：这里**不能**在余额为 0 时直接抛错。旧实现有这一行，后果是
+  // 「整轮对话已经完整交付给用户，却一分钱不扣、连一条消费日志都不写」
+  // （余额被并发请求清零或管理员扣款时命中，16 步 harness 白送）。
+  // 正确做法是照常记账：余额不够就扣成负数（见下），让鉴权处的余额检查
+  // 去挡住**下一个**请求，而不是让已经发生的这一轮凭空消失。
   let ret;
   try {
     [ret] = await pool.query(
@@ -397,8 +425,11 @@ router.post(
     );
     if (!ret.affectedRows) {
       await pool.query(
-        "UPDATE users SET quota = 0, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ?",
-        [units, user.id]
+        "UPDATE users SET quota = quota - ?, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ?",
+        [units, units, user.id]
+      );
+      console.warn(
+        `[chat] 用户 ${user.id} 余额不足仍完成对话，已记账为欠费 ${units} 单位，后续请求将被拒绝直到充值`
       );
     }
   } catch (e) {
@@ -700,6 +731,8 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
   let runTodo = session.todo || [];
   let channelName = "";
   let settled = false;
+  // 助手消息是否已落库：catch 分支据此避免重复写入（见下方 appendMessage 处说明）
+  let saved = false;
 
   try {
     const out = await runHarness({
@@ -740,6 +773,8 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       output: "",
       usage: null,
       tokens,
+      // 逐次调用分别判峰谷档（整轮跨分界点时不再全部按发起时刻计价）
+      calls: runCalls,
       channel: channelName ? { name: channelName } : null,
       channelIds: runChannelIds,
       groupName: routeGroup,
@@ -763,6 +798,11 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       tokens: { prompt: billed.promptTokens, completion: billed.completionTokens },
       created_time: now(),
     };
+    // 落库成功标记（saved 声明在 try 之外）：catch 分支据此判断
+    // 「助手消息是否已经写过」。否则 appendMessage 之后的任一步骤
+    // （updateSession / getSession / publish）抛错都会走到 catch 的兜底落库，
+    // 同一轮回答在 chat_messages 里出现两条 —— 用户看到重复回答，
+    // 下一轮模型上下文里同一答案还会再出现一次。
     message.seq = await appendMessage({
       sessionId: session.id,
       userId: user.id,
@@ -774,6 +814,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       promptTokens: billed.promptTokens,
       completionTokens: billed.completionTokens,
     });
+    saved = true;
     await updateSession(user.id, session.id, { todo: runTodo });
 
     publish(run, { type: "done", message, todo: runTodo, session: await getSession(user.id, session.id) });
@@ -788,12 +829,25 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
     // 失败/中止时最后一次调用没有 usage，按 prompt/输出字符数估算补上。
     const tokens = aggregate(runCalls);
     const partial = runParts.filter((p) => p.type === "text").map((p) => p.text).join("");
+    // 失败的那一步不进 runCalls（loop.js 只在 runCompletion 成功后才 record），
+    // 若只按 runCalls 汇总，那一步的 prompt 完全不计费 —— 而失败步往往带着
+    // 整轮最长的上下文（历史 + 工具结果），是漏收最多的一处。
+    // 这里补一条合成调用，让它按自己的时刻判档、按估算用量计费。
+    const failedCall = {
+      prompt: err?.billingPrompt || "",
+      output: partial,
+      usage: null,
+      startedAt: err?.billingStartedAt || startedAt,
+      tokens: null,
+    };
     if (!settled && (tokens.promptTokens || tokens.completionTokens || partial)) {
       if (partial && !tokens.completionTokens) {
         // 只有整轮都没有 usage（中途失败）才按字符估算；
         // 已有精确 completion 计费时再按差额补会重复计费（估算值通常高于真实 token）。
         tokens.completionTokens += estimateTokens(partial);
-        tokens.promptTokens += estimateTokens(content);
+        // prompt 用「失败步的完整上下文」估算，而不是只算本轮用户输入 ——
+        // 后者漏掉 system 提示与全部历史，而 harness 的 system 提示常常上万字符。
+        tokens.promptTokens += estimateTokens(failedCall.prompt || content);
       }
       try {
         await chargeUser({
@@ -803,6 +857,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           output: "",
           usage: null,
           tokens,
+          calls: runCalls.length ? [...runCalls, failedCall] : null,
           channel: channelName ? { name: channelName } : null,
           channelIds: [...new Set(runCalls.map((c) => Number(c.channelId) || 0).filter(Boolean))],
           groupName: routeGroup,
@@ -819,9 +874,12 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       }
     }
 
-    if (runParts.length) {
+    // 只有「尚未落库」时才补写：成功路径可能已经写过（saved=true），
+    // 若此处再写一次，同一轮回答会在库里出现两条。
+    if (!saved && runParts.length) {
       try {
         await appendMessage({ sessionId: session.id, userId: user.id, role: "assistant", parts: runParts, agent: agent.id, model });
+        saved = true;
         await updateSession(user.id, session.id, { todo: runTodo });
       } catch (e2) {
         console.error("[chat] 失败消息落库异常：", e2.message);

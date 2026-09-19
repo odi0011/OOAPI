@@ -110,14 +110,26 @@ router.put(
       input = num(input_price, "input");
       output = num(output_price, "output");
       cache = num(cache_price, "cache");
-      offIn = num(offpeak_input_price, "offpeak_input");
-      offOut = num(offpeak_output_price, "offpeak_output");
-      offCache = num(offpeak_cache_price, "offpeak_cache");
+      // 闲时价：显式 0 等同于「未配置」。0 会被 effectivePrice 当成有效的闲时单价，
+      // 闲时段（约一周 70% 时间）就变成兜底 1 单位/次，与基准价差上万倍，
+      // 而界面上只是把闲时价显示成 0，看不出任何异常。
+      const optNum = (v, name) => {
+        const n = num(v, name);
+        return Number(n) === 0 ? null : n;
+      };
+      offIn = optNum(offpeak_input_price, "offpeak_input");
+      offOut = optNum(offpeak_output_price, "offpeak_output");
+      offCache = optNum(offpeak_cache_price, "offpeak_cache");
       ruleText = parseRuleInput(offpeak_rule);
     } catch (e) {
       return fail(res, e.message);
     }
     if (input == null || output == null) return fail(res, "输入/输出价格不能为空");
+    const hasOffpeakPrice = offIn !== null || offOut !== null || offCache !== null;
+    if (ruleText && !hasOffpeakPrice) return fail(res, "配置了闲时规则但未提供任何闲时价格");
+    if (!ruleText && hasOffpeakPrice) {
+      return fail(res, "配置了闲时价格但缺少闲时规则，闲时价永远不会生效；请补上规则或清空闲时价");
+    }
     await pool.query(
       `INSERT INTO model_prices
          (model, input_price, output_price, cache_price,
@@ -287,9 +299,15 @@ router.post(
       // 闲时价与上面的「可空数字」语义不同：空必须落 NULL 而不是 0。
       // 落 0 会被 effectivePrice 当成「配了闲时价 0」，闲时段直接按 0 计费（兜底 1 厘/次），
       // 属于静默少计费；NULL 才是「该模型不分时」的正确表达。
+      //
+      // 注意：显式写 0 也必须当「未配置」处理。CSV/Excel 导出里把闲时列留成 0 很常见
+      // （而不是留空），若原样入库，闲时段（占一周约 70% 时间）就变成 1 单位一次，
+      // 与基准价相比差了一万多倍，而管理界面上「分时」列只是正常显示 0，完全看不出异常。
       const optNum = (v, name) => {
         if (v === undefined || v === null || String(v).trim() === "") return null;
-        return num(v, name, false);
+        const n = num(v, name, false);
+        if (Number(n) === 0) return null;
+        return n;
       };
       try {
         const offpeakInput = optNum(entry.offpeak_input ?? entry.offpeak_input_price, "offpeak_input");
@@ -299,6 +317,11 @@ router.post(
         // 有规则但没有任何闲时价 = 规则无意义（判档了却拿不到闲时单价），直接拒绝
         if (offpeakRule && offpeakInput === null && offpeakOutput === null && offpeakCache === null) {
           throw new Error("配置了闲时规则但未提供任何闲时价格");
+        }
+        // 反向：配了闲时价却没有规则 → 闲时价永远不生效，界面显示两档价但全天按基准价收费
+        // （用户被多收），且没有任何提示。这种情况必须拒绝，否则就是又一个「设置了不生效」。
+        if (!offpeakRule && (offpeakInput !== null || offpeakOutput !== null || offpeakCache !== null)) {
+          throw new Error("配置了闲时价格但缺少闲时规则，闲时价永远不会生效；请补上规则或清空闲时价");
         }
         accepted.set(model.toLowerCase(), {
           model: reg.model,

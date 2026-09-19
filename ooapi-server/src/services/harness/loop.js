@@ -355,24 +355,38 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       emit?.({ type: "delta", id: reasoningPart.id, field: "text", delta: t });
     };
 
-    const result = await runCompletion({
-      model: modelForChannelMatch(model) || model,
-      prompt: flattenPrompt(system, messages),
-      messages: [{ role: "system", content: system }, ...messages],
-      thinking: typeof settings.thinking === "boolean" ? settings.thinking : agent.thinking,
-      search: typeof settings.search === "boolean" ? settings.search : Boolean(agent.search),
-      images: step === 1 ? images : [],
-      groupName,
-      user,
-      signal,
-      onDelta: (t) => {
-        markStepFirstToken();
-        appendText(stream.push(t));
-      },
-      onReasoning: (t) => {
-        markStepFirstToken();
-        appendReasoning(t);
-      }});
+    // 本步的完整上下文（system + 历史 + 工具结果）在失败时也要能计费：
+    // 失败步不进 billing（只有成功才 record），但它的 prompt 往往是整轮最长的。
+    // 挂在错误对象上由 chat.js 的失败结算读取，避免在计费路径重新拼一遍上下文。
+    const stepPrompt = flattenPrompt(system, messages);
+    let result;
+    try {
+      result = await runCompletion({
+        model: modelForChannelMatch(model) || model,
+        prompt: stepPrompt,
+        messages: [{ role: "system", content: system }, ...messages],
+        thinking: typeof settings.thinking === "boolean" ? settings.thinking : agent.thinking,
+        search: typeof settings.search === "boolean" ? settings.search : Boolean(agent.search),
+        images: step === 1 ? images : [],
+        groupName,
+        user,
+        signal,
+        onDelta: (t) => {
+          markStepFirstToken();
+          appendText(stream.push(t));
+        },
+        onReasoning: (t) => {
+          markStepFirstToken();
+          appendReasoning(t);
+        }});
+    } catch (e) {
+      // 带上计费上下文：失败步的 prompt 与发起时刻
+      if (e && typeof e === "object") {
+        e.billingPrompt = stepPrompt;
+        e.billingStartedAt = stepStartedAt;
+      }
+      throw e;
+    }
 
     const { text: tail, call, bad } = stream.finish();
     appendText(tail);

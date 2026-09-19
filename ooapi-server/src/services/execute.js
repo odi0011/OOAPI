@@ -24,6 +24,7 @@ const RETRYABLE = new Set([
   "UNSUPPORTED_CHANNEL",  // 渠道类型未注册/配置错误：属于该渠道自身问题，应跳过换下一个
   "CHANNEL_CONFIG_ERROR", // 订阅渠道的部署配置缺失（如 Google OAuth 密钥未配置）：跳过该渠道
   "CHANNEL_DEGRADED",     // 上游降智/过载信号（codex-state-kit）：立即换号，短冷却后重试
+  "CHANNEL_POW_FAILED",   // PoW 求解失败（worker 崩溃/超时）：换号往往能拿到更简单的挑战
 ]);
 
 export function isRetryable(code) {
@@ -82,7 +83,23 @@ export async function runCompletion({
   // 否则第一个渠道耗掉大部分预算后，后续渠道会「秒败」。
   const timeoutMs = Math.max(1000, getNumberOption("request_timeout_ms") || 600000);
 
+  // 重试预算：`retry_times` 设置项此前是死配置（没有任何代码读取），
+  // 实际重试次数等于「匹配到的渠道总数」——10 个渠道集体故障时，
+  // 单个客户端请求最坏会挂 10 × timeoutMs（默认 10 分钟 = 100 分钟），
+  // 而客户端早就断开了，服务端还在逐个试错、逐个写渠道错误。
+  // 语义：retry_times = 换渠道重试次数，故总尝试次数 = retry_times + 1（至少试 1 个）。
+  const retryTimes = Math.max(0, Math.min(10, Number(getNumberOption("retry_times")) || 0));
+  const maxAttempts = Math.min(channels.length, retryTimes + 1);
+
+  let attempts = 0;
   for (const channel of channels) {
+    if (attempts >= maxAttempts) {
+      // 预算用尽：带上最后一个错误抛出，让调用方看到真实失败原因
+      // （而不是「所有渠道都不可用」这种误导性结论）
+      console.warn(`[execute] 已达重试上限（${maxAttempts} 个渠道），停止换号`);
+      break;
+    }
+    attempts += 1;
     tried.add(channel.id);
     if (onChannelTry) onChannelTry(channel);
 

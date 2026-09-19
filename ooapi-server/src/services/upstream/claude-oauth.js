@@ -80,7 +80,7 @@ export function parseAuthJson(raw) {
 
 /** 刷新登录态（JSON 请求，官方 CLI 同款头）；并发用 withRefreshLock 合并 */
 export async function refreshAuth(channel, { force = false } = {}) {
-  return withRefreshLock(channel.id, async () => {
+  return withRefreshLock(channel.id, channel, async () => {
     const fresh = await loadOther(channel.id);
     if (fresh) {
       const freshExp = Number(fresh.expires_at || 0);

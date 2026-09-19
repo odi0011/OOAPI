@@ -87,13 +87,19 @@ export function createDoubaoParser() {
       if (msg.conversation_id) state.conversationId = msg.conversation_id;
       if (msg.message_id) state.messageId = msg.message_id;
       if (msg.ext) {
-        // 结构化上报：只上报 output_tokens 会被当成 total_tokens 导致少计费
+        // 整体透传 usage（同 glm/qwen）：白名单重建会丢掉缓存命中字段，
+        // 导致缓存部分按全额输入价计费（多收）。
+        // 只给 output_tokens 时 normalizeUsage 会识别为 partial 并估算补输入侧，
+        // 不再像以前那样把输入当成 0（等于整段上下文不计费）。
         const ext = msg.ext;
-        const p = Number(ext.input_tokens ?? ext.prompt_tokens) || 0;
-        const c = Number(ext.output_tokens ?? ext.completion_tokens) || 0;
-        const total = Number(ext.total_tokens) || 0;
-        if (p || c || total) {
-          state.usage = { prompt_tokens: p, completion_tokens: c, total_tokens: total };
+        const p = Number(ext.input_tokens ?? ext.prompt_tokens);
+        const c = Number(ext.output_tokens ?? ext.completion_tokens);
+        const total = Number(ext.total_tokens);
+        if (Number.isFinite(p) || Number.isFinite(c) || Number.isFinite(total)) {
+          state.usage = { ...ext };
+          if (!Number.isFinite(total)) {
+            state.usage.total_tokens = (Number.isFinite(p) ? p : 0) + (Number.isFinite(c) ? c : 0);
+          }
         }
       }
 

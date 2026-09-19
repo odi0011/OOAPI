@@ -252,10 +252,14 @@ function commitRate(channel) {
 /**
  * 渠道限速闸门：同一渠道的请求按账号配置串行/限并发执行。
  *
- * concurrency=1（默认）时行为与原先完全一致：整条链严格串行 —— 这是保护反代账号
+ * concurrency=1（默认）时行为与原先一致：整条链严格串行 —— 这是保护反代账号
  * 最保守、也是风控最不敏感的方式。
- * concurrency>1 时放开为信号量：最多 N 个在途，其余排队。用于官方 API 这类
- * 明确支持并发的渠道（管理员按账号实际额度配置）。
+ * concurrency>1 时放开为真正的信号量：最多 N 个在途，第 N+1 个开始等待。
+ *
+ * 注意：这里必须用「等待者队列」而不是「首尾相接的 promise 链」。
+ * 旧实现是 `gate.then(() => run())` 且 run() 里 await 整个任务，
+ * 于是下一个任务的 gate 要等上一个任务**彻底结束**才 resolve ——
+ * 结果是即便把 concurrency 配成 8，仍然严格串行，管理员以为放开了并发但毫无效果。
  *
  * 为什么仍然保留「最小间隔」：即使放开并发，也按 min_gap_ms 给提交节奏留随机抖动，
  * 避免 N 个请求在同一毫秒一起打出去（那是明显的脚本特征）。
@@ -274,6 +278,10 @@ export function withChannelLimit(channel, taskFn) {
       return await taskFn();
     } finally {
       s.inflight = Math.max(0, (s.inflight || 1) - 1);
+      // 释放名额：唤醒一个等待者（若有）。放在 finally 里保证失败也会让位，
+      // 否则一次异常就会把该渠道的并发槽永久占死。
+      const nextInLine = s.waiters?.shift();
+      if (nextInLine) nextInLine();
     }
   };
 
@@ -290,27 +298,26 @@ export function withChannelLimit(channel, taskFn) {
     return next;
   }
 
-  // 并发模式：等「在途数 < concurrency」再进；等待者排成一条链保证 FIFO
-  const gate = chains.get(key) || Promise.resolve();
-  const next = gate.then(async () => {
-    // 轮询等待名额（每次等 50ms）：比自建信号量简单，且天然支持运行期改配置
-    for (;;) {
-      if ((s.inflight || 0) < r.concurrency) break;
-      await new Promise((res) => setTimeout(res, 50));
-    }
-    return run();
-  }, async () => {
-    for (;;) {
-      if ((s.inflight || 0) < r.concurrency) break;
-      await new Promise((res) => setTimeout(res, 50));
-    }
-    return run();
+  // 并发模式：真信号量。拿到名额才进入 run()，等待者按 FIFO 排队。
+  return new Promise((resolve) => {
+    const tryStart = () => {
+      if ((s.inflight || 0) < r.concurrency) {
+        // 用 resolve(promise) 让外层直接采用任务的结果（含 rejection）
+        resolve(run());
+        return true;
+      }
+      return false;
+    };
+    if (tryStart()) return;
+    // 名额已满：挂到等待队列，由 run() 的 finally 唤醒。
+    // 入队的是「可重入的一次性函数」：被唤醒时若名额被别人抢走就继续排队，
+    // 避免唤醒后无人补位导致并发度凭空少 1。
+    if (!s.waiters) s.waiters = [];
+    const waiter = () => {
+      if (!tryStart()) s.waiters.push(waiter);
+    };
+    s.waiters.push(waiter);
   });
-  chains.set(key, next.catch(() => {}));
-  next.catch(() => {}).finally(() => {
-    if (chains.get(key) === next) chains.delete(key);
-  });
-  return next;
 }
 
 export function resetChannelState(channelId) {
@@ -359,7 +366,8 @@ export function runtimeConcurrency() {
       cooldownRemainSec: s.cooldownUntil && now < s.cooldownUntil ? Math.ceil((s.cooldownUntil - now) / 1000) : 0,
       lastError: s.lastError || "",
       recentCalls: s.window?.length || 0, // 最近一分钟内的提交次数
-      queued: chains.has(id) ? 1 : 0,     // 该渠道是否有串行链在等待（1 = 有排队的后续请求）
+      // 等待名额的请求数：并发模式下是真实的排队数，串行模式下只有「有链在跑」这一个信息
+      queued: (s.waiters?.length || 0) + (chains.has(id) ? 1 : 0),
     });
   }
   return out;
@@ -479,7 +487,16 @@ export function collectAvailableModels(channelRows) {
     if (declared.length) {
       for (const m of declared) {
         const t = m.trim();
-        if (t && t !== "*") out.add(t.toLowerCase());
+        if (!t) continue;
+        // 显式写 "*" 与「留空」同义（channelSupportsModel 就是这么判的）。
+        // 之前这里把 "*" 直接丢掉，于是声明了 "*" 的渠道在 available 里既没有具体模型
+        // 也没有通配标记 —— 网关过滤条件恒为假，该渠道能服务的模型在 /v1/models
+        // 里完全看不到，但实际调用又能成功（列表与真实能力不一致）。
+        if (t === "*") {
+          out.add("*");
+          continue;
+        }
+        out.add(t.toLowerCase());
       }
       continue;
     }

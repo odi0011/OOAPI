@@ -30,6 +30,12 @@ export function resolveTestModel(channel) {
   return String(mCfg?.testModel || "").trim();
 }
 
+// 探针总超时：此前 probe 与兜底 chat 都不传 signal，上游返回 200 后 SSE 永不结束
+// （网关卡死、半开连接）会一直挂着 —— 期间这个渠道的串行槽被占死，
+// 后续**所有真实请求**都得排队，而前端 90s 就报超时，管理员完全看不到真实原因。
+// 给探针一个比 verify（30~60s）宽松、但一定有上限的预算。
+const PROBE_TIMEOUT_MS = 90000;
+
 /**
  * 发送一条探测请求。
  * @returns {{ ms:number, reply:string, model:string, degraded?:number, state?:number }}
@@ -39,14 +45,25 @@ export async function probeChannel(adapter, channel, prompt = "hi") {
   // 走渠道限速闸门：测试/定时检测此前完全绕过 withChannelLimit，
   // 批量检测会并发打同一个账号（HTTP 渠道没有任何串行保护），是实打实的风控触发点。
   // 浏览器渠道靠会话锁侥幸串行，但不能依赖这种巧合。
-  return withChannelLimit(channel, () => probeChannelInner(adapter, channel, prompt));
+  return withChannelLimit(channel, () =>
+    probeChannelInner(adapter, channel, prompt, AbortSignal.timeout(PROBE_TIMEOUT_MS))
+  );
 }
 
-async function probeChannelInner(adapter, channel, prompt = "hi") {
+async function probeChannelInner(adapter, channel, prompt = "hi", signal = undefined) {
   const model = resolveTestModel(channel);
+  const withTimeout = (p) =>
+    p.catch((e) => {
+      if (e?.name === "TimeoutError" || e?.name === "AbortError") {
+        throw Object.assign(new Error(`渠道检测超时（${PROBE_TIMEOUT_MS / 1000}s 未返回）`), { code: "CHANNEL_TIMEOUT" });
+      }
+      throw e;
+    });
   if (adapter?.probe) {
     // 把解析出的模型显式传给适配器（适配器内部优先读 channel.test_model）
-    const r = await adapter.probe({ ...channel, test_model: model || channel?.test_model || "" }, prompt);
+    const r = await withTimeout(
+      adapter.probe({ ...channel, test_model: model || channel?.test_model || "" }, prompt, signal)
+    );
     return {
       ms: r.ms,
       reply: r.reply || "",
@@ -57,15 +74,18 @@ async function probeChannelInner(adapter, channel, prompt = "hi") {
   }
   if (adapter?.chat) {
     const started = Date.now();
-    const r = await adapter.chat({
-      channel,
-      model,
-      prompt,
-      messages: [{ role: "user", content: prompt }],
-      images: [],
-      onDelta: () => {},
-      onReasoning: () => {},
-    });
+    const r = await withTimeout(
+      adapter.chat({
+        channel,
+        model,
+        prompt,
+        messages: [{ role: "user", content: prompt }],
+        images: [],
+        onDelta: () => {},
+        onReasoning: () => {},
+        signal,
+      })
+    );
     return {
       ms: Date.now() - started,
       reply: r.content || "",
@@ -75,7 +95,7 @@ async function probeChannelInner(adapter, channel, prompt = "hi") {
     };
   }
   if (adapter?.verify) {
-    const ms = await adapter.verify(channel);
+    const ms = await withTimeout(adapter.verify(channel));
     return { ms, reply: "(健康检查通过，适配器未提供对话探针)", model };
   }
   throw Object.assign(new Error("该渠道适配器不支持检测"), { code: "UNSUPPORTED_CHANNEL" });
