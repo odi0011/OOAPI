@@ -11,7 +11,7 @@
 //   · 轨迹左侧竖线随内容高度过渡
 //   · 正文光标为 2px 圆角条
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ModelLabel } from "./VendorIcon";
+import {} from "./VendorIcon";
 import "./beautifului.css";
 
 /* ============================ LoaderGrid ============================ */
@@ -31,8 +31,7 @@ export function LoaderGrid({ delays = CHEVRON_DELAYS, dur = 650, round = false }
           className={round ? "is-round" : "is-square"}
           style={{
             opacity: delay === null ? 0.07 : 0.15,
-            animation: delay === null ? "none" : `bui-pixel-on ${dur}ms ease-in-out ${delay}ms infinite`,
-          }}
+            animation: delay === null ? "none" : `bui-pixel-on ${dur}ms ease-in-out ${delay}ms infinite`}}
         />
       ))}
     </span>
@@ -78,8 +77,7 @@ export function ThinkingState({
   doneTitle = "已完成思考",
   icon,
   variant = "Steps",
-  defaultExpanded = null,
-}) {
+  defaultExpanded = null}) {
   const [manualExpanded, setManualExpanded] = useState(defaultExpanded);
   const autoExpanded = working;
   const expanded = manualExpanded === null ? autoExpanded : manualExpanded;
@@ -248,8 +246,7 @@ export function TaskRows({ rows = [], variant = "Capsules", className = "", onTo
             className={`bui-taskrow ${list ? "is-list" : "is-capsules"}`}
             style={{
               borderRadius: list ? 0 : open ? 14 : 22,
-              animation: `bui-fade-up 450ms cubic-bezier(0.23,1,0.32,1) ${i * 80}ms both`,
-            }}
+              animation: `bui-fade-up 450ms cubic-bezier(0.23,1,0.32,1) ${i * 80}ms both`}}
           >
             <button
               type="button"

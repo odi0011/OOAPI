@@ -705,7 +705,8 @@ router.get(
 // 并发注意：写回必须**生效在刷新之后**。适配器的 refreshAuth 走 withRefreshLock，
 // 其 persistOtherPatch 是「重读 latest → 合并 patch → 整列 UPDATE」；
 // 如果它在我们写回之后才落库，会把旧 access/refresh_token 覆盖回来（管理员看到
-// 「凭据已更新」但库里其实是旧账号）。这里用同一把刷新锁把写回串起来避免该竞态。
+// 「凭据已更新」但库里其实是旧账号）。这里用 other.cred_epoch 代次解决：
+// 写回时 +1，刷新写回带上发起时的代次，不一致就丢弃本次刷新（见 auth-store.js）。
 async function applyCredentialToChannel({ id, type, method, credential }) {
   const [rows] = await pool.query("SELECT id, type, api_key, other FROM channels WHERE id = ?", [id]);
   if (!rows.length) throw Object.assign(new Error("渠道不存在"), { code: "LOGIN_BAD_PARAMS" });

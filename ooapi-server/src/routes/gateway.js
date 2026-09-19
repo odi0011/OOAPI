@@ -3,7 +3,7 @@
 import express from "express";
 import crypto from "node:crypto";
 import { pool } from "../db.js";
-import { getBoolOption } from "../config.js";
+import {} from "../config.js";
 import { now, clientIp, asyncHandler, assertPublicUrl } from "../utils.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { runCompletion } from "../services/execute.js";
@@ -46,9 +46,7 @@ router.get(
         // owned_by 用厂商类型，便于客户端区分模型来源
         owned_by: m.aliasOf ? m.vendor : m.vendor || m.aliasOf || "unknown",
         ...(m.vendorName ? { vendor_name: m.vendorName } : {}),
-        ...(m.aliasOf ? { alias_of: m.aliasOf, deprecated: true } : {}),
-      })),
-    });
+        ...(m.aliasOf ? { alias_of: m.aliasOf, deprecated: true } : {})}))});
   })
 );
 
@@ -91,8 +89,7 @@ async function authorize(req, res) {
   }
   if (Number(user.quota) <= 0) {
     res.status(403).json({
-      error: { message: `账户 ${CURRENCY} 币余额不足，请联系管理员充值`, type: "insufficient_user_quota", code: "insufficient_user_quota" },
-    });
+      error: { message: `账户 ${CURRENCY} 币余额不足，请联系管理员充值`, type: "insufficient_user_quota", code: "insufficient_user_quota" }});
     return null;
   }
   return { token, user };
@@ -205,8 +202,7 @@ async function extractImages(messages) {
         images.push({
           buffer: Buffer.from(mm[2], "base64"),
           mimeType: mm[1],
-          filename: mm[1].includes("png") ? "image.png" : "image.jpg",
-        });
+          filename: mm[1].includes("png") ? "image.png" : "image.jpg"});
       } else if (/^https?:/i.test(url)) {
         try {
           const img = await fetchRemoteImage(url);
@@ -233,8 +229,7 @@ async function settle({
   channel,
   startedAt = 0,
   firstTokenAt = 0,
-  userAgent = "",
-}) {
+  userAgent = ""}) {
   const { promptTokens, completionTokens, cacheTokens } = splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
   const basePrice = await getPrice(resolveAliasSync(model));
@@ -295,8 +290,7 @@ async function settle({
       priced_at: startedAt || Date.now(),
       rate: Number(gcfg?.rate) || 1,
       amount_units: units,
-      requestId,
-    }),
+      requestId}),
     quota: units,
     ip,
     requestId,
@@ -314,8 +308,7 @@ async function settle({
     firstTokenMs: firstTokenAt && startedAt ? firstTokenAt - startedAt : startedAt ? Date.now() - startedAt : 0,
     elapsedMs: startedAt ? Date.now() - startedAt : 0,
     userAgent,
-    pricePhase: eff.phase,
-  });
+    pricePhase: eff.phase});
   return { units, promptTokens, completionTokens, cacheTokens };
 }
 
@@ -389,8 +382,7 @@ router.post(
             object: "chat.completion.chunk",
             created: Math.floor(Date.now() / 1000),
             model,
-            choices: [{ index: 0, delta, finish_reason: finish }],
-          })}\n\n`
+            choices: [{ index: 0, delta, finish_reason: finish }]})}\n\n`
         );
       send({ role: "assistant" });
       send({ content: notice });
@@ -404,8 +396,7 @@ router.post(
       created: Math.floor(Date.now() / 1000),
       model,
       choices: [{ index: 0, message: { role: "assistant", content: notice }, finish_reason: "stop" }],
-      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-    });
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }});
   }
   // 图片校验交由各厂商适配器判断（不同厂商支持的模型不同），
   // 网关只做「超 3 张」的通用限制（见上）。
@@ -431,8 +422,7 @@ router.post(
         object: "chat.completion.chunk",
         created: Math.floor(Date.now() / 1000),
         model,
-        choices: [{ index: 0, delta, finish_reason: finishReason }],
-      })}\n\n`
+        choices: [{ index: 0, delta, finish_reason: finishReason }]})}\n\n`
     );
   };
 
@@ -476,8 +466,7 @@ router.post(
           startStream();
           sendChunk({ reasoning_content: t });
         }
-      },
-    });
+      }});
 
     // 扣费函数内部已区分：确定未扣（余额不足等）走 catch 部分结算；结果不确定（BILLING_UNCERTAIN）跳过
     const settled = await settle({
@@ -492,8 +481,7 @@ router.post(
       channel: result.channel,
       startedAt,
       firstTokenAt,
-      userAgent,
-    });
+      userAgent});
     settledOnce = true;
 
     if (wantStream) {
@@ -515,23 +503,19 @@ router.post(
             message: {
               role: "assistant",
               content: result.content,
-              ...(result.reasoning ? { reasoning_content: result.reasoning } : {}),
-            },
-            finish_reason: "stop",
-          },
+              ...(result.reasoning ? { reasoning_content: result.reasoning } : {})},
+            finish_reason: "stop"},
         ],
         usage: {
           // 严格遵循 OpenAI usage 结构，扩展字段放到顶层 x_* （严格 SDK 会校验 usage 子字段）
           prompt_tokens: settled.promptTokens,
           completion_tokens: settled.completionTokens,
           total_tokens: settled.promptTokens + settled.completionTokens,
-          ...(settled.cacheTokens ? { prompt_tokens_details: { cached_tokens: settled.cacheTokens } } : {}),
-        },
+          ...(settled.cacheTokens ? { prompt_tokens_details: { cached_tokens: settled.cacheTokens } } : {})},
         x_od_cost: Number((settled.units / UNITS_PER_OD).toFixed(6)),
         x_currency: CURRENCY,
         x_channel: result.channel?.name,
-        x_latency_ms: result.elapsed,
-      });
+        x_latency_ms: result.elapsed});
     }
   } catch (err) {
     const code = err.code || "UPSTREAM_ERROR";
@@ -557,8 +541,7 @@ router.post(
           channel: err.channelId ? { id: err.channelId, name: err.channelName } : null,
           startedAt,
           firstTokenAt,
-          userAgent,
-        });
+          userAgent});
       } catch (e2) {
         console.error(`[gateway] ${requestId} 部分结算失败：${e2.message}`);
       }
@@ -578,8 +561,7 @@ router.post(
       tokenName: token?.name || "",
       groupName: token?.group_name || user?.group_name || "",
       elapsedMs: Date.now() - startedAt,
-      userAgent,
-    });
+      userAgent});
     // 错误码 → HTTP 状态要能区分「调用方请求错」与「网关/上游故障」，
     // 否则客户端会把 400/429 当成 502 盲目重试。
     const status =

@@ -4,7 +4,7 @@ import { pool } from "../db.js";
 import { ok, fail, asyncHandler, clientIp, now, genAffCode, userToResponse } from "../utils.js";
 import { authRequired, signToken } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
-import { getOption, getBoolOption, getNumberOption } from "../config.js";
+import { getBoolOption, getNumberOption } from "../config.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 
 const router = Router();

@@ -149,7 +149,16 @@ function buildQuery({ isAdmin, userId, kind, query, defaultDays = 0 }) {
 async function listLogs(req, res, kind) {
   const isAdmin = Number(req.user.role) >= 100;
   const { p, size, offset } = pageParams(req.query);
-  const { where, args } = buildQuery({ isAdmin, userId: req.user.id, kind, query: req.query });
+  // 默认 30 天窗口：与 /usage/summary、/usage/filters 保持同一口径。
+  // 不这么做的后果是「裸调接口（不带 days）时列表是全量、卡片是近 30 天」——
+  // 同一页两个口径会误导，且全量 COUNT(*) 在大表上没有上界。
+  const { where, args } = buildQuery({
+    isAdmin,
+    userId: req.user.id,
+    kind,
+    query: req.query,
+    defaultDays: 30,
+  });
   const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total FROM logs ${where}`, args);
   // 显式列出需要的列而不是 SELECT *：
   //   · detail 是 TEXT，只有管理员在详情里会看，列表页取回来纯属浪费带宽；

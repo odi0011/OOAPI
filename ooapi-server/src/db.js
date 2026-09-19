@@ -328,16 +328,28 @@ const TYPE_MIGRATIONS = [
 
 async function ensureColumnTypes() {
   for (const m of TYPE_MIGRATIONS) {
-    const [rows] = await pool.query(
-      "SELECT data_type AS t, character_maximum_length AS len FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
-      [m.table, m.column]
-    );
-    if (!rows.length) continue;
-    const typeChanged = String(rows[0].t).toLowerCase() !== m.dataType;
-    const tooShort = m.minLen && Number(rows[0].len || 0) < m.minLen;
-    if (typeChanged || tooShort) {
-      await pool.query(`ALTER TABLE ${m.table} MODIFY ${m.column} ${m.ddl}`);
-      console.log(`[migrate] ${m.table}.${m.column} 已扩容为 ${m.ddl}`);
+    try {
+      const [rows] = await pool.query(
+        "SELECT data_type AS t, character_maximum_length AS len FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+        [m.table, m.column]
+      );
+      if (!rows.length) continue;
+      const typeChanged = String(rows[0].t).toLowerCase() !== m.dataType;
+      const tooShort = m.minLen && Number(rows[0].len || 0) < m.minLen;
+      if (typeChanged || tooShort) {
+        // 同一连接上限时（与 ensureColumns 同理：pool.query 每次取不同连接）
+        const conn = await pool.getConnection();
+        try {
+          await conn.query("SET SESSION lock_wait_timeout = 20");
+          await conn.query(`ALTER TABLE ${m.table} MODIFY ${m.column} ${m.ddl}`);
+        } finally {
+          conn.release();
+        }
+        console.log(`[migrate] ${m.table}.${m.column} 已扩容为 ${m.ddl}`);
+      }
+    } catch (e) {
+      // 扩容失败不应阻断启动（下次启动会重试）；缺列型问题由 ensureColumns 覆盖
+      console.error(`[migrate] ${m.table}.${m.column} 扩容失败（下次启动会重试）：${e.message}`);
     }
   }
 }
@@ -353,24 +365,44 @@ async function ensureColumns() {
     byTable.get(m.table).push(m);
   }
   for (const [table, cols] of byTable) {
+    const [rows] = await pool
+      .query("SELECT column_name AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?", [
+        table,
+      ])
+      .catch(() => [[]]);
+    const have = new Set(rows.map((r) => String(r.c).toLowerCase()));
+    const missing = cols.filter((m) => !have.has(m.column.toLowerCase()));
+    if (!missing.length) continue;
+
+    // 必须在**同一个连接**上 SET SESSION + ALTER：mysql2 的 pool.query 每次独立取连接，
+    // 分两条语句发出去时 SET 很可能落在别的连接上（限时不生效），
+    // 而这条连接归还后 20s 的 lock_wait_timeout 还会残留给后续无关查询。
+    const conn = await pool.getConnection();
     try {
-      const [rows] = await pool.query(
-        "SELECT column_name AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?",
-        [table]
-      );
-      const have = new Set(rows.map((r) => String(r.c).toLowerCase()));
-      const missing = cols.filter((m) => !have.has(m.column.toLowerCase()));
-      if (!missing.length) continue;
       // 单表 ALTER 限时：大表上可能长时间等 MDL，把启动卡死。
       // 超时/失败都只记日志继续 —— 补列是幂等的，下次启动会重试；
       // 而「因为一列加不上就让服务起不来」（配合 systemd Restart=always 会变成
       // 三秒重启一次的死循环，站点全挂）是更严重的问题。
-      await pool.query("SET SESSION lock_wait_timeout = 20");
+      await conn.query("SET SESSION lock_wait_timeout = 20");
       const clause = missing.map((m) => `ADD COLUMN ${m.column} ${m.ddl}`).join(", ");
-      await pool.query(`ALTER TABLE ${table} ${clause}`);
-      console.log(`[migrate] ${table} 已补齐 ${missing.length} 列：${missing.map((m) => m.column).join(", ")}`);
-    } catch (e) {
-      console.error(`[migrate] ${table} 补列失败（下次启动会重试）：${e.message}`);
+      try {
+        await conn.query(`ALTER TABLE ${table} ${clause}`);
+        console.log(`[migrate] ${table} 已补齐 ${missing.length} 列：${missing.map((m) => m.column).join(", ")}`);
+      } catch (e) {
+        // 合并 ALTER 里只要有一列不合法，整条都会失败 → 退化为逐列，
+        // 让能加的列先加上（与合并前行为一致，不会因一列坏掉让整表停在半迁移状态）。
+        console.warn(`[migrate] ${table} 合并补列失败（${e.message}），改为逐列重试`);
+        for (const m of missing) {
+          try {
+            await conn.query(`ALTER TABLE ${table} ADD COLUMN ${m.column} ${m.ddl}`);
+            console.log(`[migrate] ${table}.${m.column} 已添加`);
+          } catch (e2) {
+            console.error(`[migrate] ${table}.${m.column} 补列失败（下次启动会重试）：${e2.message}`);
+          }
+        }
+      }
+    } finally {
+      conn.release();
     }
   }
 }
@@ -391,6 +423,17 @@ const INDEX_MIGRATIONS = [
 ];
 
 async function ensureIndexes() {
+  // 先清掉被复合索引取代的旧单列索引：idx_logs_channel / idx_logs_model 是早期版本建的，
+  // 现在的查询恒带 type + created_at，复合索引已完全覆盖它们的用途；
+  // 留着只会让每次写日志多维护两棵 B+Tree（写放大）。
+  for (const name of ["idx_logs_channel", "idx_logs_model"]) {
+    try {
+      await pool.query(`DROP INDEX ${name} ON logs`);
+      console.log(`[migrate] 已移除冗余索引 ${name}（复合索引已覆盖）`);
+    } catch {
+      /* 不存在（新库）或权限不足：都不影响启动 */
+    }
+  }
   for (const ddl of INDEX_MIGRATIONS) {
     try {
       await pool.query(ddl);

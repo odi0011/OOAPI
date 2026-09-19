@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { Table, Tag, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions } from "antd";
 import { ReloadOutlined, HistoryOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
-import { fmtDate, fmtOd, unitsPerOd, CURRENCY_NAME } from "../services/format";
+import { fmtDate, fmtOd, unitsPerOd } from "../services/format";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
@@ -48,7 +48,8 @@ export default function OperationLogPage() {
   const { begin, isLatest } = useLatest();
 
   const params = useMemo(
-    () => ({ days: days || undefined, keyword: keyword || undefined, type: type || undefined }),
+    // days 显式传（含 0=全部）：与使用记录页同一写法，避免后端默认值变化后两边口径分裂
+    () => ({ days, keyword: keyword || undefined, type: type || undefined }),
     [days, keyword, type]
   );
 

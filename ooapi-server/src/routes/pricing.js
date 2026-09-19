@@ -4,7 +4,7 @@ import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
-import { invalidatePrices, UNITS_PER_OD, CURRENCY, loadPrices, DEFAULT_PRICES, describeRule } from "../services/pricing.js";
+import { invalidatePrices, DEFAULT_PRICES, describeRule } from "../services/pricing.js";
 import { modelRegistry, invalidateModelRegistry } from "../services/models.js";
 
 const router = Router();
@@ -78,8 +78,7 @@ router.get(
         remark: r.remark || "",
         updated_time: Number(r.updated_time) || 0,
         // 折算展示：输入/输出各 1M token 的总价
-        cost_1m_both: Number((Number(r.input_price) + Number(r.output_price)).toFixed(4)),
-      }))
+        cost_1m_both: Number((Number(r.input_price) + Number(r.output_price)).toFixed(4))}))
     );
   })
 );
@@ -90,8 +89,7 @@ router.put(
   asyncHandler(async (req, res) => {
     const {
       model, input_price, output_price, cache_price, channel_type, remark,
-      offpeak_input_price, offpeak_output_price, offpeak_cache_price, offpeak_rule,
-    } = req.body || {};
+      offpeak_input_price, offpeak_output_price, offpeak_cache_price, offpeak_rule} = req.body || {};
     const m = String(model || "").trim();
     if (!m) return fail(res, "缺少模型 ID");
     // 与导入同一套严格口径：只允许平台已注册的模型
@@ -209,8 +207,7 @@ const HEADER_ALIASES = {
   offpeak_cache: "offpeak_cache", offpeak_cache_price: "offpeak_cache", 闲时缓存: "offpeak_cache",
   offpeak_rule: "offpeak_rule", 闲时规则: "offpeak_rule",
   type: "type", channel_type: "type", 类型: "type",
-  remark: "remark", source: "remark", 来源: "remark", 备注: "remark",
-};
+  remark: "remark", source: "remark", 来源: "remark", 备注: "remark"};
 
 function parseEntries(raw) {
   const text = String(raw || "").trim();
@@ -314,8 +311,7 @@ router.post(
           offpeakCache,
           offpeakRule,
           type: reg.type || type,
-          remark: String(entry.remark ?? entry.source ?? "").slice(0, 255),
-        });
+          remark: String(entry.remark ?? entry.source ?? "").slice(0, 255)});
       } catch (e) {
         rejected.push({ line, model, reason: e.message });
       }
@@ -365,8 +361,7 @@ router.post(
       req,
       user: req.user,
       type: LOG_TYPE.MANAGE,
-      content: `导入模型定价：新增 ${inserted} 条、更新 ${updated} 条、拒绝 ${rejected.length} 条`,
-    });
+      content: `导入模型定价：新增 ${inserted} 条、更新 ${updated} 条、拒绝 ${rejected.length} 条`});
     return ok(res, { total: parsed.length, inserted, updated, rejected }, `导入完成：新增 ${inserted}，更新 ${updated}，拒绝 ${rejected.length}`);
   })
 );
@@ -389,8 +384,7 @@ router.post(
       req,
       user: req.user,
       type: LOG_TYPE.MANAGE,
-      content: `清理无效定价 ${dead.length} 条${dead.length ? `：${dead.slice(0, 10).join("、")}` : ""}`,
-    });
+      content: `清理无效定价 ${dead.length} 条${dead.length ? `：${dead.slice(0, 10).join("、")}` : ""}`});
     return ok(res, { removed: dead }, dead.length ? `已删除 ${dead.length} 条无效定价` : "没有发现无效定价");
   })
 );

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, now, safeJSONParse, userToResponse, pageParams, idParam } from "../utils.js";
+import { ok, fail, asyncHandler, userToResponse, pageParams, idParam } from "../utils.js";
 import { authRequired, adminRequired, signToken } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
@@ -90,8 +90,7 @@ router.get(
       used_quota: Number(req.user.used_quota),
       request_count: req.user.request_count,
       consume_in_logs: consume,
-      daily,
-    });
+      daily});
   })
 );
 
@@ -168,8 +167,7 @@ router.put(
       req,
       user: req.user,
       type: LOG_TYPE.MANAGE,
-      content: `编辑用户 #${id}（${user.username}）`,
-    });
+      content: `编辑用户 #${id}（${user.username}）`});
     const [fresh] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
     return ok(res, userToResponse(fresh[0]), "已更新");
   })
@@ -198,8 +196,7 @@ router.post(
       // 扣除用「管理」类型、充值用「充值」类型：日志页按类型显示 +/- 符号
       type: quota > 0 ? LOG_TYPE.TOPUP : LOG_TYPE.MANAGE,
       content: `${quota > 0 ? "补充" : "扣除"} ${Math.abs(quota)} 额度给 ${user.username}（${user.display_name || user.username} 当前 ${newQuota}）`,
-      quota: Math.abs(quota),
-    });
+      quota: Math.abs(quota)});
     return ok(res, userToResponse(fresh[0]), "额度已调整");
   })
 );

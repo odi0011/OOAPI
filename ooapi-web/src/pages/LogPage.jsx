@@ -97,7 +97,13 @@ export default function LogPage() {
       setLoadError(msg);
       message.error(msg);
     }
-    if (sumRes.status === "fulfilled") setSummary(sumRes.value);
+    if (sumRes.status === "fulfilled") {
+      setSummary(sumRes.value);
+    } else {
+      // 失败时清空而不是保留上一次的数据：否则切到「全部」后汇总挂了，
+      // 会看到「旧范围的卡片 + 新范围的表格」并存，比看不到更误导。
+      setSummary(null);
+    }
     setLoading(false);
   }, [params, page, pageSize, message, begin, isLatest]);
 

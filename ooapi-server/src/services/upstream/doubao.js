@@ -8,7 +8,7 @@
 //   · api_key       → 可留空（浏览器用自己 cookie 里的 sessionid）
 //   · other.profile → 设备指纹（浏览器 profile 天然稳定）
 // ---------------------------------------------------------------------------
-import { createDoubaoParser, extractSseData } from "./doubao-parser.js";
+import { createDoubaoParser} from "./doubao-parser.js";
 import { resolveModel } from "./doubao-models.js";
 import { resolveProfile } from "./shared-profile.js";
 import {
@@ -21,8 +21,7 @@ import {
   withLock,
   closeSession,
   newConversation,
-  markReady,
-} from "./browser-driver.js";
+  markReady} from "./browser-driver.js";
 
 const ENTRY_URL = "https://www.doubao.com/chat/";
 // 两个可能的端点都监听（不同版本页面用不同接口）
@@ -44,8 +43,7 @@ export async function verify(channel) {
     vendor: "doubao",
     channelId: channel.id,
     entryUrl: ENTRY_URL,
-    profile,
-  });
+    profile});
 
   return withLock(session, async () => {
     const { page } = session;
@@ -76,8 +74,7 @@ export async function chat({
   images = [],
   onDelta,
   onReasoning,
-  signal,
-}) {
+  signal}) {
   const resolved = resolveModel(model);
   const thinking = thinkingOverride !== undefined ? Boolean(thinkingOverride) : resolved.thinking;
 
@@ -100,8 +97,7 @@ export async function chat({
     vendor: "doubao",
     channelId: channel.id,
     entryUrl: ENTRY_URL,
-    profile,
-  });
+    profile});
 
   return withLock(session, async () => {
     const { page } = session;
@@ -120,8 +116,7 @@ export async function chat({
     const filled = await fillInput(page, prompt);
     if (!filled) {
       throw Object.assign(new Error("找不到输入框，页面结构可能已变化（建议用抓包模式核对）"), {
-        code: "CHANNEL_NOT_READY",
-      });
+        code: "CHANNEL_NOT_READY"});
     }
 
     let submitted = false;
@@ -147,8 +142,7 @@ export async function chat({
       timeoutMs: 180_000,
       signal,
       onChunk: pump,
-      shouldStop: () => Boolean(parser.error || parser.finished),
-    });
+      shouldStop: () => Boolean(parser.error || parser.finished)});
 
     if (res.error === "ABORTED" || signal?.aborted) {
       throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
@@ -179,8 +173,7 @@ export async function chat({
       content: parser.content,
       usage: parser.usage,
       conversationId: parser.conversationId,
-      upstreamModel: `${resolved.model}(bot:${resolved.botId})`,
-    };
+      upstreamModel: `${resolved.model}(bot:${resolved.botId})`};
   });
 }
 

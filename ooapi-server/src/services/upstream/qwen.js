@@ -8,7 +8,7 @@
 //   · api_key       → 可留空（浏览器用自己 cookie 里的登录态）
 //   · other.profile → 设备指纹
 // ---------------------------------------------------------------------------
-import { createQwenParser, extractQwenSseData } from "./qwen-parser.js";
+import { createQwenParser} from "./qwen-parser.js";
 import { resolveModel } from "./qwen-models.js";
 import { resolveProfile } from "./shared-profile.js";
 import {
@@ -21,8 +21,7 @@ import {
   withLock,
   closeSession,
   newConversation,
-  markReady,
-} from "./browser-driver.js";
+  markReady} from "./browser-driver.js";
 
 // 国际版与 CN 版的入口
 const ENTRY_URL = "https://chat.qwen.ai/";
@@ -42,8 +41,7 @@ export async function verify(channel) {
     vendor: "qwen",
     channelId: channel.id,
     entryUrl: ENTRY_URL,
-    profile,
-  });
+    profile});
 
   return withLock(session, async () => {
     const { page } = session;
@@ -83,8 +81,7 @@ export async function chat({
   images = [],
   onDelta,
   onReasoning,
-  signal,
-}) {
+  signal}) {
   const resolved = resolveModel(model);
   const thinking = thinkingOverride !== undefined ? Boolean(thinkingOverride) : resolved.thinking;
 
@@ -107,8 +104,7 @@ export async function chat({
     vendor: "qwen",
     channelId: channel.id,
     entryUrl: ENTRY_URL,
-    profile,
-  });
+    profile});
 
   return withLock(session, async () => {
     const { page } = session;
@@ -125,8 +121,7 @@ export async function chat({
     const filled = await fillInput(page, prompt);
     if (!filled) {
       throw Object.assign(new Error("找不到输入框，页面结构可能已变化（建议用抓包模式核对）"), {
-        code: "CHANNEL_NOT_READY",
-      });
+        code: "CHANNEL_NOT_READY"});
     }
 
     let submitted = false;
@@ -152,8 +147,7 @@ export async function chat({
       timeoutMs: 180_000,
       signal,
       onChunk: pump,
-      shouldStop: () => Boolean(parser.error || parser.finished),
-    });
+      shouldStop: () => Boolean(parser.error || parser.finished)});
 
     if (res.error === "ABORTED" || signal?.aborted) {
       throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
@@ -181,8 +175,7 @@ export async function chat({
       reasoning: parser.reasoning,
       content: parser.content,
       usage: parser.usage,
-      upstreamModel: resolved.upstream,
-    };
+      upstreamModel: resolved.upstream};
   });
 }
 

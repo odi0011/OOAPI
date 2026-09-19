@@ -14,7 +14,7 @@
 import crypto from "node:crypto";
 import { runCompletion } from "../execute.js";
 import { modelForChannelMatch } from "../models.js";
-import { findAgent, buildSystemPrompt, SUBAGENTS } from "./agents.js";
+import { buildSystemPrompt, SUBAGENTS } from "./agents.js";
 import { toolSpecs, runTool } from "./tools.js";
 import { DEFAULT_MAX_STEPS } from "./sessions.js";
 
@@ -299,8 +299,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
               emit: null, // 子代理过程不直接展示，结果通过 task 工具返回
               onTodo: null,
               onCall: record,
-              modelCaps,
-            },
+              modelCaps},
             billing,
             depth + 1
           );
@@ -327,8 +326,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       toolSpecs: specs,
       todo,
       subagents: SUBAGENTS,
-      depth,
-    });
+      depth});
 
     const stream = new StepStream();
     let textPart = null;
@@ -374,8 +372,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       onReasoning: (t) => {
         markStepFirstToken();
         appendReasoning(t);
-      },
-    });
+      }});
 
     const { text: tail, call, bad } = stream.finish();
     appendText(tail);
@@ -388,8 +385,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       channelId: Number(result.channel?.id) || 0,
       // 单步耗时与首 token：使用记录里按「整轮」汇总展示（见 chat.js 的 chargeUser）
       startedAt: stepStartedAt,
-      firstTokenAt: stepFirstTokenAt || stepStartedAt,
-    });
+      firstTokenAt: stepFirstTokenAt || stepStartedAt});
 
     const stepText = (textPart?.text || "").trim();
     if (stepText) lastText = stepText;
@@ -402,8 +398,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
         content:
           "你上一条的工具调用格式无法解析。调用必须严格写成：\n" +
           `${OPEN_TAG}{"tool":"工具名","args":{...}}${CLOSE_TAG}\n` +
-          "请重新输出合法的调用，或者直接给出最终回答。",
-      });
+          "请重新输出合法的调用，或者直接给出最终回答。"});
       if (step === maxSteps) hitLimit = true;
       continue;
     }
@@ -423,8 +418,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
           // 最近调用里显示调用方（工具触发的上游请求也归属到同一次对话的用户）
           user,
           // 某些上游（如网页版反代）不支持联网搜索：工具要据此拒绝，而不是发一次必定失败的请求
-          searchSupported: modelCaps?.supportsSearch !== false,
-        })
+          searchSupported: modelCaps?.supportsSearch !== false})
       : { ok: false, output: `工具「${call.tool}」在本轮不可用；可用工具：${specs.map((s) => s.id).join("、") || "（无）"}` };
 
     const patch = { status: res.ok ? "done" : "failed", output: String(res.output || "").slice(0, 12000), ended: Date.now() };
@@ -442,8 +436,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       role: "user",
       content:
         `<tool_result tool="${call.tool}" ok="${res.ok}">\n${patch.output}\n</tool_result>\n` +
-        (step === maxSteps ? "这已经是最后一步：不要再调用工具，请直接给出最终回答。" : "需要更多信息就继续调用工具，否则直接给出最终回答。"),
-    });
+        (step === maxSteps ? "这已经是最后一步：不要再调用工具，请直接给出最终回答。" : "需要更多信息就继续调用工具，否则直接给出最终回答。")});
     if (step === maxSteps) hitLimit = true;
   }
 
