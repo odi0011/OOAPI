@@ -7,6 +7,10 @@
 // 用法（在服务器上）：
 //   cd ooapi-server && node tests/monitor-smoke.mjs           # 自动取一个管理员生成令牌
 // 需要数据库可连（用 db.js 里的 pool 直接签令牌，不需要知道管理员密码）。
+//
+// 必须显式加载 .env：正式服务由 index.js 里的 `import "dotenv/config"` 加载，
+// 测试脚本直接 import db.js 就拿不到 DB_PASSWORD —— 会报 ER_ACCESS_DENIED。
+import "dotenv/config";
 import assert from "node:assert/strict";
 import jwt from "jsonwebtoken";
 

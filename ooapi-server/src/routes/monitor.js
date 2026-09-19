@@ -472,11 +472,17 @@ router.get(
 router.post(
   "/alert/cleanup",
   asyncHandler(async (req, res) => {
-    const days = Math.min(3650, Math.max(0, Number(req.body?.days ?? getNumberOption("alert_retention_days")) || 30));
-    if (days <= 0) return fail(res, "保留天数为 0 会清空全部告警历史，请显式填写要清理的天数");
-    const [r] = await pool.query("DELETE FROM alert_events WHERE created_time < ?", [now() - days * 86400]);
-    await pool.query("DELETE FROM alert_notify_logs WHERE created_time < ?", [now() - days * 86400]);
-    return ok(res, { deleted: r.affectedRows }, `已清理 ${r.affectedRows} 条历史告警`);
+    // 注意不能写成 `Number(x) || 30`：显式传 days=0 会被 0 是 falsy 这条规则
+    // 悄悄变成 30，把「清空全部」的保护性拒绝变成「删掉 30 天前的数据」。
+    const raw = req.body?.days ?? getNumberOption("alert_retention_days");
+    const days = Number(raw);
+    if (!Number.isFinite(days) || days <= 0) {
+      return fail(res, "保留天数必须大于 0；清空全部告警历史属于危险操作，不予执行");
+    }
+    const keep = Math.min(3650, Math.floor(days));
+    const [r] = await pool.query("DELETE FROM alert_events WHERE created_time < ?", [now() - keep * 86400]);
+    await pool.query("DELETE FROM alert_notify_logs WHERE created_time < ?", [now() - keep * 86400]);
+    return ok(res, { deleted: r.affectedRows, days: keep }, `已清理 ${r.affectedRows} 条历史告警（保留 ${keep} 天）`);
   })
 );
 
