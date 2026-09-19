@@ -26,6 +26,7 @@ const ADAPTERS = {
   antigravity: () => import("./upstream/antigravity.js"),
   "grok-oauth": () => import("./upstream/grok.js"),
   kiro: () => import("./upstream/kiro.js"),
+  "openai-web": () => import("./upstream/openai-web.js"),
 };
 
 /**

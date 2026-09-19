@@ -20,7 +20,7 @@
 //   antigravity  Google 订阅（Antigravity/Code Assist OAuth）
 //   grok-oauth   xAI Grok 订阅（device-code OAuth，responses 协议）
 // 与 relay 的区别：不需要浏览器，凭据是 OAuth 令牌（粘贴官方 CLI / CPA / sub2api 的凭据文件）
-export const OAUTH_METHODS = ["codex", "claude-oauth", "antigravity", "grok-oauth", "kiro"];
+export const OAUTH_METHODS = ["codex", "claude-oauth", "antigravity", "grok-oauth", "kiro", "openai-web"];
 
 export function isOAuthMethod(key) {
   return OAUTH_METHODS.includes(String(key || ""));
@@ -245,6 +245,25 @@ export const PROVIDERS = [
           { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
           { id: "gpt-5.5", name: "GPT-5.5" },
           { id: "codex-auto-review", name: "Codex Auto Review" },
+        ],
+        testModel: "gpt-5.6-luna",
+      },
+      {
+        // 第三方网页版反代：ChatGPT Web（chat2api 协议），模型与计费仍归 OpenAI
+        key: "openai-web",
+        adapter: "openai-web",
+        label: "反代（网页版）",
+        desc: "用 ChatGPT 网页版账号跑对话（无需 Codex 订阅）",
+        loginModes: ["paste"],
+        loginFields: oauthCredentialField(
+          '{ "accessToken": "...", "refreshToken": "可选" }',
+          "登录 chatgpt.com 后打开 /api/auth/session 复制 accessToken；带 refreshToken 可自动续期"
+        ),
+        pasteHint: "ChatGPT 网页版 access_token：走网页版对话额度；触发风控的账号会显式报错，请换号",
+        defaultModels: [
+          { id: "gpt-5.6-luna", name: "GPT-5.6 Luna" },
+          { id: "gpt-5.5", name: "GPT-5.5" },
+          { id: "gpt-4o", name: "GPT-4o" },
         ],
         testModel: "gpt-5.6-luna",
       },
