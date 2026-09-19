@@ -869,3 +869,45 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   R19 清理：未使用导入删除、README 管理员密码流程改为 `.admin-password` 说明。
   验证：全量 66 个后端文件 `node --check` 通过、前端构建通过；线上部署 `f45e515` 后渠道页/统计弹窗/添加弹窗/网关鉴权（0 额度 Key 正确 403）实测正常，无哨兵残留。
   已知取舍（评估后接受）：渠道创建并发去重仍是「先查后插」（单管理员操作，双并发概率极低）；`other` 列多处读改写未统一原子化（涉及面广，改动风险大于收益）；DNS rebinding 出站 TOCTOU 仍存在（已收窄触发面）。 |
+
+## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
+
+> 目标：把开源社区已有的「网页版反代 / 工具类反代」按**厂商**归类接入平台，
+> 工具（Kiro/Trae/Cursor/Windsurf/OpenCode/zcode/WorkBuddy 等）只是子类型标签，
+> 模型与计费归属对应厂商。渠道界面呈现为「厂商=Anthropic，渠道类型=反代（Kiro）」。
+
+### 7.1 调研结论（参考实现）
+
+| 厂商 | 子类型 | 参考开源项目 | 凭据形态 / 协议要点 |
+|---|---|---|---|
+| Anthropic | **Kiro（AWS Q/CodeWhisperer）** | jwadow/kiro-gateway、dwgx/KiroStudio（源自 hank9999/kiro.rs）、awei84/KiroGate、jx-zyf/kiro-proxy、jasminnanda/kirogo | ① Kiro Desktop：`prod.{region}.auth.desktop.kiro.dev/refreshToken`；② AWS SSO(OIDC)：`oidc.{region}.amazonaws.com/token`（clientId/clientSecret）；上游 `codewhisperer.{region}.amazonaws.com/generateAssistantResponse`，`application/vnd.amazon.eventstream` 流；凭据 JSON 含 accessToken/refreshToken/region/profileArn(可选) |
+| Anthropic | Trae / Cursor / Windsurf / OpenCode / zcode / WorkBuddy | cursor-to-api、windsurf-api 等 | 多为 IDE 侧凭据 + 私有签名，需逐个逆向，插件化实现 |
+| OpenAI | **ChatGPT 网页版（chat2api）** | lanqian528/chat2api、Cyrene963/chat2api、xqdoo00o/ChatGPT-to-API | access_token / refresh_token（`chatgpt.com/api/auth/session`）；协议与 codex 相邻（responses API）；Plus 号可能需 Arkose/Turnstile |
+| Google | Gemini 网页版（HanaokaYuzu/Gemini-API） | Gemini-API、Bard-API | `__Secure-1PSID` 等 cookie；capture 已有基础设施可直接抓 |
+| xAI | Grok 网页版 | grok-web 类项目 | 网页 session；目前已有 device OAuth，优先级低 |
+
+### 7.2 架构方案
+
+- `channel-types.js`：厂商 methods 增加「工具反代」条目（如 `{ key: "relay-kiro", label: "反代（Kiro）", adapter: "kiro", loginModes: ["paste","capture"] }`），
+  保持 `adapterFor()` 现有语义（方法上声明 adapter）。
+- 每个工具一个适配器文件（`upstream/kiro.js` 等），复用：
+  - `auth-store.js`（刷新+持久化）、`browser-driver`（如需网页登录）、`auth-import.js`（凭据导入）。
+- 计费/模型归属厂商：适配器内部把工具模型 ID 映射到厂商模型表（如 `claude-sonnet-4.5`）。
+
+### 7.3 交付批次（每批：实现 → 单测/桩测 → 十轮审查 → 线上验证）
+
+1. **Kiro（Anthropic）**：JWKS 无需，直接 bearer；重写 refresh + eventstream 解析；支持粘贴 Kiro auth JSON / `REFRESH_TOKEN`。
+2. **chat2api（OpenAI 网页版）**：access_token 直连 + responses 流解析；Arkose 账号标记为不支持并显式报错。
+3. **Gemini 网页版（Google）**：cookie 粘贴 + capture 抓取，复用现有 noVNC 登录。
+4. **IDE 工具批量**（Trae/Cursor/Windsurf/OpenCode/zcode/WorkBuddy）：每个工具一个适配器，按社区实现逆向，逐个灰度。
+5. **统一收尾**：模型映射表、测试用例、文档、UI 标签。
+
+### 7.4 功能测试前置条件（需要提供）
+
+每个工具/网页反代需要**至少一个真实账号凭据**才能做功能测试：
+- Kiro：`kiro-auth-token.json`（或 Builder ID 的 refresh token）
+- ChatGPT 网页版：有效 `access_token`（或 RT）
+- Gemini 网页版：`__Secure-1PSID` 等 cookie
+- IDE 工具：对应工具的登录凭据
+
+没有凭据时只能做到「代码完成 + 静态检查 + 桩测试」，无法完成真实链路验证。
