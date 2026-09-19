@@ -400,6 +400,35 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 - [ ] **`explainNoChannel` 的提示语**：`models` 留空语义生效后，「没有可用渠道」的原因可能是
   「该模型不属于该厂商/未登记」或「登记表未就绪」，提示语仍只说「为某个渠道添加该模型」，排障时会被误导。
 
+### 第 31–33 批遗留（日志明细化 / 峰谷计费 / 十轮审查）
+
+- [ ] **Claude 额度 utilization 口径待真机确认**：十轮审查中唯一无法在仓库内证实的项 ——
+  `/api/oauth/usage` 的 `utilization` 我们按 0-100 百分数处理（依据是同一响应里 `limits[].percent`
+  的命名），若上游实际给 0-1 比例，用量会显示成 1/100（不报错、只是数字偏小）。
+  有 Claude 订阅凭据后打一次日志核对；若是 0-1，`quota.js` 两处改成 `pctFromFraction` 即可。
+- [ ] **站内对话跨峰谷按整轮判档**：一轮最多 16 步、可跨峰谷边界（如 11:59 发起、13:00 结束），
+  现在整轮按发起时刻判档（与网关口径一致）。要精确到每步需按 `runCalls[i].startedAt` 分别计费后求和。
+- [ ] **`detail` 缺规则快照**：`priced_at + price_phase` 只能看出「当时判成峰/谷」，
+  无法在规则被改后复现判定依据；建议补 `offpeak_rule` 快照（或规则哈希）。
+- [ ] **扣费不确定/部分结算失败无审计留痕**：`BILLING_UNCERTAIN` 与部分结算自身抛错时只有 ERROR 日志，
+  事后无法证明扣没扣、也无法复算；建议补一条带 `amount_units/price/priced_at` 的记录。
+- [ ] **`tokens.remain_quota` 与用户扣费非同事务**：best-effort 更新失败会让「令牌级限额」失效
+  （用户余额仍是硬约束，不会直接跑钱）。同进程内同时失败概率低，但可考虑合并进一个事务。
+- [ ] **模型列表按密钥过滤的边界**：`/v1/models` 不按 `model_limits` 过滤（会向受限 Key 暴露模型目录）；
+  站内对话里管理员豁免密钥层限制。
+- [ ] **单用户无上限的资源入口**：会话/令牌/项目的创建数量无上限，`/run` 只按会话去重
+  （同一用户开 N 个会话即可 N 路并发）。建议加每用户条数上限与并发上限。
+- [ ] **`verify` / `fetchQuota` 未过渠道限速闸门**：`withChannelLimit` 只包了 chat 链路，
+  健康检查与额度查询是直连（预算内有次数限制，但批量操作仍可能并发打同一账号）。
+- [ ] **`closeSession` 不等锁**：管理员关浏览器会话时若正有流在跑，会被腰斩成半截输出
+  （execute 按失败处理）；建议 `closeSession` 也走 `withLock` 或等待 inFlight 归零。
+- [ ] **老库 `logs` 新列无历史回填**：新列对老日志永远是默认值（列表页显示 0 token/空模型），
+  渠道统计只补了渠道归属；要么补一次性幂等回填，要么在文档里明确「老日志仅统计不展示明细」。
+- [ ] **`operation-log` 的 `days=0` 全历史 GROUP BY**：单用户全历史做两次聚合，
+  量大时建议观察慢查询再加「候选值最多回溯 N 天」上限。
+- [ ] **`SET SESSION` 类迁移的通用做法**：本次已修 `ensureColumns`/`ensureColumnTypes`，
+  但其它脚本（`migrate*.mjs`）如将来需要会话级设置，记得同样用单连接。
+
 ### 长期/设计取舍项（已评估，暂不处理）
 
 - [ ] **在线更新无签名校验**：目前信任 GitHub main；供应链加固需要发布流水线（哈希/签名），规划中。
@@ -941,6 +970,88 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   `gpt-5.6-luna`，3240ms 返回 "Hi! How can I help you today?"，计费 1 单位并正确落库到渠道 #13；
   ③ 线上渠道 #10 的 `refresh_token` 已被上游吊销（`token_revoked`，强刷 HTTP 401）—— 正是本批找回流程要覆盖的场景，
   `/channel/10/recovery` 已正确给出 3 种找回方式。测试脚本已从服务器清理。 |
+| 2026-09-19 | **第 31 批（使用记录明细化 + 独立操作日志页 + 渠道失败归因，线上 `e35cf79`）**：
+  · **logs 表扩展 14 列**（建表 + `COLUMN_MIGRATIONS` 同步）：模型/渠道(id+名)/令牌(id+名)/分组/
+  提示与补全与缓存 tokens/首Token耗时/总耗时/UA/设备/计费时段；索引改为复合
+  `(channel_id, type, created_at)` 与 `(model, type)`（单列索引在恒带 type+时间的查询下仍需回表过滤）。
+  · **首 Token 耗时**在流式首个增量到达时打点（网关 `onDelta/onReasoning`、harness 每步记录）；
+  **设备**由 UA 解析（`utils.deviceFromUa`，零依赖：浏览器版本 + 系统，覆盖 Chrome/Edge/Safari/微信/
+  curl/Python/Node/Go 等）。
+  · **writeLog 支持传 `req` 自动补 ip/UA**：38 处管理类调用点统一补上，操作日志从此能追「谁从哪台设备做的」。
+  · **接口重构**（`routes/log.js`）：`/log/usage`（消费）与 `/log/operation`（非消费）分离 ——
+  一个是用量审计、一个是行为审计；新增 `/usage/summary` 汇总卡与 `/usage/filters` 筛选候选；
+  **敏感字段按角色裁剪**（渠道/密钥/分组/原始 UA/成本明细仅管理员）。
+  · **前端**：新增 `UserAvatar`（用户名→稳定色相首字母头像，零依赖，支持自定义头像回退）；
+  使用记录页重写（13 列 + 顶部 6 张汇总卡 + 详情抽屉）；新增操作日志页与侧边栏入口。
+  · **渠道失败归因（P0）**：`execute.js` 给错误挂 `channelId/channelName` ——
+  此前失败调用无法归属到渠道，看板的「渠道成功率」只能靠 20 条环形缓冲估算，按天/周维度完全失真；
+  gateway 与 chat 的 ERROR 日志都带上渠道/模型/耗时/设备，渠道统计改走 `channel_id` 列。 |
+| 2026-09-19 | **第 32 批（峰谷计费 + 定价审计，线上 `bd8b3e0`）**：
+  · **调研结论**：全网检索确认**只有 DeepSeek 官方按钟点差异定价**（高峰=北京时间周一至周五
+  9:00-12:00、14:00-18:00，其余时段含整个周末半价；官方定价页脚注原文）。
+  OpenAI/Claude/Gemini/GLM/Kimi/千问/豆包/Grok 均无时段定价，其折扣来自 Batch/服务等级。
+  · **缺口**：我们此前**全时段按峰价收费**，闲时请求被系统性多收一倍。
+  · **实现**：`model_prices` 新增 4 列（`offpeak_{input,output,cache}_price` + `offpeak_rule` 规则 JSON）；
+  `pricing.js` 新增 `isPeakAt/effectivePrice/describeRule` ——
+  判定用**固定 UTC 偏移**而非 Intl/timeZone（中国无夏令时，不依赖 ICU，跨平台一致）、
+  支持跨零点窗口（阿里百炼托管的 DeepSeek 是每天 22:00-08:00 闲时，窗口与官方不同）、
+  `effectivePrice` 返回**新对象**（`getPrice` 返回 30s 缓存里的同一引用，就地改会污染整批请求）。
+  · **计费按「请求发起时刻」判档**（而非结算时刻）：11:59 发起 / 12:01 结束的请求应按峰价。
+  · 两个计费点（网关 `settle`、站内对话 `chargeUser`）都接上；日志 detail 补
+  `price_phase/priced_at/rate/amount_units`，`logs` 新增 `price_phase` 列，事后可复核复算。
+  · 定价 CRUD 全部同步（列表/手动保存/CSV+JSON 导入/同步官方价目）—— 漏掉 `sync-defaults`
+  会把新列的谷价清空，这是最容易漏的一处。
+  · 顺带修复：`harness/loop.js` 引用未定义的 `stepStartAt`/`firstTokenAt`（会抛 ReferenceError）。
+  · 测试：`tests/pricing-offpeak.test.mjs`（峰/谷/周末/跨零点边界 + 缓存对象不被污染）。 |
+| 2026-09-19 | **第 33 批（十轮渠道审查 → 逐轮修复，线上 `f4050b8`）**：
+  按要求「审查十次、每次修完再审」，分十路并行审查（数据一致性/R1、前端与权限/R2、
+  额度与找回/R3、计费正确性/R4、网关调度/R5、数据层与迁移/R6、鉴权与安全/R7、
+  适配器与解析器/R8、前端质量/R9、回归验证/R10），**共修 1 个 P0 + 16 个 P1 + 30 余个 P2**。
+  · **P0（全站白屏）**：`MainLayout` 引用 `HistoryOutlined` 未导入 —— 该图标在模块顶层常量
+  `NAV_USER` 里，模块求值即抛 ReferenceError，会让整个 SPA（含公开首页与登录页）白屏。
+  已补导入，并写了全量扫描脚本核对所有 JSX 未定义引用（其余为 SVG/模板字符串误报）。
+  · **P1 计费**：`kimi-k2` 已注册但无定价行 → 落到「同厂商最贵档」按 k3 旗舰价计费（多收约 3 倍），
+  补官方价；并新增一层「同族兜底」（请求名是某已配价模型名的前缀时取最贴近的，
+  `kimi-k2 → kimi-k2.6`），比直接跳到旗舰准得多。
+  · **P1 计费**：`pct()` 用「<=1 就当比例」的启发式与调用处口径冲突 ——
+  Antigravity 剩余 99.5% 被显示成已用 50%、Kiro 1/1000 被显示成 10%（差 100 倍）；
+  拆成 `pctFromFraction`/`pctFromPercent` 并逐处对齐上游口径。
+  · **P1 调度**：`execute.js` 两段超时存在**定时器泄漏** —— backstop 先触发后，
+  排队任务稍后才执行并 `armDeadline()`，那个 hardTimer 在 finally 之后创建、无人清理，
+  会空转一整个 timeoutMs 并再次 abort；且排队期间被判定超时时仍会真的发一次上游请求。
+  引入 `settled` 标志彻底封住。
+  · **P1 安全**：Kiro 的 `region` 来自外部凭据文件且直接拼进主机名 ——
+  `region="@127.0.0.1:8080/"` 会把带 Bearer 令牌的请求打到内网（**SSRF + 令牌外泄**）。
+  抽出 `safeRegion()` 白名单，**读取路径（chat/refresh/quota）也过一遍**（只校验导入挡不住存量脏值）。
+  · **P1 安全**：`.admin-password`（首次启动生成的管理员随机密码）没被 gitignore，
+  一次 `git add -A` 就会把 root 凭据提交进仓库。
+  · **P1 越权**：批量删除会话先删会话再按**请求里的 ids** 删消息 —— 第一条命中 0 行时
+  （id 不属于该用户）仍会删掉别人会话的全部消息；改为先查归属再删。
+  · **P1 迁移**：`migrate()` 的任何 DDL 失败都会让 bootstrap 抛出 → `process.exit(1)`，
+  配合 `Restart=always` 变成三秒一次的重启死循环（站点全挂且不自愈）；改为失败只记日志继续
+  （补列幂等，下次重试），并加 `lock_wait_timeout=20` 防大表等 MDL 卡死启动；
+  同表缺列合并成一条 ALTER（避免 MySQL 5.7 上逐列重建整表）。
+  · **P1 凭据竞态**：凭据写回与适配器异步刷新会互相覆盖 —— 刷新写回「重读 latest → 合并 → 整列 UPDATE」
+  若发生在人工换凭据之后，会把旧 token 覆盖回来（提示已更新、实际还是旧账号）。
+  引入 `other.cred_epoch` 代次：写回时 +1，六个适配器的刷新写回带上发起时代次，不一致即丢弃。
+  · **P1 找回断链**：`kind=paste` 的找回会话写不回渠道（DeepSeek/Kimi 抓取到 token 后
+  只回填「添加渠道」表单）；补 targetId 写回分支，并给 `applyCredentialToChannel` 加 relay 兜底
+  （这类适配器没有 `importAuth`，凭据契约就是 token + cookies）。
+  · **P1 口径**：使用记录页选「全部」时表格全量、汇总卡近 30 天、筛选候选近 365 天（三处不一致）；
+  统一为显式 `days=0`。`/log/usage` 裸调 API 原本无时间上界（全表 COUNT）→ 默认 30 天。
+  · **P1 计费**：`allTime` 只按 `channel_id` 列聚合，老记录（detail 里才有渠道）被漏算，
+  会出现「累计调用 < 近 30 天」。
+  · **P2 批次（摘要）**：错误消息泄露渠道名（通常是账号邮箱）→ 改为只回编号/数量；
+  缓存命中率分母重复计算（`prompt_tokens` 已含缓存）；导入路径闲时价 null→0 会变成 1 厘/次；
+  deepseek 余额接口域名改精确匹配（子串匹配会让 `api.deepseek.com.evil.io` 收到该渠道 Key）；
+  `channels.quota` TEXT 溢出保护；`logs` 老记录 token 回填因 `??` 失效；
+  召回冷门模型的厂商表空窗改 stale-while-revalidate；`sawOutput` 路径冷却硬编码 300s 压平 WAF 6h →
+  抽 `cooldownFor` 共用；`StatCard` 的 `hint` 属性不存在导致底部说明被吞；列宽和 > scroll.x
+  导致 ellipsis 列被压成 0 宽；金额单位重复（`OD币 OD币`）；表格行无键盘入口；
+  批量操作无二次确认与防重入；`units_per_od` 硬编码回落值；冗余单列索引清理；
+  9 个未使用导入；新增 `tests/static-check.mjs`（72 文件语法 + 跨文件导入导出一致性）与 `npm test`。
+  · **验证**：十轮复查确认**无已知 P0/P1**；线上部署 `f4050b8`，服务 active、`/api/status` 200、
+  `npm test` 全绿（static-check / device-ua / pricing-offpeak）。 |
 
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 
