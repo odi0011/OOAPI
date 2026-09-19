@@ -17,6 +17,7 @@ import { groupConfigOf, applyGroupRate } from "../services/group-rate.js";
 import { allPublicModels, resolveAliasSync } from "../services/models.js";
 import { rowToChannel, channelInGroup, collectAvailableModels } from "../services/router.js";
 import { getBoolOption } from "../config.js";
+import { saveBuffer, getMedia, readBlob, mediaUrl, attachRef, releaseRefs } from "../services/media.js";
 import { runHarness } from "../services/harness/loop.js";
 import { AGENTS, findAgent, publicAgents, PRIMARY_AGENTS } from "../services/harness/agents.js";
 import { toolSpecs } from "../services/harness/tools.js";
@@ -529,16 +530,49 @@ function aggregate(calls = []) {
 
     const settings = sanitizeSettings(settingsPatch ?? {}, { previous: session.settings });
 
-    // 图片（base64 data URL）
+    // 图片：优先走媒体库（parts 只存 media_id，字节落盘）。
+    //
+    // 为什么必须这样：以前是把 dataURL 原样写进 chat_messages.parts（MEDIUMTEXT）——
+    // 20MB 请求体下 3 张图就能产出 ~16.9MB 的 parts，超过 16,777,215 字节上限，
+    // 严格模式 INSERT 失败（整轮对话落库失败、用户消息丢失），
+    // 非严格模式被截断 → 历史消息**静默变空**。
+    // 兼容旧前端：仍然接受 dataUrl（先存媒体库再走同一条路），
+    // 这样新旧前端都能用，且新数据一定是 media_id。
     const imgs = [];
+    const imgMediaIds = [];
     for (const img of Array.isArray(images) ? images : []) {
+      // 新格式：前端已上传，直接给 media_id
+      const mid = Number(img?.mediaId || img?.media_id) || 0;
+      if (mid) {
+        const row = await getMedia(mid);
+        if (!row || Number(row.user_id) !== req.user.id || !String(row.kind).startsWith("image")) {
+          return fail(res, "图片不存在或无权使用");
+        }
+        const buf = await readBlob(row);
+        if (!buf) return fail(res, "图片内容缺失，请重新上传");
+        imgs.push({ buffer: buf, mimeType: row.mime || "image/png", filename: row.orig_name || "image" });
+        imgMediaIds.push(mid);
+        continue;
+      }
+      // 旧格式：dataUrl（存进媒体库，后续统一按 media_id 处理）
       const mm = /^data:([^;]+);base64,(.+)$/s.exec(String(img?.dataUrl || ""));
-      if (mm) {
-        imgs.push({
-          buffer: Buffer.from(mm[2], "base64"),
-          mimeType: mm[1],
-          filename: mm[1].includes("png") ? "image.png" : "image.jpg",
+      if (!mm) continue;
+      const buf = Buffer.from(mm[2], "base64");
+      try {
+        const saved = await saveBuffer({
+          buffer: buf,
+          userId: req.user.id,
+          origName: mm[1].includes("png") ? "image.png" : "image.jpg",
+          source: "chat",
         });
+        imgs.push({ buffer: buf, mimeType: mm[1], filename: mm[1].includes("png") ? "image.png" : "image.jpg" });
+        imgMediaIds.push(saved.id);
+      } catch (e) {
+        // 媒体库不可用（关闭/超配额）时不让对话直接失败：回退到旧行为（本轮可用，
+        // 但不落库到媒体库）。宁可少存一次图，也不要让用户发不出消息。
+        console.warn(`[chat] 图片存媒体库失败，回退为内存透传：${e.message}`);
+        imgs.push({ buffer: buf, mimeType: mm[1], filename: mm[1].includes("png") ? "image.png" : "image.jpg" });
+        imgMediaIds.push(0);
       }
     }
     if (imgs.length > 3) return fail(res, "最多 3 张图片");
@@ -586,17 +620,29 @@ function aggregate(calls = []) {
     try {
       history = await getSessionMessages(session.id);
 
-      // 用户消息先落库再跑：即使执行失败，对话历史也是完整的
+      // 用户消息先落库再跑：即使执行失败，对话历史也是完整的。
+      // 图片 part 只存 media_id（字节在媒体库），渲染时由服务端补签名 URL ——
+      // 这样 parts 不再承载 base64，彻底避开 MEDIUMTEXT 溢出。
       const userParts = [{ id: `u${Date.now().toString(36)}`, type: "text", text: content }];
-      for (const img of Array.isArray(images) ? images : []) {
-        if (typeof img?.dataUrl === "string" && img.dataUrl.startsWith("data:image/")) {
-          userParts.push({ id: `i${Math.random().toString(36).slice(2, 8)}`, type: "image", url: img.dataUrl });
-        }
+      for (let i = 0; i < imgMediaIds.length; i += 1) {
+        const mid = imgMediaIds[i];
+        if (!mid) continue; // 存库失败的（回退路径）不写进历史，避免留下坏引用
+        userParts.push({ id: `i${Math.random().toString(36).slice(2, 8)}`, type: "image", media_id: mid });
       }
       for (const d of docs) {
         userParts.push({ id: `f${Math.random().toString(36).slice(2, 8)}`, type: "file", name: d.name, kind: d.kind, bytes: d.bytes, text: d.text });
       }
-      await appendMessage({ sessionId: session.id, userId: req.user.id, role: "user", parts: userParts });
+      // appendMessage 返回消息 id：图片引用要绑到这个 id 上（删除消息时据此释放）
+      const userMsgId = await appendMessage({ sessionId: session.id, userId: req.user.id, role: "user", parts: userParts });
+      for (const mid of imgMediaIds) {
+        if (!mid) continue;
+        await attachRef(mid, {
+          userId: req.user.id,
+          refType: "chat_message",
+          refId: String(userMsgId),
+          slot: `m${mid}`,
+        }).catch((e) => console.warn(`[chat] 绑定图片引用失败：${e.message}`));
+      }
 
       // 首条消息直接当标题（比再调一次模型便宜；用户之后可手动改名）
       if (session.message_count === 0 && session.title === "新对话") {

@@ -145,7 +145,7 @@ export async function getSessionMessages(sessionId, { limit = 200 } = {}) {
   );
   // 反转为升序：调用方（渲染与上下文构造）都按时间正序消费
   rows.reverse();
-  return rows.map((r) => ({
+  const out = rows.map((r) => ({
     seq: Number(r.seq),
     role: r.role,
     parts: safeJSONParse(r.parts, []),
@@ -155,6 +155,23 @@ export async function getSessionMessages(sessionId, { limit = 200 } = {}) {
     tokens: { prompt: Number(r.prompt_tokens) || 0, completion: Number(r.completion_tokens) || 0 },
     created_time: Number(r.created_time) || 0,
   }));
+
+  // 图片 part 只存 media_id（字节在媒体库），渲染前补上签名 URL。
+  // 老消息里可能是内联 dataURL（媒体库上线前写入的），原样保留即可 ——
+  // 前端对两种情况都用 part.url 渲染，不需要区分。
+  try {
+    const { mediaUrl } = await import("../media.js");
+    for (const msg of out) {
+      for (const p of msg.parts || []) {
+        if (p?.type === "image" && !p.url && p.media_id) {
+          p.url = await mediaUrl(p.media_id);
+        }
+      }
+    }
+  } catch {
+    /* 媒体库不可用时不影响消息读取（图片显示为空，其余功能正常） */
+  }
+  return out;
 }
 
 /**
@@ -246,9 +263,35 @@ export async function updateSession(userId, id, patch = {}) {
 }
 
 export async function deleteSession(userId, id) {
+  // 先取出本会话的所有消息 id：删完消息后要按这些 id 释放媒体引用，
+  // 否则图片会永远停留在「被引用」状态（既不会被回收，用户也删不掉）
+  const msgIds = await messageIdsOf(id);
   const [ret] = await pool.query("DELETE FROM chat_sessions WHERE id = ? AND user_id = ?", [String(id), userId]);
-  if (ret.affectedRows) await pool.query("DELETE FROM chat_messages WHERE session_id = ?", [String(id)]);
+  if (ret.affectedRows) {
+    await pool.query("DELETE FROM chat_messages WHERE session_id = ?", [String(id)]);
+    await releaseMediaRefs(msgIds);
+  }
   return Boolean(ret.affectedRows);
+}
+
+/** 会话/消息 id 列表（用于释放媒体引用） */
+async function messageIdsOf(sessionId, fromSeq = 0) {
+  const [rows] = await pool.query(
+    "SELECT id FROM chat_messages WHERE session_id = ? AND seq >= ?",
+    [String(sessionId), Number(fromSeq) || 0]
+  );
+  return rows.map((r) => Number(r.id)).filter(Boolean);
+}
+
+/** 释放一批消息占用的媒体引用（失败只记日志：不影响删除本身） */
+async function releaseMediaRefs(messageIds) {
+  if (!messageIds?.length) return;
+  try {
+    const { releaseRefs } = await import("../media.js");
+    await releaseRefs("chat_message", messageIds.map(String));
+  } catch (e) {
+    console.warn(`[sessions] 释放媒体引用失败：${e.message}`);
+  }
 }
 
 /**
@@ -261,7 +304,10 @@ export async function rewindSession(userId, id, fromSeq) {
   const seq = Math.max(1, Number(fromSeq) || 1);
   const session = await getSession(userId, id);
   if (!session) return null;
+  // 被回退掉的消息要释放媒体引用（否则这些图片永远无法回收）
+  const msgIds = await messageIdsOf(id, seq);
   await pool.query("DELETE FROM chat_messages WHERE session_id = ? AND seq >= ?", [String(id), seq]);
+  await releaseMediaRefs(msgIds);
   const [aggRows] = await pool.query(
     "SELECT COUNT(*) AS c, COALESCE(SUM(cost),0) AS cost, COALESCE(SUM(prompt_tokens),0) AS pt, COALESCE(SUM(completion_tokens),0) AS ct FROM chat_messages WHERE session_id = ?",
     [String(id)]
@@ -372,11 +418,18 @@ export async function batchSessions({ userId, ids = [], action, projectId = "" }
     const ownedIds = owned.map((r) => String(r.id));
     if (!ownedIds.length) return { affected: 0 };
     const ph2 = ownedIds.map(() => "?").join(",");
+    // 删会话前先收集所有消息 id，删完再释放媒体引用（顺序不能反：
+    // 消息行删掉后就查不到 id 了，图片会永远停在「被引用」状态）
+    const [msgRows] = await pool.query(
+      `SELECT id FROM chat_messages WHERE session_id IN (${ph2})`,
+      ownedIds
+    );
     const [ret] = await pool.query(`DELETE FROM chat_sessions WHERE user_id = ? AND id IN (${ph2})`, [
       userId,
       ...ownedIds,
     ]);
     await pool.query(`DELETE FROM chat_messages WHERE session_id IN (${ph2})`, ownedIds);
+    await releaseMediaRefs(msgRows.map((r) => Number(r.id)));
     return { affected: ret.affectedRows };
   }
 

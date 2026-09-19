@@ -1,7 +1,7 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, userToResponse, pageParams, idParam } from "../utils.js";
+import { ok, fail, asyncHandler, userToResponse, pageParams, idParam, now } from "../utils.js";
 import { authRequired, adminRequired, signToken } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
@@ -240,6 +240,18 @@ router.delete(
       conn.release();
     }
     await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `删除用户 #${id}（${user.username}）` });
+    // 媒体清理放在事务外：文件是磁盘操作，不该拖进数据库事务（失败也不回滚用户删除）。
+    // 把该用户的媒体标记为待回收，引用记录解绑 —— 文件由 6 小时回收任务统一删。
+    try {
+      const { releaseRefs } = await import("../services/media.js");
+      const [mediaRows] = await pool.query("SELECT id FROM media WHERE user_id = ?", [id]);
+      await releaseRefs("avatar", [String(id)]).catch(() => {});
+      if (mediaRows.length) {
+        await pool.query("UPDATE media SET status = 2, deleted_time = ? WHERE user_id = ?", [now(), id]);
+      }
+    } catch (e) {
+      console.warn(`[user] 清理用户 #${id} 的媒体失败（不影响删除）：${e.message}`);
+    }
     return ok(res, null, "用户已删除");
   })
 );
