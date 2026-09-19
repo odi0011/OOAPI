@@ -486,24 +486,31 @@ export async function verify(channel) {
   return Date.now() - started;
 }
 
-/** 拉取上游可用模型（管理端「获取模型」用） */export async function fetchUpstreamModels(channel) {
-  const token = await ensureToken(channel);
+/**
+ * 拉取上游可用模型（管理端「获取模型」用）。
+ * 走 fetchWithAuthRetry：access_token 过期时上游回 401，之前的实现直接抛错，
+ * 管理员看到「凭据无效」但其实只要刷一次就好（实测线上就是这样）。
+ */
+export async function fetchUpstreamModels(channel) {
   const project = String(channel?.other?.project_id || "").trim();
-  const resp = await fetch(MODELS_URL, {
+  const buildInit = (token) => ({
     method: "POST",
     headers: { ...agHeaders(channel), authorization: `Bearer ${token}` },
     body: JSON.stringify(project ? { project } : {}),
     signal: AbortSignal.timeout(30_000),
   });
+  const resp = await fetchWithAuthRetry(channel, buildInit, MODELS_URL);
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
-    throw new Error(`拉取模型失败（HTTP ${resp.status}）：${text.slice(0, 160)}`);
+    throw Object.assign(new Error(`拉取模型失败（HTTP ${resp.status}）：${text.slice(0, 160)}`), {
+      code: resp.status === 401 || resp.status === 403 ? "CHANNEL_AUTH_EXPIRED" : "CHANNEL_HTTP_ERROR",
+    });
   }
   const j = await resp.json().catch(() => null);
   const models = j?.models || {};
   // 统一返回 id 字符串数组（前端模型选择器直接写入，不能给对象）
   return Object.keys(models)
-    .filter((id) => !/^(chat_|tab_)/.test(id) && !/^gemini-2\.5/.test(id))
+    .filter((id) => !/^(chat_|tab_)/.test(id))
     .sort();
 }
 

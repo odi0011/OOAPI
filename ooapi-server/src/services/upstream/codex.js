@@ -15,7 +15,7 @@
 //   头：Authorization Bearer / Originator: codex-tui / Chatgpt-Account-Id / session_id
 //   SSE 事件：response.output_text.delta、response.reasoning_summary_text.delta、response.completed
 // ---------------------------------------------------------------------------
-import { codexIdentity } from "./cli-profile.js";
+import { codexIdentity, CLI_VERSIONS } from "./cli-profile.js";
 import { persistOtherPatch, loadOther, withRefreshLock } from "./auth-store.js";
 import {
   stateHeaders,
@@ -600,7 +600,10 @@ export function loginModes() {
 export async function fetchUpstreamModels(channel) {
   const token = await ensureToken(channel);
   const identity = codexIdentity(channel);
-  const resp = await fetch(`${API_BASE}/models`, {
+  // 端点要求 client_version（缺了会 400 missing query client_version）
+  const version = String(channel?.other?.client_version || "").trim() || CLI_VERSIONS.codex;
+  const qs = new URLSearchParams({ client_version: version });
+  const resp = await fetch(`${API_BASE}/models?${qs.toString()}`, {
     headers: {
       authorization: `Bearer ${token}`,
       originator: "codex-tui",

@@ -1408,6 +1408,25 @@ h1, h2, h3, h4 {
   margin-bottom: 14px;
 }
 
+/* 紧凑统计条：列表页的汇总用一行小标签，不用大卡片（列表页主体是表格，
+   统计只做辅助；大卡片会把表格挤到首屏之外）。与 oo-stats-cards 是两种
+   场景，按「页面主体是表格还是统计」二选一，不要混用。 */
+.oo-stats-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.oo-stats-strip .bui-chip {
+  font-size: 12px;
+  gap: 4px;
+}
+.oo-stats-strip .bui-chip b {
+  font-weight: 600;
+  color: var(--ink);
+}
+
 .oo-stat-card {
   border: 1px solid var(--line);
   background: var(--surface);

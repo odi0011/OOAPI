@@ -7,6 +7,7 @@ import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
+import UsageAnalysis from "../components/UsageAnalysis";
 import { ModelLabel } from "../components/VendorIcon";
 import UserAvatar from "../components/UserAvatar";
 
@@ -110,6 +111,36 @@ export default function LogPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // 分析数据（按天趋势 + 按模型排行）：只在展开时拉，避免每次进页面都跑聚合
+  const [analysisOpen, setAnalysisOpen] = useState(false);
+  const [byDay, setByDay] = useState([]);
+  const [byModel, setByModel] = useState([]);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState("");
+
+  const loadAnalysis = useCallback(
+    async (daysArg) => {
+      setAnalysisLoading(true);
+      setAnalysisError("");
+      try {
+        const d = await API.get("/log/usage/analysis", { params: { days: daysArg } });
+        setByDay(Array.isArray(d?.byDay) ? d.byDay : []);
+        setByModel(Array.isArray(d?.byModel) ? d.byModel : []);
+      } catch (e) {
+        setAnalysisError(e.message || "分析数据加载失败");
+      } finally {
+        setAnalysisLoading(false);
+      }
+    },
+    []
+  );
+
+  // 展开时按当前时间范围加载；切范围后重新拉
+  useEffect(() => {
+    if (analysisOpen) loadAnalysis(days);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysisOpen, days]);
 
   // 筛选下拉的候选项（模型/密钥）：与列表同一时间口径（含「全部」）
   useEffect(() => {
@@ -325,19 +356,55 @@ export default function LogPage() {
         }
       />
 
+      {/* 汇总用小 tag 展示，不用大卡片 —— 这一页的主体是记录表，统计只做辅助。
+          需要看图表分析时点「分析」展开（与渠道统计弹窗同一套视觉规范）。 */}
       {summary ? (
-        <div className="oo-stats-cards">
-          <StatCard label="调用次数" value={summary.calls} />
-          <StatCard label="消耗" value={`${fmtOd(summary.units, perUnit, 4)}`} foot={CURRENCY_NAME} />
-          <StatCard
-            label="Tokens"
-            value={summary.prompt_tokens + summary.completion_tokens}
-            foot={`提示 ${summary.prompt_tokens} / 补全 ${summary.completion_tokens}`}
-          />
-          <StatCard label="缓存命中率" value={`${summary.cache_rate}%`} foot={`命中 ${summary.cache_tokens}`} />
-          <StatCard label="平均首Token" value={ms(summary.avg_first_token)} />
-          <StatCard label="平均耗时" value={ms(summary.avg_elapsed)} />
+        <div className="oo-stats-strip">
+          <span className="bui-chip" title="区间调用次数">
+            调用 <b className="oo-num">{summary.calls}</b>
+          </span>
+          <span className="bui-chip" title={`区间消耗（${CURRENCY_NAME}）`}>
+            消耗 <b className="oo-num">{fmtOd(summary.units, perUnit, 4, false)}</b> {CURRENCY_NAME}
+          </span>
+          <span className="bui-chip" title={`提示 ${summary.prompt_tokens} / 补全 ${summary.completion_tokens}`}>
+            Tokens <b className="oo-num">{summary.prompt_tokens + summary.completion_tokens}</b>
+          </span>
+          <span
+            className={`bui-chip${summary.cache_rate >= 50 ? " bui-chip--green" : ""}`}
+            title={`命中 ${summary.cache_tokens} / 输入 ${summary.prompt_tokens}`}
+          >
+            缓存 <b className="oo-num">{summary.cache_rate}%</b>
+          </span>
+          <span className="bui-chip" title="流式首个增量到达的平均耗时">
+            首Token <b className="oo-num">{ms(summary.avg_first_token)}</b>
+          </span>
+          <span className="bui-chip" title="端到端平均耗时">
+            耗时 <b className="oo-num">{ms(summary.avg_elapsed)}</b>
+          </span>
+          {summary.uncached_tokens ? (
+            <span className="bui-chip" title="未命中缓存的输入 token">
+              未命中 <b className="oo-num">{summary.uncached_tokens}</b>
+            </span>
+          ) : null}
+          <button
+            type="button"
+            className="bui-btn"
+            style={{ marginLeft: "auto" }}
+            onClick={() => setAnalysisOpen((v) => !v)}
+          >
+            {analysisOpen ? "收起分析" : "展开分析"}
+          </button>
         </div>
+      ) : null}
+
+      {analysisOpen ? (
+        <UsageAnalysis
+          byDay={byDay}
+          byModel={byModel}
+          loading={analysisLoading}
+          error={analysisError}
+          onRefresh={() => loadAnalysis(days)}
+        />
       ) : null}
 
       <div className="oo-panel">

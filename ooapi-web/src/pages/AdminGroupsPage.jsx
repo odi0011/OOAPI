@@ -81,11 +81,23 @@ export default function AdminGroupsPage() {
   );
 
   const modelOptions = useMemo(() => {
-    const pool = memberIds.length
-      ? channels.filter((c) => memberIds.includes(c.id))
-      : channels.filter((c) => c.type === pickedType);
-    return [...new Set(pool.flatMap((c) => c.models || []))].map((m) => ({ value: m, label: m }));
-  }, [channels, memberIds, pickedType]);
+    // 模型只能从**已选中的渠道**汇总（用户要求：「选择好渠道后，模型才可以进行选择，
+    // 从已选择的渠道中获取它们已经支持的所有模型」）。没选渠道时不给候选，避免
+    // 出现「分组里有这个模型、但没有任何账号能提供它」的死配置。
+    if (!memberIds.length) return [];
+    const pool = channels.filter((c) => memberIds.includes(c.id));
+    return [...new Set(pool.flatMap((c) => (Array.isArray(c.models) ? c.models : [])))].sort().map((m) => ({ value: m, label: m }));
+  }, [channels, memberIds]);
+
+  // 选中渠道的图标（用于列表里的折叠展示）：一个显示该厂商图标，多个显示前 3 个叠加
+  const iconsOfGroup = useCallback(
+    (g) => {
+      const ids = Array.isArray(g.channel_ids) ? g.channel_ids.map(Number) : [];
+      const types = [...new Set(channels.filter((c) => ids.includes(c.id)).map((c) => c.type))];
+      return types.length ? types : [g.type];
+    },
+    [channels]
+  );
 
   const submit = async () => {
     if (busy) return;
@@ -133,22 +145,60 @@ export default function AdminGroupsPage() {
 
   const columns = [
     {
+      // 分组图标：单厂商显示该厂商图标，跨厂商显示前 3 个折叠叠加
+      // （用户要求：全 openai 就用 openai 图标，多厂商用几个图标的折叠态）
       title: "厂商",
       dataIndex: "type",
       width: 150,
-      render: (t, g) => (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <VendorIcon type={t} size={16} />
-          <span>{g.typeName || t}</span>
+      render: (t, g) => {
+        const icons = iconsOfGroup(g);
+        const shown = icons.slice(0, 3);
+        const more = icons.length - shown.length;
+        return (
+          <Tooltip title={icons.map((x) => providers.find((p) => p.key === x)?.name || x).join("、")}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span style={{ display: "inline-flex", alignItems: "center" }}>
+                {shown.map((x, i) => (
+                  <span
+                    key={x}
+                    style={{
+                      marginLeft: i === 0 ? 0 : -6,
+                      zIndex: 10 - i,
+                      background: "var(--surface)",
+                      borderRadius: "50%",
+                      padding: icons.length > 1 ? 1 : 0,
+                      display: "inline-flex",
+                    }}
+                  >
+                    <VendorIcon type={x} size={16} />
+                  </span>
+                ))}
+                {more > 0 ? <span className="bui-chip" style={{ marginLeft: 2 }}>+{more}</span> : null}
+              </span>
+              <span>{g.typeName || t}</span>
+            </span>
+          </Tooltip>
+        );
+      },
+    },
+    {
+      // 分组名 + 备注（用户要求：左侧图标 + 标题 + 标题下小字备注）
+      title: "分组名",
+      dataIndex: "name",
+      width: 220,
+      render: (v, g) => (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <VendorIcon type={iconsOfGroup(g)[0]} size={18} />
+          <span style={{ minWidth: 0, overflow: "hidden" }}>
+            <div style={{ fontWeight: 550 }} className="oo-truncate">{v}</div>
+            {g.remark ? (
+              <div className="oo-truncate" style={{ fontSize: 11.5, color: "var(--ink-3)" }} title={g.remark}>
+                {g.remark}
+              </div>
+            ) : null}
+          </span>
         </span>
       ),
-    },
-    { title: "分组名", dataIndex: "name", width: 160, render: (v) => <span style={{ fontWeight: 550 }}>{v}</span> },
-    {
-      title: "备注",
-      dataIndex: "remark",
-      width: 200,
-      render: (v) => (v ? <span className="oo-truncate">{v}</span> : <Text type="secondary">—</Text>),
     },
     {
       title: "倍率",
@@ -273,23 +323,62 @@ export default function AdminGroupsPage() {
           <Form.Item label="包含哪些账号">
             <Select
               mode="multiple"
-              placeholder={pickedType ? "可多选" : "先选择厂商"}
+              placeholder={pickedType ? "可多选（不选 = 该厂商全部账号）" : "先选择厂商"}
               disabled={!pickedType}
               value={memberIds}
-              onChange={setMemberIds}
+              onChange={(v) => {
+                setMemberIds(v);
+                // 渠道变了 → 已选模型可能已不在可选范围内，剔除掉，避免「分组里有
+                // 没有任何账号支持的模型」这种静默失效配置
+                const pool = channels.filter((c) => (v || []).includes(c.id));
+                const allowed = new Set(pool.flatMap((c) => (Array.isArray(c.models) ? c.models : [])));
+                setModels((prev) => prev.filter((m) => allowed.has(m)));
+              }}
               options={channelOptions}
               optionFilterProp="label"
+              maxTagCount={6}
             />
           </Form.Item>
-          <Form.Item label="支持的模型">
-            <Select
-              mode="tags"
-              placeholder={pickedType ? "从账号模型里选，或手动输入" : "先选择厂商"}
-              disabled={!pickedType}
-              value={models}
-              onChange={setModels}
-              options={modelOptions}
-            />
+          <Form.Item
+            label="支持的模型"
+            extra={
+              memberIds.length
+                ? "候选来自你选中的账号（渠道声明 + 上游探测）；留空 = 不限（跟随账号）"
+                : "先选择账号，模型候选会从这些账号支持的模型里汇总"
+            }
+          >
+            <Space direction="vertical" style={{ width: "100%" }} size={6}>
+              <Space size={6} wrap>
+                <Button
+                  size="small"
+                  disabled={!modelOptions.length}
+                  onClick={() => setModels(modelOptions.map((o) => o.value))}
+                >
+                  全选
+                </Button>
+                <Button size="small" disabled={!models.length} onClick={() => setModels([])}>
+                  清空（= 不限）
+                </Button>
+                {modelOptions.length ? (
+                  <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                    可选 {modelOptions.length} 个，已选 {models.length} 个
+                  </span>
+                ) : null}
+              </Space>
+              <Select
+                mode="multiple"
+                allowClear
+                placeholder={memberIds.length ? "留空 = 不限（跟随账号）" : "先选择账号"}
+                disabled={!memberIds.length}
+                value={models}
+                onChange={setModels}
+                options={modelOptions}
+                optionRender={(opt) => <ModelLabel model={opt.value} size={14} />}
+                maxTagCount={10}
+                maxTagPlaceholder={(omitted) => `+${omitted.length}`}
+                style={{ width: "100%" }}
+              />
+            </Space>
           </Form.Item>
         </Form>
       </Modal>

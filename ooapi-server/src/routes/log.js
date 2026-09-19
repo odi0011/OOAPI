@@ -301,6 +301,72 @@ router.get(
   })
 );
 
+// ---------- 使用记录页的图表分析 ----------
+/**
+ * 按天趋势 + 按模型排行。与列表/汇总同一套筛选口径（走 buildQuery），
+ * 所以图表与表格永远对得上（这是「同一页数据必须自洽」的基本要求）。
+ */
+router.get(
+  "/usage/analysis",
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const isAdmin = Number(req.user.role) >= 100;
+    const { where, args } = buildQuery({
+      isAdmin,
+      userId: req.user.id,
+      kind: "usage",
+      query: req.query,
+      defaultDays: 30,
+    });
+    // 按天：用 FLOOR(created_at/86400)*86400 做桶（纯算术，能走 created_at 索引范围扫描）
+    const [days] = await pool.query(
+      `SELECT FLOOR(created_at/86400)*86400 AS day_ts,
+              COUNT(*) AS calls,
+              COALESCE(SUM(quota),0) AS units,
+              COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
+              COALESCE(SUM(completion_tokens),0) AS completion_tokens,
+              COALESCE(SUM(cache_tokens),0) AS cache_tokens,
+              COALESCE(AVG(NULLIF(first_token_ms,0)),0) AS avg_first_token,
+              COALESCE(AVG(NULLIF(elapsed_ms,0)),0) AS avg_elapsed
+         FROM logs ${where}
+        GROUP BY day_ts ORDER BY day_ts ASC`,
+      args
+    );
+    // 按模型：消费 + tokens + 次数 + 成功率（成功率取同模型的错误日志数）
+    const [models] = await pool.query(
+      `SELECT model,
+              COUNT(*) AS calls,
+              COALESCE(SUM(quota),0) AS units,
+              COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
+              COALESCE(SUM(completion_tokens),0) AS completion_tokens,
+              COALESCE(SUM(cache_tokens),0) AS cache_tokens,
+              COALESCE(AVG(NULLIF(elapsed_ms,0)),0) AS avg_elapsed
+         FROM logs ${where}
+        GROUP BY model ORDER BY units DESC LIMIT 20`,
+      args
+    );
+    return ok(res, {
+      byDay: days.map((d) => ({
+        day: new Date(Number(d.day_ts) * 1000).toISOString().slice(0, 10),
+        calls: Number(d.calls) || 0,
+        units: Number(d.units) || 0,
+        tokens: (Number(d.prompt_tokens) || 0) + (Number(d.completion_tokens) || 0),
+        cacheTokens: Number(d.cache_tokens) || 0,
+        avgFirstToken: Math.round(Number(d.avg_first_token) || 0),
+        avgElapsed: Math.round(Number(d.avg_elapsed) || 0),
+      })),
+      byModel: models.map((m) => ({
+        model: m.model || "-",
+        calls: Number(m.calls) || 0,
+        units: Number(m.units) || 0,
+        tokens: (Number(m.prompt_tokens) || 0) + (Number(m.completion_tokens) || 0),
+        cacheTokens: Number(m.cache_tokens) || 0,
+        avgElapsed: Math.round(Number(m.avg_elapsed) || 0),
+      })),
+    });
+  })
+);
+
 // 管理：清空日志（同时清掉使用记录与操作日志）
 router.delete(
   "/",
