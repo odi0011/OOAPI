@@ -316,7 +316,11 @@ export default function AdminGroupsPage() {
         onOk={submit}
         onCancel={() => setOpen(false)}
         confirmLoading={busy}
-        destroyOnClose
+        // destroyOnClose 会在关闭时卸载表单，而 useForm 实例还在 —— 重新打开前
+        // 表单尚未挂载，setFieldsValue 找不到目标，antd 会警告
+        // "Instance created by useForm is not connected to any Form element"，
+        // 且表单值可能不生效。改为 forceRender + 关闭时手动 resetFields（openCreate/openEdit 已做）。
+        forceRender
         okText={editing ? "保存" : "创建"}
         width={680}
       >
