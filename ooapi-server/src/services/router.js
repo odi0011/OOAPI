@@ -473,17 +473,19 @@ export async function explainNoChannel({ model, groupName = null } = {}) {
 
   if (!all.length) return { reason: "EMPTY", message: "平台还没有配置任何渠道，请在渠道管理中添加" };
   if (cooling.length && cooling.length === forModel.length) {
-    const names = cooling.map((c) => c.name).join("、");
+    // 只回数量、不回渠道名：这条 message 会原样返回给 API 调用方、也会进普通用户可见的
+    // 错误日志，而渠道名通常是上游账号邮箱（等于泄露供应商/账号身份）。
+    // 管理员在渠道管理页的「冷却」标签与最近调用里能看到具体是哪些。
     return {
       reason: "COOLING",
-      message: `支持模型「${model}」的渠道都在冷却中（${names}），请稍后重试或添加新账号`,
+      message: `支持模型「${model}」的 ${cooling.length} 个账号都在冷却中，请稍后重试`,
     };
   }
   if (!forModel.length) {
-    const types = [...new Set(all.map((c) => c.type))].join("、");
+    // 同理不回厂商类型明细，只引导到管理员
     return {
       reason: "NO_MODEL",
-      message: `没有渠道支持模型「${model}」。当前已有渠道类型：${types}；请在渠道管理里为某个渠道添加该模型`,
+      message: `当前没有可服务模型「${model}」的账号，请联系管理员在渠道管理中配置`,
     };
   }
   return {

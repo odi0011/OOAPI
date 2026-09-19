@@ -3,12 +3,22 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 const host = process.env.DB_HOST || "127.0.0.1";
 const port = Number(process.env.DB_PORT || 3306);
 const user = process.env.DB_USER || "ooapi";
 const password = process.env.DB_PASSWORD || "ooapi";
 const database = process.env.DB_NAME || "ooapi";
+
+// 弱口令告警：`ooapi` 是文档里的示例口令，不是可以裸奔上线的默认值。
+// 不用「直接启动失败」是因为开发/内网环境本就常用它，硬失败会让老部署起不来；
+// 但生产环境必须让运维看见（日志 + 启动横幅）。
+if (!process.env.DB_PASSWORD && process.env.NODE_ENV === "production") {
+  console.error(
+    "[db] 警告：未设置 DB_PASSWORD，正在使用示例口令「ooapi」。请在 .env 里改成强口令并同步 MySQL 用户密码。"
+  );
+}
 
 export const pool = mysql.createPool({
   host,
@@ -62,7 +72,9 @@ const TABLES = [
     created_time BIGINT NOT NULL DEFAULT 0,
     last_login_time BIGINT NOT NULL DEFAULT 0,
     last_login_ip VARCHAR(64) DEFAULT '',
-    login_count INT NOT NULL DEFAULT 0
+    login_count INT NOT NULL DEFAULT 0,
+    -- JWT 吊销版本：改密 +1，旧令牌立即失效（中间件每次请求比对）
+    token_version INT NOT NULL DEFAULT 0
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
   `CREATE TABLE IF NOT EXISTS tokens (
@@ -112,9 +124,12 @@ const TABLES = [
     price_phase VARCHAR(16) NOT NULL DEFAULT '' COMMENT '计费时段：peak/offpeak/flat（分时定价模型用）',
     INDEX idx_logs_user (user_id),
     INDEX idx_logs_created (created_at),
+    INDEX idx_logs_user_type_created (user_id, type, created_at),
     INDEX idx_logs_type_created (type, created_at),
-    INDEX idx_logs_channel (channel_id),
-    INDEX idx_logs_model (model)
+    /* 渠道统计与模型筛选都是「type + 时间范围 + channel/model」的组合查询，
+       复合索引才吃得下；单列索引在大表上仍需回表过滤。 */
+    INDEX idx_logs_channel_type_created (channel_id, type, created_at),
+    INDEX idx_logs_model_type (model, type)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
   `CREATE TABLE IF NOT EXISTS options (
@@ -236,18 +251,21 @@ const TABLES = [
 // 生成 / 持久化 JWT 密钥：环境变量 > .jwt-secret 文件 > 随机生成
 function resolveJwtSecret() {
   if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
-  const secretFile = path.join(process.cwd(), ".jwt-secret");
+  // 用「包根目录」而不是 cwd：systemd 与手动 `node src/index.js` 的 cwd 可能不同，
+  // 从不同目录启动会在新位置生成新密钥，导致全站登录态失效（表现为「莫名其妙掉登录」）。
+  const secretFile = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", ".jwt-secret");
   try {
     const s = fs.readFileSync(secretFile, "utf8").trim();
     if (s) return s;
   } catch {
-    /* ignore */
+    /* 文件不存在：下面生成 */
   }
   const s = crypto.randomBytes(32).toString("hex");
   try {
     fs.writeFileSync(secretFile, s, { mode: 0o600 });
-  } catch {
-    /* ignore */
+  } catch (e) {
+    // 写不进去就等于每次重启换密钥（全员掉线），必须让运维看到而不是静默
+    console.warn(`[db] JWT 密钥无法写入 ${secretFile}（${e.message}）；本次使用进程内随机密钥，重启后所有登录态会失效`);
   }
   return s;
 }
@@ -325,14 +343,34 @@ async function ensureColumnTypes() {
 }
 
 async function ensureColumns() {
+  // 按表分组：同一张表的多个缺列**合并成一条 ALTER**。
+  // 为什么：逐列 ALTER 在 MySQL 5.7 上每一列都要重建一次整表，logs 新增 14 列
+  // 就是 14 次全表重建；合并后只重建一次。MySQL 8.0.12+ 对「末尾追加 + 常量默认值」
+  // 走 INSTANT（只改数据字典），合并同样只有一条 DDL，代价更低。
+  const byTable = new Map();
   for (const m of COLUMN_MIGRATIONS) {
-    const [rows] = await pool.query(
-      "SELECT COUNT(*) AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
-      [m.table, m.column]
-    );
-    if (!rows[0].c) {
-      await pool.query(`ALTER TABLE ${m.table} ADD COLUMN ${m.column} ${m.ddl}`);
-      console.log(`[migrate] ${m.table}.${m.column} 已添加`);
+    if (!byTable.has(m.table)) byTable.set(m.table, []);
+    byTable.get(m.table).push(m);
+  }
+  for (const [table, cols] of byTable) {
+    try {
+      const [rows] = await pool.query(
+        "SELECT column_name AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?",
+        [table]
+      );
+      const have = new Set(rows.map((r) => String(r.c).toLowerCase()));
+      const missing = cols.filter((m) => !have.has(m.column.toLowerCase()));
+      if (!missing.length) continue;
+      // 单表 ALTER 限时：大表上可能长时间等 MDL，把启动卡死。
+      // 超时/失败都只记日志继续 —— 补列是幂等的，下次启动会重试；
+      // 而「因为一列加不上就让服务起不来」（配合 systemd Restart=always 会变成
+      // 三秒重启一次的死循环，站点全挂）是更严重的问题。
+      await pool.query("SET SESSION lock_wait_timeout = 20");
+      const clause = missing.map((m) => `ADD COLUMN ${m.column} ${m.ddl}`).join(", ");
+      await pool.query(`ALTER TABLE ${table} ${clause}`);
+      console.log(`[migrate] ${table} 已补齐 ${missing.length} 列：${missing.map((m) => m.column).join(", ")}`);
+    } catch (e) {
+      console.error(`[migrate] ${table} 补列失败（下次启动会重试）：${e.message}`);
     }
   }
 }
@@ -344,10 +382,12 @@ const INDEX_MIGRATIONS = [
   "CREATE INDEX idx_channels_status_priority ON channels (status, priority)",
   "CREATE INDEX idx_logs_type_created ON logs (type, created_at)",
   "CREATE INDEX idx_logs_user_type_created ON logs (user_id, type, created_at)",
-  // 渠道统计/筛选走 channel_id 列（替代原 JSON_EXTRACT detail），无索引等于每页全表扫
-  "CREATE INDEX idx_logs_channel ON logs (channel_id)",
-  // 按模型筛选与模型排行
-  "CREATE INDEX idx_logs_model ON logs (model)",
+  // 渠道统计/筛选走 channel_id 列（替代原 JSON_EXTRACT detail）。
+  // 用复合索引而不是单列：查询恒带 type=2 + created_at 范围，复合索引能把这三种条件
+  // 一次吃下（单列 channel_id 仍要回表过滤 type/时间，大渠道上差别明显）。
+  "CREATE INDEX idx_logs_channel_type_created ON logs (channel_id, type, created_at)",
+  // 按模型筛选（列表页恒带 type=2）
+  "CREATE INDEX idx_logs_model_type ON logs (model, type)",
 ];
 
 async function ensureIndexes() {

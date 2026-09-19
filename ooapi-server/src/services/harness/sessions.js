@@ -354,9 +354,21 @@ export async function batchSessions({ userId, ids = [], action, projectId = "" }
   const ph = list.map(() => "?").join(",");
 
   if (action === "delete") {
-    const [ret] = await pool.query(`DELETE FROM chat_sessions WHERE user_id = ? AND id IN (${ph})`, [userId, ...list]);
-    // 消息按 session_id 删（这些 id 已确认属于该用户，直接删不会越权）
-    await pool.query(`DELETE FROM chat_messages WHERE session_id IN (${ph})`, list);
+    // 先取回**确实属于该用户**的会话 id，再据此删消息。
+    // 不能直接拿请求里的 ids 去删消息：第一条 DELETE 命中 0 行时（id 不属于该用户或不存在）
+    // 也照样会执行第二条，从而删掉别人会话的全部消息（只删消息、会话还在）。
+    const [owned] = await pool.query(
+      `SELECT id FROM chat_sessions WHERE user_id = ? AND id IN (${ph})`,
+      [userId, ...list]
+    );
+    const ownedIds = owned.map((r) => String(r.id));
+    if (!ownedIds.length) return { affected: 0 };
+    const ph2 = ownedIds.map(() => "?").join(",");
+    const [ret] = await pool.query(`DELETE FROM chat_sessions WHERE user_id = ? AND id IN (${ph2})`, [
+      userId,
+      ...ownedIds,
+    ]);
+    await pool.query(`DELETE FROM chat_messages WHERE session_id IN (${ph2})`, ownedIds);
     return { affected: ret.affectedRows };
   }
 

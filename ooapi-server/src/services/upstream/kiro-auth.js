@@ -19,7 +19,11 @@ function normalize(t) {
   const str = (v) => String(v || "").trim();
   const access_token = str(t.accessToken || t.access_token);
   const refresh_token = str(t.refreshToken || t.refresh_token);
-  const region = str(t.region || t.regionId || t.region_id) || DEFAULT_REGION;
+  // region 会直接拼进上游主机名（codewhisperer.{region}.amazonaws.com），
+  // 而它来自外部凭据文件 —— 必须白名单校验。否则 region = "@127.0.0.1:8080/" 这类值
+  // 会把请求重定向到内网，并带着 Kiro 的 Bearer 令牌（SSRF + 令牌外泄）。
+  const rawRegion = str(t.region || t.regionId || t.region_id);
+  const region = /^[a-z0-9-]{2,32}$/i.test(rawRegion) ? rawRegion : DEFAULT_REGION;
   const profile_arn = str(t.profileArn || t.profile_arn);
   const client_id = str(t.clientId || t.client_id);
   const client_secret = str(t.clientSecret || t.client_secret);

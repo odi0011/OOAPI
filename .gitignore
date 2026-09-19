@@ -8,6 +8,8 @@ package-lock.json.bak
 .jwt-secret
 *.pem
 *.key
+# 首次启动生成的管理员随机密码（含 root 凭据，一次 git add -A 就会入库）
+.admin-password
 
 # 运行时数据
 data/

@@ -10,6 +10,7 @@ import express from "express";
 import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now, safeInt, clientIp } from "../utils.js";
 import { authRequired, preAuthJwt } from "../middleware/auth.js";
+import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getPrice, computeCost, splitTokens, estimateTokens, loadPrices, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { groupConfigOf, applyGroupRate } from "../services/group-rate.js";
@@ -464,11 +465,14 @@ function aggregate(calls = []) {
 //   · 后台任务负责跑完并把结果落库，客户端断开只取消订阅、不影响运行；
 //   · 事件进 runs 环形缓冲，刷新后重新订阅（GET /sessions/:id/stream）先回放再续播；
 //   · 只有用户显式点「停止」（POST /sessions/:id/stop）才真的中止上游。
-// 事件类型：start / resumed / part / part_update / delta / todo / done / error / stopped
-router.post(
-  "/run",
-  authRequired,
-  asyncHandler(async (req, res) => {
+  // 事件类型：start / resumed / part / part_update / delta / todo / done / error / stopped
+  router.post(
+    "/run",
+    authRequired,
+    // 单个用户维度限流：一轮对话最多可触发 16 步上游调用（每步都是真金白银），
+    // 是本站成本最高的入口。给一个宽松但存在的上限，防脚本化刷量与误连点。
+    rateLimit({ windowMs: 60_000, max: 20, keyPrefix: "chat-run", keyFn: (r) => r.user?.id || r.ip }),
+    asyncHandler(async (req, res) => {
     const { sessionId, text = "", model: modelOverride, agent: agentOverride, settings: settingsPatch, images = [], files = [], keyId = 0 } = req.body || {};
 
     const session = await getSession(req.user.id, sessionId);

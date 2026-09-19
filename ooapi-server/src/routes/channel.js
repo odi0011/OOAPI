@@ -413,10 +413,12 @@ router.get(
       } catch {
         d = {};
       }
-      // 新列优先，老记录回落到 detail
-      const pt = Number(l.prompt_tokens ?? d.prompt_tokens) || 0;
-      const ct = Number(l.completion_tokens ?? d.completion_tokens) || 0;
-      const cat = Number(l.cache_tokens ?? d.cache_tokens) || 0;
+      // 新列优先，老记录回落到 detail。
+      // 必须用 || 而不是 ??：新列是 NOT NULL DEFAULT 0，老记录读出来是 0（不是 null），
+      // ?? 永远不会回落到 detail，导致老行的 token 全部算 0，与「累计」口径（走 JSON_EXTRACT）矛盾。
+      const pt = Number(l.prompt_tokens) || Number(d.prompt_tokens) || 0;
+      const ct = Number(l.completion_tokens) || Number(d.completion_tokens) || 0;
+      const cat = Number(l.cache_tokens) || Number(d.cache_tokens) || 0;
       const units = Number(l.quota) || 0;
       totals.units += units;
       totals.promptTokens += pt;

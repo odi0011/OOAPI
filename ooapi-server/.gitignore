@@ -1,5 +1,7 @@
 node_modules/
 .env
 .jwt-secret
+# 首次启动生成的管理员随机密码（含 root 凭据）
+.admin-password
 data/
 *.log

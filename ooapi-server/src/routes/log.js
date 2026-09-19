@@ -52,20 +52,26 @@ function mapLog(r, { isAdmin }) {
   };
 }
 
-/** 解析时间范围参数（支持 days / start / end 秒级时间戳） */
-function timeRange(query = {}) {
-  const days = safeInt(query.days, { min: 1, max: 3660, fallback: 0 });
+/**
+ * 解析时间范围参数（支持 days / start / end 秒级时间戳）。
+ * @param {object} query
+ * @param {number} defaultDays 未传/非法时的默认窗口（0 = 不限制）。
+ *   summary 这类聚合查询必须给默认窗口：不带参数直接打接口会对全表做
+ *   COUNT + SUM + AVG，大表上足以拖垮数据库。
+ */
+function timeRange(query = {}, defaultDays = 0) {
+  const daysRaw = safeInt(query.days, { min: 0, max: 3660, fallback: null });
+  const days = daysRaw === null ? defaultDays : daysRaw;
   const start = safeInt(query.start, { min: 0, max: 9_999_999_999_999, fallback: 0 });
   const end = safeInt(query.end, { min: 0, max: 9_999_999_999_999, fallback: 0 });
   const conds = [];
   const args = [];
-  if (days) {
+  // days 与 start 都表达「起点」：取较晚的那个，避免 WHERE 里出现两个 created_at >= ?
+  const fromDays = days ? Math.floor(Date.now() / 1000) - days * 86400 : 0;
+  const from = Math.max(fromDays, start);
+  if (from) {
     conds.push("created_at >= ?");
-    args.push(Math.floor(Date.now() / 1000) - days * 86400);
-  }
-  if (start) {
-    conds.push("created_at >= ?");
-    args.push(start);
+    args.push(from);
   }
   if (end) {
     conds.push("created_at <= ?");
@@ -80,8 +86,9 @@ function timeRange(query = {}) {
  * @param {boolean} opts.isAdmin
  * @param {number} opts.userId     普通用户只能看自己
  * @param {"usage"|"operation"} opts.kind
+ * @param {number} [opts.defaultDays] 未传时间范围时的默认窗口（聚合查询用）
  */
-function buildQuery({ isAdmin, userId, kind, query }) {
+function buildQuery({ isAdmin, userId, kind, query, defaultDays = 0 }) {
   const conds = [];
   const args = [];
   if (kind === "usage") {
@@ -133,7 +140,7 @@ function buildQuery({ isAdmin, userId, kind, query }) {
       args.push(type);
     }
   }
-  const range = timeRange(query);
+  const range = timeRange(query, defaultDays);
   conds.push(...range.conds);
   args.push(...range.args);
   return { where: conds.length ? `WHERE ${conds.join(" AND ")}` : "", args };
@@ -238,7 +245,15 @@ router.get(
   authRequired,
   asyncHandler(async (req, res) => {
     const isAdmin = Number(req.user.role) >= 100;
-    const { where, args } = buildQuery({ isAdmin, userId: req.user.id, kind: "usage", query: req.query });
+    // 默认 30 天窗口：不带参数的聚合查询在大表上是全表 COUNT/SUM/AVG，
+    // 前端总是会带 days，但接口必须自己兜住（否则一个裸请求就能压住数据库）。
+    const { where, args } = buildQuery({
+      isAdmin,
+      userId: req.user.id,
+      kind: "usage",
+      query: req.query,
+      defaultDays: 30,
+    });
     const [[row]] = await pool.query(
       `SELECT COUNT(*) AS calls,
               COALESCE(SUM(quota),0) AS units,
