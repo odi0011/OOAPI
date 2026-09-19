@@ -7,6 +7,7 @@
 // alerts/* ≈ 它的 OpsAlertRulesCard / OpsAlertEventsCard；
 // 多出来的部分：SSE 实时推送、Webhook 通道、进程级 CPU、事件循环阻塞归因、Buffer 泄漏检测。
 import { Router } from "express";
+import crypto from "node:crypto";
 import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
@@ -17,7 +18,15 @@ import { sendTestMail, sendWebhook, webhookPlatform, smtpConfig } from "../servi
 import { START_TIME, VERSION, getNumberOption, getBoolOption, getOption } from "../config.js";
 
 const router = Router();
-router.use(adminRequired);
+// 注意：/stream 走「一次性票据」自鉴权（EventSource 无法带 Authorization 头），
+// 所以不能在这里全局挂 adminRequired —— 那会让它在进到处理器之前就被 401 挡掉。
+// 其余接口在下面各自的中间件里挂，或在文件末尾统一补挂（见 GUARDED 注释）。
+const GUARD_EXEMPT = new Set(["/stream", "/stream-ticket"]);
+router.use((req, res, next) => {
+  // mount 之后 req.path 是去掉挂载点的相对路径
+  if (GUARD_EXEMPT.has(req.path)) return next();
+  return adminRequired(req, res, next);
+});
 
 // 阈值：与「告警」同源，避免两处口径（前端据此给红/黄标记）
 function thresholds() {
@@ -151,9 +160,48 @@ router.get(
 );
 
 // SSE 实时推送（sub2api 用的 WebSocket；SSE 无依赖、浏览器原生自动重连、没有连接数上限问题）
+//
+// 鉴权：浏览器原生的 EventSource **不能自定义请求头**，所以没法带 Authorization。
+// 早期实现直接让这个接口过 adminRequired，结果前端每次连接都被 401（控制台报错、
+// 图表拿不到实时数据，只能靠 15s 轮询兜着）。
+// 这里改为「一次性短票据」：前端先用普通 API 调用换取一个 60 秒内有效、只能用于
+// 这一个接口的随机票据，再拼到 query 上。比把完整 JWT 放进 URL 安全 ——
+// 完整 JWT 有效期 30 天且等同全站通行证，一旦出现在访问日志/浏览器历史里就是长期风险。
+const streamTickets = new Map(); // ticket → { userId, exp }
+const TICKET_TTL_MS = 60_000;
+
+function issueTicket(userId) {
+  const ticket = crypto.randomBytes(24).toString("hex");
+  streamTickets.set(ticket, { userId, exp: Date.now() + TICKET_TTL_MS });
+  // 顺手清理过期票据：量很小，但避免只增不减
+  const now = Date.now();
+  for (const [k, v] of streamTickets.entries()) if (v.exp < now) streamTickets.delete(k);
+  return ticket;
+}
+
+router.post(
+  "/stream-ticket",
+  adminRequired,
+  asyncHandler(async (req, res) => ok(res, { ticket: issueTicket(req.user.id), expiresInSec: TICKET_TTL_MS / 1000 }))
+);
+
 router.get(
   "/stream",
   asyncHandler(async (req, res) => {
+    // 票据校验（一次性：用过即删，避免被反复利用）
+    const ticket = String(req.query.ticket || "");
+    const rec = streamTickets.get(ticket);
+    if (!rec || rec.exp < Date.now()) {
+      res.status(401).json({ success: false, message: "实时推送凭据无效或已过期，请刷新页面" });
+      return;
+    }
+    streamTickets.delete(ticket);
+    const [[user]] = await pool.query("SELECT id, role, status FROM users WHERE id = ?", [rec.userId]);
+    if (!user || user.status !== 1 || user.role < 100) {
+      res.status(403).json({ success: false, message: "需要管理员权限" });
+      return;
+    }
+
     res.setHeader("content-type", "text/event-stream; charset=utf-8");
     res.setHeader("cache-control", "no-cache, no-transform");
     res.setHeader("connection", "keep-alive");

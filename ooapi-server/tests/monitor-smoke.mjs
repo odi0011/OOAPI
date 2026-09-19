@@ -273,11 +273,23 @@ await check("清理接口拒绝 days<=0（防止一键清空历史）", async ()
   assert.equal(r.status, 400, `days=0 应被拒绝，实际 HTTP ${r.status}`);
 });
 
-await check("SSE 流能建立连接并推送首帧", async () => {
+await check("SSE 流需要一次性票据：无票据 401、有票据可连", async () => {
+  // 无票据必须被拒（EventSource 带不了 Authorization，所以用票据代替）
+  const noTicket = await fetch(`${BASE}/api/monitor/stream?interval=1000`);
+  assert.equal(noTicket.status, 401, `无票据应 401，实际 ${noTicket.status}`);
+
+  // 换票据 → 连接 → 读首帧
+  const tr = await req("/api/monitor/stream-ticket", { method: "POST", body: "{}" });
+  assert.equal(tr.status, 200, `换票据失败 HTTP ${tr.status}`);
+  const ticket = tr.body?.data?.ticket;
+  assert.ok(typeof ticket === "string" && ticket.length >= 16, "票据格式不对");
+
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 6000);
   try {
-    const r = await fetch(`${BASE}/api/monitor/stream?interval=1000`, { headers: H, signal: ctrl.signal });
+    const r = await fetch(`${BASE}/api/monitor/stream?interval=1000&ticket=${encodeURIComponent(ticket)}`, {
+      signal: ctrl.signal,
+    });
     assert.equal(r.status, 200, `HTTP ${r.status}`);
     assert.match(String(r.headers.get("content-type")), /event-stream/, "content-type 必须是 event-stream");
     const reader = r.body.getReader();
@@ -291,6 +303,10 @@ await check("SSE 流能建立连接并推送首帧", async () => {
   } finally {
     clearTimeout(timer);
   }
+
+  // 票据是一次性的：同一张票再用必须失败
+  const reuse = await fetch(`${BASE}/api/monitor/stream?interval=1000&ticket=${encodeURIComponent(ticket)}`);
+  assert.equal(reuse.status, 401, `票据应一次性，复用应 401，实际 ${reuse.status}`);
 });
 
 await pool.end().catch(() => {});

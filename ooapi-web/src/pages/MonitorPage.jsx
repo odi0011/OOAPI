@@ -564,29 +564,72 @@ export default function MonitorPage() {
   }, [interval, load]);
 
   // SSE 实时推送（失败自动退回纯轮询，不影响可用性）
+  //
+  // EventSource 不能自定义请求头，所以拿不到 Authorization —— 直接连会被 401。
+  // 先用普通 API 调用换一张 60 秒有效的一次性票据，再拼到 query 上。
+  // 票据用一次即失效；断线重连时（浏览器自动重连会复用同一个 URL，票据已作废）
+  // 由下面的 onerror 主动换新票据重建连接。
   useEffect(() => {
     if (typeof EventSource === "undefined") return undefined;
-    let es;
-    try {
-      es = new EventSource("/api/monitor/stream?interval=3000");
-    } catch {
-      return undefined;
-    }
-    esRef.current = es;
-    es.onopen = () => setLiveOk(true);
-    es.onmessage = (ev) => {
+    let es = null;
+    let closed = false;
+    let retryTimer = null;
+
+    const connect = async () => {
+      if (closed) return;
       try {
-        setLive(JSON.parse(ev.data));
-        setLiveOk(true);
+        const r = await API.post("/monitor/stream-ticket");
+        const ticket = r?.data?.ticket;
+        if (!ticket || closed) return;
+        es = new EventSource(`/api/monitor/stream?interval=3000&ticket=${encodeURIComponent(ticket)}`);
+        esRef.current = es;
+        es.onopen = () => setLiveOk(true);
+        es.onmessage = (ev) => {
+          try {
+            setLive(JSON.parse(ev.data));
+            setLiveOk(true);
+          } catch {
+            /* 忽略脏帧 */
+          }
+        };
+        es.onerror = () => {
+          setLiveOk(false);
+          // 票据一次性，自动重连必然 401：关掉旧连接，换新票据再连（5 秒后）
+          try {
+            es?.close();
+          } catch {
+            /* ignore */
+          }
+          es = null;
+          if (!closed && !retryTimer) {
+            retryTimer = setTimeout(() => {
+              retryTimer = null;
+              connect();
+            }, 5000);
+          }
+        };
       } catch {
-        /* 忽略脏帧 */
+        // 换票据失败（网络/权限）：退回轮询，稍后再试
+        setLiveOk(false);
+        if (!closed && !retryTimer) {
+          retryTimer = setTimeout(() => {
+            retryTimer = null;
+            connect();
+          }, 15000);
+        }
       }
     };
-    es.onerror = () => {
-      // 浏览器会自动重连；这里只把「实时」标记抹掉，页面继续靠轮询
-      setLiveOk(false);
+
+    connect();
+    return () => {
+      closed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      try {
+        es?.close();
+      } catch {
+        /* ignore */
+      }
     };
-    return () => es.close();
   }, []);
 
   const g = data?.gateway || {};
