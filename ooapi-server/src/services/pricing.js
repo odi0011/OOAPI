@@ -78,6 +78,10 @@ export const DEFAULT_PRICES = [
   // --- Kimi（官方美元价；来源 platform.kimi.com/docs/pricing/chat）---
   { model: "kimi-k3", input: 3.00, output: 15.00, cache: 0.30, type: "kimi", remark: "官方定价，1M 上下文；来源 platform.kimi.com/docs/pricing/chat-k3" },
   { model: "kimi-k2.6", input: 0.95, output: 4.00, cache: 0.16, type: "kimi", remark: "官方定价；来源 platform.kimi.com/docs/pricing/chat" },
+  // kimi-k2 是仍在注册表里的经典档（网页反代 SCENARIO_K2 会用到）。
+  // 缺这一行会让它落到「同厂商最高档兜底」= 按 k3 旗舰价（3.00/15.00）计费，
+  // 相对 k2.6 档最多多收约 3 倍。
+  { model: "kimi-k2", input: 0.55, output: 2.20, cache: 0.10, type: "kimi", remark: "经典档，按上一代官方价录入（待官方页复核）；来源 platform.kimi.com/docs/pricing/chat" },
 
   // --- 通义千问（官方人民币价 ÷ 7.2；来源 help.aliyun.com/zh/model-studio）---
   { model: "qwen3.8-max", input: 1.667, output: 5.000, cache: 0.208, type: "qwen", remark: `官方 ¥12/¥36/缓存 ¥1.5 ÷ ${CNY_PER_USD}；来源 help.aliyun.com/zh/model-studio/qwen3-8-max` },
@@ -264,8 +268,21 @@ export async function getPrice(model) {
     }
   }
   if (best) return best;
+  // 同族匹配：请求名是某个已配价模型名的前缀（kimi-k2 → kimi-k2.6、deepseek-v4 → deepseek-v4-pro）。
+  // 取「最短的那个」（最贴近的族），比直接跳到「同厂商最贵档」准确得多 ——
+  // 按最贵档兜底会让上一代/中端模型被按旗舰价收（kimi-k2 落到 kimi-k3 就是 3 倍）。
+  let family = null;
+  let familyLen = Infinity;
+  for (const [k, v] of prices) {
+    if (k.length < m.length) continue; // 只考虑比请求名更长的
+    if (k.startsWith(m) && k.length < familyLen) {
+      family = v;
+      familyLen = k.length;
+    }
+  }
+  if (family) return { ...family, model, remark: `${family.model} 同族兜底（原模型未单独定价）` };
   // 兜底不能一律按 DeepSeek 价：反代/订阅渠道产出的模型（gpt-5.6-*、grok-* 等）单价是
-  // DeepSeek flash 的 3~10 倍，一律按它算等于系统性少计费。这里先按「同厂商最贵档」兜底
+  // DeepSeek flash 的 3~10 倍，一律按它算等于系统性少计费。这里再退一步按「同厂商最贵档」
   // （宁可高估不可漏收），真的连厂商都判定不出来才退回 DeepSeek 档。
   const vendor = await vendorOfModel(model);
   const vendorPrice = vendor ? priciestOfVendor(prices, vendor) : null;

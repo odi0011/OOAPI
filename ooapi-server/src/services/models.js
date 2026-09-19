@@ -180,10 +180,11 @@ export async function modelRegistry() {
 }
 
 export function invalidateModelRegistry() {
-  registryCache = { at: 0, map: null };
-  // 渠道写操作会让这里失效：调度层按「该厂商有哪些模型」判断能否服务，
-  // 拿到的是同步快照（见 modelRegistrySync），所以必须**立即补热**，
-  // 否则失效到下次预热之间所有「models 留空」的渠道都会被判为不可用。
+  // stale-while-revalidate：**保留旧 map**，只标记过期并异步重建。
+  // 为什么不能直接置 null：调度层用同步快照（modelRegistrySync）判断「该模型是否属于该厂商」，
+  // 置 null 会让所有 models 留空的渠道在重建完成前（约 200ms+）被误判为不可用 ——
+  // 而渠道/定价的每次写操作都会触发失效，等于把「管理员点一下保存」变成「短暂全站 503」。
+  registryCache.at = 0;
   scheduleRegistryWarmup();
 }
 

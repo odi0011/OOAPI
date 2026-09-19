@@ -103,6 +103,11 @@ export async function runCompletion({
       let backstopTimer;
       let callStarted = 0;
       let armDeadline = () => {};
+      // race 是否已结束。用它防住一个隐蔽的定时器泄漏：
+      // backstop 先触发（深队列时排队就超时）后，排队中的任务稍后才真正开始执行并调用
+      // armDeadline()，那个 hardTimer 在 finally 之后才创建，没人清理，会空转一整个
+      // timeoutMs（默认 10 分钟）并再次 abort + 把 timedOut 置真。
+      let settled = false;
       // 两段计时：
       //   · hardTimer 只包住真正的上游调用（排队不算，避免黄条失真/没发请求就超时）；
       //   · backstopTimer 覆盖「排队 + 调用」，防止同渠道前序任务悬挂导致本请求永远排不到队头。
@@ -112,21 +117,22 @@ export async function runCompletion({
         // 管理员在日志的 channel_name 列与渠道最近调用里都能看到真实名称。
         const timeoutError = () =>
           Object.assign(new Error(`上游渠道 #${channel.id} 响应超时（${timeoutMs}ms）`), { code: "CHANNEL_TIMEOUT" });
-        armDeadline = () => {
-          hardTimer = setTimeout(() => {
-            timedOut = true;
-            attemptCtrl.abort();
-            reject(timeoutError());
-          }, timeoutMs);
-        };
-        backstopTimer = setTimeout(() => {
+        const fire = () => {
+          if (settled) return;
           timedOut = true;
           attemptCtrl.abort();
           reject(timeoutError());
-        }, timeoutMs + 5 * 60 * 1000);
+        };
+        armDeadline = () => {
+          if (settled) return;
+          hardTimer = setTimeout(fire, timeoutMs);
+        };
+        backstopTimer = setTimeout(fire, timeoutMs + 5 * 60 * 1000);
       });
       const result = await Promise.race([
         withChannelLimit(channel, () => {
+          // 排队期间可能已经被 backstop 判超时：这时不必再发请求（上游会被 abort 立刻打断）
+          if (settled) return Promise.reject(Object.assign(new Error("渠道排队超时"), { code: "CHANNEL_TIMEOUT" }));
           callStarted = Date.now();
           armDeadline();
           return adapter.chat({
@@ -153,6 +159,7 @@ export async function runCompletion({
         }),
         deadline,
       ]).finally(() => {
+        settled = true;
         clearTimeout(hardTimer);
         clearTimeout(backstopTimer);
       });
@@ -203,8 +210,11 @@ export async function runCompletion({
 
       // 已经流式输出过内容就不能换渠道了（否则客户端会收到拼接错乱的内容），
       // 但故障渠道仍要冷却与记录，否则下一请求还会优先命中它、反复失败。
+      // 冷却用与下方同一条计算函数：已流出内容只决定「不换渠道」，不该影响「冷却多久」——
+      // 之前这里硬编码 300s，会把 DeepSeek WAF（6h）、429（15min）等档位压成 5 分钟，
+      // 等于立刻回去撞同一个账号。
       if (sawOutput) {
-        await markChannelError(channel, lastError.message, 300, {
+        await markChannelError(channel, lastError.message, cooldownFor(code, lastError), {
           prompt,
           reply: lastError.message,
           kind: "chat",
@@ -219,27 +229,7 @@ export async function runCompletion({
       const judgeable = Boolean(lastError.code);
       if (judgeable && !isRetryable(code)) throw lastError;
 
-      // 标记渠道异常并冷却，尝试下一个。
-      // 适配器可自带 cooldownSec（如 grok 免费额度用尽要冷却 24h、codex 降智只冷却 90s）
-      const requestedCooldown = Number(lastError?.cooldownSec);
-      // 默认冷却按「这个渠道还能不能自己恢复」分档：
-      //   · 风控（WAF）：需要人工处理或等待较久，冷却太短等于反复去撞，会把临时限制升级成封禁；
-      //   · 验证码：通常要人过，给 1 小时；
-      //   · 登录态失效：6 小时（等管理员重新登录，期间不再浪费请求）；
-      //   · 其余瞬时错误：5 分钟。
-      const cooldown =
-        Number.isFinite(requestedCooldown) && requestedCooldown > 0
-          ? Math.min(86400, Math.max(30, Math.floor(requestedCooldown)))
-          : code === "CHANNEL_MUTED"
-            ? 1800
-            : code === "CHANNEL_AUTH_EXPIRED"
-              ? 21600
-              : code === "CHANNEL_WAF"
-                ? 21600
-                : code === "CHANNEL_CAPTCHA"
-                  ? 3600
-                  : 300;
-      await markChannelError(channel, lastError.message, cooldown, {
+      await markChannelError(channel, lastError.message, cooldownFor(code, lastError), {
         prompt,
         reply: lastError.message,
         kind: "chat",
@@ -252,6 +242,34 @@ export async function runCompletion({
   }
 
   throw lastError || Object.assign(new Error("所有渠道均不可用"), { code: "NO_CHANNEL" });
+}
+
+/**
+ * 失败后的冷却时长（秒）。两条失败路径（已输出内容 / 未输出）共用同一口径。
+ * 分档依据是「这个渠道能不能自己恢复」：
+ *   · 适配器自带 cooldownSec（grok 免费额度 24h、codex 降智 90s）优先；
+ *   · 风控（WAF）：需要人工处理或等待较久，冷却太短等于反复去撞，会把临时限制升级成封禁；
+ *   · 验证码：通常要人过，给 1 小时；
+ *   · 登录态失效：6 小时（等管理员重新登录，期间不再浪费请求）；
+ *   · 渠道类型未注册/配置缺失：不会自愈，给 6 小时，避免每次请求都遍历一遍坏渠道；
+ *   · 其余瞬时错误：5 分钟。
+ */
+function cooldownFor(code, err) {
+  const requested = Number(err?.cooldownSec);
+  if (Number.isFinite(requested) && requested > 0) return Math.min(86400, Math.max(30, Math.floor(requested)));
+  switch (code) {
+    case "CHANNEL_MUTED":
+      return 1800;
+    case "CHANNEL_AUTH_EXPIRED":
+    case "CHANNEL_WAF":
+    case "UNSUPPORTED_CHANNEL":
+    case "CHANNEL_CONFIG_ERROR":
+      return 21600;
+    case "CHANNEL_CAPTCHA":
+      return 3600;
+    default:
+      return 300;
+  }
 }
 
 /**
