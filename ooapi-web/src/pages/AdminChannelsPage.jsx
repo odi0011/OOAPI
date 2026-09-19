@@ -617,7 +617,7 @@ export default function AdminChannelsPage() {
       return next;
     });
 
-  // 某厂商可选的分组（管理员在「分组管理」创建；不选 = 公共池，供未绑定分组的 Key 使用）
+  // 某厂商可选的分组（管理员在「分组管理」创建；不选 = 不绑定）
   const groupNamesOf = (type) => groups.filter((g) => !type || g.type === type).map((g) => g.name);
 
   const groupSelectOptions = (type) =>
@@ -861,7 +861,9 @@ export default function AdminChannelsPage() {
       name: p.name,
       base_url: m.baseUrl || "",
       api_key: "",
-      models: (m.defaultModels || []).map((x) => x.id),
+      // 模型范围留空 = 该厂商全部模型：不在新建时预填「推荐模型」，
+      // 否则新模型上线后还得逐个渠道补，漏了就等于该渠道不能服务该模型。
+      models: [],
       priority: 0,
       // 非 API 方式（反代/订阅）后端会把 <=0 的权重归一到 1，表单默认值保持一致
       weight: m.key === "api" ? 0 : 1,
@@ -1580,7 +1582,7 @@ export default function AdminChannelsPage() {
       title: "模型",
       dataIndex: "models",
       width: 250,
-      render: (list) => (
+      render: (list, r) => (
         <Tooltip
           title={
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -1589,8 +1591,15 @@ export default function AdminChannelsPage() {
           }
         >
           <span style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "nowrap", overflow: "hidden" }}>
-            {(list || []).slice(0, 2).map((m) => <ModelLabel key={m} model={m} size={14} />)}
-            {(list?.length || 0) > 2 ? <span className="bui-chip">+{list.length - 2}</span> : null}
+            {/* 留空 = 该厂商全部模型（模型归厂商，不归账号），显示厂商名而不是空白 */}
+            {(list || []).length ? (
+              <>
+                {(list || []).slice(0, 2).map((m) => <ModelLabel key={m} model={m} size={14} />)}
+                {(list?.length || 0) > 2 ? <span className="bui-chip">+{list.length - 2}</span> : null}
+              </>
+            ) : (
+              <span className="bui-chip">{r.typeName} 全部</span>
+            )}
           </span>
         </Tooltip>
       ),
@@ -2034,7 +2043,7 @@ export default function AdminChannelsPage() {
                     {r.method === "api" ? (r.key_count > 1 ? `${r.key_count} 个 Key` : "Key") : "账号"}
                   </span>
                   <span className="bui-chip" title={(r.groups || []).join("、")}>
-                    {Array.isArray(r.groups) && r.groups.length ? r.groups[0] : "公共"}
+                    {Array.isArray(r.groups) && r.groups.length ? r.groups[0] : "未分组"}
                   </span>
                 </div>
                 <div className="oo-channel-card-models">
@@ -2046,8 +2055,14 @@ export default function AdminChannelsPage() {
                     }
                   >
                     <span style={{ display: "flex", gap: 8, alignItems: "center", overflow: "hidden" }}>
-                      {(r.models || []).slice(0, 3).map((m) => <ModelLabel key={m} model={m} size={14} />)}
-                      {(r.models?.length || 0) > 3 ? <span className="bui-chip">+{r.models.length - 3}</span> : null}
+                      {(r.models || []).length ? (
+                        <>
+                          {(r.models || []).slice(0, 3).map((m) => <ModelLabel key={m} model={m} size={14} />)}
+                          {(r.models?.length || 0) > 3 ? <span className="bui-chip">+{r.models.length - 3}</span> : null}
+                        </>
+                      ) : (
+                        <span className="bui-chip">{r.typeName} 全部</span>
+                      )}
                     </span>
                   </Tooltip>
                 </div>
@@ -2219,19 +2234,9 @@ export default function AdminChannelsPage() {
                                 ) : null}
                               </Space>
                               {oauthUrl ? (
-                                <Alert
-                                  type="info"
-                                  showIcon
-                                  className="oo-alert-compact"
-                                  style={{ marginTop: 8 }}
-                                  message="还差一步：把回调地址粘回来"
-                                  description={
-                                    <span style={{ fontSize: 12 }}>
-                                      在新窗口完成登录后，页面会停在一个打不开的 localhost 地址（正常现象）。
-                                      复制地址栏那一整串 URL，粘贴到下面的输入框，再点「添加」。
-                                    </span>
-                                  }
-                                />
+                                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                                  登录后页面会停在打不开的 localhost 地址（正常），把地址栏整串 URL 粘到下面输入框。
+                                </Typography.Text>
                               ) : null}
                             </Form.Item>
                           ) : null}
@@ -2316,21 +2321,15 @@ export default function AdminChannelsPage() {
                         </>
                       ) : addMode === "browser" ? (
                         <>
-                          <Alert
-                            type={onboardReady ? "success" : "info"}
-                            showIcon
-                            className="oo-alert-compact"
-                            style={{ marginBottom: 12 }}
-                            message={onboardReady ? "已完成浏览器登录" : "需要浏览器登录"}
-                            description={
-                              <span style={{ fontSize: 12 }}>
-                                {onboardReady
-                                  ? "登录态已就绪，点右下角「添加」保存渠道即可。"
-                                  : pickMethod.browserHint ||
-                                    "点下面的「打开登录页」，在服务器浏览器里完成登录（扫码/验证码），然后回到这里点「添加」。"}
-                              </span>
-                            }
-                          />
+                          {onboardReady ? (
+                            <Alert
+                              type="success"
+                              showIcon
+                              className="oo-alert-compact"
+                              style={{ marginBottom: 12 }}
+                              message="已完成浏览器登录"
+                            />
+                          ) : null}
                           <Form.Item label="登录（在服务器浏览器里完成）">
                             <Space wrap>
                               <Button icon={<GlobalOutlined />} onClick={startCapture} loading={capBusy}>
@@ -2355,15 +2354,11 @@ export default function AdminChannelsPage() {
                     </>
                   )}
 
-                    <Form.Item
-                      name="models"
-                      label="支持的模型"
-                      rules={[{ required: true, message: "请至少选择一个模型" }]}
-                      extra={isRelay ? "已按该厂商默认填入，可增删" : "输入模型名后回车"}
-                    >
+                    <Form.Item name="models" label="模型范围">
                       <Select
                         mode="tags"
-                        placeholder="输入模型名后回车"
+                        allowClear
+                        placeholder="留空 = 该厂商全部模型"
                         tokenSeparators={[","]}
                         tagRender={modelTagRender(pickProvider?.key)}
                         optionRender={modelOptionRender(pickProvider?.key)}
@@ -2372,23 +2367,23 @@ export default function AdminChannelsPage() {
 
                     <Row gutter={12}>
                       <Col span={8}>
-                        <Form.Item name="groups" label="分组" extra="可多选（分组由「分组管理」创建；不选 = 公共池）">
+                        <Form.Item name="groups" label="分组">
                           <Select
                             mode="multiple"
-                            placeholder="不选 = 公共池"
+                            placeholder="不绑定"
                             options={groupSelectOptions(pickProvider?.key)}
                           />
                         </Form.Item>
                       </Col>
                     <Col span={8}>
-                      <Form.Item name="priority" label="优先级" extra="越大越优先">
-                        <InputNumber style={{ width: "100%" }} min={0} />
-                      </Form.Item>
-                    </Col>
-                    <Col span={8}>
-                      <Form.Item name="weight" label="权重" extra="同级随机">
-                        <InputNumber style={{ width: "100%" }} min={0} />
-                      </Form.Item>
+              <Form.Item name="priority" label="优先级">
+                <InputNumber style={{ width: "100%" }} min={0} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="weight" label="权重">
+                <InputNumber style={{ width: "100%" }} min={0} />
+              </Form.Item>
                     </Col>
                   </Row>
 
@@ -2436,20 +2431,15 @@ export default function AdminChannelsPage() {
             </Form.Item>
           ) : null}
           {editing?.method === "api" ? (
-            <Form.Item name="api_key" label="API Key" extra="留空表示不修改">
+            <Form.Item name="api_key" label="API Key">
               <Input.Password placeholder="留空不修改" autoComplete="new-password" />
             </Form.Item>
-          ) : (
-            <Alert
-              type="info" showIcon className="oo-alert-compact" style={{ marginBottom: 16 }}
-              message="凭据修改"
-              description={<span style={{ fontSize: 12 }}>登录态不支持直接编辑；如需重新登录，请删除后重新添加。</span>}
-            />
-          )}
-          <Form.Item name="models" label="支持的模型" rules={[{ required: true, message: "请至少选择一个模型" }]}>
+          ) : null}
+          <Form.Item name="models" label="模型范围">
             <Select
               mode="tags"
-              placeholder="输入模型名后回车"
+              allowClear
+              placeholder="留空 = 该厂商全部模型"
               tokenSeparators={[","]}
               tagRender={modelTagRender(editing?.type)}
               optionRender={modelOptionRender(editing?.type)}
@@ -2457,10 +2447,10 @@ export default function AdminChannelsPage() {
           </Form.Item>
             <Row gutter={12}>
               <Col span={8}>
-                <Form.Item name="groups" label="分组" extra="可多选（分组由「分组管理」创建；不选 = 公共池）">
+                <Form.Item name="groups" label="分组">
                   <Select
                     mode="multiple"
-                    placeholder="不选 = 公共池"
+                    placeholder="不绑定"
                     options={groupSelectOptions(editing?.type)}
                   />
                 </Form.Item>
@@ -2485,14 +2475,14 @@ export default function AdminChannelsPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="auto_test_minutes" label="检测间隔（分钟）" extra="到点自动发检测提示词">
+              <Form.Item name="auto_test_minutes" label="检测间隔（分钟）">
                 <InputNumber style={{ width: "100%" }} min={1} max={1440} disabled={!editAutoTestOn} />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={12}>
             <Col span={8}>
-              <Form.Item name="test_model" label="检测模型" extra="默认用渠道第一个模型">
+              <Form.Item name="test_model" label="检测模型">
                 <Select
                   allowClear
                   placeholder="默认第一个模型"
@@ -2502,7 +2492,7 @@ export default function AdminChannelsPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="test_prompt" label="检测提示词" extra="默认 hi；tip 会展示 AI 的回复">
+              <Form.Item name="test_prompt" label="检测提示词">
                 <Input maxLength={200} placeholder="hi" disabled={!editAutoTestOn} />
               </Form.Item>
             </Col>
@@ -2532,19 +2522,6 @@ export default function AdminChannelsPage() {
           </Space>
         }
       >
-        <Alert
-          type="info"
-          showIcon
-          className="oo-alert-compact"
-          style={{ marginBottom: 12 }}
-          message="服务器上没有桌面，请先在这个页面里完成登录"
-          description={
-            <span style={{ fontSize: 12 }}>
-              下方是上游网页的实时截图。若出现二维码，请用手机扫码；登录完成后点「检测状态」。
-              登录成功后登录态会保存在服务器上，之后长期有效，无需重复登录。
-            </span>
-          }
-        />
         {browserShot?.error ? (
           <Alert type="warning" showIcon className="oo-alert-compact" style={{ marginBottom: 12 }} message={browserShot.error} />
         ) : null}
@@ -2588,22 +2565,9 @@ export default function AdminChannelsPage() {
         destroyOnClose
         width={720}
       >
-        <Alert
-          type="info"
-          showIcon
-          className="oo-alert-compact"
-          style={{ marginBottom: 12 }}
-          message="操作说明"
-          description={
-            <span style={{ fontSize: 12 }}>
-              {capShot?.hint ||
-                (capShot?.kind === "oauth"
-                  ? "在下方截图里完成官方登录授权，然后点「完成授权，抓取凭据」。"
-                  : "在下方页面里完成登录（可扫码），然后点「抓取登录态」。")}
-              截图每 4 秒自动刷新；可直接在截图上点击（如同意条款、切换登录方式）。
-            </span>
-          }
-        />
+        {capShot?.hint ? (
+          <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 10 }}>{capShot.hint}</div>
+        ) : null}
 
         {useVnc ? (
           <div>
@@ -2803,19 +2767,6 @@ export default function AdminChannelsPage() {
         okText="开始导入"
         width={680}
       >
-        <Alert
-          type="info"
-          showIcon
-          className="oo-alert-compact"
-          style={{ marginBottom: 12 }}
-          message="支持格式"
-          description={
-            <span style={{ fontSize: 12 }}>
-              sub2api 导出文件（accounts 数组）、CPA auth 文件（type=codex/claude/antigravity/gemini/xai）；
-              可一次选择或粘贴多个文件内容，自动识别厂商与接入方式，重复账号自动跳过。
-            </span>
-          }
-        />
                 <input type="file" accept=".json,application/json,.txt,text/plain" multiple onChange={readImportFile} style={{ marginBottom: 10 }} />
         <Input.TextArea
           rows={10}
@@ -2861,17 +2812,6 @@ export default function AdminChannelsPage() {
         width={520}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <Alert
-            type="info"
-            showIcon
-            className="oo-alert-compact"
-            message="额度按需查询"
-            description={
-              <span style={{ fontSize: 12 }}>
-                额度接口是各厂商的额外请求，平台不会自动高频轮询。查询失败不影响渠道调用。
-              </span>
-            }
-          />
           <QuotaPanel
             quota={quotaData}
             loading={quotaBusyId === quotaTarget?.id && !quotaError}
@@ -2908,26 +2848,15 @@ export default function AdminChannelsPage() {
               </div>
             ) : null}
             {reloginInfo?.lastError ? (
-              <Alert
-                type={reloginInfo.needsRelogin ? "warning" : "info"}
-                showIcon
-                className="oo-alert-compact"
-                message="最近的失败原因"
-                description={<span style={{ fontSize: 12 }}>{reloginInfo.lastError}</span>}
-              />
+              <div style={{ fontSize: 12, color: "var(--red)" }}>{reloginInfo.lastError}</div>
             ) : null}
 
-            <div style={{ fontSize: 12, color: "var(--ink-3)" }}>选择找回方式</div>
             <Select
               value={reloginMode || undefined}
               onChange={(v) => { setReloginMode(v); setReloginDevice(null); }}
               style={{ width: "100%" }}
               options={(reloginInfo?.modes || []).map((m) => ({ value: m.key, label: m.label }))}
             />
-            {(() => {
-              const m = (reloginInfo?.modes || []).find((x) => x.key === reloginMode);
-              return m?.desc ? <div style={{ fontSize: 12, color: "var(--ink-3)" }}>{m.desc}</div> : null;
-            })()}
 
             {/* 浏览器登录：服务器浏览器里打开官方页/官网，验证码人工完成，成功后自动写回 */}
             {["oauth-browser", "session-capture", "capture", "browser-ready"].includes(reloginMode) ? (
@@ -2953,7 +2882,6 @@ export default function AdminChannelsPage() {
                     >
                       打开授权页
                     </Typography.Link>
-                    <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 4 }}>授权成功后凭据会自动写回该渠道并立即校验。</div>
                   </div>
                 ) : null}
                 {reloginDevice?.error ? <div style={{ fontSize: 12, color: "var(--red)" }}>{reloginDevice.error}</div> : null}
@@ -2969,17 +2897,6 @@ export default function AdminChannelsPage() {
                     <Typography.Link href={reloginDevice.oauthUrl} target="_blank" rel="noreferrer">在新窗口打开</Typography.Link>
                   ) : null}
                 </Space>
-                <Alert
-                  type="info"
-                  showIcon
-                  className="oo-alert-compact"
-                  message="登录后把回调地址粘到下面"
-                  description={
-                    <span style={{ fontSize: 12 }}>
-                      页面会停在打不开的 localhost 地址（正常），复制地址栏整串 URL 粘贴到下面。
-                    </span>
-                  }
-                />
                 <Input.TextArea
                   rows={4}
                   value={reloginText}

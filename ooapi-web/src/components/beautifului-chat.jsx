@@ -324,7 +324,7 @@ export function OrchestrationBar({ agent, agents, settings, tools, onAgent, onSe
                 }}
               >
                 <span className="nm">{k.name}</span>
-                <span className="ds">{k.group ? k.group : "公共池（未分组渠道）"}</span>
+                <span className="ds">{k.group || "未分组"}</span>
                 <span className={`tick ${k.id === keyId ? "" : "is-off"}`}>{TickIcon}</span>
               </button>
             ))}

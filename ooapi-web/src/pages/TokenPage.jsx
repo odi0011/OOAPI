@@ -245,7 +245,7 @@ export default function TokenPage() {
         dataIndex: "group",
         width: 170,
         render: (g) => {
-          if (!g) return <Text type="secondary" style={{ fontSize: 12 }}>默认池</Text>;
+          if (!g) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
           const meta = groupMetaOf(g);
           const rate = Number(meta?.rate) || 1;
           const tip = `${meta?.typeName || meta?.type || ""} / ${meta?.name || g}${meta?.remark ? ` · ${meta.remark}` : ""} · 倍率 ×${rate}`;
@@ -266,8 +266,8 @@ export default function TokenPage() {
         width: 170,
         render: (g) => {
           const list = groupMetaOf(g)?.models || [];
-          if (!g) return <Text type="secondary" style={{ fontSize: 12 }}>公共池</Text>;
-          if (!list.length) return <Text type="secondary" style={{ fontSize: 12 }}>不限（跟随账号）</Text>;
+          if (!g) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
+          if (!list.length) return <Text type="secondary" style={{ fontSize: 12 }}>不限</Text>;
           return (
             <Tooltip
               title={
@@ -311,7 +311,6 @@ export default function TokenPage() {
     <div className="oo-page">
       <PageHeader
         title="令牌管理"
-        desc="为不同应用签发独立密钥，可限制额度上限、可用模型与有效期"
         extra={
           <>
             <Button icon={<ReloadOutlined />} onClick={load} title="刷新令牌列表" aria-label="刷新令牌列表" />
@@ -400,27 +399,15 @@ export default function TokenPage() {
             }
           </Form.Item>
 
-          <Form.Item
-            name="group_name"
-            label="分组"
-            extra="一个 Key 只能绑定一个分组（由管理员创建）；可用模型与计费倍率均由分组决定，不绑定则走公共池（未分组渠道）"
-          >
+          <Form.Item name="group_name" label="分组">
             <Select
               allowClear
               showSearch
-              placeholder="不绑定（公共池）"
+              placeholder="不绑定"
               options={groupOptions}
               filterOption={(input, option) => (option?.search || "").includes(input.toLowerCase())}
             />
           </Form.Item>
-          <div style={{ marginTop: -10, marginBottom: 14, fontSize: 12, color: "var(--ink-3)", lineHeight: 1.6 }}>
-            可用模型：
-            {pickedGroupName
-              ? pickedGroupMeta?.models?.length
-                ? pickedGroupMeta.models.join("、")
-                : "不限（跟随账号可用模型）"
-              : "公共池（未分组渠道，跟随账号可用模型）"}
-          </div>
         </Form>
       </Modal>
     </div>

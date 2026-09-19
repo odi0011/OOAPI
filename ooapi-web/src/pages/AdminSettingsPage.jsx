@@ -107,7 +107,6 @@ function GeneralTab() {
   return (
     <SettingsPanel
       title="站点信息"
-      desc="影响首页、登录页与浏览器标签的展示"
       form={s.form}
       onFinish={s.save}
       loading={s.loading}
@@ -118,22 +117,22 @@ function GeneralTab() {
       <Form.Item name="system_name" label="系统名称">
         <Input placeholder="OOAPI" />
       </Form.Item>
-      <Form.Item name="logo" label="Logo 地址" extra="建议使用正方形图片">
+      <Form.Item name="logo" label="Logo 地址">
         <Input placeholder="/logo.jpg" />
       </Form.Item>
-      <Form.Item name="server_address" label="服务器地址" extra="用于拼接展示接口地址，如 https://api.example.com">
+      <Form.Item name="server_address" label="服务器地址">
         <Input placeholder="https://..." />
       </Form.Item>
       <Form.Item name="about" label="站点简介">
         <Input.TextArea rows={3} placeholder="显示在首页与登录页" />
       </Form.Item>
-      <Form.Item name="announcement" label="公告" extra="留空则不显示">
+      <Form.Item name="announcement" label="公告">
         <Input.TextArea rows={2} />
       </Form.Item>
       <Form.Item name="footer" label="页脚文案">
         <Input.TextArea rows={2} />
       </Form.Item>
-      <Form.Item name="log_retention_days" label="日志保留天数" extra="0 = 永久保留；大于 0 时每 6 小时自动清理过期日志">
+      <Form.Item name="log_retention_days" label="日志保留天数">
         <InputNumber style={{ width: "100%" }} min={0} step={30} />
       </Form.Item>
     </SettingsPanel>
@@ -148,7 +147,6 @@ function AuthTab() {
   return (
     <SettingsPanel
       title="认证与注册"
-      desc="控制用户如何登录与注册"
       form={s.form}
       onFinish={s.save}
       loading={s.loading}
@@ -160,7 +158,6 @@ function AuthTab() {
         name="password_register_enabled"
         label="允许新用户注册"
         valuePropName="checked"
-        extra="关闭后注册页将显示为不可用状态"
       >
         <Switch />
       </Form.Item>
@@ -179,7 +176,6 @@ function QuotaTab() {
   return (
     <SettingsPanel
       title="额度与计费"
-      desc="决定额度换算比例与新用户初始额度"
       form={s.form}
       onFinish={s.save}
       loading={s.loading}
@@ -190,11 +186,10 @@ function QuotaTab() {
       <Form.Item
         name="units_per_od"
         label="额度换算"
-        extra="固定 1 OD币 = 10,000 额度单位（计费代码写死，不可修改，避免展示与实际扣费漂移）"
       >
         <InputNumber style={{ width: "100%" }} disabled />
       </Form.Item>
-      <Form.Item name="quota_for_new_user" label="新用户初始额度" extra="注册时自动赠送（单位：额度，10,000 单位 = 1 OD币 = $1）">
+      <Form.Item name="quota_for_new_user" label="新用户初始额度">
         <InputNumber style={{ width: "100%" }} min={0} step={100000} />
       </Form.Item>
       <Form.Item name="general_setting_quota_display" label="前台展示额度" valuePropName="checked">
@@ -212,7 +207,6 @@ function ModelsTab() {
   return (
     <SettingsPanel
       title="模型列表"
-      desc="用于令牌的模型白名单下拉选项"
       form={s.form}
       onFinish={s.save}
       loading={s.loading}
@@ -220,12 +214,9 @@ function ModelsTab() {
       error={s.error}
       onRetry={s.load}
     >
-      <Form.Item name="model_list" label="可用模型" extra="多个模型用英文逗号分隔">
+      <Form.Item name="model_list" label="可用模型">
         <Input.TextArea rows={5} placeholder="deepseek-chat,deepseek-reasoner,deepseek-vision" />
       </Form.Item>
-      <Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: -6, marginBottom: 12 }}>
-        提示：DeepSeek 通道支持的模型名可包含 vision（看图）、reasoner（深度思考）、search（联网）关键词。
-      </Text>
     </SettingsPanel>
   );
 }
@@ -456,7 +447,7 @@ function UpdateTab() {
 export default function AdminSettingsPage() {
   return (
     <div className="oo-page">
-      <PageHeader title="系统设置" desc="站点信息、认证策略、计费规则与模型列表" />
+      <PageHeader title="系统设置" />
       <Tabs
         destroyInactiveTabPane
         items={[

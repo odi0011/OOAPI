@@ -1554,7 +1554,8 @@ router.post(
         type,
         "",
         token,
-        (methodCfg?.defaultModels || []).map((m) => m.id).join(","),
+        // 留空 = 该厂商全部模型（模型归厂商，不归账号）
+        "",
         "",
         "[]",
         1,
@@ -1656,11 +1657,13 @@ router.post(
 
     // 表单里的模型/分组/优先级/权重/自动禁用必须真正落库（此前 relay 提交被全部丢弃，
     // 用户改了等于没改）；未提交的字段在更新时保持原值
-    const defaultModels = (mCfg.defaultModels || []).map((m) => m.id).join(",");
+    // 模型范围：留空 = 该厂商全部模型（模型归厂商，不归账号），
+    // 只有管理员显式指定时才落库限制范围。不再自动填该接入方式的默认模型列表 ——
+    // 那些默认值只是「推荐模型」，写成范围会把新模型（如新发布的档位）挡在调度之外。
     const models = (
       Array.isArray(modelsInput)
-        ? modelsInput.map((s) => String(s).trim()).filter(Boolean).join(",") || defaultModels
-        : String(modelsInput || "").trim() || defaultModels
+        ? modelsInput.map((s) => String(s).trim()).filter(Boolean).join(",")
+        : String(modelsInput || "").trim()
     ).slice(0, 20_000);
     const groupName = String(group_name || "").trim().slice(0, 64);
     // 分组（可多选）：优先 groups 数组，否则沿用 group_name；空数组 = 公共池

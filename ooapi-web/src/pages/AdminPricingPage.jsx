@@ -211,7 +211,6 @@ export default function AdminPricingPage() {
     <div className="oo-page">
       <PageHeader
         title="模型定价"
-        desc={`${CURRENCY_NAME}计价（1 ${CURRENCY_NAME} = 1 美元），单位为「${CURRENCY_NAME} / 百万 token」`}
         extra={
           <>
             <Button icon={<UploadOutlined />} onClick={openImport}>

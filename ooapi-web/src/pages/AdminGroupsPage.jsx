@@ -178,7 +178,7 @@ export default function AdminGroupsPage() {
             </span>
           </Tooltip>
         ) : (
-          <Text type="secondary" style={{ fontSize: 12 }}>不限（跟随账号）</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>不限</Text>
         ),
     },
     {
@@ -207,7 +207,6 @@ export default function AdminGroupsPage() {
     <div className="oo-page">
       <PageHeader
         title="分组管理"
-        desc="分组绑定厂商：管理员挑选账号、限制可用模型、设置计费倍率；密钥只能选分组，模型由分组决定"
         extra={
           <>
             <Button icon={<ReloadOutlined />} onClick={load} title="刷新分组列表" aria-label="刷新分组列表" />
@@ -264,14 +263,14 @@ export default function AdminGroupsPage() {
             <Form.Item name="name" label="分组名" rules={[{ required: true, message: "请填写分组名" }]} style={{ width: 200 }}>
               <Input placeholder="如 vip" maxLength={32} />
             </Form.Item>
-            <Form.Item name="rate" label="计费倍率" extra="绑定该分组的 Key 按此倍率计费" style={{ width: 180 }}>
+            <Form.Item name="rate" label="计费倍率" style={{ width: 180 }}>
               <InputNumber min={0.0001} max={1000} step={0.1} style={{ width: "100%" }} />
             </Form.Item>
           </Space>
           <Form.Item name="remark" label="备注">
             <Input placeholder="可为空" maxLength={64} />
           </Form.Item>
-          <Form.Item label="包含哪些账号" extra="双向：渠道编辑里也能把该渠道挂到分组">
+          <Form.Item label="包含哪些账号">
             <Select
               mode="multiple"
               placeholder={pickedType ? "可多选" : "先选择厂商"}
@@ -282,7 +281,7 @@ export default function AdminGroupsPage() {
               optionFilterProp="label"
             />
           </Form.Item>
-          <Form.Item label="支持的模型" extra="留空 = 不限（跟随账号可用模型）；可输入通配如 gpt-5.6-*">
+          <Form.Item label="支持的模型">
             <Select
               mode="tags"
               placeholder={pickedType ? "从账号模型里选，或手动输入" : "先选择厂商"}

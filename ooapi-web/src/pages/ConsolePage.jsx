@@ -150,7 +150,6 @@ export default function ConsolePage() {
     <div className="oo-page">
       <PageHeader
         title={`你好，${user?.display_name || user?.username}`}
-        desc="这是你的账户概览与近期用量"
         extra={
           <>
             <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => loadData({ alsoUser: true })} title="刷新控制台数据" aria-label="刷新控制台数据">

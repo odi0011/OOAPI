@@ -251,7 +251,6 @@ export default function AdminUsersPage() {
     <div className="oo-page">
       <PageHeader
         title="用户管理"
-        desc="管理平台用户的角色、状态与可用额度"
         extra={
           <>
             <Input
@@ -330,7 +329,7 @@ export default function AdminUsersPage() {
           <Form.Item name="email" label="邮箱" rules={[{ type: "email", message: "邮箱格式不正确" }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="role" label="角色" extra="管理员可管理渠道、用户与系统设置">
+          <Form.Item name="role" label="角色">
             <Select
               // 不能改自己的角色（后端也拒绝）：唯一管理员把自己降级后将失去后台入口
               disabled={editing?.id === me?.id}

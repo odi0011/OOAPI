@@ -182,3 +182,12 @@ export async function modelRegistry() {
 export function invalidateModelRegistry() {
   registryCache = { at: 0, map: null };
 }
+
+/**
+ * 同步读取登记表（未预热时返回 null）。
+ * 用途：调度路径（selectChannels → channelSupportsModel）判断「该模型是否属于该厂商」，
+ * 不能在那里 await 加载模块（会给每个请求加上模块加载延迟）。
+ */
+export function modelRegistrySync() {
+  return registryCache.map || null;
+}

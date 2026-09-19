@@ -139,7 +139,6 @@ export default function LogPage() {
     <div className="oo-page">
       <PageHeader
         title="使用记录"
-        desc={isAdmin ? "全平台调用与操作日志" : "你的调用明细与消费记录"}
         extra={
           <>
             {isAdmin && (

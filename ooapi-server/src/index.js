@@ -125,6 +125,14 @@ async function bootstrap() {
   } catch (e) {
     console.error("[init] 别名表预热失败：", e.message);
   }
+  // 预热模型登记表：渠道 models 留空时，调度层要按「该厂商有哪些模型」判断能否服务
+  // （modelRegistrySync 是同步读取，没预热就等于所有留空渠道都不可用）
+  try {
+    const { modelRegistry } = await import("./services/models.js");
+    await modelRegistry();
+  } catch (e) {
+    console.error("[init] 模型登记表预热失败：", e.message);
+  }
   // 首次启动创建默认管理员
   const [[{ c }]] = await pool.query("SELECT COUNT(*) AS c FROM users WHERE role >= 100");
   if (!c) {

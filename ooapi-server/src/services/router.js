@@ -5,6 +5,7 @@ import { pool } from "../db.js";
 import { now } from "../utils.js";
 import { isOAuthMethod } from "./channel-types.js";
 import { groupConfigOf } from "./group-rate.js";
+import { modelRegistrySync } from "./models.js";
 
 // 适配器表（懒加载，避免未用到的适配器被引入）
 //
@@ -309,11 +310,50 @@ function parseModels(modelsStr) {
     .filter(Boolean);
 }
 
-// 渠道是否支持该模型（支持通配：deepseek-* 或 *）
+// 渠道 → 厂商模型集合（同步缓存）。
+// 概念澄清：**模型属于厂商，不属于账号** —— 一个 ChatGPT 账号天然能用 OpenAI 的全部模型，
+// 让管理员给每个账号手填「支持的模型」既多余又容易漏配（漏一个模型该账号就永远不被调度）。
+// 因此渠道 `models` 留空 = 该厂商全部已注册模型；只在与厂商模型表对不上时才需要显式声明
+// （例如 custom 兼容端点，或只想让某个号只跑部分模型）。
+let vendorModelsCache = { at: 0, map: null };
+const VENDOR_MODELS_TTL_MS = 60_000;
+
+function vendorModelSet(channelType) {
+  const t = String(channelType || "");
+  if (!t) return null;
+  if (!vendorModelsCache.map || Date.now() - vendorModelsCache.at > VENDOR_MODELS_TTL_MS) {
+    vendorModelsCache = { at: Date.now(), map: new Map() };
+  }
+  const cache = vendorModelsCache.map;
+  if (cache.has(t)) return cache.get(t);
+  let set = null;
+  try {
+    // 同步读取：登记表在 execute/models 层已预热；未预热时先按「无厂商表」处理，
+    // 下一次调度（60s 内）就会拿到。绝不在调度路径上 await 加载模块。
+    const reg = modelRegistrySync();
+    if (reg) {
+      set = new Set();
+      for (const [model, info] of reg) {
+        if (String(info?.type || "") === t) set.add(model);
+      }
+    }
+  } catch {
+    set = null;
+  }
+  cache.set(t, set);
+  return set;
+}
+
+/** 渠道是否支持该模型（支持通配：deepseek-* 或 *） */
 export function channelSupportsModel(channel, model) {
   const list = parseModels(channel.models);
-  if (!list.length) return false;
   const m = String(model || "").toLowerCase();
+  // 留空 = 该厂商全部模型（模型归属厂商，不归属账号）
+  if (!list.length) {
+    const vendorSet = vendorModelSet(channel.type);
+    if (!vendorSet || !vendorSet.size) return false; // 没有厂商模型表（如 custom）：必须显式声明
+    return vendorSet.has(m);
+  }
   return list.some((pattern) => {
     const p = pattern.toLowerCase();
     if (p === "*") return true;

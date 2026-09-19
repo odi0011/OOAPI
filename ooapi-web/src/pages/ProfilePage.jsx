@@ -74,7 +74,7 @@ function ProfileTab() {
         />
       </div>
 
-      <Section title="个人信息" desc="这些信息用于后台展示与通知">
+      <Section title="个人信息">
         <Form
           form={form}
           layout="vertical"
@@ -118,7 +118,7 @@ function PasswordTab() {
   };
 
   return (
-    <Section title="修改密码" desc="建议使用字母与数字组合，长度至少 8 位">
+      <Section title="修改密码">
       <Form form={form} layout="vertical" onFinish={save} requiredMark={false}>
         <Form.Item
           name="old_password"
@@ -173,11 +173,11 @@ function AppearanceTab() {
 
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
-      <Section title="界面主题" desc="「跟随系统」会自动匹配操作系统的明暗设置">
+      <Section title="界面主题">
         <ThemeSwitch />
       </Section>
 
-      <Section title="主题色" desc="影响按钮、链接、选中态等交互元素" width={640}>
+      <Section title="主题色" width={640}>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
           {PRIMARY_PRESETS.map((p) => {
             const active = primary.toLowerCase() === p.color.toLowerCase();
@@ -236,7 +236,7 @@ export default function ProfilePage() {
 
   return (
     <div className="oo-page">
-      <PageHeader title="个人设置" desc={`${user?.username} · ${user?.role >= 100 ? "管理员" : "普通用户"}`} />
+      <PageHeader title="个人设置" />
       <Tabs
         items={[
           {

@@ -390,10 +390,13 @@ async function quotaDeepseekApi(channel) {
 const SUPPORTED = new Set(["codex", "claude-oauth", "antigravity", "grok-oauth", "kiro", "openai-web", "deepseek-api"]);
 
 /** 该渠道是否支持额度查询（前端据此决定要不要显示「查额度」按钮） */
-export function quotaSupportFor({ type, method, base_url } = {}) {
-  const m = String(method || "relay");
+export function quotaSupportFor(channel = {}) {
+  // 接入方式既可能作为顶层 method 传进来（rowToChannel 形状），也可能只在 other.method 里
+  // （直接拿数据库行调用时），两种都要认，否则会误判成「不支持」。
+  const m = String(channel.method || channel?.other?.method || "relay");
+  const type = String(channel.type || "");
   if (SUPPORTED.has(m)) return { supported: true, key: m };
-  if (m === "api" && String(type) === "deepseek" && /deepseek\.com/i.test(String(base_url || ""))) {
+  if (m === "api" && type === "deepseek" && /deepseek\.com/i.test(String(channel.base_url || ""))) {
     return { supported: true, key: "deepseek-api" };
   }
   return { supported: false, key: "" };
