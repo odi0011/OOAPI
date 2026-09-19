@@ -39,7 +39,15 @@ export function displayNameOf(userOrName) {
 export default function UserAvatar({ user, size = 24, showName = false, nameClass = "", style, title }) {
   const [broken, setBroken] = React.useState(false);
   const name = displayNameOf(user);
-  const avatar = typeof user === "object" ? String(user?.avatar || "") : "";
+  // 优先用后端下发的 avatar_url（媒体库里的真实头像，URL 带 v= 版本号）；
+  // 回退到调用方直接传的 avatar 字段（例如日志页从别处拿到的地址）。
+  // 两者都没有 / 加载失败 → 走下面的首字母色块（无头像时的默认表现）。
+  const avatar =
+    typeof user === "object" ? String(user?.avatar_url || user?.avatar || "") : "";
+  // 头像地址变了（比如刚上传新头像）要重置失败标记，否则会一直显示色块
+  React.useEffect(() => {
+    setBroken(false);
+  }, [avatar]);
   const seed = typeof user === "object" ? user?.id ?? user?.username : user;
   const hue = hueOf(seed);
   const initial = (name || "?").slice(0, 1).toUpperCase();

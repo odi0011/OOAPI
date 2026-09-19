@@ -176,6 +176,14 @@ export function userToResponse(u) {
     setting: safeJSONParse(u.setting, {}),
     created_time: u.created_time,
     last_login_time: u.last_login_time,
+    // 媒体库引入后的资料字段。avatar_url 只在有头像时给出，
+    // 前端 UserAvatar 对空值回退「首字母色块」（历史行为保持不变）。
+    // URL 带 v=<mediaId>：换头像即换 URL，可以放心长期缓存。
+    avatar_media_id: Number(u.avatar_media_id) || 0,
+    avatar_url: Number(u.avatar_media_id) > 0 ? `/api/media/avatar/${u.id}?v=${Number(u.avatar_media_id)}` : "",
+    bio: u.bio || "",
+    website: u.website || "",
+    location: u.location || "",
   };
 }
 

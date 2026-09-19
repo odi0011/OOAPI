@@ -135,6 +135,15 @@ export const DEFAULT_OPTIONS = {
   // 设置了却不生效的配置项比没有更糟（管理员会以为已经开了）。
   // 实现后再连同 DEFAULT_OPTIONS、option.js 数值白名单、AdminSettingsPage 一起加。
 
+  // ---------- 媒体库 ----------
+  // 消费方见 services/media.js（每个键都有实际读取处，不留空配置）：
+  media_enabled: "true",        // 总开关 → mediaEnabled()，关闭后拒绝上传
+  media_max_file_mb: "10",      // 单文件上限 → maxFileBytes()
+  media_user_quota_mb: "1024",  // 每用户配额（0=不限）→ quotaBytes()
+  media_avatar_max_kb: "512",   // 头像上限 → routes/media.js 的头像接口
+  media_orphan_hours: "24",     // 未引用文件的回收延迟（0=不回收）→ runGc()
+  media_retention_days: "7",    // 软删后保留天数（0=不自动回收）→ runGc()
+
   // ---------- 备份 ----------
   backup_enabled: "false",
   backup_interval_hours: "24",

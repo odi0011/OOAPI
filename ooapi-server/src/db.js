@@ -74,7 +74,12 @@ const TABLES = [
     last_login_ip VARCHAR(64) DEFAULT '',
     login_count INT NOT NULL DEFAULT 0,
     -- JWT 吊销版本：改密 +1，旧令牌立即失效（中间件每次请求比对）
-    token_version INT NOT NULL DEFAULT 0
+    token_version INT NOT NULL DEFAULT 0,
+    -- 媒体库引入后的用户资料字段
+    avatar_media_id BIGINT NOT NULL DEFAULT 0 COMMENT '头像的 media.id（0=无头像，前端回退首字母色块）',
+    bio VARCHAR(255) NOT NULL DEFAULT '' COMMENT '个人简介',
+    website VARCHAR(255) NOT NULL DEFAULT '' COMMENT '个人主页/链接',
+    location VARCHAR(64) NOT NULL DEFAULT '' COMMENT '所在地'
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
   `CREATE TABLE IF NOT EXISTS tokens (
@@ -275,6 +280,54 @@ const TABLES = [
     created_time BIGINT NOT NULL DEFAULT 0
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
+  // 媒体库：一行 = 某用户的某个文件。
+  // 物理文件按 sha256 落在 data/media/blobs（两级分片），同一字节全局只存一份 ——
+  // 之前对话图片是 base64 直接写进 chat_messages.parts(MEDIUMTEXT)，
+  // 3 张图就能超过 16MB 上限（严格模式 INSERT 失败、非严格模式静默截断）。
+  `CREATE TABLE IF NOT EXISTS media (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL DEFAULT 0 COMMENT '归属用户（0=系统内置）',
+    sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '内容哈希：去重键 + 磁盘寻址键',
+    size BIGINT NOT NULL DEFAULT 0,
+    mime VARCHAR(96) NOT NULL DEFAULT '' COMMENT '服务端按文件头嗅探，不信任前端',
+    kind VARCHAR(16) NOT NULL DEFAULT 'file' COMMENT 'image/file/audio/video/other',
+    ext VARCHAR(16) NOT NULL DEFAULT '' COMMENT '规范扩展名（由嗅探结果推导）',
+    orig_name VARCHAR(255) NOT NULL DEFAULT '' COMMENT '原始文件名（仅展示/下载，不参与磁盘路径拼接）',
+    source VARCHAR(24) NOT NULL DEFAULT '' COMMENT '上传入口：chat/avatar/post/admin',
+    width INT NOT NULL DEFAULT 0,
+    height INT NOT NULL DEFAULT 0,
+    parent_id BIGINT NOT NULL DEFAULT 0 COMMENT '派生来源（裁剪图指向原图；0=原件）',
+    ref_count INT NOT NULL DEFAULT 0 COMMENT '有效引用数（media_refs.is_live=1 的条数）',
+    status TINYINT NOT NULL DEFAULT 1 COMMENT '1=正常 2=已删（待回收） 3=封禁',
+    deleted_time BIGINT NOT NULL DEFAULT 0,
+    last_access_time BIGINT NOT NULL DEFAULT 0,
+    created_time BIGINT NOT NULL DEFAULT 0,
+    updated_time BIGINT NOT NULL DEFAULT 0,
+    UNIQUE KEY uniq_media_owner_hash (user_id, sha256),
+    KEY idx_media_user_list (user_id, status, id),
+    KEY idx_media_user_size (user_id, status, size),
+    KEY idx_media_hash (sha256),
+    KEY idx_media_reap (status, deleted_time),
+    KEY idx_media_kind (user_id, kind, status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // 媒体引用：谁在用这个文件（删会话/删用户时据此释放，避免孤儿文件与悬空引用）
+  `CREATE TABLE IF NOT EXISTS media_refs (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    media_id BIGINT NOT NULL,
+    user_id INT NOT NULL DEFAULT 0 COMMENT '引用者（权限校验与按用户清理）',
+    ref_type VARCHAR(24) NOT NULL COMMENT 'chat_message/avatar/community_post/...',
+    ref_id VARCHAR(64) NOT NULL COMMENT '被引用对象 id',
+    slot VARCHAR(24) NOT NULL DEFAULT '' COMMENT '同一对象内位置（part id / avatar）',
+    is_live TINYINT NOT NULL DEFAULT 1 COMMENT '1=有效 0=已解绑（软删保留审计）',
+    created_time BIGINT NOT NULL DEFAULT 0,
+    updated_time BIGINT NOT NULL DEFAULT 0,
+    UNIQUE KEY uniq_media_ref (media_id, ref_type, ref_id, slot),
+    KEY idx_refs_object (ref_type, ref_id, is_live),
+    KEY idx_refs_media (media_id, is_live),
+    KEY idx_refs_user (user_id, ref_type, is_live)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
   // 告警事件：触发时把「当时的指标快照」一起落库，事后可复盘（sub2api 只存事件本身）
   `CREATE TABLE IF NOT EXISTS alert_events (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -335,6 +388,11 @@ export const JWT_SECRET = resolveJwtSecret();
 // 老库启动时自动补列，不再依赖手动跑迁移脚本。
 const COLUMN_MIGRATIONS = [
   { table: "users", column: "token_version", ddl: "INT NOT NULL DEFAULT 0" },
+  // 媒体库 / 用户资料（第 36 批）：头像引用 + 个人简介三件套
+  { table: "users", column: "avatar_media_id", ddl: "BIGINT NOT NULL DEFAULT 0" },
+  { table: "users", column: "bio", ddl: "VARCHAR(255) NOT NULL DEFAULT ''" },
+  { table: "users", column: "website", ddl: "VARCHAR(255) NOT NULL DEFAULT ''" },
+  { table: "users", column: "location", ddl: "VARCHAR(64) NOT NULL DEFAULT ''" },
   { table: "channels", column: "last_error", ddl: "VARCHAR(500) NOT NULL DEFAULT ''" },
   { table: "channels", column: "used_count", ddl: "INT NOT NULL DEFAULT 0" },
   { table: "channels", column: "last_used_time", ddl: "BIGINT NOT NULL DEFAULT 0" },

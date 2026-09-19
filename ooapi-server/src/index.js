@@ -21,6 +21,7 @@ import pricingRoutes from "./routes/pricing.js";
 // 旧的账号管理接口已并入 /api/channel（routes/deepseek.js 与 services/deepseek/ 已删除）
 import updateRoutes from "./routes/update.js";
 import monitorRoutes from "./routes/monitor.js";
+import mediaRoutes from "./routes/media.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -41,6 +42,7 @@ app.use(
   ["/api/user", "/api/users", "/api/token", "/api/log", "/api/option", "/api/channel", "/api/pricing", "/api/update", "/api/monitor"],
   jsonSmall
 );
+// 注意：/api/media 不在此列表 —— 它自己用 32MB 解析 + 先鉴权（见 routes/media.js）
 
 app.get("/api/status", (req, res) => ok(res, publicStatus()));
 app.get("/health", (req, res) => res.send("ok"));
@@ -55,6 +57,7 @@ app.use("/api/chat", chatRoutes); // 站内对话 + 智能体
 app.use("/api/pricing", pricingRoutes); // 管理端：模型定价
 app.use("/api/update", updateRoutes); // 管理端：从 GitHub 拉取最新代码在线更新
 app.use("/api/monitor", monitorRoutes); // 管理端：运维监控（系统资源 + 网关运行时）
+app.use("/api/media", mediaRoutes); // 媒体库：统一文件存储（头像/对话/社区共用）
 app.use("/v1", gatewayRoutes); // 对外网关：OpenAI 兼容
 
 // 静态资源：logo 与前端构建产物（index.js 位于 src/，web 与 public 在包根目录）
@@ -103,6 +106,24 @@ function scheduleLogCleanup() {
     }
   };
   run();
+  setInterval(run, 6 * 3600 * 1000).unref?.();
+}
+
+// 媒体库自动回收：与日志清理同一套节奏（6 小时一次），失败只记日志不阻塞。
+// 三类垃圾：未引用的新上传（用户选了文件没发出去）、过期软删、磁盘残留。
+function scheduleMediaCleanup(runGc) {
+  const run = async () => {
+    try {
+      const r = await runGc({ limit: 200 });
+      if (r.softDeleted || r.purged) {
+        console.log(`[media] 回收完成：标记待删 ${r.softDeleted} 个、物理清理 ${r.purged} 个`);
+      }
+    } catch (e) {
+      console.error("[media] 回收失败：", e.message);
+    }
+  };
+  // 延迟 5 分钟再跑第一次：避开启动高峰，也避免刚部署就删掉「用户正在编辑」的上传
+  setTimeout(run, 5 * 60 * 1000).unref?.();
   setInterval(run, 6 * 3600 * 1000).unref?.();
 }
 
@@ -205,6 +226,15 @@ async function bootstrap() {
     startAlertEngine();
   } catch (e) {
     console.error("[init] 告警引擎启动失败：", e.message);
+  }
+
+  // 媒体库：准备目录（blobs/tmp）+ 清掉上次崩溃残留的半截文件 + 启动回收任务
+  try {
+    const { initMedia, runGc } = await import("./services/media.js");
+    await initMedia();
+    scheduleMediaCleanup(runGc);
+  } catch (e) {
+    console.error("[init] 媒体库初始化失败：", e.message);
   }
 
   // 退出：先停接收新连接排空在途请求（分钟级上游/日志写入不能被硬截断），

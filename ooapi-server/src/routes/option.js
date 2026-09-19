@@ -54,6 +54,12 @@ const NUMERIC_OPTIONS = {
   alert_ttft_p99_max: { min: 0, max: 600000, int: true },
   alert_error_rate_max: { min: 0, max: 100, int: false },
   alert_upstream_error_rate_max: { min: 0, max: 100, int: false },
+  // 媒体库
+  media_max_file_mb: { min: 1, max: 512, int: true },
+  media_user_quota_mb: { min: 0, max: 1048576, int: true },
+  media_avatar_max_kb: { min: 16, max: 8192, int: true },
+  media_orphan_hours: { min: 0, max: 8760, int: true },
+  media_retention_days: { min: 0, max: 3650, int: true },
 };
 
 // 固定值设置项：额度换算由计费代码硬编码（pricing.UNITS_PER_OD = 10000），
