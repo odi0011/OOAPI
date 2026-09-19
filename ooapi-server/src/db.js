@@ -246,6 +246,60 @@ const TABLES = [
     created_time BIGINT NOT NULL DEFAULT 0,
     UNIQUE KEY uniq_group_type_name (type, name)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // 告警规则（运维监控）：字段命名与 sub2api 对齐便于对照，
+  // 但增加了 webhook_url / notify_webhook 两个它没有的通道。
+  `CREATE TABLE IF NOT EXISTS alert_rules (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(64) NOT NULL,
+    metric VARCHAR(48) NOT NULL COMMENT '被观测指标（见 services/alert.js METRICS）',
+    operator VARCHAR(4) NOT NULL DEFAULT '>' COMMENT '> >= < <= == !=',
+    threshold DECIMAL(14,4) NOT NULL DEFAULT 0,
+    window_min INT NOT NULL DEFAULT 5 COMMENT '指标统计窗口（分钟）',
+    sustained_min INT NOT NULL DEFAULT 5 COMMENT '需连续满足的时长（分钟）',
+    cooldown_min INT NOT NULL DEFAULT 30 COMMENT '冷却，避免告警风暴',
+    severity VARCHAR(4) NOT NULL DEFAULT 'P2' COMMENT 'P0/P1/P2/P3',
+    enabled TINYINT NOT NULL DEFAULT 1,
+    notify_email TINYINT NOT NULL DEFAULT 1 COMMENT '1=发邮件',
+    notify_webhook TINYINT NOT NULL DEFAULT 1 COMMENT '1=发 Webhook（sub2api 没有）',
+    webhook_url VARCHAR(512) NOT NULL DEFAULT '' COMMENT '留空则用系统设置里的默认 Webhook',
+    notify_emails VARCHAR(512) NOT NULL DEFAULT '' COMMENT '留空则用系统设置里的默认收件人',
+    channels VARCHAR(64) NOT NULL DEFAULT '' COMMENT '启用的通知渠道（email,webhook）',
+    filters TEXT COMMENT '作用域 JSON：{channelId, channelType}，空=全局',
+    description VARCHAR(255) NOT NULL DEFAULT '',
+    created_time BIGINT NOT NULL DEFAULT 0
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // 告警事件：触发时把「当时的指标快照」一起落库，事后可复盘（sub2api 只存事件本身）
+  `CREATE TABLE IF NOT EXISTS alert_events (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    rule_id INT NOT NULL,
+    rule_name VARCHAR(64) NOT NULL DEFAULT '',
+    severity VARCHAR(4) NOT NULL DEFAULT 'P2',
+    metric VARCHAR(48) NOT NULL DEFAULT '',
+    value DECIMAL(14,4) NOT NULL DEFAULT 0 COMMENT '触发时的指标值',
+    threshold DECIMAL(14,4) NOT NULL DEFAULT 0,
+    operator VARCHAR(4) NOT NULL DEFAULT '',
+    status VARCHAR(16) NOT NULL DEFAULT 'firing' COMMENT 'firing/resolved',
+    detail TEXT COMMENT '触发时的指标快照 JSON',
+    resolved_value DECIMAL(14,4) NOT NULL DEFAULT 0,
+    created_time BIGINT NOT NULL DEFAULT 0,
+    resolved_time BIGINT NOT NULL DEFAULT 0,
+    INDEX idx_alert_events_time (created_time),
+    INDEX idx_alert_events_status (status, created_time),
+    INDEX idx_alert_events_rule (rule_id, status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // 通知投递日志：告警通道自己也会坏，出问题时得能查到「发了但失败了」
+  `CREATE TABLE IF NOT EXISTS alert_notify_logs (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    rule_id INT NOT NULL DEFAULT 0,
+    channel VARCHAR(16) NOT NULL DEFAULT '' COMMENT 'email/webhook',
+    ok TINYINT NOT NULL DEFAULT 1,
+    error VARCHAR(400) NOT NULL DEFAULT '',
+    created_time BIGINT NOT NULL DEFAULT 0,
+    INDEX idx_alert_notify_time (created_time)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 ];
 
 // 生成 / 持久化 JWT 密钥：环境变量 > .jwt-secret 文件 > 随机生成

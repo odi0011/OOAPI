@@ -342,6 +342,29 @@ export function channelRuntimeState(channelId) {
   };
 }
 
+/**
+ * 全渠道运行时快照（监控页的「并发/队列」卡片）。
+ * 只返回进程内已知的渠道 —— 从未被调用过的账号不会出现在这里，
+ * 调用方（监控接口）需要与 channels 表左连接，把「未激活」的补出来。
+ */
+export function runtimeConcurrency() {
+  const now = Date.now();
+  const out = [];
+  for (const [id, s] of state.entries()) {
+    out.push({
+      channelId: id,
+      inflight: s.inflight || 0,
+      coolingDown: Boolean(s.cooldownUntil && now < s.cooldownUntil),
+      cooldownUntil: s.cooldownUntil || 0,
+      cooldownRemainSec: s.cooldownUntil && now < s.cooldownUntil ? Math.ceil((s.cooldownUntil - now) / 1000) : 0,
+      lastError: s.lastError || "",
+      recentCalls: s.window?.length || 0, // 最近一分钟内的提交次数
+      queued: chains.has(id) ? 1 : 0,     // 该渠道是否有串行链在等待（1 = 有排队的后续请求）
+    });
+  }
+  return out;
+}
+
 /** 读取最近调用：运行时没有就從数据库行回填并缓存（列表接口与调度共用同一份）。
  * 修复：列表页只读运行时导致服务重启后刷新显示「暂无调用」。 */
 export function channelRecent(channelId, rawRecentCalls) {

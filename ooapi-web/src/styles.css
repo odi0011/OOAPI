@@ -1557,6 +1557,57 @@ h1, h2, h3, h4 {
   flex: none;
 }
 
+/* 纵向柱状图：延迟分布 / 状态码分布 / 分位对比。
+   与折线同属图表规范，颜色一律取 Charts.jsx 的 SERIES_COLORS。 */
+.oo-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 6px 2px 0;
+}
+
+.oo-bars-col {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+}
+
+.oo-bars-fill {
+  width: 100%;
+  max-width: 46px;
+  border-radius: 3px 3px 0 0;
+  transition: opacity 0.15s ease;
+  min-height: 2px;
+}
+
+.oo-bars-col:hover .oo-bars-fill {
+  opacity: 0.85;
+}
+
+.oo-bars-label {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.oo-bars-val {
+  position: absolute;
+  top: -2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
 .oo-trend-tip {
   position: absolute;
   top: 2px;

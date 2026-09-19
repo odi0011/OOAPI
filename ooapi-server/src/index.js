@@ -195,6 +195,17 @@ async function bootstrap() {
     console.error("[init] 定时检测启动失败：", e.message);
   }
 
+  // 运维告警：首次启动写入内置规则（表非空时不覆盖），然后启动定时求值。
+  // 求值失败只影响告警，绝不能让主服务起不来。
+  try {
+    const { seedDefaultRules, startAlertEngine } = await import("./services/alert.js");
+    const n = await seedDefaultRules();
+    if (n) console.log(`[alert] 已写入 ${n} 条内置告警规则`);
+    startAlertEngine();
+  } catch (e) {
+    console.error("[init] 告警引擎启动失败：", e.message);
+  }
+
   // 退出：先停接收新连接排空在途请求（分钟级上游/日志写入不能被硬截断），
   // 再关浏览器、PoW worker 与数据库连接池；10s 兜底强制退出。
   let shuttingDown = false;

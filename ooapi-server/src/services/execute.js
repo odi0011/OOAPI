@@ -4,6 +4,7 @@ import { pool } from "../db.js";
 import { getNumberOption } from "../config.js";
 import { selectChannels, getAdapter, markChannelError, markChannelOk, withChannelLimit, explainNoChannel } from "./router.js";
 import { resolveAliasSync } from "./models.js";
+import { recordChannelSwitch } from "./metrics.js";
 
 // 渠道异常码 → 是否需要换渠道重试
 const RETRYABLE = new Set([
@@ -235,6 +236,8 @@ export async function runCompletion({
         kind: "chat",
         user,
       });
+      // 监控页「账号切换率」：每换一次号记一次，趋势突然抬升说明渠道集体不稳
+      recordChannelSwitch();
       console.warn(`[execute] 渠道「${channel.name}」失败（${code}），切换下一渠道：${lastError.message}`);
     } finally {
       if (signal) signal.removeEventListener("abort", onOuterAbort);

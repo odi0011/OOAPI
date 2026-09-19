@@ -1,17 +1,34 @@
-// 运维监控（管理员）
+// 运维监控 + 告警管理（管理员）
 // ---------------------------------------------------------------------------
-// 指标来源：GET /api/monitor/snapshot（后端用 Node 内置模块采集，见 services/metrics.js）。
-// 展示分四块：
-//   ① 概览行：进程/系统关键指标（用小 tag，不占版面）
-//   ② 资源卡：CPU / 内存 / 磁盘 / 事件循环延迟（带进度条与阈值着色）
-//   ③ 网关运行时：在途/峰值、成功率、延迟分位、状态码分布
-//   ④ 排行：Top 模型 / Top 渠道（成功率 + 平均耗时）
-// 颜色语义与全站一致：<70% 主色、70-90% 橙、>90% 红（同渠道额度条）。
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { App as AntApp, Segmented, Spin, Empty, Tooltip } from "antd";
-import { ReloadOutlined } from "@ant-design/icons";
+// 指标来源：GET /api/monitor/snapshot（后端 Node 内置模块采集，见 services/metrics.js）。
+// 实时部分走 SSE（/api/monitor/stream），比 sub2api 的 WebSocket 更轻、浏览器原生自动重连。
+//
+// 页面结构（对标 sub2api 的 /admin/ops，并做增强）：
+//   ① 顶部健康分 + 智能诊断（现象/影响/建议三段式）
+//   ② 概览小标签条（在途/SLA/成功率/错误率/上游错误/换号率）
+//   ③ QPS/TPS 实时 + 趋势折线（sub2api 的 Throughput Trend）
+//   ④ 资源卡：CPU / 进程CPU / 内存 / 磁盘 / 事件循环 / 连接池
+//   ⑤ 延迟分析：分位表 + 直方图 + TTFT（sub2api 的 Duration Histogram + TTFT）
+//   ⑥ 错误分析：状态码分布 + 错误趋势（sub2api 的 Error Distribution / Error Trend）
+//   ⑦ 并发与队列（按渠道，sub2api 的 OpsConcurrencyCard）
+//   ⑧ 平台概览 + 数据表体积（sub2api 没有表体积）
+//   ⑨ 排行：模型 / 渠道 / 用户 / 厂商（sub2api 只有模型/渠道）
+//   ⑩ 告警：规则表 + 事件流 + 维护窗口（sub2api 放在弹窗里）
+//
+// 颜色语义与全站一致：<70% 主色/绿、70-90% 橙、>90% 红（同渠道额度条）。
+// 图表一律复用 components/Charts.jsx（全站图表规范唯一入口）。
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  App as AntApp, Segmented, Spin, Empty, Tooltip, Table, Tag, Button, Modal, Form,
+  Input, InputNumber, Select, Switch, Space, Popconfirm, Badge, Alert as AntAlert, Divider,
+} from "antd";
+import {
+  ReloadOutlined, AlertOutlined, ThunderboltOutlined, PlusOutlined,
+  DeleteOutlined, EditOutlined, ExperimentOutlined, BellOutlined,
+} from "@ant-design/icons";
 import { API } from "../services/api";
 import PageHeader from "../components/PageHeader";
+import { LineChart, BarChart, RankBar, Legend, Sparkline } from "../components/Charts";
 
 function fmtBytes(n) {
   const v = Number(n) || 0;
@@ -40,12 +57,15 @@ function usageColor(pct) {
   return "var(--green)";
 }
 
-/** 资源卡：标题 + 大字数值 + 进度条 + 副标题 */
-function ResourceCard({ label, value, percent, foot, extra }) {
+/** 资源卡：标题 + 大字数值 + 进度条 + 副标题（可选 sparkline） */
+function ResourceCard({ label, value, percent, foot, extra, spark }) {
   return (
     <div className="oo-panel" style={{ padding: 14 }}>
-      <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 4 }}>{label}</div>
-      <div className="oo-num" style={{ fontSize: 22, fontWeight: 600, lineHeight: 1.2 }}>{value}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+        <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{label}</span>
+        {extra}
+      </div>
+      <div className="oo-num" style={{ fontSize: 22, fontWeight: 600, lineHeight: 1.2, marginTop: 2 }}>{value}</div>
       {Number.isFinite(Number(percent)) ? (
         <div style={{ height: 5, borderRadius: 3, background: "var(--inset)", overflow: "hidden", margin: "8px 0 6px" }}>
           <div
@@ -57,290 +77,964 @@ function ResourceCard({ label, value, percent, foot, extra }) {
           />
         </div>
       ) : null}
+      {spark ? <div style={{ margin: "2px 0 4px" }}>{spark}</div> : null}
       {foot ? <div style={{ fontSize: 11.5, color: "var(--ink-3)" }}>{foot}</div> : null}
-      {extra || null}
     </div>
   );
 }
 
-/** 排行条（模型/渠道共用） */
-function RankList({ items, keyName, emptyText }) {
-  if (!items?.length) {
-    return <Empty description={emptyText} image={Empty.PRESENTED_IMAGE_SIMPLE} />;
-  }
-  const max = Math.max(1, ...items.map((x) => x.calls));
+/** 小标签（概览条：与使用记录页的 oo-stats-strip 同一规范） */
+function Strip({ items }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {items.map((x) => (
-        <div key={x[keyName]} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
-          <span className="oo-truncate" style={{ width: 150, fontFamily: "var(--font-mono)" }} title={x[keyName]}>
-            {x[keyName]}
-          </span>
-          <span style={{ flex: 1, height: 7, background: "var(--inset)", borderRadius: 4, overflow: "hidden" }}>
-            <span
-              style={{
-                display: "block",
-                width: `${Math.max(2, (x.calls / max) * 100)}%`,
-                height: "100%",
-                background: usageColor(x.successRate === null ? 0 : 100 - x.successRate),
-              }}
-            />
-          </span>
-          <span className="oo-num" style={{ width: 56, textAlign: "right" }}>{x.calls} 次</span>
-          <span className="oo-num" style={{ width: 62, textAlign: "right", color: placementColor(x.successRate) }}>
-            {x.successRate === null ? "—" : `${x.successRate}%`}
-          </span>
-          <span className="oo-num" style={{ width: 66, textAlign: "right", color: "var(--ink-3)" }}>
-            {(x.avgMs / 1000).toFixed(2)}s
-          </span>
-        </div>
+    <div className="oo-stats-strip">
+      {items.map((it) => (
+        <span className="bui-chip" key={it.label}>
+          {it.label} <b style={it.color ? { color: it.color } : undefined}>{it.value}</b>
+        </span>
       ))}
     </div>
   );
 }
-function placementColor(rate) {
-  if (rate === null || rate === undefined) return "var(--ink-3)";
-  if (rate >= 99) return "var(--green)";
-  if (rate >= 95) return "var(--orange)";
-  return "var(--red)";
+
+const HEALTH_TONE = {
+  healthy: { color: "var(--green)", text: "健康" },
+  degraded: { color: "var(--orange)", text: "需关注" },
+  risk: { color: "var(--red)", text: "风险" },
+  idle: { color: "var(--ink-3)", text: "空闲" },
+};
+
+const SEV_COLOR = { P0: "red", P1: "orange", P2: "gold", P3: "default" };
+
+// ---------------------------------------------------------------------------
+// 健康分 + 智能诊断
+// ---------------------------------------------------------------------------
+function HealthPanel({ health, diagnosis, onRefresh, loading }) {
+  const tone = HEALTH_TONE[health?.level] || HEALTH_TONE.idle;
+  const items = diagnosis || [];
+  return (
+    <div className="oo-panel" style={{ padding: 14, marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 18, flexWrap: "wrap" }}>
+        <div style={{ textAlign: "center", minWidth: 110 }}>
+          <div className="oo-num" style={{ fontSize: 42, fontWeight: 700, lineHeight: 1, color: tone.color }}>
+            {health?.score ?? "—"}
+          </div>
+          <div style={{ fontSize: 12, color: tone.color, marginTop: 4 }}>{tone.text}</div>
+          <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 2 }}>
+            {health?.hasTraffic ? `业务 ${health.parts?.business ?? "—"} · 设施 ${health.parts?.infra ?? "—"}` : "暂无流量"}
+          </div>
+        </div>
+        <div style={{ flex: 1, minWidth: 260 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <span className="oo-stats-card-title">智能诊断</span>
+            <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>按「现象 → 影响 → 建议」给出可执行结论</span>
+            <Button size="small" type="text" icon={<ReloadOutlined spin={loading} />} onClick={onRefresh} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {items.map((d, i) => (
+              <div
+                key={i}
+                style={{
+                  borderLeft: `3px solid ${
+                    d.severity === "critical" ? "var(--red)" : d.severity === "warning" ? "var(--orange)" : "var(--accent)"
+                  }`,
+                  paddingLeft: 10,
+                  fontSize: 12.5,
+                  lineHeight: 1.6,
+                }}
+              >
+                <b>{d.title}</b>
+                <div style={{ color: "var(--ink-3)" }}>影响：{d.impact}</div>
+                <div style={{ color: "var(--ink-3)" }}>建议：{d.advice}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
+
+// ---------------------------------------------------------------------------
+// 告警规则编辑
+// ---------------------------------------------------------------------------
+function RuleModal({ open, rule, metrics, operators, severities, onClose, onSaved }) {
+  const { message } = AntApp.useApp();
+  const [form] = Form.useForm();
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      form.setFieldsValue(
+        rule || {
+          name: "",
+          metric: "error_rate",
+          operator: ">",
+          threshold: 5,
+          window_min: 5,
+          sustained_min: 5,
+          cooldown_min: 30,
+          severity: "P2",
+          enabled: true,
+          notify_email: true,
+          notify_webhook: true,
+          webhook_url: "",
+          notify_emails: "",
+          description: "",
+        }
+      );
+    }
+  }, [open, rule, form]);
+
+  const metric = Form.useWatch("metric", form);
+  const metricDef = metrics.find((m) => m.key === metric);
+
+  const submit = async () => {
+    const v = await form.validateFields();
+    setSaving(true);
+    try {
+      const r = rule?.id ? await API.put(`/monitor/alert/rules/${rule.id}`, v) : await API.post("/monitor/alert/rules", v);
+      if (r?.success === false) throw new Error(r.message || "保存失败");
+      message.success(rule?.id ? "规则已更新" : "规则已创建");
+      onSaved();
+      onClose();
+    } catch (e) {
+      message.error(e.message || "保存失败");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={rule?.id ? "编辑告警规则" : "新建告警规则"}
+      open={open}
+      onCancel={onClose}
+      onOk={submit}
+      confirmLoading={saving}
+      okText="保存"
+      width={620}
+      destroyOnClose
+    >
+      <Form form={form} layout="vertical" size="small">
+        <Form.Item name="name" label="规则名称" tooltip="留空则用指标名作为规则名">
+          <Input placeholder={metricDef?.label || "如：错误率过高"} maxLength={64} />
+        </Form.Item>
+        <Space.Compact block>
+          <Form.Item name="metric" label="指标" style={{ flex: 2 }} rules={[{ required: true }]}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              options={metrics.map((m) => ({ value: m.key, label: `${m.label}（${m.key}）` }))}
+            />
+          </Form.Item>
+          <Form.Item name="operator" label="条件" style={{ flex: 1, marginLeft: 8 }}>
+            <Select options={operators.map((o) => ({ value: o, label: o }))} />
+          </Form.Item>
+          <Form.Item name="threshold" label={`阈值${metricDef?.unit ? `（${metricDef.unit}）` : ""}`} style={{ flex: 1, marginLeft: 8 }}>
+            <InputNumber style={{ width: "100%" }} />
+          </Form.Item>
+        </Space.Compact>
+        <Space.Compact block>
+          <Form.Item name="window_min" label="统计窗口（分钟）" style={{ flex: 1 }} tooltip="指标统计的时间范围">
+            <InputNumber min={1} max={1440} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item
+            name="sustained_min"
+            label="持续满足（分钟）"
+            style={{ flex: 1, marginLeft: 8 }}
+            tooltip="连续满足这么久才触发，避免瞬时抖动误报"
+          >
+            <InputNumber min={1} max={1440} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item
+            name="cooldown_min"
+            label="冷却（分钟）"
+            style={{ flex: 1, marginLeft: 8 }}
+            tooltip="触发后多久内不再重复告警，避免告警风暴"
+          >
+            <InputNumber min={0} max={10080} style={{ width: "100%" }} />
+          </Form.Item>
+        </Space.Compact>
+        <Form.Item name="severity" label="级别">
+          <Select options={severities.map((s) => ({ value: s, label: s }))} style={{ width: 120 }} />
+        </Form.Item>
+        <Divider style={{ margin: "4px 0 12px" }} orientation="left" plain>
+          通知通道
+        </Divider>
+        <Space size={20} wrap>
+          <Form.Item name="notify_email" label="邮件" valuePropName="checked" style={{ marginBottom: 8 }}>
+            <Switch size="small" />
+          </Form.Item>
+          <Form.Item name="notify_webhook" label="Webhook" valuePropName="checked" style={{ marginBottom: 8 }}>
+            <Switch size="small" />
+          </Form.Item>
+          <Form.Item name="enabled" label="启用" valuePropName="checked" style={{ marginBottom: 8 }}>
+            <Switch size="small" />
+          </Form.Item>
+        </Space>
+        <Form.Item name="notify_emails" label="收件人" tooltip="多个用逗号分隔；留空用系统设置里的默认收件人">
+          <Input placeholder="ops@example.com, admin@example.com" />
+        </Form.Item>
+        <Form.Item name="webhook_url" label="Webhook 地址" tooltip="留空用系统设置里的默认 Webhook；自动识别飞书/钉钉/企业微信/Slack">
+          <Input placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." />
+        </Form.Item>
+        <Form.Item name="description" label="备注">
+          <Input maxLength={255} placeholder="这条规则是给谁看的、触发后该做什么" />
+        </Form.Item>
+      </Form>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 告警面板：规则 + 事件 + 维护窗口
+// ---------------------------------------------------------------------------
+function AlertPanel({ data, onReload }) {
+  const { message, modal } = AntApp.useApp();
+  const [rules, setRules] = useState([]);
+  const [events, setEvents] = useState({ list: [], stat: {}, notify: [] });
+  const [meta, setMeta] = useState({ metrics: [], operators: [], severities: [] });
+  const [ruleModal, setRuleModal] = useState({ open: false, rule: null });
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const [r, e, m] = await Promise.allSettled([
+      API.get("/monitor/alert/rules"),
+      API.get("/monitor/alert/events?days=7"),
+      API.get("/monitor/alert/metrics"),
+    ]);
+    if (r.status === "fulfilled") setRules(r.value?.data || []);
+    if (e.status === "fulfilled") setEvents(e.value?.data || { list: [], stat: {}, notify: [] });
+    if (m.status === "fulfilled") setMeta(m.value?.data || { metrics: [], operators: [], severities: [] });
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const act = async (fn, okMsg) => {
+    setBusy(true);
+    try {
+      const r = await fn();
+      if (r?.success === false) throw new Error(r.message || "操作失败");
+      message.success(r?.message || okMsg);
+      await load();
+      onReload?.();
+    } catch (e) {
+      message.error(e.message || "操作失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const engine = data?.alerts || {};
+  const silenceLeft = engine.silence?.until ? Math.max(0, Math.ceil((engine.silence.until - Date.now()) / 60000)) : 0;
+
+  const columns = [
+    { title: "级别", dataIndex: "severity", width: 62, render: (s) => <Tag color={SEV_COLOR[s]}>{s}</Tag> },
+    { title: "规则名", dataIndex: "name", ellipsis: true },
+    {
+      title: "条件",
+      key: "cond",
+      width: 190,
+      render: (_, r) => (
+        <span className="oo-num" style={{ fontSize: 12 }}>
+          {r.metric} {r.operator} {Number(r.threshold)}
+        </span>
+      ),
+    },
+    { title: "窗口", dataIndex: "window_min", width: 66, render: (v) => `${v}分` },
+    { title: "持续", dataIndex: "sustained_min", width: 66, render: (v) => `${v}分` },
+    { title: "冷却", dataIndex: "cooldown_min", width: 66, render: (v) => `${v}分` },
+    {
+      title: "通道",
+      key: "ch",
+      width: 96,
+      render: (_, r) => (
+        <Space size={4}>
+          {r.notify_email ? <Tag>邮件</Tag> : null}
+          {r.notify_webhook ? <Tag color="blue">Webhook</Tag> : null}
+        </Space>
+      ),
+    },
+    {
+      title: "启用",
+      dataIndex: "enabled",
+      width: 60,
+      render: (v, r) => (
+        <Switch
+          size="small"
+          checked={Number(v) === 1}
+          loading={busy}
+          onChange={() => act(() => API.post(`/monitor/alert/rules/${r.id}/toggle`), "已切换")}
+        />
+      ),
+    },
+    {
+      title: "操作",
+      key: "op",
+      width: 96,
+      render: (_, r) => (
+        <Space size={2}>
+          <Button size="small" type="text" icon={<EditOutlined />} onClick={() => setRuleModal({ open: true, rule: r })} />
+          <Popconfirm title="删除这条规则？" onConfirm={() => act(() => API.delete(`/monitor/alert/rules/${r.id}`), "已删除")}>
+            <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
+
+  const eventCols = [
+    { title: "时间", dataIndex: "created_time", width: 148, render: (t) => new Date(t * 1000).toLocaleString("zh-CN") },
+    { title: "级别", dataIndex: "severity", width: 62, render: (s) => <Tag color={SEV_COLOR[s]}>{s}</Tag> },
+    { title: "规则", dataIndex: "rule_name", ellipsis: true },
+    {
+      title: "指标值",
+      key: "v",
+      width: 130,
+      render: (_, r) => (
+        <span className="oo-num" style={{ fontSize: 12 }}>
+          {r.value} {r.operator} {r.threshold}
+        </span>
+      ),
+    },
+    {
+      title: "状态",
+      dataIndex: "status",
+      width: 80,
+      render: (s) => (s === "firing" ? <Badge status="error" text="告警中" /> : <Badge status="success" text="已恢复" />),
+    },
+    {
+      title: "操作",
+      key: "op",
+      width: 80,
+      render: (_, r) =>
+        r.status === "firing" ? (
+          <Button size="small" type="link" onClick={() => act(() => API.post(`/monitor/alert/events/${r.id}/resolve`), "已标记解决")}>
+            标记解决
+          </Button>
+        ) : null,
+    },
+  ];
+
+  return (
+    <div className="oo-panel" style={{ padding: 14, marginTop: 12 }}>
+      <div className="oo-stats-card-head" style={{ marginBottom: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <BellOutlined />
+          <span className="oo-stats-card-title">告警中心</span>
+          {silenceLeft > 0 ? <Tag color="orange">维护窗口剩余 {silenceLeft} 分钟</Tag> : null}
+          {engine.lastEvalAt ? (
+            <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>
+              上次求值 {new Date(engine.lastEvalAt).toLocaleTimeString("zh-CN")} · 耗时 {engine.lastEvalMs}ms
+              {engine.lastError ? ` · 错误：${engine.lastError}` : ""}
+            </span>
+          ) : null}
+        </div>
+        <Space size={6}>
+          <Button size="small" icon={<ExperimentOutlined />} loading={busy} onClick={() => act(() => API.post("/monitor/alert/evaluate", { force: true }), "已求值")}>
+            立即检测
+          </Button>
+          <Button
+            size="small"
+            onClick={() =>
+              modal.confirm({
+                title: "维护窗口",
+                content: (
+                  <div>
+                    <p style={{ fontSize: 12, color: "var(--ink-3)" }}>开启后所有告警只记录不通知，适合发版/迁移期间使用。</p>
+                    <InputNumber id="silence-min" min={5} max={10080} defaultValue={60} addonAfter="分钟" style={{ width: 180 }} />
+                  </div>
+                ),
+                onOk: () => {
+                  const el = document.getElementById("silence-min");
+                  const minutes = Number(el?.value) || 60;
+                  return act(() => API.post("/monitor/alert/silence", { minutes, reason: "手工维护窗口" }), "已静默");
+                },
+              })
+            }
+          >
+            {silenceLeft > 0 ? "结束静默" : "维护窗口"}
+          </Button>
+          {silenceLeft > 0 ? (
+            <Button size="small" danger onClick={() => act(() => API.post("/monitor/alert/silence", { minutes: 0 }), "已解除静默")}>
+              解除
+            </Button>
+          ) : null}
+          <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => setRuleModal({ open: true, rule: null })}>
+            新建规则
+          </Button>
+        </Space>
+      </div>
+
+      <div className="oo-stats-strip">
+        <span className="bui-chip">规则 <b>{rules.length}</b></span>
+        <span className="bui-chip">告警中 <b style={{ color: events.stat?.firing ? "var(--red)" : undefined }}>{events.stat?.firing ?? 0}</b></span>
+        <span className="bui-chip">近7天恢复 <b>{events.stat?.resolved ?? 0}</b></span>
+        <span className="bui-chip">P0 <b>{events.stat?.p0 ?? 0}</b></span>
+        <span className="bui-chip">P1 <b>{events.stat?.p1 ?? 0}</b></span>
+        {(events.notify || []).map((n) => (
+          <span className="bui-chip" key={n.channel}>
+            {n.channel === "email" ? "邮件" : "Webhook"}投递 <b style={{ color: n.failed ? "var(--red)" : undefined }}>{n.total - n.failed}/{n.total}</b>
+          </span>
+        ))}
+      </div>
+
+      <Table rowKey="id" size="small" columns={columns} dataSource={rules} pagination={false} scroll={{ x: 900 }} style={{ marginBottom: 12 }} />
+
+      <div className="oo-stats-card-head" style={{ marginBottom: 6 }}>
+        <div className="oo-stats-card-title">告警事件（近 7 天）</div>
+      </div>
+      <Table
+        rowKey="id"
+        size="small"
+        columns={eventCols}
+        dataSource={events.list || []}
+        pagination={{ pageSize: 8, size: "small", hideOnSinglePage: true }}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="近期没有告警，系统运行平稳" /> }}
+      />
+
+      <RuleModal
+        open={ruleModal.open}
+        rule={ruleModal.rule}
+        metrics={meta.metrics || []}
+        operators={meta.operators || [">=", "<=", ">", "<", "==", "!="]}
+        severities={meta.severities || ["P0", "P1", "P2", "P3"]}
+        onClose={() => setRuleModal({ open: false, rule: null })}
+        onSaved={load}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 主页面
+// ---------------------------------------------------------------------------
+const REFRESH_OPTIONS = [
+  { value: 5000, label: "5 秒" },
+  { value: 15000, label: "15 秒" },
+  { value: 60000, label: "60 秒" },
+  { value: 0, label: "手动" },
+];
 
 export default function MonitorPage() {
   const { message } = AntApp.useApp();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [autoSec, setAutoSec] = useState(5);
+  const [interval, setIntervalMs] = useState(15000);
+  const [live, setLive] = useState(null); // SSE 推送的实时值
+  const [liveOk, setLiveOk] = useState(false);
+  const [rankTab, setRankTab] = useState("model");
   const timerRef = useRef(null);
+  const esRef = useRef(null);
 
-  const load = useCallback(async ({ silent = false } = {}) => {
-    if (!silent) setLoading(true);
-    try {
-      const d = await API.get("/monitor/snapshot", { timeoutMs: 20_000 });
-      setData(d);
-      setError("");
-    } catch (e) {
-      setError(e.message || "监控数据加载失败");
-      if (!silent) message.error(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [message]);
+  const load = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true);
+      try {
+        const r = await API.get("/monitor/snapshot");
+        if (r?.success === false) throw new Error(r.message || "加载失败");
+        setData(r.data);
+        setError("");
+      } catch (e) {
+        setError(e.message || "加载失败");
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
 
-  // 首次加载 + 自动刷新（手动模式下不建定时器）
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load]);
+
+  // 轮询
+  useEffect(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (!interval) return undefined;
+    timerRef.current = setInterval(() => load(true), interval);
+    return () => clearInterval(timerRef.current);
+  }, [interval, load]);
+
+  // SSE 实时推送（失败自动退回纯轮询，不影响可用性）
+  useEffect(() => {
+    if (typeof EventSource === "undefined") return undefined;
+    let es;
+    try {
+      es = new EventSource("/api/monitor/stream?interval=3000");
+    } catch {
+      return undefined;
+    }
+    esRef.current = es;
+    es.onopen = () => setLiveOk(true);
+    es.onmessage = (ev) => {
+      try {
+        setLive(JSON.parse(ev.data));
+        setLiveOk(true);
+      } catch {
+        /* 忽略脏帧 */
+      }
+    };
+    es.onerror = () => {
+      // 浏览器会自动重连；这里只把「实时」标记抹掉，页面继续靠轮询
+      setLiveOk(false);
+    };
+    return () => es.close();
   }, []);
 
-  useEffect(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    if (!autoSec) return undefined;
-    timerRef.current = setInterval(() => load({ silent: true }), autoSec * 1000);
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      timerRef.current = null;
-    };
-  }, [autoSec, load]);
+  const g = data?.gateway || {};
+  const sys = data?.system || {};
+  const proc = data?.process || {};
+  const trend = data?.trend || {};
+  const health = data?.health || {};
+  const overview = data?.overview || {};
+  const channels = data?.channels || {};
+  const alerts = data?.alerts || {};
+  const thresholds = data?.thresholds || {};
 
-  const s = data;
-  const gw = s?.gateway || {};
-  const sys = s?.system || {};
-  const ov = s?.overview || {};
+  // 实时值与轮询快照合并：SSE 有值优先（更细粒度），否则用快照
+  const rt = live || {
+    qps: trend.qps,
+    tps: trend.tps,
+    inFlight: g.inFlight,
+    sla: g.sla,
+    errorRate: g.errorRate,
+    latency: g.latency,
+  };
+
+  // 趋势序列（分钟桶）
+  const series = useMemo(() => {
+    const pts = (trend.series || []).map((s) => ({
+      x: s.minute,
+      label: new Date(s.minute * 60000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+      calls: s.calls,
+      errors: s.errors,
+      tokens: s.tokens,
+      qps: s.qps,
+      tps: s.tps,
+      avgTtftMs: s.avgTtftMs,
+    }));
+    return pts;
+  }, [trend.series]);
+
+  const qpsSeries = useMemo(
+    () => [
+      { key: "qps", label: "QPS", values: series.map((p) => ({ ...p, y: p.qps })) },
+      { key: "tps", label: "TPS", color: "#22c55e", values: series.map((p) => ({ ...p, y: p.tps })) },
+    ],
+    [series]
+  );
+
+  const errSeries = useMemo(
+    () => [
+      {
+        key: "errors",
+        label: "错误数",
+        color: "#ef4444",
+        values: series.map((p) => ({ ...p, y: p.errors })),
+      },
+      {
+        key: "calls",
+        label: "调用数",
+        color: "#3b82f6",
+        values: series.map((p) => ({ ...p, y: p.calls })),
+      },
+    ],
+    [series]
+  );
+
+  const rankSets = {
+    model: { items: (g.topModels || []).map((m) => ({ name: m.model, ...m })), key: "model", suffix: " 次" },
+    channel: { items: (g.topChannels || []).map((m) => ({ name: m.channel, ...m })), key: "channel", suffix: " 次" },
+    user: { items: (g.topUsers || []).map((m) => ({ name: `用户 #${m.userId}`, ...m })), key: "userId", suffix: " 次" },
+    vendor: { items: (g.topVendors || []).map((m) => ({ name: m.vendor || "未登记", ...m })), key: "vendor", suffix: " 次" },
+  };
+
+  if (loading && !data) {
+    return (
+      <div style={{ padding: 40, textAlign: "center" }}>
+        <Spin />
+      </div>
+    );
+  }
+  if (error && !data) {
+    return (
+      <div style={{ padding: 20 }}>
+        <AntAlert type="error" message="加载监控数据失败" description={error} showIcon />
+        <Button style={{ marginTop: 12 }} onClick={() => load()}>
+          重试
+        </Button>
+      </div>
+    );
+  }
+
+  const lat = g.latency || {};
+  const ttft = g.ttft;
+  const hist = (g.latencyHistogram || []).map((b) => ({ label: b.range.replace("ms", ""), value: b.count }));
 
   return (
-    <div className="oo-page">
+    <div>
       <PageHeader
         title="运维监控"
+        subtitle={
+          <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+            v{data?.version} · 进程运行 {fmtDuration(proc.uptimeSec)} · {sys.hostname} · {proc.platform}
+            {liveOk ? (
+              <span style={{ marginLeft: 8, color: "var(--green)" }}>● 实时推送中</span>
+            ) : (
+              <span style={{ marginLeft: 8, color: "var(--ink-3)" }}>○ 轮询模式</span>
+            )}
+          </span>
+        }
         extra={
-          <>
-            <Segmented
-              size="small"
-              value={autoSec}
-              onChange={setAutoSec}
-              options={[
-                { value: 5, label: "5s" },
-                { value: 15, label: "15s" },
-                { value: 60, label: "60s" },
-                { value: 0, label: "手动" },
-              ]}
-            />
-            <button className="bui-icon-btn" aria-label="立即刷新" onClick={() => load()}>
-              <ReloadOutlined />
-            </button>
-          </>
+          <Space size={6}>
+            <Segmented size="small" value={interval} options={REFRESH_OPTIONS} onChange={setIntervalMs} />
+            <Button size="small" icon={<ReloadOutlined spin={loading} />} onClick={() => load()}>
+              刷新
+            </Button>
+          </Space>
         }
       />
 
-      {error ? (
-        <div className="oo-panel" style={{ padding: 14, marginBottom: 12 }}>
-          <span style={{ color: "var(--red)", fontSize: 13 }}>{error}</span>
-          <button type="button" className="bui-btn" style={{ marginLeft: 10 }} onClick={() => load()}>重试</button>
-        </div>
-      ) : null}
+      {/* ① 健康分 + 智能诊断 */}
+      <HealthPanel health={health} diagnosis={data?.diagnosis} onRefresh={() => load()} loading={loading} />
 
-      {loading && !s ? (
-        <div className="oo-panel" style={{ padding: 40, textAlign: "center" }}>
-          <Spin />
-        </div>
-      ) : s ? (
-        <>
-          {/* 概览：一行小 tag（列表页规范，不占版面） */}
-          <div className="oo-stats-strip">
-            <span className="bui-chip" title="服务版本">版本 <b>{s.version}</b></span>
-            <span className="bui-chip" title="进程运行时长">运行 <b>{fmtDuration(s.process?.uptimeSec)}</b></span>
-            <span className="bui-chip" title="Node 版本与平台">Node <b>{s.process?.nodeVersion}</b> · {s.process?.platform}</span>
-            <span className="bui-chip" title="当前在途请求">在途 <b className="oo-num">{gw.inFlight ?? 0}</b></span>
-            <span className="bui-chip" title="峰值在途">峰值 <b className="oo-num">{gw.peakInFlight ?? 0}</b></span>
-            <span className="bui-chip" title="本进程累计请求">请求 <b className="oo-num">{gw.requests ?? 0}</b></span>
-            <span
-              className={`bui-chip${gw.successRate !== null && gw.successRate < 95 ? " bui-chip--red" : ""}`}
-              title="本进程成功率"
-            >
-              成功率 <b className="oo-num">{gw.successRate === null ? "—" : `${gw.successRate}%`}</b>
+      {/* ② 概览小标签 */}
+      <Strip
+        items={[
+          { label: "在途", value: rt.inFlight ?? 0, color: (rt.inFlight ?? 0) > 20 ? "var(--orange)" : undefined },
+          { label: "峰值在途", value: g.peakInFlight ?? 0 },
+          { label: "SLA", value: rt.sla != null ? `${rt.sla}%` : "—", color: rt.sla != null && rt.sla < (thresholds.slaPercentMin || 99.5) ? "var(--red)" : undefined },
+          { label: "成功率", value: g.successRate != null ? `${g.successRate}%` : "—" },
+          { label: "错误率", value: g.errorRate != null ? `${g.errorRate}%` : "—", color: g.errorRate > (thresholds.errorRateMax || 5) ? "var(--red)" : undefined },
+          { label: "业务限制", value: g.businessLimited ?? 0 },
+          { label: "上游错误", value: g.upstream?.errors ?? 0, color: (g.upstream?.errors ?? 0) > 0 ? "var(--orange)" : undefined },
+          { label: "429/529", value: `${g.upstream?.count429 ?? 0}/${g.upstream?.count529 ?? 0}` },
+          { label: "换号次数", value: g.channelSwitches ?? 0 },
+          { label: "换号率", value: g.switchRate != null ? `${g.switchRate}%` : "—" },
+          { label: "总请求", value: g.requests ?? 0 },
+        ]}
+      />
+
+      {/* ③ 吞吐实时 + 趋势 */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, marginBottom: 12 }}>
+        <div className="oo-panel" style={{ padding: 14 }}>
+          <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+            <div className="oo-stats-card-title">吞吐趋势（近 60 分钟）</div>
+            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+              QPS 峰值 {trend.qps?.peak ?? 0} · 均值 {trend.qps?.avg ?? 0} · TPS 峰值 {trend.tps?.peak ?? 0}
             </span>
-            <span className="bui-chip" title="P95 延迟">P95 <b className="oo-num">{(gw.latency?.p95Ms / 1000 || 0).toFixed(2)}s</b></span>
-            <span className="bui-chip" title="近 1 小时调用 / 失败">近1h <b className="oo-num">{ov.lastHour?.calls ?? 0}</b>/{ov.lastHour?.errors ?? 0}</span>
-            <span className="bui-chip" title="近 24 小时调用 / 失败">近24h <b className="oo-num">{ov.last24h?.calls ?? 0}</b>/{ov.last24h?.errors ?? 0}</span>
           </div>
-
-          {/* 资源 */}
-          <div className="oo-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginBottom: 12 }}>
-            <ResourceCard
-              label="CPU"
-              value={sys.cpuPercent === null || sys.cpuPercent === undefined ? "计算中…" : `${sys.cpuPercent}%`}
-              percent={sys.cpuPercent}
-              foot={`${sys.cpuCount} 核${sys.loadavg ? ` · 负载 ${sys.loadavg.join(" / ")}` : ""}`}
-            />
-            <ResourceCard
-              label="内存"
-              value={`${sys.usedMemPercent ?? 0}%`}
-              percent={sys.usedMemPercent}
-              foot={`${fmtBytes((sys.totalMemBytes || 0) - (sys.freeMemBytes || 0))} / ${fmtBytes(sys.totalMemBytes)}`}
-            />
-            <ResourceCard
-              label="进程内存"
-              value={fmtBytes(s.process?.rssBytes)}
-              foot={`堆 ${fmtBytes(s.process?.heapUsedBytes)} / ${fmtBytes(s.process?.heapTotalBytes)} · 外部 ${fmtBytes(s.process?.externalBytes)}`}
-            />
-            <ResourceCard
-              label="磁盘"
-              value={sys.disk ? `${sys.disk.usedPercent}%` : "不支持"}
-              percent={sys.disk?.usedPercent}
-              foot={sys.disk ? `${fmtBytes(sys.disk.usedBytes)} / ${fmtBytes(sys.disk.totalBytes)}` : "当前文件系统不支持 statfs"}
-            />
-            <ResourceCard
-              label="事件循环延迟"
-              value={s.eventLoop ? `${s.eventLoop.p50Ms}ms` : "不支持"}
-              percent={s.eventLoop ? Math.min(100, (s.eventLoop.p99Ms / 200) * 100) : null}
-              foot={s.eventLoop ? `P99 ${s.eventLoop.p99Ms}ms · 峰值 ${s.eventLoop.maxMs}ms` : "perf_hooks 不可用"}
-            />
-            <ResourceCard
-              label="数据库连接池"
-              value={s.pool ? `${s.pool.inUse} / ${s.pool.total}` : "—"}
-              percent={s.pool && s.pool.total ? (s.pool.inUse / s.pool.total) * 100 : null}
-              foot={s.pool ? `空闲 ${s.pool.free} · 排队 ${s.pool.queued}` : ""}
-            />
-          </div>
-
-          {/* 网关运行时 */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, marginBottom: 12 }}>
-            <div className="oo-panel" style={{ padding: 14 }}>
-              <div className="oo-stats-card-head" style={{ marginBottom: 10 }}>
-                <div className="oo-stats-card-title">延迟分位（本进程最近 {gw.latency?.samples || 0} 次）</div>
-              </div>
-              <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-                {[
-                  ["平均", gw.latency?.avgMs],
-                  ["P50", gw.latency?.p50Ms],
-                  ["P95", gw.latency?.p95Ms],
-                  ["P99", gw.latency?.p99Ms],
-                ].map(([label, v]) => (
-                  <div key={label}>
-                    <div style={{ fontSize: 11.5, color: "var(--ink-3)" }}>{label}</div>
-                    <div className="oo-num" style={{ fontSize: 18, fontWeight: 600 }}>{((v || 0) / 1000).toFixed(2)}s</div>
+          <Legend series={qpsSeries} />
+          <LineChart
+            series={qpsSeries}
+            height={190}
+            tipRender={(i) => {
+              const p = series[i];
+              if (!p) return null;
+              return (
+                <>
+                  <div style={{ fontWeight: 600 }}>{p.label}</div>
+                  <div className="oo-trend-tip-row">
+                    <i style={{ background: "#3b82f6" }} />
+                    QPS <span>{p.qps}</span>
                   </div>
-                ))}
-              </div>
-              <div style={{ marginTop: 12, fontSize: 12 }}>
-                <div style={{ color: "var(--ink-3)", marginBottom: 6 }}>HTTP 状态码分布</div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {(gw.byStatus || []).length ? (
-                    gw.byStatus.map((x) => (
-                      <span
-                        key={x.status}
-                        className={`bui-chip${x.status >= 500 ? " bui-chip--red" : x.status >= 400 ? " bui-chip--orange" : ""}`}
-                      >
-                        {x.status} <b className="oo-num">{x.count}</b>
-                      </span>
-                    ))
-                  ) : (
-                    <span style={{ color: "var(--ink-3)" }}>暂无请求</span>
-                  )}
+                  <div className="oo-trend-tip-row">
+                    <i style={{ background: "#22c55e" }} />
+                    TPS <span>{p.tps}</span>
+                  </div>
+                  <div className="oo-trend-tip-row">
+                    调用 <span>{p.calls}</span>
+                  </div>
+                  <div className="oo-trend-tip-row">
+                    错误 <span>{p.errors}</span>
+                  </div>
+                </>
+              );
+            }}
+          />
+        </div>
+
+        <div className="oo-panel" style={{ padding: 14 }}>
+          <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+            <div className="oo-stats-card-title">错误趋势（近 60 分钟）</div>
+            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>错误率 {g.errorRate ?? 0}%</span>
+          </div>
+          <Legend series={errSeries} />
+          <LineChart series={errSeries} height={190} />
+        </div>
+      </div>
+
+      {/* ④ 资源卡 */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginBottom: 12 }}>
+        <ResourceCard
+          label="CPU（系统）"
+          value={sys.cpuPercent != null ? `${sys.cpuPercent}%` : "计算中"}
+          percent={sys.cpuPercent}
+          foot={`${sys.cpuCount || 0} 核${sys.loadavg ? ` · 负载 ${sys.loadavg.join(" / ")}` : ""}`}
+        />
+        <ResourceCard
+          label="CPU（本进程）"
+          value={proc.cpu ? `${proc.cpu.percent}%` : "计算中"}
+          percent={proc.cpu?.percentOfMachine}
+          foot={proc.cpu ? `占整机 ${proc.cpu.percentOfMachine}% · 用户 ${proc.cpu.userMs}ms / 系统 ${proc.cpu.systemMs}ms` : "区分「机器忙」和「Node 卡」"}
+        />
+        <ResourceCard
+          label="内存（系统）"
+          value={`${sys.usedMemPercent ?? 0}%`}
+          percent={sys.usedMemPercent}
+          foot={`已用 ${fmtBytes((sys.totalMemBytes || 0) - (sys.freeMemBytes || 0))} / 共 ${fmtBytes(sys.totalMemBytes)}`}
+        />
+        <ResourceCard
+          label="内存（进程 RSS）"
+          value={fmtBytes(proc.rssBytes)}
+          percent={sys.totalMemBytes ? ((proc.rssBytes || 0) / sys.totalMemBytes) * 100 : null}
+          foot={`堆 ${fmtBytes(proc.heapUsedBytes)} / ${fmtBytes(proc.heapTotalBytes)} · 外部 ${fmtBytes(proc.externalBytes)}`}
+          extra={
+            (proc.externalBytes || 0) > 200 * 1024 * 1024 ? (
+              <Tooltip title="外部内存（Buffer）占比偏高，可能是流式响应的 Buffer 未释放">
+                <Tag color="orange" style={{ marginInlineEnd: 0 }}>Buffer 偏高</Tag>
+              </Tooltip>
+            ) : null
+          }
+        />
+        <ResourceCard
+          label="磁盘"
+          value={sys.disk ? `${sys.disk.usedPercent}%` : "不支持"}
+          percent={sys.disk?.usedPercent}
+          foot={sys.disk ? `剩余 ${fmtBytes(sys.disk.freeBytes)} / 共 ${fmtBytes(sys.disk.totalBytes)}` : "当前文件系统不支持 statfs"}
+        />
+        <ResourceCard
+          label="事件循环延迟"
+          value={data?.eventLoop?.p99Ms != null ? `${data.eventLoop.p99Ms} ms` : "计算中"}
+          percent={data?.eventLoop?.p99Ms != null ? Math.min(100, (data.eventLoop.p99Ms / 200) * 100) : null}
+          foot={
+            data?.eventLoop
+              ? `P50 ${data.eventLoop.p50Ms ?? "—"}ms · 最大 ${data.eventLoop.maxMs ?? "—"}ms · 利用率 ${((data.eventLoop.utilization ?? 0) * 100).toFixed(1)}%`
+              : "Node 被同步操作阻塞的程度"
+          }
+        />
+        <ResourceCard
+          label="数据库连接池"
+          value={`${data?.pool?.inUse ?? 0} / ${data?.pool?.total ?? 0}`}
+          percent={data?.pool?.total ? (data.pool.inUse / data.pool.total) * 100 : null}
+          foot={`空闲 ${data?.pool?.free ?? 0} · 排队 ${data?.pool?.queued ?? 0}`}
+          extra={(data?.pool?.queued ?? 0) > 0 ? <Tag color="orange" style={{ marginInlineEnd: 0 }}>有排队</Tag> : null}
+        />
+        <ResourceCard
+          label="活动句柄"
+          value={data?.resources?.activeHandles ?? "—"}
+          foot={
+            data?.resources?.resourceUsage
+              ? `非自愿上下文切换 ${data.resources.resourceUsage.involuntarySwitches} · 文件读写 ${data.resources.resourceUsage.fsRead}/${data.resources.resourceUsage.fsWrite}`
+              : "Node 没有 goroutine，用活动句柄作类比"
+          }
+        />
+      </div>
+
+      {/* ⑤⑥ 延迟 + 错误分析 */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12, marginBottom: 12 }}>
+        <div className="oo-panel" style={{ padding: 14 }}>
+          <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+            <div className="oo-stats-card-title">请求延迟分位</div>
+            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>样本 {lat.samples ?? 0} 次</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(72px, 1fr))", gap: 8, marginBottom: 12 }}>
+            {[
+              ["平均", lat.avgMs],
+              ["P50", lat.p50Ms],
+              ["P90", lat.p90Ms],
+              ["P95", lat.p95Ms],
+              ["P99", lat.p99Ms],
+              ["最大", lat.maxMs],
+            ].map(([k, v]) => (
+              <div key={k} className="oo-stat-card">
+                <div className="oo-stat-card-num" style={{ fontSize: 16 }}>
+                  {v ?? 0}
+                  <span style={{ fontSize: 11, color: "var(--ink-3)", marginLeft: 2 }}>ms</span>
                 </div>
+                <div className="oo-stat-card-label">{k}</div>
               </div>
-            </div>
-
-            <div className="oo-panel" style={{ padding: 14 }}>
-              <div className="oo-stats-card-head" style={{ marginBottom: 10 }}>
-                <div className="oo-stats-card-title">平台概览</div>
-              </div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontSize: 12 }}>
-                <span className="bui-chip">渠道 <b className="oo-num">{ov.channels?.total ?? 0}</b></span>
-                <span className="bui-chip bui-chip--green">启用 <b className="oo-num">{ov.channels?.enabled ?? 0}</b></span>
-                {ov.channels?.autoDisabled ? (
-                  <span className="bui-chip bui-chip--red">自动禁用 <b className="oo-num">{ov.channels.autoDisabled}</b></span>
-                ) : null}
-                <span className="bui-chip">密钥 <b className="oo-num">{ov.tokens?.active ?? 0}</b>/{ov.tokens?.total ?? 0}</span>
-                <span className="bui-chip">用户 <b className="oo-num">{ov.users?.active ?? 0}</b>/{ov.users?.total ?? 0}</span>
-                {ov.users?.lowBalance ? (
-                  <span className="bui-chip bui-chip--orange">低余额 <b className="oo-num">{ov.users.lowBalance}</b></span>
-                ) : null}
-                {s.thresholds?.autoTestEnabled ? <span className="bui-chip bui-chip--green">定时检测 开</span> : null}
-                {s.thresholds?.rateLimitEnabled ? <span className="bui-chip">限流 开</span> : null}
-              </div>
-              <div style={{ marginTop: 12, fontSize: 12 }}>
-                <div style={{ color: "var(--ink-3)", marginBottom: 6 }}>数据表体积（Top 8）</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {(ov.tables || []).map((t) => (
-                    <div key={t.name} style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span style={{ fontFamily: "var(--font-mono)" }}>{t.name}</span>
-                      <span className="oo-num" style={{ color: t.mb >= 500 ? "var(--orange)" : "var(--ink-3)" }}>{t.mb} MB</span>
-                    </div>
-                  ))}
+            ))}
+          </div>
+          <div className="oo-stats-card-title" style={{ marginBottom: 6 }}>
+            首 Token 延迟（TTFT）
+          </div>
+          {ttft ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(72px, 1fr))", gap: 8 }}>
+              {[
+                ["平均", ttft.avgMs],
+                ["P50", ttft.p50Ms],
+                ["P90", ttft.p90Ms],
+                ["P95", ttft.p95Ms],
+                ["P99", ttft.p99Ms],
+                ["最大", ttft.maxMs],
+              ].map(([k, v]) => (
+                <div key={k} className="oo-stat-card">
+                  <div
+                    className="oo-stat-card-num"
+                    style={{
+                      fontSize: 16,
+                      color: k === "P99" && v > (thresholds.ttftP99MsMax || 3000) ? "var(--red)" : undefined,
+                    }}
+                  >
+                    {v ?? 0}
+                    <span style={{ fontSize: 11, color: "var(--ink-3)", marginLeft: 2 }}>ms</span>
+                  </div>
+                  <div className="oo-stat-card-label">{k}</div>
                 </div>
-              </div>
+              ))}
             </div>
-          </div>
+          ) : (
+            <div style={{ fontSize: 12, color: "var(--ink-3)" }}>暂无流式请求样本（TTFT 只在流式响应里可测）</div>
+          )}
+        </div>
 
-          {/* 排行 */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 12 }}>
-            <div className="oo-panel" style={{ padding: 14 }}>
-              <div className="oo-stats-card-head" style={{ marginBottom: 10 }}>
-                <div className="oo-stats-card-title">模型调用（本进程）</div>
-                <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>次数 · 成功率 · 平均耗时</span>
-              </div>
-              <RankList items={gw.topModels} keyName="model" emptyText="本进程还没有调用记录" />
-            </div>
-            <div className="oo-panel" style={{ padding: 14 }}>
-              <div className="oo-stats-card-head" style={{ marginBottom: 10 }}>
-                <div className="oo-stats-card-title">渠道调用（本进程）</div>
-                <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>次数 · 成功率 · 平均耗时</span>
-              </div>
-              <RankList items={gw.topChannels} keyName="channel" emptyText="本进程还没有调用记录" />
-            </div>
+        <div className="oo-panel" style={{ padding: 14 }}>
+          <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+            <div className="oo-stats-card-title">延迟分布</div>
+            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>按耗时区间分桶</span>
           </div>
+          <BarChart bars={hist} height={150} />
 
-          <div style={{ marginTop: 10, fontSize: 11.5, color: "var(--ink-3)" }}>
-            <Tooltip title="本页的请求数/延迟分位是进程内累计，服务重启后清零；跨重启的历史请看使用记录与操作日志。">
-              <span>采样时间：{new Date(s.fetchedAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}（进程级指标随重启清零）</span>
-            </Tooltip>
+          <div className="oo-stats-card-head" style={{ margin: "14px 0 8px" }}>
+            <div className="oo-stats-card-title">HTTP 状态码分布</div>
           </div>
-        </>
-      ) : null}
+          <BarChart
+            bars={(g.byStatus || []).map((s) => ({
+              label: String(s.status),
+              value: s.count,
+              color: s.status >= 500 ? "#ef4444" : s.status >= 400 ? "#f59e0b" : "#22c55e",
+            }))}
+            height={120}
+          />
+        </div>
+      </div>
+
+      {/* ⑦ 并发与队列 */}
+      <div className="oo-panel" style={{ padding: 14, marginBottom: 12 }}>
+        <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+          <div className="oo-stats-card-title">并发与队列（按账号）</div>
+          <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+            在途 {channels.inflight ?? 0} · 冷却中 {channels.cooling ?? 0} · 启用 {channels.enabled ?? 0} · 近期有错误 {channels.errors ?? 0}
+          </span>
+        </div>
+        <Table
+          rowKey="channelId"
+          size="small"
+          dataSource={(channels.list || []).filter((c) => c.inflight > 0 || c.coolingDown || c.queued > 0 || c.lastError)}
+          pagination={false}
+          scroll={{ x: 720, y: 240 }}
+          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有在途请求，也没有冷却中的账号" /> }}
+          columns={[
+            { title: "#", dataIndex: "channelId", width: 54 },
+            { title: "账号", dataIndex: "name", ellipsis: true },
+            { title: "厂商", dataIndex: "type", width: 100 },
+            {
+              title: "在途",
+              dataIndex: "inflight",
+              width: 70,
+              render: (v) => <span className="oo-num">{v}</span>,
+            },
+            {
+              title: "排队",
+              dataIndex: "queued",
+              width: 70,
+              render: (v) => (v ? <Badge count={v} size="small" /> : <span style={{ color: "var(--ink-3)" }}>—</span>),
+            },
+            {
+              title: "冷却",
+              dataIndex: "cooldownRemainSec",
+              width: 90,
+              render: (v) => (v ? <Tag color="orange">{Math.ceil(v / 60)} 分钟</Tag> : <span style={{ color: "var(--ink-3)" }}>—</span>),
+            },
+            {
+              title: "最近调用",
+              dataIndex: "usedCount",
+              width: 90,
+              render: (v) => <span className="oo-num">{v}</span>,
+            },
+            { title: "最近错误", dataIndex: "lastError", ellipsis: true },
+          ]}
+        />
+      </div>
+
+      {/* ⑧ 平台概览 */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12, marginBottom: 12 }}>
+        <div className="oo-panel" style={{ padding: 14 }}>
+          <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+            <div className="oo-stats-card-title">平台概览</div>
+          </div>
+          <Strip
+            items={[
+              { label: "渠道", value: `${overview.channels?.enabled ?? 0}/${overview.channels?.total ?? 0}` },
+              { label: "自动禁用", value: overview.channels?.autoDisabled ?? 0, color: overview.channels?.autoDisabled ? "var(--orange)" : undefined },
+              { label: "密钥", value: `${overview.tokens?.active ?? 0}/${overview.tokens?.total ?? 0}` },
+              { label: "用户", value: `${overview.users?.active ?? 0}/${overview.users?.total ?? 0}` },
+              { label: "低余额用户", value: overview.users?.lowBalance ?? 0 },
+            ]}
+          />
+          <Strip
+            items={[
+              { label: "近1小时调用", value: overview.lastHour?.calls ?? 0 },
+              { label: "近1小时失败", value: overview.lastHour?.errors ?? 0, color: overview.lastHour?.errors ? "var(--red)" : undefined },
+              { label: "近24小时调用", value: overview.last24h?.calls ?? 0 },
+              { label: "近24小时失败", value: overview.last24h?.errors ?? 0, color: overview.last24h?.errors ? "var(--red)" : undefined },
+              { label: "近24小时消费", value: `${overview.last24h?.units ?? 0} 单位` },
+            ]}
+          />
+        </div>
+
+        <div className="oo-panel" style={{ padding: 14 }}>
+          <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+            <div className="oo-stats-card-title">数据表体积</div>
+            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>判断日志是否需要清理</span>
+          </div>
+          <RankBar
+            items={(overview.tables || []).map((t) => ({ name: t.name, mb: t.mb, rows: t.rows }))}
+            nameKey="name"
+            valueKey="mb"
+            suffix=" MB"
+          />
+        </div>
+      </div>
+
+      {/* ⑨ 排行 */}
+      <div className="oo-panel" style={{ padding: 14, marginBottom: 12 }}>
+        <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+          <div className="oo-stats-card-title">调用排行（本进程累计）</div>
+          <Segmented
+            size="small"
+            value={rankTab}
+            onChange={setRankTab}
+            options={[
+              { value: "model", label: "模型" },
+              { value: "channel", label: "渠道" },
+              { value: "user", label: "用户" },
+              { value: "vendor", label: "厂商" },
+            ]}
+          />
+        </div>
+        <RankBar
+          items={rankSets[rankTab].items.map((m) => ({
+            name: m.name,
+            calls: m.calls,
+            rate: `${m.successRate ?? "—"}% · ${m.avgMs ?? 0}ms${m.avgTtftMs ? ` · 首字 ${m.avgTtftMs}ms` : ""}`,
+          }))}
+          nameKey="name"
+          valueKey="calls"
+          suffix=" 次"
+        />
+        <div style={{ marginTop: 8, fontSize: 11.5, color: "var(--ink-3)" }}>
+          {rankSets[rankTab].items.slice(0, 8).map((m) => `${m.name}：成功率 ${m.successRate ?? "—"}%（平均 ${m.avgMs ?? 0}ms${m.avgTtftMs ? `，首字 ${m.avgTtftMs}ms` : ""}）`).join(" · ") || "暂无调用记录"}
+        </div>
+      </div>
+
+      {/* ⑩ 告警中心 */}
+      <AlertPanel data={data} onReload={() => load(true)} />
     </div>
   );
 }

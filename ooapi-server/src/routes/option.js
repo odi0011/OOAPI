@@ -46,6 +46,14 @@ const NUMERIC_OPTIONS = {
   smtp_port: { min: 1, max: 65535, int: true },
   backup_interval_hours: { min: 1, max: 8760, int: true },
   backup_keep: { min: 1, max: 365, int: true },
+  // 运维告警
+  alert_interval_seconds: { min: 10, max: 86400, int: true },
+  alert_silence_until: { min: 0, max: 4e12, int: true },
+  alert_retention_days: { min: 0, max: 3650, int: true },
+  alert_sla_min: { min: 0, max: 100, int: false },
+  alert_ttft_p99_max: { min: 0, max: 600000, int: true },
+  alert_error_rate_max: { min: 0, max: 100, int: false },
+  alert_upstream_error_rate_max: { min: 0, max: 100, int: false },
 };
 
 // 固定值设置项：额度换算由计费代码硬编码（pricing.UNITS_PER_OD = 10000），

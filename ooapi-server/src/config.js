@@ -110,9 +110,30 @@ export const DEFAULT_OPTIONS = {
   smtp_user: "",
   smtp_pass: "",
   smtp_from: "",
+  smtp_from_name: "", // 发件人显示名（留空 = 用站点名）
   smtp_ssl: "false",
   smtp_starttls: "true",
   smtp_insecure: "false",
+
+  // ---------- 运维告警 ----------
+  alert_enabled: "true", // 引擎总开关（规则各自还有 enabled）
+  alert_interval_seconds: "60", // 求值间隔
+  alert_email_to: "", // 默认收件人（规则里没填时用）
+  alert_webhook_url: "", // 默认 Webhook（飞书/钉钉/企微/Slack 自动识别）
+  alert_webhook_secret: "", // 加签密钥（钉钉/飞书）
+  alert_notify_resolved: "true", // 恢复时是否也通知
+  alert_silence_enabled: "false", // 维护窗口（全局静默）
+  alert_silence_until: "0", // 静默截止时间戳（毫秒）
+  alert_silence_reason: "",
+  alert_retention_days: "30", // 告警事件保留天数
+  // 阈值可视化（只影响监控页标红，不影响告警规则本身的触发）
+  alert_sla_min: "99.5", // SLA 低于此值标红
+  alert_ttft_p99_max: "3000", // 首 Token P99 超过此值标红（毫秒）
+  alert_error_rate_max: "5", // 请求错误率超过此值标红（%）
+  alert_upstream_error_rate_max: "5", // 上游错误率超过此值标红（%）
+  alert_reports_enabled: "false", // 定时报表
+  alert_report_daily_cron: "0 9 * * *", // 日报（每天 09:00）
+  alert_report_weekly_cron: "0 9 * * 1", // 周报（每周一 09:00）
 
   // ---------- 备份 ----------
   backup_enabled: "false",
@@ -133,7 +154,7 @@ export const DEFAULT_OPTIONS = {
 };
 
 // 敏感设置项：GET /api/option 一律掩码，PUT 收到掩码值时跳过不写
-export const SECRET_OPTIONS = new Set(["smtp_pass"]);
+export const SECRET_OPTIONS = new Set(["smtp_pass", "alert_webhook_secret"]);
 
 const cache = new Map();
 
