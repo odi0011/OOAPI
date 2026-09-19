@@ -30,15 +30,18 @@ export default function TokenPage() {
   const [form] = Form.useForm();
   const { begin, isLatest } = useLatest();
 
-  // 分组下拉（sub2api 风格）：一个 Key 只能绑定一个分组，选项显示厂商图标 / 分组名 / 备注 / 倍率
+  // 分组下拉：一个 Key 只能绑定一个分组，选项显示厂商图标 / 分组名 / 备注 / 倍率。
+  // 绑定值就是**分组名**（分组名全局唯一，且分组可跨厂商）。
+  // 注意不要拼成 `${g.type}:${g.name}`：g.type 现在是「可选的厂商筛选」，
+  // 拼出来的 "vip:vip" 会导致改名/删组时匹配不上 → Key 永久 503。
   const groupOptions = React.useMemo(
     () =>
       groupList.map((g) => ({
-        value: `${g.type}:${g.name}`,
-        search: `${g.name} ${g.remark || ""} ${g.typeName || g.type}`.toLowerCase(),
+        value: g.name,
+        search: `${g.name} ${g.remark || ""} ${g.typeName || g.vendor || ""}`.toLowerCase(),
         label: (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 320 }}>
-            <VendorIcon type={g.type} size={13} />
+            {g.vendor ? <VendorIcon type={g.vendor} size={13} /> : null}
             <span className="oo-truncate" style={{ fontWeight: 500 }}>{g.name}</span>
             {g.remark ? (
               <span className="oo-truncate" style={{ color: "var(--ink-3)", fontSize: 12 }}>{g.remark}</span>
@@ -50,10 +53,22 @@ export default function TokenPage() {
     [groupList]
   );
 
+  // 由绑定值反查分组：先按整串精确匹配（新格式就是分组名）；
+  // 匹配不到再按旧格式 "厂商:分组名" 剥掉前缀重试（兼容历史绑定）。
   const groupMetaOf = (value) => {
-    const [type, name] = String(value || "").split(":");
-    if (!type || !name) return null;
-    return groupList.find((g) => g.type === type && g.name === name) || { type, name, rate: 1 };
+    const raw = String(value || "").trim();
+    if (!raw) return null;
+    const direct = groupList.find((g) => g.name === raw);
+    if (direct) return direct;
+    const idx = raw.indexOf(":");
+    if (idx > 0 && idx < raw.length - 1) {
+      const name = raw.slice(idx + 1);
+      const legacy = groupList.find((g) => g.name === name);
+      if (legacy) return legacy;
+      // 分组已被删除：仍返回一个「按名字」的占位，避免界面显示 0 信息
+      return { name, type: "", vendor: "", rate: 1, models: [] };
+    }
+    return null;
   };
 
   // 当前选中的分组：密钥的可用模型完全由分组决定，表单不再单独选模型

@@ -620,8 +620,17 @@ export default function AdminChannelsPage() {
       return next;
     });
 
-  // 某厂商可选的分组（管理员在「分组管理」创建；不选 = 不绑定）
-  const groupNamesOf = (type) => groups.filter((g) => !type || g.type === type).map((g) => g.name);
+  // 可选分组（管理员在「分组管理」创建；不选 = 不绑定）。
+  //
+  // 不再按厂商过滤：分组可以跨厂商（vendor 只是建组时的可选筛选），
+  // 按厂商过滤会让 vendor 为空的分组对**任何**渠道都不可见，
+  // 管理员会误以为「分组丢了」，且难以把跨厂商分组挂到渠道上。
+  // 同厂商的分组排在前面，只是排序上的便利。
+  const groupNamesOf = (type) => {
+    const list = [...groups];
+    if (type) list.sort((a, b) => (b.vendor === type ? 1 : 0) - (a.vendor === type ? 1 : 0));
+    return list.map((g) => g.name);
+  };
 
   const groupSelectOptions = (type) =>
     groupNamesOf(type).map((g) => ({ value: g, label: g }));

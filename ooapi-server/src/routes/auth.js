@@ -71,7 +71,9 @@ router.post(
     try {
       [ret] = await pool.query(
         "INSERT INTO users (username, password, display_name, role, status, quota, aff_code, group_name, created_time, last_login_time, last_login_ip) VALUES (?,?,?,1,1,?,?,?, ?, ?, ?)",
-        [name, hash, name, quota, aff, "default", ts, ts, clientIp(req)]
+        // group_name 留空 = 公共池（"default" 是已废弃的历史值，用了它会让日志里
+        // 出现名为 default 的分组标签，且启动清理要等到下次重启才归一）
+        [name, hash, name, quota, aff, "", ts, ts, clientIp(req)]
       );
     } catch (e) {
       // 并发注册同名用户：唯一键冲突返回 409，而不是把 500 抛给用户

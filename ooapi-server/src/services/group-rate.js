@@ -19,6 +19,18 @@ export function parseGroupKey(groupName) {
   return { name: raw };
 }
 
+/**
+ * 归一化绑定值为「纯分组名」，用于展示与日志。
+ *
+ * 为什么不直接存原值：历史绑定有 "厂商:分组名" 与 "分组名:分组名" 等形态，
+ * 原样写进 logs.group_name 会让同一个分组在日志里出现三种不同标签，
+ * 前端按分组筛选/聚合就对不上了。
+ */
+export function displayGroupName(groupName) {
+  const key = parseGroupKey(groupName);
+  return key ? key.name : "";
+}
+
 export async function groupConfigOf(groupName) {
   const key = parseGroupKey(groupName);
   if (!key) return null;

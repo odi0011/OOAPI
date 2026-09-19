@@ -466,7 +466,8 @@ router.post(
     channelName: channel?.name || "",
     tokenId: keyId || 0,
     tokenName: keyName || "",
-    groupName: groupName || user?.group_name || "",
+    // 同网关：归一化成纯分组名，避免历史 "厂商:分组名" 绑定在日志里产生多个标签
+    groupName: displayGroupName(groupName || user?.group_name),
     promptTokens,
     completionTokens,
     cacheTokens,

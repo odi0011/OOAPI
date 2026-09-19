@@ -252,6 +252,9 @@ router.post(
     if (vendor && !getProvider(vendor)) return fail(res, "未知厂商");
     const gname = String(name || "").trim().slice(0, 32);
     if (!gname) return fail(res, "请填写分组名");
+    // 分组名不能含冒号：历史绑定格式是 "厂商:分组名"，含冒号的名字会被
+    // 解析逻辑误剥前缀（"a:b" 被当成厂商 a + 分组 b），导致绑定到别的分组或校验失败。
+    if (gname.includes(":")) return fail(res, "分组名不能包含冒号（:）");
     // 分组名全局唯一（跨厂商也不能重名）：否则绑定 Key 时无法区分走哪个组
     const [exist] = await pool.query("SELECT id FROM channel_groups WHERE name = ?", [gname]);
     if (exist.length) return fail(res, "已存在同名分组");
@@ -285,6 +288,7 @@ router.put(
     const { name, remark, rate, models, channel_ids, vendor: vendorRaw } = req.body || {};
     const gname = name === undefined ? group.name : String(name || "").trim().slice(0, 32);
     if (!gname) return fail(res, "请填写分组名");
+    if (gname.includes(":")) return fail(res, "分组名不能包含冒号（:）");
     const vendor = vendorRaw === undefined ? String(group.vendor || "") : String(vendorRaw || "").trim();
     if (vendor && !getProvider(vendor)) return fail(res, "未知厂商");
     if (gname !== group.name) {
@@ -305,9 +309,11 @@ router.put(
       await pool
         .query("UPDATE tokens SET group_name = ? WHERE group_name = ?", [gname, group.name])
         .catch(() => {});
-      // 旧版 Key 绑定带厂商前缀（"openai:分组名"），一并迁移
+      // 旧版 Key 绑定带厂商前缀（"openai:分组名"）。这里**不能**用 group.vendor 反推前缀：
+      // vendor 现在是可清空/可改的「厂商筛选」，改成空后再拼就是 ":分组名"，匹配不到。
+      // 用 LIKE 按后缀匹配，一次覆盖所有前缀形态。
       await pool
-        .query("UPDATE tokens SET group_name = ? WHERE group_name = ?", [gname, `${group.vendor}:${group.name}`])
+        .query("UPDATE tokens SET group_name = ? WHERE group_name LIKE ?", [gname, `%:${group.name}`])
         .catch(() => {});
     }
     await pool.query("UPDATE channel_groups SET name = ?, vendor = ?, remark = ?, rate = ?, models = ? WHERE id = ?", [
@@ -356,8 +362,12 @@ router.delete(
       // 解绑 Key：置空后回落到公共池，而不是留下永远 503 的死绑定
       const [un] = await conn.query("UPDATE tokens SET group_name = '' WHERE group_name = ?", [group.name]);
       unbound = un.affectedRows || 0;
-      // 旧版带厂商前缀的绑定一并清理
-      await conn.query("UPDATE tokens SET group_name = '' WHERE group_name = ?", [`${group.vendor}:${group.name}`]);
+      // 旧版带厂商前缀的绑定一并清理。用 LIKE 按后缀匹配而不是用 group.vendor 拼前缀 ——
+      // vendor 是可改的筛选值，改了之后拼出来的前缀就匹配不到历史绑定了。
+      const [un2] = await conn.query("UPDATE tokens SET group_name = '' WHERE group_name LIKE ?", [
+        `%:${group.name}`,
+      ]);
+      unbound += un2.affectedRows || 0;
       await conn.commit();
     } catch (e) {
       await conn.rollback().catch(() => {});
@@ -370,7 +380,7 @@ router.delete(
       req,
       user: req.user,
       type: LOG_TYPE.MANAGE,
-      content: `删除分组「${group.type} / ${group.name}」（解绑 ${unbound} 个密钥）`,
+      content: `删除分组「${group.vendor ? `${group.vendor} / ` : ""}${group.name}」（解绑 ${unbound} 个密钥）`,
     });
     return ok(res, null, "分组已删除");
   })

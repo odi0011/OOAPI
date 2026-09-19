@@ -192,6 +192,15 @@ export function tokenToResponse(t) {
     unlimited_quota: !!t.unlimited_quota,
     used_quota: Number(t.used_quota),
     model_limits: t.model_limits ? t.model_limits.split(",").filter(Boolean) : [],
-    group: t.group_name || "",
+    // 归一化为纯分组名：历史绑定可能是 "厂商:分组名"，直接下发会让前端
+    // 在密钥选择器里显示 "openai:vip" 这种内部格式。
+    // 这里内联实现（而不是 import services/group-rate 的 displayGroupName）：
+    // utils 是被各 service 依赖的底层模块，反向引 service 会形成循环 import。
+    group: (() => {
+      let raw = String(t.group_name || "").trim();
+      const i = raw.indexOf(":");
+      if (i > 0 && i < raw.length - 1) raw = raw.slice(i + 1);
+      return raw === "default" ? "" : raw;
+    })(),
   };
 }

@@ -348,7 +348,9 @@ async function settle({
     channelName: channel?.name || "",
     tokenId: token?.id || 0,
     tokenName: token?.name || "",
-    groupName: token?.group_name || user?.group_name || "",
+    // 归一化为纯分组名再写日志：历史绑定值可能是 "厂商:分组名"，原样写会让
+    // 同一个分组在日志里出现多种标签，前端按分组聚合/筛选就对不上
+    groupName: displayGroupName(token?.group_name || user?.group_name),
     promptTokens,
     completionTokens,
     cacheTokens,
@@ -663,7 +665,9 @@ router.post(
       channelName: err.channelName || "",
       tokenId: token?.id || 0,
       tokenName: token?.name || "",
-      groupName: token?.group_name || user?.group_name || "",
+      // 归一化为纯分组名再写日志：历史绑定值可能是 "厂商:分组名"，原样写会让
+    // 同一个分组在日志里出现多种标签，前端按分组聚合/筛选就对不上
+    groupName: displayGroupName(token?.group_name || user?.group_name),
       elapsedMs: Date.now() - startedAt,
       userAgent});
     // 错误码 → HTTP 状态要能区分「调用方请求错」与「网关/上游故障」，

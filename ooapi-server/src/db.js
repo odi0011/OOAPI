@@ -591,14 +591,65 @@ async function migrateGroupVendor() {
       const [dups] = await pool.query(
         "SELECT name, COUNT(*) AS c FROM channel_groups GROUP BY name HAVING c > 1"
       );
-      for (const d of dups) {
-        const [rows] = await pool.query("SELECT id, vendor FROM channel_groups WHERE name = ? ORDER BY id", [d.name]);
-        // 第一条保留原名，其余加厂商后缀
-        for (let i = 1; i < rows.length; i += 1) {
-          const suffix = String(rows[i].vendor || `g${rows[i].id}`).slice(0, 12);
-          const newName = `${d.name}-${suffix}`.slice(0, 32);
-          await pool.query("UPDATE channel_groups SET name = ? WHERE id = ?", [newName, rows[i].id]);
-          console.warn(`[migrate] 分组「${d.name}」重名，已重命名为「${newName}」`);
+      if (dups.length) {
+        // 已占用的名字集合：改名目标不能与任何现有分组撞车，
+        // 否则会出现两行同名 → 唯一键建不起来 → 每次启动都失败且永不自愈。
+        const taken = new Set(
+          (await pool.query("SELECT name FROM channel_groups"))[0].map((r) => String(r.name))
+        );
+        for (const d of dups) {
+          const [rows] = await pool.query(
+            "SELECT id, vendor FROM channel_groups WHERE name = ? ORDER BY id",
+            [d.name]
+          );
+          // 第一条保留原名，其余改名
+          for (let i = 1; i < rows.length; i += 1) {
+            const oldName = String(d.name);
+            taken.delete(oldName); // 允许后续行用原名（它们正在改走）
+            let newName = "";
+            // 候选：原名-厂商 / 原名-序号；都撞车就用 g<id>。
+            // 注意留出后缀长度，避免 slice 把后缀整个截掉导致 newName === oldName。
+            for (const suffix of [String(rows[i].vendor || ""), `g${rows[i].id}`, `${i}`]) {
+              if (!suffix) continue;
+              const cand = `${oldName.slice(0, Math.max(0, 32 - suffix.length - 1))}-${suffix}`;
+              if (!taken.has(cand)) {
+                newName = cand;
+                break;
+              }
+            }
+            if (!newName) newName = `group-${rows[i].id}`.slice(0, 32);
+            taken.add(newName);
+
+            // 改名必须**同步传播**到渠道与已绑定的 Key：
+            // 只改 channel_groups 会让原成员渠道仍指向旧名字，
+            // 于是它们静默并入「保留下来的那个同名分组」（跨厂商串组），
+            // 绑了旧名的 Key 也会静默换到别的分组上按错误倍率计费。
+            await pool.query("UPDATE channel_groups SET name = ? WHERE id = ?", [newName, rows[i].id]);
+            const [chans] = await pool.query("SELECT id, group_list FROM channels");
+            for (const c of chans) {
+              let list = [];
+              try {
+                const arr = c.group_list ? JSON.parse(c.group_list) : [];
+                if (Array.isArray(arr)) list = arr.map((x) => String(x));
+              } catch {
+                list = [];
+              }
+              if (!list.includes(oldName)) continue;
+              const next = [...new Set(list.map((x) => (x === oldName ? newName : x)))];
+              await pool.query("UPDATE channels SET group_list = ?, group_name = ? WHERE id = ?", [
+                JSON.stringify(next),
+                next[0] || "",
+                c.id,
+              ]);
+            }
+            // Key 绑定：新格式（纯名字）与旧格式（厂商:名字）都要处理
+            await pool.query("UPDATE tokens SET group_name = ? WHERE group_name = ?", [newName, oldName]);
+            await pool.query("UPDATE tokens SET group_name = ? WHERE group_name LIKE ?", [
+              newName,
+              `%:${oldName}`,
+            ]);
+            console.warn(`[migrate] 分组「${oldName}」重名，已重命名为「${newName}」并同步渠道与密钥绑定`);
+          }
         }
       }
       await pool.query("ALTER TABLE channel_groups ADD UNIQUE KEY uniq_group_name (name)");

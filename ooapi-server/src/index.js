@@ -150,7 +150,8 @@ async function bootstrap() {
     const now = Math.floor(Date.now() / 1000);
     await pool.query(
       "INSERT INTO users (username, password, display_name, role, status, quota, aff_code, group_name, created_time) VALUES (?,?,?,100,1,?,?,?,?)",
-      ["root", hash, "超级管理员", 10000000, "ROOT0001", "default", now]
+      // group_name 留空 = 公共池（"default" 是已废弃的历史值，只在启动清理时被归一）
+      ["root", hash, "超级管理员", 10000000, "ROOT0001", "", now]
     );
     // 随机密码绝不打印到 stdout/systemd 日志（能读日志的人就能接管后台）：
     // 写入 0600 的一次性文件，提示路径即可（更新器不会碰点文件）
