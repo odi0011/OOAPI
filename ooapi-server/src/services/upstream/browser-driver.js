@@ -96,7 +96,7 @@ export async function copyProfile(vendor, fromId, toId) {
 // 重要：必须使用 headful 模式（headless:false）+ 窗口移到屏幕外。
 // 实测 Z.ai 在 headless:true 与 --headless=new 下都检测得到，表现为
 // "发送按钮可点但请求发不出去"（非常隐蔽）。Linux 服务器需 xvfb 提供虚拟显示。
-export async function getSession({ vendor, channelId, entryUrl, profile }) {
+export async function getSession({ vendor, channelId, entryUrl, profile, visible = false }) {
   const key = `${vendor}:${channelId}`;
   const exist = sessions.get(key);
   if (exist?.ctx) {
@@ -110,22 +110,23 @@ export async function getSession({ vendor, channelId, entryUrl, profile }) {
   const inflight = pending.get(key);
   if (inflight) return inflight;
 
-  const p = createSession({ vendor, channelId, key, entryUrl, profile }).finally(() => {
+  const p = createSession({ vendor, channelId, key, entryUrl, profile, visible }).finally(() => {
     if (pending.get(key) === p) pending.delete(key);
   });
   pending.set(key, p);
   return p;
 }
 
-async function createSession({ vendor, channelId, key, entryUrl, profile }) {
+async function createSession({ vendor, channelId, key, entryUrl, profile, visible = false }) {
   // 窗口位置：把窗口放到屏幕可视区之外，但**不要**用 -32000。
   // 原因是页面 JS 能读到 window.screenX/screenY —— 恰好 -32000 是自动化环境的
   // 教科书级特征，真实用户不可能把窗口拖到那个坐标。
   // 这里改为「常见分辨率下位于屏幕右下方之外」的坐标（数值本身不异常），
   // 并按账号做小幅散布，避免所有账号共用同一个窗口坐标。
+  // visible=true（人工登录抓取）：窗口放在屏幕内，noVNC 实时画面才能看到并操作。
   const spread = (n, base, span) => base + (Math.abs(Number(n) || 0) % span);
-  const winX = spread(channelId, 1600, 400);
-  const winY = spread((Number(channelId) || 0) * 7 + 3, 900, 200);
+  const winX = visible ? 0 : spread(channelId, 1600, 400);
+  const winY = visible ? 0 : spread((Number(channelId) || 0) * 7 + 3, 900, 200);
   const ctx = await chromium.launchPersistentContext(profileDir(vendor, channelId), {
     headless: false,
     viewport: { width: 1440, height: 900 },

@@ -814,7 +814,7 @@ router.post(
       const sid = randomBytes(8).toString("hex");
       const channelId = `capture-${sid}`;
       try {
-        await browserSession({ vendor: type, channelId, entryUrl: login.url, profile: {} });
+        await browserSession({ vendor: type, channelId, entryUrl: login.url, profile: {}, visible: true });
       } catch (e) {
         await removeProfile(type, channelId).catch(() => {});
         return fail(res, `授权页打开失败：${e.message}`);
@@ -858,7 +858,7 @@ router.post(
     const sid = randomBytes(8).toString("hex");
     const channelId = onboard ? `onboarding-${sid}` : `capture-${sid}`;
     try {
-      await browserSession({ vendor: type, channelId, entryUrl: mCfg.entryUrl, profile: {} });
+      await browserSession({ vendor: type, channelId, entryUrl: mCfg.entryUrl, profile: {}, visible: true });
     } catch (e) {
       if (!onboard) await removeProfile(type, channelId).catch(() => {});
       return fail(res, `登录页打开失败：${e.message}`);
