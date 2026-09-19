@@ -92,13 +92,13 @@ function oauthConfigFor(type) {
       clientSecret,
       authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
       tokenUrl: "https://oauth2.googleapis.com/token",
-      // 与官方 Antigravity / Gemini Code Assist 客户端一致的 scope
+      // 与 gemini-cli 源码一致的 scope（只有这 3 个注册在该公开客户端上；
+      // cclog / experimentsandconfigs 属于 Antigravity 客户端，带上会被 Google 以
+      // 403 restricted_client + Unregistered scope 直接拒绝）
       scopes: [
         "https://www.googleapis.com/auth/cloud-platform",
         "https://www.googleapis.com/auth/userinfo.email",
         "https://www.googleapis.com/auth/userinfo.profile",
-        "https://www.googleapis.com/auth/cclog",
-        "https://www.googleapis.com/auth/experimentsandconfigs",
       ],
       // 官方客户端注册的固定回调地址（我们只在用户浏览器里用到它，不需要真的监听）
       redirectUri: "http://localhost:51121/oauth-callback",
