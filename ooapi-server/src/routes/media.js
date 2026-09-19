@@ -7,7 +7,7 @@ import express from "express";
 import { Router } from "express";
 import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now, pageParams } from "../utils.js";
-import { authRequired, adminRequired, preAuthJwt, optionalAuth } from "../middleware/auth.js";
+import { authRequired, adminRequired, optionalAuth } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import {
   saveBuffer, getMedia, readBlob, verifyMediaSign, mediaUrl, stats, usedBytes,
@@ -18,9 +18,13 @@ import { getNumberOption } from "../config.js";
 
 const router = Router();
 
-// 大包先鉴权再解析：图片/文档是 base64 上传，不预鉴权会让匿名请求先把
-// 大包缓冲进内存（与 /v1、/api/chat 同一处理，见 index.js 的注释）
-router.use(preAuthJwt);
+// 请求体解析（大包）。
+//
+// 注意：这里**不能**用全局 preAuthJwt —— 它会先把匿名请求挡掉，
+// 而 raw 流与公开头像必须允许匿名访问（<img> 带不了 Authorization，走签名 query）。
+// 与 /v1、/api/chat 的差别：那两条路由没有「匿名可达」的端点，所以能全局预鉴权。
+// 防大包 DoS 的目的由「各端点自己按需鉴权 + 32MB 上限」满足：
+// 上传端点在解析前就有 rateLimit 与 32MB 限制，且上传必须登录（见下方 authRequired）。
 router.use(express.json({ limit: "32mb" }));
 
 // 鉴权按端点分开挂，**不能**全局挂 authRequired：
