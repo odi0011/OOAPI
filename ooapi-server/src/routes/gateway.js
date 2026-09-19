@@ -10,6 +10,7 @@ import { runCompletion } from "../services/execute.js";
 import { getPrice, computeCost, splitTokens, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { groupConfigOf, applyGroupRate } from "../services/group-rate.js";
 import { allPublicModels, modelForChannelMatch, resolveAliasSync } from "../services/models.js";
+import { collectAvailableModels } from "../services/router.js";
 
 const router = express.Router();
 // 必须在 express.json 之前完成真实鉴权：旧实现只查 Authorization 头存在性，
@@ -31,16 +32,12 @@ router.get(
   asyncHandler(async (req, res) => {
     const auth = req.auth;
     if (!auth) return;
-    const [rows] = await pool.query("SELECT models FROM channels WHERE status = 1");
-    const available = new Set();
-    for (const r of rows) {
-      for (const m of String(r.models || "").split(",")) {
-        const t = m.trim();
-        if (t && t !== "*") available.add(t);
-      }
-    }
+    const [rows] = await pool.query("SELECT * FROM channels WHERE status = 1");
+    // 可用模型 = 各渠道「显式声明的模型」∪「models 留空渠道所属厂商的全部模型」。
+    // 不能只看 models 字段：留空代表该厂商全部模型，漏掉这部分会让客户端看不到能调的模型。
+    const available = collectAvailableModels(rows);
     const all = await allPublicModels();
-    const list = all.filter((m) => available.has(m.id) || available.size === 0);
+    const list = all.filter((m) => available.has(m.id.toLowerCase()) || available.has("*") || available.size === 0);
     res.json({
       object: "list",
       data: list.map((m) => ({

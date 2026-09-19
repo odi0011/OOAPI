@@ -25,7 +25,7 @@ import { ok, fail, asyncHandler, now, assertPublicUrl, idParam, safeInt } from "
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod } from "../services/channel-types.js";
-import { buildLoginUrl, exchangeCodeForCredential, interactiveLoginInfo, supportsInteractiveLogin, supportsDeviceLogin, startDeviceLogin, pollDeviceLogin } from "../services/upstream/oauth-login.js";
+import { buildLoginUrl, exchangeCodeForCredential, interactiveLoginInfo, supportsInteractiveLogin, supportsInteractiveLoginMethod, supportsDeviceLogin, startDeviceLogin, pollDeviceLogin } from "../services/upstream/oauth-login.js";
 import { getAdapter, resetChannelState, forgetChannel, invalidateChannelCache, channelRuntimeState, channelRecent, rowToChannel, recordChannelCall } from "../services/router.js";
 import { clearGroupConfigCache } from "../services/group-rate.js";
 import {
@@ -667,7 +667,7 @@ router.get(
 // 找回流程的公共落点：解析凭据 → 必要时由适配器补齐/刷新 → 覆盖该渠道凭据 → 清冷却。
 // 与 /channel/login 的更新分支口径一致（合并 other，不丢 profile/cookies 等旧字段）。
 async function applyCredentialToChannel({ id, type, method, credential }) {
-  const [rows] = await pool.query("SELECT id, type, other FROM channels WHERE id = ?", [id]);
+  const [rows] = await pool.query("SELECT id, type, api_key, other FROM channels WHERE id = ?", [id]);
   if (!rows.length) throw Object.assign(new Error("渠道不存在"), { code: "LOGIN_BAD_PARAMS" });
   const methodKey = method || methodOf(rows[0]);
   const adapter = await adapterOf(type || rows[0].type, methodKey);
@@ -675,10 +675,15 @@ async function applyCredentialToChannel({ id, type, method, credential }) {
     throw Object.assign(new Error("该接入方式不支持凭据写回"), { code: "LOGIN_BAD_PARAMS" });
   }
   const raw = typeof credential === "string" ? credential : JSON.stringify(credential || {});
+  // 上限兜底：HTTP 层允许 1MB，凭据不该有这么大的；顺带防住畸形输入
+  if (raw.length > 200_000) throw Object.assign(new Error("凭据内容过大"), { code: "LOGIN_BAD_PARAMS" });
   const parsed = await adapter.importAuth({ token: raw, mode: "paste" });
   const merged = { ...parseOther(rows[0]), ...(parsed.other || {}) };
+  // 解析后拿不到 token 时保留原 api_key：部分接入方式（例如只给 refreshToken 的网页版）
+  // 的 importAuth 只产出 other，用空串覆盖会让渠道连原有凭据都丢掉。
+  const nextToken = String(parsed.token || "").slice(0, 60_000) || String(rows[0].api_key || "");
   await pool.query("UPDATE channels SET api_key = ?, other = ?, last_error = '' WHERE id = ?", [
-    String(parsed.token || "").slice(0, 60_000),
+    nextToken,
     JSON.stringify(merged),
     id,
   ]);
@@ -704,7 +709,7 @@ router.get(
     const modes = [];
     if (method !== "api") {
       // 服务器浏览器里的官方授权页：能覆盖「账号掉验证要接码」这一步（人工在实时画面里输验证码）
-      if (isOAuthMethod(method) && supportsInteractiveLogin(r.type)) {
+      if (isOAuthMethod(method) && supportsInteractiveLoginMethod(r.type, method)) {
         modes.push({
           key: "oauth-browser",
           label: "浏览器登录（推荐）",
@@ -762,7 +767,8 @@ router.get(
       // 凭据时间线（展示「用了多久 / 什么时候续期」）
       expiresAt: Number(other.expires_at) || 0,
       refreshedAt: Number(other.refreshed_at) || 0,
-      canVerify: Boolean(mCfg.adapter) || method === "api",
+      // 能否「只检测当前凭据」：反代/订阅渠道各自有 verify（API 渠道走 /test）
+      canVerify: method === "api" || Boolean(mCfg.adapter) || Boolean(mCfg.loginModes?.length) || Boolean(mCfg.entryUrl),
       modes,
     });
   })
@@ -792,7 +798,7 @@ router.post(
     const channelId = `recover-${sid}`;
 
     // 订阅 OAuth：走官方授权页（浏览器里完成登录 + 可能出现的验证码），回调后自动换令牌
-    if (isOAuthMethod(method) && supportsInteractiveLogin(r.type)) {
+    if (isOAuthMethod(method) && supportsInteractiveLoginMethod(r.type, method)) {
       let login;
       try {
         login = buildLoginUrl(r.type);
@@ -1164,7 +1170,7 @@ router.post(
     // 在服务器浏览器里登录（截图操作），页面跳到 localhost 回调后由 /capture 换 token 回填表单。
     // 注意必须同时看**接入方式**：openai 厂商下既有 codex（可交互登录）也有 openai-web（走网页登录），
     // 只看厂商会把网页版渠道错送到 Codex 授权页。
-    if (isOAuthMethod(method) && supportsInteractiveLogin(type)) {
+    if (isOAuthMethod(method) && supportsInteractiveLoginMethod(type, method)) {
       let login;
       try {
         login = buildLoginUrl(type);
@@ -1404,6 +1410,16 @@ router.post(
         ...(j?.user?.email ? { email: String(j.user.email) } : {}),
         ...(j?.expires ? { expires: String(j.expires) } : {}),
       };
+      // 找回流程（从某条渠道发起）：直接写回该渠道并探一次，不用再经过「添加渠道」表单
+      if (c.targetId) {
+        try {
+          const applied = await applyCredentialToChannel({ id: c.targetId, type: c.type, credential });
+          await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `${c.type} 渠道 #${c.targetId} 网页版重新登录成功` });
+          return ok(res, { updated: true, accountLabel: applied.accountLabel }, "凭据已写回该渠道");
+        } catch (e) {
+          return fail(res, `抓取成功但写回失败：${e.message}`, 400);
+        }
+      }
       return ok(
         res,
         {
@@ -1964,7 +1980,8 @@ router.post(
     if (!lines.length) return fail(res, "请粘贴账号列表，每行一个：账号----密码");
     if (lines.length > 50) return fail(res, "单次最多 50 个");
 
-    const models = (mCfg.defaultModels || []).map((m) => m.id).join(",").slice(0, 20_000);
+    // 留空 = 该厂商全部模型（与单条添加口径一致，避免批量建的号拿不到新模型）
+    const models = "";
     const priorityVal = safeInt(priority, { min: 0, max: 1_000_000, fallback: 0 });
     const results = [];
 
@@ -2118,7 +2135,11 @@ router.put(
     if (b.api_key !== undefined && String(b.api_key).trim()) setIf("api_key", String(b.api_key).trim().slice(0, 60_000));
     if (b.models !== undefined) {
       const m = Array.isArray(b.models) ? b.models.join(",") : String(b.models);
-      if (m.trim()) setIf("models", m.slice(0, 20_000));
+      // 允许清空：反代/订阅渠道留空表示「该厂商全部模型」（模型归厂商不归账号）。
+      // 但 API 兼容渠道必须显式声明（custom 端点没有厂商模型表，留空会无法调度）。
+      const method = methodOf(cur);
+      if (!m.trim() && method === "api") return fail(res, "该接入方式需要指定模型（请至少填写一个）");
+      setIf("models", m.trim().slice(0, 20_000));
     }
     // 分组（可多选）：提交 groups 或 group_name 都接受；同步 group_name=第一个（兼容旧逻辑）
     if (b.groups !== undefined || b.group_name !== undefined) {
@@ -2380,7 +2401,6 @@ router.post(
     for (const a of accounts) {
       try {
         const mCfg = getMethod(a.type, a.method) || {};
-        const defaultModels = (mCfg.defaultModels || []).map((m) => m.id).join(",");
         const oauth = isOAuthMethod(a.method);
         const rows = await loadExisting(a.type);
         const dup = rows.find((r) => (oauth && isSameAccount(parseOther(r), a.other)) || r.api_key === a.token);
@@ -2400,13 +2420,14 @@ router.post(
         }
           const [ret] = await pool.query(
             `INSERT INTO channels (name, type, base_url, api_key, models, group_name, group_list, status, priority, weight, auto_ban, other, created_time)
-             VALUES (?,?,?,?,?, 'default', '["default"]', 1, ?, 1, 1, ?, ?)`,
+             VALUES (?,?,?,?,?, '', '[]', 1, ?, 1, 1, ?, ?)`,
           [
             String(a.name || `${a.type} 渠道`).slice(0, 64),
             a.type,
             baseUrl,
             a.token,
-            defaultModels.slice(0, 20_000),
+            // 留空 = 该厂商全部模型（与单条添加口径一致）
+            "",
             Number(a.priority) || 0,
             JSON.stringify(a.other),
             now(),

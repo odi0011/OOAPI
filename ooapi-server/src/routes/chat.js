@@ -14,7 +14,7 @@ import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getPrice, computeCost, splitTokens, estimateTokens, loadPrices, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { groupConfigOf, applyGroupRate } from "../services/group-rate.js";
 import { allPublicModels, resolveAliasSync } from "../services/models.js";
-import { rowToChannel, channelInGroup } from "../services/router.js";
+import { rowToChannel, channelInGroup, collectAvailableModels } from "../services/router.js";
 import { getBoolOption } from "../config.js";
 import { runHarness } from "../services/harness/loop.js";
 import { AGENTS, findAgent, publicAgents, PRIMARY_AGENTS } from "../services/harness/agents.js";
@@ -118,17 +118,11 @@ async function availableModels(user, keyId = 0) {
     return groupModels.some((p) => p === "*" || (p.endsWith("*") ? m.startsWith(p.slice(0, -1)) : p === m));
   };
 
-  // 3) 分组成员渠道声明的模型
+  // 3) 分组成员渠道能服务的模型（显式声明 ∪ models 留空渠道的厂商全部模型）
   const [channelRows] = await pool.query("SELECT * FROM channels WHERE status = 1");
-  const supported = new Set();
-  for (const r of channelRows) {
-    const ch = rowToChannel(r);
-    if (!channelInGroup(ch, groupName)) continue;
-    for (const m of String(ch.models || "").split(",")) {
-      const t = m.trim();
-      if (t && t !== "*") supported.add(t);
-    }
-  }
+  const supported = collectAvailableModels(
+    channelRows.filter((r) => channelInGroup(rowToChannel(r), groupName))
+  );
 
   // 4) 密钥自身的模型白名单（管理员豁免）
   const limits = key
@@ -144,7 +138,7 @@ async function availableModels(user, keyId = 0) {
   const priceMap = await loadPrices();
 
   return (await allPublicModels())
-    .filter((m) => supported.size === 0 || supported.has(m.id))
+    .filter((m) => supported.size === 0 || supported.has("*") || supported.has(String(m.id).toLowerCase()))
     .filter((m) => groupAllows(m.id))
     .filter((m) => keyAllows(m.id))
     .map((m) => {

@@ -83,9 +83,14 @@ async function getJson(url, { headers = {}, method = "GET", body, signal } = {})
 async function freshToken(channel, adapterModule) {
   const other = channel?.other || {};
   const exp = Number(other.expires_at || 0);
-  const soon = !exp || exp - 300 <= Math.floor(Date.now() / 1000);
-  if (soon && adapterModule?.refreshAuth) {
-    await adapterModule.refreshAuth(channel, { force: !exp });
+  const now = Math.floor(Date.now() / 1000);
+  // 注意：expires_at 是**平台侧**字段，不是每个适配器都会写 ——
+  // openai-web 用 JWT 自己的 exp 判断过期（见 openai-web.js 的 jwtExp），
+  // 这类渠道 expires_at 恒为 0。若把「没有 expires_at」当成「要强制刷新」，
+  // 只粘了 accessToken（官方支持 refreshToken 可选）的健康渠道会必然报「凭据已过期」。
+  // 所以这里只在「确实过期」时刷新，其余交给适配器自己判断。
+  if (exp && exp - 300 <= now && adapterModule?.refreshAuth) {
+    await adapterModule.refreshAuth(channel, { force: true });
   }
   const token = String(channel?.other?.access_token || channel?.api_key || "");
   if (!token) throw Object.assign(new Error("渠道没有可用凭据"), { code: "CHANNEL_AUTH_EXPIRED" });

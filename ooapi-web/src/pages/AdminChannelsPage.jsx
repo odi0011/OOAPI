@@ -1677,6 +1677,8 @@ export default function AdminChannelsPage() {
       setReloginMode(info?.modes?.[0]?.key || "paste");
     } catch (e) {
       message.error(e.message);
+      // 拿不到能力清单时关掉弹窗：留一个没有任何可选方式的空壳只会误导
+      setReloginTarget(null);
     } finally {
       setReloginBusy(false);
     }
@@ -2354,11 +2356,15 @@ export default function AdminChannelsPage() {
                     </>
                   )}
 
-                    <Form.Item name="models" label="模型范围">
+                    <Form.Item
+                      name="models"
+                      label="模型范围"
+                      rules={pickMethod?.key === "api" ? [{ required: true, message: "请至少填写一个模型" }] : []}
+                    >
                       <Select
                         mode="tags"
-                        allowClear
-                        placeholder="留空 = 该厂商全部模型"
+                        allowClear={pickMethod?.key !== "api"}
+                        placeholder={pickMethod?.key === "api" ? "此接入方式需指定模型，回车添加" : "留空 = 该厂商全部模型"}
                         tokenSeparators={[","]}
                         tagRender={modelTagRender(pickProvider?.key)}
                         optionRender={modelOptionRender(pickProvider?.key)}
@@ -2435,11 +2441,15 @@ export default function AdminChannelsPage() {
               <Input.Password placeholder="留空不修改" autoComplete="new-password" />
             </Form.Item>
           ) : null}
-          <Form.Item name="models" label="模型范围">
+          <Form.Item
+            name="models"
+            label="模型范围"
+            rules={editing?.method === "api" ? [{ required: true, message: "请至少填写一个模型" }] : []}
+          >
             <Select
               mode="tags"
-              allowClear
-              placeholder="留空 = 该厂商全部模型"
+              allowClear={editing?.method !== "api"}
+              placeholder={editing?.method === "api" ? "此接入方式需指定模型，回车添加" : "留空 = 该厂商全部模型"}
               tokenSeparators={[","]}
               tagRender={modelTagRender(editing?.type)}
               optionRender={modelOptionRender(editing?.type)}

@@ -181,6 +181,20 @@ export async function modelRegistry() {
 
 export function invalidateModelRegistry() {
   registryCache = { at: 0, map: null };
+  // 渠道写操作会让这里失效：调度层按「该厂商有哪些模型」判断能否服务，
+  // 拿到的是同步快照（见 modelRegistrySync），所以必须**立即补热**，
+  // 否则失效到下次预热之间所有「models 留空」的渠道都会被判为不可用。
+  scheduleRegistryWarmup();
+}
+
+let registryWarmupTimer = null;
+function scheduleRegistryWarmup() {
+  if (registryWarmupTimer) return;
+  registryWarmupTimer = setTimeout(() => {
+    registryWarmupTimer = null;
+    modelRegistry().catch(() => {});
+  }, 200);
+  registryWarmupTimer.unref?.();
 }
 
 /**

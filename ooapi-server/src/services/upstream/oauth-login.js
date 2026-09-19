@@ -145,6 +145,22 @@ export function supportsInteractiveLogin(type) {
   return ["gemini", "openai", "anthropic"].includes(String(type || ""));
 }
 
+/**
+ * 该「厂商 + 接入方式」是否支持重定向式 OAuth 登录。
+ * 为什么不能只看厂商：同一个厂商下有多种接入方式，能做官方 OAuth 的只是其中一种 ——
+ *   openai 下 codex 能走 OAuth，但 openai-web（网页版）必须走 chatgpt.com 登录页；
+ *   anthropic 下 claude-oauth 能走 OAuth，但 kiro（AWS Q 工具反代）得粘贴 Kiro 凭据。
+ * 只看厂商会把网页版/Kiro 渠道送进另一个产品的授权页，换回不匹配的令牌。
+ */
+export function supportsInteractiveLoginMethod(type, method) {
+  const t = String(type || "");
+  const m = String(method || "");
+  if (t === "openai") return m === "codex";
+  if (t === "anthropic") return m === "claude-oauth";
+  if (t === "gemini") return m === "antigravity";
+  return false;
+}
+
 // ---------- 设备码（device-code）授权：Grok / xAI ----------
 // 与重定向式 OAuth 不同：服务端拿 device_code 并轮询，用户在任意浏览器打开
 // verification_uri 输入 user_code 授权，成功后服务端直接拿到 token（无需回调地址）。

@@ -326,22 +326,38 @@ function vendorModelSet(channelType) {
   }
   const cache = vendorModelsCache.map;
   if (cache.has(t)) return cache.get(t);
-  let set = null;
-  try {
-    // 同步读取：登记表在 execute/models 层已预热；未预热时先按「无厂商表」处理，
-    // 下一次调度（60s 内）就会拿到。绝不在调度路径上 await 加载模块。
-    const reg = modelRegistrySync();
-    if (reg) {
-      set = new Set();
-      for (const [model, info] of reg) {
-        if (String(info?.type || "") === t) set.add(model);
-      }
-    }
-  } catch {
-    set = null;
+  // 登记表没就绪（刚被失效、还没重新预热）时**不缓存 null**：
+  // 一旦把 null 写进 60s TTL，所有「models 留空」的渠道会在整整一个周期内被判为不可用
+  // ——渠道写操作（测试/查额度/保存）会让登记表失效，这会把「点一下测试」变成「全站 503」。
+  const reg = modelRegistrySync();
+  if (!reg) {
+    ensureRegistryWarmup();
+    return null;
+  }
+  const set = new Set();
+  for (const [model, info] of reg) {
+    if (String(info?.type || "") === t) set.add(model);
   }
   cache.set(t, set);
   return set;
+}
+
+// 登记表被失效后异步补热（不阻塞调度：本次按「无厂商表」保守处理，下一次请求就正常了）
+let warmupTimer = null;
+function ensureRegistryWarmup() {
+  if (warmupTimer) return;
+  warmupTimer = setTimeout(() => {
+    warmupTimer = null;
+    import("./models.js")
+      .then((m) => m.modelRegistry())
+      .catch(() => {});
+  }, 200);
+  warmupTimer.unref?.();
+}
+
+/** 厂商模型集合变更时清缓存（登记表失效后必须同步清，否则会拿旧集合判断） */
+export function invalidateVendorModels() {
+  vendorModelsCache = { at: 0, map: null };
 }
 
 /** 渠道是否支持该模型（支持通配：deepseek-* 或 *） */
@@ -360,6 +376,31 @@ export function channelSupportsModel(channel, model) {
     if (p.endsWith("*")) return m.startsWith(p.slice(0, -1));
     return p === m;
   });
+}
+
+/**
+ * 一组渠道实际能服务哪些模型（id 集合）。
+ * 口径必须与 channelSupportsModel 一致，否则会出现「列表里看不到 = 实际能调」或反过来。
+ * 网关 /v1/models 与站内对话的模型下拉都用它，避免各处自己 split(models) 导致语义漂移。
+ */
+export function collectAvailableModels(channelRows) {
+  const out = new Set();
+  for (const r of channelRows || []) {
+    const ch = rowToChannel(r);
+    const declared = parseModels(ch.models);
+    if (declared.length) {
+      for (const m of declared) {
+        const t = m.trim();
+        if (t && t !== "*") out.add(t.toLowerCase());
+      }
+      continue;
+    }
+    // 留空 = 该厂商全部模型
+    const vendorSet = vendorModelSet(ch.type);
+    if (vendorSet) for (const m of vendorSet) out.add(m);
+    else out.add("*"); // 厂商表还没就绪：先按「不限」放行，避免列表瞬间空掉
+  }
+  return out;
 }
 
 export function rowToChannel(r) {

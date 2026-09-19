@@ -54,11 +54,38 @@ function WindowBar({ w }) {
   );
 }
 
-/** 内联（列表行）形态：只显示最紧的一个窗口 */
+/** 内联（列表行）形态：只显示最紧的一个窗口；没有窗口时退回 credits 摘要 */
 export function QuotaInline({ quota, size = 12 }) {
-  if (!quota?.windows?.length) return null;
+  if (!quota?.windows?.length) {
+    // 有的厂商（Grok / DeepSeek API）只回余额、没有窗口：显示「余额」文字而不是空白
+    const c = quota?.credits;
+    const line = c?.lines?.[0];
+    if (line) {
+      return (
+        <Tooltip title={<QuotaTip quota={quota} />}>
+          <span style={{ fontSize: size, color: "var(--ink-3)" }} className="oo-num">
+            余额 {line.total ?? 0}
+          </span>
+        </Tooltip>
+      );
+    }
+    if (c && c.prepaidBalance !== null && c.prepaidBalance !== undefined) {
+      return (
+        <Tooltip title={<QuotaTip quota={quota} />}>
+          <span style={{ fontSize: size, color: "var(--ink-3)" }} className="oo-num">
+            ${Number(c.prepaidBalance).toFixed(2)}
+          </span>
+        </Tooltip>
+      );
+    }
+    return null;
+  }
   // 取「已用最多」的窗口作为代表（没有 usedPercent 的排后面）
-  const sorted = [...quota.windows].sort((a, b) => (Number(b.usedPercent) || -1) - (Number(a.usedPercent) || -1));
+  const sorted = [...quota.windows].sort((a, b) => {
+    const av = Number.isFinite(Number(a.usedPercent)) ? Number(a.usedPercent) : -1;
+    const bv = Number.isFinite(Number(b.usedPercent)) ? Number(b.usedPercent) : -1;
+    return bv - av;
+  });
   const top = sorted[0];
   const pct = Number.isFinite(Number(top.usedPercent)) ? Number(top.usedPercent) : null;
   return (
