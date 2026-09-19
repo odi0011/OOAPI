@@ -91,7 +91,7 @@ router.put(
       ]
     );
     invalidatePrices();
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `保存模型定价「${m}」` });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `保存模型定价「${m}」` });
     return ok(res, null, "定价已保存");
   })
 );
@@ -105,7 +105,7 @@ router.delete(
     const [ret] = await pool.query("DELETE FROM model_prices WHERE model = ?", [m]);
     if (!ret.affectedRows) return fail(res, "模型不存在", 404);
     invalidatePrices();
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `删除模型定价「${m}」` });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `删除模型定价「${m}」` });
     return ok(res, null, "已删除");
   })
 );
@@ -272,6 +272,7 @@ router.post(
 
     invalidatePrices();
     await writeLog({
+      req,
       user: req.user,
       type: LOG_TYPE.MANAGE,
       content: `导入模型定价：新增 ${inserted} 条、更新 ${updated} 条、拒绝 ${rejected.length} 条`,
@@ -295,6 +296,7 @@ router.post(
       invalidatePrices();
     }
     await writeLog({
+      req,
       user: req.user,
       type: LOG_TYPE.MANAGE,
       content: `清理无效定价 ${dead.length} 条${dead.length ? `：${dead.slice(0, 10).join("、")}` : ""}`,
@@ -333,7 +335,7 @@ router.post(
       conn.release();
     }
     invalidatePrices();
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `同步内置价目表 ${updated} 条` });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `同步内置价目表 ${updated} 条` });
     return ok(res, { updated }, `已按内置价目表同步 ${updated} 条（来源均为官方页面）`);
   })
 );

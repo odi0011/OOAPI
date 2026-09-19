@@ -70,6 +70,45 @@ export function pageParams(query = {}, defaultSize = 20) {
   return { p, size, offset: (p - 1) * size };
 }
 
+/**
+ * 从 User-Agent 解析出可读设备串（零依赖：不需要 ua-parser 之类，日志展示够用）。
+ * 为什么不用现成库：只在日志里展示「什么浏览器 + 什么系统」，
+ * 引入完整 UA 库（含几万条设备指纹）对一个日志字段来说不划算。
+ * @returns {string} 形如 "Chrome 131 · Windows"；识别不出时返回 "未知设备"
+ */
+export function deviceFromUa(ua) {
+  const s = String(ua || "");
+  if (!s) return "";
+  // 浏览器：顺序敏感 —— Edge/OPR 的 UA 里都含 "Chrome"，必须先判它们
+  let browser = "";
+  let m;
+  if ((m = /Edg(?:e|A|iOS)?\/([\d.]+)/.exec(s))) browser = `Edge ${m[1].split(".")[0]}`;
+  else if ((m = /OPR\/([\d.]+)/.exec(s))) browser = `Opera ${m[1].split(".")[0]}`;
+  else if ((m = /MicroMessenger\/([\d.]+)/.exec(s))) browser = `微信 ${m[1].split(".")[0]}`;
+  else if ((m = /Firefox\/([\d.]+)/.exec(s))) browser = `Firefox ${m[1].split(".")[0]}`;
+  else if ((m = /Chrome\/([\d.]+)/.exec(s))) browser = `Chrome ${m[1].split(".")[0]}`;
+  else if ((m = /Version\/([\d.]+).*Safari/.exec(s))) browser = `Safari ${m[1].split(".")[0]}`;
+  else if (/curl\//i.test(s)) browser = "curl";
+  else if (/python-requests|python\/|httpx/i.test(s)) browser = "Python";
+  else if (/node-fetch|undici|axios|node\//i.test(s)) browser = "Node.js";
+  else if (/okhttp/i.test(s)) browser = "OkHttp";
+  else if (/Go-http-client/i.test(s)) browser = "Go";
+  else if (/PostmanRuntime/i.test(s)) browser = "Postman";
+
+  // 系统
+  let os = "";
+  if (/Windows NT 10\.0/i.test(s)) os = "Windows";
+  else if (/Windows/i.test(s)) os = "Windows";
+  else if (/iPhone|iPad|iPod/i.test(s)) os = "iOS";
+  else if (/Android/i.test(s)) os = "Android";
+  else if (/Mac OS X|Macintosh/i.test(s)) os = "macOS";
+  else if (/CrOS/i.test(s)) os = "ChromeOS";
+  else if (/Linux/i.test(s)) os = "Linux";
+
+  const parts = [browser, os].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "未知设备";
+}
+
 export function safeJSONParse(str, fallback) {
   try {
     const v = JSON.parse(str);

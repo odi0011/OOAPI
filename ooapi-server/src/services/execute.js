@@ -184,14 +184,17 @@ export async function runCompletion({
       }
       return { ...result, channel, elapsed: Date.now() - started };
     } catch (err) {
-      lastError = err;
+      lastError = tagChannel(err, channel);
       // 客户端主动断开：不再换渠道，直接结束
       if (signal?.aborted) throw err;
       // 本渠道超时：转换为可重试错误，换下一个渠道
       if (timedOut) {
-        lastError = Object.assign(new Error(`渠道「${channel.name}」响应超时（${timeoutMs}ms）`), {
-          code: "CHANNEL_TIMEOUT",
-        });
+        lastError = tagChannel(
+          Object.assign(new Error(`渠道「${channel.name}」响应超时（${timeoutMs}ms）`), {
+            code: "CHANNEL_TIMEOUT",
+          }),
+          channel
+        );
       }
       const code = lastError.code || "CHANNEL_ERROR";
 
@@ -246,6 +249,25 @@ export async function runCompletion({
   }
 
   throw lastError || Object.assign(new Error("所有渠道均不可用"), { code: "NO_CHANNEL" });
+}
+
+/**
+ * 给错误挂上「最后尝试的渠道」身份。
+ * 为什么需要：错误日志（type=4）要能归因到具体渠道，否则「渠道成功率」这类
+ * 看板指标只能靠最近 20 条环形缓冲（recent_calls）估算，按天/周维度完全失真。
+ * 挂在 error 对象上而不是包装新错误：调用方（gateway/chat）需要保留原始 message 与 code。
+ */
+function tagChannel(err, channel) {
+  if (!err || !channel) return err;
+  try {
+    if (!err.channelId) {
+      err.channelId = Number(channel.id) || 0;
+      err.channelName = String(channel.name || "");
+    }
+  } catch {
+    /* 冻结对象等极端情况：不影响主流程 */
+  }
+  return err;
 }
 
 /**

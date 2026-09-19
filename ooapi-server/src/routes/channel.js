@@ -249,7 +249,7 @@ router.post(
     );
     await syncGroupMembers(type, gname, channel_ids);
     clearGroupConfigCache();
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `新建分组「${provider.name} / ${gname}」` });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `新建分组「${provider.name} / ${gname}」` });
     const memberMap = await groupMemberMap();
     const [created] = await pool.query("SELECT * FROM channel_groups WHERE type = ? AND name = ?", [type, gname]);
     return ok(res, created.length ? groupResp(created[0], memberMap) : null, "分组已创建");
@@ -303,7 +303,7 @@ router.put(
     ]);
     if (channel_ids !== undefined) await syncGroupMembers(group.type, gname, channel_ids);
     clearGroupConfigCache();
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `编辑分组「${group.type} / ${gname}」` });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `编辑分组「${group.type} / ${gname}」` });
     const memberMap = await groupMemberMap();
     const [updated] = await pool.query("SELECT * FROM channel_groups WHERE id = ?", [gid]);
     return ok(res, updated.length ? groupResp(updated[0], memberMap) : null, "分组已更新");
@@ -349,6 +349,7 @@ router.delete(
     }
     clearGroupConfigCache();
     await writeLog({
+      req,
       user: req.user,
       type: LOG_TYPE.MANAGE,
       content: `删除分组「${group.type} / ${group.name}」（解绑 ${unbound} 个密钥）`,
@@ -373,15 +374,25 @@ router.get(
 
     let logs = [];
     try {
+      // 走 channel_id 列而不是解 detail JSON：列有索引，日志量上来后差距是数量级的；
+      // detail 里的 channel_ids 只用于「历史记录」（列是后来加的，老数据没有列值）。
       const [ls] = await pool.query(
+        `SELECT created_at, quota, model, prompt_tokens, completion_tokens, cache_tokens
+           FROM logs
+          WHERE type = ? AND created_at >= ? AND channel_id = ?`,
+        [LOG_TYPE.CONSUME, since, id]
+      );
+      logs = ls;
+      // 老记录（列还没写）回填：只查一次，量小
+      const [old] = await pool.query(
         `SELECT created_at, quota, detail FROM logs
-          WHERE type = ? AND created_at >= ?
+          WHERE type = ? AND created_at >= ? AND channel_id = 0
             AND JSON_VALID(detail)
             AND (JSON_UNQUOTE(JSON_EXTRACT(detail, '$.channel_id')) = ?
                  OR JSON_CONTAINS(JSON_EXTRACT(detail, '$.channel_ids'), ?))`,
         [LOG_TYPE.CONSUME, since, String(id), String(id)]
       );
-      logs = ls;
+      logs = logs.concat(old);
     } catch (e) {
       // 老库不支持 JSON 函数时退化为「仅基础信息 + 最近调用」，不让整个弹窗报错
       console.warn("[channel] 用量统计查询失败：", e.message);
@@ -399,15 +410,16 @@ router.get(
       } catch {
         d = {};
       }
-      const pt = Number(d.prompt_tokens) || 0;
-      const ct = Number(d.completion_tokens) || 0;
-      const cat = Number(d.cache_tokens) || 0;
+      // 新列优先，老记录回落到 detail
+      const pt = Number(l.prompt_tokens ?? d.prompt_tokens) || 0;
+      const ct = Number(l.completion_tokens ?? d.completion_tokens) || 0;
+      const cat = Number(l.cache_tokens ?? d.cache_tokens) || 0;
       const units = Number(l.quota) || 0;
       totals.units += units;
       totals.promptTokens += pt;
       totals.completionTokens += ct;
       totals.cacheTokens += cat;
-      const model = String(d.model || "-");
+      const model = String(l.model || d.model || "-");
       const m = byModel.get(model) || { model, calls: 0, units: 0, promptTokens: 0, completionTokens: 0 };
       m.calls += 1;
       m.units += units;
@@ -436,14 +448,11 @@ router.get(
       const [[at]] = await pool.query(
         `SELECT COUNT(*) AS calls,
                 COALESCE(SUM(quota), 0) AS units,
-                COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(detail, '$.prompt_tokens')) AS UNSIGNED)), 0) AS pt,
-                COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(detail, '$.completion_tokens')) AS UNSIGNED)), 0) AS ct
+                COALESCE(SUM(prompt_tokens), 0) AS pt,
+                COALESCE(SUM(completion_tokens), 0) AS ct
            FROM logs
-          WHERE type = ?
-            AND JSON_VALID(detail)
-            AND (JSON_UNQUOTE(JSON_EXTRACT(detail, '$.channel_id')) = ?
-                 OR JSON_CONTAINS(JSON_EXTRACT(detail, '$.channel_ids'), ?))`,
-        [LOG_TYPE.CONSUME, String(id), String(id)]
+          WHERE type = ? AND channel_id = ?`,
+        [LOG_TYPE.CONSUME, id]
       );
       allTime = {
         calls: Number(at.calls) || 0,
@@ -984,6 +993,7 @@ router.post(
       await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), id]);
     }
     await writeLog({
+      req,
       user: req.user,
       type: LOG_TYPE.MANAGE,
       content: `渠道「${rows[0].name}」凭据已更新${applied.accountLabel ? `（${applied.accountLabel}）` : ""}`,
@@ -1005,7 +1015,7 @@ router.get(
     if (!id) return fail(res, "渠道不存在", 404);
     const [rows] = await pool.query("SELECT api_key, name FROM channels WHERE id = ?", [id]);
     if (!rows.length) return fail(res, "渠道不存在", 404);
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `查看渠道「${rows[0].name}」的凭据` });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `查看渠道「${rows[0].name}」的凭据` });
     return ok(res, { api_key: rows[0].api_key });
   })
 );
@@ -1041,6 +1051,7 @@ router.post(
     if (joined.length > 60_000) return fail(res, "Key 总长度超出上限，请减少 Key 数量");
     await pool.query("UPDATE channels SET api_key = ? WHERE id = ?", [joined, id]);
     await writeLog({
+      req,
       user: req.user,
       type: LOG_TYPE.MANAGE,
       content: `渠道「${rows[0].name}」Key 管理：${action}（现有 ${next.length} 个）`,
@@ -1101,7 +1112,7 @@ router.post(
         id,
       ]);
       resetChannelState(id);
-      await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `${providerName} 渠道「${rows[0].name}」浏览器登录就绪` });
+      await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `${providerName} 渠道「${rows[0].name}」浏览器登录就绪` });
       return ok(res, { success: true, time: ms }, "登录已就绪，渠道可用");
     } catch (e) {
       await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), id]);
@@ -1338,7 +1349,7 @@ router.post(
       if (c.targetId) {
         try {
           const applied = await applyCredentialToChannel({ id: c.targetId, type: c.type, credential: result.credential });
-          await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `${c.type} 渠道 #${c.targetId} 浏览器重新登录成功` });
+          await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `${c.type} 渠道 #${c.targetId} 浏览器重新登录成功` });
           return ok(res, { updated: true, accountLabel: applied.accountLabel }, "授权成功，凭据已写回该渠道");
         } catch (e) {
           return fail(res, `授权成功但写回失败：${e.message}`, 400);
@@ -1374,7 +1385,7 @@ router.post(
           await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), c.targetId]);
           return fail(res, `登录态已写回，但渠道未就绪：${e.message}`, 400);
         }
-        await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `${c.type} 渠道 #${c.targetId} 浏览器重新登录成功（${ms}ms）` });
+        await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `${c.type} 渠道 #${c.targetId} 浏览器重新登录成功（${ms}ms）` });
         return ok(res, { updated: true }, "登录成功，渠道已恢复可用");
       }
       PENDING_PROFILES.set(c.channelId, { vendor: c.type, at: Date.now() });
@@ -1414,7 +1425,7 @@ router.post(
       if (c.targetId) {
         try {
           const applied = await applyCredentialToChannel({ id: c.targetId, type: c.type, credential });
-          await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `${c.type} 渠道 #${c.targetId} 网页版重新登录成功` });
+          await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `${c.type} 渠道 #${c.targetId} 网页版重新登录成功` });
           return ok(res, { updated: true, accountLabel: applied.accountLabel }, "凭据已写回该渠道");
         } catch (e) {
           return fail(res, `抓取成功但写回失败：${e.message}`, 400);
@@ -1803,7 +1814,7 @@ router.post(
         return fail(res, "不支持的登录方式");
       }
     } catch (e) {
-      await writeLog({ user: req.user, type: LOG_TYPE.ERROR, content: `${provider.name} 登录失败：${e.message}` });
+      await writeLog({ req, user: req.user, type: LOG_TYPE.ERROR, content: `${provider.name} 登录失败：${e.message}` });
       return fail(res, e.message, 400);
     }
 
@@ -1850,13 +1861,13 @@ router.post(
         const [fresh] = await pool.query("SELECT * FROM channels WHERE id = ?", [targetId]);
         try {
           const ms = await adapter.verify(rowToChannel(fresh[0]));
-          await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `浏览器登录 ${provider.name} 成功（${ms}ms）` });
+          await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `浏览器登录 ${provider.name} 成功（${ms}ms）` });
         } catch (e) {
           await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), targetId]);
           return fail(res, `渠道已创建但未就绪：${e.message}。请在渠道列表点「浏览器登录」完成人工登录`, 400);
         }
       }
-      await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `${provider.name} 渠道 #${targetId} 登录成功` });
+      await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `${provider.name} 渠道 #${targetId} 登录成功` });
       const all = await listRows();
       return ok(res, rowToResp(all.find((r) => r.id === targetId)), "登录成功");
     }
@@ -1901,7 +1912,7 @@ router.post(
       const [fresh] = await pool.query("SELECT * FROM channels WHERE id = ?", [insertId]);
       try {
         const ms = await adapter.verify(rowToChannel(fresh[0]));
-        await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `浏览器登录 ${provider.name} 成功（${ms}ms）` });
+        await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `浏览器登录 ${provider.name} 成功（${ms}ms）` });
       } catch (e) {
         await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), insertId]);
         return fail(res, `渠道已创建但未就绪：${e.message}。请在渠道列表点「浏览器登录」完成人工登录`, 400);
@@ -1945,6 +1956,7 @@ router.post(
         const [fresh] = await pool.query("SELECT * FROM channels WHERE id = ?", [insertId]);
         const ms = await adapter.verify(rowToChannel(fresh[0]));
         await writeLog({
+          req,
           user: req.user,
           type: LOG_TYPE.MANAGE,
           content: `订阅渠道 ${provider.name} 凭据校验通过（${ms}ms）`,
@@ -1958,7 +1970,7 @@ router.post(
       }
     }
 
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `新增 ${provider.name} 渠道「${name || ""}」` });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `新增 ${provider.name} 渠道「${name || ""}」` });
     const all = await listRows();
     return ok(res, rowToResp(all.find((r) => r.id === insertId)), "渠道已添加");
   })
@@ -2027,7 +2039,7 @@ router.post(
 
     const okCount = results.filter((r) => r.ok).length;
     if (okCount) invalidateChannelCache();
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `批量导入 ${provider.name}：成功 ${okCount} / ${results.length}` });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `批量导入 ${provider.name}：成功 ${okCount} / ${results.length}` });
     return ok(res, { results, ok: okCount, total: results.length }, `成功 ${okCount} 个，失败 ${results.length - okCount} 个`);
   })
 );
@@ -2098,7 +2110,7 @@ router.post(
       ]
     );
     invalidateChannelCache();
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `新增 ${provider.name} 渠道「${name}」（官方 API）` });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `新增 ${provider.name} 渠道「${name}」（官方 API）` });
     const all = await listRows();
     return ok(res, rowToResp(all.find((r) => r.id === ret.insertId)), "渠道已创建");
   })
@@ -2181,7 +2193,7 @@ router.put(
     if (!fields.length) return fail(res, "没有需要更新的字段");
     args.push(id);
     await pool.query(`UPDATE channels SET ${fields.join(", ")} WHERE id = ?`, args);
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `编辑渠道「${cur.name}」` });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `编辑渠道「${cur.name}」` });
     const all = await listRows();
     return ok(res, rowToResp(all.find((r) => r.id === id)), "已更新");
   })
@@ -2223,13 +2235,13 @@ router.post(
         kind: "test",
       });
       resetChannelState(id);
-      await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `测试渠道「${row.name}」通过（${probe.ms}ms）` });
+      await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `测试渠道「${row.name}」通过（${probe.ms}ms）` });
       return ok(res, { success: true, time: probe.ms, reply: probe.reply, prompt }, `渠道可用（${probe.ms}ms）`);
     } catch (e) {
       await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), id]);
       // 测试失败计入「最近调用」小绿条（失败 → 红色；tip 里带失败原因）
       await recordChannelCall(id, false, Date.now() - startedAt, e.message, { prompt, reply: e.message, kind: "test" });
-      await writeLog({ user: req.user, type: LOG_TYPE.ERROR, content: `测试渠道「${row.name}」失败：${e.message}` });
+      await writeLog({ req, user: req.user, type: LOG_TYPE.ERROR, content: `测试渠道「${row.name}」失败：${e.message}` });
       return ok(res, { success: false, message: e.message, code: e.code }, `测试失败：${e.message}`);
     }
   })
@@ -2308,7 +2320,7 @@ router.delete(
 
     await pool.query("DELETE FROM channels WHERE id = ?", [id]);
     forgetChannel(id);
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `删除渠道「${rows[0].name}」` });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `删除渠道「${rows[0].name}」` });
     return ok(res, null, "渠道已删除");
   })
 );
@@ -2369,7 +2381,7 @@ router.post(
       return fail(res, "不支持的操作");
     }
 
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `批量操作渠道 ${list.join(",")}：${action}` });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `批量操作渠道 ${list.join(",")}：${action}` });
     return ok(res, null, "操作成功");
   })
 );
@@ -2442,6 +2454,7 @@ router.post(
     }
     if (created) invalidateChannelCache();
     await writeLog({
+      req,
       user: req.user,
       type: LOG_TYPE.MANAGE,
       content: `批量导入凭据：成功 ${created} / 跳过 ${skipped} / 解析失败 ${errors.length}`,

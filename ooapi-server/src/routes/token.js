@@ -125,7 +125,7 @@ router.post(
     );
     // 用 insertId 精确回查：按 user_id ORDER BY id DESC 并发时会返回别人刚建的令牌（含完整 Key）
     const [rows] = await pool.query("SELECT * FROM tokens WHERE id = ?", [ins.insertId]);
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `新建令牌「${rows[0].name}」` });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `新建令牌「${rows[0].name}」` });
     return ok(res, tokenToResponse(rows[0]), "令牌创建成功");
   })
 );
@@ -188,7 +188,7 @@ router.delete(
     if (!token) return fail(res, "令牌不存在", 404);
     const [ret] = await pool.query("DELETE FROM tokens WHERE id = ? AND user_id = ?", [token, req.user.id]);
     if (!ret.affectedRows) return fail(res, "令牌不存在", 404);
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `删除令牌 #${token}` });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `删除令牌 #${token}` });
     return ok(res, null, "令牌已删除");
   })
 );

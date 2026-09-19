@@ -333,6 +333,12 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
     const stream = new StepStream();
     let textPart = null;
     let reasoningPart = null;
+    // 本步耗时与首 token 时刻：只用于「使用记录」的延迟展示，不计入计费
+    const stepStartedAt = Date.now();
+    let stepFirstTokenAt = 0;
+    const markStepFirstToken = () => {
+      if (!stepFirstTokenAt) stepFirstTokenAt = Date.now();
+    };
     const appendText = (t) => {
       if (!t) return;
       if (!textPart) {
@@ -341,8 +347,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       }
       textPart.text += t;
       emit?.({ type: "delta", id: textPart.id, field: "text", delta: t });
-    };
-    const appendReasoning = (t) => {
+    };    const appendReasoning = (t) => {
       if (!t) return;
       if (!reasoningPart) {
         reasoningPart = { id: uid(), type: "reasoning", text: "" };
@@ -362,8 +367,14 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       groupName,
       user,
       signal,
-      onDelta: (t) => appendText(stream.push(t)),
-      onReasoning: appendReasoning,
+      onDelta: (t) => {
+        markStepFirstToken();
+        appendText(stream.push(t));
+      },
+      onReasoning: (t) => {
+        markStepFirstToken();
+        appendReasoning(t);
+      },
     });
 
     const { text: tail, call, bad } = stream.finish();
@@ -375,6 +386,9 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       usage: result.usage,
       channel: result.channel?.name || "",
       channelId: Number(result.channel?.id) || 0,
+      // 单步耗时与首 token：使用记录里按「整轮」汇总展示（见 chat.js 的 chargeUser）
+      startedAt: stepStartAt,
+      firstTokenAt: firstTokenAt || stepStartAt,
     });
 
     const stepText = (textPart?.text || "").trim();

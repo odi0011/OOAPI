@@ -1,128 +1,233 @@
-import React, { useEffect, useState, useCallback } from "react";
-import { Table, Tag, Input, Select, Button, Alert, App as AntApp } from "antd";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
+import { Table, Tag, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions } from "antd";
 import { ReloadOutlined, FileTextOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import { fmtDate, fmtOd, unitsPerOd, CURRENCY_NAME } from "../services/format";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
-import { VendorIcon } from "../components/VendorIcon";
-
-const TYPE_COLOR = { 1: "gold", 2: "blue", 3: "purple", 4: "red", 5: "cyan" };
-
-const TYPE_OPTIONS = [
-  { value: 0, label: "全部类型" },
-  { value: 1, label: "充值" },
-  { value: 2, label: "消费" },
-  { value: 3, label: "管理" },
-  { value: 4, label: "错误" },
-  { value: 5, label: "登录" },
-];
+import StatCard from "../components/StatCard";
+import { ModelLabel } from "../components/VendorIcon";
+import UserAvatar from "../components/UserAvatar";
 
 // 历史日志里存的是改名前的「OD」，新日志写的是「OD币」。
-// 这里只在**展示时**归一化，不改数据库（历史记录保持原样可追溯）。
+// 只在展示时归一化，不改数据库（历史记录保持原样可追溯）。
 function normalizeCurrency(text) {
   return String(text || "").replace(/(\d)\s*OD(?!币)/g, `$1 ${CURRENCY_NAME}`);
 }
 
+function ms(v) {
+  const n = Number(v) || 0;
+  if (!n) return "-";
+  return n >= 1000 ? `${(n / 1000).toFixed(2)}s` : `${n}ms`;
+}
+
+/** 耗时着色：慢请求要一眼能看出来（>5s 橙、>15s 红） */
+function msColor(v) {
+  const n = Number(v) || 0;
+  if (!n) return "var(--ink-3)";
+  if (n >= 15000) return "var(--red)";
+  if (n >= 5000) return "var(--orange)";
+  return "var(--ink)";
+}
+
+const RANGE_OPTIONS = [
+  { value: 1, label: "今天" },
+  { value: 7, label: "近 7 天" },
+  { value: 30, label: "近 30 天" },
+  { value: 0, label: "全部" },
+];
+
+/**
+ * 使用记录：每一次模型调用的用量审计。
+ * 展示列按「用户/模型/分组/密钥/内容/时间/首Token/总耗时/计费/tokens/缓存/IP/设备」
+ * 组织；渠道与原始 UA 只对管理员可见（渠道等于上游供应商，属于敏感信息）。
+ */
 export default function LogPage() {
   const { user, status } = useApp();
   const { message } = AntApp.useApp();
-  const isAdmin = user?.role >= 100;
+  const isAdmin = Number(user?.role) >= 100;
   const perUnit = unitsPerOd(status);
 
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState(null);
+  const [filters, setFilters] = useState({ models: [], tokens: [] });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [keyword, setKeyword] = useState("");
-  const [type, setType] = useState(0);
+  const [model, setModel] = useState("");
+  const [tokenId, setTokenId] = useState(0);
+  const [days, setDays] = useState(7);
+  const [detail, setDetail] = useState(null);
   const { begin, isLatest } = useLatest();
+
+  const params = useMemo(
+    () => ({ days: days || undefined, keyword: keyword || undefined, model: model || undefined, token_id: tokenId || undefined }),
+    [days, keyword, model, tokenId]
+  );
 
   const load = useCallback(async () => {
     const token = begin();
     setLoading(true);
     setLoadError("");
     try {
-      const path = isAdmin ? "/log/" : "/log/self";
-      const data = await API.get(path, { params: { p: page, page_size: pageSize, keyword, type } });
+      const [data, sum] = await Promise.all([
+        API.get("/log/usage", { params: { ...params, p: page, page_size: pageSize } }),
+        API.get("/log/usage/summary", { params }),
+      ]);
       if (!isLatest(token)) return;
       setItems(data.items);
       setTotal(data.total);
+      setSummary(sum);
     } catch (e) {
       if (isLatest(token)) {
-        setLoadError(e.message || "日志加载失败");
-        message.error(e.message || "日志加载失败");
+        setLoadError(e.message || "记录加载失败");
+        message.error(e.message || "记录加载失败");
       }
     } finally {
       if (isLatest(token)) setLoading(false);
     }
-  }, [isAdmin, page, pageSize, keyword, type, message, begin, isLatest]);
+  }, [params, page, pageSize, message, begin, isLatest]);
 
   useEffect(() => {
     load();
   }, [load]);
 
+  // 筛选下拉的候选项（模型/密钥）：跟随时间范围，只列这段时间用过的
+  useEffect(() => {
+    let alive = true;
+    API.get("/log/usage/filters", { params: { days: days || 365 } })
+      .then((d) => {
+        if (alive) setFilters({ models: d.models || [], tokens: d.tokens || [] });
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [days]);
+
   const columns = [
     {
       title: "时间",
       dataIndex: "created_at",
-      width: 165,
+      width: 158,
       render: (t) => <span className="oo-num">{fmtDate(t)}</span>,
     },
+    // 管理员：用户（头像 + 名字）；普通用户看到的是自己，不需要这一列
     ...(isAdmin
       ? [
           {
             title: "用户",
             dataIndex: "username",
-            width: 130,
-            ellipsis: true,
+            width: 150,
+            render: (v, r) => <UserAvatar user={{ id: r.user_id, username: v }} size={22} showName />,
           },
         ]
       : []),
     {
-      title: "类型",
-      dataIndex: "type",
-      width: 88,
-      render: (t, r) => <Tag color={TYPE_COLOR[t] || "default"}>{r.type_label}</Tag>,
+      title: "模型",
+      dataIndex: "model",
+      width: 150,
+      render: (v) => (v ? <ModelLabel model={v} size={14} /> : <span style={{ color: "var(--ink-3)" }}>-</span>),
     },
+    // 管理员：分组 / 密钥 / 渠道（普通用户隐藏：分组=倍率口径，密钥与渠道属于平台配置）
+    ...(isAdmin
+      ? [
+          {
+            title: "分组",
+            dataIndex: "group_name",
+            width: 110,
+            render: (v) => (v ? <span className="bui-chip">{v}</span> : <span style={{ color: "var(--ink-3)" }}>-</span>),
+          },
+          {
+            title: "密钥",
+            dataIndex: "token_name",
+            width: 120,
+            ellipsis: true,
+            render: (v, r) =>
+              v ? (
+                <Tooltip title={`#${r.token_id} ${v}`}>
+                  <span className="oo-truncate" style={{ fontSize: 12.5 }}>{v}</span>
+                </Tooltip>
+              ) : (
+                <span style={{ color: "var(--ink-3)" }}>账户额度</span>
+              ),
+          },
+          {
+            title: "渠道",
+            dataIndex: "channel_name",
+            width: 150,
+            ellipsis: true,
+            render: (v, r) =>
+              v ? (
+                <Tooltip title={`#${r.channel_id} ${v}`}>
+                  <span className="oo-truncate" style={{ fontSize: 12.5 }}>{v}</span>
+                </Tooltip>
+              ) : (
+                <span style={{ color: "var(--ink-3)" }}>-</span>
+              ),
+          },
+        ]
+      : []),
     {
-      title: "内容",
+      title: "调用内容",
       dataIndex: "content",
       ellipsis: true,
-      render: (text) => {
-        // 从日志内容里提取模型名（形如 "调用 deepseek-flash · ..."）
-        const m = /(?:调用|对话|智能体)\s*[·•]?\s*([a-zA-Z0-9._-]+)/.exec(String(text || ""));
-        const modelName = m && /^(deepseek|gpt|o[0-9]|claude|gemini|qwen|glm|kimi|doubao)/i.test(m[1]) ? m[1] : null;
-        if (!modelName) return <span>{normalizeCurrency(text)}</span>;
-
-        const rest = normalizeCurrency(String(text).replace(modelName, ""));
-        return (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-            <VendorIcon type={/^deepseek/i.test(modelName) ? "deepseek" : /^claude/i.test(modelName) ? "claude" : /^gemini/i.test(modelName) ? "gemini" : /^qwen/i.test(modelName) ? "qwen" : /^glm/i.test(modelName) ? "zhipu" : /^kimi/i.test(modelName) ? "kimi" : /^doubao/i.test(modelName) ? "doubao" : "openai"} size={14} />
-            <span className="oo-truncate" style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>{modelName}</span>
-            <span className="oo-truncate" style={{ color: "var(--ink-3)", fontSize: 12 }}>{rest}</span>
-          </span>
-        );
-      },
+      render: (text) => <span style={{ fontSize: 12.5 }}>{normalizeCurrency(text)}</span>,
     },
     {
-      title: "额度",
-      dataIndex: "quota",
-      width: 110,
-      render: (q, r) => {
-        const n = Number(q);
-        if (!n) return <span style={{ color: "var(--oo-text-disabled)" }}>-</span>;
-        // 充值/补充是「+」，消费/错误是「-」；旧实现把所有正数都显示成负数
-        const sign = r.type === 1 ? "+" : "-";
-        const color = r.type === 1 ? "var(--oo-green, var(--oo-text))" : "var(--oo-text)";
-        return (
-          <span className="oo-num" style={{ color }}>
-            {sign}
-            {fmtOd(n, perUnit, 4)}
+      title: "首Token",
+      dataIndex: "first_token_ms",
+      width: 92,
+      sorter: (a, b) => (a.first_token_ms || 0) - (b.first_token_ms || 0),
+      render: (v) => <span className="oo-num" style={{ color: msColor(v) }}>{ms(v)}</span>,
+    },
+    {
+      title: "总耗时",
+      dataIndex: "elapsed_ms",
+      width: 92,
+      sorter: (a, b) => (a.elapsed_ms || 0) - (b.elapsed_ms || 0),
+      render: (v) => <span className="oo-num" style={{ color: msColor(v) }}>{ms(v)}</span>,
+    },
+    {
+      title: "tokens",
+      dataIndex: "prompt_tokens",
+      width: 150,
+      render: (v, r) => (
+        <Tooltip title={`提示 ${v} · 补全 ${r.completion_tokens} · 缓存 ${r.cache_tokens}`}>
+          <span className="oo-num" style={{ fontSize: 12.5 }}>
+            {Number(v) || 0}
+            <span style={{ color: "var(--ink-3)" }}> / </span>
+            {Number(r.completion_tokens) || 0}
           </span>
+        </Tooltip>
+      ),
+    },
+    {
+      title: "缓存",
+      dataIndex: "cache_tokens",
+      width: 88,
+      render: (v) =>
+        Number(v) ? (
+          <span className="oo-num" style={{ color: "var(--green)" }}>{Number(v)}</span>
+        ) : (
+          <span style={{ color: "var(--ink-3)" }}>-</span>
+        ),
+    },
+    {
+      title: "计费",
+      dataIndex: "quota",
+      width: 108,
+      sorter: (a, b) => (Number(a.quota) || 0) - (Number(b.quota) || 0),
+      render: (q) => {
+        const n = Number(q) || 0;
+        return n ? (
+          <span className="oo-num">{fmtOd(n, perUnit, 6)}</span>
+        ) : (
+          <span style={{ color: "var(--ink-3)" }}>-</span>
         );
       },
     },
@@ -131,7 +236,21 @@ export default function LogPage() {
       dataIndex: "ip",
       width: 128,
       ellipsis: true,
-      render: (v) => <span className="oo-num" style={{ color: "var(--oo-text-muted)" }}>{v || "-"}</span>,
+      render: (v) => <span className="oo-num" style={{ color: "var(--ink-3)" }}>{v || "-"}</span>,
+    },
+    {
+      title: "设备",
+      dataIndex: "device",
+      width: 140,
+      ellipsis: true,
+      render: (v, r) =>
+        v ? (
+          <Tooltip title={isAdmin && r.user_agent ? r.user_agent : undefined}>
+            <span className="oo-truncate" style={{ fontSize: 12.5 }}>{v}</span>
+          </Tooltip>
+        ) : (
+          <span style={{ color: "var(--ink-3)" }}>-</span>
+        ),
     },
   ];
 
@@ -141,45 +260,70 @@ export default function LogPage() {
         title="使用记录"
         extra={
           <>
-            {isAdmin && (
-              <Select
-                value={type}
-                onChange={(v) => {
-                  setType(v);
+            <Select
+              value={days}
+              onChange={(v) => { setDays(v); setPage(1); }}
+              style={{ width: 110 }}
+              options={RANGE_OPTIONS}
+            />
+            <Select
+              value={model || undefined}
+              onChange={(v) => { setModel(v || ""); setPage(1); }}
+              style={{ width: 170 }}
+              allowClear
+              showSearch
+              placeholder="全部模型"
+              options={filters.models.map((m) => ({ value: m.model, label: `${m.model}（${m.count}）` }))}
+            />
+            <Select
+              value={tokenId || undefined}
+              onChange={(v) => { setTokenId(v || 0); setPage(1); }}
+              style={{ width: 160 }}
+              allowClear
+              placeholder="全部密钥"
+              options={filters.tokens.map((t) => ({ value: t.id, label: `${t.name}（${t.count}）` }))}
+            />
+            <Input.Search
+              placeholder={isAdmin ? "搜索用户 / 内容 / 模型" : "搜索内容 / 模型"}
+              allowClear
+              style={{ width: 220 }}
+              onChange={(e) => {
+                if (!e.target.value) {
+                  setKeyword("");
                   setPage(1);
-                }}
-                style={{ width: 130 }}
-                options={TYPE_OPTIONS}
-              />
-            )}
-            {isAdmin && (
-              <Input.Search
-                placeholder="搜索用户 / 内容"
-                allowClear
-                style={{ width: 240 }}
-                onChange={(e) => {
-                  if (!e.target.value) {
-                    setKeyword("");
-                    setPage(1);
-                  }
-                }}
-                onSearch={(v) => {
-                  setKeyword(v);
-                  setPage(1);
-                }}
-              />
-            )}
-            <Button icon={<ReloadOutlined />} onClick={load} title="刷新日志" aria-label="刷新日志" />
+                }
+              }}
+              onSearch={(v) => {
+                setKeyword(v);
+                setPage(1);
+              }}
+            />
+            <Button icon={<ReloadOutlined />} onClick={load} title="刷新" aria-label="刷新使用记录" />
           </>
         }
       />
+
+      {summary ? (
+        <div className="oo-stats-cards" style={{ marginBottom: 14 }}>
+          <StatCard label="调用次数" value={summary.calls} />
+          <StatCard label="消耗" value={`${fmtOd(summary.units, perUnit, 4)}`} hint={CURRENCY_NAME} />
+          <StatCard
+            label="Tokens"
+            value={summary.prompt_tokens + summary.completion_tokens}
+            hint={`提示 ${summary.prompt_tokens} / 补全 ${summary.completion_tokens}`}
+          />
+          <StatCard label="缓存命中率" value={`${summary.cache_rate}%`} hint={`命中 ${summary.cache_tokens}`} />
+          <StatCard label="平均首Token" value={ms(summary.avg_first_token)} />
+          <StatCard label="平均耗时" value={ms(summary.avg_elapsed)} />
+        </div>
+      ) : null}
 
       <div className="oo-panel">
         {loadError ? (
           <Alert
             type="error"
             showIcon
-            message="日志加载失败"
+            message="记录加载失败"
             description={loadError}
             action={<Button size="small" onClick={load} loading={loading}>重试</Button>}
             style={{ marginBottom: 12 }}
@@ -191,11 +335,16 @@ export default function LogPage() {
           loading={loading}
           columns={columns}
           dataSource={items}
-          scroll={{ x: 900 }}
+          size="small"
+          scroll={{ x: isAdmin ? 1680 : 1100 }}
+          onRow={(r) => ({
+            style: { cursor: "pointer" },
+            onClick: () => setDetail(r),
+          })}
           locale={{
             emptyText: (
-              <div style={{ padding: "32px 0", color: "var(--oo-text-muted)" }}>
-                <FileTextOutlined style={{ fontSize: 32, color: "var(--oo-text-disabled)", display: "block", margin: "0 auto 10px" }} />
+              <div style={{ padding: "32px 0", color: "var(--ink-3)" }}>
+                <FileTextOutlined style={{ fontSize: 32, color: "var(--ink-3)", display: "block", margin: "0 auto 10px" }} />
                 暂无记录
               </div>
             ),
@@ -213,6 +362,53 @@ export default function LogPage() {
           }}
         />
       </div>
+
+      {/* 详情抽屉：完整信息（普通用户看不到渠道 / 原始 UA / 成本细节） */}
+      <Drawer
+        title="调用详情"
+        open={Boolean(detail)}
+        onClose={() => setDetail(null)}
+        width={520}
+        destroyOnClose
+      >
+        {detail ? (
+          <Descriptions column={1} size="small" bordered labelStyle={{ width: 120 }}>
+            <Descriptions.Item label="时间">{fmtDate(detail.created_at)}</Descriptions.Item>
+            <Descriptions.Item label="用户">
+              <UserAvatar user={{ id: detail.user_id, username: detail.username }} size={20} showName />
+            </Descriptions.Item>
+            <Descriptions.Item label="模型">{detail.model || "-"}</Descriptions.Item>
+            <Descriptions.Item label="调用内容">{normalizeCurrency(detail.content)}</Descriptions.Item>
+            <Descriptions.Item label="Tokens">
+              提示 {detail.prompt_tokens} · 补全 {detail.completion_tokens}
+              {detail.cache_tokens ? ` · 缓存 ${detail.cache_tokens}` : ""}
+            </Descriptions.Item>
+            <Descriptions.Item label="首Token / 总耗时">
+              {ms(detail.first_token_ms)} / {ms(detail.elapsed_ms)}
+            </Descriptions.Item>
+            <Descriptions.Item label="计费">{fmtOd(Number(detail.quota) || 0, perUnit, 6)} {CURRENCY_NAME}</Descriptions.Item>
+            <Descriptions.Item label="IP">{detail.ip || "-"}</Descriptions.Item>
+            <Descriptions.Item label="设备">{detail.device || "-"}</Descriptions.Item>
+            {isAdmin ? (
+              <>
+                <Descriptions.Item label="分组">{detail.group_name || "-"}</Descriptions.Item>
+                <Descriptions.Item label="密钥">
+                  {detail.token_name ? `#${detail.token_id} ${detail.token_name}` : "账户额度（未用密钥）"}
+                </Descriptions.Item>
+                <Descriptions.Item label="渠道">
+                  {detail.channel_name ? `#${detail.channel_id} ${detail.channel_name}` : "-"}
+                </Descriptions.Item>
+                <Descriptions.Item label="User-Agent">{detail.user_agent || "-"}</Descriptions.Item>
+                <Descriptions.Item label="原始明细">
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, wordBreak: "break-all" }}>
+                    {detail.detail || "-"}
+                  </span>
+                </Descriptions.Item>
+              </>
+            ) : null}
+          </Descriptions>
+        ) : null}
+      </Drawer>
     </div>
   );
 }

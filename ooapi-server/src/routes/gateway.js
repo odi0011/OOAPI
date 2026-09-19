@@ -221,7 +221,20 @@ async function extractImages(messages) {
 }
 
 // 计费 + 日志
-async function settle({ token, user, model, prompt, output, usage, ip, requestId, channel }) {
+async function settle({
+  token,
+  user,
+  model,
+  prompt,
+  output,
+  usage,
+  ip,
+  requestId,
+  channel,
+  startedAt = 0,
+  firstTokenAt = 0,
+  userAgent = "",
+}) {
   const { promptTokens, completionTokens, cacheTokens } = splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
   const price = await getPrice(resolveAliasSync(model));
@@ -277,6 +290,20 @@ async function settle({ token, user, model, prompt, output, usage, ip, requestId
     quota: units,
     ip,
     requestId,
+    // 使用记录页直接展示的明细（列存储，便于筛选排序）
+    model,
+    channelId: channel?.id || 0,
+    channelName: channel?.name || "",
+    tokenId: token?.id || 0,
+    tokenName: token?.name || "",
+    groupName: token?.group_name || user?.group_name || "",
+    promptTokens,
+    completionTokens,
+    cacheTokens,
+    // 首 token 耗时：流式为首个增量到达时刻；非流式没有增量信号，按总耗时记
+    firstTokenMs: firstTokenAt && startedAt ? firstTokenAt - startedAt : startedAt ? Date.now() - startedAt : 0,
+    elapsedMs: startedAt ? Date.now() - startedAt : 0,
+    userAgent,
   });
   return { units, promptTokens, completionTokens, cacheTokens };
 }
@@ -377,6 +404,14 @@ router.post(
   // 已流出的内容：上游中途失败时按实际产出结算，避免「答了一半却零计费」
   let partialOut = "";
   let settledOnce = false;
+  // 首 token 时刻（首个正文/思考增量到达）：使用记录页要展示「首Token耗时」，
+  // 这是用户最能感知的延迟指标，只有在此处能测到。
+  const startedAt = Date.now();
+  let firstTokenAt = 0;
+  const userAgent = String(req.headers["user-agent"] || "").slice(0, 255);
+  const markFirstToken = () => {
+    if (!firstTokenAt) firstTokenAt = Date.now();
+  };
 
   const sendChunk = (delta, finishReason = null) => {
     res.write(
@@ -416,6 +451,7 @@ router.post(
       user,
       signal: clientCtrl.signal,
       onDelta: (t) => {
+        markFirstToken();
         partialOut += t;
         if (wantStream) {
           startStream();
@@ -423,6 +459,7 @@ router.post(
         }
       },
       onReasoning: (t) => {
+        markFirstToken();
         partialOut += t;
         if (wantStream) {
           startStream();
@@ -442,6 +479,9 @@ router.post(
       ip,
       requestId,
       channel: result.channel,
+      startedAt,
+      firstTokenAt,
+      userAgent,
     });
     settledOnce = true;
 
@@ -502,6 +542,9 @@ router.post(
           ip,
           requestId,
           channel: null,
+          startedAt,
+          firstTokenAt,
+          userAgent,
         });
       } catch (e2) {
         console.error(`[gateway] ${requestId} 部分结算失败：${e2.message}`);
@@ -514,6 +557,15 @@ router.post(
       detail: JSON.stringify({ code, requestId }),
       ip,
       requestId,
+      model,
+      // 失败也归属到渠道：看板的「渠道成功率」按 logs 聚合，没有这个就只能靠 20 条环形缓冲
+      channelId: err.channelId || 0,
+      channelName: err.channelName || "",
+      tokenId: token?.id || 0,
+      tokenName: token?.name || "",
+      groupName: token?.group_name || user?.group_name || "",
+      elapsedMs: Date.now() - startedAt,
+      userAgent,
     });
     // 错误码 → HTTP 状态要能区分「调用方请求错」与「网关/上游故障」，
     // 否则客户端会把 400/429 当成 502 盲目重试。

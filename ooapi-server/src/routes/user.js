@@ -48,7 +48,7 @@ router.put(
       hash,
       req.user.id,
     ]);
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: "修改密码" });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: "修改密码" });
     return ok(res, null, "密码修改成功，请重新登录");
   })
 );
@@ -165,6 +165,7 @@ router.put(
       ]);
     }
     await writeLog({
+      req,
       user: req.user,
       type: LOG_TYPE.MANAGE,
       content: `编辑用户 #${id}（${user.username}）`,
@@ -192,6 +193,7 @@ router.post(
     const [fresh] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
     const newQuota = Number(fresh[0].quota);
     await writeLog({
+      req,
       user: req.user,
       // 扣除用「管理」类型、充值用「充值」类型：日志页按类型显示 +/- 符号
       type: quota > 0 ? LOG_TYPE.TOPUP : LOG_TYPE.MANAGE,
@@ -237,7 +239,7 @@ router.delete(
     } finally {
       conn.release();
     }
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `删除用户 #${id}（${user.username}）` });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `删除用户 #${id}（${user.username}）` });
     return ok(res, null, "用户已删除");
   })
 );
@@ -251,7 +253,7 @@ router.post(
     if (!id) return fail(res, "用户不存在", 404);
     const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
     if (!rows[0]) return fail(res, "用户不存在", 404);
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `以用户 #${id} 身份签发临时令牌` });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `以用户 #${id} 身份签发临时令牌` });
     return ok(res, { token: signToken(rows[0]) });
   })
 );

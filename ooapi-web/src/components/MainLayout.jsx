@@ -39,6 +39,7 @@ const NAV_USER = [
     items: [
       { key: "/token", icon: <KeyOutlined />, label: "令牌管理" },
       { key: "/log", icon: <FileTextOutlined />, label: "使用记录" },
+      { key: "/operation-log", icon: <HistoryOutlined />, label: "操作日志" },
     ],
   },
   {
@@ -66,6 +67,7 @@ const CRUMB = {
   "/console": ["工作台", "数据看板"],
   "/token": ["开发", "令牌管理"],
   "/log": ["开发", "使用记录"],
+  "/operation-log": ["开发", "操作日志"],
   "/profile": ["账户", "个人设置"],
   "/home": ["首页"],
   "/admin/channel": ["平台管理", "渠道管理"],

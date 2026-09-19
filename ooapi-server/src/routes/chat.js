@@ -8,7 +8,7 @@
 //     这里逐条 splitTokens 后求和 —— 与网关/旧智能体同一套口径，禁止自行折算。
 import express from "express";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, now, safeInt } from "../utils.js";
+import { ok, fail, asyncHandler, now, safeInt, clientIp } from "../utils.js";
 import { authRequired, preAuthJwt } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getPrice, computeCost, splitTokens, estimateTokens, loadPrices, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
@@ -369,7 +369,7 @@ router.post(
 // ---------- 计费（用户额度）----------
 // 与网关同一套原子扣费；harness 传进来的 tokens 是「每次上游调用分别 splitTokens 后求和」，
 // 混用 API 渠道（结构化 usage）与反代渠道（usage=null）时不会互相覆盖口径。
-  async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0 }) {
+  async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0, startedAt = 0, firstTokenAt = 0, userAgent = "", ip = "" }) {
     const { promptTokens, completionTokens, cacheTokens } =
       tokens || splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
@@ -416,6 +416,20 @@ router.post(
       cache_tokens: cacheTokens,
     }),
     quota: units,
+    // 使用记录明细（列存储）：站内对话不经 Key，但仍记录本次路由用的密钥与分组，
+    // 这样管理员在记录页能看出「这次是按哪个分组/倍率算的」。
+    model,
+    channelId: channel?.id || (Array.isArray(channelIds) && channelIds.length === 1 ? channelIds[0] : 0) || 0,
+    channelName: channel?.name || "",
+    tokenId: keyId || 0,
+    groupName: groupName || user?.group_name || "",
+    promptTokens,
+    completionTokens,
+    cacheTokens,
+    firstTokenMs: firstTokenAt && startedAt ? firstTokenAt - startedAt : 0,
+    elapsedMs: startedAt ? Date.now() - startedAt : 0,
+    userAgent,
+    ip,
   });
   return { units, promptTokens, completionTokens, cacheTokens };
 }
@@ -578,6 +592,10 @@ router.post(
       routeGroup,
       keyId,
       modelCaps,
+      // 使用记录要展示的调用方信息（IP/设备只在本次 HTTP 请求里有，必须在这里取）
+      ip: clientIp(req),
+      userAgent: String(req.headers["user-agent"] || "").slice(0, 255),
+      startedAt: run.startedAt || Date.now(),
     }).catch((e) => console.error("[chat] 后台运行异常：", e?.message || e));
 
     streamFromRun(req, res, run);
@@ -657,7 +675,7 @@ router.get(
  * 真正执行一轮：跑 harness、计费、落库、发布事件。
  * 无论客户端是否还在，都必须跑到最后一步（这就是断线续传的前提）。
  */
-async function executeRun({ run, ctrl, user, session, agent, model, settings, history, content, imgs, docs = [], routeGroup, keyId = 0, modelCaps }) {
+async function executeRun({ run, ctrl, user, session, agent, model, settings, history, content, imgs, docs = [], routeGroup, keyId = 0, modelCaps, ip = "", userAgent = "", startedAt = 0 }) {
   const runCalls = [];
   let runParts = [];
   let runTodo = session.todo || [];
@@ -694,6 +712,8 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
     const runChannelIds = [...new Set(runCalls.map((c) => Number(c.channelId) || 0).filter(Boolean))];
 
     const tokens = aggregate(runCalls);
+    // 首 token / 总耗时：按「本轮的第一次上游调用」算首 token，整轮总耗时从请求进入算起
+    const firstCall = runCalls.find((c) => c.firstTokenAt) || null;
     const billed = await chargeUser({
       user,
       model,
@@ -706,6 +726,10 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       groupName: routeGroup,
       keyId,
       kind: "对话",
+      ip,
+      userAgent,
+      startedAt,
+      firstTokenAt: firstCall?.firstTokenAt || 0,
     });
     settled = true;
 
@@ -763,6 +787,11 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           channelIds: [...new Set(runCalls.map((c) => Number(c.channelId) || 0).filter(Boolean))],
           groupName: routeGroup,
           kind: stopped ? "对话（已停止）" : "对话（部分）",
+          keyId,
+          ip,
+          userAgent,
+          startedAt,
+          firstTokenAt: (runCalls.find((c) => c.firstTokenAt) || {}).firstTokenAt || 0,
         });
       } catch (e2) {
         console.error("[chat] 部分计费失败：", e2.message);
@@ -779,7 +808,23 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
     }
 
     run.error = { code: err.code || "ERROR", message: err.message };
-    publish(run, {
+    // 失败也写一条错误日志：与网关同一口径（模型/渠道/耗时/设备），
+    // 否则站内对话的失败在看板上完全不可见。
+    // 这里没有 req（executeRun 是后台任务），ip/userAgent 由调用方在 /run 时捕获后传入。
+    await writeLog({
+      user,
+      type: LOG_TYPE.ERROR,
+      content: `${stopped ? "对话已停止" : "对话失败"}：${model} · ${err.message}`,
+      detail: JSON.stringify({ code: err.code || "ERROR" }),
+      model,
+      channelId: Number(err.channelId) || 0,
+      channelName: err.channelName || "",
+      tokenId: keyId || 0,
+      groupName: routeGroup || "",
+      elapsedMs: startedAt ? Date.now() - startedAt : 0,
+      userAgent,
+      ip,
+    }).catch(() => {});    publish(run, {
       type: stopped ? "stopped" : "error",
       code: err.code || "ERROR",
       message: stopped ? "已停止生成。本轮已产生的用量照常计费。" : err.message,

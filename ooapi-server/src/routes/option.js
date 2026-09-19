@@ -81,7 +81,7 @@ router.put(
       }
       if (!changed.length) return fail(res, "没有可保存的设置项");
     }
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: "更新系统设置" });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: "更新系统设置" });
     return ok(res, null, "设置已保存");
   })
 );

@@ -47,6 +47,7 @@ router.post(
       // 所以这里不 await 它的重启阶段——它自己会先返回结果。
       const result = await performUpdate((s) => collected.push(s));
       await writeLog({
+        req,
         user: req.user,
         type: result.ok ? LOG_TYPE.MANAGE : LOG_TYPE.ERROR,
         content: `在线更新${result.ok ? "成功" : "失败"}：${result.commit || ""}`,

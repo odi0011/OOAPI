@@ -85,8 +85,27 @@ const TABLES = [
     ip VARCHAR(64) DEFAULT '',
     request_id VARCHAR(64) DEFAULT '',
     quota BIGINT NOT NULL DEFAULT 0,
+    /* ---- 使用记录明细（消费类日志用；管理/登录类日志留空） ----
+       为什么要落成列而不是全塞 detail JSON：使用记录页要按渠道/模型/密钥/分组筛选与排序，
+       全表 JSON 解包既慢又没法建索引（本平台日志量按调用数线性增长）。 */
+    model VARCHAR(128) NOT NULL DEFAULT '' COMMENT '请求的模型名',
+    channel_id INT NOT NULL DEFAULT 0 COMMENT '实际命中的渠道 id（0=未经过渠道，如登录日志）',
+    channel_name VARCHAR(64) NOT NULL DEFAULT '' COMMENT '渠道名（冗余存储，渠道改名后历史记录仍可读）',
+    token_id INT NOT NULL DEFAULT 0 COMMENT '使用的令牌 id',
+    token_name VARCHAR(64) NOT NULL DEFAULT '' COMMENT '令牌名（同理冗余）',
+    group_name VARCHAR(64) NOT NULL DEFAULT '' COMMENT '路由分组（计费倍率口径）',
+    prompt_tokens INT NOT NULL DEFAULT 0,
+    completion_tokens INT NOT NULL DEFAULT 0,
+    cache_tokens INT NOT NULL DEFAULT 0 COMMENT '缓存命中 token（参与缓存价计费）',
+    first_token_ms INT NOT NULL DEFAULT 0 COMMENT '首 token 耗时（流式：首个增量到达；非流式：等同总耗时）',
+    elapsed_ms INT NOT NULL DEFAULT 0 COMMENT '端到端总耗时',
+    user_agent VARCHAR(255) NOT NULL DEFAULT '' COMMENT '原始 UA（设备识别用，仅管理员可见）',
+    device VARCHAR(64) NOT NULL DEFAULT '' COMMENT 'UA 解析出的可读设备（如 Chrome 131 · Windows）',
     INDEX idx_logs_user (user_id),
-    INDEX idx_logs_created (created_at)
+    INDEX idx_logs_created (created_at),
+    INDEX idx_logs_type_created (type, created_at),
+    INDEX idx_logs_channel (channel_id),
+    INDEX idx_logs_model (model)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
   `CREATE TABLE IF NOT EXISTS options (
@@ -245,6 +264,20 @@ const COLUMN_MIGRATIONS = [
   // 账号额度快照（订阅/网页版账号的窗口用量）+ 抓取时间；由显式「查额度」或低频定时任务写入
   { table: "channels", column: "quota", ddl: "TEXT" },
   { table: "channels", column: "quota_time", ddl: "BIGINT NOT NULL DEFAULT 0" },
+  // 使用记录明细列（老库补列）：日志展示与筛选按列走，不再解 detail JSON
+  { table: "logs", column: "model", ddl: "VARCHAR(128) NOT NULL DEFAULT ''" },
+  { table: "logs", column: "channel_id", ddl: "INT NOT NULL DEFAULT 0" },
+  { table: "logs", column: "channel_name", ddl: "VARCHAR(64) NOT NULL DEFAULT ''" },
+  { table: "logs", column: "token_id", ddl: "INT NOT NULL DEFAULT 0" },
+  { table: "logs", column: "token_name", ddl: "VARCHAR(64) NOT NULL DEFAULT ''" },
+  { table: "logs", column: "group_name", ddl: "VARCHAR(64) NOT NULL DEFAULT ''" },
+  { table: "logs", column: "prompt_tokens", ddl: "INT NOT NULL DEFAULT 0" },
+  { table: "logs", column: "completion_tokens", ddl: "INT NOT NULL DEFAULT 0" },
+  { table: "logs", column: "cache_tokens", ddl: "INT NOT NULL DEFAULT 0" },
+  { table: "logs", column: "first_token_ms", ddl: "INT NOT NULL DEFAULT 0" },
+  { table: "logs", column: "elapsed_ms", ddl: "INT NOT NULL DEFAULT 0" },
+  { table: "logs", column: "user_agent", ddl: "VARCHAR(255) NOT NULL DEFAULT ''" },
+  { table: "logs", column: "device", ddl: "VARCHAR(64) NOT NULL DEFAULT ''" },
   { table: "channel_groups", column: "rate", ddl: "DECIMAL(10,4) NOT NULL DEFAULT 1" },
   { table: "channel_groups", column: "models", ddl: "TEXT" },
   { table: "chat_sessions", column: "project_id", ddl: "VARCHAR(32) NOT NULL DEFAULT ''" },
