@@ -20,7 +20,7 @@
 //   antigravity  Google 订阅（Antigravity/Code Assist OAuth）
 //   grok-oauth   xAI Grok 订阅（device-code OAuth，responses 协议）
 // 与 relay 的区别：不需要浏览器，凭据是 OAuth 令牌（粘贴官方 CLI / CPA / sub2api 的凭据文件）
-export const OAUTH_METHODS = ["codex", "claude-oauth", "antigravity", "grok-oauth"];
+export const OAUTH_METHODS = ["codex", "claude-oauth", "antigravity", "grok-oauth", "kiro"];
 
 export function isOAuthMethod(key) {
   return OAUTH_METHODS.includes(String(key || ""));
@@ -279,6 +279,26 @@ export const PROVIDERS = [
           "本机运行 Claude Code 登录后，复制 ~/.claude/.credentials.json 的 claudeAiOauth 字段内容"
         ),
         pasteHint: "Claude Code 登录凭据：访问 Claude 订阅额度，平台自动续期；请求会按官方 CLI 协议注入身份提示词",
+        defaultModels: [
+          { id: "claude-opus-5", name: "Claude Opus 5" },
+          { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
+          { id: "claude-haiku-4.5", name: "Claude Haiku 4.5" },
+        ],
+        testModel: "claude-haiku-4.5",
+      },
+      {
+        // 第三方工具反代：Kiro（AWS Q / CodeWhisperer）订阅里的 Claude 模型
+        // 工具只是通道，模型与计费仍归 Anthropic
+        key: "kiro",
+        adapter: "kiro",
+        label: "反代（Kiro）",
+        desc: "用 Kiro/AWS Q 订阅跑 Claude 模型",
+        loginModes: ["paste"],
+        loginFields: oauthCredentialField(
+          '{ "accessToken": "...", "refreshToken": "...", "region": "us-east-1", "profileArn": "可选" }',
+          "粘贴 Kiro 的 kiro-auth-token.json；也可只填 refreshToken（AWS SSO 凭据需带 clientId/clientSecret）"
+        ),
+        pasteHint: "Kiro auth 文件：accessToken/refreshToken（+ region/profileArn；SSO 形态带 clientId/clientSecret），平台自动续期",
         defaultModels: [
           { id: "claude-opus-5", name: "Claude Opus 5" },
           { id: "claude-sonnet-5", name: "Claude Sonnet 5" },

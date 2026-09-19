@@ -25,6 +25,7 @@ const ADAPTERS = {
   "claude-oauth": () => import("./upstream/claude-oauth.js"),
   antigravity: () => import("./upstream/antigravity.js"),
   "grok-oauth": () => import("./upstream/grok.js"),
+  kiro: () => import("./upstream/kiro.js"),
 };
 
 /**
