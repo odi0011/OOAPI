@@ -29,7 +29,9 @@ export default function AdminGroupsPage() {
   const [models, setModels] = useState([]);
   const [memberIds, setMemberIds] = useState([]);
   const [form] = Form.useForm();
-  const pickedType = Form.useWatch("type", form);
+  // 账号选择区的「按厂商筛选」视图开关：只影响候选列表的显示，
+  // 不影响分组成员的范围（分组可以跨厂商）
+  const [vendorFilter, setVendorFilter] = useState(undefined);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -57,6 +59,7 @@ export default function AdminGroupsPage() {
     setEditing(null);
     setModels([]);
     setMemberIds([]);
+    setVendorFilter(undefined);
     form.resetFields();
     form.setFieldsValue({ type: undefined, name: "", remark: "", rate: 1 });
     setOpen(true);
@@ -66,19 +69,24 @@ export default function AdminGroupsPage() {
     setEditing(g);
     setModels(Array.isArray(g.models) ? g.models : []);
     setMemberIds(Array.isArray(g.channel_ids) ? g.channel_ids.map(Number) : []);
+    // 编辑时不再按厂商过滤候选，直接展示全部账号（分组可能跨厂商）
+    setVendorFilter(undefined);
     form.resetFields();
-    form.setFieldsValue({ type: g.type, name: g.name, remark: g.remark || "", rate: Number(g.rate) || 1 });
+    form.setFieldsValue({ type: g.vendor || g.type || undefined, name: g.name, remark: g.remark || "", rate: Number(g.rate) || 1 });
     setOpen(true);
   };
 
-  // 账号选项 = 该厂商的渠道；模型选项 = 已选账号（或该厂商全部渠道）声明模型的并集（tags 可手输通配）
-  const channelOptions = useMemo(
-    () =>
-      channels
-        .filter((c) => c.type === pickedType)
-        .map((c) => ({ value: c.id, label: `${c.name}${c.account ? ` · ${c.account}` : ""}` })),
-    [channels, pickedType]
-  );
+  // 账号候选项 = 全部渠道（分组**可以跨厂商**）。
+  // vendorFilter 只用于「筛出某个厂商的账号」这种便利操作，不是约束 ——
+  // 用户的要求是「分组可包含多个渠道，**或者**指定哪个厂商」，
+  // 所以厂商是一个可选的筛选视图，选了它也不会把别的厂商的账号挡在外面。
+  const channelOptions = useMemo(() => {
+    const list = vendorFilter ? channels.filter((c) => c.type === vendorFilter) : channels;
+    return list.map((c) => ({
+      value: c.id,
+      label: `${c.name}${c.account ? ` · ${c.account}` : ""} · ${c.typeName || c.type || ""}`,
+    }));
+  }, [channels, vendorFilter]);
 
   const modelOptions = useMemo(() => {
     // 模型只能从**已选中的渠道**汇总（用户要求：「选择好渠道后，模型才可以进行选择，
@@ -89,12 +97,13 @@ export default function AdminGroupsPage() {
     return [...new Set(pool.flatMap((c) => (Array.isArray(c.models) ? c.models : [])))].sort().map((m) => ({ value: m, label: m }));
   }, [channels, memberIds]);
 
-  // 选中渠道的图标（用于列表里的折叠展示）：一个显示该厂商图标，多个显示前 3 个叠加
+  // 分组图标 = **成员渠道**涉及到的厂商（去重）。
+  // 不回落成员为空时的 vendor：那样会显示成「这个组是 openai 的」，而分组并不属于厂商。
   const iconsOfGroup = useCallback(
     (g) => {
       const ids = Array.isArray(g.channel_ids) ? g.channel_ids.map(Number) : [];
-      const types = [...new Set(channels.filter((c) => ids.includes(c.id)).map((c) => c.type))];
-      return types.length ? types : [g.type];
+      if (!ids.length) return [];
+      return [...new Set(channels.filter((c) => ids.includes(c.id)).map((c) => c.type).filter(Boolean))];
     },
     [channels]
   );
@@ -110,7 +119,8 @@ export default function AdminGroupsPage() {
     setBusy(true);
     try {
       const payload = {
-        type: editing?.type || v.type,
+        // type 现在是「可选的厂商筛选」，不是分组归属
+        type: v.type || "",
         name: v.name,
         remark: v.remark || "",
         rate: Number(v.rate) || 1,
@@ -145,8 +155,10 @@ export default function AdminGroupsPage() {
 
   const columns = [
     {
-      // 分组图标：单厂商显示该厂商图标，跨厂商显示前 3 个折叠叠加
-      // （用户要求：全 openai 就用 openai 图标，多厂商用几个图标的折叠态）
+      // 分组图标：按**实际成员**的厂商来显示 —— 全 openai 就显示 openai 图标，
+      // 多厂商显示前 3 个折叠叠加 +N（用户要求的形态）。
+      // 注意数据源是成员渠道而不是分组的 vendor 字段：分组可以跨厂商，
+      // vendor 只是建组时的筛选便利，用它会漏掉成员里的其它厂商。
       title: "厂商",
       dataIndex: "type",
       width: 150,
@@ -154,8 +166,15 @@ export default function AdminGroupsPage() {
         const icons = iconsOfGroup(g);
         const shown = icons.slice(0, 3);
         const more = icons.length - shown.length;
+        // 没有任何成员时，回落到建组时选的厂商筛选（或「不限」）
+        const empty = icons.length === 0;
+        const title = empty
+          ? t
+            ? providers.find((p) => p.key === t)?.name || t
+            : "不限厂商"
+          : icons.map((x) => providers.find((p) => p.key === x)?.name || x).join("、");
         return (
-          <Tooltip title={icons.map((x) => providers.find((p) => p.key === x)?.name || x).join("、")}>
+          <Tooltip title={title}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
               <span style={{ display: "inline-flex", alignItems: "center" }}>
                 {shown.map((x, i) => (
@@ -175,7 +194,7 @@ export default function AdminGroupsPage() {
                 ))}
                 {more > 0 ? <span className="bui-chip" style={{ marginLeft: 2 }}>+{more}</span> : null}
               </span>
-              <span>{g.typeName || t}</span>
+              <span>{title}</span>
             </span>
           </Tooltip>
         );
@@ -186,19 +205,23 @@ export default function AdminGroupsPage() {
       title: "分组名",
       dataIndex: "name",
       width: 220,
-      render: (v, g) => (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          <VendorIcon type={iconsOfGroup(g)[0]} size={18} />
-          <span style={{ minWidth: 0, overflow: "hidden" }}>
-            <div style={{ fontWeight: 550 }} className="oo-truncate">{v}</div>
-            {g.remark ? (
-              <div className="oo-truncate" style={{ fontSize: 11.5, color: "var(--ink-3)" }} title={g.remark}>
-                {g.remark}
-              </div>
-            ) : null}
+      render: (v, g) => {
+        const first = iconsOfGroup(g)[0];
+        return (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            {/* 没有成员时不渲染厂商图标（分组不属于任何厂商） */}
+            {first ? <VendorIcon type={first} size={18} /> : null}
+            <span style={{ minWidth: 0, overflow: "hidden" }}>
+              <div style={{ fontWeight: 550 }} className="oo-truncate">{v}</div>
+              {g.remark ? (
+                <div className="oo-truncate" style={{ fontSize: 11.5, color: "var(--ink-3)" }} title={g.remark}>
+                  {g.remark}
+                </div>
+              ) : null}
+            </span>
           </span>
-        </span>
-      ),
+        );
+      },
     },
     {
       title: "倍率",
@@ -288,7 +311,7 @@ export default function AdminGroupsPage() {
       </div>
 
       <Modal
-        title={editing ? `编辑分组：${editing.typeName} / ${editing.name}` : "新建分组"}
+        title={editing ? `编辑分组：${editing.name}` : "新建分组"}
         open={open}
         onOk={submit}
         onCancel={() => setOpen(false)}
@@ -299,19 +322,24 @@ export default function AdminGroupsPage() {
       >
         <Form form={form} layout="vertical" requiredMark={false}>
           <Space size={12} align="start" style={{ display: "flex" }}>
-            <Form.Item name="type" label="厂商" rules={[{ required: true, message: "请选择厂商" }]} style={{ width: 200 }}>
+            <Form.Item name="name" label="分组名" rules={[{ required: true, message: "请填写分组名" }]} style={{ width: 200 }}>
+              <Input placeholder="如 vip" maxLength={32} />
+            </Form.Item>
+            <Form.Item
+              name="type"
+              label="厂商筛选"
+              tooltip="可选。只用于在建组时快速筛出某个厂商的账号；分组本身可以包含任意厂商的账号（留空 = 不限厂商）"
+              style={{ width: 200 }}
+            >
               <Select
-                placeholder="选择厂商"
-                disabled={Boolean(editing)}
-                onChange={() => {
-                  setModels([]);
-                  setMemberIds([]);
+                placeholder="不限厂商"
+                allowClear
+                onChange={(v) => {
+                  // 只切换候选视图，不清空已选账号（分组可跨厂商）
+                  setVendorFilter(v || undefined);
                 }}
                 options={providers.map((p) => ({ value: p.key, label: p.name }))}
               />
-            </Form.Item>
-            <Form.Item name="name" label="分组名" rules={[{ required: true, message: "请填写分组名" }]} style={{ width: 200 }}>
-              <Input placeholder="如 vip" maxLength={32} />
             </Form.Item>
             <Form.Item name="rate" label="计费倍率" style={{ width: 180 }}>
               <InputNumber min={0.0001} max={1000} step={0.1} style={{ width: "100%" }} />
@@ -320,11 +348,13 @@ export default function AdminGroupsPage() {
           <Form.Item name="remark" label="备注">
             <Input placeholder="可为空" maxLength={64} />
           </Form.Item>
-          <Form.Item label="包含哪些账号">
+          <Form.Item
+            label="包含哪些账号"
+            extra={`可跨厂商多选${vendorFilter ? `（当前仅显示 ${providers.find((p) => p.key === vendorFilter)?.name || vendorFilter} 的账号，可在上方「厂商筛选」里切换）` : ""}；不选 = 该分组不含任何账号`}
+          >
             <Select
               mode="multiple"
-              placeholder={pickedType ? "可多选（不选 = 该厂商全部账号）" : "先选择厂商"}
-              disabled={!pickedType}
+              placeholder="可多选（账号来自任意厂商）"
               value={memberIds}
               onChange={(v) => {
                 setMemberIds(v);
