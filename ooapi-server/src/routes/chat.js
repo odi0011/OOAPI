@@ -11,7 +11,7 @@ import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now, safeInt, clientIp } from "../utils.js";
 import { authRequired, preAuthJwt } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
-import { getPrice, computeCost, splitTokens, estimateTokens, loadPrices, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
+import { getPrice, computeCost, splitTokens, estimateTokens, loadPrices, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { groupConfigOf, applyGroupRate } from "../services/group-rate.js";
 import { allPublicModels, resolveAliasSync } from "../services/models.js";
 import { rowToChannel, channelInGroup, collectAvailableModels } from "../services/router.js";
@@ -373,7 +373,10 @@ router.post(
     const { promptTokens, completionTokens, cacheTokens } =
       tokens || splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
-  const price = await getPrice(resolveAliasSync(model));
+  const basePrice = await getPrice(resolveAliasSync(model));
+  // 分时（峰谷）定价：按整轮请求的发起时刻判档（与网关口径一致）
+  const eff = effectivePrice(basePrice, startedAt || Date.now());
+  const price = eff.price;
   // 分组倍率：用户绑定分组后按分组倍率计费（rate=1 时不变）
   // 倍率按本次实际路由的分组（选了密钥就是密钥的分组），与网关 /v1 口径一致
   const gcfg = await groupConfigOf(groupName);
@@ -414,6 +417,12 @@ router.post(
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
       cache_tokens: cacheTokens,
+      // 分时审计：与网关同一口径（事后可复核按峰价还是谷价算的）
+      price: { in: price.input, out: price.output, cache: price.cache },
+      price_phase: eff.phase,
+      priced_at: startedAt || Date.now(),
+      rate: Number(gcfg?.rate) || 1,
+      amount_units: units,
     }),
     quota: units,
     // 使用记录明细（列存储）：站内对话不经 Key，但仍记录本次路由用的密钥与分组，
@@ -430,6 +439,7 @@ router.post(
     elapsedMs: startedAt ? Date.now() - startedAt : 0,
     userAgent,
     ip,
+    pricePhase: eff.phase,
   });
   return { units, promptTokens, completionTokens, cacheTokens };
 }

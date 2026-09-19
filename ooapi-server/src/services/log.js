@@ -54,6 +54,7 @@ export async function writeLog({
   elapsedMs = 0,
   userAgent = "",
   device = "",
+  pricePhase = "",
 }) {
   // 未显式传 ip/UA 时从 req 兜底：调用方通常只关心 content，不该被迫重复写这两行
   const finalIp = ip || (req ? clientIp(req) : "");
@@ -64,8 +65,8 @@ export async function writeLog({
          user_id, username, created_at, type, content, detail, ip, request_id, quota,
          model, channel_id, channel_name, token_id, token_name, group_name,
          prompt_tokens, completion_tokens, cache_tokens, first_token_ms, elapsed_ms,
-         user_agent, device
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         user_agent, device, price_phase
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         user?.id ?? 0,
         user?.username ?? "system",
@@ -89,6 +90,7 @@ export async function writeLog({
         Math.max(0, Math.round(Number(elapsedMs) || 0)),
         finalUa,
         String(device || (finalUa ? deviceFromUa(finalUa) : "")).slice(0, 64),
+        String(pricePhase || "").slice(0, 16),
       ]
     );
   } catch (e) {

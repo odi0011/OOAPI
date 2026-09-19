@@ -30,7 +30,15 @@ const TABLES = [
     model VARCHAR(128) NOT NULL UNIQUE COMMENT '模型 id',
     input_price DECIMAL(14,6) NOT NULL DEFAULT 0 COMMENT '输入价格 OD币/百万token',
     output_price DECIMAL(14,6) NOT NULL DEFAULT 0 COMMENT '输出价格 OD币/百万token',
-    cache_price DECIMAL(14,6) NOT NULL DEFAULT 0 COMMENT '缓存命中价格 OD币/百万token',
+    cache_price DECIMAL(14,6) NOT NULL DEFAULT 0 COMMENT '缓存命中价格 OD币/百万token（高峰档）',
+    /* 分时（峰谷）定价：只有部分厂商按钟点差异定价（DeepSeek 官方工作日 9-12、14-18 为高峰，
+       其余时段半价）。NULL = 不启用闲时价，行为与改造前完全一致（全时段按上面的价格）。
+       之所以显式存闲时价而不是存折扣率：各家折扣不同（DeepSeek 半价、百炼/方舟窗口也不同），
+       存结果价最直观，也便于管理员单独调某一档。 */
+    offpeak_input_price DECIMAL(14,6) DEFAULT NULL COMMENT '闲时输入价格 OD币/百万token',
+    offpeak_output_price DECIMAL(14,6) DEFAULT NULL COMMENT '闲时输出价格 OD币/百万token',
+    offpeak_cache_price DECIMAL(14,6) DEFAULT NULL COMMENT '闲时缓存命中价格 OD币/百万token',
+    offpeak_rule TEXT COMMENT '闲时规则 JSON：{"offset":8,"days":[1,2,3,4,5],"peak":[["09:00","12:00"]]}（offset=相对 UTC 小时偏移；peak 窗口之外为空闲）',
     channel_type VARCHAR(32) NOT NULL DEFAULT '' COMMENT '典型渠道类型',
     remark VARCHAR(255) NOT NULL DEFAULT '' COMMENT '价格来源说明',
     updated_time BIGINT NOT NULL DEFAULT 0
@@ -101,6 +109,7 @@ const TABLES = [
     elapsed_ms INT NOT NULL DEFAULT 0 COMMENT '端到端总耗时',
     user_agent VARCHAR(255) NOT NULL DEFAULT '' COMMENT '原始 UA（设备识别用，仅管理员可见）',
     device VARCHAR(64) NOT NULL DEFAULT '' COMMENT 'UA 解析出的可读设备（如 Chrome 131 · Windows）',
+    price_phase VARCHAR(16) NOT NULL DEFAULT '' COMMENT '计费时段：peak/offpeak/flat（分时定价模型用）',
     INDEX idx_logs_user (user_id),
     INDEX idx_logs_created (created_at),
     INDEX idx_logs_type_created (type, created_at),
@@ -278,6 +287,12 @@ const COLUMN_MIGRATIONS = [
   { table: "logs", column: "elapsed_ms", ddl: "INT NOT NULL DEFAULT 0" },
   { table: "logs", column: "user_agent", ddl: "VARCHAR(255) NOT NULL DEFAULT ''" },
   { table: "logs", column: "device", ddl: "VARCHAR(64) NOT NULL DEFAULT ''" },
+  { table: "logs", column: "price_phase", ddl: "VARCHAR(16) NOT NULL DEFAULT ''" },
+  // 分时定价（DeepSeek 峰谷）：老库补列；NULL = 不启用闲时价，行为与改造前一致
+  { table: "model_prices", column: "offpeak_input_price", ddl: "DECIMAL(14,6) DEFAULT NULL" },
+  { table: "model_prices", column: "offpeak_output_price", ddl: "DECIMAL(14,6) DEFAULT NULL" },
+  { table: "model_prices", column: "offpeak_cache_price", ddl: "DECIMAL(14,6) DEFAULT NULL" },
+  { table: "model_prices", column: "offpeak_rule", ddl: "TEXT" },
   { table: "channel_groups", column: "rate", ddl: "DECIMAL(10,4) NOT NULL DEFAULT 1" },
   { table: "channel_groups", column: "models", ddl: "TEXT" },
   { table: "chat_sessions", column: "project_id", ddl: "VARCHAR(32) NOT NULL DEFAULT ''" },

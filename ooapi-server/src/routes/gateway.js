@@ -7,7 +7,7 @@ import { getBoolOption } from "../config.js";
 import { now, clientIp, asyncHandler, assertPublicUrl } from "../utils.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { runCompletion } from "../services/execute.js";
-import { getPrice, computeCost, splitTokens, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
+import { getPrice, computeCost, splitTokens, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { groupConfigOf, applyGroupRate } from "../services/group-rate.js";
 import { allPublicModels, modelForChannelMatch, resolveAliasSync } from "../services/models.js";
 import { collectAvailableModels } from "../services/router.js";
@@ -237,8 +237,13 @@ async function settle({
 }) {
   const { promptTokens, completionTokens, cacheTokens } = splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
-  const price = await getPrice(resolveAliasSync(model));
-  // 分组倍率：Key 绑定分组后按分组倍率计费（rate=1 时不变）
+  const basePrice = await getPrice(resolveAliasSync(model));
+  // 分时（峰谷）定价：按「请求发起时刻」归属时段，而不是结算时刻 ——
+  // 一个 11:59 发起、12:01 结束的请求应当按高峰价算，用结算时刻会差出一倍。
+  const eff = effectivePrice(basePrice, startedAt || Date.now());
+  const price = eff.price;
+  // 分组倍率：Key 绑定分组后按分组倍率计费（rate=1 时不变）；
+  // 与分时是两层独立乘数（时段决定单价，倍率决定加价倍数），顺序保持原样
   const gcfg = await groupConfigOf(token?.group_name || user?.group_name);
   const units = applyGroupRate(computeCost({ price, promptTokens, completionTokens, cacheTokens }), gcfg?.rate);
   const od = (units / UNITS_PER_OD).toFixed(4);
@@ -285,6 +290,11 @@ async function settle({
       completion_tokens: completionTokens,
       cache_tokens: cacheTokens,
       price: { in: price.input, out: price.output, cache: price.cache },
+      // 分时审计：事后能复核「这次按峰价还是谷价算的」，以及用的是哪个时刻判档
+      price_phase: eff.phase,
+      priced_at: startedAt || Date.now(),
+      rate: Number(gcfg?.rate) || 1,
+      amount_units: units,
       requestId,
     }),
     quota: units,
@@ -304,6 +314,7 @@ async function settle({
     firstTokenMs: firstTokenAt && startedAt ? firstTokenAt - startedAt : startedAt ? Date.now() - startedAt : 0,
     elapsedMs: startedAt ? Date.now() - startedAt : 0,
     userAgent,
+    pricePhase: eff.phase,
   });
   return { units, promptTokens, completionTokens, cacheTokens };
 }

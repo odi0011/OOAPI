@@ -36,21 +36,34 @@ export const CURRENCY = "OD币";
 const CNY_PER_USD = 7.2; // 官方人民币价折算美元用（平台币制固定 1 OD = 1 USD）
 export const DEFAULT_PRICES = [
   // --- DeepSeek：官方当前只有这两个模型（网页反代输出的也是 flash）---
+  // 官方按钟点差异定价（2026-09 官方定价页脚注原文：Off-peak rates are half of the peak rates.
+  // Peak hours are 01:00-04:00 and 06:00-10:00 UTC, Monday through Friday），
+  // 即北京时间周一至周五 9:00-12:00、14:00-18:00 为高峰，其余时段（含整个周末）半价。
+  // 注意：阿里百炼 / 火山方舟上托管的 DeepSeek 窗口不同（百炼是每天 22:00-08:00 闲时），
+  // 若接的是那两家的通道，需要在该渠道对应的模型价格里单独改 offpeak_rule。
   {
     model: "deepseek-flash",
     input: 0.30,
     output: 1.20,
     cache: 0.006,
+    offpeakInput: 0.15,
+    offpeakOutput: 0.60,
+    offpeakCache: 0.003,
+    offpeakRule: { offset: 8, days: [1, 2, 3, 4, 5], peak: [["09:00", "12:00"], ["14:00", "18:00"]] },
     type: "deepseek",
-    remark: "官方高峰价，闲时半价；来源 api-docs.deepseek.com/quick_start/pricing/",
+    remark: "官方峰谷价（高峰=北京时间工作日 9-12/14-18，其余半价）；来源 api-docs.deepseek.com/quick_start/pricing/",
   },
   {
     model: "deepseek-v4-pro",
     input: 1.32,
     output: 3.96,
     cache: 0.044,
+    offpeakInput: 0.66,
+    offpeakOutput: 1.98,
+    offpeakCache: 0.022,
+    offpeakRule: { offset: 8, days: [1, 2, 3, 4, 5], peak: [["09:00", "12:00"], ["14:00", "18:00"]] },
     type: "deepseek",
-    remark: "官方高峰价，闲时半价；来源 api-docs.deepseek.com/quick_start/pricing/",
+    remark: "官方峰谷价（高峰=北京时间工作日 9-12/14-18，其余半价）；来源 api-docs.deepseek.com/quick_start/pricing/",
   },
 
   // --- 智谱 GLM（官方人民币价 ÷ 7.2；来源 open.bigmodel.cn/pricing）---
@@ -128,6 +141,11 @@ export async function loadPrices() {
       input: Number(r.input_price) || 0,
       output: Number(r.output_price) || 0,
       cache: Number(r.cache_price) || 0,
+      // 闲时价：NULL 表示不启用分时（与改造前行为一致）
+      offpeakInput: r.offpeak_input_price === null ? null : Number(r.offpeak_input_price),
+      offpeakOutput: r.offpeak_output_price === null ? null : Number(r.offpeak_output_price),
+      offpeakCache: r.offpeak_cache_price === null ? null : Number(r.offpeak_cache_price),
+      offpeakRule: r.offpeak_rule || "",
       type: r.channel_type || "",
       remark: r.remark || "",
     });
@@ -139,6 +157,92 @@ export async function loadPrices() {
 
 export function invalidatePrices() {
   priceCacheAt = 0;
+}
+
+// ---------------------------------------------------------------------------
+// 分时（峰谷）定价
+// ---------------------------------------------------------------------------
+// 背景：多数厂商按时段统一定价，但 DeepSeek 官方按钟点差异定价
+// （高峰=北京时间周一至周五 9:00-12:00、14:00-18:00，其余时段半价；
+// 阿里百炼托管的 DeepSeek 窗口不同，是每天 22:00-08:00 为闲时）。
+// 因此规则必须可配，不能写死窗口。
+//
+// 为什么用固定 UTC 偏移而不是 Intl/timeZone：
+//   中国无夏令时，偏移运算不依赖 ICU，跨平台（不同 Node 构建）行为完全一致。
+// 规则 JSON：{ "offset": 8, "days": [1,2,3,4,5], "peak": [["09:00","12:00"],["14:00","18:00"]] }
+//   offset = 相对 UTC 的小时偏移（8 = 北京时间）
+//   days   = 视作「工作日」的星期（1=周一 … 7=周日）；不在其中 = 全天闲时
+//   peak   = 高峰窗口；窗口之外均为闲时（与官方「其余为空闲时段」表述一致）
+// 跨零点窗口（如 22:00-08:00）也支持：起 > 止时按「跨天」处理。
+
+function parseRule(raw) {
+  if (!raw) return null;
+  if (typeof raw === "object") return raw;
+  try {
+    return JSON.parse(String(raw));
+  } catch {
+    return null;
+  }
+}
+
+function toMinutes(hhmm) {
+  const [h, m] = String(hhmm || "").split(":");
+  const hh = Number(h);
+  const mm = Number(m);
+  if (!Number.isFinite(hh)) return null;
+  return hh * 60 + (Number.isFinite(mm) ? mm : 0);
+}
+
+/** 给定时刻是否处于高峰时段（规则缺失时一律视为高峰 = 用基准价，保持向后兼容） */
+export function isPeakAt(rule, atMs) {
+  const r = parseRule(rule);
+  if (!r || !Array.isArray(r.peak) || !r.peak.length) return true;
+  const offset = Number(r.offset) || 0;
+  // 先偏移到规则所在时区，再用 UTC 取值：避免依赖进程时区设置
+  const d = new Date(Number(atMs) + offset * 3600_000);
+  const day = d.getUTCDay() === 0 ? 7 : d.getUTCDay();
+  if (Array.isArray(r.days) && r.days.length && !r.days.includes(day)) return false;
+  const min = d.getUTCHours() * 60 + d.getUTCMinutes();
+  return r.peak.some(([a, b]) => {
+    const s = toMinutes(a);
+    const e = toMinutes(b);
+    if (s === null || e === null) return false;
+    // 起 > 止 = 跨零点（如 22:00-08:00）
+    return s <= e ? min >= s && min < e : min >= s || min < e;
+  });
+}
+
+/**
+ * 取「该时刻生效的单价」。
+ * 必须返回**新对象**：getPrice 返回的是 30s 缓存里的同一个引用，
+ * 就地改 input/output 会污染同缓存周期内的所有请求。
+ * @returns {{price: object, phase: "peak"|"offpeak"|"flat"}}
+ */
+export function effectivePrice(price, atMs = Date.now()) {
+  const hasOff = price?.offpeakInput != null || price?.offpeakOutput != null || price?.offpeakCache != null;
+  // 没配闲时价 → 全时段按基准价（flat），与改造前逐厘一致
+  if (!hasOff) return { price, phase: "flat" };
+  if (isPeakAt(price.offpeakRule, atMs)) return { price, phase: "peak" };
+  return {
+    phase: "offpeak",
+    price: {
+      ...price,
+      input: price.offpeakInput ?? price.input,
+      output: price.offpeakOutput ?? price.output,
+      cache: price.offpeakCache ?? price.cache,
+    },
+  };
+}
+
+/** 给人看的规则摘要（管理端展示；识别不出规则时返回空串） */
+export function describeRule(rule) {
+  const r = parseRule(rule);
+  if (!r || !Array.isArray(r.peak) || !r.peak.length) return "";
+  const offset = Number(r.offset) || 0;
+  const tz = offset === 8 ? "北京" : offset === 0 ? "UTC" : `UTC${offset >= 0 ? "+" : ""}${offset}`;
+  const days = Array.isArray(r.days) && r.days.length ? (r.days.length === 7 ? "每天" : `周${r.days.join("/")}`) : "每天";
+  const wins = r.peak.map(([a, b]) => `${a}-${b}`).join("、");
+  return `${tz}时间 ${days} ${wins} 为高峰，其余半价`;
 }
 
 // 取模型价格：精确匹配 → 最长前缀匹配 → 同厂商兜底 → 全局兜底
@@ -294,10 +398,25 @@ export async function seedDefaultPrices() {
   let added = 0;
   for (const p of DEFAULT_PRICES) {
     const [ret] = await pool.query(
-      `INSERT INTO model_prices (model, input_price, output_price, cache_price, channel_type, remark, updated_time)
-       VALUES (?,?,?,?,?,?,?)
+      `INSERT INTO model_prices
+         (model, input_price, output_price, cache_price,
+          offpeak_input_price, offpeak_output_price, offpeak_cache_price, offpeak_rule,
+          channel_type, remark, updated_time)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)
        ON DUPLICATE KEY UPDATE model = model`,
-      [p.model, p.input, p.output, p.cache, p.type, p.remark, ts]
+      [
+        p.model,
+        p.input,
+        p.output,
+        p.cache,
+        p.offpeakInput ?? null,
+        p.offpeakOutput ?? null,
+        p.offpeakCache ?? null,
+        p.offpeakRule ? JSON.stringify(p.offpeakRule) : null,
+        p.type,
+        p.remark,
+        ts,
+      ]
     );
     if (ret.affectedRows === 1) added += 1;
   }

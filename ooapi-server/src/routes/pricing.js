@@ -4,11 +4,40 @@ import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
-import { invalidatePrices, UNITS_PER_OD, CURRENCY, loadPrices, DEFAULT_PRICES } from "../services/pricing.js";
+import { invalidatePrices, UNITS_PER_OD, CURRENCY, loadPrices, DEFAULT_PRICES, describeRule } from "../services/pricing.js";
 import { modelRegistry, invalidateModelRegistry } from "../services/models.js";
 
 const router = Router();
 router.use(adminRequired);
+
+// 闲时规则入参校验：只接受 JSON 字符串或对象，且必须是可解析的结构。
+// 为什么要在这里校验而不是留给计费时兜底：计费失败的代价是「用户被多扣费」，
+// 宁可保存时就拒绝，也不要让一条坏规则进库。
+function parseRuleInput(v) {
+  if (v === undefined || v === null || String(v).trim() === "") return null;
+  let obj = v;
+  if (typeof v === "string") {
+    try {
+      obj = JSON.parse(v);
+    } catch {
+      throw new Error("闲时规则不是合法 JSON");
+    }
+  }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) throw new Error("闲时规则必须是 JSON 对象");
+  const peak = obj.peak;
+  if (!Array.isArray(peak) || !peak.length) throw new Error("闲时规则缺少 peak 窗口");
+  for (const w of peak) {
+    if (!Array.isArray(w) || w.length !== 2 || !/^\d{1,2}:\d{2}$/.test(String(w[0])) || !/^\d{1,2}:\d{2}$/.test(String(w[1]))) {
+      throw new Error("peak 窗口格式应为 [[\"09:00\",\"12:00\"]]");
+    }
+  }
+  if (obj.days !== undefined && (!Array.isArray(obj.days) || obj.days.some((d) => !Number.isInteger(d) || d < 1 || d > 7))) {
+    throw new Error("days 应为 1-7 的星期数组（1=周一）");
+  }
+  const offset = Number(obj.offset || 0);
+  if (!Number.isFinite(offset) || offset < -12 || offset > 14) throw new Error("offset 应为 -12 ~ 14 的小时偏移");
+  return JSON.stringify({ offset, days: obj.days || [1, 2, 3, 4, 5], peak });
+}
 
 // 列表
 router.get(
@@ -36,6 +65,12 @@ router.get(
         input_price: Number(r.input_price),
         output_price: Number(r.output_price),
         cache_price: Number(r.cache_price),
+        // 闲时价（NULL = 该模型不分时）
+        offpeak_input_price: r.offpeak_input_price === null ? null : Number(r.offpeak_input_price),
+        offpeak_output_price: r.offpeak_output_price === null ? null : Number(r.offpeak_output_price),
+        offpeak_cache_price: r.offpeak_cache_price === null ? null : Number(r.offpeak_cache_price),
+        offpeak_rule: r.offpeak_rule || "",
+        offpeak_text: describeRule(r.offpeak_rule),
         channel_type: r.channel_type || "",
         remark: r.remark || "",
         updated_time: Number(r.updated_time) || 0,
@@ -50,7 +85,10 @@ router.get(
 router.put(
   "/",
   asyncHandler(async (req, res) => {
-    const { model, input_price, output_price, cache_price, channel_type, remark } = req.body || {};
+    const {
+      model, input_price, output_price, cache_price, channel_type, remark,
+      offpeak_input_price, offpeak_output_price, offpeak_cache_price, offpeak_rule,
+    } = req.body || {};
     const m = String(model || "").trim();
     if (!m) return fail(res, "缺少模型 ID");
     // 与导入同一套严格口径：只允许平台已注册的模型
@@ -66,25 +104,39 @@ router.put(
       if (n > MAX_PRICE) throw new Error(`${name} 超出上限（${MAX_PRICE}）`);
       return Number(n.toFixed(6));
     };
-    let input; let output; let cache;
+    let input; let output; let cache; let offIn; let offOut; let offCache; let ruleText;
     try {
       input = num(input_price, "input");
       output = num(output_price, "output");
       cache = num(cache_price, "cache");
+      offIn = num(offpeak_input_price, "offpeak_input");
+      offOut = num(offpeak_output_price, "offpeak_output");
+      offCache = num(offpeak_cache_price, "offpeak_cache");
+      ruleText = parseRuleInput(offpeak_rule);
     } catch (e) {
       return fail(res, e.message);
     }
     if (input == null || output == null) return fail(res, "输入/输出价格不能为空");
     await pool.query(
-      `INSERT INTO model_prices (model, input_price, output_price, cache_price, channel_type, remark, updated_time)
-       VALUES (?,?,?,?,?,?,?)
+      `INSERT INTO model_prices
+         (model, input_price, output_price, cache_price,
+          offpeak_input_price, offpeak_output_price, offpeak_cache_price, offpeak_rule,
+          channel_type, remark, updated_time)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)
        ON DUPLICATE KEY UPDATE input_price=VALUES(input_price), output_price=VALUES(output_price),
-        cache_price=VALUES(cache_price), channel_type=VALUES(channel_type), remark=VALUES(remark), updated_time=VALUES(updated_time)`,
+        cache_price=VALUES(cache_price),
+        offpeak_input_price=VALUES(offpeak_input_price), offpeak_output_price=VALUES(offpeak_output_price),
+        offpeak_cache_price=VALUES(offpeak_cache_price), offpeak_rule=VALUES(offpeak_rule),
+        channel_type=VALUES(channel_type), remark=VALUES(remark), updated_time=VALUES(updated_time)`,
       [
         String(reg.model).slice(0, 128),
         input,
         output,
         cache ?? 0,
+        offIn,
+        offOut,
+        offCache,
+        ruleText,
         String(channel_type || reg.type || "").slice(0, 32),
         String(remark || "").slice(0, 255),
         now(),
@@ -148,6 +200,11 @@ const HEADER_ALIASES = {
   input: "input", input_price: "input", 输入: "input", 输入价: "input",
   output: "output", output_price: "output", 输出: "output", 输出价: "output",
   cache: "cache", cache_price: "cache", cached: "cache", 缓存: "cache", 缓存价: "cache",
+  // 分时定价（可选列）：闲时价 + 规则
+  offpeak_input: "offpeak_input", offpeak_input_price: "offpeak_input", 闲时输入: "offpeak_input",
+  offpeak_output: "offpeak_output", offpeak_output_price: "offpeak_output", 闲时输出: "offpeak_output",
+  offpeak_cache: "offpeak_cache", offpeak_cache_price: "offpeak_cache", 闲时缓存: "offpeak_cache",
+  offpeak_rule: "offpeak_rule", 闲时规则: "offpeak_rule",
   type: "type", channel_type: "type", 类型: "type",
   remark: "remark", source: "remark", 来源: "remark", 备注: "remark",
 };
@@ -233,6 +290,11 @@ router.post(
           input: num(entry.input ?? entry.input_price, "input", true),
           output: num(entry.output ?? entry.output_price, "output", true),
           cache: num(entry.cache ?? entry.cache_price, "cache", false),
+          // 闲时价（可选）：只给峰时价时留空 = 该模型不分时
+          offpeakInput: num(entry.offpeak_input ?? entry.offpeak_input_price, "offpeak_input", false),
+          offpeakOutput: num(entry.offpeak_output ?? entry.offpeak_output_price, "offpeak_output", false),
+          offpeakCache: num(entry.offpeak_cache ?? entry.offpeak_cache_price, "offpeak_cache", false),
+          offpeakRule: parseRuleInput(entry.offpeak_rule),
           type: reg.type || type,
           remark: String(entry.remark ?? entry.source ?? "").slice(0, 255),
         });
@@ -253,11 +315,21 @@ router.post(
       await conn.beginTransaction();
       for (const p of accepted.values()) {
         const [ret] = await conn.query(
-          `INSERT INTO model_prices (model, input_price, output_price, cache_price, channel_type, remark, updated_time)
-           VALUES (?,?,?,?,?,?,?)
+          `INSERT INTO model_prices
+             (model, input_price, output_price, cache_price,
+              offpeak_input_price, offpeak_output_price, offpeak_cache_price, offpeak_rule,
+              channel_type, remark, updated_time)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)
            ON DUPLICATE KEY UPDATE input_price=VALUES(input_price), output_price=VALUES(output_price),
-            cache_price=VALUES(cache_price), channel_type=VALUES(channel_type), remark=VALUES(remark), updated_time=VALUES(updated_time)`,
-          [p.model, p.input, p.output, p.cache, p.type, p.remark, ts]
+            cache_price=VALUES(cache_price),
+            offpeak_input_price=VALUES(offpeak_input_price), offpeak_output_price=VALUES(offpeak_output_price),
+            offpeak_cache_price=VALUES(offpeak_cache_price), offpeak_rule=VALUES(offpeak_rule),
+            channel_type=VALUES(channel_type), remark=VALUES(remark), updated_time=VALUES(updated_time)`,
+          [
+            p.model, p.input, p.output, p.cache,
+            p.offpeakInput, p.offpeakOutput, p.offpeakCache, p.offpeakRule,
+            p.type, p.remark, ts,
+          ]
         );
         if (ret.affectedRows === 1) inserted += 1;
         else updated += 1;
@@ -319,11 +391,22 @@ router.post(
       await conn.beginTransaction();
       for (const p of DEFAULT_PRICES) {
         await conn.query(
-          `INSERT INTO model_prices (model, input_price, output_price, cache_price, channel_type, remark, updated_time)
-           VALUES (?,?,?,?,?,?,?)
+          `INSERT INTO model_prices
+             (model, input_price, output_price, cache_price,
+              offpeak_input_price, offpeak_output_price, offpeak_cache_price, offpeak_rule,
+              channel_type, remark, updated_time)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)
            ON DUPLICATE KEY UPDATE input_price=VALUES(input_price), output_price=VALUES(output_price),
-            cache_price=VALUES(cache_price), channel_type=VALUES(channel_type), remark=VALUES(remark), updated_time=VALUES(updated_time)`,
-          [p.model, p.input, p.output, p.cache, p.type, p.remark, ts]
+            cache_price=VALUES(cache_price),
+            offpeak_input_price=VALUES(offpeak_input_price), offpeak_output_price=VALUES(offpeak_output_price),
+            offpeak_cache_price=VALUES(offpeak_cache_price), offpeak_rule=VALUES(offpeak_rule),
+            channel_type=VALUES(channel_type), remark=VALUES(remark), updated_time=VALUES(updated_time)`,
+          [
+            p.model, p.input, p.output, p.cache,
+            p.offpeakInput ?? null, p.offpeakOutput ?? null, p.offpeakCache ?? null,
+            p.offpeakRule ? JSON.stringify(p.offpeakRule) : null,
+            p.type, p.remark, ts,
+          ]
         );
         updated += 1;
       }

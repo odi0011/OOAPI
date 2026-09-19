@@ -387,8 +387,8 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       channel: result.channel?.name || "",
       channelId: Number(result.channel?.id) || 0,
       // 单步耗时与首 token：使用记录里按「整轮」汇总展示（见 chat.js 的 chargeUser）
-      startedAt: stepStartAt,
-      firstTokenAt: firstTokenAt || stepStartAt,
+      startedAt: stepStartedAt,
+      firstTokenAt: stepFirstTokenAt || stepStartedAt,
     });
 
     const stepText = (textPart?.text || "").trim();

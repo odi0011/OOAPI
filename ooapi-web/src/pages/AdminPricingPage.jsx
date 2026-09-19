@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Table, Input, Select, App as AntApp, Typography, Modal, Upload, Alert, Space, Button, Popconfirm, Tag } from "antd";
+import { Table, Input, Select, App as AntApp, Typography, Modal, Upload, Alert, Space, Button, Popconfirm, Tag, Tooltip } from "antd";
 import { ReloadOutlined, SearchOutlined, DollarOutlined, UploadOutlined, ClearOutlined, CloudDownloadOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import useLatest from "../hooks/useLatest";
@@ -38,10 +38,32 @@ const TYPE_LABEL = {
 };
 
 // 导入模板（JSON）：模型 ID 必须与平台登记表严格一致
+// 分时定价（可选）：offpeak_* = 闲时价，offpeak_rule 里 offset 是相对 UTC 的小时偏移
+// （8 = 北京时间），peak 是高峰窗口，窗口之外按闲时价计费。
 const importTemplate = {
   prices: [
-    { model: "deepseek-flash", input: 0.3, output: 1.2, cache: 0.006, remark: "官方高峰价；来源 api-docs.deepseek.com/quick_start/pricing/" },
-    { model: "deepseek-v4-pro", input: 1.32, output: 3.96, cache: 0.044, remark: "官方高峰价；来源 api-docs.deepseek.com/quick_start/pricing/" },
+    {
+      model: "deepseek-flash",
+      input: 0.3,
+      output: 1.2,
+      cache: 0.006,
+      offpeak_input: 0.15,
+      offpeak_output: 0.6,
+      offpeak_cache: 0.003,
+      offpeak_rule: "{\"offset\":8,\"days\":[1,2,3,4,5],\"peak\":[[\"09:00\",\"12:00\"],[\"14:00\",\"18:00\"]]}",
+      remark: "官方峰谷价；来源 api-docs.deepseek.com/quick_start/pricing/",
+    },
+    {
+      model: "deepseek-v4-pro",
+      input: 1.32,
+      output: 3.96,
+      cache: 0.044,
+      offpeak_input: 0.66,
+      offpeak_output: 1.98,
+      offpeak_cache: 0.022,
+      offpeak_rule: "{\"offset\":8,\"days\":[1,2,3,4,5],\"peak\":[[\"09:00\",\"12:00\"],[\"14:00\",\"18:00\"]]}",
+      remark: "官方峰谷价；来源 api-docs.deepseek.com/quick_start/pricing/",
+    },
   ],
 };
 
@@ -121,6 +143,31 @@ export default function AdminPricingPage() {
       dataIndex: "remark",
       ellipsis: true,
       render: (v) => <span style={{ fontSize: 12.5, color: "var(--ink-3)" }}>{v || "—"}</span>,
+    },
+    {
+      // 分时（峰谷）定价：只有部分厂商按钟点差异定价（DeepSeek 官方工作日 9-12、14-18 为高峰）
+      title: "分时",
+      dataIndex: "offpeak_text",
+      width: 240,
+      ellipsis: true,
+      render: (v, r) =>
+        v ? (
+          <Tooltip
+            title={
+              <div style={{ fontSize: 12 }}>
+                <div>{v}</div>
+                <div style={{ marginTop: 4 }}>
+                  闲时：输入 {r.offpeak_input_price ?? "—"} / 输出 {r.offpeak_output_price ?? "—"} / 缓存{" "}
+                  {r.offpeak_cache_price ?? "—"}
+                </div>
+              </div>
+            }
+          >
+            <span className="bui-chip bui-chip--green" style={{ fontSize: 11.5 }}>峰谷价</span>
+          </Tooltip>
+        ) : (
+          <Text type="secondary" style={{ fontSize: 12 }}>—</Text>
+        ),
     },
   ];
 
