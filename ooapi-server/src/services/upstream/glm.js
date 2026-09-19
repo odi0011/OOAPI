@@ -57,6 +57,15 @@ function detectError(frames) {
     if (/rate|limit|频繁|too many/i.test(`${code}${detail}`)) {
       return { code: "CHANNEL_RATE_LIMIT", message: `请求过于频繁：${detail || code}` };
     }
+    // 「无法使用此模型」：账号套餐不包含该档位。
+    // 这类错误换渠道/重试都不会好，重试只会白等一轮，所以映射成不可重试的
+    // CHANNEL_BAD_REQUEST 并给出可执行的提示（该渠道该模型不可用）。
+    if (/无法使用此模型|not available|no permission|无权/i.test(detail)) {
+      return {
+        code: "CHANNEL_BAD_REQUEST",
+        message: `当前账号无权使用该模型档位：${detail}（请更换该渠道声明的模型，或改用账号套餐内的档位）`,
+      };
+    }
     return { code: "CHANNEL_BIZ_ERROR", message: `上游错误：${detail || code || JSON.stringify(e).slice(0, 120)}` };
   }
   return null;
@@ -181,11 +190,13 @@ export async function chat({
     }
     // 请求参数或模型后缀（-search）任一命中都开联网
     if (search || resolved.search) patchSet["features.auto_web_search"] = true;
-    // 是否注入模型档位。默认**开启**：不注入时页面用它自己的默认档，
-    // 与用户请求的模型往往不一致（线上实测：请求 glm-5.3，实际跑 x-preview-l），
-    // 而计费按请求的模型算 —— 用户按贵档付费、拿到的是另一个档位。
-    // 注入失败也会在下方核对实际档位并告警（patch_model=false 可显式关掉）。
-    const wantPatchModel = channel?.other?.patch_model !== false;
+    // 是否注入模型档位。默认**不注入**：线上实测强制注入 glm-5.3 会直接被上游拒绝
+    // （「当前用户无法使用此模型」），而账号套餐能用哪些档位只有页面自己清楚 ——
+    // 注入等于把「用到别的档位」换成「整个渠道不可用」，是更糟的取舍。
+    // 代价是实际档位可能与请求不一致，因此下方会把上游真实档位回传给计费侧，
+    // 保证「实际跑什么档位就按什么档位收费」。管理员确知套餐可用时可用
+    // other.patch_model=true 强制注入。
+    const wantPatchModel = channel?.other?.patch_model === true;
     if (wantPatchModel) patchSet.model = upstreamId;
 
     await setPatch(page, { set: patchSet });
