@@ -191,6 +191,11 @@ function countImageParts(messages) {
 
 async function extractImages(messages) {
   const images = [];
+  // 远程图片并发抓取：原先在双层 for 里 await，3 张各 800ms 的图要串行等 2.4s，
+  // 而这段时间完全在「鉴权之后、调上游之前」，用户侧就是纯等待（首字延迟里最大的一块
+  // 固定开销）。改为收集任务后 Promise.all —— 顺序仍按出现顺序保持（all 保证）。
+  // base64 图片是纯内存操作，保持同步处理。
+  const remoteTasks = [];
   for (const m of messages || []) {
     if (!m || typeof m !== "object" || !Array.isArray(m.content)) continue;
     for (const part of m.content) {
@@ -206,14 +211,15 @@ async function extractImages(messages) {
           mimeType: mm[1],
           filename: mm[1].includes("png") ? "image.png" : "image.jpg"});
       } else if (/^https?:/i.test(url)) {
-        try {
-          const img = await fetchRemoteImage(url);
-          if (img) images.push(img);
-        } catch {
-          /* 忽略非法/不可达图片 */
-        }
+        remoteTasks.push(url);
       }
     }
+  }
+  if (remoteTasks.length) {
+    const fetched = await Promise.all(
+      remoteTasks.map((u) => fetchRemoteImage(u).catch(() => null))
+    );
+    for (const img of fetched) if (img) images.push(img);
   }
   return images;
 }
@@ -284,17 +290,21 @@ async function settle({
     // 扣费是否已提交无法确认：调用方据此跳过部分结算，避免重复扣费
     throw Object.assign(new Error(`扣费结果不确定：${e.message}`), { code: "BILLING_UNCERTAIN" });
   }
-  // 扣费后的令牌/日志更新是 best-effort：如果这里抛错，调用方 catch 会因
+  // 扣费后的令牌更新与日志写入是 best-effort：如果这里抛错，调用方 catch 会因
   // settledOnce 还没置位而再次结算，导致用户额度被扣两次。
-  if (!token.unlimited_quota) {
-    await pool
-      .query("UPDATE tokens SET remain_quota = GREATEST(0, remain_quota - ?) WHERE id = ?", [units, token.id])
-      .catch((e) => console.error("[gateway] 令牌额度更新失败：", e.message));
-  }
-  await pool
-    .query("UPDATE tokens SET used_quota = used_quota + ?, accessed_time = ? WHERE id = ?", [units, now(), token.id])
-    .catch((e) => console.error("[gateway] 令牌用量更新失败：", e.message));
-  await writeLog({
+  //
+  // 这两条 UPDATE 合并成一次（同一个 tokens 行），并与「写日志」并发执行：
+  // 原先三条串行语句在客户端拿到 [DONE] 之前逐一 await，本机约 1~2ms，
+  // 跨机数据库每往返 0.5~3ms，合计 3~15ms 的纯延迟，且直接推迟流式响应的收尾。
+  const tokenUpdates = pool
+    .query(
+      `UPDATE tokens SET used_quota = used_quota + ?, accessed_time = ?,
+              remain_quota = IF(unlimited_quota = 1, remain_quota, GREATEST(0, remain_quota - ?))
+        WHERE id = ?`,
+      [units, now(), units, token.id]
+    )
+    .catch((e) => console.error("[gateway] 令牌额度更新失败：", e.message));
+  const logWrite = writeLog({
     user,
     type: LOG_TYPE.CONSUME,
     content: `调用 ${model} · 提示 ${promptTokens} / 补全 ${completionTokens} tokens${
@@ -332,6 +342,7 @@ async function settle({
     elapsedMs: startedAt ? Date.now() - startedAt : 0,
     userAgent,
     pricePhase: eff.phase});
+  await Promise.all([tokenUpdates, logWrite]);
   return { units, promptTokens, completionTokens, cacheTokens };
 }
 

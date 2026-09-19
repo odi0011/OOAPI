@@ -99,9 +99,17 @@ export async function copyProfile(vendor, fromId, toId) {
 export async function getSession({ vendor, channelId, entryUrl, profile, visible = false }) {
   const key = `${vendor}:${channelId}`;
   const exist = sessions.get(key);
+  // 存活判定必须同时看 ctx 和 page：
+  // 渲染进程崩溃、页面被 window.close() 或导航到 about:blank 之后 context 仍然活着，
+  // 但 s.page 已经是个死对象 —— 此时如果直接返回该会话，后续每个请求都会在第一步
+  // 抛 Playwright 原生错误（无 code），execute 当成基础设施故障换渠道，
+  // 该渠道会一直失败到 15 分钟看门狗才重建。这里主动判定并重建页面。
   if (exist?.ctx) {
-    exist.lastUsed = Date.now();
-    return exist;
+    if (isPageUsable(exist.page)) {
+      exist.lastUsed = Date.now();
+      return exist;
+    }
+    // 页面已死但 context 还在：下面走「复用浏览器、只重建页面」（快好几秒）
   }
 
   // 并发首建保护：两个请求同时打来且会话还没建好时，若各建各的，
@@ -110,14 +118,43 @@ export async function getSession({ vendor, channelId, entryUrl, profile, visible
   const inflight = pending.get(key);
   if (inflight) return inflight;
 
-  const p = createSession({ vendor, channelId, key, entryUrl, profile, visible }).finally(() => {
+  const p = createSession({ vendor, channelId, key, entryUrl, profile, visible, reuse: exist }).finally(() => {
     if (pending.get(key) === p) pending.delete(key);
   });
   pending.set(key, p);
   return p;
 }
 
-async function createSession({ vendor, channelId, key, entryUrl, profile, visible = false }) {
+/** 页面是否还能用（isClosed 可能抛错：死对象上调用时） */
+function isPageUsable(page) {
+  if (!page) return false;
+  try {
+    return !page.isClosed();
+  } catch {
+    return false;
+  }
+}
+
+async function createSession({ vendor, channelId, key, entryUrl, profile, visible = false, reuse = null }) {
+  // 页面死了但浏览器还活着：只重建页面，省掉一次完整启动（几秒）。
+  if (reuse?.ctx && !isPageUsable(reuse.page)) {
+    try {
+      const page = await reuse.ctx.newPage();
+      await page.goto(entryUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT }).catch(() => {});
+      await page.waitForTimeout(4000);
+      reuse.page = page;
+      reuse.lastUsed = Date.now();
+      attachPageWatch(reuse, key);
+      console.log(`[browser-driver] 会话 ${key} 的页面已失效，已重建页面（复用浏览器进程）`);
+      return reuse;
+    } catch (e) {
+      // 连新建页面都失败：说明 context 也不健康了，落到下面走完整重建
+      console.warn(`[browser-driver] 会话 ${key} 重建页面失败，改为重启浏览器：${e.message}`);
+      await reuse.ctx.close().catch(() => {});
+      if (sessions.get(key) === reuse) sessions.delete(key);
+    }
+  }
+
   // 窗口位置：把窗口放到屏幕可视区之外，但**不要**用 -32000。
   // 原因是页面 JS 能读到 window.screenX/screenY —— 恰好 -32000 是自动化环境的
   // 教科书级特征，真实用户不可能把窗口拖到那个坐标。
@@ -165,8 +202,26 @@ async function createSession({ vendor, channelId, key, entryUrl, profile, visibl
   ctx.on("close", () => {
     if (sessions.get(key) === s) sessions.delete(key);
   });
+  attachPageWatch(s, key);
   scheduleIdleCleanup();
   return s;
+}
+
+/**
+ * 监听页面崩溃/被关闭：把 s.page 标记为不可用（置空），
+ * 下一次 getSession 会据此重建页面，而不是拿着死对象一直失败。
+ * 只摘页面不摘会话 —— 浏览器进程还是好的，重建页面比重启浏览器快得多。
+ */
+function attachPageWatch(session, key) {
+  const page = session.page;
+  if (!page || typeof page.on !== "function") return;
+  const mark = (why) => {
+    if (session.page !== page) return; // 已经换过页面，忽略旧页面的迟到事件
+    session.page = null;
+    console.warn(`[browser-driver] 会话 ${key} 的页面${why}，下次请求将重建页面`);
+  };
+  page.on("close", () => mark("已关闭"));
+  page.on("crash", () => mark("已崩溃"));
 }
 
 let cleanupTimer = null;
@@ -604,7 +659,15 @@ export async function submit(page, { sendSelector } = {}) {
   // 所以点击与确认之间必须有足够长的等待，否则会误判为失败。
   const WAIT_AFTER_CLICK = 6000;
 
+  // 已经点过一次就不能再点下一个候选：
+  // hook 没观察到「已发出」不代表真的没发出去（页面改用 XHR、端点路径变了、
+  // 请求在 hook 装好前就发生了，都会出现这种「发了但没看到」）。
+  // 旧实现会继续点剩余候选、最后再按一次 Enter，单请求最多点几十次，
+  // 结果是把同一条 prompt 发出去多条：既浪费账号额度，短时间内两条完全相同的
+  // 消息本身就是明显的脚本特征（更容易被风控命中）。
+  let clickedAny = false;
   for (const sel of SELECTORS) {
+    if (clickedAny) break;
     const clicked = await page
       .evaluate((s) => {
         const bs = [...document.querySelectorAll(s)].filter((b) => {
@@ -619,6 +682,7 @@ export async function submit(page, { sendSelector } = {}) {
       .catch(() => 0);
 
     if (!clicked) continue;
+    clickedAny = true;
 
     // 等待请求发出（轮询，最长 WAIT_AFTER_CLICK）。
     // 轮询间隔决定了「请求已经发出但我们还没察觉」的空等时间，
@@ -628,15 +692,46 @@ export async function submit(page, { sendSelector } = {}) {
       await page.waitForTimeout(150);
       if (await started()) return true;
     }
+    // 点过但没等到信号：不再尝试其他选择器（会重复发送），
+    // 直接交给下面的「输入框是否已清空」二次确认
+    if (await sentByUiState(page)) return true;
+    return false;
   }
 
+  // 一个候选都没点上（选择器全不匹配）：退化为回车
   await page.keyboard.press("Enter");
   const t1 = Date.now();
   while (Date.now() - t1 < WAIT_AFTER_CLICK) {
     await page.waitForTimeout(150);
     if (await started()) return true;
   }
-  return false;
+  return sentByUiState(page);
+}
+
+/**
+ * 二次确认「消息是否真的发出去了」。
+ * 页面侧的 hook 可能因为上游改了请求方式（XHR 代替 fetch、端点路径变化）
+ * 而看不到请求，但 DOM 会如实反映：输入框被清空、或出现了新的用户消息气泡。
+ * 有它才能安全地「只点一次」，而不是靠反复点击碰运气。
+ */
+async function sentByUiState(page) {
+  try {
+    return await page.evaluate(() => {
+      const cap = window.__ooCap || {};
+      // 输入框已清空（发送后页面通常会立刻清空）
+      const boxes = [...document.querySelectorAll('textarea, [contenteditable="true"]')].filter((e) => {
+        const st = getComputedStyle(e);
+        return st.display !== "none" && st.visibility !== "hidden";
+      });
+      const emptied = boxes.length > 0 && boxes.every((e) => {
+        const v = e.tagName === "TEXTAREA" ? e.value : e.textContent;
+        return !String(v || "").trim();
+      });
+      return emptied || Boolean(cap.startedAt);
+    });
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -675,9 +770,25 @@ export async function streamCapture(page, {
   let lastBody = null;
   let patchError = null;
 
+  // 客户端取消时主动让**页面内**的请求停下来。
+  // 只跳出轮询是不够的：页面里的 fetch 会继续生成并消耗账号额度，
+  // 捕获缓冲也会一直涨到上限才自己停。这里设置 hook 的 stop 标志，
+  // 由页面侧的 ReadableStream 取消上游请求。
+  const abortUpstream = () => {
+    page.evaluate(() => {
+      if (window.__ooCap) window.__ooCap.stop = true;
+    }).catch(() => {});
+  };
+
   for (;;) {
-    if (signal?.aborted) return { ok: false, error: "ABORTED", frames: cursor };
-    if (Date.now() - t0 > timeoutMs) return { ok: false, error: "TIMEOUT", frames: cursor, lastBody, patchError };
+    if (signal?.aborted) {
+      abortUpstream();
+      return { ok: false, error: "ABORTED", frames: cursor };
+    }
+    if (Date.now() - t0 > timeoutMs) {
+      abortUpstream();
+      return { ok: false, error: "TIMEOUT", frames: cursor, lastBody, patchError };
+    }
 
     await page.waitForTimeout(pollMs);
 
@@ -716,7 +827,7 @@ export async function streamCapture(page, {
 }
 
 /** 同账号串行执行（带卡死看门狗，见 QUEUE_STUCK_MS 注释） */
-export function withLock(session, task) {
+export function withLock(session, task, { signal } = {}) {
   const prev = session.queue || Promise.resolve();
   let watchdog = null;
   const guarded = (async () => {
@@ -727,6 +838,12 @@ export function withLock(session, task) {
     if (session.failed) {
       throw Object.assign(new Error("会话已因超时被重建，请重试"), { code: "CHANNEL_TIMEOUT" });
     }
+    // 排队期间客户端已经断开：直接放弃，不要把消息发到上游。
+    // 否则用户点了「停止」之后，账号仍会消耗额度、网页会话里还会多出一条
+    // 用户根本不想发的消息（多轮之后这些「幽灵消息」还会打断正在进行的生成）。
+    if (signal?.aborted) {
+      throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
+    }
     // 真正开始干活才刷新空闲时间（排队期间不算活跃）
     session.lastUsed = Date.now();
     session.inFlight = (session.inFlight || 0) + 1;
@@ -735,13 +852,21 @@ export function withLock(session, task) {
     watchdog = setTimeout(() => {
       console.warn("[browser-driver] 会话任务超时未释放，强制重建会话以恢复该渠道可用性");
       session.failed = true;
-      try {
-        session.ctx?.close?.().catch?.(() => {});
-      } catch {
-        /* ignore */
-      }
+      // 必须等 close 真正完成再让下一个请求用同一个 profile 目录重建：
+      // 旧进程还持有 user-data-dir 单例锁时，新启动会失败，而失败发生在
+      // launchPersistentContext（无 code）→ 渠道会陷入「每次请求都新建都失败」的循环。
+      // 这里先摘除会话（让新请求走重建路径），再等关闭收尾。
       for (const [k, s] of sessions) {
         if (s === session) sessions.delete(k);
+      }
+      try {
+        const closing = session.ctx?.close?.();
+        if (closing && typeof closing.catch === "function") {
+          // 最多再等 10s，超时就不再阻塞（进程残留由系统的进程回收兜底）
+          Promise.race([closing.catch(() => {}), new Promise((r) => setTimeout(r, 10000).unref?.())]).catch(() => {});
+        }
+      } catch {
+        /* ignore */
       }
     }, QUEUE_STUCK_MS);
     watchdog.unref?.();

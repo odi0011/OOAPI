@@ -100,7 +100,6 @@ export async function chat({ channel, model, prompt, messages, signal, onDelta }
     channel.other = { ...(channel.other || {}), device_id: deviceId };
     await persistOtherPatch(channel.id, { device_id: deviceId }).catch(() => {});
   }
-
   // 多轮历史 → 网页版 messages
   const list = [];
   for (const m of Array.isArray(messages) ? messages : []) {
@@ -121,23 +120,43 @@ export async function chat({ channel, model, prompt, messages, signal, onDelta }
     });
   }
 
-  const resp = await fetch(`${BASE}/backend-api/conversation`, {
-    method: "POST",
-    headers: headers(token, deviceId),
-    body: JSON.stringify({
-      action: "next",
-      messages: list,
-      model: webModelId(model),
-      parent_message_id: crypto.randomUUID(),
-      conversation_mode: { kind: "primary_assistant" },
-      timezone_offset_min: -480,
-      history_and_training_disabled: false,
-    }),
-    signal,
-  }).catch((e) => {
-    if (e.name === "AbortError") throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
-    throw Object.assign(new Error(`无法连接 ChatGPT 网页版：${e.message}`), { code: "CHANNEL_NETWORK" });
-  });
+  const send = (tk) =>
+    fetch(`${BASE}/backend-api/conversation`, {
+      method: "POST",
+      headers: headers(tk, deviceId),
+      body: JSON.stringify({
+        action: "next",
+        messages: list,
+        model: webModelId(model),
+        parent_message_id: crypto.randomUUID(),
+        conversation_mode: { kind: "primary_assistant" },
+        timezone_offset_min: -480,
+        history_and_training_disabled: false,
+      }),
+      signal,
+    }).catch((e) => {
+      if (e.name === "AbortError") throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
+      throw Object.assign(new Error(`无法连接 ChatGPT 网页版：${e.message}`), { code: "CHANNEL_NETWORK" });
+    });
+
+  let resp = await send(token);
+
+  // 401 自动刷新后重试一次：其余订阅适配器（codex/claude/grok/antigravity）都有这一步，
+  // 唯独 openai-web 没有 —— 表现为 token 刚过期时该渠道必然失败一次，
+  // 而并发场景下更容易连续失败（其它请求也可能拿到同一个刚过期的 token）。
+  if (resp.status === 401 && channel?.other?.refresh_token) {
+    console.warn("[openai-web] 上游 401，刷新登录态后重试一次");
+    try {
+      await refreshAuth(channel, { force: true });
+    } catch (e) {
+      console.warn(`[openai-web] 刷新失败：${e.message}`);
+    }
+    const retryToken = String(channel?.other?.access_token || "");
+    if (retryToken && retryToken !== token) {
+      token = retryToken;
+      resp = await send(retryToken);
+    }
+  }
 
   if (resp.status === 401 || resp.status === 403) {
     // 403 常见于 sentinel/arkose 风控：明确告诉管理员换号或过风控，而不是静默失败

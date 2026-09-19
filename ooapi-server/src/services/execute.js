@@ -182,7 +182,9 @@ export async function runCompletion({
         clearTimeout(backstopTimer);
       });
 
-      await markChannelOk(channel, Date.now() - (callStarted || started), {
+      // 渠道运行时统计与响应内容无关（也不影响计费）：不 await，
+      // 否则多一次 DB 往返会推迟流式响应的收尾。失败只记日志。
+      markChannelOk(channel, Date.now() - (callStarted || started), {
         prompt,
         reply: result.content || result.reasoning || "",
         // codex-state-kit：记录本轮是否降智 / 是否携带 292 通行证（tip 展示）
@@ -191,7 +193,7 @@ export async function runCompletion({
         kind: "chat",
         // 最近调用里显示调用方（管理端头像+名字，点击复制邮箱）
         user,
-      });
+      }).catch((e) => console.warn(`[execute] 渠道统计更新失败：${e.message}`));
       await persistProfile(channel, result);
       // codex-state-kit：命中「思考截断/降智」指纹时内容照常返回，但给渠道一个短冷却，
       // 让后续请求优先换号（避免连续拿到降智/过载响应）。
