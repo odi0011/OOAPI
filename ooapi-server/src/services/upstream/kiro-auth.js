@@ -1,6 +1,24 @@
 // Kiro 凭据解析（无外部依赖，便于单测）
 export const DEFAULT_REGION = "us-east-1";
 
+// AWS region 白名单：只允许「小写字母/数字/连字符」。
+// region 会被直接拼进上游主机名（codewhisperer.{region}.amazonaws.com、
+// prod.{region}.auth.desktop.kiro.dev），而它来自外部凭据文件 —— 不校验的话
+// region = "@127.0.0.1:8080/" 会把带 Bearer 令牌的请求打到内网（SSRF + 令牌外泄）。
+// 覆盖 us-gov-west-1 / cn-north-1 等全部现行 region 形态。
+const REGION_RE = /^[a-z0-9-]{2,32}$/;
+
+/**
+ * 校验并归一化 region。
+ * 注意：**读取路径也要过这一层** —— 仅在建渠道时校验，挡不住本次加固之前
+ * 已经导进库里的脏值（那些渠道每次请求都会拿 other.region 拼主机名）。
+ * @returns {string} 合法 region；非法/为空时回落 DEFAULT_REGION
+ */
+export function safeRegion(raw) {
+  const s = String(raw || "").trim().toLowerCase();
+  return REGION_RE.test(s) ? s : DEFAULT_REGION;
+}
+
 // 平台模型 → Kiro modelId（Kiro 接受带点/带版本号的名称，网关会归一化）
 const MODEL_MAP = {
   "claude-opus-5": "claude-opus-4.5",
@@ -19,11 +37,8 @@ function normalize(t) {
   const str = (v) => String(v || "").trim();
   const access_token = str(t.accessToken || t.access_token);
   const refresh_token = str(t.refreshToken || t.refresh_token);
-  // region 会直接拼进上游主机名（codewhisperer.{region}.amazonaws.com），
-  // 而它来自外部凭据文件 —— 必须白名单校验。否则 region = "@127.0.0.1:8080/" 这类值
-  // 会把请求重定向到内网，并带着 Kiro 的 Bearer 令牌（SSRF + 令牌外泄）。
-  const rawRegion = str(t.region || t.regionId || t.region_id);
-  const region = /^[a-z0-9-]{2,32}$/i.test(rawRegion) ? rawRegion : DEFAULT_REGION;
+  // 非法值落到默认 region（见 safeRegion 注释）
+  const region = safeRegion(str(t.region || t.regionId || t.region_id));
   const profile_arn = str(t.profileArn || t.profile_arn);
   const client_id = str(t.clientId || t.client_id);
   const client_secret = str(t.clientSecret || t.client_secret);

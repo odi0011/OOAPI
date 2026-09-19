@@ -201,19 +201,25 @@ router.get(
     const isAdmin = Number(req.user.role) >= 100;
     const whereUser = isAdmin ? "" : "AND user_id = ?";
     const args = isAdmin ? [] : [req.user.id];
-    const days = safeInt(req.query.days, { min: 1, max: 3660, fallback: 30 }) || 30;
-    const since = Math.floor(Date.now() / 1000) - days * 86400;
+    // days=0 = 不限时间（与列表页「全部」同一口径）；未传或非法则默认 30 天。
+    // 注意 max 给到 3660（10 年）而不是 365：候选值要覆盖列表能翻到的范围，
+    // 否则会出现「表格里能看到某模型、筛选下拉里却选不到」。
+    const daysRaw = safeInt(req.query.days, { min: 0, max: 3660, fallback: null });
+    const days = daysRaw === null ? 30 : daysRaw;
+    const since = days ? Math.floor(Date.now() / 1000) - days * 86400 : 0;
+    const sinceCond = since ? "AND created_at >= ?" : "";
+    const sinceArgs = since ? [since] : [];
     const [models] = await pool.query(
       `SELECT model, COUNT(*) AS c FROM logs
-        WHERE type = ? AND created_at >= ? AND model <> '' ${whereUser}
+        WHERE type = ? ${sinceCond} AND model <> '' ${whereUser}
         GROUP BY model ORDER BY c DESC LIMIT 100`,
-      [USAGE_TYPE, since, ...args]
+      [USAGE_TYPE, ...sinceArgs, ...args]
     );
     const [tokens] = await pool.query(
       `SELECT token_id, token_name, COUNT(*) AS c FROM logs
-        WHERE type = ? AND created_at >= ? AND token_id > 0 ${whereUser}
+        WHERE type = ? ${sinceCond} AND token_id > 0 ${whereUser}
         GROUP BY token_id, token_name ORDER BY c DESC LIMIT 100`,
-      [USAGE_TYPE, since, ...args]
+      [USAGE_TYPE, ...sinceArgs, ...args]
     );
     return ok(res, {
       models: models.map((m) => ({ model: m.model, count: Number(m.c) })),

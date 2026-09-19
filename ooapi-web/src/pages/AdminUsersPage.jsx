@@ -364,7 +364,7 @@ export default function AdminUsersPage() {
           <Form.Item
             name="quota"
             label={`额度变化量（${CURRENCY_NAME}）`}
-            extra={`正数为补充，负数为扣除；当前余额 ${fmtOd(quotaTarget?.quota || 0, perUnit, 2)} ${CURRENCY_NAME}`}
+            extra={`正数为补充，负数为扣除；当前余额 ${fmtOd(quotaTarget?.quota || 0, perUnit, 2)}`}
             rules={[{ required: true, message: "请输入额度变化量" }]}
           >
             <InputNumber style={{ width: "100%" }} step={10} precision={4} />

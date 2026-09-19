@@ -338,7 +338,9 @@ export default function TokenPage() {
           loading={loading}
           columns={columns}
           dataSource={items}
-          scroll={{ x: 1240 }}
+          // scroll.x 必须 ≥ 各列宽度之和（1462），否则 fixed 布局会把每列按比例压缩，
+          // 密钥列与可用模型列会出现非预期截断
+          scroll={{ x: 1480 }}
           pagination={false}
           locale={{
             emptyText: (

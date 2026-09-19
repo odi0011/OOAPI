@@ -288,8 +288,10 @@ async function quotaGrok(channel) {
 
 async function quotaKiro(channel) {
   const mod = await import("./kiro.js");
+  const { safeRegion } = await import("./kiro-auth.js");
   const token = await freshToken(channel, mod);
-  const region = String(channel?.other?.region || "us-east-1");
+  // region 拼进主机名，必须过白名单（存量渠道的 other.region 可能是加固前的脏值）
+  const region = safeRegion(channel?.other?.region);
   const profileArn = String(channel?.other?.profile_arn || channel?.other?.profileArn || "");
   const qs = new URLSearchParams({ origin: "AI_EDITOR", resourceType: "AGENTIC_REQUEST", isEmailRequired: "true" });
   if (profileArn) qs.set("profileArn", profileArn);

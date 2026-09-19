@@ -14,7 +14,7 @@
 import crypto from "node:crypto";
 import { persistOtherPatch, loadOther, withRefreshLock } from "./auth-store.js";
 import { createAwsEventStreamParser } from "./kiro-eventstream.js";
-import { parseAuthJson, kiroModelId, DEFAULT_REGION } from "./kiro-auth.js";
+import { parseAuthJson, kiroModelId, safeRegion } from "./kiro-auth.js";
 
 const REFRESH_LEAD_S = 300;
 
@@ -40,7 +40,9 @@ export async function refreshAuth(channel, { force = false } = {}) {
     const other = channel?.other || {};
     const refreshToken = String(other.refresh_token || "").trim();
     if (!refreshToken) throw Object.assign(new Error("缺少 refresh_token，请重新导入 Kiro 凭据"), { code: "CHANNEL_AUTH_EXPIRED" });
-    const region = String(other.region || DEFAULT_REGION);
+    // region 必须过白名单（不只是导入时校验）：本次加固前导入的渠道 other.region 可能是脏值，
+    // 而它要拼进主机名 —— 脏值会把带 Bearer 令牌的请求打到攻击者/内网主机。
+    const region = safeRegion(other.region);
     const sso = Boolean(other.client_id && other.client_secret);
 
     const url = sso
@@ -155,7 +157,7 @@ export async function chat({
   onDelta,
   onReasoning,
 }) {
-  const region = String(channel?.other?.region || DEFAULT_REGION);
+  const region = safeRegion(channel?.other?.region);
   const url = `https://codewhisperer.${region}.amazonaws.com/generateAssistantResponse`;
   const call = async (token) =>
     fetch(url, {

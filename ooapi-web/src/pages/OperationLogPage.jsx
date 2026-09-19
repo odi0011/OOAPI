@@ -63,8 +63,8 @@ export default function OperationLogPage() {
       setTotal(data.total);
     } catch (e) {
       if (isLatest(token)) {
-        setLoadError(e.message || "日志加载失败");
-        message.error(e.message || "日志加载失败");
+        setLoadError(e.message || "操作日志加载失败");
+        message.error(e.message || "操作日志加载失败");
       }
     } finally {
       if (isLatest(token)) setLoading(false);
@@ -120,7 +120,7 @@ export default function OperationLogPage() {
     {
       title: "IP",
       dataIndex: "ip",
-      width: 130,
+      width: 128,
       ellipsis: true,
       render: (v) => <span className="oo-num" style={{ color: "var(--ink-3)" }}>{v || "-"}</span>,
     },
@@ -178,7 +178,7 @@ export default function OperationLogPage() {
           <Alert
             type="error"
             showIcon
-            message="日志加载失败"
+            message="操作日志加载失败"
             description={loadError}
             action={<Button size="small" onClick={load} loading={loading}>重试</Button>}
             style={{ marginBottom: 12 }}
@@ -192,7 +192,20 @@ export default function OperationLogPage() {
           dataSource={items}
           size="small"
           scroll={{ x: 1000 }}
-          onRow={(r) => ({ style: { cursor: "pointer" }, onClick: () => setDetail(r) })}
+          onRow={(r) => ({
+            style: { cursor: "pointer" },
+            // 键盘可达（与使用记录页一致）
+            tabIndex: 0,
+            role: "button",
+            "aria-label": `查看 ${r.type_label || "操作"} 详情`,
+            onClick: () => setDetail(r),
+            onKeyDown: (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setDetail(r);
+              }
+            },
+          })}
           locale={{
             emptyText: (
               <div style={{ padding: "32px 0", color: "var(--ink-3)" }}>
@@ -215,9 +228,9 @@ export default function OperationLogPage() {
         />
       </div>
 
-      <Drawer title="操作详情" open={Boolean(detail)} onClose={() => setDetail(null)} width={480} destroyOnClose>
+      <Drawer title="操作详情" open={Boolean(detail)} onClose={() => setDetail(null)} width={520} destroyOnClose>
         {detail ? (
-          <Descriptions column={1} size="small" bordered labelStyle={{ width: 110 }}>
+          <Descriptions column={1} size="small" bordered labelStyle={{ width: 120 }}>
             <Descriptions.Item label="时间">{fmtDate(detail.created_at)}</Descriptions.Item>
             <Descriptions.Item label="操作者">
               <UserAvatar user={{ id: detail.user_id, username: detail.username }} size={20} showName />
@@ -227,7 +240,7 @@ export default function OperationLogPage() {
             {Number(detail.quota) ? (
               <Descriptions.Item label="额度变动">
                 {detail.type === 1 ? "+" : "-"}
-                {fmtOd(Number(detail.quota), perUnit, 4)} {CURRENCY_NAME}
+                {fmtOd(Number(detail.quota), perUnit, 4)}
               </Descriptions.Item>
             ) : null}
             <Descriptions.Item label="IP">{detail.ip || "-"}</Descriptions.Item>

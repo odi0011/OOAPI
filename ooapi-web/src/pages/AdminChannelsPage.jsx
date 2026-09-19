@@ -590,6 +590,8 @@ export default function AdminChannelsPage() {
   // 批量检测：正在并发测试的渠道 id 集合 + 批次进行中标记（防重复点击）
   const [testingIds, setTestingIds] = useState(() => new Set());
   const [batchTesting, setBatchTesting] = useState(false);
+  // 批量写操作（启用/禁用/修改/删除）的防重入：这些操作一次影响几十个渠道，连点会重复提交
+  const [batchBusy, setBatchBusy] = useState(false);
   const [actionBusyId, setActionBusyId] = useState(null);
   // 用量统计弹窗
   const [statsOpen, setStatsOpen] = useState(false);
@@ -1464,6 +1466,8 @@ export default function AdminChannelsPage() {
 
   const doBatch = async (action, payload) => {
     if (!selectedKeys.length) return message.warning("请先选择渠道");
+    if (batchBusy) return; // 防重入：连点会重复提交同一批写入
+    setBatchBusy(true);
     try {
       await API.post("/channel/batch", { ids: selectedKeys, action, payload });
       message.success("操作成功");
@@ -1471,6 +1475,8 @@ export default function AdminChannelsPage() {
       await load();
     } catch (e) {
       message.error(e.message);
+    } finally {
+      setBatchBusy(false);
     }
   };
 
@@ -2008,14 +2014,26 @@ export default function AdminChannelsPage() {
             </Tooltip>
             {selectedKeys.length ? (
               <>
-                <button className="bui-btn" onClick={() => doBatch("enable")}>批量启用</button>
-                <button className="bui-btn" onClick={() => doBatch("disable")}>批量禁用</button>
-                <button className="bui-btn" onClick={() => setBatchOpen(true)}>批量修改</button>
-                <button className="bui-btn" onClick={doBatchTest} disabled={batchTesting || Boolean(testingId)}>
+                {/* 批量写入覆盖面很广（一次影响几十个渠道），按规范必须二次确认 */}
+                <Popconfirm
+                  title={`确认批量启用 ${selectedKeys.length} 个渠道？`}
+                  onConfirm={() => doBatch("enable")}
+                >
+                  <button className="bui-btn" disabled={batchBusy}>批量启用</button>
+                </Popconfirm>
+                <Popconfirm
+                  title={`确认批量禁用 ${selectedKeys.length} 个渠道？`}
+                  description="禁用后这些渠道会立即退出调度"
+                  onConfirm={() => doBatch("disable")}
+                >
+                  <button className="bui-btn" disabled={batchBusy}>批量禁用</button>
+                </Popconfirm>
+                <button className="bui-btn" onClick={() => setBatchOpen(true)} disabled={batchBusy}>批量修改</button>
+                <button className="bui-btn" onClick={doBatchTest} disabled={batchTesting || batchBusy || Boolean(testingId)}>
                   {batchTesting ? <Spin size="small" style={{ marginInlineEnd: 6 }} /> : null}批量检测
                 </button>
-                <Popconfirm title="确认批量删除？" onConfirm={() => doBatch("delete")}>
-                  <button className="bui-btn" style={{ color: "var(--red)" }}>批量删除</button>
+                <Popconfirm title={`确认批量删除 ${selectedKeys.length} 个渠道？`} onConfirm={() => doBatch("delete")}>
+                  <button className="bui-btn" style={{ color: "var(--red)" }} disabled={batchBusy}>批量删除</button>
                 </Popconfirm>
               </>
             ) : null}

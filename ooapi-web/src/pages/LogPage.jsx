@@ -65,7 +65,15 @@ export default function LogPage() {
   const { begin, isLatest } = useLatest();
 
   const params = useMemo(
-    () => ({ days: days || undefined, keyword: keyword || undefined, model: model || undefined, token_id: tokenId || undefined }),
+    () => ({
+      // 「全部」时显式传 days=0：后端 timeRange 对 0 才是不限时间。
+      // 若传 undefined，/usage/summary 会用它自己的默认 30 天窗口，
+      // 于是「表格是全量、卡片是近 30 天」——同一页两个口径，会误导人。
+      days: days,
+      keyword: keyword || undefined,
+      model: model || undefined,
+      token_id: tokenId || undefined,
+    }),
     [days, keyword, model, tokenId]
   );
 
@@ -73,33 +81,34 @@ export default function LogPage() {
     const token = begin();
     setLoading(true);
     setLoadError("");
-    try {
-      const [data, sum] = await Promise.all([
-        API.get("/log/usage", { params: { ...params, p: page, page_size: pageSize } }),
-        API.get("/log/usage/summary", { params }),
-      ]);
-      if (!isLatest(token)) return;
-      setItems(data.items);
-      setTotal(data.total);
-      setSummary(sum);
-    } catch (e) {
-      if (isLatest(token)) {
-        setLoadError(e.message || "记录加载失败");
-        message.error(e.message || "记录加载失败");
-      }
-    } finally {
-      if (isLatest(token)) setLoading(false);
+    // 列表与汇总分开取：汇总走聚合 SQL（COUNT/SUM/AVG），比列表更容易慢或失败，
+    // 用 allSettled 保证「汇总挂了列表照常显示」，而不是整页空白。
+    const [listRes, sumRes] = await Promise.allSettled([
+      API.get("/log/usage", { params: { ...params, p: page, page_size: pageSize } }),
+      API.get("/log/usage/summary", { params }),
+    ]);
+    if (!isLatest(token)) return;
+    if (listRes.status === "fulfilled") {
+      setItems(listRes.value.items || []);
+      setTotal(listRes.value.total || 0);
+      setLoadError("");
+    } else {
+      const msg = listRes.reason?.message || "使用记录加载失败";
+      setLoadError(msg);
+      message.error(msg);
     }
+    if (sumRes.status === "fulfilled") setSummary(sumRes.value);
+    setLoading(false);
   }, [params, page, pageSize, message, begin, isLatest]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  // 筛选下拉的候选项（模型/密钥）：跟随时间范围，只列这段时间用过的
+  // 筛选下拉的候选项（模型/密钥）：与列表同一时间口径（含「全部」）
   useEffect(() => {
     let alive = true;
-    API.get("/log/usage/filters", { params: { days: days || 365 } })
+    API.get("/log/usage/filters", { params: { days } })
       .then((d) => {
         if (alive) setFilters({ models: d.models || [], tokens: d.tokens || [] });
       })
@@ -330,7 +339,7 @@ export default function LogPage() {
           <Alert
             type="error"
             showIcon
-            message="记录加载失败"
+            message="使用记录加载失败"
             description={loadError}
             action={<Button size="small" onClick={load} loading={loading}>重试</Button>}
             style={{ marginBottom: 12 }}
@@ -347,7 +356,17 @@ export default function LogPage() {
           scroll={{ x: isAdmin ? 2000 : 1480 }}
           onRow={(r) => ({
             style: { cursor: "pointer" },
+            // 键盘可达：整行是详情入口，只给 onClick 会让键盘用户无法打开
+            tabIndex: 0,
+            role: "button",
+            "aria-label": `查看 ${r.model || "调用"} 详情`,
             onClick: () => setDetail(r),
+            onKeyDown: (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setDetail(r);
+              }
+            },
           })}
           locale={{
             emptyText: (
@@ -394,7 +413,7 @@ export default function LogPage() {
             <Descriptions.Item label="首Token / 总耗时">
               {ms(detail.first_token_ms)} / {ms(detail.elapsed_ms)}
             </Descriptions.Item>
-            <Descriptions.Item label="计费">{fmtOd(Number(detail.quota) || 0, perUnit, 6)} {CURRENCY_NAME}</Descriptions.Item>
+            <Descriptions.Item label="计费">{fmtOd(Number(detail.quota) || 0, perUnit, 6)}</Descriptions.Item>
             <Descriptions.Item label="IP">{detail.ip || "-"}</Descriptions.Item>
             <Descriptions.Item label="设备">{detail.device || "-"}</Descriptions.Item>
             {isAdmin ? (
