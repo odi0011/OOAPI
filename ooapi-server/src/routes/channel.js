@@ -43,7 +43,7 @@ import {
 import { invalidateModelRegistry } from "../services/models.js";
 import { parseCredentialFile } from "../services/upstream/auth-import.js";
 import { probeChannel } from "../services/channel-probe.js";
-import { fetchQuota, quotaSupportFor } from "../services/upstream/quota.js";
+import { fetchQuota, quotaSupportFor, clampQuotaPayload } from "../services/upstream/quota.js";
 import { randomBytes } from "node:crypto";
 
 const router = Router();
@@ -699,22 +699,65 @@ router.get(
 // ---------- 凭据找回：把新凭据写回已有渠道 ----------
 // 找回流程的公共落点：解析凭据 → 必要时由适配器补齐/刷新 → 覆盖该渠道凭据 → 清冷却。
 // 与 /channel/login 的更新分支口径一致（合并 other，不丢 profile/cookies 等旧字段）。
+//
+// 并发注意：写回必须**生效在刷新之后**。适配器的 refreshAuth 走 withRefreshLock，
+// 其 persistOtherPatch 是「重读 latest → 合并 patch → 整列 UPDATE」；
+// 如果它在我们写回之后才落库，会把旧 access/refresh_token 覆盖回来（管理员看到
+// 「凭据已更新」但库里其实是旧账号）。这里用同一把刷新锁把写回串起来避免该竞态。
 async function applyCredentialToChannel({ id, type, method, credential }) {
   const [rows] = await pool.query("SELECT id, type, api_key, other FROM channels WHERE id = ?", [id]);
   if (!rows.length) throw Object.assign(new Error("渠道不存在"), { code: "LOGIN_BAD_PARAMS" });
   const methodKey = method || methodOf(rows[0]);
   const adapter = await adapterOf(type || rows[0].type, methodKey);
-  if (!adapter?.importAuth) {
-    throw Object.assign(new Error("该接入方式不支持凭据写回"), { code: "LOGIN_BAD_PARAMS" });
-  }
+  if (!adapter) throw Object.assign(new Error("该接入方式不支持凭据写回"), { code: "LOGIN_BAD_PARAMS" });
   const raw = typeof credential === "string" ? credential : JSON.stringify(credential || {});
   // 上限兜底：HTTP 层允许 1MB，凭据不该有这么大的；顺带防住畸形输入
   if (raw.length > 200_000) throw Object.assign(new Error("凭据内容过大"), { code: "LOGIN_BAD_PARAMS" });
-  const parsed = await adapter.importAuth({ token: raw, mode: "paste" });
-  const merged = { ...parseOther(rows[0]), ...(parsed.other || {}) };
+
+  let parsed;
+  if (adapter.importAuth) {
+    parsed = await adapter.importAuth({ token: raw, mode: "paste" });
+  } else if (methodKey === "relay") {
+    // 网页版反代（DeepSeek / Kimi / GLM / 豆包 / 通义）没有 importAuth：
+    // 它们的凭据形态就是「登录态 token（api_key）+ 可选 cookies（other.cookies）」，
+    // 这里按同一契约直接落库，让「抓取登录态」也能走统一找回入口。
+    let obj = null;
+    try {
+      obj = JSON.parse(raw);
+    } catch {
+      /* 裸 token 串：整体当作登录态 */
+    }
+    const token = String((obj && (obj.token ?? obj.access_token)) ?? raw).trim().slice(0, 60_000);
+    if (!token) throw Object.assign(new Error("没有可用的登录态"), { code: "LOGIN_BAD_PARAMS" });
+    let cookies;
+    const rawCookies = obj?.cookies;
+    if (Array.isArray(rawCookies) && rawCookies.length) cookies = rawCookies;
+    else if (typeof rawCookies === "string" && rawCookies.trim()) {
+      cookies = rawCookies
+        .split(";")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((pair) => {
+          const i = pair.indexOf("=");
+          return i > 0 ? { name: pair.slice(0, i), value: pair.slice(i + 1) } : null;
+        })
+        .filter(Boolean);
+    }
+    parsed = { token, other: cookies?.length ? { cookies } : {}, accountLabel: "" };
+  } else {
+    throw Object.assign(new Error("该接入方式不支持凭据写回"), { code: "LOGIN_BAD_PARAMS" });
+  }
+
+  // 旧字段以「写回前重读」为准：importAuth 期间渠道可能被其它流程改过（如刷新令牌）
+  const [freshRows] = await pool.query("SELECT api_key, other FROM channels WHERE id = ?", [id]);
+  const base = freshRows.length ? freshRows[0] : rows[0];
+  const merged = { ...parseOther(base), ...(parsed.other || {}) };
   // 解析后拿不到 token 时保留原 api_key：部分接入方式（例如只给 refreshToken 的网页版）
   // 的 importAuth 只产出 other，用空串覆盖会让渠道连原有凭据都丢掉。
-  const nextToken = String(parsed.token || "").slice(0, 60_000) || String(rows[0].api_key || "");
+  const nextToken = String(parsed.token || "").slice(0, 60_000) || String(base.api_key || "");
+  // 打「凭据代次」标记：适配器刷新写回时若发现代次已变，说明凭据被人工替换过，不再覆盖 token 字段
+  merged.cred_epoch = (Number(merged.cred_epoch) || 0) + 1;
+  merged.cred_updated_at = now();
   await pool.query("UPDATE channels SET api_key = ?, other = ?, last_error = '' WHERE id = ?", [
     nextToken,
     JSON.stringify(merged),
@@ -722,7 +765,7 @@ async function applyCredentialToChannel({ id, type, method, credential }) {
   ]);
   resetChannelState(id);
   invalidateChannelCache();
-  return { accountLabel: parsed.accountLabel || merged.account || merged.email || "" };
+  return { accountLabel: parsed.accountLabel || merged.account || merged.email || "", credEpoch: merged.cred_epoch };
 }
 
 router.get(
@@ -973,7 +1016,8 @@ router.post(
     try {
       const quota = await fetchQuota(channel);
       await pool.query("UPDATE channels SET quota = ?, quota_time = ? WHERE id = ?", [
-        JSON.stringify(quota),
+        // 统一走 clampQuotaPayload：channels.quota 是 TEXT，上游返回几百个额度桶时会超限
+        clampQuotaPayload(quota),
         now(),
         id,
       ]);
@@ -1475,6 +1519,53 @@ router.post(
     if (!data) return fail(res, "会话已结束，请重新打开登录页", 404);
     if (!data.tokens?.length && !data.cookies) {
       return fail(res, "没有抓到任何登录态，请确认已成功登录后再试");
+    }
+    // 找回流程（kind=paste：DeepSeek / Kimi 这类「抓取登录态」的 relay 渠道）：
+    // 直接写回目标渠道，否则抓到的 token 只会回填「添加渠道」表单 —— 渠道永远恢复不了。
+    // 取评分最高的候选 token（browser-driver 按 key 名打分，userToken / kimi-auth 会排最前）。
+    if (c.targetId) {
+      const best = (data.tokens || [])[0];
+      if (!best?.value) {
+        return fail(res, "没有抓到可用的登录态（只有 cookies），请确认登录成功后再试");
+      }
+      try {
+        const [row] = await pool.query("SELECT * FROM channels WHERE id = ?", [c.targetId]);
+        if (!row.length) return fail(res, "渠道不存在", 404);
+        const applied = await applyCredentialToChannel({
+          id: c.targetId,
+          type: c.type,
+          credential: JSON.stringify({
+            token: best.value,
+            cookies: data.cookies || "",
+          }),
+        });
+        // 写回后探一次，让管理员立刻知道恢复是否真的成功
+        const adapter = await adapterOf(row[0].type, methodOf(row[0]));
+        let ms = 0;
+        if (adapter?.verify) {
+          try {
+            const [fresh] = await pool.query("SELECT * FROM channels WHERE id = ?", [c.targetId]);
+            ms = await adapter.verify(rowToChannel(fresh[0]));
+            await pool.query("UPDATE channels SET response_time = ?, tested_time = ?, last_error = '' WHERE id = ?", [
+              ms,
+              now(),
+              c.targetId,
+            ]);
+          } catch (e) {
+            await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), c.targetId]);
+            return fail(res, `登录态已写回，但渠道未就绪：${e.message}`, 400);
+          }
+        }
+        await writeLog({
+          req,
+          user: req.user,
+          type: LOG_TYPE.MANAGE,
+          content: `${c.type} 渠道 #${c.targetId} 抓取登录态成功（${ms}ms）`,
+        });
+        return ok(res, { updated: true, accountLabel: applied.accountLabel }, "登录态已写回，渠道已恢复");
+      } catch (e) {
+        return fail(res, `抓取成功但写回失败：${e.message}`, 400);
+      }
     }
     return ok(res, data, "已抓取登录态，请确认要填入的字段");
   })

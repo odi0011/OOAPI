@@ -34,12 +34,24 @@ function withQuotaLock(channelId, task) {
   return p;
 }
 
-/** 百分比归一：不同厂商口径不一（0-1 小数 / 0-100 整数），统一成 0-100 */
-function pct(v) {
+/**
+ * 百分比归一 —— **必须区分两种输入口径**，不能用「<=1 就当比例」的启发式：
+ *   · pctFromFraction：上游给的是 0-1 比例（Claude 的 unified 头、Antigravity 的 remainingFraction）
+ *   · pctFromPercent ：上游给的就是 0-100 的百分数（Codex 的 used_percent、Grok 的 creditUsagePercent）
+ * 用启发式会让「0.1%」这种小数值被乘 100 放大成 10%（Kiro 1/1000、Antigravity 剩余 99.5% 都会中招）。
+ */
+function clampPct(v) {
   const n = Number(v);
   if (!Number.isFinite(n)) return null;
-  const val = n > 0 && n <= 1 ? n * 100 : n;
-  return Math.max(0, Math.min(100, Math.round(val * 10) / 10));
+  return Math.max(0, Math.min(100, Math.round(n * 10) / 10));
+}
+function pctFromFraction(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return clampPct(n * 100);
+}
+function pctFromPercent(v) {
+  return clampPct(v);
 }
 
 function windowLabel(seconds) {
@@ -125,7 +137,7 @@ async function quotaCodex(channel) {
     windows.push({
       key,
       label: `${label}（${windowLabel(w.limit_window_seconds) || "?"}）`,
-      usedPercent: pct(w.used_percent),
+      usedPercent: pctFromPercent(w.used_percent),
       windowSeconds: Number(w.limit_window_seconds) || 0,
       resetAt: Number(w.reset_at) || 0,
       resetAfterSeconds: Number(w.reset_after_seconds) || 0,
@@ -167,7 +179,7 @@ async function quotaClaude(channel) {
     windows.push({
       key,
       label,
-      usedPercent: pct(raw.utilization),
+      usedPercent: pctFromPercent(raw.utilization),
       windowSeconds: seconds,
       resetAt: epochOf(raw.resets_at),
     });
@@ -181,7 +193,7 @@ async function quotaClaude(channel) {
     windows.push({
       key: `scoped_${i}`,
       label: `7 天 ${l.scope?.model?.display_name || "限定模型"}窗口`,
-      usedPercent: pct(l.percent),
+      usedPercent: pctFromPercent(l.percent),
       windowSeconds: 7 * 86400,
       resetAt: epochOf(l.resets_at),
       severity: l.severity || "",
@@ -196,7 +208,7 @@ async function quotaClaude(channel) {
           enabled: Boolean(j.extra_usage.is_enabled),
           monthlyLimit: Number(j.extra_usage.monthly_limit) || 0,
           usedCredits: Number(j.extra_usage.used_credits) || 0,
-          utilization: pct(j.extra_usage.utilization),
+          utilization: pctFromPercent(j.extra_usage.utilization),
         }
       : null,
   };
@@ -217,12 +229,15 @@ async function quotaAntigravity(channel) {
   const windows = [];
   for (const g of Array.isArray(j.groups) ? j.groups : []) {
     for (const b of Array.isArray(g.buckets) ? g.buckets : []) {
-      if (b.remainingFraction === undefined) continue;
+      // remainingFraction 可能是 null（桶满时 proto3 省略或显式 null），两种都要跳过，
+      // 否则会被算成「已用 100%」形成假警报
+      if (b.remainingFraction === undefined || b.remainingFraction === null) continue;
       windows.push({
         key: String(b.bucketId || ""),
         label: `${g.displayName || "配额"} · ${b.window || ""}`.trim(),
-        // 注意：这里给的是**剩余**比例（1 = 满），与其他厂商的 usedPercent 相反
-        usedPercent: pct((1 - Number(b.remainingFraction)) * 100),
+        // 注意：上游给的是**剩余**比例（1 = 满），与其他厂商的 usedPercent 相反；
+        // 输入是 0-1 比例，用 pctFromFraction（不要再手动 ×100）
+        usedPercent: pctFromFraction(1 - Number(b.remainingFraction)),
         resetAt: epochOf(b.resetTime),
         note: b.description || "",
       });
@@ -245,7 +260,7 @@ async function quotaGrok(channel) {
     },
   });
   const cfg = j.config || j;
-  const used = pct(cfg.creditUsagePercent);
+  const used = pctFromPercent(cfg.creditUsagePercent);
   const period = cfg.currentPeriod || {};
   const windows = [];
   if (used !== null) {
@@ -302,7 +317,8 @@ async function quotaKiro(channel) {
       windows.push({
         key: String(b.resourceType || "usage"),
         label: `${b.resourceType || "额度"}（${b.unit || ""}）`,
-        usedPercent: pct((cur / limit) * 100),
+        // 这里是「已用/总量」的比值（0-1 比例），用 pctFromFraction
+        usedPercent: pctFromFraction(cur / limit),
         used: cur,
         limit,
         resetAt: Number(j.nextDateReset) || 0,
@@ -366,14 +382,23 @@ async function quotaOpenaiWeb(channel) {
 }
 
 async function quotaDeepseekApi(channel) {
-  // 仅官方 API 渠道有余额接口（网页版无）。base_url 可能是自建兼容端点，必须先确认。
+  // 仅官方 API 渠道有余额接口（网页版无）。
+  // 域名必须**精确匹配**：用 /deepseek\.com/ 之类的子串判断会让 deepseek.com.evil.io 命中，
+  // 从而把这个渠道的 API Key 以 Bearer 发给第三方主机（只有管理员能配渠道，但仍不该外发）。
   const base = String(channel?.base_url || "").trim();
-  if (!/deepseek\.com/i.test(base)) {
+  let host = "";
+  try {
+    host = new URL(base).hostname.toLowerCase();
+  } catch {
+    host = "";
+  }
+  if (host !== "api.deepseek.com") {
     throw Object.assign(new Error("仅 DeepSeek 官方 API（api.deepseek.com）支持余额查询"), { code: "QUOTA_UNSUPPORTED" });
   }
   const key = String(channel?.api_key || "").split("\n")[0].trim();
   if (!key) throw Object.assign(new Error("渠道没有 API Key"), { code: "CHANNEL_AUTH_EXPIRED" });
-  const j = await getJson(`${base.replace(/\/+$/, "")}/user/balance`, {
+  // 端点固定用官方路径：base_url 若被填成 .../v1 之类，拼接后会 404（管理员会误以为 Key 有问题）
+  const j = await getJson("https://api.deepseek.com/user/balance", {
     headers: { authorization: `Bearer ${key}` },
   });
   const lines = (Array.isArray(j.balance_infos) ? j.balance_infos : []).map((b) => ({
@@ -402,10 +427,20 @@ export function quotaSupportFor(channel = {}) {
   const m = String(channel.method || channel?.other?.method || "relay");
   const type = String(channel.type || "");
   if (SUPPORTED.has(m)) return { supported: true, key: m };
-  if (m === "api" && type === "deepseek" && /deepseek\.com/i.test(String(channel.base_url || ""))) {
+  // deepseek 官方 API：域名要精确匹配（与 quotaDeepseekApi 同一口径，避免子串误判）
+  if (m === "api" && type === "deepseek" && isDeepseekOfficial(channel.base_url)) {
     return { supported: true, key: "deepseek-api" };
   }
   return { supported: false, key: "" };
+}
+
+/** base_url 是否指向 DeepSeek 官方 API（精确 host 匹配；仅用于判断能否查余额） */
+function isDeepseekOfficial(raw) {
+  try {
+    return new URL(String(raw || "")).hostname.toLowerCase() === "api.deepseek.com";
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -452,4 +487,33 @@ export async function fetchQuota(channel) {
     };
   };
   return withQuotaLock(channel.id, run);
+}
+
+// ---------------------------------------------------------------------------
+// 体积兜底
+// ---------------------------------------------------------------------------
+// channels.quota 是 TEXT（约 64KB）。Antigravity / Claude / ChatGPT 网页版的额度数组
+// 没有条数上限，极端账号（几百个 bucket）序列化后会超限，MySQL 严格模式直接报
+// 「Data too long」→ 这个渠道永远存不下快照。这里统一裁掉多余窗口并打标记。
+const MAX_WINDOWS = 60;
+const MAX_QUOTA_JSON = 60_000;
+
+export function clampQuotaPayload(data) {
+  const out = { ...data };
+  if (Array.isArray(out.windows) && out.windows.length > MAX_WINDOWS) {
+    out.windows = out.windows.slice(0, MAX_WINDOWS);
+    out.truncated = true;
+  }
+  let json = JSON.stringify(out);
+  if (json.length > MAX_QUOTA_JSON) {
+    // 极端情况再退一步：只保留前若干窗口（按 1/4 递减直到装得下）
+    let n = out.windows?.length || 0;
+    while (json.length > MAX_QUOTA_JSON && n > 0) {
+      n = Math.floor(n / 2);
+      out.windows = (out.windows || []).slice(0, n);
+      out.truncated = true;
+      json = JSON.stringify(out);
+    }
+  }
+  return json;
 }

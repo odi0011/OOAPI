@@ -79,7 +79,8 @@ export async function refreshAuth(channel, { force = false } = {}) {
       expires_at: Math.floor(Date.now() / 1000) + (Number(j.expiresIn || j.expires_in) || 3600),
       region,
     };
-    await persistOtherPatch(channel.id, patch);
+    // 传入刷新发起时的凭据代次：若期间管理员人工换过凭据，写回会被丢弃（见 auth-store）
+    await persistOtherPatch(channel.id, patch, Number(other?.cred_epoch) || 0);
     channel.other = { ...other, ...patch };
     return patch;
   });

@@ -1701,6 +1701,13 @@ export default function AdminChannelsPage() {
       { credential },
       { timeoutMs: 120_000 }
     );
+    // healthy === false 表示「凭据写进去了但上游校验没通过」——这时不能报成功，
+    // 否则管理员会以为渠道已恢复（服务端 message 已经写明原因，这里按结果分色提示）
+    if (r?.healthy === false) {
+      message.warning(r?.message || "凭据已写入，但上游校验未通过，请检查凭据是否有效");
+    } else {
+      message.success(`凭据已更新${r?.account ? `（${r.account}）` : ""}，渠道已恢复`);
+    }
     return r;
   };
   // 粘贴凭据（官方 auth 文件 / 完整 JSON / 网页版 accessToken）
@@ -1709,7 +1716,8 @@ export default function AdminChannelsPage() {
     setReloginBusy(true);
     try {
       const r = await saveCredential(reloginText);
-      message.success(`凭据已更新${r?.account ? `（${r.account}）` : ""}，渠道已恢复`);
+      // 提示已由 saveCredential 按 healthy 结果给出（成功/写入但校验失败）
+      void r;
       closeRelogin();
       await load();
     } catch (e) {
@@ -1830,7 +1838,7 @@ export default function AdminChannelsPage() {
           clearInterval(reloginTimerRef.current);
           reloginTimerRef.current = null;
           const saved = await saveCredential(p.credential);
-          message.success(`设备授权成功${saved?.account ? `（${saved.account}）` : ""}，渠道已恢复`);
+          void saved;
           closeRelogin();
           await load();
         } catch (e) {
@@ -1853,7 +1861,11 @@ export default function AdminChannelsPage() {
   const [quotaData, setQuotaData] = useState(null);
   const [quotaError, setQuotaError] = useState("");
   const doQuota = async (r, { openPanel = false } = {}) => {
-    if (quotaBusyId) return;
+    // 全局忙锁：正在查另一个渠道时给出明确提示，而不是静默无反应（按钮只 disable 了自己那行）
+    if (quotaBusyId) {
+      if (quotaBusyId !== r.id) message.info("已有一个额度查询在进行中，请稍候");
+      return;
+    }
     setQuotaBusyId(r.id);
     if (openPanel) {
       setQuotaTarget(r);

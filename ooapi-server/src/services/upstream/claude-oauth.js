@@ -128,7 +128,8 @@ export async function refreshAuth(channel, { force = false } = {}) {
     if (j.account?.uuid) patch.account_uuid = j.account.uuid;
     if (j.organization?.uuid) patch.organization_uuid = j.organization.uuid;
     if (j.account?.email_address) patch.email = j.account.email_address;
-    await persistOtherPatch(channel.id, patch);
+    // 传入刷新发起时的凭据代次：若期间管理员人工换过凭据，写回会被丢弃（见 auth-store）
+    await persistOtherPatch(channel.id, patch, Number(other?.cred_epoch) || 0);
     channel.other = { ...other, ...patch };
     return patch;
   });
