@@ -29,18 +29,51 @@ function st(userId) {
   return s;
 }
 
-/** 读取某用户的三项限额（用户自定义优先，其次全局默认，0 = 不限制） */
+/** 解析 users.setting（DB 里是 TEXT 列，可能是 JSON 字符串，也可能是已解析的对象） */
+function settingOf(user) {
+  const raw = user?.setting;
+  if (!raw) return {};
+  if (typeof raw === "object") return raw;
+  try {
+    const v = JSON.parse(String(raw));
+    return v && typeof v === "object" ? v : {};
+  } catch {
+    return {}; // 脏数据不该让限流报错
+  }
+}
+
+/**
+ * 合成单项限额：用户自定义**只能收紧，不能放宽**。
+ *
+ * 为什么必须这样：`setting` 这一列可以通过 `PUT /api/user/self/settings` 由
+ * 用户自己写入（任意 JSON）。若直接采用用户填的值，用户只要写
+ * `{"limits":{"rpm":0}}` 就能把管理员的限额改成「不限制」——0 在我们的语义里
+ * 正是「不限制」，等于把限额机制整个绕过。
+ * 规则：
+ *   · 用户填 0 或负数 → 视为「未自定义」，沿用全局（不能用 0 解除限制）；
+ *   · 全局不限（0）而用户填了正数 → 采用用户值（自我限流，无害）；
+ *   · 两边都是正数 → 取较小值（只能比管理员配的更严）。
+ */
+function combine(globalLimit, userLimit) {
+  const u = Number(userLimit);
+  const g = Number(globalLimit);
+  const hasUser = Number.isFinite(u) && u > 0;
+  const hasGlobal = Number.isFinite(g) && g > 0;
+  if (hasUser && hasGlobal) return Math.min(u, g);
+  if (hasUser) return Math.floor(u);
+  return hasGlobal ? Math.floor(g) : 0;
+}
+
+// 导出给测试：收紧语义是安全边界（用户可通过 /self/settings 写 setting），必须能被单测覆盖
+export const __combine = combine;
+
+/** 读取某用户的三项限额（0 = 不限制） */
 export function limitsFor(user) {
-  const custom = user?.setting && typeof user.setting === "object" ? user.setting.limits || {} : {};
-  const num = (v, fallbackKey) => {
-    const n = Number(v);
-    if (Number.isFinite(n) && n >= 0) return Math.floor(n);
-    return Math.max(0, Math.floor(Number(getNumberOption(fallbackKey)) || 0));
-  };
+  const custom = settingOf(user).limits || {};
   return {
-    concurrency: num(custom.concurrency, "default_user_concurrency"),
-    rpm: num(custom.rpm, "default_user_rpm"),
-    tpm: num(custom.tpm, "default_user_tpm"),
+    concurrency: combine(getNumberOption("default_user_concurrency"), custom.concurrency),
+    rpm: combine(getNumberOption("default_user_rpm"), custom.rpm),
+    tpm: combine(getNumberOption("default_user_tpm"), custom.tpm),
   };
 }
 

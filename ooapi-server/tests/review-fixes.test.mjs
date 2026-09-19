@@ -107,7 +107,7 @@ t("estimateTokens 中文与英文都可估算（不因纯中文返回 0）", () 
 });
 
 console.log("\n用户限流：并发 / RPM / TPM");
-const { acquire, limitsFor, usageOf, estimateRequestTokens } = await import("../src/services/user-limit.js");
+const { acquire, limitsFor, usageOf, estimateRequestTokens, __combine } = await import("../src/services/user-limit.js");
 
 t("limitsFor 用全局默认（未配则 0 = 不限制）", () => {
   const lim = limitsFor({ id: 999, setting: {} });
@@ -117,10 +117,40 @@ t("limitsFor 用全局默认（未配则 0 = 不限制）", () => {
 });
 
 t("用户自定义限额覆盖全局", () => {
+  // 全局默认是 0（不限）时，用户自设的正数生效（自我限流）
   const lim = limitsFor({ id: 999, setting: { limits: { concurrency: 3, rpm: 7, tpm: 1234 } } });
   assert.equal(lim.concurrency, 3);
   assert.equal(lim.rpm, 7);
   assert.equal(lim.tpm, 1234);
+});
+
+t("安全：用户不能通过 setting 把自己改成「不限制」来绕过管理员的限额", () => {
+  // setting 可由用户经 PUT /api/user/self/settings 自行写入，因此语义必须是「只能收紧」。
+  // 全局 60 时：
+  assert.equal(__combine(60, 0), 60, "用户填 0 不能被当成「不限制」，必须沿用全局");
+  assert.equal(__combine(60, -1), 60, "负数同样不能解除限制");
+  assert.equal(__combine(60, "abc"), 60, "非法值不能解除限制");
+  assert.equal(__combine(60, undefined), 60, "未填时用全局");
+  assert.equal(__combine(60, 10), 10, "可以收紧到更小的值");
+  assert.equal(__combine(60, 600), 60, "不能放宽到超过全局");
+  // 全局不限时，用户自设正数属于自我限流，允许
+  assert.equal(__combine(0, 10), 10);
+  assert.equal(__combine(0, 0), 0);
+});
+
+t("setting 是 JSON 字符串时也要能解析（DB 的 setting 是 TEXT 列）", () => {
+  // 线上实测踩到过：users.setting 从数据库读出来是字符串，
+  // 只判 typeof === "object" 会让用户自定义限额静默失效（退回全局默认）。
+  const lim = limitsFor({ id: 998, setting: JSON.stringify({ limits: { concurrency: 2, rpm: 5, tpm: 600 } }) });
+  assert.equal(lim.concurrency, 2, "字符串形态的 setting 未生效");
+  assert.equal(lim.rpm, 5);
+  assert.equal(lim.tpm, 600);
+});
+
+t("setting 是脏数据时不报错，退回全局默认", () => {
+  const lim = limitsFor({ id: 997, setting: "{不是合法 JSON" });
+  assert.equal(typeof lim.concurrency, "number");
+  assert.equal(typeof lim.rpm, "number");
 });
 
 t("并发限额生效：达到上限后拒绝", () => {
