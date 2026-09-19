@@ -89,6 +89,7 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
 | 更新流程 | GitHub 拉取 → 备份源码 → rsync 覆盖（保护 `.env/.jwt-secret/data/node_modules/web`）→ npm install → 前端构建 → 复制 `dist` 到 `web/` → 迁移 → 写 `.update-stamp.json` → 延迟重启 |
 | 版本戳 | `/opt/ooapi/ooapi-server/.update-stamp.json`（与 GitHub main 的 commit 比对） |
 | 已验证 | 服务器 git / rsync / xvfb-run 齐备；能直连 GitHub API 与 codeload（无需代理） |
+| 实时浏览器（noVNC） | 登录抓取支持 noVNC 实时画面：`ooapi-vnc.service`（x11vnc+websockify）挂 `:99`，nginx 用随机路径令牌反代到 `127.0.0.1:6080`；令牌在 `.env` 的 `VNC_PUBLIC_PATH`（未配置则前端自动退回截图模式）。首次部署/换机跑 `scripts/setup-vnc.sh`（固定 xvfb display 为 99）；x11vnc 报 auth 错时跑 `scripts/fix-vnc-auth.sh`（从 Xvfb 进程动态取 `-auth`） |
 
 **验证命令**（改完代码后热验证）：
 ```powershell
