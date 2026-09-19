@@ -17,6 +17,7 @@ import { mkdirSync, existsSync, writeFileSync, rmSync, cpSync, renameSync } from
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { assertPublicUrl } from "../../utils.js";
+import { getProvider } from "../channel-types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROFILE_ROOT = path.join(__dirname, "..", "..", "..", "data", "browser-profiles");
@@ -133,6 +134,57 @@ function isPageUsable(page) {
   } catch {
     return false;
   }
+}
+
+/**
+ * 取一个可用页面；页面死了就地重建（复用浏览器进程）。
+ * 管理端接口（截图/远程操作/抓登录态）都直接解引用 session.page，
+ * 而 attachPageWatch 会把死页面置空 —— 不兜这一层的话，
+ * 页面崩过之后这些接口会抛无 code 的 TypeError（前端只看到 500）。
+ *
+ * entryUrl 允许为空：为空时自动从 providers 注册表里按厂商查，
+ * 这样 13 个调用点不必各自传参（它们分布在 channel.js 的多个路由里，很容易漏）。
+ */
+async function usablePage(session, { vendor, channelId, entryUrl = "" }) {
+  if (isPageUsable(session.page)) return session.page;
+  const url = entryUrl || entryUrlOf(vendor);
+  if (!url) {
+    throw Object.assign(new Error(`渠道 ${vendor} 未配置登录入口地址，无法重建页面`), { code: "CHANNEL_NOT_READY" });
+  }
+  await rebuildPage(session, { vendor, channelId, entryUrl: url });
+  if (!isPageUsable(session.page)) {
+    throw Object.assign(new Error("浏览器页面不可用且重建失败，请关闭该渠道的浏览器后重试"), {
+      code: "CHANNEL_NOT_READY",
+    });
+  }
+  return session.page;
+}
+
+/** 从渠道类型注册表里查该厂商的登录入口地址（用于页面重建后的导航） */
+function entryUrlOf(vendor) {
+  try {
+    const p = getProvider(vendor);
+    if (!p) return "";
+    for (const m of p.methods || []) {
+      if (m.entryUrl) return m.entryUrl;
+    }
+  } catch {
+    /* 注册表异常时返回空，由调用方报错 */
+  }
+  return "";
+}
+
+/** 只重建页面（复用浏览器进程），失败则抛错由调用方决定是否重建整个会话 */
+async function rebuildPage(session, { vendor, channelId, entryUrl }) {
+  const fresh = await createSession({
+    vendor,
+    channelId,
+    key: `${vendor}:${channelId}`,
+    entryUrl,
+    profile: null,
+    reuse: session,
+  });
+  return fresh;
 }
 
 async function createSession({ vendor, channelId, key, entryUrl, profile, visible = false, reuse = null }) {
@@ -281,12 +333,13 @@ export async function closeAll() {
 // ---------- 远程人工登录辅助 ----------
 // 服务器没有桌面，管理员没法直接看浏览器。这里截图回传，
 // 用于「扫码登录」「输验证码」这类必须人工介入的场景。
-export async function screenshot(vendor, channelId, { fullPage = false, quality = 70 } = {}) {
+export async function screenshot(vendor, channelId, { fullPage = false, quality = 70, entryUrl = "" } = {}) {
   const s = sessions.get(`${vendor}:${channelId}`);
   if (!s) return null;
   return withLock(s, async () => {
-    const buf = await s.page.screenshot({ type: "jpeg", quality, fullPage });
-    return { dataUrl: `data:image/jpeg;base64,${buf.toString("base64")}`, url: s.page.url() };
+    const page = await usablePage(s, { vendor, channelId, entryUrl });
+    const buf = await page.screenshot({ type: "jpeg", quality, fullPage });
+    return { dataUrl: `data:image/jpeg;base64,${buf.toString("base64")}`, url: page.url() };
   });
 }
 
@@ -308,11 +361,11 @@ export function currentUrl(vendor, channelId) {
  * 在会话页面上执行一次远程操作，返回操作后的截图。
  * @param {object} op { action: "click"|"type"|"key"|"scroll"|"goto", x?, y?, text?, key?, dx?, dy?, url? }
  */
-export async function act(vendor, channelId, op = {}) {
+export async function act(vendor, channelId, op = {}, { entryUrl = "" } = {}) {
   const s = sessions.get(`${vendor}:${channelId}`);
   if (!s) return null;
   return withLock(s, async () => {
-    const page = s.page;
+    const page = await usablePage(s, { vendor, channelId, entryUrl });
     const action = String(op.action || "");
     if (action === "click") {
       await page.mouse.click(Number(op.x) || 0, Number(op.y) || 0);
@@ -346,13 +399,14 @@ export async function act(vendor, channelId, op = {}) {
  * 注意：不同厂商存放字段不同（deepseek 是 userToken、GLM 是 token…），
  * 所以这里返回候选列表交给管理员确认，不擅自假设某一个键。
  */
-export async function credentials(vendor, channelId) {
+export async function credentials(vendor, channelId, { entryUrl = "" } = {}) {
   const s = sessions.get(`${vendor}:${channelId}`);
   if (!s) return null;
   return withLock(s, async () => {
+    const page = await usablePage(s, { vendor, channelId, entryUrl });
     const cookies = await s.ctx.cookies();
     const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
-    const entries = await s.page
+    const entries = await page
       .evaluate(() => {
         const out = [];
         try {
@@ -397,7 +451,7 @@ export async function credentials(vendor, channelId) {
       .filter((c) => c.value && c.value.length >= 8 && c.value.length <= 4096 && /token|auth|session/i.test(c.name))
       .map((c) => ({ key: `cookie:${c.name}`, value: c.value, score: scoreOf(c.name) + 1 }));
     cookieCandidates.sort((a, b) => b.score - a.score);
-    return { cookies: cookieStr, url: s.page.url(), tokens: [...tokens.slice(0, 20), ...cookieCandidates.slice(0, 10)] };
+    return { cookies: cookieStr, url: page.url(), tokens: [...tokens.slice(0, 20), ...cookieCandidates.slice(0, 10)] };
   });
 }
 
@@ -408,13 +462,14 @@ export async function credentials(vendor, channelId) {
  * （如 chatgpt.com 的 /api/auth/session）；在页面内 fetch 天然带 cookie 与
  * 正确的 CSRF/同源头，比在服务端拼 cookie 更稳，也不会泄露到外部。
  */
-export async function apiFetch(vendor, channelId, apiPath) {
+export async function apiFetch(vendor, channelId, apiPath, { entryUrl = "" } = {}) {
   const s = sessions.get(`${vendor}:${channelId}`);
   if (!s) return null;
   const path = String(apiPath || "");
   if (!path.startsWith("/")) return null;
   return withLock(s, async () => {
-    return s.page
+    const page = await usablePage(s, { vendor, channelId, entryUrl });
+    return page
       .evaluate(async (p) => {
         try {
           const r = await fetch(p, { credentials: "include", headers: { accept: "application/json" } });
@@ -904,6 +959,9 @@ export function prewarm(session, entryUrl, matchPath) {
   session.prewarming = true;
   withLock(session, async () => {
     try {
+      // 页面可能在空闲期间崩掉（attachPageWatch 会置空）：这时直接放弃预热，
+      // 别在死对象上操作。下一个真实请求会自行重建页面，代价只是少省一次导航。
+      if (!isPageUsable(session.page)) return;
       await newConversation(session.page, entryUrl);
       await installHook(session.page, matchPath);
       await resetHook(session.page);
