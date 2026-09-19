@@ -10,7 +10,7 @@
 > **分支约束（强制）**：仓库**只使用 `main` 一个分支**。禁止新建/推送 `master` 或其他长期分支；
 > 临时分支用完即删。提交永远只推到 `origin/main`。
 
-最后更新：2026-09-18
+最后更新：2026-09-19
 
 ---
 
@@ -63,6 +63,10 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
 | `src/services/upstream/auth-store.js` | OAuth 凭据写回 | 写前重读合并，防覆盖并发修改；`access_token` 同步更新 `channels.api_key` |
 | `src/services/upstream/grok.js` | xAI Grok 订阅（device-code OAuth） | Responses 协议：OAuth 走 `cli-chat-proxy.grok.com/v1` 必须带 CLI 身份头；403 bad-credentials 按 401 刷新重试；免费额度耗尽冷却 24h |
 | `src/services/upstream/auth-import.js` | **统一凭据导入**（CPA / sub2api） | 识别 `accounts[]`、CPA auth `type`、多文件拼接、裸凭据；映射到已有接入方式，不直接写库 |
+| `src/services/metrics.js` | **运维指标采集**（第 34 批） | 零依赖（os/fs/perf_hooks）；`recordRequest/enterRequest/leaveRequest/classifyError/windowStats/healthScore/diagnose`。错误归类决定 SLA 口径，改动前先读 2.6 |
+| `src/services/alert.js` | **告警规则引擎**（第 34 批） | 窗口/持续/冷却/静默；`METRICS` 是可用指标目录，新增指标要同时加 `metricValue` 分支 |
+| `src/services/notify.js` | **通知通道**（第 34 批） | 自研 SMTP（net/tls，不引 nodemailer）+ Webhook（飞书/钉钉/企微/Slack 自动识别与加签） |
+| `src/routes/monitor.js` | **运维监控接口**（第 34 批） | `snapshot`/`stream`(SSE)/`alert/*`；管理员专用。注意 `pool.query` 解构层数（多行结果不能用 `const [[x]]`） |
 
 ### 1.2 前端关键模块地图
 
@@ -77,6 +81,10 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
 | `src/pages/*` | 业务页 | 页面结构统一：`PageHeader` + `oo-panel`；表单校验必须 catch |
 | `src/pages/ChatPage.jsx` + `services/chat.js` | **对话页**（第 16 批重构） | 会话/消息/设定全部来自服务端；运行一轮走 `/api/chat/run`（SSE，事件见 services/chat.js 注释）；消息按 parts 渲染 |
 | `src/components/beautifului-chat.jsx` + `chat.css` | 对话页原语（Shelf/ToolChips/Notice/TodoPanel/OrchestrationBar） | 与 `beautifului.*` 同一来源（MIT），只把 Tailwind 换成本项目 OKLCH token；改动请同步两处 token |
+| `src/components/Charts.jsx` | **全站图表唯一入口**（第 34 批） | `LineChart/BarChart/RankBar/Sparkline/Legend` + `SERIES_COLORS`；新页面画图必须复用，禁止自写 SVG 与配色。规范见 2.5 |
+| `src/components/ChannelQuota.jsx` | 渠道额度展示（sub2api 风） | 窗口标签（5h/7d/30d）由接口返回的 `limit_window_seconds` 推导，**不要硬编码**；颜色分档 <70 绿 / 70-90 橙 / >90 红 |
+| `src/components/ModelPicker.jsx` | 模型范围选择器 | 「从上游获取模型」调 `/channel/:id/upstream-models`；空选 = 该厂商全部模型（与后端语义一致） |
+| `src/pages/MonitorPage.jsx` | **运维监控 + 告警中心**（第 34 批） | 数据来自 `/api/monitor/snapshot`（轮询）与 `/api/monitor/stream`（SSE 实时）；告警规则/事件内嵌在页面内，不用弹窗 |
 
 ### 1.3 线上测试环境（2026-09-17 起）
 
@@ -302,12 +310,128 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   - 图标尺寸：正文 13-14，卡片 16，页头 18；
   - 移动端断点用 antd `Grid.useBreakpoint()`，不要写死 `window.innerWidth`。
 
+### 2.5 数据展示规范（强制 · 全站统一）
+
+> 目的：同一个「汇总数字」在渠道管理、使用记录、运维监控里长得一样，
+> 用户不用重新学一遍；也避免每加一个页面就多一套配色。
+> **新页面一律复用下列现成类与组件，禁止自创。**
+
+**① 汇总数字用哪种形态 —— 二选一，按「页面主体是什么」决定**
+
+| 场景 | 用什么 | 类 / 组件 | 说明 |
+|---|---|---|---|
+| 页面主体是**表格/列表**，汇总只是辅助 | 一行小标签 | `.oo-stats-strip` + `.bui-chip` | 大卡片会把表格挤出首屏 |
+| 页面主体**就是统计数据** | 小卡片网格 | `.oo-stats-cards` + `.oo-stat-card` | 卡片内 `.oo-stat-card-num` + `.oo-stat-card-label` |
+| 单个大数字做面板头 | `.oo-stats-card` + `.oo-stats-card-head/-title` | 面板容器，右侧常放说明文字 |
+
+判定口诀：**表格页用小标签，看板页才用卡片**。两者不要混用在同一个页面。
+
+**② 图表 —— 唯一入口是 `components/Charts.jsx`**
+
+| 需求 | 组件 | 约定 |
+|---|---|---|
+| 时间趋势（单/多序列） | `<LineChart series={...} />` | 平滑曲线（Catmull-Rom→贝塞尔）、区域填充、悬浮十字线 + tooltip |
+| 多序列必须配 `<Legend />` | 否则不知道哪条线是什么 | — |
+| 分布对比（延迟直方图、状态码分布） | `<BarChart bars={...} />` | 纵向柱，最多显示 10 档 |
+| 排行榜（模型/渠道/用户/厂商/表体积） | `<RankBar items={...} />` | 横向条 + 数值，与渠道用量统计弹窗同款 |
+| 卡片内的小趋势 | `<Sparkline values={...} />` | 无坐标轴，只有一条线 |
+
+- 配色只取 `Charts.jsx` 导出的 `SERIES_COLORS`：`#3b82f6`(蓝) `#22c55e`(绿)
+  `#f59e0b`(橙) `#ef4444`(红) `#a855f7`(紫) `#06b6d4`(青) `#ec4899`(粉) `#64748b`(灰)。
+  语义固定：**绿=正常/成功、橙=注意/排队、红=异常/失败**，不要为了好看换色。
+- Y 轴最多 4 档刻度，X 轴最多 7 个标签（`maxXTicks`），数字用 `fmtCompact`（万/亿紧凑格式）。
+- 使用率进度条统一走 `.oo-bars-fill` 或额度条的 `usageColor()`：
+  `<70%` 绿、`70-90%` 橙、`>90%` 红（与渠道额度条同一套阈值）。
+
+**③ 分组/渠道的展示（列表里）**
+
+「左图标 + 右标题 + 标题下小字备注」是**统一形态**：
+- 图标：厂商图标用 `VendorIcon`；多厂商分组显示折叠态（前 3 个叠加 + `+N`）；
+- 标题：主名称；备注：`.oo-truncate` 单行省略，无备注则不占位；
+- 渠道列表的列顺序固定：**状态 → 名称 → 模型 → 额度 → 优先级/权重 → 最近调用 → 操作**。
+  额度列紧跟模型列（用户按「这个号能跑什么、还剩多少」的顺序读），
+  **额度不要单独放查询按钮**——操作栏要留给真正的操作。
+
+**④ 金额与额度的展示**：只走 `fmtOd / odOf / unitsPerOd`，见 2.1 第 1 条。
+
+### 2.6 监控指标口径（强制 · 新增指标前必读）
+
+> 口径错了比没有监控更危险：会把「没事」显示成「有事」，或让告警规则安静地失效。
+
+**① 错误分三类，绝不能混在一起算**
+
+| 类别 | 判定 | 是否计入 SLA 分母 | 为什么 |
+|---|---|---|---|
+| 业务限制 `businessLimited` | 余额不足、配额超限、Key 无效/过期、账号被禁、无可用渠道、本地限流、账号被风控静默 | **否** | 是我们自己的策略拦下的，不是服务故障。算进去会让 SLA 被用户没钱刷低 |
+| 上游保护性限流 | 上游返回 429 / 529 | 否（单独计数 `count429/count529`） | 上游的正常保护行为，不代表上游坏了 |
+| 上游真实错误 `upstreamErrors` | 其余打到上游后失败（排除上面两类） | 是 | 这才是需要排查的故障 |
+
+- 判定入口是 `classifyError(err)`（`services/metrics.js`）：先看 `err.code` 是否在
+  `BUSINESS_LIMIT_CODES`，再从 `err.upstreamStatus` 或错误消息里的
+  「上游返回 HTTP 4xx/5xx」解析上游状态码。
+- `SLA = 成功 / (总请求 - 业务限制)`，所以 **SLA ≥ 成功率**恒成立（测试里有断言）。
+- 新增错误码时：判断它属于哪一类并登记，否则默认会被当成「上游真实错误」而虚报故障。
+
+**② 累计值 vs 窗口值 —— 别用错**
+
+| 指标 | 含义 | 用在哪 |
+|---|---|---|
+| `gateway.*`（`requests`/`errors`/`latency`…） | **进程启动至今**累计，重启清零 | 页面顶部的总量显示、分位分布、排行榜 |
+| `windows.m1/m5/m60`（`windowStats`） | **最近 N 分钟**从分钟桶聚合 | 告警规则求值（`rule.window_min` 取的就是这套） |
+
+- 率类指标在**无样本时必须返回 `null` 而不是 0**：
+  `错误率 = 0%` 会让「错误率 > 5%」的规则永远不触发，看着正常其实没数据；
+  `metricValue` 对无样本返回 `null`，求值循环据此跳过该规则。
+- `windowStats().partial` 表示窗口覆盖不完整（进程刚启动或窗口长于保留的 180 分钟），
+  前端应标注「样本不足」，不要当成真实值下结论。
+
+**③ 健康分与诊断的关系**
+
+- 健康分 = 业务健康 70%（错误率 50% + TTFT 50%）+ 基础设施 30%（存储 40% + 计算 30% + 任务 30%）。
+- **有失败请求就不算「空闲」**：`hasTraffic = requests >= 3 || errors > 0`。
+  只看请求数会把「2 个请求全失败」判成 idle 100 分，和诊断里的 critical 自相矛盾（线上踩过）。
+- 诊断是纯规则引擎，每条必须给「现象 / 影响 / 建议」三段，建议要可执行。
+
+**④ 系统指标的平台差异**
+
+- `os.loadavg()` 在 **Windows 恒返回 [0,0,0]**，必须判 `platform === "win32"` 返回 `null`。
+- `fs.statfsSync` 在 Windows 需要盘符根路径，取不到时返回 `null` 而不是抛错。
+- `monitorEventLoopDelay` 的直方图**必须每次读取后 `reset()`**，否则是进程启动至今的累计值。
+- CPU 使用率是两次采样的差值，**首次调用返回 `null`**（前端显示「计算中」）。
+
+**⑤ 告警规则的默认值**
+
+新增内置规则写在 `services/alert.js` 的 `DEFAULT_RULES`，**只在 `alert_rules` 表为空时写入**，
+绝不覆盖管理员已有的改动。规则被停用/删除后不要靠启动重新 seed 恢复。
+
 ---
 
 ## 3. 待办清单（按优先级）
 
 > 以下为尚未完成的待办项。已修复的问题见「变更记录」。
-> 工作方式：每轮审查发现的问题先登记在此，修好后**删除对应条目**并写入变更记录。
+> 工作方式：每轮审查发现的问题先登记在此，修好**删除对应条目**并写入变更记录。
+
+### 第 34 批遗留（监控与告警）
+
+- [ ] **SMTP / Webhook 未做真实投递验证**：代码路径与加签逻辑已有单测（`metrics-alert.test.mjs`），
+  但线上没有可用的 SMTP 账号与群机器人地址，**尚未真实发出去过一封邮件/一条群消息**。
+  补验方式：系统设置 → 邮件填 SMTP，运维监控 → 告警中心 → 「测试」按钮，
+  或 `POST /api/monitor/alert/test {channel:"email"|"webhook"}`。
+- [ ] **告警指标仍以「进程内」为主**：`success_rate`/`error_rate` 已改为窗口口径（分钟桶），
+  但 `ttft_p99_ms`、`p95_latency_ms`、`sla_rate` 用的还是进程累计的分位样本（环形 1000 条）。
+  进程重启后这些值会短暂失真（样本少 → 分位跳变）。彻底修需把延迟样本也按分钟落桶。
+- [ ] **监控数据不跨重启**：`gateway.*` 与 `trend.series` 随进程重启清零（`logs` 表有跨重启历史，
+  但监控页读的是内存）。如需长周期看板，要加 `metrics` 分钟表并定时落库（sub2api 有 `ops_system_metrics`）。
+- [ ] **没做定时报表**：sub2api 有日报/周报（cron + 独立收件人）。当前只有实时告警。
+  实现时要一并加设置项（`DEFAULT_OPTIONS` + `option.js` 数值白名单 + `AdminSettingsPage` 字段），
+  **不要先加空配置项** —— 设置了却不生效的开关比没有更糟。
+- [ ] **多实例部署下指标会分散**：所有计数都在进程内，多实例时每个实例各算各的。
+  单机单实例部署（当前）无影响；上多实例前需要改成集中式（MySQL 或加实例维度聚合）。
+- [ ] **`alert_rules.filters` 尚未真正生效**：字段已建、接口能存，但 `metricValue` 还没按
+  `filters.channelId`/`channelType` 过滤（`account_success_rate` 等定向指标返回的是全局值）。
+  要做「某个账号专门告警」时需要补这块。
+- [ ] **告警通知无频率限制**：sub2api 有 `rate_limit_per_hour` + 批量聚合窗口。
+  当前只靠每条规则的 `cooldown_min`，规则多时同一故障可能被多条规则各通知一次。
 
 ### 持续审查（待处理）
 
@@ -321,7 +445,6 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   发现的问题先登记在此节，修完删除并写入变更记录。
 
 ### 第 16 批遗留（对话重构）
-
 - [ ] **对话 harness 线上实盘**：本地已用 mock 上游与浏览器验收（流式、工具 chip、待办、设定、移动端），
   上线后需用真实渠道各跑一次：① 纯对话（无工具）② 触发联网检索 ③ 触发 `fetch` ④ 触发 `task` 子代理
   ⑤ 步数上限兜底 ⑥ 中途停止生成的部分计费。
@@ -1052,6 +1175,52 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   9 个未使用导入；新增 `tests/static-check.mjs`（72 文件语法 + 跨文件导入导出一致性）与 `npm test`。
   · **验证**：十轮复查确认**无已知 P0/P1**；线上部署 `f4050b8`，服务 active、`/api/status` 200、
   `npm test` 全绿（static-check / device-ua / pricing-offpeak）。 |
+| 2026-09-19 | **第 34 批（渠道/分组/设置/额度重构 + 运维监控 + 告警引擎，线上 `e239d8b`）**：
+  按用户逐条反馈重构前端与补齐运维能力，分 10 个提交，见下。 |
+| 2026-09-19 | 第 34 批 · 1~2：**渠道列表**模型列改为展示真实模型（从上游接口拉取，不再写「OpenAI 全部」）；
+  额度列移到模型列之后、去掉操作栏的「查额度」按钮（改点列内「点此查询」）；
+  额度展示重做成 sub2api 风格（`[5h] ▓▓▓░░ 62%`，窗口标签从接口的 `limit_window_seconds` 推导，
+  不硬编码）；**分组**支持多选渠道/指定厂商 + 折叠图标 + 从已选渠道汇总模型 + 全选/清空；
+  **使用记录** 6 张大卡改为紧凑标签条 + 可展开的图表分析（`UsageAnalysis`）。 |
+| 2026-09-19 | 第 34 批 · 3：**系统设置**重构为配置驱动（单一 `F` 字段定义对象驱动表单/布尔归一/数值校验），
+  共 9 个页签约 90 项设置；**删除「模型列表」页签**（模型来源已改为「分组 ∩ 渠道声明」，该设置无任何逻辑）；
+  顺带修复两个历史 bug：清空字段现在能真正保存空值、布尔项正确归一。 |
+| 2026-09-19 | 第 34 批 · 4：**账号级运行参数**（并发数 / 最小间隔 / 每分钟上限 / 指纹收敛 / 上下文计费 / namespace）；
+  `rateOf()` 读账号级覆盖，`withChannelLimit` 支持 concurrency > 1（信号量）与 = 1（串行链）；
+  **用户默认并发/RPM/TPM** 落到注册与新建用户。 |
+| 2026-09-19 | 第 34 批 · 5：**运维监控页**首版（系统资源 / 网关运行时 / 平台概览 / 排行榜），
+  `services/metrics.js` 零依赖采集 + `routes/monitor.js` 快照接口。 |
+| 2026-09-19 | 第 34 批 · 6：**对标 sub2api `/admin/ops` 补齐并超越**（先调研其源码拿到完整能力清单）。
+  · metrics 新增：TTFT 分位（只在流式可测，独立于总延迟）、SLA（排除业务限制）、
+  上游错误率（排除 429/529 并单列计数）、按用户/厂商维度、分钟桶 QPS/TPS 趋势、
+  账号切换率、进程级 CPU（区分「机器忙」与「Node 卡」）、事件循环利用率、活动句柄、
+  Buffer 泄漏信号（`external/arrayBuffers` 占比）、延迟直方图、HTTP 状态码分布。
+  · `services/alert.js` **告警规则引擎**：窗口/持续/冷却/静默四要素 + 12 条内置规则；
+  静默支持全局维护窗口；事件落库时附带触发瞬间的指标快照（sub2api 只存事件本身），事后可复盘。
+  · `services/notify.js` **通知通道**：自研 SMTP（net/tls 手写 EHLO→STARTTLS→AUTH→DATA，
+  不引 nodemailer）+ **Webhook（飞书/钉钉/企业微信/Slack 自动识别与加签）——sub2api 只有邮件**。
+  · `routes/monitor.js`：快照 / **SSE 实时推送**（比它的 WebSocket 更轻、浏览器原生自动重连）/
+  规则 CRUD / 事件流 / 维护窗口 / 通道测试 / 清理。
+  · 前端：健康分 + **智能诊断（现象/影响/建议三段式）** + 延迟直方图 + 状态码分布 +
+  并发队列表（按账号/厂商/模型切换）+ **告警中心（规则与事件内嵌在页面内，sub2api 放弹窗）**。
+  · `components/Charts.jsx`：**全站图表规范唯一入口**（折线/柱状/排行/迷你线 + 固定配色），
+  规范写入本文档 2.5；指标口径写入 2.6。 |
+| 2026-09-19 | 第 34 批 · 7~10：**线上实测暴露并修复 3 个只有真请求才会暴露的缺陷**。
+  · `routes/monitor.js` 数据表体积查询误用 `const [[tbl]]` 把多行结果解成第一行 →
+  `overview.tables` 不是数组、`tbl.map` 抛 TypeError 使整个快照 **500**（语法检查完全看不出）。
+  修复并新增 **HTTP 级冒烟测试** `tests/monitor-smoke.mjs`（19 项：鉴权/快照字段/趋势桶/
+  overview 结构/渠道运行时/健康分诊断/告警 CRUD/静默开关/SSE 首帧），显式断言该字段是数组防回归。
+  · 告警清理接口 `Number(x) || 30` 把显式传入的 `days=0` 当成「没传」而回退 30 ——
+  本该拒绝的「清空全部历史」变成「删 30 天前的数据」，保护性判断形同虚设；改为显式校验。
+  · **健康分与诊断自相矛盾**：2 个请求全失败时健康分显示 100/idle，同页诊断却报 4 条 critical。
+  原因是 `hasTraffic` 只看 `requests >= 10`，业务分被跳过只剩基础设施分（机器确实健康）。
+  改为 `requests >= 3 || errors > 0` —— 失败本身就是有效信号。
+  · 另修：**告警窗口指标真正生效**——此前所有规则共用一个「进程累计」值，`window_min` 是摆设；
+  改为按规则各自的窗口从分钟桶真实聚合（`windowStats`），率类指标无样本返回 `null`
+  （返回 0% 会让「错误率 > 5%」的规则安静地不触发，是最危险的失效方式）。
+  · 验证：`tests/metrics-alert.test.mjs` 24 项 + `tests/monitor-smoke.mjs` 19 项全绿；
+  线上用临时密钥实发 2 个极小请求，确认指标链路真实可用（厂商归属 `openai×2`、换号 4 次、
+  分位/状态码分布/诊断全部正确填充），测试密钥已清理。 |
 
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 

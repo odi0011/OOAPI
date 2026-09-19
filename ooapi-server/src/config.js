@@ -131,9 +131,9 @@ export const DEFAULT_OPTIONS = {
   alert_ttft_p99_max: "3000", // 首 Token P99 超过此值标红（毫秒）
   alert_error_rate_max: "5", // 请求错误率超过此值标红（%）
   alert_upstream_error_rate_max: "5", // 上游错误率超过此值标红（%）
-  alert_reports_enabled: "false", // 定时报表
-  alert_report_daily_cron: "0 9 * * *", // 日报（每天 09:00）
-  alert_report_weekly_cron: "0 9 * * 1", // 周报（每周一 09:00）
+  // 注意：定时报表（日报/周报）尚未实现，这里不预留无效键 ——
+  // 设置了却不生效的配置项比没有更糟（管理员会以为已经开了）。
+  // 实现后再连同 DEFAULT_OPTIONS、option.js 数值白名单、AdminSettingsPage 一起加。
 
   // ---------- 备份 ----------
   backup_enabled: "false",
