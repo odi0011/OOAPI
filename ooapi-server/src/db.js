@@ -233,18 +233,23 @@ const TABLES = [
     INDEX idx_chat_msg_session (session_id, seq)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
-  // 渠道分组（sub2api 风格）：由管理员创建，绑定厂商；可设备注、计费倍率与支持的模型；
-  // 账号（channel）通过 channels.groups 加入分组（双向：渠道编辑也能改）；
-  // API Key 绑定一个分组后只路由到该分组的账号，并按分组倍率计费。
+  // 渠道分组：一组渠道的集合，API Key 绑定分组后只路由到组内渠道，并按分组倍率计费。
+  //
+  // vendor 的语义是「**可选**的厂商筛选」，不是分组的隔离维度：
+  //   · 空串 = 不限厂商（分组可跨厂商，例如「便宜档」同时放 deepseek + glm 账号）；
+  //   · 有值 = 建组时按该厂商筛了一次渠道（便利），成员仍可后续增删任意厂商的账号。
+  // 因此唯一键按 name（分组名全局唯一），不能是 (vendor, name) ——
+  // 否则「openai:便宜档」和「glm:便宜档」会变成两个分组，
+  // 而用户要的是「一个分组包含多个渠道，或者指定哪个厂商」。
   `CREATE TABLE IF NOT EXISTS channel_groups (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    type VARCHAR(32) NOT NULL COMMENT '厂商类型（分组按厂商隔离）',
-    name VARCHAR(32) NOT NULL COMMENT '分组名',
+    vendor VARCHAR(32) NOT NULL DEFAULT '' COMMENT '可选的厂商筛选（空=不限厂商，可跨厂商）',
+    name VARCHAR(32) NOT NULL COMMENT '分组名（全局唯一）',
     remark VARCHAR(255) NOT NULL DEFAULT '' COMMENT '备注（可为空）',
     rate DECIMAL(10,4) NOT NULL DEFAULT 1 COMMENT '计费倍率',
     models TEXT COMMENT '分组支持的模型 JSON 数组，空=不限',
     created_time BIGINT NOT NULL DEFAULT 0,
-    UNIQUE KEY uniq_group_type_name (type, name)
+    UNIQUE KEY uniq_group_name (name)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
   // 告警规则（运维监控）：字段命名与 sub2api 对齐便于对照，
@@ -546,9 +551,61 @@ export async function migrate() {
   await ensureColumns();
   await ensureIndexes();
   await ensureColumnTypes();
+  await migrateGroupVendor();
   await ensureGroups();
   if (!hadGroupRate) {
     // 本升级独有的清理：旧版按厂商自动种子出来的 default 分组行（非管理员创建）
     await pool.query("DELETE FROM channel_groups WHERE name = 'default'").catch(() => {});
+  }
+}
+
+/**
+ * 分组表的厂商字段迁移：`type` → `vendor`，且唯一键从 (type, name) 改为 (name)。
+ *
+ * 为什么改：`type` 原语义是「分组按厂商隔离」（NOT NULL + 联合唯一键 + 成员同步时
+ * `WHERE type = ?`），结果管理员建分组必须先选厂商、且只能选同厂商的账号。
+ * 用户要的是「分组可包含多个渠道，**或者**指定哪个厂商」——厂商只是建组时的
+ * 可选筛选便利，分组本身要能跨厂商。
+ *
+ * 幂等：用 information_schema 判断列/索引是否已迁移，重复执行无副作用。
+ */
+async function migrateGroupVendor() {
+  const hasType = await columnExists("channel_groups", "type");
+  const hasVendor = await columnExists("channel_groups", "vendor");
+  try {
+    if (hasType && !hasVendor) {
+      // 改名（保留已有数据）；同时把 NOT NULL 放宽为「可为空串」
+      await pool.query("ALTER TABLE channel_groups CHANGE COLUMN type vendor VARCHAR(32) NOT NULL DEFAULT ''");
+      console.log("[migrate] channel_groups.type 已改名为 vendor（语义：可选的厂商筛选）");
+    }
+    // 唯一键：删掉旧的 (type, name)，建 (name)。分组名全局唯一才能跨厂商。
+    const [idx] = await pool.query("SHOW INDEX FROM channel_groups");
+    const names = new Set(idx.map((r) => r.Key_name));
+    if (names.has("uniq_group_type_name")) {
+      await pool.query("ALTER TABLE channel_groups DROP INDEX uniq_group_type_name");
+      console.log("[migrate] 已移除旧唯一键 uniq_group_type_name(type,name)");
+    }
+    if (!names.has("uniq_group_name")) {
+      // 先检查有没有重名分组（跨厂商同名）——有就先改名避免加索引失败，
+      // 而不是让整个迁移失败导致服务起不来。
+      const [dups] = await pool.query(
+        "SELECT name, COUNT(*) AS c FROM channel_groups GROUP BY name HAVING c > 1"
+      );
+      for (const d of dups) {
+        const [rows] = await pool.query("SELECT id, vendor FROM channel_groups WHERE name = ? ORDER BY id", [d.name]);
+        // 第一条保留原名，其余加厂商后缀
+        for (let i = 1; i < rows.length; i += 1) {
+          const suffix = String(rows[i].vendor || `g${rows[i].id}`).slice(0, 12);
+          const newName = `${d.name}-${suffix}`.slice(0, 32);
+          await pool.query("UPDATE channel_groups SET name = ? WHERE id = ?", [newName, rows[i].id]);
+          console.warn(`[migrate] 分组「${d.name}」重名，已重命名为「${newName}」`);
+        }
+      }
+      await pool.query("ALTER TABLE channel_groups ADD UNIQUE KEY uniq_group_name (name)");
+      console.log("[migrate] 已建立唯一键 uniq_group_name(name)（分组名全局唯一，支持跨厂商）");
+    }
+  } catch (e) {
+    // 迁移失败不阻塞启动（补列/索引是幂等的，下次启动会重试）
+    console.error("[migrate] 分组厂商字段迁移失败（下次启动重试）：", e.message);
   }
 }

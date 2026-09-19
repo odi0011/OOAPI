@@ -396,21 +396,18 @@ export function channelRecent(channelId, rawRecentCalls) {
   return s.recent;
 }
 
-// 渠道是否属于某请求分组（sub2api 语义：分组由管理员创建，未分组渠道 = 公共池）。
-//   · groupName 为空 / "default"（历史值）→ 只有「未分组」的渠道可用（公共池）
-//   · "type:name"（API Key 绑定的厂商分组）→ 先按厂商过滤，再按名字匹配
+// 渠道是否属于某请求分组（分组由管理员创建，未分组渠道 = 公共池）。
+//   · groupName 为空 / "default"（历史值）→ 只有「未分组」的渠道可用（公共池）；
+//   · 分组名 → 按**名字**匹配（分组名全局唯一，可跨厂商）。
+// 兼容历史绑定：旧版 Key 绑的是 "vendor:分组名"，这里剥掉前缀按名字匹配即可 ——
+// 分组的成员本来就不再受厂商限制，所以厂商前缀对匹配没有意义。
 export function channelInGroup(channel, groupName) {
   const groups = Array.isArray(channel?.groups) ? channel.groups : [];
   if (!groupName) return groups.length === 0;
-  let type = "";
   let name = String(groupName);
   const idx = name.indexOf(":");
-  if (idx > 0) {
-    type = name.slice(0, idx);
-    name = name.slice(idx + 1);
-  }
+  if (idx > 0) name = name.slice(idx + 1); // 剥掉历史厂商前缀
   if (name === "default") return groups.length === 0;
-  if (type && String(channel?.type) !== type) return false;
   return groups.includes(name);
 }
 

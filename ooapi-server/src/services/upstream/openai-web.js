@@ -27,7 +27,7 @@ function jwtExp(accessToken) {
 
 /** 刷新网页版 token（有 refresh_token 时）；失败抛 CHANNEL_AUTH_EXPIRED 交给找回流程 */
 export async function refreshAuth(channel, { force = false } = {}) {
-  return withRefreshLock(channel.id, channel, async () => {
+  return withRefreshLock(channel, async () => {
     const fresh = await loadOther(channel.id);
     if (fresh) channel.other = { ...(channel.other || {}), ...fresh };
     const other = channel?.other || {};

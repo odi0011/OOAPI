@@ -31,11 +31,36 @@ export async function loadOther(channelId) {
 const refreshLocks = new Map();
 
 /**
- * @param {number} channelId
- * @param {Function} fn 持锁执行体，返回 { access_token, expires_at } 之类的刷新结果
- * @param {object} [channel] 调用方的渠道对象；传入后，刷新结果会同步回它的 other
+ * 同一渠道的刷新合并为一次。
+ *
+ * 推荐调用：`withRefreshLock(channel, async () => { ... })` —— 渠道对象在前，
+ * 执行体在后；channel.id 从对象里取，joiners 也能据此同步自己的 channel.other。
+ * 也兼容 `withRefreshLock(channelId, fn, channel)` 的老写法（内部归一化）。
+ *
+ * 为什么做参数归一化 + 类型守卫：
+ * 曾经 6 个适配器把 `(channel.id, fn, channel)` 误写成 `(channel.id, channel, fn)`，
+ * 于是 fn 收到对象、调用时抛 "fn is not a function"。而这个异常被调用方的
+ * `.catch()` 吞掉（日志只有一句「提前刷新失败，继续用现有 token」），
+ * 结果 token 过期后**永远刷不回来**：Codex / Claude / Gemini / Grok / Kiro
+ * 全部订阅渠道集体 401，且从现象上极难定位到参数顺序。
+ * 现在：接对象就自己取 id，且 fn 不是函数直接抛错——同类问题第一次调用就炸。
  */
-export function withRefreshLock(channelId, fn, channel = null) {
+export function withRefreshLock(channelOrId, fn, maybeChannel = null) {
+  let channelId;
+  let channel;
+  if (channelOrId && typeof channelOrId === "object") {
+    channel = channelOrId;
+    channelId = Number(channel.id);
+  } else {
+    channelId = Number(channelOrId);
+    channel = maybeChannel && typeof maybeChannel === "object" ? maybeChannel : null;
+  }
+  if (typeof fn !== "function") {
+    throw new TypeError(
+      `withRefreshLock 需要 (channel, fn) 或 (channelId, fn, channel)，但第二个参数是 ${typeof fn}；` +
+        `常见错误是把 channel 传在了 fn 前面`
+    );
+  }
   const existing = refreshLocks.get(channelId);
   if (existing) {
     // 加入方：等结果，并把结果（含写回的 other）同步到自己的 channel 上

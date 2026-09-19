@@ -109,7 +109,7 @@ export function parseAuthJson(raw) {
 }
 
 export async function refreshAuth(channel, { force = false } = {}) {
-  return withRefreshLock(channel.id, channel, async () => {
+  return withRefreshLock(channel, async () => {
     const fresh = await loadOther(channel.id);
     if (fresh) {
       const freshExp = Number(fresh.expires_at || 0);

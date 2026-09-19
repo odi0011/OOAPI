@@ -1,28 +1,31 @@
 // 分组配置（倍率 / 支持模型）读取：30s 缓存，避免每次请求查库。
-// 绑定值形态为 "type:name"（如 openai:vip），纯名字（用户分组）无对应分组配置。
+//
+// 绑定值形态：现在就是**分组名**（分组名全局唯一）。
+// 兼容历史：旧版 Key 绑的是 "vendor:分组名"，这里剥掉前缀后按名字查 ——
+// 分组成员不受厂商限制，厂商前缀对配置查找没有意义。
 import { pool } from "../db.js";
 
-const cache = new Map(); // "type:name" -> { rate, models, at }
+const cache = new Map(); // 分组名 -> { rate, models, at }
 const TTL_MS = 30_000;
 
+/** 从绑定值里取出分组名（剥掉历史厂商前缀）；空/纯 "default" 返回 null（无分组配置） */
 export function parseGroupKey(groupName) {
-  const raw = String(groupName || "").trim();
+  let raw = String(groupName || "").trim();
+  if (!raw) return null;
   const idx = raw.indexOf(":");
-  if (idx <= 0 || idx === raw.length - 1) return null;
-  return { type: raw.slice(0, idx), name: raw.slice(idx + 1) };
+  // 只剥「像厂商前缀」的部分：冒号前是非空且不含空格的短串
+  if (idx > 0 && idx < raw.length - 1) raw = raw.slice(idx + 1);
+  if (!raw || raw === "default") return null;
+  return { name: raw };
 }
 
 export async function groupConfigOf(groupName) {
   const key = parseGroupKey(groupName);
   if (!key) return null;
-  const k = `${key.type}:${key.name}`;
-  const hit = cache.get(k);
+  const hit = cache.get(key.name);
   if (hit && Date.now() - hit.at < TTL_MS) return hit;
   try {
-    const [rows] = await pool.query("SELECT rate, models FROM channel_groups WHERE type = ? AND name = ? LIMIT 1", [
-      key.type,
-      key.name,
-    ]);
+    const [rows] = await pool.query("SELECT rate, models FROM channel_groups WHERE name = ? LIMIT 1", [key.name]);
     let models = [];
     if (rows.length && rows[0].models) {
       try {
@@ -37,7 +40,7 @@ export async function groupConfigOf(groupName) {
       }
     }
     const cfg = { rate: rows.length ? Math.max(0.0001, Number(rows[0].rate) || 1) : 1, models, at: Date.now() };
-    cache.set(k, cfg);
+    cache.set(key.name, cfg);
     return cfg;
   } catch {
     return null;

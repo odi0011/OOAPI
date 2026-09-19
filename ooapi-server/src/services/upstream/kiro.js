@@ -26,7 +26,7 @@ function tokenExpiredSoon(other) {
 
 /** 刷新登录态；SSO（有 clientId/secret）与桌面版两条路径 */
 export async function refreshAuth(channel, { force = false } = {}) {
-  return withRefreshLock(channel.id, channel, async () => {
+  return withRefreshLock(channel, async () => {
     const fresh = await loadOther(channel.id);
     if (fresh) {
       const freshExp = Number(fresh.expires_at || 0);

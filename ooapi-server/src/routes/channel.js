@@ -173,12 +173,17 @@ function parseGroups(row) {
 
 /** 分组列表行 → 前端结构 */
 function groupResp(g, memberMap) {
-  const ids = memberMap.get(`${g.type}:${g.name}`) || [];
+  // 成员关系按**分组名**聚合：分组名全局唯一，且分组可以跨厂商
+  // （成员映射原来按 `vendor:name` 聚合，跨厂商分组会散成多个 key、前端拿不到成员）
+  const ids = memberMap.get(g.name) || [];
+  const vendor = String(g.vendor || "");
   return {
     id: g.id,
-    type: g.type,
+    // vendor 保留原名 type 以兼容前端历史字段；语义已改为「可选的厂商筛选」
+    type: vendor,
+    vendor,
     name: g.name,
-    typeName: getProvider(g.type)?.name || g.type,
+    typeName: vendor ? getProvider(vendor)?.name || vendor : "",
     remark: g.remark || "",
     rate: Number(g.rate) || 1,
     models: parseGroupModels(g.models),
@@ -192,20 +197,23 @@ async function groupMemberMap() {
   const memberMap = new Map();
   for (const c of chans) {
     for (const g of parseGroups(c)) {
-      const key = `${c.type}:${g}`;
-      if (!memberMap.has(key)) memberMap.set(key, []);
-      memberMap.get(key).push(Number(c.id));
+      if (!memberMap.has(g)) memberMap.set(g, []);
+      memberMap.get(g).push(Number(c.id));
     }
   }
   return memberMap;
 }
 
-/** 双向同步「分组包含哪些账号」：勾选的渠道加入分组，未勾选的从分组移除 */
-async function syncGroupMembers(type, name, channelIds) {
+/**
+ * 双向同步「分组包含哪些账号」：勾选的渠道加入分组，未勾选的从分组移除。
+ * 不再按厂商过滤 —— 分组可以包含任意厂商的账号（厂商只是建组时的可选筛选）。
+ */
+async function syncGroupMembers(name, channelIds) {
   const want = new Set(
     (Array.isArray(channelIds) ? channelIds : []).map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0)
   );
-  const [chans] = await pool.query("SELECT id, group_list, group_name FROM channels WHERE type = ?", [type]);
+  // 全量渠道：跨厂商分组需要能勾到别的厂商的账号
+  const [chans] = await pool.query("SELECT id, group_list, group_name FROM channels");
   for (const c of chans) {
     const cur = parseGroups(c);
     const has = cur.includes(name);
@@ -226,32 +234,41 @@ async function syncGroupMembers(type, name, channelIds) {
 router.get(
   "/groups",
   asyncHandler(async (req, res) => {
-    const [rows] = await pool.query("SELECT * FROM channel_groups ORDER BY type, name");
+    const [rows] = await pool.query("SELECT * FROM channel_groups ORDER BY name");
     const memberMap = await groupMemberMap();
     return ok(res, rows.map((g) => groupResp(g, memberMap)));
   })
 );
 
 // ---------- 新建分组（管理员选择包含哪些账号 + 支持哪些模型 + 倍率）----------
+// vendor 是可选的「建组筛选」：填了就只是把这个厂商的账号预勾上，
+// 分组本身可以跨厂商（成员由 channel_ids 决定，不再受厂商限制）。
 router.post(
   "/groups",
   asyncHandler(async (req, res) => {
-    const { type, name, remark, rate, models, channel_ids } = req.body || {};
-    const provider = getProvider(type);
-    if (!provider) return fail(res, "未知厂商");
+    const { type, vendor: vendorRaw, name, remark, rate, models, channel_ids } = req.body || {};
+    const vendor = String(vendorRaw ?? type ?? "").trim();
+    // 允许为空（不限厂商）；填了就必须是已知厂商，避免写进脏值
+    if (vendor && !getProvider(vendor)) return fail(res, "未知厂商");
     const gname = String(name || "").trim().slice(0, 32);
     if (!gname) return fail(res, "请填写分组名");
-    const [exist] = await pool.query("SELECT id FROM channel_groups WHERE type = ? AND name = ?", [type, gname]);
-    if (exist.length) return fail(res, "该厂商下已存在同名分组");
+    // 分组名全局唯一（跨厂商也不能重名）：否则绑定 Key 时无法区分走哪个组
+    const [exist] = await pool.query("SELECT id FROM channel_groups WHERE name = ?", [gname]);
+    if (exist.length) return fail(res, "已存在同名分组");
     await pool.query(
-      "INSERT INTO channel_groups (type, name, remark, rate, models, created_time) VALUES (?,?,?,?,?,?)",
-      [type, gname, String(remark || "").slice(0, 255), normalizeRate(rate), JSON.stringify(normalizeModels(models)), now()]
+      "INSERT INTO channel_groups (vendor, name, remark, rate, models, created_time) VALUES (?,?,?,?,?,?)",
+      [vendor, gname, String(remark || "").slice(0, 255), normalizeRate(rate), JSON.stringify(normalizeModels(models)), now()]
     );
-    await syncGroupMembers(type, gname, channel_ids);
+    await syncGroupMembers(gname, channel_ids);
     clearGroupConfigCache();
-    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `新建分组「${provider.name} / ${gname}」` });
+    await writeLog({
+      req,
+      user: req.user,
+      type: LOG_TYPE.MANAGE,
+      content: `新建分组「${gname}」${vendor ? `（厂商筛选：${getProvider(vendor)?.name || vendor}）` : "（不限厂商）"}`,
+    });
     const memberMap = await groupMemberMap();
-    const [created] = await pool.query("SELECT * FROM channel_groups WHERE type = ? AND name = ?", [type, gname]);
+    const [created] = await pool.query("SELECT * FROM channel_groups WHERE name = ?", [gname]);
     return ok(res, created.length ? groupResp(created[0], memberMap) : null, "分组已创建");
   })
 );
@@ -265,18 +282,16 @@ router.put(
     const [rows] = await pool.query("SELECT * FROM channel_groups WHERE id = ?", [gid]);
     if (!rows.length) return fail(res, "分组不存在", 404);
     const group = rows[0];
-    const { name, remark, rate, models, channel_ids } = req.body || {};
+    const { name, remark, rate, models, channel_ids, vendor: vendorRaw } = req.body || {};
     const gname = name === undefined ? group.name : String(name || "").trim().slice(0, 32);
     if (!gname) return fail(res, "请填写分组名");
+    const vendor = vendorRaw === undefined ? String(group.vendor || "") : String(vendorRaw || "").trim();
+    if (vendor && !getProvider(vendor)) return fail(res, "未知厂商");
     if (gname !== group.name) {
-      const [dup] = await pool.query("SELECT id FROM channel_groups WHERE type = ? AND name = ? AND id != ?", [
-        group.type,
-        gname,
-        gid,
-      ]);
-      if (dup.length) return fail(res, "该厂商下已存在同名分组");
+      const [dup] = await pool.query("SELECT id FROM channel_groups WHERE name = ? AND id != ?", [gname, gid]);
+      if (dup.length) return fail(res, "已存在同名分组");
       // 改名传播：渠道 group_list 与已绑定 Key 都跟着换，避免改名后绑定失效
-      const [chans] = await pool.query("SELECT id, group_list, group_name FROM channels WHERE type = ?", [group.type]);
+      const [chans] = await pool.query("SELECT id, group_list, group_name FROM channels");
       for (const c of chans) {
         const cur = parseGroups(c);
         if (!cur.includes(group.name)) continue;
@@ -288,29 +303,31 @@ router.put(
         ]);
       }
       await pool
-        .query("UPDATE tokens SET group_name = ? WHERE group_name = ?", [
-          `${group.type}:${gname}`,
-          `${group.type}:${group.name}`,
-        ])
+        .query("UPDATE tokens SET group_name = ? WHERE group_name = ?", [gname, group.name])
+        .catch(() => {});
+      // 旧版 Key 绑定带厂商前缀（"openai:分组名"），一并迁移
+      await pool
+        .query("UPDATE tokens SET group_name = ? WHERE group_name = ?", [gname, `${group.vendor}:${group.name}`])
         .catch(() => {});
     }
-    await pool.query("UPDATE channel_groups SET name = ?, remark = ?, rate = ?, models = ? WHERE id = ?", [
+    await pool.query("UPDATE channel_groups SET name = ?, vendor = ?, remark = ?, rate = ?, models = ? WHERE id = ?", [
       gname,
+      vendor,
       remark === undefined ? group.remark || "" : String(remark || "").slice(0, 255),
       rate === undefined ? group.rate : normalizeRate(rate),
       models === undefined ? group.models : JSON.stringify(normalizeModels(models)),
       gid,
     ]);
-    if (channel_ids !== undefined) await syncGroupMembers(group.type, gname, channel_ids);
+    if (channel_ids !== undefined) await syncGroupMembers(gname, channel_ids);
     clearGroupConfigCache();
-    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `编辑分组「${group.type} / ${gname}」` });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `编辑分组「${gname}」` });
     const memberMap = await groupMemberMap();
     const [updated] = await pool.query("SELECT * FROM channel_groups WHERE id = ?", [gid]);
     return ok(res, updated.length ? groupResp(updated[0], memberMap) : null, "分组已更新");
   })
 );
 
-// ---------- 删除分组（同时从该厂商渠道的 groups 里摘掉、解绑 Key）----------
+// ---------- 删除分组（同时从渠道的 groups 里摘掉、解绑 Key）----------
 router.delete(
   "/groups/:id",
   asyncHandler(async (req, res) => {
@@ -326,7 +343,8 @@ router.delete(
     try {
       await conn.beginTransaction();
       await conn.query("DELETE FROM channel_groups WHERE id = ?", [gid]);
-      const [chans] = await conn.query("SELECT id, group_list, group_name FROM channels WHERE type = ?", [group.type]);
+      // 成员摘除要扫全表：分组可以跨厂商
+      const [chans] = await conn.query("SELECT id, group_list, group_name FROM channels");
       for (const c of chans) {
         const next = parseGroups(c).filter((g) => g !== group.name);
         await conn.query("UPDATE channels SET group_list = ?, group_name = ? WHERE id = ?", [
@@ -336,10 +354,10 @@ router.delete(
         ]);
       }
       // 解绑 Key：置空后回落到公共池，而不是留下永远 503 的死绑定
-      const [un] = await conn.query("UPDATE tokens SET group_name = '' WHERE group_name = ?", [
-        `${group.type}:${group.name}`,
-      ]);
+      const [un] = await conn.query("UPDATE tokens SET group_name = '' WHERE group_name = ?", [group.name]);
       unbound = un.affectedRows || 0;
+      // 旧版带厂商前缀的绑定一并清理
+      await conn.query("UPDATE tokens SET group_name = '' WHERE group_name = ?", [`${group.vendor}:${group.name}`]);
       await conn.commit();
     } catch (e) {
       await conn.rollback().catch(() => {});

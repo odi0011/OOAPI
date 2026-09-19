@@ -7,12 +7,14 @@ import { writeLog, LOG_TYPE } from "../services/log.js";
 const router = Router();
 router.use(authRequired);
 
-// 可选分组列表（用户创建令牌时选；分组由管理员创建、按厂商隔离，返回 type:name 作为绑定值）
+// 可选分组列表（用户创建令牌时选）。
+// 绑定值就是**分组名**（分组名全局唯一，且分组可以跨厂商）——
+// 旧版是 "厂商:分组名"，现在只在读取历史绑定时做兼容（见 group-rate.parseGroupKey）。
 router.get(
   "/groups",
   asyncHandler(async (req, res) => {
     const [rows] = await pool.query(
-      "SELECT type, name, remark, rate, models FROM channel_groups ORDER BY type, name"
+      "SELECT vendor, name, remark, rate, models FROM channel_groups ORDER BY name"
     );
     return ok(
       res,
@@ -25,8 +27,10 @@ router.get(
           /* ignore */
         }
         return {
-          type: g.type,
+          // name 既是展示名也是绑定值；vendor 仅用于展示厂商筛选标签
+          type: g.name,
           name: g.name,
+          vendor: g.vendor || "",
           remark: g.remark || "",
           rate: Number(g.rate) || 1,
           models,
@@ -45,16 +49,15 @@ function getSetting(user) {
   return user?.setting ?? {};
 }
 
-// 分组绑定必须是存在的 "type:name"：防拼错，也避免绑定到不存在的分组后计费/路由都默默失败
+// 分组绑定必须是存在的分组名：防拼错，也避免绑定到不存在的分组后计费/路由都默默失败。
+// 兼容历史 "厂商:分组名"：剥掉前缀后按名字校验。
 async function validGroupBinding(binding) {
-  const raw = String(binding || "").trim();
+  let raw = String(binding || "").trim();
   if (!raw) return true; // 空 = 公共池
   const idx = raw.indexOf(":");
-  if (idx <= 0 || idx === raw.length - 1) return false;
-  const [rows] = await pool.query("SELECT id FROM channel_groups WHERE type = ? AND name = ? LIMIT 1", [
-    raw.slice(0, idx),
-    raw.slice(idx + 1),
-  ]);
+  if (idx > 0 && idx < raw.length - 1) raw = raw.slice(idx + 1);
+  if (!raw || raw === "default") return true;
+  const [rows] = await pool.query("SELECT id FROM channel_groups WHERE name = ? LIMIT 1", [raw]);
   return rows.length > 0;
 }
 
