@@ -66,7 +66,7 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
 | `src/services/metrics.js` | **运维指标采集**（第 34 批） | 零依赖（os/fs/perf_hooks）；`recordRequest/enterRequest/leaveRequest/classifyError/windowStats/healthScore/diagnose`。错误归类决定 SLA 口径，改动前先读 2.6 |
 | `src/services/alert.js` | **告警规则引擎**（第 34 批） | 窗口/持续/冷却/静默；`METRICS` 是可用指标目录，新增指标要同时加 `metricValue` 分支 |
 | `src/services/notify.js` | **通知通道**（第 34 批） | 自研 SMTP（net/tls，不引 nodemailer）+ Webhook（飞书/钉钉/企微/Slack 自动识别与加签） |
-| `src/routes/monitor.js` | **运维监控接口**（第 34 批） | `snapshot`/`stream`(SSE)/`alert/*`；管理员专用。注意 `pool.query` 解构层数（多行结果不能用 `const [[x]]`） |
+| `src/routes/monitor.js` | **运维监控接口**（第 34 批） | `snapshot`/`stream`(SSE)/`alert/*`；管理员专用。注意 `pool.query` 解构层数（多行结果不能用 `const [[x]]`）。**`/stream` 用一次性票据自鉴权**（EventSource 带不了 Authorization），因此它不走全局 `adminRequired`，改动鉴权时别把它盖回去 |
 | `src/services/user-limit.js` | **用户级限流**（第 35 批） | 并发/RPM/TPM 三维度；`setting.limits` 由用户可写，因此语义是**只能收紧不能放宽**（用户填 0 视为未自定义，不能用 0 解除限制） |
 
 ### 1.2 前端关键模块地图
@@ -404,10 +404,10 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 新增内置规则写在 `services/alert.js` 的 `DEFAULT_RULES`，**只在 `alert_rules` 表为空时写入**，
 绝不覆盖管理员已有的改动。规则被停用/删除后不要靠启动重新 seed 恢复。
 
-### 2.7 三条踩过的坑（写代码前先看，能省一次返工）
+### 2.7 四条踩过的坑（写代码前先看，能省一次返工）
 
-> 这三条都是在第 35 批审查里发现的**真实事故模式**，共同特征是：
-> 语法检查通过、单元测试通过、看起来一切正常，但线上在静默地算错或失效。
+> 这四条都是在第 35 批审查里发现的**真实事故模式**，共同特征是：
+> 语法检查通过、构建通过，但线上在静默地算错、失效或白屏。
 
 **① 「字段存在」不等于「有数据」**
 
@@ -435,7 +435,6 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 普通单测和静态检查都发现不了这类问题。
 
 **③ 设置了却不生效，比没有这个设置更糟**
-
 第 35 批的 P0 里有一半是「空配置」：`default_user_concurrency/rpm/tpm`、`retry_times`、
 `gateway_ping_interval` 在系统设置里能改，但**没有任何代码读取**。
 管理员以为配了限额，实际完全不生效——这比没有开关危险得多，因为它会让人以为已经防住了。
@@ -443,6 +442,23 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 写任何设置项时：**要么在同一个提交里接上消费方，要么不要加**。
 加完之后用 `grep` 确认它至少被读取一次（`AI协作.md` 里曾把「模型列表」因同样理由删掉）。
 同理，计费/鉴权路径上的每个配置都要有一条「配了就生效」的测试。
+
+**④ 「构建通过」不等于「页面能打开」**
+
+本项目因这条栽过三次，每次都是「构建/语法全绿，线上却挂」：
+- MainLayout 模块顶层常量引用了未导入的图标 → **全站白屏**；
+- `AdminChannelsPage` 的 `columns` 数组（立即求值）引用了 370 行后才 `useState` 的变量
+  → `const` 暂时性死区 → **渠道管理页白屏**；
+- 监控快照 `const [[tbl]] = await pool.query(...)` 把多行结果解成第一行
+  → 接口 **500**（语法检查完全看不出）。
+
+规则：
+- **前端改动** → 必须跑 `BASE=http://47.79.85.60 xvfb-run -a node tests/ui-smoke.mjs`
+  （真实浏览器逐页断言有渲染内容）。`vite build` 只证明能打包，不证明能运行。
+- **接口改动** → 必须跑 `tests/monitor-smoke.mjs` 并对新接口补字段结构断言。
+- 尤其是**模块级/立即求值表达式**（数组字面量、对象字面量、JSX、函数调用）里引用的
+  任何 `const`，都要确认它在**声明之后**才被使用；`useState` 一律写在 `columns` 之类
+  会立即求值的东西之前。
 
 ---
 
@@ -663,13 +679,36 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
    # 后端语法检查（在 ooapi-server/ 下，对所有改动文件执行）
    node --check src/routes/xxx.js
 
-   # 前端构建验证（在 ooapi-web/ 下）
+   # 全量测试（语法 + import 一致性 + 计费 + 并发闸门 + 监控指标）
+   npm test
+
+   # 前端构建（在 ooapi-web/ 下）
    npm run build
    ```
    涉及 SQL 的改动：人工核对 `?` 数与参数个数（可用 `mysql.format()` 快速验证）。
-4. **验证行为**（有环境时）：启动后端 `npm start`（需 MySQL），至少覆盖改动接口的正反用例。
+
+4. **验证行为（强制，不可跳）**：
+
+   > **`vite build` 成功不能证明页面能打开；接口 200 不能证明数据结构正确。**
+   > 本项目已因此栽过三次（全站白屏 ×2、监控快照 500），每次都是「构建/语法全绿但线上挂」。
+
+   在服务器上跑（需 xvfb）：
+   ```bash
+   ssh root@47.79.85.60
+   cd /opt/ooapi/ooapi-server
+   BASE=http://47.79.85.60 xvfb-run -a node tests/ui-smoke.mjs    # 14 个路由逐页：白屏/运行期错误
+   node tests/monitor-smoke.mjs                                   # 接口结构断言
+   ```
+   - **前端任何改动** → 必须跑 `ui-smoke`。它会真实打开每个页面并断言
+     `#root` 有渲染内容；能抓住 TDZ（声明前引用）、模块级未定义引用这类
+     「构建期不报错、一打开就白屏」的问题。
+   - **后端接口改动** → 必须跑 `monitor-smoke`，并对新增/修改的接口
+     补一条字段结构断言（曾经 `[[tbl]]` 解构错误只在真请求时才 500）。
+   - 改计费/限流/并发 → 必须跑 `npm test`（含 `concurrency-gate` 的真实计时断言）。
+
 5. **回写文档**：更新本文件「变更记录」，勾选/新增待办，保持行号引用不过期。
-6. **不要**：提交 `.env`、改 `ADMIN_PASSWORD`、在没跑构建前就说"完成"。
+6. **不要**：提交 `.env`、改 `ADMIN_PASSWORD`、在没跑构建前就说"完成"；
+   更不要**只跑构建就宣布可用**——见第 4 条。
 7. **禁止**：创建新的 `.md` 文档；所有内容只写在本文件内。
 8. **分支**：只推 `main`；禁止创建/推送 `master` 或其他分支（详见文件头「分支约束」）。
 
@@ -1395,11 +1434,45 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   · `tests/concurrency-gate.test.mjs`（9 项，**用真实计时**）：并发上限在 min_gap 窗口内也成立、
     串行语义、异常不泄漏名额、rejection 正确回传、并发确实比串行快
     （最后一条能直接发现「并发参数是空操作」的回归，静态检查与普通单测都发现不了）。
+  · `tests/ui-smoke.mjs`（14 个路由，见下条事故）：真实浏览器逐页断言「有渲染内容 + 无运行期错误」。
   · 线上验收：用户限流实测 5 个并发请求返回 4 个 429（此前完全不生效）；
     GLM 反代真实探测成功并正确报出档位不一致；`users.quota` 为 signed bigint
     （欠费记账成立）；合并后的 tokens UPDATE 在真实表结构上空跑验证语法。
   · 未验证：SMTP/Webhook 真实投递、Claude `utilization` 口径、Kimi/DeepSeek 网页版
     usage 字段语义 —— 均需真实账号与抓包样本，已登记待办。 |
+| 2026-09-19 | **线上事故 · 渠道管理页整页白屏（TDZ），用户报「打不开」**。
+  我此前只跑了 `vite build`（成功）就宣布可用，**没有真在浏览器里打开页面**，
+  实际 `/admin/channel` 一进去就白屏。
+  · 现象：整页空白，控制台 `Cannot access 'X' before initialization`（生产 bundle 里是 `wC`）。
+  · 定位方式（值得复用）：用 `vite build --sourcemap` 产出带 sourcemap 的包 →
+    临时静态服务伺服并把 `/api` 反代到真实后端 → 无头浏览器打开 → 手写 VLQ 解码
+    把报错位置还原到源码 → 定位到 `AdminChannelsPage.jsx:1587`。
+  · 根因：`const columns = [ ... {upstreamModelsBusy ? <Spin/> : <Tooltip>…} ... ]` 是
+    **数组字面量，创建时立即求值**，而 `const [upstreamModelsBusy] = useState(false)`
+    写在 370 行之后 —— `const` 的暂时性死区，必然抛 ReferenceError。
+    把三个声明上移到 `columns` 之前（并留注释说明顺序不能动）。
+  · 为什么构建没发现：TDZ 是运行期语义，`vite build` 不做这种顺序检查。
+    这与第 33 批的 `HistoryOutlined` 全站白屏是**同一性质**的两次事故。
+  · 对策：新增 `tests/ui-smoke.mjs`，并把「前端改动必须跑真实浏览器逐页检查」
+    写成第 4 节工作流的**强制项**（不再是「有环境时」）。 |
+| 2026-09-19 | **线上缺陷 · 监控页 SSE 永远 401**（UI 冒烟逐页扫描时发现）。
+  `/admin/monitor` 控制台一直报 `401 /api/monitor/stream` —— 实时推送从未成功过，
+  页面靠 15s 轮询兜底，所以没人察觉（功能「看起来正常」）。
+  根因：浏览器原生 `EventSource` **不能自定义请求头**，带不了 `Authorization`，
+  而该接口挂在 `adminRequired` 后面，必然 401。
+  修法：新增 `POST /api/monitor/stream-ticket`（走正常鉴权）换一次性短票据，
+  60 秒有效、**用一次即废**、仅对这一个接口有意义；`/stream` 自行校验票据并复查
+  用户仍是管理员。**没有**采用「把 JWT 拼进 URL」——完整 JWT 有效期 30 天且等同
+  全站通行证，进访问日志/浏览器历史就是长期风险。
+  前端配合：票据一次性 → `EventSource` 自动重连必然失败 → `onerror` 主动换新票据重建。
+  同时给 monitor 路由加了鉴权守卫豁免机制（`/stream`、`/stream-ticket` 跳过全局
+  `adminRequired`，各自内部校验）。monitor-smoke 的 SSE 用例升级为三条断言
+  （无票据 401 / 有票据能连并收到首帧 / 票据复用必须失败）。 |
+| 2026-09-19 | 第 35 批（全链路审查）：**整条调用链 + 全部反代适配器**的审查与修复，
+  线上 `ee03b57`。六路并行深审（浏览器反代核心 / 订阅型 OAuth / 国产网页反代 /
+  网关热路径 / 计费链路 / 对话 harness）+ 一轮**对抗性复审**专查「修复本身是否引入新问题」，
+  合计修 9 个 P0 + 10 余个 P1 + 2 个白屏/401 线上缺陷；测试增至 5 套。
+  详见下方分条记录。 |
 
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 
