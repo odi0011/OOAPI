@@ -6,7 +6,7 @@ import {
 import {
   PlusOutlined, ReloadOutlined, ThunderboltOutlined, DeleteOutlined, EditOutlined,
   UndoOutlined, KeyOutlined, LoginOutlined, GlobalOutlined,
-  InfoCircleOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined,
+  InfoCircleOutlined, SafetyCertificateOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { fmtDate, CURRENCY_NAME, copyText } from "../services/format";
@@ -677,10 +677,16 @@ export default function AdminChannelsPage() {
   const [browserTarget, setBrowserTarget] = useState(null);
   const [browserShot, setBrowserShot] = useState(null);
   const [browserBusy, setBrowserBusy] = useState(false);
-  // 添加表单里已完成「浏览器登录」（GLM/豆包/通义）：profile 存在服务器临时目录，
+  // 浏览器登录类：添加表单里已完成「浏览器登录」（GLM/豆包/通义）：profile 存在服务器临时目录，
   // 提交时按 profileId 复制给渠道（每次登录一个独立目录，避免并发/复用串号）
   const [onboardReady, setOnboardReady] = useState(false);
   const [onboardProfile, setOnboardProfile] = useState("");
+  // 凭据找回（401/登录态失效后重新登录）：支持粘贴凭据、回调授权、Grok 设备码
+  const [reloginTarget, setReloginTarget] = useState(null);
+  const [reloginText, setReloginText] = useState("");
+  const [reloginBusy, setReloginBusy] = useState(false);
+  const [reloginDevice, setReloginDevice] = useState(null);
+  const reloginTimerRef = useRef(null);
   // 登录态远程抓取（粘贴登录态的厂商：打开登录页 → 登录 → 自动回填 token/cookies）
   const [capOpen, setCapOpen] = useState(false);
   const [capSid, setCapSid] = useState("");
@@ -1607,8 +1613,149 @@ export default function AdminChannelsPage() {
   ];
 
   // 行内操作（列表与宫格共用）
+  const OAUTH_METHODS = ["codex", "claude-oauth", "antigravity", "grok-oauth"];
+  const openRelogin = (r) => {
+    setReloginTarget(r);
+    setReloginText("");
+    setReloginDevice(null);
+  };
+  const closeRelogin = () => {
+    if (reloginTimerRef.current) clearInterval(reloginTimerRef.current);
+    reloginTimerRef.current = null;
+    setReloginTarget(null);
+    setReloginDevice(null);
+    setReloginText("");
+  };
+  // 粘贴凭据（官方 auth 文件 / 完整 JSON）→ 更新该渠道凭据
+  const submitReloginText = async () => {
+    if (!reloginText.trim()) return message.warning("请粘贴凭据 JSON");
+    setReloginBusy(true);
+    try {
+      const r = await API.post(
+        "/channel/login",
+        {
+          id: reloginTarget.id,
+          type: reloginTarget.type,
+          method: reloginTarget.method,
+          mode: "paste",
+          name: reloginTarget.name,
+          token: reloginText,
+        },
+        { timeoutMs: 90_000 }
+      );
+      message.success(`凭据已更新${r?.account ? `（${r.account}）` : ""}`);
+      closeRelogin();
+      await load();
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setReloginBusy(false);
+    }
+  };
+  // 打开授权页 → 粘贴回调地址 → 直接更新该渠道（oauth/exchange 支持 id）
+  const reloginOauthStart = async () => {
+    setReloginBusy(true);
+    try {
+      const r = await API.post("/channel/oauth/start", { type: reloginTarget.type });
+      setReloginDevice({ oauthUrl: r.url, state: r.state });
+      window.open(r.url, "_blank", "noopener");
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setReloginBusy(false);
+    }
+  };
+  const reloginOauthSubmit = async () => {
+    if (!reloginText.trim()) return message.warning("请粘贴登录后地址栏里的完整 URL");
+    setReloginBusy(true);
+    try {
+      const r = await API.post(
+        "/channel/oauth/exchange",
+        {
+          type: reloginTarget.type,
+          method: reloginTarget.method,
+          id: reloginTarget.id,
+          name: reloginTarget.name,
+          state: reloginDevice?.state || "",
+          callback: reloginText,
+        },
+        { timeoutMs: 90_000 }
+      );
+      message.success(`登录成功${r?.account ? `（${r.account}）` : ""}，凭据已更新`);
+      closeRelogin();
+      await load();
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setReloginBusy(false);
+    }
+  };
+  // Grok 设备码找回：发起 → 轮询 → 成功后更新该渠道
+  const reloginDeviceStart = async () => {
+    setReloginBusy(true);
+    try {
+      const r = await API.post("/channel/oauth/device/start", { type: reloginTarget.type });
+      setReloginDevice(r);
+      const target = r.verification_uri_complete || r.verification_uri;
+      if (target) window.open(target, "_blank", "noopener");
+      if (reloginTimerRef.current) clearInterval(reloginTimerRef.current);
+      const iv = Math.max(3, Number(r.interval) || 5) * 1000;
+      const deadline = Date.now() + Math.min(900, Number(r.expires_in) || 900) * 1000;
+      reloginTimerRef.current = setInterval(async () => {
+        if (Date.now() > deadline) {
+          clearInterval(reloginTimerRef.current);
+          reloginTimerRef.current = null;
+          setReloginDevice((d) => (d ? { ...d, error: "已超时，请重新发起" } : d));
+          return;
+        }
+        try {
+          const p = await API.post("/channel/oauth/device/poll", { type: reloginTarget.type, device_code: r.device_code });
+          if (p.pending) return;
+          clearInterval(reloginTimerRef.current);
+          reloginTimerRef.current = null;
+          const saved = await API.post(
+            "/channel/login",
+            {
+              id: reloginTarget.id,
+              type: reloginTarget.type,
+              method: reloginTarget.method,
+              mode: "paste",
+              name: reloginTarget.name,
+              token: p.credential,
+            },
+            { timeoutMs: 90_000 }
+          );
+          message.success(`设备授权成功${saved?.account ? `（${saved.account}）` : ""}，凭据已更新`);
+          closeRelogin();
+          await load();
+        } catch (e) {
+          clearInterval(reloginTimerRef.current);
+          reloginTimerRef.current = null;
+          setReloginDevice((d) => (d ? { ...d, error: e.message } : d));
+        }
+      }, iv);
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setReloginBusy(false);
+    }
+  };
+
   const renderActions = (r) => (
     <Space size={2}>
+      {OAUTH_METHODS.includes(r.method) ? (
+        <Tooltip title={/登录态失效|过期|401|认证|AUTH/i.test(String(r.last_error || "")) ? "凭据可能失效：点此重新登录" : "重新登录 / 找回凭据"}>
+          <button
+            className="bui-icon-btn"
+            style={/登录态失效|过期|401|认证|AUTH/i.test(String(r.last_error || "")) ? { color: "var(--red)" } : undefined}
+            aria-label={`${r.name} 重新登录`}
+            onClick={() => openRelogin(r)}
+            disabled={Boolean(actionBusyId) || testingId === r.id}
+          >
+            <SafetyCertificateOutlined />
+          </button>
+        </Tooltip>
+      ) : null}
       {r.needsBrowser ? (
         <Tooltip title={r.browserReady ? "浏览器登录（已就绪）" : "浏览器登录（未完成）"}>
           <button
@@ -2568,6 +2715,78 @@ export default function AdminChannelsPage() {
             )}
           </pre>
         ) : null}
+      </Modal>
+
+      {/* ============ 重新登录 / 凭据找回 ============ */}
+      <Modal
+        title={`重新登录：${reloginTarget?.name || ""}`}
+        open={Boolean(reloginTarget)}
+        onCancel={closeRelogin}
+        footer={null}
+        destroyOnClose
+        width={560}
+      >
+        {reloginTarget?.method === "grok-oauth" ? (
+          <Space direction="vertical" style={{ width: "100%" }} size={10}>
+            <Button icon={<GlobalOutlined />} onClick={reloginDeviceStart} loading={reloginBusy}>
+              设备码登录
+            </Button>
+            {reloginDevice?.user_code ? (
+              <div style={{ fontSize: 13 }}>
+                在打开的页面输入代码：
+                <b style={{ letterSpacing: 2 }}>{reloginDevice.user_code}</b>
+                <Typography.Link
+                  href={reloginDevice.verification_uri_complete || reloginDevice.verification_uri}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ marginLeft: 8 }}
+                >
+                  打开授权页
+                </Typography.Link>
+                <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 4 }}>授权成功后凭据会自动更新到该渠道。</div>
+              </div>
+            ) : null}
+            {reloginDevice?.error ? <div style={{ fontSize: 12, color: "var(--red)" }}>{reloginDevice.error}</div> : null}
+          </Space>
+        ) : (
+          <Space direction="vertical" style={{ width: "100%" }} size={10}>
+            <Space wrap>
+              <Button icon={<GlobalOutlined />} onClick={reloginOauthStart} loading={reloginBusy}>
+                打开授权页
+              </Button>
+              {reloginDevice?.oauthUrl ? (
+                <Typography.Link href={reloginDevice.oauthUrl} target="_blank" rel="noreferrer">
+                  在新窗口打开
+                </Typography.Link>
+              ) : null}
+            </Space>
+            {reloginDevice?.oauthUrl ? (
+              <Alert
+                type="info"
+                showIcon
+                className="oo-alert-compact"
+                message="登录后把回调地址粘到下面"
+                description={
+                  <span style={{ fontSize: 12 }}>
+                    登录后页面会停在打不开的 localhost 地址（正常），复制地址栏整串 URL 粘贴到下面输入框；也可以直接粘贴官方 auth 凭据文件。
+                  </span>
+                }
+              />
+            ) : null}
+            <Input.TextArea
+              rows={6}
+              value={reloginText}
+              onChange={(e) => setReloginText(e.target.value)}
+              placeholder="粘贴官方凭据文件（JSON），或登录后的回调地址 / 授权码"
+            />
+            <Space>
+              <Button type="primary" loading={reloginBusy} onClick={reloginDevice?.state ? reloginOauthSubmit : submitReloginText}>
+                保存
+              </Button>
+              <Button onClick={closeRelogin}>取消</Button>
+            </Space>
+          </Space>
+        )}
       </Modal>
 
       {/* ============ 用量统计（总计 / 按天 / 按模型 / 最近调用） ============ */}

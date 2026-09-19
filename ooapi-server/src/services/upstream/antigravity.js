@@ -193,7 +193,10 @@ async function loadProject(channel, token) {
   const resp = await fetch(LOAD_URL, {
     method: "POST",
     headers: { ...agHeaders(channel), authorization: `Bearer ${token}` },
-    body: JSON.stringify({ metadata: { ideType: "ANTIGRAVITY" } }),
+    // 与 CLIProxyAPI 对齐：loadCodeAssist 用短 UA + snake_case metadata（camelCase 在部分账号上不返回项目）
+    body: JSON.stringify({
+      metadata: { ide_type: "ANTIGRAVITY", ide_version: CLI_VERSIONS.antigravity, ide_name: "antigravity" },
+    }),
     signal: AbortSignal.timeout(30_000),
   });
   const text = await resp.text();
@@ -223,7 +226,6 @@ async function onboard(channel, token, tier) {
     headers: {
       ...agHeaders(channel, { withNodeClient: true }),
       authorization: `Bearer ${token}`,
-      "x-goog-api-client": CLI_VERSIONS.antigravityGoogApi,
     },
     body: JSON.stringify({
       tier_id: tier,
@@ -259,7 +261,16 @@ async function ensureProject(channel, token) {
       if (!pid) await new Promise((r) => setTimeout(r, 2000));
     }
   }
-  if (!pid) throw Object.assign(new Error("Antigravity 未返回 project_id，请先在官方客户端完成开通"), { code: "CHANNEL_NOT_READY" });
+  if (!pid) {
+    throw Object.assign(
+      new Error(
+        "Google 账号未返回 Antigravity project_id：通常是该账号还没开通 Gemini Code Assist 免费层。" +
+          "请先在本机安装并登录一次 Antigravity 客户端（或 gemini CLI），再回来重新登录此渠道；" +
+          "也可以直接把官方 auth 文件（含 project_id 字段）粘贴添加"
+      ),
+      { code: "CHANNEL_NOT_READY" }
+    );
+  }
   await persistOtherPatch(channel.id, { project_id: pid });
   channel.other = { ...(channel.other || {}), project_id: pid };
   return pid;
