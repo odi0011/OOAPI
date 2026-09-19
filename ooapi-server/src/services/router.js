@@ -269,19 +269,32 @@ export function withChannelLimit(channel, taskFn) {
   const key = channel.id;
   const s = st(key);
 
-  const run = async () => {
-    const waitMs = delayFor(channel);
-    if (waitMs > 0) await new Promise((res) => setTimeout(res, waitMs));
-    commitRate(channel);
+  // 名额必须在这里「占」下来，不能等 delayFor 之后才 ++。
+  // 否则在 min_gap（默认 1200ms）窗口内到达的请求，每个都看到 inflight=0 而放行，
+  // delay 结束后一起 ++ 并发发车 —— 实测 concurrency=2 时上限会被突破到 5，
+  // 且它们在同一毫秒齐发（正是本函数要避免的脚本特征）。
+  const takeSlot = () => {
     s.inflight = (s.inflight || 0) + 1;
+  };
+  const dropSlot = () => {
+    s.inflight = Math.max(0, (s.inflight || 1) - 1);
+    // 唤醒一个等待者（若有）。放在 finally 里保证失败也会让位，
+    // 否则一次异常就会把该渠道的并发槽永久占死。
+    const nextInLine = s.waiters?.shift();
+    if (nextInLine) nextInLine();
+  };
+
+  // 串行模式下名额在任务体内取（与并发模式互斥，见下方分支）；
+  // 并发模式下名额由 tryStart 同步占好后才进入 run。
+  const run = async (slotTaken = false) => {
+    if (!slotTaken) takeSlot();
     try {
+      const waitMs = delayFor(channel);
+      if (waitMs > 0) await new Promise((res) => setTimeout(res, waitMs));
+      commitRate(channel);
       return await taskFn();
     } finally {
-      s.inflight = Math.max(0, (s.inflight || 1) - 1);
-      // 释放名额：唤醒一个等待者（若有）。放在 finally 里保证失败也会让位，
-      // 否则一次异常就会把该渠道的并发槽永久占死。
-      const nextInLine = s.waiters?.shift();
-      if (nextInLine) nextInLine();
+      dropSlot();
     }
   };
 
@@ -298,18 +311,20 @@ export function withChannelLimit(channel, taskFn) {
     return next;
   }
 
-  // 并发模式：真信号量。拿到名额才进入 run()，等待者按 FIFO 排队。
+  // 并发模式：真信号量。名额在 tryStart 里同步占好（含「正在等 min_gap 的请求」），
+  // 这样上限才真的是上限；等待者按 FIFO 排队。
   return new Promise((resolve) => {
     const tryStart = () => {
       if ((s.inflight || 0) < r.concurrency) {
+        takeSlot();
         // 用 resolve(promise) 让外层直接采用任务的结果（含 rejection）
-        resolve(run());
+        resolve(run(true));
         return true;
       }
       return false;
     };
     if (tryStart()) return;
-    // 名额已满：挂到等待队列，由 run() 的 finally 唤醒。
+    // 名额已满：挂到等待队列，由 dropSlot 唤醒。
     // 入队的是「可重入的一次性函数」：被唤醒时若名额被别人抢走就继续排队，
     // 避免唤醒后无人补位导致并发度凭空少 1。
     if (!s.waiters) s.waiters = [];

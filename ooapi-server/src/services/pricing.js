@@ -393,27 +393,31 @@ const clampUsage = (n) => Math.max(0, Math.min(MAX_USAGE, Math.round(Number(n) |
 export function normalizeUsage(u) {
   if (!u) return { promptTokens: 0, completionTokens: 0, cacheTokens: 0, totalTokens: 0, hasDetail: false, partial: false };
   if (typeof u === "object") {
-    // 用「字段是否存在」判断，而不是「取到的值是否非 0」——
-    // 有些上游只回 output_tokens（doubao-parser 的注释就写明过这种情况），
-    // 若把缺失的 prompt 当成 0，hasDetail 会因为 completion>0 而为真，
-    // 于是整个输入侧（可能是几万 token 的上下文）按 0 计费，系统性地少收。
-    const hasP = u.prompt_tokens !== undefined || u.input_tokens !== undefined;
-    const hasC = u.completion_tokens !== undefined || u.output_tokens !== undefined;
     const p = clampUsage(u.prompt_tokens ?? u.input_tokens);
     const c = clampUsage(u.completion_tokens ?? u.output_tokens);
     const cache = clampUsage(
       u.cached_tokens ?? u.cache_tokens ?? u.prompt_cache_hit_tokens ?? u.prompt_tokens_details?.cached_tokens
     );
     const total = clampUsage(u.total_tokens) || p + c;
-    // partial：只报了一半（缺 prompt 或缺 completion）→ 交给 splitTokens 估算补另一侧
-    const partial = (hasP || hasC) && !(hasP && hasC);
+    // 判定口径：**字段存在且值大于 0** 才算「这一侧有真实数据」。
+    // 两种历史坑都由此避开：
+    //   ① 上游只回 total_tokens，经 openai-compat 的 pickUsage 后被补成
+    //      {prompt:0, completion:0, total:N} —— 若按「字段存在」判定就会当成精确明细，
+    //      splitTokens 返回 0/0/0，整单只剩 1 单位兜底价（近乎白送）；
+    //   ② 上游只回 output_tokens（豆包）—— 若把缺失的 prompt 当 0，
+    //      整段输入（可能是几万 token 上下文）不计费。
+    // 把「值为 0」与「字段缺失」一律视为「该侧没有数据」，交给估算补齐。
+    const hasP = p > 0;
+    const hasC = c > 0;
+    const hasDetail = hasP && hasC;
     return {
       promptTokens: p,
       completionTokens: c,
       cacheTokens: Math.min(cache, p),
       totalTokens: total,
-      hasDetail: hasP && hasC,
-      partial,
+      hasDetail,
+      // 只有一侧有数据：splitTokens 用真实的一侧 + 估算另一侧
+      partial: (hasP || hasC) && !hasDetail,
       hasPrompt: hasP,
       hasCompletion: hasC,
     };

@@ -32,6 +32,25 @@ t("只给 output_tokens 时识别为 partial（旧逻辑会把输入记 0，整�
   assert.equal(u.hasPrompt, false);
 });
 
+t("只回 total_tokens 必须走估算，不能当成精确明细（否则近乎白送）", () => {
+  // 真实触发路径：openai-compat 的 pickUsage 会把缺失字段补成 0，
+  // 于是上游「只回 total_tokens」变成 {prompt:0, completion:0, total:N}。
+  // 若按「字段存在」判定成精确明细，splitTokens 返回 0/0/0，
+  // 整单只剩 computeCost 的 1 单位兜底价 —— 静默的资损。
+  const u = normalizeUsage({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 100 });
+  assert.equal(u.hasDetail, false, "分项全为 0 时不能声称是精确明细");
+  const r = splitTokens({ prompt: "x".repeat(300), output: "y".repeat(300), upstreamTotal: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 100 } });
+  assert.equal(r.promptTokens + r.completionTokens, 100, `应按 total 拆分出 100 token，实际 ${r.promptTokens + r.completionTokens}`);
+  assert.ok(r.promptTokens > 0 && r.completionTokens > 0, "两侧都应有值");
+});
+
+t("字段缺失与字段为 0 一律视为「该侧无数据」", () => {
+  assert.equal(normalizeUsage({ completion_tokens: 50 }).hasDetail, false, "缺 prompt 不能算精确");
+  assert.equal(normalizeUsage({ prompt_tokens: 50 }).hasDetail, false, "缺 completion 不能算精确");
+  assert.equal(normalizeUsage({ prompt_tokens: 0, completion_tokens: 50 }).partial, true);
+  assert.equal(normalizeUsage({ prompt_tokens: 10, completion_tokens: 20 }).hasDetail, true, "两侧都有值才是精确");
+});
+
 t("partial 时缺的一侧按字符估算补齐，而不是 0", () => {
   const r = splitTokens({ prompt: "这是一个很长的中文提示".repeat(50), output: "答案", upstreamTotal: { output_tokens: 500 } });
   assert.equal(r.completionTokens, 500, "已报的补全量必须用真实值");

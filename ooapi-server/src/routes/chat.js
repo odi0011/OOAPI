@@ -833,21 +833,31 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
     // 若只按 runCalls 汇总，那一步的 prompt 完全不计费 —— 而失败步往往带着
     // 整轮最长的上下文（历史 + 工具结果），是漏收最多的一处。
     // 这里补一条合成调用，让它按自己的时刻判档、按估算用量计费。
-    const failedCall = {
-      prompt: err?.billingPrompt || "",
-      output: partial,
-      usage: null,
-      startedAt: err?.billingStartedAt || startedAt,
-      tokens: null,
-    };
-    if (!settled && (tokens.promptTokens || tokens.completionTokens || partial)) {
+    //
+    // 条件是 `upstreamStarted`：只有真正发起过上游调用才计费。
+    // NO_CHANNEL / UNSUPPORTED_CHANNEL / VISION_NOT_SUPPORTED 这类错误发生在
+    // 调上游**之前**，上游零消耗，对它们计费就是无中生有。
+    const upstreamStarted = err?.upstreamStarted === true;
+    const failedCall = upstreamStarted
+      ? {
+          prompt: err?.billingPrompt || "",
+          output: partial,
+          usage: null,
+          startedAt: err?.billingStartedAt || startedAt,
+          tokens: null,
+        }
+      : null;
+    // 门槛也要带上 failedCall.prompt：首步就失败且没有任何输出时
+    // （模型不支持、渠道未就绪、首步超时），三个旧条件全是 0/0/""，
+    // 整轮会被完全跳过 —— 而这类失败的上游其实已经吃掉了整段上下文。
+    if (!settled && (tokens.promptTokens || tokens.completionTokens || partial || failedCall?.prompt)) {
       if (partial && !tokens.completionTokens) {
         // 只有整轮都没有 usage（中途失败）才按字符估算；
         // 已有精确 completion 计费时再按差额补会重复计费（估算值通常高于真实 token）。
         tokens.completionTokens += estimateTokens(partial);
         // prompt 用「失败步的完整上下文」估算，而不是只算本轮用户输入 ——
         // 后者漏掉 system 提示与全部历史，而 harness 的 system 提示常常上万字符。
-        tokens.promptTokens += estimateTokens(failedCall.prompt || content);
+        tokens.promptTokens += estimateTokens(failedCall?.prompt || content);
       }
       try {
         await chargeUser({
@@ -857,7 +867,9 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           output: "",
           usage: null,
           tokens,
-          calls: runCalls.length ? [...runCalls, failedCall] : null,
+          // 逐次调用计费。只有失败步时也要走 calls 分支，否则 chargeUser 会用
+          // 上面那个被忽略的 tokens（有 usage 的情况下它并不完整）。
+          calls: failedCall ? [...runCalls, failedCall] : null,
           channel: channelName ? { name: channelName } : null,
           channelIds: [...new Set(runCalls.map((c) => Number(c.channelId) || 0).filter(Boolean))],
           groupName: routeGroup,

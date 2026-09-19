@@ -186,8 +186,11 @@ router.post(
     const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
     const user = rows[0];
     if (!user) return fail(res, "用户不存在", 404);
-    // 单条原子更新：查询→计算→写回会在并发调整时丢更新
-    await pool.query("UPDATE users SET quota = GREATEST(0, quota + ?) WHERE id = ?", [quota, id]);
+    // 单条原子更新：查询→计算→写回会在并发调整时丢更新。
+    // 注意**不能**用 GREATEST(0, …)：quota 现在允许为负（余额不足时按欠费记账，
+    // 见 gateway/chat 的扣费），夹到 0 等于「管理员扣一次款就把欠费一笔勾销」，
+    // 用户立刻恢复服务 —— 正好抵消了欠费记账的意义。
+    await pool.query("UPDATE users SET quota = quota + ? WHERE id = ?", [quota, id]);
     const [fresh] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
     const newQuota = Number(fresh[0].quota);
     await writeLog({

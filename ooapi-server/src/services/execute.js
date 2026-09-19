@@ -92,6 +92,8 @@ export async function runCompletion({
   const maxAttempts = Math.min(channels.length, retryTimes + 1);
 
   let attempts = 0;
+  // 本轮是否真正发起过上游调用（用于失败时的计费判定，见上方注释）
+  let upstreamStarted = false;
   for (const channel of channels) {
     if (attempts >= maxAttempts) {
       // 预算用尽：带上最后一个错误抛出，让调用方看到真实失败原因
@@ -153,6 +155,10 @@ export async function runCompletion({
           if (settled) return Promise.reject(Object.assign(new Error("渠道排队超时"), { code: "CHANNEL_TIMEOUT" }));
           callStarted = Date.now();
           armDeadline();
+          // 标记「这次真的要打上游了」：失败时上游已经消耗了我们的上下文
+          // （提示词可能上万 token），计费侧据此决定是否补收。
+          // NO_CHANNEL / 参数类错误发生在更早的阶段，不会置位。
+          upstreamStarted = true;
           return adapter.chat({
             channel,
             model,
@@ -226,6 +232,9 @@ export async function runCompletion({
           channel
         );
       }
+      // 计费上下文：这一轮是否真的打到过上游（决定失败时要不要补收）。
+      // 挂在同一个错误对象上，随 throw 冒泡到站内对话的结算逻辑。
+      lastError.upstreamStarted = upstreamStarted;
       const code = lastError.code || "CHANNEL_ERROR";
 
       // 已经流式输出过内容就不能换渠道了（否则客户端会收到拼接错乱的内容），
