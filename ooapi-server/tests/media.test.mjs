@@ -124,8 +124,10 @@ console.log("\n磁盘路径分片");
 await t("blob 路径按前 2/次 2 位分片，且带规范扩展名", () => {
   const sha = "7f3a9c8b1d2e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a";
   const p = blobPath(sha, "png");
-  assert.ok(p.includes(`7f${require("node:path").sep}3a`) || p.includes("7f/3a") || p.includes("7f\\3a"), `实际 ${p}`);
-  assert.ok(p.endsWith(`${sha}.png`));
+  // 分片目录：前两位 + 次两位（跨平台路径分隔符都要兼容）
+  const seg = p.split(/[\\/]/);
+  assert.ok(seg.includes("7f") && seg.includes("3a"), `应包含 7f/3a 两级分片，实际 ${p}`);
+  assert.ok(p.endsWith(`${sha}.png`), `文件名应为 <sha>.png，实际 ${p}`);
 });
 
 console.log("\n读取签名（等价于访问凭据）");
