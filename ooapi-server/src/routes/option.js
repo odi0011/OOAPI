@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { ok, fail, asyncHandler } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
-import { getOption, setOption, DEFAULT_OPTIONS } from "../config.js";
+import { getOption, setOption, DEFAULT_OPTIONS, SECRET_OPTIONS } from "../config.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 
 const router = Router();
@@ -18,6 +18,34 @@ const NUMERIC_OPTIONS = {
   ds_price_1m_prompt: { min: 0, max: 1e6, int: false },
   ds_price_1m_completion: { min: 0, max: 1e6, int: false },
   ds_request_timeout_ms: { min: 1000, max: 86_400_000, int: true },
+  // 新增设置项的取值范围（凡是「参与运行时计算」的数字都必须在这里登记，
+  // 否则 Infinity / 负数能直接写库并在运行期引发难以定位的问题）
+  register_ip_limit: { min: 0, max: 1000, int: true },
+  login_fail_lock_count: { min: 0, max: 100, int: true },
+  login_fail_lock_minutes: { min: 1, max: 1440, int: true },
+  password_min_length: { min: 6, max: 72, int: true },
+  session_days: { min: 1, max: 365, int: true },
+  quota_remind_threshold: { min: 0, max: 1e12, int: true },
+  invite_reward_inviter: { min: 0, max: 1e12, int: true },
+  invite_reward_invitee: { min: 0, max: 1e12, int: true },
+  checkin_min_quota: { min: 0, max: 1e12, int: true },
+  checkin_max_quota: { min: 0, max: 1e12, int: true },
+  announcement_version: { min: 0, max: 1e9, int: true },
+  default_user_concurrency: { min: 0, max: 10000, int: true },
+  default_user_rpm: { min: 0, max: 1e7, int: true },
+  default_user_tpm: { min: 0, max: 1e10, int: true },
+  data_export_interval: { min: 1, max: 1440, int: true },
+  rate_limit_window_minutes: { min: 1, max: 1440, int: true },
+  rate_limit_count: { min: 0, max: 1e8, int: true },
+  channel_disable_threshold: { min: 1, max: 1000, int: true },
+  auto_test_channel_minutes: { min: 1, max: 1440, int: true },
+  auto_test_concurrency: { min: 1, max: 32, int: true },
+  perf_metrics_retention_days: { min: 0, max: 3650, int: true },
+  retry_times: { min: 0, max: 10, int: true },
+  gateway_ping_interval: { min: 0, max: 600, int: true },
+  smtp_port: { min: 1, max: 65535, int: true },
+  backup_interval_hours: { min: 1, max: 8760, int: true },
+  backup_keep: { min: 1, max: 365, int: true },
 };
 
 // 固定值设置项：额度换算由计费代码硬编码（pricing.UNITS_PER_OD = 10000），
@@ -38,13 +66,17 @@ function validateOptionValue(key, raw) {
   return null;
 }
 
-// 管理端：获取全部设置
+// 管理端：获取全部设置（敏感项掩码下发，避免密码出现在前端/日志/截图里）
+const MASK = "********";
 router.get(
   "/",
   adminRequired,
   asyncHandler(async (req, res) => {
     const data = {};
-    for (const key of Object.keys(DEFAULT_OPTIONS)) data[key] = getOption(key);
+    for (const key of Object.keys(DEFAULT_OPTIONS)) {
+      const v = getOption(key);
+      data[key] = SECRET_OPTIONS.has(key) && v ? MASK : v;
+    }
     return ok(res, data);
   })
 );
@@ -75,6 +107,8 @@ router.put(
       const changed = [];
       for (const [key, value] of Object.entries(body)) {
         if (!isKnown(key)) continue;
+        // 掩码值 = 前端把「原样未改」的敏感项回传了，跳过不写（否则会把密码写成 ********）
+        if (SECRET_OPTIONS.has(key) && String(value ?? "") === MASK) continue;
         const v = typeof value === "boolean" ? String(value) : String(value ?? "");
         await setOption(key, v);
         changed.push(key);
