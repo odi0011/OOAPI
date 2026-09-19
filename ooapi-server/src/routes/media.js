@@ -102,6 +102,71 @@ router.get(
 // 以下全部需要登录
 // ---------------------------------------------------------------------------
 router.use(authRequired);
+
+// ⚠️ /avatar 的写操作必须注册在 DELETE /:id 与 GET /:id **之前**：
+// Express 按注册顺序匹配，/avatar 会被 /:id 抢先命中（id 变成字符串 "avatar"），
+// 于是「移除头像」实际去删一个不存在的媒体行并返回 404。
+// 这个顺序已经踩过一次坑，移动路由时请保持。
+router.post(
+  "/avatar",
+  asyncHandler(async (req, res) => {
+    if (!mediaEnabled()) return fail(res, "媒体库功能已关闭", 403);
+    const { base64, dataUrl, media_id: mediaId } = req.body || {};
+    let id = Number(mediaId) || 0;
+
+    if (!id) {
+      // 直接传 base64：前端 Canvas 裁剪压缩后的结果
+      let raw = String(base64 || "");
+      if (!raw && dataUrl) {
+        const m = /^data:([^;]+);base64,(.+)$/s.exec(String(dataUrl));
+        if (m) raw = m[2];
+      }
+      if (!raw) return fail(res, "缺少头像内容");
+      const avatarMax =
+        (getNumberOption("media_avatar_max_kb") > 0 ? getNumberOption("media_avatar_max_kb") : 512) * 1024;
+      if (raw.length > avatarMax * 1.4) {
+        return fail(res, `头像过大：上限 ${(avatarMax / 1024).toFixed(0)}KB（前端应先裁剪压缩）`, 413);
+      }
+      try {
+        const saved = await saveBuffer({
+          buffer: Buffer.from(raw, "base64"),
+          userId: req.user.id,
+          origName: "avatar",
+          source: "avatar",
+        });
+        id = saved.id;
+      } catch (e) {
+        return fail(res, e.message, 400);
+      }
+    }
+
+    const row = await getMedia(id);
+    if (!row) return fail(res, "文件不存在", 404);
+    if (Number(row.user_id) !== req.user.id) return fail(res, "只能使用自己上传的文件作为头像", 403);
+    if (!String(row.kind).startsWith("image")) return fail(res, "头像必须是图片");
+
+    const [[u]] = await pool.query("SELECT avatar_media_id FROM users WHERE id = ?", [req.user.id]);
+    const oldId = Number(u?.avatar_media_id) || 0;
+    if (oldId && oldId !== id) {
+      await releaseRefs("avatar", [String(req.user.id)]).catch(() => {});
+    }
+    await attachRef(id, { userId: req.user.id, refType: "avatar", refId: String(req.user.id), slot: "avatar" });
+    await pool.query("UPDATE users SET avatar_media_id = ? WHERE id = ?", [id, req.user.id]);
+    return ok(res, { avatar_url: `/api/media/avatar/${req.user.id}?v=${id}` }, "头像已更新");
+  })
+);
+
+router.delete(
+  "/avatar",
+  asyncHandler(async (req, res) => {
+    // 解绑引用并把 avatar_media_id 归零；旧文件变成未引用，由回收任务统一清理
+    await releaseRefs("avatar", [String(req.user.id)]).catch(() => {});
+    await pool.query("UPDATE users SET avatar_media_id = 0 WHERE id = ?", [req.user.id]);
+    return ok(res, null, "头像已移除");
+  })
+);
+
+// ---------------------------------------------------------------------------
 // 上传
 // ---------------------------------------------------------------------------
 router.post(
@@ -341,66 +406,6 @@ router.delete(
       row.id,
     ]);
     return ok(res, { id: row.id, status: 2 }, "已删除（保留期后可回收）");
-  })
-);
-
-// ---------------------------------------------------------------------------
-// 头像
-// ---------------------------------------------------------------------------
-router.post(
-  "/avatar",
-  asyncHandler(async (req, res) => {
-    if (!mediaEnabled()) return fail(res, "媒体库功能已关闭", 403);
-    const { base64, dataUrl, media_id: mediaId } = req.body || {};
-    let id = Number(mediaId) || 0;
-
-    if (!id) {
-      // 直接传 base64：前端 Canvas 裁剪后的结果
-      let raw = String(base64 || "");
-      if (!raw && dataUrl) {
-        const m = /^data:([^;]+);base64,(.+)$/s.exec(String(dataUrl));
-        if (m) raw = m[2];
-      }
-      if (!raw) return fail(res, "缺少头像内容");
-      const avatarMax = (getNumberOption("media_avatar_max_kb") > 0 ? getNumberOption("media_avatar_max_kb") : 512) * 1024;
-      if (raw.length > avatarMax * 1.4) {
-        return fail(res, `头像过大：上限 ${(avatarMax / 1024).toFixed(0)}KB（前端应先裁剪压缩）`, 413);
-      }
-      try {
-        const saved = await saveBuffer({
-          buffer: Buffer.from(raw, "base64"),
-          userId: req.user.id,
-          origName: "avatar",
-          source: "avatar",
-        });
-        id = saved.id;
-      } catch (e) {
-        return fail(res, e.message, 400);
-      }
-    }
-
-    const row = await getMedia(id);
-    if (!row) return fail(res, "文件不存在", 404);
-    if (Number(row.user_id) !== req.user.id) return fail(res, "只能使用自己上传的文件作为头像", 403);
-    if (!String(row.kind).startsWith("image")) return fail(res, "头像必须是图片");
-
-    const [[u]] = await pool.query("SELECT avatar_media_id FROM users WHERE id = ?", [req.user.id]);
-    const oldId = Number(u?.avatar_media_id) || 0;
-    if (oldId && oldId !== id) {
-      await releaseRefs("avatar", [String(req.user.id)]).catch(() => {});
-    }
-    await attachRef(id, { userId: req.user.id, refType: "avatar", refId: String(req.user.id), slot: "avatar" });
-    await pool.query("UPDATE users SET avatar_media_id = ? WHERE id = ?", [id, req.user.id]);
-    return ok(res, { avatar_url: `/api/media/avatar/${req.user.id}?v=${id}` }, "头像已更新");
-  })
-);
-
-router.delete(
-  "/avatar",
-  asyncHandler(async (req, res) => {
-    await releaseRefs("avatar", [String(req.user.id)]).catch(() => {});
-    await pool.query("UPDATE users SET avatar_media_id = 0 WHERE id = ?", [req.user.id]);
-    return ok(res, null, "头像已移除");
   })
 );
 
