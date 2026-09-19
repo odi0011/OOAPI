@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node tests/static-check.mjs && node tests/device-ua.test.mjs && node tests/pricing-offpeak.test.mjs && node tests/metrics-alert.test.mjs && node tests/review-fixes.test.mjs && node tests/concurrency-gate.test.mjs",
+    "test": "node tests/static-check.mjs && node tests/device-ua.test.mjs && node tests/pricing-offpeak.test.mjs && node tests/metrics-alert.test.mjs && node tests/review-fixes.test.mjs && node tests/concurrency-gate.test.mjs && node tests/refresh-lock.test.mjs",
     "test:smoke": "node tests/monitor-smoke.mjs"
   },
   "engines": {
