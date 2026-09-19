@@ -109,6 +109,7 @@ async function quotaCodex(channel) {
       "user-agent": identity.userAgent,
     },
   });
+  const rl = j.rate_limit || {};
   const windows = [];
   for (const [key, label] of [
     ["primary_window", "主窗口"],
