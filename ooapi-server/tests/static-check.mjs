@@ -1,11 +1,13 @@
 // 全量静态健全性检查：语法 + import/export 一致性（跨文件导出是否存在）
 // 背景：批量清理未使用 import 的脚本改过 import 行，必须确认没有留下语法错误或引用不存在的导出。
+// 路径用脚本自身位置推导（不能用写死的绝对路径，否则换机器/换目录就找不到 src）。
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const ROOT = "C:/Users/93950/Documents/Code/OOAPI";
-const SERVER = path.join(ROOT, "ooapi-server/src");
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const SERVER = path.join(HERE, "..", "src");
 
 function walk(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -23,7 +25,7 @@ for (const f of files) {
     execFileSync(process.execPath, ["--check", f], { stdio: "pipe" });
   } catch (e) {
     syntaxFail += 1;
-    console.log("SYNTAX FAIL:", path.relative(ROOT, f));
+    console.log("SYNTAX FAIL:", path.relative(SERVER, f));
     console.log(String(e.stderr || "").split("\n").slice(0, 3).join("\n"));
   }
 }
@@ -59,7 +61,7 @@ for (const f of files) {
     const target = path.resolve(path.dirname(f), spec).replace(/\\/g, "/");
     if (!fs.existsSync(target)) {
       importFail += 1;
-      console.log(`MISSING FILE: ${path.relative(ROOT, f)} -> ${spec}`);
+      console.log(`MISSING FILE: ${path.relative(SERVER, f)} -> ${spec}`);
       continue;
     }
     const exports = exportMap.get(target);
@@ -71,7 +73,7 @@ for (const f of files) {
         if (!t) continue;
         if (!exports.has(t)) {
           importFail += 1;
-          console.log(`MISSING EXPORT: ${path.relative(ROOT, f)} imports {${t}} from ${spec}`);
+          console.log(`MISSING EXPORT: ${path.relative(SERVER, f)} imports {${t}} from ${spec}`);
         }
       }
     }
