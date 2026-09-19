@@ -144,7 +144,18 @@ async function listLogs(req, res, kind) {
   const { p, size, offset } = pageParams(req.query);
   const { where, args } = buildQuery({ isAdmin, userId: req.user.id, kind, query: req.query });
   const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total FROM logs ${where}`, args);
-  const [rows] = await pool.query(`SELECT * FROM logs ${where} ORDER BY id DESC LIMIT ? OFFSET ?`, [
+  // 显式列出需要的列而不是 SELECT *：
+  //   · detail 是 TEXT，只有管理员在详情里会看，列表页取回来纯属浪费带宽；
+  //   · user_agent 同理（非管理员不返回）。
+  // 普通用户查询因此不取这两列，管理员才带上。
+  const cols = [
+    "id", "user_id", "username", "created_at", "type", "content", "quota", "ip",
+    "model", "channel_id", "channel_name", "token_id", "token_name", "group_name",
+    "prompt_tokens", "completion_tokens", "cache_tokens", "first_token_ms", "elapsed_ms",
+    "device", "price_phase",
+    ...(isAdmin ? ["detail", "user_agent"] : []),
+  ].join(", ");
+  const [rows] = await pool.query(`SELECT ${cols} FROM logs ${where} ORDER BY id DESC LIMIT ? OFFSET ?`, [
     ...args,
     size,
     offset,
@@ -241,14 +252,19 @@ router.get(
     );
     const prompt = Number(row.prompt_tokens) || 0;
     const cache = Number(row.cache_tokens) || 0;
+    // 缓存命中率 = 命中 / 总输入。
+    // 注意 prompt_tokens 是上游原值、**已经包含**缓存命中部分
+    // （normalizeUsage 直接透传，扣减发生在 computeCost 内部），
+    // 所以分母就是 prompt，不能再加一次 cache（那会把命中率算低约一半）。
+    const uncached = Math.max(0, prompt - cache);
     return ok(res, {
       calls: Number(row.calls) || 0,
       units: Number(row.units) || 0,
       prompt_tokens: prompt,
       completion_tokens: Number(row.completion_tokens) || 0,
       cache_tokens: cache,
-      // 缓存命中率：命中 / (命中 + 未命中输入)。没有输入时给 0 而不是 NaN
-      cache_rate: prompt + cache > 0 ? Number(((cache / (prompt + cache)) * 100).toFixed(1)) : 0,
+      uncached_tokens: uncached,
+      cache_rate: prompt > 0 ? Number(((cache / prompt) * 100).toFixed(1)) : 0,
       avg_elapsed: Math.round(Number(row.avg_elapsed) || 0),
       avg_first_token: Math.round(Number(row.avg_first_token) || 0),
     });
@@ -261,7 +277,8 @@ router.delete(
   adminRequired,
   asyncHandler(async (req, res) => {
     await pool.query("DELETE FROM logs");
-    await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: "清空所有日志" });
+    // 传 req：清库是高危操作，自身必须留 IP/设备痕迹（否则日志被清后查不到是谁清的）
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: "清空所有日志" });
     return ok(res, null, "日志已清空");
   })
 );

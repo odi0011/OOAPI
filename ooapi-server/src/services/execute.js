@@ -107,8 +107,11 @@ export async function runCompletion({
       //   · hardTimer 只包住真正的上游调用（排队不算，避免黄条失真/没发请求就超时）；
       //   · backstopTimer 覆盖「排队 + 调用」，防止同渠道前序任务悬挂导致本请求永远排不到队头。
       const deadline = new Promise((_, reject) => {
+        // 错误消息只带渠道编号，不带渠道名：这条消息会原样返回给 API 调用方、
+        // 也会进普通用户可见的错误日志，而渠道名常是账号邮箱（上游供应商身份）。
+        // 管理员在日志的 channel_name 列与渠道最近调用里都能看到真实名称。
         const timeoutError = () =>
-          Object.assign(new Error(`渠道「${channel.name}」响应超时（${timeoutMs}ms）`), { code: "CHANNEL_TIMEOUT" });
+          Object.assign(new Error(`上游渠道 #${channel.id} 响应超时（${timeoutMs}ms）`), { code: "CHANNEL_TIMEOUT" });
         armDeadline = () => {
           hardTimer = setTimeout(() => {
             timedOut = true;
@@ -187,10 +190,10 @@ export async function runCompletion({
       lastError = tagChannel(err, channel);
       // 客户端主动断开：不再换渠道，直接结束
       if (signal?.aborted) throw err;
-      // 本渠道超时：转换为可重试错误，换下一个渠道
+      // 本渠道超时：转换为可重试错误，换下一个渠道（消息同样只带编号，不带渠道名）
       if (timedOut) {
         lastError = tagChannel(
-          Object.assign(new Error(`渠道「${channel.name}」响应超时（${timeoutMs}ms）`), {
+          Object.assign(new Error(`上游渠道 #${channel.id} 响应超时（${timeoutMs}ms）`), {
             code: "CHANNEL_TIMEOUT",
           }),
           channel

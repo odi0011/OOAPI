@@ -369,7 +369,7 @@ router.post(
 // ---------- 计费（用户额度）----------
 // 与网关同一套原子扣费；harness 传进来的 tokens 是「每次上游调用分别 splitTokens 后求和」，
 // 混用 API 渠道（结构化 usage）与反代渠道（usage=null）时不会互相覆盖口径。
-  async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0, startedAt = 0, firstTokenAt = 0, userAgent = "", ip = "" }) {
+  async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0, keyName = "", startedAt = 0, firstTokenAt = 0, userAgent = "", ip = "" }) {
     const { promptTokens, completionTokens, cacheTokens } =
       tokens || splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
@@ -431,6 +431,7 @@ router.post(
     channelId: channel?.id || (Array.isArray(channelIds) && channelIds.length === 1 ? channelIds[0] : 0) || 0,
     channelName: channel?.name || "",
     tokenId: keyId || 0,
+    tokenName: keyName || "",
     groupName: groupName || user?.group_name || "",
     promptTokens,
     completionTokens,
@@ -601,6 +602,8 @@ router.post(
       docs,
       routeGroup,
       keyId,
+      // 密钥名也要落日志：只有 id 的话「使用记录」的密钥列会显示成「账户额度」（见 chargeUser）
+      keyName: usableKey?.name || "",
       modelCaps,
       // 使用记录要展示的调用方信息（IP/设备只在本次 HTTP 请求里有，必须在这里取）
       ip: clientIp(req),
@@ -685,7 +688,7 @@ router.get(
  * 真正执行一轮：跑 harness、计费、落库、发布事件。
  * 无论客户端是否还在，都必须跑到最后一步（这就是断线续传的前提）。
  */
-async function executeRun({ run, ctrl, user, session, agent, model, settings, history, content, imgs, docs = [], routeGroup, keyId = 0, modelCaps, ip = "", userAgent = "", startedAt = 0 }) {
+async function executeRun({ run, ctrl, user, session, agent, model, settings, history, content, imgs, docs = [], routeGroup, keyId = 0, keyName = "", modelCaps, ip = "", userAgent = "", startedAt = 0 }) {
   const runCalls = [];
   let runParts = [];
   let runTodo = session.todo || [];
@@ -735,6 +738,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       channelIds: runChannelIds,
       groupName: routeGroup,
       keyId,
+      keyName,
       kind: "对话",
       ip,
       userAgent,
@@ -798,6 +802,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           groupName: routeGroup,
           kind: stopped ? "对话（已停止）" : "对话（部分）",
           keyId,
+          keyName,
           ip,
           userAgent,
           startedAt,

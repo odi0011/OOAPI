@@ -552,7 +552,9 @@ router.post(
           usage: null,
           ip,
           requestId,
-          channel: null,
+          // 失败渠道由 execute.tagChannel 挂在 error 上：带上它，这部分真实产生的用量
+          // 才能归到渠道，否则在渠道统计里完全不可见（主查询与老记录回填都匹配不到）
+          channel: err.channelId ? { id: err.channelId, name: err.channelName } : null,
           startedAt,
           firstTokenAt,
           userAgent,

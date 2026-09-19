@@ -26,9 +26,12 @@ function parseRuleInput(v) {
   if (!obj || typeof obj !== "object" || Array.isArray(obj)) throw new Error("闲时规则必须是 JSON 对象");
   const peak = obj.peak;
   if (!Array.isArray(peak) || !peak.length) throw new Error("闲时规则缺少 peak 窗口");
+  // 时刻必须严格合法（00:00-23:59）：放宽到 \d{1,2}:\d{2} 会让 "99:00" 通过，
+  // 而它永远匹配不上任何时刻 → 该模型全天按闲时价（通常半价）计费且界面看不出来。
+  const HHMM = /^([01]?\d|2[0-3]):[0-5]\d$/;
   for (const w of peak) {
-    if (!Array.isArray(w) || w.length !== 2 || !/^\d{1,2}:\d{2}$/.test(String(w[0])) || !/^\d{1,2}:\d{2}$/.test(String(w[1]))) {
-      throw new Error("peak 窗口格式应为 [[\"09:00\",\"12:00\"]]");
+    if (!Array.isArray(w) || w.length !== 2 || !HHMM.test(String(w[0])) || !HHMM.test(String(w[1]))) {
+      throw new Error('peak 窗口格式应为 [["09:00","12:00"]]（00:00-23:59）');
     }
   }
   if (obj.days !== undefined && (!Array.isArray(obj.days) || obj.days.some((d) => !Number.isInteger(d) || d < 1 || d > 7))) {
@@ -284,17 +287,32 @@ router.post(
         if (n > MAX_PRICE) throw new Error(`${name} 超出上限（${MAX_PRICE}）`);
         return Number(n.toFixed(6));
       };
+      // 闲时价与上面的「可空数字」语义不同：空必须落 NULL 而不是 0。
+      // 落 0 会被 effectivePrice 当成「配了闲时价 0」，闲时段直接按 0 计费（兜底 1 厘/次），
+      // 属于静默少计费；NULL 才是「该模型不分时」的正确表达。
+      const optNum = (v, name) => {
+        if (v === undefined || v === null || String(v).trim() === "") return null;
+        return num(v, name, false);
+      };
       try {
+        const offpeakInput = optNum(entry.offpeak_input ?? entry.offpeak_input_price, "offpeak_input");
+        const offpeakOutput = optNum(entry.offpeak_output ?? entry.offpeak_output_price, "offpeak_output");
+        const offpeakCache = optNum(entry.offpeak_cache ?? entry.offpeak_cache_price, "offpeak_cache");
+        const offpeakRule = parseRuleInput(entry.offpeak_rule);
+        // 有规则但没有任何闲时价 = 规则无意义（判档了却拿不到闲时单价），直接拒绝
+        if (offpeakRule && offpeakInput === null && offpeakOutput === null && offpeakCache === null) {
+          throw new Error("配置了闲时规则但未提供任何闲时价格");
+        }
         accepted.set(model.toLowerCase(), {
           model: reg.model,
           input: num(entry.input ?? entry.input_price, "input", true),
           output: num(entry.output ?? entry.output_price, "output", true),
           cache: num(entry.cache ?? entry.cache_price, "cache", false),
-          // 闲时价（可选）：只给峰时价时留空 = 该模型不分时
-          offpeakInput: num(entry.offpeak_input ?? entry.offpeak_input_price, "offpeak_input", false),
-          offpeakOutput: num(entry.offpeak_output ?? entry.offpeak_output_price, "offpeak_output", false),
-          offpeakCache: num(entry.offpeak_cache ?? entry.offpeak_cache_price, "offpeak_cache", false),
-          offpeakRule: parseRuleInput(entry.offpeak_rule),
+          // 闲时价（可选）：留空 = 该模型不分时
+          offpeakInput,
+          offpeakOutput,
+          offpeakCache,
+          offpeakRule,
           type: reg.type || type,
           remark: String(entry.remark ?? entry.source ?? "").slice(0, 255),
         });

@@ -377,7 +377,9 @@ router.get(
       // 走 channel_id 列而不是解 detail JSON：列有索引，日志量上来后差距是数量级的；
       // detail 里的 channel_ids 只用于「历史记录」（列是后来加的，老数据没有列值）。
       const [ls] = await pool.query(
-        `SELECT created_at, quota, model, prompt_tokens, completion_tokens, cache_tokens
+        // 一并取 detail：老记录（列已写但 detail 里也有 model 的历史数据）要靠它回落，
+        // 只在回填查询里取会让「列存在但为空」的行显示成 "-"
+        `SELECT created_at, quota, model, prompt_tokens, completion_tokens, cache_tokens, detail
            FROM logs
           WHERE type = ? AND created_at >= ? AND channel_id = ?`,
         [LOG_TYPE.CONSUME, since, id]
@@ -385,7 +387,8 @@ router.get(
       logs = ls;
       // 老记录（列还没写）回填：只查一次，量小
       const [old] = await pool.query(
-        `SELECT created_at, quota, detail FROM logs
+        `SELECT created_at, quota, model, prompt_tokens, completion_tokens, cache_tokens, detail
+           FROM logs
           WHERE type = ? AND created_at >= ? AND channel_id = 0
             AND JSON_VALID(detail)
             AND (JSON_UNQUOTE(JSON_EXTRACT(detail, '$.channel_id')) = ?
@@ -443,6 +446,8 @@ router.get(
     }
 
     // 累计（不限窗口）：卡片区展示「累计 Token / 累计调用 / 累计消费」
+    // 必须与窗口统计同口径：老记录（channel_id=0）的渠道归属只存在 detail JSON 里，
+    // 只查列会让「累计」小于「近 30 天」——管理员一眼就能看出自相矛盾。
     let allTime = { calls: 0, units: 0, promptTokens: 0, completionTokens: 0 };
     try {
       const [[at]] = await pool.query(
@@ -459,6 +464,25 @@ router.get(
         units: Number(at.units) || 0,
         promptTokens: Number(at.pt) || 0,
         completionTokens: Number(at.ct) || 0,
+      };
+      // 老记录（列还没写）补齐：只统计 channel_id = 0 的行，与上面的谓词互斥，不会双算
+      const [[oldAt]] = await pool.query(
+        `SELECT COUNT(*) AS calls,
+                COALESCE(SUM(quota), 0) AS units,
+                COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(detail, '$.prompt_tokens')) AS UNSIGNED)), 0) AS pt,
+                COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(detail, '$.completion_tokens')) AS UNSIGNED)), 0) AS ct
+           FROM logs
+          WHERE type = ? AND channel_id = 0
+            AND JSON_VALID(detail)
+            AND (JSON_UNQUOTE(JSON_EXTRACT(detail, '$.channel_id')) = ?
+                 OR JSON_CONTAINS(JSON_EXTRACT(detail, '$.channel_ids'), ?))`,
+        [LOG_TYPE.CONSUME, String(id), String(id)]
+      );
+      allTime = {
+        calls: allTime.calls + (Number(oldAt.calls) || 0),
+        units: allTime.units + (Number(oldAt.units) || 0),
+        promptTokens: allTime.promptTokens + (Number(oldAt.pt) || 0),
+        completionTokens: allTime.completionTokens + (Number(oldAt.ct) || 0),
       };
     } catch (e) {
       console.warn("[channel] 累计用量查询失败：", e.message);

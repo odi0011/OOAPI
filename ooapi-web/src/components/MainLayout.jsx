@@ -16,6 +16,7 @@ import {
   MessageOutlined,
   DollarOutlined,
   GroupOutlined,
+  HistoryOutlined,
 } from "@ant-design/icons";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";

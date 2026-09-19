@@ -338,10 +338,16 @@ async function ensureColumns() {
 }
 
 // 索引迁移：老库补索引，热路径（渠道选择/日志聚合）在大表上不再全表扫
+// 注意：索引光写在建表 SQL 里不够 —— CREATE TABLE IF NOT EXISTS 对已存在的表不生效，
+// 而有数据、真正需要索引的恰恰是老库。
 const INDEX_MIGRATIONS = [
   "CREATE INDEX idx_channels_status_priority ON channels (status, priority)",
   "CREATE INDEX idx_logs_type_created ON logs (type, created_at)",
   "CREATE INDEX idx_logs_user_type_created ON logs (user_id, type, created_at)",
+  // 渠道统计/筛选走 channel_id 列（替代原 JSON_EXTRACT detail），无索引等于每页全表扫
+  "CREATE INDEX idx_logs_channel ON logs (channel_id)",
+  // 按模型筛选与模型排行
+  "CREATE INDEX idx_logs_model ON logs (model)",
 ];
 
 async function ensureIndexes() {

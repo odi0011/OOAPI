@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { Table, Tag, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions } from "antd";
+import { Table, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions } from "antd";
 import { ReloadOutlined, FileTextOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import { fmtDate, fmtOd, unitsPerOd, CURRENCY_NAME } from "../services/format";
@@ -148,9 +148,15 @@ export default function LogPage() {
             width: 120,
             ellipsis: true,
             render: (v, r) =>
+              // token_id 有值但名字缺失（历史数据）也要显示成密钥而不是「账户额度」，
+              // 否则「筛选里能选到该密钥、表格里显示账户额度」会自相矛盾
               v ? (
                 <Tooltip title={`#${r.token_id} ${v}`}>
                   <span className="oo-truncate" style={{ fontSize: 12.5 }}>{v}</span>
+                </Tooltip>
+              ) : r.token_id ? (
+                <Tooltip title={`令牌 #${r.token_id}（名称未记录）`}>
+                  <span className="oo-truncate" style={{ fontSize: 12.5, color: "var(--ink-3)" }}>#{r.token_id}</span>
                 </Tooltip>
               ) : (
                 <span style={{ color: "var(--ink-3)" }}>账户额度</span>
@@ -175,6 +181,7 @@ export default function LogPage() {
     {
       title: "调用内容",
       dataIndex: "content",
+      width: 300,
       ellipsis: true,
       render: (text) => <span style={{ fontSize: 12.5 }}>{normalizeCurrency(text)}</span>,
     },
@@ -304,15 +311,15 @@ export default function LogPage() {
       />
 
       {summary ? (
-        <div className="oo-stats-cards" style={{ marginBottom: 14 }}>
+        <div className="oo-stats-cards">
           <StatCard label="调用次数" value={summary.calls} />
-          <StatCard label="消耗" value={`${fmtOd(summary.units, perUnit, 4)}`} hint={CURRENCY_NAME} />
+          <StatCard label="消耗" value={`${fmtOd(summary.units, perUnit, 4)}`} foot={CURRENCY_NAME} />
           <StatCard
             label="Tokens"
             value={summary.prompt_tokens + summary.completion_tokens}
-            hint={`提示 ${summary.prompt_tokens} / 补全 ${summary.completion_tokens}`}
+            foot={`提示 ${summary.prompt_tokens} / 补全 ${summary.completion_tokens}`}
           />
-          <StatCard label="缓存命中率" value={`${summary.cache_rate}%`} hint={`命中 ${summary.cache_tokens}`} />
+          <StatCard label="缓存命中率" value={`${summary.cache_rate}%`} foot={`命中 ${summary.cache_tokens}`} />
           <StatCard label="平均首Token" value={ms(summary.avg_first_token)} />
           <StatCard label="平均耗时" value={ms(summary.avg_elapsed)} />
         </div>
@@ -336,7 +343,8 @@ export default function LogPage() {
           columns={columns}
           dataSource={items}
           size="small"
-          scroll={{ x: isAdmin ? 1680 : 1100 }}
+          // scroll.x 必须 ≥ 各列宽度之和，否则带 ellipsis 的列会被压成 0 宽（table-layout: fixed）
+          scroll={{ x: isAdmin ? 2000 : 1480 }}
           onRow={(r) => ({
             style: { cursor: "pointer" },
             onClick: () => setDetail(r),
