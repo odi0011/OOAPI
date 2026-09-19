@@ -1929,7 +1929,7 @@ export default function AdminChannelsPage() {
                                   一键登录（自动抓取）
                                 </Button>
                                 <Button type="link" onClick={startOAuth} loading={oauthBusy} style={{ padding: 0 }}>
-                                  或手动打开授权页
+                                  或手动登录（需粘贴回调）
                                 </Button>
                                 {oauthUrl ? (
                                   <Typography.Link href={oauthUrl} target="_blank" rel="noreferrer">
@@ -1937,6 +1937,21 @@ export default function AdminChannelsPage() {
                                   </Typography.Link>
                                 ) : null}
                               </Space>
+                              {oauthUrl ? (
+                                <Alert
+                                  type="info"
+                                  showIcon
+                                  className="oo-alert-compact"
+                                  style={{ marginTop: 8 }}
+                                  message="还差一步：把回调地址粘回来"
+                                  description={
+                                    <span style={{ fontSize: 12 }}>
+                                      在新窗口完成登录后，页面会停在一个打不开的 localhost 地址（正常现象）。
+                                      复制地址栏那一整串 URL，粘贴到下面的输入框，再点「添加」。
+                                    </span>
+                                  }
+                                />
+                              ) : null}
                             </Form.Item>
                           ) : null}
                           {/* 设备码登录（Grok）：服务端拿 user_code，用户在任意浏览器授权后自动回填 */}
