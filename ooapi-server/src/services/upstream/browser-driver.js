@@ -769,6 +769,10 @@ export async function streamCapture(page, {
   let lastGrowthAt = 0;    // 帧数最后一次增长的时间
   let lastBody = null;
   let patchError = null;
+  // 被跳过的注入字段：setPatch 只改已存在的字段，页面结构一变就会静默跳过
+  // （表现为「开了 search/thinking 或换了 model，上游却按默认跑」，用户仍按
+  // 所请求的模型计费）。把跳过的字段名带回给调用方，由适配器决定告警或报错。
+  let patchSkipped = null;
 
   // 客户端取消时主动让**页面内**的请求停下来。
   // 只跳出轮询是不够的：页面里的 fetch 会继续生成并消耗账号额度，
@@ -787,7 +791,7 @@ export async function streamCapture(page, {
     }
     if (Date.now() - t0 > timeoutMs) {
       abortUpstream();
-      return { ok: false, error: "TIMEOUT", frames: cursor, lastBody, patchError };
+      return { ok: false, error: "TIMEOUT", frames: cursor, lastBody, patchError, patchSkipped };
     }
 
     await page.waitForTimeout(pollMs);
@@ -799,12 +803,14 @@ export async function streamCapture(page, {
       err: window.__ooCap?.error || null,
       started: window.__ooCap?.startedAt || 0,
       patchError: window.__ooPatchError || null,
+      patchSkipped: window.__ooPatchSkipped || null,
       lastBody: window.__ooLastBody || null,
     }), cursor);
 
     if (st.patchError) patchError = st.patchError;
+    if (Array.isArray(st.patchSkipped) && st.patchSkipped.length) patchSkipped = st.patchSkipped;
     if (st.lastBody) lastBody = st.lastBody;
-    if (st.err) return { ok: false, error: st.err, frames: cursor, lastBody, patchError };
+    if (st.err) return { ok: false, error: st.err, frames: cursor, lastBody, patchError, patchSkipped };
 
     // 先把这一轮新到的帧全部吐出去
     for (const c of st.chunks) {
@@ -814,14 +820,14 @@ export async function streamCapture(page, {
     if (st.total > lastTotal) lastGrowthAt = Date.now();
     lastTotal = st.total;
 
-    if (shouldStop?.()) return { ok: true, frames: cursor, stopped: true, lastBody, patchError };
+    if (shouldStop?.()) return { ok: true, frames: cursor, stopped: true, lastBody, patchError, patchSkipped };
     // 流已结束就立即返回；0 帧说明上游返回了空流（如错误体），不能死等到超时
-    if (st.done) return { ok: cursor > 0, frames: cursor, empty: cursor === 0, lastBody, patchError };
+    if (st.done) return { ok: cursor > 0, frames: cursor, empty: cursor === 0, lastBody, patchError, patchSkipped };
 
     // 兜底：流没标记结束，但帧数已经静止 idleMs，视为已结束。
     // 必须先从「首帧到达」开始算，否则等待首帧的那几秒会被当成静止。
     if (cursor > 0 && lastGrowthAt && Date.now() - lastGrowthAt > idleMs) {
-      return { ok: true, frames: cursor, endedByIdle: true, lastBody, patchError };
+      return { ok: true, frames: cursor, endedByIdle: true, lastBody, patchError, patchSkipped };
     }
   }
 }

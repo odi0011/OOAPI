@@ -237,10 +237,25 @@ async function settle({
   channel,
   startedAt = 0,
   firstTokenAt = 0,
-  userAgent = ""}) {
+  userAgent = "",
+  billModel = ""}) {
   const { promptTokens, completionTokens, cacheTokens } = splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
-  const basePrice = await getPrice(resolveAliasSync(model));
+  // billModel：上游实际跑的不是请求的那个档位时（目前只有 GLM 网页版会这样，
+  // 它用页面自身的档位），适配器会把真实档位回传，这里优先按真实档位计价 ——
+  // 否则用户按贵档付费、拿到的是另一个档位（或少收）。
+  // 只有在真实档位能解析到价格时才采用，避免因为未知档位名落到兜底高价。
+  let priceModel = resolveAliasSync(model);
+  if (billModel) {
+    const actual = await getPrice(resolveAliasSync(billModel));
+    // exact=true 才采用：否则说明这个档位没配价，用的是兜底价，
+    // 那还不如按用户请求的档位算（至少是明确配置过的价格）。
+    if (actual?.exact) {
+      priceModel = resolveAliasSync(billModel);
+      console.warn(`[gateway] 上游实际档位「${billModel}」与请求「${model}」不一致，按实际档位计费`);
+    }
+  }
+  const basePrice = await getPrice(priceModel);
   // 分时（峰谷）定价：按「请求发起时刻」归属时段，而不是结算时刻 ——
   // 一个 11:59 发起、12:01 结束的请求应当按高峰价算，用结算时刻会差出一倍。
   const eff = effectivePrice(basePrice, startedAt || Date.now());
@@ -559,6 +574,8 @@ router.post(
       ip,
       requestId,
       channel: result.channel,
+      // 上游真实档位（仅 GLM 等会与请求不一致的渠道回传）：用于按实际档位计费
+      billModel: result.billModel || "",
       startedAt,
       firstTokenAt,
       userAgent});

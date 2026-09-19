@@ -181,7 +181,11 @@ export async function chat({
     }
     // 请求参数或模型后缀（-search）任一命中都开联网
     if (search || resolved.search) patchSet["features.auto_web_search"] = true;
-    const wantPatchModel = channel?.other?.patch_model === true;
+    // 是否注入模型档位。默认**开启**：不注入时页面用它自己的默认档，
+    // 与用户请求的模型往往不一致（线上实测：请求 glm-5.3，实际跑 x-preview-l），
+    // 而计费按请求的模型算 —— 用户按贵档付费、拿到的是另一个档位。
+    // 注入失败也会在下方核对实际档位并告警（patch_model=false 可显式关掉）。
+    const wantPatchModel = channel?.other?.patch_model !== false;
     if (wantPatchModel) patchSet.model = upstreamId;
 
     await setPatch(page, { set: patchSet });
@@ -270,12 +274,18 @@ export async function chat({
     //   · 把实际档位回传，供调度/计费侧核对（见 execute 透传的 upstreamModel）。
     const actualModel = res.lastBody?.model || upstreamId;
     const mismatch = Boolean(res.lastBody?.model) && String(res.lastBody.model) !== String(upstreamId);
-    if (mismatch) {
+    // 注入被跳过（页面没有 model 字段）也算不一致：用户拿到的不是想要的档位
+    const patchSkipped = Array.isArray(res.patchSkipped) && res.patchSkipped.includes("model");
+    if (mismatch || patchSkipped) {
       console.warn(
-        `[glm] 渠道#${channel.id} 模型档位不一致：请求「${upstreamId}」→ 上游实际「${res.lastBody.model}」` +
-          `${wantPatchModel ? "（已开启 patch_model，说明注入未生效）" : "（未开启 patch_model，用的是页面默认档；可在渠道 other 里设 patch_model=true 尝试）"}`
+        `[glm] 渠道#${channel.id} 模型档位不一致：请求「${upstreamId}」→ 上游实际「${res.lastBody?.model || "未知"}」` +
+          `${patchSkipped ? "（注入被跳过：页面没有 model 字段）" : ""}` +
+          `${wantPatchModel ? "" : "（已显式关闭 patch_model，用的是页面默认档）"}`
       );
     }
+    // 实际档位用于计费兜底：把上游真实的模型 id 也带上（friendlyId 是展示用的名字）。
+    // 计费侧（gateway/chat）在 mismatch 时优先按实际档位计价，避免按请求档位多收/少收。
+    const billModel = mismatch && res.lastBody?.model ? friendlyId(res.lastBody.model) : "";
 
     // 本轮用的页面已经被消耗掉，趁空闲把下一轮的干净页面准备好（省下一轮 1.8s）
     prewarm(session, ENTRY_URL, MATCH_PATH);
@@ -287,6 +297,9 @@ export async function chat({
       upstreamModel: actualModel,
       upstreamModelFriendly: friendlyId(actualModel),
       modelMismatch: mismatch,
+      // 档位不一致时的计费模型（空串 = 按请求模型计费）。
+      // 计费侧只在能解析到价格时才采用，避免因为上游返回了未知档位名而落到兜底高价。
+      billModel,
       firstTokenMs: firstFrameAt ? firstFrameAt - T.submit : 0,
     };
   });

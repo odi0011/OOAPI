@@ -255,7 +255,9 @@ const MAX_WARNED_MODELS = 500;
 export async function getPrice(model) {
   const prices = await loadPrices();
   const m = String(model || "").toLowerCase();
-  if (prices.has(m)) return prices.get(m);
+  // 兜底链的返回值统一带 exact:false —— 调用方（如「按上游实际档位计价」）
+  // 需要知道这个价格是查到的还是猜的，靠 remark 字符串匹配太脆弱。
+  if (prices.has(m)) return { ...prices.get(m), exact: true };
   // 模糊匹配：deepseek-chat-search → deepseek-chat。
   // 必须取「命中长度最长」的前缀，不能取 Map 里第一个命中的：
   // 短前缀可能贵 10 倍（如 glm-5.3-flash-search 先命中 glm-5.3 而不是 glm-5.3-flash）。
@@ -267,7 +269,7 @@ export async function getPrice(model) {
       bestLen = k.length;
     }
   }
-  if (best) return best;
+  if (best) return { ...best, exact: true }; // 前缀命中：仍算精确（deepseek-chat-search → deepseek-chat）
   // 同族匹配：请求名是某个已配价模型名的前缀（kimi-k2 → kimi-k2.6、deepseek-v4 → deepseek-v4-pro）。
   // 取「最短的那个」（最贴近的族），比直接跳到「同厂商最贵档」准确得多 ——
   // 按最贵档兜底会让上一代/中端模型被按旗舰价收（kimi-k2 落到 kimi-k3 就是 3 倍）。
