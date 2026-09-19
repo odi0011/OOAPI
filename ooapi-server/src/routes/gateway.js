@@ -3,9 +3,10 @@
 import express from "express";
 import crypto from "node:crypto";
 import { pool } from "../db.js";
-import {} from "../config.js";
+import { getBoolOption } from "../config.js";
 import { now, clientIp, asyncHandler, assertPublicUrl } from "../utils.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
+import { recordRequest, enterRequest, leaveRequest } from "../services/metrics.js";
 import { runCompletion } from "../services/execute.js";
 import { getPrice, computeCost, splitTokens, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { groupConfigOf, applyGroupRate } from "../services/group-rate.js";
@@ -425,6 +426,15 @@ router.post(
   const markFirstToken = () => {
     if (!firstTokenAt) firstTokenAt = Date.now();
   };
+  // 运维监控埋点：在途计数 + 结束时记入延迟分位（监控页的 QPS/成功率/P95 来源）
+  enterRequest();
+  let metricDone = false;
+  const finishMetric = ({ ok = true, status = 200, channelName = "" } = {}) => {
+    if (metricDone) return;
+    metricDone = true;
+    leaveRequest();
+    recordRequest({ ok, status, ms: Date.now() - startedAt, model, channel: channelName });
+  };
 
   const sendChunk = (delta, finishReason = null) => {
     res.write(
@@ -494,6 +504,7 @@ router.post(
       firstTokenAt,
       userAgent});
     settledOnce = true;
+    finishMetric({ ok: true, status: 200, channelName: result.channel?.name || "" });
 
     if (wantStream) {
       if (!streamStarted) {
@@ -589,6 +600,7 @@ router.post(
                 code === "CHANNEL_UNSUPPORTED"
               ? 503
               : 502;
+    finishMetric({ ok: false, status, channelName: err.channelName || "" });
     if (streamStarted) {
       sendChunk({}, null);
       res.write(`data: ${JSON.stringify({ error: { message: err.message, type: code } })}\n\n`);

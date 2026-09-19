@@ -17,6 +17,7 @@ import {
   DollarOutlined,
   GroupOutlined,
   HistoryOutlined,
+  MonitorOutlined,
 } from "@ant-design/icons";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";
@@ -57,6 +58,7 @@ const NAV_ADMIN = [
       { key: "/admin/groups", icon: <GroupOutlined />, label: "分组管理" },
       { key: "/admin/pricing", icon: <DollarOutlined />, label: "模型定价" },
       { key: "/admin/users", icon: <TeamOutlined />, label: "用户管理" },
+      { key: "/admin/monitor", icon: <MonitorOutlined />, label: "运维监控" },
       { key: "/admin/settings", icon: <SettingOutlined />, label: "系统设置" },
     ],
   },
@@ -75,6 +77,7 @@ const CRUMB = {
   "/admin/groups": ["平台管理", "分组管理"],
   "/admin/pricing": ["平台管理", "模型定价"],
   "/admin/users": ["平台管理", "用户管理"],
+  "/admin/monitor": ["平台管理", "运维监控"],
   "/admin/settings": ["平台管理", "系统设置"],
 };
 

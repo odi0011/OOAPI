@@ -20,6 +20,7 @@ import chatRoutes from "./routes/chat.js";
 import pricingRoutes from "./routes/pricing.js";
 // 旧的账号管理接口已并入 /api/channel（routes/deepseek.js 与 services/deepseek/ 已删除）
 import updateRoutes from "./routes/update.js";
+import monitorRoutes from "./routes/monitor.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -37,7 +38,7 @@ app.use(cors(corsOrigin ? { origin: corsOrigin.split(",").map((s) => s.trim()).f
 // 之前这两条路径的 1MB 全局中间件先生效，导致大图请求 413/500。
 const jsonSmall = express.json({ limit: "1mb" });
 app.use(
-  ["/api/user", "/api/users", "/api/token", "/api/log", "/api/option", "/api/channel", "/api/pricing", "/api/update"],
+  ["/api/user", "/api/users", "/api/token", "/api/log", "/api/option", "/api/channel", "/api/pricing", "/api/update", "/api/monitor"],
   jsonSmall
 );
 
@@ -53,6 +54,7 @@ app.use("/api/channel", channelRoutes);
 app.use("/api/chat", chatRoutes); // 站内对话 + 智能体
 app.use("/api/pricing", pricingRoutes); // 管理端：模型定价
 app.use("/api/update", updateRoutes); // 管理端：从 GitHub 拉取最新代码在线更新
+app.use("/api/monitor", monitorRoutes); // 管理端：运维监控（系统资源 + 网关运行时）
 app.use("/v1", gatewayRoutes); // 对外网关：OpenAI 兼容
 
 // 静态资源：logo 与前端构建产物（index.js 位于 src/，web 与 public 在包根目录）

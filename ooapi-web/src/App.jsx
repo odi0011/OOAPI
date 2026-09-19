@@ -15,6 +15,7 @@ import AdminSettingsPage from "./pages/AdminSettingsPage";
 import AdminChannelsPage from "./pages/AdminChannelsPage";
 import AdminGroupsPage from "./pages/AdminGroupsPage";
 import AdminPricingPage from "./pages/AdminPricingPage";
+import MonitorPage from "./pages/MonitorPage";
 import { useApp } from "./context/AppContext";
 
 function RequireAuth({ children, admin = false }) {
@@ -83,6 +84,7 @@ export default function App() {
           <Route path="/admin/pricing" element={<RequireAuth admin><AdminPricingPage /></RequireAuth>} />
         <Route path="/admin/users" element={<RequireAuth admin><AdminUsersPage /></RequireAuth>} />
         <Route path="/admin/settings" element={<RequireAuth admin><AdminSettingsPage /></RequireAuth>} />
+        <Route path="/admin/monitor" element={<RequireAuth admin><MonitorPage /></RequireAuth>} />
         <Route path="/admin" element={<Navigate to="/admin/channel" replace />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
