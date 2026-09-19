@@ -82,11 +82,27 @@ const DEFAULT_GOOGLE_CLIENT_ID = [
 ].join("");
 const DEFAULT_GOOGLE_CLIENT_SECRET = ["GOCSPX", "K58FWR486LdLJ1mLB8sXC4z6qDAf"].join("-");
 
+/**
+ * Google OAuth 客户端凭据（.env 可覆盖，未配置时用内置公开凭据）。
+ *
+ * 导出给 antigravity.js 共用：那边原来直接读 process.env 而没有兜底，
+ * 于是「用内置凭据登录成功的渠道，刷新时必然报未配置」——
+ * 表现为渠道能建、能用一会儿、然后永久 401，且错误信息指向配置而不是代码。
+ * 登录与刷新必须用**同一套凭据**，否则 refresh_token 会因 client 不匹配被拒。
+ */
+export function googleClientCreds() {
+  return {
+    clientId: String(process.env.GOOGLE_OAUTH_CLIENT_ID || "").trim() || DEFAULT_GOOGLE_CLIENT_ID,
+    clientSecret: String(process.env.GOOGLE_OAUTH_CLIENT_SECRET || "").trim() || DEFAULT_GOOGLE_CLIENT_SECRET,
+    // 是否使用了内置兜底（供渠道状态提示用：内置凭据可能随时被上游封禁）
+    builtin: !String(process.env.GOOGLE_OAUTH_CLIENT_ID || "").trim(),
+  };
+}
+
 function oauthConfigFor(type) {
   if (type === "gemini") {
     // .env 可覆盖（自建 OAuth 客户端）；没配就用 Gemini CLI 的公开客户端
-    const clientId = String(process.env.GOOGLE_OAUTH_CLIENT_ID || "").trim() || DEFAULT_GOOGLE_CLIENT_ID;
-    const clientSecret = String(process.env.GOOGLE_OAUTH_CLIENT_SECRET || "").trim() || DEFAULT_GOOGLE_CLIENT_SECRET;
+    const { clientId, clientSecret } = googleClientCreds();
     return {
       type,
       clientId,

@@ -15,14 +15,16 @@
 // ---------------------------------------------------------------------------
 import { antigravityIdentity, antigravityUserAgent, CLI_VERSIONS } from "./cli-profile.js";
 import { persistOtherPatch, loadOther, withRefreshLock } from "./auth-store.js";
+import { googleClientCreds } from "./oauth-login.js";
 
 const AUTH_URL = "https://oauth2.googleapis.com/token";
-// Google OAuth 客户端凭据不写进仓库（GitHub 密钥扫描会拦截；也符合「不提交密钥」的规范）。
-// 管理员在 .env 配置 GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET。
-// 说明：官方客户端的 client_secret 属于「公开客户端」凭据，但与其把它硬编码在这里，
-// 不如让部署方显式配置——换客户端、被封禁时都不需要改代码。
-const CLIENT_ID = String(process.env.GOOGLE_OAUTH_CLIENT_ID || "").trim();
-const CLIENT_SECRET = String(process.env.GOOGLE_OAUTH_CLIENT_SECRET || "").trim();
+// Google OAuth 客户端凭据：.env 可覆盖，未配置时用内置的公开安装型应用凭据
+// （与 oauth-login 的登录流程共用同一套，见 googleClientCreds 的注释）。
+//
+// 为什么必须共用：这里原来是直接读 process.env 且**没有兜底**，
+// 而登录流程有兜底 —— 于是「用内置凭据登录成功的渠道，刷新时必然报未配置」，
+// 表现为渠道能建、能用一会儿、随后永久 401，错误信息还指向配置而不是代码。
+// refresh_token 与 client 是绑定的：登录与刷新用不同 client 会被直接拒绝。
 const LOAD_URL = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
 const ONBOARD_URL = "https://daily-cloudcode-pa.googleapis.com/v1internal:onboardUser";
 const CHAT_URL = "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse";
@@ -90,16 +92,18 @@ export async function refreshAuth(channel, { force = false } = {}) {
     if (!refreshToken) {
       throw Object.assign(new Error("缺少 refresh_token，请重新导入 Google 凭据"), { code: "CHANNEL_AUTH_EXPIRED" });
     }
-    if (!CLIENT_ID || !CLIENT_SECRET) {
-      // 这是部署配置问题，不是账号失效：独立错误码，避免按 6 小时账号级冷却处理
+    // 与登录流程共用同一套客户端凭据（.env 优先，其次内置公开凭据）
+    const { clientId, clientSecret } = googleClientCreds();
+    if (!clientId || !clientSecret) {
+      // 理论上不可达（内置凭据总是存在），保留兜底以防将来改动引入空值
       throw Object.assign(
-        new Error("未配置 GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET（.env），无法自动续期"),
+        new Error("Google OAuth 客户端凭据不可用（检查 .env 的 GOOGLE_OAUTH_CLIENT_ID/SECRET）"),
         { code: "CHANNEL_CONFIG_ERROR" }
       );
     }
     const body = new URLSearchParams({
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
+      client_id: clientId,
+      client_secret: clientSecret,
       grant_type: "refresh_token",
       refresh_token: refreshToken,
     });
