@@ -465,6 +465,35 @@ export function loginModes() {
   return ["paste"];
 }
 
+/**
+ * 拉取该 Claude 订阅账号可用的模型（`GET /v1/models`，与官方 CLI 同一端点）。
+ * 必须带 oauth beta 头 —— 缺了会被当成普通 API Key 请求而 401。
+ */
+export async function fetchUpstreamModels(channel) {
+  const token = await ensureToken(channel);
+  const resp = await fetch(`${API_BASE}/v1/models?limit=100`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+      "anthropic-version": "2023-06-01",
+      "anthropic-beta": "oauth-2025-04-20",
+      "user-agent": claudeIdentity(channel).userAgent,
+      "x-app": "cli",
+    },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw Object.assign(new Error(`拉取模型失败（HTTP ${resp.status}）：${text.slice(0, 160)}`), {
+      code: resp.status === 401 ? "CHANNEL_AUTH_EXPIRED" : "CHANNEL_HTTP_ERROR",
+    });
+  }
+  const j = await resp.json().catch(() => null);
+  const arr = Array.isArray(j?.data) ? j.data : Array.isArray(j?.models) ? j.models : [];
+  const ids = arr.map((m) => String(m?.id || m?.model || "").trim()).filter(Boolean);
+  if (!ids.length) throw new Error("上游没有返回模型列表");
+  return [...new Set(ids)].sort();
+}
+
 /** 测试探针：真实发送自定义提示词（默认 hi），返回 AI 回复供管理端 tip 展示 */
 export async function probe(channel, prompt = "hi") {
   const started = Date.now();

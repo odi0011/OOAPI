@@ -591,6 +591,40 @@ export function loginModes() {
   return ["paste"];
 }
 
+/**
+ * 拉取该 ChatGPT 账号实际可用的模型。
+ * 来源是 Codex 自己的模型清单接口（`/backend-api/codex/models`），
+ * 它按订阅档位返回 —— 免费号与付费号的列表不同，正是我们要的「这个账号能用什么」。
+ * 拿不到时抛错（由路由回退到平台注册表），不要伪造列表。
+ */
+export async function fetchUpstreamModels(channel) {
+  const token = await ensureToken(channel);
+  const identity = codexIdentity(channel);
+  const resp = await fetch(`${API_BASE}/models`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+      originator: "codex-tui",
+      "user-agent": identity.userAgent,
+      ...(channel?.other?.account_id ? { "chatgpt-account-id": String(channel.other.account_id) } : {}),
+    },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw Object.assign(new Error(`拉取模型失败（HTTP ${resp.status}）：${text.slice(0, 160)}`), {
+      code: resp.status === 401 ? "CHANNEL_AUTH_EXPIRED" : "CHANNEL_HTTP_ERROR",
+    });
+  }
+  const j = await resp.json().catch(() => null);
+  // 兼容两种形态：{models:[{slug|id}]} 与 {data:[{id}]}
+  const arr = Array.isArray(j?.models) ? j.models : Array.isArray(j?.data) ? j.data : [];
+  const ids = arr
+    .map((m) => String(m?.slug || m?.id || m?.model || "").trim())
+    .filter((s) => s && /^[a-z0-9][a-z0-9._-]*$/i.test(s));
+  if (!ids.length) throw new Error("上游没有返回模型列表（账号可能受限或接口变更）");
+  return [...new Set(ids)].sort();
+}
+
 /** 测试探针：真实发送自定义提示词（默认 hi），返回 AI 回复供管理端 tip 展示 */
 export async function probe(channel, prompt = "hi") {
   const started = Date.now();

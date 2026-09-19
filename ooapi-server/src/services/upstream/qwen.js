@@ -9,7 +9,7 @@
 //   · other.profile → 设备指纹
 // ---------------------------------------------------------------------------
 import { createQwenParser} from "./qwen-parser.js";
-import { resolveModel } from "./qwen-models.js";
+import { resolveModel, CHANNEL_MODELS } from "./qwen-models.js";
 import { resolveProfile } from "./shared-profile.js";
 import {
   getSession,
@@ -183,6 +183,11 @@ export async function chat({
 // 风控重，由浏览器承载
 export function loginModes() {
   return ["browser"];
+}
+
+/** 「上游可用模型」：网页版没有列模型接口，返回本适配器能驱动的模型（前端标注来源） */
+export async function fetchUpstreamModels() {
+  return CHANNEL_MODELS.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
 export async function release(channelId) {

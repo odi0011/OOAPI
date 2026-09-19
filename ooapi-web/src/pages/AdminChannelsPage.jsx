@@ -14,6 +14,7 @@ import { fmtDate, CURRENCY_NAME, copyText } from "../services/format";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import { VendorIcon, ModelLabel } from "../components/VendorIcon";
+import ModelPicker from "../components/ModelPicker";
 import QuotaPanel, { QuotaInline } from "../components/ChannelQuota";
 
 const { Text } = Typography;
@@ -1556,60 +1557,93 @@ export default function AdminChannelsPage() {
       render: (list) => <UptimeBars calls={list} onCopy={copyCallResult} />,
     },
     {
-      // 账号额度：订阅/网页版账号的窗口用量（点「查额度」写入，悬浮看全部窗口）
+      title: "厂商",
+      dataIndex: "typeName",
+      width: 110,
+      render: (v) => <span className="bui-chip">{v}</span>,
+    },
+    {
+      // 模型列：展示该渠道**实际可用**的模型。
+      // 两个来源合并：渠道声明的模型（管理员限定的范围）+ 上游实时探测到的模型
+      // （非 API 渠道点列头刷新按钮从上游拉，API 渠道直接问 /v1/models）。
+      // 不再显示「XX 全部」——那是把「没配置」当结果展示，管理员看不到真实情况。
+      title: (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          模型
+          {upstreamModelsBusy ? (
+            <Spin size="small" />
+          ) : (
+            <Tooltip title="从上游拉取该账号实际可用的模型">
+              <ReloadOutlined
+                style={{ fontSize: 12, cursor: "pointer", color: "var(--ink-3)" }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  refreshAllUpstreamModels();
+                }}
+              />
+            </Tooltip>
+          )}
+        </span>
+      ),
+      dataIndex: "models",
+      width: 260,
+      render: (list, r) => {
+        const own = Array.isArray(list) ? list : [];
+        const probed = upstreamModels[r.id] || [];
+        // 探测结果优先（它才是账号真实可用的），渠道声明作为补充
+        const merged = probed.length ? probed : own;
+        if (!merged.length) {
+          return <Text type="secondary" style={{ fontSize: 12 }}>未探测</Text>;
+        }
+        return (
+          <Tooltip
+            title={
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ fontSize: 11, color: "#aaa" }}>
+                  {probed.length ? `上游实际可用（${probed.length}）` : `渠道声明（${own.length}）`}
+                </div>
+                {merged.map((m) => <ModelLabel key={m} model={m} size={13} />)}
+              </div>
+            }
+          >
+            <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap", overflow: "hidden" }}>
+              {merged.slice(0, 2).map((m) => <ModelLabel key={m} model={m} size={14} />)}
+              {merged.length > 2 ? <span className="bui-chip">+{merged.length - 2}</span> : null}
+            </span>
+          </Tooltip>
+        );
+      },
+    },
+    {
+      // 额度：紧跟在模型之后（与 sub2api 一致）。窗口按上游实际返回动态展示 ——
+      // 免费号是 30 天窗口、付费号才是 5h/7d，写死窗口会显示错。
       title: "额度",
       dataIndex: "quota",
-      width: 116,
+      width: 190,
       render: (q, r) =>
         q?.windows?.length || q?.credits ? (
+          <QuotaInline quota={q} />
+        ) : r.quota_supported ? (
+          // 未查询时点一下即查（不再单独占用操作栏的位置）
           <span
             role="button"
             tabIndex={0}
-            style={{ cursor: "pointer" }}
+            style={{ cursor: "pointer", fontSize: 12, color: "var(--ink-3)" }}
             onClick={() => doQuota(r, { openPanel: true })}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); doQuota(r, { openPanel: true }); } }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                doQuota(r, { openPanel: true });
+              }
+            }}
           >
-            <QuotaInline quota={q} />
+            点此查询
           </span>
-        ) : r.quota_supported ? (
-          <Text type="secondary" style={{ fontSize: 12 }}>未查询</Text>
         ) : (
-          <Text type="secondary" style={{ fontSize: 12 }}>—</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>不支持</Text>
         ),
     },
-    {
-      title: "厂商",
-      dataIndex: "typeName",
-      width: 120,
-      render: (v) => <span className="bui-chip">{v}</span>,
-    },
     { title: "状态", dataIndex: "status", width: 128, render: (_, r) => <StatusCell r={r} /> },
-    {
-      title: "模型",
-      dataIndex: "models",
-      width: 250,
-      render: (list, r) => (
-        <Tooltip
-          title={
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {(list || []).map((m) => <ModelLabel key={m} model={m} size={13} />)}
-            </div>
-          }
-        >
-          <span style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "nowrap", overflow: "hidden" }}>
-            {/* 留空 = 该厂商全部模型（模型归厂商，不归账号），显示厂商名而不是空白 */}
-            {(list || []).length ? (
-              <>
-                {(list || []).slice(0, 2).map((m) => <ModelLabel key={m} model={m} size={14} />)}
-                {(list?.length || 0) > 2 ? <span className="bui-chip">+{list.length - 2}</span> : null}
-              </>
-            ) : (
-              <span className="bui-chip">{r.typeName} 全部</span>
-            )}
-          </span>
-        </Tooltip>
-      ),
-    },
     {
       // 凭据种类直接写清（账号 / Key），这样就不需要单独一列讲「接入方式」
       title: "凭据",
@@ -1860,6 +1894,37 @@ export default function AdminChannelsPage() {
     }
   };
 
+  // 上游模型探测：非 API 的反代/订阅渠道没法问「你有哪些模型」，只能让适配器去上游查一次。
+  // 结果缓存在内存（不落库）：它是「账号当前"实际"能用什么」的实时快照，
+  // 与渠道声明的 model 范围是两件事（后者是管理员限定的范围）。
+  const [upstreamModels, setUpstreamModels] = useState({});
+  const [upstreamModelsBusy, setUpstreamModelsBusy] = useState(false);
+  const refreshAllUpstreamModels = async () => {
+    if (upstreamModelsBusy) return;
+    const targets = items.filter((r) => r.method !== "api");
+    if (!targets.length) return message.info("当前没有可探测的反代/订阅渠道");
+    setUpstreamModelsBusy(true);
+    const hide = message.loading(`正在从上游探测 ${targets.length} 个渠道的模型…`, 0);
+    try {
+      const results = await Promise.allSettled(
+        targets.map((r) => API.post(`/channel/${r.id}/upstream-models`, undefined, { timeoutMs: 90_000 }))
+      );
+      const next = { ...upstreamModels };
+      let okCount = 0;
+      results.forEach((res, i) => {
+        if (res.status === "fulfilled" && Array.isArray(res.value?.models)) {
+          next[targets[i].id] = res.value.models;
+          if (res.value.models.length) okCount += 1;
+        }
+      });
+      setUpstreamModels(next);
+      message.success(`探测完成：${okCount}/${targets.length} 个渠道返回了模型列表`);
+    } finally {
+      hide();
+      setUpstreamModelsBusy(false);
+    }
+  };
+
   // 查额度：显式触发（不进请求主链路、不做高频轮询 —— 额度接口本身就是风控信号）
   const [quotaBusyId, setQuotaBusyId] = useState(null);
   const [quotaOpen, setQuotaOpen] = useState(false);
@@ -1932,18 +1997,7 @@ export default function AdminChannelsPage() {
           </button>
         </Tooltip>
       ) : null}
-      {r.quota_supported ? (
-        <Tooltip title={r.quota_time ? `查额度（上次 ${new Date(r.quota_time).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}）` : "查额度"}>
-          <button
-            className="bui-icon-btn"
-            aria-label={`${r.name} 查额度`}
-            disabled={Boolean(actionBusyId) || quotaBusyId === r.id}
-            onClick={() => doQuota(r)}
-          >
-            {quotaBusyId === r.id ? <Spin size="small" /> : <DashboardOutlined />}
-          </button>
-        </Tooltip>
-      ) : null}
+      {/* 查额度已移到「额度」列（点未查询的格子即查），不再占用操作栏 —— 操作栏留给高频动作 */}
       <Tooltip title="用量统计">
         <button
           className="bui-icon-btn"
@@ -2391,14 +2445,7 @@ export default function AdminChannelsPage() {
                       label="模型范围"
                       rules={pickMethod?.key === "api" ? [{ required: true, message: "请至少填写一个模型" }] : []}
                     >
-                      <Select
-                        mode="tags"
-                        allowClear={pickMethod?.key !== "api"}
-                        placeholder={pickMethod?.key === "api" ? "此接入方式需指定模型，回车添加" : "留空 = 该厂商全部模型"}
-                        tokenSeparators={[","]}
-                        tagRender={modelTagRender(pickProvider?.key)}
-                        optionRender={modelOptionRender(pickProvider?.key)}
-                      />
+                      <ModelPicker providerKey={pickProvider?.key} />
                     </Form.Item>
 
                     <Row gutter={12}>
@@ -2476,14 +2523,7 @@ export default function AdminChannelsPage() {
             label="模型范围"
             rules={editing?.method === "api" ? [{ required: true, message: "请至少填写一个模型" }] : []}
           >
-            <Select
-              mode="tags"
-              allowClear={editing?.method !== "api"}
-              placeholder={editing?.method === "api" ? "此接入方式需指定模型，回车添加" : "留空 = 该厂商全部模型"}
-              tokenSeparators={[","]}
-              tagRender={modelTagRender(editing?.type)}
-              optionRender={modelOptionRender(editing?.type)}
-            />
+            <ModelPicker channelId={editing?.id || 0} providerKey={editing?.type} />
           </Form.Item>
             <Row gutter={12}>
               <Col span={8}>

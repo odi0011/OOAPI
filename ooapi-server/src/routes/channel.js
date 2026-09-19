@@ -1032,6 +1032,60 @@ router.post(
   })
 );
 
+// ---------- 从上游拉取该渠道实际可用的模型 ----------
+// 为什么要这条：渠道的 models 字段是「管理员限定的范围」，而管理员并不知道
+// 这个账号到底能用哪些模型（尤其订阅/网页版账号，档位决定可见模型，且会变）。
+// 这里直接问上游要一份真实清单，供渠道编辑的「模型范围」全选/多选，
+// 以及渠道列表里展示「这个号实际能用什么」。
+//
+// 兜底策略：适配器没实现 / 上游接口失败时，回退到平台按该厂商注册的模型
+// （至少管理员能选，而不是报错卡死）。响应里用 source 字段说明数据来源。
+router.post(
+  "/:id/upstream-models",
+  asyncHandler(async (req, res) => {
+    const id = idParam(req);
+    if (!id) return fail(res, "渠道不存在", 404);
+    const [rows] = await pool.query("SELECT * FROM channels WHERE id = ?", [id]);
+    if (!rows.length) return fail(res, "渠道不存在", 404);
+    const r = rows[0];
+    const channel = rowToChannel(r);
+    const adapter = await adapterOf(r.type, methodOf(r));
+
+    let models = [];
+    let source = "upstream";
+    let upstreamError = "";
+    if (typeof adapter?.fetchUpstreamModels === "function") {
+      try {
+        models = await adapter.fetchUpstreamModels(channel);
+      } catch (e) {
+        upstreamError = e.message;
+      }
+    } else {
+      upstreamError = "该接入方式没有实现上游模型接口";
+    }
+
+    if (!models.length) {
+      // 回退到平台注册表（该厂商已注册的模型）—— 让管理员至少有一个可选的清单
+      const { allPublicModels } = await import("../services/models.js");
+      try {
+        const all = await allPublicModels([r.type]);
+        models = all.map((m) => m.id);
+        source = all.length ? "registry" : "none";
+      } catch {
+        source = "none";
+      }
+    }
+
+    return ok(res, {
+      models: [...new Set(models)].sort(),
+      source,
+      upstreamError: upstreamError || undefined,
+      // 渠道已声明的范围，前端据此预选
+      declared: String(r.models || "").split(",").map((s) => s.trim()).filter(Boolean),
+    });
+  })
+);
+
 // ---------- 凭据找回：直接写入该渠道的凭据 ----------
 // 粘贴凭据 / 设备码挂机 / 上游回调，最终都落到这里：解析 → 覆盖 → 清冷却 → 健康检查。
 router.post(

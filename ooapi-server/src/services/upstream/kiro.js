@@ -285,6 +285,40 @@ export async function verify(channel) {
   return Date.now() - started;
 }
 
+/**
+ * 拉取该 Kiro 账号可用的模型（`ListAvailableModels`）。
+ * 返回的 modelId 是 Kiro 侧命名（claude-sonnet-4.5 等），与平台注册的 Claude 模型对应；
+ * 这里**原样返回上游 id**，由管理员在模型范围里挑选（映射在 chat 时由 kiroModelId 完成）。
+ */
+export async function fetchUpstreamModels(channel) {
+  const region = safeRegion(channel?.other?.region);
+  const token = await ensureToken(channel);
+  const profileArn = String(channel?.other?.profile_arn || channel?.other?.profileArn || "");
+  const qs = new URLSearchParams({ origin: "AI_EDITOR", maxResults: "50" });
+  if (profileArn) qs.set("profileArn", profileArn);
+  const resp = await fetch(`https://codewhisperer.${region}.amazonaws.com/ListAvailableModels?${qs.toString()}`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: "application/json",
+      "x-amzn-codewhisperer-optout": "true",
+      "user-agent": "aws-sdk-js/1.0.0 KiroIDE-0.8.0",
+      "x-amz-user-agent": "aws-sdk-js/1.0.0 KiroIDE-0.8.0",
+    },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw Object.assign(new Error(`拉取模型失败（HTTP ${resp.status}）：${text.slice(0, 160)}`), {
+      code: resp.status === 401 || resp.status === 403 ? "CHANNEL_AUTH_EXPIRED" : "CHANNEL_HTTP_ERROR",
+    });
+  }
+  const j = await resp.json().catch(() => null);
+  const arr = Array.isArray(j?.models) ? j.models : Array.isArray(j?.data) ? j.data : [];
+  const ids = arr.map((m) => String(m?.modelId || m?.modelName || m?.id || "").trim()).filter(Boolean);
+  if (!ids.length) throw new Error("上游没有返回模型列表（Builder ID 账号可能不支持该接口）");
+  return [...new Set(ids)].sort();
+}
+
 /** 导入凭据（管理端粘贴）：返回 { token, other, accountLabel } */
 export async function importAuth(input = {}) {
   const raw = input.token ?? input.auth ?? input.json ?? input;

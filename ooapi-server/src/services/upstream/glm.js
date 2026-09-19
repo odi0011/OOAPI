@@ -11,7 +11,7 @@
 //   · other.cookies → 可选，补充 cookie
 // ---------------------------------------------------------------------------
 import { createGlmParser } from "./glm-parser.js";
-import { resolveModel, REAL_MODELS, friendlyId } from "./glm-models.js";
+import { resolveModel, REAL_MODELS, friendlyId, CHANNEL_MODELS } from "./glm-models.js";
 import { resolveProfile } from "./shared-profile.js";
 import {
   getSession,
@@ -297,6 +297,11 @@ export async function chat({
 // 直接在后台“添加账号 → 打开浏览器登录一次”即可（游客也能用）。
 export function loginModes() {
   return ["browser"];
+}
+
+/** 「上游可用模型」：网页版没有列模型接口，返回本适配器能驱动的模型（前端标注来源） */
+export async function fetchUpstreamModels() {
+  return CHANNEL_MODELS.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
 /** 关闭该账号的浏览器会话（改配置/删除时用） */

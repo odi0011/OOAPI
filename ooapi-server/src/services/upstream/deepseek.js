@@ -13,7 +13,7 @@
 // ---------------------------------------------------------------------------
 import { solvePow, buildPowHeader } from "./deepseek-pow.js";
 import { createDeepSeekParser } from "./deepseek-parser.js";
-import { resolveModel } from "./deepseek-models.js";
+import { resolveModel, CHANNEL_MODELS } from "./deepseek-models.js";
 import { resolveProfile, buildHeaders, buildCookie, generateProfile } from "./deepseek-profile.js";
 
 const BASE = "https://chat.deepseek.com";
@@ -491,4 +491,14 @@ export function buildOtherAfterLogin({ profile, cookies, account }) {
   if (Array.isArray(cookies) && cookies.length) other.cookies = cookies;
   if (account) other.account = account; // 记录登录用的手机/邮箱（脱敏展示用），不存密码
   return other;
+}
+
+/**
+ * 「上游可用模型」——网页版没有列模型的接口（模型档位由页面默认值决定，
+ * 不在请求参数里），所以这里返回的是**本适配器能驱动的模型集合**。
+ * 与订阅渠道的「问上游要清单」语义不同，前端会标注来源（capability vs upstream），
+ * 避免管理员误以为这是账号的实际可见档位。
+ */
+export async function fetchUpstreamModels() {
+  return CHANNEL_MODELS.split(",").map((s) => s.trim()).filter(Boolean);
 }

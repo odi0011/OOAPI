@@ -454,6 +454,32 @@ export function loginModes() {
   return ["paste"];
 }
 
+/**
+ * 拉取该 Grok 账号可用的模型。
+ * OAuth 渠道走 CLI 代理（与对话同一通道，需要 CLI 身份头），API Key 渠道走官方 /models。
+ */
+export async function fetchUpstreamModels(channel) {
+  const identity = grokIdentity(channel);
+  const base = chatBase(channel);
+  const token = await ensureToken(channel);
+  const resp = await fetch(`${base}/models`, {
+    method: "GET",
+    headers: { ...buildHeaders(channel, token, identity, base), accept: "application/json" },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw Object.assign(new Error(`拉取模型失败（HTTP ${resp.status}）：${text.slice(0, 160)}`), {
+      code: resp.status === 401 || resp.status === 403 ? "CHANNEL_AUTH_EXPIRED" : "CHANNEL_HTTP_ERROR",
+    });
+  }
+  const j = await resp.json().catch(() => null);
+  const arr = Array.isArray(j?.data) ? j.data : Array.isArray(j?.models) ? j.models : [];
+  const ids = arr.map((m) => String(m?.id || m?.model || m?.name || "").trim()).filter(Boolean);
+  if (!ids.length) throw new Error("上游没有返回模型列表");
+  return [...new Set(ids)].sort();
+}
+
 /** 测试探针：真实发送自定义提示词（默认 hi），返回 AI 回复供管理端 tip 展示 */
 export async function probe(channel, prompt = "hi") {
   const started = Date.now();

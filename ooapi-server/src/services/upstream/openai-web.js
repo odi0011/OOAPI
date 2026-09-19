@@ -230,6 +230,32 @@ export async function verify(channel) {
   return Date.now() - started;
 }
 
+/**
+ * 拉取该网页版账号可用的模型（`GET /backend-api/models`）。
+ * 这个接口返回的是**该账号档位可见**的模型清单（免费号拿不到付费档），
+ * 正是「这个账号实际能用什么」的答案；拿不到由路由回退到平台注册表。
+ */
+export async function fetchUpstreamModels(channel) {
+  const token = await ensureToken(channel);
+  const resp = await fetch(`${BASE}/backend-api/models`, {
+    headers: { authorization: `Bearer ${token}`, "user-agent": USER_AGENT, accept: "application/json" },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw Object.assign(new Error(`拉取模型失败（HTTP ${resp.status}）：${text.slice(0, 160)}`), {
+      code: resp.status === 401 || resp.status === 403 ? "CHANNEL_AUTH_EXPIRED" : "CHANNEL_HTTP_ERROR",
+    });
+  }
+  const j = await resp.json().catch(() => null);
+  const arr = Array.isArray(j?.models) ? j.models : Array.isArray(j?.data) ? j.data : [];
+  const ids = arr
+    .map((m) => String(m?.slug || m?.id || "").trim())
+    .filter((s) => s && /^[a-z0-9][a-z0-9._-]*$/i.test(s));
+  if (!ids.length) throw new Error("上游没有返回模型列表");
+  return [...new Set(ids)].sort();
+}
+
 /** 导入凭据（管理端粘贴）：返回 { token, other, accountLabel } */
 export async function importAuth(input = {}) {
   const raw = input.token ?? input.auth ?? input.json ?? input;

@@ -62,6 +62,15 @@ function windowLabel(seconds) {
   return `${Math.round(s / 60)} 分钟`;
 }
 
+/** 列表里用的极短标签（sub2api 那种 `5h` / `7d` / `30d`） */
+function shortWindowTag(seconds) {
+  const s = Number(seconds) || 0;
+  if (!s) return "";
+  if (s % 86400 === 0) return `${s / 86400}d`;
+  if (s % 3600 === 0) return `${s / 3600}h`;
+  return `${Math.round(s / 60)}m`;
+}
+
 function epochOf(v) {
   if (!v) return 0;
   const n = Number(v);
@@ -128,17 +137,22 @@ async function quotaCodex(channel) {
   });
   const rl = j.rate_limit || {};
   const windows = [];
+  // OpenAI 的窗口**按账号档位变化**：付费号是 5h（primary）+ 7d（secondary），
+  // 免费号实测只有一个月窗口（limit_window_seconds = 2592000）。
+  // 所以窗口标签一律由 seconds 推导，不能写死 5h/7d。
   for (const [key, label] of [
     ["primary_window", "主窗口"],
     ["secondary_window", "次窗口"],
   ]) {
     const w = rl[key];
     if (!w) continue;
+    const secs = Number(w.limit_window_seconds) || 0;
     windows.push({
       key,
-      label: `${label}（${windowLabel(w.limit_window_seconds) || "?"}）`,
+      label: `${label}（${windowLabel(secs) || "?"}）`,
+      tag: shortWindowTag(secs),
       usedPercent: pctFromPercent(w.used_percent),
-      windowSeconds: Number(w.limit_window_seconds) || 0,
+      windowSeconds: secs,
       resetAt: Number(w.reset_at) || 0,
       resetAfterSeconds: Number(w.reset_after_seconds) || 0,
     });
@@ -179,6 +193,7 @@ async function quotaClaude(channel) {
     windows.push({
       key,
       label,
+      tag: shortWindowTag(seconds),
       usedPercent: pctFromPercent(raw.utilization),
       windowSeconds: seconds,
       resetAt: epochOf(raw.resets_at),
@@ -193,6 +208,7 @@ async function quotaClaude(channel) {
     windows.push({
       key: `scoped_${i}`,
       label: `7 天 ${l.scope?.model?.display_name || "限定模型"}窗口`,
+      tag: "7d",
       usedPercent: pctFromPercent(l.percent),
       windowSeconds: 7 * 86400,
       resetAt: epochOf(l.resets_at),
