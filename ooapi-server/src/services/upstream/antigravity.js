@@ -262,11 +262,15 @@ async function ensureProject(channel, token) {
     }
   }
   if (!pid) {
+    // 每个账号的 project_id 由 loadCodeAssist/onboardUser 自动开通并落库到渠道 other；
+    // 换号/新建渠道都会自动重新开通，不需要人工配置任何东西。
+    // 若这里仍拿不到，说明 Google 侧拒绝为该账号开项目（通常是账号资格问题），
+    // 而不是平台配置问题 —— 换一个已开通过 Code Assist 的 Google 账号即可。
     throw Object.assign(
       new Error(
-        "Google 账号未返回 Antigravity project_id：通常是该账号还没开通 Gemini Code Assist 免费层。" +
-          "请先在本机安装并登录一次 Antigravity 客户端（或 gemini CLI），再回来重新登录此渠道；" +
-          "也可以直接把官方 auth 文件（含 project_id 字段）粘贴添加"
+        "Google 未能为该账号自动开通 Antigravity 项目（project_id）。" +
+          "该账号可能没有 Gemini Code Assist 资格：请换一个开通过的 Google 账号登录；" +
+          "也可以直接粘贴官方 Antigravity auth 文件（内含 project_id）添加。"
       ),
       { code: "CHANNEL_NOT_READY" }
     );
