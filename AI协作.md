@@ -380,6 +380,26 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 - [ ] **Google 客户端凭据来源**：从 `.env` 读（`GOOGLE_OAUTH_CLIENT_ID/SECRET`），
   用的是官方 Antigravity 客户端的公开凭据；若上游轮换或封禁该客户端，需要替换成自建 OAuth 客户端（并注册对应 redirect_uri）。
 
+### 第 28–30 批遗留（凭据找回 / 额度检测 / 模型归厂商）
+
+- [ ] **找回流程的账号一致性校验**：`applyCredentialToChannel` 目前不比对写回凭据的账号是否与原渠道一致
+  （找回时若在浏览器里登录了另一个账号，会静默替换该渠道的凭据并报「已恢复」）。
+  收紧做法：写回前用 `auth-import` 的稳定账号标识比对，不一致时要求管理员显式确认。
+- [ ] **CAPTURES 未绑定发起人**：`/capture/:sid/*` 只按 sid 查表，多管理员场景下 A 发起的登录会话可被 B 接管
+  （在真实页面里替 A 输入）。单管理员部署无实际风险；要收紧就在条目里存 `req.user.id` 并在 `captureOf` 校验。
+- [ ] **额度快照无自动刷新**：额度只在管理员点「查额度」时更新（刻意不做高频轮询，避免被当成脚本）。
+  若需要「快过期时提醒」，建议做**低频**（≥30 分钟）定时任务 + 仅在超过阈值时提示，而不是提高频率。
+- [ ] **额度端点的上游变更风险**：7 个额度接口都是各厂商 CLI/前端的私有接口（非公开文档），
+  上游改版即失效。当前失败只回错误不影响调用；建议线上出现连续失败时记录一次日志便于回捞。
+- [ ] **WorkBuddy 接入的产品决策**：调研确认其 `deepseek-*` 是腾讯云托管同名档位、不是 DeepSeek 官方转发
+  （详见 7.5）。接入前需确认：是按独立厂商计价，还是并入 DeepSeek（后者会有计费口径偏差）。
+  另外其 `X-Device-Token` 是设备风控头，需要设计可插拔的注入方式。
+- [ ] **`.oo-page-desc` 死样式**：`styles.css:1681`（及 2561 的媒体查询）已无组件使用，可随下次样式整理删除。
+- [ ] **渠道列表 `SELECT *`**：新增 `quota` 列后列表查询仍取全列；单条快照数百字节，当前可接受，
+  若渠道数破千建议改列白名单 + 额度按需拉取。
+- [ ] **`explainNoChannel` 的提示语**：`models` 留空语义生效后，「没有可用渠道」的原因可能是
+  「该模型不属于该厂商/未登记」或「登记表未就绪」，提示语仍只说「为某个渠道添加该模型」，排障时会被误导。
+
 ### 长期/设计取舍项（已评估，暂不处理）
 
 - [ ] **在线更新无签名校验**：目前信任 GitHub main；供应链加固需要发布流水线（哈希/签名），规划中。
@@ -869,6 +889,58 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   R19 清理：未使用导入删除、README 管理员密码流程改为 `.admin-password` 说明。
   验证：全量 66 个后端文件 `node --check` 通过、前端构建通过；线上部署 `f45e515` 后渠道页/统计弹窗/添加弹窗/网关鉴权（0 额度 Key 正确 403）实测正常，无哨兵残留。
   已知取舍（评估后接受）：渠道创建并发去重仍是「先查后插」（单管理员操作，双并发概率极低）；`other` 列多处读改写未统一原子化（涉及面广，改动风险大于收益）；DNS rebinding 出站 TOCTOU 仍存在（已收窄触发面）。 |
+| 2026-09-19 | **第 28 批（完整凭据找回 + 账号额度实时检测 + 反代模型定价补齐，线上 `81129ce`）**：
+  · **凭据找回不再只有「粘贴凭据文件」**：新增 `GET /api/channel/:id/recovery`（按渠道真实接入方式给出可用找回方式）、
+  `POST /api/channel/:id/recover/start`（在服务器浏览器里打开官方登录页 —— 掉验证/接码那一步由人工在实时画面完成，
+  回调/会话读取代理由服务端接管）、`POST /api/channel/:id/credential`（统一凭据写回 + 写回后自动健康检查）。
+  · **ChatGPT 网页版支持浏览器登录抓取**：`channel-types` 新增 `captureApi`（`/api/auth/session`）；
+  `browser-driver` 新增 `apiFetch`（在已登录页面内请求同源接口，天然带 cookie 与同源头）；
+  `/capture/:sid/capture` 新增 `session` 分支与 `targetId` 写回。
+  · **前端重登弹窗按能力渲染**：入口对所有反代/订阅渠道开放（此前写死 4 种接入方式，kiro/openai-web 没有入口），
+  方式含浏览器授权 / 打开授权页+粘贴回调 / 设备码 / 账号密码 / 粘贴凭据，并显示订阅档位与「需要重新登录」标记。
+  · **账号额度实时检测**（新增 `services/upstream/quota.js`）：接入 7 个官方端点 ——
+  Codex `GET /backend-api/wham/usage`（primary/secondary window + credits）、Claude `GET /api/oauth/usage`、
+  Antigravity `v1internal:retrieveUserQuotaSummary`（`remainingFraction` 是**剩余**比例，已换算）、
+  Grok `GET /v1/billing?format=credits`、Kiro `getUsageLimits`、ChatGPT 网页版 `conversation/init` 的 `limits_progress`、
+  DeepSeek 官方 API `/user/balance`；GLM/Kimi/豆包/通义的网页版上游确无可读额度接口，明确返回不支持。
+  设计约束：**单账号并发锁 + 只由管理员显式触发**（额度接口本身是风控信号，不做高频轮询）；
+  查询失败不写 `last_error`、不冷却（额度接口挂了 ≠ 渠道不可用）。
+  · 新增 `channels.quota`/`quota_time` 列（建表 + COLUMN_MIGRATIONS 均改）；渠道列表新增「额度」列与「查额度」按钮。
+  · **定价补齐**：`gpt-5.6-sol/terra/luna`、`gpt-5.5`、`codex-auto-review`、`grok-4.6/4.5/4.3/3-mini`
+  按官方价录入（Grok 取自 docs.x.ai 页面内嵌的官方价表）；**兜底价从「一律 DeepSeek 价」改为「同厂商最高档」**
+  （前者对 gpt-5.6-* 这类模型会系统性少计费 3~8 倍）。
+  · 厂商归属：`codex-auto-review` 归 OpenAI 图标；定价页补 `anthropic`/`grok` 类型标签。 |
+| 2026-09-19 | **第 29 批（模型归厂商 + UI 去解释文案）**：
+  · **概念修正：模型属于厂商，不属于账号**。渠道 `models` 留空 = 该厂商全部已注册模型
+  （此前留空 = 该渠道不可用，逼着管理员给每个账号手填模型，漏一个模型那个号就永远不被调度）。
+  · 新增 `models.modelRegistrySync()`（同步读取登记表）供调度层使用，启动时预热；
+  `router.vendorModelSet()` 按厂商聚合模型集合并缓存 60s。
+  · 新建渠道 / 登录 / OAuth 交换 / 批量导入 / 凭据导入**不再自动写入 `defaultModels`**
+  （那些只是「推荐模型」，写死会让新模型上线后被挡在调度之外）；`PUT /channel` 允许清空 models
+  （API 兼容方式仍强制声明，因为 custom 端点没有厂商模型表）。
+  · 渠道表单「支持的模型」→「模型范围」（可留空）；列表/宫格对留空渠道显示「{厂商} 全部」。
+  · **UI 去 AI 味**：`PageHeader` 删除 `desc` 插槽（所有页面标题下的说明小字一并移除）；
+  清掉令牌/渠道/设置/分组/用户页的解释性 `extra` 与说明 Alert（保留功能性提示如字段格式）；
+  「公共池/默认池」这类自造措辞统一改为「未分组/不绑定」。 |
+| 2026-09-19 | **第 30 批（三路审查修复，线上 `2f1237b`）**：审查第 28/29 批改动，修 1 个 P0 + 4 个 P1。
+  · **P0（全站不可用的隐患）**：渠道写操作会让模型登记表失效，而 `vendorModelSet` 把「登记表未就绪」的
+  `null` 结果缓存了 60 秒 → 管理员点一次「测试/查额度」就可能让所有 `models` 留空的渠道持续判为不可用
+  （表现为 NO_CHANNEL 503，且不会自愈）。修复：`invalidateModelRegistry()` 失效后立即异步补热；
+  `vendorModelSet` 不再缓存 null；新增 `invalidateVendorModels()`。回归实测：连续 3 轮「失效 → 自动补热」后均正常命中。
+  · **P1 找回错配**：`supportsInteractiveLogin` 只看厂商，导致 openai 厂商下的 `openai-web` 被送进 Codex 授权页、
+  anthropic 厂商下的 `kiro` 被写入 Claude 令牌。新增 `supportsInteractiveLoginMethod(type, method)` 精确判定。
+  · **P1 额度误判**：`freshToken` 用平台 `expires_at` 预判过期，但 `openai-web` 凭据里没有该字段（它用 JWT 的 exp），
+  导致只粘 accessToken 的健康网页版渠道「查额度」必然报「凭据已过期」。改为只在确实过期时刷新。
+  · **P1 模型列表少返回**：`/v1/models` 与站内对话的模型列表只用「渠道 models 字段的并集」过滤，
+  留空渠道服务的模型会从列表消失。新增 `router.collectAvailableModels()` 统一口径（显式声明 ∪ 厂商全部）。
+  · P2：session 抓取分支补 `targetId` 写回；`applyCredentialToChannel` 加凭据长度上限、空 token 不清空原 `api_key`；
+  `/login/batch` 与 `/import` 统一留空口径、`/import` 不再硬写已废弃的 `default` 分组；
+  找回失败时关闭弹窗而非留空壳；`canVerify` 对 relay 渠道生效；`QuotaInline` 支持只有余额没有窗口的快照。
+  · **线上实测（真实账号）**：① 用户提供的两个 sub2api free 账号经 `POST /channel/import` 导入成功（#13/#14），
+  额度查询返回真实用量（720 小时窗口已用 82% / 77%，credits 1000）；② 经 `/v1/chat/completions` 实发一次
+  `gpt-5.6-luna`，3240ms 返回 "Hi! How can I help you today?"，计费 1 单位并正确落库到渠道 #13；
+  ③ 线上渠道 #10 的 `refresh_token` 已被上游吊销（`token_revoked`，强刷 HTTP 401）—— 正是本批找回流程要覆盖的场景，
+  `/channel/10/recovery` 已正确给出 3 种找回方式。测试脚本已从服务器清理。 |
 
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 
@@ -911,3 +983,26 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 - IDE 工具：对应工具的登录凭据
 
 没有凭据时只能做到「代码完成 + 静态检查 + 桩测试」，无法完成真实链路验证。
+
+### 7.5 第 30 批补充调研（2026-09-19，开源工具第二轮盘点）
+
+> 结论先行：**只有 Kiro 与 WorkBuddy 值得优先接**（前者已实现），
+> 其余要么需要私有客户端二进制，要么协议已死，要么上层模型名与实际模型不符。
+
+| 对象 | star 量级 | 认证 / 协议 | 适配难度 | 结论 |
+|---|---|---|---|---|
+| **Kiro** | kiro-gateway 2280 / kiro.rs 1912 | refreshToken（桌面版 + AWS SSO OIDC 双模）；`runtime.{region}.kiro.dev/generateAssistantResponse`（新版）或 `q.{region}.amazonaws.com`（旧版）；AWS EventStream | 低 | **已实现**（第 27 批第 1 批交付） |
+| **WorkBuddy / CodeBuddy（腾讯）** | workbuddy2api 1085 / 237 / 115 | OAuth 设备授权；上游本身就是 **OpenAI 兼容** `POST {base}/v2/chat/completions`；双域（CN `copilot.tencent.com` / Global `www.workbuddy.ai`）；额外头 `X-User-Id`/`X-Enterprise-Id`/`X-Device-Token` | 低（协议薄） | **推荐接入**：上游即 OpenAI 协议，只需 key 池 + 头注入。风险：`X-Device-Token` 是腾讯 Turing Shield 设备风控头，社区靠宿主机落盘文件注入，**随时可能升级**。模型是腾讯云托管同名档位（`deepseek-v4.1-flash`/`glm-5.3`/`kimi-k3`/`gpt-5.6-*`），**不是**从 DeepSeek/智谱官方 API 转发的 |
+| **Windsurf** | WindsurfAPI 3022 | apiKey + **必须运行官方 language_server 二进制**（Connect-RPC via 本地进程） | 中（重资产） | 暂缓：需下载并运行官方二进制，Linux 部署 + 平台合规成本高 |
+| **Gemini 网页版** | Gemini-API 3518 | `__Secure-1PSID` cookie；StreamGenerate + batchexecute | 中 | 可作为补充能力；注意新版 Chromium 的 Device Bound Session Credentials 会让 cookie 数小时失效，社区建议用 Firefox 导出 |
+| **OpenCode Zen / Qoder** | opencode2api 326 / qoder-proxy 56 | 上游多为标准 API（key 池为主）；Qoder 需每请求 spawn `qodercli` 子进程 | 低-中 | 需本机安装官方 CLI，资源占用不可控；按需评估 |
+| **Trae** | trae-local-api 55 | IDE `storage.json` 的 "tc" 加密（AES-128-CBC + SHA-512 派生）；**模型名与实际不符**（请求 claude-opus 实际跑 glm-5.2） | 高 | 暂缓：加密随版本变、无长期维护仓库、模型归属会误导计费 |
+| **Cursor** | cursor-api 268（已停更 2025-06） | Connect-RPC over HTTP/2 + protobuf + `x-cursor-checksum` 签名 | 高 | 不建议：私有协议 + 签名 + 主力仓库停更半年以上 |
+| **chat2api 系** | chat2api 3812（停更 2025-05） | 需要 `curl_cffi` TLS/JA3 指纹伪装 + PoW + 可选打码 | 高 | **不建议**：两个主仓库都停留在 2025 年初的 ChatGPT 前端，且与现有 `openai-web` 适配器功能重叠（后者走浏览器登录，不受 TLS 指纹限制） |
+
+**关于「WorkBuddy 免费 DeepSeek 归属 DeepSeek」的澄清**：调研确认 WorkBuddy 国际版返回的
+`deepseek-v4-pro`/`deepseek-v4.1-flash` 是**腾讯云托管的同名模型**，不是 DeepSeek 官方 API 转发。
+因此接入时若把它当 DeepSeek 官方模型计费，会出现「按官方价收费但实际跑的是第三方托管档位」的偏差。
+本平台的处理口径：WorkBuddy 作为独立厂商接入（不并入 deepseek），模型 id 保留上游原名，
+定价按上游实际档位录入。**这一点需要在接入前确认产品意图**。
+
