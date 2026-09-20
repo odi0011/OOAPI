@@ -536,8 +536,33 @@ function TokenTrend({ byDay = [], series = [], range, onRangeChange }) {
  * 刻意不做分类。厂商就是厂商，接入方式是它内部的属性，
  * 拆成「反代渠道 / API 渠道」两栏只会让同一个厂商出现两次。
  */
-function ProviderPicker({ providers, activeKey, onPick }) {
+/** 支持「一键绑定」（设备授权）的接入方式 —— 与后端 device-bind.js 的清单一致 */
+const DEVICE_BIND_METHODS = ["kiro", "workbuddy", "qoder"];
+function supportsDeviceBindMethod(methodKey) {
+  return DEVICE_BIND_METHODS.includes(String(methodKey || ""));
+}
 
+/**
+ * 接入方式的短名 —— 用于「凭据」标签。
+ * 为什么需要：Anthropic 下同时挂着「Claude 订阅」与「Kiro 反代」，
+ * 两者的 credential 都是 paste 模式，若标签一律叫「粘贴凭据」会出现两个同名标签，
+ * 用户分不清该选哪个（截图实测确认过这个问题）。
+ */
+function methodShortName(m) {
+  const byKey = {
+    kiro: "Kiro 反代",
+    "claude-oauth": "Claude 订阅",
+    codex: "Codex 订阅",
+    antigravity: "Google 订阅",
+    grok: "Grok 订阅",
+  };
+  if (byKey[m.key]) return byKey[m.key];
+  // 兜底：用方法自身的 label 去掉括号说明（label 形如「反代（Kiro）」）
+  const raw = String(m.label || "凭据");
+  return raw.replace(/（[^）]*）/g, "").trim() || "凭据";
+}
+
+function ProviderPicker({ providers, activeKey, onPick }) {
   return (
     <div className="oo-provider-picker">
       {providers.map((p) => {
@@ -722,6 +747,10 @@ export default function AdminChannelsPage() {
   const [oauthSupported, setOauthSupported] = useState(false);
   // 该渠道是否支持「一键绑定」（设备授权）：Kiro / WorkBuddy / Qoder。
   // 清单由后端下发（/channel/devices/vendors），前端不写死 —— 加渠道不用改前端。
+  //
+  // 注意：这个 state 曾经声明了却**从没拉取**，导致一键绑定 UI 恒不显示
+  // （常量式写法掩盖了问题：`includes()` 在空数组上恒为 false，不报错）。
+  // 现在在挂载时拉一次，并给「重新绑定」弹窗单独存一份（那一处需要按渠道类型判断）。
   const [deviceBindVendors, setDeviceBindVendors] = useState([]);
   // 设备码登录（Grok/xAI）：返回 user_code 并在任意浏览器完成授权
   const [oauthDevice, setOauthDevice] = useState(false);
@@ -812,6 +841,14 @@ export default function AdminChannelsPage() {
       .catch(() => setVncInfo({ enabled: false }));
   }, []);
 
+  // 拉「支持一键绑定」的渠道清单（只一次）。
+  // 必须真的拉：之前声明了 state 却忘了拉，导致一键绑定 UI 恒不显示（截图才发现）。
+  useEffect(() => {
+    API.get("/channel/devices/vendors")
+      .then((d) => setDeviceBindVendors(Array.isArray(d?.vendors) ? d.vendors : []))
+      .catch(() => setDeviceBindVendors([]));
+  }, []);
+
   const useVnc = Boolean(vncInfo?.enabled) && !vncOff && !capCands;
 
   // 切换筛选/搜索时清空已选：否则批量操作会作用到当前不可见的渠道
@@ -835,15 +872,19 @@ export default function AdminChannelsPage() {
           out.push({
             // id 必须带 method 前缀：同一厂商出现多个 paste 方式时不能撞车
             id: `${m.key}:${lm}`,
-            method: m.key, // relay / codex / claude-oauth / antigravity
+            method: m.key, // relay / codex / claude-oauth / antigravity / kiro
             mode: lm,
+            // 标签不要一律叫「粘贴凭据」—— 同一厂商有多个订阅/反代方式时
+            // （Anthropic 下同时有 Claude 订阅与 Kiro 反代）会出现两个同名标签，
+            // 用户根本分不清该选哪个。用方法名区分，并标注支持一键绑定。
             label: m.oauth
-              ? "粘贴凭据"
+              ? `${methodShortName(m)}${lm === "paste" ? "（粘贴凭据）" : ""}`
               : lm === "password"
                 ? "账号密码"
                 : lm === "paste"
                   ? "粘贴登录态"
                   : "浏览器登录",
+            hint: supportsDeviceBindMethod(m.key) ? "支持一键绑定" : "",
           });
         }
       }
@@ -852,10 +893,15 @@ export default function AdminChannelsPage() {
   }, [pickProvider]);
 
   const isApi = pickMethod?.key === "api";
-  // 当前选中渠道是否支持一键绑定（设备授权）。
-  // 放在 isApi 之后声明：它依赖 pickProvider，而这段代码在渲染期立即求值 ——
+  // 当前选中的**接入方式**是否支持一键绑定（设备授权）。
+  //
+  // 注意必须看 method.key 而不是 provider.key：Kiro 挂在 anthropic 厂商下，
+  // provider.key 是 "anthropic"，只有 method.key 才是 "kiro"。
+  // 后端 /channel/devices/vendors 返回的正是 method key（kiro/workbuddy/qoder）。
+  //
+  // 放在 isApi 之后声明：它依赖 pickMethod，而这段代码在渲染期立即求值 ——
   // 放在前面会踩 const 暂时性死区（本项目因此白屏过，见 AI协作.md 2.7 第 ④ 条）。
-  const deviceBindSupported = Boolean(pickProvider && deviceBindVendors.includes(pickProvider.key));
+  const deviceBindSupported = Boolean(pickMethod && deviceBindVendors.includes(pickMethod.key));
   // 非 API 的接入方式（relay 反代 / 订阅 OAuth）走同一套「凭据登录」提交流程
   const isRelay = Boolean(pickMethod) && !isApi;
 
@@ -869,8 +915,7 @@ export default function AdminChannelsPage() {
     setAddMode("password");
     setOnboardReady(false);
     setOnboardProfile("");
-    setOauthUrl("");
-    setOauthState("");
+    setOauthUrl("");    setOauthState("");
     addForm.resetFields();
     setAddOpen(true);
   };
@@ -1334,7 +1379,7 @@ export default function AdminChannelsPage() {
     setOauthBusy(true);
     try {
       const r = await API.post("/channel/devices/start", {
-        vendor: pickProvider.key,
+        vendor: pickMethod.key,
         start_url: addForm.getFieldValue("bind_start_url") || undefined,
         region: addForm.getFieldValue("bind_region") || undefined,
         realm: addForm.getFieldValue("bind_realm") || undefined,
@@ -1355,7 +1400,7 @@ export default function AdminChannelsPage() {
         try {
           const p = await API.post("/channel/devices/poll", {
             session_id: r.sessionId,
-            vendor: pickProvider.key,
+            vendor: pickMethod.key,
             channel_id: bindTargetChannelId || undefined,
           });
           if (p.status === "pending") {
@@ -2463,7 +2508,13 @@ export default function AdminChannelsPage() {
                         }}
                       >
                         {credOptions.map((o) => (
-                          <Radio.Button key={o.id} value={o.id}>{o.label}</Radio.Button>
+                          <Radio.Button key={o.id} value={o.id}>
+                            {o.label}
+                            {/* 支持一键绑定的方式打标：用户一眼知道哪个不用手工找凭据文件 */}
+                            {o.hint ? (
+                              <span style={{ fontSize: 11, color: "var(--green)", marginLeft: 4 }}>· {o.hint}</span>
+                            ) : null}
+                          </Radio.Button>
                         ))}
                       </Radio.Group>
                     </Form.Item>
@@ -2613,7 +2664,7 @@ export default function AdminChannelsPage() {
                                 ) : null}
 
                                 {/* 渠道特化输入：Kiro 的 region/startUrl、WorkBuddy/Qoder 的区域 */}
-                                {pickProvider.key === "kiro" ? (
+                                {pickMethod.key === "kiro" ? (
                                   <Space wrap>
                                     <Input
                                       name="bind_region"
@@ -2629,7 +2680,7 @@ export default function AdminChannelsPage() {
                                     />
                                   </Space>
                                 ) : null}
-                                {pickProvider.key === "workbuddy" || pickProvider.key === "qoder" ? (
+                                {pickMethod.key === "workbuddy" || pickMethod.key === "qoder" ? (
                                   <Select
                                     style={{ width: 200 }}
                                     placeholder="区域（默认国内）"
@@ -2643,9 +2694,9 @@ export default function AdminChannelsPage() {
                                 ) : null}
 
                                 <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                                  {pickProvider.key === "kiro"
+                                  {pickMethod.key === "kiro"
                                     ? "走 AWS SSO OIDC 设备授权（官方标准流程）：打开链接输入验证码即可，无需手工找凭据文件"
-                                    : pickProvider.key === "workbuddy"
+                                    : pickMethod.key === "workbuddy"
                                       ? "打开链接登录 WorkBuddy/CodeBuddy 即可；设备风控头（X-Device-Token）无法服务端生成，需要时可在下面粘贴补充"
                                       : "打开链接登录 Qoder 即可；也可在下面粘贴 PAT（pt-...）作为兜底"}
                                 </span>
