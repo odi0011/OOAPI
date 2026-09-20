@@ -3163,6 +3163,9 @@ h1, h2, h3, h4 {
   }
   .oo-split-lock.is-immersive { height: 100dvh; border: 0; }
   .oo-split-lock > .oo-split-side { border-right: 0; }
+  /* 移动端未选中会话时藏掉聊天区（走「列表 → 全屏聊天」的主从堆叠）。
+     桌面端不能藏 —— 藏了右侧就是一块空白（曾经的条件 display:none 就是这么错的）。 */
+  .oo-split-lock > .oo-split-main.is-empty { display: none; }
   .oo-msg-bubble { max-width: 84%; }
   .oo-post-thumb, .oo-thumb-more { width: 48px; height: 48px; }
   .oo-profile-name { font-size: 17px; }

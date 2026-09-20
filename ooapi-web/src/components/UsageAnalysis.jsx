@@ -41,10 +41,20 @@ function smoothPath(rawPts) {
   return d;
 }
 
-/** 图卡片：统一高度与内边距，标题在左上、口径说明在右上 */
-function ChartCard({ title, note, children, full }) {
+/**
+ * 图卡片：统一高度与内边距，标题在左上、口径说明在右上。
+ *
+ * 跨列策略（不要写死像素宽度 —— 网格列数是自适应的）：
+ *   · 默认 1 列（单序列小图）；
+ *   · `wide` 跨 2 列：内容需要横向空间但不需要整行（多折线、热力图）；
+ *   · `full` 跨满整行：只给「一行只有它」的主趋势图用。
+ * 实测教训：给「模型消费趋势」用 full 时它独占 1600px 而高仅 150px，
+ * 折线被拉成一条斜直线 —— 宽高比失衡就是「丑」的直接来源。
+ */
+function ChartCard({ title, note, children, full, wide }) {
+  const col = full ? "1 / -1" : wide ? "span 2" : undefined;
   return (
-    <div className="oo-chart-card" style={full ? { gridColumn: "1 / -1" } : undefined}>
+    <div className="oo-chart-card" style={col ? { gridColumn: col } : undefined}>
       <div className="oo-chart-card-head">
         <span className="oo-chart-card-title">{title}</span>
         {note ? <span className="oo-chart-card-note">{note}</span> : null}
@@ -86,7 +96,14 @@ function MiniTrend({ series, height = 132, yFormat = fmtCompact, unitHint = "" }
 
   const ticks = [0, 0.5, 1].map((r) => ({ y: PAD.t + (H - PAD.t - PAD.b) * (1 - r), v: max * r }));
   const labels = series[0]?.values || [];
-  const step = Math.max(1, Math.ceil(n / 4));
+  // X 轴标签自适应：小图空间有限，标签太长（"2026-08-21"）会相互重叠。
+  // 按「每个标签至少 58px」算能放几个，再决定是否缩写为 MM-DD。
+  const labelBudget = Math.max(2, Math.floor((W - PAD.l - PAD.r) / 58));
+  const step = Math.max(1, Math.ceil(n / labelBudget));
+  const shortDate = (v) => {
+    const s = String(v);
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s.slice(5) : s;
+  };
 
   return (
     <div ref={wrapRef} style={{ position: "relative" }}>
@@ -140,7 +157,7 @@ function MiniTrend({ series, height = 132, yFormat = fmtCompact, unitHint = "" }
         {labels.map((v, i) =>
           i % step === 0 ? (
             <text key={i} x={plots[0]?.pts[i]?.[0]} y={H - 6} textAnchor="middle" fontSize={9.5} fill="var(--ink-3)">
-              {String(v.x).slice(5)}
+              {shortDate(v.x)}
             </text>
           ) : null
         )}
@@ -350,7 +367,7 @@ export default function UsageAnalysis({ byDay = [], byModel = [], modelSeries = 
         <ChartCard
           title="模型消费趋势"
           note={modelLines.length ? `Top ${modelLines.length}` : "暂无数据"}
-          full={modelLines.length > 0}
+          wide={modelLines.length > 0}
         >
           {modelLines.length ? (
             <>

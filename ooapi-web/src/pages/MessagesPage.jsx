@@ -588,14 +588,13 @@ export default function MessagesPage() {
           </div>
         </div>
 
-        {/* 右：聊天区（移动端无选中会话时隐藏，靠路由切换） */}
-        <div
-          className="oo-split-main"
-          style={activeRoomId ? undefined : { display: "none" }}
-        >
+        {/* 右：聊天区。隐藏逻辑交给 CSS —— **只在移动端隐藏**未选中时的占位
+            （移动端走「列表 → 全屏聊天」的主从堆叠）。
+            这里曾经无条件 display:none，结果桌面端右侧整块空白（截图实测发现）。 */}
+        <div className={`oo-split-main${activeRoomId ? "" : " is-empty"}`}>
           {!activeRoomId ? (
             <div style={{ margin: "auto", padding: 24, textAlign: "center", color: "var(--ink-3)" }}>
-              <Empty description="选择一个会话开始聊天" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              <Empty description="从左侧选择一个会话开始聊天" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             </div>
           ) : (
             <>

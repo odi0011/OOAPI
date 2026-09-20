@@ -122,7 +122,19 @@ export function LineChart({ series = [], height = 200, yFormat = fmtCompact, tip
   if (!n) return <Empty description="暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
 
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((r) => ({ y: PAD.t + (H - PAD.t - PAD.b) * (1 - r), v: max * r }));
-  const step = Math.max(1, Math.ceil(n / maxXTicks));
+  // X 轴标签：数量与**格式**都按实测宽度自适应。
+  // 只看数量不够 —— 日期标签 "2026-08-21" 有 10 个字符，
+  // 在 380px 宽的图里放 7 个必然相互重叠（实测截图里糊成一团）。
+  // 这里按「每个标签至少 62px」算能放几个，再据此决定是否缩写为 MM-DD。
+  const labelBudget = Math.max(2, Math.floor((W - PAD.l - PAD.r) / 62));
+  const tickCount = Math.min(maxXTicks, labelBudget);
+  const step = Math.max(1, Math.ceil(n / tickCount));
+  // 空间紧张时把 "2026-08-21" 缩成 "08-21"：保留判读所需的最小信息
+  const shortLabel = (W - PAD.l - PAD.r) / Math.max(1, Math.ceil(n / step)) < 78;
+  const fmtX = (v) => {
+    const s = String(v);
+    return shortLabel && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s.slice(5) : s;
+  };
 
   return (
     <div ref={wrapRef} className="oo-trend-wrap" style={{ position: "relative" }}>
@@ -191,7 +203,7 @@ export function LineChart({ series = [], height = 200, yFormat = fmtCompact, tip
         {(plots[0]?.values || []).map((v, i) =>
           i % step === 0 ? (
             <text key={i} x={plots[0].pts[i]?.[0]} y={H - 8} textAnchor="middle" fontSize={10} fill="var(--ink-3)">
-              {v.label ?? v.x}
+              {v.label ?? fmtX(v.x)}
             </text>
           ) : null
         )}
