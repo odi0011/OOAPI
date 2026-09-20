@@ -22,6 +22,11 @@ const VENDOR_MODEL_MODULES = {
   grok: () => import("./upstream/grok-models.js"),
   workbuddy: () => import("./upstream/workbuddy-models.js"),
   qoder: () => import("./upstream/qoder-models.js"),
+  // 国产厂商直连（OpenAI 兼容，2026-09 接入）
+  mimo: () => import("./upstream/mimo-models.js"),
+  minimax: () => import("./upstream/minimax-models.js"),
+  stepfun: () => import("./upstream/stepfun-models.js"),
+  ark: () => import("./upstream/ark-models.js"),
   opencode: () => import("./upstream/opencode-models.js"),
   openrouter: () => import("./upstream/openrouter-models.js"),
   siliconflow: () => import("./upstream/siliconflow-models.js"),

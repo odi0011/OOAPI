@@ -7,7 +7,7 @@ import {
   PlusOutlined, ReloadOutlined, ThunderboltOutlined, DeleteOutlined, EditOutlined,
   UndoOutlined, KeyOutlined, LoginOutlined, GlobalOutlined,
   InfoCircleOutlined, SafetyCertificateOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined,
-  ExclamationCircleOutlined, DashboardOutlined,
+  ExclamationCircleOutlined, DashboardOutlined, LinkOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { fmtDate, CURRENCY_NAME, copyText } from "../services/format";
@@ -705,6 +705,11 @@ export default function AdminChannelsPage() {
   const [reloginMode, setReloginMode] = useState("");
   const [reloginBusy, setReloginBusy] = useState(false);
   const [reloginDevice, setReloginDevice] = useState(null);
+  // 一键绑定（重新绑定已有渠道）时的渠道特化输入：Kiro 的 region/startUrl、
+  // WorkBuddy/Qoder 的区域。放在弹窗里让用户按需填，留空用默认/自动探测。
+  const [reloginBindRegion, setReloginBindRegion] = useState("");
+  const [reloginBindStartUrl, setReloginBindStartUrl] = useState("");
+  const [reloginBindRealm, setReloginBindRealm] = useState("");
   const reloginTimerRef = useRef(null);
   // 找回指向的渠道 id：抓取界面成功后直接写回该渠道（而不是回填「添加渠道」表单）
   const reloginIdRef = useRef(0);
@@ -715,10 +720,23 @@ export default function AdminChannelsPage() {
   const [capBusy, setCapBusy] = useState(false);
   // 订阅 OAuth 交互式登录：oauthUrl 有值表示「已发起登录，等待用户粘贴回调地址」
   const [oauthSupported, setOauthSupported] = useState(false);
+  // 该渠道是否支持「一键绑定」（设备授权）：Kiro / WorkBuddy / Qoder。
+  // 清单由后端下发（/channel/devices/vendors），前端不写死 —— 加渠道不用改前端。
+  const [deviceBindVendors, setDeviceBindVendors] = useState([]);
   // 设备码登录（Grok/xAI）：返回 user_code 并在任意浏览器完成授权
   const [oauthDevice, setOauthDevice] = useState(false);
   const [deviceInfo, setDeviceInfo] = useState(null);
   const deviceTimerRef = useRef(null);
+  // 一键绑定（设备授权）：Kiro / WorkBuddy / Qoder。
+  // 与上面的 deviceInfo（Grok 设备码登录）**流程相同但接口不同**：
+  // 那几个渠道走 /channel/devices/*（服务端直接落库），不是 /oauth/device/*（回填表单）。
+  // 刻意分开维护 —— 混用会让「绑定成功后凭据去哪」变得含糊。
+  const [bindInfo, setBindInfo] = useState(null);
+  const bindTimerRef = useRef(null);
+  // 绑定成功后暂存的凭据票据（新建渠道流程：先授权、再建渠道、最后 claim）
+  const bindTicketRef = useRef("");
+  // 绑定目标渠道：新建渠道时为 0（走 ticket 流程），重新绑定时为渠道 id
+  const [bindTargetChannelId, setBindTargetChannelId] = useState(0);
   const autoCapRef = useRef(false);
   const autoFailRef = useRef(0);
   const [oauthUrl, setOauthUrl] = useState("");
@@ -834,6 +852,10 @@ export default function AdminChannelsPage() {
   }, [pickProvider]);
 
   const isApi = pickMethod?.key === "api";
+  // 当前选中渠道是否支持一键绑定（设备授权）。
+  // 放在 isApi 之后声明：它依赖 pickProvider，而这段代码在渲染期立即求值 ——
+  // 放在前面会踩 const 暂时性死区（本项目因此白屏过，见 AI协作.md 2.7 第 ④ 条）。
+  const deviceBindSupported = Boolean(pickProvider && deviceBindVendors.includes(pickProvider.key));
   // 非 API 的接入方式（relay 反代 / 订阅 OAuth）走同一套「凭据登录」提交流程
   const isRelay = Boolean(pickMethod) && !isApi;
 
@@ -959,7 +981,20 @@ export default function AdminChannelsPage() {
           if (onboardReady && onboardProfile) payload.profileFrom = onboardProfile;
         }
         const r = await API.post("/channel/login", payload, { timeoutMs: 90_000 });
-        message.success(`渠道「${r.name}」已添加`);
+        // 一键绑定：授权已成功但当时还没渠道，现在把暂存的凭据写进刚建的渠道。
+        // 必须在 login 之后 —— 凭据要落到真实渠道 id 上。
+        if (bindTicketRef.current && r?.id) {
+          try {
+            await API.post("/channel/devices/claim", { ticket: bindTicketRef.current, channel_id: r.id });
+            message.success(`渠道「${r.name}」已添加并完成账号绑定`);
+          } catch (err) {
+            // 绑定失败不影响渠道本身：渠道已建好，用户可重新点「一键绑定」
+            message.warning(`渠道已添加，但绑定失败：${err.message}。可在渠道列表点「重新绑定」`);
+          }
+          bindTicketRef.current = "";
+        } else {
+          message.success(`渠道「${r.name}」已添加`);
+        }
       } else {
         await API.post("/channel/", {
           name: v.name,
@@ -1285,6 +1320,83 @@ export default function AdminChannelsPage() {
     } finally {
       setOauthBusy(false);
     }
+  };
+
+  /**
+   * 一键绑定（设备授权）：Kiro / WorkBuddy / Qoder。
+   *
+   * 与 Grok 设备码的区别：这几个渠道的凭据**由服务端直接写入渠道**，
+   * 不回填表单 —— 因为产出的是完整账号凭据（refresh_token 等），
+   * 不该经过浏览器。所以流程是「绑定成功后直接刷新渠道列表」。
+   */
+  const startBind = async () => {
+    if (!pickProvider) return;
+    setOauthBusy(true);
+    try {
+      const r = await API.post("/channel/devices/start", {
+        vendor: pickProvider.key,
+        start_url: addForm.getFieldValue("bind_start_url") || undefined,
+        region: addForm.getFieldValue("bind_region") || undefined,
+        realm: addForm.getFieldValue("bind_realm") || undefined,
+      });
+      setBindInfo({ ...r, status: "pending" });
+      // 有链接就自动打开新窗口（用户不用手抄）
+      if (r.verifyUrl) window.open(r.verifyUrl, "_blank", "noopener");
+      if (bindTimerRef.current) clearInterval(bindTimerRef.current);
+      const iv = Math.max(2, Number(r.intervalMs) / 1000 || 3) * 1000;
+      const deadline = Date.now() + Math.min(900, Number(r.expiresIn) || 900) * 1000;
+      bindTimerRef.current = setInterval(async () => {
+        if (Date.now() > deadline) {
+          clearInterval(bindTimerRef.current);
+          bindTimerRef.current = null;
+          setBindInfo((d) => (d ? { ...d, status: "expired", error: "授权超时，请重新发起" } : d));
+          return;
+        }
+        try {
+          const p = await API.post("/channel/devices/poll", {
+            session_id: r.sessionId,
+            vendor: pickProvider.key,
+            channel_id: bindTargetChannelId || undefined,
+          });
+          if (p.status === "pending") {
+            setBindInfo((d) => (d ? { ...d, status: "pending" } : d));
+            return;
+          }
+          clearInterval(bindTimerRef.current);
+          bindTimerRef.current = null;
+          if (p.status === "success") {
+            if (p.ticket) {
+              // 还没有渠道（新建流程）：先把 ticket 记下，等提交后 claim
+              bindTicketRef.current = p.ticket;
+              setBindInfo((d) => (d ? { ...d, status: "ready", ticket: p.ticket } : d));
+              message.success("授权成功，点「添加」完成绑定");
+            } else {
+              setBindInfo((d) => (d ? { ...d, status: "success", account: p.account } : d));
+              message.success(`绑定成功${p.account ? `（${p.account}）` : ""}，凭据已写入渠道`);
+              setAddOpen(false);
+              load();
+            }
+            return;
+          }
+          setBindInfo((d) => (d ? { ...d, status: p.status, error: p.message || "" } : d));
+        } catch (e) {
+          clearInterval(bindTimerRef.current);
+          bindTimerRef.current = null;
+          setBindInfo((d) => (d ? { ...d, status: "error", error: e.message } : d));
+        }
+      }, iv);
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setOauthBusy(false);
+    }
+  };
+
+  const cancelBind = () => {
+    if (bindTimerRef.current) clearInterval(bindTimerRef.current);
+    bindTimerRef.current = null;
+    if (bindInfo?.sessionId) API.post("/channel/devices/cancel", { session_id: bindInfo.sessionId }).catch(() => {});
+    setBindInfo(null);
   };
 
   const startCapture = async () => {
@@ -1958,6 +2070,58 @@ export default function AdminChannelsPage() {
     }
   };
 
+  // 一键绑定（设备授权）找回：发起 → 轮询 → 成功后由服务端直接写回该渠道。
+  // 与 Grok 设备码的区别：这里不回填表单，凭据不经浏览器（服务端收到即落库）。
+  const reloginBindStart = async () => {
+    setReloginBusy(true);
+    try {
+      const r = await API.post("/channel/devices/start", {
+        vendor: reloginTarget.type,
+        start_url: reloginBindStartUrl || undefined,
+        region: reloginBindRegion || undefined,
+        realm: reloginBindRealm || undefined,
+      });
+      setReloginDevice({ ...r, status: "pending" });
+      if (r.verifyUrl) window.open(r.verifyUrl, "_blank", "noopener");
+      if (reloginTimerRef.current) clearInterval(reloginTimerRef.current);
+      const iv = Math.max(2, Number(r.intervalMs) / 1000 || 3) * 1000;
+      const deadline = Date.now() + Math.min(900, Number(r.expiresIn) || 900) * 1000;
+      reloginTimerRef.current = setInterval(async () => {
+        if (Date.now() > deadline) {
+          clearInterval(reloginTimerRef.current);
+          reloginTimerRef.current = null;
+          setReloginDevice((d) => (d ? { ...d, status: "expired", error: "授权超时，请重新发起" } : d));
+          return;
+        }
+        try {
+          const p = await API.post("/channel/devices/poll", {
+            session_id: r.sessionId,
+            vendor: reloginTarget.type,
+            channel_id: reloginTarget.id, // 直接落到该渠道
+          });
+          if (p.status === "pending") return;
+          clearInterval(reloginTimerRef.current);
+          reloginTimerRef.current = null;
+          if (p.status === "success") {
+            message.success(`绑定成功${p.account ? `（${p.account}）` : ""}，凭据已更新`);
+            closeRelogin();
+            await load();
+            return;
+          }
+          setReloginDevice((d) => (d ? { ...d, status: p.status, error: p.message || "" } : d));
+        } catch (e) {
+          clearInterval(reloginTimerRef.current);
+          reloginTimerRef.current = null;
+          setReloginDevice((d) => (d ? { ...d, error: e.message } : d));
+        }
+      }, iv);
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setReloginBusy(false);
+    }
+  };
+
   // 上游模型探测的 state 与刷新函数已上移到 `columns` 之前（见那里的注释：
   // columns 会立即求值，放后面会触发 TDZ 白屏）。这里不再重复声明。
 
@@ -2386,6 +2550,106 @@ export default function AdminChannelsPage() {
                               {deviceInfo?.error ? (
                                 <div style={{ fontSize: 12, color: "var(--red)", marginTop: 6 }}>{deviceInfo.error}</div>
                               ) : null}
+                            </Form.Item>
+                          ) : null}
+                          {/* 一键绑定（设备授权）：Kiro / WorkBuddy / Qoder。
+                              这三个渠道原先只能手工粘贴桌面端登录文件 —— 对多数用户做不到。
+                              设备授权把流程压成「点一下 → 打开链接确认 → 自动完成」。 */}
+                          {deviceBindSupported ? (
+                            <Form.Item label="一键绑定（推荐）">
+                              <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                                <Space wrap>
+                                  <Button type="primary" icon={<LinkOutlined />} onClick={startBind} loading={oauthBusy}>
+                                    {bindInfo ? "重新发起授权" : "一键绑定账号"}
+                                  </Button>
+                                  {bindInfo?.verifyUrl ? (
+                                    <Typography.Link href={bindInfo.verifyUrl} target="_blank" rel="noreferrer">
+                                      在新窗口打开授权页
+                                    </Typography.Link>
+                                  ) : null}
+                                  {bindInfo ? (
+                                    <Button size="small" type="link" onClick={cancelBind} style={{ padding: 0 }}>
+                                      取消
+                                    </Button>
+                                  ) : null}
+                                </Space>
+
+                                {/* 用户码：Kiro 需要用户在授权页输入这串码 */}
+                                {bindInfo?.userCode ? (
+                                  <div
+                                    style={{
+                                      padding: "8px 12px",
+                                      background: "var(--inset)",
+                                      borderRadius: "var(--r-sm)",
+                                      fontSize: 13,
+                                    }}
+                                  >
+                                    在授权页输入代码：
+                                    <b style={{ letterSpacing: 2, marginLeft: 6, fontSize: 16 }}>{bindInfo.userCode}</b>
+                                  </div>
+                                ) : null}
+
+                                {/* 状态：轮询中/成功/失败/超时都要有明确文案 */}
+                                {bindInfo ? (
+                                  <span
+                                    style={{
+                                      fontSize: 12,
+                                      color:
+                                        bindInfo.status === "pending"
+                                          ? "var(--ink-3)"
+                                          : bindInfo.status === "ready" || bindInfo.status === "success"
+                                            ? "var(--green)"
+                                            : "var(--red)",
+                                    }}
+                                  >
+                                    {bindInfo.status === "pending"
+                                      ? "等待你在浏览器中确认授权…（完成后会自动继续）"
+                                      : bindInfo.status === "ready"
+                                        ? "授权成功，点下方「添加」完成绑定"
+                                        : bindInfo.status === "success"
+                                          ? `绑定成功${bindInfo.account ? `（${bindInfo.account}）` : ""}`
+                                          : bindInfo.error || "授权未完成，请重新发起"}
+                                  </span>
+                                ) : null}
+
+                                {/* 渠道特化输入：Kiro 的 region/startUrl、WorkBuddy/Qoder 的区域 */}
+                                {pickProvider.key === "kiro" ? (
+                                  <Space wrap>
+                                    <Input
+                                      name="bind_region"
+                                      placeholder="区域（留空自动探测）"
+                                      style={{ width: 200 }}
+                                      onChange={(e) => addForm.setFieldValue("bind_region", e.target.value)}
+                                    />
+                                    <Input
+                                      name="bind_start_url"
+                                      placeholder="startUrl（留空用 Builder ID）"
+                                      style={{ width: 280 }}
+                                      onChange={(e) => addForm.setFieldValue("bind_start_url", e.target.value)}
+                                    />
+                                  </Space>
+                                ) : null}
+                                {pickProvider.key === "workbuddy" || pickProvider.key === "qoder" ? (
+                                  <Select
+                                    style={{ width: 200 }}
+                                    placeholder="区域（默认国内）"
+                                    allowClear
+                                    onChange={(v) => addForm.setFieldValue("bind_realm", v)}
+                                    options={[
+                                      { value: "cn", label: "国内（CN）" },
+                                      { value: "global", label: "国际（Global）" },
+                                    ]}
+                                  />
+                                ) : null}
+
+                                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                                  {pickProvider.key === "kiro"
+                                    ? "走 AWS SSO OIDC 设备授权（官方标准流程）：打开链接输入验证码即可，无需手工找凭据文件"
+                                    : pickProvider.key === "workbuddy"
+                                      ? "打开链接登录 WorkBuddy/CodeBuddy 即可；设备风控头（X-Device-Token）无法服务端生成，需要时可在下面粘贴补充"
+                                      : "打开链接登录 Qoder 即可；也可在下面粘贴 PAT（pt-...）作为兜底"}
+                                </span>
+                              </Space>
                             </Form.Item>
                           ) : null}
                           <Form.Item
@@ -3047,6 +3311,59 @@ export default function AdminChannelsPage() {
               <Button type="primary" icon={<GlobalOutlined />} onClick={reloginBrowserStart} loading={reloginBusy} block>
                 在服务器浏览器里打开登录页
               </Button>
+            ) : null}
+
+            {/* 一键绑定（设备授权）：Kiro / WorkBuddy / Qoder 重新绑定已有渠道 */}
+            {reloginMode === "device-bind" ? (
+              <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                <Button type="primary" icon={<LinkOutlined />} onClick={reloginBindStart} loading={reloginBusy} block>
+                  发起一键绑定
+                </Button>
+                {reloginDevice?.userCode ? (
+                  <div style={{ fontSize: 13, padding: "6px 10px", background: "var(--inset)", borderRadius: "var(--r-sm)" }}>
+                    在授权页输入代码：<b style={{ letterSpacing: 2 }}>{reloginDevice.userCode}</b>
+                  </div>
+                ) : null}
+                {reloginDevice?.verifyUrl ? (
+                  <Typography.Link href={reloginDevice.verifyUrl} target="_blank" rel="noreferrer">
+                    在新窗口打开授权页
+                  </Typography.Link>
+                ) : null}
+                {/* 渠道特化输入 */}
+                {reloginTarget?.type === "kiro" ? (
+                  <Space wrap>
+                    <Input
+                      placeholder="区域（留空自动探测）"
+                      style={{ width: 180 }}
+                      value={reloginBindRegion}
+                      onChange={(e) => setReloginBindRegion(e.target.value)}
+                    />
+                    <Input
+                      placeholder="startUrl（留空用 Builder ID）"
+                      style={{ width: 260 }}
+                      value={reloginBindStartUrl}
+                      onChange={(e) => setReloginBindStartUrl(e.target.value)}
+                    />
+                  </Space>
+                ) : null}
+                {reloginTarget?.type === "workbuddy" || reloginTarget?.type === "qoder" ? (
+                  <Select
+                    style={{ width: 180 }}
+                    placeholder="区域（默认国内）"
+                    allowClear
+                    value={reloginBindRealm || undefined}
+                    onChange={(v) => setReloginBindRealm(v || "")}
+                    options={[
+                      { value: "cn", label: "国内（CN）" },
+                      { value: "global", label: "国际（Global）" },
+                    ]}
+                  />
+                ) : null}
+                {reloginDevice?.status === "pending" ? (
+                  <div style={{ fontSize: 12, color: "var(--ink-3)" }}>等待你在浏览器中确认授权…（完成后自动写入）</div>
+                ) : null}
+                {reloginDevice?.error ? <div style={{ fontSize: 12, color: "var(--red)" }}>{reloginDevice.error}</div> : null}
+              </Space>
             ) : null}
 
             {/* 设备码登录（Grok） */}

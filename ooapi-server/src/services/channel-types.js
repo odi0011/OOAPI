@@ -500,6 +500,88 @@ export const PROVIDERS = [
       },
     ],
   },
+  // ---- 国产厂商直连（OpenAI 兼容，Key + Base URL）----
+  // 这四家都是标准 OpenAI 协议，走 openai-compat；协议差异在 vendor-quirks.js 处理。
+  {
+    key: "mimo",
+    name: "小米 MiMo",
+    vendor: "mimo",
+    desc: "小米 MiMo 开放平台（OpenAI 兼容；另有 Anthropic 兼容端点）",
+    methods: [
+      {
+        key: "api",
+        label: "API Key",
+        desc: "填 platform.xiaomimimo.com 的 API Key（sk-...）",
+        baseUrl: "https://api.xiaomimimo.com/v1",
+        keyHint: "sk-...",
+        defaultModels: [
+          { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro" },
+          { id: "mimo-v2.5", name: "MiMo V2.5" },
+        ],
+        testModel: "mimo-v2.5",
+      },
+    ],
+  },
+  {
+    key: "minimax",
+    name: "MiniMax",
+    vendor: "minimax",
+    desc: "MiniMax 开放平台（国内 api.minimax.cn / 国际 api.minimax.io，按账号区域选）",
+    methods: [
+      {
+        key: "api",
+        label: "API Key",
+        desc: "平台强制开启 reasoning_split，思维链不会混进正文",
+        baseUrl: "https://api.minimax.cn/v1",
+        keyHint: "填 MiniMax 开放平台的 API Key",
+        defaultModels: [
+          { id: "MiniMax-M3", name: "MiniMax M3" },
+          { id: "MiniMax-M2.7", name: "MiniMax M2.7" },
+        ],
+        testModel: "MiniMax-M2.7",
+      },
+    ],
+  },
+  {
+    key: "stepfun",
+    name: "阶跃星辰 StepFun",
+    vendor: "stepfun",
+    desc: "阶跃星辰开放平台（OpenAI 兼容）",
+    methods: [
+      {
+        key: "api",
+        label: "API Key",
+        desc: "填 platform.stepfun.com 的 API Key",
+        baseUrl: "https://api.stepfun.com/v1",
+        keyHint: "填 StepFun 开放平台的 API Key",
+        defaultModels: [
+          { id: "step-5-preview", name: "Step 5 Preview" },
+          { id: "step-3.7-flash", name: "Step 3.7 Flash" },
+        ],
+        testModel: "step-3.5-flash",
+      },
+    ],
+  },
+  {
+    key: "ark",
+    name: "火山方舟",
+    vendor: "ark",
+    desc: "字节火山方舟（Doubao Seed 系列；API Key 鉴权时 model 直接填模型名，无需 ep- 接入点）",
+    methods: [
+      {
+        key: "api",
+        label: "API Key",
+        desc: "方舟在容量紧张时会自动降级模型，平台会按实际生效的模型计费",
+        baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+        keyHint: "填火山方舟的 API Key",
+        defaultModels: [
+          { id: "doubao-seed-2-1-pro", name: "Doubao Seed 2.1 Pro" },
+          { id: "doubao-seed-2-1-turbo", name: "Doubao Seed 2.1 Turbo" },
+        ],
+        testModel: "doubao-seed-1-6-flash",
+      },
+    ],
+  },
   // ---- 三方兼容聚合（OpenAI / Anthropic 协议接入，Key + Base URL）----
   {
     key: "opencode",

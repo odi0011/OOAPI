@@ -44,9 +44,31 @@ import { invalidateModelRegistry } from "../services/models.js";
 import { parseCredentialFile } from "../services/upstream/auth-import.js";
 import { probeChannel } from "../services/channel-probe.js";
 import { fetchQuota, quotaSupportFor, clampQuotaPayload } from "../services/upstream/quota.js";
+import { rateLimit } from "../middleware/ratelimit.js";
+import {
+  supportsDeviceBind,
+  deviceBindVendors,
+  startDeviceBind,
+  pollDeviceBind,
+  cancelDeviceBind,
+} from "../services/device-bind.js";
 import { randomBytes } from "node:crypto";
 
 const router = Router();
+
+// 待领取的绑定凭据（一次性 ticket → 凭据）。
+// 为什么不让凭据经过前端：设备授权拿到的是完整账号凭据，
+// 直接回给浏览器等于让 token 走一遍 HTTP 响应体（会进访问日志、浏览器缓存）。
+// 这里暂存在服务端，前端只拿 ticket，建完渠道再换。
+// 存进程内（单机单实例），TTL 5 分钟 —— 只在「绑定成功→建渠道」这几秒内需要。
+const pendingCredentials = new Map();
+const PENDING_CRED_TTL_MS = 5 * 60 * 1000;
+function sweepPendingCredentials() {
+  const nowMs = Date.now();
+  for (const [k, v] of pendingCredentials.entries()) {
+    if (nowMs - v.at > PENDING_CRED_TTL_MS) pendingCredentials.delete(k);
+  }
+}
 router.use(adminRequired);
 
 // 渠道写操作会改变「平台已注册模型」集合（models 字段），写成功后让登记表缓存失效，
@@ -847,6 +869,11 @@ router.get(
       }
       if (isOAuthMethod(method) && supportsDeviceLogin(r.type)) {
         modes.push({ key: "device", label: "设备码登录", desc: "打开授权页输入设备码，适合无法回调的场景" });
+      }
+      // 一键绑定（设备授权）：Kiro / WorkBuddy / Qoder。
+      // 放在最前是因为它是这三个渠道**唯一不需要用户手工找凭据文件**的方式。
+      if (supportsDeviceBind(r.type)) {
+        modes.unshift({ key: "device-bind", label: "一键绑定（推荐）", desc: "打开授权页确认一次即可自动完成绑定，无需手工找凭据文件" });
       }
       if (mCfg.needsBrowser) {
         modes.push({ key: "browser-ready", label: "浏览器登录", desc: "打开上游页面完成扫码/验证码登录" });
@@ -2717,6 +2744,113 @@ router.post(
       { created, skipped, results, parseErrors: errors },
       `导入完成：成功 ${created}，跳过 ${skipped}，失败 ${results.length - created - skipped + errors.length}`
     );
+  })
+);
+
+// ---------- 一键绑定（设备授权）----------
+// ---------------------------------------------------------------------------
+// 为什么要有它：Kiro / WorkBuddy / Qoder 原先只能「手工粘贴凭据」——
+// 用户得自己找到桌面端登录文件、从里面挑出 token 字段。对多数用户不可完成。
+// 设备授权（device authorization）能把这段变成：服务端发起 → 用户看到
+// 「用户码 + 链接」→ 在浏览器确认一次 → 服务端轮询到凭据自动入库。
+//
+// 三种绑定场景共用一套流程，差异只在「绑到哪」：
+//   · 已有渠道 → 刷新凭据（管理员在渠道列表点「重新绑定」）
+//   · 新建渠道 → 先建渠道再绑（前端走 /devices/start?channel_id= 之后回调）
+// 所以接口设计成：start 记下目标渠道（可空），成功后由前端调 /devices/apply。
+router.get(
+  "/devices/vendors",
+  adminRequired,
+  asyncHandler(async (req, res) => ok(res, { vendors: deviceBindVendors() }))
+);
+
+router.post(
+  "/devices/start",
+  adminRequired,
+  rateLimit({ windowMs: 60_000, max: 10, keyPrefix: "device-bind", keyFn: (r) => r.user?.id || r.ip }),
+  asyncHandler(async (req, res) => {
+    const vendor = String(req.body?.vendor || "").trim();
+    if (!supportsDeviceBind(vendor)) return fail(res, `该渠道不支持一键绑定：${vendor}`);
+    try {
+      const out = await startDeviceBind(vendor, {
+        startUrl: req.body?.start_url,
+        regionHint: req.body?.region,
+        realm: req.body?.realm,
+      });
+      await writeLog({
+        req,
+        user: req.user,
+        type: LOG_TYPE.MANAGE,
+        content: `发起 ${vendor} 设备授权绑定（会话 ${out.sessionId.slice(0, 8)}）`,
+      });
+      return ok(res, out, "已生成授权信息，请在浏览器中确认");
+    } catch (e) {
+      return fail(res, e.message, 400);
+    }
+  })
+);
+
+router.post(
+  "/devices/poll",
+  adminRequired,
+  asyncHandler(async (req, res) => {
+    const sessionId = String(req.body?.session_id || "");
+    if (!sessionId) return fail(res, "缺少会话标识");
+    try {
+      const out = await pollDeviceBind(sessionId);
+      // 凭据**不直接返回给前端**：先落库再回状态，避免 token 经过浏览器/日志
+      if (out.status === "success" && out.credential) {
+        const channelId = Number(req.body?.channel_id) || 0;
+        if (!channelId) {
+          // 前端还没建渠道：把凭据暂存在服务端（会话已删，这里用一次性凭据表）
+          const ticket = randomBytes(16).toString("hex");
+          pendingCredentials.set(ticket, { credential: out.credential, vendor: String(req.body?.vendor || ""), at: Date.now() });
+          return ok(res, { status: "success", ticket }, "授权成功");
+        }
+        const [[ch]] = await pool.query("SELECT id, type FROM channels WHERE id = ?", [channelId]);
+        if (!ch) return fail(res, "目标渠道不存在", 404);
+        const r = await applyCredentialToChannel({ id: channelId, type: ch.type, credential: out.credential });
+        await writeLog({
+          req,
+          user: req.user,
+          type: LOG_TYPE.MANAGE,
+          content: `设备授权绑定成功，已写入渠道 #${channelId}${r.accountLabel ? `（${r.accountLabel}）` : ""}`,
+        });
+        return ok(res, { status: "success", channel_id: channelId, account: r.accountLabel }, "绑定成功，凭据已写入");
+      }
+      return ok(res, { status: out.status, message: out.message || "", slowDown: Boolean(out.slowDown) });
+    } catch (e) {
+      // 轮询失败不该让前端无限等：明确告诉它这次出错，前端会重试或提示
+      return fail(res, e.message, 502);
+    }
+  })
+);
+
+router.post(
+  "/devices/cancel",
+  adminRequired,
+  asyncHandler(async (req, res) => {
+    const okFlag = cancelDeviceBind(String(req.body?.session_id || ""));
+    return ok(res, { cancelled: okFlag });
+  })
+);
+
+// 取出暂存的凭据（前端建完渠道后再调，凭据只经服务端内部传递）
+router.post(
+  "/devices/claim",
+  adminRequired,
+  asyncHandler(async (req, res) => {
+    const ticket = String(req.body?.ticket || "");
+    const rec = pendingCredentials.get(ticket);
+    if (!rec) return fail(res, "凭据已过期或不存在，请重新绑定", 410);
+    pendingCredentials.delete(ticket); // 一次性
+    const channelId = Number(req.body?.channel_id) || 0;
+    if (!channelId) return fail(res, "缺少目标渠道");
+    const [[ch]] = await pool.query("SELECT id, type FROM channels WHERE id = ?", [channelId]);
+    if (!ch) return fail(res, "目标渠道不存在", 404);
+    const r = await applyCredentialToChannel({ id: channelId, type: ch.type, credential: rec.credential });
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `设备授权凭据已写入新建渠道 #${channelId}` });
+    return ok(res, { channel_id: channelId, account: r.accountLabel }, "绑定成功");
   })
 );
 

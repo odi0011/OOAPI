@@ -15,6 +15,7 @@
 //     https://ark.cn-beijing.volces.com/api/v3    → /api/v3/chat/completions
 //     https://dashscope.aliyuncs.com/compatible-mode → /compatible-mode/v1/chat/completions
 import { now, assertPublicUrl } from "../../utils.js";
+import { applyVendorRequest, effectiveModelOf, reasoningDeltaOf, splitThinkTags } from "./vendor-quirks.js";
 
 // 一次性文本读取必须有上限：SSE 路径有单行 8MB 限制，JSON/错误兜底却直接 resp.text()，
 // 异常或恶意上游可以用超大响应把内存打爆。分块读取并在超限时取消响应体。
@@ -268,6 +269,10 @@ export async function chat({
     }
   }
 
+  // 厂商协议差异在这统一落地（MiniMax 的 reasoning_split 必须开、
+  // 方舟的 thinking 格式与 max_tokens 互斥、StepFun 的参数裁剪），见 vendor-quirks.js
+  applyVendorRequest(body, { channel, model });
+
   const resp = await fetch(url, {
     method: "POST",
     headers: { ...authHeaders(channel, nextKey(channel)), Accept: "text/event-stream" },
@@ -315,8 +320,20 @@ export async function chat({
       throw Object.assign(new Error("上游返回了非法的 JSON"), { code: "CHANNEL_BAD_RESPONSE" });
     }
     const msg = j?.choices?.[0]?.message || {};
-    const content = typeof msg.content === "string" ? msg.content : "";
-    const reasoning = typeof msg.reasoning_content === "string" ? msg.reasoning_content : "";
+    // 思维链字段各家不同：reasoning_content / reasoning / MiniMax 的 reasoning_details
+    let reasoning =
+      typeof msg.reasoning_content === "string"
+        ? msg.reasoning_content
+        : typeof msg.reasoning === "string"
+          ? msg.reasoning
+          : reasoningDeltaOf(msg);
+    let content = typeof msg.content === "string" ? msg.content : "";
+    // 兜底剥离正文里的 <think> 块（理由见流式分支的同名处理）
+    const split = splitThinkTags(content);
+    if (split.reasoning) {
+      reasoning += split.reasoning;
+      content = split.content;
+    }
     if (reasoning && onReasoning) onReasoning(reasoning);
     if (content && onDelta) onDelta(content);
     if (!content) {
@@ -329,6 +346,8 @@ export async function chat({
       reasoning,
       usage: pickUsage(j?.usage),
       upstreamModel: j?.model || model,
+      // 方舟自动降级：非流式响应同样带 service_status
+      billModel: effectiveModelOf(j),
     };
   }
 
@@ -340,6 +359,9 @@ export async function chat({
   let reasoning = "";
   let usage = null;
   let upstreamModel = model;
+  // 上游「实际生效」的模型（方舟自动降级时会与请求的 model 不同）。
+  // 与 upstreamModel 分开：后者是上游回显的名字，前者是**该按谁计费**的依据。
+  let fallbackModel = "";
 
   const handleLine = (line) => {
     const t = line.trim();
@@ -354,19 +376,33 @@ export async function chat({
     }
     // data: null / data: 123 等也是合法 JSON，直接读属性会抛 TypeError 打断整个流
     if (!ev || typeof ev !== "object") return;
+    // 火山方舟会在容量紧张时自动降级到别的模型跑，这里读**实际生效**的模型名，
+    // 计费与日志都据此（否则会按 A 的价收 B 的钱）——见 vendor-quirks.js
+    const eff = effectiveModelOf(ev);
+    if (eff) fallbackModel = eff;
     if (ev.model) upstreamModel = ev.model;
     if (ev.usage) usage = ev.usage;
     const d = ev.choices?.[0]?.delta;
     if (!d) return;
-    // 部分厂商把思考链放在 reasoning_content，另有 reasoning 的写法
-    const r = d.reasoning_content ?? d.reasoning;
+    // 部分厂商把思考链放在 reasoning_content，另有 reasoning 的写法；
+    // MiniMax 开 reasoning_split 后放在 reasoning_details（数组）——统一在这里读
+    const r = d.reasoning_content ?? d.reasoning ?? reasoningDeltaOf(d);
     if (typeof r === "string" && r) {
       reasoning += r;
       if (onReasoning) onReasoning(r);
     }
     if (typeof d.content === "string" && d.content) {
-      content += d.content;
-      if (onDelta) onDelta(d.content);
+      // 兜底剥离正文里的 <think> 块：个别版本/中转即使开了 reasoning_split
+      // 仍可能把思维链混在 content 里，那种内容不该当正文展示
+      const { content: c, reasoning: r2 } = splitThinkTags(d.content);
+      if (r2) {
+        reasoning += r2;
+        if (onReasoning) onReasoning(r2);
+      }
+      if (c) {
+        content += c;
+        if (onDelta) onDelta(c);
+      }
     }
   };
 
@@ -402,6 +438,8 @@ export async function chat({
     reasoning,
     usage: pickUsage(usage),
     upstreamModel,
+    // 实际生效模型（方舟降级时非空）：计费按它算，见 vendor-quirks.js 的说明
+    billModel: fallbackModel,
   };
 }
 
