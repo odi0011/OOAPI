@@ -155,16 +155,30 @@ router.get(
     const gameKey = String(req.query.game_key || "").trim().slice(0, 24);
     if (!gameKey) return fail(res, "缺少游戏标识");
     const { p, size, offset } = pageParams(req.query, 20);
-    // 排行榜：每人只取最高分（否则一个人刷 100 局就霸榜）
+    // 排行榜：每人只取最高分（否则一个人刷 100 局就霸榜）。
+    //
+    // 写法要点：用「按 user_id 取该用户最高分那一行」的自连接，
+    // 并且**取哪一行的规则必须唯一**（先按 score 再按 id 取最早那条），
+    // 否则同一用户有多个同分行时会重复出现在榜上。
+    // 注意不能写成 `... GROUP BY t.user_id` 去重：MySQL 默认开启
+    // only_full_group_by，SELECT 里出现未聚合的 duration_ms 会直接 500
+    // （线上已实测报 ER_WRONG_FIELD_WITH_GROUP）。
     const [rows] = await pool.query(
-      `SELECT t.user_id, t.score, t.duration_ms, t.created_time, u.username, u.display_name, u.avatar_media_id
-         FROM (
-           SELECT user_id, MAX(score) AS score FROM game_records WHERE game_key = ? GROUP BY user_id
-         ) best
-         JOIN game_records t ON t.user_id = best.user_id AND t.score = best.score AND t.game_key = ?
+      `SELECT t.user_id, t.score, t.duration_ms, t.created_time,
+              u.username, u.display_name, u.avatar_media_id
+         FROM game_records t
          JOIN users u ON u.id = t.user_id
-        WHERE u.status = 1
-        GROUP BY t.user_id
+         JOIN (
+           SELECT user_id, MAX(score) AS best_score, MIN(id) AS best_id
+             FROM game_records WHERE game_key = ?
+            GROUP BY user_id
+         ) b ON b.user_id = t.user_id AND t.score = b.best_score
+        WHERE t.game_key = ? AND u.status = 1
+          -- 同一分数可能有多局：只保留该分数下的最早一条，保证一人一行
+          AND t.id = (
+            SELECT MIN(t2.id) FROM game_records t2
+             WHERE t2.user_id = t.user_id AND t2.game_key = t.game_key AND t2.score = t.score
+          )
         ORDER BY t.score DESC, t.created_time ASC
         LIMIT ? OFFSET ?`,
       [gameKey, gameKey, size, offset]
