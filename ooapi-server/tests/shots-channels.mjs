@@ -72,22 +72,18 @@ if (await kiro.count()) {
   await page.waitForTimeout(1200);
   await page.screenshot({ path: `${OUT}/03-anthropic-methods.png` });
 
-  // 切到「反代（Kiro）」方式
-  const kiroMethod = page.getByText("反代（Kiro）", { exact: false });
+  // 切到 Kiro 反代方式。
+  // 文案由 methodShortName 生成（形如「Kiro 反代（粘贴凭据）」），
+  // 所以匹配 "Kiro 反代" 而不是早期写死的 "反代（Kiro）」——
+  // 后者是改成短名之前的老文案，用它定位会永远找不到。
+  const kiroMethod = page.getByText("Kiro 反代", { exact: false });
   if (await kiroMethod.count()) {
     await kiroMethod.first().click();
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(1500);
     await page.screenshot({ path: `${OUT}/04-kiro-selected.png`, fullPage: true });
-
-    // 凭据方式选「粘贴登录态」—— 一键绑定 UI 在那下面
-    const paste = page.getByText(/粘贴登录态|粘贴凭据/).first();
-    if (await paste.count()) {
-      await paste.click();
-      await page.waitForTimeout(1200);
-    }
     await page.screenshot({ path: `${OUT}/05-kiro-bind-ui.png`, fullPage: true });
 
-    const bodyText = await page.evaluate(() => document.getElementById("root")?.innerText || "");
+    const bodyText = await page.evaluate(() => document.body?.innerText || "");
     ck("Kiro 弹窗内出现「一键绑定」", /一键绑定/.test(bodyText));
     const m = bodyText.match(/一键绑定[\s\S]{0,260}/);
     if (m) console.log(`       文案：${m[0].replace(/\s+/g, " ").slice(0, 220)}`);
@@ -99,7 +95,7 @@ if (await kiro.count()) {
       await bindBtn.first().click();
       await page.waitForTimeout(6000);
       await page.screenshot({ path: `${OUT}/06-kiro-bind-started.png`, fullPage: true });
-      const after = await page.evaluate(() => document.getElementById("root")?.innerText || "");
+      const after = await page.evaluate(() => document.body?.innerText || "");
       const hasCode = /在授权页输入代码/.test(after);
       const hasPending = /等待你在浏览器中确认/.test(after);
       const hasRegion = /region|region 注册失败|AWS SSO/.test(after);
@@ -109,7 +105,7 @@ if (await kiro.count()) {
       if (snip) console.log(`       状态：${snip.replace(/\s+/g, " ").slice(0, 160)}`);
     }
   } else {
-    ck("Kiro 接入方式可见", false, "未找到「反代（Kiro）」");
+    ck("Kiro 接入方式可见", false, "未找到「Kiro 反代」标签");
   }
 } else {
   ck("厂商选择器含 Anthropic（Kiro 所在厂商）", false);
