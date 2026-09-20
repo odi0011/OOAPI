@@ -454,12 +454,17 @@ const TABLES = [
     owner_id INT NOT NULL DEFAULT 0,
     avatar_media_id BIGINT NOT NULL DEFAULT 0,
     member_count INT NOT NULL DEFAULT 0,
+    -- 单聊唯一键：两个用户 id 排序后拼成 "小:大"。
+    -- 没有它，A→B 连点两次「发消息」会建出两个房间，双方各看一个、消息永远对不上。
+    -- 群聊/讨论组为 NULL（唯一键允许多个 NULL，所以不影响建群）。
+    single_key VARCHAR(40) DEFAULT NULL COMMENT '单聊唯一键（群聊为 NULL）',
     -- 冗余最后一条消息：会话列表要按活跃度排序，不能对每个房间查一次消息表
     last_message_id BIGINT NOT NULL DEFAULT 0,
     last_message_text VARCHAR(120) NOT NULL DEFAULT '',
     last_message_time BIGINT NOT NULL DEFAULT 0,
     status TINYINT NOT NULL DEFAULT 1 COMMENT '1=正常 2=已解散',
     created_time BIGINT NOT NULL DEFAULT 0,
+    UNIQUE KEY uniq_room_single (single_key),
     KEY idx_room_active (status, last_message_time),
     KEY idx_room_owner (owner_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
@@ -560,6 +565,10 @@ const COLUMN_MIGRATIONS = [
   // 社区/聊天（第 37 批）：评论扁平化的 @ 目标 + 消息的客户端临时 id（乐观队列）
   { table: "community_comments", column: "reply_to_user_id", ddl: "INT NOT NULL DEFAULT 0" },
   { table: "chat_room_messages", column: "client_id", ddl: "VARCHAR(40) NOT NULL DEFAULT ''" },
+  // 单聊唯一键：本次上线时 chat_rooms 已按老建表语句建好（不含此列），
+  // CREATE TABLE IF NOT EXISTS 不会补，必须走列迁移。
+  // 唯一索引由 ensureIndexes 单独创建（CREATE INDEX 语法不支持 UNIQUE）。
+  { table: "chat_rooms", column: "single_key", ddl: "VARCHAR(40) DEFAULT NULL" },
   // 媒体库 / 用户资料（第 36 批）：头像引用 + 个人简介三件套
   { table: "users", column: "avatar_media_id", ddl: "BIGINT NOT NULL DEFAULT 0" },
   { table: "users", column: "bio", ddl: "VARCHAR(255) NOT NULL DEFAULT ''" },
@@ -730,6 +739,17 @@ async function ensureIndexes() {
     } catch (e) {
       if (e?.code !== "ER_DUP_KEYNAME") console.warn(`[migrate] 索引创建失败（忽略）：${e.message}`);
     }
+  }
+
+  // 单聊唯一键的唯一索引：CREATE TABLE IF NOT EXISTS 对已存在的表不生效，
+  // 所以老库（以及本次上线时已建好 chat_rooms 的库）必须单独补。
+  // 没有这个唯一索引，单聊房间的唯一性就只靠代码里的「先查再插」——
+  // 并发点两次「发消息」会各建一个房间，双方各看一个，消息永远对不上。
+  try {
+    await pool.query("CREATE UNIQUE INDEX uniq_room_single ON chat_rooms (single_key)");
+    console.log("[migrate] 索引已创建：uniq_room_single");
+  } catch (e) {
+    if (e?.code !== "ER_DUP_KEYNAME") console.warn(`[migrate] uniq_room_single 创建失败（忽略）：${e.message}`);
   }
 }
 
