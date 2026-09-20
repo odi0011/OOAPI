@@ -24,9 +24,11 @@ const RANGES = [
   { value: "90d", label: "近 90 天" },
 ];
 
-function ChartCard({ title, note, children, span }) {
+/** 图表卡：full = 跨满整行（主趋势图用）。
+ *  不要写死 span=2 —— 网格列数自适应，写死会留下尴尬空位。 */
+function ChartCard({ title, note, children, full }) {
   return (
-    <div className="oo-chart-card" style={span ? { gridColumn: `span ${span}` } : undefined}>
+    <div className="oo-chart-card" style={full ? { gridColumn: "1 / -1" } : undefined}>
       <div className="oo-chart-card-head">
         <span className="oo-chart-card-title">{title}</span>
         {note ? <span className="oo-chart-card-note">{note}</span> : null}
@@ -158,7 +160,7 @@ export default function AdminDashboardPage() {
       </div>
 
       <div className="oo-chart-grid">
-        <ChartCard title="全站趋势" note={`近 ${data?.range?.days || 30} 天`} span={2}>
+        <ChartCard title="全站趋势" note={`近 ${data?.range?.days || 30} 天`} full>
           {trend.length ? (
             <>
               <LineChart

@@ -30,9 +30,12 @@ const RANGES = [
 ];
 
 /** 图表卡：统一标题 + 右上口径说明 */
-function ChartCard({ title, note, children, span }) {
+/** 图表卡：统一标题 + 右上口径说明。
+ *  full = 跨满整行（主趋势图用）。不要用固定 span=2 ——
+ *  网格列数是自适应的（宽屏 3~4 列），写死跨 2 列会留下尴尬的空位。 */
+function ChartCard({ title, note, children, full }) {
   return (
-    <div className="oo-chart-card" style={span ? { gridColumn: `span ${span}` } : undefined}>
+    <div className="oo-chart-card" style={full ? { gridColumn: "1 / -1" } : undefined}>
       <div className="oo-chart-card-head">
         <span className="oo-chart-card-title">{title}</span>
         {note ? <span className="oo-chart-card-note">{note}</span> : null}
@@ -142,9 +145,15 @@ export default function ConsolePage() {
   const usedQuota = data?.account?.used_quota ?? user?.used_quota ?? 0;
   const totalQuota = quota + usedQuota;
   const usedPct = totalQuota > 0 ? (usedQuota / totalQuota) * 100 : 0;
-  // 余额可用天数：按区间日均消费估算 —— 比单看「剩余额度」有用得多
+  // 余额可用天数：按区间日均消费估算 —— 比单看「剩余额度」有用得多。
+  //
+  // 但**必须封顶**：余额大而消费极小时会算出「3365587 天」这种数字，
+  // 不但没意义，还让整块看板显得不可信（实测被用户一眼看到）。
+  // 超过 999 天就归入「>999」语义：那个量级下精确天数没有决策价值。
   const dailyAvg = trend.length ? (t?.units || 0) / trend.length : 0;
-  const daysLeft = dailyAvg > 0 ? Math.floor(quota / dailyAvg) : null;
+  const rawDaysLeft = dailyAvg > 0 ? Math.floor(quota / dailyAvg) : null;
+  const daysLeft = rawDaysLeft === null ? null : Math.min(rawDaysLeft, 999);
+  const daysLeftCapped = rawDaysLeft !== null && rawDaysLeft > 999;
 
   return (
     <div className="oo-page">
@@ -210,16 +219,20 @@ export default function ConsolePage() {
         />
         <StatCard
           label="余额可用"
-          value={loading ? "—" : daysLeft === null ? "—" : daysLeft}
+          value={loading ? "—" : daysLeft === null ? "—" : daysLeftCapped ? "999+" : daysLeft}
           suffix={daysLeft === null ? "" : "天"}
           tone={daysLeft !== null && daysLeft < 7 ? "danger" : daysLeft !== null && daysLeft < 30 ? "warning" : undefined}
-          hint="按区间日均消费估算（无消费则为 —）"
+          hint={
+            daysLeftCapped
+              ? "按日均消费估算已超过 999 天，实际可视为余额充足"
+              : "按区间日均消费估算（无消费则显示 —）"
+          }
         />
       </div>
 
       {/* 多图并列：一屏看全，不用来回切口径 */}
       <div className="oo-chart-grid">
-        <ChartCard title="调用与消费趋势" note={`近 ${data?.range?.days || 30} 天 · 双口径`} span={2}>
+        <ChartCard title="调用与消费趋势" note={`近 ${data?.range?.days || 30} 天 · 双口径`} full>
           {loading && !trend.length ? (
             <Skeleton active paragraph={{ rows: 3 }} />
           ) : trend.length ? (

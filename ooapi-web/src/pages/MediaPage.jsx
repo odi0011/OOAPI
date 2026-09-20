@@ -699,7 +699,9 @@ function MediaGrid({ items, loading, onOpen, actionsOf, empty }) {
     );
   }
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12, padding: 14 }}>
+    // 格子给宽度上限：auto-fill + 1fr 会让文件少时每格拉到几百像素宽
+    // （缩略图被扯成一条），文件多时又挤成小方块。maxWidth 让格子大小稳定。
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 200px))", gap: 12, padding: 14, justifyContent: "start" }}>
       {items.map((r) => (
         <div
           key={r.id}

@@ -42,9 +42,9 @@ function smoothPath(rawPts) {
 }
 
 /** 图卡片：统一高度与内边距，标题在左上、口径说明在右上 */
-function ChartCard({ title, note, children, span }) {
+function ChartCard({ title, note, children, full }) {
   return (
-    <div className="oo-chart-card" style={span ? { gridColumn: `span ${span}` } : undefined}>
+    <div className="oo-chart-card" style={full ? { gridColumn: "1 / -1" } : undefined}>
       <div className="oo-chart-card-head">
         <span className="oo-chart-card-title">{title}</span>
         {note ? <span className="oo-chart-card-note">{note}</span> : null}
@@ -350,7 +350,7 @@ export default function UsageAnalysis({ byDay = [], byModel = [], modelSeries = 
         <ChartCard
           title="模型消费趋势"
           note={modelLines.length ? `Top ${modelLines.length}` : "暂无数据"}
-          span={modelLines.length ? 2 : 1}
+          full={modelLines.length > 0}
         >
           {modelLines.length ? (
             <>

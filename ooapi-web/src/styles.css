@@ -1172,6 +1172,17 @@ h1, h2, h3, h4 {
   margin: 0;
 }
 
+/* 内容区限宽（A 类骨架：看板 / 个人主页 / 媒体库 / 消息 / 设置这类卡片与图表页）。
+   为什么需要：表格页（渠道/用户/定价）确实该铺满 —— 列多，宽一点更好读；
+   但**卡片与图表铺满 1880px 只会产生大片留白与失衡比例**。
+   让「阅读型」页面收在 1320px 居中，是版式上最基本的克制。
+   由 MainLayout 按路由挂到 Content 上。 */
+.oo-content--narrow > .oo-page {
+  max-width: 1320px;
+  margin: 0 auto;
+  width: 100%;
+}
+
 /* ---------------------------------------------------------------------------
    9. 页面头部 / 统计卡 / 面板
    --------------------------------------------------------------------------- */
@@ -1403,7 +1414,11 @@ h1, h2, h3, h4 {
    --------------------------------------------------------------------------- */
 .oo-stats-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  /* `minmax(118px, 1fr)` 在宽屏会把每张卡拉成几百像素宽的薄片 ——
+     数字缩在左上角、右侧一大片空白，看着非常廉价（用户实测反馈）。
+     给单卡设上限（200px）并左对齐：一屏多放几张，也不再变形。 */
+  grid-template-columns: repeat(auto-fit, minmax(118px, 200px));
+  justify-content: start;
   gap: 8px;
   margin-bottom: 14px;
 }
@@ -3158,10 +3173,14 @@ h1, h2, h3, h4 {
    且要在多个口径间来回切换。2 列网格 + 固定小高度 = 一屏看全。 */
 .oo-chart-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* 按「每列至少 380px」自适应，而不是死写 2 列。
+     死写 2 列时 1880px 下每张图宽 790px 而高仅 132px（宽高比 6:1），
+     折线被拉成一条近乎水平的长线 + 大片留白 —— 这是「丑」的主因。
+     自适应后宽屏自然变 3~4 列，每张图回到接近 2.5:1 的正常比例。 */
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
   gap: 10px;
 }
-@media (max-width: 900px) {
+@media (max-width: 820px) {
   .oo-chart-grid { grid-template-columns: minmax(0, 1fr); }
 }
 .oo-chart-card {
