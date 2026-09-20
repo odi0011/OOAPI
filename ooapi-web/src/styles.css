@@ -2846,8 +2846,11 @@ h1, h2, h3, h4 {
 .oo-split-lock {
   display: grid;
   grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-  height: calc(100dvh - 108px);
-  min-height: 420px;
+  /* 高度 = 视口 - 内容区上下内边距(24*2) - 页头(约 32px) - 页面 gap(约 16px)。
+     算够才不会让「锁定」失效 —— 高度差一点，页面就会出现外层滚动条，
+     底部输入框随即被推出视野（那正是 B 类骨架要避免的）。 */
+  height: calc(100dvh - 128px);
+  min-height: 380px;
   border: 1px solid var(--line);
   border-radius: var(--r-card);
   background: var(--surface);
