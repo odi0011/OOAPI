@@ -94,7 +94,9 @@ export function LineChart({ series = [], height = 200, yFormat = fmtCompact, tip
   // 宽度跟随容器实测值（侧栏折叠/窗口缩放/抽屉开合都会触发重算）
   const [wrapRef, W] = useResizeWidth(780);
   const H = height;
-  const PAD = { l: 52, r: 14, t: 14, b: 26 };
+  // 右侧留 34px：末尾 X 轴标签（如 "2026-09-20"）文字锚点在中间，
+  // 只留 14px 会让它的一半探出绘图区、贴着或溢出卡片边缘。
+  const PAD = { l: 52, r: 34, t: 14, b: 26 };
 
   const first = series[0];
   const n = first?.values?.length || 0;
@@ -129,7 +131,8 @@ export function LineChart({ series = [], height = 200, yFormat = fmtCompact, tip
   const labelBudget = Math.max(2, Math.floor((W - PAD.l - PAD.r) / 62));
   const tickCount = Math.min(maxXTicks, labelBudget);
   const step = Math.max(1, Math.ceil(n / tickCount));
-  // 空间紧张时把 "2026-08-21" 缩成 "08-21"：保留判读所需的最小信息
+  // 空间紧张时把 "2026-08-21" 缩成 "08-21"：保留判读所需的最小信息。
+  // 阈值 78px 是「10 字符 × 10px 字号 + 间距」的经验值，低于它就该缩写。
   const shortLabel = (W - PAD.l - PAD.r) / Math.max(1, Math.ceil(n / step)) < 78;
   const fmtX = (v) => {
     const s = String(v);

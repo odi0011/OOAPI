@@ -1178,7 +1178,7 @@ h1, h2, h3, h4 {
    让「阅读型」页面收在 1320px 居中，是版式上最基本的克制。
    由 MainLayout 按路由挂到 Content 上。 */
 .oo-content--narrow > .oo-page {
-  max-width: 1320px;
+  max-width: 1440px;
   margin: 0 auto;
   width: 100%;
 }
