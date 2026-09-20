@@ -547,6 +547,31 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
     能反推布局的都要藏；
   · 测试报出信息类问题时，两侧都要查 —— 测试前提可能错，服务端也可能真漏。
 
+**⑪ 「声明了 state 却没拉取」这类空实现，只有看界面才能发现**（第 40 批）
+
+一键绑定 UI 写完了、构建通过、测试全绿，但**界面上根本不显示**。根因是三处：
+① `deviceBindVendors` 声明了 state 却**从没调用接口拉取** ——
+   空数组上 `.includes()` 恒为 false，不报错、不白屏、DOM 断言也查不出；
+② 厂商判断用错了 key（Kiro 挂在 `anthropic` 厂商下，`provider.key` 是
+   "anthropic"，只有 `method.key` 才是 "kiro"）；
+③ 凭据标签对 oauth 方法一律显示「粘贴凭据」，Anthropic 下同时挂着
+   Claude 订阅与 Kiro 反代 → **两个同名标签**，用户分不清选哪个。
+
+规则：
+  · 新增 UI 分支后，**截图确认它真的渲染出来了**（`tests/shots-channels.mjs` 已工具化）；
+  · 功能开关的判据要看**最具体的那个 key**（method 而非 provider），
+    并在注释里写清为什么 —— 两者名字不同时极容易写反；
+  · 同一容器里出现多个同类标签时，标签必须能区分（用具体名字而不是统称）。
+
+**⑫ 测试读不到弹窗内容：Portal 挂在 body 下**（第 40 批）
+
+Ant Design 的 Modal 走 Portal，DOM 上挂在 `document.body` 而不是 `#root`。
+测试里读 `#root.innerText` 断言弹窗内容会**永远拿不到**（返回空串），
+表现为「断言失败但截图里 UI 明明是对的」。
+规则：断言弹窗类内容用 `document.body.innerText`；
+**当断言失败而截图看着正常时，先怀疑定位器/取值源，别急着改功能代码**
+（这次差点因此去改一处本来就是对的实现）。
+
 ---
 
 ## 3. 待办清单（按优先级）
