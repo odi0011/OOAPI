@@ -22,6 +22,18 @@
 - **模型定价**：按模型维护单价（OD币 / 百万 token），内置常见模型默认价，可随时调整
 - **系统设置**：站点名称、注册开关、新用户赠送额度等均可在后台修改，无需改代码
 - **在线更新**：后台一键检查并拉取 GitHub 最新代码更新（见「升级」）
+- **媒体库**：统一文件存储（对话图片、头像、社区配图），内容寻址去重、按用户配额、
+  引用计数与自动回收；图片只存 id，历史消息不再内联 base64
+- **社区大厅**：话题、发帖（支持 Markdown 与代码块）、扁平二级评论、点赞收藏关注
+- **实时聊天**：单聊 / 群聊 / 讨论组，SSE 实时推送，未读数、撤回、成员管理
+- **Playground（联机对战）**：四子棋、黑白棋、五子棋、西洋跳棋、中国象棋、海战棋，
+  规则与胜负全部由服务端判定，支持观战与房间分享链接
+- **个人主页**：`/u/:id` 公开资料与动态（匿名可访问，不泄露邮箱/余额）
+- **数据看板**：个人维度（消费趋势、余额可用天数、模型分布）与管理员维度
+  （全站吞吐、渠道成功率、用户与令牌排行）分开成两个页面
+- **外观自定义**：主题色、圆角、布局密度、字号、背景底纹，改动即时生效无需刷新
+- **三层权限**：普通用户 / 管理员 / 超管 —— 不可逆操作（任免角色、清空日志、
+  基础设施配置）仅超管可执行
 
 ## 技术栈
 
@@ -316,6 +328,15 @@ print(resp.choices[0].message.content)
 | GET | `/api/status` | 站点公开配置 |
 | POST | `/api/user/login` · `/register` | 登录 / 注册 |
 | GET | `/api/user/self` | 当前用户 |
+| GET | `/api/profile/u/:id` | 个人主页（**匿名可访问**，只返回公开字段） |
+| GET/POST | `/api/community/topics` · `/posts` · `/comments` | 社区：话题 / 帖子 / 评论 |
+| POST | `/api/community/posts/:id/like` · `/favorite` · `/users/:id/follow` | 社区互动 |
+| GET/POST | `/api/chatroom/rooms` · `/rooms/:id/messages` | 聊天：会话与消息 |
+| GET | `/api/chatroom/stream?ticket=` | 聊天实时推送（SSE，一次性票据自鉴权） |
+| GET | `/api/games/list` · `/rooms` | Playground：游戏目录与对局列表 |
+| POST | `/api/games/rooms/:id/action` | 对局动作（move/place/ready/auto，服务端判定） |
+| GET | `/api/dashboard/self` · `/admin` | 数据看板（个人 / 全站，后者需管理员） |
+| GET/POST/DELETE | `/api/media/` · `/:id/raw` · `/stats` | 媒体库：上传 / 读取（签名 URL）/ 统计 |
 | GET/POST/PUT/DELETE | `/api/token/` | 令牌管理 |
 | GET | `/api/channel/` · `/providers` · `/stats` | 渠道管理 |
 | GET/PUT | `/api/pricing/` | 模型定价 |
