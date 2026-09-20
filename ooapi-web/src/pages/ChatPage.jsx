@@ -870,7 +870,8 @@ export default function ChatPage() {
         role: "user",
         parts: [
           { id: uid(), type: "text", text },
-          ...images.map((url) => ({ id: uid(), type: "image", url })),
+          // 本地渲染优先用签名 URL（媒体库），回退 dataUrl（上传失败的那批）
+          ...images.map((img) => ({ id: uid(), type: "image", url: img.url || img.dataUrl })),
           // 文件只放元信息，正文由服务端解析后回填（避免把大段文本塞进前端状态）
           ...docsToSend.map((d) => ({ id: uid(), type: "file", name: d.name, bytes: d.size ?? d.bytes })),
         ],
@@ -920,7 +921,8 @@ export default function ChatPage() {
         {
           sessionId: current.id,
           text,
-          images: images.map((dataUrl) => ({ dataUrl })),
+          // 新格式：带 media_id 的走 id，没传上的（上传失败）回退 dataUrl
+          images: images.map((img) => (img.mediaId ? { mediaId: img.mediaId } : { dataUrl: img.dataUrl })),
           files: docsToSend.map((d) => ({ name: d.name, type: d.type, dataUrl: d.dataUrl })).filter((f) => f.dataUrl),
           // 重发历史消息时附件没有 dataUrl，用已解析文本走 docs 通道
           docs: docsToSend.some((d) => !d.dataUrl) ? docsToSend.map((d) => ({ name: d.name, kind: d.kind, bytes: d.bytes, text: d.text })) : undefined,
@@ -1074,18 +1076,27 @@ export default function ChatPage() {
     readingRef.current = true;
     setReading(true);
     try {
-      const data = await Promise.all(
-        files.map(
-          (file) =>
-            new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = () => resolve(reader.result);
-              reader.onerror = () => reject(new Error("图片读取失败"));
-              reader.readAsDataURL(file);
-            })
-        )
+      const loaded = await Promise.all(
+        files.map(async (file) => {
+          const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error("图片读取失败"));
+            reader.readAsDataURL(file);
+          });
+          // 先传媒体库拿 media_id：聊天请求里只带一个 id，不再把整段 base64
+          // 塞进 /api/chat 的请求体（以前 3 张图就能顶到 20MB 上限，落库还会撑爆
+          // MEDIUMTEXT）。上传失败时**回退成 dataUrl 直传**（后端仍兼容旧格式），
+          // 不让存储故障变成「发不出消息」。
+          try {
+            const saved = await API.post("/media", { dataUrl, name: file.name, source: "chat" });
+            return { mediaId: saved?.id || 0, url: saved?.url || "", dataUrl };
+          } catch {
+            return { mediaId: 0, url: "", dataUrl };
+          }
+        })
       );
-      setImages((prev) => [...prev, ...data]);
+      setImages((prev) => [...prev, ...loaded]);
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -1574,7 +1585,7 @@ export default function ChatPage() {
               model={session?.model || ""}
               onModelChange={setModel}
               chips={[
-                ...images.map((src, i) => ({ src, label: `图片 ${i + 1}`, kind: "image" })),
+                ...images.map((img, i) => ({ src: img.url || img.dataUrl, label: `图片 ${i + 1}`, kind: "image" })),
                 ...docs.map((d) => ({ label: d.name, kind: "file" })),
               ]}
               onRemoveChip={(i) => {
