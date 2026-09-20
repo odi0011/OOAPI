@@ -9,6 +9,7 @@
 //   · Recommendation    → SuggestionCard（欢迎页建议卡）
 //   · Records/Insight   → TodoPanel（会话待办清单，todowrite 工具产出）
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { GroupVendorIcons } from "./VendorIcon";
 
 // 兜底名称：/meta 未返回某个工具时也不要在界面上暴露原始 id
 const TOOL_FALLBACK_NAMES = {
@@ -324,7 +325,17 @@ export function OrchestrationBar({ agent, agents, settings, tools, onAgent, onSe
                 }}
               >
                 <span className="nm">{k.name}</span>
-                <span className="ds">{k.group || "未分组"}</span>
+                <span className="ds">
+                  {k.group_name ? (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                      <GroupVendorIcons vendors={k.group_vendors} size={12} />
+                      <span>{k.group_name}</span>
+                      {Number(k.group_rate) !== 1 ? <span>×{Number(k.group_rate) || 1}</span> : null}
+                    </span>
+                  ) : (
+                    "公共池（未分组渠道）"
+                  )}
+                </span>
                 <span className={`tick ${k.id === keyId ? "" : "is-off"}`}>{TickIcon}</span>
               </button>
             ))}

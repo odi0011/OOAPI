@@ -16,6 +16,22 @@ router.get(
     const [rows] = await pool.query(
       "SELECT vendor, name, remark, rate, models FROM channel_groups ORDER BY name"
     );
+    // 成员账号的厂商集合：前端按「单厂商=单个图标 / 多厂商=折叠态图标」渲染
+    const [chans] = await pool.query("SELECT type, group_list, group_name FROM channels");
+    const vendorsOf = new Map();
+    for (const c of chans) {
+      let list = [];
+      try {
+        const arr = c.group_list ? JSON.parse(c.group_list) : [];
+        if (Array.isArray(arr)) list = arr.map((s) => String(s)).filter(Boolean);
+      } catch {
+        list = c.group_name ? [String(c.group_name)] : [];
+      }
+      for (const g of list) {
+        if (!vendorsOf.has(g)) vendorsOf.set(g, new Set());
+        if (c.type) vendorsOf.get(g).add(String(c.type));
+      }
+    }
     return ok(
       res,
       rows.map((g) => {
@@ -34,6 +50,7 @@ router.get(
           remark: g.remark || "",
           rate: Number(g.rate) || 1,
           models,
+          vendors: [...(vendorsOf.get(g.name) || [])],
         };
       })
     );

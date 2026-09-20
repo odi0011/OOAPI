@@ -16,6 +16,7 @@
 //   <VendorIcon type="deepseek" />           渠道类型图标
 //   <ModelLabel model="deepseek-flash" />    模型名（自动带对应厂商图标）
 import React from "react";
+import { Tooltip } from "antd";
 
 const ICON_DIR = "/icons";
 
@@ -55,6 +56,10 @@ const CHANNEL_ICON = {
   workbuddy: "workbuddy.svg",
   codebuddy: "workbuddy.svg",
   qoder: "qoder.svg",
+  // 三方兼容聚合
+  opencode: "opencode.png",
+  openrouter: "openrouter.svg",
+  siliconflow: "siliconflow.ico",
   // 自定义渠道 → 使用平台 logo
   custom: PLATFORM_LOGO,
 };
@@ -105,7 +110,7 @@ export function vendorNameForModel(model) {
  * 厂商图标
  * @param {object} props { type, size, radius, title }
  */
-export function VendorIcon({ type, size = 16, radius, title, style }) {
+export function VendorIcon({ type, size = 16, radius, title, className, style }) {
   const file = iconFileForChannel(type);
   return (
     <img
@@ -115,6 +120,7 @@ export function VendorIcon({ type, size = 16, radius, title, style }) {
       height={size}
       loading="lazy"
       draggable={false}
+      className={className}
       style={{
         width: size,
         height: size,
@@ -125,6 +131,50 @@ export function VendorIcon({ type, size = 16, radius, title, style }) {
         ...style,
       }}
     />
+  );
+}
+
+/**
+ * 分组厂商图标（折叠态）—— 分组表格/下拉统一使用：
+ *   · 单厂商账号 → 直接显示该厂商图标
+ *   · 多厂商账号 → 折叠成叠放的图标堆（+N 表示还有几个）
+ *   · 无成员厂商 → 不显示（由调用方决定占位文案）
+ */
+export function GroupVendorIcons({ vendors = [], size = 14, max = 3, className, style }) {
+  const list = [...new Set((vendors || []).map((v) => String(v || "").trim()).filter(Boolean))];
+  if (!list.length) return null;
+  if (list.length === 1) {
+    return <VendorIcon type={list[0]} size={size} title={list[0]} className={className} style={style} />;
+  }
+  const shown = list.slice(0, max);
+  return (
+    <Tooltip title={`成员厂商：${list.join("、")}`}>
+      <span
+        className={className}
+        style={{ display: "inline-flex", alignItems: "center", flexShrink: 0, ...style }}
+      >
+        {shown.map((t, i) => (
+          <VendorIcon
+            key={t}
+            type={t}
+            size={size}
+            style={{
+              marginInlineStart: i ? -Math.max(3, Math.round(size * 0.38)) : 0,
+              zIndex: shown.length - i,
+              // 白色描边把叠放图标分开，暗色主题下也清晰
+              boxShadow: "0 0 0 1.5px var(--surface)",
+              background: "var(--surface)",
+              borderRadius: "50%",
+            }}
+          />
+        ))}
+        {list.length > max ? (
+          <span className="bui-chip" style={{ marginInlineStart: 3, fontSize: 10, height: 15, lineHeight: "15px", padding: "0 4px" }}>
+            +{list.length - max}
+          </span>
+        ) : null}
+      </span>
+    </Tooltip>
   );
 }
 

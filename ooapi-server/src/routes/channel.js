@@ -171,11 +171,11 @@ function parseGroups(row) {
   return [];
 }
 
-/** 分组列表行 → 前端结构 */
+/** 分组列表行 → 前端结构（vendors = 成员账号的厂商集合，供折叠态图标展示） */
 function groupResp(g, memberMap) {
   // 成员关系按**分组名**聚合：分组名全局唯一，且分组可以跨厂商
   // （成员映射原来按 `vendor:name` 聚合，跨厂商分组会散成多个 key、前端拿不到成员）
-  const ids = memberMap.get(g.name) || [];
+  const m = memberMap.get(g.name) || { ids: [], vendors: new Set() };
   const vendor = String(g.vendor || "");
   return {
     id: g.id,
@@ -187,18 +187,22 @@ function groupResp(g, memberMap) {
     remark: g.remark || "",
     rate: Number(g.rate) || 1,
     models: parseGroupModels(g.models),
-    channel_ids: ids,
-    count: ids.length,
+    // 成员账号的厂商（去重）：前端按「单厂商=单个图标 / 多厂商=折叠态图标」渲染
+    vendors: [...m.vendors],
+    channel_ids: m.ids,
+    count: m.ids.length,
   };
 }
 
 async function groupMemberMap() {
   const [chans] = await pool.query("SELECT id, type, group_list, group_name FROM channels");
-  const memberMap = new Map();
+  const memberMap = new Map(); // 分组名 -> { ids: [], vendors: Set }
   for (const c of chans) {
     for (const g of parseGroups(c)) {
-      if (!memberMap.has(g)) memberMap.set(g, []);
-      memberMap.get(g).push(Number(c.id));
+      if (!memberMap.has(g)) memberMap.set(g, { ids: [], vendors: new Set() });
+      const m = memberMap.get(g);
+      m.ids.push(Number(c.id));
+      if (c.type) m.vendors.add(String(c.type));
     }
   }
   return memberMap;

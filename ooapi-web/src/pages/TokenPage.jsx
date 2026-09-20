@@ -11,7 +11,7 @@ import { copyText, fmtDate, fmtOd, odOf, unitsPerOd, CURRENCY_NAME } from "../se
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
-import { VendorIcon, ModelLabel } from "../components/VendorIcon";
+import { VendorIcon, ModelLabel, GroupVendorIcons } from "../components/VendorIcon";
 
 const { Text } = Typography;
 
@@ -30,18 +30,18 @@ export default function TokenPage() {
   const [form] = Form.useForm();
   const { begin, isLatest } = useLatest();
 
-  // 分组下拉：一个 Key 只能绑定一个分组，选项显示厂商图标 / 分组名 / 备注 / 倍率。
+  // 分组下拉：一个 Key 只能绑定一个分组，选项显示「折叠态厂商图标（成员厂商）/ 分组名 / 备注 / 倍率」。
   // 绑定值就是**分组名**（分组名全局唯一，且分组可跨厂商）。
-  // 注意不要拼成 `${g.type}:${g.name}`：g.type 现在是「可选的厂商筛选」，
-  // 拼出来的 "vip:vip" 会导致改名/删组时匹配不上 → Key 永久 503。
+  // 图标必须按成员账号的厂商（g.vendors）来画：g.vendor 只是建组时的可选筛选，
+  // 用它会出现「跨厂商分组只显示一个图标」或「不限厂商时掉到平台 logo」的显示 bug。
   const groupOptions = React.useMemo(
     () =>
       groupList.map((g) => ({
         value: g.name,
-        search: `${g.name} ${g.remark || ""} ${g.typeName || g.vendor || ""}`.toLowerCase(),
+        search: `${g.name} ${g.remark || ""} ${g.vendor || ""}`.toLowerCase(),
         label: (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 320 }}>
-            {g.vendor ? <VendorIcon type={g.vendor} size={13} /> : null}
+            <GroupVendorIcons vendors={g.vendors} size={13} />
             <span className="oo-truncate" style={{ fontWeight: 500 }}>{g.name}</span>
             {g.remark ? (
               <span className="oo-truncate" style={{ color: "var(--ink-3)", fontSize: 12 }}>{g.remark}</span>
@@ -263,11 +263,11 @@ export default function TokenPage() {
           if (!g) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
           const meta = groupMetaOf(g);
           const rate = Number(meta?.rate) || 1;
-          const tip = `${meta?.typeName || meta?.type || ""} / ${meta?.name || g}${meta?.remark ? ` · ${meta.remark}` : ""} · 倍率 ×${rate}`;
+          const tip = `${meta?.name || g}${meta?.remark ? ` · ${meta.remark}` : ""} · 倍率 ×${rate}`;
           return (
             <Tooltip title={tip}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 5, maxWidth: "100%" }}>
-                <VendorIcon type={meta?.type} size={13} />
+                <GroupVendorIcons vendors={meta?.vendors} size={13} />
                 <span className="oo-truncate">{meta?.name || g}</span>
                 {rate !== 1 ? <span className="bui-chip">×{rate}</span> : null}
               </span>

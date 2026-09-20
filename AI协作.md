@@ -2016,6 +2016,21 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   · **官方图标**：新增 `ooapi-web/public/icons/qoder.svg` 与 `workbuddy.svg`（均取自官网 logo）。
   · 待办盘点（本轮开始时的存量，未在本批处理）：第 35 批遗留 10 条、第 34 批遗留 6 条、
     订阅 OAuth 实盘（Claude/Gemini/Grok 待凭据）、新模型定价补录、harness 线上实盘等仍登记在第 3 节。 |
+| 2026-09-20 | **第 39 批（三方兼容厂商扩展 + 分组厂商图标折叠态 + 密钥分组显示修复）**：
+  · **三方兼容厂商**：新增 **OpenCode Zen** / **OpenRouter** / **硅基流动**（OpenAI 兼容，Key + Base URL）；
+    「自定义」升级为通用兼容（**OpenAI 兼容** + **Anthropic 兼容** 两个接入方式）；
+    Anthropic 官方 API 方法改走新适配器 `upstream/anthropic-compat.js`
+    （标准 `/v1/messages` + `x-api-key` + SSE，与 `claude-oauth` 的 CLI 伪装区分，
+    `importAuth`/身份提示词一律不注入）；`router.adapterKeyFor` 改为「接入方式声明的 adapter 优先」，
+    这样 anthropic 的 api 走 Anthropic 协议、其余厂商 api 仍走 openai-compat。
+  · **分组厂商图标（折叠态，用户要求）**：分组数据（`/channel/groups`、`/token/groups`、`/chat/meta` 的
+    密钥项）新增 `vendors`（成员账号厂商去重）；前端新增 `GroupVendorIcons` 组件——
+    单厂商显示单个图标、多厂商叠放显示（超出 3 个给 +N），统一用于：令牌下拉与令牌表、
+    渠道表分组列、分组管理表、使用记录分组列、对话编排栏密钥菜单。
+  · **密钥分组显示 bug**：此前用分组的 `vendor`（建组时的可选筛选）画图标 —— 跨厂商分组只画一个、
+    不限厂商时掉到平台 logo；现在一律按成员厂商绘制，并显示清理后的分组名 + 倍率 + 备注
+    （历史 `厂商:名称` 前缀统一剥离）。
+  · 官方图标：`opencode.png`（官网 favicon）/ `openrouter.svg`（Simple Icons）/ `siliconflow.ico`（官网）。 |
 
 
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）

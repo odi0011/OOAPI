@@ -22,6 +22,9 @@ const VENDOR_MODEL_MODULES = {
   grok: () => import("./upstream/grok-models.js"),
   workbuddy: () => import("./upstream/workbuddy-models.js"),
   qoder: () => import("./upstream/qoder-models.js"),
+  opencode: () => import("./upstream/opencode-models.js"),
+  openrouter: () => import("./upstream/openrouter-models.js"),
+  siliconflow: () => import("./upstream/siliconflow-models.js"),
 };
 
 /**

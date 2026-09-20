@@ -3,7 +3,7 @@
 // 由 type 区分适配器，优先级/权重决定调度顺序 —— 与 new-api 一致。
 import { pool } from "../db.js";
 import { now } from "../utils.js";
-import { isOAuthMethod } from "./channel-types.js";
+import { isOAuthMethod, getMethod } from "./channel-types.js";
 import { groupConfigOf } from "./group-rate.js";
 import { modelRegistrySync } from "./models.js";
 
@@ -21,6 +21,7 @@ const ADAPTERS = {
   doubao: () => import("./upstream/doubao.js"),
   qwen: () => import("./upstream/qwen.js"),
   "openai-compat": () => import("./upstream/openai-compat.js"),
+  "anthropic-compat": () => import("./upstream/anthropic-compat.js"),
   // 订阅型 OAuth（参考 CLIProxyAPI/sub2api 的协议实现）
   codex: () => import("./upstream/codex.js"),
   "claude-oauth": () => import("./upstream/claude-oauth.js"),
@@ -38,7 +39,11 @@ const ADAPTERS = {
  * 老数据没有 other.method，一律按 relay 处理（历史渠道都是反代）
  */
 export function adapterKeyFor(channel) {
-  const method = channel?.other?.method;
+  const method = String(channel?.other?.method || "");
+  // 接入方式显式声明 adapter 时优先（例如 anthropic 的 api 走 anthropic-compat，
+  // 而其它厂商的 api 仍走 openai-compat）
+  const mCfg = method ? getMethod(channel?.type, method) : null;
+  if (mCfg?.adapter) return mCfg.adapter;
   if (method === "api") return "openai-compat";
   if (isOAuthMethod(method)) return method;
   return channel?.type || "";

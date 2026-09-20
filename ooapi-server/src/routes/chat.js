@@ -13,7 +13,7 @@ import { authRequired, preAuthJwt } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getPrice, computeCost, splitTokens, estimateTokens, loadPrices, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
-import { groupConfigOf, applyGroupRate } from "../services/group-rate.js";
+import { groupConfigOf, applyGroupRate, parseGroupKey } from "../services/group-rate.js";
 import { allPublicModels, resolveAliasSync } from "../services/models.js";
 import { rowToChannel, channelInGroup, collectAvailableModels } from "../services/router.js";
 import { getBoolOption } from "../config.js";
@@ -64,8 +64,29 @@ export async function listUserKeys(user) {
     [user.id]
   );
   const nowSec = Math.floor(Date.now() / 1000);
+  // 分组展示信息（备注/倍率/成员厂商）：密钥菜单与列表按「折叠态厂商图标 + 分组名」展示
+  const names = [...new Set(rows.map((t) => parseGroupKey(t.group_name)?.name).filter(Boolean))];
+  const meta = new Map();
+  if (names.length) {
+    const ph = names.map(() => "?").join(",");
+    const [gs] = await pool.query(`SELECT name, remark, rate FROM channel_groups WHERE name IN (${ph})`, names);
+    for (const g of gs) meta.set(g.name, { remark: g.remark || "", rate: Number(g.rate) || 1, vendors: new Set() });
+    const [chans] = await pool.query("SELECT type, group_list, group_name FROM channels");
+    for (const c of chans) {
+      let list = [];
+      try {
+        const arr = c.group_list ? JSON.parse(c.group_list) : [];
+        if (Array.isArray(arr)) list = arr.map((s) => String(s)).filter(Boolean);
+      } catch {
+        list = c.group_name ? [String(c.group_name)] : [];
+      }
+      for (const n of list) if (meta.has(n) && c.type) meta.get(n).vendors.add(String(c.type));
+    }
+  }
   return rows.map((t) => {
     const expired = Number(t.expired_time) !== -1 && Number(t.expired_time) <= nowSec;
+    const gkey = parseGroupKey(t.group_name);
+    const gm = gkey ? meta.get(gkey.name) : null;
     return {
       id: Number(t.id),
       name: t.name || `密钥 ${t.id}`,
@@ -73,6 +94,10 @@ export async function listUserKeys(user) {
       masked: `${String(t.key_str || "").slice(0, 8)}…${String(t.key_str || "").slice(-4)}`,
       status: expired ? 3 : Number(t.status) || 1,
       group: t.group_name || "",
+      group_name: gkey?.name || "",
+      group_remark: gm?.remark || "",
+      group_rate: gm?.rate || 1,
+      group_vendors: gm ? [...gm.vendors] : [],
       model_limits: String(t.model_limits || "").split(",").map((s) => s.trim()).filter(Boolean),
     };
   });

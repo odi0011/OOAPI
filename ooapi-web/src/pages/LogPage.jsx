@@ -8,7 +8,7 @@ import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
 import UsageAnalysis from "../components/UsageAnalysis";
-import { ModelLabel } from "../components/VendorIcon";
+import { ModelLabel, GroupVendorIcons } from "../components/VendorIcon";
 import UserAvatar from "../components/UserAvatar";
 
 // 历史日志里存的是改名前的「OD」，新日志写的是「OD币」。
@@ -63,7 +63,23 @@ export default function LogPage() {
   const [tokenId, setTokenId] = useState(0);
   const [days, setDays] = useState(7);
   const [detail, setDetail] = useState(null);
+  // 分组元信息（倍率/备注/成员厂商）：分组列按「折叠态厂商图标 + 分组名」展示
+  const [groupMeta, setGroupMeta] = useState([]);
   const { begin, isLatest } = useLatest();
+
+  useEffect(() => {
+    API.get("/token/groups")
+      .then((list) => setGroupMeta(Array.isArray(list) ? list : []))
+      .catch(() => setGroupMeta([]));
+  }, []);
+
+  /** 历史绑定可能带 "厂商:" 前缀（新格式就是分组名）；展示时统一剥掉 */
+  const displayGroupName = (raw) => {
+    const s = String(raw || "").trim();
+    if (!s || s === "default") return "";
+    const i = s.indexOf(":");
+    return i > 0 && i < s.length - 1 ? s.slice(i + 1) : s;
+  };
 
   const params = useMemo(
     () => ({
@@ -190,8 +206,20 @@ export default function LogPage() {
           {
             title: "分组",
             dataIndex: "group_name",
-            width: 110,
-            render: (v) => (v ? <span className="bui-chip">{v}</span> : <span style={{ color: "var(--ink-3)" }}>-</span>),
+            width: 140,
+            render: (v) => {
+              const name = displayGroupName(v);
+              if (!name) return <span style={{ color: "var(--ink-3)" }}>-</span>;
+              const meta = groupMeta.find((g) => g.name === name);
+              return (
+                <Tooltip title={meta?.remark ? `${name} · ${meta.remark}` : name}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5, maxWidth: "100%" }}>
+                    <GroupVendorIcons vendors={meta?.vendors} size={12} />
+                    <span className="bui-chip oo-truncate">{name}</span>
+                  </span>
+                </Tooltip>
+              );
+            },
           },
           {
             title: "密钥",

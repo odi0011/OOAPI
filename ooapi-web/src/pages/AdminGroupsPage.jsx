@@ -6,7 +6,7 @@ import {
 import { ReloadOutlined, PlusOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import PageHeader from "../components/PageHeader";
-import { VendorIcon, ModelLabel } from "../components/VendorIcon";
+import { VendorIcon, ModelLabel, GroupVendorIcons } from "../components/VendorIcon";
 
 const { Text } = Typography;
 
@@ -206,11 +206,11 @@ export default function AdminGroupsPage() {
       dataIndex: "name",
       width: 220,
       render: (v, g) => {
-        const first = iconsOfGroup(g)[0];
+        const icons = iconsOfGroup(g);
         return (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-            {/* 没有成员时不渲染厂商图标（分组不属于任何厂商） */}
-            {first ? <VendorIcon type={first} size={18} /> : null}
+            {/* 折叠态厂商图标：单厂商单图标，多厂商叠放 +N */}
+            {icons.length ? <GroupVendorIcons vendors={icons} size={18} /> : null}
             <span style={{ minWidth: 0, overflow: "hidden" }}>
               <div style={{ fontWeight: 550 }} className="oo-truncate">{v}</div>
               {g.remark ? (
