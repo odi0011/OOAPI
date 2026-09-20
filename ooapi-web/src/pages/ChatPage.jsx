@@ -30,7 +30,7 @@ import {
   ThunderboltOutlined,
 } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { getToken } from "../services/api";
+import { API, getToken } from "../services/api";
 import { chatApi, runChatStream, resumeChatStream } from "../services/chat";
 import { useApp } from "../context/AppContext";
 import Markdown from "../components/Markdown";
@@ -1091,7 +1091,11 @@ export default function ChatPage() {
           try {
             const saved = await API.post("/media", { dataUrl, name: file.name, source: "chat" });
             return { mediaId: saved?.id || 0, url: saved?.url || "", dataUrl };
-          } catch {
+          } catch (err) {
+            // 必须留痕：这个回退会吞掉所有异常，包括「代码写错」这一类
+            // （曾经漏导入 API → ReferenceError 被吞 → 上传从未发生，但界面照常显示附件）。
+            // 静默回退会让真故障看起来像正常工作。
+            console.warn(`[chat] 图片上传媒体库失败，回退为直传：${err?.message || err}`);
             return { mediaId: 0, url: "", dataUrl };
           }
         })
