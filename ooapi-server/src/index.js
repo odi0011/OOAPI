@@ -138,6 +138,38 @@ function scheduleMediaCleanup(runGc) {
   setInterval(run, 6 * 3600 * 1000).unref?.();
 }
 
+/**
+ * 清理过期的对局房间。
+ *
+ * 为什么要它：每开一局就是 game_rooms 一行（含棋盘 JSON，象棋/海战棋几百字节），
+ * 只增不删。当前量级无感，但「没有清理」意味着它会随时间一直长 —— 属于迟早要还的账。
+ *
+ * 保留窗口刻意给得很宽（已结束 30 天 / 未开打 7 天）：
+ * 对局记录是「我的对局」列表与看板统计的数据源，删太早会让用户找不到历史。
+ */
+function scheduleGameCleanup() {
+  const run = async () => {
+    try {
+      // 已结束/已放弃的对局：30 天后清理
+      const [r1] = await pool.query(
+        "DELETE FROM game_rooms WHERE status IN ('finished','abandoned') AND updated_time > 0 AND updated_time < UNIX_TIMESTAMP() - 30*86400 LIMIT 500"
+      );
+      // 一直没人加入的空房间：7 天后清理（房主早就走了，留着只占列表）
+      const [r2] = await pool.query(
+        "DELETE FROM game_rooms WHERE status = 'waiting' AND created_time > 0 AND created_time < UNIX_TIMESTAMP() - 7*86400 LIMIT 500"
+      );
+      if (r1.affectedRows || r2.affectedRows) {
+        console.log(`[games] 清理对局：已结束 ${r1.affectedRows} 局、无人加入 ${r2.affectedRows} 局`);
+      }
+    } catch (e) {
+      console.error("[games] 对局清理失败：", e.message);
+    }
+  };
+  // 延迟 10 分钟首跑（避开启动高峰），之后每 12 小时一次
+  setTimeout(run, 10 * 60 * 1000).unref?.();
+  setInterval(run, 12 * 3600 * 1000).unref?.();
+}
+
 async function bootstrap() {
   // 等待数据库就绪（systemd 启动顺序兜底）
   for (let i = 0; i < 30; i++) {
@@ -246,6 +278,21 @@ async function bootstrap() {
     scheduleMediaCleanup(runGc);
   } catch (e) {
     console.error("[init] 媒体库初始化失败：", e.message);
+  }
+
+  // 对局房间清理：房间只增不删，迟早要还的账
+  try {
+    scheduleGameCleanup();
+  } catch (e) {
+    console.error("[init] 对局清理任务启动失败：", e.message);
+  }
+
+  // 社区通知清理同理（保留 90 天）
+  try {
+    const { scheduleNotificationCleanup } = await import("./services/notify-center.js");
+    scheduleNotificationCleanup();
+  } catch (e) {
+    console.error("[init] 通知清理任务启动失败：", e.message);
   }
 
   // 实时推送（聊天/对战）心跳：反代会掐掉 60s 无数据的连接，注释帧保活

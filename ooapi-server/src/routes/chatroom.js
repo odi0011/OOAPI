@@ -170,6 +170,65 @@ router.get(
   asyncHandler(async (req, res) => ok(res, onlineUserIds()))
 );
 
+// 跨会话消息搜索（只搜自己所在房间的消息）
+// 为什么限制在自己房间：聊天是私密的，能搜到别人房间的内容等于泄露。
+router.get(
+  "/search",
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const kw = String(req.query.q || "").trim().slice(0, 64);
+    if (!kw) return ok(res, { items: [], total: 0 });
+    const { p, size, offset } = pageParams(req.query, 30);
+    // 用 EXISTS 限定「我在这个房间里」，并在 SQL 层做 LIKE——
+    // 不要把消息全拉到 Node 里过滤（量大了内存与延迟都不可控）
+    const base = `FROM chat_room_messages msg
+       JOIN chat_rooms r ON r.id = msg.room_id
+       JOIN chat_room_members m ON m.room_id = msg.room_id AND m.user_id = ?
+      WHERE msg.status = 1 AND r.status = 1 AND msg.content LIKE ?`;
+    const [[cnt]] = await pool.query(`SELECT COUNT(*) AS n ${base}`, [req.user.id, `%${kw}%`]);
+    const [rows] = await pool.query(
+      `SELECT msg.*, r.type AS room_type, r.name AS room_name ${base} ORDER BY msg.id DESC LIMIT ? OFFSET ?`,
+      [req.user.id, `%${kw}%`, size, offset]
+    );
+    const items = [];
+    for (const r of rows) {
+      // 单聊房间显示对方名字（与列表一致），否则用户看不懂搜到的是哪段对话
+      let title = r.room_name;
+      if (r.room_type === "single") {
+        const [[other]] = await pool.query("SELECT user_id FROM chat_room_members WHERE room_id = ? AND user_id <> ? LIMIT 1", [
+          r.room_id,
+          req.user.id,
+        ]);
+        if (other) {
+          const b = await userBrief(other.user_id);
+          title = b.display_name || b.username;
+        }
+      }
+      const msgResp = await messageToResp(r);
+      items.push({ ...msgResp, room_title: title || `会话 #${r.room_id}` });
+    }
+    return ok(res, { items, total: Number(cnt.n) || 0, page: p, page_size: size });
+  })
+);
+
+// 全部未读汇总（导航栏红点用）
+router.get(
+  "/unread",
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const [[row]] = await pool.query(
+      `SELECT COALESCE(SUM(unread), 0) AS total FROM (
+         SELECT (SELECT COUNT(*) FROM chat_room_messages msg
+                  WHERE msg.room_id = m.room_id AND msg.id > m.last_read_id AND msg.status = 1 AND msg.user_id <> ?) AS unread
+           FROM chat_room_members m JOIN chat_rooms r ON r.id = m.room_id
+          WHERE m.user_id = ? AND r.status = 1) t`,
+      [req.user.id, req.user.id]
+    );
+    return ok(res, { total: Number(row.total) || 0 });
+  })
+);
+
+
 // ---------------------------------------------------------------------------
 // 用户搜索（发起单聊/邀请进群用）
 // ---------------------------------------------------------------------------
@@ -614,23 +673,6 @@ router.post(
       [target, id, req.user.id]
     );
     return ok(res, { last_read_id: target });
-  })
-);
-
-// 全部未读汇总（导航栏红点用）
-router.get(
-  "/unread",
-  authRequired,
-  asyncHandler(async (req, res) => {
-    const [[row]] = await pool.query(
-      `SELECT COALESCE(SUM(unread), 0) AS total FROM (
-         SELECT (SELECT COUNT(*) FROM chat_room_messages msg
-                  WHERE msg.room_id = m.room_id AND msg.id > m.last_read_id AND msg.status = 1 AND msg.user_id <> ?) AS unread
-           FROM chat_room_members m JOIN chat_rooms r ON r.id = m.room_id
-          WHERE m.user_id = ? AND r.status = 1) t`,
-      [req.user.id, req.user.id]
-    );
-    return ok(res, { total: Number(row.total) || 0 });
   })
 );
 

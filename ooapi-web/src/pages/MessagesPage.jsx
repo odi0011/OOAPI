@@ -79,6 +79,9 @@ export default function MessagesPage() {
   const [searching, setSearching] = useState(false);
   const [online, setOnline] = useState([]);
   const [sseOk, setSseOk] = useState(false);
+  const [kw, setKw] = useState("");
+  const [results, setResults] = useState([]);
+  const [msgSearching, setMsgSearching] = useState(false); // 消息内容搜索（与「搜索用户」区分）
   const [form] = Form.useForm();
 
   const scrollRef = useRef(null);
@@ -110,6 +113,33 @@ export default function MessagesPage() {
   useEffect(() => {
     loadRooms();
   }, [loadRooms]);
+
+  /**
+   * 跨会话搜索消息。
+   * 服务端只在「我所在的房间」里搜 —— 聊天是私密的，能搜到别人房间等于泄露。
+   * 结果为空时不清空会话列表（让用户能接着点原有会话）。
+   */
+  const doSearch = useCallback(
+    async (text) => {
+      const q = String(text || "").trim();
+      if (!q) {
+        setResults([]);
+        return;
+      }
+      setMsgSearching(true);
+      try {
+        const d = await API.get("/chatroom/search", { params: { q, p: 1, page_size: 30 } });
+        setResults(d?.items || []);
+        if (!d?.items?.length) toast.info("没有匹配的消息");
+      } catch (e) {
+        toast.error(e.message);
+        setResults([]);
+      } finally {
+        setMsgSearching(false);
+      }
+    },
+    [toast]
+  );
 
   /* ---------------- SSE 长连接 ---------------- */
   useEffect(() => {
@@ -459,15 +489,55 @@ export default function MessagesPage() {
           <div style={{ padding: "8px 10px", borderBottom: "1px solid var(--line)" }}>
             <Input
               size="small"
-              placeholder="搜索用户发起单聊"
+              placeholder="搜索消息内容 / 会话"
               allowClear
-              onPressEnter={(e) => {
-                const kw = e.target.value.trim();
-                if (kw) navigate(`/messages?q=${encodeURIComponent(kw)}`);
-              }}
+              prefix={<SearchOutlined style={{ color: "var(--ink-3)" }} />}
+              value={kw}
+              onChange={(e) => setKw(e.target.value)}
+              onPressEnter={() => doSearch(kw)}
             />
           </div>
           <div className="oo-split-scroll">
+            {/* 搜索结果：命中消息列表（点击跳到该会话） */}
+            {kw.trim() ? (
+              <div style={{ borderBottom: "1px solid var(--line)", background: "var(--inset)" }}>
+                <div style={{ padding: "6px 10px", fontSize: 11.5, color: "var(--ink-3)" }}>
+                  {msgSearching ? "搜索中…" : `消息搜索结果 ${results.length} 条`}
+                  {kw ? (
+                    <Button type="link" size="small" style={{ padding: 0, marginLeft: 8 }} onClick={() => { setKw(""); setResults([]); }}>
+                      清除
+                    </Button>
+                  ) : null}
+                </div>
+                {results.slice(0, 20).map((r) => (
+                  <div
+                    key={r.id}
+                    className="oo-room-item"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      navigate(`/messages/${r.room_id}`);
+                      setKw("");
+                      setResults([]);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        navigate(`/messages/${r.room_id}`);
+                        setKw("");
+                        setResults([]);
+                      }
+                    }}
+                  >
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div className="oo-room-title oo-truncate">{r.room_title || `会话 #${r.room_id}`}</div>
+                      <div className="oo-room-preview oo-truncate">{r.content || "[图片]"}</div>
+                    </div>
+                    <span className="oo-room-time">{fmtRoomTime(r.created_time)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {roomsLoading && !rooms.length ? (
               <div style={{ padding: 14 }}><Skeleton active paragraph={{ rows: 3 }} /></div>
             ) : !rooms.length ? (
@@ -475,7 +545,13 @@ export default function MessagesPage() {
                 <Empty description="还没有会话，点右上角「发起会话」" image={Empty.PRESENTED_IMAGE_SIMPLE} />
               </div>
             ) : (
-              rooms.map((r) => (
+              rooms
+                .filter((r) => {
+                  const q = kw.trim().toLowerCase();
+                  if (!q) return true;
+                  return String(r.title || r.name || "").toLowerCase().includes(q);
+                })
+                .map((r) => (
                 <div
                   key={r.id}
                   className={`oo-room-item${r.id === activeRoomId ? " is-active" : ""}`}

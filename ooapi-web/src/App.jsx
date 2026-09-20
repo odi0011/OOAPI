@@ -21,6 +21,7 @@ import ProfileViewPage from "./pages/ProfileViewPage";
 import CommunityPage from "./pages/CommunityPage";
 import PostDetailPage from "./pages/PostDetailPage";
 import MessagesPage from "./pages/MessagesPage";
+import NotificationsPage from "./pages/NotificationsPage";
 import GamesPage from "./pages/GamesPage";
 import AppearancePage from "./pages/AppearancePage";
 import AdminDashboardPage from "./pages/AdminDashboardPage";
@@ -88,6 +89,7 @@ export default function App() {
         <Route path="/community/:id" element={<PostDetailPage />} />
         <Route path="/u/:id" element={<ProfileViewPage />} />
         <Route path="/messages" element={<MessagesPage />} />
+        <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/messages/:roomId" element={<MessagesPage />} />
         <Route path="/games" element={<GamesPage />} />
         <Route path="/token" element={<TokenPage />} />

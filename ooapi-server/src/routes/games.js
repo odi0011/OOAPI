@@ -26,6 +26,37 @@ function sideOf(row, userId) {
   return 0;
 }
 
+/**
+ * 观战者集合：roomId → Map<userId, expireAt>。
+ *
+ * 为什么放进程内：与实时推送同一套取舍（单机单实例够用，多实例要换共享存储）。
+ * 为什么带 TTL 而不是永久保留：观战行为是「打开对局页面期间」才有效，
+ * 关掉页面就该停止推送 —— 否则一个人看完就走，之后每一步还白推给他。
+ */
+const spectators = new Map();
+const SPECTATE_TTL_MS = 30 * 60 * 1000;
+
+function touchSpectator(roomId, userId) {
+  const rid = Number(roomId) || 0;
+  const uid = Number(userId) || 0;
+  if (!rid || !uid) return;
+  if (!spectators.has(rid)) spectators.set(rid, new Map());
+  spectators.get(rid).set(uid, Date.now() + SPECTATE_TTL_MS);
+}
+
+/** 取有效观战者（顺手清理过期项） */
+function spectatorsOf(roomId) {
+  const m = spectators.get(Number(roomId) || 0);
+  if (!m) return [];
+  const nowMs = Date.now();
+  const out = [];
+  for (const [uid, exp] of [...m.entries()]) {
+    if (exp < nowMs) m.delete(uid);
+    else out.push(uid);
+  }
+  return out;
+}
+
 /** 房间 → 响应体（按 viewer 视角过滤，绝不泄露隐藏信息） */
 function roomToResp(row, viewerId = 0, baseUrlHint = "") {
   const game = getGame(row.game_key);
@@ -90,6 +121,11 @@ async function commit(row, engineResult, io = {}) {
   // 按各自视角推送：两个客户端收到的隐藏信息不同（海战棋）
   if (Number(row.host_id)) push(Number(row.host_id), "game_move", roomToResp(fresh, Number(row.host_id)));
   if (Number(row.guest_id)) push(Number(row.guest_id), "game_move", roomToResp(fresh, Number(row.guest_id)));
+  // 观战者：以「非对局方」视角推送（海战棋下等同对手视角，看不到布阵）
+  for (const uid of spectatorsOf(row.id)) {
+    if (uid === Number(row.host_id) || uid === Number(row.guest_id)) continue;
+    push(uid, "game_move", roomToResp(fresh, uid));
+  }
   return { fresh, result: engineResult };
 }
 
@@ -192,6 +228,8 @@ router.get(
     const side = sideOf(row, req.user.id);
     // 非对局方：只有允许观战时能看（且对隐藏信息游戏，观战视角等同对手视角，看不到布阵）
     if (!side && !Number(row.spectatable)) return fail(res, "该对局不允许观战", 403);
+    // 登记观战者：之后每一步实时推给他，而不是让他自己反复刷新
+    if (!side && row.status === "playing") touchSpectator(row.id, req.user.id);
     return ok(res, roomToResp(row, req.user.id));
   })
 );

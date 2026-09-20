@@ -195,27 +195,56 @@ export const DENSITY_PRESETS = [
   },
 ];
 
+/**
+ * 底纹平铺尺寸：按视口宽度放大。
+ *
+ * 为什么需要：24px 网格在 4K 屏上看着像一层密麻的纱（同一屏里格子数量翻了 4 倍），
+ * 而在小笔记本上又刚好。这里按屏宽给三档，保持「肉眼上格子大小一致」的观感。
+ * 只改尺寸不改透明度 —— 透明度锁死是为了保证文字对比度稳定。
+ */
+function tileScale() {
+  if (typeof window === "undefined") return 1;
+  const w = window.innerWidth || 1280;
+  if (w >= 2560) return 1.6;
+  if (w >= 1920) return 1.3;
+  return 1;
+}
+
+/** 把 "24px 24px" 这类尺寸按屏宽放大（保留 px 单位，避免小数累积误差） */
+function scaleSize(size, scale) {
+  if (scale === 1) return size;
+  return size
+    .split(/[,\s]+/)
+    .filter(Boolean)
+    .map((v) => {
+      const n = parseFloat(v);
+      return Number.isFinite(n) ? `${Math.round(n * scale)}px` : v;
+    })
+    .join(" ");
+}
+
 /** 背景底纹：以 background-image 挂在根节点，颜色绑定 --line（明暗主题自动跟随） */
 function backgroundImage(key) {
+  const scale = tileScale();
   switch (key) {
     case "blueprint":
-      // 横竖各一组 1px 线，24px 一格
+      // 横竖各一组 1px 线，基准 24px 一格
       return {
-        size: "24px 24px",
+        size: scaleSize("24px 24px", scale),
         image:
           "linear-gradient(to right, var(--line) 1px, transparent 1px), linear-gradient(to bottom, var(--line) 1px, transparent 1px)",
         opacity: "0.06",
       };
     case "dots":
       return {
-        size: "16px 16px",
+        size: scaleSize("16px 16px", scale),
         image: "radial-gradient(var(--line) 1px, transparent 1px)",
         opacity: "0.06",
       };
     case "grain":
       // 噪点用重复渐变模拟（不引外部图片资源）：三层不同尺寸的斜向条纹叠加
       return {
-        size: "3px 3px, 5px 5px, 7px 7px",
+        size: `${scaleSize("3px 3px", scale)}, ${scaleSize("5px 5px", scale)}, ${scaleSize("7px 7px", scale)}`,
         image:
           "repeating-linear-gradient(45deg, var(--line) 0 1px, transparent 1px 3px), repeating-linear-gradient(-45deg, var(--line) 0 1px, transparent 1px 5px), repeating-linear-gradient(90deg, var(--line) 0 1px, transparent 1px 7px)",
         opacity: "0.03",
@@ -229,11 +258,25 @@ function backgroundImage(key) {
  * 应用外观设置（可只传改动的字段）。
  * @param {{background?:string, radius?:string, density?:string, fontSize?:number|string, accent?:string, resolved?:string}} opt
  */
+/** 记住当前底纹，屏宽变化时原地重算（不必让调用方知道） */
+let lastBackground = "pure";
+if (typeof window !== "undefined") {
+  let resizeTimer = null;
+  window.addEventListener("resize", () => {
+    // 防抖 200ms：拖拽窗口会连续触发，每次重算 background-image 会掉帧
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (lastBackground && lastBackground !== "pure") applyAppearance({ background: lastBackground });
+    }, 200);
+  });
+}
+
 export function applyAppearance(opt = {}) {
   const r = document.documentElement;
   const set = (k, v) => r.style.setProperty(k, v);
 
   if (opt.background !== undefined) {
+    lastBackground = String(opt.background);
     const bg = backgroundImage(String(opt.background));
     const layer = document.getElementById("app-bg");
     if (layer) {

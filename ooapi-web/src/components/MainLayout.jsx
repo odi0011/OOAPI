@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Layout, Avatar, Dropdown, Grid, Drawer, Button } from "antd";
 import {
   HomeOutlined,
@@ -22,10 +22,12 @@ import {
   ReadOutlined,
   CommentOutlined,
   ThunderboltOutlined,
+  BellOutlined,
   BgColorsOutlined,
 } from "@ant-design/icons";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";
+import { API } from "../services/api";
 import { useTheme } from "../theme/ThemeContext";
 import ThemeSwitch from "./ThemeSwitch";
 
@@ -40,7 +42,8 @@ const NAV_USER = [
       { key: "/chat", icon: <MessageOutlined />, label: "对话" },
       { key: "/console", icon: <DashboardOutlined />, label: "数据看板" },
       { key: "/community", icon: <ReadOutlined />, label: "社区" },
-      { key: "/messages", icon: <CommentOutlined />, label: "消息" },
+      { key: "/messages", icon: <CommentOutlined />, label: "消息", badge: "messages" },
+      { key: "/notifications", icon: <BellOutlined />, label: "通知", badge: "notifications" },
       { key: "/games", icon: <ThunderboltOutlined />, label: "Playground" },
     ],
   },
@@ -84,6 +87,7 @@ const CRUMB = {
   "/console": ["工作台", "数据看板"],
   "/community": ["工作台", "社区"],
   "/messages": ["工作台", "消息"],
+  "/notifications": ["工作台", "通知"],
   "/games": ["工作台", "Playground"],
   "/token": ["开发", "令牌管理"],
   "/log": ["开发", "使用记录"],
@@ -112,6 +116,38 @@ export default function MainLayout() {
 
   const [collapsed, setCollapsed] = useState(false);
   const [drawer, setDrawer] = useState(false);
+  // 导航红点：消息未读 + 通知未读。
+  // 用 60s 轮询而不是只靠 SSE：SSE 断开（换网络/休眠唤醒）时不刷新会红点残留，
+  // 轮询是兜底；SSE 事件到达时也会立刻更新（见下面的 effect）。
+  const [badges, setBadges] = useState({ messages: 0, notifications: 0 });
+
+  const refreshBadges = useCallback(async () => {
+    // 两个接口都可能因权限/网络失败，任一失败都不该影响导航渲染
+    const [m, n] = await Promise.all([
+      API.get("/chatroom/unread").catch(() => null),
+      API.get("/community/notifications/unread").catch(() => null),
+    ]);
+    setBadges({
+      messages: Number(m?.total) || 0,
+      notifications: Number(n?.total) || 0,
+    });
+  }, []);
+
+  useEffect(() => {
+    refreshBadges();
+    const timer = setInterval(refreshBadges, 60_000);
+    const onFocus = () => refreshBadges(); // 切回标签页立刻刷新（用户最可能此刻在看）
+    window.addEventListener("focus", onFocus);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [refreshBadges]);
+
+  // 正在看消息/通知页时，红点应该立刻消失（切换页面即重算）
+  useEffect(() => {
+    if (["/messages", "/notifications"].some((p) => location.pathname.startsWith(p))) refreshBadges();
+  }, [location.pathname, refreshBadges]);
 
   const isAdmin = user?.role >= 100;
   const selectedKey = location.pathname;
@@ -170,6 +206,12 @@ export default function MainLayout() {
           >
             {it.icon}
             {!collapsed && <span className="oo-truncate">{it.label}</span>}
+            {/* 未读数：折叠态也显示（只显示数字，省空间） */}
+            {badges[it.badge] ? (
+              <span className="oo-nav-badge" title={`${badges[it.badge]} 条未读`}>
+                {badges[it.badge] > 99 ? "99+" : badges[it.badge]}
+              </span>
+            ) : null}
           </div>
         ))}
       </div>
@@ -186,7 +228,7 @@ export default function MainLayout() {
         )}
       </nav>
     );
-  }, [collapsed, selectedKey, isAdmin, isMobile, navigate]);
+  }, [collapsed, selectedKey, isAdmin, isMobile, navigate, badges]);
 
   const brand = (
     <div className="oo-brand">

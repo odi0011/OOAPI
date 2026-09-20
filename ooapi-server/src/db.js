@@ -431,6 +431,23 @@ const TABLES = [
     KEY idx_reaction_target (target_type, target_id, kind)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
+  // 通知：社区互动的提醒（评论/回复/点赞/收藏/关注）
+  // 为什么落库而不是只用 SSE：SSE 是「现在有人在看」的加速通道，
+  // 用户离线时错过的提醒必须以数据库为准（否则关掉页面就永久丢失）。
+  `CREATE TABLE IF NOT EXISTS notifications (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL COMMENT '接收者',
+    actor_id INT NOT NULL COMMENT '触发者',
+    type VARCHAR(24) NOT NULL COMMENT 'post_comment/comment_reply/post_like/comment_like/post_favorite/follow',
+    post_id BIGINT NOT NULL DEFAULT 0,
+    comment_id BIGINT NOT NULL DEFAULT 0,
+    extra VARCHAR(160) NOT NULL DEFAULT '' COMMENT '当时的帖子标题（帖子被删后仍可读）',
+    is_read TINYINT NOT NULL DEFAULT 0,
+    created_time BIGINT NOT NULL DEFAULT 0,
+    KEY idx_notify_user (user_id, is_read, id),
+    KEY idx_notify_clean (is_read, created_time)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
   `CREATE TABLE IF NOT EXISTS community_follows (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     follower_id INT NOT NULL COMMENT '关注者',

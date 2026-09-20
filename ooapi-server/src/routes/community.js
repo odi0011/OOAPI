@@ -23,6 +23,7 @@ import { authRequired, adminRequired } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { mediaUrl, attachRef } from "../services/media.js";
+import { notify, unreadCount, list as listNotifications, markRead, remove as removeNotification } from "../services/notify-center.js";
 
 const router = Router();
 
@@ -521,8 +522,28 @@ router.post(
       "INSERT INTO community_comments (post_id, user_id, parent_id, reply_to_user_id, content, status, created_time) VALUES (?, ?, ?, ?, ?, 1, ?)",
       [postId, req.user.id, parentId, replyToUserId, content, now()]
     );
+    const commentId = Number(r[0].insertId);
     await pool.query("UPDATE community_posts SET comment_count = comment_count + 1 WHERE id = ?", [postId]);
-    return ok(res, { id: Number(r[0].insertId) }, "评论成功");
+
+    // 通知（不给自己发，已在 notify 内部兜住）：
+    //   回复别人的评论 → 通知被回复者；否则通知帖子作者
+    const [[postFull]] = await pool.query("SELECT user_id, title FROM community_posts WHERE id = ?", [postId]);
+    if (replyToUserId) {
+      await notify({
+        userId: replyToUserId,
+        actorId: req.user.id,
+        type: "comment_reply",
+        target: { postId, commentId, postTitle: postFull?.title },
+      });
+    } else if (postFull) {
+      await notify({
+        userId: postFull.user_id,
+        actorId: req.user.id,
+        type: "post_comment",
+        target: { postId, commentId, postTitle: postFull.title },
+      });
+    }
+    return ok(res, { id: commentId }, "评论成功");
   })
 );
 
@@ -568,6 +589,7 @@ async function toggleReaction(req, res, targetType, kind) {
     const [[after]] = await pool.query(`SELECT ${countCol} AS n FROM ${table} WHERE id = ?`, [id]);
     return ok(res, { active: false, count: Number(after.n) || 0 }, kind === "like" ? "已取消点赞" : "已取消收藏");
   }
+  let inserted = true;
   try {
     await pool.query(
       "INSERT INTO community_reactions (user_id, target_type, target_id, kind, created_time) VALUES (?, ?, ?, ?, ?)",
@@ -576,9 +598,35 @@ async function toggleReaction(req, res, targetType, kind) {
   } catch (e) {
     // 并发双击：唯一键挡住了第二次插入。这本身就是「已赞」，按成功返回
     if (e.code !== "ER_DUP_ENTRY") throw e;
+    inserted = false; // 已经赞过：不再发通知（否则双击会产生两条提醒）
   }
   await pool.query(`UPDATE ${table} SET ${countCol} = ${countCol} + 1 WHERE id = ?`, [id]);
   const [[after]] = await pool.query(`SELECT ${countCol} AS n FROM ${table} WHERE id = ?`, [id]);
+
+  if (inserted) {
+    // 通知内容作者（帖子点赞/收藏通知楼主；评论点赞通知该评论作者）
+    if (targetType === "post") {
+      const [[p]] = await pool.query("SELECT user_id, title FROM community_posts WHERE id = ?", [id]);
+      if (p) {
+        await notify({
+          userId: p.user_id,
+          actorId: req.user.id,
+          type: kind === "like" ? "post_like" : "post_favorite",
+          target: { postId: id, postTitle: p.title },
+        });
+      }
+    } else {
+      const [[c]] = await pool.query("SELECT user_id, post_id FROM community_comments WHERE id = ?", [id]);
+      if (c) {
+        await notify({
+          userId: c.user_id,
+          actorId: req.user.id,
+          type: "comment_like",
+          target: { postId: c.post_id, commentId: id },
+        });
+      }
+    }
+  }
   return ok(res, { active: true, count: Number(after.n) || 0 }, kind === "like" ? "已点赞" : "已收藏");
 }
 
@@ -623,6 +671,7 @@ router.post(
       const [[c]] = await pool.query("SELECT COUNT(*) AS n FROM community_follows WHERE followee_id = ?", [targetId]);
       return ok(res, { following: false, followers: Number(c.n) || 0 }, "已取消关注");
     }
+    let fresh = true;
     try {
       await pool.query("INSERT INTO community_follows (follower_id, followee_id, created_time) VALUES (?, ?, ?)", [
         req.user.id,
@@ -631,7 +680,10 @@ router.post(
       ]);
     } catch (e) {
       if (e.code !== "ER_DUP_ENTRY") throw e;
+      fresh = false;
     }
+    // 只在「新关注」时通知（反复点关注/取关不该刷屏）
+    if (fresh) await notify({ userId: targetId, actorId: req.user.id, type: "follow" });
     const [[c]] = await pool.query("SELECT COUNT(*) AS n FROM community_follows WHERE followee_id = ?", [targetId]);
     return ok(res, { following: true, followers: Number(c.n) || 0 }, "已关注");
   })
@@ -663,6 +715,40 @@ router.get(
       followers: Number(follows.followers) || 0,
       favorites: Number(favs.n) || 0,
     });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// 通知（社区互动的提醒）
+// ---------------------------------------------------------------------------
+router.get(
+  "/notifications",
+  authRequired,
+  asyncHandler(async (req, res) => ok(res, await listNotifications(req.user.id, req.query)))
+);
+
+router.get(
+  "/notifications/unread",
+  authRequired,
+  asyncHandler(async (req, res) => ok(res, { total: await unreadCount(req.user.id) }))
+);
+
+router.post(
+  "/notifications/read",
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const n = await markRead(req.user.id, req.body?.ids);
+    return ok(res, { updated: n, unread: await unreadCount(req.user.id) }, n ? "已标记已读" : "没有未读");
+  })
+);
+
+router.delete(
+  "/notifications/:id",
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const okFlag = await removeNotification(req.user.id, idParam(req));
+    if (!okFlag) return fail(res, "通知不存在", 404);
+    return ok(res, null, "已删除");
   })
 );
 
