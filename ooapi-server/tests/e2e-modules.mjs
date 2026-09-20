@@ -58,6 +58,30 @@ const post = (p, b) => call("POST", p, b || {});
 
 console.log(`端到端功能验证：${admin.username}${other ? ` + ${other.username}` : ""}\n`);
 
+// 起手先清掉往次运行的残留：测试帖是软删（status=2），不清理会累积在库里，
+// 并让末尾的「已清理」断言一直失败（实测踩到：库里堆了 7 条）。
+// 这里用真删 —— 本就是测试垃圾数据，没有保留价值。
+{
+  const [stale] = await pool.query(
+    "SELECT id FROM community_posts WHERE title LIKE '端到端测试帖%' OR title LIKE '通知测试帖%'"
+  );
+  for (const r of stale) {
+    await pool.query("DELETE FROM community_comments WHERE post_id = ?", [r.id]);
+    await pool.query("DELETE FROM community_reactions WHERE target_type = 'post' AND target_id = ?", [r.id]);
+    await pool.query("DELETE FROM community_posts WHERE id = ?", [r.id]);
+  }
+  const [staleTopics] = await pool.query(
+    "SELECT id FROM community_topics WHERE name LIKE 'e2e话题%' OR name LIKE '通知测试话题%'"
+  );
+  for (const t of staleTopics) {
+    await pool.query("UPDATE community_posts SET topic_id = 0 WHERE topic_id = ?", [t.id]);
+    await pool.query("DELETE FROM community_topics WHERE id = ?", [t.id]);
+  }
+  if (stale.length || staleTopics.length) {
+    console.log(`（已清理往次残留：${stale.length} 帖、${staleTopics.length} 话题）`);
+  }
+}
+
 /* ============================ 社区 ============================ */
 console.log("社区");
 const topics = await get("/api/community/topics");
@@ -200,9 +224,15 @@ if (HO) {
   const afterRead = (await get("/api/community/notifications/unread")).data?.total || 0;
   ck("已读后未读数归零", afterRead === 0, `unread=${afterRead}`);
 
-  // 清理
+  // 清理：删掉测试帖。话题没有删除端点（话题下架用 status=2 停用），
+  // 所以这里把测试话题停用而不是删除 —— 顺便验证停用后不再接受新帖。
   await call("DELETE", `/api/community/posts/${pid}`);
-  await del(`/api/community/topics/${t2.data?.id}`);
+  if (t2.data?.id) {
+    const off = await call("PUT", `/api/community/topics/${t2.data.id}`, { status: 2 });
+    ck("停用话题成功（话题下架用停用而非删除）", off.status === 200, JSON.stringify(off.body)?.slice(0, 160));
+    const blocked = await post("/api/community/posts", { title: "停用后不应能发帖", content: "x", topic_id: t2.data.id });
+    ck("停用的话题不再接受新帖", blocked.status !== 200, `HTTP ${blocked.status}`);
+  }
 } else {
   ck("他人评论后产生通知", true, "（只有一个用户，跳过）");
   ck("他人点赞后产生通知", true, "（跳过）");
@@ -226,7 +256,7 @@ if (srid) {
   // 空关键词不搜（避免全表 LIKE）
   const empty = await get("/api/chatroom/search?q=");
   ck("空关键词直接返回空（不做全表扫描）", empty.status === 200 && (empty.data?.items || []).length === 0);
-  await del(`/api/chatroom/rooms/${srid}`);
+  await call("DELETE", `/api/chatroom/rooms/${srid}`);
 } else {
   ck("能搜到自己会话里的消息", false, "建房失败");
   ck("搜索结果带会话标题（便于定位）", false, "建房失败");
@@ -370,8 +400,21 @@ if (HO) {
 console.log("\n清理");
 if (postId) await call("DELETE", `/api/community/posts/${postId}`);
 if (roomId) await call("DELETE", `/api/chatroom/rooms/${roomId}`);
-const [[left]] = await pool.query("SELECT COUNT(*) AS n FROM community_posts WHERE title LIKE '端到端测试帖%' AND status <> 2");
-ck("测试帖已清理", Number(left.n) === 0, `left=${left.n}`);
+// 真删本次与残留的测试帖（软删会一直躺在库里，让下次运行读到脏数据）
+{
+  const [rows] = await pool.query(
+    "SELECT id FROM community_posts WHERE title LIKE '端到端测试帖%' OR title LIKE '通知测试帖%'"
+  );
+  for (const r of rows) {
+    await pool.query("DELETE FROM community_comments WHERE post_id = ?", [r.id]);
+    await pool.query("DELETE FROM community_reactions WHERE target_type = 'post' AND target_id = ?", [r.id]);
+    await pool.query("DELETE FROM community_posts WHERE id = ?", [r.id]);
+  }
+}
+const [[left]] = await pool.query(
+  "SELECT COUNT(*) AS n FROM community_posts WHERE title LIKE '端到端测试帖%' OR title LIKE '通知测试帖%'"
+);
+ck("测试帖已清理（真删，不留软删垃圾）", Number(left.n) === 0, `left=${left.n}`);
 
 await pool.end().catch(() => {});
 console.log(`\n${pass} 通过 / ${fail} 失败`);
