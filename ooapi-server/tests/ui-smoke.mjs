@@ -24,6 +24,7 @@ const ROUTES = [
   ["/token", "令牌管理"],
   ["/log", "使用记录"],
   ["/operation-log", "操作日志"],
+  ["/media", "媒体库"],
   ["/profile", "个人中心"],
   ["/admin/channel", "渠道管理"],
   ["/admin/groups", "分组管理"],

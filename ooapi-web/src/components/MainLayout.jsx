@@ -18,6 +18,7 @@ import {
   GroupOutlined,
   HistoryOutlined,
   MonitorOutlined,
+  FolderOpenOutlined,
 } from "@ant-design/icons";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";
@@ -46,7 +47,10 @@ const NAV_USER = [
   },
   {
     title: "账户",
-    items: [{ key: "/profile", icon: <UserOutlined />, label: "个人设置" }],
+    items: [
+      { key: "/media", icon: <FolderOpenOutlined />, label: "媒体库" },
+      { key: "/profile", icon: <UserOutlined />, label: "个人设置" },
+    ],
   },
 ];
 
@@ -71,6 +75,7 @@ const CRUMB = {
   "/token": ["开发", "令牌管理"],
   "/log": ["开发", "使用记录"],
   "/operation-log": ["开发", "操作日志"],
+  "/media": ["账户", "媒体库"],
   "/profile": ["账户", "个人设置"],
   "/home": ["首页"],
   "/admin/channel": ["平台管理", "渠道管理"],

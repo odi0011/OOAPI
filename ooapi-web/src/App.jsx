@@ -9,6 +9,7 @@ import ChatPage from "./pages/ChatPage";
 import TokenPage from "./pages/TokenPage";
 import LogPage from "./pages/LogPage";
 import OperationLogPage from "./pages/OperationLogPage";
+import MediaPage from "./pages/MediaPage";
 import ProfilePage from "./pages/ProfilePage";
 import AdminUsersPage from "./pages/AdminUsersPage";
 import AdminSettingsPage from "./pages/AdminSettingsPage";
@@ -78,6 +79,8 @@ export default function App() {
         <Route path="/log" element={<LogPage />} />
         {/* 操作日志：与使用记录分开（一个是用量审计，一个是行为审计） */}
         <Route path="/operation-log" element={<OperationLogPage />} />
+        {/* 媒体库：普通用户看自己的；管理员可用 ?user_id 切到指定用户 */}
+        <Route path="/media" element={<MediaPage />} />
         <Route path="/profile" element={<ProfilePage />} />
           <Route path="/admin/channel" element={<RequireAuth admin><AdminChannelsPage /></RequireAuth>} />
           <Route path="/admin/groups" element={<RequireAuth admin><AdminGroupsPage /></RequireAuth>} />
