@@ -22,7 +22,6 @@ import CommunityPage from "./pages/CommunityPage";
 import PostDetailPage from "./pages/PostDetailPage";
 import MessagesPage from "./pages/MessagesPage";
 import NotificationsPage from "./pages/NotificationsPage";
-import GamesPage from "./pages/GamesPage";
 import AppearancePage from "./pages/AppearancePage";
 import AdminDashboardPage from "./pages/AdminDashboardPage";
 import AdminCommunityPage from "./pages/AdminCommunityPage";
@@ -91,7 +90,7 @@ export default function App() {
         <Route path="/messages" element={<MessagesPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/messages/:roomId" element={<MessagesPage />} />
-        <Route path="/games" element={<GamesPage />} />
+          <Route path="/games" element={<Navigate to="/community?board=games" replace />} />
         <Route path="/token" element={<TokenPage />} />
         <Route path="/log" element={<LogPage />} />
         {/* 操作日志：与使用记录分开（一个是用量审计，一个是行为审计） */}

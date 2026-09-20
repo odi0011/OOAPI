@@ -1,4 +1,4 @@
-// Playground —— 联机对战游戏大厅
+// 社区 · 小游戏专区 —— 联机对战游戏大厅（社区页内的一个板块）
 // ---------------------------------------------------------------------------
 // 定位（延续 Gemini 的 Terminal Arcade 建议）：不是「小游戏集合」，
 // 而是**联机棋牌室**。所以这一版彻底去掉了单机 2048/贪吃蛇（用户明确不要：
@@ -12,6 +12,9 @@
 //   · xiangqi   ：象棋（带汉字棋子与九宫/河界标注）
 //   · battleship：海战棋（双棋盘，对手盘是迷雾）
 // 这样加新游戏只需实现引擎 + 一个渲染分支，不用复制整套对战 UI。
+//
+// 页面归属：**社区页的一个板块**（用户要求），不再是独立的 Playground 页面；
+// 分享链接形如 /community?room=<id>（room 参数会自动切到本板块）。
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -24,7 +27,6 @@ import {
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
-import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
 import UserAvatar from "../components/UserAvatar";
 
@@ -471,7 +473,7 @@ function GameRoom({ room, me, toast, onUpdate, onLeave, onJoin }) {
 /* ===========================================================================
    页面
    =========================================================================== */
-export default function GamesPage() {
+export default function GameZone() {
   const navigate = useNavigate();
   const { message: toast } = AntApp.useApp();
   const { user: me } = useApp();
@@ -628,19 +630,18 @@ export default function GamesPage() {
   const currentGame = games.find((g) => g.key === gameKey);
 
   return (
-    <div className="oo-page">
-      <PageHeader
-        title="Playground"
-        tags={<Tag icon={<GlobalOutlined />}>联机对战</Tag>}
-        extra={
-          <>
-            <Button icon={<ReloadOutlined />} onClick={loadRooms} loading={loading} title="刷新" aria-label="刷新对局列表" />
-            <Button type="primary" icon={<PlusOutlined />} onClick={createRoom} disabled={!gameKey || Boolean(room)}>
-              创建房间
-            </Button>
-          </>
-        }
-      />
+    <div className="oo-game-zone">
+      <div className="oo-game-zone-head">
+        <span className="oo-game-zone-title">
+          <ThunderboltOutlined /> 小游戏 · 联机对战
+        </span>
+        <Space size={8}>
+          <Button icon={<ReloadOutlined />} onClick={loadRooms} loading={loading} title="刷新" aria-label="刷新对局列表" />
+          <Button type="primary" icon={<PlusOutlined />} onClick={createRoom} disabled={!gameKey || Boolean(room)}>
+            创建房间
+          </Button>
+        </Space>
+      </div>
 
       {/* 汇总：紧凑统计卡（全站统一形态） */}
       <div className="oo-stats-cards">

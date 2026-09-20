@@ -51,6 +51,10 @@ const CHANNEL_ICON = {
   grok: "grok.svg",
   "grok-oauth": "grok.svg",
   xai: "grok.svg",
+  // 第三方反代厂商（官网官方 logo）
+  workbuddy: "workbuddy.svg",
+  codebuddy: "workbuddy.svg",
+  qoder: "qoder.svg",
   // 自定义渠道 → 使用平台 logo
   custom: PLATFORM_LOGO,
 };

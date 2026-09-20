@@ -44,7 +44,6 @@ const NAV_USER = [
       { key: "/community", icon: <ReadOutlined />, label: "社区" },
       { key: "/messages", icon: <CommentOutlined />, label: "消息", badge: "messages" },
       { key: "/notifications", icon: <BellOutlined />, label: "通知", badge: "notifications" },
-      { key: "/games", icon: <ThunderboltOutlined />, label: "Playground" },
     ],
   },
   {
@@ -88,7 +87,7 @@ const CRUMB = {
   "/community": ["工作台", "社区"],
   "/messages": ["工作台", "消息"],
   "/notifications": ["工作台", "通知"],
-  "/games": ["工作台", "Playground"],
+  "/games": ["工作台", "社区", "小游戏"],
   "/token": ["开发", "令牌管理"],
   "/log": ["开发", "使用记录"],
   "/operation-log": ["开发", "操作日志"],

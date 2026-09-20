@@ -20,7 +20,7 @@
 //   antigravity  Google 订阅（Antigravity/Code Assist OAuth）
 //   grok-oauth   xAI Grok 订阅（device-code OAuth，responses 协议）
 // 与 relay 的区别：不需要浏览器，凭据是 OAuth 令牌（粘贴官方 CLI / CPA / sub2api 的凭据文件）
-export const OAUTH_METHODS = ["codex", "claude-oauth", "antigravity", "grok-oauth", "kiro", "openai-web"];
+export const OAUTH_METHODS = ["codex", "claude-oauth", "antigravity", "grok-oauth", "kiro", "openai-web", "workbuddy", "qoder"];
 
 export function isOAuthMethod(key) {
   return OAUTH_METHODS.includes(String(key || ""));
@@ -425,6 +425,62 @@ export const PROVIDERS = [
         keyHint: "xai-...",
         defaultModels: [],
         testModel: "",
+      },
+    ],
+  },
+  {
+    key: "workbuddy",
+    name: "WorkBuddy / CodeBuddy",
+    vendor: "workbuddy",
+    desc: "腾讯 WorkBuddy/CodeBuddy 桌面端凭据反代（后端本身就是 OpenAI 协议）",
+    methods: [
+      {
+        key: "workbuddy",
+        adapter: "workbuddy",
+        label: "桌面端凭据（WorkBuddy）",
+        desc: "粘贴桌面端登录凭据，走腾讯托管模型",
+        loginModes: ["paste"],
+        loginFields: oauthCredentialField(
+          '{ "access_token": "...", "device_token": "...", "user_id": "...", "enterprise_id": "可选" }',
+          "登录 WorkBuddy/CodeBuddy 桌面端后，复制本机登录文件（workbuddy-desktop.info）里的 token 与设备头"
+        ),
+        pasteHint: "WorkBuddy 凭据：access_token（Bearer）+ X-Device-Token/X-User-Id（风控头）；token 过期后重新粘贴",
+        defaultModels: [
+          { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash（腾讯）" },
+          { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro（腾讯）" },
+          { id: "glm-5.3", name: "GLM-5.3（腾讯）" },
+          { id: "kimi-k3", name: "Kimi K3（腾讯）" },
+          { id: "gpt-5.6-luna", name: "GPT-5.6 Luna（腾讯）" },
+        ],
+        testModel: "deepseek-v4.1-flash",
+      },
+    ],
+  },
+  {
+    key: "qoder",
+    name: "Qoder（阿里）",
+    vendor: "qoder",
+    desc: "Qoder 订阅经本地桥（qoder2api）转 OpenAI 协议；PAT 作为 Key",
+    methods: [
+      {
+        key: "qoder",
+        adapter: "qoder",
+        label: "本地桥（qoder2api）",
+        desc: "桥地址 + Qoder PAT",
+        loginModes: ["paste"],
+        loginFields: oauthCredentialField(
+          '{ "personal_token": "pt-...", "endpoint": "http://127.0.0.1:8963" }',
+          "先在本地起 qoder2api/qoder-proxy 桥；PAT 在 qoder.com「服务集成 → 个人访问令牌」创建"
+        ),
+        pasteHint: "Qoder 推理协议需官方 WASM 签名，服务端不直连；桥默认 http://127.0.0.1:8963，凭据为 PAT（pt-...）",
+        defaultModels: [
+          { id: "Qwen3.7-Max", name: "Qwen3.7 Max" },
+          { id: "Qwen3.7-Plus", name: "Qwen3.7 Plus" },
+          { id: "DeepSeek-V4-Pro", name: "DeepSeek V4 Pro" },
+          { id: "GLM-5.2", name: "GLM-5.2" },
+          { id: "Kimi-K2.7-Code", name: "Kimi K2.7 Code" },
+        ],
+        testModel: "Qwen3.7-Plus",
       },
     ],
   },

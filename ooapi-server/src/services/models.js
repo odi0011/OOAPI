@@ -20,6 +20,8 @@ const VENDOR_MODEL_MODULES = {
   anthropic: () => import("./upstream/anthropic-models.js"),
   gemini: () => import("./upstream/gemini-models.js"),
   grok: () => import("./upstream/grok-models.js"),
+  workbuddy: () => import("./upstream/workbuddy-models.js"),
+  qoder: () => import("./upstream/qoder-models.js"),
 };
 
 /**

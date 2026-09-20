@@ -1383,6 +1383,23 @@ h1, h2, h3, h4 {
   height: 14px;
 }
 
+/* 社区 · 小游戏板块（原独立 Playground 页面并入社区页） */
+.oo-game-zone-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.oo-game-zone-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
 /* 最近调用：小绿条可点（复制原始返回结果），用户标签可点（复制邮箱） */
 .oo-uptime-bar.is-clickable {
   cursor: copy;

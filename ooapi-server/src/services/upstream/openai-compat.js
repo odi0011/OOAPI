@@ -89,10 +89,13 @@ function nextKey(channel) {
 
 function authHeaders(channel, keyOverride) {
   const key = keyOverride || listKeys(channel)[0] || "";
+  // 专属接入方式（WorkBuddy 等）通过 other.extra_headers 注入设备/企业风控头
+  const extra = channel?.other?.extra_headers;
   return {
     "Content-Type": "application/json",
     Authorization: `Bearer ${key}`,
     Accept: "application/json",
+    ...(extra && typeof extra === "object" ? extra : {}),
   };
 }
 

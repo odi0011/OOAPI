@@ -125,6 +125,32 @@ export const VENDORS = [
     supportsVision: true,
     hint: "粘贴 CPA/sub2api 导出的 Grok 凭据；平台自动续期并保持官方 CLI 指纹",
   },
+  {
+    key: "workbuddy",
+    name: "WorkBuddy / CodeBuddy（腾讯）",
+    channelType: "workbuddy",
+    desc: "腾讯 WorkBuddy/CodeBuddy 桌面端凭据反代",
+    loginModes: ["paste"],
+    fields: [],
+    models: ["deepseek-v4.1-flash", "deepseek-v4-pro", "glm-5.3", "kimi-k3", "gpt-5.6-luna"],
+    baseUrl: "https://copilot.tencent.com",
+    supportsBatch: false,
+    supportsVision: false,
+    hint: "后端为标准 OpenAI 协议：粘贴桌面端 access_token + 设备头（X-Device-Token）即可；模型为腾讯托管同名档位",
+  },
+  {
+    key: "qoder",
+    name: "Qoder（阿里）",
+    channelType: "qoder",
+    desc: "Qoder 订阅经本地桥（qoder2api）转 OpenAI 协议",
+    loginModes: ["paste"],
+    fields: [],
+    models: ["Qwen3.7-Max", "Qwen3.7-Plus", "DeepSeek-V4-Pro", "GLM-5.2", "Kimi-K2.7-Code"],
+    baseUrl: "http://127.0.0.1:8963",
+    supportsBatch: false,
+    supportsVision: true,
+    hint: "Qoder 推理协议需官方 WASM 签名，服务端不直连；请先起 qoder2api/qoder-proxy 本地桥，再填桥地址与 PAT",
+  },
 ];
 
 export function getVendor(key) {

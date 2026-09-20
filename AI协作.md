@@ -721,6 +721,9 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 
 ### 持续审查（待处理）
 
+- [ ] **Qoder 原生直连（WASM 签名移植）**：当前 Qoder 走「本地桥（qoder2api/qoder-proxy）→ OpenAI 协议」
+  接入（第 38 批）。原生直连需要移植 qoder2api 的签名/加密链路（自定义 Base64 + MD5 签名 +
+  RSA/AES + 22 个 Cosy-* 头），属独立工程；有真实 PAT 后再立项验证。
 - [ ] **订阅 OAuth 渠道实盘验证**（第 12 批进展）：**Codex 已完成全链路实盘验证**
   （sub2api 文件导入 → 渠道测试 → 站内对话 → 精确计费 → 292 state 捕获/注入 → 312 判定）；
   Claude / Gemini / Grok 目前没有真实订阅凭据，待补各跑一次「测试渠道 + 对话」。
@@ -803,6 +806,9 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 - [ ] **WorkBuddy 接入的产品决策**：调研确认其 `deepseek-*` 是腾讯云托管同名档位、不是 DeepSeek 官方转发
   （详见 7.5）。接入前需确认：是按独立厂商计价，还是并入 DeepSeek（后者会有计费口径偏差）。
   另外其 `X-Device-Token` 是设备风控头，需要设计可插拔的注入方式。
+  - [x] **已接入（第 38 批）**：按独立厂商实现（`upstream/workbuddy.js`，后端本身是标准 OpenAI 协议，
+    设备/企业头经 `other.extra_headers` 注入）；计价按独立厂商登记，价目未收录前走兜底价并告警。
+    遗留：token 过期需重新粘贴（桌面端刷新端点未公开稳定，未做猜测性刷新）。
 - [ ] **`.oo-page-desc` 死样式**：`styles.css:1681`（及 2561 的媒体查询）已无组件使用，可随下次样式整理删除。
 - [ ] **渠道列表 `SELECT *`**：新增 `quota` 列后列表查询仍取全列；单条快照数百字节，当前可接受，
   若渠道数破千建议改列白名单 + 额度按需拉取。
@@ -1990,6 +1996,26 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   另把工作区里**并行进行的 UI 紧凑化改动**（管理页/令牌页按钮与表格改 small）
   单独成一个提交并标注来源 —— 不是我做的就不冒领，但也不该让它们停在本地
   （线上从 GitHub 构建，不提交等于永不上线）。 |
+| 2026-09-20 | **第 38 批（用户点名）· 小游戏并入社区 + WorkBuddy / Qoder 接入 + Kiro 复核**：
+  · **小游戏并入社区**（用户：不要独立的 Playground 页面）：`GamesPage.jsx` 提取为
+    `components/GameZone.jsx`，社区页顶部新增板块切换「讨论区 / 小游戏」（`?board=games`）；
+    `/games` 改为重定向到 `/community?board=games`；移除侧栏 Playground 菜单项与独立页面文件；
+    分享链接 `?room=<id>` 依然有效（自动切到小游戏板块，切换回讨论区会清掉 room 参数）。
+  · **WorkBuddy / CodeBuddy（腾讯）反代**：新增 `upstream/workbuddy.js`（凭据解析 + `X-User-Id`/
+    `X-Enterprise-Id`/`X-Device-Token` 注入，复用 `openai-compat` —— 腾讯后端 `/v2/chat/completions`
+    本身就是标准 OpenAI 协议）+ 厂商/接入方式/模型表/VendorIcon 全套；
+    `openai-compat` 新增 `other.extra_headers` 通用注入能力。
+    遗留：桌面端刷新端点未公开稳定，token 过期需重新粘贴凭据（不做猜测性刷新）。
+  · **Qoder（阿里）接入**：新增 `upstream/qoder.js` —— Qoder 推理协议要求 22 个 Cosy-* 签名头 +
+    官方 WASM 加密（服务端不能直连），按社区标准经**本地桥**（qoder2api / qoder-proxy，
+    默认 `http://127.0.0.1:8963`）以 OpenAI 协议接入，凭据为 Qoder PAT（`pt-...`）；
+    原生直连移植（自定义 Base64 + MD5 签名 + RSA/AES + Cosy 头）已登记为独立待办。
+  · **Kiro 复核**：Kiro 适配器（`upstream/kiro.js` + `kiro-auth.js` + `kiro-eventstream.js`）
+    与「Anthropic → 反代（Kiro）」接入方式**早已实现并注册**，本轮无需重复添加（用户可能没在
+    UI 里注意到它挂在 Anthropic 厂商下）。
+  · **官方图标**：新增 `ooapi-web/public/icons/qoder.svg` 与 `workbuddy.svg`（均取自官网 logo）。
+  · 待办盘点（本轮开始时的存量，未在本批处理）：第 35 批遗留 10 条、第 34 批遗留 6 条、
+    订阅 OAuth 实盘（Claude/Gemini/Grok 待凭据）、新模型定价补录、harness 线上实盘等仍登记在第 3 节。 |
 
 
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）

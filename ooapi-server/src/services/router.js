@@ -28,6 +28,9 @@ const ADAPTERS = {
   "grok-oauth": () => import("./upstream/grok.js"),
   kiro: () => import("./upstream/kiro.js"),
   "openai-web": () => import("./upstream/openai-web.js"),
+  // 第三方反代（凭据型）：WorkBuddy 直连腾讯后端；Qoder 经本地桥
+  workbuddy: () => import("./upstream/workbuddy.js"),
+  qoder: () => import("./upstream/qoder.js"),
 };
 
 /**
