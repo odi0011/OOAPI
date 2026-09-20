@@ -166,59 +166,79 @@ if (other) {
   ck("单聊房间唯一（重复发起复用同一房间）", true, "（只有一个用户，跳过）");
 }
 
-/* ============================ 游戏 ============================ */
-console.log("\n游戏");
-const rec = await post("/api/games/records", { game_key: "g2048", score: 1234, duration_ms: 60000 });
-ck("提交成绩成功", rec.status === 200 && rec.data?.best >= 1234, JSON.stringify(rec.body)?.slice(0, 160));
+/* ============================ 游戏（联机对战） ============================ */
+console.log("联机对战");
+const gameList = await get("/api/games/list");
+ck("游戏目录可读", gameList.status === 200 && Array.isArray(gameList.data), JSON.stringify(gameList.body)?.slice(0, 200));
+const gameKeys = (gameList.data || []).map((g) => g.key);
+for (const want of ["connect4", "reversi", "gomoku", "checkers", "xiangqi", "battleship"]) {
+  ck(`目录含 ${want}`, gameKeys.includes(want), JSON.stringify(gameKeys));
+}
+ck("已下线单机游戏（2048/贪吃蛇）", !gameKeys.includes("g2048") && !gameKeys.includes("snake"), JSON.stringify(gameKeys));
 
-const board = await get("/api/games/records?game_key=g2048");
-ck("排行榜可读（曾经因 GROUP BY 报 500）", board.status === 200 && Array.isArray(board.data?.items), JSON.stringify(board.body)?.slice(0, 200));
-ck("排行榜含我的成绩", (board.data?.items || []).some((x) => x.is_me));
-ck("榜单一行一人（未被同分行重复占位）", new Set((board.data?.items || []).map((x) => x.user_id)).size === (board.data?.items || []).length);
+// 逐个游戏建房间 + 走一步，验证「引擎派发」这条路对每种游戏都通
+for (const key of gameKeys) {
+  const r = await post("/api/games/rooms", { game_key: key });
+  const rid = r.data?.id;
+  if (!rid) {
+    ck(`${key}：创建房间`, false, JSON.stringify(r.body)?.slice(0, 160));
+    continue;
+  }
+  const detail = await get(`/api/games/rooms/${rid}`);
+  ck(`${key}：详情含视图与 meta`, detail.status === 200 && detail.data?.meta?.rows > 0, JSON.stringify(detail.body)?.slice(0, 200));
 
-const over = await post("/api/games/records", { game_key: "g2048", score: 99999999, duration_ms: 1000 });
-ck("超上限分数被拒绝", over.status !== 200, `HTTP ${over.status}`);
+  if (other) {
+    const joined = await call("POST", `/api/games/rooms/${rid}/join`, {}, HO);
+    ck(`${key}：对手可加入`, joined.status === 200, JSON.stringify(joined.body)?.slice(0, 160));
+    // 每个游戏第一步的合法动作不同，这里只测「抢回合/非法输入被拒」这类通用约束
+    const wrongTurn = await call("POST", `/api/games/rooms/${rid}/action`, { action: "move", payload: { position: 0, col: 0 } }, HO);
+    ck(`${key}：非当前回合被拒（服务端权威）`, wrongTurn.status !== 200, `HTTP ${wrongTurn.status} ${JSON.stringify(wrongTurn.body)?.slice(0, 120)}`);
+  }
+  await call("DELETE", `/api/games/rooms/${rid}`); // 不存在也无妨
+  await post(`/api/games/rooms/${rid}/resign`, {});
+}
 
-const gr = await post("/api/games/rooms", { game_key: "gomoku" });
-ck("创建对战房间成功", gr.status === 200 && gr.data?.id > 0, JSON.stringify(gr.body)?.slice(0, 160));
-const gameRoomId = gr.data?.id;
-
-if (other && gameRoomId) {
-  const joined = await call("POST", `/api/games/rooms/${gameRoomId}/join`, {}, HO);
-  ck("他人加入房间成功", joined.status === 200 && joined.data?.status === "playing", JSON.stringify(joined.body)?.slice(0, 200));
-
-  const wrongTurn = await call("POST", `/api/games/rooms/${gameRoomId}/move`, { position: 1 }, HO);
-  ck("非当前回合落子被拒（服务端权威）", wrongTurn.status !== 200, `HTTP ${wrongTurn.status}`);
-
-  let won = null;
-  let stepOk = true;
-  // 房主执先手(1)，横向连成五子获胜；对手落在第 2 行避免干扰
-  for (let i = 0; i < 5; i += 1) {
-    const a = await post(`/api/games/rooms/${gameRoomId}/move`, { position: i });
-    if (a.status !== 200) {
-      ck(`房主第 ${i + 1} 子`, false, JSON.stringify(a.body)?.slice(0, 160));
-      stepOk = false;
-      break;
-    }
-    won = a.data;
-    if (i < 4) {
-      const b = await call("POST", `/api/games/rooms/${gameRoomId}/move`, { position: 15 + i }, HO);
-      if (b.status !== 200) {
-        ck(`对手第 ${i + 1} 子`, false, JSON.stringify(b.body)?.slice(0, 160));
-        stepOk = false;
-        break;
+// 四子棋完整对局：验证服务端判定连成四子获胜
+{
+  const r = await post("/api/games/rooms", { game_key: "connect4" });
+  const rid = r.data?.id;
+  if (rid && other) {
+    await call("POST", `/api/games/rooms/${rid}/join`, {}, HO);
+    // 房主(1) 连打 0/1/2/3 列，客方(2) 打 6 列避免形成四连
+    let last = null;
+    for (let i = 0; i < 4; i += 1) {
+      const a = await post(`/api/games/rooms/${rid}/action`, { action: "move", payload: { col: i } });
+      if (a.status !== 200) { ck(`四子棋第 ${i + 1} 手`, false, JSON.stringify(a.body)?.slice(0, 160)); break; }
+      last = a.data;
+      if (i < 3) {
+        const b = await call("POST", `/api/games/rooms/${rid}/action`, { action: "move", payload: { col: 6 } }, HO);
+        if (b.status !== 200) { ck(`四子棋对手第 ${i + 1} 手`, false, JSON.stringify(b.body)?.slice(0, 160)); break; }
       }
     }
+    ck("四子棋：横向四连由服务端判胜", last?.status === "finished" && Number(last?.winner_id) === Number(admin.id),
+       `status=${last?.status} winner=${last?.winner_id}`);
+    await post(`/api/games/rooms/${rid}/resign`, {});
+  } else {
+    ck("四子棋：横向四连由服务端判胜", true, "（只有一个用户，跳过）");
   }
-  if (stepOk) {
-    ck("五子连线后服务端判定胜负", won?.status === "finished" && Number(won?.winner_id) === Number(admin.id), `status=${won?.status} winner=${won?.winner_id}`);
-  }
-  const dup = await call("POST", `/api/games/rooms/${gameRoomId}/move`, { position: 0 }, HO);
-  ck("已结束的对局拒绝继续落子", dup.status !== 200, `HTTP ${dup.status}`);
-} else {
-  ck("联机对战判定（只有一个用户，跳过）", true, "");
 }
-if (gameRoomId) await post(`/api/games/rooms/${gameRoomId}/resign`, {});
+
+// 海战棋：验证布阵阶段与隐藏信息
+{
+  const r = await post("/api/games/rooms", { game_key: "battleship" });
+  const rid = r.data?.id;
+  if (rid) {
+    const before = await get(`/api/games/rooms/${rid}`);
+    ck("海战棋：初始为布阵阶段", before.data?.phase === "placing", `phase=${before.data?.phase}`);
+    const auto = await post(`/api/games/rooms/${rid}/action`, { action: "auto" });
+    ck("海战棋：随机布阵成功", auto.status === 200 && (auto.data?.placed || 0) === 5, JSON.stringify(auto.body)?.slice(0, 200));
+    // 隐藏信息：对局未开始时不该暴露对手舰位
+    const asHost = await get(`/api/games/rooms/${rid}`);
+    ck("海战棋：对手棋盘全为未知", (asHost.data?.foeBoard || []).every((v) => v === -1), JSON.stringify(asHost.data?.foeBoard)?.slice(0, 100));
+    ck("海战棋：视图不含对手舰位清单", !JSON.stringify(asHost.data || {}).includes('"cells"') || !asHost.data?.foeShips);
+    await post(`/api/games/rooms/${rid}/resign`, {});
+  }
+}
 
 /* ==================== 个人主页：公开字段边界 ==================== */
 console.log("\n个人主页");

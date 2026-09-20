@@ -50,9 +50,10 @@ async function statsOf(userId, { withUsage = false } = {}) {
     "SELECT COUNT(*) AS n FROM community_reactions WHERE user_id = ? AND kind = 'favorite' AND target_type = 'post'",
     [userId]
   );
+  // 统计联机对局数（原先是单机成绩记录数；单机游戏已下线）
   const [[{ best_game }]] = await pool.query(
-    "SELECT COUNT(*) AS best_game FROM game_records WHERE user_id = ?",
-    [userId]
+    "SELECT COUNT(*) AS best_game FROM game_rooms WHERE host_id = ? OR guest_id = ?",
+    [userId, userId]
   );
   const out = {
     posts: Number(posts.n) || 0,

@@ -1,91 +1,43 @@
-// 小游戏：单机成绩榜 + 联机对战（服务端权威判定）
-// ---------------------------------------------------------------------------
-// 设计要点：
+// 联机对战路由 —— 通用引擎派发
+// ===========================================================================
+// 这一层**不含任何游戏规则**：规则全在 services/games/*.js 里。
+// 路由只负责：房间生命周期、成员校验、把客户端操作转交引擎、广播结果。
 //
-// ① **成绩校验不能信任客户端**。单机游戏（2048/贪吃蛇）的分数是客户端报的，
-//    无法完全防伪 —— 所以加两道闸：分数上限（超过理论可能值直接拒）+ 频率限制
-//    （单位时间内能刷多少局有物理上限）。真正的防作弊需要服务端跑游戏逻辑，
-//    那对单机小游戏投入产出比太低；排行榜定位是「乐子」而非竞技排名，这点在
-//    UI 上要诚实（不宣称「公平竞技」）。
-//
-// ② **联机对战必须服务端权威**：棋盘状态存 game_rooms.state，客户端只发「落子坐标」，
-//    服务端判定合法性、胜负、轮次。否则改前端就能无限连子。
-//
-// ③ **乐观锁防并发覆盖**：落子时校验 version，两次请求同时到达只会有一次生效，
-//    另一次返回「棋盘已变化，请重试」——比行锁轻，且对局场景冲突极少。
+// 三条不变式（改动前先确认）：
+//   ① 房主恒为 side 1（先手）；客户端永远不能自己指定 side，
+//      否则可以伪造「我是先手」来抢回合；
+//   ② state 由引擎产出、原样落库，路由不解释它；
+//   ③ view() 按视角过滤（海战棋据此隐藏对手布阵）——
+//      所以**每次返回都必须带 viewer 的 side**，不能把原始 state 直接下发。
 import { Router } from "express";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, now, pageParams, idParam, safeJSONParse } from "../utils.js";
+import { ok, fail, asyncHandler, now, idParam, safeJSONParse } from "../utils.js";
 import { authRequired } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { push } from "../services/realtime.js";
+import { getGame, gameList, isOnlineGame } from "../services/games/index.js";
 
 const router = Router();
 
-// 支持的联机游戏定义。新增游戏只在这里加一条 + 前端实现渲染，
-// 服务端判定逻辑按 key 分发（见 judge 分支）。
-const GAMES = {
-  gomoku: { name: "五子棋", size: 15, needTwo: true },
-  tictactoe: { name: "井字棋", size: 3, needTwo: true },
-};
-
-// 单机游戏的理论上限：超过即拒绝（挡住「分数=99999999」这种一眼假的提交）
-const SCORE_CAP = { g2048: 1_000_000, snake: 500_000, tetris: 2_000_000 };
-const DEFAULT_CAP = 1_000_000;
-
-function gameMeta(key) {
-  const k = String(key || "").trim().slice(0, 24);
-  if (GAMES[k]) return { key: k, ...GAMES[k], online: true };
-  const cap = Object.prototype.hasOwnProperty.call(SCORE_CAP, k) ? SCORE_CAP[k] : DEFAULT_CAP;
-  return { key: k, name: k, online: false, scoreCap: cap };
+/** 玩家在房间里的阵营：房主 1、客方 2、其他人 0（观战） */
+function sideOf(row, userId) {
+  if (Number(row.host_id) === Number(userId)) return 1;
+  if (Number(row.guest_id) === Number(userId)) return 2;
+  return 0;
 }
 
-/** 五子棋胜负判定：以最后落子点为中心，四个方向数连子 */
-function gomokuWin(board, size, x, y, who) {
-  const dirs = [
-    [1, 0],
-    [0, 1],
-    [1, 1],
-    [1, -1],
-  ];
-  for (const [dx, dy] of dirs) {
-    let n = 1;
-    for (const sign of [1, -1]) {
-      for (let step = 1; step < 5; step += 1) {
-        const nx = x + dx * step * sign;
-        const ny = y + dy * step * sign;
-        if (nx < 0 || ny < 0 || nx >= size || ny >= size) break;
-        if (board[ny * size + nx] !== who) break;
-        n += 1;
-      }
-    }
-    if (n >= 5) return true;
-  }
-  return false;
-}
-
-/** 井字棋胜负：8 条线 */
-function tictactoeWin(board, who) {
-  const lines = [
-    [0, 1, 2], [3, 4, 5], [6, 7, 8],
-    [0, 3, 6], [1, 4, 7], [2, 5, 8],
-    [0, 4, 8], [2, 4, 6],
-  ];
-  return lines.some((l) => l.every((i) => board[i] === who));
-}
-
-function newBoard(gameKey) {
-  const meta = GAMES[gameKey];
-  return new Array(meta.size * meta.size).fill(0);
-}
-
-/** 对局状态 → 响应体（只暴露给对局双方与观战者） */
-function roomToResp(row, viewerId = 0) {
-  const state = safeJSONParse(row.state, null) || {};
+/** 房间 → 响应体（按 viewer 视角过滤，绝不泄露隐藏信息） */
+function roomToResp(row, viewerId = 0, baseUrlHint = "") {
+  const game = getGame(row.game_key);
+  const side = sideOf(row, viewerId);
+  const state = safeJSONParse(row.state, {}) || {};
+  const view = game?.view ? game.view(state, { side, userId: viewerId }) : { board: [] };
   return {
     id: Number(row.id),
     game_key: row.game_key,
-    game_name: GAMES[row.game_key]?.name || row.game_key,
+    game_name: game?.name || row.game_key,
+    brief: game?.brief || "",
+    meta: game?.meta ? game.meta() : {},
     status: row.status,
     host_id: Number(row.host_id) || 0,
     guest_id: Number(row.guest_id) || 0,
@@ -93,125 +45,65 @@ function roomToResp(row, viewerId = 0) {
     winner_id: Number(row.winner_id) || 0,
     version: Number(row.version) || 0,
     spectatable: Number(row.spectatable) || 0,
-    board: state.board || [],
-    size: GAMES[row.game_key]?.size || 0,
-    // 谁是先手（黑棋）：房主固定执黑，避免先手方在开局前不确定
-    my_turn: Number(row.turn_user_id) === Number(viewerId),
-    my_side: Number(row.host_id) === Number(viewerId) ? 1 : Number(row.guest_id) === Number(viewerId) ? 2 : 0,
+    my_side: side,
+    my_turn: side > 0 && Number(row.turn_user_id) === Number(viewerId),
+    // 引擎给的视图（棋盘、阶段、合法着法等）平铺到顶层，前端直接用
+    ...view,
     created_time: Number(row.created_time),
     updated_time: Number(row.updated_time) || 0,
+    url_hint: baseUrlHint,
   };
 }
 
+async function loadRoom(id) {
+  const [[row]] = await pool.query("SELECT * FROM game_rooms WHERE id = ?", [id]);
+  return row || null;
+}
+
+/** 落库 + 广播（对局双方都收到同一次更新的各自视角） */
+async function commit(row, engineResult, io = {}) {
+  const finished = Boolean(engineResult.finished);
+  const winnerSide = Number(engineResult.winnerSide) || 0;
+  const newState = engineResult.state;
+  // winner_id 落库：需要把 side 换算成具体用户（1=host，2=guest）
+  const winnerId = winnerSide === 1 ? Number(row.host_id) : winnerSide === 2 ? Number(row.guest_id) : 0;
+  const turnSide = newState.turn;
+  const turnUserId = turnSide === 1 ? Number(row.host_id) : turnSide === 2 ? Number(row.guest_id) : 0;
+
+  // 乐观锁：带上读到的 version，并发操作只生效一次
+  const [r] = await pool.query(
+    `UPDATE game_rooms SET state = ?, status = ?, turn_user_id = ?, winner_id = ?, version = version + 1, updated_time = ?
+      WHERE id = ? AND version = ?`,
+    [
+      JSON.stringify(newState),
+      finished ? "finished" : row.status,
+      finished ? 0 : turnUserId,
+      winnerId,
+      now(),
+      row.id,
+      Number(row.version) || 0,
+    ]
+  );
+  if (!r.affectedRows) return { conflict: true };
+
+  const [[fresh]] = await pool.query("SELECT * FROM game_rooms WHERE id = ?", [row.id]);
+  // 按各自视角推送：两个客户端收到的隐藏信息不同（海战棋）
+  if (Number(row.host_id)) push(Number(row.host_id), "game_move", roomToResp(fresh, Number(row.host_id)));
+  if (Number(row.guest_id)) push(Number(row.guest_id), "game_move", roomToResp(fresh, Number(row.guest_id)));
+  return { fresh, result: engineResult };
+}
+
 // ---------------------------------------------------------------------------
-// 单机成绩
+// 游戏目录
 // ---------------------------------------------------------------------------
 router.get(
   "/list",
   authRequired,
-  asyncHandler(async (req, res) => {
-    // 前端游戏大厅需要知道有哪些游戏、各自的上限与联机能力
-    const list = [
-      ...Object.entries(GAMES).map(([key, g]) => ({ key, name: g.name, online: true, size: g.size })),
-      { key: "g2048", name: "2048", online: false, scoreCap: SCORE_CAP.g2048 },
-      { key: "snake", name: "贪吃蛇", online: false, scoreCap: SCORE_CAP.snake },
-    ];
-    return ok(res, list);
-  })
-);
-
-router.post(
-  "/records",
-  rateLimit({ windowMs: 60_000, max: 20, keyPrefix: "game-record", keyFn: (r) => r.user?.id || r.ip }),
-  authRequired,
-  asyncHandler(async (req, res) => {
-    const meta = gameMeta(req.body?.game_key);
-    if (!meta.key) return fail(res, "缺少游戏标识");
-    const score = Math.floor(Number(req.body?.score) || 0);
-    const durationMs = Math.max(0, Math.floor(Number(req.body?.duration_ms) || 0));
-    if (score < 0) return fail(res, "分数不合法");
-    const cap = meta.scoreCap || DEFAULT_CAP;
-    if (score > cap) return fail(res, `分数超出该游戏上限（${cap}）`);
-    // 时长下限：一局真玩的游戏不可能 3 秒内拿到高分（挡脚本化的「瞬时刷分」）
-    if (score > 1000 && durationMs > 0 && durationMs < 3000) return fail(res, "成绩异常：用时过短");
-
-    const r = await pool.query(
-      "INSERT INTO game_records (user_id, game_key, score, duration_ms, detail, created_time) VALUES (?, ?, ?, ?, ?, ?)",
-      [req.user.id, meta.key, score, durationMs, String(req.body?.detail || "").slice(0, 255), now()]
-    );
-    const [[best]] = await pool.query("SELECT COALESCE(MAX(score),0) AS best FROM game_records WHERE user_id = ? AND game_key = ?", [
-      req.user.id,
-      meta.key,
-    ]);
-    // 本次是否刷新个人纪录：前端据此弹「新纪录」，比让前端自己比对可靠
-    return ok(res, { id: Number(r[0].insertId), best: Number(best.best) || 0, is_record: score >= (Number(best.best) || 0) }, "成绩已记录");
-  })
-);
-
-router.get(
-  "/records",
-  authRequired,
-  asyncHandler(async (req, res) => {
-    const gameKey = String(req.query.game_key || "").trim().slice(0, 24);
-    if (!gameKey) return fail(res, "缺少游戏标识");
-    const { p, size, offset } = pageParams(req.query, 20);
-    // 排行榜：每人只取最高分（否则一个人刷 100 局就霸榜）。
-    //
-    // 写法要点：用「按 user_id 取该用户最高分那一行」的自连接，
-    // 并且**取哪一行的规则必须唯一**（先按 score 再按 id 取最早那条），
-    // 否则同一用户有多个同分行时会重复出现在榜上。
-    // 注意不能写成 `... GROUP BY t.user_id` 去重：MySQL 默认开启
-    // only_full_group_by，SELECT 里出现未聚合的 duration_ms 会直接 500
-    // （线上已实测报 ER_WRONG_FIELD_WITH_GROUP）。
-    const [rows] = await pool.query(
-      `SELECT t.user_id, t.score, t.duration_ms, t.created_time,
-              u.username, u.display_name, u.avatar_media_id
-         FROM game_records t
-         JOIN users u ON u.id = t.user_id
-         JOIN (
-           SELECT user_id, MAX(score) AS best_score, MIN(id) AS best_id
-             FROM game_records WHERE game_key = ?
-            GROUP BY user_id
-         ) b ON b.user_id = t.user_id AND t.score = b.best_score
-        WHERE t.game_key = ? AND u.status = 1
-          -- 同一分数可能有多局：只保留该分数下的最早一条，保证一人一行
-          AND t.id = (
-            SELECT MIN(t2.id) FROM game_records t2
-             WHERE t2.user_id = t.user_id AND t2.game_key = t.game_key AND t2.score = t.score
-          )
-        ORDER BY t.score DESC, t.created_time ASC
-        LIMIT ? OFFSET ?`,
-      [gameKey, gameKey, size, offset]
-    );
-    const [[cnt]] = await pool.query("SELECT COUNT(DISTINCT user_id) AS n FROM game_records WHERE game_key = ?", [gameKey]);
-    const items = rows.map((r, i) => ({
-      rank: offset + i + 1,
-      user_id: Number(r.user_id),
-      username: r.username,
-      display_name: r.display_name,
-      avatar_url: Number(r.avatar_media_id) ? `/api/media/avatar/${r.user_id}?v=${r.avatar_media_id}` : "",
-      score: Number(r.score),
-      duration_ms: Number(r.duration_ms) || 0,
-      created_time: Number(r.created_time),
-      is_me: Number(r.user_id) === req.user.id,
-    }));
-    // 我的最高分（即使没进榜也要显示，否则用户看不到自己的进度）
-    const [[mine]] = await pool.query(
-      "SELECT COALESCE(MAX(score),0) AS best, COUNT(*) AS plays FROM game_records WHERE user_id = ? AND game_key = ?",
-      [req.user.id, gameKey]
-    );
-    return ok(res, {
-      items,
-      total: Number(cnt.n) || 0,
-      page: p,
-      page_size: size,
-      mine: { best: Number(mine.best) || 0, plays: Number(mine.plays) || 0 },
-    });
-  })
+  asyncHandler(async (req, res) => ok(res, gameList()))
 );
 
 // ---------------------------------------------------------------------------
-// 联机对战
+// 房间列表（可加入 / 观战）
 // ---------------------------------------------------------------------------
 router.get(
   "/rooms",
@@ -231,195 +123,135 @@ router.get(
          LEFT JOIN users h ON h.id = r.host_id
          LEFT JOIN users g ON g.id = r.guest_id
         WHERE ${where.join(" AND ")}
-        ORDER BY r.status = 'waiting' DESC, r.id DESC LIMIT 50`,
+        ORDER BY r.status = 'waiting' DESC, r.id DESC LIMIT 60`,
       args
     );
     return ok(
       res,
-      rows.map((r) => ({
-        id: Number(r.id),
-        game_key: r.game_key,
-        game_name: GAMES[r.game_key]?.name || r.game_key,
-        status: r.status,
-        host_id: Number(r.host_id) || 0,
-        host_name: r.host_display_name || r.host_name || "",
-        guest_id: Number(r.guest_id) || 0,
-        guest_name: r.guest_display_name || r.guest_name || "",
-        move_count: (safeJSONParse(r.state, {})?.board || []).filter((c) => c).length,
-        created_time: Number(r.created_time),
-        is_mine: Number(r.host_id) === req.user.id || Number(r.guest_id) === req.user.id,
-      }))
+      rows.map((r) => {
+        const game = getGame(r.game_key);
+        const state = safeJSONParse(r.state, {}) || {};
+        return {
+          id: Number(r.id),
+          game_key: r.game_key,
+          game_name: game?.name || r.game_key,
+          brief: game?.brief || "",
+          status: r.status,
+          phase: state.phase || "",
+          host_id: Number(r.host_id) || 0,
+          host_name: r.host_display_name || r.host_name || "",
+          guest_id: Number(r.guest_id) || 0,
+          guest_name: r.guest_display_name || r.guest_name || "",
+          spectatable: Number(r.spectatable) || 0,
+          created_time: Number(r.created_time),
+          is_mine: Number(r.host_id) === req.user.id || Number(r.guest_id) === req.user.id,
+        };
+      })
     );
   })
 );
 
+// ---------------------------------------------------------------------------
+// 创建房间
+// ---------------------------------------------------------------------------
 router.post(
   "/rooms",
-  rateLimit({ windowMs: 60_000, max: 10, keyPrefix: "game-room", keyFn: (r) => r.user?.id || r.ip }),
+  rateLimit({ windowMs: 60_000, max: 15, keyPrefix: "game-room", keyFn: (r) => r.user?.id || r.ip }),
   authRequired,
   asyncHandler(async (req, res) => {
-    const meta = gameMeta(req.body?.game_key);
-    if (!GAMES[meta.key]) return fail(res, "该游戏不支持联机对战");
-    // 同一用户同时只能开一个等待中的房间：否则会建出一堆空房间把大厅刷满
-    const [[exist]] = await pool.query(
-      "SELECT id FROM game_rooms WHERE host_id = ? AND status = 'waiting' LIMIT 1",
-      [req.user.id]
-    );
+    const key = String(req.body?.game_key || "").trim().slice(0, 24);
+    const game = getGame(key);
+    if (!game) return fail(res, "不支持的游戏类型");
+    // 同一用户同时只能有一个等待中的房间：否则会建一堆空房间把大厅刷满
+    const [[exist]] = await pool.query("SELECT id FROM game_rooms WHERE host_id = ? AND status = 'waiting' LIMIT 1", [req.user.id]);
     if (exist) await pool.query("UPDATE game_rooms SET status = 'abandoned' WHERE id = ?", [exist.id]);
-    const state = { board: newBoard(meta.key) };
+
+    const state = game.init();
     const r = await pool.query(
       `INSERT INTO game_rooms (game_key, status, host_id, state, turn_user_id, spectatable, version, created_time, updated_time)
        VALUES (?, 'waiting', ?, ?, ?, 1, 0, ?, ?)`,
-      [meta.key, req.user.id, JSON.stringify(state), req.user.id, now(), now()]
+      [key, req.user.id, JSON.stringify(state), req.user.id, now(), now()]
     );
     const roomId = Number(r[0].insertId);
-    return ok(res, { id: roomId }, "房间已创建，等待对手加入");
+    const [[row]] = await pool.query("SELECT * FROM game_rooms WHERE id = ?", [roomId]);
+    return ok(res, roomToResp(row, req.user.id), "房间已创建，等待对手加入");
   })
 );
 
+// ---------------------------------------------------------------------------
+// 房间详情
+// ---------------------------------------------------------------------------
 router.get(
   "/rooms/:id",
   authRequired,
   asyncHandler(async (req, res) => {
     const id = idParam(req);
     if (!id) return fail(res, "房间不存在", 404);
-    const [[row]] = await pool.query("SELECT * FROM game_rooms WHERE id = ?", [id]);
+    const row = await loadRoom(id);
     if (!row) return fail(res, "房间不存在", 404);
-    const involved = Number(row.host_id) === req.user.id || Number(row.guest_id) === req.user.id;
-    // 非对局方：只有观战开启时能看（观战是社交乐趣，但要让房主能关掉）
-    if (!involved && !Number(row.spectatable)) return fail(res, "该对局不允许观战", 403);
+    const side = sideOf(row, req.user.id);
+    // 非对局方：只有允许观战时能看（且对隐藏信息游戏，观战视角等同对手视角，看不到布阵）
+    if (!side && !Number(row.spectatable)) return fail(res, "该对局不允许观战", 403);
     return ok(res, roomToResp(row, req.user.id));
   })
 );
 
-// 加入房间
+// ---------------------------------------------------------------------------
+// 加入 / 认输 / 离开
+// ---------------------------------------------------------------------------
 router.post(
   "/rooms/:id/join",
   authRequired,
   asyncHandler(async (req, res) => {
     const id = idParam(req);
     if (!id) return fail(res, "房间不存在", 404);
-    // 条件更新 + affectedRows 判断：两个人同时点「加入」只有一个能成功
+    // 条件更新 + affectedRows：两人同时点「加入」只有一个能成功
     const [r] = await pool.query(
       "UPDATE game_rooms SET guest_id = ?, status = 'playing', updated_time = ? WHERE id = ? AND status = 'waiting' AND host_id <> ?",
       [req.user.id, now(), id, req.user.id]
     );
     if (!r.affectedRows) {
-      const [[row]] = await pool.query("SELECT * FROM game_rooms WHERE id = ?", [id]);
+      const row = await loadRoom(id);
       if (!row) return fail(res, "房间不存在", 404);
       if (Number(row.host_id) === req.user.id) return fail(res, "不能加入自己创建的房间");
       return fail(res, "房间已开始对局或被占满", 409);
     }
-    const [[row]] = await pool.query("SELECT * FROM game_rooms WHERE id = ?", [id]);
-    // 通知房主：对手到了，前端据此立刻切到对局界面
-    push(row.host_id, "game_joined", { room_id: id, guest_id: req.user.id });
+    const row = await loadRoom(id);
+    // 通知房主：对手到了（各自视角）
+    push(Number(row.host_id), "game_joined", roomToResp(row, Number(row.host_id)));
     return ok(res, roomToResp(row, req.user.id), "已加入对局");
   })
 );
 
-// 落子（服务端权威判定）
-router.post(
-  "/rooms/:id/move",
-  rateLimit({ windowMs: 60_000, max: 120, keyPrefix: "game-move", keyFn: (r) => r.user?.id || r.ip }),
-  authRequired,
-  asyncHandler(async (req, res) => {
-    const id = idParam(req);
-    if (!id) return fail(res, "房间不存在", 404);
-    const [[row]] = await pool.query("SELECT * FROM game_rooms WHERE id = ?", [id]);
-    if (!row) return fail(res, "房间不存在", 404);
-    const meta = GAMES[row.game_key];
-    if (!meta) return fail(res, "该游戏不支持对战");
-    const me = req.user.id;
-    const isHost = Number(row.host_id) === me;
-    const isGuest = Number(row.guest_id) === me;
-    if (!isHost && !isGuest) return fail(res, "你不是对局方", 403);
-    if (row.status !== "playing") return fail(res, "对局未开始或已结束");
-    if (Number(row.turn_user_id) !== me) return fail(res, "还没轮到你落子");
-
-    const pos = Math.floor(Number(req.body?.position));
-    const state = safeJSONParse(row.state, null) || { board: newBoard(row.game_key) };
-    const board = Array.isArray(state.board) ? state.board : newBoard(row.game_key);
-    if (!Number.isInteger(pos) || pos < 0 || pos >= board.length) return fail(res, "落子位置不合法");
-    if (board[pos]) return fail(res, "该位置已有棋子");
-
-    const mySide = isHost ? 1 : 2;
-    const next = board.slice();
-    next[pos] = mySide;
-    const size = meta.size;
-    const x = pos % size;
-    const y = Math.floor(pos / size);
-
-    let winner = 0;
-    let finished = false;
-    if (row.game_key === "gomoku" && gomokuWin(next, size, x, y, mySide)) {
-      winner = me;
-      finished = true;
-    } else if (row.game_key === "tictactoe" && tictactoeWin(next, mySide)) {
-      winner = me;
-      finished = true;
-    } else if (next.every((c) => c !== 0)) {
-      // 棋盘满了且无人获胜：平局（winner 保持 0，status=finished 由前端显示「平局」）
-      finished = true;
-    }
-
-    // 乐观锁：带上读到的 version，并发落子时只有一个能生效
-    const [r] = await pool.query(
-      `UPDATE game_rooms SET state = ?, turn_user_id = ?, status = ?, winner_id = ?, version = version + 1, updated_time = ?
-        WHERE id = ? AND version = ?`,
-      [
-        JSON.stringify({ board: next }),
-        finished ? 0 : isHost ? Number(row.guest_id) : Number(row.host_id),
-        finished ? "finished" : "playing",
-        winner,
-        now(),
-        id,
-        Number(row.version) || 0,
-      ]
-    );
-    if (!r.affectedRows) return fail(res, "棋盘已变化，请刷新后重试", 409);
-
-    const [[fresh]] = await pool.query("SELECT * FROM game_rooms WHERE id = ?", [id]);
-    const payload = roomToResp(fresh, 0);
-    // 同时通知双方与观战者（观战者靠轮询 /rooms/:id，这里只推对局方）
-    push(Number(row.host_id), "game_move", payload);
-    if (Number(row.guest_id)) push(Number(row.guest_id), "game_move", payload);
-    return ok(res, roomToResp(fresh, me), finished ? (winner ? "获胜！" : "平局") : "已落子");
-  })
-);
-
-// 认输 / 离开
 router.post(
   "/rooms/:id/resign",
   authRequired,
   asyncHandler(async (req, res) => {
     const id = idParam(req);
     if (!id) return fail(res, "房间不存在", 404);
-    const [[row]] = await pool.query("SELECT * FROM game_rooms WHERE id = ?", [id]);
+    const row = await loadRoom(id);
     if (!row) return fail(res, "房间不存在", 404);
-    const me = req.user.id;
-    const isHost = Number(row.host_id) === me;
-    const isGuest = Number(row.guest_id) === me;
-    if (!isHost && !isGuest) return fail(res, "你不是对局方", 403);
+    const side = sideOf(row, req.user.id);
+    if (!side) return fail(res, "你不是对局方", 403);
     if (row.status === "finished") return ok(res, null, "对局已结束");
-    // 等待中退出 = 废弃房间；对局中退出 = 对手获胜
-    const opponent = isHost ? Number(row.guest_id) : Number(row.host_id);
     if (row.status === "waiting") {
       await pool.query("UPDATE game_rooms SET status = 'abandoned', updated_time = ? WHERE id = ?", [now(), id]);
       return ok(res, null, "已取消房间");
     }
+    const opponentId = side === 1 ? Number(row.guest_id) : Number(row.host_id);
     const [r] = await pool.query(
       "UPDATE game_rooms SET status = 'finished', winner_id = ?, turn_user_id = 0, version = version + 1, updated_time = ? WHERE id = ? AND status = 'playing'",
-      [opponent || 0, now(), id]
+      [opponentId || 0, now(), id]
     );
-    if (r.affectedRows && opponent) {
-      const [[fresh]] = await pool.query("SELECT * FROM game_rooms WHERE id = ?", [id]);
-      push(opponent, "game_move", roomToResp(fresh, 0));
+    if (r.affectedRows && opponentId) {
+      const fresh = await loadRoom(id);
+      push(opponentId, "game_move", roomToResp(fresh, opponentId));
     }
     return ok(res, null, "已认输");
   })
 );
 
-// 进行中的对局（前端「继续对局」入口）
+// 我参与的对局（前端「继续对局」入口）
 router.get(
   "/my-rooms",
   authRequired,
@@ -439,15 +271,95 @@ router.get(
       rows.map((r) => ({
         id: Number(r.id),
         game_key: r.game_key,
-        game_name: GAMES[r.game_key]?.name || r.game_key,
+        game_name: getGame(r.game_key)?.name || r.game_key,
         status: r.status,
-        opponent: Number(r.host_id) === req.user.id
-          ? { id: Number(r.guest_id) || 0, name: r.guest_display_name || r.guest_name || "" }
-          : { id: Number(r.host_id) || 0, name: r.host_display_name || r.host_name || "" },
+        opponent:
+          Number(r.host_id) === req.user.id
+            ? { id: Number(r.guest_id) || 0, name: r.guest_display_name || r.guest_name || "" }
+            : { id: Number(r.host_id) || 0, name: r.host_display_name || r.host_name || "" },
         my_turn: Number(r.turn_user_id) === req.user.id,
         updated_time: Number(r.updated_time) || Number(r.created_time),
       }))
     );
+  })
+);
+
+// ---------------------------------------------------------------------------
+// 统一动作入口
+// ---------------------------------------------------------------------------
+// 把「落子 / 摆放 / 准备 / 随机布阵」都收在一个端点上：
+// 每个游戏的阶段动作集不同（海战棋有 place/ready/auto，其他只有 move），
+// 用 /action 分派比给每个游戏开一套路由清晰得多，限流也只需挂一处。
+const ENGINE_ACTIONS = {
+  move: (game, state, ctx) => game.move(state, ctx),
+  place: (game, state, ctx) => (game.place ? game.place(state, ctx) : { error: "该游戏不支持布阵" }),
+  ready: (game, state, ctx) => (game.ready ? game.ready(state, ctx) : { error: "该游戏不支持准备操作" }),
+  auto: (game, state, ctx) =>
+    game.auto ? game.auto(state, { side: ctx.side, userId: ctx.userId }) : { error: "该游戏不支持随机布置" },
+};
+
+router.post(
+  "/rooms/:id/action",
+  rateLimit({ windowMs: 60_000, max: 180, keyPrefix: "game-action", keyFn: (r) => r.user?.id || r.ip }),
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const id = idParam(req);
+    if (!id) return fail(res, "房间不存在", 404);
+    const action = String(req.body?.action || "move");
+    if (!ENGINE_ACTIONS[action]) return fail(res, "未知操作");
+    const game = getGame(req.body?.game_key) || null;
+
+    const row = await loadRoom(id);
+    if (!row) return fail(res, "房间不存在", 404);
+    const engine = getGame(row.game_key);
+    if (!engine) return fail(res, "该房间的游戏已下线", 410);
+    // game_key 传了就必须一致：防止「在 A 游戏的房间里用 B 游戏规则落子」
+    if (game && game.key !== engine.key) return fail(res, "游戏类型不匹配");
+
+    const side = sideOf(row, req.user.id);
+    if (!side) return fail(res, "你不是对局方", 403);
+    if (row.status === "waiting") return fail(res, "还在等待对手加入");
+    if (row.status === "finished") return fail(res, "对局已结束");
+
+    const state = safeJSONParse(row.state, null);
+    if (!state) return fail(res, "对局状态异常，请重新开局", 500);
+
+    const out = ENGINE_ACTIONS[action](engine, state, { side, payload: req.body?.payload || req.body, userId: req.user.id });
+    if (out?.error) return fail(res, out.error);
+
+    const { conflict, fresh, result } = await commit(row, out);
+    if (conflict) {
+      // 乐观锁冲突：让客户端刷新（极少数并发场景）
+      const latest = await loadRoom(id);
+      return fail(res, "对局状态已变化，请重试", 409, roomToResp(latest, req.user.id));
+    }
+    return ok(res, roomToResp(fresh, req.user.id), result.note || "已执行");
+  })
+);
+
+// 兼容旧端点：POST /rooms/:id/move（前端历史的落子调用）
+router.post(
+  "/rooms/:id/move",
+  rateLimit({ windowMs: 60_000, max: 180, keyPrefix: "game-action", keyFn: (r) => r.user?.id || r.ip }),
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const id = idParam(req);
+    if (!id) return fail(res, "房间不存在", 404);
+    const row = await loadRoom(id);
+    if (!row) return fail(res, "房间不存在", 404);
+    const engine = getGame(row.game_key);
+    if (!engine) return fail(res, "该房间的游戏已下线", 410);
+    const side = sideOf(row, req.user.id);
+    if (!side) return fail(res, "你不是对局方", 403);
+    if (row.status !== "playing") return fail(res, "对局未开始或已结束");
+
+    const state = safeJSONParse(row.state, null);
+    if (!state) return fail(res, "对局状态异常", 500);
+    const out = engine.move(state, { side, payload: req.body, userId: req.user.id });
+    if (out?.error) return fail(res, out.error);
+    const { conflict, fresh, result } = await commit(row, out);
+    if (conflict) return fail(res, "对局状态已变化，请重试", 409);
+    return ok(res, roomToResp(fresh, req.user.id), result.note || "已落子");
   })
 );
 

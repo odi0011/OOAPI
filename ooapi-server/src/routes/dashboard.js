@@ -303,8 +303,8 @@ router.get(
          (SELECT COUNT(*) FROM community_follows WHERE follower_id = ?) AS following,
          (SELECT COUNT(*) FROM community_follows WHERE followee_id = ?) AS followers,
          (SELECT COUNT(*) FROM chat_room_members WHERE user_id = ?) AS rooms,
-         (SELECT COUNT(*) FROM game_records WHERE user_id = ?) AS game_plays`,
-      [uid, uid, uid, uid, uid, uid, uid]
+         (SELECT COUNT(*) FROM game_rooms WHERE host_id = ? OR guest_id = ?) AS game_plays`,
+      [uid, uid, uid, uid, uid, uid, uid, uid]
     );
     const out = {
       range: { key, days },
@@ -327,7 +327,7 @@ router.get(
            (SELECT COUNT(*) FROM users WHERE status = 1) AS users,
            (SELECT COUNT(*) FROM chat_rooms WHERE status = 1) AS rooms,
            (SELECT COUNT(*) FROM chat_room_messages WHERE status = 1 AND created_time >= ?) AS messages_new,
-           (SELECT COUNT(*) FROM game_records WHERE created_time >= ?) AS game_plays_new`,
+           (SELECT COUNT(*) FROM game_rooms WHERE created_time >= ?) AS game_plays_new`,
         [since, since, since]
       );
       // 待处理内容：隐藏帖与举报（举报功能未做，这里只列隐藏/删除留痕）
