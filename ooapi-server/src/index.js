@@ -22,6 +22,11 @@ import pricingRoutes from "./routes/pricing.js";
 import updateRoutes from "./routes/update.js";
 import monitorRoutes from "./routes/monitor.js";
 import mediaRoutes from "./routes/media.js";
+import communityRoutes from "./routes/community.js"; // 社区大厅
+import chatroomRoutes from "./routes/chatroom.js"; // 实时聊天（SSE）
+import gamesRoutes from "./routes/games.js"; // 小游戏
+import profileRoutes from "./routes/profile.js"; // 个人主页（含匿名可达）
+import dashboardRoutes from "./routes/dashboard.js"; // 数据看板（个人 + 管理端）
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -39,10 +44,11 @@ app.use(cors(corsOrigin ? { origin: corsOrigin.split(",").map((s) => s.trim()).f
 // 之前这两条路径的 1MB 全局中间件先生效，导致大图请求 413/500。
 const jsonSmall = express.json({ limit: "1mb" });
 app.use(
-  ["/api/user", "/api/users", "/api/token", "/api/log", "/api/option", "/api/channel", "/api/pricing", "/api/update", "/api/monitor"],
+  ["/api/user", "/api/users", "/api/token", "/api/log", "/api/option", "/api/channel", "/api/pricing", "/api/update", "/api/monitor", "/api/community", "/api/chatroom", "/api/games", "/api/dashboard"],
   jsonSmall
 );
 // 注意：/api/media 不在此列表 —— 它自己用 32MB 解析 + 先鉴权（见 routes/media.js）
+// /api/profile 也不在：它是匿名可达的（公开个人主页），统一 1MB 足够，单独挂更清楚
 
 app.get("/api/status", (req, res) => ok(res, publicStatus()));
 app.get("/health", (req, res) => res.send("ok"));
@@ -58,6 +64,11 @@ app.use("/api/pricing", pricingRoutes); // 管理端：模型定价
 app.use("/api/update", updateRoutes); // 管理端：从 GitHub 拉取最新代码在线更新
 app.use("/api/monitor", monitorRoutes); // 管理端：运维监控（系统资源 + 网关运行时）
 app.use("/api/media", mediaRoutes); // 媒体库：统一文件存储（头像/对话/社区共用）
+app.use("/api/community", communityRoutes); // 社区大厅：话题/帖子/评论/点赞收藏/关注
+app.use("/api/chatroom", chatroomRoutes); // 实时聊天：单聊/群聊/讨论组（SSE 长连接）
+app.use("/api/games", gamesRoutes); // 小游戏：成绩榜 + 联机对战（服务端权威判定）
+app.use("/api/profile", profileRoutes); // 个人主页（匿名可达，只出公开字段）
+app.use("/api/dashboard", dashboardRoutes); // 数据看板：个人维度 + 管理端维度
 app.use("/v1", gatewayRoutes); // 对外网关：OpenAI 兼容
 
 // 静态资源：logo 与前端构建产物（index.js 位于 src/，web 与 public 在包根目录）
@@ -235,6 +246,14 @@ async function bootstrap() {
     scheduleMediaCleanup(runGc);
   } catch (e) {
     console.error("[init] 媒体库初始化失败：", e.message);
+  }
+
+  // 实时推送（聊天/对战）心跳：反代会掐掉 60s 无数据的连接，注释帧保活
+  try {
+    const { startHeartbeat } = await import("./services/realtime.js");
+    startHeartbeat(15000);
+  } catch (e) {
+    console.error("[init] 实时推送心跳启动失败：", e.message);
   }
 
   // 退出：先停接收新连接排空在途请求（分钟级上游/日志写入不能被硬截断），

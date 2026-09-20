@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { pool } from "../db.js";
 import { ok, asyncHandler, pageParams, safeInt } from "../utils.js";
-import { authRequired, adminRequired } from "../middleware/auth.js";
+import { authRequired, adminRequired, superRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE, LOG_TYPE_LABEL } from "../services/log.js";
 
 const router = Router();
@@ -345,6 +345,43 @@ router.get(
         GROUP BY model ORDER BY units DESC LIMIT 20`,
       args
     );
+    // 按模型 × 按天：多折线图用。只取消费 Top 5 的模型（线太多会糊成一团）。
+    // 先取榜，再按榜取序列 —— 一次 IN 查询，不做 N+1。
+    const topModels = models.slice(0, 5).map((m) => m.model);
+    let modelSeries = [];
+    if (topModels.length) {
+      const [seriesRows] = await pool.query(
+        `SELECT model, FLOOR(created_at/86400)*86400 AS day_ts,
+                COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units,
+                COALESCE(SUM(prompt_tokens + completion_tokens),0) AS tokens
+           FROM logs ${where} AND model IN (${topModels.map(() => "?").join(",")})
+          GROUP BY model, day_ts ORDER BY day_ts ASC`,
+        [...args, ...topModels]
+      );
+      modelSeries = topModels.map((model) => ({
+        model,
+        points: seriesRows
+          .filter((r) => r.model === model)
+          .map((r) => ({
+            day: new Date(Number(r.day_ts) * 1000).toISOString().slice(0, 10),
+            calls: Number(r.calls) || 0,
+            units: Number(r.units) || 0,
+            tokens: Number(r.tokens) || 0,
+          })),
+      }));
+    }
+
+    // 按小时（0-23）× 星期（0-6）：热点图用。
+    // 为什么要这个：看板要回答「我什么时候在用 / 全站高峰在几点」，
+    // 单看每日趋势看不出作息与峰谷。
+    const [hourly] = await pool.query(
+      `SELECT HOUR(FROM_UNIXTIME(created_at)) AS hour,
+              WEEKDAY(FROM_UNIXTIME(created_at)) AS weekday,
+              COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
+         FROM logs ${where} GROUP BY hour, weekday`,
+      args
+    );
+
     return ok(res, {
       byDay: days.map((d) => ({
         day: new Date(Number(d.day_ts) * 1000).toISOString().slice(0, 10),
@@ -363,6 +400,14 @@ router.get(
         cacheTokens: Number(m.cache_tokens) || 0,
         avgElapsed: Math.round(Number(m.avg_elapsed) || 0),
       })),
+      modelSeries,
+      // 补齐成 7×24 的矩阵，缺的格子填 0（前端热力图要完整网格，缺格会错位）
+      hourly: Array.from({ length: 7 }, (_, wd) =>
+        Array.from({ length: 24 }, (_, h) => {
+          const hit = hourly.find((x) => Number(x.hour) === h && Number(x.weekday) === wd);
+          return { hour: h, weekday: wd, calls: Number(hit?.calls) || 0, units: Number(hit?.units) || 0 };
+        })
+      ),
     });
   })
 );
@@ -370,7 +415,9 @@ router.get(
 // 管理：清空日志（同时清掉使用记录与操作日志）
 router.delete(
   "/",
-  adminRequired,
+  // 超管专属：日志是事后审计的唯一依据，清掉就再也无法追溯（不可逆）。
+  // 日常运营账号不应有这个能力 —— 一次误点等于抹掉全部历史。
+  superRequired,
   asyncHandler(async (req, res) => {
     await pool.query("DELETE FROM logs");
     // 传 req：清库是高危操作，自身必须留 IP/设备痕迹（否则日志被清后查不到是谁清的）

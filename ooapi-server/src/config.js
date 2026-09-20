@@ -135,7 +135,29 @@ export const DEFAULT_OPTIONS = {
   // 设置了却不生效的配置项比没有更糟（管理员会以为已经开了）。
   // 实现后再连同 DEFAULT_OPTIONS、option.js 数值白名单、AdminSettingsPage 一起加。
 
-  // ---------- 媒体库 ----------
+  // ---------- 外观（全站默认；用户可在个人设置里覆盖成自己的偏好）----------
+  // background 刻意只给 4 个受控预设，不做图片上传、不做全色域调色盘：
+  // 自由壁纸必然毁掉文字可读性，而底纹的透明度也锁死在 0.03~0.06（见 styles.css）。
+  theme_background: "pure", // pure | blueprint | dots | grain
+  theme_radius: "default", // sharp | default | round
+  theme_density: "compact", // compact | default | loose
+  theme_font_size: "13", // 13 | 14 | 15（正文基准 px；13 是既有观感，改默认会全站变样）
+  theme_accent: "", // 留空 = 用主题内置主色；否则是 oklch/hsl 色值
+  // 用户能否自行改外观（关闭后所有人固定用站点默认）
+  theme_user_custom: "true",
+
+  // ---------- 站点设定（参考 newapi；均为公开展示项，前端经 /api/status 读取）----------
+  site_name: "", // 留空 = 用 system_name
+  site_logo: "", // 留空 = 用默认 logo.jpg
+  site_favicon: "",
+  site_footer: "",
+  site_about: "",
+  site_announcement: "", // 全站顶部公告（留空不显示）
+  site_announcement_level: "info", // info | warning | error
+  site_announcement_enabled: "false",
+  site_register_enabled: "false", // 是否开放注册（新装默认关闭，防被刷号）
+  site_default_quota: "0", // 新用户初始额度（额度单位）
+  // 媒体库 ----------
   // 消费方见 services/media.js（每个键都有实际读取处，不留空配置）：
   media_enabled: "true",        // 总开关 → mediaEnabled()，关闭后拒绝上传
   media_max_file_mb: "10",      // 单文件上限 → maxFileBytes()
@@ -164,6 +186,25 @@ export const DEFAULT_OPTIONS = {
 
 // 敏感设置项：GET /api/option 一律掩码，PUT 收到掩码值时跳过不写
 export const SECRET_OPTIONS = new Set(["smtp_pass", "alert_webhook_secret"]);
+
+/**
+ * 超管专属设置项：**基础设施与凭据**类，管理员改不了（只读展示 + 无法保存）。
+ *
+ * 分层理由：管理员负责日常运营（定价、用户、渠道、注册开关、外观），
+ * 而下面这些配错会影响**整站可用性或安全性**：
+ *   · SMTP 是邮件通道，填错会让所有验证码/通知静默失败；
+ *   · 告警 Webhook 与加签密钥是外发通道，误配等于对外泄露运维信息；
+ *   · 备份与数据目录涉及磁盘与数据安全；
+ *   · 网关超时/重试次数影响全站请求行为（调小会让所有长回答中途失败）。
+ * 这些不该由日常运营账号承担风险，需要超管显式操作。
+ */
+export const SUPER_OPTIONS = new Set([
+  "smtp_enabled", "smtp_host", "smtp_port", "smtp_user", "smtp_pass", "smtp_from", "smtp_from_name",
+  "smtp_ssl", "smtp_starttls", "smtp_insecure",
+  "alert_webhook_url", "alert_webhook_secret", "alert_email_to",
+  "request_timeout_ms", "retry_times", "gateway_ping_interval",
+  "backup_enabled", "backup_interval_hours", "backup_keep", "backup_dir",
+]);
 
 const cache = new Map();
 

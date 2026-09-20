@@ -142,8 +142,11 @@ router.put(
     if (role !== undefined) {
       // 不能改自己的角色：唯一管理员把自己降级后会永久失去后台入口（无 API 恢复路径）
       if (id === req.user.id) return fail(res, "不能修改自己的角色");
-      // 角色上限 100（超级管理员），避免管理员把用户设成未定义的更高权限
-      const r = Math.min(100, Math.max(1, Math.floor(Number(role)) || 1));
+      // 任免管理员是「不可逆的权限变更」，只有超管能做：
+      // 否则一个普通管理员可以把同伙提成管理员、或把别的管理员降级（横向夺权）。
+      if (req.user.role < 1000) return fail(res, "只有超级管理员可以变更用户角色", 403);
+      // 角色分三层：1=普通用户 100=管理员 1000=超管
+      const r = Math.min(1000, Math.max(1, Math.floor(Number(role)) || 1));
       if (user.role >= 100 && r < 100) {
         const [[{ admins }]] = await pool.query(
           "SELECT COUNT(*) AS admins FROM users WHERE role >= 100 AND status = 1 AND id <> ?",
@@ -151,17 +154,35 @@ router.put(
         );
         if (!admins) return fail(res, "必须至少保留一个启用的管理员");
       }
+      // 超管数量同样要保底：降级最后一个超管会让系统配置再也改不了（无恢复路径）
+      if (user.role >= 1000 && r < 1000) {
+        const [[{ supers }]] = await pool.query(
+          "SELECT COUNT(*) AS supers FROM users WHERE role >= 1000 AND status = 1 AND id <> ?",
+          [id]
+        );
+        if (!supers) return fail(res, "必须至少保留一个启用的超级管理员");
+      }
       await pool.query("UPDATE users SET role = ? WHERE id = ?", [r, id]);
     }
     if (status !== undefined) {
       const s = Number(status) === 2 ? 2 : 1;
       if (s === 2 && user.role >= 100) {
         if (id === req.user.id) return fail(res, "不能禁用自己的账号");
+        // 停用管理员账号只允许超管操作：管理员之间不应能互相停用
+        if (req.user.role < 1000) return fail(res, "只有超级管理员可以停用管理员账号", 403);
         const [[{ admins }]] = await pool.query(
           "SELECT COUNT(*) AS admins FROM users WHERE role >= 100 AND status = 1 AND id <> ?",
           [id]
         );
         if (!admins) return fail(res, "必须至少保留一个启用的管理员");
+        // 超管账号也不能被停用（否则夺权后系统锁死）
+        if (user.role >= 1000) {
+          const [[{ supers }]] = await pool.query(
+            "SELECT COUNT(*) AS supers FROM users WHERE role >= 1000 AND status = 1 AND id <> ?",
+            [id]
+          );
+          if (!supers) return fail(res, "必须至少保留一个启用的超级管理员");
+        }
       }
       await pool.query("UPDATE users SET status = ? WHERE id = ?", [s, id]);
     }

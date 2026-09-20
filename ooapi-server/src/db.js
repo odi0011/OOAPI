@@ -358,6 +358,175 @@ const TABLES = [
     created_time BIGINT NOT NULL DEFAULT 0,
     INDEX idx_alert_notify_time (created_time)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // ---------------------------------------------------------------------------
+  // 社区：话题 / 帖子 / 评论 / 互动（点赞收藏）/ 关注
+  // ---------------------------------------------------------------------------
+  // 话题：发帖必须归入一个话题（不做「无话题」的散帖 —— 社区没有分类会很快变成
+  // 信息垃圾场，检索与治理都无从下手）。
+  `CREATE TABLE IF NOT EXISTS community_topics (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(40) NOT NULL UNIQUE,
+    description VARCHAR(160) NOT NULL DEFAULT '',
+    icon VARCHAR(16) NOT NULL DEFAULT '' COMMENT 'emoji 或图标名',
+    post_count INT NOT NULL DEFAULT 0 COMMENT '冗余计数：列表页按热度排序不查子表',
+    sort INT NOT NULL DEFAULT 0 COMMENT '越大越靠前',
+    status TINYINT NOT NULL DEFAULT 1 COMMENT '1=正常 2=停用（停用后不再接受新帖，历史帖仍可读）',
+    created_time BIGINT NOT NULL DEFAULT 0,
+    INDEX idx_topic_sort (status, sort, id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  `CREATE TABLE IF NOT EXISTS community_posts (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    topic_id INT NOT NULL DEFAULT 0,
+    title VARCHAR(120) NOT NULL DEFAULT '',
+    content MEDIUMTEXT NOT NULL,
+    media_ids TEXT COMMENT '附件 media.id 列表（JSON 数组），字节在媒体库',
+    like_count INT NOT NULL DEFAULT 0,
+    comment_count INT NOT NULL DEFAULT 0,
+    favorite_count INT NOT NULL DEFAULT 0,
+    view_count INT NOT NULL DEFAULT 0,
+    is_pinned TINYINT NOT NULL DEFAULT 0 COMMENT '置顶（管理员）',
+    status TINYINT NOT NULL DEFAULT 1 COMMENT '1=正常 2=已删 3=隐藏（管理员）',
+    -- 治理留痕：谁删的、为什么。社区内容被删必须能回答「谁删的」
+    deleted_by INT NOT NULL DEFAULT 0,
+    deleted_time BIGINT NOT NULL DEFAULT 0,
+    created_time BIGINT NOT NULL DEFAULT 0,
+    updated_time BIGINT NOT NULL DEFAULT 0,
+    KEY idx_post_list (status, is_pinned, id),
+    KEY idx_post_topic (topic_id, status, id),
+    KEY idx_post_user (user_id, status, id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  `CREATE TABLE IF NOT EXISTS community_comments (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    post_id BIGINT NOT NULL,
+    user_id INT NOT NULL,
+    parent_id BIGINT NOT NULL DEFAULT 0 COMMENT '一级评论 id（0=直接评论帖子）。刻意不做无限级：见下方说明',
+    reply_to_user_id INT NOT NULL DEFAULT 0 COMMENT '被回复者（扁平化后靠 @ 标明上下文）',
+    content TEXT NOT NULL,
+    like_count INT NOT NULL DEFAULT 0,
+    status TINYINT NOT NULL DEFAULT 1 COMMENT '1=正常 2=已删 3=隐藏',
+    deleted_by INT NOT NULL DEFAULT 0,
+    created_time BIGINT NOT NULL DEFAULT 0,
+    KEY idx_comment_post (post_id, status, id),
+    KEY idx_comment_user (user_id, status, id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  // 评论只允许两层：parent_id 永远指向一级评论。
+  // 无限级递归在窄屏会把文字压成细条（每层缩进吃掉宽度），
+  // 而开发者习惯引用回复，实际很容易到 4-5 层。做法是「回复二级评论时挂到它的一级父节点，
+  // 用 reply_to_user_id 标明@谁」，缩进恒为 1 级。
+
+  // 互动：点赞与收藏合成一张表（kind 区分）。
+  // 唯一键保证「同一人同一目标同一动作」只有一条 —— 并发双击也不会重复计数。
+  `CREATE TABLE IF NOT EXISTS community_reactions (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    target_type VARCHAR(16) NOT NULL COMMENT 'post/comment',
+    target_id BIGINT NOT NULL,
+    kind VARCHAR(16) NOT NULL COMMENT 'like/favorite',
+    created_time BIGINT NOT NULL DEFAULT 0,
+    UNIQUE KEY uniq_reaction (user_id, target_type, target_id, kind),
+    KEY idx_reaction_target (target_type, target_id, kind)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  `CREATE TABLE IF NOT EXISTS community_follows (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    follower_id INT NOT NULL COMMENT '关注者',
+    followee_id INT NOT NULL COMMENT '被关注者',
+    created_time BIGINT NOT NULL DEFAULT 0,
+    UNIQUE KEY uniq_follow (follower_id, followee_id),
+    KEY idx_followee (followee_id, id),
+    KEY idx_follower (follower_id, id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // ---------------------------------------------------------------------------
+  // 实时聊天：房间 / 成员 / 消息
+  // ---------------------------------------------------------------------------
+  // 三种房间共用一个表：type 区分 single（单聊）/ group（群聊）/ discussion（讨论组）。
+  // 单聊也建成房间而不是「一对用户的消息表」—— 否则拉会话列表要 union 两种结构，
+  // 且「从单聊升级成群聊」得搬数据。
+  `CREATE TABLE IF NOT EXISTS chat_rooms (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    type VARCHAR(16) NOT NULL DEFAULT 'group' COMMENT 'single/group/discussion',
+    name VARCHAR(64) NOT NULL DEFAULT '',
+    owner_id INT NOT NULL DEFAULT 0,
+    avatar_media_id BIGINT NOT NULL DEFAULT 0,
+    member_count INT NOT NULL DEFAULT 0,
+    -- 冗余最后一条消息：会话列表要按活跃度排序，不能对每个房间查一次消息表
+    last_message_id BIGINT NOT NULL DEFAULT 0,
+    last_message_text VARCHAR(120) NOT NULL DEFAULT '',
+    last_message_time BIGINT NOT NULL DEFAULT 0,
+    status TINYINT NOT NULL DEFAULT 1 COMMENT '1=正常 2=已解散',
+    created_time BIGINT NOT NULL DEFAULT 0,
+    KEY idx_room_active (status, last_message_time),
+    KEY idx_room_owner (owner_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  `CREATE TABLE IF NOT EXISTS chat_room_members (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    room_id BIGINT NOT NULL,
+    user_id INT NOT NULL,
+    role VARCHAR(16) NOT NULL DEFAULT 'member' COMMENT 'owner/admin/member',
+    last_read_id BIGINT NOT NULL DEFAULT 0 COMMENT '已读到哪条消息（未读数据此算）',
+    muted TINYINT NOT NULL DEFAULT 0 COMMENT '免打扰',
+    joined_time BIGINT NOT NULL DEFAULT 0,
+    UNIQUE KEY uniq_room_member (room_id, user_id),
+    KEY idx_member_user (user_id, room_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  `CREATE TABLE IF NOT EXISTS chat_room_messages (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    room_id BIGINT NOT NULL,
+    user_id INT NOT NULL,
+    type VARCHAR(16) NOT NULL DEFAULT 'text' COMMENT 'text/image/system',
+    content TEXT,
+    media_ids TEXT COMMENT '图片 media.id 列表（JSON 数组）',
+    -- 客户端临时 id：发送方生成，服务端原样回显。
+    -- 用途是「乐观队列」—— 消息先本地显示为「发送中」，SSE 广播回来匹配到这个 id
+    -- 才置为已发送。没有它就无法区分「我发的这条」与「别人发的」，弱网下会重复插入。
+    client_id VARCHAR(40) NOT NULL DEFAULT '',
+    created_time BIGINT NOT NULL DEFAULT 0,
+    status TINYINT NOT NULL DEFAULT 1 COMMENT '1=正常 2=已撤回/删除',
+    -- 增量拉取靠 (room_id, id)：客户端带 since_id 只取新消息
+    KEY idx_room_msg (room_id, id),
+    KEY idx_msg_user (user_id, id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // ---------------------------------------------------------------------------
+  // 小游戏：单机成绩榜 / 联机对战房间
+  // ---------------------------------------------------------------------------
+  `CREATE TABLE IF NOT EXISTS game_records (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    game_key VARCHAR(24) NOT NULL COMMENT 'g2048/snake/gomoku/...',
+    score INT NOT NULL DEFAULT 0,
+    duration_ms INT NOT NULL DEFAULT 0,
+    detail VARCHAR(255) NOT NULL DEFAULT '' COMMENT '附加信息（关卡/步数等）',
+    created_time BIGINT NOT NULL DEFAULT 0,
+    KEY idx_game_board (game_key, score DESC, id),
+    KEY idx_game_user (user_id, game_key, id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // 联机对战：状态存 JSON 由服务端权威判定（客户端只发操作，防篡改成绩）
+  `CREATE TABLE IF NOT EXISTS game_rooms (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    game_key VARCHAR(24) NOT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'waiting' COMMENT 'waiting/playing/finished/abandoned',
+    host_id INT NOT NULL DEFAULT 0,
+    guest_id INT NOT NULL DEFAULT 0,
+    state TEXT COMMENT '棋盘等对局状态（JSON）',
+    turn_user_id INT NOT NULL DEFAULT 0,
+    winner_id INT NOT NULL DEFAULT 0,
+    version INT NOT NULL DEFAULT 0 COMMENT '乐观锁：每次落子 +1，防并发覆盖',
+    spectatable TINYINT NOT NULL DEFAULT 1,
+    created_time BIGINT NOT NULL DEFAULT 0,
+    updated_time BIGINT NOT NULL DEFAULT 0,
+    KEY idx_game_room_status (status, id),
+    KEY idx_game_room_host (host_id),
+    KEY idx_game_room_guest (guest_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 ];
 
 // 生成 / 持久化 JWT 密钥：环境变量 > .jwt-secret 文件 > 随机生成
@@ -388,6 +557,9 @@ export const JWT_SECRET = resolveJwtSecret();
 // 老库启动时自动补列，不再依赖手动跑迁移脚本。
 const COLUMN_MIGRATIONS = [
   { table: "users", column: "token_version", ddl: "INT NOT NULL DEFAULT 0" },
+  // 社区/聊天（第 37 批）：评论扁平化的 @ 目标 + 消息的客户端临时 id（乐观队列）
+  { table: "community_comments", column: "reply_to_user_id", ddl: "INT NOT NULL DEFAULT 0" },
+  { table: "chat_room_messages", column: "client_id", ddl: "VARCHAR(40) NOT NULL DEFAULT ''" },
   // 媒体库 / 用户资料（第 36 批）：头像引用 + 个人简介三件套
   { table: "users", column: "avatar_media_id", ddl: "BIGINT NOT NULL DEFAULT 0" },
   { table: "users", column: "bio", ddl: "VARCHAR(255) NOT NULL DEFAULT ''" },

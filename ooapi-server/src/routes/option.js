@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { ok, fail, asyncHandler } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
-import { getOption, setOption, DEFAULT_OPTIONS, SECRET_OPTIONS } from "../config.js";
+import { getOption, setOption, DEFAULT_OPTIONS, SECRET_OPTIONS, SUPER_OPTIONS } from "../config.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 
 const router = Router();
@@ -91,7 +91,10 @@ router.get(
       const v = getOption(key);
       data[key] = SECRET_OPTIONS.has(key) && v ? MASK : v;
     }
-    return ok(res, data);
+    // 告诉前端哪些项当前账号改不了：前端据此置灰，而不是让用户填完才报 403。
+    // 后端依然会独立校验（前端置灰只是体验，不是权限边界）。
+    const superOnly = req.user.role >= 1000 ? [] : [...SUPER_OPTIONS].filter((k) => k in DEFAULT_OPTIONS);
+    return ok(res, data, "", { super_only: superOnly, is_super: req.user.role >= 1000 });
   })
 );
 
@@ -101,19 +104,29 @@ router.put(
   adminRequired,
   asyncHandler(async (req, res) => {
     const body = req.body || {};
+    const isSuper = req.user.role >= 1000;
     // 用 hasOwnProperty 而不是 in：in 会命中原型链（constructor/toString/__proto__ 等），
     // 可能把非白名单键写进 options 表
     const isKnown = (k) => Object.prototype.hasOwnProperty.call(DEFAULT_OPTIONS, k);
+    const guard = (key) => {
+      if (!isKnown(key)) return `未知设置项：${key}`;
+      // 基础设施/凭据类只有超管能改（前端已置灰，这里是真正的权限边界）
+      if (!isSuper && SUPER_OPTIONS.has(key)) return `设置项 ${key} 需要超级管理员权限`;
+      return null;
+    };
     if (body.key !== undefined && body.value !== undefined) {
       // 单个更新
       const key = String(body.key);
-      if (!isKnown(key)) return fail(res, `未知设置项：${key}`);
+      const gerr = guard(key);
+      if (gerr) return fail(res, gerr, SUPER_OPTIONS.has(key) ? 403 : 400);
       const verr = validateOptionValue(key, body.value);
       if (verr) return fail(res, `设置项 ${key} ${verr}`);
       await setOption(key, body.value);
     } else {
       // 批量更新：先整体校验再写，避免写一半失败留下混合状态
       for (const [key, value] of Object.entries(body)) {
+        const gerr = guard(key);
+        if (gerr && isKnown(key)) return fail(res, gerr, SUPER_OPTIONS.has(key) ? 403 : 400);
         if (!isKnown(key)) continue;
         const verr = validateOptionValue(key, value);
         if (verr) return fail(res, `设置项 ${key} ${verr}`);
@@ -121,6 +134,7 @@ router.put(
       const changed = [];
       for (const [key, value] of Object.entries(body)) {
         if (!isKnown(key)) continue;
+        if (!isSuper && SUPER_OPTIONS.has(key)) continue; // 已在上面拦住，这里兜底
         // 掩码值 = 前端把「原样未改」的敏感项回传了，跳过不写（否则会把密码写成 ********）
         if (SECRET_OPTIONS.has(key) && String(value ?? "") === MASK) continue;
         const v = typeof value === "boolean" ? String(value) : String(value ?? "");
