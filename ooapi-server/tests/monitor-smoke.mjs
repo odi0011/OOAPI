@@ -315,18 +315,18 @@ await check("SSE 流需要一次性票据：无票据 401、有票据可连", as
 await check("媒体库统计三个 scope 的字段都是全的", async () => {
   const want = ["scope", "count", "bytes", "quotaBytes", "maxFileBytes", "orphanHours", "retentionDays"];
   // 全站（管理员不带 user_id）
-  const all = await req("/api/media/stats");
+  const all = (await req("/api/media/stats")).body.data;
   for (const k of want) assert.ok(k in all, `全站视图缺字段 ${k}`);
   assert.equal(all.scope, "all");
   // 指定用户（管理员带 user_id）—— 曾经这里漏下发 orphanHours/retentionDays，
   // 前端把保留策略显示成「— 天 / 不自动回收」，看着像配置丢了
-  const one = await req(`/api/media/stats?user_id=${admin.id}`);
+  const one = (await req(`/api/media/stats?user_id=${admin.id}`)).body.data;
   assert.equal(one.scope, "user");
   for (const k of want) assert.ok(k in one, `用户视图缺字段 ${k}`);
 });
 
 await check("媒体库列表返回分页结构，且普通用户只能看到自己", async () => {
-  const list = await req("/api/media/?p=1&page_size=5");
+  const list = (await req("/api/media/?p=1&page_size=5")).body.data;
   assert.ok(Array.isArray(list.items), "items 必须是数组");
   assert.ok(typeof list.total === "number", "缺 total");
   assert.equal(list.page, 1);
@@ -341,7 +341,7 @@ await check("媒体库列表返回分页结构，且普通用户只能看到自�
 });
 
 await check("读取签名 URL 可匿名访问（聊天里的 <img> 带不了 Authorization）", async () => {
-  const list = await req("/api/media/?p=1&page_size=1");
+  const list = (await req("/api/media/?p=1&page_size=1")).body.data;
   const first = list.items[0];
   if (!first) return; // 空库跳过（不是失败）
   const r = await fetch(`${BASE}${first.url}`); // 刻意不带 Authorization
