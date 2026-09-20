@@ -230,6 +230,9 @@ for (const key of gameKeys) {
   if (rid) {
     const before = await get(`/api/games/rooms/${rid}`);
     ck("海战棋：初始为布阵阶段", before.data?.phase === "placing", `phase=${before.data?.phase}`);
+    // 布阵动作要求房间已进入对局（status=playing）—— 先让对手加入，
+    // 否则会返回「还在等待对手加入」（引擎动作本就该拒绝未开始的对局）
+    if (other) await call("POST", `/api/games/rooms/${rid}/join`, {}, HO);
     const auto = await post(`/api/games/rooms/${rid}/action`, { action: "auto" });
     ck("海战棋：随机布阵成功", auto.status === 200 && (auto.data?.placed || 0) === 5, JSON.stringify(auto.body)?.slice(0, 200));
     // 隐藏信息：对局未开始时不该暴露对手舰位

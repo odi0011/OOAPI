@@ -318,8 +318,15 @@ router.post(
 
     const side = sideOf(row, req.user.id);
     if (!side) return fail(res, "你不是对局方", 403);
-    if (row.status === "waiting") return fail(res, "还在等待对手加入");
     if (row.status === "finished") return fail(res, "对局已结束");
+    // 等待对手期间允许**布阵类**动作（place/ready/auto）：
+    // 房主建好房间就该能先摆好自己的舰，对手一加入即可开打 ——
+    // 让大家干等对手到了才能布阵是没必要的摩擦。
+    // 但落子（move）必须等对手到场，否则等于一个人先走棋。
+    const PLACEMENT_ACTIONS = new Set(["place", "ready", "auto"]);
+    if (row.status === "waiting" && !PLACEMENT_ACTIONS.has(action)) {
+      return fail(res, "还在等待对手加入");
+    }
 
     const state = safeJSONParse(row.state, null);
     if (!state) return fail(res, "对局状态异常，请重新开局", 500);

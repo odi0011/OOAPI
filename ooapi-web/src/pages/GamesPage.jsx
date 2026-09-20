@@ -383,9 +383,11 @@ function GameRoom({ room, me, toast, onUpdate, onLeave, onJoin }) {
   const myReady = placing && room.ready?.[room.my_side];
 
   const statusText = () => {
-    if (room.status === "waiting") return "等待对手加入";
     if (room.status === "finished") return room.winner_id ? (Number(room.winner_id) === Number(me?.id) ? "你赢了" : "你输了") : "平局";
+    // 布阵阶段优先于「等待对手加入」：房主建好房间就能先摆舰，
+    // 不该被「等对手」这句话盖住而不知道该干什么
     if (placing) return myReady ? "已准备，等待对手布阵" : "布阵阶段：请摆放舰船";
+    if (room.status === "waiting") return "等待对手加入";
     return room.my_turn ? "轮到你" : "等待对手";
   };
 
