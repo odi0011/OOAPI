@@ -19,6 +19,10 @@ import {
   HistoryOutlined,
   MonitorOutlined,
   FolderOpenOutlined,
+  ReadOutlined,
+  CommentOutlined,
+  ThunderboltOutlined,
+  BgColorsOutlined,
 } from "@ant-design/icons";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";
@@ -28,13 +32,16 @@ import ThemeSwitch from "./ThemeSwitch";
 const { Header, Sider, Content } = Layout;
 const { useBreakpoint } = Grid;
 
-// 导航：工作台（对话/智能体为核心） → 开发 → 账户 → 管理
+// 导航：工作台（对话/社区） → 开发 → 账户 → 平台管理
 const NAV_USER = [
   {
     title: "工作台",
     items: [
       { key: "/chat", icon: <MessageOutlined />, label: "对话" },
       { key: "/console", icon: <DashboardOutlined />, label: "数据看板" },
+      { key: "/community", icon: <ReadOutlined />, label: "社区" },
+      { key: "/messages", icon: <CommentOutlined />, label: "消息" },
+      { key: "/games", icon: <ThunderboltOutlined />, label: "Playground" },
     ],
   },
   {
@@ -49,6 +56,7 @@ const NAV_USER = [
     title: "账户",
     items: [
       { key: "/media", icon: <FolderOpenOutlined />, label: "媒体库" },
+      { key: "/settings/appearance", icon: <BgColorsOutlined />, label: "外观设置" },
       { key: "/profile", icon: <UserOutlined />, label: "个人设置" },
     ],
   },
@@ -58,10 +66,12 @@ const NAV_ADMIN = [
   {
     title: "平台管理",
     items: [
+      { key: "/admin/dashboard", icon: <DashboardOutlined />, label: "平台看板" },
       { key: "/admin/channel", icon: <ApiOutlined />, label: "渠道管理" },
       { key: "/admin/groups", icon: <GroupOutlined />, label: "分组管理" },
       { key: "/admin/pricing", icon: <DollarOutlined />, label: "模型定价" },
       { key: "/admin/users", icon: <TeamOutlined />, label: "用户管理" },
+      { key: "/admin/community", icon: <ReadOutlined />, label: "社区管理" },
       { key: "/admin/monitor", icon: <MonitorOutlined />, label: "运维监控" },
       { key: "/admin/settings", icon: <SettingOutlined />, label: "系统设置" },
     ],
@@ -72,16 +82,22 @@ const CRUMB = {
   "/chat": ["工作台", "对话"],
   "/agent": ["工作台", "智能体"],
   "/console": ["工作台", "数据看板"],
+  "/community": ["工作台", "社区"],
+  "/messages": ["工作台", "消息"],
+  "/games": ["工作台", "Playground"],
   "/token": ["开发", "令牌管理"],
   "/log": ["开发", "使用记录"],
   "/operation-log": ["开发", "操作日志"],
   "/media": ["账户", "媒体库"],
+  "/settings/appearance": ["账户", "外观设置"],
   "/profile": ["账户", "个人设置"],
   "/home": ["首页"],
+  "/admin/dashboard": ["平台管理", "平台看板"],
   "/admin/channel": ["平台管理", "渠道管理"],
   "/admin/groups": ["平台管理", "分组管理"],
   "/admin/pricing": ["平台管理", "模型定价"],
   "/admin/users": ["平台管理", "用户管理"],
+  "/admin/community": ["平台管理", "社区管理"],
   "/admin/monitor": ["平台管理", "运维监控"],
   "/admin/settings": ["平台管理", "系统设置"],
 };

@@ -1,141 +1,131 @@
+// 数据看板 · 个人维度（/console）
+// ---------------------------------------------------------------------------
+// 为什么个人与管理端是**两个独立物理路由**（Gemini 第 7 点）：
+//   · 权限边界：管理端涉及全站流水、渠道故障率、异常用户画像。
+//     物理路由 + 路由守卫能从源头阻断非管理员的代码加载与接口嗅探；
+//     做成同一页的 Tab 则「代码已加载、只是不显示」，边界靠前端 if 维持，很脆。
+//   · 关注点不同：个人看「我花了多少、余额够撑几天、何时在用」；
+//     管理看「渠道延迟、全站 QPS、哪个分组在被刷」。见 AdminDashboardPage。
+//
+// 图表一律走 components/Charts.jsx 与 .oo-chart-grid 多图并列网格：
+// 单张大图信息密度极低，且要在口径间来回切换（用户明确反馈过）。
 import React, { useCallback, useEffect, useState } from "react";
-import { Row, Col, Button, Grid, App as AntApp, Alert } from "antd";
-import {
-  WalletOutlined,
-  ThunderboltOutlined,
-  ApiOutlined,
-  RiseOutlined,
-  ReloadOutlined,
-  CopyOutlined,
-  KeyOutlined,
-} from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
-import { useApp } from "../context/AppContext";
+import { Button, Segmented, Tag, Empty, Skeleton, App as AntApp, Tooltip, Alert } from "antd";
+import {
+  ReloadOutlined, KeyOutlined, CopyOutlined, ClockCircleOutlined, DashboardOutlined, WalletOutlined,
+} from "@ant-design/icons";
 import { API } from "../services/api";
+import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
-import { copyText, fmtOd, odOf, odRateText, unitsPerOd } from "../services/format";
-import { OdStatValue } from "../components/OdCoin";
+import { LineChart, RankBar, Legend, SERIES_COLORS, fmtCompact, useResizeWidth } from "../components/Charts";
+import { copyText, fmtOd, odRateText, unitsPerOd, CURRENCY_NAME } from "../services/format";
 
-// 近 30 天用量柱状图（纯 CSS，无额外依赖）
-function UsageBars({ daily, perUnit, loading, error }) {
-  if (loading) {
-    return (
-      <div style={{ padding: "28px 0", textAlign: "center", color: "var(--oo-text-muted)", fontSize: 13 }}>
-        正在加载用量记录…
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <div style={{ padding: "28px 0", textAlign: "center", color: "var(--oo-text-muted)", fontSize: 13 }}>
-        用量记录加载失败，请点击上方重试
-      </div>
-    );
-  }
-  const max = Math.max(1, ...daily.map((d) => Number(d.quota) || 0));
-  if (!daily.length) {
-    return (
-      <div style={{ padding: "28px 0", textAlign: "center", color: "var(--oo-text-muted)", fontSize: 13 }}>
-        暂无调用记录
-      </div>
-    );
-  }
+const RANGES = [
+  { value: "7d", label: "近 7 天" },
+  { value: "30d", label: "近 30 天" },
+  { value: "90d", label: "近 90 天" },
+];
+
+/** 图表卡：统一标题 + 右上口径说明 */
+function ChartCard({ title, note, children, span }) {
   return (
-    <div>
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 120 }}>
-        {daily.map((d) => {
-          const q = Number(d.quota) || 0;
-          const h = Math.max(3, Math.round((q / max) * 100));
+    <div className="oo-chart-card" style={span ? { gridColumn: `span ${span}` } : undefined}>
+      <div className="oo-chart-card-head">
+        <span className="oo-chart-card-title">{title}</span>
+        {note ? <span className="oo-chart-card-note">{note}</span> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** 按小时分布：0-23 的柱状（看个人作息与峰谷） */
+function HourBars({ hours }) {
+  const [wrapRef, W] = useResizeWidth(420);
+  const H = 124;
+  const PAD = { l: 34, r: 8, t: 8, b: 18 };
+  const n = hours?.length || 0;
+  if (!n) return <Empty description="暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+  const max = Math.max(1, ...hours.map((h) => Number(h.calls) || 0));
+  const innerW = Math.max(10, W - PAD.l - PAD.r);
+  const innerH = H - PAD.t - PAD.b;
+  const bw = innerW / n;
+  return (
+    <div ref={wrapRef}>
+      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ display: "block", maxWidth: "100%" }}>
+        <line x1={PAD.l} y1={PAD.t + innerH} x2={W - PAD.r} y2={PAD.t + innerH} stroke="var(--line)" />
+        {hours.map((h, i) => {
+          const v = Number(h.calls) || 0;
+          const bh = (v / max) * innerH;
           return (
-            <div
-              key={d.day}
-              title={`${d.day}　${fmtOd(q, perUnit, 4)}　${d.calls} 次`}
-              style={{
-                flex: 1,
-                height: `${h}%`,
-                minWidth: 4,
-                borderRadius: "3px 3px 0 0",
-                background:
-                  q > 0
-                    ? "linear-gradient(to top, color-mix(in srgb, var(--oo-primary) 55%, transparent), var(--oo-primary))"
-                    : "var(--oo-bg-subtle)",
-                transition: "opacity 160ms ease",
-                cursor: "default",
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.75")}
-              onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
-            />
+            <Tooltip key={h.hour} title={`${h.hour}:00 · ${v} 次调用`}>
+              <rect
+                x={PAD.l + i * bw + 1}
+                y={PAD.t + innerH - bh}
+                width={Math.max(1, bw - 2)}
+                height={Math.max(v ? 1 : 0, bh)}
+                fill="var(--accent)"
+                opacity={v ? 0.85 : 0.25}
+                rx={1}
+              />
+            </Tooltip>
           );
         })}
-      </div>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          marginTop: 8,
-          fontSize: 11,
-          color: "var(--oo-text-muted)",
-        }}
-      >
-        <span>{daily[0]?.day}</span>
-        <span>近 {daily.length} 天</span>
-        <span>{daily[daily.length - 1]?.day}</span>
-      </div>
+        {[0, 6, 12, 18, 23].map((h) => (
+          <text key={h} x={PAD.l + h * bw + bw / 2} y={H - 5} textAnchor="middle" fontSize={9.5} fill="var(--ink-3)">
+            {h}
+          </text>
+        ))}
+        <text x={PAD.l - 5} y={PAD.t + 8} textAnchor="end" fontSize={9.5} fill="var(--ink-3)">{fmtCompact(max)}</text>
+      </svg>
     </div>
   );
 }
 
 export default function ConsolePage() {
-  const { user, status, refreshUser } = useApp();
-  const { message } = AntApp.useApp();
   const navigate = useNavigate();
-  const screens = Grid.useBreakpoint();
-  const isMobile = !screens.lg;
-  const [data, setData] = useState(null);
-  const [dataLoading, setDataLoading] = useState(true);
-  const [dataError, setDataError] = useState(null);
-  const [refreshing, setRefreshing] = useState(false);
+  const { message } = AntApp.useApp();
+  const { user, status } = useApp();
   const { begin, isLatest } = useLatest();
+  const perUnit = unitsPerOd(status);
 
-  // alsoUser=true 时顺带刷新全局用户信息（刷新按钮用），保证余额卡不是缓存的旧值
-  const loadData = useCallback(async ({ alsoUser = false } = {}) => {
+  const [range, setRange] = useState("30d");
+  const [data, setData] = useState(null);
+  const [community, setCommunity] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+
+  const endpoint = status?.api_endpoint || `${window.location.origin}/v1`;
+
+  const load = useCallback(async () => {
     const token = begin();
-    setRefreshing(true);
-    setDataLoading(true);
-    setDataError(null);
+    setLoading(true);
+    setLoadError("");
     try {
-      const d = await API.get("/users/data/self");
+      const [d, c] = await Promise.all([
+        API.get("/dashboard/self", { params: { range } }),
+        // 社区数据失败不影响看板主体（它不是核心指标）
+        API.get("/dashboard/community", { params: { range } }).catch(() => null),
+      ]);
       if (!isLatest(token)) return;
       setData(d);
-      if (alsoUser) await refreshUser();
+      setCommunity(c);
     } catch (e) {
       if (isLatest(token)) {
-        setDataError(e.message || "数据加载失败，请重试");
-        message.error(e.message || "数据加载失败，请重试");
+        setLoadError(e.message || "看板加载失败");
+        message.error(e.message);
       }
     } finally {
-      if (isLatest(token)) {
-        setRefreshing(false);
-        setDataLoading(false);
-      }
+      if (isLatest(token)) setLoading(false);
     }
-  }, [message, refreshUser, begin, isLatest]);
+  }, [begin, isLatest, message, range]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  const perUnit = unitsPerOd(status); // 1 OD币 = 10,000 额度单位（固定 1 OD = $1）
-  // 额度展示统一走 fmtOd：全站货币只能是 OD币（1 OD = 1 美元）
-  const od = (q) => fmtOd(q, perUnit, 2);
-  // 去掉结尾斜杠：api_endpoint 以 / 结尾时 curl 示例会生成 `//chat/completions`
-  // （HomePage 已是这个口径，两处保持一致）
-  const endpoint = (status?.api_endpoint || "https://your-domain/v1").replace(/\/+$/, "");
-
-  const totalQuota = Number(user?.quota || 0) + Number(user?.used_quota || 0);
-  const usedPct = totalQuota > 0 ? Math.min(100, (Number(user?.used_quota || 0) / totalQuota) * 100) : 0;
+    load();
+  }, [load]);
 
   const copyEndpoint = async () => {
     try {
@@ -146,185 +136,216 @@ export default function ConsolePage() {
     }
   };
 
+  const t = data?.totals;
+  const trend = data?.trend || [];
+  const quota = data?.account?.quota ?? user?.quota ?? 0;
+  const usedQuota = data?.account?.used_quota ?? user?.used_quota ?? 0;
+  const totalQuota = quota + usedQuota;
+  const usedPct = totalQuota > 0 ? (usedQuota / totalQuota) * 100 : 0;
+  // 余额可用天数：按区间日均消费估算 —— 比单看「剩余额度」有用得多
+  const dailyAvg = trend.length ? (t?.units || 0) / trend.length : 0;
+  const daysLeft = dailyAvg > 0 ? Math.floor(quota / dailyAvg) : null;
+
   return (
     <div className="oo-page">
       <PageHeader
         title={`你好，${user?.display_name || user?.username}`}
+        tags={
+          <>
+            <Tag icon={<DashboardOutlined />}>我的用量</Tag>
+            {/* 时区必须显式声明：跨时区排查账单差异全靠它（Gemini 第 10 点） */}
+            <Tooltip title="所有按天聚合以此为基准，与服务器时区一致（按天重置）">
+              <Tag icon={<ClockCircleOutlined />}>时区 UTC+8</Tag>
+            </Tooltip>
+          </>
+        }
         extra={
           <>
-            <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => loadData({ alsoUser: true })} title="刷新控制台数据" aria-label="刷新控制台数据">
-              刷新
-            </Button>
-            <Button type="primary" icon={<KeyOutlined />} onClick={() => navigate("/token")}>
-              管理令牌
-            </Button>
+            <Segmented value={range} onChange={setRange} options={RANGES} />
+            <Button icon={<ReloadOutlined />} loading={loading} onClick={load} title="刷新" aria-label="刷新看板" />
+            <Button type="primary" icon={<KeyOutlined />} onClick={() => navigate("/token")}>管理令牌</Button>
           </>
         }
       />
 
-      {dataError ? (
+      {loadError ? (
         <Alert
           type="error"
           showIcon
-          closable={false}
-          style={{ marginBottom: 16 }}
-          message="控制台数据加载失败"
-          description={dataError}
-          action={<Button size="small" onClick={() => loadData({ alsoUser: true })}>重试</Button>}
+          message="看板数据加载失败"
+          description={loadError}
+          action={<Button size="small" onClick={load} loading={loading}>重试</Button>}
         />
       ) : null}
 
-      {/* 指标卡 */}
-      <Row gutter={[16, 16]}>
-        <Col xs={12} lg={6}>
-          <StatCard
-            label="剩余额度"
-            value={<OdStatValue od={odOf(user?.quota, perUnit)} />}
-            icon={<WalletOutlined />}
-            glow="color-mix(in srgb, var(--oo-primary) 32%, transparent)"
-            foot={<span>共 {od(totalQuota)} 额度</span>}
-          />
-        </Col>
-        <Col xs={12} lg={6}>
-          <StatCard
-            label="已用额度"
-            value={<OdStatValue od={odOf(user?.used_quota, perUnit)} />}
-            icon={<ThunderboltOutlined />}
-            tone="warning"
-            glow="color-mix(in srgb, var(--orange) 20%, transparent)"
-            foot={
-              <div style={{ width: "100%" }}>
-                <div className="oo-bar" style={{ marginBottom: 6 }}>
-                  <div
-                    className="oo-bar-fill"
-                    style={{
-                      width: `${usedPct}%`,
-                      background: "linear-gradient(90deg, var(--orange), var(--red))",
-                    }}
-                  />
-                </div>
-                <span>占比 {usedPct.toFixed(1)}%</span>
-              </div>
-            }
-          />
-        </Col>
-        <Col xs={12} lg={6}>
-          <StatCard
-            label="调用次数"
-            value={(user?.request_count ?? 0).toLocaleString()}
-            icon={<ApiOutlined />}
-            tone="success"
-            glow="color-mix(in srgb, var(--green) 18%, transparent)"
-            foot={<span>累计成功请求</span>}
-          />
-        </Col>
-        <Col xs={12} lg={6}>
-          <StatCard
-            label="近 30 天消费"
-            value={data ? od(data.consume_in_logs) : dataLoading ? "加载中…" : "—"}
-            icon={<RiseOutlined />}
-            glow="color-mix(in srgb, var(--oo-primary) 32%, transparent)"
-            foot={<span>{data ? `${data.daily?.length || 0} 天有调用` : dataLoading ? "正在加载" : "—"}</span>}
-          />
-        </Col>
-      </Row>
+      {/* 汇总：紧凑统计卡（全站统一形态，一行放得下 7 张） */}
+      <div className="oo-stats-cards" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(104px, 1fr))" }}>
+        <StatCard
+          label="剩余额度"
+          value={loading ? "—" : fmtOd(quota, perUnit, 2, false)}
+          suffix={CURRENCY_NAME}
+          tone={quota < 0 ? "danger" : undefined}
+          hint={quota < 0 ? "已欠费，充值需大于欠费额才能恢复服务" : `共 ${fmtOd(totalQuota, perUnit, 2, false)} ${CURRENCY_NAME}`}
+        />
+        <StatCard
+          label="已用额度"
+          value={loading ? "—" : fmtOd(usedQuota, perUnit, 2, false)}
+          suffix={CURRENCY_NAME}
+          tone={usedPct >= 90 ? "danger" : usedPct >= 70 ? "warning" : undefined}
+          hint={`占总额度 ${usedPct.toFixed(1)}%`}
+        />
+        <StatCard label="调用次数" value={loading ? "—" : fmtCompact(data?.account?.request_count ?? user?.request_count ?? 0)} suffix="次" hint="累计成功请求" />
+        <StatCard
+          label={`区间消费`}
+          value={loading ? "—" : fmtOd(t?.units || 0, perUnit, 2, false)}
+          suffix={CURRENCY_NAME}
+          hint={`近 ${data?.range?.days || 30} 天 · 应按上游实际用量计费`}
+        />
+        <StatCard label="区间调用" value={loading ? "—" : fmtCompact(t?.calls || 0)} suffix="次" hint={`${trend.filter((d) => d.calls > 0).length} 天有调用`} />
+        <StatCard
+          label="缓存命中"
+          value={loading ? "—" : `${t?.cache_rate ?? 0}%`}
+          tone={(t?.cache_rate ?? 0) >= 50 ? "success" : undefined}
+          hint={`命中 ${fmtCompact(t?.cache_tokens || 0)} · 未命中 ${fmtCompact(t?.uncached_tokens || 0)}`}
+        />
+        <StatCard
+          label="余额可用"
+          value={loading ? "—" : daysLeft === null ? "—" : daysLeft}
+          suffix={daysLeft === null ? "" : "天"}
+          tone={daysLeft !== null && daysLeft < 7 ? "danger" : daysLeft !== null && daysLeft < 30 ? "warning" : undefined}
+          hint="按区间日均消费估算（无消费则为 —）"
+        />
+      </div>
 
-      {/* 用量趋势 + 账户信息 */}
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={14}>
-          <div className="oo-panel" style={{ height: "100%" }}>
-            <div className="oo-panel-head">
-              <span className="oo-panel-title">用量趋势</span>
-              <span style={{ fontSize: 12, color: "var(--oo-text-muted)" }}>按日消费（OD）</span>
-            </div>
-            <div className="oo-panel-body">
-              <UsageBars daily={data?.daily || []} perUnit={perUnit} loading={dataLoading} error={dataError} />
-            </div>
-          </div>
-        </Col>
+      {/* 多图并列：一屏看全，不用来回切口径 */}
+      <div className="oo-chart-grid">
+        <ChartCard title="调用与消费趋势" note={`近 ${data?.range?.days || 30} 天 · 双口径`} span={2}>
+          {loading && !trend.length ? (
+            <Skeleton active paragraph={{ rows: 3 }} />
+          ) : trend.length ? (
+            <>
+              <LineChart
+                height={160}
+                series={[
+                  { name: "调用次数", values: trend.map((d) => ({ x: d.day, y: d.calls })), color: SERIES_COLORS[0] },
+                  { name: "消费（额度单位）", values: trend.map((d) => ({ x: d.day, y: d.units })), color: SERIES_COLORS[2] },
+                ]}
+              />
+              <Legend
+                series={[
+                  { name: "调用次数", color: SERIES_COLORS[0] },
+                  { name: "消费（额度单位）", color: SERIES_COLORS[2] },
+                ]}
+              />
+            </>
+          ) : (
+            <Empty description="该时间范围内没有调用数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          )}
+        </ChartCard>
 
-        <Col xs={24} lg={10}>
-          <div className="oo-panel" style={{ height: "100%" }}>
-            <div className="oo-panel-head">
-              <span className="oo-panel-title">账户信息</span>
-            </div>
-            <div className="oo-panel-body" style={{ paddingTop: 6 }}>
-              <div className="bui-kv">
-                <span className="bui-kv-k">用户名</span>
-                <span className="bui-kv-v">{user?.username}</span>
-              </div>
-              <div className="bui-kv">
-                <span className="bui-kv-k">显示名称</span>
-                <span className="bui-kv-v">{user?.display_name || "-"}</span>
-              </div>
-              <div className="bui-kv">
-                <span className="bui-kv-k">用户分组</span>
-                <span className="bui-kv-v">{user?.group || "default"}</span>
-              </div>
-              <div className="bui-kv">
-                <span className="bui-kv-k">邀请码</span>
-                <span className="bui-kv-v">
-                  <span className="oo-mono">{user?.aff_code || "-"}</span>
+        <ChartCard title="Token 用量结构" note="输入 / 输出 / 缓存">
+          {trend.length ? (
+            <>
+              <LineChart
+                height={130}
+                series={[
+                  { name: "输入", values: trend.map((d) => ({ x: d.day, y: d.prompt_tokens })), color: SERIES_COLORS[0] },
+                  { name: "输出", values: trend.map((d) => ({ x: d.day, y: d.completion_tokens })), color: SERIES_COLORS[1] },
+                  { name: "缓存命中", values: trend.map((d) => ({ x: d.day, y: d.cache_tokens })), color: SERIES_COLORS[5] },
+                ]}
+              />
+              <Legend
+                series={[
+                  { name: "输入", color: SERIES_COLORS[0] },
+                  { name: "输出", color: SERIES_COLORS[1] },
+                  { name: "缓存命中", color: SERIES_COLORS[5] },
+                ]}
+              />
+            </>
+          ) : (
+            <Empty description="暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          )}
+        </ChartCard>
+
+        <ChartCard title="调用时段分布" note="0-23 点（看作息与峰谷）">
+          <HourBars hours={data?.by_hour} />
+        </ChartCard>
+
+        <ChartCard title="模型消费排行" note="Top 12 · 按额度单位">
+          <RankBar items={(data?.by_model || []).map((m) => ({ name: m.model, value: m.units }))} suffix="" />
+        </ChartCard>
+
+        <ChartCard title="模型调用量" note="按次数">
+          <RankBar items={(data?.by_model || []).map((m) => ({ name: m.model, value: m.calls }))} suffix="" />
+        </ChartCard>
+
+        <ChartCard title="渠道分布" note="按消费">
+          <RankBar items={(data?.by_channel || []).map((c) => ({ name: `渠道 #${c.channel_id}`, value: c.units }))} suffix="" />
+        </ChartCard>
+
+        {community ? (
+          <ChartCard title="我的社区与娱乐" note="点击可跳转">
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", fontSize: 12.5 }}>
+              {[
+                { label: "帖子", value: community.mine?.posts, to: `/u/${user?.id}` },
+                { label: "获赞", value: community.mine?.likes_received },
+                { label: "评论", value: community.mine?.comments },
+                { label: "粉丝", value: community.mine?.followers, to: `/u/${user?.id}` },
+                { label: "关注", value: community.mine?.following, to: `/u/${user?.id}` },
+                { label: "会话", value: community.mine?.rooms, to: "/messages" },
+                { label: "游戏局数", value: community.mine?.game_plays, to: "/games" },
+              ].map((x) => (
+                <span
+                  key={x.label}
+                  style={{ display: "inline-flex", gap: 5, alignItems: "baseline", cursor: x.to ? "pointer" : "default" }}
+                  onClick={() => x.to && navigate(x.to)}
+                >
+                  <span style={{ color: "var(--ink-3)" }}>{x.label}</span>
+                  <b className="oo-num">{x.value ?? 0}</b>
                 </span>
-              </div>
+              ))}
             </div>
-          </div>
-        </Col>
-      </Row>
+          </ChartCard>
+        ) : null}
+      </div>
 
-      {/* 快速开始 */}
+      {/* 接入信息：保留原有实用内容（Base URL / 鉴权 / 快速测试） */}
       <div className="oo-panel">
         <div className="oo-panel-head">
           <span className="oo-panel-title">接入信息</span>
-          <Button size="small" type="text" icon={<CopyOutlined />} onClick={copyEndpoint}>
-            复制地址
-          </Button>
+          <Button size="small" type="text" icon={<CopyOutlined />} onClick={copyEndpoint}>复制地址</Button>
         </div>
         <div className="oo-panel-body">
-          <Row gutter={[16, 12]}>
-            <Col xs={24} md={12}>
-              <div className="bui-kv">
-                <span className="bui-kv-k">Base URL</span>
-                <span className="bui-kv-v">
-                  <span className="oo-mono">{endpoint}</span>
-                </span>
-              </div>
-              <div className="bui-kv">
-                <span className="bui-kv-k">鉴权</span>
-                <span className="bui-kv-v">
-                  <span className="oo-mono">Authorization: Bearer sk-xxx</span>
-                </span>
-              </div>
-            </Col>
-            <Col xs={24} md={12}>
-              <div className="bui-kv">
-                <span className="bui-kv-k">计费比例</span>
-                <span className="bui-kv-v">{odRateText(perUnit)}</span>
-              </div>
-              <div className="bui-kv">
-                <span className="bui-kv-k">可用模型</span>
-                <span className="bui-kv-v">
-                  {(status?.model_list || []).slice(0, 4).join("、") || "-"}
-                  {(status?.model_list?.length || 0) > 4 ? ` 等 ${status.model_list.length} 个` : ""}
-                </span>
-              </div>
-            </Col>
-          </Row>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "8px 20px" }}>
+            <div className="bui-kv">
+              <span className="bui-kv-k">Base URL</span>
+              <span className="bui-kv-v"><span className="oo-mono">{endpoint}</span></span>
+            </div>
+            <div className="bui-kv">
+              <span className="bui-kv-k">鉴权</span>
+              <span className="bui-kv-v"><span className="oo-mono">Authorization: Bearer sk-xxx</span></span>
+            </div>
+            <div className="bui-kv">
+              <span className="bui-kv-k">计费比例</span>
+              <span className="bui-kv-v">{odRateText(perUnit)}</span>
+            </div>
+            <div className="bui-kv">
+              <span className="bui-kv-k">用户分组</span>
+              <span className="bui-kv-v">{user?.group || "default"}</span>
+            </div>
+          </div>
 
-          {!isMobile && (
-            <div className="oo-code" style={{ marginTop: 14 }}>
-              <div className="oo-code-head">
-                <span className="bui-dot bui-dot--ok" />
-                <span>快速测试</span>
-              </div>
-              <pre>
-{`curl ${endpoint}/chat/completions \\
+          <div className="oo-code-block" style={{ marginTop: 12 }}>
+            <div className="oo-code-head">
+              <span className="oo-code-lang">bash</span>
+            </div>
+            <pre>
+              <code>{`curl ${endpoint}/chat/completions \\
   -H "Authorization: Bearer sk-xxx" \\
   -H "Content-Type: application/json" \\
-  -d '{"model":"deepseek-chat","messages":[{"role":"user","content":"你好"}]}'`}
-              </pre>
-            </div>
-          )}
+  -d '{"model":"deepseek-chat","messages":[{"role":"user","content":"你好"}]}'`}</code>
+            </pre>
+          </div>
         </div>
       </div>
     </div>

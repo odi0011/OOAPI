@@ -151,3 +151,137 @@ export function tint(hex, alpha) {
   const num = parseInt(full, 16);
   return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${alpha})`;
 }
+
+// ============================================================================
+// 外观四件套：背景底纹 / 圆角 / 密度 / 正文字号
+// ----------------------------------------------------------------------------
+// 全部走「CSS 变量即时注入」（setProperty 直接改根样式），调控件就是所见即所得，
+// **不需要「保存后刷新」** —— 这是只有变量体系才做得到的体验。
+//
+// 背景为什么只有 4 个受控预设、且透明度锁死在 0.03~0.06：
+//   开放自定义图片/全色域会让文字对比度失控（用户选张深色照片配深色文字就废了）。
+//   这里只给矢量几何底纹，颜色强制绑定 var(--line)，且内容层（卡片/表格/表单）
+//   都是不透明 var(--surface) 实色，所以无论底纹怎么换，正文对比度都稳住。
+// ============================================================================
+
+export const BACKGROUNDS = [
+  { key: "pure", label: "纯色平底", desc: "无底纹（默认）" },
+  { key: "blueprint", label: "蓝图网格", desc: "24px 细网格" },
+  { key: "dots", label: "终端点阵", desc: "点阵网格" },
+  { key: "grain", label: "微噪点", desc: "细腻颗粒质感" },
+];
+
+export const RADIUS_PRESETS = [
+  { key: "sharp", label: "直角", r: { window: "6px", card: "4px", btn: "4px", chip: "3px", xs: "2px" } },
+  { key: "default", label: "默认", r: { window: "14px", card: "10px", btn: "8px", chip: "6px", xs: "4px" } },
+  { key: "round", label: "圆润", r: { window: "20px", card: "14px", btn: "10px", chip: "8px", xs: "6px" } },
+];
+
+export const DENSITY_PRESETS = [
+  {
+    key: "compact",
+    label: "紧凑",
+    sp: { 1: "3px", 2: "6px", 3: "10px", 4: "13px", 5: "16px", 6: "20px", 8: "26px", 10: "34px" },
+  },
+  {
+    key: "default",
+    label: "标准",
+    sp: { 1: "4px", 2: "8px", 3: "12px", 4: "16px", 5: "20px", 6: "24px", 8: "32px", 10: "40px" },
+  },
+  {
+    key: "loose",
+    label: "宽松",
+    sp: { 1: "6px", 2: "10px", 3: "15px", 4: "20px", 5: "25px", 6: "30px", 8: "40px", 10: "50px" },
+  },
+];
+
+/** 背景底纹：以 background-image 挂在根节点，颜色绑定 --line（明暗主题自动跟随） */
+function backgroundImage(key) {
+  switch (key) {
+    case "blueprint":
+      // 横竖各一组 1px 线，24px 一格
+      return {
+        size: "24px 24px",
+        image:
+          "linear-gradient(to right, var(--line) 1px, transparent 1px), linear-gradient(to bottom, var(--line) 1px, transparent 1px)",
+        opacity: "0.06",
+      };
+    case "dots":
+      return {
+        size: "16px 16px",
+        image: "radial-gradient(var(--line) 1px, transparent 1px)",
+        opacity: "0.06",
+      };
+    case "grain":
+      // 噪点用重复渐变模拟（不引外部图片资源）：三层不同尺寸的斜向条纹叠加
+      return {
+        size: "3px 3px, 5px 5px, 7px 7px",
+        image:
+          "repeating-linear-gradient(45deg, var(--line) 0 1px, transparent 1px 3px), repeating-linear-gradient(-45deg, var(--line) 0 1px, transparent 1px 5px), repeating-linear-gradient(90deg, var(--line) 0 1px, transparent 1px 7px)",
+        opacity: "0.03",
+      };
+    default:
+      return null;
+  }
+}
+
+/**
+ * 应用外观设置（可只传改动的字段）。
+ * @param {{background?:string, radius?:string, density?:string, fontSize?:number|string, accent?:string, resolved?:string}} opt
+ */
+export function applyAppearance(opt = {}) {
+  const r = document.documentElement;
+  const set = (k, v) => r.style.setProperty(k, v);
+
+  if (opt.background !== undefined) {
+    const bg = backgroundImage(String(opt.background));
+    const layer = document.getElementById("app-bg");
+    if (layer) {
+      if (bg) {
+        layer.style.backgroundImage = bg.image;
+        layer.style.backgroundSize = bg.size;
+        layer.style.opacity = bg.opacity;
+      } else {
+        layer.style.backgroundImage = "none";
+        layer.style.opacity = "0";
+      }
+    }
+    r.dataset.bg = String(opt.background);
+  }
+
+  if (opt.radius !== undefined) {
+    const preset = RADIUS_PRESETS.find((p) => p.key === opt.radius) || RADIUS_PRESETS[1];
+    set("--r-window", preset.r.window);
+    set("--r-card", preset.r.card);
+    set("--r-btn", preset.r.btn);
+    set("--r-chip", preset.r.chip);
+    set("--r-xs", preset.r.xs);
+    // styles.css 里 --r-sm/--r-md 是旧别名（部分组件在用），必须一起更新，
+    // 否则「直角」模式下仍有组件是圆角（视觉不统一）
+    set("--r-sm", preset.r.chip);
+    set("--r-md", preset.r.btn);
+    r.dataset.radius = preset.key;
+  }
+
+  if (opt.density !== undefined) {
+    const preset = DENSITY_PRESETS.find((p) => p.key === opt.density) || DENSITY_PRESETS[0];
+    for (const [k, v] of Object.entries(preset.sp)) set(`--sp-${k}`, v);
+    r.dataset.density = preset.key;
+  }
+
+  if (opt.fontSize !== undefined) {
+    // 只改正文基准：标题走 em/rem 相对值，不必逐个调（逐个调必然漏几处）
+    const px = Math.min(16, Math.max(12, Number(opt.fontSize) || 14));
+    set("--fs-body", `${px}px`);
+    set("--fs-desc", `${Math.max(11, px - 1.5)}px`);
+    r.dataset.fontSize = String(px);
+  }
+
+  if (opt.accent) {
+    // 站点默认主色。注意用户本地选择仍优先（见 ThemeContext 的 localStorage）
+    const pv = primaryVars(String(opt.accent), opt.resolved || r.dataset.theme || "light");
+    set("--accent", pv.accent);
+    set("--accent-ink", pv.accentInk);
+    set("--accent-tint", pv.accentTint);
+  }
+}

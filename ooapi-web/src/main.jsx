@@ -5,6 +5,7 @@ import { App as AntApp } from "antd";
 import dayjs from "dayjs";
 import "dayjs/locale/zh-cn";
 import { ThemeProvider } from "./theme/ThemeContext";
+import { applyAppearance } from "./theme/presets";
 import { AppProvider } from "./context/AppContext";
 import App from "./App";
 // 正文字体：Noto Sans SC（本地打包，避免依赖外网字体 CDN）
@@ -31,6 +32,27 @@ try {
   document.documentElement.style.colorScheme = dark ? "dark" : "light";
 } catch {
   /* ignore */
+}
+
+// 背景底纹层：必须在 React 挂载前就存在于 DOM 里，
+// 否则 applyAppearance 找不到节点会让底纹静默失效（设置里选了却没效果）。
+{
+  const layer = document.createElement("div");
+  layer.id = "app-bg";
+  layer.setAttribute("aria-hidden", "true");
+  document.body.insertBefore(layer, document.body.firstChild);
+}
+
+// 启动前应用本地外观偏好（背景/圆角/密度/字号），避免先按默认渲染再跳变
+try {
+  applyAppearance({
+    background: localStorage.getItem("ooapi-bg") || "pure",
+    radius: localStorage.getItem("ooapi-radius") || "default",
+    density: localStorage.getItem("ooapi-density") || "compact",
+    fontSize: localStorage.getItem("ooapi-fontsize") || 13,
+  });
+} catch {
+  /* 首帧外观失败不影响使用 */
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(

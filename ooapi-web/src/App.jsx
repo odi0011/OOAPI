@@ -17,6 +17,14 @@ import AdminChannelsPage from "./pages/AdminChannelsPage";
 import AdminGroupsPage from "./pages/AdminGroupsPage";
 import AdminPricingPage from "./pages/AdminPricingPage";
 import MonitorPage from "./pages/MonitorPage";
+import ProfileViewPage from "./pages/ProfileViewPage";
+import CommunityPage from "./pages/CommunityPage";
+import PostDetailPage from "./pages/PostDetailPage";
+import MessagesPage from "./pages/MessagesPage";
+import GamesPage from "./pages/GamesPage";
+import AppearancePage from "./pages/AppearancePage";
+import AdminDashboardPage from "./pages/AdminDashboardPage";
+import AdminCommunityPage from "./pages/AdminCommunityPage";
 import { useApp } from "./context/AppContext";
 
 function RequireAuth({ children, admin = false }) {
@@ -75,6 +83,13 @@ export default function App() {
         <Route path="/console" element={<ConsolePage />} />
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/agent" element={<Navigate to="/chat?mode=agent" replace />} />
+        {/* 社区：大厅 / 帖子详情 / 个人主页（统一路由，自己看与别人看同一入口） */}
+        <Route path="/community" element={<CommunityPage />} />
+        <Route path="/community/:id" element={<PostDetailPage />} />
+        <Route path="/u/:id" element={<ProfileViewPage />} />
+        <Route path="/messages" element={<MessagesPage />} />
+        <Route path="/messages/:roomId" element={<MessagesPage />} />
+        <Route path="/games" element={<GamesPage />} />
         <Route path="/token" element={<TokenPage />} />
         <Route path="/log" element={<LogPage />} />
         {/* 操作日志：与使用记录分开（一个是用量审计，一个是行为审计） */}
@@ -82,12 +97,17 @@ export default function App() {
         {/* 媒体库：普通用户看自己的；管理员可用 ?user_id 切到指定用户 */}
         <Route path="/media" element={<MediaPage />} />
         <Route path="/profile" element={<ProfilePage />} />
+        {/* 外观设置：即时热注入，改动立刻生效 */}
+        <Route path="/settings/appearance" element={<AppearancePage />} />
           <Route path="/admin/channel" element={<RequireAuth admin><AdminChannelsPage /></RequireAuth>} />
           <Route path="/admin/groups" element={<RequireAuth admin><AdminGroupsPage /></RequireAuth>} />
           <Route path="/admin/pricing" element={<RequireAuth admin><AdminPricingPage /></RequireAuth>} />
         <Route path="/admin/users" element={<RequireAuth admin><AdminUsersPage /></RequireAuth>} />
         <Route path="/admin/settings" element={<RequireAuth admin><AdminSettingsPage /></RequireAuth>} />
         <Route path="/admin/monitor" element={<RequireAuth admin><MonitorPage /></RequireAuth>} />
+        {/* 管理端看板：与个人看板（/console）物理分离，权限边界靠路由守卫 */}
+        <Route path="/admin/dashboard" element={<RequireAuth admin><AdminDashboardPage /></RequireAuth>} />
+        <Route path="/admin/community" element={<RequireAuth admin><AdminCommunityPage /></RequireAuth>} />
         <Route path="/admin" element={<Navigate to="/admin/channel" replace />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
