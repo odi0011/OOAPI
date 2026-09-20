@@ -76,6 +76,8 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
 | `src/routes/profile.js` | **个人主页**（第 37 批） | **匿名可达**（`optionalAuth`），但只出公开字段：邮箱/余额/用量/IP 一律不下发（有测试断言）。用量与邮箱仅在「本人或管理员」时返回 |
 | `src/routes/dashboard.js` | **数据看板**（第 37 批） | 个人维度与全站维度分开。错误统计查 `type=4` 错误日志 —— **logs 表没有 status 列**，拿消费日志数「status<>1」会一条都数不到（静默算成 0 错误） |
 | `migrate6.mjs` | **历史数据迁移**（第 37 批） | 老消息内联 base64 → 媒体库。幂等靠「parts 里还有没有 base64」而不是靠打标；**有图片失败就整条不更新**（不更新只是下次重试，更新了就是数据丢失）；结尾必须 `process.exit`（媒体库模块的定时器/连接池会挂住进程） |
+| `src/services/upstream/vendor-quirks.js` | **厂商协议特化**（第 40 批） | 只收「会影响正确性」的差异，按 `channel.type` 分发（**不按 base_url** —— 用户可能把官方地址换到自建中转上）。当前四项：MiniMax 强制 `reasoning_split`、方舟读降级后实际模型、StepFun 参数裁剪、`<think>` 块兜底剥离。新增厂商差异时加在这里，别往 openai-compat 里塞 |
+| `src/services/device-bind.js` | **一键绑定（设备授权）**（第 40 批） | Kiro/WorkBuddy/Qoder 的 `start/poll/cancel` 统一抽象。**三家的 `judge*` 判定函数是导出纯函数**（便于无上游依赖地测最易错的分支）。会话存进程内（单机单实例）；凭据不经浏览器，见路由注释 |
 
 ### 1.2 前端关键模块地图
 
@@ -1972,6 +1974,58 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   已改为显式区分对局方与观战，并补了单元测试（含缺省 side 的断言）。
   新增 `tests/shots.mjs`：按 1880×900 把关键页面截图存盘供肉眼审阅 ——
   **这是本次返工的根本教训的工具化**（见 2.7 第 ⑨⑩ 条）。 |
+| 2026-09-20 | **第 40 批（一）· 接入四家国产厂商直连**（小米 MiMo / MiniMax / 阶跃星辰 / 火山方舟）。
+  四家都是标准 OpenAI 协议，走 `openai-compat`，协议差异集中在 `vendor-quirks.js`：
+  · **小米 MiMo**（`api.xiaomimimo.com/v1`）：mimo-v2.5-pro / mimo-v2.5。
+    思考模式下官方会忽略 temperature/top_p（属官方行为，平台不干预）。
+  · **MiniMax**（`api.minimax.cn/v1`，国际站 `api.minimax.io`）：
+    **必须在适配器层强制 `reasoning_split=true`** —— 官方默认为 false 时
+    思维链以 `<think>` 标签混在 `content` 里，下游会把思考内容当正文渲染。
+    另外把 temperature 裁到 [0,2]（官方对越界**直接报错**而非忽略）、
+    移除官方明确忽略的三个 penalty 参数。
+  · **阶跃星辰**（`api.stepfun.com/v1`）：`step-3.5-flash-2603` 只接受
+    reasoning_effort=low/high（medium 会 400）；无 tools 时剥离 tool_choice
+    （官方参数表未列出，避免不确定行为）。
+  · **火山方舟**（`ark.cn-beijing.volces.com/api/v3`）：**API Key 鉴权时 model
+    直接填模型名，不需要 ep- 接入点 ID**（只有 AK/SK 签名才必须填 Endpoint）。
+    关键差异：方舟容量紧张时**会自动降级到别的模型跑**，
+    响应 `service_status.model_fallback` 会说明 —— 计费按实际生效模型算，
+    不读的话会「按 pro 的价收 lite 的钱」。已接进网关既有的 `billModel` 分支。
+  模型 ID 与定价全部取自各家官方文档（2026-09-20 检索），人民币价按全站既有口径
+  ÷7.2 折算并在 `remark` 写明来源。
+  **刻意不登记已下线模型**：MiMo 的 v2 全系（2026-06-30 弃用）、
+  StepFun 的 step-1-*/step-2-mini/step-3（2026-07-08 弃用）—— 登记了就是死链。
+  另给火山方舟补别名映射（`doubao-pro` → `doubao-seed-2-0-pro` 等），老渠道简名继续可用。 |
+| 2026-09-20 | **第 40 批（二）· 三个反代渠道的一键绑定**（Kiro / WorkBuddy / Qoder）。
+  原先这三个渠道只能「手工粘贴凭据」—— 用户得自己找到桌面端登录文件
+  （`kiro-auth-token.json` / `workbuddy-desktop.info`）、从里面挑出 token 字段
+  再粘进来。对多数用户这是做不到的。
+  现在三家都走**设备授权**（无回调、无需公网 HTTPS 回调地址、不依赖宿主机）：
+  · **Kiro**：AWS SSO OIDC **官方**设备流（`client/register` → `device_authorization`
+    → `token` 轮询）。三个易错点：字段是 **camelCase**（不是标准 OAuth2 的 snake_case）、
+    `grantType` 是那个长 URN（`urn:ietf:params:oauth:grant-type:device_code`）、
+    「等待授权」是**异常名**（`AuthorizationPendingException`）而不是 HTTP 状态。
+    `startUrl` 默认 Builder ID；**region 自动探测**（填错或没填时逐个试候选区，
+    每个 region 的 clientId 独立、必须各注册一次）。
+  · **WorkBuddy**：腾讯自研的 state + authUrl 轮询（CN/Global 双域）。
+    **它不是 RFC 8628 设备码**（无 user_code），且**待授权是 HTTP 200 + 业务 code ≠ 0**
+    —— 按 HTTP 状态判会把「等待中」直接判成失败，用户永远等不到成功。
+    设备风控头 `X-Device-Token` 由桌面端原生 SDK 产出、**服务端无法生成**，
+    因此不承诺这一点（缺失时优雅降级为不注入该头）。
+  · **Qoder**：设备授权（PKCE S256）+ 分区分支。**Global 端已发生协议漂移**
+    （`client_id`/`machine_id` 从授权 URL 移除，继续带会「Parameter invalid」），
+    按 region 分支处理；另有 PAT 粘贴作为兜底。
+  **凭据不经过浏览器**：设备授权拿到的是完整账号凭据（含 refresh_token），
+  直接回给前端等于让 token 走一遍 HTTP 响应体（会进访问日志与浏览器缓存）。
+  所以「已有渠道」由服务端轮询到即写库、响应只回状态；
+  「新建渠道」服务端暂存凭据并给一次性 ticket（5 分钟 TTL），前端建完渠道再 claim。
+  产出字段与各适配器的 `importAuth` 严格对齐（kiro 的 client_id/client_secret、
+  workbuddy 的 user_id/domain、qoder 的 personal_token/endpoint），
+  保证走同一条入库链路，不另开旁路。
+  测试（新增 30 项，已纳入 `npm test`）：把三家的「响应 → 状态」判定抽成纯函数导出
+  （`judgeKiroToken` / `judgeWorkbuddyToken` / `judgeQoderPoll`），
+  用真实响应样本验证 —— 真实上游需要 AWS/腾讯/阿里账号、测试环境打不到，
+  而这几条分支恰恰最容易写错。 |
 | 2026-09-20 | **第 37 批（八）· 补齐遗留：通知中心 / 聊天搜索 / 观战实时 / 房间清理**。
   用户要求「不要欠」，于是把第 37 批自己记的遗留也做掉：
   · **社区通知**（`services/notify-center.js` + `notifications` 表 + `/notifications` 页）：
