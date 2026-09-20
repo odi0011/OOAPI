@@ -319,11 +319,16 @@ router.get(
       });
     }
     const st = await stats(uid);
+    // orphanHours / retentionDays 与 scope 无关（都是全站设置），三个分支必须都返回：
+    // 只在 all 分支返回过一次，导致管理员切到「某个用户」时页面把保留策略显示成
+    // 「— 天 / 不自动回收」—— 看着像配置丢了，其实是字段没下发。
     return ok(res, {
       scope,
       ...st,
       maxFileBytes: maxFileBytes(),
       enabled: mediaEnabled(),
+      orphanHours: getNumberOption("media_orphan_hours"),
+      retentionDays: getNumberOption("media_retention_days"),
     });
   })
 );

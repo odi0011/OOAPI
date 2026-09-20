@@ -309,6 +309,46 @@ await check("SSE 流需要一次性票据：无票据 401、有票据可连", as
   assert.equal(reuse.status, 401, `票据应一次性，复用应 401，实际 ${reuse.status}`);
 });
 
+// ---------------------------------------------------------------------------
+// 媒体库接口（前端媒体库页面的数据来源）
+// ---------------------------------------------------------------------------
+await check("媒体库统计三个 scope 的字段都是全的", async () => {
+  const want = ["scope", "count", "bytes", "quotaBytes", "maxFileBytes", "orphanHours", "retentionDays"];
+  // 全站（管理员不带 user_id）
+  const all = await req("/api/media/stats");
+  for (const k of want) assert.ok(k in all, `全站视图缺字段 ${k}`);
+  assert.equal(all.scope, "all");
+  // 指定用户（管理员带 user_id）—— 曾经这里漏下发 orphanHours/retentionDays，
+  // 前端把保留策略显示成「— 天 / 不自动回收」，看着像配置丢了
+  const one = await req(`/api/media/stats?user_id=${admin.id}`);
+  assert.equal(one.scope, "user");
+  for (const k of want) assert.ok(k in one, `用户视图缺字段 ${k}`);
+});
+
+await check("媒体库列表返回分页结构，且普通用户只能看到自己", async () => {
+  const list = await req("/api/media/?p=1&page_size=5");
+  assert.ok(Array.isArray(list.items), "items 必须是数组");
+  assert.ok(typeof list.total === "number", "缺 total");
+  assert.equal(list.page, 1);
+  assert.equal(list.page_size, 5);
+  // 每一行都必须属于当前用户（管理员在此接口里也只能按 user_id 过滤，
+  // 不带 user_id 时列表仍按登录用户过滤 —— 全站视图只体现在 stats 上）
+  for (const it of list.items) {
+    assert.equal(Number(it.user_id), admin.id, `列表出现了别人的文件：${JSON.stringify(it)}`);
+    assert.ok(typeof it.url === "string" && it.url.includes("/api/media/"), "缺签名 url");
+    assert.ok("ref_count" in it && "kind" in it && "created_time" in it, "列表行字段不全");
+  }
+});
+
+await check("读取签名 URL 可匿名访问（聊天里的 <img> 带不了 Authorization）", async () => {
+  const list = await req("/api/media/?p=1&page_size=1");
+  const first = list.items[0];
+  if (!first) return; // 空库跳过（不是失败）
+  const r = await fetch(`${BASE}${first.url}`); // 刻意不带 Authorization
+  assert.equal(r.status, 200, `签名 URL 应匿名可读，实际 ${r.status}`);
+  assert.equal(r.headers.get("x-content-type-options"), "nosniff", "必须带 nosniff");
+});
+
 await pool.end().catch(() => {});
 console.log(`\n${passed} 通过 / ${failed} 失败`);
 process.exit(failed ? 1 : 0);
