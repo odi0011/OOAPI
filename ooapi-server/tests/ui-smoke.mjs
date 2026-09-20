@@ -23,6 +23,7 @@ const ROUTES = [
   ["/chat", "站内对话"],
   ["/community", "社区大厅"],
   ["/messages", "消息中心"],
+  ["/notifications", "通知中心"],
   ["/games", "Playground"],
   ["/token", "令牌管理"],
   ["/log", "使用记录"],

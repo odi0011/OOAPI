@@ -166,6 +166,74 @@ if (other) {
   ck("单聊房间唯一（重复发起复用同一房间）", true, "（只有一个用户，跳过）");
 }
 
+/* ============================ 通知 ============================ */
+console.log("通知");
+const n0 = await get("/api/community/notifications/unread");
+ck("未读通知可读", n0.status === 200 && typeof n0.data?.total === "number", JSON.stringify(n0.body)?.slice(0, 160));
+
+if (HO) {
+  // 第二个用户评论 + 点赞第一条帖子，管理员应收到通知
+  const t2 = await post("/api/community/topics", { name: `通知测试话题${Date.now() % 100000}` });
+  const p2 = await post("/api/community/posts", { title: `通知测试帖 ${Date.now() % 100000}`, content: "正文", topic_id: t2.data?.id });
+  const pid = p2.data?.id;
+  const before = (await get("/api/community/notifications/unread")).data?.total || 0;
+  await call("POST", `/api/community/posts/${pid}/comments`, { content: "来自第二个用户的评论" }, HO);
+  const afterComment = (await get("/api/community/notifications/unread")).data?.total || 0;
+  ck("他人评论后产生通知", afterComment > before, `${before} → ${afterComment}`);
+
+  await call("POST", `/api/community/posts/${pid}/like`, {}, HO);
+  const afterLike = (await get("/api/community/notifications/unread")).data?.total || 0;
+  ck("他人点赞后产生通知", afterLike > afterComment, `${afterComment} → ${afterLike}`);
+
+  // 关键：自己的操作不该给自己发通知
+  const mineBefore = (await get("/api/community/notifications/unread")).data?.total || 0;
+  await post(`/api/community/posts/${pid}/comments`, { content: "自己评论自己的帖子" });
+  await post(`/api/community/posts/${pid}/like`, {});
+  const mineAfter = (await get("/api/community/notifications/unread")).data?.total || 0;
+  ck("自己的操作不给自己发通知", mineAfter === mineBefore, `${mineBefore} → ${mineAfter}`);
+
+  const list = await get("/api/community/notifications?p=1&page_size=10");
+  ck("通知列表含触发者与文案", list.status === 200 && (list.data?.items || []).every((n) => n.actor && n.text), JSON.stringify(list.data?.items?.[0])?.slice(0, 200));
+
+  const readAll = await post("/api/community/notifications/read", {});
+  ck("标记全部已读", readAll.status === 200 && (readAll.data?.unread || 0) === 0, JSON.stringify(readAll.data));
+  const afterRead = (await get("/api/community/notifications/unread")).data?.total || 0;
+  ck("已读后未读数归零", afterRead === 0, `unread=${afterRead}`);
+
+  // 清理
+  await call("DELETE", `/api/community/posts/${pid}`);
+  await del(`/api/community/topics/${t2.data?.id}`);
+} else {
+  ck("他人评论后产生通知", true, "（只有一个用户，跳过）");
+  ck("他人点赞后产生通知", true, "（跳过）");
+  ck("自己的操作不给自己发通知", true, "（跳过）");
+  ck("通知列表含触发者与文案", true, "（跳过）");
+  ck("标记全部已读", true, "（跳过）");
+  ck("已读后未读数归零", true, "（跳过）");
+}
+
+/* ============================ 聊天搜索 ============================ */
+console.log("聊天搜索");
+const searchRoom = await post("/api/chatroom/rooms", { type: "group", name: "搜索测试群", user_ids: other ? [other.id] : [] });
+const srid = searchRoom.data?.id;
+if (srid) {
+  await post(`/api/chatroom/rooms/${srid}/messages`, { type: "text", content: "这里有一句独一无二的关键词 zzqqxx" });
+  const found = await get("/api/chatroom/search?q=zzqqxx");
+  ck("能搜到自己会话里的消息", found.status === 200 && (found.data?.items || []).length > 0, JSON.stringify(found.body)?.slice(0, 200));
+  ck("搜索结果带会话标题（便于定位）", (found.data?.items || []).every((m) => m.room_title), JSON.stringify(found.data?.items?.[0])?.slice(0, 160));
+  const none = await get("/api/chatroom/search?q=不存在的关键词zzz999");
+  ck("无匹配时返回空数组而不是报错", none.status === 200 && (none.data?.items || []).length === 0);
+  // 空关键词不搜（避免全表 LIKE）
+  const empty = await get("/api/chatroom/search?q=");
+  ck("空关键词直接返回空（不做全表扫描）", empty.status === 200 && (empty.data?.items || []).length === 0);
+  await del(`/api/chatroom/rooms/${srid}`);
+} else {
+  ck("能搜到自己会话里的消息", false, "建房失败");
+  ck("搜索结果带会话标题（便于定位）", false, "建房失败");
+  ck("无匹配时返回空数组而不是报错", false, "建房失败");
+  ck("空关键词直接返回空（不做全表扫描）", false, "建房失败");
+}
+
 /* ============================ 游戏（联机对战） ============================ */
 console.log("联机对战");
 const gameList = await get("/api/games/list");
