@@ -381,5 +381,27 @@ await t("海战棋：视图不泄露对手布阵（隐藏信息）", async () =>
   assert.equal(view2.foeBoard.filter((v) => v !== -1 && v !== 1).length, 0, "除命中外其余应仍为未知");
 });
 
+await t("海战棋：观战者看不到任何一方的布阵", async () => {
+  const g = getGame("battleship");
+  let s = g.init();
+  s = g.auto(s, { side: 1 }).state;
+  s = g.auto(s, { side: 2 }).state;
+
+  // side=0 = 观战者。**这条曾经是真实泄露**：
+  // 原实现写 `const me = side || 1`，side=0 会回退成 1 号玩家视角，
+  // 把房主整份布阵发给观战者。
+  const spec = g.view(s, { side: 0 });
+  assert.equal(spec.placed, 0, "观战者的 placed 必须为 0（不知道任何一方布了几舰）");
+  assert.deepEqual(spec.myShips, [], "观战者不该拿到舰位清单");
+  assert.ok(!spec.myBoard.includes(3), "观战者的棋盘不该出现舰体标记");
+  assert.equal(spec.foeAlive, null, "观战者不该知道对手还剩几舰");
+  assert.deepEqual(spec.foeSunk, [], "观战者不该知道哪些舰已被击沉（能反推布局）");
+  assert.equal(spec.spectator, true, "应标记为观战视角");
+  // 未传 side（缺省）时同样按观战处理，不能回退到任何一方的视角
+  const noSide = g.view(s, {});
+  assert.equal(noSide.placed, 0, "缺省 side 时应按观战处理而不是回退到 1 号玩家");
+  assert.ok(!noSide.myBoard.includes(3), "缺省 side 时不该出现舰体标记");
+});
+
 console.log(`\n${passed} 通过 / ${failed} 失败`);
 process.exit(failed ? 1 : 0);

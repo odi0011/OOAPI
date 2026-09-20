@@ -195,13 +195,18 @@ export default {
   /**
    * 按视角下发（**隐藏信息的关键**）：
    *   · 自己的棋盘：我的舰在哪、对手打了我哪里，完整可见；
-   *   · 对手的棋盘：只暴露已打过的结果，未打过的格子一律 -1（未知），
-   *     绝不能把对手的 fleet 发出去。
+   *   · 对手的棋盘：只暴露已打过的结果，未打过的格子一律 -1（未知）；
+   *   · **观战者（side=0）**：两边都看不到舰位 —— 只能看已探明的炮击结果。
+   *
+   * 观战者这条曾经漏了：原来写 `const me = side || 1`，
+   * side=0 会**回退成 1 号玩家的视角**，把房主布阵整份发给观战者。
+   * 现在显式区分「我是对局方」与「我在观战」，观战时不带任何舰位。
    */
   view(state, { side } = {}) {
-    const me = side || 1;
+    const isPlayer = side === 1 || side === 2;
+    const me = isPlayer ? side : 1; // 观战时 me 只用于「哪张盘放左边」，不暴露内容
     const foeSide = me === 1 ? 2 : 1;
-    const mine = state.sides?.[me] || emptySide();
+    const mine = isPlayer ? state.sides?.[me] || emptySide() : emptySide();
     const foe = state.sides?.[foeSide] || emptySide();
 
     // 对手棋盘：0 未知 / 1 命中 / 2 打空（-1 表示未知，前端画雾）
@@ -218,13 +223,16 @@ export default {
       phase: state.phase,
       turn: state.turn,
       ready: state.ready,
+      // 观战时 myShips 恒为空、placed 为 0：不告诉观战者任何一方的布阵
       myShips: mine.fleet.map((f) => ({ key: f.key, name: f.name, len: f.len, cells: f.cells, sunk: isSunk(f, mine.shots) })),
       placed: mine.fleet.length,
       // 前面几个是我方视角（完整），后面是对手视角（迷雾）
       myBoard: mineView,
       foeBoard: foeView,
-      foeSunk: foe.fleet.filter((f) => isSunk(f, foe.shots)).map((f) => ({ key: f.key, name: f.name })),
-      foeAlive: foe.fleet.filter((f) => !isSunk(f, foe.shots)).length,
+      // 观战者不该知道「还剩几舰」—— 那能反推出被击沉的数量与布局进度
+      foeSunk: isPlayer ? foe.fleet.filter((f) => isSunk(f, foe.shots)).map((f) => ({ key: f.key, name: f.name })) : [],
+      foeAlive: isPlayer ? foe.fleet.filter((f) => !isSunk(f, foe.shots)).length : null,
+      spectator: !isPlayer,
       lastPos: state.lastPos,
       note: state.lastNote || "",
     };

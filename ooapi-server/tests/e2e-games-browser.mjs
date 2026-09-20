@@ -167,9 +167,10 @@ ck("象棋棋子渲染为汉字", /[将帅车马炮士象兵卒仕相]/.test(ren
           "content-type": "application/json",
         }
       : null;
-    // 注意：布阵**不需要**对手先加入（房主建好房间就能先摆舰）。
-    // 这里刻意不让对手加入，以验证这条产品逻辑。
-
+    // 先测「房主无需等对手就能布阵」（这条产品逻辑本身要验证）；
+    // 但后面的「对手视角」断言必须让对手真正加入 —— 否则 sideOf 返回 0（观战者），
+    // 测的就不是对手视角，断言会失真（曾因此误报「对手看到 5 舰」，
+    // 顺带暴露出观战视角的真实泄露，已在 battleship.js 修掉）。
     await page.goto(`${BASE}/games?room=${rid}`, { waitUntil: "networkidle", timeout: 40000 });
     await page.waitForTimeout(2400);
 
@@ -195,6 +196,11 @@ ck("象棋棋子渲染为汉字", /[将帅车马炮士象兵卒仕相]/.test(ren
     const [[dbRow]] = await pool.query("SELECT state FROM game_rooms WHERE id = ?", [rid]);
     const st = JSON.parse(dbRow.state);
     ck("海战棋：随机布阵落库 5 舰", (st.sides?.[1]?.fleet || []).length === 5, `fleet=${st.sides?.[1]?.fleet?.length}`);
+
+    // 对手现在加入（后面要按「对手视角」断言）：
+    // 不加入的话 sideOf 返回 0，接口给的是**观战视角**，
+    // 拿它当「对手视角」验证会得出错误结论。
+    if (HO) await fetch(`${BASE}/api/games/rooms/${rid}/join`, { method: "POST", headers: HO });
 
     // 关键：拿到「对手视角」的接口响应，确认不含我方舰位。
     // 注意检查方法：不能拿格子下标去 JSON 里做子串匹配 ——
@@ -217,12 +223,21 @@ ck("象棋棋子渲染为汉字", /[将帅车马炮士象兵卒仕相]/.test(ren
         JSON.stringify(g.foeBoard)?.slice(0, 80)
       );
       ck(
-        "海战棋：对手视角看不到我方舰体标记（myBoard 无 3）",
-        Array.isArray(g.myBoard) && !g.myBoard.includes(3),
-        JSON.stringify(g.myBoard)?.slice(0, 80)
+        "海战棋：对手视野里没有我的舰体（myBoard 只显示他自己的船）",
+        // 注意：g.myBoard 是对手**自己的**棋盘，他布阵后必然出现自己的舰体（值 3）。
+        // 要断言的是「他的视野里不出现**我的**舰位坐标」——
+        // 用我的舰位集合减去他自己的舰位集合，剩下若还有 3 就是泄露。
+        (() => {
+          const hisOwn = new Set((g.myShips || []).flatMap((f) => f.cells || []));
+          return (st.sides?.[1]?.fleet || []).flatMap((f) => f.cells).filter((c) => !hisOwn.has(c) && g.myBoard?.[c] === 3).length === 0;
+        })(),
+        `他的舰位=${(g.myShips || []).flatMap((f) => f.cells || []).slice(0, 6)}`
       );
-      // 他能看到的「自己舰位」数必须为 0（他没布阵），不能变成我方的 5 舰
-      ck("海战棋：对手视角的已布舰数为 0（他没布阵）", (g.placed || 0) === 0, `placed=${g.placed}`);
+      ck(
+        "海战棋：对手只能看到自己布阵的舰数（不是我方的 5 舰）",
+        (g.myShips || []).length === (st.sides?.[2]?.fleet || []).length,
+        `他看到 ${(g.myShips || []).length} 舰，实际布了 ${(st.sides?.[2]?.fleet || []).length} 舰`
+      );
       ck(
         "海战棋：对手视角只暴露已探明格子数（此处应为 0）",
         (g.foeBoard || []).filter((v) => v !== -1).length === 0,
@@ -230,8 +245,8 @@ ck("象棋棋子渲染为汉字", /[将帅车马炮士象兵卒仕相]/.test(ren
       );
     } else {
       ck("海战棋：对手视角的对方棋盘全为未知（无泄露）", true, "（只有一个用户，跳过）");
-      ck("海战棋：对手视角看不到我方舰体标记（myBoard 无 3）", true, "（跳过）");
-      ck("海战棋：对手视角的已布舰数为 0（他没布阵）", true, "（跳过）");
+      ck("海战棋：对手视野里没有我的舰体（myBoard 只显示他自己的船）", true, "（跳过）");
+      ck("海战棋：对手只能看到自己布阵的舰数（不是我方的 5 舰）", true, "（跳过）");
       ck("海战棋：对手视角只暴露已探明格子数（此处应为 0）", true, "（跳过）");
     }
 
@@ -240,66 +255,6 @@ ck("象棋棋子渲染为汉字", /[将帅车马炮士象兵卒仕相]/.test(ren
     ck("四子棋：点击列后棋盘出现棋子", true, "（只有一个用户，跳过）");
     ck("四子棋：棋子落在最底行（受重力）", true, "（跳过）");
     ck("四子棋：落子已落库（服务端 state 与 DOM 一致）", true, "（跳过）");
-  }
-}
-
-/* ---------------- ④ 海战棋布阵与迷雾 ---------------- */
-{
-  const rid = await enterRoom("battleship");
-  if (rid) {
-    const HO = other
-      ? {
-          authorization: `Bearer ${jwt.sign({ id: other.id, role: other.role, tv: Number(other.token_version) || 0 }, JWT_SECRET, { expiresIn: "20m" })}`,
-          "content-type": "application/json",
-        }
-      : null;
-    // 注意：布阵**不需要**对手先加入（房主建好房间就能先摆舰）。
-    // 这里刻意不让对手加入，以验证这条产品逻辑。
-
-    await page.goto(`${BASE}/games?room=${rid}`, { waitUntil: "networkidle", timeout: 40000 });
-    await page.waitForTimeout(2400);
-
-    const placing = await page.evaluate(() => ({
-      text: (document.querySelector(".oo-game-canvas")?.innerText || "").replace(/\s+/g, "").slice(0, 60),
-      hasRandomBtn: Array.from(document.querySelectorAll("button")).some((b) => b.innerText.includes("随机布阵")),
-      hasReadyBtn: Array.from(document.querySelectorAll("button")).some((b) => b.innerText.includes("准备完毕")),
-    }));
-    ck("海战棋：布阵阶段显示随机布阵/准备按钮", placing.hasRandomBtn && placing.hasReadyBtn, JSON.stringify(placing));
-
-    // 点随机布阵
-    await page.evaluate(() => {
-      Array.from(document.querySelectorAll("button")).find((b) => b.innerText.includes("随机布阵"))?.click();
-    });
-    await page.waitForTimeout(2200);
-    const afterAuto = await page.evaluate(() => ({
-      text: (document.querySelector(".oo-game-hud")?.innerText || "").replace(/\s+/g, " ").slice(0, 80),
-      myCells: document.querySelectorAll(".oo-game-canvas > div > div > div:first-child > div > span").length,
-    }));
-    ck("海战棋：随机布阵后状态更新", /已布|已准备|布阵/.test(afterAuto.text) || true, JSON.stringify(afterAuto));
-
-    // 数据库核对：我方 5 舰已落库，且对手（未开始炮击）视角看不到任何命中信息
-    const [[dbRow]] = await pool.query("SELECT state FROM game_rooms WHERE id = ?", [rid]);
-    const st = JSON.parse(dbRow.state);
-    ck("海战棋：随机布阵落库 5 舰", (st.sides?.[1]?.fleet || []).length === 5, `fleet=${st.sides?.[1]?.fleet?.length}`);
-
-    // 关键：拿到「对手视角」的接口响应，确认不含我方舰位
-    if (other) {
-      const HO2 = {
-        authorization: `Bearer ${jwt.sign({ id: other.id, role: other.role, tv: Number(other.token_version) || 0 }, JWT_SECRET, { expiresIn: "20m" })}`,
-        "content-type": "application/json",
-      };
-      const asGuest = await fetch(`${BASE}/api/games/rooms/${rid}`, { headers: HO2 });
-      const guestBody = await asGuest.json();
-      const guestText = JSON.stringify(guestBody?.data || {});
-      // 对手视角里，我方（1 号）的舰位不能出现在任何字段里
-      const myCells = (st.sides?.[1]?.fleet || []).flatMap((f) => f.cells);
-      const leaked = myCells.filter((c) => guestText.includes(`"${c}"`) || guestText.includes(`:${c},`));
-      ck("海战棋：对手视角看不到我方舰位（隐藏信息）", leaked.length === 0, `泄露格子=${leaked.slice(0, 5)}`);
-    } else {
-      ck("海战棋：对手视角看不到我方舰位（隐藏信息）", true, "（只有一个用户，跳过）");
-    }
-
-    await fetch(`${BASE}/api/games/rooms/${rid}/resign`, { method: "POST", headers: HA });
   }
 }
 
