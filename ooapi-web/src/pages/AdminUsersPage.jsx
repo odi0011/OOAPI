@@ -254,6 +254,7 @@ export default function AdminUsersPage() {
         extra={
           <>
             <Input
+              className="oo-users-search"
               placeholder="搜索用户名 / 邮箱"
               allowClear
               prefix={<SearchOutlined style={{ color: "var(--oo-text-muted)" }} />}
@@ -274,7 +275,7 @@ export default function AdminUsersPage() {
         }
       />
 
-      <div className="oo-grid">
+      <div className="oo-grid oo-users-stats">
         <StatCard label="用户总数" value={loadError ? "—" : total} icon={<TeamOutlined />} />
         <StatCard label="管理员" value={loadError ? "—" : admins} foot={<span>本页统计</span>} />
         <StatCard label="已禁用" value={loadError ? "—" : disabled} tone={!loadError && disabled ? "danger" : undefined} foot={<span>本页统计</span>} />
@@ -293,7 +294,7 @@ export default function AdminUsersPage() {
           />
         ) : null}
         <Table
-          className="oo-table"
+          className="oo-table oo-users-table"
           rowKey="id"
           loading={loading}
           columns={columns}
@@ -314,6 +315,7 @@ export default function AdminUsersPage() {
       </div>
 
       <Modal
+        className="oo-users-edit-modal"
         title={`编辑用户：${editing?.username || ""}`}
         open={editOpen}
         onOk={saveEdit}
@@ -322,36 +324,39 @@ export default function AdminUsersPage() {
         destroyOnClose
         okText="保存"
       >
-        <Form form={form} layout="vertical" requiredMark={false}>
-          <Form.Item name="display_name" label="显示名称">
-            <Input maxLength={64} />
-          </Form.Item>
-          <Form.Item name="email" label="邮箱" rules={[{ type: "email", message: "邮箱格式不正确" }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="role" label="角色">
-            <Select
-              // 不能改自己的角色（后端也拒绝）：唯一管理员把自己降级后将失去后台入口
-              disabled={editing?.id === me?.id}
-              options={[
-                { value: 1, label: "普通用户" },
-                { value: 100, label: "管理员" },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item name="status" label="状态">
-            <Select
-              disabled={editing?.id === me?.id}
-              options={[
-                { value: 1, label: "启用" },
-                { value: 2, label: "禁用" },
-              ]}
-            />
-          </Form.Item>
+        <Form form={form} layout="vertical" requiredMark={false} className="oo-user-form">
+          <div className="oo-user-form-grid">
+            <Form.Item name="display_name" label="显示名称">
+              <Input maxLength={64} />
+            </Form.Item>
+            <Form.Item name="email" label="邮箱" rules={[{ type: "email", message: "邮箱格式不正确" }]}>
+              <Input />
+            </Form.Item>
+            <Form.Item name="role" label="角色">
+              <Select
+                // 不能改自己的角色（后端也拒绝）：唯一管理员把自己降级后将失去后台入口
+                disabled={editing?.id === me?.id}
+                options={[
+                  { value: 1, label: "普通用户" },
+                  { value: 100, label: "管理员" },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item name="status" label="状态">
+              <Select
+                disabled={editing?.id === me?.id}
+                options={[
+                  { value: 1, label: "启用" },
+                  { value: 2, label: "禁用" },
+                ]}
+              />
+            </Form.Item>
+          </div>
         </Form>
       </Modal>
 
       <Modal
+        className="oo-users-quota-modal"
         title={`调整额度：${quotaTarget?.username || ""}`}
         open={quotaOpen}
         onOk={submitQuota}
@@ -360,15 +365,20 @@ export default function AdminUsersPage() {
         destroyOnClose
         okText="确认调整"
       >
-        <Form form={quotaForm} layout="vertical" requiredMark={false}>
-          <Form.Item
-            name="quota"
-            label={`额度变化量（${CURRENCY_NAME}）`}
-            extra={`正数为补充，负数为扣除；当前余额 ${fmtOd(quotaTarget?.quota || 0, perUnit, 2)}`}
-            rules={[{ required: true, message: "请输入额度变化量" }]}
-          >
-            <InputNumber style={{ width: "100%" }} step={10} precision={4} />
-          </Form.Item>
+        <Form form={quotaForm} layout="vertical" requiredMark={false} className="oo-user-form">
+          <div className="oo-user-form-grid oo-user-quota-grid">
+            <Form.Item
+              name="quota"
+              label={`额度变化量（${CURRENCY_NAME}）`}
+              rules={[{ required: true, message: "请输入额度变化量" }]}
+            >
+              <InputNumber style={{ width: "100%" }} step={10} precision={4} />
+            </Form.Item>
+            <div className="oo-user-quota-balance" aria-label="当前余额">
+              <span className="oo-user-quota-label">当前余额</span>
+              <span className="oo-num">{fmtOd(quotaTarget?.quota || 0, perUnit, 2)} {CURRENCY_NAME}</span>
+            </div>
+          </div>
         </Form>
       </Modal>
     </div>

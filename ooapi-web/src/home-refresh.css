@@ -188,3 +188,132 @@
   .hr-hero h1 > span { -webkit-text-fill-color: currentColor; background: none; }
   .hr-atmosphere { display: none; }
 }
+
+/* Gemini homepage refinement: keep the API entry points prominent while
+   reducing decorative weight and preventing wide-screen drift. */
+.hr-home {
+  overflow-x: hidden;
+}
+
+.hr-home .hr-container {
+  width: min(1200px, calc(100% - 48px));
+}
+
+.hr-header {
+  position: sticky;
+  top: 0;
+  background: color-mix(in srgb, var(--page) 94%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.hr-header-inner {
+  width: min(1280px, calc(100% - 48px));
+  padding-inline: 0;
+}
+
+.hr-hero {
+  padding-top: 58px;
+}
+
+.hr-atmosphere::before {
+  opacity: 0.45;
+  background-size: 72px 72px;
+}
+
+.hr-glow {
+  width: 520px;
+  height: 360px;
+  filter: blur(72px);
+  opacity: 0.32;
+}
+
+.hr-glow-one { left: calc(50% - 560px); }
+.hr-glow-two { right: calc(50% - 560px); }
+
+.hr-hero-description {
+  max-width: 660px;
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.hr-hero-actions {
+  margin-top: 22px;
+}
+
+.hr-preview {
+  margin-top: 36px;
+  max-width: 1080px;
+}
+
+.hr-window {
+  border-radius: 14px;
+  box-shadow: var(--shadow-raised);
+}
+
+.hr-section {
+  padding-top: 72px;
+}
+
+.hr-section-heading {
+  margin-bottom: 22px;
+}
+
+.hr-feature {
+  padding: 22px;
+  border-radius: var(--r-card);
+}
+
+.hr-feature-connection {
+  background: var(--surface);
+}
+
+.hr-feature > p {
+  margin-bottom: 18px;
+  line-height: 1.7;
+}
+
+.hr-start-grid,
+.hr-closing {
+  border-radius: var(--r-card);
+}
+
+.hr-start-steps {
+  padding: 24px;
+}
+
+.hr-code-panel pre {
+  max-width: 100%;
+  white-space: pre;
+}
+
+.hr-home .hr-footer {
+  margin-top: 44px;
+}
+
+@media (max-width: 720px) {
+  .hr-home .hr-container,
+  .hr-header-inner {
+    width: calc(100% - 28px);
+  }
+
+  .hr-hero {
+    padding-top: 40px;
+  }
+
+  .hr-hero-actions > .ant-btn {
+    flex: 1 1 100%;
+  }
+
+  .hr-endpoint {
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  .hr-endpoint code {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

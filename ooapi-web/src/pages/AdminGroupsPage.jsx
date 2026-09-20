@@ -281,10 +281,10 @@ export default function AdminGroupsPage() {
       <PageHeader
         title="分组管理"
         extra={
-          <>
-            <Button icon={<ReloadOutlined />} onClick={load} title="刷新分组列表" aria-label="刷新分组列表" />
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建分组</Button>
-          </>
+          <Space size={6} wrap>
+            <Button size="small" icon={<ReloadOutlined />} onClick={load} title="刷新分组列表" aria-label="刷新分组列表" />
+            <Button size="small" type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建分组</Button>
+          </Space>
         }
       />
 
@@ -303,6 +303,7 @@ export default function AdminGroupsPage() {
           className="oo-table"
           rowKey="id"
           loading={loading}
+          size="small"
           columns={columns}
           dataSource={groups}
           scroll={{ x: 1000 }}

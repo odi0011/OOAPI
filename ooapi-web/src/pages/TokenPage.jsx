@@ -327,12 +327,12 @@ export default function TokenPage() {
       <PageHeader
         title="令牌管理"
         extra={
-          <>
-            <Button icon={<ReloadOutlined />} onClick={load} title="刷新令牌列表" aria-label="刷新令牌列表" />
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+          <Space size={6} wrap>
+            <Button size="small" icon={<ReloadOutlined />} onClick={load} title="刷新令牌列表" aria-label="刷新令牌列表" />
+            <Button size="small" type="primary" icon={<PlusOutlined />} onClick={openCreate}>
               创建令牌
             </Button>
-          </>
+          </Space>
         }
       />
 
@@ -351,6 +351,7 @@ export default function TokenPage() {
           className="oo-table"
           rowKey="id"
           loading={loading}
+          size="small"
           columns={columns}
           dataSource={items}
           // scroll.x 必须 ≥ 各列宽度之和（1462），否则 fixed 布局会把每列按比例压缩，
@@ -376,47 +377,51 @@ export default function TokenPage() {
         onCancel={() => setModalOpen(false)}
         destroyOnClose
         okText="保存"
-        width={520}
+        width={600}
       >
-        <Form form={form} layout="vertical" requiredMark={false}>
-          <Form.Item name="name" label="名称" rules={[{ required: true, message: "请输入令牌名称" }]}>
+        <Form form={form} layout="vertical" requiredMark={false} className="oo-form-grid">
+          <Form.Item className="oo-form-grid__full" name="name" label="名称" rules={[{ required: true, message: "请输入令牌名称" }]}>
             <Input placeholder="例如：my-app" maxLength={64} />
           </Form.Item>
 
-          <Form.Item name="unlimited_quota" label="无限额度" valuePropName="checked">
-            <Switch />
-          </Form.Item>
-          <Form.Item noStyle shouldUpdate={(p, c) => p.unlimited_quota !== c.unlimited_quota}>
-            {({ getFieldValue }) =>
-              !getFieldValue("unlimited_quota") && (
-                <Form.Item name="remain_quota" label={`额度上限（${CURRENCY_NAME}）`} rules={[{ required: true, message: "请输入额度" }]}>
-                  <InputNumber
-                    style={{ width: "100%" }}
-                    min={0}
-                    step={1}
-                    precision={4}
-                    formatter={(v) => `${v} ${CURRENCY_NAME}`}
-                    parser={(v) => String(v).replace(/[^\d.]/g, "")}
-                  />
-                </Form.Item>
-              )
-            }
-          </Form.Item>
+          <div className="oo-form-grid__pair">
+            <Form.Item name="unlimited_quota" label="无限额度" valuePropName="checked">
+              <Switch />
+            </Form.Item>
+            <Form.Item noStyle shouldUpdate={(p, c) => p.unlimited_quota !== c.unlimited_quota}>
+              {({ getFieldValue }) =>
+                !getFieldValue("unlimited_quota") ? (
+                  <Form.Item name="remain_quota" label={`额度上限（${CURRENCY_NAME}）`} rules={[{ required: true, message: "请输入额度" }]}>
+                    <InputNumber
+                      style={{ width: "100%" }}
+                      min={0}
+                      step={1}
+                      precision={4}
+                      formatter={(v) => `${v} ${CURRENCY_NAME}`}
+                      parser={(v) => String(v).replace(/[^\d.]/g, "")}
+                    />
+                  </Form.Item>
+                ) : null
+              }
+            </Form.Item>
+          </div>
 
-          <Form.Item name="never_expire" label="永不过期" valuePropName="checked">
-            <Switch />
-          </Form.Item>
-          <Form.Item noStyle shouldUpdate={(p, c) => p.never_expire !== c.never_expire}>
-            {({ getFieldValue }) =>
-              !getFieldValue("never_expire") && (
-                <Form.Item name="expired_time" label="过期时间" rules={[{ required: true, message: "请选择过期时间" }]}>
-                  <DatePicker showTime style={{ width: "100%" }} />
-                </Form.Item>
-              )
-            }
-          </Form.Item>
+          <div className="oo-form-grid__pair">
+            <Form.Item name="never_expire" label="永不过期" valuePropName="checked">
+              <Switch />
+            </Form.Item>
+            <Form.Item noStyle shouldUpdate={(p, c) => p.never_expire !== c.never_expire}>
+              {({ getFieldValue }) =>
+                !getFieldValue("never_expire") ? (
+                  <Form.Item name="expired_time" label="过期时间" rules={[{ required: true, message: "请选择过期时间" }]}>
+                    <DatePicker showTime style={{ width: "100%" }} />
+                  </Form.Item>
+                ) : null
+              }
+            </Form.Item>
+          </div>
 
-          <Form.Item name="group_name" label="分组">
+          <Form.Item className="oo-form-grid__full" name="group_name" label="分组">
             <Select
               allowClear
               showSearch

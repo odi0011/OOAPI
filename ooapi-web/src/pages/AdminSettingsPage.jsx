@@ -6,7 +6,7 @@
 // 现在全站设置项的字段定义只写一遍，三处自动一致。
 //
 // 分组：站点 / 外观 / 认证 / 计费 / 用户 / 安全 / 网关 / 邮件 / 备份（+ 更新）
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Form, Input, Button, Switch, InputNumber, App as AntApp, Tabs, Typography, Alert, Spin, Select,
 } from "antd";
@@ -251,7 +251,7 @@ function Field({ spec, name }) {
   if (spec.type === "number") {
     return <InputNumber style={{ width: "100%" }} min={spec.min} max={spec.max} step={spec.step || 1} disabled={spec.disabled} />;
   }
-  if (spec.type === "select") return <Select options={spec.options} allowClear={false} />;
+  if (spec.type === "select") return <Select style={{ width: "100%" }} options={spec.options} allowClear={false} />;
   if (spec.type === "password") return <Input.Password {...common} autoComplete="new-password" />;
   if (spec.type === "textarea") return <Input.TextArea rows={spec.rows || 3} {...common} />;
   return <Input {...common} maxLength={spec.maxLength} />;
@@ -266,6 +266,41 @@ function SettingsTab({ group }) {
   const fields = useMemo(() => Object.entries(F).filter(([, v]) => v.g === group), [group]);
   return (
     <div className="oo-panel" style={{ maxWidth: 760, opacity: s.loading || s.error ? 0.72 : 1 }}>
+      <style>{`
+        .oo-settings-form {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          column-gap: 18px;
+          row-gap: 0;
+        }
+        .oo-settings-form .oo-settings-field {
+          min-width: 0;
+          margin-bottom: 12px;
+        }
+        .oo-settings-form .oo-settings-field--wide,
+        .oo-settings-form .oo-settings-actions {
+          grid-column: 1 / -1;
+        }
+        .oo-settings-form .oo-settings-field .ant-form-item-label {
+          padding-bottom: 4px;
+        }
+        .oo-settings-form .oo-settings-field .ant-form-item-control-input {
+          min-height: 32px;
+        }
+        .oo-settings-form .oo-settings-actions {
+          margin-top: 2px;
+        }
+        @media (max-width: 640px) {
+          .oo-settings-form {
+            grid-template-columns: minmax(0, 1fr);
+            column-gap: 0;
+          }
+          .oo-settings-form .oo-settings-field--wide,
+          .oo-settings-form .oo-settings-actions {
+            grid-column: auto;
+          }
+        }
+      `}</style>
       {s.error ? (
         <Alert
           type="error"
@@ -278,23 +313,30 @@ function SettingsTab({ group }) {
       ) : null}
       <div className="oo-panel-body">
         <Spin spinning={s.loading}>
-          <Form form={s.form} layout="vertical" onFinish={s.save} disabled={s.loading || Boolean(s.error)} requiredMark={false}>
+          <Form
+            form={s.form}
+            className="oo-settings-form"
+            layout="vertical"
+            onFinish={s.save}
+            disabled={s.loading || Boolean(s.error)}
+            requiredMark={false}
+          >
             {fields.map(([key, spec]) => (
               <Form.Item
                 key={key}
+                className={`oo-settings-field${spec.type === "textarea" ? " oo-settings-field--wide" : ""}`}
                 name={key}
                 label={spec.label}
                 valuePropName={spec.type === "switch" ? "checked" : "value"}
-                extra={
-                  spec.hint ? <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{spec.hint}</span> : undefined
-                }
               >
                 <Field spec={spec} name={key} />
               </Form.Item>
             ))}
-            <Button type="primary" htmlType="submit" loading={s.saving} icon={<SaveOutlined />} style={{ marginTop: 4 }}>
-              保存设置
-            </Button>
+            <div className="oo-settings-actions">
+              <Button type="primary" htmlType="submit" loading={s.saving} icon={<SaveOutlined />}>
+                保存设置
+              </Button>
+            </div>
           </Form>
         </Spin>
       </div>
