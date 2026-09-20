@@ -9,8 +9,46 @@
 //   · 多序列配色固定为 SERIES_COLORS 顺序，颜色语义跨页面一致；
 //   · Y 轴最多 4 档刻度，X 轴最多 7 个标签（避免拥挤）；
 //   · 纵向条 = 时间桶直方图（用于延迟分布、状态码分布）。
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Empty } from "antd";
+
+/**
+ * 容器实测宽度（带 ResizeObserver + 防抖）。
+ *
+ * 为什么必须有：图表原来用固定 viewBox（780）配 `width:100%`，SVG 会**整体缩放** ——
+ * 宽屏上文字被放大变形、窄屏缩到看不清，而且侧栏折叠/窗口缩放时压根不重绘。
+ * 改成「按容器实际像素宽度重算坐标系」后，1 单位 = 1 像素，字号恒定不变形。
+ *
+ * 防抖（120ms）是必要的：拖拽窗口会连续触发 ResizeObserver，
+ * 每帧重算 path 会让长折线明显卡顿。
+ */
+export function useResizeWidth(fallback = 780) {
+  const ref = useRef(null);
+  const [width, setWidth] = useState(0);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    let timer = null;
+    const apply = () => {
+      const w = Math.max(240, Math.round(el.getBoundingClientRect().width || 0));
+      setWidth((prev) => (Math.abs(prev - w) >= 8 ? w : prev)); // <8px 的抖动忽略，避免无谓重绘
+    };
+    apply();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(apply, 120);
+    });
+    ro.observe(el);
+    return () => {
+      if (timer) clearTimeout(timer);
+      ro.disconnect();
+    };
+  }, []);
+
+  return [ref, width || fallback];
+}
 
 export const SERIES_COLORS = [
   "#3b82f6", "#22c55e", "#f59e0b", "#ef4444",
@@ -53,7 +91,8 @@ export function smoothPath(rawPts) {
  */
 export function LineChart({ series = [], height = 200, yFormat = fmtCompact, tipRender, maxXTicks = 7 }) {
   const [hover, setHover] = useState(null);
-  const W = 780;
+  // 宽度跟随容器实测值（侧栏折叠/窗口缩放/抽屉开合都会触发重算）
+  const [wrapRef, W] = useResizeWidth(780);
   const H = height;
   const PAD = { l: 52, r: 14, t: 14, b: 26 };
 
@@ -78,7 +117,7 @@ export function LineChart({ series = [], height = 200, yFormat = fmtCompact, tip
       return { ...s, pts, path, area, color: s.color || SERIES_COLORS[si % SERIES_COLORS.length] };
     });
     return { max: mx, plots };
-  }, [series, n, H, PAD.l, PAD.r, PAD.t, PAD.b]);
+  }, [series, n, H, W, PAD.l, PAD.r, PAD.t, PAD.b]);
 
   if (!n) return <Empty description="暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
 
@@ -86,10 +125,14 @@ export function LineChart({ series = [], height = 200, yFormat = fmtCompact, tip
   const step = Math.max(1, Math.ceil(n / maxXTicks));
 
   return (
-    <div className="oo-trend-wrap" style={{ position: "relative" }}>
+    <div ref={wrapRef} className="oo-trend-wrap" style={{ position: "relative" }}>
       <svg
         viewBox={`0 0 ${W} ${H}`}
-        style={{ width: "100%", height: "auto", display: "block" }}
+        // 宽高都按实测像素给（不再 width:100%）：viewBox 与元素同尺寸 = 1:1 映射，
+        // 文字与线宽不会被拉伸变形
+        width={W}
+        height={H}
+        style={{ display: "block", maxWidth: "100%" }}
         onMouseLeave={() => setHover(null)}
         onMouseMove={(e) => {
           const rect = e.currentTarget.getBoundingClientRect();
@@ -224,8 +267,8 @@ export function BarChart({ bars = [], height = 170, valueFormat = (v) => v, show
 }
 
 /** 横向排行条（模型/渠道/用户排行，与渠道统计弹窗同款） */
-export function RankBar({ items = [], nameKey = "name", valueKey = "value", suffix = "", max: maxProp }) {
-  if (!items.length) return <Empty description="暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+export function RankBar({ items = [], nameKey = "name", valueKey = "value", suffix = "", max: maxProp, empty = "暂无数据" }) {
+  if (!items.length) return <Empty description={empty} image={Empty.PRESENTED_IMAGE_SIMPLE} />;
   const max = maxProp || Math.max(1, ...items.map((m) => Number(m[valueKey]) || 0));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

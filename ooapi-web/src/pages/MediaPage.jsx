@@ -415,43 +415,36 @@ export default function MediaPage() {
         }
       />
 
-      {/* 汇总卡片：这一页的主体是文件集合，用量本身就是用户最关心的数字，
-          所以按 2.5 规范用卡片（不是表格页的小标签）。 */}
-      <div className="oo-grid">
+      {/* 汇总：用全站统一的紧凑统计卡（.oo-stats-cards，约 58px 高）。
+          以前用 .oo-grid + 三行大卡（图标 + 大数值 + foot），
+          一行就吃掉首屏 1/6，把文件网格挤出视野。 */}
+      <div className="oo-stats-cards">
         <StatCard
           label="文件数"
           value={loadError ? "—" : (stats?.count ?? 0)}
           suffix="个"
-          icon={<PictureOutlined />}
-          foot={<span>{scopeLabel}</span>}
+          hint={scopeLabel}
         />
         <StatCard
           label="已用空间"
           value={loadError ? "—" : fmtBytes(stats?.bytes)}
-          icon={<AppstoreOutlined />}
-          foot={
-            quotaPct === null ? (
-              <span>配额不限</span>
-            ) : (
-              <span>
-                共 {fmtBytes(stats?.quotaBytes)} · 已用 {quotaPct.toFixed(1)}%
-              </span>
-            )
+          hint={
+            quotaPct === null
+              ? "配额不限"
+              : `共 ${fmtBytes(stats?.quotaBytes)} · 已用 ${quotaPct.toFixed(1)}%`
           }
         />
         <StatCard
           label="单文件上限"
           value={loadError ? "—" : maxFileMb}
           suffix="MB"
-          icon={<FileOutlined />}
-          foot={<span>超出会被拒绝（后端按设置项判定）</span>}
+          hint="超出会被拒绝（后端按设置项判定）"
         />
         <StatCard
           label="保留策略"
-          value={loadError ? "—" : stats?.retentionDays ?? "—"}
+          value={loadError ? "—" : (stats?.retentionDays ?? "—")}
           suffix="天"
-          icon={<DeleteOutlined />}
-          foot={<span>{stats?.orphanHours ? `未引用 ${stats.orphanHours} 小时后回收` : "不自动回收"}</span>}
+          hint={stats?.orphanHours ? `未引用 ${stats.orphanHours} 小时后回收` : "不自动回收"}
         />
       </div>
 

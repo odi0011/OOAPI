@@ -259,26 +259,26 @@ export default function AdminPricingPage() {
       <PageHeader
         title="模型定价"
         extra={
-          <>
-            <Button icon={<UploadOutlined />} onClick={openImport}>
+          <Space size={6} wrap>
+            <Button size="small" icon={<UploadOutlined />} onClick={openImport}>
               上传文件更新
             </Button>
             <Popconfirm title="按内置官方价目表覆盖更新？" description="会同步价格与来源说明；管理员手改的价格也会被覆盖。" onConfirm={syncDefaults} okText="同步" cancelText="取消">
-              <Button icon={<CloudDownloadOutlined />} loading={syncing}>
+              <Button size="small" icon={<CloudDownloadOutlined />} loading={syncing}>
                 同步官方价目
               </Button>
             </Popconfirm>
             <Popconfirm title="清理无效定价？" description="删除所有「模型 ID 未在平台注册」的垃圾数据（含历史遗留的错误模型）。" onConfirm={prune} okText="清理" cancelText="取消">
-              <Button icon={<ClearOutlined />} loading={cleaning} danger>
+              <Button size="small" icon={<ClearOutlined />} loading={cleaning} danger>
                 清理无效数据
               </Button>
             </Popconfirm>
-            <Button icon={<ReloadOutlined />} onClick={load} title="刷新定价列表" aria-label="刷新定价列表" />
-          </>
+            <Button size="small" icon={<ReloadOutlined />} onClick={load} title="刷新定价列表" aria-label="刷新定价列表" />
+          </Space>
         }
       />
 
-      <div className="oo-grid">
+      <div className="oo-stats-cards">
         <StatCard label="已配置模型" value={loadError ? "—" : items.length} icon={<DollarOutlined />} foot={<span>计价条目</span>} />
         <StatCard
           label="渠道类型"
@@ -307,6 +307,7 @@ export default function AdminPricingPage() {
         ) : null}
         <div className="oo-toolbar">
           <Input
+            size="small"
             placeholder="搜索模型"
             allowClear
             prefix={<SearchOutlined style={{ color: "var(--ink-3)" }} />}
@@ -317,6 +318,7 @@ export default function AdminPricingPage() {
             }}
           />
           <Select
+            size="small"
             placeholder="全部渠道类型"
             allowClear
             style={{ width: 160 }}
@@ -329,6 +331,7 @@ export default function AdminPricingPage() {
           className="oo-table"
           rowKey="model"
           loading={loading}
+          size="small"
           columns={columns}
           dataSource={items}
           scroll={{ x: 980 }}

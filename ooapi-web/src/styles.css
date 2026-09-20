@@ -1427,27 +1427,54 @@ h1, h2, h3, h4 {
   color: var(--ink);
 }
 
+/* 统计卡（全站唯一形态）：「数值在上、标签在下」的紧凑卡，单卡约 58px 高。
+   ---------------------------------------------------------------------------
+   为什么是这个形态（不要再改回带图标的三行大卡）：
+     旧版 `.oo-stat` 是「图标行 + 大数值 + foot 说明」三行、约 110px 高，
+     一行 4 张就吃掉首屏 1/6，把真正要看的内容（表格/图表）挤出视野。
+     渠道管理页与用量统计弹窗一直用的是这种紧凑形态，现在统一到这一种。
+   补充信息走 Tooltip（不占高度）；确需常显的用 .oo-stat-card-hint，克制使用。 */
 .oo-stat-card {
   border: 1px solid var(--line);
   background: var(--surface);
   border-radius: var(--r-sm);
-  padding: 10px 12px;
+  padding: 8px 11px;
   min-width: 0;
 }
 
 .oo-stat-card-num {
-  font-size: 20px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 19px;
   font-weight: 600;
-  line-height: 1.15;
+  line-height: 1.2;
   letter-spacing: -0.01em;
+  color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.oo-stat-card-label {
-  margin-top: 3px;
+.oo-stat-card-suffix {
+  font-family: var(--font-sans);
   font-size: 12px;
+  font-weight: 450;
+  color: var(--ink-3);
+  margin-left: 4px;
+}
+
+.oo-stat-card-label {
+  margin-top: 1px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.oo-stat-card-hint {
+  margin-top: 2px;
+  font-size: 10.5px;
   color: var(--ink-3);
   white-space: nowrap;
   overflow: hidden;
@@ -2531,6 +2558,35 @@ h1, h2, h3, h4 {
   padding-bottom: 3px;
 }
 
+/* 弹窗内高频配置项用两列排列，减少无意义的纵向滚动；窄屏自动单列。 */
+.oo-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 16px;
+}
+
+.oo-form-grid__full {
+  grid-column: 1 / -1;
+}
+
+.oo-form-grid__pair {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 16px;
+}
+
+@media (max-width: 767px) {
+  .oo-form-grid,
+  .oo-form-grid__pair {
+    grid-template-columns: 1fr;
+  }
+
+  .oo-form-grid__full {
+    grid-column: auto;
+  }
+}
+
 /* 弹窗内的说明型提示：保留图标、标题和描述，但压缩成一行级信息块，
    避免占用表单区域过多高度。页面级错误提示继续使用默认密度。 */
 .oo-alert-compact.ant-alert {
@@ -2583,6 +2639,85 @@ h1, h2, h3, h4 {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 14px;
+}
+
+/* 用户管理页：统计信息是导航式概览，压成一条紧凑 strip，给列表留出首屏空间。 */
+.oo-users-stats {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.oo-users-stats .oo-stat {
+  min-height: 0;
+  padding: 11px 14px;
+}
+
+.oo-users-stats .oo-stat-top {
+  margin-bottom: 4px;
+}
+
+.oo-users-stats .oo-stat-icon {
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
+}
+
+.oo-users-stats .oo-stat-value {
+  font-size: var(--fs-xl);
+}
+
+.oo-users-stats .oo-stat-foot {
+  margin-top: 3px;
+}
+
+.oo-users-search {
+  width: 200px !important;
+}
+
+.oo-users-table .ant-table-thead > tr > th {
+  padding-top: 8px !important;
+  padding-bottom: 8px !important;
+}
+
+.oo-users-table .ant-table-tbody > tr > td {
+  padding-top: 8px !important;
+  padding-bottom: 8px !important;
+}
+
+.oo-user-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 14px;
+  row-gap: 2px;
+}
+
+.oo-user-form-grid .ant-form-item {
+  min-width: 0;
+}
+
+.oo-user-quota-grid {
+  align-items: end;
+}
+
+.oo-user-quota-balance {
+  min-height: 56px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 12px;
+  border-left: 1px solid var(--line);
+  color: var(--ink-2);
+}
+
+.oo-user-quota-label {
+  color: var(--ink-3);
+  font-size: var(--fs-desc);
+}
+
+.oo-users-edit-modal .ant-modal-content,
+.oo-users-quota-modal .ant-modal-content {
+  padding-bottom: 12px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2642,6 +2777,17 @@ h1, h2, h3, h4 {
   .oo-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
   .oo-stat { padding: 12px 13px; }
 
+  .oo-users-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .oo-users-search { width: 100% !important; }
+  .oo-user-form-grid { grid-template-columns: 1fr; row-gap: 0; }
+  .oo-user-quota-balance {
+    min-height: 0;
+    padding: 0 0 10px;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    padding-top: 10px;
+  }
+
   /* 移动端：宫格单列、小绿条略缩 */
   .oo-channel-grid { grid-template-columns: 1fr; }
   .oo-uptime { height: 16px; }
@@ -2669,4 +2815,375 @@ h1, h2, h3, h4 {
     max-height: 250px;
     overflow-y: auto;
   }
+}
+
+/* ============================================================================
+   17. 第 37 批新增：社区 / 消息 / 小游戏 / 个人主页 / 看板骨架
+   ----------------------------------------------------------------------------
+   骨架分三类（依据「信息组织与交互动线」的本质差异，不硬套同一套模板）：
+     A. 标准工作台流式骨架 `.oo-page`        —— 个人主页 / 数据看板 / 系统设置
+     B. 视口锁定双栏骨架 `.oo-split-lock`    —— 消息中心（输入框必须常驻可见）
+     C. 双栏流式阅读骨架 `.oo-read-shell`    —— 社区（主信息流 + 侧栏）
+        游戏专用受控画布 `.oo-game-stage`   —— 固定长宽比、不劫持页面滚动
+   ============================================================================ */
+
+/* 背景底纹层：挂在根节点下的伪元素层，颜色绑定 --line（明暗主题自动跟随），
+   透明度由 presets.js 的 applyAppearance 锁死在 0.03~0.06。
+   内容层（.oo-panel/.oo-table/表单）都是不透明 --surface，所以底纹怎么换都不影响可读性。 */
+#app-bg {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-repeat: repeat;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+/* --- B 类：视口锁定双栏（消息中心）---
+   高度锁死为视口减去头部，父容器 overflow:hidden，左右各自独立滚动。
+   绝不允许页面整体被长消息撑出外层滚动条 —— 那会让底部输入框脱离视线。 */
+.oo-split-lock {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  height: calc(100dvh - 108px);
+  min-height: 420px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  overflow: hidden;
+}
+.oo-split-lock > .oo-split-side {
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.oo-split-lock > .oo-split-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.oo-split-scroll { flex: 1; overflow-y: auto; min-height: 0; }
+
+/* 会话列表项：单行高度自适应，未读用主色数字而不是整行变色（克制） */
+.oo-room-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: background 0.12s ease;
+}
+.oo-room-item:hover { background: var(--hover); }
+.oo-room-item.is-active { background: var(--accent-tint); border-left-color: var(--accent); }
+.oo-room-title { font-size: 13px; font-weight: 500; }
+.oo-room-preview { font-size: 12px; color: var(--ink-3); }
+.oo-room-time { font-size: 11px; color: var(--ink-3); flex-shrink: 0; }
+
+/* 消息流：高密度 —— 气泡内边距 --sp-sm，条间距 ≤8px，头像 28-32px */
+.oo-msg-list { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; }
+.oo-msg-row { display: flex; gap: 8px; align-items: flex-start; }
+.oo-msg-row.is-mine { flex-direction: row-reverse; }
+.oo-msg-bubble {
+  max-width: min(620px, 72%);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-card);
+  background: var(--inset);
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+.oo-msg-row.is-mine .oo-msg-bubble { background: var(--accent-tint); }
+.oo-msg-bubble.is-pending { opacity: 0.62; }
+.oo-msg-bubble.is-failed { background: var(--red-tint); }
+/* 时间戳按 5 分钟间隔居中合并；单条时间只在 hover 时于气泡角标浮现 */
+.oo-msg-time-divider {
+  text-align: center;
+  font-size: 11px;
+  color: var(--ink-3);
+  margin: 6px 0 2px;
+}
+.oo-msg-meta {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  align-self: flex-end;
+  white-space: nowrap;
+}
+.oo-msg-row:hover .oo-msg-meta { opacity: 1; }
+.oo-msg-input {
+  border-top: 1px solid var(--line);
+  padding: 8px 10px;
+  background: var(--surface);
+}
+
+/* --- C 类：双栏流式阅读（社区）---
+   主信息流 + 侧栏，宽屏也不拉满：单行过长会让视线回行困难。 */
+.oo-read-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  gap: var(--sp-4);
+  align-items: start;
+}
+@media (max-width: 1023px) {
+  .oo-read-shell { grid-template-columns: minmax(0, 1fr); }
+  .oo-read-aside { display: none; }
+}
+
+/* 帖子列表项：单列列表式（不是卡片瀑布流 —— 卡片宽屏下标题折行破碎、
+   且会破坏代码块与日志的阅读连续性）。一屏应能放下 6~8 条讨论。 */
+.oo-post-item {
+  display: flex;
+  gap: var(--sp-3);
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.oo-post-item:last-child { border-bottom: 0; }
+.oo-post-item:hover { background: var(--hover); }
+.oo-post-title {
+  font-size: 14px;
+  font-weight: 550;
+  line-height: 1.4;
+  letter-spacing: -0.005em;
+}
+.oo-post-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--ink-3);
+  margin-top: 3px;
+}
+/* 摘要严格 2 行截断（80~120 字），阅读流由「标签 + 标题」主导 */
+.oo-post-summary {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.5;
+  margin-top: 3px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* 多图不在信息流展开九宫格：只给 1~3 张 56px 微缩图 + N */
+.oo-post-thumbs { display: flex; gap: 4px; flex-shrink: 0; margin-top: 4px; }
+.oo-post-thumb {
+  width: 56px; height: 56px;
+  border-radius: var(--r-xs);
+  object-fit: cover;
+  border: 1px solid var(--line);
+  display: block;
+}
+.oo-thumb-more {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px; height: 56px;
+  border-radius: var(--r-xs);
+  background: var(--inset);
+  border: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+/* 评论区：**扁平二级**，子评论统一平铺在一级评论内（缩进恒为 1 级）。
+   无限级递归在窄屏会把正文压成细条（每层缩进吃宽度）。 */
+.oo-comment-children {
+  margin-top: 8px;
+  padding-left: 12px;
+  border-left: 2px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.oo-comment-at { color: var(--accent-ink); font-weight: 500; }
+
+/* 社区侧栏卡片：热榜 / 快捷发帖 / 公告 */
+.oo-aside-card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  padding: 12px 14px;
+  margin-bottom: var(--sp-3);
+}
+
+/* --- 小游戏：受控画布（固定长宽比，绝不劫持页面滚动）--- */
+.oo-game-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.oo-game-canvas {
+  position: relative;
+  width: 100%;
+  max-width: 520px;
+  aspect-ratio: 1 / 1;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  overflow: hidden;
+  /* 只有获焦时组件才接管方向键/WASD（失焦释放，不劫持浏览器翻页） */
+  outline: none;
+}
+.oo-game-canvas:focus-visible { border-color: var(--accent); }
+.oo-game-grid { display: grid; gap: 1px; padding: 1px; }
+.oo-game-cell { background: var(--inset); border-radius: 1px; }
+/* 棋子/方块只用 --ink 与 --accent 单色扁平（不引卡通/糖果色） */
+.oo-game-cell.is-a { background: var(--ink); }
+.oo-game-cell.is-b { background: var(--accent); }
+.oo-game-hud {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  font-size: 12px;
+  color: var(--ink-3);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* --- 代码块（Markdown）：一键复制 + 超长折叠 --- */
+.oo-code-block {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  margin: 6px 0;
+  background: var(--inset);
+}
+.oo-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.oo-code-lang {
+  font-size: 11px;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  text-transform: lowercase;
+}
+.oo-code-btn {
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 1px 6px;
+  border-radius: var(--r-xs);
+}
+.oo-code-btn:hover { background: var(--hover); color: var(--ink); }
+.oo-code-block pre {
+  margin: 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.oo-code-more {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: 11.5px;
+  padding: 4px;
+  cursor: pointer;
+}
+.oo-code-more:hover { color: var(--accent-ink); background: var(--hover); }
+
+/* 消息里的超长文本自动折叠（粘长 JSON/日志不刷屏） */
+.oo-msg-collapsed {
+  position: relative;
+  max-height: 168px;
+  overflow: hidden;
+}
+.oo-msg-collapsed::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 40px;
+  background: linear-gradient(transparent, var(--inset));
+}
+
+.oo-msg-row.is-mine .oo-msg-collapsed::after { background: linear-gradient(transparent, var(--accent-tint)); }
+
+/* --- 个人主页 --- */
+.oo-profile-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+.oo-profile-name { font-size: 19px; font-weight: 600; letter-spacing: -0.01em; }
+.oo-profile-bio { font-size: 13px; color: var(--ink-2); line-height: 1.55; margin-top: 4px; }
+.oo-profile-links { display: flex; gap: var(--sp-3); flex-wrap: wrap; font-size: 12.5px; color: var(--ink-3); margin-top: 6px; }
+
+/* --- 移动端：消息中心改为「主从堆叠」路由页（不用抽屉）---
+   移动端用抽屉展示列表 + 同屏挤双栏都会毁掉体验。
+   正确做法是路由级主从堆叠：/messages 是纯列表，/messages/:id 全屏切入聊天。 */
+@media (max-width: 767px) {
+  .oo-split-lock {
+    grid-template-columns: minmax(0, 1fr);
+    height: calc(100dvh - 96px);
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+  }
+  .oo-split-lock.is-immersive { height: 100dvh; border: 0; }
+  .oo-split-lock > .oo-split-side { border-right: 0; }
+  .oo-msg-bubble { max-width: 84%; }
+  .oo-post-thumb, .oo-thumb-more { width: 48px; height: 48px; }
+  .oo-profile-name { font-size: 17px; }
+}
+
+/* --- 图表多图并列网格（使用分析 / 数据看板共用）---
+   为什么要网格而不是单张大图：单张图拉满宽度后信息密度极低，
+   且要在多个口径间来回切换。2 列网格 + 固定小高度 = 一屏看全。 */
+.oo-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (max-width: 900px) {
+  .oo-chart-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.oo-chart-card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  padding: 9px 11px 6px;
+  min-width: 0;
+}
+.oo-chart-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.oo-chart-card-title {
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--ink);
+}
+.oo-chart-card-note {
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

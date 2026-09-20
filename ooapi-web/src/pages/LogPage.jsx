@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { Table, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions } from "antd";
+import { Table, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions, Space } from "antd";
 import { ReloadOutlined, FileTextOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import { fmtDate, fmtOd, unitsPerOd, CURRENCY_NAME } from "../services/format";
@@ -112,10 +112,13 @@ export default function LogPage() {
     load();
   }, [load]);
 
-  // 分析数据（按天趋势 + 按模型排行）：只在展开时拉，避免每次进页面都跑聚合
+  // 分析数据（按天趋势 + 按模型排行 + 模型多折线 + 时段热点）：
+  // 只在展开时拉，避免每次进页面都跑聚合
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [byDay, setByDay] = useState([]);
   const [byModel, setByModel] = useState([]);
+  const [modelSeries, setModelSeries] = useState([]);
+  const [hourly, setHourly] = useState([]);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
 
@@ -127,6 +130,8 @@ export default function LogPage() {
         const d = await API.get("/log/usage/analysis", { params: { days: daysArg } });
         setByDay(Array.isArray(d?.byDay) ? d.byDay : []);
         setByModel(Array.isArray(d?.byModel) ? d.byModel : []);
+        setModelSeries(Array.isArray(d?.modelSeries) ? d.modelSeries : []);
+        setHourly(Array.isArray(d?.hourly) ? d.hourly : []);
       } catch (e) {
         setAnalysisError(e.message || "分析数据加载失败");
       } finally {
@@ -312,14 +317,16 @@ export default function LogPage() {
       <PageHeader
         title="使用记录"
         extra={
-          <>
+          <Space size={6} wrap>
             <Select
+              size="small"
               value={days}
               onChange={(v) => { setDays(v); setPage(1); }}
               style={{ width: 110 }}
               options={RANGE_OPTIONS}
             />
             <Select
+              size="small"
               value={model || undefined}
               onChange={(v) => { setModel(v || ""); setPage(1); }}
               style={{ width: 170 }}
@@ -329,6 +336,7 @@ export default function LogPage() {
               options={filters.models.map((m) => ({ value: m.model, label: `${m.model}（${m.count}）` }))}
             />
             <Select
+              size="small"
               value={tokenId || undefined}
               onChange={(v) => { setTokenId(v || 0); setPage(1); }}
               style={{ width: 160 }}
@@ -337,6 +345,7 @@ export default function LogPage() {
               options={filters.tokens.map((t) => ({ value: t.id, label: `${t.name}（${t.count}）` }))}
             />
             <Input.Search
+              size="small"
               placeholder={isAdmin ? "搜索用户 / 内容 / 模型" : "搜索内容 / 模型"}
               allowClear
               style={{ width: 220 }}
@@ -351,8 +360,8 @@ export default function LogPage() {
                 setPage(1);
               }}
             />
-            <Button icon={<ReloadOutlined />} onClick={load} title="刷新" aria-label="刷新使用记录" />
-          </>
+            <Button size="small" icon={<ReloadOutlined />} onClick={load} title="刷新" aria-label="刷新使用记录" />
+          </Space>
         }
       />
 
@@ -401,8 +410,11 @@ export default function LogPage() {
         <UsageAnalysis
           byDay={byDay}
           byModel={byModel}
+          modelSeries={modelSeries}
+          hourly={hourly}
           loading={analysisLoading}
           error={analysisError}
+          perUnit={perUnit}
           onRefresh={() => loadAnalysis(days)}
         />
       ) : null}

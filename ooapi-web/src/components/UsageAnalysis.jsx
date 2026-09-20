@@ -1,27 +1,25 @@
 // 使用记录页的图表分析区
 // ---------------------------------------------------------------------------
 // 视觉规范与「渠道用量统计弹窗」保持一致（同一套 oo-* 类、同一套配色语义），
-// 这是本项目图表展示的**统一标准**：新页面要画图，复用这里的组件与类，
-// 不要自己写一套 SVG 与颜色。
+// 这是本项目图表展示的**统一标准**：新页面要画图，复用这里的组件与类。
 //
-// 内容：
-//   · 每日趋势（调用/消费/Token 三口径切换）—— 平滑折线 + 悬浮十字线
-//   · 模型消费排行（横向条）—— 和渠道统计弹窗的模型榜同款
-//   · 缓存命中与延迟小结 —— 用于快速判断「是不是该优化提示词/渠道」
+// 这一版的两个重要改变（用户反馈「图表太丑而且巨大、要看多个图一起」）：
+//   ① **多图并列**：以前一次只显示一张图 + 一个 Segmented 切换，
+//      要看「调用 vs 消费 vs Token」得来回点，且单张图被拉满整屏宽度。
+//      现在改成 2×2 网格并列（调用/消费/Token/耗时各一张），
+//      每张高度收敛到 132px —— 一屏看全四个口径。
+//   ② **宽度跟随容器**：旧实现 viewBox 固定 780 配 width:100%，
+//      被拉伸到宽屏时文字与线宽一起放大（丑的根源）。
+//      现在用 ResizeObserver 实测宽度做 1:1 映射，字号恒定。
+//
+// 新增两类图（回答「单看一条线看不出结构」的问题）：
+//   · 模型多折线：Top 5 模型的消费趋势叠在一张图上，看份额此消彼长；
+//   · 时段热点图：7 天 × 24 小时的调用密度，看作息与峰谷。
 import React, { useMemo, useState } from "react";
-import { Spin, Segmented, Empty } from "antd";
+import { Spin, Empty, Tooltip } from "antd";
+import { LineChart, BarChart, RankBar, Legend, Sparkline, SERIES_COLORS, fmtCompact, useResizeWidth } from "./Charts";
 
-const SERIES_COLORS = [
-  "#3b82f6", "#22c55e", "#f59e0b", "#ef4444",
-  "#a855f7", "#06b6d4", "#ec4899", "#64748b",
-];
-
-function fmtCompact(n) {
-  const v = Number(n) || 0;
-  if (v >= 1e8) return `${(v / 1e8).toFixed(2)}亿`;
-  if (v >= 1e4) return `${(v / 1e4).toFixed(1)}万`;
-  return v.toLocaleString();
-}
+const WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 
 /** Catmull-Rom → 三次贝塞尔（与渠道统计弹窗同一实现） */
 function smoothPath(rawPts) {
@@ -43,55 +41,67 @@ function smoothPath(rawPts) {
   return d;
 }
 
-const METRICS = [
-  { key: "calls", label: "调用次数" },
-  { key: "units", label: "消费" },
-  { key: "tokens", label: "Token" },
-  { key: "avgElapsed", label: "平均耗时" },
-];
+/** 图卡片：统一高度与内边距，标题在左上、口径说明在右上 */
+function ChartCard({ title, note, children, span }) {
+  return (
+    <div className="oo-chart-card" style={span ? { gridColumn: `span ${span}` } : undefined}>
+      <div className="oo-chart-card-head">
+        <span className="oo-chart-card-title">{title}</span>
+        {note ? <span className="oo-chart-card-note">{note}</span> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
 
-/** 每日趋势折线（单序列 + 悬浮十字线） */
-function DayTrend({ byDay, metric }) {
+/**
+ * 紧凑折线（多序列 + 悬浮十字线）。
+ * 与 Charts.jsx 的 LineChart 的区别：这里是**小卡片内**使用，
+ * 高度更矮、Y 轴只留 3 档、X 轴最多 4 个标签，避免小图里全是刻度文字。
+ */
+function MiniTrend({ series, height = 132, yFormat = fmtCompact, unitHint = "" }) {
   const [hover, setHover] = useState(null);
-  const W = 780;
-  const H = 200;
-  const PAD = { l: 52, r: 14, t: 14, b: 26 };
+  const [wrapRef, W] = useResizeWidth(420); // 容器实测宽度：1:1 映射，文字不随宽屏放大
+  const H = height;
+  const PAD = { l: 44, r: 10, t: 10, b: 20 };
 
-  const { path, area, max, points } = useMemo(() => {
-    const vals = byDay.map((d) => Number(d[metric]) || 0);
-    const mx = Math.max(1, ...vals);
-    const n = byDay.length || 1;
-    const innerW = W - PAD.l - PAD.r;
+  const n = series[0]?.values?.length || 0;
+  const { max, plots } = useMemo(() => {
+    let mx = 0;
+    for (const s of series) for (const v of s.values) mx = Math.max(mx, Number(v.y) || 0);
+    mx = Math.max(1, mx);
+    const innerW = Math.max(10, W - PAD.l - PAD.r);
     const innerH = H - PAD.t - PAD.b;
-    const pts = vals.map((v, i) => [
-      PAD.l + (n === 1 ? innerW / 2 : (i * innerW) / (n - 1)),
-      PAD.t + innerH - (v / mx) * innerH,
-    ]);
-    const p = smoothPath(pts);
-    const a = p ? `${p} L ${pts[pts.length - 1][0]} ${PAD.t + innerH} L ${pts[0][0]} ${PAD.t + innerH} Z` : "";
-    return { path: p, area: a, max: mx, points: pts };
-  }, [byDay, metric]);
+    const plots = series.map((s, si) => {
+      const pts = s.values.map((v, i) => [
+        PAD.l + (n === 1 ? innerW / 2 : (i * innerW) / (n - 1)),
+        PAD.t + innerH - ((Number(v.y) || 0) / mx) * innerH,
+      ]);
+      return { ...s, pts, path: smoothPath(pts), color: s.color || SERIES_COLORS[si % SERIES_COLORS.length] };
+    });
+    return { max: mx, plots };
+  }, [series, n, H, W, PAD.l, PAD.r, PAD.t, PAD.b]);
 
-  if (!byDay.length) return <Empty description="该时间范围内没有数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+  if (!n) return <Empty description="暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
 
-  // Y 轴 4 档刻度
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map((r) => ({
-    y: PAD.t + (H - PAD.t - PAD.b) * (1 - r),
-    v: max * r,
-  }));
+  const ticks = [0, 0.5, 1].map((r) => ({ y: PAD.t + (H - PAD.t - PAD.b) * (1 - r), v: max * r }));
+  const labels = series[0]?.values || [];
+  const step = Math.max(1, Math.ceil(n / 4));
 
   return (
-    <div className="oo-trend-wrap" style={{ position: "relative" }}>
+    <div ref={wrapRef} style={{ position: "relative" }}>
       <svg
         viewBox={`0 0 ${W} ${H}`}
-        style={{ width: "100%", height: "auto", display: "block" }}
+        width={W}
+        height={H}
+        style={{ display: "block", maxWidth: "100%" }}
         onMouseLeave={() => setHover(null)}
         onMouseMove={(e) => {
           const rect = e.currentTarget.getBoundingClientRect();
           const x = ((e.clientX - rect.left) * W) / rect.width;
           let best = 0;
           let bestD = Infinity;
-          points.forEach((p, i) => {
+          (plots[0]?.pts || []).forEach((p, i) => {
             const d = Math.abs(p[0] - x);
             if (d < bestD) {
               bestD = d;
@@ -104,79 +114,149 @@ function DayTrend({ byDay, metric }) {
         {ticks.map((t, i) => (
           <g key={i}>
             <line x1={PAD.l} y1={t.y} x2={W - PAD.r} y2={t.y} stroke="var(--line-soft)" strokeWidth={1} />
-            <text x={PAD.l - 6} y={t.y + 4} textAnchor="end" fontSize={10} fill="var(--ink-3)">
-              {fmtCompact(t.v)}
+            <text x={PAD.l - 5} y={t.y + 3.5} textAnchor="end" fontSize={9.5} fill="var(--ink-3)">
+              {yFormat(t.v)}
             </text>
           </g>
         ))}
-        {area ? <path d={area} fill="color-mix(in srgb, var(--accent) 12%, transparent)" /> : null}
-        <path d={path} fill="none" stroke="var(--accent)" strokeWidth={2} strokeLinecap="round" />
-        {hover !== null && points[hover] ? (
-          <>
-            <line x1={points[hover][0]} y1={PAD.t} x2={points[hover][0]} y2={H - PAD.b} stroke="var(--line-strong)" strokeDasharray="3 3" />
-            <circle cx={points[hover][0]} cy={points[hover][1]} r={4} fill="var(--accent)" stroke="var(--surface)" strokeWidth={2} />
-          </>
+        {plots.map((p) => (
+          <path key={p.name} d={p.path} fill="none" stroke={p.color} strokeWidth={1.8} strokeLinecap="round" />
+        ))}
+        {hover !== null ? (
+          <line
+            x1={plots[0]?.pts[hover]?.[0]}
+            y1={PAD.t}
+            x2={plots[0]?.pts[hover]?.[0]}
+            y2={H - PAD.b}
+            stroke="var(--line-strong)"
+            strokeDasharray="3 3"
+          />
         ) : null}
-        {/* X 轴标签：最多 7 个，避免拥挤 */}
-        {byDay.map((d, i) =>
-          i % Math.max(1, Math.ceil(byDay.length / 7)) === 0 ? (
-            <text key={d.day} x={points[i]?.[0]} y={H - 8} textAnchor="middle" fontSize={10} fill="var(--ink-3)">
-              {String(d.day).slice(5)}
+        {plots.map((p) =>
+          hover !== null && p.pts[hover] ? (
+            <circle key={`d-${p.name}`} cx={p.pts[hover][0]} cy={p.pts[hover][1]} r={3} fill={p.color} stroke="var(--surface)" strokeWidth={1.5} />
+          ) : null
+        )}
+        {labels.map((v, i) =>
+          i % step === 0 ? (
+            <text key={i} x={plots[0]?.pts[i]?.[0]} y={H - 6} textAnchor="middle" fontSize={9.5} fill="var(--ink-3)">
+              {String(v.x).slice(5)}
             </text>
           ) : null
         )}
       </svg>
-      {hover !== null && byDay[hover] ? (
-        <div className="oo-trend-tip" style={{ left: `${(points[hover][0] / W) * 100}%`, top: 8 }}>
-          <div style={{ fontWeight: 600 }}>{byDay[hover].day}</div>
-          <div>调用 {byDay[hover].calls}</div>
-          <div>消费 {byDay[hover].units} 单位</div>
-          <div>Token {byDay[hover].tokens}</div>
-          <div>缓存 {byDay[hover].cacheTokens}</div>
-          <div>平均耗时 {(byDay[hover].avgElapsed / 1000).toFixed(2)}s</div>
+      {hover !== null ? (
+        <div className="oo-trend-tip" style={{ left: `${((plots[0]?.pts[hover]?.[0] || 0) / W) * 100}%`, top: 4 }}>
+          <div style={{ fontWeight: 600 }}>{labels[hover]?.x}</div>
+          {plots.map((p) => (
+            <div key={p.name} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <span style={{ width: 7, height: 7, borderRadius: 2, background: p.color, display: "inline-block" }} />
+              <span>{p.name}</span>
+              <b style={{ marginLeft: "auto" }}>{fmtCompact(p.values[hover]?.y || 0)}</b>
+            </div>
+          ))}
+          {unitHint ? <div style={{ color: "#aaa" }}>{unitHint}</div> : null}
         </div>
       ) : null}
     </div>
   );
 }
 
-/** 模型消费排行（横向条，与渠道统计弹窗同款） */
-function ModelRank({ byModel }) {
-  const list = byModel.slice(0, 10);
-  if (!list.length) return <Empty description="该时间范围内没有数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
-  const max = Math.max(1, ...list.map((m) => m.units || m.tokens));
+/** 时段热点图：7 天 × 24 小时（像 GitHub 贡献图，但两维都是时间） */
+function HourHeatmap({ hourly }) {
+  const [tip, setTip] = useState(null);
+  if (!hourly?.length) return <Empty description="暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+  const max = Math.max(1, ...hourly.flat().map((c) => c.calls));
+  // 五档离散色阶（离散比连续更好判读：一眼看出「哪个格子最深」）
+  const level = (v) => {
+    if (!v) return 0;
+    const r = v / max;
+    if (r > 0.75) return 4;
+    if (r > 0.5) return 3;
+    if (r > 0.25) return 2;
+    return 1;
+  };
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {list.map((m, i) => (
-        <div key={m.model} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
-          <span className="oo-truncate" style={{ width: 170, fontFamily: "var(--font-mono)" }} title={m.model}>
-            {m.model}
+    <div style={{ position: "relative" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "34px repeat(24, 1fr)", gap: 2, fontSize: 9.5 }}>
+        <span />
+        {Array.from({ length: 24 }, (_, h) => (
+          <span key={h} style={{ textAlign: "center", color: "var(--ink-3)" }}>
+            {h % 3 === 0 ? h : ""}
           </span>
-          <span style={{ flex: 1, height: 8, background: "var(--inset)", borderRadius: 4, overflow: "hidden" }}>
-            <span
-              style={{
-                display: "block",
-                width: `${Math.max(2, ((m.units || m.tokens) / max) * 100)}%`,
-                height: "100%",
-                background: SERIES_COLORS[i % SERIES_COLORS.length],
-              }}
-            />
-          </span>
-          <span className="oo-num" style={{ width: 90, textAlign: "right", color: "var(--ink-3)" }}>
-            {m.units} 单位
-          </span>
-          <span className="oo-num" style={{ width: 70, textAlign: "right", color: "var(--ink-3)" }}>
-            {m.calls} 次
-          </span>
-        </div>
-      ))}
+        ))}
+        {hourly.map((row, wd) => (
+          <React.Fragment key={wd}>
+            <span style={{ color: "var(--ink-3)", lineHeight: "14px" }}>{WEEKDAYS[wd].slice(1)}</span>
+            {row.map((c) => (
+              <Tooltip
+                key={c.hour}
+                title={`${WEEKDAYS[wd]} ${String(c.hour).padStart(2, "0")}:00 · ${c.calls} 次 · ${c.units} 单位`}
+              >
+                <span
+                  onMouseEnter={() => setTip(c)}
+                  onMouseLeave={() => setTip(null)}
+                  style={{
+                    height: 14,
+                    borderRadius: 2,
+                    background:
+                      level(c.calls) === 0
+                        ? "var(--inset)"
+                        : `color-mix(in srgb, var(--accent) ${level(c.calls) * 22}%, var(--inset))`,
+                  }}
+                />
+              </Tooltip>
+            ))}
+          </React.Fragment>
+        ))}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 6, fontSize: 10.5, color: "var(--ink-3)" }}>
+        <span>少</span>
+        {[0, 1, 2, 3, 4].map((l) => (
+          <span
+            key={l}
+            style={{
+              width: 11,
+              height: 11,
+              borderRadius: 2,
+              background: l === 0 ? "var(--inset)" : `color-mix(in srgb, var(--accent) ${l * 22}%, var(--inset))`,
+            }}
+          />
+        ))}
+        <span>多（峰值 {max} 次）</span>
+        {tip ? <span style={{ marginLeft: "auto" }}>{WEEKDAYS[tip.weekday]} {tip.hour}:00 · {tip.calls} 次</span> : null}
+      </div>
     </div>
   );
 }
 
-export default function UsageAnalysis({ byDay = [], byModel = [], loading, error, onRefresh }) {
-  const [metric, setMetric] = useState("calls");
+/** 单机游戏化的分布条：状态/耗时/模型份额都能用（横向堆叠） */
+function ShareBar({ items }) {
+  const total = items.reduce((a, b) => a + (Number(b.value) || 0), 0);
+  if (!total) return <Empty description="暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+  return (
+    <div>
+      <div style={{ display: "flex", height: 10, borderRadius: 4, overflow: "hidden", background: "var(--inset)" }}>
+        {items.map((it, i) => (
+          <Tooltip key={it.name} title={`${it.name}：${fmtCompact(it.value)}（${((it.value / total) * 100).toFixed(1)}%）`}>
+            <span style={{ width: `${(it.value / total) * 100}%`, background: SERIES_COLORS[i % SERIES_COLORS.length] }} />
+          </Tooltip>
+        ))}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", marginTop: 7, fontSize: 11.5 }}>
+        {items.map((it, i) => (
+          <span key={it.name} style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "var(--ink-3)" }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: SERIES_COLORS[i % SERIES_COLORS.length] }} />
+            <span className="oo-truncate" style={{ maxWidth: 120 }}>{it.name}</span>
+            <b style={{ color: "var(--ink)" }}>{(it.value).toLocaleString()}</b>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
+export default function UsageAnalysis({ byDay = [], byModel = [], modelSeries = [], hourly = [], loading, error, onRefresh, perUnit }) {
   if (loading) {
     return (
       <div className="oo-panel" style={{ padding: 28, textAlign: "center" }}>
@@ -196,43 +276,108 @@ export default function UsageAnalysis({ byDay = [], byModel = [], loading, error
       </div>
     );
   }
+  if (!byDay.length && !byModel.length) {
+    return (
+      <div className="oo-panel" style={{ padding: "40px 0" }}>
+        <Empty description="该时间范围内没有数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+      </div>
+    );
+  }
 
-  // 小结：缓存命中率与平均延迟（按区间汇总）
   const sum = byDay.reduce(
     (a, d) => ({
+      calls: a.calls + (d.calls || 0),
+      units: a.units + (d.units || 0),
       tokens: a.tokens + (d.tokens || 0),
       cache: a.cache + (d.cacheTokens || 0),
       elapsed: a.elapsed + (d.avgElapsed || 0),
       n: a.n + (d.avgElapsed ? 1 : 0),
     }),
-    { tokens: 0, cache: 0, elapsed: 0, n: 0 }
+    { calls: 0, units: 0, tokens: 0, cache: 0, elapsed: 0, n: 0 }
   );
+  // 缓存命中率分母是 **输入 token**（不是总量）：prompt 已含缓存部分，不能再加一次
   const cacheRate = sum.tokens > 0 ? ((sum.cache / sum.tokens) * 100).toFixed(1) : "0.0";
   const avgElapsed = sum.n ? Math.round(sum.elapsed / sum.n) : 0;
 
+  const xOf = (arr) => arr.map((d) => ({ x: d.day, y: 0 }));
+  const trend = (key) => [
+    { name: key.label, values: byDay.map((d) => ({ x: d.day, y: Number(d[key.field]) || 0 })), color: key.color },
+  ];
+
+  // 模型多折线：把 modelSeries 补齐到与 byDay 相同的日期轴（缺的日期填 0），
+  // 否则各条线的 X 轴长度不同，画出来会错位。
+  const days = byDay.map((d) => d.day);
+  const modelLines = (modelSeries || []).map((ms, i) => ({
+    name: ms.model,
+    color: SERIES_COLORS[i % SERIES_COLORS.length],
+    values: days.map((day) => {
+      const hit = ms.points.find((p) => p.day === day);
+      return { x: day, y: Number(hit?.units) || 0 };
+    }),
+  }));
+
   return (
     <div className="oo-panel" style={{ marginBottom: 14 }}>
-      <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+      <div className="oo-stats-card-head" style={{ marginBottom: 10 }}>
         <div className="oo-stats-card-title">使用分析</div>
         <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
-          缓存命中 {cacheRate}% · 平均耗时 {(avgElapsed / 1000).toFixed(2)}s
+          缓存命中 {cacheRate}% · 平均耗时 {(avgElapsed / 1000).toFixed(2)}s · 时区 UTC+8（按天重置）
         </span>
       </div>
 
-      <Segmented
-        size="small"
-        value={metric}
-        onChange={setMetric}
-        options={METRICS.map((m) => ({ value: m.key, label: m.label }))}
-        style={{ marginBottom: 8 }}
-      />
-      <DayTrend byDay={byDay} metric={metric} />
-
-      <div className="oo-stats-card-head" style={{ marginTop: 16, marginBottom: 8 }}>
-        <div className="oo-stats-card-title">模型消费排行</div>
-        <span style={{ fontSize: 12, color: "var(--ink-3)" }}>Top 10</span>
+      {/* 多图并列：一屏看全四个口径，不用来回切换 */}
+      <div className="oo-chart-grid">
+        <ChartCard title="调用次数" note={`合计 ${fmtCompact(sum.calls)}`}>
+          <MiniTrend series={trend({ label: "调用", field: "calls", color: SERIES_COLORS[0] })} />
+        </ChartCard>
+        <ChartCard title="消费" note={`合计 ${fmtCompact(sum.units)} 单位`}>
+          <MiniTrend series={trend({ label: "消费", field: "units", color: SERIES_COLORS[2] })} />
+        </ChartCard>
+        <ChartCard title="Token 用量" note={`命中 ${fmtCompact(sum.cache)}`}>
+          <MiniTrend series={trend({ label: "Token", field: "tokens", color: SERIES_COLORS[1] })} />
+        </ChartCard>
+        <ChartCard title="平均耗时" note={`${(avgElapsed / 1000).toFixed(2)}s`}>
+          <MiniTrend
+            series={trend({ label: "耗时(ms)", field: "avgElapsed", color: SERIES_COLORS[4] })}
+            yFormat={(v) => `${Math.round(v)}`}
+            unitHint="单位：毫秒"
+          />
+        </ChartCard>
       </div>
-      <ModelRank byModel={byModel} />
+
+      {/* 模型多折线：看份额此消彼长 */}
+      <div className="oo-chart-grid" style={{ marginTop: 12 }}>
+        <ChartCard
+          title="模型消费趋势"
+          note={modelLines.length ? `Top ${modelLines.length}` : "暂无数据"}
+          span={modelLines.length ? 2 : 1}
+        >
+          {modelLines.length ? (
+            <>
+              <MiniTrend series={modelLines} height={150} />
+              <Legend series={modelLines.map((s) => ({ name: s.name, color: s.color }))} />
+            </>
+          ) : (
+            <Empty description="暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          )}
+        </ChartCard>
+
+        <ChartCard title="时段热点" note="7 天 × 24 小时（调用密度）">
+          <HourHeatmap hourly={hourly} />
+        </ChartCard>
+      </div>
+
+      <div className="oo-chart-grid" style={{ marginTop: 12 }}>
+        <ChartCard title="模型消费排行" note="Top 10">
+          <RankBar
+            items={byModel.slice(0, 10).map((m) => ({ name: m.model, value: m.units }))}
+            suffix=" 单位"
+          />
+        </ChartCard>
+        <ChartCard title="模型调用占比" note="按次数">
+          <ShareBar items={byModel.slice(0, 8).map((m) => ({ name: m.model, value: m.calls }))} />
+        </ChartCard>
+      </div>
     </div>
   );
 }
