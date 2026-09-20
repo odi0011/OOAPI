@@ -82,16 +82,11 @@ for (const key of gameKeys) {
     renderCheck[key] = { error: "建房失败" };
     continue;
   }
-  await page.goto(`${BASE}/games`, { waitUntil: "networkidle", timeout: 40000 });
-  await page.waitForTimeout(1200);
-  // 大厅里点「回到对局」进入
-  const opened = await page.evaluate(() => {
-    const btn = Array.from(document.querySelectorAll("button")).find((b) => b.innerText.includes("回到对局"));
-    if (!btn) return false;
-    btn.click();
-    return true;
-  });
-  await page.waitForTimeout(1800);
+  // 直接用分享链接进入（?room=<id>）：既是本测试最稳的进入方式，
+  // 也顺便验证了「把地址栏链接发给对手」这条路径真的可用
+  await page.goto(`${BASE}/games?room=${rid}`, { waitUntil: "networkidle", timeout: 40000 });
+  await page.waitForTimeout(2200);
+  const opened = true;
   renderCheck[key] = await page.evaluate(() => {
     const canvas = document.querySelector(".oo-game-canvas");
     const grid = document.querySelector(".oo-game-grid");
@@ -124,12 +119,8 @@ ck("象棋棋子渲染为汉字", /[将帅车马炮士象兵卒仕相]/.test(ren
     };
     await fetch(`${BASE}/api/games/rooms/${rid}/join`, { method: "POST", headers: HO });
 
-    await page.goto(`${BASE}/games`, { waitUntil: "networkidle", timeout: 40000 });
-    await page.waitForTimeout(1200);
-    await page.evaluate(() => {
-      Array.from(document.querySelectorAll("button")).find((b) => b.innerText.includes("回到对局"))?.click();
-    });
-    await page.waitForTimeout(1800);
+    await page.goto(`${BASE}/games?room=${rid}`, { waitUntil: "networkidle", timeout: 40000 });
+    await page.waitForTimeout(2200);
 
     // 点第 3 列顶格（四子棋按列落子）
     const clicked = await page.evaluate(() => {
@@ -176,14 +167,11 @@ ck("象棋棋子渲染为汉字", /[将帅车马炮士象兵卒仕相]/.test(ren
           "content-type": "application/json",
         }
       : null;
-    if (HO) await fetch(`${BASE}/api/games/rooms/${rid}/join`, { method: "POST", headers: HO });
+    // 注意：布阵**不需要**对手先加入（房主建好房间就能先摆舰）。
+    // 这里刻意不让对手加入，以验证这条产品逻辑。
 
-    await page.goto(`${BASE}/games`, { waitUntil: "networkidle", timeout: 40000 });
-    await page.waitForTimeout(1200);
-    await page.evaluate(() => {
-      Array.from(document.querySelectorAll("button")).find((b) => b.innerText.includes("回到对局"))?.click();
-    });
-    await page.waitForTimeout(2000);
+    await page.goto(`${BASE}/games?room=${rid}`, { waitUntil: "networkidle", timeout: 40000 });
+    await page.waitForTimeout(2400);
 
     const placing = await page.evaluate(() => ({
       text: (document.querySelector(".oo-game-canvas")?.innerText || "").replace(/\s+/g, "").slice(0, 60),

@@ -13,7 +13,7 @@
 //   · battleship：海战棋（双棋盘，对手盘是迷雾）
 // 这样加新游戏只需实现引擎 + 一个渲染分支，不用复制整套对战 UI。
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Button, Space, Tag, Empty, App as AntApp, Segmented, List, Tooltip, Skeleton, Popconfirm, Badge,
 } from "antd";
@@ -476,6 +476,10 @@ export default function GamesPage() {
   const { message: toast } = AntApp.useApp();
   const { user: me } = useApp();
   const { begin, isLatest } = useLatest();
+  // 房间直链：?room=<id>。文案里让用户「把链接给对手」，那链接就必须真能打开
+  // 对应房间 —— 否则分享过去对方只看到大厅，得自己翻列表找（实测踩到）
+  const [params, setParams] = useSearchParams();
+  const urlRoomId = Number(params.get("room")) || 0;
 
   const [games, setGames] = useState([]);
   const [gameKey, setGameKey] = useState("");
@@ -556,21 +560,54 @@ export default function GamesPage() {
     };
   }, [loadRooms]);
 
-  const openRoom = async (id) => {
+  /** 打开房间并把 id 写进地址栏（便于分享给别人 / 刷新后仍在同一局） */
+  const openRoom = useCallback(async (id) => {
     try {
       const d = await API.get(`/games/rooms/${id}`);
       setRoom(d);
+      setParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.set("room", String(id));
+        return next;
+      }, { replace: true });
     } catch (e) {
       toast.error(e.message);
+      // 房间不存在/已结束：清掉 URL 参数，避免一直指向死房间
+      setParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("room");
+        return next;
+      }, { replace: true });
     }
-  };
+  }, [setParams, toast]);
+
+  /** 离开房间：清空状态与 URL 参数 */
+  const closeRoom = useCallback(() => {
+    setRoom(null);
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("room");
+      return next;
+    }, { replace: true });
+  }, [setParams]);
+
+  // 带 ?room= 进来（分享链接 / 刷新）→ 自动打开该房间
+  useEffect(() => {
+    if (urlRoomId && (!room || Number(room.id) !== urlRoomId)) openRoom(urlRoomId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlRoomId]);
 
   const createRoom = async () => {
     if (!gameKey) return;
     try {
       const r = await API.post("/games/rooms", { game_key: gameKey });
       setRoom(r);
-      toast.success("房间已创建，等待对手加入");
+      setParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.set("room", String(r.id));
+        return next;
+      }, { replace: true });
+      toast.success("房间已创建，把地址栏链接发给对手即可加入");
       loadRooms();
     } catch (e) {
       toast.error(e.message);
@@ -632,7 +669,7 @@ export default function GamesPage() {
               }}
               onJoin={joinRoom}
               onLeave={(why) => {
-                setRoom(null);
+                closeRoom();
                 if (why === "refresh") loadRooms();
               }}
             />
