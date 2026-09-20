@@ -225,35 +225,67 @@ ck("社区是单列列表式而非卡片瀑布流（.oo-post-item）", community
 
 await page.goto(`${BASE}/games`, { waitUntil: "networkidle", timeout: 40000 });
 await page.waitForTimeout(2500);
-const gamesUi = await page.evaluate(() => {
+
+/** 读取当前棋盘状态（三个游戏结构统一：.oo-game-grid > .oo-game-cell/span） */
+const readBoard = () =>
+  page.evaluate(() => {
+    const grid = document.querySelector(".oo-game-grid");
+    const cells = grid ? Array.from(grid.children) : [];
+    return {
+      count: cells.length,
+      sig: cells.map((c) => `${c.className}|${c.textContent.trim()}`).join(";"),
+      cols: grid ? getComputedStyle(grid).gridTemplateColumns.split(" ").length : 0,
+    };
+  });
+
+const first = await page.evaluate(() => {
   const canvas = document.querySelector(".oo-game-canvas");
   return {
     hasStage: Boolean(document.querySelector(".oo-game-stage")),
     canvasSize: canvas ? { w: Math.round(canvas.getBoundingClientRect().width), h: Math.round(canvas.getBoundingClientRect().height) } : null,
-    hasBoard: document.querySelectorAll(".oo-game-grid > span").length,
     tabIndex: canvas?.getAttribute("tabindex"),
   };
 });
-ck("游戏页使用受控画布（.oo-game-canvas）", gamesUi.hasStage);
-ck("画布为正方形（固定长宽比，不随窗口拉伸）", gamesUi.canvasSize && Math.abs(gamesUi.canvasSize.w - gamesUi.canvasSize.h) <= 2, JSON.stringify(gamesUi.canvasSize));
-ck("棋盘格子已渲染（16×16=256）", gamesUi.hasBoard === 256, `cells=${gamesUi.hasBoard}`);
-ck("画布可获焦（键盘仅在获焦时接管）", gamesUi.tabIndex === "0", `tabindex=${gamesUi.tabIndex}`);
+ck("游戏页使用受控画布（.oo-game-canvas）", first.hasStage);
+ck("画布为正方形（固定长宽比，不随窗口拉伸）", first.canvasSize && Math.abs(first.canvasSize.w - first.canvasSize.h) <= 2, JSON.stringify(first.canvasSize));
+ck("画布可获焦（键盘仅在获焦时接管）", first.tabIndex === "0", `tabindex=${first.tabIndex}`);
 
-// 键盘必须只在获焦时生效：未聚焦时按方向键不应改变棋盘
-const beforeKeys = await page.evaluate(() => Array.from(document.querySelectorAll(".oo-game-grid > span")).map((s) => `${s.className}:${s.textContent}`).join("|"));
+// 2048：4×4 = 16 格
+const b2048 = await readBoard();
+ck("2048 棋盘已渲染（4×4=16 格）", b2048.count === 16, `cells=${b2048.count}`);
+ck("2048 棋盘为四列网格", b2048.cols === 4, `cols=${b2048.cols}`);
+
+// 键盘必须只在获焦时生效：未聚焦按方向键不应改变棋盘
 await page.evaluate(() => document.activeElement?.blur?.());
 await page.keyboard.press("ArrowLeft");
 await page.waitForTimeout(300);
-const afterKeys = await page.evaluate(() => Array.from(document.querySelectorAll(".oo-game-grid > span")).map((s) => `${s.className}:${s.textContent}`).join("|"));
-ck("未聚焦时按方向键不改变棋盘（不劫持键盘）", beforeKeys === afterKeys);
+const afterBlur = await readBoard();
+ck("未聚焦时按方向键不改变棋盘（不劫持键盘）", afterBlur.sig === b2048.sig);
 
-// 聚焦后按键应生效（2048 的格子样式会变）
+// 聚焦后按键应生效（2048 会合并/移动，格子签名变化）
 await page.click(".oo-game-canvas");
 await page.waitForTimeout(200);
 await page.keyboard.press("ArrowLeft");
-await page.waitForTimeout(400);
-const afterFocus = await page.evaluate(() => Array.from(document.querySelectorAll(".oo-game-grid > span")).map((s) => `${s.className}:${s.textContent}`).join("|"));
-ck("聚焦后方向键生效（棋盘状态变化）", afterFocus !== afterKeys || afterFocus !== beforeKeys, `before=${beforeKeys.slice(0,40)} after=${afterFocus.slice(0,40)}`);
+await page.waitForTimeout(500);
+const afterFocus = await readBoard();
+ck("聚焦后方向键生效（棋盘状态变化）", afterFocus.sig !== b2048.sig, `before=${b2048.sig.slice(0, 60)}`);
+
+// 切到贪吃蛇：16×16 = 256 格
+const clickedSnake = await page.evaluate(() => {
+  const item = Array.from(document.querySelectorAll(".ant-segmented-item")).find((x) => x.innerText.includes("贪吃蛇"));
+  if (!item) return false;
+  item.click();
+  return true;
+});
+await page.waitForTimeout(1500);
+if (clickedSnake) {
+  const snakeBoard = await readBoard();
+  ck("贪吃蛇棋盘已渲染（16×16=256 格）", snakeBoard.count === 256, `cells=${snakeBoard.count}`);
+  ck("贪吃蛇棋盘为十六列网格", snakeBoard.cols === 16, `cols=${snakeBoard.cols}`);
+} else {
+  ck("贪吃蛇棋盘已渲染（16×16=256 格）", false, "未找到贪吃蛇 tab");
+  ck("贪吃蛇棋盘为十六列网格", false, "未找到贪吃蛇 tab");
+}
 
 console.log("\n运行期错误:", errors.length ? errors.slice(0, 5) : "无");
 if (errors.length) fail += 1;

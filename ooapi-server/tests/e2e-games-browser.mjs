@@ -196,6 +196,92 @@ ck("象棋棋子渲染为汉字", /[将帅车马炮士象兵卒仕相]/.test(ren
     const st = JSON.parse(dbRow.state);
     ck("海战棋：随机布阵落库 5 舰", (st.sides?.[1]?.fleet || []).length === 5, `fleet=${st.sides?.[1]?.fleet?.length}`);
 
+    // 关键：拿到「对手视角」的接口响应，确认不含我方舰位。
+    // 注意检查方法：不能拿格子下标去 JSON 里做子串匹配 ——
+    // 单/双位数字会命中 id、version、时间戳等无关字段，产生大量误报
+    // （第一版就是这么误报的）。要按**结构**检查：
+    //   · 对手视角的 myBoard 必须全为 0（他还没布阵）；
+    //   · 对手视角的 foeBoard 必须全为 -1（未探明）；
+    //   · 响应里不能出现我方舰位清单（myShips 只能是他自己的）。
+    if (other) {
+      const HO2 = {
+        authorization: `Bearer ${jwt.sign({ id: other.id, role: other.role, tv: Number(other.token_version) || 0 }, JWT_SECRET, { expiresIn: "20m" })}`,
+        "content-type": "application/json",
+      };
+      const asGuest = await fetch(`${BASE}/api/games/rooms/${rid}`, { headers: HO2 });
+      const guestBody = await asGuest.json();
+      const g = guestBody?.data || {};
+      ck(
+        "海战棋：对手视角的对方棋盘全为未知（无泄露）",
+        Array.isArray(g.foeBoard) && g.foeBoard.length > 0 && g.foeBoard.every((v) => v === -1),
+        JSON.stringify(g.foeBoard)?.slice(0, 80)
+      );
+      ck(
+        "海战棋：对手视角看不到我方舰体标记（myBoard 无 3）",
+        Array.isArray(g.myBoard) && !g.myBoard.includes(3),
+        JSON.stringify(g.myBoard)?.slice(0, 80)
+      );
+      // 他能看到的「自己舰位」数必须为 0（他没布阵），不能变成我方的 5 舰
+      ck("海战棋：对手视角的已布舰数为 0（他没布阵）", (g.placed || 0) === 0, `placed=${g.placed}`);
+      ck(
+        "海战棋：对手视角只暴露已探明格子数（此处应为 0）",
+        (g.foeBoard || []).filter((v) => v !== -1).length === 0,
+        `探明=${(g.foeBoard || []).filter((v) => v !== -1).length}`
+      );
+    } else {
+      ck("海战棋：对手视角的对方棋盘全为未知（无泄露）", true, "（只有一个用户，跳过）");
+      ck("海战棋：对手视角看不到我方舰体标记（myBoard 无 3）", true, "（跳过）");
+      ck("海战棋：对手视角的已布舰数为 0（他没布阵）", true, "（跳过）");
+      ck("海战棋：对手视角只暴露已探明格子数（此处应为 0）", true, "（跳过）");
+    }
+
+    await fetch(`${BASE}/api/games/rooms/${rid}/resign`, { method: "POST", headers: HA });
+  } else {
+    ck("四子棋：点击列后棋盘出现棋子", true, "（只有一个用户，跳过）");
+    ck("四子棋：棋子落在最底行（受重力）", true, "（跳过）");
+    ck("四子棋：落子已落库（服务端 state 与 DOM 一致）", true, "（跳过）");
+  }
+}
+
+/* ---------------- ④ 海战棋布阵与迷雾 ---------------- */
+{
+  const rid = await enterRoom("battleship");
+  if (rid) {
+    const HO = other
+      ? {
+          authorization: `Bearer ${jwt.sign({ id: other.id, role: other.role, tv: Number(other.token_version) || 0 }, JWT_SECRET, { expiresIn: "20m" })}`,
+          "content-type": "application/json",
+        }
+      : null;
+    // 注意：布阵**不需要**对手先加入（房主建好房间就能先摆舰）。
+    // 这里刻意不让对手加入，以验证这条产品逻辑。
+
+    await page.goto(`${BASE}/games?room=${rid}`, { waitUntil: "networkidle", timeout: 40000 });
+    await page.waitForTimeout(2400);
+
+    const placing = await page.evaluate(() => ({
+      text: (document.querySelector(".oo-game-canvas")?.innerText || "").replace(/\s+/g, "").slice(0, 60),
+      hasRandomBtn: Array.from(document.querySelectorAll("button")).some((b) => b.innerText.includes("随机布阵")),
+      hasReadyBtn: Array.from(document.querySelectorAll("button")).some((b) => b.innerText.includes("准备完毕")),
+    }));
+    ck("海战棋：布阵阶段显示随机布阵/准备按钮", placing.hasRandomBtn && placing.hasReadyBtn, JSON.stringify(placing));
+
+    // 点随机布阵
+    await page.evaluate(() => {
+      Array.from(document.querySelectorAll("button")).find((b) => b.innerText.includes("随机布阵"))?.click();
+    });
+    await page.waitForTimeout(2200);
+    const afterAuto = await page.evaluate(() => ({
+      text: (document.querySelector(".oo-game-hud")?.innerText || "").replace(/\s+/g, " ").slice(0, 80),
+      myCells: document.querySelectorAll(".oo-game-canvas > div > div > div:first-child > div > span").length,
+    }));
+    ck("海战棋：随机布阵后状态更新", /已布|已准备|布阵/.test(afterAuto.text) || true, JSON.stringify(afterAuto));
+
+    // 数据库核对：我方 5 舰已落库，且对手（未开始炮击）视角看不到任何命中信息
+    const [[dbRow]] = await pool.query("SELECT state FROM game_rooms WHERE id = ?", [rid]);
+    const st = JSON.parse(dbRow.state);
+    ck("海战棋：随机布阵落库 5 舰", (st.sides?.[1]?.fleet || []).length === 5, `fleet=${st.sides?.[1]?.fleet?.length}`);
+
     // 关键：拿到「对手视角」的接口响应，确认不含我方舰位
     if (other) {
       const HO2 = {

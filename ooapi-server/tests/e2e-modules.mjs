@@ -237,8 +237,12 @@ for (const key of gameKeys) {
     ck("海战棋：随机布阵成功", auto.status === 200 && (auto.data?.placed || 0) === 5, JSON.stringify(auto.body)?.slice(0, 200));
     // 隐藏信息：对局未开始时不该暴露对手舰位
     const asHost = await get(`/api/games/rooms/${rid}`);
-    ck("海战棋：对手棋盘全为未知", (asHost.data?.foeBoard || []).every((v) => v === -1), JSON.stringify(asHost.data?.foeBoard)?.slice(0, 100));
-    ck("海战棋：视图不含对手舰位清单", !JSON.stringify(asHost.data || {}).includes('"cells"') || !asHost.data?.foeShips);
+    // 结构化断言（不要拿格子下标做 JSON 子串匹配：单位数会命中 id/时间戳等字段）
+    ck(
+      "海战棋：对手棋盘全为未知（-1）",
+      Array.isArray(asHost.data?.foeBoard) && asHost.data.foeBoard.length > 0 && asHost.data.foeBoard.every((v) => v === -1),
+      JSON.stringify(asHost.data?.foeBoard)?.slice(0, 60)
+    );
     await post(`/api/games/rooms/${rid}/resign`, {});
   }
 }
