@@ -37,7 +37,12 @@ const sessions = new Map();
 // 正在首建的会话（key -> Promise），用于合并并发启动请求
 const pending = new Map();
 
-function profileDir(vendor, channelId) {
+/**
+ * 某个渠道的 profile 目录（不存在则创建）。
+ * 导出给适配器用：他们需要在目录里放/读自己的标记文件
+ * （例如 openai-web-ui 用它记录「已从哪份登录 profile 复制而来」）。
+ */
+export function profileDir(vendor, channelId) {
   const d = path.join(PROFILE_ROOT, `${vendor}-${channelId}`);
   mkdirSync(d, { recursive: true });
   return d;
