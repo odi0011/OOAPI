@@ -11,7 +11,20 @@ import { withChannelLimit } from "./router.js";
 
 export function methodKeyOf(channel) {
   const m = String(channel?.other?.method || "relay");
-  return m === "api" || isOAuthMethod(m) ? m : "relay";
+  // 同 routes/channel.js 的 methodOf：**不能把未知 method 归一成 relay**，
+  // 否则同一厂商下的具名反代方式（openai-web-ui）会被错判成经典 relay，
+  // 探测时拿到错误的 testModel 与 needsBrowser 判定。
+  if (m === "api" || isOAuthMethod(m)) return m;
+  return getMethod(channel?.type, m) ? m : "relay";
+}
+
+/** 该渠道是否走浏览器会话（needsBrowser 的接入方式） */
+function needsBrowserSession(channel) {
+  try {
+    return Boolean(getMethod(channel?.type, methodKeyOf(channel))?.needsBrowser);
+  } catch {
+    return false;
+  }
 }
 
 /** 给渠道解析一个可用的测试模型（可能为空字符串，交给适配器兜底）。
@@ -35,6 +48,11 @@ export function resolveTestModel(channel) {
 // 后续**所有真实请求**都得排队，而前端 90s 就报超时，管理员完全看不到真实原因。
 // 给探针一个比 verify（30~60s）宽松、但一定有上限的预算。
 const PROBE_TIMEOUT_MS = 90000;
+// 浏览器驱动渠道（browser 会话）首次探测要付「启动 Chromium + 过风控 + 页面水合」
+// 的固定开销，实测常到 60~120s：90s 预算下**测试按钮每次都报超时**，
+// 而渠道其实是好的 —— 管理员会据此误判为坏渠道。给这类渠道单独放宽。
+// 仍保留上限：探测必须能结束，否则会占住该渠道的串行槽。
+const PROBE_TIMEOUT_BROWSER_MS = 240000;
 
 /**
  * 发送一条探测请求。
@@ -42,20 +60,22 @@ const PROBE_TIMEOUT_MS = 90000;
  *   degraded：1=本轮命中降智/截断信号（目前仅 codex 有）；state：1=注入了通行证（292）
  */
 export async function probeChannel(adapter, channel, prompt = "hi") {
+  const budget = needsBrowserSession(channel) ? PROBE_TIMEOUT_BROWSER_MS : PROBE_TIMEOUT_MS;
   // 走渠道限速闸门：测试/定时检测此前完全绕过 withChannelLimit，
   // 批量检测会并发打同一个账号（HTTP 渠道没有任何串行保护），是实打实的风控触发点。
   // 浏览器渠道靠会话锁侥幸串行，但不能依赖这种巧合。
   return withChannelLimit(channel, () =>
-    probeChannelInner(adapter, channel, prompt, AbortSignal.timeout(PROBE_TIMEOUT_MS))
+    probeChannelInner(adapter, channel, prompt, AbortSignal.timeout(budget), budget)
   );
 }
 
-async function probeChannelInner(adapter, channel, prompt = "hi", signal = undefined) {
+async function probeChannelInner(adapter, channel, prompt = "hi", signal = undefined, budgetMs = PROBE_TIMEOUT_MS) {
   const model = resolveTestModel(channel);
   const withTimeout = (p) =>
     p.catch((e) => {
       if (e?.name === "TimeoutError" || e?.name === "AbortError") {
-        throw Object.assign(new Error(`渠道检测超时（${PROBE_TIMEOUT_MS / 1000}s 未返回）`), { code: "CHANNEL_TIMEOUT" });
+        // 报实际预算：浏览器渠道的预算与普通渠道不同，写死 90 会与实际不符
+        throw Object.assign(new Error(`渠道检测超时（${budgetMs / 1000}s 未返回）`), { code: "CHANNEL_TIMEOUT" });
       }
       throw e;
     });
