@@ -22,6 +22,8 @@
 //     （连续登录约 5 次会被限流，提交按钮挂起 2~3 分钟）。
 //   · 每轮对话结束要导航回干净页面：网页版是**有状态的会话**，
 //     不重置会把上一轮的上下文带进下一轮（用户会看到莫名其妙的连贯回答）。
+import path from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   getSession,
   installHook,
@@ -33,6 +35,9 @@ import {
   newConversation,
   markReady,
   isReady,
+  copyProfile,
+  profileDir,
+  removeProfile,
 } from "./browser-driver.js";
 import { resolveProfile } from "./shared-profile.js";
 import { loginWithCredentials, checkSession } from "./openai-web-login.js";
@@ -63,13 +68,56 @@ const LOGIN_ENTRY = "https://chatgpt.com/";
  */
 async function openChannelSession(channel) {
   const { profile } = resolveProfile(channel, { vendor: "openai-web-ui" });
+  // 首次使用某渠道时，把「登录时那份已登录的 profile」整目录复制过来。
+  //
+  // 为什么是复制目录而不是注入 cookies：登录态不只在 cookie 里 ——
+  // 实测把 18 个 cookie（含 __Secure-next-auth.session-token.0/.1）完整注入
+  // 一个干净浏览器后，/api/auth/session 依旧返回空，页面仍是未登录营销页。
+  // 网页版还依赖 localStorage / IndexedDB 里的设备与会话状态，
+  // 只搬 cookie 不够。而平台已有的 copyProfile 正是为此设计的
+  // （浏览器登录类渠道一直这么用），这里复用同一套机制。
+  await maybeAdoptLoginProfile(channel);
+  const { profile: fresh } = resolveProfile(channel, { vendor: "openai-web-ui" });
   return getSession({
     vendor: "openai-web-ui",
     channelId: channel.id,
     entryUrl: ENTRY_URL,
-    profile,
-    cookies: Array.isArray(channel?.other?.cookies) ? channel.other.cookies : null,
+    profile: fresh || profile,
   });
+}
+
+/**
+ * 把登录 profile 认领到该渠道（幂等）。
+ *
+ * 登录时渠道还不存在（没有 id），所以登录在 `openai-web-ui-login-<时间戳>`
+ * 这个独立 profile 里做；渠道建好后第一次使用时把那份目录复制成
+ * `openai-web-ui-<channelId>`。用标记文件记下「已从哪份登录复制而来」，
+ * 因此：重复调用不会重复复制（省一次 30MB 拷贝），
+ * 而管理员重新登录（新的 login 目录）后会自动重新认领。
+ */
+async function maybeAdoptLoginProfile(channel) {
+  const src = String(channel?.other?.browserProfile || "");
+  if (!src) return; // 老渠道/非登录型：不需要
+  const marker = path.join(profileDir("openai-web-ui", channel.id), ".oo-login-profile");
+  try {
+    if (existsSync(marker) && readFileSync(marker, "utf8").trim() === src) return;
+  } catch {
+    /* 读不到标记就当没认领过 */
+  }
+  const ok = await copyProfile("openai-web-ui", src, String(channel.id)).catch(() => false);
+  if (!ok) {
+    throw Object.assign(new Error("登录态文件复制失败，请重新登录该渠道"), { code: "CHANNEL_NOT_READY" });
+  }
+  try {
+    writeFileSync(marker, src);
+  } catch {
+    /* 标记写不了只是会多复制一次，不影响功能 */
+  }
+  // 复制完就删掉登录期的临时 profile。
+  // 不删的话每建一个渠道就永久留一份 ~30MB 的目录，长期跑下来会占满磁盘；
+  // 而且删掉后 other.browserProfile 指向的目录不存在，
+  // 重新登录也不会被误认成"已经认领过"（标记文件才是认领依据）。
+  await removeProfile("openai-web-ui", src).catch(() => {});
 }
 
 /**
@@ -84,12 +132,11 @@ export function loginModes() {
   return ["password"];
 }
 
-// 登录用的固定会话 id。
-// 为什么不是渠道 id：新建渠道时渠道还不存在（没有 id），profile 目录按 id 命名就没法落盘。
-// 这里所有登录共用一个会话，登录成功后把 **cookies 提取出来**存进 channel.other，
-// 真实渠道的会话启动时再注入（见 browser-driver 的 restoreCookies）——
-// 比复制整个 profile 目录更干净，也不依赖登录期的 id 与最终 id 的关系。
-const LOGIN_CHANNEL_ID = 0;
+// 每个渠道 id 对应一个 profile 目录（browser-driver 的约定）。
+// 登录时记录成 other.browserProfile，渠道首次使用时由 maybeAdoptLoginProfile
+// 把那份已登录目录复制成 profileDir("openai-web-ui", <channelId>)。
+let loginSeq = 0;
+const nextLoginId = () => `login-${Date.now().toString(36)}-${(loginSeq += 1)}`;
 
 /**
  * 账号密码登录（含 2FA）。
@@ -99,24 +146,21 @@ export async function loginWithPassword({ email, password, totpSecret, profileSe
   if (!email || !password) {
     throw Object.assign(new Error("请填写邮箱与密码"), { code: "LOGIN_BAD_PARAMS" });
   }
-  // 用账号派生指纹：同一账号在 OpenAI 侧始终表现为"同一台浏览器"（防封基础）
-  const { profile } = resolveProfile({ id: LOGIN_CHANNEL_ID, other: {} }, { vendor: "openai-web-ui" });
+  // 每次登录用**独立的** profile 目录（按时间戳命名）。
+  //
+  // 为什么不是固定一个：固定目录的话，第二次登录会撞上上次留下的
+  // Chromium 进程持有的目录锁（Playwright 报 "Opening in existing browser session"），
+  // 而且旧会话的 cookie 会让 /auth/login 重定向回首页、邮箱框永远不出现。
+  // 独立目录天然避开这两点，代价只是每次登录多几十 MB 临时目录（认领后即删）。
+  const loginId = nextLoginId();
+  const { profile } = resolveProfile({ id: loginId, other: {} }, { vendor: "openai-web-ui" });
   if (!profile?.userAgent) {
     throw Object.assign(new Error("无法生成浏览器指纹"), { code: "LOGIN_BAD_PARAMS" });
   }
 
-  // 登录前先关掉上一次登录留下的会话。
-  //
-  // 为什么必须显式关：所有登录共用一个 channelId（见 LOGIN_CHANNEL_ID 注释），
-  // 而服务会按空闲时长保活浏览器会话 —— 上一次登录结束后会话可能还在，
-  // 它的 Chromium 仍持有 profile 目录锁，第二次登录启动就会失败，
-  // 报 Playwright 的 "Opening in existing browser session"。
-  // 实测踩到：第一次登录成功建出渠道后，随后每次登录都失败。
-  await closeSession("openai-web-ui", LOGIN_CHANNEL_ID).catch(() => {});
-
   const session = await getSession({
     vendor: "openai-web-ui",
-    channelId: LOGIN_CHANNEL_ID,
+    channelId: loginId,
     entryUrl: LOGIN_ENTRY,
     profile,
   });
@@ -128,25 +172,19 @@ export async function loginWithPassword({ email, password, totpSecret, profileSe
       loginWithCredentials(session.page, { email, password, totpSecret })
     );
 
-    // 提取完整 cookies（含 httpOnly）—— 这是可移植的登录态本体
-    let cookies = [];
+    // 再抓一份 cookies 存 other：**只用于展示与排查**（登录态本体是
+    // profile 目录）。实测单独注入这些 cookie 到干净浏览器并不足以登录
+    // —— 网页版还依赖 localStorage/IndexedDB 里的会话与设备状态。
     try {
-      cookies = await session.ctx.cookies("https://chatgpt.com");
+      const list = await session.ctx.cookies("https://chatgpt.com");
+      cookieList = list.map((c) => ({ name: c.name, value: c.value, domain: c.domain, path: c.path }));
     } catch {
-      cookies = [];
+      cookieList = [];
     }
-    cookieList = cookies.map((c) => ({
-      name: c.name, value: c.value, domain: c.domain, path: c.path,
-      ...(c.expires && c.expires > 0 ? { expires: c.expires } : {}),
-      ...(c.httpOnly ? { httpOnly: true } : {}),
-      ...(c.secure ? { secure: true } : {}),
-      ...(c.sameSite ? { sameSite: c.sameSite } : {}),
-    }));
   } finally {
-    // 无论成功失败都要关：登录会话的 profile 目录是登录专用的，
-    // 留着会锁住目录导致**下一次登录必然失败** —— 失败路径更要清理，
-    // 否则一次失败会级联影响后续所有尝试（实测踩过）。
-    await closeSession("openai-web-ui", LOGIN_CHANNEL_ID).catch(() => {});
+    // 必须关掉会话：否则它的 Chromium 进程会一直占着这个 profile 目录，
+    // 后续 copyProfile 会因目录被占用而失败（EBUSY / 半份拷贝）。
+    await closeSession("openai-web-ui", loginId).catch(() => {});
   }
 
   return {
@@ -154,7 +192,10 @@ export async function loginWithPassword({ email, password, totpSecret, profileSe
     profile,
     account: r.account,
     other: {
-      // 登录态：cookies 是本体；access_token/device_id 用于展示与风控一致性
+      // 登录态本体：这份已登录的 profile 目录名。
+      // 渠道首次使用时由 maybeAdoptLoginProfile 复制成该渠道的目录。
+      browserProfile: loginId,
+      // cookies 仅作展示/排查（单靠它们不能恢复登录态，见上）
       ...(cookieList.length ? { cookies: cookieList } : {}),
       access_token: r.accessToken,
       device_id: r.deviceId,
