@@ -484,9 +484,31 @@ export async function chat({ channel, model, prompt, images = [], signal, onDelt
         });
       }
       if (!out.content) {
-        throw Object.assign(new Error("ChatGPT 网页版返回了空回复（可能被风控拦截，请在网页端确认账号状态）"), {
-          code: "CHANNEL_EMPTY_RESPONSE",
-        });
+        // 空回复有多种成因（风控 / 登录态 / 钩子没挂上 / 发送没成功），
+        // 报错必须带上现场，否则只能靠猜（本轮已因此多轮往返）：
+        //   frames=0 且 capturedUrl 为空 → 钩子没捕到任何请求（发送没发出/端点变了）
+        //   frames>0 但 seenTypes 里没有 patch → 帧格式又变了
+        let diag = "";
+        try {
+          const st = await page.evaluate(() => ({
+            capturedUrl: window.__ooCap?.url || "",
+            started: Boolean(window.__ooCap?.startedAt),
+            chunks: window.__ooCap?.chunks?.length || 0,
+            err: window.__ooCap?.error || "",
+            hooked: window.__ooHookedPaths || [],
+            excl: window.__ooHookedExclude || [],
+            url: location.href,
+          }));
+          diag = `；现场：捕获URL=${st.capturedUrl || "(空)"} 已开始=${st.started} 帧数=${st.chunks}`
+            + `${st.err ? ` 捕获错误=${st.err}` : ""} 钩子=${st.hooked.join(",")}`
+            + ` 排除=${st.excl.join(",") || "无"} 页面=${st.url}`;
+        } catch { /* 取不到就不带 */ }
+        throw Object.assign(
+          new Error(
+            `ChatGPT 网页版返回了空回复${diag}；解析器见过的帧类型=[${(out.seenTypes || []).join(",") || "无"}]`,
+          ),
+          { code: "CHANNEL_EMPTY_RESPONSE" },
+        );
       }
 
       return {
