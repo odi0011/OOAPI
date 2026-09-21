@@ -147,8 +147,15 @@ export function createOpenAiWebParser() {
       const snap = j?.v?.message || (j?.message && !j.o ? j.message : null);
       if (snap && !j.o) return onMessage(snap);
 
-      // 形态二：patch 操作流
-      if (j.o === "patch") return onPatch(j.v);
+      // 形态二：patch 操作流。
+      // 有两种到达方式，**都要认**（实测同一账号两次请求就分别命中过）：
+      //   a) 包装形态：{"o":"patch","v":[ {op}, {op}, … ]}
+      //   b) 单操作形态：{"p":"/message/content/parts/0","o":"append","v":"收到"}
+      //      —— 上游把 patch 数组拆成多个 data: 行发送，每行一个操作项。
+      // 只认 a) 会漏掉正文：现象是帧数正常（20+）、钩子正常、页面也真回复了，
+      // 但解析出来是空字符串（本轮实测踩到，且是间歇性的 —— 取决于上游怎么分帧）。
+      if (j.o === "patch" && Array.isArray(j.v)) return onPatch(j.v);
+      if (typeof j.p === "string" && typeof j.o === "string") return onPatch([j]);
       // {"p":"","o":"add","v":{"message":…}} —— add 带 message 时也当快照处理
       if (j.o === "add" && j.v?.message) return onMessage(j.v.message);
 

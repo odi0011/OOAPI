@@ -92,6 +92,16 @@ console.log("\n=== 增量语义 ===");
   const d2 = p2.push(patch([{ p: "/message/content/parts/0", o: "append", v: "到" }]));
   ck("占位快照后接 patch 增量", (d1?.content || "") + (d2?.content || "") === "收到", `${d1?.content}|${d2?.content}`);
 
+  // 单操作形态（上游把 patch 数组拆成多个 data: 行）—— 实测两种形态都出现过，
+  // 只认包装形态会漏掉正文：帧数正常但解析出空串（间歇性，取决于上游分帧）。
+  const p3 = createOpenAiWebParser();
+  const s1 = p3.push(JSON.stringify({ p: "/message/content/parts/0", o: "append", v: "收" }));
+  const s2 = p3.push(JSON.stringify({ p: "/message/content/parts/0", o: "append", v: "到" }));
+  ck("单操作形态的 patch 也能产出增量", (s1?.content || "") + (s2?.content || "") === "收到",
+    `第一次=${JSON.stringify(s1?.content)} 第二次=${JSON.stringify(s2?.content)}`);
+  const s3 = p3.push(JSON.stringify({ p: "/message/status", o: "replace", v: "finished_successfully" }));
+  ck("单操作形态的 status patch 标记结束", s3?.done === true, JSON.stringify(s3));
+
   // 非 parts 路径的 patch 不应产出正文
   const d3 = p2.push(patch([{ p: "/message/status", o: "replace", v: "finished_successfully" }]));
   ck("status patch 不产正文但标记结束", d3?.content === undefined && d3?.done === true, JSON.stringify(d3));
