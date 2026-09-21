@@ -120,3 +120,6 @@ await browser.close();
 await pool.end().catch(() => {});
 console.log(`\n${pass} 通过 / ${fail} 失败`);
 console.log(`截图已存到 ${OUT}`);
+// 必须显式退出：db.js 的 mysql2 pool 会保活事件循环，
+// 少了这行脚本跑完也永不退出 —— 线上曾因此堆了 8 个孤儿进程（吃掉 1GB 内存）。
+process.exit(fail ? 1 : 0);

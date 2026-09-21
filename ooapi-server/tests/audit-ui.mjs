@@ -231,3 +231,7 @@ if (st) console.log(`  可用 ${st.avail}px，面板 ${st.panel}px，左 ${st.le
 
 console.log("\n截图目录：", OUT);
 await browser.close();
+await pool.end().catch(() => {});
+// 必须显式退出：db.js 的 mysql2 pool 会保活事件循环，
+// 少了这行脚本跑完也永不退出 —— 线上曾因此堆了 8 个孤儿进程（吃掉 1GB 内存）。
+process.exit(0);

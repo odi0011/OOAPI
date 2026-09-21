@@ -69,6 +69,9 @@ for (const path of ROUTES) {
     // 面板限宽（>120px 的显式 max-width 就是问题）
     const limited = [...document.querySelectorAll(".oo-content *")]
       .filter((el) => {
+        // 表单控件（输入框/文本域）的限宽是刻意为之的例外：长文本单行铺满
+        // 1600px 要来回扫视，所以只对控件限宽、面板照旧铺满（见 2.5 ①-b）。
+        if (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName)) return false;
         const s = getComputedStyle(el);
         const b = el.getBoundingClientRect();
         return /^\d+px$/.test(s.maxWidth) && parseFloat(s.maxWidth) > 120
@@ -102,7 +105,9 @@ ck("添加渠道弹窗已渲染", dlgReady.items > 0, `厂商项 ${dlgReady.item
 const icons = await page.evaluate(() => {
   return [...document.querySelectorAll(".oo-provider-picker__item")].map((it) => {
     const img = it.querySelector("img");
-    const nm = it.querySelector("div div");
+    // :scope > div > div —— `div div` 会先命中外层包装 div（文本是名称+描述拼接），
+    // 导致按名称查表全部「未找到」（第 42 批踩过）。
+    const nm = it.querySelector(":scope > div > div");
     return {
       name: nm ? nm.textContent.trim() : "?",
       src: img ? img.getAttribute("src") : "(none)",
