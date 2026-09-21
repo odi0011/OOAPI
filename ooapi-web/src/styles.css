@@ -2379,10 +2379,13 @@ h1, h2, h3, h4 {
   /* 弹窗高度锁定，**滚动交给左右两栏各自处理**。
      原先只有 body 整体滚动 —— 后果是左边厂商列表跟着内容一起滚走，
      往上填配置时看不到自己选了谁（用户明确指出的问题）。
-     现在 body 不滚，两栏各自 overflow-y: auto。 */
+     用 flex 而不是 height:100%：body 的高度是「已确定」的，
+     但子元素要撑满必须靠 flex（height:100% 在内容自适应高度下拿不到参照）。 */
   height: calc(100vh - 190px);
   max-height: calc(100vh - 190px);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .oo-channel-add-layout {
@@ -2390,15 +2393,21 @@ h1, h2, h3, h4 {
   grid-template-columns: minmax(235px, 292px) minmax(0, 1fr);
   gap: 22px;
   min-width: 0;
-  /* 撑满 body 高度，两栏才能各自算出滚动区 */
-  height: 100%;
+  /* 撑满 body 剩余高度（body 是 flex 列），两栏才能各自算出滚动区 */
+  flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .oo-channel-add-providers {
   min-width: 0;
   padding-right: 18px;
   border-right: 1px solid var(--line);
+  /* 左栏**独立滚动**（滚动条加在这一层，不是里面的 .oo-provider-picker ——
+     后者只是个内层容器，加在它上面不生效，因为父级高度由内容决定）。
+     19 家厂商只滚这一栏，右侧配置区保持不动。 */
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .oo-channel-add-config {
@@ -3215,6 +3224,13 @@ h1, h2, h3, h4 {
   background: var(--surface);
   padding: 9px 11px 6px;
   min-width: 0;
+  /* 同行等高：grid 默认 stretch 已经会拉伸，但内容少时（例如排行榜只有 1 项）
+     卡片会显得「内容贴着顶、下面一大片空」。
+     给一个最小高度让空卡片不至于太矮，同时把内容顶部对齐，
+     视觉上比「一块高一块矮」整齐得多。 */
+  min-height: 178px;
+  display: flex;
+  flex-direction: column;
 }
 .oo-chart-card-head {
   display: flex;

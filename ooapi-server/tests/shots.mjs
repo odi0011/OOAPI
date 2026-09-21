@@ -43,7 +43,8 @@ const PAGES = [
   ["/admin/community", "11-admin-community"],
   ["/settings/appearance", "12-appearance"],
   ["/token", "13-token"],
-  ["/admin/channel", "14-admin-channel"],
+  ["/admin/groups", "15-admin-groups"],
+  ["/admin/channel", "16-admin-channel"],
 ];
 
 for (const [path, name, prep] of PAGES) {
