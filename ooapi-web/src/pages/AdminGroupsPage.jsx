@@ -155,7 +155,6 @@ export default function AdminGroupsPage() {
 
   const columns = [
     {
-    {
       // 分组名 + 折叠态厂商图标 + 备注。
       // **不再单列「厂商」**：图标已经在这里了（单厂商单图标、多厂商叠放 +N），
       // 单独一列等于把同一信息说两遍，还白占 150px 宽度
