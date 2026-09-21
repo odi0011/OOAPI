@@ -26,7 +26,6 @@ import {
   getSession,
   installHook,
   resetHook,
-  fillInput,
   submit,
   streamCapture,
   withLock,
@@ -180,6 +179,62 @@ export async function release(channelId) {
 }
 
 /**
+ * 把提示词键入 ChatGPT 的输入框。
+ *
+ * 为什么不直接用 browser-driver 的 fillInput：ChatGPT 页面上**同时存在**两个候选 ——
+ * 一个隐藏的 <textarea id="prompt-textarea">（旧版遗留）和一个可见的
+ * ProseMirror contenteditable；两者共用同一个 id。
+ * fillInput 按 INPUT_SELECTORS 顺序取「第一个可见的」，会命中 contenteditable，
+ * 然后走 `el.fill("")` 清空 —— 而 **fill() 不支持 contenteditable**，
+ * 直接挂到 30s 超时，报错只是 "locator.fill: Timeout 30000ms exceeded"，
+ * 看不出真正原因（实测踩过，表现为「渠道测试超时 240s」）。
+ *
+ * 这里显式用 #prompt-textarea 精确定位可见的那个，并全程只做
+ * click + 真实按键（pressSequentially）—— 让页面收到真实的 input 事件，
+ * 它才会更新内部 state 并启用发送按钮。
+ */
+async function typePrompt(page, text) {
+  // 精确锁到可见的 ProseMirror 输入区（隐藏 textarea 会被 :visible 过滤掉）
+  const box = page.locator('#prompt-textarea[contenteditable="true"]:visible').first();
+  let target = (await box.count()) > 0 ? box : page.locator('#prompt-textarea:visible').first();
+  if ((await target.count()) === 0) {
+    // 兜底：任意可见的 contenteditable（页面改版时仍可能可用）
+    target = page.locator('[contenteditable="true"]:visible').first();
+  }
+  if ((await target.count()) === 0) return false;
+
+  try {
+    await target.click({ timeout: 5000 }).catch(() => {});
+    // 清空：全选 + 删除（不能对 contenteditable 用 fill）
+    await page.keyboard.press("Control+A").catch(() => {});
+    await page.keyboard.press("Delete").catch(() => {});
+    await page.waitForTimeout(150);
+    // 逐字符键入：短文本用 pressSequentially（真实按键事件），长文本用 insertText 提速
+    if (text.length > 400) {
+      await page.keyboard.insertText(text);
+    } else {
+      await page.keyboard.type(text, { delay: 18 });
+    }
+    // 等输入框真的出现内容（框架把 state 同步过去）
+    await page
+      .waitForFunction(
+        () => {
+          const el = document.querySelector("#prompt-textarea");
+          const v = el ? (el.tagName === "TEXTAREA" ? el.value : el.textContent) : "";
+          return String(v || "").trim().length > 0;
+        },
+        null,
+        { timeout: 8000 },
+      )
+      .catch(() => {});
+    await page.waitForTimeout(250);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 对话（UI 驱动）。
  *
  * 流程：干净页面 → 装 hook → 键入 → 回车 → 边收边转。
@@ -224,13 +279,18 @@ export async function chat({ channel, model, prompt, images = [], signal, onDelt
 
       // 真实键入（页面自己算 sentinel；不用 patch 改模型 —— 页面档位由账号决定，
       // 强改会被上游拒绝，比"跑在别的档位"更糟）
-      const filled = await fillInput(page, prompt);
+      const filled = await typePrompt(page, prompt);
       if (!filled) {
         throw Object.assign(new Error("找不到输入框，ChatGPT 页面结构可能已变化"), { code: "CHANNEL_NOT_READY" });
       }
 
-      // 回车发送。ChatGPT 的发送按钮没有稳定的 aria-label，
-      // browser-driver 的 submit 会先试选择器、失败后退化为 Enter —— 正是这里需要的。
+      // 发送：先试发送按钮（有稳定 data-testid），失败退回 Enter。
+      //
+      // 不能只靠 Enter：ChatGPT 的输入区是个表单，Enter 在部分状态下
+      // （输入法组合中、或焦点被弹层抢走）不会提交；也不能只靠按钮 ——
+      // 按钮在 state 未同步时是 disabled，submit() 会跳过它。
+      // 两条路都留着，且 submit() 内部有「已点过一次就不再点下一个候选」的
+      // 防重复保护（见其注释：重复发送会浪费额度且是明显的脚本特征）。
       const submitted = await submit(page, {
         sendSelector: 'button[data-testid="send-button"], button[aria-label*="发送"], button[aria-label*="Send"]',
       });

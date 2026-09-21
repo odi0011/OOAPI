@@ -10,7 +10,11 @@ import { recordRequest, enterRequest, leaveRequest, classifyError } from "../ser
 import { runCompletion } from "../services/execute.js";
 import { acquire, estimateRequestTokens } from "../services/user-limit.js";
 import { getPrice, computeCost, splitTokens, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
-import { groupConfigOf, applyGroupRate } from "../services/group-rate.js";
+// displayGroupName 被用来把分组名归一化后再写日志（见下方 groupName 处），
+// 但此前**没有导入**：每次成功请求都会在写日志时抛
+// ReferenceError: displayGroupName is not defined，把一次本来成功的调用
+// 变成 500（用户只看到"服务器内部错误"，日志里却只有一条引用错误）。
+import { groupConfigOf, applyGroupRate, displayGroupName } from "../services/group-rate.js";
 import { allPublicModels, modelForChannelMatch, resolveAliasSync, modelRegistry } from "../services/models.js";
 import { collectAvailableModels } from "../services/router.js";
 

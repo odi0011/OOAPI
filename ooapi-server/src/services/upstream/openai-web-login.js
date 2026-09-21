@@ -32,8 +32,17 @@ async function fillAndSubmit(page, selector, value, label, { submitSelector = 'b
     throw Object.assign(new Error(`未找到${label}输入框，登录页结构可能已变化`), { code: "LOGIN_PAGE_CHANGED" });
   }
   await el.click().catch(() => {});
-  // 清空：先全选再删除，避免残留内容触发校验
-  await el.fill("").catch(() => {});
+  // 清空：只对真正的 input/textarea 用 fill("")。
+  // contenteditable（如 ChatGPT 输入的 ProseMirror div）不支持 fill() ——
+  // 调用它会挂到 30s 超时，表现为「找不到输入框 / 发送失败」，
+  // 而页面其实完全正常（实测踩过）。这类元素用全选 + 删除。
+  const tag = await el.evaluate((n) => n.tagName.toLowerCase()).catch(() => "");
+  if (tag === "input" || tag === "textarea") {
+    await el.fill("").catch(() => {});
+  } else {
+    await page.keyboard.press("Control+A").catch(() => {});
+    await page.keyboard.press("Delete").catch(() => {});
+  }
   await el.type(value, { delay: 25 });
   // 等值真的落到输入框上（type 是异步逐字符，早提交会发出空表单）
   await page.waitForFunction(
