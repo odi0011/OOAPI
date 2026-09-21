@@ -98,29 +98,54 @@ async function openChannelSession(channel) {
  * 因此：重复调用不会重复复制（省一次 30MB 拷贝），
  * 而管理员重新登录（新的 login 目录）后会自动重新认领。
  */
+/**
+ * 认领互斥表：channelId → Promise。
+ *
+ * 为什么必需：认领要做「拷贝整个 profile 目录 + 删源目录」，
+ * 而 copyProfile 内部会先 closeSession(目标) 再删目标目录 ——
+ * 两个并发请求同时认领同一个渠道时，第二个会把第一个刚拷好的目录删掉，
+ * 于是报「登录态文件复制失败」。
+ * 实测踩到：测试渠道与网关对话几乎同时发起，一个成功一个失败（间歇性 4/7 vs 7/7）。
+ * 没有这把锁，生产上「首次调用并发」必然命中。
+ */
+const adopting = new Map();
+
 async function maybeAdoptLoginProfile(channel) {
   const src = String(channel?.other?.browserProfile || "");
   if (!src) return; // 老渠道/非登录型：不需要
-  const marker = path.join(profileDir("openai-web-ui", channel.id), ".oo-login-profile");
-  try {
-    if (existsSync(marker) && readFileSync(marker, "utf8").trim() === src) return;
-  } catch {
-    /* 读不到标记就当没认领过 */
-  }
-  const ok = await copyProfile("openai-web-ui", src, String(channel.id)).catch(() => false);
-  if (!ok) {
-    throw Object.assign(new Error("登录态文件复制失败，请重新登录该渠道"), { code: "CHANNEL_NOT_READY" });
-  }
-  try {
-    writeFileSync(marker, src);
-  } catch {
-    /* 标记写不了只是会多复制一次，不影响功能 */
-  }
-  // 复制完就删掉登录期的临时 profile。
-  // 不删的话每建一个渠道就永久留一份 ~30MB 的目录，长期跑下来会占满磁盘；
-  // 而且删掉后 other.browserProfile 指向的目录不存在，
-  // 重新登录也不会被误认成"已经认领过"（标记文件才是认领依据）。
-  await removeProfile("openai-web-ui", src).catch(() => {});
+
+  const key = String(channel.id);
+  const inflight = adopting.get(key);
+  if (inflight) return inflight; // 已有认领在进行：等它，不要重复拷
+
+  const task = (async () => {
+    // 拿到锁后**再查一次标记**：前一个并发可能刚认领完，这时直接复用
+    const marker = path.join(profileDir("openai-web-ui", channel.id), ".oo-login-profile");
+    try {
+      if (existsSync(marker) && readFileSync(marker, "utf8").trim() === src) return;
+    } catch {
+      /* 读不到标记就当没认领过 */
+    }
+    const ok = await copyProfile("openai-web-ui", src, String(channel.id)).catch(() => false);
+    if (!ok) {
+      throw Object.assign(new Error("登录态文件复制失败，请重新登录该渠道"), { code: "CHANNEL_NOT_READY" });
+    }
+    try {
+      writeFileSync(marker, src);
+    } catch {
+      /* 标记写不了只是会多复制一次，不影响功能 */
+    }
+    // 复制完就删掉登录期的临时 profile。
+    // 不删的话每建一个渠道就永久留一份 ~30MB 的目录，长期跑下来会占满磁盘；
+    // 而且删掉后 other.browserProfile 指向的目录不存在，
+    // 重新登录也不会被误认成"已经认领过"（标记文件才是认领依据）。
+    await removeProfile("openai-web-ui", src).catch(() => {});
+  })().finally(() => {
+    if (adopting.get(key) === task) adopting.delete(key);
+  });
+
+  adopting.set(key, task);
+  return task;
 }
 
 /**
