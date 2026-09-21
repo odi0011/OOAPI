@@ -103,7 +103,8 @@ function cookieStr(list) {
 
 /** 适配器契约：解析粘贴的凭据 */
 export async function importAuth(input = {}) {
-  const raw = String(input.token ?? input.json ?? input ?? "").trim();
+  // 同 mimo-web：对象形态下只取字段，避免 String({}) → "[object Object]" 混进渠道
+  const raw = String(typeof input === "string" ? input : (input.token ?? input.json ?? "")).trim();
   if (!raw) throw Object.assign(new Error("粘贴内容为空"), { code: "CHANNEL_BAD_PARAMS" });
 
   let obj = null;

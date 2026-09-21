@@ -27,7 +27,9 @@ const md5 = (s) => crypto.createHash("md5").update(s, "utf8").digest("hex");
 
 /** 适配器契约：解析粘贴的凭据（token JWT + 可选指纹） */
 export async function importAuth(input = {}) {
-  const raw = String(input.token ?? input.json ?? input ?? "").trim();
+  // 同 mimo-web：对象形态下只取字段，避免 String({}) → "[object Object]" 混进渠道
+  // （那种假凭据能建成渠道但永远 401）
+  const raw = String(typeof input === "string" ? input : (input.token ?? input.json ?? "")).trim();
   if (!raw) throw Object.assign(new Error("粘贴内容为空"), { code: "CHANNEL_BAD_PARAMS" });
 
   let obj = null;

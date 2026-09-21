@@ -97,7 +97,10 @@ function parseCookieString(str) {
 
 /** 适配器契约：解析粘贴的凭据 */
 export async function importAuth(input = {}) {
-  const raw = input.token ?? input.json ?? input;
+  // 取凭据文本：显式传 token/json 时用它，否则用 input 本身（可能是裸字符串）。
+  // **对象形态下必须取字段** —— 直接把整个对象 String() 会得到 "[object Object]"，
+  // 这种假凭据能通过校验并建成渠道，但永远 401（用户以为配好了）。
+  const raw = typeof input === "string" ? input : (input.token ?? input.json ?? "");
   const cred = parseAuth(raw);
   if (!cred.service_token) {
     throw Object.assign(new Error("没有解析到 serviceToken，请确认复制的是小米 MiMo Studio 的登录态"), {
