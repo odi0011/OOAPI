@@ -36,6 +36,21 @@ await page.waitForTimeout(2500);
 await page.getByRole("button", { name: /添加渠道|新增渠道/ }).first().click();
 await page.waitForTimeout(1800);
 
+// 选一个表单最长的厂商（Anthropic → Kiro 反代：带一键绑定 UI 与渠道特化输入），
+// 这样右栏才会真正溢出 —— 短表单下「不能滚」是正常的，
+// 拿短表单断言会把「内容没超出」误判成「滚动失效」。
+const kiroProvider = page.locator('[role="button"][aria-label="选择厂商 Anthropic"]');
+if (await kiroProvider.count()) {
+  await kiroProvider.first().scrollIntoViewIfNeeded();
+  await kiroProvider.first().click();
+  await page.waitForTimeout(1200);
+  const kiroMethod = page.getByText("Kiro 反代", { exact: false });
+  if (await kiroMethod.count()) {
+    await kiroMethod.first().click();
+    await page.waitForTimeout(1500);
+  }
+}
+
 /** 探针：左右两栏各自的滚动能力与实际滚动位置 */
 const probe = () =>
   page.evaluate(() => {
@@ -54,8 +69,24 @@ const before = await probe();
 console.log(`      左栏 可滚=${before.left?.can} (${before.left?.h}/${before.left?.sh})  右栏 可滚=${before.right?.can} (${before.right?.h}/${before.right?.sh})  弹窗体 可滚=${before.body?.can}`);
 
 ck("左栏（厂商列表）可独立滚动", before.left?.can === true, JSON.stringify(before.left));
-ck("右栏（配置表单）可独立滚动", before.right?.can === true, JSON.stringify(before.right));
+ck("右栏在内容超出时可独立滚动（长表单）", before.right?.can === true && before.right?.sh > before.right?.h, JSON.stringify(before.right));
 ck("弹窗体本身不滚（滚动交给两栏）", before.body?.can === false, JSON.stringify(before.body));
+
+// 右栏最关键的一条：内容必须真的能滚到（截断是静默的，用户会以为表单没这一项）
+const reachable = await page.evaluate(() => {
+  const right = document.querySelector(".oo-channel-add-config");
+  if (!right) return { ok: false };
+  right.scrollTop = right.scrollHeight; // 滚到底
+  const bottom = right.getBoundingClientRect().bottom;
+  // 取右栏里所有可见文本节点，看有没有元素超出容器底边
+  const clipped = [...right.querySelectorAll("div, input, textarea, .ant-select, button")].filter((el) => {
+    const r = el.getBoundingClientRect();
+    if (r.height === 0 || r.width === 0) return false;
+    return r.bottom > bottom + 2;
+  });
+  return { ok: clipped.length === 0, clipped: clipped.length, scrolled: right.scrollTop };
+});
+ck("右栏滚到底后没有内容被裁切", reachable.ok, JSON.stringify(reachable));
 
 // 滚左栏 → 右栏位置不动
 const afterLeft = await page.evaluate(() => {

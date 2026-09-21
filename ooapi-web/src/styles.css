@@ -2391,6 +2391,13 @@ h1, h2, h3, h4 {
 .oo-channel-add-layout {
   display: grid;
   grid-template-columns: minmax(235px, 292px) minmax(0, 1fr);
+  /* 行高必须显式约束为 minmax(0, 1fr)：
+     默认 grid 行高是 max-content，会被右栏的长表单撑高，
+     于是 `.oo-channel-add-config` 的 `overflow-y: auto` 永远不会触发
+     （容器跟着内容一起长高）—— 表现就是右栏内容被裁掉且滚不动。
+     这是 grid 布局里最容易踩的一个坑：只给子项设 min-height:0 不够，
+     行轨道本身也要用 minmax(0, ...)。 */
+  grid-template-rows: minmax(0, 1fr);
   gap: 22px;
   min-width: 0;
   /* 撑满 body 剩余高度（body 是 flex 列），两栏才能各自算出滚动区 */
