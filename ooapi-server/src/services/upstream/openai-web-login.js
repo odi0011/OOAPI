@@ -149,13 +149,21 @@ export async function loginWithCredentials(page, { email, password, totpSecret }
   // ④ 等落到已登录首页
   const ok = await waitFor(page, onLoggedIn, { timeout: 45_000, label: "登录成功页" });
   if (!ok) {
+    // 报错必须指出**卡在哪一步**：只写「登录失败」时，管理员无法区分
+    // 「密码错」「动态码错」「被风控」，只能靠自己猜（实测踩过）。
     const url = page.url();
-    const hint = /log-in\/password/i.test(url)
-      ? "邮箱或密码不正确"
+    const body = await page.evaluate(() => (document.body.innerText || "").replace(/\s+/g, " ").slice(0, 200)).catch(() => "");
+    const at = /log-in\/password/i.test(url)
+      ? "停在密码页（邮箱或密码不正确）"
       : /mfa|challenge/i.test(url)
-        ? "两步验证码未被接受（检查 2FA 密钥）"
-        : "登录未完成（可能触发了风控或需要人工验证）";
-    throw Object.assign(new Error(`ChatGPT 登录失败：${hint}`), { code: "LOGIN_FAILED" });
+        ? "停在两步验证页（动态码未被接受，检查 2FA 密钥是否正确、与本账号匹配）"
+        : /auth\/login/i.test(url)
+          ? "仍在登录页（邮箱未被接受，或登录被限流）"
+          : `停在 ${url}`;
+    throw Object.assign(
+      new Error(`ChatGPT 登录失败：${at}${body ? `。页面提示：${body.slice(0, 120)}` : ""}`),
+      { code: "LOGIN_FAILED", step: url },
+    );
   }
 
   // ⑤ 取 access_token 与 device_id —— 后者是网页版的设备指纹，

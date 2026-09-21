@@ -96,6 +96,15 @@ export async function loginWithPassword({ email, password, totpSecret, profileSe
     throw Object.assign(new Error("无法生成浏览器指纹"), { code: "LOGIN_BAD_PARAMS" });
   }
 
+  // 登录前先关掉上一次登录留下的会话。
+  //
+  // 为什么必须显式关：所有登录共用一个 channelId（见 LOGIN_CHANNEL_ID 注释），
+  // 而服务会按空闲时长保活浏览器会话 —— 上一次登录结束后会话可能还在，
+  // 它的 Chromium 仍持有 profile 目录锁，第二次登录启动就会失败，
+  // 报 Playwright 的 "Opening in existing browser session"。
+  // 实测踩到：第一次登录成功建出渠道后，随后每次登录都失败。
+  await closeSession("openai-web-ui", LOGIN_CHANNEL_ID).catch(() => {});
+
   const session = await getSession({
     vendor: "openai-web-ui",
     channelId: LOGIN_CHANNEL_ID,
@@ -103,27 +112,33 @@ export async function loginWithPassword({ email, password, totpSecret, profileSe
     profile,
   });
 
-  const r = await withLock(session, async () =>
-    loginWithCredentials(session.page, { email, password, totpSecret })
-  );
-
-  // 提取完整 cookies（含 httpOnly）—— 这是可移植的登录态本体
-  let cookies = [];
+  let r = null;
+  let cookieList = [];
   try {
-    cookies = await session.ctx.cookies("https://chatgpt.com");
-  } catch {
-    cookies = [];
-  }
-  const cookieList = cookies.map((c) => ({
-    name: c.name, value: c.value, domain: c.domain, path: c.path,
-    ...(c.expires && c.expires > 0 ? { expires: c.expires } : {}),
-    ...(c.httpOnly ? { httpOnly: true } : {}),
-    ...(c.secure ? { secure: true } : {}),
-    ...(c.sameSite ? { sameSite: c.sameSite } : {}),
-  }));
+    r = await withLock(session, async () =>
+      loginWithCredentials(session.page, { email, password, totpSecret })
+    );
 
-  // 登录会话用完即关：它的 profile 目录是登录专用的，留着会与渠道会话抢目录锁
-  await closeSession("openai-web-ui", LOGIN_CHANNEL_ID).catch(() => {});
+    // 提取完整 cookies（含 httpOnly）—— 这是可移植的登录态本体
+    let cookies = [];
+    try {
+      cookies = await session.ctx.cookies("https://chatgpt.com");
+    } catch {
+      cookies = [];
+    }
+    cookieList = cookies.map((c) => ({
+      name: c.name, value: c.value, domain: c.domain, path: c.path,
+      ...(c.expires && c.expires > 0 ? { expires: c.expires } : {}),
+      ...(c.httpOnly ? { httpOnly: true } : {}),
+      ...(c.secure ? { secure: true } : {}),
+      ...(c.sameSite ? { sameSite: c.sameSite } : {}),
+    }));
+  } finally {
+    // 无论成功失败都要关：登录会话的 profile 目录是登录专用的，
+    // 留着会锁住目录导致**下一次登录必然失败** —— 失败路径更要清理，
+    // 否则一次失败会级联影响后续所有尝试（实测踩过）。
+    await closeSession("openai-web-ui", LOGIN_CHANNEL_ID).catch(() => {});
+  }
 
   return {
     token: r.accessToken,

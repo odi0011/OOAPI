@@ -13,7 +13,7 @@
 //   2. 同账号请求串行，不并发（并发是非人类特征）
 //   3. 闲置自动回收，避免长期占用内存
 import { chromium } from "playwright";
-import { mkdirSync, existsSync, writeFileSync, rmSync, cpSync, renameSync } from "node:fs";
+import { mkdirSync, existsSync, writeFileSync, rmSync, cpSync, renameSync, readlinkSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { assertPublicUrl } from "../../utils.js";
@@ -41,6 +41,46 @@ function profileDir(vendor, channelId) {
   const d = path.join(PROFILE_ROOT, `${vendor}-${channelId}`);
   mkdirSync(d, { recursive: true });
   return d;
+}
+
+/**
+ * 清理「无主的」profile 单例锁。
+ *
+ * Chromium 在 profile 目录里放 SingletonLock（指向 hostname-pid 的符号链接）
+ * 来防止同一 profile 被并发打开。进程被强杀时会留下它，而下次启动并不会
+ * 自动忽略 —— 直接报 "Opening in existing browser session"。
+ *
+ * **安全性**：只有确认「锁指向的 pid 已不存在」才删。如果那个进程还活着，
+ * 说明确实有另一个实例在用这个 profile（我们不该抢），此时不动它，
+ * 让 Playwright 自己报错 —— 抢锁会破坏另一个会话的数据。
+ */
+function clearStaleProfileLock(vendor, channelId, dir) {
+  const lock = path.join(dir, "SingletonLock");
+  let target = "";
+  try {
+    target = readlinkSync(lock);
+  } catch {
+    return; // 没有锁（正常情况），无需处理
+  }
+  // 格式：<hostname>-<pid>；同机情况下 hostname 匹配才有意义
+  const m = String(target).match(/-(\d+)$/);
+  const pid = m ? Number(m[1]) : 0;
+  if (pid > 0) {
+    try {
+      process.kill(pid, 0); // 只探测存在性，不发信号
+      return; // 进程还活着：锁是有效的，不去动它
+    } catch (e) {
+      if (e?.code !== "ESRCH") return; // EPERM 等：无法确认，保守不动
+    }
+  }
+  try {
+    rmSync(lock, { force: true });
+    rmSync(path.join(dir, "SingletonCookie"), { force: true });
+    rmSync(path.join(dir, "SingletonSocket"), { force: true });
+    console.warn(`[browser-driver] 清理了无主的 profile 锁（${vendor}-${channelId}，指向 pid ${pid || "未知"}）`);
+  } catch {
+    /* 删不掉就交给 Playwright 报错，至少我们试过了 */
+  }
 }
 
 /** 标记该渠道的浏览器会话已经登录就绪 */
@@ -268,7 +308,16 @@ async function createSession({ vendor, channelId, key, entryUrl, profile, visibl
   const spread = (n, base, span) => base + (Math.abs(Number(n) || 0) % span);
   const winX = visible ? 0 : spread(channelId, 1600, 400);
   const winY = visible ? 0 : spread((Number(channelId) || 0) * 7 + 3, 900, 200);
-  const ctx = await chromium.launchPersistentContext(profileDir(vendor, channelId), {
+  const dir = profileDir(vendor, channelId);
+  // 清掉可能残留的 profile 单例锁。
+  // Chromium 用 SingletonLock 阻止同一 profile 被两个进程同时打开；
+  // 进程被强杀（OOM、部署重启、看门狗 kill）时会留下这个锁，
+  // 之后每次启动都失败并报 Playwright 的
+  // "Opening in existing browser session" —— 渠道永久不可用，
+  // 而原因只是磁盘上一个没人持有的符号链接。
+  // 注意只在**确认没有活进程**时才清（见 clearStaleProfileLock）。
+  clearStaleProfileLock(vendor, channelId, dir);
+  const ctx = await chromium.launchPersistentContext(dir, {
     headless: false,
     viewport: { width: 1440, height: 900 },
     locale: profile?.locale || "zh-CN",
