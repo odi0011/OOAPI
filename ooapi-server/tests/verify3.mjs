@@ -44,6 +44,16 @@ const ROUTES = ["/console", "/notifications", "/media", "/profile", "/admin/sett
 for (const path of ROUTES) {
   await page.goto(`${BASE}${path}`, { waitUntil: "networkidle", timeout: 45000 });
   await page.waitForTimeout(1600);
+  // 先确认页面真的渲染了 —— 否则下面所有宽度断言都在 null 上崩掉，
+  // 报出来的是 TypeError 而不是「这页白屏了」（第 42 批就这么绕过一次）。
+  const rendered = await page.evaluate(() => {
+    const c = document.querySelector(".oo-content");
+    return { has: Boolean(c), text: (c?.innerText || "").trim().length };
+  });
+  ck(`${path} 页面已渲染`, rendered.has && rendered.text > 10,
+    rendered.has ? `内容仅 ${rendered.text} 字符` : ".oo-content 不存在（白屏）");
+  if (!rendered.has) continue;
+
   const r = await page.evaluate(() => {
     const content = document.querySelector(".oo-content");
     const cs = getComputedStyle(content);
@@ -83,6 +93,12 @@ await page.getByRole("button", { name: /添加渠道|新增渠道|添加账号/ 
 await page.waitForTimeout(1500);
 
 // 逐个厂商：滚动到可见 → 截图它的图标区域 → 记录 src 与自然尺寸
+const dlgReady = await page.evaluate(() => ({
+  body: (document.body.innerText || "").length,
+  items: document.querySelectorAll(".oo-provider-picker__item").length,
+}));
+ck("添加渠道弹窗已渲染", dlgReady.items > 0, `厂商项 ${dlgReady.items} 个，body 文本 ${dlgReady.body}`);
+
 const icons = await page.evaluate(() => {
   return [...document.querySelectorAll(".oo-provider-picker__item")].map((it) => {
     const img = it.querySelector("img");
@@ -143,6 +159,9 @@ console.log(`  左栏 client=${m.left?.client} scroll=${m.left?.scroll} over=${m
 console.log(`  右栏 client=${m.right?.client} scroll=${m.right?.scroll} over=${m.right?.over}`);
 console.log(`  外层：文档 ${m.docScroll}px，弹窗容器 ${m.wrapScroll}px`);
 
+if (m.right && m.right.scroll <= m.right.client + 2) {
+  console.log(`  !! 右栏内容未溢出（${m.right.scroll} vs ${m.right.client}）——「右栏不动」不构成独立滚动的证据`);
+}
 ck("左栏可滚动", m.left && m.left.scroll > m.left.client + 2, JSON.stringify(m.left));
 ck("外层不滚动（文档）", m.docScroll === 0, `文档可滚 ${m.docScroll}px`);
 ck("外层不滚动（弹窗容器）", m.wrapScroll <= 0, `弹窗容器可滚 ${m.wrapScroll}px`);

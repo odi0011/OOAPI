@@ -132,7 +132,7 @@ function contentClass(pathname) {
 }
 
 export default function MainLayout() {
-  const { user, status, logout } = useApp();
+  const { user, status, logout, refreshStatus } = useApp();
   const { resolved } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
