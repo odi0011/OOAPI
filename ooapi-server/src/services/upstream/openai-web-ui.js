@@ -244,6 +244,8 @@ export async function release(channelId) {
  * click + 真实按键（pressSequentially）—— 让页面收到真实的 input 事件，
  * 它才会更新内部 state 并启用发送按钮。
  */
+let lastPageState = null;
+
 async function typePrompt(page, text) {
   // 精确锁到可见的 ProseMirror 输入区（隐藏 textarea 会被 :visible 过滤掉）
   const box = page.locator('#prompt-textarea[contenteditable="true"]:visible').first();
@@ -252,7 +254,35 @@ async function typePrompt(page, text) {
     // 兜底：任意可见的 contenteditable（页面改版时仍可能可用）
     target = page.locator('[contenteditable="true"]:visible').first();
   }
-  if ((await target.count()) === 0) return false;
+  if ((await target.count()) === 0) {
+    // 把页面实况带出去：这类失败以后还会遇到（上游改版/登录态丢失/停在弹窗），
+    // 错误里没有现场就只能靠猜。
+    try {
+      const st = await page.evaluate(async () => {
+        const vis = [...document.querySelectorAll("textarea, [contenteditable], div[role='textbox']")]
+          .filter((e) => {
+            const s = getComputedStyle(e);
+            const b = e.getBoundingClientRect();
+            return s.display !== "none" && s.visibility !== "hidden" && b.width > 0 && b.height > 0;
+          })
+          .map((e) => `${e.tagName.toLowerCase()}${e.id ? "#" + e.id : ""}${e.getAttribute("contenteditable") ? "[ce]" : ""}`);
+        let planned = "";
+        try {
+          const j = await (await fetch("/api/auth/session", { credentials: "include" })).json();
+          planned = j?.account?.planType || "";
+        } catch { /* ignore */ }
+        return {
+          url: location.href,
+          loggedIn: Boolean(planned),
+          plan: planned,
+          visibleInputs: vis,
+          head: (document.body.innerText || "").replace(/\s+/g, " ").slice(0, 120),
+        };
+      });
+      lastPageState = st;
+    } catch { /* 取不到就算了 */ }
+    return false;
+  }
 
   try {
     await target.click({ timeout: 5000 }).catch(() => {});
@@ -330,9 +360,17 @@ export async function chat({ channel, model, prompt, images = [], signal, onDelt
 
       // 真实键入（页面自己算 sentinel；不用 patch 改模型 —— 页面档位由账号决定，
       // 强改会被上游拒绝，比"跑在别的档位"更糟）
+      lastPageState = null;
       const filled = await typePrompt(page, prompt);
       if (!filled) {
-        throw Object.assign(new Error("找不到输入框，ChatGPT 页面结构可能已变化"), { code: "CHANNEL_NOT_READY" });
+        const st = lastPageState;
+        const detail = st
+          ? `；页面实况：url=${st.url} 已登录=${st.loggedIn}${st.plan ? `(${st.plan})` : ""} 可见输入框=[${st.visibleInputs.join(", ") || "无"}] 正文开头="${st.head}"`
+          : "";
+        throw Object.assign(
+          new Error(`找不到 ChatGPT 输入框（页面结构可能已变化）${detail}`),
+          { code: "CHANNEL_NOT_READY" },
+        );
       }
 
       // 发送：先试发送按钮（有稳定 data-testid），失败退回 Enter。
