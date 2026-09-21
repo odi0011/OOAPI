@@ -60,6 +60,16 @@ const CHANNEL_ICON = {
   opencode: "opencode.png",
   openrouter: "openrouter.svg",
   siliconflow: "siliconflow.ico",
+  // 国产厂商直连（2026-09 接入）。图标取自各厂商 **GitHub 官方组织头像**
+  // （MiniMax-AI / stepfun-ai / volcengine / XiaomiMiMo）——
+  // 这些厂商的官网 favicon 取不到（域名不可达或返回 403），
+  // 官方组织头像是同源的官方资源。
+  minimax: "minimax.png",
+  stepfun: "stepfun.png",
+  ark: "ark.png",
+  volcengine: "ark.png",
+  mimo: "mimo.png",
+  xiaomi: "mimo.png",
   // 自定义渠道 → 使用平台 logo
   custom: PLATFORM_LOGO,
 };
@@ -78,6 +88,10 @@ const MODEL_ICON = [
   [/^kimi|^moonshot/i, "kimi.png"],
   [/^doubao|^ep-/i, "doubao.png"],
   [/^grok/i, "grok.svg"],
+  // 2026-09 接入的四家（不加这几条会掉到平台 logo，看着像没配图）
+  [/^minimax/i, "minimax.png"],
+  [/^step-|^stepfun/i, "stepfun.png"],
+  [/^mimo/i, "mimo.png"],
 ];
 
 export function iconFileForChannel(type) {

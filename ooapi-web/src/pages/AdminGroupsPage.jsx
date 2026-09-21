@@ -155,62 +155,27 @@ export default function AdminGroupsPage() {
 
   const columns = [
     {
-      // 分组图标：按**实际成员**的厂商来显示 —— 全 openai 就显示 openai 图标，
-      // 多厂商显示前 3 个折叠叠加 +N（用户要求的形态）。
-      // 注意数据源是成员渠道而不是分组的 vendor 字段：分组可以跨厂商，
-      // vendor 只是建组时的筛选便利，用它会漏掉成员里的其它厂商。
-      title: "厂商",
-      dataIndex: "type",
-      width: 150,
-      render: (t, g) => {
-        const icons = iconsOfGroup(g);
-        const shown = icons.slice(0, 3);
-        const more = icons.length - shown.length;
-        // 没有任何成员时，回落到建组时选的厂商筛选（或「不限」）
-        const empty = icons.length === 0;
-        const title = empty
-          ? t
-            ? providers.find((p) => p.key === t)?.name || t
-            : "不限厂商"
-          : icons.map((x) => providers.find((p) => p.key === x)?.name || x).join("、");
-        return (
-          <Tooltip title={title}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <span style={{ display: "inline-flex", alignItems: "center" }}>
-                {shown.map((x, i) => (
-                  <span
-                    key={x}
-                    style={{
-                      marginLeft: i === 0 ? 0 : -6,
-                      zIndex: 10 - i,
-                      background: "var(--surface)",
-                      borderRadius: "50%",
-                      padding: icons.length > 1 ? 1 : 0,
-                      display: "inline-flex",
-                    }}
-                  >
-                    <VendorIcon type={x} size={16} />
-                  </span>
-                ))}
-                {more > 0 ? <span className="bui-chip" style={{ marginLeft: 2 }}>+{more}</span> : null}
-              </span>
-              <span>{title}</span>
-            </span>
-          </Tooltip>
-        );
-      },
-    },
     {
-      // 分组名 + 备注（用户要求：左侧图标 + 标题 + 标题下小字备注）
+      // 分组名 + 折叠态厂商图标 + 备注。
+      // **不再单列「厂商」**：图标已经在这里了（单厂商单图标、多厂商叠放 +N），
+      // 单独一列等于把同一信息说两遍，还白占 150px 宽度
+      // （而且分组本身不绑定厂商，那一列在语义上也是错的）。
       title: "分组名",
       dataIndex: "name",
-      width: 220,
+      width: 300,
       render: (v, g) => {
         const icons = iconsOfGroup(g);
+        const names = icons.map((x) => providers.find((p) => p.key === x)?.name || x);
         return (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
             {/* 折叠态厂商图标：单厂商单图标，多厂商叠放 +N */}
-            {icons.length ? <GroupVendorIcons vendors={icons} size={18} /> : null}
+            <Tooltip title={names.length ? `成员厂商：${names.join("、")}` : "尚无成员渠道"}>
+              <span style={{ display: "inline-flex", alignItems: "center" }}>
+                {icons.length ? <GroupVendorIcons vendors={icons} size={18} /> : (
+                  <span className="bui-chip" style={{ fontSize: 11 }}>无成员</span>
+                )}
+              </span>
+            </Tooltip>
             <span style={{ minWidth: 0, overflow: "hidden" }}>
               <div style={{ fontWeight: 550 }} className="oo-truncate">{v}</div>
               {g.remark ? (
@@ -234,24 +199,33 @@ export default function AdminGroupsPage() {
       },
     },
     {
+      // 可用模型：只显示「模型个数」而不是把模型名铺开。
+      //
+      // 为什么改：分组挂的模型可能有几十个（不限 = 全部），
+      // 把第一个模型名渲染出来会让这一列宽度失控（实测：deepseek-flash +17
+      // 撑出很宽的一列，而其余列都被挤压）。个数 + 悬浮查看才是正确形态。
       title: "可用模型",
       dataIndex: "models",
+      width: 110,
       render: (list) =>
         list?.length ? (
           <Tooltip
             title={
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {list.map((m) => <ModelLabel key={m} model={m} size={13} />)}
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 320, overflow: "auto" }}>
+                {list.map((m) => (
+                  <ModelLabel key={m} model={m} size={13} />
+                ))}
               </div>
             }
           >
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-              <ModelLabel model={list[0]} size={13} />
-              {list.length > 1 ? <span className="bui-chip">+{list.length - 1}</span> : null}
+            <span className="bui-chip" style={{ cursor: "default" }}>
+              {list.length} 个
             </span>
           </Tooltip>
         ) : (
-              <Text type="secondary" style={{ fontSize: 12 }}>不限</Text>
+          <Tooltip title="未限制模型：该分组的密钥可用渠道声明的全部模型">
+            <span className="bui-chip" style={{ cursor: "default" }}>不限</span>
+          </Tooltip>
         ),
     },
     {

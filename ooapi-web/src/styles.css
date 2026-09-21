@@ -1166,21 +1166,14 @@ h1, h2, h3, h4 {
 
 .oo-content {
   padding: 24px;
-  /* 后台页面默认铺满主区域，避免大屏下出现两侧大块空白。 */
+  /* 全站全宽（用户明确要求）。
+     曾经有过 .oo-content--narrow（卡片/图表页限宽 1320px 居中），已移除 ——
+     窄屏与宽屏的适配由各页面自身的自适应栅格负责
+     （.oo-stats-cards 单卡上限 200px、.oo-chart-grid 按 380px 自动增减列数），
+     不靠外层容器限宽。 */
   max-width: 100%;
   width: 100%;
   margin: 0;
-}
-
-/* 内容区限宽（A 类骨架：看板 / 个人主页 / 媒体库 / 消息 / 设置这类卡片与图表页）。
-   为什么需要：表格页（渠道/用户/定价）确实该铺满 —— 列多，宽一点更好读；
-   但**卡片与图表铺满 1880px 只会产生大片留白与失衡比例**。
-   让「阅读型」页面收在 1320px 居中，是版式上最基本的克制。
-   由 MainLayout 按路由挂到 Content 上。 */
-.oo-content--narrow > .oo-page {
-  max-width: 1440px;
-  margin: 0 auto;
-  width: 100%;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2383,8 +2376,13 @@ h1, h2, h3, h4 {
 }
 
 .oo-channel-add-modal .ant-modal-body {
+  /* 弹窗高度锁定，**滚动交给左右两栏各自处理**。
+     原先只有 body 整体滚动 —— 后果是左边厂商列表跟着内容一起滚走，
+     往上填配置时看不到自己选了谁（用户明确指出的问题）。
+     现在 body 不滚，两栏各自 overflow-y: auto。 */
+  height: calc(100vh - 190px);
   max-height: calc(100vh - 190px);
-  overflow: auto;
+  overflow: hidden;
 }
 
 .oo-channel-add-layout {
@@ -2392,6 +2390,8 @@ h1, h2, h3, h4 {
   grid-template-columns: minmax(235px, 292px) minmax(0, 1fr);
   gap: 22px;
   min-width: 0;
+  /* 撑满 body 高度，两栏才能各自算出滚动区 */
+  height: 100%;
   min-height: 0;
 }
 
@@ -2404,6 +2404,9 @@ h1, h2, h3, h4 {
 .oo-channel-add-config {
   min-width: 0;
   padding: 2px 8px 8px 0;
+  /* 右栏**独立滚动**：表单很长时只滚这一栏，左边厂商列表保持可见 */
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .oo-channel-add-step {
@@ -2443,8 +2446,11 @@ h1, h2, h3, h4 {
   flex-direction: column;
   gap: 8px;
   box-sizing: border-box;
-  /* 留出足够边距，焦点环/选中描边不再被 overflow 裁掉；滚动交给弹窗 body */
+  /* 留出边距让焦点环/选中描边不被裁掉（overflow 会裁描边）。
+     左栏**独立滚动**：19 家厂商只滚这一栏，右侧配置区保持不动。 */
   padding: 6px 12px 10px 6px;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .oo-provider-picker__item {

@@ -506,8 +506,24 @@ export const PROVIDERS = [
     key: "mimo",
     name: "小米 MiMo",
     vendor: "mimo",
-    desc: "小米 MiMo 开放平台（OpenAI 兼容；另有 Anthropic 兼容端点）",
+    desc: "小米 MiMo：MiMo Studio 网页版反代，或官方 API 直连",
     methods: [
+      {
+        key: "mimo-web",
+        adapter: "mimo-web",
+        label: "网页版（MiMo Studio）",
+        desc: "用小米账号登录，走订阅额度",
+        loginModes: ["paste", "capture"],
+        entryUrl: "https://aistudio.xiaomimimo.com/",
+        captureHint: "登录 MiMo Studio（小米账号 SSO），完成后点「抓取登录态」自动读取 Cookie",
+        pasteHint:
+          "MiMo Studio 登录态：复制 Cookie 里的 serviceToken / userId / xiaomichatbot_ph（三个都要；只填 serviceToken 仍可建渠道，但缺 ph 易被风控）",
+        defaultModels: [
+          { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro" },
+          { id: "mimo-v2.5", name: "MiMo V2.5" },
+        ],
+        testModel: "mimo-v2.5",
+      },
       {
         key: "api",
         label: "API Key",
@@ -526,8 +542,25 @@ export const PROVIDERS = [
     key: "minimax",
     name: "MiniMax",
     vendor: "minimax",
-    desc: "MiniMax 开放平台（国内 api.minimax.cn / 国际 api.minimax.io，按账号区域选）",
+    desc: "MiniMax：MiniMax Agent 网页版反代，或官方 API 直连（国内 api.minimax.cn / 国际 api.minimax.io）",
     methods: [
+      {
+        key: "minimax-web",
+        adapter: "minimax-web",
+        label: "网页版（MiniMax Agent）",
+        desc: "用 MiniMax 账号登录，走 C 端额度",
+        loginModes: ["paste", "capture"],
+        // 注意：chat.minimaxi.com 已 307 跳转到 agent.minimaxi.com，接入点是后者
+        entryUrl: "https://agent.minimaxi.com/",
+        captureHint: "登录 MiniMax Agent，完成后点「抓取登录态」自动读取 token",
+        pasteHint:
+          "MiniMax Agent 登录态：复制 Cookie 里的 token（JWT）。签名是纯 MD5 可复刻，指纹参数由平台稳定派生",
+        defaultModels: [
+          { id: "MiniMax-M3", name: "MiniMax M3" },
+          { id: "MiniMax-M2.7", name: "MiniMax M2.7" },
+        ],
+        testModel: "MiniMax-M2.7",
+      },
       {
         key: "api",
         label: "API Key",
@@ -546,8 +579,24 @@ export const PROVIDERS = [
     key: "stepfun",
     name: "阶跃星辰 StepFun",
     vendor: "stepfun",
-    desc: "阶跃星辰开放平台（OpenAI 兼容）",
+    desc: "阶跃星辰：chat.stepfun.com 网页版反代，或官方 API 直连",
     methods: [
+      {
+        key: "stepfun-web",
+        adapter: "stepfun-web",
+        label: "网页版（chat.stepfun.com）",
+        desc: "手机号登录，走 C 端额度（协议零签名）",
+        loginModes: ["paste", "capture"],
+        // 不要用 yuewen.cn：实测该域名 TLS 证书已过期并返回 403，品牌已退役
+        entryUrl: "https://chat.stepfun.com/",
+        captureHint: "登录 chat.stepfun.com（手机号短信），完成后点「抓取登录态」自动读取 Cookie",
+        pasteHint: "chat.stepfun.com 登录态：复制 Cookie（形如 a=b; c=d）",
+        defaultModels: [
+          { id: "step-5-preview", name: "Step 5 Preview" },
+          { id: "step-3.7-flash", name: "Step 3.7 Flash" },
+        ],
+        testModel: "step-3.5-flash",
+      },
       {
         key: "api",
         label: "API Key",
@@ -710,7 +759,16 @@ export function needsBrowser(providerKey, methodKey) {
 
 /** 对外下发用（前端「添加渠道」按此渲染，不含函数） */
 export function publicProviders() {
-  return PROVIDERS.map((p) => ({
+  // 「自定义（通用兼容）」强制排最后：它是兜底选项，不是厂商。
+  // 混在厂商中间会让人以为它也是一家，而且新厂商接入时容易被挤到下面找不着。
+  // 在**后端**排序而不是前端：前端有多处渲染厂商列表（弹窗、筛选下拉），
+  // 只改一处必然会漏（历史上就漏过）。
+  const ordered = [...PROVIDERS].sort((a, b) => {
+    if (a.key === "custom") return 1;
+    if (b.key === "custom") return -1;
+    return 0;
+  });
+  return ordered.map((p) => ({
     key: p.key,
     name: p.name,
     vendor: p.vendor,

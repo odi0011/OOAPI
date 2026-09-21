@@ -106,30 +106,17 @@ const CRUMB = {
 };
 
 /**
- * 内容区的宽度策略 —— 按「页面主体是什么」二分，不按个人喜好。
+ * 内容区宽度：**全站全宽**。
  *
- * **铺满**（表格页）：渠道 / 分组 / 定价 / 用户 / 使用记录 / 操作日志 / 运维监控 /
- *   社区管理。这些页面主体是多列表格，列多、信息密，宽一点更好读；
- *   限宽反而会让表格纵向滚动，更费劲。
- *
- * **限宽 1320px 居中**（卡片与图表页）：看板 / 社区 / 消息 / Playground /
- *   个人主页 / 通知 / 媒体库 / 令牌 / 外观 / 个人设置。
- *   这些页面的主体是卡片与图表，铺满 1880px 只会产生大片留白与失衡比例
- *   （实测：统计卡被拉成 400px 宽薄片、图表宽高比 6:1 像一条平线）。
+ * 曾经按「表格页铺满 / 卡片图表页限宽 1320px 居中」二分过，
+ * 用户明确要求**所有页面全宽** —— 已取消限宽。
+ * 窄屏适配交给各页面自身的栅格（.oo-stats-cards / .oo-chart-grid 都是
+ * auto-fit 自适应列数），不靠外层容器限宽。
  *
  * 聊天页单独处理（高度锁定，不能有外层滚动）。
  */
-const FULL_WIDTH_PREFIXES = [
-  "/log", "/operation-log",
-  "/admin/channel", "/admin/groups", "/admin/pricing", "/admin/users",
-  "/admin/monitor", "/admin/community",
-];
-
 function contentClass(pathname) {
-  if (pathname === "/chat") return " ui-chat-content";
-  // 用前缀匹配：/community/1（帖子详情）也应限宽
-  const full = FULL_WIDTH_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
-  return full ? "" : " oo-content--narrow";
+  return pathname === "/chat" ? " ui-chat-content" : "";
 }
 
 export default function MainLayout() {
