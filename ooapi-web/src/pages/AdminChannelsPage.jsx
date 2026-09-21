@@ -985,6 +985,8 @@ export default function AdminChannelsPage() {
           payload.account = v.account;
           payload.password = v.password;
           payload.areaCode = v.areaCode || "+86";
+          // 2FA 密钥（仅 needs2fa 的接入方式会填）：后端据此算动态码
+          if (v.totpSecret) payload.totpSecret = v.totpSecret;
         } else if (addMode === "paste") {
           // 已发起交互式登录（oauthUrl 有值）时，粘贴的是回调地址 → 走换 token 接口，
           // 一步完成「换令牌 + 建渠道」，管理员不用再手抄凭据 JSON。
@@ -2524,19 +2526,36 @@ export default function AdminChannelsPage() {
                     <>
                       {addMode === "password" ? (
                         <>
-                          <Form.Item name="account" label="手机号 / 邮箱" rules={[{ required: true, message: "请填写手机号或邮箱" }]}>
+                          <Form.Item
+                            name="account"
+                            label={pickMethod.needs2fa ? "邮箱" : "手机号 / 邮箱"}
+                            rules={[{ required: true, message: "请填写账号" }]}
+                          >
                             <Input placeholder="13800138000 或 you@example.com" autoComplete="off" />
                           </Form.Item>
                           <Row gutter={12}>
-                            <Col span={8}>
-                              <Form.Item name="areaCode" label="区号"><Input placeholder="+86" /></Form.Item>
-                            </Col>
-                            <Col span={16}>
+                            {!pickMethod.needs2fa ? (
+                              <Col span={8}>
+                                <Form.Item name="areaCode" label="区号"><Input placeholder="+86" /></Form.Item>
+                              </Col>
+                            ) : null}
+                            <Col span={pickMethod.needs2fa ? 24 : 16}>
                               <Form.Item name="password" label="密码" rules={[{ required: true, message: "请填写密码" }]}>
                                 <Input.Password placeholder="账号密码" autoComplete="new-password" />
                               </Form.Item>
                             </Col>
                           </Row>
+                          {/* 2FA 密钥（base32）——**不是** 6 位动态码。
+                              6 位码每 30 秒变一次，存下来下次就失效；密钥可以重复算出验证码。 */}
+                          {pickMethod.needs2fa ? (
+                            <Form.Item
+                              name="totpSecret"
+                              label="2FA 密钥（两步验证）"
+                              extra="验证器 App 里那串 base32 密钥（如 JBSWY3DPEHPK3PXP…），不是每隔 30 秒变的 6 位数字；账号未开两步验证则留空"
+                            >
+                              <Input.Password placeholder="留空表示账号未开两步验证" autoComplete="off" />
+                            </Form.Item>
+                          ) : null}
                         </>
                       ) : addMode === "paste" ? (
                         <>

@@ -2001,12 +2001,20 @@ router.post(
           password: rest.password,
           areaCode: rest.areaCode || "+86",
           profileSeed: account,
+          // 2FA 密钥：带两步验证的厂商（ChatGPT 网页版）靠它算动态码。
+          // 它是密钥不是验证码 —— 验证码 30 秒一变，没法存下来复用。
+          totpSecret: rest.totpSecret || "",
         });
         token = r.token;
         other = {
           method: "relay",
           profile: r.profile || null,
           ...(r.cookies?.length ? { cookies: r.cookies } : {}),
+          // 适配器返回的 other 必须一并保留：浏览器驱动型适配器把登录态
+          // （cookies / device_id / 套餐 / 过期时间）放在这里，
+          // 上面那行硬编码只认 cookies，会把其余字段丢掉 ——
+          // 丢掉 device_id 的后果是网页版把每次请求当成"换设备"，直接风控。
+          ...(r.other || {}),
           account: isEmail ? account : `${account.slice(0, 3)}****${account.slice(-4)}`,
         };
         accountLabel = other.account;

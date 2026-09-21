@@ -273,6 +273,36 @@ export const PROVIDERS = [
         testModel: "gpt-5.6-luna",
       },
       {
+        // 浏览器 UI 驱动反代：与上一个方法的根本区别在于**请求从哪发出去**。
+        // 「反代（网页版）」在 Node 里直接拼 HTTP（现在会被 sentinel 的 turnstile 拦死，
+        // Node 端无解）；这个方式在服务器浏览器里驱动真实页面 UI，页面自己过风控。
+        key: "openai-web-ui",
+        adapter: "openai-web-ui",
+        label: "反代（浏览器驱动）",
+        desc: "用邮箱+密码+2FA 自动登录，在服务器浏览器里驱动页面（无需手工操作）",
+        loginModes: ["password"],
+        // needs2fa：让前端在账号密码之外多渲染一个「2FA 密钥」输入框。
+        // 密钥（base32）≠ 6 位动态码 —— 后者每 30 秒变一次，没法存下来复用。
+        needs2fa: true,
+        loginFields: [
+          { key: "account", label: "邮箱", type: "text", required: true, placeholder: "you@example.com" },
+          { key: "password", label: "密码", type: "password", required: true },
+          {
+            key: "totpSecret",
+            label: "2FA 密钥",
+            type: "password",
+            placeholder: "验证器 App 里那串 base32 密钥（未开两步验证可留空）",
+          },
+        ],
+        needsBrowser: true,
+        defaultModels: [
+          { id: "gpt-5.6-luna", name: "GPT-5.6 Luna" },
+          { id: "gpt-5.5", name: "GPT-5.5" },
+          { id: "gpt-4o", name: "GPT-4o" },
+        ],
+        testModel: "gpt-5.6-luna",
+      },
+      {
         key: "api",
         label: "API Key",
         desc: "填 Base URL 与 API Key",
@@ -782,6 +812,8 @@ export function publicProviders() {
       oauth: isOAuthMethod(m.key),
       loginModes: m.loginModes || [],
       loginFields: m.loginFields || [],
+      // 需要 2FA：前端在账号密码之外多渲染一个密钥输入框（见 needs2fa 的说明）
+      needs2fa: Boolean(m.needs2fa),
       pasteHint: m.pasteHint || "",
       browserHint: m.browserHint || "",
       // 远程登录抓取能力：有 entryUrl 就说明支持「打开登录页自动抓取」

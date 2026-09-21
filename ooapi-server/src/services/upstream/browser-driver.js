@@ -97,7 +97,7 @@ export async function copyProfile(vendor, fromId, toId) {
 // 重要：必须使用 headful 模式（headless:false）+ 窗口移到屏幕外。
 // 实测 Z.ai 在 headless:true 与 --headless=new 下都检测得到，表现为
 // "发送按钮可点但请求发不出去"（非常隐蔽）。Linux 服务器需 xvfb 提供虚拟显示。
-export async function getSession({ vendor, channelId, entryUrl, profile, visible = false }) {
+export async function getSession({ vendor, channelId, entryUrl, profile, visible = false, cookies = null }) {
   const key = `${vendor}:${channelId}`;
   const exist = sessions.get(key);
   // 存活判定必须同时看 ctx 和 page：
@@ -119,7 +119,9 @@ export async function getSession({ vendor, channelId, entryUrl, profile, visible
   const inflight = pending.get(key);
   if (inflight) return inflight;
 
-  const p = createSession({ vendor, channelId, key, entryUrl, profile, visible, reuse: exist }).finally(() => {
+  // cookies：可移植的登录态（见 restoreCookies 注释）。只在**新建会话**时注入 ——
+  // 已存在的会话里已经有登录态，重复注入没有意义还可能覆盖页面自己刷新的值。
+  const p = createSession({ vendor, channelId, key, entryUrl, profile, visible, reuse: exist, cookies }).finally(() => {
     if (pending.get(key) === p) pending.delete(key);
   });
   pending.set(key, p);
@@ -187,7 +189,57 @@ async function rebuildPage(session, { vendor, channelId, entryUrl }) {
   return fresh;
 }
 
-async function createSession({ vendor, channelId, key, entryUrl, profile, visible = false, reuse = null }) {
+/**
+ * 把外部保存的 cookies 注入会话（登录态可移植）。
+ *
+ * 为什么需要：有些厂商（ChatGPT 网页版）的自动登录要跑一整套浏览器流程，
+ * 而登录时渠道可能还不存在（新建渠道时没有 id，profile 目录无法按真实 id 落盘）。
+ * 有了它，登录可以在**任意会话**里做，把 cookies 提取出来存进 channel.other，
+ * 之后真实渠道的会话启动时再注入 —— 不必复制整个 profile 目录。
+ *
+ * cookies 支持两种形态：
+ *   · [{ name, value }]                      ← 其它反代渠道的既有形态
+ *   · [{ name, value, domain, path, ... }]   ← ctx.cookies() 的完整对象
+ * 缺 domain/path 时按 url 补全（用页面当前 URL 推断）。
+ */
+export async function restoreCookies(ctx, page, cookies) {
+  const list = Array.isArray(cookies) ? cookies.filter((c) => c && c.name) : [];
+  if (!list.length) return 0;
+  let fallbackUrl = "";
+  try {
+    fallbackUrl = page?.url?.() || "";
+  } catch {
+    fallbackUrl = "";
+  }
+  const normalized = list.map((c) => ({
+    name: String(c.name),
+    value: String(c.value ?? ""),
+    ...(c.domain ? { domain: String(c.domain) } : { url: c.url || fallbackUrl }),
+    ...(c.path ? { path: String(c.path) } : {}),
+    ...(c.expires !== undefined && Number(c.expires) > 0 ? { expires: Number(c.expires) } : {}),
+    ...(c.httpOnly !== undefined ? { httpOnly: Boolean(c.httpOnly) } : {}),
+    ...(c.secure !== undefined ? { secure: Boolean(c.secure) } : {}),
+    ...(c.sameSite ? { sameSite: c.sameSite } : {}),
+  }));
+  try {
+    await ctx.addCookies(normalized);
+    return normalized.length;
+  } catch (e) {
+    // 个别 cookie 的 sameSite/domain 组合会被 Chromium 拒绝：逐个重试，
+    // 能注入多少算多少 —— 登录态缺一两个次要 cookie 通常仍可用，
+    // 整批失败才是真的不可用（那会由后续的会话检查报出来）。
+    let ok = 0;
+    for (const c of normalized) {
+      await ctx.addCookies([c]).then(() => { ok += 1; }).catch(() => {});
+    }
+    if (!ok) {
+      throw Object.assign(new Error(`登录态 cookies 注入失败：${e?.message || e}`), { code: "CHANNEL_NOT_READY" });
+    }
+    return ok;
+  }
+}
+
+async function createSession({ vendor, channelId, key, entryUrl, profile, visible = false, reuse = null, cookies = null }) {
   // 页面死了但浏览器还活着：只重建页面，省掉一次完整启动（几秒）。
   if (reuse?.ctx && !isPageUsable(reuse.page)) {
     try {
@@ -239,6 +291,13 @@ async function createSession({ vendor, channelId, key, entryUrl, profile, visibl
   let page;
   try {
     page = ctx.pages()[0] || (await ctx.newPage());
+    // 先注入保存的登录态再导航：顺序反了会先以未登录状态请求一次页面，
+    // 有些站会据此写下"匿名访客"的 cookie，把真正的登录态盖掉。
+    if (cookies?.length) {
+      await restoreCookies(ctx, page, cookies).catch((e) => {
+        console.warn(`[browser-driver] 会话 ${key} 注入登录态失败：${e?.message || e}`);
+      });
+    }
     await page.goto(entryUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT }).catch(() => {});
     await page.waitForTimeout(4000);
   } catch (e) {

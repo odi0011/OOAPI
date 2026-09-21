@@ -29,6 +29,10 @@ const ADAPTERS = {
   "grok-oauth": () => import("./upstream/grok.js"),
   kiro: () => import("./upstream/kiro.js"),
   "openai-web": () => import("./upstream/openai-web.js"),
+  // ChatGPT 网页版·浏览器 UI 驱动。与 openai-web 的区别：后者在 Node 里直接
+  // 拼 HTTP 请求（现已走不通 —— sentinel 的 turnstile 必须由页面 JS 解），
+  // 这个驱动真实页面 UI，让页面自己去过风控。
+  "openai-web-ui": () => import("./upstream/openai-web-ui.js"),
   // 第三方反代（凭据型）：WorkBuddy 直连腾讯后端；Qoder 经本地桥
   workbuddy: () => import("./upstream/workbuddy.js"),
   qoder: () => import("./upstream/qoder.js"),
