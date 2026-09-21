@@ -78,15 +78,29 @@ export async function loginWithCredentials(page, { email, password, totpSecret }
     });
   }
 
+  // 先清掉可能存在的旧会话。
+  // 否则访问 /auth/login 会被重定向回首页（已登录状态），邮箱框永远不出现 ——
+  // 表现为「登录页加载失败」，而页面其实完全正常。
+  // 实测踩过：第一次登录成功留下的 profile 会让第二次登录直接失败。
+  await page.context().clearCookies().catch(() => {});
+
   await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
   // 首屏要过 Cloudflare 挑战，等输入框真正出现而不是固定睡眠
   const emailReady = await page
     .waitForSelector("input#email, input[name='email']", { timeout: 45_000, state: "visible" })
     .catch(() => null);
   if (!emailReady) {
-    throw Object.assign(new Error("ChatGPT 登录页加载失败（可能是 Cloudflare 挑战未通过或网络不可达）"), {
-      code: "LOGIN_PAGE_UNAVAILABLE",
-    });
+    // 区分两种失败：真的打不开页面，还是被重定向走了（清 cookie 没生效）
+    const url = page.url();
+    const onLoginPage = /auth\/login|\/log-in/i.test(url);
+    throw Object.assign(
+      new Error(
+        onLoginPage
+          ? "ChatGPT 登录页加载失败（可能是 Cloudflare 挑战未通过或网络不可达）"
+          : `ChatGPT 登录页被重定向到 ${url}（旧会话未清干净，请重试）`,
+      ),
+      { code: "LOGIN_PAGE_UNAVAILABLE" },
+    );
   }
 
   // ① 邮箱
