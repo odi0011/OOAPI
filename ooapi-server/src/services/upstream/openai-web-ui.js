@@ -237,7 +237,12 @@ export async function loginWithPassword({ email, password, totpSecret, profileSe
 export async function verify(channel) {
   const session = await openChannelSession(channel);
   return withLock(session, async () => {
-    const r = await checkSession(session.page);
+    // 同样容忍瞬时失败（见 chat 里的说明）：页面刚建好时 session 可能还没就绪
+    let r = await checkSession(session.page);
+    for (let i = 0; i < 2 && !r.ok; i += 1) {
+      await session.page.waitForTimeout(2500);
+      r = await checkSession(session.page);
+    }
     if (!r.ok) {
       throw Object.assign(new Error("ChatGPT 网页版登录态已失效，请重新用邮箱+密码+2FA 登录"), {
         code: "CHANNEL_AUTH_EXPIRED",
@@ -410,8 +415,19 @@ export async function chat({ channel, model, prompt, images = [], signal, onDelt
         throw Object.assign(new Error("页面钩子注入失败（页面可能已重新加载）"), { code: "CHANNEL_NOT_READY" });
       }
 
-      // 登录态兜底检查：过期就明确报错，而不是让用户等到超时
-      const sess = await checkSession(page);
+      // 登录态兜底检查：过期就明确报错，而不是让用户等到超时。
+      //
+      // **必须容忍瞬时失败**：刚导航完的页面在完全水合前，
+      // 页面内 fetch("/api/auth/session") 可能拿不到 token（cookie 尚未参与、
+      // 或 next-auth 上下文还没就绪）。实测踩到：同一渠道连续三次测试，
+      // 第三次在导航后 22 秒报「登录态已失效」，而渠道其实完全正常
+      // —— 那次是页面重建后立刻检查。
+      // 所以重试两次、每次等 2.5s；仍失败才判定真的过期。
+      let sess = await checkSession(page);
+      for (let i = 0; i < 2 && !sess.ok; i += 1) {
+        await page.waitForTimeout(2500);
+        sess = await checkSession(page);
+      }
       if (!sess.ok) {
         throw Object.assign(new Error("ChatGPT 网页版登录态已失效，请重新登录该渠道"), {
           code: "CHANNEL_AUTH_EXPIRED",
