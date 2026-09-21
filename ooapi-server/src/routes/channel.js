@@ -2007,12 +2007,18 @@ router.post(
         });
         token = r.token;
         other = {
-          method: "relay",
+          // method 必须用**请求里的真实接入方式**，不能写死 "relay"。
+          // 写死的后果：adapterKeyFor 解析出的适配器 key 变成厂商名（openai），
+          // 而 openai 没有适配器 —— 渠道能建出来、凭据也存对了，
+          // 但一测试就报「适配器未实现测试」，对话直接不可用。
+          // （历史上前端只提交 relay，所以写死没暴露；现在有 openai-web-ui 这类
+          //   挂在同一厂商下的多种接入方式，写死就会串。）
+          method: methodKey,
           profile: r.profile || null,
           ...(r.cookies?.length ? { cookies: r.cookies } : {}),
           // 适配器返回的 other 必须一并保留：浏览器驱动型适配器把登录态
           // （cookies / device_id / 套餐 / 过期时间）放在这里，
-          // 上面那行硬编码只认 cookies，会把其余字段丢掉 ——
+          // 上面的硬编码只认 cookies，会把其余字段丢掉 ——
           // 丢掉 device_id 的后果是网页版把每次请求当成"换设备"，直接风控。
           ...(r.other || {}),
           account: isEmail ? account : `${account.slice(0, 3)}****${account.slice(-4)}`,
