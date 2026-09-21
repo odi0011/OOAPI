@@ -265,11 +265,15 @@ function SettingsTab({ group }) {
   }, []);
   const fields = useMemo(() => Object.entries(F).filter(([, v]) => v.g === group), [group]);
   return (
-    <div className="oo-panel" style={{ maxWidth: 760, opacity: s.loading || s.error ? 0.72 : 1 }}>
+    <div className="oo-panel" style={{ opacity: s.loading || s.error ? 0.72 : 1 }}>
       <style>{`
+        /* 铺满内容区（不再限宽 760px —— 宽屏下右侧会空出一半）。
+           但「铺满」不等于把输入框拉成 1600px 宽的一条：
+           列数按可用宽度自适应（每列 260~340px），宽屏自动 4~5 列，
+           设置项密集但不失衡。 */
         .oo-settings-form {
           display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
           column-gap: 18px;
           row-gap: 0;
         }
@@ -299,6 +303,10 @@ function SettingsTab({ group }) {
           .oo-settings-form .oo-settings-actions {
             grid-column: auto;
           }
+        }
+        /* 长文本字段（textarea）跨列但不铺满整行：1600px 宽的单行文本读起来要来回扫视 */
+        .oo-settings-form .oo-settings-field--wide textarea {
+          max-width: 1100px;
         }
       `}</style>
       {s.error ? (
@@ -416,7 +424,7 @@ function UpdateTab() {
   };
 
   return (
-    <div className="oo-panel" style={{ maxWidth: 760 }}>
+    <div className="oo-panel">
       <div className="oo-panel-body">
         {error ? (
           <Alert type="error" showIcon message="检查更新失败" description={error} style={{ marginBottom: 12 }} />

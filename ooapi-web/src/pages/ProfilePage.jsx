@@ -17,9 +17,11 @@ import { OdStatValue } from "../components/OdCoin";
 
 const { Text } = Typography;
 
-function Section({ title, desc, children, width = 560 }) {
+// 面板铺满内容区（曾限宽 560px，宽屏下右侧空出一半以上）。
+// 表单本身用下面的 .oo-form-grid 自适应多列，不靠外层限宽来控制行长。
+function Section({ title, desc, children, className, style }) {
   return (
-    <div className="oo-panel" style={{ maxWidth: width }}>
+    <div className={`oo-panel${className ? ` ${className}` : ""}`} style={style}>
       <div className="oo-panel-head">
         <div>
           <div className="oo-panel-title">{title}</div>
@@ -32,6 +34,26 @@ function Section({ title, desc, children, width = 560 }) {
     </div>
   );
 }
+
+// 表单栅格：按可用宽度自动决定列数（每列 260~320px）。
+// 短字段（用户名/邮箱/链接）各占一列，长字段（简介）跨整行。
+const FORM_GRID = `
+  .oo-form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    column-gap: 18px;
+    row-gap: 0;
+  }
+  .oo-form-grid .oo-form-field { min-width: 0; margin-bottom: 14px; }
+  .oo-form-grid .oo-form-field--wide,
+  .oo-form-grid .oo-form-actions { grid-column: 1 / -1; }
+  .oo-form-grid .oo-form-field--wide textarea { max-width: 1100px; }
+  @media (max-width: 640px) {
+    .oo-form-grid { grid-template-columns: minmax(0, 1fr); column-gap: 0; }
+    .oo-form-grid .oo-form-field--wide,
+    .oo-form-grid .oo-form-actions { grid-column: auto; }
+  }
+`;
 
 function ProfileTab() {
   const { user, refreshUser, status } = useApp();
@@ -73,7 +95,8 @@ function ProfileTab() {
 
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, maxWidth: 900 }}>
+      <style>{FORM_GRID}</style>
+      <div className="oo-stats-cards">
         <StatCard
           label="剩余额度"
           value={<OdStatValue od={odOf(user?.quota, perUnit)} />}
@@ -89,7 +112,7 @@ function ProfileTab() {
         />
       </div>
 
-      <Section title="个人信息" width={620}>
+      <Section title="个人信息">
         {/* 头像：点击打开裁剪弹窗（纯 Canvas 处理，不引依赖） */}
         <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 18 }}>
           <UserAvatar user={user} size={64} />
@@ -105,28 +128,40 @@ function ProfileTab() {
           </div>
         </div>
 
-        <Form form={form} layout="vertical" onFinish={save} requiredMark={false}>
-          <Form.Item label="用户名">
+        <Form form={form} className="oo-form-grid" layout="vertical" onFinish={save} requiredMark={false}>
+          <Form.Item className="oo-form-field" label="用户名">
             <Input value={user?.username} disabled />
           </Form.Item>
-          <Form.Item name="display_name" label="显示名称">
+          <Form.Item className="oo-form-field" name="display_name" label="显示名称">
             <Input placeholder="显示名称" maxLength={64} />
           </Form.Item>
-          <Form.Item name="email" label="邮箱" rules={[{ type: "email", message: "邮箱格式不正确" }]}>
+          <Form.Item
+            className="oo-form-field"
+            name="email"
+            label="邮箱"
+            rules={[{ type: "email", message: "邮箱格式不正确" }]}
+          >
             <Input placeholder="用于接收通知（选填）" />
           </Form.Item>
-          <Form.Item name="bio" label="个人简介" tooltip="会在个人主页展示">
-            <Input.TextArea placeholder="一句话介绍自己（选填）" maxLength={255} rows={3} showCount />
-          </Form.Item>
-          <Form.Item name="website" label="个人链接">
+          <Form.Item className="oo-form-field" name="website" label="个人链接">
             <Input placeholder="https://（选填）" maxLength={255} />
           </Form.Item>
-          <Form.Item name="location" label="所在地">
+          <Form.Item className="oo-form-field" name="location" label="所在地">
             <Input placeholder="如：杭州（选填）" maxLength={64} />
           </Form.Item>
-          <Button type="primary" htmlType="submit" loading={busy}>
-            保存修改
-          </Button>
+          <Form.Item
+            className="oo-form-field oo-form-field--wide"
+            name="bio"
+            label="个人简介"
+            tooltip="会在个人主页展示"
+          >
+            <Input.TextArea placeholder="一句话介绍自己（选填）" maxLength={255} rows={3} showCount />
+          </Form.Item>
+          <div className="oo-form-actions">
+            <Button type="primary" htmlType="submit" loading={busy}>
+              保存修改
+            </Button>
+          </div>
         </Form>
       </Section>
 
@@ -155,8 +190,9 @@ function PasswordTab() {
 
   return (
       <Section title="修改密码">
-      <Form form={form} layout="vertical" onFinish={save} requiredMark={false}>
+      <Form form={form} className="oo-form-grid" layout="vertical" onFinish={save} requiredMark={false}>
         <Form.Item
+          className="oo-form-field"
           name="old_password"
           label="当前密码"
           rules={[{ required: true, message: "请输入当前密码" }]}
@@ -164,6 +200,7 @@ function PasswordTab() {
           <Input.Password placeholder="当前登录密码" autoComplete="current-password" />
         </Form.Item>
         <Form.Item
+          className="oo-form-field"
           name="new_password"
           label="新密码"
           rules={[
@@ -180,6 +217,7 @@ function PasswordTab() {
           <Input.Password placeholder="8 位以上，字母 + 数字" autoComplete="new-password" />
         </Form.Item>
         <Form.Item
+          className="oo-form-field"
           name="confirm"
           label="确认新密码"
           dependencies={["new_password"]}
@@ -196,9 +234,11 @@ function PasswordTab() {
         >
           <Input.Password autoComplete="new-password" />
         </Form.Item>
-        <Button type="primary" htmlType="submit" loading={busy}>
-          修改密码
-        </Button>
+        <div className="oo-form-actions">
+          <Button type="primary" htmlType="submit" loading={busy}>
+            修改密码
+          </Button>
+        </div>
       </Form>
     </Section>
   );
@@ -213,7 +253,7 @@ function AppearanceTab() {
         <ThemeSwitch />
       </Section>
 
-      <Section title="主题色" width={640}>
+      <Section title="主题色">
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
           {PRIMARY_PRESETS.map((p) => {
             const active = primary.toLowerCase() === p.color.toLowerCase();

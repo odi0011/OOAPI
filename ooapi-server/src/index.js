@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { pool, migrate } from "./db.js";
 import { loadOptions, publicStatus, getNumberOption } from "./config.js";
 import { seedDefaultPrices } from "./services/pricing.js";
+import { buildId } from "./services/build-info.js";
 import { ok } from "./utils.js";
 import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/user.js";
@@ -50,7 +51,9 @@ app.use(
 // 注意：/api/media 不在此列表 —— 它自己用 32MB 解析 + 先鉴权（见 routes/media.js）
 // /api/profile 也不在：它是匿名可达的（公开个人主页），统一 1MB 足够，单独挂更清楚
 
-app.get("/api/status", (req, res) => ok(res, publicStatus()));
+// build_id：当前部署的前端 bundle 名。前端拿它和自己的 script src 比对，
+// 不一致说明页面还是旧包（SPA 打开后不会再取 index.html），提示刷新。
+app.get("/api/status", (req, res) => ok(res, { ...publicStatus(), build_id: buildId() }));
 app.get("/health", (req, res) => res.send("ok"));
 
 app.use("/api/user", authRoutes);

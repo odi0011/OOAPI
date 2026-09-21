@@ -1424,11 +1424,14 @@ h1, h2, h3, h4 {
    --------------------------------------------------------------------------- */
 .oo-stats-cards {
   display: grid;
-  /* `minmax(118px, 1fr)` 在宽屏会把每张卡拉成几百像素宽的薄片 ——
-     数字缩在左上角、右侧一大片空白，看着非常廉价（用户实测反馈）。
-     给单卡设上限（200px）并左对齐：一屏多放几张，也不再变形。 */
-  grid-template-columns: repeat(auto-fit, minmax(118px, 200px));
-  justify-content: start;
+  /* 铺满整行：卡片数少时（媒体库 4 张、个人设置 3 张）也必须占满宽度，
+     否则右侧留一大片空白，看着就是「这页没做全宽」（用户实测反馈）。
+     曾用 minmax(118px, 200px) + justify-content:start 想避免「薄片」，
+     结果从「卡片被拉长」变成「卡片挤在左边」—— 两个问题里留白更刺眼。
+     现在的取法：列数自适应、每列等分（1fr），卡片内部数值左对齐；
+     大屏单卡宽一些是正常的仪表盘密度，不留白才是关键。
+     窄屏靠 minmax 下限（148px）自动减少列数。 */
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
   gap: 8px;
   margin-bottom: 14px;
 }
@@ -2778,6 +2781,12 @@ h1, h2, h3, h4 {
    14. 页面骨架（所有内页遵循同一垂直节奏）
    --------------------------------------------------------------------------- */
 /* 页面骨架：PageHeader + 若干区块，间距统一由 gap 控制，页面内不再写内联 margin */
+/* 发版提示条：贴在内容区顶部，不占页面骨架的间距（banner 自带背景） */
+.oo-stale-build {
+  margin-bottom: 14px;
+  border-radius: var(--r-card);
+}
+
 .oo-page {
   display: flex;
   flex-direction: column;

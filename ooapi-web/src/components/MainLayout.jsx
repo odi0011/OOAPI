@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Layout, Avatar, Dropdown, Grid, Drawer, Button } from "antd";
+import { Layout, Avatar, Dropdown, Grid, Drawer, Button, Alert } from "antd";
 import {
   HomeOutlined,
   DashboardOutlined,
@@ -33,6 +33,18 @@ import ThemeSwitch from "./ThemeSwitch";
 
 const { Header, Sider, Content } = Layout;
 const { useBreakpoint } = Grid;
+
+/**
+ * 当前页面加载的是哪个 bundle —— 从自己的 script 标签读。
+ * 与 /api/status 的 build_id 比对，不一致就说明这个标签页是发版前打开的旧包。
+ * 这不只是提示：**旧包会真的渲染出旧行为**（历史事故：图标/滚动已修好并部署，
+ * 用户在旧页面里看到旧样子，据此判断「没改」）。
+ */
+function loadedBuildId() {
+  const el = document.querySelector('script[type="module"][src*="/assets/index-"]');
+  const m = el?.getAttribute("src")?.match(/index-[A-Za-z0-9_-]+\.js/);
+  return m ? m[0] : "";
+}
 
 // 导航：工作台（对话/社区） → 开发 → 账户 → 平台管理
 const NAV_USER = [
@@ -161,6 +173,21 @@ export default function MainLayout() {
   useEffect(() => {
     if (["/messages", "/notifications"].some((p) => location.pathname.startsWith(p))) refreshBadges();
   }, [location.pathname, refreshBadges]);
+
+  // 发版检测：页面加载的 bundle 与服务器当前部署的不一致 → 提示刷新。
+  // 只在焦点时检查（用户回到标签页那一刻最该知道）而不是纯定时器，
+  // 发版是低频事件，没必要为此长期轮询。
+  const [staleBuild, setStaleBuild] = useState("");
+  useEffect(() => {
+    const mine = loadedBuildId();
+    if (!mine) return undefined;
+    if (status?.build_id && status.build_id !== mine) setStaleBuild(status.build_id);
+    // status 只在应用挂载时取过一次，发版后它自己也是旧的 ——
+    // 所以切回标签页要重新拉一次，否则对比永远发生在两个旧值之间。
+    const onFocus = () => refreshStatus();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [status?.build_id, refreshStatus]);
 
   const isAdmin = user?.role >= 100;
   const selectedKey = location.pathname;
@@ -336,6 +363,23 @@ export default function MainLayout() {
         </Header>
 
         <Content className={`oo-content${contentClass(location.pathname)}`}>
+          {staleBuild ? (
+            <Alert
+              className="oo-stale-build"
+              type="warning"
+              showIcon
+              banner
+              closable
+              onClose={() => setStaleSince("")}
+              message="页面版本已更新"
+              description="你当前打开的是旧版本页面，部分新改动不会生效（例如图标、布局）。刷新即可加载最新版本。"
+              action={
+                <Button size="small" type="primary" onClick={() => window.location.reload()}>
+                  立即刷新
+                </Button>
+              }
+            />
+          ) : null}
           <Outlet />
         </Content>
       </Layout>
