@@ -77,6 +77,9 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
 | `src/routes/dashboard.js` | **数据看板**（第 37 批） | 个人维度与全站维度分开。错误统计查 `type=4` 错误日志 —— **logs 表没有 status 列**，拿消费日志数「status<>1」会一条都数不到（静默算成 0 错误） |
 | `migrate6.mjs` | **历史数据迁移**（第 37 批） | 老消息内联 base64 → 媒体库。幂等靠「parts 里还有没有 base64」而不是靠打标；**有图片失败就整条不更新**（不更新只是下次重试，更新了就是数据丢失）；结尾必须 `process.exit`（媒体库模块的定时器/连接池会挂住进程） |
 | `src/services/upstream/vendor-quirks.js` | **厂商协议特化**（第 40 批） | 只收「会影响正确性」的差异，按 `channel.type` 分发（**不按 base_url** —— 用户可能把官方地址换到自建中转上）。当前四项：MiniMax 强制 `reasoning_split`、方舟读降级后实际模型、StepFun 参数裁剪、`<think>` 块兜底剥离。新增厂商差异时加在这里，别往 openai-compat 里塞 |
+| `src/services/upstream/mimo-web.js` | **小米 MiMo 网页版反代**（第 41 批） | 纯 Cookie（`serviceToken`/`userId`/`xiaomichatbot_ph`）+ 标准 SSE，零签名。**`xiaomichatbot_ph` 同时要作为 URL query**（上游双校验），漏了会被风控 |
+| `src/services/upstream/minimax-web.js` | **MiniMax 网页版反代**（第 41 批） | 接入点是 `agent.minimaxi.com`（`chat.minimaxi.com` 只剩 307）。签名 `x-signature`/`yy` **都是纯 MD5**；`yy` 依赖指纹参数（uuid/device_id/screen_*），**必须按账号固定**（随机变化是强风控信号） |
+| `src/services/upstream/stepfun-web.js` | **阶跃星辰网页版反代**（第 41 批） | 接入点是 `chat.stepfun.com`（**不要用 yuewen.cn，证书过期+403**）。零签名；难点是 Connect RPC 分帧（1B flags + 4B len，与 kimi 同构） |
 | `src/services/device-bind.js` | **一键绑定（设备授权）**（第 40 批） | Kiro/WorkBuddy/Qoder 的 `start/poll/cancel` 统一抽象。**三家的 `judge*` 判定函数是导出纯函数**（便于无上游依赖地测最易错的分支）。会话存进程内（单机单实例）；凭据不经浏览器，见路由注释 |
 
 ### 1.2 前端关键模块地图
@@ -423,7 +426,8 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 
 ### 2.7 踩过的坑（写代码前先看，能省一次返工）
 
-> ①-④ 来自第 35 批审查，⑤-⑧ 来自第 37 批实现过程。共同特征是：
+> ①-④ 来自第 35 批审查，⑤-⑧ 来自第 37 批实现过程，⑨-⑩ 来自第 37 批返工，
+> ⑪-⑭ 来自第 40-41 批。共同特征是：
 > 语法检查通过、构建通过，但线上在静默地算错、失效或白屏。
 
 **① 「字段存在」不等于「有数据」**
@@ -571,6 +575,30 @@ Ant Design 的 Modal 走 Portal，DOM 上挂在 `document.body` 而不是 `#root
 规则：断言弹窗类内容用 `document.body.innerText`；
 **当断言失败而截图看着正常时，先怀疑定位器/取值源，别急着改功能代码**
 （这次差点因此去改一处本来就是对的实现）。
+
+**⑬ grid 子项要滚动，行轨道也必须约束**（第 41 批）
+
+弹窗改成「左右两栏各自独立滚动」时，给子项设了 `overflow-y: auto` 与
+`min-height: 0`，但右栏**依然滚不动**，长表单底部的控件被静默裁掉。
+根因：`display:grid` 的**行轨道默认是 max-content**，会被内容撑高 ——
+容器跟着内容一起长高，`overflow` 永远不触发。
+只给子项设 `min-height: 0` 是不够的（那是 flex 的规则），
+**必须同时写 `grid-template-rows: minmax(0, 1fr)`**。
+
+规则：grid 里做滚动容器，行轨道用 `minmax(0, 1fr)`；
+验证方式不能靠截图（内容被裁掉在静态截图里看不出来），
+要断言 `scrollHeight > clientHeight` 且**滚到底后没有元素超出容器底边**。
+
+**⑭ 构建失败却提交了**（第 41 批）
+
+我用 `npm run build 2>&1 | grep -E "✓ built|ERROR"` 看构建结果，
+自以为没问题就提交 —— 实际上 grep 把 `ERROR` 行过滤掉了，
+**构建是失败的、语法是坏的**，提交信息里还写着「已完成」。
+
+规则：**提交前必须看命令的退出码**（`npm run build || echo BUILD_FAILED`），
+不能只依赖过滤后的输出；过滤输出会掩盖错误，让失败看起来像成功。
+这条与第 ④ 条（「构建通过 ≠ 页面能打开」）是一对：
+④ 说的是构建通过不代表没问题，⑭ 说的是**构建失败也可能没被看见**。
 
 ---
 
@@ -2110,6 +2138,61 @@ Ant Design 的 Modal 走 Portal，DOM 上挂在 `document.body` 而不是 `#root
     不限厂商时掉到平台 logo；现在一律按成员厂商绘制，并显示清理后的分组名 + 倍率 + 备注
     （历史 `厂商:名称` 前缀统一剥离）。
   · 官方图标：`opencode.png`（官网 favicon）/ `openrouter.svg`（Simple Icons）/ `siliconflow.ico`（官网）。 |
+| 2026-09-21 | **第 41 批（一）· 界面问题集中修**（用户逐条指出，全部采纳）。
+  · **全站改回全宽**：之前按「表格页铺满 / 卡片图表页限宽 1320px 居中」二分过，
+    用户明确要求**所有页面全宽** —— 已移除 `.oo-content--narrow` 与路由判断。
+    窄屏适配交给各页面自身的自适应栅格（统计卡单卡上限 200px、
+    图表网格 `auto-fit minmax(380px,1fr)` 自动增减列数），不靠外层容器限宽。
+  · **分组表格删掉「厂商」列**：图标已经在「分组名」列里（单厂商单图标、
+    多厂商叠放 +N），单独一列把同一信息说两遍还白占 150px；
+    而且**分组本身不绑定厂商**，那一列在语义上也是错的。
+  · **「可用模型」列从「模型名 +N」改成「N 个」**：原先渲染第一个模型名，
+    不限模型时该列宽度失控（实测截图确认），改为个数 + 悬浮看明细。
+  · **渠道弹窗左右两栏各自独立滚动**：原先只有 `.ant-modal-body` 整体滚动，
+    左侧厂商列表会跟着内容滚走，往上填配置时看不到自己选了谁。
+    修的过程踩了两个布局坑（见 2.7 第 ⑬ 条）：滚动条要加在**正确的元素**上
+    （section 而非内层容器），以及 **grid 行轨道要写 `minmax(0, 1fr)`**。
+  · **「自定义（通用兼容）」强制排最后**：在**后端** `publicProviders()` 排序，
+    不放前端 —— 前端有多处渲染厂商列表（弹窗 + 筛选下拉），只改一处必然漏。
+  · **补齐四家新厂商图标**：之前都掉到平台 logo（显示成一张照片）。
+    资源取自各厂商 **GitHub 官方组织头像**（MiniMax-AI / stepfun-ai /
+    volcengine / XiaomiMiMo）—— 它们的官网 favicon 取不到（域名不可达或 403）。
+    同时补模型名前缀映射，否则 `MiniMax-M3` / `step-*` / `mimo-*` 也掉平台 logo。 |
+| 2026-09-21 | **第 41 批（二）· 三家网页版反代**（用户质疑「为什么都是 API 形式」）。
+  调研确认三家都有可反代的 C 端网页，难度都不高，全部实现：
+  · **小米 MiMo**（`aistudio.xiaomimimo.com`）—— 参考 wtz44/mimo-free-api（86★ MIT）。
+    纯 Cookie（`serviceToken`/`userId`/`xiaomichatbot_ph`）+ 标准 SSE，
+    **零签名零 PoW**。选网页版而非桌面端：桌面端走 OAuth + `mimo-x-preview`，
+    且官方明确该档位只对桌面客户端开放。
+  · **MiniMax**（`agent.minimaxi.com`）—— 参考 snake-aabb-wtf/minimaxM3-web2api
+    （已完整逆向签名）。`x-signature` + `yy` **都是纯 MD5**（静态密钥硬编码），
+    无 PoW/wasm/SM3；指纹参数（参与 yy 计算）由 token 稳定派生 ——
+    同一账号必须固定，随机变化是强风控信号。
+    **更正**：接入点是 `agent.minimaxi.com`，`chat.minimaxi.com` 实测只剩 307 跳转。
+  · **阶跃星辰**（`chat.stepfun.com`）—— 参考 dijiaozhibei-top/step2api。
+    **零签名零 PoW**，唯一难点是 Connect RPC 分帧（1B flags + 4B len），
+    与 kimi 的帧格式同构。**更正**：不要用「跃问 yuewen.cn」——
+    实测该域名 TLS 证书已过期并返回 403，品牌已退役。
+  三家实现同一套适配器契约（`importAuth/verify/chat/loginModes/ENTRY_URL`），
+  复用既有「抓取登录态」与「测试渠道」链路，不另开旁路。
+  图片输入暂不支持并**明确报错**：不静默丢弃 ——
+  用户以为图发出去了但模型没看到，是最坏的情况。 |
+| 2026-09-21 | **第 41 批（三）· WorkBuddy 的 CLI 集成：调研后判定「做了也没用」**。
+  用户提出「WorkBuddy 没有轻的 CLI 版本？不能直接在包里安装一个？」——
+  调研结论（2026-09-21，含实测）：
+  · 官方 CLI **确实存在**（`@tencent-ai/codebuddy-code`，纯 Node.js + linux ripgrep，
+    `npm i -g` 可装），这点用户是对的；
+  · 但**全包 174MB 零 `X-Device-Token` 命中** —— CLI 自己就不发这个头，
+    装它解决不了设备头问题（净增 54MB 依赖、零收益），
+    且 CLI 的登录是 TUI 里的 `/login` 斜杠命令、无 headless 子命令；
+  · Turing Shield SDK **没有 Linux 构建**（`index.cjs` 首行门控
+    `supportedPlatform = darwin || win32`，二进制为 Windows DLL/macOS node 模块）；
+  · 桌面端自己的逻辑是「取不到 token 就改发 `X-Device-Token-Error`」——
+    说明**服务端接受无有效设备头的请求**（软风控信号，非硬鉴权）；
+  · 7 个可验证的开源网关里 **5 个完全不发该头**，1 个可选注入并优雅降级，
+    仅 1 个需要同机装 Windows 桌面端才能生成。
+  **处理**：现有设备授权方案保持不动（它是腾讯官方协议、CLI 内部同款），
+  不做 CLI 集成、不做签到类接口（那是唯一确证需要设备头的路径，属灰产风控面）。 |
 
 
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
