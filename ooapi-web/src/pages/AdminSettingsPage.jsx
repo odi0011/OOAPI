@@ -266,49 +266,6 @@ function SettingsTab({ group }) {
   const fields = useMemo(() => Object.entries(F).filter(([, v]) => v.g === group), [group]);
   return (
     <div className="oo-panel" style={{ opacity: s.loading || s.error ? 0.72 : 1 }}>
-      <style>{`
-        /* 铺满内容区（不再限宽 760px —— 宽屏下右侧会空出一半）。
-           但「铺满」不等于把输入框拉成 1600px 宽的一条：
-           列数按可用宽度自适应（每列 260~340px），宽屏自动 4~5 列，
-           设置项密集但不失衡。 */
-        .oo-settings-form {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-          column-gap: 18px;
-          row-gap: 0;
-        }
-        .oo-settings-form .oo-settings-field {
-          min-width: 0;
-          margin-bottom: 12px;
-        }
-        .oo-settings-form .oo-settings-field--wide,
-        .oo-settings-form .oo-settings-actions {
-          grid-column: 1 / -1;
-        }
-        .oo-settings-form .oo-settings-field .ant-form-item-label {
-          padding-bottom: 4px;
-        }
-        .oo-settings-form .oo-settings-field .ant-form-item-control-input {
-          min-height: 32px;
-        }
-        .oo-settings-form .oo-settings-actions {
-          margin-top: 2px;
-        }
-        @media (max-width: 640px) {
-          .oo-settings-form {
-            grid-template-columns: minmax(0, 1fr);
-            column-gap: 0;
-          }
-          .oo-settings-form .oo-settings-field--wide,
-          .oo-settings-form .oo-settings-actions {
-            grid-column: auto;
-          }
-        }
-        /* 长文本字段（textarea）跨列但不铺满整行：1600px 宽的单行文本读起来要来回扫视 */
-        .oo-settings-form .oo-settings-field--wide textarea {
-          max-width: 1100px;
-        }
-      `}</style>
       {s.error ? (
         <Alert
           type="error"

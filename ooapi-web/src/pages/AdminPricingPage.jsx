@@ -279,19 +279,24 @@ export default function AdminPricingPage() {
       />
 
       <div className="oo-stats-cards">
-        <StatCard label="已配置模型" value={loadError ? "—" : items.length} icon={<DollarOutlined />} foot={<span>计价条目</span>} />
+        <StatCard label="已配置模型" value={loadError ? "—" : items.length} suffix="个" hint="平台生效计价条目" />
         <StatCard
           label="渠道类型"
           value={loadError ? "—" : new Set(items.map((i) => i.channel_type).filter(Boolean)).size}
-          foot={<span>覆盖厂商数</span>}
+          suffix="类"
+          hint="覆盖上游厂商数"
         />
         <StatCard
           label="最低输入价"
           value={loadError ? "—" : cheapest ? Number(cheapest.input_price).toFixed(4) : "-"}
           suffix={CURRENCY_NAME}
-          foot={<span>{loadError ? "加载失败" : cheapest?.model || "—"}</span>}
+          hint={loadError ? "加载失败" : `对应模型：${cheapest?.model || "—"}`}
         />
-        <StatCard label="币种" value={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><OdCoin size={22} />{CURRENCY_NAME}</span>} foot={<span>1 {CURRENCY_NAME} = 1 美元（1:1）</span>} />
+        <StatCard
+          label="统一币制"
+          value={<span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><OdCoin size={18} />{CURRENCY_NAME}</span>}
+          hint={`1 ${CURRENCY_NAME} = 1 美元（1:1 精确核算）`}
+        />
       </div>
 
       <div className="oo-panel">

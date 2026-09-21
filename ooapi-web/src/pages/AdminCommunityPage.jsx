@@ -209,7 +209,7 @@ export default function AdminCommunityPage() {
               <Button
                 type="text"
                 size="small"
-                icon={Number(r.status) === 3 ? <EyeInvisibleOutlined /> : <EyeInvisibleOutlined />}
+                icon={Number(r.status) === 3 ? <EyeOutlined /> : <EyeInvisibleOutlined />}
                 disabled={acting}
                 onClick={() => moderate(r.id, { status: Number(r.status) === 3 ? 1 : 3 })}
               />

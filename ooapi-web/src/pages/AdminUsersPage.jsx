@@ -147,7 +147,7 @@ export default function AdminUsersPage() {
       title: "ID",
       dataIndex: "id",
       width: 64,
-      render: (v) => <span className="oo-num" style={{ color: "var(--oo-text-muted)" }}>{v}</span>,
+      render: (v) => <span className="oo-num" style={{ color: "var(--ink-3)" }}>{v}</span>,
     },
     {
       title: "用户",
@@ -157,7 +157,7 @@ export default function AdminUsersPage() {
         <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 560 }}>{r.display_name || v}</div>
           {r.display_name && r.display_name !== v ? (
-            <div style={{ fontSize: 12, color: "var(--oo-text-muted)" }}>{v}</div>
+            <div style={{ fontSize: 12, color: "var(--ink-3)" }}>{v}</div>
           ) : null}
         </div>
       ),
@@ -179,7 +179,7 @@ export default function AdminUsersPage() {
             <span className="bui-dot bui-dot--ok" /> 启用
           </span>
         ) : (
-          <span className="oo-flex oo-gap-2" style={{ fontSize: 13, color: "var(--oo-text-muted)" }}>
+          <span className="oo-flex oo-gap-2" style={{ fontSize: 13, color: "var(--ink-3)" }}>
             <span className="bui-dot bui-dot--err" /> 禁用
           </span>
         ),
@@ -195,7 +195,7 @@ export default function AdminUsersPage() {
       title: "已用额度",
       dataIndex: "used_quota",
       width: 116,
-      render: (q) => <span className="oo-num" style={{ color: "var(--oo-text-muted)" }}>{fmtOd(q, perUnit, 4)}</span>,
+      render: (q) => <span className="oo-num" style={{ color: "var(--ink-3)" }}>{fmtOd(q, perUnit, 4)}</span>,
     },
     {
       title: "调用",
@@ -257,7 +257,7 @@ export default function AdminUsersPage() {
               className="oo-users-search"
               placeholder="搜索用户名 / 邮箱"
               allowClear
-              prefix={<SearchOutlined style={{ color: "var(--oo-text-muted)" }} />}
+              prefix={<SearchOutlined style={{ color: "var(--ink-3)" }} />}
               style={{ width: 220 }}
               onPressEnter={(e) => {
                 setKeyword(e.target.value);
@@ -275,11 +275,11 @@ export default function AdminUsersPage() {
         }
       />
 
-      <div className="oo-grid oo-users-stats">
-        <StatCard label="用户总数" value={loadError ? "—" : total} icon={<TeamOutlined />} />
-        <StatCard label="管理员" value={loadError ? "—" : admins} foot={<span>本页统计</span>} />
-        <StatCard label="已禁用" value={loadError ? "—" : disabled} tone={!loadError && disabled ? "danger" : undefined} foot={<span>本页统计</span>} />
-        <StatCard label="累计消费" value={loadError ? "—" : fmtOd(totalUsed, perUnit, 2)} foot={<span>本页统计</span>} />
+      <div className="oo-stats-cards">
+        <StatCard label="用户总数" value={loadError ? "—" : total} suffix="人" />
+        <StatCard label="管理员" value={loadError ? "—" : admins} suffix="人" hint="本页统计" />
+        <StatCard label="已禁用" value={loadError ? "—" : disabled} suffix="人" tone={!loadError && disabled ? "danger" : undefined} hint="本页统计" />
+        <StatCard label="累计消费" value={loadError ? "—" : fmtOd(totalUsed, perUnit, 2)} suffix={CURRENCY_NAME} hint="本页统计" />
       </div>
 
       <div className="oo-panel">

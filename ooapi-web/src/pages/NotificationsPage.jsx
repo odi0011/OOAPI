@@ -8,7 +8,7 @@
 //   · 列表用紧凑行（头像 26px + 一行文案 + 相对时间），一屏能看十几条。
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Segmented, Empty, Skeleton, App as AntApp, Tag, Tooltip } from "antd";
+import { Button, Segmented, Empty, Skeleton, App as AntApp, Tag, Tooltip, Alert } from "antd";
 import {
   ReloadOutlined, CheckOutlined, DeleteOutlined, MessageOutlined, LikeOutlined,
   StarOutlined, UserAddOutlined, CommentOutlined,
@@ -145,10 +145,14 @@ export default function NotificationsPage() {
         </div>
 
         {loadError ? (
-          <div style={{ padding: 16 }}>
-            <div style={{ color: "var(--red)", fontSize: 13, marginBottom: 8 }}>{loadError}</div>
-            <Button size="small" onClick={load}>重试</Button>
-          </div>
+          <Alert
+            type="error"
+            showIcon
+            message="通知加载失败"
+            description={loadError}
+            action={<Button size="small" onClick={load} loading={loading}>重试</Button>}
+            style={{ margin: 16 }}
+          />
         ) : null}
 
         {loading && !items.length ? (

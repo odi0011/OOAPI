@@ -6,7 +6,6 @@ import {
   ApiOutlined,
   KeyOutlined,
   FundOutlined,
-  CheckCircleFilled,
 } from "@ant-design/icons";
 import { useNavigate, useLocation, Navigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";
@@ -64,7 +63,7 @@ export default function AuthPage({ initialTab = "login" }) {
         { pattern: /^[a-zA-Z0-9_]{2,32}$/, message: "2-32 位字母、数字或下划线" },
       ]}
     >
-      <Input prefix={<UserOutlined style={{ color: "var(--oo-text-muted)" }} />} placeholder="用户名" size="large" autoComplete="username" />
+      <Input prefix={<UserOutlined style={{ color: "var(--ink-3)" }} />} placeholder="用户名" size="large" autoComplete="username" />
     </Form.Item>
   );
 
@@ -103,7 +102,7 @@ export default function AuthPage({ initialTab = "login" }) {
         {nameInput}
         <Form.Item name="password" label="密码" rules={loginPwdRules}>
           <Input.Password
-            prefix={<LockOutlined style={{ color: "var(--oo-text-muted)" }} />}
+            prefix={<LockOutlined style={{ color: "var(--ink-3)" }} />}
             placeholder="密码"
             size="large"
             autoComplete="current-password"
@@ -121,7 +120,7 @@ export default function AuthPage({ initialTab = "login" }) {
       {nameInput}
       <Form.Item name="password" label="密码" rules={registerPwdRules}>
         <Input.Password
-          prefix={<LockOutlined style={{ color: "var(--oo-text-muted)" }} />}
+          prefix={<LockOutlined style={{ color: "var(--ink-3)" }} />}
           placeholder="8 位以上，字母 + 数字"
           size="large"
           autoComplete="new-password"
@@ -143,7 +142,7 @@ export default function AuthPage({ initialTab = "login" }) {
         ]}
       >
         <Input.Password
-          prefix={<LockOutlined style={{ color: "var(--oo-text-muted)" }} />}
+          prefix={<LockOutlined style={{ color: "var(--ink-3)" }} />}
           placeholder="确认密码"
           size="large"
           autoComplete="new-password"
@@ -164,7 +163,7 @@ export default function AuthPage({ initialTab = "login" }) {
             <img
               src={status?.logo || "/logo.jpg"}
               alt="logo"
-              style={{ width: 34, height: 34, borderRadius: 9, objectFit: "cover", border: "1px solid var(--oo-border)" }}
+              style={{ width: 34, height: 34, borderRadius: 9, objectFit: "cover", border: "1px solid var(--line)" }}
             />
             <span style={{ fontWeight: 650, fontSize: 16 }}>{status?.system_name || "OOAPI"}</span>
           </Space>
@@ -188,7 +187,7 @@ export default function AuthPage({ initialTab = "login" }) {
           </div>
         </div>
 
-        <div className="oo-auth-brand-inner" style={{ fontSize: 12, color: "var(--oo-text-muted)" }}>
+        <div className="oo-auth-brand-inner" style={{ fontSize: 12, color: "var(--ink-3)" }}>
           {status?.footer || `© ${new Date().getFullYear()} OOAPI`}
         </div>
       </div>
@@ -225,13 +224,13 @@ export default function AuthPage({ initialTab = "login" }) {
                   status?.password_register_enabled === false ? (
                     <div
                       style={{
-                        padding: "28px 0",
+                        padding: "36px 0",
                         textAlign: "center",
-                        color: "var(--oo-text-muted)",
+                        color: "var(--ink-2)",
                         fontSize: 13,
                       }}
                     >
-                      <CheckCircleFilled style={{ fontSize: 22, display: "block", marginBottom: 10, color: "var(--oo-text-disabled)" }} />
+                      <LockOutlined style={{ fontSize: 26, display: "block", margin: "0 auto 12px", color: "var(--ink-3)" }} />
                       系统当前未开放注册，请联系管理员开通
                     </div>
                   ) : (

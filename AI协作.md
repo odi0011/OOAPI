@@ -2415,6 +2415,22 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
     以及一套静态预览工具（`make-preview.py` + `shot.mjs`）。
     线上实测取回：轨道 `rgb(229,231,235)`、填充 `rgb(245,158,11)`（琥珀档）、
     胶囊 `#fef3c7`+`#b45309` —— 与取样值一致。
+| 2026-09-21 | **第 44 批 · 全站 UI/UX 规范性审查与视觉统一整改**（独立窗口审查，严格避开其他窗口并发修改文件）：
+  · **并发文件隔离**：审查前先锁定并发窗口正在改动的后端服务、适配器及 `AdminChannelsPage.jsx`，本次改动严格限定在未被触碰的独立前端页面及公共样式中。
+  · **响应式网格与消除内联 `<style>`**：
+    - `styles.css`：新增全局标准响应式表单网格类 `.oo-settings-form` 与 `.oo-profile-form`（基于 `minmax(280px, 1fr)` / `minmax(340px, 1fr)`，移动端自动切单列），统一间距与排版。
+    - `AdminSettingsPage.jsx`：清理设置页 `SettingsTab` 组件内部动态注入的 `<style>` 标签，改为引用集中 CSS 类。
+    - `ProfilePage.jsx`：移除 `const FORM_GRID` 并在 JSX 中内联注入的 `<style>` 字符串，采用 `.oo-profile-form` 标准网格。
+  · **设计令牌（Token）与暗色兼容对齐**：
+    - 全面清理遗留废弃变量 `--oo-text-muted`，统一替换为标准语义令牌 `var(--ink-3)`（涵盖 ProfilePage、AdminUsersPage 等）。
+    - `AuthPage.jsx`：输入框前缀图标统一前景色 `var(--ink-3)`，外框统一采用 `var(--line)`，关闭注册提示图标修正为 `<LockOutlined />`（替代原本带有成功歧义的 `CheckCircleFilled`）。
+  · **交互状态与反馈一致性**：
+    - `NotificationsPage.jsx`：将直接裸露的红色文字 `color: "var(--red)"` 重构成标准反馈容器 `<Alert type="error" showIcon message="通知加载失败" description={loadError} action={<Button size="small" onClick={load}>重试</Button>} />`，统一空状态与错误重试体验。
+    - `AdminCommunityPage.jsx`：修复帖子隐藏/恢复操作按钮图标逻辑 bug（解除隐藏原错误渲染为 `<EyeInvisibleOutlined />`，现修正为 `<EyeOutlined />`）。
+  · **管理端统计卡片规范化**：
+    - `AdminUsersPage.jsx`：将自定义容器 `.oo-grid .oo-users-stats` 统一升级为标准类名 `.oo-stats-cards`，并将 `StatCard` 的非标 `foot` 属性升级为全局规范的 `hint` Tooltip 提示。
+    - `AdminPricingPage.jsx`：规范 `StatCard` 用法，移除多余未解析的 `icon` 属性，将底部自定义 JSX 统一规范至 `hint` 说明，补充对应计量单位。
+  · **构建与产物同步**：`ooapi-web` 执行 `npm run build` 通过，3097 个模块全部构建通过，产物同步至 `ooapi-server/web/`。 |
 
 
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）

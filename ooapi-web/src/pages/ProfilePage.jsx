@@ -26,7 +26,7 @@ function Section({ title, desc, children, className, style }) {
         <div>
           <div className="oo-panel-title">{title}</div>
           {desc ? (
-            <div style={{ fontSize: 12, color: "var(--oo-text-muted)", marginTop: 2 }}>{desc}</div>
+            <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 2 }}>{desc}</div>
           ) : null}
         </div>
       </div>
@@ -34,26 +34,6 @@ function Section({ title, desc, children, className, style }) {
     </div>
   );
 }
-
-// 表单栅格：按可用宽度自动决定列数（每列 260~320px）。
-// 短字段（用户名/邮箱/链接）各占一列，长字段（简介）跨整行。
-const FORM_GRID = `
-  .oo-form-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    column-gap: 18px;
-    row-gap: 0;
-  }
-  .oo-form-grid .oo-form-field { min-width: 0; margin-bottom: 14px; }
-  .oo-form-grid .oo-form-field--wide,
-  .oo-form-grid .oo-form-actions { grid-column: 1 / -1; }
-  .oo-form-grid .oo-form-field--wide textarea { max-width: 1100px; }
-  @media (max-width: 640px) {
-    .oo-form-grid { grid-template-columns: minmax(0, 1fr); column-gap: 0; }
-    .oo-form-grid .oo-form-field--wide,
-    .oo-form-grid .oo-form-actions { grid-column: auto; }
-  }
-`;
 
 function ProfileTab() {
   const { user, refreshUser, status } = useApp();
@@ -95,7 +75,6 @@ function ProfileTab() {
 
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
-      <style>{FORM_GRID}</style>
       <div className="oo-stats-cards">
         <StatCard
           label="剩余额度"
@@ -128,7 +107,7 @@ function ProfileTab() {
           </div>
         </div>
 
-        <Form form={form} className="oo-form-grid" layout="vertical" onFinish={save} requiredMark={false}>
+        <Form form={form} className="oo-profile-form" layout="vertical" onFinish={save} requiredMark={false}>
           <Form.Item className="oo-form-field" label="用户名">
             <Input value={user?.username} disabled />
           </Form.Item>
@@ -190,7 +169,7 @@ function PasswordTab() {
 
   return (
       <Section title="修改密码">
-      <Form form={form} className="oo-form-grid" layout="vertical" onFinish={save} requiredMark={false}>
+      <Form form={form} className="oo-profile-form" layout="vertical" onFinish={save} requiredMark={false}>
         <Form.Item
           className="oo-form-field"
           name="old_password"
@@ -290,7 +269,7 @@ function AppearanceTab() {
                 >
                   {active ? <CheckOutlined /> : null}
                 </button>
-                <div style={{ fontSize: 11, color: "var(--oo-text-muted)", marginTop: 6 }}>{p.label}</div>
+                <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 6 }}>{p.label}</div>
               </div>
             );
           })}
