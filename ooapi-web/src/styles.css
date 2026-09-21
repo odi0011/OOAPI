@@ -51,6 +51,24 @@ html[data-theme="light"] {
   --red: oklch(62.1% 0.192 23.042);
   --red-tint: oklch(95.6% 0.017 17.462);
 
+  /* -------------------------------------------------------------------------
+     胶囊色板（账号额度窗口标签用）—— 形态对齐 sub2api。
+     实测 sub2api 取的是 Tailwind 的成对值：淡色底(indigo-100/emerald-100/
+     gray-100) + 同色系深字。比原来的高饱和实心色块耐看，且同屏多窗口
+     仍能一眼区分。每个色有三个角色：
+       tint = 胶囊底、ink = 胶囊字、bar = 进度条填充
+     进度条填充刻意用**中等饱和**（不是 ink 的深色、也不是 tint 的淡色），
+     4px 细条上才看得清又不刺眼。
+     ------------------------------------------------------------------------- */
+  --pill-indigo-tint: #e0e7ff;  --pill-indigo-ink: #4338ca;  --pill-indigo-bar: #6366f1;
+  --pill-emerald-tint: #d1fae5; --pill-emerald-ink: #047857; --pill-emerald-bar: #10b981;
+  --pill-sky-tint: #e0f2fe;     --pill-sky-ink: #0369a1;     --pill-sky-bar: #0ea5e9;
+  --pill-amber-tint: #fef3c7;   --pill-amber-ink: #b45309;   --pill-amber-bar: #f59e0b;
+  --pill-red-tint: #fee2e2;     --pill-red-ink: #b91c1c;     --pill-red-bar: #ef4444;
+  --pill-gray-tint: #f3f4f6;    --pill-gray-ink: #4b5563;    --pill-gray-bar: #9ca3af;
+  /* 细轨底色（sub2api 的进度条轨道是 gray-200） */
+  --pill-track: #e5e7eb;
+
   /* 气泡提示 */
   --tooltip-bg: oklch(27.2% 0.008 264.435);
   --tooltip-fg: oklch(97.6% 0.002 247.839);
@@ -101,6 +119,16 @@ html[data-theme="dark"] {
   --orange-tint: oklch(74.6% 0.156 55.642 / 0.14);
   --red: oklch(66.6% 0.18 21.433);
   --red-tint: oklch(66.6% 0.18 21.433 / 0.14);
+
+  /* 胶囊色板（暗色）：sub2api 的淡底深字在暗色下会糊，反过来做 ——
+     低透明度的同色底 + 提亮的同色字，语义与亮色一致（见亮色块注释）。 */
+  --pill-indigo-tint: oklch(58% 0.16 266 / 0.22);  --pill-indigo-ink: oklch(80% 0.1 268);  --pill-indigo-bar: oklch(66% 0.17 268);
+  --pill-emerald-tint: oklch(58% 0.15 160 / 0.22); --pill-emerald-ink: oklch(82% 0.1 160); --pill-emerald-bar: oklch(68% 0.15 160);
+  --pill-sky-tint: oklch(60% 0.13 240 / 0.22);     --pill-sky-ink: oklch(82% 0.09 235);     --pill-sky-bar: oklch(70% 0.13 237);
+  --pill-amber-tint: oklch(62% 0.14 70 / 0.22);    --pill-amber-ink: oklch(84% 0.11 80);    --pill-amber-bar: oklch(76% 0.15 72);
+  --pill-red-tint: oklch(58% 0.17 25 / 0.22);      --pill-red-ink: oklch(80% 0.11 25);      --pill-red-bar: oklch(66% 0.18 25);
+  --pill-gray-tint: oklch(100% 0 0 / 0.08);        --pill-gray-ink: oklch(78% 0.005 260);   --pill-gray-bar: oklch(66% 0.005 260);
+  --pill-track: oklch(100% 0 0 / 0.1);
 
   --tooltip-bg: oklch(18.2% 0.004 264.459);
   --tooltip-fg: oklch(96.4% 0.002 247.839);
