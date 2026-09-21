@@ -255,26 +255,35 @@ async function typePrompt(page, text) {
   //   · 未登录/部分版本：可见的 div#prompt-textarea[contenteditable]（ProseMirror）
   // 只认 contenteditable 会在登录态下报「找不到输入框」，
   // 而错误信息里明明显示「已登录=true 可见输入框=[textarea]」（实测踩过）。
-  let target = page.locator('textarea#prompt-textarea:visible').first();
-  if ((await target.count()) === 0) {
-    target = page.locator('div#prompt-textarea[contenteditable="true"]:visible').first();
-  }
-  if ((await target.count()) === 0) {
-    target = page.locator('#prompt-textarea:visible').first();
-  }
-  if ((await target.count()) === 0) {
-    // 兜底：任意可见的输入区（页面改版时仍可能可用）
-    target = page.locator('textarea:visible').first();
-  }
-  if ((await target.count()) === 0) {
-    target = page.locator('[contenteditable="true"]:visible').first();
+  //
+  // **必须等待而不是立即查一次**：newConversation 只等到「任意输入区可见」就返回，
+  // 而 ChatGPT 首页水合有先后 —— 那一瞬间严格带 :visible 的选择器可能还匹配不到，
+  // 立即 count() 就会是 0，几秒后（诊断信息里）它又明明在。
+  // 实测踩过：同一渠道时好时坏，报「找不到输入框」但诊断显示输入框可见。
+  const CANDIDATES = [
+    'textarea#prompt-textarea',
+    'div#prompt-textarea[contenteditable="true"]',
+    '#prompt-textarea',
+    'textarea',
+    '[contenteditable="true"]',
+  ];
+  let target = null;
+  for (const sel of CANDIDATES) {
+    const loc = page.locator(`${sel}:visible`).first();
+    // 每个候选给 3s：命中即用，全部落空也只为最后一个付满等待
+    const ok = await loc
+      .waitFor({ state: "visible", timeout: target ? 1500 : 6000 })
+      .then(() => true)
+      .catch(() => false);
+    if (ok) {
+      target = loc;
+      break;
+    }
   }
   // 清空方式按元素类型区分：fill("") 只对 input/textarea 有效，
   // 对 contenteditable 会挂到 30s 超时（实测踩过）。
-  const inputTag = (await target.count()) > 0
-    ? await target.evaluate((n) => n.tagName.toLowerCase()).catch(() => "")
-    : "";
-  if ((await target.count()) === 0) {
+  const inputTag = await target.evaluate((n) => n.tagName.toLowerCase()).catch(() => "");
+  if (!target) {
     // 把页面实况带出去：这类失败以后还会遇到（上游改版/登录态丢失/停在弹窗），
     // 错误里没有现场就只能靠猜。
     try {
