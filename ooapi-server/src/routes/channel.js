@@ -592,8 +592,17 @@ router.get(
 function methodOf(row) {
   const other = parseOther(row);
   const m = String(other.method || "relay");
-  // 接入方式：relay（反代）/ api（官方 Key）/ 订阅 OAuth（codex、claude-oauth、antigravity）
-  return m === "api" || isOAuthMethod(m) ? m : "relay";
+  // 接入方式：relay（反代）/ api（官方 Key）/ 订阅 OAuth（codex…）/ 具名反代（openai-web-ui…）
+  //
+  // 关键：**不能把未知 method 一律归一成 "relay"**。
+  // provider 下可能挂多个反代方式（openai 下同时有 openai-web 与 openai-web-ui），
+  // 它们的 adapter 是分开注册的；归一成 relay 后 adapterKeyFor 会去解析
+  // 「厂商名」这个 key（openai），而它没有适配器 ——
+  // 表现是渠道能建、能测登录，但一测试就报「适配器未实现测试」。
+  // 判定顺序：api / 订阅 OAuth 保持原值；其余若在注册表里存在同名 method 就保留，
+  // 只有**确实不存在**的（历史脏数据）才退回 relay 兜底。
+  if (m === "api" || isOAuthMethod(m)) return m;
+  return getMethod(row?.type, m) ? m : "relay";
 }
 
 function rowToResp(r, { withKey = false } = {}) {
@@ -1262,10 +1271,13 @@ router.post(
     if (!id) return fail(res, "渠道不存在", 404);
     const [rows] = await pool.query("SELECT * FROM channels WHERE id = ?", [id]);
     if (!rows.length) return fail(res, "渠道不存在", 404);
-    if (methodOf(rows[0]) !== "relay") return fail(res, "只有网页版反代渠道需要浏览器登录");
-    const mCfg = getMethod(rows[0].type, "relay");
+    // 判定用「该渠道实际的接入方式」，不是写死 relay：
+    // 同一厂商下可能挂多个反代方式（openai-web / openai-web-ui），
+    // 写死 relay 会让具名反代渠道被误拒。
+    const method0 = methodOf(rows[0]);
+    const mCfg = getMethod(rows[0].type, method0);
     if (!mCfg?.needsBrowser) return fail(res, `${getProvider(rows[0].type)?.name || rows[0].type} 不需要浏览器登录`);
-    const adapter = await adapterOf(rows[0].type, "relay");
+    const adapter = await adapterOf(rows[0].type, method0);
     if (!adapter?.verify) return fail(res, "该渠道未实现浏览器登录");
 
     // 先开一次会话（verify 会导航并等待页面就绪），失败也继续截图，
@@ -1290,9 +1302,12 @@ router.post(
     if (!id) return fail(res, "渠道不存在", 404);
     const [rows] = await pool.query("SELECT * FROM channels WHERE id = ?", [id]);
     if (!rows.length) return fail(res, "渠道不存在", 404);
-    if (methodOf(rows[0]) !== "relay") return fail(res, "只有网页版反代渠道需要浏览器登录");
+    const method0 = methodOf(rows[0]);
+    if (!getMethod(rows[0].type, method0)?.needsBrowser) {
+      return fail(res, "只有需要浏览器登录的渠道才适用此检查");
+    }
     const providerName = getProvider(rows[0].type)?.name || rows[0].type;
-    const adapter = await adapterOf(rows[0].type, "relay");
+    const adapter = await adapterOf(rows[0].type, method0);
 
     try {
       const ms = await adapter.verify(rowToChannel(rows[0]));
