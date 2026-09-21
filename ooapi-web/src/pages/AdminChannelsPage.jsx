@@ -555,6 +555,10 @@ function methodShortName(m) {
     codex: "Codex 订阅",
     antigravity: "Google 订阅",
     grok: "Grok 订阅",
+    // 「浏览器驱动」必须显式命名：兜底逻辑会把「反代（浏览器驱动）」去掉括号后
+    // 变成「反代」，与同厂商的「反代（网页版）」撞名 —— 而两者凭据完全不同
+    // （前者填邮箱密码+2FA，后者粘贴 access_token），选错就建不出可用渠道。
+    "openai-web-ui": "浏览器驱动",
   };
   if (byKey[m.key]) return byKey[m.key];
   // 兜底：用方法自身的 label 去掉括号说明（label 形如「反代（Kiro）」）
@@ -877,10 +881,16 @@ export default function AdminChannelsPage() {
             // 标签不要一律叫「粘贴凭据」—— 同一厂商有多个订阅/反代方式时
             // （Anthropic 下同时有 Claude 订阅与 Kiro 反代）会出现两个同名标签，
             // 用户根本分不清该选哪个。用方法名区分，并标注支持一键绑定。
+            //
+            // 同一厂商有**多个 password 方式**时（OpenAI 下有「浏览器驱动」，
+            // 未来还可能加别的）也必须区分开：它们的凭据字段完全不同，
+            // 都叫「账号密码」会让人选错。needs2fa 的方式带上自己的方法名。
             label: m.oauth
               ? `${methodShortName(m)}${lm === "paste" ? "（粘贴凭据）" : ""}`
               : lm === "password"
-                ? "账号密码"
+                ? m.needs2fa
+                  ? `${methodShortName(m)}（账号密码）`
+                  : "账号密码"
                 : lm === "paste"
                   ? "粘贴登录态"
                   : "浏览器登录",
