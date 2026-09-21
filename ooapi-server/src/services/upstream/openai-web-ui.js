@@ -247,13 +247,30 @@ export async function release(channelId) {
 let lastPageState = null;
 
 async function typePrompt(page, text) {
-  // 精确锁到可见的 ProseMirror 输入区（隐藏 textarea 会被 :visible 过滤掉）
-  const box = page.locator('#prompt-textarea[contenteditable="true"]:visible').first();
-  let target = (await box.count()) > 0 ? box : page.locator('#prompt-textarea:visible').first();
+  // 输入区有两种形态，**都要接受** —— 实测同一站点在不同登录状态下给的不一样：
+  //   · 登录态：可见的 <textarea id="prompt-textarea">（宽度撑满、可直接 fill/type）
+  //   · 未登录/部分版本：可见的 div#prompt-textarea[contenteditable]（ProseMirror）
+  // 只认 contenteditable 会在登录态下报「找不到输入框」，
+  // 而错误信息里明明显示「已登录=true 可见输入框=[textarea]」（实测踩过）。
+  let target = page.locator('textarea#prompt-textarea:visible').first();
   if ((await target.count()) === 0) {
-    // 兜底：任意可见的 contenteditable（页面改版时仍可能可用）
+    target = page.locator('div#prompt-textarea[contenteditable="true"]:visible').first();
+  }
+  if ((await target.count()) === 0) {
+    target = page.locator('#prompt-textarea:visible').first();
+  }
+  if ((await target.count()) === 0) {
+    // 兜底：任意可见的输入区（页面改版时仍可能可用）
+    target = page.locator('textarea:visible').first();
+  }
+  if ((await target.count()) === 0) {
     target = page.locator('[contenteditable="true"]:visible').first();
   }
+  // 清空方式按元素类型区分：fill("") 只对 input/textarea 有效，
+  // 对 contenteditable 会挂到 30s 超时（实测踩过）。
+  const inputTag = (await target.count()) > 0
+    ? await target.evaluate((n) => n.tagName.toLowerCase()).catch(() => "")
+    : "";
   if ((await target.count()) === 0) {
     // 把页面实况带出去：这类失败以后还会遇到（上游改版/登录态丢失/停在弹窗），
     // 错误里没有现场就只能靠猜。
@@ -286,9 +303,13 @@ async function typePrompt(page, text) {
 
   try {
     await target.click({ timeout: 5000 }).catch(() => {});
-    // 清空：全选 + 删除（不能对 contenteditable 用 fill）
-    await page.keyboard.press("Control+A").catch(() => {});
-    await page.keyboard.press("Delete").catch(() => {});
+    if (inputTag === "textarea" || inputTag === "input") {
+      await target.fill("").catch(() => {});
+    } else {
+      // contenteditable 不能 fill：走全选 + 删除
+      await page.keyboard.press("Control+A").catch(() => {});
+      await page.keyboard.press("Delete").catch(() => {});
+    }
     await page.waitForTimeout(150);
     // 逐字符键入：短文本用 pressSequentially（真实按键事件），长文本用 insertText 提速
     if (text.length > 400) {
