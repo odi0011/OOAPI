@@ -599,12 +599,18 @@ export async function apiFetch(vendor, channelId, apiPath, { entryUrl = "" } = {
  * 安装 fetch 钩子：按 __ooPatch 改写请求 body，并捕获响应流
  * @param {string} matchPath 匹配的 URL 片段
  */
-export async function installHook(page, matchPath) {
-  await page.evaluate((match) => {
+export async function installHook(page, matchPath, { exclude = [] } = {}) {
+  await page.evaluate(({ match, excl }) => {
     // 支持多条匹配路径：路径注册表 + fetch 只包装一次，
     // 否则第二个 MATCH_PATHS 永远不会被挂钩。
     window.__ooHookedPaths = window.__ooHookedPaths || [];
     if (!window.__ooHookedPaths.includes(match)) window.__ooHookedPaths.push(match);
+    // 排除路径：只靠 includes 匹配前缀时，同前缀的「兄弟端点」会被误捕。
+    // 实测例子：对话流在 /backend-api/f/conversation，而它前面还有一个
+    // /backend-api/f/conversation/prepare（小的 JSON，不是 SSE）——
+    // 后者先发出、先被捕获并立即 done，于是真正的流一帧都收不到。
+    window.__ooHookedExclude = window.__ooHookedExclude || [];
+    for (const e of excl) if (!window.__ooHookedExclude.includes(e)) window.__ooHookedExclude.push(e);
     window.__ooPatch = window.__ooPatch || null;
     if (!window.__ooCap) window.__ooCap = { chunks: [], done: false, error: null, startedAt: 0 };
     window.__ooLastBody = null;
@@ -630,7 +636,9 @@ export async function installHook(page, matchPath) {
     const origFetch = window.fetch;
     window.fetch = async function (input, init) {
       const url = typeof input === "string" ? input : input?.url || "";
-      if (!(window.__ooHookedPaths || []).some((m) => url.includes(m))) return origFetch.call(this, input, init);
+      const matched = (window.__ooHookedPaths || []).some((m) => url.includes(m));
+      const excluded = (window.__ooHookedExclude || []).some((e) => url.includes(e));
+      if (!matched || excluded) return origFetch.call(this, input, init);
 
       // 改写 body
       let finalInit = init;
@@ -711,7 +719,7 @@ export async function installHook(page, matchPath) {
       }
       return resp;
     };
-  }, matchPath);
+  }, { match: matchPath, excl: Array.isArray(exclude) ? exclude : [] });
 }
 
 /** 设置下一次请求的参数改写规则 */

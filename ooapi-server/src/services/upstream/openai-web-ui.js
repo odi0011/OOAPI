@@ -56,6 +56,9 @@ const ENTRY_URL = "https://chatgpt.com/";
 // 于是列表请求被当成对话捕获、真正的对话请求反被覆盖。
 // "/f/conversation" 这个片段同时避开了上述两者。
 const MATCH_PATH = "/backend-api/f/conversation";
+// 同前缀的「准备」端点：先于对话发出、返回的是小 JSON 而非 SSE，
+// 必须在匹配时排除掉（见 installHook 的 exclude 说明）。
+const MATCH_EXCLUDE = ["/backend-api/f/conversation/prepare"];
 // 登录流程内部会跳 auth.openai.com，入口仍用 chatgpt.com 首页
 const LOGIN_ENTRY = "https://chatgpt.com/";
 
@@ -362,7 +365,9 @@ export async function chat({ channel, model, prompt, images = [], signal, onDelt
 
       // 每轮都从干净对话页开始：网页版是有状态会话，不重置会串上下文
       await newConversation(page, ENTRY_URL);
-      await installHook(page, MATCH_PATH);
+      // 排除 /prepare：它与对话端点同前缀，会在对话之前先发出，
+      // 被 includes() 匹配到就会抢占捕获位（真正的流一帧都收不到）。
+      await installHook(page, MATCH_PATH, { exclude: MATCH_EXCLUDE });
       await resetHook(page);
 
       // hook 必须真的生效：否则参数注入与流捕获都会静默失效（表现为"上游没反应"）
