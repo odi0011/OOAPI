@@ -40,7 +40,17 @@ import { createOpenAiWebParser, detectOpenAiWebError } from "./openai-web-parser
 import { persistOtherPatch, loadOther } from "./auth-store.js";
 
 const ENTRY_URL = "https://chatgpt.com/";
-const MATCH_PATH = "/backend-api/conversation";
+// 匹配路径：实测（捕获一次完整发送的全部 /backend-api 请求）确认，
+// 当前网页版真正发送对话的端点是 **POST /backend-api/f/conversation**，
+// 不是社区文档里的 /backend-api/conversation —— 后者在页面上根本不会出现，
+// 写成它会导致 hook 一帧都捕不到（现象是 Enter 发出去了但 chunks=0）。
+//
+// 同时必须注意不能写成 "/backend-api/conversation"：
+// hook 用 includes() 匹配，那个前缀会同时命中
+// `/backend-api/conversations?offset=0&limit=28`（左侧会话列表，页面加载时就发），
+// 于是列表请求被当成对话捕获、真正的对话请求反被覆盖。
+// "/f/conversation" 这个片段同时避开了上述两者。
+const MATCH_PATH = "/backend-api/f/conversation";
 // 登录流程内部会跳 auth.openai.com，入口仍用 chatgpt.com 首页
 const LOGIN_ENTRY = "https://chatgpt.com/";
 
