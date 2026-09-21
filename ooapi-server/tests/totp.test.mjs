@@ -67,7 +67,11 @@ ck("同一窗口内码不变", totp(RFC_SEED, { at: 30_000 }) === totp(RFC_SEED,
 ck("跨窗口后码改变", totp(RFC_SEED, { at: 30_000 }) !== totp(RFC_SEED, { at: 60_000 }));
 
 console.log("\n=== 密钥形态识别（前端提示用）===");
-ck("32 位 base32 识别为密钥", looksLikeTotpSecret("DLS4FDR7A2KWMOTFOP3F32OR5HMFOOGZ"));
+// 用**构造的**示例密钥，不要拿真实账号的 2FA 密钥当测试数据 ——
+// 测试文件会进版本库，等于把密钥公开（本轮我把用户的真实密钥写进了这里，
+// 已替换；那个密钥应视为已泄露，需在账号侧重新绑定 2FA）。
+// 下面这串是随机生成的合法 base32（32 字符），仅用于断言形态识别。
+ck("32 位 base32 识别为密钥", looksLikeTotpSecret("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"));
 ck("6 位数字码不识别为密钥", !looksLikeTotpSecret("142718"));
 ck("过短不识别", !looksLikeTotpSecret("ABCD"));
 
