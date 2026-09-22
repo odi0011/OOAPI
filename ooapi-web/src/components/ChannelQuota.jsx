@@ -7,7 +7,6 @@
 //   · 百分比取整显示（88%），悬浮才给精确值与重置时间，列表里不堆字；
 //   · 颜色按用量分档：<70% 主色、70-90% 橙、>90% 红，一眼看出快用完的账号。
 import React from "react";
-import { Tooltip } from "antd";
 
 /** 把秒数转成 sub2api 那样的短标签：18000→5h、604800→7d、2592000→30d */
 function windowTag(seconds) {
@@ -161,7 +160,12 @@ function WindowRow({ w, index = 0 }) {
             {pct >= 99.95 ? "100%" : `${Math.round(pct)}%`}
           </span>
           {resetShort ? (
-            <span style={{ color: "var(--ink-3)", fontSize: 11, flexShrink: 0 }}>{resetShort}</span>
+            <span
+              title={fmtReset(w.resetAt, w.resetAfterSeconds) || undefined}
+              style={{ color: "var(--ink-3)", fontSize: 11, flexShrink: 0, cursor: "default" }}
+            >
+              {resetShort}
+            </span>
           ) : null}
         </>
       ) : (
@@ -214,20 +218,15 @@ export function InfoPill({ children, tone = "gray", title }) {
   );
 }
 
-/** 悬浮详情：套餐、账号、各窗口的重置时间、余额 */
+/** 悬浮/补充详情：套餐、各窗口的重置时间、余额（账号与抓取时间按需求无需展示） */
 export function QuotaTip({ quota }) {
   if (!quota) return null;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 200 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 180 }}>
       {quota.plan || quota.limitReached ? (
         <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
           {quota.plan ? <InfoPill tone="indigo">套餐 {quota.plan}</InfoPill> : null}
           {quota.limitReached ? <InfoPill tone="red">已达限额</InfoPill> : null}
-        </div>
-      ) : null}
-      {quota.account ? (
-        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-          <InfoPill title={quota.account}>账号 {quota.account}</InfoPill>
         </div>
       ) : null}
       {(quota.windows || []).map((w, i) => (
@@ -251,54 +250,60 @@ export function QuotaTip({ quota }) {
           ) : null}
         </div>
       ) : null}
-      {quota.fetchedAt ? (
-        <div style={{ fontSize: 11, color: "var(--ink-3)" }}>
-          抓取于 {new Date(quota.fetchedAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}
-        </div>
-      ) : null}
     </div>
   );
 }
 
 /**
- * 列表内联形态：最多两行窗口（sub2api 布局），其余进悬浮。
- * 没有窗口但有余额（DeepSeek API / Grok）时退化为一行余额。
+ * 列表内联形态（表格单元格直接展示，无需悬浮）：
+ * 上方横向一行：[套餐 free] [余额 1000]（套餐与余额标签并排）
+ * 下方：细进度条（sub2api 风格 [30d] ── 77% 26d）
+ * 账号与抓取时间按需求无需展示；关键信息直出在表格中，无需鼠标悬浮触发浮层。
  */
 export function QuotaInline({ quota }) {
   if (!quota) return null;
   const wins = Array.isArray(quota.windows) ? quota.windows : [];
-  if (wins.length) {
-    return (
-      <Tooltip title={<QuotaTip quota={quota} />}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 150 }}>
-          {wins.slice(0, 2).map((w, i) => (
-            <WindowRow key={i} w={w} index={i} />
-          ))}
-          {wins.length > 2 ? (
-            <span style={{ fontSize: 11, color: "var(--ink-3)" }}>还有 {wins.length - 2} 个窗口…</span>
+  const c = quota.credits;
+
+  const hasPlan = Boolean(quota.plan || quota.limitReached);
+  const hasBalance = Boolean(c && c.balance !== undefined && c.balance !== null && c.balance !== "");
+  const hasPrepaid = Number.isFinite(Number(c?.prepaidBalance));
+  const hasLines = Boolean(c?.lines?.length);
+  const hasCredits = hasBalance || hasPrepaid || hasLines;
+
+  if (!hasPlan && !hasCredits && !wins.length) {
+    return null;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 150 }}>
+      {hasPlan || hasCredits ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+          {quota.plan ? <InfoPill tone="indigo">套餐 {quota.plan}</InfoPill> : null}
+          {quota.limitReached ? <InfoPill tone="red">已达限额</InfoPill> : null}
+          {hasLines
+            ? c.lines.map((line, i) => (
+                <InfoPill key={i}>{line.label} {line.total ?? line.used ?? 0}</InfoPill>
+              ))
+            : null}
+          {hasBalance ? <InfoPill>余额 {c.balance}</InfoPill> : null}
+          {hasPrepaid ? (
+            <InfoPill>预付费 ${Number(c.prepaidBalance).toFixed(2)}</InfoPill>
           ) : null}
         </div>
-      </Tooltip>
-    );
-  }
-  const c = quota.credits;
-  const line = c?.lines?.[0];
-  const text = line
-    ? `余额 ${line.total ?? 0}`
-    : c && c.balance
-      ? `余额 ${c.balance}`
-      : Number.isFinite(Number(c?.prepaidBalance))
-        ? `$${Number(c.prepaidBalance).toFixed(2)}`
-        : "";
-  if (!text) return null;
-  return (
-    <Tooltip title={<QuotaTip quota={quota} />}>
-      <span className="oo-num" style={{ fontSize: 12, color: "var(--ink-3)" }}>{text}</span>
-    </Tooltip>
+      ) : null}
+
+      {wins.slice(0, 2).map((w, i) => (
+        <WindowRow key={i} w={w} index={i} />
+      ))}
+      {wins.length > 2 ? (
+        <span style={{ fontSize: 11, color: "var(--ink-3)" }}>还有 {wins.length - 2} 个窗口…</span>
+      ) : null}
+    </div>
   );
 }
 
-/** 弹窗/详情块形态：完整窗口 + 余额 + 刷新 */
+/** 弹窗/详情块形态：完整窗口 + 余额 + 刷新（账号与抓取时间按需求无需展示） */
 export default function QuotaPanel({ quota, loading, onRefresh, error }) {
   if (loading) return <div style={{ fontSize: 12, color: "var(--ink-3)" }}>正在查询账号额度…</div>;
   if (error) return <div style={{ fontSize: 12, color: "var(--red)" }}>{error}</div>;
@@ -306,10 +311,9 @@ export default function QuotaPanel({ quota, loading, onRefresh, error }) {
   const wins = Array.isArray(quota.windows) ? quota.windows : [];
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {quota.plan || quota.account ? (
+      {quota.plan || quota.limitReached ? (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {quota.plan ? <span className="bui-chip">套餐 {quota.plan}</span> : null}
-          {quota.account ? <span className="bui-chip">{quota.account}</span> : null}
           {quota.limitReached ? <span className="bui-chip bui-chip--orange">已达限额</span> : null}
         </div>
       ) : null}
@@ -338,11 +342,6 @@ export default function QuotaPanel({ quota, loading, onRefresh, error }) {
       ) : null}
       {quota.credits && quota.credits.balance ? (
         <div style={{ fontSize: 12 }}>余额：{quota.credits.balance}</div>
-      ) : null}
-      {quota.fetchedAt ? (
-        <div style={{ fontSize: 11, color: "var(--ink-3)" }}>
-          抓取于 {new Date(quota.fetchedAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}
-        </div>
       ) : null}
       {onRefresh ? (
         <button type="button" className="bui-btn" style={{ alignSelf: "flex-start" }} onClick={onRefresh}>
