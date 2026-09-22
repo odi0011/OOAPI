@@ -62,6 +62,32 @@ function windowLabel(seconds) {
   return `${Math.round(s / 60)} 分钟`;
 }
 
+/**
+ * Google（antigravity）的窗口标识 → 秒数。
+ *
+ * 上游 buckets[].window 给的是**字符串**（实测取值 "5h" / "weekly" / "monthly" /
+ * "daily"），不是秒数 —— 而前端的窗口标签是按秒数推导的（sub2api 那种 5h/7d/30d）。
+ * 不转换的后果：windowSeconds 为空，标签回退成「额度」两个字，
+ * 用户看到两行一模一样的「额度」完全分不清哪个是 5h、哪个是 weekly。
+ */
+function googleWindowSeconds(raw) {
+  const t = String(raw || "").trim().toLowerCase();
+  if (!t) return 0;
+  const m = t.match(/^(\d+)\s*(m|min|h|d|w)$/);
+  if (m) {
+    const n = Number(m[1]);
+    const unit = m[2];
+    if (unit === "m" || unit === "min") return n * 60;
+    if (unit === "h") return n * 3600;
+    if (unit === "d") return n * 86400;
+    if (unit === "w") return n * 604800;
+  }
+  if (t.includes("daily")) return 86400;
+  if (t.includes("weekly")) return 604800;
+  if (t.includes("monthly")) return 2592000;
+  return 0;
+}
+
 /** 列表里用的极短标签（sub2api 那种 `5h` / `7d` / `30d`） */
 function shortWindowTag(seconds) {
   const s = Number(seconds) || 0;
@@ -248,9 +274,18 @@ async function quotaAntigravity(channel) {
       // remainingFraction 可能是 null（桶满时 proto3 省略或显式 null），两种都要跳过，
       // 否则会被算成「已用 100%」形成假警报
       if (b.remainingFraction === undefined || b.remainingFraction === null) continue;
+      const secs = googleWindowSeconds(b.window);
       windows.push({
         key: String(b.bucketId || ""),
+        // 标签用「分组名 · 窗口」：两者都留着，因为同一账号下会有
+        // 「Gemini Models · 5h」与「Claude and GPT models · weekly」两组，
+        // 只看窗口就分不清是哪个模型组的额度。
         label: `${g.displayName || "配额"} · ${b.window || ""}`.trim(),
+        // 关键：把窗口秒数补上，前端才能渲染成 5h / 7d 这样的短标签
+        // （缺它时会回退成「额度」，两行标签完全一样）
+        windowSeconds: secs,
+        // 模型组名单独留一份：列表里两行都有「额度」时，用它区分
+        scope: String(g.displayName || "").trim(),
         // 注意：上游给的是**剩余**比例（1 = 满），与其他厂商的 usedPercent 相反；
         // 输入是 0-1 比例，用 pctFromFraction（不要再手动 ×100）
         usedPercent: pctFromFraction(1 - Number(b.remainingFraction)),

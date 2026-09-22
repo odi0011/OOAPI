@@ -11,10 +11,67 @@ import React from "react";
 /** 把秒数转成 sub2api 那样的短标签：18000→5h、604800→7d、2592000→30d */
 function windowTag(seconds) {
   const s = Number(seconds) || 0;
-  if (!s) return "额度";
+  if (!s) return "";
   if (s % 86400 === 0) return `${s / 86400}d`;
   if (s % 3600 === 0) return `${s / 3600}h`;
   return `${Math.round(s / 60)}m`;
+}
+
+/**
+ * 从窗口标签文本里解析出短窗口名 —— 兜底用。
+ *
+ * 为什么需要：上游有时只在 label 里写窗口（antigravity 的
+ * `buckets[].window` 是 "5h"/"weekly"/"monthly" 这类字符串），
+ * windowSeconds 缺省时标签会退化成「额度」两个字 —— 同一账号两行
+ * 都是「额度」，用户完全分不清哪个是 5h、哪个是 weekly。
+ */
+function tagFromText(text) {
+  const t = String(text || "").trim().toLowerCase();
+  if (!t) return "";
+  // 取最后一段（label 形如「Gemini Models · weekly」，窗口在后半段）
+  const tail = (t.split(/[·|/]/).pop() || "").trim();
+  const m = tail.match(/^(\d+)\s*(m|min|h|d|w)$/);
+  if (m) {
+    const n = Number(m[1]);
+    const unit = m[2];
+    if (unit === "m" || unit === "min") return `${n}m`;
+    if (unit === "h") return `${n}h`;
+    if (unit === "d") return `${n}d`;
+    if (unit === "w") return `${n * 7}d`;
+  }
+  if (tail.includes("daily")) return "1d";
+  if (tail.includes("weekly")) return "7d";
+  if (tail.includes("monthly")) return "30d";
+  if (tail.includes("hourly")) return "1h";
+  return "";
+}
+
+/**
+ * 窗口的身份标签（显示在胶囊里）。
+ *
+ * 用户反馈的原话：「意义不明的 tag，既然都是额度，那就不要写额度啊」——
+ * 原来的兜底是「额度」，同一账号的多个窗口全都长一样，等于没有信息。
+ * 现在的优先级：显式 tag → 秒数推导 → 从 label 文本解析。
+ * 三者都拿不到时才退回「额度」（那种窗口本身就是「余额」类，没有时间维度）。
+ */
+/**
+ * 分组名的极短形式（「Gemini Models」→「Gemini」，「Claude and GPT models」→「Claude」）。
+ * 只在同一账号存在多个分组时才用，作用是区分「都是 7d 但属于不同模型组」的两行。
+ */
+function shortScope(scope) {
+  const t = String(scope || "").trim();
+  if (!t) return "";
+  const first = t.split(/[\s·|/]+/).filter(Boolean)[0] || "";
+  return first.slice(0, 8);
+}
+
+function windowIdentity(w) {
+  return (
+    String(w?.tag || "").trim() ||
+    windowTag(w?.windowSeconds) ||
+    tagFromText(w?.label) ||
+    "额度"
+  );
 }
 
 /**
@@ -103,12 +160,15 @@ function fmtReset(epochSeconds, resetAfterSeconds) {
  *
  * index 决定静态色序（第一窗口靛蓝、第二翠绿…），用量档位再覆盖成琥珀/红。
  */
-function WindowRow({ w, index = 0 }) {
+function WindowRow({ w, index = 0, showScope = false }) {
   const hasPct = Number.isFinite(Number(w.usedPercent));
   const pct = hasPct ? Math.max(0, Math.min(100, Number(w.usedPercent))) : 0;
   const pill = pillOf(index, hasPct ? pct : NaN);
-  // sub2api 的「0% 现在」：把重置时间压成最短的相对描述
-  const resetShort = fmtResetShort(w.resetAt, w.resetAfterSeconds);
+  const identity = windowIdentity(w);
+  // 同一账号有多个「额度分组」时（antigravity 的 Gemini / Claude 两组各有 5h+weekly），
+  // 光看 5h/7d 还是分不清属于哪一组 —— 补一个极短的分组前缀。
+  // 只在真有多个分组时才显示，否则白白占宽度。
+  const scopeShort = showScope ? shortScope(w.scope) : "";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, minWidth: 0 }}>
       <span
@@ -124,10 +184,11 @@ function WindowRow({ w, index = 0 }) {
           padding: "2px 5px",
           flexShrink: 0,
           lineHeight: 1.35,
+          whiteSpace: "nowrap",
         }}
-        title={w.label}
+        title={w.label || identity}
       >
-        {w.tag || windowTag(w.windowSeconds)}
+        {scopeShort ? `${scopeShort} ` : ""}{identity}
       </span>
       {hasPct ? (
         <>
@@ -159,14 +220,9 @@ function WindowRow({ w, index = 0 }) {
           >
             {pct >= 99.95 ? "100%" : `${Math.round(pct)}%`}
           </span>
-          {resetShort ? (
-            <span
-              title={fmtReset(w.resetAt, w.resetAfterSeconds) || undefined}
-              style={{ color: "var(--ink-3)", fontSize: 11, flexShrink: 0, cursor: "default" }}
-            >
-              {resetShort}
-            </span>
-          ) : null}
+          {/* 尾部不再显示重置时间：用户反馈「窗口写在标签里，后面那个时间就不要了」——
+              两处都在说时间，读起来分不清哪个是窗口、哪个是倒计时。
+              重置信息保留在悬浮提示里（fmtReset 给完整时间与相对描述）。 */}
         </>
       ) : (
         <span className="oo-num" style={{ color: "var(--ink-3)", flexShrink: 0 }}>
@@ -293,12 +349,17 @@ export function QuotaInline({ quota }) {
         </div>
       ) : null}
 
-      {wins.slice(0, 2).map((w, i) => (
-        <WindowRow key={i} w={w} index={i} />
-      ))}
-      {wins.length > 2 ? (
-        <span style={{ fontSize: 11, color: "var(--ink-3)" }}>还有 {wins.length - 2} 个窗口…</span>
-      ) : null}
+      {/* 全部窗口都渲染（原来只显示前 2 个 + 「还有 N 个窗口…」）。
+          用户反馈：「下面的还有 2 个窗口是你故意压缩了还是他没加载出来啊」——
+          那种省略让人分不清是数据缺失还是界面藏起来了，而额度恰恰是这张表的
+          关键信息（哪个窗口快满了决定要不要换号）。
+          窗口行很薄（4px 条 + 一行文字），4 个窗口也只占约 90px 高，值得全展开。
+          scope 前缀只在同一账号真有多个分组时才加（见 WindowRow）。 */}
+      {(() => {
+        const scopes = [...new Set(wins.map((w) => String(w.scope || "").trim()).filter(Boolean))];
+        const multiScope = scopes.length > 1;
+        return wins.map((w, i) => <WindowRow key={w.key || i} w={w} index={i} showScope={multiScope} />);
+      })()}
     </div>
   );
 }
