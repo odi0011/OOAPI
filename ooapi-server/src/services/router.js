@@ -33,6 +33,9 @@ const ADAPTERS = {
   // 拼 HTTP 请求（现已走不通 —— sentinel 的 turnstile 必须由页面 JS 解），
   // 这个驱动真实页面 UI，让页面自己去过风控。
   "openai-web-ui": () => import("./upstream/openai-web-ui.js"),
+  // TypeSafe AI（Jev）：**不兼容 OpenAI** 的判定模型，单端点 /v1/systemone，
+  // 请求/响应都是自定义结构，必须走独立适配器（见该文件顶部说明）。
+  typesafe: () => import("./upstream/typesafe.js"),
   // 第三方反代（凭据型）：WorkBuddy 直连腾讯后端；Qoder 经本地桥
   workbuddy: () => import("./upstream/workbuddy.js"),
   qoder: () => import("./upstream/qoder.js"),

@@ -543,7 +543,10 @@ export const PROVIDERS = [
         adapter: "mimo-web",
         label: "网页版（MiMo Studio）",
         desc: "用小米账号登录，走订阅额度",
-        loginModes: ["paste", "capture"],
+        // 只保留 paste：抓取（浏览器登录）是 paste 面板里的入口，不是独立模式。
+        // 见前端 credOptions 的注释 —— 拆成两个模式会让弹窗裂出两个按钮，
+        // 而其中一个（capture）没有对应渲染分支，点进去是空白表单。
+        loginModes: ["paste"],
         entryUrl: "https://aistudio.xiaomimimo.com/",
         captureHint: "登录 MiMo Studio（小米账号 SSO），完成后点「抓取登录态」自动读取 Cookie",
         pasteHint:
@@ -579,7 +582,10 @@ export const PROVIDERS = [
         adapter: "minimax-web",
         label: "网页版（MiniMax Agent）",
         desc: "用 MiniMax 账号登录，走 C 端额度",
-        loginModes: ["paste", "capture"],
+        // 只保留 paste：抓取（浏览器登录）是 paste 面板里的入口，不是独立模式。
+        // 见前端 credOptions 的注释 —— 拆成两个模式会让弹窗裂出两个按钮，
+        // 而其中一个（capture）没有对应渲染分支，点进去是空白表单。
+        loginModes: ["paste"],
         // 注意：chat.minimaxi.com 已 307 跳转到 agent.minimaxi.com，接入点是后者
         entryUrl: "https://agent.minimaxi.com/",
         captureHint: "登录 MiniMax Agent，完成后点「抓取登录态」自动读取 token",
@@ -616,7 +622,10 @@ export const PROVIDERS = [
         adapter: "stepfun-web",
         label: "网页版（chat.stepfun.com）",
         desc: "手机号登录，走 C 端额度（协议零签名）",
-        loginModes: ["paste", "capture"],
+        // 只保留 paste：抓取（浏览器登录）是 paste 面板里的入口，不是独立模式。
+        // 见前端 credOptions 的注释 —— 拆成两个模式会让弹窗裂出两个按钮，
+        // 而其中一个（capture）没有对应渲染分支，点进去是空白表单。
+        loginModes: ["paste"],
         // 不要用 yuewen.cn：实测该域名 TLS 证书已过期并返回 403，品牌已退役
         entryUrl: "https://chat.stepfun.com/",
         captureHint: "登录 chat.stepfun.com（手机号短信），完成后点「抓取登录态」自动读取 Cookie",
@@ -761,6 +770,175 @@ export const PROVIDERS = [
           { id: "moonshotai/Kimi-K2", name: "Kimi K2" },
         ],
         testModel: "deepseek-ai/DeepSeek-V3.2",
+      },
+    ],
+  },
+  // ---- 2026 新增（调研 + 端点实测，见 AI协作.md 第 48 批）----
+  {
+    key: "typesafe",
+    name: "TypeSafe AI（Jev）",
+    vendor: "typesafe",
+    // Jev 与传统 chat 模型的根本区别：**它不生成文本**。
+    // 输入 state + 类型化 problems，输出类型化判断 + 概率 + 置信度
+    // （noul 是/否、choice 多选上限 255、score 评分），全程无 free-text。
+    // 因此它**刻意不兼容 OpenAI**，只有一个端点 POST /v1/systemone。
+    desc: "Jev（System One 判定模型）：不生成文本，输出类型化判断与置信度；协议非 OpenAI 兼容",
+    methods: [
+      {
+        key: "systemone",
+        // 非 OpenAI 协议 → 用独立适配器（不能走 openai-compat）
+        adapter: "typesafe",
+        label: "System One（Jev）",
+        desc: "原生 /v1/systemone：请求 {state, model, questions}，响应 {model, answers, usage}",
+        baseUrl: "https://api.typesafe.ai",
+        keyHint: "TypeSafe API Key（console.typesafe.ai/keys 获取）",
+        // 实测 GET /v1/models 无 key 返回 403「Must supply an API key」→ 地址与鉴权方式确认
+        defaultModels: [
+          { id: "jev-latest", name: "Jev Latest（稳定版）" },
+          { id: "jev-preview", name: "Jev Preview" },
+          { id: "jev-1.13.0", name: "Jev 1.13.0" },
+        ],
+        testModel: "jev-latest",
+      },
+    ],
+  },
+  {
+    key: "longcat",
+    name: "LongCat（美团）",
+    vendor: "longcat",
+    desc: "LongCat-2.0，1M 上下文；OpenAI 与 Anthropic 双协议",
+    methods: [
+      {
+        key: "api",
+        label: "OpenAI 兼容",
+        desc: "LongCat 开放平台（api.longcat.chat/openai）",
+        baseUrl: "https://api.longcat.chat/openai",
+        keyHint: "在 longcat.chat/platform/api_keys 获取",
+        defaultModels: [{ id: "LongCat-2.0", name: "LongCat-2.0" }],
+        testModel: "LongCat-2.0",
+      },
+      {
+        // 双协议：实测 /anthropic/v1/messages 返回 405（端点存在、仅不收 GET），
+        // 说明上游同时提供 Anthropic 协议 —— 用 anthropic-compat 适配器接入，
+        // 这样 Claude SDK 的客户端也能直接打这个渠道。
+        key: "anthropic",
+        adapter: "anthropic-compat",
+        label: "Anthropic 兼容",
+        desc: "同一账号的 Claude 协议端点（api.longcat.chat/anthropic）",
+        baseUrl: "https://api.longcat.chat/anthropic",
+        keyHint: "与 OpenAI 端点同一把 key",
+        defaultModels: [{ id: "LongCat-2.0", name: "LongCat-2.0" }],
+        testModel: "LongCat-2.0",
+      },
+    ],
+  },
+  {
+    key: "chutes",
+    name: "Chutes",
+    vendor: "chutes",
+    desc: "去中心化算力聚合（Kimi K3 / GLM / DeepSeek / Qwen）",
+    methods: [
+      {
+        key: "api",
+        label: "API Key",
+        desc: "Chutes（llm.chutes.ai，支持 PAYG 与 $10/月订阅）",
+        baseUrl: "https://llm.chutes.ai/v1",
+        keyHint: "在 chutes.ai 控制台获取",
+        // 实测 GET /v1/models 返回 200（清单可匿名读取）
+        defaultModels: [
+          { id: "moonshotai/Kimi-K3", name: "Kimi K3" },
+          { id: "zai-org/GLM-5.2", name: "GLM 5.2" },
+          { id: "deepseek-ai/DeepSeek-V4-Flash", name: "DeepSeek V4 Flash" },
+          { id: "Qwen/Qwen3.5-397B-A17B", name: "Qwen3.5 397B" },
+        ],
+        testModel: "zai-org/GLM-5.2",
+      },
+    ],
+  },
+  {
+    key: "nvidia",
+    name: "NVIDIA NIM",
+    vendor: "nvidia",
+    desc: "NVIDIA 官方推理服务（Nemotron 系列）",
+    methods: [
+      {
+        key: "api",
+        label: "API Key",
+        desc: "build.nvidia.com 的 API Key（integrate.api.nvidia.com）",
+        baseUrl: "https://integrate.api.nvidia.com/v1",
+        keyHint: "nvapi-...",
+        // 实测 GET /v1/models 返回 200
+        defaultModels: [
+          { id: "nvidia/nemotron-3-ultra-550b-a55b", name: "Nemotron 3 Ultra 550B" },
+          { id: "nvidia/nemotron-3.5-lightning-30b-a3b", name: "Nemotron 3.5 Lightning 30B" },
+        ],
+        testModel: "nvidia/nemotron-3.5-lightning-30b-a3b",
+      },
+    ],
+  },
+  {
+    key: "cerebras",
+    name: "Cerebras",
+    vendor: "cerebras",
+    desc: "Cerebras 推理云（官方称 OpenAI 客户端兼容）",
+    methods: [
+      {
+        key: "api",
+        label: "API Key",
+        desc: "Cerebras（api.cerebras.ai，另有 Code 订阅）",
+        baseUrl: "https://api.cerebras.ai/v1",
+        keyHint: "csk-...",
+        // 实测 GET /v1/models 返回 403（需鉴权）→ 地址确认
+        defaultModels: [
+          { id: "qwen-3.8-27b", name: "Qwen 3.8 27B" },
+          { id: "gpt-oss-120b", name: "GPT-OSS 120B" },
+        ],
+        testModel: "qwen-3.8-27b",
+      },
+    ],
+  },
+  {
+    key: "hunyuan",
+    name: "腾讯混元",
+    vendor: "hunyuan",
+    desc: "混元 Hy3 系列（官方明确兼容 OpenAI 接口规范）",
+    methods: [
+      {
+        key: "api",
+        label: "API Key",
+        desc: "腾讯云混元（api.hunyuan.cloud.tencent.com）",
+        baseUrl: "https://api.hunyuan.cloud.tencent.com/v1",
+        keyHint: "在腾讯云控制台获取",
+        // 实测 GET /v1/models 返回 401（需鉴权）→ 地址确认
+        defaultModels: [
+          { id: "hunyuan-hy3", name: "混元 Hy3" },
+          { id: "hunyuan-turbos-latest", name: "混元 TurboS" },
+        ],
+        testModel: "hunyuan-hy3",
+      },
+    ],
+  },
+  {
+    key: "meta",
+    name: "Meta（Muse Spark）",
+    vendor: "meta",
+    desc: "Meta Muse Spark 系列，1M 上下文",
+    methods: [
+      {
+        key: "api",
+        label: "API Key",
+        desc: "Meta Model API（api.meta.ai）",
+        baseUrl: "https://api.meta.ai/v1",
+        keyHint: "在 Meta 开发者平台获取",
+        // 实测 GET /v1/models 返回 401（需鉴权）→ 地址确认。
+        // 注意：官方文档站（dev.meta.ai）在本机与服务器均连接超时，
+        // 模型 id 与定价取自社区实现（CLIProxyAPI 配置），可能随官方调整。
+        defaultModels: [
+          { id: "muse-spark-1.3", name: "Muse Spark 1.3" },
+          { id: "muse-spark-1.2", name: "Muse Spark 1.2" },
+          { id: "muse-spark-1.2-contributor", name: "Muse Spark 1.2 Contributor" },
+        ],
+        testModel: "muse-spark-1.3",
       },
     ],
   },

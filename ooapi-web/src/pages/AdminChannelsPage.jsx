@@ -888,7 +888,22 @@ export default function AdminChannelsPage() {
           hint: "",
         });
       } else {
-        for (const lm of m.loginModes || []) {
+        // 每个接入方式只出**一个**登录选项。
+        //
+        // 为什么合并：`paste`（粘贴登录态）与 `capture`（服务端浏览器登录后自动抓取）
+        // 是同一条流程的两个入口 —— 抓取面板里本来就带着粘贴框兜底
+        // （见下方 addMode === "paste" 分支的 canCapture 块）。
+        // 早先的接入方式（Kimi / DeepSeek）只用 paste 一个模式，面板里自带抓取按钮；
+        // 后来给 MiMo / MiniMax / StepFun 写成了 ["paste","capture"]，
+        // 导致弹窗里裂出「粘贴登录态」「浏览器登录」两个按钮，
+        // 而 capture 那个**前端根本没有对应的渲染分支 → 点进去是空白表单**（用户实测反馈）。
+        // 现在统一成一个入口：能抓取的方式直接叫「浏览器登录」（主路径就是它）。
+        const modes = (m.loginModes || []).filter((x) => x !== "capture");
+        const effective = modes.length ? modes : ["paste"];
+        for (const lm of effective) {
+          // 能自动抓取（有 entryUrl/canCapture）的方式，主路径是「在服务器浏览器里登录」，
+          // 所以标签就该叫「浏览器登录」；粘贴只是它的兜底手段，写进面板里说明即可。
+          const canGrab = Boolean(m.canCapture || m.entryUrl);
           out.push({
             // id 必须带 method 前缀：同一厂商出现多个 paste 方式时不能撞车
             id: `${m.key}:${lm}`,
@@ -907,9 +922,11 @@ export default function AdminChannelsPage() {
                 ? m.needs2fa
                   ? `${methodShortName(m)}（账号密码）`
                   : "账号密码"
-                : lm === "paste"
-                  ? "粘贴登录态"
-                  : "浏览器登录",
+                : lm === "browser"
+                  ? "浏览器登录"
+                  : canGrab
+                    ? "浏览器登录"
+                    : "粘贴登录态",
             hint: supportsDeviceBindMethod(m.key) ? "支持一键绑定" : "",
           });
         }

@@ -891,9 +891,9 @@ router.get(
       if (mCfg.needsBrowser) {
         modes.push({ key: "browser-ready", label: "浏览器登录", desc: "打开上游页面完成扫码/验证码登录" });
       }
-      if (mCfg.entryUrl && !mCfg.captureApi && !mCfg.needsBrowser) {
-        modes.push({ key: "capture", label: "抓取登录态", desc: "在服务器浏览器里登录后自动抓取 cookies / token" });
-      }
+      // 注：这里曾有独立的 "capture" 项，与 "paste" 并列。
+      // 两者是同一条流程（抓取面板里自带粘贴兜底），并列会让用户以为是两种登录方式，
+      // 而前端对 "capture" 没有渲染分支 → 点进去是空白表单。已移除，由 paste 的抓取按钮承担。
       if ((mCfg.loginModes || []).includes("password")) {
         modes.push({ key: "password", label: "账号密码登录", desc: "用上游账号密码重新登录" });
       }
