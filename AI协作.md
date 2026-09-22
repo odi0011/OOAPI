@@ -871,6 +871,125 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 - [ ] **审查方式可复用**：后续批次继续用「三路并行子代理（前端 / 后端路由 / 服务适配器）+ 人工核实」，
   发现的问题先登记在此节，修完删除并写入变更记录。
 
+### 第 46 批最新远端复审发现（远端 `02e22d3`，2026-09-22）
+
+> 本节来自对 `origin/main` 最新代码的只读复审。审查基线不是本机旧副本，而是干净 worktree 的提交 `02e22d3`；后端 117 个 `src/**/*.js` 均通过 `node --check`，未运行会修改数据或调用真实上游的测试。以下问题均有代码证据，修复后逐项删除并写入变更记录。
+
+#### P0/P1：协议、凭据与 SSRF
+
+- [ ] **Gemini API Key 的官方 `generateContent` 协议未实现**：外部网关只注册
+      `/v1/chat/completions`、`/v1/messages`、`/v1/responses`（`ooapi-server/src/routes/gateway.js:698-702`），
+      没有 Gemini 的 `generateContent` 路由；但 `channel-types.js:403-410` 已把 Gemini API Key
+      预填为 `https://generativelanguage.googleapis.com`，`router.js:45-53` 又会把它按
+      `openai-compat` 适配，`openai-compat.js:57-72` 最终拼成 `/v1/chat/completions`，而不是
+      `/v1beta/models/{model}:generateContent`。用户配置看似是 Google 官方 API，实际请求必然走错协议。
+      修复：独立实现 Gemini 请求/响应适配（含 API Key、generateContent/streamGenerateContent、usage），
+      或明确隐藏该接入方式，不能把 Gemini base URL 当 OpenAI 兼容端点。
+
+- [ ] **一键绑定凭据可跨厂商写入目标渠道**：`routes/channel.js:2834-2850,2876-2889`
+      的设备绑定轮询/claim 只按目标渠道类型选择解析器，没有验证绑定会话或票据记录的厂商与 method
+      是否等于目标渠道。管理员可以将 Kiro/WorkBuddy/Qoder 会话结果提交到另一厂商渠道，造成错误凭据
+      覆盖目标账号。修复：session/ticket 持久记录 `vendor + method`，poll/claim/写回前强制匹配。
+
+- [ ] **WorkBuddy/Qoder 凭据中的 endpoint/base_url 可将 Bearer/PAT 外送到任意地址**：
+      `services/upstream/workbuddy.js:55-75,91-93`、`qoder.js:37-50,56-62` 将凭据内地址直接作为
+      `base_url`，对话/验证经过 `openai-compat.js:243-280` 直接 fetch；当前只有模型列表路径做了
+      `assertPublicUrl`。攻击者若能诱导管理员导入恶意凭据，可把上游凭据发往攻击者主机、内网或云元数据地址。
+      修复：导入、读取、请求三处都校验严格官方域名白名单；若确需自定义桥地址，只允许服务端配置的白名单，
+      不能信任凭据 JSON 的 endpoint。
+
+- [ ] **设备绑定轮询无并发互斥**：`services/device-bind.js:428-445` 同一 session 可被并发 poll。
+      前端轮询重叠或两个管理员同时操作时，会重复请求上游并可能重复消费授权结果，成功凭据还可能互相覆盖。
+      修复：session 级 in-flight 锁；终态用原子状态转移/删除后再做凭据写回。
+
+- [ ] **三协议的“超过 3 张图片”短路分支写死 Chat 响应格式**：`routes/gateway.js:458-485`
+      在 `/v1/messages` 或 `/v1/responses` 请求中触发图片超限时，直接返回 `chat.completion` JSON/SSE，
+      绕过 `PROTOCOLS.messages/responses` 的 renderer；Anthropic/Codex 客户端会收到错误协议形状并解析失败。
+      修复：所有短路错误/提示也必须通过当前 protocol 的 `error/finish/openStream` 渲染。
+
+- [ ] **Anthropic thinking 协议不正确且非流式静默丢思考内容**：流式在
+      `services/gateway-protocols.js:200-210` 先声明 `content_block` 为 `text`，随后在同一 block
+      发 `thinking_delta`，合法协议应有独立 thinking block；非流式 `:223-243` 完全不输出 `reasoning`。
+      修复：按 Anthropic thinking block 的完整事件序列实现；非流式按客户端可识别的 thinking block 返回，或在能力不支持时明确关闭思考而不是静默丢失。
+
+- [ ] **Responses 顶层 `instructions` 被丢弃**：`services/gateway-protocols.js:45-69`
+      的 `responsesInput` 只解析 `body.input`，没有把 Responses 协议的顶层 instructions 转成 system message，
+      `gateway.js:544-555` 随后只把丢失指令后的 messages 交给执行器。使用 Responses SDK 的系统约束会静默失效。
+      修复：读取并验证 `instructions`，置于 input messages 前作为 system/developer 上下文。
+
+- [ ] **Responses `response.completed` 事件对象不完整**：`gateway-protocols.js:282-294,333-341`
+      创建事件有 id/object/model/output，但完成事件只携带 status/usage；依赖完成事件重建最终 response 的官方
+      SDK 可能得到缺字段对象。修复：完成事件带回 id、object、model、output、status、usage 等一致字段。
+
+#### P1/P2：新增适配器与能力声明
+
+- [ ] **mimo-web/minimax-web/stepfun-web 已声明但未注册到 router 适配器表**：
+      `services/channel-types.js:542-543,578-579,615-616` 已声明接入方式，但
+      `services/router.js:17-39,715-723` 的 `ADAPTERS` 没有对应 loader；新建这些渠道会直接得到
+      `UNSUPPORTED_CHANNEL`。修复：同时完成 provider method、router ADAPTERS、模型表与测试注册。
+
+- [ ] **OpenAI 网页 UI 输入框为空时直接解引用 null**：`services/upstream/openai-web-ui.js:301-315`
+      在确认候选 target 非空之前调用 `target.evaluate`；页面结构变化、未登录或风控页没有输入框时会抛原生
+      TypeError，绕过预期诊断并可能被 execute 当成基础设施故障换号/冷却。修复：先判断 target，返回带明确
+      `CHANNEL_NOT_READY`/页面现场的错误。
+
+- [ ] **StepFun Connect 未知帧/错误帧/尾部残帧静默丢弃**：`services/upstream/stepfun-web.js:47-66,217-227`
+      解码器只特殊处理 `0x02`，其它 flags 均尝试 JSON 后丢弃，错误帧与不完整尾帧没有错误状态；上游有输出时
+      可能最终被归类为空回复。修复：未知帧保留诊断信息；未知 content 若可解码应当正文输出，尾部不完整应抛可归因的
+      `CHANNEL_BAD_RESPONSE`，不能静默吞掉。
+
+- [ ] **新网页适配器对 429/403 错误分类过粗**：`mimo-web.js:209-214`、`minimax-web.js:187-192`、
+      `stepfun-web.js:190-195` 把 429 归普通 `CHANNEL_HTTP_ERROR`、403 一律归鉴权过期，导致
+      `execute.js:288-303` 使用错误的冷却档位（限流/风控/凭据失效无法区分）。修复：分别识别 429、WAF/风控
+      403、过期 token 403，并设置匹配的 code/cooldown；避免把可恢复限流与需人工处理的封禁混为一类。
+
+- [ ] **MiniMax/StepFun 模型能力声明与实际模型表不一致**：`minimax-models.js:24-34,42-48`、
+      `stepfun-models.js:23-25,33-36` 的 `resolveModel` 对所有模型返回 `vision:true`，但模型表只给部分模型声明视觉能力；
+      图片请求可能被错误放行到不支持视觉的模型。修复：能力以具体模型登记为准，适配器在不支持时显式返回
+      `VISION_NOT_SUPPORTED`。
+
+- [ ] **新网页适配器固定 `usage:null`，计费只能估算**：`mimo-web.js:256-260`、`minimax-web.js:261-264`、
+      `stepfun-web.js:229-232`。若上游返回可解析的 token/usage，当前仍无法精确计费，长上下文或思考请求会产生系统性偏差。
+      修复：解析真实 usage；若确实无 usage，至少在响应/日志中标记 estimated，不能与精确计费混同。
+
+#### 前端新增问题
+
+- [ ] **帖子详情页永久骨架屏**：`ooapi-web/src/pages/PostDetailPage.jsx:53,73,85-88`
+      `loadPost` 与 `loadComments` 共用同一个 `useLatest` 计数器；同一 effect 中前者拿 token 1、后者拿 token 2，
+      前者结果恒被自己作废，`setPost` 和 finally 的 `setLoading(false)` 都不执行。打开任意 `/community/:id`
+      永远停在 skeleton。修复：每个并发 loader 独立 useLatest，或只对会覆盖同一状态的请求做序号控制。
+
+- [ ] **个人主页永久骨架屏且关注 Tab 永远为空**：`ProfileViewPage.jsx:82,107,100-102,112,272`
+      首次加载的 `load` 与 `loadTab` 共用一个 useLatest，主数据恒被作废；此外代码判断 `tab === "follows"`，
+      但 Tab key 是 `"following"`，分支永远不可达。修复：拆分 loader 的竞态 token，并统一 Tab key/判据。
+
+- [ ] **个人主页 website 形成存储型 XSS**：`ProfileViewPage.jsx:234` 直接将用户可编辑的
+      `data.website` 放入 `<a href>`，未经过 `Markdown.jsx:68` 的 `safeHref` 协议白名单。填写 `javascript:` 后，
+      访客点击链接可在本站上下文执行脚本。修复：展示前调用 safeHref，非法协议只作为纯文本显示。
+
+- [ ] **消息/通知 SSE 断线后永久离线**：`MessagesPage.jsx:152-153,224` 使用一次性票据连接，onerror 只置离线状态；
+      服务端 `routes/chatroom.js:137` 消费票据后，EventSource 自动重连会重复使用旧票据并 401。`GameZone.jsx:536-538`
+      存在同类问题且没有 onerror。修复：onerror 关闭旧连接、重新申请票据、指数退避重连，并清理旧监听器。
+
+- [ ] **API 渠道新增时“留空=不限”与表单/后端校验冲突**：`AdminChannelsPage.jsx:2847-2852`、
+      `ModelPicker.jsx:167` 展示可留空，但新增表单要求至少一个模型，`routes/channel.js:2348-2349` 又拒绝空模型。
+      按默认流程新增 API Key 渠道会失败。修复：自动填充平台注册模型，或统一允许空值并明确 custom 语义。
+
+#### 线上实测与生产版本差异（2026-09-22）
+
+- [ ] **Antigravity 测试把“模型已下线”文本当健康成功**：生产渠道 `Google Gemini` 的 `recent_calls` 曾真实记录
+      `ok:1`、`r:"Gemini 3.5 Flash is no longer available. Please switch to Gemini 3.7 Flash in the latest version of Antigravity."`、
+      `k:"test"`（耗时约 3019ms）。代码 `services/upstream/antigravity.js:427-439` 只要收到非空 `part.text` 就调用
+      `onDelta`，`476-481` 只在 `content` 为空时抛 `CHANNEL_EMPTY`；因此上游返回的错误提示被当成正常正文，
+      渠道测试写入 `ok=1`，自动检测也会重置冷却。修复：对 Antigravity/各适配器增加结构化错误字段与内容级错误模式识别；
+      命中“model unavailable/switch model/权限不足/账号失效”等明确错误时返回可分类错误并冷却/换渠道，不能只用“有正文”判定健康。
+
+- [ ] **线上部署版本与远端不一致，审查结论不能直接视为线上已修复**：线上服务器在本次检查时运行
+      `.update-stamp.json=5a1c8ca`，远端最新为 `02e22d3`。线上还出现过 `.backup-2026-09-22T09-24-57` 与
+      “上次在线更新未完成，当前代码可能半新半旧”的启动警告；机器当时约 3.5GB 内存且无 swap，更新期间日志持续
+      `Under memory pressure`，随后发生一次硬重启。修复/运维动作：在线更新必须先做内存预算与失败回滚校验，更新完成后
+      明确比对 stamp、服务健康、前端构建产物和迁移状态；部署前不得把远端静态审查结果当成线上版本结果。
+
 ### 第 16 批遗留（对话重构）
 - [ ] **对话 harness 线上实盘**：本地已用 mock 上游与浏览器验收（流式、工具 chip、待办、设定、移动端），
   上线后需用真实渠道各跑一次：① 纯对话（无工具）② 触发联网检索 ③ 触发 `fetch` ④ 触发 `task` 子代理
@@ -2603,6 +2722,7 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 
 
 
+| 2026-09-22 | **第 46 批 · 最新远端代码只读复审 + 线上实测问题登记**：以干净 worktree 的远端 `02e22d3` 为基线，后端 117 个 JS 文件 `node --check` 全部通过；新增登记 Gemini API `generateContent` 未实现、三协议图片超限分支写死 Chat 响应、Anthropic thinking 事件/非流式思考丢失、Responses `instructions`/完成事件字段丢失、mimo/minimax/stepfun 未注册、WorkBuddy/Qoder endpoint SSRF、绑定跨厂商与并发轮询、StepFun 未知帧丢失、前端社区/个人主页骨架屏与 website XSS 等问题。线上 `5a1c8ca` 实测确认 Antigravity 将「Gemini 3.5 Flash is no longer available」作为 `ok=1` 健康测试；同时确认线上版本落后远端，且曾发生未完成更新告警、内存压力与硬重启。详见第 46 批最新远端复审发现。
 | 2026-09-22 | **第 46 批 · 用户四个反馈的查证与修复**（三协议网关 / 模型自定义 / 一键绑定 / OpenCode GO）。
 
   逐条先复现、再定位、后修复，四项都有线上证据：
