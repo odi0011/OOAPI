@@ -132,6 +132,15 @@ function buildQuery({ isAdmin, userId, kind, query, defaultDays = 0 }) {
       conds.push("token_id = ?");
       args.push(tokenId);
     }
+    const group = String(query.group || query.group_name || "").trim();
+    if (group) {
+      if (group === "__public__" || group === "公共" || group === "default") {
+        conds.push("(group_name IS NULL OR group_name = '' OR group_name = 'default')");
+      } else {
+        conds.push("group_name = ?");
+        args.push(group.slice(0, 64));
+      }
+    }
   } else {
     // 操作日志专有筛选：按具体类型（管理/错误/登录/充值）
     const type = safeInt(query.type, { min: 1, max: 999, fallback: 0 });
@@ -171,7 +180,7 @@ async function listLogs(req, res, kind) {
     "device", "price_phase",
     ...(isAdmin ? ["detail", "user_agent"] : []),
   ].join(", ");
-  const [rows] = await pool.query(`SELECT ${cols} FROM logs ${where} ORDER BY id DESC LIMIT ? OFFSET ?`, [
+  const [rows] = await pool.query(`SELECT ${cols} FROM logs ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`, [
     ...args,
     size,
     offset,
@@ -230,9 +239,24 @@ router.get(
         GROUP BY token_id, token_name ORDER BY c DESC LIMIT 100`,
       [USAGE_TYPE, ...sinceArgs, ...args]
     );
+    const [groups] = await pool.query(
+      `SELECT group_name, COUNT(*) AS c FROM logs
+        WHERE type = ? ${sinceCond} AND group_name IS NOT NULL AND group_name <> '' AND group_name <> 'default' ${whereUser}
+        GROUP BY group_name ORDER BY c DESC LIMIT 50`,
+      [USAGE_TYPE, ...sinceArgs, ...args]
+    );
+    const [[publicGroup]] = await pool.query(
+      `SELECT COUNT(*) AS c FROM logs
+        WHERE type = ? ${sinceCond} AND (group_name IS NULL OR group_name = '' OR group_name = 'default') ${whereUser}`,
+      [USAGE_TYPE, ...sinceArgs, ...args]
+    );
     return ok(res, {
       models: models.map((m) => ({ model: m.model, count: Number(m.c) })),
       tokens: tokens.map((t) => ({ id: Number(t.token_id), name: t.token_name || `#${t.token_id}`, count: Number(t.c) })),
+      groups: [
+        ...(publicGroup && Number(publicGroup.c) > 0 ? [{ name: "__public__", label: "公共", count: Number(publicGroup.c) }] : []),
+        ...groups.map((g) => ({ name: g.group_name, label: g.group_name, count: Number(g.c) })),
+      ],
     });
   })
 );

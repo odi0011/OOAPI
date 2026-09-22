@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { Table, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions, Space } from "antd";
+import { Table, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions, Space, Typography } from "antd";
 import { ReloadOutlined, FileTextOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import { fmtDate, fmtOd, unitsPerOd, CURRENCY_NAME } from "../services/format";
@@ -8,8 +8,10 @@ import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
 import UsageAnalysis from "../components/UsageAnalysis";
-import { ModelLabel, GroupVendorIcons } from "../components/VendorIcon";
+import { ModelLabel, GroupVendorIcons, GroupTag } from "../components/VendorIcon";
 import UserAvatar from "../components/UserAvatar";
+
+const { Text } = Typography;
 
 // 历史日志里存的是改名前的「OD」，新日志写的是「OD币」。
 // 只在展示时归一化，不改数据库（历史记录保持原样可追溯）。
@@ -36,7 +38,7 @@ const RANGE_OPTIONS = [
   { value: 1, label: "今天" },
   { value: 7, label: "近 7 天" },
   { value: 30, label: "近 30 天" },
-  { value: 0, label: "全部" },
+  { value: 0, label: "全部时间" },
 ];
 
 /**
@@ -53,7 +55,7 @@ export default function LogPage() {
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState(null);
-  const [filters, setFilters] = useState({ models: [], tokens: [] });
+  const [filters, setFilters] = useState({ models: [], tokens: [], groups: [] });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
@@ -61,7 +63,8 @@ export default function LogPage() {
   const [keyword, setKeyword] = useState("");
   const [model, setModel] = useState("");
   const [tokenId, setTokenId] = useState(0);
-  const [days, setDays] = useState(7);
+  const [group, setGroup] = useState("");
+  const [days, setDays] = useState(30);
   const [detail, setDetail] = useState(null);
   // 分组元信息（倍率/备注/成员厂商）：分组列按「折叠态厂商图标 + 分组名」展示
   const [groupMeta, setGroupMeta] = useState([]);
@@ -90,8 +93,9 @@ export default function LogPage() {
       keyword: keyword || undefined,
       model: model || undefined,
       token_id: tokenId || undefined,
+      group: group || undefined,
     }),
-    [days, keyword, model, tokenId]
+    [days, keyword, model, tokenId, group]
   );
 
   const load = useCallback(async () => {
@@ -163,12 +167,18 @@ export default function LogPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysisOpen, days]);
 
-  // 筛选下拉的候选项（模型/密钥）：与列表同一时间口径（含「全部」）
+  // 筛选下拉的候选项（模型/密钥/分组）：与列表同一时间口径（含「全部」）
   useEffect(() => {
     let alive = true;
     API.get("/log/usage/filters", { params: { days } })
       .then((d) => {
-        if (alive) setFilters({ models: d.models || [], tokens: d.tokens || [] });
+        if (alive) {
+          setFilters({
+            models: d.models || [],
+            tokens: d.tokens || [],
+            groups: d.groups || [],
+          });
+        }
       })
       .catch(() => {});
     return () => {
@@ -180,8 +190,10 @@ export default function LogPage() {
     {
       title: "时间",
       dataIndex: "created_at",
-      width: 158,
-      render: (t) => <span className="oo-num">{fmtDate(t)}</span>,
+      width: 165,
+      sorter: (a, b) => (a.created_at || 0) - (b.created_at || 0),
+      defaultSortOrder: "descend",
+      render: (t) => <span className="oo-num" style={{ whiteSpace: "nowrap" }}>{fmtDate(t)}</span>,
     },
     // 管理员：用户（头像 + 名字）；普通用户看到的是自己，不需要这一列
     ...(isAdmin
@@ -189,7 +201,7 @@ export default function LogPage() {
           {
             title: "用户",
             dataIndex: "username",
-            width: 150,
+            width: 130,
             render: (v, r) => <UserAvatar user={{ id: r.user_id, username: v }} size={22} showName />,
           },
         ]
@@ -197,29 +209,91 @@ export default function LogPage() {
     {
       title: "模型",
       dataIndex: "model",
-      width: 150,
+      width: 145,
       render: (v) => (v ? <ModelLabel model={v} size={14} /> : <span style={{ color: "var(--ink-3)" }}>-</span>),
     },
-    // 管理员：分组 / 密钥 / 渠道（普通用户隐藏：分组=倍率口径，密钥与渠道属于平台配置）
+    // 管理员：分组（独立 Tag 包含专属图标与标题）
     ...(isAdmin
       ? [
           {
             title: "分组",
             dataIndex: "group_name",
-            width: 140,
+            width: 135,
             render: (v) => {
               const name = displayGroupName(v);
-              if (!name) return <span style={{ color: "var(--ink-3)" }}>-</span>;
+              if (!name) return <Text type="secondary" style={{ fontSize: 12 }}>公共</Text>;
               const meta = groupMeta.find((g) => g.name === name);
-              return (
-                <Tooltip title={meta?.remark ? `${name} · ${meta.remark}` : name}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5, maxWidth: "100%" }}>
-                    <GroupVendorIcons vendors={meta?.vendors} size={12} />
-                    <span className="bui-chip oo-truncate">{name}</span>
-                  </span>
-                </Tooltip>
-              );
+              return <GroupTag name={name} meta={meta} />;
             },
+          },
+        ]
+      : []),
+    {
+      title: "计费",
+      dataIndex: "quota",
+      width: 110,
+      sorter: (a, b) => (Number(a.quota) || 0) - (Number(b.quota) || 0),
+      render: (q) => {
+        const n = Number(q) || 0;
+        return n ? (
+          <Tooltip title={`${fmtOd(n, perUnit, 6)}`}>
+            <span className="oo-num" style={{ fontWeight: 550 }}>{fmtOd(n, perUnit, 4, false)}</span>
+            <span style={{ fontSize: 11, color: "var(--ink-3)", marginLeft: 3 }}>{CURRENCY_NAME}</span>
+          </Tooltip>
+        ) : (
+          <span style={{ color: "var(--ink-3)" }}>-</span>
+        );
+      },
+    },
+    {
+      title: "Tokens",
+      dataIndex: "prompt_tokens",
+      width: 135,
+      render: (v, r) => (
+        <Tooltip title={`提示 ${v} · 补全 ${r.completion_tokens}${r.cache_tokens ? ` · 缓存 ${r.cache_tokens}` : ""}`}>
+          <span className="oo-num" style={{ fontSize: 12.5, whiteSpace: "nowrap" }}>
+            {Number(v) || 0}
+            <span style={{ color: "var(--ink-3)" }}> / </span>
+            {Number(r.completion_tokens) || 0}
+            {Number(r.cache_tokens) > 0 ? (
+              <span className="bui-chip bui-chip--green" style={{ fontSize: 10.5, height: 16, lineHeight: "16px", padding: "0 4px", marginLeft: 4 }}>
+                缓{r.cache_tokens}
+              </span>
+            ) : null}
+          </span>
+        </Tooltip>
+      ),
+    },
+    {
+      title: "总耗时",
+      dataIndex: "elapsed_ms",
+      width: 88,
+      sorter: (a, b) => (a.elapsed_ms || 0) - (b.elapsed_ms || 0),
+      render: (v) => <span className="oo-num" style={{ color: msColor(v) }}>{ms(v)}</span>,
+    },
+    {
+      title: "首Token",
+      dataIndex: "first_token_ms",
+      width: 88,
+      sorter: (a, b) => (a.first_token_ms || 0) - (b.first_token_ms || 0),
+      render: (v) => <span className="oo-num" style={{ color: msColor(v) }}>{ms(v)}</span>,
+    },
+    // 管理员：渠道与密钥
+    ...(isAdmin
+      ? [
+          {
+            title: "渠道",
+            dataIndex: "channel_name",
+            width: 140,
+            ellipsis: true,
+            render: (v, r) =>
+              v ? (
+                <Tooltip title={`#${r.channel_id} ${v}`}>
+                  <span className="oo-truncate" style={{ fontSize: 12.5 }}>{v}</span>
+                </Tooltip>
+              ) : (
+                <span style={{ color: "var(--ink-3)" }}>-</span>
+              ),
           },
           {
             title: "密钥",
@@ -227,8 +301,6 @@ export default function LogPage() {
             width: 120,
             ellipsis: true,
             render: (v, r) =>
-              // token_id 有值但名字缺失（历史数据）也要显示成密钥而不是「账户额度」，
-              // 否则「筛选里能选到该密钥、表格里显示账户额度」会自相矛盾
               v ? (
                 <Tooltip title={`#${r.token_id} ${v}`}>
                   <span className="oo-truncate" style={{ fontSize: 12.5 }}>{v}</span>
@@ -241,93 +313,30 @@ export default function LogPage() {
                 <span style={{ color: "var(--ink-3)" }}>账户额度</span>
               ),
           },
-          {
-            title: "渠道",
-            dataIndex: "channel_name",
-            width: 150,
-            ellipsis: true,
-            render: (v, r) =>
-              v ? (
-                <Tooltip title={`#${r.channel_id} ${v}`}>
-                  <span className="oo-truncate" style={{ fontSize: 12.5 }}>{v}</span>
-                </Tooltip>
-              ) : (
-                <span style={{ color: "var(--ink-3)" }}>-</span>
-              ),
-          },
         ]
       : []),
     {
       title: "调用内容",
       dataIndex: "content",
-      width: 300,
+      width: 220,
       ellipsis: true,
-      render: (text) => <span style={{ fontSize: 12.5 }}>{normalizeCurrency(text)}</span>,
-    },
-    {
-      title: "首Token",
-      dataIndex: "first_token_ms",
-      width: 92,
-      sorter: (a, b) => (a.first_token_ms || 0) - (b.first_token_ms || 0),
-      render: (v) => <span className="oo-num" style={{ color: msColor(v) }}>{ms(v)}</span>,
-    },
-    {
-      title: "总耗时",
-      dataIndex: "elapsed_ms",
-      width: 92,
-      sorter: (a, b) => (a.elapsed_ms || 0) - (b.elapsed_ms || 0),
-      render: (v) => <span className="oo-num" style={{ color: msColor(v) }}>{ms(v)}</span>,
-    },
-    {
-      title: "tokens",
-      dataIndex: "prompt_tokens",
-      width: 150,
-      render: (v, r) => (
-        <Tooltip title={`提示 ${v} · 补全 ${r.completion_tokens} · 缓存 ${r.cache_tokens}`}>
-          <span className="oo-num" style={{ fontSize: 12.5 }}>
-            {Number(v) || 0}
-            <span style={{ color: "var(--ink-3)" }}> / </span>
-            {Number(r.completion_tokens) || 0}
-          </span>
+      render: (text) => (
+        <Tooltip title={normalizeCurrency(text)}>
+          <span style={{ fontSize: 12.5 }}>{normalizeCurrency(text)}</span>
         </Tooltip>
       ),
     },
     {
-      title: "缓存",
-      dataIndex: "cache_tokens",
-      width: 88,
-      render: (v) =>
-        Number(v) ? (
-          <span className="oo-num" style={{ color: "var(--green)" }}>{Number(v)}</span>
-        ) : (
-          <span style={{ color: "var(--ink-3)" }}>-</span>
-        ),
-    },
-    {
-      title: "计费",
-      dataIndex: "quota",
-      width: 108,
-      sorter: (a, b) => (Number(a.quota) || 0) - (Number(b.quota) || 0),
-      render: (q) => {
-        const n = Number(q) || 0;
-        return n ? (
-          <span className="oo-num">{fmtOd(n, perUnit, 6)}</span>
-        ) : (
-          <span style={{ color: "var(--ink-3)" }}>-</span>
-        );
-      },
-    },
-    {
       title: "IP",
       dataIndex: "ip",
-      width: 128,
+      width: 115,
       ellipsis: true,
       render: (v) => <span className="oo-num" style={{ color: "var(--ink-3)" }}>{v || "-"}</span>,
     },
     {
       title: "设备",
       dataIndex: "device",
-      width: 140,
+      width: 120,
       ellipsis: true,
       render: (v, r) =>
         v ? (
@@ -353,11 +362,26 @@ export default function LogPage() {
               style={{ width: 110 }}
               options={RANGE_OPTIONS}
             />
+            {isAdmin ? (
+              <Select
+                size="small"
+                value={group || undefined}
+                onChange={(v) => { setGroup(v || ""); setPage(1); }}
+                style={{ width: 130 }}
+                allowClear
+                showSearch
+                placeholder="全部分组"
+                options={filters.groups?.map((g) => ({
+                  value: g.name,
+                  label: `${g.label || g.name}（${g.count}）`,
+                }))}
+              />
+            ) : null}
             <Select
               size="small"
               value={model || undefined}
               onChange={(v) => { setModel(v || ""); setPage(1); }}
-              style={{ width: 170 }}
+              style={{ width: 165 }}
               allowClear
               showSearch
               placeholder="全部模型"
@@ -367,7 +391,7 @@ export default function LogPage() {
               size="small"
               value={tokenId || undefined}
               onChange={(v) => { setTokenId(v || 0); setPage(1); }}
-              style={{ width: 160 }}
+              style={{ width: 150 }}
               allowClear
               placeholder="全部密钥"
               options={filters.tokens.map((t) => ({ value: t.id, label: `${t.name}（${t.count}）` }))}
@@ -376,7 +400,7 @@ export default function LogPage() {
               size="small"
               placeholder={isAdmin ? "搜索用户 / 内容 / 模型" : "搜索内容 / 模型"}
               allowClear
-              style={{ width: 220 }}
+              style={{ width: 190 }}
               onChange={(e) => {
                 if (!e.target.value) {
                   setKeyword("");
@@ -464,9 +488,8 @@ export default function LogPage() {
           loading={loading}
           columns={columns}
           dataSource={items}
-          size="small"
           // scroll.x 必须 ≥ 各列宽度之和，否则带 ellipsis 的列会被压成 0 宽（table-layout: fixed）
-          scroll={{ x: isAdmin ? 2000 : 1480 }}
+          scroll={{ x: isAdmin ? 1720 : 1180 }}
           onRow={(r) => ({
             style: { cursor: "pointer" },
             // 键盘可达：整行是详情入口，只给 onClick 会让键盘用户无法打开

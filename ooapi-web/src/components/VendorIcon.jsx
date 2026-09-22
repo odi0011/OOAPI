@@ -17,6 +17,7 @@
 //   <ModelLabel model="deepseek-flash" />    模型名（自动带对应厂商图标）
 import React from "react";
 import { Tooltip } from "antd";
+import { TeamOutlined } from "@ant-design/icons";
 
 const ICON_DIR = "/icons";
 
@@ -242,3 +243,80 @@ export function ModelLabel({ model, size = 15, showVendor = false, className, st
     </span>
   );
 }
+
+/**
+ * 判断指定标识是否对应已知厂商
+ */
+export function hasKnownVendor(name) {
+  const k = String(name || "").toLowerCase().trim();
+  return Boolean(CHANNEL_ICON[k]);
+}
+
+/**
+ * 统一分组标签（独立 Tag，包含专属或推导图标 + 名称 + 悬浮提示）
+ * 解决全站分组图标关联错漏与 [+N] 折叠遮挡问题：
+ * 1. 若 meta 带有 vendors 数组且非空，优先按 vendors 渲染（单厂商显示单图标，多厂商显示叠放图标）
+ * 2. 若 meta 带有 vendor 单厂商，直接渲染对应图标
+ * 3. 若分组名直接命中已知厂商关键字（如 deepseek / openai / kimi 等），渲染对应厂商图标
+ * 4. 其余自定义/跨厂商分组，使用统一优雅的 TeamOutlined 图标兜底，绝不丢失图标或留空
+ * 5. 统一渲染为独立 chip/tag，包含倍率标识和完整悬停提示
+ */
+export function GroupTag({ name, meta, size = 13, className, style }) {
+  const n = String(name || "").trim();
+  if (!n || n === "default") {
+    return (
+      <span
+        className={`bui-chip bui-chip--muted ${className || ""}`}
+        style={{ fontSize: 12, height: 22, lineHeight: "22px", padding: "0 6px", ...style }}
+      >
+        公共
+      </span>
+    );
+  }
+
+  const vendors = Array.isArray(meta?.vendors) ? meta.vendors.filter(Boolean) : [];
+  let icon = null;
+  if (vendors.length === 1) {
+    icon = <VendorIcon type={vendors[0]} size={size} />;
+  } else if (vendors.length > 1) {
+    icon = <GroupVendorIcons vendors={vendors} size={size} />;
+  } else if (meta?.vendor) {
+    icon = <VendorIcon type={meta.vendor} size={size} />;
+  } else if (hasKnownVendor(n)) {
+    icon = <VendorIcon type={n} size={size} />;
+  } else {
+    icon = <TeamOutlined style={{ fontSize: size, color: "var(--ink-2)", flexShrink: 0 }} />;
+  }
+
+  const rate = Number(meta?.rate);
+  const tip = meta?.remark
+    ? `${n} · ${meta.remark}${rate && rate !== 1 ? `（倍率 ×${rate}）` : ""}`
+    : `分组：${n}${rate && rate !== 1 ? `（倍率 ×${rate}）` : ""}`;
+
+  return (
+    <Tooltip title={tip}>
+      <span
+        className={`bui-chip ${className || ""}`}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 4.5,
+          height: 22,
+          lineHeight: "22px",
+          padding: "0 7px",
+          fontSize: 12,
+          fontWeight: 500,
+          whiteSpace: "nowrap",
+          ...style,
+        }}
+      >
+        {icon}
+        <span className="oo-truncate" style={{ maxWidth: 120 }}>{n}</span>
+        {rate && rate !== 1 ? (
+          <span style={{ fontSize: 11, color: "var(--ink-3)", fontWeight: 400 }}>×{rate}</span>
+        ) : null}
+      </span>
+    </Tooltip>
+  );
+}
+

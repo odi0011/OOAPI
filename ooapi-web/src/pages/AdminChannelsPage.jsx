@@ -13,7 +13,7 @@ import { API } from "../services/api";
 import { fmtDate, CURRENCY_NAME, copyText } from "../services/format";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
-import { VendorIcon, ModelLabel, GroupVendorIcons } from "../components/VendorIcon";
+import { VendorIcon, ModelLabel, GroupVendorIcons, GroupTag } from "../components/VendorIcon";
 import ModelPicker from "../components/ModelPicker";
 import QuotaPanel, { QuotaInline } from "../components/ChannelQuota";
 
@@ -1893,21 +1893,17 @@ export default function AdminChannelsPage() {
     {
       title: "分组",
       dataIndex: "groups",
-      width: 160,
+      width: 180,
       render: (list) => {
         const gs = Array.isArray(list) ? list : [];
         if (!gs.length) return <Text type="secondary" style={{ fontSize: 12 }}>公共</Text>;
-        // 每个分组前显示「成员厂商」的折叠态图标（单厂商单图标 / 多厂商叠放）
-        const first = gs[0];
-        const meta = groups.find((x) => x.name === first);
+        // 每个分组独立渲染完整标签（厂商图标 + 分组名称 + 悬浮提示），不截断不折叠
         return (
-          <Tooltip title={gs.join("、")}>
-            <span style={{ display: "inline-flex", gap: 5, alignItems: "center", overflow: "hidden" }}>
-              <GroupVendorIcons vendors={meta?.vendors} size={12} />
-              <span className="bui-chip">{first}</span>
-              {gs.length > 1 ? <span className="bui-chip">+{gs.length - 1}</span> : null}
-            </span>
-          </Tooltip>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
+            {gs.map((g) => (
+              <GroupTag key={g} name={g} meta={groups.find((x) => x.name === g)} />
+            ))}
+          </div>
         );
       },
     },

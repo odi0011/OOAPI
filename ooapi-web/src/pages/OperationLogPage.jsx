@@ -26,7 +26,7 @@ const RANGE_OPTIONS = [
   { value: 1, label: "今天" },
   { value: 7, label: "近 7 天" },
   { value: 30, label: "近 30 天" },
-  { value: 0, label: "全部" },
+  { value: 0, label: "全部时间" },
 ];
 
 export default function OperationLogPage() {
@@ -43,7 +43,7 @@ export default function OperationLogPage() {
   const [loadError, setLoadError] = useState("");
   const [keyword, setKeyword] = useState("");
   const [type, setType] = useState(0);
-  const [days, setDays] = useState(7);
+  const [days, setDays] = useState(30);
   const [detail, setDetail] = useState(null);
   const { begin, isLatest } = useLatest();
 
@@ -80,8 +80,10 @@ export default function OperationLogPage() {
     {
       title: "时间",
       dataIndex: "created_at",
-      width: 158,
-      render: (t) => <span className="oo-num">{fmtDate(t)}</span>,
+      width: 165,
+      sorter: (a, b) => (a.created_at || 0) - (b.created_at || 0),
+      defaultSortOrder: "descend",
+      render: (t) => <span className="oo-num" style={{ whiteSpace: "nowrap" }}>{fmtDate(t)}</span>,
     },
     {
       title: "操作者",
@@ -191,7 +193,6 @@ export default function OperationLogPage() {
           loading={loading}
           columns={columns}
           dataSource={items}
-          size="small"
           scroll={{ x: 1000 }}
           onRow={(r) => ({
             style: { cursor: "pointer" },
