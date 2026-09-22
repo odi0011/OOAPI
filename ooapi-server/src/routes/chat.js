@@ -642,6 +642,8 @@ function aggregate(calls = []) {
     let models;
     let modelCaps;
     let routeGroup;
+    // 作用域必须覆盖后台 executeRun 调用，否则成功通过密钥校验后会在收尾处引用不到。
+    let usableKey = null;
     try {
       history = await getSessionMessages(session.id);
 
@@ -677,7 +679,7 @@ function aggregate(calls = []) {
       models = await availableModels(req.user, keyId);
       modelCaps = models.find((m) => m.id === model) || null;
       // 路由分组：必须通过密钥路由（分组决定渠道/模型/倍率），没有可用密钥不开跑
-      const usableKey = await activeKeyOf(req.user, keyId);
+      usableKey = await activeKeyOf(req.user, keyId);
       if (!usableKey) {
         finishRun(run);
         return fail(res, "请先在「令牌管理」创建可用密钥，并在对话页选择它（密钥的分组决定可用模型与倍率）", 403);
