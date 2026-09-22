@@ -13,7 +13,7 @@ import { authRequired, preAuthJwt } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getPrice, computeCost, splitTokens, estimateTokens, loadPrices, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
-import { groupConfigOf, applyGroupRate, parseGroupKey } from "../services/group-rate.js";
+import { groupConfigOf, applyGroupRate, parseGroupKey, displayGroupName } from "../services/group-rate.js";
 import { allPublicModels, resolveAliasSync } from "../services/models.js";
 import { rowToChannel, channelInGroup, collectAvailableModels } from "../services/router.js";
 import { getBoolOption } from "../config.js";
