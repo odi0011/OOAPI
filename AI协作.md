@@ -2945,6 +2945,73 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
   拿回语焉不详的 422。已分离两个 try。
 
 
+| 2026-09-22 | **第 49 批 · WorkBuddy 深度修复 + 登录规范统一 + Kiro 独立 + 新增厂商图标**
+
+  用户一次报了 8 个问题，逐个实测定位（全部在线上用真实账号验证）。
+
+  **一、WorkBuddy：四个问题其实是一条链路上的四个断点**
+
+  ① **绑定后点「添加」报错，但渠道已经出现在表格里**
+    根因：绑定路径建渠道时 `other` 里还没有凭据（凭据在服务端等 claim 写入），
+    而「订阅 OAuth 入池前凭据校验」强制执行 `adapter.verify` → 失败 → 接口 400，
+    但渠道**已经 INSERT 成功**；前端因报错走不到 claim，凭据永远写不进去 → 死结。
+    修：带 bindTicket 时跳过入池校验；渠道先以禁用态建出、claim 成功再启用
+    （避免「无凭据渠道在池中被调度并连续失败」的窗口期）；
+    claim 失败则删掉空渠道并明确报错。
+  ② **重新认证还让选国内/国际**：WorkBuddy 的 realm 可由凭据 JWT 的 `iss` 自动判定，
+    重新绑定不该再问；只有 Qoder 需要（它的区域决定 OAuth 端点，拿 token 前无法推断）。
+  ③ **绑定后检测报 404**：实测真实端点是 **`/v2/chat/completions`**（不是 /v1）——
+    `/v1/chat/completions`、`/v1/models`、`/v2/plugin/models` 全部 404。
+    早期版本按社区文档写成 /v1，所以「绑定能成、一检测就 404」。
+  ④ **有积分制却显示「不支持」**：实测积分接口
+    `POST {billing域}/v2/billing/meter/get-user-resource` 返回 200
+    （真实数据：TotalDosage 220、5 个积分包）。已实现并注册，额度列现在显示积分。
+
+  重写适配器时实测确认的四个硬约束（都写进代码注释）：
+  · **域必须与账号 realm 一致**：国际账号（JWT iss=workbuddy.ai）打国内域会被
+    APISIX 网关 401（返回 HTML），**而这个 401 极像 token 过期** ——
+    实测 token 有效期到 2027 年却一直 401，真因只是域错了；
+  · **首条消息必须是 system**，否则 400 `code 11128`；
+  · UA 必须**双段**（`CLI/x CodeBuddy/x`），单段被 `/v3/config` 以 12403 拒；
+  · **头不能重复设置**：openai-compat 用大写 `Content-Type`/`Authorization`，
+    我的 extra_headers 又放了一份，而 Fetch 的 Headers 对同名头是**逗号拼接**
+    而非覆盖 → 实际发出 `Bearer A, Bearer A` → 必然 401。
+    这个坑排查成本很高（同一 token 手打 curl 200、走适配器 401，
+    一度怀疑头名大小写敏感，实测大小写本身无影响）。
+
+  线上验收：测试渠道通过（回复正常）、模型清单 21 个、积分 119/220。
+
+  **二、登录方式规范统一（用户：「没统一规范」）**
+  盘 26 个厂商后发现登录方式分裂成三套：早期 GLM/豆包/通义用 `["browser"]`（对）、
+  Kimi/DeepSeek 用 `["paste"]`+entryUrl（对），后期 MiMo/MiniMax/StepFun 写成
+  `["paste","capture"]` → 弹窗裂出两个按钮，而 `capture` **前端没有渲染分支 → 空白表单**。
+  用户判断「这俩实际是一个东西」是对的：capture 就是 paste 面板里那个抓取按钮。
+  已归一：每个接入方式只出一个登录入口，能抓取的直接叫「浏览器登录」。
+  线上 UI 验收 19/19。
+
+  **三、Kiro 独立成厂商**（用户批评「workbuddy 都单独拉成厂商了，kiro 为啥寄居在 claude 里」）
+  批评成立。归属该按「用谁的订阅/账号」定，不该按「跑什么模型」定：
+  Kiro 是 AWS 产品、凭据 kiro-auth-token.json，与 anthropic 下的 claude-oauth
+  （Claude Code CLI 凭据）是两条完全不同的链路。已提为独立厂商「Kiro（AWS）」，
+  vendor 仍标 anthropic（模型归属 ≠ 账号归属）。
+  连带修：厂商列表图标原取 `vendor`，导致 Kiro 显示成 Claude 图标 ——
+  新增下发 `icon`（取厂商 key），两者语义分开。
+
+  **四、新增厂商图标（用户：「你刚刚新增的厂商图标呢？都测试了吗？」）**
+  实测确认批评成立：7 个新厂商**全部掉到平台 logo**。
+  下载过程又踩了一次「加了不测试」：第一版直接抓官网 favicon，
+  **7 个里只有 1 个是真图标**，其余 6 个拿到 HTML/占位图（文件大小与 Content-Type 都正常，
+  看着像成功）。渲染成对照图人工核对才发现。
+  改用 Google favicon 服务 + PNG 魔数校验，重下后渲染对照图逐一确认。
+  Meta 暂无可用官方图标，用平台 logo 兜底并在注释标明。
+
+  **五、其他**
+  · OpenCode 凭据 tab 点了没反应：`credId` 对 API Key 型硬编码返回 `"api"`，
+    而选项 id 是 `m.key` → GO（key=`go`）的 value 永远匹配不上选中态。已改为同源。
+  · API Key 标题旁加「获取 Key」链接（用户要求）：25 个厂商写入官方取 Key 页面地址。
+  · 新增 tests/workbuddy.test.mjs 23 项。
+
+
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 
 > 目标：把开源社区已有的「网页版反代 / 工具类反代」按**厂商**归类接入平台，
