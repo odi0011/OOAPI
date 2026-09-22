@@ -23,10 +23,40 @@
 // 不变量：shown ∪ collapsed = 全部窗口，且 shown ∩ collapsed = ∅（不丢数据）。
 export const DEFAULT_MAX_BARS = 2;
 
+/**
+ * 从窗口标签文本解析秒数：「5h」→18000、「7d」→604800、「30d」→2592000、「30m」→1800。
+ *
+ * 为什么必须解析 tag 而不能只看 windowSeconds：**上游给的窗口常常只有 tag**。
+ * antigravity 是 `buckets[].window` 字符串、部分快照里 windowSeconds 直接缺失，
+ * 实测预览时 5h 排在 7d 后面 —— 递进规则整个失效，用户看到的顺序像是随机。
+ * 秒数是规则的唯一依据，缺了它规则就不成立，所以这里补齐换算。
+ */
+export function parseWindowSeconds(w) {
+  const direct = Number(w?.windowSeconds);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const text = String(w?.tag || w?.label || "").trim().toLowerCase();
+  if (!text) return Number.POSITIVE_INFINITY;
+  // 取最后一段（label 形如「Gemini Models · weekly」，窗口在后半段）
+  const tail = (text.split(/[·|/]/).pop() || "").trim();
+  const m = tail.match(/(\d+(?:\.\d+)?)\s*(m|min|h|d|w)\b/);
+  if (m) {
+    const n = Number(m[1]);
+    const unit = m[2];
+    if (unit === "m" || unit === "min") return n * 60;
+    if (unit === "h") return n * 3600;
+    if (unit === "d") return n * 86400;
+    if (unit === "w") return n * 7 * 86400;
+  }
+  if (tail.includes("hourly")) return 3600;
+  if (tail.includes("daily")) return 86400;
+  if (tail.includes("weekly")) return 7 * 86400;
+  if (tail.includes("monthly")) return 30 * 86400;
+  return Number.POSITIVE_INFINITY;
+}
+
 /** 窗口长度（秒）；未知返回 Infinity 以便排到最后 */
 export function windowSecondsOf(w) {
-  const s = Number(w?.windowSeconds);
-  return Number.isFinite(s) && s > 0 ? s : Number.POSITIVE_INFINITY;
+  return parseWindowSeconds(w);
 }
 
 /** 是否已用完（99.95% 向上取整会显示成 100%，所以用它作阈值） */

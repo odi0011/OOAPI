@@ -277,9 +277,40 @@ console.log("\n=== ⑨ 额度条折叠规范 ===");
 
   ck("数量不超上限时原样返回", qo.pickVisibleWindows([W(18000, 1, "5h")]).shown.length === 1);
 
+  // **只有 tag、没有 windowSeconds** 是真实上游的常见形态（antigravity 的
+  // buckets[].window 就是字符串）。此时必须从 tag 解析出长度，否则整条递进规则失效。
+  ck("tag '5h' 解析为 18000 秒", qo.parseWindowSeconds({ tag: "5h" }) === 18000);
+  ck("tag '7d' 解析为 604800 秒", qo.parseWindowSeconds({ tag: "7d" }) === 604800);
+  ck("tag '30d' 解析为 2592000 秒", qo.parseWindowSeconds({ tag: "30d" }) === 2592000);
+  ck("tag '30m' 解析为 1800 秒", qo.parseWindowSeconds({ tag: "30m" }) === 1800);
+  ck("label 尾段 'weekly' 解析为 7 天", qo.parseWindowSeconds({ label: "Gemini Models · weekly" }) === 604800);
+  ck("windowSeconds 优先于 tag", qo.parseWindowSeconds({ windowSeconds: 3600, tag: "7d" }) === 3600);
+  ck("无法识别时为 Infinity（排最后）", qo.parseWindowSeconds({ tag: "额度" }) === Infinity);
+
+  // 端到端：只有 tag 时也要按短→长排序（这是预览截图里发现的真实缺陷）
+  const tagOnly = [{ tag: "7d", usedPercent: 10 }, { tag: "5h", usedPercent: 20 }];
+  const r5 = qo.pickVisibleWindows(tagOnly);
+  ck("只有 tag 时 5h 排在 7d 前面", r5.shown[0].tag === "5h", JSON.stringify(r5.shown.map((w) => w.tag)));
+
+  const tagOnly4 = [
+    { tag: "7d", usedPercent: 10, scope: "Gemini" }, { tag: "5h", usedPercent: 20, scope: "Gemini" },
+    { tag: "7d", usedPercent: 15, scope: "Claude" }, { tag: "5h", usedPercent: 5, scope: "Claude" },
+  ];
+  const r6 = qo.pickVisibleWindows(tagOnly4);
+  ck("只有 tag 时 4 个窗口折叠成 2 条", r6.shown.length === 2 && r6.collapsed.length === 2);
+  ck("只有 tag 时主行都是 5h", r6.shown.every((w) => w.tag === "5h"), JSON.stringify(r6.shown.map((w) => w.tag)));
+
   // 余额/积分必须是第一个 tag（用户要求：折叠时余额显示为第一个）
   const cq = SRC("../../ooapi-web/src/components/ChannelQuota.jsx");
   ck("余额 chips 用 unshift 排到最前", /if \(hasBalance\) chips\.unshift\(/.test(cq));
+
+  // `+N` 必须同时统计「放不下的 chips」与「折叠的窗口」。
+  // 原来只算窗口：纯积分渠道（WorkBuddy 6 个积分包、无窗口）会只显示前 3 个、
+  // 既没有 +N 也无处展开，剩下 3 个静默消失（预览截图里发现）。
+  ck("hiddenCount 同时计入 chips 与窗口", /const hiddenCount = hiddenChips\.length \+ collapsedPre\.length;/.test(cq));
+  ck("折叠行只渲染一个 +N（不再平铺被折叠的 chips）",
+    /\{hiddenCount > 0 \? \(/.test(cq) && !/shownWins\.length \? chips : restChips/.test(cq));
+  ck("悬浮提示同时列出 chips 与窗口", /hiddenChips\.map/.test(cq) && /collapsedWins\.map/.test(cq));
 }
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);

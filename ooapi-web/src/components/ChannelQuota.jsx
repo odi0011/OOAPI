@@ -396,6 +396,10 @@ export function QuotaInline({ quota, stats }) {
 
   const shownChips = chips.slice(0, INLINE_MAX_PILLS);
   const restChips = chips.slice(INLINE_MAX_PILLS);
+  // 主行放额度条时，所有 chips 都只能靠折叠行展示；无额度条时主行承载前几个 chips
+  const hiddenChips = wins.length ? chips : restChips;
+  const { shown: shownWinsPre, collapsed: collapsedPre } = pickVisibleWindows(wins);
+  const hiddenCount = hiddenChips.length + collapsedPre.length;
 
   // 分组集合：scope 缺失时从 label 回推（老快照），两处口径必须一致，
   // 否则会出现「判出多分组但取不到 scope」→ 前缀渲染成空。
@@ -408,7 +412,8 @@ export function QuotaInline({ quota, stats }) {
 
   if (!chips.length && !wins.length && !hasStats) return null;
 
-  const { shown: shownWins, collapsed: collapsedWins } = pickVisibleWindows(wins);
+  const shownWins = shownWinsPre;
+  const collapsedWins = collapsedPre;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 150 }}>
@@ -449,30 +454,33 @@ export function QuotaInline({ quota, stats }) {
         </div>
       ) : null}
 
-      {/* ③ 折叠行：信息 chips（余额/积分排第一）+ 被折叠的窗口条。
-          悬浮 `+N` 给全量 —— 用户要求「下面是折叠的额度条，悬浮显示全部」。 */}
-      {(shownWins.length ? chips.length : 0) || collapsedWins.length ? (
+      {/* ③ 折叠行：只有一个 `+N`，悬浮列出全部被折叠项 ——
+          用户要求「下面是折叠的额度条，超出宽度的就 +xx，鼠标悬浮显示全部的即可」。
+
+          两个必须踩对的点（都在预览截图里发现过）：
+          ① `+N` 要**同时统计折叠的窗口与放不下的 chips**。原来只算窗口，
+             于是「没有窗口但有 6 个积分包」的 WorkBuddy 只显示前 3 个、
+             既没有 +N 也无处展开，剩下 3 个静默消失。
+          ② 折叠行**只放 `+N`**，不要再把被折叠的 chips 平铺一遍 ——
+             试过那样，结果是 6 个 chip 全显示 + 一个多余且自相矛盾的 `+3`。 */}
+      {hiddenCount > 0 ? (
         <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", minWidth: 0 }}>
-          {(shownWins.length ? chips : []).map((x) => (
-            <span key={x.key} style={{ minWidth: 0, flexShrink: 1, display: "inline-flex" }}>
-              <InfoPill tone={x.tone}>{x.node}</InfoPill>
+          <Tooltip
+            title={
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 220 }}>
+                {hiddenChips.map((x) => (
+                  <div key={x.key}>{x.node}</div>
+                ))}
+                {collapsedWins.map((w, i) => (
+                  <WindowRow key={w.key || i} w={w} index={i + shownWins.length} showScope={multiScope} />
+                ))}
+              </div>
+            }
+          >
+            <span className="bui-chip" style={{ fontSize: 11, flexShrink: 0 }}>
+              +{hiddenCount}
             </span>
-          ))}
-          {collapsedWins.length ? (
-            <Tooltip
-              title={
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 220 }}>
-                  {collapsedWins.map((w, i) => (
-                    <WindowRow key={w.key || i} w={w} index={i + shownWins.length} showScope={multiScope} />
-                  ))}
-                </div>
-              }
-            >
-              <span className="bui-chip" style={{ fontSize: 11, flexShrink: 0 }}>
-                +{collapsedWins.length}
-              </span>
-            </Tooltip>
-          ) : null}
+          </Tooltip>
         </div>
       ) : null}
     </div>
