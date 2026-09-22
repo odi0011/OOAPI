@@ -311,6 +311,35 @@ console.log("\n=== ⑨ 额度条折叠规范 ===");
   ck("折叠行只渲染一个 +N（不再平铺被折叠的 chips）",
     /\{hiddenCount > 0 \? \(/.test(cq) && !/shownWins\.length \? chips : restChips/.test(cq));
   ck("悬浮提示同时列出 chips 与窗口", /hiddenChips\.map/.test(cq) && /collapsedWins\.map/.test(cq));
+
+  // 余额/积分必须**常驻可见**，不能被 `+N` 吞掉。
+  // 线上实测（导出生产库真实 quota 后渲染）：#13/#14 的 free 账号余额 1000、
+  // #42 的 119 积分，原先都只显示一个 `+N` —— 用户完全看不到还剩多少额度。
+  ck("余额 chip 被单独摘出（balanceChip）", /const balanceChip = chips\.find/.test(cq));
+  ck("其余 chips 排除余额后再折叠",
+    /const otherChips = chips\.filter\(\(x\) => x\.key !== "bal"\)/.test(cq));
+  ck("折叠计数不含余额（+N 与实际隐藏项对齐）",
+    /const hiddenChips = wins\.length \? otherChips : restChips;/.test(cq));
+  ck("有额度条时余额也在折叠行第一位", /\{hiddenCount > 0 \|\| balanceChip \? \(/.test(cq));
+  ck("无额度条时余额是主行第一个 tag", /\{balanceChip \? \(/.test(cq));
+
+  // 线上真实数据的回归：Google 那 4 个窗口只有 label、没有 tag/scope/windowSeconds，
+  // 必须能从 label 解析出 5h/weekly 并正确递进（否则 4 条挤在一起看不出主次）
+  const gemini = [
+    { label: "Gemini Models · weekly", usedPercent: 17.1 },
+    { label: "Gemini Models · 5h", usedPercent: 0 },
+    { label: "Claude and GPT models · weekly", usedPercent: 0 },
+    { label: "Claude and GPT models · 5h", usedPercent: 0 },
+  ];
+  ck("线上 Gemini 的 weekly 标签解析为 7 天",
+    qo.parseWindowSeconds(gemini[0]) === 604800, String(qo.parseWindowSeconds(gemini[0])));
+  ck("线上 Gemini 的 5h 标签解析为 18000 秒",
+    qo.parseWindowSeconds(gemini[1]) === 18000, String(qo.parseWindowSeconds(gemini[1])));
+  const gp = qo.pickVisibleWindows(gemini);
+  ck("线上 4 窗口折叠为 2 条主行", gp.shown.length === 2 && gp.collapsed.length === 2,
+    JSON.stringify([gp.shown.length, gp.collapsed.length]));
+  ck("主行是两个 5h（短窗口优先）", gp.shown.every((w) => /5h/.test(w.label)),
+    JSON.stringify(gp.shown.map((w) => w.label)));
 }
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);

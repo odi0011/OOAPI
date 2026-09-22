@@ -394,11 +394,21 @@ export function QuotaInline({ quota, stats }) {
   if (hasBalance) chips.unshift({ key: "bal", node: <>余额 {c.balance}{c.unit ? ` ${c.unit}` : ""}</> });
   if (hasPrepaid) chips.push({ key: "pre", node: <>预付费 ${Number(c.prepaidBalance).toFixed(2)}</> });
 
-  const shownChips = chips.slice(0, INLINE_MAX_PILLS);
-  const restChips = chips.slice(INLINE_MAX_PILLS);
-  // 主行放额度条时，所有 chips 都只能靠折叠行展示；无额度条时主行承载前几个 chips
-  const hiddenChips = wins.length ? chips : restChips;
+  // 余额/积分 chip 单独摘出来（chips 里 key==="bal" 那条）常驻展示。
+  // 用户明确要求：「workbuddy 或者 gpt 的 free 带积分的这种，如果被折叠了，
+  // 则余额显示为第一个 tag」—— 它回答的是「这个号还能不能用」，是最该常驻的一条。
+  // 线上实测（#13/#14 free 账号余额 1000、#42 的 119 积分）原先全被 `+N` 吞掉：
+  // 用户只看到一个 `+N`，完全不知道还有多少额度。
+  const balanceChip = chips.find((x) => x.key === "bal") || null;
+  const otherChips = chips.filter((x) => x.key !== "bal");
+
+  const shownChips = otherChips.slice(0, INLINE_MAX_PILLS);
+  const restChips = otherChips.slice(INLINE_MAX_PILLS);
+  // 主行放额度条时，其余 chips 只能靠折叠行展示；无额度条时主行承载前几个
+  const hiddenChips = wins.length ? otherChips : restChips;
   const { shown: shownWinsPre, collapsed: collapsedPre } = pickVisibleWindows(wins);
+  // `+N` 只统计被折叠的窗口与被折叠的其它 chips；余额已常驻，不能再计入
+  // （否则计数与实际隐藏项对不上，用户点开发现少一个）
   const hiddenCount = hiddenChips.length + collapsedPre.length;
 
   // 分组集合：scope 缺失时从 label 回推（老快照），两处口径必须一致，
@@ -446,6 +456,13 @@ export function QuotaInline({ quota, stats }) {
         </div>
       ) : chips.length ? (
         <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", minWidth: 0 }}>
+          {/* 无额度条时（纯积分渠道）主行就是 chip 行 —— 余额必须是**第一个** tag
+              （用户原话：「如果被折叠了，则余额显示为第一个 tag」）。 */}
+          {balanceChip ? (
+            <span style={{ minWidth: 0, flexShrink: 1, display: "inline-flex" }}>
+              <InfoPill tone={balanceChip.tone}>{balanceChip.node}</InfoPill>
+            </span>
+          ) : null}
           {shownChips.map((x) => (
             <span key={x.key} style={{ minWidth: 0, flexShrink: 1, display: "inline-flex" }}>
               <InfoPill tone={x.tone}>{x.node}</InfoPill>
@@ -463,24 +480,33 @@ export function QuotaInline({ quota, stats }) {
              既没有 +N 也无处展开，剩下 3 个静默消失。
           ② 折叠行**只放 `+N`**，不要再把被折叠的 chips 平铺一遍 ——
              试过那样，结果是 6 个 chip 全显示 + 一个多余且自相矛盾的 `+3`。 */}
-      {hiddenCount > 0 ? (
+      {hiddenCount > 0 || balanceChip ? (
         <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", minWidth: 0 }}>
-          <Tooltip
-            title={
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 220 }}>
-                {hiddenChips.map((x) => (
-                  <div key={x.key}>{x.node}</div>
-                ))}
-                {collapsedWins.map((w, i) => (
-                  <WindowRow key={w.key || i} w={w} index={i + shownWins.length} showScope={multiScope} />
-                ))}
-              </div>
-            }
-          >
-            <span className="bui-chip" style={{ fontSize: 11, flexShrink: 0 }}>
-              +{hiddenCount}
+          {/* 余额/积分常驻在第一位（用户要求：折叠时余额必须是第一个 tag）。
+              它不参与折叠计数，所以即使其余全部收进 `+N` 也始终可见。 */}
+          {balanceChip ? (
+            <span style={{ minWidth: 0, flexShrink: 1, display: "inline-flex" }}>
+              <InfoPill tone={balanceChip.tone}>{balanceChip.node}</InfoPill>
             </span>
-          </Tooltip>
+          ) : null}
+          {hiddenCount > 0 ? (
+            <Tooltip
+              title={
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 220 }}>
+                  {hiddenChips.map((x) => (
+                    <div key={x.key}>{x.node}</div>
+                  ))}
+                  {collapsedWins.map((w, i) => (
+                    <WindowRow key={w.key || i} w={w} index={i + shownWins.length} showScope={multiScope} />
+                  ))}
+                </div>
+              }
+            >
+              <span className="bui-chip" style={{ fontSize: 11, flexShrink: 0 }}>
+                +{hiddenCount}
+              </span>
+            </Tooltip>
+          ) : null}
         </div>
       ) : null}
     </div>
