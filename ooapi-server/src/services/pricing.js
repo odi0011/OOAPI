@@ -473,7 +473,8 @@ export function estimateTokens(text) {
 export function splitTokens({ prompt, output, upstreamTotal }) {
   const u = normalizeUsage(upstreamTotal);
   if (u.hasDetail) {
-    return { promptTokens: u.promptTokens, completionTokens: u.completionTokens, cacheTokens: u.cacheTokens };
+    // 唯一「精确」的分支：上游给了 input/output 明细，直接用
+    return { promptTokens: u.promptTokens, completionTokens: u.completionTokens, cacheTokens: u.cacheTokens, estimated: false };
   }
   const estP = estimateTokens(prompt);
   const estC = estimateTokens(output);
@@ -484,13 +485,19 @@ export function splitTokens({ prompt, output, upstreamTotal }) {
       promptTokens: u.hasPrompt ? u.promptTokens : estP,
       completionTokens: u.hasCompletion ? u.completionTokens : estC,
       cacheTokens: u.cacheTokens,
+      // 只要有一侧是估算的，整体就算 estimated —— 不能与精确计费混同口径
+      estimated: !u.hasPrompt || !u.hasCompletion,
     };
   }
   if (u.totalTokens > 0 && estP + estC > 0) {
     const p = Math.max(1, Math.round((u.totalTokens * estP) / (estP + estC)));
-    return { promptTokens: p, completionTokens: Math.max(1, u.totalTokens - p), cacheTokens: 0 };
+    return { promptTokens: p, completionTokens: Math.max(1, u.totalTokens - p), cacheTokens: 0, estimated: true };
   }
-  return { promptTokens: estP, completionTokens: estC, cacheTokens: 0 };
+  // 上游完全没给 usage：两侧都靠字符估算。
+  // 网页反代渠道（mimo / minimax / stepfun）走的就是这条 —— 它们的响应里
+  // 根本没有 usage，长上下文或思考型请求会系统性偏差（第 46 批复审点名）。
+  // 计费仍按估算走（不能不计费），但必须**显式标记**，让调用方/日志能区分。
+  return { promptTokens: estP, completionTokens: estC, cacheTokens: 0, estimated: true };
 }
 
 // 金额展示（OD 币）

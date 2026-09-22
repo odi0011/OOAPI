@@ -46,6 +46,13 @@ html[data-theme="light"] {
   --accent-tint: oklch(96% 0.019 252.878);
   --green: oklch(60.3% 0.155 150.883);
   --green-tint: oklch(95.8% 0.017 159.118);
+  /* 调用记录小竖条的「成功绿」—— 与 --green 分开定义。
+     用户反馈：「那个小条条绿色的颜色换一个换亮绿色，但是不要太亮，现在这个绿色太暗了」。
+     --green（L=60.3%）在表格白底上确实发暗，几像素宽的小条尤其显脏；
+     这里单独提到 L=73%、色相略偏青（152），清新但不刺眼 ——
+     再亮（>80%）在白底上会发荧光，反而失去「健康」的语义。
+     只作用于 .oo-uptime-bar，不动全局语义色（按钮/标签/tint 仍用 --green）。 */
+  --green-bar: oklch(73% 0.166 152);
   --orange: oklch(68.9% 0.179 49.902);
   --orange-tint: oklch(96.4% 0.021 67.581);
   --red: oklch(62.1% 0.192 23.042);
@@ -115,6 +122,8 @@ html[data-theme="dark"] {
   --accent-tint: oklch(68% 0.173 253.301 / 0.16);
   --green: oklch(70.5% 0.154 153.814);
   --green-tint: oklch(70.5% 0.154 153.814 / 0.14);
+  /* 暗色下 --green 已经是 L=70.5%，小竖条只需略微提亮拉开与背景的对比 */
+  --green-bar: oklch(76% 0.163 153);
   --orange: oklch(74.6% 0.156 55.642);
   --orange-tint: oklch(74.6% 0.156 55.642 / 0.14);
   --red: oklch(66.6% 0.18 21.433);
@@ -1253,7 +1262,9 @@ h1, h2, h3, h4 {
   width: 4px;
   height: 100%;
   border-radius: 2px;
-  background: var(--green);
+  /* 用 --green-bar 而不是 --green：小竖条面积小，原来的 L=60.3% 在白底上偏暗，
+     见变量定义处的说明（用户要求「换亮绿色但不要太亮」）。 */
+  background: var(--green-bar);
   transition: transform 140ms ease, filter 140ms ease;
   transform-origin: bottom center;
   cursor: default;

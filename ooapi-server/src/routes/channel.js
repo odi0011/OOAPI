@@ -69,6 +69,30 @@ function sweepPendingCredentials() {
     if (nowMs - v.at > PENDING_CRED_TTL_MS) pendingCredentials.delete(k);
   }
 }
+
+/**
+ * 设备授权（一键绑定）是**厂商专属**流程：Kiro 的授权流只会产出 Kiro 凭据，
+ * WorkBuddy 的只会产出 WorkBuddy 凭据。而 `/devices/poll`、`/devices/claim` 的
+ * 目标渠道由调用方传 `channel_id` 决定 —— 两者原本没有任何校验，等于允许
+ * 「拿 A 厂商的授权结果覆盖 B 厂商渠道的凭据」：目标渠道原有账号会被冲掉，
+ * 新凭据又必然解析不出 token，渠道从此静默不可用。
+ *
+ * 因此写回前强制「会话归属厂商 === 目标渠道类型」。厂商键与渠道类型键是同一套
+ * （kiro / workbuddy / qoder），直接等值比较即可；vendor 一律取服务端会话里
+ * 记录的那个，不信请求体（体里的只能用于展示）。
+ */
+function assertBindVendorFits(channelType, vendor) {
+  const v = String(vendor || "").trim();
+  const t = String(channelType || "").trim();
+  if (!v) {
+    throw Object.assign(new Error("绑定会话缺少厂商信息，请重新发起一键绑定"), { code: "BIND_VENDOR_MISMATCH" });
+  }
+  if (t !== v) {
+    throw Object.assign(new Error(`绑定会话属于「${v}」，不能写入「${t}」渠道；请对该渠道发起对应的绑定`), {
+      code: "BIND_VENDOR_MISMATCH",
+    });
+  }
+}
 router.use(adminRequired);
 
 // 渠道写操作会改变「平台已注册模型」集合（models 字段），写成功后让登记表缓存失效，
@@ -671,6 +695,8 @@ function rowToResp(r, { withKey = false } = {}) {
     fingerprint_mode: String(other.fingerprint_mode || "stable"),
     context_billing: String(other.context_billing || "auto"),
     namespace: String(other.namespace || ""),
+    // 检测超时预算（秒，0 = 用默认）：给响应本来就慢的模型单独放宽
+    probe_timeout_sec: Math.round((Number(other.probe_timeout_ms) || 0) / 1000),
     // 账号额度快照（订阅/网页版账号）：只在管理员查过之后才有值
     quota: safeJson(r.quota),
     quota_time: Number(r.quota_time) || 0,
@@ -680,7 +706,11 @@ function rowToResp(r, { withKey = false } = {}) {
     // 该渠道累计（额度列要显示：次数 / token / 消费）
     totals: r._totals || null,
     last_used_time: Number(r.last_used_time) || 0,
+    // 两个耗时都给前端：ttft_ms 是展示与慢判定口径（首 Token），
+    // response_time 是总耗时（含生成）。老数据没有 ttft_ms 时退化为总耗时，
+    // 前端不必区分「有没有这个字段」。
     response_time: Number(r.response_time) || 0,
+    ttft_ms: Number(r.ttft_ms) || Number(r.response_time) || 0,
     tested_time: Number(r.tested_time) || 0,
     remark: r.remark || "",
     created_time: Number(r.created_time) || 0,
@@ -837,11 +867,15 @@ router.get(
 // 如果它在我们写回之后才落库，会把旧 access/refresh_token 覆盖回来（管理员看到
 // 「凭据已更新」但库里其实是旧账号）。这里用 other.cred_epoch 代次解决：
 // 写回时 +1，刷新写回带上发起时的代次，不一致就丢弃本次刷新（见 auth-store.js）。
-async function applyCredentialToChannel({ id, type, method, credential }) {
+async function applyCredentialToChannel({ id, type, method, credential, vendor }) {
   const [rows] = await pool.query("SELECT id, type, api_key, other FROM channels WHERE id = ?", [id]);
   if (!rows.length) throw Object.assign(new Error("渠道不存在"), { code: "LOGIN_BAD_PARAMS" });
+  const targetType = String(type || rows[0].type);
+  // 设备授权路径必须带 vendor（服务端会话里的归属厂商），此处强校验；
+  // 手工粘贴路径（/recover 等）不传 vendor，不受影响。
+  if (vendor) assertBindVendorFits(targetType, vendor);
   const methodKey = method || methodOf(rows[0]);
-  const adapter = await adapterOf(type || rows[0].type, methodKey);
+  const adapter = await adapterOf(targetType, methodKey);
   if (!adapter) throw Object.assign(new Error("该接入方式不支持凭据写回"), { code: "LOGIN_BAD_PARAMS" });
   const raw = typeof credential === "string" ? credential : JSON.stringify(credential || {});
   // 上限兜底：HTTP 层允许 1MB，凭据不该有这么大的；顺带防住畸形输入
@@ -2008,6 +2042,21 @@ router.post(
     const adapter = await adapterOf(type, methodKey);
     if (!adapter) return fail(res, `${provider.name} 适配器不可用`);
 
+    // 一键绑定：提交的 ticket 必须属于本厂商。这一步放在建渠道之前 —— 否则会先
+    // 建出一条类型不符的渠道，等 /devices/claim 才发现不匹配再删掉（用户看到渠道
+    // 闪一下就没了）。这里直接给出明确报错，什么都不写库。
+    const bindTicket = String(rest.bindTicket || "").trim();
+    if (bindTicket) {
+      sweepPendingCredentials();
+      const rec = pendingCredentials.get(bindTicket);
+      if (!rec) return fail(res, "绑定凭据已过期或不存在，请重新发起一键绑定", 410);
+      try {
+        assertBindVendorFits(type, rec.vendor);
+      } catch (e) {
+        return fail(res, e.message, 400);
+      }
+    }
+
     // 表单里的模型/分组/优先级/权重/自动禁用必须真正落库（此前 relay 提交被全部丢弃，
     // 用户改了等于没改）；未提交的字段在更新时保持原值
     // 模型范围：留空 = 该厂商全部模型（模型归厂商，不归账号），
@@ -2427,7 +2476,13 @@ router.post(
     const apiKey = String(b.api_key || "").trim();
     if (!apiKey) return fail(res, "请填写 API Key");
     const models = Array.isArray(b.models) ? b.models.join(",") : String(b.models || "");
-    if (!models.trim()) return fail(res, "请至少选择一个模型");
+    // 模型范围留空 = 该厂商全部已注册模型（与反代/订阅路径、与 router.parseModels
+    // 的口径一致，见 services/router.js 的注释）。早先这里硬性要求至少一个模型，
+    // 造成死锁：**新建渠道时拿不到模型清单**（fetch-models 需要先有渠道，
+    // 而保存又要求有模型），管理员被卡在中间动不了 —— 实测反馈的原话是
+    // 「输入 key 之后就应该能根据 key 获取模型啊」。
+    // 真正的保护不在这一行，而在「模型必须有归属厂商」：空值走厂商全量，
+    // 显式声明才收窄范围，两者都比「必须填一个」更贴近实际可用性。
     const baseUrl = String(b.base_url || mCfg.baseUrl || "").trim().slice(0, 255);
     if (b.base_url) {
       try {
@@ -2577,6 +2632,16 @@ router.put(
       otherPatch.context_billing = m;
     }
     if (b.namespace !== undefined) otherPatch.namespace = String(b.namespace).trim().slice(0, 64);
+    // 检测超时预算（秒 → 存毫秒）：给「响应本来就慢」的模型单独放宽。
+    // 用户实测反馈：「如果这个渠道这个厂商本身响应就很慢的话则可以根据具体的模型
+    // 进行这个响应时间的配置，有的模型好像响应时间就是很慢」—— 实测确实如此，
+    // gpt-5.6 / glm-5.3 这类大档位光思考就可能几分钟，统一 90s 预算下每次都报超时。
+    // 上限 30 分钟（channel-probe.probeBudgetMs 里同样有钳制）。
+    if (b.probe_timeout_sec !== undefined) {
+      const n = safeInt(b.probe_timeout_sec, { min: 0, max: 1800 });
+      if (n === null) return fail(res, "检测超时需在 0~1800 秒之间（0 = 用默认值）");
+      otherPatch.probe_timeout_ms = n * 1000; // 0 表示回落默认
+    }
     if (Object.keys(otherPatch).length) {
       // 与其它写 other 的路径一致：先解析当前 other 再合并，不整列覆盖
       const [cur2] = await pool.query("SELECT other FROM channels WHERE id = ?", [id]);
@@ -2620,13 +2685,18 @@ router.post(
       const probe = await probeChannel(adapter, channel, prompt);
       // 只写运行指标，绝不写 status：status 是管理员开关，
       // 测试成功不能把管理员手动禁用的渠道复活（与 markChannelOk 约定一致）
-      await pool.query("UPDATE channels SET response_time = ?, tested_time = ?, last_error = '' WHERE id = ?", [
+      //
+      // 同时落 ttft_ms：**慢渠道判定与前端展示都用首 Token 耗时**（用户实测反馈）。
+      // 总耗时把「思考 + 生成全文」都算进去，思考型模型（GLM / o 系列）与长回答
+      // 会被判成坏渠道；用户体感是「多久开始出字」。两个数都存，各司其职。
+      await pool.query("UPDATE channels SET response_time = ?, ttft_ms = ?, tested_time = ?, last_error = '' WHERE id = ?", [
         probe.ms,
+        probe.ttftMs || probe.ms,
         now(),
         id,
       ]);
-      // 测试结果计入「最近调用」小绿条（tip 里带提示词、AI 回复与降智状态）
-      await recordChannelCall(id, true, probe.ms, "", {
+      // 小竖条用 ttft 着色：它表达的是「这次调用快不快」，与上面的口径保持一致
+      await recordChannelCall(id, true, probe.ttftMs || probe.ms, "", {
         prompt,
         reply: probe.reply,
         degraded: probe.degraded,
@@ -2634,8 +2704,17 @@ router.post(
         kind: "test",
       });
       resetChannelState(id);
-      await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `测试渠道「${row.name}」通过（${probe.ms}ms）` });
-      return ok(res, { success: true, time: probe.ms, reply: probe.reply, prompt }, `渠道可用（${probe.ms}ms）`);
+      await writeLog({
+        req,
+        user: req.user,
+        type: LOG_TYPE.MANAGE,
+        content: `测试渠道「${row.name}」通过（首Token ${probe.ttftMs || probe.ms}ms / 总 ${probe.ms}ms）`,
+      });
+      return ok(
+        res,
+        { success: true, time: probe.ttftMs || probe.ms, total: probe.ms, ttft: probe.ttftMs || probe.ms, reply: probe.reply, prompt },
+        `渠道可用（首Token ${probe.ttftMs || probe.ms}ms / 总 ${probe.ms}ms）`
+      );
     } catch (e) {
       await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), id]);
       // 测试失败计入「最近调用」小绿条（失败 → 红色；tip 里带失败原因）
@@ -2919,16 +2998,21 @@ router.post(
       const out = await pollDeviceBind(sessionId);
       // 凭据**不直接返回给前端**：先落库再回状态，避免 token 经过浏览器/日志
       if (out.status === "success" && out.credential) {
+        // vendor 取服务端会话记录的归属厂商（pollDeviceBind 回传），
+        // 不用请求体的值 —— 后者是前端传的，用来校验等于自证。
+        const vendor = String(out.vendor || "");
         const channelId = Number(req.body?.channel_id) || 0;
         if (!channelId) {
-          // 前端还没建渠道：把凭据暂存在服务端（会话已删，这里用一次性凭据表）
+          // 前端还没建渠道：把凭据暂存在服务端（会话已删，这里用一次性凭据表）。
+          // ticket 里带上 vendor，claim 时用它校验目标渠道的厂商。
           const ticket = randomBytes(16).toString("hex");
-          pendingCredentials.set(ticket, { credential: out.credential, vendor: String(req.body?.vendor || ""), at: Date.now() });
-          return ok(res, { status: "success", ticket }, "授权成功");
+          pendingCredentials.set(ticket, { credential: out.credential, vendor, at: Date.now() });
+          return ok(res, { status: "success", ticket, vendor }, "授权成功");
         }
         const [[ch]] = await pool.query("SELECT id, type FROM channels WHERE id = ?", [channelId]);
         if (!ch) return fail(res, "目标渠道不存在", 404);
-        const r = await applyCredentialToChannel({ id: channelId, type: ch.type, credential: out.credential });
+        assertBindVendorFits(ch.type, vendor);
+        const r = await applyCredentialToChannel({ id: channelId, type: ch.type, credential: out.credential, vendor });
         await writeLog({
           req,
           user: req.user,
@@ -2937,7 +3021,12 @@ router.post(
         });
         return ok(res, { status: "success", channel_id: channelId, account: r.accountLabel }, "绑定成功，凭据已写入");
       }
-      return ok(res, { status: out.status, message: out.message || "", slowDown: Boolean(out.slowDown) });
+      return ok(res, {
+        status: out.status,
+        message: out.message || "",
+        slowDown: Boolean(out.slowDown),
+        vendor: out.vendor || "",
+      });
     } catch (e) {
       // 轮询失败不该让前端无限等：明确告诉它这次出错，前端会重试或提示
       return fail(res, e.message, 502);
@@ -2967,9 +3056,16 @@ router.post(
     if (!channelId) return fail(res, "缺少目标渠道");
     const [[ch]] = await pool.query("SELECT id, type FROM channels WHERE id = ?", [channelId]);
     if (!ch) return fail(res, "目标渠道不存在", 404);
+    // 跨厂商防护：ticket 里记的是发起绑定时的厂商，必须与目标渠道类型一致。
+    // 放在写库之前，避免「拿 Kiro 的授权结果去覆盖 WorkBuddy 渠道」。
+    try {
+      assertBindVendorFits(ch.type, rec.vendor);
+    } catch (e) {
+      return fail(res, e.message, 400);
+    }
     let r;
     try {
-      r = await applyCredentialToChannel({ id: channelId, type: ch.type, credential: rec.credential });
+      r = await applyCredentialToChannel({ id: channelId, type: ch.type, credential: rec.credential, vendor: rec.vendor });
     } catch (e) {
       // 写回失败时**删掉刚建的空渠道**，否则留下一条永远没凭据、永远不可用的记录
       // （用户会以为绑定成功了，因为它在表格里）。仅当该渠道确实是「等绑定」建出来的

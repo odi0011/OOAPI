@@ -244,7 +244,10 @@ async function settle({
   firstTokenAt = 0,
   userAgent = "",
   billModel = ""}) {
-  const { promptTokens, completionTokens, cacheTokens } = splitTokens({ prompt, output, upstreamTotal: usage });
+  // tokensEstimated：上游没给（或只给了一部分）usage，用量由字符数估算得到。
+  // 下游要把它透出到日志/响应头 —— 估算值不能与精确值用同一个口径展示，
+  // 否则管理员看到的是「精确数字」，实际偏差可能很大（第 46 批复审）。
+  const { promptTokens, completionTokens, cacheTokens, estimated: tokensEstimated } = splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
   // billModel：上游实际跑的不是请求的那个档位时（目前只有 GLM 网页版会这样，
   // 它用页面自身的档位），适配器会把真实档位回传，这里优先按真实档位计价 ——
@@ -365,7 +368,9 @@ async function settle({
     userAgent,
     pricePhase: eff.phase});
   await Promise.all([tokenUpdates, logWrite]);
-  return { units, promptTokens, completionTokens, cacheTokens };
+  // tokensEstimated 透出给调用方：上游没给 usage 时用量是字符估算值，
+  // 响应头会带 X-Tokens-Estimated: 1，便于调用方与排查时区分口径。
+  return { units, promptTokens, completionTokens, cacheTokens, tokensEstimated };
 }
 
 // ---------- 聊天补全 ----------
@@ -455,34 +460,32 @@ async function handleCompletion(protocol, req, res) {
     thinkingOverride = String(body.reasoning_effort).toLowerCase() !== "none";
   }
 
-  // 超 3 张图：以正常回复形式告知，避免打断调用方
+  // 超 3 张图：以正常回复形式告知，避免打断调用方。
+  //
+  // **必须走当前 protocol 的渲染**：这里原先写死了 `chat.completion` 的
+  // JSON/SSE 帧，于是 /v1/messages（Anthropic SDK）与 /v1/responses（Codex）
+  // 的客户端会收到 chat 形状的响应 —— 官方 SDK 解析不了，报的是协议错误而不是
+  // 「图片太多」。同一处代码在三个入口共用，写死一种形状必然错两种。
   if (imageCount > 3) {
     const notice = "不支持三张以上图片，请修改问题或切换对话窗口！";
+    // 没调上游、没产生 token：按零用量收尾（既不计费，也不污染日志）
+    const zero = {
+      promptTokens: 0,
+      completionTokens: 0,
+      cacheTokens: 0,
+      od: 0,
+      currency: CURRENCY,
+      channel: "",
+      elapsed: 0,
+    };
     if (wantStream) {
-      res.status(200).setHeader("content-type", "text/event-stream; charset=utf-8");
-      res.setHeader("cache-control", "no-cache");
-      const send = (delta, finish = null) =>
-        res.write(
-          `data: ${JSON.stringify({
-            id: requestId,
-            object: "chat.completion.chunk",
-            created: Math.floor(Date.now() / 1000),
-            model,
-            choices: [{ index: 0, delta, finish_reason: finish }]})}\n\n`
-        );
-      send({ role: "assistant" });
-      send({ content: notice });
-      send({}, "stop");
-      res.write("data: [DONE]\n\n");
-      return res.end();
+      const st = protocol.openStream(res, requestId, model);
+      protocol.delta(st, notice);
+      protocol.done(res, st, { settled: zero });
+    } else {
+      protocol.finish(res, { id: requestId, model, content: notice, reasoning: "", settled: zero });
     }
-    return res.json({
-      id: requestId,
-      object: "chat.completion",
-      created: Math.floor(Date.now() / 1000),
-      model,
-      choices: [{ index: 0, message: { role: "assistant", content: notice }, finish_reason: "stop" }],
-      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }});
+    return;
   }
   // 图片校验交由各厂商适配器判断（不同厂商支持的模型不同），
   // 网关只做「超 3 张」的通用限制（见上）。
@@ -605,7 +608,11 @@ async function handleCompletion(protocol, req, res) {
       currency: CURRENCY,
       channel: result.channel?.name || "",
       elapsed: result.elapsed,
+      // 用量为估算值（上游未返回 usage）：响应头会带出去，调用方据此判断
+      // 是否可以把本次 token 数当精确值用
+      estimated: Boolean(settled.tokensEstimated),
     };
+    if (settled.tokensEstimated && !res.headersSent) res.setHeader("X-Tokens-Estimated", "1");
     if (wantStream) {
       if (!streamStarted) startStream();
       protocol.done(res, protoState, { settled: settledForClient });

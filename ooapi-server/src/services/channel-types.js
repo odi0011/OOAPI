@@ -96,7 +96,7 @@ export const PROVIDERS = [
         key: "relay",
         label: "登录账号",
         desc: "登录 Z.ai 账号，验证码自动处理",
-        loginModes: ["browser"],
+        loginModes: ["browser", "paste"],
         loginFields: [],
         needsBrowser: true,
         browserHint: "该渠道需在服务器上打开浏览器登录一次（验证码由页面自动处理），之后长期有效",
@@ -167,7 +167,7 @@ export const PROVIDERS = [
         key: "relay",
         label: "登录账号",
         desc: "扫码登录一次，之后长期有效",
-        loginModes: ["browser"],
+        loginModes: ["browser", "paste"],
         loginFields: [],
         needsBrowser: true,
         browserHint: "该渠道需在服务器上打开浏览器扫码登录一次，之后长期有效",
@@ -202,7 +202,7 @@ export const PROVIDERS = [
         key: "relay",
         label: "登录账号",
         desc: "登录一次，风控较重",
-        loginModes: ["browser"],
+        loginModes: ["browser", "paste"],
         loginFields: [],
         needsBrowser: true,
         browserHint: "该渠道需在服务器上打开浏览器登录一次（阿里风控较重），之后长期有效",
@@ -391,9 +391,23 @@ export const PROVIDERS = [
       {
         key: "api",
         label: "API Key",
-        desc: "填写 Base URL 与 API Key",
-        baseUrl: "https://generativelanguage.googleapis.com",
-        keyHint: "填写 Gemini API Key",
+        desc: "填写 Gemini API Key（走 Google 官方的 OpenAI 兼容端点）",
+        // 必须用 **OpenAI 兼容端点**，不能填裸域名。
+        //
+        // 原值 `https://generativelanguage.googleapis.com` 是 Google 的原生 API
+        // 根地址，而本平台的 API Key 渠道统一走 openai-compat（拼 `/v1/chat/completions`），
+        // 于是实际请求会打到 `.../v1/chat/completions` —— 那个路径在 Google 那边
+        // **不存在**（原生协议是 `/v1beta/models/{model}:generateContent`）。
+        // 结果：用户以为配好的是 Google 官方 API，实际每个请求都必然 404。
+        // 第 46 批复审点名了这一点，给出的两条出路里选「让它真的可用」。
+        //
+        // Google 官方提供 OpenAI 兼容层：`/v1beta/openai/`，支持
+        // chat/completions 与 models，**并返回真实 usage**（原生协议要自己解析
+        // usageMetadata，走兼容层两条协议都能正确计费）。
+        // 填完整端点（到 /chat/completions）：openai-compat 的 endpoints()
+        // 会据此推出 models 端点，且不会再多拼一层版本段。
+        baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        keyHint: "填写 Google AI Studio 的 Gemini API Key（AIza...）",
         defaultModels: [],
         testModel: "",
       },

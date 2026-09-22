@@ -154,7 +154,8 @@ const TABLES = [
     status INT NOT NULL DEFAULT 1 COMMENT '1=启用 2=手动禁用 3=自动禁用',
     priority INT NOT NULL DEFAULT 0 COMMENT '调度优先级，越大越优先',
     weight INT NOT NULL DEFAULT 0 COMMENT '同优先级负载权重',
-    response_time INT NOT NULL DEFAULT 0 COMMENT '最近测试耗时 ms',
+    response_time INT NOT NULL DEFAULT 0 COMMENT '最近测试耗时 ms（总耗时，含生成）',
+    ttft_ms INT NOT NULL DEFAULT 0 COMMENT '最近测试首 Token 耗时 ms（展示与慢渠道判定用）',
     tested_time BIGINT NOT NULL DEFAULT 0 COMMENT '最近测试时间戳',
     other TEXT COMMENT '扩展配置 JSON',
     remark VARCHAR(255) NOT NULL DEFAULT '' COMMENT '备注',
@@ -592,6 +593,8 @@ const COLUMN_MIGRATIONS = [
   { table: "users", column: "website", ddl: "VARCHAR(255) NOT NULL DEFAULT ''" },
   { table: "users", column: "location", ddl: "VARCHAR(64) NOT NULL DEFAULT ''" },
   { table: "channels", column: "last_error", ddl: "VARCHAR(500) NOT NULL DEFAULT ''" },
+  // 首 Token 耗时（老库补列）：与 response_time（总耗时）并存，前者用于展示与慢渠道判定
+  { table: "channels", column: "ttft_ms", ddl: "INT NOT NULL DEFAULT 0" },
   { table: "channels", column: "used_count", ddl: "INT NOT NULL DEFAULT 0" },
   { table: "channels", column: "last_used_time", ddl: "BIGINT NOT NULL DEFAULT 0" },
   { table: "channels", column: "remark", ddl: "VARCHAR(255) NOT NULL DEFAULT ''" },

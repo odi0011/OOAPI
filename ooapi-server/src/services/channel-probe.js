@@ -55,12 +55,44 @@ const PROBE_TIMEOUT_MS = 90000;
 const PROBE_TIMEOUT_BROWSER_MS = 240000;
 
 /**
+ * 该渠道的探测超时预算（毫秒）。
+ *
+ * 支持逐模型覆盖：`other.probe_timeout_ms`（或 `test_timeout_ms`）。
+ * 为什么需要它（用户实测反馈）：「如果这个渠道这个厂商本身响应就很慢的话，
+ * 则可以根据具体的模型进行这个响应时间的配置，有的模型好像响应时间就是很慢」——
+ * 实测确实如此：同一渠道下 gpt-5.6 / glm-5.3 这类大档位的思考时间可达数分钟，
+ * 而「hi」这种最短提示词也救不了它（思考长度由模型档位决定，与提示词长短无关）。
+ * 统一 90s 预算下这些渠道**每次都报超时**，管理员只能反复重试。
+ *
+ * 优先级：渠道 other 配置 > 浏览器渠道默认 > 普通默认。
+ * 上限 30 分钟：必须有上限，否则探测会占死该渠道的串行槽。
+ */
+export function probeBudgetMs(channel) {
+  const custom = Number(channel?.other?.probe_timeout_ms ?? channel?.other?.test_timeout_ms);
+  if (Number.isFinite(custom) && custom > 0) return Math.min(30 * 60 * 1000, Math.max(5000, Math.floor(custom)));
+  return needsBrowserSession(channel) ? PROBE_TIMEOUT_BROWSER_MS : PROBE_TIMEOUT_MS;
+}
+
+/**
  * 发送一条探测请求。
- * @returns {{ ms:number, reply:string, model:string, degraded?:number, state?:number }}
+ * @returns {{ ms:number, ttftMs:number, reply:string, model:string, degraded?:number, state?:number }}
+ *   ms：本次探测的**总耗时**（发出 → 流结束）。
+ *   ttftMs：**首 Token 耗时**（首个正文**或思考**增量到达的时刻）。
  *   degraded：1=本轮命中降智/截断信号（目前仅 codex 有）；state：1=注入了通行证（292）
+ *
+ * **为什么必须同时给两个数**（用户实测反馈）：
+ *   「你线上测测 Gemini 渠道的是不是根据首 t 来判定的检测时间？为什么响应时间这么长？」
+ *   「GLM 这个模型响应也是很慢，但是实际上人家是一直在思考的，思考的首 t 也算首 t 吧？」
+ *
+ * 原实现只记总耗时，于是：
+ *   · 思考型模型（GLM / o 系列 / R1）先吐几十秒 reasoning 再吐正文 —— 首字其实很快，
+ *     总耗时却是几十秒，管理员看到的「响应时间」严重偏离体感，误判成坏渠道；
+ *   · Gemini 这类预填充重的模型同理：真正慢的是生成总量，不是「连不上」。
+ * 用户感知的健康度是「多久开始出字」，所以**展示与慢速判定都用 ttftMs**，
+ * 总耗时作为参考一并返回（吞吐与截断排查要用）。
  */
 export async function probeChannel(adapter, channel, prompt = "hi") {
-  const budget = needsBrowserSession(channel) ? PROBE_TIMEOUT_BROWSER_MS : PROBE_TIMEOUT_MS;
+  const budget = probeBudgetMs(channel);
   // 走渠道限速闸门：测试/定时检测此前完全绕过 withChannelLimit，
   // 批量检测会并发打同一个账号（HTTP 渠道没有任何串行保护），是实打实的风控触发点。
   // 浏览器渠道靠会话锁侥幸串行，但不能依赖这种巧合。
@@ -84,8 +116,12 @@ async function probeChannelInner(adapter, channel, prompt = "hi", signal = undef
     const r = await withTimeout(
       adapter.probe({ ...channel, test_model: model || channel?.test_model || "" }, prompt, signal)
     );
+    // 适配器自带 probe 的 ms 是总耗时；没给 ttft 时回填 ms。
+    // 不能回填 0：0 会被前端当成「没测到」，且会被小竖条判定成「极快」，比不显示更误导。
+    const ttft = Number(r.ttftMs) > 0 ? Number(r.ttftMs) : r.ms;
     return {
       ms: r.ms,
+      ttftMs: ttft,
       reply: r.reply || "",
       model: r.model || model,
       ...(r.degraded !== undefined ? { degraded: r.degraded ? 1 : 0 } : {}),
@@ -94,6 +130,13 @@ async function probeChannelInner(adapter, channel, prompt = "hi", signal = undef
   }
   if (adapter?.chat) {
     const started = Date.now();
+    // 首个增量（正文**或思考**）到达即记首 Token。
+    // 思考必须计入：模型在「想着」对用户而言就是「已经在响应了」，
+    // 漏掉思考会把所有思考型渠道判成慢渠道（用户实测的原话）。
+    let firstAt = 0;
+    const mark = () => {
+      if (!firstAt) firstAt = Date.now();
+    };
     const r = await withTimeout(
       adapter.chat({
         channel,
@@ -101,13 +144,16 @@ async function probeChannelInner(adapter, channel, prompt = "hi", signal = undef
         prompt,
         messages: [{ role: "user", content: prompt }],
         images: [],
-        onDelta: () => {},
-        onReasoning: () => {},
+        onDelta: mark,
+        onReasoning: mark,
         signal,
       })
     );
+    const total = Date.now() - started;
     return {
-      ms: Date.now() - started,
+      ms: total,
+      // 一次增量都没回调（非流式适配器）：那种「首 Token」就是全量返回，退化用总耗时
+      ttftMs: firstAt ? firstAt - started : total,
       reply: r.content || "",
       model: r.upstreamModel || model,
       ...(r.rotateNext ? { degraded: 1 } : {}),
@@ -116,7 +162,7 @@ async function probeChannelInner(adapter, channel, prompt = "hi", signal = undef
   }
   if (adapter?.verify) {
     const ms = await withTimeout(adapter.verify(channel));
-    return { ms, reply: "(健康检查通过，适配器未提供对话探针)", model };
+    return { ms, ttftMs: ms, reply: "(健康检查通过，适配器未提供对话探针)", model };
   }
   throw Object.assign(new Error("该渠道适配器不支持检测"), { code: "UNSUPPORTED_CHANNEL" });
 }

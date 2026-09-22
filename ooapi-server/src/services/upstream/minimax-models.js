@@ -45,7 +45,19 @@ export function resolveModel(requested) {
   // 用户可能填成全小写 → 按不区分大小写匹配回规范名（否则渠道匹配会落空）
   const hit = REAL_MODELS.find((m) => m.id.toLowerCase() === raw.toLowerCase());
   const resolved = hit ? hit.id : ALIASES[raw] || raw || REAL_MODELS[0].id;
-  return { model: resolved, thinking: false, search: false, vision: true, isReal: REAL_MODELS.some((m) => m.id === resolved) };
+  // vision **按具体模型**取，不能一律 true：M2.7/M2.5 这些纯文本档位
+  // 上游不接图片，一律放行会让带图请求打到一个必然失败的模型上
+  // （表现是上游报参数错误，而不是「不支持视觉」）。
+  // 未登记的模型（用户自定义名）保守按不支持处理，由适配器显式报
+  // VISION_NOT_SUPPORTED，让管理员看到明确原因而不是上游的含糊报错。
+  const spec = REAL_MODELS.find((m) => m.id === resolved);
+  return {
+    model: resolved,
+    thinking: false,
+    search: false,
+    vision: Boolean(spec?.vision),
+    isReal: Boolean(spec),
+  };
 }
 
 export const CHANNEL_MODELS = REAL_MODELS.map((m) => m.id).join(",");

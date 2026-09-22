@@ -29,7 +29,13 @@ export default function PostDetailPage() {
   const navigate = useNavigate();
   const { message } = AntApp.useApp();
   const { user: me } = useApp();
-  const { begin, isLatest } = useLatest();
+  // **两个独立的竞态令牌**（同一个会让其中一个恒被自己作废）：
+  // 帖子与评论是两条并行请求，各自被重试/刷新独立触发。共用一个 useLatest 时，
+  // 同一 effect 里先发的 loadPost 拿到 token 1、后发的 loadComments 拿到 token 2，
+  // 于是 isLatest(1) 恒为假 → setPost 与 finally 里的 setLoading(false) 都不执行，
+  // 页面**永远停在骨架屏**（实测反馈：打开任意 /community/:id 都出不来内容）。
+  const postRace = useLatest();
+  const commentRace = useLatest();
 
   const [post, setPost] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -50,37 +56,40 @@ export default function PostDetailPage() {
 
   const loadPost = useCallback(async () => {
     if (!postId) return;
-    const token = begin();
+    const token = postRace.begin();
     setLoading(true);
     setNotFound(false);
     try {
       const d = await API.get(`/community/posts/${postId}`);
-      if (!isLatest(token)) return;
+      if (!postRace.isLatest(token)) return;
       setPost(d);
     } catch (e) {
-      if (isLatest(token)) {
+      if (postRace.isLatest(token)) {
         if (e.status === 404) setNotFound(true);
         else message.error(e.message);
       }
     } finally {
-      if (isLatest(token)) setLoading(false);
+      // finally 也要判 isLatest，但**必须保证首次加载一定会关闭 loading**：
+      // 之前的问题正是这里被判假而永不执行。现在 token 不再被兄弟请求顶掉，
+      // 正常路径下这里一定成立。
+      if (postRace.isLatest(token)) setLoading(false);
     }
-  }, [begin, isLatest, message, postId]);
+  }, [postRace, message, postId]);
 
   const loadComments = useCallback(async () => {
     if (!postId) return;
-    const token = begin();
+    const token = commentRace.begin();
     setCLoading(true);
     try {
       const d = await API.get(`/community/posts/${postId}/comments`, { params: { p: 1, page_size: 200 } });
-      if (!isLatest(token)) return;
+      if (!commentRace.isLatest(token)) return;
       setComments(d?.items || []);
     } catch (e) {
-      if (isLatest(token)) message.error(e.message);
+      if (commentRace.isLatest(token)) message.error(e.message);
     } finally {
-      if (isLatest(token)) setCLoading(false);
+      if (commentRace.isLatest(token)) setCLoading(false);
     }
-  }, [begin, isLatest, message, postId]);
+  }, [commentRace, message, postId]);
 
   useEffect(() => {
     loadPost();

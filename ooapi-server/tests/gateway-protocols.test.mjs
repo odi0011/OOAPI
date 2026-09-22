@@ -162,5 +162,98 @@ console.log("\n=== ④ 错误形状 ===");
   ck("responses：错误体 {error:{...}} + 状态码透传", r3.statusCode === 429 && r3.body.error.message === "上游失败");
 }
 
+/* ============ ⑤ 第 46 批复审修复项的回归（AI协作.md） ============ */
+console.log("\n=== ⑤ 复审修复项回归 ===");
+{
+  // Responses 顶层 instructions = system（早先整段丢弃，系统约束静默失效）
+  const a = PROTOCOLS.responses.parse({ model: "m", instructions: "只回答一个字", input: "你好" });
+  ck("responses：instructions 转成 system 且排在最前",
+    a.messages[0]?.role === "system" && a.messages[0]?.content === "只回答一个字" && a.messages[1]?.role === "user",
+    JSON.stringify(a.messages));
+  ck("responses：instructions 数组形态也能读",
+    PROTOCOLS.responses.parse({ model: "m", instructions: [{ type: "input_text", text: "S" }], input: "u" })
+      .messages[0]?.content === "S");
+  ck("responses：无 instructions 时不无中生有",
+    PROTOCOLS.responses.parse({ model: "m", input: "u" }).messages.every((x) => x.role !== "system"));
+
+  // Anthropic thinking 必须是**独立块**，且与 text 块各占一个 index
+  const r1 = fakeRes();
+  const st = PROTOCOLS.messages.openStream(r1, "id1", "claude-x");
+  PROTOCOLS.messages.reasoning(st, "想一想");
+  PROTOCOLS.messages.delta(st, "答案");
+  PROTOCOLS.messages.done(r1, st, { settled: { promptTokens: 1, completionTokens: 2 } });
+  const ev1 = [];
+  r1.chunks.join("").split("\n\n").forEach((frame) => {
+    const em = frame.match(/^event: (\S+)/m);
+    const dm = frame.match(/^data: (.*)$/m);
+    if (em && dm) { try { ev1.push({ event: em[1], data: JSON.parse(dm[1]) }); } catch { /* skip */ } }
+  });
+  const types1 = ev1.map((e) => e.event);
+  ck("messages：thinking 有独立 content_block_start(type=thinking)",
+    ev1.some((e) => e.event === "content_block_start" && e.data.content_block?.type === "thinking"),
+    JSON.stringify(types1));
+  ck("messages：thinking_delta 落在 thinking 块的下标上",
+    ev1.some((e) => e.data?.delta?.type === "thinking_delta" && e.data.index === 0),
+    JSON.stringify(ev1.filter((e) => e.data?.delta).map((e) => [e.data.index, e.data.delta.type])));
+  ck("messages：text_delta 落在另一个快下标上（不与 thinking 混块）",
+    ev1.some((e) => e.data?.delta?.type === "text_delta" && e.data.index === 1),
+    JSON.stringify(ev1.filter((e) => e.data?.delta).map((e) => [e.data.index, e.data.delta.type])));
+  const starts1 = ev1.filter((e) => e.event === "content_block_start").length;
+  const stops1 = ev1.filter((e) => e.event === "content_block_stop").length;  // 以解析后的事件为准
+  ck("messages：块开闭配对（每个块恰好关一次）", starts1 === stops1 && starts1 === 2, `${starts1}/${stops1}`);
+
+  // 只有正文时不产生多余块
+  const r2 = fakeRes();
+  const st2 = PROTOCOLS.messages.openStream(r2, "id2", "m");
+  PROTOCOLS.messages.delta(st2, "只有正文");
+  PROTOCOLS.messages.done(r2, st2, { settled: {} });
+  // 只数 event: 行 —— 事件名在 data JSON 里也出现一次，直接 match 会翻倍
+  const countBlockStart = (res) => (res.chunks.join("").match(/^event: content_block_start$/gm) || []).length;
+  ck("messages：无思考时只有一个块", countBlockStart(r2) === 1, String(countBlockStart(r2)));
+
+  // 空回复也要有一个块（部分 SDK 对「零内容块」判为解析失败）
+  const r3 = fakeRes();
+  const st3 = PROTOCOLS.messages.openStream(r3, "id3", "m");
+  PROTOCOLS.messages.done(r3, st3, { settled: {} });
+  ck("messages：空回复仍给出一个 content_block", countBlockStart(r3) === 1, String(countBlockStart(r3)));
+
+  // 非流式必须返回 thinking 块（原先静默丢弃）
+  const r4 = fakeRes();
+  PROTOCOLS.messages.finish(r4, {
+    id: "i", model: "m", content: "答案", reasoning: "推理过程",
+    settled: { promptTokens: 1, completionTokens: 2, od: 0, currency: "OD", channel: "c", elapsed: 5 },
+  });
+  ck("messages：非流式返回独立 thinking 块",
+    r4.body.content.length === 2 && r4.body.content[0].type === "thinking" && r4.body.content[0].thinking === "推理过程",
+    JSON.stringify(r4.body.content));
+
+  // Responses 完成事件的字段完整性（官方 SDK 用它替换本地 response 对象）
+  const r5 = fakeRes();
+  const st5 = PROTOCOLS.responses.openStream(r5, "resp_1", "gpt-5.6");
+  PROTOCOLS.responses.reasoning(st5, "思考");
+  PROTOCOLS.responses.delta(st5, "正文");
+  PROTOCOLS.responses.done(r5, st5, { settled: { promptTokens: 3, completionTokens: 4 } });
+  const done = sseData(r5).find((d) => d.type === "response.completed");
+  const cc = done?.response || {};
+  ck("responses：completed 带 id", cc.id === "resp_1", String(cc.id));
+  ck("responses：completed 带 object/model/created_at",
+    cc.object === "response" && cc.model === "gpt-5.6" && typeof cc.created_at === "number", JSON.stringify(cc));
+  ck("responses：completed 带 output（含 message 项）",
+    Array.isArray(cc.output) && cc.output.some((o) => o.type === "message"), JSON.stringify(cc.output?.map((o) => o.type)));
+  ck("responses：completed 的 output 文本与流内一致",
+    cc.output?.find((o) => o.type === "message")?.content?.[0]?.text === "正文");
+  ck("responses：completed 的思考在 output 里也有",
+    cc.output?.some((o) => o.type === "reasoning" && o.summary?.[0]?.text === "思考"),
+    JSON.stringify(cc.output?.map((o) => o.type)));
+  ck("responses：usage 三件套齐全",
+    cc.usage?.input_tokens === 3 && cc.usage?.output_tokens === 4 && cc.usage?.total_tokens === 7, JSON.stringify(cc.usage));
+  ck("responses：created 与 completed 字段集一致（同一 respBase）",
+    (() => {
+      const cr = sseData(r5).find((d) => d.type === "response.created")?.response || {};
+      const keys = ["id", "object", "created_at", "model"];
+      return keys.every((k) => k in cr && k in cc);
+    })());
+}
+
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
 process.exit(fail ? 1 : 0);

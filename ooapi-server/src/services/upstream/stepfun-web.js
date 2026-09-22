@@ -22,6 +22,8 @@
 //   流程：RegisterDevice → SendSmsCode → LoginBySmsCode → RefreshToken → GetUser
 //   端点：POST https://www.stepfun.com/passport/proto.api.passport.v1.PassportService/{Method}
 import crypto from "node:crypto";
+import { assertNoContentError } from "./content-error.js";
+import { throwUpstreamHttpError } from "./http-error.js";
 
 const SITE = "https://www.stepfun.com";
 const API = `${SITE}/api`;
@@ -46,7 +48,11 @@ function encodeFrame(obj) {
  */
 function createFrameDecoder(onMessage) {
   let buf = Buffer.alloc(0);
-  return (chunk) => {
+  // 诊断计数：早先未知 flags / 坏 JSON 都静默 continue，上游真有输出时
+  // 最终只会得到「空回复」这种无法归因的结论（分不清是上游没说话、
+  // 还是我们解错了帧）。这里把异常帧记下来，由调用方在内容为空时抛出。
+  const diag = { unknownFlags: [], badJson: 0, trailingBytes: 0 };
+  const decode = (chunk) => {
     buf = Buffer.concat([buf, chunk]);
     for (;;) {
       if (buf.length < 5) return;
@@ -56,15 +62,35 @@ function createFrameDecoder(onMessage) {
       const payload = buf.slice(5, 5 + len);
       buf = buf.slice(5 + len);
       if (flags === 0x02) continue; // end-stream：无 body
+      if (flags !== 0x00) {
+        // 未知 flags：Connect 协议里 0x00=数据、0x02=结束；出现别的说明
+        // 上游换了帧格式或流已错位 —— 不再静默丢弃，留证据。
+        if (diag.unknownFlags.length < 8) diag.unknownFlags.push(flags);
+        // 尽力解析：能解出 JSON 就照常当数据帧用（避免把真实内容丢掉）
+        try {
+          onMessage(JSON.parse(payload.toString("utf8")));
+        } catch {
+          /* 解不出就只记 flags */
+        }
+        continue;
+      }
       let json = null;
       try {
         json = JSON.parse(payload.toString("utf8"));
       } catch {
+        diag.badJson += 1;
         continue;
       }
       onMessage(json);
     }
   };
+  decode.diag = diag;
+  decode.flushCheck = () => {
+    // 流结束时缓冲区还有残留＝收到了不完整的帧（长度字段说还有 N 字节但流断了）
+    if (buf.length > 0) diag.trailingBytes = buf.length;
+    return diag;
+  };
+  return decode;
 }
 
 /** 统一请求头 */
@@ -146,12 +172,16 @@ async function createSession(channel, signal) {
     body: encodeFrame({}),
     signal,
   });
-  if (resp.status === 401 || resp.status === 403) {
-    throw Object.assign(new Error("登录态已失效（401/403），请重新抓取 StepFun 凭据"), { code: "CHANNEL_AUTH_EXPIRED" });
+  if (resp.status === 401 || resp.status === 403 || resp.status === 429) {
+    // 三个码要分开处理：429=限流（可自愈）、403 可能是风控验证页或权限不足、
+    // 401 才是真失效。原先一律按「凭据过期」抛，会让管理员对着好账号反复重抓
+    // 也修不好（第 46 批复审点名）。分类与文案统一在 upstream/http-error.js。
+    const eb = await resp.text().catch(() => "");
+    throwUpstreamHttpError(resp.status, eb);
   }
   if (!resp.ok) {
     const t = await resp.text().catch(() => "");
-    throw Object.assign(new Error(`建会话失败（HTTP ${resp.status}）：${t.slice(0, 200)}`), { code: "CHANNEL_HTTP_ERROR" });
+    throwUpstreamHttpError(resp.status, t, "建会话失败");
   }
   const buf = Buffer.from(await resp.arrayBuffer());
   let sid = "";
@@ -187,12 +217,16 @@ export async function chat({ channel, model, prompt, thinkingOverride, images = 
     body: encodeFrame(body),
     signal,
   });
-  if (resp.status === 401 || resp.status === 403) {
-    throw Object.assign(new Error("登录态已失效，请重新抓取 StepFun 凭据"), { code: "CHANNEL_AUTH_EXPIRED" });
+  if (resp.status === 401 || resp.status === 403 || resp.status === 429) {
+    // 三个码要分开处理：429=限流（可自愈）、403 可能是风控验证页或权限不足、
+    // 401 才是真失效。原先一律按「凭据过期」抛，会让管理员对着好账号反复重抓
+    // 也修不好（第 46 批复审点名）。分类与文案统一在 upstream/http-error.js。
+    const eb = await resp.text().catch(() => "");
+    throwUpstreamHttpError(resp.status, eb);
   }
   if (!resp.ok) {
     const t = await resp.text().catch(() => "");
-    throw Object.assign(new Error(`上游返回 HTTP ${resp.status}：${t.slice(0, 200)}`), { code: "CHANNEL_HTTP_ERROR" });
+    throwUpstreamHttpError(resp.status, t, "上游返回异常");
   }
   if (!resp.body) throw Object.assign(new Error("上游未返回流"), { code: "CHANNEL_BAD_RESPONSE" });
 
@@ -225,11 +259,24 @@ export async function chat({ channel, model, prompt, thinkingOverride, images = 
   } finally {
     reader.cancel().catch(() => {});
   }
+  const diag = decode.flushCheck();
 
   if (!content) {
+    // 有诊断信息时给可归因的错误，而不是笼统的「空内容」：
+    // 解码错位（trailingBytes / unknownFlags / badJson）与「上游真没说话」
+    // 是两种完全不同的故障，处理方式也不同（前者要修适配器，后者要换号/换模型）。
+    const bits = [];
+    if (diag.trailingBytes) bits.push(`尾部残留 ${diag.trailingBytes} 字节（帧不完整）`);
+    if (diag.unknownFlags.length) bits.push(`未知帧标志 ${diag.unknownFlags.map((f) => "0x" + f.toString(16)).join(",")}`);
+    if (diag.badJson) bits.push(`${diag.badJson} 个帧不是合法 JSON`);
+    if (bits.length) {
+      throw Object.assign(new Error(`上游响应无法解析：${bits.join("；")}`), { code: "CHANNEL_BAD_RESPONSE" });
+    }
     throw Object.assign(new Error(reasoning ? "上游只返回了思考内容，没有正文" : "上游返回空内容"), { code: "CHANNEL_EMPTY" });
   }
-  return { content, reasoning, usage: null, upstreamModel: modelId };
+    // 上游可能用正常正文说错误（模型下线/权限不足），不能只看「有正文」就判成功
+  assertNoContentError(content, "StepFun");
+return { content, reasoning, usage: null, upstreamModel: modelId };
 }
 
 /** 只检测凭据：拉模型配置（不建会话、不产生生成费用） */
@@ -240,10 +287,17 @@ export async function verify(channel) {
     body: encodeFrame({}),
     signal: AbortSignal.timeout(20000),
   });
-  if (resp.status === 401 || resp.status === 403) {
-    throw Object.assign(new Error("登录态已失效，请重新抓取 StepFun 凭据"), { code: "CHANNEL_AUTH_EXPIRED" });
+  if (resp.status === 401 || resp.status === 403 || resp.status === 429) {
+    // 三个码要分开处理：429=限流（可自愈）、403 可能是风控验证页或权限不足、
+    // 401 才是真失效。原先一律按「凭据过期」抛，会让管理员对着好账号反复重抓
+    // 也修不好（第 46 批复审点名）。分类与文案统一在 upstream/http-error.js。
+    const eb = await resp.text().catch(() => "");
+    throwUpstreamHttpError(resp.status, eb);
   }
-  if (!resp.ok) throw Object.assign(new Error(`凭据检测失败（HTTP ${resp.status}）`), { code: "CHANNEL_HTTP_ERROR" });
+  if (!resp.ok) {
+    const t = await resp.text().catch(() => "");
+    throwUpstreamHttpError(resp.status, t, "凭据检测失败");
+  }
   return { ok: true, account: "阶跃星辰 StepFun" };
 }
 

@@ -37,12 +37,14 @@ export async function runDueChannelTests() {
     const prompt = String(row.test_prompt || "hi").trim() || "hi";
     try {
       const r = await runOne(row);
-      await pool.query("UPDATE channels SET response_time = ?, tested_time = ?, last_error = '' WHERE id = ?", [
+      // 与手动测试同口径：同时落总耗时与首 Token 耗时，小竖条按首 Token 着色
+      await pool.query("UPDATE channels SET response_time = ?, ttft_ms = ?, tested_time = ?, last_error = '' WHERE id = ?", [
         r.ms,
+        r.ttftMs || r.ms,
         now(),
         row.id,
       ]);
-      await recordChannelCall(row.id, true, r.ms, "", {
+      await recordChannelCall(row.id, true, r.ttftMs || r.ms, "", {
         prompt,
         reply: r.reply,
         degraded: r.degraded,
@@ -50,7 +52,7 @@ export async function runDueChannelTests() {
         kind: "auto",
       });
       resetChannelState(row.id);
-      console.log(`[autotest] #${row.id}「${row.name}」通过（${r.ms}ms）`);
+      console.log(`[autotest] #${row.id}「${row.name}」通过（首Token ${r.ttftMs || r.ms}ms / 总 ${r.ms}ms）`);
     } catch (e) {
       const ms = Date.now() - t0;
       await pool.query("UPDATE channels SET last_error = ?, tested_time = ? WHERE id = ?", [

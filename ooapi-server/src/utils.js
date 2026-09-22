@@ -159,6 +159,37 @@ export async function assertPublicUrl(raw) {
   return u;
 }
 
+// assertPublicUrl 的结果缓存（hostname → {ok, err, exp}）。
+//
+// 为什么需要缓存：对话请求每次都做一次 DNS 解析会给网关加一段串行延迟
+// （dns.lookup 走线程池，不在 OS 缓存命中时是真实 RTT）。渠道地址是管理员
+// 配置的、变化极慢，缓存 60 秒既省掉这段延迟，又能在 DNS 被改成内网时
+// 最迟一分钟后失效。失败结果同样缓存（但更短），避免坏域名拖慢每一次请求。
+const urlCheckCache = new Map();
+const URL_CHECK_OK_TTL = 60_000;
+const URL_CHECK_BAD_TTL = 10_000;
+
+export async function assertPublicUrlCached(raw) {
+  // 先做不依赖 DNS 的静态检查（快，且能立刻拦住 http://user:pass@host 这类）
+  const u = new URL(raw);
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("协议不允许");
+  if (u.username || u.password) throw new Error("不允许携带凭据");
+  const host = u.hostname.toLowerCase();
+  const hit = urlCheckCache.get(host);
+  if (hit && hit.exp > Date.now()) {
+    if (hit.ok) return u;
+    throw new Error(hit.err);
+  }
+  try {
+    await assertPublicUrl(raw);
+    urlCheckCache.set(host, { ok: true, exp: Date.now() + URL_CHECK_OK_TTL });
+    return u;
+  } catch (e) {
+    urlCheckCache.set(host, { ok: false, err: e.message, exp: Date.now() + URL_CHECK_BAD_TTL });
+    throw e;
+  }
+}
+
 // 返回给前端的用户对象（去除敏感字段）
 export function userToResponse(u) {
   return {

@@ -33,7 +33,16 @@ export const ALIASES = {
 export function resolveModel(requested) {
   const raw = String(requested || "").trim();
   const resolved = ALIASES[raw] || raw || REAL_MODELS[0].id;
-  return { model: resolved, thinking: false, search: false, vision: true, isReal: REAL_MODELS.some((m) => m.id === resolved) };
+  // vision 按具体模型取（step-3.5-flash 系列仅文本）。一律 true 会把带图请求
+  // 送到不支持视觉的档位上，上游报的是含糊的参数错误而不是「不支持图片」。
+  const spec = REAL_MODELS.find((m) => m.id === resolved);
+  return {
+    model: resolved,
+    thinking: false,
+    search: false,
+    vision: Boolean(spec?.vision),
+    isReal: Boolean(spec),
+  };
 }
 
 export const CHANNEL_MODELS = REAL_MODELS.map((m) => m.id).join(",");

@@ -288,9 +288,14 @@ export function InfoPill({ children, tone = "gray", title }) {
         borderRadius: 5,
         padding: "1px 6px",
         whiteSpace: "nowrap",
+        // 横向排布时每个 chip 必须能被压缩 + 省略号截断，否则长文案
+        // （「Free Plan Subscription 0」）会被父级 overflow:hidden 硬切，
+        // 看起来像文字残缺（实测截图确认）。
+        minWidth: 0,
         maxWidth: "100%",
         overflow: "hidden",
         textOverflow: "ellipsis",
+        flexShrink: 1,
       }}
     >
       {children}
@@ -354,12 +359,17 @@ export function QuotaTip({ quota }) {
  */
 const INLINE_MAX_PILLS = 3;
 
+// 额度条的递进选取规则抽到 quota-order.js —— 那是「全局统一规范」的落点
+// （用户要求后续所有厂商的额度展示都复用同一规则）。这里只做 re-export，
+// 让老的 import { pickVisibleWindows } from "./ChannelQuota" 仍然可用。
+export { pickVisibleWindows, windowSecondsOf, isWindowSpent, DEFAULT_MAX_BARS } from "./quota-order.js";
+import { pickVisibleWindows, DEFAULT_MAX_BARS as MAX_BARS } from "./quota-order.js";
+
 export function QuotaInline({ quota, stats }) {
   if (!quota && !stats) return null;
   const wins = Array.isArray(quota?.windows) ? quota.windows : [];
   const c = quota?.credits;
 
-  const hasPlan = Boolean(quota?.plan || quota?.limitReached);
   const hasBalance = Boolean(c && c.balance !== undefined && c.balance !== null && c.balance !== "");
   const hasPrepaid = Number.isFinite(Number(c?.prepaidBalance));
   const hasLines = Boolean(c?.lines?.length);
@@ -378,7 +388,10 @@ export function QuotaInline({ quota, stats }) {
       });
     });
   }
-  if (hasBalance) chips.push({ key: "bal", node: <>余额 {c.balance}{c.unit ? ` ${c.unit}` : ""}</> });
+  // 余额/积分为「账户存量」，视觉上排在最前 —— 用户要求：
+  // 「workbuddy 或者 gpt 的 free 带积分的这种，如果被折叠了，则余额显示为第一个 tag」。
+  // 它比套餐名更能回答「还能不能用」，所以即使不折叠也放最前。
+  if (hasBalance) chips.unshift({ key: "bal", node: <>余额 {c.balance}{c.unit ? ` ${c.unit}` : ""}</> });
   if (hasPrepaid) chips.push({ key: "pre", node: <>预付费 ${Number(c.prepaidBalance).toFixed(2)}</> });
 
   const shownChips = chips.slice(0, INLINE_MAX_PILLS);
@@ -394,6 +407,8 @@ export function QuotaInline({ quota, stats }) {
   const hasStats = st.calls !== undefined || st.tokens !== undefined || st.cost !== undefined;
 
   if (!chips.length && !wins.length && !hasStats) return null;
+
+  const { shown: shownWins, collapsed: collapsedWins } = pickVisibleWindows(wins);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 150 }}>
@@ -415,51 +430,51 @@ export function QuotaInline({ quota, stats }) {
         </div>
       ) : null}
 
-      {/* ② 汇总 chips：横向，超出收进 +N（悬浮显示全部） */}
-      {chips.length ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", overflow: "hidden" }}>
-          {shownChips.map((x) => (
-            <InfoPill key={x.key} tone={x.tone}>{x.node}</InfoPill>
+      {/* ② 主行：递进选出的额度条（最多 INLINE_MAX_BARS 条）。
+          没有任何窗口（纯积分渠道）时，这一行直接承载信息 chips ——
+          保证「上面统计、中间额度、下面折叠」三段结构不出现空行。 */}
+      {shownWins.length ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", overflow: "hidden" }}>
+          {shownWins.map((w, i) => (
+            <WindowRow key={w.key || i} w={w} index={i} showScope={multiScope} compact />
           ))}
-          {restChips.length ? (
+        </div>
+      ) : chips.length ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", minWidth: 0 }}>
+          {shownChips.map((x) => (
+            <span key={x.key} style={{ minWidth: 0, flexShrink: 1, display: "inline-flex" }}>
+              <InfoPill tone={x.tone}>{x.node}</InfoPill>
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {/* ③ 折叠行：信息 chips（余额/积分排第一）+ 被折叠的窗口条。
+          悬浮 `+N` 给全量 —— 用户要求「下面是折叠的额度条，悬浮显示全部」。 */}
+      {(shownWins.length ? chips.length : 0) || collapsedWins.length ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", minWidth: 0 }}>
+          {(shownWins.length ? chips : []).map((x) => (
+            <span key={x.key} style={{ minWidth: 0, flexShrink: 1, display: "inline-flex" }}>
+              <InfoPill tone={x.tone}>{x.node}</InfoPill>
+            </span>
+          ))}
+          {collapsedWins.length ? (
             <Tooltip
               title={
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {restChips.map((x) => <div key={x.key}>{x.node}</div>)}
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 220 }}>
+                  {collapsedWins.map((w, i) => (
+                    <WindowRow key={w.key || i} w={w} index={i + shownWins.length} showScope={multiScope} />
+                  ))}
                 </div>
               }
             >
-              <span><InfoPill tone="gray">+{restChips.length}</InfoPill></span>
+              <span className="bui-chip" style={{ fontSize: 11, flexShrink: 0 }}>
+                +{collapsedWins.length}
+              </span>
             </Tooltip>
           ) : null}
         </div>
       ) : null}
-
-      {/* ③ 窗口行：横向排布，超出收进 +N（用户要求：原来一行一个把行高撑太高） */}
-      {wins.length ? (() => {
-        const shown = wins.slice(0, INLINE_MAX_PILLS);
-        const rest = wins.slice(INLINE_MAX_PILLS);
-        return (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", overflow: "hidden" }}>
-            {shown.map((w, i) => (
-              <WindowRow key={w.key || i} w={w} index={i} showScope={multiScope} compact />
-            ))}
-            {rest.length ? (
-              <Tooltip
-                title={
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 220 }}>
-                    {rest.map((w, i) => (
-                      <WindowRow key={w.key || i} w={w} index={i + INLINE_MAX_PILLS} showScope={multiScope} />
-                    ))}
-                  </div>
-                }
-              >
-                <span className="bui-chip" style={{ fontSize: 11, flexShrink: 0 }}>+{rest.length}</span>
-              </Tooltip>
-            ) : null}
-          </div>
-        );
-      })() : null}
     </div>
   );
 }

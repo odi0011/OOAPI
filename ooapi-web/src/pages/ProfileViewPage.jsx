@@ -23,6 +23,7 @@ import {
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
+import { safeHref } from "../components/Markdown";
 import PageHeader from "../components/PageHeader";
 import UserAvatar from "../components/UserAvatar";
 import StatCard from "../components/StatCard";
@@ -62,7 +63,12 @@ export default function ProfileViewPage() {
   const navigate = useNavigate();
   const { message } = AntApp.useApp();
   const { user: me } = useApp();
-  const { begin, isLatest } = useLatest();
+  // **两个独立令牌**：主数据与 Tab 列表是两条并行请求。
+  // 共用一个 useLatest 时，同一轮里 load() 拿 token 1、loadTab() 拿 token 2，
+  // 于是主数据的结果恒被判为「过期」丢弃 —— setData 与 setLoading(false) 都不执行，
+  // 整个个人主页**永远停在骨架屏**（实测反馈）。分开后各管各的竞态。
+  const mainRace = useLatest();
+  const tabRace = useLatest();
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -79,23 +85,25 @@ export default function ProfileViewPage() {
 
   const load = useCallback(async () => {
     if (!uid) return;
-    const token = begin();
+    const token = mainRace.begin();
     setLoading(true);
     setNotFound(false);
     try {
       const d = await API.get(`/profile/u/${uid}`);
-      if (!isLatest(token)) return;
+      if (!mainRace.isLatest(token)) return;
       setData(d);
       setFollowing(Boolean(d.following));
     } catch (e) {
-      if (isLatest(token)) {
+      if (mainRace.isLatest(token)) {
         if (e.status === 404) setNotFound(true);
         else message.error(e.message);
       }
     } finally {
-      if (isLatest(token)) setLoading(false);
+      // 必须能关闭 loading：此前与 loadTab 共用令牌时，
+      // loadTab 的 token 更大 → 这里恒被判假 → 主数据永远加载不出来（永远骨架屏）
+      if (mainRace.isLatest(token)) setLoading(false);
     }
-  }, [begin, isLatest, message, uid]);
+  }, [mainRace, message, uid]);
 
   useEffect(() => {
     load();
@@ -104,12 +112,14 @@ export default function ProfileViewPage() {
   // Tab 数据：帖子 / 收藏 / 关注 / 粉丝
   const loadTab = useCallback(async () => {
     if (!uid) return;
-    const token = begin();
+    const token = tabRace.begin();
     setListLoading(true);
     try {
       let d;
       if (tab === "posts") d = await API.get(`/profile/u/${uid}/posts`, { params: { p: 1, page_size: 20 } });
-      else if (tab === "follows") d = await API.get(`/profile/u/${uid}/follows`, { params: { kind: "following", p: 1, page_size: 30 } });
+      // Tab 的 key 是 "following"（见下方 Tabs items）。这里原写成 "follows" ——
+      // 分支永远不可达，关注列表恒为空（实测反馈「关注 Tab 永远为空」）。
+      else if (tab === "following") d = await API.get(`/profile/u/${uid}/follows`, { params: { kind: "following", p: 1, page_size: 30 } });
       else if (tab === "followers") d = await API.get(`/profile/u/${uid}/follows`, { params: { kind: "followers", p: 1, page_size: 30 } });
       else if (tab === "favorites") {
         // 收藏只有本人能看（别人的收藏是隐私）
@@ -119,14 +129,14 @@ export default function ProfileViewPage() {
         }
         d = await API.get("/community/posts", { params: { p: 1, page_size: 20, favorited: "1" } });
       }
-      if (!isLatest(token)) return;
+      if (!tabRace.isLatest(token)) return;
       setListData({ items: d?.items || [], total: d?.total || 0 });
     } catch (e) {
-      if (isLatest(token)) message.error(e.message);
+      if (tabRace.isLatest(token)) message.error(e.message);
     } finally {
-      if (isLatest(token)) setListLoading(false);
+      if (tabRace.isLatest(token)) setListLoading(false);
     }
-  }, [begin, isLatest, isSelf, message, tab, uid]);
+  }, [tabRace, isSelf, message, tab, uid]);
 
   useEffect(() => {
     loadTab();
@@ -231,9 +241,22 @@ export default function ProfileViewPage() {
                 <span><EnvironmentOutlined /> {data.location}</span>
               ) : null}
               {data?.website ? (
-                <a href={data.website} target="_blank" rel="noreferrer noopener">
-                  <LinkOutlined /> {data.website}
-                </a>
+                // 存储型 XSS 防护：website 是用户可编辑字段，直接放进 href 时
+                // 填 `javascript:...` 就能让访客在本站上下文执行脚本。
+                // 复用 Markdown 的 safeHref（协议白名单：http/https/mailto/相对路径），
+                // 非法的一律当纯文本展示 —— 不隐藏信息，但绝不点得动。
+                (() => {
+                  const href = safeHref(data.website);
+                  return href ? (
+                    <a href={href} target="_blank" rel="noreferrer noopener">
+                      <LinkOutlined /> {data.website}
+                    </a>
+                  ) : (
+                    <span title="该链接协议不被支持，仅作展示">
+                      <LinkOutlined /> {data.website}
+                    </span>
+                  );
+                })()
               ) : null}
               <span><ClockCircleOutlined /> 加入于 {fmtDate(data?.created_time, "YYYY-MM-DD")}</span>
             </div>

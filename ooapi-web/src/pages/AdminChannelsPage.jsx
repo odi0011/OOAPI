@@ -791,6 +791,10 @@ export default function AdminChannelsPage() {
   const [addForm] = Form.useForm();
   const [editForm] = Form.useForm();
   const [batchForm] = Form.useForm();
+  // 新建表单里的接口地址 / API Key 实时值：ModelPicker 靠它们在**保存前**拉模型
+  // （否则「点获取模型 → 请先保存」与「保存 → 请先选模型」互相锁死，见 ModelPicker 注释）
+  const addBaseUrl = Form.useWatch("base_url", addForm);
+  const addApiKey = Form.useWatch("api_key", addForm);
   // 定时检测开关（关闭时禁用间隔与提示词输入）
   const editAutoTestOn = Form.useWatch("auto_test", editForm);
   // 检测模型下拉：用当前渠道声明的模型列表
@@ -922,6 +926,11 @@ export default function AdminChannelsPage() {
             // 同一厂商有**多个 password 方式**时（OpenAI 下有「浏览器驱动」，
             // 未来还可能加别的）也必须区分开：它们的凭据字段完全不同，
             // 都叫「账号密码」会让人选错。needs2fa 的方式带上自己的方法名。
+            //
+            // **browser 与 paste 必须给不同标签**（实测坑）：网页反代类渠道现在
+            // 同时提供两条路 —— 服务器浏览器（自动抓取）与本机浏览器（登录后粘贴
+            // 登录态）。两者以前都渲染成「浏览器登录」，同一厂商裂出两个同名按钮，
+            // 用户点哪个都像撞运气。现在按「谁在跑浏览器」明确区分。
             label: m.oauth
               ? `${methodShortName(m)}${lm === "paste" ? "（粘贴凭据）" : ""}`
               : lm === "password"
@@ -929,9 +938,9 @@ export default function AdminChannelsPage() {
                   ? `${methodShortName(m)}（账号密码）`
                   : "账号密码"
                 : lm === "browser"
-                  ? "浏览器登录"
+                  ? "服务器浏览器登录"
                   : canGrab
-                    ? "浏览器登录"
+                    ? "本机浏览器登录"
                     : "粘贴登录态",
             hint: supportsDeviceBindMethod(m.key) ? "支持一键绑定" : "",
           });
@@ -1244,6 +1253,9 @@ export default function AdminChannelsPage() {
       auto_test_minutes: Math.max(1, Math.round((Number(r.auto_test_interval) || 3600) / 60)),
       test_model: r.test_model || undefined,
       test_prompt: r.test_prompt || "hi",
+      // 检测超时（秒）：0/空 = 用默认预算（普通 90s、浏览器渠道 240s）。
+      // 慢模型（大档位思考久）在这里单独放宽，否则每次检测都报超时。
+      probe_timeout_sec: Number(r.probe_timeout_sec) || 0,
       // 账号级运行参数
       concurrency: Number(r.concurrency) || 1,
       min_gap_ms: Number(r.min_gap_ms) || 0,
@@ -1279,6 +1291,7 @@ export default function AdminChannelsPage() {
         auto_test_interval: Math.max(60, Math.round(Number(v.auto_test_minutes || 60) * 60)),
         test_model: String(v.test_model || "").trim(),
         test_prompt: String(v.test_prompt || "hi").trim() || "hi",
+        probe_timeout_sec: Number(v.probe_timeout_sec) || 0,
         // 账号级参数（并发/限速/指纹/计费口径）
         concurrency: Number(v.concurrency) || 0,
         min_gap_ms: Number(v.min_gap_ms) || 0,
@@ -1312,7 +1325,14 @@ export default function AdminChannelsPage() {
     try {
       // 订阅渠道 verify 内部可能先刷新 token，服务端超时 60s；前端必须留足余量
       const res = await API.post(`/channel/${r.id}/test`, undefined, { timeoutMs: 90_000 });
-      if (res?.success) message.success(`「${r.name}」可用（${res.time}ms）`);
+      // 报首 Token 与总耗时两个数：管理员据此判断慢在「连不上」还是「生成久」
+      if (res?.success) {
+        message.success(
+          res.total && res.total !== res.time
+            ? `「${r.name}」可用（首Token ${res.time}ms / 总 ${res.total}ms）`
+            : `「${r.name}」可用（${res.time}ms）`
+        );
+      }
       else message.warning(res?.message || "测试失败");
       await load();
     } catch (e) {
@@ -2045,12 +2065,22 @@ export default function AdminChannelsPage() {
       title: "响应",
       dataIndex: "response_time",
       width: 94,
-      render: (v, r) =>
-        r.tested_time ? (
-          <span className="oo-num" style={{ color: v > 3000 ? "var(--orange)" : "var(--ink)" }}>{v ? `${v}ms` : "-"}</span>
-        ) : (
-          <Text type="secondary" style={{ fontSize: 12 }}>未测</Text>
-        ),
+      render: (v, r) => {
+        if (!r.tested_time) return <Text type="secondary" style={{ fontSize: 12 }}>未测</Text>;
+        // 展示**首 Token 耗时**（ttft_ms），总耗时放悬浮里。
+        // 用户实测反馈：「测测 Gemini 是不是根据首 t 来判定的检测时间？为什么响应时间这么长？」
+        // 以及「GLM 响应很慢但人家一直在思考，思考的首 t 也算首 t 吧？」——
+        // 首字到达才是体感上的「响应」，总耗时把整段生成/思考都算进去了。
+        const ttft = Number(r.ttft_ms) || Number(v) || 0;
+        const total = Number(v) || 0;
+        return (
+          <Tooltip title={total && total !== ttft ? `首 Token ${ttft}ms ｜ 总耗时 ${total}ms（含全部生成/思考）` : ""}>
+            <span className="oo-num" style={{ color: ttft > UPTIME_SLOW_MS ? "var(--orange)" : "var(--ink)" }}>
+              {ttft ? `${ttft}ms` : "-"}
+            </span>
+          </Tooltip>
+        );
+      },
     },
     {
       title: "操作",
@@ -2704,8 +2734,22 @@ export default function AdminChannelsPage() {
                             <Form.Item label="快捷登录（推荐）">
                               <Space wrap>
                                 <Button icon={<GlobalOutlined />} onClick={startCapture} loading={capBusy}>
-                                  打开登录页自动抓取
+                                  服务器浏览器（自动抓取）
                                 </Button>
+                                {/* 本机浏览器路径：用户在自己电脑上登录，再回来粘贴登录态。
+                                    为什么必须有这条路：服务器浏览器要跑一台带显示的真实浏览器，
+                                    资源受限、首次登录还有风控（阿里/字节尤其重）；很多管理员
+                                    更愿意在自己已经登录过的浏览器里直接拷登录态。此前
+                                    只有服务器浏览器一条路（GLM/豆包/通义连 paste 都没挂上），
+                                    等于逼着所有人走最重的那条。 */}
+                                {pickMethod.entryUrl ? (
+                                  <Button
+                                    icon={<GlobalOutlined />}
+                                    onClick={() => window.open(pickMethod.entryUrl, "_blank", "noopener")}
+                                  >
+                                    在本机浏览器打开登录页
+                                  </Button>
+                                ) : null}
                                 <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
                                   {pickMethod.captureHint || "在服务器端登录页完成登录后，自动读取登录态回填下面"}
                                 </span>
@@ -2980,9 +3024,15 @@ export default function AdminChannelsPage() {
                     <Form.Item
                       name="models"
                       label="模型范围"
-                      rules={isApi ? [{ required: true, message: "请至少填写一个模型" }] : []}
+                      // 不再强制必填：留空 = 该厂商全部已注册模型（后端同口径）。
+                      // 原来要求「至少一个」会把「填 Key → 拉模型 → 保存」这条路堵死 ——
+                      // 拉模型需要先有渠道，保存又要求先有模型，管理员无路可走（实测反馈）。
                     >
-                      <ModelPicker providerKey={pickProvider?.key} />
+                      <ModelPicker
+                        providerKey={pickProvider?.key}
+                        baseUrl={addBaseUrl || ""}
+                        apiKey={addApiKey || ""}
+                      />
                     </Form.Item>
 
                     <Row gutter={12}>
@@ -3077,7 +3127,7 @@ export default function AdminChannelsPage() {
           <Form.Item
             name="models"
             label="模型范围"
-            rules={editing?.isApiKey ? [{ required: true, message: "请至少填写一个模型" }] : []}
+            // 同上：编辑时也允许留空（= 全部模型），避免「想清空重新拉」被拦下
           >
             <ModelPicker channelId={editing?.id || 0} providerKey={editing?.type} />
           </Form.Item>
@@ -3130,6 +3180,15 @@ export default function AdminChannelsPage() {
             <Col span={8}>
               <Form.Item name="test_prompt" label="检测提示词">
                 <Input maxLength={200} placeholder="hi" disabled={!editAutoTestOn} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item
+                name="probe_timeout_sec"
+                label="检测超时（秒）"
+                extra="0 或留空 = 默认（普通 90s、浏览器渠道 240s）；大模型思考久就调大，否则每次检测都会报超时"
+              >
+                <InputNumber style={{ width: "100%" }} min={0} max={1800} step={30} placeholder="默认" />
               </Form.Item>
             </Col>
             <Col span={8}>
@@ -3721,7 +3780,13 @@ export default function AdminChannelsPage() {
                     setReloginBusy(true);
                     try {
                       const r = await API.post(`/channel/${reloginTarget.id}/test`, undefined, { timeoutMs: 90_000 });
-                      if (r?.success) message.success(`渠道可用（${r.time}ms）`);
+                      if (r?.success) {
+                        message.success(
+                          r.total && r.total !== r.time
+                            ? `渠道可用（首Token ${r.time}ms / 总 ${r.total}ms）`
+                            : `渠道可用（${r.time}ms）`
+                        );
+                      }
                       else message.warning(r?.message || "渠道暂不可用");
                       await load();
                     } catch (e) {

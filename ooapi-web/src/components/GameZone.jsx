@@ -528,32 +528,68 @@ export default function GameZone() {
   }, [loadRooms]);
 
   // SSE：对手落子/加入后立即更新（服务端按各自视角推送，隐藏信息不会串）
+  //
+  // 与消息页同一套：票据是**一次性**的，EventSource 的内置重连会复用旧票据
+  // 而必然 401，所以断线必须换新票据重建，并自己做指数退避。
+  // 原来连 onerror 都没有：断线后**永远收不到对手的落子**，只剩手动刷新，
+  // 对局体验直接坏掉。
   useEffect(() => {
     let closed = false;
     let es = null;
-    (async () => {
+    let retryTimer = null;
+    let attempt = 0;
+    const MAX_BACKOFF_MS = 30000;
+
+    const onUpdate = (ev) => {
+      try {
+        const d = JSON.parse(ev.data);
+        setRoom((prev) => (prev && Number(prev.id) === Number(d.id) ? d : prev));
+        loadRooms();
+      } catch {
+        /* ignore */
+      }
+    };
+
+    const scheduleReconnect = () => {
+      if (closed) return;
+      attempt += 1;
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => {
+        if (!closed) connect();
+      }, Math.min(MAX_BACKOFF_MS, 1000 * 2 ** (attempt - 1)));
+    };
+
+    const connect = async () => {
+      if (closed) return;
       try {
         const { ticket } = await API.post("/chatroom/stream-ticket", {});
         if (closed) return;
         es = new EventSource(`/api/chatroom/stream?ticket=${encodeURIComponent(ticket)}`);
         esRef.current = es;
-        const onUpdate = (ev) => {
+        es.addEventListener("ready", () => {
+          attempt = 0;
+        });
+        es.addEventListener("game_move", onUpdate);
+        es.addEventListener("game_joined", onUpdate);
+        es.onerror = () => {
           try {
-            const d = JSON.parse(ev.data);
-            setRoom((prev) => (prev && Number(prev.id) === Number(d.id) ? d : prev));
-            loadRooms();
+            es?.close();
           } catch {
             /* ignore */
           }
+          esRef.current = null;
+          scheduleReconnect();
         };
-        es.addEventListener("game_move", onUpdate);
-        es.addEventListener("game_joined", onUpdate);
       } catch {
-        /* 无实时也能玩（可手动刷新） */
+        // 无实时也能玩（可手动刷新），但要有退避重试，不能就此放弃
+        scheduleReconnect();
       }
-    })();
+    };
+
+    connect();
     return () => {
       closed = true;
+      clearTimeout(retryTimer);
       try {
         es?.close();
       } catch {

@@ -423,26 +423,52 @@ export async function startDeviceBind(vendor, params = {}) {
 
 /**
  * 轮询一次。
- * @returns {{status:'pending'|'success'|'expired'|'denied', credential?, message?, slowDown?}}
+ *
+ * 两处关键约束：
+ *
+ * ① **vendor 由服务端会话决定，不信调用方**。返回值里带上 `vendor`，路由用它校验
+ *    「这次授权拿到的凭据，到底属于哪个厂商」，防止把 A 厂商的授权结果写进 B 厂商渠道。
+ *    （`/devices/poll` 的 body 里也有 vendor，但那是前端传的，只能当展示用。）
+ *
+ * ② **会话级 in-flight 互斥**。前端 `setInterval` 轮询与「两个管理员同时点」都会让同一
+ *    session 被并发 poll：上游会被请求多次，更糟的是两边都拿到 `success`、都去写凭据，
+ *    后写的那份覆盖先写的。这里用 `s.polling` 做闸门，重复请求直接返回 pending。
+ *    终态用「删除成功者」做原子状态转移 —— `sessions.delete` 返回 true 的那个才继续。
+ *
+ * @returns {{status:'pending'|'success'|'expired'|'denied', vendor?:string, credential?, message?, slowDown?}}
  */
 export async function pollDeviceBind(sessionId) {
-  const s = sessions.get(String(sessionId || ""));
+  const key = String(sessionId || "");
+  const s = sessions.get(key);
   if (!s) return { status: "expired", message: "绑定会话已失效，请重新发起" };
   if (Date.now() - s.createdAt > SESSION_TTL_MS) {
-    sessions.delete(sessionId);
+    sessions.delete(key);
     return { status: "expired", message: "绑定超时，请重新发起" };
   }
   const impl = VENDORS[s.vendor];
   if (!impl) {
-    sessions.delete(sessionId);
+    sessions.delete(key);
     return { status: "expired", message: "该渠道不支持一键绑定" };
   }
-  const out = await impl.poll(s);
-  if (out.status === "success" || out.status === "expired" || out.status === "denied") {
-    // 终态：立即回收会话，避免凭据在内存里多留一份
-    sessions.delete(sessionId);
+  if (s.polling) {
+    // 上一次 poll 还在飞：这次不碰上游，按「仍在等待」回给前端（它会照常再轮询一次）
+    return { status: "pending", vendor: s.vendor, vendorLocked: true, message: "上一次查询尚未返回，本次已跳过" };
   }
-  return out;
+  s.polling = true;
+  let out;
+  try {
+    out = await impl.poll(s);
+  } finally {
+    // 会话可能已在下面被删除；对已删除的会话补写标记无害
+    s.polling = false;
+  }
+  if (out.status === "success" || out.status === "expired" || out.status === "denied") {
+    // 终态：立即回收会话，避免凭据在内存里多留一份。
+    // delete 的返回值即「谁抢到了终态」，避免两次成功各自写回。
+    const won = sessions.delete(key);
+    if (!won) return { status: "pending", vendor: s.vendor, message: "该会话已被其它请求完成" };
+  }
+  return { ...out, vendor: out.vendor || s.vendor };
 }
 
 /** 取消绑定（用户关弹窗） */

@@ -14,7 +14,8 @@
 //     https://open.bigmodel.cn/api/paas/v4        → /api/paas/v4/chat/completions
 //     https://ark.cn-beijing.volces.com/api/v3    → /api/v3/chat/completions
 //     https://dashscope.aliyuncs.com/compatible-mode → /compatible-mode/v1/chat/completions
-import { now, assertPublicUrl } from "../../utils.js";
+import { now, assertPublicUrlCached } from "../../utils.js";
+import { assertNoContentError } from "./content-error.js";
 import { applyVendorRequest, effectiveModelOf, reasoningDeltaOf, splitThinkTags } from "./vendor-quirks.js";
 
 // 一次性文本读取必须有上限：SSE 路径有单行 8MB 限制，JSON/错误兜底却直接 resp.text()，
@@ -70,6 +71,50 @@ export function endpoints(baseUrl) {
     return { chat: `${base}/chat/completions`, models: `${base}/models` };
   }
   return { chat: `${raw}/v1/chat/completions`, models: `${raw}/v1/models` };
+}
+
+/**
+ * 该渠道是否被允许访问内网上游。
+ * 只有适配器在**自己做过白名单校验**之后才敢设 other.allow_private_upstream；
+ * 它绝不能来自用户可编辑的表单字段（那等于给 SSRF 开后门）。
+ */
+function isPrivateUpstream(channel) {
+  return channel?.other?.allow_private_upstream === true;
+}
+
+/**
+ * 带 SSRF 防护的 fetch —— 本文件所有出站请求都必须走这里。
+ *
+ * 两件事：
+ *  ① 请求前校验目标为公网地址（`assertPublicUrlCached`，60 秒 DNS 缓存不拖慢网关）。
+ *     之所以不能只在「拉模型」那条路径校验：`channel.api_key` 是在 chat 里发出去的，
+ *     而 base_url 有两个不可信来源 —— 管理员填的表单，以及适配器从**凭据 JSON** 里
+ *     取出的 endpoint（Qoder 就是）。只校验拉模型路径等于留了条把 Bearer 送到任意
+ *     地址（含内网、云元数据 169.254.169.254）的路。
+ *  ② 手动逐跳重定向并在每跳重新校验 —— fetch 默认跟随 302，上游只要重定向到内网
+ *     就能绕过校验。
+ *
+ * 例外：`allowPrivate` 为真时跳过公网校验（见 isPrivateUpstream）。
+ */
+async function guardedFetch(url, init = {}, { allowPrivate = false } = {}) {
+  const check = async (target) => {
+    if (allowPrivate) return;
+    await assertPublicUrlCached(target);
+  };
+  let target = url;
+  await check(target);
+  for (let hop = 0; hop < 4; hop++) {
+    const resp = await fetch(target, { ...init, redirect: "manual" });
+    if (resp.status >= 300 && resp.status < 400) {
+      const loc = resp.headers.get("location");
+      if (!loc) throw new Error("上游返回了空重定向");
+      target = new URL(loc, target).toString();
+      await check(target);
+      continue;
+    }
+    return resp;
+  }
+  throw new Error("重定向次数过多");
 }
 
 // 多 Key 轮换：api_key 支持多行，按请求轮换（put 到 Map 的游标自增）
@@ -152,7 +197,7 @@ export async function verify(channel) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 15000);
   try {
-    const resp = await fetch(models, { headers: authHeaders(channel), signal: ac.signal });
+    const resp = await guardedFetch(models, { headers: authHeaders(channel), signal: ac.signal }, { allowPrivate: isPrivateUpstream(channel) });
     if (resp.status === 401 || resp.status === 403) {
       throw Object.assign(new Error(`上游拒绝鉴权（HTTP ${resp.status}），请检查 API Key`), {
         code: "CHANNEL_AUTH_EXPIRED",
@@ -183,22 +228,11 @@ export async function fetchUpstreamModels(channel) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 15000);
   try {
-    // 手动逐跳重定向：调用方虽已做过一次 assertPublicUrl，但 fetch 默认跟随 302，
-    // 上游只要重定向到内网地址就能绕过校验（SSRF）。每跳都校验后才继续。
-    let target = models;
-    let resp = null;
-    for (let hop = 0; hop < 4; hop++) {
-      await assertPublicUrl(target);
-      resp = await fetch(target, { headers: authHeaders(channel), signal: ac.signal, redirect: "manual" });
-      if (resp.status >= 300 && resp.status < 400) {
-        const loc = resp.headers.get("location");
-        if (!loc) throw new Error("上游返回了空重定向");
-        target = new URL(loc, target).toString();
-        continue;
-      }
-      break;
-    }
-    if (!resp || (resp.status >= 300 && resp.status < 400)) throw new Error("重定向次数过多");
+    const resp = await guardedFetch(
+      models,
+      { headers: authHeaders(channel), signal: ac.signal },
+      { allowPrivate: isPrivateUpstream(channel) }
+    );
     const data = await resp.json().catch(() => null);
     return (data?.data || data?.models || []).map((m) => m.id || m.name).filter(Boolean);
   } catch (e) {
@@ -273,13 +307,22 @@ export async function chat({
   // 方舟的 thinking 格式与 max_tokens 互斥、StepFun 的参数裁剪），见 vendor-quirks.js
   applyVendorRequest(body, { channel, model });
 
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { ...authHeaders(channel, nextKey(channel)), Accept: "text/event-stream" },
-    body: JSON.stringify(body),
-    signal,
-  }).catch((e) => {
+  const resp = await guardedFetch(
+    url,
+    {
+      method: "POST",
+      headers: { ...authHeaders(channel, nextKey(channel)), Accept: "text/event-stream" },
+      body: JSON.stringify(body),
+      signal,
+    },
+    { allowPrivate: isPrivateUpstream(channel) }
+  ).catch((e) => {
     if (e.name === "AbortError") throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
+    // 地址被拒（SSRF 防护）是可归因的配置错误，不能混进 CHANNEL_NETWORK
+    // ——那会让渠道被当成「网络抖动」换个号重试，实际配置永远不会自愈。
+    if (/内网|协议不允许|携带凭据|解析|重定向/.test(String(e.message || ""))) {
+      throw Object.assign(new Error(`接口地址被拒绝：${e.message}`), { code: "CHANNEL_NOT_READY" });
+    }
     throw Object.assign(new Error(`无法连接上游：${e.message}`), { code: "CHANNEL_NETWORK" });
   });
 
@@ -432,6 +475,11 @@ export async function chat({
   if (!content) {
     throw Object.assign(new Error(reasoning ? "上游只返回了思考内容，没有正文" : "上游返回空内容"), { code: "CHANNEL_EMPTY" });
   }
+  // 上游可能把错误写成正常正文（模型下线/权限不足/额度耗尽），HTTP 200 且
+  // 有正文。这类响应按成功处理会让渠道测试写 ok=1、重置冷却，而真实用户
+  // 必然失败（线上实测抓到过，见 AI协作.md 第 46 批）。这里是**所有走
+  // openai-compat 的渠道**的公共出口，一处拦截覆盖大部分厂商。
+  assertNoContentError(content, "上游");
 
   return {
     content,

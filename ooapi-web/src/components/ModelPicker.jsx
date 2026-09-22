@@ -43,7 +43,18 @@ function formatErrorMessage(raw) {
   return s.length > 150 ? `${s.slice(0, 150)}...` : s;
 }
 
-export default function ModelPicker({ value = [], onChange, channelId = 0, providerKey = "", disabled = false, extra }) {
+export default function ModelPicker({
+  value = [],
+  onChange,
+  channelId = 0,
+  providerKey = "",
+  // 新建渠道时用：未保存的 base_url / api_key。有它们就能**先拉模型再保存**，
+  // 不必先建渠道再回头改模型（见 fetchModels 里的死锁说明）。
+  baseUrl = "",
+  apiKey = "",
+  disabled = false,
+  extra,
+}) {
   const { message } = AntApp.useApp();
   const [options, setOptions] = useState([]);
   const [source, setSource] = useState("");
@@ -62,15 +73,42 @@ export default function ModelPicker({ value = [], onChange, channelId = 0, provi
   }, [channelId]);
 
   const fetchModels = async (isManual = false) => {
-    if (!channelId) {
-      if (isManual) {
-        message.info("新建渠道请先保存基础凭据，保存后即可从上游一键获取并填入可用模型");
-      }
+    // 两条路径：
+    //   ① 已保存的渠道 → /channel/:id/upstream-models（能走适配器探测，含订阅渠道）；
+    //   ② 新建未保存的渠道 → /channel/fetch-models，带表单里刚填的 base_url + api_key。
+    //
+    // 为什么必须有第 ② 条：早先只支持 ①，于是新建渠道点「从上游获取模型」只能提示
+    // 「请先保存」；而后端保存时又要求「请至少选择一个模型」—— 两个校验互相锁死，
+    // 管理员无路可走（实测反馈）。用户的原话是对的：填了 Key 就该能拉模型。
+    const canPrefetch = !channelId && Boolean(apiKey);
+    if (!channelId && !canPrefetch) {
+      if (isManual) message.warning("请先填写 API Key，填好后即可直接从上游获取模型");
       return;
     }
     setBusy(true);
     setErrNote("");
     try {
+      if (!channelId) {
+        const models = await API.post(
+          "/channel/fetch-models",
+          { base_url: baseUrl, api_key: apiKey, type: providerKey },
+          { timeoutMs: 90_000 }
+        );
+        const arr = Array.isArray(models) ? models : [];
+        setOptions(arr.map((m) => ({ value: m, label: m })));
+        setSource(arr.length ? "upstream" : "none");
+        if (arr.length) {
+          setNote(`已从上游接口拉取到 ${arr.length} 个实时模型`);
+          if (isManual) {
+            onChange?.(arr);
+            message.success(`已成功从上游获取并自动填入 ${arr.length} 个模型`);
+          }
+        } else {
+          setNote("上游未返回模型清单，可留空（= 该厂商全部模型）或手工输入");
+          if (isManual) message.warning("上游未返回任何可用模型，可留空后直接保存");
+        }
+        return;
+      }
       const r = await API.post(`/channel/${channelId}/upstream-models`, undefined, { timeoutMs: 90_000 });
       const models = Array.isArray(r?.models) ? r.models : [];
       setOptions(models.map((m) => ({ value: m, label: m })));

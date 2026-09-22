@@ -25,6 +25,11 @@ const RETRYABLE = new Set([
   "CHANNEL_CONFIG_ERROR", // 订阅渠道的部署配置缺失（如 Google OAuth 密钥未配置）：跳过该渠道
   "CHANNEL_DEGRADED",     // 上游降智/过载信号（codex-state-kit）：立即换号，短冷却后重试
   "CHANNEL_POW_FAILED",   // PoW 求解失败（worker 崩溃/超时）：换号往往能拿到更简单的挑战
+  // 限流/风控（429 与「返回验证页的 403」）—— 可自愈，冷却后重试；
+  // 归到普通 HTTP 错误会让冷却档位与提示都失准（见 upstream/http-error.js）
+  "CHANNEL_RATE_LIMITED",
+  // 403 权限不足（免费号用了付费模型档位）：换号或换模型可解，重抓凭据无效
+  "CHANNEL_FORBIDDEN",
 ]);
 
 export function isRetryable(code) {
@@ -298,6 +303,13 @@ function cooldownFor(code, err) {
       return 21600;
     case "CHANNEL_CAPTCHA":
       return 3600;
+    // 限流：5 分钟后自愈，太短会反复撞（把临时限流升级成封禁），太长浪费可用账号
+    case "CHANNEL_RATE_LIMITED":
+      return 300;
+    // 权限不足：不是渠道坏了，是模型档位不对 —— 给短冷却，
+    // 让它在换个模型时能立刻复用（长冷却会把好账号也冻住）
+    case "CHANNEL_FORBIDDEN":
+      return 300;
     default:
       return 300;
   }

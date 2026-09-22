@@ -310,9 +310,10 @@ async function typePrompt(page, text) {
       break;
     }
   }
-  // 清空方式按元素类型区分：fill("") 只对 input/textarea 有效，
-  // 对 contenteditable 会挂到 30s 超时（实测踩过）。
-  const inputTag = await target.evaluate((n) => n.tagName.toLowerCase()).catch(() => "");
+  // ⚠️ 先判空再解引用：target 为 null 时 `target.evaluate(...)` 会抛原生
+  // TypeError（"Cannot read properties of null"），绕过下面精心准备的页面现场
+  // 诊断，还会被上层当成基础设施故障 → 错误地换号/冷却整个渠道。
+  // 页面结构变化、未登录、停在风控页时都会走到这里，必须给可归因的错误。
   if (!target) {
     // 把页面实况带出去：这类失败以后还会遇到（上游改版/登录态丢失/停在弹窗），
     // 错误里没有现场就只能靠猜。
@@ -343,6 +344,10 @@ async function typePrompt(page, text) {
     return false;
   }
 
+  // 清空方式按元素类型区分：fill("") 只对 input/textarea 有效，
+  // 对 contenteditable 会挂到 30s 超时（实测踩过）。
+  // 必须在判空**之后**取——放在判空前就是 null 解引用。
+  const inputTag = await target.evaluate((n) => n.tagName.toLowerCase()).catch(() => "");
   try {
     await target.click({ timeout: 5000 }).catch(() => {});
     if (inputTag === "textarea" || inputTag === "input") {

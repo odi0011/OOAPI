@@ -14,6 +14,7 @@
 //      身份用统一指纹模块派生的 requestId / sessionId，UA 用官方 antigravity/hub/<ver>。
 // ---------------------------------------------------------------------------
 import { antigravityIdentity, antigravityUserAgent, CLI_VERSIONS } from "./cli-profile.js";
+import { assertNoContentError } from "./content-error.js";
 import { persistOtherPatch, loadOther, withRefreshLock } from "./auth-store.js";
 import { googleClientCreds } from "./oauth-login.js";
 
@@ -478,6 +479,11 @@ export async function chat({
       code: "CHANNEL_EMPTY",
     });
   }
+  // 上游会用**正常正文**说错误（实测抓到过：
+  // "Gemini 3.5 Flash is no longer available. Please switch to Gemini 3.7 Flash..."）。
+  // 只看「有正文」就判健康，会让这类渠道测试写入 ok=1 并重置冷却，
+  // 而真实请求必然失败（第 46 批复审点名的线上问题）。这里补一道内容级识别。
+  assertNoContentError(content, "Antigravity");
   return { content, reasoning, usage, upstreamModel };
 }
 

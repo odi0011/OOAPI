@@ -141,18 +141,46 @@ export default function MessagesPage() {
     [toast]
   );
 
-  /* ---------------- SSE 长连接 ---------------- */
+  /* ---------------- SSE 长连接（一次性票据 + 指数退避重连） ----------------
+   *
+   * 票据是**一次性的**（服务端 `tickets.delete(ticket)`，见 routes/chatroom.js），
+   * 而 EventSource 内置的重连会拿同一个 URL（同一个旧票据）再请求 → 必然 401。
+   * 所以断线后必须**换新票据**重建连接，且要自己控制退避节奏，
+   * 否则服务端一抖就变成「永久离线」（原来 onerror 只是 setSseOk(false)，
+   * 什么都不做 —— 实测反馈的问题）。
+   *
+   * 退避：1s → 2s → 4s → … 最多 30s，一旦 ready 就重置回 1s。
+   * cleanup 时必须 clearTimeout，否则组件卸载后定时器还会建连接（内存泄漏 + 幽灵连接）。
+   */
   useEffect(() => {
     let closed = false;
     let es = null;
-    (async () => {
+    let retryTimer = null;
+    let attempt = 0;
+    const MAX_BACKOFF_MS = 30000;
+
+    const scheduleReconnect = () => {
+      if (closed) return;
+      attempt += 1;
+      const delay = Math.min(MAX_BACKOFF_MS, 1000 * 2 ** (attempt - 1));
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => {
+        if (!closed) connect();
+      }, delay);
+    };
+
+    const connect = async () => {
+      if (closed) return;
       try {
         const { ticket } = await API.post("/chatroom/stream-ticket", {});
         if (closed) return;
         // EventSource 带不了 Authorization，所以用一次性票据（与监控页同一套）
         es = new EventSource(`/api/chatroom/stream?ticket=${encodeURIComponent(ticket)}`);
         esRef.current = es;
-        es.addEventListener("ready", () => setSseOk(true));
+        es.addEventListener("ready", () => {
+          attempt = 0; // 连上了就把退避重置
+          setSseOk(true);
+        });
         es.addEventListener("message", (ev) => {
           let payload = null;
           try {
@@ -221,13 +249,28 @@ export default function MessagesPage() {
           navigate("/messages");
           loadRooms();
         });
-        es.onerror = () => setSseOk(false);
+        es.onerror = () => {
+          setSseOk(false);
+          // 关键：先 close 掉内置重连（它会复用旧票据，必然 401 并在
+          // 浏览器里反复打接口），再由我们换新票据重连。
+          try {
+            es?.close();
+          } catch {
+            /* ignore */
+          }
+          esRef.current = null;
+          scheduleReconnect();
+        };
       } catch {
         setSseOk(false);
+        scheduleReconnect();
       }
-    })();
+    };
+
+    connect();
     return () => {
       closed = true;
+      clearTimeout(retryTimer);
       try {
         es?.close();
       } catch {

@@ -44,10 +44,27 @@ function anthropicText(content) {
 
 /** 把 Responses 的 input（string | [{role,content}]）转成标准 messages */
 function responsesInput(body) {
-  const input = body?.input;
-  if (typeof input === "string") return [{ role: "user", content: input }];
-  if (!Array.isArray(input)) return [];
   const out = [];
+  // Responses 协议的**顶层 instructions 等价于 system 提示词**（官方文档：
+  // "instructions: A system (or developer) message inserted into the model's context"）。
+  // 它不在 input 里。早先只解析 input，等于把系统约束整段丢掉 —— 用 Responses SDK
+  // 的调用方看到的是「模型不遵守系统指令」，而且不报任何错，极难归因。
+  const instructions = body?.instructions;
+  if (typeof instructions === "string" && instructions.trim()) {
+    out.push({ role: "system", content: instructions });
+  } else if (Array.isArray(instructions)) {
+    const t = instructions
+      .map((c) => (typeof c === "string" ? c : c?.text || ""))
+      .join("")
+      .trim();
+    if (t) out.push({ role: "system", content: t });
+  }
+  const input = body?.input;
+  if (typeof input === "string") {
+    out.push({ role: "user", content: input });
+    return out;
+  }
+  if (!Array.isArray(input)) return out;
   for (const it of input) {
     if (typeof it === "string") {
       out.push({ role: "user", content: it });
@@ -197,19 +214,45 @@ const anthropicMessages = {
         usage: { input_tokens: 0, output_tokens: 0 },
       },
     });
-    send("content_block_start", { index: 0, content_block: { type: "text", text: "" } });
-    return { send, started: true };
+    // 这里**不**声明 content_block：块的类型要等第一段增量到达才知道是 thinking
+    // 还是 text。原先先声明一个 text 块、随后往同一个块里塞 thinking_delta ——
+    // 那不是合法协议（thinking_delta 只允许出现在 thinking 块内），Anthropic SDK
+    // 会把它当坏消息丢掉，思考内容整段看不见。改为按需开块（见 openBlock）。
+    return { send, started: true, blockCount: 0, cur: null };
+  },
+  /**
+   * 按需开启内容块，返回块下标。
+   * Anthropic 的流式协议要求每个块自成一段且块内类型单一：thinking 块只发
+   * thinking_delta，文本块只发 text_delta。两类内容混进一个块 = 非法协议。
+   */
+  openBlock(state, type) {
+    if (state.cur === type) return state.blockCount - 1;
+    if (state.cur) state.send("content_block_stop", { index: state.blockCount - 1 });
+    const index = state.blockCount++;
+    state.cur = type;
+    state.send("content_block_start", {
+      index,
+      content_block:
+        type === "thinking"
+          ? // 与官方流式一致：起始块带空 thinking / 空 signature，内容随后增量补
+            { type: "thinking", thinking: "", signature: "" }
+          : { type: "text", text: "" },
+    });
+    return index;
   },
   delta(state, text) {
-    state.send("content_block_delta", { index: 0, delta: { type: "text_delta", text } });
+    const i = anthropicMessages.openBlock(state, "text");
+    state.send("content_block_delta", { index: i, delta: { type: "text_delta", text } });
   },
   reasoning(state, text) {
-    // Anthropic 协议里思考内容走 thinking block；这里用 text_delta 表达会污染正文，
-    // 所以显式发出 thinking_delta（客户端不认识时会忽略，正文仍正确）。
-    state.send("content_block_delta", { index: 0, delta: { type: "thinking_delta", thinking: text } });
+    const i = anthropicMessages.openBlock(state, "thinking");
+    state.send("content_block_delta", { index: i, delta: { type: "thinking_delta", thinking: text } });
   },
   done(res, state, { settled } = {}) {
-    state.send("content_block_stop", { index: 0 });
+    // 空回复也要有一个块：客户端拿到「一个 content block 都没有的 message」
+    // 时部分 SDK 会判为解析失败。
+    if (!state.cur) anthropicMessages.openBlock(state, "text");
+    state.send("content_block_stop", { index: state.blockCount - 1 });
     state.send("message_delta", {
       delta: { stop_reason: "end_turn", stop_sequence: null },
       usage: {
@@ -220,13 +263,19 @@ const anthropicMessages = {
     state.send("message_stop", {});
     res.end();
   },
-  finish(res, { id, model, content, settled }) {
+  finish(res, { id, model, content, reasoning, settled }) {
     res.json({
       id,
       type: "message",
       role: "assistant",
       model,
-      content: [{ type: "text", text: content }],
+      content: [
+        // 思考内容作为独立的 thinking 块返回。原先非流式**完全丢弃** reasoning ——
+        // 用 Anthropic SDK 的调用方（Claude Code 等）开了思考却什么都看不到，
+        // 也不报错，属于静默丢数据。
+        ...(reasoning ? [{ type: "thinking", thinking: reasoning, signature: "" }] : []),
+        { type: "text", text: content },
+      ],
       stop_reason: "end_turn",
       stop_sequence: null,
       usage: {
@@ -276,11 +325,18 @@ const openaiResponses = {
     res.setHeader("x-accel-buffering", "no");
     res.flushHeaders?.();
     const itemId = newId("msg");
+    const createdAt = now();
     const send = (type, payload) => {
       res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...payload })}\n\n`);
     };
+    // 一个 response 对象的形状只在这里定义一次：created 与 completed 必须给出
+    // 同一组字段（id/object/created_at/model/output/...）。官方 SDK（如 Codex 用
+    // 的 openai-node）在 response.completed 时用事件里的对象**替换**本地累积的
+    // response；若完成事件只有 status/usage，替换后 id、model、output 全变成
+    // undefined —— 表现为「流式跑完了但拿不到文本/模型名」。
+    const respBase = () => ({ id, object: "response", created_at: createdAt, model });
     send("response.created", {
-      response: { id, object: "response", status: "in_progress", model, output: [] },
+      response: { ...respBase(), status: "in_progress", output: [] },
     });
     send("response.output_item.added", {
       output_index: 0,
@@ -292,7 +348,7 @@ const openaiResponses = {
       content_index: 0,
       part: { type: "output_text", text: "", annotations: [] },
     });
-    return { send, itemId, text: "" };
+    return { send, itemId, id, text: "", reasoning: "", createdAt, model };
   },
   delta(state, text) {
     state.text += text;
@@ -305,6 +361,7 @@ const openaiResponses = {
   },
   reasoning(state, text) {
     // Responses 把思考放在 reasoning summary 事件里
+    state.reasoning = (state.reasoning || "") + text;
     state.send("response.reasoning_summary_text.delta", {
       item_id: state.itemId,
       output_index: 0,
@@ -314,6 +371,7 @@ const openaiResponses = {
   },
   done(res, state, { settled } = {}) {
     const text = state.text || "";
+    const reasoning = state.reasoning || "";
     state.send("response.output_text.done", {
       item_id: state.itemId,
       output_index: 0,
@@ -326,13 +384,27 @@ const openaiResponses = {
       content_index: 0,
       part: { type: "output_text", text, annotations: [] },
     });
-    state.send("response.output_item.done", {
-      output_index: 0,
-      item: { id: state.itemId, type: "message", status: "completed", role: "assistant", content: [{ type: "output_text", text }] },
-    });
+    const messageItem = {
+      id: state.itemId,
+      type: "message",
+      status: "completed",
+      role: "assistant",
+      content: [{ type: "output_text", text, annotations: [] }],
+    };
+    state.send("response.output_item.done", { output_index: 0, item: messageItem });
+    // 与 openStream 的 respBase 保持同一组字段；output 为最终产物列表
+    // （有思考时先放 reasoning 项，与 finish 的非流式形状一致）
     state.send("response.completed", {
       response: {
+        id: state.id,
+        object: "response",
+        created_at: state.createdAt,
         status: "completed",
+        model: state.model,
+        output: [
+          ...(reasoning ? [{ type: "reasoning", summary: [{ type: "summary_text", text: reasoning }] }] : []),
+          messageItem,
+        ],
         usage: {
           input_tokens: settled?.promptTokens || 0,
           output_tokens: settled?.completionTokens || 0,

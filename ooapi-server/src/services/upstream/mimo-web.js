@@ -19,6 +19,8 @@
 //   · 标准 SSE（`id:` / `event:` / `data:` 三行式）
 //   · 对话端点 /open-apis/bot/chat?xiaomichatbot_ph=<ph>
 import { randomUUID } from "node:crypto";
+import { assertNoContentError } from "./content-error.js";
+import { throwUpstreamHttpError } from "./http-error.js";
 
 const SITE = "https://aistudio.xiaomimimo.com";
 const API = `${SITE}/open-apis`;
@@ -206,12 +208,16 @@ export async function chat({ channel, model, prompt, thinkingOverride, images = 
     signal,
   });
 
-  if (resp.status === 401 || resp.status === 403) {
-    throw Object.assign(new Error("登录态已失效（401/403），请重新抓取 MiMo 凭据"), { code: "CHANNEL_AUTH_EXPIRED" });
+  if (resp.status === 401 || resp.status === 403 || resp.status === 429) {
+    // 三个码要分开处理：429=限流（可自愈）、403 可能是风控验证页或权限不足、
+    // 401 才是真失效。原先一律按「凭据过期」抛，会让管理员对着好账号反复重抓
+    // 也修不好（第 46 批复审点名）。分类与文案统一在 upstream/http-error.js。
+    const eb = await resp.text().catch(() => "");
+    throwUpstreamHttpError(resp.status, eb);
   }
   if (!resp.ok) {
     const t = await resp.text().catch(() => "");
-    throw Object.assign(new Error(`上游返回 HTTP ${resp.status}：${t.slice(0, 200)}`), { code: "CHANNEL_HTTP_ERROR" });
+    throwUpstreamHttpError(resp.status, t, "上游返回异常");
   }
   if (!resp.body) throw Object.assign(new Error("上游未返回流"), { code: "CHANNEL_BAD_RESPONSE" });
 
@@ -257,17 +263,24 @@ export async function chat({ channel, model, prompt, thinkingOverride, images = 
     throw Object.assign(new Error(reasoning ? "上游只返回了思考内容，没有正文" : "上游返回空内容"), { code: "CHANNEL_EMPTY" });
   }
   // MiMo 网页版不返回 usage → 交给调用方估算（与其它反代渠道一致）
-  return { content, reasoning, usage: null, upstreamModel: modelId };
+    // 上游可能用正常正文说错误（模型下线/权限不足），不能只看「有正文」就判成功
+  assertNoContentError(content, "MiMo");
+return { content, reasoning, usage: null, upstreamModel: modelId };
 }
 
 /** 只检测凭据有效性：拉用户信息（不产生生成费用） */
 export async function verify(channel) {
   const resp = await fetch(`${API}/user/info`, { headers: headers(channel), signal: AbortSignal.timeout(15000) });
-  if (resp.status === 401 || resp.status === 403) {
-    throw Object.assign(new Error("登录态已失效，请重新抓取 MiMo 凭据"), { code: "CHANNEL_AUTH_EXPIRED" });
+  if (resp.status === 401 || resp.status === 403 || resp.status === 429) {
+    // 三个码要分开处理：429=限流（可自愈）、403 可能是风控验证页或权限不足、
+    // 401 才是真失效。原先一律按「凭据过期」抛，会让管理员对着好账号反复重抓
+    // 也修不好（第 46 批复审点名）。分类与文案统一在 upstream/http-error.js。
+    const eb = await resp.text().catch(() => "");
+    throwUpstreamHttpError(resp.status, eb);
   }
   if (!resp.ok) {
-    throw Object.assign(new Error(`凭据检测失败（HTTP ${resp.status}）`), { code: "CHANNEL_HTTP_ERROR" });
+    const t = await resp.text().catch(() => "");
+    throwUpstreamHttpError(resp.status, t, "凭据检测失败");
   }
   const j = await resp.json().catch(() => null);
   const name = j?.data?.userName || j?.data?.nickname || j?.userName || "";

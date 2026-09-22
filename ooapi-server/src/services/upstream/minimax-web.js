@@ -17,6 +17,8 @@
 // 注意：**不要按 chat.minimaxi.com 规划** —— 实测该域名只剩 307 跳转，
 // 实际入口是 agent.minimaxi.com（产品名 MiniMax Agent）。
 import crypto from "node:crypto";
+import { assertNoContentError } from "./content-error.js";
+import { throwUpstreamHttpError } from "./http-error.js";
 
 const SITE = "https://agent.minimaxi.com";
 const STREAM_HOST = "https://agent-stream.minimaxi.com";
@@ -147,8 +149,12 @@ async function createSession(channel, model, signal) {
     body: JSON.stringify(body),
     signal,
   });
-  if (resp.status === 401 || resp.status === 403) {
-    throw Object.assign(new Error("登录态已失效（401/403），请重新抓取 MiniMax 凭据"), { code: "CHANNEL_AUTH_EXPIRED" });
+  if (resp.status === 401 || resp.status === 403 || resp.status === 429) {
+    // 三个码要分开处理：429=限流（可自愈）、403 可能是风控验证页或权限不足、
+    // 401 才是真失效。原先一律按「凭据过期」抛，会让管理员对着好账号反复重抓
+    // 也修不好（第 46 批复审点名）。分类与文案统一在 upstream/http-error.js。
+    const eb = await resp.text().catch(() => "");
+    throwUpstreamHttpError(resp.status, eb);
   }
   if (resp.status === 409) {
     // 会话忙：重建（参考实现的做法）
@@ -156,7 +162,7 @@ async function createSession(channel, model, signal) {
   }
   if (!resp.ok) {
     const t = await resp.text().catch(() => "");
-    throw Object.assign(new Error(`建会话失败（HTTP ${resp.status}）：${t.slice(0, 200)}`), { code: "CHANNEL_HTTP_ERROR" });
+    throwUpstreamHttpError(resp.status, t, "建会话失败");
   }
   const j = await resp.json().catch(() => null);
   const sid = j?.data?.session_id || j?.session_id || j?.data?.sessionId;
@@ -184,12 +190,16 @@ export async function chat({ channel, model, prompt, thinkingOverride, images = 
     body: JSON.stringify(body),
     signal,
   });
-  if (resp.status === 401 || resp.status === 403) {
-    throw Object.assign(new Error("登录态已失效，请重新抓取 MiniMax 凭据"), { code: "CHANNEL_AUTH_EXPIRED" });
+  if (resp.status === 401 || resp.status === 403 || resp.status === 429) {
+    // 三个码要分开处理：429=限流（可自愈）、403 可能是风控验证页或权限不足、
+    // 401 才是真失效。原先一律按「凭据过期」抛，会让管理员对着好账号反复重抓
+    // 也修不好（第 46 批复审点名）。分类与文案统一在 upstream/http-error.js。
+    const eb = await resp.text().catch(() => "");
+    throwUpstreamHttpError(resp.status, eb);
   }
   if (!resp.ok) {
     const t = await resp.text().catch(() => "");
-    throw Object.assign(new Error(`上游返回 HTTP ${resp.status}：${t.slice(0, 200)}`), { code: "CHANNEL_HTTP_ERROR" });
+    throwUpstreamHttpError(resp.status, t, "上游返回异常");
   }
   if (!resp.body) throw Object.assign(new Error("上游未返回流"), { code: "CHANNEL_BAD_RESPONSE" });
 
@@ -261,17 +271,26 @@ export async function chat({ channel, model, prompt, thinkingOverride, images = 
   if (!content) {
     throw Object.assign(new Error(reasoning ? "上游只返回了思考内容，没有正文" : "上游返回空内容"), { code: "CHANNEL_EMPTY" });
   }
-  return { content, reasoning, usage: null, upstreamModel: modelId };
+    // 上游可能用正常正文说错误（模型下线/权限不足），不能只看「有正文」就判成功
+  assertNoContentError(content, "MiniMax");
+return { content, reasoning, usage: null, upstreamModel: modelId };
 }
 
 /** 只检测凭据：查用户信息（不建会话、不产生生成费用） */
 export async function verify(channel) {
   const url = withToken(`${SITE}/archon/api/v1/user/info`, channel);
   const resp = await fetch(url, { headers: signedHeaders(channel, { url }), signal: AbortSignal.timeout(15000) });
-  if (resp.status === 401 || resp.status === 403) {
-    throw Object.assign(new Error("登录态已失效，请重新抓取 MiniMax 凭据"), { code: "CHANNEL_AUTH_EXPIRED" });
+  if (resp.status === 401 || resp.status === 403 || resp.status === 429) {
+    // 三个码要分开处理：429=限流（可自愈）、403 可能是风控验证页或权限不足、
+    // 401 才是真失效。原先一律按「凭据过期」抛，会让管理员对着好账号反复重抓
+    // 也修不好（第 46 批复审点名）。分类与文案统一在 upstream/http-error.js。
+    const eb = await resp.text().catch(() => "");
+    throwUpstreamHttpError(resp.status, eb);
   }
-  if (!resp.ok) throw Object.assign(new Error(`凭据检测失败（HTTP ${resp.status}）`), { code: "CHANNEL_HTTP_ERROR" });
+  if (!resp.ok) {
+    const t = await resp.text().catch(() => "");
+    throwUpstreamHttpError(resp.status, t, "凭据检测失败");
+  }
   return { ok: true, account: "MiniMax Agent" };
 }
 
