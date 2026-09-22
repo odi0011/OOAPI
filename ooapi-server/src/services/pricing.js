@@ -72,7 +72,12 @@ export const DEFAULT_PRICES = [
   { model: "glm-5.2", input: 1.111, output: 3.889, cache: 0.278, type: "glm", remark: `官方 ¥8/¥28/缓存 ¥2 ÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
   { model: "glm-5v-turbo", input: 0.694, output: 3.056, cache: 0.167, type: "glm", remark: `官方 ≤32K 档 ¥5/¥22/缓存 ¥1.2 ÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
   { model: "glm-4.7", input: 0.278, output: 1.111, cache: 0.056, type: "glm", remark: `官方 ¥2/¥8/缓存 ¥0.4 ÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
+  { model: "glm-4.6", input: 0.278, output: 1.111, cache: 0.056, type: "glm", remark: `官方 ¥2/¥8/缓存 ¥0.4 ÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
   { model: "glm-4.5", input: 0.111, output: 0.278, cache: 0, type: "glm", remark: `官方 ¥0.8/¥2（官方公告即将下线）÷ ${CNY_PER_USD}；来源 docs.bigmodel.cn` },
+  // glm-5 / glm-5.1：5.x 早期档，官方已由 5.2 取代；按 5.2 同档价录入，
+  // 避免落到兜底价（那会让这些档位比旗舰还贵）
+  { model: "glm-5", input: 1.111, output: 3.889, cache: 0.278, type: "glm", remark: `按 5.2 同档价录入（官方页已下架 5/5.1）÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
+  { model: "glm-5.1", input: 1.111, output: 3.889, cache: 0.278, type: "glm", remark: `按 5.2 同档价录入（官方页已下架 5/5.1）÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
   { model: "glm-4.5-air", input: 0.111, output: 0.278, cache: 0.022, type: "glm", remark: `官方 ¥0.8/¥2/缓存 ¥0.16 ÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
 
   // --- Kimi（官方美元价；来源 platform.kimi.com/docs/pricing/chat）---
@@ -158,6 +163,48 @@ export const DEFAULT_PRICES = [
   { model: "grok-4.5", input: 2.00, output: 6.00, cache: 0.30, type: "grok", remark: "官方价表；来源 docs.x.ai/docs/models" },
   { model: "grok-4.3", input: 1.25, output: 2.50, cache: 0.20, type: "grok", remark: "官方价表；来源 docs.x.ai/docs/models" },
   { model: "grok-3-mini", input: 0.30, output: 0.50, cache: 0.03, type: "grok", remark: "轻量档，按官方 4.3 档一半估录入，待官方页复核；来源 docs.x.ai/docs/models" },
+
+  // --- 后续批次新接入的档位（此前落到兜底价 0.30/1.20 并打告警）---
+  // 阿里通义：qwen-max 对应官方 max 档，turbo/flash 是轻量档
+  { model: "qwen-max", input: 0.347, output: 1.389, cache: 0, type: "qwen", remark: `对应官方 max 档 ¥2.5/¥10 ÷ ${CNY_PER_USD}（与 qwen3-max 同档）；来源 help.aliyun.com/zh/model-studio` },
+  { model: "qwen-max-latest", input: 0.347, output: 1.389, cache: 0, type: "qwen", remark: `官方 max 最新版同档价 ÷ ${CNY_PER_USD}；来源 help.aliyun.com/zh/model-studio` },
+  { model: "qwen-turbo", input: 0.056, output: 0.222, cache: 0, type: "qwen", remark: `官方 turbo 档 ¥0.4/¥1.6 ÷ ${CNY_PER_USD}；来源 help.aliyun.com/zh/model-studio` },
+  { model: "qwen-flash", input: 0.028, output: 0.111, cache: 0, type: "qwen", remark: `官方 flash 档 ¥0.2/¥0.8 ÷ ${CNY_PER_USD}；来源 help.aliyun.com/zh/model-studio` },
+  { model: "qwen3.7-max", input: 0.347, output: 1.389, cache: 0.030, type: "qwen", remark: `官方 3.7-max 与 max 同档 ¥2.5/¥10、缓存 ¥0.22 ÷ ${CNY_PER_USD}；来源 help.aliyun.com/zh/model-studio` },
+  // Google：3.8-flash 是 3.5-flash 的迭代档，官方同档价
+  { model: "gemini-3.8-flash", input: 1.50, output: 9.00, cache: 0.15, type: "gemini", remark: "与 3.5-flash 同档官方牌价；来源 ai.google.dev/gemini-api/docs/pricing" },
+  { model: "gemini-2.5-flash-lite", input: 0.10, output: 0.40, cache: 0.025, type: "gemini", remark: "官方牌价录入；来源 ai.google.dev/gemini-api/docs/pricing" },
+  // Anthropic：4.5 代 sonnet/haiku（旧代命名，按官方历史价录入）
+  { model: "claude-sonnet-4.5", input: 3.00, output: 15.00, cache: 0.30, type: "anthropic", remark: "4.5 代 sonnet 官方价；来源 anthropic.com/pricing" },
+  { model: "claude-opus-4.5", input: 5.00, output: 25.00, cache: 0.50, type: "anthropic", remark: "4.5 代 opus 官方价；来源 anthropic.com/pricing" },
+  // 智谱视觉档：与对应文本档同价（官方视觉不加价）
+  { model: "glm-5v", input: 0.60, output: 2.20, cache: 0.11, type: "glm", remark: `视觉档与 glm-5.2 同价 ¥4.3/¥15.8 ÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
+  { model: "glm-4.6v", input: 0.28, output: 1.10, cache: 0.06, type: "glm", remark: `视觉档与 glm-4.6 同价 ¥2/¥8 ÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
+  { model: "glm-4v", input: 0.14, output: 0.14, cache: 0, type: "glm", remark: `官方 glm-4v ¥1/¥1 ÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
+  // WorkBuddy（腾讯托管）的 DeepSeek 档：底层同名模型，按 DeepSeek 官方价计
+  { model: "deepseek-v4.1-flash", input: 0.30, output: 1.20, cache: 0.006, type: "deepseek", remark: "腾讯托管同名档，按 DeepSeek 官方 flash 价录入；来源 api-docs.deepseek.com/quick_start/pricing/" },
+  // 小米 MiMo / 美团 LongCat：官方未公布完整价表，按公开档位与同类轻量档估录，待官方页复核
+  { model: "mimo-v2.6-pro", input: 0.50, output: 2.00, cache: 0.05, type: "mimo", remark: "官方未公布完整价表，按同类 pro 档估录，待复核" },
+  { model: "longcat-2.0", input: 0.30, output: 1.20, cache: 0.03, type: "longcat", remark: "官方未公布完整价表，按同类轻量档估录，待复核" },
+
+  // --- 上一代档位：仍在注册表里可被请求，不给价会按「同厂商最贵档」兜底，
+  //     即用旗舰价收轻量档的钱（最多差 20 倍）。按官方历史价补录。---
+  { model: "glm-4", input: 0.139, output: 0.139, cache: 0, type: "glm", remark: `官方 ¥1/¥1（4 代基础档）÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
+  { model: "glm-4-plus", input: 0.694, output: 0.694, cache: 0, type: "glm", remark: `官方 ¥5/¥5（4 代增强档）÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
+  { model: "glm-4-air", input: 0.014, output: 0.014, cache: 0, type: "glm", remark: `官方 ¥0.1/¥0.1（4 代轻量）÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
+  { model: "glm-4-flash", input: 0, output: 0, cache: 0, type: "glm", remark: "官方免费档（¥0）；来源 open.bigmodel.cn/pricing" },
+  { model: "glm-4-flashx", input: 0.014, output: 0.014, cache: 0, type: "glm", remark: `官方 ¥0.1/¥0.1 高速版 ÷ ${CNY_PER_USD}；来源 open.bigmodel.cn/pricing` },
+  // kimi-latest / kimi-thinking 是官方「跟随最新档」的别名，按 k2.6 档价录入
+  { model: "kimi-latest", input: 0.95, output: 4.00, cache: 0.16, type: "kimi", remark: "跟随最新档，按 k2.6 同价录入；来源 platform.kimi.com/docs/pricing/chat" },
+  { model: "kimi-thinking", input: 0.95, output: 4.00, cache: 0.16, type: "kimi", remark: "思考档，按 k2.6 同价录入；来源 platform.kimi.com/docs/pricing/chat" },
+  { model: "moonshot-v1-8k", input: 0.167, output: 0.167, cache: 0, type: "kimi", remark: `官方 ¥1.2/¥1.2（8K）÷ ${CNY_PER_USD}；来源 platform.moonshot.cn/docs/pricing` },
+  { model: "moonshot-v1-32k", input: 0.333, output: 0.333, cache: 0, type: "kimi", remark: `官方 ¥2.4/¥2.4（32K）÷ ${CNY_PER_USD}；来源 platform.moonshot.cn/docs/pricing` },
+  { model: "moonshot-v1-128k", input: 0.833, output: 0.833, cache: 0, type: "kimi", remark: `官方 ¥6/¥6（128K）÷ ${CNY_PER_USD}；来源 platform.moonshot.cn/docs/pricing` },
+  // 聚合渠道上的开源权重模型（OpenRouter / NIM 常用 `vendor/模型` 形式，
+  // 前缀会被 getPrice 剥掉，这里按对应开源模型的托管价录入）
+  { model: "deepseek-chat", input: 0.27, output: 1.10, cache: 0.07, type: "deepseek", remark: "DeepSeek-V3 对话档官方价（旧命名 deepseek-chat）；来源 api-docs.deepseek.com/quick_start/pricing/" },
+  { model: "deepseek-v3.2", input: 0.28, output: 0.42, cache: 0.028, type: "deepseek", remark: "V3.2 官方价（开源权重托管同价）；来源 api-docs.deepseek.com/quick_start/pricing/" },
+  { model: "qwen3-235b-a22b", input: 0.20, output: 0.60, cache: 0.02, type: "qwen", remark: "Qwen3-235B 开源权重，按官方百炼托管价录入；来源 help.aliyun.com/zh/model-studio" },
 ];
 
 // 价格缓存（避免每请求查库）
@@ -285,7 +332,13 @@ const warnedModels = new Set();
 const MAX_WARNED_MODELS = 500;
 export async function getPrice(model) {
   const prices = await loadPrices();
-  const m = String(model || "").toLowerCase();
+  let m = String(model || "").toLowerCase();
+  // 聚合渠道（OpenRouter / NVIDIA NIM / HuggingFace 风格）的模型名带厂商前缀：
+  // `zai-org/GLM-4.6`、`anthropic/claude-sonnet-4.5`、`Qwen/Qwen3-235B-A22B`。
+  // 这些前缀只是路由标识，底层就是同名模型 —— 不去掉就会整片落到兜底价，
+  // 而兜底价比实际价可能差几倍（用户按贵档付费）。统一剥成裸模型名再匹配。
+  const slash = m.lastIndexOf("/");
+  if (slash > 0 && slash < m.length - 1) m = m.slice(slash + 1);
   // 兜底链的返回值统一带 exact:false —— 调用方（如「按上游实际档位计价」）
   // 需要知道这个价格是查到的还是猜的，靠 remark 字符串匹配太脆弱。
   if (prices.has(m)) return { ...prices.get(m), exact: true };
