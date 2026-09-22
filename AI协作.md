@@ -1118,6 +1118,71 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 - [ ] **反代图片上传未实现**：GLM/Kimi/豆包/通义适配器暂不支持图片（能力声明已统一为 `vision:false`，
   不会再展示无效开关）；实现图片上传后再把对应模型改回 `vision:true`。
 
+### 第 47 批线上全量验收记录与新问题（2026-09-22）
+
+> 本批不是静态猜测：直接在当前线上版本 `7c2b9e4` 执行。范围包括：118 个后端文件静态检查、`npm test` 全量、真实渠道探针、真实 `/v1` 对话与计费、Anthropic/Responses 三协议、视觉输入、社区/聊天/通知/游戏/个人主页/看板 HTTP E2E、真实浏览器 UI smoke、桌面宽度审计、移动端横向溢出审计、弹窗滚动与游戏浏览器交互。所有临时脚本均在测试后删除；保留用户要求保留的线上测试渠道 `#44` 与全量实测令牌 `#47`，不在文档记录任何密钥。
+
+#### P0/P1：真实线上功能问题
+
+- [ ] **线上聊天链路仍出现 `usableKey is not defined` 运行时 ReferenceError**：线上 `journalctl -u ooapi` 在
+      `2026-09-22 19:35:21` 记录 `[error] ReferenceError: usableKey is not defined`，位置
+      `/opt/ooapi/ooapi-server/src/routes/chat.js:715:16`。这不是历史日志转述，而是本次线上验收前后同一运行环境中的真实错误。
+      触发条件是站内对话路径执行到该分支；后果是该轮返回 500/中断，并可能影响已启动运行的收尾与计费审计。
+      修复：先定位该线上版本与远端源码差异，保证变量在所有分支声明/传递；补一条真实 `/api/chat/run` 成功路径断言，不能只靠 `node --check`。
+
+- [ ] **WorkBuddy 渠道真实探针失败：HTTP 404 Route Not Found，且会阻断同模型的正常渠道**：线上渠道 `#42` 的真实
+      `probeChannel` 返回 `CHANNEL_BAD_REQUEST`，上游响应 `{"error_msg":"404 Route Not Found"}`。随后真实 `/v1`
+      请求 `glm-5.3` 被渠道 #42 优先选中，返回 400 `CHANNEL_BAD_REQUEST`，没有继续尝试可用的 GLM 渠道 #8；
+      同一请求改为正确分组/路由后 GLM 才能成功。当前 WorkBuddy 模型声明包含 `glm-5.3`，所以这是实际能力声明与上游路由不一致，
+      不只是账号暂时失效。修复：校正 WorkBuddy endpoint/path 或移除错误模型声明；对“模型不属于该上游/路由不存在”的 404 做准确分类，
+      不要让单个聚合渠道的 BAD_REQUEST 阻断其它同模型渠道。
+
+- [ ] **GLM 真实调用反复发生请求模型与上游实际模型不一致**：真实探针与网关调用均记录：请求 `glm-5.3`，页面实际
+      `x-preview-l`；网关日志又记录按 `glm-5.3-flash` 计费。实测成功，但模型能力、响应模型、计费模型三者不是同一档位。
+      触发：渠道 #8 的 `patch_model` 关闭、页面默认档位变化。修复：要么在请求前强制选择与声明一致的上游模型，要么将实际模型映射、返回模型和计价模型统一，并增加“用户请求档位≠实际档位”的失败/告警门槛，避免健康但答非所选模型。
+
+- [ ] **Gemini 渠道探针成功，但网关模型不可调用**：渠道 #12 的直接真实 probe 返回 `OOAPI_VENDOR_TEST_OK`，约 3.5s；
+      但真实 `/v1` 请求 `gemini-3.8-flash-tiered` 返回 `NO_CHANNEL`，原因是当前 `测试` 分组 Key 的模型限制不允许该模型。
+      同时 `/v1/models` 仍向该 Key 暴露了该模型。结果是“模型目录显示可选”与“实际调用被分组拒绝”不一致。
+      修复：`/v1/models` 必须复用与 `selectChannels` 完全一致的用户/Key/分组/模型过滤；分组模型限制变更后补真实 `/v1/models` 与调用成对断言。
+
+#### P1：协议与视觉实测问题
+
+- [ ] **Anthropic 流式 thinking 事件序列仍不符合协议**：真实 `POST /v1/messages`（`stream=true`）返回 200，
+      但先发送 `content_block_start`，其 `content_block.type` 为 `text`，随后发送同一 block 的
+      `delta.type=thinking_delta`；客户端协议要求 thinking 独立 block。非流式当前能返回正文，但流式官方客户端可能拒绝或错误解析思考事件。
+      修复：按 Anthropic thinking block 的完整 start/delta/stop 序列发送，并补官方 SDK 级解析测试。
+
+- [ ] **视觉能力只验证了“请求不报错”，尚未证明模型真的读取图片**：真实 `/v1/chat/completions` 发送 1x1 PNG：
+      DeepSeek 返回 200 和正确测试文本，说明图片链路被接受；GLM 明确返回 `VISION_NOT_SUPPORTED`，符合当前适配器能力声明。
+      但 DeepSeek 本次提示词要求只返回固定字符串，无法证明模型观察到了图像内容。修复：使用带明显可识别内容的测试图，要求模型描述图中内容，
+      对答案做人工/结构化核验；不要把“200”当视觉能力通过。
+
+#### P2：真实视觉/回归审计问题
+
+- [ ] **桌面端 `/log` 与 `/admin/channel` 存在横向溢出**：真实 `audit-ui.mjs` 宽度 1880 检查显示：
+      `/log` 实用宽度 1720 超出可用 1648，右边界为 -96；`/admin/channel` 实用宽度 1668 超出可用 1648，右边界为 -44。
+      实际截图已保存于本次验收临时目录，渠道管理表右侧操作列紧贴/超出视口。修复：检查表格最小宽度、固定操作列和横向滚动容器，确保溢出发生在预期表格容器而不是页面根节点。
+
+- [ ] **`audit-ui.mjs` 视觉审计过程中服务发生重启，导致后续页面访问 `ECONN_REFUSED`**：UI smoke 在全部页面渲染通过后，
+      宽度审计进入社区管理/渠道弹窗阶段出现拒绝连接；systemd 日志随后显示服务重启。重启前后没有明确应用异常堆栈，
+      但视觉验收不能以“脚本最终异常退出”视为全绿。修复：查清触发重启来源（更新器、测试脚本、OOM 或运维任务），为视觉审计增加服务存活探针和重启计数；重启期间的页面结果必须标记为未完成。
+
+- [ ] **旧浏览器游戏测试脚本与当前产品路由脱节**：`e2e-games-browser.mjs`/`e2e-browser.mjs` 仍按旧 `/games`、2048、`.oo-game-canvas`
+      断言，线上当前真实路由是 `/community?board=games`，棋盘使用 SVG/DOM；因此旧脚本出现 12 项游戏失败、2048 失败，但人工直读当前 DOM
+      可以打开房间 `/community?board=games&room=111` 并显示四子棋状态。修复：更新测试脚本到当前路由与 DOM 契约；在测试更新前不能把这些失败简单标成产品 bug，也不能把旧脚本全绿当作当前游戏验收。
+
+#### 本次全量实测结论
+
+- [x] 线上 `npm test`：全部通过；118 个文件静态检查、各套件 0 失败。
+- [x] `/api` 模块 E2E：83/83 通过（社区、聊天、通知、搜索、游戏、个人主页、看板、权限）。
+- [x] `ui-smoke`：所有登记路由正常渲染。
+- [x] 弹窗滚动/厂商图标：11/11 通过。
+- [x] 移动端 390px：8 个关键页面无横向溢出。
+- [x] 真实渠道：DeepSeek probe + 网关流式/非流式通过；GLM probe + 网关流式/非流式通过；Gemini probe 通过；Codex 账号全部 `token_revoked`；OpenAI API 503；WorkBuddy 404。
+- [x] 真实计费：DeepSeek/GLM 网关调用均产生 usage、消费日志、用户 request_count/used_quota 变化。
+- [ ] 视觉全量验收：因服务在宽度审计阶段重启且存在桌面横向溢出，不能标记为全绿。
+
 ---
 
 ## 4. AI 工作流（每次修改必须执行）
@@ -2722,6 +2787,7 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 
 
 
+| 2026-09-22 | **第 47 批 · 线上全量验收与视觉审查**：当前线上版本 `7c2b9e4` 实测完成：`npm test`（118 文件/13 套件）0 失败；模块 HTTP E2E 83/83；UI smoke 全部登记路由渲染；弹窗滚动 11/11；移动端 390px 关键页面无横向溢出；DeepSeek/GLM 真实 `/v1` 非流式+流式+usage/计费通过；Gemini 直接探针通过；Codex 账号全部 `token_revoked`；OpenAI API 503；WorkBuddy 真实 404。新增问题已登记第 47 批：`chat.js:715` 线上 `usableKey is not defined`、WorkBuddy 404 阻断同模型渠道、GLM 请求档位与实际模型不一致、Gemini 目录显示与分组调用权限不一致、Anthropic thinking 流事件协议错误、桌面 `/log`/`/admin/channel` 横向溢出、视觉审查期间服务重启、旧游戏浏览器测试脚本与当前 `/community?board=games` 路由脱节。用户提供的 GPT 测试账号保留在线上渠道 #44，实测为上游 401 `token_revoked`。
 | 2026-09-22 | **第 46 批 · 最新远端代码只读复审 + 线上实测问题登记**：以干净 worktree 的远端 `02e22d3` 为基线，后端 117 个 JS 文件 `node --check` 全部通过；新增登记 Gemini API `generateContent` 未实现、三协议图片超限分支写死 Chat 响应、Anthropic thinking 事件/非流式思考丢失、Responses `instructions`/完成事件字段丢失、mimo/minimax/stepfun 未注册、WorkBuddy/Qoder endpoint SSRF、绑定跨厂商与并发轮询、StepFun 未知帧丢失、前端社区/个人主页骨架屏与 website XSS 等问题。线上 `5a1c8ca` 实测确认 Antigravity 将「Gemini 3.5 Flash is no longer available」作为 `ok=1` 健康测试；同时确认线上版本落后远端，且曾发生未完成更新告警、内存压力与硬重启。详见第 46 批最新远端复审发现。
 | 2026-09-22 | **第 46 批 · 用户四个反馈的查证与修复**（三协议网关 / 模型自定义 / 一键绑定 / OpenCode GO）。
 
