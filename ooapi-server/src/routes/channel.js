@@ -1963,7 +1963,12 @@ router.post(
     let accountLabel = null;
 
     try {
-      if (isOAuthMethod(methodKey)) {
+      if (isOAuthMethod(methodKey) && rest.bindTicket) {
+        // 一键绑定路径：凭据已由设备授权回调存进 pendingCredentials，
+        // 前端提交时只带 ticket。此处**跳过凭据导入**（用户手里没有 JSON，
+        // 也不该被要求去弄一份）；真实凭据由随后的 /devices/claim 写入。
+        other = { method: methodKey };
+      } else if (isOAuthMethod(methodKey)) {
         // 订阅型 OAuth：粘贴官方 CLI 的凭据 JSON，由适配器解析并落库
         if (!adapter.importAuth) return fail(res, `${provider.name} 适配器未实现凭据导入`);
         let authInput = String(rest.token || "");

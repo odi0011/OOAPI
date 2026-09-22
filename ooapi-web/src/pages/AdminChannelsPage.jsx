@@ -873,12 +873,19 @@ export default function AdminChannelsPage() {
       // 硬编码的后果：同一厂商下的第二个 API Key 型方式（OpenCode 的 GO 套餐、
       // 自定义厂商的 Anthropic 兼容）在「添加渠道」里整档消失 —— 用户根本选不到。
       if (m.apiKey || m.key === "api") {
+        // 标签规则：厂商只有**一个** API Key 型方式时叫「API Key」（如各家的官方接口）；
+        // 有多个时必须各自带方法名 —— 否则 OpenCode 的 Zen 与 GO 会一个叫「API Key」、
+        // 一个叫「GO（$10/月订阅）（API Key）」，用户看不出第一个其实是 Zen。
+        const apiKeyCount = pickProvider.methods.filter((x) => x.apiKey || x.key === "api").length;
         out.push({
           id: m.key,
           method: m.key,
           mode: null,
-          label: m.key === "api" ? "API Key" : `${m.label || m.key}（API Key）`,
-          hint: m.baseUrl ? "" : "",
+          label:
+            apiKeyCount > 1
+              ? `${m.label || m.key}（API Key）`
+              : "API Key",
+          hint: "",
         });
       } else {
         for (const lm of m.loginModes || []) {
@@ -1044,6 +1051,8 @@ export default function AdminChannelsPage() {
           // 那条路径的凭据由服务端在授权回调里拿到，提交后经 /channel/devices/claim
           // 写进刚建好的渠道。原实现把这条校验放在票据检查之前，于是用户明明看到
           // 「授权成功」，点「添加」却仍被要求粘贴 JSON —— 而那份 JSON 用户根本不用准备。
+          // 带着票据提交：后端据此跳过「凭据导入」（凭据在服务端，用户手里没有 JSON）
+          if (bindTicketRef.current) payload.bindTicket = bindTicketRef.current;
           if (pickMethod.oauth && !token && !bindTicketRef.current) {
             throw new Error(
               "请粘贴凭据 JSON、填写 Access/Refresh Token、导入凭据文件，或先用上方的「一键登录 / 一键绑定」完成授权"
