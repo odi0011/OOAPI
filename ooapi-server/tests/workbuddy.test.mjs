@@ -1,4 +1,5 @@
 // WorkBuddy 适配器单测：域判定、头组、积分聚合（不联网）
+import { readFileSync } from "node:fs";
 import { realmOf, realmEndpoints, buildHeaders, parseAuthJson } from "../src/services/upstream/workbuddy.js";
 import { quotaSupportFor } from "../src/services/upstream/quota.js";
 
@@ -39,6 +40,18 @@ ck("domain 形态的 realm 判为 global", realmOf("tok-" + Buffer.from(JSON.str
 
 // 积分支持
 ck("quotaSupportFor(workbuddy) → supported", quotaSupportFor({ type: "workbuddy", method: "workbuddy" }).supported === true);
+
+/* ==================== ⑤ 不重复设置 content-type / authorization ==================== */
+console.log("\n=== ⑤ 头不重复（重复会被逗号拼接成两段 Bearer → 上游必然 401）===");
+{
+  // buildHeaders 里含这两个头，但适配器在放进 extra_headers 前会删掉
+  // （openai-compat 自己会设，重复设置会被 Fetch 的 Headers 逗号拼接）。
+  const src = readFileSync(new URL("../src/services/upstream/workbuddy.js", import.meta.url), "utf8");
+  ck("extra_headers 删除了 content-type", /delete h\["content-type"\]/.test(src));
+  ck("extra_headers 删除了 authorization", /delete h\.authorization/.test(src));
+  ck("注释写明了原因（逗号拼接 / 两段 Bearer）", /逗号拼接|两段 Bearer/.test(src));
+}
+
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
 process.exit(fail ? 1 : 0);

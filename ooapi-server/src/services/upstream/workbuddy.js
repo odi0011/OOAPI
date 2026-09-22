@@ -187,8 +187,23 @@ function decorated(channel) {
     api_key: c.token,
     other: {
       ...(channel?.other || {}),
-      // extra_headers 由 openai-compat 合并进请求头
-      extra_headers: buildHeaders({ ...c, sse: true }),
+      // extra_headers 由 openai-compat 合并进请求头（它会再叠加大写的
+      // `Content-Type` 与 `Authorization`）。
+      //
+      // **这两个头绝不能放在这里**：Fetch 的 Headers 把头名归一后，
+      // 同名头的值会被**逗号拼接**而不是覆盖 —— 实测：
+      //   {"authorization":"Bearer A","Authorization":"Bearer B"}
+      //   → 实际发出 `authorization: "Bearer A, Bearer B"`
+      // 上游收到两段 Bearer，必然 401（返回 HTML，极像 token 失效）。
+      // 这个坑排查了很久：同一 token 手打 curl 是 200，走适配器就 401，
+      // 差异只在「有没有重复设置这两个头」。
+      // 所以这里只放兼容层不会设置的那些头。
+      extra_headers: (() => {
+        const h = buildHeaders({ ...c, sse: true });
+        delete h["content-type"];
+        delete h.authorization;
+        return h;
+      })(),
     },
   };
 }
