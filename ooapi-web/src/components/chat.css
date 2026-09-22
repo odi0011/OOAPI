@@ -19,7 +19,7 @@
   min-width: 0;
   border-radius: var(--r-window);
   background: var(--page);
-  overflow: hidden;
+  overflow: visible;
 }
 
 /* ============================ 侧栏（Shelf） ============================ */
@@ -786,6 +786,7 @@
    外层区域完全透明（透出会话背景），提示文字紧贴输入框下方。 */
 .ui-chat2-composer {
   position: relative;
+  z-index: 2;
   flex-shrink: 0;
   padding: 8px clamp(16px, 3.4vw, 44px) 10px;
   background: transparent;

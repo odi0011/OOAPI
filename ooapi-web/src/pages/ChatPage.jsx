@@ -119,7 +119,6 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
   const tools = parts.filter((p) => p.type === "tool");
   // 待办来自 todowrite 工具的结果（落在 tool part 上，刷新后依然在），或流式期间的 todo 事件
   const todo = parts.filter((p) => Array.isArray(p.todo)).slice(-1)[0]?.todo || msg.todo;
-  const errors = parts.filter((p) => p.type === "error");
   const hasText = textParts.some((p) => (p.text || "").trim());
   const working = Boolean(streaming) && !hasText;
   const reasoningWorking = Boolean(streaming) && !hasText && reasoning.length > 0;
@@ -150,12 +149,6 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
       ) : working ? (
         <LoadingState label={tools.some((t) => t.status === "running") ? "正在调用工具" : "正在生成回答"} />
       ) : null}
-
-      {errors.map((e) => (
-        <Notice key={e.id} tone="warn" title="本轮说明">
-          {e.message}
-        </Notice>
-      ))}
 
       {!streaming ? (
         <div className="ui-msg-actions">
@@ -625,21 +618,23 @@ export default function ChatPage() {
               patchAi((m) => ({ ...m, parts: [...m.parts, { id: uid(), type: "error", message: ev.message }] }));
               finish();
             } else if (ev.type === "error") {
-              // 服务端已明确结束本轮：必须解除 streaming/busy，否则输入栏会永久显示“正在生成”。
-              patchAi((m) => ({ ...m, parts: [...m.parts, { id: uid(), type: "error", message: ev.message }], streaming: false }));
+              // 错误属于全局运行提示，不再占用消息流的大块布局；同时立即解除生成状态。
+              toast.error(ev.message || "本轮生成失败");
+              patchAi((m) => ({ ...m, streaming: false }));
               finish();
             }
           },
-          onError: () => {
-            // 重连失败：把这条占位消息收尾，用户可正常刷新查看
-            patchAi((m) => ({ ...m, parts: [...m.parts, { id: uid(), type: "error", message: "与服务器的连接已断开，刷新页面可查看完整结果。" }] }));
+          onError: (e) => {
+            // 错误统一走右上角 toast，避免在消息流里插入大块警告卡片。
+            toast.error(e?.message || "与服务器的连接已断开");
+            patchAi((m) => ({ ...m, streaming: false }));
             finish();
           },
           onDone: finish,
         });
       })();
     },
-    [refreshUser, loadSessions]
+    [refreshUser, loadSessions, toast]
   );
   attachRunningRef.current = attachRunning;
 
@@ -957,14 +952,16 @@ export default function ChatPage() {
               }
               finish();
             } else if (ev.type === "error") {
-              // 服务端已明确结束本轮：必须解除 streaming/busy，否则输入栏会永久显示“正在生成”。
-              patchAi((m) => ({ ...m, parts: [...m.parts, { id: uid(), type: "error", message: ev.message }], streaming: false }));
+              // 错误属于全局运行提示，不再占用消息流的大块布局；同时立即解除生成状态。
+              toast.error(ev.message || "本轮生成失败");
+              patchAi((m) => ({ ...m, streaming: false }));
               finish();
             }
           },
           onError: (e) => {
             if (genRef.current !== myGen) return;
-            patchAi((m) => ({ ...m, parts: [...m.parts, { id: uid(), type: "error", message: e.message || "网络连接失败" }] }));
+            toast.error(e.message || "网络连接失败");
+            patchAi((m) => ({ ...m, streaming: false }));
             finish();
           },
           onDone: finish,
