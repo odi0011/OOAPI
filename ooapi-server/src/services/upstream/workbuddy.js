@@ -258,6 +258,38 @@ export async function fetchUpstreamModels(channel) {
     .map((m) => String(m.id));
 }
 
+/**
+ * 模型单价 —— **该厂商自己的计价口径**（与平台定价无关）。
+ *
+ * WorkBuddy 是**积分制**：`/v3/config` 的每个模型带 `credits` 字段
+ * （实测形如 `"x0.79 credits"`），这就是跑一次该模型的消耗倍率。
+ * 前端在「模型」列的悬浮里显示它 —— 用户要的是「这个模型对当前厂商
+ * 消费多少」，而不是我们平台收多少。
+ *
+ * 返回 { "<model-id>": { text, unit } }；拿不到就返回空对象（前端不显示价格）。
+ */
+export async function fetchUpstreamPrices(channel) {
+  const c = credsOf(channel);
+  const e = realmEndpoints(c.realm);
+  const resp = await fetch(`${e.api}/v3/config`, {
+    headers: buildHeaders(c),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!resp.ok) return {};
+  const j = await resp.json();
+  const models = Array.isArray(j?.data?.models) ? j.data.models : [];
+  const out = {};
+  for (const m of models) {
+    if (!m?.id) continue;
+    // credits 形如 "x0.79 credits" / "x2.00 credits" —— 原样透出，
+    // 但把单位抽出来供前端加图标（积分/美元是两种不同的东西）。
+    const raw = String(m.credits || "").trim();
+    if (!raw) continue;
+    out[String(m.id)] = { text: raw, unit: /credit/i.test(raw) ? "credits" : "money" };
+  }
+  return out;
+}
+
 /** 渠道可用性：打 /v3/config（轻量、不计费），顺带验证 realm 是否正确 */
 export async function verify(channel) {
   const c = credsOf(channel);

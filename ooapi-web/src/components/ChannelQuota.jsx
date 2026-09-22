@@ -7,6 +7,8 @@
 //   · 百分比取整显示（88%），悬浮才给精确值与重置时间，列表里不堆字；
 //   · 颜色按用量分档：<70% 主色、70-90% 橙、>90% 红，一眼看出快用完的账号。
 import React from "react";
+import { Tooltip } from "antd";
+import { ApiOutlined, DatabaseOutlined, ThunderboltOutlined } from "@ant-design/icons";
 
 /** 把秒数转成 sub2api 那样的短标签：18000→5h、604800→7d、2592000→30d */
 function windowTag(seconds) {
@@ -63,6 +65,22 @@ function shortScope(scope) {
   if (!t) return "";
   const first = t.split(/[\s·|/]+/).filter(Boolean)[0] || "";
   return first.slice(0, 8);
+}
+
+/**
+ * 从 label 回推模型分组名 —— 老**额度快照**没有 `scope` 字段时的兜底。
+ *
+ * 为什么需要：scope 是后加的字段，已缓存在 channels.quota 里的旧快照没有它。
+ * 没有 scope 时，antigravity 的 4 个窗口会显示成「7d / 5h / 7d / 5h」两两重复，
+ * 用户完全分不清哪个属于 Gemini、哪个属于 Claude（实测反馈）。
+ * label 形如「Gemini Models · weekly」→ 取分隔符之前的部分作为分组名。
+ */
+function scopeFromLabel(label) {
+  const t = String(label || "").trim();
+  if (!t) return "";
+  const parts = t.split(/[·|]/);
+  if (parts.length < 2) return "";
+  return parts[0].trim();
 }
 
 function windowIdentity(w) {
@@ -160,7 +178,7 @@ function fmtReset(epochSeconds, resetAfterSeconds) {
  *
  * index 决定静态色序（第一窗口靛蓝、第二翠绿…），用量档位再覆盖成琥珀/红。
  */
-function WindowRow({ w, index = 0, showScope = false }) {
+function WindowRow({ w, index = 0, showScope = false, compact = false }) {
   const hasPct = Number.isFinite(Number(w.usedPercent));
   const pct = hasPct ? Math.max(0, Math.min(100, Number(w.usedPercent))) : 0;
   const pill = pillOf(index, hasPct ? pct : NaN);
@@ -168,7 +186,7 @@ function WindowRow({ w, index = 0, showScope = false }) {
   // 同一账号有多个「额度分组」时（antigravity 的 Gemini / Claude 两组各有 5h+weekly），
   // 光看 5h/7d 还是分不清属于哪一组 —— 补一个极短的分组前缀。
   // 只在真有多个分组时才显示，否则白白占宽度。
-  const scopeShort = showScope ? shortScope(w.scope) : "";
+  const scopeShort = showScope ? shortScope(w.scope || scopeFromLabel(w.label)) : "";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, minWidth: 0 }}>
       <span
@@ -194,8 +212,11 @@ function WindowRow({ w, index = 0, showScope = false }) {
         <>
           <span
             style={{
-              flex: 1,
-              minWidth: 32,
+              // compact（表格内横向排布）：进度条固定短宽，不抢 flex 空间，
+              // 这样一行能放下 3 个 pill；非 compact（详情面板）仍铺满可用宽度。
+              flex: compact ? "0 0 auto" : 1,
+              width: compact ? 44 : undefined,
+              minWidth: compact ? 44 : 32,
               height: 4,
               borderRadius: 2,
               background: "var(--pill-track)",
@@ -311,56 +332,184 @@ export function QuotaTip({ quota }) {
 }
 
 /**
- * 列表内联形态（表格单元格直接展示，无需悬浮）：
- * 上方横向一行：[套餐 free] [余额 1000]（套餐与余额标签并排）
- * 下方：细进度条（sub2api 风格 [30d] ── 77% 26d）
- * 账号与抓取时间按需求无需展示；关键信息直出在表格中，无需鼠标悬浮触发浮层。
+ * 列表内联形态 —— 表格单元格直接展示。
+ *
+ * 用户明确要求的形态（2026-09-22）：
+ *   · **横向排布**所有标签，超出可用宽度的收进 `+N`，悬浮显示全部
+ *     （原来每个窗口占一行，WorkBuddy 那种 5 个积分包会把行高撑到 200px+）；
+ *   · 额度条上面三个**纯数字 tag**：调用次数 / 总 token / 总消费 ——
+ *     **不写标题文字**（三个位置固定，写「次数/token/消费」纯属占位），
+ *     靠图标与单位区分：token 带 k/M/B 单位，消费带 OD 币图标或积分图标；
+ *   · 消费单位取决于该渠道**实际消耗什么**：走钱的用 OD 币图标，
+ *     积分制的（WorkBuddy/mimo 之类）用积分图标 —— 与模型价格同源。
+ *
+ * 为什么用 flex-wrap 而不是真的测量截断：表格列宽是固定的，
+ * 用纯 CSS 的 `overflow: hidden` + `+N` 需要知道「装得下几个」，
+ * 那要靠 ResizeObserver 逐格测量，成本高且窗口 resize 时抖动。
+ * 这里用「固定展示前 N 个 + 其余 +M」的近似（N 由列宽与行高决定），
+ * 悬浮给全量 —— 与 sub2api 的做法一致，够用且稳。
  */
-export function QuotaInline({ quota }) {
-  if (!quota) return null;
-  const wins = Array.isArray(quota.windows) ? quota.windows : [];
-  const c = quota.credits;
+const INLINE_MAX_PILLS = 3;
 
-  const hasPlan = Boolean(quota.plan || quota.limitReached);
+export function QuotaInline({ quota, stats }) {
+  if (!quota && !stats) return null;
+  const wins = Array.isArray(quota?.windows) ? quota.windows : [];
+  const c = quota?.credits;
+
+  const hasPlan = Boolean(quota?.plan || quota?.limitReached);
   const hasBalance = Boolean(c && c.balance !== undefined && c.balance !== null && c.balance !== "");
   const hasPrepaid = Number.isFinite(Number(c?.prepaidBalance));
   const hasLines = Boolean(c?.lines?.length);
-  const hasCredits = hasBalance || hasPrepaid || hasLines;
 
-  if (!hasPlan && !hasCredits && !wins.length) {
-    return null;
+  // 汇总 chips：套餐 / 余额 / 积分包…全部作为「横向标签」平铺，超出收进 +N
+  const chips = [];
+  if (quota?.plan) chips.push({ key: "plan", node: <>套餐 {quota.plan}</>, tone: "indigo" });
+  if (quota?.limitReached) chips.push({ key: "limit", node: <>已达限额</>, tone: "red" });
+  if (hasLines) {
+    c.lines.forEach((line, i) => {
+      chips.push({
+        key: `line${i}`,
+        node: <>{(line.label || "包") + " "}{line.total ?? line.used ?? 0}</>,
+        // 积分包剩 0 的标红（一眼看出哪个用完了）
+        tone: Number(line.total) === 0 ? "red" : "gray",
+      });
+    });
   }
+  if (hasBalance) chips.push({ key: "bal", node: <>余额 {c.balance}{c.unit ? ` ${c.unit}` : ""}</> });
+  if (hasPrepaid) chips.push({ key: "pre", node: <>预付费 ${Number(c.prepaidBalance).toFixed(2)}</> });
+
+  const shownChips = chips.slice(0, INLINE_MAX_PILLS);
+  const restChips = chips.slice(INLINE_MAX_PILLS);
+
+  // 分组集合：scope 缺失时从 label 回推（老快照），两处口径必须一致，
+  // 否则会出现「判出多分组但取不到 scope」→ 前缀渲染成空。
+  const scopes = [...new Set(wins.map((w) => String(w.scope || scopeFromLabel(w.label) || "").trim()).filter(Boolean))];
+  const multiScope = scopes.length > 1;
+
+  // 统计 tag：三个纯数字（次数 / token / 消费）
+  const st = stats || {};
+  const hasStats = st.calls !== undefined || st.tokens !== undefined || st.cost !== undefined;
+
+  if (!chips.length && !wins.length && !hasStats) return null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 150 }}>
-      {hasPlan || hasCredits ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-          {quota.plan ? <InfoPill tone="indigo">套餐 {quota.plan}</InfoPill> : null}
-          {quota.limitReached ? <InfoPill tone="red">已达限额</InfoPill> : null}
-          {hasLines
-            ? c.lines.map((line, i) => (
-                <InfoPill key={i}>{line.label} {line.total ?? line.used ?? 0}</InfoPill>
-              ))
-            : null}
-          {hasBalance ? <InfoPill>余额 {c.balance}</InfoPill> : null}
-          {hasPrepaid ? (
-            <InfoPill>预付费 ${Number(c.prepaidBalance).toFixed(2)}</InfoPill>
+      {/* ① 统计行：三个纯数字 tag（无标题文字，靠图标/单位区分） */}
+      {hasStats ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", overflow: "hidden" }}>
+          <StatTag icon={<ApiOutlined />} title={`当前渠道累计调用 ${st.calls ?? 0} 次`}>
+            {fmtCompact(st.calls ?? 0)}
+          </StatTag>
+          <StatTag icon={<DatabaseOutlined />} title={`当前渠道累计 token ${fmtFull(st.tokens ?? 0)}`}>
+            {fmtToken(st.tokens ?? 0)}
+          </StatTag>
+          <StatTag
+            icon={st.costUnit === "credits" ? <ThunderboltOutlined /> : <OdCoinIcon />}
+            title={`当前渠道累计消费 ${st.costText || ""}`}
+          >
+            {st.costText || "0"}
+          </StatTag>
+        </div>
+      ) : null}
+
+      {/* ② 汇总 chips：横向，超出收进 +N（悬浮显示全部） */}
+      {chips.length ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", overflow: "hidden" }}>
+          {shownChips.map((x) => (
+            <InfoPill key={x.key} tone={x.tone}>{x.node}</InfoPill>
+          ))}
+          {restChips.length ? (
+            <Tooltip
+              title={
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {restChips.map((x) => <div key={x.key}>{x.node}</div>)}
+                </div>
+              }
+            >
+              <span><InfoPill tone="gray">+{restChips.length}</InfoPill></span>
+            </Tooltip>
           ) : null}
         </div>
       ) : null}
 
-      {/* 全部窗口都渲染（原来只显示前 2 个 + 「还有 N 个窗口…」）。
-          用户反馈：「下面的还有 2 个窗口是你故意压缩了还是他没加载出来啊」——
-          那种省略让人分不清是数据缺失还是界面藏起来了，而额度恰恰是这张表的
-          关键信息（哪个窗口快满了决定要不要换号）。
-          窗口行很薄（4px 条 + 一行文字），4 个窗口也只占约 90px 高，值得全展开。
-          scope 前缀只在同一账号真有多个分组时才加（见 WindowRow）。 */}
-      {(() => {
-        const scopes = [...new Set(wins.map((w) => String(w.scope || "").trim()).filter(Boolean))];
-        const multiScope = scopes.length > 1;
-        return wins.map((w, i) => <WindowRow key={w.key || i} w={w} index={i} showScope={multiScope} />);
-      })()}
+      {/* ③ 窗口行：横向排布，超出收进 +N（用户要求：原来一行一个把行高撑太高） */}
+      {wins.length ? (() => {
+        const shown = wins.slice(0, INLINE_MAX_PILLS);
+        const rest = wins.slice(INLINE_MAX_PILLS);
+        return (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", overflow: "hidden" }}>
+            {shown.map((w, i) => (
+              <WindowRow key={w.key || i} w={w} index={i} showScope={multiScope} compact />
+            ))}
+            {rest.length ? (
+              <Tooltip
+                title={
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 220 }}>
+                    {rest.map((w, i) => (
+                      <WindowRow key={w.key || i} w={w} index={i + INLINE_MAX_PILLS} showScope={multiScope} />
+                    ))}
+                  </div>
+                }
+              >
+                <span className="bui-chip" style={{ fontSize: 11, flexShrink: 0 }}>+{rest.length}</span>
+              </Tooltip>
+            ) : null}
+          </div>
+        );
+      })() : null}
     </div>
+  );
+}
+
+/** 统计 tag：一个图标 + 一个数字，无标题文字 */
+function StatTag({ icon, children, title }) {
+  return (
+    <Tooltip title={title}>
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 3,
+          fontSize: 11.5,
+          lineHeight: 1.5,
+          color: "var(--ink-2)",
+          background: "var(--inset)",
+          borderRadius: 5,
+          padding: "1px 6px",
+          whiteSpace: "nowrap",
+        }}
+      >
+        <span style={{ display: "inline-flex", fontSize: 11, color: "var(--ink-3)" }}>{icon}</span>
+        <span className="oo-num">{children}</span>
+      </span>
+    </Tooltip>
+  );
+}
+
+/** token 数的紧凑显示：1.2M / 345k / 120（用户要求「加单位 m/b/k」） */
+function fmtToken(n) {
+  const v = Number(n) || 0;
+  if (v >= 1e9) return `${(v / 1e9).toFixed(v >= 1e10 ? 0 : 1)}B`;
+  if (v >= 1e6) return `${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1)}M`;
+  if (v >= 1e3) return `${(v / 1e3).toFixed(v >= 1e4 ? 0 : 1)}k`;
+  return String(v);
+}
+function fmtCompact(n) {
+  const v = Number(n) || 0;
+  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+  if (v >= 1e4) return `${(v / 1e3).toFixed(0)}k`;
+  return String(v);
+}
+function fmtFull(n) {
+  return String(Number(n) || 0);
+}
+/** OD 币图标（内联 SVG，避免为一个小图标引入图片资源） */
+function OdCoinIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v10M9 10h6" strokeLinecap="round" />
+    </svg>
   );
 }
 

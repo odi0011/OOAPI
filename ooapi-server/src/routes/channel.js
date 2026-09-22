@@ -677,6 +677,8 @@ function rowToResp(r, { withKey = false } = {}) {
     quota_supported: quotaSupportFor({ type: r.type, method, base_url: r.base_url }).supported,
     // 统计
     used_count: Number(r.used_count) || 0,
+    // 该渠道累计（额度列要显示：次数 / token / 消费）
+    totals: r._totals || null,
     last_used_time: Number(r.last_used_time) || 0,
     response_time: Number(r.response_time) || 0,
     tested_time: Number(r.tested_time) || 0,
@@ -707,9 +709,63 @@ async function listRows({ type, keyword, status, method } = {}) {
   }
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
   const [rows] = await pool.query(`SELECT * FROM channels ${where} ORDER BY priority DESC, id ASC`, args);
-  if (!method) return rows;
-  // 接入方式存在 other JSON 里，SQL 层不好过滤，取回后再筛
-  return rows.filter((r) => methodOf(r) === method);
+  const filtered = method ? rows.filter((r) => methodOf(r) === method) : rows;
+  // 批量挂上「该渠道累计」三个数（列表页额度列要显示：调用次数 / token / 消费）。
+  // **一次聚合查询算全部渠道**，不逐行查 —— 逐行是 N+1，几十个渠道就是几十次往返。
+  await attachChannelTotals(filtered);
+  return filtered;
+}
+
+/**
+ * 给渠道行批量挂 `_totals`：{ calls, units, tokens }（该渠道的累计口径）。
+ *
+ * 为什么要批量：渠道列表页每行都要显示这三个数，逐行查会变成 N+1。
+ * 口径与 `/:id/stats` 的全量统计一致（logs 表 + 老记录回落 detail JSON），
+ * 只是把 WHERE channel_id = ? 换成 GROUP BY channel_id。
+ */
+async function attachChannelTotals(rows) {
+  if (!rows.length) return;
+  const ids = rows.map((r) => Number(r.id)).filter(Boolean);
+  if (!ids.length) return;
+  const map = new Map();
+  const add = (id, o) => {
+    const cur = map.get(id) || { calls: 0, units: 0, tokens: 0 };
+    cur.calls += Number(o.calls) || 0;
+    cur.units += Number(o.units) || 0;
+    cur.tokens += Number(o.tokens) || 0;
+    map.set(id, cur);
+  };
+  try {
+    const [list] = await pool.query(
+      `SELECT channel_id AS cid, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units,
+              COALESCE(SUM(prompt_tokens),0) + COALESCE(SUM(completion_tokens),0) AS tokens
+         FROM logs
+        WHERE type = ? AND channel_id IN (?)
+        GROUP BY channel_id`,
+      [LOG_TYPE.CONSUME, ids]
+    );
+    for (const x of list) add(Number(x.cid), x);
+    // 老记录（channel_id 列还没写）回落到 detail JSON：只处理 channel_id = 0 的行，
+    // 与上面互斥不会双算（与 /:id/stats 同一口径，否则列表与详情会对不上）。
+    const [old] = await pool.query(
+      `SELECT COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(detail, '$.channel_id')) AS UNSIGNED), 0) AS cid,
+              COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units,
+              COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(detail, '$.prompt_tokens')) AS UNSIGNED)),0)
+            + COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(detail, '$.completion_tokens')) AS UNSIGNED)),0) AS tokens
+         FROM logs
+        WHERE type = ? AND channel_id = 0 AND JSON_VALID(detail)
+          AND JSON_EXTRACT(detail, '$.channel_id') IS NOT NULL
+        GROUP BY cid`,
+      [LOG_TYPE.CONSUME]
+    );
+    for (const x of old) {
+      if (ids.includes(Number(x.cid))) add(Number(x.cid), x);
+    }
+  } catch (e) {
+    // 老库不支持 JSON 函数时退化为「无统计」，不让整个列表报错
+    console.warn("[channel] 批量统计查询失败：", e.message);
+  }
+  for (const r of rows) r._totals = map.get(Number(r.id)) || { calls: 0, units: 0, tokens: 0 };
 }
 
 /** 取该渠道的适配器（仅反代方式有本地适配器；API 方式走 openai-compat） */
@@ -1155,9 +1211,22 @@ router.post(
       }
     }
 
+    // 该厂商自己的**模型单价**（与平台定价无关）：WorkBuddy 之类是积分制，
+    // 每个模型的 credits 倍率就在上游 config 里。适配器没实现就为空对象。
+    let prices = {};
+    if (typeof adapter?.fetchUpstreamPrices === "function") {
+      try {
+        prices = await adapter.fetchUpstreamPrices(channel);
+      } catch {
+        /* 拿不到价格不影响模型清单返回 */
+      }
+    }
+
     return ok(res, {
       models: [...new Set(models)].sort(),
       source,
+      // { "<model-id>": { text: "x0.79 credits", unit: "credits"|"money" } }
+      prices,
       upstreamError: upstreamError || undefined,
       // 渠道已声明的范围，前端据此预选
       declared: String(r.models || "").split(",").map((s) => s.trim()).filter(Boolean),

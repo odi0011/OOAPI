@@ -10,7 +10,8 @@ import {
   ExclamationCircleOutlined, DashboardOutlined, LinkOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
-import { fmtDate, CURRENCY_NAME, copyText } from "../services/format";
+import { useApp } from "../context/AppContext";
+import { fmtDate, CURRENCY_NAME, copyText, odOf, unitsPerOd } from "../services/format";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import { VendorIcon, ModelLabel, GroupVendorIcons, GroupTag } from "../components/VendorIcon";
@@ -609,6 +610,8 @@ function ProviderPicker({ providers, activeKey, onPick }) {
 
 export default function AdminChannelsPage() {
   const { message } = AntApp.useApp();
+  // status 提供 units_per_od 等站点配置：额度单位换算要它（不要自己写死 10000）
+  const { status } = useApp();
 
   const [items, setItems] = useState([]);
   const [providers, setProviders] = useState([]);
@@ -982,6 +985,37 @@ export default function AdminChannelsPage() {
 
   // 从已加载的厂商表里取「获取 Key」地址（编辑弹窗只有 type，没有 provider 对象）
   const keyUrlOf = (type) => providers.find((p) => p.key === type)?.keyUrl || "";
+
+  /** 取某渠道某模型的「厂商单价」（后端随 upstream-models 一起下发） */
+  const pricesFor = (channelId, model) => upstreamPrices[channelId]?.[model] || null;
+
+  // 额度单位换算（1 OD = 10000 units，全站唯一口径）
+  const perUnit = unitsPerOd(status);
+
+  /**
+   * 该渠道的消费单位 —— 决定额度列上「总消费」那个 tag 用什么图标。
+   *
+   * 判据是**接入方式/厂商的计费形态**，不是模型：
+   *   · WorkBuddy 等积分制（上游 config 里带 credits 倍率）→ 积分
+   *   · 其余走货币 → OD 币（平台统一记账单位）
+   * 这与「模型列悬浮里显示的厂商单价」是同一套口径，
+   * 避免同一页面出现「模型写积分、汇总写 OD 币」的自相矛盾。
+   */
+  const costUnitOf = (r) => (String(r.type || "") === "workbuddy" ? "credits" : "od");
+
+  /**
+   * 格式化消费额：积分制显示原始数值 + 「积分」，货币制换算成 OD 币。
+   * 注意 units 是平台的**额度单位**（1 OD = 10000 units），
+   * 而积分制渠道的 units 语义就是积分本身（上游按 credits 计），不做换算。
+   */
+  const fmtCost = (r, units) => {
+    const v = Number(units) || 0;
+    if (costUnitOf(r) === "credits") return `${v}`;
+    // 货币制：按 OD 币展示（与用户余额、定价页同一单位）
+    const od = odOf(v, perUnit);
+    if (od === 0) return "0";
+    return od >= 100 ? String(Math.round(od)) : od.toFixed(od >= 1 ? 2 : 4);
+  };
 
   const applyMethod = (p, m, forceMode = null) => {
     if (!m) return;
@@ -1787,6 +1821,9 @@ export default function AdminChannelsPage() {
   // 运行期抛 "Cannot access 'X' before initialization" → 整个页面白屏，
   // 而 vite build 是成功的（它不做这种顺序检查），只有真打开页面才会暴露。
   const [upstreamModels, setUpstreamModels] = useState({});
+  // 该厂商自己的模型单价（积分制的显示积分，货币制的显示金额）——
+  // 与平台定价无关，只是「这个模型对当前厂商消费多少」。
+  const [upstreamPrices, setUpstreamPrices] = useState({});
   const [upstreamModelsBusy, setUpstreamModelsBusy] = useState(false);
   const refreshAllUpstreamModels = async () => {
     if (upstreamModelsBusy) return;
@@ -1801,13 +1838,16 @@ export default function AdminChannelsPage() {
       );
       const next = { ...upstreamModels };
       let okCount = 0;
+      const nextPrices = { ...upstreamPrices };
       results.forEach((res, i) => {
         if (res.status === "fulfilled" && Array.isArray(res.value?.models)) {
           next[targets[i].id] = res.value.models;
+          if (res.value.prices) nextPrices[targets[i].id] = res.value.prices;
           if (res.value.models.length) okCount += 1;
         }
       });
       setUpstreamModels(next);
+      setUpstreamPrices(nextPrices);
       message.success(`探测完成：${okCount}/${targets.length} 个渠道返回了模型列表`);
     } finally {
       hide();
@@ -1877,7 +1917,24 @@ export default function AdminChannelsPage() {
                 <div style={{ fontSize: 11, color: "#aaa" }}>
                   {probed.length ? `上游实际可用：${probed.length} 个` : `共 ${own.length} 个`}
                 </div>
-                {merged.map((m) => <ModelLabel key={m} model={m} size={13} />)}
+                {/* 每个模型后面标出**该厂商自己的单价**（用户要求）。
+                    注意这是厂商口径、不是平台定价：
+                    WorkBuddy 是积分制就显示积分（credits），
+                    走货币的显示金额；拿不到价格的模型不显示这一栏。 */}
+                {merged.map((m) => {
+                  const pr = pricesFor(r.id, m);
+                  return (
+                    <div key={m} style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
+                      <ModelLabel model={m} size={13} />
+                      {pr ? (
+                        <span style={{ fontSize: 11, color: "var(--ink-3)", whiteSpace: "nowrap" }}>
+                          {pr.unit === "credits" ? <ThunderboltOutlined style={{ marginInlineEnd: 3 }} /> : null}
+                          {pr.text}
+                        </span>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
             }
           >
@@ -1892,28 +1949,42 @@ export default function AdminChannelsPage() {
     {
       title: "额度",
       dataIndex: "quota",
-      width: 190,
-      render: (q, r) =>
-        q?.windows?.length || q?.credits ? (
-          <QuotaInline quota={q} />
-        ) : r.quota_supported ? (
-          <span
-            role="button"
-            tabIndex={0}
-            style={{ cursor: "pointer", fontSize: 12, color: "var(--ink-3)" }}
-            onClick={() => doQuota(r, { openPanel: true })}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                doQuota(r, { openPanel: true });
-              }
-            }}
-          >
-            点击查询
-          </span>
-        ) : (
-          <Text type="secondary" style={{ fontSize: 12 }}>不支持</Text>
-        ),
+      // 额度列承载三块内容（用户要求，2026-09-22）：
+      //   ① 统计 tag：调用次数 / 总 token / 总消费（三个纯数字，不写标题文字，
+      //      靠图标与单位区分：token 带 k/M/B，消费带 OD 币或积分图标）
+      //   ② 汇总 chips（套餐 / 余额 / 积分包），横向排布、超出收 +N
+      //   ③ 窗口额度条，同样横向排布、超出收 +N
+      // 列宽因此给到 240，否则三块挤在一起会频繁触发 +N。
+      width: 240,
+      render: (q, r) => {
+        // 统计数字来自后端批量聚合（row.totals，一次查询算全部渠道，避免 N+1）。
+        // 消费单位取决于该渠道**实际走什么**：积分制渠道（WorkBuddy 等）显示积分，
+        // 其余显示 OD 币 —— 与模型单价的单位判定同源，避免一页两种口径。
+        const t = r.totals;
+        const stats = t
+          ? { calls: t.calls, tokens: t.tokens, costUnit: costUnitOf(r), costText: fmtCost(r, t.units) }
+          : null;
+        if (q?.windows?.length || q?.credits || stats) return <QuotaInline quota={q} stats={stats} />;
+        if (r.quota_supported) {
+          return (
+            <span
+              role="button"
+              tabIndex={0}
+              style={{ cursor: "pointer", fontSize: 12, color: "var(--ink-3)" }}
+              onClick={() => doQuota(r, { openPanel: true })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  doQuota(r, { openPanel: true });
+                }
+              }}
+            >
+              点击查询
+            </span>
+          );
+        }
+        return <Text type="secondary" style={{ fontSize: 12 }}>不支持</Text>;
+      },
     },
     { title: "状态", dataIndex: "status", width: 128, render: (_, r) => <StatusCell r={r} /> },
     {
@@ -1949,17 +2020,18 @@ export default function AdminChannelsPage() {
       },
     },
     {
-      title: "优先级 / 权重 / 次数",
-      width: 140,
+      // 累计调用次数**不再放这里** —— 已移到额度列的统计 tag 里
+      // （用户要求：次数/token/消费三个数字贴在额度条上方，与渠道统计归在一处）。
+      // 这一列只留调度参数，名字也收窄成「优先级 / 权重」。
+      title: "优先级 / 权重",
+      width: 110,
       sorter: (a, b) => (a.priority || 0) - (b.priority || 0),
       render: (_, r) => (
-        <Tooltip title={`优先级: ${r.priority ?? 0} · 调度权重: ${r.weight ?? 0} · 累计调用: ${r.used_count ?? 0} 次`}>
+        <Tooltip title={`优先级: ${r.priority ?? 0} · 调度权重: ${r.weight ?? 0}`}>
           <span className="oo-num" style={{ fontSize: 12.5, whiteSpace: "nowrap" }}>
             {r.priority ?? 0}
             <span style={{ color: "var(--ink-3)", margin: "0 2px" }}>/</span>
             {r.weight ?? 0}
-            <span style={{ color: "var(--ink-3)", margin: "0 2px" }}>/</span>
-            {r.used_count ?? 0}
           </span>
         </Tooltip>
       ),
@@ -2265,7 +2337,12 @@ export default function AdminChannelsPage() {
 
   const renderActions = (r) => (
     <Space size={2}>
-      {r.canRecover !== false && !r.isApiKey ? (
+      {/* 「重新登录 / 找回凭据」只在**渠道真的有问题**时才显示。
+          用户反馈：渠道一切正常时也挂着这个按钮，纯属噪音 ——
+          它是个"修复"入口，不是常用操作。
+          判定「需要找回」：最近一次错误是认证类（needsRelogin，后端已按
+          AUTH/401/403/失效/过期 判定），或渠道处于禁用/冷却中。 */}
+      {r.canRecover !== false && !r.isApiKey && (r.needsRelogin || r.status !== 1 || r.cooling) ? (
         <Tooltip title={r.needsRelogin ? "凭据可能失效：点此重新登录 / 找回" : "重新登录 / 找回凭据"}>
           <button
             className="bui-icon-btn"
