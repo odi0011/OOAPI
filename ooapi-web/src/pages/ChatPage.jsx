@@ -625,7 +625,9 @@ export default function ChatPage() {
               patchAi((m) => ({ ...m, parts: [...m.parts, { id: uid(), type: "error", message: ev.message }] }));
               finish();
             } else if (ev.type === "error") {
-              patchAi((m) => ({ ...m, parts: [...m.parts, { id: uid(), type: "error", message: ev.message }] }));
+              // 服务端已明确结束本轮：必须解除 streaming/busy，否则输入栏会永久显示“正在生成”。
+              patchAi((m) => ({ ...m, parts: [...m.parts, { id: uid(), type: "error", message: ev.message }], streaming: false }));
+              finish();
             }
           },
           onError: () => {
@@ -955,7 +957,9 @@ export default function ChatPage() {
               }
               finish();
             } else if (ev.type === "error") {
-              patchAi((m) => ({ ...m, parts: [...m.parts, { id: uid(), type: "error", message: ev.message }] }));
+              // 服务端已明确结束本轮：必须解除 streaming/busy，否则输入栏会永久显示“正在生成”。
+              patchAi((m) => ({ ...m, parts: [...m.parts, { id: uid(), type: "error", message: ev.message }], streaming: false }));
+              finish();
             }
           },
           onError: (e) => {
