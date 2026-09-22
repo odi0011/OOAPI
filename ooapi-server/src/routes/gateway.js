@@ -559,7 +559,7 @@ async function handleCompletion(protocol, req, res) {
         partialOut += t;
         if (wantStream) {
           startStream();
-          sendChunk({ content: t });
+          protocol.delta(protoState, t);
         }
       },
       onReasoning: (t) => {
@@ -567,7 +567,7 @@ async function handleCompletion(protocol, req, res) {
         partialOut += t;
         if (wantStream) {
           startStream();
-          sendChunk({ reasoning_content: t });
+          if (protocol.reasoning) protocol.reasoning(protoState, t);
         }
       }});
 
@@ -596,38 +596,27 @@ async function handleCompletion(protocol, req, res) {
         : null,
     });
 
+    // 计费结果整理成协议层需要的形状（三种协议共用这一份，避免各自算一遍）
+    const settledForClient = {
+      promptTokens: settled.promptTokens,
+      completionTokens: settled.completionTokens,
+      cacheTokens: settled.cacheTokens || 0,
+      od: Number((settled.units / UNITS_PER_OD).toFixed(6)),
+      currency: CURRENCY,
+      channel: result.channel?.name || "",
+      elapsed: result.elapsed,
+    };
     if (wantStream) {
-      if (!streamStarted) {
-        startStream();
-      }
-      sendChunk({}, "stop");
-      res.write("data: [DONE]\n\n");
-      res.end();
+      if (!streamStarted) startStream();
+      protocol.done(res, protoState, { settled: settledForClient });
     } else {
-      res.json({
+      protocol.finish(res, {
         id: requestId,
-        object: "chat.completion",
-        created: Math.floor(Date.now() / 1000),
         model,
-        choices: [
-          {
-            index: 0,
-            message: {
-              role: "assistant",
-              content: result.content,
-              ...(result.reasoning ? { reasoning_content: result.reasoning } : {})},
-            finish_reason: "stop"},
-        ],
-        usage: {
-          // 严格遵循 OpenAI usage 结构，扩展字段放到顶层 x_* （严格 SDK 会校验 usage 子字段）
-          prompt_tokens: settled.promptTokens,
-          completion_tokens: settled.completionTokens,
-          total_tokens: settled.promptTokens + settled.completionTokens,
-          ...(settled.cacheTokens ? { prompt_tokens_details: { cached_tokens: settled.cacheTokens } } : {})},
-        x_od_cost: Number((settled.units / UNITS_PER_OD).toFixed(6)),
-        x_currency: CURRENCY,
-        x_channel: result.channel?.name,
-        x_latency_ms: result.elapsed});
+        content: result.content,
+        reasoning: result.reasoning,
+        settled: settledForClient,
+      });
     }
   } catch (err) {
     const code = err.code || "UPSTREAM_ERROR";
