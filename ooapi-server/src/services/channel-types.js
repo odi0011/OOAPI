@@ -475,7 +475,11 @@ export const PROVIDERS = [
     methods: [
       {
         key: "grok-oauth",
-        adapter: "grok",
+        // adapter 名必须与 router.js 的 ADAPTERS 表键**完全一致**。
+        // 这里曾写 "grok" 而表里注册的是 "grok-oauth" → 解析出的 key 查不到
+        // → 渠道一建就「适配器不可用」。静态一致性检查（tests/adapter-registry）
+        // 会盯住这类不一致。
+        adapter: "grok-oauth",
         label: "Grok 订阅（xAI OAuth）",
         desc: "粘贴 CPA/sub2api 导出的 Grok 凭据",
         loginModes: ["paste"],

@@ -33,6 +33,14 @@ const ADAPTERS = {
   // 拼 HTTP 请求（现已走不通 —— sentinel 的 turnstile 必须由页面 JS 解），
   // 这个驱动真实页面 UI，让页面自己去过风控。
   "openai-web-ui": () => import("./upstream/openai-web-ui.js"),
+  // 三家网页版反代。**这三行曾经漏掉**：channel-types 里声明了 adapter
+  // （mimo-web / minimax-web / stepfun-web），但 ADAPTERS 表里没有对应注册，
+  // 于是 adapterKeyFor 解析出的 key 在表里查不到 → getAdapter 抛
+  // UNSUPPORTED_CHANNEL → 渠道一建就报「适配器不可用」。
+  // 这类漏注册的静态检查：channel-types 里每个 adapter 值都应在本表出现（见单测）。
+  "mimo-web": () => import("./upstream/mimo-web.js"),
+  "minimax-web": () => import("./upstream/minimax-web.js"),
+  "stepfun-web": () => import("./upstream/stepfun-web.js"),
   // TypeSafe AI（Jev）：**不兼容 OpenAI** 的判定模型，单端点 /v1/systemone，
   // 请求/响应都是自定义结构，必须走独立适配器（见该文件顶部说明）。
   typesafe: () => import("./upstream/typesafe.js"),

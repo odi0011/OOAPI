@@ -1014,7 +1014,12 @@ export default function AdminChannelsPage() {
     // 货币制：按 OD 币展示（与用户余额、定价页同一单位）
     const od = odOf(v, perUnit);
     if (od === 0) return "0";
-    return od >= 100 ? String(Math.round(od)) : od.toFixed(od >= 1 ? 2 : 4);
+    if (od >= 1000) return `${(od / 1000).toFixed(1)}k`;
+    if (od >= 1) return od.toFixed(2);
+    // 小额（<1 OD）保留有效数字而不是固定 4 位小数：
+    // 0.0001 OD 这种写法读起来没有信息量，改成「<0.01」更诚实（精确值在悬浮里）。
+    if (od >= 0.01) return od.toFixed(3);
+    return "<0.01";
   };
 
   const applyMethod = (p, m, forceMode = null) => {

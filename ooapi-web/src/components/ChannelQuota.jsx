@@ -178,7 +178,7 @@ function fmtReset(epochSeconds, resetAfterSeconds) {
  *
  * index 决定静态色序（第一窗口靛蓝、第二翠绿…），用量档位再覆盖成琥珀/红。
  */
-function WindowRow({ w, index = 0, showScope = false, compact = false }) {
+function WindowRow({ w, index = 0, showScope = true, compact = false }) {
   const hasPct = Number.isFinite(Number(w.usedPercent));
   const pct = hasPct ? Math.max(0, Math.min(100, Number(w.usedPercent))) : 0;
   const pill = pillOf(index, hasPct ? pct : NaN);
@@ -186,6 +186,9 @@ function WindowRow({ w, index = 0, showScope = false, compact = false }) {
   // 同一账号有多个「额度分组」时（antigravity 的 Gemini / Claude 两组各有 5h+weekly），
   // 光看 5h/7d 还是分不清属于哪一组 —— 补一个极短的分组前缀。
   // 只在真有多个分组时才显示，否则白白占宽度。
+  // scope 前缀：**只要有多个分组就显示**（含 compact 横向排布）。
+  // 用户反馈「谷歌那个为什么四个额度条，两个 7d 两个 5h」—— 正是因为没有前缀时
+  // 「7d / 5h / 7d / 5h」两两重复，看不出哪个属于 Gemini、哪个属于 Claude。
   const scopeShort = showScope ? shortScope(w.scope || scopeFromLabel(w.label)) : "";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, minWidth: 0 }}>
