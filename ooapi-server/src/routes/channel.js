@@ -2148,6 +2148,15 @@ router.post(
       return ok(res, rowToResp(all.find((r) => r.id === targetId)), "登录成功");
     }
 
+    // 订阅 OAuth：入池前做一次凭据健康检查（失败禁用而不是带着坏凭据参与调度）
+    //
+    // **但一键绑定路径必须跳过**：那条路此刻 `other` 里还没有凭据
+    // （凭据在服务端 pendingCredentials，要等前端随后的 /devices/claim 写入）。
+    // 不跳过就会「校验失败 → 接口返回 400」，而渠道**已经 INSERT 成功**，
+    // 于是用户看到「渠道出现在表格里 + 点添加报错」，且前端因报错走不到 claim 那一步
+    // —— 凭据永远写不进去，渠道永远不可用。实测踩到（WorkBuddy 绑定）。
+    const pendingBind = Boolean(String(rest.bindTicket || "").trim());
+
     // 新建
     let insertId;
     if (mode === "browser") {
@@ -2205,8 +2214,12 @@ router.post(
         if (dup.length) return fail(res, "该账号已存在（登录态重复）");
       }
       const [ret] = await pool.query(
+        // status：一键绑定路径先建为**禁用**（2），等 claim 写入凭据后再启用。
+        // 否则会出现一段「渠道已在池中但没有任何凭据」的窗口期，
+        // 被调度到就会连续失败，进而被自动禁用规则打上 last_error
+        // （用户随后看到「渠道明明是刚绑定的却报错」）。
         `INSERT INTO channels (name, type, base_url, api_key, models, group_name, group_list, status, priority, weight, auto_ban, other, created_time)
-         VALUES (?,?,?,?,?,?,?, 1, ?, ?, ?, ?, ?)`,
+         VALUES (?,?,?,?,?,?,?, ${pendingBind ? 2 : 1}, ?, ?, ?, ?, ?)`,
         [
           String(name || accountLabel || `${provider.name} 渠道`).slice(0, 64),
           type,
@@ -2226,8 +2239,7 @@ router.post(
       invalidateChannelCache();
     }
 
-    // 订阅 OAuth：入池前做一次凭据健康检查（失败禁用而不是带着坏凭据参与调度）
-    if (isOAuthMethod(methodKey) && adapter.verify) {
+    if (isOAuthMethod(methodKey) && adapter.verify && !pendingBind) {
       try {
         const [fresh] = await pool.query("SELECT * FROM channels WHERE id = ?", [insertId]);
         const ms = await adapter.verify(rowToChannel(fresh[0]));
@@ -2886,8 +2898,28 @@ router.post(
     if (!channelId) return fail(res, "缺少目标渠道");
     const [[ch]] = await pool.query("SELECT id, type FROM channels WHERE id = ?", [channelId]);
     if (!ch) return fail(res, "目标渠道不存在", 404);
-    const r = await applyCredentialToChannel({ id: channelId, type: ch.type, credential: rec.credential });
-    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `设备授权凭据已写入新建渠道 #${channelId}` });
+    let r;
+    try {
+      r = await applyCredentialToChannel({ id: channelId, type: ch.type, credential: rec.credential });
+    } catch (e) {
+      // 写回失败时**删掉刚建的空渠道**，否则留下一条永远没凭据、永远不可用的记录
+      // （用户会以为绑定成功了，因为它在表格里）。仅当该渠道确实是「等绑定」建出来的
+      // （status=2 且无凭据）才删，避免误删已有渠道。
+      const [[cur]] = await pool.query("SELECT status, api_key, other FROM channels WHERE id = ?", [channelId]);
+      const curOther = cur?.other ? JSON.parse(cur.other) : {};
+      const looksUnbound = Number(cur?.status) === 2 && !curOther?.access_token;
+      if (looksUnbound) {
+        await pool.query("DELETE FROM channels WHERE id = ?", [channelId]).catch(() => {});
+        invalidateChannelCache();
+        return fail(res, `绑定失败，已撤销该渠道：${e.message}。请重新发起一键绑定`, 400);
+      }
+      return fail(res, `凭据写入失败：${e.message}`, 400);
+    }
+    // 凭据就位后启用渠道：它是以 status=2（禁用）建出来的，等这一步才入池
+    await pool.query("UPDATE channels SET status = 1, last_error = '' WHERE id = ?", [channelId]);
+    resetChannelState(channelId);
+    invalidateChannelCache();
+    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `设备授权凭据已写入新建渠道 #${channelId} 并启用` });
     return ok(res, { channel_id: channelId, account: r.accountLabel }, "绑定成功");
   })
 );

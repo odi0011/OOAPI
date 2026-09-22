@@ -45,6 +45,7 @@ export const PROVIDERS = [
   {
     key: "deepseek",
     name: "DeepSeek",
+    keyUrl: "https://platform.deepseek.com/api_keys",
     vendor: "deepseek",
     desc: "原生多模态，官方 V4.1-Flash 能力与价格",
     methods: [
@@ -87,6 +88,7 @@ export const PROVIDERS = [
   {
     key: "glm",
     name: "智谱 GLM",
+    keyUrl: "https://open.bigmodel.cn/usercenter/apikeys",
     vendor: "zhipu",
     desc: "GLM 系列，网页版与开放平台双通道",
     methods: [
@@ -122,6 +124,7 @@ export const PROVIDERS = [
   {
     key: "kimi",
     name: "Kimi",
+    keyUrl: "https://platform.moonshot.cn/console/api-keys",
     vendor: "kimi",
     desc: "月之暗面 Kimi，支持深度思考与联网",
     methods: [
@@ -156,6 +159,7 @@ export const PROVIDERS = [
   {
     key: "doubao",
     name: "豆包",
+    keyUrl: "https://console.volcengine.com/ark",
     vendor: "doubao",
     desc: "字节豆包，网页版需扫码登录",
     methods: [
@@ -190,6 +194,7 @@ export const PROVIDERS = [
   {
     key: "qwen",
     name: "通义千问",
+    keyUrl: "https://bailian.console.aliyun.com/",
     vendor: "qwen",
     desc: "阿里通义千问，网页版风控较重",
     methods: [
@@ -224,6 +229,7 @@ export const PROVIDERS = [
   {
     key: "openai",
     name: "OpenAI",
+    keyUrl: "https://platform.openai.com/api-keys",
     vendor: "openai",
     desc: "官方接口、OpenAI 格式中转，或 ChatGPT 订阅（Codex OAuth）",
     methods: [
@@ -319,6 +325,7 @@ export const PROVIDERS = [
   {
     key: "anthropic",
     name: "Anthropic",
+    keyUrl: "https://console.anthropic.com/settings/keys",
     vendor: "claude",
     desc: "Claude 系列：官方 API 或 Claude 订阅（Claude Code OAuth）",
     methods: [
@@ -333,26 +340,6 @@ export const PROVIDERS = [
           "本机运行 Claude Code 登录后，复制 ~/.claude/.credentials.json 的 claudeAiOauth 字段内容"
         ),
         pasteHint: "Claude Code 登录凭据：访问 Claude 订阅额度，平台自动续期；请求会按官方 CLI 协议注入身份提示词",
-        defaultModels: [
-          { id: "claude-opus-5", name: "Claude Opus 5" },
-          { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
-          { id: "claude-haiku-4.5", name: "Claude Haiku 4.5" },
-        ],
-        testModel: "claude-haiku-4.5",
-      },
-      {
-        // 第三方工具反代：Kiro（AWS Q / CodeWhisperer）订阅里的 Claude 模型
-        // 工具只是通道，模型与计费仍归 Anthropic
-        key: "kiro",
-        adapter: "kiro",
-        label: "反代（Kiro）",
-        desc: "用 Kiro/AWS Q 订阅跑 Claude 模型",
-        loginModes: ["paste"],
-        loginFields: oauthCredentialField(
-          '{ "accessToken": "...", "refreshToken": "...", "region": "us-east-1", "profileArn": "可选" }',
-          "粘贴 Kiro 的 kiro-auth-token.json；也可只填 refreshToken（AWS SSO 凭据需带 clientId/clientSecret）"
-        ),
-        pasteHint: "Kiro auth 文件：accessToken/refreshToken（+ region/profileArn；SSO 形态带 clientId/clientSecret），平台自动续期",
         defaultModels: [
           { id: "claude-opus-5", name: "Claude Opus 5" },
           { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
@@ -379,6 +366,7 @@ export const PROVIDERS = [
   {
     key: "gemini",
     name: "Google Gemini",
+    keyUrl: "https://aistudio.google.com/app/apikey",
     vendor: "gemini",
     desc: "Gemini 系列：官方 API 或 Google 订阅（Antigravity OAuth）",
     methods: [
@@ -408,6 +396,45 @@ export const PROVIDERS = [
         keyHint: "填写 Gemini API Key",
         defaultModels: [],
         testModel: "",
+      },
+    ],
+  },
+  {
+    // Kiro 独立成厂商（此前挂在 anthropic 下）。用户指出「workbuddy 都单独拉成厂商了，
+    // kiro 为啥寄居在 claude 里」—— 这批评是对的。
+    //
+    // **归属该按「用谁的订阅/账号」定，不该按「跑什么模型」定**：Kiro 是 AWS 的产品，
+    // 用 AWS 订阅登录、凭据是 kiro-auth-token.json；而 anthropic 下的 claude-oauth
+    // 走的是 Claude Code CLI 凭据 —— 两条完全不同的链路。
+    // 挂在 anthropic 下的实际后果：新增渠道要在厂商列表先找「Anthropic」、
+    // 再在凭据里找「反代（Kiro）」，用户根本想不到 Kiro 藏在 Claude 里面。
+    //
+    // 它跑的 Claude 模型**仍归 Anthropic 厂商**（模型归属 ≠ 账号归属），
+    // 所以 vendor 标 anthropic、defaultModels 保留 claude-* 真实模型名。
+    key: "kiro",
+    name: "Kiro（AWS）",
+    vendor: "anthropic",
+    desc: "AWS Kiro 订阅反代：用 Kiro 账号跑 Claude 模型（凭据 kiro-auth-token.json）",
+    methods: [
+      {
+      // 第三方工具反代：Kiro（AWS Q / CodeWhisperer）订阅里的 Claude 模型
+      // 工具只是通道，模型与计费仍归 Anthropic
+      key: "kiro",
+      adapter: "kiro",
+      label: "反代（Kiro）",
+      desc: "用 Kiro/AWS Q 订阅跑 Claude 模型",
+      loginModes: ["paste"],
+      loginFields: oauthCredentialField(
+        '{ "accessToken": "...", "refreshToken": "...", "region": "us-east-1", "profileArn": "可选" }',
+        "粘贴 Kiro 的 kiro-auth-token.json；也可只填 refreshToken（AWS SSO 凭据需带 clientId/clientSecret）"
+      ),
+      pasteHint: "Kiro auth 文件：accessToken/refreshToken（+ region/profileArn；SSO 形态带 clientId/clientSecret），平台自动续期",
+      defaultModels: [
+        { id: "claude-opus-5", name: "Claude Opus 5" },
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
+        { id: "claude-haiku-4.5", name: "Claude Haiku 4.5" },
+      ],
+      testModel: "claude-haiku-4.5",
       },
     ],
   },
@@ -442,6 +469,7 @@ export const PROVIDERS = [
   {
     key: "grok",
     name: "xAI Grok",
+    keyUrl: "https://console.x.ai/",
     vendor: "grok",
     desc: "Grok 系列：订阅 OAuth（device-code）或官方 API Key",
     methods: [
@@ -477,6 +505,7 @@ export const PROVIDERS = [
   {
     key: "workbuddy",
     name: "WorkBuddy / CodeBuddy",
+    keyUrl: "https://www.workbuddy.ai/",
     vendor: "workbuddy",
     desc: "腾讯 WorkBuddy/CodeBuddy 桌面端凭据反代（后端本身就是 OpenAI 协议）",
     methods: [
@@ -505,6 +534,7 @@ export const PROVIDERS = [
   {
     key: "qoder",
     name: "Qoder（阿里）",
+    keyUrl: "https://qoder.com/account/integrations",
     vendor: "qoder",
     desc: "Qoder 订阅经本地桥（qoder2api）转 OpenAI 协议；PAT 作为 Key",
     methods: [
@@ -535,6 +565,7 @@ export const PROVIDERS = [
   {
     key: "mimo",
     name: "小米 MiMo",
+    keyUrl: "https://platform.xiaomimimo.com/",
     vendor: "mimo",
     desc: "小米 MiMo：MiMo Studio 网页版反代，或官方 API 直连",
     methods: [
@@ -574,6 +605,7 @@ export const PROVIDERS = [
   {
     key: "minimax",
     name: "MiniMax",
+    keyUrl: "https://platform.minimaxi.com/user-center/basic-information/interface-key",
     vendor: "minimax",
     desc: "MiniMax：MiniMax Agent 网页版反代，或官方 API 直连（国内 api.minimax.cn / 国际 api.minimax.io）",
     methods: [
@@ -614,6 +646,7 @@ export const PROVIDERS = [
   {
     key: "stepfun",
     name: "阶跃星辰 StepFun",
+    keyUrl: "https://platform.stepfun.com/interface-key",
     vendor: "stepfun",
     desc: "阶跃星辰：chat.stepfun.com 网页版反代，或官方 API 直连",
     methods: [
@@ -653,6 +686,7 @@ export const PROVIDERS = [
   {
     key: "ark",
     name: "火山方舟",
+    keyUrl: "https://console.volcengine.com/ark",
     vendor: "ark",
     desc: "字节火山方舟（Doubao Seed 系列；API Key 鉴权时 model 直接填模型名，无需 ep- 接入点）",
     methods: [
@@ -674,6 +708,7 @@ export const PROVIDERS = [
   {
     key: "opencode",
     name: "OpenCode",
+    keyUrl: "https://opencode.ai/auth",
     vendor: "opencode",
     // Zen 与 GO 是 OpenCode 的**两个独立产品**（不是同一产品的两个名字）：
     //   · Zen：按量付费（预充值、零加价），模型池约 76 个（含 Claude/GPT/Gemini）
@@ -732,6 +767,7 @@ export const PROVIDERS = [
   {
     key: "openrouter",
     name: "OpenRouter",
+    keyUrl: "https://openrouter.ai/keys",
     vendor: "openrouter",
     desc: "多厂商聚合（OpenAI 兼容，模型用 vendor/model 命名）",
     methods: [
@@ -754,6 +790,7 @@ export const PROVIDERS = [
   {
     key: "siliconflow",
     name: "硅基流动",
+    keyUrl: "https://cloud.siliconflow.cn/account/ak",
     vendor: "siliconflow",
     desc: "国内模型聚合（OpenAI 兼容）",
     methods: [
@@ -777,6 +814,7 @@ export const PROVIDERS = [
   {
     key: "typesafe",
     name: "TypeSafe AI（Jev）",
+    keyUrl: "https://console.typesafe.ai/keys",
     vendor: "typesafe",
     // Jev 与传统 chat 模型的根本区别：**它不生成文本**。
     // 输入 state + 类型化 problems，输出类型化判断 + 概率 + 置信度
@@ -805,6 +843,7 @@ export const PROVIDERS = [
   {
     key: "longcat",
     name: "LongCat（美团）",
+    keyUrl: "https://longcat.chat/platform/api_keys",
     vendor: "longcat",
     desc: "LongCat-2.0，1M 上下文；OpenAI 与 Anthropic 双协议",
     methods: [
@@ -835,6 +874,7 @@ export const PROVIDERS = [
   {
     key: "chutes",
     name: "Chutes",
+    keyUrl: "https://chutes.ai/app/api",
     vendor: "chutes",
     desc: "去中心化算力聚合（Kimi K3 / GLM / DeepSeek / Qwen）",
     methods: [
@@ -858,6 +898,7 @@ export const PROVIDERS = [
   {
     key: "nvidia",
     name: "NVIDIA NIM",
+    keyUrl: "https://build.nvidia.com/settings/api-keys",
     vendor: "nvidia",
     desc: "NVIDIA 官方推理服务（Nemotron 系列）",
     methods: [
@@ -879,6 +920,7 @@ export const PROVIDERS = [
   {
     key: "cerebras",
     name: "Cerebras",
+    keyUrl: "https://cloud.cerebras.ai/",
     vendor: "cerebras",
     desc: "Cerebras 推理云（官方称 OpenAI 客户端兼容）",
     methods: [
@@ -900,6 +942,7 @@ export const PROVIDERS = [
   {
     key: "hunyuan",
     name: "腾讯混元",
+    keyUrl: "https://console.cloud.tencent.com/hunyuan/api-key",
     vendor: "hunyuan",
     desc: "混元 Hy3 系列（官方明确兼容 OpenAI 接口规范）",
     methods: [
@@ -921,6 +964,7 @@ export const PROVIDERS = [
   {
     key: "meta",
     name: "Meta（Muse Spark）",
+    keyUrl: "https://dev.meta.ai/",
     vendor: "meta",
     desc: "Meta Muse Spark 系列，1M 上下文",
     methods: [
@@ -1034,6 +1078,9 @@ export function publicProviders() {
     key: p.key,
     name: p.name,
     vendor: p.vendor,
+    // 获取 API Key 的官方页面：前端在「API Key」标题旁渲染成可点击小字，
+    // 省得用户自己去搜「XX 的 key 在哪」。
+    keyUrl: p.keyUrl || "",
     desc: p.desc,
     defaultMethod: defaultMethodKey(p.key),
     methods: p.methods.map((m) => ({

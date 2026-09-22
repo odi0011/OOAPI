@@ -297,6 +297,17 @@ async function quotaAntigravity(channel) {
   return { account: String(channel?.other?.email || ""), plan: String(channel?.other?.plan_tier || channel?.other?.tier || ""), windows };
 }
 
+/**
+ * WorkBuddy / CodeBuddy 积分。
+ * 具体请求与聚合口径放在适配器里（它才掌握 realm 判定与头组），
+ * 这里只做转发 —— 避免同一套协议在两处各写一遍。
+ */
+async function quotaWorkbuddy(channel) {
+  const mod = await import("./workbuddy.js");
+  if (!mod.fetchCredits) throw new Error("该适配器未实现积分查询");
+  return mod.fetchCredits(channel);
+}
+
 async function quotaGrok(channel) {
   const mod = await import("./grok.js");
   const token = await freshToken(channel, mod);
@@ -471,7 +482,18 @@ async function quotaDeepseekApi(channel) {
 // ---------------------------------------------------------------------------
 // 分派
 // ---------------------------------------------------------------------------
-const SUPPORTED = new Set(["codex", "claude-oauth", "antigravity", "grok-oauth", "kiro", "openai-web", "deepseek-api"]);
+const SUPPORTED = new Set([
+  "codex",
+  "claude-oauth",
+  "antigravity",
+  "grok-oauth",
+  "kiro",
+  "openai-web",
+  "deepseek-api",
+  // WorkBuddy/CodeBuddy 是**积分制**（用户反馈「有积分制为什么显示不支持」）：
+  // 额度接口是 POST {billing域}/v2/billing/meter/get-user-resource，实测可用
+  "workbuddy",
+]);
 
 /** 该渠道是否支持额度查询（前端据此决定要不要显示「查额度」按钮） */
 export function quotaSupportFor(channel = {}) {
@@ -523,6 +545,9 @@ export async function fetchQuota(channel) {
         break;
       case "kiro":
         data = await quotaKiro(channel);
+        break;
+      case "workbuddy":
+        data = await quotaWorkbuddy(channel);
         break;
       case "openai-web":
         data = await quotaOpenaiWeb(channel);

@@ -950,7 +950,14 @@ export default function AdminChannelsPage() {
   const isRelay = Boolean(pickMethod) && !isApi;
 
   // 当前选中的凭据项（注意：必须放在 isApi 声明之后，否则 const 的暂时性死区会直接白屏）
-  const credId = isApi ? "api" : pickMethod ? `${pickMethod.key}:${addMode}` : "";
+  // 当前选中的凭据项 id，必须与 credOptions 里生成的 `o.id` **完全一致**。
+  //
+  // 踩过的坑：这里曾对 API Key 型硬编码返回 "api"，而选项 id 是 `m.key`
+  // —— 当厂商有多个 API Key 型方式时（OpenCode 的 Zen="api" 与 GO="go"），
+  // GO 那个按钮的 value 永远匹配不上选中态，**点了没有任何反应**
+  // （Radio.Group 的 value 不匹配 → 视觉上不切换、也不触发 onChange 的场景）。
+  // 现在统一用 pickMethod.key，与生成侧同源。
+  const credId = pickMethod ? (isApi ? pickMethod.key : `${pickMethod.key}:${addMode}`) : "";
 
   // ---------- 添加 ----------
   const openAdd = () => {
@@ -969,6 +976,9 @@ export default function AdminChannelsPage() {
     const mKey = p.defaultMethod || p.methods[0].key;
     applyMethod(p, p.methods.find((m) => m.key === mKey));
   };
+
+  // 从已加载的厂商表里取「获取 Key」地址（编辑弹窗只有 type，没有 provider 对象）
+  const keyUrlOf = (type) => providers.find((p) => p.key === type)?.keyUrl || "";
 
   const applyMethod = (p, m, forceMode = null) => {
     if (!m) return;
@@ -2855,7 +2865,28 @@ export default function AdminChannelsPage() {
                       >
                         <Input placeholder={pickMethod.baseUrl || "https://..."} />
                       </Form.Item>
-                      <Form.Item name="api_key" label="API Key" rules={[{ required: true, message: "请填写 API Key" }]}>
+                      <Form.Item
+                        name="api_key"
+                        label={
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                            API Key
+                            {/* 用户要求：标题旁给一个蓝色小字，点开就是该厂商获取 Key 的官方页面。
+                                「XX 的 key 在哪」本来是每个人都要自己搜一次的事。 */}
+                            {pickProvider?.keyUrl ? (
+                              <a
+                                href={pickProvider.keyUrl}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                style={{ fontSize: 12, fontWeight: 400 }}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                获取 Key ↗
+                              </a>
+                            ) : null}
+                          </span>
+                        }
+                        rules={[{ required: true, message: "请填写 API Key" }]}
+                      >
                         <Input.Password placeholder={pickMethod.keyHint || "填写上游 API Key"} autoComplete="new-password" />
                       </Form.Item>
                       </>
@@ -2935,7 +2966,26 @@ export default function AdminChannelsPage() {
             </Form.Item>
           ) : null}
           {editing?.isApiKey ? (
-            <Form.Item name="api_key" label="API Key">
+            <Form.Item
+              name="api_key"
+              label={
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  API Key
+                  {/* 编辑弹窗同样给「获取 Key」入口（与新建弹窗一致） */}
+                  {keyUrlOf(editing?.type) ? (
+                    <a
+                      href={keyUrlOf(editing?.type)}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      style={{ fontSize: 12, fontWeight: 400 }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      获取 Key ↗
+                    </a>
+                  ) : null}
+                </span>
+              }
+            >
               <Input.Password placeholder="留空不修改" autoComplete="new-password" />
             </Form.Item>
           ) : null}
@@ -3467,7 +3517,13 @@ export default function AdminChannelsPage() {
                     />
                   </Space>
                 ) : null}
-                {reloginTarget?.type === "workbuddy" || reloginTarget?.type === "qoder" ? (
+                {/* 区域只在**确实无法自动判定**时才问：
+                    · Qoder 的区域决定 OAuth 端点与 client 参数，且拿不到 token 前无法推断 → 需要选；
+                    · WorkBuddy 的区域可由凭据 JWT 的 `iss` 自动判定
+                      （适配器 realmOf()），重新绑定时用户没必要再选一次 ——
+                      而且选错会被网关 401（且极易被误判成 token 过期）。
+                      这是用户反馈「绑定之后重新认证还让我选国内还是国际」的那处。 */}
+                {reloginTarget?.type === "qoder" ? (
                   <Select
                     style={{ width: 180 }}
                     placeholder="区域（默认国内）"
