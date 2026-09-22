@@ -241,13 +241,13 @@ export default function ConsolePage() {
                 height={160}
                 series={[
                   { name: "调用次数", values: trend.map((d) => ({ x: d.day, y: d.calls })), color: SERIES_COLORS[0] },
-                  { name: "消费（额度单位）", values: trend.map((d) => ({ x: d.day, y: d.units })), color: SERIES_COLORS[2] },
+                  { name: `消费 (${CURRENCY_NAME})`, values: trend.map((d) => ({ x: d.day, y: Number((d.units / perUnit).toFixed(2)) })), color: SERIES_COLORS[2] },
                 ]}
               />
               <Legend
                 series={[
                   { name: "调用次数", color: SERIES_COLORS[0] },
-                  { name: "消费（额度单位）", color: SERIES_COLORS[2] },
+                  { name: `消费 (${CURRENCY_NAME})`, color: SERIES_COLORS[2] },
                 ]}
               />
             </>
@@ -284,21 +284,21 @@ export default function ConsolePage() {
           <HourBars hours={data?.by_hour} />
         </ChartCard>
 
-        <ChartCard title="模型消费排行" note="Top 12 · 按额度单位">
-          <RankBar items={(data?.by_model || []).map((m) => ({ name: m.model, value: m.units }))} suffix="" />
+        <ChartCard title="模型消费排行" note={`Top 12 · 按消费 (${CURRENCY_NAME})`}>
+          <RankBar items={(data?.by_model || []).map((m) => ({ name: m.model, value: Number((m.units / perUnit).toFixed(2)) }))} suffix={` ${CURRENCY_NAME}`} />
         </ChartCard>
 
         <ChartCard title="模型调用量" note="按次数">
-          <RankBar items={(data?.by_model || []).map((m) => ({ name: m.model, value: m.calls }))} suffix="" />
+          <RankBar items={(data?.by_model || []).map((m) => ({ name: m.model, value: m.calls }))} suffix=" 次" />
         </ChartCard>
 
-        <ChartCard title="渠道分布" note="按消费">
-          <RankBar items={(data?.by_channel || []).map((c) => ({ name: `渠道 #${c.channel_id}`, value: c.units }))} suffix="" />
+        <ChartCard title="渠道分布" note={`按消费 (${CURRENCY_NAME})`}>
+          <RankBar items={(data?.by_channel || []).map((c) => ({ name: `渠道 #${c.channel_id}`, value: Number((c.units / perUnit).toFixed(2)) }))} suffix={` ${CURRENCY_NAME}`} />
         </ChartCard>
 
         {community ? (
           <ChartCard title="我的社区与娱乐" note="点击可跳转">
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", fontSize: 12.5 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(84px, 1fr))", gap: 8 }}>
               {[
                 { label: "帖子", value: community.mine?.posts, to: `/u/${user?.id}` },
                 { label: "获赞", value: community.mine?.likes_received },
@@ -306,16 +306,30 @@ export default function ConsolePage() {
                 { label: "粉丝", value: community.mine?.followers, to: `/u/${user?.id}` },
                 { label: "关注", value: community.mine?.following, to: `/u/${user?.id}` },
                 { label: "会话", value: community.mine?.rooms, to: "/messages" },
-                { label: "游戏局数", value: community.mine?.game_plays, to: "/games" },
+                { label: "游戏", value: community.mine?.game_plays, to: "/games" },
               ].map((x) => (
-                <span
+                <div
                   key={x.label}
-                  style={{ display: "inline-flex", gap: 5, alignItems: "baseline", cursor: x.to ? "pointer" : "default" }}
+                  className="bui-chip"
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: "6px 4px",
+                    height: "auto",
+                    background: "var(--inset)",
+                    border: "1px solid var(--line-soft)",
+                    borderRadius: 6,
+                    cursor: x.to ? "pointer" : "default",
+                  }}
                   onClick={() => x.to && navigate(x.to)}
                 >
-                  <span style={{ color: "var(--ink-3)" }}>{x.label}</span>
-                  <b className="oo-num">{x.value ?? 0}</b>
-                </span>
+                  <span style={{ fontSize: 11, color: "var(--ink-3)" }}>{x.label}</span>
+                  <span className="oo-num" style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-1)", marginTop: 2 }}>
+                    {x.value ?? 0}
+                  </span>
+                </div>
               ))}
             </div>
           </ChartCard>

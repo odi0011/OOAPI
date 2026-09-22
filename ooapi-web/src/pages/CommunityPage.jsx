@@ -208,12 +208,12 @@ export default function CommunityPage() {
                 style={{ width: 150 }}
                 options={topics.map((t) => ({ value: t.id, label: `${t.icon || ""} ${t.name}`.trim() }))}
               />
-              <Input.Search
+              <Input
                 placeholder="搜索标题或正文"
                 allowClear
                 prefix={<SearchOutlined style={{ color: "var(--ink-3)" }} />}
                 style={{ width: 200 }}
-                onSearch={(v) => { setKeyword(v); setPage(1); }}
+                onPressEnter={(e) => { setKeyword(e.target.value); setPage(1); }}
                 onChange={(e) => { if (!e.target.value) { setKeyword(""); setPage(1); } }}
               />
             </div>

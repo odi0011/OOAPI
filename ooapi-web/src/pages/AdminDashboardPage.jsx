@@ -167,13 +167,13 @@ export default function AdminDashboardPage() {
                 height={168}
                 series={[
                   { name: "调用次数", values: trend.map((d) => ({ x: d.day, y: d.calls })), color: SERIES_COLORS[0] },
-                  { name: "消费（单位）", values: trend.map((d) => ({ x: d.day, y: d.units })), color: SERIES_COLORS[2] },
+                  { name: `消费 (${CURRENCY_NAME})`, values: trend.map((d) => ({ x: d.day, y: Number((d.units / perUnit).toFixed(2)) })), color: SERIES_COLORS[2] },
                 ]}
               />
               <Legend
                 series={[
                   { name: "调用次数", color: SERIES_COLORS[0] },
-                  { name: "消费（单位）", color: SERIES_COLORS[2] },
+                  { name: `消费 (${CURRENCY_NAME})`, color: SERIES_COLORS[2] },
                 ]}
               />
             </>
@@ -207,11 +207,11 @@ export default function AdminDashboardPage() {
         </ChartCard>
 
         <ChartCard title="模型成本排行" note="按消费额度">
-          <RankBar items={(data?.top_models || []).map((m) => ({ name: m.model, value: m.units }))} suffix="" />
+          <RankBar items={(data?.top_models || []).map((m) => ({ name: m.model, value: Number((m.units / perUnit).toFixed(2)) }))} suffix={` ${CURRENCY_NAME}`} />
         </ChartCard>
 
         <ChartCard title="模型调用排行" note="按次数">
-          <RankBar items={(data?.top_models || []).map((m) => ({ name: m.model, value: m.calls }))} suffix="" />
+          <RankBar items={(data?.top_models || []).map((m) => ({ name: m.model, value: m.calls }))} suffix=" 次" />
         </ChartCard>
 
         <ChartCard title="用户消费排行" note="Top 10">
@@ -224,7 +224,7 @@ export default function AdminDashboardPage() {
                   {u.display_name || u.username}
                 </a>
                 <span className="oo-num" style={{ color: "var(--ink-3)" }}>{fmtCompact(u.calls)} 次</span>
-                <span className="oo-num" style={{ fontWeight: 600 }}>{fmtCompact(u.units)} 单位</span>
+                <span className="oo-num" style={{ fontWeight: 600 }}>{fmtOd(u.units, perUnit, 2)}</span>
               </div>
             ))}
             {!(data?.top_users || []).length ? <Empty description="暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} /> : null}
@@ -240,7 +240,7 @@ export default function AdminDashboardPage() {
             dataSource={data?.by_channel || []}
             locale={{ emptyText: <Empty description="暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
             columns={[
-              { title: "渠道", dataIndex: "name", ellipsis: true, render: (v, r) => <span className="oo-truncate" title={`#${r.channel_id} ${v}`}>{v}</span> },
+              { title: "渠道", dataIndex: "name", minWidth: 140, render: (v, r) => <span className="oo-truncate" title={`#${r.channel_id} ${v}`}>{`#${r.channel_id} ${v}`}</span> },
               { title: "调用", dataIndex: "calls", width: 70, render: (v) => <span className="oo-num">{fmtCompact(v)}</span> },
               {
                 title: "成功率",

@@ -116,7 +116,8 @@ export function LineChart({ series = [], height = 200, yFormat = fmtCompact, tip
       const area = path
         ? `${path} L ${pts[pts.length - 1]?.[0] ?? PAD.l} ${PAD.t + innerH} L ${pts[0]?.[0] ?? PAD.l} ${PAD.t + innerH} Z`
         : "";
-      return { ...s, pts, path, area, color: s.color || SERIES_COLORS[si % SERIES_COLORS.length] };
+      const label = s.label ?? s.name;
+      return { ...s, label, pts, path, area, color: s.color || SERIES_COLORS[si % SERIES_COLORS.length] };
     });
     return { max: mx, plots };
   }, [series, n, H, W, PAD.l, PAD.r, PAD.t, PAD.b]);
@@ -221,7 +222,7 @@ export function LineChart({ series = [], height = 200, yFormat = fmtCompact, tip
               {plots.map((s) => (
                 <div key={s.key} className="oo-trend-tip-row">
                   <i style={{ background: s.color }} />
-                  {s.label} <span>{s.values[hover]?.y ?? 0}</span>
+                  {s.label ?? s.name} <span>{s.values[hover]?.y ?? 0}</span>
                 </div>
               ))}
             </>
@@ -240,7 +241,7 @@ export function Legend({ series = [] }) {
       {series.map((s, i) => (
         <span className="oo-trend-legend-item" key={s.key || i}>
           <i style={{ background: s.color || SERIES_COLORS[i % SERIES_COLORS.length] }} />
-          {s.label}
+          {s.label ?? s.name}
         </span>
       ))}
     </div>

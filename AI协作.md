@@ -2514,6 +2514,20 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
     - `poll` 轮询完善根据目标 commit（`stamp.commit === latest.commit`）及最多 40 次重试自动退出并提示更新成功。
   · **构建与产物同步**：
     - `ooapi-web` 执行 `npm run build` 通过，产物同步至 `ooapi-server/web/`。 |
+| 2026-09-22 | **第 48 批 · 全站 UI/UX 体验与视觉规范综合整改**（线上实测审查落地）：
+  · **图表组件与图例文字兼容（P1 缺陷修复）**：
+    - `Charts.jsx`：`Legend` 与 `LineChart` 序列定义原本仅读取 `s.label`，导致传入 `{ name: "..." }` 时图例仅有圆点而缺失文字说明；现统一支持 `s.label ?? s.name`，彻底修复全站（控制台、数据看板、使用分析）折线图图例文字丢失问题。
+  · **统一货币与底层单位收敛（P1 规范对齐）**：
+    - `AdminDashboardPage.jsx`：修复「用户消费排行」直接渲染底层 `单位` 的违规泄露，改为通过 `fmtOd(u.units, perUnit, 2)` 格式化为标准 OD 币；将「模型成本排行」及全站趋势图中的消费轴单位统一换算为 `消费 (${CURRENCY_NAME})`。
+    - `ConsolePage.jsx`：将「模型消费排行」与「渠道分布」统一换算为 OD 币展示，消除「按额度单位」的内部概念外露。
+  · **视觉排版与一致性优化（P2 体验升级）**：
+    - `AdminDashboardPage.jsx`：解决「渠道表现」表格渠道名称列被粗暴截断为「渠道…」的缺陷，设置最小列宽 `minWidth: 140` 并补充渠道 ID 前缀。
+    - `ChatPage.jsx`：侧栏底部余额展示精度从 4 位小数统一收敛至 2 位小数（`fmtOd(user.quota, unitsPerOd(status), 2)`），与全站保持高度一致。
+    - `AdminPricingPage.jsx`：在「价格来源」列过滤清洗掉内部草稿公式（如 `÷ 7.2`、`¥.../¥...`），提供更专业美观的公开来源标签，同时完整保留 Tooltip 浮层供管理员深入查看。
+    - `CommunityPage.jsx`：优化社区大厅搜索框，移除 `Input.Search` 内部额外前缀导致的双重放大镜图标冗余。
+    - `ConsolePage.jsx`：将「我的社区与娱乐」从一整段紧凑纯文本重构为结构化的轻量徽章胶囊网格，视觉层次与交互体验显著提升。
+  · **构建与产物同步**：
+    - `ooapi-web` 执行 `npm run build` 成功（3097 个模块构建完成，退出码 0），产物已同步至 `ooapi-server/web/`。 |
 
 
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）

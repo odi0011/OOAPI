@@ -429,7 +429,7 @@ export default function ChatPage() {
     }),
     [settings, agent, meta]
   );
-  const quota = user?.quota != null ? fmtOd(user.quota, unitsPerOd(status), 4) : "—";
+  const quota = user?.quota != null ? fmtOd(user.quota, unitsPerOd(status), 2) : "—";
   // 对话必须通过密钥路由：没有可用密钥就没有可用模型，输入区与编排栏一并禁用
   const usableKeys = (meta?.keys || []).filter((k) => k.status === 1);
   const needKey = Boolean(meta) && !usableKeys.length;

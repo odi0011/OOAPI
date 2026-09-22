@@ -142,7 +142,25 @@ export default function AdminPricingPage() {
       title: "价格来源",
       dataIndex: "remark",
       ellipsis: true,
-      render: (v) => <span style={{ fontSize: 12.5, color: "var(--ink-3)" }}>{v || "—"}</span>,
+      render: (v) => {
+        if (!v) return <span style={{ fontSize: 12.5, color: "var(--ink-3)" }}>—</span>;
+        // 过滤内部汇率折算与草稿公式（如 "÷ 7.2"、"¥.../¥..."），提取清爽的公开来源说明
+        const cleaned = v
+          .replace(/[¥￥][0-9.]+(?:\/[¥￥]?[0-9.]+|(?:\/缓存\s*[¥￥]?[0-9.]+))*/g, "")
+          .replace(/÷\s*[0-9.]+/g, "")
+          .replace(/；\s*；/g, "；")
+          .replace(/；\s*来源\s*/g, " · ")
+          .replace(/^来源\s*/g, "")
+          .replace(/；\s*$/, "")
+          .trim();
+        return (
+          <Tooltip title={v}>
+            <span style={{ fontSize: 12.5, color: "var(--ink-2)", cursor: "default" }}>
+              {cleaned || v}
+            </span>
+          </Tooltip>
+        );
+      },
     },
     {
       // 分时（峰谷）定价：只有部分厂商按钟点差异定价（DeepSeek 官方工作日 9-12、14-18 为高峰）
