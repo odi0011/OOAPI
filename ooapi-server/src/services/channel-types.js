@@ -1078,6 +1078,11 @@ export function publicProviders() {
     key: p.key,
     name: p.name,
     vendor: p.vendor,
+    // 图标标识：**优先用厂商 key，而不是 vendor**。
+    // 两者语义不同：vendor 表示「模型归哪家」（Kiro 跑的 Claude 归 anthropic），
+    // 而 key 表示「这个厂商在产品里叫什么」（kiro）。厂商列表的图标要的是后者 ——
+    // 用 vendor 会让 Kiro 显示成 Claude 图标（用户看不出这是 Kiro）。
+    icon: p.icon || p.key,
     // 获取 API Key 的官方页面：前端在「API Key」标题旁渲染成可点击小字，
     // 省得用户自己去搜「XX 的 key 在哪」。
     keyUrl: p.keyUrl || "",

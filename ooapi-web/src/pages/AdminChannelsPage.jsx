@@ -587,7 +587,10 @@ function ProviderPicker({ providers, activeKey, onPick }) {
               }
             }}
           >
-            <VendorIcon type={p.vendor} size={22} />
+            {/* 图标用 p.icon（= 厂商 key），不是 p.vendor ——
+                vendor 是「模型归哪家」（Kiro 的 Claude 归 anthropic），
+                用它会让 Kiro 显示成 Claude 图标。 */}
+            <VendorIcon type={p.icon || p.key || p.vendor} size={22} />
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontSize: 13.5, fontWeight: 550, color: "var(--ink)" }}>{p.name}</div>
               <div className="oo-truncate" style={{ fontSize: 11.5, color: "var(--ink-3)" }}>{p.desc}</div>
