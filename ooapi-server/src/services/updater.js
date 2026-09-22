@@ -158,23 +158,31 @@ export async function checkUpdate() {
       const b = path.join(SERVER_ROOT, f);
       if (existsSync(a) && !(await sameFile(a, b))) changed.push(`ooapi-server/${f}`);
     }
+    const webSrc = path.join(tmp, "ooapi-web", "src");
+    if (existsSync(webSrc)) {
+      await collectDiff(webSrc, path.join(WEB_ROOT, "src"), "ooapi-web/src", changed);
+    }
 
     await fs.rm(tmp, { recursive: true, force: true });
 
     const upToDate = Boolean(local.commit) && local.commit === remoteHead;
+    const remoteInfo = {
+      commit: remoteHead,
+      short: remoteShort,
+      date: remoteDate,
+      message: remoteMsg,
+      author: remoteSubject,
+    };
     return {
       ok: true,
       repo: REPO_URL,
       branch: BRANCH,
       local,
-      remote: {
-        commit: remoteHead,
-        short: remoteShort,
-        date: remoteDate,
-        message: remoteMsg,
-        author: remoteSubject,
-      },
+      current: local,
+      remote: remoteInfo,
+      latest: remoteInfo,
       upToDate,
+      hasUpdate: !upToDate,
       changedCount: changed.length,
       changed: changed.slice(0, 60),
     };

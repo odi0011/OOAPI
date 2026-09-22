@@ -2503,6 +2503,17 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
     - 按用户明确要求，彻底隐藏不再展示「账号」与「抓取于...」字段。
   · **构建与产物同步**：
     - `ooapi-web` 执行 `npm run build` 通过（3097 个模块构建完成，退出码 0），产物已同步至 `ooapi-server/web/`。 |
+| 2026-09-22 | **第 47 批 · 在线更新契约修复与前端更新轮询容错**（线上环境排查修复）：
+  · **契约属性名修复（P0 Bug）**：
+    - `updater.js`（`checkUpdate`）返回结构原本为 `local/remote/upToDate`，而前端 `AdminSettingsPage.jsx`（`UpdateTab`）却读取 `current/latest/hasUpdate`；
+    - 字段不匹配导致 `info.hasUpdate` 恒为 `undefined`，`!info.hasUpdate` 恒为 `true`，导致前端始终误判并展示「已是最新版本」，「立即更新」按钮被永久禁用，版本号显示为 `—`；
+    - 后端补充 `current/latest/hasUpdate` 字段别名；前端完善容错取值（`current || local`、`latest || remote`、`hasUpdate ?? !upToDate`）；
+    - `collectDiff` 增加对 `ooapi-web/src` 目录的差异检查，避免纯前端改动时 `changedCount` 误报为 0。
+  · **热更新轮询与超时放宽**：
+    - 前端 `API.post("/update/apply")` 超时由 30s 放宽至 300s（覆盖构建与安装耗时）；
+    - `poll` 轮询完善根据目标 commit（`stamp.commit === latest.commit`）及最多 40 次重试自动退出并提示更新成功。
+  · **构建与产物同步**：
+    - `ooapi-web` 执行 `npm run build` 通过，产物同步至 `ooapi-server/web/`。 |
 
 
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）

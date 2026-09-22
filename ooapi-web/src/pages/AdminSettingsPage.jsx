@@ -341,17 +341,29 @@ function UpdateTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const poll = () => {
+  const current = info?.current || info?.local;
+  const latest = info?.latest || info?.remote;
+  const hasUpdate = Boolean(
+    info?.hasUpdate !== undefined
+      ? info.hasUpdate
+      : info?.upToDate !== undefined
+        ? !info.upToDate
+        : false
+  );
+
+  const poll = (targetCommit) => {
     if (timerRef.current) clearInterval(timerRef.current);
+    let attempts = 0;
     timerRef.current = setInterval(async () => {
+      attempts++;
       try {
         const r = await API.get("/update/status", { timeoutMs: 15_000 });
-        setSteps(Array.isArray(r?.steps) ? r.steps : []);
-        if (r?.done) {
+        const currentCommit = r?.stamp?.commit;
+        if ((targetCommit && currentCommit === targetCommit) || r?.done || attempts >= 40) {
           clearInterval(timerRef.current);
           timerRef.current = null;
           setApplying(false);
-          message.success("更新完成");
+          message.success("更新完成，服务已就绪");
           await check();
         }
       } catch {
@@ -363,15 +375,18 @@ function UpdateTab() {
   const apply = async () => {
     modal.confirm({
       title: "确认更新到最新版本？",
-      content: "会拉取 GitHub 最新代码、重建前端并重启服务。更新前会自动备份当前源码。",
+      content: `即将更新到版本 ${latest?.short || ""}：${latest?.message || ""}。更新将拉取 GitHub 最新代码、重新构建并热重启服务。`,
       okText: "立即更新",
       cancelText: "取消",
       onOk: async () => {
         setApplying(true);
         setSteps([]);
         try {
-          await API.post("/update/apply", undefined, { timeoutMs: 30_000 });
-          poll();
+          const res = await API.post("/update/apply", undefined, { timeoutMs: 300_000 });
+          if (Array.isArray(res?.steps)) {
+            setSteps(res.steps);
+          }
+          poll(latest?.commit);
         } catch (e) {
           setApplying(false);
           message.error(e.message);
@@ -388,19 +403,27 @@ function UpdateTab() {
         ) : null}
         <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
           <div>
-            当前版本：<Text code>{info?.current?.short || "—"}</Text>
-            {info?.current?.message ? <span style={{ color: "var(--ink-3)" }}> · {info.current.message}</span> : null}
+            当前版本：<Text code>{current?.short || "—"}</Text>
+            {current?.message ? <span style={{ color: "var(--ink-3)" }}> · {current.message}</span> : null}
           </div>
           <div>
-            最新版本：<Text code>{info?.latest?.short || "—"}</Text>
-            {info?.latest?.message ? <span style={{ color: "var(--ink-3)" }}> · {info.latest.message}</span> : null}
+            最新版本：<Text code>{latest?.short || "—"}</Text>
+            {latest?.message ? <span style={{ color: "var(--ink-3)" }}> · {latest.message}</span> : null}
           </div>
-          {info && !info.hasUpdate ? (
+          {info && !hasUpdate ? (
             <Alert type="success" showIcon message="已是最新版本" />
+          ) : null}
+          {info && hasUpdate ? (
+            <Alert
+              type="info"
+              showIcon
+              message={`发现新版本：${latest?.short || ""}`}
+              description={latest?.message || "有新版本可用，点击下方按钮即可一键在线更新。"}
+            />
           ) : null}
           <div style={{ display: "flex", gap: 8 }}>
             <Button onClick={check} loading={checking}>检查更新</Button>
-            <Button type="primary" onClick={apply} loading={applying} disabled={!info?.hasUpdate}>
+            <Button type="primary" onClick={apply} loading={applying} disabled={!hasUpdate}>
               立即更新
             </Button>
           </div>
