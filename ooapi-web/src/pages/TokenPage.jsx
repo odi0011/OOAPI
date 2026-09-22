@@ -11,7 +11,7 @@ import { copyText, fmtDate, fmtOd, odOf, unitsPerOd, CURRENCY_NAME } from "../se
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
-import { VendorIcon, ModelLabel, GroupVendorIcons } from "../components/VendorIcon";
+import { VendorIcon, ModelLabel, GroupVendorIcons, GroupRateBadge, GroupTag } from "../components/VendorIcon";
 
 const { Text } = Typography;
 
@@ -30,24 +30,39 @@ export default function TokenPage() {
   const [form] = Form.useForm();
   const { begin, isLatest } = useLatest();
 
-  // 分组下拉：一个 Key 只能绑定一个分组，选项显示「折叠态厂商图标（成员厂商）/ 分组名 / 备注 / 倍率」。
-  // 绑定值就是**分组名**（分组名全局唯一，且分组可跨厂商）。
-  // 图标必须按成员账号的厂商（g.vendors）来画：g.vendor 只是建组时的可选筛选，
-  // 用它会出现「跨厂商分组只显示一个图标」或「不限厂商时掉到平台 logo」的显示 bug。
+  // 分组下拉：一个 Key 只能绑定一个分组
+  // 结构升级为专业 SaaS 三段式卡片（左侧厂商图标叠放，中间上下双行标题与备注，右侧精致微胶囊倍率）
+  // 绑定值就是分组名（全局唯一，可跨厂商）
   const groupOptions = React.useMemo(
     () =>
       groupList.map((g) => ({
         value: g.name,
-        search: `${g.name} ${g.remark || ""} ${g.vendor || ""}`.toLowerCase(),
+        search: `${g.name} ${g.remark || ""} ${g.vendor || ""} ${(g.vendors || []).join(" ")}`.toLowerCase(),
+        // 选定后在 Select 框内的单行精简回显
         label: (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 320 }}>
-            <GroupVendorIcons vendors={g.vendors} size={13} />
-            <span className="oo-truncate" style={{ fontWeight: 500 }}>{g.name}</span>
-            {g.remark ? (
-              <span className="oo-truncate" style={{ color: "var(--ink-3)", fontSize: 12 }}>{g.remark}</span>
-            ) : null}
-            <span className="bui-chip" style={{ marginLeft: "auto", flexShrink: 0 }}>×{Number(g.rate) || 1}</span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, verticalAlign: "middle" }}>
+            <GroupVendorIcons vendors={g.vendors} size={14} />
+            <span className="oo-truncate">{g.name}</span>
           </span>
+        ),
+        // 下拉列表中展开时的三段式卡片
+        renderItem: (
+          <div className="oo-group-select-item">
+            <div className="oo-group-select-item__left">
+              <GroupVendorIcons vendors={g.vendors} size={16} />
+              <div className="oo-group-select-item__meta">
+                <div className="oo-truncate oo-group-select-item__title">{g.name}</div>
+                {g.remark ? (
+                  <div className="oo-truncate oo-group-select-item__desc">{g.remark}</div>
+                ) : (
+                  <div className="oo-truncate oo-group-select-item__desc" style={{ opacity: 0.75 }}>
+                    {Array.isArray(g.models) && g.models.length ? `支持 ${g.models.length} 个指定模型` : "支持全量模型"}
+                  </div>
+                )}
+              </div>
+            </div>
+            <GroupRateBadge rate={g.rate} />
+          </div>
         ),
       })),
     [groupList]
@@ -258,23 +273,14 @@ export default function TokenPage() {
       {
         title: "分组",
         dataIndex: "group",
-        width: 170,
+        width: 150,
         render: (g) => {
           if (!g) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
           const meta = groupMetaOf(g);
-          const rate = Number(meta?.rate) || 1;
-          const tip = `${meta?.name || g}${meta?.remark ? ` · ${meta.remark}` : ""} · 倍率 ×${rate}`;
-          return (
-            <Tooltip title={tip}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, maxWidth: "100%" }}>
-                <GroupVendorIcons vendors={meta?.vendors} size={13} />
-                <span className="oo-truncate">{meta?.name || g}</span>
-                {rate !== 1 ? <span className="bui-chip">×{rate}</span> : null}
-              </span>
-            </Tooltip>
-          );
+          return <GroupTag name={meta?.name || g} meta={meta} />;
         },
       },
+
       {
         title: "可用模型",
         dataIndex: "group",
@@ -425,9 +431,12 @@ export default function TokenPage() {
             <Select
               allowClear
               showSearch
-              placeholder="不绑定"
+              placeholder="不绑定（使用系统默认池）"
               options={groupOptions}
+              optionRender={(opt) => opt.data?.renderItem || opt.label}
               filterOption={(input, option) => (option?.search || "").includes(input.toLowerCase())}
+              popupMatchSelectWidth={false}
+              dropdownStyle={{ minWidth: 380, padding: "6px" }}
             />
           </Form.Item>
         </Form>

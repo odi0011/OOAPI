@@ -3356,3 +3356,102 @@ h1, h2, h3, h4 {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ============================================================================
+   统一倍率微徽章（重构全站倍率展示：乘号小巧、等宽数字、圆润微胶囊）
+   解决乘号巨大粗笨、数字失真及缺乏美感的问题
+   ============================================================================ */
+.oo-rate-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 1.5px;
+  height: 19px;
+  line-height: 17px;
+  padding: 0 6px;
+  border-radius: var(--r-full, 999px);
+  background: var(--inset, rgba(0, 0, 0, 0.03));
+  border: 1px solid var(--line-soft, rgba(0, 0, 0, 0.06));
+  color: var(--ink-2);
+  white-space: nowrap;
+  vertical-align: middle;
+  box-sizing: border-box;
+}
+
+.oo-rate-badge__x {
+  font-size: 9.5px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--ink-3);
+  transform: translateY(-0.5px);
+  user-select: none;
+}
+
+.oo-rate-badge__num {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.oo-rate-badge--base {
+  background: var(--inset, rgba(0, 0, 0, 0.02));
+  border-color: var(--line, rgba(0, 0, 0, 0.06));
+  color: var(--ink-3);
+}
+
+.oo-rate-badge--boost {
+  background: var(--accent-tint, rgba(24, 144, 255, 0.06));
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent-ink, #1677ff);
+}
+.oo-rate-badge--boost .oo-rate-badge__x {
+  color: color-mix(in srgb, var(--accent-ink) 70%, transparent);
+}
+
+.oo-rate-badge--discount {
+  background: var(--green-tint, rgba(82, 196, 26, 0.06));
+  border-color: color-mix(in srgb, var(--green) 24%, transparent);
+  color: var(--green, #52c41a);
+}
+.oo-rate-badge--discount .oo-rate-badge__x {
+  color: color-mix(in srgb, var(--green) 70%, transparent);
+}
+
+/* 令牌创建/编辑时分组下拉项专用卡片样式（告别拥挤单行） */
+.oo-group-select-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 4px 2px;
+  box-sizing: border-box;
+}
+.oo-group-select-item__left {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  flex: 1;
+}
+.oo-group-select-item__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5px;
+  min-width: 0;
+  flex: 1;
+}
+.oo-group-select-item__title {
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--ink);
+  line-height: 1.3;
+}
+.oo-group-select-item__desc {
+  font-size: 11px;
+  color: var(--ink-3);
+  line-height: 1.3;
+}
+

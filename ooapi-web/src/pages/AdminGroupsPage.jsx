@@ -3,10 +3,10 @@ import {
   Table, Button, Space, Input, Popconfirm, Modal, Form, Select,
   InputNumber, App as AntApp, Typography, Alert, Tooltip,
 } from "antd";
-import { ReloadOutlined, PlusOutlined } from "@ant-design/icons";
+import { ReloadOutlined, PlusOutlined, SearchOutlined, ApiOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import PageHeader from "../components/PageHeader";
-import { VendorIcon, ModelLabel, GroupVendorIcons } from "../components/VendorIcon";
+import { VendorIcon, ModelLabel, GroupVendorIcons, GroupRateBadge, GroupTag } from "../components/VendorIcon";
 
 const { Text } = Typography;
 
@@ -28,6 +28,7 @@ export default function AdminGroupsPage() {
   const [busy, setBusy] = useState(false);
   const [models, setModels] = useState([]);
   const [memberIds, setMemberIds] = useState([]);
+  const [search, setSearch] = useState("");
   const [form] = Form.useForm();
   // 账号选择区的「按厂商筛选」视图开关：只影响候选列表的显示，
   // 不影响分组成员的范围（分组可以跨厂商）
@@ -77,9 +78,6 @@ export default function AdminGroupsPage() {
   };
 
   // 账号候选项 = 全部渠道（分组**可以跨厂商**）。
-  // vendorFilter 只用于「筛出某个厂商的账号」这种便利操作，不是约束 ——
-  // 用户的要求是「分组可包含多个渠道，**或者**指定哪个厂商」，
-  // 所以厂商是一个可选的筛选视图，选了它也不会把别的厂商的账号挡在外面。
   const channelOptions = useMemo(() => {
     const list = vendorFilter ? channels.filter((c) => c.type === vendorFilter) : channels;
     return list.map((c) => ({
@@ -89,16 +87,12 @@ export default function AdminGroupsPage() {
   }, [channels, vendorFilter]);
 
   const modelOptions = useMemo(() => {
-    // 模型只能从**已选中的渠道**汇总（用户要求：「选择好渠道后，模型才可以进行选择，
-    // 从已选择的渠道中获取它们已经支持的所有模型」）。没选渠道时不给候选，避免
-    // 出现「分组里有这个模型、但没有任何账号能提供它」的死配置。
     if (!memberIds.length) return [];
     const pool = channels.filter((c) => memberIds.includes(c.id));
     return [...new Set(pool.flatMap((c) => (Array.isArray(c.models) ? c.models : [])))].sort().map((m) => ({ value: m, label: m }));
   }, [channels, memberIds]);
 
-  // 分组图标 = **成员渠道**涉及到的厂商（去重）。
-  // 不回落成员为空时的 vendor：那样会显示成「这个组是 openai 的」，而分组并不属于厂商。
+  // 分组图标 = **成员渠道**涉及到的厂商（去重）
   const iconsOfGroup = useCallback(
     (g) => {
       const ids = Array.isArray(g.channel_ids) ? g.channel_ids.map(Number) : [];
@@ -107,6 +101,16 @@ export default function AdminGroupsPage() {
     },
     [channels]
   );
+
+  const filteredGroups = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return groups;
+    return groups.filter(
+      (g) =>
+        (g.name || "").toLowerCase().includes(q) ||
+        (g.remark || "").toLowerCase().includes(q)
+    );
+  }, [groups, search]);
 
   const submit = async () => {
     if (busy) return;
@@ -119,7 +123,6 @@ export default function AdminGroupsPage() {
     setBusy(true);
     try {
       const payload = {
-        // type 现在是「可选的厂商筛选」，不是分组归属
         type: v.type || "",
         name: v.name,
         remark: v.remark || "",
@@ -155,95 +158,135 @@ export default function AdminGroupsPage() {
 
   const columns = [
     {
-      // 分组名 + 折叠态厂商图标 + 备注。
-      // **不再单列「厂商」**：图标已经在这里了（单厂商单图标、多厂商叠放 +N），
-      // 单独一列等于把同一信息说两遍，还白占 150px 宽度
-      // （而且分组本身不绑定厂商，那一列在语义上也是错的）。
-      title: "分组名",
+      title: "分组名称",
       dataIndex: "name",
-      width: 300,
-      render: (v, g) => {
+      width: 200,
+      render: (v, g) => (
+        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontWeight: 600, fontSize: 13, color: "var(--ink)" }} className="oo-truncate">
+              {v}
+            </span>
+            {v === "default" ? (
+              <span className="bui-chip bui-chip--accent" style={{ fontSize: 10.5, height: 16, lineHeight: "16px", padding: "0 4px" }}>
+                默认
+              </span>
+            ) : null}
+          </div>
+          {g.remark ? (
+            <div className="oo-truncate" style={{ fontSize: 11.5, color: "var(--ink-3)", lineHeight: 1.3 }} title={g.remark}>
+              {g.remark}
+            </div>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      title: "成员厂商",
+      width: 140,
+      render: (_, g) => {
         const icons = iconsOfGroup(g);
         const names = icons.map((x) => providers.find((p) => p.key === x)?.name || x);
+        if (!icons.length) {
+          return <span className="bui-chip bui-chip--muted" style={{ fontSize: 11 }}>未关联厂商</span>;
+        }
         return (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-            {/* 折叠态厂商图标：单厂商单图标，多厂商叠放 +N */}
-            <Tooltip title={names.length ? `成员厂商：${names.join("、")}` : "尚无成员渠道"}>
-              <span style={{ display: "inline-flex", alignItems: "center" }}>
-                {icons.length ? <GroupVendorIcons vendors={icons} size={18} /> : (
-                  <span className="bui-chip" style={{ fontSize: 11 }}>无成员</span>
-                )}
-              </span>
-            </Tooltip>
-            <span style={{ minWidth: 0, overflow: "hidden" }}>
-              <div style={{ fontWeight: 550 }} className="oo-truncate">{v}</div>
-              {g.remark ? (
-                <div className="oo-truncate" style={{ fontSize: 11.5, color: "var(--ink-3)" }} title={g.remark}>
-                  {g.remark}
-                </div>
-              ) : null}
+          <Tooltip title={`成员厂商：${names.join("、")}`}>
+            <span style={{ display: "inline-flex", alignItems: "center" }}>
+              <GroupVendorIcons vendors={icons} size={16} />
             </span>
-          </span>
+          </Tooltip>
         );
       },
     },
     {
-      title: "倍率",
+      title: "计费倍率",
       dataIndex: "rate",
-      width: 90,
+      width: 110,
       sorter: (a, b) => (Number(a.rate) || 1) - (Number(b.rate) || 1),
-      render: (v) => {
-        const r = Number(v) || 1;
-        return r === 1 ? <span className="oo-num" style={{ color: "var(--ink-3)" }}>×1</span> : <span className="bui-chip">×{r}</span>;
-      },
+      render: (v) => <GroupRateBadge rate={v} />,
     },
     {
-      // 可用模型：只显示「模型个数」而不是把模型名铺开。
-      //
-      // 为什么改：分组挂的模型可能有几十个（不限 = 全部），
-      // 把第一个模型名渲染出来会让这一列宽度失控（实测：deepseek-flash +17
-      // 撑出很宽的一列，而其余列都被挤压）。个数 + 悬浮查看才是正确形态。
-      title: "可用模型",
+      title: "模型范围",
       dataIndex: "models",
-      width: 110,
-      render: (list) =>
-        list?.length ? (
+      width: 190,
+      render: (list) => {
+        if (!list || !list.length) {
+          return (
+            <Tooltip title="未限制模型：该分组的密钥可直接使用关联渠道支持的全部模型">
+              <span className="bui-chip bui-chip--muted" style={{ fontSize: 11.5, cursor: "default" }}>
+                全部模型（不限）
+              </span>
+            </Tooltip>
+          );
+        }
+        return (
           <Tooltip
             title={
-              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 320, overflow: "auto" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 300, overflow: "auto" }}>
+                <div style={{ fontSize: 11, color: "var(--ink-3)", marginBottom: 2 }}>支持以下 {list.length} 个模型：</div>
                 {list.map((m) => (
                   <ModelLabel key={m} model={m} size={13} />
                 ))}
               </div>
             }
           >
-            <span className="bui-chip" style={{ cursor: "default" }}>
-              {list.length} 个
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "default" }}>
+              <ModelLabel model={list[0]} size={13} />
+              {list.length > 1 ? (
+                <span className="bui-chip" style={{ fontSize: 10.5, height: 16, lineHeight: "16px", padding: "0 4px" }}>
+                  +{list.length - 1}
+                </span>
+              ) : null}
             </span>
           </Tooltip>
-        ) : (
-          <Tooltip title="未限制模型：该分组的密钥可用渠道声明的全部模型">
-            <span className="bui-chip" style={{ cursor: "default" }}>不限</span>
-          </Tooltip>
-        ),
+        );
+      },
     },
     {
-      title: "账号",
-      dataIndex: "count",
-      width: 90,
-      sorter: (a, b) => (a.count || 0) - (b.count || 0),
-      render: (v) => <span className="oo-num">{v || 0}</span>,
+      title: "关联渠道",
+      width: 140,
+      sorter: (a, b) => {
+        const aLen = Array.isArray(a.channel_ids) ? a.channel_ids.length : (a.count || 0);
+        const bLen = Array.isArray(b.channel_ids) ? b.channel_ids.length : (b.count || 0);
+        return aLen - bLen;
+      },
+      render: (_, g) => {
+        const ids = Array.isArray(g.channel_ids) ? g.channel_ids.map(Number) : [];
+        const bound = channels.filter((c) => ids.includes(c.id));
+        const count = ids.length || g.count || 0;
+        if (!count) {
+          return <span style={{ color: "var(--ink-3)", fontSize: 12 }}>—</span>;
+        }
+        const tip = bound.length
+          ? `关联渠道：${bound.map((c) => `${c.name} (${c.typeName || c.type || "通用"})`).join("、")}`
+          : `关联 ${count} 个渠道`;
+        return (
+          <Tooltip title={tip}>
+            <span className="bui-chip" style={{ fontSize: 11.5, cursor: "default" }}>
+              <ApiOutlined style={{ fontSize: 11, color: "var(--ink-3)" }} />
+              <span>{count} 个渠道</span>
+            </span>
+          </Tooltip>
+        );
+      },
     },
     {
       title: "操作",
-      width: 140,
+      width: 120,
       fixed: "right",
       render: (_, g) => (
-        <Space size={2}>
-          <Button type="link" size="small" onClick={() => openEdit(g)}>编辑</Button>
-          <Popconfirm title={`删除分组「${g.name}」？已绑定的 Key 会自动解绑回默认池`} onConfirm={() => remove(g)}>
-            <Button type="link" size="small" danger>删除</Button>
-          </Popconfirm>
+        <Space size={4}>
+          <Button type="link" size="small" onClick={() => openEdit(g)}>
+            编辑
+          </Button>
+          {g.name !== "default" ? (
+            <Popconfirm title={`确定删除分组「${g.name}」？已绑定的 Key 会自动解绑回系统默认池`} onConfirm={() => remove(g)}>
+              <Button type="link" size="small" danger>
+                删除
+              </Button>
+            </Popconfirm>
+          ) : null}
         </Space>
       ),
     },
@@ -272,17 +315,31 @@ export default function AdminGroupsPage() {
             style={{ marginBottom: 12 }}
           />
         ) : null}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 12, flexWrap: "wrap" }}>
+          <Input
+            placeholder="按分组名或备注搜索..."
+            prefix={<SearchOutlined style={{ color: "var(--ink-3)" }} />}
+            allowClear
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: 240 }}
+          />
+          <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+            共 {filteredGroups.length} 个分组
+          </span>
+        </div>
         <Table
           className="oo-table"
           rowKey="id"
           loading={loading}
           size="small"
           columns={columns}
-          dataSource={groups}
-          scroll={{ x: 1000 }}
+          dataSource={filteredGroups}
+          scroll={{ x: 900 }}
           pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 个分组` }}
         />
       </div>
+
 
       <Modal
         title={editing ? `编辑分组：${editing.name}` : "新建分组"}
@@ -319,7 +376,18 @@ export default function AdminGroupsPage() {
                 options={providers.map((p) => ({ value: p.key, label: p.name }))}
               />
             </Form.Item>
-            <Form.Item name="rate" label="计费倍率" style={{ width: 180 }}>
+            <Form.Item
+              name="rate"
+              label={
+                <Space size={6}>
+                  <span>计费倍率</span>
+                  <Form.Item noStyle shouldUpdate={(p, c) => p.rate !== c.rate}>
+                    {({ getFieldValue }) => <GroupRateBadge rate={getFieldValue("rate")} />}
+                  </Form.Item>
+                </Space>
+              }
+              style={{ width: 180 }}
+            >
               <InputNumber min={0.0001} max={1000} step={0.1} style={{ width: "100%" }} />
             </Form.Item>
           </Space>

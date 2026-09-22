@@ -183,13 +183,38 @@ export function GroupVendorIcons({ vendors = [], size = 14, max = 3, className, 
             }}
           />
         ))}
-        {list.length > max ? (
-          <span className="bui-chip" style={{ marginInlineStart: 3, fontSize: 10, height: 15, lineHeight: "15px", padding: "0 4px" }}>
-            +{list.length - max}
-          </span>
-        ) : null}
       </span>
     </Tooltip>
+  );
+}
+
+/**
+ * 精致倍率微徽章（重构全站倍率展示）：
+ * 1. 解决「乘号 × 硕大怪异、数字失衡」问题：乘号微缩弱化、数字使用等宽精细字体 (var(--font-mono))
+ * 2. 区分倍率状态：1.0 为基准低调灰，>1 为微强调高亮色，<1 为优惠折让绿色
+ */
+export function GroupRateBadge({ rate = 1, className, style }) {
+  const num = Number(rate);
+  const valid = !Number.isNaN(num) && num > 0 ? num : 1;
+  const isBase = valid === 1;
+  const isBoost = valid > 1;
+  const isDiscount = valid < 1;
+
+  const toneClass = isDiscount
+    ? "oo-rate-badge--discount"
+    : isBoost
+    ? "oo-rate-badge--boost"
+    : "oo-rate-badge--base";
+
+  return (
+    <span
+      className={`oo-rate-badge ${toneClass} ${className || ""}`}
+      style={style}
+      title={`计费倍率：×${valid}`}
+    >
+      <span className="oo-rate-badge__x">×</span>
+      <span className="oo-rate-badge__num">{valid}</span>
+    </span>
   );
 }
 
@@ -255,11 +280,11 @@ export function hasKnownVendor(name) {
 /**
  * 统一分组标签（独立 Tag，包含专属或推导图标 + 名称 + 悬浮提示）
  * 解决全站分组图标关联错漏与 [+N] 折叠遮挡问题：
- * 1. 若 meta 带有 vendors 数组且非空，优先按 vendors 渲染（单厂商显示单图标，多厂商显示叠放图标）
+ * 1. 若 meta 带有 vendors 数组且非空，优先按 vendors 渲染（单厂商显示单图标，多厂商显示叠放图标，最多 3 个）
  * 2. 若 meta 带有 vendor 单厂商，直接渲染对应图标
  * 3. 若分组名直接命中已知厂商关键字（如 deepseek / openai / kimi 等），渲染对应厂商图标
  * 4. 其余自定义/跨厂商分组，使用统一优雅的 TeamOutlined 图标兜底，绝不丢失图标或留空
- * 5. 统一渲染为独立 chip/tag，包含倍率标识和完整悬停提示
+ * 5. 表格内只展示图标与分组名，干净清爽；倍率收敛至 Tooltip 悬浮提示，不污染表格单元格
  */
 export function GroupTag({ name, meta, size = 13, className, style }) {
   const n = String(name || "").trim();
@@ -312,11 +337,9 @@ export function GroupTag({ name, meta, size = 13, className, style }) {
       >
         {icon}
         <span className="oo-truncate" style={{ maxWidth: 120 }}>{n}</span>
-        {rate && rate !== 1 ? (
-          <span style={{ fontSize: 11, color: "var(--ink-3)", fontWeight: 400 }}>×{rate}</span>
-        ) : null}
       </span>
     </Tooltip>
   );
 }
+
 
