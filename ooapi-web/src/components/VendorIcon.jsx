@@ -71,6 +71,21 @@ const CHANNEL_ICON = {
   volcengine: "ark.png",
   mimo: "mimo.png",
   xiaomi: "mimo.png",
+  // Kiro（AWS）：独立厂商后需要自己的图标（原先是 anthropic 下的一员，
+  // 借用 claude 图标；提出来之后必须有自己的标识）
+  kiro: "kiro.png",
+  // 2026-09 新增厂商。图标取自各站 favicon（Google favicon 服务，
+  // 128px PNG）—— 直接抓官网 favicon 大多拿到 HTML/占位图（实测 7 个里只有 1 个可用）。
+  // 每个都已在服务器上渲染成对照图人工核对过是真图标。
+  typesafe: "typesafe.png",
+  longcat: "longcat.png",
+  chutes: "chutes.png",
+  nvidia: "nvidia.png",
+  cerebras: "cerebras.png",
+  hunyuan: "hunyuan.png",
+  // Meta：favicon 服务对该域名返回的不是 PNG，暂无可用官方图标，
+  // 暂用平台 logo 兜底（会在界面上显示为统一 logo，非错误）。
+  meta: PLATFORM_LOGO,
   // 自定义渠道 → 使用平台 logo
   custom: PLATFORM_LOGO,
 };
@@ -93,6 +108,11 @@ const MODEL_ICON = [
   [/^minimax/i, "minimax.png"],
   [/^step-|^stepfun/i, "stepfun.png"],
   [/^mimo/i, "mimo.png"],
+  // 2026-09 新增厂商的模型名前缀
+  [/^jev/i, "typesafe.png"],
+  [/^longcat/i, "longcat.png"],
+  [/^nemotron/i, "nvidia.png"],
+  [/^hy3|^hunyuan/i, "hunyuan.png"],
 ];
 
 export function iconFileForChannel(type) {
