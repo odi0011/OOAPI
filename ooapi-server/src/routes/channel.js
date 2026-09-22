@@ -24,7 +24,7 @@ import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now, assertPublicUrl, idParam, safeInt } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
-import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod } from "../services/channel-types.js";
+import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod, isApiKeyMethod } from "../services/channel-types.js";
 import { buildLoginUrl, exchangeCodeForCredential, interactiveLoginInfo, supportsInteractiveLogin, supportsInteractiveLoginMethod, supportsDeviceLogin, startDeviceLogin, pollDeviceLogin } from "../services/upstream/oauth-login.js";
 import { getAdapter, resetChannelState, forgetChannel, invalidateChannelCache, channelRuntimeState, channelRecent, rowToChannel, recordChannelCall } from "../services/router.js";
 import { clearGroupConfigCache } from "../services/group-rate.js";
@@ -601,7 +601,7 @@ function methodOf(row) {
   // 表现是渠道能建、能测登录，但一测试就报「适配器未实现测试」。
   // 判定顺序：api / 订阅 OAuth 保持原值；其余若在注册表里存在同名 method 就保留，
   // 只有**确实不存在**的（历史脏数据）才退回 relay 兜底。
-  if (m === "api" || isOAuthMethod(m)) return m;
+  if (isApiKeyMethod(row?.type, m) || isOAuthMethod(m)) return m;
   return getMethod(row?.type, m) ? m : "relay";
 }
 
@@ -616,7 +616,10 @@ function rowToResp(r, { withKey = false } = {}) {
   // 浏览器驱动渠道：登录态在 profile 目录里，用标记文件判断是否已登录，
   // 不能只看 other.profile（它在首次打开页面时就会被写入）
   const brReady = mCfg?.needsBrowser ? browserReady(r.type, r.id) : false;
-  const isApi = method === "api";
+  // 是否 API Key 型接入方式：前端据此渲染「API Key / Base URL」表单与隐藏找回入口。
+  // 不能让它自己判 method === "api" —— 同一厂商可能有第二个 API Key 型方式
+  // （OpenCode 的 GO 套餐、自定义厂商的 Anthropic 兼容），那些的 method key 不是 "api"。
+  const isApi = isApiKeyMethod(r.type, method);
 
   return {
     id: r.id,
@@ -635,7 +638,8 @@ function rowToResp(r, { withKey = false } = {}) {
     browserReady: brReady,
     // 是否订阅 OAuth 接入 + 是否支持「找回凭据」（前端据此显示重新登录入口，不再写死方式清单）
     oauth: isOAuthMethod(method),
-    canRecover: method !== "api",
+    isApiKey: isApi,
+    canRecover: !isApi,
     canCaptureSession: Boolean(mCfg?.captureApi),
     // 认证类错误 → 前端把找回按钮标红并按「需要重新登录」提示
     needsRelogin: /AUTH|401|403|失效|过期|无效|重新登录|验证/i.test(String(rt.last_error || r.last_error || "")),

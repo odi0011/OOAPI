@@ -6,7 +6,7 @@
 //   · 都没有才退回 verify 健康检查（回复显示为「健康检查通过」）。
 //
 // 测试模型解析顺序：渠道 test_model → 接入方式的 testModel → 渠道声明的第一个模型（跳过 *）。
-import { getMethod, isOAuthMethod } from "./channel-types.js";
+import { getMethod, isOAuthMethod, isApiKeyMethod } from "./channel-types.js";
 import { withChannelLimit } from "./router.js";
 
 export function methodKeyOf(channel) {
@@ -14,7 +14,7 @@ export function methodKeyOf(channel) {
   // 同 routes/channel.js 的 methodOf：**不能把未知 method 归一成 relay**，
   // 否则同一厂商下的具名反代方式（openai-web-ui）会被错判成经典 relay，
   // 探测时拿到错误的 testModel 与 needsBrowser 判定。
-  if (m === "api" || isOAuthMethod(m)) return m;
+  if (isApiKeyMethod(channel?.type, m) || isOAuthMethod(m)) return m;
   return getMethod(channel?.type, m) ? m : "relay";
 }
 

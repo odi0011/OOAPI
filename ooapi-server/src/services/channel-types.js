@@ -664,24 +664,59 @@ export const PROVIDERS = [
   // ---- 三方兼容聚合（OpenAI / Anthropic 协议接入，Key + Base URL）----
   {
     key: "opencode",
-    name: "OpenCode Zen",
+    name: "OpenCode",
     vendor: "opencode",
-    desc: "OpenCode 官方模型网关（OpenAI 兼容）",
+    // Zen 与 GO 是 OpenCode 的**两个独立产品**（不是同一产品的两个名字）：
+    //   · Zen：按量付费（预充值、零加价），模型池约 76 个（含 Claude/GPT/Gemini）
+    //   · GO ：$10/月订阅，模型池约 40 个（**仅开源模型**：GLM/Kimi/MiMo/Qwen/DeepSeek/MiniMax…）
+    // 官网 FAQ 原话：「Is Go the same as Zen? → No.」
+    // 两者**鉴权完全一致**（同一把 `sk-`+64 位 key，两个前缀都能通过），
+    // 区别只在 baseUrl 的 path 前缀与计费来源 —— 所以做成同一厂商下的两个接入方式，
+    // 正好对应「同一把 key，换个地址就是另一个套餐」。
+    desc: "OpenCode 官方模型网关：Zen（按量付费）或 GO（$10/月订阅）",
     methods: [
       {
+        // Zen 保留 key="api"（历史渠道都用它，改 key 会让既有渠道解析不到适配器）
         key: "api",
-        label: "API Key",
-        desc: "OpenCode Zen API Key（opencode.ai/zen）",
+        adapter: "openai-compat",
+        label: "Zen（按量付费）",
+        desc: "OpenCode Zen API Key（opencode.ai/zen，预充值按量计费，含 Claude/GPT/Gemini）",
         baseUrl: "https://opencode.ai/zen/v1",
         keyHint: "sk-...",
+        // 清单实测自 GET https://opencode.ai/zen/v1/models（可匿名拉取）。
+        // 注意 qwen3-coder / grok-code / kimi-k2 已从 Zen 下架，
+        // 留在默认列表会让管理员一建渠道就默认选中不存在的模型。
         defaultModels: [
           { id: "gpt-5.6-luna", name: "GPT-5.6 Luna" },
-          { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
-          { id: "qwen3-coder", name: "Qwen3 Coder" },
-          { id: "grok-code", name: "Grok Code" },
-          { id: "kimi-k2", name: "Kimi K2" },
+          { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
+          { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
+          { id: "glm-5.3", name: "GLM-5.3" },
+          { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
         ],
         testModel: "gpt-5.6-luna",
+      },
+      {
+        // GO：与 Zen 同一把 key、不同 path 前缀（/zen/go/v1）。
+        // 用独立 method key（不叫 "api"）→ isApiKeyMethod 判定为 API Key 型，
+        // 前端会渲染成独立一档表单，baseUrl 自带、用户不用填地址。
+        key: "go",
+        adapter: "openai-compat",
+        label: "GO（$10/月订阅）",
+        desc: "OpenCode GO 订阅（opencode.ai/zen/go，仅开源模型；用同一把 sk- key）",
+        baseUrl: "https://opencode.ai/zen/go/v1",
+        keyHint: "sk-...（与 Zen 同一把 key；需该账号本人订阅了 GO 才计入订阅额度）",
+        // 清单实测自 GET https://opencode.ai/zen/go/v1/models（可匿名拉取，约 40 个）。
+        // 这里只留各家族旗舰，完整清单用「从上游获取模型」拉。
+        defaultModels: [
+          { id: "glm-5.3", name: "GLM-5.3" },
+          { id: "kimi-k3", name: "Kimi K3" },
+          { id: "minimax-m3", name: "MiniMax M3" },
+          { id: "qwen3.8-max", name: "Qwen3.8 Max" },
+          { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+          { id: "mimo-v2.6-pro", name: "MiMo V2.6 Pro" },
+          { id: "longcat-2.0", name: "LongCat 2.0" },
+        ],
+        testModel: "glm-5.3",
       },
     ],
   },
@@ -775,10 +810,29 @@ export function isSubscriptionChannel(providerKey, methodKey) {
  *   api   → 统一 openai-compat（OpenAI 兼容协议）
  *   订阅 OAuth → 方法上显式声明的 adapter（codex / claude-oauth / antigravity）
  */
+/**
+ * 该接入方式是不是「API Key 型」——
+ * 判据：有 Base URL、且没有登录方式（loginModes）。
+ *
+ * 为什么不只判 `key === "api"`：同一厂商下可能有**多个 API Key 型方式**，
+ * 它们的区别只在 baseUrl（典型：OpenCode 的 Zen 与 GO 是同一把 key、
+ * 不同 path 前缀），也可能用不同协议（自定义厂商下的 Anthropic 兼容）。
+ * 把判据锁死在字符串 "api" 上会导致这些方式：
+ *   · 在「添加渠道」里根本不出现（前端按 key==="api" 才会渲染 API Key 选项）；
+ *   · 后端 methodOf 把它归一成 relay，适配器解析不到。
+ * 用「有 baseUrl 且无 loginModes」描述这类方式，语义自洽且能自动覆盖新套餐。
+ */
+export function isApiKeyMethod(providerKey, methodKey) {
+  const m = getMethod(providerKey, methodKey);
+  if (!m) return String(methodKey || "") === "api";
+  if (String(methodKey) === "api") return true;
+  return Boolean(m.baseUrl) && !(m.loginModes || []).length;
+}
+
 export function adapterFor(providerKey, methodKey) {
   const m = getMethod(providerKey, methodKey);
   if (m?.adapter) return m.adapter;
-  if (methodKey === "api") return "openai-compat";
+  if (isApiKeyMethod(providerKey, methodKey)) return "openai-compat";
   return providerKey;
 }
 
@@ -814,6 +868,9 @@ export function publicProviders() {
       loginFields: m.loginFields || [],
       // 需要 2FA：前端在账号密码之外多渲染一个密钥输入框（见 needs2fa 的说明）
       needs2fa: Boolean(m.needs2fa),
+      // 是否 API Key 型接入方式：前端据此渲染「API Key」那一档表单。
+      // 不能让它去判 key === "api"（那会让第二个 API Key 型方式整档消失）。
+      apiKey: isApiKeyMethod(p.key, m.key),
       pasteHint: m.pasteHint || "",
       browserHint: m.browserHint || "",
       // 远程登录抓取能力：有 entryUrl 就说明支持「打开登录页自动抓取」

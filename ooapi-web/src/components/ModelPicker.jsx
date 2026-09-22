@@ -152,15 +152,24 @@ export default function ModelPicker({ value = [], onChange, channelId = 0, provi
         ) : null}
       </Space>
 
+      {/* mode="tags" 而不是 "multiple"：
+          multiple 只接受**候选列表里已存在**的选项，输入自定义模型名按回车会被静默丢弃
+          —— 用户以为填上了、保存了，其实模型字段仍是空的，刷新后显示「未探测」。
+          而「手工输入模型名」是明确要支持的（上游探测失败时的唯一出路，
+          上方 none 状态的提示也写着「支持手动输入」）。
+          tags 允许任意输入成为标签，正好对应「可以是上游没列的模型」。 */}
       <Select
-        mode="multiple"
+        mode="tags"
         allowClear
         disabled={disabled}
         value={list}
         onChange={onChange}
-        placeholder="留空 = 该厂商全部模型（不限）"
+        placeholder="留空 = 该厂商全部模型（不限）；也可直接输入模型名后回车添加"
         options={options.length ? options : list.map((m) => ({ value: m, label: m }))}
         optionRender={(opt) => <ModelLabel model={opt.value} size={14} />}
+        // tags 模式下下拉里会出现「输入的内容 + 回车」的候选项，这里过滤掉纯输入项，
+        // 避免它和真实模型名混在一起（antd 用 __rc_select__ 之类的伪选项标记）
+        filterOption={(input, opt) => String(opt?.value || "").toLowerCase().includes(String(input || "").toLowerCase())}
         maxTagCount={8}
         maxTagPlaceholder={(omitted) => `+${omitted.length}`}
         style={{ width: "100%" }}

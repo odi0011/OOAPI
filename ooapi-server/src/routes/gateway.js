@@ -17,6 +17,7 @@ import { getPrice, computeCost, splitTokens, effectivePrice, UNITS_PER_OD, CURRE
 import { groupConfigOf, applyGroupRate, displayGroupName } from "../services/group-rate.js";
 import { allPublicModels, modelForChannelMatch, resolveAliasSync, modelRegistry } from "../services/models.js";
 import { collectAvailableModels } from "../services/router.js";
+import { PROTOCOLS } from "../services/gateway-protocols.js";
 
 const router = express.Router();
 // 必须在 express.json 之前完成真实鉴权：旧实现只查 Authorization 头存在性，
@@ -368,14 +369,28 @@ async function settle({
 }
 
 // ---------- 聊天补全 ----------
-router.post(
-  "/chat/completions",
-  asyncHandler(async (req, res) => {
-  const requestId = "chatcmpl-" + crypto.randomBytes(12).toString("hex");
+/**
+ * 三种对外协议的共用处理器。
+ *
+ * 协议差异（怎么读请求、怎么写响应）全部交给 protocol 对象；
+ * 中间的鉴权、限流、渠道选择、计费、日志**只有这一份实现** ——
+ * 为每个协议复制一份主流程是重复扣费与漏记日志的典型来源。
+ */
+async function handleCompletion(protocol, req, res) {
+  const prefix = protocol.name === "messages" ? "msg" : protocol.name === "responses" ? "resp" : "chatcmpl";
+  const requestId = `${prefix}-` + crypto.randomBytes(12).toString("hex");
   const ip = clientIp(req);
   const body = req.body || {};
-  const model = String(body.model || "");
-  const wantStream = body.stream === true;
+
+  // 请求解析（各协议字段名不同：messages / input / system 的位置都不一样）
+  let parsed;
+  try {
+    parsed = protocol.parse(body);
+  } catch (e) {
+    return protocol.error(res, 400, { message: e.message, code: "invalid_request_error" }, { id: requestId });
+  }
+  const model = parsed.model;
+  const wantStream = parsed.stream === true;
 
   // 客户端断开时中止上游（提前注册：authorize/图片抓取阶段断线也能感知）。
   // 必须监听 res 而不是 req：req "close" 在请求体读完后立即触发（Node 16+），
@@ -390,19 +405,19 @@ router.post(
   const { token, user } = auth;
 
   if (!model) {
-    return res.status(400).json({ error: { message: "缺少 model 参数", type: "invalid_request_error" } });
+    return protocol.error(res, 400, { message: "缺少 model 参数", code: "invalid_request_error" }, { id: requestId });
   }
   if (!modelAllowed(token, model)) {
-    return res.status(403).json({ error: { message: `当前 API Key 不允许使用模型 ${model}`, type: "invalid_request_error" } });
-  }
-  if (!Array.isArray(body.messages) || !body.messages.length) {
-    return res.status(400).json({ error: { message: "messages 不能为空", type: "invalid_request_error" } });
+    return protocol.error(res, 403, { message: `当前 API Key 不允许使用模型 ${model}`, code: "invalid_request_error" }, { id: requestId });
   }
   // 过滤非对象元素：null/字符串会让适配器 `.map(m => m.role)` 抛 TypeError；
   // 无 code 的异常会被 execute 当成渠道故障并冷却所有渠道（可被构造的 DoS）
-  const messages = body.messages.filter((m) => m && typeof m === "object");
+  const messages = (Array.isArray(parsed.messages) ? parsed.messages : []).filter(
+    (m) => m && typeof m === "object"
+  );
   if (!messages.length) {
-    return res.status(400).json({ error: { message: "messages 不能为空", type: "invalid_request_error" } });
+    const hint = protocol.name === "responses" ? "input 不能为空（字符串或消息数组）" : "messages 不能为空";
+    return protocol.error(res, 400, { message: hint, code: "invalid_request_error" }, { id: requestId });
   }
 
   // 用户级限流（并发 / RPM / TPM）：这三个限额来自系统设置的 default_user_*，
@@ -516,26 +531,13 @@ router.post(
     });
   };
 
-  const sendChunk = (delta, finishReason = null) => {
-    res.write(
-      `data: ${JSON.stringify({
-        id: requestId,
-        object: "chat.completion.chunk",
-        created: Math.floor(Date.now() / 1000),
-        model,
-        choices: [{ index: 0, delta, finish_reason: finishReason }]})}\n\n`
-    );
-  };
-
+  // 流式响应统一交给协议对象：三种协议的 SSE 事件名与结构完全不同
+  // （chat.completions 是 data: {...chunk}；messages 是 event: content_block_delta；
+  //   responses 是 event: response.output_text.delta），这里不再手写其中一种。
+  let protoState = null;
   const startStream = () => {
     if (streamStarted || !wantStream) return;
-    res.status(200);
-    res.setHeader("content-type", "text/event-stream; charset=utf-8");
-    res.setHeader("cache-control", "no-cache");
-    res.setHeader("connection", "keep-alive");
-    res.setHeader("x-accel-buffering", "no");
-    res.flushHeaders?.();
-    sendChunk({ role: "assistant" });
+    protoState = protocol.openStream(res, requestId, model);
     streamStarted = true;
   };
 
@@ -691,18 +693,23 @@ router.post(
               ? 503
               : 502;
     finishMetric({ ok: false, status, channelName: err.channelName || "", err });
+    // 错误也要按协议输出：Anthropic 客户端认 {type:"error",error:{...}}，
+    // 拿 OpenAI 的 {error:{...}} 会解析失败并丢掉真正的错误信息。
+    const errObj = Object.assign(new Error(err.message), { code });
     if (streamStarted) {
-      sendChunk({}, null);
-      res.write(`data: ${JSON.stringify({ error: { message: err.message, type: code } })}\n\n`);
-      res.write("data: [DONE]\n\n");
-      res.end();
+      protocol.errorInStream(res, protoState, errObj);
     } else if (!res.headersSent) {
-      res.status(status).json({ error: { message: err.message, type: code, code } });
+      protocol.error(res, status, errObj, { id: requestId });
     } else {
       res.end();
     }
   }
-  })
-);
+}
+
+// 三个协议各自注册路由，共用 handleCompletion。
+// 路径与官方一致：/v1/chat/completions、/v1/messages、/v1/responses
+router.post("/chat/completions", asyncHandler((req, res) => handleCompletion(PROTOCOLS.chat, req, res)));
+router.post("/messages", asyncHandler((req, res) => handleCompletion(PROTOCOLS.messages, req, res)));
+router.post("/responses", asyncHandler((req, res) => handleCompletion(PROTOCOLS.responses, req, res)));
 
 export default router;

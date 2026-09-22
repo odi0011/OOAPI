@@ -869,8 +869,17 @@ export default function AdminChannelsPage() {
     if (!pickProvider) return [];
     const out = [];
     for (const m of pickProvider.methods) {
-      if (m.key === "api") {
-        out.push({ id: "api", method: "api", mode: null, label: "API Key" });
+      // 用后端下发的 apiKey 标记判断，而不是硬编码 m.key === "api"。
+      // 硬编码的后果：同一厂商下的第二个 API Key 型方式（OpenCode 的 GO 套餐、
+      // 自定义厂商的 Anthropic 兼容）在「添加渠道」里整档消失 —— 用户根本选不到。
+      if (m.apiKey || m.key === "api") {
+        out.push({
+          id: m.key,
+          method: m.key,
+          mode: null,
+          label: m.key === "api" ? "API Key" : `${m.label || m.key}（API Key）`,
+          hint: m.baseUrl ? "" : "",
+        });
       } else {
         for (const lm of m.loginModes || []) {
           out.push({
@@ -902,7 +911,8 @@ export default function AdminChannelsPage() {
     return out;
   }, [pickProvider]);
 
-  const isApi = pickMethod?.key === "api";
+  // API Key 型：看后端标记（覆盖 OpenCode GO / 自定义 Anthropic 兼容等非 "api" 的 key）
+  const isApi = Boolean(pickMethod?.apiKey) || pickMethod?.key === "api";
   // 当前选中的**接入方式**是否支持一键绑定（设备授权）。
   //
   // 注意必须看 method.key 而不是 provider.key：Kiro 挂在 anthropic 厂商下，
@@ -962,6 +972,8 @@ export default function AdminChannelsPage() {
     for (const f of m.loginFields || []) {
       if (f.default !== undefined) init[f.key] = f.default;
     }
+    // API Key 型方式自带的地址直接预填（OpenCode Zen/GO、自定义厂商等）
+    if (m.baseUrl) init.base_url = m.baseUrl;
     addForm.resetFields();
     addForm.setFieldsValue(init);
   };
@@ -1028,8 +1040,14 @@ export default function AdminChannelsPage() {
             const rt = String(v.refresh_token || "").trim();
             if (at || rt) token = JSON.stringify({ access_token: at, refresh_token: rt });
           }
-          if (pickMethod.oauth && !token) {
-            throw new Error("请粘贴凭据 JSON、填写 Access/Refresh Token，或导入凭据文件");
+          // **已完成一键绑定/一键登录时不能再要求凭据**。
+          // 那条路径的凭据由服务端在授权回调里拿到，提交后经 /channel/devices/claim
+          // 写进刚建好的渠道。原实现把这条校验放在票据检查之前，于是用户明明看到
+          // 「授权成功」，点「添加」却仍被要求粘贴 JSON —— 而那份 JSON 用户根本不用准备。
+          if (pickMethod.oauth && !token && !bindTicketRef.current) {
+            throw new Error(
+              "请粘贴凭据 JSON、填写 Access/Refresh Token、导入凭据文件，或先用上方的「一键登录 / 一键绑定」完成授权"
+            );
           }
           payload.token = token;
           payload.cookies = v.cookies;
@@ -1192,12 +1210,12 @@ export default function AdminChannelsPage() {
         namespace: String(v.namespace || "").trim(),
       };
       // 只有 API 渠道有 Base URL（反代/订阅不展示也不提交，避免把空串写回）
-      if (editing.method === "api") payload.base_url = v.base_url;
+      if (editing.isApiKey) payload.base_url = v.base_url;
       // status 只在开关真正变化时提交：服务端收到 status 会清冷却/重置运行状态，
       // 只改备注不该顺手把「冷却中」的渠道重置。
       const nextStatus = v.status ? 1 : 2;
       if (nextStatus !== editing.status) payload.status = nextStatus;
-      if (editing.method === "api" && v.api_key) payload.api_key = v.api_key;
+      if (editing.isApiKey && v.api_key) payload.api_key = v.api_key;
       await API.put("/channel/", payload);
       message.success("已保存");
       setEditOpen(false);
@@ -1733,7 +1751,8 @@ export default function AdminChannelsPage() {
   const [upstreamModelsBusy, setUpstreamModelsBusy] = useState(false);
   const refreshAllUpstreamModels = async () => {
     if (upstreamModelsBusy) return;
-    const targets = items.filter((r) => r.method !== "api");
+    // 探测上游模型：所有非 API Key 型渠道（反代/订阅）都能探测
+    const targets = items.filter((r) => !r.isApiKey);
     if (!targets.length) return message.info("当前没有可探测的反代/订阅渠道");
     setUpstreamModelsBusy(true);
     const hide = message.loading(`正在从上游探测 ${targets.length} 个渠道的模型…`, 0);
@@ -1865,7 +1884,7 @@ export default function AdminChannelsPage() {
         if (!r.has_credential) {
           return <span className="bui-chip bui-chip--orange"><InfoCircleOutlined /> 未配置</span>;
         }
-        const isApi = r.method === "api";
+        const isApi = Boolean(r.isApiKey);
         return (
           <span className="bui-chip" title={r.methodLabel}>
             {isApi ? <KeyOutlined /> : <LoginOutlined />}
@@ -2207,7 +2226,7 @@ export default function AdminChannelsPage() {
 
   const renderActions = (r) => (
     <Space size={2}>
-      {r.canRecover !== false && r.method !== "api" ? (
+      {r.canRecover !== false && !r.isApiKey ? (
         <Tooltip title={r.needsRelogin ? "凭据可能失效：点此重新登录 / 找回" : "重新登录 / 找回凭据"}>
           <button
             className="bui-icon-btn"
@@ -2374,7 +2393,7 @@ export default function AdminChannelsPage() {
                 <div className="oo-channel-card-meta">
                   <span className="bui-chip">{r.typeName}</span>
                   <span className="bui-chip" title={r.methodLabel}>
-                    {r.method === "api" ? (r.key_count > 1 ? `${r.key_count} 个 Key` : "Key") : "账号"}
+                    {r.isApiKey ? (r.key_count > 1 ? `${r.key_count} 个 Key` : "Key") : "账号"}
                   </span>
                   <span className="bui-chip" title={(r.groups || []).join("、")}>
                     {Array.isArray(r.groups) && r.groups.length ? r.groups[0] : "未分组"}
@@ -2799,8 +2818,16 @@ export default function AdminChannelsPage() {
                     </>
                   ) : (
                     <>
-                      <Form.Item name="base_url" label="接口地址（Base URL）" rules={[{ required: true, message: "请填写地址" }]}>
-                        <Input placeholder="https://..." />
+                      {/* Base URL：接入方式自带地址时预填为默认值（如 OpenCode 的
+                          Zen 与 GO 只是 path 前缀不同），用户不用手抄；仍可改写以适配自建/中转。
+                          只有「自定义（通用兼容）」那种 baseUrl 为空的方式才要求必填。 */}
+                      <Form.Item
+                        name="base_url"
+                        label="接口地址（Base URL）"
+                        rules={pickMethod.baseUrl ? [] : [{ required: true, message: "请填写地址" }]}
+                        extra={pickMethod.baseUrl ? "已按接入方式预填，可在需要时改成自建中转地址" : undefined}
+                      >
+                        <Input placeholder={pickMethod.baseUrl || "https://..."} />
                       </Form.Item>
                       <Form.Item name="api_key" label="API Key" rules={[{ required: true, message: "请填写 API Key" }]}>
                         <Input.Password placeholder={pickMethod.keyHint || "填写上游 API Key"} autoComplete="new-password" />
@@ -2811,7 +2838,7 @@ export default function AdminChannelsPage() {
                     <Form.Item
                       name="models"
                       label="模型范围"
-                      rules={pickMethod?.key === "api" ? [{ required: true, message: "请至少填写一个模型" }] : []}
+                      rules={isApi ? [{ required: true, message: "请至少填写一个模型" }] : []}
                     >
                       <ModelPicker providerKey={pickProvider?.key} />
                     </Form.Item>
@@ -2876,12 +2903,12 @@ export default function AdminChannelsPage() {
             <Input maxLength={64} />
           </Form.Item>
           {/* 只有 API 渠道有 Base URL；反代/订阅渠道不展示也不提交 */}
-          {editing?.method === "api" ? (
+          {editing?.isApiKey ? (
             <Form.Item name="base_url" label="接口地址（Base URL）">
               <Input placeholder="https://..." />
             </Form.Item>
           ) : null}
-          {editing?.method === "api" ? (
+          {editing?.isApiKey ? (
             <Form.Item name="api_key" label="API Key">
               <Input.Password placeholder="留空不修改" autoComplete="new-password" />
             </Form.Item>
@@ -2889,7 +2916,7 @@ export default function AdminChannelsPage() {
           <Form.Item
             name="models"
             label="模型范围"
-            rules={editing?.method === "api" ? [{ required: true, message: "请至少填写一个模型" }] : []}
+            rules={editing?.isApiKey ? [{ required: true, message: "请至少填写一个模型" }] : []}
           >
             <ModelPicker channelId={editing?.id || 0} providerKey={editing?.type} />
           </Form.Item>
@@ -3502,17 +3529,17 @@ export default function AdminChannelsPage() {
                   value={reloginText}
                   onChange={(e) => setReloginText(e.target.value)}
                   placeholder={
-                    reloginInfo?.method === "api"
+                    reloginInfo?.isApiKey
                       ? "API Key 渠道请关闭本弹窗，用「编辑」更换 Key"
                       : "粘贴官方凭据文件（JSON）/ 登录态（token、cookie 串）"
                   }
-                  disabled={reloginInfo?.method === "api"}
+                  disabled={reloginInfo?.isApiKey}
                 />
                 <Button
                   type="primary"
                   loading={reloginBusy}
                   onClick={submitReloginText}
-                  disabled={reloginInfo?.method === "api"}
+                  disabled={reloginInfo?.isApiKey}
                 >
                   保存凭据并校验
                 </Button>

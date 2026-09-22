@@ -3,7 +3,7 @@
 // 由 type 区分适配器，优先级/权重决定调度顺序 —— 与 new-api 一致。
 import { pool } from "../db.js";
 import { now } from "../utils.js";
-import { isOAuthMethod, getMethod } from "./channel-types.js";
+import { isOAuthMethod, getMethod, isApiKeyMethod } from "./channel-types.js";
 import { groupConfigOf } from "./group-rate.js";
 import { modelRegistrySync } from "./models.js";
 
@@ -48,7 +48,7 @@ export function adapterKeyFor(channel) {
   // 而其它厂商的 api 仍走 openai-compat）
   const mCfg = method ? getMethod(channel?.type, method) : null;
   if (mCfg?.adapter) return mCfg.adapter;
-  if (method === "api") return "openai-compat";
+  if (isApiKeyMethod(channel?.type, method)) return "openai-compat";
   if (isOAuthMethod(method)) return method;
   return channel?.type || "";
 }
@@ -551,7 +551,7 @@ export function rowToChannel(r) {
     .filter(Boolean);
   // 未分组渠道 = 公共池（groups 为空数组）；group_name 仅作显示/兼容
   const rawMethod = String(other.method || "relay");
-  const method = rawMethod === "api" || isOAuthMethod(rawMethod) ? rawMethod : "relay";
+  const method = isApiKeyMethod(r.type, rawMethod) || isOAuthMethod(rawMethod) ? rawMethod : "relay";
   // 最近调用记录：运行时已有则用运行时的（更新），否则从数据库行回填
   const recent = channelRecent(r.id, r.recent_calls);
   return {
