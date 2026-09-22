@@ -642,8 +642,13 @@ function aggregate(calls = []) {
     let models;
     let modelCaps;
     let routeGroup;
-    // 作用域必须覆盖后台 executeRun 调用，否则成功通过密钥校验后会在收尾处引用不到。
-    let usableKey = null;
+    // usableKey **必须在 try 外声明**：它在 try 里赋值、却在 try 之后的
+    // executeRun 里被读（keyName 落日志用）。之前写成 `const usableKey = ...`（在 try 内），
+    // 于是 try 外那一行必然抛 `ReferenceError: usableKey is not defined` ——
+    // 线上 journalctl 抓到的 `/opt/ooapi/ooapi-server/src/routes/chat.js:715`
+    // 就是这个（每次站内对话都 500/中断，且影响该轮收尾与计费审计）。
+    // `node --check` 查不出这类作用域错误（语法合法），必须有真实调用路径的断言。
+    let usableKey;
     try {
       history = await getSessionMessages(session.id);
 

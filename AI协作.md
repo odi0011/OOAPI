@@ -751,9 +751,6 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 > 与 C 组沙盒调研都在第 37 批完成，不再是欠账。
 > **第 37 批的遗留（用户列表之外、由本轮实现引入的待办）见下节。**
 
-
-
-
 ### 第 37 批遗留（大部分已补齐，剩两条为明确不做的取舍）
 
 > 用户要求「不要欠」，所以这一节里的 8 条在本批全部处理过：
@@ -865,7 +862,6 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 - [ ] **订阅 OAuth 渠道实盘验证**（第 12 批进展）：**Codex 已完成全链路实盘验证**
   （sub2api 文件导入 → 渠道测试 → 站内对话 → 精确计费 → 292 state 捕获/注入 → 312 判定）；
   Claude / Gemini / Grok 目前没有真实订阅凭据，待补各跑一次「测试渠道 + 对话」。
-- [ ] **新模型定价待补录**：Codex（`gpt-5.6-luna/terra/sol`、`gpt-5.5`、`codex-auto-review`）与
   Grok（`grok-4.6/4.5/4.3`、`grok-3-mini`）尚未收录官方价，当前走兜底价（0.30/1.20 并打告警）；
   补录时按规范在 `remark` 写官方来源（openai.com/api/pricing、x.ai 定价页）。
 - [ ] **审查方式可复用**：后续批次继续用「三路并行子代理（前端 / 后端路由 / 服务适配器）+ 人工核实」，
@@ -875,114 +871,7 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 
 > 本节来自对 `origin/main` 最新代码的只读复审。审查基线不是本机旧副本，而是干净 worktree 的提交 `02e22d3`；后端 117 个 `src/**/*.js` 均通过 `node --check`，未运行会修改数据或调用真实上游的测试。以下问题均有代码证据，修复后逐项删除并写入变更记录。
 
-#### P0/P1：协议、凭据与 SSRF
-
-- [ ] **Gemini API Key 的官方 `generateContent` 协议未实现**：外部网关只注册
-      `/v1/chat/completions`、`/v1/messages`、`/v1/responses`（`ooapi-server/src/routes/gateway.js:698-702`），
-      没有 Gemini 的 `generateContent` 路由；但 `channel-types.js:403-410` 已把 Gemini API Key
-      预填为 `https://generativelanguage.googleapis.com`，`router.js:45-53` 又会把它按
-      `openai-compat` 适配，`openai-compat.js:57-72` 最终拼成 `/v1/chat/completions`，而不是
-      `/v1beta/models/{model}:generateContent`。用户配置看似是 Google 官方 API，实际请求必然走错协议。
-      修复：独立实现 Gemini 请求/响应适配（含 API Key、generateContent/streamGenerateContent、usage），
-      或明确隐藏该接入方式，不能把 Gemini base URL 当 OpenAI 兼容端点。
-
-- [ ] **一键绑定凭据可跨厂商写入目标渠道**：`routes/channel.js:2834-2850,2876-2889`
-      的设备绑定轮询/claim 只按目标渠道类型选择解析器，没有验证绑定会话或票据记录的厂商与 method
-      是否等于目标渠道。管理员可以将 Kiro/WorkBuddy/Qoder 会话结果提交到另一厂商渠道，造成错误凭据
-      覆盖目标账号。修复：session/ticket 持久记录 `vendor + method`，poll/claim/写回前强制匹配。
-
-- [ ] **WorkBuddy/Qoder 凭据中的 endpoint/base_url 可将 Bearer/PAT 外送到任意地址**：
-      `services/upstream/workbuddy.js:55-75,91-93`、`qoder.js:37-50,56-62` 将凭据内地址直接作为
-      `base_url`，对话/验证经过 `openai-compat.js:243-280` 直接 fetch；当前只有模型列表路径做了
-      `assertPublicUrl`。攻击者若能诱导管理员导入恶意凭据，可把上游凭据发往攻击者主机、内网或云元数据地址。
-      修复：导入、读取、请求三处都校验严格官方域名白名单；若确需自定义桥地址，只允许服务端配置的白名单，
-      不能信任凭据 JSON 的 endpoint。
-
-- [ ] **设备绑定轮询无并发互斥**：`services/device-bind.js:428-445` 同一 session 可被并发 poll。
-      前端轮询重叠或两个管理员同时操作时，会重复请求上游并可能重复消费授权结果，成功凭据还可能互相覆盖。
-      修复：session 级 in-flight 锁；终态用原子状态转移/删除后再做凭据写回。
-
-- [ ] **三协议的“超过 3 张图片”短路分支写死 Chat 响应格式**：`routes/gateway.js:458-485`
-      在 `/v1/messages` 或 `/v1/responses` 请求中触发图片超限时，直接返回 `chat.completion` JSON/SSE，
-      绕过 `PROTOCOLS.messages/responses` 的 renderer；Anthropic/Codex 客户端会收到错误协议形状并解析失败。
-      修复：所有短路错误/提示也必须通过当前 protocol 的 `error/finish/openStream` 渲染。
-
-- [ ] **Anthropic thinking 协议不正确且非流式静默丢思考内容**：流式在
-      `services/gateway-protocols.js:200-210` 先声明 `content_block` 为 `text`，随后在同一 block
-      发 `thinking_delta`，合法协议应有独立 thinking block；非流式 `:223-243` 完全不输出 `reasoning`。
-      修复：按 Anthropic thinking block 的完整事件序列实现；非流式按客户端可识别的 thinking block 返回，或在能力不支持时明确关闭思考而不是静默丢失。
-
-- [ ] **Responses 顶层 `instructions` 被丢弃**：`services/gateway-protocols.js:45-69`
-      的 `responsesInput` 只解析 `body.input`，没有把 Responses 协议的顶层 instructions 转成 system message，
-      `gateway.js:544-555` 随后只把丢失指令后的 messages 交给执行器。使用 Responses SDK 的系统约束会静默失效。
-      修复：读取并验证 `instructions`，置于 input messages 前作为 system/developer 上下文。
-
-- [ ] **Responses `response.completed` 事件对象不完整**：`gateway-protocols.js:282-294,333-341`
-      创建事件有 id/object/model/output，但完成事件只携带 status/usage；依赖完成事件重建最终 response 的官方
-      SDK 可能得到缺字段对象。修复：完成事件带回 id、object、model、output、status、usage 等一致字段。
-
-#### P1/P2：新增适配器与能力声明
-
-- [ ] **mimo-web/minimax-web/stepfun-web 已声明但未注册到 router 适配器表**：
-      `services/channel-types.js:542-543,578-579,615-616` 已声明接入方式，但
-      `services/router.js:17-39,715-723` 的 `ADAPTERS` 没有对应 loader；新建这些渠道会直接得到
-      `UNSUPPORTED_CHANNEL`。修复：同时完成 provider method、router ADAPTERS、模型表与测试注册。
-
-- [ ] **OpenAI 网页 UI 输入框为空时直接解引用 null**：`services/upstream/openai-web-ui.js:301-315`
-      在确认候选 target 非空之前调用 `target.evaluate`；页面结构变化、未登录或风控页没有输入框时会抛原生
-      TypeError，绕过预期诊断并可能被 execute 当成基础设施故障换号/冷却。修复：先判断 target，返回带明确
-      `CHANNEL_NOT_READY`/页面现场的错误。
-
-- [ ] **StepFun Connect 未知帧/错误帧/尾部残帧静默丢弃**：`services/upstream/stepfun-web.js:47-66,217-227`
-      解码器只特殊处理 `0x02`，其它 flags 均尝试 JSON 后丢弃，错误帧与不完整尾帧没有错误状态；上游有输出时
-      可能最终被归类为空回复。修复：未知帧保留诊断信息；未知 content 若可解码应当正文输出，尾部不完整应抛可归因的
-      `CHANNEL_BAD_RESPONSE`，不能静默吞掉。
-
-- [ ] **新网页适配器对 429/403 错误分类过粗**：`mimo-web.js:209-214`、`minimax-web.js:187-192`、
-      `stepfun-web.js:190-195` 把 429 归普通 `CHANNEL_HTTP_ERROR`、403 一律归鉴权过期，导致
-      `execute.js:288-303` 使用错误的冷却档位（限流/风控/凭据失效无法区分）。修复：分别识别 429、WAF/风控
-      403、过期 token 403，并设置匹配的 code/cooldown；避免把可恢复限流与需人工处理的封禁混为一类。
-
-- [ ] **MiniMax/StepFun 模型能力声明与实际模型表不一致**：`minimax-models.js:24-34,42-48`、
-      `stepfun-models.js:23-25,33-36` 的 `resolveModel` 对所有模型返回 `vision:true`，但模型表只给部分模型声明视觉能力；
-      图片请求可能被错误放行到不支持视觉的模型。修复：能力以具体模型登记为准，适配器在不支持时显式返回
-      `VISION_NOT_SUPPORTED`。
-
-- [ ] **新网页适配器固定 `usage:null`，计费只能估算**：`mimo-web.js:256-260`、`minimax-web.js:261-264`、
-      `stepfun-web.js:229-232`。若上游返回可解析的 token/usage，当前仍无法精确计费，长上下文或思考请求会产生系统性偏差。
-      修复：解析真实 usage；若确实无 usage，至少在响应/日志中标记 estimated，不能与精确计费混同。
-
-#### 前端新增问题
-
-- [ ] **帖子详情页永久骨架屏**：`ooapi-web/src/pages/PostDetailPage.jsx:53,73,85-88`
-      `loadPost` 与 `loadComments` 共用同一个 `useLatest` 计数器；同一 effect 中前者拿 token 1、后者拿 token 2，
-      前者结果恒被自己作废，`setPost` 和 finally 的 `setLoading(false)` 都不执行。打开任意 `/community/:id`
-      永远停在 skeleton。修复：每个并发 loader 独立 useLatest，或只对会覆盖同一状态的请求做序号控制。
-
-- [ ] **个人主页永久骨架屏且关注 Tab 永远为空**：`ProfileViewPage.jsx:82,107,100-102,112,272`
-      首次加载的 `load` 与 `loadTab` 共用一个 useLatest，主数据恒被作废；此外代码判断 `tab === "follows"`，
-      但 Tab key 是 `"following"`，分支永远不可达。修复：拆分 loader 的竞态 token，并统一 Tab key/判据。
-
-- [ ] **个人主页 website 形成存储型 XSS**：`ProfileViewPage.jsx:234` 直接将用户可编辑的
-      `data.website` 放入 `<a href>`，未经过 `Markdown.jsx:68` 的 `safeHref` 协议白名单。填写 `javascript:` 后，
-      访客点击链接可在本站上下文执行脚本。修复：展示前调用 safeHref，非法协议只作为纯文本显示。
-
-- [ ] **消息/通知 SSE 断线后永久离线**：`MessagesPage.jsx:152-153,224` 使用一次性票据连接，onerror 只置离线状态；
-      服务端 `routes/chatroom.js:137` 消费票据后，EventSource 自动重连会重复使用旧票据并 401。`GameZone.jsx:536-538`
-      存在同类问题且没有 onerror。修复：onerror 关闭旧连接、重新申请票据、指数退避重连，并清理旧监听器。
-
-- [ ] **API 渠道新增时“留空=不限”与表单/后端校验冲突**：`AdminChannelsPage.jsx:2847-2852`、
-      `ModelPicker.jsx:167` 展示可留空，但新增表单要求至少一个模型，`routes/channel.js:2348-2349` 又拒绝空模型。
-      按默认流程新增 API Key 渠道会失败。修复：自动填充平台注册模型，或统一允许空值并明确 custom 语义。
-
 #### 线上实测与生产版本差异（2026-09-22）
-
-- [ ] **Antigravity 测试把“模型已下线”文本当健康成功**：生产渠道 `Google Gemini` 的 `recent_calls` 曾真实记录
-      `ok:1`、`r:"Gemini 3.5 Flash is no longer available. Please switch to Gemini 3.7 Flash in the latest version of Antigravity."`、
-      `k:"test"`（耗时约 3019ms）。代码 `services/upstream/antigravity.js:427-439` 只要收到非空 `part.text` 就调用
-      `onDelta`，`476-481` 只在 `content` 为空时抛 `CHANNEL_EMPTY`；因此上游返回的错误提示被当成正常正文，
-      渠道测试写入 `ok=1`，自动检测也会重置冷却。修复：对 Antigravity/各适配器增加结构化错误字段与内容级错误模式识别；
-      命中“model unavailable/switch model/权限不足/账号失效”等明确错误时返回可分类错误并冷却/换渠道，不能只用“有正文”判定健康。
 
 - [ ] **线上部署版本与远端不一致，审查结论不能直接视为线上已修复**：线上服务器在本次检查时运行
       `.update-stamp.json=5a1c8ca`，远端最新为 `02e22d3`。线上还出现过 `.backup-2026-09-22T09-24-57` 与
@@ -1124,12 +1013,6 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 
 #### P0/P1：真实线上功能问题
 
-- [ ] **线上聊天链路仍出现 `usableKey is not defined` 运行时 ReferenceError**：线上 `journalctl -u ooapi` 在
-      `2026-09-22 19:35:21` 记录 `[error] ReferenceError: usableKey is not defined`，位置
-      `/opt/ooapi/ooapi-server/src/routes/chat.js:715:16`。这不是历史日志转述，而是本次线上验收前后同一运行环境中的真实错误。
-      触发条件是站内对话路径执行到该分支；后果是该轮返回 500/中断，并可能影响已启动运行的收尾与计费审计。
-      修复：先定位该线上版本与远端源码差异，保证变量在所有分支声明/传递；补一条真实 `/api/chat/run` 成功路径断言，不能只靠 `node --check`。
-
 - [ ] **WorkBuddy 渠道真实探针失败：HTTP 404 Route Not Found，且会阻断同模型的正常渠道**：线上渠道 `#42` 的真实
       `probeChannel` 返回 `CHANNEL_BAD_REQUEST`，上游响应 `{"error_msg":"404 Route Not Found"}`。随后真实 `/v1`
       请求 `glm-5.3` 被渠道 #42 优先选中，返回 400 `CHANNEL_BAD_REQUEST`，没有继续尝试可用的 GLM 渠道 #8；
@@ -1147,11 +1030,6 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
       修复：`/v1/models` 必须复用与 `selectChannels` 完全一致的用户/Key/分组/模型过滤；分组模型限制变更后补真实 `/v1/models` 与调用成对断言。
 
 #### P1：协议与视觉实测问题
-
-- [ ] **Anthropic 流式 thinking 事件序列仍不符合协议**：真实 `POST /v1/messages`（`stream=true`）返回 200，
-      但先发送 `content_block_start`，其 `content_block.type` 为 `text`，随后发送同一 block 的
-      `delta.type=thinking_delta`；客户端协议要求 thinking 独立 block。非流式当前能返回正文，但流式官方客户端可能拒绝或错误解析思考事件。
-      修复：按 Anthropic thinking block 的完整 start/delta/stop 序列发送，并补官方 SDK 级解析测试。
 
 - [ ] **视觉能力只验证了“请求不报错”，尚未证明模型真的读取图片**：真实 `/v1/chat/completions` 发送 1x1 PNG：
       DeepSeek 返回 200 和正确测试文本，说明图片链路被接受；GLM 明确返回 `VISION_NOT_SUPPORTED`，符合当前适配器能力声明。
@@ -2785,8 +2663,6 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
     - 前端打包产物已同步到 `ooapi-server/web/`；
     - 后端 13 个单测套件全量跑通（0 失败）。 |
 
-
-
 | 2026-09-22 | **第 47 批 · 线上全量验收与视觉审查**：当前线上版本 `7c2b9e4` 实测完成：`npm test`（118 文件/13 套件）0 失败；模块 HTTP E2E 83/83；UI smoke 全部登记路由渲染；弹窗滚动 11/11；移动端 390px 关键页面无横向溢出；DeepSeek/GLM 真实 `/v1` 非流式+流式+usage/计费通过；Gemini 直接探针通过；Codex 账号全部 `token_revoked`；OpenAI API 503；WorkBuddy 真实 404。新增问题已登记第 47 批：`chat.js:715` 线上 `usableKey is not defined`、WorkBuddy 404 阻断同模型渠道、GLM 请求档位与实际模型不一致、Gemini 目录显示与分组调用权限不一致、Anthropic thinking 流事件协议错误、桌面 `/log`/`/admin/channel` 横向溢出、视觉审查期间服务重启、旧游戏浏览器测试脚本与当前 `/community?board=games` 路由脱节。用户提供的 GPT 测试账号保留在线上渠道 #44，实测为上游 401 `token_revoked`。
 | 2026-09-22 | **第 46 批 · 最新远端代码只读复审 + 线上实测问题登记**：以干净 worktree 的远端 `02e22d3` 为基线，后端 117 个 JS 文件 `node --check` 全部通过；新增登记 Gemini API `generateContent` 未实现、三协议图片超限分支写死 Chat 响应、Anthropic thinking 事件/非流式思考丢失、Responses `instructions`/完成事件字段丢失、mimo/minimax/stepfun 未注册、WorkBuddy/Qoder endpoint SSRF、绑定跨厂商与并发轮询、StepFun 未知帧丢失、前端社区/个人主页骨架屏与 website XSS 等问题。线上 `5a1c8ca` 实测确认 Antigravity 将「Gemini 3.5 Flash is no longer available」作为 `ok=1` 健康测试；同时确认线上版本落后远端，且曾发生未完成更新告警、内存压力与硬重启。详见第 46 批最新远端复审发现。
 | 2026-09-22 | **第 46 批 · 用户四个反馈的查证与修复**（三协议网关 / 模型自定义 / 一键绑定 / OpenCode GO）。
@@ -2856,7 +2732,6 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
   · **另**：期间服务器 SSH 出现间歇性丢包（端口 22 三次里仅一次可连，
     但 ping/80/443 正常）——不是封禁，给 SSH 助手加了重试包装即可。
 
-
 | 2026-09-22 | **第 47 批 · 额度条展示返工**（用户反馈两处：「标签写额度没有信息量」
   与「还有 N 个窗口是压缩了还是没加载」）。
 
@@ -2888,7 +2763,6 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
   验收（线上渲染）：`["套餐 pro","Gemini 7d","17%","Gemini 5h","0%",
   "Claude 7d","62%","Claude 5h","88%"]` —— 4 个窗口全展开、
   标签各自可区分、尾部无冗余时间；单窗口渠道仍是干净的 `30d 77%`。
-
 
 | 2026-09-22 | **第 48 批 · 统一登录方式规范 + 新增 7 家厂商（含 JEV/TypeSafe AI）**
 
@@ -2944,7 +2818,127 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
   「choice 超 255 项」的异常被当成「解析失败」吞掉 → 超限请求原样发给上游、
   拿回语焉不详的 422。已分离两个 try。
 
+| 2026-09-22 | **第 50 批 · 清第 46 批复审全部条目 + 用户实时反馈修复**（提交 `a6ffa92`、`d592008`、`50db36e`、`789baba`）。
 
+  **一、安全（第 46 批 P0，逐条已修，条目已从待办删除）**
+  · **一键绑定跨厂商写入**：设备授权是厂商专属流程，而 `/devices/poll`、`/devices/claim`
+    的目标渠道由调用方传 `channel_id` 决定 —— 两者原先零校验，等于允许「拿 Kiro 的授权
+    结果覆盖 WorkBuddy 渠道的凭据」。现在会话与一次性 ticket 都记录归属厂商（vendor 取
+    服务端会话值，不信请求体），写库前强制 `厂商 === 目标渠道类型`；建渠道路径也提前校验，
+    避免「先建后删」（用户会看到渠道闪一下就没了）。
+  · **凭据内 endpoint 外送 Bearer/PAT**：`openai-compat` 的对话路径原本直接 fetch，
+    base_url 却可能来自**凭据 JSON**（Qoder 的 endpoint 就是）。现在所有出站请求统一走
+    `guardedFetch`（请求前校验 + 逐跳重定向校验 + 60s DNS 缓存不拖慢网关）；
+    Qoder 桥地址改走白名单（默认仅本机 127.0.0.1:8963，可用 `QODER_BRIDGE_ALLOWLIST`
+    扩展，且只认服务端运维配置），凭据里写 `https://evil.example` 会在**导入时**就被拒。
+    WorkBuddy 侧已核实安全：endpoint 只参与 realm 二分判定，base_url 恒为两个硬编码官方域。
+  · **设备绑定轮询无并发互斥**：加会话级 `polling` 闸门，重复请求返回 pending；
+    终态用 `sessions.delete` 的返回值判定唯一胜者（否则两次 success 会各写一次凭据互相覆盖）。
+
+  **二、协议（第 46 批 P0/P1）**
+  · 三协议「超 3 张图」短路分支原先写死 `chat.completion` 帧 —— Anthropic/Codex 客户端
+    收到错误协议形状，报的是解析失败而不是「图片太多」。现在统一走 `protocol.openStream/
+    delta/done/finish`（零用量收尾，不计费不污染日志）。
+  · Anthropic thinking 改为**独立 content_block**：原先先声明 text 块、再往同一个块发
+    `thinking_delta`（非法协议，SDK 会整段丢弃），且非流式**完全丢弃** reasoning。
+    现在按需开块（thinking 块带空 thinking/signature，与官方流一致）、块开闭配对、
+    空回复也给一个块，非流式返回独立 thinking 块。
+  · Responses 顶层 `instructions` 转 system（原先整段丢弃 → 系统约束静默失效）；
+    `response.completed` 补全 id/object/created_at/model/output（官方 SDK 用该事件
+    替换本地 response 对象，缺字段会导致「流跑完但拿不到文本/模型名」）。
+
+  **三、适配器（第 46 批 P1/P2）**
+  · **HTTP 错误分类**（新增 `upstream/http-error.js`）：429 → `CHANNEL_RATE_LIMITED`
+    （可自愈）、403 三分（风控验证页/权限不足/凭据失效）。此前 429 归普通 HTTP 错误、
+    403 一律「凭据过期」，后果是冷却档位错 + 管理员对好账号反复重抓也修不好。
+    `execute.js` 登记两个新错误码与冷却档位。
+  · **内容级错误识别**（新增 `upstream/content-error.js`）：识别「用正常正文说错误」。
+    线上实测抓到 Antigravity 把 `Gemini 3.5 Flash is no longer available...` 当正文返回，
+    渠道测试写 ok=1 并重置冷却，而真实请求必然失败。现在 6 个出口（openai-compat、
+    antigravity、mimo/minimax/stepfun-web）统一拦一道，命中抛 `CHANNEL_BIZ_ERROR`；
+    带长度门槛防误杀（长回答里偶发出现同一词组不算）。
+  · 用量估算标记：`splitTokens` 返回 `estimated`，透出到 `X-Tokens-Estimated` 响应头
+    —— 估算值不再与精确值同口径展示。
+  · MiniMax/StepFun 视觉能力按模型表声明（原先 `resolveModel` 一律 `vision:true`，
+    带图请求会被送到纯文本档位，上游报的是含糊参数错误而不是「不支持视觉」）。
+  · StepFun 帧诊断：未知 flags/坏 JSON/尾部残帧不再静默丢弃，内容为空时按类型给出
+    `CHANNEL_BAD_RESPONSE`（解码错位）或 `CHANNEL_EMPTY`（上游真没说话）。
+  · openai-web-ui 输入框判空前置：`target.evaluate` 原先在判空前调用，页面结构变化/
+    未登录时抛原生 TypeError，绕过精心准备的现场诊断还会被当成基础设施故障。
+  · **Gemini API 端点修正**：原先填裸域名 `generativelanguage.googleapis.com`，
+    而 API Key 渠道统一走 openai-compat（拼 `/v1/chat/completions`）—— 实测该路径
+    返回 **404**，即用户配好的 Google 官方 API 每个请求都必然失败。改用官方 OpenAI
+    兼容层 `/v1beta/openai/chat/completions`（实测返回 400「请传有效 API Key」，证明
+    路径存在且要求鉴权；兼容层同样返回真实 usage，计费也正确）。
+
+  **四、渠道检测口径（用户实时反馈：「为什么响应时间这么长」）**
+  · **首 Token 耗时成为展示与慢渠道判定口径**（新增 `channels.ttft_ms` 列）：
+    原先只记总耗时，思考型模型（GLM/o 系列/R1）先吐几十秒 reasoning 再出正文，
+    首字其实很快，却被判成慢渠道。现在**思考增量也计入首 Token**（用户原话：
+    「思考的首 t 也算首 t 吧？」——对，模型在「想着」就是已经在响应了）。
+    总耗时一并保留（吞吐与截断排查要用），前端悬浮同时给两个数。
+    实机验证（真实本地 SSE 上游，非 mock 计时）：思考型 ttft=533ms / total=3092ms；
+    快模型 ttft=46ms。
+  · **逐渠道检测超时配置** `probe_timeout_sec`（0=默认，普通 90s / 浏览器渠道 240s，
+    钳制 5s~30 分钟）：大档位（gpt-5.6 / glm-5.3）光思考可能几分钟，
+    统一 90s 预算下每次都报超时；实机验证 6s 预算对 9s 上游确实超时且错误里报实际预算。
+
+  **五、额度列（用户实时反馈：折叠规范）**
+  · 折叠规则抽到 `components/quota-order.js` 作为**全局统一规范**：按窗口长度升序
+    （5h → 1d → 7d → 30d）、**跳过已用完的递进到下一档**（「5h 完了就显示 7d」）、
+    全部用完时仍显示最短的、未知长度排最后。窗口数不超上限时只排序不折叠（不藏数据）。
+  · **必须从 tag 解析长度**：上游常常只给 tag（antigravity 的 `buckets[].window` 就是
+    字符串），缺 `windowSeconds` 时递进规则整个失效 —— 预览截图里发现 5h 排在 7d 后面。
+  · **余额/积分恒为第一个 tag**（用户要求：WorkBuddy/GPT free 带积分这种，
+    折叠时余额显示为第一条）。
+  · **`+N` 同时统计放不下的 chips 与折叠的窗口**：原先只算窗口，纯积分渠道
+    （WorkBuddy 6 个积分包、无窗口）只显示前 3 个、既无 `+N` 也无处展开，
+    剩下 3 个静默消失（预览截图发现）。折叠行只渲染一个 `+N`，悬浮列全量。
+  · 调用记录小竖条换亮绿（`--green-bar`，L=73%）：原 `--green`（L=60.3%）在表格白底上
+    发暗，几像素宽的小条尤其显脏。
+
+  **六、前端（第 46 批新增问题）**
+  · `PostDetailPage` / `ProfileViewPage` 永久骨架屏：两个并行 loader（主数据 + Tab 列表）
+    共用一个 `useLatest`，同一 effect 里后者 token 更大 → 前者的结果恒被判「过期」丢弃，
+    `setLoading(false)` 永不执行。拆成独立竞态令牌。
+  · `ProfileViewPage` 关注 Tab 永远为空：判定写的是 `tab === "follows"`，而 Tab key 是
+    `"following"`，分支不可达。
+  · `ProfileViewPage` website 存储型 XSS：用户可编辑字段直接进 `<a href>`，
+    填 `javascript:` 即可在访客上下文执行脚本。改用 `Markdown.jsx` 的 `safeHref`
+    协议白名单，非法协议只作纯文本展示。
+  · 消息/通知与游戏区 SSE：票据是**一次性**的（服务端消费即删），而 EventSource 内置
+    重连会复用旧票据 → 必然 401、永久离线（GameZone 连 onerror 都没有）。
+    改为 onerror 关闭旧连接 + 重新申请票据 + 指数退避（1s→30s，ready 后重置），
+    cleanup 清定时器。
+
+  **七、用户实时反馈的其他修复**
+  · **新建渠道「先保存 / 先选模型」死锁**：点「从上游获取模型」提示「请先保存」，
+    而保存又要求「请至少选择一个模型」—— 两个校验互相锁死。现在 `ModelPicker` 支持
+    未保存时带表单里的 base_url + api_key 走 `/channel/fetch-models`，
+    后端也允许模型范围留空（= 该厂商全部已注册模型，与反代/订阅路径、与
+    `router.parseModels` 的口径一致）。
+  · **登录方式标签歧义**：网页反代类渠道同时提供「服务器浏览器（自动抓取）」与
+    「本机浏览器（登录后粘贴登录态）」两条路，原先都渲染成「浏览器登录」，
+    同一厂商裂出两个同名按钮。现在按「谁在跑浏览器」明确区分，并补上「在本机浏览器
+    打开登录页」按钮；GLM/豆包/通义原先只挂 `["browser"]`（连 paste 都没有，
+    等于逼所有人走最重的那条），补为 `["browser","paste"]`。
+
+  **八、模型定价（协作文档「待补录」项）**
+  价格表 63 → 94 条。补齐 Codex/Grok 点名档位，新增 qwen-max/turbo/flash/3.7-max、
+  gemini-3.8-flash/2.5-flash-lite、claude-sonnet-4.5/opus-4.5、glm-4.6/5/5.1/5v/4v/4.6v、
+  上一代与轻量档（glm-4-flash 免费档等）、moonshot-v1 系列；并让 `getPrice`
+  **剥离 `vendor/模型` 前缀**（OpenRouter/NIM 风格 ID 此前整片落到兜底价）。
+  注册表里仅剩 12 个厂商占位名走兜底链。
+
+  **测试**：新增 `security-bind.test.mjs`(35)、`audit46.test.mjs`(114)、
+  `ttft-live.test.mjs`(22)、`pricing-coverage.test.mjs`(57)，扩展
+  `gateway-protocols.test.mjs`(+17)；全量 **573 通过 / 0 失败**，
+  `static-check` 120 文件语法与 import 全通。
+
+  **未完成**：线上部署未执行 —— 服务器 SSH 在本次会话中被 fail2ban 反复封禁
+  （握手 15s 后 EOF/Reset，间歇可用），最后一次成功连接时线上仍为 `c139396`
+  且内存无 swap（3.5G 无 swap，文档记录过更新期间的 OOM 硬重启）。
+  下次部署前应先加 2G swap 再跑在线更新。 |
 | 2026-09-22 | **第 49 批 · WorkBuddy 深度修复 + 登录规范统一 + Kiro 独立 + 新增厂商图标**
 
   用户一次报了 8 个问题，逐个实测定位（全部在线上用真实账号验证）。
@@ -3010,7 +3004,6 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
     而选项 id 是 `m.key` → GO（key=`go`）的 value 永远匹配不上选中态。已改为同源。
   · API Key 标题旁加「获取 Key」链接（用户要求）：25 个厂商写入官方取 Key 页面地址。
   · 新增 tests/workbuddy.test.mjs 23 项。
-
 
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 
