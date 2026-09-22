@@ -1763,7 +1763,7 @@ export default function AdminChannelsPage() {
     {
       title: "名称",
       dataIndex: "name",
-      width: 150,
+      width: 160,
       render: (v, r) => (
         <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0, maxWidth: "100%" }}>
           <VendorIcon type={r.type} size={18} />
@@ -1779,30 +1779,19 @@ export default function AdminChannelsPage() {
       ),
     },
     {
-      // 数据重要：紧挨名称展示，方便快速判断账号健康度
       title: "最近调用",
       dataIndex: "recent",
       width: 150,
       render: (list) => <UptimeBars calls={list} onCopy={copyCallResult} />,
     },
     {
-      title: "厂商",
-      dataIndex: "typeName",
-      width: 110,
-      render: (v) => <span className="bui-chip">{v}</span>,
-    },
-    {
-      // 模型列：展示该渠道**实际可用**的模型。
-      // 两个来源合并：渠道声明的模型（管理员限定的范围）+ 上游实时探测到的模型
-      // （非 API 渠道点列头刷新按钮从上游拉，API 渠道直接问 /v1/models）。
-      // 不再显示「XX 全部」——那是把「没配置」当结果展示，管理员看不到真实情况。
       title: (
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           模型
           {upstreamModelsBusy ? (
             <Spin size="small" />
           ) : (
-            <Tooltip title="从上游拉取该账号实际可用的模型">
+            <Tooltip title="获取该账号真实可用的模型">
               <ReloadOutlined
                 style={{ fontSize: 12, cursor: "pointer", color: "var(--ink-3)" }}
                 onClick={(e) => {
@@ -1819,7 +1808,6 @@ export default function AdminChannelsPage() {
       render: (list, r) => {
         const own = Array.isArray(list) ? list : [];
         const probed = upstreamModels[r.id] || [];
-        // 探测结果优先（它才是账号真实可用的），渠道声明作为补充
         const merged = probed.length ? probed : own;
         if (!merged.length) {
           return <Text type="secondary" style={{ fontSize: 12 }}>未探测</Text>;
@@ -1829,7 +1817,7 @@ export default function AdminChannelsPage() {
             title={
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <div style={{ fontSize: 11, color: "#aaa" }}>
-                  {probed.length ? `上游实际可用（${probed.length}）` : `渠道声明（${own.length}）`}
+                  {probed.length ? `上游实际可用：${probed.length} 个` : `共 ${own.length} 个`}
                 </div>
                 {merged.map((m) => <ModelLabel key={m} model={m} size={13} />)}
               </div>
@@ -1844,8 +1832,6 @@ export default function AdminChannelsPage() {
       },
     },
     {
-      // 额度：紧跟在模型之后（与 sub2api 一致）。窗口按上游实际返回动态展示 ——
-      // 免费号是 30 天窗口、付费号才是 5h/7d，写死窗口会显示错。
       title: "额度",
       dataIndex: "quota",
       width: 190,
@@ -1853,7 +1839,6 @@ export default function AdminChannelsPage() {
         q?.windows?.length || q?.credits ? (
           <QuotaInline quota={q} />
         ) : r.quota_supported ? (
-          // 未查询时点一下即查（不再单独占用操作栏的位置）
           <span
             role="button"
             tabIndex={0}
@@ -1866,7 +1851,7 @@ export default function AdminChannelsPage() {
               }
             }}
           >
-            点此查询
+            点击查询
           </span>
         ) : (
           <Text type="secondary" style={{ fontSize: 12 }}>不支持</Text>
@@ -1874,7 +1859,6 @@ export default function AdminChannelsPage() {
     },
     { title: "状态", dataIndex: "status", width: 128, render: (_, r) => <StatusCell r={r} /> },
     {
-      // 凭据种类直接写清（账号 / Key），这样就不需要单独一列讲「接入方式」
       title: "凭据",
       width: 126,
       render: (_, r) => {
@@ -1897,7 +1881,6 @@ export default function AdminChannelsPage() {
       render: (list) => {
         const gs = Array.isArray(list) ? list : [];
         if (!gs.length) return <Text type="secondary" style={{ fontSize: 12 }}>公共</Text>;
-        // 每个分组独立渲染完整标签（厂商图标 + 分组名称 + 悬浮提示），不截断不折叠
         return (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
             {gs.map((g) => (
@@ -1907,8 +1890,22 @@ export default function AdminChannelsPage() {
         );
       },
     },
-    { title: "优先级", dataIndex: "priority", width: 86, sorter: (a, b) => a.priority - b.priority, render: (v) => <span className="oo-num">{v}</span> },
-    { title: "权重", dataIndex: "weight", width: 74, render: (v) => <span className="oo-num">{v}</span> },
+    {
+      title: "优先级 / 权重 / 次数",
+      width: 140,
+      sorter: (a, b) => (a.priority || 0) - (b.priority || 0),
+      render: (_, r) => (
+        <Tooltip title={`优先级: ${r.priority ?? 0} · 调度权重: ${r.weight ?? 0} · 累计调用: ${r.used_count ?? 0} 次`}>
+          <span className="oo-num" style={{ fontSize: 12.5, whiteSpace: "nowrap" }}>
+            {r.priority ?? 0}
+            <span style={{ color: "var(--ink-3)", margin: "0 2px" }}>/</span>
+            {r.weight ?? 0}
+            <span style={{ color: "var(--ink-3)", margin: "0 2px" }}>/</span>
+            {r.used_count ?? 0}
+          </span>
+        </Tooltip>
+      ),
+    },
     {
       title: "响应",
       dataIndex: "response_time",
@@ -1917,10 +1914,9 @@ export default function AdminChannelsPage() {
         r.tested_time ? (
           <span className="oo-num" style={{ color: v > 3000 ? "var(--orange)" : "var(--ink)" }}>{v ? `${v}ms` : "-"}</span>
         ) : (
-          <Text type="secondary" style={{ fontSize: 12 }}>未测试</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>未测</Text>
         ),
     },
-    { title: "调用", dataIndex: "used_count", width: 78, sorter: (a, b) => a.used_count - b.used_count, render: (v) => <span className="oo-num">{v}</span> },
     {
       title: "操作",
       width: 150,
@@ -1929,7 +1925,6 @@ export default function AdminChannelsPage() {
     },
   ];
 
-  // 打开找回弹窗：先问后端这个渠道支持哪些恢复方式（不再写死接入方式清单）
   const openRelogin = async (r) => {
     setReloginTarget(r);
     setReloginInfo(null);
@@ -2439,7 +2434,7 @@ export default function AdminChannelsPage() {
             loading={loading}
             dataSource={visibleItems}
             columns={columns}
-            scroll={{ x: 1660 }}
+            scroll={{ x: 1450 }}
             rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
             pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (t) => `共 ${t} 个渠道` }}
           />
@@ -2810,10 +2805,7 @@ export default function AdminChannelsPage() {
                       <Form.Item name="api_key" label="API Key" rules={[{ required: true, message: "请填写 API Key" }]}>
                         <Input.Password placeholder={pickMethod.keyHint || "填写上游 API Key"} autoComplete="new-password" />
                       </Form.Item>
-                      <Form.Item label="拉取上游模型">
-                        <button className="bui-btn" onClick={fetchModels}>从上游获取模型列表</button>
-                      </Form.Item>
-                    </>
+                      </>
                   )}
 
                     <Form.Item
