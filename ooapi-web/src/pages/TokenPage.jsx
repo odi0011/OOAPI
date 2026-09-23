@@ -253,6 +253,14 @@ export default function TokenPage() {
         </Space>
       ),
     },
+    // 窄屏（手机）只保留「名称 + 状态 + 额度 + 操作」这四列最有信息量的，
+    // 其余靠 responsive 自动收起。
+    //
+    // 实测背景（黑盒测试在 390×844 视口量的）：这张表宽 1480px、屏幕只有 390px，
+    // 首屏**只看得见 2 列**（名称、操作），而「密钥/状态/额度/已用/分组」
+    // 全在屏幕外。虽然能横向滚动，但用户第一眼看不到中间列、也意识不到要滚。
+    // 收起冗余列后，第一屏能直接看到「这把 Key 是什么状态、还剩多少额度」。
+    // 桌面端不受影响（md/lg 以上照旧全显示）。
     { title: "状态", dataIndex: "status", width: 92, render: statusTag },
     {
       title: "额度",
@@ -268,12 +276,15 @@ export default function TokenPage() {
       title: "已用",
       dataIndex: "used_quota",
       width: 110,
+      responsive: ["md"],
       render: (q) => <span className="oo-num">{fmtOd(q, perUnit, 4)}</span>,
     },
       {
         title: "分组",
         dataIndex: "group",
         width: 150,
+        // 手机上收起（分组是配置信息，不常看；名称/状态/额度已经说清这把 Key 能不能用）
+        responsive: ["lg"],
         render: (g) => {
           // 未绑分组的密钥**不能调用**（网关会返回 403 token_group_required），
           // 所以这里不能只显示一个「—」当装饰 —— 那看起来像「没设置也无所谓」。
@@ -297,6 +308,7 @@ export default function TokenPage() {
         title: "可用模型",
         dataIndex: "group",
         width: 170,
+        responsive: ["lg"],
         render: (g) => {
           const list = groupMetaOf(g)?.models || [];
           if (!g) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;

@@ -342,6 +342,27 @@
 }
 .bui-composer-input::placeholder { color: var(--ink-3); }
 
+/* 窄屏：输入框必须独占一行。
+   ==========================================================================
+   原布局是单行 grid `28px | minmax(0,1fr) | auto | 28px | 28px`。
+   在 390px 手机上，固定列（附件 28 + 模型选择器 93 + 发送 28）加间隙
+   已吃掉约 193px，留给输入框只有 **135px** —— 实测 placeholder
+   「输入你的问题，或分享一个想法…」被压成 4 行竖排，键盘弹起后基本没法打字
+   （黑盒测试在 390×844 视口量到并报上来，附件/模型/发送都应当留在第二行）。
+   改成两行后输入框 135 → 328px。 */
+@media (max-width: 560px) {
+  .bui-composer-row {
+    grid-template-columns: 28px minmax(0, 1fr) 28px;
+    grid-template-areas:
+      "input input input"
+      "attach model send";
+  }
+  .bui-composer-row > .bui-composer-input { grid-area: input; }
+  .bui-composer-row > .bui-attachwrap { grid-area: attach; }
+  .bui-composer-row > .bui-modelwrap { grid-area: model; justify-self: start; }
+  .bui-composer-row > .bui-cbtn.is-send { grid-area: send; justify-self: end; }
+}
+
 /* 28×28 方形图标按钮 —— 官方 size-7 + active:scale-[0.94] */
 .bui-cbtn {
   display: flex;

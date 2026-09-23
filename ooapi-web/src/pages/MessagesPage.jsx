@@ -442,12 +442,20 @@ export default function MessagesPage() {
     } catch {
       return;
     }
+    // 防御：正常不会走到（Select 已 multi + 表单必填），但若字段形状意外变化
+    // 也不能把 JS 内部报错当 toast 丢给用户（之前 `number.map is not a function`
+    // 就是这么漏出去的 —— 用户看到的是引擎报错串，不是人话）。
+    const pickedIds = Array.isArray(v.user_ids) ? v.user_ids : v.user_ids == null ? [] : [v.user_ids];
+    if (!pickedIds.length) {
+      toast.error("请先选择一位成员");
+      return;
+    }
     setCreating(true);
     try {
       const payload =
         v.type === "single"
-          ? { type: "single", user_id: Number(v.user_ids?.[0]) }
-          : { type: v.type, name: v.name, user_ids: (v.user_ids || []).map(Number) };
+          ? { type: "single", user_id: Number(pickedIds[0]) }
+          : { type: v.type, name: v.name, user_ids: pickedIds.map(Number).filter(Number.isFinite) };
       const r = await API.post("/chatroom/rooms", payload);
       toast.success("会话已就绪");
       setCreateOpen(false);
@@ -797,7 +805,18 @@ export default function MessagesPage() {
             ]}
             tooltip="输入用户名或昵称搜索；单聊只能选一人"
           >
+            {/* 必须 multi 模式：表单字段名是 user_ids（复数），提交处按数组取
+                `v.user_ids[0]`（单聊）/ `v.user_ids.map()`（群聊）。
+                原先漏了 mode="multiple"，Select 返回的是**标量**，于是：
+                  · 单聊 → `Number(number?.[0])` = NaN → JSON 序列化成 null
+                    → 后端 400「请选择聊天对象」，明明已经选中了人；
+                  · 群聊 → `(number).map is not a function`，JS 报错串直接弹给用户。
+                即「站内消息发起会话 100% 失败」（黑盒测试实测，单聊/群聊都发不出去）。
+                maxCount 让单聊在 UI 层就选不了第二个人 —— 与下面
+                「单聊只能选择一位成员」的校验互补（那条是兜底，不该让用户先选错再报错）。 */}
             <Select
+              mode="multiple"
+              maxCount={getFieldValue("type") === "single" ? 1 : undefined}
               showSearch
               filterOption={false}
               onSearch={searchUsers}

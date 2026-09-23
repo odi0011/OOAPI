@@ -34,6 +34,11 @@ import { API, getToken } from "../services/api";
 
 // 单次可带的图片上限：与后端 routes/chat.js 的 MAX_CHAT_IMAGES 一致（后端才是权威值）
 const MAX_CHAT_IMAGES = 30;
+
+// 上次选用的密钥 id：刷新后要接着用它，而不是回到服务端的默认选择
+// （默认可能是一把没有可用模型的密钥，那样页面一进来就是禁用状态）。
+// 注意这是**偏好**不是权限依据 —— 服务端仍会校验它是否属于当前用户且可用。
+const LS_KEY_ID = "oo.chat.keyId";
 import { chatApi, runChatStream, resumeChatStream } from "../services/chat";
 import { useApp } from "../context/AppContext";
 import Markdown from "../components/Markdown";
@@ -493,7 +498,13 @@ export default function ChatPage() {
      三者分开写：如果都挂在 [loadMeta, loadSessions] 的 effect 上，
      切换「已归档/项目」视图会触发 cleanup，把正在接收的流误杀。 */
   useEffect(() => {
-    loadMeta();
+    // 带上次用的密钥一起加载。
+    //
+    // 修的问题（黑盒测试实测）：用户在对话页切到某把可用密钥后**一刷新就被踢回**
+    // 服务端的默认选择（第一把可用密钥）。若那把密钥没有可用模型，
+    // 页面直接变成「当前密钥没有可用模型」+ 输入框禁用 —— 用户明明有能用的密钥，
+    // 却要先手动再切一次才能说话。刷新是最高频的操作之一，这个回退很恼人。
+    loadMeta(Number(localStorage.getItem(LS_KEY_ID)) || 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1487,8 +1498,14 @@ export default function ChatPage() {
           keys={usableKeys}
           keyId={keyId}
           onKey={(id) => {
-            // 切密钥 = 换一套路由身份：可用模型会变，重新拉 meta 并校正当前模型
+            // 切密钥 = 换一套路由身份：可用模型会变，重新拉 meta 并校正当前模型。
+            // 同时记住它是哪一把：刷新后不该被服务端的默认选择顶掉（见挂载处的注释）。
             setKeyId(id);
+            try {
+              localStorage.setItem(LS_KEY_ID, String(id || ""));
+            } catch {
+              /* 隐私模式下 localStorage 可能不可写：记不住不影响功能 */
+            }
             loadMeta(id);
           }}
           onAgent={setAgent}

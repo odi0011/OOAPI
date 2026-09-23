@@ -1509,6 +1509,10 @@ h1, h2, h3, h4 {
   min-width: 0;
 }
 
+/* 数值区：flex + wrap，让「数字」与「单位」在窄屏下能分行，
+   而不是把数字截断成 `200.00 0…`。
+   实测来源：黑盒测试在 390×844 视口截图，余额卡显示为 `200.00 0…`
+   （`.oo-stat-card-num` 原先是 nowrap + ellipsis，单位被吃掉一半）。 */
 .oo-stat-card-num {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -1517,9 +1521,17 @@ h1, h2, h3, h4 {
   line-height: 1.2;
   letter-spacing: -0.01em;
   color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 4px;
+  min-width: 0;
+}
+
+/* 数字本身：超长时缩字号（手机上 19→16px）而不是直接溢出 */
+.oo-stat-card-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .oo-stat-card-suffix {
@@ -1527,7 +1539,9 @@ h1, h2, h3, h4 {
   font-size: 12px;
   font-weight: 450;
   color: var(--ink-3);
-  margin-left: 4px;
+  /* 单位是短字符串：宁可换行也不截断 */
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .oo-stat-card-label {

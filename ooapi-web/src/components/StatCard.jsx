@@ -31,7 +31,10 @@ export default function StatCard({ label, value, suffix, hint, hintInline, tone,
   const card = (
     <div className="oo-stat-card" style={glow ? { boxShadow: `inset 0 -2px 0 ${glow}` } : undefined}>
       <div className="oo-stat-card-num" style={tone ? { color: TONE[tone] } : undefined}>
-        {value}
+        {/* 数字必须单独成元素：`.oo-stat-card-num` 是 flex + wrap，
+            这样窄屏下挂不下时是「单位换到第二行」，而不是把数字截成 `200.00 0…`。
+            裸文本会变成一个不可拆分的匿名 flex item，达不到这个效果。 */}
+        <span className="oo-stat-card-value">{value}</span>
         {suffix ? <span className="oo-stat-card-suffix">{suffix}</span> : null}
       </div>
       <div className="oo-stat-card-label">{label}</div>
