@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import {
   Button, Table, Modal, Form, Input, Switch, InputNumber, DatePicker,
   Select, Tag, Space, Typography, App as AntApp, Popconfirm, Tooltip, Empty,
-  Alert,
+  Alert, Grid,
 } from "antd";
 import { PlusOutlined, CopyOutlined, ReloadOutlined, KeyOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
@@ -232,6 +232,16 @@ export default function TokenPage() {
       <Tag>已过期</Tag>
     );
 
+  // 窄屏时列会被 responsive 收起，scroll.x 必须跟着变小。
+  //
+  // 原先写死 `scroll={{ x: 1480 }}` —— 那是「9 列全在时的列宽之和」。
+  // 收起 4 列后表格仍被撑到 1480px，手机上依然只有 2 列可见、其余全靠横向滚动，
+  // 等于 responsive 白做了（实测：收起后 totalCols=6 但 innerTableW 仍是 1480）。
+  // 用 breakpoint 算真实需要的总宽：手机上只剩名称+状态+额度+操作。
+  const screens = Grid.useBreakpoint();
+  const isNarrow = !screens.md; // < 768px
+  const scrollX = isNarrow ? 170 + 92 + 130 + 180 : 1480; // 名称+状态+额度+操作
+
   const columns = [
     {
       title: "名称",
@@ -384,9 +394,11 @@ export default function TokenPage() {
           size="small"
           columns={columns}
           dataSource={items}
-          // scroll.x 必须 ≥ 各列宽度之和（1462），否则 fixed 布局会把每列按比例压缩，
-          // 密钥列与可用模型列会出现非预期截断
-          scroll={{ x: 1480 }}
+          // scroll.x 必须 ≥ **当前可见列**的宽度之和，否则 fixed 布局会把每列按比例压缩，
+          // 密钥列与可用模型列会出现非预期截断。
+          // 手机端可见列少（responsive 收起了 4 列），总宽要跟着降下来 ——
+          // 否则仍被撑到 1480px，一屏还是只看得到 2 列（见 scrollX 的注释）。
+          scroll={{ x: scrollX }}
           pagination={false}
           locale={{
             emptyText: (

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { Table, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions, Space, Typography } from "antd";
+import { Table, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions, Space, Typography, Grid } from "antd";
 import { ReloadOutlined, FileTextOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import { fmtDate, fmtOd, unitsPerOd, CURRENCY_NAME } from "../services/format";
@@ -91,6 +91,8 @@ export default function LogPage() {
   const { message } = AntApp.useApp();
   const isAdmin = Number(user?.role) >= 100;
   const perUnit = unitsPerOd(status);
+  // < 768px（手机）：模型列要放宽，否则模型名被截成 `deepseek-v4.1-fl`
+  const isNarrow = !Grid.useBreakpoint().md;
 
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
@@ -249,12 +251,21 @@ export default function LogPage() {
     {
       title: "模型",
       dataIndex: "model",
-      width: 145,
+      // 窄屏加宽：模型名是这一列的核心信息，被截成 `deepseek-v4.1-fl`
+      // 就失去意义了（黑盒测试在 390 视口实测：单元格 145px、内容 158px，被右侧裁掉）。
+      width: isNarrow ? 190 : 145,
       // channelType 是**兜底**：模型名判定不出来时（OpenCode 的 omen-alpha、
       // 聚合渠道的 openrouter/free）退回该渠道的厂商图标。
       // 用户要求：「应该是跟随其厂商的图标啊」——渠道就是这些模型的厂商来源。
+      // title 属性兜底：真的放不下时还能看到全名。
       render: (v, r) =>
-        v ? <ModelLabel model={v} size={14} channelType={r.channel_type || ""} /> : <span style={{ color: "var(--ink-3)" }}>-</span>,
+        v ? (
+          <span title={String(v)}>
+            <ModelLabel model={v} size={14} channelType={r.channel_type || ""} />
+          </span>
+        ) : (
+          <span style={{ color: "var(--ink-3)" }}>-</span>
+        ),
     },
     // 管理员：分组（独立 Tag 包含专属图标与标题）
     ...(isAdmin
@@ -534,7 +545,9 @@ export default function LogPage() {
           columns={columns}
           dataSource={items}
           // scroll.x 必须 ≥ 各列宽度之和，否则带 ellipsis 的列会被压成 0 宽（table-layout: fixed）
-          scroll={{ x: isAdmin ? 1720 : 1180 }}
+          // 窄屏总宽要跟着降：模型列加宽后仍按 1180 会挤压其他列。
+          // 手机上主要靠横向滚动，但至少模型名要能在滚动后看全。
+          scroll={{ x: isAdmin ? 1720 : isNarrow ? 1240 : 1180 }}
           onRow={(r) => ({
             style: { cursor: "pointer" },
             // 键盘可达：整行是详情入口，只给 onClick 会让键盘用户无法打开
