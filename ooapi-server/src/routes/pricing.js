@@ -636,10 +636,13 @@ router.get(
       // 厂商分布（归属规则把哪些厂商的模型自动收进来了）
       vendors: [...byVendor.entries()].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count),
       // 一句话总结：给不看细节的人
+      // 一句话结论要**与下面的卡片口径一致**：卡片里分「库里已定价」与「规则自动定价」
+      // 两类，原先一句话说「全部 N 个都有确切价格」会让人以为都来自定价表
+      //（黑盒测试指出这个措辞与自己的卡片矛盾）。
       summary:
         counts.fallback || counts.none
           ? `有 ${counts.fallback + counts.none} 个模型没有确切价格，其中 ${counts.none} 个会被直接拦下`
-          : `全部 ${total} 个模型都有确切价格`,
+          : `全部 ${total} 个模型都有价可计（${counts.exact} 条表内价 + ${counts.rule} 条规则价）`,
     });
   })
 );

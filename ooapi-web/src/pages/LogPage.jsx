@@ -600,8 +600,22 @@ export default function LogPage() {
             </Descriptions.Item>
             <Descriptions.Item label="调用内容">{normalizeCurrency(detail.content)}</Descriptions.Item>
             <Descriptions.Item label="Tokens">
-              提示 {detail.prompt_tokens} · 补全 {detail.completion_tokens}
-              {detail.cache_tokens ? ` · 缓存 ${detail.cache_tokens}` : ""}
+              {/* 升级前的旧记录没写 token 列（当时的 detail 里也没有），显示 0 会让人
+                  误以为"这次没消耗" —— 但同一行的「调用内容」里明明写着「提示 3 / 补全 570」。
+                  这种自相矛盾让管理员无法判断该信哪个（黑盒测试指出）。
+                  所以 token 全为 0 且 content 里带过数字时，直接标明"旧记录未记"。 */}
+              {Number(detail.prompt_tokens) === 0 &&
+              Number(detail.completion_tokens) === 0 &&
+              /tokens/.test(String(detail.content || "")) ? (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  该记录较旧，未单独记 token（见左侧「调用内容」里的数字）
+                </Text>
+              ) : (
+                <>
+                  提示 {detail.prompt_tokens} · 补全 {detail.completion_tokens}
+                  {detail.cache_tokens ? ` · 缓存 ${detail.cache_tokens}` : ""}
+                </>
+              )}
             </Descriptions.Item>
             <Descriptions.Item label="首Token / 总耗时">
               {ms(detail.first_token_ms)} / {ms(detail.elapsed_ms)}

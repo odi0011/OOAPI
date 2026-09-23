@@ -714,7 +714,7 @@ function aggregate(calls = []) {
     const session = await getSession(req.user.id, sessionId);
     if (!session) return fail(res, "会话不存在", 404);
     if (!getBoolOption("chat_enabled")) return fail(res, "站内对话功能已关闭", 403);
-    if (Number(req.user.quota) <= 0) return fail(res, `${CURRENCY} 币余额不足，请联系管理员充值`, 403);
+    if (Number(req.user.quota) <= 0) return fail(res, `${CURRENCY}余额不足，请联系管理员充值`, 403);
 
     const content = String(text || "").trim();
     const agentId = agentOverride || session.agent;

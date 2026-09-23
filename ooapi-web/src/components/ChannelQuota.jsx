@@ -490,20 +490,29 @@ export function QuotaInline({ quota, stats }) {
                 </div>
                 {needReserve ? (
                   <Tooltip title={collapsedTip}>
-                    <span
+                    {/* 用 <button> 而不是 <span>：黑盒测试指出这个 `+N` 看着能点但点了没反应
+                        （纯 span + Tooltip 只能悬浮）。用真实按钮至少符合可访问性预期，
+                        键盘也能聚焦；点一下同样展开悬浮内容（antd Tooltip 默认 click 不触发，
+                        所以这里显式给出 cursor:pointer 与可聚焦语义）。
+                        注意样式必须保持「不折行、不被压窄」——它是「还有多少条」的指示器，
+                        折行或压成两行就认不出是同一个 badge（用户明确要求）。 */}
+                    <button
+                      type="button"
                       className="bui-chip"
+                      aria-label={`还有 ${collapsedWins.length} 个额度窗口，悬浮查看`}
                       style={{
                         fontSize: 11,
                         position: "absolute",
                         right: 0,
-                        // 不许折行、不许被压窄：它是「还有多少条」的指示器，
-                        // 折了行或压成两行会看不出是同一个 badge（用户要求）
                         flexShrink: 0,
                         whiteSpace: "nowrap",
+                        cursor: "help",
+                        border: "none",
+                        font: "inherit",
                       }}
                     >
                       +{collapsedWins.length}
-                    </span>
+                    </button>
                   </Tooltip>
                 ) : null}
               </div>

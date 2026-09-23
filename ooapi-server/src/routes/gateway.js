@@ -187,7 +187,7 @@ async function authorize(req, res) {
   }
   if (Number(user.quota) <= 0) {
     res.status(403).json({
-      error: { message: `账户 ${CURRENCY} 币余额不足，请联系管理员充值`, type: "insufficient_user_quota", code: "insufficient_user_quota" }});
+      error: { message: `账户 ${CURRENCY}余额不足，请联系管理员充值`, type: "insufficient_user_quota", code: "insufficient_user_quota" }});
     return null;
   }
   // 密钥必须绑定分组 —— 用户要求（原话）：

@@ -6,11 +6,11 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  Button, Select, Input, Segmented, Tag, Space, Empty, Skeleton, App as AntApp, Tooltip, Alert, Modal, Form, List,
+  Button, Select, Input, Segmented, Tag, Space, Empty, Skeleton, App as AntApp, Tooltip, Alert, Modal, Form, List, Upload,
 } from "antd";
 import {
   PlusOutlined, ReloadOutlined, FireOutlined, ClockCircleOutlined, StarOutlined,
-  TeamOutlined, TagsOutlined, SearchOutlined, NotificationOutlined,
+  TeamOutlined, TagsOutlined, SearchOutlined, NotificationOutlined, PictureOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
@@ -102,6 +102,27 @@ export default function CommunityPage() {
       .catch(() => setHotPosts([]));
   }, []);
 
+  // 发帖附图：**先上传到媒体库拿 id，再带 media_ids 发帖**。
+  //
+  // 黑盒测试发现这里原本硬编码 `media_ids: []`，整个弹窗没有任何上传入口 ——
+  // 而**后端与展示层完全支持图片**（POST /api/media 可用、帖子详情会渲染 <img>、
+  // 带 media_ids 的发帖 API 也正常）。所以纯前端缺一个上传控件，
+  // 图片帖只能靠直接调 API 造出来。
+  const [postMedia, setPostMedia] = useState([]); // [{ id, url, name }]
+  const [uploading, setUploading] = useState(false);
+
+  const uploadOne = async (file) => {
+    // 前端先读成 dataURL（与站内对话一致，后端 POST /api/media 接受 dataUrl）
+    const dataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result || ""));
+      fr.onerror = () => reject(new Error("读取文件失败"));
+      fr.readAsDataURL(file);
+    });
+    const r = await API.post("/media", { dataUrl, name: file.name, source: "community" });
+    return { id: r.id, url: r.url || "", name: file.name };
+  };
+
   const submitPost = async () => {
     if (posting) return;
     let v;
@@ -116,11 +137,12 @@ export default function CommunityPage() {
         title: v.title,
         content: v.content,
         topic_id: v.topic_id,
-        media_ids: [],
+        media_ids: postMedia.map((m) => m.id),
       });
       message.success("发布成功");
       setPostOpen(false);
       form.resetFields();
+      setPostMedia([]);
       navigate(`/community/${r.id}`);
     } catch (e) {
       message.error(e.message);
@@ -380,6 +402,44 @@ export default function CommunityPage() {
             tooltip="支持 Markdown：代码块、列表、链接。贴报错日志请用代码块包裹，便于他人复制。"
           >
             <Input.TextArea rows={10} placeholder={"支持 Markdown。例如：\n\n```bash\ncurl -X POST ...\n```"} maxLength={20000} showCount />
+          </Form.Item>
+          {/* 附图：上传到媒体库后带 media_ids 发帖（后端与详情页本来就支持，只是缺这个入口） */}
+          <Form.Item label="图片（可选，最多 9 张）">
+            <Upload
+              listType="picture-card"
+              accept="image/*"
+              multiple
+              fileList={postMedia.map((m) => ({ uid: String(m.id), name: m.name, status: "done", url: m.url }))}
+              customRequest={async ({ file, onSuccess, onError }) => {
+                if (postMedia.length >= 9) {
+                  message.warning("最多 9 张图片");
+                  onError?.(new Error("too many"));
+                  return;
+                }
+                setUploading(true);
+                try {
+                  const item = await uploadOne(file);
+                  setPostMedia((prev) => [...prev, item]);
+                  onSuccess?.(item);
+                } catch (e) {
+                  message.error(e.message || "图片上传失败");
+                  onError?.(e);
+                } finally {
+                  setUploading(false);
+                }
+              }}
+              onRemove={(f) => {
+                setPostMedia((prev) => prev.filter((m) => String(m.id) !== String(f.uid)));
+              }}
+              disabled={uploading}
+            >
+              {postMedia.length >= 9 ? null : (
+                <div style={{ fontSize: 12 }}>
+                  <PictureOutlined />
+                  <div style={{ marginTop: 4 }}>添加图片</div>
+                </div>
+              )}
+            </Upload>
           </Form.Item>
         </Form>
       </Modal>

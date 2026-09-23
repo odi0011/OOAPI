@@ -1161,14 +1161,25 @@ export default function AdminChannelsPage() {
 
   const applyMethod = (p, m, forceMode = null) => {
     if (!m) return;
+    // **保留用户已手填的内容**（渠道名称、备注），只重置与凭据/接入方式相关的字段。
+    //
+    // 这里踩过一个让管理员白填一遍的坑（黑盒测试实测）：
+    // 原先无条件 `resetFields()` + `setFieldsValue(init)`，把**整个表单**按厂商模板
+    // 重写 —— 用户填好渠道名称、切一下凭据 tab，名称就变回厂商名
+    //（实测导致渠道被建成「Cline」而不是用户填的名字），base_url 同理。
+    // 现在的口径：名字/备注属于「用户的意图」，跨 tab 保留；凭据相关字段属于
+    // 「上一条接入方式的状态」，必须清空（否则会把 A 的登录结果带给 B）。
+    const prevName = addForm.getFieldValue("name");
+    const prevRemark = addForm.getFieldValue("remark");
+    // 用户改过名字（不等于上一个厂商的默认名）才视为「有意图」
+    const userTouchedName = Boolean(prevName) && prevName !== pickProvider?.name;
     setPickMethod(m);
-    // 换厂商/换凭据方式时清掉上一轮残留，避免把 A 的登录结果带给 B
     setOauthUrl("");
     setOauthState("");
     const mode = forceMode || (m.loginModes && m.loginModes[0]) || "apikey";
     setAddMode(mode);
     const init = {
-      name: p.name,
+      name: userTouchedName ? prevName : p.name,
       base_url: m.baseUrl || "",
       api_key: "",
       // 模型范围留空 = 该厂商全部模型：不在新建时预填「推荐模型」，
@@ -1179,6 +1190,7 @@ export default function AdminChannelsPage() {
       weight: m.key === "api" ? 0 : 1,
       groups: [],
       auto_ban: true,
+      remark: prevRemark || "",
     };
     for (const f of m.loginFields || []) {
       if (f.default !== undefined) init[f.key] = f.default;
