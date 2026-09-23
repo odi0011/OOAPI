@@ -252,9 +252,19 @@ function RateLimitRow({ r }) {
   if (!until) return null;
   const left = until * 1000 - Date.now();
   // 已到点但后台还没跑到（30s 那一轮）：显示「恢复中」而不是负数倒计时
-  const text = left > 0 ? `预计 ${fmtClock(until)} 恢复（${fmtLeft(left)}）` : "已到恢复时间，正在恢复…";
+  //
+  // 文案必须**短**：额度列只有 240px，实测「上游 429 预计 16:34:52 恢复（7 分 45 秒）」
+  // 会被截成「…恢复（7 分 45 …」—— 而恢复时刻恰好是最该看清的那几个字。
+  // 所以这一行只放「上游 429 · HH:MM 恢复」，倒计时与完整原因放进悬浮提示
+  // （要看细节时鼠标一悬就有，平时不占宽度）。
+  const text = left > 0 ? `· ${fmtClock(until)} 恢复` : "· 正在恢复…";
+  const leftText = left > 0 ? `，还有 ${fmtLeft(left)}` : "";
   return (
-    <Tooltip title={`上游返回 429（请求过于频繁），渠道已暂停调用；${text}\n${r.last_error || ""}`}>
+    <Tooltip
+      title={`上游返回 429（请求过于频繁），渠道已暂停调用${leftText}\n恢复时刻：${
+        left > 0 ? fmtClock(until) : "已到，等待后台放回启用"
+      }\n${r.last_error || ""}`}
+    >
       <span
         style={{
           display: "inline-flex",
@@ -272,19 +282,22 @@ function RateLimitRow({ r }) {
           background: "var(--pill-amber-tint)",
         }}
       >
-        <ClockCircleOutlined style={{ fontSize: 11 }} />
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>上游 429 {text}</span>
+        <ClockCircleOutlined style={{ fontSize: 11, flexShrink: 0 }} />
+        {/* 不设 ellipsis：文案已按列宽裁剪过，真溢出说明列更窄 —— 那时截断会吃掉
+            「恢复」二字，还不如让它自然显示。数字与时刻绝不能被切成两行（用户要求）。 */}
+        <span>上游 429 {text}</span>
       </span>
     </Tooltip>
   );
 }
 
-/** 时刻（epoch 秒）→ HH:MM:SS，本地时区 */
+/** 时刻（epoch 秒）→ HH:MM（本地时区）。到秒级没有意义：这一行是「大概什么时候好」，
+ * 精确到分足够，还能省下 3 个字符的宽度（额度列很窄）。 */
 function fmtClock(epochSeconds) {
   const d = new Date(Number(epochSeconds) * 1000);
   if (!Number.isFinite(d.getTime())) return "";
   const p = (n) => String(n).padStart(2, "0");
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  return `${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 /** 剩余毫秒 → 「x 分 y 秒」/「x 小时 y 分」 */

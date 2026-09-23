@@ -199,9 +199,21 @@ t("前端有 RateLimitRow 组件且用橙黄色（amber 色板）", () => {
   ck(/--pill-amber-ink/.test(page), "没有用 amber 前景色");
   ck(/--pill-amber-tint/.test(page), "没有用 amber 背景色");
 });
-t("文案是「上游 429 + 预计恢复时间」", () => {
+t("文案是「上游 429 + 恢复时刻」（够短，不被列宽截断）", () => {
   ck(/上游 429 \{text\}/.test(page), "文案不是「上游 429 …」");
-  ck(/预计 \$\{fmtClock\(until\)\} 恢复/.test(page), "没有「预计 XX 恢复」");
+  const m = page.match(/const text = left > 0 \? `([^`]+)`/);
+  ck(m, "未找到 text 文案");
+  // 按**渲染后**的宽度估算，而不是源码字符数：`${fmtClock(until)}` 在源码里 17 字符、
+  // 渲染出来只有 5（HH:MM）。额度列 ~240px / 11px 字号，一行约放得下 26 个半角字符。
+  const rendered = m[1].replace(/\$\{[^}]+\}/g, "XXXXX"); // 插值按 5 字符估
+  ck(rendered.length <= 12, `渲染后文案过长（约 ${rendered.length} 字符）：${m[1]}`);
+  // 倒计时（分/秒）必须已挪进悬浮提示：它是长文案被截断的根源
+  ck(!/分|秒/.test(m[1]), `可见文案里还有倒计时：「${m[1]}」`);
+  ck(/leftText/.test(page), "倒计时没有挪进提示（leftText 缺失）");
+  // 时刻到分为止（带秒会多占 ~14px）
+  const fc = page.match(/function fmtClock\(epochSeconds\)[\s\S]*?\n\}/);
+  ck(fc, "未找到 fmtClock");
+  ck(!/:?\$\{p\(d\.getSeconds\(\)\)\}/.test(fc[0]), "fmtClock 仍带秒，列宽不够");
 });
 t("RateLimitRow 挂在额度列（余额那一行的下方）", () => {
   // 必须出现在 quota 列的 render 里：先 <QuotaInline/>，随后紧跟 rateLimitRow
