@@ -325,6 +325,41 @@ export async function getMedia(id) {
   return rows[0] || null;
 }
 
+/**
+ * 校验一批 media_id **都属于同一个用户**，返回合法的 id 列表。
+ *
+ * 为什么必须有这个函数（安全缺陷，授权渗透测试实测发现）：
+ *   `media_id` 是全局自增整数、可遍历。社区发帖与私聊发消息原先只把 id 写进
+ *   `media_ids` 并 `attachRef`，**从不校验归属** —— 于是任意登录用户可以把别人的
+ *   私有文件挂到自己的帖子/消息上，帖子详情会返回一个**服务端现签的可用 URL**，
+ *   匿名即可读到对方文件内容（聊天图片、附件）。
+ *   更糟的是引用行记在**引用者**名下，受害者自己反而删不掉自己的文件
+ *   （`DELETE /api/media/:id` 会因「仍被 N 处引用」返回 409）—— 等于把删除权也挟持了。
+ *
+ * 对照：站内对话（routes/chat.js）早就有这条校验（`图片不存在或无权使用`），
+ * 只有社区与私聊两处漏了 —— 同类接口实现不一致本身就是漏洞的温床。
+ */
+export async function filterOwnedMediaIds(ids, userId) {
+  const uid = Number(userId) || 0;
+  // 去重 + 只留正整数（-1 / Infinity / "abc" 这类脏值在这里就被挡掉，
+  // 顺带修掉「写入指向不存在媒体的 media_refs 垃圾行」的问题）
+  const uniq = [
+    ...new Set(
+      (Array.isArray(ids) ? ids : [])
+        .map((x) => Math.trunc(Number(x)))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    ),
+  ];
+  if (!uniq.length) return { ok: [], bad: [] };
+  if (!uid) return { ok: [], bad: uniq };
+  const [rows] = await pool.query(
+    `SELECT id, user_id FROM media WHERE id IN (${uniq.map(() => "?").join(",")})`,
+    uniq
+  );
+  const owned = new Set(rows.filter((r) => Number(r.user_id) === uid).map((r) => Number(r.id)));
+  return { ok: uniq.filter((id) => owned.has(id)), bad: uniq.filter((id) => !owned.has(id)) };
+}
+
 /** 读取文件内容（用于转发给上游；文件缺失返回 null 而不是抛错） */
 export async function readBlob(row) {
   if (!row) return null;

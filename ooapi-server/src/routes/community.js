@@ -22,7 +22,7 @@ import { ok, fail, asyncHandler, now, pageParams, idParam, safeJSONParse } from 
 import { authRequired, adminRequired } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
-import { mediaUrl, attachRef } from "../services/media.js";
+import { mediaUrl, attachRef, filterOwnedMediaIds } from "../services/media.js";
 import { notify, unreadCount, list as listNotifications, markRead, remove as removeNotification } from "../services/notify-center.js";
 
 const router = Router();
@@ -310,7 +310,11 @@ router.post(
     const title = String(req.body?.title || "").trim().slice(0, MAX_TITLE);
     const content = String(req.body?.content || "").trim().slice(0, MAX_CONTENT);
     const topicId = Number(req.body?.topic_id) || 0;
-    const mediaIds = Array.isArray(req.body?.media_ids) ? req.body.media_ids.slice(0, MAX_MEDIA).map(Number).filter(Boolean) : [];
+    // 附图必须**属于发帖人自己**（见 filterOwnedMediaIds 的注释：不校验会让
+    // 任意用户把别人的私有文件挂到自己帖子上，详情返回现签 URL，匿名可读）
+    const rawMediaIds = Array.isArray(req.body?.media_ids) ? req.body.media_ids.slice(0, MAX_MEDIA) : [];
+    const { ok: mediaIds, bad: badMedia } = await filterOwnedMediaIds(rawMediaIds, req.user.id);
+    if (badMedia.length) return fail(res, "图片不存在或无权使用", 403);
     if (!title) return fail(res, "请输入标题");
     if (!content && !mediaIds.length) return fail(res, "请输入正文或添加图片");
     if (!topicId) return fail(res, "请选择话题");
@@ -353,8 +357,11 @@ router.put(
     if (!title) return fail(res, "请输入标题");
     if (!content) return fail(res, "请输入正文");
     if (!topicId) return fail(res, "请选择话题");
+    // 编辑时同样要校验（否则可以「先发空帖、再把 media_ids 改成别人的图」绕过上面那关）
     const mediaIds = Array.isArray(req.body?.media_ids)
-      ? req.body.media_ids.slice(0, MAX_MEDIA).map(Number).filter(Boolean)
+      ? (
+          await filterOwnedMediaIds(req.body.media_ids.slice(0, MAX_MEDIA), req.user.id)
+        ).ok
       : safeJSONParse(row.media_ids, []) || [];
     await pool.query(
       "UPDATE community_posts SET title = ?, content = ?, topic_id = ?, media_ids = ?, updated_time = ? WHERE id = ?",

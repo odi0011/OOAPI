@@ -21,7 +21,7 @@ import { ok, fail, asyncHandler, now, pageParams, idParam, safeJSONParse } from 
 import { authRequired, adminRequired } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { sseHeaders, register, unregister, push, pushMany, onlineUserIds, startHeartbeat } from "../services/realtime.js";
-import { mediaUrl, attachRef } from "../services/media.js";
+import { mediaUrl, attachRef, filterOwnedMediaIds } from "../services/media.js";
 
 const router = Router();
 
@@ -590,7 +590,11 @@ router.post(
 
     const type = String(req.body?.type || "text") === "image" ? "image" : "text";
     const content = String(req.body?.content || "").trim().slice(0, MAX_TEXT);
-    const mediaIds = Array.isArray(req.body?.media_ids) ? req.body.media_ids.slice(0, MAX_MEDIA).map(Number).filter(Boolean) : [];
+    // 附图必须属于发送者自己（同 community：不校验就等于把别人的私有文件
+    // 变成「我发的消息里的图」，服务端会现签 URL 给所有房间成员读）
+    const rawMediaIds = Array.isArray(req.body?.media_ids) ? req.body.media_ids.slice(0, MAX_MEDIA) : [];
+    const { ok: mediaIds, bad: badMedia } = await filterOwnedMediaIds(rawMediaIds, req.user.id);
+    if (badMedia.length) return fail(res, "图片不存在或无权使用", 403);
     if (!content && !mediaIds.length) return fail(res, "消息不能为空");
     if (type === "image" && !mediaIds.length) return fail(res, "请先上传图片");
     // 客户端临时 id：原样存库并回显，前端据此把「本地乐观插入的消息」
