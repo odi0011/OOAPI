@@ -57,6 +57,22 @@ router.use(express.json({ limit: "50mb" }));
 //
 // 正确语义（与 selectChannels / explainNoChannel 同一套判定，三处必须一致）：
 //   能调的模型 = 该密钥所属分组下的启用渠道所支持的模型 ∩ 分组配置的 models 白名单
+// **能力后缀要声明出来**，否则会出现「列表里只有 X，实际 X-thinking 也能调」
+// 这种自相矛盾 —— 黑盒测试实测抱怨过：
+//   「放不进来就别放，放了就得在 /v1/models 里告诉我，
+//     不然我按 /v1/models 写代码，线上却有个隐藏模型能悄悄烧钱。」
+//
+// 后缀**不是独立模型**（同一模型上的开关，见 deepseek-models.js 的设计说明），
+// 所以不把 `X-thinking` / `X-search` 全展开成条目（那会让列表膨胀数倍）。
+// 也不构成「隐藏计费」风险：`canonicalModelName` 把带后缀的名字归一到基础模型，
+// **计价与白名单判定用的都是基础模型**，不存在第二个价格。
+// 声明一次即可 —— 调用方由此知道列表里每个 id 都能加该后缀。
+// 非标准扩展键：OpenAI 客户端会忽略未知字段，不影响兼容性。
+const CAPABILITY_SUFFIXES = [
+  { suffix: "-thinking", desc: "在基础模型上开启深度思考（与请求体 thinking 参数等价）" },
+  { suffix: "-search", desc: "在基础模型上开启联网搜索" },
+];
+
 router.get(
   "/models",
   asyncHandler(async (req, res) => {
@@ -81,7 +97,9 @@ router.get(
     // 于是**整份模型目录（104 个）**被返回给一个什么都调不了的密钥。
     // 用户按列表选模型 → 必然 503。这正是「列表说能调、调用说不能」的原病。
     if (!inGroup.length) {
-      return res.json({ object: "list", data: [] });
+      // 带上 capability_suffixes：即使这里一个模型都没有，响应形状也要和
+      // 正常路径**一致** —— 客户端只写一套解析逻辑，不该因为空列表就缺字段。
+      return res.json({ object: "list", data: [], capability_suffixes: CAPABILITY_SUFFIXES });
     }
 
     // ② 分组配置的模型白名单（分组管理里设的「只能走这俩模型」就是它）
@@ -143,25 +161,10 @@ router.get(
       }
     }
 
-    // **能力后缀要声明出来**，否则会出现「列表里只有 X，实际 X-thinking 也能调」
-    // 这种自相矛盾 —— 黑盒测试实测抱怨过：
-    //   「放不进来就别放，放了就得在 /v1/models 里告诉我，
-    //     不然我按 /v1/models 写代码，线上却有个隐藏模型能悄悄烧钱。」
-    //
-    // 后缀**不是独立模型**（同一模型上的开关，见 deepseek-models.js 的设计说明），
-    // 所以不把 `X-thinking` / `X-search` 全展开成条目（那会让列表膨胀数倍）。
-    // 它们也不构成「隐藏计费」风险：`canonicalModelName` 把带后缀的名字
-    // 归一到基础模型，**计价与白名单判定用的都是基础模型**，不存在另一个价格。
-    // 这里声明一次，调用方就能知道「列表里的每个 id 都可以加这个后缀」。
-    const sorted = out.sort((a, b) => String(a.id).localeCompare(String(b.id)));
     res.json({
       object: "list",
-      data: sorted,
-      // 非标准扩展字段：OpenAI 客户端会忽略未知键，不影响兼容性
-      capability_suffixes: [
-        { suffix: "-thinking", desc: "在基础模型上开启深度思考（与请求体 thinking 参数等价）" },
-        { suffix: "-search", desc: "在基础模型上开启联网搜索" },
-      ],
+      data: out.sort((a, b) => String(a.id).localeCompare(String(b.id))),
+      capability_suffixes: CAPABILITY_SUFFIXES,
     });
   })
 );

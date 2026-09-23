@@ -78,6 +78,15 @@ t("定价判定也认同规范名（否则别名模型会被误判成未定价�
   const pricing = read("src/services/pricing.js");
   ck(/canonicalModelName/.test(pricing), "isModelPriced 没有规范名兜底");
 });
+t("/v1/models 声明能力后缀（老张：「放了就得在列表里告诉我」）", () => {
+  ck(/CAPABILITY_SUFFIXES/.test(gatewayCode), "没有声明能力后缀");
+  ck(/-thinking/.test(gatewayCode) && /-search/.test(gatewayCode), "后缀没写全");
+  // 空分组路径也要带该字段：响应形状不能因为空列表就变
+  const iEmpty = gatewayCode.indexOf("if (!inGroup.length)");
+  ck(iEmpty > 0, "找不到空分组分支");
+  ck(/capability_suffixes: CAPABILITY_SUFFIXES/.test(gatewayCode.slice(iEmpty, iEmpty + 400)),
+    "空分组分支漏了 capability_suffixes（响应形状不一致）");
+});
 
 /* ============ ② 报错回显用户请求的原始模型名 ============ */
 console.log("\n=== ② 错误信息可归因（老张 D）===");
