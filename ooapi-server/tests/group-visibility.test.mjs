@@ -167,6 +167,26 @@ t("分组模型白名单的匹配规则三处一致（支持精确 + 前缀通�
   ck(/endsWith\("\*"\)/.test(gateway), "/v1/models 没有处理通配");
 });
 
+console.log("\n=== ④b 站内对话的 vision 判定（原先全被标成不支持）===");
+t("vision 不只看厂商模型表（那是人工猜的，已被证伪）", () => {
+  const chat = read("src/routes/chat.js");
+  // 实测证据：deepseek-v4.1-flash 在 workbuddy-models.js 里写 vision:false，
+  // 但通过 /v1/chat/completions 正确识出了品红色 —— 附件确实送到了模型。
+  // 原先两处都不信渠道、只信那张表，于是站内对话里 7 个模型的图片按钮全是灰的。
+  ck(/anyChannelCarriesImages/.test(chat), "没有按「服务该模型的渠道」判定能否带图");
+  ck(/Boolean\(pm\.vision\) \|\| anyChannelCarriesImages\(pm\.id\)/.test(chat), "公开库分支没有 OR 上渠道判定");
+  ck(/vision: channelCarriesImages\(r\)/.test(chat), "渠道声明分支仍写死 false");
+  // 反例锚点：确认代码里不再有硬编码的 vision: false（注释里提到是允许的）
+  const code = chat.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  ck(!/vision: false,/.test(code), "仍有硬编码的 vision: false");
+});
+t("明确只做纯文本的适配器仍标成不支持（trae / cursor）", () => {
+  const chat = read("src/routes/chat.js");
+  const m = chat.match(/const TEXT_ONLY_TYPES = new Set\(\[([^\]]*)\]\)/);
+  ck(m, "没有纯文本适配器名单");
+  ck(/trae/.test(m[1]) && /cursor/.test(m[1]), `名单里缺 trae/cursor：${m[1]}`);
+});
+
 console.log("\n=== ⑤ 图片上限（用户实测抱怨过）===");
 t("内联与外链分开限（不是一律 3 张）", () => {
   ck(/MAX_REMOTE_IMAGES/.test(gateway) && /MAX_INLINE_IMAGES/.test(gateway), "没有分开的两个上限");

@@ -97,19 +97,31 @@ export default function ModelPicker({
     setErrNote("");
     try {
       if (!channelId) {
-        const models = await API.post(
+        const resp = await API.post(
           "/channel/fetch-models",
           { base_url: baseUrl, api_key: apiKey, type: providerKey },
           { timeoutMs: 90_000 }
         );
-        const arr = Array.isArray(models) ? models : [];
+        // 后端返回 `{ models, source, clineGroups? }`；旧版是**裸数组**，两种都要认
+        //（这条分支曾经只认数组，于是新形状被当成空清单：添加渠道时明明拉到了 457 个
+        //  模型，界面却显示「上游未返回模型清单」+「未探测」，分组选择器也不出现 ——
+        //  管理员在这一步完全被误导。编辑渠道那条分支读的是对象，所以只有添加路径坏）。
+        const arr = Array.isArray(resp) ? resp : Array.isArray(resp?.models) ? resp.models : [];
         setOptions(arr.map((m) => ({ value: m, label: m })));
-        setSource(arr.length ? "upstream" : "none");
+        setSource((Array.isArray(resp) ? "" : resp?.source) || (arr.length ? "upstream" : "none"));
+        // 目录型渠道（Cline 那种 457 个 `vendor/model`）要带上分组，否则这里会
+        // 一次性全选，把旗舰档也放开（含 $600/M 的 o1-pro）
+        setGroups(Array.isArray(resp) ? null : resp?.clineGroups || null);
         if (arr.length) {
           setNote(`已从上游接口拉取到 ${arr.length} 个实时模型`);
           if (isManual) {
-            onChange?.(arr);
-            message.success(`已成功从上游获取并自动填入 ${arr.length} 个模型`);
+            // 目录型渠道不自动全选：交给下面的分组按钮挑（与编辑路径同一口径）
+            if (!Array.isArray(resp) && resp?.clineGroups) {
+              message.info(`上游返回 ${arr.length} 个模型，已按档位/厂商分组，请用下方分组按钮挑选`);
+            } else {
+              onChange?.(arr);
+              message.success(`已成功从上游获取并自动填入 ${arr.length} 个模型`);
+            }
           }
         } else {
           setNote("上游未返回模型清单，可留空（= 该厂商全部模型）或手工输入");

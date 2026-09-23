@@ -214,6 +214,40 @@ async function availableModels(user, keyId = 0) {
   const [channelRows] = await pool.query("SELECT * FROM channels WHERE status = 1");
   const channelsInGrp = channelRows.filter((r) => channelInGroup(rowToChannel(r), groupName));
 
+  /**
+   * 该分组里是否有渠道能带图服务这个模型 —— 决定前端「能不能贴图」。
+   *
+   * 为什么不能只信厂商模型表里的 `vision` 字段：那是**人工猜的**，而且已被证伪 ——
+   * `deepseek-v4.1-flash` 在 workbuddy-models.js 里写着 vision:false，
+   * 但实测通过 /v1/chat/completions 正确识出了品红色（附件确实送到了模型）。
+   * 原因是 vision 本质上是「**上游 + 模型**」的属性，而同一模型可能被多个渠道
+   * 服务（该模型同时挂在 workbuddy 与 OpenCode 上），我们无从逐个确知。
+   *
+   * 判定规则（乐观优先）：
+   *   · 委托给 openai-compat / anthropic-compat 的适配器 —— 它们会把 images
+   *     一路带到上游（workbuddy / opencode / cline 等都是 `{...args}` 转发），**带图**；
+   *   · 明确只做纯文本的适配器（trae / cursor，协议里没有图片字段）—— **不带图**；
+   *   · 其余（浏览器驱动的网页反代等）—— 按**带图**处理。
+   * 乐观的理由是两个方向的错代价不对等：错成 true 会让用户得到一个明确的上游报错
+   * （换模型即可）；错成 false 会让用户**根本看不到这个能力**（实测就是如此 ——
+   * 7 个模型全被标成不支持，图片按钮全程灰着）。
+   */
+  const TEXT_ONLY_TYPES = new Set(["trae", "cursor"]);
+  const channelCarriesImages = (r) => !TEXT_ONLY_TYPES.has(String(r.type || ""));
+  const anyChannelCarriesImages = (modelId) => {
+    const m = String(modelId || "").toLowerCase();
+    return channelsInGrp.some((r) => {
+      if (!channelCarriesImages(r)) return false;
+      const declared = String(r.models || "")
+        .split(/[,，\n]/)
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      // 声明了 "*" 或留空 = 该厂商全部模型（与 channelSupportsModel 同口径）
+      if (!declared.length || declared.includes("*")) return true;
+      return declared.includes(m);
+    });
+  };
+
   // 若当前分组没有可用渠道，严格返回空模型，绝不回退到全量默认模型
   if (!channelsInGrp.length) return [];
 
@@ -252,7 +286,9 @@ async function availableModels(user, keyId = 0) {
           id: pm.id,
           label: pm.label || pm.id,
           desc: pm.desc || "",
-          vision: Boolean(pm.vision),
+          // 公开库里明确标了 true 就用它；否则看**服务这个模型的渠道**能不能带图。
+          // 不能只信模型表里的 vision —— 那是人工猜的（已被证伪，见上方注释）。
+          vision: Boolean(pm.vision) || anyChannelCarriesImages(pm.id),
           thinkingDefault: pm.thinkingDefault,
           supportsSearch: pm.supportsSearch,
           supportsThinking: pm.supportsThinking,
@@ -292,7 +328,24 @@ async function availableModels(user, keyId = 0) {
         id: rawM,
         label: rawM,
         desc: "",
-        vision: false,
+        // 渠道声明的模型（不在公开模型库里）：**默认允许附图**，而不是硬编码 false。
+        //
+        // 这里原先写死 `false`，后果是「站内对话的图片按钮对所有可用模型都是灰的」
+        // （黑盒复验实测：7 个模型全部 vision=false，按钮显示「当前模型不支持图片」，
+        // 于是用户根本没法在站内贴图 —— 而我们刚把图片上限从 3 张放宽到 30 张，
+        // 这条路径却被前端闸门挡死）。
+        //
+        // 为什么默认 true 而不是 false —— 两个方向的错代价不对等：
+        //   · 错成 true：用户贴图 → 上游若不支持，会返回一个**明确的错误**
+        //     （适配器的 VISION_NOT_SUPPORTED 或上游 400），用户知道发生了什么，
+        //     换模型即可；
+        //   · 错成 false：用户**根本看不到这个能力**，以为平台不支持贴图，
+        //     而这个模型可能明明能用图（实测 `deepseek-v4.1-flash` 通过
+        //     /v1/chat/completions 正确识出了品红色，而厂商模型表里写的是 false）。
+        // 厂商模型表（各 *-models.js）里的 vision 是**人工猜的**，已被证伪至少一处；
+        // 所以这里不再把它当权威，改为看**当前这个渠道**能不能带图
+        //（纯文本适配器如 trae / cursor 的模型正确地标成不支持）。
+        vision: channelCarriesImages(r),
         thinkingDefault: false,
         supportsSearch: true,
         supportsThinking: true,
