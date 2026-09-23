@@ -357,13 +357,14 @@ export function QuotaTip({ quota }) {
  * 这里用「固定展示前 N 个 + 其余 +M」的近似（N 由列宽与行高决定），
  * 悬浮给全量 —— 与 sub2api 的做法一致，够用且稳。
  */
-const INLINE_MAX_PILLS = 3;
-
-// 额度条的递进选取规则抽到 quota-order.js —— 那是「全局统一规范」的落点
+// 额度/chip 的选取规则全在 quota-order.js —— 那是「全局统一规范」的落点
 // （用户要求后续所有厂商的额度展示都复用同一规则）。这里只做 re-export，
 // 让老的 import { pickVisibleWindows } from "./ChannelQuota" 仍然可用。
-export { pickVisibleWindows, windowSecondsOf, isWindowSpent, DEFAULT_MAX_BARS } from "./quota-order.js";
-import { pickVisibleWindows, DEFAULT_MAX_BARS as MAX_BARS } from "./quota-order.js";
+export {
+  pickVisibleWindows, pickVisibleChips, windowSecondsOf, isWindowSpent,
+  parseWindowSeconds, scopeOfWindow, MAX_INLINE_BARS, MAX_INLINE_CHIPS,
+} from "./quota-order.js";
+import { pickVisibleWindows, pickVisibleChips } from "./quota-order.js";
 
 export function QuotaInline({ quota, stats }) {
   if (!quota && !stats) return null;
@@ -394,22 +395,17 @@ export function QuotaInline({ quota, stats }) {
   if (hasBalance) chips.unshift({ key: "bal", node: <>余额 {c.balance}{c.unit ? ` ${c.unit}` : ""}</> });
   if (hasPrepaid) chips.push({ key: "pre", node: <>预付费 ${Number(c.prepaidBalance).toFixed(2)}</> });
 
-  // 余额/积分 chip 单独摘出来（chips 里 key==="bal" 那条）常驻展示。
+  // 余额/积分 chip 单独摘出来（chips 里 key==="bal" 那条）恒放行首。
   // 用户明确要求：「workbuddy 或者 gpt 的 free 带积分的这种，如果被折叠了，
   // 则余额显示为第一个 tag」—— 它回答的是「这个号还能不能用」，是最该常驻的一条。
-  // 线上实测（#13/#14 free 账号余额 1000、#42 的 119 积分）原先全被 `+N` 吞掉：
-  // 用户只看到一个 `+N`，完全不知道还有多少额度。
+  // 线上实测（#13/#14 free 账号余额 1000、#42 的 119 积分）原先全被 `+N` 吞掉。
   const balanceChip = chips.find((x) => x.key === "bal") || null;
   const otherChips = chips.filter((x) => x.key !== "bal");
 
-  const shownChips = otherChips.slice(0, INLINE_MAX_PILLS);
-  const restChips = otherChips.slice(INLINE_MAX_PILLS);
-  // 主行放额度条时，其余 chips 只能靠折叠行展示；无额度条时主行承载前几个
-  const hiddenChips = wins.length ? otherChips : restChips;
-  const { shown: shownWinsPre, collapsed: collapsedPre } = pickVisibleWindows(wins);
-  // `+N` 只统计被折叠的窗口与被折叠的其它 chips；余额已常驻，不能再计入
-  // （否则计数与实际隐藏项对不上，用户点开发现少一个）
-  const hiddenCount = hiddenChips.length + collapsedPre.length;
+  // 额度条：按全局规范选取（装得下不折叠；折叠时按窗口长度各留一条）
+  const { shown: shownWins, collapsed: collapsedWins } = pickVisibleWindows(wins);
+  // chip 容量扣掉已被额度条占去的位置（额度条比 chip 宽，不能各算各的）
+  const { shown: shownChips, overflow: chipsOverflow } = pickVisibleChips(otherChips, 3, shownWins.length);
 
   // 分组集合：scope 缺失时从 label 回推（老快照），两处口径必须一致，
   // 否则会出现「判出多分组但取不到 scope」→ 前缀渲染成空。
@@ -422,8 +418,14 @@ export function QuotaInline({ quota, stats }) {
 
   if (!chips.length && !wins.length && !hasStats) return null;
 
-  const shownWins = shownWinsPre;
-  const collapsedWins = collapsedPre;
+  // 悬浮显示被折叠的额度条
+  const collapsedTip = (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 220 }}>
+      {collapsedWins.map((w, i) => (
+        <WindowRow key={w.key || i} w={w} index={i + shownWins.length} showScope={multiScope} />
+      ))}
+    </div>
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 150 }}>
@@ -445,19 +447,30 @@ export function QuotaInline({ quota, stats }) {
         </div>
       ) : null}
 
-      {/* ② 主行：递进选出的额度条（最多 INLINE_MAX_BARS 条）。
-          没有任何窗口（纯积分渠道）时，这一行直接承载信息 chips ——
-          保证「上面统计、中间额度、下面折叠」三段结构不出现空行。 */}
+      {/* ② 额度行：最多两条（规范：折叠时按窗口长度各留一条 → 一条 5h + 一条 7d），
+             `+N` **紧跟在第二条后面**（用户要求：「在第二个额度条的后面加一个 tag
+             显示 +n，鼠标悬浮显示折叠掉的额度条即可」）。
+             装得下就不折叠 —— 折叠是宽度不够时的妥协，不是默认行为。 */}
       {shownWins.length ? (
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", overflow: "hidden" }}>
           {shownWins.map((w, i) => (
             <WindowRow key={w.key || i} w={w} index={i} showScope={multiScope} compact />
           ))}
+          {collapsedWins.length ? (
+            <Tooltip title={collapsedTip}>
+              <span className="bui-chip" style={{ fontSize: 11, flexShrink: 0 }}>
+                +{collapsedWins.length}
+              </span>
+            </Tooltip>
+          ) : null}
         </div>
-      ) : chips.length ? (
+      ) : null}
+
+      {/* ③ 信息行：余额/积分（恒第一位）+ 套餐/积分包等 chip。
+             用户反馈：「比如那个 gpt 的积分 free，人家就俩 tag，一个余额一个套餐 tag，
+             你给折叠干啥啊？」—— 装得下就全显示，只有真的超出容量才收进 `+N`。 */}
+      {balanceChip || shownChips.length || chipsOverflow > 0 ? (
         <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", minWidth: 0 }}>
-          {/* 无额度条时（纯积分渠道）主行就是 chip 行 —— 余额必须是**第一个** tag
-              （用户原话：「如果被折叠了，则余额显示为第一个 tag」）。 */}
           {balanceChip ? (
             <span style={{ minWidth: 0, flexShrink: 1, display: "inline-flex" }}>
               <InfoPill tone={balanceChip.tone}>{balanceChip.node}</InfoPill>
@@ -468,42 +481,18 @@ export function QuotaInline({ quota, stats }) {
               <InfoPill tone={x.tone}>{x.node}</InfoPill>
             </span>
           ))}
-        </div>
-      ) : null}
-
-      {/* ③ 折叠行：只有一个 `+N`，悬浮列出全部被折叠项 ——
-          用户要求「下面是折叠的额度条，超出宽度的就 +xx，鼠标悬浮显示全部的即可」。
-
-          两个必须踩对的点（都在预览截图里发现过）：
-          ① `+N` 要**同时统计折叠的窗口与放不下的 chips**。原来只算窗口，
-             于是「没有窗口但有 6 个积分包」的 WorkBuddy 只显示前 3 个、
-             既没有 +N 也无处展开，剩下 3 个静默消失。
-          ② 折叠行**只放 `+N`**，不要再把被折叠的 chips 平铺一遍 ——
-             试过那样，结果是 6 个 chip 全显示 + 一个多余且自相矛盾的 `+3`。 */}
-      {hiddenCount > 0 || balanceChip ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", minWidth: 0 }}>
-          {/* 余额/积分常驻在第一位（用户要求：折叠时余额必须是第一个 tag）。
-              它不参与折叠计数，所以即使其余全部收进 `+N` 也始终可见。 */}
-          {balanceChip ? (
-            <span style={{ minWidth: 0, flexShrink: 1, display: "inline-flex" }}>
-              <InfoPill tone={balanceChip.tone}>{balanceChip.node}</InfoPill>
-            </span>
-          ) : null}
-          {hiddenCount > 0 ? (
+          {chipsOverflow > 0 ? (
             <Tooltip
               title={
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 220 }}>
-                  {hiddenChips.map((x) => (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 180 }}>
+                  {otherChips.slice(otherChips.length - chipsOverflow).map((x) => (
                     <div key={x.key}>{x.node}</div>
-                  ))}
-                  {collapsedWins.map((w, i) => (
-                    <WindowRow key={w.key || i} w={w} index={i + shownWins.length} showScope={multiScope} />
                   ))}
                 </div>
               }
             >
               <span className="bui-chip" style={{ fontSize: 11, flexShrink: 0 }}>
-                +{hiddenCount}
+                +{chipsOverflow}
               </span>
             </Tooltip>
           ) : null}

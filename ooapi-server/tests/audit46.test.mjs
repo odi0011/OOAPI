@@ -246,11 +246,15 @@ console.log("\n=== ⑨ 额度条折叠规范 ===");
   const qo = await import("../../ooapi-web/src/components/quota-order.js");
   const W = (secs, pct, tag) => ({ windowSeconds: secs, usedPercent: pct, tag });
 
-  // 典型：4 个窗口（Gemini 的两组 5h/7d）→ 只显示 2 条，短的优先
+  // 典型：4 个窗口（Gemini 的两组 5h/7d）→ 主行 2 条、折叠 2 条
   const gem = [W(604800, 10, "7d"), W(18000, 20, "5h"), W(604800, 15, "7d"), W(18000, 5, "5h")];
   const r1 = qo.pickVisibleWindows(gem);
   ck("条数超过上限时折叠", r1.collapsed.length === 2, JSON.stringify(r1.collapsed.length));
-  ck("主行全是短窗口（5h 优先于 7d）", r1.shown.every((w) => w.windowSeconds === 18000), JSON.stringify(r1.shown.map((w) => w.tag)));
+  // 规范 ②：按窗口长度各留一条 → 一条 5h + 一条 7d（**不是**两条 5h）。
+  // 旧断言「主行全是短窗口」是上一版口径，与最终规范矛盾，已按新口径替换。
+  ck("主行是一条 5h + 一条 7d", r1.shown.some((w) => w.windowSeconds === 18000) && r1.shown.some((w) => w.windowSeconds === 604800),
+    JSON.stringify(r1.shown.map((w) => w.tag)));
+  ck("短窗口排在前（5h 在 7d 之前）", r1.shown[0].windowSeconds === 18000, JSON.stringify(r1.shown.map((w) => w.tag)));
   ck("不丢数据（shown + collapsed = 全部）", r1.shown.length + r1.collapsed.length === gem.length);
 
   // 递进：5h 用满 → 让位给 7d
@@ -298,30 +302,40 @@ console.log("\n=== ⑨ 额度条折叠规范 ===");
   ];
   const r6 = qo.pickVisibleWindows(tagOnly4);
   ck("只有 tag 时 4 个窗口折叠成 2 条", r6.shown.length === 2 && r6.collapsed.length === 2);
-  ck("只有 tag 时主行都是 5h", r6.shown.every((w) => w.tag === "5h"), JSON.stringify(r6.shown.map((w) => w.tag)));
+  // 注：「主行是两个 5h」这条旧断言已被新规范取代（见下方「一条 5h + 一条 7d」），
+  // 故意不留着它 —— 旧断言会与最终口径互相矛盾，那比少一条断言更糟。
+
+  // 规范 ②：折叠时按**窗口长度**各留一条 —— 一条 5h + 一条 7d。
+  //（前一版按「取前 N 条」会拿到两个 5h，weekly 的用量完全看不到 —— 用户实测指出）
+  ck("4 窗口的主行是一条 5h + 一条 7d（不是两个 5h）",
+    r6.shown.some((w) => w.tag === "5h") && r6.shown.some((w) => w.tag === "7d"),
+    JSON.stringify(r6.shown.map((w) => w.tag)));
 
   // 余额/积分必须是第一个 tag（用户要求：折叠时余额显示为第一个）
   const cq = SRC("../../ooapi-web/src/components/ChannelQuota.jsx");
+  const qoSrc = SRC("../../ooapi-web/src/components/quota-order.js");
+
+  // 规范 ①（用户第三轮口径）：装得下就不折叠。
+  //   「下面那里不用只显示一个就折叠啊，是看宽度啊，比如那个 gpt 的积分 free，
+  //     人家就俩 tag，一个余额一个套餐 tag，你给折叠干啥啊？」
+  ck("额度条容量是 2（一条 5h + 一条 7d），不是 1",
+    /export const MAX_INLINE_BARS = 2;/.test(qoSrc));
+  ck("chip 有自己的容量（pickVisibleChips）", /export function pickVisibleChips/.test(qoSrc));
+  ck("两个 chip 不超容量时全部显示（free 的余额+套餐不折叠）",
+    qo.pickVisibleChips([{ key: "bal" }, { key: "plan" }], 3, 1).collapsed.length === 0);
+  ck("额度条与 chips 共用同一行的位置预算", /pickVisibleChips\(otherChips, 3, shownWins\.length\)/.test(cq));
+
+  // 余额/积分必须**常驻可见**，不能被 `+N` 吞掉（线上 #13/#14/#42 全被吞过）
   ck("余额 chips 用 unshift 排到最前", /if \(hasBalance\) chips\.unshift\(/.test(cq));
-
-  // `+N` 必须同时统计「放不下的 chips」与「折叠的窗口」。
-  // 原来只算窗口：纯积分渠道（WorkBuddy 6 个积分包、无窗口）会只显示前 3 个、
-  // 既没有 +N 也无处展开，剩下 3 个静默消失（预览截图里发现）。
-  ck("hiddenCount 同时计入 chips 与窗口", /const hiddenCount = hiddenChips\.length \+ collapsedPre\.length;/.test(cq));
-  ck("折叠行只渲染一个 +N（不再平铺被折叠的 chips）",
-    /\{hiddenCount > 0 \? \(/.test(cq) && !/shownWins\.length \? chips : restChips/.test(cq));
-  ck("悬浮提示同时列出 chips 与窗口", /hiddenChips\.map/.test(cq) && /collapsedWins\.map/.test(cq));
-
-  // 余额/积分必须**常驻可见**，不能被 `+N` 吞掉。
-  // 线上实测（导出生产库真实 quota 后渲染）：#13/#14 的 free 账号余额 1000、
-  // #42 的 119 积分，原先都只显示一个 `+N` —— 用户完全看不到还剩多少额度。
   ck("余额 chip 被单独摘出（balanceChip）", /const balanceChip = chips\.find/.test(cq));
-  ck("其余 chips 排除余额后再折叠",
-    /const otherChips = chips\.filter\(\(x\) => x\.key !== "bal"\)/.test(cq));
-  ck("折叠计数不含余额（+N 与实际隐藏项对齐）",
-    /const hiddenChips = wins\.length \? otherChips : restChips;/.test(cq));
-  ck("有额度条时余额也在折叠行第一位", /\{hiddenCount > 0 \|\| balanceChip \? \(/.test(cq));
-  ck("无额度条时余额是主行第一个 tag", /\{balanceChip \? \(/.test(cq));
+  ck("其余 chips 排除余额", /const otherChips = chips\.filter\(\(x\) => x\.key !== "bal"\)/.test(cq));
+  ck("余额恒在信息行第一位", /\{balanceChip \? \(/.test(cq) && /balanceChip\.node/.test(cq));
+
+  // 规范 ③：`+N` 紧跟在最后一条额度条后面（同一位置流），不另起一行。
+  //   「在第二个额度条的后面加一个 tag 显示 +n，鼠标悬浮显示折叠掉的额度条即可」
+  ck("`+N` 与额度条在同一行（跟在第二条后面）",
+    /\{shownWins\.map\(\(w, i\) => \([\s\S]{0,260}?\{collapsedWins\.length \? \(/.test(cq));
+  ck("悬浮 `+N` 列出被折叠的额度条", /const collapsedTip = \([\s\S]{0,220}collapsedWins\.map/.test(cq));
 
   // 线上真实数据的回归：Google 那 4 个窗口只有 label、没有 tag/scope/windowSeconds，
   // 必须能从 label 解析出 5h/weekly 并正确递进（否则 4 条挤在一起看不出主次）
@@ -336,10 +350,16 @@ console.log("\n=== ⑨ 额度条折叠规范 ===");
   ck("线上 Gemini 的 5h 标签解析为 18000 秒",
     qo.parseWindowSeconds(gemini[1]) === 18000, String(qo.parseWindowSeconds(gemini[1])));
   const gp = qo.pickVisibleWindows(gemini);
-  ck("线上 4 窗口折叠为 2 条主行", gp.shown.length === 2 && gp.collapsed.length === 2,
+  ck("线上 Gemini 4 窗口 → 主行 2 条 + 折叠 2 条",
+    gp.shown.length === 2 && gp.collapsed.length === 2,
     JSON.stringify([gp.shown.length, gp.collapsed.length]));
-  ck("主行是两个 5h（短窗口优先）", gp.shown.every((w) => /5h/.test(w.label)),
+  ck("主行是一条 5h + 一条 weekly（两种时间尺度都可见）",
+    gp.shown.some((w) => /5h/.test(w.label)) && gp.shown.some((w) => /weekly/.test(w.label)),
     JSON.stringify(gp.shown.map((w) => w.label)));
+  ck("主行取的是主分组（Gemini 而非 Claude）",
+    gp.shown.every((w) => /^Gemini/.test(w.label)),
+    JSON.stringify(gp.shown.map((w) => w.label)));
+  ck("overflow 计数等于被折叠条数", gp.overflow === gp.collapsed.length, String(gp.overflow));
 }
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
