@@ -650,10 +650,26 @@ function TokenTrend({ byDay = [], series = [], range, onRangeChange }) {
  * 刻意不做分类。厂商就是厂商，接入方式是它内部的属性，
  * 拆成「反代渠道 / API 渠道」两栏只会让同一个厂商出现两次。
  */
-/** 支持「一键绑定」（设备授权）的接入方式 —— 与后端 device-bind.js 的清单一致 */
-const DEVICE_BIND_METHODS = ["kiro", "workbuddy", "qoder"];
-function supportsDeviceBindMethod(methodKey) {
-  return DEVICE_BIND_METHODS.includes(String(methodKey || ""));
+/**
+ * 「一键绑定」（设备授权）的支持判定。
+ *
+ * ⚠️ 这里**不再硬编码名单** —— 名单的唯一权威是后端 device-bind.js 的 VENDORS，
+ * 通过 /channel/devices/vendors 下发给 `deviceBindVendors`。
+ *
+ * 硬编码曾经造成两个真实缺陷（黑盒测试发现）：
+ *   ① 名单里还留着 `qoder`，但它早已从后端移除（设备流服务端走不通）——
+ *      渠道列表因此给 Qoder 显示「· 支持一键绑定」的假徽标；
+ *   ② 名单里没有 `cline`，而后端有 —— 可 Cline 的**方法键是 `cli`** 而不是 `cline`，
+ *      所以它的一键绑定按钮永远不渲染，而它的凭据指引却写着「点下面的『一键绑定』最省事」，
+ *      用户按指引找不到那个按钮。
+ * 现在统一走后端下发的清单（方法键口径），不再各写一份。
+ */
+function supportsDeviceBindMethod(methodKey, vendors = []) {
+  const key = String(methodKey || "");
+  if (!key) return false;
+  // 后端清单用的是**方法键**（kiro / workbuddy / cli），这里按方法键匹配；
+  // 为兼容旧后端（曾按厂商键 cline 下发），两种写法都认。
+  return vendors.includes(key) || vendors.includes(`${key}-oauth`);
 }
 
 /**
@@ -960,7 +976,10 @@ export default function AdminChannelsPage() {
   // 必须真的拉：之前声明了 state 却忘了拉，导致一键绑定 UI 恒不显示（截图才发现）。
   useEffect(() => {
     API.get("/channel/devices/vendors")
-      .then((d) => setDeviceBindVendors(Array.isArray(d?.vendors) ? d.vendors : []))
+      // **优先用 methods（方法键）** —— 前端的 pickMethod.key 就是方法键。
+      // 旧后端只给 vendors（厂商键），那种情况下回退用它（那时 Cline 的 cline≠cli
+      // 问题本来就存在，但至少 Kiro/WorkBuddy 能用）。
+      .then((d) => setDeviceBindVendors(Array.isArray(d?.methods) ? d.methods : Array.isArray(d?.vendors) ? d.vendors : []))
       .catch(() => setDeviceBindVendors([]));
   }, []);
 
@@ -1051,7 +1070,7 @@ export default function AdminChannelsPage() {
                   ? `${methodShortName(m)}（账号密码）`
                   : "账号密码"
                 : "本机浏览器登录",
-            hint: supportsDeviceBindMethod(m.key) ? "支持一键绑定" : "",
+            hint: deviceBindVendors.includes(m.key) ? "支持一键绑定" : "",
           });
         }
       }
@@ -1065,7 +1084,9 @@ export default function AdminChannelsPage() {
   //
   // 注意必须看 method.key 而不是 provider.key：Kiro 挂在 anthropic 厂商下，
   // provider.key 是 "anthropic"，只有 method.key 才是 "kiro"。
-  // 后端 /channel/devices/vendors 返回的正是 method key（kiro/workbuddy/qoder）。
+  // 后端 /channel/devices/vendors 返回的 methods 是**方法键**（kiro/workbuddy/cli）。
+  // 注意 Cline 的方法键是 `cli` 而不是厂商名 `cline` —— 这正是它的一键绑定按钮
+  // 长期不渲染的原因（前端拿 cli 去比对厂商键清单，永远不匹配）。
   //
   // 放在 isApi 之后声明：它依赖 pickMethod，而这段代码在渲染期立即求值 ——
   // 放在前面会踩 const 暂时性死区（本项目因此白屏过，见 AI协作.md 2.7 第 ④ 条）。

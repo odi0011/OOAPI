@@ -59,9 +59,29 @@ console.log("=== ① 请求解析 ===");
   // Anthropic content 支持数组块
   const c = PROTOCOLS.messages.parse({ model: "m", messages: [{ role: "user", content: [{ type: "text", text: "块文本" }] }] });
   ck("messages：content 数组块被压成文本", c.messages[0].content === "块文本", JSON.stringify(c.messages));
-  ck("messages：图片块变成占位而不是 base64",
-    PROTOCOLS.messages.parse({ model: "m", messages: [{ role: "user", content: [{ type: "image" }, { type: "text", text: "T" }] }] })
-      .messages[0].content.includes("[图片]"));
+  // 图片：**必须作为独立分片保留**。
+  // 这条断言原先写的是「变成 [图片] 占位」—— 那是把缺陷当契约锁住了：
+  // 拍平之后图片数据丢失（Anthropic SDK 传图静默失效），而且网关的图片数量防护
+  // 是按 image_url 计数的，拍平后一张都数不到、防护被绕过。
+  // 现在改为：数据走 image_url 分片，文本里不再重复占位。
+  const cImg = PROTOCOLS.messages.parse({
+    model: "m",
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } },
+          { type: "text", text: "T" },
+        ],
+      },
+    ],
+  });
+  const parts = Array.isArray(cImg.messages[0].content) ? cImg.messages[0].content : [];
+  ck("messages：图片块保留为 image_url 分片（不再被拍平丢弃）",
+    parts.filter((x) => x.type === "image_url").length === 1, JSON.stringify(cImg.messages));
+  ck("messages：文本片里不再重复写 [图片] 占位",
+    parts.some((x) => x.type === "text" && x.text === "T") && !JSON.stringify(cImg.messages).includes("[图片]"),
+    JSON.stringify(cImg.messages));
 
   // Responses：input 可为字符串或数组
   ck("responses：input 字符串 → 一条 user",

@@ -204,6 +204,25 @@ await t("Qoder 有 PAT 的替代路径（登录入口 + 分步指引）", async 
   assert.match(m.localLogin.note || "", /一键绑定/, "要说明为什么没有一键绑定");
 });
 
+await t("方法键清单与 VENDORS 一一对应（防止按钮改名后静默失效）", async () => {
+  // 黑盒测试发现的真实缺陷：device-bind 的 VENDORS 用**厂商键**（cline），
+  // 而前端拿的是**方法键**（cli）—— 两套命名不一致，导致 Cline 的
+  // 「一键绑定」按钮永远不渲染，而同一个面板的指引还写着「点下面的『一键绑定』」。
+  const { deviceBindMethodKeys, vendorOfMethod } = await import("../src/services/device-bind.js");
+  const methods = deviceBindMethodKeys();
+  const vendors = deviceBindVendors();
+  assert.equal(methods.length, vendors.length, `方法键 ${methods.length} 个 vs 厂商键 ${vendors.length} 个，映射表与 VENDORS 不同步`);
+  for (const v of vendors) {
+    assert.ok(vendorOfMethod(v), `厂商键 ${v} 没有对应的映射（vendorOfMethod 回不去）`);
+  }
+  // Cline 的方法键必须是 cli（channel-types 里就是这么声明的）
+  assert.ok(methods.includes("cli"), `方法键清单里没有 cli：${methods.join(",")}`);
+  assert.equal(vendorOfMethod("cli"), "cline", "cli 应映射回厂商键 cline");
+  // 旧前端传厂商键也要能工作
+  assert.equal(vendorOfMethod("cline"), "cline", "厂商键应原样通过");
+  assert.equal(vendorOfMethod("nope"), "", "未知键应返回空串（而不是硬套一个）");
+});
+
 await t("不支持一键绑定的渠道：发起时报错而不是静默失败", async () => {
   await assert.rejects(() => startDeviceBind("deepseek", {}), /不支持一键绑定/);
   await assert.rejects(() => startDeviceBind("", {}), /不支持一键绑定/);

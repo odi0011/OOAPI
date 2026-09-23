@@ -561,6 +561,42 @@ export function deviceBindVendors() {
 }
 
 /**
+ * 前端「一键绑定」按钮的**唯一权威清单**：接入方式的方法键（method key）。
+ *
+ * 为什么需要单独一个函数，而不直接用 deviceBindVendors()：
+ * 两边的键**不是同一套命名**（黑盒测试发现的真实缺陷）：
+ *   · 这里是**厂商键**：`cline`（因为 device-bind 内部按厂商组织流程）
+ *   · 前端拿到的是**方法键**：Cline 的接入方式叫 `cli`（见 channel-types 的
+ *     `cline.methods[0].key === "cli"`），所以 `vendors.includes("cli")` 永远为假
+ *     → **一键绑定按钮从不渲染**，而同一个面板里的凭据指引却写着
+ *     「点下面的『一键绑定』最省事」——用户按指引找不到按钮。
+ * 所以这里做一次显式映射，把厂商键翻译成方法键下发；前端只按方法键匹配。
+ *
+ * 新增可绑定厂商时**两处都要改**（VENDORS + 这张映射表），
+ * tests/device-bind.test.mjs 有一条断言专门守着「映射表与 VENDORS 一一对应」。
+ */
+const VENDOR_TO_METHOD = {
+  kiro: "kiro",
+  workbuddy: "workbuddy",
+  cline: "cli",
+};
+
+/** 下发给前端的「支持一键绑定」方法键清单 */
+export function deviceBindMethodKeys() {
+  return Object.values(VENDOR_TO_METHOD);
+}
+
+/** 方法键 → 厂商键（/devices/start 收到方法键时用它换算） */
+export function vendorOfMethod(methodKey) {
+  const k = String(methodKey || "").trim();
+  for (const [vendor, method] of Object.entries(VENDOR_TO_METHOD)) {
+    if (method === k) return vendor;
+  }
+  // 也接受直接传厂商键（旧前端就是这么传的）
+  return VENDORS[k] ? k : "";
+}
+
+/**
  * 发起绑定：返回给前端展示的信息。
  * @returns {{sessionId, vendor, userCode, verifyUrl, intervalMs, expiresIn, realm?}}
  */

@@ -40,6 +40,8 @@ import { rateLimit } from "../middleware/ratelimit.js";
 import {
   supportsDeviceBind,
   deviceBindVendors,
+  deviceBindMethodKeys,
+  vendorOfMethod,
   startDeviceBind,
   pollDeviceBind,
   cancelDeviceBind,
@@ -2472,7 +2474,10 @@ router.post(
 router.get(
   "/devices/vendors",
   adminRequired,
-  asyncHandler(async (req, res) => ok(res, { vendors: deviceBindVendors() }))
+  asyncHandler(async (req, res) =>
+      // 同时下发两套键：methods = 方法键（前端按它匹配「一键绑定」按钮，权威），
+      // vendors = 厂商键（旧前端与 /devices/start 的历史口径，保留兼容）
+      ok(res, { vendors: deviceBindVendors(), methods: deviceBindMethodKeys() }))
 );
 
 router.post(
@@ -2480,8 +2485,12 @@ router.post(
   adminRequired,
   rateLimit({ windowMs: 60_000, max: 10, keyPrefix: "device-bind", keyFn: (r) => r.user?.id || r.ip }),
   asyncHandler(async (req, res) => {
-    const vendor = String(req.body?.vendor || "").trim();
-    if (!supportsDeviceBind(vendor)) return fail(res, `该渠道不支持一键绑定：${vendor}`);
+    // 前端传的可能是**方法键**（cli）也可能是**厂商键**（cline）—— 两套命名都接受。
+    // 曾经只认厂商键，而前端传的是 pickMethod.key（Cline 就是 "cli"），
+    // 于是点「一键绑定」报「该渠道不支持一键绑定：cli」（黑盒测试实测）。
+    const rawVendor = String(req.body?.vendor || "").trim();
+    const vendor = vendorOfMethod(rawVendor);
+    if (!vendor || !supportsDeviceBind(vendor)) return fail(res, `该渠道不支持一键绑定：${rawVendor}`);
     try {
       const out = await startDeviceBind(vendor, {
         startUrl: req.body?.start_url,

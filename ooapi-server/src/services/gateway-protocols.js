@@ -24,7 +24,19 @@ import crypto from "node:crypto";
 const now = () => Math.floor(Date.now() / 1000);
 const newId = (prefix) => `${prefix}-${crypto.randomBytes(12).toString("hex")}`;
 
-/** 把 Anthropic 的 content（string | [{type,text}]）压成纯文本 */
+/**
+ * 把 Anthropic 的 content（string | [{type,text}]）压成纯文本。
+ *
+ * ⚠️ 图片块在这里只留 `[图片]` 占位（base64 塞进 prompt 会撑爆上下文），
+ * 但**真正的图片数据必须另行取出**交给适配器 —— 见
+ * `extractImagesFromAnthropicContent`。早先只拍平、没有取出，
+ * 造成两个真实缺陷（黑盒测试实测）：
+ *   ① 图片被静默丢弃：Anthropic SDK 传图 → 200 + 一个凭空编的回答，
+ *      调用方完全不知道图没送到（实测模型回答「我目前看不到你发的图片」）；
+ *   ② 图片数量防护被绕过：网关的 MAX_REMOTE_IMAGES（防外链抓取的 SSRF/DoS）
+ *      是按 `part.type === "image_url"` 数的，拍平后一个都数不到 ——
+ *      10 张外链图在 /v1/messages 上照常放行，而 /v1/chat/completions 会正确拒绝。
+ */
 function anthropicText(content) {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -32,14 +44,58 @@ function anthropicText(content) {
       .map((b) => {
         if (typeof b === "string") return b;
         if (b?.type === "text") return b.text || "";
-        // 图片块在这里只保留占位说明：网关的多模态支持在各适配器里，
-        // 这里不该把 base64 塞进 prompt（会撑爆上下文且适配器不认）。
-        if (b?.type === "image") return "[图片]";
+        // 图片不再留文本占位：数据已作为独立分片保留（见 extractImagesFromAnthropicContent），
+        // 再写 [图片] 会让模型在同一处看到"占位符 + 真实图片"两份语义（实测出现过
+        // 模型回答「你发了 30 次 [object Object] 这样的文本，以及 30 张相同的图片」）。
+        if (b?.type === "image") return "";
         return "";
       })
       .join("");
   }
   return "";
+}
+
+/**
+ * 从 Anthropic 的 content 取出图片 → 转成网关统一的 OpenAI `image_url` 片。
+ * 支持 base64（内嵌）与 url（外链）两种 source。
+ * 这样 `/v1/messages` 的图片与 `/v1/chat/completions` 走**完全同一条**处理链：
+ * 同样计数、同样抓取、同样受限。
+ */
+export function extractImagesFromAnthropicContent(content) {
+  const out = [];
+  if (!Array.isArray(content)) return out;
+  for (const b of content) {
+    if (!b || typeof b !== "object" || b.type !== "image") continue;
+    const src = b.source || {};
+    if (src.type === "base64" && src.data) {
+      out.push({
+        type: "image_url",
+        image_url: { url: `data:${src.media_type || "image/png"};base64,${src.data}` },
+      });
+    } else if (src.type === "url" && src.url) {
+      out.push({ type: "image_url", image_url: { url: String(src.url) } });
+    }
+  }
+  return out;
+}
+
+/** 同上，供 Responses 协议的 input_image 用 */
+export function extractImagesFromResponsesInput(input) {
+  const out = [];
+  if (typeof input === "string") return out;
+  for (const it of Array.isArray(input) ? input : []) {
+    if (!it || typeof it !== "object" || !Array.isArray(it.content)) continue;
+    for (const c of it.content) {
+      if (!c || typeof c !== "object") continue;
+      if (c.type !== "input_image" && c.type !== "image_url") continue;
+      const url = c.image_url ?? c.url ?? "";
+      if (typeof url === "string" && url) out.push({ type: "image_url", image_url: { url } });
+      else if (url && typeof url === "object" && url.url) {
+        out.push({ type: "image_url", image_url: { url: String(url.url) } });
+      }
+    }
+  }
+  return out;
 }
 
 /** 把 Responses 的 input（string | [{role,content}]）转成标准 messages */
@@ -77,10 +133,16 @@ function responsesInput(body) {
     if (typeof it.content === "string") text = it.content;
     else if (Array.isArray(it.content)) {
       text = it.content
-        .map((c) => (typeof c === "string" ? c : c?.text || ""))
+        .map((c) => (typeof c === "string" ? c : c?.type === "input_image" ? "" : c?.text || ""))
         .join("");
     }
-    if (text) out.push({ role, content: text });
+    // 图片同样要作为标准分片保留（否则被静默丢弃 + 绕过数量防护）
+    const imgs = extractImagesFromResponsesInput([it]);
+    if (!text && !imgs.length) continue;
+    out.push({
+      role,
+      content: imgs.length ? [{ type: "text", text }, ...imgs] : text,
+    });
   }
   return out;
 }
@@ -186,8 +248,17 @@ const anthropicMessages = {
     for (const m of Array.isArray(body?.messages) ? body.messages : []) {
       if (!m || typeof m !== "object") continue;
       const text = anthropicText(m.content);
-      if (!text) continue;
-      msgs.push({ role: String(m.role || "user"), content: text });
+      // **图片要作为标准 content 分片保留下来**（而不是只留 "[图片]" 占位）。
+      // 网关的图片计数/抓取/限额全靠 `type === "image_url"` 的分片 ——
+      // 只给纯文本的话图片会被静默丢弃、防护也一并失效（见 anthropicText 的说明）。
+      const imgs = extractImagesFromAnthropicContent(m.content);
+      if (!text && !imgs.length) continue;
+      msgs.push({
+        role: String(m.role || "user"),
+        content: imgs.length
+          ? [{ type: "text", text }, ...imgs]
+          : text,
+      });
     }
     return { model, messages: msgs, stream: body?.stream === true };
   },
