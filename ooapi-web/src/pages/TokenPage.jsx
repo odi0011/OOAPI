@@ -240,20 +240,27 @@ export default function TokenPage() {
   // 用 breakpoint 算真实需要的总宽：手机上只剩名称+状态+额度+操作。
   const screens = Grid.useBreakpoint();
   const isNarrow = !screens.md; // < 768px
-  const scrollX = isNarrow ? 170 + 92 + 130 + 180 : 1480; // 名称+状态+额度+操作
+  // 各列在手机上的宽度（与下面 columns 的 width 表达式保持一致，否则 scroll.x
+  // 与真实列宽之和对不上，AntD 会按比例压缩每一列，反而更容易截断）。
+  const W = { name: isNarrow ? 150 : 170, key: isNarrow ? 150 : 280 };
+  const scrollX = isNarrow
+    ? W.name + W.key + 92 + 130 + 170 // 名称+密钥+状态+额度+操作
+    : 1480;
 
   const columns = [
     {
       title: "名称",
       dataIndex: "name",
-      width: 170,
+      width: W.name,
       ellipsis: true,
       render: (v) => <Text strong>{v}</Text>,
     },
     {
       title: "密钥",
       dataIndex: "key",
-      width: 280,
+      // 手机上收窄（280 → 150）：完整密钥本来也显示不下，但**复制按钮必须留着** ——
+      // 「复制密钥」是这个页面最主要的动作，不能因为窄屏就藏起来。
+      width: W.key,
       render: (k, r) => (
         <Space size={2}>
           <span className="oo-mono">{k}</span>
@@ -339,7 +346,15 @@ export default function TokenPage() {
           );
         },
       },
-    { title: "创建时间", dataIndex: "created_time", width: 160, render: (v) => <span className="oo-num">{fmtDate(v)}</span> },
+    // 手机上收起（创建时间属于查阅型信息，不是日常操作要看的东西；
+    // 且它在窄屏会白占 160px 把状态/额度挤到屏幕外）
+    {
+      title: "创建时间",
+      dataIndex: "created_time",
+      width: 160,
+      responsive: ["md"],
+      render: (v) => <span className="oo-num">{fmtDate(v)}</span>,
+    },
     {
       title: "操作",
       width: 180,
