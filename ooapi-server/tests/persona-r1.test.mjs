@@ -247,6 +247,18 @@ t("改话题前先确认目标话题存在且启用", () => {
   ck(/if \(!t\) return fail\(res, "话题不存在"\)/.test(communityCode), "没有拦不存在的话题");
   ck(/该话题已停用，无法移入/.test(communityCode), "没有拦停用话题");
 });
+t("隐藏/恢复帖子要同步话题计数、删除不能重复扣", () => {
+  // 实测发现：批量隐藏 24 条测试帖后，「综合讨论」显示 25 帖、实际只剩 2 帖 ——
+  // moderate 只改 status、不动 post_count。
+  const iMod = community.search(/"\/posts\/:id\/moderate"/);
+  ck(iMod >= 0, "未找到 moderate 处理器");
+  const modBody = community.slice(iMod, iMod + 2500);
+  ck(/countDelta/.test(modBody), "moderate 没有计算计数增减");
+  ck(/post_count = GREATEST\(0, post_count \+ \?\)/.test(modBody), "moderate 没有同步 post_count");
+  // 删除侧必须只在「从正常删」时减，否则删一个已隐藏的帖子会二次扣减
+  ck(/if \(Number\(row\.status\) === 1\) \{[\s\S]{0,160}post_count = GREATEST\(post_count - 1, 0\)/.test(communityCode),
+    "删除没有按原状态判断，隐藏后再删会重复扣减");
+});
 
 /* ============ 语法校验（改坏一个字符就全站 500）============ */
 console.log("\n=== ⑫ 改动的文件语法可解析 ===");

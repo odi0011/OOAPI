@@ -456,7 +456,11 @@ router.delete(
     await releaseRefs("community_post", [String(id)]).catch((e) =>
       console.warn(`[community] 删除帖子 #${id} 释放图片引用失败：${e.message}`)
     );
-    await pool.query("UPDATE community_topics SET post_count = GREATEST(post_count - 1, 0) WHERE id = ?", [row.topic_id]);
+    // 只有**从「正常」删**才减计数：隐藏（status=3）的帖子在 moderate 里已经减过了，
+    // 这里再减一次就是重复扣减（话题计数会低于真实值，且再也回不来）。
+    if (Number(row.status) === 1) {
+      await pool.query("UPDATE community_topics SET post_count = GREATEST(post_count - 1, 0) WHERE id = ?", [row.topic_id]);
+    }
     if (!isOwner) {
       await writeLog({
         req,
@@ -476,11 +480,22 @@ router.post(
   asyncHandler(async (req, res) => {
     const id = idParam(req);
     if (!id) return fail(res, "帖子不存在", 404);
+    const [[row]] = await pool.query("SELECT id, topic_id, status FROM community_posts WHERE id = ?", [id]);
+    if (!row) return fail(res, "帖子不存在", 404);
     const sets = [];
     const args = [];
+    // 隐藏/恢复要**同步话题计数**。
+    //
+    // 话题页的「N 帖」统计的是 status=1 的帖子，而这里的 status 变更原先不改
+    // post_count —— 隐藏一批帖子后，话题计数就成了虚高的死数
+    //（实测：批量隐藏 24 条测试帖后，「综合讨论」显示 25 帖、实际只剩 2 帖）。
+    // 与「编辑帖子换话题」处的计数维护是同一类问题，这里补上。
+    let countDelta = 0;
     if (req.body?.status !== undefined) {
       const st = Number(req.body.status);
       if (![1, 3].includes(st)) return fail(res, "status 只能是 1（正常）或 3（隐藏）");
+      const was = Number(row.status);
+      if (was !== st && (was === 1 || st === 1)) countDelta = st === 1 ? 1 : -1;
       sets.push("status = ?");
       args.push(st);
       if (st === 3) {
@@ -495,6 +510,12 @@ router.post(
     if (!sets.length) return fail(res, "没有需要更新的字段");
     args.push(id);
     await pool.query(`UPDATE community_posts SET ${sets.join(", ")} WHERE id = ?`, args);
+    if (countDelta) {
+      await pool.query(
+        `UPDATE community_topics SET post_count = GREATEST(0, post_count + ?) WHERE id = ?`,
+        [countDelta, row.topic_id]
+      );
+    }
     await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `管理社区帖子 #${id}：${sets.join(", ")}` });
     return ok(res, null, "已处理");
   })
