@@ -58,6 +58,10 @@ const ADAPTERS = {
   // 且认证失败也返回 200（错误在 SSE 帧里）—— 必须有独立适配器，
   // 端点与协议均在服务器上实测过，见 upstream/trae.js 顶部。
   trae: () => import("./upstream/trae.js"),
+  // Cursor：协议最特殊的一个 —— **HTTP/2 + Connect 帧**（Node 的 fetch 走 h1.1
+  // 会被 415 拒），所以自带传输层。请求/响应 schema 来自官方客户端 bundle 的
+  // proto 定义（已逐字段在服务端验证），见 upstream/cursor.js 顶部。
+  cursor: () => import("./upstream/cursor.js"),
 };
 
 /**

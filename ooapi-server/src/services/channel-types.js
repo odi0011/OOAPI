@@ -956,6 +956,46 @@ export const PROVIDERS = [
     ],
   },
   {
+    key: "cursor",
+    name: "Cursor",
+    // 官方 API Key 页面（crsr_ 开头的那种）
+    keyUrl: "https://cursor.com/dashboard/api-keys",
+    vendor: "cursor",
+    desc: "Cursor 订阅反代：HTTP/2 + Connect 协议，支持官方 API Key（crsr_...）",
+    methods: [
+      {
+        key: "cursor",
+        adapter: "cursor",
+        label: "Cursor",
+        desc: "填 Cursor 官方 API Key（crsr_...），或粘贴 IDE 的 accessToken",
+        entryUrl: "https://cursor.com/dashboard/api-keys",
+        // 必须有 loginModes：否则 isApiKeyMethod 会把「有 baseUrl 且无 loginModes」的方式
+        // 判成 API Key 型而错走 openai-compat（Cursor 完全不是 OpenAI 协议）
+        loginModes: ["paste"],
+        loginFields: oauthCredentialField(
+          '{ "api_key": "crsr_..." }',
+          "推荐用官方 API Key（cursor.com → Dashboard → API Keys，crsr_ 开头）——" +
+            "平台会自动用它换取访问令牌并定期重换，不需要 machineId 或 checksum 签名。" +
+            "若要用 IDE 凭据，则填 { \"accessToken\": \"...\", \"machineId\": \"...\" }" +
+            "（从本机 %APPDATA%\\Cursor\\User\\globalStorage\\state.vscdb 的 ItemTable 取）"
+        ),
+        pasteHint:
+          "Cursor 的对话后端只讲 HTTP/2 + Connect 协议，平台已内置该传输；" +
+          "认证失败时上游会在帧里回 ERROR_NOT_LOGGED_IN（HTTP 仍是 200），平台会识别为凭据失效",
+        // 只登记上游**真实存在**的档位名（Cursor 的产品内模型名）
+        defaultModels: [
+          { id: "composer-2.5", name: "Composer 2.5" },
+          { id: "composer-2.5-fast", name: "Composer 2.5 Fast" },
+          { id: "claude-4.5-sonnet", name: "Claude 4.5 Sonnet" },
+          { id: "gpt-5.6-luna", name: "GPT-5.6 Luna" },
+          { id: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
+          { id: "grok-4.6", name: "Grok 4.6" },
+        ],
+        testModel: "composer-2.5",
+      },
+    ],
+  },
+  {
     key: "siliconflow",
     name: "硅基流动",
     keyUrl: "https://cloud.siliconflow.cn/account/ak",
@@ -1413,6 +1453,20 @@ const LOCAL_LOGIN_GUIDE = {
       "region 决定上游：sg → coresg-normal.trae.ai，us → coreva-normal.trae.ai，cn → trae-api-cn.mchost.guru；" +
       "令牌过期由平台自动续期。注意：Trae 的模型名与实际档位不一致（claude-* 别名实际跑 GLM/DeepSeek），" +
       "所以渠道里请按实际档位声明模型，否则计费会按错误的价目表算。",
+  },
+  // Cursor：官方 API Key 是推荐路径（不需要 machineId / checksum 签名），
+  // IDE 凭据是备选 —— 指引要按这个优先级写，否则用户会去抠本地 SQLite（麻烦且易错）。
+  "cursor:cursor": {
+    steps: [
+      "点上面的「弹出登录小窗」打开 Cursor 的 API Keys 页面（未登录会先让你登录）",
+      "在页面里创建一个 API Key，复制那串以 crsr_ 开头的字符串",
+      "把它填成 { \"api_key\": \"crsr_你的密钥\" } 粘到下面的「凭据 JSON」框 —— 平台会自动用它换取访问令牌，并在过期前自动重换",
+    ],
+    note:
+      "也可以不用 API Key：填 { \"accessToken\": \"...\", \"machineId\": \"...\" }，" +
+      "两个值都要 —— 从本机 Cursor 的 %APPDATA%\Cursor\User\globalStorage\state.vscdb 里取" +
+      "（ItemTable 表的 cursorAuth/accessToken 与 telemetry.machineId）。这条路更麻烦且令牌会过期，不推荐。" +
+      "注意 Cursor 的对话走的是 HTTP/2 + Connect 协议，平台已内置该传输，不需要额外装任何东西。",
   },
   "cline:cli": {
     steps: [
