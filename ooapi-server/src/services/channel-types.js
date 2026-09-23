@@ -844,16 +844,43 @@ export const PROVIDERS = [
     desc: "Cline 官方 API（OpenAI 兼容，模型用 vendor/model 命名）",
     methods: [
       {
+        // ── 方式一：一键绑定（设备授权，主路径）──
+        // 用户点一下 → 打开 authkit.cline.bot/device 输用户码 → 自动写入凭据。
+        // 走 WorkOS 的标准 RFC 8628 设备流，端点均已实测（见 device-bind.js 的注释）。
+        key: "cli",
+        adapter: "cline",
+        label: "Cline 账号（一键绑定）",
+        desc: "设备授权绑定 Cline 账号，自动续期；无需手工找 token",
+        loginModes: ["paste"],
+        loginFields: [],
+        pasteHint: "粘贴 Cline 的 refreshToken（或包含它的完整 JSON）；也可直接用上方「一键绑定」",
+        testModel: "anthropic/claude-haiku-4.5",
+        // 与 api 方式同一份清单（账号绑定与 API Key 能用的模型集合相同）
+        defaultModels: [
+          { id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
+          { id: "anthropic/claude-opus-4.5", name: "Claude Opus 4.5" },
+          { id: "anthropic/claude-haiku-4.5", name: "Claude Haiku 4.5" },
+          { id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna" },
+          { id: "openai/gpt-5.5", name: "GPT-5.5" },
+          { id: "google/gemini-3.5-flash", name: "Gemini 3.5 Flash" },
+          { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+          { id: "z-ai/glm-5.3", name: "GLM-5.3" },
+          { id: "deepseek/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash" },
+          { id: "moonshotai/kimi-k2.6", name: "Kimi K2.6" },
+        ],
+      },
+      {
+        // ── 方式二：官方 API Key ──
+        // Cline 在 app.cline.bot 提供正式签发的 API Key，与扩展登录的 account token
+        // 是同一套 Bearer 头格式。手上已有 Key 的用这条，最省事。
         key: "api",
-        adapter: "cline", // 补客户端标识头 + 兼容响应包封（见 upstream/cline.js）
+        // API Key 方式同样走 cline 适配器：客户端标识头 + 响应包封解包都要用
+        //（Key 方式不需要刷新逻辑，但标识头不带会被上游 403）
+        adapter: "cline",
         label: "API Key",
         desc: "Cline API Key（app.cline.bot → Settings → API Keys）",
         baseUrl: "https://api.cline.bot/api/v1",
         keyHint: "Cline 账号的 API Key",
-        // 默认模型只挑「平台价格表已能匹配到的档位」——
-        // 否则会立刻被「未定价模型不放行」的门禁拦下。
-        // （getPrice 剥掉 vendor/ 前缀后能命中 claude-sonnet-4.6 / gpt-5.6-luna /
-        //   gemini-3.5-flash 等已有定价，所以这些开箱即可用。）
         defaultModels: [
           { id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
           { id: "anthropic/claude-opus-4.5", name: "Claude Opus 4.5" },

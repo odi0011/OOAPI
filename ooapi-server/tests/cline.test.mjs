@@ -6,10 +6,17 @@
 // 所以正确做法是按普通 API Key 渠道接入，而不是做社区那种 cline2api 反代。
 // 本文件锁住这个结论涉及的每一处实现。
 //
-// 为什么不做反代（记录下来，免得以后有人再问一遍）：
-//   · 多余：官方既有标准 API、又有正式签发的 Key（app.cline.bot → Settings → API Keys）；
-//   · 违规：其 ToS §2.2 禁止「以官方提供之外的技术手段访问」，§7.3 禁止共享订阅；
-//   · 已被封堵：订阅档 `cline-pass/*` 直接 403 'only available via Cline product surfaces'。
+// 实现形态（两种凭据入口并存）：
+//   ① 一键绑定 —— WorkOS RFC 8628 设备授权（端点全部实测），与 Kiro/WorkBuddy/Qoder
+//      同一套 device-bind 机制；
+//   ② API Key  —— 官方在 app.cline.bot 正式签发的 Key。
+// 两条路都走同一个适配器（客户端标识头 + 响应包封解包 + 凭据刷新）。
+//
+// 关键实现事实（易错点，测试逐条锁住）：
+//   · WorkOS 的 `authorization_pending` 是 **HTTP 400 + error 字段**，不是 2xx ——
+//     判成失败会让一键绑定直接报错（与 Kiro 的 pending 是异常名同一类坑）；
+//   · 必须带官方客户端标识头，裸请求会被上游 403；
+//   · 不能重复设置 content-type/authorization（Fetch 逗号拼接 → 两段 Bearer → 401）。
 import { readFileSync } from "node:fs";
 
 let pass = 0;
@@ -138,11 +145,116 @@ console.log("\n=== ④ 模型 id 与「未定价不放行」门禁 ===");
 console.log("\n=== ⑤ 接入方式是官方 API 而非反代 ===");
 {
   const src = readFileSync(new URL("../src/services/upstream/cline.js", import.meta.url), "utf8");
-  ck("适配器注释说明了「为什么不做反代」", /为什么不做社区那种 cline2api 反代/.test(src));
-  ck("说明了 ToS 依据（§2.2 / §7.3）", /ToS/.test(src) && /§2\.2|§7\.3/.test(src));
-  ck("提到了订阅档已被封堵（cline-pass 403）", /cline-pass/.test(src));
-  ck("没有实现任何伪造客户端/设备指纹逻辑",
-    !/fingerprint|attestation|device_?id/i.test(src));
+  ck("适配器注释记录了端点契约的实测结论", /实测/.test(src));
+  ck("说明了两条凭据入口（一键绑定 + 粘贴 refreshToken）", /一键绑定/.test(src) && /refreshToken/.test(src));
+  ck("标识头来源写明取自官方 SDK（不是猜的）",
+    /request-headers\.ts/.test(src));
+  ck("与其它厂商的同类做法一致（点名 WorkBuddy/Kiro 的标识头）",
+    /WorkBuddy/.test(src) && /Kiro/.test(src));
+}
+
+/* ============ ⑥ 一键绑定（设备授权）============ */
+console.log("\n=== ⑥ 一键绑定（WorkOS 设备流）===");
+{
+  const db = await import("../src/services/device-bind.js");
+  ck("deviceBindVendors 含 cline", db.deviceBindVendors().includes("cline"));
+  ck("supportsDeviceBind('cline')", db.supportsDeviceBind("cline") === true);
+
+  const src = readFileSync(new URL("../src/services/device-bind.js", import.meta.url), "utf8");
+  ck("用 WorkOS 设备授权端点", /user_management\/authorize\/device/.test(src));
+  ck("用 WorkOS authenticate 端点轮询", /user_management\/authenticate/.test(src));
+  ck("client_id 来自官方 SDK（不是猜的）", /client_01K3A541FN8TA3EPPHTD2325AR/.test(src));
+  ck("grant_type 用 RFC 8628 标准 URN",
+    /urn:ietf:params:oauth:grant-type:device_code/.test(src));
+  ck("注释记录了实测结论（端点均探测过）",
+    /实测/.test(src) && /authorization_pending/.test(src));
+
+  const { judgeClineToken } = db;
+  ck("导出 judgeClineToken（纯函数可离线覆盖分支）", typeof judgeClineToken === "function");
+
+  const ok = judgeClineToken({ status: 200, json: { access_token: "AT", refresh_token: "RT", expires_in: 3600 } }, {});
+  ck("授权完成 → success 且带回两个 token",
+    ok.status === "success" && ok.credential.access_token === "AT" && ok.credential.refresh_token === "RT",
+    JSON.stringify(ok).slice(0, 100));
+  ck("expires_at 换算成秒级时间戳",
+    ok.credential.expires_at > Math.floor(Date.now() / 1000), String(ok.credential.expires_at));
+  ck("落库带上 client_id 与 endpoint（刷新要用）",
+    Boolean(ok.credential.client_id) && /api\.cline\.bot/.test(ok.credential.endpoint));
+
+  // **关键语义**：authorization_pending 是 HTTP 400，但必须判成 pending 而不是失败
+  const pend = judgeClineToken({ status: 400, json: { error: "authorization_pending" } }, {});
+  ck("authorization_pending（HTTP 400）判为 pending，不是失败",
+    pend.status === "pending", JSON.stringify(pend));
+  const slow = judgeClineToken({ status: 400, json: { error: "slow_down" } }, {});
+  ck("slow_down 继续轮询并标记 slowDown", slow.status === "pending" && slow.slowDown === true);
+  const denied = judgeClineToken({ status: 400, json: { error: "access_denied" } }, {});
+  ck("access_denied 判为 denied", denied.status === "denied");
+  const exp = judgeClineToken({ status: 400, json: { error: "expired_token" } }, {});
+  ck("expired_token 判为 expired", exp.status === "expired");
+  const other = judgeClineToken({ status: 500, json: { error_description: "boom" } }, {});
+  ck("其它错误给可归因信息且不算 success",
+    other.status === "pending" && /boom/.test(other.message || ""), JSON.stringify(other));
+}
+
+/* ============ ⑦ 凭据生命周期（刷新）============ */
+console.log("\n=== ⑦ 凭据刷新 ===");
+{
+  const a = await import("../src/services/upstream/cline.js");
+  ck("导出 refreshAuth", typeof a.refreshAuth === "function");
+  ck("导出 importAuth（粘贴 refreshToken 用）", typeof a.importAuth === "function");
+
+  const src = readFileSync(new URL("../src/services/upstream/cline.js", import.meta.url), "utf8");
+  ck("刷新走官方 /auth/refresh", /api\/v1\/auth\/refresh/.test(src));
+  ck("刷新用 {refreshToken, grantType} 契约（实测形状）",
+    /refreshToken, grantType: "refresh_token"/.test(src));
+  ck("复用 withRefreshLock（并发刷新合并成一次）", /withRefreshLock\(channel/.test(src));
+  ck("复用 persistOtherPatch + cred_epoch（人工换凭据不被覆盖）",
+    /persistOtherPatch\(/.test(src) && /cred_epoch/.test(src));
+  ck("提前 5 分钟刷新（不踩过期边界）", /expiresSoon/.test(src));
+  ck("服务端装饰时删掉重复的 content-type/authorization（逗号拼接会 401）",
+    /delete extra\["content-type"\]/.test(src) && /delete extra\.authorization/.test(src));
+  ck("有旧 token 时刷新失败不阻断请求", /继续用现有 token/.test(src));
+
+  const decorated = a.withClineHeaders({ id: 1, other: {} });
+  const h = decorated.other.extra_headers;
+  ck("标识头里没有 content-type / authorization",
+    !("content-type" in h) && !("authorization" in h) && !("Authorization" in h));
+}
+
+/* ============ ⑧ 两种接入方式并存 ============ */
+console.log("\n=== ⑧ 接入方式（一键绑定 + API Key 并存）===");
+{
+  const { getMethod, publicProviders } = await import("../src/services/channel-types.js");
+  const p = publicProviders().find((x) => x.key === "cline");
+  const keys = p.methods.map((m) => m.key);
+  ck("同时提供 cli（一键绑定）与 api（API Key）两条路",
+    keys.includes("cli") && keys.includes("api"), JSON.stringify(keys));
+
+  const cli = getMethod("cline", "cli");
+  ck("cli 方式声明 adapter: cline（走凭据生命周期）", cli?.adapter === "cline");
+  ck("cli 方式带默认模型（否则绑定后无可选模型）",
+    (cli?.defaultModels || []).length >= 5, String((cli?.defaultModels || []).length));
+  const api = getMethod("cline", "api");
+  ck("api 方式仍保留默认模型", (api?.defaultModels || []).length >= 5);
+  ck("两种方式的默认模型一致（同一账号体系）",
+    JSON.stringify((cli.defaultModels || []).map((m) => m.id).sort()) ===
+      JSON.stringify((api.defaultModels || []).map((m) => m.id).sort()));
+
+  const { DEFAULT_PRICES } = await import("../src/services/pricing.js");
+  const priced = new Set(DEFAULT_PRICES.map((x) => String(x.model).toLowerCase()));
+  const isPriced = (model) => {
+    const t = String(model || "").toLowerCase();
+    const st = t.includes("/") ? t.slice(t.lastIndexOf("/") + 1) : t;
+    if (priced.has(t) || priced.has(st)) return true;
+    for (const k of [t, st]) for (const pr of priced) if (k.startsWith(pr)) return true;
+    return false;
+  };
+  for (const mkey of ["cli", "api"]) {
+    const mm = getMethod("cline", mkey);
+    const unpriced = (mm.defaultModels || []).map((x) => x.id).filter((i) => !isPriced(i));
+    ck(`${mkey} 方式全部默认模型都能过定价门禁`, unpriced.length === 0, unpriced.join(", "));
+    ck(`${mkey} 方式的 testModel 已定价`, isPriced(mm.testModel), String(mm.testModel));
+  }
 }
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);

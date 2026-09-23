@@ -383,9 +383,128 @@ async function qoderPoll(s) {
 }
 
 // ---------------------------------------------------------------------------
+// Cline：WorkOS 设备授权（RFC 8628 标准流程）
+// ---------------------------------------------------------------------------
+// 调研与实测（2026-09-23，全部端点为真实探测结果，非猜测）：
+//   · Cline 的账号体系建在 **WorkOS AuthKit** 上，客户端 id 来自其开源 SDK
+//     （`sdk/packages/shared/src/runtime/cline-environment.ts` 的 workOsClientId）。
+//   · ① 发起：POST https://api.workos.com/user_management/authorize/device
+//         body {client_id} → 实测 200，返回
+//         {device_code, user_code, verification_uri: "https://authkit.cline.bot/device",
+//          verification_uri_complete, expires_in: 300, interval: 5}
+//   · ② 轮询：POST https://api.workos.com/user_management/authenticate
+//         body {client_id, device_code, grant_type: "urn:ietf:params:oauth:grant-type:device_code"}
+//         → 未授权时实测 400 {"error":"authorization_pending", ...}（标准语义，**不是** HTTP 错误）
+//         → 授权完成后返回 WorkOS 的 accessToken / refreshToken
+//   · ③ 刷新：POST https://api.cline.bot/api/v1/auth/refresh
+//         body {refreshToken, grantType: "refresh_token"}
+//         → 坏 token 实测 400 {"error":"failed to refresh token: invalid_grant"}
+//         （语义正确 ⇒ 有真 refreshToken 即可换取新 accessToken）
+//
+// 三个端点都已实测「存在且契约正确」，唯一未实测的是「用户完成授权后的返回体」——
+// 那需要真实账号走一次，所以判空与容错写得宽一些（见 judgeClineToken）。
+const CLINE_WORKOS_CLIENT_ID = "client_01K3A541FN8TA3EPPHTD2325AR";
+const CLINE_DEVICE_URL = "https://api.workos.com/user_management/authorize/device";
+const CLINE_AUTHENTICATE_URL = "https://api.workos.com/user_management/authenticate";
+const CLINE_API_BASE = "https://api.cline.bot";
+
+// 与其它厂商的浏览器标识保持一致（探测时用的就是这套头）
+const CLINE_UA = "OOAPI-Gateway/1.0";
+
+async function clineStart() {
+  const r = await reqJson(CLINE_DEVICE_URL, {
+    method: "POST",
+    body: { client_id: CLINE_WORKOS_CLIENT_ID },
+    headers: { "user-agent": CLINE_UA, accept: "application/json" },
+  });
+  const j = r.json || {};
+  const deviceCode = j.device_code;
+  const userCode = j.user_code || "";
+  if (!deviceCode) {
+    throw new Error(`Cline 发起授权失败：${j.error_description || j.error || `HTTP ${r.status}`}`);
+  }
+  return {
+    deviceCode,
+    userCode,
+    // verification_uri_complete 带 user_code，用户点开就是填好的（少一步手抄）
+    verifyUrl: j.verification_uri_complete || j.verification_uri || "https://authkit.cline.bot/device",
+    intervalMs: Math.max(3, Number(j.interval) || 5) * 1000,
+    // WorkOS 给 300 秒；按它自己的值来，别写死
+    expiresIn: Number(j.expires_in) || 300,
+  };
+}
+
+/**
+ * 把 WorkOS 的轮询响应判定成统一状态。
+ *
+ * 抽成纯函数导出是刻意的（与 judgeKiroToken/judgeQoderPoll 同一理由）：
+ * device flow 的分支最容易写错 —— WorkOS 的 `authorization_pending` 是
+ * **HTTP 400 + error 字段**，不是 2xx；`slow_down` 要继续轮询而不是失败。
+ * 而真实上游必须有 Cline 账号才能完整打到，纯函数才能被测试覆盖。
+ *
+ * @returns {{status, credential?, message?, slowDown?}}
+ */
+export function judgeClineToken(r, s) {
+  const j = r?.json || {};
+  const err = String(j.error || "");
+  const desc = String(j.error_description || "");
+
+  // 授权完成：WorkOS 返回标准 OAuth 令牌
+  const access = j.access_token || j.accessToken;
+  const refresh = j.refresh_token || j.refreshToken;
+  if (access || refresh) {
+    return {
+      status: "success",
+      credential: {
+        access_token: access || "",
+        refresh_token: refresh || "",
+        token_type: String(j.token_type || "Bearer"),
+        // 秒级时间戳；WorkOS 给 expires_in（秒），实测同族实现为 3600
+        expires_at: Math.floor(Date.now() / 1000) + (Number(j.expires_in) || 3600),
+        // 后续刷新与调用都要用的固定信息，一并落库（避免每次请求重新推导）
+        client_id: CLINE_WORKOS_CLIENT_ID,
+        endpoint: CLINE_API_BASE,
+      },
+    };
+  }
+
+  // 等待用户授权：**要继续轮询**，不是失败
+  if (err === "authorization_pending") return { status: "pending", message: "等待你在浏览器里完成授权" };
+  if (err === "slow_down") return { status: "pending", message: "轮询过快，已自动放慢", slowDown: true };
+  if (err === "access_denied") return { status: "denied", message: "你在授权页拒绝了本次登录" };
+  if (err === "expired_token" || r?.status === 410) {
+    return { status: "expired", message: "授权已过期，请重新发起绑定" };
+  }
+  // 其余错误（含 WorkOS 偶发 5xx）：给可归因信息，不当作成功
+  return {
+    status: "pending",
+    message: desc || err || (r?.status && r.status >= 400 ? `HTTP ${r.status}` : ""),
+  };
+}
+
+async function clinePoll(s) {
+  const r = await reqJson(CLINE_AUTHENTICATE_URL, {
+    method: "POST",
+    body: {
+      client_id: CLINE_WORKOS_CLIENT_ID,
+      device_code: s.deviceCode,
+      grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+    },
+    headers: { "user-agent": CLINE_UA, accept: "application/json" },
+  });
+  return judgeClineToken(r, s);
+}
+
+// ---------------------------------------------------------------------------
 // 统一入口
 // ---------------------------------------------------------------------------
-const VENDORS = { kiro: { start: kiroStart, poll: kiroPoll }, workbuddy: { start: wbStart, poll: wbPoll }, qoder: { start: qoderStart, poll: qoderPoll } };
+const VENDORS = {
+  kiro: { start: kiroStart, poll: kiroPoll },
+  workbuddy: { start: wbStart, poll: wbPoll },
+  qoder: { start: qoderStart, poll: qoderPoll },
+  // Cline：WorkOS 设备授权（标准 RFC 8628，端点均已实测）
+  cline: { start: clineStart, poll: clinePoll },
+};
 
 /** 是否支持设备授权绑定 */
 export function supportsDeviceBind(vendor) {

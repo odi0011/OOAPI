@@ -59,6 +59,8 @@ const CHANNEL_ICON = {
   qoder: "qoder.svg",
   // 三方兼容聚合
   opencode: "opencode.png",
+  // Cline（官方 GitHub 仓库的 assets/icons/icon.png —— 官网 favicon 取不到）
+  cline: "cline.png",
   openrouter: "openrouter.svg",
   siliconflow: "siliconflow.ico",
   // 国产厂商直连（2026-09 接入）。图标取自各厂商 **GitHub 官方组织头像**
