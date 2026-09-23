@@ -19,6 +19,11 @@ import PageHeader from "../components/PageHeader";
 import { VendorIcon, ModelLabel, GroupVendorIcons, GroupTag } from "../components/VendorIcon";
 import ModelPicker from "../components/ModelPicker";
 import QuotaPanel, { QuotaInline } from "../components/ChannelQuota";
+// SERIES_COLORS：渠道「用量统计」弹窗里按模型画多条折线时取色。
+// 必须显式导入 —— 此前只有引用没有导入，打开该弹窗会抛
+// `ReferenceError: SERIES_COLORS is not defined` 把整块图表打空（实测踩到）。
+// 取色统一走 Charts.jsx 的规范，颜色语义跨页面一致（见该文件注释）。
+import { SERIES_COLORS } from "../components/Charts";
 
 const { Text } = Typography;
 
