@@ -25,6 +25,25 @@ const now = () => Math.floor(Date.now() / 1000);
 const newId = (prefix) => `${prefix}-${crypto.randomBytes(12).toString("hex")}`;
 
 /**
+ * 解析「输出上限」参数。三种协议各有字段名：
+ *   · OpenAI Chat   max_tokens / max_completion_tokens
+ *   · Anthropic     max_tokens（官方规范里是**必填**）
+ *   · Responses     max_output_tokens
+ *
+ * 非法值一律当作「没给」（返回 0）而不是抛错 —— 这是**刻意的宽容**：
+ * 官方会为 `max_tokens: -1` 回 400，但那会让一批「参数写错但意图明确」的
+ * 客户端直接失败；而静默忽略又会让调用方以为生效了（黑盒测试实测吐槽的
+ * 正是这一点 —— `max_tokens: 8` 却返回 88 个 token）。
+ * 折中：合法值**严格生效**（见 gateway 里的截断实现），
+ * 非法值当没给（并在网关日志里留一条 warn）。
+ */
+function pickMaxTokens(v) {
+  if (v === undefined || v === null || v === "") return 0;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+/**
  * 把 Anthropic 的 content（string | [{type,text}]）压成纯文本。
  *
  * ⚠️ 图片块在这里只留 `[图片]` 占位（base64 塞进 prompt 会撑爆上下文），
@@ -153,7 +172,11 @@ const chatCompletions = {
   parse(body) {
     const model = String(body?.model || "");
     const messages = Array.isArray(body?.messages) ? body.messages : [];
-    return { model, messages, stream: body?.stream === true };
+    // 输出上限：官方两个字段都认（max_completion_tokens 是较新的名字）
+    const maxTokens = pickMaxTokens(
+      body?.max_tokens !== undefined ? body.max_tokens : body?.max_completion_tokens
+    );
+    return { model, messages, stream: body?.stream === true, maxTokens };
   },
   openStream(res, id, model) {
     res.status(200);
@@ -182,8 +205,10 @@ const chatCompletions = {
   reasoning(state, text) {
     state.send({ reasoning_content: text });
   },
-  done(res, state) {
-    state.send({}, "stop");
+  done(res, state, { settled } = {}) {
+    // 被输出上限截断时必须回 "length"，这是 OpenAI 协议里客户端判断
+    // 「回答没写完」的唯一信号（原先永远是 "stop"）。
+    state.send({}, settled?.truncated ? "length" : "stop");
     res.write("data: [DONE]\n\n");
     res.end();
   },
@@ -201,7 +226,8 @@ const chatCompletions = {
             content,
             ...(reasoning ? { reasoning_content: reasoning } : {}),
           },
-          finish_reason: "stop",
+          // 截断时回 "length"（OpenAI 规范），否则 "stop"
+          finish_reason: settled?.truncated ? "length" : "stop",
         },
       ],
       usage: {
@@ -260,7 +286,9 @@ const anthropicMessages = {
           : text,
       });
     }
-    return { model, messages: msgs, stream: body?.stream === true };
+    // Anthropic 的 max_tokens 在官方规范里是**必填**。这里不强制（宽容旧客户端），
+    // 但给了就按它截断。
+    return { model, messages: msgs, stream: body?.stream === true, maxTokens: pickMaxTokens(body?.max_tokens) };
   },
   openStream(res, id, model) {
     res.status(200);
@@ -325,7 +353,8 @@ const anthropicMessages = {
     if (!state.cur) anthropicMessages.openBlock(state, "text");
     state.send("content_block_stop", { index: state.blockCount - 1 });
     state.send("message_delta", {
-      delta: { stop_reason: "end_turn", stop_sequence: null },
+      // 截断时回 "max_tokens"（Anthropic 规范），否则 "end_turn"
+      delta: { stop_reason: settled?.truncated ? "max_tokens" : "end_turn", stop_sequence: null },
       usage: {
         input_tokens: settled?.promptTokens || 0,
         output_tokens: settled?.completionTokens || 0,
@@ -347,7 +376,8 @@ const anthropicMessages = {
         ...(reasoning ? [{ type: "thinking", thinking: reasoning, signature: "" }] : []),
         { type: "text", text: content },
       ],
-      stop_reason: "end_turn",
+      // 截断时回 "max_tokens"（Anthropic 规范）
+      stop_reason: settled?.truncated ? "max_tokens" : "end_turn",
       stop_sequence: null,
       usage: {
         input_tokens: settled.promptTokens,
@@ -386,7 +416,12 @@ const openaiResponses = {
     const model = String(body?.model || "");
     const messages = responsesInput(body);
     // Responses 的流式开关是 stream；部分客户端不传则视为非流式
-    return { model, messages, stream: body?.stream === true };
+    return {
+      model,
+      messages,
+      stream: body?.stream === true,
+      maxTokens: pickMaxTokens(body?.max_output_tokens),
+    };
   },
   openStream(res, id, model) {
     res.status(200);
@@ -465,12 +500,17 @@ const openaiResponses = {
     state.send("response.output_item.done", { output_index: 0, item: messageItem });
     // 与 openStream 的 respBase 保持同一组字段；output 为最终产物列表
     // （有思考时先放 reasoning 项，与 finish 的非流式形状一致）
-    state.send("response.completed", {
+    // 截断时走 response.incomplete（Responses 协议里没有 finish_reason，
+    // 状态从 completed 变成 incomplete 就是「没写完」的信号）
+    state.send(settled?.truncated ? "response.incomplete" : "response.completed", {
       response: {
         id: state.id,
         object: "response",
         created_at: state.createdAt,
-        status: "completed",
+        status: settled?.truncated ? "incomplete" : "completed",
+        ...(settled?.truncated
+          ? { incomplete_details: { reason: "max_output_tokens" } }
+          : {}),
         model: state.model,
         output: [
           ...(reasoning ? [{ type: "reasoning", summary: [{ type: "summary_text", text: reasoning }] }] : []),
@@ -490,7 +530,10 @@ const openaiResponses = {
       id,
       object: "response",
       created_at: now(),
-      status: "completed",
+      status: settled?.truncated ? "incomplete" : "completed",
+      ...(settled?.truncated
+        ? { incomplete_details: { reason: "max_output_tokens" } }
+        : {}),
       model,
       output: [
         ...(reasoning

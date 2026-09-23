@@ -634,6 +634,18 @@ export default function LogPage() {
               {ms(detail.first_token_ms)} / {ms(detail.elapsed_ms)}
             </Descriptions.Item>
             <Descriptions.Item label="计费">{fmtOd(Number(detail.quota) || 0, perUnit, 6)}</Descriptions.Item>
+            {/* 请求 id：客户端提前断开时一次调用会产生两条记录（计费行 + 错误行），
+                这是把它们对起来的唯一线索（黑盒测试实测抱怨过没有它）。
+                等宽字体 + 可选中，方便复制去搜另一条。 */}
+            <Descriptions.Item label="请求 ID">
+              {detail.request_id ? (
+                <span className="oo-mono" style={{ fontSize: 12, userSelect: "all" }}>
+                  {detail.request_id}
+                </span>
+              ) : (
+                "-"
+              )}
+            </Descriptions.Item>
             <Descriptions.Item label="IP">{detail.ip || "-"}</Descriptions.Item>
             <Descriptions.Item label="设备">{detail.device || "-"}</Descriptions.Item>
             {isAdmin ? (

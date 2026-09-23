@@ -595,6 +595,14 @@ async function handleCompletion(protocol, req, res) {
   }
   const model = parsed.model;
   const wantStream = parsed.stream === true;
+  // 输出上限（max_tokens / max_output_tokens，见 onDelta 处的说明）。
+  // 0 = 未指定，不限。要交给结算用，所以声明在这里而不是 onDelta 里。
+  const maxOutTokens = Number(parsed.maxTokens) || 0;
+  // 已**发给客户端**的输出（与 partialOut 不同：截断后 partialOut 还会继续累积
+  // 上游产出用于审计，而 emitted 停在上限处 —— 计费按 emitted 算，
+  // 否则用户设了 max_tokens=8 却被按 88 个 token 收费，与「成本控制」的预期相反）
+  let emitted = "";
+  let outputTruncated = false;
 
   // 客户端断开时中止上游（提前注册：authorize/图片抓取阶段断线也能感知）。
   // 必须监听 res 而不是 req：req "close" 在请求体读完后立即触发（Node 16+），
@@ -802,6 +810,35 @@ async function handleCompletion(protocol, req, res) {
       signal: clientCtrl.signal,
       onDelta: (t) => {
         markFirstToken();
+        // 输出上限（max_tokens / max_output_tokens）在这里**真正生效**。
+        //
+        // 背景（黑盒测试实测）：三个协议都接受该参数却完全不用它 ——
+        // 同一 prompt 传 max_tokens: 8 与 4096，两次都返回 88 个 token。
+        // 这是成本控制最被信任的旋钮，静默失效比报错更糟：
+        // 任何依赖 finish_reason === "length" 判断截断的客户端永远等不到它。
+        //
+        // 为什么在**网关层**截而不传给上游：本平台大量渠道是网页版反代
+        // （浏览器驱动 / OAuth 订阅），上游根本没有这个参数可传；
+        // 在唯一收敛点截断，三种协议、所有渠道口径一致。
+        // 估算沿用计费的 estimateTokens（字符数/3），所以是**近似上限**：
+        // 宁可略超也不误伤短回复（精确值要等上游返回 usage，来不及）。
+        const before = emitted.length;
+        emitted += t;
+        if (maxOutTokens > 0) {
+          // 超出上限：只送出还能放下的那一段，其余丢弃（但仍留在 partialOut 里，
+          // 保证「上游已产出」这件事如实反映到计费上）
+          if (estimateTokens(emitted) > maxOutTokens) {
+            outputTruncated = true;
+            const room = Math.max(0, maxOutTokens * 3 - before);
+            const keep = t.slice(0, room);
+            if (keep && wantStream) {
+              startStream();
+              protocol.delta(protoState, keep);
+            }
+            partialOut += t; // 计费按上游真实产出
+            return;
+          }
+        }
         partialOut += t;
         if (wantStream) {
           startStream();
@@ -817,14 +854,22 @@ async function handleCompletion(protocol, req, res) {
         }
       }});
 
-    // 扣费函数内部已区分：确定未扣（余额不足等）走 catch 部分结算；结果不确定（BILLING_UNCERTAIN）跳过
+    // 被 max_tokens 截断时，**按实际发给客户端的内容**计费。
+    //
+    // 为什么不能按上游全量算：上游不受我们控制（网页版反代根本没有这个参数），
+    // 它在服务端已经跑完 88 个 token；但用户设 `max_tokens: 8` 的目的正是
+    // 控制成本，按 88 收费与这个预期直接相反。
+    // 截断时上游的 usage 也不再可信（它算的是全量），所以整段用估算。
+    const cutThis = outputTruncated && maxOutTokens > 0;
     const settled = await settle({
       token,
       user,
       model,
       prompt,
-      output: result.content + (result.reasoning || ""),
-      usage: result.usage,
+      output: cutThis
+        ? emitted + (result.reasoning || "")
+        : result.content + (result.reasoning || ""),
+      usage: cutThis ? null : result.usage,
       ip,
       requestId,
       channel: result.channel,
@@ -857,8 +902,14 @@ async function handleCompletion(protocol, req, res) {
       // 用量为估算值（上游未返回 usage）：响应头会带出去，调用方据此判断
       // 是否可以把本次 token 数当精确值用
       estimated: Boolean(settled.tokensEstimated),
+      // 因 max_tokens / max_output_tokens 被截断：协议层据此回
+      // finish_reason: "length" / stop_reason: "max_tokens" ——
+      // 这是客户端判断「回答是否完整」的唯一正规信号
+      //（黑盒测试实测：原先永远是 "stop"/"end_turn"，依赖它的 agent 会误判）。
+      truncated: cutThis,
     };
     if (settled.tokensEstimated && !res.headersSent) res.setHeader("X-Tokens-Estimated", "1");
+    if (cutThis && !res.headersSent) res.setHeader("X-Output-Truncated", String(maxOutTokens));
     if (wantStream) {
       if (!streamStarted) startStream();
       protocol.done(res, protoState, { settled: settledForClient });
@@ -866,7 +917,7 @@ async function handleCompletion(protocol, req, res) {
       protocol.finish(res, {
         id: requestId,
         model,
-        content: result.content,
+        content: cutThis ? emitted : result.content,
         reasoning: result.reasoning,
         settled: settledForClient,
       });
@@ -884,9 +935,15 @@ async function handleCompletion(protocol, req, res) {
     // 已产生内容：按已产出部分结算（客户端已收到这些内容，不能零计费）。
     // 条件不能只看 streamStarted：非流式请求（stream:false）适配器同样边流边回调，
     // 中途失败时 partialOut 也有内容，却会漏计费。
+    // 部分结算的金额要留到错误日志里：否则「使用记录」里那笔真实扣费
+    // 与「操作日志」里那条 quota=0 的错误行对不上，管理员看不出这次花过钱。
+    // 黑盒测试实测抱怨（运维人格原话）：「错误行的 quota/pt/ct 全是 0，
+    // 看不出这次已经花了钱」。
+    let partialUnits = 0;
+    let partialTokens = null;
     if (!settledOnce && partialOut) {
       try {
-        await settle({
+        const partialSettled = await settle({
           token,
           user,
           model,
@@ -903,15 +960,38 @@ async function handleCompletion(protocol, req, res) {
           userAgent,
           tokenQuotaHold: quotaHold.amount});
         quotaHold.consume();
+        partialUnits = Number(partialSettled?.units) || 0;
+        partialTokens = {
+          prompt: Number(partialSettled?.promptTokens) || 0,
+          completion: Number(partialSettled?.completionTokens) || 0,
+        };
       } catch (e2) {
         console.error(`[gateway] ${requestId} 部分结算失败：${e2.message}`);
       }
     }
+    // 错误行的措辞要能区分「客户端断开 / 上游断开 / 网关超时」——
+    // 这三者的处置完全不同（前者不用管、中者要找上游、后者要调超时配置），
+    // 而原先一律是上游那句英文原文（如 "This operation was aborted"），分不清。
+    const errKind = /abort/i.test(err.message)
+      ? clientCtrl.signal.aborted
+        ? "客户端提前断开"
+        : "上游中断"
+      : /timeout|timed out/i.test(err.message)
+        ? "超时"
+        : "";
+    const failReason = errKind ? `${errKind}：${err.message}` : err.message;
     await writeLog({
       user,
       type: LOG_TYPE.ERROR,
-      content: `调用 ${model} 失败：${err.message}`,
-      detail: JSON.stringify({ code, requestId }),
+      // 已经部分结算过的，把金额写进文案里 —— 与「使用记录」那笔对得上
+      content:
+        `调用 ${model} 失败：${failReason}` +
+        (partialUnits ? ` · 已按已产出内容计费 ${(partialUnits / UNITS_PER_OD).toFixed(4)} ${CURRENCY}` : ""),
+      // 带上部分结算的金额与 token：两个日志页都能看出「这次其实花了钱」
+      detail: JSON.stringify({ code, requestId, partial_units: partialUnits, partial_tokens: partialTokens }),
+      quota: partialUnits,
+      promptTokens: partialTokens?.prompt || 0,
+      completionTokens: partialTokens?.completion || 0,
       ip,
       requestId,
       model,

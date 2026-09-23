@@ -38,6 +38,9 @@ function mapLog(r, { isAdmin }) {
     // 原始 UA 串只给管理员，避免被用来做指纹拼接）
     ip: r.ip || "",
     device: r.device || "",
+    // 关联键：一次调用若产生两条记录（计费 + 错误，客户端提前断开时会这样），
+    // 靠它才能把两条对起来。本人可见（就是他自己的调用）。
+    request_id: r.request_id || "",
   };
   if (!isAdmin) return base;
   return {
@@ -178,6 +181,11 @@ async function listLogs(req, res, kind) {
     "model", "channel_id", "channel_name", "token_id", "token_name", "group_name",
     "prompt_tokens", "completion_tokens", "cache_tokens", "first_token_ms", "elapsed_ms",
     "device", "price_phase",
+    // request_id 必须返回：一次调用可能产生两条记录（计费行 + 错误行，
+    // 见「客户端提前断开」那个场景），没有这个字段用户在界面上**无法把两条对起来**。
+    // 黑盒测试实测抱怨（运维人格）：「两页都没有 request_id，我只能下 SQL 才看得出来
+    // 是同一次调用」—— 排查断连/重试问题时它是唯一的关联键。
+    "request_id",
     ...(isAdmin ? ["detail", "user_agent"] : []),
   ].join(", ");
   const [rows] = await pool.query(`SELECT ${cols} FROM logs ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`, [
