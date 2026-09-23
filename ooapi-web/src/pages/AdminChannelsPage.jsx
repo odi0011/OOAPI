@@ -722,14 +722,9 @@ export default function AdminChannelsPage() {
   const [addMode, setAddMode] = useState("password");
   const [addSubmitting, setAddSubmitting] = useState(false);
   const [editSubmitting, setEditSubmitting] = useState(false);
-  const [browserOpen, setBrowserOpen] = useState(false);
-  const [browserTarget, setBrowserTarget] = useState(null);
-  const [browserShot, setBrowserShot] = useState(null);
   const [browserBusy, setBrowserBusy] = useState(false);
   // 浏览器登录类：添加表单里已完成「浏览器登录」（GLM/豆包/通义）：profile 存在服务器临时目录，
   // 提交时按 profileId 复制给渠道（每次登录一个独立目录，避免并发/复用串号）
-  const [onboardReady, setOnboardReady] = useState(false);
-  const [onboardProfile, setOnboardProfile] = useState("");
   // 凭据找回（401/登录态失效后重新登录）：能力由后端算（/channel/:id/recovery），
   // 前端只负责把对应流程跑起来 —— 浏览器授权、网页版会话抓取、设备码、粘贴凭据都在这里。
   const [reloginTarget, setReloginTarget] = useState(null);
@@ -752,10 +747,6 @@ export default function AdminChannelsPage() {
   // 找回指向的渠道 id：抓取界面成功后直接写回该渠道（而不是回填「添加渠道」表单）
   const reloginIdRef = useRef(0);
   // 登录态远程抓取（粘贴登录态的厂商：打开登录页 → 登录 → 自动回填 token/cookies）
-  const [capOpen, setCapOpen] = useState(false);
-  const [capSid, setCapSid] = useState("");
-  const [capShot, setCapShot] = useState(null);
-  const [capBusy, setCapBusy] = useState(false);
   // 订阅 OAuth 交互式登录：oauthUrl 有值表示「已发起登录，等待用户粘贴回调地址」
   const [oauthSupported, setOauthSupported] = useState(false);
   // 该渠道是否支持「一键绑定」（设备授权）：Kiro / WorkBuddy / Qoder。
@@ -779,84 +770,9 @@ export default function AdminChannelsPage() {
   const bindTicketRef = useRef("");
   // 绑定目标渠道：新建渠道时为 0（走 ticket 流程），重新绑定时为渠道 id
   const [bindTargetChannelId, setBindTargetChannelId] = useState(0);
-  const autoCapRef = useRef(false);
-  const autoFailRef = useRef(0);
   const [oauthUrl, setOauthUrl] = useState("");
   const [oauthState, setOauthState] = useState("");
   const [oauthBusy, setOauthBusy] = useState(false);
-  const [capCands, setCapCands] = useState(null);
-  const [capPick, setCapPick] = useState("");
-  const [capText, setCapText] = useState("");
-  // noVNC 实时浏览器：可用时弹窗内直接嵌服务器浏览器画面（截图模式作为兜底）
-  const [vncInfo, setVncInfo] = useState(null);
-  const [vncOff, setVncOff] = useState(false);
-  const capImgRef = useRef(null);
-  const [addForm] = Form.useForm();
-  const [editForm] = Form.useForm();
-  const [batchForm] = Form.useForm();
-  // 新建表单里的接口地址 / API Key 实时值：ModelPicker 靠它们在**保存前**拉模型
-  // （否则「点获取模型 → 请先保存」与「保存 → 请先选模型」互相锁死，见 ModelPicker 注释）
-  const addBaseUrl = Form.useWatch("base_url", addForm);
-  const addApiKey = Form.useWatch("api_key", addForm);
-  // 定时检测开关（关闭时禁用间隔与提示词输入）
-  const editAutoTestOn = Form.useWatch("auto_test", editForm);
-  // 检测模型下拉：用当前渠道声明的模型列表
-  const editModels = Form.useWatch("models", editForm);
-  const { begin, isLatest } = useLatest();
-
-  const load = useCallback(async ({ silent = false } = {}) => {
-    const token = begin();
-    // silent：轮询刷新时不要闪表格 loading，也不要清错误提示
-    if (!silent) {
-      setLoading(true);
-      setLoadError("");
-      setProvidersError("");
-      setStatsError("");
-    }
-    try {
-      // allSettled：某一个接口失败（如 stats 表未建好）不应让整页停在旧数据
-      const [list, st, ps, gs] = await Promise.allSettled([
-        API.get("/channel/", { params: { keyword, type: filterProvider } }),
-        API.get("/channel/stats"),
-        API.get("/channel/providers"),
-        API.get("/channel/groups"),
-      ]);
-      if (!isLatest(token)) return;
-      if (list.status === "fulfilled") setItems(list.value);
-      else setLoadError(list.reason?.message || "渠道列表加载失败");
-      if (st.status === "fulfilled") setStats(st.value);
-      else setStatsError(st.reason?.message || "渠道统计加载失败");
-      if (ps.status === "fulfilled") setProviders(ps.value);
-      else setProvidersError(ps.reason?.message || "厂商列表加载失败");
-      if (gs.status === "fulfilled") setGroups(Array.isArray(gs.value) ? gs.value : []);
-      const failed = [list, st, ps, gs].find((r) => r.status === "rejected");
-      if (failed) message.error(failed.reason?.message || "部分数据加载失败");
-    } catch (e) {
-      if (isLatest(token)) message.error(e.message);
-    } finally {
-      if (isLatest(token) && !silent) setLoading(false);
-    }
-  }, [keyword, filterProvider, message, begin, isLatest]);
-
-  // 定时检测会在后台不断写入新记录：静默轮询刷新列表（页面不可见时跳过），
-  // 这样小绿条会自己长出来，不需要手动刷新。
-  useEffect(() => {
-    const timer = setInterval(() => {
-      if (!document.hidden) load({ silent: true });
-    }, 30_000);
-    return () => clearInterval(timer);
-  }, [load]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  // 探测 noVNC 是否可用（只查一次；不可用时全部走原来的截图模式）
-  useEffect(() => {
-    API.get("/channel/vnc/info")
-      .then((r) => setVncInfo(r || { enabled: false }))
-      .catch(() => setVncInfo({ enabled: false }));
-  }, []);
 
   // 拉「支持一键绑定」的渠道清单（只一次）。
   // 必须真的拉：之前声明了 state 却忘了拉，导致一键绑定 UI 恒不显示（截图才发现）。
@@ -866,7 +782,6 @@ export default function AdminChannelsPage() {
       .catch(() => setDeviceBindVendors([]));
   }, []);
 
-  const useVnc = Boolean(vncInfo?.enabled) && !vncOff && !capCands;
 
   // 切换筛选/搜索时清空已选：否则批量操作会作用到当前不可见的渠道
   useEffect(() => {
@@ -911,11 +826,15 @@ export default function AdminChannelsPage() {
         // 导致弹窗里裂出「粘贴登录态」「浏览器登录」两个按钮，
         // 而 capture 那个**前端根本没有对应的渲染分支 → 点进去是空白表单**（用户实测反馈）。
         // 现在统一成一个入口：能抓取的方式直接叫「浏览器登录」（主路径就是它）。
-        const modes = (m.loginModes || []).filter((x) => x !== "capture");
+        // `capture` 与 `browser` 都过滤掉：它们代表**服务器浏览器**登录，那条路已删除
+        //（用户：「卡的不行、吃服务器内存，根本用不着」）。
+        // 按厂商是否声明过它们来分裂 tab，正是「有的厂商一个 tab、有的两个 tab」
+        // 的根源（豆包/GLM/通义写了 ["browser","paste"] 就多出一个）。
+        // 现在所有网页渠道统一只出一个「本机浏览器登录」入口。
+        // 后端 channel-types 里这几家的 loginModes 也已收敛为 ["paste"]。
+        const modes = (m.loginModes || []).filter((x) => x !== "capture" && x !== "browser");
         const effective = modes.length ? modes : ["paste"];
         for (const lm of effective) {
-          // 能自动抓取（有 entryUrl/canCapture）的方式，主路径是「在服务器浏览器里登录」，
-          // 所以标签就该叫「浏览器登录」；粘贴只是它的兜底手段，写进面板里说明即可。
           const canGrab = Boolean(m.canCapture || m.entryUrl);
           out.push({
             // id 必须带 method 前缀：同一厂商出现多个 paste 方式时不能撞车
@@ -934,17 +853,19 @@ export default function AdminChannelsPage() {
             // 同时提供两条路 —— 服务器浏览器（自动抓取）与本机浏览器（登录后粘贴
             // 登录态）。两者以前都渲染成「浏览器登录」，同一厂商裂出两个同名按钮，
             // 用户点哪个都像撞运气。现在按「谁在跑浏览器」明确区分。
+            // 标签口径（统一规范）：
+            //   · OAuth 订阅 → 「方法名（粘贴凭据）」或方法名
+            //   · 账号密码   → 「账号密码」，带 2FA 的加上方法名
+            //   · 其余网页反代 → **一律「本机浏览器登录」**
+            //     （服务器浏览器那条已删除，不再有「粘贴登录态」这种要用户自己
+            //      判断该粘什么的名字 —— 面板里会给分步指引）
             label: m.oauth
               ? `${methodShortName(m)}${lm === "paste" ? "（粘贴凭据）" : ""}`
               : lm === "password"
                 ? m.needs2fa
                   ? `${methodShortName(m)}（账号密码）`
                   : "账号密码"
-                : lm === "browser"
-                  ? "服务器浏览器登录"
-                  : canGrab
-                    ? "本机浏览器登录"
-                    : "粘贴登录态",
+                : "本机浏览器登录",
             hint: supportsDeviceBindMethod(m.key) ? "支持一键绑定" : "",
           });
         }
@@ -1141,9 +1062,6 @@ export default function AdminChannelsPage() {
           }
           payload.token = token;
           payload.cookies = v.cookies;
-        } else if (addMode === "browser") {
-          // 在表单里已通过 onboarding 完成浏览器登录：带上临时 profile id，后端复制给新渠道
-          if (onboardReady && onboardProfile) payload.profileFrom = onboardProfile;
         }
         const r = await API.post("/channel/login", payload, { timeoutMs: 90_000 });
         // 一键绑定：授权已成功但当时还没渠道，现在把暂存的凭据写进刚建的渠道。
@@ -1373,37 +1291,7 @@ export default function AdminChannelsPage() {
     }
   };
 
-  const refreshShot = async () => {
-    if (!browserTarget) return;
-    setBrowserBusy(true);
-    try {
-      const res = await API.post(`/channel/${browserTarget.id}/browser/open`);
-      setBrowserShot(res);
-    } catch (e) {
-      message.error(e.message);
-    } finally {
-      setBrowserBusy(false);
-    }
-  };
 
-  const confirmBrowserReady = async () => {
-    if (!browserTarget) return;
-    setBrowserBusy(true);
-    try {
-      const res = await API.post(`/channel/${browserTarget.id}/browser/check`);
-      if (res?.success) {
-        message.success(`「${browserTarget.name}」登录就绪，渠道可用`);
-        setBrowserOpen(false);
-        await load();
-      } else {
-        message.warning(res?.message || "尚未就绪，请先完成登录");
-      }
-    } catch (e) {
-      message.error(e.message);
-    } finally {
-      setBrowserBusy(false);
-    }
-  };
 
   // ---------- 登录态远程抓取 ----------
   // 选到订阅 OAuth 方式时问一下后端：这个厂商支不支持交互式登录（gemini 支持，codex/claude 目前只能粘贴凭据）
@@ -1442,19 +1330,22 @@ export default function AdminChannelsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pickProvider?.key, pickMethod?.oauth]);
 
+  /** 取授权地址并返回（**不自己开窗**）：由调用方决定用哪种窗口打开 */
   const startOAuth = async () => {
     const type = pickProvider?.key;
-    if (!type) return;
+    if (!type) return "";
     setOauthBusy(true);
     try {
       const r = await API.post("/channel/oauth/start", { type });
       setOauthUrl(r.url);
       setOauthState(r.state || "");
-      // 新窗口打开授权页（被拦截时页面上还有可点的链接兜底）
-      window.open(r.url, "_blank", "noopener");
+      // 这里**不再** window.open：调用方统一用弹窗小窗打开。
+      // 两处都开会让用户看到两个窗口（一个多余），且绕过弹窗尺寸设置。
+      return r.url;
     } catch (e) {
       // 未配置 OAuth 客户端等：说清怎么解决，而不是只丢报错
       message.error(e.message || "发起登录失败");
+      return "";
     } finally {
       setOauthBusy(false);
     }
@@ -1575,87 +1466,35 @@ export default function AdminChannelsPage() {
     setBindInfo(null);
   };
 
-  const startCapture = async () => {
-    if (!pickProvider) return;
-    setCapCands(null);
-    setCapPick("");
-    setCapText("");
-    setCapShot(null);
-    setCapBusy(true);
-    try {
-      const res = await API.post(
-        "/channel/capture/start",
-        { type: pickProvider.key, method: pickMethod?.key || "relay" },
-        { timeoutMs: 90_000 } // 服务端要启动浏览器并等首个页面加载，默认 30s 不够
-      );
-      // 浏览器登录类：重新登录时先清掉旧的「已登录」标记
-      if (res.kind === "browser") {
-        setOnboardReady(false);
-        setOnboardProfile(res.profileId || "");
-      } else {
-        setOnboardProfile("");
-      }
-      autoCapRef.current = false;
-      autoFailRef.current = 0;
-      setCapSid(res.sid);
-      setCapShot({ dataUrl: res.dataUrl, url: res.url, hint: res.hint, kind: res.kind, redirectUri: res.redirectUri || "" });
-      setCapOpen(true);
-    } catch (e) {
-      message.error(e.message);
-    } finally {
-      setCapBusy(false);
+  /**
+   * 在**用户自己的浏览器**里弹出一个小窗打开登录页。
+   *
+   * 为什么是小窗而不是新标签：用户明确要求「应该是弹出用户浏览器的小窗口啊」——
+   * 小窗（带尺寸的 window.open）能让人一眼看出「这是登录流程的一部分」，
+   * 而不是混在一堆标签里找不着；登录完关掉即可，不污染浏览习惯。
+   *
+   * 为什么**不能**自动把凭据抓回来（这点必须说清楚，不能让用户以为能）：
+   * 浏览器同源策略禁止一个站点读取**另一个站点**的 localStorage / cookie。
+   * 任何网站都做不到 —— 不是本平台没实现。所以流程是「小窗里登录 →
+   * 回到本页按指引复制一次」。真正能全自动的只有 OAuth 回调类
+   * （走「粘贴回调地址」那条路），因为授权页会把 code 交给我们自己的回调地址。
+   */
+  const openLocalLoginWindow = (url) => {
+    if (!url) return;
+    // 尺寸取常见登录窗大小：够放二维码/验证码，又不至于全屏
+    const w = Math.min(520, Math.max(380, Math.round(window.screen.availWidth * 0.42)));
+    const h = Math.min(760, Math.max(520, Math.round(window.screen.availHeight * 0.78)));
+    const left = Math.max(0, Math.round(window.screen.availWidth / 2 - w / 2));
+    const top = Math.max(0, Math.round(window.screen.availHeight / 2 - h / 2));
+    const features = `popup=yes,width=${w},height=${h},left=${left},top=${top},scrollbars=yes,resizable=yes`;
+    const win = window.open(url, "ooapi-local-login", features);
+    if (!win) {
+      // 被拦截时不能静默失败：给一条可点的链接兜底
+      message.warning("浏览器拦截了弹窗，请允许本站弹窗后重试，或手动打开：" + url);
     }
+    return win;
   };
 
-  // 未抓取完成前每 4 秒刷新一次截图（登录过程可见；二维码也能跟着刷新）。
-  // noVNC 模式下有实时画面，不需要截图轮询。
-  useEffect(() => {
-    if (!capOpen || !capSid || capCands || useVnc) return undefined;
-    const timer = setInterval(async () => {
-      try {
-        const res = await API.get(`/channel/capture/${capSid}/shot`);
-        setCapShot((old) => ({ ...old, dataUrl: res.dataUrl, url: res.url }));
-      } catch {
-        /* 会话过期时由用户重新打开，无需打断 */
-      }
-    }, 4000);
-    return () => clearInterval(timer);
-  }, [capOpen, capSid, capCands, useVnc]);
-
-  // OAuth 回调自动检测：服务器浏览器跳到 localhost 回调页（连接被拒）时，
-  // 轮询当前 URL 一旦命中回调地址就自动换取凭据并填入表单，管理员不用再点按钮。
-  useEffect(() => {
-    if (!capOpen || !capSid || capCands) return undefined;
-    if (capShot?.kind !== "oauth" || !capShot?.redirectUri) return undefined;
-    const timer = setInterval(async () => {
-      if (autoCapRef.current) return;
-      if (autoFailRef.current >= 3) return; // 连续失败就不再自动重试，留给手动按钮
-      try {
-        const r = await API.get(`/channel/capture/${capSid}/url`);
-        const url = String(r?.url || "");
-        if (!url.startsWith(capShot.redirectUri) || !/[?&]code=/.test(url)) return;
-        autoCapRef.current = true;
-        const res = await API.post(`/channel/capture/${capSid}/capture`, undefined, { timeoutMs: 90_000 });
-        const val = res?.tokens?.[0]?.value || res?.credential || "";
-        if (res?.oauth && val) {
-          autoFailRef.current = 0;
-          addForm.setFieldsValue({ token: val });
-          message.success(`已检测到授权完成，凭据自动填入${res.accountLabel ? `（${res.accountLabel}）` : ""}，请点「添加」`);
-          closeCapture(true);
-        }
-      } catch {
-        // 回调到达但换取失败（如授权码已被用过）：限次后停止，提示手动重试
-        autoFailRef.current += 1;
-        if (autoFailRef.current === 3) {
-          message.warning("自动换取凭据失败，请点「完成授权，抓取凭据」重试，或重新登录");
-        }
-      } finally {
-        autoCapRef.current = false;
-      }
-    }, 2500);
-    return () => clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [capOpen, capSid, capCands, capShot?.kind, capShot?.redirectUri]);
 
   // 卸载时清掉设备码轮询
   useEffect(
@@ -1665,55 +1504,6 @@ export default function AdminChannelsPage() {
     []
   );
 
-  const capAct = async (op) => {
-    if (!capSid) return;
-    try {
-      const res = await API.post(`/channel/capture/${capSid}/act`, op);
-      setCapShot((old) => ({ ...old, dataUrl: res.dataUrl, url: res.url }));
-    } catch (e) {
-      message.error(e.message);
-    }
-  };
-
-  // 截图按原始分辨率换算坐标：页面显示宽度 ≠ 真实视口宽度
-  const onCapShotClick = (e) => {
-    const img = capImgRef.current;
-    if (!img || !img.naturalWidth) return;
-    const rect = img.getBoundingClientRect();
-    const x = Math.round((e.clientX - rect.left) * (img.naturalWidth / rect.width));
-    const y = Math.round((e.clientY - rect.top) * (img.naturalHeight / rect.height));
-    capAct({ action: "click", x, y });
-  };
-
-  const finishCapture = async () => {
-    if (!capSid) return;
-    setCapBusy(true);
-    try {
-      const res = await API.post(`/channel/capture/${capSid}/capture`, undefined, { timeoutMs: 90_000 });
-      // 找回流程：服务端已把凭据/登录态写回该渠道，这里只需刷新列表
-      if (res.updated) {
-        reloginIdRef.current = 0;
-        message.success(`凭据已写回${res.accountLabel ? `（${res.accountLabel}）` : ""}，渠道已恢复`);
-        closeCapture(true);
-        await load();
-        return;
-      }
-      // 浏览器登录类：登录态在服务器 profile 里，提交时复制给渠道
-      if (res.browserReady) {
-        setOnboardReady(true);
-        message.success("浏览器登录已完成，点「添加」保存渠道");
-        closeCapture(true);
-        return;
-      }
-      setCapCands({ cookies: res.cookies, tokens: res.tokens || [] });
-      setCapPick(res.tokens?.[0]?.value || "");
-      if (res.oauth) message.success("已抓到登录凭据，确认无误后点「添加」");
-    } catch (e) {
-      message.error(e.message);
-    } finally {
-      setCapBusy(false);
-    }
-  };
 
   // 订阅凭据文件导入：Codex auth.json / CPA / sub2api 导出都能识别其中的凭据对象。
   // 多账号导出（accounts 数组）取第一个；批量导入请用页面顶部的「导入凭据」。
@@ -1743,23 +1533,6 @@ export default function AdminChannelsPage() {
     }
   };
 
-  const applyCapture = () => {
-    if (!capCands) return;
-    addForm.setFieldsValue({ token: capPick, cookies: capCands.cookies || "" });
-    message.success("已回填登录态，请继续完善其他字段");
-    closeCapture(true);
-  };
-
-  const closeCapture = async (keep) => {
-    const sid = capSid;
-    setCapOpen(false);
-    setCapSid("");
-    setCapShot(null);
-    setCapCands(null);
-    setCapPick("");
-    setCapText("");
-    if (sid && !keep) await API.post(`/channel/capture/${sid}/close`).catch(() => {});
-  };
 
   const doDelete = async (r) => {
     if (actionBusyId) return;
@@ -2181,28 +1954,6 @@ export default function AdminChannelsPage() {
       message.success(`登录成功${r?.account ? `（${r.account}）` : ""}，渠道已恢复`);
       closeRelogin();
       await load();
-    } catch (e) {
-      message.error(e.message);
-    } finally {
-      setReloginBusy(false);
-    }
-  };
-  // 在服务器浏览器里重新登录（订阅渠道的官方授权页 / 网页版官网登录）：
-  // 掉登录态时上游常要求「再验证一次」，验证码在实时画面里人工完成，回调由服务端接管。
-  const reloginBrowserStart = async () => {
-    setReloginBusy(true);
-    try {
-      const res = await API.post(`/channel/${reloginTarget.id}/recover/start`, undefined, { timeoutMs: 90_000 });
-      reloginIdRef.current = reloginTarget.id;
-      autoCapRef.current = false;
-      autoFailRef.current = 0;
-      setCapSid(res.sid);
-      setCapShot({ dataUrl: res.dataUrl, url: res.url, hint: res.hint, kind: res.kind, redirectUri: res.redirectUri || "" });
-      setCapCands(null);
-      setCapPick("");
-      setCapText("");
-      setCapOpen(true);
-      closeRelogin();
     } catch (e) {
       message.error(e.message);
     } finally {
@@ -2734,20 +2485,21 @@ export default function AdminChannelsPage() {
                         </>
                       ) : addMode === "paste" ? (
                         <>
-                          {/* 网页反代渠道：**本机浏览器是主路径**，服务器浏览器是备选。
+                          {/* 网页反代渠道的登录：**只用本机浏览器**（服务器浏览器那条路已整体删除）。
                               
-                              为什么这么排（用户反馈）：
-                                「所有快捷登录你都是做的内置浏览器？这不是给服务器徒增压力吗，
-                                  而且压根没必要啊，就直接唤起用户本机浏览器窗口就行啊，
-                                  登录完抓回调参数回填不就行了吗？」
-                              这是对的，而且代价差别很大：服务器浏览器要为每次登录起一个真实
-                              Chromium（带 xvfb 显示、过风控、读 localStorage），而多数情况下
-                              用户自己的浏览器**早就登录好了**，只要告诉他去哪儿复制那串凭据。
+                              演进（用户三轮反馈，最终落在「删掉」）：
+                                ① 「所有快捷登录你都是做的内置浏览器？这不是给服务器徒增压力吗」
+                                ② 「本机浏览器应该是直接唤起用户当前浏览器的一个小窗啊，
+                                    为什么要做文本让用户照着做？」
+                                ③ 「那个服务器内部浏览器压根用不了你懂吗？卡的不行啊而且吃服务器
+                                    内存和性能，这个逼玩意可以直接删了啊，根本用不着啊。」
+                              于是现在是：点按钮 → 弹出一个浏览器小窗 → 按面板里的分步指引
+                              登录并复制一次凭据。零服务器开销。
                               
-                              保留服务器浏览器作为备选的理由只有一个，且是真实的：
-                              **HttpOnly cookie 用 JS 读不到**。豆包/通义/StepFun 这类纯 cookie
-                              登录态，用户在开发者工具里仍能手工复制，但服务器浏览器能自动读 ——
-                              它擅长这个。所以降级为「服务器浏览器（备选）」，而不是删掉。 */}
+                              为什么仍需「复制一次」而不能全自动：浏览器同源策略禁止读取
+                              **其他站点**的 localStorage/cookie，任何网站都做不到。
+                              真正能全自动的只有 OAuth 回调类（走「粘贴回调」那条路，
+                              授权码交给我们自己的回调地址）。 */}
                           {pickMethod.localLogin ? (
                             <Form.Item label="登录（推荐：用你自己的浏览器）">
                               <Space direction="vertical" style={{ width: "100%" }} size={8}>
@@ -2756,9 +2508,9 @@ export default function AdminChannelsPage() {
                                     <Button
                                       type="primary"
                                       icon={<GlobalOutlined />}
-                                      onClick={() => window.open(pickMethod.entryUrl, "_blank", "noopener")}
+                                      onClick={() => openLocalLoginWindow(pickMethod.entryUrl)}
                                     >
-                                      打开 {pickProvider?.name} 登录页
+                                      弹出登录小窗（{pickProvider?.name}）
                                     </Button>
                                   ) : null}
                                   {pickMethod.localLogin.snippet ? (
@@ -2772,11 +2524,6 @@ export default function AdminChannelsPage() {
                                       }
                                     >
                                       复制「取凭据」代码
-                                    </Button>
-                                  ) : null}
-                                  {pickMethod.canCapture ? (
-                                    <Button onClick={startCapture} loading={capBusy}>
-                                      服务器浏览器（备选）
                                     </Button>
                                   ) : null}
                                 </Space>
@@ -2813,18 +2560,6 @@ export default function AdminChannelsPage() {
                                 </span>
                               </Space>
                             </Form.Item>
-                          ) : pickMethod.canCapture ? (
-                            // 没登记本机指引的网页渠道（暂无）：保留原来的服务器浏览器入口
-                            <Form.Item label="快捷登录">
-                              <Space wrap>
-                                <Button icon={<GlobalOutlined />} onClick={startCapture} loading={capBusy}>
-                                  服务器浏览器（自动抓取）
-                                </Button>
-                                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                                  {pickMethod.captureHint || "在服务器端登录页完成登录后，自动读取登录态回填下面"}
-                                </span>
-                              </Space>
-                            </Form.Item>
                           ) : null}
                           {/* 订阅 OAuth：两种登录方式。
                               · 一键登录：在服务器浏览器里打开官方授权页（截图操作），自动抓回调换 token；
@@ -2832,16 +2567,25 @@ export default function AdminChannelsPage() {
                           {pickMethod.oauth && oauthSupported ? (
                             <Form.Item label="登录账号（推荐）">
                               <Space wrap>
-                                <Button icon={<GlobalOutlined />} onClick={startCapture} loading={capBusy}>
-                                  一键登录（自动抓取）
-                                </Button>
-                                <Button type="link" onClick={startOAuth} loading={oauthBusy} style={{ padding: 0 }}>
-                                  或手动登录（需粘贴回调）
+                                <Button
+                                  type="primary"
+                                  icon={<GlobalOutlined />}
+                                  onClick={async () => {
+                                    // 先向后端要授权地址，再在**本机浏览器小窗**里打开：
+                                    // 登录后页面会跳到打不开的 localhost 回调地址（正常现象），
+                                    // 把地址栏那串 URL 粘回来即可换到令牌 —— 这是唯一
+                                    // 能真正全自动拿到凭据的路径（授权码交给我们自己的回调）。
+                                    const url = await startOAuth();
+                                    if (url) openLocalLoginWindow(url);
+                                  }}
+                                  loading={oauthBusy}
+                                >
+                                  弹出登录小窗（授权后粘回调）
                                 </Button>
                                 {oauthUrl ? (
-                                  <Typography.Link href={oauthUrl} target="_blank" rel="noreferrer">
-                                    在新窗口打开
-                                  </Typography.Link>
+                                  <Button type="link" onClick={() => openLocalLoginWindow(oauthUrl)} style={{ padding: 0 }}>
+                                    小窗已关？重新打开
+                                  </Button>
                                 ) : null}
                               </Space>
                               {oauthUrl ? (
@@ -3029,25 +2773,6 @@ export default function AdminChannelsPage() {
                               <Input.TextArea rows={2} placeholder='[{"name":"...","value":"..."}]' />
                             </Form.Item>
                           )}
-                        </>
-                      ) : addMode === "browser" ? (
-                        <>
-                          {onboardReady ? (
-                            <Alert
-                              type="success"
-                              showIcon
-                              className="oo-alert-compact"
-                              style={{ marginBottom: 12 }}
-                              message="已完成浏览器登录"
-                            />
-                          ) : null}
-                          <Form.Item label="登录（在服务器浏览器里完成）">
-                            <Space wrap>
-                              <Button icon={<GlobalOutlined />} onClick={startCapture} loading={capBusy}>
-                                {onboardReady ? "重新登录" : "打开登录页"}
-                              </Button>
-                            </Space>
-                          </Form.Item>
                         </>
                       ) : null}
                     </>
@@ -3336,197 +3061,6 @@ export default function AdminChannelsPage() {
         </Form>
       </Modal>
 
-      {/* ============ 浏览器登录 ============ */}
-      <Modal
-        title={`浏览器登录：${browserTarget?.name || ""}`}
-        open={browserOpen}
-        onCancel={() => setBrowserOpen(false)}
-        width={860}
-        destroyOnClose
-        footer={
-          <Space>
-            <button className="bui-btn" onClick={() => setBrowserOpen(false)}>关闭</button>
-            <button className="bui-btn" onClick={refreshShot} disabled={browserBusy}>
-              <ReloadOutlined /> 刷新画面
-            </button>
-            <button className="bui-btn bui-btn--primary" onClick={confirmBrowserReady} disabled={browserBusy}>
-              {browserBusy ? "处理中…" : "我已完成登录，检测状态"}
-            </button>
-          </Space>
-        }
-      >
-        {browserShot?.error ? (
-          <Alert type="warning" showIcon className="oo-alert-compact" style={{ marginBottom: 12 }} message={browserShot.error} />
-        ) : null}
-        <div
-          style={{
-            background: "var(--inset)",
-            borderRadius: "var(--r-card)",
-            padding: 8,
-            minHeight: 320,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            overflow: "auto",
-          }}
-        >
-          {browserBusy && !browserShot ? (
-            <span style={{ color: "var(--ink-3)", fontSize: 13 }}>正在打开浏览器并加载页面，请稍候…</span>
-          ) : browserShot?.dataUrl ? (
-            <img
-              src={browserShot.dataUrl}
-              alt="上游页面截图"
-              style={{ maxWidth: "100%", borderRadius: 8, display: "block" }}
-            />
-          ) : (
-            <span style={{ color: "var(--ink-3)", fontSize: 13 }}>暂无画面</span>
-          )}
-        </div>
-        {browserShot?.url ? (
-          <div style={{ marginTop: 8, fontSize: 12, color: "var(--ink-3)", fontFamily: "var(--font-mono)" }} className="oo-truncate">
-            {browserShot.url}
-          </div>
-        ) : null}
-      </Modal>
-
-      {/* ============ 登录态远程抓取 ============ */}
-      <Modal
-        title={capShot?.kind === "oauth" ? "登录并自动抓取凭据" : capShot?.kind === "browser" ? "浏览器登录" : "登录并自动抓取登录态"}
-        open={capOpen}
-        onCancel={() => closeCapture(false)}
-        footer={null}
-        destroyOnClose
-        width={720}
-      >
-        {capShot?.hint ? (
-          <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 10 }}>{capShot.hint}</div>
-        ) : null}
-
-        {useVnc ? (
-          <div>
-            <iframe
-              title="远程浏览器"
-              src={vncInfo.url}
-              style={{ width: "100%", height: 430, border: "1px solid var(--line)", borderRadius: 8, background: "#111" }}
-            />
-            <div style={{ marginTop: 6, fontSize: 12, color: "var(--ink-3)", display: "flex", alignItems: "center", gap: 8 }}>
-              <span>直接在画面里操作登录，登录态留在服务器。</span>
-              <button type="button" className="bui-btn" onClick={() => setVncOff(true)}>画面没反应？切回截图模式</button>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div
-              style={{
-                background: "var(--canvas)",
-                borderRadius: 8,
-                padding: 8,
-                minHeight: 260,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              {capShot?.dataUrl ? (
-                <img
-                  ref={capImgRef}
-                  src={capShot.dataUrl}
-                  alt="登录页截图"
-                  onClick={onCapShotClick}
-                  style={{ maxWidth: "100%", borderRadius: 6, display: "block", cursor: "crosshair" }}
-                />
-              ) : (
-                <Spin tip="正在打开登录页…" />
-              )}
-            </div>
-            {capShot?.url ? (
-              <div style={{ marginTop: 8, fontSize: 12, color: "var(--ink-3)", fontFamily: "var(--font-mono)" }} className="oo-truncate">
-                {capShot.url}
-              </div>
-            ) : null}
-            {vncInfo?.enabled ? (
-              <div style={{ marginTop: 6 }}>
-                <button type="button" className="bui-btn" onClick={() => setVncOff(false)}>切回实时浏览器画面</button>
-              </div>
-            ) : null}
-          </>
-        )}
-
-        {!capCands ? (
-          <Space direction="vertical" style={{ width: "100%", marginTop: 12 }} size={8}>
-            {!useVnc ? (
-            <Space wrap>
-              <Input
-                style={{ width: 220 }}
-                placeholder="输入验证码 / 账号（可选）"
-                value={capText}
-                onChange={(e) => setCapText(e.target.value)}
-                onPressEnter={() => {
-                  if (capText) {
-                    capAct({ action: "type", text: capText });
-                    setCapText("");
-                  }
-                }}
-              />
-              <Button
-                onClick={() => {
-                  if (capText) {
-                    capAct({ action: "type", text: capText });
-                    setCapText("");
-                  }
-                }}
-              >
-                输入到页面
-              </Button>
-              <Button onClick={() => capAct({ action: "key", key: "Enter" })}>回车</Button>
-              <Button onClick={() => capAct({ action: "key", key: "Tab" })}>Tab</Button>
-              <Button onClick={() => capAct({ action: "key", key: "Backspace" })}>退格</Button>
-              <Button onClick={() => capAct({ action: "scroll", dy: 600 })}>向下滚</Button>
-              <Button onClick={() => capAct({ action: "scroll", dy: -600 })}>向上滚</Button>
-            </Space>
-            ) : null}
-            <Space>
-              <Button type="primary" onClick={finishCapture} loading={capBusy}>
-                {capShot?.kind === "oauth" ? "完成授权，抓取凭据" : capShot?.kind === "browser" ? "我已登录，完成" : "我已登录，抓取登录态"}
-              </Button>
-              <Button onClick={() => closeCapture(false)}>放弃</Button>
-            </Space>
-          </Space>
-        ) : (
-          <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-              选择要填入表单的登录态（共 {capCands.tokens.length} 个候选）
-            </div>
-            {capCands.tokens.length ? (
-              <Radio.Group
-                value={capPick}
-                onChange={(e) => setCapPick(e.target.value)}
-                style={{ display: "flex", flexDirection: "column", gap: 6 }}
-              >
-                {capCands.tokens.map((t) => (
-                  <Radio key={t.key} value={t.value}>
-                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
-                      {t.key} = {t.value.slice(0, 24)}…{t.value.slice(-6)}
-                    </span>
-                  </Radio>
-                ))}
-              </Radio.Group>
-            ) : (
-              <div style={{ fontSize: 12, color: "var(--orange)" }}>没有抓到 token 类登录态，只回填 cookies。</div>
-            )}
-            <div style={{ marginTop: 6, fontSize: 12, color: "var(--ink-3)" }}>
-              Cookies：{capCands.cookies ? `${capCands.cookies.slice(0, 60)}…` : "（空）"}
-            </div>
-            <Space style={{ marginTop: 12 }}>
-              <Button type="primary" onClick={applyCapture} disabled={!capPick && !capCands.cookies}>
-                填入表单
-              </Button>
-              <Button onClick={() => closeCapture(false)}>取消</Button>
-            </Space>
-          </div>
-        )}
-      </Modal>
-
       {/* ============ 批量修改 ============ */}
       <Modal
         title={`批量修改 ${selectedKeys.length} 个渠道`}
@@ -3755,19 +3289,6 @@ export default function AdminChannelsPage() {
                     {reloginLocalGuide.snippet}
                   </div>
                 ) : null}
-              </Space>
-            ) : null}
-
-            {/* 服务器浏览器（备选）：打开官方页/官网，验证码人工完成，成功后自动写回 */}
-            {["oauth-browser", "session-capture", "capture", "browser-ready"].includes(reloginMode) ? (
-              <Space direction="vertical" style={{ width: "100%" }} size={8}>
-                <Button type="primary" icon={<GlobalOutlined />} onClick={reloginBrowserStart} loading={reloginBusy} block>
-                  在服务器浏览器里打开登录页
-                </Button>
-                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                  会在这台服务器上启动一个真实浏览器（有资源开销）。若你在本机浏览器里能打开该站点，
-                  用上面的「本机浏览器登录后粘贴」更快。
-                </span>
               </Space>
             ) : null}
 

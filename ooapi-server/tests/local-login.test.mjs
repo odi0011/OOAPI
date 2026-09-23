@@ -93,24 +93,34 @@ console.log("\n=== ③ 找回方式排序（本机浏览器优先）===");
 {
   const src = readFileSync(new URL("../src/routes/channel.js", import.meta.url), "utf8");
   // 顺序断言：paste 先 push，session-capture / oauth-browser 后 push
-  const iLocalSession = src.indexOf('label: "本机浏览器登录后粘贴（推荐）"');
-  const iServerSession = src.indexOf('label: "服务器浏览器自动抓取"');
-  ck("session-capture 段：本机路径先于服务器路径", iLocalSession > 0 && iServerSession > iLocalSession,
-    `本地@${iLocalSession} 服务器@${iServerSession}`);
-  const iLocalOauth = src.indexOf('label: "本机浏览器登录 + 粘贴回调（推荐）"');
-  const iServerOauth = src.indexOf('label: "服务器浏览器自动登录"');
-  ck("oauth 段：本机路径先于服务器路径", iLocalOauth > 0 && iServerOauth > iLocalOauth,
-    `本地@${iLocalOauth} 服务器@${iServerOauth}`);
-  ck("不再把服务器浏览器标成「推荐」",
-    !/label: "浏览器登录（推荐）"/.test(src) && !/label: "浏览器登录抓取（推荐）"/.test(src));
+  // 用户要求（原话）：「那个服务器内部浏览器压根用不了你懂吗？卡的不行啊而且吃服务器内存
+  // 和性能，这个逼玩意可以直接删了啊，根本用不着啊。」
+  // 删的是**登录用的**服务器浏览器；对话驱动的浏览器（GLM/豆包/通义）另有原因必须保留
+  //（页面签名无法服务端伪造，见 glm.js 说明），所以这里只断言登录相关已清理。
+  ck("后端不再提供服务器浏览器登录方式（session-capture）",
+    !/key: "session-capture"/.test(src));
+  ck("后端不再提供服务器浏览器自动登录（oauth-browser）",
+    !/key: "oauth-browser"/.test(src));
+  ck("后端不再提供 browser-ready（服务器浏览器打开登录页）",
+    !/key: "browser-ready"/.test(src));
+  ck("oauth 找回用「本机浏览器 + 粘贴回调」", /label: "本机浏览器登录 \+ 粘贴回调"/.test(src));
+  ck("needsBrowser 渠道也只剩本机浏览器路径",
+    src.includes('label: "本机浏览器登录"') && src.includes('desc: "在弹出的小窗里登录上游'));
   // 去重：同一 key 不能出现两次（否则下拉里两个同名项，用户分不清）
   ck("paste 方式做了去重（不重复 push）",
     /if \(!modes\.some\(\(m\) => m\.key === "paste"\)\)/.test(src));
   // 这句文案在前端（后端只提供数据）；且它在 JSX 里跨行，
   // 正则必须先压掉空白再匹配（第一版就是因跨行而误判失败的）
   const feSrcForNote = readFileSync(new URL("../../ooapi-web/src/pages/AdminChannelsPage.jsx", import.meta.url), "utf8");
-  ck("服务器浏览器按钮带资源开销说明",
-    /会在这台服务器上启动一个真实浏览器/.test(feSrcForNote.replace(/\s+/g, " ")));
+  // 只断言「没有入口/按钮」，不断言「一个字都不许提」——
+  // 注释里写明「这条已删除及其原因」恰恰是必要的（否则下一个人会再加回来）
+  const feCode = feSrcForNote
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")   // 去掉 JSX 注释块
+    .replace(/^\s*\/\/.*$/gm, "");              // 去掉行注释
+  ck("前端不再有「服务器浏览器」入口/按钮文案",
+    !/服务器浏览器（备选）/.test(feCode) && !/>\s*服务器浏览器/.test(feCode));
+  ck("前端不再引用捕获/实时画面相关接口",
+    !/\/capture\/|vnc\/info/.test(feSrcForNote));
   // recovery 接口要下发本机指引，重新登录弹窗才有分步说明可用
   ck("recovery 返回 localLogin 指引", /localLogin: \{ \.\.\.\(localLoginGuide/.test(src));
 }
@@ -120,9 +130,14 @@ console.log("\n=== ④ 前端两处入口 ===");
 {
   const fe = readFileSync(new URL("../../ooapi-web/src/pages/AdminChannelsPage.jsx", import.meta.url), "utf8");
   ck("新增渠道面板：有本机指引时渲染分步说明", /pickMethod\.localLogin\.steps\.map/.test(fe));
-  ck("新增渠道面板：主按钮是「打开 XX 登录页」（type=primary）",
-    /打开 \{pickProvider\?\.name\} 登录页/.test(fe));
-  ck("新增渠道面板：服务器浏览器标注「（备选）」", /服务器浏览器（备选）/.test(fe));
+  // 用户要求：「本机浏览器应该是直接唤起用户的当前的浏览器的一个小窗啊…
+  //           应该是弹出小窗口啊弹出用户浏览器的小窗口啊」
+  ck("新增渠道面板：主按钮是「弹出登录小窗」",
+    /弹出登录小窗（\{pickProvider\?\.name\}）/.test(fe));
+  ck("用小窗打开（window.open 带 popup 尺寸），不是普通新标签",
+    /popup=yes,width=\$\{w\},height=\$\{h\}/.test(fe));
+  ck("弹窗被拦截时给出可点链接兜底（不静默失败）",
+    /浏览器拦截了弹窗/.test(fe));
   ck("重新登录弹窗也渲染指引", /reloginLocalGuide\?\.steps/.test(fe));
   ck("重新登录弹窗读的是后端下发的 localLogin", /reloginInfo\?\.localLogin/.test(fe));
   ck("取码代码块可点击复制", /copyText\(pickMethod\.localLogin\.snippet\)/.test(fe));

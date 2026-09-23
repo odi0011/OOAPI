@@ -96,7 +96,10 @@ export const PROVIDERS = [
         key: "relay",
         label: "登录账号",
         desc: "登录 Z.ai 账号，验证码自动处理",
-        loginModes: ["browser", "paste"],
+        // 只留 paste：`browser` 代表服务器浏览器登录，已废弃
+        //（用户实测「卡的不行、吃服务器内存」，且本机浏览器粘贴完全能替代）。
+        // 留着它会让这些厂商在弹窗里多出一个 tab —— 「有的一个 tab 有的两个」的根源。
+        loginModes: ["paste"],
         loginFields: [],
         needsBrowser: true,
         browserHint: "该渠道需在服务器上打开浏览器登录一次（验证码由页面自动处理），之后长期有效",
@@ -167,7 +170,10 @@ export const PROVIDERS = [
         key: "relay",
         label: "登录账号",
         desc: "扫码登录一次，之后长期有效",
-        loginModes: ["browser", "paste"],
+        // 只留 paste：`browser` 代表服务器浏览器登录，已废弃
+        //（用户实测「卡的不行、吃服务器内存」，且本机浏览器粘贴完全能替代）。
+        // 留着它会让这些厂商在弹窗里多出一个 tab —— 「有的一个 tab 有的两个」的根源。
+        loginModes: ["paste"],
         loginFields: [],
         needsBrowser: true,
         browserHint: "该渠道需在服务器上打开浏览器扫码登录一次，之后长期有效",
@@ -202,7 +208,10 @@ export const PROVIDERS = [
         key: "relay",
         label: "登录账号",
         desc: "登录一次，风控较重",
-        loginModes: ["browser", "paste"],
+        // 只留 paste：`browser` 代表服务器浏览器登录，已废弃
+        //（用户实测「卡的不行、吃服务器内存」，且本机浏览器粘贴完全能替代）。
+        // 留着它会让这些厂商在弹窗里多出一个 tab —— 「有的一个 tab 有的两个」的根源。
+        loginModes: ["paste"],
         loginFields: [],
         needsBrowser: true,
         browserHint: "该渠道需在服务器上打开浏览器登录一次（阿里风控较重），之后长期有效",

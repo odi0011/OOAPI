@@ -953,32 +953,13 @@ router.get(
     if (method !== "api") {
       // 服务器浏览器里的官方授权页：能覆盖「账号掉验证要接码」这一步（人工在实时画面里输验证码）
       if (isOAuthMethod(method) && supportsInteractiveLoginMethod(r.type, method)) {
-        // 本机浏览器优先：授权页在用户自己浏览器里打开，把回调地址贴回来即可。
-        // 服务器浏览器那条路仍保留（有些环境本地打不开官方页 / 需要接码），但不再标「推荐」。
+        // 服务器浏览器那条路已整体删除（用户实测「卡的不行、吃服务器内存」且没必要）。
+        // 现在是本机浏览器小窗登录 + 粘回调 —— 唯一能真正全自动拿到凭据的路径
+        //（授权码交给我们自己的回调地址）。
         modes.push({
           key: "oauth-callback",
-          label: "本机浏览器登录 + 粘贴回调（推荐）",
-          desc: "在自己电脑的浏览器里登录，把回调地址粘回来换令牌；不占服务器资源",
-        });
-        modes.push({
-          key: "oauth-browser",
-          label: "服务器浏览器自动登录",
-          desc: "在服务器浏览器里打开官方登录页，验证码/接码人工完成，授权后自动写回凭据",
-        });
-      } else if (mCfg.captureApi) {
-        // 顺序与措辞反映代价差异（用户反馈「所有快捷登录都做内置浏览器，给服务器徒增压力」）：
-        // 先给**本机浏览器**路径 —— 多数人自己的浏览器早就登录好了，复制一串凭据即可，
-        // 零服务器开销；服务器浏览器要起真实 Chromium，只在前者不可用时才需要
-        //（典型是 HttpOnly cookie：JS 读不到，但服务器浏览器能自动读）。
-        modes.push({
-          key: "paste",
-          label: "本机浏览器登录后粘贴（推荐）",
-          desc: "用你自己电脑的浏览器登录官网，把登录态复制过来；不占服务器资源，也不容易触发风控",
-        });
-        modes.push({
-          key: "session-capture",
-          label: "服务器浏览器自动抓取",
-          desc: "在服务器浏览器里登录官网，登录后自动读取会话凭据（适合 JS 读不到的 HttpOnly cookie）",
+          label: "本机浏览器登录 + 粘贴回调",
+          desc: "在弹出的小窗里登录，把回调地址粘回来换令牌；不占服务器资源",
         });
       }
       if (isOAuthMethod(method) && supportsDeviceLogin(r.type)) {
@@ -989,14 +970,16 @@ router.get(
       if (supportsDeviceBind(r.type)) {
         modes.unshift({ key: "device-bind", label: "一键绑定（推荐）", desc: "打开授权页确认一次即可自动完成绑定，无需手工找凭据文件" });
       }
+      // needsBrowser 的方式（GLM/豆包/通义等）也只剩本机浏览器路径。
+      // 注意：这些渠道的**对话**仍在服务器浏览器里跑（页面签名无法服务端伪造，
+      // 见 services/upstream/glm.js 的说明）—— 删的只是「登录用的浏览器」，
+      // 它不是服务器压力的来源，对话驱动那部分另有空闲回收控制。
       if (mCfg.needsBrowser) {
-        // 本机浏览器优先；服务器浏览器作为备选（保持 key 不变，前端已有对应分支）
         modes.push({
           key: "paste",
-          label: "本机浏览器登录后粘贴（推荐）",
-          desc: "用你自己电脑的浏览器登录上游，把登录态复制过来",
+          label: "本机浏览器登录",
+          desc: "在弹出的小窗里登录上游，把登录态复制过来",
         });
-        modes.push({ key: "browser-ready", label: "服务器浏览器打开登录页", desc: "打开上游页面完成扫码/验证码登录" });
       }
       // 注：这里曾有独立的 "capture" 项，与 "paste" 并列。
       // 两者是同一条流程（抓取面板里自带粘贴兜底），并列会让用户以为是两种登录方式，

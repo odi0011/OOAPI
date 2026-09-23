@@ -333,9 +333,26 @@ console.log("\n=== ⑨ 额度条折叠规范 ===");
 
   // 规范 ③：`+N` 紧跟在最后一条额度条后面（同一位置流），不另起一行。
   //   「在第二个额度条的后面加一个 tag 显示 +n，鼠标悬浮显示折叠掉的额度条即可」
-  ck("`+N` 与额度条在同一行（跟在第二条后面）",
-    /\{shownWins\.map\(\(w, i\) => \([\s\S]{0,260}?\{collapsedWins\.length \? \(/.test(cq));
+  // 额度条**竖排**（每条独占一行），最后一条右侧留出 `+N` 的位置。
+  // 用户要求：「多个额度条要他妈的竖着排啊，你横着排干啥？第一个完整显示，
+  // 第二个就宽度少一点给留一个 tag 的位置，tag 显示 +N 就行啊」
+  ck("额度条容器是竖排（flexDirection: column）",
+    /flexDirection: "column", gap: 3, minWidth: 0/.test(cq));
+  ck("除最后一条外的条占满宽度（不给 +N 留位）",
+    /const needReserve = isLast && collapsedWins\.length > 0;/.test(cq));
+  ck("最后一条右侧用 padding 预留 +N 位置（不让 +N 挤压进度条）",
+    /paddingRight: needReserve \? 44 : 0/.test(cq));
+  ck("`+N` 绝对定位在行尾", /position: "absolute", right: 0/.test(cq));
   ck("悬浮 `+N` 列出被折叠的额度条", /const collapsedTip = \([\s\S]{0,220}collapsedWins\.map/.test(cq));
+  // 进度条铺满整行宽度（竖排下每行都有完整宽度可用，不该再固定 44px）
+  ck("进度条 flex:1 铺满宽度（不再是 compact 固定 44px）",
+    /flex: 1,\n\s+minWidth: 32,/.test(cq) && !/flex: compact \? "0 0 auto" : 1/.test(cq));
+
+  // 余额/积分 chip **不能被裁剪**：加过 flexShrink+ellipsis，会把
+  // 「余额 119 积分」截成「余额 119」—— 数字单位被吃掉比换行更糟（用户实测反馈）
+  ck("InfoPill 不压缩（flexShrink: 0）", /flexShrink: 0,/.test(cq));
+  ck("InfoPill 不再用省略号截断数字",
+    !/textOverflow: "ellipsis"/.test(cq));
 
   // 线上真实数据的回归：Google 那 4 个窗口只有 label、没有 tag/scope/windowSeconds，
   // 必须能从 label 解析出 5h/weekly 并正确递进（否则 4 条挤在一起看不出主次）

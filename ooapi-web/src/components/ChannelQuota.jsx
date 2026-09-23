@@ -191,7 +191,9 @@ function WindowRow({ w, index = 0, showScope = true, compact = false }) {
   // 「7d / 5h / 7d / 5h」两两重复，看不出哪个属于 Gemini、哪个属于 Claude。
   const scopeShort = showScope ? shortScope(w.scope || scopeFromLabel(w.label)) : "";
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, minWidth: 0 }}>
+    // flex:1 让整行铺满父容器：父级是竖排的每条一行，这里不铺满的话
+    // 进度条会按内容宽度收缩，右边留一片空白（实测截图：条子都偏短）
+    <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, minWidth: 0, flex: 1 }}>
       <span
         style={{
           minWidth: 34,
@@ -215,11 +217,13 @@ function WindowRow({ w, index = 0, showScope = true, compact = false }) {
         <>
           <span
             style={{
-              // compact（表格内横向排布）：进度条固定短宽，不抢 flex 空间，
-              // 这样一行能放下 3 个 pill；非 compact（详情面板）仍铺满可用宽度。
-              flex: compact ? "0 0 auto" : 1,
-              width: compact ? 44 : undefined,
-              minWidth: compact ? 44 : 32,
+              // 进度条**始终铺满可用宽度**（flex:1）。
+              // 原来 compact 模式固定 44px，是为「多个 pill 横排在一行」服务的 ——
+              // 现在额度条已改竖排（一条一行），那条约束不再成立：
+              // 固定短条会让整行看起来空荡、百分比孤零零浮在右边（实测截图反馈）。
+              // 竖排下每行都是满宽，进度条正好用来表达比例。
+              flex: 1,
+              minWidth: 32,
               height: 4,
               borderRadius: 2,
               background: "var(--pill-track)",
@@ -288,14 +292,11 @@ export function InfoPill({ children, tone = "gray", title }) {
         borderRadius: 5,
         padding: "1px 6px",
         whiteSpace: "nowrap",
-        // 横向排布时每个 chip 必须能被压缩 + 省略号截断，否则长文案
-        // （「Free Plan Subscription 0」）会被父级 overflow:hidden 硬切，
-        // 看起来像文字残缺（实测截图确认）。
-        minWidth: 0,
-        maxWidth: "100%",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        flexShrink: 1,
+        // **不压缩、不截断**。加过 `flexShrink:1 + textOverflow:ellipsis`，
+        // 结果横向空间不足时把「余额 119 积分」裁成「余额 119」——
+        // 数字/单位被吃掉比换行或收进 `+N` 更糟：用户看到的是错的信息。
+        // 空间不够的正确处理是「收进 +N」或「换行」，不是把内容切一半。
+        flexShrink: 0,
       }}
     >
       {children}
@@ -447,22 +448,42 @@ export function QuotaInline({ quota, stats }) {
         </div>
       ) : null}
 
-      {/* ② 额度行：最多两条（规范：折叠时按窗口长度各留一条 → 一条 5h + 一条 7d），
-             `+N` **紧跟在第二条后面**（用户要求：「在第二个额度条的后面加一个 tag
-             显示 +n，鼠标悬浮显示折叠掉的额度条即可」）。
+      {/* ② 额度条：**竖排**，每条独占一行（用户要求：「多个额度条要他妈的竖着排啊，
+             你横着排干啥？第一个完整显示，第二个就宽度少一点给留一个 tag 的位置，
+             tag 显示 +N 就行啊」）。
+             横排的问题：一条条挤在一行里，进度条被压得很短，百分比与标签也互相抢宽度，
+             最后哪条都看不清；竖排后每条都有完整的一行可以铺开。
+             · 第一条：占满整行宽度
+             · 其余条：右侧留出一个 `+N` 的位置（宽度略窄），`+N` 与该条同行显示，
+               悬浮列出所有被折叠的额度条
              装得下就不折叠 —— 折叠是宽度不够时的妥协，不是默认行为。 */}
       {shownWins.length ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", overflow: "hidden" }}>
-          {shownWins.map((w, i) => (
-            <WindowRow key={w.key || i} w={w} index={i} showScope={multiScope} compact />
-          ))}
-          {collapsedWins.length ? (
-            <Tooltip title={collapsedTip}>
-              <span className="bui-chip" style={{ fontSize: 11, flexShrink: 0 }}>
-                +{collapsedWins.length}
-              </span>
-            </Tooltip>
-          ) : null}
+        <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+          {shownWins.map((w, i) => {
+            const isLast = i === shownWins.length - 1;
+            // 最后一条才需要给 `+N` 留位置；前面的条占满宽度
+            const needReserve = isLast && collapsedWins.length > 0;
+            return (
+              <div key={w.key || i} style={{ position: "relative", display: "flex", alignItems: "center", minWidth: 0 }}>
+                {/* 需要留位时给右侧留出 `+N` 的宽度（用户要求「第二个宽度少一点
+                    给留一个 tag 的位置」）——用 padding 预留，而不是让 +N 参与
+                    flex 挤压，否则第二条的进度条会比第一条短一截、看起来像两套尺度 */}
+                <div style={{ flex: 1, minWidth: 0, display: "flex", paddingRight: needReserve ? 44 : 0 }}>
+                  <WindowRow w={w} index={i} showScope={multiScope} compact />
+                </div>
+                {needReserve ? (
+                  <Tooltip title={collapsedTip}>
+                    <span
+                      className="bui-chip"
+                      style={{ fontSize: 11, flexShrink: 0, position: "absolute", right: 0 }}
+                    >
+                      +{collapsedWins.length}
+                    </span>
+                  </Tooltip>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       ) : null}
 
