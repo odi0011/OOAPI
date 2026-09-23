@@ -774,6 +774,72 @@ export default function AdminChannelsPage() {
   const [oauthState, setOauthState] = useState("");
   const [oauthBusy, setOauthBusy] = useState(false);
 
+  // ── 以下这段是表单实例、竞态令牌与列表加载函数 ────────────────────────────
+  // ⚠️ 它们在一次「删服务器浏览器死代码」的批量删除里被误删过（连带把
+  //    addForm/editForm/editModels/load 一起删掉了，线上直接白屏
+  //    `ReferenceError: load is not defined`）。恢复时特意标出：
+  //    **删代码必须按符号查引用，不能只按行号区间切** —— 行号会因前面的编辑漂移。
+  const capImgRef = useRef(null);
+  const [addForm] = Form.useForm();
+  const [editForm] = Form.useForm();
+  const [batchForm] = Form.useForm();
+  // 新建表单里的接口地址 / API Key 实时值：ModelPicker 靠它们在**保存前**拉模型
+  // （否则「点获取模型 → 请先保存」与「保存 → 请先选模型」互相锁死，见 ModelPicker 注释）
+  const addBaseUrl = Form.useWatch("base_url", addForm);
+  const addApiKey = Form.useWatch("api_key", addForm);
+  // 定时检测开关（关闭时禁用间隔与提示词输入）
+  const editAutoTestOn = Form.useWatch("auto_test", editForm);
+  // 检测模型下拉：用当前渠道声明的模型列表
+  const editModels = Form.useWatch("models", editForm);
+  const { begin, isLatest } = useLatest();
+
+  const load = useCallback(async ({ silent = false } = {}) => {
+    const token = begin();
+    // silent：轮询刷新时不要闪表格 loading，也不要清错误提示
+    if (!silent) {
+      setLoading(true);
+      setLoadError("");
+      setProvidersError("");
+      setStatsError("");
+    }
+    try {
+      // allSettled：某一个接口失败（如 stats 表未建好）不应让整页停在旧数据
+      const [list, st, ps, gs] = await Promise.allSettled([
+        API.get("/channel/", { params: { keyword, type: filterProvider } }),
+        API.get("/channel/stats"),
+        API.get("/channel/providers"),
+        API.get("/channel/groups"),
+      ]);
+      if (!isLatest(token)) return;
+      if (list.status === "fulfilled") setItems(list.value);
+      else setLoadError(list.reason?.message || "渠道列表加载失败");
+      if (st.status === "fulfilled") setStats(st.value);
+      else setStatsError(st.reason?.message || "渠道统计加载失败");
+      if (ps.status === "fulfilled") setProviders(ps.value);
+      else setProvidersError(ps.reason?.message || "厂商列表加载失败");
+      if (gs.status === "fulfilled") setGroups(Array.isArray(gs.value) ? gs.value : []);
+      const failed = [list, st, ps, gs].find((r) => r.status === "rejected");
+      if (failed) message.error(failed.reason?.message || "部分数据加载失败");
+    } catch (e) {
+      if (isLatest(token)) message.error(e.message);
+    } finally {
+      if (isLatest(token) && !silent) setLoading(false);
+    }
+  }, [keyword, filterProvider, message, begin, isLatest]);
+
+  // 定时检测会在后台不断写入新记录：静默轮询刷新列表（页面不可见时跳过），
+  // 这样小绿条会自己长出来，不需要手动刷新。
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (!document.hidden) load({ silent: true });
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
   // 拉「支持一键绑定」的渠道清单（只一次）。
   // 必须真的拉：之前声明了 state 却忘了拉，导致一键绑定 UI 恒不显示（截图才发现）。
   useEffect(() => {
@@ -903,8 +969,6 @@ export default function AdminChannelsPage() {
     setPickProvider(null);
     setPickMethod(null);
     setAddMode("password");
-    setOnboardReady(false);
-    setOnboardProfile("");
     setOauthUrl("");    setOauthState("");
     addForm.resetFields();
     setAddOpen(true);
@@ -958,9 +1022,7 @@ export default function AdminChannelsPage() {
   const applyMethod = (p, m, forceMode = null) => {
     if (!m) return;
     setPickMethod(m);
-    // 换厂商/换凭据方式时清掉上一轮的登录态标记，避免把 A 的登录结果带给 B
-    setOnboardReady(false);
-    setOnboardProfile("");
+    // 换厂商/换凭据方式时清掉上一轮残留，避免把 A 的登录结果带给 B
     setOauthUrl("");
     setOauthState("");
     const mode = forceMode || (m.loginModes && m.loginModes[0]) || "apikey";
@@ -1276,21 +1338,6 @@ export default function AdminChannelsPage() {
       setActionBusyId(null);
     }
   };
-
-  const openBrowser = async (r) => {
-    setBrowserTarget(r);
-    setBrowserShot(null);
-    setBrowserBusy(true);
-    try {
-      const res = await API.post(`/channel/${r.id}/browser/open`);
-      setBrowserShot(res);
-    } catch (e) {
-      message.error(e.message);
-    } finally {
-      setBrowserBusy(false);
-    }
-  };
-
 
 
   // ---------- 登录态远程抓取 ----------
@@ -2145,19 +2192,9 @@ export default function AdminChannelsPage() {
           </button>
         </Tooltip>
       ) : null}
-      {r.needsBrowser ? (
-        <Tooltip title={r.browserReady ? "浏览器登录（已就绪）" : "浏览器登录（未完成）"}>
-          <button
-            className="bui-icon-btn"
-            style={r.browserReady ? undefined : { color: "var(--orange)" }}
-            aria-label={`${r.name} 浏览器登录`}
-            disabled={Boolean(actionBusyId) || browserBusy}
-            onClick={() => { setBrowserOpen(true); openBrowser(r); }}
-          >
-            <GlobalOutlined />
-          </button>
-        </Tooltip>
-      ) : null}
+      {/* 注：这里原有「浏览器登录」按钮（服务器浏览器里打开登录页）。
+          该链路已整体删除 —— 这类渠道改用「重新登录」里的
+          「本机浏览器登录 + 粘贴凭据」，不占服务器资源。 */}
       <Tooltip title="测试">
         <button className="bui-icon-btn" aria-label={`${r.name} 测试`} onClick={() => doTest(r)} disabled={Boolean(actionBusyId) || batchTesting || testingId === r.id} aria-busy={testingId === r.id || testingIds.has(r.id)}>
           {testingId === r.id || testingIds.has(r.id) ? <Spin size="small" /> : <ThunderboltOutlined />}
