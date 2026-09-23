@@ -52,12 +52,35 @@ router.post(
   "/register",
   registerLimit,
   asyncHandler(async (req, res) => {
-    const { username, password } = req.body || {};
+    const { username, password, email, invite_code } = req.body || {};
     if (!getBoolOption("password_register_enabled")) return fail(res, "系统未开放注册", 403);
+    // 下面几项在「系统设置」里都能改、也都通过 /api/status 暴露给前端，
+    // 但**原先服务端只读了 password_register_enabled**（黑盒测试实测：
+    // 把 register_invite_only / register_email_required / password_min_length
+    // 都设成限制值后，用 8 位密码、无邮箱、无邀请码仍然 200 注册成功）——
+    // 管理员以为已经把注册锁住了，实际没有。
+    // 设置项必须真的生效，否则不如不在界面上放出来。
+    if (getBoolOption("register_invite_only")) {
+      const code = String(invite_code || "").trim();
+      if (!code) return fail(res, "本站为邀请注册，请填写邀请码");
+      // 邀请码机制用的是**已有用户的 aff_code**（没有单独的 invite_codes 表）：
+      // 老用户把自己的 aff_code 给新用户，新用户注册时带上 → 记 inviter_id。
+      const [iv] = await pool
+        .query("SELECT id FROM users WHERE aff_code = ? AND status = 1 LIMIT 1", [code])
+        .catch(() => [[]]);
+      if (!iv.length) return fail(res, "邀请码无效");
+      req._inviterId = Number(iv[0].id) || 0;
+    }
     const name = String(username || "").trim();
     if (!USERNAME_RE.test(name)) return fail(res, "用户名需为 2-32 位字母、数字或下划线");
+    const mail = String(email || "").trim();
+    if (getBoolOption("register_email_required") && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) {
+      return fail(res, "本站要求填写有效邮箱");
+    }
     const pwd = String(password || "");
-    if (pwd.length < 8) return fail(res, "密码长度至少 8 位");
+    // 密码长度按设置取值（原先硬编码 8，改设置项不起作用）
+    const minLen = Math.max(6, Number(getNumberOption("password_min_length")) || 8);
+    if (pwd.length < minLen) return fail(res, `密码长度至少 ${minLen} 位`);
     if (passwordTooLong(pwd)) return fail(res, "密码过长（最多 72 字节）");
     if (/^[0-9]+$/.test(pwd) || /^[a-zA-Z]+$/.test(pwd))
       return fail(res, "密码需同时包含字母和数字");
@@ -70,10 +93,12 @@ router.post(
     let ret;
     try {
       [ret] = await pool.query(
-        "INSERT INTO users (username, password, display_name, role, status, quota, aff_code, group_name, created_time, last_login_time, last_login_ip) VALUES (?,?,?,1,1,?,?,?, ?, ?, ?)",
+        "INSERT INTO users (username, password, display_name, email, role, status, quota, aff_code, inviter_id, group_name, created_time, last_login_time, last_login_ip) VALUES (?,?,?,?,1,1,?,?,?,?, ?, ?, ?)",
         // group_name 留空 = 公共池（"default" 是已废弃的历史值，用了它会让日志里
-        // 出现名为 default 的分组标签，且启动清理要等到下次重启才归一）
-        [name, hash, name, quota, aff, "", ts, ts, clientIp(req)]
+        // 出现名为 default 的分组标签，且启动清理要等到下次重启才归一）。
+        // email 与 inviter_id 来自上面新增的开关校验：不写进去的话
+        // 「要求填邮箱」「邀请注册」两项设置就只是拦一下、不留痕，管理员查不到来源。
+        [name, hash, name, mail, quota, aff, Number(req._inviterId) || 0, "", ts, ts, clientIp(req)]
       );
     } catch (e) {
       // 并发注册同名用户：唯一键冲突返回 409，而不是把 500 抛给用户

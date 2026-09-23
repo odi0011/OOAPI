@@ -67,8 +67,13 @@ export default function ProfileViewPage() {
   // 共用一个 useLatest 时，同一轮里 load() 拿 token 1、loadTab() 拿 token 2，
   // 于是主数据的结果恒被判为「过期」丢弃 —— setData 与 setLoading(false) 都不执行，
   // 整个个人主页**永远停在骨架屏**（实测反馈）。分开后各管各的竞态。
-  const mainRace = useLatest();
-  const tabRace = useLatest();
+  //
+  // ⚠️ **必须解构**：useLatest 返回 `{ begin, isLatest }` 是每次渲染都新建的对象，
+  // begin/isLatest 才是稳定的 useCallback。把整个对象放进 useCallback 依赖数组 →
+  // useCallback 每次重建 → useEffect([load]) 每次重跑 → setState → 再渲染 →
+  // **无限请求循环**（黑盒测试实测：个人主页 117.8 req/s，404 用户页永远卡骨架屏）。
+  const { begin: mainBegin, isLatest: mainIsLatest } = useLatest();
+  const { begin: tabBegin, isLatest: tabIsLatest } = useLatest();
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -85,25 +90,25 @@ export default function ProfileViewPage() {
 
   const load = useCallback(async () => {
     if (!uid) return;
-    const token = mainRace.begin();
+    const token = mainBegin();
     setLoading(true);
     setNotFound(false);
     try {
       const d = await API.get(`/profile/u/${uid}`);
-      if (!mainRace.isLatest(token)) return;
+      if (!mainIsLatest(token)) return;
       setData(d);
       setFollowing(Boolean(d.following));
     } catch (e) {
-      if (mainRace.isLatest(token)) {
+      if (mainIsLatest(token)) {
         if (e.status === 404) setNotFound(true);
         else message.error(e.message);
       }
     } finally {
       // 必须能关闭 loading：此前与 loadTab 共用令牌时，
       // loadTab 的 token 更大 → 这里恒被判假 → 主数据永远加载不出来（永远骨架屏）
-      if (mainRace.isLatest(token)) setLoading(false);
+      if (mainIsLatest(token)) setLoading(false);
     }
-  }, [mainRace, message, uid]);
+  }, [mainBegin, mainIsLatest, message, uid]);
 
   useEffect(() => {
     load();
@@ -112,7 +117,7 @@ export default function ProfileViewPage() {
   // Tab 数据：帖子 / 收藏 / 关注 / 粉丝
   const loadTab = useCallback(async () => {
     if (!uid) return;
-    const token = tabRace.begin();
+    const token = tabBegin();
     setListLoading(true);
     try {
       let d;
@@ -129,14 +134,14 @@ export default function ProfileViewPage() {
         }
         d = await API.get("/community/posts", { params: { p: 1, page_size: 20, favorited: "1" } });
       }
-      if (!tabRace.isLatest(token)) return;
+      if (!tabIsLatest(token)) return;
       setListData({ items: d?.items || [], total: d?.total || 0 });
     } catch (e) {
-      if (tabRace.isLatest(token)) message.error(e.message);
+      if (tabIsLatest(token)) message.error(e.message);
     } finally {
-      if (tabRace.isLatest(token)) setListLoading(false);
+      if (tabIsLatest(token)) setListLoading(false);
     }
-  }, [tabRace, isSelf, message, tab, uid]);
+  }, [tabBegin, tabIsLatest, isSelf, message, tab, uid]);
 
   useEffect(() => {
     loadTab();

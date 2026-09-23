@@ -34,8 +34,17 @@ export default function PostDetailPage() {
   // 同一 effect 里先发的 loadPost 拿到 token 1、后发的 loadComments 拿到 token 2，
   // 于是 isLatest(1) 恒为假 → setPost 与 finally 里的 setLoading(false) 都不执行，
   // 页面**永远停在骨架屏**（实测反馈：打开任意 /community/:id 都出不来内容）。
-  const postRace = useLatest();
-  const commentRace = useLatest();
+  //
+  // ⚠️ **必须解构出 begin/isLatest，不能把整个对象放进 useCallback 的依赖数组**。
+  // useLatest 返回的是 `{ begin, isLatest }` —— 那是一个**每次渲染都新建的对象**，
+  // 而 begin/isLatest 本身是稳定的 useCallback。把对象当依赖 →
+  // useCallback 每次都重新创建 → useEffect([loadPost]) 每次都重跑 →
+  // setState → 再渲染 → **无限请求循环**。
+  // 黑盒测试实测：这一处让帖子详情页跑到 79.6 req/s、个人主页 117.8 req/s，
+  // 且 404 的帖子/用户页会永远停在骨架屏（loading 在循环里被反复置真）。
+  // 对照：CommunityPage / NotificationsPage / MessagesPage 用的是解构写法，所以没这个问题。
+  const { begin: postBegin, isLatest: postIsLatest } = useLatest();
+  const { begin: commentBegin, isLatest: commentIsLatest } = useLatest();
 
   const [post, setPost] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -56,15 +65,15 @@ export default function PostDetailPage() {
 
   const loadPost = useCallback(async () => {
     if (!postId) return;
-    const token = postRace.begin();
+    const token = postBegin();
     setLoading(true);
     setNotFound(false);
     try {
       const d = await API.get(`/community/posts/${postId}`);
-      if (!postRace.isLatest(token)) return;
+      if (!postIsLatest(token)) return;
       setPost(d);
     } catch (e) {
-      if (postRace.isLatest(token)) {
+      if (postIsLatest(token)) {
         if (e.status === 404) setNotFound(true);
         else message.error(e.message);
       }
@@ -72,24 +81,24 @@ export default function PostDetailPage() {
       // finally 也要判 isLatest，但**必须保证首次加载一定会关闭 loading**：
       // 之前的问题正是这里被判假而永不执行。现在 token 不再被兄弟请求顶掉，
       // 正常路径下这里一定成立。
-      if (postRace.isLatest(token)) setLoading(false);
+      if (postIsLatest(token)) setLoading(false);
     }
-  }, [postRace, message, postId]);
+  }, [postBegin, postIsLatest, message, postId]);
 
   const loadComments = useCallback(async () => {
     if (!postId) return;
-    const token = commentRace.begin();
+    const token = commentBegin();
     setCLoading(true);
     try {
       const d = await API.get(`/community/posts/${postId}/comments`, { params: { p: 1, page_size: 200 } });
-      if (!commentRace.isLatest(token)) return;
+      if (!commentIsLatest(token)) return;
       setComments(d?.items || []);
     } catch (e) {
-      if (commentRace.isLatest(token)) message.error(e.message);
+      if (commentIsLatest(token)) message.error(e.message);
     } finally {
-      if (commentRace.isLatest(token)) setCLoading(false);
+      if (commentIsLatest(token)) setCLoading(false);
     }
-  }, [commentRace, message, postId]);
+  }, [commentBegin, commentIsLatest, message, postId]);
 
   useEffect(() => {
     loadPost();

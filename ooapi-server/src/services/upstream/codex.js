@@ -15,6 +15,7 @@
 //   头：Authorization Bearer / Originator: codex-tui / Chatgpt-Account-Id / session_id
 //   SSE 事件：response.output_text.delta、response.reasoning_summary_text.delta、response.completed
 // ---------------------------------------------------------------------------
+import { normalizeContentToText } from "./content-text.js";
 import { codexIdentity, CLI_VERSIONS } from "./cli-profile.js";
 import { persistOtherPatch, loadOther, withRefreshLock } from "./auth-store.js";
 import {
@@ -213,7 +214,7 @@ function toResponsesInput(messages, images) {
     if (m.role === "system") continue; // 系统提示走 instructions
     const role = m.role === "assistant" ? "assistant" : "user";
     const contentType = role === "assistant" ? "output_text" : "input_text";
-    out.push({ type: "message", role, content: [{ type: contentType, text: String(m.content ?? "") }] });
+    out.push({ type: "message", role, content: [{ type: contentType, text: normalizeContentToText(m.content) }] });
   }
   if (images?.length) {
     // 图片挂在最后一条 user 消息上
@@ -234,7 +235,7 @@ function toResponsesInput(messages, images) {
 }
 
 function extractInstructions(messages) {
-  const sys = (messages || []).filter((m) => m && m.role === "system").map((m) => String(m.content ?? ""));
+  const sys = (messages || []).filter((m) => m && m.role === "system").map((m) => normalizeContentToText(m.content));
   return sys.join("\n\n");
 }
 

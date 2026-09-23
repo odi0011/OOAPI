@@ -15,6 +15,7 @@
 // 注意：Grok 无 device code 的 refresh 不带 scope；403 bad-credentials 按 401 处理
 //（刷新后重试一次）；429 free-usage-exhausted 冷却 24h（免费额度滚动窗口）。
 // ---------------------------------------------------------------------------
+import { normalizeContentToText } from "./content-text.js";
 import { grokIdentity } from "./cli-profile.js";
 import { persistOtherPatch, loadOther, withRefreshLock } from "./auth-store.js";
 
@@ -243,7 +244,7 @@ function toResponsesInput(messages, images, fallbackPrompt) {
     if (!m || typeof m !== "object" || m.role === "system") continue;
     const role = m.role === "assistant" ? "assistant" : "user";
     const contentType = role === "assistant" ? "output_text" : "input_text";
-    out.push({ type: "message", role, content: [{ type: contentType, text: String(m.content ?? "") }] });
+    out.push({ type: "message", role, content: [{ type: contentType, text: normalizeContentToText(m.content) }] });
   }
   if (images?.length) {
     for (let i = out.length - 1; i >= 0; i--) {
@@ -259,7 +260,7 @@ function toResponsesInput(messages, images, fallbackPrompt) {
 }
 
 function instructionsOf(messages) {
-  return (messages || []).filter((m) => m && m.role === "system").map((m) => String(m.content ?? "")).join("\n\n");
+  return (messages || []).filter((m) => m && m.role === "system").map((m) => normalizeContentToText(m.content)).join("\n\n");
 }
 
 export async function chat({ channel, model, prompt, messages, thinkingOverride, images = [], onDelta, onReasoning, signal }) {

@@ -543,6 +543,41 @@ router.post(
         target: { postId, commentId, postTitle: postFull.title },
       });
     }
+    // **正文里手打的 @用户名 也要通知**。
+    //
+    // 黑盒测试发现的问题：本平台原先只有「点回复按钮」才会产生 @（走
+    // reply_to_user_id），而用户在正文里直接写 `@某人` **完全没有效果** ——
+    // 不解析、不通知，被提及的人永远不知道。这与绝大多数社区产品的直觉不符
+    //（输入 @ 就是提及），而输入框的提示也没说明只支持回复式 @。
+    //
+    // 实现要点：
+    //   · 只认「存在的用户名」，逐条查库确认 —— 不猜、不为不存在的名字发通知
+    //     （否则 `@随便打` 会变成骚扰渠道）；
+    //   · **必须要求 @ 前面是行首或空白**：否则 `user@example.com` 这种邮箱会被
+    //     当成提及 `example`（实测过），给莫名其妙的人发通知；
+    //   · 一条评论里提及多人，逐个发；同一人重复 @ 只发一次；
+    //   · 与已有通知去重：被回复者/楼主已经收到 comment_reply / post_comment 了，
+    //     不再叠加一条 mention（同一条评论对同一个人最多一条通知）。
+    const mentioned = [
+      ...new Set(
+        [...content.matchAll(/(?:^|[\s，。！？、,.!?])@([A-Za-z0-9_\u4e00-\u9fa5-]{2,32})/g)].map((m) => m[1])
+      ),
+    ].filter((name) => !/^\d+$/.test(name)); // 纯数字不是用户名
+    if (mentioned.length) {
+      const alreadyNotified = new Set([Number(replyToUserId) || 0, Number(postFull?.user_id) || 0]);
+      for (const name of mentioned.slice(0, 10)) {
+        const [[u]] = await pool.query("SELECT id FROM users WHERE username = ? AND status = 1 LIMIT 1", [name]);
+        const uid = Number(u?.id) || 0;
+        if (!uid || uid === req.user.id || alreadyNotified.has(uid)) continue;
+        alreadyNotified.add(uid); // 同一人只发一次
+        await notify({
+          userId: uid,
+          actorId: req.user.id,
+          type: "mention",
+          target: { postId, commentId, postTitle: postFull?.title },
+        });
+      }
+    }
     return ok(res, { id: commentId }, "评论成功");
   })
 );
@@ -600,7 +635,18 @@ async function toggleReaction(req, res, targetType, kind) {
     if (e.code !== "ER_DUP_ENTRY") throw e;
     inserted = false; // 已经赞过：不再发通知（否则双击会产生两条提醒）
   }
-  await pool.query(`UPDATE ${table} SET ${countCol} = ${countCol} + 1 WHERE id = ?`, [id]);
+  // **计数自增必须只在真正插入成功时执行**。
+  //
+  // 这里踩过一个会造成**永久数据漂移**的坑（黑盒测试实测复现）：自增原先写在
+  // `if (inserted)` 之外，于是两个并发请求（同一用户开两个标签页同时点赞，
+  // 或 API 双击）都会走到这一行 —— 唯一键只挡住了重复的 INSERT，
+  // 计数却 +2，而真实点赞行只有 1 行。结果是「帖子显示 2 个赞、实际 1 人赞」，
+  // 且**永不自动纠正**（取消一次只 -1，要点两次才回到真值）。
+  // 取消赞的并发同理（会 -2）。所以把自增移进分支内 —— 与上面 cancel 分支的
+  // 「先删行、再减计数」严格对称。
+  if (inserted) {
+    await pool.query(`UPDATE ${table} SET ${countCol} = ${countCol} + 1 WHERE id = ?`, [id]);
+  }
   const [[after]] = await pool.query(`SELECT ${countCol} AS n FROM ${table} WHERE id = ?`, [id]);
 
   if (inserted) {
@@ -682,8 +728,22 @@ router.post(
       if (e.code !== "ER_DUP_ENTRY") throw e;
       fresh = false;
     }
-    // 只在「新关注」时通知（反复点关注/取关不该刷屏）
-    if (fresh) await notify({ userId: targetId, actorId: req.user.id, type: "follow" });
+    // 只在「**首次**关注」时通知（反复点关注/取关不该刷屏）。
+    //
+    // 这里踩过一个通知刷屏的坑（黑盒测试实测）：`fresh` 只挡得住**同一次重放**
+    // （并发/双击产生的 ER_DUP_ENTRY），而「取关 → 再关注」是**全新的插入**，
+    // fresh 恒为 true —— 于是在限流窗口（40 次/分）内连点，就能给对方刷满通知
+    // （每人保留上限 200 条，很快被刷掉）。
+    //
+    // 正确语义是「曾经关注过就不再通知第二次」，所以这里查**历史通知**而不是
+    // 查关注行（关注行在取关时已经被删掉了，查它必然查不到）。
+    if (fresh) {
+      const [[notified]] = await pool.query(
+        "SELECT id FROM notifications WHERE user_id = ? AND actor_id = ? AND type = 'follow' LIMIT 1",
+        [targetId, req.user.id]
+      );
+      if (!notified) await notify({ userId: targetId, actorId: req.user.id, type: "follow" });
+    }
     const [[c]] = await pool.query("SELECT COUNT(*) AS n FROM community_follows WHERE followee_id = ?", [targetId]);
     return ok(res, { following: true, followers: Number(c.n) || 0 }, "已关注");
   })

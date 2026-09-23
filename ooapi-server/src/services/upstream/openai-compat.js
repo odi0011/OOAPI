@@ -174,7 +174,17 @@ function buildMessages({ messages, prompt, images }) {
     if (images?.length) {
       for (let i = out.length - 1; i >= 0; i--) {
         if (out[i].role === "user") {
-          out[i] = { role: "user", content: imageContent(images, String(out[i].content || "")) };
+          // **必须先把 content 归一成字符串，再交给 imageContent**。
+          //
+          // 这里踩过一个会让模型收到垃圾输入的坑（黑盒测试实测，P0）：
+          // OpenAI SDK / Responses API 会把 content 传成**分片数组**
+          // （`[{type:"text",text:"..."},{type:"image_url",...}]`），
+          // 而这里直接 `String(array)` —— JS 会把每个对象转成 "[object Object]"，
+          // 于是模型真正收到的是 `[object Object],[object Object]`。
+          // 用户看到的是模型答非所问（还在讨论 "[object Object] 这个占位符"），
+          // 却照常被计费；而日志里存的 prompt 是对的，排查时会以为模型疯了。
+          const norm = normalizeContentToText(out[i].content);
+          out[i] = { role: "user", content: imageContent(images, norm) };
           break;
         }
       }
@@ -182,6 +192,31 @@ function buildMessages({ messages, prompt, images }) {
     return out;
   }
   return [{ role: "user", content: imageContent(images, String(prompt || "")) }];
+}
+
+/**
+ * 把 messages 里的 content 归一成纯文本。
+ * 分片数组只取文本片（图片片由 imageContent 统一追加，避免重复）。
+ * 这个函数存在的唯一原因就是上面那条注释里的 P0 —— 不要把 String() 用在这里。
+ */
+export function normalizeContentToText(content) {
+  if (content === null || content === undefined) return "";
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (!part || typeof part !== "object") return "";
+        if (part.type === "text") return String(part.text ?? part.content ?? "");
+        // image_url 片由 imageContent 从 images 参数统一加（避免同一张图加两次）
+        return "";
+      })
+      .join("");
+  }
+  if (typeof content === "object") {
+    return String(content.text ?? "");
+  }
+  return String(content);
 }
 
 /** 健康检查：请求 /models（免费且不消耗额度） */

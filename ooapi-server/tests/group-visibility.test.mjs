@@ -75,9 +75,39 @@ t("分组白名单（group_config.models）参与过滤", () => {
 t("输出按 id 去重（真实模型优先于兼容别名）", () => {
   const body = modelsHandler();
   ck(body, "未找到 /models 处理器");
-  ck(/const seen = new Map\(\)/.test(body), "没有去重");
-  ck(/prev\.aliasOf && !m\.aliasOf/.test(body), "去重时没有优先保留真实模型");
-  ck(/\[\.\.\.seen\.values\(\)\]/.test(body), "没有用去重后的集合输出");
+  // 去重现在在 pushModel 里用 Set 完成（比原先「先收集再过滤」更早去重，
+  // 也顺带挡掉了白名单/密钥限制之外的重复项）：
+  //   ① seen 是 Set，pushModel 先查 seen.has(key) 再入队；
+  //   ② 通配渠道时先推公共目录、再推渠道声明、最后补别名 —— 同一 id 只留第一次。
+  ck(/const seen = new Set\(\)/.test(body), "没有去重用的 seen 集合");
+  ck(/if \(!key \|\| seen\.has\(key\)\) return;/.test(body), "pushModel 没有按 id 去重");
+  ck(/seen\.add\(key\)/.test(body), "没有把 id 记进去重集合");
+});
+
+t("分组无渠道时必须返回**空列表**（不是整份目录）", () => {
+  const body = modelsHandler();
+  ck(body, "未找到 /models 处理器");
+  // 黑盒测试实测过的 P0：`available.size === 0` 那个逃逸口让「分组零渠道」
+  // 退化成「不限模型」，把整份目录（104 个）返回给一个什么都调不了的密钥。
+  // 只看**代码**、不看成句的注释（修复说明里会引用旧写法，那是解释不是实现）。
+  const code = body.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  ck(!/available\.size === 0/.test(code), "还留着 available.size === 0 逃逸口");
+  ck(!/available\.has\("\*"\) \|\|/.test(code), "仍在用「通配 or 空集合」的旧判定");
+  ck(/if \(!inGroup\.length\)/.test(code), "没有对「分组无渠道」单独处理");
+  ck(/data: \[\]/.test(code), "分组无渠道时没有返回空列表");
+});
+t("列表含**渠道声明**的模型（hy3/omen-alpha 这类不在公共目录里的）", () => {
+  const body = modelsHandler();
+  // 主数据源必须是 collectAvailableModels（渠道能力）而不是 allPublicModels（登记表），
+  // 否则「能调但不在目录里」的模型会被吞掉 —— 实测一个只能调 omen-alpha 的密钥
+  // 拿到的是空列表。
+  ck(/for \(const id of available\)/.test(body), "没有把渠道声明的模型并进列表");
+  ck(/wildcard/.test(body), "没有处理「渠道声明为通配」的情况");
+});
+t("列表认 per-token 的 model_limits", () => {
+  const body = modelsHandler();
+  ck(/allowedByToken/.test(body), "没有按密钥级模型限制过滤");
+  ck(/modelAllowed\(token, id\)/.test(body), "没有复用 modelAllowed（与调用路径同一判定）");
 });
 
 console.log("\n=== ② 密钥未绑分组：调用时报错 ===");

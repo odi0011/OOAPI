@@ -12,6 +12,7 @@
 //      "You are Claude Code, Anthropic's official CLI for Claude." 身份提示词，
 //      否则订阅 OAuth 会被拒绝（这是官方 CLI 的协议要求）。
 // ---------------------------------------------------------------------------
+import { normalizeContentToText } from "./content-text.js";
 import crypto from "node:crypto";
 import { claudeIdentity, CLI_VERSIONS } from "./cli-profile.js";
 import { persistOtherPatch, loadOther, withRefreshLock } from "./auth-store.js";
@@ -190,7 +191,7 @@ function buildClaudeMessages(messages) {
     // 注意：system 消息由 systemBlocks() 单独处理，这里跳过
     if (!m || typeof m !== "object" || m.role === "system") continue;
     const role = m.role === "assistant" ? "assistant" : "user";
-    const text = String(m.content ?? "");
+    const text = normalizeContentToText(m.content);
     // Anthropic 要求首条为 user 且 user/assistant 严格交替：合并连续同角色
     if (!out.length && role !== "user") continue;
     const prev = out[out.length - 1];
@@ -207,7 +208,7 @@ function injectImages(blocks, images) {
     if (blocks[i].role !== "user") continue;
     const arr = Array.isArray(blocks[i].content)
       ? blocks[i].content
-      : [{ type: "text", text: String(blocks[i].content || "") }];
+      : [{ type: "text", text: normalizeContentToText(blocks[i].content) }];
     for (const img of images) {
       arr.push({
         type: "image",
@@ -225,7 +226,7 @@ function injectImages(blocks, images) {
 
 function systemBlocks(messages, model) {
   const blocks = [{ type: "text", text: CLAUDE_CODE_IDENTITY, cache_control: { type: "ephemeral" } }];
-  const sys = (messages || []).filter((m) => m && m.role === "system").map((m) => String(m.content ?? ""));
+  const sys = (messages || []).filter((m) => m && m.role === "system").map((m) => normalizeContentToText(m.content));
   const joined = sys.join("\n\n");
   if (joined) blocks.push({ type: "text", text: joined });
   // Fable 5 要求附带产出说明块（协议要求，非本平台业务）

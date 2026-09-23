@@ -216,7 +216,7 @@ export default function PromptBar({
                   }}
                 >
                   <span className="nm">图片</span>
-                  <span className="ds">{visionOk ? "截图、照片，最多 3 张" : "当前模型不支持图片"}</span>
+                  <span className="ds">{visionOk ? "截图、照片，最多 30 张" : "当前模型不支持图片"}</span>
                 </button>
                 <button
                   type="button"

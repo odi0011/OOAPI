@@ -117,11 +117,24 @@ async function activeKeyOf(user, keyId = 0) {
     const t = rows[0];
     const expired = Number(t.expired_time) !== -1 && Number(t.expired_time) <= nowSec;
     if (Number(t.status) !== 1 || expired) return null;
+    // 未绑分组 → 不可用（与网关的 token_group_required 同一口径）。
+    // 不拦的话，显式传 keyId 就能选中一把未绑分组的密钥绕过校验。
+    if (!String(t.group_name || "").trim()) return null;
     return t;
   }
-  // 未指定密钥时，默认选取第一个可用有效密钥
+  // 未指定密钥时，默认选取第一个可用有效密钥。
+  //
+  // **必须排除未绑分组的密钥**（与网关 authorize 的 token_group_required 同一口径）。
+  //
+  // 这里踩过一个让「必须绑分组」这条规则形同虚设的漏洞（黑盒测试实测）：
+  // 站内对话走的是本条查询，而它只筛 status/过期 —— 于是一把密钥在管理员
+  // 删掉它所属的分组之后（routes/channel.js 会把 tokens.group_name 清空），
+  // **外部 API 立刻 403 拒绝，但站内对话照常可用**，还会因为
+  // `channelInGroup(c, null)` 只匹配「同样没分组的渠道」而路由到管理员
+  // 没打算开放的渠道上 —— 既绕过了校验，又绕过了分组范围。
   const [rows] = await pool.query(
-    "SELECT * FROM tokens WHERE user_id = ? AND status = 1 AND (expired_time = -1 OR expired_time > ?) ORDER BY id ASC LIMIT 1",
+    "SELECT * FROM tokens WHERE user_id = ? AND status = 1 AND (expired_time = -1 OR expired_time > ?)" +
+      " AND group_name IS NOT NULL AND group_name <> '' ORDER BY id ASC LIMIT 1",
     [user.id, nowSec]
   );
   return rows[0] || null;
@@ -344,6 +357,10 @@ function groupModelsByVendor(models) {
 
 // 单个附件正文上限：留出余量给历史与工具结果，避免一个大文件把上下文挤爆
 const FILE_TEXT_LIMIT = 30000;
+
+// 站内对话单次可带的最大图片数。与网关的 MAX_INLINE_IMAGES 同口径（见下方 748 行的说明）：
+// 站内上传是 base64 内嵌，只有解码与内存代价，没有外链抓取的 SSRF/DoS 面。
+const MAX_CHAT_IMAGES = 30;
 function clipFileText(text) {
   const s = String(text || "");
   return s.length > FILE_TEXT_LIMIT ? `${s.slice(0, FILE_TEXT_LIMIT)}\n…（文件较长，已截断）` : s;
@@ -745,7 +762,16 @@ function aggregate(calls = []) {
         imgMediaIds.push(0);
       }
     }
-    if (imgs.length > 3) return fail(res, "最多 3 张图片");
+    // 图片数量上限：与网关侧（gateway.js 的 MAX_INLINE_IMAGES）**保持同一个口径**。
+    //
+    // 这里有一个我上一轮改漏的地方，值得记下来：
+    // 用户反馈「为啥老是报『不支持三张以上图片，请修改问题或切换对话窗口！』」时，
+    // 我只改了网关 `/v1/chat/completions` 的 3 张上限，**没有改站内对话这条路** ——
+    // 而用户实际就是站内对话里贴图时撞到的。黑盒测试复现：
+    //   POST /api/chat/run {images: [4 张]} → 400「最多 3 张图片」
+    // 站内上传的图是 base64 内嵌（前端已经读进内存），代价只有解码与内存，
+    // 不存在外链抓取的 SSRF/DoS 面 —— 所以和网关一致按 30 张放行。
+    if (imgs.length > MAX_CHAT_IMAGES) return fail(res, `最多 ${MAX_CHAT_IMAGES} 张图片，请分批发送`);
 
     // 文档附件：前端传 base64，这里解析成文本（PDF/Word/Excel/文本/代码），
     // 解析结果作为 user 消息的 file part 落库 —— 历史里保留文件名与正文，

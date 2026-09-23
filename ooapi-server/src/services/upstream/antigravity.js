@@ -13,6 +13,7 @@
 //   —— 请求体是 Google 私有信封 {model, project, request:{contents,...}}，
 //      身份用统一指纹模块派生的 requestId / sessionId，UA 用官方 antigravity/hub/<ver>。
 // ---------------------------------------------------------------------------
+import { normalizeContentToText } from "./content-text.js";
 import { antigravityIdentity, antigravityUserAgent, CLI_VERSIONS } from "./cli-profile.js";
 import { assertNoContentError } from "./content-error.js";
 import { persistOtherPatch, loadOther, withRefreshLock } from "./auth-store.js";
@@ -296,7 +297,7 @@ function toContents(messages, images, fallbackPrompt) {
   for (const m of use) {
     if (!m || typeof m !== "object" || m.role === "system") continue;
     const role = m.role === "assistant" ? "model" : "user";
-    const text = String(m.content ?? "");
+    const text = normalizeContentToText(m.content);
     // Google 要求首条为 user，合并连续同角色
     if (!contents.length && role !== "user") continue;
     const prev = contents[contents.length - 1];
@@ -321,7 +322,7 @@ function toContents(messages, images, fallbackPrompt) {
 }
 
 function extractSystem(messages, prompt) {
-  const sys = (messages || []).filter((m) => m && m.role === "system").map((m) => String(m.content ?? ""));
+  const sys = (messages || []).filter((m) => m && m.role === "system").map((m) => normalizeContentToText(m.content));
   const text = sys.join("\n\n");
   return text ? { parts: [{ text }] } : undefined;
 }

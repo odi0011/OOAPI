@@ -1,3 +1,4 @@
+import { normalizeContentToText } from "./content-text.js";
 // 上游适配器：Anthropic 兼容 API（API Key）
 // ===========================================================================
 // 用途：接入**任何 Anthropic Messages 协议**的第三方服务（官方 api.anthropic.com、
@@ -53,7 +54,7 @@ function buildMessages(messages) {
   for (const m of messages || []) {
     if (!m || typeof m !== "object" || m.role === "system") continue;
     const role = m.role === "assistant" ? "assistant" : "user";
-    const text = String(m.content ?? "");
+    const text = normalizeContentToText(m.content);
     if (!out.length && role !== "user") continue;
     const prev = out[out.length - 1];
     if (prev && prev.role === role) prev.content += `\n\n${text}`;
@@ -67,7 +68,7 @@ function buildMessages(messages) {
 function systemOf(messages) {
   return (messages || [])
     .filter((m) => m && m.role === "system")
-    .map((m) => String(m.content ?? ""))
+    .map((m) => normalizeContentToText(m.content))
     .join("\n\n");
 }
 
@@ -76,7 +77,7 @@ function injectImages(blocks, images) {
     if (blocks[i].role !== "user") continue;
     const arr = Array.isArray(blocks[i].content)
       ? blocks[i].content
-      : [{ type: "text", text: String(blocks[i].content || "") }];
+      : [{ type: "text", text: normalizeContentToText(blocks[i].content) }];
     for (const img of images) {
       arr.push({
         type: "image",

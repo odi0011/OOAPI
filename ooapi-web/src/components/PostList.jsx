@@ -71,6 +71,13 @@ export default function PostList({ items = [], loading, empty = "还没有帖子
                   </Tooltip>
                 ) : null}
                 <span className="oo-post-title oo-truncate">{p.title}</span>
+                {/* 状态标记：**作者自己的已删帖（status=2）也会出现在列表里** ——
+                    这是后端 visibilityClause 的有意设计（作者能读自己的内容），
+                    但前端原先只处理了 status=3（已隐藏），没处理 status=2。
+                    后果（黑盒测试实测反馈）：作者删完帖子，列表里它照常显示、
+                    点进去内容也照常，看起来像「删除没生效」；评论列表是有
+                    「已删除」标记的（见 PostDetailPage），帖子列表漏了这一支。 */}
+                {showStatus && Number(p.status) === 2 ? <Tag color="red">已删除</Tag> : null}
                 {showStatus && Number(p.status) === 3 ? <Tag color="orange">已隐藏</Tag> : null}
               </div>
 

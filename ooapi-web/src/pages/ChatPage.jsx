@@ -31,6 +31,9 @@ import {
 } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { API, getToken } from "../services/api";
+
+// 单次可带的图片上限：与后端 routes/chat.js 的 MAX_CHAT_IMAGES 一致（后端才是权威值）
+const MAX_CHAT_IMAGES = 30;
 import { chatApi, runChatStream, resumeChatStream } from "../services/chat";
 import { useApp } from "../context/AppContext";
 import Markdown from "../components/Markdown";
@@ -1062,8 +1065,12 @@ export default function ChatPage() {
       toast.warning("当前模型不支持图片，请先切换模型");
       return;
     }
-    if (files.length + images.length > 3) {
-      toast.warning("最多上传 3 张图片");
+    // 与后端 chat.js 的 MAX_CHAT_IMAGES 保持同一个数：前端先拦是为了给即时提示，
+    // 但**上限的权威值在后端**（前端能被绕过）。早先这里写死 3、后端也是 3，
+    // 于是用户贴第 4 张就被拒（用户实测反馈：「为啥老是报不支持三张以上图片」）；
+    // 后端已放宽到 30（站内上传是 base64 内嵌，只有内存代价），前端跟着改。
+    if (files.length + images.length > MAX_CHAT_IMAGES) {
+      toast.warning(`最多上传 ${MAX_CHAT_IMAGES} 张图片`);
       return;
     }
     if (files.some((f) => !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(f.type))) {

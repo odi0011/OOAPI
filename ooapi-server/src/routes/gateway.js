@@ -59,11 +59,23 @@ router.get(
     const groupName = displayGroupName(token?.group_name || user?.group_name);
 
     // ① 只取**该分组下的**启用渠道（与 selectChannels 的 channelInGroup 同一判定）。
-    //    没绑分组的密钥在这里就被拦下（见下面 authorizeAllowsNoGroup 的说明），
+    //    没绑分组的密钥在这里就被拦下（见下面 authorize 的 token_group_required），
     //    所以 groupName 一定有值。
     const [rows] = await pool.query("SELECT * FROM channels WHERE status = 1");
     const inGroup = rows.filter((r) => channelInGroup(rowToChannel(r), groupName));
     const available = collectAvailableModels(inGroup);
+
+    // 分组下一个渠道都没有 → **空列表**，不是「不限」。
+    //
+    // 这里踩过一个把整份目录泄漏出去的坑（黑盒测试实测）：
+    // `collectAvailableModels` 对「没有渠道」与「渠道声明为空」都返回**空 Set**，
+    // 而下面的过滤器原本写作 `available.has(id) || available.has("*") || available.size === 0`
+    // —— 最后那个 `size === 0` 分支在「分组没有渠道」时恒为真，
+    // 于是**整份模型目录（104 个）**被返回给一个什么都调不了的密钥。
+    // 用户按列表选模型 → 必然 503。这正是「列表说能调、调用说不能」的原病。
+    if (!inGroup.length) {
+      return res.json({ object: "list", data: [] });
+    }
 
     // ② 分组配置的模型白名单（分组管理里设的「只能走这俩模型」就是它）
     const cfg = await groupConfigOf(groupName);
@@ -78,37 +90,61 @@ router.get(
         return pat === m;
       });
     };
+    // ③ 密钥级模型限制（令牌管理里可给单把 Key 限模型）。
+    //    与 handleCompletion 用的是**同一个** modelAllowed 判定 ——
+    //    之前列表页没调用它，导致「列表给 7 个、实际只有 1 个能调」
+    //    （黑盒测试实测：限制 glm-5.3-flash 的 Key 看到 7 个模型，其中 6 个 403）。
+    const allowedByToken = (id) => modelAllowed(token, id);
 
+    // 能调的模型 = **渠道声明的模型** ∩ 分组白名单 ∩ 密钥限制。
+    //
+    // 注意这里的主数据源是 `available`（渠道能力）而不是 `allPublicModels()`（厂商登记表）：
+    // 反代/聚合渠道会产出**登记表里没有**的模型（hy3、omen-alpha、gemini-3.8-flash-low、
+    // mimo-v2.6-flash 等，实测这些都能调通却不在公共目录里）。
+    // 原实现是「公共目录 ∩ 分组」，那些模型就被整片吞掉了 ——
+    // 一个只能调 omen-alpha 的密钥拿到**空列表**（黑盒测试实测）。
+    // 现在反过来：以渠道能力为准，再去公共目录取元信息（vendor/别名）丰富展示。
     const all = await allPublicModels();
-    const list = all.filter((m) => {
-      const id = String(m.id).toLowerCase();
-      // 渠道能力：显式声明的模型 or 通配
-      const byChannel = available.has(id) || available.has("*") || available.size === 0;
-      return byChannel && allowedByGroup(id);
-    });
+    const metaById = new Map(all.map((m) => [String(m.id).toLowerCase(), m]));
+    // 渠道声明了通配（models 留空或写 "*"）= 该渠道所属厂商的全部登记模型都可用
+    const wildcard = available.has("*");
 
-    // ③ 去重：同一 id 只保留一条（真实模型优先于兼容别名）。
-    //    别名（kimi-latest、qwen-turbo 这类）与真实模型会同时命中上面的过滤器，
-    //    不去重就会出现「同一个模型在清单里出现 3 次」。
-    const seen = new Map();
-    for (const m of list) {
-      const key = String(m.id).toLowerCase();
-      const prev = seen.get(key);
-      // 已有真实模型就把别名挤掉；否则保留先到的
-      if (!prev || (prev.aliasOf && !m.aliasOf)) seen.set(key, m);
-    }
-
-    res.json({
-      object: "list",
-      data: [...seen.values()].map((m) => ({
-        id: m.id,
+    const out = [];
+    const seen = new Set();
+    const pushModel = (id, meta) => {
+      const key = String(id).toLowerCase();
+      if (!key || seen.has(key)) return;
+      if (!allowedByGroup(key) || !allowedByToken(key)) return;
+      seen.add(key);
+      out.push({
+        id: meta?.id || id,
         object: "model",
         // owned_by 用厂商类型，便于客户端区分模型来源
-        owned_by: m.aliasOf ? m.vendor : m.vendor || m.aliasOf || "unknown",
-        ...(m.vendorName ? { vendor_name: m.vendorName } : {}),
-        ...(m.aliasOf ? { alias_of: m.aliasOf, deprecated: true } : {}),
-      })),
-    });
+        owned_by: meta?.aliasOf ? meta.vendor : meta?.vendor || meta?.aliasOf || "unknown",
+        ...(meta?.vendorName ? { vendor_name: meta.vendorName } : {}),
+        ...(meta?.aliasOf ? { alias_of: meta.aliasOf, deprecated: true } : {}),
+      });
+    };
+
+    if (wildcard) {
+      // 通配渠道：公共目录里该有的都给（保留别名与 vendor 元信息）
+      for (const m of all) pushModel(m.id, m);
+    }
+    // 渠道显式声明的模型：即使不在公共目录里也要给（这才是它们的真实来源）
+    for (const id of available) {
+      if (id === "*") continue;
+      pushModel(id, metaById.get(id));
+    }
+    // 通配情况下，别名（kimi-latest 这类）也要覆盖到：它们不在 available 里，
+    // 但 resolveAliasSync 能把它们映射到真实模型，用户调得通。
+    if (wildcard) {
+      for (const m of all) {
+        if (!m.aliasOf) continue;
+        pushModel(m.id, m);
+      }
+    }
+
+    res.json({ object: "list", data: out.sort((a, b) => String(a.id).localeCompare(String(b.id))) });
   })
 );
 

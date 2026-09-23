@@ -71,6 +71,14 @@ app.use("/api/community", communityRoutes); // 社区大厅：话题/帖子/评�
 app.use("/api/chatroom", chatroomRoutes); // 实时聊天：单聊/群聊/讨论组（SSE 长连接）
 app.use("/api/games", gamesRoutes); // 小游戏：成绩榜 + 联机对战（服务端权威判定）
 app.use("/api/profile", profileRoutes); // 个人主页（匿名可达，只出公开字段）
+// 数据看板（个人 /console 与管理端 /admin/dashboard）。
+//
+// 这一行曾经**漏掉了**，而 import（文件顶部）与 body-parser 白名单里都有它 ——
+// 于是看板接口全部 404：新用户注册后的第一个页面就是
+// 「看板数据加载失败 / 请求失败（HTTP 404）」，所有 KPI 卡片永远显示 0。
+// 黑盒测试（新用户全旅程）实测复现。
+// 教训：import 了、加进白名单了，都**不等于**挂载了 —— 新增路由必须在这张表里出现。
+app.use("/api/dashboard", dashboardRoutes);
 app.use("/v1", gatewayRoutes); // 对外网关：OpenAI / Anthropic / Responses 兼容
 app.use("/api/v1", gatewayRoutes); // 兼容以 /api/v1 为 Base URL 的三方客户端
 

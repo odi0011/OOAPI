@@ -2269,7 +2269,25 @@ router.post(
     const mod = await import("../services/upstream/openai-compat.js");
     try {
       const list = await mod.fetchUpstreamModels({ base_url: base, api_key: key });
-      return ok(res, list);
+      const models = [...new Set(Array.isArray(list) ? list : [])].sort();
+      // **必须带上 clineGroups**（与 /:id/upstream-models 同一个形状）。
+      //
+      // 这里踩过一个让新管理员直接踩坑的缺陷（黑盒测试实测）：添加渠道时前端走的是
+      // 本接口，而它原先 `return ok(res, list)` —— **一个裸数组**，没有 clineGroups；
+      // 而编辑渠道走 /:id/upstream-models，那边是带 clineGroups 的对象。
+      // 前端 ModelPicker 靠 `r.clineGroups` 判断「这是目录型渠道，别自动全选」
+      // （见该组件的注释：454 个模型全选会把旗舰档也放开）。
+      // 结果：**编辑路径有保护、添加路径没有** —— 新建 Cline 渠道点了「从上游获取模型」
+      // 就 toast「已成功自动填入 455 个模型」，连 $600/M 的 o1-pro 一起放开，
+      // 同时把定价页的「在用模型」从 30 个冲到 485 个。
+      // 现在两条路径返回同一形状，前端那层保护才真正生效。
+      const groups = clineGroupsFor(type, models);
+      // 兼容旧前端：同时给出一个数组形状的 models 字段（老版本直接当数组用）
+      return ok(res, {
+        models,
+        source: "upstream",
+        ...(groups ? { clineGroups: groups } : {}),
+      });
     } catch (e) {
       return fail(res, e.message);
     }
