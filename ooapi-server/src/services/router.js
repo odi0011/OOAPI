@@ -47,6 +47,10 @@ const ADAPTERS = {
   // 第三方反代（凭据型）：WorkBuddy 直连腾讯后端；Qoder 经本地桥
   workbuddy: () => import("./upstream/workbuddy.js"),
   qoder: () => import("./upstream/qoder.js"),
+  // OpenCode（Zen / GO）：协议是标准 OpenAI，但 GO 订阅强制要求
+  // x-opencode-session 与自述 UA，缺了直接 400 missing_session_id
+  //（线上渠道 #45 的故障）。薄适配器只补这两个头，对话仍复用 openai-compat。
+  opencode: () => import("./upstream/opencode.js"),
 };
 
 /**
