@@ -589,7 +589,18 @@ router.post(
     if (!room || Number(room.status) !== 1) return fail(res, "房间已解散", 404);
 
     const type = String(req.body?.type || "text") === "image" ? "image" : "text";
-    const content = String(req.body?.content || "").trim().slice(0, MAX_TEXT);
+    // 超长**报错**，不静默截断（与社区帖子/评论同一口径）。
+    //
+    // 黑盒测试实测（社交型人格）：「content 传 4001/5000/12000 字，
+    // 全部返回 200『已发送』，但服务端存的长度一律被压到 4000」——
+    // 用户粘一段长文案进去，以为发出去了，对方只收到前 4000 字，
+    // 双方都不知道。社区那边做对了（「正文最长 20000 字，当前 25000 字」），
+    // 这里对齐。
+    const contentRaw = String(req.body?.content || "").trim();
+    if (contentRaw.length > MAX_TEXT) {
+      return fail(res, `消息最长 ${MAX_TEXT} 字，当前 ${contentRaw.length} 字`);
+    }
+    const content = contentRaw;
     // 附图必须属于发送者自己（同 community：不校验就等于把别人的私有文件
     // 变成「我发的消息里的图」，服务端会现签 URL 给所有房间成员读）
     const rawMediaIds = Array.isArray(req.body?.media_ids) ? req.body.media_ids.slice(0, MAX_MEDIA) : [];
