@@ -96,6 +96,30 @@ console.log("\n=== ② 指引可用性 ===");
     /\.value/.test(ds) && !/copy\(localStorage\.getItem\('userToken'\)\)$/.test(ds), ds);
 }
 
+/* ============ ②b 指引文案里不能出现 Markdown 星号 ============ */
+console.log("\n=== ②b 指引文案不能有裸 Markdown 星号 ===");
+{
+  // 视觉审查实测：这些字符串是 antd 的 steps / note / desc，**纯文本渲染** ——
+  // 写 `**重点**` 不会变粗体，而是原样显示裸星号，用户看到的是"这句没写完"。
+  // 要强调就靠措辞（"注意…"），不要留 Markdown 记号。
+  const bad = [];
+  for (const { provider, method } of webMethods) {
+    const g = method.localLogin;
+    if (!g) continue;
+    for (const t of [...(g.steps || []), g.note || ""]) {
+      if (/\*\*[^*]+\*\*/.test(String(t))) bad.push(`${provider.key}:${method.key} → ${String(t).slice(0, 36)}`);
+    }
+  }
+  ck("本机指引里没有裸 Markdown 星号", bad.length === 0, bad.slice(0, 4).join(" | "));
+  const bad2 = [];
+  for (const { provider, method } of webMethods) {
+    for (const [k, v] of [["desc", method.desc], ["pasteHint", method.pasteHint]]) {
+      if (/\*\*[^*]+\*\*/.test(String(v || ""))) bad2.push(`${provider.key}:${method.key}.${k}`);
+    }
+  }
+  ck("desc / pasteHint 里也没有裸星号", bad2.length === 0, bad2.slice(0, 4).join(" | "));
+}
+
 /* ============ ③ 找回方式的排序：本机优先，且不重复 ============ */
 console.log("\n=== ③ 找回方式排序（本机浏览器优先）===");
 {

@@ -2976,15 +2976,32 @@ h1, h2, h3, h4 {
     max-height: calc(100vh - 170px);
     overflow-y: auto;
   }
-  .oo-channel-add-layout { grid-template-columns: 1fr; gap: 14px; }
+  /* **必须同时把行轨道改回 auto** —— 这是窄屏下一个把厂商列表压成 35.5px 细缝的坑
+     （视觉审查智能体在 767/640/480px 实测发现）：
+       基础规则是 `grid-template-rows: minmax(0, 1fr)`（为两栏各自滚动而设），
+       窄屏只改列数为 1fr 之后，两栏变成上下两行 ——
+       第 1 行（厂商列表）仍是 `minmax(0,1fr)`，第 2 行（配置表单，隐式 auto）
+       会按内容把 610px 的 body 几乎吃光，第 1 行只剩 35.5px。
+       结果：29 个厂商里只能看到 3 行、还有一行被切一半，而它自己的
+       `max-height:250px; overflow-y:auto` 被 35.5px 的父级裁住，滚也滚不出来 ——
+       选完厂商就再也换不了厂商，控制项完全不可用。
+     改为 auto 后两行都按内容伸展，滚动交给 body（上面已设 overflow-y:auto）。 */
+  .oo-channel-add-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+    gap: 14px;
+    overflow: visible;
+  }
   .oo-channel-add-providers {
     padding-right: 0;
     border-right: 0;
+    /* 单栏下由 body 统一滚动，这一层不能再各自滚（两层滚动条在手机上很难操作） */
+    overflow-y: visible;
   }
   .oo-channel-add-config {
     max-height: none;
     overflow: visible;
-    padding-right: 0;
+    padding-right: 12px;
   }
   .oo-provider-picker {
     max-height: 250px;

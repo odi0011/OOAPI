@@ -354,7 +354,7 @@ export default function AdminPricingPage() {
               title="从上游同步价目表？"
               description={
                 <span style={{ fontSize: 12 }}>
-                  从上游模型目录（OpenRouter 公开接口）拉取**真实价格**，覆盖
+                  从上游模型目录（OpenRouter 公开接口）拉取真实价格，覆盖
                   {overwrite ? "包括已有行在内的全部价格" : "仅补齐库里还没有的模型"}。
                   {overwrite ? "⚠️ 已开启「覆盖已有价」，管理员手改的价格会被冲掉。" : ""}
                 </span>

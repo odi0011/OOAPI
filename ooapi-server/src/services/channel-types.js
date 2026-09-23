@@ -1337,7 +1337,7 @@ const LOCAL_LOGIN_GUIDE = {
     steps: [
       "本机装好 Codex CLI 并登录（命令行执行 codex login，浏览器会弹出授权页，按提示完成）",
       "登录后打开凭据文件：Windows 在资源管理器地址栏输入 %USERPROFILE%\\.codex 回车，找到 auth.json（macOS / Linux 就是 ~/.codex/auth.json）",
-      "用记事本打开 auth.json，把**全部内容**原样粘到下面的「凭据 JSON」框（含 tokens 与 account_id）",
+      "用记事本打开 auth.json，把全部内容原样粘到下面的「凭据 JSON」框（含 tokens 与 account_id）",
       "找不到该文件：说明 CLI 还没登录成功，回到第 1 步重跑 codex login",
     ],
     note: "还没装 CLI：直接点上面的登录小窗也行 —— 授权后地址栏会停在一个打不开的 localhost 地址，把整串 URL 粘到下方输入框即可",
@@ -1346,7 +1346,7 @@ const LOCAL_LOGIN_GUIDE = {
     steps: [
       "本机装好 Claude Code 并登录（命令行执行 claude，按提示完成 OAuth 授权）",
       "登录后打开凭据文件：Windows 在资源管理器地址栏输入 %USERPROFILE%\\.claude 回车，找到 .credentials.json（macOS 也可用「钥匙串访问」搜 Claude Code-credentials）",
-      "用记事本打开该文件，把**全部内容**原样粘到下面的「凭据 JSON」框",
+      "用记事本打开该文件，把全部内容原样粘到下面的「凭据 JSON」框",
     ],
     note: "或直接点上面的登录小窗：授权后页面会跳到打不开的 localhost 地址（正常现象），把地址栏整串 URL 粘回下方输入框即可",
   },
@@ -1355,7 +1355,7 @@ const LOCAL_LOGIN_GUIDE = {
       "本机装好 Antigravity 客户端并登录 Google 账号（登录后它会自己写入凭据缓存）",
       "打开凭据目录：Windows 在资源管理器地址栏输入 %USERPROFILE%\\.antigravity 回车（macOS / Linux 就是 ~/.antigravity/）",
       "找到文件名含 oauth / token 字样的那个 json（不同版本路径略有差异），用记事本打开",
-      "把**全部内容**粘到下面的「凭据 JSON」框；只想给 refresh_token 也可以，平台会自行换 access_token",
+      "把全部内容粘到下面的「凭据 JSON」框；只想给 refresh_token 也可以，平台会自行换 access_token",
     ],
     note: "或直接点上面的登录小窗：授权后把地址栏整串 URL 粘回下方输入框",
   },
@@ -1364,7 +1364,7 @@ const LOCAL_LOGIN_GUIDE = {
       "本机装好 Kiro 客户端并登录（登录后凭据会缓存到本机）",
       "打开缓存目录：Windows 在资源管理器地址栏输入 %USERPROFILE%\\.aws\\sso\\cache 回车（macOS / Linux：~/.aws/sso/cache/）",
       "按「修改时间」排序，打开最新的那个 json（文件名是一串哈希），用记事本查看内容",
-      "把**全部内容**粘到下面的「凭据 JSON」框，至少要有 accessToken 与 refreshToken",
+      "把全部内容粘到下面的「凭据 JSON」框，至少要有 accessToken 与 refreshToken",
     ],
     note: "更省事的做法：用上面的「一键绑定」—— 点开授权页登录确认后，凭据由服务端直接写入渠道，不用手工复制任何文件",
   },
@@ -1380,9 +1380,9 @@ const LOCAL_LOGIN_GUIDE = {
   // 但要明确说清「该填什么」——不然面对一个「凭据 JSON」框完全不知道放什么。
   "custom:anthropic": {
     steps: [
-      "这个接入方式对接的是你自己的 Anthropic 兼容服务，凭据从**该服务商**的管理后台获取（不是 Anthropic 官网）",
+      "这个接入方式对接的是你自己的 Anthropic 兼容服务，凭据从该服务商的管理后台获取（注意不是 Anthropic 官网）",
       "在该服务商后台打开「API Key / 密钥」页面新建一把，复制那串 Key（常见形如 sk-ant-... 或 sk-...）",
-      "把 Key 直接粘到下面输入框；若服务商给的是一个 JSON 文件，用记事本打开并把**全部内容**原样粘进来（平台会自动识别字段）",
+      "把 Key 直接粘到下面输入框；若服务商给的是一个 JSON 文件，用记事本打开并把全部内容原样粘进来（平台会自动识别字段）",
     ],
     note: "不确定该填哪个字段：先粘进去点一次「测试」—— 报错会说明上游拒绝的具体原因",
   },
@@ -1393,7 +1393,7 @@ const LOCAL_LOGIN_GUIDE = {
       "点上面的「弹出登录小窗」打开 Qoder 的 Personal Access Tokens 页面（未登录会先让你登录）",
       "在那个页面点「Create token / 新建令牌」，复制生成的令牌（形如 pt-...）",
       "把令牌填成下面「凭据 JSON」的形式：{ \"personal_token\": \"pt-你的令牌\", \"endpoint\": \"http://127.0.0.1:8963\" }",
-      "endpoint 是你本机 qoder2api 桥的地址（默认 http://127.0.0.1:8963）；桥必须跑在**与网关同一台机器**上，否则会被白名单挡下",
+      "endpoint 是你本机 qoder2api 桥的地址（默认 http://127.0.0.1:8963）；桥必须与网关跑在同一台机器上，否则会被白名单挡下",
     ],
     note:
       "为什么不能用一键绑定：Qoder 的设备授权端点在服务端不可用（openapi 域 404、站点域要浏览器会话与 CSRF），" +
@@ -1412,7 +1412,7 @@ const LOCAL_LOGIN_GUIDE = {
     note:
       "region 决定上游：sg → coresg-normal.trae.ai，us → coreva-normal.trae.ai，cn → trae-api-cn.mchost.guru；" +
       "令牌过期由平台自动续期。注意：Trae 的模型名与实际档位不一致（claude-* 别名实际跑 GLM/DeepSeek），" +
-      "所以渠道里请按**实际档位**声明模型，否则计费会按错误的价目表算。",
+      "所以渠道里请按实际档位声明模型，否则计费会按错误的价目表算。",
   },
   "cline:cli": {
     steps: [
