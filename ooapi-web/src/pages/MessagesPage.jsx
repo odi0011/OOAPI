@@ -83,6 +83,10 @@ export default function MessagesPage() {
   const [results, setResults] = useState([]);
   const [msgSearching, setMsgSearching] = useState(false); // 消息内容搜索（与「搜索用户」区分）
   const [form] = Form.useForm();
+  // 建会话弹窗里当前选的类型（single/group/discussion）。
+  // 用 useWatch 而不是 getFieldValue：后者的作用域仅限 shouldUpdate 的 render prop，
+  // 在 Select 那一层引用它会抛 ReferenceError 并让整页白屏（见 Select 处的注释）。
+  const formType = Form.useWatch("type", form);
 
   const scrollRef = useRef(null);
   const esRef = useRef(null);
@@ -813,10 +817,17 @@ export default function MessagesPage() {
                   · 群聊 → `(number).map is not a function`，JS 报错串直接弹给用户。
                 即「站内消息发起会话 100% 失败」（黑盒测试实测，单聊/群聊都发不出去）。
                 maxCount 让单聊在 UI 层就选不了第二个人 —— 与下面
-                「单聊只能选择一位成员」的校验互补（那条是兜底，不该让用户先选错再报错）。 */}
+                「单聊只能选择一位成员」的校验互补（那条是兜底，不该让用户先选错再报错）。
+
+                `formType` 来自组件顶部的 `Form.useWatch("type", form)`。
+                **不能**在这里写 `getFieldValue(...)`：它只在上面的
+                `<Form.Item noStyle shouldUpdate>` render prop 作用域里存在，
+                在本层是未定义标识符 —— 那会让整个页面抛
+                `ReferenceError: getFieldValue is not defined` 而**白屏**
+                （我第一版就是这么写的，导致 /messages 整页崩掉，产品经理人格实测报上来）。 */}
             <Select
               mode="multiple"
-              maxCount={getFieldValue("type") === "single" ? 1 : undefined}
+              maxCount={formType === "single" ? 1 : undefined}
               showSearch
               filterOption={false}
               onSearch={searchUsers}
