@@ -101,7 +101,7 @@ const SYSTEM_FEATURES = [
 const SAMPLE_LOGS = [
   {
     time: "12:04:18",
-    model: "deepseek-chat",
+    model: SAMPLE_MODEL,
     status: 200,
     tokens: "28 / 142",
     ttft: "245ms",
@@ -153,6 +153,17 @@ export default function HomePage() {
   // 当前网关接口端点
   const endpoint = status?.api_endpoint || "https://your-domain/v1";
   const cleanEndpoint = endpoint.replace(/\/+$/, "");
+
+  // 首页示例代码里用的模型名。
+  //
+  // 原先是硬编码 `deepseek-chat` —— 那是 DeepSeek **官方已停用**的旧 id，
+  // 照抄示例必然 503「当前没有可服务模型…的账号」。
+  // 三个独立人格（大学生 / 产品经理 / 海外开发者）都栽在这一步，
+  // 其中一人原话：「这是最伤新手的一条」「我自己就来回改了半小时」。
+  // 首页是**未登录可见**的营销页，拿不到「该用户可用模型」（那需要登录态），
+  // 所以这里用一个平台真实支持、且在任何分组里都常见的现役模型名；
+  // 登录后的控制台会显示该账号**实际可用**的模型名（见 ConsolePage 的 sampleModel）。
+  const SAMPLE_MODEL = "deepseek-flash";
   const systemName = status?.system_name || "OOAPI";
 
   // 管理员注册开关控制
@@ -197,7 +208,7 @@ export default function HomePage() {
   -H "Authorization: Bearer sk-your-token" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "deepseek-chat",
+    "model": "${SAMPLE_MODEL}",
     "messages": [
       {"role": "user", "content": "请介绍系统核心能力与网关架构"}
     ],
@@ -214,7 +225,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="deepseek-chat",
+    model=SAMPLE_MODEL,
     messages=[
         {"role": "user", "content": "请介绍系统核心能力与网关架构"}
     ],
@@ -234,7 +245,7 @@ const client = new OpenAI({
 });
 
 const stream = await client.chat.completions.create({
-  model: "deepseek-chat",
+  model: SAMPLE_MODEL,
   messages: [
     { role: "user", content: "请介绍系统核心能力与网关架构" }
   ],
@@ -248,7 +259,7 @@ for await (const chunk of stream) {
     langchain: `from langchain_openai import ChatOpenAI
 
 chat = ChatOpenAI(
-    model="deepseek-chat",
+    model=SAMPLE_MODEL,
     openai_api_base="${cleanEndpoint}",
     openai_api_key="sk-your-token",
     temperature=0.7,
@@ -429,7 +440,7 @@ print(response.content)`,
                     </div>
                     <pre>
                       <code>{`{
-  "model": "deepseek-chat",
+  "model": "${SAMPLE_MODEL}",
   "messages": [
     {
       "role": "user",

@@ -100,22 +100,30 @@ export default function ConsolePage() {
   const [community, setCommunity] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-
-  const endpoint = status?.api_endpoint || `${window.location.origin}/v1`;
+  // 下方 curl 示例用的模型名：取该用户**当前可用**的第一个模型。
+  //
+  // 原先硬编码 `deepseek-chat`（官方已停用的旧名）。三个独立人格都照抄了这段示例，
+  // 全部拿到 503「当前没有可服务模型「deepseek-chat」的账号，请联系管理员在渠道管理中配置」
+  // —— 而真正能用的模型名就在同一页面的另一个角落（对话页下拉 / GET /v1/models）。
+  // 大学生人格的原话：「这是最伤新手的一条」「我自己就来回改了半小时」。
+  const [sampleModel, setSampleModel] = useState("");
 
   const load = useCallback(async () => {
     const token = begin();
     setLoading(true);
     setLoadError("");
     try {
-      const [d, c] = await Promise.all([
+      const [d, c, m] = await Promise.all([
         API.get("/dashboard/self", { params: { range } }),
         // 社区数据失败不影响看板主体（它不是核心指标）
         API.get("/dashboard/community", { params: { range } }).catch(() => null),
+        // 真实可用模型（见 sampleModel 的注释）：失败不影响看板主体
+        API.get("/chat/meta").catch(() => null),
       ]);
       if (!isLatest(token)) return;
       setData(d);
       setCommunity(c);
+      setSampleModel(m?.models?.[0]?.id || "");
     } catch (e) {
       if (isLatest(token)) {
         setLoadError(e.message || "看板加载失败");
@@ -367,10 +375,12 @@ export default function ConsolePage() {
               <span className="oo-code-lang">bash</span>
             </div>
             <pre>
+              {/* 模型名用这个账号真能调的（见 sampleModel 注释）；
+                  没拿到时给一个**明显是占位**的名字，而不是一个看起来能用却报错的真名 */}
               <code>{`curl ${endpoint}/chat/completions \\
   -H "Authorization: Bearer sk-xxx" \\
   -H "Content-Type: application/json" \\
-  -d '{"model":"deepseek-chat","messages":[{"role":"user","content":"你好"}]}'`}</code>
+  -d '{"model":"${sampleModel || "<你的模型名>"}","messages":[{"role":"user","content":"你好"}]}'`}</code>
             </pre>
           </div>
         </div>

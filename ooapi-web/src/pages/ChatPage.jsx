@@ -1543,10 +1543,41 @@ export default function ChatPage() {
             </Notice>
           </div>
         ) : null}
+        {/* 「有密钥但一把都不可用」的引导。
+            为什么必须有动作按钮（三个独立人格都撞到并报上来）：
+            原文只说「请让管理员检查分组管理与渠道管理」—— 而个人端根本没有那两个菜单，
+            用户被指向一个自己去不了的地方，是**死路**；且输入框同时被禁用、旁边没解释，
+            新人会判定「网站坏了」（大学生/产品经理/小白三人都这么描述）。
+            与上面「无密钥」那条保持一致：说清原因 + 给出能点的出口。 */}
         {!metaError && meta && !needKey && !models.length ? (
           <div style={{ padding: "10px 16px" }}>
-            <Notice tone="warn" title="当前密钥没有可用模型">
-              该密钥绑定的分组下没有可用渠道/模型，请让管理员检查「分组管理」与「渠道管理」。
+            <Notice
+              tone="warn"
+              title="当前密钥所在的分组没有可用模型"
+              actions={
+                <>
+                  <Button size="small" onClick={() => navigate("/token")}>
+                    换一把密钥
+                  </Button>
+                  <Button size="small" type="primary" onClick={() => loadMeta(keyId)}>
+                    重新检测
+                  </Button>
+                </>
+              }
+            >
+              密钥的路由由它绑定的分组决定。这个分组下暂时没有可用渠道 ——
+              换一把绑定了其他分组的密钥通常就能用了；若所有分组都不可用，
+              再把这条提示发给站点管理员。**不是你的配置问题。**
+            </Notice>
+          </div>
+        ) : null}
+        {/* 「已就绪但还没选模型」：输入框此时是禁用的，必须解释原因。
+            原先这个中间态没有任何提示（输入框灰着、页面上找不到半句说明），
+            用户只能靠乱点发现「要点右下角的『选择模型』」。 */}
+        {!metaError && meta && !needKey && models.length && !curModel ? (
+          <div style={{ padding: "10px 16px" }}>
+            <Notice tone="info" title="请先选择模型">
+              点右下角的「选择模型」挑一个，选好后输入框就能用了。
             </Notice>
           </div>
         ) : null}
