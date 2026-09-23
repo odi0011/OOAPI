@@ -2,6 +2,7 @@ import React from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Alert, Button, Spin } from "antd";
 import MainLayout from "./components/MainLayout";
+import ErrorBoundary from "./components/ErrorBoundary";
 import HomePage from "./pages/HomePage";
 import AuthPage from "./pages/AuthPage";
 import ConsolePage from "./pages/ConsolePage";
@@ -73,6 +74,10 @@ function RequireAuth({ children, admin = false }) {
 
 export default function App() {
   return (
+    // 错误边界包住**整棵路由树**：任何页面崩了都还能看到「页面出错了 + 刷新」，
+    // 而不是纯白页（真实事故：一个未定义标识符就让 5 个页面同时白屏，
+    // 用户连导航都没了。见 components/ErrorBoundary.jsx 的说明）。
+    <ErrorBoundary>
     <Routes>
       <Route path="/" element={<HomePage />} />
       {/* 侧边栏「返回首页」的兼容路由：跳出控制台布局回公开首页 */}
@@ -113,5 +118,6 @@ export default function App() {
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </ErrorBoundary>
   );
 }

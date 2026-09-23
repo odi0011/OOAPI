@@ -108,7 +108,18 @@ export default function ConsolePage() {
   // 大学生人格的原话：「这是最伤新手的一条」「我自己就来回改了半小时」。
   const [sampleModel, setSampleModel] = useState("");
 
-  const endpoint = status?.api_endpoint || `${window.location.origin}/v1`;
+  // 网关端点：必须是**可直接复制使用**的完整 URL。
+  //
+  // 后端在「API 端点」设置项留空时会回落到 `${server_address || ""}/v1`，
+  // 而 server_address 也没配时就是裸的 `/v1` —— 小白人格实测的原话：
+  // 「少了一截吧？别人的教程都是 https://xxx.com/v1，光一个 /v1 我要粘到哪？」
+  // 所以这里补一步：**相对路径**一律补上当前站点 origin。
+  const endpoint = (() => {
+    const raw = String(status?.api_endpoint || "").trim();
+    if (!raw) return `${window.location.origin}/v1`;
+    if (/^https?:\/\//i.test(raw)) return raw;
+    return `${window.location.origin}${raw.startsWith("/") ? "" : "/"}${raw}`;
+  })();
 
   const load = useCallback(async () => {
     const token = begin();

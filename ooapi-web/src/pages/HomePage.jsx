@@ -162,8 +162,16 @@ export default function HomePage() {
   const { message } = AntApp.useApp();
   const navigate = useNavigate();
 
-  // 当前网关接口端点
-  const endpoint = status?.api_endpoint || "https://your-domain/v1";
+  // 当前网关接口端点：**必须能直接复制使用**（见 ConsolePage 同名变量的注释 ——
+  // 后端在「API 端点」与「服务器地址」都留空时会下发裸的相对路径 `/v1`，
+  // 小白看到不知道往哪粘，原话：「少了一截吧？别人的教程都是 https://xxx.com/v1」）。
+  // 首页未登录也能拿到浏览器 origin，所以同样补全。
+  const endpoint = (() => {
+    const raw = String(status?.api_endpoint || "").trim();
+    if (!raw) return `${window.location.origin}/v1`;
+    if (/^https?:\/\//i.test(raw)) return raw;
+    return `${window.location.origin}${raw.startsWith("/") ? "" : "/"}${raw}`;
+  })();
   const cleanEndpoint = endpoint.replace(/\/+$/, "");
 
   // SAMPLE_MODEL 是模块级常量（见文件顶部），这里不再重复声明
