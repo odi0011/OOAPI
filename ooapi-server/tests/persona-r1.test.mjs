@@ -150,6 +150,14 @@ t("站内对话同样预占（两条计费路径口径一致）", () => {
   ck(/quotaHold\?\.refund\(\)/.test(chatCode), "chat 的 finally 没有兜底退回");
   ck(/quotaHold\?\.consume\(\)/.test(chatCode), "chat 结算后没有 consume");
 });
+t("建 Key 时「给了额度」就当有限额度（否则用户设的额度被静默忽略）", () => {
+  // 实测踩到：{remain_quota: 1} 建出来的 Key 是 unlimited（默认 true），
+  // 于是并发 20 次全部通过 —— 看着像预占失效，其实是这把 Key 根本不限额。
+  const tk = stripComments(read("src/routes/token.js"));
+  ck(/const unlimitedVal = unlimitedGiven \? Boolean\(unlimited_quota\) : !remainGiven/.test(tk),
+    "新建令牌没有按「是否给了 remain_quota」推断 unlimited");
+  ck(/unlimitedVal \? 1 : 0/.test(tk), "INSERT 仍在用原始的 unlimited_quota 变量");
+});
 
 /* ============ ⑤ 官方 Anthropic SDK 要能直连 ============ */
 console.log("\n=== ⑤ x-api-key（老张 C）===");

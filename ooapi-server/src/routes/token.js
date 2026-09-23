@@ -121,11 +121,23 @@ router.post(
     const {
       name = "",
       remain_quota = 0,
-      unlimited_quota = true,
+      unlimited_quota,
       expired_time = -1,
       model_limits = [],
       group_name = "",
     } = req.body || {};
+    // 「无限额度」的默认值：**给了 remain_quota 就按有限额度处理**，否则无限。
+    //
+    // 原实现把 unlimited_quota 默认写死 true，于是 `{remain_quota: 100}` 会得到
+    // 一把**无限额度**的 Key —— 你设的额度被静默忽略（实测踩到：黑盒测试建了一把
+    // `remain_quota=1` 的 Key，用它在并发下跑满 20 次请求，额度一滴没扣，
+    // 因为 unlimited_quota 默认为 1，`holdTokenQuota` 按设计对无限 Key 直接放行）。
+    // 前端表单两个字段一起提交所以没暴露，但直连 API / 脚本会踩。
+    // 语义改为：显式传了 unlimited_quota 就听它的；没传但传了 remain_quota
+    // （哪怕是 0）就视为有限额度；两者都没传才是无限。
+    const unlimitedGiven = unlimited_quota !== undefined;
+    const remainGiven = req.body?.remain_quota !== undefined;
+    const unlimitedVal = unlimitedGiven ? Boolean(unlimited_quota) : !remainGiven;
     if (String(name).length > 64) return fail(res, "名称过长");
     // 数值严格校验：NaN/Infinity/负数一律拒绝（strict 模式下写库会直接 500）
     const remainVal = Number(remain_quota);
@@ -149,7 +161,7 @@ router.post(
         0,
         Number(expiredVal),
         Number(remainVal),
-        unlimited_quota ? 1 : 0,
+        unlimitedVal ? 1 : 0,
         0,
         Array.isArray(model_limits) ? model_limits.join(",").slice(0, 2000) : "",
         String(group_name || "").slice(0, 64),
@@ -193,11 +205,19 @@ router.put(
     if (group_name !== undefined && !(await validGroupBinding(group_name))) {
       return fail(res, "请为该密钥选择一个分组（已取消「公共池」，密钥必须归属某个分组）");
     }
+    // 与新建同一口径：没显式传 unlimited_quota 却传了 remain_quota，
+    // 视为「想改额度」而不是「保持无限」—— 否则改额度会被静默忽略（见新建处的说明）。
+    // 注意只在**当前是无限**并且用户给了有限额度时才自动切换，避免把
+    // 「无限 Key 上只想改额度数值」这类意图意外的调用改成有限额度。
+    let unlimitedVal = unlimited_quota !== undefined ? (unlimited_quota ? 1 : 0) : cur.unlimited_quota;
+    if (unlimited_quota === undefined && remain_quota !== undefined && remainVal > 0 && Number(cur.unlimited_quota) === 1) {
+      unlimitedVal = 0;
+    }
     const sets = ["name = ?", "status = ?", "unlimited_quota = ?", "expired_time = ?", "model_limits = ?", "group_name = ?"];
     const vals = [
       name !== undefined ? String(name).trim().slice(0, 64) : cur.name,
       statusVal,
-      unlimited_quota !== undefined ? (unlimited_quota ? 1 : 0) : cur.unlimited_quota,
+      unlimitedVal,
       expiredVal,
       Array.isArray(model_limits) ? model_limits.join(",").slice(0, 2000) : cur.model_limits,
       group_name !== undefined ? String(group_name).slice(0, 64) : cur.group_name,
