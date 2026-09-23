@@ -9,7 +9,16 @@ import { writeLog, LOG_TYPE } from "../services/log.js";
 import { recordRequest, enterRequest, leaveRequest, classifyError } from "../services/metrics.js";
 import { runCompletion } from "../services/execute.js";
 import { acquire, estimateRequestTokens } from "../services/user-limit.js";
-import { getPrice, computeCost, splitTokens, effectivePrice, isModelPriced, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
+import {
+  getPrice,
+  computeCost,
+  splitTokens,
+  effectivePrice,
+  isModelPriced,
+  estimateTokens,
+  UNITS_PER_OD,
+  CURRENCY,
+} from "../services/pricing.js";
 // displayGroupName 被用来把分组名归一化后再写日志（见下方 groupName 处），
 // 但此前**没有导入**：每次成功请求都会在写日志时抛
 // ReferenceError: displayGroupName is not defined，把一次本来成功的调用

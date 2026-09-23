@@ -15,7 +15,8 @@
 // React 组件名是 PascalCase，误报少），而踩过的两个坑（SERIES_COLORS、load）
 // 里 SERIES_COLORS 正好属于这一类。小写自由变量扫不了（无法与属性名/局部变量区分），
 // 那部分靠 e2e 真点开弹窗覆盖。
-import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -44,14 +45,34 @@ function walk(dir, out = []) {
   return out;
 }
 
-/** 去掉注释与字符串/模板字面量：只在「代码」里找标识符，避免文案里的全大写词误报 */
+/**
+ * 去掉注释与字符串/模板字面量：只在「代码」里找标识符，避免文案里的全大写词误报。
+ *
+ * ⚠️ 这里的顺序与判据很讲究，踩过一次**致命的**坑（2026-09-24）：
+ * 原先第一步是 `/\/\*[\s\S]*?\*\//g` 去块注释。但文件开头那种
+ * 「多行 // 注释里出现 `/**` 字样」的写法（本项目的注释风格大量如此，
+ * 注释里会引用示例代码）会让这个正则把**从那个 `/**` 到很后面某个 `*​/`**
+ * 之间的 30 多行整段吃掉 —— **包括文件顶部所有 import**。
+ * 后果不是「少识别几个名字」，而是 definedNames 认为「什么都没导入」，
+ * 于是后端扫描器对 channel.js 报出 20 个假阳性（providerKeys/fail/writeLog…），
+ * 一个会误报的门禁等于没有门禁。
+ *
+ * 所以现在按「先去掉行注释（它最简单、最不容易误吃），再去块注释」的顺序，
+ * 且块注释要求 `/*` **不在行注释里**（前面不能是 `//`）。
+ * 自检见文件末尾的「扫描器有效性」用例 —— 反例必须被抓到、正例不许误报。
+ */
 function stripNonCode(src) {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, " ") // 块注释
-    .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ") // 行注释（避开 http://）
-    .replace(/`(?:\\[\s\S]|[^`\\])*`/g, "``") // 模板字面量
-    .replace(/"(?:\\[\s\S]|[^"\\\n])*"/g, '""') // 双引号串
-    .replace(/'(?:\\[\s\S]|[^'\\\n])*'/g, "''"); // 单引号串
+  let s = src;
+  // ① 行注释：要求 // 前面不是冒号（避开 http://）也不是转义
+  s = s.replace(/(^|[^:\\])\/\/[^\n]*/g, "$1 ");
+  // ② 块注释：走过行注释后，剩下的 /* 才是真块注释起点
+  s = s.replace(/\/\*[\s\S]*?\*\//g, " ");
+  // ③ 字符串与模板字面量
+  s = s
+    .replace(/`(?:\\[\s\S]|[^`\\])*`/g, "``")
+    .replace(/"(?:\\[\s\S]|[^"\\\n])*"/g, '""')
+    .replace(/'(?:\\[\s\S]|[^'\\\n])*'/g, "''");
+  return s;
 }
 
 /** 该文件里「有定义」的标识符：声明、导入、re-export、解构 */
@@ -63,6 +84,20 @@ function definedNames(rawSrc) {
   const names = new Set();
   // const/let/var/function/class FOO
   for (const m of src.matchAll(/\b(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/g)) names.add(m[1]);
+  // 函数参数的解构：function f({ onDelta, onReasoning = null }, x) { … }
+  //   `async function execute({ onChannelTry, onDelta }) { onDelta(t) }` ——
+  //   这些名字是**参数**，不是未导入的全局。后端扫描器在 execute.js /
+  //   battleship.js 上正是被这类形态误报（onDelta(、move(、view(…）。
+  // 覆盖三种声明形态（游戏模块用的是第二种）：
+  //   ① function f({ a, b }) {}
+  //   ② 对象简写方法：view(state, { side, payload }) {}
+  //   ③ 箭头函数：({ a }) => {}
+  for (const m of src.matchAll(/(?:function\s+[\w$]*\s*|[\w$]+\s*\([^)]*?|\(\s*|,\s*)\{([^{}]*)\}\s*(?:=[^,)]*)?\s*[,)]/g)) {
+    for (const part of m[1].split(",")) {
+      const n = part.trim().split(":").pop()?.trim().split("=")[0].trim().split(/\s+as\s+/).pop()?.trim();
+      if (n && /^[A-Za-z_$][\w$]*$/.test(n)) names.add(n);
+    }
+  }
   // 对象解构：const { Text, Title } = Typography;  /  const { a: b } = obj;
   // 这也是**真实事故**的一种：定价页用了 <Text> 却没在导入里加它，
   // 靠 `const { Text } = Typography` 这种写法才拿到的名字必须被认作「有定义」。
@@ -248,6 +283,70 @@ t("AdminPricingPage 导入了 Row / Col（真实事故回归）", () => {
   for (const name of ["Row", "Col"]) {
     if (!new RegExp(`<${name}[\\s>]`).test(src)) continue; // 不用就无所谓
     if (!defined.has(name)) throw new Error(`用了 <${name}> 但没有导入`);
+  }
+});
+
+/* ===========================================================================
+   后端：整包**可加载性**（比「正则当 linter」更可靠的一层）
+   ===========================================================================
+   真实事故（2026-09-24，我自己造成的）：给网关加 max_tokens 截断时用了
+   `estimateTokens(...)` 却没把它加进 pricing.js 的 import 列表 ——
+   `node --check` 通过（只做语法分析，不做作用域解析），部署成功、服务健康，
+   但每次真实调用都在适配器里抛 `ReferenceError: estimateTokens is not defined`，
+   渠道被标记 CHANNEL_ERROR 并冷却，用户看到的是 503「账号都在冷却中」——
+   症状与根因看起来毫无关系（像是把渠道搞挂了），排查成本很高。
+
+   我先试着写「正则扫未定义调用」，失败得很彻底：要给 Promise 的
+   `resolve(` / `reject(`、对象简写方法 `view(state, {…}) {`、动态 `import(`、
+   参数解构……逐个开豁免，最后剩下的仍是十几处误报。
+   **一个会误报的门禁等于没有门禁** —— 正则做不了作用域分析。
+
+   所以改用这个更朴素但**可靠**的判据：把每个后端模块**真正 import 一遍**。
+   · 若是「顶层就引用了不存在的标识符」，加载即抛 ReferenceError；
+   · 若是「只有某条路径用到」，加载不会抛 —— 那种只能靠真实调用覆盖，
+     本文件不假装能测到（诚实划界，而不是给个假绿灯）。
+   代价是每个模块都要被求值一次：本项目模块都是「定义函数 + 少量常量」，
+   不连数据库、不起服务（连接是惰性的），所以安全且快。
+   =========================================================================== */
+const SKIP_LOAD = new Set([
+  // 这些模块在被 import 时会立即做副作用（读文件/起定时器/连库），
+  // 不适合在单测进程里加载。它们由各自的专项测试与 e2e 覆盖。
+  "index.js",
+]);
+
+t("后端每个模块都能被 import（顶层未定义标识符会让加载直接抛错）", async () => {
+  // ⚠️ 诚实划界：这一条**只能**抓「顶层」引用（import 时求值的路径）。
+  // 实测验证过它抓不到真事故：estimateTokens 的引用在闭包里，
+  // 只有真正处理请求时才抛 —— 我把 import 删掉跑这个测试，它照样全绿。
+  // 闭包里的未定义标识符只能靠**真实调用**覆盖，
+  // 那一层由 tests/api-smoke.mjs（真打接口）与线上 e2e 负责，这里不假装能测到。
+  const srcDir = path.join(here, "..", "src");
+  const files = [];
+  const walkJs = (dir) => {
+    for (const f of readdirSync(dir)) {
+      const p = path.join(dir, f);
+      if (statSync(p).isDirectory()) walkJs(p);
+      else if (f.endsWith(".js") && !SKIP_LOAD.has(f)) files.push(p);
+    }
+  };
+  walkJs(srcDir);
+
+  const broken = [];
+  for (const f of files) {
+    try {
+      await import(pathToFileURL(f).href);
+    } catch (e) {
+      // 只报「标识符未定义」这类**代码缺陷**；
+      // 缺依赖/缺环境变量属于部署问题，不是本测试的职责
+      const msg = String(e && e.message);
+      if (/is not defined|Cannot access .* before initialization/.test(msg)) {
+        broken.push(`${path.relative(srcDir, f).split(path.sep).join("/")}: ${msg}`);
+      }
+    }
+  }
+  if (broken.length) {
+    const head = `有 ${broken.length} 个模块加载即失败（真实事故：estimateTokens is not defined 让整条渠道 503）：`;
+    throw new Error(head + "\n    " + broken.join("\n    "));
   }
 });
 
