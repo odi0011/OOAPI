@@ -4,8 +4,8 @@
 // 1. 点击「从上游获取模型」：成功后直接自动填入下方模型字段，无需用户二次操作；
 // 2. 「全选」与「清空」合二为一：根据当前选中状态智能切换（未全选时显示「全选全部」，全选后显示「清空所选」）；
 // 3. 友好清洗上游报错（提炼 token_revoked / 401 等常见异常，杜绝倾倒原始 JSON）。
-import React, { useEffect, useState } from "react";
-import { Select, Button, Space, Tooltip, Tag, App as AntApp, Alert } from "antd";
+import React, { useEffect, useMemo, useState } from "react";
+import { Select, Button, Space, Tooltip, Tag, App as AntApp, Alert, Segmented } from "antd";
 import { CloudDownloadOutlined, CheckSquareOutlined, ClearOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import { ModelLabel } from "./VendorIcon";
@@ -61,6 +61,14 @@ export default function ModelPicker({
   const [note, setNote] = useState("");
   const [errNote, setErrNote] = useState("");
   const [busy, setBusy] = useState(false);
+  // 上游返回的分组（目前只有 Cline 这类 `vendor/model` 目录型渠道会给）。
+  // 454 个模型平铺进多选框时，管理员既看不出「哪些便宜、哪些是旗舰」，
+  // 也不知道选中之后按什么价收费 —— 而这两件事恰好决定该选哪些。
+  // 分组是**可选的展示层**：上游没给就退回原来的平铺多选，行为不变。
+  const [groups, setGroups] = useState(null);
+  // 分组视图：tier = 按档位（免费/轻量/中/旗舰，选模型的主维度：直接对应成本）；
+  // vendor = 按厂商（同族横向比较用）。默认档位，因为「先定预算再选型号」更常见。
+  const [groupMode, setGroupMode] = useState("tier");
 
   const list = Array.isArray(value) ? value : [];
 
@@ -113,6 +121,8 @@ export default function ModelPicker({
       const models = Array.isArray(r?.models) ? r.models : [];
       setOptions(models.map((m) => ({ value: m, label: m })));
       setSource(r?.source || "none");
+      // 目录型渠道（Cline：454 个 `vendor/model`）才带分组；其它渠道是 null → 退回平铺
+      setGroups(r?.clineGroups || null);
 
       const cleanErr = formatErrorMessage(r?.upstreamError);
       if (r?.source === "upstream") {
@@ -125,10 +135,17 @@ export default function ModelPicker({
       }
 
       // 用户主动点击按钮时，直接自动将探测到的模型完整填充至下方选择器中！
+      // **但目录型渠道例外**：Cline 那种 454 个模型的清单一次性全选，
+      // 等于把 454 个模型都放开（含 $600/M 的 o1-pro），既不是用户想要的、
+      // 也会让定价页瞬间多出几百个待定价项。这种情况改为提示用户用分组选择。
       if (isManual) {
         if (models.length) {
-          onChange?.(models);
-          message.success(`已成功从上游获取并自动填入 ${models.length} 个模型`);
+          if (r?.clineGroups) {
+            message.info(`上游返回 ${models.length} 个模型，已按档位/厂商分组，请用下方分组按钮挑选`);
+          } else {
+            onChange?.(models);
+            message.success(`已成功从上游获取并自动填入 ${models.length} 个模型`);
+          }
         } else {
           message.warning("上游未返回任何可用模型");
         }
@@ -154,6 +171,33 @@ export default function ModelPicker({
       onChange?.(options.map((o) => o.value));
       message.success(`已全选 ${options.length} 个模型`);
     }
+  };
+
+  // 分组视图的当前数据（档位 / 厂商）
+  const groupItems = useMemo(() => {
+    if (!groups) return [];
+    return groupMode === "tier" ? groups.tiers || [] : groups.groups || [];
+  }, [groups, groupMode]);
+
+  // 某个分组是否已全部选中 —— 用来把按钮文案切成「取消选择」
+  const groupAllSelected = (g) => {
+    const ms = g.models || [];
+    return ms.length > 0 && ms.every((id) => list.includes(typeof id === "string" ? id : id.id));
+  };
+
+  // 点分组按钮：整组加选 / 整组取消（幂等，不会把别的组误删）
+  const toggleGroup = (g) => {
+    const ids = (g.models || []).map((m) => (typeof m === "string" ? m : m.id));
+    if (!ids.length) return;
+    const set = new Set(list);
+    if (groupAllSelected(g)) {
+      ids.forEach((id) => set.delete(id));
+      message.info(`已取消「${g.label}」的 ${ids.length} 个模型`);
+    } else {
+      ids.forEach((id) => set.add(id));
+      message.success(`已加入「${g.label}」的 ${ids.length} 个模型`);
+    }
+    onChange?.([...set]);
   };
 
   return (
@@ -189,6 +233,68 @@ export default function ModelPicker({
           </span>
         ) : null}
       </Space>
+
+      {/* 分组选择（目录型渠道专属）：Cline 实测 454 个模型，平铺进多选框既选不动、
+          也看不出「选中之后按什么价收费」。这里按**档位**（免费/轻量/中/旗舰，
+          直接对应成本）与**厂商**两个维度各给一组按钮，点一下整组加选/取消。
+          一次点击代替几十次勾选，且选之前就能看到每个档位有多少个、什么价位。
+          上游没返回分组时（groups 为 null）整块不渲染，行为与从前完全一致。 */}
+      {groups ? (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+            padding: "8px 10px",
+            border: "1px solid var(--line)",
+            borderRadius: 6,
+            background: "var(--surface-2, transparent)",
+          }}
+        >
+          <Space wrap size={8} align="center">
+            <Segmented
+              size="small"
+              value={groupMode}
+              onChange={setGroupMode}
+              options={[
+                { label: "按档位", value: "tier" },
+                { label: "按厂商", value: "vendor" },
+              ]}
+              disabled={disabled}
+            />
+            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+              共 {groups.total} 个模型
+              {groups.freeCount ? `，其中 ${groups.freeCount} 个标了免费` : ""}
+            </span>
+          </Space>
+          <Space wrap size={6}>
+            {groupItems.map((g) => {
+              const on = groupAllSelected(g);
+              return (
+                <Tooltip
+                  key={g.key}
+                  title={
+                    // 档位给价格区间；厂商标出组内模型数 —— 两者都是「选之前想知道的事」
+                    g.desc
+                      ? `${g.label}：${g.desc}（${g.count} 个）`
+                      : `${g.label}：${g.count} 个模型`
+                  }
+                >
+                  <Button
+                    size="small"
+                    type={on ? "primary" : "default"}
+                    disabled={disabled || !g.count}
+                    onClick={() => toggleGroup(g)}
+                    icon={on ? <CheckSquareOutlined /> : null}
+                  >
+                    {g.label} {g.count}
+                  </Button>
+                </Tooltip>
+              );
+            })}
+          </Space>
+        </div>
+      ) : null}
 
       {/* mode="tags" 而不是 "multiple"：
           multiple 只接受**候选列表里已存在**的选项，输入自定义模型名按回车会被静默丢弃

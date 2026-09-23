@@ -278,6 +278,64 @@ export async function chat({
   // 只有真存在包封时才解 —— 这样对绝大多数厂商是零影响的空操作。
   unwrap,
 }) {
+  // 上游 5xx（503 Service is too busy / 502 Bad Gateway …）是**上游瞬时过载**，
+  // 不是这个渠道坏了 —— 线上实测：DeepSeek 官方 API 的 503 是随机的，
+  // 同一把 key 连打 6 次全部 200（503 与请求内容、key 有效性都无关）。
+  // 这种错误原地等一下再打常常就好了，比「冷却渠道 + 换下一个渠道」代价小得多：
+  //   · 换渠道会绕远路（用户可能只有这一个渠道，那就直接失败）；
+  //   · 冷却渠道还会把一次上游抖动记成渠道故障（成功率被污染）。
+  // 所以这里先原地重试两次（0.6s / 1.8s 退避），都不成才交给上层换渠道。
+  // 只在**还没吐出任何内容**时重试：已经流式输出过就不能重来，
+  // 否则客户端会收到两份拼接的内容（与 execute 的 sawOutput 判定同源）。
+  const BUSY_RETRIES = 2;
+  let sawOutput = false;
+  const emitDelta = (t) => {
+    sawOutput = true;
+    if (onDelta) onDelta(t);
+  };
+  const emitReasoning = (t) => {
+    sawOutput = true;
+    if (onReasoning) onReasoning(t);
+  };
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await chatOnce({
+        channel,
+        model,
+        prompt,
+        messages,
+        thinkingOverride,
+        images,
+        onDelta: emitDelta,
+        onReasoning: emitReasoning,
+        signal,
+        unwrap,
+      });
+    } catch (e) {
+      const busy = e?.code === "CHANNEL_UPSTREAM_BUSY";
+      if (!busy || attempt >= BUSY_RETRIES || sawOutput || signal?.aborted) throw e;
+      const waitMs = 600 * 3 ** attempt;
+      console.warn(`[openai-compat] 上游过载（${e.message.slice(0, 80)}），${waitMs}ms 后原地重试（第 ${attempt + 1}/${BUSY_RETRIES} 次）`);
+      await new Promise((r) => setTimeout(r, waitMs));
+      // 等待期间客户端可能已断开：别白打一次上游
+      if (signal?.aborted) throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
+    }
+  }
+}
+
+async function chatOnce({
+  channel,
+  model,
+  prompt,
+  messages,
+  thinkingOverride,
+  images = [],
+  onDelta,
+  onReasoning,
+  signal,
+  unwrap,
+}) {
   const { chat: url } = endpoints(channel.base_url);
   if (!url) {
     throw Object.assign(new Error("未填写接口地址（Base URL）"), { code: "CHANNEL_NOT_READY" });
@@ -341,15 +399,20 @@ export async function chat({
     }
     // 400/404/409/422 是请求本身的问题（模型名错、上下文超长等），换渠道也没用；
     // 这类错误不可重试，直接抛给调用方，避免把健康渠道全部冷却。
+    // 5xx 单独归类为 CHANNEL_UPSTREAM_BUSY：那是**上游自己过载**（DeepSeek 的
+    // 「Service is too busy」、各家网关的 502/504），不是这个渠道的凭据或配置有问题。
+    // 交给 chat() 的循环原地重试；重试仍失败才算渠道异常。
     const code =
       resp.status === 401 || resp.status === 403
         ? "CHANNEL_AUTH_EXPIRED"
         : resp.status === 429
           ? "CHANNEL_RATE_LIMIT"
-          : [400, 404, 409, 413, 422].includes(resp.status)
-            ? "CHANNEL_BAD_REQUEST"
-            : "CHANNEL_HTTP_ERROR";
-    throw Object.assign(new Error(`上游返回 HTTP ${resp.status}：${msg}`), { code });
+          : resp.status >= 500
+            ? "CHANNEL_UPSTREAM_BUSY"
+            : [400, 404, 409, 413, 422].includes(resp.status)
+              ? "CHANNEL_BAD_REQUEST"
+              : "CHANNEL_HTTP_ERROR";
+    throw Object.assign(new Error(`上游返回 HTTP ${resp.status}：${msg}`), { code, status: resp.status });
   }
   if (!resp.body) {
     throw Object.assign(new Error("上游未返回内容流"), { code: "CHANNEL_BAD_RESPONSE" });

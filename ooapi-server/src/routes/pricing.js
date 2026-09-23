@@ -4,9 +4,10 @@ import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
-import { invalidatePrices, DEFAULT_PRICES, describeRule } from "../services/pricing.js";
+import { invalidatePrices, loadPrices, DEFAULT_PRICES, describeRule } from "../services/pricing.js";
 import { pendingPricedModels } from "../services/pricing.js";
 import { modelRegistry, invalidateModelRegistry } from "../services/models.js";
+import { clinePriceFor, CLINE_RULE_COUNT } from "../services/cline-prices.js";
 
 const router = Router();
 router.use(adminRequired);
@@ -469,6 +470,211 @@ router.post(
     invalidatePrices();
     await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `同步内置价目表 ${updated} 条` });
     return ok(res, { updated }, `已按内置价目表同步 ${updated} 条（来源均为官方页面）`);
+  })
+);
+
+// ---------------------------------------------------------------------------
+// 模型归属：把「别的名字的同一个模型」自动对到真实厂商的图标与价格
+// ---------------------------------------------------------------------------
+// 用户要求（原话）：
+//   「我看到 Cline 里很多模型，并没有走系统已有模型的厂商的图标，应该是他们的 id
+//     不相同，这个有什么办法自动归属吗？比如 workbuddy 或者其他渠道有那个 deepseekv4.1flash，
+//     但是实际他应该就是 deepseek-flash 模型，能不能全部，在获取模型的时候自动归属，
+//     在后台模型定价页面坐一块功能区给管理员做？…价格我估计也是对不上的，这点你检查一下」
+//
+// 背景（已核对线上实测）：Cline 的 /models 返回 454 个模型，形如
+// `anthropic/claude-sonnet-4.5`、`~openai/gpt-luna-latest`、`x-ai/grok-4.3:free` ——
+// 厂商前缀是**上游的写法**，与我们渠道类型的 key 常常不同（x-ai vs grok、z-ai vs glm、
+// moonshotai vs kimi、meta-llama vs meta）。于是：
+//   · 图标：模型名带前缀 → 前端匹配不到 → 退化成渠道图标（看着像「不认识这个模型」）；
+//   · 价格：库里没有 `anthropic/claude-sonnet-4.5` 这一行 → 走兜底链（同族/最贵档），
+//     而兜底是**猜的**，实测会把便宜模型按旗舰价收。
+// 解决办法是一层「归属规则」（services/cline-prices.js）：模型名归一化后按规则
+// 映射到真实厂商与价格。规则覆盖 454/454（0 条落到兜底、0 条为 0 价）。
+//
+// 下面两个接口把这件事摊到管理员面前：
+//   · resolve     —— 「这个模型到底会被当成谁、按什么价算」的即时查询（单条自检）
+//   · materialize —— 把归属规则**固化成真实定价行**（之后可在定价表里逐条改）
+// 为什么要有 materialize：规则是代码里的映射，管理员改不了；而有些模型确实需要
+// 单独定价（比如上游涨价）。固化后 DB 里的行优先于规则，管理员就有了控制权。
+
+/** 归属规则的只读快照（前端展示「哪些模型归给谁、还有多少没着落」） */
+router.get(
+  "/attribution",
+  asyncHandler(async (req, res) => {
+    const prices = await loadPrices();
+    const [rows] = await pool.query(
+      "SELECT id, name, type, models FROM channels WHERE status = 1 AND models IS NOT NULL AND models <> ''"
+    );
+    // 统计「渠道声明过的模型」里：多少条靠 DB 价格、多少条靠归属规则、多少条没着落
+    let byDb = 0;
+    let byRule = 0;
+    const unresolved = new Set();
+    const byVendor = new Map();
+    const ruleModels = [];
+    for (const r of rows) {
+      for (const raw of String(r.models || "").split(",")) {
+        const m = raw.trim();
+        if (!m || m === "*") continue;
+        const key = m.toLowerCase();
+        let hit = prices.has(key);
+        if (!hit) {
+          let bestLen = -1;
+          for (const k of prices.keys()) if (key.startsWith(k) && k.length > bestLen) bestLen = k.length;
+          hit = bestLen >= 0;
+        }
+        if (hit) {
+          byDb += 1;
+          continue;
+        }
+        const rule = clinePriceFor(m);
+        if (rule) {
+          byRule += 1;
+          const v = rule.type || "其他";
+          byVendor.set(v, (byVendor.get(v) || 0) + 1);
+          if (ruleModels.length < 500) ruleModels.push({ model: m, type: v, input: rule.input, output: rule.output });
+        } else {
+          unresolved.add(m);
+        }
+      }
+    }
+    const vendors = [...byVendor.entries()].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count);
+    return ok(res, {
+      ruleCount: CLINE_RULE_COUNT,
+      byDb,
+      byRule,
+      unresolved: [...unresolved].slice(0, 200),
+      unresolvedCount: unresolved.size,
+      // 归属到的厂商分布：一眼看出「哪些厂商的模型被自动归过来了」
+      vendors,
+      // 抽样 30 条归属明细给管理员看（不做分页：这是「一眼确认规则对不对」的预览，
+      // 真要逐条改价走上面的定价表）
+      samples: ruleModels.filter((_, i) => i % Math.max(1, Math.ceil(ruleModels.length / 30)) === 0).slice(0, 30),
+    });
+  })
+);
+
+/** 单个模型的归属解析（管理员在「归属检查」里贴一个模型名即可看到结果） */
+router.get(
+  "/resolve",
+  asyncHandler(async (req, res) => {
+    const model = String(req.query.model || "").trim();
+    if (!model) return fail(res, "请提供 model 参数");
+    const prices = await loadPrices();
+    const key = model.toLowerCase();
+    const exact = prices.get(key);
+    if (exact) {
+      return ok(res, {
+        model,
+        source: "db",
+        type: exact.type || "",
+        input: Number(exact.input) || 0,
+        output: Number(exact.output) || 0,
+        cache: Number(exact.cache) || 0,
+        remark: exact.remark || "（定价表中已有该模型）",
+      });
+    }
+    let bestLen = -1;
+    let best = null;
+    for (const [k, v] of prices) if (key.startsWith(k) && k.length > bestLen) { bestLen = k.length; best = { k, v }; }
+    if (best) {
+      return ok(res, {
+        model,
+        source: "db-prefix",
+        matched: best.k,
+        type: best.v.type || "",
+        input: Number(best.v.input) || 0,
+        output: Number(best.v.output) || 0,
+        cache: Number(best.v.cache) || 0,
+        remark: `命中定价表里的前缀「${best.k}」`,
+      });
+    }
+    const rule = clinePriceFor(model);
+    if (rule) {
+      return ok(res, {
+        model,
+        source: "rule",
+        type: rule.type,
+        input: rule.input,
+        output: rule.output,
+        cache: rule.cache,
+        remark: rule.remark,
+      });
+    }
+    return ok(res, { model, source: "none", remark: "归属规则未覆盖：该模型会走兜底价（同族/最贵档），建议手工定价" });
+  })
+);
+
+/**
+ * 把归属规则固化成真实定价行（管理员点「固化为定价」时执行）。
+ *
+ * 入参二选一：
+ *   `{ models: ["anthropic/claude-sonnet-4.5", ...] }` —— 指定若干模型
+ *   `{ vendor: "anthropic" }`                        —— 固化「归到该厂商的全部模型」
+ *     （vendor 的取值来自 /attribution 的 vendors[].type）
+ *
+ * **已存在的行不覆盖**：管理员手工调过的价不能被一次「固化」抹掉 ——
+ * 那正是固化的反面。想回到规则价就先删掉那一行再固化。
+ */
+router.post(
+  "/materialize",
+  asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    const explicit = Array.isArray(body.models) ? body.models.map((m) => String(m).trim()).filter(Boolean) : [];
+    const vendor = String(body.vendor || "").trim();
+    if (!explicit.length && !vendor) return fail(res, "请提供 models 或 vendor");
+
+    const [rows] = await pool.query(
+      "SELECT id, name, type, models FROM channels WHERE status = 1 AND models IS NOT NULL AND models <> ''"
+    );
+    const declared = new Set();
+    for (const r of rows) {
+      for (const raw of String(r.models || "").split(",")) {
+        const m = raw.trim();
+        if (m && m !== "*") declared.add(m);
+      }
+    }
+    const candidate = explicit.length ? explicit : [...declared];
+
+    const ts = now();
+    let inserted = 0;
+    let skipped = 0;
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      for (const m of candidate) {
+        // 已有定价行的跳过（不覆盖管理员的手工定价）
+        const [exist] = await conn.query("SELECT model FROM model_prices WHERE model = ?", [m]);
+        if (exist.length) { skipped += 1; continue; }
+        const p = clinePriceFor(m);
+        if (!p) { skipped += 1; continue; }
+        if (vendor && p.type !== vendor) { skipped += 1; continue; }
+        await conn.query(
+          `INSERT INTO model_prices (model, input_price, output_price, cache_price, channel_type, remark, updated_time)
+           VALUES (?,?,?,?,?,?,?)`,
+          [m, p.input, p.output, p.cache, p.type, p.remark, ts]
+        );
+        inserted += 1;
+      }
+      await conn.commit();
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally {
+      conn.release();
+    }
+    if (inserted) invalidatePrices();
+    await writeLog({
+      req,
+      user: req.user,
+      type: LOG_TYPE.MANAGE,
+      content: `固化模型归属定价：新增 ${inserted} 条（跳过 ${skipped} 条已有/未覆盖）${vendor ? `，厂商 ${vendor}` : ""}`,
+    });
+    return ok(
+      res,
+      { inserted, skipped },
+      inserted ? `已固化 ${inserted} 条归属定价（可在上方列表中继续微调）` : "没有需要固化的模型（都已定价或不适用）"
+    );
   })
 );
 

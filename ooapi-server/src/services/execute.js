@@ -28,6 +28,9 @@ const RETRYABLE = new Set([
   // 限流/风控（429 与「返回验证页的 403」）—— 可自愈，冷却后重试；
   // 归到普通 HTTP 错误会让冷却档位与提示都失准（见 upstream/http-error.js）
   "CHANNEL_RATE_LIMITED",
+  // 上游 5xx（503 Service is too busy 等）：上游瞬时过载，与「渠道坏了」是两回事。
+  // 必须可重试，否则一次上游抖动就把请求直接推给用户，而换个渠道往往立刻成功。
+  "CHANNEL_UPSTREAM_BUSY",
   // 403 权限不足（免费号用了付费模型档位）：换号或换模型可解，重抓凭据无效
   "CHANNEL_FORBIDDEN",
 ]);
@@ -312,7 +315,11 @@ function cooldownFor(code, err) {
       return 21600;
     case "CHANNEL_CAPTCHA":
       return 3600;
-    // 限流：5 分钟后自愈，太短会反复撞（把临时限流升级成封禁），太长浪费可用账号
+    // 限流：可自愈，冷却后重试。**两个错误码都要覆盖** —— 适配器侧抛
+    // CHANNEL_RATE_LIMIT（无 D），http-error.js 归类出 CHANNEL_RATE_LIMITED（有 D）。
+    // 此前只写了带 D 的版本，不带 D 的那条（也就是 429 的绝大多数来源）靠
+    // `default: 300` 巧合对上同档数值；一旦有人调整 default 就会静默漂移。
+    case "CHANNEL_RATE_LIMIT":
     case "CHANNEL_RATE_LIMITED":
       return 300;
     // 权限不足：不是渠道坏了，是模型档位不对 —— 给短冷却，

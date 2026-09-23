@@ -26,13 +26,14 @@ import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod, isApiKeyMethod, localLoginGuide } from "../services/channel-types.js";
 import { buildLoginUrl, exchangeCodeForCredential, interactiveLoginInfo, supportsInteractiveLogin, supportsInteractiveLoginMethod, supportsDeviceLogin, startDeviceLogin, pollDeviceLogin } from "../services/upstream/oauth-login.js";
-import { getAdapter, resetChannelState, forgetChannel, invalidateChannelCache, channelRuntimeState, channelRecent, rowToChannel, recordChannelCall, AUTO_PAUSE_CODES } from "../services/router.js";
+import { getAdapter, resetChannelState, forgetChannel, invalidateChannelCache, channelRuntimeState, channelRecent, rowToChannel, recordChannelCall, AUTO_PAUSE_CODES, isRateLimitedCode, setChannelRateLimit, rateLimitPauseSec } from "../services/router.js";
 import { clearGroupConfigCache } from "../services/group-rate.js";
 // 只留这两个：浏览器登录相关的辅助（截图/远程操作/读凭据）随「服务器浏览器登录」
 // 一起删除后已无调用点；这两个仍需（删渠道时清 profile、订阅渠道复制 profile）。
 import { isReady as browserReady, removeProfile, copyProfile } from "../services/upstream/browser-driver.js";
 import { invalidateModelRegistry } from "../services/models.js";
 import { parseCredentialFile } from "../services/upstream/auth-import.js";
+import { clineModelGroups } from "../services/cline-prices.js";
 import { probeChannel } from "../services/channel-probe.js";
 import { fetchQuota, quotaSupportFor, clampQuotaPayload } from "../services/upstream/quota.js";
 import { rateLimit } from "../middleware/ratelimit.js";
@@ -98,6 +99,26 @@ router.use((req, res, next) => {
 });
 
 const VALID_PROVIDERS = providerKeys();
+
+/**
+ * 该渠道的模型是否要做「按档位 / 按厂商」分组。
+ *
+ * 判据是**模型名结构**而不是渠道类型：Cline 返回的是 `vendor/model` 形式的目录
+ * （实测 454 个，`~openai/...`、`:free`、`:batch` 各种变体），这种清单平铺没法用。
+ * 用结构判定还有个好处：将来接入别的聚合型渠道（同样返回 `vendor/model`）时
+ * 自动就有分组，不需要再改这里。
+ */
+function clineGroupsFor(type, models) {
+  const list = Array.isArray(models) ? models : [];
+  if (list.length < 20) return null; // 小清单平铺更好用，分组反而多一层点击
+  const prefixed = list.filter((m) => /^~?[a-z0-9.-]+\//i.test(String(m))).length;
+  if (prefixed / list.length < 0.8) return null; // 多数模型没有 `vendor/` 前缀 → 不分组
+  try {
+    return clineModelGroups(list);
+  } catch {
+    return null; // 分组只是展示层的便利：算不出来就让前端退回平铺，不能让接口报错
+  }
+}
 
 // ---------- 工具 ----------
 function parseOther(row) {
@@ -635,6 +656,10 @@ function rowToResp(r, { withKey = false } = {}) {
   // 不能让它自己判 method === "api" —— 同一厂商可能有第二个 API Key 型方式
   // （OpenCode 的 GO 套餐、自定义厂商的 Anthropic 兼容），那些的 method key 不是 "api"。
   const isApi = isApiKeyMethod(r.type, method);
+  // 该渠道是不是因为上游 429 被停用的（前端在额度行下方显示橙黄色恢复时间）。
+  // 判据用错误码而不是 last_error 文案：文案会随适配器改写而漂移。
+  const rateLimited =
+    Number(r.rate_limit_until) > 0 || isRateLimitedCode(String(r.last_error_code || ""));
 
   return {
     id: r.id,
@@ -667,9 +692,25 @@ function rowToResp(r, { withKey = false } = {}) {
     weight: Number(r.weight) || 0,
     // 状态
     status: r.status,
-    status_label: r.status === 2 ? "已禁用" : cooling ? "冷却中" : r.status === 1 ? "已启用" : "自动禁用",
+    // 状态文案要区分「为什么停」：管理员禁用（status=2）与系统自动停用（status=3）
+    // 是两回事，而 429 停用更特殊 —— 它到点会自己恢复，所以文案要说清是临时的。
+    status_label:
+      r.status === 2
+        ? "已禁用"
+        : cooling
+          ? "冷却中"
+          : r.status === 1
+            ? "已启用"
+            : rateLimited
+              ? "限流停用"
+              : "自动禁用",
     auto_ban: r.auto_ban === 0 ? false : true,
       cooling,
+      // 上游 429 的恢复时刻（epoch 秒，0 = 未限流）。
+      // 前端在额度行的余额 tag 下面新起一行、橙黄色显示「上游 429，预计恢复 HH:MM:SS」。
+      // 以 DB 列为准（重启后内存态会丢，而停用是持久的）。
+      rate_limit_until: Number(r.rate_limit_until) || Number(rt.rate_limit_until) || 0,
+      last_error_code: String(r.last_error_code || ""),
       recent: channelRecent(r.id, r.recent_calls),
       test_model: r.test_model || "",
       test_prompt: r.test_prompt || "hi",
@@ -1104,6 +1145,11 @@ router.post(
       }
     }
 
+    // Cline 专属：454 个模型平铺没法选，附上「按档位 / 按厂商」的分组供前端做分组选择器。
+    // 只对带厂商前缀的目录型渠道启用（目前就是 Cline；其它厂商的模型名没有 `vendor/model`
+    // 结构，套上分组只会得到一堆无意义的单元素分组）。
+    const groups = clineGroupsFor(r.type, [...new Set(models)]);
+
     return ok(res, {
       models: [...new Set(models)].sort(),
       source,
@@ -1112,6 +1158,8 @@ router.post(
       upstreamError: upstreamError || undefined,
       // 渠道已声明的范围，前端据此预选
       declared: String(r.models || "").split(",").map((s) => s.trim()).filter(Boolean),
+      // { groups:[{key,label,count,models}], tiers:[{key,label,count,models}], total, freeCount }
+      ...(groups ? { clineGroups: groups } : {}),
     });
   })
 );
@@ -2086,24 +2134,47 @@ router.post(
     } catch (e) {
       // 手动测试失败：记错误 + 决定要不要**自动暂停**。
       // 用户要求「手动检测出错了则自动暂停」，但同样按错误性质区分：
-      // 凭据失效/被封/配置错这类不会自愈的才暂停；限流/网络/超时只记错误
-      //（否则一次上游抖动就把好渠道停掉，管理员得手工恢复）。
-      const fatal = AUTO_PAUSE_CODES.has(String(e.code || ""));
-      const pause = fatal && row.auto_ban !== 0 && Number(row.status) === 1;
-      await pool.query(
-        pause
-          ? "UPDATE channels SET last_error = ?, status = 3 WHERE id = ? AND status = 1"
-          : "UPDATE channels SET last_error = ? WHERE id = ?",
-        [String(e.message).slice(0, 480), id]
-      );
-      // 测试失败计入「最近调用」小绿条（失败 → 红色；tip 里带失败原因）
-      await recordChannelCall(id, false, Date.now() - startedAt, e.message, { prompt, reply: e.message, kind: "test" });
+      //   · 凭据失效/被封/配置错 → 停用（status=3，人工处理）；
+      //   · 上游 429 限流 → 也停用，但带 `rate_limit_until`，到点自动恢复
+      //     （用户要求「如果哪个渠道报错 429，直接停止渠道状态」）；
+      //   · 网络/超时 → 只记错误（一次抖动不该把好渠道停掉）。
+      const ec = String(e.code || "");
+      const fatal = AUTO_PAUSE_CODES.has(ec);
+      const rateLimited = isRateLimitedCode(ec);
+      const pause = (fatal || rateLimited) && row.auto_ban !== 0 && Number(row.status) === 1;
+      // 限流时长与 markChannelError 共用 rateLimitPauseSec（同一口径，不会漂移）
+      const until = rateLimited ? now() + rateLimitPauseSec(e.cooldownSec) : 0;
+      // 429 不计入「最近调用」：那条环形记录回答的是「渠道干活干得怎么样」，
+      // 而被限流挡回的请求根本没被处理（与 router.markChannelError 同一口径）。
+      if (pause) {
+        await pool.query(
+          "UPDATE channels SET last_error = ?, last_error_code = ?, status = 3, rate_limit_until = ? WHERE id = ? AND status = 1",
+          [String(e.message).slice(0, 480), ec, rateLimited ? until : 0, id]
+        );
+      } else {
+        await pool.query("UPDATE channels SET last_error = ?, last_error_code = ? WHERE id = ?", [
+          String(e.message).slice(0, 480),
+          ec,
+          id,
+        ]);
+      }
+      // 测试失败计入「最近调用」小绿条（失败 → 红色；tip 里带失败原因）。
+      // 429 例外：见上方注释。
+      if (!rateLimited) {
+        await recordChannelCall(id, false, Date.now() - startedAt, e.message, { prompt, reply: e.message, kind: "test" });
+      }
       await writeLog({ req, user: req.user, type: LOG_TYPE.ERROR, content: `测试渠道「${row.name}」失败：${e.message}` });
+      // 内存态：resetChannelState 会清掉冷却与限流标记，限流那条要在之后补回来
       if (pause) resetChannelState(id);
+      if (rateLimited && pause) setChannelRateLimit(id, until);
       return ok(
         res,
-        { success: false, message: e.message, code: e.code, autoPaused: pause },
-        pause ? `测试失败，渠道已自动暂停：${e.message}` : `测试失败：${e.message}`
+        { success: false, message: e.message, code: e.code, autoPaused: pause, rateLimitUntil: until },
+        rateLimited && pause
+          ? `测试失败，渠道已因限流停用：${e.message}`
+          : pause
+            ? `测试失败，渠道已自动暂停：${e.message}`
+            : `测试失败：${e.message}`
       );
     }
   })

@@ -606,6 +606,14 @@ const COLUMN_MIGRATIONS = [
   { table: "channels", column: "last_test_time", ddl: "BIGINT NOT NULL DEFAULT 0" },
   { table: "channels", column: "group_list", ddl: "TEXT" },
   { table: "channels", column: "recent_calls", ddl: "TEXT" },
+  // 上游 429（限流）的恢复时刻（epoch 秒，0 = 未限流）。
+  // 与 status=3 配合表达「临时停用，到点自动恢复」——见 router.markChannelError：
+  // status=3 且 rate_limit_until>0 的渠道由后台任务到点自动放回启用；
+  // 凭据失效那类自动暂停（rate_limit_until=0）仍要管理员手工处理。
+  { table: "channels", column: "rate_limit_until", ddl: "BIGINT NOT NULL DEFAULT 0" },
+  // 最后一次失败的错误码：前端据此区分「429 限流」「凭据失效」「风控」并给不同提示。
+  // 不能再靠 last_error 的文案正则猜 —— 文案会随适配器改写而漂移。
+  { table: "channels", column: "last_error_code", ddl: "VARCHAR(48) NOT NULL DEFAULT ''" },
   // 账号额度快照（订阅/网页版账号的窗口用量）+ 抓取时间；由显式「查额度」或低频定时任务写入
   { table: "channels", column: "quota", ddl: "TEXT" },
   { table: "channels", column: "quota_time", ddl: "BIGINT NOT NULL DEFAULT 0" },

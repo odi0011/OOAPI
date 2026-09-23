@@ -5,9 +5,9 @@
 //   · 成功重置冷却并更新响应时间；失败写 last_error 与红条，不自动禁用（保留人工决策）。
 import { pool } from "../db.js";
 import { now } from "../utils.js";
-import { rowToChannel, getAdapter, recordChannelCall, resetChannelState } from "./router.js";
+import { rowToChannel, getAdapter, recordChannelCall, resetChannelState, setChannelRateLimit } from "./router.js";
 import { probeChannel } from "./channel-probe.js";
-import { AUTO_PAUSE_CODES } from "./router.js";
+import { AUTO_PAUSE_CODES, isRateLimitedCode, rateLimitPauseSec } from "./router.js";
 
 const CHECK_TICK_MS = 60_000;
 
@@ -57,18 +57,37 @@ export async function runDueChannelTests() {
     } catch (e) {
       const ms = Date.now() - t0;
       // 自动检测失败同样按错误性质决定是否自动暂停（与手动测试、用户调用同一口径）：
-      // 只有「不会自愈」的错误才停（凭据失效/被封/配置错），限流与网络抖动只记错误。
+      //   · 凭据失效/被封/配置错 → 停用（status=3，人工处理）；
+      //   · 上游 429 限流 → 也停用，但带 `rate_limit_until`，到点自动恢复；
+      //   · 网络抖动/超时 → 只记错误，不动状态。
       // 三重保护与 router.markChannelError 一致：错误码白名单 + auto_ban 开关 + 仅启用中。
-      const pause = AUTO_PAUSE_CODES.has(String(e.code || "")) && row.auto_ban !== 0 && Number(row.status) === 1;
+      const ec = String(e.code || "");
+      const fatal = AUTO_PAUSE_CODES.has(ec);
+      const rateLimited = isRateLimitedCode(ec);
+      const pause = (fatal || rateLimited) && row.auto_ban !== 0 && Number(row.status) === 1;
+      const until = rateLimited ? now() + rateLimitPauseSec(e.cooldownSec) : 0;
       await pool.query(
         pause
-          ? "UPDATE channels SET last_error = ?, tested_time = ?, status = 3 WHERE id = ? AND status = 1"
-          : "UPDATE channels SET last_error = ?, tested_time = ? WHERE id = ?",
-        [String(e.message).slice(0, 480), now(), row.id]
+          ? "UPDATE channels SET last_error = ?, last_error_code = ?, tested_time = ?, status = 3, rate_limit_until = ? WHERE id = ? AND status = 1"
+          : "UPDATE channels SET last_error = ?, last_error_code = ?, tested_time = ? WHERE id = ?",
+        pause
+          ? [String(e.message).slice(0, 480), ec, now(), rateLimited ? until : 0, row.id]
+          : [String(e.message).slice(0, 480), ec, now(), row.id]
       );
-      await recordChannelCall(row.id, false, ms, e.message, { prompt, reply: e.message, kind: "auto" });
+      // 429 不计入「最近调用」（与 router.markChannelError / 手动测试同一口径）：
+      // 被限流挡回的请求根本没被处理，记进去只会把真实成功率的含义搞乱。
+      if (!rateLimited) {
+        await recordChannelCall(row.id, false, ms, e.message, { prompt, reply: e.message, kind: "auto" });
+      }
+      if (pause) {
+        resetChannelState(row.id);
+        // resetChannelState 会清掉限流标记，限流那条要在之后补回内存
+        if (rateLimited) setChannelRateLimit(row.id, until);
+      }
       console.warn(
-        `[autotest] #${row.id}「${row.name}」失败${pause ? "（已自动暂停）" : ""}：${e.message}`
+        `[autotest] #${row.id}「${row.name}」失败${
+          pause ? (rateLimited ? "（已因限流停用，到点自动恢复）" : "（已自动暂停）") : ""
+        }：${e.message}`
       );
     }
     // 渠道之间留间隔，避免同一时刻并发打上游

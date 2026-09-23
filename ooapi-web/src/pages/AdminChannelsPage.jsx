@@ -8,6 +8,8 @@ import {
   UndoOutlined, KeyOutlined, LoginOutlined, GlobalOutlined,
   InfoCircleOutlined, SafetyCertificateOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined,
   ExclamationCircleOutlined, DashboardOutlined, LinkOutlined, CopyOutlined,
+  // 额度列的「上游 429，预计恢复时间」提示行用它（时钟语义）
+  ClockCircleOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
@@ -199,9 +201,20 @@ function StatusCell({ r, onToggle, busy }) {
   const cooling = Boolean(r.cooling) && !auto && !paused;
   const active = !auto && !paused;
 
-  const state = auto ? (r.last_error ? "已自动暂停" : "已暂停") : paused ? "已暂停" : cooling ? "冷却中" : "已启用";
+  const state = auto
+    ? r.rate_limit_until
+      ? "限流停用"
+      : r.last_error
+        ? "已自动暂停"
+        : "已暂停"
+    : paused
+      ? "已暂停"
+      : cooling
+        ? "冷却中"
+        : "已启用";
   const lines = [`${state}（点击${active ? "暂停" : "启用"}）`];
-  if (cooling && r.cooldown_text) lines.push(`冷却至 ${r.cooldown_text}`);
+  if (auto && r.rate_limit_until) lines.push(`${fmtClock(r.rate_limit_until)} 自动恢复`);
+  else if (cooling && r.cooldown_text) lines.push(`冷却至 ${r.cooldown_text}`);
   if (r.last_error) lines.push(`原因：${r.last_error}`);
 
   return (
@@ -212,6 +225,70 @@ function StatusCell({ r, onToggle, busy }) {
       onToggle={(next) => onToggle?.(r, next)}
     />
   );
+}
+
+/**
+ * 「上游 429」提示行 —— 挂在额度列下方，橙黄色，显示预计恢复时刻。
+ *
+ * 用户要求（原话）：「如果哪个渠道报错 429，不要计入最近调用条条里，
+ * 应该直接停止渠道状态然后在额度的余额那一行 tag 的下面新起一行，
+ * 用橙黄色显示上游 429，预计恢复时间 xxx」。
+ *
+ * 为什么单独一行而不是塞进状态列的气泡：429 是**有时间维度的临时状态**，
+ * 管理员最需要的是「还要等多久」并据此判断要不要手工启用（或换个号）。
+ * 状态列那一个小开关的 hover 里说不清，而额度列本来就是「这个账号现在怎么样」
+ * 的位置，放在这里不用额外操作就能看到。
+ *
+ * 只在真的被限流停用时渲染（`rate_limit_until > 0`）：429 恢复后后端会把它清零，
+ * 这一行随之消失，不需要前端自己算时间。
+ */
+function RateLimitRow({ r }) {
+  const until = Number(r?.rate_limit_until) || 0;
+  if (!until) return null;
+  const left = until * 1000 - Date.now();
+  // 已到点但后台还没跑到（30s 那一轮）：显示「恢复中」而不是负数倒计时
+  const text = left > 0 ? `预计 ${fmtClock(until)} 恢复（${fmtLeft(left)}）` : "已到恢复时间，正在恢复…";
+  return (
+    <Tooltip title={`上游返回 429（请求过于频繁），渠道已暂停调用；${text}\n${r.last_error || ""}`}>
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 3,
+          alignSelf: "flex-start",
+          maxWidth: "100%",
+          padding: "1px 6px",
+          borderRadius: 4,
+          fontSize: 11,
+          lineHeight: "16px",
+          whiteSpace: "nowrap",
+          // 橙黄色（复用额度条的 amber 色板，与「用量偏高」同一套语义色）
+          color: "var(--pill-amber-ink)",
+          background: "var(--pill-amber-tint)",
+        }}
+      >
+        <ClockCircleOutlined style={{ fontSize: 11 }} />
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>上游 429 {text}</span>
+      </span>
+    </Tooltip>
+  );
+}
+
+/** 时刻（epoch 秒）→ HH:MM:SS，本地时区 */
+function fmtClock(epochSeconds) {
+  const d = new Date(Number(epochSeconds) * 1000);
+  if (!Number.isFinite(d.getTime())) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/** 剩余毫秒 → 「x 分 y 秒」/「x 小时 y 分」 */
+function fmtLeft(ms) {
+  const sec = Math.max(0, Math.round(ms / 1000));
+  if (sec < 60) return `${sec} 秒`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} 分 ${sec % 60} 秒`;
+  return `${Math.floor(min / 60)} 小时 ${min % 60} 分`;
 }
 function fmtCompact(n) {
   const v = Number(n) || 0;
@@ -1295,6 +1372,11 @@ export default function AdminChannelsPage() {
         probe_timeout_sec: Number(v.probe_timeout_sec) || 0,
         // 账号级参数（并发/限速/指纹/计费口径）
         concurrency: Number(v.concurrency) || 0,
+        // 空值 / 0 一律提交 0（= 用服务端默认），**不要**在前端把它翻成某个具体数字：
+        // 用户留空的意思是「不知道填多少，用默认」，服务端默认（min_gap 1200ms）才是权威。
+        // 这里曾经把空提交成 0，而服务端旧代码把 0 当「不限间隔」照单放行 ——
+        // 线上 WorkBuddy 就是这样把 20 条探测在同一秒打完、被上游回了 429 的。
+        // 服务端现已改成 0/未设都回落默认，这里保持「0 = 用默认」这一个含义即可。
         min_gap_ms: Number(v.min_gap_ms) || 0,
         max_per_min: Number(v.max_per_min) || 0,
         fingerprint_mode: v.fingerprint_mode || "stable",
@@ -1850,26 +1932,46 @@ export default function AdminChannelsPage() {
         const stats = t
           ? { calls: t.calls, tokens: t.tokens, costUnit: costUnitOf(r), costText: fmtCost(r, t.units) }
           : null;
-        if (q?.windows?.length || q?.credits || stats) return <QuotaInline quota={q} stats={stats} />;
-        if (r.quota_supported) {
+        // 上游 429 的提示行（用户要求）：「如果哪个渠道报错 429…在额度的余额那一行
+        // tag 的下面新起一行，用橙黄色显示 上游 429，预计恢复时间 xxx」。
+        // 放在 stats 之前渲染成独立一行，不受额度快照有没有取到影响 ——
+        // 限流是**当下正在发生的事**，比额度数字更该先被看到。
+        const rateLimitRow = <RateLimitRow r={r} />;
+        if (q?.windows?.length || q?.credits || stats) {
           return (
-            <span
-              role="button"
-              tabIndex={0}
-              style={{ cursor: "pointer", fontSize: 12, color: "var(--ink-3)" }}
-              onClick={() => doQuota(r, { openPanel: true })}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  doQuota(r, { openPanel: true });
-                }
-              }}
-            >
-              点击查询
-            </span>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <QuotaInline quota={q} stats={stats} />
+              {rateLimitRow}
+            </div>
           );
         }
-        return <Text type="secondary" style={{ fontSize: 12 }}>不支持</Text>;
+        if (r.quota_supported) {
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span
+                role="button"
+                tabIndex={0}
+                style={{ cursor: "pointer", fontSize: 12, color: "var(--ink-3)" }}
+                onClick={() => doQuota(r, { openPanel: true })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    doQuota(r, { openPanel: true });
+                  }
+                }}
+              >
+                点击查询
+              </span>
+              {rateLimitRow}
+            </div>
+          );
+        }
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>不支持</Text>
+            {rateLimitRow}
+          </div>
+        );
       },
     },
     { title: "状态", dataIndex: "status", width: 128, render: (_, r) => <StatusCell r={r} onToggle={doToggleStatus} busy={actionBusyId === r.id} /> },
@@ -3082,7 +3184,7 @@ export default function AdminChannelsPage() {
               <Form.Item
                 name="min_gap_ms"
                 label="最小间隔（毫秒）"
-                extra="两次请求之间的最小间隔，0 = 不限（用默认值）"
+                extra="两次请求之间的最小间隔；0 = 用默认（1200ms）"
               >
                 <InputNumber style={{ width: "100%" }} min={0} max={600000} step={100} />
               </Form.Item>

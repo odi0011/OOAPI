@@ -11,6 +11,7 @@
 //   向上取整，最低 1 厘（避免零计费刷量）。
 import { pool } from "../db.js";
 import { now } from "../utils.js";
+import { clinePriceFor } from "./cline-prices.js";
 
 export const UNITS_PER_OD = 10000; // 1 OD 币 = 10000 厘
 export const CURRENCY = "OD币";
@@ -361,6 +362,24 @@ export async function getPrice(model) {
     }
   }
   if (best) return { ...best, exact: true }; // 前缀命中：仍算精确（deepseek-chat-search → deepseek-chat）
+  // Cline 转发目录（454 个模型，形如 `anthropic/claude-sonnet-4.5`、`~openai/gpt-luna-latest`）：
+  // 上游只给 {id, object, created, owned_by}，**没有任何价格字段**（实测核对过），
+  // 所以价格由 cline-prices.js 的归属规则定。位置刻意放在 DB 命中之后、同族兜底之前：
+  //   · DB 里的价格永远优先 —— 管理员在「模型定价」显式配的那条说了算；
+  //   · 规则比「同族兜底」准得多（同族兜底会拿最贵档，实测 mimo-v2.6-flash 被按
+  //     claude-opus-5 收费）；规则表里每条都写明了归属到哪个型号或哪家官方价。
+  const clineHit = clinePriceFor(m);
+  if (clineHit) {
+    return {
+      model,
+      input: clineHit.input,
+      output: clineHit.output,
+      cache: clineHit.cache,
+      type: clineHit.type,
+      exact: false, // 是归属价而非逐条配置：调用方（与管理员）要知道这一点
+      remark: clineHit.remark,
+    };
+  }
   // 同族匹配：请求名是某个已配价模型名的前缀（kimi-k2 → kimi-k2.6、deepseek-v4 → deepseek-v4-pro）。
   // 取「最短的那个」（最贴近的族），比直接跳到「同厂商最贵档」准确得多 ——
   // 按最贵档兜底会让上一代/中端模型被按旗舰价收（kimi-k2 落到 kimi-k3 就是 3 倍）。
@@ -652,6 +671,9 @@ export async function pendingPricedModels() {
         priced = bestLen >= 0;
       }
       if (priced) continue;
+      // Cline 归属规则（cline-prices.js）命中的同样算「已定价」——
+      // 否则 Cline 那 454 个模型会整片出现在待定价徽标里（几百个数字，等于没提示）。
+      if (clinePriceFor(key)) continue;
       if (!byModel.has(m)) byModel.set(m, { model: m, type: String(r.type || ""), channels: [] });
       byModel.get(m).channels.push({ id: Number(r.id), name: String(r.name || "") });
     }
@@ -662,7 +684,10 @@ export async function pendingPricedModels() {
 
 /**
  * 该模型是否已定价（可放行）。与 getPrice 的匹配顺序保持一致：
- * 精确命中或最长前缀命中都算「已定价」。
+ * 精确命中 / 最长前缀命中 / Cline 归属规则 都算「已定价」。
+ *
+ * 第三项不能少：Cline 的 454 个模型里绝大多数靠归属规则定价（DB 里没有逐条记录），
+ * 少了它会让「无价即不放行」把整个 Cline 渠道全拦下来。
  */
 export async function isModelPriced(model) {
   const prices = await loadPrices();
@@ -673,5 +698,5 @@ export async function isModelPriced(model) {
   for (const key of [m, stripped]) {
     for (const k of prices.keys()) if (key.startsWith(k)) return true;
   }
-  return false;
+  return Boolean(clinePriceFor(m));
 }

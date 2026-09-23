@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Table, Input, Select, App as AntApp, Typography, Modal, Upload, Alert, Space, Button, Popconfirm, Tag, Tooltip } from "antd";
-import { ReloadOutlined, SearchOutlined, DollarOutlined, UploadOutlined, ClearOutlined, CloudDownloadOutlined } from "@ant-design/icons";
+import { ReloadOutlined, SearchOutlined, DollarOutlined, UploadOutlined, ClearOutlined, CloudDownloadOutlined, ApartmentOutlined, CheckCircleOutlined, QuestionCircleOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
@@ -81,6 +81,63 @@ export default function AdminPricingPage() {
   const [importResult, setImportResult] = useState(null);
   const [cleaning, setCleaning] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  // 模型归属（把 `anthropic/claude-sonnet-4.5` 这类上游 id 自动对到真实厂商与价格）：
+  //   attrib    —— 归属概览（规则覆盖了多少、多少落到 DB 价、多少没着落）
+  //   resolveQ  —— 管理员贴一个模型名，即时看「会被当成谁、按什么价算」
+  //   resolveR  —— 上一条的查询结果
+  //   fixing    —— 「固化为定价」进行中
+  const [attrib, setAttrib] = useState(null);
+  const [attribOpen, setAttribOpen] = useState(false);
+  const [resolveQ, setResolveQ] = useState("");
+  const [resolveR, setResolveR] = useState(null);
+  const [resolving, setResolving] = useState(false);
+  const [fixing, setFixing] = useState("");
+
+  const loadAttrib = useCallback(async () => {
+    try {
+      setAttrib(await API.get("/pricing/attribution"));
+    } catch {
+      /* 归属概览是辅助信息：拿不到就整块不显示，不能让定价页主体跟着报错 */
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAttrib();
+  }, [loadAttrib]);
+
+  const doResolve = async () => {
+    const q = String(resolveQ || "").trim();
+    if (!q) return message.warning("请先输入要检查的模型名");
+    setResolving(true);
+    try {
+      setResolveR(await API.get("/pricing/resolve", { params: { model: q } }));
+    } catch (e) {
+      message.error(e.message || "查询失败");
+    } finally {
+      setResolving(false);
+    }
+  };
+
+  // 固化：把归属规则写进定价表，之后可在上方列表里逐条微调。
+  // `vendor` 为空 = 固化全部有归属的模型；给了 vendor 就只固化归到该厂商的那批。
+  const doMaterialize = async (vendor = "") => {
+    const who = vendor ? `归到「${TYPE_LABEL[vendor] || vendor}」的模型` : "全部有归属的模型";
+    setFixing(vendor || "__all__");
+    try {
+      const r = await API.post("/pricing/materialize", vendor ? { vendor } : {});
+      if (r.inserted) {
+        message.success(`已固化 ${r.inserted} 条定价（跳过 ${r.skipped} 条已定价/不适用）`);
+        await load();
+        await loadAttrib();
+      } else {
+        message.info("没有需要固化的模型（都已定价或不适用）");
+      }
+    } catch (e) {
+      message.error(e.message || "固化失败");
+    } finally {
+      setFixing("");
+    }
+  };
 
   const load = useCallback(async () => {
     const token = begin();
@@ -316,6 +373,138 @@ export default function AdminPricingPage() {
           hint={`1 ${CURRENCY_NAME} = 1 美元（1:1 精确核算）`}
         />
       </div>
+
+      {/* 模型归属：把上游的模型 id 自动对到真实厂商（图标）与真实价格
+          ----------------------------------------------------------------------
+          用户要求（原话）：「Cline 里很多模型并没有走系统已有模型的厂商的图标，
+          应该是他们的 id 不相同，这个有什么办法自动归属吗？…能不能全部，在获取模型的
+          时候自动归属，在后台模型定价页面坐一块功能区给管理员做？价格我估计也是对不上的」。
+          这里就是那块功能区：一眼看到覆盖情况 + 单条即时自检 + 一键固化成真实定价行。 */}
+      {attrib ? (
+        <div className="oo-panel">
+          <div className="oo-panel-head">
+            <span className="oo-panel-title">
+              <ApartmentOutlined style={{ marginRight: 6 }} />
+              模型归属
+            </span>
+            <Space size={6}>
+              <Button size="small" icon={<ReloadOutlined />} onClick={loadAttrib}>
+                刷新
+              </Button>
+              <Button
+                size="small"
+                type="primary"
+                ghost
+                icon={<CheckCircleOutlined />}
+                loading={fixing === "__all__"}
+                onClick={() => doMaterialize("")}
+              >
+                固化为定价
+              </Button>
+              <Button size="small" onClick={() => setAttribOpen((v) => !v)}>
+                {attribOpen ? "收起" : "展开明细"}
+              </Button>
+            </Space>
+          </div>
+          <div className="oo-panel-body">
+            <Space size={18} wrap style={{ marginBottom: 8 }}>
+              <span>
+                <Text type="secondary" style={{ fontSize: 12 }}>归属规则 </Text>
+                <Tag color="blue">{attrib.ruleCount} 条</Tag>
+              </span>
+              <span>
+                <Text type="secondary" style={{ fontSize: 12 }}>已直接定价 </Text>
+                <Tag color="green">{attrib.byDb}</Tag>
+              </span>
+              <span>
+                <Text type="secondary" style={{ fontSize: 12 }}>靠归属规则定价 </Text>
+                <Tag color="cyan">{attrib.byRule}</Tag>
+              </span>
+              <span>
+                <Text type="secondary" style={{ fontSize: 12 }}>未覆盖（走兜底价） </Text>
+                <Tag color={attrib.unresolvedCount ? "red" : "default"}>{attrib.unresolvedCount}</Tag>
+              </span>
+            </Space>
+            <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 10 }}>
+              规则把上游 id（<code>anthropic/claude-sonnet-4.5</code>、
+              <code>~openai/gpt-luna-latest</code>、<code>x-ai/grok-4.3:free</code>）归一化后
+              对到真实厂商与价格；库里已有的定价行**优先于规则**，规则只在没定价时兜底。
+              固化会把规则写成真实定价行，之后可以在上方列表里逐条微调。
+            </Text>
+
+            <Space wrap size={6} style={{ marginBottom: 10 }}>
+              <Input
+                size="small"
+                placeholder="贴一个模型名检查归属，如 anthropic/claude-sonnet-4.5"
+                value={resolveQ}
+                onChange={(e) => setResolveQ(e.target.value)}
+                onPressEnter={doResolve}
+                style={{ width: 340 }}
+                prefix={<QuestionCircleOutlined style={{ color: "var(--ink-3)" }} />}
+              />
+              <Button size="small" loading={resolving} onClick={doResolve}>检查</Button>
+              {resolveR ? (
+                resolveR.source === "none" ? (
+                  <Tag color="red">{resolveR.remark}</Tag>
+                ) : (
+                  <Tag color={resolveR.source === "rule" ? "cyan" : "green"}>
+                    <ModelLabel model={resolveR.model} size={12} />
+                    {" → "}
+                    {TYPE_LABEL[resolveR.type] || resolveR.type || "—"}
+                    {" · 输入 "}
+                    {Number(resolveR.input).toFixed(4)}
+                    {" / 输出 "}
+                    {Number(resolveR.output).toFixed(4)}
+                  </Tag>
+                )
+              ) : null}
+            </Space>
+
+            {attribOpen ? (
+              <div style={{ maxHeight: 320, overflow: "auto" }}>
+                <Table
+                  size="small"
+                  rowKey="type"
+                  pagination={false}
+                  dataSource={attrib.vendors || []}
+                  columns={[
+                    { title: "归属厂商", dataIndex: "type", render: (v) => <span className="bui-chip">{TYPE_LABEL[v] || v}</span> },
+                    { title: "模型数", dataIndex: "count", width: 90 },
+                    {
+                      title: "操作",
+                      width: 130,
+                      render: (_, r) => (
+                        <Button
+                          size="small"
+                          type="link"
+                          loading={fixing === r.type}
+                          onClick={() => doMaterialize(r.type)}
+                        >
+                          固化为定价
+                        </Button>
+                      ),
+                    },
+                  ]}
+                />
+                {attrib.unresolved?.length ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginTop: 10 }}
+                    message={`规则未覆盖 ${attrib.unresolvedCount} 个模型（会走「同族/最贵档」兜底价）`}
+                    description={
+                      <span style={{ fontSize: 12, wordBreak: "break-all" }}>
+                        {attrib.unresolved.slice(0, 30).join("、")}
+                        {attrib.unresolvedCount > 30 ? ` …等 ${attrib.unresolvedCount} 个` : ""}
+                      </span>
+                    }
+                  />
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       <div className="oo-panel">
         {loadError ? (

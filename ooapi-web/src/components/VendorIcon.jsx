@@ -114,23 +114,105 @@ const MODEL_ICON = [
   [/^jev/i, "typesafe.png"],
   [/^longcat/i, "longcat.png"],
   [/^nemotron/i, "nvidia.png"],
-  [/^hy3|^hunyuan/i, "hunyuan.png"],
+  // 混元：WorkBuddy 渠道里是 `hy-4-preview`（Hy4 预览版），只写 `^hy3` 会漏掉 ——
+  // 实测反馈「workbuddy 里面的 hy-4-preview 不是混元的模型吗？为啥给我弄成厂商的图标了」。
+  // `^hy[-\d]` 同时覆盖 hy3 / hy-4 / hy4 各种写法；以 `hy` 开头接分隔符或数字的
+  // 模型名目前只有混元一家，不会误伤。
+  [/^hunyuan|^hy[-\d]/i, "hunyuan.png"],
 ];
+
+// 厂商前缀 → 图标文件（`vendor/model` 形式的目录型渠道用）。
+//
+// 为什么单独一张表：Cline 之类的聚合渠道返回的是 `anthropic/claude-sonnet-4.5`、
+// `x-ai/grok-4.3`、`~openai/gpt-luna-latest` —— 前缀是**厂商**，但和我们的渠道 key
+// 拼写往往不同（x-ai vs grok、z-ai vs glm、moonshotai vs kimi、meta-llama vs meta）。
+// 用户实测反馈：「Cline 里很多模型并没有走系统已有模型的厂商图标，应该是他们的 id
+// 不相同，这个有什么办法自动归属吗」。
+//
+// 两级解析（顺序不能颠倒）：
+//   ① 先按**模型名**判定（同名模型无论挂在哪个渠道都是同一家的）——
+//      `anthropic/claude-sonnet-4.5` 剥掉前缀后就是 `claude-sonnet-4.5`，
+//      MODEL_ICON 直接命中 claude 图标；
+//   ② 模型名认不出来时，再按**厂商前缀**判定（`x-ai/某新模型` → grok 图标）——
+//      新模型（`grok-build-0.1`）不在 MODEL_ICON 里，但前缀已经说明了归属。
+// 两者都没命中才落到「渠道图标」兜底（上一层的 ModelLabel 负责）。
+const VENDOR_PREFIX_ICON = {
+  anthropic: "claude.svg",
+  openai: "openai.svg",
+  google: "gemini.svg",
+  "x-ai": "grok.svg",
+  xai: "grok.svg",
+  deepseek: "deepseek.png",
+  qwen: "qwen.png",
+  alibaba: "alibaba.svg",
+  "z-ai": "zhipu.svg",
+  zhipu: "zhipu.svg",
+  moonshotai: "kimi.png",
+  moonshot: "kimi.png",
+  minimax: "minimax.png",
+  mistralai: "mistralai.png",
+  mistral: "mistralai.png",
+  "meta-llama": "meta.svg",
+  meta: "meta.svg",
+  nvidia: "nvidia.png",
+  cohere: "cohere.png",
+  amazon: "amazon.png",
+  perplexity: "perplexity.png",
+  tencent: "hunyuan.png",
+  bytedance: "bytedance.svg",
+  "bytedance-seed": "bytedance.svg",
+  xiaomi: "mimo.png",
+  inclusionai: "inclusionai.png",
+  stepfun: "stepfun.png",
+  baidu: "baidu.png",
+  meituan: "longcat.png",
+  // 平台自己的模型（omen-alpha 等）
+  ooapi: PLATFORM_LOGO,
+};
+
+/**
+ * 把 `vendor/model` 形式的 id 归一化成裸模型名。
+ * 与后端 cline-prices.js 的 normalizeClineModel 保持**同一套规则** —— 前端判图标、
+ * 后端判价格，两处若不一致会出现「图标是 Anthropic、价格按别的厂商算」的错配。
+ * （`-latest` / `-preview` 也要去掉：`~openai/gpt-luna-latest` 归一化后是 `gpt-luna`，
+ * 两边都得到同一个字符串才谈得上一致。）
+ */
+export function bareModelId(model) {
+  let s = String(model || "").trim();
+  if (s.startsWith("~")) s = s.slice(1); // ~openai/gpt-luna-latest = 别名路由
+  const slash = s.lastIndexOf("/");
+  if (slash >= 0) s = s.slice(slash + 1);
+  s = s.replace(/:(free|batch|extended|thinking)$/i, "");
+  return s.replace(/-(latest|preview)$/i, "");
+}
 
 export function iconFileForChannel(type) {
   return CHANNEL_ICON[String(type || "").toLowerCase()] || PLATFORM_LOGO;
 }
 
 export function iconFileForModel(model) {
-  const m = String(model || "");
+  const raw = String(model || "");
+  // ① 裸模型名（剥掉 `vendor/` 前缀与 `:free`/`:batch` 后缀后按 MODEL_ICON 判定）
+  const bare = bareModelId(raw);
   for (const [re, file] of MODEL_ICON) {
-    if (re.test(m)) return file;
+    if (re.test(bare)) return file;
+  }
+  // ② 模型名认不出来时按厂商前缀判定（`x-ai/新模型` → grok）
+  const noTilde = raw.startsWith("~") ? raw.slice(1) : raw;
+  const slash = noTilde.indexOf("/");
+  if (slash > 0) {
+    const prefix = noTilde.slice(0, slash).toLowerCase();
+    if (VENDOR_PREFIX_ICON[prefix]) return VENDOR_PREFIX_ICON[prefix];
+  }
+  // ③ 原始名（没有前缀时，再拿完整串试一次 MODEL_ICON，兼容 `gpt-5.6-sol:batch` 这类）
+  for (const [re, file] of MODEL_ICON) {
+    if (re.test(raw)) return file;
   }
   return PLATFORM_LOGO;
 }
 
 export function vendorNameForModel(model) {
-  const m = String(model || "");
+  const m = bareModelId(model) || String(model || "");
   if (/^deepseek/i.test(m)) return "DeepSeek";
   if (/^(gpt|o1|o3|o4|chatgpt|codex)/i.test(m)) return "OpenAI";
   if (/^claude/i.test(m)) return "Claude";
@@ -140,6 +222,26 @@ export function vendorNameForModel(model) {
   if (/^kimi|^moonshot/i.test(m)) return "Kimi";
   if (/^doubao/i.test(m)) return "豆包";
   if (/^grok/i.test(m)) return "Grok";
+  if (/^hunyuan|^hy[-\d]/i.test(m)) return "混元";
+  if (/^mimo/i.test(m)) return "小米 MiMo";
+  if (/^minimax/i.test(m)) return "MiniMax";
+  if (/^mistral|^magistral|^codestral|^devstral|^ministral|^mixtral/i.test(m)) return "Mistral";
+  if (/^llama|^muse/i.test(m)) return "Meta";
+  if (/^nemotron/i.test(m)) return "NVIDIA";
+  if (/^command|^north/i.test(m)) return "Cohere";
+  if (/^nova/i.test(m)) return "Amazon";
+  if (/^sonar/i.test(m)) return "Perplexity";
+  if (/^seed/i.test(m)) return "字节 Seed";
+  // 认不出来时用厂商前缀兜底（`x-ai/某新模型` → xAI，而不是「其他」）
+  const raw = String(model || "");
+  const noTilde = raw.startsWith("~") ? raw.slice(1) : raw;
+  const slash = noTilde.indexOf("/");
+  if (slash > 0) {
+    const prefix = noTilde.slice(0, slash).toLowerCase();
+    if (VENDOR_PREFIX_ICON[prefix] && VENDOR_PREFIX_ICON[prefix] !== PLATFORM_LOGO) {
+      return prefix.charAt(0).toUpperCase() + prefix.slice(1);
+    }
+  }
   return "其他";
 }
 

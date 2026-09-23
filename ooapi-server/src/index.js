@@ -263,6 +263,19 @@ async function bootstrap() {
     console.error("[init] 定时检测启动失败：", e.message);
   }
 
+  // 限流渠道自动恢复：429 停用的渠道到点放回启用（见 resumeRateLimitedChannels）。
+  // 单独一个轻量定时器（30s）而不是并进上面的检测循环：检测要打上游、可能很慢，
+  // 而「到点恢复」只是几十毫秒的数据库操作，被慢探针拖住会让渠道白停更久。
+  try {
+    const { resumeRateLimitedChannels } = await import("./services/router.js");
+    const run = () =>
+      resumeRateLimitedChannels().catch((e) => console.error("[router] 限流恢复任务失败：", e.message));
+    run();
+    setInterval(run, 30_000).unref?.();
+  } catch (e) {
+    console.error("[init] 限流恢复任务启动失败：", e.message);
+  }
+
   // 运维告警：首次启动写入内置规则（表非空时不覆盖），然后启动定时求值。
   // 求值失败只影响告警，绝不能让主服务起不来。
   try {
