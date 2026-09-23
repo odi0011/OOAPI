@@ -302,6 +302,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  max-height: 240px;
   padding: 6px;
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -311,17 +312,19 @@
 }
 .bui-composer:focus-within { border-color: var(--line-strong); }
 
-/* 控制行：控件以同一水平中心线对齐，输入框变高时仍保持工具按钮居中 */
+/* 控制行：底对齐，输入框变高时按钮始终平齐贴底，杜绝悬空居中拉伸 */
 .bui-composer-row {
   display: grid;
-  align-items: center;
+  align-items: flex-end;
   gap: 6px 4px;
   grid-template-columns: 28px minmax(0, 1fr) auto 28px 28px;
 }
 
 .bui-composer-input {
-  /* 输入框略高一点，首屏打字更舒展 */
+  /* 输入框最小 36px，最大 160px 且内部滚动，防止长文本异常撑爆容器 */
   min-height: 36px;
+  max-height: 160px;
+  box-sizing: border-box;
   width: 100%;
   min-width: 0;
   padding: 8px 4px 7px;
@@ -334,7 +337,8 @@
   resize: none;
   outline: none;
   overflow-wrap: anywhere;
-  overflow-y: hidden;
+  word-break: break-word;
+  overflow-y: auto;
 }
 .bui-composer-input::placeholder { color: var(--ink-3); }
 

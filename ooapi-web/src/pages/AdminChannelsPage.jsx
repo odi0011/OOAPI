@@ -1237,8 +1237,22 @@ export default function AdminChannelsPage() {
           // 带着票据提交：后端据此跳过「凭据导入」（凭据在服务端，用户手里没有 JSON）
           if (bindTicketRef.current) payload.bindTicket = bindTicketRef.current;
           if (pickMethod.oauth && !token && !bindTicketRef.current) {
+            // 报错必须**按当前接入方式**给具体指引，而不是列一堆可能性。
+            //
+            // 用户实测反馈（截图）：在 Qoder 上登录成功后点「添加」，收到的是
+            // 「请粘贴凭据 JSON、填写 Access/Refresh Token、导入凭据文件，
+            // 或先用上方的「一键登录 / 一键绑定」完成授权」—— 一句话里四条路，
+            // 而其中「一键绑定」在 Qoder 上根本不存在、另外几条也没说清该粘什么。
+            // 这种「把所有分支平铺成一句话」的报错，用户读完还是不知道下一步做什么。
+            //
+            // 现在的口径：这个方式的手工步骤是什么，就说那一句
+            //（步骤文案与后端 localLogin / loginFields 的指引保持一致）。
+            const label = methodShortName(pickMethod) || "该接入方式";
+            const guided = pickMethod.localLogin?.steps?.[0];
             throw new Error(
-              "请粘贴凭据 JSON、填写 Access/Refresh Token、导入凭据文件，或先用上方的「一键登录 / 一键绑定」完成授权"
+              `还差凭据：${label} 需要你按下面的指引取得凭据后粘贴进来${
+                guided ? `（第一步：${guided.replace(/\*\*/g, "")}）` : ""
+              }。`
             );
           }
           payload.token = token;

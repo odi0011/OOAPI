@@ -20,6 +20,11 @@
 //   antigravity  Google 订阅（Antigravity/Code Assist OAuth）
 //   grok-oauth   xAI Grok 订阅（device-code OAuth，responses 协议）
 // 与 relay 的区别：不需要浏览器，凭据是 OAuth 令牌（粘贴官方 CLI / CPA / sub2api 的凭据文件）
+//
+// 注意这个列表的用途是「**凭据形态**是粘贴 JSON」，不是「支持一键绑定」：
+//   · qoder 在列表里是对的（它确实靠粘贴 PAT），但它**没有**可用的设备授权
+//     （见 device-bind.js 的实测说明）—— 一键绑定的名单在那边单独维护。
+//     早先两处混用，于是前端给 Qoder 显示了一个永远失败的「一键绑定」按钮。
 export const OAUTH_METHODS = ["codex", "claude-oauth", "antigravity", "grok-oauth", "kiro", "openai-web", "workbuddy", "qoder"];
 
 export function isOAuthMethod(key) {
@@ -569,7 +574,8 @@ export const PROVIDERS = [
   {
     key: "qoder",
     name: "Qoder（阿里）",
-    keyUrl: "https://qoder.com/account/integrations",
+    // 直达 PAT 创建页（实测存在：未登录会 302 到 sign-in，登录后就是令牌列表）
+    keyUrl: "https://qoder.com/account/personal-access-tokens",
     vendor: "qoder",
     desc: "Qoder 订阅经本地桥（qoder2api）转 OpenAI 协议；PAT 作为 Key",
     methods: [
@@ -578,10 +584,15 @@ export const PROVIDERS = [
         adapter: "qoder",
         label: "Qoder",
         desc: "桥地址 + Qoder PAT",
+        // 登录入口 = PAT 页面本身。这个按钮对 Qoder 尤其重要：
+        // 它没有可用的一键绑定（见 device-bind.js 里 VENDORS 的说明），
+        // 管理员唯一的路径就是「去这个页面建一个 PAT 再粘回来」，
+        // 所以必须能一键跳过去，而不是让人自己搜「Qoder PAT 在哪」。
+        entryUrl: "https://qoder.com/account/personal-access-tokens",
         loginModes: ["paste"],
         loginFields: oauthCredentialField(
           '{ "personal_token": "pt-...", "endpoint": "http://127.0.0.1:8963" }',
-          "先在本地起 qoder2api/qoder-proxy 桥；PAT 在 qoder.com「服务集成 → 个人访问令牌」创建"
+          "先在本地起 qoder2api/qoder-proxy 桥；PAT 在 qoder.com → 账户设置 → Personal Access Tokens 创建"
         ),
         pasteHint: "Qoder 推理协议需官方 WASM 签名，服务端不直连；桥默认 http://127.0.0.1:8963，凭据为 PAT（pt-...）",
         defaultModels: [
@@ -1335,6 +1346,19 @@ const LOCAL_LOGIN_GUIDE = {
       "把 Key 直接粘到下面输入框；若服务商给的是一个 JSON 文件，用记事本打开并把**全部内容**原样粘进来（平台会自动识别字段）",
     ],
     note: "不确定该填哪个字段：先粘进去点一次「测试」—— 报错会说明上游拒绝的具体原因",
+  },
+  // Qoder：**没有可用的服务端一键绑定**（2026-09-23 实测，详见 device-bind.js 的说明），
+  // 所以这里是主路径，必须写清「去哪建 PAT」以及「为什么还要一个桥」。
+  "qoder:qoder": {
+    steps: [
+      "点上面的「弹出登录小窗」打开 Qoder 的 Personal Access Tokens 页面（未登录会先让你登录）",
+      "在那个页面点「Create token / 新建令牌」，复制生成的令牌（形如 pt-...）",
+      "把令牌填成下面「凭据 JSON」的形式：{ \"personal_token\": \"pt-你的令牌\", \"endpoint\": \"http://127.0.0.1:8963\" }",
+      "endpoint 是你本机 qoder2api 桥的地址（默认 http://127.0.0.1:8963）；桥必须跑在**与网关同一台机器**上，否则会被白名单挡下",
+    ],
+    note:
+      "为什么不能用一键绑定：Qoder 的设备授权端点在服务端不可用（openapi 域 404、站点域要浏览器会话与 CSRF），" +
+      "官方 OIDC 只开放 authorization_code（需要 client_secret），令牌最终经 qoder:// 自定义协议交回本机客户端 —— 服务器接不住。",
   },
   "cline:cli": {
     steps: [

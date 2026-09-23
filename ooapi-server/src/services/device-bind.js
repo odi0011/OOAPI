@@ -206,7 +206,26 @@ export function judgeWorkbuddyToken(r, s) {
 
 /**
  * Qoder：判定设备轮询响应。
- * 404 / 202 / 200-但-无-token 都算「还没授权」；410 或带 expire 文案才算过期。
+ *
+ * **2026-09-23 实测更正**（线上故障排查）：这个设备流**服务端根本走不通**，
+ * 原先「404 算 pending」的判法会让前端永远转圈（用户实测：「登录成功后这边没有回显回填，
+ * 还是提示我请粘贴凭据 JSON」）。逐条实测结论：
+ *
+ *   · `GET openapi.qoder.sh/api/v1/deviceToken/poll`   → **404 NotFound**
+ *     （路由不存在；我们原先就是打这个，于是永远 pending）
+ *   · `GET qoder.com/api/v1/deviceToken/poll`          → 401 User not authenticated
+ *     （路由存在，但要**浏览器会话**；`POST` 更要 CSRF token —— 服务端拿不到）
+ *   · `GET qoder.com/.well-known/openid-configuration` → 官方只公开 authorization_code
+ *     + refresh_token 两种 grant，**没有 device_code grant**
+ *   · `POST qoder.com/oauth/token`                     → 400 `client_secret is required`
+ *     （授权码路径要 client_secret，而我们手里只有公开 client_id）
+ *   · `GET qoder.com/oauth/authorize?...`              → 400 `client is not enabled for oidc`
+ *   · 官方前端 bundle（g.alicdn.com 上 qbase/qoder 的 index.js）里的收尾动作是
+ *     `window.location.href = <sso_url>`，即令牌经 **`qoder://` 自定义协议**交回
+ *     —— 那条协议只有本机 Qoder 客户端能接住，服务器无法拦截。
+ *
+ * 所以这里把「路由不存在 / 需要会话」明确判成**错误**（附可操作的替代路径），
+ * 而不是 pending —— 静默转圈是最糟的结果：用户以为在等授权，其实永远不会成功。
  */
 export function judgeQoderPoll(r, s) {
   const j = r?.json || {};
@@ -231,7 +250,27 @@ export function judgeQoderPoll(r, s) {
   if (r?.status === 410 || /expire/i.test(String(j?.message || ""))) {
     return { status: "expired", message: "授权已过期，请重新发起绑定" };
   }
-  return { status: "pending", message: j?.message || (r?.status && r.status !== 200 && r.status !== 202 && r.status !== 404 ? `HTTP ${r.status}` : "") };
+  // 路由不存在（网关 errorCode=NotFound / 空 404）：**端点不可用**，不是「还没授权」。
+  // 这类错误重试一万次也不会变，必须立刻让管理员看到并换路径。
+  const code = String(j?.errorCode || j?.code || "");
+  if (r?.status === 404 || code === "NotFound") {
+    return {
+      status: "error",
+      message:
+        "Qoder 的设备授权端点在服务端不可用（上游 404）。请改用「个人访问令牌（PAT）」方式：" +
+        "登录 qoder.com → 账户设置 → Personal Access Tokens 创建一个，粘贴到凭据框。",
+    };
+  }
+  // 需要登录会话/CSRF（401/403/CSRFInvalid）：同样是服务端做不到的事
+  if (r?.status === 401 || r?.status === 403 || /CSRF/i.test(code)) {
+    return {
+      status: "error",
+      message:
+        "Qoder 的授权接口要求浏览器会话（服务端无法满足）。请改用「个人访问令牌（PAT）」方式：" +
+        "登录 qoder.com → 账户设置 → Personal Access Tokens 创建一个，粘贴到凭据框。",
+    };
+  }
+  return { status: "pending", message: j?.message || (r?.status && r.status !== 200 && r.status !== 202 ? `HTTP ${r.status}` : "") };
 }
 
 async function kiroPoll(s) {
@@ -501,9 +540,14 @@ async function clinePoll(s) {
 const VENDORS = {
   kiro: { start: kiroStart, poll: kiroPoll },
   workbuddy: { start: wbStart, poll: wbPoll },
-  qoder: { start: qoderStart, poll: qoderPoll },
   // Cline：WorkOS 设备授权（标准 RFC 8628，端点均已实测）
   cline: { start: clineStart, poll: clinePoll },
+  // ⚠️ Qoder 已从一键绑定中**移除**（2026-09-23 实测）：它的设备流在服务端走不通 ——
+  // 轮询端点在 openapi 域是 404、在 site 域要浏览器会话 + CSRF，官方 OIDC 只公开
+  // authorization_code（要 client_secret），令牌最终经 `qoder://` 自定义协议交回本机客户端。
+  // 留着它只会让管理员点一个「永远转圈最后失败」的按钮（用户实测反馈过）。
+  // 现在 Qoder 渠道改用**个人访问令牌（PAT）**：前端给专门的指引 + 直达页面
+  //（见 channel-types.js 的 "qoder:qoder" 指南与 entryUrl）。
 };
 
 /** 是否支持设备授权绑定 */

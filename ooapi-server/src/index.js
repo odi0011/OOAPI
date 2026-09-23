@@ -71,8 +71,22 @@ app.use("/api/community", communityRoutes); // 社区大厅：话题/帖子/评�
 app.use("/api/chatroom", chatroomRoutes); // 实时聊天：单聊/群聊/讨论组（SSE 长连接）
 app.use("/api/games", gamesRoutes); // 小游戏：成绩榜 + 联机对战（服务端权威判定）
 app.use("/api/profile", profileRoutes); // 个人主页（匿名可达，只出公开字段）
-app.use("/api/dashboard", dashboardRoutes); // 数据看板：个人维度 + 管理端维度
-app.use("/v1", gatewayRoutes); // 对外网关：OpenAI 兼容
+app.use("/v1", gatewayRoutes); // 对外网关：OpenAI / Anthropic / Responses 兼容
+app.use("/api/v1", gatewayRoutes); // 兼容以 /api/v1 为 Base URL 的三方客户端
+
+// 兼容客户端直接向根路径发送补全请求（如省略 /v1）
+app.post("/chat/completions", (req, res, next) => {
+  req.url = "/chat/completions";
+  gatewayRoutes(req, res, next);
+});
+app.post("/messages", (req, res, next) => {
+  req.url = "/messages";
+  gatewayRoutes(req, res, next);
+});
+app.post("/responses", (req, res, next) => {
+  req.url = "/responses";
+  gatewayRoutes(req, res, next);
+});
 
 // 静态资源：logo 与前端构建产物（index.js 位于 src/，web 与 public 在包根目录）
 app.use(express.static(path.join(__dirname, "..", "public")));

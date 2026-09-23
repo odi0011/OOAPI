@@ -439,24 +439,20 @@ export default function ChatPage() {
       if (gen !== metaGenRef.current) return;
       setMeta(data);
       const keys = data.keys || [];
-      // 对话必须通过密钥路由（分组 → 模型/渠道/倍率）：
-      //   · 没显式选密钥时，自动选中第一个可用密钥并按其能力重算模型
-      //   · 当前密钥被禁用/删除时回到自动选择
-      if (forKeyId === 0) {
-        const first = keys.find((k) => k.status === 1);
-        if (first) {
-          setKeyId(first.id);
-          return loadMeta(first.id);
-        }
-      } else if (!keys.some((k) => k.id === forKeyId && k.status === 1)) {
-        setKeyId(0);
-        return loadMeta(0);
-      }
-      // 切密钥后模型集合会变：当前模型不在新集合里就自动换到第一个可用模型
+      const chosenKeyId = data.active_key_id || data.active_key?.id || forKeyId || keys.find((k) => k.status === 1)?.id || 0;
+      setKeyId(chosenKeyId);
+
+      // 切密钥后模型集合会变：当前模型不在新集合里就自动换到第一个可用模型，并持久化更新
       setSession((prev) => {
         if (!prev) return prev;
-        const ok = (data.models || []).some((m) => m.id === prev.model);
-        return ok ? prev : { ...prev, model: (data.models || [])[0]?.id || "" };
+        const availableList = data.models || [];
+        const ok = availableList.some((m) => m.id === prev.model);
+        if (ok) return prev;
+        const fallbackModel = availableList[0]?.id || "";
+        if (prev.id && fallbackModel) {
+          chatApi.patchSession(prev.id, { model: fallbackModel }).catch(() => {});
+        }
+        return { ...prev, model: fallbackModel };
       });
     } catch (e) {
       setMetaError(e.message || "无法加载模型配置");

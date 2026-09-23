@@ -91,14 +91,15 @@ export default function PromptBar({
 
   const canSend = !disabled && (value.trim().length > 0 || chips.length > 0);
 
-  // 输入框自增高：与官方一致（最小 28，最大 160 后出滚动条）
+  // 输入框自增高：使用 auto 准确度量，限制在 36px~160px 之间，超出平滑滚动
   useLayoutEffect(() => {
     const ta = taRef.current;
     if (!ta) return;
+    const minH = 36;
     const maxH = 160;
-    ta.style.height = "0px";
+    ta.style.height = "auto";
     const h = ta.scrollHeight;
-    ta.style.height = `${Math.min(Math.max(h, 28), maxH)}px`;
+    ta.style.height = `${Math.min(Math.max(h, minH), maxH)}px`;
     ta.style.overflowY = h > maxH ? "auto" : "hidden";
   }, [value, taRef]);
 

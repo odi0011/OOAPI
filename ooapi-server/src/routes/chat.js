@@ -105,28 +105,75 @@ export async function listUserKeys(user) {
 
 /**
  * 取「当前可用的密钥」：站内对话必须通过密钥路由（分组→模型/渠道/倍率），
+ * 未指定密钥（keyId=0）时，默认选取当前账户下第一个可用的有效密钥（status=1 且未过期）。
  * 没有可用密钥时不给模型、也不允许开跑。禁用/过期/不属于该用户的密钥一律视为不可用。
  */
 async function activeKeyOf(user, keyId = 0) {
-  // 必须用 safeInt：Number("Infinity") 是合法真值，会拼进 SQL 直接 500
   const id = safeInt(keyId, { min: 1 }) || 0;
-  if (!id) return null;
-  const [rows] = await pool.query("SELECT * FROM tokens WHERE id = ? AND user_id = ?", [id, user.id]);
-  if (!rows.length) return null;
-  const t = rows[0];
   const nowSec = Math.floor(Date.now() / 1000);
-  const expired = Number(t.expired_time) !== -1 && Number(t.expired_time) <= nowSec;
-  if (Number(t.status) !== 1 || expired) return null;
-  return t;
+  if (id) {
+    const [rows] = await pool.query("SELECT * FROM tokens WHERE id = ? AND user_id = ?", [id, user.id]);
+    if (!rows.length) return null;
+    const t = rows[0];
+    const expired = Number(t.expired_time) !== -1 && Number(t.expired_time) <= nowSec;
+    if (Number(t.status) !== 1 || expired) return null;
+    return t;
+  }
+  // 未指定密钥时，默认选取第一个可用有效密钥
+  const [rows] = await pool.query(
+    "SELECT * FROM tokens WHERE user_id = ? AND status = 1 AND (expired_time = -1 OR expired_time > ?) ORDER BY id ASC LIMIT 1",
+    [user.id, nowSec]
+  );
+  return rows[0] || null;
 }
+
+// 厂商推断规则（根据模型名特征归属到知名厂商，保持图标与分类准确）
+const VENDOR_PREFIX_RULES = [
+  { prefix: ["gpt-", "o1-", "o3-", "chatgpt-", "text-embedding-", "dall-e"], vendor: "openai", vendorName: "OpenAI" },
+  { prefix: ["claude-"], vendor: "anthropic", vendorName: "Anthropic" },
+  { prefix: ["gemini-"], vendor: "gemini", vendorName: "Google Gemini" },
+  { prefix: ["deepseek-"], vendor: "deepseek", vendorName: "DeepSeek" },
+  { prefix: ["glm-", "cogview-", "charglm-"], vendor: "glm", vendorName: "智谱 GLM" },
+  { prefix: ["qwen-", "qwq-", "wanx-"], vendor: "qwen", vendorName: "阿里通义千问" },
+  { prefix: ["kimi-", "moonshot-"], vendor: "kimi", vendorName: "Moonshot Kimi" },
+  { prefix: ["doubao-", "ep-"], vendor: "doubao", vendorName: "字节豆包" },
+  { prefix: ["minimax-", "abab-"], vendor: "minimax", vendorName: "MiniMax" },
+  { prefix: ["step-"], vendor: "stepfun", vendorName: "阶跃星辰" },
+  { prefix: ["grok-"], vendor: "grok", vendorName: "xAI Grok" },
+  { prefix: ["mimo-"], vendor: "mimo", vendorName: "小米 MiMo" },
+];
+
+const VENDOR_NAMES = {
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  gemini: "Google Gemini",
+  deepseek: "DeepSeek",
+  glm: "智谱 GLM",
+  qwen: "阿里通义千问",
+  kimi: "Moonshot Kimi",
+  doubao: "字节豆包",
+  minimax: "MiniMax",
+  stepfun: "阶跃星辰",
+  grok: "xAI Grok",
+  mimo: "小米 MiMo",
+  ark: "火山引擎",
+  qoder: "Qoder",
+  workbuddy: "WorkBuddy",
+  opencode: "OpenCode",
+  openrouter: "OpenRouter",
+  siliconflow: "SiliconFlow",
+  custom: "自定义渠道",
+  other: "其他厂商",
+};
 
 /**
  * 用户可用的模型。
  *
- * 核心口径：**按「这个用户 + 这个密钥」实际能调用什么来算**。
- *   · 必须选中一个可用密钥；没有密钥 → 返回空（前端引导去创建密钥）
- *   · 密钥绑定的分组（type:name）决定：分组限制的模型 ∩ 分组成员渠道声明的模型
- *   · 额度是账户额度，但路由身份完全挂在密钥上（与网关 /v1 同一口径）
+ * 核心口径：**按「当前账户 + 选定密钥（默认第一个）」实际能调用的模型来算**。
+ *   · 必须有可用密钥（没有密钥时返回空，引导用户去创建）
+ *   · 密钥绑定的分组决定：分组限制的模型 ∩ 分组成员渠道声明的模型
+ *   · 当分组下无可用渠道时，严格返回空，绝不展示写死的默认兜底模型
+ *   · 自动去重并按厂商精准归类
  */
 async function availableModels(user, keyId = 0) {
   const isAdmin = Number(user?.role) >= 100;
@@ -136,7 +183,14 @@ async function availableModels(user, keyId = 0) {
   if (!key) return [];
   const groupName = key.group_name || null;
 
-  // 2) 分组限制的模型（分组配了 models 就只给这些）
+  // 2) 分组成员渠道能服务的模型
+  const [channelRows] = await pool.query("SELECT * FROM channels WHERE status = 1");
+  const channelsInGrp = channelRows.filter((r) => channelInGroup(rowToChannel(r), groupName));
+
+  // 若当前分组没有可用渠道，严格返回空模型，绝不回退到全量默认模型
+  if (!channelsInGrp.length) return [];
+
+  // 3) 分组限制的模型（分组配了 models 就只给这些）
   const gcfg = groupName ? await groupConfigOf(groupName) : null;
   const groupModels = gcfg?.models?.length ? gcfg.models : null;
   const groupAllows = (id) => {
@@ -145,49 +199,97 @@ async function availableModels(user, keyId = 0) {
     return groupModels.some((p) => p === "*" || (p.endsWith("*") ? m.startsWith(p.slice(0, -1)) : p === m));
   };
 
-  // 3) 分组成员渠道能服务的模型（显式声明 ∪ models 留空渠道的厂商全部模型）
-  const [channelRows] = await pool.query("SELECT * FROM channels WHERE status = 1");
-  const supported = collectAvailableModels(
-    channelRows.filter((r) => channelInGroup(rowToChannel(r), groupName))
-  );
-
   // 4) 密钥自身的模型白名单（管理员豁免）
   const limits = key
     ? String(key.model_limits || "").split(",").map((s) => s.trim()).filter(Boolean)
     : [];
   const keyAllows = (id) => {
     if (isAdmin || !limits.length) return true;
-    // 与网关 modelAllowed 同一套前缀语义
     return limits.some((l) => id === l || id.startsWith(l));
   };
 
-  // 复用带 TTL 的价格缓存（此前这里每次 /meta 都全表查一次 model_prices）
-  const priceMap = await loadPrices();
+  // 5) 汇总该分组渠道支持的模型集合
+  const supported = collectAvailableModels(channelsInGrp);
+  if (supported.size === 0) return [];
 
-  return (await allPublicModels())
-    .filter((m) => supported.size === 0 || supported.has("*") || supported.has(String(m.id).toLowerCase()))
-    .filter((m) => groupAllows(m.id))
-    .filter((m) => keyAllows(m.id))
-    .map((m) => {
-      const p = priceMap.get(String(m.id).toLowerCase());
-      return {
-        id: m.id,
-        label: m.label,
-        desc: m.desc,
-        vision: m.vision,
-        thinkingDefault: m.thinkingDefault,
-        // 能力标记必须透传：前端据此隐藏无效开关（缺失时前端按“支持”处理）
-        supportsSearch: m.supportsSearch,
-        supportsThinking: m.supportsThinking,
-        deprecated: Boolean(m.deprecated),
-        vendor: m.vendor,
-        vendorName: m.vendorName,
-        aliasOf: m.aliasOf,
-        price: p
-          ? { input: Number(p.input_price), output: Number(p.output_price), cache: Number(p.cache_price) }
-          : null,
-      };
+  // 从公开模型库中筛选
+  const publicModels = await allPublicModels();
+  const candidateModels = new Map(); // id.toLowerCase() -> modelObj
+
+  for (const pm of publicModels) {
+    const idLower = String(pm.id).toLowerCase();
+    if (supported.has("*") || supported.has(idLower)) {
+      if (groupAllows(pm.id) && keyAllows(pm.id)) {
+        const v = pm.vendor || "other";
+        candidateModels.set(idLower, {
+          id: pm.id,
+          label: pm.label || pm.id,
+          desc: pm.desc || "",
+          vision: Boolean(pm.vision),
+          thinkingDefault: pm.thinkingDefault,
+          supportsSearch: pm.supportsSearch,
+          supportsThinking: pm.supportsThinking,
+          deprecated: Boolean(pm.deprecated),
+          vendor: v,
+          vendorName: pm.vendorName || VENDOR_NAMES[v] || v,
+          aliasOf: pm.aliasOf,
+        });
+      }
+    }
+  }
+
+  // 6) 检查渠道显式配置的模型（包含自定义/未录入公开库的模型）
+  for (const r of channelsInGrp) {
+    const ch = rowToChannel(r);
+    const declared = String(ch.models || "")
+      .split(/[,，\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const rawM of declared) {
+      if (rawM === "*") continue;
+      const idLower = rawM.toLowerCase();
+      if (candidateModels.has(idLower)) continue; // 去重
+      if (!groupAllows(rawM) || !keyAllows(rawM)) continue;
+
+      let vendor = ch.type || "other";
+      let vendorName = VENDOR_NAMES[vendor] || ch.type || "其他厂商";
+      for (const rule of VENDOR_PREFIX_RULES) {
+        if (rule.prefix.some((p) => idLower.startsWith(p))) {
+          vendor = rule.vendor;
+          vendorName = rule.vendorName;
+          break;
+        }
+      }
+
+      candidateModels.set(idLower, {
+        id: rawM,
+        label: rawM,
+        desc: "",
+        vision: false,
+        thinkingDefault: false,
+        supportsSearch: true,
+        supportsThinking: true,
+        deprecated: false,
+        vendor,
+        vendorName,
+      });
+    }
+  }
+
+  // 7) 补充价格信息并生成最终结果
+  const priceMap = await loadPrices();
+  const result = [];
+  for (const m of candidateModels.values()) {
+    const p = priceMap.get(String(m.id).toLowerCase());
+    result.push({
+      ...m,
+      price: p
+        ? { input: Number(p.input_price), output: Number(p.output_price), cache: Number(p.cache_price) }
+        : null,
     });
+  }
+
+  return result;
 }
 
 /** 解析密钥的路由分组（/run 用；与 availableModels 同一套优先级；没有可用密钥返回 null） */
@@ -196,50 +298,93 @@ async function routeGroupOf(user, keyId = 0) {
   return key ? key.group_name || null : null;
 }
 
-/** 把模型按厂商归类（前端下拉要按厂商分组，不是一长条平铺） */
+/** 把模型按厂商归类并排好序（前端下拉按厂商分组展示，无重复项） */
 function groupModelsByVendor(models) {
-  const order = [];
+  const VENDOR_ORDER = [
+    "openai",
+    "anthropic",
+    "gemini",
+    "deepseek",
+    "glm",
+    "qwen",
+    "kimi",
+    "doubao",
+    "minimax",
+    "stepfun",
+    "grok",
+    "mimo",
+    "ark",
+    "qoder",
+    "workbuddy",
+    "opencode",
+    "custom",
+    "other",
+  ];
   const map = new Map();
   for (const m of models) {
     const key = m.vendor || "other";
     if (!map.has(key)) {
-      map.set(key, { vendor: key, vendorName: m.vendorName || key, models: [] });
-      order.push(key);
+      map.set(key, { vendor: key, vendorName: m.vendorName || VENDOR_NAMES[key] || key, models: [] });
     }
     map.get(key).models.push(m);
   }
-  return order.map((k) => map.get(k));
+
+  const sortedVendors = [];
+  for (const v of VENDOR_ORDER) {
+    if (map.has(v)) {
+      sortedVendors.push(map.get(v));
+      map.delete(v);
+    }
+  }
+  for (const g of map.values()) {
+    sortedVendors.push(g);
+  }
+  return sortedVendors;
 }
 
 // 单个附件正文上限：留出余量给历史与工具结果，避免一个大文件把上下文挤爆
 const FILE_TEXT_LIMIT = 30000;
 function clipFileText(text) {
   const s = String(text || "");
-  return s.length > FILE_TEXT_LIMIT ? `${s.slice(0, FILE_TEXT_LIMIT)}
-…（文件较长，已截断）` : s;
+  return s.length > FILE_TEXT_LIMIT ? `${s.slice(0, FILE_TEXT_LIMIT)}\n…（文件较长，已截断）` : s;
 }
 
 // ---------- 元信息（密钥 / 模型 / 厂商 / 智能体 / 工具 / 默认值）----------
 // keyId：按某个密钥的能力算模型（分组模型 ∩ 密钥白名单 ∩ 渠道声明）。
-// 不传则用「账户默认」（用户分组），与老行为一致。
+// 未指定时默认选取当前账户下的第一个可用密钥。
 router.get(
   "/meta",
   authRequired,
   asyncHandler(async (req, res) => {
-    const keyId = Number(req.query.keyId) || 0;
-    const [models, keys] = await Promise.all([availableModels(req.user, keyId), listUserKeys(req.user)]);
-    const activeKey = keys.find((k) => k.id === keyId) || null;
+    let keyId = safeInt(req.query.keyId, { min: 1 }) || 0;
+    const keys = await listUserKeys(req.user);
+    // 默认选取当前账户下的第一个可用密钥
+    if (!keyId) {
+      const first = keys.find((k) => k.status === 1);
+      if (first) keyId = first.id;
+    }
+    const [models, activeKey] = await Promise.all([
+      availableModels(req.user, keyId),
+      keyId ? activeKeyOf(req.user, keyId) : null,
+    ]);
     return ok(res, {
       currency: CURRENCY,
       units_per_od: UNITS_PER_OD,
       quota: Number(req.user.quota),
       used_quota: Number(req.user.used_quota),
       models,
-      // 厂商分组：前端模型下拉按厂商归类展示（并带厂商图标）
+      // 厂商分组：前端模型下拉按厂商归类展示（带厂商图标），无重复模型且分类准确
       vendors: groupModelsByVendor(models),
-      // 密钥：站内对话按账户额度计费，但**路由配置挂在密钥上**（分组决定可用模型与倍率）
+      // 密钥：站内对话按账户额度计费，但路由配置挂在密钥上（分组决定可用模型与倍率）
       keys,
-      active_key: activeKey,
+      active_key_id: keyId,
+      active_key: activeKey
+        ? {
+            id: activeKey.id,
+            name: activeKey.name,
+            group_name: activeKey.group_name || "",
+          }
+        : null,
       agents: publicAgents(AGENTS),
       tools: toolSpecs(TOOL_IDS).map(({ id, name, desc }) => ({ id, name, desc })),
       defaults: { agent: PRIMARY_AGENTS[0]?.id || "general", maxSteps: DEFAULT_MAX_STEPS, maxStepsLimit: MAX_STEPS_LIMIT },
@@ -681,14 +826,14 @@ function aggregate(calls = []) {
         await updateSession(req.user.id, session.id, { title: titleFromText(content || docs[0]?.name || "图片对话") });
       }
 
-      models = await availableModels(req.user, keyId);
-      modelCaps = models.find((m) => m.id === model) || null;
       // 路由分组：必须通过密钥路由（分组决定渠道/模型/倍率），没有可用密钥不开跑
       usableKey = await activeKeyOf(req.user, keyId);
       if (!usableKey) {
         finishRun(run);
         return fail(res, "请先在「令牌管理」创建可用密钥，并在对话页选择它（密钥的分组决定可用模型与倍率）", 403);
       }
+      models = await availableModels(req.user, usableKey.id);
+      modelCaps = models.find((m) => m.id === model) || null;
       routeGroup = usableKey.group_name || null;
       if (!models.some((m) => m.id === model)) {
         finishRun(run);

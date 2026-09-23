@@ -144,8 +144,22 @@ await t("Qoder：拿到 accessToken 即成功，expires_in 毫秒换算成秒", 
   assert.ok(days > 25 && days < 35, `2592000000ms 应换算成约 30 天，实际 ${days.toFixed(1)} 天`);
 });
 
-await t("Qoder：404 / 202 / 200-空-token 都判 pending", async () => {
-  assert.equal(judgeQoderPoll({ status: 404, json: null }, qoderSession).status, "pending");
+await t("Qoder：404 / 401 判 **error**（端点不可用，不是还没授权）", async () => {
+  // 2026-09-23 实测更正：这两个状态**永远等不到授权**，原先判 pending 会让前端
+  // 一直转圈（线上故障：用户登录成功后没有任何回显，就是卡在这里）。
+  //   · openapi 域轮询 → 404 NotFound（路由根本不存在）
+  //   · site 域轮询   → 401 User not authenticated（要浏览器会话）/ POST 还要 CSRF
+  // 兜底证据：官方 .well-known 只公开 authorization_code + refresh_token，没有 device_code。
+  const nf = judgeQoderPoll({ status: 404, json: { errorCode: "NotFound", errorMessage: "Not found" } }, qoderSession);
+  assert.equal(nf.status, "error");
+  assert.match(nf.message, /PAT|个人访问令牌/, "错误里要给出可操作的替代路径");
+  const na = judgeQoderPoll({ status: 401, json: { errorCode: "Unauthorized" } }, qoderSession);
+  assert.equal(na.status, "error");
+  const csrf = judgeQoderPoll({ status: 400, json: { errorCode: "CSRFInvalid" } }, qoderSession);
+  assert.equal(csrf.status, "error");
+});
+
+await t("Qoder：202 / 200-空-token 仍判 pending（真·授权中）", async () => {
   assert.equal(judgeQoderPoll({ status: 202, json: null }, qoderSession).status, "pending");
   assert.equal(judgeQoderPoll({ status: 200, json: { data: {} } }, qoderSession).status, "pending");
   // 顶层字段（不带 data 包装）
@@ -155,22 +169,39 @@ await t("Qoder：404 / 202 / 200-空-token 都判 pending", async () => {
 await t("Qoder：410 或过期文案判 expired", async () => {
   assert.equal(judgeQoderPoll({ status: 410, json: null }, qoderSession).status, "expired");
   assert.equal(judgeQoderPoll({ status: 200, json: { message: "token expired" } }, qoderSession).status, "expired");
-  // 其它非 200/202/404 的状态带出 HTTP 码便于排查
+  // 其它非 200/202 的状态带出 HTTP 码便于排查（500 是服务端抖动，重试有意义 → 仍 pending）
   const other = judgeQoderPoll({ status: 500, json: { message: "boom" } }, qoderSession);
   assert.equal(other.status, "pending");
   assert.match(other.message, /500|boom/);
 });
 
 /* ============================ 会话生命周期 ============================ */
-await t("支持的渠道清单正确（只含已实现的三家）", async () => {
+await t("支持的渠道清单正确（qoder 已移出：它的设备流服务端走不通）", async () => {
   const list = deviceBindVendors();
   assert.ok(list.includes("kiro"), "应有 kiro");
   assert.ok(list.includes("workbuddy"), "应有 workbuddy");
-  assert.ok(list.includes("qoder"), "应有 qoder");
+  assert.ok(list.includes("cline"), "应有 cline");
+  // qoder 2026-09-23 移出：轮询端点 404（openapi 域）／要浏览器会话 + CSRF（站点域），
+  // 官方 OIDC 只公开 authorization_code（需 client_secret），令牌走 qoder:// 自定义协议。
+  // 留着它只会让管理员点一个永远失败的按钮。
+  assert.ok(!list.includes("qoder"), "qoder 不应再出现在一键绑定名单里");
+  assert.equal(supportsDeviceBind("qoder"), false, "qoder 不该再被判定为支持一键绑定");
   assert.equal(supportsDeviceBind("kiro"), true);
   assert.equal(supportsDeviceBind("deepseek"), false, "网页反代渠道不走设备授权");
   assert.equal(supportsDeviceBind(""), false);
   assert.equal(supportsDeviceBind(null), false);
+});
+
+await t("Qoder 有 PAT 的替代路径（登录入口 + 分步指引）", async () => {
+  const { publicProviders } = await import("../src/services/channel-types.js");
+  const p = publicProviders().find((x) => x.key === "qoder");
+  assert.ok(p, "qoder 厂商应存在");
+  const m = p.methods.find((x) => x.key === "qoder");
+  assert.ok(m, "qoder 接入方式应存在");
+  // 移出一键绑定后必须给一条能走通的路，否则管理员无路可走
+  assert.match(m.entryUrl || "", /personal-access-tokens/, "要有直达 PAT 页面的入口");
+  assert.ok(m.localLogin?.steps?.length >= 3, "要有分步指引");
+  assert.match(m.localLogin.note || "", /一键绑定/, "要说明为什么没有一键绑定");
 });
 
 await t("不支持一键绑定的渠道：发起时报错而不是静默失败", async () => {

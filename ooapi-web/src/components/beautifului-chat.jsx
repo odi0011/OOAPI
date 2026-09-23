@@ -416,20 +416,6 @@ export function OrchestrationBar({ agent, agents, settings, tools, onAgent, onSe
 
       <span className="bui-orch-sep" />
 
-      <label className="bui-orch-steps" title="一轮对话里最多调用几次模型（含工具往返）">
-        步数
-        <input
-          type="number"
-          min={1}
-          max={16}
-          value={settings.maxSteps || 6}
-          disabled={disabled}
-          onChange={(e) => onSetting("maxSteps", Math.max(1, Math.min(16, Number(e.target.value) || 1)))}
-        />
-      </label>
-
-      <span className="bui-orch-sep" />
-
       <button
         type="button"
         className={`bui-orch-btn is-sys ${String(settings.instructions || "").trim() ? "is-on" : ""}`}
