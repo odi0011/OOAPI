@@ -54,6 +54,10 @@ const ADAPTERS = {
   // Cline 官方就是标准 OpenAI 兼容 API，薄适配器只补客户端标识头与响应包封解包
   //（调研结论见 upstream/cline.js 顶部：官方有正式 API，不需要也不应做反代）。
   cline: () => import("./upstream/cline.js"),
+  // Trae（字节 AI IDE）：协议**不是** OpenAI 兼容（自定义 SSE 事件 + 三个令牌头），
+  // 且认证失败也返回 200（错误在 SSE 帧里）—— 必须有独立适配器，
+  // 端点与协议均在服务器上实测过，见 upstream/trae.js 顶部。
+  trae: () => import("./upstream/trae.js"),
 };
 
 /**

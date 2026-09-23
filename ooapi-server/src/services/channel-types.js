@@ -917,6 +917,45 @@ export const PROVIDERS = [
     ],
   },
   {
+    key: "trae",
+    name: "Trae（字节）",
+    // 登录页（Trae 网页版就是它的账号中心；令牌从本机 IDE 取，见下方指引）
+    keyUrl: "https://www.trae.ai/",
+    vendor: "trae",
+    desc: "Trae 订阅反代：IDE 账号令牌 → 上游自定义 SSE（非 OpenAI 兼容）",
+    methods: [
+      {
+        key: "trae",
+        adapter: "trae",
+        label: "Trae",
+        desc: "粘贴 Trae IDE 的登录令牌（token + refreshToken + userId）",
+        entryUrl: "https://www.trae.ai/",
+        // 必须有 loginModes：否则 isApiKeyMethod 会把「有 baseUrl 且无 loginModes」的方式
+        // 判成 API Key 型，从而错走 openai-compat（Trae 不是 OpenAI 协议）
+        loginModes: ["paste"],
+        loginFields: oauthCredentialField(
+          '{ "token": "...", "refreshToken": "...", "userId": "...", "region": "sg" }',
+          "Trae IDE 登录后从本机 storage.json 取：Windows 在 %APPDATA%\\Trae\\User\\globalStorage\\storage.json；" +
+            "国际版（SG/US）是明文，国内版(SOLO)是 tc 加密串（需 trae-local-api 解出 token/refreshToken/userId）"
+        ),
+        pasteHint:
+          "region 决定上游：sg → coresg-normal.trae.ai，us → coreva-normal.trae.ai，cn → trae-api-cn.mchost.guru；" +
+          "令牌过期由平台自动续期（走 {host}/cloudide/api/v3/trae/oauth/ExchangeToken）",
+        // ⚠️ 只登记**上游真实档位**，不登记 claude-* 别名 ——
+        // 社区实测 Trae 的 claude-opus-4-x / claude-sonnet-4-x 实际跑的是 GLM-5.2，
+        // claude-haiku-4-5 跑 GLM-5.1，gpt-4o 跑 DeepSeek-V4-Pro。
+        // 登记别名会让用户按 Claude 的价付费、拿到 GLM 的输出（与 WorkBuddy 同类问题）。
+        defaultModels: [
+          { id: "glm-5.2", name: "GLM-5.2（Trae 托管）" },
+          { id: "glm-5.3", name: "GLM-5.3（Trae 托管）" },
+          { id: "DeepSeek-V4-Pro", name: "DeepSeek V4 Pro（Trae 托管）" },
+          { id: "GLM-5.1", name: "GLM-5.1（Trae 托管）" },
+        ],
+        testModel: "glm-5.2",
+      },
+    ],
+  },
+  {
     key: "siliconflow",
     name: "硅基流动",
     keyUrl: "https://cloud.siliconflow.cn/account/ak",
@@ -1359,6 +1398,21 @@ const LOCAL_LOGIN_GUIDE = {
     note:
       "为什么不能用一键绑定：Qoder 的设备授权端点在服务端不可用（openapi 域 404、站点域要浏览器会话与 CSRF），" +
       "官方 OIDC 只开放 authorization_code（需要 client_secret），令牌最终经 qoder:// 自定义协议交回本机客户端 —— 服务器接不住。",
+  },
+  // Trae：同样是浏览器 OAuth + PKCE 回调 localhost，服务端接不住（与 Qoder 同一判定标准），
+  // 所以手工粘贴是唯一路径 —— 指引必须写清去哪个文件取哪几个字段。
+  "trae:trae": {
+    steps: [
+      "在本机装好 Trae IDE 并登录（登录后它会把令牌写进本地 storage.json）",
+      "打开令牌文件：Windows 在资源管理器地址栏输入 %APPDATA%\\Trae\\User\\globalStorage 回车，找到 storage.json",
+      "用记事本打开，搜索 iCubeAuthInfo://icube.cloudide 这一项 —— 国际版(SG/US)它的值是明文 JSON，里面有 token、refreshToken、userId",
+      "把这三个字段填成：{ \"token\": \"...\", \"refreshToken\": \"...\", \"userId\": \"...\", \"region\": \"sg\" } 粘到下面输入框",
+      "国内版（SOLO）的值是 tc 加密串，需要先用 trae-local-api 之类的工具解出上述三个字段（平台只接受明文令牌）",
+    ],
+    note:
+      "region 决定上游：sg → coresg-normal.trae.ai，us → coreva-normal.trae.ai，cn → trae-api-cn.mchost.guru；" +
+      "令牌过期由平台自动续期。注意：Trae 的模型名与实际档位不一致（claude-* 别名实际跑 GLM/DeepSeek），" +
+      "所以渠道里请按**实际档位**声明模型，否则计费会按错误的价目表算。",
   },
   "cline:cli": {
     steps: [
