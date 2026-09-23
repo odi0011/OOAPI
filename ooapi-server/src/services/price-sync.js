@@ -179,6 +179,15 @@ export async function syncUpstreamPrices({ overwrite = false, only = null } = {}
  * 找出「渠道声明了、但平台还没定价」的模型 —— 前端用它提示「有 N 个模型缺价」。
  * 与 pricing.pendingPricedModels 的区别：这里只回答「上游价目表里有没有」，用于同步前的预检。
  */
+/**
+ * 同步前的预检：哪些模型在库里没有确切价格。
+ *
+ * **判定必须与 routes/pricing.js 的 /attribution 完全一致** —— 两处不一致会给出
+ * 互相矛盾的数字（实测踩过：体检面板显示「0 个缺价」，而本函数说「6 个缺价」，
+ * 差别在于这里只认「精确命中」，而 attribution 还把「前缀命中」与「归属规则命中」
+ * 都算作有价）。管理员看到两个页面报不同的数，只会两个都不信。
+ * 所以这里复用同一套三级判定：精确 → 最长前缀 → 归属规则。
+ */
 export async function missingFromUpstream() {
   const [rows] = await pool.query(
     "SELECT models FROM channels WHERE status = 1 AND models IS NOT NULL AND models <> ''"
@@ -191,9 +200,19 @@ export async function missingFromUpstream() {
     }
   }
   const prices = await loadPrices();
-  const upstream = await fetchUpstreamPriceList();
+  const { clinePriceFor } = await import("./cline-prices.js");
+  const priced = (m) => {
+    const key = m.toLowerCase();
+    if (prices.has(key)) return true;
+    let bestLen = -1;
+    for (const k of prices.keys()) if (key.startsWith(k) && k.length > bestLen) bestLen = k.length;
+    if (bestLen >= 0) return true;
+    return Boolean(clinePriceFor(m));
+  };
+  const missing = [...declared].filter((m) => !priced(m));
+  if (!missing.length) return { declared: declared.size, missingInDb: [], fixableBySync: [] };
+  const upstream = await fetchUpstreamPriceList().catch(() => []);
   const upstreamIds = new Set(upstream.map((u) => u.model));
-  const missing = [...declared].filter((m) => !prices.has(m.toLowerCase()) && !prices.has(m));
   return {
     declared: declared.size,
     missingInDb: missing,

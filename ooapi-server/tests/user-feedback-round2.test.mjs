@@ -126,6 +126,14 @@ t("路由与前端接的是新接口", () => {
   ck(!/pricing\/sync-defaults/.test(pricingPage), "前端仍调用只重写静态表的旧接口");
   ck(/覆盖已有价/.test(pricingPage), "没有覆盖开关（危险操作必须显式选）");
 });
+t("预检与体检用同一套判定（两处不一致会给出互相矛盾的数字）", () => {
+  const m = priceSync.match(/export async function missingFromUpstream[\s\S]*?\n\}/);
+  ck(m, "未找到 missingFromUpstream");
+  ck(/clinePriceFor\(m\)/.test(m[0]), "预检没认归属规则（会与体检数字打架）");
+  ck(/bestLen/.test(m[0]), "预检没认前缀命中");
+  // 上游拉不到时不能让整个预检失败（它只是提示，不是关键路径）
+  ck(/fetchUpstreamPriceList\(\)\.catch/.test(m[0]), "上游不可达时预检会直接抛错");
+});
 t("sync-defaults 保留但注释说明它不发现新模型", () => {
   ck(/"\/sync-defaults"/.test(pricingRoute), "sync-defaults 被删了（历史兼容）");
   ck(/它\*\*不会\*\*发现新模型/.test(pricingRoute), "没说明 sync-defaults 的局限");
