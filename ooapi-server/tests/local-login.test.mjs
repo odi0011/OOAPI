@@ -129,7 +129,9 @@ console.log("\n=== ③ 找回方式排序（本机浏览器优先）===");
 console.log("\n=== ④ 前端两处入口 ===");
 {
   const fe = readFileSync(new URL("../../ooapi-web/src/pages/AdminChannelsPage.jsx", import.meta.url), "utf8");
-  ck("新增渠道面板：有本机指引时渲染分步说明", /pickMethod\.localLogin\.steps\.map/.test(fe));
+  // 分步说明：第 1 步（「在打开的页面完成登录」）由按钮承担，渲染时被过滤掉
+  ck("新增渠道面板：有本机指引时渲染分步说明",
+    /pickMethod\.localLogin\.steps/.test(fe) && /\.filter\(\(t\) => !\/\^在打开的页面\//.test(fe));
   // 用户要求：「本机浏览器应该是直接唤起用户的当前的浏览器的一个小窗啊…
   //           应该是弹出小窗口啊弹出用户浏览器的小窗口啊」
   ck("新增渠道面板：主按钮是「弹出登录小窗」",

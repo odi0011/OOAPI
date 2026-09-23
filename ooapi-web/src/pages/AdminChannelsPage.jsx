@@ -139,47 +139,58 @@ function UptimeBars({ calls = [], count = 20, onCopy }) {
   );
 }
 
-// 状态单元格
-function StatusCell({ r }) {
-  if (r.status === 3) {
-    return (
-      <Space direction="vertical" size={2}>
-        <span className="bui-chip bui-chip--red">
-          <span className="bui-dot bui-dot--err" />
-          自动禁用
-        </span>
-        {r.last_error ? (
-          <Tooltip title={r.last_error}>
-            <span style={{ fontSize: 11, color: "var(--ink-3)" }}>{r.last_error.slice(0, 20)}…</span>
-          </Tooltip>
-        ) : null}
-      </Space>
-    );
-  }
-  if (r.status === 2) {
-    return (
-      <span className="bui-chip" style={{ background: "transparent", padding: 0 }}>
-        <span className="bui-dot bui-dot--idle" />
-        已禁用
-      </span>
-    );
-  }
-  if (r.cooling) {
-    return (
-      <Space direction="vertical" size={2}>
-        <span className="bui-chip bui-chip--orange">
-          <span className="bui-dot bui-dot--warn" />
-          冷却中
-        </span>
-        <span style={{ fontSize: 11, color: "var(--ink-3)" }}>至 {r.cooldown_text}</span>
-      </Space>
-    );
-  }
+/**
+ * 状态单元格 —— **可点击切换启停**（用户要求：「状态列应该是一个按钮，
+ * 点击能直接设定启用和暂停」）。
+ *
+ * 之前是纯展示的 chip，启停要去操作列的菜单里翻；而这是运维最高频的动作
+ * （一出错就先停掉），直接点状态最顺手。
+ *
+ * 自动暂停（status=3，检测失败或用户调用出错时由后端写入）也能点 ——
+ * 那正是最需要「修好后一键启用」的场景。
+ */
+function StatusCell({ r, onToggle, busy }) {
+  const st = Number(r.status);
+  const auto = st === 3;
+  const paused = st === 2;
+  const cooling = Boolean(r.cooling) && !auto && !paused;
+  const active = !auto && !paused; // 当前是否在跑（可被点成暂停）
+
+  const tone = auto ? "bui-chip--red" : paused ? "" : cooling ? "bui-chip--orange" : "";
+  const dot = auto ? "bui-dot--err" : paused ? "bui-dot--idle" : cooling ? "bui-dot--warn" : "bui-dot--ok";
+  const text = auto ? (r.last_error ? "已自动暂停" : "已暂停") : paused ? "已暂停" : cooling ? "冷却中" : "已启用";
+  const tip = `${text}（点击${active ? "暂停" : "启用"}）${r.last_error ? `\n原因：${r.last_error}` : ""}`;
+
   return (
-    <span className="bui-chip" style={{ background: "transparent", padding: 0 }}>
-      <span className="bui-dot bui-dot--ok" />
-      已启用
-    </span>
+    <Tooltip title={<span style={{ whiteSpace: "pre-line" }}>{tip}</span>}>
+      <span
+        role="button"
+        tabIndex={0}
+        aria-label={tip}
+        className={`bui-chip ${tone}`}
+        style={{
+          cursor: busy ? "wait" : "pointer",
+          opacity: busy ? 0.6 : 1,
+          // 暂停态原来是无底色的纯文字，看起来像不可点 —— 给个底色明确它是按钮
+          background: paused ? "var(--inset)" : undefined,
+          userSelect: "none",
+          whiteSpace: "nowrap",
+        }}
+        onClick={() => !busy && onToggle?.(r, !active)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            if (!busy) onToggle?.(r, !active);
+          }
+        }}
+      >
+        <span className={`bui-dot ${dot}`} />
+        {text}
+        {cooling && r.cooldown_text ? (
+          <span style={{ fontSize: 11, color: "var(--ink-3)", fontWeight: 400 }}>至 {r.cooldown_text}</span>
+        ) : null}
+      </span>
+    </Tooltip>
   );
 }
 
@@ -1325,6 +1336,26 @@ export default function AdminChannelsPage() {
     }
   };
 
+  /**
+   * 点状态列直接启停（用户要求：「状态列应该是一个按钮，点击能直接设定启用和暂停」）。
+   *
+   * 走批量 enable/disable 而不是 PUT：它们已经处理好了「启用时清冷却、清 last_error」
+   * 这类副作用（见 routes/channel.js 的 batch 分支），PUT 只改字段不做这些收尾。
+   */
+  const doToggleStatus = async (r, nextActive) => {
+    if (actionBusyId) return;
+    setActionBusyId(r.id);
+    try {
+      await API.post("/channel/batch", { ids: [r.id], action: nextActive ? "enable" : "disable" });
+      message.success(nextActive ? `「${r.name}」已启用` : `「${r.name}」已暂停`);
+      await load();
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
   const doReset = async (r) => {
     if (actionBusyId) return;
     setActionBusyId(r.id);
@@ -1773,7 +1804,7 @@ export default function AdminChannelsPage() {
                   const pr = pricesFor(r.id, m);
                   return (
                     <div key={m} style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
-                      <ModelLabel model={m} size={13} />
+                      <ModelLabel model={m} size={13} channelType={r.type} />
                       {pr ? (
                         <span style={{ fontSize: 11, color: "var(--ink-3)", whiteSpace: "nowrap" }}>
                           {pr.unit === "credits" ? <ThunderboltOutlined style={{ marginInlineEnd: 3 }} /> : null}
@@ -1787,7 +1818,7 @@ export default function AdminChannelsPage() {
             }
           >
             <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap", overflow: "hidden" }}>
-              {merged.slice(0, 2).map((m) => <ModelLabel key={m} model={m} size={14} />)}
+              {merged.slice(0, 2).map((m) => <ModelLabel key={m} model={m} size={14} channelType={r.type} />)}
               {merged.length > 2 ? <span className="bui-chip">+{merged.length - 2}</span> : null}
             </span>
           </Tooltip>
@@ -1834,7 +1865,7 @@ export default function AdminChannelsPage() {
         return <Text type="secondary" style={{ fontSize: 12 }}>不支持</Text>;
       },
     },
-    { title: "状态", dataIndex: "status", width: 128, render: (_, r) => <StatusCell r={r} /> },
+    { title: "状态", dataIndex: "status", width: 128, render: (_, r) => <StatusCell r={r} onToggle={doToggleStatus} busy={actionBusyId === r.id} /> },
     {
       title: "凭据",
       width: 126,
@@ -2331,7 +2362,7 @@ export default function AdminChannelsPage() {
                       {r.account || r.remark || r.typeName}
                     </div>
                   </div>
-                  <StatusCell r={r} />
+                  <StatusCell r={r} onToggle={doToggleStatus} busy={actionBusyId === r.id} />
                 </div>
                 <div className="oo-channel-card-meta">
                   <span className="bui-chip">{r.typeName}</span>
@@ -2346,14 +2377,14 @@ export default function AdminChannelsPage() {
                   <Tooltip
                     title={
                       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        {(r.models || []).map((m) => <ModelLabel key={m} model={m} size={13} />)}
+                        {(r.models || []).map((m) => <ModelLabel key={m} model={m} size={13} channelType={r.type} />)}
                       </div>
                     }
                   >
                     <span style={{ display: "flex", gap: 8, alignItems: "center", overflow: "hidden" }}>
                       {(r.models || []).length ? (
                         <>
-                          {(r.models || []).slice(0, 3).map((m) => <ModelLabel key={m} model={m} size={14} />)}
+                          {(r.models || []).slice(0, 3).map((m) => <ModelLabel key={m} model={m} size={14} channelType={r.type} />)}
                           {(r.models?.length || 0) > 3 ? <span className="bui-chip">+{r.models.length - 3}</span> : null}
                         </>
                       ) : (
@@ -2565,9 +2596,13 @@ export default function AdminChannelsPage() {
                                   ) : null}
                                 </Space>
                                 <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.9 }}>
-                                  {pickMethod.localLogin.steps.map((s, i) => (
-                                    <li key={i}>{s}</li>
-                                  ))}
+                                  {pickMethod.localLogin.steps
+                                    // 第 1 步通常是「在打开的页面完成登录」—— 那句话由上面的按钮承担，
+                                    // 不再重复列出（用户要求「不要干巴巴一堆文本」）
+                                    .filter((t) => !/^在打开的页面/.test(t))
+                                    .map((t, i) => (
+                                      <li key={i}>{t}</li>
+                                    ))}
                                 </ol>
                                 {pickMethod.localLogin.snippet ? (
                                   <div
@@ -2592,9 +2627,6 @@ export default function AdminChannelsPage() {
                                     {pickMethod.localLogin.snippet}
                                   </div>
                                 ) : null}
-                                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                                  取到的凭据粘到下面「登录态」框里即可。全程不占用服务器资源，比服务器浏览器更快、也不触发风控。
-                                </span>
                               </Space>
                             </Form.Item>
                           ) : null}

@@ -464,7 +464,9 @@ export function QuotaInline({ quota, stats }) {
             // 最后一条才需要给 `+N` 留位置；前面的条占满宽度
             const needReserve = isLast && collapsedWins.length > 0;
             return (
-              <div key={w.key || i} style={{ position: "relative", display: "flex", alignItems: "center", minWidth: 0 }}>
+              // 宽度按用户要求收到 ~80%：额度条铺满整列会显得过长、占比失衡。
+              // 用 maxWidth 而非固定宽：窄列时仍能自适应收缩。
+              <div key={w.key || i} style={{ position: "relative", display: "flex", alignItems: "center", minWidth: 0, maxWidth: "80%" }}>
                 {/* 需要留位时给右侧留出 `+N` 的宽度（用户要求「第二个宽度少一点
                     给留一个 tag 的位置」）——用 padding 预留，而不是让 +N 参与
                     flex 挤压，否则第二条的进度条会比第一条短一截、看起来像两套尺度 */}
@@ -475,7 +477,15 @@ export function QuotaInline({ quota, stats }) {
                   <Tooltip title={collapsedTip}>
                     <span
                       className="bui-chip"
-                      style={{ fontSize: 11, flexShrink: 0, position: "absolute", right: 0 }}
+                      style={{
+                        fontSize: 11,
+                        position: "absolute",
+                        right: 0,
+                        // 不许折行、不许被压窄：它是「还有多少条」的指示器，
+                        // 折了行或压成两行会看不出是同一个 badge（用户要求）
+                        flexShrink: 0,
+                        whiteSpace: "nowrap",
+                      }}
                     >
                       +{collapsedWins.length}
                     </span>
@@ -513,7 +523,7 @@ export function QuotaInline({ quota, stats }) {
                 </div>
               }
             >
-              <span className="bui-chip" style={{ fontSize: 11, flexShrink: 0 }}>
+              <span className="bui-chip" style={{ fontSize: 11, flexShrink: 0, whiteSpace: "nowrap" }}>
                 +{chipsOverflow}
               </span>
             </Tooltip>

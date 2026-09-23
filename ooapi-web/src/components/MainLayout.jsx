@@ -83,7 +83,10 @@ const NAV_ADMIN = [
       { key: "/admin/dashboard", icon: <DashboardOutlined />, label: "平台看板" },
       { key: "/admin/channel", icon: <ApiOutlined />, label: "渠道管理" },
       { key: "/admin/groups", icon: <GroupOutlined />, label: "分组管理" },
-      { key: "/admin/pricing", icon: <DollarOutlined />, label: "模型定价" },
+      // badge: "pendingPrices" —— 待定价模型数的红色徽标。
+      // 模型被「从上游获取到」的瞬间就该让管理员看见（而不是等他某天去定价页翻），
+      // 徽标挂在「模型定价」上，点进去就是配置处。
+      { key: "/admin/pricing", icon: <DollarOutlined />, label: "模型定价", badge: "pendingPrices" },
       { key: "/admin/users", icon: <TeamOutlined />, label: "用户管理" },
       { key: "/admin/community", icon: <ReadOutlined />, label: "社区管理" },
       { key: "/admin/monitor", icon: <MonitorOutlined />, label: "运维监控" },
@@ -144,19 +147,23 @@ export default function MainLayout() {
   // 导航红点：消息未读 + 通知未读。
   // 用 60s 轮询而不是只靠 SSE：SSE 断开（换网络/休眠唤醒）时不刷新会红点残留，
   // 轮询是兜底；SSE 事件到达时也会立刻更新（见下面的 effect）。
-  const [badges, setBadges] = useState({ messages: 0, notifications: 0 });
+  const [badges, setBadges] = useState({ messages: 0, notifications: 0, pendingPrices: 0 });
 
   const refreshBadges = useCallback(async () => {
-    // 两个接口都可能因权限/网络失败，任一失败都不该影响导航渲染
-    const [m, n] = await Promise.all([
+    // 三个接口都可能因权限/网络失败，任一失败都不该影响导航渲染
+    const [m, n, pp] = await Promise.all([
       API.get("/chatroom/unread").catch(() => null),
       API.get("/community/notifications/unread").catch(() => null),
+      // 待定价清单只有管理员能读（普通用户请求只会 403 刷日志），先判角色再请求
+      Number(user?.role) >= 100 ? API.get("/pricing/pending").catch(() => null) : Promise.resolve(null),
     ]);
     setBadges({
       messages: Number(m?.total) || 0,
       notifications: Number(n?.total) || 0,
+      // 待定价模型数：徽标颜色与未读一致（复用 oo-nav-badge），但语义是「需处理」
+      pendingPrices: Number(pp?.count) || 0,
     });
-  }, []);
+  }, [user?.role]);
 
   useEffect(() => {
     refreshBadges();

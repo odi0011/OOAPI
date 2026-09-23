@@ -150,10 +150,21 @@ async function probeChannelInner(adapter, channel, prompt = "hi", signal = undef
       })
     );
     const total = Date.now() - started;
+    // 适配器可能**自己**测了更准的首 Token（只算「发出请求 → 上游首帧」，不含
+    // 浏览器启动/导航/输入这些我们这侧的开销）。这类渠道（GLM/豆包/通义）的
+    // `firstAt` 会晚得离谱：实测 GLM 首个增量在 11.7 秒才到，其中绝大部分是
+    // 起 Chromium + 导航 + 逐字符输入 —— 把它当「响应时间」展示会误导管理员
+    // （用户实测反馈：「检测机制也无法检测到真正的首token」）。
+    // 有自报值就优先用它，并把两个数都留下（`browserMs` = 我们这侧的开销）。
+    const selfTtft = Number(r?.firstTokenMs);
+    const browserMs = firstAt ? firstAt - started : 0;
+    const ttft = Number.isFinite(selfTtft) && selfTtft > 0 ? Math.min(selfTtft, browserMs || selfTtft) : browserMs || total;
     return {
       ms: total,
-      // 一次增量都没回调（非流式适配器）：那种「首 Token」就是全量返回，退化用总耗时
-      ttftMs: firstAt ? firstAt - started : total,
+      // 一次增量都没回调且适配器也没自报（非流式适配器）：退化用总耗时
+      ttftMs: ttft,
+      // 我们这侧的开销（浏览器渠道才有意义）：展示时可用来说明「11.7s 里绝大部分不是上游慢」
+      ...(browserMs ? { browserMs } : {}),
       reply: r.content || "",
       model: r.upstreamModel || model,
       ...(r.rotateNext ? { degraded: 1 } : {}),

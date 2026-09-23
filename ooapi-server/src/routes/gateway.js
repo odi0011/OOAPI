@@ -9,7 +9,7 @@ import { writeLog, LOG_TYPE } from "../services/log.js";
 import { recordRequest, enterRequest, leaveRequest, classifyError } from "../services/metrics.js";
 import { runCompletion } from "../services/execute.js";
 import { acquire, estimateRequestTokens } from "../services/user-limit.js";
-import { getPrice, computeCost, splitTokens, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
+import { getPrice, computeCost, splitTokens, effectivePrice, isModelPriced, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 // displayGroupName 被用来把分组名归一化后再写日志（见下方 groupName 处），
 // 但此前**没有导入**：每次成功请求都会在写日志时抛
 // ReferenceError: displayGroupName is not defined，把一次本来成功的调用
@@ -414,6 +414,29 @@ async function handleCompletion(protocol, req, res) {
   }
   if (!modelAllowed(token, model)) {
     return protocol.error(res, 403, { message: `当前 API Key 不允许使用模型 ${model}`, code: "invalid_request_error" }, { id: requestId });
+  }
+  // 未定价模型**不放行**（用户明确要求：「若没返回则不给用户使用，直接明文返回
+  // xxx模型未设定价格」）。
+  //
+  // 为什么以前允许：未定价会走兜底链（同族 → 同厂商最贵档 → 全表最贵档），
+  // 那是「宁可高估不可漏收」的权宜之计 —— 但用户是按**猜出来的**价格付费
+  // （实测 mimo-v2.6-flash 被按 claude-opus-5 的最贵档收），而且兜底是静默的，
+  // 管理员永远不知道有模型漏配价。
+  //
+  // 报错刻意用**明文中文**而不是 OpenAI 那套错误码：管理员/用户看到的应当是
+  // 「该模型未定价」这个可执行的信息，而不是 invalid_request_error 这种泛化类型。
+  // 走 402（需付费/未配置价格）语义最贴近；但为兼容各家 SDK 的错误处理，
+  // 统一用 400 + 明确的 message 与 code=model_not_priced。
+  if (!(await isModelPriced(model))) {
+    return protocol.error(
+      res,
+      400,
+      {
+        message: `「${model}」模型未设定价格，请联系管理员在「模型定价」中配置后再使用`,
+        code: "model_not_priced",
+      },
+      { id: requestId }
+    );
   }
   // 过滤非对象元素：null/字符串会让适配器 `.map(m => m.role)` 抛 TypeError；
   // 无 code 的异常会被 execute 当成渠道故障并冷却所有渠道（可被构造的 DoS）

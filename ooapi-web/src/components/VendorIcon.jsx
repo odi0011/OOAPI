@@ -257,8 +257,18 @@ export function VendorLabel({ type, label, size = 15, gap = 7, className, style 
  * 模型名（带厂商图标）—— 全站统一使用
  * @param {object} props { model, size, showVendor, monoClassName, style }
  */
-export function ModelLabel({ model, size = 15, showVendor = false, className, style, title }) {
-  const file = iconFileForModel(model);
+export function ModelLabel({ model, size = 15, showVendor = false, className, style, title, channelType = "" }) {
+  // 图标解析：先按模型名匹配厂商；**匹配不到时用「渠道」的图标**。
+  // 用户要求：「如果渠道里有一些我们系统本身没有的模型，则模型图标就直接使用对应
+  // 哪个渠道的就行」—— 那些模型（omen-alpha、mimo-v2.6-flash 之类）在模型表里
+  // 没有对应厂商，退回平台 logo 等于把「未知」和「本平台」混在一起；
+  // 用渠道图标既指明了来源，又不假装认识它。
+  const file = (() => {
+    const byModel = iconFileForModel(model);
+    if (byModel !== PLATFORM_LOGO) return byModel;
+    const byChannel = CHANNEL_ICON[String(channelType || "").toLowerCase()];
+    return byChannel || byModel;
+  })();
   return (
     <span
       className={className}

@@ -211,9 +211,33 @@ export function isCoolingDown(channel) {
   return true;
 }
 
-// 标记渠道运行异常：只做运行时冷却，不改数据库 status。
-// 原因：status 是管理员开关（手动启停/测试结果），运行期错误若直接写 status=3，
-// 会导致 token 更新后渠道仍被永久排除在调度外。冷却结束后自动恢复调度。
+/**
+ * 不该自愈的错误码 → 直接把渠道**自动暂停**（status=3）。
+ *
+ * 用户要求：「如果某个渠道自动检测，或者手动检测，或者用户调用到了出错了，
+ * 则自动暂停状态即可」。
+ *
+ * 但这里刻意**按错误性质区分**，而不是所有错误都暂停：
+ *   · 该暂停的：凭据失效、被封禁、权限不足、渠道类型/配置错误 ——
+ *     它们不会自己好，继续参与调度只是白打上游（还可能加重风控）。
+ *   · 不该暂停的：限流、网络抖动、超时、上游 5xx —— 冷却一下就能恢复，
+ *     暂停反而要管理员手工介入（深夜出一次抖动就把渠道停掉是过度反应）。
+ *
+ * 校验过的一个反例：早先的实现注释写着「运行期错误若直接写 status=3，会导致
+ * token 更新后渠道仍被永久排除」—— 那个担心现在由「状态列可点击启停 +
+ * 错误原因直接展示」解决：管理员一眼能看到「已自动暂停」并点一下恢复，
+ * 不需要它自己悄悄恢复（悄悄恢复才是更危险的：坏凭据会一直被调度）。
+ */
+export const AUTO_PAUSE_CODES = new Set([
+  "CHANNEL_AUTH_EXPIRED", // 凭据失效：重试一万次也不会好
+  "CHANNEL_FORBIDDEN",    // 权限不足（模型档位/账号权限）
+  "CHANNEL_CONFIG_ERROR", // 订阅渠道部署配置缺失
+  "UNSUPPORTED_CHANNEL",  // 渠道类型未注册 / 适配器缺失
+  "CHANNEL_CAPTCHA",      // 需要人机验证：必须人工过一次
+  "CHANNEL_WAF",          // 被 WAF 拦：短时间内不会自愈
+]);
+
+// 标记渠道运行异常：运行时冷却 + （不可自愈的错误）自动暂停。
 export async function markChannelError(channel, message, cooldownSec = 300, meta = {}) {
   const s = st(channel.id);
   s.cooldownUntil = Date.now() + cooldownSec * 1000;
@@ -232,6 +256,22 @@ export async function markChannelError(channel, message, cooldownSec = 300, meta
       .query("UPDATE channels SET last_error = ?, recent_calls = ? WHERE id = ?", [s.lastError, recentJson, channel.id])
       .catch(() => {});
   });
+  // 不可自愈的错误 → 自动暂停（status=3）。
+  // 三重保护：① 只在错误码命中白名单时暂停；② 尊重渠道的 auto_ban 开关
+  //（管理员关掉它就是不希望自动停）；③ 已经暂停的不重复写（省一次 DB 往返）。
+  const code = String(meta.errorCode || "");
+  if (AUTO_PAUSE_CODES.has(code) && channel?.auto_ban !== 0 && Number(channel?.status) === 1) {
+    await pool
+      .query("UPDATE channels SET status = 3 WHERE id = ? AND status = 1", [channel.id])
+      .then(([ret]) => {
+        if (ret.affectedRows) {
+          console.warn(`[router] 渠道 #${channel.id}「${channel.name}」因 ${code} 已自动暂停：${s.lastError.slice(0, 120)}`);
+        }
+      })
+      .catch(() => {});
+    // 让内存态与库一致：下次调度不再选中它
+    s.autoPaused = true;
+  }
 }
 
 export async function markChannelOk(channel, elapsedMs, meta = {}) {

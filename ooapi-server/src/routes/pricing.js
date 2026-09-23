@@ -5,6 +5,7 @@ import { ok, fail, asyncHandler, now } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { invalidatePrices, DEFAULT_PRICES, describeRule } from "../services/pricing.js";
+import { pendingPricedModels } from "../services/pricing.js";
 import { modelRegistry, invalidateModelRegistry } from "../services/models.js";
 
 const router = Router();
@@ -43,6 +44,19 @@ function parseRuleInput(v) {
 }
 
 // 列表
+// 待定价模型清单（后台左侧「模型定价」的红色徽标用它）
+//
+// 放在 "/" 之前：Express 的路由按注册顺序匹配，"/pending" 若不先注册，
+// 会被某些通配写法拦住 —— 这里虽然都是字面量路径不冲突，但保持「具体路径在前」
+// 是好习惯，免得以后有人加 "/:id" 时被吞掉。
+router.get(
+  "/pending",
+  asyncHandler(async (req, res) => {
+    const out = await pendingPricedModels();
+    return ok(res, out);
+  })
+);
+
 router.get(
   "/",
   asyncHandler(async (req, res) => {

@@ -205,6 +205,12 @@ export const DEFAULT_PRICES = [
   { model: "deepseek-chat", input: 0.27, output: 1.10, cache: 0.07, type: "deepseek", remark: "DeepSeek-V3 对话档官方价（旧命名 deepseek-chat）；来源 api-docs.deepseek.com/quick_start/pricing/" },
   { model: "deepseek-v3.2", input: 0.28, output: 0.42, cache: 0.028, type: "deepseek", remark: "V3.2 官方价（开源权重托管同价）；来源 api-docs.deepseek.com/quick_start/pricing/" },
   { model: "qwen3-235b-a22b", input: 0.20, output: 0.60, cache: 0.02, type: "qwen", remark: "Qwen3-235B 开源权重，按官方百炼托管价录入；来源 help.aliyun.com/zh/model-studio" },
+
+  // --- 线上实测发现的「渠道在用但无价」的模型（新门禁会拦下它们，故补录）---
+  // 补录依据：这些是上游渠道实际暴露的档位，官方页若未公布就按同档估录并在 remark 注明。
+  { model: "gpt-6-astra", input: 2.50, output: 20.00, cache: 0.25, type: "openai", remark: "未在官方价表找到，按 gpt-5.6-sol 旗舰档估录，待官方页复核" },
+  { model: "mimo-v2.6-flash", input: 0.15, output: 0.60, cache: 0.015, type: "mimo", remark: "小米 MiMo 轻量档，按同厂 v2.6-pro 的 1/3 估录，待官方页复核" },
+  { model: "omen-alpha", input: 0.30, output: 1.20, cache: 0.03, type: "opencode", remark: "OpenCode 平台上的未公开档位，按同类轻量档估录，待复核" },
 ];
 
 // 价格缓存（避免每请求查库）
@@ -599,4 +605,72 @@ export async function seedDefaultPrices() {
     invalidatePrices();
     console.log(`[init] 已写入默认模型价格 ${added} 条（可在「模型定价」中调整）`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// 未定价模型（待定价清单）与「无价即不放行」
+// ---------------------------------------------------------------------------
+// 用户要求（原话）：
+//   「如果上游返回了价格则使用价格，若没返回则不给用户使用，直接明文返回
+//    xxx模型未设定价格。在这个模型被获取到的瞬间，就应该通知管理员
+//    （后台左侧模型定价项放红色徽标显示待定价模型数量），管理员可在这里进行模型定价。」
+//
+// 为什么必须拦：未定价的模型会走兜底链（同族 → 同厂商最贵档 → 全表最贵档）。
+// 那条链是「宁可高估不可漏收」的权宜之计，但它有两个问题：
+//   ① 用户按一个**猜出来的**价格付费，可能是真实价格的几倍（mimo-v2.6-flash
+//      实测被按 claude-opus-5 的最贵档收费）；
+//   ② 管理员永远不知道有模型漏配了价 —— 兜底静默生效，没人会去查。
+// 所以改成：没价就不放行，并把「待定价」显式摊到管理员面前。
+
+/**
+ * 平台已登记但**没有精确价格**的模型（= 待定价清单）。
+ *
+ * 判定范围刻意只取「渠道声明过的模型」而不是整个注册表：
+ *   注册表里有大量厂商占位名（glm / zhipu / kimi / qwen / tongyi …），
+ *   它们不是真实模型、也不需要定价；把它们算进待定价会让徽标长期挂着一个
+ *   虚高的数字，管理员点进去发现一半是垃圾项 —— 那种徽标很快就会被无视。
+ *
+ * @returns {Promise<{models: Array<{model:string, type:string, channels:Array<{id:number,name:string}>}>, count:number}>}
+ */
+export async function pendingPricedModels() {
+  const prices = await loadPrices();
+  const [rows] = await pool.query(
+    "SELECT id, name, type, models FROM channels WHERE status = 1 AND models IS NOT NULL AND models <> ''"
+  );
+  const byModel = new Map();
+  for (const r of rows) {
+    for (const raw of String(r.models || "").split(",")) {
+      const m = raw.trim();
+      if (!m || m === "*") continue;
+      const key = m.toLowerCase();
+      // 精确命中（含最长前缀命中）都算「已定价」—— 见 getPrice 的匹配顺序
+      let priced = prices.has(key);
+      if (!priced) {
+        let bestLen = -1;
+        for (const k of prices.keys()) if (key.startsWith(k) && k.length > bestLen) bestLen = k.length;
+        priced = bestLen >= 0;
+      }
+      if (priced) continue;
+      if (!byModel.has(m)) byModel.set(m, { model: m, type: String(r.type || ""), channels: [] });
+      byModel.get(m).channels.push({ id: Number(r.id), name: String(r.name || "") });
+    }
+  }
+  const models = [...byModel.values()].sort((a, b) => a.model.localeCompare(b.model));
+  return { models, count: models.length };
+}
+
+/**
+ * 该模型是否已定价（可放行）。与 getPrice 的匹配顺序保持一致：
+ * 精确命中或最长前缀命中都算「已定价」。
+ */
+export async function isModelPriced(model) {
+  const prices = await loadPrices();
+  const m = String(model || "").toLowerCase();
+  if (!m) return false;
+  const stripped = m.includes("/") ? m.slice(m.lastIndexOf("/") + 1) : m;
+  if (prices.has(m) || prices.has(stripped)) return true;
+  for (const key of [m, stripped]) {
+    for (const k of prices.keys()) if (key.startsWith(k)) return true;
+  }
+  return false;
 }

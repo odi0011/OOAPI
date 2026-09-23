@@ -136,13 +136,20 @@ export async function chat({
 
     // 边收边转发（CN 版是累积全文，解析器内部会做 diff，但必须逐帧喂才能出增量）
     const parser = createQwenParser();
+    // 首帧时刻：与 glm 同口径（只算「已发出 → 上游首帧」，不含起浏览器/导航/输入）。
+    // 浏览器渠道这侧开销常有 10 秒以上，不单独报出来就会被当成「上游很慢」——
+    // channel-probe 会优先采用这个值作为响应时间（见该文件说明）。
+    let firstFrameAt = 0;
     const pump = (chunk) => {
       const d = parser.push(chunk);
       if (!d) return;
+      if (!firstFrameAt) firstFrameAt = Date.now();
       if (d.reasoning && onReasoning) onReasoning(d.reasoning);
       if (d.content && onDelta) onDelta(d.content);
     };
 
+    // 记录本步起点（含导航/输入），用于算出「我们这侧的开销」
+    const stepStart = Date.now();
     const res = await streamCapture(page, {
       timeoutMs: 180_000,
       signal,
@@ -175,6 +182,8 @@ export async function chat({
       reasoning: parser.reasoning,
       content: parser.content,
       usage: parser.usage,
+      // 上游首帧耗时（我们这侧的开销不计入）：probe 优先用它作为响应时间
+      firstTokenMs: firstFrameAt ? firstFrameAt - stepStart : 0,
       upstreamModel: resolved.upstream};
   });
 }

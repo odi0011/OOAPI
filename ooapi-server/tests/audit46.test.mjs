@@ -342,7 +342,10 @@ console.log("\n=== ⑨ 额度条折叠规范 ===");
     /const needReserve = isLast && collapsedWins\.length > 0;/.test(cq));
   ck("最后一条右侧用 padding 预留 +N 位置（不让 +N 挤压进度条）",
     /paddingRight: needReserve \? 44 : 0/.test(cq));
-  ck("`+N` 绝对定位在行尾", /position: "absolute", right: 0/.test(cq));
+  // `+N` 绝对定位在行尾（不参与 flex 挤压，否则会压窄进度条）
+  ck("`+N` 绝对定位在行尾", /position: "absolute"/.test(cq) && /right: 0/.test(cq));
+  // 用户要求：「tag超出宽度了就直接显示+N，这个+N不要折行」
+  ck("`+N` 不折行（whiteSpace: nowrap）", /whiteSpace: "nowrap"/.test(cq));
   ck("悬浮 `+N` 列出被折叠的额度条", /const collapsedTip = \([\s\S]{0,220}collapsedWins\.map/.test(cq));
   // 进度条铺满整行宽度（竖排下每行都有完整宽度可用，不该再固定 44px）
   ck("进度条 flex:1 铺满宽度（不再是 compact 固定 44px）",

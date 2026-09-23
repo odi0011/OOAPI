@@ -198,8 +198,14 @@ export async function runCompletion({
       markChannelOk(channel, Date.now() - (callStarted || started), {
         prompt,
         reply: result.content || result.reasoning || "",
-        // codex-state-kit：记录本轮是否降智 / 是否携带 292 通行证（tip 展示）
-        degraded: result.rotateNext ? 1 : 0,
+        // codex-state-kit：记录本轮是否降智 / 是否携带 292 通行证（tip 展示）。
+        // **必须显式区分「不支持检测」与「检测为否」**：
+        // `result.rotateNext ? 1 : 0` 对不支持该机制的适配器（除 codex 外全部）
+        // 恒为 0，而 0 是**已定义值** —— 于是每个厂商的每次调用都会带上 `d:0`，
+        // 前端「降智状态：否」那一行就出现在所有渠道上（用户实测：
+        // 「这个降智方案是只有 gpt 才有的吧，为什么我现在看很多都有」）。
+        // 这里改成与下一行 state 同样的处理：适配器没给就写 undefined（不落库、不展示）。
+        degraded: result.rotateNext === undefined ? undefined : result.rotateNext ? 1 : 0,
         state: result.stateUsed === undefined ? undefined : result.stateUsed ? 1 : 0,
         kind: "chat",
         // 最近调用里显示调用方（管理端头像+名字，点击复制邮箱）
@@ -253,6 +259,7 @@ export async function runCompletion({
           reply: lastError.message,
           kind: "chat",
           user,
+          errorCode: code,
         }).catch(() => {});
         throw lastError;
       }
@@ -268,6 +275,8 @@ export async function runCompletion({
         reply: lastError.message,
         kind: "chat",
         user,
+        // 带上错误码：不可自愈的错误（凭据失效/被封/权限不足）由 router 自动暂停渠道
+        errorCode: code,
       });
       // 监控页「账号切换率」：每换一次号记一次，趋势突然抬升说明渠道集体不稳
       recordChannelSwitch();
