@@ -97,6 +97,18 @@ const SYSTEM_FEATURES = [
   },
 ];
 
+// 首页示例代码里的模型名（**模块级常量**：SAMPLE_LOGS 与组件内的
+// CODE_EXAMPLES 都要用它，所以必须声明在最外层 —— 放进组件里会让
+// 模块级的 SAMPLE_LOGS 报 `SAMPLE_MODEL is not defined`，整页白屏）。
+//
+// 原先是硬编码 `deepseek-chat` —— DeepSeek **官方已停用**的旧 id，
+// 照抄示例必然 503「当前没有可服务模型…的账号」。
+// 三个独立人格（大学生 / 产品经理 / 海外开发者）都栽在这一步，
+// 其中一人原话：「这是最伤新手的一条」「我自己就来回改了半小时」。
+// 首页是**未登录可见**的营销页，拿不到「该用户可用模型」（需要登录态），
+// 所以用平台真实支持的现役名；登录后的控制台显示该账号实际可用的模型（见 ConsolePage）。
+const SAMPLE_MODEL = "deepseek-flash";
+
 // 审计日志流水模拟演示数据（实事求是呈现系统日志字段）
 const SAMPLE_LOGS = [
   {
@@ -154,16 +166,7 @@ export default function HomePage() {
   const endpoint = status?.api_endpoint || "https://your-domain/v1";
   const cleanEndpoint = endpoint.replace(/\/+$/, "");
 
-  // 首页示例代码里用的模型名。
-  //
-  // 原先是硬编码 `deepseek-chat` —— 那是 DeepSeek **官方已停用**的旧 id，
-  // 照抄示例必然 503「当前没有可服务模型…的账号」。
-  // 三个独立人格（大学生 / 产品经理 / 海外开发者）都栽在这一步，
-  // 其中一人原话：「这是最伤新手的一条」「我自己就来回改了半小时」。
-  // 首页是**未登录可见**的营销页，拿不到「该用户可用模型」（那需要登录态），
-  // 所以这里用一个平台真实支持、且在任何分组里都常见的现役模型名；
-  // 登录后的控制台会显示该账号**实际可用**的模型名（见 ConsolePage 的 sampleModel）。
-  const SAMPLE_MODEL = "deepseek-flash";
+  // SAMPLE_MODEL 是模块级常量（见文件顶部），这里不再重复声明
   const systemName = status?.system_name || "OOAPI";
 
   // 管理员注册开关控制
@@ -225,7 +228,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model=SAMPLE_MODEL,
+    model="${SAMPLE_MODEL}",
     messages=[
         {"role": "user", "content": "请介绍系统核心能力与网关架构"}
     ],
@@ -245,7 +248,7 @@ const client = new OpenAI({
 });
 
 const stream = await client.chat.completions.create({
-  model: SAMPLE_MODEL,
+  model: "${SAMPLE_MODEL}",
   messages: [
     { role: "user", content: "请介绍系统核心能力与网关架构" }
   ],
@@ -259,7 +262,7 @@ for await (const chunk of stream) {
     langchain: `from langchain_openai import ChatOpenAI
 
 chat = ChatOpenAI(
-    model=SAMPLE_MODEL,
+    model="${SAMPLE_MODEL}",
     openai_api_base="${cleanEndpoint}",
     openai_api_key="sk-your-token",
     temperature=0.7,
