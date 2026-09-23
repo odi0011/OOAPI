@@ -448,7 +448,16 @@
   cursor: pointer;
 }
 .bui-chip-file button:hover { background: var(--line); color: var(--ink); }
-.bui-chip-file img { width: 20px; height: 20px; object-fit: cover; border-radius: 4px; }
+/* 附件缩略图：原为 20×20 —— 贴 8 张图时全是认不出内容的小方块
+   （黑盒测试实测：「完全认不出哪张」）。放大到 36px 并保持 chip 不换行。 */
+.bui-chip-file img {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex: 0 0 auto;
+}
+.bui-chip-file { align-items: center; }
 
 /* 上弹菜单：bottom-full mb-2 rounded-[10px] bg-surface p-1 */
 .bui-upmenu {

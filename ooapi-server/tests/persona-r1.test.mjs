@@ -260,8 +260,50 @@ t("隐藏/恢复帖子要同步话题计数、删除不能重复扣", () => {
     "删除没有按原状态判断，隐藏后再删会重复扣减");
 });
 
+/* ============ ⑫ 注册限流不再把「第一次来的人」挡在门外 ============ */
+console.log("\n=== ⑫ 注册限流（阿强：第一次点注册就 429）===");
+t("成功注册不计数（只惩罚失败），并有小时级总量兜底", () => {
+  const rl = read("src/middleware/ratelimit.js");
+  ck(/skipSuccessful/.test(rl), "限流中间件没有 skipSuccessful 选项");
+  ck(/if \(res\.statusCode >= 400\) hits\.push/.test(rl), "不是只在失败时计数");
+  const auth = stripComments(read("src/routes/auth.js"));
+  ck(/registerFailLimit/.test(auth), "没有失败层限流");
+  ck(/registerTotalLimit/.test(auth), "没有总量层限流（放开成功计数就等于不限量）");
+  ck(/registerTotalLimit,\s*\r?\n\s*registerFailLimit,/.test(auth), "两层顺序不对（总量应先判）");
+});
+
+/* ============ ⑬ 网关未实现端点返回 JSON 而不是 HTML ============ */
+console.log("\n=== ⑬ /v1 未知端点（老张：HTML 错误页混在 JSON API 里）===");
+t("网关兜底返回 JSON 404 并列出支持的端点", () => {
+  const idx = stripComments(read("src/index.js"));
+  ck(/endpoint_not_supported/.test(idx), "没有 JSON 兜底 404");
+  ck(/GATEWAY_ENDPOINTS/.test(idx), "没有列出支持的端点");
+  ck(/app\.use\(\["\/v1", "\/api\/v1"\]/.test(idx), "兜底没有覆盖 /v1 与 /api/v1");
+});
+
+/* ============ ⑭ 暗色空状态插画可见 ============ */
+console.log("\n=== ⑭ 暗色空状态插画（Mia：对比度 1.1:1）===");
+t("Empty 插画的填充 token 跟主题走", () => {
+  const web = readFileSync(path.join(root, "..", "ooapi-web", "src", "theme", "ThemeContext.jsx"), "utf8");
+  ck(/colorFill: s\.line/.test(web), "colorFill 没跟主题（插画会是 AntD 默认的近黑色）");
+  ck(/colorFillQuaternary: s\.field/.test(web), "colorFillQuaternary 没跟主题");
+});
+
+/* ============ ⑮ 手机端触控目标 ============ */
+console.log("\n=== ⑮ 触控目标（Mia：26×26 容易点错）===");
+t("窄屏放大了图标按钮/分段控件/分页的命中区域", () => {
+  const css = readFileSync(path.join(root, "..", "ooapi-web", "src", "styles.css"), "utf8");
+  ck(/pointer: coarse/.test(css), "没有针对触屏的媒体查询");
+  ck(/\.oo-header \.ant-btn \{ min-width: 40px/.test(css), "顶栏按钮没放大");
+  ck(/\.ant-pagination-item/.test(css), "分页没放大");
+});
+t("聊天附件缩略图放大到 36px", () => {
+  const css = readFileSync(path.join(root, "..", "ooapi-web", "src", "components", "beautifului.css"), "utf8");
+  ck(/\.bui-chip-file img \{[\s\S]{0,90}width: 36px/.test(css), "缩略图没放大（贴多张图认不出）");
+});
+
 /* ============ 语法校验（改坏一个字符就全站 500）============ */
-console.log("\n=== ⑫ 改动的文件语法可解析 ===");
+console.log("\n=== ⑯ 改动的文件语法可解析 ===");
 for (const f of [
   "src/routes/gateway.js",
   "src/routes/chat.js",

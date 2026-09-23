@@ -3612,3 +3612,73 @@ h1, h2, h3, h4 {
 }
 /* 禁用态（表头勾选/批量操作中）不要动效，避免看起来能点 */
 .oo-toggle41 input[type="checkbox"]:disabled::before { transition: none; }
+
+/* ===========================================================================
+   超窄屏（≤360px）顶栏收敛
+   ===========================================================================
+   实测（黑盒测试在 320×640 视口量的）：
+     · `documentElement.scrollWidth 335 > 320` —— **整页横向可滚**
+     · `.oo-user-chip right=335`、`.oo-user-name right=326` —— 头像/昵称顶出屏幕
+     · 面包屑高度变成 104px（被挤成两行）
+   390/430/768 都正常，只有 ≤360 有问题。
+
+   做法：窄到这份上时，昵称只留头像、面包屑收成单行、间距收紧。
+   宁可少显示信息，也不要让页面横向滚动（横滚会让**每个页面**的
+   「右侧内容」都够不着，比少个字严重得多）。 */
+@media (max-width: 380px) {
+  .oo-header-left,
+  .oo-header-right { gap: 4px; }
+  /* 昵称文字收起来，保留头像（头像 click 仍可进菜单） */
+  .oo-user-name { display: none; }
+  .oo-user-chip { padding: 0 3px; gap: 0; }
+  /* 面包屑单行省略：中间层级隐藏，只留最后一级 */
+  .oo-crumb { min-width: 0; overflow: hidden; }
+  .oo-crumb > span:not(.oo-crumb-current):not(.oo-crumb-sep) { display: none; }
+  .oo-crumb-sep { display: none; }
+  .oo-crumb-current { max-width: 130px; }
+  /* 首页头部品牌名：原被裁成「OO…」（实测 cw 46 / sw 56 —— 容器只给了 46px） */
+  .hr-brand { flex-shrink: 0; }
+  .hr-brand > span { max-width: none; overflow: visible; }
+  /* 首页「POST /v1/chat/completions」徽章：实测 right=393 > 390 溢出 3px。
+     它是一段长且不可断的路径文本，窄屏下必须允许换行 */
+  .hr-badge-method {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    max-width: 100%;
+  }
+  .hr-pane-header { flex-wrap: wrap; gap: 4px; }
+}
+
+/* ===========================================================================
+   手机端触控目标（黑盒测试实测偏小）
+   ===========================================================================
+   实测值（390×844 视口）：顶栏「打开导航」26×26、主题切换 .ant-segmented-item
+   28×22、令牌/媒体库行内图标按钮 26×26、分页按钮 30×30 —— 均低于 44×44 的
+   通行触控标准，用户（尤其是测试里那位设计师）反馈「经常点错」。
+
+   做法：只在**触屏 + 窄屏**下放大命中区域，且用 min-height/min-width
+   而不是改字号/图标尺寸（视觉不变，只让手指更容易点中）。
+   桌面（有鼠标）不受影响。
+   =========================================================================== */
+@media (max-width: 767px) and (pointer: coarse), (max-width: 560px) {
+  /* 顶栏图标按钮（打开导航 / 主题切换入口） */
+  .oo-header .ant-btn { min-width: 40px; min-height: 40px; }
+
+  /* 主题/语言等分段控件 */
+  .oo-seg .ant-segmented-item { min-height: 36px; min-width: 40px; }
+  .ant-segmented-item { min-height: 36px; }
+
+  /* 表格行内操作按钮（令牌禁用/删除、媒体库下载/删除等） */
+  .oo-table .ant-btn-sm,
+  .ant-table-cell .ant-btn-sm { min-width: 36px; min-height: 36px; }
+
+  /* 分页 */
+  .ant-pagination-item,
+  .ant-pagination-prev,
+  .ant-pagination-next { min-width: 36px; height: 36px; line-height: 34px; }
+
+  /* 输入框类控件：手机上统一给足高度，避免误触相邻元素 */
+  .ant-input-affix-wrapper,
+  .ant-select-selector { min-height: 36px; }
+}
+

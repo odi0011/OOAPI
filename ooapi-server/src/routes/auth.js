@@ -21,7 +21,23 @@ function passwordTooLong(pwd) {
 
 // 登录/注册限流：防暴力破解与批量刷号
 const loginLimit = rateLimit({ windowMs: 60_000, max: 20, keyPrefix: "login" });
-const registerLimit = rateLimit({ windowMs: 300_000, max: 5, keyPrefix: "register" });
+// 注册限流分两层（旧实现只有一条「5 次/5 分钟」，对共用出口极不友好）：
+//
+//   ① 失败层：5 次失败 / 5 分钟 —— 这才是滥用信号（撞用户名、刷号脚本）。
+//      `skipSuccessful` 让成功注册**不计数**，因为同一 IP 连续注册成功
+//      通常说明是真实组织（公司/学校/家庭共用出口），不是攻击。
+//   ② 总量层：30 次 / 小时 —— 兜底防「无限量注册」，正常团队远用不到。
+//
+// 改前的实测问题（黑盒测试报的）：「新用户**第一次**打开站点点『创建账户』
+// 就吃 429『请求过于频繁，请 78 秒后再试』」—— 因为同 IP 已有其他人注册过。
+// 办公室/NAT/校园网下第一批用户会集体卡在这一步，而这是他们见到平台的**第一屏**。
+const registerFailLimit = rateLimit({
+  windowMs: 300_000,
+  max: 5,
+  keyPrefix: "register-fail",
+  skipSuccessful: true,
+});
+const registerTotalLimit = rateLimit({ windowMs: 3_600_000, max: 30, keyPrefix: "register-total" });
 
 router.post(
   "/login",
@@ -50,7 +66,8 @@ router.post(
 
 router.post(
   "/register",
-  registerLimit,
+  registerTotalLimit,
+  registerFailLimit,
   asyncHandler(async (req, res) => {
     const { username, password, email, invite_code } = req.body || {};
     if (!getBoolOption("password_register_enabled")) return fail(res, "系统未开放注册", 403);

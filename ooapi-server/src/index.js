@@ -82,6 +82,35 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/v1", gatewayRoutes); // 对外网关：OpenAI / Anthropic / Responses 兼容
 app.use("/api/v1", gatewayRoutes); // 兼容以 /api/v1 为 Base URL 的三方客户端
 
+// 网关未实现的端点 → **JSON 404**，而不是 Express 默认的 HTML 错误页。
+//
+// 黑盒测试实测（老张的原话）：「没宣告不支持；HTML 错误页混在 JSON API 里不好处理」
+// —— `/v1/embeddings`、`/v1/completions`、`/v1/images/generations` 都返回
+// `<pre>Cannot POST /v1/embeddings</pre>`（HTML）。客户端 SDK 按 JSON 解析会
+// 抛出一个语焉不详的解析错误，把「这个端点我们没做」误报成「服务端返回了垃圾」。
+// 同理 `GET /v1/chat/completions`（应该用 POST）也返回 HTML。
+//
+// 这里给出与 OpenAI 同形的错误体，并**明确列出本平台支持的端点**，
+// 让调用方一眼知道是「没这个功能」还是「路径写错了」。
+const GATEWAY_ENDPOINTS = [
+  "POST /v1/chat/completions",
+  "POST /v1/messages",
+  "POST /v1/responses",
+  "GET /v1/models",
+];
+app.use(["/v1", "/api/v1"], (req, res) => {
+  res.status(404).json({
+    error: {
+      message:
+        `本平台未实现端点 ${req.method} ${req.baseUrl}${req.path}。` +
+        `支持的端点：${GATEWAY_ENDPOINTS.join("、")}`,
+      type: "invalid_request_error",
+      code: "endpoint_not_supported",
+      supported_endpoints: GATEWAY_ENDPOINTS,
+    },
+  });
+});
+
 // 兼容客户端直接向根路径发送补全请求（如省略 /v1）
 app.post("/chat/completions", (req, res, next) => {
   req.url = "/chat/completions";
