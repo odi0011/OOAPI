@@ -491,14 +491,15 @@ export function QuotaInline({ quota, stats }) {
              用户反馈：「比如那个 gpt 的积分 free，人家就俩 tag，一个余额一个套餐 tag，
              你给折叠干啥啊？」—— 装得下就全显示，只有真的超出容量才收进 `+N`。 */}
       {balanceChip || shownChips.length || chipsOverflow > 0 ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", minWidth: 0 }}>
           {balanceChip ? (
-            <span style={{ minWidth: 0, flexShrink: 1, display: "inline-flex" }}>
+            // wrapper 不再收缩：让 chip 保持内容宽度，装不下就换行（而不是被切掉半个数字）
+            <span style={{ display: "inline-flex", maxWidth: "100%" }}>
               <InfoPill tone={balanceChip.tone}>{balanceChip.node}</InfoPill>
             </span>
           ) : null}
           {shownChips.map((x) => (
-            <span key={x.key} style={{ minWidth: 0, flexShrink: 1, display: "inline-flex" }}>
+            <span key={x.key} style={{ display: "inline-flex", maxWidth: "100%" }}>
               <InfoPill tone={x.tone}>{x.node}</InfoPill>
             </span>
           ))}

@@ -384,7 +384,18 @@ export async function fetchCredits(channel) {
     }
     size += s;
     remain += r;
-    const name = String(a.PackageName || a.DealName || "积分包");
+    // 上游的 PackageName 是英文长串（实测：「Free Plan Subscription」「Bonus Pack」），
+    // 直接展示会占掉大半行宽度、把额度列挤爆。做**机械的短名映射**（不丢语义）：
+    // 免费套餐包 → 套餐包；Bonus/赠送 → 赠送包；其余原样截断到 12 字。
+    // 不改上游数据，只改展示名 —— 额度列是窄列，名字只是区分用途。
+    const rawName = String(a.PackageName || a.DealName || "积分包");
+    const name = /free\s*plan|subscription/i.test(rawName)
+      ? "套餐包"
+      : /bonus|gift|grant/i.test(rawName)
+        ? "赠送包"
+        : rawName.length > 12
+          ? `${rawName.slice(0, 12)}…`
+          : rawName;
     lines.push({
       label: name,
       total: Math.round(r * 100) / 100,
