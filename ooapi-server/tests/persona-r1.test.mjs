@@ -283,10 +283,40 @@ t("网关兜底返回 JSON 404 并列出支持的端点", () => {
 
 /* ============ ⑭ 暗色空状态插画可见 ============ */
 console.log("\n=== ⑭ 暗色空状态插画（Mia：对比度 1.1:1）===");
-t("Empty 插画的填充 token 跟主题走", () => {
+t("Empty 插画的填充 token 写在**全局**层且转成 hex", () => {
   const web = readFileSync(path.join(root, "..", "ooapi-web", "src", "theme", "ThemeContext.jsx"), "utf8");
-  ck(/colorFill: s\.line/.test(web), "colorFill 没跟主题（插画会是 AntD 默认的近黑色）");
-  ck(/colorFillQuaternary: s\.field/.test(web), "colorFillQuaternary 没跟主题");
+  const presets = readFileSync(path.join(root, "..", "ooapi-web", "src", "theme", "presets.js"), "utf8");
+  // ① 必须在全局 token 层：插画读的是 useToken()，写进 components.Empty 不生效
+  //    （我第一版就写在那里，实测插画仍是 rgb(20,20,20)）
+  //
+  // 用行首锚定 `\n      components: {` 定位全局 token 块的结束 ——
+  // `web.indexOf("components:")` 会先命中注释里那句 "写在 components: {...} 里不会生效"，
+  // 把分界点算到 92 行（注释），于是误判「没写在全局层」。
+  const compIdx = web.search(/\n\s{4,}components:\s*\{/);
+  ck(compIdx > 0, "没找到 components 配置块");
+  const globalPart = web.slice(0, compIdx);
+  ck(/colorFill: oklchToHex\(s\.line\)/.test(globalPart),
+    "colorFill 没写在全局 token 层（组件层覆盖对插画无效）");
+  ck(/colorFillQuaternary: oklchToHex\(s\.field\)/.test(globalPart), "colorFillQuaternary 没写在全局层");
+  // ② 必须转 hex：AntD 的颜色合成库不认 oklch，解析失败退化成纯黑
+  ck(/export function oklchToHex/.test(presets), "没有 oklchToHex 转换器");
+  ck(!/colorFill: s\.line\b/.test(web), "colorFill 直接给了 oklch（AntD 会算成纯黑）");
+});
+
+t("oklchToHex 转换数值正确（手算对照）", () => {
+  const presets = readFileSync(path.join(root, "..", "ooapi-web", "src", "theme", "presets.js"), "utf8");
+  const body = presets.match(/export function oklchToHex[\s\S]*?\n\}/)[0].replace("export function", "function");
+  const fn = new Function(`${body}; return oklchToHex;`)();
+  const cases = [
+    ["oklch(30.8% 0.006 258.354)", "#2e3033"],
+    ["oklch(27.8% 0.006 258.354)", "#27282b"],
+    ["oklch(29.3% 0.006 271.223)", "#2b2c2f"],
+    ["oklch(94.6% 0.003 264.542)", "#ecedef"],
+  ];
+  for (const [input, want] of cases) {
+    ck(fn(input) === want, `${input} → ${fn(input)}（期望 ${want}）`);
+  }
+  ck(fn("#abcdef") === "#abcdef", "非 oklch 输入应原样返回");
 });
 
 /* ============ ⑮ 手机端触控目标 ============ */

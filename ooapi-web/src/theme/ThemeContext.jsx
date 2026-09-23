@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
 import { ConfigProvider, theme as antdTheme } from "antd";
 import zhCN from "antd/locale/zh_CN";
-import { SURFACES, applyCssVars, DEFAULT_PRIMARY, tint } from "./presets";
+import { SURFACES, applyCssVars, DEFAULT_PRIMARY, tint, oklchToHex } from "./presets";
 
 const MODE_KEY = "ooapi-theme";
 const PRIMARY_KEY = "ooapi-primary";
@@ -98,9 +98,13 @@ export function ThemeProvider({ children }) {
         // 合成到我们的暗色面板上就是「一块糊黑」（黑盒测试实测报上来的）。
         // 这里显式指向调色板里的 line / lineSoft —— 两种主题下都过了对比度校验，
         // 且随主题切换自动跟随。
-        colorFill: s.line,
-        colorFillTertiary: s.lineSoft,
-        colorFillQuaternary: s.field,
+        //
+        // **必须 oklchToHex**：调色板是 oklch，而 AntD 的颜色合成库不认 oklch
+        //（解析失败退化成纯黑，实测 rgb(0,0,0)、对比度 1.15:1 —— 换了个黑法而已）。
+        // 见 presets.js 里 oklchToHex 的说明。
+        colorFill: oklchToHex(s.line),
+        colorFillTertiary: oklchToHex(s.lineSoft),
+        colorFillQuaternary: oklchToHex(s.field),
 
         // 几何：对齐 beautifului 圆角阶梯
         borderRadius: 8,

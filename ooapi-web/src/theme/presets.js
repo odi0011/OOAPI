@@ -144,6 +144,47 @@ export function applyCssVars(resolved, primary) {
   set("--accent-tint", pv.accentTint);
 }
 
+/**
+ * oklch 字符串 → sRGB hex。
+ *
+ * 为什么需要：AntD 内部用 `@ant-design/fast-color` 做颜色合成，而它**不认 oklch**
+ * （解析失败会退化成纯黑）。我们的调色板全是 oklch（品牌色支持运行时切换，
+ * oklch 的感知均匀性正是为此），于是凡是要交给 AntD 参与计算的 token
+ * 都必须先转成 hex。
+ *
+ * 实测踩到的具体后果：空状态插画（Empty.PRESENTED_IMAGE_SIMPLE）的填充色由
+ * `new FastColor(colorFill).onBackground(colorBgContainer).toHexString()` 算出，
+ * 传 oklch 进去得到 `rgb(0,0,0)` —— 暗色面板上对比度 1.15:1（几乎不可见），
+ * 亮色下是纯黑实心方块。
+ *
+ * 按 CSS Color 4 标准矩阵实现（oklch → oklab → linear sRGB → sRGB）。
+ * 输入形如 "oklch(30.8% 0.006 258.354)"；非 oklch 输入原样返回。
+ */
+export function oklchToHex(value) {
+  const str = String(value || "").trim();
+  const m = str.match(/^oklch\(\s*([\d.]+)%?\s+([\d.]+)\s+([\d.]+)/i);
+  if (!m) return str;
+  const L = Number(m[1]) / 100;
+  const C = Number(m[2]);
+  const h = (Number(m[3]) * Math.PI) / 180;
+  const a = C * Math.cos(h);
+  const b = C * Math.sin(h);
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const mm = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (L - 0.0894841775 * a - 1.2914855480 * b) ** 3;
+  const lin = [
+    4.0767416621 * l - 3.3077115913 * mm + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * mm - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * mm + 1.7076147010 * s,
+  ];
+  const to255 = (x) => {
+    const c = Math.max(0, Math.min(1, x));
+    const g = c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+    return Math.round(Math.max(0, Math.min(1, g)) * 255);
+  };
+  return "#" + lin.map((x) => to255(x).toString(16).padStart(2, "0")).join("");
+}
+
 // 派生半透明色（用于 antd 的选中底色等）
 export function tint(hex, alpha) {
   const h = String(hex).replace("#", "");
