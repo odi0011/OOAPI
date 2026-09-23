@@ -831,24 +831,27 @@ async function handleCompletion(protocol, req, res) {
         // 在唯一收敛点截断，三种协议、所有渠道口径一致。
         // 估算沿用计费的 estimateTokens（字符数/3），所以是**近似上限**：
         // 宁可略超也不误伤短回复（精确值要等上游返回 usage，来不及）。
-        const before = emitted.length;
-        emitted += t;
-        if (maxOutTokens > 0) {
-          // 超出上限：只送出还能放下的那一段，其余丢弃（但仍留在 partialOut 里，
-          // 保证「上游已产出」这件事如实反映到计费上）
-          if (estimateTokens(emitted) > maxOutTokens) {
-            outputTruncated = true;
-            const room = Math.max(0, maxOutTokens * 3 - before);
-            const keep = t.slice(0, room);
-            if (keep && wantStream) {
+        // partialOut 始终记录**上游真实产出**（含被截断丢弃的部分）——
+        // 它是「上游消耗了多少」的审计依据，与「用户收到多少」是两回事。
+        partialOut += t;
+        // 已经截断过：后续增量一律不再下发（但继续记账）
+        if (outputTruncated) return;
+        if (maxOutTokens > 0 && estimateTokens(emitted + t) > maxOutTokens) {
+          outputTruncated = true;
+          // 只送出还放得下的那一段。估算口径与 estimateTokens 一致（3 字符/token），
+          // 所以「还能放多少字符」= maxOutTokens*3 - 已发字符数。
+          const room = Math.max(0, maxOutTokens * 3 - emitted.length);
+          const keep = t.slice(0, room);
+          if (keep) {
+            emitted += keep;
+            if (wantStream) {
               startStream();
               protocol.delta(protoState, keep);
             }
-            partialOut += t; // 计费按上游真实产出
-            return;
           }
+          return;
         }
-        partialOut += t;
+        emitted += t;
         if (wantStream) {
           startStream();
           protocol.delta(protoState, t);
