@@ -807,6 +807,19 @@ export async function explainNoChannel({ model, groupName = null } = {}) {
   const [[disabled]] = await pool.query("SELECT COUNT(*) AS c FROM channels WHERE status != 1");
 
   if (!all.length) return { reason: "EMPTY", message: "平台还没有配置任何渠道，请在渠道管理中添加" };
+  // **该分组下一个渠道都没有** —— 用户要求（原话）：
+  //   「分组如果渠道为空则直接也是调用时返回当前密钥绑定分组 xx 下无可用渠道」
+  //
+  // 这种情况与「有渠道但都不支持这个模型」是**两件不同的事**，排查方向完全相反：
+  //   · 分组没渠道   → 管理员忘了给分组绑渠道（去分组管理 / 渠道编辑里绑）
+  //   · 有渠道无模型 → 该分组确实不提供这个模型（去渠道里补模型声明）
+  // 合并成一句「没有可用渠道支持模型 X」会让管理员去查渠道的模型声明，白费功夫。
+  if (groupName && !inGroup.length) {
+    return {
+      reason: "GROUP_EMPTY",
+      message: `当前密钥绑定的分组「${groupName}」下没有可用渠道，请联系管理员把渠道绑定到该分组`,
+    };
+  }
   if (cooling.length && cooling.length === forModel.length) {
     // 只回数量、不回渠道名：这条 message 会原样返回给 API 调用方、也会进普通用户可见的
     // 错误日志，而渠道名通常是上游账号邮箱（等于泄露供应商/账号身份）。

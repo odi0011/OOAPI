@@ -16,7 +16,7 @@ import { getPrice, computeCost, splitTokens, effectivePrice, isModelPriced, UNIT
 // 变成 500（用户只看到"服务器内部错误"，日志里却只有一条引用错误）。
 import { groupConfigOf, applyGroupRate, displayGroupName } from "../services/group-rate.js";
 import { allPublicModels, modelForChannelMatch, resolveAliasSync, modelRegistry } from "../services/models.js";
-import { collectAvailableModels } from "../services/router.js";
+import { collectAvailableModels, channelInGroup, rowToChannel } from "../services/router.js";
 import { PROTOCOLS } from "../services/gateway-protocols.js";
 
 const router = express.Router();
@@ -34,26 +34,81 @@ router.use(express.json({ limit: "50mb" }));
 
 // ---------- 对外可用模型列表（平台真实模型 + 兼容别名）----------
 // 与 OpenAI 一致需要鉴权，避免匿名枚举全量模型目录
+//
+// 用户实测反馈（原话）：「我创建了一个分组叫 deepseek，然后创建一个密钥也叫 deepseek，
+// 这个分组我设定只能走俩模型，但是我在外部调用 api，还是能拿到这个分组里全部渠道支持的
+// 模型，并且是 21 个模型？外部调用甚至没去重自动调度？你不是检查了吗？这是你检查的结果吗？」
+//
+// 他说得对，这里原先有三个真实缺陷（全部已复现）：
+//   ① **完全没按分组过滤** —— 直接 `SELECT * FROM channels WHERE status = 1`，
+//      把全平台渠道的模型都算进 available。于是「分组限 2 个模型」的密钥
+//      却看到 21 个（含 glm-5.3、gpt-5.6-luna 等它根本调不了的）。
+//      客户端按这份清单选模型，选了就被 503「分组限制了可用模型」拒 —— 列表与能力不一致。
+//   ② **没去重** —— 输出里 deepseek-v4-pro / glm-5.3 / gpt-5.6-luna 各出现 3 次
+//      （allPublicModels 同时返回真实模型与兼容别名，两边都命中过滤器）。
+//   ③ 分组没配「可用模型」时也没限制到「该分组下的渠道」。
+//
+// 正确语义（与 selectChannels / explainNoChannel 同一套判定，三处必须一致）：
+//   能调的模型 = 该密钥所属分组下的启用渠道所支持的模型 ∩ 分组配置的 models 白名单
 router.get(
   "/models",
   asyncHandler(async (req, res) => {
     const auth = req.auth;
     if (!auth) return;
+    const { token, user } = auth;
+    const groupName = displayGroupName(token?.group_name || user?.group_name);
+
+    // ① 只取**该分组下的**启用渠道（与 selectChannels 的 channelInGroup 同一判定）。
+    //    没绑分组的密钥在这里就被拦下（见下面 authorizeAllowsNoGroup 的说明），
+    //    所以 groupName 一定有值。
     const [rows] = await pool.query("SELECT * FROM channels WHERE status = 1");
-    // 可用模型 = 各渠道「显式声明的模型」∪「models 留空渠道所属厂商的全部模型」。
-    // 不能只看 models 字段：留空代表该厂商全部模型，漏掉这部分会让客户端看不到能调的模型。
-    const available = collectAvailableModels(rows);
+    const inGroup = rows.filter((r) => channelInGroup(rowToChannel(r), groupName));
+    const available = collectAvailableModels(inGroup);
+
+    // ② 分组配置的模型白名单（分组管理里设的「只能走这俩模型」就是它）
+    const cfg = await groupConfigOf(groupName);
+    const allowPatterns = Array.isArray(cfg?.models) ? cfg.models.filter(Boolean) : [];
+    const allowedByGroup = (id) => {
+      if (!allowPatterns.length) return true; // 分组没设白名单 = 不限模型
+      const m = String(id).toLowerCase();
+      return allowPatterns.some((p) => {
+        const pat = String(p).toLowerCase();
+        if (pat === "*") return true;
+        if (pat.endsWith("*")) return m.startsWith(pat.slice(0, -1));
+        return pat === m;
+      });
+    };
+
     const all = await allPublicModels();
-    const list = all.filter((m) => available.has(m.id.toLowerCase()) || available.has("*") || available.size === 0);
+    const list = all.filter((m) => {
+      const id = String(m.id).toLowerCase();
+      // 渠道能力：显式声明的模型 or 通配
+      const byChannel = available.has(id) || available.has("*") || available.size === 0;
+      return byChannel && allowedByGroup(id);
+    });
+
+    // ③ 去重：同一 id 只保留一条（真实模型优先于兼容别名）。
+    //    别名（kimi-latest、qwen-turbo 这类）与真实模型会同时命中上面的过滤器，
+    //    不去重就会出现「同一个模型在清单里出现 3 次」。
+    const seen = new Map();
+    for (const m of list) {
+      const key = String(m.id).toLowerCase();
+      const prev = seen.get(key);
+      // 已有真实模型就把别名挤掉；否则保留先到的
+      if (!prev || (prev.aliasOf && !m.aliasOf)) seen.set(key, m);
+    }
+
     res.json({
       object: "list",
-      data: list.map((m) => ({
+      data: [...seen.values()].map((m) => ({
         id: m.id,
         object: "model",
         // owned_by 用厂商类型，便于客户端区分模型来源
         owned_by: m.aliasOf ? m.vendor : m.vendor || m.aliasOf || "unknown",
         ...(m.vendorName ? { vendor_name: m.vendorName } : {}),
-        ...(m.aliasOf ? { alias_of: m.aliasOf, deprecated: true } : {})}))});
+        ...(m.aliasOf ? { alias_of: m.aliasOf, deprecated: true } : {}),
+      })),
+    });
   })
 );
 
@@ -97,6 +152,26 @@ async function authorize(req, res) {
   if (Number(user.quota) <= 0) {
     res.status(403).json({
       error: { message: `账户 ${CURRENCY} 币余额不足，请联系管理员充值`, type: "insufficient_user_quota", code: "insufficient_user_quota" }});
+    return null;
+  }
+  // 密钥必须绑定分组 —— 用户要求（原话）：
+  //   「我说了密钥必须绑定分组。如果密钥没绑定分组则直接调用的时候报错啊」
+  //
+  // 为什么必须在**调用时**也拦，而不只是在创建时拦：
+  //   · 历史密钥（在「必须绑分组」这条规则上线之前建的）身上是空的，
+  //     它们仍然能用，且因为没有分组 → `channelInGroup(c, "")` 只匹配**同样没分组的渠道**
+  //     → 走到一批管理员没打算开放的渠道上，计费与可见范围都是不可预期的；
+  //   · 只在前端表单必填是不够的（直连 API、脚本、旧客户端都能绕过）。
+  // 所以这里做最后一道闸：空分组直接拒绝，并说清怎么修。
+  if (!String(token.group_name || "").trim()) {
+    res.status(403).json({
+      error: {
+        message:
+          "该 API Key 未绑定分组（已取消「公共池」）。请在「令牌管理」里编辑这把 Key 并选择一个分组后再调用。",
+        type: "invalid_request_error",
+        code: "token_group_required",
+      },
+    });
     return null;
   }
   return { token, user };
@@ -182,16 +257,28 @@ async function fetchRemoteImage(rawUrl) {
   return null;
 }
 
-// 只数图片数量，不抓取（用于超限时快速拒绝，避免对上白张外链发请求）
-function countImageParts(messages) {
-  let count = 0;
+// 图片数量上限（按来源分开，因为两类代价完全不同）：
+//   · 外链图片：每张都要发一次带凭据的 HTTP 请求 → SSRF/DoS 面 → 严格限制
+//   · base64 内嵌：已在请求体里，解码是纯内存操作 → 宽松上限，只防荒唐输入
+// 早先两者共用「3 张」的硬上限，用户贴 4 张截图（完全正常）就被拒。
+const MAX_REMOTE_IMAGES = 8;
+const MAX_INLINE_IMAGES = 30;
+
+// 按来源数图片，不抓取（超限时快速拒绝，避免对上白张外链发请求）
+function countImagePartsByKind(messages) {
+  let inline = 0;
+  let remote = 0;
   for (const m of messages || []) {
     if (!m || typeof m !== "object" || !Array.isArray(m.content)) continue;
     for (const part of m.content) {
-      if (part?.type === "image_url") count += 1;
+      if (part?.type !== "image_url") continue;
+      const url = String(part.image_url?.url || "");
+      if (/^data:/i.test(url)) inline += 1;
+      else if (/^https?:/i.test(url)) remote += 1;
+      else inline += 1; // 其它形态按内联算（适配器自己会判断能不能用）
     }
   }
-  return count;
+  return { inline, remote };
 }
 
 async function extractImages(messages) {
@@ -376,7 +463,11 @@ async function settle({
     tokenName: token?.name || "",
     // 归一化为纯分组名再写日志：历史绑定值可能是 "厂商:分组名"，原样写会让
     // 同一个分组在日志里出现多种标签，前端按分组聚合/筛选就对不上
-    groupName: displayGroupName(token?.group_name || user?.group_name),
+    // 密钥没绑分组时退回用户分组，最后兜一句「(未绑定分组)」而不是写空：
+    // 空值会让这条记录在「使用记录」页的分组列显示为空、无法按分组聚合
+    //（用户实测反馈过这个现象）。注意这只是**日志展示**的兜底 —— 真正调用前
+    // authorize 已经拦下空分组密钥（见 token_group_required），正常不会再出现空值。
+    groupName: displayGroupName(token?.group_name || user?.group_name) || "(未绑定分组)",
     promptTokens,
     completionTokens,
     cacheTokens,
@@ -486,9 +577,40 @@ async function handleCompletion(protocol, req, res) {
   // 是否支持视觉也由适配器判断，网关不预设能力
   const matchModel = modelForChannelMatch(model) || model;
   const wantSearch = /-search$/i.test(String(model || ""));
-  // 先数图片数量：超 3 张走「不支持」分支，绝不先抓取（防外链 DoS）
-  const imageCount = countImageParts(messages);
-  const images = imageCount > 3 ? [] : await extractImages(messages);
+  // 图片数量与来源分类。
+  //
+  // 用户实测反馈（原话）：「为啥老是报『不支持三张以上图片，请修改问题或切换对话窗口！』？
+  // 这他妈是正常的问题吗，需要解决掉」—— 他说得对，这里有**两个**真实缺陷：
+  //
+  //   ① **上限的口径错了**：3 张的初衷是防「外链图片」的抓取 DoS
+  //      （每个 URL 都要发一次带凭据的 HTTP 请求，几十上百个就是 SSRF/DoS 面）。
+  //      但 base64 图片**已经在请求体里了**、解码是纯内存操作，抓不到任何东西 ——
+  //      把两者一起卡在 3 张，等于用户贴 4 张截图（完全正常的用法）就被拒。
+  //   ② **拒绝方式错的更离谱**：原先不是报错，而是**伪造一条模型回复**
+  //      （把提示词当成模型说出的话返回）。用户问 A，收到「不支持三张以上图片」，
+  //      看起来像模型答非所问 —— 比直接报错还难排查。
+  //
+  // 现在：base64 只做「防荒唐」的宽松上限，外链单独限（真正的 DoS 面），
+  // 超限走协议层**标准错误**（三种 SDK 都能正常解析成 error）。
+  const imgKinds = countImagePartsByKind(messages);
+  const localCount = imgKinds.inline;
+  const remoteCount = imgKinds.remote;
+  const images = await extractImages(messages);
+
+  // 外链过多：这才是需要拦的那一类（每个 URL 一次出站请求）
+  if (remoteCount > MAX_REMOTE_IMAGES) {
+    return protocol.error(res, 400, {
+      message: `单次请求最多支持 ${MAX_REMOTE_IMAGES} 张**外链图片**（当前 ${remoteCount} 张）。请改为上传图片（base64 内嵌）或分成多次请求。`,
+      code: "too_many_remote_images",
+    }, { id: requestId });
+  }
+  // base64 过多：纯内存开销，给一个宽松上限防荒唐输入（100 张 20MB 图 = 2GB 内存）
+  if (localCount > MAX_INLINE_IMAGES) {
+    return protocol.error(res, 400, {
+      message: `单次请求最多支持 ${MAX_INLINE_IMAGES} 张图片（当前 ${localCount} 张），请分批发送。`,
+      code: "too_many_images",
+    }, { id: requestId });
+  }
 
   // 客户端可显式覆盖深度思考（兼容官方 thinking / reasoning_effort 语义）
   let thinkingOverride;
@@ -501,35 +623,9 @@ async function handleCompletion(protocol, req, res) {
     thinkingOverride = String(body.reasoning_effort).toLowerCase() !== "none";
   }
 
-  // 超 3 张图：以正常回复形式告知，避免打断调用方。
-  //
-  // **必须走当前 protocol 的渲染**：这里原先写死了 `chat.completion` 的
-  // JSON/SSE 帧，于是 /v1/messages（Anthropic SDK）与 /v1/responses（Codex）
-  // 的客户端会收到 chat 形状的响应 —— 官方 SDK 解析不了，报的是协议错误而不是
-  // 「图片太多」。同一处代码在三个入口共用，写死一种形状必然错两种。
-  if (imageCount > 3) {
-    const notice = "不支持三张以上图片，请修改问题或切换对话窗口！";
-    // 没调上游、没产生 token：按零用量收尾（既不计费，也不污染日志）
-    const zero = {
-      promptTokens: 0,
-      completionTokens: 0,
-      cacheTokens: 0,
-      od: 0,
-      currency: CURRENCY,
-      channel: "",
-      elapsed: 0,
-    };
-    if (wantStream) {
-      const st = protocol.openStream(res, requestId, model);
-      protocol.delta(st, notice);
-      protocol.done(res, st, { settled: zero });
-    } else {
-      protocol.finish(res, { id: requestId, model, content: notice, reasoning: "", settled: zero });
-    }
-    return;
-  }
-  // 图片校验交由各厂商适配器判断（不同厂商支持的模型不同），
-  // 网关只做「超 3 张」的通用限制（见上）。
+  // 图片数量校验已在上方完成（走协议层标准错误，见那里的说明）。
+  // 这里不再有「伪造一条模型回复」的分支 —— 那是用户实测反馈的核心问题：
+  // 明明是一个参数错误，却伪装成模型的回答，比报错更难排查。
 
   const prompt = messagesToPrompt(messages);
   let streamStarted = false;
@@ -710,7 +806,11 @@ async function handleCompletion(protocol, req, res) {
       tokenName: token?.name || "",
       // 归一化为纯分组名再写日志：历史绑定值可能是 "厂商:分组名"，原样写会让
     // 同一个分组在日志里出现多种标签，前端按分组聚合/筛选就对不上
-    groupName: displayGroupName(token?.group_name || user?.group_name),
+    // 密钥没绑分组时退回用户分组，最后兜一句「(未绑定分组)」而不是写空：
+    // 空值会让这条记录在「使用记录」页的分组列显示为空、无法按分组聚合
+    //（用户实测反馈过这个现象）。注意这只是**日志展示**的兜底 —— 真正调用前
+    // authorize 已经拦下空分组密钥（见 token_group_required），正常不会再出现空值。
+    groupName: displayGroupName(token?.group_name || user?.group_name) || "(未绑定分组)",
       elapsedMs: Date.now() - startedAt,
       userAgent});
     // 错误码 → HTTP 状态要能区分「调用方请求错」与「网关/上游故障」，
