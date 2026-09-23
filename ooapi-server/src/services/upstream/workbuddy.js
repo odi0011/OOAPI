@@ -417,17 +417,18 @@ export async function fetchCredits(channel) {
     },
     plan: "",
     account: String(c.userId || ""),
-    windows: size > 0
-      ? [{
-          label: "积分余额",
-          key: "credits",
-          usedPercent: (used / size) * 100,
-          limit: size,
-          used,
-          remaining: remain,
-          note: `共 ${size} 积分，剩 ${remain}`,
-        }]
-      : [],
+    // **不产出 windows** —— WorkBuddy 是积分制，没有「5 小时 / 7 天」那种订阅窗口。
+    //
+    // 用户实测反馈：「workbuddy 为什么有额度条？他不是走积分的吗？我线上登录的那个
+    // 也没有订阅啥的」。他说得对：那条「额度条」是这里硬造出来的 ——
+    // 把「已用 101 / 共 220 积分」算成一个百分比塞进 windows，前端就画成了进度条。
+    // 后果是**误导**：进度条在界面上代表「订阅窗口用量」，而这里是「积分消耗比例」，
+    // 两者语义完全不同 —— 账号明明没有订阅，界面上却看起来像有套餐额度。
+    //
+    // 积分正确的位置是 credits（总余额 + 每个包各剩多少），前端渲染成
+    // 「余额 119 积分 / 套餐包 0 / 赠送包 29 …」那组标签 —— 信息更全，
+    // 也不会伪装成订阅窗口。所以这里返回空数组，而不是把积分换个名字继续当窗口。
+    windows: [],
   };
 }
 

@@ -165,5 +165,23 @@ t("旧版那些内部指标不再直接甩给管理员", () => {
   ck(!/attrib\.ruleCount/.test(pricingPage), "界面仍在展示裸的规则条数");
 });
 
+console.log("\n=== ⑥ WorkBuddy 不该有「额度条」（它是积分制）===");
+const wb = read("src/services/upstream/workbuddy.js");
+t("WorkBuddy 不再把积分余额伪装成订阅窗口", () => {
+  const m = wb.match(/export async function fetchCredits[\s\S]*?\n\}/);
+  ck(m, "未找到 fetchCredits");
+  ck(/windows: \[\]/.test(m[0]), "仍在产出 windows（会被前端画成额度条）");
+  ck(!/usedPercent/.test(m[0]), "仍在算 usedPercent（那是订阅窗口才有的概念）");
+});
+t("积分走 credits.lines（总余额 + 每个包各剩多少）", () => {
+  const m = wb.match(/export async function fetchCredits[\s\S]*?\n\}/);
+  ck(/balance: Math\.round\(remain/.test(m[0]), "没有返回总余额");
+  ck(/lines\.push\(\{/.test(m[0]), "没有返回每个包的明细");
+  ck(/unit: "积分"/.test(m[0]), "没有标注单位是积分");
+});
+t("quota.js 的 workbuddy 分派不受影响", () => {
+  ck(/case "workbuddy":/.test(quota), "分派丢了");
+});
+
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
 process.exit(fail ? 1 : 0);
