@@ -302,8 +302,43 @@ t("聊天附件缩略图放大到 36px", () => {
   ck(/\.bui-chip-file img \{[\s\S]{0,90}width: 36px/.test(css), "缩略图没放大（贴多张图认不出）");
 });
 
+/* ============ ⑯ 信息流摘要不再漏 Markdown 标记 ============ */
+console.log("\n=== ⑯ 摘要漏 markdown（Mia）===");
+t("摘要走 summarize 剥离，而不是直接 slice 原文", () => {
+  ck(/function summarize\(/.test(communityCode), "没有 summarize");
+  ck(/summary: withContent \? undefined : summarize\(row\.content/.test(communityCode),
+    "摘要仍在直接 slice（会漏出 ** 等标记）");
+  // 常见标记逐条检查。
+  // 用**字面量包含**而不是正则：这些规则本身就是带转义的正则字面量，
+  // 再套一层正则去匹配极容易把转义搞错（我就先踩了一次，误报「没处理加粗」）。
+  // 断言打在**未剥离注释的原文**上 —— stripComments 会把 `**` 开头的那行
+  // 当成块注释起点删掉（它长得像注释）。
+  // 源码里的正则是带转义字面量，所以 needle 也要带转义（`\*\*` 而不是 `**`）
+  const rules = [
+    ["```", "代码块"],
+    ["\\*\\*([^*]+)\\*\\*", "加粗"],
+    ["^#{1,6}\\s+", "标题"],
+    ["^\\s*[-*+]\\s+", "列表符"],
+    ["~~([^~]+)~~", "删除线"],
+    ["\\|.*\\|", "表格行"],
+  ];
+  for (const [needle, what] of rules) {
+    ck(community.includes(needle), `summarize 没处理${what}（缺 ${needle}）`);
+  }
+});
+t("小游戏规则区不再写 Markdown 语法（那个容器不渲染 markdown）", () => {
+  const game = readFileSync(path.join(root, "..", "ooapi-web", "src", "components", "GameZone.jsx"), "utf8");
+  ck(/<b>胜负与合法性全部由服务端判定<\/b>/.test(game), "没有改用 <b>");
+  // 只查**渲染出来的文本节点**：注释（说明这段历史的那几行）里出现 ** 是正常的，
+  // 所以必须去掉注释再判定。JSX 注释是 {/* ... */}，普通注释是 // 与 /* */。
+  const gameCode = stripComments(game).replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+  // JSX 文本节点里形如 **xxx** 的强调写法（非 markdown 容器不该有）
+  const badEmphasis = gameCode.match(/>[^<>{]*\*\*[^*<>{}]+\*\*[^<>{]*</g) || [];
+  ck(!badEmphasis.length, `还有 ${badEmphasis.length} 处非 markdown 容器用 ** 强调：${badEmphasis[0]}`);
+});
+
 /* ============ 语法校验（改坏一个字符就全站 500）============ */
-console.log("\n=== ⑯ 改动的文件语法可解析 ===");
+console.log("\n=== ⑰ 改动的文件语法可解析 ===");
 for (const f of [
   "src/routes/gateway.js",
   "src/routes/chat.js",

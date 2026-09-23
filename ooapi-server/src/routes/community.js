@@ -33,6 +33,41 @@ const MAX_COMMENT = 2000;
 const MAX_MEDIA = 9;
 
 /**
+ * 信息流摘要：把 Markdown 标记剥成纯文本再截断。
+ *
+ * 为什么必须在**服务端**做：摘要会出现在信息流、搜索结果、以及将来的
+ * 邮件/推送里，任何消费端都不该再处理一遍标记。原先直接 slice 原文，
+ * 结果列表里露出字面量 `**问题**：在手机（390 宽）打开…`（黑盒测试实测），
+ * 小游戏规则区同样漏 `**胜负与合法性全部由服务端判定**`。
+ * 截断也**按整行**收尾：`-webkit-line-clamp: 2` 之外再切出半个字更难看。
+ */
+function summarize(content, max = 160) {
+  let s = String(content || "");
+  // 代码块整体去掉（摘要里放代码没有意义，还会漏出 ``` 标记）
+  s = s.replace(/```[\s\S]*?```/g, " ");
+  s = s.replace(/`([^`]*)`/g, "$1"); // 行内代码保留内容
+  s = s.replace(/!\[[^\]]*\]\([^)]*\)/g, ""); // 图片
+  s = s.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1"); // 链接保留文字
+  s = s.replace(/^#{1,6}\s+/gm, ""); // 标题
+  s = s.replace(/\*\*([^*]+)\*\*/g, "$1"); // 加粗
+  s = s.replace(/__([^_]+)__/g, "$1");
+  s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1$2"); // 斜体
+  s = s.replace(/~~([^~]+)~~/g, "$1"); // 删除线
+  s = s.replace(/^\s*[-*+]\s+/gm, ""); // 列表符
+  s = s.replace(/^\s*>\s?/gm, ""); // 引用
+  s = s.replace(/^\s*\|.*\|\s*$/gm, (m) => m.replace(/\|/g, " ").trim()); // 表格行
+  s = s.replace(/^\s*[-:| ]{3,}\s*$/gm, ""); // 表格分隔行
+  s = s.replace(/[*_~`#>|]/g, " "); // 残留的孤立标记
+  s = s.replace(/[ \t\u3000]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  // 优先在标点/空白处收尾，避免把词或中文句子切成两半
+  const at = Math.max(cut.lastIndexOf("。"), cut.lastIndexOf("！"), cut.lastIndexOf("？"),
+    cut.lastIndexOf("\n"), cut.lastIndexOf(" "));
+  return (at > max * 0.6 ? cut.slice(0, at) : cut) + "…";
+}
+
+/**
  * 长度校验：超限**报错**，不静默截断。
  *
  * 黑盒测试实测（原话）：「标题塞 1502 字 → 接口 200『发布成功』，落库只剩 120 字」。
@@ -78,7 +113,7 @@ async function postToResp(row, { withContent = true, authors = null } = {}) {
     topic: row.topic_name || "",
     title: row.title,
     content: withContent ? row.content : undefined,
-    summary: withContent ? undefined : String(row.content || "").slice(0, 160),
+    summary: withContent ? undefined : summarize(row.content, 160),
     media: await mediaList(row.media_ids),
     like_count: Number(row.like_count) || 0,
     comment_count: Number(row.comment_count) || 0,

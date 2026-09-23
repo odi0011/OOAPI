@@ -804,7 +804,10 @@ export default function GameZone() {
             </div>
             <div style={{ fontSize: 12.5, color: "var(--ink-3)", lineHeight: 1.9 }}>
               <div>· 创建房间后把链接给对手，或让对方在左侧列表点「加入」</div>
-              <div>· **胜负与合法性全部由服务端判定**，客户端只提交走子意图</div>
+              {/* 这里是纯文本展示区（不是 Markdown 渲染区）：原本写成
+                  `**胜负与合法性…**`，星号被原样显示出来（黑盒测试实测）。
+                  要强调就用 <b>，别在非 Markdown 容器里写 Markdown 语法。 */}
+              <div>· <b>胜负与合法性全部由服务端判定</b>，客户端只提交走子意图</div>
               <div>· 观战：对局默认允许观战（海战棋观战看不到双方布阵）</div>
               <div>· 离开页面不影响对局，回来点「我的对局」继续</div>
             </div>
