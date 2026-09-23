@@ -3473,3 +3473,159 @@ h1, h2, h3, h4 {
   line-height: 1.3;
 }
 
+
+/* ===========================================================================
+   宇宙开关（cosmic toggle）—— 渠道管理「状态」列用
+   ---------------------------------------------------------------------------
+   用户提供的设计（styled-components 版），这里按项目约定转成纯 CSS：
+     · 项目是零新依赖，不引入 styled-components（只为一条控件加一个运行时依赖不值得）；
+     · 原稿 `style={{-angle: '30deg'}}` 不是合法 JSX（应为 `"--angle"`），已修正；
+     · 原稿 140×70px 塞不进 128px 的状态列 —— 用 `--tgl-s` 缩放变量统一控制，
+       布局尺寸也跟着缩（外层按缩放后的实际尺寸占位，不会把行撑高）。
+   颜色全部走既有设计令牌（--accent / --pill-*），深浅主题都自动适配。
+   =========================================================================== */
+.oo-cosmic-toggle {
+  --tgl-s: 0.5; /* 缩放系数：0.5 → 70×35px，细节看得清且不撑高行 */
+  --tgl-w: 140px;
+  --tgl-h: 70px;
+  position: relative;
+  width: calc(var(--tgl-w) * var(--tgl-s));
+  height: calc(var(--tgl-h) * var(--tgl-s));
+  flex-shrink: 0;
+  cursor: pointer;
+  /* 输入框藏在里面（无障碍仍可聚焦） */
+  display: inline-block;
+}
+.oo-cosmic-toggle__input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+  z-index: 3;
+}
+.oo-cosmic-toggle__slider {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: linear-gradient(45deg, #1a1a2e, #16213e);
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.35), inset 0 0 15px rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  transform-origin: left center;
+  transform: scale(var(--tgl-s));
+  width: var(--tgl-w);
+  height: var(--tgl-h);
+  /* 缩放后视觉尺寸对，但占用空间按未缩放算 —— 用外层 width/height 兜住 */
+  transition: background 0.5s;
+}
+.oo-cosmic-toggle__cosmos {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(1px 1px at 10% 10%, #fff 100%, transparent),
+    radial-gradient(1px 1px at 20% 20%, #fff 100%, transparent),
+    radial-gradient(2px 2px at 30% 30%, #fff 100%, transparent),
+    radial-gradient(1px 1px at 40% 40%, #fff 100%, transparent),
+    radial-gradient(2px 2px at 50% 50%, #fff 100%, transparent),
+    radial-gradient(1px 1px at 60% 60%, #fff 100%, transparent),
+    radial-gradient(2px 2px at 70% 70%, #fff 100%, transparent),
+    radial-gradient(1px 1px at 80% 80%, #fff 100%, transparent),
+    radial-gradient(1px 1px at 90% 90%, #fff 100%, transparent);
+  background-size: 200% 200%;
+  opacity: 0.1;
+  transition: opacity 0.5s;
+}
+.oo-cosmic-toggle__orb {
+  position: absolute;
+  height: 62px;
+  width: 62px;
+  left: 4px;
+  bottom: 4px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, var(--pill-red-bar, #ff6b6b), var(--pill-emerald-bar, #4ecdc4));
+  transition: transform 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55), background 0.6s;
+  z-index: 2;
+}
+.oo-cosmic-toggle__inner {
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #fff, #e6e6e6);
+  overflow: hidden;
+}
+.oo-cosmic-toggle__ring {
+  position: absolute;
+  inset: -3px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  transition: border-color 0.5s;
+}
+.oo-cosmic-toggle.is-on .oo-cosmic-toggle__ring {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  animation: ooTglRingPulse 2s infinite;
+}
+.oo-cosmic-toggle__line {
+  position: absolute;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 55%, transparent), transparent);
+  transform-origin: left;
+  opacity: 0;
+  transition: opacity 0.5s;
+}
+.oo-cosmic-toggle__line:nth-of-type(1) { top: 20%; transform: rotate(15deg); }
+.oo-cosmic-toggle__line:nth-of-type(2) { top: 50%; transform: rotate(0deg); }
+.oo-cosmic-toggle__line:nth-of-type(3) { top: 80%; transform: rotate(-15deg); }
+.oo-cosmic-toggle.is-on .oo-cosmic-toggle__line { opacity: 1; animation: ooTglEnergy 2s linear infinite; }
+.oo-cosmic-toggle__particle {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0;
+  top: 50%;
+}
+.oo-cosmic-toggle.is-on .oo-cosmic-toggle__particle { animation: ooTglBurst 1s ease-out infinite; }
+.oo-cosmic-toggle__particle:nth-child(1) { left: 20%; animation-delay: 0s; }
+.oo-cosmic-toggle__particle:nth-child(2) { left: 40%; animation-delay: 0.2s; }
+.oo-cosmic-toggle__particle:nth-child(3) { left: 60%; animation-delay: 0.4s; }
+.oo-cosmic-toggle__particle:nth-child(4) { left: 80%; animation-delay: 0.6s; }
+.oo-cosmic-toggle__particle:nth-child(5) { left: 30%; animation-delay: 0.8s; }
+.oo-cosmic-toggle__particle:nth-child(6) { left: 70%; animation-delay: 1s; }
+/* 打开：球体移到右侧并转一圈，颜色切到主色 */
+.oo-cosmic-toggle.is-on .oo-cosmic-toggle__slider { background: linear-gradient(45deg, #16213e, #1a1a2e); }
+.oo-cosmic-toggle.is-on .oo-cosmic-toggle__orb {
+  transform: translateX(70px) rotate(360deg);
+  background: linear-gradient(145deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #000));
+}
+.oo-cosmic-toggle.is-on .oo-cosmic-toggle__inner { transform: scale(0.9); }
+.oo-cosmic-toggle:hover .oo-cosmic-toggle__slider { transform: scale(var(--tgl-s)) rotateX(8deg) rotateY(8deg); }
+.oo-cosmic-toggle:hover .oo-cosmic-toggle__cosmos { opacity: 0.2; }
+/* 无障碍：键盘聚焦时给一圈外环（输入框本身透明，必须显式加） */
+.oo-cosmic-toggle__input:focus-visible + .oo-cosmic-toggle__slider {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.oo-cosmic-toggle__input:disabled + .oo-cosmic-toggle__slider { opacity: 0.55; cursor: not-allowed; }
+
+@keyframes ooTglRingPulse {
+  0%, 100% { transform: scale(1); opacity: 0.35; }
+  50% { transform: scale(1.1); opacity: 0.7; }
+}
+@keyframes ooTglEnergy {
+  0% { transform: scaleX(0) translateX(0); opacity: 0; }
+  50% { transform: scaleX(1) translateX(50%); opacity: 1; }
+  100% { transform: scaleX(0) translateX(100%); opacity: 0; }
+}
+@keyframes ooTglBurst {
+  0% { transform: translate(0, 0) scale(1); opacity: 1; }
+  100% { transform: translate(calc(cos(var(--angle, 0deg)) * 50px), calc(sin(var(--angle, 0deg)) * 50px)) scale(0); opacity: 0; }
+}
+/* 尊重「减少动效」偏好：关掉粒子/能量线这类持续动画，只留状态切换 */
+@media (prefers-reduced-motion: reduce) {
+  .oo-cosmic-toggle .oo-cosmic-toggle__particle,
+  .oo-cosmic-toggle .oo-cosmic-toggle__line,
+  .oo-cosmic-toggle .oo-cosmic-toggle__ring { animation: none !important; }
+}

@@ -6,7 +6,7 @@
 //     （OpenAI 的 limit_window_seconds 会告诉我们是哪个），付费号才是 5h+7d；
 //   · 百分比取整显示（88%），悬浮才给精确值与重置时间，列表里不堆字；
 //   · 颜色按用量分档：<70% 主色、70-90% 橙、>90% 红，一眼看出快用完的账号。
-import React from "react";
+import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Tooltip } from "antd";
 import { ApiOutlined, DatabaseOutlined, ThunderboltOutlined } from "@ant-design/icons";
 
@@ -365,7 +365,7 @@ export {
   pickVisibleWindows, pickVisibleChips, windowSecondsOf, isWindowSpent,
   parseWindowSeconds, scopeOfWindow, MAX_INLINE_BARS, MAX_INLINE_CHIPS,
 } from "./quota-order.js";
-import { pickVisibleWindows, pickVisibleChips } from "./quota-order.js";
+import { pickVisibleWindows } from "./quota-order.js";
 
 export function QuotaInline({ quota, stats }) {
   if (!quota && !stats) return null;
@@ -405,8 +405,6 @@ export function QuotaInline({ quota, stats }) {
 
   // 额度条：按全局规范选取（装得下不折叠；折叠时按窗口长度各留一条）
   const { shown: shownWins, collapsed: collapsedWins } = pickVisibleWindows(wins);
-  // chip 容量扣掉已被额度条占去的位置（额度条比 chip 宽，不能各算各的）
-  const { shown: shownChips, overflow: chipsOverflow } = pickVisibleChips(otherChips, 3, shownWins.length);
 
   // 分组集合：scope 缺失时从 label 回推（老快照），两处口径必须一致，
   // 否则会出现「判出多分组但取不到 scope」→ 前缀渲染成空。
@@ -497,39 +495,154 @@ export function QuotaInline({ quota, stats }) {
         </div>
       ) : null}
 
-      {/* ③ 信息行：余额/积分（恒第一位）+ 套餐/积分包等 chip。
-             用户反馈：「比如那个 gpt 的积分 free，人家就俩 tag，一个余额一个套餐 tag，
-             你给折叠干啥啊？」—— 装得下就全显示，只有真的超出容量才收进 `+N`。 */}
-      {balanceChip || shownChips.length || chipsOverflow > 0 ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", minWidth: 0 }}>
-          {balanceChip ? (
-            // wrapper 不再收缩：让 chip 保持内容宽度，装不下就换行（而不是被切掉半个数字）
-            <span style={{ display: "inline-flex", maxWidth: "100%" }}>
-              <InfoPill tone={balanceChip.tone}>{balanceChip.node}</InfoPill>
-            </span>
-          ) : null}
-          {shownChips.map((x) => (
-            <span key={x.key} style={{ display: "inline-flex", maxWidth: "100%" }}>
-              <InfoPill tone={x.tone}>{x.node}</InfoPill>
-            </span>
-          ))}
-          {chipsOverflow > 0 ? (
-            <Tooltip
-              title={
-                <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 180 }}>
-                  {otherChips.slice(otherChips.length - chipsOverflow).map((x) => (
-                    <div key={x.key}>{x.node}</div>
-                  ))}
-                </div>
-              }
-            >
-              <span className="bui-chip" style={{ fontSize: 11, flexShrink: 0, whiteSpace: "nowrap" }}>
-                +{chipsOverflow}
-              </span>
-            </Tooltip>
-          ) : null}
-        </div>
+      {/* ③ 信息行：余额/积分（恒第一位）+ 套餐/积分包等 chip —— **保证一行**。
+             用户要求：「要确保都是一行的，如果宽度不够，就再多折叠进去一个呗，不要折行」
+             InfoRow 会先量再决定显示几个，详见该组件的注释。 */}
+      {chips.length ? <InfoRow chips={chips} /> : null}
+    </div>
+  );
+}
+
+/**
+ * 信息行 —— 余额/积分 + 套餐/积分包 chips，**保证一行显示、绝不折行**。
+ *
+ * 用户要求（原话）：
+ *   「要确保都是一行的，如果宽度不够，就再多折叠进去一个呗，不要折行」
+ *
+ * 为什么必须**量**而不能估算：列宽固定，但 chip 文案是动态的 ——
+ * 「余额 119 积分」比「余额 1000」宽近一倍，「套餐包 0」与「赠送包 29」也不等宽。
+ * 任何「固定显示 N 个」的估算都会在某个组合下溢出，而溢出只能靠折行或截断解决
+ * （截断会切掉数字、折行就是用户看到的问题）。
+ *
+ * 做法：
+ *   ① 先把全部 chip 渲染进一个不可见的测量层（`visibility:hidden`，不占布局），
+ *      取每个的自然宽度；
+ *   ② 若总宽（含间距）≤ 可用宽 → 全部显示，不出现 `+N`；
+ *   ③ 否则留出 `+N` 的位置，按顺序尽量多放，其余收进 `+N`（至少留一个，
+ *      否则整行只剩一个 `+N`，看不出说的是什么）。
+ * 容器始终 `nowrap` + `overflow: hidden`，所以永远不会折行。
+ */
+function InfoRow({ chips }) {
+  const rowRef = useRef(null);
+  const ghostRef = useRef(null);
+  const overflowRef = useRef(null);
+  const [fit, setFit] = useState(null);
+
+  // 依赖 chip 的 key 集合：文案变了要重新量
+  const keys = useMemo(() => chips.map((c) => c.key).join("|"), [chips]);
+  const [layoutKey, setLayoutKey] = useState("");
+
+  useLayoutEffect(() => {
+    const row = rowRef.current;
+    const ghost = ghostRef.current;
+    if (!row || !ghost) return undefined;
+    const recompute = () => {
+      const avail = row.clientWidth;
+      const overEl = overflowRef.current;
+      if (!avail || !overEl) return;
+      const GAP = 4;
+      // 测量层里最后一个是 `+N` 的占位，其余是 chip
+      const chipEls = Array.from(ghost.children).filter((el) => el !== overEl);
+      if (!chipEls.length) return;
+      const widths = chipEls.map((el) => el.getBoundingClientRect().width);
+      const total = widths.reduce((a, b) => a + b, 0) + GAP * (widths.length - 1);
+      if (total <= avail) {
+        setFit(widths.length);
+        return;
+      }
+      const overW = overEl.getBoundingClientRect().width;
+      const budget = avail - overW - GAP;
+      let used = 0;
+      let n = 0;
+      for (let i = 0; i < widths.length; i += 1) {
+        const add = widths[i] + (i ? GAP : 0);
+        if (used + add > budget) break;
+        used += add;
+        n += 1;
+      }
+      setFit(Math.max(1, n));
+    };
+    recompute();
+    // 列宽变化（拖表头、窗口缩放、侧栏折叠）时重量
+    const ro = new ResizeObserver(recompute);
+    ro.observe(row);
+    return () => ro.disconnect();
+  }, [keys, layoutKey]);
+
+  // 表格初次渲染时列宽可能还是 0（antd 在测量阶段），下一帧量一次
+  useLayoutEffect(() => {
+    const id = requestAnimationFrame(() => setLayoutKey((v) => `${v}.`));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  const total = chips.length;
+  const shown = fit === null ? chips : chips.slice(0, Math.min(fit, total));
+  const hidden = chips.slice(shown.length);
+
+  return (
+    <div
+      ref={rowRef}
+      style={{
+        position: "relative",
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        // 关键：**不折行**。宽度不够由 fit 决定多折一个，而不是换行
+        flexWrap: "nowrap",
+        overflow: "hidden",
+        minWidth: 0,
+      }}
+    >
+      {shown.map((x) => (
+        <span key={x.key} style={{ display: "inline-flex", flexShrink: 0 }}>
+          <InfoPill tone={x.tone}>{x.node}</InfoPill>
+        </span>
+      ))}
+      {hidden.length ? (
+        <Tooltip
+          title={
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 180 }}>
+              {hidden.map((x) => (
+                <div key={x.key}>{x.node}</div>
+              ))}
+            </div>
+          }
+        >
+          <span className="bui-chip" style={{ fontSize: 11, flexShrink: 0, whiteSpace: "nowrap" }}>
+            +{hidden.length}
+          </span>
+        </Tooltip>
       ) : null}
+
+      {/* 不可见测量层：只为取自然宽度，不参与布局、也不响应鼠标。
+          ⚠️ 必须 `left: -10000px`（移到视野外），**不能** `left: 0`：
+          position:absolute 的元素仍会算进祖先的 scrollWidth —— 放在 0 处会让
+          这个宽 400+px 的测量层把父容器撑宽，于是 `scrollWidth > clientWidth`
+          恒成立、看起来永远在溢出（实测踩到：显示数量其实是对的，容器却被撑宽）。 */}
+      <div
+        ref={ghostRef}
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          left: -10000,
+          top: 0,
+          visibility: "hidden",
+          pointerEvents: "none",
+          whiteSpace: "nowrap",
+          width: "max-content",
+          display: "flex",
+          gap: 4,
+        }}
+      >
+        {chips.map((x) => (
+          <span key={x.key} style={{ display: "inline-flex" }}>
+            <InfoPill tone={x.tone}>{x.node}</InfoPill>
+          </span>
+        ))}
+        <span ref={overflowRef} className="bui-chip" style={{ fontSize: 11, whiteSpace: "nowrap" }}>
+          +{total}
+        </span>
+      </div>
     </div>
   );
 }

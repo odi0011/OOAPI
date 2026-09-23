@@ -149,63 +149,90 @@ function UptimeBars({ calls = [], count = 20, onCopy }) {
  * 自动暂停（status=3，检测失败或用户调用出错时由后端写入）也能点 ——
  * 那正是最需要「修好后一键启用」的场景。
  */
+/**
+ * 宇宙开关（cosmic toggle）—— 用户提供的设计，按项目约定转成纯 CSS。
+ *
+ * 原稿改了三处（都不是风格问题）：
+ *   ① 原稿用 styled-components，而本项目**零新依赖** —— 为一条控件引入运行时样式库
+ *      不值得，还会和现有 CSS 变量体系打架。样式落在 styles.css 的 .oo-cosmic-toggle；
+ *   ② 原稿 `style={{-angle: '30deg'}}` 不是合法 JSX（CSS 自定义属性名必须以 `--`
+ *      开头且要加引号），已修正为 `"--angle"`；
+ *   ③ 原稿 140×70px 放不进 128px 的状态列，改用 `--tgl-s` 缩放统一控制。
+ *
+ * 无障碍：用真实 `<input type="checkbox">`（藏在里面）而不是拿 div 假装开关 ——
+ * 可聚焦、空格可切换、读屏能识别「开/关」语义。
+ */
+function CosmicSwitch({ checked, disabled, onToggle, title }) {
+  return (
+    <Tooltip title={title}>
+      <label className={`oo-cosmic-toggle${checked ? " is-on" : ""}`}>
+        <input
+          type="checkbox"
+          className="oo-cosmic-toggle__input"
+          checked={Boolean(checked)}
+          disabled={Boolean(disabled)}
+          aria-label={title}
+          onChange={(e) => onToggle?.(e.target.checked)}
+        />
+        <span className="oo-cosmic-toggle__slider">
+          <span className="oo-cosmic-toggle__cosmos" />
+          <span className="oo-cosmic-toggle__line" />
+          <span className="oo-cosmic-toggle__line" />
+          <span className="oo-cosmic-toggle__line" />
+          <span className="oo-cosmic-toggle__orb">
+            <span className="oo-cosmic-toggle__inner" />
+            <span className="oo-cosmic-toggle__ring" />
+          </span>
+          <span className="oo-cosmic-toggle__particles">
+            {[30, 60, 90, 120, 150, 180, 210, 240].map((deg) => (
+              <span key={deg} className="oo-cosmic-toggle__particle" style={{ "--angle": `${deg}deg` }} />
+            ))}
+          </span>
+        </span>
+      </label>
+    </Tooltip>
+  );
+}
+
+/**
+ * 状态单元格 —— 宇宙开关 + 状态文字（用户要求：「状态那个开关用这个样式」）。
+ * 点开关切换启停；自动暂停（status=3）也能开回来 —— 那正是最需要的场景。
+ */
 function StatusCell({ r, onToggle, busy }) {
   const st = Number(r.status);
   const auto = st === 3;
   const paused = st === 2;
   const cooling = Boolean(r.cooling) && !auto && !paused;
-  const active = !auto && !paused; // 当前是否在跑（可被点成暂停）
+  const active = !auto && !paused; // 当前是否在跑（= 开关的勾选态）
 
-  const tone = auto ? "bui-chip--red" : paused ? "" : cooling ? "bui-chip--orange" : "";
   const dot = auto ? "bui-dot--err" : paused ? "bui-dot--idle" : cooling ? "bui-dot--warn" : "bui-dot--ok";
   const text = auto ? (r.last_error ? "已自动暂停" : "已暂停") : paused ? "已暂停" : cooling ? "冷却中" : "已启用";
-  const tip = `${text}（点击${active ? "暂停" : "启用"}）${r.last_error ? `\n原因：${r.last_error}` : ""}`;
+  const tip = `${text}（点击${active ? "暂停" : "启用"}）${r.last_error ? `
+原因：${r.last_error}` : ""}`;
 
   return (
-    <Tooltip title={<span style={{ whiteSpace: "pre-line" }}>{tip}</span>}>
-      <span
-        role="button"
-        tabIndex={0}
-        aria-label={tip}
-        className={`bui-chip ${tone}`}
-        style={{
-          cursor: busy ? "wait" : "pointer",
-          opacity: busy ? 0.6 : 1,
-          // 暂停态原来是无底色的纯文字，看起来像不可点 —— 给个底色明确它是按钮
-          background: paused ? "var(--inset)" : undefined,
-          userSelect: "none",
-          whiteSpace: "nowrap",
-        }}
-        onClick={() => !busy && onToggle?.(r, !active)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            if (!busy) onToggle?.(r, !active);
-          }
-        }}
-      >
-        <span className={`bui-dot ${dot}`} />
-        {text}
+    <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+      <CosmicSwitch checked={active} disabled={busy} title={tip} onToggle={(next) => onToggle?.(r, next)} />
+      <span style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
+        <span style={{ fontSize: 12, color: "var(--ink-2)", whiteSpace: "nowrap" }}>
+          <span className={`bui-dot ${dot}`} style={{ marginInlineEnd: 4 }} />
+          {text}
+        </span>
+        {/* 自动暂停的原因直接可见 —— 用户据此决定是恢复还是换凭据 */}
+        {auto && r.last_error ? (
+          <Tooltip title={r.last_error}>
+            <span className="oo-truncate" style={{ fontSize: 11, color: "var(--ink-3)", maxWidth: 74 }}>
+              {r.last_error.slice(0, 12)}…
+            </span>
+          </Tooltip>
+        ) : null}
         {cooling && r.cooldown_text ? (
-          <span style={{ fontSize: 11, color: "var(--ink-3)", fontWeight: 400 }}>至 {r.cooldown_text}</span>
+          <span style={{ fontSize: 11, color: "var(--ink-3)", whiteSpace: "nowrap" }}>至 {r.cooldown_text}</span>
         ) : null}
       </span>
-    </Tooltip>
+    </div>
   );
 }
-
-// ============================================================================
-// 用量统计弹窗的图表组件（统计卡 / Token 活动热力图 / 每日 Token 趋势）
-// 全部用原生 div + SVG 实现，不引入图表库；颜色取自现有设计令牌。
-// ============================================================================
-
-// 折线图分类色（明亮/黑暗主题下都保持可辨识）
-const SERIES_COLORS = [
-  "#3b82f6", "#22c55e", "#f59e0b", "#ef4444",
-  "#a855f7", "#06b6d4", "#ec4899", "#64748b",
-];
-
-// 数字紧凑格式：亿 / 万（统计卡与坐标轴用；详情 tooltip 用完整千分位）
 function fmtCompact(n) {
   const v = Number(n) || 0;
   if (v >= 1e8) return `${(v / 1e8).toFixed(2)} 亿`;

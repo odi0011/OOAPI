@@ -323,13 +323,19 @@ console.log("\n=== ⑨ 额度条折叠规范 ===");
   ck("chip 有自己的容量（pickVisibleChips）", /export function pickVisibleChips/.test(qoSrc));
   ck("两个 chip 不超容量时全部显示（free 的余额+套餐不折叠）",
     qo.pickVisibleChips([{ key: "bal" }, { key: "plan" }], 3, 1).collapsed.length === 0);
-  ck("额度条与 chips 共用同一行的位置预算", /pickVisibleChips\(otherChips, 3, shownWins\.length\)/.test(cq));
+  // 信息行改为**按实际宽度测量**（用户要求「要确保都是一行的，宽度不够就再多折一个」）：
+  // 固定容量估算在动态文案下必然在某个组合溢出，而溢出只能靠折行或截断解决。
+  ck("信息行用测量的方式决定显示几个（InfoRow）", /function InfoRow\(\{ chips \}\)/.test(cq));
+  ck("信息行容器不折行（flexWrap: nowrap）", /flexWrap: "nowrap"[\s\S]{0,120}overflow: "hidden"/.test(cq));
+  ck("测量层移出视野（left: -10000，否则会撑宽父容器）", /left: -10000/.test(cq));
+  ck("测量层用 ResizeObserver 跟随列宽变化", /new ResizeObserver\(recompute\)/.test(cq));
 
   // 余额/积分必须**常驻可见**，不能被 `+N` 吞掉（线上 #13/#14/#42 全被吞过）
   ck("余额 chips 用 unshift 排到最前", /if \(hasBalance\) chips\.unshift\(/.test(cq));
   ck("余额 chip 被单独摘出（balanceChip）", /const balanceChip = chips\.find/.test(cq));
   ck("其余 chips 排除余额", /const otherChips = chips\.filter\(\(x\) => x\.key !== "bal"\)/.test(cq));
-  ck("余额恒在信息行第一位", /\{balanceChip \? \(/.test(cq) && /balanceChip\.node/.test(cq));
+  // 余额恒在第一位：chips 组装时用 unshift 排最前（InfoRow 按数组顺序渲染）
+  ck("余额恒在信息行第一位", /if \(hasBalance\) chips\.unshift\(/.test(cq));
 
   // 规范 ③：`+N` 紧跟在最后一条额度条后面（同一位置流），不另起一行。
   //   「在第二个额度条的后面加一个 tag 显示 +n，鼠标悬浮显示折叠掉的额度条即可」
