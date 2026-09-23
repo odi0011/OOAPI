@@ -2985,7 +2985,16 @@ export default function AdminChannelsPage() {
                           >
                             <Input.TextArea
                               rows={pickMethod.oauth ? 6 : 3}
-                              placeholder={pickMethod.oauth ? "粘贴官方 CLI 凭据文件的完整内容（JSON）" : "粘贴登录态值"}
+                              placeholder={
+                                // 占位文案要贴合当前接入方式的**凭据形态**：
+                                // 不能一律写「官方 CLI 凭据文件」—— Qoder 的凭据是 PAT、
+                                // 网页反代是登录态值，写错会让人以为要去找一个不存在的文件
+                                //（用户实测反馈过：「手动填凭证也没引导用户要拿哪个字段啊」）。
+                                // 有 loginFields 的就用它的 placeholder（那是各方式自己声明的），
+                                // 否则按 oauth / 登录态 两档给。
+                                pickMethod.loginFields?.[0]?.placeholder ||
+                                (pickMethod.oauth ? "粘贴凭据 JSON（各方式要什么见上面指引）" : "粘贴登录态值")
+                              }
                             />
                           </Form.Item>
                           {pickMethod.oauth ? (
