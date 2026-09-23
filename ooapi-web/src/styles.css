@@ -3480,22 +3480,37 @@ h1, h2, h3, h4 {
    用户提供的设计（styled-components 版），按项目约定转成纯 CSS：
      · 项目零新依赖，不引入 styled-components —— 为一条控件加运行时样式库不划算，
        还会和现有 CSS 变量体系打架；样式落成 CSS 类，结构与动效保持原设计。
-     · 尺寸按状态列缩放：原设计 --size:100px（即 100×50px）放不进 128px 的列，
-       这里 --size: 44px → 44×22px，正好留出呼吸感。
-     · 颜色换成主题色：原稿的 #222 边框 / #fde881 黄底改为 --ink-2 与 --accent，
-       深浅主题自动适配（这也是「用我们的主题色」的要求）。
+     · 尺寸：原设计 --size:100px（100×50px）放不进 128px 的状态列；
+       初版收到 44px，用户又要求「整体再小一点」→ 现为 38px（38×19px）。
+       视觉更小但用 padding + 负 margin 把可点范围补回 ~44×25px（不改布局占位）。
+     · 边框：原稿 2px 偏重（用户两次要求「边框再细一点」，球体同样要细），
+       统一收到 1.5px。
+     · 阴影：原稿有 `box-shadow: 0 10px 20px`，用户要求「整体不要背景阴影」，已完全去掉
+       —— 状态只靠边框与填充区分。
+     · 颜色用 **success 绿**（--green），不是主题强调色：
+         未开启 → 球体实心绿（控件本身的品牌色），轨道中性
+         已开启 → 轨道填「绿色的衍生浅色」，球体转白
+       浅色用 color-mix 与 surface 调和，深浅主题各自得到合适的浅绿；
+       直接拿 --green-tint 会几乎等于白色（L=95.8%），开关开着也看不出来。
      · 原稿的 30px/100px 圆角是相对 --size 的固定值，缩放后会失真 ——
-       这里按比例改成 em（1em = --size/2 的一半，见下方 font-size 设定），
-       形状与大尺寸下一致。
+       这里按比例改成 em（1em = --size/4，见下方 font-size 设定），形状与大尺寸一致。
    无障碍：保留真实 input[type=checkbox]（可聚焦、空格切换、读屏识别开关语义），
    色弱用户也不只靠颜色区分 —— 勾选态的圆角方向本身就不同（左凹/右凹）。
    =========================================================================== */
 .oo-toggle41 {
-  --size: 44px;
+  /* 38px → 38×19px（用户要求「整体再小一点」）。
+     比初版 44px 小一圈，同时按下方的 padding 扩大点击热区 ——
+     视觉更紧凑，但手指/鼠标的实际可点范围仍有 ~25px 高，不牺牲易用性。 */
+  --size: 38px;
+  --bd: 1.5px; /* 边框粗细：原稿 2px 偏重，收到 1.5px（球体同样用这个值） */
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  /* 让 em 与 --size 挂钩：1em = size/2 的一半，圆角与内球都按 em 写就不会失真 */
+  /* 热区补偿：视觉 38×19，可点范围撑到 44×25（不改变布局占位） */
+  padding: 3px;
+  margin: -3px;
+  /* 让 em 与 --size 挂钩：1em = size/4，圆角与内球都按 em 写就不会失真 */
   font-size: calc(var(--size) / 4);
 }
 .oo-toggle41 input[type="checkbox"] {
@@ -3505,14 +3520,15 @@ h1, h2, h3, h4 {
   height: calc(var(--size) / 2);
   margin: 0;
   background-color: var(--surface);
-  border: 2px solid var(--ink-2);
+  border: var(--bd) solid var(--ink-3);
   /* 圆角按比例：原稿 30px/100px 相对 100px 尺寸，这里折算到 em */
   border-radius: 0.6em 2em 2em 2em;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  /* 不加任何阴影（用户要求「整体不要背景阴影」）—— 只靠边框与填充区分状态 */
+  box-shadow: none;
   outline: none;
   cursor: pointer;
   position: relative;
-  transition: all 0.4s;
+  transition: background-color 0.35s, border-color 0.35s, border-radius 0.35s;
 }
 /* 内球：原稿用 ::before + 居中偏移；这里同样用 ::before，尺寸 = --size/2 */
 .oo-toggle41 input[type="checkbox"]::before {
@@ -3523,25 +3539,32 @@ h1, h2, h3, h4 {
   left: 0;
   top: 50%;
   transform: translateY(-50%) scale(0.7);
-  border: 2px solid var(--ink-2);
+  border: var(--bd) solid var(--green);
   border-radius: 0.6em 2em 2em 2em;
-  background-color: var(--accent);
+  /* 未开启：球体用 success 绿（用户要求「颜色应该用 success 的绿色」）。
+     轨道保持中性 —— 状态信号交给轨道填充，球体是控件本身的品牌色。 */
+  background-color: var(--green);
   box-sizing: border-box;
-  transition: all 0.4s;
+  transition: left 0.35s, background-color 0.35s, border-color 0.35s, border-radius 0.35s;
 }
 .oo-toggle41 input[type="checkbox"]:checked {
-  background-color: var(--accent);
+  /* 开启：轨道填**绿色的衍生浅色**（不是实心绿 —— 用户明确要求浅色）；
+     用 color-mix 与 surface 调和，深浅主题各自得到合适的浅绿（暗色下是沉稳的深绿）。
+     直接拿 --green-tint 会几乎等于白色（L=95.8%），开关开着也看不出来。 */
+  background-color: color-mix(in srgb, var(--green) 35%, var(--surface));
+  border-color: var(--green);
   /* 勾选后圆角方向翻转：左侧变凹，视觉上「球滚到右边」 */
   border-radius: 2em 2em 0.6em 2em;
 }
 .oo-toggle41 input[type="checkbox"]:checked::before {
   left: 50%;
   background-color: var(--surface);
+  border-color: var(--green);
   border-radius: 2em 2em 0.6em 2em;
 }
 /* 键盘聚焦外环：输入框自身是唯一可见元素，必须显式给（无障碍） */
 .oo-toggle41 input[type="checkbox"]:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--green);
   outline-offset: 3px;
 }
 .oo-toggle41 input[type="checkbox"]:disabled {

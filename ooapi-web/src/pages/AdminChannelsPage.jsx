@@ -165,7 +165,11 @@ function UptimeBars({ calls = [], count = 20, onCopy }) {
  */
 function ChannelSwitch({ checked, disabled, onToggle, title }) {
   return (
-    <Tooltip title={title}>
+    <Tooltip
+      // 状态含义与自动暂停原因是多行，antd 默认会把换行折叠成空格 ——
+      // 用 pre-line 的容器保住分行（否则「冷却至 …」「原因：…」会挤成一坨）
+      title={<span style={{ whiteSpace: "pre-line" }}>{title}</span>}
+    >
       <span className="oo-toggle41">
         <input
           type="checkbox"
