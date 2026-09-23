@@ -3475,154 +3475,78 @@ h1, h2, h3, h4 {
 
 
 /* ===========================================================================
-   宇宙开关（cosmic toggle）—— 渠道管理「状态」列用
+   渠道启停开关（checkbox-41 造型）—— 渠道管理「状态」列用
    ---------------------------------------------------------------------------
-   用户提供的设计（styled-components 版），这里按项目约定转成纯 CSS：
-     · 项目是零新依赖，不引入 styled-components（只为一条控件加一个运行时依赖不值得）；
-     · 原稿 `style={{-angle: '30deg'}}` 不是合法 JSX（应为 `"--angle"`），已修正；
-     · 原稿 140×70px 塞不进 128px 的状态列 —— 用 `--tgl-s` 缩放变量统一控制，
-       布局尺寸也跟着缩（外层按缩放后的实际尺寸占位，不会把行撑高）。
-   颜色全部走既有设计令牌（--accent / --pill-*），深浅主题都自动适配。
+   用户提供的设计（styled-components 版），按项目约定转成纯 CSS：
+     · 项目零新依赖，不引入 styled-components —— 为一条控件加运行时样式库不划算，
+       还会和现有 CSS 变量体系打架；样式落成 CSS 类，结构与动效保持原设计。
+     · 尺寸按状态列缩放：原设计 --size:100px（即 100×50px）放不进 128px 的列，
+       这里 --size: 44px → 44×22px，正好留出呼吸感。
+     · 颜色换成主题色：原稿的 #222 边框 / #fde881 黄底改为 --ink-2 与 --accent，
+       深浅主题自动适配（这也是「用我们的主题色」的要求）。
+     · 原稿的 30px/100px 圆角是相对 --size 的固定值，缩放后会失真 ——
+       这里按比例改成 em（1em = --size/2 的一半，见下方 font-size 设定），
+       形状与大尺寸下一致。
+   无障碍：保留真实 input[type=checkbox]（可聚焦、空格切换、读屏识别开关语义），
+   色弱用户也不只靠颜色区分 —— 勾选态的圆角方向本身就不同（左凹/右凹）。
    =========================================================================== */
-.oo-cosmic-toggle {
-  /* 直接用小尺寸，**不用 transform: scale** —— scale 只改渲染、不改布局占位，
-     里面的元素仍按原尺寸参与布局，会把状态列撑开、把文字挤没（线上实测踩到）。
-     这里用一套自定义属性表达「设计尺寸」，各处 calc 引用，改比例只改这几个值。 */
-  --tgl-w: 48px;
-  --tgl-h: 24px;
-  --tgl-orb: 20px;
-  --tgl-pad: 2px;
-  --tgl-travel: 24px; /* 球体行程 = 宽 - 球 - 两侧内边距 */
-  position: relative;
-  display: inline-block;
-  width: var(--tgl-w);
-  height: var(--tgl-h);
+.oo-toggle41 {
+  --size: 44px;
+  display: inline-flex;
+  align-items: center;
   flex-shrink: 0;
-  cursor: pointer;
-  vertical-align: middle;
+  /* 让 em 与 --size 挂钩：1em = size/2 的一半，圆角与内球都按 em 写就不会失真 */
+  font-size: calc(var(--size) / 4);
 }
-.oo-cosmic-toggle__input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
+.oo-toggle41 input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: var(--size);
+  height: calc(var(--size) / 2);
   margin: 0;
+  background-color: var(--surface);
+  border: 2px solid var(--ink-2);
+  /* 圆角按比例：原稿 30px/100px 相对 100px 尺寸，这里折算到 em */
+  border-radius: 0.6em 2em 2em 2em;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  outline: none;
   cursor: pointer;
-  z-index: 3;
+  position: relative;
+  transition: all 0.4s;
 }
-.oo-cosmic-toggle__slider {
+/* 内球：原稿用 ::before + 居中偏移；这里同样用 ::before，尺寸 = --size/2 */
+.oo-toggle41 input[type="checkbox"]::before {
+  content: "";
   position: absolute;
-  inset: 0;
-  border-radius: 999px;
-  background: linear-gradient(45deg, #1a1a2e, #16213e);
-  box-shadow: 0 0 8px rgba(0, 0, 0, 0.35), inset 0 0 6px rgba(255, 255, 255, 0.05);
-  overflow: hidden;
-  transition: background 0.5s;
+  width: calc(var(--size) / 2);
+  height: calc(var(--size) / 2);
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%) scale(0.7);
+  border: 2px solid var(--ink-2);
+  border-radius: 0.6em 2em 2em 2em;
+  background-color: var(--accent);
+  box-sizing: border-box;
+  transition: all 0.4s;
 }
-.oo-cosmic-toggle__cosmos {
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(1px 1px at 10% 10%, #fff 100%, transparent),
-    radial-gradient(1px 1px at 30% 30%, #fff 100%, transparent),
-    radial-gradient(1px 1px at 50% 50%, #fff 100%, transparent),
-    radial-gradient(1px 1px at 70% 70%, #fff 100%, transparent),
-    radial-gradient(1px 1px at 90% 90%, #fff 100%, transparent);
-  background-size: 200% 200%;
-  opacity: 0.15;
-  transition: opacity 0.5s;
+.oo-toggle41 input[type="checkbox"]:checked {
+  background-color: var(--accent);
+  /* 勾选后圆角方向翻转：左侧变凹，视觉上「球滚到右边」 */
+  border-radius: 2em 2em 0.6em 2em;
 }
-.oo-cosmic-toggle__orb {
-  position: absolute;
-  width: var(--tgl-orb);
-  height: var(--tgl-orb);
-  left: var(--tgl-pad);
-  top: var(--tgl-pad);
-  border-radius: 50%;
-  background: linear-gradient(145deg, var(--pill-red-bar, #ff6b6b), var(--pill-emerald-bar, #4ecdc4));
-  transition: transform 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55), background 0.5s;
-  z-index: 2;
+.oo-toggle41 input[type="checkbox"]:checked::before {
+  left: 50%;
+  background-color: var(--surface);
+  border-radius: 2em 2em 0.6em 2em;
 }
-.oo-cosmic-toggle__inner {
-  position: absolute;
-  inset: 2px;
-  border-radius: 50%;
-  background: linear-gradient(145deg, #fff, #e6e6e6);
-  overflow: hidden;
-}
-.oo-cosmic-toggle__ring {
-  position: absolute;
-  inset: -1px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 50%;
-  transition: border-color 0.5s;
-}
-.oo-cosmic-toggle.is-on .oo-cosmic-toggle__ring {
-  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-  animation: ooTglRingPulse 2s infinite;
-}
-.oo-cosmic-toggle__line {
-  position: absolute;
-  width: 100%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 60%, transparent), transparent);
-  transform-origin: left;
-  opacity: 0;
-  transition: opacity 0.5s;
-}
-.oo-cosmic-toggle__line:nth-of-type(1) { top: 25%; }
-.oo-cosmic-toggle__line:nth-of-type(2) { top: 50%; }
-.oo-cosmic-toggle__line:nth-of-type(3) { top: 75%; }
-.oo-cosmic-toggle.is-on .oo-cosmic-toggle__line { opacity: 1; animation: ooTglEnergy 2s linear infinite; }
-.oo-cosmic-toggle__particle {
-  position: absolute;
-  width: 2px;
-  height: 2px;
-  border-radius: 50%;
-  background: var(--accent);
-  opacity: 0;
-  top: 46%;
-}
-.oo-cosmic-toggle.is-on .oo-cosmic-toggle__particle { animation: ooTglBurst 1.1s ease-out infinite; }
-.oo-cosmic-toggle__particle:nth-child(1) { left: 20%; animation-delay: 0s; }
-.oo-cosmic-toggle__particle:nth-child(2) { left: 40%; animation-delay: 0.15s; }
-.oo-cosmic-toggle__particle:nth-child(3) { left: 60%; animation-delay: 0.3s; }
-.oo-cosmic-toggle__particle:nth-child(4) { left: 80%; animation-delay: 0.45s; }
-.oo-cosmic-toggle__particle:nth-child(5) { left: 30%; animation-delay: 0.6s; }
-.oo-cosmic-toggle__particle:nth-child(6) { left: 70%; animation-delay: 0.75s; }
-.oo-cosmic-toggle__particle:nth-child(7) { left: 50%; animation-delay: 0.9s; }
-.oo-cosmic-toggle__particle:nth-child(8) { left: 90%; animation-delay: 1.05s; }
-/* 打开：球体移到右侧并转一圈，颜色切到主色 */
-.oo-cosmic-toggle.is-on .oo-cosmic-toggle__slider { background: linear-gradient(45deg, #16213e, #1a1a2e); }
-.oo-cosmic-toggle.is-on .oo-cosmic-toggle__orb {
-  transform: translateX(var(--tgl-travel)) rotate(360deg);
-  background: linear-gradient(145deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #000));
-}
-.oo-cosmic-toggle.is-on .oo-cosmic-toggle__inner { transform: scale(0.88); }
-.oo-cosmic-toggle:hover .oo-cosmic-toggle__cosmos { opacity: 0.28; }
-.oo-cosmic-toggle:hover .oo-cosmic-toggle__orb { filter: brightness(1.15); }
-/* 无障碍：键盘聚焦时给一圈外环（输入框本身透明，必须显式加） */
-.oo-cosmic-toggle__input:focus-visible + .oo-cosmic-toggle__slider {
+/* 键盘聚焦外环：输入框自身是唯一可见元素，必须显式给（无障碍） */
+.oo-toggle41 input[type="checkbox"]:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
-.oo-cosmic-toggle__input:disabled + .oo-cosmic-toggle__slider { opacity: 0.55; cursor: not-allowed; }
-
-@keyframes ooTglRingPulse {
-  0%, 100% { transform: scale(1); opacity: 0.35; }
-  50% { transform: scale(1.1); opacity: 0.7; }
+.oo-toggle41 input[type="checkbox"]:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
-@keyframes ooTglEnergy {
-  0% { transform: scaleX(0) translateX(0); opacity: 0; }
-  50% { transform: scaleX(1) translateX(50%); opacity: 1; }
-  100% { transform: scaleX(0) translateX(100%); opacity: 0; }
-}
-@keyframes ooTglBurst {
-  0% { transform: translate(0, 0) scale(1); opacity: 1; }
-  100% { transform: translate(calc(cos(var(--angle, 0deg)) * 16px), calc(sin(var(--angle, 0deg)) * 16px)) scale(0); opacity: 0; }
-}
-/* 尊重「减少动效」偏好：关掉粒子/能量线这类持续动画，只留状态切换 */
-@media (prefers-reduced-motion: reduce) {
-  .oo-cosmic-toggle .oo-cosmic-toggle__particle,
-  .oo-cosmic-toggle .oo-cosmic-toggle__line,
-  .oo-cosmic-toggle .oo-cosmic-toggle__ring { animation: none !important; }
-}
+/* 禁用态（表头勾选/批量操作中）不要动效，避免看起来能点 */
+.oo-toggle41 input[type="checkbox"]:disabled::before { transition: none; }

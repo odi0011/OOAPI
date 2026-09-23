@@ -150,87 +150,63 @@ function UptimeBars({ calls = [], count = 20, onCopy }) {
  * 那正是最需要「修好后一键启用」的场景。
  */
 /**
- * 宇宙开关（cosmic toggle）—— 用户提供的设计，按项目约定转成纯 CSS。
+ * 渠道启停开关（checkbox-41 造型）—— 用户提供的设计。
  *
- * 原稿改了三处（都不是风格问题）：
- *   ① 原稿用 styled-components，而本项目**零新依赖** —— 为一条控件引入运行时样式库
- *      不值得，还会和现有 CSS 变量体系打架。样式落在 styles.css 的 .oo-cosmic-toggle；
- *   ② 原稿 `style={{-angle: '30deg'}}` 不是合法 JSX（CSS 自定义属性名必须以 `--`
- *      开头且要加引号），已修正为 `"--angle"`；
- *   ③ 原稿 140×70px 放不进 128px 的状态列，改用 `--tgl-s` 缩放统一控制。
+ * 按项目约定转成纯 CSS（styles.css 的 .oo-toggle41），原稿改了三处：
+ *   ① 不引入 styled-components —— 项目零新依赖，为一条控件加运行时样式库不划算，
+ *      还会和现有 CSS 变量体系打架；
+ *   ② 尺寸：原设计 --size:100px（100×50px）放不进 128px 的状态列 → 44px（44×22px）；
+ *      原稿的 30px/100px 圆角是绝对 px，缩放后会失真，已按比例折成 em；
+ *   ③ 颜色换成主题色：`#222` 边框 → `--ink-2`，`#fde881` 黄 → `--accent`，
+ *      深浅主题自动适配（用户要求「颜色用我们的主题色」）。
  *
- * 无障碍：用真实 `<input type="checkbox">`（藏在里面）而不是拿 div 假装开关 ——
- * 可聚焦、空格可切换、读屏能识别「开/关」语义。
+ * 无障碍：用真实 `<input type="checkbox">`（原设计也是），可聚焦、空格切换、
+ * 读屏识别开关语义；且勾选态的圆角方向本身不同，不单靠颜色区分。
  */
-function CosmicSwitch({ checked, disabled, onToggle, title }) {
+function ChannelSwitch({ checked, disabled, onToggle, title }) {
   return (
     <Tooltip title={title}>
-      <label className={`oo-cosmic-toggle${checked ? " is-on" : ""}`}>
+      <span className="oo-toggle41">
         <input
           type="checkbox"
-          className="oo-cosmic-toggle__input"
           checked={Boolean(checked)}
           disabled={Boolean(disabled)}
           aria-label={title}
           onChange={(e) => onToggle?.(e.target.checked)}
         />
-        <span className="oo-cosmic-toggle__slider">
-          <span className="oo-cosmic-toggle__cosmos" />
-          <span className="oo-cosmic-toggle__line" />
-          <span className="oo-cosmic-toggle__line" />
-          <span className="oo-cosmic-toggle__line" />
-          <span className="oo-cosmic-toggle__orb">
-            <span className="oo-cosmic-toggle__inner" />
-            <span className="oo-cosmic-toggle__ring" />
-          </span>
-          <span className="oo-cosmic-toggle__particles">
-            {[30, 60, 90, 120, 150, 180, 210, 240].map((deg) => (
-              <span key={deg} className="oo-cosmic-toggle__particle" style={{ "--angle": `${deg}deg` }} />
-            ))}
-          </span>
-        </span>
-      </label>
+      </span>
     </Tooltip>
   );
 }
 
 /**
- * 状态单元格 —— 宇宙开关 + 状态文字（用户要求：「状态那个开关用这个样式」）。
- * 点开关切换启停；自动暂停（status=3）也能开回来 —— 那正是最需要的场景。
+ * 状态单元格 —— **只放启停开关**（用户要求：「那个已启用不要了，这一列就放这个按钮就行」）。
+ *
+ * 状态含义全部收进开关本身 + 悬浮提示：
+ *   · 勾选 = 渠道在跑（启用且未冷却）
+ *   · 未勾选 = 已暂停（手动暂停或自动暂停）
+ *   · 冷却中仍是勾选态（渠道没被停，只是暂时避开），提示里写明冷却到几点
+ *   · 自动暂停的原因在提示里给出 —— 用户据此决定是恢复还是换凭据
  */
 function StatusCell({ r, onToggle, busy }) {
   const st = Number(r.status);
   const auto = st === 3;
   const paused = st === 2;
   const cooling = Boolean(r.cooling) && !auto && !paused;
-  const active = !auto && !paused; // 当前是否在跑（= 开关的勾选态）
+  const active = !auto && !paused;
 
-  const dot = auto ? "bui-dot--err" : paused ? "bui-dot--idle" : cooling ? "bui-dot--warn" : "bui-dot--ok";
-  const text = auto ? (r.last_error ? "已自动暂停" : "已暂停") : paused ? "已暂停" : cooling ? "冷却中" : "已启用";
-  const tip = `${text}（点击${active ? "暂停" : "启用"}）${r.last_error ? `
-原因：${r.last_error}` : ""}`;
+  const state = auto ? (r.last_error ? "已自动暂停" : "已暂停") : paused ? "已暂停" : cooling ? "冷却中" : "已启用";
+  const lines = [`${state}（点击${active ? "暂停" : "启用"}）`];
+  if (cooling && r.cooldown_text) lines.push(`冷却至 ${r.cooldown_text}`);
+  if (r.last_error) lines.push(`原因：${r.last_error}`);
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
-      <CosmicSwitch checked={active} disabled={busy} title={tip} onToggle={(next) => onToggle?.(r, next)} />
-      <span style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-        <span style={{ fontSize: 12, color: "var(--ink-2)", whiteSpace: "nowrap" }}>
-          <span className={`bui-dot ${dot}`} style={{ marginInlineEnd: 4 }} />
-          {text}
-        </span>
-        {/* 自动暂停的原因直接可见 —— 用户据此决定是恢复还是换凭据 */}
-        {auto && r.last_error ? (
-          <Tooltip title={r.last_error}>
-            <span className="oo-truncate" style={{ fontSize: 11, color: "var(--ink-3)", maxWidth: 74 }}>
-              {r.last_error.slice(0, 12)}…
-            </span>
-          </Tooltip>
-        ) : null}
-        {cooling && r.cooldown_text ? (
-          <span style={{ fontSize: 11, color: "var(--ink-3)", whiteSpace: "nowrap" }}>至 {r.cooldown_text}</span>
-        ) : null}
-      </span>
-    </div>
+    <ChannelSwitch
+      checked={active}
+      disabled={busy}
+      title={lines.join("\n")}
+      onToggle={(next) => onToggle?.(r, next)}
+    />
   );
 }
 function fmtCompact(n) {
