@@ -275,7 +275,19 @@ export default function TokenPage() {
         dataIndex: "group",
         width: 150,
         render: (g) => {
-          if (!g) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
+          // 未绑分组的密钥**不能调用**（网关会返回 403 token_group_required），
+          // 所以这里不能只显示一个「—」当装饰 —— 那看起来像「没设置也无所谓」。
+          // 用户要求（原话）：「密钥必须绑定分组…如果密钥没绑定分组则直接调用的时候报错啊」。
+          // 展示上把它标成待处理状态，并说清后果与怎么修。
+          if (!g) {
+            return (
+              <Tooltip title="该密钥未绑定分组，调用会被拒绝（403）。点「编辑」给它选一个分组即可恢复。">
+                <span className="bui-chip" style={{ color: "var(--pill-red-ink)", background: "var(--pill-red-tint)" }}>
+                  未绑定 · 不可用
+                </span>
+              </Tooltip>
+            );
+          }
           const meta = groupMetaOf(g);
           return <GroupTag name={meta?.name || g} meta={meta} />;
         },
