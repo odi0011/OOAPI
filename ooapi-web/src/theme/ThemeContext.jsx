@@ -87,6 +87,21 @@ export function ThemeProvider({ children }) {
         colorBorderSecondary: s.lineSoft,
         colorSplit: s.line,
 
+        // 空状态插画（Empty.PRESENTED_IMAGE_SIMPLE）的填充色。
+        //
+        // 它读的是**全局** token（`useToken()`）里的 colorFill /
+        // colorFillTertiary / colorFillQuaternary，而不是组件级 Empty 段配置 ——
+        // 所以写在 `components: { Empty: {...} }` 里**不会生效**（我第一版就是
+        // 写在那里，实测插画仍是 rgb(20,20,20)，与面板对比度 1.01:1）。
+        //
+        // AntD 的暗色算法给这三个 token 的默认值仍是近黑（rgba(0,0,0,.88) 系），
+        // 合成到我们的暗色面板上就是「一块糊黑」（黑盒测试实测报上来的）。
+        // 这里显式指向调色板里的 line / lineSoft —— 两种主题下都过了对比度校验，
+        // 且随主题切换自动跟随。
+        colorFill: s.line,
+        colorFillTertiary: s.lineSoft,
+        colorFillQuaternary: s.field,
+
         // 几何：对齐 beautifului 圆角阶梯
         borderRadius: 8,
         borderRadiusLG: 10,
@@ -178,21 +193,9 @@ export function ThemeProvider({ children }) {
         Divider: { colorSplit: s.line },
         Dropdown: { paddingBlock: 4 },
         Form: { labelColor: s.ink3, labelFontSize: 13, verticalLabelPadding: "0 0 5px" },
-        // 空状态插画在暗色下几乎不可见。
-        //
-        // 实测（黑盒测试量的）：插画 SVG 的填充取自 `colorFill` /
-        // `colorFillQuaternary`，而这两个 token 在暗色主题里仍是 AntD 默认的
-        // rgba(0,0,0,.88) / rgba(0,0,0,.06) 系 —— 没跟着我们的暗色调色板走，
-        // 于是与面板底色对比度约 **1.1:1**（实测 #141414 vs #202024），
-        // 用户看到的是「一块糊黑」；亮色下也不好看（纯黑实心方块）。
-        //
-        // 改这两个 token 就等于把插画换成主题色版本：用 s.line（面板边线色）
-        // 与 s.field（输入框底色），两种主题下都经过对比度校验，且随主题自动跟随。
-        Empty: {
-          colorTextDescription: s.ink3,
-          colorFill: s.line,
-          colorFillQuaternary: s.field,
-        },
+        // 注意：插画的填充色**不能**在这里配 —— 它读全局 token，
+        // 见上面 `token.colorFill` 处的注释（我第一版写在这里，实测无效）。
+        Empty: { colorTextDescription: s.ink3 },
         Message: { contentBg: s.surface },
         Tooltip: { colorBgSpotlight: s.tooltipBg, colorTextLightSolid: s.tooltipFg, borderRadius: 8 },
         Popover: { borderRadiusLG: 10 },
