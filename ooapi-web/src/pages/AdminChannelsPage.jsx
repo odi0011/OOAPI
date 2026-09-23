@@ -7,7 +7,7 @@ import {
   PlusOutlined, ReloadOutlined, ThunderboltOutlined, DeleteOutlined, EditOutlined,
   UndoOutlined, KeyOutlined, LoginOutlined, GlobalOutlined,
   InfoCircleOutlined, SafetyCertificateOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined,
-  ExclamationCircleOutlined, DashboardOutlined, LinkOutlined,
+  ExclamationCircleOutlined, DashboardOutlined, LinkOutlined, CopyOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
@@ -734,6 +734,9 @@ export default function AdminChannelsPage() {
   // 前端只负责把对应流程跑起来 —— 浏览器授权、网页版会话抓取、设备码、粘贴凭据都在这里。
   const [reloginTarget, setReloginTarget] = useState(null);
   const [reloginInfo, setReloginInfo] = useState(null);
+  // 本机浏览器登录指引（后端 /recovery 返回）：分步说明 + 可选的一行取码代码。
+  // 与「新增渠道」面板共用后端同一份数据（channel-types 的 LOCAL_LOGIN_GUIDE）。
+  const reloginLocalGuide = reloginInfo?.localLogin || null;
   const [reloginText, setReloginText] = useState("");
   const [reloginAccount, setReloginAccount] = useState("");
   const [reloginPassword, setReloginPassword] = useState("");
@@ -2102,7 +2105,8 @@ export default function AdminChannelsPage() {
     try {
       const info = await API.get(`/channel/${r.id}/recovery`);
       setReloginInfo(info);
-      // 默认选推荐方式（列表第一个）
+      // 默认选推荐方式（列表第一个）。后端已把「本机浏览器登录后粘贴」排在前面 ——
+      // 它不起服务器浏览器、更快，也不容易触发风控。
       setReloginMode(info?.modes?.[0]?.key || "paste");
     } catch (e) {
       message.error(e.message);
@@ -2730,26 +2734,92 @@ export default function AdminChannelsPage() {
                         </>
                       ) : addMode === "paste" ? (
                         <>
-                          {pickMethod.canCapture ? (
-                            <Form.Item label="快捷登录（推荐）">
+                          {/* 网页反代渠道：**本机浏览器是主路径**，服务器浏览器是备选。
+                              
+                              为什么这么排（用户反馈）：
+                                「所有快捷登录你都是做的内置浏览器？这不是给服务器徒增压力吗，
+                                  而且压根没必要啊，就直接唤起用户本机浏览器窗口就行啊，
+                                  登录完抓回调参数回填不就行了吗？」
+                              这是对的，而且代价差别很大：服务器浏览器要为每次登录起一个真实
+                              Chromium（带 xvfb 显示、过风控、读 localStorage），而多数情况下
+                              用户自己的浏览器**早就登录好了**，只要告诉他去哪儿复制那串凭据。
+                              
+                              保留服务器浏览器作为备选的理由只有一个，且是真实的：
+                              **HttpOnly cookie 用 JS 读不到**。豆包/通义/StepFun 这类纯 cookie
+                              登录态，用户在开发者工具里仍能手工复制，但服务器浏览器能自动读 ——
+                              它擅长这个。所以降级为「服务器浏览器（备选）」，而不是删掉。 */}
+                          {pickMethod.localLogin ? (
+                            <Form.Item label="登录（推荐：用你自己的浏览器）">
+                              <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                                <Space wrap>
+                                  {pickMethod.entryUrl ? (
+                                    <Button
+                                      type="primary"
+                                      icon={<GlobalOutlined />}
+                                      onClick={() => window.open(pickMethod.entryUrl, "_blank", "noopener")}
+                                    >
+                                      打开 {pickProvider?.name} 登录页
+                                    </Button>
+                                  ) : null}
+                                  {pickMethod.localLogin.snippet ? (
+                                    <Button
+                                      icon={<CopyOutlined />}
+                                      onClick={() =>
+                                        copyText(pickMethod.localLogin.snippet).then(
+                                          () => message.success("取凭据代码已复制：登录后在浏览器控制台粘贴执行"),
+                                          () => message.warning("复制失败，请手动选中下方代码复制")
+                                        )
+                                      }
+                                    >
+                                      复制「取凭据」代码
+                                    </Button>
+                                  ) : null}
+                                  {pickMethod.canCapture ? (
+                                    <Button onClick={startCapture} loading={capBusy}>
+                                      服务器浏览器（备选）
+                                    </Button>
+                                  ) : null}
+                                </Space>
+                                <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.9 }}>
+                                  {pickMethod.localLogin.steps.map((s, i) => (
+                                    <li key={i}>{s}</li>
+                                  ))}
+                                </ol>
+                                {pickMethod.localLogin.snippet ? (
+                                  <div
+                                    onClick={() =>
+                                      copyText(pickMethod.localLogin.snippet).then(
+                                        () => message.success("已复制"),
+                                        () => message.warning("复制失败，请手动选中复制")
+                                      )
+                                    }
+                                    style={{
+                                      fontFamily: "var(--font-mono)",
+                                      fontSize: 12,
+                                      background: "var(--inset)",
+                                      border: "1px solid var(--line)",
+                                      borderRadius: "var(--r-sm)",
+                                      padding: "7px 10px",
+                                      cursor: "pointer",
+                                      wordBreak: "break-all",
+                                    }}
+                                    title="点击复制"
+                                  >
+                                    {pickMethod.localLogin.snippet}
+                                  </div>
+                                ) : null}
+                                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                                  取到的凭据粘到下面「登录态」框里即可。全程不占用服务器资源，比服务器浏览器更快、也不触发风控。
+                                </span>
+                              </Space>
+                            </Form.Item>
+                          ) : pickMethod.canCapture ? (
+                            // 没登记本机指引的网页渠道（暂无）：保留原来的服务器浏览器入口
+                            <Form.Item label="快捷登录">
                               <Space wrap>
                                 <Button icon={<GlobalOutlined />} onClick={startCapture} loading={capBusy}>
                                   服务器浏览器（自动抓取）
                                 </Button>
-                                {/* 本机浏览器路径：用户在自己电脑上登录，再回来粘贴登录态。
-                                    为什么必须有这条路：服务器浏览器要跑一台带显示的真实浏览器，
-                                    资源受限、首次登录还有风控（阿里/字节尤其重）；很多管理员
-                                    更愿意在自己已经登录过的浏览器里直接拷登录态。此前
-                                    只有服务器浏览器一条路（GLM/豆包/通义连 paste 都没挂上），
-                                    等于逼着所有人走最重的那条。 */}
-                                {pickMethod.entryUrl ? (
-                                  <Button
-                                    icon={<GlobalOutlined />}
-                                    onClick={() => window.open(pickMethod.entryUrl, "_blank", "noopener")}
-                                  >
-                                    在本机浏览器打开登录页
-                                  </Button>
-                                ) : null}
                                 <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
                                   {pickMethod.captureHint || "在服务器端登录页完成登录后，自动读取登录态回填下面"}
                                 </span>
@@ -3621,11 +3691,84 @@ export default function AdminChannelsPage() {
               options={(reloginInfo?.modes || []).map((m) => ({ value: m.key, label: m.label }))}
             />
 
-            {/* 浏览器登录：服务器浏览器里打开官方页/官网，验证码人工完成，成功后自动写回 */}
+            {/* 本机浏览器登录 + 粘贴凭据：**推荐路径**。
+                用户自己的浏览器多半已登录好，复制一串凭据即可 —— 不起服务器浏览器、
+                不占资源、也不容易触发风控。服务器浏览器只在前者不可用时才需要
+                （典型是 HttpOnly cookie：JS 读不到，服务器浏览器能自动读）。 */}
+            {reloginMode === "paste" ? (
+              <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                {reloginLocalGuide?.entryUrl ? (
+                  <Button
+                    type="primary"
+                    icon={<GlobalOutlined />}
+                    onClick={() => window.open(reloginLocalGuide.entryUrl, "_blank", "noopener")}
+                    block
+                  >
+                    打开 {reloginInfo?.typeName || ""} 登录页
+                  </Button>
+                ) : null}
+                {reloginLocalGuide?.snippet ? (
+                  <Button
+                    icon={<CopyOutlined />}
+                    onClick={() =>
+                      copyText(reloginLocalGuide.snippet).then(
+                        () => message.success("取凭据代码已复制：登录后在浏览器控制台粘贴执行"),
+                        () => message.warning("复制失败，请手动选中下方代码复制")
+                      )
+                    }
+                    block
+                  >
+                    复制「取凭据」代码
+                  </Button>
+                ) : null}
+                {reloginLocalGuide?.steps?.length ? (
+                  <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.9 }}>
+                    {reloginLocalGuide.steps.map((s, i) => (
+                      <li key={i}>{s}</li>
+                    ))}
+                  </ol>
+                ) : (
+                  <div style={{ fontSize: 12.5, color: "var(--ink-2)" }}>
+                    用你自己电脑的浏览器登录上游，把登录态（token / cookie）复制过来即可。
+                  </div>
+                )}
+                {reloginLocalGuide?.snippet ? (
+                  <div
+                    onClick={() =>
+                      copyText(reloginLocalGuide.snippet).then(
+                        () => message.success("已复制"),
+                        () => message.warning("复制失败，请手动选中复制")
+                      )
+                    }
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 12,
+                      background: "var(--inset)",
+                      border: "1px solid var(--line)",
+                      borderRadius: "var(--r-sm)",
+                      padding: "7px 10px",
+                      cursor: "pointer",
+                      wordBreak: "break-all",
+                    }}
+                    title="点击复制"
+                  >
+                    {reloginLocalGuide.snippet}
+                  </div>
+                ) : null}
+              </Space>
+            ) : null}
+
+            {/* 服务器浏览器（备选）：打开官方页/官网，验证码人工完成，成功后自动写回 */}
             {["oauth-browser", "session-capture", "capture", "browser-ready"].includes(reloginMode) ? (
-              <Button type="primary" icon={<GlobalOutlined />} onClick={reloginBrowserStart} loading={reloginBusy} block>
-                在服务器浏览器里打开登录页
-              </Button>
+              <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                <Button type="primary" icon={<GlobalOutlined />} onClick={reloginBrowserStart} loading={reloginBusy} block>
+                  在服务器浏览器里打开登录页
+                </Button>
+                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                  会在这台服务器上启动一个真实浏览器（有资源开销）。若你在本机浏览器里能打开该站点，
+                  用上面的「本机浏览器登录后粘贴」更快。
+                </span>
+              </Space>
             ) : null}
 
             {/* 一键绑定（设备授权）：Kiro / WorkBuddy / Qoder 重新绑定已有渠道 */}

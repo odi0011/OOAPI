@@ -24,7 +24,7 @@ import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now, assertPublicUrl, idParam, safeInt } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
-import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod, isApiKeyMethod } from "../services/channel-types.js";
+import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod, isApiKeyMethod, localLoginGuide } from "../services/channel-types.js";
 import { buildLoginUrl, exchangeCodeForCredential, interactiveLoginInfo, supportsInteractiveLogin, supportsInteractiveLoginMethod, supportsDeviceLogin, startDeviceLogin, pollDeviceLogin } from "../services/upstream/oauth-login.js";
 import { getAdapter, resetChannelState, forgetChannel, invalidateChannelCache, channelRuntimeState, channelRecent, rowToChannel, recordChannelCall } from "../services/router.js";
 import { clearGroupConfigCache } from "../services/group-rate.js";
@@ -953,21 +953,32 @@ router.get(
     if (method !== "api") {
       // 服务器浏览器里的官方授权页：能覆盖「账号掉验证要接码」这一步（人工在实时画面里输验证码）
       if (isOAuthMethod(method) && supportsInteractiveLoginMethod(r.type, method)) {
-        modes.push({
-          key: "oauth-browser",
-          label: "浏览器登录（推荐）",
-          desc: "在服务器浏览器里打开官方登录页，验证码/接码人工完成，授权后自动写回凭据",
-        });
+        // 本机浏览器优先：授权页在用户自己浏览器里打开，把回调地址贴回来即可。
+        // 服务器浏览器那条路仍保留（有些环境本地打不开官方页 / 需要接码），但不再标「推荐」。
         modes.push({
           key: "oauth-callback",
-          label: "打开授权页 + 粘贴回调",
-          desc: "在自己电脑的浏览器里登录，把回调地址粘回来换令牌",
+          label: "本机浏览器登录 + 粘贴回调（推荐）",
+          desc: "在自己电脑的浏览器里登录，把回调地址粘回来换令牌；不占服务器资源",
+        });
+        modes.push({
+          key: "oauth-browser",
+          label: "服务器浏览器自动登录",
+          desc: "在服务器浏览器里打开官方登录页，验证码/接码人工完成，授权后自动写回凭据",
         });
       } else if (mCfg.captureApi) {
+        // 顺序与措辞反映代价差异（用户反馈「所有快捷登录都做内置浏览器，给服务器徒增压力」）：
+        // 先给**本机浏览器**路径 —— 多数人自己的浏览器早就登录好了，复制一串凭据即可，
+        // 零服务器开销；服务器浏览器要起真实 Chromium，只在前者不可用时才需要
+        //（典型是 HttpOnly cookie：JS 读不到，但服务器浏览器能自动读）。
+        modes.push({
+          key: "paste",
+          label: "本机浏览器登录后粘贴（推荐）",
+          desc: "用你自己电脑的浏览器登录官网，把登录态复制过来；不占服务器资源，也不容易触发风控",
+        });
         modes.push({
           key: "session-capture",
-          label: "浏览器登录抓取（推荐）",
-          desc: "在服务器浏览器里登录官网，登录后自动读取会话凭据",
+          label: "服务器浏览器自动抓取",
+          desc: "在服务器浏览器里登录官网，登录后自动读取会话凭据（适合 JS 读不到的 HttpOnly cookie）",
         });
       }
       if (isOAuthMethod(method) && supportsDeviceLogin(r.type)) {
@@ -979,7 +990,13 @@ router.get(
         modes.unshift({ key: "device-bind", label: "一键绑定（推荐）", desc: "打开授权页确认一次即可自动完成绑定，无需手工找凭据文件" });
       }
       if (mCfg.needsBrowser) {
-        modes.push({ key: "browser-ready", label: "浏览器登录", desc: "打开上游页面完成扫码/验证码登录" });
+        // 本机浏览器优先；服务器浏览器作为备选（保持 key 不变，前端已有对应分支）
+        modes.push({
+          key: "paste",
+          label: "本机浏览器登录后粘贴（推荐）",
+          desc: "用你自己电脑的浏览器登录上游，把登录态复制过来",
+        });
+        modes.push({ key: "browser-ready", label: "服务器浏览器打开登录页", desc: "打开上游页面完成扫码/验证码登录" });
       }
       // 注：这里曾有独立的 "capture" 项，与 "paste" 并列。
       // 两者是同一条流程（抓取面板里自带粘贴兜底），并列会让用户以为是两种登录方式，
@@ -987,7 +1004,11 @@ router.get(
       if ((mCfg.loginModes || []).includes("password")) {
         modes.push({ key: "password", label: "账号密码登录", desc: "用上游账号密码重新登录" });
       }
-      modes.push({ key: "paste", label: "粘贴凭据", desc: "手工粘贴官方凭据文件或登录态" });
+      // 去重：上面几条分支可能已经加过 paste（本机浏览器路径）。
+      // 不去重的话下拉里会出现两个「粘贴」，用户分不清该点哪个。
+      if (!modes.some((m) => m.key === "paste")) {
+        modes.push({ key: "paste", label: "粘贴凭据", desc: "手工粘贴官方凭据文件或登录态" });
+      }
     } else {
       modes.push({ key: "api-key", label: "更新 API Key", desc: "到渠道编辑里换一个可用的 Key" });
     }
@@ -1018,6 +1039,10 @@ router.get(
       // 能否「只检测当前凭据」：反代/订阅渠道各自有 verify（API 渠道走 /test）
       canVerify: method === "api" || Boolean(mCfg.adapter) || Boolean(mCfg.loginModes?.length) || Boolean(mCfg.entryUrl),
       modes,
+      // 本机浏览器登录指引（凭据在自己浏览器里的位置 + 可选的取码一行）。
+      // 放在这里是为了让「重新登录」弹窗也能给分步说明 —— 否则它只能丢一句
+      // 「粘贴登录态」，用户不知道该从哪抄（新增渠道面板用的是同一份数据）。
+      localLogin: { ...(localLoginGuide(r.type, method) || {}), entryUrl: mCfg.entryUrl || "" },
     });
   })
 );

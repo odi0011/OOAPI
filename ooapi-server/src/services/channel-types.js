@@ -1084,6 +1084,114 @@ export function needsBrowser(providerKey, methodKey) {
 }
 
 /** 对外下发用（前端「添加渠道」按此渲染，不含函数） */
+/**
+ * 本机浏览器登录指引 —— 每个网页反代渠道的凭据，在**用户自己的浏览器**里从哪取。
+ *
+ * 为什么要有这份数据（用户反馈）：
+ *   「所有快捷登录你都是做的内置浏览器？这不是给服务器徒增压力吗，而且压根没必要啊，
+ *    就直接唤起用户本机浏览器窗口就行啊，登录完抓回调参数回填不就行了吗？」
+ *
+ * 这个判断是对的，而且成本差异很大：服务器浏览器要为每次登录起一个真实 Chromium
+ * （带 xvfb 显示、过风控、读 localStorage），而绝大多数情况下**用户自己的浏览器
+ * 早就登录好了**，只要告诉他去哪儿复制那串凭据即可 —— 零服务器开销、还更快。
+ *
+ * 但有一个诚实的例外必须保留服务器浏览器：**HttpOnly cookie 用 JS 读不到**。
+ * 这类渠道（豆包/通义/StepFun 等纯 cookie 登录态）用户仍能手工从开发者工具复制，
+ * 只是步骤多一些；服务器浏览器可以自动读，所以它作为**备选**保留，
+ * 而不是像以前那样当唯一路径。
+ *
+ * 字段：
+ *   · steps   给人看的分步说明（本机浏览器登录后要先做什么）
+ *   · snippet 可选的一行控制台代码（能直接 copy 出凭据的渠道）
+ *   · console 提示是否需要在控制台执行（前端据此显示「复制取凭据代码」按钮）
+ */
+const LOCAL_LOGIN_GUIDE = {
+  "deepseek:relay": {
+    steps: [
+      "在打开的页面完成登录（可用手机 App 扫码）",
+      "登录后按 F12 打开开发者工具，切到 Console",
+      "粘贴下面这行代码并回车，凭据会自动进剪贴板",
+    ],
+    // 值本身是 JSON，真实 token 在 .value 里（只 copy(整个对象) 会被适配器判为非法）
+    snippet: "copy(JSON.parse(localStorage.getItem('userToken')).value)",
+  },
+  "glm:relay": {
+    steps: [
+      "在打开的页面完成登录（验证码由页面自己处理）",
+      "登录后按 F12 → Console",
+      "粘贴下面这行代码并回车，凭据会自动进剪贴板",
+    ],
+    snippet: "copy(localStorage.getItem('token'))",
+  },
+  "kimi:relay": {
+    steps: [
+      "在打开的页面完成登录（手机号验证码 / 扫码）",
+      "登录后按 F12 → Application → Cookies → https://www.kimi.com",
+      "找到名为 kimi-auth 的那一行，双击 Value 全选复制（一串以 eyJ 开头的 JWT）",
+    ],
+    // kimi-auth 可能是 HttpOnly，document.cookie 取不到；先给一行尝试，
+    // 取不到时下面的手工步骤是可靠路径（不把「可能失败」写成「一定能用」）
+    snippet: "copy((document.cookie.match(/(?:^|;\\s*)kimi-auth=([^;]+)/)||[])[1]||'取不到（HttpOnly）：请按上面手工步骤复制')",
+  },
+  "doubao:relay": {
+    steps: [
+      "在打开的页面用手机 App 扫码登录",
+      "登录后按 F12 → Network，刷新一下页面，点任意一个请求",
+      "在 Request Headers 里找到 cookie: 那一行，把整行的值复制过来",
+    ],
+  },
+  "qwen:relay": {
+    steps: [
+      "在打开的页面完成登录（阿里风控较重，可能需要拖动验证）",
+      "登录后按 F12 → Network，刷新页面，点任意一个请求",
+      "在 Request Headers 里找到 cookie: 那一行，把整行的值复制过来",
+    ],
+  },
+  "minimax:minimax-web": {
+    steps: [
+      "在打开的页面完成登录",
+      "登录后按 F12 → Console",
+      "粘贴下面这行代码并回车；若提示取不到，改从 Application → Cookies 里复制 token 的值",
+    ],
+    snippet: "copy(localStorage.getItem('token') || (document.cookie.match(/(?:^|;\\s*)token=([^;]+)/)||[])[1] || '取不到：请从 Application → Cookies 复制 token 的值')",
+  },
+  "mimo:mimo-web": {
+    steps: [
+      "在打开的页面完成登录（小米账号）",
+      "登录后按 F12 → Network，刷新页面，点任意一个请求",
+      "在 Request Headers 里找到 cookie: 那一行，整行值复制过来（适配器会自动取出 serviceToken / userId / xiaomichatbot_ph 三个值）",
+    ],
+  },
+  "stepfun:stepfun-web": {
+    steps: [
+      "在打开的页面完成登录（手机号验证码）",
+      "登录后按 F12 → Network，刷新页面，点任意一个请求",
+      "在 Request Headers 里找到 cookie: 那一行，把整行的值复制过来",
+    ],
+  },
+  "openai:openai-web": {
+    steps: [
+      "在打开的页面完成登录（含邮箱验证码）",
+      "登录后按 F12 → Console",
+      "粘贴下面这行代码并回车：它请求 ChatGPT 自己的 session 接口，把 accessToken 复制进剪贴板",
+    ],
+    // 走官方 session 接口而不是读 cookie：access_token 不在 cookie 里（实测），
+    // 而且带着会话请求更稳（与服务器端抓取用的是同一个端点 /api/auth/session）。
+    snippet:
+      "(async()=>{try{const j=await (await fetch('/api/auth/session',{credentials:'include'})).json();const t=j&&j.accessToken;if(t){copy(t);console.log('已复制 access_token')}else{console.log('没取到 access_token，确认已登录后再试')}}catch(e){console.log('请求失败：'+e.message)}})()",
+  },
+};
+
+/**
+ * 取某接入方式的本机登录指引（没有登记则返回 null，前端退回纯说明文案）。
+ * **必须带 provider**：多个厂商的网页反代方法键都叫 relay，
+ * 只按 method 查会互相撞车（早先一版就是这么写的，结果一条都取不到）。
+ */
+export function localLoginGuide(providerKey, methodKey) {
+  const k = [String(providerKey || ""), String(methodKey || "")].join(":");
+  return LOCAL_LOGIN_GUIDE[k] || null;
+}
+
 export function publicProviders() {
   // 「自定义（通用兼容）」强制排最后：它是兜底选项，不是厂商。
   // 混在厂商中间会让人以为它也是一家，而且新厂商接入时容易被挤到下面找不着。
@@ -1126,6 +1234,8 @@ export function publicProviders() {
       // 远程登录抓取能力：有 entryUrl 就说明支持「打开登录页自动抓取」
       captureHint: m.captureHint || "",
       canCapture: Boolean(m.entryUrl),
+      // 本机浏览器登录指引（凭据在用户浏览器里的位置 + 可选的取码一行）
+      localLogin: localLoginGuide(p.key, m.key),
       needsBrowser: Boolean(m.needsBrowser),
       baseUrl: m.baseUrl || "",
       keyHint: m.keyHint || "",
