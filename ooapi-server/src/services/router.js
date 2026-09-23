@@ -51,6 +51,9 @@ const ADAPTERS = {
   // x-opencode-session 与自述 UA，缺了直接 400 missing_session_id
   //（线上渠道 #45 的故障）。薄适配器只补这两个头，对话仍复用 openai-compat。
   opencode: () => import("./upstream/opencode.js"),
+  // Cline 官方就是标准 OpenAI 兼容 API，薄适配器只补客户端标识头与响应包封解包
+  //（调研结论见 upstream/cline.js 顶部：官方有正式 API，不需要也不应做反代）。
+  cline: () => import("./upstream/cline.js"),
 };
 
 /**

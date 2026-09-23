@@ -273,6 +273,10 @@ export async function chat({
   onDelta,
   onReasoning,
   signal,
+  // 可选：解包上游的响应包封（Cline 官方 SDK 定义里带 responseEnvelope: "success-data"，
+  // 社区报告非流式会把 choices 包在 data 里）。传进来的函数对「标准形状」应原样返回，
+  // 只有真存在包封时才解 —— 这样对绝大多数厂商是零影响的空操作。
+  unwrap,
 }) {
   const { chat: url } = endpoints(channel.base_url);
   if (!url) {
@@ -419,6 +423,9 @@ export async function chat({
     }
     // data: null / data: 123 等也是合法 JSON，直接读属性会抛 TypeError 打断整个流
     if (!ev || typeof ev !== "object") return;
+    // 上游可能把结果包一层（Cline 的 data 包封）：解包后再按标准形状读。
+    // unwrap 是适配器传入的可选钩子，未传时完全不执行（对其它厂商零影响）。
+    if (unwrap) ev = unwrap(ev) || ev;
     // 火山方舟会在容量紧张时自动降级到别的模型跑，这里读**实际生效**的模型名，
     // 计费与日志都据此（否则会按 A 的价收 B 的钱）——见 vendor-quirks.js
     const eff = effectiveModelOf(ev);

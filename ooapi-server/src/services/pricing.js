@@ -175,6 +175,7 @@ export const DEFAULT_PRICES = [
   { model: "gemini-3.8-flash", input: 1.50, output: 9.00, cache: 0.15, type: "gemini", remark: "与 3.5-flash 同档官方牌价；来源 ai.google.dev/gemini-api/docs/pricing" },
   { model: "gemini-2.5-flash-lite", input: 0.10, output: 0.40, cache: 0.025, type: "gemini", remark: "官方牌价录入；来源 ai.google.dev/gemini-api/docs/pricing" },
   // Anthropic：4.5 代 sonnet/haiku（旧代命名，按官方历史价录入）
+  { model: "claude-sonnet-4.6", input: 3.00, output: 15.00, cache: 0.30, type: "anthropic", remark: "4.6 代 sonnet 官方价（与 4.5 同档）；来源 anthropic.com/pricing" },
   { model: "claude-sonnet-4.5", input: 3.00, output: 15.00, cache: 0.30, type: "anthropic", remark: "4.5 代 sonnet 官方价；来源 anthropic.com/pricing" },
   { model: "claude-opus-4.5", input: 5.00, output: 25.00, cache: 0.50, type: "anthropic", remark: "4.5 代 opus 官方价；来源 anthropic.com/pricing" },
   // 智谱视觉档：与对应文本档同价（官方视觉不加价）

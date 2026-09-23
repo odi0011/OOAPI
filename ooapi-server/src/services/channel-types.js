@@ -817,6 +817,60 @@ export const PROVIDERS = [
     ],
   },
   {
+    // Cline（cline.bot）—— 调研结论：**官方就提供标准 OpenAI 兼容 API**，
+    // 所以按普通 API Key 渠道接入，**不需要**任何反代/逆向。
+    //
+    // 调研记录（2026-09-23，逐条有据可查）：
+    //   · 官方端点 POST https://api.cline.bot/api/v1/chat/completions，
+    //     认证 Authorization: Bearer <key>；Key 在 app.cline.bot → Settings → API Keys
+    //     创建，与扩展登录得到的 account token **是同一套头格式**（官方文档 api/authentication）。
+    //   · GET {base}/models **公开无需鉴权**（实测返回 200 + 454 个模型），
+    //     所以拉模型清单不需要先有 Key。
+    //   · 模型 id 是 vendor/model 形式（同 OpenRouter）：anthropic/claude-sonnet-4.6、
+    //     openai/gpt-5.6-luna、google/gemini-3.5-flash 等；另有 :free / :batch 后缀档。
+    //     getPrice 已支持剥离 vendor/ 前缀，所以这些 id 能直接命中平台已有定价。
+    //   · 计费形态：Cline 自己的 credit（usage-billing）或 ClinePass 订阅（$9.99/月）。
+    //
+    // **为什么接成 API Key 而不是反代**（调研里最关键的结论）：
+    // 社区确有一批 cline2api 反代项目（拿扩展 refreshToken + 伪造客户端头），
+    // 但那条路对我们是多余的 —— 官方既有标准 API、又有正式签发的 Key。
+    // 且它明确违反其 ToS（§2.2 禁止「以官方提供之外的技术手段访问」、§7.3 禁止共享订阅），
+    // 并已被部分封堵（订阅档 cline-pass/* 直接 403 "only available via Cline product surfaces"）。
+    // 用官方 Key 既稳定、又不涉封号风险。
+    key: "cline",
+    name: "Cline",
+    keyUrl: "https://app.cline.bot/settings/api-keys",
+    vendor: "cline",
+    desc: "Cline 官方 API（OpenAI 兼容，模型用 vendor/model 命名）",
+    methods: [
+      {
+        key: "api",
+        adapter: "cline", // 补客户端标识头 + 兼容响应包封（见 upstream/cline.js）
+        label: "API Key",
+        desc: "Cline API Key（app.cline.bot → Settings → API Keys）",
+        baseUrl: "https://api.cline.bot/api/v1",
+        keyHint: "Cline 账号的 API Key",
+        // 默认模型只挑「平台价格表已能匹配到的档位」——
+        // 否则会立刻被「未定价模型不放行」的门禁拦下。
+        // （getPrice 剥掉 vendor/ 前缀后能命中 claude-sonnet-4.6 / gpt-5.6-luna /
+        //   gemini-3.5-flash 等已有定价，所以这些开箱即可用。）
+        defaultModels: [
+          { id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
+          { id: "anthropic/claude-opus-4.5", name: "Claude Opus 4.5" },
+          { id: "anthropic/claude-haiku-4.5", name: "Claude Haiku 4.5" },
+          { id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna" },
+          { id: "openai/gpt-5.5", name: "GPT-5.5" },
+          { id: "google/gemini-3.5-flash", name: "Gemini 3.5 Flash" },
+          { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+          { id: "z-ai/glm-5.3", name: "GLM-5.3" },
+          { id: "deepseek/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash" },
+          { id: "moonshotai/kimi-k2.6", name: "Kimi K2.6" },
+        ],
+        testModel: "anthropic/claude-haiku-4.5",
+      },
+    ],
+  },
+  {
     key: "siliconflow",
     name: "硅基流动",
     keyUrl: "https://cloud.siliconflow.cn/account/ak",
