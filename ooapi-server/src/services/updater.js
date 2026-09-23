@@ -285,18 +285,56 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
 
     step("构建前端…");
     try {
-      // 关键坑：systemd 单元里设了 NODE_ENV=production，而更新器是服务进程的子进程
-      // 会继承这个变量 —— npm 在 NODE_ENV=production 下 **默认跳过 devDependencies**，
-      // 而 vite 正是 devDependency，被跳过后构建必然报 "vite: not found"。
-      // 所以这里必须 --include=dev 显式带上，并把 NODE_ENV 覆盖掉。
-      const frontEnv = { ...process.env, NODE_ENV: "development" };
+      // NODE_ENV 在这两步里的**取值不一样**，踩过坑：
+      //
+      //   ① **装依赖**：systemd 单元设了 NODE_ENV=production，服务进程的子进程会继承，
+      //      而 npm 在 NODE_ENV=production 下**默认跳过 devDependencies** ——
+      //      vite 正是 devDependency，被跳过后构建必然报 "vite: not found"。
+      //      所以装依赖时要覆盖成 development（或显式 --include=dev）。
+      //
+      //   ② **打包**：vite 也是用 NODE_ENV 决定**打包哪个 React** ——
+      //      development 会把 `react-dom.development` 整包打进去（实测 2.58MB、
+      //      带一堆 dev 警告），production 才是 1.92MB 的优化版。
+      //
+      // 原实现把同一份 frontEnv（NODE_ENV=development）用在 ①②两步，
+      // 于是**线上前端一直是开发版 React**：包大 600KB+、加载更慢、控制台刷警告。
+      // （靠比对「线上产物 vs 本地 production 产物」的哈希才发现：CSS 相同、JS 差 600KB。）
+      // 构建这步额外显式给 `--mode production`：vite 官方推荐用 mode 而不是
+      // NODE_ENV 来控制构建，两个都给最稳。
+      const installEnv = { ...process.env, NODE_ENV: "development" };
+      const buildEnv = { ...process.env, NODE_ENV: "production" };
       const needDeps =
         !existsSync(path.join(WEB_ROOT, "node_modules")) ||
         !existsSync(path.join(WEB_ROOT, "node_modules", ".bin")) ||
         !existsSync(path.join(WEB_ROOT, "node_modules", ".bin", "vite"));
       step(needDeps ? "  前端依赖缺失，正在安装（含 devDependencies）…" : "  同步前端依赖…");
-      await run("npm", ["install", "--include=dev", "--no-audit", "--no-fund"], { cwd: WEB_ROOT, env: frontEnv });
-      await run("npm", ["run", "build"], { cwd: WEB_ROOT, env: frontEnv });
+      await run("npm", ["install", "--include=dev", "--no-audit", "--no-fund"], { cwd: WEB_ROOT, env: installEnv });
+      await run("npm", ["run", "build", "--", "--mode", "production"], { cwd: WEB_ROOT, env: buildEnv });
+      // 产物自检：把 React 开发版发上线是个**静默故障** —— 部署显示成功、
+      // 功能也正常，只是又大又慢、控制台刷警告，没人会注意到。
+      // 所以构建完主动查一遍产物，命中就明确告警，而不是假装一切正常。
+      try {
+        const assetsDir = path.join(WEB_DIST, "assets");
+        const jsFiles = (await fs.readdir(assetsDir).catch(() => [])).filter((f) => f.endsWith(".js"));
+        let devBuild = null;
+        for (const f of jsFiles) {
+          const text = await fs.readFile(path.join(assetsDir, f), "utf8");
+          // React 开发构建的独有标记：生产构建里必被剔除
+          if (text.includes("react-dom.development") || text.includes("Consider adding an error boundary")) {
+            devBuild = f;
+            break;
+          }
+        }
+        if (devBuild) {
+          step(`⚠ 前端产物疑似含 React 开发版（${devBuild}）`);
+          console.warn(`[updater] 前端产物 ${devBuild} 含 React 开发版标记：线上会比生产版大 600KB+，请检查 NODE_ENV/mode`);
+        } else {
+          step("  产物自检通过（生产版 React）");
+        }
+      } catch (e) {
+        // 自检只是多一道保险，失败不影响部署
+        console.warn(`[updater] 前端产物自检跳过：${e.message}`);
+      }
       // 原子切换构建产物：先拷到 stage 目录再逐项 rename，中途失败/被杀时旧产物仍可用
       // （旧实现先删 assets 再拷贝，失败会留下白屏且回滚不覆盖 web/）
       await fs.mkdir(STATIC_WEB, { recursive: true });
