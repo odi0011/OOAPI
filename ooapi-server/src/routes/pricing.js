@@ -7,7 +7,8 @@ import { writeLog, LOG_TYPE } from "../services/log.js";
 import { invalidatePrices, loadPrices, DEFAULT_PRICES, describeRule } from "../services/pricing.js";
 import { pendingPricedModels } from "../services/pricing.js";
 import { modelRegistry, invalidateModelRegistry } from "../services/models.js";
-import { clinePriceFor, CLINE_RULE_COUNT } from "../services/cline-prices.js";
+import { clinePriceFor } from "../services/cline-prices.js";
+import { syncUpstreamPrices, missingFromUpstream } from "../services/price-sync.js";
 
 const router = Router();
 router.use(adminRequired);
@@ -428,9 +429,59 @@ router.post(
 );
 
 // ---------------------------------------------------------------------------
+// 同步上游价目表：**真的去线上取价**（OpenRouter 公开模型目录），而不是重写内置表
+// ---------------------------------------------------------------------------
+// 用户反馈：「点击同步官方价目没用啊？比如 anthropic 今天出了新模型也没同步到啊？」
+// —— 老实现只把硬编码的 DEFAULT_PRICES 写回库，那是一张人肉维护的静态表，
+// 上游发新模型它当然不会自己出现。现在换成 services/price-sync.js 的真实取价。
+//
+// `overwrite` 默认 false：库里已有的行不覆盖（保住管理员手工调过的价）。
+// 前端用「覆盖已有价」开关表达这个意图 —— 它是个危险操作，必须显式选。
+router.post(
+  "/sync-upstream",
+  asyncHandler(async (req, res) => {
+    const overwrite = req.body?.overwrite === true;
+    try {
+      const r = await syncUpstreamPrices({ overwrite });
+      await writeLog({
+        req,
+        user: req.user,
+        type: LOG_TYPE.MANAGE,
+        content: `同步上游价目：新增 ${r.inserted}、更新 ${r.updated}、跳过 ${r.skipped}${overwrite ? "（含覆盖）" : ""}`,
+      });
+      const bits = [];
+      if (r.inserted) bits.push(`新增 ${r.inserted}`);
+      if (r.updated) bits.push(`更新 ${r.updated}`);
+      if (r.skipped) bits.push(`跳过 ${r.skipped}（已有价，未开启覆盖）`);
+      return ok(
+        res,
+        { ...r },
+        `已从上游同步 ${r.fetched} 条价目${bits.length ? `，${bits.join("、")}` : ""}`
+      );
+    } catch (e) {
+      return fail(res, `同步失败：${e.message}`);
+    }
+  })
+);
+
+/** 同步前预检：渠道声明了但库里没价的模型，其中多少能靠同步补上 */
+router.get(
+  "/sync-precheck",
+  asyncHandler(async (req, res) => {
+    try {
+      const r = await missingFromUpstream();
+      return ok(res, r);
+    } catch (e) {
+      return fail(res, `预检失败：${e.message}`);
+    }
+  })
+);
+
+// ---------------------------------------------------------------------------
 // 同步内置价目表：按 DEFAULT_PRICES 覆盖更新（仅管理员主动点击时执行）
 // ---------------------------------------------------------------------------
 // 与启动时 seed 不同：这里会覆盖价格与来源说明，用于把被改乱/写错的历史数据拉回官方口径。
+// 注意它**不会**发现新模型（数据源就是代码里那张静态表）；要拿上游新模型用 /sync-upstream。
 router.post(
   "/sync-defaults",
   asyncHandler(async (req, res) => {
@@ -506,55 +557,94 @@ router.get(
     const [rows] = await pool.query(
       "SELECT id, name, type, models FROM channels WHERE status = 1 AND models IS NOT NULL AND models <> ''"
     );
-    // 统计「渠道声明过的模型」里：多少条靠 DB 价格、多少条靠归属规则、多少条没着落
-    let byDb = 0;
-    let byRule = 0;
-    const unresolved = new Set();
+    // 逐模型判定「这个模型按什么价收费」，四个来源分开计数。
+    // 用户反馈「这块太模糊了我根本看不懂咋用」—— 所以这里不只给数字，
+    // 每个来源都带上**可操作的下一步**（见 sources[].action）。
+    const SRC = {
+      exact: { key: "exact", label: "库里已定价", tone: "green", desc: "在下面定价表里能直接找到并修改" },
+      rule: { key: "rule", label: "归属规则自动定价", tone: "cyan", desc: "由内置规则按厂商归属，无需你操作" },
+      fallback: { key: "fallback", label: "走兜底价（会偏贵）", tone: "orange", desc: "只能按「同厂商最贵档」猜，建议补齐" },
+      none: { key: "none", label: "完全没价，调用会被拦下", tone: "red", desc: "用户调用时会被拒绝，必须定价" },
+    };
+    const counts = { exact: 0, rule: 0, fallback: 0, none: 0 };
+    const buckets = { exact: [], rule: [], fallback: [], none: [] };
     const byVendor = new Map();
-    const ruleModels = [];
+
     for (const r of rows) {
       for (const raw of String(r.models || "").split(",")) {
         const m = raw.trim();
         if (!m || m === "*") continue;
         const key = m.toLowerCase();
-        let hit = prices.has(key);
-        if (!hit) {
-          let bestLen = -1;
-          for (const k of prices.keys()) if (key.startsWith(k) && k.length > bestLen) bestLen = k.length;
-          hit = bestLen >= 0;
-        }
-        if (hit) {
-          byDb += 1;
+        const item = { model: m, channel: String(r.name || ""), channelId: Number(r.id) || 0 };
+
+        // ① 库里精确命中
+        if (prices.has(key)) {
+          const v = prices.get(key);
+          counts.exact += 1;
+          if (buckets.exact.length < 300) buckets.exact.push({ ...item, got: v.model, input: Number(v.input), output: Number(v.output) });
           continue;
         }
+        // ② 前缀命中（deepseek-chat-search → deepseek-chat）：也算库里已定价
+        let bestLen = -1;
+        let bestKey = "";
+        for (const k of prices.keys()) if (key.startsWith(k) && k.length > bestLen) { bestLen = k.length; bestKey = k; }
+        if (bestLen >= 0) {
+          const v = prices.get(bestKey);
+          counts.exact += 1;
+          if (buckets.exact.length < 300) buckets.exact.push({ ...item, got: bestKey, input: Number(v.input), output: Number(v.output) });
+          continue;
+        }
+        // ③ 归属规则
         const rule = clinePriceFor(m);
         if (rule) {
-          byRule += 1;
+          counts.rule += 1;
           const v = rule.type || "其他";
           byVendor.set(v, (byVendor.get(v) || 0) + 1);
-          if (ruleModels.length < 500) ruleModels.push({ model: m, type: v, input: rule.input, output: rule.output });
+          if (buckets.rule.length < 300) buckets.rule.push({ ...item, got: v, input: rule.input, output: rule.output });
+          continue;
+        }
+        // ④ 没有规则 → 会走兜底（同厂商最贵档 / 全表最贵档）。
+        // 兜底链里「同厂商」要靠注册表判定，拿得到就是 fallback，拿不到就是 none
+        //（两者对管理员的差别是「大概多收几倍」vs「完全不能调用」，必须分开）。
+        let vendor = "";
+        try {
+          const { modelRegistry } = await import("../services/models.js");
+          const reg = await modelRegistry();
+          vendor = reg.get(key)?.type || "";
+        } catch { /* 注册表取不到就当 none 处理 */ }
+        if (vendor) {
+          counts.fallback += 1;
+          if (buckets.fallback.length < 300) buckets.fallback.push({ ...item, got: vendor });
         } else {
-          unresolved.add(m);
+          counts.none += 1;
+          if (buckets.none.length < 300) buckets.none.push({ ...item, got: "" });
         }
       }
     }
-    const vendors = [...byVendor.entries()].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count);
+
+    const total = counts.exact + counts.rule + counts.fallback + counts.none;
     return ok(res, {
-      ruleCount: CLINE_RULE_COUNT,
-      byDb,
-      byRule,
-      unresolved: [...unresolved].slice(0, 200),
-      unresolvedCount: unresolved.size,
-      // 归属到的厂商分布：一眼看出「哪些厂商的模型被自动归过来了」
-      vendors,
-      // 抽样 30 条归属明细给管理员看（不做分页：这是「一眼确认规则对不对」的预览，
-      // 真要逐条改价走上面的定价表）
-      samples: ruleModels.filter((_, i) => i % Math.max(1, Math.ceil(ruleModels.length / 30)) === 0).slice(0, 30),
+      total,
+      counts,
+      // 每个桶带上「下一步该做什么」—— 这是「看不懂咋用」的解药：
+      // 管理员不需要理解规则引擎，只需要知道「哪里有问题、点哪个按钮」。
+      //
+      // 刻意**不返回** ruleCount（内置规则条数）：那是引擎内部指标，旧版把它
+      // 摆在最显眼的位置（「归属规则 212 条」），管理员看到只会想「所以呢？」——
+      // 它既不是问题、也不是能操作的数字（用户反馈「太模糊了我根本看不懂咋用」）。
+      sources: Object.values(SRC).map((x) => ({ ...x, count: counts[x.key], models: buckets[x.key] })),
+      // 厂商分布（归属规则把哪些厂商的模型自动收进来了）
+      vendors: [...byVendor.entries()].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count),
+      // 一句话总结：给不看细节的人
+      summary:
+        counts.fallback || counts.none
+          ? `有 ${counts.fallback + counts.none} 个模型没有确切价格，其中 ${counts.none} 个会被直接拦下`
+          : `全部 ${total} 个模型都有确切价格`,
     });
   })
 );
 
-/** 单个模型的归属解析（管理员在「归属检查」里贴一个模型名即可看到结果） */
+
 router.get(
   "/resolve",
   asyncHandler(async (req, res) => {

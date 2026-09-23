@@ -2015,7 +2015,10 @@ export default function AdminChannelsPage() {
       width: 180,
       render: (list) => {
         const gs = Array.isArray(list) ? list : [];
-        if (!gs.length) return <Text type="secondary" style={{ fontSize: 12 }}>公共</Text>;
+        // 渠道不绑分组是**合法**的（渠道可以不属于任何分组，只对绑了同名分组的密钥可见）。
+        // 这里显示「全域」而不是「公共」：它描述的是「这些渠道对绑了分组的密钥都不开放」，
+        // 而不是某个叫「公共池」的东西（那个概念已废弃）。
+        if (!gs.length) return <Text type="secondary" style={{ fontSize: 12 }}>未绑定分组</Text>;
         return (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
             {gs.map((g) => (

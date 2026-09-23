@@ -479,6 +479,81 @@ async function quotaDeepseekApi(channel) {
   };
 }
 
+/**
+ * OpenCode GO 套餐的额度。
+ *
+ * 用户反馈：「opencode 如果是 go 渠道的额度条呢？」—— 此前判断「OpenCode 没有额度接口」
+ * 是**只探了 zen 主站**得出的结论（`/zen/v1/usage` 等一圈全 404），漏了 GO 套餐自己的路径。
+ * 实测 `GET https://opencode.ai/zen/go/v1/usage` 返回：
+ *   { usage: { rolling: {status, percent, resetsAt},
+ *              weekly:  {status, percent, resetsAt},
+ *              monthly: {status, percent, resetsAt} } }
+ * 三个窗口正好对应平台现有的多条额度条（rolling≈5h 滚动、weekly 周、monthly 月）。
+ *
+ * 认证就是渠道里那把 `oc_sk_...` Key（GO 套餐的 Key 与 zen 按量付费的 Key 不同：
+ * 同一个 Key 打 /zen/v1/usage 是 404，只有 /zen/go/v1/usage 认它 —— 所以路径必须跟着
+ * base_url 走，不能写死）：
+ *   base_url = https://opencode.ai/zen/go/v1  → /usage
+ *   base_url = https://opencode.ai/zen/v1     → 按量付费，没有额度接口（上游确实没提供）
+ */
+async function quotaOpencodeGo(channel) {
+  const base = String(channel?.base_url || "").trim().replace(/\/+$/, "");
+  let host = "";
+  try {
+    host = new URL(base).hostname.toLowerCase();
+  } catch {
+    host = "";
+  }
+  // 域名精确匹配（与 deepseek-api 同一口径）：避免把 Key 发给第三方主机。
+  // 这里允许 opencode.ai 及其子域，但路径必须落到 /zen/go/v1。
+  if (host !== "opencode.ai" && !host.endsWith(".opencode.ai")) {
+    throw Object.assign(new Error("仅 OpenCode 官方域名（opencode.ai）支持额度查询"), { code: "QUOTA_UNSUPPORTED" });
+  }
+  if (!/\/zen\/go\/v\d+$/.test(base)) {
+    // 非 GO 套餐：上游没有额度接口（探过 /zen/v1/{usage,balance,me,plan,limits,quota,credits,user,account} 全 404）
+    throw Object.assign(new Error("该地址不是 OpenCode GO 套餐（zen/go），上游未提供额度接口"), {
+      code: "QUOTA_UNSUPPORTED",
+    });
+  }
+  const key = String(channel?.api_key || "").split("\n")[0].trim();
+  if (!key) throw Object.assign(new Error("渠道没有 API Key"), { code: "CHANNEL_AUTH_EXPIRED" });
+  const j = await getJson(`${base}/usage`, { headers: { authorization: `Bearer ${key}` } });
+
+  // 三个窗口映射成额度条。窗口长度取上游语义：rolling = 滚动 5 小时（与 Anthropic/Gemini
+  // 的 5h 窗口同档，便于前端按「同长度只留一条」的规范折叠），weekly = 7 天，monthly = 30 天。
+  const SPEC = [
+    ["rolling", 5 * 3600, "5h"],
+    ["weekly", 7 * 86400, "7d"],
+    ["monthly", 30 * 86400, "30d"],
+  ];
+  const windows = [];
+  for (const [name, seconds, tag] of SPEC) {
+    const w = j?.usage?.[name];
+    if (!w || typeof w !== "object") continue;
+    // percent 是**已用百分比**（实测 rolling 4 / weekly 52 / monthly 41）。
+    // status: ok | (限额时上游给别的值) —— 非 ok 按「已触发限额」显示满条。
+    const pct = clampPct(Number(w.percent));
+    const limited = w.status && w.status !== "ok";
+    windows.push({
+      key: name,
+      label: windowLabel(seconds),
+      tag,
+      windowSeconds: seconds,
+      usedPercent: limited ? 100 : pct,
+      resetAt: epochOf(w.resetsAt),
+      note: limited ? "该窗口已触发限额" : "",
+    });
+  }
+  if (!windows.length) {
+    throw Object.assign(new Error("上游未返回额度信息"), { code: "CHANNEL_BAD_RESPONSE" });
+  }
+  return {
+    account: String(channel?.other?.account || ""),
+    plan: "GO 套餐",
+    windows,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // 分派
 // ---------------------------------------------------------------------------
@@ -493,6 +568,9 @@ const SUPPORTED = new Set([
   // WorkBuddy/CodeBuddy 是**积分制**（用户反馈「有积分制为什么显示不支持」）：
   // 额度接口是 POST {billing域}/v2/billing/meter/get-user-resource，实测可用
   "workbuddy",
+  // OpenCode GO 套餐：GET {base}/usage（实测三个窗口 rolling/weekly/monthly）。
+  // 注意 key 名与 quotaSupportFor 里的判定条件要一致（见下方 opencode-go 分支）。
+  "opencode-go",
 ]);
 
 /** 该渠道是否支持额度查询（前端据此决定要不要显示「查额度」按钮） */
@@ -506,7 +584,28 @@ export function quotaSupportFor(channel = {}) {
   if (m === "api" && type === "deepseek" && isDeepseekOfficial(channel.base_url)) {
     return { supported: true, key: "deepseek-api" };
   }
+  // OpenCode GO 套餐：同样是 api 方式，但路径必须是 /zen/go/v1 才认那把 Key。
+  // 与 quotaOpencodeGo 的判定保持一致（两处不一致会出现「按钮能点、点了报不支持」）。
+  if (type === "opencode" && isOpencodeGo(channel.base_url)) {
+    return { supported: true, key: "opencode-go" };
+  }
   return { supported: false, key: "" };
+}
+
+/** base_url 是否指向 OpenCode 官方 API（精确 host 匹配；仅用于判断能否查额度） */
+function isOpencodeOfficial(raw) {
+  try {
+    const h = new URL(String(raw || "")).hostname.toLowerCase();
+    return h === "opencode.ai" || h.endsWith(".opencode.ai");
+  } catch {
+    return false;
+  }
+}
+
+/** base_url 是否是 OpenCode GO 套餐的地址（.../zen/go/v1） */
+function isOpencodeGo(raw) {
+  if (!isOpencodeOfficial(raw)) return false;
+  return /\/zen\/go\/v\d+\/?$/.test(String(raw || "").trim().replace(/\/+$/, ""));
 }
 
 /** base_url 是否指向 DeepSeek 官方 API（精确 host 匹配；仅用于判断能否查余额） */
@@ -554,6 +653,9 @@ export async function fetchQuota(channel) {
         break;
       case "deepseek-api":
         data = await quotaDeepseekApi(channel);
+        break;
+      case "opencode-go":
+        data = await quotaOpencodeGo(channel);
         break;
       default:
         throw Object.assign(new Error("该接入方式上游没有可用的额度接口"), { code: "QUOTA_UNSUPPORTED" });

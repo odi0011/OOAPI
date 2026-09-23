@@ -263,6 +263,15 @@ async function bootstrap() {
     console.error("[init] 定时检测启动失败：", e.message);
   }
 
+  // 渠道额度自动刷新（deepseek 余额 / OpenCode GO 窗口 …）
+  // 与检测分开：查额度是只读快接口、不消耗上游额度，失败也绝不冷却渠道（见该文件注释）
+  try {
+    const { scheduleQuotaRefresh } = await import("./services/quota-refresh.js");
+    scheduleQuotaRefresh();
+  } catch (e) {
+    console.error("[init] 额度刷新任务启动失败：", e.message);
+  }
+
   // 限流渠道自动恢复：429 停用的渠道到点放回启用（见 resumeRateLimitedChannels）。
   // 单独一个轻量定时器（30s）而不是并进上面的检测循环：检测要打上游、可能很慢，
   // 而「到点恢复」只是几十毫秒的数据库操作，被慢探针拖住会让渠道白停更久。

@@ -423,13 +423,18 @@ export function hasKnownVendor(name) {
 export function GroupTag({ name, meta, size = 13, className, style }) {
   const n = String(name || "").trim();
   if (!n || n === "default") {
+    // 「公共池」已废弃（用户要求彻底清掉）：未分组不再是合法的绑定状态，
+    // 只有**历史数据**还可能为空。这里显示为「未分组」而不是「公共」——
+    // 前者是「这条记录缺一个归属、需要补」，后者听起来像一个正常的池子。
     return (
-      <span
-        className={`bui-chip bui-chip--muted ${className || ""}`}
-        style={{ fontSize: 12, height: 22, lineHeight: "22px", padding: "0 6px", ...style }}
-      >
-        公共
-      </span>
+      <Tooltip title="该记录没有绑定分组（历史数据）。密钥必须归属某个分组，请在编辑里补上。">
+        <span
+          className={`bui-chip bui-chip--muted ${className || ""}`}
+          style={{ fontSize: 12, height: 22, lineHeight: "22px", padding: "0 6px", ...style }}
+        >
+          未分组
+        </span>
+      </Tooltip>
     );
   }
 

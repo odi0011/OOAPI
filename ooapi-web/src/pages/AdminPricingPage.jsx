@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Table, Input, Select, App as AntApp, Typography, Modal, Upload, Alert, Space, Button, Popconfirm, Tag, Tooltip } from "antd";
-import { ReloadOutlined, SearchOutlined, DollarOutlined, UploadOutlined, ClearOutlined, CloudDownloadOutlined, ApartmentOutlined, CheckCircleOutlined, QuestionCircleOutlined } from "@ant-design/icons";
+import { Table, Input, Select, App as AntApp, Typography, Modal, Upload, Alert, Space, Button, Popconfirm, Tag, Tooltip, Checkbox, Segmented } from "antd";
+import { ReloadOutlined, SearchOutlined, DollarOutlined, UploadOutlined, ClearOutlined, CloudDownloadOutlined, ApartmentOutlined, QuestionCircleOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
@@ -87,7 +87,7 @@ export default function AdminPricingPage() {
   //   resolveR  —— 上一条的查询结果
   //   fixing    —— 「固化为定价」进行中
   const [attrib, setAttrib] = useState(null);
-  const [attribOpen, setAttribOpen] = useState(false);
+  const [attribOpen, setAttribOpen] = useState(""); // "" = 未展开；否则是展开的来源 key
   const [resolveQ, setResolveQ] = useState("");
   const [resolveR, setResolveR] = useState(null);
   const [resolving, setResolving] = useState(false);
@@ -316,14 +316,26 @@ export default function AdminPricingPage() {
     }
   };
 
-  const syncDefaults = async () => {
+  // 同步上游价目：**真的去线上取价**（OpenRouter 公开模型目录，454 个模型全带价），
+  // 不再是「把代码里那张静态表重写一遍」—— 老实现因此永远发现不了上游新模型
+  //（用户实测反馈：「anthropic 今天出了新模型也没同步到」）。
+  //
+  // `overwrite` 是危险开关，默认关：库里已有的行不覆盖，保住管理员手工调过的价。
+  // 打开它才会把上游价强行写回（用于「历史数据被改乱了想拉回官方口径」）。
+  const [overwrite, setOverwrite] = useState(false);
+  const syncUpstream = async () => {
     setSyncing(true);
     try {
-      const r = await API.post("/pricing/sync-defaults");
-      message.success(`已同步内置价目表 ${r.updated} 条`);
+      const r = await API.post("/pricing/sync-upstream", { overwrite });
+      const bits = [];
+      if (r.inserted) bits.push(`新增 ${r.inserted}`);
+      if (r.updated) bits.push(`更新 ${r.updated}`);
+      if (r.skipped) bits.push(`跳过 ${r.skipped}`);
+      message.success(`已同步上游 ${r.fetched} 条价目${bits.length ? `（${bits.join("、")}）` : ""}`);
       await load();
+      loadAttrib();
     } catch (e) {
-      message.error(e.message);
+      message.error(e.message || "同步失败");
     } finally {
       setSyncing(false);
     }
@@ -338,11 +350,29 @@ export default function AdminPricingPage() {
             <Button size="small" icon={<UploadOutlined />} onClick={openImport}>
               上传文件更新
             </Button>
-            <Popconfirm title="按内置官方价目表覆盖更新？" description="会同步价格与来源说明；管理员手改的价格也会被覆盖。" onConfirm={syncDefaults} okText="同步" cancelText="取消">
+            <Popconfirm
+              title="从上游同步价目表？"
+              description={
+                <span style={{ fontSize: 12 }}>
+                  从上游模型目录（OpenRouter 公开接口）拉取**真实价格**，覆盖
+                  {overwrite ? "包括已有行在内的全部价格" : "仅补齐库里还没有的模型"}。
+                  {overwrite ? "⚠️ 已开启「覆盖已有价」，管理员手改的价格会被冲掉。" : ""}
+                </span>
+              }
+              onConfirm={syncUpstream}
+              okText="开始同步"
+              cancelText="取消"
+              width={420}
+            >
               <Button size="small" icon={<CloudDownloadOutlined />} loading={syncing}>
-                同步官方价目
+                同步上游价目
               </Button>
             </Popconfirm>
+            <Tooltip title="开启后连已有价格一起覆盖（会把管理员手改的价冲掉）">
+              <Checkbox checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} style={{ fontSize: 12 }}>
+                覆盖已有价
+              </Checkbox>
+            </Tooltip>
             <Popconfirm title="清理无效定价？" description="删除所有「模型 ID 未在平台注册」的垃圾数据（含历史遗留的错误模型）。" onConfirm={prune} okText="清理" cancelText="取消">
               <Button size="small" icon={<ClearOutlined />} loading={cleaning} danger>
                 清理无效数据
@@ -374,134 +404,226 @@ export default function AdminPricingPage() {
         />
       </div>
 
-      {/* 模型归属：把上游的模型 id 自动对到真实厂商（图标）与真实价格
+      {/* 模型定价体检
           ----------------------------------------------------------------------
-          用户要求（原话）：「Cline 里很多模型并没有走系统已有模型的厂商的图标，
-          应该是他们的 id 不相同，这个有什么办法自动归属吗？…能不能全部，在获取模型的
-          时候自动归属，在后台模型定价页面坐一块功能区给管理员做？价格我估计也是对不上的」。
-          这里就是那块功能区：一眼看到覆盖情况 + 单条即时自检 + 一键固化成真实定价行。 */}
+          用户反馈（原话）：「模型归属区域做的太模糊了我根本看不懂咋用，很反人类」。
+          旧版失败在哪：它列的是**引擎内部指标**（规则 212 条 / 靠规则 7 个 / 未覆盖 0），
+          回答的是「规则引擎怎么工作」，而管理员真正要知道的是三件事：
+            ① 我现在有没有问题？（哪些模型没价、会被拦下）
+            ② 有问题的话怎么修？（点哪个按钮）
+            ③ 我怎么确认某个模型会被按什么价收费？（查一个看看）
+          所以这一版改成**按「价格来源」分组**：每个来源是一个人话标签 + 数量 +
+          「该怎么处理」，点开就是具体模型清单（带渠道名），每条还能直接跳去定价表改价。 */}
       {attrib ? (
         <div className="oo-panel">
           <div className="oo-panel-head">
             <span className="oo-panel-title">
               <ApartmentOutlined style={{ marginRight: 6 }} />
-              模型归属
+              定价体检
             </span>
             <Space size={6}>
               <Button size="small" icon={<ReloadOutlined />} onClick={loadAttrib}>
                 刷新
               </Button>
-              <Button
-                size="small"
-                type="primary"
-                ghost
-                icon={<CheckCircleOutlined />}
-                loading={fixing === "__all__"}
-                onClick={() => doMaterialize("")}
-              >
-                固化为定价
-              </Button>
-              <Button size="small" onClick={() => setAttribOpen((v) => !v)}>
-                {attribOpen ? "收起" : "展开明细"}
-              </Button>
             </Space>
           </div>
           <div className="oo-panel-body">
-            <Space size={18} wrap style={{ marginBottom: 8 }}>
-              <span>
-                <Text type="secondary" style={{ fontSize: 12 }}>归属规则 </Text>
-                <Tag color="blue">{attrib.ruleCount} 条</Tag>
-              </span>
-              <span>
-                <Text type="secondary" style={{ fontSize: 12 }}>已直接定价 </Text>
-                <Tag color="green">{attrib.byDb}</Tag>
-              </span>
-              <span>
-                <Text type="secondary" style={{ fontSize: 12 }}>靠归属规则定价 </Text>
-                <Tag color="cyan">{attrib.byRule}</Tag>
-              </span>
-              <span>
-                <Text type="secondary" style={{ fontSize: 12 }}>未覆盖（走兜底价） </Text>
-                <Tag color={attrib.unresolvedCount ? "red" : "default"}>{attrib.unresolvedCount}</Tag>
-              </span>
-            </Space>
-            <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 10 }}>
-              规则把上游 id（<code>anthropic/claude-sonnet-4.5</code>、
-              <code>~openai/gpt-luna-latest</code>、<code>x-ai/grok-4.3:free</code>）归一化后
-              对到真实厂商与价格；库里已有的定价行**优先于规则**，规则只在没定价时兜底。
-              固化会把规则写成真实定价行，之后可以在上方列表里逐条微调。
-            </Text>
+            {/* 一句话结论：不展开也能知道有没有问题 */}
+            <Alert
+              type={attrib.counts?.none || attrib.counts?.fallback ? "warning" : "success"}
+              showIcon
+              style={{ marginBottom: 10 }}
+              message={attrib.summary}
+              description={
+                <span style={{ fontSize: 12 }}>
+                  平台在用的模型共 <b>{attrib.total}</b> 个（只统计启用渠道声明过的）。
+                  下面是每个模型按什么价收费 —— 点某一类可以展开看具体是哪些模型。
+                </span>
+              }
+            />
 
-            <Space wrap size={6} style={{ marginBottom: 10 }}>
-              <Input
-                size="small"
-                placeholder="贴一个模型名检查归属，如 anthropic/claude-sonnet-4.5"
-                value={resolveQ}
-                onChange={(e) => setResolveQ(e.target.value)}
-                onPressEnter={doResolve}
-                style={{ width: 340 }}
-                prefix={<QuestionCircleOutlined style={{ color: "var(--ink-3)" }} />}
-              />
-              <Button size="small" loading={resolving} onClick={doResolve}>检查</Button>
-              {resolveR ? (
-                resolveR.source === "none" ? (
-                  <Tag color="red">{resolveR.remark}</Tag>
-                ) : (
-                  <Tag color={resolveR.source === "rule" ? "cyan" : "green"}>
-                    <ModelLabel model={resolveR.model} size={12} />
-                    {" → "}
-                    {TYPE_LABEL[resolveR.type] || resolveR.type || "—"}
-                    {" · 输入 "}
-                    {Number(resolveR.input).toFixed(4)}
-                    {" / 输出 "}
-                    {Number(resolveR.output).toFixed(4)}
-                  </Tag>
-                )
-              ) : null}
-            </Space>
+            {/* 四类价格来源：卡片形式，一眼看出「哪类是问题」 */}
+            <Row gutter={10} style={{ marginBottom: 10 }}>
+              {(attrib.sources || []).map((src) => {
+                const tone = {
+                  green: { bg: "var(--pill-green-tint, #e7f6ec)", ink: "var(--pill-green-ink, #1a7f4b)" },
+                  cyan: { bg: "var(--pill-cyan-tint, #e3f5f8)", ink: "var(--pill-cyan-ink, #0d7490)" },
+                  orange: { bg: "var(--pill-amber-tint)", ink: "var(--pill-amber-ink)" },
+                  red: { bg: "var(--pill-red-tint)", ink: "var(--pill-red-ink)" },
+                }[src.tone] || { bg: "transparent", ink: "var(--ink-2)" };
+                const isOpen = attribOpen === src.key;
+                return (
+                  <Col span={6} key={src.key}>
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setAttribOpen(isOpen ? "" : src.key)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setAttribOpen(isOpen ? "" : src.key);
+                        }
+                      }}
+                      style={{
+                        cursor: "pointer",
+                        padding: "8px 10px",
+                        borderRadius: 6,
+                        height: "100%",
+                        border: `1px solid ${isOpen ? tone.ink : "var(--line)"}`,
+                        background: isOpen ? tone.bg : "transparent",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                        <span style={{ fontSize: 20, fontWeight: 600, color: tone.ink }}>{src.count}</span>
+                        <span style={{ fontSize: 12, color: tone.ink }}>{src.label}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--ink-3)", lineHeight: 1.4, marginTop: 2 }}>{src.desc}</div>
+                    </div>
+                  </Col>
+                );
+              })}
+            </Row>
 
-            {attribOpen ? (
-              <div style={{ maxHeight: 320, overflow: "auto" }}>
-                <Table
-                  size="small"
-                  rowKey="type"
-                  pagination={false}
-                  dataSource={attrib.vendors || []}
-                  columns={[
-                    { title: "归属厂商", dataIndex: "type", render: (v) => <span className="bui-chip">{TYPE_LABEL[v] || v}</span> },
-                    { title: "模型数", dataIndex: "count", width: 90 },
-                    {
-                      title: "操作",
-                      width: 130,
-                      render: (_, r) => (
-                        <Button
-                          size="small"
-                          type="link"
-                          loading={fixing === r.type}
-                          onClick={() => doMaterialize(r.type)}
-                        >
-                          固化为定价
+            {/* 点开某一类 → 具体模型清单（带渠道名，一眼知道是哪个渠道带进来的） */}
+            {attribOpen ? (() => {
+              const src = (attrib.sources || []).find((x) => x.key === attribOpen);
+              if (!src) return null;
+              const rows = src.models || [];
+              return (
+                <div style={{ marginBottom: 12 }}>
+                  <Space size={8} style={{ marginBottom: 6 }} wrap>
+                    <Text strong style={{ fontSize: 13 }}>{src.label}（{src.count} 个）</Text>
+                    {src.key === "rule" || src.key === "fallback" ? (
+                      <Popconfirm
+                        title={`把「${src.label}」里的模型固化成定价行？`}
+                        description="已存在的定价行不会被覆盖（管理员手改的价保住）。固化后可在上方列表里逐条微调。"
+                        onConfirm={() => doMaterialize("")}
+                        okText="固化"
+                        cancelText="取消"
+                      >
+                        <Button size="small" type="primary" ghost loading={fixing === "__all__"}>
+                          一键固化为定价
                         </Button>
-                      ),
-                    },
-                  ]}
-                />
-                {attrib.unresolved?.length ? (
-                  <Alert
-                    type="warning"
-                    showIcon
-                    style={{ marginTop: 10 }}
-                    message={`规则未覆盖 ${attrib.unresolvedCount} 个模型（会走「同族/最贵档」兜底价）`}
-                    description={
-                      <span style={{ fontSize: 12, wordBreak: "break-all" }}>
-                        {attrib.unresolved.slice(0, 30).join("、")}
-                        {attrib.unresolvedCount > 30 ? ` …等 ${attrib.unresolvedCount} 个` : ""}
-                      </span>
-                    }
+                      </Popconfirm>
+                    ) : null}
+                    {src.key === "fallback" || src.key === "none" ? (
+                      <Button
+                        size="small"
+                        onClick={() => {
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                          message.info("用顶部的「同步上游价目」能从上游补齐这些模型的价格");
+                        }}
+                      >
+                        怎么补价？
+                      </Button>
+                    ) : null}
+                    <Button size="small" onClick={() => setAttribOpen("")}>收起</Button>
+                  </Space>
+                  <Table
+                    size="small"
+                    rowKey={(r) => `${r.model}@${r.channelId}`}
+                    dataSource={rows}
+                    pagination={rows.length > 20 ? { pageSize: 20, size: "small" } : false}
+                    columns={[
+                      { title: "模型", dataIndex: "model", render: (v) => <ModelLabel model={v} size={14} /> },
+                      { title: "来自渠道", dataIndex: "channel", width: 150, ellipsis: true },
+                      {
+                        title: "归属 / 命中",
+                        dataIndex: "got",
+                        width: 170,
+                        render: (v) => (v ? <span className="bui-chip">{TYPE_LABEL[v] || v}</span> : <Text type="secondary">—</Text>),
+                      },
+                      {
+                        title: "输入 / 输出",
+                        width: 150,
+                        render: (_, r) =>
+                          r.input !== undefined ? (
+                            <span className="oo-num">
+                              {Number(r.input).toFixed(4)} / {Number(r.output).toFixed(4)}
+                            </span>
+                          ) : (
+                            <Text type="secondary">未知</Text>
+                          ),
+                      },
+                      {
+                        title: "操作",
+                        width: 90,
+                        render: (_, r) => (
+                          <Button size="small" type="link" onClick={() => setKeyword(r.model)}>
+                            改价
+                          </Button>
+                        ),
+                      },
+                    ]}
                   />
-                ) : null}
+                  {src.count > rows.length ? (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      只显示前 {rows.length} 个（共 {src.count} 个）
+                    </Text>
+                  ) : null}
+                </div>
+              );
+            })() : null}
+
+            {/* 单条自检：最直白的入口 ——「我这个模型会被按什么价收费？」 */}
+            <div style={{ padding: "8px 10px", border: "1px solid var(--line)", borderRadius: 6 }}>
+              <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 6 }}>
+                <b>查一个模型</b>：输入模型名（可以是 <code>vendor/model</code> 这种带前缀的），
+                看它会被归到哪个厂商、按什么价收费、这个价是从哪来的。
               </div>
-            ) : null}
+              <Space wrap size={6}>
+                <Input
+                  size="small"
+                  placeholder="如 anthropic/claude-sonnet-4.5、deepseek-flash"
+                  value={resolveQ}
+                  onChange={(e) => setResolveQ(e.target.value)}
+                  onPressEnter={doResolve}
+                  style={{ width: 340 }}
+                  prefix={<QuestionCircleOutlined style={{ color: "var(--ink-3)" }} />}
+                />
+                <Button size="small" type="primary" ghost loading={resolving} onClick={doResolve}>
+                  查询
+                </Button>
+              </Space>
+              {resolveR ? (
+                <div style={{ marginTop: 8, fontSize: 12 }}>
+                  {resolveR.source === "none" ? (
+                    <Alert
+                      type="error"
+                      showIcon
+                      message={`「${resolveR.model}」没有确切价格`}
+                      description={
+                        <span>
+                          {resolveR.remark}
+                          <br />
+                          它被调用时会被闸门拦下。请到顶部点「同步上游价目」补齐，或在这张表里手工加一行。
+                        </span>
+                      }
+                    />
+                  ) : (
+                    <Space size={8} wrap>
+                      <ModelLabel model={resolveR.model} size={14} />
+                      <span style={{ color: "var(--ink-3)" }}>→</span>
+                      <Tag color="blue">{TYPE_LABEL[resolveR.type] || resolveR.type || "未知厂商"}</Tag>
+                      <span className="oo-num">
+                        输入 {Number(resolveR.input).toFixed(4)} / 输出 {Number(resolveR.output).toFixed(4)}
+                        {Number(resolveR.cache) ? ` / 缓存 ${Number(resolveR.cache).toFixed(4)}` : ""}
+                      </span>
+                      <Tag color={resolveR.source === "rule" ? "cyan" : resolveR.source === "db" ? "green" : "default"}>
+                        {{
+                          db: "来自定价表（你配的）",
+                          "db-prefix": `命中定价表前缀「${resolveR.matched || ""}」`,
+                          rule: "来自归属规则（自动）",
+                        }[resolveR.source] || resolveR.source}
+                      </Tag>
+                      {resolveR.remark ? (
+                        <Text type="secondary" style={{ fontSize: 11 }}>{resolveR.remark}</Text>
+                      ) : null}
+                    </Space>
+                  )}
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
       ) : null}

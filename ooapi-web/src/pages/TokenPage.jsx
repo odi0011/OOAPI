@@ -427,16 +427,27 @@ export default function TokenPage() {
             </Form.Item>
           </div>
 
-          <Form.Item className="oo-form-grid__full" name="group_name" label="分组">
+          {/* 分组是**必填**：用户要求「密钥必须绑定分组，我们没有那个所谓的公共，
+              以及系统默认池，这玩意给我彻底清掉」。
+              以前可以不绑定（= 落到「公共池」，只能调用同样没分组的渠道），
+              那个池子已经废弃 —— 不绑分组时密钥既不知道按哪个倍率计费、
+              也不清楚能调哪些渠道，属于说不清归属的状态。 */}
+          <Form.Item
+            className="oo-form-grid__full"
+            name="group_name"
+            label="分组"
+            rules={[{ required: true, message: "请选择分组（密钥必须归属某个分组）" }]}
+          >
             <Select
               allowClear
               showSearch
-              placeholder="不绑定（使用系统默认池）"
+              placeholder="请选择分组"
               options={groupOptions}
               optionRender={(opt) => opt.data?.renderItem || opt.label}
               filterOption={(input, option) => (option?.search || "").includes(input.toLowerCase())}
               popupMatchSelectWidth={false}
               dropdownStyle={{ minWidth: 380, padding: "6px" }}
+              notFoundContent={<span style={{ fontSize: 12 }}>还没有分组，请先到「分组管理」创建一个</span>}
             />
           </Form.Item>
         </Form>

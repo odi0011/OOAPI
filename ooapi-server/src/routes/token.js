@@ -66,14 +66,24 @@ function getSetting(user) {
   return user?.setting ?? {};
 }
 
-// 分组绑定必须是存在的分组名：防拼错，也避免绑定到不存在的分组后计费/路由都默默失败。
-// 兼容历史 "厂商:分组名"：剥掉前缀后按名字校验。
+/**
+ * 分组绑定必须是**存在的分组名**：防拼错，也避免绑定到不存在的分组后计费/路由都默默失败。
+ *
+ * 用户要求（原话）：「我看到有的密钥咋没绑定分组？密钥必须绑定分组，我们没有那个所谓的
+ * 公共，以及系统默认池，这玩意给我彻底清掉。」
+ *
+ * 所以这里**不再允许空值**：以前 `if (!raw) return true` 把空串当成「公共池」放行，
+ * 结果是密钥没有分组 → 调度时只能匹配到「没有分组的渠道」→ 那些渠道对这类密钥可见。
+ * 现在密钥必须有归属，空串与 default（历史别名）都直接拒绝，由路由层给出可读提示。
+ *
+ * 兼容历史 "厂商:分组名"：剥掉前缀后按名字校验。
+ */
 async function validGroupBinding(binding) {
   let raw = String(binding || "").trim();
-  if (!raw) return true; // 空 = 公共池
+  if (!raw || raw === "default") return false; // 空/default 不再合法（公共池已废弃）
   const idx = raw.indexOf(":");
   if (idx > 0 && idx < raw.length - 1) raw = raw.slice(idx + 1);
-  if (!raw || raw === "default") return true;
+  if (!raw || raw === "default") return false; // 剥前缀后为空也要拒
   const [rows] = await pool.query("SELECT id FROM channel_groups WHERE name = ? LIMIT 1", [raw]);
   return rows.length > 0;
 }
@@ -122,7 +132,9 @@ router.post(
     const expiredVal = Number(expired_time);
     if (!Number.isFinite(remainVal) || remainVal < 0 || remainVal > MAX_QUOTA) return fail(res, "额度无效");
     if (!Number.isFinite(expiredVal) || expiredVal > MAX_EXPIRED) return fail(res, "过期时间无效");
-    if (!(await validGroupBinding(group_name))) return fail(res, "分组不存在");
+    if (!(await validGroupBinding(group_name))) {
+      return fail(res, "请为该密钥选择一个分组（已取消「公共池」，密钥必须归属某个分组）");
+    }
     const key = genApiKey();
     const [ins] = await pool.query(
       `INSERT INTO tokens (user_id, name, key_str, status, created_time, accessed_time, expired_time,
@@ -178,7 +190,9 @@ router.put(
       expiredVal = Number(expired_time);
       if (!Number.isFinite(expiredVal) || expiredVal > MAX_EXPIRED) return fail(res, "过期时间无效");
     }
-    if (group_name !== undefined && !(await validGroupBinding(group_name))) return fail(res, "分组不存在");
+    if (group_name !== undefined && !(await validGroupBinding(group_name))) {
+      return fail(res, "请为该密钥选择一个分组（已取消「公共池」，密钥必须归属某个分组）");
+    }
     const sets = ["name = ?", "status = ?", "unlimited_quota = ?", "expired_time = ?", "model_limits = ?", "group_name = ?"];
     const vals = [
       name !== undefined ? String(name).trim().slice(0, 64) : cur.name,

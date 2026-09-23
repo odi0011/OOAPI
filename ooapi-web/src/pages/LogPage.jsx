@@ -221,7 +221,8 @@ export default function LogPage() {
             width: 135,
             render: (v) => {
               const name = displayGroupName(v);
-              if (!name) return <Text type="secondary" style={{ fontSize: 12 }}>公共</Text>;
+              // 「公共池」已废弃：空分组是历史数据的缺归属状态，显示为「未分组」
+              if (!name) return <Text type="secondary" style={{ fontSize: 12 }}>未分组</Text>;
               const meta = groupMeta.find((g) => g.name === name);
               return <GroupTag name={name} meta={meta} />;
             },

@@ -102,7 +102,7 @@ const F = {
   checkin_max_quota: { g: "billing", label: "签到最大奖励", type: "number", min: 0 },
 
   // ---------- 用户 ----------
-  default_user_group: { g: "user", label: "新用户默认分组", type: "text", ph: "留空 = 公共池" },
+  default_user_group: { g: "user", label: "新用户默认分组", type: "text", ph: "留空 = 新用户无分组（需管理员指定）" },
   user_visible_quota_detail: {
     g: "user", label: "用户可见额度粒度", type: "select",
     options: [

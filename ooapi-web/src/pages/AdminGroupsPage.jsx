@@ -281,7 +281,7 @@ export default function AdminGroupsPage() {
             编辑
           </Button>
           {g.name !== "default" ? (
-            <Popconfirm title={`确定删除分组「${g.name}」？已绑定的 Key 会自动解绑回系统默认池`} onConfirm={() => remove(g)}>
+            <Popconfirm title={`确定删除分组「${g.name}」？已绑定的 Key 会变成「未分组」，需要重新指定分组才能调用`} onConfirm={() => remove(g)}>
               <Button type="link" size="small" danger>
                 删除
               </Button>
