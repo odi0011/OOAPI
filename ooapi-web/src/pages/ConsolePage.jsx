@@ -108,6 +108,8 @@ export default function ConsolePage() {
   // 大学生人格的原话：「这是最伤新手的一条」「我自己就来回改了半小时」。
   const [sampleModel, setSampleModel] = useState("");
 
+  const endpoint = status?.api_endpoint || `${window.location.origin}/v1`;
+
   const load = useCallback(async () => {
     const token = begin();
     setLoading(true);
