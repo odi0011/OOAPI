@@ -3349,6 +3349,78 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 
   回归锁：`persona-r1.test.mjs` 42 → 50 项；新增 `ratelimit-skip.test.mjs` 3 项。
 
+| 2026-09-24 | **第 54 批 · Round 2 五人格报告：3 项硬伤 + 1 个我自己造的 P0（提交 `293f27d`、`0cfbcee`、`5a42718`、`13be2be`）**。
+
+  Round 2 换了五个新人格（大学生 / 海外开发者 / 运维 / 产品经理 / 社交型用户），
+  五人全部回报。本批处理最要命的三项。
+
+  **一、P0 `/messages` 整页白屏 —— 我上一批引入的，两个仪表盘同时报上来**
+  产品经理与运维人格各自独立撞到：`#root` innerHTML 长度 **0**，纯白页，
+  控制台 `ReferenceError: getFieldValue is not defined`。
+  根因：`getFieldValue` 只存在于 `<Form.Item shouldUpdate>` 的 render prop 作用域，
+  我在 Select 那一层直接调了它 → 整棵 React 树崩溃。
+  修：改用组件顶部的 `Form.useWatch("type", form)`。
+
+  **我的流程失误比这个 bug 更值得记**：上一批修「发起会话失败」时，
+  我只验证了**后端**（跑 verify_msg.py 6/6 通过），没打开页面看一眼 ——
+  而当时的浏览器脚本其实已经报出 `{'opened': false}`（没找到按钮），
+  我判断成「选择器没匹配上」放过去了，那正是白屏的信号。
+  更该反省的是：仓库里**早就有** `tests/ui-smoke.mjs`，注释里明确写着
+  「本项目已因此栽过两次（MainLayout / AdminChannelsPage）」，而我没跑它。
+  本次实测它对线上版本准确报出 `FAIL /messages 渲染=0 ERR: ReferenceError: getFieldValue is not defined`。
+  **门禁有效，是执行漏了** —— 从本批起：改前端组件必须跑 ui-smoke。
+
+  **二、P0 输出上限在三种协议上全部失效**（海外开发者人格）
+  同一 prompt：`max_tokens: 8` 与 `max_tokens: 4096` 都返回 **88** 个 completion token。
+  他的判断很准：「max_tokens 是成本控制最被信任的旋钮；任何依赖
+  `finish_reason == "length"` 判断截断的 agent 循环永远看不到该值。」
+  修在**网关层**（唯一收敛点）：本平台大量渠道是网页版反代，
+  上游根本没有这个参数可传，所以在 onDelta 里按估算截断。
+  三个协议的字段名都解析（`max_tokens` / `max_completion_tokens` / `max_output_tokens`），
+  截断信号按各自规范给（`length` / `max_tokens` / `response.incomplete`），
+  计费按**实际发给客户端的内容**算（用户设上限就是为了省钱）。
+  实测：`max_tokens=8` → **恰好 8 个 token** + `finish_reason: length`；
+  20 → 20；4096 → 完整 88 + `stop`。
+
+  **三、P1 审计日志的客户端 IP 可伪造**（运维人格）
+  带 `X-Forwarded-For: 203.0.113.77` 调用，落库的 ip 就是它。
+  根因在 nginx：`location /` 那一档（`/v1/*` 走的正是它）**完全没设 XFF**，
+  客户端自带的头被原样透传；而 `.env` 没配 `TRUST_PROXY`，
+  Express 用默认 loopback 信任代理 → 取到伪造值。
+  修：nginx 的**每个** location 都改成 `X-Forwarded-For $remote_addr`（覆写而非追加）。
+  实测：伪造 → 落库 127.0.0.1；公网直连 → 落库真实 `47.79.85.60`。
+
+  **四、P2 `request_id` 没暴露，两条日志无法关联**（运维人格）
+  「两页都没有 request_id，我只能下 SQL 才看出来是同一次调用」。
+  客户端提前断开时一次调用会产生两条记录（计费行 + 错误行），
+  request_id 是唯一的关联键。已加进接口与详情抽屉；错误行也带上
+  部分结算的金额与 token（原先全 0，看不出这次其实花了钱），
+  文案区分「客户端提前断开 / 上游中断 / 超时」。
+
+  **五、我自己造的第二个 P0：`estimateTokens is not defined`**
+  给 max_tokens 加截断时用了 `estimateTokens(...)` 却忘了加 import。
+  后果链条极隐蔽：ReferenceError → 适配器当渠道故障 → 标记 CHANNEL_ERROR
+  并冷却 → 用户看到 503「账号都在冷却中」。**症状与根因看起来毫无关系。**
+
+  为什么现有门禁全没拦住（值得记住）：
+  `node --check` 只做语法分析不做作用域解析；`vite build` 不管后端；
+  `undefined-symbols` 的模块加载检查也抓不到 —— 引用在闭包里，不调用不抛
+  （我注入破坏验证过，确实是假绿灯）；服务健康检查 200、进程 active。
+
+  我试过写「正则扫未定义调用」，失败得很彻底：要给 Promise 的 `resolve(`/`reject(`、
+  对象简写方法 `view(state, {…}) {`、动态 `import(`、参数解构逐个开豁免，
+  最后仍有十几处误报 —— **一个会误报的门禁等于没有门禁**，正则做不了作用域分析。
+  改用可靠的判据：新增 `tests/gateway-smoke.mjs`，对**三种协议各打一次真实请求**，
+  断言响应里不出现 "is not defined"、形状正确、未实现端点是 JSON 404。
+  它**确实抓到了**：部署前跑第一条就报
+  `chat/completions: 网关内部抛了未定义标识符 → {"message":"estimateTokens is not defined"}`。
+  **门禁的有效性用真实事故验证过**，不是又一个假绿灯。
+
+  另给 `undefined-symbols` 那条补了**诚实划界**的注释：它只能抓顶层引用，
+  闭包里的未定义标识符要靠真实调用覆盖，别再对它抱错期望。
+
+  回归锁：新增 `max-tokens.test.mjs` 22 项 + `gateway-smoke.mjs` 9 项。
+
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 
 > 目标：把开源社区已有的「网页版反代 / 工具类反代」按**厂商**归类接入平台，
