@@ -78,6 +78,8 @@ router.post(
       return fail(res, "本站要求填写有效邮箱");
     }
     const pwd = String(password || "");
+    // 全是空白的密码要单独拒（不 trim —— 空格是合法字符，见 user.js 修改密码处的说明）
+    if (!/\S/.test(pwd)) return fail(res, "密码不能全是空格，请包含可见字符");
     // 密码长度按设置取值（原先硬编码 8，改设置项不起作用）
     const minLen = Math.max(6, Number(getNumberOption("password_min_length")) || 8);
     if (pwd.length < minLen) return fail(res, `密码长度至少 ${minLen} 位`);

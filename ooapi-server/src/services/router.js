@@ -5,7 +5,7 @@ import { pool } from "../db.js";
 import { now } from "../utils.js";
 import { isOAuthMethod, getMethod, isApiKeyMethod } from "./channel-types.js";
 import { groupConfigOf } from "./group-rate.js";
-import { modelRegistrySync } from "./models.js";
+import { modelRegistrySync, modelInAllowList } from "./models.js";
 
 // 适配器表（懒加载，避免未用到的适配器被引入）
 //
@@ -795,16 +795,23 @@ export function rowToChannel(r) {
 // 轮询实现：同优先级内用模块级游标轮转，保证多账号均摊负载，
 // 无可用渠道时，说明到底卡在哪一步。
 // 只看「没有可用渠道」很容易被误判成模型不支持，实际多数是账号在冷却。
-export async function explainNoChannel({ model, groupName = null } = {}) {
+export async function explainNoChannel({ model, displayModel = "", groupName = null } = {}) {
+  // 报错里回显的名字：优先用**用户请求的原始名**。
+  // 传进来匹配的 `model` 已经被 modelForChannelMatch/resolveAliasSync 归一化过
+  //（deepseek-chat → deepseek-flash），拿它当"你请求的模型"回显会让用户去查
+  // 一个自己没写过的名字（黑盒测试实测抱怨过这一点）。
+  const shown = String(displayModel || model || "");
   // 分组模型限制：直接给出明确原因，而不是让用户误以为没有渠道支持该模型
   if (groupName) {
     const cfg = await groupConfigOf(groupName);
-    if (cfg?.models?.length) {
-      const m = String(model || "").toLowerCase();
-      const allowed = cfg.models.some((p) => p === "*" || (p.endsWith("*") ? m.startsWith(p.slice(0, -1)) : p === m));
-      if (!allowed) {
-        return { reason: "GROUP_MODEL", message: `当前分组的 Key 不可调用模型「${model}」（分组限制了可用模型）` };
-      }
+    if (cfg?.models?.length && !modelInAllowList(cfg.models, model)) {
+      // 报错回显**用户请求的那个名字**，不是归一化之后的名字 ——
+      // 黑盒测试实测抱怨：「我写的是 deepseek-chat，你告诉我不存在 deepseek-flash」，
+      // 用户会去查一个自己根本没写过的模型名。
+      return {
+        reason: "GROUP_MODEL",
+        message: `当前分组的 Key 不可调用模型「${displayModel}」（分组限制了可用模型）`,
+      };
     }
   }
   const [rows] = await pool.query("SELECT * FROM channels WHERE status = 1");
@@ -834,19 +841,19 @@ export async function explainNoChannel({ model, groupName = null } = {}) {
     // 管理员在渠道管理页的「冷却」标签与最近调用里能看到具体是哪些。
     return {
       reason: "COOLING",
-      message: `支持模型「${model}」的 ${cooling.length} 个账号都在冷却中，请稍后重试`,
+      message: `支持模型「${shown}」的 ${cooling.length} 个账号都在冷却中，请稍后重试`,
     };
   }
   if (!forModel.length) {
     // 同理不回厂商类型明细，只引导到管理员
     return {
       reason: "NO_MODEL",
-      message: `当前没有可服务模型「${model}」的账号，请联系管理员在渠道管理中配置`,
+      message: `当前没有可服务模型「${shown}」的账号，请联系管理员在渠道管理中配置`,
     };
   }
   return {
     reason: "GROUP",
-    message: `没有可用渠道支持模型「${model}」（已排除分组不匹配${disabled?.c ? `，另有 ${disabled.c} 个渠道被禁用` : ""}）`,
+    message: `没有可用渠道支持模型「${shown}」（已排除分组不匹配${disabled?.c ? `，另有 ${disabled.c} 个渠道被禁用` : ""}）`,
   };
 }
 
@@ -867,15 +874,7 @@ export async function selectChannels({ model, excludeIds = null, groupName = nul
   // 分组模型限制：分组配置了「支持的模型」时，请求模型不在列表内直接无渠道
   if (groupName) {
     const cfg = await groupConfigOf(groupName);
-    if (cfg?.models?.length) {
-      const m = String(model || "").toLowerCase();
-      const allowed = cfg.models.some((p) => {
-        if (p === "*") return true;
-        if (p.endsWith("*")) return m.startsWith(p.slice(0, -1));
-        return p === m;
-      });
-      if (!allowed) return [];
-    }
+    if (cfg?.models?.length && !modelInAllowList(cfg.models, model)) return [];
   }
   if (!channelsCache || Date.now() - channelsCacheAt > CHANNELS_TTL_MS) {
     const epoch = channelsCacheEpoch;

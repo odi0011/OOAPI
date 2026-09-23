@@ -70,7 +70,8 @@ t("分组白名单（group_config.models）参与过滤", () => {
   ck(body, "未找到 /models 处理器");
   ck(/groupConfigOf\(groupName\)/.test(body), "没有读分组配置");
   ck(/allowedByGroup/.test(body), "没有按白名单过滤");
-  ck(/endsWith\("\*"\)/.test(body), "没有支持通配（glm-* 这种写法）");
+  // 通配（glm-* 这种写法）的支持已收进**共用**的 modelInAllowList，这里只校验外观
+  ck(/modelInAllowList/.test(body), "没有走共用的白名单判定");
 });
 t("输出按 id 去重（真实模型优先于兼容别名）", () => {
   const body = modelsHandler();
@@ -156,15 +157,35 @@ t("都用 channelInGroup 做分组归属判定", () => {
   // /v1/models
   ck(/channelInGroup\(rowToChannel\(r\), groupName\)/.test(gateway), "/v1/models 没用 channelInGroup");
 });
-t("分组模型白名单的匹配规则三处一致（支持精确 + 前缀通配）", () => {
-  // selectChannels 与 explainNoChannel 各写了一份匹配，语义必须相同
+t("分组模型白名单：各处共用同一个判定实现（而不是各写一份）", () => {
+  // 原实现有四处独立的前缀匹配（selectChannels / explainNoChannel /
+  // /v1/models / 密钥 model_limits），规则一旦分叉就会互相矛盾 ——
+  // 实测后果：白名单写 `deepseek-v4.1-flash`，`...-thinking` 从某一处漏过去。
+  // 现在全部走 services/models.js 的 modelInAllowList，这里锁住这个结构性不变量。
+  const models = read("src/services/models.js");
+  ck(/export function modelInAllowList/.test(models), "没有共用的 modelInAllowList");
+  ck(/export function canonicalModelName/.test(models), "没有共用的 canonicalModelName");
+  // 通配只能由管理员**显式**写出来（`glm-*`），不再把白名单项隐式当前缀
+  ck(/raw\.endsWith\("\*"\)/.test(models), "modelInAllowList 没有支持显式通配");
+  ck(/canonicalModelName\(p\) \|\| raw\) === m/.test(models), "白名单项没有归一化后精确匹配");
+
   const sc = router.match(/export async function selectChannels[\s\S]*?\n\}/)[0];
   const en = router.match(/export async function explainNoChannel[\s\S]*?\n\}/)[0];
   for (const [name, body] of [["selectChannels", sc], ["explainNoChannel", en]]) {
-    ck(/endsWith\("\*"\)/.test(body), `${name} 没有处理通配`);
-    ck(/startsWith\(/.test(body), `${name} 没有做前缀匹配`);
+    ck(/modelInAllowList/.test(body), `${name} 没有走共用判定`);
   }
-  ck(/endsWith\("\*"\)/.test(gateway), "/v1/models 没有处理通配");
+  ck(/modelInAllowList/.test(gateway), "/v1/models 没有走共用判定");
+});
+
+t("白名单不能再被前缀绕过（P0：分组只勾 2 个模型，第 3 个却能调通）", () => {
+  // 黑盒测试实测：分组白名单 [deepseek-flash, deepseek-v4.1-flash]，
+  // 请求 deepseek-v4.1-flash-thinking → 200 且正常扣费，而 /v1/models 里没有它。
+  const models = read("src/services/models.js");
+  const code = models.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  ck(!/model\.startsWith\(l\)/.test(code), "还留着 `model.startsWith(白名单项)` 的隐式前缀");
+  ck(!/m\.startsWith\(pat\.slice\(0, -1\)\)/.test(code), "还留着未归一化的通配前缀匹配");
+  // 能力后缀必须被归一化掉（-thinking 是同一个模型上的开关，应当放行）
+  ck(/modelForChannelMatch\(resolveAliasSync\(raw\)\)/.test(models), "规范名没有同时处理别名与能力后缀");
 });
 
 console.log("\n=== ④b 站内对话的 vision 判定（原先全被标成不支持）===");

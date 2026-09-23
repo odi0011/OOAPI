@@ -47,7 +47,14 @@ router.put(
     if (!old_password) return fail(res, "请输入当前密码", 400);
     const okOld = await bcrypt.compare(String(old_password), req.user.password);
     if (!okOld) return fail(res, "当前密码不正确", 403);
+    // 密码校验：**不 trim**（空格是合法密码字符），但必须拒绝「全是空白」。
+    //
+    // 黑盒测试实测：`new_password: "        "`（8 个空格）能设置成功，
+    // 而且能用这 8 个空格登录 —— 长度够了、纯数字/纯字母检查也"通过"了，
+    // 唯独没人管它是不是可见字符。空格密码是撞库脚本最喜欢的形状之一
+    //（也是用户手滑粘贴时的常见结果：看起来像没输，其实设上了）。
     const pwd = String(new_password || "");
+    if (!/\S/.test(pwd)) return fail(res, "密码不能全是空格，请包含可见字符");
     if (pwd.length < 8) return fail(res, "新密码长度至少 8 位");
     if (Buffer.byteLength(pwd, "utf8") > 72) return fail(res, "密码过长（最多 72 字节）");
     if (/^[0-9]+$/.test(pwd) || /^[a-zA-Z]+$/.test(pwd)) return fail(res, "密码需同时包含字母和数字");

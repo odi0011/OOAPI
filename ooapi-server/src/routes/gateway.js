@@ -15,9 +15,16 @@ import { getPrice, computeCost, splitTokens, effectivePrice, isModelPriced, UNIT
 // ReferenceError: displayGroupName is not defined，把一次本来成功的调用
 // 变成 500（用户只看到"服务器内部错误"，日志里却只有一条引用错误）。
 import { groupConfigOf, applyGroupRate, displayGroupName } from "../services/group-rate.js";
-import { allPublicModels, modelForChannelMatch, resolveAliasSync, modelRegistry } from "../services/models.js";
+import {
+  allPublicModels,
+  modelForChannelMatch,
+  resolveAliasSync,
+  modelRegistry,
+  modelInAllowList,
+} from "../services/models.js";
 import { collectAvailableModels, channelInGroup, rowToChannel } from "../services/router.js";
 import { PROTOCOLS } from "../services/gateway-protocols.js";
+import { holdTokenQuota } from "../services/token-quota.js";
 
 const router = express.Router();
 // 必须在 express.json 之前完成真实鉴权：旧实现只查 Authorization 头存在性，
@@ -80,16 +87,8 @@ router.get(
     // ② 分组配置的模型白名单（分组管理里设的「只能走这俩模型」就是它）
     const cfg = await groupConfigOf(groupName);
     const allowPatterns = Array.isArray(cfg?.models) ? cfg.models.filter(Boolean) : [];
-    const allowedByGroup = (id) => {
-      if (!allowPatterns.length) return true; // 分组没设白名单 = 不限模型
-      const m = String(id).toLowerCase();
-      return allowPatterns.some((p) => {
-        const pat = String(p).toLowerCase();
-        if (pat === "*") return true;
-        if (pat.endsWith("*")) return m.startsWith(pat.slice(0, -1));
-        return pat === m;
-      });
-    };
+    // 与 selectChannels / explainNoChannel / 密钥限制**同一套**判定（见 modelInAllowList 注释）
+    const allowedByGroup = (id) => modelInAllowList(allowPatterns, id);
     // ③ 密钥级模型限制（令牌管理里可给单把 Key 限模型）。
     //    与 handleCompletion 用的是**同一个** modelAllowed 判定 ——
     //    之前列表页没调用它，导致「列表给 7 个、实际只有 1 个能调」
@@ -150,9 +149,30 @@ router.get(
 
 // ---------- 令牌鉴权 ----------
 async function authorize(req, res) {
-  const raw = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+  // 取 Key：`Authorization: Bearer sk-xxx` 为主，`x-api-key` 为**兼容**。
+  //
+  // 为什么必须认 x-api-key：官方 Anthropic SDK（@anthropic-ai/sdk）
+  // 默认**只发 x-api-key、不发 Authorization**，所以 `new Anthropic({apiKey})`
+  // 直连本平台会直接 401。我们的 `/v1/messages` 已经把 SSE 事件序列
+  // （message_start → content_block_delta → message_delta → message_stop）、
+  // content 分片数组、system block 数组、thinking block 全做对了 ——
+  // 就差这一个头，等于把官方 SDK 用户整个挡在门外（黑盒测试实测：
+  // 只带 x-api-key → 401；同一个 key 再加 Authorization → 200 完全正常）。
+  //
+  // 两个头同时存在时以 Authorization 为准（不合并、不叠加）。
+  const raw = (
+    (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim() ||
+    String(req.headers["x-api-key"] || "").trim()
+  );
   if (!raw) {
-    res.status(401).json({ error: { message: "缺少 API Key，请携带 Authorization: Bearer sk-xxx", type: "invalid_request_error" } });
+    res.status(401).json({
+      error: {
+        message:
+          "缺少 API Key。请携带 `Authorization: Bearer sk-xxx`（OpenAI 风格），" +
+          "或 `/v1/messages` 用 `x-api-key: sk-xxx`（Anthropic 官方 SDK 默认方式）",
+        type: "invalid_request_error",
+      },
+    });
     return null;
   }
   const [rows] = await pool.query("SELECT * FROM tokens WHERE key_str = ? LIMIT 1", [raw]);
@@ -213,10 +233,19 @@ async function authorize(req, res) {
   return { token, user };
 }
 
+// 密钥级模型限制。判定逻辑与分组白名单**共用** modelInAllowList：
+//
+// 旧实现是 `model === l || model.startsWith(l)` —— 同样是隐式前缀匹配，
+// 于是限制 `deepseek-v4.1-flash` 的 Key 能调 `deepseek-v4.1-flash-thinking`
+//（黑盒测试实测：白名单外的模型照样能调通并正常扣费）。
+// 归一化 + 精确匹配之后，能力后缀仍然放行（它就是同一个模型），
+// 但上游将来新增的 `同前缀-别的模型` 不会再被静默授权。
 function modelAllowed(token, model) {
-  const limits = String(token.model_limits || "").split(",").map((s) => s.trim()).filter(Boolean);
-  if (!limits.length) return true;
-  return limits.some((l) => model === l || model.startsWith(l));
+  const limits = String(token.model_limits || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return modelInAllowList(limits, model);
 }
 
 // messages → prompt（DeepSeek 网页版多轮分隔符；其他渠道由适配器决定如何使用）
@@ -366,7 +395,8 @@ async function settle({
   startedAt = 0,
   firstTokenAt = 0,
   userAgent = "",
-  billModel = ""}) {
+  billModel = "",
+  tokenQuotaHold = 0}) {
   // tokensEstimated：上游没给（或只给了一部分）usage，用量由字符数估算得到。
   // 下游要把它透出到日志/响应头 —— 估算值不能与精确值用同一个口径展示，
   // 否则管理员看到的是「精确数字」，实际偏差可能很大（第 46 批复审）。
@@ -444,10 +474,12 @@ async function settle({
   // 跨机数据库每往返 0.5~3ms，合计 3~15ms 的纯延迟，且直接推迟流式响应的收尾。
   const tokenUpdates = pool
     .query(
+      // remain_quota：先加回入口预占的 hold，再扣本次实际用量 —— 净效果 = 只扣实际用量。
+      // 没预占时 hold=0，与旧行为完全一致。
       `UPDATE tokens SET used_quota = used_quota + ?, accessed_time = ?,
-              remain_quota = IF(unlimited_quota = 1, remain_quota, GREATEST(0, remain_quota - ?))
+              remain_quota = IF(unlimited_quota = 1, remain_quota, GREATEST(0, remain_quota + ? - ?))
         WHERE id = ?`,
-      [units, now(), units, token.id]
+      [units, now(), Number(tokenQuotaHold) || 0, units, token.id]
     )
     .catch((e) => console.error("[gateway] 令牌额度更新失败：", e.message));
   const logWrite = writeLog({
@@ -609,6 +641,22 @@ async function handleCompletion(protocol, req, res) {
   // release() 内部做了幂等保护，不会把计数减成负数。
   res.on("close", () => slot.release());
 
+  // 令牌额度预占：必须在**发起上游调用之前**原子占位，否则并发的 N 个请求
+  // 会共享同一次「余额 > 0」检查全部放行（见 holdTokenQuota 的注释）。
+  const quotaHold = await holdTokenQuota(token);
+  if (!quotaHold.ok) {
+    slot.release();
+    return protocol.error(
+      res,
+      403,
+      { message: "该 API Key 额度已用尽", type: "insufficient_quota", code: "insufficient_quota" },
+      { id: requestId }
+    );
+  }
+  // 结算时会用 hold 的金额做「加回再扣实际」，所以这条只兜底「没走到结算」的路径
+  //（上游直接失败、鉴权后异常等）；refund() 幂等，重复调用无害。
+  res.on("close", () => quotaHold.refund());
+
   // 模型名归一化后透传给渠道层匹配（各厂商别名在适配器内部处理）；
   // 是否支持视觉也由适配器判断，网关不预设能力
   const matchModel = modelForChannelMatch(model) || model;
@@ -762,7 +810,10 @@ async function handleCompletion(protocol, req, res) {
       billModel: result.billModel || "",
       startedAt,
       firstTokenAt,
-      userAgent});
+      userAgent,
+      tokenQuotaHold: quotaHold.amount});
+    // 结算已把预占计入（加回 hold、扣掉实际用量）→ 阻止响应结束时的兜底退回
+    quotaHold.consume();
     settledOnce = true;
     finishMetric({ ok: true, status: 200, channelName: result.channel?.name || "", usage: result.usage });
     // TPM 按真实用量记账（预占的是估算值），多退少补
@@ -801,8 +852,13 @@ async function handleCompletion(protocol, req, res) {
   } catch (err) {
     const code = err.code || "UPSTREAM_ERROR";
     console.error(`[gateway] ${requestId} 失败：${code} ${err.message}`);
-    // 扣费结果不确定时跳过部分结算（防重复扣费）
-    if (code === "BILLING_UNCERTAIN") settledOnce = true;
+    // 扣费结果不确定时跳过部分结算（防重复扣费）。
+    // 同时把预占「消费掉」：那条 UPDATE 可能已经提交，此时再退回就会白送 1 个单位。
+    // 宁可少退也不能多退 —— 多退会让额度阀门永远漏气（正是本次要修的缺陷）。
+    if (code === "BILLING_UNCERTAIN") {
+      settledOnce = true;
+      quotaHold.consume();
+    }
     // 已产生内容：按已产出部分结算（客户端已收到这些内容，不能零计费）。
     // 条件不能只看 streamStarted：非流式请求（stream:false）适配器同样边流边回调，
     // 中途失败时 partialOut 也有内容，却会漏计费。
@@ -822,7 +878,9 @@ async function handleCompletion(protocol, req, res) {
           channel: err.channelId ? { id: err.channelId, name: err.channelName } : null,
           startedAt,
           firstTokenAt,
-          userAgent});
+          userAgent,
+          tokenQuotaHold: quotaHold.amount});
+        quotaHold.consume();
       } catch (e2) {
         console.error(`[gateway] ${requestId} 部分结算失败：${e2.message}`);
       }

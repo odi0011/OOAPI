@@ -698,5 +698,16 @@ export async function isModelPriced(model) {
   for (const key of [m, stripped]) {
     for (const k of prices.keys()) if (key.startsWith(k)) return true;
   }
+  // 规范名兜底：兼容别名（kimi-latest → kimi-k3）与能力后缀（-thinking/-search）
+  // 归一化之后再查一次，与 getPrice 的别名/前缀口径保持一致。
+  // **只做加法**：这里返回 true 只会让「本来就会被 getPrice 算出价格」的模型
+  // 不再被误判成未定价，不会让真没配价的模型蒙混放行。
+  // 动态 import 是为了避开循环依赖（models.js 反过来 import 了本模块的 DEFAULT_PRICES）。
+  const { canonicalModelName } = await import("./models.js");
+  const canon = canonicalModelName(m);
+  if (canon && canon !== m) {
+    if (prices.has(canon)) return true;
+    for (const k of prices.keys()) if (canon.startsWith(k)) return true;
+  }
   return Boolean(clinePriceFor(m));
 }

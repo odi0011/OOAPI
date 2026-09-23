@@ -6,7 +6,7 @@
 import express from "express";
 import { Router } from "express";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, now, pageParams } from "../utils.js";
+import { ok, fail, asyncHandler, now, pageParams, safeInt } from "../utils.js";
 import { authRequired, adminRequired, optionalAuth } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import {
@@ -241,7 +241,9 @@ router.get(
       params.push(req.user.id);
     } else if (req.query.user_id) {
       where.push("user_id = ?");
-      params.push(Number(req.query.user_id));
+      // 必须过 safeInt：`Number("Infinity")` 是合法数字，直接进 SQL 会被 mysql2
+      // 转义成字面量 Infinity → 语法错误 → 500（而不是干净的 400）
+      params.push(safeInt(req.query.user_id, { min: 1 }) ?? 0);
     }
     if (req.query.kind) {
       where.push("kind = ?");
@@ -294,7 +296,7 @@ router.get(
     let scope = "self";
     if (req.user.role >= 100) {
       if (req.query.user_id) {
-        uid = Number(req.query.user_id);
+        uid = safeInt(req.query.user_id, { min: 1 }) ?? 0;
         scope = "user";
       } else {
         scope = "all";

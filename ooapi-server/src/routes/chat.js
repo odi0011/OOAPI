@@ -23,6 +23,7 @@ import { AGENTS, findAgent, publicAgents, PRIMARY_AGENTS } from "../services/har
 import { toolSpecs } from "../services/harness/tools.js";
 import { extractFileText, MAX_UPLOAD_FILES, MAX_UPLOAD_BYTES, TEXT_FILE_EXTS } from "../services/harness/files.js";
 import { startRun, getRun, isRunning, publish, subscribe, finishRun, runStatus } from "../services/harness/runs.js";
+import { holdTokenQuota } from "../services/token-quota.js";
 import {
   createSession,
   listSessions,
@@ -625,7 +626,7 @@ router.post(
 // ---------- 计费（用户额度）----------
 // 与网关同一套原子扣费；harness 传进来的 tokens 是「每次上游调用分别 splitTokens 后求和」，
 // 混用 API 渠道（结构化 usage）与反代渠道（usage=null）时不会互相覆盖口径。
-  async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0, keyName = "", startedAt = 0, firstTokenAt = 0, userAgent = "", ip = "", calls = null }) {
+  async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0, keyName = "", startedAt = 0, firstTokenAt = 0, userAgent = "", ip = "", calls = null, tokenQuotaHold = 0 }) {
     const { promptTokens, completionTokens, cacheTokens } =
       tokens || splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
@@ -690,6 +691,26 @@ router.post(
   } catch (e) {
     // 扣费是否已提交无法确认：抛专用错误，调用方不得再次结算（宁可少扣不可重复扣）
     throw Object.assign(new Error(`扣费结果不确定：${e.message}`), { code: "BILLING_UNCERTAIN" });
+  }
+  // **令牌侧的 used_quota / remain_quota 也要一起记**。
+  //
+  // 黑盒测试实测（原话）：「Token 的 used_quota 不含站内对话 —— 两本账对不上」：
+  // 站内对话调的就是用户选的那把 Key（前端 `POST /api/chat/run` 带 keyId），
+  // usage log 里 98 条也全部挂在它名下，但只有网关那条路写 tokens 表，
+  // chat 这条路只写 users → 令牌管理页的「已用」少算了站内对话那一份
+  //（实测差额 14 单位 = 该 Key 名下所有 browser/chrome 渠道的日志合计）。
+  // 后果：按令牌额度做限流/预算的调用方守不住（额度早就该用尽了却仍显示有余）。
+  //
+  // 与 gateway 的 settle 同一口径：加回入口预占的 hold，再扣本次实际用量。
+  if (keyId) {
+    await pool
+      .query(
+        `UPDATE tokens SET used_quota = used_quota + ?, accessed_time = ?,
+                remain_quota = IF(unlimited_quota = 1, remain_quota, GREATEST(0, remain_quota + ? - ?))
+          WHERE id = ?`,
+        [units, now(), Number(tokenQuotaHold) || 0, units, keyId]
+      )
+      .catch((e) => console.error("[chat] 令牌额度更新失败：", e.message));
   }
   await writeLog({
     user,
@@ -763,6 +784,9 @@ function aggregate(calls = []) {
     rateLimit({ windowMs: 60_000, max: 20, keyPrefix: "chat-run", keyFn: (r) => r.user?.id || r.ip }),
     asyncHandler(async (req, res) => {
     const { sessionId, text = "", model: modelOverride, agent: agentOverride, settings: settingsPatch, images = [], files = [], keyId = 0 } = req.body || {};
+    // 令牌额度预占：在**发起上游调用之前**原子占位，避免并发的多个请求
+    // 共享同一次「余额 > 0」检查全部放行（见 services/token-quota.js 的说明）
+    let quotaHold = { ok: true, amount: 0, consume() {}, refund() {} };
 
     const session = await getSession(req.user.id, sessionId);
     if (!session) return fail(res, "会话不存在", 404);
@@ -925,6 +949,21 @@ function aggregate(calls = []) {
         finishRun(run);
         return fail(res, "请先在「令牌管理」创建可用密钥，并在对话页选择它（密钥的分组决定可用模型与倍率）", 403);
       }
+      // 密钥额度在站内对话同样生效（与网关 authorize 的 insufficient_quota 同一口径）。
+      //
+      // 必须检查的原因：站内对话的用量按这把密钥记账（日志挂在它名下、结算时
+      // 也会扣它的 remain_quota），如果不在这里拦，就会出现「Key 早就用尽了、
+      // 站内却还能无限继续」——正是黑盒测试报的「密钥额度形同虚设」的另一种形态。
+      if (!usableKey.unlimited_quota && Number(usableKey.remain_quota) <= 0) {
+        finishRun(run);
+        return fail(res, "该密钥额度已用尽，请在对话页换一把密钥（或让管理员调整额度）", 403);
+      }
+      // 原子预占：并发下只有一个请求能拿到这 1 个单位，其余在这里就被拒
+      quotaHold = await holdTokenQuota(usableKey);
+      if (!quotaHold.ok) {
+        finishRun(run);
+        return fail(res, "该密钥额度已用尽，请在对话页换一把密钥（或让管理员调整额度）", 403);
+      }
       models = await availableModels(req.user, usableKey.id);
       modelCaps = models.find((m) => m.id === model) || null;
       routeGroup = usableKey.group_name || null;
@@ -963,6 +1002,7 @@ function aggregate(calls = []) {
       ip: clientIp(req),
       userAgent: String(req.headers["user-agent"] || "").slice(0, 255),
       startedAt: run.startedAt || Date.now(),
+      quotaHold,
     }).catch((e) => console.error("[chat] 后台运行异常：", e?.message || e));
 
     streamFromRun(req, res, run);
@@ -1042,7 +1082,7 @@ router.get(
  * 真正执行一轮：跑 harness、计费、落库、发布事件。
  * 无论客户端是否还在，都必须跑到最后一步（这就是断线续传的前提）。
  */
-async function executeRun({ run, ctrl, user, session, agent, model, settings, history, content, imgs, docs = [], routeGroup, keyId = 0, keyName = "", modelCaps, ip = "", userAgent = "", startedAt = 0 }) {
+async function executeRun({ run, ctrl, user, session, agent, model, settings, history, content, imgs, docs = [], routeGroup, keyId = 0, keyName = "", modelCaps, ip = "", userAgent = "", startedAt = 0, quotaHold = null }) {
   const runCalls = [];
   let runParts = [];
   let runTodo = session.todo || [];
@@ -1102,7 +1142,10 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       userAgent,
       startedAt,
       firstTokenAt: firstCall?.firstTokenAt || 0,
+      tokenQuotaHold: quotaHold?.amount || 0,
     });
+    // 结算已把预占计入（加回 hold、扣掉实际用量）→ 阻止 finally 里的兜底退回
+    quotaHold?.consume();
     settled = true;
 
     const message = {
@@ -1197,7 +1240,9 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           userAgent,
           startedAt,
           firstTokenAt: (runCalls.find((c) => c.firstTokenAt) || {}).firstTokenAt || 0,
+          tokenQuotaHold: quotaHold?.amount || 0,
         });
+        quotaHold?.consume();
       } catch (e2) {
         console.error("[chat] 部分计费失败：", e2.message);
       }
@@ -1240,6 +1285,9 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       session: await getSession(user.id, session.id).catch(() => null),
     });
   } finally {
+    // 没走到结算（上游直接失败、无任何产出）就退回预占的 1 个单位。
+    // consume() 过的（结算已计入）会在这里自动让路；refund() 幂等，重复调用无害。
+    quotaHold?.refund();
     finishRun(run);
   }
 }

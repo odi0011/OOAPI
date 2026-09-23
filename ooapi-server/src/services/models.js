@@ -109,6 +109,55 @@ export function resolveAliasSync(requested) {
 }
 
 /**
+ * 权限判定用的**规范模型名**：解析兼容别名 + 去掉能力后缀，统一小写。
+ *
+ * 为什么权限判定必须用它，而不是直接拿请求里的字符串比：
+ * 路由层在匹配渠道前会先做 `modelForChannelMatch()`（把 `-thinking`/`-search`
+ * 这类能力后缀去掉）。如果白名单/密钥限制拿**原始名**做前缀匹配，
+ * 就会出现「明明限制了 deepseek-v4.1-flash，却放行了 deepseek-v4.1-flash-thinking」
+ * 这种不一致 —— 黑盒测试实测到这条（分组只勾了 2 个模型，`...-thinking`
+ * 能调通并正常计费，而 `/v1/models` 里根本没有这个名字）。
+ *
+ * 归一化之后两边都在同一坐标系里比，语义变成：
+ *   · `deepseek-v4.1-flash-thinking` → 规范名 `deepseek-v4.1-flash`
+ *     → 命中白名单（正确：它就是那个被允许的模型，只是开了思考）；
+ *   · `deepseek-v4.1-flash-super`（上游将来新增的**另一个**模型）
+ *     → 规范名原样保留，**不再**被 `deepseek-v4.1-flash` 的前缀蒙混放行。
+ */
+export function canonicalModelName(name) {
+  const raw = String(name || "").trim();
+  if (!raw) return "";
+  return String(modelForChannelMatch(resolveAliasSync(raw)) || "").toLowerCase();
+}
+
+/**
+ * 白名单匹配（分组模型限制 / 密钥模型限制共用一套判定）。
+ *
+ * 支持的写法（与分组管理页的说明一致）：
+ *   · 空列表      → 不限制，全部放行
+ *   · `*`         → 全部放行
+ *   · `deepseek-*`→ 前缀通配（管理员显式写的，是**有意**的宽松）
+ *   · 其他        → **精确**匹配规范名（不再隐式前缀匹配）
+ *
+ * 关键点：通配只能由管理员**显式**写出来。旧实现是 `model.startsWith(白名单项)`，
+ * 意味着白名单里写 `deepseek-v4.1-flash` 就等于免费附送 `deepseek-v4.1-flash-*`
+ * 整个前缀空间 —— 上游哪天新增一个更贵的同名前缀模型，会被静默授权。
+ */
+export function modelInAllowList(patterns, requested) {
+  const list = (Array.isArray(patterns) ? patterns : []).map((s) => String(s ?? "").trim()).filter(Boolean);
+  if (!list.length) return true;
+  const m = canonicalModelName(requested);
+  if (!m) return false;
+  return list.some((p) => {
+    const raw = p.toLowerCase();
+    if (raw === "*") return true;
+    if (raw.endsWith("*")) return m.startsWith(raw.slice(0, -1));
+    // 白名单项本身也走归一化：写 `deepseek-chat` 等同于写它实际落到的 `deepseek-flash`
+    return (canonicalModelName(p) || raw) === m;
+  });
+}
+
+/**
  * 校验模型是否属于某个厂商（用于管理端提示，不用于调度）
  */
 export async function modelBelongsToVendor(model, channelType) {

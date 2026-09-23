@@ -18,11 +18,11 @@
 //    发帖/评论/点赞按用户维度限流 —— 社区是最容易被脚本刷的入口。
 import { Router } from "express";
 import { pool } from "../db.js";
-import { ok, fail, asyncHandler, now, pageParams, idParam, safeJSONParse } from "../utils.js";
+import { ok, fail, asyncHandler, now, pageParams, idParam, safeJSONParse, safeInt } from "../utils.js";
 import { authRequired, adminRequired } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
-import { mediaUrl, attachRef, filterOwnedMediaIds } from "../services/media.js";
+import { mediaUrl, attachRef, releaseRefs, filterOwnedMediaIds } from "../services/media.js";
 import { notify, unreadCount, list as listNotifications, markRead, remove as removeNotification } from "../services/notify-center.js";
 
 const router = Router();
@@ -31,6 +31,20 @@ const MAX_TITLE = 120;
 const MAX_CONTENT = 20000;
 const MAX_COMMENT = 2000;
 const MAX_MEDIA = 9;
+
+/**
+ * 长度校验：超限**报错**，不静默截断。
+ *
+ * 黑盒测试实测（原话）：「标题塞 1502 字 → 接口 200『发布成功』，落库只剩 120 字」。
+ * 前端输入框有 maxLength 挡着，但直连 API / 第三方客户端的内容会被**悄悄吃掉**
+ * 且返回成功 —— 用户以为发出去了 1502 字，实际只有 120 字，且没有任何提示。
+ * 内容类接口截断比报错更糟（用户不会知道要重发），所以宁可拒绝。
+ */
+function tooLong(value, max, label) {
+  const s = String(value ?? "");
+  if (s.length <= max) return null;
+  return `${label}最长 ${max} 字，当前 ${s.length} 字`;
+}
 
 /** 帖子/评论的可见性条件：普通用户只看 status=1 与自己的内容 */
 function visibilityClause(user, alias = "p") {
@@ -220,13 +234,15 @@ router.get(
         args.push(...vis.args);
       }
     }
+    // ?topic_id=Infinity 这类输入要挡住：`Number("Infinity") || 0` 仍然是 Infinity，
+    // 进 SQL 会被 mysql2 转义成字面量 → 语法错误 → 500（而不是干净的 400/空结果）
     if (req.query.topic_id) {
       where.push("p.topic_id = ?");
-      args.push(Number(req.query.topic_id) || 0);
+      args.push(safeInt(req.query.topic_id, { min: 1 }) ?? 0);
     }
     if (req.query.user_id) {
       where.push("p.user_id = ?");
-      args.push(Number(req.query.user_id) || 0);
+      args.push(safeInt(req.query.user_id, { min: 1 }) ?? 0);
     }
     if (String(req.query.q || "").trim()) {
       const kw = `%${String(req.query.q).trim().slice(0, 64)}%`;
@@ -307,8 +323,12 @@ router.post(
   rateLimit({ windowMs: 60_000, max: 8, keyPrefix: "post-create", keyFn: (r) => r.user?.id || r.ip }),
   authRequired,
   asyncHandler(async (req, res) => {
-    const title = String(req.body?.title || "").trim().slice(0, MAX_TITLE);
-    const content = String(req.body?.content || "").trim().slice(0, MAX_CONTENT);
+    const titleRaw = String(req.body?.title || "").trim();
+    const contentRaw = String(req.body?.content || "").trim();
+    const lenErr = tooLong(titleRaw, MAX_TITLE, "标题") || tooLong(contentRaw, MAX_CONTENT, "正文");
+    if (lenErr) return fail(res, lenErr, 400);
+    const title = titleRaw;
+    const content = contentRaw;
     const topicId = Number(req.body?.topic_id) || 0;
     // 附图必须**属于发帖人自己**（见 filterOwnedMediaIds 的注释：不校验会让
     // 任意用户把别人的私有文件挂到自己帖子上，详情返回现签 URL，匿名可读）
@@ -351,18 +371,31 @@ router.put(
     const [[row]] = await pool.query("SELECT * FROM community_posts WHERE id = ?", [id]);
     if (!row) return fail(res, "帖子不存在", 404);
     if (Number(row.user_id) !== req.user.id) return fail(res, "只能编辑自己的帖子", 403);
-    const title = String(req.body?.title ?? row.title).trim().slice(0, MAX_TITLE);
-    const content = String(req.body?.content ?? row.content).trim().slice(0, MAX_CONTENT);
+    const titleRaw = String(req.body?.title ?? row.title).trim();
+    const contentRaw = String(req.body?.content ?? row.content).trim();
+    const lenErr = tooLong(titleRaw, MAX_TITLE, "标题") || tooLong(contentRaw, MAX_CONTENT, "正文");
+    if (lenErr) return fail(res, lenErr, 400);
+    const title = titleRaw;
+    const content = contentRaw;
     const topicId = req.body?.topic_id !== undefined ? Number(req.body.topic_id) || 0 : Number(row.topic_id);
     if (!title) return fail(res, "请输入标题");
     if (!content) return fail(res, "请输入正文");
     if (!topicId) return fail(res, "请选择话题");
+    // 换话题前必须确认目标话题存在 —— 否则 post_count 会加到一个不存在的 id 上：
+    // 那个帖子在话题页永远不出现（JOIN 不到），计数却已经漂了。
+    // （黑盒测试实测：PUT topic_id=99999 → 200 已保存，任务里说「话题计数漂移」）
+    if (topicId !== Number(row.topic_id)) {
+      const [[t]] = await pool.query("SELECT id, status FROM community_topics WHERE id = ?", [topicId]);
+      if (!t) return fail(res, "话题不存在");
+      if (Number(t.status) !== 1) return fail(res, "该话题已停用，无法移入");
+    }
     // 编辑时同样要校验（否则可以「先发空帖、再把 media_ids 改成别人的图」绕过上面那关）
+    const oldMediaIds = (safeJSONParse(row.media_ids, []) || []).map((x) => Number(x) || 0).filter(Boolean);
     const mediaIds = Array.isArray(req.body?.media_ids)
       ? (
           await filterOwnedMediaIds(req.body.media_ids.slice(0, MAX_MEDIA), req.user.id)
         ).ok
-      : safeJSONParse(row.media_ids, []) || [];
+      : oldMediaIds;
     await pool.query(
       "UPDATE community_posts SET title = ?, content = ?, topic_id = ?, media_ids = ?, updated_time = ? WHERE id = ?",
       [title, content, topicId, JSON.stringify(mediaIds), now(), id]
@@ -371,6 +404,21 @@ router.put(
     if (topicId !== Number(row.topic_id)) {
       await pool.query("UPDATE community_topics SET post_count = GREATEST(post_count - 1, 0) WHERE id = ?", [row.topic_id]);
       await pool.query("UPDATE community_topics SET post_count = post_count + 1 WHERE id = ?", [topicId]);
+    }
+    // 编辑时**移掉的图片也要解绑**，否则旧图被永久占着（用户删不掉它，见 DELETE 处的注释）。
+    // releaseRefs 只能按 ref_id（帖子）整批释放，所以这里的做法是
+    // 「先全部释放，再把当前这组重新绑上」—— 结果与「只释放被移除的」等价：
+    // attachRef 对已存在的 (media, ref_type, ref_id, slot) 走 ON DUPLICATE 复活，
+    // 两个方向都幂等，且末尾的 recountRefs 会把计数收敛到真值。
+    if (oldMediaIds.length) {
+      await releaseRefs("community_post", [String(id)]).catch((e) =>
+        console.warn(`[community] 编辑帖子释放图片引用失败：${e.message}`)
+      );
+    }
+    for (const mid of mediaIds) {
+      await attachRef(mid, { userId: req.user.id, refType: "community_post", refId: String(id), slot: `p${mid}` }).catch(
+        (e) => console.warn(`[community] 编辑帖子绑定图片引用失败：${e.message}`)
+      );
     }
     return ok(res, null, "已保存");
   })
@@ -395,6 +443,19 @@ router.delete(
       now(),
       id,
     ]);
+    // **必须释放图片引用**，否则用户的图被永久锁死。
+    //
+    // 黑盒测试实测（原话）：「帖子删了，图永远删不掉」——
+    // 发帖时 attachRef 记了一行 is_live=1 的引用，删帖只改 status，引用不释放，
+    // 之后用户自己删图 → 409「该文件仍被 1 处引用，请先删除对应内容（或由管理员强制删除）」，
+    // 而那个「对应内容」正是他刚删掉的帖子，无法再操作。用户媒体配额被永久占用，
+    // 只能求管理员 force。库内实测已积压 25 条指向已删帖的活引用。
+    //
+    // 软删帖不复活（status=2 是终态），所以这里直接释放是安全的；
+    // 若是「隐藏」（status=3，可恢复）则不释放 —— 内容还在，引用也该在。
+    await releaseRefs("community_post", [String(id)]).catch((e) =>
+      console.warn(`[community] 删除帖子 #${id} 释放图片引用失败：${e.message}`)
+    );
     await pool.query("UPDATE community_topics SET post_count = GREATEST(post_count - 1, 0) WHERE id = ?", [row.topic_id]);
     if (!isOwner) {
       await writeLog({
@@ -502,10 +563,23 @@ router.post(
   asyncHandler(async (req, res) => {
     const postId = idParam(req);
     if (!postId) return fail(res, "帖子不存在", 404);
-    const content = String(req.body?.content || "").trim().slice(0, MAX_COMMENT);
+    const contentRaw = String(req.body?.content || "").trim();
+    const lenErr = tooLong(contentRaw, MAX_COMMENT, "评论");
+    if (lenErr) return fail(res, lenErr, 400);
+    const content = contentRaw;
     if (!content) return fail(res, "请输入评论内容");
     let parentId = Number(req.body?.parent_id) || 0;
+    // reply_to_user_id 决定给谁发通知，所以**不能由客户端随便指定**。
+    //
+    // 黑盒测试实测：任意传 reply_to_user_id=<某人> 就能让平台以自己的名义
+    // 给那个人投递一条「回复了你」的通知（通知骚扰面：不需要对方参与过这个帖子、
+    // 甚至不需要那条评论存在）。合法取值只有三种：0、父评论作者、帖子作者；
+    // 这里只承认最严格的一种 —— 有 parent_id 时必须是该评论的作者
+    //（前端 PostDetailPage 始终成对发送 parent_id + reply_to_user_id，
+    //  「回复二级评论」时 parent_id 已归一到一级父节点，作者不变，故不受影响）。
+    // 想 @ 帖子里没回复过的人，走正文里的 @用户名（那条路径会逐条查库确认用户存在）。
     let replyToUserId = Number(req.body?.reply_to_user_id) || 0;
+    if (replyToUserId && !parentId) return fail(res, "回复目标不正确", 400);
     const [[post]] = await pool.query("SELECT id, status FROM community_posts WHERE id = ?", [postId]);
     if (!post) return fail(res, "帖子不存在", 404);
     if (Number(post.status) !== 1) return fail(res, "该帖子已关闭评论");
@@ -521,7 +595,9 @@ router.post(
       if (Number(parent.parent_id) > 0) {
         parentId = Number(parent.parent_id);
       }
-      if (!replyToUserId) replyToUserId = Number(parent.user_id) || 0;
+      // 只有「回复对象 == 这条父评论的作者」才成立（见上方 reply_to_user_id 的注释）。
+      // 不认客户端送来的其他 id，一律按父评论作者重算 —— 伪造也就无从下手。
+      replyToUserId = Number(parent.user_id) || 0;
       // 不给自己回复时@自己（没意义且看着像 bug）
       if (replyToUserId === req.user.id) replyToUserId = 0;
     }
@@ -826,6 +902,24 @@ router.post(
   "/admin/recount",
   adminRequired,
   asyncHandler(async (req, res) => {
+    // 先补一步「僵尸引用清理」：把属于**已删帖子**的活引用释放掉。
+    //
+    // 这是为旧代码造成的历史脏数据准备的 —— 在「删帖释放引用」修好之前删掉的帖子，
+    // 引用一直挂着 is_live=1，导致用户自己的图删不掉（409「仍被 1 处引用」，
+    // 而那个引用指向的是他刚删掉的帖子，无法再操作）。实测库内有 25 条。
+    // 新代码不会再产生这种数据，但存量必须清一次；放进重算里，
+    // 管理员点一次「重算计数」就顺带修好，不必手工跑 SQL。
+    const [zombieRefs] = await pool.query(
+      `SELECT r.ref_id FROM media_refs r
+         JOIN community_posts p ON p.id = r.ref_id
+        WHERE r.ref_type = 'community_post' AND r.is_live = 1 AND p.status = 2`
+    );
+    const zombieIds = [...new Set(zombieRefs.map((r) => String(r.ref_id)))];
+    if (zombieIds.length) {
+      await releaseRefs("community_post", zombieIds).catch((e) =>
+        console.warn(`[community] 清理僵尸引用失败：${e.message}`)
+      );
+    }
     // 用一次子查询批量重算，而不是逐行 COUNT（帖子多时逐行会拖很久）
     await pool.query(
       `UPDATE community_posts p SET
@@ -841,8 +935,13 @@ router.post(
       `UPDATE community_comments c SET
          like_count = (SELECT COUNT(*) FROM community_reactions r WHERE r.target_type='comment' AND r.target_id=c.id AND r.kind='like')`
     );
-    await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: "重算社区计数" });
-    return ok(res, null, "计数已重算");
+    await writeLog({
+      req,
+      user: req.user,
+      type: LOG_TYPE.MANAGE,
+      content: `重算社区计数${zombieIds.length ? `（并释放 ${zombieIds.length} 条已删帖的图片引用）` : ""}`,
+    });
+    return ok(res, { released_refs: zombieIds.length }, "计数已重算");
   })
 );
 

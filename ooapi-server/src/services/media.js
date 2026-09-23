@@ -73,11 +73,24 @@ export function sniff(buf) {
   return null;
 }
 
+// 宽高的合理上限（像素）。PNG 的 IHDR 是 32 位无符号，畸形文件会读出
+// 0xFFFFFFFF 这种值 —— 直接写库会撞上列宽限制，把 MySQL 的原始报错
+//（`Out of range value for column 'width' at row 1`）原样吐给用户：
+// 用户看不懂，还顺带泄露了表结构（黑盒测试实测过这条）。
+// 真实图片没有超过这个尺寸的（100000² = 100 亿像素），超出一律视为解析失败。
+const MAX_DIM = 100000;
+
+function clampDim(n) {
+  const v = Math.trunc(Number(n)) || 0;
+  return v > 0 && v <= MAX_DIM ? v : 0;
+}
+
 /** PNG / JPEG / GIF / WebP 的宽高（用于列表展示与按尺寸过滤；解析不了就返回 0） */
 export function imageSize(buf, ext) {
   try {
     if (ext === "png" && buf.length > 24) {
-      return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+      // 先钳制再返回：畸形 PNG 的 IHDR 可以是任意 32 位值
+      return { width: clampDim(buf.readUInt32BE(16)), height: clampDim(buf.readUInt32BE(20)) };
     }
     if (ext === "gif" && buf.length > 10) {
       return { width: buf.readUInt16LE(6), height: buf.readUInt16LE(8) };

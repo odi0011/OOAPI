@@ -77,8 +77,10 @@ export async function runCompletion({
   const channels = await selectChannels({ model: matchName, excludeIds: tried, groupName });
 
   if (!channels.length) {
-    // 区分「没有渠道支持这个模型」和「渠道都在冷却」，否则排查方向会完全跑偏
-    const why = await explainNoChannel({ model: matchName, groupName }).catch(() => null);
+    // 区分「没有渠道支持这个模型」和「渠道都在冷却」，否则排查方向会完全跑偏。
+    // displayModel 传原始请求名：报错要回显用户写的那个名字，而不是归一化后的
+    //（否则用户会去查一个自己没写过的模型名 —— 见 explainNoChannel 的注释）。
+    const why = await explainNoChannel({ model: matchName, displayModel: model, groupName }).catch(() => null);
     throw Object.assign(
       new Error(why?.message || `没有可用渠道支持模型「${model}」，请在渠道管理中添加或启用对应渠道`),
       { code: "NO_CHANNEL", reason: why?.reason }
