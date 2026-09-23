@@ -1,3 +1,8 @@
 node_modules/
 dist/
 *.local
+
+# 离线预览脚本的临时构建产物（在项目内跑 esbuild 生成，不应进仓库）
+channel-quota.build.mjs
+quota-preview.html
+live-preview.html
