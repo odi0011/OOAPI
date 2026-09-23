@@ -31,3 +31,4 @@ web/
 Thumbs.db
 __pycache__/
 *.pyc
+ooapi-web/.qa-tmp/
