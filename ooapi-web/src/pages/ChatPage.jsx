@@ -426,8 +426,13 @@ export default function ChatPage() {
     [settings, agent, meta]
   );
   const quota = user?.quota != null ? fmtOd(user.quota, unitsPerOd(status), 2) : "—";
-  // 对话必须通过密钥路由：没有可用密钥就没有可用模型，输入区与编排栏一并禁用
-  const usableKeys = (meta?.keys || []).filter((k) => k.status === 1);
+  // 对话必须通过密钥路由：没有可用密钥就没有可用模型，输入区与编排栏一并禁用。
+  //
+  // 判据用后端给的 `usable`（= 已启用 + 未过期 + **已绑定分组**），不能只看 status：
+  // 未绑分组的密钥会被网关 403 拒绝、也会被 activeKeyOf 跳过，若这里放行，
+  // 用户会选中它、拿到模型列表，然后每次发送都失败。
+  // 后端若没给 usable（旧版本），退回 status===1 —— 不能因为字段缺失把所有人都挡住。
+  const usableKeys = (meta?.keys || []).filter((k) => (k.usable === undefined ? k.status === 1 : k.usable));
   const needKey = Boolean(meta) && !usableKeys.length;
   const unavailable = !session || !curModel || needKey || loadingSession;
 

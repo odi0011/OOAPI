@@ -87,12 +87,26 @@ export async function listUserKeys(user) {
     const expired = Number(t.expired_time) !== -1 && Number(t.expired_time) <= nowSec;
     const gkey = parseGroupKey(t.group_name);
     const gm = gkey ? meta.get(gkey.name) : null;
+    // 未绑分组的密钥**不能用于对话**：activeKeyOf 会跳过它，网关也返回
+    // token_group_required（黑盒测试实测：管理员删掉分组后，外部 API 立刻 403，
+    // 站内对话却照常可用，还会路由到「同样没分组的渠道」上）。
+    // 这里仍然把它列出来，但标记 usable:false 并给出原因 ——
+    // 直接隐藏会让用户以为密钥丢了；列出来却看似可用，则是选中之后才报错。
+    const unbound = !String(t.group_name || "").trim();
     return {
       id: Number(t.id),
       name: t.name || `密钥 ${t.id}`,
       // 只回传前后几位，避免完整密钥出现在页面/日志里
       masked: `${String(t.key_str || "").slice(0, 8)}…${String(t.key_str || "").slice(-4)}`,
       status: expired ? 3 : Number(t.status) || 1,
+      usable: !expired && Number(t.status) === 1 && !unbound,
+      unusable_reason: expired
+        ? "已过期"
+        : Number(t.status) !== 1
+          ? "已禁用"
+          : unbound
+            ? "未绑定分组，不能用于对话"
+            : "",
       group: t.group_name || "",
       group_name: gkey?.name || "",
       group_remark: gm?.remark || "",
