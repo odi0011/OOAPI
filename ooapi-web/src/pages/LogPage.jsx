@@ -34,6 +34,46 @@ function msColor(v) {
   return "var(--ink)";
 }
 
+/**
+ * 日志原文块（输入 / 输出内容）。
+ *
+ * 为什么需要单独一个组件：原文可能有几千字且含换行，直接铺进 Descriptions
+ * 会把整个详情面板撑成一长条（其他字段全被挤到看不见）。
+ * 所以给一个**可滚动的固定高度框**：默认只占几行，要看细节在里面滚。
+ * 后端已各截断到 4000 字符（TEXT 列上限，见 gateway.js 的 settle），
+ * 截断时明确标出来 —— 否则会误以为「模型只输出了这么多」。
+ */
+function LogTextBlock({ text, truncated, empty = "-" }) {
+  if (!text) return <span style={{ color: "var(--ink-3)", fontSize: 12 }}>{empty}</span>;
+  return (
+    <div>
+      <pre
+        style={{
+          margin: 0,
+          maxHeight: 220,
+          overflow: "auto",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          fontFamily: "var(--font-mono)",
+          fontSize: 11.5,
+          lineHeight: 1.55,
+          background: "var(--inset)",
+          border: "1px solid var(--line)",
+          borderRadius: "var(--r-sm)",
+          padding: "6px 9px",
+        }}
+      >
+        {text}
+      </pre>
+      {truncated ? (
+        <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
+          已截断（仅保存前 4000 字符；完整内容会超出日志列的存储上限）
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 const RANGE_OPTIONS = [
   { value: 1, label: "今天" },
   { value: 7, label: "近 7 天" },
@@ -210,7 +250,11 @@ export default function LogPage() {
       title: "模型",
       dataIndex: "model",
       width: 145,
-      render: (v) => (v ? <ModelLabel model={v} size={14} /> : <span style={{ color: "var(--ink-3)" }}>-</span>),
+      // channelType 是**兜底**：模型名判定不出来时（OpenCode 的 omen-alpha、
+      // 聚合渠道的 openrouter/free）退回该渠道的厂商图标。
+      // 用户要求：「应该是跟随其厂商的图标啊」——渠道就是这些模型的厂商来源。
+      render: (v, r) =>
+        v ? <ModelLabel model={v} size={14} channelType={r.channel_type || ""} /> : <span style={{ color: "var(--ink-3)" }}>-</span>,
     },
     // 管理员：分组（独立 Tag 包含专属图标与标题）
     ...(isAdmin
@@ -535,13 +579,25 @@ export default function LogPage() {
         width={520}
         destroyOnClose
       >
-        {detail ? (
+        {detail ? (() => {
+          // detail.detail 是后端写的 JSON 字符串（含输入/输出原文、价格快照等）。
+          // 解析失败不能炸整页 —— 历史记录里可能有非 JSON 内容，
+          // 那种情况下原文块显示「未存」而不是抛异常。
+          let parsedDetail = null;
+          try {
+            parsedDetail = detail.detail ? JSON.parse(detail.detail) : null;
+          } catch {
+            parsedDetail = null;
+          }
+          return (
           <Descriptions column={1} size="small" bordered labelStyle={{ width: 120 }}>
             <Descriptions.Item label="时间">{fmtDate(detail.created_at)}</Descriptions.Item>
             <Descriptions.Item label="用户">
               <UserAvatar user={{ id: detail.user_id, username: detail.username }} size={20} showName />
             </Descriptions.Item>
-            <Descriptions.Item label="模型">{detail.model || "-"}</Descriptions.Item>
+            <Descriptions.Item label="模型">
+              <ModelLabel model={detail.model} size={15} channelType={detail.channel_type || ""} />
+            </Descriptions.Item>
             <Descriptions.Item label="调用内容">{normalizeCurrency(detail.content)}</Descriptions.Item>
             <Descriptions.Item label="Tokens">
               提示 {detail.prompt_tokens} · 补全 {detail.completion_tokens}
@@ -563,6 +619,24 @@ export default function LogPage() {
                   {detail.channel_name ? `#${detail.channel_id} ${detail.channel_name}` : "-"}
                 </Descriptions.Item>
                 <Descriptions.Item label="User-Agent">{detail.user_agent || "-"}</Descriptions.Item>
+                {/* 输入 / 输出原文 —— 用户要求：「历史记录原始明细没存储输入和输出实际内容
+                    （仅管理员可见）？」。整块在 isAdmin 分支里，普通用户连 detail 列都取不到
+                    （后端按 isAdmin 裁剪列，见 routes/log.js）。
+                    后端各截断到 4000 字符并带 text_truncated 标记，这里照实提示。 */}
+                <Descriptions.Item label="输入内容">
+                  <LogTextBlock
+                    text={parsedDetail?.prompt_text}
+                    truncated={parsedDetail?.text_truncated}
+                    empty="（该记录未存输入原文，可能是本次升级之前的调用）"
+                  />
+                </Descriptions.Item>
+                <Descriptions.Item label="输出内容">
+                  <LogTextBlock
+                    text={parsedDetail?.output_text}
+                    truncated={parsedDetail?.text_truncated}
+                    empty="（该记录未存输出原文，可能是本次升级之前的调用）"
+                  />
+                </Descriptions.Item>
                 <Descriptions.Item label="原始明细">
                   <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, wordBreak: "break-all" }}>
                     {detail.detail || "-"}
@@ -571,7 +645,8 @@ export default function LogPage() {
               </>
             ) : null}
           </Descriptions>
-        ) : null}
+          );
+        })() : null}
       </Drawer>
     </div>
   );

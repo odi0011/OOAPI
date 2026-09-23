@@ -346,6 +346,24 @@ async function settle({
       priced_at: startedAt || Date.now(),
       rate: Number(gcfg?.rate) || 1,
       amount_units: units,
+      // 输入/输出**原文**（仅管理员可见）。
+      //
+      // 用户要求（原话）：「历史记录原始明细没存储输入和输出实际内容（仅管理员可见）？」
+      // 原先 detail 里只有 token 数与价格 —— 排查「用户说回复不对」「这笔为什么这么贵」
+      // 时，界面只能显示「提示 19 / 补全 155 tokens」，完全不知道当时问了什么、答了什么。
+      //
+      // 三条约束（缺一个就会出事）：
+      //   ① **只在管理员能看的地方**：detail 列在接口层已按 `isAdmin` 裁剪
+      //      （见 routes/log.js 的 cols：非管理员根本不返回这一列），
+      //      所以这里不需要再套一层开关。
+      //   ② **必须截断**：detail 是 TEXT（64KB 上限），而上下文可达 1M token ——
+      //      不截断会让整行 INSERT 失败，连带这条日志一起丢。各留前 4000 字符。
+      //   ③ 存的是**拼装后的完整 prompt**（含系统提示与历史消息）：计费按它算，
+      //      要复核「为什么这么贵」就得看到真正发出去的那段。
+      prompt_text: String(prompt || "").slice(0, 4000),
+      output_text: String(output || "").slice(0, 4000),
+      // 被截断时明确标记 —— 否则管理员会误以为「模型只输出了 4000 字」
+      text_truncated: String(prompt || "").length > 4000 || String(output || "").length > 4000,
       requestId}),
     quota: units,
     ip,

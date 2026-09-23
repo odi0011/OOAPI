@@ -51,8 +51,8 @@ export const PROVIDERS = [
     methods: [
       {
         key: "relay",
-        label: "登录账号",
-        desc: "登录 DeepSeek 账号即可",
+        label: "网页对话",
+        desc: "登录 DeepSeek 账号即可（网页版通道）",
         loginModes: ["password", "paste"],
         loginFields: [
           { key: "account", label: "手机号 / 邮箱", type: "text", required: true, placeholder: "13800138000 或 you@example.com" },
@@ -94,8 +94,8 @@ export const PROVIDERS = [
     methods: [
       {
         key: "relay",
-        label: "登录账号",
-        desc: "登录 Z.ai 账号，验证码自动处理",
+        label: "系统驱动",
+        desc: "登录 Z.ai 账号后在服务器浏览器里跑（页面自己算签名）",
         // 只留 paste：`browser` 代表服务器浏览器登录，已废弃
         //（用户实测「卡的不行、吃服务器内存」，且本机浏览器粘贴完全能替代）。
         // 留着它会让这些厂商在弹窗里多出一个 tab —— 「有的一个 tab 有的两个」的根源。
@@ -133,8 +133,8 @@ export const PROVIDERS = [
     methods: [
       {
         key: "relay",
-        label: "登录账号",
-        desc: "粘贴网页登录态即可",
+        label: "网页对话",
+        desc: "粘贴网页版登录态即可",
         loginModes: ["paste"],
         loginFields: [],
         pasteHint: "浏览器登录 kimi.com 后，复制 Cookie 中 kimi-auth 的值（JWT，以 eyJ 开头）",
@@ -168,8 +168,8 @@ export const PROVIDERS = [
     methods: [
       {
         key: "relay",
-        label: "登录账号",
-        desc: "扫码登录一次，之后长期有效",
+        label: "系统驱动",
+        desc: "扫码登录一次后在服务器浏览器里跑（a_bogus 签名由页面生成）",
         // 只留 paste：`browser` 代表服务器浏览器登录，已废弃
         //（用户实测「卡的不行、吃服务器内存」，且本机浏览器粘贴完全能替代）。
         // 留着它会让这些厂商在弹窗里多出一个 tab —— 「有的一个 tab 有的两个」的根源。
@@ -206,8 +206,8 @@ export const PROVIDERS = [
     methods: [
       {
         key: "relay",
-        label: "登录账号",
-        desc: "登录一次，风控较重",
+        label: "系统驱动",
+        desc: "登录一次后在服务器浏览器里跑（风控较重，页面自己算签名）",
         // 只留 paste：`browser` 代表服务器浏览器登录，已废弃
         //（用户实测「卡的不行、吃服务器内存」，且本机浏览器粘贴完全能替代）。
         // 留着它会让这些厂商在弹窗里多出一个 tab —— 「有的一个 tab 有的两个」的根源。
@@ -245,7 +245,9 @@ export const PROVIDERS = [
       {
         key: "codex",
         adapter: "codex",
-        label: "ChatGPT 订阅（Codex OAuth）",
+        label: "Codex",
+        // 登录入口：ChatGPT 订阅页（用户在这里登录后，Codex CLI 才能授权取凭据）
+        entryUrl: "https://chatgpt.com/#settings/Subscription",
         desc: "粘贴 Codex CLI 的凭据，走订阅用量",
         loginModes: ["paste"],
         loginFields: oauthCredentialField(
@@ -267,7 +269,7 @@ export const PROVIDERS = [
         // 第三方网页版反代：ChatGPT Web（chat2api 协议），模型与计费仍归 OpenAI
         key: "openai-web",
         adapter: "openai-web",
-        label: "反代（网页版）",
+        label: "网页对话",
         desc: "用 ChatGPT 网页版账号跑对话（无需 Codex 订阅）",
         loginModes: ["paste"],
         loginFields: oauthCredentialField(
@@ -293,7 +295,7 @@ export const PROVIDERS = [
         // Node 端无解）；这个方式在服务器浏览器里驱动真实页面 UI，页面自己过风控。
         key: "openai-web-ui",
         adapter: "openai-web-ui",
-        label: "反代（浏览器驱动）",
+        label: "系统驱动",
         desc: "用邮箱+密码+2FA 自动登录，在服务器浏览器里驱动页面（无需手工操作）",
         loginModes: ["password"],
         // needs2fa：让前端在账号密码之外多渲染一个「2FA 密钥」输入框。
@@ -341,7 +343,8 @@ export const PROVIDERS = [
       {
         key: "claude-oauth",
         adapter: "claude-oauth",
-        label: "Claude 订阅（Claude Code OAuth）",
+        label: "Claude 订阅",
+        entryUrl: "https://claude.ai/login",
         desc: "粘贴 Claude Code 凭据，走订阅用量",
         loginModes: ["paste"],
         loginFields: oauthCredentialField(
@@ -382,7 +385,8 @@ export const PROVIDERS = [
       {
         key: "antigravity",
         adapter: "antigravity",
-        label: "Google 订阅（Antigravity OAuth）",
+        label: "Google 订阅",
+        entryUrl: "https://accounts.google.com/",
         desc: "粘贴 Google OAuth 凭据，走订阅用量",
         loginModes: ["paste"],
         loginFields: oauthCredentialField(
@@ -444,8 +448,11 @@ export const PROVIDERS = [
       // 工具只是通道，模型与计费仍归 Anthropic
       key: "kiro",
       adapter: "kiro",
-      label: "反代（Kiro）",
+      label: "Kiro",
       desc: "用 Kiro/AWS Q 订阅跑 Claude 模型",
+      // 凭据在 Kiro 客户端里：点开这个入口登录后，本机 ~/.aws/sso/cache/ 会出现
+      // 对应的 token 文件（或从 Kiro 设置里导出 kiro-auth-token.json）
+      entryUrl: "https://app.kiro.dev/",
       loginModes: ["paste"],
       loginFields: oauthCredentialField(
         '{ "accessToken": "...", "refreshToken": "...", "region": "us-east-1", "profileArn": "可选" }',
@@ -503,7 +510,8 @@ export const PROVIDERS = [
         // → 渠道一建就「适配器不可用」。静态一致性检查（tests/adapter-registry）
         // 会盯住这类不一致。
         adapter: "grok-oauth",
-        label: "Grok 订阅（xAI OAuth）",
+        label: "Grok 订阅",
+        entryUrl: "https://accounts.x.ai/",
         desc: "粘贴 CPA/sub2api 导出的 Grok 凭据",
         loginModes: ["paste"],
         loginFields: oauthCredentialField(
@@ -539,7 +547,7 @@ export const PROVIDERS = [
       {
         key: "workbuddy",
         adapter: "workbuddy",
-        label: "桌面端凭据（WorkBuddy）",
+        label: "WorkBuddy",
         desc: "粘贴桌面端登录凭据，走腾讯托管模型",
         loginModes: ["paste"],
         loginFields: oauthCredentialField(
@@ -568,7 +576,7 @@ export const PROVIDERS = [
       {
         key: "qoder",
         adapter: "qoder",
-        label: "本地桥（qoder2api）",
+        label: "Qoder",
         desc: "桥地址 + Qoder PAT",
         loginModes: ["paste"],
         loginFields: oauthCredentialField(
@@ -599,7 +607,7 @@ export const PROVIDERS = [
       {
         key: "mimo-web",
         adapter: "mimo-web",
-        label: "网页版（MiMo Studio）",
+        label: "网页对话",
         desc: "用小米账号登录，走订阅额度",
         // 只保留 paste：抓取（浏览器登录）是 paste 面板里的入口，不是独立模式。
         // 见前端 credOptions 的注释 —— 拆成两个模式会让弹窗裂出两个按钮，
@@ -639,7 +647,7 @@ export const PROVIDERS = [
       {
         key: "minimax-web",
         adapter: "minimax-web",
-        label: "网页版（MiniMax Agent）",
+        label: "网页对话",
         desc: "用 MiniMax 账号登录，走 C 端额度",
         // 只保留 paste：抓取（浏览器登录）是 paste 面板里的入口，不是独立模式。
         // 见前端 credOptions 的注释 —— 拆成两个模式会让弹窗裂出两个按钮，
@@ -680,7 +688,7 @@ export const PROVIDERS = [
       {
         key: "stepfun-web",
         adapter: "stepfun-web",
-        label: "网页版（chat.stepfun.com）",
+        label: "网页对话",
         desc: "手机号登录，走 C 端额度（协议零签名）",
         // 只保留 paste：抓取（浏览器登录）是 paste 面板里的入口，不是独立模式。
         // 见前端 credOptions 的注释 —— 拆成两个模式会让弹窗裂出两个按钮，
@@ -936,7 +944,7 @@ export const PROVIDERS = [
         key: "systemone",
         // 非 OpenAI 协议 → 用独立适配器（不能走 openai-compat）
         adapter: "typesafe",
-        label: "System One（Jev）",
+        label: "System One",
         desc: "原生 /v1/systemone：请求 {state, model, questions}，响应 {model, answers, usage}",
         baseUrl: "https://api.typesafe.ai",
         keyHint: "TypeSafe API Key（console.typesafe.ai/keys 获取）",
@@ -1270,8 +1278,73 @@ const LOCAL_LOGIN_GUIDE = {
     snippet:
       "(async()=>{try{const j=await (await fetch('/api/auth/session',{credentials:'include'})).json();const t=j&&j.accessToken;if(t){copy(t);console.log('已复制 access_token')}else{console.log('没取到 access_token，确认已登录后再试')}}catch(e){console.log('请求失败：'+e.message)}})()",
   },
-};
 
+  // ---- 订阅 / 反代类：凭据都在**本机客户端**里，不在浏览器里 ----
+  // 用户反馈：「手动填凭证也没引导用户要拿哪个字段啊？」——
+  // 这几家原先只有一行 pasteHint（一句话说明），没有分步指引，
+  // 管理员看到「凭据 JSON」这个框不知道该往里放什么文件。
+  "openai:codex": {
+    steps: [
+      "本机装好 Codex CLI 并登录（命令行执行 codex login，浏览器会弹出授权页，按提示完成）",
+      "登录后打开凭据文件：Windows 在资源管理器地址栏输入 %USERPROFILE%\\.codex 回车，找到 auth.json（macOS / Linux 就是 ~/.codex/auth.json）",
+      "用记事本打开 auth.json，把**全部内容**原样粘到下面的「凭据 JSON」框（含 tokens 与 account_id）",
+      "找不到该文件：说明 CLI 还没登录成功，回到第 1 步重跑 codex login",
+    ],
+    note: "还没装 CLI：直接点上面的登录小窗也行 —— 授权后地址栏会停在一个打不开的 localhost 地址，把整串 URL 粘到下方输入框即可",
+  },
+  "anthropic:claude-oauth": {
+    steps: [
+      "本机装好 Claude Code 并登录（命令行执行 claude，按提示完成 OAuth 授权）",
+      "登录后打开凭据文件：Windows 在资源管理器地址栏输入 %USERPROFILE%\\.claude 回车，找到 .credentials.json（macOS 也可用「钥匙串访问」搜 Claude Code-credentials）",
+      "用记事本打开该文件，把**全部内容**原样粘到下面的「凭据 JSON」框",
+    ],
+    note: "或直接点上面的登录小窗：授权后页面会跳到打不开的 localhost 地址（正常现象），把地址栏整串 URL 粘回下方输入框即可",
+  },
+  "gemini:antigravity": {
+    steps: [
+      "本机装好 Antigravity 客户端并登录 Google 账号（登录后它会自己写入凭据缓存）",
+      "打开凭据目录：Windows 在资源管理器地址栏输入 %USERPROFILE%\\.antigravity 回车（macOS / Linux 就是 ~/.antigravity/）",
+      "找到文件名含 oauth / token 字样的那个 json（不同版本路径略有差异），用记事本打开",
+      "把**全部内容**粘到下面的「凭据 JSON」框；只想给 refresh_token 也可以，平台会自行换 access_token",
+    ],
+    note: "或直接点上面的登录小窗：授权后把地址栏整串 URL 粘回下方输入框",
+  },
+  "kiro:kiro": {
+    steps: [
+      "本机装好 Kiro 客户端并登录（登录后凭据会缓存到本机）",
+      "打开缓存目录：Windows 在资源管理器地址栏输入 %USERPROFILE%\\.aws\\sso\\cache 回车（macOS / Linux：~/.aws/sso/cache/）",
+      "按「修改时间」排序，打开最新的那个 json（文件名是一串哈希），用记事本查看内容",
+      "把**全部内容**粘到下面的「凭据 JSON」框，至少要有 accessToken 与 refreshToken",
+    ],
+    note: "更省事的做法：用上面的「一键绑定」—— 点开授权页登录确认后，凭据由服务端直接写入渠道，不用手工复制任何文件",
+  },
+  "grok:grok-oauth": {
+    steps: [
+      "推荐用上面的「设备码登录」：点一下会给出一个验证链接与代码，在任意浏览器授权即可，凭据自动回填",
+      "若要手工填：本机登录 grok.com 后，从浏览器开发者工具的 Application → Local Storage 里找 sso / sso-rw 两项的值",
+      "把两个值拼成 JSON 粘到下面的「凭据 JSON」框：{ \"sso\": \"...\", \"ssoRw\": \"...\" }",
+    ],
+    note: "设备码登录是官方支持的路径，比手工复制 cookie 稳得多，优先用它",
+  },
+  // 自定义（Anthropic 兼容）：凭据由管理员从**上游服务商**那里拿，我们无从指引具体路径，
+  // 但要明确说清「该填什么」——不然面对一个「凭据 JSON」框完全不知道放什么。
+  "custom:anthropic": {
+    steps: [
+      "这个接入方式对接的是你自己的 Anthropic 兼容服务，凭据从**该服务商**的管理后台获取（不是 Anthropic 官网）",
+      "在该服务商后台打开「API Key / 密钥」页面新建一把，复制那串 Key（常见形如 sk-ant-... 或 sk-...）",
+      "把 Key 直接粘到下面输入框；若服务商给的是一个 JSON 文件，用记事本打开并把**全部内容**原样粘进来（平台会自动识别字段）",
+    ],
+    note: "不确定该填哪个字段：先粘进去点一次「测试」—— 报错会说明上游拒绝的具体原因",
+  },
+  "cline:cli": {
+    steps: [
+      "点下面的「一键绑定」最省事：会打开 Cline 官方授权页，登录后凭据自动写回渠道",
+      "若要手工填：登录 app.cline.bot 后按 F12 → Application → Cookies",
+      "找到名为 cline_session（或 workos_session）的那一行，复制它的值粘到下面输入框",
+    ],
+    note: "用邮箱密码换来的 token 有有效期，平台会自动续期；续期失败时会在这里提示重新绑定",
+  },
+};
 /**
  * 取某接入方式的本机登录指引（没有登记则返回 null，前端退回纯说明文案）。
  * **必须带 provider**：多个厂商的网页反代方法键都叫 relay，
@@ -1324,6 +1397,14 @@ export function publicProviders() {
       // 远程登录抓取能力：有 entryUrl 就说明支持「打开登录页自动抓取」
       captureHint: m.captureHint || "",
       canCapture: Boolean(m.entryUrl),
+      // **登录页地址必须原样下发** —— 前端「弹出登录小窗」按钮就是拿它开窗口的。
+      //
+      // 这里踩过一个真实的坑：早先只下发了 `canCapture: Boolean(m.entryUrl)` 这个
+      // **布尔**，而前端按钮读的是 `pickMethod.entryUrl` —— 那个字段根本不存在，
+      // 于是按钮**永远不渲染**。用户实测反馈：「点击跳转对应登录地址的按钮呢？
+      // 你不是说做了吗？」—— 后端注释里写着「支持抓取」，前端却一个按钮都看不到。
+      // 教训：能力布尔值不能替代数据本身；前端要用什么就原样给什么。
+      entryUrl: m.entryUrl || "",
       // 本机浏览器登录指引（凭据在用户浏览器里的位置 + 可选的取码一行）
       localLogin: localLoginGuide(p.key, m.key),
       needsBrowser: Boolean(m.needsBrowser),

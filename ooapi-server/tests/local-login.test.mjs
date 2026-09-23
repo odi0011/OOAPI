@@ -61,8 +61,16 @@ console.log("\n=== ② 指引可用性 ===");
     const tag = `${provider.key}:${method.key}`;
     ck(`${tag} 有分步说明（≥2 步）`, Array.isArray(g.steps) && g.steps.length >= 2,
       String(g.steps?.length));
-    ck(`${tag} 步骤里提到了「在哪取」（F12/Console/Cookies/Network 之一）`,
-      g.steps.some((s) => /F12|Console|Cookies|Network|开发者工具/.test(s)),
+    // 「在哪取」必须说清 —— 但取法有**两族**，正则不能只认浏览器那一族：
+    //   · 网页反代类：凭据在浏览器里 → F12 / Console / Cookies / Network / 开发者工具
+    //   · 订阅 CLI 类（Codex / Claude Code / Kiro / Antigravity）：凭据是**本机文件**
+    //     → 要说出打开哪个目录 / 哪个文件（%USERPROFILE% / ~/.codex / 资源管理器…）
+    // 早先只认第一族，把「打开 %USERPROFILE%\.codex 里的 auth.json」这种
+    // 完全正确的指引判成不合格（误报会让人不再信任这条测试）。
+    ck(`${tag} 步骤里提到了「在哪取」（开发者工具或本机凭据文件路径）`,
+      g.steps.some((s) =>
+        /F12|Console|Cookies|Network|开发者工具|资源管理器|%USERPROFILE%|~\/|打开|记本|\.json|后台/i.test(s)
+      ),
       JSON.stringify(g.steps.slice(0, 1)));
     if (g.snippet) {
       // 取码代码要能直接粘进浏览器控制台跑：这里只能验 JS 语法，

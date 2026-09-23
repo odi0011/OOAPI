@@ -185,8 +185,35 @@ async function listLogs(req, res, kind) {
     size,
     offset,
   ]);
+
+  // 附上渠道类型，供前端渲染**厂商图标**。
+  //
+  // 用户反馈（原话）：「使用记录里我看到咋还有模型是用的默认的我们系统 logo？
+  // 应该是跟随其厂商的图标啊。」—— 模型图标原先只按模型名判定，
+  // 有些模型名里既没有厂商前缀、也不在图标规则里（OpenCode 自有的 `omen-alpha`、
+  // 聚合渠道的 `openrouter/free`），就掉到平台 logo 了。
+  // 而这些模型**跑在哪个渠道上是知道的**（logs.channel_id），
+  // 渠道的厂商图标正是「跟随其厂商」的兜底答案。
+  //
+  // 为什么在查询之后补一次而不是 JOIN：where 子句用的是裸列名（`type = ?`），
+  // 加 JOIN 就得给所有列加表别名，改动面大且容易漏（这文件里 where 被
+  // COUNT 与列表两处复用）。这里是「一页 20~50 条日志、渠道表只有十几行」，
+  // 单独查一次拿 id→type 映射更简单也更安全。
+  const chanIds = [...new Set(rows.map((r) => Number(r.channel_id) || 0).filter(Boolean))];
+  const chanType = new Map();
+  if (chanIds.length) {
+    const [ch] = await pool
+      .query(`SELECT id, type FROM channels WHERE id IN (${chanIds.map(() => "?").join(",")})`, chanIds)
+      .catch(() => [[]]);
+    for (const c of ch) chanType.set(Number(c.id), String(c.type || ""));
+  }
+
   return ok(res, {
-    items: rows.map((r) => mapLog(r, { isAdmin })),
+    items: rows.map((r) => ({
+      ...mapLog(r, { isAdmin }),
+      // 渠道类型：前端 ModelLabel 的 channelType 兜底（图标跟随厂商）
+      channel_type: chanType.get(Number(r.channel_id) || 0) || "",
+    })),
     total,
     page: p,
     page_size: size,

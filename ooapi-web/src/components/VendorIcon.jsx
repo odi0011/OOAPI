@@ -119,6 +119,12 @@ const MODEL_ICON = [
   // `^hy[-\d]` 同时覆盖 hy3 / hy-4 / hy4 各种写法；以 `hy` 开头接分隔符或数字的
   // 模型名目前只有混元一家，不会误伤。
   [/^hunyuan|^hy[-\d]/i, "hunyuan.png"],
+  // OpenRouter 聚合目录里的「路由型」模型（openrouter/auto、openrouter/free …）：
+  // 名字本身就是这家聚合站的产品名，用它的官方图标；不带前缀时（`free`、`auto`）
+  // 无法安全判定（可能与别的模型重名），交给渠道图标兜底，不在这里猜。
+  [/^openrouter\//i, "openrouter.svg"],
+  // 本平台自有/测试模型（omen-alpha 是 OpenCode Zen 上的自有档）：
+  // 名字里没有厂商线索，这里**不猜**——由调用方传 channelType 用渠道图标兜底。
 ];
 
 // 厂商前缀 → 图标文件（`vendor/model` 形式的目录型渠道用）。
@@ -166,6 +172,7 @@ const VENDOR_PREFIX_ICON = {
   stepfun: "stepfun.png",
   baidu: "baidu.png",
   meituan: "longcat.png",
+  openrouter: "openrouter.svg",
   // 平台自己的模型（omen-alpha 等）
   ooapi: PLATFORM_LOGO,
 };

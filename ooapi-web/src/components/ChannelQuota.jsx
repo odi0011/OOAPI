@@ -378,7 +378,24 @@ export function QuotaInline({ quota, stats }) {
 
   // 汇总 chips：套餐 / 余额 / 积分包…全部作为「横向标签」平铺，超出收进 +N
   const chips = [];
-  if (quota?.plan) chips.push({ key: "plan", node: <>套餐 {quota.plan}</>, tone: "indigo" });
+  if (quota?.plan) {
+    // 套餐 tag 不再一律加「套餐」前缀。
+    //
+    // 用户要求（原话）：「额度条下面的套餐那个 tag，如果渠道有 tag，
+    // 套餐这个 tag 就直接显示他是啥套餐就行不用再前面加套餐俩字了。」
+    //
+    // 为什么：多数上游返回的 plan 本身已经说清了是什么（「free」「Plus」
+    // 「GO 套餐」「Max 20x」），前面再叠一个「套餐」就变成「套餐 free」——
+    // 多两个字、占掉本来就不够的列宽，而信息量为零。
+    // 只有当上游给的名字**单独看不知道是什么**时才补前缀（例如纯代号「p_tcaca」）。
+    const plan = String(quota.plan);
+    const selfExplanatory = /free|plus|pro|max|go\b|premium|basic|standard|enterprise|team|订阅|套餐/i.test(plan);
+    chips.push({
+      key: "plan",
+      node: selfExplanatory ? <>{plan}</> : <>套餐 {plan}</>,
+      tone: "indigo",
+    });
+  }
   if (quota?.limitReached) chips.push({ key: "limit", node: <>已达限额</>, tone: "red" });
   if (hasLines) {
     c.lines.forEach((line, i) => {

@@ -964,7 +964,47 @@ async function applyCredentialToChannel({ id, type, method, credential, vendor }
   ]);
   resetChannelState(id);
   invalidateChannelCache();
-  return { accountLabel: parsed.accountLabel || merged.account || merged.email || "", credEpoch: merged.cred_epoch };
+
+  // 凭据刚写回成功 → **顺手把这个账号实际能用的模型拉回来**。
+  //
+  // 用户反馈（原话）：「qoder 点击一键绑定登录成功后这边也没回填凭证或者正确回显
+  // 自动获取模型啊？怎么还要用户填东西？」—— 一键绑定的意义就是「点一下就完事」，
+  // 而绑完后渠道的 models 仍是空的：管理员还得自己点「从上游获取模型」再全选保存。
+  // 那一步完全多余 —— 凭据都在手上了，问一次上游是免费的（只读接口）。
+  //
+  // 只在**模型为空**时填：已有声明的渠道不覆盖（管理员可能特意只放开几个模型，
+  // 自动填满会把他的限制冲掉）。失败也不抛错：拉不到模型不该让绑定本身报失败。
+  let autoModels = 0;
+  try {
+    const [cur] = await pool.query("SELECT models FROM channels WHERE id = ?", [id]);
+    const hasModels = String(cur[0]?.models || "").trim().length > 0;
+    if (!hasModels) {
+      const [fresh] = await pool.query("SELECT * FROM channels WHERE id = ?", [id]);
+      const channel = rowToChannel(fresh[0]);
+      const adapter = await getAdapter(channel);
+      if (typeof adapter?.fetchUpstreamModels === "function") {
+        const list = await adapter.fetchUpstreamModels(channel);
+        const ids = (Array.isArray(list) ? list : [])
+          .map((m) => String(m?.id || m || "").trim())
+          .filter((m) => m && m !== "*");
+        if (ids.length) {
+          await pool.query("UPDATE channels SET models = ? WHERE id = ?", [ids.join(",").slice(0, 4000), id]);
+          autoModels = ids.length;
+          console.log(`[channel] #${id} 绑定成功后自动填入 ${ids.length} 个上游模型`);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn(`[channel] #${id} 绑定后自动拉模型失败（不影响绑定）：${e.message}`);
+  }
+
+  return {
+    accountLabel: parsed.accountLabel || merged.account || merged.email || "",
+    credEpoch: merged.cred_epoch,
+    // 自动填入的模型数：调用方回给前端，让「绑定成功」这句提示带上实际结果，
+    // 而不是让管理员自己去渠道详情里找（用户要的就是「正确回显自动获取模型」）
+    autoModels,
+  };
 }
 
 router.get(
@@ -2472,9 +2512,15 @@ router.post(
           req,
           user: req.user,
           type: LOG_TYPE.MANAGE,
-          content: `设备授权绑定成功，已写入渠道 #${channelId}${r.accountLabel ? `（${r.accountLabel}）` : ""}`,
+          content: `设备授权绑定成功，已写入渠道 #${channelId}${r.accountLabel ? `（${r.accountLabel}）` : ""}${
+            r.autoModels ? `，自动填入 ${r.autoModels} 个模型` : ""
+          }`,
         });
-        return ok(res, { status: "success", channel_id: channelId, account: r.accountLabel }, "绑定成功，凭据已写入");
+        return ok(
+          res,
+          { status: "success", channel_id: channelId, account: r.accountLabel, autoModels: r.autoModels || 0 },
+          "绑定成功，凭据已写入"
+        );
       }
       return ok(res, {
         status: out.status,

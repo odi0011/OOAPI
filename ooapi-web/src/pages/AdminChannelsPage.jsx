@@ -664,15 +664,18 @@ function supportsDeviceBindMethod(methodKey) {
  */
 function methodShortName(m) {
   const byKey = {
-    kiro: "Kiro 反代",
+    kiro: "Kiro",
     "claude-oauth": "Claude 订阅",
-    codex: "Codex 订阅",
+    codex: "Codex",
     antigravity: "Google 订阅",
     grok: "Grok 订阅",
-    // 「浏览器驱动」必须显式命名：兜底逻辑会把「反代（浏览器驱动）」去掉括号后
-    // 变成「反代」，与同厂商的「反代（网页版）」撞名 —— 而两者凭据完全不同
-    // （前者填邮箱密码+2FA，后者粘贴 access_token），选错就建不出可用渠道。
-    "openai-web-ui": "浏览器驱动",
+    "grok-oauth": "Grok 订阅",
+    // 这两个必须显式命名，且**不能都叫「反代」**：
+    // 前者粘贴 chatgpt.com 的 access_token（网页会话），后者填邮箱+密码+2FA
+    // 由系统在服务器浏览器里驱动页面（页面自己过风控）。
+    // 凭据字段完全不同，标签撞名会让人选错。
+    "openai-web": "网页对话",
+    "openai-web-ui": "系统驱动",
   };
   if (byKey[m.key]) return byKey[m.key];
   // 兜底：用方法自身的 label 去掉括号说明（label 形如「反代（Kiro）」）
@@ -1032,14 +1035,17 @@ export default function AdminChannelsPage() {
             // 同时提供两条路 —— 服务器浏览器（自动抓取）与本机浏览器（登录后粘贴
             // 登录态）。两者以前都渲染成「浏览器登录」，同一厂商裂出两个同名按钮，
             // 用户点哪个都像撞运气。现在按「谁在跑浏览器」明确区分。
-            // 标签口径（统一规范）：
-            //   · OAuth 订阅 → 「方法名（粘贴凭据）」或方法名
-            //   · 账号密码   → 「账号密码」，带 2FA 的加上方法名
-            //   · 其余网页反代 → **一律「本机浏览器登录」**
-            //     （服务器浏览器那条已删除，不再有「粘贴登录态」这种要用户自己
-            //      判断该粘什么的名字 —— 面板里会给分步指引）
+            //
+            // 标签口径（用户要求：「直接写 codex、网页对话、系统驱动、API Key 就行了啊」）：
+            //   · 标签只说**走哪条通道**，不描述**怎么操作** ——
+            //     「（粘贴凭据）」这类后缀已被去掉：用户选 tab 时想的是「用哪条通道」，
+            //     而「要粘贴什么、粘哪一段」是选完之后表单里该说的事（见下面的字段引导）。
+            //   · OAuth 订阅   → 「Claude 订阅」/「Codex」/「Google 订阅」…
+            //   · 网页反代     → 「网页对话」（粘贴 access_token）
+            //   · 浏览器驱动   → 「系统驱动」（系统开浏览器驱动页面）
+            //   · 账号密码     → 「账号密码」，带 2FA 的加方法名
             label: m.oauth
-              ? `${methodShortName(m)}${lm === "paste" ? "（粘贴凭据）" : ""}`
+              ? methodShortName(m)
               : lm === "password"
                 ? m.needs2fa
                   ? `${methodShortName(m)}（账号密码）`
@@ -1624,7 +1630,13 @@ export default function AdminChannelsPage() {
               message.success("授权成功，点「添加」完成绑定");
             } else {
               setBindInfo((d) => (d ? { ...d, status: "success", account: p.account } : d));
-              message.success(`绑定成功${p.account ? `（${p.account}）` : ""}，凭据已写入渠道`);
+              message.success(
+                `绑定成功${p.account ? `（${p.account}）` : ""}，凭据已写入渠道${
+                  // 后端绑完顺手拉了上游模型（用户要求「正确回显自动获取模型」）：
+                  // 提示里带上实际结果，管理员不用自己去渠道详情里确认
+                  p.autoModels ? `，已自动填入 ${p.autoModels} 个模型` : ""
+                }`
+              );
               setAddOpen(false);
               load();
             }
@@ -2699,8 +2711,18 @@ export default function AdminChannelsPage() {
                               真正能全自动的只有 OAuth 回调类（走「粘贴回调」那条路，
                               授权码交给我们自己的回调地址）。 */}
                           {pickMethod.localLogin ? (
-                            <Form.Item label="登录（推荐：用你自己的浏览器）">
-                              <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                            <Form.Item
+                              label={
+                                // 有 OAuth 一键路径时，这块是**备选**（手工取凭据），
+                                // 标题必须说清，否则两个「登录」按钮会让人迷惑该点哪个。
+                                // 没有 OAuth 路径时（Codex CLI / Claude Code / Kiro …），
+                                // 它就是主路径 —— 用户反馈「手动填凭证也没引导用户要拿哪个字段啊」
+                                // 指的就是这种情况。
+                                oauthSupported || deviceBindSupported
+                                  ? "手动获取凭据（备选）"
+                                  : "登录（推荐：用你自己的浏览器）"
+                              }
+                            >                              <Space direction="vertical" style={{ width: "100%" }} size={8}>
                                 <Space wrap>
                                   {pickMethod.entryUrl ? (
                                     <Button
@@ -2734,6 +2756,12 @@ export default function AdminChannelsPage() {
                                       <li key={i}>{t}</li>
                                     ))}
                                 </ol>
+                                {/* 补充说明（可选）：例如「也可以走设备码登录」这类岔路提示 */}
+                                {pickMethod.localLogin.note ? (
+                                  <div style={{ fontSize: 12, color: "var(--ink-3)", lineHeight: 1.7 }}>
+                                    {pickMethod.localLogin.note}
+                                  </div>
+                                ) : null}
                                 {pickMethod.localLogin.snippet ? (
                                   <div
                                     onClick={() =>
@@ -2760,9 +2788,16 @@ export default function AdminChannelsPage() {
                               </Space>
                             </Form.Item>
                           ) : null}
-                          {/* 订阅 OAuth：两种登录方式。
-                              · 一键登录：在服务器浏览器里打开官方授权页（截图操作），自动抓回调换 token；
-                              · 手动：打开授权页面，把打不开的 localhost 回调地址复制回来。 */}
+                          {/* 订阅 OAuth：按能力渲染登录入口。
+                              三种能力互斥，按优先级取一种：
+                                · oauthSupported → 重定向式 OAuth（授权后把 localhost 回调 URL 粘回来）
+                                · oauthDevice    → 设备码（服务端拿 user_code，任意浏览器授权即可）
+                                · entryUrl       → **只能手工取凭据**的订阅/反代（Codex CLI / Claude Code /
+                                                   Kiro / Antigravity …）：至少给一个「打开登录页」按钮，
+                                                   再配上下面的分步指引说清该复制哪个字段。
+                              用户反馈：「点击跳转对应登录地址的按钮呢？你不是说做了吗？」
+                              —— 那时候第三种情况**没有任何按钮**（entryUrl 也没下发到前端），
+                              管理员面对一个「凭据 JSON」输入框完全不知道从哪下手。 */}
                           {pickMethod.oauth && oauthSupported ? (
                             <Form.Item label="登录账号（推荐）">
                               <Space wrap>
