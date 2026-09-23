@@ -123,6 +123,9 @@ export async function importAuth(input = {}) {
       { code: "LOGIN_BAD_PARAMS" }
     );
   }
+  // 提示：官方签发的 API Key 请用「API Key」那种接入方式 —— 这里期望的是
+  // OAuth 的 refresh/access token 对，拿 API Key 过来会被送去刷新并得到一个
+  // 令人困惑的 invalid_grant（上面的报错里已说明该怎么做）。
 
   // 拿到 refreshToken 就立刻换一次 accessToken：确认凭据真的可用，
   // 而不是先建成渠道、等第一次调用才发现是坏的（WorkBuddy 踩过这个坑：
@@ -220,9 +223,39 @@ export async function refreshAuth(channel, { force = false } = {}) {
   });
 }
 
-/** 拿到可用的 accessToken（快过期或缺失时先刷新） */
+/**
+ * 该渠道用的是哪种凭据。
+ *
+ * 必须区分，否则会出**真实故障**（上线后立刻被用户撞到）：
+ *   · `api` 方式：凭据是官方签发的 API Key，存在 `channel.api_key` 里，
+ *     **不参与刷新**（它不是 OAuth access token，没有 refreshToken）；
+ *   · `cli` 方式（一键绑定）：凭据是 WorkOS 的 access/refresh 对，存在 `other` 里，
+ *     access 过期要用 refresh 换新的。
+ *
+ * 早先这里只看 `other.access_token`，于是 API Key 渠道被判成「需要刷新」→
+ * 找不到 refresh_token → 抛「凭据里没有 refreshToken，请重新一键绑定」。
+ * 用户的 API Key 完全正常，却收到「没有 RT 凭证」的矛盾提示。
+ */
+function credentialKind(channel) {
+  const method = String(channel?.other?.method || "");
+  // 显式声明了方法就按方法走；老渠道没有 method 时按凭据形态兜底推断
+  if (method === "api") return "apikey";
+  if (method === "cli") return "oauth";
+  return channel?.other?.refresh_token ? "oauth" : "apikey";
+}
+
+/** 拿到可用的 bearer token（OAuth 方式快过期时先刷新；API Key 方式直接用） */
 async function ensureToken(channel) {
   const other = channel?.other || {};
+  if (credentialKind(channel) === "apikey") {
+    // API Key 直接用它本身；不动 other 里的字段（避免旧渠道残留的 access_token
+    // 把新填的 Key 顶掉 —— 那会让管理员「改了 Key 却不生效」）
+    const key = String(channel?.api_key || "").trim();
+    if (!key) {
+      throw Object.assign(new Error("未填写 Cline API Key"), { code: "CHANNEL_AUTH_EXPIRED" });
+    }
+    return key;
+  }
   if (!other.access_token || expiresSoon(other)) {
     await refreshAuth(channel, { force: !other.access_token }).catch((e) => {
       if (!other.access_token) throw e;

@@ -257,5 +257,61 @@ console.log("\n=== ⑧ 接入方式（一键绑定 + API Key 并存）===");
   }
 }
 
+/* ============ ⑨ 凭据类型分派（线上故障回归）============ */
+console.log("\n=== ⑨ API Key 渠道不得被当成 OAuth 去刷新 ===");
+{
+  // 线上真实故障：API Key 方式的渠道在给 api 方式也挂上 adapter 后报
+  // 「凭据里没有 refreshToken，请重新一键绑定或粘贴凭据」——
+  // 根因是 ensureToken 只看 other.access_token（账号绑定的产物），
+  // 完全忽略了 channel.api_key，于是把 API Key 渠道判成「需要刷新」。
+  // 用户的 Key 完全正常，却收到「没有 RT」的矛盾提示。
+  const a = await import("../src/services/upstream/cline.js");
+  const src = readFileSync(new URL("../src/services/upstream/cline.js", import.meta.url), "utf8");
+
+  ck("有 credentialKind 区分两种凭据", /function credentialKind\(channel\)/.test(src));
+  ck("method=api → 按 API Key 处理（不刷新）", /if \(method === "api"\) return "apikey"/.test(src));
+  ck("method=cli → 按 OAuth 处理（要刷新）", /if \(method === "cli"\) return "oauth"/.test(src));
+  ck("无 method 的老渠道按「有没有 refresh_token」兜底推断",
+    /refresh_token \? "oauth" : "apikey"/.test(src));
+
+  // 行为验证：API Key 渠道真的发得出请求（而不是抛 RT 错误）
+  let err = "";
+  let count = 0;
+  try {
+    const r = await a.fetchUpstreamModels({
+      id: 990001,
+      base_url: "https://api.cline.bot/api/v1",
+      api_key: "sk-test-key-for-regression",
+      other: { method: "api" },
+    });
+    count = r.length;
+  } catch (e) {
+    err = String(e.message || "");
+  }
+  ck("API Key 渠道不发 RT 相关报错", !/refreshToken|refresh_token/.test(err), err.slice(0, 90));
+  ck("API Key 渠道能正常拿到模型清单（/models 无需鉴权）",
+    count > 100, count ? `${count} 个` : err.slice(0, 90));
+
+  // 账号绑定渠道在没有 RT 时，必须给出明确引导（而不是含糊报错）
+  let oauthErr = "";
+  try {
+    await a.fetchUpstreamModels({ id: 990002, base_url: "https://api.cline.bot/api/v1", api_key: "", other: { method: "cli" } });
+  } catch (e) {
+    oauthErr = String(e.message || "");
+  }
+  ck("OAuth 渠道缺 RT 时报错指明是 refreshToken 问题",
+    /refreshToken/.test(oauthErr), oauthErr.slice(0, 90));
+
+  // 空 Key 的 API 渠道要给「未填 Key」而不是 RT 错误
+  let emptyErr = "";
+  try {
+    await a.fetchUpstreamModels({ id: 990003, base_url: "https://api.cline.bot/api/v1", api_key: "", other: { method: "api" } });
+  } catch (e) {
+    emptyErr = String(e.message || "");
+  }
+  ck("空 Key 的 API 渠道提示「未填写 Cline API Key」",
+    /未填写 Cline API Key/.test(emptyErr) && !/refreshToken/.test(emptyErr), emptyErr.slice(0, 90));
+}
+
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
 process.exit(fail ? 1 : 0);
