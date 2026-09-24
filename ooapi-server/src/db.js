@@ -407,6 +407,7 @@ const TABLES = [
     parent_id BIGINT NOT NULL DEFAULT 0 COMMENT '一级评论 id（0=直接评论帖子）。刻意不做无限级：见下方说明',
     reply_to_user_id INT NOT NULL DEFAULT 0 COMMENT '被回复者（扁平化后靠 @ 标明上下文）',
     content TEXT NOT NULL,
+    media_ids TEXT COMMENT '附图 media.id 列表（JSON 数组），字节在媒体库；与帖子同一套',
     like_count INT NOT NULL DEFAULT 0,
     status TINYINT NOT NULL DEFAULT 1 COMMENT '1=正常 2=已删 3=隐藏',
     deleted_by INT NOT NULL DEFAULT 0,
@@ -518,37 +519,56 @@ const TABLES = [
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
   // ---------------------------------------------------------------------------
-  // 小游戏：单机成绩榜 / 联机对战房间
+  // 好友系统：关系列表 / 申请与验证
   // ---------------------------------------------------------------------------
-  `CREATE TABLE IF NOT EXISTS game_records (
+  `CREATE TABLE IF NOT EXISTS friendships (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL,
-    game_key VARCHAR(24) NOT NULL COMMENT 'g2048/snake/gomoku/...',
-    score INT NOT NULL DEFAULT 0,
-    duration_ms INT NOT NULL DEFAULT 0,
-    detail VARCHAR(255) NOT NULL DEFAULT '' COMMENT '附加信息（关卡/步数等）',
+    user_id INT NOT NULL COMMENT '用户ID',
+    friend_id INT NOT NULL COMMENT '好友ID',
+    remark VARCHAR(64) NOT NULL DEFAULT '' COMMENT '好友自定义备注名',
+    status TINYINT NOT NULL DEFAULT 1 COMMENT '1=正常 2=已解除',
     created_time BIGINT NOT NULL DEFAULT 0,
-    KEY idx_game_board (game_key, score DESC, id),
-    KEY idx_game_user (user_id, game_key, id)
+    UNIQUE KEY uniq_user_friend (user_id, friend_id),
+    KEY idx_friend_user (friend_id, user_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
-  // 联机对战：状态存 JSON 由服务端权威判定（客户端只发操作，防篡改成绩）
-  `CREATE TABLE IF NOT EXISTS game_rooms (
+  `CREATE TABLE IF NOT EXISTS friend_requests (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    game_key VARCHAR(24) NOT NULL,
-    status VARCHAR(16) NOT NULL DEFAULT 'waiting' COMMENT 'waiting/playing/finished/abandoned',
-    host_id INT NOT NULL DEFAULT 0,
-    guest_id INT NOT NULL DEFAULT 0,
-    state TEXT COMMENT '棋盘等对局状态（JSON）',
-    turn_user_id INT NOT NULL DEFAULT 0,
-    winner_id INT NOT NULL DEFAULT 0,
-    version INT NOT NULL DEFAULT 0 COMMENT '乐观锁：每次落子 +1，防并发覆盖',
-    spectatable TINYINT NOT NULL DEFAULT 1,
+    from_user_id INT NOT NULL COMMENT '申请发起人',
+    to_user_id INT NOT NULL COMMENT '接收申请人',
+    message VARCHAR(255) NOT NULL DEFAULT '' COMMENT '验证说明留言',
+    status TINYINT NOT NULL DEFAULT 0 COMMENT '0=待处理 1=已同意 2=已拒绝',
+    handled_time BIGINT NOT NULL DEFAULT 0,
     created_time BIGINT NOT NULL DEFAULT 0,
-    updated_time BIGINT NOT NULL DEFAULT 0,
-    KEY idx_game_room_status (status, id),
-    KEY idx_game_room_host (host_id),
-    KEY idx_game_room_guest (guest_id)
+    KEY idx_to_user (to_user_id, status, id),
+    KEY idx_from_user (from_user_id, status, id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // ---------------------------------------------------------------------------
+  // QQ 频道体系：频道服务器 (Guild) 与子频道 (Channel)
+  // ---------------------------------------------------------------------------
+  `CREATE TABLE IF NOT EXISTS community_guilds (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(64) NOT NULL COMMENT '频道服务器名称',
+    description VARCHAR(255) NOT NULL DEFAULT '' COMMENT '频道简介',
+    icon VARCHAR(255) NOT NULL DEFAULT '' COMMENT '图标或首字母',
+    owner_id INT NOT NULL DEFAULT 0,
+    is_default TINYINT NOT NULL DEFAULT 0 COMMENT '1=官方默认主频道',
+    status TINYINT NOT NULL DEFAULT 1,
+    created_time BIGINT NOT NULL DEFAULT 0
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  `CREATE TABLE IF NOT EXISTS community_channels (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    guild_id BIGINT NOT NULL COMMENT '所属频道服务器',
+    category_name VARCHAR(32) NOT NULL DEFAULT '常规讨论' COMMENT '子频道分组',
+    name VARCHAR(64) NOT NULL COMMENT '子频道名称（如：综合交流）',
+    type VARCHAR(16) NOT NULL DEFAULT 'chat' COMMENT 'chat/notice/feed',
+    topic VARCHAR(255) NOT NULL DEFAULT '' COMMENT '话题或简介',
+    sort INT NOT NULL DEFAULT 0,
+    status TINYINT NOT NULL DEFAULT 1,
+    created_time BIGINT NOT NULL DEFAULT 0,
+    KEY idx_guild_sort (guild_id, sort, id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 ];
 
@@ -582,11 +602,16 @@ const COLUMN_MIGRATIONS = [
   { table: "users", column: "token_version", ddl: "INT NOT NULL DEFAULT 0" },
   // 社区/聊天（第 37 批）：评论扁平化的 @ 目标 + 消息的客户端临时 id（乐观队列）
   { table: "community_comments", column: "reply_to_user_id", ddl: "INT NOT NULL DEFAULT 0" },
+  // 评论附图（2026-09-24）：用户要求「评论也要能带图」。
+  // 走列迁移而不是只改建表语句 —— 线上库的表已存在，CREATE TABLE IF NOT EXISTS 不会补列。
+  { table: "community_comments", column: "media_ids", ddl: "TEXT" },
   { table: "chat_room_messages", column: "client_id", ddl: "VARCHAR(40) NOT NULL DEFAULT ''" },
   // 单聊唯一键：本次上线时 chat_rooms 已按老建表语句建好（不含此列），
   // CREATE TABLE IF NOT EXISTS 不会补，必须走列迁移。
   // 唯一索引由 ensureIndexes 单独创建（CREATE INDEX 语法不支持 UNIQUE）。
   { table: "chat_rooms", column: "single_key", ddl: "VARCHAR(40) DEFAULT NULL" },
+  { table: "chat_rooms", column: "announcement", ddl: "VARCHAR(500) NOT NULL DEFAULT ''" },
+  { table: "chat_rooms", column: "guild_channel_id", ddl: "BIGINT NOT NULL DEFAULT 0" },
   // 媒体库 / 用户资料（第 36 批）：头像引用 + 个人简介三件套
   { table: "users", column: "avatar_media_id", ddl: "BIGINT NOT NULL DEFAULT 0" },
   { table: "users", column: "bio", ddl: "VARCHAR(255) NOT NULL DEFAULT ''" },

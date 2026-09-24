@@ -102,7 +102,6 @@ const CRUMB = {
   "/community": ["工作台", "社区"],
   "/messages": ["工作台", "消息"],
   "/notifications": ["工作台", "通知"],
-  "/games": ["工作台", "社区", "小游戏"],
   "/token": ["开发", "令牌管理"],
   "/log": ["开发", "使用记录"],
   "/operation-log": ["开发", "操作日志"],

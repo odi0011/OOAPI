@@ -20,7 +20,7 @@
 //
 //  安全研究者 K：
 //   · 评论可伪造 reply_to_user_id 向任意用户投递通知
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -356,15 +356,62 @@ t("摘要走 summarize 剥离，而不是直接 slice 原文", () => {
     ck(community.includes(needle), `summarize 没处理${what}（缺 ${needle}）`);
   }
 });
-t("小游戏规则区不再写 Markdown 语法（那个容器不渲染 markdown）", () => {
-  const game = readFileSync(path.join(root, "..", "ooapi-web", "src", "components", "GameZone.jsx"), "utf8");
-  ck(/<b>胜负与合法性全部由服务端判定<\/b>/.test(game), "没有改用 <b>");
-  // 只查**渲染出来的文本节点**：注释（说明这段历史的那几行）里出现 ** 是正常的，
-  // 所以必须去掉注释再判定。JSX 注释是 {/* ... */}，普通注释是 // 与 /* */。
-  const gameCode = stripComments(game).replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
-  // JSX 文本节点里形如 **xxx** 的强调写法（非 markdown 容器不该有）
-  const badEmphasis = gameCode.match(/>[^<>{]*\*\*[^*<>{}]+\*\*[^<>{]*</g) || [];
-  ck(!badEmphasis.length, `还有 ${badEmphasis.length} 处非 markdown 容器用 ** 强调：${badEmphasis[0]}`);
+t("非 markdown 容器里没有裸露的 ** 强调（全站扫描）", () => {
+  // 原用例只查 GameZone（小游戏规则区曾写 `**胜负由服务端判定**`，星号原样显示）。
+  // 2026-09-24 小游戏模块整体下线（用户改动），改扫**所有页面与组件** ——
+  // 这条约束本身与游戏无关：任何「纯文本展示区」写 markdown 语法都是 bug。
+  const dirs = ["pages", "components"];
+  const bad = [];
+  for (const d of dirs) {
+    const dir = path.join(root, "..", "ooapi-web", "src", d);
+    for (const f of readdirSync(dir)) {
+      if (!/\.jsx$/.test(f)) continue;
+      const raw = readFileSync(path.join(dir, f), "utf8");
+      // 去掉注释再判定（说明这段历史的那几行里出现 ** 是正常的）
+      const code = stripComments(raw).replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+      // JSX 文本节点里形如 **xxx** 的强调写法
+      const hit = code.match(/>[^<>{]*\*\*[^*<>{}]+\*\*[^<>{]*</g) || [];
+      if (hit.length) bad.push(`${f}: ${hit[0].trim().slice(0, 60)}`);
+    }
+  }
+  ck(!bad.length, `有 ${bad.length} 处非 markdown 容器用 ** 强调：${bad[0]}`);
+});
+
+/* ============ ⑰ 评论带图（用户要求：评论也要能带图）============ */
+console.log("\n=== ⑰ 评论附图 ===");
+t("评论接受 media_ids、校验归属、写入并绑定引用", () => {
+  const c = communityCode;
+  // ① 建表语句带列 + 老库走列迁移（CREATE TABLE IF NOT EXISTS 不会补列）
+  const db = read("src/db.js");
+  ck(/media_ids TEXT COMMENT '附图 media\.id 列表/.test(db), "建表语句没有 media_ids 列");
+  ck(/table: "community_comments", column: "media_ids"/.test(db), "没有列迁移（老库不会补列）");
+  // ② 评论创建：校验归属 + 允许纯图
+  ck(/filterOwnedMediaIds\(rawMediaIds, req\.user\.id\)/.test(c), "评论没有校验图片归属");
+  ck(/请输入评论内容或添加图片/.test(c), "没有放开「纯图评论」");
+  // ③ 写入并绑定引用（删评论时图才回收得掉）
+  ck(/INSERT INTO community_comments \(post_id, user_id, parent_id, reply_to_user_id, content, media_ids/.test(c),
+    "INSERT 没有带 media_ids");
+  ck(/refType: "community_comment"/.test(c), "没有绑定 community_comment 引用");
+  // ④ 读取时返回 media
+  ck(/media: await mediaList\(c\.media_ids\)/.test(c), "列表没返回 media");
+});
+t("删除路径要释放评论附图引用（否则用户的图被永久锁死）", () => {
+  const c = communityCode;
+  ck(/releaseRefs\("community_comment", \[String\(id\)\]\)/.test(c), "删评论没有释放引用");
+  // 删帖也要带走其评论的引用（两套 ref key，不会自动级联）
+  ck(/SELECT id FROM community_comments WHERE post_id = \?/.test(c), "删帖没有查它的评论");
+  ck(/releaseRefs\("community_comment", cmts\.map/.test(c), "删帖没有释放评论引用");
+  // 重算里也要清僵尸（存量数据）
+  ck(/r\.ref_type = 'community_comment' AND r\.is_live = 1 AND c\.status = 2/.test(c),
+    "recount 没有清理评论僵尸引用");
+});
+t("前端：评论框有图片入口、可粘贴截图、列表渲染缩略图", () => {
+  const p2 = readFileSync(path.join(root, "..", "ooapi-web", "src", "pages", "PostDetailPage.jsx"), "utf8");
+  ck(/pickCommentImage/.test(p2), "没有评论上传函数");
+  ck(/onPaste=/.test(p2) && /clipboardData/.test(p2), "没有支持粘贴截图");
+  ck(/media_ids: cMedia\.map/.test(p2), "提交时没带 media_ids");
+  ck(/comment\.media/.test(p2), "一级评论没有渲染图片");
+  ck(/c\.media/.test(p2), "二级评论没有渲染图片");
 });
 
 /* ============ 语法校验（改坏一个字符就全站 500）============ */

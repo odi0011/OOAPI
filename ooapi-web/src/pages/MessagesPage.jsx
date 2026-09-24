@@ -1,40 +1,27 @@
-// 消息中心 —— 单聊 / 群聊 / 讨论组
+// QQ 频道沉浸式消息社区工作台
 // ---------------------------------------------------------------------------
-// 骨架属 B 类（视口锁定双栏）：高度锁死，左右各自独立滚动。
-// **绝不允许页面整体被长消息撑出外层滚动条** —— 那会让底部输入框脱离视线。
-//
-// 移动端按 Gemini 意见走「主从堆叠」而不是抽屉：
-//   /messages        → 纯会话列表（占满宽度）
-//   /messages/:id    → 全屏聊天（顶部常驻返回箭头）
-//   并用 100dvh 规避移动端虚拟键盘遮挡输入框的老问题。
-//
-// 消息状态用**本地乐观队列**（SSE 是单向的，上行仍走 HTTP POST）：
-//   发送时立即用 clientId 乐观插入一条「发送中」的消息，
-//   收到服务端广播回来带同一 clientId 的消息后，把它替换为「已发送」。
-//   没有这层，弱网下会出现「重复插入」或「红点假消除」。
+// 模式与功能对齐：
+// ① QQ 频道 (QQ Channel) 体系：频道服务器 (Guild) + 文字/公告子频道组织，支持公告气泡、话题说明与公共文字流；
+// ② QQ 私聊 (C2C) 与 群聊 (Group Chat)：单聊/群聊会话、置顶、未读红点、实时在线指示灯、群公告、群成员分层展示；
+// ③ 完备好友系统：好友申请与留言验证、在线/离线好友分组、好友备注名修改、双向关系解除、一键发起私聊；
+// ④ 纯正 Channel Layout：左侧 Hub Rail + 中间 Sub-Sidebar + 右侧主舞台与成员抽屉。
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-  Button, Input, Space, Avatar, Empty, Skeleton, App as AntApp, Modal, Form, Select, Tag, Dropdown, Tooltip,
+  Button, Input, Space, Avatar, Empty, Skeleton, App as AntApp, Modal, Form, Select, Tag, Dropdown, Tooltip, Badge, Popover, Card, Divider,
 } from "antd";
 import {
   PlusOutlined, SendOutlined, ArrowLeftOutlined, PictureOutlined, UsergroupAddOutlined,
-  MoreOutlined, SearchOutlined, MessageOutlined, TeamOutlined, CommentOutlined, DeleteOutlined, WifiOutlined,
+  MoreOutlined, SearchOutlined, MessageOutlined, TeamOutlined, CommentOutlined, DeleteOutlined,
+  UserAddOutlined, GlobalOutlined, SmileOutlined, CodeOutlined, SoundOutlined, PushpinOutlined,
+  CrownOutlined, SafetyOutlined, CheckOutlined, CloseOutlined, EditOutlined, ReloadOutlined,
 } from "@ant-design/icons";
-import { API, getToken } from "../services/api";
+import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
-import PageHeader from "../components/PageHeader";
 import UserAvatar from "../components/UserAvatar";
 
-const ROOM_TYPE = {
-  single: { label: "单聊", icon: <MessageOutlined /> },
-  group: { label: "群聊", icon: <TeamOutlined /> },
-  discussion: { label: "讨论组", icon: <CommentOutlined /> },
-};
-
-/** 时间戳合并：5 分钟内的消息共用一条时间分隔（避免每条都占一行高度） */
-const TIME_MERGE_MS = 5 * 60 * 1000;
+const EMOJI_LIST = ["😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇", "🙂", "🙃", "😉", "😍", "🥰", "😘", "😎", "🥳", "🤔", "🤫", "🤗", "🤖", "🚀", "💡", "🔥", "👍", "👏", "🎉", "❤️", "⭐", "✨", "💯"];
 
 function fmtTime(ts) {
   const d = new Date(Number(ts) * 1000);
@@ -57,15 +44,17 @@ function fmtRoomTime(ts) {
   return fmtTime(t).slice(0, 5);
 }
 
-/** 超长消息折叠：粘长 JSON/日志不刷屏 */const LONG_TEXT = 600;
-
 export default function MessagesPage() {
   const { roomId } = useParams();
   const navigate = useNavigate();
-  const { message: toast } = AntApp.useApp();
+  const { message: toast, modal } = AntApp.useApp();
   const { user: me } = useApp();
   const { begin, isLatest } = useLatest();
 
+  // 1. 导轨当前选中的 Hub 标签页：'messages' | 'contacts' | 'guild'
+  const [hubTab, setHubTab] = useState("messages");
+
+  // 2. 会话列表数据
   const [rooms, setRooms] = useState([]);
   const [roomsLoading, setRoomsLoading] = useState(false);
   const [room, setRoom] = useState(null);
@@ -73,33 +62,45 @@ export default function MessagesPage() {
   const [msgsLoading, setMsgsLoading] = useState(false);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+
+  // 3. 好友系统状态
+  const [friends, setFriends] = useState([]);
+  const [friendsLoading, setFriendsLoading] = useState(false);
+  const [requests, setRequests] = useState({ incoming: [], outgoing: [], pending_count: 0 });
+  const [addFriendOpen, setAddFriendOpen] = useState(false);
+  const [addFriendLoading, setAddFriendLoading] = useState(false);
+  const [addFriendForm] = Form.useForm();
+  const [contactsView, setContactsView] = useState("friends"); // 'friends' | 'requests'
+
+  // 4. QQ 频道体系状态
+  const [guilds, setGuilds] = useState([]);
+  const [guildsLoading, setGuildsLoading] = useState(false);
+  const [activeChannelId, setActiveChannelId] = useState(0);
+
+  // 5. 群组与公告操作
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [userOptions, setUserOptions] = useState([]);
   const [searching, setSearching] = useState(false);
-  const [online, setOnline] = useState([]);
-  const [sseOk, setSseOk] = useState(false);
-  const [kw, setKw] = useState("");
-  const [results, setResults] = useState([]);
-  const [msgSearching, setMsgSearching] = useState(false); // 消息内容搜索（与「搜索用户」区分）
-  const [form] = Form.useForm();
-  // 建会话弹窗里当前选的类型（single/group/discussion）。
-  // 用 useWatch 而不是 getFieldValue：后者的作用域仅限 shouldUpdate 的 render prop，
-  // 在 Select 那一层引用它会抛 ReferenceError 并让整页白屏（见 Select 处的注释）。
-  const formType = Form.useWatch("type", form);
+  const [createForm] = Form.useForm();
+  const [editAnnounceOpen, setEditAnnounceOpen] = useState(false);
+  const [announceText, setAnnounceText] = useState("");
+  const [showMembers, setShowMembers] = useState(true);
 
-  const scrollRef = useRef(null);
-  const esRef = useRef(null);
-  const activeRoomRef = useRef(0);
-  // 乐观队列：clientId → 本地消息。SSE 回来时按 clientId 命中并替换为服务端版本
-  const pendingRef = useRef(new Map());
-  const fileRef = useRef(null);
+  // 6. 搜索与在线状态
+  const [kw, setKw] = useState("");
+  const [online, setOnline] = useState([]);
+  const [profileModalUser, setProfileModalUser] = useState(null);
 
   const activeRoomId = Number(roomId) || 0;
+  const activeRoomRef = useRef(activeRoomId);
   activeRoomRef.current = activeRoomId;
-  const isMobileList = !activeRoomId;
+  const scrollRef = useRef(null);
+  const esRef = useRef(null);
+  const fileRef = useRef(null);
+  const pendingRef = useRef(new Map());
 
-  /* ---------------- 会话列表 ---------------- */
+  /* ==================== ① 会话列表加载 ==================== */
   const loadRooms = useCallback(async () => {
     const token = begin();
     setRoomsLoading(true);
@@ -114,358 +115,328 @@ export default function MessagesPage() {
     }
   }, [begin, isLatest, toast]);
 
-  useEffect(() => {
-    loadRooms();
-  }, [loadRooms]);
+  /* ==================== ② 好友系统加载 ==================== */
+  const loadFriends = useCallback(async () => {
+    setFriendsLoading(true);
+    try {
+      const [fList, reqList] = await Promise.all([
+        API.get("/friends").catch(() => []),
+        API.get("/friends/requests").catch(() => ({ incoming: [], outgoing: [], pending_count: 0 })),
+      ]);
+      setFriends(Array.isArray(fList) ? fList : []);
+      setRequests(reqList || { incoming: [], outgoing: [], pending_count: 0 });
+    } catch (e) {
+      // 忽略
+    } finally {
+      setFriendsLoading(false);
+    }
+  }, []);
 
-  /**
-   * 跨会话搜索消息。
-   * 服务端只在「我所在的房间」里搜 —— 聊天是私密的，能搜到别人房间等于泄露。
-   * 结果为空时不清空会话列表（让用户能接着点原有会话）。
-   */
-  const doSearch = useCallback(
-    async (text) => {
-      const q = String(text || "").trim();
-      if (!q) {
-        setResults([]);
-        return;
-      }
-      setMsgSearching(true);
-      try {
-        const d = await API.get("/chatroom/search", { params: { q, p: 1, page_size: 30 } });
-        setResults(d?.items || []);
-        if (!d?.items?.length) toast.info("没有匹配的消息");
-      } catch (e) {
-        toast.error(e.message);
-        setResults([]);
-      } finally {
-        setMsgSearching(false);
-      }
-    },
-    [toast]
-  );
+  /* ==================== ③ QQ 频道体系加载 ==================== */
+  const loadGuilds = useCallback(async () => {
+    setGuildsLoading(true);
+    try {
+      const d = await API.get("/chatroom/guilds");
+      setGuilds(Array.isArray(d) ? d : []);
+    } catch (e) {
+      // 忽略
+    } finally {
+      setGuildsLoading(false);
+    }
+  }, []);
 
-  /* ---------------- SSE 长连接（一次性票据 + 指数退避重连） ----------------
-   *
-   * 票据是**一次性的**（服务端 `tickets.delete(ticket)`，见 routes/chatroom.js），
-   * 而 EventSource 内置的重连会拿同一个 URL（同一个旧票据）再请求 → 必然 401。
-   * 所以断线后必须**换新票据**重建连接，且要自己控制退避节奏，
-   * 否则服务端一抖就变成「永久离线」（原来 onerror 只是 setSseOk(false)，
-   * 什么都不做 —— 实测反馈的问题）。
-   *
-   * 退避：1s → 2s → 4s → … 最多 30s，一旦 ready 就重置回 1s。
-   * cleanup 时必须 clearTimeout，否则组件卸载后定时器还会建连接（内存泄漏 + 幽灵连接）。
-   */
-  useEffect(() => {
-    let closed = false;
-    let es = null;
-    let retryTimer = null;
-    let attempt = 0;
-    const MAX_BACKOFF_MS = 30000;
+  /* ==================== ④ SSE 实时推送 ==================== */
+  const connectSSE = useCallback(async () => {
+    try {
+      const { ticket } = await API.post("/chatroom/stream-ticket", {});
+      const es = new EventSource(`/api/chatroom/stream?ticket=${encodeURIComponent(ticket)}`);
+      esRef.current = es;
 
-    const scheduleReconnect = () => {
-      if (closed) return;
-      attempt += 1;
-      const delay = Math.min(MAX_BACKOFF_MS, 1000 * 2 ** (attempt - 1));
-      clearTimeout(retryTimer);
-      retryTimer = setTimeout(() => {
-        if (!closed) connect();
-      }, delay);
-    };
-
-    const connect = async () => {
-      if (closed) return;
-      try {
-        const { ticket } = await API.post("/chatroom/stream-ticket", {});
-        if (closed) return;
-        // EventSource 带不了 Authorization，所以用一次性票据（与监控页同一套）
-        es = new EventSource(`/api/chatroom/stream?ticket=${encodeURIComponent(ticket)}`);
-        esRef.current = es;
-        es.addEventListener("ready", () => {
-          attempt = 0; // 连上了就把退避重置
-          setSseOk(true);
-        });
-        es.addEventListener("message", (ev) => {
-          let payload = null;
-          try {
-            payload = JSON.parse(ev.data);
-          } catch {
-            return;
-          }
-          const m = payload?.message;
-          if (!m) return;
-          const rid = Number(payload.room_id) || 0;
-          // 乐观队列命中：这条就是我刚发的，用服务端版本替换本地临时消息
-          if (m.client_id && pendingRef.current.has(m.client_id)) {
+      es.addEventListener("message", (ev) => {
+        try {
+          const payload = JSON.parse(ev.data);
+          const rid = Number(payload.room_id);
+          const m = payload.message;
+          if (m?.client_id && pendingRef.current.has(m.client_id)) {
             pendingRef.current.delete(m.client_id);
           }
           if (rid === activeRoomRef.current) {
             setMsgs((prev) => {
-              // clientId 命中 → 替换；否则按 id 去重后追加
-              const byClient = m.client_id ? prev.findIndex((x) => x.client_id === m.client_id && x.id < 0) : -1;
-              if (byClient >= 0) {
-                const copy = prev.slice();
-                copy[byClient] = { ...m, _local: false };
-                return copy;
-              }
-              if (prev.some((x) => x.id === m.id)) return prev;
-              return [...prev, { ...m, _local: false }];
+              const without = prev.filter((x) => (m.client_id ? x.client_id !== m.client_id : x.id !== m.id));
+              return [...without, m];
             });
-            // 在看的房间即时标记已读，避免红点残留
             API.post(`/chatroom/rooms/${rid}/read`, {}).catch(() => {});
           }
           loadRooms();
-        });
-        es.addEventListener("presence", (ev) => {
-          try {
-            const p = JSON.parse(ev.data);
-            setOnline((prev) => (p.online ? [...new Set([...prev, p.user_id])] : prev.filter((x) => x !== p.user_id)));
-          } catch {
-            /* ignore */
-          }
-        });
-        es.addEventListener("invited", () => {
-          toast.info("你被邀请加入了一个新的会话");
-          loadRooms();
-        });
-        es.addEventListener("dissolved", (ev) => {
-          try {
-            const d = JSON.parse(ev.data);
-            toast.info("一个会话已被解散");
-            if (Number(d.room_id) === activeRoomRef.current) navigate("/messages");
-          } catch {
-            /* ignore */
-          }
-          loadRooms();
-        });
-        es.addEventListener("recalled", (ev) => {
-          try {
-            const d = JSON.parse(ev.data);
-            if (Number(d.room_id) === activeRoomRef.current) {
-              setMsgs((prev) => prev.map((m) => (m.id === Number(d.message_id) ? { ...m, status: 2, content: "" } : m)));
-            }
-          } catch {
-            /* ignore */
-          }
-        });
-        es.addEventListener("kicked", () => {
-          toast.info("你已被移出该会话");
-          navigate("/messages");
-          loadRooms();
-        });
-        es.onerror = () => {
-          setSseOk(false);
-          // 关键：先 close 掉内置重连（它会复用旧票据，必然 401 并在
-          // 浏览器里反复打接口），再由我们换新票据重连。
-          try {
-            es?.close();
-          } catch {
-            /* ignore */
-          }
-          esRef.current = null;
-          scheduleReconnect();
-        };
-      } catch {
-        setSseOk(false);
-        scheduleReconnect();
-      }
-    };
+        } catch {
+          // 忽略
+        }
+      });
 
-    connect();
-    return () => {
-      closed = true;
-      clearTimeout(retryTimer);
-      try {
-        es?.close();
-      } catch {
-        /* ignore */
-      }
-      esRef.current = null;
-    };
-  }, [loadRooms, navigate, toast]);
+      es.addEventListener("presence", (ev) => {
+        try {
+          const { user_id, online: isOnlineNow } = JSON.parse(ev.data);
+          setOnline((prev) => {
+            const s = new Set(prev);
+            if (isOnlineNow) s.add(user_id);
+            else s.delete(user_id);
+            return [...s];
+          });
+          loadFriends();
+        } catch {
+          // 忽略
+        }
+      });
+
+      es.addEventListener("friend_request", () => {
+        toast.info("收到一条新的好友申请");
+        loadFriends();
+      });
+
+      es.addEventListener("friend_accepted", () => {
+        toast.success("好友申请已通过，双方已成为好友");
+        loadFriends();
+        loadRooms();
+      });
+
+      es.addEventListener("room_updated", (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          if (data.room_id === activeRoomRef.current) {
+            setRoom((prev) => (prev ? { ...prev, ...data } : prev));
+          }
+          loadRooms();
+        } catch {
+          // 忽略
+        }
+      });
+
+      es.onerror = () => {
+        es.close();
+      };
+    } catch {
+      // 忽略
+    }
+  }, [loadRooms, loadFriends, toast]);
 
   useEffect(() => {
-    API.get("/chatroom/online")
-      .then((d) => setOnline(Array.isArray(d) ? d : []))
-      .catch(() => setOnline([]));
-  }, []);
+    loadRooms();
+    loadFriends();
+    loadGuilds();
+    connectSSE();
+    API.get("/chatroom/online").then((ids) => setOnline(Array.isArray(ids) ? ids : [])).catch(() => {});
+    return () => esRef.current?.close();
+  }, [loadRooms, loadFriends, loadGuilds, connectSSE]);
 
-  /* ---------------- 当前房间与消息 ---------------- */
-  const loadMsgs = useCallback(async () => {
+  /* ==================== ⑤ 切换会话与消息加载 ==================== */
+  useEffect(() => {
     if (!activeRoomId) {
       setRoom(null);
       setMsgs([]);
       return;
     }
-    const token = begin();
     setMsgsLoading(true);
-    try {
-      const [r, m] = await Promise.all([
-        API.get(`/chatroom/rooms/${activeRoomId}`),
-        API.get(`/chatroom/rooms/${activeRoomId}/messages`, { params: { p: 1, page_size: 60 } }),
-      ]);
-      if (!isLatest(token)) return;
-      setRoom(r);
-      // 服务端消息 + 仍在等待确认的本地消息（乐观队列里没被替换掉的）
-      const local = [...pendingRef.current.values()].filter((x) => x.room_id === activeRoomId);
-      setMsgs([...(m?.items || []), ...local].sort((a, b) => Number(a.id) - Number(b.id)));
-      if (Number(r.last_read_id) !== undefined) {
+    Promise.all([
+      API.get(`/chatroom/rooms/${activeRoomId}`),
+      API.get(`/chatroom/rooms/${activeRoomId}/messages`, { params: { p: 1, page_size: 80 } }),
+    ])
+      .then(([r, mData]) => {
+        setRoom(r);
+        setMsgs(mData?.items || []);
         API.post(`/chatroom/rooms/${activeRoomId}/read`, {}).catch(() => {});
-      }
-    } catch (e) {
-      if (isLatest(token)) {
-        toast.error(e.message);
-        navigate("/messages");
-      }
-    } finally {
-      if (isLatest(token)) setMsgsLoading(false);
+      })
+      .catch((e) => {
+        toast.error(e.message || "加载会话失败");
+      })
+      .finally(() => setMsgsLoading(false));
+  }, [activeRoomId, toast]);
+
+  // 消息自动滚到底部
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [activeRoomId, begin, isLatest, navigate, toast]);
+  }, [msgs]);
 
-  useEffect(() => {
-    loadMsgs();
-  }, [loadMsgs]);
-
-  // 自动滚到底：新消息到达或切换房间时
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [msgs.length, activeRoomId]);
-
-  /* ---------------- 发送（乐观队列） ---------------- */
-  const send = async () => {
-    const content = input.trim();
-    if (!content || sending || !activeRoomId) return;
-    // clientId 必须唯一且够短（服务端列宽 40）；用随机串避免与其它标签页撞车
-    const clientId = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-    const tempId = -Date.now();
-    const optimistic = {
-      id: tempId,
+  /* ==================== ⑥ 发送消息 ==================== */
+  const doSend = async (type = "text", content = input, mediaIds = []) => {
+    if (!activeRoomId || (!content.trim() && !mediaIds.length)) return;
+    setSending(true);
+    const clientId = `cli_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const optMsg = {
+      id: -Date.now(),
       room_id: activeRoomId,
-      user_id: me?.id || 0,
+      user_id: me?.id,
       author: { id: me?.id, username: me?.username, display_name: me?.display_name, avatar_url: me?.avatar_url },
-      type: "text",
-      content,
+      type,
+      content: content.trim(),
       media: [],
       client_id: clientId,
       created_time: Math.floor(Date.now() / 1000),
       status: 1,
-      _local: true,
+      pending: true,
     };
-    pendingRef.current.set(clientId, optimistic);
-    setMsgs((prev) => [...prev, optimistic]);
+    pendingRef.current.set(clientId, optMsg);
+    setMsgs((prev) => [...prev, optMsg]);
     setInput("");
-    setSending(true);
+
     try {
-      const sent = await API.post(`/chatroom/rooms/${activeRoomId}/messages`, { type: "text", content, client_id: clientId });
-      pendingRef.current.delete(clientId);
-      setMsgs((prev) => prev.map((m) => (m.client_id === clientId && m.id < 0 ? { ...sent, _local: false } : m)));
-      loadRooms();
+      await API.post(`/chatroom/rooms/${activeRoomId}/messages`, {
+        type,
+        content: content.trim(),
+        media_ids: mediaIds,
+        client_id: clientId,
+      });
     } catch (e) {
-      // 发送失败：把这条标成失败（不静默丢弃 —— 用户要能看到哪条没发出去）
-      setMsgs((prev) => prev.map((m) => (m.client_id === clientId ? { ...m, _failed: true } : m)));
-      toast.error(e.message);
+      toast.error(e.message || "发送失败");
+      setMsgs((prev) => prev.filter((x) => x.client_id !== clientId));
+      pendingRef.current.delete(clientId);
     } finally {
       setSending(false);
     }
   };
 
-  const retry = async (m) => {
-    const clientId = m.client_id;
-    setMsgs((prev) => prev.map((x) => (x.client_id === clientId ? { ...x, _failed: false, _local: true } : x)));
-    try {
-      const sent = await API.post(`/chatroom/rooms/${activeRoomId}/messages`, { type: "text", content: m.content, client_id: clientId });
-      pendingRef.current.delete(clientId);
-      setMsgs((prev) => prev.map((x) => (x.client_id === clientId ? { ...sent, _local: false } : x)));
-    } catch (e) {
-      setMsgs((prev) => prev.map((x) => (x.client_id === clientId ? { ...x, _failed: true } : x)));
-      toast.error(e.message);
-    }
-  };
-
-  const sendImage = async (e) => {
-    const files = Array.from(e.target.files || []);
-    e.target.value = "";
-    if (!files.length || !activeRoomId) return;
-    const file = files[0];
-    if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) {
-      toast.warning("请选择 PNG、JPEG、WebP 或 GIF 图片");
-      return;
-    }
+  /* ==================== ⑦ 快捷上传图片 ==================== */
+  const handleUploadPic = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
     try {
       const dataUrl = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(new Error("图片读取失败"));
-        reader.readAsDataURL(file);
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result || ""));
+        fr.onerror = () => reject(new Error("读取文件失败"));
+        fr.readAsDataURL(file);
       });
-      // 先传媒体库再发 id（与对话页同一条链路）
-      const saved = await API.post("/media", { dataUrl, name: file.name, source: "chat" });
-      const clientId = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-      const sent = await API.post(`/chatroom/rooms/${activeRoomId}/messages`, {
-        type: "image",
-        content: "",
-        media_ids: [saved.id],
-        client_id: clientId,
-      });
-      setMsgs((prev) => (prev.some((x) => x.id === sent.id) ? prev : [...prev, { ...sent, _local: false }]));
-      loadRooms();
+      const r = await API.post("/media", { dataUrl, name: file.name, source: "chat" });
+      await doSend("image", "[图片]", [r.id]);
     } catch (err) {
-      toast.error(err.message);
-    }
-  };
-
-  /* ---------------- 新建会话 ---------------- */
-  const searchUsers = async (kw) => {
-    if (!kw?.trim()) {
-      setUserOptions([]);
-      return;
-    }
-    setSearching(true);
-    try {
-      const d = await API.get("/chatroom/users", { params: { q: kw.trim() } });
-      setUserOptions(
-        (Array.isArray(d) ? d : []).map((u) => ({
-          value: u.id,
-          label: `${u.display_name || u.username}（@${u.username}）`,
-        }))
-      );
-    } catch {
-      setUserOptions([]);
+      toast.error(err.message || "图片上传失败");
     } finally {
-      setSearching(false);
+      if (fileRef.current) fileRef.current.value = "";
     }
   };
 
-  const submitCreate = async () => {
-    if (creating) return;
-    let v;
+  /* ==================== ⑧ 好友申请操作 ==================== */
+  const submitAddFriend = async (values) => {
+    setAddFriendLoading(true);
     try {
-      v = await form.validateFields();
-    } catch {
-      return;
+      await API.post("/friends/requests", {
+        to_user_id: values.to_user_id,
+        message: values.message,
+      });
+      toast.success("好友申请已发送，等待对方验证");
+      setAddFriendOpen(false);
+      addFriendForm.resetFields();
+      loadFriends();
+    } catch (e) {
+      toast.error(e.message || "发送申请失败");
+    } finally {
+      setAddFriendLoading(false);
     }
-    // 防御：正常不会走到（Select 已 multi + 表单必填），但若字段形状意外变化
-    // 也不能把 JS 内部报错当 toast 丢给用户（之前 `number.map is not a function`
-    // 就是这么漏出去的 —— 用户看到的是引擎报错串，不是人话）。
-    const pickedIds = Array.isArray(v.user_ids) ? v.user_ids : v.user_ids == null ? [] : [v.user_ids];
-    if (!pickedIds.length) {
-      toast.error("请先选择一位成员");
-      return;
+  };
+
+  const handleFriendRequest = async (requestId, action) => {
+    try {
+      await API.put(`/friends/requests/${requestId}`, { action });
+      toast.success(action === "accept" ? "已同意好友申请" : "已拒绝好友申请");
+      loadFriends();
+      loadRooms();
+    } catch (e) {
+      toast.error(e.message || "操作失败");
     }
+  };
+
+  const directChatFriend = async (friendId) => {
+    try {
+      const r = await API.post(`/friends/${friendId}/chat`, {});
+      navigate(`/messages/${r.room_id}`);
+      setHubTab("messages");
+    } catch (e) {
+      toast.error(e.message || "发起私聊失败");
+    }
+  };
+
+  const editFriendRemark = (f) => {
+    modal.confirm({
+      title: `修改好友「${f.display_name || f.username}」的备注名`,
+      content: (
+        <Input
+          id="remark-input"
+          defaultValue={f.remark || ""}
+          placeholder="请输入自定义备注名"
+          maxLength={30}
+          style={{ marginTop: 12 }}
+        />
+      ),
+      onOk: async () => {
+        const val = document.getElementById("remark-input")?.value?.trim() || "";
+        await API.put(`/friends/${f.id}/remark`, { remark: val });
+        toast.success("备注名已更新");
+        loadFriends();
+        loadRooms();
+      },
+    });
+  };
+
+  const removeFriend = (f) => {
+    modal.confirm({
+      title: "解除好友关系",
+      content: `确定要删除好友「${f.remark || f.display_name || f.username}」吗？解除后双方无法在好友列表直接查看。`,
+      okType: "danger",
+      okText: "删除",
+      onOk: async () => {
+        await API.del(`/friends/${f.id}`);
+        toast.success("已解除好友关系");
+        loadFriends();
+      },
+    });
+  };
+
+  /* ==================== ⑨ 修改群公告与群名 ==================== */
+  const saveAnnouncement = async () => {
+    if (!activeRoomId) return;
+    try {
+      await API.put(`/chatroom/rooms/${activeRoomId}/announcement`, { announcement: announceText });
+      toast.success("群公告已更新");
+      setRoom((prev) => (prev ? { ...prev, announcement: announceText } : prev));
+      setEditAnnounceOpen(false);
+    } catch (e) {
+      toast.error(e.message || "更新公告失败");
+    }
+  };
+
+  const editRoomName = () => {
+    modal.confirm({
+      title: "修改群聊名称",
+      content: <Input id="rname-input" defaultValue={room?.name || ""} maxLength={30} style={{ marginTop: 12 }} />,
+      onOk: async () => {
+        const val = document.getElementById("rname-input")?.value?.trim() || "";
+        if (!val) return;
+        await API.put(`/chatroom/rooms/${activeRoomId}/name`, { name: val });
+        toast.success("群名称已修改");
+        setRoom((prev) => (prev ? { ...prev, name: val } : prev));
+        loadRooms();
+      },
+    });
+  };
+
+  /* ==================== ⑩ 创建新会话（群聊/私聊） ==================== */
+  const submitCreateRoom = async (values) => {
     setCreating(true);
     try {
-      const payload =
-        v.type === "single"
-          ? { type: "single", user_id: Number(pickedIds[0]) }
-          : { type: v.type, name: v.name, user_ids: pickedIds.map(Number).filter(Number.isFinite) };
+      const payload = {
+        type: values.type,
+        name: values.name,
+        user_id: values.user_id,
+        user_ids: values.user_ids,
+      };
       const r = await API.post("/chatroom/rooms", payload);
-      toast.success("会话已就绪");
+      toast.success("已创建");
       setCreateOpen(false);
-      form.resetFields();
-      await loadRooms();
+      createForm.resetFields();
+      loadRooms();
       navigate(`/messages/${r.id}`);
+      setHubTab("messages");
     } catch (e) {
       toast.error(e.message);
     } finally {
@@ -473,487 +444,854 @@ export default function MessagesPage() {
     }
   };
 
-  const recall = async (m) => {
+  // 搜索用户备选列表
+  const handleSearchUsers = async (kwStr) => {
+    if (!kwStr.trim()) return;
+    setSearching(true);
     try {
-      await API.del(`/chatroom/messages/${m.id}`);
-      setMsgs((prev) => prev.map((x) => (x.id === m.id ? { ...x, status: 2, content: "" } : x)));
-      toast.success("已撤回");
-    } catch (e) {
-      toast.error(e.message);
+      const d = await API.get("/chatroom/users", { params: { q: kwStr.trim() } });
+      setUserOptions(Array.isArray(d) ? d : []);
+    } catch {
+      setUserOptions([]);
+    } finally {
+      setSearching(false);
     }
   };
 
-  const leaveRoom = async () => {
-    try {
-      await API.del(`/chatroom/rooms/${activeRoomId}/members/me`);
-      toast.success("已退出");
-      navigate("/messages");
-      loadRooms();
-    } catch (e) {
-      toast.error(e.message);
-    }
-  };
-
-  /* ---------------- 渲染：消息流（时间合并） ---------------- */
-  const rendered = useMemo(() => {
-    const out = [];
-    let lastTs = 0;
-    for (const m of msgs) {
-      const ts = Number(m.created_time) * 1000;
-      // 5 分钟内的消息共用一条时间分隔，避免每条都占一行
-      if (!lastTs || ts - lastTs > TIME_MERGE_MS) {
-        out.push({ kind: "time", key: `t-${m.id}`, ts: m.created_time });
-        lastTs = ts;
-      }
-      out.push({ kind: "msg", key: `m-${m.id}-${m.client_id || ""}`, m });
-    }
-    return out;
-  }, [msgs]);
-
-  const isMine = (m) => Number(m.user_id) === Number(me?.id);
+  // 在线好友列表计算
+  const onlineFriends = useMemo(() => friends.filter((f) => online.includes(f.id)), [friends, online]);
+  const offlineFriends = useMemo(() => friends.filter((f) => !online.includes(f.id)), [friends, online]);
 
   return (
-    <div className="oo-page" style={{ gap: "var(--sp-3)" }}>
-      <PageHeader
-        title="消息"
-        tags={
-          <>
-            <Tag>{rooms.reduce((a, r) => a + (r.unread || 0), 0)} 条未读</Tag>
-            <Tooltip title={sseOk ? "实时推送已连接" : "实时推送未连接，消息需刷新后可见"}>
-              <Tag color={sseOk ? "green" : "default"} icon={<WifiOutlined />}>
-                {sseOk ? "实时" : "离线"}
-              </Tag>
-            </Tooltip>
-          </>
-        }
-        extra={
-          <>
-            <Button icon={<SearchOutlined />} onClick={() => toast.info("在左侧会话列表上方可直接搜索用户发起新会话")} />
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setCreateOpen(true); }}>
-              发起会话
-            </Button>
-          </>
-        }
-      />
+    <div className="oo-page" style={{ padding: "0 0 16px" }}>
+      <div className="qq-channel-shell">
+        {/* =========================================================
+            第 1 栏：左侧功能极窄导轨 (Hub Rail)
+            ========================================================= */}
+        <div className="qq-hub-rail">
+          {/* 用户自己头像与在线小绿点 */}
+          <Popover content={<div style={{ fontSize: 12 }}>当前在线 · <strong>{me?.display_name || me?.username}</strong></div>} placement="right">
+            <div className="qq-online-badge" style={{ cursor: "pointer" }} onClick={() => navigate(`/u/${me?.id}`)}>
+              <UserAvatar user={me} size={40} />
+              <span className="qq-online-dot" />
+            </div>
+          </Popover>
 
-      {/* B 类骨架：视口锁定双栏，两端各自滚动。
-          移动端由 CSS 切成单列（主从堆叠），所以这里不写条件渲染分支。 */}
-      <div className={`oo-split-lock${activeRoomId ? " is-immersive" : ""}`}>
-        {/* 左：会话列表 */}
-        <div className="oo-split-side" style={activeRoomId ? undefined : { display: "flex" }}>
-          <div style={{ padding: "8px 10px", borderBottom: "1px solid var(--line)" }}>
-            <Input
-              size="small"
-              placeholder="搜索消息内容 / 会话"
-              allowClear
-              prefix={<SearchOutlined style={{ color: "var(--ink-3)" }} />}
-              value={kw}
-              onChange={(e) => setKw(e.target.value)}
-              onPressEnter={() => doSearch(kw)}
-            />
-          </div>
-          <div className="oo-split-scroll">
-            {/* 搜索结果：命中消息列表（点击跳到该会话） */}
-            {kw.trim() ? (
-              <div style={{ borderBottom: "1px solid var(--line)", background: "var(--inset)" }}>
-                <div style={{ padding: "6px 10px", fontSize: 11.5, color: "var(--ink-3)" }}>
-                  {msgSearching ? "搜索中…" : `消息搜索结果 ${results.length} 条`}
-                  {kw ? (
-                    <Button type="link" size="small" style={{ padding: 0, marginLeft: 8 }} onClick={() => { setKw(""); setResults([]); }}>
-                      清除
-                    </Button>
-                  ) : null}
-                </div>
-                {results.slice(0, 20).map((r) => (
-                  <div
-                    key={r.id}
-                    className="oo-room-item"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => {
-                      navigate(`/messages/${r.room_id}`);
-                      setKw("");
-                      setResults([]);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        navigate(`/messages/${r.room_id}`);
-                        setKw("");
-                        setResults([]);
-                      }
-                    }}
-                  >
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div className="oo-room-title oo-truncate">{r.room_title || `会话 #${r.room_id}`}</div>
-                      <div className="oo-room-preview oo-truncate">{r.content || "[图片]"}</div>
-                    </div>
-                    <span className="oo-room-time">{fmtRoomTime(r.created_time)}</span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            {roomsLoading && !rooms.length ? (
-              <div style={{ padding: 14 }}><Skeleton active paragraph={{ rows: 3 }} /></div>
-            ) : !rooms.length ? (
-              <div style={{ padding: "32px 12px" }}>
-                <Empty description="还没有会话，点右上角「发起会话」" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-              </div>
-            ) : (
-              rooms
-                .filter((r) => {
-                  const q = kw.trim().toLowerCase();
-                  if (!q) return true;
-                  return String(r.title || r.name || "").toLowerCase().includes(q);
-                })
-                .map((r) => (
-                <div
-                  key={r.id}
-                  className={`oo-room-item${r.id === activeRoomId ? " is-active" : ""}`}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => navigate(`/messages/${r.id}`)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      navigate(`/messages/${r.id}`);
-                    }
-                  }}
-                >
-                  {r.type === "single" && r.peer ? (
-                    <UserAvatar user={r.peer} size={32} />
-                  ) : (
-                    <Avatar size={32} style={{ background: "var(--accent-tint)", color: "var(--accent-ink)" }} icon={ROOM_TYPE[r.type]?.icon} />
-                  )}
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span className="oo-room-title oo-truncate" style={{ flex: 1 }}>{r.title || r.name}</span>
-                      <span className="oo-room-time">{fmtRoomTime(r.last_message_time)}</span>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span className="oo-room-preview oo-truncate" style={{ flex: 1 }}>{r.last_message_text || "暂无消息"}</span>
-                      {r.unread ? (
-                        <span className="bui-chip bui-chip--accent" style={{ padding: "0 5px", fontSize: 10.5 }}>{r.unread}</span>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
+          <div className="qq-rail-divider" />
+
+          {/* 消息会话入口图标 */}
+          <Tooltip title="消息 (私聊与群聊)" placement="right">
+            <div
+              className={`qq-rail-btn${hubTab === "messages" ? " is-active" : ""}`}
+              onClick={() => { setHubTab("messages"); }}
+            >
+              <Badge count={rooms.reduce((acc, r) => acc + (r.unread || 0), 0)} size="small" offset={[-2, 2]}>
+                <MessageOutlined />
+              </Badge>
+            </div>
+          </Tooltip>
+
+          {/* 通讯录/好友入口图标 */}
+          <Tooltip title="通讯录与好友" placement="right">
+            <div
+              className={`qq-rail-btn${hubTab === "contacts" ? " is-active" : ""}`}
+              onClick={() => { setHubTab("contacts"); }}
+            >
+              <Badge count={requests.pending_count} size="small" offset={[-2, 2]}>
+                <TeamOutlined />
+              </Badge>
+            </div>
+          </Tooltip>
+
+          <div className="qq-rail-divider" />
+
+          {/* QQ 频道服务器入口图标（默认官方开发者主频道） */}
+          <Tooltip title="QQ 频道 · OOAPI 开发者社区" placement="right">
+            <div
+              className={`qq-rail-btn${hubTab === "guild" ? " is-active" : ""}`}
+              onClick={() => {
+                setHubTab("guild");
+                // 默认切到官方主频道的第一个子频道
+                if (guilds[0]?.channels?.[0]) {
+                  const ch = guilds[0].channels[0];
+                  setActiveChannelId(ch.id);
+                  navigate(`/messages/${ch.room_id}`);
+                }
+              }}
+            >
+              <GlobalOutlined />
+            </div>
+          </Tooltip>
+
+          <div style={{ flex: 1 }} />
+
+          {/* 底部快捷操作 */}
+          <Tooltip title="添加好友" placement="right">
+            <div className="qq-rail-btn" onClick={() => setAddFriendOpen(true)}>
+              <UserAddOutlined />
+            </div>
+          </Tooltip>
+
+          <Tooltip title="发起聊天 / 创建群聊" placement="right">
+            <div className="qq-rail-btn" onClick={() => { createForm.resetFields(); setCreateOpen(true); }}>
+              <PlusOutlined />
+            </div>
+          </Tooltip>
         </div>
 
-        {/* 右：聊天区。隐藏逻辑交给 CSS —— **只在移动端隐藏**未选中时的占位
-            （移动端走「列表 → 全屏聊天」的主从堆叠）。
-            这里曾经无条件 display:none，结果桌面端右侧整块空白（截图实测发现）。 */}
-        <div className={`oo-split-main${activeRoomId ? "" : " is-empty"}`}>
-          {!activeRoomId ? (
-            <div style={{ margin: "auto", padding: 24, textAlign: "center", color: "var(--ink-3)" }}>
-              <Empty description="从左侧选择一个会话开始聊天" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-            </div>
-          ) : (
+        {/* =========================================================
+            第 2 栏：中间二级列表侧边栏 (Sub Sidebar)
+            ========================================================= */}
+        <div className={`qq-sub-side${activeRoomId ? " is-hidden-mobile" : ""}`}>
+          {/* A. 处于「消息 (Messages)」模式 */}
+          {hubTab === "messages" && (
             <>
-              {/* 顶栏：移动端常驻返回箭头 */}
-              <div
-                style={{
-                  display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
-                  borderBottom: "1px solid var(--line)", flexShrink: 0,
-                }}
-              >
-                <Button
-                  type="text"
+              <div className="qq-sub-head">
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                  <span style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)" }}>近期会话</span>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<UsergroupAddOutlined />}
+                    title="创建群聊"
+                    onClick={() => { createForm.resetFields(); createForm.setFieldsValue({ type: "group" }); setCreateOpen(true); }}
+                  />
+                </div>
+                <Input
+                  prefix={<SearchOutlined style={{ color: "var(--ink-3)" }} />}
+                  placeholder="搜索聊天会话…"
+                  allowClear
                   size="small"
-                  icon={<ArrowLeftOutlined />}
-                  onClick={() => navigate("/messages")}
-                  aria-label="返回会话列表"
+                  value={kw}
+                  onChange={(e) => setKw(e.target.value)}
                 />
-                {room ? (
-                  <>
-                    <span style={{ fontSize: 13.5, fontWeight: 550 }} className="oo-truncate">{room.title}</span>
-                    <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>
-                      {ROOM_TYPE[room.type]?.label} · {room.member_count} 人
-                    </span>
-                  </>
-                ) : null}
-                <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
-                  <Tooltip title="邀请成员">
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<UsergroupAddOutlined />}
-                      disabled={room?.type === "single"}
-                      onClick={() => navigate(`/messages/${activeRoomId}?invite=1`)}
-                    />
-                  </Tooltip>
-                  <Dropdown
-                    menu={{
-                      items: [
-                        { key: "leave", label: "退出会话", danger: true, icon: <DeleteOutlined />, onClick: leaveRoom },
-                      ],
-                    }}
-                  >
-                    <Button type="text" size="small" icon={<MoreOutlined />} />
-                  </Dropdown>
-                </span>
               </div>
 
-              {/* 消息流 */}
-              <div className="oo-split-scroll" ref={scrollRef}>
-                {msgsLoading && !msgs.length ? (
+              <div className="qq-sub-scroll">
+                {roomsLoading && !rooms.length ? (
                   <div style={{ padding: 14 }}><Skeleton active paragraph={{ rows: 4 }} /></div>
-                ) : !msgs.length ? (
-                  <div style={{ padding: "40px 12px", textAlign: "center", color: "var(--ink-3)", fontSize: 12.5 }}>
-                    还没有消息，发送第一条开始对话
+                ) : !rooms.length ? (
+                  <div style={{ padding: "40px 16px", textAlign: "center" }}>
+                    <Empty description="暂无会话，点右下角添加好友或发起聊天" image={Empty.PRESENTED_IMAGE_SIMPLE} />
                   </div>
                 ) : (
-                  <div className="oo-msg-list">
-                    {rendered.map((it) =>
-                      it.kind === "time" ? (
-                        <div key={it.key} className="oo-msg-time-divider">{fmtTime(it.ts)}</div>
-                      ) : it.m.type === "system" ? (
-                        <div key={it.key} className="oo-msg-time-divider">{it.m.content}</div>
-                      ) : (
-                        <MessageRow
-                          key={it.key}
-                          m={it.m}
-                          mine={isMine(it.m)}
-                          onRecall={() => recall(it.m)}
-                          onRetry={() => retry(it.m)}
-                        />
-                      )
-                    )}
-                  </div>
+                  rooms
+                    .filter((r) => {
+                      if (!kw.trim()) return true;
+                      const q = kw.trim().toLowerCase();
+                      return String(r.title || r.name || "").toLowerCase().includes(q);
+                    })
+                    .map((r) => {
+                      const isPeerOnline = r.type === "single" && r.peer && online.includes(r.peer.id);
+                      return (
+                        <div
+                          key={r.id}
+                          className={`qq-list-item${r.id === activeRoomId ? " is-active" : ""}`}
+                          onClick={() => navigate(`/messages/${r.id}`)}
+                        >
+                          {r.type === "single" && r.peer ? (
+                            <div className="qq-online-badge">
+                              <UserAvatar user={r.peer} size={36} />
+                              <span className={`qq-online-dot${isPeerOnline ? "" : " is-offline"}`} />
+                            </div>
+                          ) : (
+                            <Avatar size={36} style={{ background: "var(--accent-tint)", color: "var(--accent-ink)" }} icon={<TeamOutlined />} />
+                          )}
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                              <span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--ink)" }} className="oo-truncate">
+                                {r.title || r.name}
+                              </span>
+                              <span style={{ fontSize: 11, color: "var(--ink-3)" }}>{fmtRoomTime(r.last_message_time)}</span>
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 2 }}>
+                              <span style={{ fontSize: 12, color: "var(--ink-3)" }} className="oo-truncate">
+                                {r.last_message_text || "暂无最新消息"}
+                              </span>
+                              {Boolean(r.unread) && (
+                                <Badge count={r.unread} size="small" />
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
                 )}
               </div>
+            </>
+          )}
 
-              {/* 输入区：常驻可见（B 类骨架的核心目的） */}
-              <div className="oo-msg-input">
-                <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
-                  <Tooltip title="发送图片">
-                    <Button icon={<PictureOutlined />} onClick={() => fileRef.current?.click()} />
-                  </Tooltip>
-                  <Input.TextArea
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder="输入消息，Enter 发送（Shift+Enter 换行）"
-                    autoSize={{ minRows: 1, maxRows: 5 }}
-                    maxLength={4000}
-                    onPressEnter={(e) => {
-                      if (!e.shiftKey) {
-                        e.preventDefault();
-                        send();
-                      }
-                    }}
-                  />
-                  <Button type="primary" icon={<SendOutlined />} loading={sending} disabled={!input.trim()} onClick={send}>
-                    发送
+          {/* B. 处于「通讯录与好友 (Contacts)」模式 */}
+          {hubTab === "contacts" && (
+            <>
+              <div className="qq-sub-head">
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                  <span style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)" }}>通讯录</span>
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<UserAddOutlined />}
+                    onClick={() => setAddFriendOpen(true)}
+                  >
+                    加好友
                   </Button>
                 </div>
-                <input ref={fileRef} type="file" hidden accept="image/png,image/jpeg,image/webp,image/gif" onChange={sendImage} />
+                <Input
+                  prefix={<SearchOutlined style={{ color: "var(--ink-3)" }} />}
+                  placeholder="搜索好友或群组…"
+                  allowClear
+                  size="small"
+                  value={kw}
+                  onChange={(e) => setKw(e.target.value)}
+                />
+              </div>
+
+              <div className="qq-sub-scroll">
+                {/* 1. 新的朋友卡片 */}
+                <div
+                  className={`qq-list-item${contactsView === "requests" ? " is-active" : ""}`}
+                  style={{ borderBottom: "1px solid var(--line)", padding: "10px 14px" }}
+                  onClick={() => { setContactsView("requests"); navigate("/messages"); }}
+                >
+                  <Avatar size={36} style={{ background: "var(--accent)", color: "#fff" }} icon={<UserAddOutlined />} />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)" }}>新的朋友</div>
+                    <div style={{ fontSize: 11.5, color: "var(--ink-3)" }}>
+                      {requests.pending_count ? `${requests.pending_count} 条好友验证待处理` : "查看好友申请历史"}
+                    </div>
+                  </div>
+                  {Boolean(requests.pending_count) && <Badge count={requests.pending_count} size="small" />}
+                </div>
+
+                {/* 2. 在线好友分组 */}
+                <div style={{ padding: "8px 14px 4px", fontSize: 11.5, fontWeight: 600, color: "var(--ink-3)" }}>
+                  在线好友 ({onlineFriends.length}/{friends.length})
+                </div>
+                {onlineFriends
+                  .filter((f) => !kw.trim() || (f.title || f.username).toLowerCase().includes(kw.trim().toLowerCase()))
+                  .map((f) => (
+                    <div
+                      key={f.id}
+                      className="qq-list-item"
+                      onClick={() => { setContactsView("friends"); directChatFriend(f.id); }}
+                    >
+                      <div className="qq-online-badge">
+                        <UserAvatar user={f} size={32} />
+                        <span className="qq-online-dot" />
+                      </div>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: "var(--ink)" }} className="oo-truncate">
+                          {f.remark ? `${f.remark} (${f.display_name || f.username})` : f.display_name || f.username}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: "var(--ink-3)" }} className="oo-truncate">{f.bio || "这个人很懒，什么都没写"}</div>
+                      </div>
+                      <Dropdown
+                        menu={{
+                          items: [
+                            { key: "chat", icon: <MessageOutlined />, label: "发起私聊", onClick: () => directChatFriend(f.id) },
+                            { key: "remark", icon: <EditOutlined />, label: "修改备注", onClick: () => editFriendRemark(f) },
+                            { key: "profile", icon: <TeamOutlined />, label: "查看主页", onClick: () => navigate(`/u/${f.id}`) },
+                            { type: "divider" },
+                            { key: "del", icon: <DeleteOutlined />, label: "删除好友", danger: true, onClick: () => removeFriend(f) },
+                          ],
+                        }}
+                        trigger={["click"]}
+                      >
+                        <Button type="text" size="small" icon={<MoreOutlined />} onClick={(e) => e.stopPropagation()} />
+                      </Dropdown>
+                    </div>
+                  ))}
+
+                {/* 3. 离线好友分组 */}
+                <div style={{ padding: "12px 14px 4px", fontSize: 11.5, fontWeight: 600, color: "var(--ink-3)" }}>
+                  离线好友 ({offlineFriends.length})
+                </div>
+                {offlineFriends
+                  .filter((f) => !kw.trim() || (f.title || f.username).toLowerCase().includes(kw.trim().toLowerCase()))
+                  .map((f) => (
+                    <div
+                      key={f.id}
+                      className="qq-list-item"
+                      style={{ opacity: 0.8 }}
+                      onClick={() => { setContactsView("friends"); directChatFriend(f.id); }}
+                    >
+                      <div className="qq-online-badge">
+                        <UserAvatar user={f} size={32} />
+                        <span className="qq-online-dot is-offline" />
+                      </div>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: "var(--ink)" }} className="oo-truncate">
+                          {f.remark ? `${f.remark} (${f.display_name || f.username})` : f.display_name || f.username}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: "var(--ink-3)" }} className="oo-truncate">{f.bio || "离线"}</div>
+                      </div>
+                      <Dropdown
+                        menu={{
+                          items: [
+                            { key: "chat", icon: <MessageOutlined />, label: "发送离线消息", onClick: () => directChatFriend(f.id) },
+                            { key: "remark", icon: <EditOutlined />, label: "修改备注", onClick: () => editFriendRemark(f) },
+                            { key: "profile", icon: <TeamOutlined />, label: "查看主页", onClick: () => navigate(`/u/${f.id}`) },
+                            { type: "divider" },
+                            { key: "del", icon: <DeleteOutlined />, label: "删除好友", danger: true, onClick: () => removeFriend(f) },
+                          ],
+                        }}
+                        trigger={["click"]}
+                      >
+                        <Button type="text" size="small" icon={<MoreOutlined />} onClick={(e) => e.stopPropagation()} />
+                      </Dropdown>
+                    </div>
+                  ))}
+              </div>
+            </>
+          )}
+
+          {/* C. 处于「QQ 频道 (Channel Guild)」模式 */}
+          {hubTab === "guild" && (
+            <>
+              <div className="qq-sub-head" style={{ background: "var(--inset)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Avatar style={{ background: "var(--accent)" }} icon={<GlobalOutlined />} />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }} className="oo-truncate">
+                      {guilds[0]?.name || "OOAPI 开发者社区"}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: "var(--ink-3)" }} className="oo-truncate">
+                      {guilds[0]?.description || "官方频道"}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="qq-sub-scroll">
+                {guilds[0]?.channels?.map((c) => {
+                  const isActive = activeRoomId === c.room_id;
+                  const isNotice = c.type === "notice";
+                  return (
+                    <div
+                      key={c.id}
+                      className={`qq-channel-item${isActive ? " is-active" : ""}`}
+                      onClick={() => {
+                        setActiveChannelId(c.id);
+                        navigate(`/messages/${c.room_id}`);
+                      }}
+                    >
+                      {isNotice ? <SoundOutlined style={{ color: "var(--accent)" }} /> : <span style={{ fontWeight: "bold" }}>#</span>}
+                      <span style={{ flex: 1 }} className="oo-truncate">{c.name}</span>
+                      {isNotice && <Tag color="blue" style={{ margin: 0, fontSize: 10 }}>公告</Tag>}
+                    </div>
+                  );
+                })}
               </div>
             </>
           )}
         </div>
+
+        {/* =========================================================
+            第 3 栏：右侧主舞台 (Main Stage)
+            ========================================================= */}
+        <div className={`qq-main-stage${!activeRoomId && contactsView !== "requests" ? " is-hidden-mobile" : ""}`}>
+          {/* 场景 1：如果处于通讯录的「新的朋友」申请管理面板 */}
+          {hubTab === "contacts" && contactsView === "requests" ? (
+            <div style={{ flex: 1, padding: "24px 32px", overflowY: "auto" }}>
+              <div style={{ maxWidth: 760, margin: "0 auto" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+                  <div>
+                    <h2 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>新的朋友申请</h2>
+                    <div style={{ fontSize: 13, color: "var(--ink-3)", marginTop: 4 }}>验证并处理来自社区伙伴的好友请求</div>
+                  </div>
+                  <Button icon={<UserAddOutlined />} type="primary" onClick={() => setAddFriendOpen(true)}>
+                    主动添加好友
+                  </Button>
+                </div>
+
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: "var(--ink)" }}>收到的好友验证</div>
+                {!requests.incoming.length ? (
+                  <Card style={{ textAlign: "center", padding: "30px 0", borderRadius: 12, marginBottom: 24 }}>
+                    <Empty description="暂无待处理的好友申请" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                  </Card>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
+                    {requests.incoming.map((req) => (
+                      <Card key={req.id} size="small" style={{ borderRadius: 10 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                            <UserAvatar user={{ username: req.username, display_name: req.display_name, avatar_url: req.avatar_url }} size={42} />
+                            <div>
+                              <div style={{ fontWeight: 600, fontSize: 14 }}>{req.display_name || req.username}</div>
+                              <div style={{ fontSize: 12.5, color: "var(--ink-2)", marginTop: 2 }}>
+                                留言说明：<span style={{ color: "var(--ink)" }}>{req.message || "对方未填写留言"}</span>
+                              </div>
+                              <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 2 }}>{fmtTime(req.created_time)}</div>
+                            </div>
+                          </div>
+                          <Space>
+                            <Button size="small" type="primary" icon={<CheckOutlined />} onClick={() => handleFriendRequest(req.id, "accept")}>
+                              同意
+                            </Button>
+                            <Button size="small" danger icon={<CloseOutlined />} onClick={() => handleFriendRequest(req.id, "reject")}>
+                              拒绝
+                            </Button>
+                          </Space>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: "var(--ink)" }}>我发出的好友申请</div>
+                {!requests.outgoing.length ? (
+                  <Card style={{ textAlign: "center", padding: "20px 0", borderRadius: 12 }}>
+                    <Empty description="没有发出的申请记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                  </Card>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {requests.outgoing.map((req) => (
+                      <Card key={req.id} size="small" style={{ borderRadius: 10 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <UserAvatar user={{ username: req.username, display_name: req.display_name, avatar_url: req.avatar_url }} size={34} />
+                            <div>
+                              <span style={{ fontWeight: 500 }}>{req.display_name || req.username}</span>
+                              <span style={{ fontSize: 12, color: "var(--ink-3)", marginLeft: 8 }}>留言: {req.message || "无"}</span>
+                            </div>
+                          </div>
+                          <div>
+                            {req.status === 0 ? <Tag color="orange">等待验证</Tag> : req.status === 1 ? <Tag color="green">已同意</Tag> : <Tag color="default">已拒绝</Tag>}
+                          </div>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : !activeRoomId ? (
+            /* 场景 2：未选中任何聊天会话时的精美占位 */
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32 }}>
+              <div style={{ width: 68, height: 68, borderRadius: "50%", background: "var(--accent-tint)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--accent)", fontSize: 32, marginBottom: 16 }}>
+                <MessageOutlined />
+              </div>
+              <h3 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>开启无界交流</h3>
+              <p style={{ color: "var(--ink-3)", fontSize: 13, marginTop: 6, maxWidth: 360, textAlign: "center" }}>
+                从左侧选择好友私聊、交流群，或切换到 QQ 频道探索技术交流天地
+              </p>
+              <Space style={{ marginTop: 12 }}>
+                <Button type="primary" icon={<UserAddOutlined />} onClick={() => setAddFriendOpen(true)}>添加好友</Button>
+                <Button icon={<UsergroupAddOutlined />} onClick={() => { createForm.resetFields(); setCreateOpen(true); }}>创建群聊</Button>
+              </Space>
+            </div>
+          ) : (
+            /* 场景 3：正常的聊天/频道工作台 */
+            <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+                {/* A. 顶部 Header */}
+                <div className="qq-chat-header">
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                    <Button
+                      type="text"
+                      icon={<ArrowLeftOutlined />}
+                      className="is-mobile-only"
+                      onClick={() => navigate("/messages")}
+                    />
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)" }} className="oo-truncate">
+                          {room?.title || room?.name}
+                        </span>
+                        {room?.type === "group" && (
+                          <Tag style={{ margin: 0 }}>{room?.member_count || room?.members?.length || 0} 人</Tag>
+                        )}
+                      </div>
+                      {Boolean(room?.announcement) && (
+                        <div style={{ fontSize: 11.5, color: "var(--ink-3)", display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
+                          <PushpinOutlined style={{ color: "var(--accent)" }} />
+                          <span className="oo-truncate">{room?.announcement}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <Space>
+                    {(room?.my_role === "owner" || room?.my_role === "admin" || me?.role >= 100) && (
+                      <Tooltip title="编辑公告">
+                        <Button
+                          size="small"
+                          icon={<SoundOutlined />}
+                          onClick={() => { setAnnounceText(room?.announcement || ""); setEditAnnounceOpen(true); }}
+                        />
+                      </Tooltip>
+                    )}
+                    {room?.type === "group" && (
+                      <Tooltip title={showMembers ? "隐藏群成员" : "展开群成员"}>
+                        <Button
+                          size="small"
+                          type={showMembers ? "primary" : "default"}
+                          icon={<TeamOutlined />}
+                          onClick={() => setShowMembers((prev) => !prev)}
+                        />
+                      </Tooltip>
+                    )}
+                    {room?.type === "group" && (room?.my_role === "owner" || me?.role >= 100) && (
+                      <Dropdown
+                        menu={{
+                          items: [
+                            { key: "rename", icon: <EditOutlined />, label: "修改群名称", onClick: editRoomName },
+                          ],
+                        }}
+                      >
+                        <Button size="small" icon={<MoreOutlined />} />
+                      </Dropdown>
+                    )}
+                  </Space>
+                </div>
+
+                {/* B. 消息滚动流 */}
+                <div className="qq-msg-scroll" ref={scrollRef}>
+                  {msgsLoading ? (
+                    <Skeleton active paragraph={{ rows: 6 }} />
+                  ) : !msgs.length ? (
+                    <div style={{ padding: "40px 0", textAlign: "center", color: "var(--ink-3)" }}>
+                      <CommentOutlined style={{ fontSize: 24, marginBottom: 8, opacity: 0.5 }} />
+                      <div>暂无历史消息，说点什么打个招呼吧~</div>
+                    </div>
+                  ) : (
+                    msgs.map((m, idx) => {
+                      if (m.type === "system") {
+                        return (
+                          <div key={m.id || idx} style={{ textAlign: "center", fontSize: 11.5, color: "var(--ink-3)", margin: "4px 0" }}>
+                            <span>{m.content}</span>
+                          </div>
+                        );
+                      }
+                      const isMine = m.user_id === me?.id;
+                      return (
+                        <div key={m.id || idx} className={`qq-msg-row${isMine ? " is-mine" : ""}`}>
+                          <Popover
+                            content={
+                              <div style={{ width: 180 }}>
+                                <div style={{ fontWeight: 600, fontSize: 13 }}>{m.author?.display_name || m.author?.username}</div>
+                                <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 2 }}>ID: {m.user_id}</div>
+                                <Divider style={{ margin: "8px 0" }} />
+                                <Space direction="vertical" style={{ width: "100%" }} size={4}>
+                                  {m.user_id !== me?.id && (
+                                    <>
+                                      <Button size="small" type="primary" block icon={<MessageOutlined />} onClick={() => directChatFriend(m.user_id)}>
+                                        发私聊
+                                      </Button>
+                                      <Button size="small" block icon={<UserAddOutlined />} onClick={() => { addFriendForm.setFieldsValue({ to_user_id: m.user_id }); setAddFriendOpen(true); }}>
+                                        加为好友
+                                      </Button>
+                                    </>
+                                  )}
+                                  <Button size="small" block onClick={() => navigate(`/u/${m.user_id}`)}>查看个人主页</Button>
+                                </Space>
+                              </div>
+                            }
+                            trigger="click"
+                          >
+                            <div style={{ cursor: "pointer" }}>
+                              <UserAvatar user={m.author} size={34} />
+                            </div>
+                          </Popover>
+
+                          <div className="qq-msg-box">
+                            <div className="qq-msg-meta">
+                              <span>{m.author?.display_name || m.author?.username}</span>
+                              <span>{fmtTime(m.created_time)}</span>
+                            </div>
+
+                            <div className="qq-msg-bubble">
+                              {m.content}
+                              {Boolean(m.media?.length) && (
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                                  {m.media.map((img) => (
+                                    <img
+                                      key={img.id}
+                                      src={img.url}
+                                      alt="图片"
+                                      style={{ maxWidth: 220, maxHeight: 180, borderRadius: 6, cursor: "pointer", objectFit: "cover" }}
+                                      onClick={() => window.open(img.url, "_blank")}
+                                    />
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* C. 发送底栏 */}
+                <div className="qq-composer-box">
+                  <div className="qq-composer-tools">
+                    <Popover
+                      content={
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 6, width: 260 }}>
+                          {EMOJI_LIST.map((emo) => (
+                            <span
+                              key={emo}
+                              style={{ fontSize: 20, cursor: "pointer", textAlign: "center", padding: 2 }}
+                              onClick={() => setInput((prev) => prev + emo)}
+                            >
+                              {emo}
+                            </span>
+                          ))}
+                        </div>
+                      }
+                      trigger="click"
+                    >
+                      <span className="qq-composer-tool-btn" title="表情"><SmileOutlined /></span>
+                    </Popover>
+
+                    <label className="qq-composer-tool-btn" title="上传图片">
+                      <PictureOutlined />
+                      <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleUploadPic} />
+                    </label>
+
+                    <span className="qq-composer-tool-btn" title="插入代码块" onClick={() => setInput((prev) => `${prev}\n\`\`\`\n\n\`\`\`\n`)}>
+                      <CodeOutlined />
+                    </span>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+                    <Input.TextArea
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      placeholder="发送消息… (Enter 发送，Shift+Enter 换行)"
+                      autoSize={{ minRows: 2, maxRows: 5 }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          doSend();
+                        }
+                      }}
+                    />
+                    <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={() => doSend()}>
+                      发送
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              {/* D. 右侧群成员/频道成员侧边栏 */}
+              {showMembers && room?.type === "group" && (
+                <div className="qq-members-panel">
+                  <div style={{ fontSize: 13, fontWeight: 600, padding: "0 6px 8px", borderBottom: "1px solid var(--line)" }}>
+                    频道成员 ({room?.members?.length || 0})
+                  </div>
+
+                  {/* 频道主/群主 */}
+                  <div className="qq-member-group-title"><CrownOutlined style={{ color: "#faad14" }} /> 群主 / 频道主</div>
+                  {room?.members?.filter((m) => m.role === "owner").map((m) => (
+                    <div key={m.id} className="qq-member-item" onClick={() => setProfileModalUser(m)}>
+                      <UserAvatar user={m} size={24} />
+                      <span style={{ fontSize: 12.5 }} className="oo-truncate">{m.display_name || m.username}</span>
+                    </div>
+                  ))}
+
+                  {/* 管理员 */}
+                  {Boolean(room?.members?.some((m) => m.role === "admin")) && (
+                    <>
+                      <div className="qq-member-group-title"><SafetyOutlined style={{ color: "var(--accent)" }} /> 管理员</div>
+                      {room?.members?.filter((m) => m.role === "admin").map((m) => (
+                        <div key={m.id} className="qq-member-item" onClick={() => setProfileModalUser(m)}>
+                          <UserAvatar user={m} size={24} />
+                          <span style={{ fontSize: 12.5 }} className="oo-truncate">{m.display_name || m.username}</span>
+                        </div>
+                      ))}
+                    </>
+                  )}
+
+                  {/* 在线成员 */}
+                  <div className="qq-member-group-title">在线成员</div>
+                  {room?.members?.filter((m) => m.role === "member" && m.online).map((m) => (
+                    <div key={m.id} className="qq-member-item" onClick={() => setProfileModalUser(m)}>
+                      <div className="qq-online-badge">
+                        <UserAvatar user={m} size={24} />
+                        <span className="qq-online-dot" />
+                      </div>
+                      <span style={{ fontSize: 12.5 }} className="oo-truncate">{m.display_name || m.username}</span>
+                    </div>
+                  ))}
+
+                  {/* 离线成员 */}
+                  <div className="qq-member-group-title">离线成员</div>
+                  {room?.members?.filter((m) => m.role === "member" && !m.online).map((m) => (
+                    <div key={m.id} className="qq-member-item" style={{ opacity: 0.65 }} onClick={() => setProfileModalUser(m)}>
+                      <UserAvatar user={m} size={24} />
+                      <span style={{ fontSize: 12.5 }} className="oo-truncate">{m.display_name || m.username}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* 邀请成员弹窗（复用 meta 里的用户搜索） */}
-      <InviteModal
-        open={new URLSearchParams(window.location.search).get("invite") === "1"}
-        roomId={activeRoomId}
-        onClose={() => navigate(`/messages/${activeRoomId}`)}
-        onDone={() => { loadMsgs(); loadRooms(); }}
-      />
-
+      {/* =========================================================
+          模态弹窗：添加好友
+          ========================================================= */}
       <Modal
-        title="发起会话"
-        open={createOpen}
-        onOk={submitCreate}
-        confirmLoading={creating}
-        onCancel={() => setCreateOpen(false)}
-        okText="创建"
-        width={520}
+        title="添加好友"
+        open={addFriendOpen}
+        onOk={() => addFriendForm.submit()}
+        confirmLoading={addFriendLoading}
+        onCancel={() => setAddFriendOpen(false)}
         destroyOnClose
       >
-        <Form form={form} layout="vertical" requiredMark={false} initialValues={{ type: "single" }}>
-          <Form.Item name="type" label="类型">
+        <Form form={addFriendForm} layout="vertical" onFinish={submitAddFriend}>
+          <Form.Item name="to_user_id" label="查找目标用户" rules={[{ required: true, message: "请选择用户" }]}>
             <Select
-              options={[
-                { value: "single", label: "单聊（一对一）" },
-                { value: "group", label: "群聊" },
-                { value: "discussion", label: "讨论组" },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item noStyle shouldUpdate={(p, c) => p.type !== c.type}>
-            {({ getFieldValue }) =>
-              getFieldValue("type") !== "single" ? (
-                <Form.Item name="name" label="名称" rules={[{ required: true, message: "请输入名称" }]}>
-                  <Input placeholder="例如：前端讨论组" maxLength={64} />
-                </Form.Item>
-              ) : null
-            }
-          </Form.Item>
-          <Form.Item
-            name="user_ids"
-            label="选择成员"
-            rules={[
-              { required: true, message: "请选择成员" },
-              // 单聊必须是恰好一人：选两个会在后端只取第一个（静默忽略第二个），
-              // 前端必须拦住，否则用户以为拉进了一个双人会话
-              ({ getFieldValue }) => ({
-                validator: (_, v) =>
-                  getFieldValue("type") === "single" && Array.isArray(v) && v.length > 1
-                    ? Promise.reject(new Error("单聊只能选择一位成员"))
-                    : Promise.resolve(),
-              }),
-            ]}
-            tooltip="输入用户名或昵称搜索；单聊只能选一人"
-          >
-            {/* 必须 multi 模式：表单字段名是 user_ids（复数），提交处按数组取
-                `v.user_ids[0]`（单聊）/ `v.user_ids.map()`（群聊）。
-                原先漏了 mode="multiple"，Select 返回的是**标量**，于是：
-                  · 单聊 → `Number(number?.[0])` = NaN → JSON 序列化成 null
-                    → 后端 400「请选择聊天对象」，明明已经选中了人；
-                  · 群聊 → `(number).map is not a function`，JS 报错串直接弹给用户。
-                即「站内消息发起会话 100% 失败」（黑盒测试实测，单聊/群聊都发不出去）。
-                maxCount 让单聊在 UI 层就选不了第二个人 —— 与下面
-                「单聊只能选择一位成员」的校验互补（那条是兜底，不该让用户先选错再报错）。
-
-                `formType` 来自组件顶部的 `Form.useWatch("type", form)`。
-                **不能**在这里写 `getFieldValue(...)`：它只在上面的
-                `<Form.Item noStyle shouldUpdate>` render prop 作用域里存在，
-                在本层是未定义标识符 —— 那会让整个页面抛
-                `ReferenceError: getFieldValue is not defined` 而**白屏**
-                （我第一版就是这么写的，导致 /messages 整页崩掉，产品经理人格实测报上来）。 */}
-            <Select
-              mode="multiple"
-              maxCount={formType === "single" ? 1 : undefined}
               showSearch
+              placeholder="输入用户名或昵称搜索…"
               filterOption={false}
-              onSearch={searchUsers}
+              onSearch={handleSearchUsers}
               loading={searching}
-              placeholder="搜索用户"
-              options={userOptions}
+              options={userOptions.map((u) => ({
+                value: u.id,
+                label: `${u.display_name ? `${u.display_name} (@${u.username})` : u.username} · ID:${u.id}`,
+              }))}
             />
           </Form.Item>
-          <Form.Item noStyle shouldUpdate={(p, c) => p.type !== c.type}>
-            {({ getFieldValue }) => (
-              <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                {getFieldValue("type") === "single"
-                  ? "单聊只能选一位成员；重复发起会复用已有会话。"
-                  : "群聊最多 200 人；创建后会通知被邀请者。"}
-              </div>
-            )}
+          <Form.Item name="message" label="验证申请消息" initialValue="你好，我是社区伙伴，希望能添加好友交流。">
+            <Input.TextArea maxLength={200} showCount rows={3} />
           </Form.Item>
         </Form>
       </Modal>
-    </div>
-  );
-}
 
-/** 单条消息：头像 28px、气泡紧凑；长文本折叠；hover 才显示时间与操作 */
-function MessageRow({ m, mine, onRecall, onRetry }) {
-  const [expanded, setExpanded] = useState(false);
-  const text = String(m.content || "");
-  const long = text.length > LONG_TEXT;
-  return (
-    <div className={`oo-msg-row${mine ? " is-mine" : ""}`}>
-      {!mine ? <UserAvatar user={m.author} size={28} /> : null}
-      <div className={`oo-msg-bubble${m._local ? " is-pending" : ""}${m._failed ? " is-failed" : ""}`}>
-        {!mine && m.author?.display_name ? (
-          <div style={{ fontSize: 11, color: "var(--ink-3)", marginBottom: 1 }}>{m.author.display_name}</div>
-        ) : null}
-        {m.type === "image" && Array.isArray(m.media) && m.media.length ? (
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: text ? 4 : 0 }}>
-            {m.media.map((x) => (
-              <img key={x.id} src={x.url} alt="" style={{ maxWidth: 200, borderRadius: "var(--r-sm)", display: "block" }} />
-            ))}
-          </div>
-        ) : null}
-        {m.status === 2 ? (
-          <span style={{ color: "var(--ink-3)", fontStyle: "italic" }}>消息已撤回</span>
-        ) : text ? (
-          <>
-            <div className={long && !expanded ? "oo-msg-collapsed" : undefined} style={{ whiteSpace: "pre-wrap" }}>
-              {long && !expanded ? text.slice(0, LONG_TEXT) : text}
+      {/* =========================================================
+          模态弹窗：发起会话 / 创建群聊
+          ========================================================= */}
+      <Modal
+        title="发起新聊天 / 创建群聊"
+        open={createOpen}
+        onOk={() => createForm.submit()}
+        confirmLoading={creating}
+        onCancel={() => setCreateOpen(false)}
+        destroyOnClose
+      >
+        <Form form={createForm} layout="vertical" onFinish={submitCreateRoom} initialValue={{ type: "single" }}>
+          <Form.Item name="type" label="会话类型" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: "single", label: "好友私聊 (单聊)" },
+                { value: "group", label: "多人交流群 (群聊)" },
+              ]}
+            />
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(p, c) => p.type !== c.type}>
+            {({ getFieldValue }) =>
+              getFieldValue("type") === "single" ? (
+                <Form.Item name="user_id" label="聊天对象" rules={[{ required: true, message: "请选择用户" }]}>
+                  <Select
+                    showSearch
+                    placeholder="从好友或全站用户中选择…"
+                    filterOption={false}
+                    onSearch={handleSearchUsers}
+                    loading={searching}
+                    options={[
+                      ...friends.map((f) => ({ value: f.id, label: `[好友] ${f.title} (@${f.username})` })),
+                      ...userOptions.filter((u) => !friends.some((f) => f.id === u.id)).map((u) => ({
+                        value: u.id,
+                        label: `${u.display_name || u.username} · ID:${u.id}`,
+                      })),
+                    ]}
+                  />
+                </Form.Item>
+              ) : (
+                <>
+                  <Form.Item name="name" label="群聊名称" rules={[{ required: true, message: "请输入群名称" }]}>
+                    <Input placeholder="例如：DeepSeek 提示词探讨组" maxLength={30} />
+                  </Form.Item>
+                  <Form.Item name="user_ids" label="邀请初始成员" rules={[{ required: true, message: "请至少选一人" }]}>
+                    <Select
+                      mode="multiple"
+                      placeholder="搜索并选择好友/成员…"
+                      filterOption={false}
+                      onSearch={handleSearchUsers}
+                      options={[
+                        ...friends.map((f) => ({ value: f.id, label: `${f.title} (@${f.username})` })),
+                        ...userOptions.filter((u) => !friends.some((f) => f.id === u.id)).map((u) => ({
+                          value: u.id,
+                          label: `${u.display_name || u.username} · ID:${u.id}`,
+                        })),
+                      ]}
+                    />
+                  </Form.Item>
+                </>
+              )
+            }
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* =========================================================
+          模态弹窗：编辑群公告
+          ========================================================= */}
+      <Modal
+        title="编辑群公告"
+        open={editAnnounceOpen}
+        onOk={saveAnnouncement}
+        onCancel={() => setEditAnnounceOpen(false)}
+        destroyOnClose
+      >
+        <Input.TextArea
+          value={announceText}
+          onChange={(e) => setAnnounceText(e.target.value)}
+          placeholder="请输入最新的群公告内容…"
+          rows={4}
+          maxLength={500}
+          showCount
+        />
+      </Modal>
+
+      {/* =========================================================
+          模态弹窗：成员资料名片
+          ========================================================= */}
+      <Modal
+        open={Boolean(profileModalUser)}
+        footer={null}
+        onCancel={() => setProfileModalUser(null)}
+        width={380}
+        destroyOnClose
+      >
+        {profileModalUser && (
+          <div style={{ textAlign: "center", padding: "12px 0" }}>
+            <UserAvatar user={profileModalUser} size={64} />
+            <h3 style={{ fontSize: 17, fontWeight: 600, marginTop: 12, marginBottom: 2 }}>
+              {profileModalUser.display_name || profileModalUser.username}
+            </h3>
+            <div style={{ fontSize: 12, color: "var(--ink-3)" }}>@{profileModalUser.username} · ID: {profileModalUser.id}</div>
+            <div style={{ fontSize: 13, color: "var(--ink-2)", margin: "12px auto", maxWidth: 280 }}>
+              {profileModalUser.bio || "暂无个性签名"}
             </div>
-            {long ? (
-              <button type="button" className="oo-code-btn" style={{ padding: 0, marginTop: 2 }} onClick={() => setExpanded((v) => !v)}>
-                {expanded ? "收起" : `展开全部（${text.length} 字）`}
-              </button>
-            ) : null}
-          </>
-        ) : null}
-        {m._failed ? (
-          <div style={{ fontSize: 11, marginTop: 2 }}>
-            发送失败 <a onClick={onRetry} style={{ cursor: "pointer" }}>重试</a>
+
+            <Divider style={{ margin: "14px 0" }} />
+
+            <Space>
+              {profileModalUser.id !== me?.id && (
+                <>
+                  <Button type="primary" icon={<MessageOutlined />} onClick={() => { setProfileModalUser(null); directChatFriend(profileModalUser.id); }}>
+                    发起私聊
+                  </Button>
+                  {!friends.some((f) => f.id === profileModalUser.id) && (
+                    <Button icon={<UserAddOutlined />} onClick={() => { setProfileModalUser(null); addFriendForm.setFieldsValue({ to_user_id: profileModalUser.id }); setAddFriendOpen(true); }}>
+                      加好友
+                    </Button>
+                  )}
+                </>
+              )}
+              <Button onClick={() => { setProfileModalUser(null); navigate(`/u/${profileModalUser.id}`); }}>
+                主页
+              </Button>
+            </Space>
           </div>
-        ) : null}
-      </div>
-      {/* 时间与撤回只在 hover 时浮现（否则每条都占一行高度） */}
-      <div className="oo-msg-meta" style={{ display: "flex", gap: 6 }}>
-        <span>{m._local ? "发送中…" : fmtTime(m.created_time)}</span>
-        {mine && m.status === 1 && !m._local ? (
-          <a onClick={onRecall} style={{ cursor: "pointer" }}>撤回</a>
-        ) : null}
-      </div>
+        )}
+      </Modal>
     </div>
-  );
-}
-
-/** 邀请成员 */
-function InviteModal({ open, roomId, onClose, onDone }) {
-  const { message: toast } = AntApp.useApp();
-  const [opts, setOpts] = useState([]);
-  const [val, setVal] = useState([]);
-  const [busy, setBusy] = useState(false);
-
-  if (!open) return null;
-  return (
-    <Modal
-      title="邀请成员"
-      open={open}
-      onCancel={onClose}
-      okText="邀请"
-      confirmLoading={busy}
-      onOk={async () => {
-        if (!val.length) {
-          toast.warning("请选择要邀请的成员");
-          return;
-        }
-        setBusy(true);
-        try {
-          const r = await API.post(`/chatroom/rooms/${roomId}/members`, { user_ids: val });
-          toast.success(`已邀请 ${r?.added ?? 0} 位成员`);
-          setVal([]);
-          onDone?.();
-          onClose?.();
-        } catch (e) {
-          toast.error(e.message);
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      <Select
-        mode="multiple"
-        showSearch
-        filterOption={false}
-        value={val}
-        onChange={setVal}
-        style={{ width: "100%" }}
-        placeholder="输入用户名或昵称搜索"
-        onSearch={async (kw) => {
-          if (!kw?.trim()) return setOpts([]);
-          try {
-            const d = await API.get("/chatroom/users", { params: { q: kw.trim() } });
-            setOpts((Array.isArray(d) ? d : []).map((u) => ({ value: u.id, label: `${u.display_name || u.username}（@${u.username}）` })));
-          } catch {
-            setOpts([]);
-          }
-        }}
-        options={opts}
-      />
-    </Modal>
   );
 }

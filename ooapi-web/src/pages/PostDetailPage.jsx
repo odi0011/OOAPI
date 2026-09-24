@@ -8,11 +8,12 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import {
-  Button, Input, Space, Tag, Skeleton, Empty, App as AntApp, Popconfirm, Tooltip, Divider, Image, Modal,
+  Button, Input, Space, Tag, Skeleton, Empty, App as AntApp, Popconfirm, Tooltip, Divider, Image, Modal, Upload,
 } from "antd";
 import {
   LikeOutlined, LikeFilled, StarOutlined, StarFilled, UserAddOutlined, MessageOutlined,
   DeleteOutlined, EditOutlined, EyeOutlined, EyeInvisibleOutlined, PushpinOutlined, ArrowLeftOutlined,
+  PictureOutlined, CloseOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
@@ -54,6 +55,25 @@ export default function PostDetailPage() {
   const [input, setInput] = useState("");
   const [replyTo, setReplyTo] = useState(null); // { id, userId, name } —— 回复某人
   const [sending, setSending] = useState(false);
+  // 评论附图（用户要求「评论也要能带图」）。
+  // 流程与发帖一致：**先上传到媒体库拿 id，再带 media_ids 发评论** ——
+  // 字节进媒体库（有配额/去重/引用计数），评论行只存 id 列表。
+  const [cMedia, setCMedia] = useState([]); // [{ id, url, name }]
+  const [cUploading, setCUploading] = useState(false);
+
+  /** 上传一张图到媒体库，返回 { id, url, name }（评论附图用） */
+  const uploadCommentImage = async (file) => {
+    // 前端先读成 dataURL（与发帖/站内对话一致，后端 POST /api/media 接受 dataUrl）
+    const dataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result || ""));
+      fr.onerror = () => reject(new Error("读取文件失败"));
+      fr.readAsDataURL(file);
+    });
+    const r = await API.post("/media", { dataUrl, name: file.name, source: "community" });
+    return { id: r.id, url: r.url || "", name: file.name };
+  };
+
   const [acting, setActing] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editTitle, setEditTitle] = useState("");
@@ -144,17 +164,20 @@ export default function PostDetailPage() {
 
   const sendComment = async () => {
     const content = input.trim();
-    if (!content || sending) return;
+    // 纯图评论也允许（「这张图你看」是很常见的用法），所以判据是「有字或有图」
+    if ((!content && !cMedia.length) || sending) return;
     setSending(true);
     try {
       await API.post(`/community/posts/${postId}/comments`, {
         content,
+        media_ids: cMedia.map((m) => m.id),
         // 扁平二级：回复二级评论时，parent_id 仍然挂它的一级父节点，
         // reply_to_user_id 用来渲染 @谁 —— 缩进因此恒为 1 级
         parent_id: replyTo?.parentId ?? 0,
         reply_to_user_id: replyTo?.userId || 0,
       });
       setInput("");
+      setCMedia([]);
       setReplyTo(null);
       await loadComments();
       setPost((prev) => (prev ? { ...prev, comment_count: (prev.comment_count || 0) + 1 } : prev));
@@ -162,6 +185,23 @@ export default function PostDetailPage() {
       message.error(e.message);
     } finally {
       setSending(false);
+    }
+  };
+
+  /** 评论附图上传（与发帖同一套：先入媒体库拿 id） */
+  const pickCommentImage = async (file) => {
+    if (cMedia.length >= 3) {
+      message.warning("评论最多 3 张图片");
+      return;
+    }
+    setCUploading(true);
+    try {
+      const item = await uploadCommentImage(file);
+      setCMedia((prev) => [...prev, item]);
+    } catch (e) {
+      message.error(e.message || "图片上传失败");
+    } finally {
+      setCUploading(false);
     }
   };
 
@@ -378,12 +418,74 @@ export default function PostDetailPage() {
                   <Input.TextArea
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    placeholder="友善发言。支持 Markdown；贴日志请用代码块包裹。"
+                    // 支持贴图后，正文与图任一即可（粘贴快捷键也提示出来，
+                    // 因为「截图 → Ctrl+V」比点「添加图片」再选文件快得多）
+                    placeholder="友善发言。支持 Markdown 与图片（可直接粘贴截图）；贴日志请用代码块包裹。"
                     autoSize={{ minRows: 2, maxRows: 8 }}
                     maxLength={2000}
+                    onPaste={(e) => {
+                      // 从剪贴板直接贴图：把 image/* 的项交给上传，
+                      // 其余（文字）走默认行为，别打断正常粘贴
+                      const items = Array.from(e.clipboardData?.items || []);
+                      const img = items.find((it) => it.type.startsWith("image/"));
+                      if (!img) return;
+                      const f = img.getAsFile();
+                      if (!f) return;
+                      e.preventDefault();
+                      pickCommentImage(f);
+                    }}
                   />
-                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
-                    <Button type="primary" size="small" loading={sending} disabled={!input.trim()} onClick={sendComment}>
+                  {/* 已选图片的缩略图（可单张移除） */}
+                  {cMedia.length ? (
+                    <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                      {cMedia.map((m) => (
+                        <div key={m.id} style={{ position: "relative" }}>
+                          <img
+                            src={m.url}
+                            alt={m.name}
+                            style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 6, border: "1px solid var(--line)" }}
+                          />
+                          <button
+                            type="button"
+                            aria-label="移除这张图"
+                            onClick={() => setCMedia((prev) => prev.filter((x) => x.id !== m.id))}
+                            style={{
+                              position: "absolute", top: -6, right: -6, width: 18, height: 18,
+                              borderRadius: "50%", border: 0, cursor: "pointer", lineHeight: 1,
+                              background: "var(--ink)", color: "var(--surface)", fontSize: 11,
+                            }}
+                          >
+                            <CloseOutlined />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
+                    {/* 评论附图入口（用户要求「评论也要能带图」） */}
+                    <Upload
+                      accept="image/*"
+                      multiple
+                      showUploadList={false}
+                      beforeUpload={(file) => {
+                        pickCommentImage(file);
+                        return false; // 交给上面的 handler 上传，Upload 自身不发请求
+                      }}
+                      disabled={cUploading || cMedia.length >= 3}
+                    >
+                      <Tooltip title={cMedia.length >= 3 ? "最多 3 张" : "添加图片（也可直接粘贴截图）"}>
+                        <Button size="small" type="text" icon={<PictureOutlined />} loading={cUploading}>
+                          图片
+                        </Button>
+                      </Tooltip>
+                    </Upload>
+                    <Button
+                      type="primary"
+                      size="small"
+                      loading={sending}
+                      disabled={!input.trim() && !cMedia.length}
+                      onClick={sendComment}
+                    >
                       发表评论
                     </Button>
                   </div>
@@ -497,6 +599,22 @@ function CommentItem({ comment, me, isAdmin, onReply, onChanged, children = [] }
             ) : null}
             <Markdown text={comment.content || ""} />
           </div>
+          {/* 评论附图：小尺寸缩略图（评论是次要内容，不该用帖子那种大图占满屏），
+              点开用 antd Image 的预览看大图 */}
+          {Array.isArray(comment.media) && comment.media.length ? (
+            <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+              {comment.media.map((m) => (
+                <Image
+                  key={m.id}
+                  src={m.url}
+                  alt="评论图片"
+                  width={88}
+                  height={88}
+                  style={{ objectFit: "cover", borderRadius: 6, border: "1px solid var(--line)" }}
+                />
+              ))}
+            </div>
+          ) : null}
           <Space size={10} style={{ marginTop: 4 }}>
             <Button
               type="text"
@@ -540,6 +658,21 @@ function CommentItem({ comment, me, isAdmin, onReply, onChanged, children = [] }
                       ) : null}
                       <Markdown text={c.content || ""} />
                     </div>
+                    {/* 二级评论的附图（比一级再小一点，保持层级感） */}
+                    {Array.isArray(c.media) && c.media.length ? (
+                      <div style={{ display: "flex", gap: 5, marginTop: 5, flexWrap: "wrap" }}>
+                        {c.media.map((m) => (
+                          <Image
+                            key={m.id}
+                            src={m.url}
+                            alt="评论图片"
+                            width={68}
+                            height={68}
+                            style={{ objectFit: "cover", borderRadius: 5, border: "1px solid var(--line)" }}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
                     <Space size={10} style={{ marginTop: 2 }}>
                       <Button type="text" size="small" style={{ fontSize: 11.5 }} onClick={() => onReply({ id: c.id, parentId: c.parent_id, userId: c.user_id, name: c.author?.display_name || c.author?.username })}>
                         回复

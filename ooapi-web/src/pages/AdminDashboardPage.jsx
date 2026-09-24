@@ -274,7 +274,7 @@ export default function AdminDashboardPage() {
                 { label: "评论总数", value: community.site.comments },
                 { label: "会话数", value: community.site.rooms },
                 { label: `区间消息`, value: community.site.messages_new },
-                { label: `区间对局`, value: community.site.game_plays_new, to: "/games" },
+                { label: "好友关系数", value: community.site.friendships_total },
                 { label: "待处理内容", value: community.site.hidden_posts, to: "/admin/community", tone: community.site.hidden_posts ? "warning" : undefined },
               ].map((x) => (
                 <span

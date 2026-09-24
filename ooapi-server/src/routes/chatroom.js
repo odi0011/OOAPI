@@ -406,9 +406,11 @@ router.get(
       type: room.type,
       name: room.name,
       title,
+      announcement: room.announcement || "",
+      guild_channel_id: Number(room.guild_channel_id) || 0,
       owner_id: Number(room.owner_id) || 0,
       member_count: Number(room.member_count) || 0,
-      my_role: m?.role || "admin",
+      my_role: m?.role || (req.user.role >= 100 ? "admin" : "member"),
       last_read_id: Number(m?.last_read_id) || 0,
       created_time: Number(room.created_time),
       members: members.map((x) => ({
@@ -688,6 +690,167 @@ router.post(
       [target, id, req.user.id]
     );
     return ok(res, { last_read_id: target });
+  })
+);
+router.put(
+  "/rooms/:id/announcement",
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const id = idParam(req);
+    if (!id) return fail(res, "房间不存在", 404);
+    const m = await memberOf(id, req.user.id);
+    if (!m && req.user.role < 100) return fail(res, "你不在该群聊中", 403);
+    if (m?.role !== "owner" && m?.role !== "admin" && req.user.role < 100) {
+      return fail(res, "只有群主或管理员可以修改公告", 403);
+    }
+
+    const announcement = String(req.body?.announcement || "").trim().slice(0, 500);
+    await pool.query("UPDATE chat_rooms SET announcement = ? WHERE id = ?", [announcement, id]);
+    
+    // 写一条系统公告更新消息并推送
+    await systemMessage(id, `${req.user.display_name || req.user.username} 更新了群公告`);
+    const ids = await memberIdsOf(id);
+    pushMany(ids, "room_updated", { room_id: id, announcement });
+
+    return ok(res, { id, announcement }, "公告已更新");
+  })
+);
+
+router.put(
+  "/rooms/:id/name",
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const id = idParam(req);
+    if (!id) return fail(res, "房间不存在", 404);
+    const m = await memberOf(id, req.user.id);
+    if (!m && req.user.role < 100) return fail(res, "你不在该群聊中", 403);
+    if (m?.role !== "owner" && m?.role !== "admin" && req.user.role < 100) {
+      return fail(res, "只有群主或管理员可以修改名称", 403);
+    }
+
+    const name = String(req.body?.name || "").trim().slice(0, 64);
+    if (!name) return fail(res, "请输入名称");
+
+    await pool.query("UPDATE chat_rooms SET name = ? WHERE id = ?", [name, id]);
+    await systemMessage(id, `${req.user.display_name || req.user.username} 修改了群名称为「${name}」`);
+    const ids = await memberIdsOf(id);
+    pushMany(ids, "room_updated", { room_id: id, name });
+
+    return ok(res, { id, name }, "名称已修改");
+  })
+);
+
+// ---------------------------------------------------------------------------
+// 9. QQ 频道体系：频道服务器与子频道列表（自动预置官方默认主频道）
+// ---------------------------------------------------------------------------
+async function ensureDefaultGuildAndChannels() {
+  const [guilds] = await pool.query("SELECT * FROM community_guilds WHERE status = 1 LIMIT 1");
+  if (guilds.length > 0) return guilds[0];
+
+  const nowTs = now();
+  // 1. 创建默认官方频道
+  const r = await pool.query(
+    "INSERT INTO community_guilds (name, description, icon, is_default, status, created_time) VALUES (?, ?, ?, 1, 1, ?)",
+    ["OOAPI 开发者社区", "官方技术交流与互助频道，欢迎畅所欲言！", "💬", nowTs]
+  );
+  const guildId = Number(r[0].insertId);
+
+  // 2. 预置四个经典子频道
+  const defaultChannels = [
+    { cat: "官方发布", name: "官方公告", type: "notice", topic: "发布平台重要动态与维护通知", sort: 100 },
+    { cat: "常规讨论", name: "综合交流", type: "chat", topic: "日常闲聊、交流互动、心得分享", sort: 90 },
+    { cat: "常规讨论", name: "技术探讨", type: "chat", topic: "API 调用、模型参数调优、Prompt 技巧", sort: 80 },
+    { cat: "支持与反馈", name: "问题反馈", type: "chat", topic: "遇到问题在这里反馈，管理员与社区伙伴协同排查", sort: 70 },
+  ];
+
+  for (const ch of defaultChannels) {
+    const chRes = await pool.query(
+      "INSERT INTO community_channels (guild_id, category_name, name, type, topic, sort, status, created_time) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+      [guildId, ch.cat, ch.name, ch.type, ch.topic, ch.sort, nowTs]
+    );
+    const chId = Number(chRes[0].insertId);
+
+    // 为每个文字/公告子频道对应创建一个 chat_rooms
+    const roomRes = await pool.query(
+      "INSERT INTO chat_rooms (type, name, owner_id, member_count, guild_channel_id, status, created_time) VALUES ('group', ?, 1, 0, ?, 1, ?)",
+      [ch.name, chId, nowTs]
+    );
+    const roomId = Number(roomRes[0].insertId);
+    await systemMessage(roomId, `欢迎来到 #${ch.name} 频道！`);
+  }
+
+  const [[fresh]] = await pool.query("SELECT * FROM community_guilds WHERE id = ?", [guildId]);
+  return fresh;
+}
+
+router.get(
+  "/guilds",
+  authRequired,
+  asyncHandler(async (req, res) => {
+    try {
+      await ensureDefaultGuildAndChannels();
+    } catch (e) {
+      // 捕获并发初始化时的重复错误
+    }
+
+    const [guildRows] = await pool.query(
+      "SELECT * FROM community_guilds WHERE status = 1 ORDER BY is_default DESC, id ASC"
+    );
+
+    const result = [];
+    for (const g of guildRows) {
+      const [channels] = await pool.query(
+        "SELECT * FROM community_channels WHERE guild_id = ? AND status = 1 ORDER BY sort DESC, id ASC",
+        [g.id]
+      );
+
+      // 查询每个子频道对应的 chat_rooms ID
+      const chList = [];
+      for (const c of channels) {
+        let [[room]] = await pool.query(
+          "SELECT id, name, last_message_text, last_message_time, member_count, announcement FROM chat_rooms WHERE guild_channel_id = ? AND status = 1 LIMIT 1",
+          [c.id]
+        );
+        if (!room) {
+          // 若之前没有绑定的房间，自愈创建一个
+          const r = await pool.query(
+            "INSERT INTO chat_rooms (type, name, owner_id, member_count, guild_channel_id, status, created_time) VALUES ('group', ?, 1, 0, ?, 1, ?)",
+            [c.name, c.id, now()]
+          );
+          room = { id: Number(r[0].insertId), name: c.name, member_count: 0 };
+        }
+
+        // 自动加入成员，以便能收到消息与推送
+        await pool.query(
+          "INSERT IGNORE INTO chat_room_members (room_id, user_id, role, joined_time) VALUES (?, ?, 'member', ?)",
+          [room.id, req.user.id, now()]
+        ).catch(() => {});
+
+        chList.push({
+          id: Number(c.id),
+          room_id: Number(room.id),
+          guild_id: Number(g.id),
+          category_name: c.category_name,
+          name: c.name,
+          type: c.type,
+          topic: c.topic || "",
+          announcement: room.announcement || "",
+          last_message_text: room.last_message_text || "",
+          last_message_time: Number(room.last_message_time) || 0,
+        });
+      }
+
+      result.push({
+        id: Number(g.id),
+        name: g.name,
+        description: g.description,
+        icon: g.icon,
+        is_default: Boolean(g.is_default),
+        channels: chList,
+      });
+    }
+
+    return ok(res, result);
   })
 );
 

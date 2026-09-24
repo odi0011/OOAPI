@@ -84,14 +84,18 @@ console.log("\n=== ④ 关键挂载点的回归锚点（这几条各自出过或
 for (const [prefix, why] of [
   ["/api/dashboard", "数据看板（新用户第一个落地页）——曾漏挂载导致全站 404"],
   ["/api/community", "社区"],
-  ["/api/chatroom", "私信"],
-  ["/api/games", "小游戏"],
+  ["/api/chatroom", "私信与群聊频道"],
+  ["/api/friends", "好友系统（已重构并替代旧小游戏）"],
   ["/v1", "对外网关（OpenAI 协议）"],
 ]) {
   t(`挂载了 ${prefix}（${why}）`, () => {
     ck(new RegExp(`app\\.use\\(\\s*"${prefix.replace(/\//g, "\\/")}"`).test(index), `${prefix} 没有挂载`);
   });
 }
+
+t("小游戏路由 /api/games 已彻底下线未挂载", () => {
+  ck(!index.includes('"/api/games"'), "/api/games 仍残留在挂载或白名单中");
+});
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
 process.exit(fail ? 1 : 0);

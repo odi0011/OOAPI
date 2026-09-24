@@ -303,8 +303,8 @@ router.get(
          (SELECT COUNT(*) FROM community_follows WHERE follower_id = ?) AS following,
          (SELECT COUNT(*) FROM community_follows WHERE followee_id = ?) AS followers,
          (SELECT COUNT(*) FROM chat_room_members WHERE user_id = ?) AS rooms,
-         (SELECT COUNT(*) FROM game_rooms WHERE host_id = ? OR guest_id = ?) AS game_plays`,
-      [uid, uid, uid, uid, uid, uid, uid, uid]
+         (SELECT COUNT(*) FROM friendships WHERE user_id = ? AND status = 1) AS friends`,
+      [uid, uid, uid, uid, uid, uid, uid]
     );
     const out = {
       range: { key, days },
@@ -315,7 +315,7 @@ router.get(
         following: Number(mine.following) || 0,
         followers: Number(mine.followers) || 0,
         rooms: Number(mine.rooms) || 0,
-        game_plays: Number(mine.game_plays) || 0,
+        friends: Number(mine.friends) || 0,
       },
     };
     if (isAdmin) {
@@ -327,7 +327,7 @@ router.get(
            (SELECT COUNT(*) FROM users WHERE status = 1) AS users,
            (SELECT COUNT(*) FROM chat_rooms WHERE status = 1) AS rooms,
            (SELECT COUNT(*) FROM chat_room_messages WHERE status = 1 AND created_time >= ?) AS messages_new,
-           (SELECT COUNT(*) FROM game_rooms WHERE created_time >= ?) AS game_plays_new`,
+           (SELECT COUNT(*) FROM friendships WHERE status = 1) AS friendships_total`,
         [since, since, since]
       );
       // 待处理内容：隐藏帖与举报（举报功能未做，这里只列隐藏/删除留痕）
@@ -339,7 +339,7 @@ router.get(
         users: Number(all.users) || 0,
         rooms: Number(all.rooms) || 0,
         messages_new: Number(all.messages_new) || 0,
-        game_plays_new: Number(all.game_plays_new) || 0,
+        friendships_total: Number(all.friendships_total) || 0,
         hidden_posts: Number(pending.n) || 0,
       };
     }

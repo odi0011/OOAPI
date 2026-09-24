@@ -478,6 +478,20 @@ router.delete(
       now(),
       id,
     ]);
+    // 先释放**这条帖子下所有评论**的图片引用。
+    //
+    // 评论的 ref 是 `community_comment/<comment_id>`，与帖子的 ref 是两套 key，
+    // 删帖不会自动带走它们 —— 不处理的话，帖子连带评论一起没了，
+    // 而评论里的图仍挂着活引用：用户删自己的图会 409，且找不到是哪条内容占着
+    //（与「删帖不释放引用」是同一个坑的另一半）。
+    const [cmts] = await pool
+      .query("SELECT id FROM community_comments WHERE post_id = ?", [id])
+      .catch(() => [[]]);
+    if (cmts.length) {
+      await releaseRefs("community_comment", cmts.map((c) => String(c.id))).catch((e) =>
+        console.warn(`[community] 删除帖子 #${id} 时释放评论图片引用失败：${e.message}`)
+      );
+    }
     // **必须释放图片引用**，否则用户的图被永久锁死。
     //
     // 黑盒测试实测（原话）：「帖子删了，图永远删不掉」——
@@ -590,9 +604,12 @@ router.get(
       );
       liked = new Set(rs.map((r) => Number(r.target_id)));
     }
-    const items = rows.map((c) => {
+    // 逐条 await mediaList（现签 URL 是异步的）—— 一页最多 50 条评论、
+    // 每条最多 9 张图，串行即可；并发会打满连接池且收益有限。
+    const items = [];
+    for (const c of rows) {
       const a = authors.get(Number(c.user_id));
-      return {
+      items.push({
         id: Number(c.id),
         post_id: Number(c.post_id),
         user_id: Number(c.user_id),
@@ -606,8 +623,11 @@ router.get(
         // 扁平二级：靠 @ 谁标明上下文（而不是靠缩进层级）
         reply_to_user_id: Number(c.reply_to_user_id) || 0,
         reply_to_name: c.reply_display_name || c.reply_username || "",
-      };
-    });
+        // 评论附图（用户要求「评论也要能带图」）：与帖子同形状，
+        // 前端拿到就能直接渲染缩略图（url 是现签的，见 mediaList）
+        media: await mediaList(c.media_ids),
+      });
+    }
     return ok(res, { items, total: Number(cnt.n) || 0, page: p, page_size: size });
   })
 );
@@ -623,7 +643,14 @@ router.post(
     const lenErr = tooLong(contentRaw, MAX_COMMENT, "评论");
     if (lenErr) return fail(res, lenErr, 400);
     const content = contentRaw;
-    if (!content) return fail(res, "请输入评论内容");
+    // 评论附图（用户要求：「评论也要能带图」）。
+    // 与发帖同一套：必须**属于评论者自己**（不校验就等于借用别人的私有文件，
+    // 详情会返回现签 URL 给所有读者 —— 这正是之前社区发帖漏校验的那个漏洞形态）。
+    const rawMediaIds = Array.isArray(req.body?.media_ids) ? req.body.media_ids.slice(0, MAX_MEDIA) : [];
+    const { ok: mediaIds, bad: badMedia } = await filterOwnedMediaIds(rawMediaIds, req.user.id);
+    if (badMedia.length) return fail(res, "图片不存在或无权使用", 403);
+    // 文字与图片至少要有一个（纯图评论是常见用法：「这张图你看」）
+    if (!content && !mediaIds.length) return fail(res, "请输入评论内容或添加图片");
     let parentId = Number(req.body?.parent_id) || 0;
     // reply_to_user_id 决定给谁发通知，所以**不能由客户端随便指定**。
     //
@@ -658,11 +685,21 @@ router.post(
       if (replyToUserId === req.user.id) replyToUserId = 0;
     }
     const r = await pool.query(
-      "INSERT INTO community_comments (post_id, user_id, parent_id, reply_to_user_id, content, status, created_time) VALUES (?, ?, ?, ?, ?, 1, ?)",
-      [postId, req.user.id, parentId, replyToUserId, content, now()]
+      "INSERT INTO community_comments (post_id, user_id, parent_id, reply_to_user_id, content, media_ids, status, created_time) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+      [postId, req.user.id, parentId, replyToUserId, content, JSON.stringify(mediaIds), now()]
     );
     const commentId = Number(r[0].insertId);
     await pool.query("UPDATE community_posts SET comment_count = comment_count + 1 WHERE id = ?", [postId]);
+    // 绑定媒体引用：评论删掉时图片才回收得掉（不绑就是永久孤儿，
+    // 而且用户会发现自己的图「被引用」却找不到是哪条内容 —— 与发帖同一套逻辑）
+    for (const mid of mediaIds) {
+      await attachRef(mid, {
+        userId: req.user.id,
+        refType: "community_comment",
+        refId: String(commentId),
+        slot: `c${mid}`,
+      }).catch((e) => console.warn(`[community] 绑定评论图片引用失败：${e.message}`));
+    }
 
     // 通知（不给自己发，已在 notify 内部兜住）：
     //   回复别人的评论 → 通知被回复者；否则通知帖子作者
@@ -733,6 +770,11 @@ router.delete(
     if (!isOwner && req.user.role < 100) return fail(res, "无权删除", 403);
     if (Number(row.status) === 2) return ok(res, null, "已删除");
     await pool.query("UPDATE community_comments SET status = 2, deleted_by = ? WHERE id = ?", [req.user.id, id]);
+    // 释放评论附图引用（与删帖同一逻辑：不释放的话用户的图被永久锁死，
+    // 删自己的图会 409「仍被 1 处引用」而那条引用指向的就是这条已删评论）
+    await releaseRefs("community_comment", [String(id)]).catch((e) =>
+      console.warn(`[community] 删除评论 #${id} 释放图片引用失败：${e.message}`)
+    );
     await pool.query("UPDATE community_posts SET comment_count = GREATEST(comment_count - 1, 0) WHERE id = ?", [row.post_id]);
     if (!isOwner) {
       await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `删除社区评论 #${id}（作者 uid=${row.user_id}）` });
@@ -976,6 +1018,19 @@ router.post(
         console.warn(`[community] 清理僵尸引用失败：${e.message}`)
       );
     }
+    // 同理清「已删评论」的活引用（评论附图是后加的 ref_type，
+    // 存量里可能已有「评论删了但引用还在」的行 —— 同一次重算里一并收拾）
+    const [zombieCmts] = await pool.query(
+      `SELECT r.ref_id FROM media_refs r
+         JOIN community_comments c ON c.id = r.ref_id
+        WHERE r.ref_type = 'community_comment' AND r.is_live = 1 AND c.status = 2`
+    );
+    const zombieCommentIds = [...new Set(zombieCmts.map((r) => String(r.ref_id)))];
+    if (zombieCommentIds.length) {
+      await releaseRefs("community_comment", zombieCommentIds).catch((e) =>
+        console.warn(`[community] 清理评论僵尸引用失败：${e.message}`)
+      );
+    }
     // 用一次子查询批量重算，而不是逐行 COUNT（帖子多时逐行会拖很久）
     await pool.query(
       `UPDATE community_posts p SET
@@ -995,9 +1050,16 @@ router.post(
       req,
       user: req.user,
       type: LOG_TYPE.MANAGE,
-      content: `重算社区计数${zombieIds.length ? `（并释放 ${zombieIds.length} 条已删帖的图片引用）` : ""}`,
+      content:
+        `重算社区计数` +
+        (zombieIds.length ? `（并释放 ${zombieIds.length} 条已删帖的图片引用）` : "") +
+        (zombieCommentIds.length ? `（并释放 ${zombieCommentIds.length} 条已删评论的图片引用）` : ""),
     });
-    return ok(res, { released_refs: zombieIds.length }, "计数已重算");
+    return ok(
+      res,
+      { released_refs: zombieIds.length, released_comment_refs: zombieCommentIds.length },
+      "计数已重算"
+    );
   })
 );
 

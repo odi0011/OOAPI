@@ -318,7 +318,7 @@ export default function ConsolePage() {
         </ChartCard>
 
         {community ? (
-          <ChartCard title="我的社区与娱乐" note="点击可跳转">
+          <ChartCard title="我的社区与社交" note="点击可跳转">
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(84px, 1fr))", gap: 8 }}>
               {[
                 { label: "帖子", value: community.mine?.posts, to: `/u/${user?.id}` },
@@ -327,7 +327,7 @@ export default function ConsolePage() {
                 { label: "粉丝", value: community.mine?.followers, to: `/u/${user?.id}` },
                 { label: "关注", value: community.mine?.following, to: `/u/${user?.id}` },
                 { label: "会话", value: community.mine?.rooms, to: "/messages" },
-                { label: "游戏", value: community.mine?.game_plays, to: "/games" },
+                { label: "好友", value: community.mine?.friends, to: "/messages" },
               ].map((x) => (
                 <div
                   key={x.label}

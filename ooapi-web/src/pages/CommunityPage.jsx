@@ -18,7 +18,6 @@ import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import PostList from "../components/PostList";
 import UserAvatar from "../components/UserAvatar";
-import GameZone from "../components/GameZone";
 import { fmtCompact } from "../components/Charts";
 
 export default function CommunityPage() {
@@ -31,8 +30,6 @@ export default function CommunityPage() {
   const topicId = Number(params.get("topic_id")) || 0;
   const sort = params.get("sort") === "hot" ? "hot" : "new";
   const feed = ["all", "following", "favorited"].includes(params.get("feed") || "") ? params.get("feed") : "all";
-  // 板块：讨论区 / 小游戏（小游戏是社区内的一个板块；?room= 分享链接自动进小游戏）
-  const board = params.get("board") === "games" || params.get("room") ? "games" : "posts";
 
   const [topics, setTopics] = useState([]);
   const [posts, setPosts] = useState({ items: [], total: 0 });
@@ -154,51 +151,21 @@ export default function CommunityPage() {
   const announce = status?.announcement;
   const announceEnabled = status?.announcement_enabled === true || status?.announcement_enabled === "true";
 
-  // 切换板块：离开小游戏时清掉 room 参数（否则刷新又回到对局）
-  const switchBoard = (v) => {
-    setParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        if (v === "games") next.set("board", "games");
-        else {
-          next.delete("board");
-          next.delete("room");
-        }
-        return next;
-      },
-      { replace: true }
-    );
-  };
-
   return (
     <div className="oo-page">
       <PageHeader
         title="社区"
-        tags={board === "games" ? <Tag>联机对战</Tag> : <Tag>{posts.total} 篇讨论</Tag>}
+        tags={<Tag>{posts.total} 篇讨论</Tag>}
         extra={
           <>
-            <Segmented
-              value={board}
-              onChange={switchBoard}
-              options={[
-                { value: "posts", label: "讨论区" },
-                { value: "games", label: "小游戏" },
-              ]}
-            />
             <Button icon={<ReloadOutlined />} onClick={load} title="刷新" aria-label="刷新社区" />
-            {board === "posts" ? (
-              <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setPostOpen(true); }}>
-                发帖
-              </Button>
-            ) : null}
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setPostOpen(true); }}>
+              发帖
+            </Button>
           </>
         }
       />
 
-      {board === "games" ? (
-        <GameZone />
-      ) : (
-        <>
       {/* 骨架 C：主信息流 + 侧栏（不拉满宽度） */}
       <div className="oo-read-shell">
         <div>
@@ -373,8 +340,6 @@ export default function CommunityPage() {
           </div>
         </aside>
       </div>
-        </>
-      )}
 
       <Modal
         title="发布新帖"
