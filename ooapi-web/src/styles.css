@@ -4420,4 +4420,45 @@ h1, h2, h3, h4 {
   .qq-members-panel { display: none; }
 }
 
+/* 带 showCount 的多行文本域：计数器绝对定位在右下角，会压住内容/滚动条。
+   给文本区留出底部内边距即可（人格实测量到重叠）。 */
+.oo-count-textarea.ant-input {
+  padding-bottom: 22px;
+}
+.oo-count-textarea + .ant-input-data-count,
+.oo-count-textarea ~ .ant-input-data-count {
+  bottom: 6px;
+  right: 10px;
+  padding: 0 4px;
+  background: var(--surface);
+  border-radius: 4px;
+}
 
+/* @ 联想下拉：贴在评论输入框上方的小面板 */
+.oo-mention-pop {
+  position: relative;
+  margin-top: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+}
+.oo-mention-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.oo-mention-item:hover { background: var(--hover); }
+.oo-mention-name { font-size: 13px; color: var(--ink); }
+.oo-mention-nick { font-size: 12px; color: var(--ink-3); margin-left: auto; }

@@ -1300,7 +1300,18 @@ export default function MessagesPage() {
             />
           </Form.Item>
           <Form.Item name="message" label="验证申请消息" initialValue="你好，我是社区伙伴，希望能添加好友交流。">
-            <Input.TextArea maxLength={200} showCount rows={3} />
+            {/* showCount 的计数器是绝对定位在右下角的，会和文本区的内容/滚动条压在一起。
+                人格实测（插画师）量到「验证消息框 (478×71) 和右下角字数『20 / 200』
+                视觉上压在一起（overlaps: true）」。
+                修法：给文本区底部留出计数器的位置（paddingBottom），
+                并把计数器本身往下挪一点，让两者不重叠。 */}
+            <Input.TextArea
+              maxLength={200}
+              showCount={{ formatter: ({ count, maxLength }) => `${count} / ${maxLength}` }}
+              rows={3}
+              style={{ paddingBottom: 22 }}
+              className="oo-count-textarea"
+            />
           </Form.Item>
         </Form>
       </Modal>

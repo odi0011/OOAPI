@@ -11,7 +11,7 @@
 //   · **删除按钮在引用数 > 0 时仍然可点**，让后端返回「仍被 N 处引用」的明确原因 ——
 //     前端自己禁用会让用户以为坏了；管理员额外给「强制删除」，
 //     因为清理违规内容时确实需要绕过引用保护。
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Button, Table, Tag, Space, Typography, App as AntApp, Popconfirm, Tooltip, Empty,
@@ -20,7 +20,7 @@ import {
 import {
   ReloadOutlined, AppstoreOutlined, UnorderedListOutlined, DeleteOutlined,
   DownloadOutlined, EditOutlined, PictureOutlined, FileOutlined, SearchOutlined,
-  ClearOutlined, UserOutlined, EyeOutlined,
+  ClearOutlined, UserOutlined, EyeOutlined, UploadOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { fmtDate } from "../services/format";
@@ -64,6 +64,8 @@ const SOURCE_LABEL = {
   chat: "对话上传",
   avatar: "头像",
   post: "社区发帖",
+  // 媒体库直传（本次新增的上传入口）
+  upload: "媒体库上传",
   admin: "管理员上传",
 };
 
@@ -97,6 +99,43 @@ export default function MediaPage() {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [view, setView] = useState("grid"); // grid | list
+  // 直传：与发帖/评论同一套（读 dataUrl → POST /api/media）
+  const uploadRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+
+  const onPickUpload = useCallback(
+    async (e) => {
+      const files = Array.from(e.target.files || []);
+      e.target.value = "";
+      if (!files.length) return;
+      setUploading(true);
+      let okN = 0;
+      const errs = [];
+      for (const file of files) {
+        try {
+          const dataUrl = await new Promise((resolve, reject) => {
+            const fr = new FileReader();
+            fr.onload = () => resolve(String(fr.result || ""));
+            fr.onerror = () => reject(new Error("读取文件失败"));
+            fr.readAsDataURL(file);
+          });
+          // source 用 "upload" 以便在来源列里区分「主动上传」与其他场景
+          await API.post("/media", { dataUrl, name: file.name, source: "upload" });
+          okN += 1;
+        } catch (err) {
+          errs.push(`${file.name}：${err.message || "上传失败"}`);
+        }
+      }
+      setUploading(false);
+      if (okN) {
+        message.success(`已上传 ${okN} 个文件`);
+        load();
+      }
+      // 失败要逐条说明（哪个文件、为什么），否则用户不知道该重传哪个
+      if (errs.length) message.error(errs.slice(0, 3).join("；"));
+    },
+    [message, load]
+  );
   const [kind, setKind] = useState("");
   const [status, setStatus] = useState(1);
   const [keyword, setKeyword] = useState("");
@@ -410,6 +449,32 @@ export default function MediaPage() {
                 回收
               </Button>
             ) : null}
+            {/* 媒体库直传入口。
+                原先**完全没有**上传按钮 —— 列表/配额/删除/重命名/下载都有，
+                但想放一个文件进去只能绕道发帖、评论或换头像。
+                人格实测（插画师）原话：「媒体库没有上传入口，我只能通过发帖/评论/贴图
+                间接入库。不确定这是设计如此还是漏了。」
+                连空状态文案都在教用户「去对话里发图片」——
+                说明这是漏的，不是有意为之。
+                实现与发帖/评论同一套：读成 dataUrl → POST /api/media。 */}
+            <>
+              <input
+                ref={uploadRef}
+                type="file"
+                hidden
+                multiple
+                accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.md,.csv"
+                onChange={onPickUpload}
+              />
+              <Button
+                type="primary"
+                icon={<UploadOutlined />}
+                loading={uploading}
+                onClick={() => uploadRef.current?.click()}
+              >
+                上传
+              </Button>
+            </>
             <Button icon={<ReloadOutlined />} onClick={load} title="刷新媒体库" aria-label="刷新媒体库" />
           </>
         }

@@ -666,6 +666,9 @@ async function handleCompletion(protocol, req, res) {
   // 上游产出用于审计，而 emitted 停在上限处 —— 计费按 emitted 算，
   // 否则用户设了 max_tokens=8 却被按 88 个 token 收费，与「成本控制」的预期相反）
   let emitted = "";
+  // 推理增量：与 emitted 一起计入 max_tokens 预算（见 onReasoning 的注释）。
+  // 单独一个变量是因为协议层要把「思考」与「正文」分成不同的块/字段下发。
+  let reasoningOut = "";
   let outputTruncated = false;
 
   // 客户端断开时中止上游（提前注册：authorize/图片抓取阶段断线也能感知）。
@@ -915,6 +918,25 @@ async function handleCompletion(protocol, req, res) {
       onReasoning: (t) => {
         markFirstToken();
         partialOut += t;
+        // 推理内容**同样受输出上限约束**。
+        //
+        // 修的问题（人格实测，独立开发者）：
+        //   「gemini-3.8-flash-high max_tokens=10 → completion=85 / cost=0.0008，
+        //    **可见内容只有 1 个字**；hy4-preview 同理（57 tokens，1 个字）。」
+        // 根因：截断只在 onDelta 里做，而推理模型（gemini 系 / hy 系）
+        // 把绝大部分产出放在 onReasoning —— 那条路径完全绕过了上限，
+        // 于是用户设 10 想省钱，实际按 85~93 个 token 付费，
+        // 而且拿到的东西比不设上限还少（都被截在推理里）。
+        //
+        // 这里把推理增量也计入同一个预算：超了就丢弃后续推理
+        //（partialOut 仍照记，保证「上游产出多少」的审计口径不变）。
+        if (outputTruncated) return;
+        if (maxOutTokens > 0 && estimateTokens(emitted + reasoningOut + t) > maxOutTokens) {
+          outputTruncated = true;
+          reasoningOut += t;
+          return;
+        }
+        reasoningOut += t;
         if (wantStream) {
           startStream();
           if (protocol.reasoning) protocol.reasoning(protoState, t);
@@ -933,8 +955,13 @@ async function handleCompletion(protocol, req, res) {
       user,
       model,
       prompt,
+      // 截断时按**实际交付的内容**计费：正文用 emitted（已截断），
+      // 推理用 reasoningOut（现在也受上限约束）。
+      // 不再用 result.reasoning —— 那是上游的**全量**推理，
+      // 在截断场景下它比我们实际下发的多（被截掉的部分用户没拿到，
+      // 不该按它计费）。
       output: cutThis
-        ? emitted + (result.reasoning || "")
+        ? emitted + reasoningOut
         : result.content + (result.reasoning || ""),
       usage: cutThis ? null : result.usage,
       ip,

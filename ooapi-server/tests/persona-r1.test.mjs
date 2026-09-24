@@ -627,6 +627,49 @@ t("能力后缀的声明要写实（不再暗示一定生效）", () => {
   ck(/capability_suffixes/.test(gw), "仍要保留声明（删掉会回到「隐藏模型」那个抱怨）");
 });
 
+/* ============ ㉒ Round 3 清账（第二批）============ */
+console.log("\n=== ㉒ Round 3 清账（二）===");
+t("推理内容也计入 max_tokens 预算（推理模型不再超支）", () => {
+  const gw = read("src/routes/gateway.js");
+  // 人格实测：「gemini-3.8-flash-high max_tokens=10 → completion=85，可见内容只有 1 个字」
+  ck(/let reasoningOut = ""/.test(gw), "没有单独记录推理增量");
+  ck(/estimateTokens\(emitted \+ reasoningOut \+ t\) > maxOutTokens/.test(gw),
+    "onReasoning 没有把推理计入预算（会绕过上限）");
+  ck(/if \(outputTruncated\) return;/.test(gw), "onReasoning 没有在已截断时停止下发");
+  // 计费口径：截断时按实际交付（emitted + reasoningOut），不是上游全量
+  ck(/\? emitted \+ reasoningOut/.test(gw), "截断时仍按上游全量推理计费");
+});
+t("发帖图片按正方形缩略图渲染（长图不再撑高整行）", () => {
+  const pd = readFileSync(path.join(root, "..", "ooapi-web", "src", "pages", "PostDetailPage.jsx"), "utf8");
+  // 人格实测：「三张图并排时中间那张高一截，整块图区被它拉长」
+  // 窗口要够大：中间夹着一段说明注释（注释本身也提到 width/height，
+  // 但断言必须落在**真正的 props** 上，所以取到 <Image 那一块）
+  const i = pd.indexOf("post.media.map");
+  const blk = pd.slice(i, pd.indexOf("</Image.PreviewGroup>", i));
+  ck(/width=\{140\}/.test(blk) && /height=\{140\}/.test(blk), "帖子缩略图没有固定宽高（长图会撑高行）");
+});
+t("媒体库有直传入口（原先只能绕道发帖/换头像）", () => {
+  const mp = readFileSync(path.join(root, "..", "ooapi-web", "src", "pages", "MediaPage.jsx"), "utf8");
+  ck(/uploadRef/.test(mp), "没有上传用的 file ref");
+  ck(/onPickUpload/.test(mp), "没有上传处理函数");
+  ck(/upload: "媒体库上传"/.test(mp), "来源标签没有对应项");
+  ck(/accept="image\/\*,application\/pdf/.test(mp), "文件类型白名单没收窄（会送明显不支持的类型给后端）");
+});
+t("评论框有 @ 联想，且补全用用户名（昵称 @ 不生效）", () => {
+  const pd = readFileSync(path.join(root, "..", "ooapi-web", "src", "pages", "PostDetailPage.jsx"), "utf8");
+  // 人格实测：「@ 输入时没有联想下拉」；后端 @ 解析只认 username
+  ck(/oo-mention-pop/.test(pd), "没有联想下拉");
+  ck(/@\$\{name\} /.test(pd), "补全没有插入 @用户名");
+  ck(/chatroom\/users/.test(pd), "没有复用已有的用户搜索接口");
+});
+t("好友申请弹窗的字数计数器不压内容", () => {
+  const mp = readFileSync(path.join(root, "..", "ooapi-web", "src", "pages", "MessagesPage.jsx"), "utf8");
+  const css = readFileSync(path.join(root, "..", "ooapi-web", "src", "styles.css"), "utf8");
+  // 人格实测量到重叠
+  ck(/oo-count-textarea/.test(mp), "没有给该文本域加避让类名");
+  ck(/padding-bottom: 22px/.test(css), "没有给计数器留出底部空间");
+});
+
 /* ============ 语法校验（改坏一个字符就全站 500）============ */
 console.log("\n=== ⑰ 改动的文件语法可解析 ===");
 for (const f of [

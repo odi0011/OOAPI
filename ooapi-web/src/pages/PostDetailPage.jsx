@@ -62,6 +62,13 @@ export default function PostDetailPage() {
   // 字节进媒体库（有配额/去重/引用计数），评论行只存 id 列表。
   const [cMedia, setCMedia] = useState([]); // [{ id, url, name }]
   const [cUploading, setCUploading] = useState(false);
+  // @ 联想：输入 @ 后列出匹配的用户（用户名或昵称）。
+  //
+  // 人格实测（插画师）：「@ 输入时没有联想下拉，我是手打全名的」；
+  // 而且「社区里大家认昵称，输入框也不提示该写用户名还是昵称」。
+  // 后端 /api/chatroom/users?q= 本来就支持按 username 或 display_name 模糊搜，
+  // 直接复用（不新增接口）。
+  const [mention, setMention] = useState({ open: false, kw: "", items: [] });
 
   /** 上传一张图到媒体库，返回 { id, url, name }（评论附图用） */
   const uploadCommentImage = async (file) => {
@@ -387,7 +394,23 @@ export default function PostDetailPage() {
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
                   <Image.PreviewGroup>
                     {post.media.map((m) => (
-                      <Image key={m.id} src={m.url} alt="" width={140} style={{ borderRadius: "var(--r-sm)", objectFit: "cover" }} />
+                      // **必须同时给 width 与 height**。
+                      // 人格实测（插画师，传了 700×2000 的长图）：
+                      //   「我传的竖长条在详情页按 140×400 显示、比例没变形（这点对），
+                      //     但三张图并排时中间那张高一截，整块图区被它拉长，
+                      //     旁边留一大片空白。」
+                      // 原因就是这里只给了 width，高度由原图比例决定 →
+                      // 横图. 竖图. 方图混排时行高参差。
+                      // 修法：固定 140×140 + objectFit:cover（缩略图统一裁成方），
+                      // 想按原比例看完整图**点开预览**（灯箱本来就是按原比例的）。
+                      <Image
+                        key={m.id}
+                        src={m.url}
+                        alt=""
+                        width={140}
+                        height={140}
+                        style={{ borderRadius: "var(--r-sm)", objectFit: "cover" }}
+                      />
                     ))}
                   </Image.PreviewGroup>
                 </div>
@@ -495,7 +518,28 @@ export default function PostDetailPage() {
                         <textarea
                           className="oo-comment-raw-input"
                           value={input}
-                          onChange={(e) => setInput(e.target.value)}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setInput(v);
+                            // 取光标前最后一个 @ 到光标之间的片段作为关键词；
+                            // 含空格/换行就认为不在 @ 状态（避免把邮箱当提及，
+                            // 与后端 @ 解析的规则保持一致：要求 @ 前是行首或空白）
+                            const pos = e.target.selectionStart ?? v.length;
+                            const before = v.slice(0, pos);
+                            const m = before.match(/(?:^|[\s，。！？、,.!?])@([A-Za-z0-9_一-龥-]{0,32})$/);
+                            if (!m) {
+                              if (mention.open) setMention({ open: false, kw: "", items: [] });
+                              return;
+                            }
+                            const kw = m[1];
+                            setMention((prev) => ({ ...prev, open: true, kw }));
+                            API.get("/chatroom/users", { params: { q: kw } })
+                              .then((list) => {
+                                const arr = Array.isArray(list) ? list : list?.items || [];
+                                setMention((prev) => (prev.kw === kw ? { ...prev, items: arr.slice(0, 8) } : prev));
+                              })
+                              .catch(() => {});
+                          }}
                           placeholder="友善发言。支持 Markdown 语法与图片（可直接 Ctrl+V 粘贴截图）..."
                           maxLength={2000}
                           onPaste={(e) => {
@@ -508,6 +552,41 @@ export default function PostDetailPage() {
                             pickCommentImage(f);
                           }}
                         />
+
+                        {/* @ 联想下拉：点了就把「@用户名」补进正文。
+                            用**用户名**而不是昵称 —— 后端的 @ 解析只认 username
+                            （人格实测报过「写 @昵称 不产生通知」），
+                            所以补全时直接给能生效的那个写法，并在右侧显示昵称帮助辨认。 */}
+                        {mention.open && mention.items.length ? (
+                          <div className="oo-mention-pop">
+                            {mention.items.map((u) => (
+                              <button
+                                type="button"
+                                key={u.id}
+                                className="oo-mention-item"
+                                onMouseDown={(e) => {
+                                  // 用 mousedown 而不是 click：click 会在 textarea 失焦后才触发，
+                                  // 那时光标位置已经不可靠
+                                  e.preventDefault();
+                                  const name = u.username || "";
+                                  setInput((prev) =>
+                                    prev.replace(
+                                      /(^|[\s，。！？、,.!?])@([A-Za-z0-9_一-龥-]{0,32})$/,
+                                      (_all, pre) => `${pre}@${name} `
+                                    )
+                                  );
+                                  setMention({ open: false, kw: "", items: [] });
+                                }}
+                              >
+                                <UserAvatar user={u} size={20} />
+                                <span className="oo-mention-name">@{u.username}</span>
+                                {u.display_name ? (
+                                  <span className="oo-mention-nick">{u.display_name}</span>
+                                ) : null}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
 
                         {/* 图片预览 */}
                         {Boolean(cMedia.length) && (
