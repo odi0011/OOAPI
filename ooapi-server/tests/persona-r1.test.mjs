@@ -484,6 +484,58 @@ t("首页示例模型名必须是当前部署里**真能调**的（改过两次�
   ck(/以.{0,20}控制台.{0,30}为准|控制台 → 数据看板 → 接入信息/.test(hp), "示例旁没有指路到控制台的真实可用模型");
 });
 
+/* ============ ⑳ Round 3 后三人格 + 假人报的项 ============ */
+console.log("\n=== ⑳ Round 3 后段修复项 ===");
+t("编辑器不再往正文插 ![文件名](url)（同一张图显示两次）", () => {
+  const rte = readFileSync(path.join(root, "..", "ooapi-web", "src", "components", "RichTextEditor.jsx"), "utf8");
+  // 两个假人独立报：「传完图正文里多一行 !IMG_2043.JPG，得手动删」
+  ck(!/imgMarkdown/.test(rte), "还在往正文插 markdown 图片语法（会渲染成纯文本文件名）");
+  ck(/onMediaUploaded\?\.\(\{ id: res\.id/.test(rte), "没有登记附件（图片就丢了）");
+  ck(/图片已添加为附件/.test(rte), "提示文案没改（仍说『已插入正文』会误导）");
+});
+t("图片消息不再塞「[图片]」占位文字", () => {
+  const mp = readFileSync(path.join(root, "..", "ooapi-web", "src", "pages", "MessagesPage.jsx"), "utf8");
+  // 人格实测：「图的上面多了一行字『[图片]』，像模板没渲染完」
+  // 去掉注释再判定 —— 修复说明里会引用旧写法（`doSend("image", "[图片]", …)`），
+  // 那是解释不是实现，直接全文匹配会误报。
+  const mpCode = mp.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  ck(!/doSend\("image", "\[图片\]"/.test(mpCode), "还在发「[图片]」占位（气泡里会和图重复显示）");
+  ck(/doSend\("image", "", \[r\.id\]\)/.test(mpCode), "没有改成只发图");
+});
+t("对话页短会话不再强制滚到底（手机欢迎语被切）", () => {
+  const cp = readFileSync(path.join(root, "..", "ooapi-web", "src", "pages", "ChatPage.jsx"), "utf8");
+  // 人格实测（手机 390）：「『今天，想弄清楚什么？』只露出下半截」
+  ck(/el\.scrollHeight <= el\.clientHeight \+ 4/.test(cp), "没有「内容装得下就不滚」的判据");
+  ck(/el\.scrollTop = 0/.test(cp), "装得下时没有归零（会把顶部内容顶出视野）");
+});
+t("折叠评论框的提示文字单行省略（手机上会挤成 3 行压住图标）", () => {
+  const css = readFileSync(path.join(root, "..", "ooapi-web", "src", "styles.css"), "utf8");
+  // 注意文件里有**两条**同名前缀规则：一条是 `.oo-comment-collapsed-bar .oo-comment-input-pill > span:first-child`
+  //（只管颜色），另一条才是独立的省略规则。取最后一条。
+  const marker = "\n.oo-comment-input-pill > span:first-child {";
+  const blk = css.slice(css.lastIndexOf(marker), css.lastIndexOf(marker) + 400);
+  ck(/white-space: nowrap/.test(blk) && /text-overflow: ellipsis/.test(blk), "提示文字没有单行省略");
+  ck(/flex: 0 0 auto/.test(css.slice(css.indexOf(".oo-comment-pill-actions"), css.indexOf(".oo-comment-pill-actions") + 200)),
+    "右侧图标组没有禁止收缩（会被长文案挤走）");
+});
+t("使用记录的令牌/分组对本人可见（不只是管理员）", () => {
+  const lg = read("src/routes/log.js");
+  const baseEnd = lg.indexOf("if (!isAdmin) return base;");
+  const base = lg.slice(0, baseEnd);
+  ck(/token_id: Number\(r\.token_id\)/.test(base), "token_id 不在 base（普通用户看不到是哪把 Key 花的）");
+  ck(/token_name: r\.token_name/.test(base), "token_name 不在 base");
+  ck(/group_name: r\.group_name/.test(base), "group_name 不在 base");
+  // 渠道名仍必须只给管理员（上游账号身份）
+  ck(!/channel_name: r\.channel_name/.test(base), "channel_name 被开放给普通用户了（会泄露上游账号身份）");
+});
+t("令牌对账接口在 /:id 之前声明（否则被路由吞掉）", () => {
+  const tk = read("src/routes/token.js");
+  const iReconcile = tk.indexOf('"/reconcile"');
+  const iId = tk.indexOf('"/:id"');
+  ck(iReconcile > 0, "没有 /reconcile 接口（删过密钥的账对不上）");
+  ck(iId > 0 && iReconcile < iId, "/reconcile 声明在 /:id 之后，会被它吞掉（Express 按声明顺序匹配）");
+});
+
 /* ============ 语法校验（改坏一个字符就全站 500）============ */
 console.log("\n=== ⑰ 改动的文件语法可解析 ===");
 for (const f of [

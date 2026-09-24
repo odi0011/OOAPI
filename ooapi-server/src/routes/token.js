@@ -98,6 +98,21 @@ router.get(
       // 掩码只留前缀与后 4 位，避免泄露可用密钥
       return { ...r, key: r.key.slice(0, 3) + "******************" + r.key.slice(-4) };
     });
+    // 已删除密钥花掉的钱：**必须显式告诉用户**，否则对账永远差一截。
+    //
+    // 人格实测报的（小团队负责人）：「我删了三把用过的测试钥匙。
+    //   工作台『已用额度』= 51 单位；令牌管理里所有钥匙『已用』加总 = 39 单位。
+    //   差的 12 个单位，就是被我删掉那几把钥匙花掉的钱。钥匙删了，钱还留在账户上，
+    //   但再也加不回来。我月底对账，一对就是差一截。」
+    //
+    // 根因：删令牌是**物理删除**（DELETE FROM tokens），而花费记在账户的
+    // used_quota 上 —— 删掉的那把 Key 花过的钱不再属于任何现存行，
+    // 于是「可见的行加总 ≠ 账户总额」。这个差不是 bug（钱确实花了），
+    // 但用户看不见它，就只会当成「系统算错了」。
+    // 这里把差额算出来显式返回，前端把它作为「(另有已删除密钥 N)」展示。
+    // 对账差额（= 账户已用 − 现存 Key 已用之和）：**另走一个轻量接口**
+    // `/token/reconcile` 返回，不塞进这里 —— 列表接口的 data 必须是数组，
+    // 前端多处直接当数组用（`setItems(data)`），改形状会连带改前端与所有测试。
     return ok(res, items);
   })
 );
@@ -231,6 +246,42 @@ router.put(
     await pool.query(`UPDATE tokens SET ${sets.join(", ")} WHERE id = ? AND user_id = ?`, vals);
     const [fresh] = await pool.query("SELECT * FROM tokens WHERE id = ?", [token]);
     return ok(res, tokenToResponse(fresh[0]), "令牌已更新");
+  })
+);
+
+// 令牌对账：账户已用额度 vs 现存密钥已用之和
+// ---------------------------------------------------------------------------
+// 为什么需要它（人格实测报的，小团队负责人）：
+//   「我删了三把用过的测试钥匙。工作台『已用额度』= 51 单位；
+//     令牌管理里所有钥匙『已用』加总 = 39 单位。差的 12 个单位，
+//     就是被我删掉那几把钥匙花掉的钱。钥匙删了，钱还留在账户上，
+//     但再也加不回来。我月底对账，一对就是差一截。」
+//
+// 根因：删令牌是**物理删除**，而花费记在账户的 used_quota 上 ——
+// 被删那把 Key 花过的钱不再属于任何现存行，于是「可见行之和 ≠ 账户总额」。
+// 钱确实花了，这个差不是账算错，但用户看不见它就只会当成系统出错。
+// 这个接口把差额显式报出来，前端在令牌页顶部提示
+// 「另有已删除密钥花掉 X」——对得上账，才不会怀疑平台。
+//
+// 注意放在 `/:id` 之前：Express 按声明顺序匹配，否则 "/reconcile" 会被
+// `/:id` 吞掉（idParam 解析失败 → 404「令牌不存在」），这是很典型的路由顺序坑。
+router.get(
+  "/reconcile",
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const [[u]] = await pool.query("SELECT used_quota FROM users WHERE id = ? LIMIT 1", [req.user.id]);
+    const accountUsed = Number(u?.used_quota) || 0;
+    const [[k]] = await pool.query(
+      "SELECT COALESCE(SUM(used_quota), 0) AS s FROM tokens WHERE user_id = ?",
+      [req.user.id]
+    );
+    const keysUsed = Number(k?.s) || 0;
+    return ok(res, {
+      account_used_quota: accountUsed,
+      keys_used_quota: keysUsed,
+      // 差额（正数 = 有已删除密钥花掉的量；负数说明有其他入账来源，同样如实报）
+      deleted_used_quota: accountUsed - keysUsed,
+    });
   })
 );
 

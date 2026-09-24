@@ -3918,6 +3918,7 @@ h1, h2, h3, h4 {
 }
 .oo-comment-input-pill {
   flex: 1;
+  min-width: 0; /* 允许在 flex 行里收缩（否则长文案会把同级图标挤出去） */
   height: 38px;
   border-radius: 19px;
   background: var(--inset);
@@ -3926,9 +3927,30 @@ h1, h2, h3, h4 {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   color: var(--ink-3);
   font-size: 13px;
   transition: all 0.15s ease;
+  overflow: hidden;
+}
+/* 折叠态的提示文字必须**单行省略**。
+   手机（390）下这段文案有 30+ 字，原实现没有 nowrap/ellipsis →
+   换成 3 行、冲出 38px 的胶囊高度，中间那行还压在右侧图标上。
+   人格实测原话：「灰字挤成三行，上下的字都冲出圆角框外面，
+   中间一行正压在右边三个图标上，字和图标糊成一团。」 */
+.oo-comment-input-pill > span:first-child {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 右侧图标组不参与收缩（它们是可点区域，缩了就点不到） */
+.oo-comment-pill-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .oo-comment-collapsed-bar:hover .oo-comment-input-pill {
   border-color: var(--accent);

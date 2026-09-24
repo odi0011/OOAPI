@@ -326,8 +326,17 @@ export default function MessagesPage() {
         fr.onerror = () => reject(new Error("读取文件失败"));
         fr.readAsDataURL(file);
       });
+      // **不要塞 "[图片]" 这个占位文字**。
+      //
+      // 原实现发的是 `doSend("image", "[图片]", [r.id])` —— content 和 media 都带上，
+      // 于是气泡里既渲染图片、又把这四个字原样显示在图片上方，看着像模板没渲染完。
+      // 人格实测原话：「图确实在气泡里，但图的上面多了一行字『[图片]』……
+      // 对我这种发图为主的人，等于每张图配一个多余的标签。」
+      //
+      // doSend 允许「只有图、没有字」（它判的是 `!content.trim() && !mediaIds.length`），
+      // 所以传空字符串即可，气泡只显示图片。
       const r = await API.post("/media", { dataUrl, name: file.name, source: "chat" });
-      await doSend("image", "[图片]", [r.id]);
+      await doSend("image", "", [r.id]);
     } catch (err) {
       toast.error(err.message || "图片上传失败");
     } finally {

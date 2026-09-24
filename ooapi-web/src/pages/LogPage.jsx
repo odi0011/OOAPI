@@ -351,26 +351,33 @@ export default function LogPage() {
                 <span style={{ color: "var(--ink-3)" }}>-</span>
               ),
           },
-          {
-            title: "密钥",
-            dataIndex: "token_name",
-            width: 120,
-            ellipsis: true,
-            render: (v, r) =>
-              v ? (
-                <Tooltip title={`#${r.token_id} ${v}`}>
-                  <span className="oo-truncate" style={{ fontSize: 12.5 }}>{v}</span>
-                </Tooltip>
-              ) : r.token_id ? (
-                <Tooltip title={`令牌 #${r.token_id}（名称未记录）`}>
-                  <span className="oo-truncate" style={{ fontSize: 12.5, color: "var(--ink-3)" }}>#{r.token_id}</span>
-                </Tooltip>
-              ) : (
-                <span style={{ color: "var(--ink-3)" }}>账户额度</span>
-              ),
-          },
         ]
       : []),
+    // 密钥列：**所有人可见**（不只是管理员）。
+    //
+    // 人格实测报的（小团队负责人，一人管 10 把 Key）：
+    //   「使用记录里没有『密钥』列。我 10 个人 10 把钥匙，想知道小李这个月花了多少，
+    //     得先去筛选框选中他那把钥匙。我要的是每一行直接写着谁花的。」
+    // 后端已把 token_id/token_name/group_name 对本人开放（渠道名仍只给管理员，
+    // 那是上游账号身份）。这里把列移出 isAdmin 分支即可。
+    {
+      title: "密钥",
+      dataIndex: "token_name",
+      width: 120,
+      ellipsis: true,
+      render: (v, r) =>
+        v ? (
+          <Tooltip title={`#${r.token_id} ${v}`}>
+            <span className="oo-truncate" style={{ fontSize: 12.5 }}>{v}</span>
+          </Tooltip>
+        ) : r.token_id ? (
+          <Tooltip title={`令牌 #${r.token_id}（名称未记录）`}>
+            <span className="oo-truncate" style={{ fontSize: 12.5, color: "var(--ink-3)" }}>#{r.token_id}</span>
+          </Tooltip>
+        ) : (
+          <span style={{ color: "var(--ink-3)" }}>账户额度</span>
+        ),
+    },
     {
       title: "调用内容",
       dataIndex: "content",

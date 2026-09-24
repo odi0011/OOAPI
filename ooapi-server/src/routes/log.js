@@ -41,15 +41,25 @@ function mapLog(r, { isAdmin }) {
     // 关联键：一次调用若产生两条记录（计费 + 错误，客户端提前断开时会这样），
     // 靠它才能把两条对起来。本人可见（就是他自己的调用）。
     request_id: r.request_id || "",
+    // 令牌与分组**对本人可见**。
+    //
+    // 原先这三个字段只给管理员，普通用户看不到「这笔调用是哪把 Key 花的」——
+    // 人格实测报的（小团队负责人，一人管 10 把 Key）：
+    //   「使用记录里没有『密钥』列。我 10 个人 10 把钥匙，想知道小李这个月花了多少，
+    //     得先去筛选框选中他那把钥匙。我要的是每一行直接写着谁花的。」
+    //
+    // 这几个值描述的是**用户自己的资源**（他自己创建的 Key、他自己选的分组），
+    // 不是别人的信息 —— 与 channel_name 不同：后者是上游账号身份，泄露它
+    // 等于暴露供应商来源，所以仍然只给管理员。
+    token_id: Number(r.token_id) || 0,
+    token_name: r.token_name || "",
+    group_name: r.group_name || "",
   };
   if (!isAdmin) return base;
   return {
     ...base,
     channel_id: Number(r.channel_id) || 0,
     channel_name: r.channel_name || "",
-    token_id: Number(r.token_id) || 0,
-    token_name: r.token_name || "",
-    group_name: r.group_name || "",
     user_agent: r.user_agent || "",
     detail: r.detail || "",
   };

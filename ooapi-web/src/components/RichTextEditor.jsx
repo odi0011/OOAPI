@@ -109,11 +109,23 @@ export default function RichTextEditor({
         source: "community",
       });
 
+      // **只登记附件，不往正文插 markdown**。
+      //
+      // 原先这里既 replaceSelection(`![文件名](url)`) 又 onMediaUploaded，
+      // 同一张图出现两次：正文里一行 `![IMG_2043.JPG](/api/media/123/raw?s=…)`，
+      // 下面附件区又是那张图。而正文那行**渲染出来是纯文本** ——
+      // Markdown 渲染器只认加粗/斜体/代码/列表/引用，不解析图片语法。
+      //
+      // 两个假人独立报了这条（各自原话）：
+      //   「传完图正文里多一行 !IMG_2043.JPG，得手动删」
+      //   「是 bug 还是我操作不对？」
+      //
+      // 修法：图片统一由**附件**承载（media_ids → 详情页按 <Image> 渲染，
+      // 有缩略图、能点开大图、删除时引用计数也归它管）。
+      // 「把图插到正文某一行」是 markdown 能力问题，不该由上传按钮顺手塞一行文本。
       const imgUrl = res.url || "";
-      const imgMarkdown = `\n![${file.name || "图片"}](${imgUrl})\n`;
-      replaceSelection(imgMarkdown, "", "");
       onMediaUploaded?.({ id: res.id, url: imgUrl, name: file.name });
-      antMessage.success("图片已插入正文");
+      antMessage.success("图片已添加为附件");
     } catch (err) {
       antMessage.error(err.message || "图片上传失败");
     } finally {

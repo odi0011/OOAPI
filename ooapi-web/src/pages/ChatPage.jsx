@@ -766,7 +766,24 @@ export default function ChatPage() {
 
   /* ---------- 滚动跟随 ---------- */
   useEffect(() => {
-    if (stickyRef.current && threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
+    const el = threadRef.current;
+    if (!stickyRef.current || !el) return;
+    // 只在**真的需要**时才滚到底。
+    //
+    // 原先无条件 `scrollTop = scrollHeight`，在手机（视口 390×844、
+    // 消息容器只有 ~414px 高）上空会话或短会话会被顶到最下面，
+    // 把欢迎语那行大字顶出上边缘 —— 只露出下半截。
+    // 人格实测原话：「手机上看对话页，『今天，想弄清楚什么？』这行字被切掉了一半。
+    // 我把 scrollTop 归 0，它跑到 377px 就完整了。桌面上容器装得下，所以看不到。」
+    //
+    // 判据：内容超出容器（有可滚动的余量）才跟随到底；装得下就保持原位，
+    // 让欢迎语完整可见。这与 onThreadScroll 里「内容不足一屏不显示跳转按钮」
+    // 是同一个思路。
+    if (el.scrollHeight <= el.clientHeight + 4) {
+      el.scrollTop = 0;
+      return;
+    }
+    el.scrollTop = el.scrollHeight;
   }, [msgs]);
 
   const onThreadScroll = () => {
