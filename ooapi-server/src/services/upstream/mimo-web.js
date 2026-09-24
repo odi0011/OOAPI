@@ -56,9 +56,26 @@ export function parseAuth(raw) {
     obj = null;
   }
 
+  // cookies 有**两种**常见形态，都要认：
+  //   ① 对象映射：{"cookies": {"serviceToken": "xxx"}}
+  //   ② 数组形式：{"cookies": [{"name":"serviceToken","value":"xxx"}]}
+  //      —— 浏览器扩展/抓取流程导出的就是这个形状（也是前端提交的形状）。
+  // 原先只认 ①，于是用户粘 ② 时报「没有解析到 serviceToken」，
+  // 而他手里那份凭据明明是完整有效的 —— 这是最让人火大的那类报错。
+  const cookieMap = (() => {
+    const c = obj?.cookies;
+    if (Array.isArray(c)) {
+      const m = {};
+      for (const it of c) {
+        if (it && typeof it === "object" && it.name) m[String(it.name)] = it.value;
+      }
+      return m;
+    }
+    return c && typeof c === "object" ? c : {};
+  })();
   const pick = (...names) => {
     for (const n of names) {
-      const v = obj?.[n] ?? obj?.cookies?.[n];
+      const v = obj?.[n] ?? cookieMap?.[n];
       if (v) return String(v).trim();
     }
     return "";
@@ -66,7 +83,16 @@ export function parseAuth(raw) {
 
   // 形态一：JSON（可能来自扩展导出或手工拼）
   if (obj && typeof obj === "object" && !Array.isArray(obj)) {
-    const serviceToken = pick("serviceToken", "service_token", "token");
+    // cookie 的真实名字是 `xiaomichatbot_serviceToken`（数组/映射形态里都是这个名），
+    // 所以候选名要把它带上 —— 否则「数组形态」会取到 uid/ph 却独独缺 token，
+    // 报「没有解析到 serviceToken」，而用户手里那份凭据其实是完整的。
+    const serviceToken = pick(
+      "serviceToken",
+      "service_token",
+      "xiaomichatbot_serviceToken",
+      "xiaomichatbot_servicetoken",
+      "token"
+    );
     // 也接受 "cookie": "a=b; c=d" 的形态
     const cookieStr = String(obj.cookie || obj.cookies_raw || "");
     if (!serviceToken && cookieStr) return parseCookieString(cookieStr);
@@ -91,7 +117,9 @@ function parseCookieString(str) {
     return m ? decodeURIComponent(m[1].trim().replace(/^"|"$/g, "")) : "";
   };
   return {
-    service_token: get("serviceToken"),
+    // 两个名字都认（DevTools 里显示的是 xiaomichatbot_serviceToken，
+    // 而手册/扩展导出里常写成 serviceToken）
+    service_token: get("xiaomichatbot_serviceToken") || get("serviceToken"),
     user_id: get("userId"),
     ph: get("xiaomichatbot_ph"),
   };
