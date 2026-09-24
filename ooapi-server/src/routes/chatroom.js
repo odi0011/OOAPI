@@ -743,7 +743,7 @@ router.put(
 );
 
 // ---------------------------------------------------------------------------
-// 9. QQ 频道体系：频道服务器与子频道列表（自动预置官方默认主频道）
+// 9. 频道体系：频道服务器与子频道列表（自动预置官方默认主频道）
 // ---------------------------------------------------------------------------
 async function ensureDefaultGuildAndChannels() {
   const [guilds] = await pool.query("SELECT * FROM community_guilds WHERE status = 1 LIMIT 1");

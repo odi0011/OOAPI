@@ -10,7 +10,7 @@ import {
 } from "antd";
 import {
   PlusOutlined, ReloadOutlined, FireOutlined, ClockCircleOutlined, StarOutlined,
-  TeamOutlined, TagsOutlined, SearchOutlined, NotificationOutlined, PictureOutlined,
+  TeamOutlined, TagsOutlined, SearchOutlined, NotificationOutlined, PictureOutlined, DeleteOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
@@ -28,8 +28,10 @@ export default function CommunityPage() {
   const { begin, isLatest } = useLatest();
   const [params, setParams] = useSearchParams();
 
+  const isAdmin = Number(user?.role) >= 100;
   const topicId = Number(params.get("topic_id")) || 0;
-  const sort = params.get("sort") === "hot" ? "hot" : "new";
+  const rawSort = params.get("sort");
+  const sort = rawSort === "hot" ? "hot" : (isAdmin && rawSort === "deleted" ? "deleted" : "new");
   const feed = ["all", "following", "favorited"].includes(params.get("feed") || "") ? params.get("feed") : "all";
 
   const [topics, setTopics] = useState([]);
@@ -63,15 +65,18 @@ export default function CommunityPage() {
     setLoading(true);
     setLoadError("");
     try {
+      const isDeletedTab = sort === "deleted" && isAdmin;
       const data = await API.get("/community/posts", {
         params: {
           p: page,
           page_size: 20,
           topic_id: topicId || undefined,
-          sort,
+          sort: isDeletedTab ? undefined : sort,
+          tab: isDeletedTab ? "deleted" : undefined,
+          status: isDeletedTab ? 2 : undefined,
           q: keyword || undefined,
-          following: feed === "following" ? 1 : undefined,
-          favorited: feed === "favorited" ? 1 : undefined,
+          following: !isDeletedTab && feed === "following" ? 1 : undefined,
+          favorited: !isDeletedTab && feed === "favorited" ? 1 : undefined,
         },
       });
       if (!isLatest(token)) return;
@@ -84,7 +89,7 @@ export default function CommunityPage() {
     } finally {
       if (isLatest(token)) setLoading(false);
     }
-  }, [begin, isLatest, message, page, topicId, sort, keyword, feed]);
+  }, [begin, isLatest, message, page, topicId, sort, keyword, feed, isAdmin]);
 
   useEffect(() => {
     load();
@@ -215,6 +220,7 @@ export default function CommunityPage() {
                 options={[
                   { value: "new", label: "最新", icon: <ClockCircleOutlined /> },
                   { value: "hot", label: "最热", icon: <FireOutlined /> },
+                  ...(isAdmin ? [{ value: "deleted", label: "已删除", icon: <DeleteOutlined /> }] : []),
                 ]}
               />
               <Select
@@ -270,13 +276,15 @@ export default function CommunityPage() {
               items={posts.items}
               loading={loading}
               empty={
-                feed === "following"
-                  ? "你关注的人还没有发帖；去社区逛逛，关注几个感兴趣的作者"
-                  : feed === "favorited"
-                    ? "还没有收藏的帖子"
-                    : topicId
-                      ? "这个话题下还没有帖子，来发第一帖"
-                      : "社区还没有内容，点击右上角「发帖」开启第一帖"
+                sort === "deleted"
+                  ? "回收站为空，暂无已删除帖子"
+                  : feed === "following"
+                    ? "你关注的人还没有发帖；去社区逛逛，关注几个感兴趣的作者"
+                    : feed === "favorited"
+                      ? "还没有收藏的帖子"
+                      : topicId
+                        ? "这个话题下还没有帖子，来发第一帖"
+                        : "社区还没有内容，点击右上角「发帖」开启第一帖"
               }
               onOpen={(p) => navigate(`/community/${p.id}`)}
               // 后端对普通用户是「status=1 或 自己发的」，所以**自己删掉/被隐藏的帖子

@@ -13,7 +13,7 @@ import {
 } from "antd";
 import {
   PlusOutlined, ReloadOutlined, EditOutlined, EyeOutlined, EyeInvisibleOutlined,
-  PushpinOutlined, DeleteOutlined, CalculatorOutlined, TagsOutlined,
+  PushpinOutlined, DeleteOutlined, CalculatorOutlined, TagsOutlined, UndoOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import useLatest from "../hooks/useLatest";
@@ -204,6 +204,17 @@ export default function AdminCommunityPage() {
           <Tooltip title="查看详情">
             <Button type="text" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/community/${r.id}`)} />
           </Tooltip>
+          {Number(r.status) === 2 ? (
+            <Tooltip title="恢复帖子">
+              <Button
+                type="text"
+                size="small"
+                icon={<UndoOutlined />}
+                disabled={acting}
+                onClick={() => moderate(r.id, { status: 1 })}
+              />
+            </Tooltip>
+          ) : null}
           {Number(r.status) !== 2 ? (
             <Tooltip title={Number(r.status) === 3 ? "取消隐藏" : "隐藏（可恢复，比删除温和）"}>
               <Button

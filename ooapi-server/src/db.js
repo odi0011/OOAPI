@@ -545,7 +545,7 @@ const TABLES = [
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
   // ---------------------------------------------------------------------------
-  // QQ 频道体系：频道服务器 (Guild) 与子频道 (Channel)
+  // 频道体系：频道服务器 (Guild) 与子频道 (Channel)
   // ---------------------------------------------------------------------------
   `CREATE TABLE IF NOT EXISTS community_guilds (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,

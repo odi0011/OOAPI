@@ -1,8 +1,8 @@
-// 好友系统与 QQ 频道自动化测试
+// 好友系统与频道模块自动化测试
 // 验证：
 // 1. 好友申请发送、防自己加自己拦截、待处理列表
 // 2. 好友申请同意、双向关系建立、备注修改、解除好友
-// 3. QQ 频道体系：频道服务器与子频道列表、子频道房间绑定
+// 3. 频道体系：频道服务器与子频道列表、子频道房间绑定
 // 4. 群公告与群名称修改接口
 // 5. 校验小游戏模块已全量下线
 import http from "node:http";
@@ -24,7 +24,7 @@ const ck = (n, cond, extra = "") => {
   }
 };
 
-console.log("=== 好友系统与 QQ 频道模块自动化测试 ===\n");
+console.log("=== 好友系统与频道模块自动化测试 ===\n");
 
 // 内存 Mock 数据库，验证业务逻辑闭环
 const db = {
@@ -341,7 +341,7 @@ try {
     ck("修改好友备注成功", remarkRes.status === 200 && remarkRes.json?.data?.remark === "我的伙伴Bob");
   }
 
-  console.log("\n--- 3. QQ 频道体系（频道服务器与子频道列表自动预置） ---");
+  console.log("\n--- 3. 频道体系（频道服务器与子频道列表自动预置） ---");
   {
     const guildRes = await req("/api/chatroom/guilds");
     ck("成功获取频道服务器列表", guildRes.status === 200 && Array.isArray(guildRes.json?.data));
@@ -380,6 +380,6 @@ console.log(`\n测试汇总：通过 ${pass}，失败 ${fail}`);
 if (fail > 0) {
   process.exit(1);
 } else {
-  console.log("好友系统与 QQ 频道自动化测试全部通过！");
+  console.log("好友系统与频道自动化测试全部通过！");
   process.exit(0);
 }

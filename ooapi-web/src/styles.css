@@ -1113,7 +1113,7 @@ h1, h2, h3, h4 {
 
 /* 对话页整页锁定高度，内部各自滚动 */
 .oo-content.ui-chat-content { padding: 24px; overflow: hidden; }
-/* 消息与QQ频道沉浸式工作台：无缝铺满，无外边距，高度自适应填充 */
+/* 消息与频道沉浸式工作台：无缝铺满，无外边距，高度自适应填充 */
 .oo-content.ui-messages-content { padding: 0; overflow: hidden; height: calc(100vh - 54px); display: flex; flex-direction: column; }
 
 .oo-nav-badge {
@@ -3992,7 +3992,7 @@ h1, h2, h3, h4 {
 }
 
 /* ===========================================================================
-   QQ 频道与消息模块沉浸式工作台 (QQ Channel & Full-bleed IM Layout)
+   频道与消息模块沉浸式工作台 (Channels & Full-bleed IM Layout)
    =========================================================================== */
 .qq-workspace-wrap {
   width: 100%;
@@ -4155,7 +4155,7 @@ h1, h2, h3, h4 {
   background: #bfbfbf;
 }
 
-/* QQ 频道服务器 Banner 与子频道列表 */
+/* 频道服务器 Banner 与子频道列表 */
 .qq-guild-banner {
   padding: 14px;
   background: linear-gradient(135deg, rgba(var(--accent-rgb, 22, 119, 255), 0.1) 0%, rgba(var(--accent-rgb, 22, 119, 255), 0.02) 100%);

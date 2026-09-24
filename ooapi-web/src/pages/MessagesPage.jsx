@@ -1,7 +1,7 @@
-// QQ 频道沉浸式消息社区工作台
+// 频道与即时消息社区工作台
 // ---------------------------------------------------------------------------
 // 模式与功能对齐：
-// ① QQ 频道 (QQ Channel) 体系：频道服务器 (Guild) + 文字/公告子频道组织，支持公告气泡、话题说明与公共文字流；
+// ① 频道 (Channels / Guild) 体系：频道服务器 + 文字/公告子频道组织，支持公告气泡、话题说明与公共文字流；
 // ② QQ 私聊 (C2C) 与 群聊 (Group Chat)：单聊/群聊会话、置顶、未读红点、实时在线指示灯、群公告、群成员分层展示；
 // ③ 完备好友系统：好友申请与留言验证、在线/离线好友分组、好友备注名修改、双向关系解除、一键发起私聊；
 // ④ 纯正 Channel Layout：左侧 Hub Rail + 中间 Sub-Sidebar + 右侧主舞台与成员抽屉。
@@ -74,7 +74,7 @@ export default function MessagesPage() {
   const [addFriendForm] = Form.useForm();
   const [contactsView, setContactsView] = useState("friends"); // 'friends' | 'requests'
 
-  // 4. QQ 频道体系状态
+  // 4. 频道体系状态
   const [guilds, setGuilds] = useState([]);
   const [guildsLoading, setGuildsLoading] = useState(false);
   const [activeChannelId, setActiveChannelId] = useState(0);
@@ -134,7 +134,7 @@ export default function MessagesPage() {
     }
   }, []);
 
-  /* ==================== ③ QQ 频道体系加载 ==================== */
+  /* ==================== ③ 频道体系加载 ==================== */
   const loadGuilds = useCallback(async () => {
     setGuildsLoading(true);
     try {
@@ -538,15 +538,15 @@ export default function MessagesPage() {
             </Tooltip>
           </div>
 
-          {/* 2. QQ 频道服务器入口图标 */}
+          {/* 2. 频道服务器入口图标 */}
           <div className={`qq-rail-item-box ${hubTab === "guild" ? "is-active" : ""}`}>
             <span className="qq-rail-pill" />
-            <Tooltip title="QQ 频道 · 官方开发者社区" placement="right">
+            <Tooltip title="频道 · 开发者社区" placement="right">
               <div
                 className="qq-rail-btn"
                 role="button"
                 tabIndex={0}
-                aria-label="QQ 频道 · 官方开发者社区"
+                aria-label="频道 · 开发者社区"
                 onClick={() => {
                   setHubTab("guild");
                   if (guilds[0]?.channels?.[0]) {
@@ -630,13 +630,13 @@ export default function MessagesPage() {
                 ) : !rooms.filter((r) => !r.guild_channel_id).length ? (
                   <div style={{ padding: "36px 16px", textAlign: "center" }}>
                     <div style={{ fontSize: 13, color: "var(--ink-2)", fontWeight: 500, marginBottom: 4 }}>暂无私聊或独立群聊</div>
-                    <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 14 }}>可添加好友发起私聊，或前往 QQ 频道交流</div>
+                    <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 14 }}>可添加好友发起私聊，或前往频道交流</div>
                     <Space direction="vertical" size={8} style={{ width: "100%" }}>
                       <Button size="small" type="primary" block icon={<UserAddOutlined />} onClick={() => setAddFriendOpen(true)}>添加好友</Button>
                       <Button size="small" block icon={<GlobalOutlined />} onClick={() => {
                         setHubTab("guild");
                         if (guilds[0]?.channels?.[0]) navigate(`/messages/${guilds[0].channels[0].room_id}`);
-                      }}>前往 QQ 频道</Button>
+                      }}>前往官方频道</Button>
                     </Space>
                   </div>
                 ) : (
@@ -811,7 +811,7 @@ export default function MessagesPage() {
             </>
           )}
 
-          {/* C. 处于「QQ 频道 (Channel Guild)」模式 */}
+          {/* C. 处于「频道 (Channel Guild)」模式 */}
           {hubTab === "guild" && (
             <>
               <div className="qq-guild-banner">
@@ -976,14 +976,14 @@ export default function MessagesPage() {
               </div>
               <h3 style={{ fontSize: 18, fontWeight: 600, margin: 0, color: "var(--ink)" }}>开启社区无界交流</h3>
               <p style={{ color: "var(--ink-3)", fontSize: 13, marginTop: 8, maxWidth: 380, textAlign: "center", lineHeight: 1.6 }}>
-                选择左侧好友私聊、交流群，或切换到 QQ 频道探索官方技术交流天地
+                选择左侧好友私聊、交流群，或切换到频道探索技术交流天地
               </p>
               <Space style={{ marginTop: 18 }}>
                 <Button type="primary" icon={<UserAddOutlined />} onClick={() => setAddFriendOpen(true)}>添加好友</Button>
                 <Button icon={<GlobalOutlined />} onClick={() => {
                   setHubTab("guild");
                   if (guilds[0]?.channels?.[0]) navigate(`/messages/${guilds[0].channels[0].room_id}`);
-                }}>进入 QQ 频道</Button>
+                }}>进入频道</Button>
                 <Button icon={<UsergroupAddOutlined />} onClick={() => { createForm.resetFields(); setCreateOpen(true); }}>创建群聊</Button>
               </Space>
             </div>

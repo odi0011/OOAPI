@@ -81,10 +81,10 @@ function tooLong(value, max, label) {
   return `${label}最长 ${max} 字，当前 ${s.length} 字`;
 }
 
-/** 帖子/评论的可见性条件：普通用户只看 status=1 与自己的内容 */
+/** 帖子/评论的可见性条件：正常流中彻底剔除已删除 (status=2) 内容，即使管理员与作者也不例外 */
 function visibilityClause(user, alias = "p") {
-  if (user && user.role >= 100) return { sql: "", args: [] };
-  if (user) return { sql: `AND (${alias}.status = 1 OR ${alias}.user_id = ?)`, args: [user.id] };
+  if (user && user.role >= 100) return { sql: `AND ${alias}.status != 2`, args: [] };
+  if (user) return { sql: `AND (${alias}.status = 1 OR (${alias}.status = 3 AND ${alias}.user_id = ?))`, args: [user.id] };
   return { sql: `AND ${alias}.status = 1`, args: [] };
 }
 
@@ -256,17 +256,23 @@ router.get(
     const isAdmin = req.user.role >= 100;
     const where = ["1=1"];
     const args = [];
-    // 管理员可以显式指定 status 查看隐藏/已删内容（审核用）；
-    // 普通用户一律走可见性规则，传了 status 也只当筛选自己的可见内容。
-    const explicitStatus = isAdmin && req.query.status !== undefined ? Number(req.query.status) : null;
-    if (isAdmin && [1, 2, 3].includes(explicitStatus)) {
-      where.push("p.status = ?");
-      args.push(explicitStatus);
+    // 检查是否请求管理员专属的「已删除」Tab：
+    const isDeletedTab = req.query.tab === "deleted" || (req.query.status !== undefined && Number(req.query.status) === 2);
+    if (isDeletedTab) {
+      if (!isAdmin) return fail(res, "无权查看已删除内容", 403);
+      where.push("p.status = 2");
     } else {
-      const vis = visibilityClause(req.user, "p");
-      if (vis.sql) {
-        where.push(vis.sql.replace(/^AND /, ""));
-        args.push(...vis.args);
+      // 常规流（最新/最热/关注等）：彻底禁止展示已删除内容（status=2），即便是管理员也不展示！
+      const explicitStatus = isAdmin && req.query.status !== undefined ? Number(req.query.status) : null;
+      if (isAdmin && [1, 3].includes(explicitStatus)) {
+        where.push("p.status = ?");
+        args.push(explicitStatus);
+      } else {
+        const vis = visibilityClause(req.user, "p");
+        if (vis.sql) {
+          where.push(vis.sql.replace(/^AND /, ""));
+          args.push(...vis.args);
+        }
       }
     }
     // ?topic_id=Infinity 这类输入要挡住：`Number("Infinity") || 0` 仍然是 Infinity，
@@ -299,7 +305,9 @@ router.get(
     const clause = `WHERE ${where.join(" AND ")}`;
     // 排序白名单：拼接 SQL 前必须先过白名单（用户可控值不进 ORDER BY）
     const sort = String(req.query.sort || "");
-    const order = sort === "hot" ? "p.is_pinned DESC, p.like_count DESC, p.comment_count DESC, p.id DESC" : "p.is_pinned DESC, p.id DESC";
+    const order = isDeletedTab
+      ? "p.deleted_time DESC, p.id DESC"
+      : (sort === "hot" ? "p.is_pinned DESC, p.like_count DESC, p.comment_count DESC, p.id DESC" : "p.is_pinned DESC, p.id DESC");
 
     const [[cnt]] = await pool.query(`SELECT COUNT(*) AS n FROM community_posts p ${clause}`, args);
     const [rows] = await pool.query(
@@ -542,12 +550,17 @@ router.post(
     let countDelta = 0;
     if (req.body?.status !== undefined) {
       const st = Number(req.body.status);
-      if (![1, 3].includes(st)) return fail(res, "status 只能是 1（正常）或 3（隐藏）");
+      if (![1, 2, 3].includes(st)) return fail(res, "status 只能是 1（正常）、2（已删）或 3（隐藏）");
       const was = Number(row.status);
-      if (was !== st && (was === 1 || st === 1)) countDelta = st === 1 ? 1 : -1;
+      if (was !== st) {
+        if (was === 1 && st !== 1) countDelta = -1;
+        else if (was !== 1 && st === 1) countDelta = 1;
+      }
       sets.push("status = ?");
       args.push(st);
-      if (st === 3) {
+      if (st === 1) {
+        sets.push("deleted_by = NULL", "deleted_time = NULL");
+      } else {
         sets.push("deleted_by = ?", "deleted_time = ?");
         args.push(req.user.id, now());
       }

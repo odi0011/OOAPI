@@ -13,7 +13,7 @@ import {
 import {
   LikeOutlined, LikeFilled, StarOutlined, StarFilled, UserAddOutlined, MessageOutlined,
   DeleteOutlined, EditOutlined, EyeOutlined, EyeInvisibleOutlined, PushpinOutlined, ArrowLeftOutlined,
-  PictureOutlined, CloseOutlined, SmileOutlined, CodeOutlined,
+  PictureOutlined, CloseOutlined, SmileOutlined, CodeOutlined, UndoOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
@@ -314,12 +314,23 @@ export default function PostDetailPage() {
               编辑
             </Button>
           )}
-          {(isOwner || isAdmin) && (
+          {isAdmin && Number(post?.status) === 2 && (
+            <Tooltip title="恢复帖子到正常发布状态">
+              <Button
+                type="primary"
+                icon={<UndoOutlined />}
+                onClick={() => moderate({ status: 1 })}
+              >
+                恢复帖子
+              </Button>
+            </Tooltip>
+          )}
+          {Number(post?.status) !== 2 && (isOwner || isAdmin) && (
             <Popconfirm title="确定删除该帖子？" onConfirm={removePost} okText="删除" okType="danger" cancelText="取消">
               <Button danger icon={<DeleteOutlined />}>删除</Button>
             </Popconfirm>
           )}
-          {isAdmin && (
+          {isAdmin && Number(post?.status) !== 2 && (
             <>
               <Tooltip title={Number(post?.status) === 3 ? "取消隐藏" : "隐藏（比删除轻，可恢复）"}>
                 <Button
@@ -346,10 +357,11 @@ export default function PostDetailPage() {
         <h1 className="oo-page-title" style={{ margin: 0, fontSize: 20, lineHeight: 1.4 }}>
           {post?.title || "帖子"}
         </h1>
-        {(post?.is_pinned || Number(post?.status) === 3) && (
+        {(post?.is_pinned || Number(post?.status) === 3 || Number(post?.status) === 2) && (
           <div className="oo-page-tags" style={{ marginTop: 6 }}>
             {post?.is_pinned ? <Tag color="orange">置顶</Tag> : null}
             {Number(post?.status) === 3 ? <Tag color="orange">已隐藏（仅你与管理员可见）</Tag> : null}
+            {Number(post?.status) === 2 ? <Tag color="red">已删除（仅管理员可见）</Tag> : null}
           </div>
         )}
       </div>
