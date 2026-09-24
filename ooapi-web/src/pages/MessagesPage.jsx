@@ -15,11 +15,13 @@ import {
   MoreOutlined, SearchOutlined, MessageOutlined, TeamOutlined, CommentOutlined, DeleteOutlined,
   UserAddOutlined, GlobalOutlined, SmileOutlined, CodeOutlined, SoundOutlined, PushpinOutlined,
   CrownOutlined, SafetyOutlined, CheckOutlined, CloseOutlined, EditOutlined, ReloadOutlined,
+  CheckCircleFilled,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
 import UserAvatar from "../components/UserAvatar";
+import Markdown from "../components/Markdown";
 
 const EMOJI_LIST = ["😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇", "🙂", "🙃", "😉", "😍", "🥰", "😘", "😎", "🥳", "🤔", "🤫", "🤗", "🤖", "🚀", "💡", "🔥", "👍", "👏", "🎉", "❤️", "⭐", "✨", "💯"];
 
@@ -251,6 +253,23 @@ export default function MessagesPage() {
       .finally(() => setMsgsLoading(false));
   }, [activeRoomId, toast]);
 
+  // 智能默认选中：若进入页面无指定 roomId，自动导航到首个活跃会话或官方频道，消除空屏
+  useEffect(() => {
+    if (!activeRoomId) {
+      if (hubTab === "guild") {
+        const firstCh = guilds[0]?.channels?.[0];
+        if (firstCh) navigate(`/messages/${firstCh.room_id}`, { replace: true });
+      } else if (hubTab === "messages" && rooms.length > 0) {
+        const nonGuildRooms = rooms.filter((r) => !r.guild_channel_id);
+        if (nonGuildRooms.length > 0) {
+          navigate(`/messages/${nonGuildRooms[0].id}`, { replace: true });
+        } else if (guilds[0]?.channels?.[0]) {
+          navigate(`/messages/${guilds[0].channels[0].room_id}`, { replace: true });
+        }
+      }
+    }
+  }, [activeRoomId, hubTab, rooms, guilds, navigate]);
+
   // 消息自动滚到底部
   useEffect(() => {
     if (scrollRef.current) {
@@ -463,7 +482,7 @@ export default function MessagesPage() {
   const offlineFriends = useMemo(() => friends.filter((f) => !online.includes(f.id)), [friends, online]);
 
   return (
-    <div className="oo-page" style={{ padding: "0 0 16px" }}>
+    <div className="qq-workspace-wrap">
       <div className="qq-channel-shell">
         {/* =========================================================
             第 1 栏：左侧功能极窄导轨 (Hub Rail)
@@ -471,69 +490,75 @@ export default function MessagesPage() {
         <div className="qq-hub-rail">
           {/* 用户自己头像与在线小绿点 */}
           <Popover content={<div style={{ fontSize: 12 }}>当前在线 · <strong>{me?.display_name || me?.username}</strong></div>} placement="right">
-            <div className="qq-online-badge" style={{ cursor: "pointer" }} onClick={() => navigate(`/u/${me?.id}`)}>
-              <UserAvatar user={me} size={40} />
+            <div className="qq-online-badge" style={{ cursor: "pointer", marginBottom: 2 }} onClick={() => navigate(`/u/${me?.id}`)}>
+              <UserAvatar user={me} size={42} />
               <span className="qq-online-dot" />
             </div>
           </Popover>
 
           <div className="qq-rail-divider" />
 
-          {/* 消息会话入口图标 */}
-          <Tooltip title="消息 (私聊与群聊)" placement="right">
-            <div
-              className={`qq-rail-btn${hubTab === "messages" ? " is-active" : ""}`}
-              onClick={() => { setHubTab("messages"); }}
-            >
-              <Badge count={rooms.reduce((acc, r) => acc + (r.unread || 0), 0)} size="small" offset={[-2, 2]}>
-                <MessageOutlined />
-              </Badge>
-            </div>
-          </Tooltip>
+          {/* 1. 消息会话入口图标 */}
+          <div className={`qq-rail-item-box ${hubTab === "messages" ? "is-active" : ""}`}>
+            <span className="qq-rail-pill" />
+            <Tooltip title="即时消息 (私聊与群聊)" placement="right">
+              <div
+                className="qq-rail-btn"
+                onClick={() => { setHubTab("messages"); }}
+              >
+                <Badge count={rooms.filter((r) => !r.guild_channel_id).reduce((acc, r) => acc + (r.unread || 0), 0)} size="small" offset={[-2, 2]}>
+                  <MessageOutlined />
+                </Badge>
+              </div>
+            </Tooltip>
+          </div>
 
-          {/* 通讯录/好友入口图标 */}
-          <Tooltip title="通讯录与好友" placement="right">
-            <div
-              className={`qq-rail-btn${hubTab === "contacts" ? " is-active" : ""}`}
-              onClick={() => { setHubTab("contacts"); }}
-            >
-              <Badge count={requests.pending_count} size="small" offset={[-2, 2]}>
-                <TeamOutlined />
-              </Badge>
-            </div>
-          </Tooltip>
+          {/* 2. QQ 频道服务器入口图标 */}
+          <div className={`qq-rail-item-box ${hubTab === "guild" ? "is-active" : ""}`}>
+            <span className="qq-rail-pill" />
+            <Tooltip title="QQ 频道 · 官方开发者社区" placement="right">
+              <div
+                className="qq-rail-btn"
+                onClick={() => {
+                  setHubTab("guild");
+                  if (guilds[0]?.channels?.[0]) {
+                    const ch = guilds[0].channels[0];
+                    setActiveChannelId(ch.id);
+                    navigate(`/messages/${ch.room_id}`);
+                  }
+                }}
+              >
+                <GlobalOutlined />
+              </div>
+            </Tooltip>
+          </div>
 
-          <div className="qq-rail-divider" />
-
-          {/* QQ 频道服务器入口图标（默认官方开发者主频道） */}
-          <Tooltip title="QQ 频道 · OOAPI 开发者社区" placement="right">
-            <div
-              className={`qq-rail-btn${hubTab === "guild" ? " is-active" : ""}`}
-              onClick={() => {
-                setHubTab("guild");
-                // 默认切到官方主频道的第一个子频道
-                if (guilds[0]?.channels?.[0]) {
-                  const ch = guilds[0].channels[0];
-                  setActiveChannelId(ch.id);
-                  navigate(`/messages/${ch.room_id}`);
-                }
-              }}
-            >
-              <GlobalOutlined />
-            </div>
-          </Tooltip>
+          {/* 3. 通讯录/好友入口图标 */}
+          <div className={`qq-rail-item-box ${hubTab === "contacts" ? "is-active" : ""}`}>
+            <span className="qq-rail-pill" />
+            <Tooltip title="通讯录与好友关系" placement="right">
+              <div
+                className="qq-rail-btn"
+                onClick={() => { setHubTab("contacts"); }}
+              >
+                <Badge count={requests.pending_count} size="small" offset={[-2, 2]}>
+                  <TeamOutlined />
+                </Badge>
+              </div>
+            </Tooltip>
+          </div>
 
           <div style={{ flex: 1 }} />
 
           {/* 底部快捷操作 */}
           <Tooltip title="添加好友" placement="right">
-            <div className="qq-rail-btn" onClick={() => setAddFriendOpen(true)}>
+            <div className="qq-rail-btn" onClick={() => setAddFriendOpen(true)} style={{ width: 42, height: 42, fontSize: 17 }}>
               <UserAddOutlined />
             </div>
           </Tooltip>
 
           <Tooltip title="发起聊天 / 创建群聊" placement="right">
-            <div className="qq-rail-btn" onClick={() => { createForm.resetFields(); setCreateOpen(true); }}>
+            <div className="qq-rail-btn" onClick={() => { createForm.resetFields(); setCreateOpen(true); }} style={{ width: 42, height: 42, fontSize: 17 }}>
               <PlusOutlined />
             </div>
           </Tooltip>
@@ -570,12 +595,21 @@ export default function MessagesPage() {
               <div className="qq-sub-scroll">
                 {roomsLoading && !rooms.length ? (
                   <div style={{ padding: 14 }}><Skeleton active paragraph={{ rows: 4 }} /></div>
-                ) : !rooms.length ? (
-                  <div style={{ padding: "40px 16px", textAlign: "center" }}>
-                    <Empty description="暂无会话，点右下角添加好友或发起聊天" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                ) : !rooms.filter((r) => !r.guild_channel_id).length ? (
+                  <div style={{ padding: "36px 16px", textAlign: "center" }}>
+                    <div style={{ fontSize: 13, color: "var(--ink-2)", fontWeight: 500, marginBottom: 4 }}>暂无私聊或独立群聊</div>
+                    <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 14 }}>可添加好友发起私聊，或前往 QQ 频道交流</div>
+                    <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                      <Button size="small" type="primary" block icon={<UserAddOutlined />} onClick={() => setAddFriendOpen(true)}>添加好友</Button>
+                      <Button size="small" block icon={<GlobalOutlined />} onClick={() => {
+                        setHubTab("guild");
+                        if (guilds[0]?.channels?.[0]) navigate(`/messages/${guilds[0].channels[0].room_id}`);
+                      }}>前往 QQ 频道</Button>
+                    </Space>
                   </div>
                 ) : (
                   rooms
+                    .filter((r) => !r.guild_channel_id)
                     .filter((r) => {
                       if (!kw.trim()) return true;
                       const q = kw.trim().toLowerCase();
@@ -591,15 +625,15 @@ export default function MessagesPage() {
                         >
                           {r.type === "single" && r.peer ? (
                             <div className="qq-online-badge">
-                              <UserAvatar user={r.peer} size={36} />
+                              <UserAvatar user={r.peer} size={38} />
                               <span className={`qq-online-dot${isPeerOnline ? "" : " is-offline"}`} />
                             </div>
                           ) : (
-                            <Avatar size={36} style={{ background: "var(--accent-tint)", color: "var(--accent-ink)" }} icon={<TeamOutlined />} />
+                            <Avatar size={38} style={{ background: "linear-gradient(135deg, #1890ff 0%, #36cfc9 100%)", color: "#fff", flexShrink: 0 }} icon={<TeamOutlined />} />
                           )}
                           <div style={{ minWidth: 0, flex: 1 }}>
                             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                              <span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--ink)" }} className="oo-truncate">
+                              <span style={{ fontSize: 13.5, fontWeight: 550, color: "var(--ink)" }} className="oo-truncate">
                                 {r.title || r.name}
                               </span>
                               <span style={{ fontSize: 11, color: "var(--ink-3)" }}>{fmtRoomTime(r.last_message_time)}</span>
@@ -748,24 +782,28 @@ export default function MessagesPage() {
           {/* C. 处于「QQ 频道 (Channel Guild)」模式 */}
           {hubTab === "guild" && (
             <>
-              <div className="qq-sub-head" style={{ background: "var(--inset)" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <Avatar style={{ background: "var(--accent)" }} icon={<GlobalOutlined />} />
+              <div className="qq-guild-banner">
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <Avatar size={42} style={{ background: "linear-gradient(135deg, var(--accent) 0%, #722ed1 100%)", fontWeight: 700, fontSize: 16 }}>
+                    OO
+                  </Avatar>
                   <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }} className="oo-truncate">
-                      {guilds[0]?.name || "OOAPI 开发者社区"}
+                    <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)", display: "flex", alignItems: "center", gap: 6 }} className="oo-truncate">
+                      <span>{guilds[0]?.name || "OOAPI 开发者社区"}</span>
+                      <CheckCircleFilled style={{ color: "var(--accent)", fontSize: 13 }} />
                     </div>
-                    <div style={{ fontSize: 11.5, color: "var(--ink-3)" }} className="oo-truncate">
-                      {guilds[0]?.description || "官方频道"}
+                    <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 2 }} className="oo-truncate">
+                      {guilds[0]?.description || "官方开发者交流阵地 · 实时互动"}
                     </div>
                   </div>
                 </div>
               </div>
 
               <div className="qq-sub-scroll">
-                {guilds[0]?.channels?.map((c) => {
+                {/* 频道分组 1：官方公告 */}
+                <div className="qq-channel-group-title">📢 官方发布</div>
+                {guilds[0]?.channels?.filter((c) => c.type === "notice").map((c) => {
                   const isActive = activeRoomId === c.room_id;
-                  const isNotice = c.type === "notice";
                   return (
                     <div
                       key={c.id}
@@ -775,9 +813,28 @@ export default function MessagesPage() {
                         navigate(`/messages/${c.room_id}`);
                       }}
                     >
-                      {isNotice ? <SoundOutlined style={{ color: "var(--accent)" }} /> : <span style={{ fontWeight: "bold" }}>#</span>}
+                      <SoundOutlined style={{ color: "var(--accent)" }} />
                       <span style={{ flex: 1 }} className="oo-truncate">{c.name}</span>
-                      {isNotice && <Tag color="blue" style={{ margin: 0, fontSize: 10 }}>公告</Tag>}
+                      <Tag color="blue" style={{ margin: 0, fontSize: 10, borderRadius: 4 }}>公告</Tag>
+                    </div>
+                  );
+                })}
+
+                {/* 频道分组 2：讨论交流 */}
+                <div className="qq-channel-group-title" style={{ marginTop: 10 }}>💬 互动交流</div>
+                {guilds[0]?.channels?.filter((c) => c.type !== "notice").map((c) => {
+                  const isActive = activeRoomId === c.room_id;
+                  return (
+                    <div
+                      key={c.id}
+                      className={`qq-channel-item${isActive ? " is-active" : ""}`}
+                      onClick={() => {
+                        setActiveChannelId(c.id);
+                        navigate(`/messages/${c.room_id}`);
+                      }}
+                    >
+                      <span style={{ fontWeight: 700, fontSize: 14, opacity: 0.7 }}>#</span>
+                      <span style={{ flex: 1 }} className="oo-truncate">{c.name}</span>
                     </div>
                   );
                 })}
@@ -866,17 +923,27 @@ export default function MessagesPage() {
               </div>
             </div>
           ) : !activeRoomId ? (
-            /* 场景 2：未选中任何聊天会话时的精美占位 */
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32 }}>
-              <div style={{ width: 68, height: 68, borderRadius: "50%", background: "var(--accent-tint)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--accent)", fontSize: 32, marginBottom: 16 }}>
+            /* 场景 2：未选中任何聊天会话时的精美占位看板 */
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40 }}>
+              <div style={{
+                width: 72, height: 72, borderRadius: "50%",
+                background: "linear-gradient(135deg, var(--accent-tint) 0%, rgba(var(--accent-rgb, 22, 119, 255), 0.15) 100%)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: "var(--accent)", fontSize: 34, marginBottom: 16,
+                boxShadow: "0 4px 16px rgba(var(--accent-rgb, 22, 119, 255), 0.12)"
+              }}>
                 <MessageOutlined />
               </div>
-              <h3 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>开启无界交流</h3>
-              <p style={{ color: "var(--ink-3)", fontSize: 13, marginTop: 6, maxWidth: 360, textAlign: "center" }}>
-                从左侧选择好友私聊、交流群，或切换到 QQ 频道探索技术交流天地
+              <h3 style={{ fontSize: 18, fontWeight: 600, margin: 0, color: "var(--ink)" }}>开启社区无界交流</h3>
+              <p style={{ color: "var(--ink-3)", fontSize: 13, marginTop: 8, maxWidth: 380, textAlign: "center", lineHeight: 1.6 }}>
+                选择左侧好友私聊、交流群，或切换到 QQ 频道探索官方技术交流天地
               </p>
-              <Space style={{ marginTop: 12 }}>
+              <Space style={{ marginTop: 18 }}>
                 <Button type="primary" icon={<UserAddOutlined />} onClick={() => setAddFriendOpen(true)}>添加好友</Button>
+                <Button icon={<GlobalOutlined />} onClick={() => {
+                  setHubTab("guild");
+                  if (guilds[0]?.channels?.[0]) navigate(`/messages/${guilds[0].channels[0].room_id}`);
+                }}>进入 QQ 频道</Button>
                 <Button icon={<UsergroupAddOutlined />} onClick={() => { createForm.resetFields(); setCreateOpen(true); }}>创建群聊</Button>
               </Space>
             </div>
@@ -893,27 +960,32 @@ export default function MessagesPage() {
                       className="is-mobile-only"
                       onClick={() => navigate("/messages")}
                     />
-                    <div>
+                    <div style={{ minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        {room?.guild_channel_id ? (
+                          <span style={{ fontWeight: 700, fontSize: 17, color: "var(--accent)" }}>#</span>
+                        ) : room?.type === "group" ? (
+                          <TeamOutlined style={{ color: "var(--accent)", fontSize: 16 }} />
+                        ) : null}
                         <span style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)" }} className="oo-truncate">
                           {room?.title || room?.name}
                         </span>
-                        {room?.type === "group" && (
+                        {room?.guild_channel_id ? (
+                          <Tag color="blue" style={{ margin: 0, fontSize: 11, borderRadius: 4 }}>官方频道</Tag>
+                        ) : room?.type === "group" ? (
                           <Tag style={{ margin: 0 }}>{room?.member_count || room?.members?.length || 0} 人</Tag>
+                        ) : (
+                          <Tag color={online.includes(room?.peer?.id) ? "success" : "default"} style={{ margin: 0, fontSize: 11 }}>
+                            {online.includes(room?.peer?.id) ? "在线" : "离线"}
+                          </Tag>
                         )}
                       </div>
-                      {Boolean(room?.announcement) && (
-                        <div style={{ fontSize: 11.5, color: "var(--ink-3)", display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
-                          <PushpinOutlined style={{ color: "var(--accent)" }} />
-                          <span className="oo-truncate">{room?.announcement}</span>
-                        </div>
-                      )}
                     </div>
                   </div>
 
                   <Space>
                     {(room?.my_role === "owner" || room?.my_role === "admin" || me?.role >= 100) && (
-                      <Tooltip title="编辑公告">
+                      <Tooltip title="编辑群/频道公告">
                         <Button
                           size="small"
                           icon={<SoundOutlined />}
@@ -944,6 +1016,26 @@ export default function MessagesPage() {
                     )}
                   </Space>
                 </div>
+
+                {/* 置顶群/频道公告横幅 */}
+                {Boolean(room?.announcement) && (
+                  <div className="qq-announce-bubble">
+                    <SoundOutlined style={{ color: "var(--accent)", flexShrink: 0 }} />
+                    <span style={{ fontWeight: 600, flexShrink: 0 }}>置顶公告：</span>
+                    <span style={{ flex: 1 }} className="oo-truncate">{room.announcement}</span>
+                    {(room?.my_role === "owner" || room?.my_role === "admin" || me?.role >= 100) && (
+                      <Button
+                        type="link"
+                        size="small"
+                        icon={<EditOutlined />}
+                        style={{ padding: "0 4px", fontSize: 11 }}
+                        onClick={() => { setAnnounceText(room?.announcement || ""); setEditAnnounceOpen(true); }}
+                      >
+                        编辑
+                      </Button>
+                    )}
+                  </div>
+                )}
 
                 {/* B. 消息滚动流 */}
                 <div className="qq-msg-scroll" ref={scrollRef}>
@@ -1001,15 +1093,15 @@ export default function MessagesPage() {
                             </div>
 
                             <div className="qq-msg-bubble">
-                              {m.content}
+                              <Markdown text={m.content || ""} />
                               {Boolean(m.media?.length) && (
-                                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
                                   {m.media.map((img) => (
                                     <img
                                       key={img.id}
                                       src={img.url}
                                       alt="图片"
-                                      style={{ maxWidth: 220, maxHeight: 180, borderRadius: 6, cursor: "pointer", objectFit: "cover" }}
+                                      style={{ maxWidth: 240, maxHeight: 190, borderRadius: 8, cursor: "pointer", objectFit: "cover", border: "1px solid var(--line)" }}
                                       onClick={() => window.open(img.url, "_blank")}
                                     />
                                   ))}
@@ -1050,7 +1142,7 @@ export default function MessagesPage() {
                       <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleUploadPic} />
                     </label>
 
-                    <span className="qq-composer-tool-btn" title="插入代码块" onClick={() => setInput((prev) => `${prev}\n\`\`\`\n\n\`\`\`\n`)}>
+                    <span className="qq-composer-tool-btn" title="插入代码块" onClick={() => setInput((prev) => `${prev}\n\`\`\`javascript\n\n\`\`\`\n`)}>
                       <CodeOutlined />
                     </span>
                   </div>
@@ -1059,8 +1151,19 @@ export default function MessagesPage() {
                     <Input.TextArea
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
-                      placeholder="发送消息… (Enter 发送，Shift+Enter 换行)"
-                      autoSize={{ minRows: 2, maxRows: 5 }}
+                      placeholder="发送消息… (Enter 发送，Shift+Enter 换行，支持直接粘贴截图)"
+                      autoSize={{ minRows: 2, maxRows: 6 }}
+                      onPaste={async (e) => {
+                        const items = Array.from(e.clipboardData?.items || []);
+                        const img = items.find((it) => it.type.startsWith("image/"));
+                        if (img) {
+                          const f = img.getAsFile();
+                          if (f) {
+                            e.preventDefault();
+                            await handleUploadPic({ target: { files: [f] } });
+                          }
+                        }
+                      }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) {
                           e.preventDefault();

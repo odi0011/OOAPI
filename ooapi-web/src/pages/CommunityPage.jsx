@@ -3,7 +3,7 @@
 // 骨架属 C 类（双栏流式阅读）：主信息流 + 侧栏（热榜/公告/快捷发帖）。
 // **宽屏也不拉满**：单行过长会让视线回行困难（Gemini 第 1.C 点）。
 // 列表本身是单列列表式（见 components/PostList），不是卡片瀑布流。
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Button, Select, Input, Segmented, Tag, Space, Empty, Skeleton, App as AntApp, Tooltip, Alert, Modal, Form, List, Upload,
@@ -19,6 +19,7 @@ import PageHeader from "../components/PageHeader";
 import PostList from "../components/PostList";
 import UserAvatar from "../components/UserAvatar";
 import { fmtCompact } from "../components/Charts";
+import RichTextEditor from "../components/RichTextEditor";
 
 export default function CommunityPage() {
   const navigate = useNavigate();
@@ -120,6 +121,36 @@ export default function CommunityPage() {
     return { id: r.id, url: r.url || "", name: file.name };
   };
 
+  // 多图**按选择顺序**入列，而不是按上传完成顺序。
+  //
+  // 修的问题（插画师人格实测三次、还附了对照片）：
+  //   「我按 A、B、C 传的，显示出来是 C、B、A」——
+  //   同一组图先后发两个帖，顺序甚至相反（她帖子里 `[119,120,121]` 与
+  //   `[121,120,119]` 并存，就是同一批图的两个相反顺序）。
+  //
+  // 根因：Upload 的 `customRequest` 对多选文件是**并发**触发的，
+  // 原实现 `setPostMedia(prev => [...prev, item])` 在**每张完成时**追加 ——
+  // 哪张先传完就先入列，与用户选择顺序无关（大图/长图更慢，往往被排到后面）。
+  //
+  // 做法：**选中时就按顺序占好槽位**（先放占位项），完成后再按槽位回填。
+  // 这样顺序只取决于选择顺序，与传输快慢完全无关；用户也能立刻看到
+  // 「选了几张、什么顺序、哪张还在传」。
+  const slotSeqRef = useRef(0);
+  const nextSlot = () => {
+    slotSeqRef.current += 1;
+    return slotSeqRef.current;
+  };
+  /** 先占位（返回槽位号） */
+  const addSlot = (name) => {
+    const slot = nextSlot();
+    setPostMedia((prev) => [...prev, { slot, id: 0, url: "", name, pending: true }]);
+    return slot;
+  };
+  /** 按槽位回填上传结果 */
+  const fillSlot = (slot, item) => {
+    setPostMedia((prev) => prev.map((m) => (m.slot === slot ? { ...m, ...item, pending: false } : m)));
+  };
+
   const submitPost = async () => {
     if (posting) return;
     let v;
@@ -130,11 +161,18 @@ export default function CommunityPage() {
     }
     setPosting(true);
     try {
+      // 只提交**已上传完成**的图（占位项的 id 还是 0）；顺序即列表顺序。
+      // 若还有在传的，拦下来提醒 —— 否则用户以为发了 5 张、实际只带上 3 张。
+      if (postMedia.some((m) => m.pending)) {
+        message.warning("还有图片在上传中，请稍等片刻再发布");
+        setPosting(false);
+        return;
+      }
       const r = await API.post("/community/posts", {
         title: v.title,
         content: v.content,
         topic_id: v.topic_id,
-        media_ids: postMedia.map((m) => m.id),
+        media_ids: postMedia.filter((m) => m.id).map((m) => m.id),
       });
       message.success("发布成功");
       setPostOpen(false);
@@ -348,7 +386,7 @@ export default function CommunityPage() {
         confirmLoading={posting}
         onCancel={() => setPostOpen(false)}
         okText="发布"
-        width={620}
+        width={780}
         destroyOnClose
       >
         <Form form={form} layout="vertical" requiredMark={false}>
@@ -369,9 +407,18 @@ export default function CommunityPage() {
             name="content"
             label="正文"
             rules={[{ required: true, message: "请输入正文" }]}
-            tooltip="支持 Markdown：代码块、列表、链接。贴报错日志请用代码块包裹，便于他人复制。"
+            tooltip="支持 Markdown 与所见即所得编辑：粗体、代码块、列表、引用。支持截图直接 Ctrl+V 粘贴上传。"
           >
-            <Input.TextArea rows={10} placeholder={"支持 Markdown。例如：\n\n```bash\ncurl -X POST ...\n```"} maxLength={20000} showCount />
+            <RichTextEditor
+              placeholder="分享你的见解、踩坑经验或代码片段... 支持 Markdown，可直接粘贴截图"
+              minHeight={240}
+              onMediaUploaded={(media) => {
+                // 粘贴/插图路径：与点「添加图片」同一条队列，也按槽位占位，
+                // 这样「先粘一张、再选两张」的顺序也是稳定的
+                const slot = addSlot(media.name || "粘贴的图片");
+                fillSlot(slot, media);
+              }}
+            />
           </Form.Item>
           {/* 附图：上传到媒体库后带 media_ids 发帖（后端与详情页本来就支持，只是缺这个入口） */}
           <Form.Item label="图片（可选，最多 9 张）">
@@ -379,27 +426,39 @@ export default function CommunityPage() {
               listType="picture-card"
               accept="image/*"
               multiple
-              fileList={postMedia.map((m) => ({ uid: String(m.id), name: m.name, status: "done", url: m.url }))}
+              // uid 用**槽位号**（不是 media id）：上传完成前还没有 id，
+              // 而用户此时就该看到「第几张、什么顺序」
+              fileList={postMedia.map((m) => ({
+                uid: `s${m.slot}`,
+                name: m.name,
+                status: m.pending ? "uploading" : "done",
+                url: m.url,
+              }))}
               customRequest={async ({ file, onSuccess, onError }) => {
                 if (postMedia.length >= 9) {
                   message.warning("最多 9 张图片");
                   onError?.(new Error("too many"));
                   return;
                 }
+                // **先占位再上传**：顺序由选择顺序决定（见 addSlot 的注释）
+                const slot = addSlot(file.name);
                 setUploading(true);
                 try {
                   const item = await uploadOne(file);
-                  setPostMedia((prev) => [...prev, item]);
+                  fillSlot(slot, item);
                   onSuccess?.(item);
                 } catch (e) {
                   message.error(e.message || "图片上传失败");
+                  setPostMedia((prev) => prev.filter((m) => m.slot !== slot));
                   onError?.(e);
                 } finally {
                   setUploading(false);
                 }
               }}
-              onRemove={(f) => {
-                setPostMedia((prev) => prev.filter((m) => String(m.id) !== String(f.uid)));
+              onRemove={(_f, file) => {
+                // 按槽位移除（fileList 的 uid 是 `s<slot>`）
+                const slot = Number(String(file?.uid || "").replace(/^s/, "")) || 0;
+                setPostMedia((prev) => prev.filter((m) => m.slot !== slot));
               }}
               disabled={uploading}
             >

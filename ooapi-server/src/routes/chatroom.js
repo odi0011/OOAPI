@@ -303,6 +303,8 @@ router.get(
         title,
         peer,
         owner_id: Number(r.owner_id) || 0,
+        guild_channel_id: Number(r.guild_channel_id) || 0,
+        announcement: r.announcement || "",
         member_count: Number(r.member_count) || 0,
         last_message_text: r.last_message_text || "",
         last_message_time: Number(r.last_message_time) || 0,

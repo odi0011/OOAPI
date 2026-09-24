@@ -130,7 +130,9 @@ const CRUMB = {
  * 聊天页单独处理（高度锁定，不能有外层滚动）。
  */
 function contentClass(pathname) {
-  return pathname === "/chat" ? " ui-chat-content" : "";
+  if (pathname === "/chat") return " ui-chat-content";
+  if (pathname.startsWith("/messages")) return " ui-messages-content";
+  return "";
 }
 
 export default function MainLayout() {

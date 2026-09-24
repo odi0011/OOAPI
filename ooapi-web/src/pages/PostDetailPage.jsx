@@ -8,12 +8,12 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import {
-  Button, Input, Space, Tag, Skeleton, Empty, App as AntApp, Popconfirm, Tooltip, Divider, Image, Modal, Upload,
+  Button, Input, Space, Tag, Skeleton, Empty, App as AntApp, Popconfirm, Tooltip, Divider, Image, Modal, Upload, Popover,
 } from "antd";
 import {
   LikeOutlined, LikeFilled, StarOutlined, StarFilled, UserAddOutlined, MessageOutlined,
   DeleteOutlined, EditOutlined, EyeOutlined, EyeInvisibleOutlined, PushpinOutlined, ArrowLeftOutlined,
-  PictureOutlined, CloseOutlined,
+  PictureOutlined, CloseOutlined, SmileOutlined, CodeOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
@@ -21,6 +21,7 @@ import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import UserAvatar from "../components/UserAvatar";
 import Markdown from "../components/Markdown";
+import RichTextEditor from "../components/RichTextEditor";
 import { relTime } from "../components/PostList";
 import { fmtCompact } from "../components/Charts";
 import { fmtDate } from "../services/format";
@@ -54,6 +55,7 @@ export default function PostDetailPage() {
   const [cLoading, setCLoading] = useState(false);
   const [input, setInput] = useState("");
   const [replyTo, setReplyTo] = useState(null); // { id, userId, name } —— 回复某人
+  const [commentExpanded, setCommentExpanded] = useState(false);
   const [sending, setSending] = useState(false);
   // 评论附图（用户要求「评论也要能带图」）。
   // 流程与发帖一致：**先上传到媒体库拿 id，再带 media_ids 发评论** ——
@@ -270,58 +272,80 @@ export default function PostDetailPage() {
 
   return (
     <div className="oo-page">
-      <PageHeader
-        title={post?.title || "帖子"}
-        tags={
-          <>
+      {/* 顶部直观导航栏：左侧放置返回与话题面包屑，右侧放置操作/管理按钮 */}
+      <div className="oo-post-detail-topbar">
+        <Button
+          type="text"
+          icon={<ArrowLeftOutlined />}
+          onClick={() => navigate("/community")}
+          className="oo-back-btn"
+        >
+          返回社区
+        </Button>
+        <span className="oo-topbar-sep">/</span>
+        <Tag
+          color="blue"
+          style={{ margin: 0, cursor: "pointer", borderRadius: 4 }}
+          onClick={() => navigate(`/community?topic_id=${post?.topic_id || ""}`)}
+        >
+          {post?.topic || "社区讨论"}
+        </Tag>
+
+        <div style={{ flex: 1 }} />
+
+        {/* 右侧管理与编辑按钮 */}
+        <Space size={8}>
+          {isOwner && (
+            <Button
+              icon={<EditOutlined />}
+              onClick={() => {
+                setEditTitle(post.title);
+                setEditContent(post.content || "");
+                setEditOpen(true);
+              }}
+            >
+              编辑
+            </Button>
+          )}
+          {(isOwner || isAdmin) && (
+            <Popconfirm title="确定删除该帖子？" onConfirm={removePost} okText="删除" okType="danger" cancelText="取消">
+              <Button danger icon={<DeleteOutlined />}>删除</Button>
+            </Popconfirm>
+          )}
+          {isAdmin && (
+            <>
+              <Tooltip title={Number(post?.status) === 3 ? "取消隐藏" : "隐藏（比删除轻，可恢复）"}>
+                <Button
+                  icon={Number(post?.status) === 3 ? <EyeOutlined /> : <EyeInvisibleOutlined />}
+                  onClick={() => moderate({ status: Number(post?.status) === 3 ? 1 : 3 })}
+                >
+                  {Number(post?.status) === 3 ? "取消隐藏" : "隐藏"}
+                </Button>
+              </Tooltip>
+              <Tooltip title={post?.is_pinned ? "取消置顶" : "置顶"}>
+                <Button
+                  icon={<PushpinOutlined />}
+                  onClick={() => moderate({ is_pinned: post?.is_pinned ? 0 : 1 })}
+                >
+                  {post?.is_pinned ? "取消置顶" : "置顶"}
+                </Button>
+              </Tooltip>
+            </>
+          )}
+        </Space>
+      </div>
+
+      <div className="oo-post-head-title">
+        <h1 className="oo-page-title" style={{ margin: 0, fontSize: 20, lineHeight: 1.4 }}>
+          {post?.title || "帖子"}
+        </h1>
+        {(post?.is_pinned || Number(post?.status) === 3) && (
+          <div className="oo-page-tags" style={{ marginTop: 6 }}>
             {post?.is_pinned ? <Tag color="orange">置顶</Tag> : null}
             {Number(post?.status) === 3 ? <Tag color="orange">已隐藏（仅你与管理员可见）</Tag> : null}
-            {post?.topic ? <Tag>{post.topic}</Tag> : null}
-          </>
-        }
-        extra={
-          <>
-            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/community")}>返回社区</Button>
-            {isOwner ? (
-              <Button
-                icon={<EditOutlined />}
-                onClick={() => {
-                  setEditTitle(post.title);
-                  setEditContent(post.content || "");
-                  setEditOpen(true);
-                }}
-              >
-                编辑
-              </Button>
-            ) : null}
-            {isOwner || isAdmin ? (
-              <Popconfirm title="确定删除该帖子？" onConfirm={removePost} okText="删除" okType="danger" cancelText="取消">
-                <Button danger icon={<DeleteOutlined />}>删除</Button>
-              </Popconfirm>
-            ) : null}
-            {isAdmin ? (
-              <>
-                <Tooltip title={Number(post?.status) === 3 ? "取消隐藏" : "隐藏（比删除轻，可恢复）"}>
-                  <Button
-                    icon={Number(post?.status) === 3 ? <EyeOutlined /> : <EyeInvisibleOutlined />}
-                    onClick={() => moderate({ status: Number(post?.status) === 3 ? 1 : 3 })}
-                  >
-                    {Number(post?.status) === 3 ? "取消隐藏" : "隐藏"}
-                  </Button>
-                </Tooltip>
-                <Tooltip title={post?.is_pinned ? "取消置顶" : "置顶"}>
-                  <Button
-                    icon={<PushpinOutlined />}
-                    onClick={() => moderate({ is_pinned: post?.is_pinned ? 0 : 1 })}
-                  >
-                    {post?.is_pinned ? "取消置顶" : "置顶"}
-                  </Button>
-                </Tooltip>
-              </>
-            ) : null}
-          </>
-        }
-      />
+          </div>
+        )}
+      </div>
 
       <div className="oo-read-shell">
         <div>
@@ -399,97 +423,181 @@ export default function PostDetailPage() {
             </div>
           </div>
 
-          {/* 评论：扁平二级 */}
+          {/* 评论区 */}
           <div className="oo-panel">
-            <div style={{ padding: "12px 16px" }}>
-              <div className="oo-section-title" style={{ marginBottom: 10 }}>
+            <div style={{ padding: "16px 18px" }}>
+              <div className="oo-section-title" style={{ marginBottom: 12 }}>
                 评论 {post?.comment_count || 0}
               </div>
 
-              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-                <UserAvatar user={me} size={30} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  {replyTo ? (
-                    <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 4 }}>
-                      回复 <span className="oo-comment-at">@{replyTo.name}</span>
-                      <Button type="link" size="small" onClick={() => setReplyTo(null)}>取消</Button>
-                    </div>
-                  ) : null}
-                  <Input.TextArea
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    // 支持贴图后，正文与图任一即可（粘贴快捷键也提示出来，
-                    // 因为「截图 → Ctrl+V」比点「添加图片」再选文件快得多）
-                    placeholder="友善发言。支持 Markdown 与图片（可直接粘贴截图）；贴日志请用代码块包裹。"
-                    autoSize={{ minRows: 2, maxRows: 8 }}
-                    maxLength={2000}
-                    onPaste={(e) => {
-                      // 从剪贴板直接贴图：把 image/* 的项交给上传，
-                      // 其余（文字）走默认行为，别打断正常粘贴
-                      const items = Array.from(e.clipboardData?.items || []);
-                      const img = items.find((it) => it.type.startsWith("image/"));
-                      if (!img) return;
-                      const f = img.getAsFile();
-                      if (!f) return;
-                      e.preventDefault();
-                      pickCommentImage(f);
+              {/* 现代折叠式评论卡片 (Sleek Collapsible Comment Composer) */}
+              <div className={`oo-comment-composer-card ${commentExpanded || input.trim() || replyTo || cMedia.length ? "is-expanded" : ""}`}>
+                {!commentExpanded && !input.trim() && !replyTo && !cMedia.length ? (
+                  <div
+                    className="oo-comment-collapsed-bar"
+                    onClick={() => {
+                      setCommentExpanded(true);
+                      setTimeout(() => document.querySelector(".oo-comment-raw-input")?.focus(), 50);
                     }}
-                  />
-                  {/* 已选图片的缩略图（可单张移除） */}
-                  {cMedia.length ? (
-                    <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
-                      {cMedia.map((m) => (
-                        <div key={m.id} style={{ position: "relative" }}>
-                          <img
-                            src={m.url}
-                            alt={m.name}
-                            style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 6, border: "1px solid var(--line)" }}
-                          />
-                          <button
-                            type="button"
-                            aria-label="移除这张图"
-                            onClick={() => setCMedia((prev) => prev.filter((x) => x.id !== m.id))}
-                            style={{
-                              position: "absolute", top: -6, right: -6, width: 18, height: 18,
-                              borderRadius: "50%", border: 0, cursor: "pointer", lineHeight: 1,
-                              background: "var(--ink)", color: "var(--surface)", fontSize: 11,
-                            }}
-                          >
-                            <CloseOutlined />
-                          </button>
-                        </div>
-                      ))}
+                  >
+                    <UserAvatar user={me} size={32} />
+                    <div className="oo-comment-input-pill">
+                      <span>友善交流，写下你的评论...（支持 Markdown 语法与截图粘贴）</span>
+                      <div className="oo-comment-pill-actions">
+                        <Tooltip title="添加图片"><PictureOutlined /></Tooltip>
+                        <Tooltip title="快捷表情"><SmileOutlined /></Tooltip>
+                        <Tooltip title="插入代码"><CodeOutlined /></Tooltip>
+                      </div>
                     </div>
-                  ) : null}
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
-                    {/* 评论附图入口（用户要求「评论也要能带图」） */}
-                    <Upload
-                      accept="image/*"
-                      multiple
-                      showUploadList={false}
-                      beforeUpload={(file) => {
-                        pickCommentImage(file);
-                        return false; // 交给上面的 handler 上传，Upload 自身不发请求
-                      }}
-                      disabled={cUploading || cMedia.length >= 3}
-                    >
-                      <Tooltip title={cMedia.length >= 3 ? "最多 3 张" : "添加图片（也可直接粘贴截图）"}>
-                        <Button size="small" type="text" icon={<PictureOutlined />} loading={cUploading}>
-                          图片
-                        </Button>
-                      </Tooltip>
-                    </Upload>
-                    <Button
-                      type="primary"
-                      size="small"
-                      loading={sending}
-                      disabled={!input.trim() && !cMedia.length}
-                      onClick={sendComment}
-                    >
-                      发表评论
-                    </Button>
                   </div>
-                </div>
+                ) : (
+                  <div className="oo-comment-expanded-inner">
+                    <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                      <UserAvatar user={me} size={32} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        {replyTo && (
+                          <div className="oo-comment-reply-banner">
+                            <span>正在回复 @{replyTo.name}</span>
+                            <Button
+                              type="text"
+                              size="small"
+                              icon={<CloseOutlined />}
+                              style={{ fontSize: 10, padding: 0, height: 16, width: 16, lineHeight: 1 }}
+                              onClick={() => setReplyTo(null)}
+                            />
+                          </div>
+                        )}
+                        <textarea
+                          className="oo-comment-raw-input"
+                          value={input}
+                          onChange={(e) => setInput(e.target.value)}
+                          placeholder="友善发言。支持 Markdown 语法与图片（可直接 Ctrl+V 粘贴截图）..."
+                          maxLength={2000}
+                          onPaste={(e) => {
+                            const items = Array.from(e.clipboardData?.items || []);
+                            const img = items.find((it) => it.type.startsWith("image/"));
+                            if (!img) return;
+                            const f = img.getAsFile();
+                            if (!f) return;
+                            e.preventDefault();
+                            pickCommentImage(f);
+                          }}
+                        />
+
+                        {/* 图片预览 */}
+                        {Boolean(cMedia.length) && (
+                          <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                            {cMedia.map((m) => (
+                              <div key={m.id} style={{ position: "relative" }}>
+                                <img
+                                  src={m.url}
+                                  alt={m.name}
+                                  style={{ width: 58, height: 58, objectFit: "cover", borderRadius: 6, border: "1px solid var(--line)" }}
+                                />
+                                <button
+                                  type="button"
+                                  aria-label="移除图片"
+                                  onClick={() => setCMedia((prev) => prev.filter((x) => x.id !== m.id))}
+                                  style={{
+                                    position: "absolute", top: -6, right: -6, width: 18, height: 18,
+                                    borderRadius: "50%", border: 0, cursor: "pointer", lineHeight: 1,
+                                    background: "var(--ink)", color: "var(--surface)", fontSize: 11,
+                                  }}
+                                >
+                                  <CloseOutlined />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* 底栏工具 */}
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8, paddingTop: 6, borderTop: "1px solid var(--line)" }}>
+                          <Space size={6}>
+                            <Popover
+                              content={
+                                <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 4, width: 250 }}>
+                                  {["😀", "😄", "🤣", "😊", "😍", "😎", "🤔", "👍", "👏", "🎉", "🔥", "💡", "🚀", "❤️", "✨", "💯"].map((emo) => (
+                                    <span
+                                      key={emo}
+                                      style={{ fontSize: 18, cursor: "pointer", textAlign: "center", padding: 3 }}
+                                      onClick={() => setInput((prev) => prev + emo)}
+                                    >
+                                      {emo}
+                                    </span>
+                                  ))}
+                                </div>
+                              }
+                              trigger="click"
+                            >
+                              <Button size="small" type="text" icon={<SmileOutlined />}>表情</Button>
+                            </Popover>
+
+                            <Upload
+                              accept="image/*"
+                              multiple
+                              showUploadList={false}
+                              beforeUpload={(file) => {
+                                pickCommentImage(file);
+                                return false;
+                              }}
+                              disabled={cUploading || cMedia.length >= 3}
+                            >
+                              <Tooltip title={cMedia.length >= 3 ? "最多 3 张" : "添加图片（可直接粘贴截图）"}>
+                                <Button size="small" type="text" icon={<PictureOutlined />} loading={cUploading}>
+                                  图片
+                                </Button>
+                              </Tooltip>
+                            </Upload>
+
+                            <Tooltip title="插入代码块">
+                              <Button
+                                size="small"
+                                type="text"
+                                icon={<CodeOutlined />}
+                                onClick={() => setInput((prev) => prev + "\n```javascript\n\n```\n")}
+                              >
+                                代码
+                              </Button>
+                            </Tooltip>
+                          </Space>
+
+                          <Space size={10}>
+                            <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>{input.length} / 2000</span>
+                            <Button
+                              size="small"
+                              onClick={() => {
+                                if (!input.trim() && !cMedia.length) {
+                                  setCommentExpanded(false);
+                                  setReplyTo(null);
+                                } else {
+                                  setInput("");
+                                  setCMedia([]);
+                                  setReplyTo(null);
+                                  setCommentExpanded(false);
+                                }
+                              }}
+                            >
+                              取消
+                            </Button>
+                            <Button
+                              type="primary"
+                              size="small"
+                              loading={sending}
+                              disabled={!input.trim() && !cMedia.length}
+                              onClick={async () => {
+                                await sendComment();
+                                setCommentExpanded(false);
+                              }}
+                            >
+                              发表评论
+                            </Button>
+                          </Space>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {cLoading && !comments.length ? (
@@ -506,8 +614,8 @@ export default function PostDetailPage() {
                       isAdmin={isAdmin}
                       onReply={(target) => {
                         setReplyTo(target);
-                        // 聚焦输入框：回复是「立刻打字」的动作，不该再点一次
-                        document.querySelector(".oo-panel textarea")?.focus();
+                        setCommentExpanded(true);
+                        setTimeout(() => document.querySelector(".oo-comment-raw-input")?.focus(), 50);
                       }}
                       onChanged={loadComments}
                       children={childrenOf(c.id)}
@@ -537,10 +645,10 @@ export default function PostDetailPage() {
         onOk={saveEdit}
         onCancel={() => setEditOpen(false)}
         okText="保存"
-        width={620}
+        width={780}
       >
-        <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} maxLength={120} showCount style={{ marginBottom: 10 }} />
-        <Input.TextArea value={editContent} onChange={(e) => setEditContent(e.target.value)} autoSize={{ minRows: 8, maxRows: 20 }} />
+        <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} maxLength={120} showCount style={{ marginBottom: 12 }} />
+        <RichTextEditor value={editContent} onChange={setEditContent} minHeight={260} />
       </Modal>
     </div>
   );

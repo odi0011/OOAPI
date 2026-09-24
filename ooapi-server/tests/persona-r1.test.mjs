@@ -414,6 +414,30 @@ t("前端：评论框有图片入口、可粘贴截图、列表渲染缩略图",
   ck(/c\.media/.test(p2), "二级评论没有渲染图片");
 });
 
+/* ============ ⑱ 多图按选择顺序入列（插画师人格实测三次）============ */
+console.log("\n=== ⑱ 多图顺序 ===");
+t("发帖多图按选择顺序占位，不按上传完成顺序追加", () => {
+  const p2 = readFileSync(path.join(root, "..", "ooapi-web", "src", "pages", "CommunityPage.jsx"), "utf8");
+  // 必须有「先占位」的机制
+  ck(/const addSlot = /.test(p2), "没有 addSlot（先占位再上传）");
+  ck(/const fillSlot = /.test(p2), "没有 fillSlot（按槽位回填）");
+  ck(/slotSeqRef/.test(p2), "没有槽位序号");
+  // 关键：不能再出现「完成时直接 append」的写法（那就是错序的根因）
+  ck(!/setPostMedia\(\(prev\) => \[\.\.\.prev, item\]\)/.test(p2),
+    "仍在按上传完成顺序追加（setPostMedia 直接 append item）—— 顺序会错乱");
+  // 上传前后必须走 addSlot/fillSlot
+  ck(/const slot = addSlot\(file\.name\)/.test(p2), "Upload 路径没有先占位");
+  ck(/fillSlot\(slot, item\)/.test(p2), "Upload 路径没有按槽位回填");
+  // 提交前要拦住还在上传的图（否则用户以为发了 5 张实际只有 3 张）
+  ck(/postMedia\.some\(\(m\) => m\.pending\)/.test(p2), "提交时没有拦住「还在上传」的图");
+  ck(/filter\(\(m\) => m\.id\)\.map\(\(m\) => m\.id\)/.test(p2), "提交时没有过滤掉占位项");
+});
+t("粘贴插图也走同一条有序队列", () => {
+  const p2 = readFileSync(path.join(root, "..", "ooapi-web", "src", "pages", "CommunityPage.jsx"), "utf8");
+  const blk = p2.slice(p2.indexOf("onMediaUploaded="), p2.indexOf("onMediaUploaded=") + 400);
+  ck(/addSlot\(/.test(blk) && /fillSlot\(/.test(blk), "粘贴路径没走槽位队列（顺序会与手选不一致）");
+});
+
 /* ============ 语法校验（改坏一个字符就全站 500）============ */
 console.log("\n=== ⑰ 改动的文件语法可解析 ===");
 for (const f of [
