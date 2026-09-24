@@ -3,7 +3,7 @@
 // 由 type 区分适配器，优先级/权重决定调度顺序 —— 与 new-api 一致。
 import { pool } from "../db.js";
 import { now } from "../utils.js";
-import { isOAuthMethod, getMethod, isApiKeyMethod } from "./channel-types.js";
+import { isOAuthMethod, getMethod, getProvider, isApiKeyMethod } from "./channel-types.js";
 import { groupConfigOf } from "./group-rate.js";
 import { modelRegistrySync, modelInAllowList } from "./models.js";
 
@@ -70,13 +70,40 @@ const ADAPTERS = {
  */
 export function adapterKeyFor(channel) {
   const method = String(channel?.other?.method || "");
+  const type = String(channel?.type || "");
   // 接入方式显式声明 adapter 时优先（例如 anthropic 的 api 走 anthropic-compat，
   // 而其它厂商的 api 仍走 openai-compat）
-  const mCfg = method ? getMethod(channel?.type, method) : null;
+  const mCfg = method ? getMethod(type, method) : null;
   if (mCfg?.adapter) return mCfg.adapter;
-  if (isApiKeyMethod(channel?.type, method)) return "openai-compat";
+  if (isApiKeyMethod(type, method)) return "openai-compat";
   if (isOAuthMethod(method)) return method;
-  return channel?.type || "";
+
+  // 走到这里说明「按 method 查不到接入方式配置」，而 method 又不为空 ——
+  // 典型是**历史渠道存的是通用值 `relay`，而该厂商的网页反代方法名叫别的**
+  //（MiMo 是 `mimo-web`、MiniMax 是 `minimax-web`、StepFun 是 `stepfun-web`）。
+  //
+  // 后果非常隐蔽（用户实测报的）：「小米 mimo 我添加了渠道，为什么要登录态是啥玩意？
+  // 我这边拿到了 cookie 填写进去保存之后测试链接显示未实现测试？
+  // 你不是说全部的厂商都正常工作吗？」
+  // 链路是：methodOf 把未知 method 兜底成 "relay" → 这里 mCfg 为 null →
+  // 回落到 `channel.type`（"mimo"）→ 而 ADAPTERS 里注册的 key 是 "mimo-web"，
+  // 没有 "mimo" → 适配器解析为 undefined → 测试报「适配器未实现测试」，
+  // 对话也直接不可用。渠道能建、能填凭据，就是不能用。
+  //
+  // 修法：**回落到该厂商真正有适配器的那个方法**（优先 relay 类），
+  // 而不是盲目用厂商名当 adapter key。这样历史脏数据与新建渠道都能自愈。
+  const provider = type ? getProvider(type) : null;
+  if (provider) {
+    const codes = provider.methods
+      .map((m2) => m2.adapter || (isApiKeyMethod(type, m2.key) ? "openai-compat" : m2.key))
+      .filter((k2) => k2 && Object.prototype.hasOwnProperty.call(ADAPTERS, k2));
+    // 多个候选时优先「网页反代」类（这类渠道几乎都是反代账号），
+    // 否则取第一个有适配器的 —— 总之不会返回一个不存在的 key。
+    const relayish = codes.find((k2) => /-web(-ui)?$/.test(k2) || k2 === type);
+    if (relayish) return relayish;
+    if (codes.length) return codes[0];
+  }
+  return type;
 }
 
 export function isSupportedType(type) {

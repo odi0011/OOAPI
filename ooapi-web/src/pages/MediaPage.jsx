@@ -151,6 +151,20 @@ export default function MediaPage() {
       ]);
 
 
+      if (!isLatest(token)) return;
+      setItems(Array.isArray(list?.items) ? list.items : []);
+      setTotal(Number(list?.total) || 0);
+      setStats(st || null);
+    } catch (e) {
+      if (isLatest(token)) {
+        setLoadError(e.message || "媒体库加载失败");
+        message.error(e.message || "媒体库加载失败");
+      }
+    } finally {
+      if (isLatest(token)) setLoading(false);
+    }
+  }, [begin, isLatest, message, page, pageSize, kind, keyword, status, scopeParams]);
+
   const onPickUpload = useCallback(
     async (e) => {
       const files = Array.from(e.target.files || []);
@@ -184,19 +198,6 @@ export default function MediaPage() {
     },
     [message, load]
   );
-      if (!isLatest(token)) return;
-      setItems(Array.isArray(list?.items) ? list.items : []);
-      setTotal(Number(list?.total) || 0);
-      setStats(st || null);
-    } catch (e) {
-      if (isLatest(token)) {
-        setLoadError(e.message || "媒体库加载失败");
-        message.error(e.message || "媒体库加载失败");
-      }
-    } finally {
-      if (isLatest(token)) setLoading(false);
-    }
-  }, [begin, isLatest, message, page, pageSize, kind, keyword, status, scopeParams]);
 
   useEffect(() => {
     load();
