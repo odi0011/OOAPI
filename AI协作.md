@@ -3791,6 +3791,93 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
   本轮进行中的产出（截至记录时）：5 个人格全部注册并建 Key，
   已发出带图帖 6 篇、带图评论 2 条 —— **评论带图这个新功能真的被用起来了**。
 
+| 2026-09-24 | **第 59 批 · 图标门禁 + MiMo 渠道凭据链路（提交 `771a02d`、`3e74358`、`b0dde39`、`e644d97`）**。
+
+  **一、cursor / trae 图标（用户第二次反馈）**
+  用户原话：「cursor 和 trae 的图标依旧是不对的，**为啥每次让你加新厂商就会出这问题**」
+  —— 这句点出的是**流程缺陷**，不是某一次疏忽。查明：
+  cursor / trae **根本不在** `CHANNEL_ICON` 表里，`public/icons` 下也没有文件；
+  而 `CHANNEL_ICON[type] || PLATFORM_LOGO` 会静默回落到平台 logo，页面照常渲染 ——
+  所以连续两次都只能靠人眼在渠道列表里发现。
+  加一个厂商要改三处（`vendors.js` / `channel-types.js` / 前端图标表），
+  **第三处漏了不报任何错**，这就是它反复发生的原因。
+
+  修法分两步：
+  · 补图标：取 cursor.com / trae.ai 的 favicon，并**逐个核对像素**
+    （cursor 白底黑图形 128×128；trae 深底 + 品牌绿 `rgb(50,240,140)` 48×48）——
+    不是只看文件大小（早先有过「7 个里只有 1 个是真图标」的教训）。
+    已出**对照图**肉眼确认两者都与平台 logo 明显不同。
+  · 加门禁 `tests/vendor-icons.test.mjs`（已进 `npm test`），五项：
+    ① `VENDOR_ICON_KEYS` 清单里每个厂商都必须在 `CHANNEL_ICON` 里有映射；
+    ② 映射的文件必须在 `public/icons/` 下存在；
+    ③ 后端 `vendors.js` 的 channelType 反向比对，前端不能缺；
+    ④ 图标必须过**图片魔数**校验（防「抓到 HTML 当成图片」，历史上真发生过）；
+    ⑤ cursor / trae 的回归锚点。
+    **用注入法验证过**：删掉 trae 的映射 → 立刻报
+    「这些厂商没有图标映射，会静默回落到平台 logo：trae」。
+    以后新增厂商漏图标会直接测试失败，不必等用户发现。
+
+  顺带确认：`antigravity` 不是厂商位（它是 Gemini 的订阅接入方式，渠道 type 是 `gemini`），
+  走 gemini 图标是对的，不需要独立图标。
+
+  **二、MiMo 渠道「测试未实现」（用户实测）**
+  用户原话：「小米 mimo 我添加了渠道，为什么要登录态是啥玩意？
+  我这边拿到了 cookie 填写进去保存之后**测试链接显示未实现测试**？
+  你不是说全部的厂商都正常工作吗？」
+
+  查清后是**两个独立问题**，先说明确的：
+  · **「要登录态」是正常的**：MiMo 的「网页对话」接入方式就是走小米账号 SSO，
+    复制 Cookie（serviceToken / userId / xiaomichatbot_ph）——
+    `pasteHint` 里写得很清楚。这是这类反代渠道的固有形态（同 GLM / 豆包 / Kimi）。
+  · **「未实现测试」是真 bug**，而且是**三层叠加**，一层比一层深：
+
+  **第一层：适配器解析不到。** 渠道存的是 `other.method = "relay"`（通用值），
+  而 MiMo 的网页反代方法名是 `mimo-web`。于是：
+  `methodOf()` 查不到 → 兜底 `"relay"` → `adapterKeyFor()` 查 `"relay"` 也查不到
+  → 回落到 `channel.type = "mimo"` → **而 `ADAPTERS` 注册的是 `"mimo-web"`，没有 `"mimo"`**
+  → 适配器 undefined → 「适配器未实现测试」，对话也不可用。
+  渠道能建、能填凭据，就是不能用。
+  修：`adapterKeyFor()` 在「按 method 查不到」时**回落到该厂商真正注册了适配器的方法**，
+  而不是盲目拿厂商名当 adapter key。实测：
+  `mimo+relay → mimo-web`、`minimax+relay → minimax-web`、`stepfun+relay → stepfun-web`
+  （后两个是同类隐患，一并修了）、`deepseek+relay → openai-compat`（不变）、`kiro+kiro → kiro`（不变）。
+
+  **第二层：凭据写回绕过了适配器。** `/channel/login` 的 relay 分支是按旧契约写的
+  （「裸 token 存 api_key + 可选 cookies 数组存 other.cookies」），
+  服务于 DeepSeek / Kimi / GLM 那批适配器；而新一批具名反代适配器
+  （mimo-web / minimax-web / stepfun-web）的凭据形态是
+  `other.service_token / user_id / ph` 这类**具名字段**。
+  走旧契约的实测后果：`other_keys = ["method"]`（只有 method），
+  `api_key` = 整个 JSON 串 —— 适配器读 service_token 读到空 → 永远 401。
+  修：relay 分支里 `adapter.importAuth` 存在时优先用它。
+
+  **第三层：即使交给适配器，解析也漏了两种真实形态。**
+  · `parseAuth` 只认 `obj.cookies` 是**对象映射**，而浏览器扩展/抓取流程导出的是**数组**
+    （`[{name,value},…]`）—— 数组形态下 uid/ph 能取到、唯独 token 取不到，
+    报错还指向「凭据不完整」，最让人火大；
+  · cookie 的**真实名**是 `xiaomichatbot_serviceToken`，而候选名只有 `serviceToken`。
+  修：数组与映射统一归一，候选名补上真实名。
+
+  **端到端验证**（建渠道 → 查字段 → 测活 → 清理）：
+  ```
+  凭据解析：other = {method:mimo, service_token:E2E_TOKEN_ABC, user_id:2892751303, ph:E2E_PH_XYZ}
+            api_key 13 字节（就是 token 本身）—— 修复前是整个 JSON
+  渠道测试：登录态已失效（401）← 业务错误（我用的是假 token，401 正是预期）
+  解析器单测：数组形态 PASS、映射形态 PASS
+  ```
+  一句话：**之前是「适配器未实现测试」（系统故障），现在是「登录态失效」（数据问题）**
+  —— 用户用真实 cookie 重填一次即可使用。
+
+  **三、我自己的错（记录在案）**
+  为了给媒体库加上传入口，我用脚本把 `onPickUpload` 移到 `load` 之后 ——
+  脚本按「第一个 `);`」找块尾，**插进了 load 的函数体中间**，把它的 try 块切断，
+  `/media` 整页白屏（`onPickUpload is not defined`）。
+  这是我第三次在这个文件上出错（先 TDZ、再未定义、现在是切函数）。
+  教训：**用脚本按文本边界搬代码块本身就不可靠**（边界会撞上嵌套），
+  这类改动应当用编辑器精确替换，或搬完立刻跑 ui-smoke（这次正是它拦下的）。
+
+  回归锁：`persona-r1.test.mjs` 82 项；新增 `vendor-icons.test.mjs` 5 项。
+
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 
 > 目标：把开源社区已有的「网页版反代 / 工具类反代」按**厂商**归类接入平台，
