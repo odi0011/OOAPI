@@ -917,8 +917,22 @@ async function applyCredentialToChannel({ id, type, method, credential, vendor }
 
   let parsed;
   if (adapter.importAuth) {
-    parsed = await adapter.importAuth({ token: raw, mode: "paste" });
-  } else if (methodKey === "relay") {
+    // **优先交适配器解析**，不要因为 methodKey 被归一成 "relay" 就绕过它。
+    //
+    // 真实事故（用户实测，MiMo）：「我添加了渠道，为什么要登录态是啥玩意？
+    // 我这边拿到了 cookie 填写进去保存之后测试链接显示未实现测试？」
+    // 链路：渠道的 method 存的是通用值 "relay"，而 MiMo 的方法名是 "mimo-web" ——
+    // 于是这里既不满足 `methodKey === "relay"`（methodKey 由 methodOf 归一，
+    // 在「能查到方法」时会保留原值，但历史渠道存的是 relay），
+    // 又因为分支判断用的是归一化前的值而**跳过了 importAuth**，
+    // 结果凭据按「裸 token + cookies 数组」落库（other.cookies），
+    // 而 mimo-web 适配器读的是 other.service_token / user_id / ph →
+    // 凭据字段名对不上 → 永远 401「登录态已失效」，管理员反复重抓也修不好。
+    //
+    // 适配器自带 importAuth 时它最懂自己的凭据形态（parseAuth 已兼容 cookies 数组、
+    // 各种别名与裸串），所以只要 adapter.importAuth 存在就一定用它。
+    parsed = await adapter.importAuth({ token: raw, mode: "paste", ...(rest || {}) });
+  } else if (methodKey === "relay" || /-web(-ui)?$/.test(methodKey) || adapter === null) {
     // 网页版反代（DeepSeek / Kimi / GLM / 豆包 / 通义）没有 importAuth：
     // 它们的凭据形态就是「登录态 token（api_key）+ 可选 cookies（other.cookies）」，
     // 这里按同一契约直接落库，让「抓取登录态」也能走统一找回入口。
@@ -1625,6 +1639,24 @@ router.post(
         };
         accountLabel = other.account;
       } else if (mode === "paste") {
+        // **有 importAuth 就交给适配器** —— 它最懂自己的凭据形态。
+        //
+        // 为什么必须放在这里（用户实测的 MiMo 事故）：
+        // 这条 relay 分支是按「裸 token（api_key）+ 可选 cookies 数组（other.cookies）」
+        // 的旧契约写的，服务于 DeepSeek / Kimi / GLM / 豆包这类适配器。
+        // 但新一批「具名反代」适配器（mimo-web / minimax-web / stepfun-web）
+        // 的凭据形态是 `other.service_token / user_id / ph` 这类**具名字段**，
+        // 由它们自己的 importAuth 解析（parseAuth 已兼容 cookies 数组与各种别名）。
+        // 走旧契约的后果：整个 JSON 被当成裸 token 塞进 api_key，
+        // other 里只有 method —— 适配器读 service_token 读到空 →
+        // 永远 401「登录态已失效」，管理员反复重抓也修不好。
+        // （实测：建完渠道后 other_keys 只有 ["method"]，api_key 是本该被解析的 JSON 串。）
+        if (adapter.importAuth) {
+          const r = await adapter.importAuth({ ...rest, token: String(rest.token || ""), mode: "paste" });
+          token = String(r.token || "").slice(0, 60_000);
+          other = { method: methodKey, ...(r.other || {}) };
+          accountLabel = r.accountLabel || null;
+        } else {
         const t = String(rest.token || "").trim().slice(0, 60_000);
         if (!t) return fail(res, "请填写登录态");
         if (adapter.verifyPastedToken) {
@@ -1658,6 +1690,7 @@ router.post(
             }
           }
           if (list.length) other.cookies = list;
+        }
         }
       } else if (mode === "browser") {
         // 浏览器登录：账号先落库，再由浏览器验证/建立会话
