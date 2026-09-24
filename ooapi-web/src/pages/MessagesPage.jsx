@@ -505,7 +505,11 @@ export default function MessagesPage() {
               <Badge count={rooms.filter((r) => !r.guild_channel_id).reduce((acc, r) => acc + (r.unread || 0), 0)} size="small" offset={[-4, 4]}>
                 <div
                   className="qq-rail-btn"
+                  role="button"
+                  tabIndex={0}
+                  aria-label="即时消息（私聊与群聊）"
                   onClick={() => { setHubTab("messages"); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setHubTab("messages"); } }}
                 >
                   <MessageOutlined />
                 </div>
@@ -519,6 +523,9 @@ export default function MessagesPage() {
             <Tooltip title="QQ 频道 · 官方开发者社区" placement="right">
               <div
                 className="qq-rail-btn"
+                role="button"
+                tabIndex={0}
+                aria-label="QQ 频道 · 官方开发者社区"
                 onClick={() => {
                   setHubTab("guild");
                   if (guilds[0]?.channels?.[0]) {
@@ -540,7 +547,11 @@ export default function MessagesPage() {
               <Badge count={requests.pending_count} size="small" offset={[-4, 4]}>
                 <div
                   className="qq-rail-btn"
+                  role="button"
+                  tabIndex={0}
+                  aria-label="通讯录与好友关系"
                   onClick={() => { setHubTab("contacts"); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setHubTab("contacts"); } }}
                 >
                   <TeamOutlined />
                 </div>
@@ -552,13 +563,13 @@ export default function MessagesPage() {
 
           {/* 底部快捷操作 */}
           <Tooltip title="添加好友" placement="right">
-            <div className="qq-rail-btn" onClick={() => setAddFriendOpen(true)} style={{ width: 42, height: 42, fontSize: 17 }}>
+            <div className="qq-rail-btn" role="button" tabIndex={0} aria-label="添加好友" onClick={() => setAddFriendOpen(true)} style={{ width: 42, height: 42, fontSize: 17 }}>
               <UserAddOutlined />
             </div>
           </Tooltip>
 
           <Tooltip title="发起聊天 / 创建群聊" placement="right">
-            <div className="qq-rail-btn" onClick={() => { createForm.resetFields(); setCreateOpen(true); }} style={{ width: 42, height: 42, fontSize: 17 }}>
+            <div className="qq-rail-btn" role="button" tabIndex={0} aria-label="发起聊天 / 创建群聊" onClick={() => { createForm.resetFields(); setCreateOpen(true); }} style={{ width: 42, height: 42, fontSize: 17 }}>
               <PlusOutlined />
             </div>
           </Tooltip>
