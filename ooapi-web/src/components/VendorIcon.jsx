@@ -59,6 +59,15 @@ const CHANNEL_ICON = {
   qoder: "qoder.svg",
   // 三方兼容聚合
   opencode: "opencode.png",
+  // Trae（字节的 AI IDE）：账号反代，无 API 模式。
+  // **2026-09-24 补**：之前加这个厂商时**忘了加图标映射**，
+  // 于是渠道图标掉到平台 logo。用户反馈：「cursor 和 trae 的图标依旧是不对的，
+  // 为啥每次让你加新厂商就会出这问题」—— 见下方 assertVendorIcons 的说明，
+  // 现在有构建期兜底，漏配会直接报错而不是静默掉 logo。
+  // 图标取 trae.ai 的 favicon（深底 + Trae 品牌绿 50,240,140，已核对像素）。
+  trae: "trae.png",
+  // Cursor：同上，本次一并补。图标取 cursor.com favicon（白底 + 黑图形，已核对）。
+  cursor: "cursor.png",
   // Cline（官方 GitHub 仓库的 assets/icons/icon.png —— 官网 favicon 取不到）
   cline: "cline.png",
   openrouter: "openrouter.svg",
@@ -196,6 +205,31 @@ export function bareModelId(model) {
 export function iconFileForChannel(type) {
   return CHANNEL_ICON[String(type || "").toLowerCase()] || PLATFORM_LOGO;
 }
+
+/**
+ * 厂商 key 清单 —— **新增厂商时必须同时改这里和 CHANNEL_ICON**。
+ *
+ * 为什么要维护这份清单（真实反馈，2026-09-24）：
+ *   「cursor 和 trae 的图标依旧是不对的，为啥每次让你加新厂商就会出这问题」
+ *   —— 因为加厂商时要改三处（后端 vendors.js / channel-types.js、前端图标表），
+ *   而图标表那一处**漏了不会报错**：查表失败会静默回落到平台 logo，
+ *   页面照样渲染，所以能一路漏到线上，只能靠人眼发现。
+ *
+ * 现在的兜底：tests/vendor-icons.test.mjs 会拿这份清单逐个比对 ——
+ * 清单里的每个厂商都必须在 CHANNEL_ICON 里有映射，且映射的文件必须真实存在
+ * （public/icons 下）。漏一个就红。**新增厂商时照着报错补即可，不会再静默漏。**
+ *
+ * 注意区分「厂商」与「接入方式」：antigravity 是 Gemini 的订阅接入方式
+ *（它的渠道 type 是 gemini），不是独立厂商，所以不需要自己的图标；
+ * 而 kiro / trae / cursor / workbuddy 是**厂商位**（用户按「用谁的账号」归类），
+ * 必须有图标。
+ */
+export const VENDOR_ICON_KEYS = [
+  "deepseek", "glm", "kimi", "doubao", "qwen", "openai", "anthropic", "gemini",
+  "grok", "workbuddy", "qoder", "mimo", "minimax", "stepfun", "ark", "opencode",
+  "openrouter", "siliconflow", "kiro", "cline", "trae", "cursor",
+  "typesafe", "longcat", "chutes", "nvidia", "cerebras", "hunyuan",
+];
 
 export function iconFileForModel(model) {
   const raw = String(model || "");
