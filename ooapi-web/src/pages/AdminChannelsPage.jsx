@@ -699,6 +699,42 @@ function methodShortName(m) {
   return raw.replace(/（[^）]*）/g, "").trim() || "凭据";
 }
 
+/**
+ * 把一条凭据规格转成**输入框标签**。
+ *
+ * 用户原话：「cookie 就 cookie，token 就 token，哪个位置哪个参数……你放个登录态输入框，
+ * 用户也不知道是啥啊」。所以标签要说清**粘的是什么**，而不是平台自己的术语「登录态」。
+ *   cookie 类 → 「Cookie：kimi-auth」（用户一眼知道去 Cookies 里找）
+ *   文件类    → 「凭据文件内容」
+ *   Key 类     → 「API Key」
+ */
+function credLabelOf(v) {
+  const f = String(v?.field || "").trim();
+  if (!f) return "登录凭据";
+  if (/cookie/i.test(f)) return `Cookie：${f.replace(/cookie[：:\s]*/i, "").trim() || f}`;
+  if (/json|文件|整份|内容/i.test(f)) return "凭据文件内容";
+  if (/^(api_key|PAT|accessToken|access_token)$/i.test(f)) return f;
+  return f;
+}
+
+/**
+ * 多值规格的标签：**也要说清是哪一类东西**，不能退回成「登录凭据」。
+ *
+ * 三种多值情形各自形态不同，标签必须区分开：
+ *   MiMo（3 个 cookie）→ 「3 个 Cookie」；WorkBuddy（同文件的 3 个值）→「凭据文件内容」；
+ *   Cursor（Key 与 IDE 凭据二选一）→「API Key / IDE 凭据」。
+ * 判据用 from 里出现的线索（Cookies 面板 / 文件 / 二选一），而不是硬编码厂商名 ——
+ * 这样新加的多值方式也能落到合理的一档。
+ */
+function credLabelMulti(spec) {
+  const vals = spec?.values || [];
+  const allCookie = vals.every((v) => /cookie/i.test(v.field) || /Cookies/i.test(v.from));
+  if (allCookie) return `${vals.length} 个 Cookie`;
+  const anyEither = vals.some((v) => /才需要|二选一|或/.test(v.note || ""));
+  if (anyEither) return "API Key / IDE 凭据";
+  return "凭据文件内容";
+}
+
 function ProviderPicker({ providers, activeKey, onPick }) {
   return (
     <div className="oo-provider-picker">
@@ -3002,20 +3038,125 @@ export default function AdminChannelsPage() {
                               </Space>
                             </Form.Item>
                           ) : null}
+                          {/* 凭据输入区。
+                              用户原话（两次，第二次是发火）：
+                                「手动填凭证也没引导用户要拿哪个字段啊」
+                                「cookie 就 cookie，token 就 token，哪个位置哪个参数，每个厂商都要
+                                  对应官网核对清楚，你放个登录态输入框，用户也不知道是啥啊，而且你
+                                  上面写一堆小字说要干嘛干嘛，也没明确说到底是啥啊」
+                              所以这里的规则是：
+                                · 标签**直接写要粘的东西**（cookie 就说 cookie，token 就说 token），
+                                  不再一律叫「登录态」——那是平台自己的术语，用户看不懂；
+                                · 要粘的值逐条列出来（后端 credSpec 提供 field + from），
+                                  每条都能点一下复制字段名，不用手抄；
+                                · `why` 只解释「为什么是这东西」（一句话），注意事项留给报错信息，
+                                  不再堆成一墙小字。 */}
                           <Form.Item
                             name="token"
-                            label={pickMethod.oauth ? (oauthUrl ? "回调地址 / 授权码" : "凭据 JSON") : "登录态"}
+                            label={
+                              oauthUrl
+                                ? "回调地址 / 授权码"
+                                : pickMethod.credSpec?.values?.length === 1
+                                  ? // 只有一个值时，标签就把答案说完：直接显示字段名
+                                    `${credLabelOf(pickMethod.credSpec.values[0])}`
+                                  : pickMethod.credSpec?.values?.length
+                                    ? // 多值时也要说清是哪类东西（几个 cookie / 凭据文件）
+                                      credLabelMulti(pickMethod.credSpec)
+                                    : pickMethod.oauth
+                                      ? "凭据 JSON"
+                                      : "登录凭据"
+                            }
                             rules={
                               pickMethod.oauth
                                 ? []
-                                : [{ required: true, message: "请粘贴登录态" }]
+                                : pickMethod.credSpec?.blankOk
+                                  ? [] // 系统驱动型：服务器浏览器登录，凭据可留空
+                                  : [{ required: true, message: "请先按上面的清单取到值再粘贴" }]
                             }
                             extra={
                               oauthUrl
                                 ? "粘贴形如 http://localhost:51121/oauth-callback?code=... 的完整地址"
-                                : pickMethod.pasteHint
+                                : undefined // 说明交给下面的清单，不再在这里堆小字
                             }
                           >
+                            {/* 清单：要粘哪些值、分别去哪取 */}
+                            {!oauthUrl && pickMethod.credSpec?.values?.length ? (
+                              <div
+                                style={{
+                                  border: "1px solid var(--line)",
+                                  borderRadius: "var(--r-sm)",
+                                  background: "var(--inset)",
+                                  padding: "9px 11px",
+                                  marginBottom: 8,
+                                }}
+                              >
+                                <div style={{ fontSize: 12.5, color: "var(--ink-2)", marginBottom: 6 }}>
+                                  要粘的内容
+                                  {pickMethod.credSpec.blankOk ? (
+                                    <span style={{ color: "var(--ink-3)" }}>　（可留空，除非你要手工指定）</span>
+                                  ) : pickMethod.credSpec.values.length > 1 ? (
+                                    <span style={{ color: "var(--ink-3)" }}>
+                                      　（{pickMethod.credSpec.values.length} 项，全选复制粘贴即可）
+                                    </span>
+                                  ) : null}
+                                </div>
+                                {pickMethod.credSpec.values.map((v, i) => (
+                                  <div
+                                    key={i}
+                                    style={{
+                                      display: "flex",
+                                      gap: 8,
+                                      alignItems: "flex-start",
+                                      padding: "3px 0",
+                                      fontSize: 12.5,
+                                      lineHeight: 1.7,
+                                    }}
+                                  >
+                                    <span style={{ color: "var(--ink-3)", minWidth: 14 }}>{i + 1}.</span>
+                                    <div style={{ flex: 1 }}>
+                                      <code
+                                        onClick={() =>
+                                          copyText(v.field).then(
+                                            () => message.success("已复制字段名"),
+                                            () => message.warning("复制失败，请手动选中")
+                                          )
+                                        }
+                                        title="点击复制字段名"
+                                        style={{
+                                          fontFamily: "var(--font-mono)",
+                                          fontSize: 12,
+                                          color: "var(--accent-ink, #1677ff)",
+                                          background: "transparent",
+                                          border: "none",
+                                          padding: 0,
+                                          cursor: "pointer",
+                                          wordBreak: "break-all",
+                                        }}
+                                      >
+                                        {v.field}
+                                      </code>
+                                      <span style={{ color: "var(--ink-2)" }}>　— {v.from}</span>
+                                      {v.note ? (
+                                        <div style={{ color: "var(--ink-3)", fontSize: 12 }}>{v.note}</div>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                ))}
+                                {pickMethod.credSpec.why ? (
+                                  <div
+                                    style={{
+                                      color: "var(--ink-3)",
+                                      fontSize: 12,
+                                      marginTop: 6,
+                                      paddingTop: 6,
+                                      borderTop: "1px dashed var(--line)",
+                                    }}
+                                  >
+                                    {pickMethod.credSpec.why}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
                             <Input.TextArea
                               rows={pickMethod.oauth ? 6 : 3}
                               placeholder={
@@ -3023,10 +3164,14 @@ export default function AdminChannelsPage() {
                                 // 不能一律写「官方 CLI 凭据文件」—— Qoder 的凭据是 PAT、
                                 // 网页反代是登录态值，写错会让人以为要去找一个不存在的文件
                                 //（用户实测反馈过：「手动填凭证也没引导用户要拿哪个字段啊」）。
-                                // 有 loginFields 的就用它的 placeholder（那是各方式自己声明的），
-                                // 否则按 oauth / 登录态 两档给。
-                                pickMethod.loginFields?.[0]?.placeholder ||
-                                (pickMethod.oauth ? "粘贴凭据 JSON（各方式要什么见上面指引）" : "粘贴登录态值")
+                                // 有 credSpec 时按清单第一项给（与上面的标签一致）；
+                                // 否则退回 loginFields 的 placeholder（那是各方式自己声明的）。
+                                pickMethod.credSpec?.values?.length === 1
+                                  ? `粘贴 ${pickMethod.credSpec.values[0].field}`
+                                  : pickMethod.credSpec?.blankOk
+                                    ? "可留空"
+                                    : pickMethod.loginFields?.[0]?.placeholder ||
+                                      (pickMethod.oauth ? "粘贴凭据 JSON" : "粘贴上面列出的内容")
                               }
                             />
                           </Form.Item>

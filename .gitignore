@@ -32,3 +32,8 @@ Thumbs.db
 __pycache__/
 *.pyc
 ooapi-web/.qa-tmp/
+
+# 本地协作/测试脚手架：**.workbuddy-ai/qssh.py 里写着测试服务器的口令**，
+# 还有假人脚本、临时截图与探针。这些是本地工具，不属于产品代码，
+# 而且一旦 `git add -A` 就会把服务器密码提进仓库 —— 必须忽略。
+.workbuddy-ai/

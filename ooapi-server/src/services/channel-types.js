@@ -1256,7 +1256,17 @@ export function isApiKeyMethod(providerKey, methodKey) {
   const m = getMethod(providerKey, methodKey);
   if (!m) return String(methodKey || "") === "api";
   if (String(methodKey) === "api") return true;
-  return Boolean(m.baseUrl) && !(m.loginModes || []).length;
+  // 判据是「这个方式要的凭据是不是 API Key 形态」，有两个等价信号：
+  //   · 有 baseUrl  → 标准兼容接口，填地址 + Key
+  //   · 有 keyHint  → 明确写了 Key 的形态（keyHint 只在 Key 型方式上出现，
+  //                   与 loginModes 互斥，见 providers 表）
+  // **keyHint 这一条是补的**：「自定义（通用兼容）」的 Anthropic 方式
+  // 故意把 baseUrl 留空（地址由用户自己填），于是旧判据
+  //（只看 baseUrl）判它为 false → 前端按「登录态」渲染出一个粘贴框，
+  // 而它要的其实是一行 API Key + 一个 Base URL。
+  // 用户抱怨「你放个登录态输入框，用户也不知道是啥啊」，这就是其中一个来源。
+  // （该漏判由 tests/cred-spec.test.mjs 的门禁查出。）
+  return (Boolean(m.baseUrl) || Boolean(m.keyHint)) && !(m.loginModes || []).length;
 }
 
 export function adapterFor(providerKey, methodKey) {
@@ -1377,7 +1387,7 @@ const LOCAL_LOGIN_GUIDE = {
     steps: [
       "本机装好 Codex CLI 并登录（命令行执行 codex login，浏览器会弹出授权页，按提示完成）",
       "登录后打开凭据文件：Windows 在资源管理器地址栏输入 %USERPROFILE%\\.codex 回车，找到 auth.json（macOS / Linux 就是 ~/.codex/auth.json）",
-      "用记事本打开 auth.json，把全部内容原样粘到下面的「凭据 JSON」框（含 tokens 与 account_id）",
+      "用记事本打开 auth.json，把全部内容原样粘到下面的下面的输入框（含 tokens 与 account_id）",
       "找不到该文件：说明 CLI 还没登录成功，回到第 1 步重跑 codex login",
     ],
     note: "还没装 CLI：直接点上面的登录小窗也行 —— 授权后地址栏会停在一个打不开的 localhost 地址，把整串 URL 粘到下方输入框即可",
@@ -1386,7 +1396,7 @@ const LOCAL_LOGIN_GUIDE = {
     steps: [
       "本机装好 Claude Code 并登录（命令行执行 claude，按提示完成 OAuth 授权）",
       "登录后打开凭据文件：Windows 在资源管理器地址栏输入 %USERPROFILE%\\.claude 回车，找到 .credentials.json（macOS 也可用「钥匙串访问」搜 Claude Code-credentials）",
-      "用记事本打开该文件，把全部内容原样粘到下面的「凭据 JSON」框",
+      "用记事本打开该文件，把全部内容原样粘到下面的下面的输入框",
     ],
     note: "或直接点上面的登录小窗：授权后页面会跳到打不开的 localhost 地址（正常现象），把地址栏整串 URL 粘回下方输入框即可",
   },
@@ -1395,7 +1405,7 @@ const LOCAL_LOGIN_GUIDE = {
       "本机装好 Antigravity 客户端并登录 Google 账号（登录后它会自己写入凭据缓存）",
       "打开凭据目录：Windows 在资源管理器地址栏输入 %USERPROFILE%\\.antigravity 回车（macOS / Linux 就是 ~/.antigravity/）",
       "找到文件名含 oauth / token 字样的那个 json（不同版本路径略有差异），用记事本打开",
-      "把全部内容粘到下面的「凭据 JSON」框；只想给 refresh_token 也可以，平台会自行换 access_token",
+      "把全部内容粘到下面的下面的输入框；只想给 refresh_token 也可以，平台会自行换 access_token",
     ],
     note: "或直接点上面的登录小窗：授权后把地址栏整串 URL 粘回下方输入框",
   },
@@ -1404,7 +1414,7 @@ const LOCAL_LOGIN_GUIDE = {
       "本机装好 Kiro 客户端并登录（登录后凭据会缓存到本机）",
       "打开缓存目录：Windows 在资源管理器地址栏输入 %USERPROFILE%\\.aws\\sso\\cache 回车（macOS / Linux：~/.aws/sso/cache/）",
       "按「修改时间」排序，打开最新的那个 json（文件名是一串哈希），用记事本查看内容",
-      "把全部内容粘到下面的「凭据 JSON」框，至少要有 accessToken 与 refreshToken",
+      "把全部内容粘到下面的下面的输入框，至少要有 accessToken 与 refreshToken",
     ],
     note: "更省事的做法：用上面的「一键绑定」—— 点开授权页登录确认后，凭据由服务端直接写入渠道，不用手工复制任何文件",
   },
@@ -1412,12 +1422,12 @@ const LOCAL_LOGIN_GUIDE = {
     steps: [
       "推荐用上面的「设备码登录」：点一下会给出一个验证链接与代码，在任意浏览器授权即可，凭据自动回填",
       "若要手工填：本机登录 grok.com 后，从浏览器开发者工具的 Application → Local Storage 里找 sso / sso-rw 两项的值",
-      "把两个值拼成 JSON 粘到下面的「凭据 JSON」框：{ \"sso\": \"...\", \"ssoRw\": \"...\" }",
+      "把两个值拼成 JSON 粘到下面的下面的输入框：{ \"sso\": \"...\", \"ssoRw\": \"...\" }",
     ],
     note: "设备码登录是官方支持的路径，比手工复制 cookie 稳得多，优先用它",
   },
   // 自定义（Anthropic 兼容）：凭据由管理员从**上游服务商**那里拿，我们无从指引具体路径，
-  // 但要明确说清「该填什么」——不然面对一个「凭据 JSON」框完全不知道放什么。
+  // 但要明确说清「该填什么」——不然面对一个下面的输入框完全不知道放什么。
   "custom:anthropic": {
     steps: [
       "这个接入方式对接的是你自己的 Anthropic 兼容服务，凭据从该服务商的管理后台获取（注意不是 Anthropic 官网）",
@@ -1460,7 +1470,7 @@ const LOCAL_LOGIN_GUIDE = {
     steps: [
       "点上面的「弹出登录小窗」打开 Cursor 的 API Keys 页面（未登录会先让你登录）",
       "在页面里创建一个 API Key，复制那串以 crsr_ 开头的字符串",
-      "把它填成 { \"api_key\": \"crsr_你的密钥\" } 粘到下面的「凭据 JSON」框 —— 平台会自动用它换取访问令牌，并在过期前自动重换",
+      "把它填成 { \"api_key\": \"crsr_你的密钥\" } 粘到下面的下面的输入框 —— 平台会自动用它换取访问令牌，并在过期前自动重换",
     ],
     note:
       "也可以不用 API Key：填 { \"accessToken\": \"...\", \"machineId\": \"...\" }，" +
@@ -1485,6 +1495,169 @@ const LOCAL_LOGIN_GUIDE = {
 export function localLoginGuide(providerKey, methodKey) {
   const k = [String(providerKey || ""), String(methodKey || "")].join(":");
   return LOCAL_LOGIN_GUIDE[k] || null;
+}
+
+// ---------------------------------------------------------------------------
+// 凭据规格（credSpec）：明确告诉用户**到底要粘什么**
+// ---------------------------------------------------------------------------
+// 用户原话（两次）：
+//   「手动填凭证也没引导用户要拿哪个字段啊」
+//   「cookie 就 cookie，token 就 token，哪个位置哪个参数，每个厂商都要对应官网核对清楚，
+//     你放个登录态输入框，用户也不知道是啥啊，而且你上面写一堆小字说要干嘛干嘛，
+//     也没明确说到底是啥啊」
+//
+// 批评成立。原先每个接入方式只有一段散文 `pasteHint`，标签又一律叫「登录态」：
+//   ① 用户不知道去哪找 —— 可能是 cookie、是 localStorage 的一项、是 JWT、
+//      也可能是本机 CLI 的凭据文件，这四种东西在浏览器里的位置完全不同；
+//   ② 散文里混着「为什么」「注意事项」「平台会怎样」，**要粘哪个字段**被淹在中间；
+//   ③ glm / doubao / qwen 连 pasteHint 都没有 —— 等于什么都没说。
+//
+// 这里改成**结构化清单**，每一项就是一个要填的值：
+//   field  真实字段名（与适配器读取的名字一致，不是泛称）
+//   from   从哪取（浏览器哪个面板、哪个文件路径）
+//   note   形态/兜底说明
+// 前端渲染成带序号的清单 + 可点击复制的字段名，而不是一段小字。
+//
+// 维护要求：新增厂商**必须按官网/实测核对字段名**，不许凭印象写。
+// tests/cred-spec.test.mjs 会做结构校验（当前 20 个非 API 方式全覆盖），
+// 并且要求 field 名在该厂商适配器的源码里真实出现过 —— 防止写下不存在字段。
+const CRED_SPEC = {
+  // ---- 网页对话：粘贴 cookie / localStorage ----
+  "deepseek:relay": {
+    values: [
+      { field: "userToken", from: "F12 → Application → Local Storage → https://chat.deepseek.com", note: "取该 value（含逗号时只要逗号前那段）" },
+    ],
+    why: "DeepSeek 网页版拿 localStorage 里的 userToken 鉴权，不是 Cookie。",
+  },
+  "kimi:relay": {
+    values: [
+      { field: "kimi-auth", from: "F12 → Application → Cookies → https://www.kimi.com", note: "JWT，以 eyJ 开头" },
+    ],
+    why: "Kimi 网页版的登录态就是 cookie kimi-auth 的值。",
+  },
+  "mimo:mimo-web": {
+    values: [
+      { field: "xiaomichatbot_serviceToken", from: "F12 → Application → Cookies → aistudio.xiaomimimo.com", note: "主凭据，必需" },
+      { field: "userId", from: "同上面板，Cookies 里名为 userId 的那项" },
+      { field: "xiaomichatbot_ph", from: "同上面板，Cookies 里名为 xiaomichatbot_ph 的那项", note: "缺它更容易触发风控" },
+    ],
+    // 这段是**界面上的纯文本**，不是 markdown —— 写反引号会被原样显示出来。
+    //（同类错误之前犯过一次：ChatPage 的 Notice 里写了 `**不是你的配置问题。**`，
+    // 星号直接露在界面上，被用户看到。）
+    why: "MiMo 用这三个 cookie 鉴权，三个一起复制。整串 name=value; … 或扩展导出的 JSON 都能识别。",
+  },
+  "minimax:minimax-web": {
+    values: [
+      { field: "token", from: "F12 → Application → Cookies → agent.minimaxi.com", note: "JWT，以 eyJ 开头" },
+    ],
+    why: "MiniMax Agent 用 cookie token；签名与指纹平台自己算，不用你填。",
+  },
+  "stepfun:stepfun-web": {
+    values: [
+      { field: "完整 Cookie 串", from: "F12 → Network → 任选一个 chat.stepfun.com 请求 → Request Headers → cookie", note: "形如 a=b; c=d，整行复制" },
+    ],
+    why: "StepFun 要的是整串 cookie，不是单个值。",
+  },
+  // ---- 系统驱动（服务器浏览器）：通常不用手填 ----
+  "glm:relay": {
+    values: [
+      { field: "（留空即可）", from: "服务器浏览器里登录一次，页面自己过验证码与签名", note: "要手工粘就是 localStorage 的 token" },
+    ],
+    why: "Z.ai 有一次性前端验证码，必须由页面 JS 生成，所以这个渠道靠服务器浏览器跑，不靠粘贴。",
+    blankOk: true,
+  },
+  "doubao:relay": {
+    values: [
+      { field: "（留空即可）", from: "服务器浏览器里登录一次，页面自动带 cookie sessionid", note: "a_bogus 签名由页面算，纯 HTTP 复现不了" },
+    ],
+    why: "豆包请求要 a_bogus 签名，只能由页面注入。",
+    blankOk: true,
+  },
+  "qwen:relay": {
+    values: [
+      { field: "（留空即可）", from: "服务器浏览器里登录一次，页面自动带登录态", note: "风控参数由闭源 SDK 生成" },
+    ],
+    why: "通义有 umidToken / doQwenAuth 签名，算法在闭源 SDK 里。",
+    blankOk: true,
+  },
+  // ---- 订阅与 CLI 凭据 ----
+  "openai:codex": {
+    values: [
+      // 路径里的反斜杠必须写 `\\` —— 单写 `\.` 在 JS 字符串里会退化成 `.`，
+      // 界面上就成了 `%USERPROFILE%.codexauth.json`（一个不存在的路径）。
+      // 实测截图里看到过这个错，用户照着找会找不到文件。
+      { field: "auth.json 整份文件内容", from: "本机 %USERPROFILE%\\.codex\\auth.json（macOS/Linux: ~/.codex/auth.json）", note: "里面有 access_token 与 refresh_token" },
+    ],
+    why: "Codex CLI 的订阅凭据，平台用 refresh_token 自动续期。",
+  },
+  "openai:openai-web": {
+    values: [
+      { field: "accessToken", from: "登录 chatgpt.com 后打开 https://chatgpt.com/api/auth/session，复制 JSON 里的 accessToken", note: "ref 里带上 refreshToken 可自动续期（可选）" },
+    ],
+    why: "走 ChatGPT 网页版对话额度；触发风控的账号会显式报错，换个号即可。",
+  },
+  "anthropic:claude-oauth": {
+    values: [
+      { field: "凭据文件整份内容", from: "本机 ~/.claude/.credentials.json（Claude Code CLI 登录后生成）", note: "含 access_token / refresh_token" },
+    ],
+    why: "Claude 订阅凭据；请求会按官方 CLI 协议注入身份提示词。",
+  },
+  "gemini:antigravity": {
+    values: [
+      { field: "凭据文件整份内容", from: "Antigravity / Gemini Code Assist 的本机凭据文件", note: "含 access_token / refresh_token" },
+    ],
+    why: "Google 订阅凭据；平台续期后会引导补 project_id。",
+  },
+  "grok:grok-oauth": {
+    values: [
+      { field: "凭据文件整份内容", from: "本机 Grok CLI 凭据文件", note: "含 access_token / refresh_token" },
+    ],
+    why: "Grok 订阅走 cli-chat-proxy.grok.com，平台保持官方 CLI 指纹。",
+  },
+  "kiro:kiro": {
+    values: [
+      { field: "kiro-auth-token.json 整份内容", from: "本机 ~/.aws/sso/cache/ 或 Kiro 客户端凭据目录", note: "含 accessToken / refreshToken；SSO 形态另带 clientId / clientSecret" },
+    ],
+    why: "Kiro（AWS）的 SSO 凭据。也可以直接用上面的设备授权流程，更省事。",
+  },
+  "workbuddy:workbuddy": {
+    values: [
+      { field: "access_token", from: "WorkBuddy / CodeBuddy 桌面端的凭据文件", note: "必需" },
+      { field: "device_token", from: "同一个文件（对应请求头 X-Device-Token）", note: "设备风控头，服务端生成不了，只能来自真实客户端" },
+      { field: "user_id", from: "同一个文件（对应请求头 X-User-Id）" },
+    ],
+    why: "这三个值在一个文件里，整份 JSON 粘过来即可，平台自己挑字段。",
+  },
+  "qoder:qoder": {
+    values: [
+      { field: "PAT", from: "Qoder 个人访问令牌", note: "以 pt- 开头；桥地址默认 http://127.0.0.1:8963" },
+    ],
+    why: "Qoder 的推理协议要官方 WASM 签名，服务端不直连，走本机桥。",
+  },
+  "cline:cli": {
+    values: [
+      { field: "refreshToken", from: "Cline 扩展的登录态（或包含它的完整 JSON）", note: "也可以直接用上面的一键绑定" },
+    ],
+    why: "Cline 用 WorkOS AuthKit，refreshToken 是续期的关键。",
+  },
+  "trae:trae": {
+    values: [
+      { field: "整份凭据 JSON", from: "Trae 客户端的凭据文件或 DevTools 里的 localStorage", note: "含 token / refreshToken / userId / region；也可以只粘那一串令牌" },
+    ],
+    why: "整份 JSON 最稳（region 决定上游主机），平台自己挑字段。",
+  },
+  "cursor:cursor": {
+    values: [
+      { field: "api_key", from: "cursor.com → Dashboard → API Keys 新建", note: "以 crsr_ 开头，推荐用这个（平台会当场校验一次）" },
+      { field: "accessToken + machineId", from: "本机 Cursor 的 state.vscdb（ItemTable 表）", note: "只有不想建 API Key 时才需要这两个" },
+    ],
+    why: "Cursor 的对话后端讲 HTTP/2 + Connect 协议，平台已内置；API Key 最省事。",
+  },
+};
+
+/** 取某个接入方式的凭据规格（无则返回 null，前端退回 pasteHint） */
+export function credSpecOf(providerKey, methodKey) {
+  return CRED_SPEC[`${providerKey}:${methodKey}`] || null;
 }
 
 export function publicProviders() {
@@ -1525,6 +1698,8 @@ export function publicProviders() {
       // 不能让它去判 key === "api"（那会让第二个 API Key 型方式整档消失）。
       apiKey: isApiKeyMethod(p.key, m.key),
       pasteHint: m.pasteHint || "",
+      // 凭据规格（要粘哪几个值、从哪取）—— 前端渲染成清单，而不是一段散文
+      credSpec: credSpecOf(p.key, m.key),
       browserHint: m.browserHint || "",
       // 远程登录抓取能力：有 entryUrl 就说明支持「打开登录页自动抓取」
       captureHint: m.captureHint || "",

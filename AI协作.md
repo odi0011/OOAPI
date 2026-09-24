@@ -3878,6 +3878,86 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 
   回归锁：`persona-r1.test.mjs` 82 项；新增 `vendor-icons.test.mjs` 5 项。
 
+| 2026-09-24 | **第 60 批 · 凭据指引：把「登录态」换成每个厂商的具体字段（用户第三次为同一件事发火）**。
+
+  **用户原话**：
+  「cookie 就 cookie，token 就 token，哪个位置哪个参数，每个厂商都要对应官网核对清楚，
+  你放个登录态输入框，用户也不知道是啥啊，而且你上面写一堆小字说要干嘛干嘛，
+  也没明确说到底是啥啊」
+
+  **批评成立，而且是三层问题**：
+  ① 标签一律叫「登录态」—— 这是平台自己的术语。用户要填的东西四种形态都有
+     （cookie 值 / localStorage 里的一项 / JWT / 本机 CLI 的凭据文件），
+     在浏览器里的位置完全不同，一个笼统的框等于没说；
+  ② 唯一的信息是一条 `pasteHint` 散文，里面混着「为什么」「注意事项」，
+     **要粘哪个字段**被淹在中间；
+  ③ `glm` / `doubao` / `qwen` 连 `pasteHint` 都没有，等于什么都没说。
+
+  **改法：结构化凭据规格（`CRED_SPEC`）**，位置在 `services/channel-types.js`。
+  每个非 API 接入方式声明一个清单，前端渲染成带序号的列表：
+  ```
+  values: [{ field: 真实字段名, from: 从哪取, note: 形态/兜底 }]
+  why:   一句话解释为什么是这东西（不再堆小字）
+  blankOk: 系统驱动型渠道可留空
+  ```
+  输入框标签也跟着变具体：单个 cookie 直接显示「Cookie：kimi-auth」，
+  单个文件显示「凭据文件内容」，多个 cookie 显示「3 个 Cookie」。
+  字段名可点击复制，不用手抄。
+
+  **字段名是逐个核对过的，不是凭印象写的**：全部回到适配器源码里查证
+  （`kimi-auth`、`xiaomichatbot_serviceToken`/`userId`/`xiaomichatbot_ph`、
+  `sessionid`、`kimi-auth`、`access_token`/`device_token`/`user_id`、
+  `refresh_token`、`crsr_` 前缀…）。
+  浏览器驱动型（glm / 豆包 / 通义）的字段名在 `browser-driver.js` 的候选打分表里，
+  一并在门禁的查证范围内。
+
+  **顺带查出一个真 bug**：`custom:anthropic`（自定义 + Anthropic 兼容）
+  被 `isApiKeyMethod` 判成 false —— 旧判据只认 `baseUrl`，
+  而该方式的 `baseUrl` 故意留空（地址由用户自己填），
+  于是前端给它渲染出一个「登录态」粘贴框，而它其实要的是 API Key + Base URL。
+  这正是用户抱怨的「你放个登录态输入框，用户也不知道是啥啊」的来源之一。
+  修：判据补上 `keyHint`（keyHint 只在 Key 型方式上出现，与 loginModes 互斥，已核对全部 30 家）。
+
+  **门禁 `tests/cred-spec.test.mjs`（13 项，已进 `npm test`）**。
+  防的是修复本身的退化，三类「不报错、只让用户困惑」的错：
+  · 新加厂商忘了写规格 → 用户又看到光秃秃一个框；
+  · 写了规格但 field 名是编的 → 用户按指引找不到那个 cookie，比没指引更气人
+    → **回到适配器源码里查证字段名真的存在**（本条最关键）；
+  · 规格键写错（`provider:method` 对不上）→ `credSpecOf` 永远返回 null，
+    规格静静躺着不生效，肉眼完全看不出。
+  另有三条文案类检查，查的都是**只在界面上暴露、构建期查不出**的缺陷：
+  不能出现反引号/markdown 星号（我自己犯过：ChatPage 里 `**不是你的配置问题。**`
+  星号直接显示给用户）；Windows 路径的反斜杠不能被吃掉
+  （实测发现 `%USERPROFILE%\.codex` 在界面上成了 `%USERPROFILE%.codexauth.json`，
+  用户照着找不到文件）；每条都要有 `from`。
+  **注入法验证过**：编造 kimi 的字段名 → 立刻报出该字段在适配器里查不到；
+  把 `cursor:cursor` 键改成拼错的 → 立刻报「缺少 CRED_SPEC：cursor:cursor」。
+
+  **真实截图验收**（服务器上跑脚本，登真实管理员，逐个厂商截弹窗）：
+  ```
+  mimo      → 标签「3 个 Cookie」，列 3 条含 xiaomichatbot_serviceToken 与来源面板 ✅
+  kimi      → 标签「Cookie：kimi-auth」，标注 JWT 以 eyJ 开头 ✅
+  codex     → 标签「凭据文件内容」，路径 %USERPROFILE%\.codexuth.json 正确 ✅
+  glm       → 标签「（留空即可）」，并说明为什么可以留空 ✅
+  workbuddy → 「凭据文件内容」，3 项（含 X-Device-Token 风控头） ✅
+  cursor    → 「API Key / IDE 凭据」，2 项（crsr_ 优先，IDE 凭据兜底） ✅
+  ```
+  6 张截图 md5 各不相同（确认真的切换了厂商）。
+
+  **这次踩的坑（两次，都记下来）**：
+  · 第一版截图脚本用 `button:has-text("小米")` 选厂商，而厂商项其实是
+    `<div class="oo-provider-picker__item" role="button">` → 选择器匹配不到
+    → 每次都停在第一步 → **6 张截图 md5 完全相同，而脚本照样打印 "shot xxx" 报成功**。
+    教训：**截图必须校验内容（md5/像素），不能只看脚本没报错**。
+  · 构建产物落到了 `ooapi-web/dist`，而服务实际从 `ooapi-server/web` 读取
+    （`src/index.js` 的 `express.static`）—— 于是跑的还是旧包，
+    截图里标签仍写着「登录态」，看着像没修好。**部署后要确认服务真在服务新包**
+    （`grep -c credSpec ooapi-server/web/assets/*.js`）。
+
+  **上线验证**：cred-spec 13/13、ui-smoke 全部页面正常、gateway-smoke 9/9，
+  三个门禁都在**部署后的线上构建**上跑过。
+  本地 `npm test` 368 项断言全通过。
+
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 
 > 目标：把开源社区已有的「网页版反代 / 工具类反代」按**厂商**归类接入平台，
