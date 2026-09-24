@@ -670,6 +670,20 @@ t("好友申请弹窗的字数计数器不压内容", () => {
   ck(/padding-bottom: 22px/.test(css), "没有给计数器留出底部空间");
 });
 
+t("MediaPage 的钩子声明顺序（TDZ：引用在声明之前会白屏）", () => {
+  const mp = readFileSync(path.join(root, "..", "ooapi-web", "src", "pages", "MediaPage.jsx"), "utf8");
+  // 真实事故（我自己造的，被 ui-smoke 拦下）：
+  // 我把 onPickUpload 插在 load 之前，而它内部调用 load() ——
+  // 于是 /media 整页白屏：ReferenceError: Cannot access 're' before initialization
+  // （TDZ。压缩后变量名变成 re，报错完全看不出是哪个变量）。
+  // 这条断言只覆盖 MediaPage 这一个已知点：局部函数按 const 声明，
+  // **调用别的 useCallback 时必须排在它后面**。
+  const iLoad = mp.indexOf("const load = useCallback");
+  const iPick = mp.indexOf("const onPickUpload = useCallback");
+  ck(iLoad > 0 && iPick > 0, "找不到两个 useCallback（改名了？）");
+  ck(iLoad < iPick, "onPickUpload 声明在 load 之前，但它内部调用 load() —— 会 TDZ 白屏");
+});
+
 /* ============ 语法校验（改坏一个字符就全站 500）============ */
 console.log("\n=== ⑰ 改动的文件语法可解析 ===");
 for (const f of [

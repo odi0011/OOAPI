@@ -102,40 +102,6 @@ export default function MediaPage() {
   // 直传：与发帖/评论同一套（读 dataUrl → POST /api/media）
   const uploadRef = useRef(null);
   const [uploading, setUploading] = useState(false);
-
-  const onPickUpload = useCallback(
-    async (e) => {
-      const files = Array.from(e.target.files || []);
-      e.target.value = "";
-      if (!files.length) return;
-      setUploading(true);
-      let okN = 0;
-      const errs = [];
-      for (const file of files) {
-        try {
-          const dataUrl = await new Promise((resolve, reject) => {
-            const fr = new FileReader();
-            fr.onload = () => resolve(String(fr.result || ""));
-            fr.onerror = () => reject(new Error("读取文件失败"));
-            fr.readAsDataURL(file);
-          });
-          // source 用 "upload" 以便在来源列里区分「主动上传」与其他场景
-          await API.post("/media", { dataUrl, name: file.name, source: "upload" });
-          okN += 1;
-        } catch (err) {
-          errs.push(`${file.name}：${err.message || "上传失败"}`);
-        }
-      }
-      setUploading(false);
-      if (okN) {
-        message.success(`已上传 ${okN} 个文件`);
-        load();
-      }
-      // 失败要逐条说明（哪个文件、为什么），否则用户不知道该重传哪个
-      if (errs.length) message.error(errs.slice(0, 3).join("；"));
-    },
-    [message, load]
-  );
   const [kind, setKind] = useState("");
   const [status, setStatus] = useState(1);
   const [keyword, setKeyword] = useState("");
@@ -183,6 +149,41 @@ export default function MediaPage() {
         }),
         API.get("/media/stats", { params: { ...scopeParams } }),
       ]);
+
+
+  const onPickUpload = useCallback(
+    async (e) => {
+      const files = Array.from(e.target.files || []);
+      e.target.value = "";
+      if (!files.length) return;
+      setUploading(true);
+      let okN = 0;
+      const errs = [];
+      for (const file of files) {
+        try {
+          const dataUrl = await new Promise((resolve, reject) => {
+            const fr = new FileReader();
+            fr.onload = () => resolve(String(fr.result || ""));
+            fr.onerror = () => reject(new Error("读取文件失败"));
+            fr.readAsDataURL(file);
+          });
+          // source 用 "upload" 以便在来源列里区分「主动上传」与其他场景
+          await API.post("/media", { dataUrl, name: file.name, source: "upload" });
+          okN += 1;
+        } catch (err) {
+          errs.push(`${file.name}：${err.message || "上传失败"}`);
+        }
+      }
+      setUploading(false);
+      if (okN) {
+        message.success(`已上传 ${okN} 个文件`);
+        load();
+      }
+      // 失败要逐条说明（哪个文件、为什么），否则用户不知道该重传哪个
+      if (errs.length) message.error(errs.slice(0, 3).join("；"));
+    },
+    [message, load]
+  );
       if (!isLatest(token)) return;
       setItems(Array.isArray(list?.items) ? list.items : []);
       setTotal(Number(list?.total) || 0);
