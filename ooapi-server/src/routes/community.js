@@ -609,13 +609,25 @@ router.get(
     const items = [];
     for (const c of rows) {
       const a = authors.get(Number(c.user_id));
+      // 已删评论：**只回墓碑，不回正文与附图**。
+      //
+      // 为什么（人格实测报的）：「删掉的评论，接口照样原样吐回来，连内容都没清掉。
+      // 网页端是过滤了的（显示成灰色『已删除』），但任何拿这个接口做客户端的人
+      // 会把删掉的评论原样重新显示出来。」
+      //
+      // 现状的成因：可见性规则是「status=1 或 自己发的」（与帖子同一套，
+      // 本意是作者能回看自己的内容），所以作者视角下已删评论会出现在列表里 ——
+      // 这个保留没错（墓碑能让作者知道这里有过内容），但**正文不该跟着回来**：
+      // 用户点删除就是不想让这段文字再出现，而"网页端碰巧做了过滤"不是保障。
+      // 图同理：删掉的评论不该还能通过接口拿到已签名的图片 URL。
+      const deleted = Number(c.status) !== 1;
       items.push({
         id: Number(c.id),
         post_id: Number(c.post_id),
         user_id: Number(c.user_id),
         author: a || { id: Number(c.user_id), username: "", display_name: "" },
         parent_id: Number(c.parent_id) || 0,
-        content: c.content,
+        content: deleted ? "" : c.content,
         like_count: Number(c.like_count) || 0,
         status: Number(c.status),
         created_time: Number(c.created_time),
@@ -625,7 +637,7 @@ router.get(
         reply_to_name: c.reply_display_name || c.reply_username || "",
         // 评论附图（用户要求「评论也要能带图」）：与帖子同形状，
         // 前端拿到就能直接渲染缩略图（url 是现签的，见 mediaList）
-        media: await mediaList(c.media_ids),
+        media: deleted ? [] : await mediaList(c.media_ids),
       });
     }
     return ok(res, { items, total: Number(cnt.n) || 0, page: p, page_size: size });

@@ -10,6 +10,7 @@
 import { Router } from "express";
 import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now, idParam } from "../utils.js";
+import { notify } from "../services/notify-center.js";
 import { authRequired } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { push, pushMany, onlineUserIds, isOnline } from "../services/realtime.js";
@@ -187,6 +188,18 @@ router.post(
       reqId = Number(r[0].insertId);
     }
 
+    // 落库通知：**离线也要能看到**。
+    //
+    // 原先这里只有下面的 SSE 推送，没有落库 —— 人格实测报的缺口：
+    // 「小号给主号发申请，主号通知页 0 条……不是我主动去翻那个五步路径，
+    //   永远不知道有人加我。」SSE 只覆盖"此刻在线"的人，离线用户彻底错过。
+    // 与社区通知同一套（notify 内部会顺带发 SSE，两者不冲突）。
+    await notify({
+      userId: toUserId,
+      actorId: req.user.id,
+      type: "friend_request",
+    }).catch((e) => console.warn(`[friends] 好友申请通知写入失败：${e.message}`));
+
     // SSE 实时通知接收方
     push(toUserId, "friend_request", {
       request_id: reqId,
@@ -238,7 +251,13 @@ router.put(
         [req.user.id, fromUserId, ts, fromUserId, req.user.id, ts]
       );
 
-      // 3. SSE 通知申请发起方：申请已被同意，双方成为好友
+      // 3. 落库通知发起方（离线可见，见上面 friend_request 的说明）+ SSE 实时推送
+      await notify({
+        userId: fromUserId,
+        actorId: req.user.id,
+        type: "friend_accept",
+      }).catch((e) => console.warn(`[friends] 好友通过通知写入失败：${e.message}`));
+
       push(fromUserId, "friend_accepted", {
         by: {
           id: req.user.id,

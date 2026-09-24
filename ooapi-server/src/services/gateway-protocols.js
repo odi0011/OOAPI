@@ -185,14 +185,17 @@ const chatCompletions = {
     res.setHeader("connection", "keep-alive");
     res.setHeader("x-accel-buffering", "no");
     res.flushHeaders?.();
-    const send = (delta, finishReason = null) => {
+    const send = (delta, finishReason = null, extra = null, emptyChoices = false) => {
       res.write(
         `data: ${JSON.stringify({
           id,
           object: "chat.completion.chunk",
           created: now(),
           model,
-          choices: [{ index: 0, delta, finish_reason: finishReason }],
+          // usage 帧按 OpenAI 规范要求 `choices: []`（空数组，不是含空 delta 的一项）——
+          // 客户端据此区分「这是结尾的用量帧」而不是「一个空的正文增量」。
+          choices: emptyChoices ? [] : [{ index: 0, delta, finish_reason: finishReason }],
+          ...(extra || {}),
         })}\n\n`
       );
     };
@@ -209,6 +212,35 @@ const chatCompletions = {
     // 被输出上限截断时必须回 "length"，这是 OpenAI 协议里客户端判断
     // 「回答没写完」的唯一信号（原先永远是 "stop"）。
     state.send({}, settled?.truncated ? "length" : "stop");
+    // **usage 帧**：OpenAI 流式协议里，量在最后一个 chunk 上（`choices` 为空数组），
+    // 且仅在请求带 `stream_options.include_usage` 时才有。
+    //
+    // 为什么必须补（两个独立人格都实测报过，其中一个是专业开发者）：
+    //   老王：「流式响应完全没有 usage / 计费字段。逐 chunk 数过：
+    //          data 行 102 | 含 usage: 0 | 含 x_od_cost: 0。非流式有完整字段。
+    //          **流式是推荐用法，却最不透明** —— 写多用户工具时账单延迟出现，
+    //          用户端用量和后端记录对不上，没法解释。」
+    //   Alex 的原始报告同源：`stream_options.include_usage` 接受但从不返回 usage 帧，
+    //   导致流式下无法做 token 记账，只能再补一次非流式调用 —— 而数据本来就有。
+    //
+    // 这里**无条件发**（不判断 include_usage）：多一帧 usage 不会破坏任何客户端
+    //（官方 SDK 遇到末尾空 choices 的 usage 帧是标准处理路径），
+    // 而按需发会让「忘了加参数」的调用方继续拿不到数 —— 他们当初就是这么丢的。
+    if (settled) {
+      state.send([], null, {
+        usage: {
+          prompt_tokens: settled.promptTokens || 0,
+          completion_tokens: settled.completionTokens || 0,
+          total_tokens: (settled.promptTokens || 0) + (settled.completionTokens || 0),
+          ...(settled.cacheTokens ? { prompt_tokens_details: { cached_tokens: settled.cacheTokens } } : {}),
+        },
+        // 本平台的扩展字段：与非流式响应保持同名同义（便于统一记账）
+        x_od_cost: settled.od,
+        x_currency: settled.currency,
+        x_channel: settled.channel,
+        x_latency_ms: settled.elapsed,
+      }, true); // ← 第 4 个参数：空 choices（usage 帧的规范形状）
+    }
     res.write("data: [DONE]\n\n");
     res.end();
   },

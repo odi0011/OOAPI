@@ -392,8 +392,17 @@ t("评论接受 media_ids、校验归属、写入并绑定引用", () => {
   ck(/INSERT INTO community_comments \(post_id, user_id, parent_id, reply_to_user_id, content, media_ids/.test(c),
     "INSERT 没有带 media_ids");
   ck(/refType: "community_comment"/.test(c), "没有绑定 community_comment 引用");
-  // ④ 读取时返回 media
-  ck(/media: await mediaList\(c\.media_ids\)/.test(c), "列表没返回 media");
+  // ④ 读取时返回 media（**已删评论返回空数组** —— 见下一条测试的说明）
+  ck(/media: deleted \? \[\] : await mediaList\(c\.media_ids\)/.test(c), "列表没返回 media（或没对已删评论做屏蔽）");
+});
+t("已删评论只回墓碑，不回正文与附图（防第三方客户端把删掉的内容重新显示）", () => {
+  const c = communityCode;
+  // 人格实测：「删掉的评论，接口照样原样吐回来，连内容都没清掉。
+  // 网页端过滤了（显示灰色『已删除』），但任何拿这个接口做客户端的人
+  // 会把删掉的评论原样重新显示出来。」
+  ck(/const deleted = Number\(c\.status\) !== 1/.test(c), "没有识别「已删/隐藏」状态");
+  ck(/content: deleted \? "" : c\.content/.test(c), "已删评论仍返回正文");
+  ck(/media: deleted \? \[\] : await mediaList/.test(c), "已删评论仍返回附图（会给已删内容现签 URL）");
 });
 t("删除路径要释放评论附图引用（否则用户的图被永久锁死）", () => {
   const c = communityCode;
@@ -436,6 +445,43 @@ t("粘贴插图也走同一条有序队列", () => {
   const p2 = readFileSync(path.join(root, "..", "ooapi-web", "src", "pages", "CommunityPage.jsx"), "utf8");
   const blk = p2.slice(p2.indexOf("onMediaUploaded="), p2.indexOf("onMediaUploaded=") + 400);
   ck(/addSlot\(/.test(blk) && /fillSlot\(/.test(blk), "粘贴路径没走槽位队列（顺序会与手选不一致）");
+});
+
+/* ============ ⑲ Round 3 人格报告的三项（流式 usage / 通知筛选 / 好友通知）============ */
+console.log("\n=== ⑲ Round 3 修复项 ===");
+t("流式响应末帧要带 usage 与计费字段（两人格都报过）", () => {
+  const gp = read("src/services/gateway-protocols.js");
+  // OpenAI 规范：usage 在末帧、choices 为空数组
+  ck(/usage: \{/.test(gp) && /prompt_tokens: settled\.promptTokens/.test(gp),
+    "流式 done() 没有发 usage 帧");
+  ck(/x_od_cost: settled\.od/.test(gp), "流式末帧没有 x_od_cost");
+  ck(/emptyChoices \? \[\] :/.test(gp), "usage 帧没有用空 choices（会用成含空 delta 的一项）");
+  ck(/\}, true\); \/\/ ← 第 4 个参数/.test(gp), "done() 里没传空 choices 标志");
+});
+t("通知列表的 type 筛选真的生效（原先是假的）", () => {
+  const nc = read("src/services/notify-center.js");
+  ck(/const wantTypes = String\(query\.type/.test(nc), "没有解析 type 参数");
+  ck(/n\.type IN \(\$\{wantTypes\.map/.test(nc), "type 没有进 WHERE");
+  ck(/knownTypes\.includes\(s\)/.test(nc), "没有对未知 type 做白名单（会变成查不到而不是不过滤）");
+  ck(/Object\.keys\(TYPE_TEXT\)/.test(nc), "已知类型没有从 TYPE_TEXT 推导（新增类型会漏）");
+});
+t("好友申请/通过要落库通知（原实现只有 SSE，离线用户永远不知道）", () => {
+  const f = read("src/routes/friends.js");
+  const nc = read("src/services/notify-center.js");
+  ck(/friend_request: "申请加你为好友"/.test(nc), "缺 friend_request 通知文案");
+  ck(/friend_accept: "同意了你的好友申请"/.test(nc), "缺 friend_accept 通知文案");
+  // 两处都要 notify（不能只有 SSE）
+  ck(/type: "friend_request"/.test(f), "发申请时没有落库通知");
+  ck(/type: "friend_accept"/.test(f), "同意申请时没有落库通知");
+});
+t("首页示例模型名必须是当前部署里**真能调**的（改过两次都错）", () => {
+  const hp = readFileSync(path.join(root, "..", "ooapi-web", "src", "pages", "HomePage.jsx"), "utf8");
+  // 历史：deepseek-chat（官方停用）→ deepseek-flash（有渠道声明但那渠道不可用）→ 现在
+  ck(!/const SAMPLE_MODEL = "deepseek-chat"/.test(hp), "又退回了已停用的 deepseek-chat");
+  ck(!/const SAMPLE_MODEL = "deepseek-flash"/.test(hp), "又退回了实测不可用的 deepseek-flash");
+  ck(/const SAMPLE_MODEL = "deepseek-v4\.1-flash"/.test(hp), "示例模型名不是实测可用的那个");
+  // 且必须带「以控制台为准」的指路（否则换个部署环境又会卡住用户）
+  ck(/以.{0,20}控制台.{0,30}为准|控制台 → 数据看板 → 接入信息/.test(hp), "示例旁没有指路到控制台的真实可用模型");
 });
 
 /* ============ 语法校验（改坏一个字符就全站 500）============ */

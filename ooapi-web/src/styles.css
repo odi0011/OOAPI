@@ -3904,6 +3904,18 @@ h1, h2, h3, h4 {
 .oo-comment-collapsed-bar:hover {
   background: var(--hover);
 }
+/* 键盘可达：折叠条是 role="button"，聚焦时必须看得到焦点环
+   （无障碍要求；也给「这行字能点」再补一层视觉暗示） */
+.oo-comment-collapsed-bar:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* 折叠态的胶囊做成「像输入框」：浅色内底 + 边框 + placeholder 色文字。
+   原实现文字是普通正文色，看着像一句说明文字而不是输入框 ——
+   两个人格因此把整个控件当成「评论框不见了」（见 PostDetailPage 的注释）。 */
+.oo-comment-collapsed-bar .oo-comment-input-pill > span:first-child {
+  color: var(--ink-3);
+}
 .oo-comment-input-pill {
   flex: 1;
   height: 38px;
@@ -4050,10 +4062,8 @@ h1, h2, h3, h4 {
   border-color: transparent;
   box-shadow: 0 4px 14px rgba(var(--accent-rgb, 22, 119, 255), 0.35);
 }
-.qq-rail-btn .ant-badge {
-  position: absolute;
-  top: 0px;
-  right: 0px;
+.qq-rail-item-box .ant-badge {
+  display: flex;
 }
 .qq-rail-divider {
   width: 32px;
@@ -4241,6 +4251,18 @@ h1, h2, h3, h4 {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.02);
   position: relative;
 }
+.qq-msg-bubble .bui-prose {
+  font-size: 13.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.qq-msg-bubble .bui-prose p {
+  margin: 0 0 6px;
+}
+.qq-msg-bubble .bui-prose p:last-child {
+  margin-bottom: 0;
+}
+
 .qq-msg-row.is-mine .qq-msg-bubble {
   border-top-left-radius: 14px;
   border-top-right-radius: 4px;
@@ -4249,9 +4271,52 @@ h1, h2, h3, h4 {
   border-color: transparent;
   box-shadow: 0 2px 8px rgba(var(--accent-rgb, 22, 119, 255), 0.25);
 }
-.qq-msg-row.is-mine .qq-msg-bubble a {
-  color: #fff;
+.qq-msg-row.is-mine .qq-msg-bubble,
+.qq-msg-row.is-mine .qq-msg-bubble .bui-prose,
+.qq-msg-row.is-mine .qq-msg-bubble .bui-prose p,
+.qq-msg-row.is-mine .qq-msg-bubble .bui-prose span,
+.qq-msg-row.is-mine .qq-msg-bubble .bui-prose strong,
+.qq-msg-row.is-mine .qq-msg-bubble .bui-prose em,
+.qq-msg-row.is-mine .qq-msg-bubble .bui-prose h1,
+.qq-msg-row.is-mine .qq-msg-bubble .bui-prose h2,
+.qq-msg-row.is-mine .qq-msg-bubble .bui-prose h3,
+.qq-msg-row.is-mine .qq-msg-bubble .bui-prose h4,
+.qq-msg-row.is-mine .qq-msg-bubble .bui-prose li {
+  color: #ffffff !important;
+}
+.qq-msg-row.is-mine .qq-msg-bubble .bui-prose a {
+  color: #ffffff !important;
   text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.qq-msg-row.is-mine .qq-msg-bubble .bui-prose code {
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+.qq-msg-row.is-mine .qq-msg-bubble .bui-prose blockquote {
+  border-left-color: rgba(255, 255, 255, 0.6);
+  color: rgba(255, 255, 255, 0.95);
+}
+.qq-msg-row.is-mine .qq-msg-bubble .oo-code-block {
+  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.25);
+}
+.qq-msg-row.is-mine .qq-msg-bubble .oo-code-head {
+  background: rgba(0, 0, 0, 0.3);
+  border-bottom-color: rgba(255, 255, 255, 0.15);
+}
+.qq-msg-row.is-mine .qq-msg-bubble .oo-code-lang {
+  color: rgba(255, 255, 255, 0.85);
+}
+.qq-msg-row.is-mine .qq-msg-bubble .oo-code-btn {
+  color: #ffffff;
+}
+.qq-msg-row.is-mine .qq-msg-bubble .oo-code-block pre code {
+  color: #ffffff !important;
+}
+.qq-msg-row.is-mine .qq-msg-bubble img {
+  border-color: rgba(255, 255, 255, 0.25) !important;
 }
 
 /* 发送底栏 */
@@ -4318,7 +4383,14 @@ h1, h2, h3, h4 {
 }
 
 /* 移动端主从自适应 */
+.is-mobile-only {
+  display: none !important;
+}
+
 @media (max-width: 768px) {
+  .is-mobile-only {
+    display: inline-flex !important;
+  }
   .qq-hub-rail { width: 52px; }
   .qq-sub-side { width: 100%; }
   .qq-main-stage.is-hidden-mobile { display: none; }

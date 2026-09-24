@@ -140,8 +140,16 @@ console.log("\n=== ③ 流式事件 ===");
   ck("chat：首帧带 role=assistant", d[0].choices[0].delta.role === "assistant");
   const text = d.filter((x) => x.choices?.[0]?.delta?.content).map((x) => x.choices[0].delta.content).join("");
   ck("chat：增量拼接正确", text === "你好", text);
-  ck("chat：末帧 finish_reason=stop + [DONE]",
-    d[d.length - 1].choices[0].finish_reason === "stop" && r.chunks.join("").includes("[DONE]"));
+  // finish 帧**不再是最后一个 data 帧** —— 后面还有一帧 usage
+  //（OpenAI 流式协议规定 usage 在末帧、choices 为空数组；见 done() 的注释）。
+  // 判据因此改成「存在 finish_reason=stop 的帧」，不再是「最后一帧是它」。
+  ck("chat：有 finish_reason=stop 的帧 + [DONE]",
+    d.some((x) => x.choices?.[0]?.finish_reason === "stop") && r.chunks.join("").includes("[DONE]"));
+  ck("chat：末帧是 usage（choices 为空数组，含 token 与计费字段）",
+    Array.isArray(d[d.length - 1].choices) && d[d.length - 1].choices.length === 0 &&
+      d[d.length - 1].usage && typeof d[d.length - 1].usage.prompt_tokens === "number" &&
+      "x_od_cost" in d[d.length - 1],
+    JSON.stringify(d[d.length - 1]).slice(0, 160));
 
   const r2 = fakeRes();
   const st2 = PROTOCOLS.messages.openStream(r2, "id2", "m");

@@ -431,24 +431,49 @@ export default function PostDetailPage() {
               </div>
 
               {/* 现代折叠式评论卡片 (Sleek Collapsible Comment Composer) */}
+              {/* 折叠条必须**看起来就能点**。
+                  两个人格独立把这个当成 bug 报上来：
+                    「帖子底下的评论框整个没了，只剩一行『友善交流…』的提示文字」
+                    「F12 看 textarea 0 个、file input 0 个，那行提示是个 <span>」
+                  他们都没意识到那行字是「点一下就会变成输入框」的折叠控件 ——
+                  因为原实现是纯 div ＋ 一段浅灰文字，**没有任何可交互的视觉暗示**
+                  （无边框、无光标、无按钮、无"点我"字样）。
+                  功能是好的（实测点击后 textarea / 图片按钮 / 发表按钮全部出现），
+                  但「功能在却没人发现」等于没有。这里补三件事：
+                    ① role="button" + tabIndex + 键盘处理 → 键盘可达、读屏可识别；
+                    ② 文案改成明确的动作邀请；
+                    ③ 右侧给一个真的按钮，鼠标用户一眼看出能点。 */}
               <div className={`oo-comment-composer-card ${commentExpanded || input.trim() || replyTo || cMedia.length ? "is-expanded" : ""}`}>
                 {!commentExpanded && !input.trim() && !replyTo && !cMedia.length ? (
                   <div
                     className="oo-comment-collapsed-bar"
+                    role="button"
+                    tabIndex={0}
+                    aria-label="展开评论输入框"
                     onClick={() => {
                       setCommentExpanded(true);
                       setTimeout(() => document.querySelector(".oo-comment-raw-input")?.focus(), 50);
                     }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setCommentExpanded(true);
+                        setTimeout(() => document.querySelector(".oo-comment-raw-input")?.focus(), 50);
+                      }
+                    }}
                   >
                     <UserAvatar user={me} size={32} />
                     <div className="oo-comment-input-pill">
-                      <span>友善交流，写下你的评论...（支持 Markdown 语法与截图粘贴）</span>
+                      <span>点这里写评论…（支持 Markdown，可直接粘贴截图）</span>
                       <div className="oo-comment-pill-actions">
                         <Tooltip title="添加图片"><PictureOutlined /></Tooltip>
                         <Tooltip title="快捷表情"><SmileOutlined /></Tooltip>
                         <Tooltip title="插入代码"><CodeOutlined /></Tooltip>
                       </div>
                     </div>
+                    <Button size="small" type="primary" tabIndex={-1}>
+                      写评论
+                    </Button>
                   </div>
                 ) : (
                   <div className="oo-comment-expanded-inner">

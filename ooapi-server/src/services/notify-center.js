@@ -25,6 +25,12 @@ const TYPE_TEXT = {
   follow: "关注了你",
   // 正文里 @某人（黑盒测试发现原先只有「点回复」才会 @，手打 @ 完全无效）
   mention: "在评论里提到了你",
+  // 好友申请（人格实测报的缺口：原先只有 SSE 实时推送，**不落库**，
+  // 于是对方不在线就永远不知道自己被加了 —— 「不是我主动去翻那个五步路径，
+  // 永远不知道有人加我」）。SSE 与落库通知是两回事：前者只管当下在线的人，
+  // 后者才是「离线也能看到」。
+  friend_request: "申请加你为好友",
+  friend_accept: "同意了你的好友申请",
 };
 
 /** 每个用户保留的通知条数上限（超出的删最旧） */
@@ -99,9 +105,29 @@ export async function unreadCount(userId) {
 /** 列表（分页） */
 export async function list(userId, query = {}) {
   const { p, size, offset } = pageParams(query, 30);
-  const onlyUnread = String(query.unread || "") === "1";
-  const where = onlyUnread ? "n.user_id = ? AND n.is_read = 0" : "n.user_id = ?";
-  const [[cnt]] = await pool.query(`SELECT COUNT(*) AS n FROM notifications n WHERE ${where}`, [userId]);
+  // 过滤条件要**真的生效**。
+  //
+  // 原实现只读了 `unread`，`type` 被静默忽略 —— 人格实测原话：
+  // 「筛选参数是假的：带 ?type=friend、?type=system 等任意值，返回的都是同一批数据，
+  //   服务端完全忽略该参数。」调用方会以为筛过了、实际拿到全量，属于误导。
+  //
+  // type 支持逗号分隔多值（前端可一次选多类）。只接受**已知类型**：
+  // 未知值当作「不过滤」而不是「查不到」—— 后者会让前端一个拼写错就显示空列表，
+  // 更难排查。已知类型从 TYPE_TEXT 的键推导，将来新增通知类型自动生效。
+  const conds = ["n.user_id = ?"];
+  const args = [userId];
+  if (String(query.unread || "") === "1") conds.push("n.is_read = 0");
+  const knownTypes = Object.keys(TYPE_TEXT);
+  const wantTypes = String(query.type || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => knownTypes.includes(s));
+  if (wantTypes.length) {
+    conds.push(`n.type IN (${wantTypes.map(() => "?").join(",")})`);
+    args.push(...wantTypes);
+  }
+  const where = conds.join(" AND ");
+  const [[cnt]] = await pool.query(`SELECT COUNT(*) AS n FROM notifications n WHERE ${where}`, args);
   const [rows] = await pool.query(
     `SELECT n.*, u.username, u.display_name, u.avatar_media_id, p.title AS post_title_now
        FROM notifications n
@@ -109,7 +135,7 @@ export async function list(userId, query = {}) {
        LEFT JOIN community_posts p ON p.id = n.post_id
       WHERE ${where}
       ORDER BY n.id DESC LIMIT ? OFFSET ?`,
-    [userId, size, offset]
+    [...args, size, offset]
   );
   return {
     items: rows.map((r) => ({

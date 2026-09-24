@@ -502,14 +502,14 @@ export default function MessagesPage() {
           <div className={`qq-rail-item-box ${hubTab === "messages" ? "is-active" : ""}`}>
             <span className="qq-rail-pill" />
             <Tooltip title="即时消息 (私聊与群聊)" placement="right">
-              <div
-                className="qq-rail-btn"
-                onClick={() => { setHubTab("messages"); }}
-              >
-                <Badge count={rooms.filter((r) => !r.guild_channel_id).reduce((acc, r) => acc + (r.unread || 0), 0)} size="small" offset={[-2, 2]}>
+              <Badge count={rooms.filter((r) => !r.guild_channel_id).reduce((acc, r) => acc + (r.unread || 0), 0)} size="small" offset={[-4, 4]}>
+                <div
+                  className="qq-rail-btn"
+                  onClick={() => { setHubTab("messages"); }}
+                >
                   <MessageOutlined />
-                </Badge>
-              </div>
+                </div>
+              </Badge>
             </Tooltip>
           </div>
 
@@ -537,14 +537,14 @@ export default function MessagesPage() {
           <div className={`qq-rail-item-box ${hubTab === "contacts" ? "is-active" : ""}`}>
             <span className="qq-rail-pill" />
             <Tooltip title="通讯录与好友关系" placement="right">
-              <div
-                className="qq-rail-btn"
-                onClick={() => { setHubTab("contacts"); }}
-              >
-                <Badge count={requests.pending_count} size="small" offset={[-2, 2]}>
+              <Badge count={requests.pending_count} size="small" offset={[-4, 4]}>
+                <div
+                  className="qq-rail-btn"
+                  onClick={() => { setHubTab("contacts"); }}
+                >
                   <TeamOutlined />
-                </Badge>
-              </div>
+                </div>
+              </Badge>
             </Tooltip>
           </div>
 
@@ -852,9 +852,17 @@ export default function MessagesPage() {
             <div style={{ flex: 1, padding: "24px 32px", overflowY: "auto" }}>
               <div style={{ maxWidth: 760, margin: "0 auto" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-                  <div>
-                    <h2 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>新的朋友申请</h2>
-                    <div style={{ fontSize: 13, color: "var(--ink-3)", marginTop: 4 }}>验证并处理来自社区伙伴的好友请求</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <Button
+                      type="text"
+                      icon={<ArrowLeftOutlined />}
+                      className="is-mobile-only"
+                      onClick={() => setContactsView("friends")}
+                    />
+                    <div>
+                      <h2 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>新的朋友申请</h2>
+                      <div style={{ fontSize: 13, color: "var(--ink-3)", marginTop: 4 }}>验证并处理来自社区伙伴的好友请求</div>
+                    </div>
                   </div>
                   <Button icon={<UserAddOutlined />} type="primary" onClick={() => setAddFriendOpen(true)}>
                     主动添加好友
