@@ -582,6 +582,13 @@ export default function LogPage() {
             pageSize,
             total,
             showSizeChanger: true,
+            // 显式给出档位并把上限拉到 200。
+            //
+            // 人格实测（团队负责人，10 人一天几百条）：「使用记录分页 20 条/页，
+            // 对账要翻很多页；在没有导出的前提下更难受。」
+            // AntD 默认档位是 10/20/50/100，20 是默认值 —— 她要的是
+            // 「一屏能看更多」，所以把档位摆在明面上、上限提到 200。
+            pageSizeOptions: [20, 50, 100, 200],
             showTotal: (t) => `共 ${t} 条`,
             onChange: (p, ps) => {
               setPage(p);

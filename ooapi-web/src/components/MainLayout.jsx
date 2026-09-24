@@ -30,6 +30,7 @@ import { useApp } from "../context/AppContext";
 import { API } from "../services/api";
 import { useTheme } from "../theme/ThemeContext";
 import ThemeSwitch from "./ThemeSwitch";
+import UserAvatar from "./UserAvatar";
 
 const { Header, Sider, Content } = Layout;
 const { useBreakpoint } = Grid;
@@ -70,6 +71,10 @@ const NAV_USER = [
     title: "账户",
     items: [
       { key: "/media", icon: <FolderOpenOutlined />, label: "媒体库" },
+      // 模型价格（只读）：用户端比价入口。原先完全没有 ——
+      // 独立开发者人格实测：「价格表完全找不到，我只能反推实际扣费，
+      // 无法核对标价与实收是否一致。」
+      { key: "/pricing", icon: <DollarOutlined />, label: "模型价格" },
       { key: "/settings/appearance", icon: <BgColorsOutlined />, label: "外观设置" },
       { key: "/profile", icon: <UserOutlined />, label: "个人设置" },
     ],
@@ -106,6 +111,7 @@ const CRUMB = {
   "/log": ["开发", "使用记录"],
   "/operation-log": ["开发", "操作日志"],
   "/media": ["账户", "媒体库"],
+  "/pricing": ["账户", "模型价格"],
   "/settings/appearance": ["账户", "外观设置"],
   "/profile": ["账户", "个人设置"],
   "/home": ["首页"],
@@ -363,7 +369,14 @@ export default function MainLayout() {
             <ThemeSwitch size="small" />
             <Dropdown menu={userMenu} placement="bottomRight" trigger={["click"]}>
               <div className="oo-user-chip">
-                <Avatar size={24} icon={<UserOutlined />} style={{ background: "var(--accent)", fontSize: 12 }} />
+                {/* 用 UserAvatar 而不是写死的 <Avatar icon={<UserOutlined/>}>。
+                    原先这里永远是默认灰小人 —— 用户上传头像后，
+                    个人设置页与社区里都正常显示，唯独顶栏不更新。
+                    人格实测原话：「头像传上去了，个人设置里能看到，
+                    但左边侧边栏还是那个默认小人。我 F5 过、跨 6 个页面都试过。」
+                    根因就是这一行没读 avatar_url（UserAvatar 会读，且已处理
+                    「加载失败回退首字母色块」「换头像后重置失败标记」）。 */}
+                <UserAvatar user={user} size={24} />
                 <span className="oo-user-name">{user?.display_name || user?.username}</span>
               </div>
             </Dropdown>

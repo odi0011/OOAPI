@@ -77,9 +77,37 @@ router.use(express.json({ limit: "50mb" }));
 // **计价与白名单判定用的都是基础模型**，不存在第二个价格。
 // 声明一次即可 —— 调用方由此知道列表里每个 id 都能加该后缀。
 // 非标准扩展键：OpenAI 客户端会忽略未知字段，不影响兼容性。
+// 后缀是**解析层**接受的写法（路由与计费都会归一化掉它），
+// 但「能不能真的开启该能力」取决于**渠道与模型** —— 见 note 字段。
+//
+// 背景（人格实测报的，两次）：老王实测 `hy3` / `hy3-thinking` / `hy3-search`
+// 三者的 reasoning 长度与 completion 都在自然波动范围内，
+// `deepseek-v4.1-flash-thinking` 的 reasoning 长度是 **0**（与基础版完全相同）；
+// 我自己复测也确认 flash 加 `-thinking` 后 reasoning_len 仍为 0。
+// 也就是说：在多数反代渠道上，这些后缀**不激活任何能力**，只换了个名字。
+//
+// 但完全删掉声明又会回到另一个问题（原始抱怨）：「列表里只有 X，
+// 实际 X-thinking 也能调，按列表写代码的人不知道」。
+// 折中：**保留声明，但把真实语义写清楚** —— 后缀会被接受、
+// 路由与计价按基础模型处理；是否真开启能力由渠道决定，
+// 调用方应优先用请求体参数（`thinking` / `search` / `reasoning_effort`）
+// 而不是依赖后缀。
 const CAPABILITY_SUFFIXES = [
-  { suffix: "-thinking", desc: "在基础模型上开启深度思考（与请求体 thinking 参数等价）" },
-  { suffix: "-search", desc: "在基础模型上开启联网搜索" },
+  {
+    suffix: "-thinking",
+    desc: "被接受并归一到基础模型；是否真开启深度思考取决于渠道",
+    note: "推荐改用请求体参数 thinking:true（部分渠道会下发上游，部分不会）",
+  },
+  {
+    suffix: "-search",
+    desc: "被接受并归一到基础模型；是否真联网取决于渠道",
+    note: "推荐改用请求体参数 search:true；反代渠道多数不支持联网",
+  },
+  {
+    suffix: "-agent / -agent-swarm",
+    desc: "被接受并归一到基础模型（仅影响站内编排语义，API 侧无额外行为）",
+    note: "",
+  },
 ];
 
 router.get(
@@ -512,6 +540,33 @@ async function settle({
         WHERE id = ?`,
       [units, now(), Number(tokenQuotaHold) || 0, units, token.id]
     )
+    .then(async ([ret]) => {
+      // 额度**恰好用尽**时给用户一条站内通知。
+      //
+      // 人格实测报的（小团队负责人）：「把一把 Key 打爆（403 insufficient_quota），
+      // 通知中心一条没多，也没提醒管理员。10 个人的团队里某个人的钥匙悄悄用完了，
+      // 只能等他跑来问我，或者我自己去翻列表。」
+      //
+      // 判据用 affectedRows + 扣完为 0 双重确认：这个 UPDATE 每次都命中（used_quota 变了），
+      // 所以真正要判断的是「扣完之后 remain_quota 是否归零」。
+      // 只在**从有到无**的那一刻发一次，避免每次调用都刷屏 ——
+      // 做法是再查一次当前值并比对（用 GREATEST 保证不会为负，
+      // 所以归零后就恒为 0，不会重复触发「从有到无」）。
+      const limited = Number(token.unlimited_quota) ? 0 : 1;
+      if (!limited || !ret?.affectedRows) return;
+      const [[cur]] = await pool
+        .query("SELECT remain_quota FROM tokens WHERE id = ? LIMIT 1", [token.id])
+        .catch(() => [[null]]);
+      if (cur && Number(cur.remain_quota) === 0) {
+        const { notify } = await import("../services/notify-center.js");
+        await notify({
+          userId: user.id,
+          actorId: user.id,
+          type: "token_quota_exhausted",
+          target: { postTitle: token.name || `#${token.id}` },
+        }).catch(() => {});
+      }
+    })
     .catch((e) => console.error("[gateway] 令牌额度更新失败：", e.message));
   const logWrite = writeLog({
     user,

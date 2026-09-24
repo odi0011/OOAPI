@@ -20,7 +20,7 @@
 //
 //  安全研究者 K：
 //   · 评论可伪造 reply_to_user_id 向任意用户投递通知
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -534,6 +534,97 @@ t("令牌对账接口在 /:id 之前声明（否则被路由吞掉）", () => {
   const iId = tk.indexOf('"/:id"');
   ck(iReconcile > 0, "没有 /reconcile 接口（删过密钥的账对不上）");
   ck(iId > 0 && iReconcile < iId, "/reconcile 声明在 /:id 之后，会被它吞掉（Express 按声明顺序匹配）");
+});
+
+/* ============ ㉑ Round 3 清账：把登记项做完 ============ */
+console.log("\n=== ㉑ Round 3 清账 ===");
+t("对话页支持粘贴截图，且与文件选择共用同一套校验", () => {
+  const pb = readFileSync(path.join(root, "..", "ooapi-web", "src", "components", "PromptBar.jsx"), "utf8");
+  const cp = readFileSync(path.join(root, "..", "ooapi-web", "src", "pages", "ChatPage.jsx"), "utf8");
+  // 人格实测：「Ctrl+V 贴图什么都不发生，而且是静默的」
+  ck(/onPaste=\{/.test(pb), "PromptBar 没有 onPaste 处理");
+  ck(/kind === "file"/.test(pb) && /type\.startsWith\("image\/"\)/.test(pb), "paste 没有识别图片类型");
+  ck(/if \(!imgs\.length\) return/.test(pb), "paste 没有放行纯文本粘贴（会把贴代码也吃掉）");
+  // 必须复用同一套校验（否则粘贴会绕过视觉能力/张数/类型检查）
+  ck(/const acceptImageFiles = async \(files\)/.test(cp), "ChatPage 没有抽出共用的收图函数");
+  ck(/await acceptImageFiles\(files\)/.test(cp), "pickImages 没有复用 acceptImageFiles");
+  ck(/onPasteImage=\{\(files\) => acceptImageFiles\(files\)\}/.test(cp), "ChatPage 没有把粘贴接到共用函数");
+});
+t("顶栏头像读真实 avatar_url（不再写死默认图标）", () => {
+  const ml = readFileSync(path.join(root, "..", "ooapi-web", "src", "components", "MainLayout.jsx"), "utf8");
+  // 人格实测：「头像传上去了，个人设置里能看到，但侧边栏还是默认小人」
+  ck(/<UserAvatar user=\{user\} size=\{24\} \/>/.test(ml), "顶栏没有用 UserAvatar");
+  ck(!/<Avatar size=\{24\} icon=\{<UserOutlined \/>\}/.test(ml), "顶栏仍写死默认图标");
+});
+t("发图不再清空用户正在输入的文字", () => {
+  const mp = readFileSync(path.join(root, "..", "ooapi-web", "src", "pages", "MessagesPage.jsx"), "utf8");
+  // 人格实测（阿蓝，3 次复现）：「先打好一句话，再点图片图标选图 → 输入框变空」
+  ck(/const draft = input;/.test(mp), "没有保存草稿");
+  ck(/setInput\(draft\)/.test(mp), "发图后没有恢复草稿");
+});
+t("头像上传上限与服务端一致（不再各写一个数）", () => {
+  const au = readFileSync(path.join(root, "..", "ooapi-web", "src", "components", "AvatarUploader.jsx"), "utf8");
+  // 人格实测：「头像弹窗说上限 20MB，媒体库页面写 10MB，不知道以哪个为准」
+  ck(!/20 \* 1024 \* 1024/.test(au), "仍硬编码 20MB");
+  ck(/maxUploadBytes/.test(au), "没有从服务端读上限");
+  ck(/await maxUploadBytes\(\)/.test(au), "读了上限却没 await（会拿到 Promise 比较大小）");
+});
+t("暗色禁用态文字有显式 token（对比度 1.8:1 → 3:1+）", () => {
+  const th = readFileSync(path.join(root, "..", "ooapi-web", "src", "theme", "ThemeContext.jsx"), "utf8");
+  ck(/colorTextDisabled: s\.ink3/.test(th), "没有显式指定 colorTextDisabled（会落到 AntD 暗色默认的极低对比）");
+});
+t("令牌额度列精度自适应（0.002 不再显示成 0.00）", () => {
+  const tp = readFileSync(path.join(root, "..", "ooapi-web", "src", "pages", "TokenPage.jsx"), "utf8");
+  ck(/odOf\(r\.remain_quota, perUnit\) < 0\.01 \? 4 : 2/.test(tp), "额度列仍是固定 2 位小数");
+});
+t("令牌变更留痕（禁用/启用、额度、分组）", () => {
+  const tk = read("src/routes/token.js");
+  ck(/const changes = \[\]/.test(tk), "PUT 处理器没有收集变更");
+  ck(/状态 \$\{LABEL/.test(tk), "状态变更没记录");
+  ck(/额度 \$\{Number\(cur\.remain_quota\)\}/.test(tk), "额度变更没记录");
+  ck(/分组的 Key/.test(tk) || /分组 \$\{cur\.group_name/.test(tk), "分组变更没记录");
+  ck(/if \(changes\.length\)/.test(tk), "没有只在有变更时才写日志（会产生噪音）");
+});
+t("密钥额度用尽给站内通知（系统通知要豁免「不给自己发」）", () => {
+  const gw = read("src/routes/gateway.js");
+  const nc = read("src/services/notify-center.js");
+  ck(/token_quota_exhausted/.test(nc), "没有注册该通知类型");
+  ck(/token_quota_exhausted/.test(gw), "网关没有在额度归零时发通知");
+  // 关键：notify() 有「to === from 直接 return false」的守卫，
+  // 而系统类通知的 actor 只能是用户自己 —— 不豁免就永远发不出去，且是静默失败
+  ck(/SELF_ALLOWED/.test(nc), "没有为系统通知豁免自发送限制（会静默发不出去）");
+  ck(/SELF_ALLOWED\.has\(type\)/.test(nc), "豁免集合没有被使用");
+});
+t("价格表有用户端只读端点，且声明在 adminRequired 之前", () => {
+  const pr = read("src/routes/pricing.js");
+  // 注意源码里路径单独占一行（router.get 换行后才是 "/public"），
+  // 所以找「引号 + 路径」这个片段，不能拼成 router.get("/public" 去匹配。
+  // **必须先去掉注释再比位置**。
+  // 这段修复说明的注释里就写着 `router.use(adminRequired)` 这几个字
+  //（"必须声明在 router.use(adminRequired) 之前"），indexOf 会先命中注释里的那处，
+  // 于是「公开路由在前」这个事实被判成 false —— 我自己连踩两次：
+  // 第一次命中 import，第二次命中注释。凡是「按源码位置断言顺序」的测试
+  // 都得先把注释剥掉，否则注释一改就会误报。
+  const prCode = pr.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const iPublic = prCode.indexOf('"/public"');
+  const iAdmin = prCode.indexOf("router.use(adminRequired)");
+  ck(iPublic > 0, "没有 /pricing/public 端点");
+  ck(iAdmin > 0 && iPublic < iAdmin, "/public 声明在 adminRequired 之后（会被门禁拦住）");
+  ck(/expose_pricing_to_user/.test(pr), "没有尊重后台的展示开关");
+  // 前端要有页面与入口
+  const web = path.join(root, "..", "ooapi-web", "src");
+  ck(existsSync(path.join(web, "pages", "PricingPage.jsx")), "前端没有价格页");
+  const app = readFileSync(path.join(web, "App.jsx"), "utf8");
+  ck(/path="\/pricing"/.test(app), "没有挂 /pricing 路由");
+  const ml = readFileSync(path.join(web, "components", "MainLayout.jsx"), "utf8");
+  ck(/key: "\/pricing"/.test(ml), "侧边栏没有入口");
+});
+t("能力后缀的声明要写实（不再暗示一定生效）", () => {
+  const gw = read("src/routes/gateway.js");
+  // 人格实测：hy3/-thinking/-search 三者行为无差异；flash 加 -thinking 后 reasoning 仍为 0
+  ck(/是否真开启深度思考取决于渠道/.test(gw) || /取决于渠道/.test(gw), "后缀声明没写清「取决于渠道」");
+  ck(/推荐改用请求体参数/.test(gw), "没有引导用户用请求体参数");
+  ck(/capability_suffixes/.test(gw), "仍要保留声明（删掉会回到「隐藏模型」那个抱怨）");
 });
 
 /* ============ 语法校验（改坏一个字符就全站 500）============ */

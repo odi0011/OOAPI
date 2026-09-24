@@ -336,7 +336,19 @@ export default function MessagesPage() {
       // doSend 允许「只有图、没有字」（它判的是 `!content.trim() && !mediaIds.length`），
       // 所以传空字符串即可，气泡只显示图片。
       const r = await API.post("/media", { dataUrl, name: file.name, source: "chat" });
+      // **不要把用户正在打的字一起发出去、更不能因此清空输入框**。
+      //
+      // 人格实测原话（阿蓝，3 次复现）：
+      //   「先打好一句话，再点图片图标选一张图 → 输入框变空字符串。
+      //     等于每次都得『先贴图再写字』。」
+      // 根因：doSend 末尾无条件 setInput("")，而这里把刚打的字当成
+      // content 一起发走了 —— 所以既丢字、又把文字混进了图片消息。
+      //
+      // 正确行为：发图**独立成一条消息**（content 传空），
+      // 且发送后把输入框恢复成用户原来打的内容。
+      const draft = input;
       await doSend("image", "", [r.id]);
+      setInput(draft);
     } catch (err) {
       toast.error(err.message || "图片上传失败");
     } finally {

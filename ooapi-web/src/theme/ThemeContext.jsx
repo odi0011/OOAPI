@@ -82,6 +82,14 @@ export function ThemeProvider({ children }) {
         colorTextSecondary: s.ink2,
         colorTextTertiary: s.ink3,
         colorTextQuaternary: s.ink3,
+        // 禁用态文字：**必须显式给**，否则落到 AntD 暗色算法默认值，
+        // 在深底上几乎看不见。人格实测（阿蓝，量过对比度）：
+        //   「社区分页的『上一页』：oklch(0.541…) 灰字压在 rgb(39,40,43) 深底上，
+        //     对比度 1.8:1（可读下限是 3:1）。按钮是 disabled 态，
+        //     但同一个『下一页』是亮的，对比明显。」
+        // 用 ink3（调色板里已过对比度校验的次级文字色），
+        // 比正文弱、但仍在可读范围内 —— 禁用态该「看起来弱」，不该「看不见」。
+        colorTextDisabled: s.ink3,
 
         colorBorder: s.line,
         colorBorderSecondary: s.lineSoft,

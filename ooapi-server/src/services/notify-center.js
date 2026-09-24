@@ -31,6 +31,11 @@ const TYPE_TEXT = {
   // 后者才是「离线也能看到」。
   friend_request: "申请加你为好友",
   friend_accept: "同意了你的好友申请",
+  // 密钥额度用尽（人格实测报的缺口：额度打爆后通知中心一条没有，
+  // 团队里某人钥匙悄悄用完，只能等他来问或管理员自己去翻列表）
+  // 注意前端渲染成「<actor 名字> + text」，而这条的 actor 就是用户自己 ——
+  // 所以文案要写成「你…」而不是「的…」，否则会渲染成「某某 的密钥额度已用尽」。
+  token_quota_exhausted: "你名下有个密钥额度已用尽",
 };
 
 /** 每个用户保留的通知条数上限（超出的删最旧） */
@@ -49,7 +54,15 @@ const KEEP_PER_USER = 200;
 export async function notify({ userId, actorId, type, target = {} }) {
   const to = Number(userId) || 0;
   const from = Number(actorId) || 0;
-  if (!to || !from || to === from) return false; // ① 不给自己发
+  if (!to || !from) return false;
+  // ① 不给**自己**发（「我评论了我的帖子」这种没意义）。
+  //    但**系统类通知**必须豁免 —— 它们的发起者就是接收者本人
+  //    （例如「你的密钥额度已用尽」，actor 只能是该用户自己，
+  //     因为没有别的 actor 可以代表系统）。
+  //    不豁免的话 notify() 会静默 return false，通知永远发不出去，
+  //    而且失败是静默的（不抛错、不写日志），极难发现。
+  const SELF_ALLOWED = new Set(["token_quota_exhausted"]);
+  if (to === from && !SELF_ALLOWED.has(type)) return false;
   if (!TYPE_TEXT[type]) return false;
 
   try {

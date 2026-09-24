@@ -1090,18 +1090,21 @@ export default function ChatPage() {
     [toast]
   );
 
-  const pickImages = async (e) => {
-    const files = Array.from(e.target.files || []);
-    e.target.value = "";
+  /**
+   * 收下一组图片文件（来自文件选择器或剪贴板粘贴）：校验 → 读成 dataUrl →
+   * 传媒体库拿 media_id → 进预览队列。
+   *
+   * 抽出来是因为「点 + 选图」和「Ctrl+V 贴图」必须走**同一套**校验与上传，
+   * 否则粘贴那条路会绕过模型视觉能力检查、张数上限、类型白名单
+   *（原先粘贴根本没接，所以不存在绕过；接上时若不共用就会引入）。
+   */
+  const acceptImageFiles = async (files) => {
+    if (!files.length) return;
     if (readingRef.current || busy) return;
     if (curModel && curModel.vision !== true) {
       toast.warning("当前模型不支持图片，请先切换模型");
       return;
     }
-    // 与后端 chat.js 的 MAX_CHAT_IMAGES 保持同一个数：前端先拦是为了给即时提示，
-    // 但**上限的权威值在后端**（前端能被绕过）。早先这里写死 3、后端也是 3，
-    // 于是用户贴第 4 张就被拒（用户实测反馈：「为啥老是报不支持三张以上图片」）；
-    // 后端已放宽到 30（站内上传是 base64 内嵌，只有内存代价），前端跟着改。
     if (files.length + images.length > MAX_CHAT_IMAGES) {
       toast.warning(`最多上传 ${MAX_CHAT_IMAGES} 张图片`);
       return;
@@ -1121,17 +1124,10 @@ export default function ChatPage() {
             reader.onerror = () => reject(new Error("图片读取失败"));
             reader.readAsDataURL(file);
           });
-          // 先传媒体库拿 media_id：聊天请求里只带一个 id，不再把整段 base64
-          // 塞进 /api/chat 的请求体（以前 3 张图就能顶到 20MB 上限，落库还会撑爆
-          // MEDIUMTEXT）。上传失败时**回退成 dataUrl 直传**（后端仍兼容旧格式），
-          // 不让存储故障变成「发不出消息」。
           try {
-            const saved = await API.post("/media", { dataUrl, name: file.name, source: "chat" });
+            const saved = await API.post("/media", { dataUrl, name: file.name || "pasted.png", source: "chat" });
             return { mediaId: saved?.id || 0, url: saved?.url || "", dataUrl };
           } catch (err) {
-            // 必须留痕：这个回退会吞掉所有异常，包括「代码写错」这一类
-            // （曾经漏导入 API → ReferenceError 被吞 → 上传从未发生，但界面照常显示附件）。
-            // 静默回退会让真故障看起来像正常工作。
             console.warn(`[chat] 图片上传媒体库失败，回退为直传：${err?.message || err}`);
             return { mediaId: 0, url: "", dataUrl };
           }
@@ -1144,6 +1140,12 @@ export default function ChatPage() {
       readingRef.current = false;
       setReading(false);
     }
+  };
+
+  const pickImages = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    await acceptImageFiles(files);
   };
 
   // 文档附件：前端只负责读成 base64，真正的解析（PDF/Word/Excel）在服务端做。
@@ -1672,6 +1674,8 @@ export default function ChatPage() {
                 else setDocs((prev) => prev.filter((_, j) => j !== i - images.length));
               }}
               onPickImage={() => fileRef.current?.click()}
+              // Ctrl+V 贴截图：与「点 + 选图」共用同一套校验/上传（见 acceptImageFiles）
+              onPasteImage={(files) => acceptImageFiles(files)}
               onPickFile={() => docRef.current?.click()}
               fileOk={!reading}
               visionOk={supportsVision && !reading}

@@ -245,6 +245,35 @@ router.put(
     vals.push(token, req.user.id);
     await pool.query(`UPDATE tokens SET ${sets.join(", ")} WHERE id = ? AND user_id = ?`, vals);
     const [fresh] = await pool.query("SELECT * FROM tokens WHERE id = ?", [token]);
+    // 关键字段变更要**留痕**（人格实测报的：操作日志里有新建/删除令牌、登录、
+    // 调用错误，唯独**禁用/启用**和**额度编辑**没记录）。
+    // 团队场景里「谁把谁的钥匙禁了/改了额度」是必须能查的，
+    // 而这些动作直接影响服务可用性（禁用即断供）。
+    // 只记**实际发生变化的字段**，避免把每次保存都写成一条噪音。
+    const changes = [];
+    if (statusVal !== Number(cur.status)) {
+      const LABEL = { 1: "启用", 2: "禁用", 3: "置为过期" };
+      changes.push(`状态 ${LABEL[Number(cur.status)] || cur.status} → ${LABEL[statusVal] || statusVal}`);
+    }
+    if (remain_quota !== undefined && Number(cur.remain_quota) !== Number(remainVal)) {
+      changes.push(`额度 ${Number(cur.remain_quota)} → ${Number(remainVal)}`);
+    }
+    if (unlimited_quota !== undefined && Number(cur.unlimited_quota) !== unlimitedVal) {
+      changes.push(`无限额度 ${Number(cur.unlimited_quota) ? "开" : "关"} → ${unlimitedVal ? "开" : "关"}`);
+    }
+    if (model_limits !== undefined) changes.push("模型限制已改");
+    if (group_name !== undefined && String(cur.group_name || "") !== String(group_name || "")) {
+      changes.push(`分组 ${cur.group_name || "(空)"} → ${group_name || "(空)"}`);
+    }
+    if (name !== undefined && String(cur.name) !== String(name).trim().slice(0, 64)) changes.push("名称已改");
+    if (changes.length) {
+      await writeLog({
+        req,
+        user: req.user,
+        type: LOG_TYPE.MANAGE,
+        content: `修改令牌「${fresh[0].name || cur.name}」(#${token})：${changes.join("；")}`,
+      });
+    }
     return ok(res, tokenToResponse(fresh[0]), "令牌已更新");
   })
 );

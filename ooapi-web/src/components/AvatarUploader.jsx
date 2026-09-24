@@ -68,6 +68,24 @@ function renderSquare(src, zoom) {
  * @param {function} props.onClose
  * @param {function} props.onDone 上传成功后回调（用于刷新用户信息）
  */
+/**
+ * 服务端允许的单文件上限（字节）。与媒体库页同源（/api/media/stats 的
+ * maxFileBytes），避免前后端各写一个数。取不到时退回 10MB（服务端默认值）。
+ *
+ * 缓存住：一次会话里上限不会变，没必要每次选图都请求。
+ */
+let cachedMaxBytes = 0;
+async function maxUploadBytes() {
+  if (cachedMaxBytes) return cachedMaxBytes;
+  try {
+    const s = await API.get("/media/stats");
+    cachedMaxBytes = Number(s?.maxFileBytes) || 10 * 1048576;
+  } catch {
+    cachedMaxBytes = 10 * 1048576;
+  }
+  return cachedMaxBytes;
+}
+
 export default function AvatarUploader({ open, onClose, onDone }) {
   const { message } = AntApp.useApp();
   const fileRef = useRef(null);
@@ -91,7 +109,19 @@ export default function AvatarUploader({ open, onClose, onDone }) {
     async (file) => {
       if (!file) return;
       if (!/^image\//.test(file.type)) return message.error("请选择图片文件");
-      if (file.size > 20 * 1024 * 1024) return message.error("图片过大（上限 20MB）");
+      // 上限必须与**服务端真实允许值**一致，不能各写一套。
+      //
+      // 原先这里硬编码 20MB，而媒体库页面（同一个 /api/media 端点）写的是
+      // 10MB（来自服务端下发的 stats.maxFileBytes）。人格实测撞到过这个矛盾：
+      // 传 27MB 被拒时提示「上限 20MB」，但媒体库页面明明白白写着「单文件上限 10 MB」
+      // —— 用户不知道以哪个为准。
+      // 更糟的是 10~20MB 这个区间：前端放行、服务端拒绝，
+      // 用户会经历「选了图 → 裁剪 → 保存 → 报错」，白折腾一次。
+      // 现在从服务端配置读（与 MediaPage 同一来源），读不到才退回 10MB。
+      const maxBytes = await maxUploadBytes();
+      if (file.size > maxBytes) {
+        return message.error(`图片过大（上限 ${Math.round(maxBytes / 1048576)}MB）`);
+      }
       setLoading(true);
       try {
         const src = await loadImage(file);

@@ -282,11 +282,20 @@ export default function TokenPage() {
     {
       title: "额度",
       width: 130,
+      // 精度要**自适应**，不能固定 2 位。
+      // 人格实测（团队负责人）：「我设 0.002 和 0.0005 的额度，
+      // 列表里都显示 `0.00 OD币`；而『已用』那列却是 4 位小数（0.0020）。
+      // 我在列表上扫一眼就是要判断『谁快不够用了』，
+      // 现在显示 0.00，我第一反应是已经用完了？」
+      // 规则：额度小于 0.01 OD 时给 4 位小数（否则小数部分全被抹平），
+      // 否则保持 2 位（避免 100 OD 被写成 100.0000 那种噪音）。
       render: (_, r) =>
         r.unlimited_quota ? (
           <Tag color="geekblue">无限</Tag>
         ) : (
-          <span className="oo-num">{fmtOd(r.remain_quota, perUnit, 2)}</span>
+          <span className="oo-num">
+            {fmtOd(r.remain_quota, perUnit, odOf(r.remain_quota, perUnit) < 0.01 ? 4 : 2)}
+          </span>
         ),
     },
     {

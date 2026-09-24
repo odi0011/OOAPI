@@ -71,6 +71,9 @@ export default function PromptBar({
   chips = [],
   onRemoveChip,
   onPickImage,
+  // 粘贴图片回调（可选）。有它才接管 Ctrl+V 里的图片 ——
+  // 没传就保持浏览器默认粘贴行为（不吞用户的文本粘贴）。
+  onPasteImage,
   onPickFile,
   fileOk = true,
   visionOk = false,
@@ -243,6 +246,26 @@ export default function PromptBar({
             disabled={disabled}
             placeholder={busy ? "正在生成…" : placeholder}
             onChange={(e) => onChange(e.target.value)}
+            // Ctrl+V 贴截图 → 交给上层走图片上传链路。
+            //
+            // 原先这里**完全没有 onPaste 处理**，于是"往输入框粘截图"什么都不发生：
+            // 没缩略图、没 toast、没报错、输入框也没变化（人格实测原话：
+            // 「Ctrl+V 和直接派发 paste 事件都试了，没有任何反应……而且是静默的，
+            //   连失败都不告诉你。评论框在同一时期是支持粘贴的，对比之下更像漏了。」）
+            //
+            // 只拦「剪贴板里有图片文件」的情况，其余（纯文本粘贴）不干预 ——
+            // 否则会把用户正常贴代码/贴文字也吃掉。
+            onPaste={(e) => {
+              if (!onPasteImage) return;
+              const items = Array.from(e.clipboardData?.items || []);
+              const imgs = items
+                .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+                .map((it) => it.getAsFile())
+                .filter(Boolean);
+              if (!imgs.length) return; // 没图就走默认行为
+              e.preventDefault();
+              onPasteImage(imgs);
+            }}
             onKeyDown={(e) => {
               if (cmdOpen && (e.key === "Escape" || e.key === "ArrowDown")) {
                 e.preventDefault();

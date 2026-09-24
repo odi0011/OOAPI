@@ -8,6 +8,7 @@ import AuthPage from "./pages/AuthPage";
 import ConsolePage from "./pages/ConsolePage";
 import ChatPage from "./pages/ChatPage";
 import TokenPage from "./pages/TokenPage";
+import PricingPage from "./pages/PricingPage";
 import LogPage from "./pages/LogPage";
 import OperationLogPage from "./pages/OperationLogPage";
 import MediaPage from "./pages/MediaPage";
@@ -101,6 +102,8 @@ export default function App() {
         <Route path="/operation-log" element={<OperationLogPage />} />
         {/* 媒体库：普通用户看自己的；管理员可用 ?user_id 切到指定用户 */}
         <Route path="/media" element={<MediaPage />} />
+        {/* 模型价格（只读）：用户端比价用；后台可关（expose_pricing_to_user） */}
+        <Route path="/pricing" element={<PricingPage />} />
         <Route path="/profile" element={<ProfilePage />} />
         {/* 外观设置：即时热注入，改动立刻生效 */}
         <Route path="/settings/appearance" element={<AppearancePage />} />

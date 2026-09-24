@@ -11,6 +11,43 @@ import { clinePriceFor } from "../services/cline-prices.js";
 import { syncUpstreamPrices, missingFromUpstream } from "../services/price-sync.js";
 
 const router = Router();
+
+// ---------------------------------------------------------------------------
+// 公开价格表（只读，给用户端比价用）
+// ---------------------------------------------------------------------------
+// 人格实测报的（独立开发者，正在给自己项目选网关）：
+//   「价格表完全找不到 —— /pricing、/models、/console/pricing、/price 全被弹回首页，
+//     /api/pricing 要管理员权限。所以我只能反推实际扣费，
+//     无法核对『标价』与『实收』是否一致。对一个会认真比价的用户来说这是硬伤。」
+//
+// 而后台设置项 `expose_pricing_to_user`（默认 **true**）早就存在、
+// 也早在 /api/status 里下发了 —— 只是**没有任何前端页面用它**。
+// 这个端点把「展示什么价格」的开关接上：开关关掉就 403（保持管理员可配）。
+//
+// **必须声明在 router.use(adminRequired) 之前** —— Express 按声明顺序匹配中间件，
+// 放在后面会被管理员门禁拦住（与 token.js 里 /reconcile 被 /:id 吞掉是同一类坑）。
+router.get(
+  "/public",
+  asyncHandler(async (req, res) => {
+    const { getBoolOption } = await import("../config.js");
+    if (!getBoolOption("expose_pricing_to_user")) {
+      return fail(res, "本站未开放价格查询", 403);
+    }
+    const prices = await loadPrices();
+    // 只回**单价**，不回成本、倍率、上游来源这些管理端信息
+    const items = [...prices.values()]
+      .map((p) => ({
+        model: p.model,
+        input: p.input, // 每百万 input token 单价（OD币，1 OD = $1）
+        output: p.output,
+        ...(p.cache ? { cache: p.cache } : {}),
+        ...(p.type ? { vendor: p.type } : {}),
+      }))
+      .sort((a, b) => String(a.model).localeCompare(String(b.model)));
+    return ok(res, { items, currency: "OD", note: "单价按每百万 token 计，1 OD币 = 1 美元" });
+  })
+);
+
 router.use(adminRequired);
 
 // 闲时规则入参校验：只接受 JSON 字符串或对象，且必须是可解析的结构。
