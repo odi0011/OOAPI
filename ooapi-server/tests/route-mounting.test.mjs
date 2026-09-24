@@ -13,7 +13,7 @@
 //   这类缺陷的特点是「三处有两处做了」：import 有、白名单有、挂载没有。
 //   人眼审代码时很容易被前两处骗过（看着像已经接好了），所以用测试锁住：
 //   **凡是被 import 进 index.js 的 *Routes，都必须在 app.use 里出现**。
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -95,6 +95,41 @@ for (const [prefix, why] of [
 
 t("小游戏路由 /api/games 已彻底下线未挂载", () => {
   ck(!index.includes('"/api/games"'), "/api/games 仍残留在挂载或白名单中");
+});
+
+/* ===========================================================================
+   AI 助手入口文件（AGENTS.md / CLAUDE.md / CODEX.md）
+   ===========================================================================
+   作用：让 Codex / Claude Code / ZCode 等助手一进仓库就看到硬约束与验证门禁
+   （本项目已三次因「构建通过就上线」而白屏，那些门禁是唯一的防线）。
+   这类文件最容易「悄悄失效」的方式不是被删，而是**内容过期** ——
+   比如测试脚本改名或被删、而文档还指着旧的。这里锁住几条最容易过期的事实。 */
+const REPO = path.join(here, "..", "..");
+for (const f of ["AGENTS.md", "CLAUDE.md", "CODEX.md"]) {
+  t(`${f} 存在且指向唯一事实来源 AI协作.md`, () => {
+    const p = path.join(REPO, f);
+    ck(existsSync(p), `${f} 不存在（AI 助手进仓库会看不到规则）`);
+    const md = readFileSync(p, "utf8");
+    ck(/AI协作\.md/.test(md), `${f} 没有指向 AI协作.md`);
+    ck(/\.env/.test(md) && /main/.test(md), `${f} 没写清「只推 main / 不提交 .env」`);
+  });
+}
+t("入口文件引用的测试脚本都真实存在（防文档过期）", () => {
+  const names = readdirSync(path.join(here));
+  for (const f of ["AGENTS.md", "CLAUDE.md", "CODEX.md"]) {
+    const md = readFileSync(path.join(REPO, f), "utf8");
+    for (const m of md.matchAll(/tests\/([\w.-]+\.mjs)/g)) {
+      ck(names.includes(m[1]), `${f} 引用了不存在的 tests/${m[1]}（文档已过期）`);
+    }
+  }
+});
+t("入口文件不含项目流水账（职责边界：只引路 + 硬约束）", () => {
+  for (const f of ["AGENTS.md", "CLAUDE.md", "CODEX.md"]) {
+    const md = readFileSync(path.join(REPO, f), "utf8");
+    // 变更记录表格只属于 AI协作.md
+    ck(!/^\|\s*20\d\d-\d\d-\d\d\s*\|/m.test(md), `${f} 出现了变更记录表格（应只写进 AI协作.md）`);
+    ck(md.length < 12000, `${f} 过长（${md.length} 字符）—— 入口文件应精简，细节写进 AI协作.md`);
+  }
 });
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
