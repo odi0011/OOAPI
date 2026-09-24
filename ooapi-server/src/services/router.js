@@ -835,9 +835,21 @@ export async function explainNoChannel({ model, displayModel = "", groupName = n
       // 报错回显**用户请求的那个名字**，不是归一化之后的名字 ——
       // 黑盒测试实测抱怨：「我写的是 deepseek-chat，你告诉我不存在 deepseek-flash」，
       // 用户会去查一个自己根本没写过的模型名。
+      //
+      // 只说「分组限制了可用模型」是**半句话**：用户不知道这个分组到底能用什么，
+      // 只能一个个试。Round 4 子线实测（5 个人格里 4 个撞上，共 14 次）：
+      // 「我照着教程复制粘贴的 key，结果告诉我分组限制了可用模型。分组是个啥啊」
+      // 所以这里补上「这个分组能用哪些模型」，让用户下一步有明确动作。
+      const allowed = cfg.models.map((x) => String(x)).filter(Boolean);
+      // 最多列 5 个（列表太长会把 message 撑爆，也淹没重点）
+      const head = allowed.slice(0, 5).join("、");
+      const more = allowed.length > 5 ? ` 等 ${allowed.length} 个` : "";
       return {
         reason: "GROUP_MODEL",
-        message: `当前分组的 Key 不可调用模型「${displayModel}」（分组限制了可用模型）`,
+        message:
+          `当前分组的 Key 不可调用模型「${displayModel}」（分组限制了可用模型）。` +
+          `这个分组可用的模型：${head}${more}。` +
+          `用 GET /v1/models 可以看到完整清单。`,
       };
     }
   }

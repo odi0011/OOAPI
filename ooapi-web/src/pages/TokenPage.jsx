@@ -54,11 +54,17 @@ export default function TokenPage() {
                 <div className="oo-truncate oo-group-select-item__title">{g.name}</div>
                 {g.remark ? (
                   <div className="oo-truncate oo-group-select-item__desc">{g.remark}</div>
-                ) : (
-                  <div className="oo-truncate oo-group-select-item__desc" style={{ opacity: 0.75 }}>
-                    {Array.isArray(g.models) && g.models.length ? `支持 ${g.models.length} 个指定模型` : "支持全量模型"}
-                  </div>
-                )}
+                ) : null}
+                {/* 把**具体模型名**列出来，而不是只说「支持 N 个指定模型」。
+                    Round 4 子线实测（4 个人格、14 次撞墙）：「我照着教程复制粘贴的 key，
+                    结果告诉我分组限制了可用模型。分组是个啥啊」——
+                    用户在选分组时根本看不出这个分组能用什么，选完建了 Key 才发现调不通。
+                    这里把模型名摆出来，选之前就能判断。 */}
+                <div className="oo-truncate oo-group-select-item__desc" style={{ opacity: 0.75 }}>
+                  {Array.isArray(g.models) && g.models.length
+                    ? `仅 ${g.models.slice(0, 3).join("、")}${g.models.length > 3 ? ` 等 ${g.models.length} 个` : ""}`
+                    : "支持全量模型"}
+                </div>
               </div>
             </div>
             <GroupRateBadge rate={g.rate} />
@@ -242,9 +248,15 @@ export default function TokenPage() {
   const isNarrow = !screens.md; // < 768px
   // 各列在手机上的宽度（与下面 columns 的 width 表达式保持一致，否则 scroll.x
   // 与真实列宽之和对不上，AntD 会按比例压缩每一列，反而更容易截断）。
-  const W = { name: isNarrow ? 150 : 170, key: isNarrow ? 150 : 280 };
+  //
+  // 窄屏下密钥列只留「复制按钮」的宽度（56px）——这是量出来的结论，不是拍脑袋：
+  // 手机视口 390px、可滚动区只有 370px，而「名称」150 + 固定的「操作」180
+  // 就吃掉 330px，留给密钥的只剩 ~40px，于是那串 sk-xxx 在 40px 里一个字符一行地竖排。
+  // 而密钥在列表里本来就是**打码**的（sk-********87b），读它没有意义，
+  // 真正的动作是「复制」。所以窄屏把它收成一列只放复制按钮，把宽度让给名称/状态/额度。
+  const W = { name: isNarrow ? 130 : 170, key: isNarrow ? 56 : 280 };
   const scrollX = isNarrow
-    ? W.name + W.key + 92 + 130 + 170 // 名称+密钥+状态+额度+操作
+    ? W.name + W.key + 92 + 130 + 170 // 名称+密钥(仅按钮)+状态+额度+操作
     : 1480;
 
   const columns = [
@@ -256,14 +268,37 @@ export default function TokenPage() {
       render: (v) => <Text strong>{v}</Text>,
     },
     {
-      title: "密钥",
+      // 窄屏这一列只放复制按钮，表头就叫「复制」才不误导（否则用户在「密钥」
+      // 这一列下面找不到密钥，会以为坏了）
+      title: isNarrow ? "复制" : "密钥",
       dataIndex: "key",
       // 手机上收窄（280 → 150）：完整密钥本来也显示不下，但**复制按钮必须留着** ——
       // 「复制密钥」是这个页面最主要的动作，不能因为窄屏就藏起来。
       width: W.key,
+      // 密钥是**不可断行的一串**（sk-xxx），窄屏下必须省略成一行。
+      //
+      // 实测（Round 4 子线报「密钥列被压成竖条」，390×844 截图确认）：
+      // 列的宽度声明与实际渲染都是 150px，**问题不在宽度，而在内容换行** ——
+      // `.oo-mono` 那串没有截断规则，sk- 开头的长串就在 150px 里
+      // 一个字符一行地竖着排下去，看起来像列被压扁了。
+      // 所以这里给文字加 ellipsis：一行显示、超出省略，完整值仍可一键复制。
+      ellipsis: {
+        showTitle: false, // 用下面的 Tooltip 显示全文，避免原生 title 与它重复弹两层
+      },
       render: (k, r) => (
-        <Space size={2}>
-          <span className="oo-mono">{k}</span>
+        <Space size={2} style={{ maxWidth: "100%" }}>
+          {/* 窄屏不显示打码密钥：列宽已被 sticky 操作列挤到 56px，
+              留在这里只会变成一串看不全的字符。复制按钮才是这列的价值。 */}
+          {isNarrow ? null : (
+            <Tooltip title={k}>
+              <span
+                className="oo-mono"
+                style={{ display: "inline-block", maxWidth: W.key - 34, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", verticalAlign: "bottom" }}
+              >
+                {k}
+              </span>
+            </Tooltip>
+          )}
           <Tooltip title="复制完整密钥">
             <Button type="text" size="small" icon={<CopyOutlined />} loading={copyingId === r.id} disabled={Boolean(actingId)} onClick={() => copyKey(r)} />
           </Tooltip>

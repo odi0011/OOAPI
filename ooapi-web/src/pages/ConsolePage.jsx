@@ -215,7 +215,19 @@ export default function ConsolePage() {
           value={loading ? "—" : fmtOd(quota, perUnit, 2, false)}
           suffix={CURRENCY_NAME}
           tone={quota < 0 ? "danger" : undefined}
-          hint={quota < 0 ? "已欠费，充值需大于欠费额才能恢复服务" : `共 ${fmtOd(totalQuota, perUnit, 2, false)} ${CURRENCY_NAME}`}
+          // 余额的悬浮说明要**先解释币是什么**，再说总数。
+          //
+          // Round 4 子线实测（4 个人格里 3 个都在问这件事）：
+          //   「给我发了 200 OD币的额度……OD 币是啥我不知道，那个 1 比 10000 的比例也没看懂」
+          //   「200 币到底能问多少句话啊」
+          //   「看不懂的是『1 OD币 = 10,000 额度』这个换算，我到底一次对话扣多少」
+          // 原先这里只回「共 X OD币」，等于把同一个看不懂的词再说一遍。
+          // 现在补上一句人话：OD币就是美元计价的余额，按 token 实际用量扣。
+          hint={
+            quota < 0
+              ? "已欠费，充值需大于欠费额才能恢复服务"
+              : `共 ${fmtOd(totalQuota, perUnit, 2, false)} ${CURRENCY_NAME}。${CURRENCY_NAME}是你这个账号的余额单位，按每次调用的 token 用量扣费（价格见「模型价格」页）；用完后调用会被拒绝。`
+          }
         />
         <StatCard
           label="已用额度"
