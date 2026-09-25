@@ -261,6 +261,22 @@ export default function ConsolePage() {
           value={loading ? "—" : daysLeft === null ? "—" : daysLeftCapped ? "999+" : daysLeft}
           suffix={daysLeft === null ? "" : "天"}
           tone={daysLeft !== null && daysLeft < 7 ? "danger" : daysLeft !== null && daysLeft < 30 ? "warning" : undefined}
+          // 「999+」本身是对的（余额 ÷ 日均消费 超过 999 天，就封顶显示），
+          // 但**算法只写在悬浮里**，用户看不到，于是把区间消费总量当成了日消费。
+          // Round 4 子线实测（第 95 轮，5/5 人格、带困惑表述 161 条去重发言）：
+          //   lan 「已用才 3.69…我一天就用掉 3.69，怎么算也算不出四位数」（3.69 是 30 天总量）
+          //   lin 「0.05 OD币能撑 999 天？笑死，这数是不是写死的」
+          //   may 「估计是按当前消耗速率算的，但那也离谱」
+          //   wang「我用了 312 次花了 6 分钱，按这速度能撑三年？不信」
+          // 前两次同样的病（币值锚点、分组倍率）证明：解释放悬浮里等于没加，
+          // 必须写进**常显的 hintInline**。这里就报出日均与余额，用户自己一除就对上了。
+          hintInline={
+            daysLeftCapped
+              ? `余额充足：按日均 ${fmtOd(dailyAvg, perUnit, 4, false)} ${CURRENCY_NAME} 估算已超 999 天`
+              : daysLeft === null
+              ? "暂无消费，无法估算"
+              : `按日均 ${fmtOd(dailyAvg, perUnit, 4, false)} ${CURRENCY_NAME} 估算`
+          }
           hint={
             daysLeftCapped
               ? "按日均消费估算已超过 999 天，实际可视为余额充足"
