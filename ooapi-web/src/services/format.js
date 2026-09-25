@@ -58,9 +58,22 @@ export function fmtOd(quota, perUnit = DEFAULT_UNITS_PER_OD, digits = 2, withUni
  *   （实测 /api/user/self 返回 quota=1963089、/api/dashboard/self 返回 account.quota=1963089），
  *   管理端加额度也按该单位操作（logs：「补充 5000000 额度给 tester01」）。
  *   所以要补的是「这属于接口层的单位」这个说明，而不是取消换算。
+ *
+ * 【第 104 轮补正】上一版只讲清了「额度单位是什么」，**没回答「它值多少钱」**，
+ *   而后者才是用户在这一格真正想问的。实测（第 104 轮，4 人格、原话引用本句）：
+ *     · wang「写了 1 OD币 = 10,000 额度单位，**可没说 10,000 单位对应多少人民币**」
+ *     · lin 「模型价格和『OD币 = 10,000 额度单位』**到底怎么换算成钱**，翻半天没看到」
+ *     · lan 「看不懂的是『OD币』和『额度单位』到底怎么换算」
+ *   而「1 OD币 = 1 美元」当时只存在于**另一处的悬浮提示**里（余额卡的 hint）。
+ *   这是同类缺陷第四次出现（前三次：币值锚点、倍率指路、余额可用依据）：
+ *   **解释放在悬浮/别处，等于没有解释。** 所以这里把币值锚点补在**同一句内**。
+ *
+ *   写「1 OD币 = 1 美元」而不是人民币数额：前者是**币制定义句**
+ *   （管理端 AdminPricingPage.jsx:403 早已在用同一句），后者是汇率换算，
+ *   会违反全站硬约束（币制只有一条规则，禁新增换算与其他币名）。
  */
 export function odRateText(perUnit = DEFAULT_UNITS_PER_OD) {
-  return `1 ${CURRENCY_NAME} = ${Number(perUnit || DEFAULT_UNITS_PER_OD).toLocaleString()} 额度单位（接口返回的整数即此单位）`;
+  return `1 ${CURRENCY_NAME} = ${Number(perUnit || DEFAULT_UNITS_PER_OD).toLocaleString()} 额度单位（接口返回的整数即此单位；1 ${CURRENCY_NAME} = 1 美元）`;
 }
 
 export function fmtDate(ts, fmt = "YYYY-MM-DD HH:mm:ss") {
