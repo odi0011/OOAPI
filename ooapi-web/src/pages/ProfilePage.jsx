@@ -12,7 +12,7 @@ import UserAvatar from "../components/UserAvatar";
 import AvatarUploader from "../components/AvatarUploader";
 import { PRIMARY_PRESETS, DEFAULT_PRIMARY } from "../theme/presets";
 import { useTheme } from "../theme/ThemeContext";
-import { fmtDate, odOf, unitsPerOd } from "../services/format";
+import { fmtDate, odOf, unitsPerOd, CURRENCY_NAME } from "../services/format";
 import { OdStatValue } from "../components/OdCoin";
 
 const { Text } = Typography;
@@ -80,6 +80,18 @@ function ProfileTab() {
           label="剩余额度"
           value={<OdStatValue od={odOf(user?.quota, perUnit)} />}
           icon={<UserOutlined />}
+          // 这张卡的数字读作「196.31 OD币」，下面一行标签却是「剩余额度」——
+          // 币名与标签是两个词，用户会读成两个并列的东西。
+          //
+          // Round 4 子线实测（第 100 轮，5/5 人格、近 8 小时去重 15 条）：
+          //   lin「『198.98 OD币』这行小字挨着『剩余额度』，我第一反应是这俩是一个数还是两个数？」
+          //   lan「196.31 孤零零一个，下面并排两个标签『OD币』和『剩余额度』，中间也没个分隔，
+          //        你说这是币还是额度。要不就分开写两行。」
+          //   wang「到底 OD币 是余额单位还是额度单位，还是这俩是同一个东西」
+          // 实测这张卡原来**没有任何悬浮说明**（hover 无 tooltip）。
+          // 而 /console 上同样标签的卡片早在第 68 批就补了 hint —— 两个页面不一致。
+          // 这里与 /console 对齐：说清「同一个东西」+ 币值锚点（1:1 美元，仍不引入汇率字段）。
+          hint={`这就是你的余额：1 ${CURRENCY_NAME} = 1 美元，按每次调用的 token 用量扣费，用完调用会被拒绝。`}
         />
         <StatCard
           label="注册时间"
