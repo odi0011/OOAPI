@@ -487,8 +487,24 @@ export default function LogPage() {
           <span className="bui-chip" title="区间调用次数">
             调用 <b className="oo-num">{summary.calls}</b>
           </span>
-          <span className="bui-chip" title={`区间消耗（${CURRENCY_NAME}）`}>
+          {/* 对账页必须说清「币是什么」。
+              Round 4 子线实测（第 94 轮）：这一页是困惑最集中的地方 ——
+              check_usage_log 的发言里 15/98 在问汇率，原话：
+                「折合人民币我是真算不出来，页面只给币不给汇率，服了」
+                「OD币到底是啥汇率啊，服了」
+                「我得知道 0.5 个币等于多少钱，才能算这 2582 次调用划不划算」
+              而 /pricing 加了同一句锚点后，该类困惑从 739 降到 113 每千轮
+              （该页只剩 1/24）。所以这里补同一句。
+
+              为什么写成「1 OD币 = 1 美元」而**不是**「≈ 3.69 美元」：
+              前者是币制定义句（管理端 AdminPricingPage 早就这么写），
+              后者是汇率换算 —— 全站硬约束禁止新增换算与其他币名。
+              用户看到 1:1 自己就能折算，不需要平台替他算。 */}
+          <span className="bui-chip" title={`区间消耗（1 ${CURRENCY_NAME} = 1 美元）`}>
             消耗 <b className="oo-num">{fmtOd(summary.units, perUnit, 4, false)}</b> {CURRENCY_NAME}
+            <span style={{ color: "var(--ink-3)", fontWeight: 400 }}>
+              （1 {CURRENCY_NAME} = 1 美元）
+            </span>
           </span>
           <span className="bui-chip" title={`提示 ${summary.prompt_tokens} / 补全 ${summary.completion_tokens}`}>
             Tokens <b className="oo-num">{summary.prompt_tokens + summary.completion_tokens}</b>
