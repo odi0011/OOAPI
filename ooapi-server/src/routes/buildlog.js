@@ -45,14 +45,17 @@ const CC_REDACT = [
 function ccTail(since) {
   return fsp
     .readFile(CC_LOG) // 跟随软链；文件不存在/无权限都走 catch
-    .then((buf) => {
+    .then(async (buf) => {
       const size = buf.length;
       const start = Math.min(since, size);
       let chunk = buf.subarray(start, Math.min(start + CC_CHUNK_MAX, size)).toString("utf8");
       for (const [re, rep] of CC_REDACT) chunk = chunk.replace(re, rep);
-      return { cursor: start + Buffer.byteLength(chunk, "utf8"), chunk, size, alive: true };
+      // mtime 给前端判断「进程是否空闲」：15 分钟没动静就不该装作还在直播
+      let mtime = 0;
+      try { mtime = Math.floor((await fsp.stat(CC_LOG)).mtimeMs / 1000); } catch { /* ignore */ }
+      return { cursor: start + Buffer.byteLength(chunk, "utf8"), chunk, size, mtime, alive: true };
     })
-    .catch(() => ({ cursor: since, chunk: "", size: 0, alive: false }));
+    .catch(() => ({ cursor: since, chunk: "", size: 0, mtime: 0, alive: false }));
 }
 
 router.get(
