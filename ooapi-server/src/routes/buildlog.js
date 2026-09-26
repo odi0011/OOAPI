@@ -31,7 +31,7 @@ router.get(
 
     const [calls] = await pool.query(
       `SELECT model, type, prompt_tokens, completion_tokens, cache_tokens,
-              cost_units, elapsed_ms, first_token_ms, created_at
+              quota AS cost_units, elapsed_ms, first_token_ms, created_at
          FROM logs
         WHERE ${MAINT_WHERE}
         ORDER BY id DESC
@@ -50,7 +50,9 @@ router.get(
         prompt_tokens: Number(r.prompt_tokens) || 0,
         completion_tokens: Number(r.completion_tokens) || 0,
         cache_tokens: Number(r.cache_tokens) || 0,
-        // 10,000 单位 = 1 OD币（全站唯一币制规则，见 AGENTS.md）
+        // 10,000 单位 = 1 OD币（全站唯一币制规则，见 AGENTS.md）。
+        // 列名注意：logs 表的消耗列线上叫 quota（历史命名），本地 CREATE TABLE 里的
+        // cost_units 是注释性别名 —— 上面 SELECT 里已用 `quota AS cost_units` 对齐。
         od: Number(r.cost_units || 0) / 10000,
         elapsed_ms: Number(r.elapsed_ms) || 0,
         first_token_ms: Number(r.first_token_ms) || 0,
