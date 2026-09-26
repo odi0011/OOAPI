@@ -219,7 +219,9 @@ async function listLogs(req, res, kind) {
   // 单独查一次拿 id→type 映射更简单也更安全。
   const chanIds = [...new Set(rows.map((r) => Number(r.channel_id) || 0).filter(Boolean))];
   const chanType = new Map();
-  if (chanIds.length) {
+  // 非管理员根本拿不到 channel_type（见下面的返回），这次查询也就不必做 ——
+  // 顺带少一次对渠道表的读取（普通用户的请求不该碰渠道信息，哪怕只是 SELECT）。
+  if (isAdmin && chanIds.length) {
     const [ch] = await pool
       .query(`SELECT id, type FROM channels WHERE id IN (${chanIds.map(() => "?").join(",")})`, chanIds)
       .catch(() => [[]]);
@@ -229,8 +231,13 @@ async function listLogs(req, res, kind) {
   return ok(res, {
     items: rows.map((r) => ({
       ...mapLog(r, { isAdmin }),
-      // 渠道类型：前端 ModelLabel 的 channelType 兜底（图标跟随厂商）
-      channel_type: chanType.get(Number(r.channel_id) || 0) || "",
+      // 渠道类型：前端 ModelLabel 的 channelType 兜底（图标跟随厂商）。
+      //
+      // **只随 mapLog 一起对管理员开放**（2026-09-26）：channel_type 看似只是个
+      // 图标提示，但 glm / deepseek / openrouter 这些值本身就是供应商身份 ——
+      // 用户原话：「不管是啥渠道，用户都不能看到啊，谁家中转站把自己号池给用户看？」。
+      // 普通用户拿到 undefined 后 ModelLabel 自会落回按模型名判图标，展示不受影响。
+      ...(isAdmin ? { channel_type: chanType.get(Number(r.channel_id) || 0) || "" } : {}),
     })),
     total,
     page: p,

@@ -20,6 +20,7 @@ import PostList from "../components/PostList";
 import UserAvatar from "../components/UserAvatar";
 import { fmtCompact } from "../components/Charts";
 import RichTextEditor from "../components/RichTextEditor";
+import BuildLogCard from "../components/BuildLogCard";
 
 export default function CommunityPage() {
   const navigate = useNavigate();
@@ -333,6 +334,9 @@ export default function CommunityPage() {
               ))}
             </Space>
           </div>
+
+          {/* 平台修复进度（实时待办 + 维护调用流，公开数据）—— 在热门讨论上面 */}
+          <BuildLogCard />
 
           <div className="oo-aside-card">
             <div className="oo-section-title" style={{ marginBottom: 6 }}>

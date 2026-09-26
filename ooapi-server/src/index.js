@@ -27,6 +27,7 @@ import communityRoutes from "./routes/community.js"; // 社区大厅
 import chatroomRoutes from "./routes/chatroom.js"; // 实时聊天（SSE）
 import friendsRoutes from "./routes/friends.js"; // 好友系统（申请/列表/备注）
 import profileRoutes from "./routes/profile.js"; // 个人主页（含匿名可达）
+import buildlogRoutes from "./routes/buildlog.js"; // 修复进度公示（公开只读：待办 + 维护调用流）
 import dashboardRoutes from "./routes/dashboard.js"; // 数据看板（个人 + 管理端）
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -71,6 +72,7 @@ app.use("/api/community", communityRoutes); // 社区大厅：话题/帖子/评�
 app.use("/api/chatroom", chatroomRoutes); // 实时聊天：单聊/群聊/讨论组（SSE 长连接）
 app.use("/api/friends", friendsRoutes); // 好友系统：申请/好友列表/备注/一键私聊
 app.use("/api/profile", profileRoutes); // 个人主页（匿名可达，只出公开字段）
+app.use("/api/buildlog", buildlogRoutes); // 修复进度公示（公开只读，无 body 解析需求）
 // 数据看板（个人 /console 与管理端 /admin/dashboard）。
 //
 // 这一行曾经**漏掉了**，而 import（文件顶部）与 body-parser 白名单里都有它 ——
