@@ -4807,6 +4807,47 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
   第 104 批修好了"素材不过期"，却让帖子开始编造等待时长与重试次数 ——
   两次都是"素材/叙述的准确性"问题，只是方向相反。
 
+- **2026-09-26 12:35 公示系统 + 渠道信息隐藏 + 探针同题合流（用户指令批次）**
+
+  **背景**：用户连续追加指令 —— 假人扩到 10 个、假人头像（二次元/欧美）、说话去 AI 味、
+  同题不许重复发帖（去评论区说）、渠道信息绝不能让用户看到、做一个公示窗口实时展示修复进度
+  与 Claude Code 对话流；并授权把管理员密码重置为 123456（测试环境）。
+
+  **平台侧（已部署，commit a90821c + 84e6675 + 3406a1c）**：
+  - `routes/log.js`：`channel_type` 原先对全员返回（前端厂商图标兜底），等于把上游供应商
+    身份暴露给普通用户。现仅管理员可见；普通用户请求不再触碰 channels 表。
+    实测验证：fb4zhou 调 /api/log/usage 返回字段里 channel_name/channel_type 均不存在。
+  - 新增 `routes/buildlog.js`（公开只读 `GET /api/buildlog`）：待办清单
+    （`options.buildlog_state`，监工脚本维护，**现查不走启动缓存**）+ 维护调用流
+    （logs 表 token_name LIKE 'fb4%'/'cc%'，只出模型/tokens/耗时/花费）+
+    Claude Code 对话增量（tail `/root/cc-tasks/latest.log`，`?cc_since=` 字节游标，
+    出口对 `sk-***` 与 `password=***` 打码）。
+    **踩坑**：logs 表消耗列线上叫 `quota`，本地 CREATE TABLE 的 `cost_units` 只是注释性别名
+    —— 首版线上 500（ER_BAD_FIELD_ERROR），SELECT 里 `quota AS cost_units` 对齐后修复。
+  - 前端 `components/BuildLogCard.jsx`：社区页右栏「平台修复进度」盒（话题卡下、热门讨论上）：
+    进度 + 待办 + 维护调用流（15s）+ CC 对话实时回显（3s 轮询、终端质感、自动贴底）。
+  - 门禁：npm test ✅ / vite build ✅ / ui-smoke 全路由 ✅ / bundle MD5 本地=服务器 ✅。
+
+  **社区**：管理员人格发置顶公示帖 #1255「平台修复进度公示（实时更新）」，
+  每条待办带**真实消耗**（CC 4 次修复尝试 200 调用/0.0764 OD 成果 0，全卡 T0；
+  测试人群累计 9.7828 OD）。
+
+  **探针侧（fb4.mjs，gitignored，两副本 md5 一致）**：
+  - 同题合流：发帖前拉社区最近 20 帖让模型判定，同题 → 去原帖下评论不开新帖
+    （采信的编号必须在真实 id 集合内，防模型从标题数字幻觉出假编号）。
+  - 记忆注入：写作提示词带本人最近 5 条帖标题（第 159 轮「话题固着」的直接对策）。
+  - 页面轮换：上一帖页面本轮剔除；页面池 6→9（新增 /chat、/media、/ 首页）。
+  - 删掉各人格 voice 里钦定的口头禅（「有一说一」等），HUMAN_STYLE 增补开头禁重复。
+  - 假人头像 10/10（DiceBear PNG，seed=人格 key，走 POST /api/media/avatar 同网页接口）。
+
+  **运维事实（重要，踩过一次）**：`POST /api/update/apply` 会清掉 /opt/ooapi/ooapi-server 下
+  **非 git 跟踪**的文件（fb4_launch.sh/fb4.mjs 被清过一次）。母本在 /root/fb4.mjs 与
+  /root/fb4_launch.sh；启动一律 `bash /root/fb4_launch.sh`。10 人格当前全部在线，
+  2 核机上 load 暂稳（0.32）但内存偏紧（2937/3499MB），OOM 风险记录在案。
+
+  **管理员账号**：实际管理员是 `odi`（不存在 root 用户）；密码已按用户指令重置为 123456
+  （users.password bcrypt 更新 + token_version+1，.env ADMIN_PASSWORD 同步）。
+
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 
 > 目标：把开源社区已有的「网页版反代 / 工具类反代」按**厂商**归类接入平台，
