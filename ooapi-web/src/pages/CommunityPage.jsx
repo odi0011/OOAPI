@@ -114,6 +114,10 @@ export default function CommunityPage() {
   // 图片帖只能靠直接调 API 造出来。
   const [postMedia, setPostMedia] = useState([]); // [{ id, url, name }]
   const [uploading, setUploading] = useState(false);
+  // 正文编辑器里是否还有图片在上传（由 RichTextEditor 上报，见其 onUploadingChange 注释）。
+  // 必须单独记一份：编辑器那条上传路径在传输期间**不会**在 postMedia 里留占位项，
+  // 只查 postMedia 是查不到它的。
+  const [editorUploading, setEditorUploading] = useState(false);
 
   const uploadOne = async (file) => {
     // 前端先读成 dataURL（与站内对话一致，后端 POST /api/media 接受 dataUrl）
@@ -168,8 +172,25 @@ export default function CommunityPage() {
     setPosting(true);
     try {
       // 只提交**已上传完成**的图（占位项的 id 还是 0）；顺序即列表顺序。
-      // 若还有在传的，拦下来提醒 —— 否则用户以为发了 5 张、实际只带上 3 张。
-      if (postMedia.some((m) => m.pending)) {
+      // 若还有在传的，拦下来提醒 —— 否则用户以为发了 5 张、实际只带上 3 张，
+      // 而且**图不会报错**：媒体行已经落库（ref_count=0 的孤儿），帖子却是空的。
+      //
+      // 发帖弹窗一共有**三种**上传入口，两个来源都要查、缺一个就会漏
+      // （实测帖 1233：图片还在传时点了发布，media_ids 为空，媒体 1993 成了孤儿）：
+      //   ① 编辑器工具栏「插入图片」、② 编辑器里 Ctrl+V 粘贴
+      //      —— 这两条都走 RichTextEditor.handleUploadFile，由 editorUploading 覆盖。
+      //      注意它们在上传**进行中**时 postMedia 里还没有对应条目（占位项是上传成功
+      //      回调 onMediaUploaded 里才加的），所以**只查 postMedia 是看不见这两条的**。
+      //   ③ 「图片（可选）」区的 Upload —— 选中即 addSlot(pending:true)，由 postMedia 覆盖。
+      //
+      // 为什么**不**再扫正文里的 `![..](/api/media/<id>/raw)` 引用兜底：
+      //   编辑器早就改成「只登记附件、不往正文插 markdown 图片语法」（见
+      //   RichTextEditor.handleUploadFile 里的长注释），而 Markdown 渲染器也不解析图片
+      //   语法（只把 `[..](..)` 渲染成链接）。所以正文里出现这种引用只可能是用户手输，
+      //   据此拦截会误伤正常发帖，而图并不会因此丢失 —— 属于「发明产品口径」，故不做。
+      //   以后若再加新的上传入口：请让它在传输开始前就 addSlot 或上报 uploading，
+      //   并保留这个守卫，别删。
+      if (postMedia.some((m) => m.pending) || editorUploading) {
         message.warning("还有图片在上传中，请稍等片刻再发布");
         setPosting(false);
         return;
@@ -424,6 +445,8 @@ export default function CommunityPage() {
             <RichTextEditor
               placeholder="分享你的见解、踩坑经验或代码片段... 支持 Markdown，可直接粘贴截图"
               minHeight={240}
+              // 编辑器内的上传进行中状态要报上来，否则发布守卫看不见这条路径（见 submitPost）
+              onUploadingChange={setEditorUploading}
               onMediaUploaded={(media) => {
                 // 粘贴/插图路径：与点「添加图片」同一条队列，也按槽位占位，
                 // 这样「先粘一张、再选两张」的顺序也是稳定的

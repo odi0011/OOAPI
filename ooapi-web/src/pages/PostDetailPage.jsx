@@ -175,6 +175,13 @@ export default function PostDetailPage() {
     const content = input.trim();
     // 纯图评论也允许（「这张图你看」是很常见的用法），所以判据是「有字或有图」
     if ((!content && !cMedia.length) || sending) return;
+    // 与发帖同一条守卫（见 CommunityPage 的 submitPost）：图还在传时 cMedia 里
+    // 还没有条目，此时提交会把图**静默丢掉** —— 媒体行已经落库，评论却没带上，
+    // 留下一个 ref_count=0 的孤儿。有正文时「发表评论」按钮是可点的，所以必须在这里拦。
+    if (cUploading) {
+      message.warning("还有图片在上传中，请稍等片刻再发布");
+      return;
+    }
     setSending(true);
     try {
       await API.post(`/community/posts/${postId}/comments`, {
@@ -700,7 +707,7 @@ export default function PostDetailPage() {
                               type="primary"
                               size="small"
                               loading={sending}
-                              disabled={!input.trim() && !cMedia.length}
+                              disabled={(!input.trim() && !cMedia.length) || cUploading}
                               onClick={async () => {
                                 await sendComment();
                                 setCommentExpanded(false);

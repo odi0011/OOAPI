@@ -40,7 +40,32 @@ const newId = (prefix) => `${prefix}-${crypto.randomBytes(12).toString("hex")}`;
 function pickMaxTokens(v) {
   if (v === undefined || v === null || v === "") return 0;
   const n = Number(v);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.floor(n);
+}
+
+/**
+ * 结束原因。**这一处是整个 T0 修复里最容易被忽略、却最致命的细节**：
+ * agent 客户端（Claude Code / Codex）靠它判断「模型是在说话，还是在请求执行工具」。
+ * 模型返回了 tool_use 块但结束原因仍是 end_turn/stop 时，客户端会认为
+ * 「这轮说完了」→ 工具请求被当成普通文本丢掉 → 表现和「工具没生效」完全一样。
+ *
+ * 三个档位的优先级：截断 > 工具调用 > 正常结束。
+ * 截断优先是刻意的：被 max_tokens 截断时工具调用的 arguments 是**残缺的 JSON**，
+ * 标成 tool_use 会让客户端拿一段坏 JSON 去解析（实测 Claude Code 会报
+ * "Unexpected end of JSON input" 而不是「输出被截断，请调大上限」）。
+ */
+function finishReasonOf(settled) {
+  if (settled?.truncated) return "length";
+  if (settled?.toolCalls) return "tool_calls";
+  return "stop";
+}
+
+/** 同上的 Anthropic 说法：max_tokens / tool_use / end_turn */
+function stopReasonOf(settled) {
+  if (settled?.truncated) return "max_tokens";
+  if (settled?.toolCalls) return "tool_use";
+  return "end_turn";
 }
 
 /**
@@ -166,17 +191,228 @@ function responsesInput(body) {
   return out;
 }
 
+/* ============================== 工具调用（tools） ==============================
+ * 这是 T0 修复的核心：三个协议的 parse 原先只提取 model/messages/stream/maxTokens，
+ * **tools 被整段丢弃**。后果不是「工具调用不好用」，而是「任何工具型客户端完全不可用」：
+ * 模型根本没收到工具定义，只能照着自己训练里的记忆瞎编一个调用格式塞进正文 ——
+ * 实测 Claude Code 通过本网关时，输出的是 `<｜｜DSML｜｜ invoke name="Bash">`
+ * 这样的**纯文本**，一个 tool_use 块都没有（日志里 grep DSML = 9，grep tool_use = 0），
+ * 于是它「演」完了整个任务、一条命令都没真正执行。
+ *
+ * 内部统一形状（三种协议的差异全部收敛在下面这几个函数里）：
+ *   · 工具定义  { name, description, parameters }  parameters 是 JSON Schema 对象
+ *   · 工具选择  "auto" | "none" | "required" | { name }   （已归一，不再带协议痕迹）
+ *   · 模型请求  { id, name, arguments }  arguments 是**未解析的 JSON 字符串**
+ *              —— 与 OpenAI 一致，故意不 JSON.parse：上游可能分片传来，
+ *                 解析失败时还要原样回传（客户端自己会解析）
+ *   · 消息扩展  assistant 消息上的 `tool_calls`；独立的 `{role:"tool", tool_call_id}`
+ *              消息承载工具执行结果（Anthropic 把它们放在 user 消息的 tool_result
+ *              块里，parse 时拆成独立消息 —— 上游 OpenAI 需要这个形状）
+ */
+
+/**
+ * 把 content 归一成纯文本（字符串 / 分片数组 / 对象都认）。
+ * 与 openai-compat 的 normalizeContentToText 同口径，但**故意各留一份**：
+ * 这里是「读请求」，那里是「写上游」，分属两层；跨层 import 会让
+ * 协议层反向依赖适配器层（适配器已经 import 协议层的东西了，会成环）。
+ */
+function plainText(content) {
+  if (content === null || content === undefined) return "";
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((p) => {
+        if (typeof p === "string") return p;
+        if (!p || typeof p !== "object") return "";
+        if (p.type === "text" || p.type === "input_text") return String(p.text ?? p.content ?? "");
+        // 图片片由 image_url 分片单独承载，不在文本里重复
+        return "";
+      })
+      .join("");
+  }
+  if (typeof content === "object") return String(content.text ?? "");
+  return String(content);
+}
+
+/**
+ * 归一化工具定义。三种协议的入参形状各不相同，这里都认：
+ *   · Anthropic  { name, description, input_schema }
+ *   · OpenAI Chat { type:"function", function:{ name, description, parameters } }
+ *   · OpenAI Responses { type:"function", name, description, parameters }（**扁平**）
+ * 无法识别的条目**直接丢弃**而不是抛错：工具定义里混进一条垃圾不该让整个请求 400
+ *（客户端可能带 `{"type":"web_search"}` 这类服务端工具）。
+ */
+function normalizeTools(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const t of list) {
+    if (!t || typeof t !== "object") continue;
+    // Responses 是扁平的，Chat 包了一层 function，Anthropic 是平铺但 schema 叫 input_schema
+    const src = t.function && typeof t.function === "object" ? t.function : t;
+    const name = String(src.name || "").trim();
+    if (!name) continue;
+    const schema = src.parameters ?? src.input_schema;
+    out.push({
+      name,
+      description: String(src.description || ""),
+      // parameters 必须是对象；字符串（部分客户端会 stringify）或缺失时给一个
+      // 合法的空对象 schema —— 给 null 会让上游 400（"parameters must be an object"）
+      parameters:
+        schema && typeof schema === "object" ? schema : { type: "object", properties: {} },
+    });
+  }
+  return out;
+}
+
+/** 归一化 tool_choice → "auto" | "none" | "required" | { name } */
+function normalizeToolChoice(v) {
+  if (v === undefined || v === null) return null;
+  if (typeof v === "string") {
+    const s = v.toLowerCase();
+    if (s === "auto" || s === "none" || s === "required" || s === "any") {
+      // Anthropic 用 "any" 表示「必须调用某个工具」，等价于 OpenAI 的 "required"
+      return s === "any" ? "required" : s;
+    }
+    return null;
+  }
+  if (typeof v !== "object") return null;
+  const inner = v.function && typeof v.function === "object" ? v.function : v;
+  const name = String(inner.name || "").trim();
+  if (name) return { name };
+  const type = String(v.type || "").toLowerCase();
+  if (type === "auto" || type === "none") return type;
+  if (type === "any" || type === "required") return "required";
+  return null;
+}
+
+/**
+ * 把一条消息里的 content 归一成「文本 + 图片分片」并保留工具字段。
+ *
+ * 归一的目的是让**上游适配器**只面对一种形状。三种协议里只有 OpenAI 原生的
+ * messages 已经是我们想要的形状；Anthropic 的块（tool_use/tool_result）与
+ * Responses 的 item（function_call/function_call_output）都要在这里翻译。
+ *
+ * @returns {Array} 0 条或多条规范消息（tool_result 会被拆成独立消息）
+ */
+function canonicalizeMessage({ role, content, toolCalls = [], toolResult = null, extra = null }) {
+  const out = [];
+  // 工具结果必须是独立的一条 role:"tool" 消息（OpenAI 的硬要求），
+  // 且它不能带图片分片 —— 混在一起上游会 400。
+  if (toolResult) {
+    out.push({
+      role: "tool",
+      tool_call_id: toolResult.tool_call_id,
+      content: toolResult.content,
+    });
+  }
+  const hasContent =
+    (typeof content === "string" && content.length > 0) ||
+    (Array.isArray(content) && content.length > 0);
+  // 只有工具调用的 assistant 消息 content 必须为空串（不能省字段：
+  // 部分上游对缺 content 的 assistant 消息直接 400）
+  const isAssistantToolCall = role === "assistant" && toolCalls.length > 0;
+  if (hasContent || isAssistantToolCall || (!toolResult && !toolCalls.length && role !== "tool")) {
+    out.push({
+      role,
+      content: typeof content === "string" ? content : Array.isArray(content) ? content : "",
+      ...(toolCalls.length
+        ? {
+            tool_calls: toolCalls.map((t) => ({
+              id: String(t.id || ""),
+              name: String(t.name || ""),
+              arguments: typeof t.arguments === "string" ? t.arguments : JSON.stringify(t.arguments ?? {}),
+            })),
+          }
+        : {}),
+      ...(extra && typeof extra === "object" ? extra : {}),
+    });
+  }
+  return out;
+}
+
+/** 从 Anthropic 的 content 块数组里取出 tool_use / tool_result（其余块交给文本与图片处理） */
+function anthropicToolBlocks(content) {
+  const uses = [];
+  const results = [];
+  if (!Array.isArray(content)) return { uses, results };
+  for (const b of content) {
+    if (!b || typeof b !== "object") continue;
+    if (b.type === "tool_use") {
+      uses.push({
+        id: String(b.id || ""),
+        name: String(b.name || ""),
+        arguments: JSON.stringify(b.input ?? {}),
+      });
+    } else if (b.type === "tool_result") {
+      results.push({
+        tool_call_id: String(b.tool_use_id || ""),
+        // content 可以是字符串，也可以是 [{type:"text",text}] 块数组
+        content: anthropicText(b.content),
+        // is_error 必须透传：agent 客户端靠它判断「命令失败了」并调整策略，
+        // 吞掉之后工具错误会被当成正常输出（实测会让 agent 反复重试同一条命令）
+        is_error: b.is_error === true,
+      });
+    }
+  }
+  return { uses, results };
+}
+
 /* ============================ ① Chat Completions ============================ */
 const chatCompletions = {
   name: "chat.completions",
   parse(body) {
     const model = String(body?.model || "");
-    const messages = Array.isArray(body?.messages) ? body.messages : [];
+    const raw = Array.isArray(body?.messages) ? body.messages : [];
     // 输出上限：官方两个字段都认（max_completion_tokens 是较新的名字）
     const maxTokens = pickMaxTokens(
       body?.max_tokens !== undefined ? body.max_tokens : body?.max_completion_tokens
     );
-    return { model, messages, stream: body?.stream === true, maxTokens };
+    // 多轮工具调用的**回传**：assistant 消息带 tool_calls、工具结果带 role:"tool"。
+    // 这两个形状本来就是 OpenAI 原生的，这里只做一遍归一（统一 arguments 为字符串、
+    // 丢掉协议不需要的字段），否则回传时上游会因为形状不规范而 400。
+    const messages = [];
+    for (const m of raw) {
+      if (!m || typeof m !== "object") continue;
+      const role = String(m.role || "user");
+      const calls = Array.isArray(m.tool_calls)
+        ? m.tool_calls
+            .filter((c) => c && typeof c === "object")
+            .map((c) => ({
+              id: String(c.id || ""),
+              name: String((c.function && c.function.name) || c.name || ""),
+              arguments:
+                (c.function && c.function.arguments) ?? c.arguments ?? "{}",
+            }))
+        : [];
+      // role:"tool" 是工具结果本身（不是「结果挂在别的角色上」）
+      if (role === "tool") {
+        messages.push({
+          role: "tool",
+          tool_call_id: String(m.tool_call_id || m.id || ""),
+          content: plainText(m.content),
+        });
+        continue;
+      }
+      // 图片：与其它两个协议走同一条链路（计数、抓取、限额都在网关里）
+      const imgs = Array.isArray(m.content)
+        ? m.content.filter((p) => p && typeof p === "object" && p.type === "image_url")
+        : [];
+      const text = plainText(m.content);
+      const content = imgs.length ? [{ type: "text", text }, ...imgs] : text;
+      messages.push({
+        role,
+        content,
+        ...(calls.length ? { tool_calls: calls } : {}),
+      });
+    }
+    return {
+      model,
+      messages,
+      stream: body?.stream === true,
+      maxTokens,
+      tools: normalizeTools(body?.tools),
+      toolChoice: normalizeToolChoice(body?.tool_choice),
+    };
   },
   openStream(res, id, model) {
     res.status(200);
@@ -208,10 +444,25 @@ const chatCompletions = {
   reasoning(state, text) {
     state.send({ reasoning_content: text });
   },
+  /**
+   * 工具调用增量。OpenAI 流式协议里 tool_calls 是**按 index 累积**的：
+   * 首帧带 id/type/name，后续帧只带 function.arguments 的片段（可能是任意
+   * 切割位置，甚至切开一个多字节字符 —— 所以 arguments 全程按**原样字符串**
+   * 透传，绝不能在这里 JSON.parse）。
+   */
+  toolCall(state, ev) {
+    const fn = { arguments: ev.args || "" };
+    // 只有首帧带 name：重复发会让部分严格客户端把名字拼成 "BashBash"
+    if (ev.first) fn.name = ev.name || "";
+    const tc = { index: ev.index, type: "function", function: fn };
+    if (ev.first) tc.id = ev.id || newId("call");
+    state.send({ tool_calls: [tc] });
+  },
   done(res, state, { settled } = {}) {
     // 被输出上限截断时必须回 "length"，这是 OpenAI 协议里客户端判断
     // 「回答没写完」的唯一信号（原先永远是 "stop"）。
-    state.send({}, settled?.truncated ? "length" : "stop");
+    // 有工具调用时必须是 "tool_calls"，否则客户端不会去执行工具（见 finishReasonOf）。
+    state.send({}, finishReasonOf(settled));
     // **usage 帧**：OpenAI 流式协议里，量在最后一个 chunk 上（`choices` 为空数组），
     // 且仅在请求带 `stream_options.include_usage` 时才有。
     //
@@ -244,7 +495,8 @@ const chatCompletions = {
     res.write("data: [DONE]\n\n");
     res.end();
   },
-  finish(res, { id, model, content, reasoning, settled }) {
+  finish(res, { id, model, content, reasoning, settled, toolCalls }) {
+    const calls = Array.isArray(toolCalls) ? toolCalls : [];
     res.json({
       id,
       object: "chat.completion",
@@ -255,11 +507,27 @@ const chatCompletions = {
           index: 0,
           message: {
             role: "assistant",
-            content,
+            // 只有工具调用时 content 必须是 null（不是空串）：OpenAI 规范如此，
+            // 且部分客户端把 "" 当成「模型说了空话」而不是「模型要调工具」
+            content: calls.length && !content ? null : content,
             ...(reasoning ? { reasoning_content: reasoning } : {}),
+            ...(calls.length
+              ? {
+                  tool_calls: calls.map((c, i) => ({
+                    id: String(c.id || newId("call")),
+                    index: i,
+                    type: "function",
+                    function: {
+                      name: String(c.name || ""),
+                      arguments:
+                        typeof c.arguments === "string" ? c.arguments : JSON.stringify(c.arguments ?? {}),
+                    },
+                  })),
+                }
+              : {}),
           },
-          // 截断时回 "length"（OpenAI 规范），否则 "stop"
-          finish_reason: settled?.truncated ? "length" : "stop",
+          // 截断时回 "length"（OpenAI 规范），有工具调用时回 "tool_calls"
+          finish_reason: finishReasonOf({ ...settled, toolCalls: calls.length }),
         },
       ],
       usage: {

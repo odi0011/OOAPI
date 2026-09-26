@@ -6,7 +6,7 @@
 // 3. 多视图模式：编写 (Write)、分屏 (Split)、预览 (Preview)，预览直接使用系统 Markdown 引擎；
 // 4. 强大的剪贴板与拖拽支持：在编辑框内直接 Ctrl+V 粘贴截图或拖拽图片，自动上传到媒体库并在光标处插入图片 Markdown；
 // 5. 快捷键拦截：Ctrl+B / Cmd+B (加粗)、Ctrl+I / Cmd+I (斜体)、Tab 缩进等。
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Tooltip, Popover, Space, Dropdown, Spin, message as antMessage } from "antd";
 import {
   BoldOutlined, ItalicOutlined, StrikethroughOutlined,
@@ -33,11 +33,48 @@ export default function RichTextEditor({
   maxLength = 20000,
   disabled = false,
   onMediaUploaded, // 可选回调：上传成功后将媒体对象 { id, url, name } 回传给表单
+  onUploadingChange, // 可选回调：编辑器内是否还有图片在上传（发布守卫要用，见下方注释）
 }) {
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const [mode, setMode] = useState("write"); // 'write' | 'split' | 'preview'
-  const [uploading, setUploading] = useState(false);
+
+  // 编辑器**自身**的上传中状态。
+  //
+  // 为什么是计数器而不是布尔：粘贴图片走 handlePaste，**不受工具栏插图按钮
+  // disabled 的限制**（那个按钮只在 disabled||uploading 时才禁），所以完全可能
+  // 「上一张还在传、又粘进来一张」。用布尔的话，先发的那张传完就把状态置回 false，
+  // 外面会以为已经没有在传的图了。
+  //
+  // 为什么要把这个状态**报给父组件**：社区的发布守卫原先只看 postMedia 里的
+  // pending 项，而 postMedia 的占位项是 onMediaUploaded（**上传成功之后**）才加的 ——
+  // 所以在传输进行中的这段时间，postMedia 里根本没有对应条目，守卫看不见，
+  // 用户一点发布就发出一个 media_ids=[] 的帖子（图片静默丢弃、媒体行变孤儿，
+  // 实测帖 1233 就是这样）。三种上传入口（编辑器插图 / 粘贴 / 「图片」区选择）
+  // 里，只有后两种会被原先的守卫拦住，这里补上的就是编辑器那一种。
+  const uploadingCountRef = useRef(0);
+  const [uploadingCount, setUploadingCount] = useState(0);
+  const uploading = uploadingCount > 0;
+  // 用 ref 存回调：父组件一般都是内联箭头函数，每次渲染都是新引用，
+  // 直接依赖它会导致重复通知
+  const onUploadingChangeRef = useRef(onUploadingChange);
+  onUploadingChangeRef.current = onUploadingChange;
+
+  const beginUpload = () => {
+    uploadingCountRef.current += 1;
+    setUploadingCount(uploadingCountRef.current);
+    onUploadingChangeRef.current?.(true);
+  };
+  const endUpload = () => {
+    uploadingCountRef.current = Math.max(0, uploadingCountRef.current - 1);
+    setUploadingCount(uploadingCountRef.current);
+    onUploadingChangeRef.current?.(uploadingCountRef.current > 0);
+  };
+
+  // 卸载时必须把「上传中」清掉：弹窗是 destroyOnClose，用户在图还在传时点取消，
+  // 编辑器卸载后 endUpload 永远不会执行 —— 父组件那个状态会一直停在 true，
+  // 之后每次发帖都被守卫拦下。
+  useEffect(() => () => onUploadingChangeRef.current?.(false), []);
 
   const text = value || "";
 
@@ -94,7 +131,7 @@ export default function RichTextEditor({
       antMessage.warning("请选择图片文件");
       return;
     }
-    setUploading(true);
+    beginUpload();
     try {
       const dataUrl = await new Promise((resolve, reject) => {
         const fr = new FileReader();
@@ -129,7 +166,7 @@ export default function RichTextEditor({
     } catch (err) {
       antMessage.error(err.message || "图片上传失败");
     } finally {
-      setUploading(false);
+      endUpload();
     }
   };
 
