@@ -4987,6 +4987,73 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
   车队回到 **10/10**，gateway-smoke 全绿。教训：**常驻脚本的"活着"必须用日志心跳证明，
   systemd 的 active 只说明进程在，不说明循环在转。**
 
+<br>
+
+| 2026-09-27 | **第 78 批 · WorkBuddy 403 定性（腾讯账号级风控）+ 风控归类修复 + 找回链接按渠道 + Gemini 调用溯源 + 全站清空**。
+
+  **一、「WorkBuddy 一添加就 403，换账号也一样」—— 定性与修复**
+
+  **定性（有据）：不是平台 bug，也不是凭据或 IP 问题，是腾讯账号级风控。**
+  · 服务器 IP 没被拉黑：`copilot.tencent.com/v3/config` 与 `www.workbuddy.ai/v3/config`
+    匿名（无任何凭据）从服务器实测 **200**。
+  · 真实报错（logs 51722/51723）：HTTP 403 `{"code":11140,"msg":"request illegal",
+    "displayMsg":{"zh":"内容未通过安全审核…"}}` —— 这是腾讯对**新绑定账号首次 API 调用**
+    的风控闸门；9/25 渠道 #42 上的间歇性 400 `11128 unapproved channel` 是同一风控的
+    前一档。旧账号（#42，已预热）真实流量成功，新账号（谷歌登录 + 4 次设备绑定）首调
+    即被拦 —— 所以「换账号也一样」。
+  · **为什么管理员会反复重绑**：403 被旧归类当成 `CHANNEL_AUTH_EXPIRED`（凭据失效）→
+    渠道被 auto_ban + 找回弹窗引导重新绑定（实测同一账号连绑 4 次，全部无效）。
+
+  **修复（CHANNEL_NOT_APPROVED，对应主线 TASKS.md 的 T5 设计）**：
+  · `http-error.js` 新增 `isNotApprovedResponse()`（匹配 11128/11140/unapproved
+    channel/request illegal，与状态码无关）+ `UPSTREAM_ERROR.NOT_APPROVED`；
+  · 六个适配器接入（openai-compat / codex / grok / anthropic-compat / antigravity /
+    claude-oauth），403 不再一律归凭据失效；报错文案写明「非凭据问题，重新绑定无效；
+    建议稍后重测或更换账号」；
+  · `execute.js`：加入 RETRYABLE（换渠道重试，别的账号往往能过）+ cooldownFor 6h；
+    **刻意不进 AUTO_PAUSE_CODES** —— 自动恢复（T1）上线前，自动停用等于永久下线；
+  · `routes/channel.js` recovery：`last_error_code=CHANNEL_NOT_APPROVED` 时
+    `needsRelogin=false`，找回弹窗不再被误触发；
+  · 回归锁：`tests/not-approved.test.mjs` 9 项（分类函数 + 假上游真实 403+11140）。
+
+  **二、「一键找回该弹当前账号的重登链接」—— 补齐入口**
+
+  recovery 本来就按渠道下发 `localLogin.entryUrl`，但三个厂商的接入方式**没登记**
+  entryUrl，找回弹窗里「打开登录页」按钮直接消失：workbuddy（已补，www.workbuddy.ai，
+  且 recovery 按凭据 realm 动态换成 www.codebuddy.cn）、cline（app.cline.bot）、
+  autoclaw（bigmodel API Keys 页）。zcode 的凭据在本机 CLI 文件里、无网页登录，
+  靠分步指引（已满足）。逐厂商核对过：其余厂商的 entryUrl 原本就有。
+
+  **三、Gemini 渠道的「那些对话」—— 溯源结论：不是账号泄露**
+
+  截图里的调用来自**平台注册用户 `chat`（id 86，9/26 20:05 注册的真人访客）**，
+  用他自己创建的令牌（名「chat」，id 184）以 node-fetch 客户端打进来：
+  当晚 20:07-20:20 走 Gemini 渠道 6 次、20:18-20:45 走 WorkBuddy #42 渠道 15 次。
+  提示词是他自己的创作内容（尺度较大的角色扮演小说设定），平台凭据全程没有离开网关。
+  判定：**无泄露**；属于用户内容治理问题（要不要限流/审查由产品决定），不是安全事件。
+
+  **四、全站清空（社区/假人/Claude Code → 干净状态，先备份后执行）**
+
+  · 备份：`/root/cleanup-20260927-003054/`（涉及表 mysqldump + CC 任务/密钥/假人
+    state 打包），**可整体恢复**。
+  · 数据：帖子 1253、评论 991、反应、关注、假人的聊天室与通知全部清空；
+    删除探针/假人账号 44 个（zq* 全系/fb4*/probe*）；**9 个真人账号保留**
+    （odi/tester01/xy/em/a49320317/MNnbB3411/mxy552500/mdzzba3/chat）；
+    两个测试话题（e2e/通知测试）删除，正式版块（综合讨论/问题反馈/模型评测/
+    接入求助/闲聊灌水）保留并计数归零；`options.buildlog_state` 清除（CC 任务板）。
+  · Claude Code：进程已停，`/root/cc-tasks` 任务与日志归档，`/root/.cc_key` 归档移除。
+  · 假人车队：fb4.service 已停用；守护新增 `personas.conf` 覆盖（conf 里已写
+    `zhou wang lin`）—— 社区重构完成后 `systemctl enable --now fb4` 即起 3 个假人，
+    不会把 10 人格带回来。
+  · 踩坑（自己犯的，如实记录）：mysqldump 报错被 `2>/dev/null` 吞掉导致第一版备份
+    是 20 字节空文件（帖子删除发生在有效备份之前 —— 内容均为用户明确要求清除的
+    测试内容，未造成恢复需求）；MySQL 临时表在同一条语句里不能引用两次
+    （ERROR 1137），删除语句改为内联子查询。教训：**删数据的脚本里，备份必须
+    校验非空才算成功；错误输出不能吞。**
+
+  **五、分工记录**：社区/消息/交友机制重构与其他内容优化由另一窗口负责（优先级更高）；
+  本窗口职责为反代机制与渠道问题检索（本批一、二、三节）+ 按指令执行清空（第四节）。
+
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 
 > 目标：把开源社区已有的「网页版反代 / 工具类反代」按**厂商**归类接入平台，
