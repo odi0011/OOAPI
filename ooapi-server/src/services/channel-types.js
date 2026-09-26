@@ -25,7 +25,7 @@
 //   · qoder 在列表里是对的（它确实靠粘贴 PAT），但它**没有**可用的设备授权
 //     （见 device-bind.js 的实测说明）—— 一键绑定的名单在那边单独维护。
 //     早先两处混用，于是前端给 Qoder 显示了一个永远失败的「一键绑定」按钮。
-export const OAUTH_METHODS = ["codex", "claude-oauth", "antigravity", "grok-oauth", "kiro", "openai-web", "workbuddy", "qoder"];
+export const OAUTH_METHODS = ["codex", "claude-oauth", "antigravity", "grok-oauth", "kiro", "openai-web", "workbuddy", "qoder", "zcode", "autoclaw"];
 
 export function isOAuthMethod(key) {
   return OAUTH_METHODS.includes(String(key || ""));
@@ -996,6 +996,71 @@ export const PROVIDERS = [
     ],
   },
   {
+    key: "zcode",
+    name: "ZCode（智谱）",
+    // Z.ai 开放平台的 API Key 管理页（coding plan 的 key 也在 Z.ai 账号中心）
+    keyUrl: "https://z.ai/manage-apikey/apikey-list",
+    // vendor 归 zhipu：跑的是 Z.ai 官方 GLM 模型（模型归属 ≠ 账号归属，
+    // 与 Kiro 归 anthropic 同一条规则），定价直接复用平台已有的 GLM 价目。
+    vendor: "zhipu",
+    desc: "ZCode CLI 凭据反代：用 Z.ai 账号（GLM Coding Plan）跑 GLM 模型",
+    methods: [
+      {
+        key: "zcode",
+        adapter: "zcode",
+        label: "ZCode",
+        desc: "粘贴 ZCode CLI 的登录凭据（credentials.json）",
+        loginModes: ["paste"],
+        loginFields: oauthCredentialField(
+          '{ "oauth:zai:access_token": "..." }\n或整份凭据文件内容',
+          "本机 ZCode 登录后，复制 ~/.zcode/v2/credentials.json 的内容；平台自动挑 coding-plan 的 api-key，没有再用 Z.ai 的 access_token"
+        ),
+        pasteHint:
+          "ZCode CLI 凭据：整份 credentials.json 粘进来即可（平台自己挑字段）；" +
+          "推荐凭据里带 coding-plan 的 api-key（长期有效），只有 oauth access_token 时过期后需重新粘贴",
+        // 上游是 Z.ai 官方 API 面（coding plan 专用前缀 /api/coding/paas/v4，
+        // 2026-09-26 匿名实测 401「未收到 Authorization」—— 路径存在、缺鉴权，地址确认）。
+        // 端点支持在凭据 JSON 里用 endpoint 字段覆盖（如国内 bigmodel）。
+        defaultModels: [
+          { id: "glm-5.3", name: "GLM-5.3" },
+          { id: "glm-5.3-flash", name: "GLM-5.3 Flash" },
+          { id: "glm-5v-turbo", name: "GLM-5V Turbo" },
+        ],
+        testModel: "glm-5.3-flash",
+      },
+    ],
+  },
+  {
+    key: "autoclaw",
+    name: "AutoClaw（智谱）",
+    keyUrl: "https://open.bigmodel.cn/usercenter/apikeys",
+    vendor: "zhipu",
+    desc: "智谱 AutoClaw（OpenClaw 部署工具）账号反代，跑 GLM 系列",
+    methods: [
+      {
+        key: "autoclaw",
+        adapter: "autoclaw",
+        label: "AutoClaw",
+        desc: "填 AutoClaw 初始化时用的智谱 API Key",
+        loginModes: ["paste"],
+        loginFields: oauthCredentialField(
+          '{ "api_key": "id.secret" }',
+          "AutoClaw 初始化时填的就是智谱开放平台的 API Key（open.bigmodel.cn → 用户中心 → API Keys）；也可只粘 Key 本身"
+        ),
+        pasteHint:
+          "智谱开放平台 API Key（形如 id.secret）：AutoClaw 的「国内模型镜像代理」就是 bigmodel 开放平台，" +
+          "同一把 Key 两侧通用；国际账号可在凭据 JSON 里用 endpoint 指向 api.z.ai",
+        // 默认打国内 bigmodel 开放平台（AutoClaw 的定位就是国内部署工具）；
+        // 端点可用凭据 JSON 的 endpoint 覆盖。
+        defaultModels: [
+          { id: "glm-5.3", name: "GLM-5.3" },
+          { id: "glm-5.3-flash", name: "GLM-5.3 Flash" },
+        ],
+        testModel: "glm-5.3-flash",
+      },
+    ],
+  },
+  {
     key: "siliconflow",
     name: "硅基流动",
     keyUrl: "https://cloud.siliconflow.cn/account/ak",
@@ -1486,6 +1551,25 @@ const LOCAL_LOGIN_GUIDE = {
     ],
     note: "用邮箱密码换来的 token 有有效期，平台会自动续期；续期失败时会在这里提示重新绑定",
   },
+  // ZCode：凭据在本机 CLI 的文件里（不是浏览器里），指引要写清文件路径与该粘什么。
+  "zcode:zcode": {
+    steps: [
+      "本机装好 ZCode CLI 并登录 Z.ai 账号（登录成功后凭据会写进本地文件）",
+      "打开凭据目录：Windows 在资源管理器地址栏输入 %USERPROFILE%\\.zcode\\v2 回车（macOS / Linux 就是 ~/.zcode/v2/）",
+      "用记事本打开 credentials.json，把全部内容原样粘到下面的输入框（它是一份键值对，平台自己挑字段）",
+      "里面若同时有 coding-plan 的 api-key（键名以 account-provider:coding-plan 开头、以 :api-key 结尾）与 oauth:zai:access_token，平台会优先用前者 —— 它长期有效",
+    ],
+    note: "凭据里只有 oauth access_token 时也能用，但它会过期；过期后重新登录 ZCode 再粘一次即可",
+  },
+  // AutoClaw：凭据是初始化时填的智谱开放平台 Key，来源在网页控制台。
+  "autoclaw:autoclaw": {
+    steps: [
+      "打开智谱开放平台的 API Keys 页面：open.bigmodel.cn → 用户中心 → API Keys（AutoClaw 初始化时填的就是这把 Key）",
+      "没有 Key 就在页面里新建一个，复制那串形如 id.secret 的字符串",
+      "把 Key 直接粘到下面的输入框；也可以包成 { \"api_key\": \"你的Key\" } 再粘",
+    ],
+    note: "国际版 Z.ai 账号的 Key 需要换端点：粘成 { \"api_key\": \"...\", \"endpoint\": \"https://api.z.ai/api/paas/v4\" }",
+  },
 };
 /**
  * 取某接入方式的本机登录指引（没有登记则返回 null，前端退回纯说明文案）。
@@ -1652,6 +1736,19 @@ const CRED_SPEC = {
       { field: "accessToken + machineId", from: "本机 Cursor 的 state.vscdb（ItemTable 表）", note: "只有不想建 API Key 时才需要这两个" },
     ],
     why: "Cursor 的对话后端讲 HTTP/2 + Connect 协议，平台已内置；API Key 最省事。",
+  },
+  "zcode:zcode": {
+    values: [
+      { field: "整份 credentials.json 内容", from: "本机 %USERPROFILE%\\.zcode\\v2\\credentials.json（macOS/Linux: ~/.zcode/v2/credentials.json）", note: "ZCode CLI 登录后生成；整份粘进来，平台自己挑字段" },
+      { field: "api_key", from: "同一个文件里 account-provider:coding-plan 开头、以 :api-key 结尾的值", note: "推荐：coding-plan 的 key 长期有效；只有 oauth:zai:access_token 时过期后要重新粘" },
+    ],
+    why: "ZCode CLI 的凭据是一个键值对文件（Z.ai OAuth 与 coding-plan 的 key 都在里面），整份粘最稳。",
+  },
+  "autoclaw:autoclaw": {
+    values: [
+      { field: "api_key", from: "AutoClaw 初始化时填的那把智谱 API Key（open.bigmodel.cn → 用户中心 → API Keys）", note: "形如 id.secret；直接粘 Key 本身或 { \"api_key\": \"...\" } 都行" },
+    ],
+    why: "AutoClaw 的国内模型镜像代理就是智谱开放平台，用同一把 Key 调 GLM 系列。",
   },
 };
 

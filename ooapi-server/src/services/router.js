@@ -62,6 +62,11 @@ const ADAPTERS = {
   // 会被 415 拒），所以自带传输层。请求/响应 schema 来自官方客户端 bundle 的
   // proto 定义（已逐字段在服务端验证），见 upstream/cursor.js 顶部。
   cursor: () => import("./upstream/cursor.js"),
+  // ZCode / AutoClaw（智谱系工具反代）：上游都是 Z.ai 官方 OpenAI 兼容 API，
+  // 薄适配器只做「凭据解析 + 默认端点」（ZCode 挑 coding-plan 的 key，
+  // AutoClaw 用智谱开放平台 Key），对话复用 openai-compat。见各文件顶部。
+  zcode: () => import("./upstream/zcode.js"),
+  autoclaw: () => import("./upstream/autoclaw.js"),
 };
 
 /**

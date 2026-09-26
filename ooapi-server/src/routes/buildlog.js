@@ -8,7 +8,8 @@
 // ① 待办/进度：options 表的 buildlog_state（监工脚本在每轮巡检/每次任务状态变化时
 //    直接 UPDATE 这一行 JSON）。这里**不走 config.js 的启动缓存**（loadOptions 只在
 //    启动时读一次），而是现查 —— 否则脚本改了数据要等重启才能看见，「实时」就没了。
-// ② 维护调用流：logs 表里令牌名以 fb4（测试人群）/ cc（修复进程）开头的最近调用。
+// ② 维护调用流：logs 表里维护令牌的最近调用 —— 优先按 buildlog_state.tokens 精确名单，
+//    名单为空时退回令牌名前缀（fb4=测试人群 / cc=修复进程）。
 //
 // 隐私红线（与 T11 同一条规则）：只出模型名/tokens/耗时/花费这类聚合可见字段，
 // **绝不出** channel_*（渠道=上游供应商身份）、username、user_agent、ip。
@@ -22,7 +23,22 @@ const router = Router();
 
 // 维护侧令牌的白名单前缀。写死前缀而不是拉全表：这个接口是公开的，
 // 匹配面越窄越安全 —— 以后新增维护令牌必须用这两个前缀命名。
+//
+// **但前缀匹配有误伤面**（2026-09-26 审查发现）：令牌名由用户自起（后端只限长度 64），
+// 普通用户把令牌叫 cc-xxx / fb4-xxx，自己的调用流（模型/tokens/花费/耗时）就会
+// 被这个公开接口聚合展示给所有访客。所以优先用**精确名单**：
+// options.buildlog_state.tokens（监工脚本维护的令牌名数组），名单非空时严格按名单查；
+// 为空（监工还没配）才退回前缀匹配 —— 行为不比收紧前更差，且升级路径清晰：
+// 监工侧把令牌名写进 state.tokens 即完成收紧，本接口零改动。
 const MAINT_WHERE = "(token_name LIKE 'fb4%' OR token_name LIKE 'cc%')";
+
+/** 按名单形态拼 WHERE：精确名单用 IN(?)，否则退回前缀匹配。
+ *  返回 [whereSql, params] —— 占位符与参数个数必须一一对应（历史事故：缺参 → 500）。 */
+function maintWhere(tokens) {
+  const names = (Array.isArray(tokens) ? tokens : []).map(String).map((s) => s.trim()).filter(Boolean);
+  if (!names.length) return [MAINT_WHERE, []];
+  return [`token_name IN (${names.map(() => "?").join(",")})`, names];
+}
 
 // ---------------------------------------------------------------------------
 // 修复进程（Claude Code）的实时对话回显。
@@ -64,15 +80,17 @@ router.get(
     const since = Math.max(0, Number(req.query.cc_since) || 0);
     const [[opt]] = await pool.query("SELECT value FROM options WHERE key_str = 'buildlog_state'");
     const state = safeJSONParse(opt?.value, {}) || {};
+    const [where, params] = maintWhere(state.tokens);
 
     const [calls, cc] = await Promise.all([
       pool.query(
         `SELECT model, type, prompt_tokens, completion_tokens, cache_tokens,
               quota AS cost_units, elapsed_ms, first_token_ms, created_at
          FROM logs
-        WHERE ${MAINT_WHERE}
+        WHERE ${where}
         ORDER BY id DESC
-        LIMIT 10`
+        LIMIT 10`,
+        params
       ),
       ccTail(since),
     ]);

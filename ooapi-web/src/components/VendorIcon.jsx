@@ -70,6 +70,12 @@ const CHANNEL_ICON = {
   cursor: "cursor.png",
   // Cline（官方 GitHub 仓库的 assets/icons/icon.png —— 官网 favicon 取不到）
   cline: "cline.png",
+  // ZCode / AutoClaw（智谱系工具反代，2026-09-26 接入）。
+  // 上游都是 Z.ai 官方 API（模型=GLM，ModelLabel 按模型名已落智谱图标），
+  // 这里是**渠道位**的图标 —— 两家都是智谱产品，用 zhipu 的品牌标识，
+  // 不另造 logo（渠道列表里名字已经区分了工具）。
+  zcode: "zhipu.svg",
+  autoclaw: "zhipu.svg",
   openrouter: "openrouter.svg",
   siliconflow: "siliconflow.ico",
   // 国产厂商直连（2026-09 接入）。图标取自各厂商 **GitHub 官方组织头像**
@@ -229,6 +235,7 @@ export const VENDOR_ICON_KEYS = [
   "grok", "workbuddy", "qoder", "mimo", "minimax", "stepfun", "ark", "opencode",
   "openrouter", "siliconflow", "kiro", "cline", "trae", "cursor",
   "typesafe", "longcat", "chutes", "nvidia", "cerebras", "hunyuan",
+  "zcode", "autoclaw",
 ];
 
 export function iconFileForModel(model) {

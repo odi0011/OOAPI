@@ -126,6 +126,8 @@ const ADAPTER_FILE = {
   "cline:cli": ["src/services/upstream/cline.js"],
   "trae:trae": ["src/services/upstream/trae.js"],
   "cursor:cursor": ["src/services/upstream/cursor.js"],
+  "zcode:zcode": ["src/services/upstream/zcode.js"],
+  "autoclaw:autoclaw": ["src/services/upstream/autoclaw.js"],
 };
 
 t("适配器映射表覆盖全部需要规格的方式（漏一个就等于没查证）", () => {

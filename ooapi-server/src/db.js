@@ -134,7 +134,8 @@ const TABLES = [
     /* 渠道统计与模型筛选都是「type + 时间范围 + channel/model」的组合查询，
        复合索引才吃得下；单列索引在大表上仍需回表过滤。 */
     INDEX idx_logs_channel_type_created (channel_id, type, created_at),
-    INDEX idx_logs_model_type (model, type)
+    INDEX idx_logs_model_type (model, type),
+    INDEX idx_logs_token_name (token_name)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
   `CREATE TABLE IF NOT EXISTS options (
@@ -771,6 +772,10 @@ const INDEX_MIGRATIONS = [
   "CREATE INDEX idx_logs_channel_type_created ON logs (channel_id, type, created_at)",
   // 按模型筛选（列表页恒带 type=2）
   "CREATE INDEX idx_logs_model_type ON logs (model, type)",
+  // 修复进度公示（/api/buildlog）按令牌名前缀查维护流量（fb4*/cc*），该接口是公开的
+  // 且前端 15s 轮询 —— 没有这个索引就是每次全表扫（logs 按调用量线性增长）。
+  // 前缀 LIKE（'fb4%'）可以走 B+Tree 范围扫描。
+  "CREATE INDEX idx_logs_token_name ON logs (token_name)",
 ];
 
 async function ensureIndexes() {
