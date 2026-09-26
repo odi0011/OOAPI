@@ -1,9 +1,11 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { API, getToken, setToken } from "../services/api";
+import { useTheme } from "../theme/ThemeContext";
 
 const AppContext = createContext(null);
 
 export function AppProvider({ children }) {
+  const { setSiteAppearance } = useTheme();
   const [status, setStatus] = useState(null); // 系统公开配置
   const [user, setUser] = useState(null); // 当前登录用户
   const [loading, setLoading] = useState(true);
@@ -65,6 +67,12 @@ export function AppProvider({ children }) {
       setLoading(false);
     })();
   }, [refreshStatus, refreshUser]);
+
+  // 站点默认外观交给主题层：用户没调过的项跟随它；管理员关掉「允许个性化」时全员跟随，
+  // 但管理员自己豁免 —— 否则他在外观页调整、准备「保存为站点默认」时看不到任何预览。
+  useEffect(() => {
+    if (status?.appearance) setSiteAppearance(status.appearance, Number(user?.role) >= 100);
+  }, [status?.appearance, user?.role, setSiteAppearance]);
 
   // 任意请求遇到 401（token 过期/被撤销）时，api.js 会广播事件，这里统一清空登录态，
   // RequireAuth 随即自动跳转登录页，无需刷新页面。

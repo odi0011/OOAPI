@@ -47,13 +47,20 @@ function loadedBuildId() {
   return m ? m[0] : "";
 }
 
-// 导航：工作台（对话/社区） → 开发 → 账户 → 平台管理
+// 导航：工作台 → 社交（社区/私聊群聊/通知） → 开发 → 账户 → 平台管理
+// 社交三件套单独成组：频道体系下线后，「社区」承担公共讨论、「消息」只有私聊与群聊，
+// 两者是同一类动线（找人 / 说话），和「对话」（找模型）分开，用户不会再把消息当成 AI 对话。
 const NAV_USER = [
   {
     title: "工作台",
     items: [
       { key: "/chat", icon: <MessageOutlined />, label: "对话" },
       { key: "/console", icon: <DashboardOutlined />, label: "数据看板" },
+    ],
+  },
+  {
+    title: "社交",
+    items: [
       { key: "/community", icon: <ReadOutlined />, label: "社区" },
       { key: "/messages", icon: <CommentOutlined />, label: "消息", badge: "messages" },
       { key: "/notifications", icon: <BellOutlined />, label: "通知", badge: "notifications" },
@@ -104,9 +111,10 @@ const CRUMB = {
   "/chat": ["工作台", "对话"],
   "/agent": ["工作台", "智能体"],
   "/console": ["工作台", "数据看板"],
-  "/community": ["工作台", "社区"],
-  "/messages": ["工作台", "消息"],
-  "/notifications": ["工作台", "通知"],
+  "/community": ["社交", "社区"],
+  "/messages": ["社交", "消息"],
+  "/notifications": ["社交", "通知"],
+  "/u": ["社交", "个人主页"],
   "/token": ["开发", "令牌管理"],
   "/log": ["开发", "使用记录"],
   "/operation-log": ["开发", "操作日志"],
@@ -135,6 +143,21 @@ const CRUMB = {
  *
  * 聊天页单独处理（高度锁定，不能有外层滚动）。
  */
+/**
+ * 详情路由归属到哪个导航项：/community/12 → /community，/messages/3 → /messages。
+ * 原先按全等匹配，进帖子详情或某个会话后侧栏没有任何高亮、面包屑是空的。
+ * 取「最长前缀」：/settings/appearance 不会被误判成别的项。
+ */
+function navKeyOf(pathname, keys) {
+  let best = "";
+  for (const k of keys) {
+    if ((pathname === k || pathname.startsWith(`${k}/`)) && k.length > best.length) best = k;
+  }
+  return best || pathname;
+}
+
+const COLLAPSE_KEY = "ooapi-sider-collapsed";
+
 function contentClass(pathname) {
   if (pathname === "/chat") return " ui-chat-content";
   if (pathname.startsWith("/messages")) return " ui-messages-content";
@@ -149,7 +172,23 @@ export default function MainLayout() {
   const screens = useBreakpoint();
   const isMobile = !screens.md;
 
-  const [collapsed, setCollapsed] = useState(false);
+  // 折叠状态记在本地：原先每次刷新都展开，习惯窄侧栏的人每次都要再点一下。
+  // 没存过时跟随站点设置 default_collapse_sidebar。
+  const [collapsedPref, setCollapsedPref] = useState(() => {
+    try {
+      const v = localStorage.getItem(COLLAPSE_KEY);
+      return v === null ? null : v === "1";
+    } catch {
+      return null;
+    }
+  });
+  const collapsed = collapsedPref ?? Boolean(status?.default_collapse_sidebar);
+  const setCollapsed = (v) => {
+    setCollapsedPref(v);
+    try {
+      localStorage.setItem(COLLAPSE_KEY, v ? "1" : "0");
+    } catch { /* ignore */ }
+  };
   const [drawer, setDrawer] = useState(false);
   // 导航红点：消息未读 + 通知未读。
   // 用 60s 轮询而不是只靠 SSE：SSE 断开（换网络/休眠唤醒）时不刷新会红点残留，
@@ -177,9 +216,12 @@ export default function MainLayout() {
     const timer = setInterval(refreshBadges, 60_000);
     const onFocus = () => refreshBadges(); // 切回标签页立刻刷新（用户最可能此刻在看）
     window.addEventListener("focus", onFocus);
+    // 页面内已读/收到消息时主动通知（消息页、通知页会派发），红点不用等 60s 轮询
+    window.addEventListener("ooapi:badges", onFocus);
     return () => {
       clearInterval(timer);
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener("ooapi:badges", onFocus);
     };
   }, [refreshBadges]);
 
@@ -204,8 +246,12 @@ export default function MainLayout() {
   }, [status?.build_id, refreshStatus]);
 
   const isAdmin = user?.role >= 100;
-  const selectedKey = location.pathname;
-  const crumb = CRUMB[location.pathname] || [];
+  const navKeys = useMemo(
+    () => [...NAV_USER, ...NAV_ADMIN].flatMap((g) => g.items.map((it) => it.key)).concat(Object.keys(CRUMB)),
+    []
+  );
+  const selectedKey = navKeyOf(location.pathname, navKeys);
+  const crumb = CRUMB[selectedKey] || [];
 
   const doLogout = async () => {
     await logout();
@@ -391,7 +437,7 @@ export default function MainLayout() {
               showIcon
               banner
               closable
-              onClose={() => setStaleSince("")}
+              onClose={() => setStaleBuild("")}
               message="页面版本已更新"
               description="你当前打开的是旧版本页面，部分新改动不会生效（例如图标、布局）。刷新即可加载最新版本。"
               action={

@@ -140,14 +140,14 @@ if (!roomId) {
   await page.goto(`${BASE}/messages/${roomId}`, { waitUntil: "networkidle", timeout: 40000 });
   await page.waitForTimeout(2500);
 
-  // 视口锁定骨架：容器高度应受限于视口，且输入区可见
+  // 视口锁定骨架：容器高度应受限于视口，且输入区可见（第 79 批起外壳是 .oo-im）
   const layout = await page.evaluate(() => {
-    const box = document.querySelector(".oo-split-lock");
+    const box = document.querySelector(".oo-im");
     if (!box) return null;
     const r = box.getBoundingClientRect();
     return { h: Math.round(r.height), winH: window.innerHeight, bodyScroll: document.body.scrollHeight > window.innerHeight + 4 };
   });
-  ck("消息页使用视口锁定骨架（.oo-split-lock）", Boolean(layout), JSON.stringify(layout));
+  ck("消息页使用视口锁定骨架（.oo-im）", Boolean(layout), JSON.stringify(layout));
   ck("容器高度受控（不超过视口）", layout && layout.h <= layout.winH, JSON.stringify(layout));
   ck("页面本身不被长内容撑出外层滚动条", layout && !layout.bodyScroll, JSON.stringify(layout));
 
@@ -164,7 +164,7 @@ if (!roomId) {
       btn?.click();
     });
     const immediate = await page.evaluate((t) => {
-      const bubbles = Array.from(document.querySelectorAll(".oo-msg-bubble"));
+      const bubbles = Array.from(document.querySelectorAll(".oo-im-bubble"));
       const hit = bubbles.find((b) => b.innerText.includes(t));
       return { found: Boolean(hit), pending: Boolean(hit?.className.includes("is-pending")), count: bubbles.length };
     }, text);
@@ -172,12 +172,12 @@ if (!roomId) {
 
     await page.waitForTimeout(3000);
     const settled = await page.evaluate((t) => {
-      const rows = Array.from(document.querySelectorAll(".oo-msg-row"));
+      const rows = Array.from(document.querySelectorAll(".oo-im-msg"));
       const hits = rows.filter((r) => r.innerText.includes(t));
       return {
         occurrences: hits.length,
-        stillPending: hits.some((r) => r.querySelector(".oo-msg-bubble.is-pending")),
-        failed: hits.some((r) => r.querySelector(".oo-msg-bubble.is-failed")),
+        stillPending: hits.some((r) => r.querySelector(".oo-im-bubble.is-pending")),
+        failed: hits.some((r) => r.querySelector(".oo-im-bubble.is-failed")),
       };
     }, text);
     ck("服务端确认后不重复插入（只出现一条）", settled.occurrences === 1, JSON.stringify(settled));

@@ -15,10 +15,10 @@
 // ③ 骨架属 A 类（标准工作台流式）：通栏卡片堆叠 + 原生纵向滚动。
 import React, { useCallback, useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { Button, Tabs, Space, Typography, Empty, Skeleton, App as AntApp, Tag, Tooltip } from "antd";
+import { Button, Tabs, Typography, Empty, Skeleton, App as AntApp, Tag, Tooltip, Modal, Input } from "antd";
 import {
   UserAddOutlined, MessageOutlined, EditOutlined, KeyOutlined, ReloadOutlined,
-  FileTextOutlined, EnvironmentOutlined, LinkOutlined, ClockCircleOutlined,
+  EnvironmentOutlined, LinkOutlined, ClockCircleOutlined, CheckOutlined, UsergroupAddOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
@@ -162,6 +162,61 @@ export default function ProfileViewPage() {
     }
   };
 
+  // 好友关系（按钮状态）：none / friend / pending_out / pending_in
+  const [rel, setRel] = useState(null);
+  const [friendOpen, setFriendOpen] = useState(false);
+  const [friendMsg, setFriendMsg] = useState("");
+  const [relBusy, setRelBusy] = useState(false);
+  const loadRel = useCallback(async () => {
+    if (!uid || !me || me.id === uid) return setRel(null);
+    try {
+      setRel(await API.get(`/friends/relation/${uid}`));
+    } catch {
+      setRel(null);
+    }
+    return undefined;
+  }, [uid, me]);
+  useEffect(() => {
+    loadRel();
+  }, [loadRel]);
+
+  const relAction = async (fn, ok) => {
+    setRelBusy(true);
+    try {
+      const r = await fn();
+      message.success(typeof ok === "function" ? ok(r) : ok);
+      setFriendOpen(false);
+      loadRel();
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setRelBusy(false);
+    }
+  };
+  const sendFriendRequest = () =>
+    relAction(
+      () => API.post("/friends/requests", { to_user_id: uid, message: friendMsg.trim() }),
+      (r) => (r?.status === "accepted" ? "对方也申请过加你，已直接成为好友" : "好友申请已发送")
+    );
+
+  const friendButton = !rel ? null : rel.relation === "friend" ? (
+    <Button icon={<CheckOutlined />} disabled>好友</Button>
+  ) : rel.relation === "pending_out" ? (
+    <Tooltip title="撤回申请">
+      <Button icon={<ClockCircleOutlined />} loading={relBusy} onClick={() => relAction(() => API.del(`/friends/requests/${rel.request_id}`), "已撤回申请")}>
+        已申请
+      </Button>
+    </Tooltip>
+  ) : rel.relation === "pending_in" ? (
+    <Button type="primary" icon={<CheckOutlined />} loading={relBusy} onClick={() => relAction(() => API.put(`/friends/requests/${rel.request_id}`, { action: "accept" }), "已成为好友")}>
+      通过好友申请
+    </Button>
+  ) : (
+    <Button icon={<UsergroupAddOutlined />} onClick={() => { setFriendMsg(`你好，我是 ${me?.display_name || me?.username || ""}`); setFriendOpen(true); }}>
+      加好友
+    </Button>
+  );
+
   // 打开与某人的私聊：复用聊天房间的「单聊唯一」语义，重复点不会建出两个房间
   const startChat = async () => {
     try {
@@ -227,11 +282,32 @@ export default function ProfileViewPage() {
               >
                 {following ? "已关注" : "关注"}
               </Button>
+              {friendButton}
               <Button icon={<MessageOutlined />} onClick={startChat}>发私信</Button>
             </>
           )
         }
       />
+
+      <Modal
+        title={`加 ${data?.display_name || data?.username || ""} 为好友`}
+        open={friendOpen}
+        onOk={sendFriendRequest}
+        confirmLoading={relBusy}
+        onCancel={() => setFriendOpen(false)}
+        okText="发送申请"
+        destroyOnClose
+      >
+        <Input.TextArea
+          value={friendMsg}
+          onChange={(e) => setFriendMsg(e.target.value)}
+          maxLength={200}
+          showCount
+          rows={3}
+          placeholder="验证消息（可选）"
+          className="oo-count-textarea"
+        />
+      </Modal>
 
       {/* 头部资料 + 统计条：统计内嵌在此处，紧贴身份信息，不抢占内容区 */}
       <div className="oo-panel" style={{ padding: "16px 18px" }}>
@@ -303,13 +379,15 @@ export default function ProfileViewPage() {
           tabBarStyle={{ padding: "0 14px", marginBottom: 0 }}
         />
         <div style={{ padding: "4px 0 10px" }}>
-          {tab === "following" || tab === "followers" || tab === "favorites" ? (
-            <UserList items={listData.items} loading={listLoading} empty={tab === "favorites" ? "还没有收藏的帖子" : "还没有用户"} />
+          {/* 收藏是**帖子**列表：原先和关注/粉丝一起走 UserList，
+              帖子对象没有 username/display_name，于是每行只剩一个空头像、标题全丢 */}
+          {tab === "following" || tab === "followers" ? (
+            <UserList items={listData.items} loading={listLoading} empty="还没有用户" />
           ) : (
             <PostList
               items={listData.items}
               loading={listLoading}
-              empty={isSelf ? "你还没有发过帖子" : "TA 还没有发过帖子"}
+              empty={tab === "favorites" ? "还没有收藏的帖子" : isSelf ? "你还没有发过帖子" : "TA 还没有发过帖子"}
               onOpen={(p) => navigate(`/community/${p.id}`)}
             />
           )}

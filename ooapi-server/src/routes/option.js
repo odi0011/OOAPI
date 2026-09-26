@@ -66,7 +66,23 @@ const NUMERIC_OPTIONS = {
 // 允许修改只会造成「展示口径 vs 实际扣费」漂移，直接拒绝。
 const FIXED_OPTIONS = new Set(["units_per_od"]);
 
+// 外观项经 /api/status 下发给所有访客，并直接进 CSS 变量与 AntD token：
+// 非法值（拼错的预设名、非 hex 颜色）会让全站主色退化成黑色或圆角失效，写库前就拦下。
+const ENUM_OPTIONS = {
+  theme_background: ["pure", "blueprint", "dots", "grain"],
+  theme_radius: ["sharp", "default", "round"],
+  theme_density: ["compact", "default", "loose"],
+  theme_font_size: ["13", "14", "15"],
+  theme_user_custom: ["true", "false"],
+};
+
 function validateOptionValue(key, raw) {
+  if (ENUM_OPTIONS[key]) {
+    return ENUM_OPTIONS[key].includes(String(raw)) ? null : `取值必须是 ${ENUM_OPTIONS[key].join(" / ")} 之一`;
+  }
+  if (key === "theme_accent") {
+    return raw === "" || /^#[0-9a-fA-F]{6}$/.test(String(raw)) ? null : "主题色必须是 #RRGGBB 格式（留空 = 内置主色）";
+  }
   if (FIXED_OPTIONS.has(key)) {
     // 表单会把当前值原样回传：等于固定值视为无操作，其他值拒绝
     if (Number(raw) === 10000) return null;

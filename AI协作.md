@@ -69,7 +69,7 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
 | `src/routes/monitor.js` | **运维监控接口**（第 34 批） | `snapshot`/`stream`(SSE)/`alert/*`；管理员专用。注意 `pool.query` 解构层数（多行结果不能用 `const [[x]]`）。**`/stream` 用一次性票据自鉴权**（EventSource 带不了 Authorization），因此它不走全局 `adminRequired`，改动鉴权时别把它盖回去 |
 | `src/services/user-limit.js` | **用户级限流**（第 35 批） | 并发/RPM/TPM 三维度；`setting.limits` 由用户可写，因此语义是**只能收紧不能放宽**（用户填 0 视为未自定义，不能用 0 解除限制） |
 | `src/routes/community.js` | **社区大厅**（第 37 批） | 话题/帖子/评论/点赞收藏/关注。计数是冗余字段（列表按热度排序不能逐帖查子表），漂移用 `POST /admin/recount` 修；点赞靠唯一键去重而不是先查再插；**评论强制扁平二级**（回复二级评论时 parent_id 归一到一级父节点，靠 `reply_to_user_id` 渲染 @谁）—— 无限级递归在窄屏会把正文压成细条 |
-| `src/routes/chatroom.js` | **实时聊天**（第 37 批） | 单聊/群聊/讨论组。单聊靠 `single_key` 唯一键保证唯一（否则连点两次会建出两个房间）；**未读用 `last_read_id` 算**，不维护冗余未读计数；消息带 `client_id` 原样回显（前端乐观队列据此对账）；**任何房间读写先过 `memberOf()`**，否则知道 room_id 就能读别人私聊 |
+| `src/routes/chatroom.js` + `services/chat-rooms.js` | **实时聊天**（第 37 批；第 79 批下线频道体系） | 只剩单聊/群聊（discussion 兼容读取）。**打开单聊一律走 `openSingleRoom`**（按 single_key 找、不管状态，找到就复活+补回成员；撞唯一键回退复活）—— 否则「一方删除会话后 403」「双方都删后 500」。在线状态只对「社交圈」（`contactIdsOf`：好友+单聊对象）可见。单聊靠 `single_key` 唯一键保证唯一（否则连点两次会建出两个房间）；**未读用 `last_read_id` 算**，不维护冗余未读计数；消息带 `client_id` 原样回显（前端乐观队列据此对账）；**任何房间读写先过 `memberOf()`**，否则知道 room_id 就能读别人私聊 |
 | `src/services/realtime.js` | **实时推送中枢**（第 37 批） | 进程内 SSE 广播。写失败必须摘除连接（否则一直往死连接写）；心跳保活（反代会掐 60s 无数据的连接）；**多实例部署必须改共享存储**（已登记遗留项） |
 | `src/routes/games.js` | **联机对战路由**（第 37 批） | **不含任何游戏规则**，只做房间生命周期 + 把操作转交引擎 + 广播。三条不变式：房主恒为 side 1（客户端不能自选阵营）；state 由引擎产出、路由不解释它；**返回必须带 viewer 的 side**（`view()` 据此过滤隐藏信息） |
 | `src/services/games/*.js` | **游戏引擎**（第 37 批） | 每游戏实现 `init/move/view/meta`（海战棋另有 `place/ready/auto`）。**服务端权威**：客户端只提交走子意图，合法性/轮次/胜负全在服务端判定。`view(state, {side})` 决定可见范围 —— 海战棋据此隐藏对手布阵。加新游戏只需实现引擎 + 前端一个渲染分支，不用动路由与对战 UI |
@@ -100,7 +100,7 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
 | `src/components/ModelPicker.jsx` | 模型范围选择器 | 「从上游获取模型」调 `/channel/:id/upstream-models`；空选 = 该厂商全部模型（与后端语义一致） |
 | `src/pages/MonitorPage.jsx` | **运维监控 + 告警中心**（第 34 批） | 数据来自 `/api/monitor/snapshot`（轮询）与 `/api/monitor/stream`（SSE 实时）；告警规则/事件内嵌在页面内，不用弹窗 |
 | `src/pages/CommunityPage.jsx` + `PostDetailPage.jsx` + `components/PostList.jsx` | **社区**（第 37 批） | 骨架 C 类（双栏流式阅读，宽屏不拉满）；列表是**单列列表式**不是卡片瀑布流，摘要 `-webkit-line-clamp: 2`，多图只给 1~3 张 56px 微缩图 +N；评论扁平二级、缩进恒为 1 级 |
-| `src/pages/MessagesPage.jsx` | **消息中心**（第 37 批） | 骨架 B 类（视口锁定，输入框必须常驻可见）；移动端走**路由级主从堆叠**（`/messages` → `/messages/:roomId`），不用抽屉；发送走**本地乐观队列**（clientId 对账，失败标红可重试，不静默丢弃） |
+| `src/pages/MessagesPage.jsx` + `components/im/*` | **消息中心**（第 37 批；第 79 批重写） | 页面只做状态编排，展示拆在 `components/im/`（Sidebar/Chat/Panels + `im.css`）。外壳 `.oo-im`、输入框外层保留 `.oo-msg-input`（e2e 依赖）；SSE 指数退避重连 + since_id 补齐；Enter 发送要判 `isComposing`（输入法选词）。骨架 B 类（视口锁定，输入框必须常驻可见）；移动端走**路由级主从堆叠**（`/messages` → `/messages/:roomId`），不用抽屉；发送走**本地乐观队列**（clientId 对账，失败标红可重试，不静默丢弃） |
 | `src/pages/GamesPage.jsx` | **Playground**（第 37 批） | 六款联机对战共用一套对战框架，差异由引擎 `meta.render/click` 决定（`grid-stone`/`xiangqi`/`battleship`/`column`）。视觉是 Terminal Arcade（只用设计系统变量，无卡通色）；**键盘仅在棋盘获焦时接管**；`?room=` 支持分享链接 |
 | `src/pages/ProfileViewPage.jsx` | **个人主页**（第 37 批） | 恒为 `/u/:id`，靠 `is_self` 切换主操作（自己=编辑资料；别人=关注+私信）。统计内嵌一行 `.oo-stats-strip`（不是 4 张大卡），点击就地切换列表 |
 | `src/pages/AdminDashboardPage.jsx` | **平台看板**（第 37 批） | 与个人看板 `/console` **物理分离**（权限边界靠路由守卫而不是前端 if）；关注点是渠道延迟/全站吞吐/谁在刷 |
@@ -5053,6 +5053,58 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 
   **五、分工记录**：社区/消息/交友机制重构与其他内容优化由另一窗口负责（优先级更高）；
   本窗口职责为反代机制与渠道问题检索（本批一、二、三节）+ 按指令执行清空（第四节）。
+| 2026-09-27 | **第 79 批 · 下线频道体系 + 私聊/群聊/好友重构 + 社区改版 + 主题系统整合**（用户需求：「已经有社区了，频道机制不需要，仅有群聊、私聊」）。
+
+  **一、频道体系下线**：删 `/chatroom/guilds` 与自动建默认频道逻辑；新装不再建
+  `community_guilds/community_channels`（老库表与数据**不删**）；`db.js#retireGuildRooms`
+  幂等地把挂在子频道上的聊天房间置 status=2（消息保留，回滚代码即复活）——
+  所有入口本来只认 status=1，会话列表/未读/搜索/发消息自动排除，不必每条 SQL 加过滤。
+  **部署后注意**：线上老用户会话列表里的「综合交流/官方公告/技术探讨/问题反馈」等频道房间会消失，这是预期。
+
+  **二、私聊/群聊后端修复**（`services/chat-rooms.js` 抽出两路由共用逻辑）：
+  · 一方「删除会话」后再点发私信 → 拿到旧房间 id 但已不是成员 → **403**；双方都删后
+    single_key 仍占着 → 重建撞唯一键 **500**。现 `openSingleRoom` 统一复活并补回成员；
+    对方删了会话、我发消息时把他补回（否则他永远收不到）；删除单聊不再发「退出了群聊」。
+  · `/friends/:id/chat` 不校验对方账号（任意 id 都能建房间）→ 已校验。
+  · `/chatroom/online` 原先返回**全站在线 id**（与「不做全站广播」自相矛盾）→ 只返回社交圈。
+  · SSE 关闭改 `res.on("close")`；多标签页只在「首条连接/最后一条断开」时推上下线。
+  · 房间详情补 `peer`（单聊顶栏在线状态原先恒为「离线」）；会话列表/搜索的 N+1 改批量；
+    列表标题优先好友备注；限流中间件移到鉴权之后（原先按 IP 计数）；私聊禁止设公告/改名；
+    公告超长报错而不是截断；踢人系统消息带被踢者名字。
+  · 好友：互相申请直接成为好友（并把两方向待处理申请都标记已同意）；新增撤回
+    `DELETE /friends/requests/:id`（status=3）与关系查询 `GET /friends/relation/:id`；
+    重复申请不重复落库通知；同意前校验申请人仍可用。
+  · 测试：`friends-channels.test.mjs` → `friends-chat.test.mjs`（有状态 SQL 桩，46 项，
+    覆盖复活/补回成员/互相申请/在线可见范围/guilds 404）；route-mounting 加下线锚点。
+
+  **三、消息中心重写**（`MessagesPage.jsx` + `components/im/*` + `im.css`）：四栏收成两栏
+  + 可收起资料栏（宽屏常驻 / 窄屏抽屉）；联系人 Tab（在线/离线分组、新的朋友、好友名片）；
+  发送**失败标红可重试/删除**（原实现失败直接把消息删掉，违反 1.2 的约定）；撤回（2 分钟）；
+  超长消息折叠；日期分隔 + 连续消息合并；滚动贴底/「N 条新消息」/加载更早不跳；
+  拖拽/粘贴发图；Enter 判 `isComposing`（原先拼音选词回车会把半截拼音发出去）；
+  SSE 断线指数退避重连 + since_id 补齐（原先 onerror 直接 close 不重连）；
+  已读后派发 `ooapi:badges`，导航红点即时刷新；群管理（邀请/踢人/改名/公告/退出/解散）。
+  「我的」气泡底色 = 主题色混黑，保证自定义主题色下白字对比度。
+
+  **四、社区与个人主页**：社区改三栏（话题导轨 / 信息流 + 发帖提示条 / 我的社区·热榜）；
+  **公告条原先永远不显示**（读的 announcement_enabled/level 在 /api/status 里不存在）→
+  改读 announcement + announcement_type，关闭按版本记忆。帖子详情加「私信作者」+ 作者卡。
+  个人主页加好友按钮（四种关系态）；**收藏 Tab 原先用用户列表组件渲染帖子**（标题全丢）→ 改 PostList。
+
+  **五、主题系统**：外观状态并入 ThemeContext（站点默认 + 本地覆盖）。修三个问题：
+  ① AntD 圆角/控件高度/字号写死 → 现随外观设置（默认档换算值与改版前一致）；
+  ② 外观页初值写死（普通用户读不到 /api/option，显示与实际生效不一致）；
+  ③ **站点默认外观从未下发**（「保存为站点默认」对谁都不生效）→ `/api/status.appearance`，
+  首帧用本地缓存避免跳变；`theme_user_custom=false` 时非管理员固定用站点默认。
+  新增一键方案、自定义主题色（仅 #RRGGBB，option.js 同步做枚举/格式校验）、实时预览。
+  MainLayout：导航拆出「社交」组、详情页按前缀高亮与面包屑、侧栏折叠记忆、
+  修复关闭「版本已更新」横幅时调用未定义的 `setStaleSince`（点关闭会抛错）。
+
+  **验证**：`npm test` 除 `rate-limit-429`（另一窗口在改 openai-compat，与本批无关）外全过；
+  persona-r1 82/0；vite build 无告警。部署前在服务器起了**只挂新路由、其余反代 3001 的
+  临时预览**（不跑 migrate、不起定时任务，用完已删）：ui-smoke 23/23、e2e-browser 消息乐观
+  队列 11/11、e2e-modules 55 过（7 个失败全是已下线的 games 目录断言，旧遗留）；
+  明暗/移动端截图已人工核对。
 
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 

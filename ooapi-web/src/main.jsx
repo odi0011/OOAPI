@@ -5,7 +5,7 @@ import { App as AntApp } from "antd";
 import dayjs from "dayjs";
 import "dayjs/locale/zh-cn";
 import { ThemeProvider } from "./theme/ThemeContext";
-import { applyAppearance } from "./theme/presets";
+import { bootAppearance } from "./theme/presets";
 import { AppProvider } from "./context/AppContext";
 import App from "./App";
 // 正文字体：Noto Sans SC（本地打包，避免依赖外网字体 CDN）
@@ -43,14 +43,10 @@ try {
   document.body.insertBefore(layer, document.body.firstChild);
 }
 
-// 启动前应用本地外观偏好（背景/圆角/密度/字号），避免先按默认渲染再跳变
+// 启动前应用外观（站点默认的上次缓存 + 本地偏好），避免先按写死的默认渲染再跳变。
+// 挂载后由 ThemeProvider 接管（它会按最新 /api/status 再算一次）。
 try {
-  applyAppearance({
-    background: localStorage.getItem("ooapi-bg") || "pure",
-    radius: localStorage.getItem("ooapi-radius") || "default",
-    density: localStorage.getItem("ooapi-density") || "compact",
-    fontSize: localStorage.getItem("ooapi-fontsize") || 13,
-  });
+  bootAppearance();
 } catch {
   /* 首帧外观失败不影响使用 */
 }

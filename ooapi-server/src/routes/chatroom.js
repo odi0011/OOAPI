@@ -1,4 +1,7 @@
-// 实时聊天：房间（单聊/群聊/讨论组）+ 消息 + SSE 推送
+// 实时聊天：房间（单聊/群聊）+ 消息 + SSE 推送
+// 频道体系（服务器 + 子频道）已于第 79 批下线：公共讨论由社区帖子承担，
+// 这里只保留私聊与群聊。遗留的频道房间由 db.js#retireGuildRooms 软解散。
+// type=discussion（讨论组）仍兼容读取，前端按群聊展示，不再提供新建入口。
 // ---------------------------------------------------------------------------
 // 设计要点：
 //
@@ -20,8 +23,9 @@ import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now, pageParams, idParam, safeJSONParse } from "../utils.js";
 import { authRequired, adminRequired } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
-import { sseHeaders, register, unregister, push, pushMany, onlineUserIds, startHeartbeat } from "../services/realtime.js";
+import { sseHeaders, register, unregister, push, pushMany, isOnline } from "../services/realtime.js";
 import { mediaUrl, attachRef, filterOwnedMediaIds } from "../services/media.js";
+import { openSingleRoom, avatarUrlOf, contactIdsOf } from "../services/chat-rooms.js";
 
 const router = Router();
 
@@ -29,11 +33,7 @@ const MAX_TEXT = 4000;
 const MAX_GROUP_MEMBERS = 200;
 const MAX_MEDIA = 4;
 
-/** 单聊房间唯一键：两个用户 id 排序拼接（谁先发起都指向同一个房间） */
-function singleKey(a, b) {
-  const [x, y] = [Number(a) || 0, Number(b) || 0].sort((m, n) => m - n);
-  return `${x}:${y}`;
-}
+const nameOf = (u) => u?.display_name || u?.username || "";
 
 /** 成员校验：返回成员行（含 role/last_read_id），非成员返回 null */
 async function memberOf(roomId, userId) {
@@ -50,12 +50,32 @@ async function memberIdsOf(roomId) {
 async function userBrief(id) {
   const [[u]] = await pool.query("SELECT id, username, display_name, avatar_media_id FROM users WHERE id = ?", [id]);
   if (!u) return { id: Number(id) || 0, username: "", display_name: "" };
-  return {
-    id: Number(u.id),
-    username: u.username,
-    display_name: u.display_name,
-    avatar_url: Number(u.avatar_media_id) ? `/api/media/avatar/${u.id}?v=${u.avatar_media_id}` : "",
-  };
+  return { id: Number(u.id), username: u.username, display_name: u.display_name, avatar_url: avatarUrlOf(u) };
+}
+
+/**
+ * 批量取单聊房间的「对方」：一次查询代替逐房间 N 次。
+ * 会话列表与搜索结果都要显示对方名字，原实现每个单聊房间各查两次（成员 + 用户）。
+ */
+async function peersOf(roomIds, userId) {
+  const map = new Map();
+  if (!roomIds.length) return map;
+  const [rows] = await pool.query(
+    `SELECT m.room_id, u.id, u.username, u.display_name, u.avatar_media_id
+       FROM chat_room_members m JOIN users u ON u.id = m.user_id
+      WHERE m.room_id IN (${roomIds.map(() => "?").join(",")}) AND m.user_id <> ?`,
+    [...roomIds, userId]
+  );
+  for (const r of rows) {
+    if (map.has(Number(r.room_id))) continue;
+    map.set(Number(r.room_id), {
+      id: Number(r.id),
+      username: r.username,
+      display_name: r.display_name,
+      avatar_url: avatarUrlOf(r),
+    });
+  }
+  return map;
 }
 
 /** 消息行 → 响应体 */
@@ -143,31 +163,35 @@ router.get(
 
     sseHeaders(res);
     const uid = Number(user.id);
+    const wasOnline = isOnline(uid);
     register(uid, res);
     res.write(`event: ready\ndata: ${JSON.stringify({ user_id: uid, at: Date.now() })}\n\n`);
 
-    // 上线通知：给「与我有单聊房间」的人推在线状态（不做全站广播，避免泄露用户列表）
-    const [peers] = await pool.query(
-      `SELECT DISTINCT m2.user_id AS uid FROM chat_room_members m1
-         JOIN chat_rooms r ON r.id = m1.room_id AND r.type = 'single'
-         JOIN chat_room_members m2 ON m2.room_id = m1.room_id AND m2.user_id <> ?
-        WHERE m1.user_id = ?`,
-      [uid, uid]
-    );
-    pushMany(peers.map((p) => Number(p.uid)), "presence", { user_id: uid, online: true });
+    // 在线状态只推给「社交圈」（好友 + 单聊对象），不做全站广播，避免泄露用户列表。
+    // 多标签页：只有「第一条连接建立 / 最后一条连接断开」才算上下线，
+    // 否则关掉其中一个标签页就会让对方看到你「离线」（而你其实还挂着另一个）。
+    const contacts = await contactIdsOf(uid).catch(() => []);
+    if (!wasOnline) pushMany(contacts, "presence", { user_id: uid, online: true });
 
-    req.on("close", () => {
+    // 用 res 的 close 而不是 req 的：请求体读完后 req 的 close 可能提前触发（见 AGENTS.md 速查表）
+    res.on("close", () => {
       unregister(uid, res);
-      pushMany(peers.map((p) => Number(p.uid)), "presence", { user_id: uid, online: false });
+      if (!isOnline(uid)) pushMany(contacts, "presence", { user_id: uid, online: false });
     });
     return undefined;
   })
 );
 
+// 在线列表：只返回「社交圈」里在线的人。
+// 原实现直接返回 onlineUserIds() —— 任何登录用户都能拿到全站在线 id，
+// 与上面「不做全站广播」的设计自相矛盾。
 router.get(
   "/online",
   authRequired,
-  asyncHandler(async (req, res) => ok(res, onlineUserIds()))
+  asyncHandler(async (req, res) => {
+    const contacts = await contactIdsOf(req.user.id);
+    return ok(res, contacts.filter((id) => isOnline(id)));
+  })
 );
 
 // 跨会话消息搜索（只搜自己所在房间的消息）
@@ -190,22 +214,16 @@ router.get(
       `SELECT msg.*, r.type AS room_type, r.name AS room_name ${base} ORDER BY msg.id DESC LIMIT ? OFFSET ?`,
       [req.user.id, `%${kw}%`, size, offset]
     );
+    // 单聊房间显示对方名字（与列表一致），否则用户看不懂搜到的是哪段对话
+    const singleIds = [...new Set(rows.filter((r) => r.room_type === "single").map((r) => Number(r.room_id)))];
+    const peers = await peersOf(singleIds, req.user.id);
+    const users = new Map();
     const items = [];
     for (const r of rows) {
-      // 单聊房间显示对方名字（与列表一致），否则用户看不懂搜到的是哪段对话
-      let title = r.room_name;
-      if (r.room_type === "single") {
-        const [[other]] = await pool.query("SELECT user_id FROM chat_room_members WHERE room_id = ? AND user_id <> ? LIMIT 1", [
-          r.room_id,
-          req.user.id,
-        ]);
-        if (other) {
-          const b = await userBrief(other.user_id);
-          title = b.display_name || b.username;
-        }
-      }
-      const msgResp = await messageToResp(r);
-      items.push({ ...msgResp, room_title: title || `会话 #${r.room_id}` });
+      const peer = peers.get(Number(r.room_id));
+      const title = r.room_type === "single" ? nameOf(peer) : r.room_name;
+      const msgResp = await messageToResp(r, users);
+      items.push({ ...msgResp, room_type: r.room_type, room_title: title || `会话 #${r.room_id}` });
     }
     return ok(res, { items, total: Number(cnt.n) || 0, page: p, page_size: size });
   })
@@ -281,20 +299,25 @@ router.get(
         ORDER BY r.last_message_time DESC, r.id DESC LIMIT ? OFFSET ?`,
       [req.user.id, req.user.id, size, offset]
     );
+    // 单聊房间对每个用户显示「对方」的名字与头像（而不是空房间名）；
+    // 好友备注优先 —— 否则在通讯录里改了备注，会话列表还是原名，两处对不上
+    const peers = await peersOf(rows.filter((r) => r.type === "single").map((r) => Number(r.id)), req.user.id);
+    const peerIds = [...new Set([...peers.values()].map((p) => p.id))];
+    const remarks = new Map();
+    if (peerIds.length) {
+      const [fr] = await pool.query(
+        `SELECT friend_id, remark FROM friendships WHERE user_id = ? AND status = 1 AND friend_id IN (${peerIds.map(() => "?").join(",")})`,
+        [req.user.id, ...peerIds]
+      );
+      for (const f of fr) if (f.remark) remarks.set(Number(f.friend_id), f.remark);
+    }
     const items = [];
     for (const r of rows) {
-      // 单聊房间对每个用户显示「对方」的名字与头像（而不是空房间名）
       let title = r.name;
       let peer = null;
       if (r.type === "single") {
-        const [[other]] = await pool.query(
-          "SELECT user_id FROM chat_room_members WHERE room_id = ? AND user_id <> ? LIMIT 1",
-          [r.id, req.user.id]
-        );
-        if (other) {
-          peer = await userBrief(other.user_id);
-          title = peer.display_name || peer.username || `用户 #${peer.id}`;
-        }
+        peer = peers.get(Number(r.id)) || null;
+        if (peer) title = remarks.get(peer.id) || nameOf(peer) || `用户 #${peer.id}`;
       }
       items.push({
         id: Number(r.id),
@@ -303,7 +326,6 @@ router.get(
         title,
         peer,
         owner_id: Number(r.owner_id) || 0,
-        guild_channel_id: Number(r.guild_channel_id) || 0,
         announcement: r.announcement || "",
         member_count: Number(r.member_count) || 0,
         last_message_text: r.last_message_text || "",
@@ -320,10 +342,12 @@ router.get(
 );
 
 // 创建房间：type=single 时 body.user_id 是对方；group/discussion 时 body.user_ids 是成员
+// 限流放在鉴权**之后**：keyFn 读 req.user.id，放在前面时 req.user 还没挂上，
+// 实际按 IP 计数 —— 同一出口（公司 NAT）下的所有人共享 20 次/分钟。
 router.post(
   "/rooms",
-  rateLimit({ windowMs: 60_000, max: 20, keyPrefix: "room-create", keyFn: (r) => r.user?.id || r.ip }),
   authRequired,
+  rateLimit({ windowMs: 60_000, max: 20, keyPrefix: "room-create", keyFn: (r) => r.user?.id || r.ip }),
   asyncHandler(async (req, res) => {
     const type = ["single", "group", "discussion"].includes(String(req.body?.type)) ? String(req.body.type) : "group";
     const name = String(req.body?.name || "").trim().slice(0, 64);
@@ -333,25 +357,15 @@ router.post(
 
     if (type === "single") {
       if (!peerId) return fail(res, "请选择聊天对象");
+      if (peerId === req.user.id) return fail(res, "不能和自己发起私聊");
       const [[peer]] = await pool.query("SELECT id, status FROM users WHERE id = ?", [peerId]);
       if (!peer || Number(peer.status) !== 1) return fail(res, "对方账号不可用", 404);
-      // 唯一键保证同一对用户只有一个房间（重复点「发消息」不会建出两个）
-      const key = singleKey(req.user.id, peerId);
-      const [[exist]] = await pool.query("SELECT id FROM chat_rooms WHERE single_key = ? AND status = 1", [key]);
-      if (exist) return ok(res, { id: Number(exist.id), existed: true }, "已存在聊天");
-      const r = await pool.query(
-        "INSERT INTO chat_rooms (type, name, owner_id, member_count, single_key, status, created_time) VALUES ('single', '', ?, 2, ?, 1, ?)",
-        [req.user.id, key, now()]
-      );
-      const roomId = Number(r[0].insertId);
-      await pool.query(
-        "INSERT INTO chat_room_members (room_id, user_id, role, joined_time) VALUES (?, ?, 'member', ?), (?, ?, 'member', ?)",
-        [roomId, req.user.id, now(), roomId, peerId, now()]
-      );
-      return ok(res, { id: roomId, existed: false }, "已创建聊天");
+      // 唯一键保证同一对用户只有一个房间；退出过/解散过的旧房间会被复活（见 services/chat-rooms.js）
+      const r = await openSingleRoom(req.user.id, peerId);
+      return ok(res, r, r.existed ? "已存在聊天" : "已创建聊天");
     }
 
-    if (!name) return fail(res, "请输入房间名称");
+    if (!name) return fail(res, "请输入群聊名称");
     if (!ids.length) return fail(res, "请至少邀请一位成员");
     if (ids.length + 1 > MAX_GROUP_MEMBERS) return fail(res, `成员上限 ${MAX_GROUP_MEMBERS} 人`);
     // 只把有效用户拉进来（无效 id 静默丢弃会让「拉了 5 个人只进来 3 个」难以察觉，必须报错）
@@ -394,35 +408,50 @@ router.get(
     // 非成员：只有管理员能看（用于处理投诉），普通用户一律 404（不泄露房间是否存在）
     if (!m && req.user.role < 100) return fail(res, "房间不存在", 404);
     const [members] = await pool.query(
-      `SELECT m.user_id, m.role, m.joined_time, u.username, u.display_name, u.avatar_media_id, u.status
+      `SELECT m.user_id, m.role, m.joined_time, u.username, u.display_name, u.avatar_media_id, u.bio, u.status
          FROM chat_room_members m JOIN users u ON u.id = m.user_id WHERE m.room_id = ? ORDER BY m.id ASC`,
       [id]
     );
+    const memberResp = members.map((x) => ({
+      id: Number(x.user_id),
+      username: x.username,
+      display_name: x.display_name,
+      bio: x.bio || "",
+      role: x.role,
+      online: isOnline(x.user_id),
+      avatar_url: avatarUrlOf({ id: x.user_id, avatar_media_id: x.avatar_media_id }),
+    }));
     let title = room.name;
+    // 单聊要带上 peer：前端顶栏的在线状态读 room.peer —— 原先详情接口不返回它，
+    // 于是单聊顶栏恒显示「离线」（列表接口有 peer，详情没有，两处口径不一）
+    let peer = null;
     if (room.type === "single") {
-      const other = members.find((x) => Number(x.user_id) !== req.user.id);
-      title = other ? other.display_name || other.username : "单聊";
+      peer = memberResp.find((x) => x.id !== req.user.id) || null;
+      title = nameOf(peer) || "单聊";
+      if (peer) {
+        const [[fr]] = await pool.query(
+          "SELECT remark FROM friendships WHERE user_id = ? AND friend_id = ? AND status = 1",
+          [req.user.id, peer.id]
+        );
+        peer.is_friend = Boolean(fr);
+        peer.remark = fr?.remark || "";
+        if (fr?.remark) title = fr.remark;
+      }
     }
     return ok(res, {
       id: Number(room.id),
       type: room.type,
       name: room.name,
       title,
+      peer,
       announcement: room.announcement || "",
-      guild_channel_id: Number(room.guild_channel_id) || 0,
       owner_id: Number(room.owner_id) || 0,
-      member_count: Number(room.member_count) || 0,
+      member_count: memberResp.length,
       my_role: m?.role || (req.user.role >= 100 ? "admin" : "member"),
+      is_member: Boolean(m),
       last_read_id: Number(m?.last_read_id) || 0,
       created_time: Number(room.created_time),
-      members: members.map((x) => ({
-        id: Number(x.user_id),
-        username: x.username,
-        display_name: x.display_name,
-        role: x.role,
-        online: onlineUserIds().includes(Number(x.user_id)),
-        avatar_url: Number(x.avatar_media_id) ? `/api/media/avatar/${x.user_id}?v=${x.avatar_media_id}` : "",
-      })),
+      members: memberResp,
     });
   })
 );
@@ -481,18 +510,21 @@ router.delete(
     const [[room]] = await pool.query("SELECT * FROM chat_rooms WHERE id = ?", [id]);
     await pool.query("DELETE FROM chat_room_members WHERE room_id = ? AND user_id = ?", [id, req.user.id]);
     await pool.query("UPDATE chat_rooms SET member_count = GREATEST(member_count - 1, 0) WHERE id = ?", [id]);
-    const [[{ left }]] = await pool.query("SELECT COUNT(*) AS left_ FROM chat_room_members WHERE room_id = ?", [id]).catch(() => [[{ left_: 0 }]]);
     const [others] = await pool.query("SELECT user_id FROM chat_room_members WHERE room_id = ? ORDER BY id ASC LIMIT 1", [id]);
     const remain = others.length ? Number(others[0].user_id) : 0;
     if (!remain) {
       await pool.query("UPDATE chat_rooms SET status = 2 WHERE id = ?", [id]);
-    } else if (Number(room?.owner_id) === req.user.id) {
+    } else if (room?.type !== "single" && Number(room?.owner_id) === req.user.id) {
       // 群主走了必须有新群主，否则「解散群」「踢人」这类操作没人能做
       await pool.query("UPDATE chat_rooms SET owner_id = ? WHERE id = ?", [remain, id]);
       await pool.query("UPDATE chat_room_members SET role = 'owner' WHERE room_id = ? AND user_id = ?", [id, remain]);
     }
-    await systemMessage(id, `${req.user.display_name || req.user.username} 退出了${room?.type === "discussion" ? "讨论组" : "群聊"}`);
-    return ok(res, null, "已退出");
+    // 单聊的「删除会话」是静默的：不给对方推「XX 退出了群聊」这种系统消息；
+    // 对方再发消息或自己再点「发私信」时 openSingleRoom 会把人补回来
+    if (room?.type !== "single" && remain) {
+      await systemMessage(id, `${nameOf(req.user)} 退出了群聊`);
+    }
+    return ok(res, null, room?.type === "single" ? "已删除会话" : "已退出");
   })
 );
 
@@ -518,7 +550,8 @@ router.delete(
     }
     await pool.query("DELETE FROM chat_room_members WHERE room_id = ? AND user_id = ?", [id, targetId]);
     await pool.query("UPDATE chat_rooms SET member_count = GREATEST(member_count - 1, 0) WHERE id = ?", [id]);
-    await systemMessage(id, `${req.user.display_name || req.user.username} 移除了成员`);
+    const targetUser = await userBrief(targetId);
+    await systemMessage(id, `${nameOf(req.user)} 将 ${nameOf(targetUser) || "一位成员"} 移出了群聊`);
     push(targetId, "kicked", { room_id: id });
     return ok(res, null, "已移除");
   })
@@ -581,16 +614,28 @@ router.get(
 
 router.post(
   "/rooms/:id/messages",
-  rateLimit({ windowMs: 60_000, max: 60, keyPrefix: "msg-send", keyFn: (r) => r.user?.id || r.ip }),
   authRequired,
+  rateLimit({ windowMs: 60_000, max: 60, keyPrefix: "msg-send", keyFn: (r) => r.user?.id || r.ip }),
   asyncHandler(async (req, res) => {
     const id = idParam(req);
     if (!id) return fail(res, "房间不存在", 404);
     const m = await memberOf(id, req.user.id);
     if (!m) return fail(res, "你不在这个房间里", 403);
     if (Number(m.muted)) return fail(res, "你已被禁言", 403);
-    const [[room]] = await pool.query("SELECT id, status FROM chat_rooms WHERE id = ?", [id]);
+    const [[room]] = await pool.query("SELECT id, type, single_key, status FROM chat_rooms WHERE id = ?", [id]);
     if (!room || Number(room.status) !== 1) return fail(res, "房间已解散", 404);
+    // 单聊里对方可能「删除了会话」（退出成员表）：发消息时把他补回来，
+    // 否则他永远收不到、会话列表也不会重新出现 —— 私聊不该因为一方清理列表就单向断掉
+    if (room.type === "single" && room.single_key) {
+      const pair = String(room.single_key).split(":").map(Number).filter(Boolean);
+      if (pair.length === 2) {
+        const [ins] = await pool.query(
+          "INSERT IGNORE INTO chat_room_members (room_id, user_id, role, joined_time) VALUES (?, ?, 'member', ?), (?, ?, 'member', ?)",
+          [id, pair[0], now(), id, pair[1], now()]
+        );
+        if (ins?.affectedRows) await pool.query("UPDATE chat_rooms SET member_count = 2 WHERE id = ?", [id]);
+      }
+    }
 
     const type = String(req.body?.type || "text") === "image" ? "image" : "text";
     // 超长**报错**，不静默截断（与社区帖子/评论同一口径）。
@@ -706,11 +751,17 @@ router.put(
       return fail(res, "只有群主或管理员可以修改公告", 403);
     }
 
-    const announcement = String(req.body?.announcement || "").trim().slice(0, 500);
+    const [[room]] = await pool.query("SELECT type, status FROM chat_rooms WHERE id = ?", [id]);
+    if (!room || Number(room.status) !== 1) return fail(res, "房间不存在", 404);
+    if (room.type === "single") return fail(res, "私聊没有群公告");
+
+    const raw = String(req.body?.announcement || "").trim();
+    if (raw.length > 500) return fail(res, `公告最长 500 字，当前 ${raw.length} 字`);
+    const announcement = raw;
     await pool.query("UPDATE chat_rooms SET announcement = ? WHERE id = ?", [announcement, id]);
-    
+
     // 写一条系统公告更新消息并推送
-    await systemMessage(id, `${req.user.display_name || req.user.username} 更新了群公告`);
+    await systemMessage(id, announcement ? `${nameOf(req.user)} 更新了群公告` : `${nameOf(req.user)} 清空了群公告`);
     const ids = await memberIdsOf(id);
     pushMany(ids, "room_updated", { room_id: id, announcement });
 
@@ -730,6 +781,10 @@ router.put(
       return fail(res, "只有群主或管理员可以修改名称", 403);
     }
 
+    const [[room]] = await pool.query("SELECT type, status FROM chat_rooms WHERE id = ?", [id]);
+    if (!room || Number(room.status) !== 1) return fail(res, "房间不存在", 404);
+    if (room.type === "single") return fail(res, "私聊不能改名");
+
     const name = String(req.body?.name || "").trim().slice(0, 64);
     if (!name) return fail(res, "请输入名称");
 
@@ -739,120 +794,6 @@ router.put(
     pushMany(ids, "room_updated", { room_id: id, name });
 
     return ok(res, { id, name }, "名称已修改");
-  })
-);
-
-// ---------------------------------------------------------------------------
-// 9. 频道体系：频道服务器与子频道列表（自动预置官方默认主频道）
-// ---------------------------------------------------------------------------
-async function ensureDefaultGuildAndChannels() {
-  const [guilds] = await pool.query("SELECT * FROM community_guilds WHERE status = 1 LIMIT 1");
-  if (guilds.length > 0) return guilds[0];
-
-  const nowTs = now();
-  // 1. 创建默认官方频道
-  const r = await pool.query(
-    "INSERT INTO community_guilds (name, description, icon, is_default, status, created_time) VALUES (?, ?, ?, 1, 1, ?)",
-    ["OOAPI 开发者社区", "官方技术交流与互助频道，欢迎畅所欲言！", "💬", nowTs]
-  );
-  const guildId = Number(r[0].insertId);
-
-  // 2. 预置四个经典子频道
-  const defaultChannels = [
-    { cat: "官方发布", name: "官方公告", type: "notice", topic: "发布平台重要动态与维护通知", sort: 100 },
-    { cat: "常规讨论", name: "综合交流", type: "chat", topic: "日常闲聊、交流互动、心得分享", sort: 90 },
-    { cat: "常规讨论", name: "技术探讨", type: "chat", topic: "API 调用、模型参数调优、Prompt 技巧", sort: 80 },
-    { cat: "支持与反馈", name: "问题反馈", type: "chat", topic: "遇到问题在这里反馈，管理员与社区伙伴协同排查", sort: 70 },
-  ];
-
-  for (const ch of defaultChannels) {
-    const chRes = await pool.query(
-      "INSERT INTO community_channels (guild_id, category_name, name, type, topic, sort, status, created_time) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
-      [guildId, ch.cat, ch.name, ch.type, ch.topic, ch.sort, nowTs]
-    );
-    const chId = Number(chRes[0].insertId);
-
-    // 为每个文字/公告子频道对应创建一个 chat_rooms
-    const roomRes = await pool.query(
-      "INSERT INTO chat_rooms (type, name, owner_id, member_count, guild_channel_id, status, created_time) VALUES ('group', ?, 1, 0, ?, 1, ?)",
-      [ch.name, chId, nowTs]
-    );
-    const roomId = Number(roomRes[0].insertId);
-    await systemMessage(roomId, `欢迎来到 #${ch.name} 频道！`);
-  }
-
-  const [[fresh]] = await pool.query("SELECT * FROM community_guilds WHERE id = ?", [guildId]);
-  return fresh;
-}
-
-router.get(
-  "/guilds",
-  authRequired,
-  asyncHandler(async (req, res) => {
-    try {
-      await ensureDefaultGuildAndChannels();
-    } catch (e) {
-      // 捕获并发初始化时的重复错误
-    }
-
-    const [guildRows] = await pool.query(
-      "SELECT * FROM community_guilds WHERE status = 1 ORDER BY is_default DESC, id ASC"
-    );
-
-    const result = [];
-    for (const g of guildRows) {
-      const [channels] = await pool.query(
-        "SELECT * FROM community_channels WHERE guild_id = ? AND status = 1 ORDER BY sort DESC, id ASC",
-        [g.id]
-      );
-
-      // 查询每个子频道对应的 chat_rooms ID
-      const chList = [];
-      for (const c of channels) {
-        let [[room]] = await pool.query(
-          "SELECT id, name, last_message_text, last_message_time, member_count, announcement FROM chat_rooms WHERE guild_channel_id = ? AND status = 1 LIMIT 1",
-          [c.id]
-        );
-        if (!room) {
-          // 若之前没有绑定的房间，自愈创建一个
-          const r = await pool.query(
-            "INSERT INTO chat_rooms (type, name, owner_id, member_count, guild_channel_id, status, created_time) VALUES ('group', ?, 1, 0, ?, 1, ?)",
-            [c.name, c.id, now()]
-          );
-          room = { id: Number(r[0].insertId), name: c.name, member_count: 0 };
-        }
-
-        // 自动加入成员，以便能收到消息与推送
-        await pool.query(
-          "INSERT IGNORE INTO chat_room_members (room_id, user_id, role, joined_time) VALUES (?, ?, 'member', ?)",
-          [room.id, req.user.id, now()]
-        ).catch(() => {});
-
-        chList.push({
-          id: Number(c.id),
-          room_id: Number(room.id),
-          guild_id: Number(g.id),
-          category_name: c.category_name,
-          name: c.name,
-          type: c.type,
-          topic: c.topic || "",
-          announcement: room.announcement || "",
-          last_message_text: room.last_message_text || "",
-          last_message_time: Number(room.last_message_time) || 0,
-        });
-      }
-
-      result.push({
-        id: Number(g.id),
-        name: g.name,
-        description: g.description,
-        icon: g.icon,
-        is_default: Boolean(g.is_default),
-        channels: chList,
-      });
-    }
-
-    return ok(res, result);
   })
 );
 

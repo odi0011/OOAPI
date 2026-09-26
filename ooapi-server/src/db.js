@@ -545,32 +545,9 @@ const TABLES = [
     KEY idx_from_user (from_user_id, status, id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
-  // ---------------------------------------------------------------------------
-  // 频道体系：频道服务器 (Guild) 与子频道 (Channel)
-  // ---------------------------------------------------------------------------
-  `CREATE TABLE IF NOT EXISTS community_guilds (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(64) NOT NULL COMMENT '频道服务器名称',
-    description VARCHAR(255) NOT NULL DEFAULT '' COMMENT '频道简介',
-    icon VARCHAR(255) NOT NULL DEFAULT '' COMMENT '图标或首字母',
-    owner_id INT NOT NULL DEFAULT 0,
-    is_default TINYINT NOT NULL DEFAULT 0 COMMENT '1=官方默认主频道',
-    status TINYINT NOT NULL DEFAULT 1,
-    created_time BIGINT NOT NULL DEFAULT 0
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-
-  `CREATE TABLE IF NOT EXISTS community_channels (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    guild_id BIGINT NOT NULL COMMENT '所属频道服务器',
-    category_name VARCHAR(32) NOT NULL DEFAULT '常规讨论' COMMENT '子频道分组',
-    name VARCHAR(64) NOT NULL COMMENT '子频道名称（如：综合交流）',
-    type VARCHAR(16) NOT NULL DEFAULT 'chat' COMMENT 'chat/notice/feed',
-    topic VARCHAR(255) NOT NULL DEFAULT '' COMMENT '话题或简介',
-    sort INT NOT NULL DEFAULT 0,
-    status TINYINT NOT NULL DEFAULT 1,
-    created_time BIGINT NOT NULL DEFAULT 0,
-    KEY idx_guild_sort (guild_id, sort, id)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  // 频道体系（community_guilds / community_channels）已下线（第 79 批）：
+  // 社区帖子承担公共讨论，实时聊天只保留单聊与群聊。新装不再建这两张表；
+  // 老库里的表与数据**不删**（只读遗留，回滚代码即可恢复），见 retireGuildRooms。
 ];
 
 // 生成 / 持久化 JWT 密钥：环境变量 > .jwt-secret 文件 > 随机生成
@@ -845,6 +822,21 @@ async function ensureGroups() {
   await pool.query("ALTER TABLE users ALTER COLUMN group_name SET DEFAULT ''").catch(() => {});
 }
 
+/**
+ * 频道体系下线（第 79 批）：把挂在子频道上的聊天房间置为「已解散」(status=2)。
+ *
+ * 为什么是软解散而不是删：消息与成员行原样保留（回滚代码即可复活），
+ * 而所有读写入口本来就只认 status=1 的房间 —— 会话列表、未读红点、搜索、
+ * 发消息都会自动把它们排除，不必在每条 SQL 里再加 guild_channel_id 过滤。
+ * 幂等：只处理仍是 status=1 的频道房间，重复执行无副作用。
+ */
+async function retireGuildRooms() {
+  const [r] = await pool
+    .query("UPDATE chat_rooms SET status = 2 WHERE guild_channel_id <> 0 AND status = 1")
+    .catch(() => [{ affectedRows: 0 }]);
+  if (r?.affectedRows) console.log(`[migrate] 频道体系已下线：${r.affectedRows} 个频道房间置为已解散（消息保留）`);
+}
+
 async function columnExists(table, column) {
   const [rows] = await pool.query(
     "SELECT COUNT(*) AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
@@ -861,6 +853,7 @@ export async function migrate() {
   await ensureColumnTypes();
   await migrateGroupVendor();
   await ensureGroups();
+  await retireGuildRooms();
   if (!hadGroupRate) {
     // 本升级独有的清理：旧版按厂商自动种子出来的 default 分组行（非管理员创建）
     await pool.query("DELETE FROM channel_groups WHERE name = 'default'").catch(() => {});

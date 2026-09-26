@@ -1,16 +1,18 @@
-// 社区大厅 —— 话题筛选 + 信息流 + 发帖
+// 社区大厅 —— 话题导轨 + 信息流 + 侧栏（第 79 批改版）
 // ---------------------------------------------------------------------------
-// 骨架属 C 类（双栏流式阅读）：主信息流 + 侧栏（热榜/公告/快捷发帖）。
-// **宽屏也不拉满**：单行过长会让视线回行困难（Gemini 第 1.C 点）。
+// 频道体系下线后，社区是站内唯一的公共讨论区，所以话题从下拉框升级成常驻导轨：
+//   宽屏三栏（话题 / 信息流 / 我的社区·热榜），中屏话题收成信息流上方的横向标签，
+//   窄屏隐藏侧栏。信息流**宽屏也不拉满**：单行过长会让视线回行困难（Gemini 第 1.C 点）。
 // 列表本身是单列列表式（见 components/PostList），不是卡片瀑布流。
+// 顶部的「发帖提示条」是低门槛入口：点开即发帖弹窗，已选话题会预填。
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  Button, Select, Input, Segmented, Tag, Space, Empty, Skeleton, App as AntApp, Tooltip, Alert, Modal, Form, List, Upload,
+  Button, Select, Input, Segmented, Tag, App as AntApp, Tooltip, Alert, Modal, Form, Upload,
 } from "antd";
 import {
-  PlusOutlined, ReloadOutlined, FireOutlined, ClockCircleOutlined, StarOutlined,
-  TeamOutlined, TagsOutlined, SearchOutlined, NotificationOutlined, PictureOutlined, DeleteOutlined,
+  PlusOutlined, ReloadOutlined, FireOutlined, ClockCircleOutlined,
+  TagsOutlined, NotificationOutlined, PictureOutlined, DeleteOutlined, MessageOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
@@ -213,30 +215,108 @@ export default function CommunityPage() {
     }
   };
 
+  // 全站公告：/api/status 下发的是 announcement + announcement_type（off/banner/modal）+ version。
+  // 原实现读 announcement_enabled / announcement_level —— 这两个键 status 里根本没有，
+  // 于是社区页的公告条**永远不显示**。关闭按版本记忆：管理员发新版本公告会重新出现。
   const announce = status?.announcement;
-  const announceEnabled = status?.announcement_enabled === true || status?.announcement_enabled === "true";
+  const announceVersion = String(status?.announcement_version ?? 0);
+  const [announceClosed, setAnnounceClosed] = useState(() => {
+    try {
+      return localStorage.getItem("ooapi-community-announce-closed") || "";
+    } catch {
+      return "";
+    }
+  });
+  const showAnnounce = Boolean(announce) && status?.announcement_type !== "off" && announceClosed !== announceVersion;
+  const closeAnnounce = () => {
+    setAnnounceClosed(announceVersion);
+    try {
+      localStorage.setItem("ooapi-community-announce-closed", announceVersion);
+    } catch { /* ignore */ }
+  };
+
+  const [summary, setSummary] = useState(null);
+  useEffect(() => {
+    API.get("/community/me/summary").then(setSummary).catch(() => setSummary(null));
+  }, []);
+
+  const totalPages = Math.max(1, Math.ceil(posts.total / 20));
+  const topicTotal = topics.reduce((n, t) => n + (Number(t.post_count) || 0), 0);
+  const openComposer = () => {
+    form.resetFields();
+    if (topicId) form.setFieldsValue({ topic_id: topicId });
+    setPostOpen(true);
+  };
+  const activeTopic = topics.find((t) => t.id === topicId);
+
+  const topicButton = (t) => {
+    const active = t ? topicId === t.id : !topicId;
+    return (
+      <button
+        key={t ? t.id : "all"}
+        type="button"
+        className={`oo-topic-item${active ? " is-active" : ""}`}
+        aria-pressed={active}
+        onClick={() => patchParams({ topic_id: t ? t.id : "" })}
+      >
+        <span className="oo-topic-icon" aria-hidden="true">{t ? t.icon || "#" : <TagsOutlined />}</span>
+        <span className="oo-truncate">{t ? t.name : "全部话题"}</span>
+        <span className="oo-topic-count">{t ? t.post_count : topicTotal}</span>
+      </button>
+    );
+  };
 
   return (
     <div className="oo-page">
       <PageHeader
         title="社区"
-        tags={<Tag>{posts.total} 篇讨论</Tag>}
+        tags={<Tag>{posts.total} 篇{activeTopic ? ` · ${activeTopic.name}` : "讨论"}</Tag>}
         extra={
           <>
-            <Button icon={<ReloadOutlined />} onClick={load} title="刷新" aria-label="刷新社区" />
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setPostOpen(true); }}>
-              发帖
-            </Button>
+            <Tooltip title="刷新"><Button icon={<ReloadOutlined />} onClick={load} aria-label="刷新社区" /></Tooltip>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openComposer}>发帖</Button>
           </>
         }
       />
 
-      {/* 骨架 C：主信息流 + 侧栏（不拉满宽度） */}
-      <div className="oo-read-shell">
-        <div>
-          <div className="oo-panel" style={{ marginBottom: 0 }}>
-            <div className="oo-toolbar">
+      {showAnnounce ? (
+        <Alert type="info" showIcon icon={<NotificationOutlined />} message={announce} closable onClose={closeAnnounce} />
+      ) : null}
+
+      {/* 三栏：话题导轨 / 信息流 / 侧栏。窄屏话题导轨收成信息流上方的横向标签条 */}
+      <div className="oo-read-shell oo-community-shell">
+        <nav className="oo-topic-rail" aria-label="话题">
+          <div className="oo-topic-rail-title">话题</div>
+          {topicButton(null)}
+          {topics.map(topicButton)}
+        </nav>
+
+        <div className="oo-community-feed">
+          <button type="button" className="oo-compose-prompt" onClick={openComposer}>
+            <UserAvatar user={user} size={34} />
+            <span>分享经验、提问或发一段代码……{activeTopic ? `（发到「${activeTopic.name}」）` : ""}</span>
+            <span className="oo-compose-prompt-icons" aria-hidden="true"><PictureOutlined /></span>
+          </button>
+
+          <div className="oo-topic-chips" role="group" aria-label="话题">
+            {topicButton(null)}
+            {topics.map(topicButton)}
+          </div>
+
+          <div className="oo-panel">
+            <div className="oo-toolbar oo-community-toolbar">
               <Segmented
+                value={feed}
+                onChange={(v) => patchParams({ feed: v })}
+                options={[
+                  { value: "all", label: "全部" },
+                  { value: "following", label: "关注的人" },
+                  { value: "favorited", label: "我的收藏" },
+                ]}
+              />
+              <div className="oo-toolbar-spacer" />
+              <Segmented
+                size="small"
                 value={sort}
                 onChange={(v) => patchParams({ sort: v })}
                 options={[
@@ -245,42 +325,20 @@ export default function CommunityPage() {
                   ...(isAdmin ? [{ value: "deleted", label: "已删除", icon: <DeleteOutlined /> }] : []),
                 ]}
               />
-              <Select
-                value={feed}
-                onChange={(v) => patchParams({ feed: v })}
-                style={{ width: 130 }}
-                options={[
-                  { value: "all", label: "全部讨论" },
-                  { value: "following", label: "只看关注" },
-                  { value: "favorited", label: "我的收藏" },
-                ]}
-              />
-              <Select
-                value={topicId || undefined}
-                onChange={(v) => patchParams({ topic_id: v || "" })}
-                allowClear
-                placeholder="全部话题"
-                style={{ width: 150 }}
-                options={topics.map((t) => ({ value: t.id, label: `${t.icon || ""} ${t.name}`.trim() }))}
-              />
-              <Input
+              <Input.Search
                 placeholder="搜索标题或正文"
                 allowClear
-                prefix={<SearchOutlined style={{ color: "var(--ink-3)" }} />}
-                style={{ width: 200 }}
-                onPressEnter={(e) => { setKeyword(e.target.value); setPage(1); }}
+                className="oo-community-search"
+                onSearch={(v) => { setKeyword(v.trim()); setPage(1); }}
                 onChange={(e) => { if (!e.target.value) { setKeyword(""); setPage(1); } }}
               />
             </div>
 
-            {announceEnabled && announce ? (
-              <Alert
-                type={status?.announcement_level === "error" ? "error" : status?.announcement_level === "warning" ? "warning" : "info"}
-                showIcon
-                icon={<NotificationOutlined />}
-                message={announce}
-                style={{ margin: 12 }}
-              />
+            {keyword ? (
+              <div className="oo-community-filter-note">
+                搜索「{keyword}」共 {posts.total} 条
+                <button type="button" className="oo-link-btn" onClick={() => { setKeyword(""); setPage(1); }}>清除</button>
+              </div>
             ) : null}
 
             {loadError ? (
@@ -300,13 +358,15 @@ export default function CommunityPage() {
               empty={
                 sort === "deleted"
                   ? "回收站为空，暂无已删除帖子"
-                  : feed === "following"
-                    ? "你关注的人还没有发帖；去社区逛逛，关注几个感兴趣的作者"
-                    : feed === "favorited"
-                      ? "还没有收藏的帖子"
-                      : topicId
-                        ? "这个话题下还没有帖子，来发第一帖"
-                        : "社区还没有内容，点击右上角「发帖」开启第一帖"
+                  : keyword
+                    ? "没有搜到相关帖子，换个关键词试试"
+                    : feed === "following"
+                      ? "你关注的人还没有发帖；去社区逛逛，关注几个感兴趣的作者"
+                      : feed === "favorited"
+                        ? "还没有收藏的帖子"
+                        : topicId
+                          ? "这个话题下还没有帖子，来发第一帖"
+                          : "社区还没有内容，点击右上角「发帖」开启第一帖"
               }
               onOpen={(p) => navigate(`/community/${p.id}`)}
               // 后端对普通用户是「status=1 或 自己发的」，所以**自己删掉/被隐藏的帖子
@@ -317,98 +377,63 @@ export default function CommunityPage() {
             />
 
             {posts.total > 20 ? (
-              <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 14px", gap: 8 }}>
+              <div className="oo-community-pager">
                 <Button size="small" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>上一页</Button>
-                <span style={{ fontSize: 12, color: "var(--ink-3)", alignSelf: "center" }}>
-                  第 {page} / {Math.ceil(posts.total / 20)} 页
-                </span>
-                <Button size="small" disabled={page >= Math.ceil(posts.total / 20)} onClick={() => setPage((p) => p + 1)}>下一页</Button>
+                <span className="oo-num">第 {page} / {totalPages} 页</span>
+                <Button size="small" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>下一页</Button>
               </div>
             ) : null}
           </div>
         </div>
 
-        {/* 侧栏：话题 / 热榜（复用 RankBar 的数据形态但用列表更省高度） */}
         <aside className="oo-read-aside">
-          <div className="oo-aside-card">
-            <div className="oo-section-title" style={{ marginBottom: 8 }}>
-              <TagsOutlined /> 话题
+          <div className="oo-aside-card oo-community-me">
+            <div className="oo-community-me-head">
+              <UserAvatar user={user} size={40} />
+              <div style={{ minWidth: 0 }}>
+                <div className="oo-truncate" style={{ fontWeight: 600 }}>{user?.display_name || user?.username}</div>
+                <a className="oo-desc" onClick={() => navigate(`/u/${user?.id}`)} role="link" tabIndex={0}>我的主页 →</a>
+              </div>
             </div>
-            <Space size={[6, 6]} wrap>
-              <Tag
-                style={{ cursor: "pointer" }}
-                color={topicId ? undefined : "blue"}
-                onClick={() => patchParams({ topic_id: "" })}
-              >
-                全部
-              </Tag>
-              {topics.map((t) => (
-                <Tag
-                  key={t.id}
-                  style={{ cursor: "pointer" }}
-                  color={topicId === t.id ? "blue" : undefined}
-                  onClick={() => patchParams({ topic_id: t.id })}
-                >
-                  {t.icon ? `${t.icon} ` : ""}{t.name}
-                  <span style={{ color: "var(--ink-3)", marginLeft: 4 }}>{t.post_count}</span>
-                </Tag>
+            <div className="oo-community-me-stats">
+              {[
+                ["帖子", summary?.posts, () => navigate(`/u/${user?.id}`)],
+                ["获赞", summary?.likes_received, () => navigate(`/u/${user?.id}`)],
+                ["收藏", summary?.favorites, () => patchParams({ feed: "favorited" })],
+                ["关注", summary?.following, () => patchParams({ feed: "following" })],
+              ].map(([label, value, onClick]) => (
+                <button key={label} type="button" onClick={onClick}>
+                  <b className="oo-num">{value ?? "—"}</b>
+                  <span>{label}</span>
+                </button>
               ))}
-            </Space>
+            </div>
+            <Button block icon={<MessageOutlined />} onClick={() => navigate("/messages")}>私聊与群聊</Button>
           </div>
-
-          {/* 平台修复进度（实时待办 + 维护调用流，公开数据）—— 在热门讨论上面 */}
-          <BuildLogCard />
 
           <div className="oo-aside-card">
             <div className="oo-section-title" style={{ marginBottom: 6 }}>
               <FireOutlined /> 热门讨论
             </div>
             {hotPosts.length ? (
-              <List
-                size="small"
-                split={false}
-                dataSource={hotPosts}
-                renderItem={(p, i) => (
-                  <List.Item
-                    style={{ padding: "5px 0", cursor: "pointer", border: 0 }}
-                    onClick={() => navigate(`/community/${p.id}`)}
-                  >
-                    <div style={{ display: "flex", gap: 8, minWidth: 0, width: "100%" }}>
-                      <span
-                        className="oo-num"
-                        style={{
-                          width: 16,
-                          flexShrink: 0,
-                          color: i < 3 ? "var(--accent-ink)" : "var(--ink-3)",
-                          fontWeight: i < 3 ? 600 : 400,
-                          fontSize: 12,
-                        }}
-                      >
-                        {i + 1}
-                      </span>
-                      <span className="oo-truncate" style={{ fontSize: 12.5, flex: 1 }}>{p.title}</span>
-                      <span className="oo-num" style={{ fontSize: 11, color: "var(--ink-3)", flexShrink: 0 }}>
-                        {fmtCompact(p.like_count || 0)}
-                      </span>
-                    </div>
-                  </List.Item>
-                )}
-              />
+              <ol className="oo-hot-list">
+                {hotPosts.map((p, i) => (
+                  <li key={p.id}>
+                    <button type="button" onClick={() => navigate(`/community/${p.id}`)}>
+                      <span className={`oo-hot-rank${i < 3 ? " is-top" : ""}`}>{i + 1}</span>
+                      <span className="oo-truncate">{p.title}</span>
+                      <span className="oo-hot-count oo-num">{fmtCompact(p.like_count || 0)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
             ) : (
               <div style={{ fontSize: 12, color: "var(--ink-3)" }}>暂无数据</div>
             )}
           </div>
 
-          <div className="oo-aside-card">
-            <div className="oo-section-title" style={{ marginBottom: 8 }}>
-              <TeamOutlined /> 我的社区
-            </div>
-            <Space direction="vertical" size={4} style={{ width: "100%", fontSize: 12.5 }}>
-              <a onClick={() => navigate(`/u/${user?.id}`)} style={{ cursor: "pointer" }}>我的主页与发帖</a>
-              <a onClick={() => patchParams({ feed: "favorited" })} style={{ cursor: "pointer" }}>我的收藏</a>
-              <a onClick={() => patchParams({ feed: "following" })} style={{ cursor: "pointer" }}>我关注的人</a>
-            </Space>
-          </div>
+          {/* 平台修复进度（实时待办 + 维护调用流，公开数据） */}
+          <BuildLogCard />
         </aside>
       </div>
 

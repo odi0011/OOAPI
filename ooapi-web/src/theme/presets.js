@@ -218,22 +218,109 @@ export const RADIUS_PRESETS = [
   { key: "round", label: "圆润", r: { window: "20px", card: "14px", btn: "10px", chip: "8px", xs: "6px" } },
 ];
 
+// control / cell 是交给 AntD 的控件高度与表格单元格内边距（ThemeContext 读取）。
+// 「紧凑」是站点默认档，取值与改版前 ConfigProvider 里写死的一致（30 / 10·12），
+// 否则没动过外观的用户会看到全站按钮、表格一起变样。
 export const DENSITY_PRESETS = [
   {
     key: "compact",
     label: "紧凑",
     sp: { 1: "3px", 2: "6px", 3: "10px", 4: "13px", 5: "16px", 6: "20px", 8: "26px", 10: "34px" },
+    control: { sm: 26, md: 30, lg: 36 },
+    cell: { block: 10, inline: 12 },
   },
   {
     key: "default",
     label: "标准",
     sp: { 1: "4px", 2: "8px", 3: "12px", 4: "16px", 5: "20px", 6: "24px", 8: "32px", 10: "40px" },
+    control: { sm: 28, md: 32, lg: 38 },
+    cell: { block: 12, inline: 14 },
   },
   {
     key: "loose",
     label: "宽松",
     sp: { 1: "6px", 2: "10px", 3: "15px", 4: "20px", 5: "25px", 6: "30px", 8: "40px", 10: "50px" },
+    control: { sm: 30, md: 36, lg: 42 },
+    cell: { block: 14, inline: 16 },
   },
+];
+
+export const FONT_SIZES = [13, 14, 15];
+
+/** 外观项 → localStorage 键（沿用历史键名，老用户的偏好不丢） */
+export const APPEARANCE_KEYS = {
+  background: "ooapi-bg",
+  radius: "ooapi-radius",
+  density: "ooapi-density",
+  fontSize: "ooapi-fontsize",
+};
+
+/** 站点默认外观的本地缓存：首帧就按站点默认渲染，而不是先按写死的默认值再跳变 */
+const SITE_CACHE_KEY = "ooapi-site-appearance";
+
+export const SITE_APPEARANCE_FALLBACK = {
+  background: "pure",
+  radius: "default",
+  density: "compact",
+  fontSize: 13,
+  accent: "",
+  user_custom: true,
+};
+
+export function isHexColor(v) {
+  return /^#[0-9a-fA-F]{6}$/.test(String(v || ""));
+}
+
+/**
+ * 外观值归一化：非法值丢弃（partial）或回落默认。
+ * 同时接受服务端的 font_size（下划线）与前端的 fontSize。
+ */
+export function normalizeAppearance(raw = {}, { partial = false } = {}) {
+  const out = {};
+  const pick = (key, value, ok) => {
+    if (value !== undefined && value !== null && value !== "" && ok(value)) out[key] = value;
+    else if (!partial) out[key] = SITE_APPEARANCE_FALLBACK[key];
+  };
+  pick("background", raw.background, (v) => BACKGROUNDS.some((b) => b.key === v));
+  pick("radius", raw.radius, (v) => RADIUS_PRESETS.some((p) => p.key === v));
+  pick("density", raw.density, (v) => DENSITY_PRESETS.some((p) => p.key === v));
+  const fsRaw = raw.fontSize ?? raw.font_size;
+  const fs = fsRaw === undefined || fsRaw === null || fsRaw === "" ? undefined : Number(fsRaw);
+  pick("fontSize", fs, (v) => FONT_SIZES.includes(v));
+  return out;
+}
+
+export function readSiteAppearanceCache() {
+  try {
+    const v = JSON.parse(localStorage.getItem(SITE_CACHE_KEY) || "null");
+    if (!v || typeof v !== "object") return SITE_APPEARANCE_FALLBACK;
+    return {
+      ...normalizeAppearance(v),
+      accent: isHexColor(v.accent) ? v.accent : "",
+      user_custom: v.user_custom !== false,
+    };
+  } catch {
+    return SITE_APPEARANCE_FALLBACK;
+  }
+}
+
+export function writeSiteAppearanceCache(site) {
+  try {
+    localStorage.setItem(SITE_CACHE_KEY, JSON.stringify(site));
+  } catch { /* ignore */ }
+}
+
+/**
+ * 一键方案：主题色 + 圆角 + 密度 + 底纹 + 字号的组合。
+ * 明暗模式不在方案里 —— 那是环境偏好（白天/夜里），不该被「换个风格」顺带改掉。
+ */
+export const THEME_SCHEMES = [
+  { key: "classic", label: "经典", desc: "默认观感", primary: "#3b6ef5", radius: "default", density: "compact", background: "pure", fontSize: 13 },
+  { key: "tool", label: "工具感", desc: "直角 · 紧凑 · 网格", primary: "#5b5bd6", radius: "sharp", density: "compact", background: "blueprint", fontSize: 13 },
+  { key: "soft", label: "柔和", desc: "圆润 · 标准间距", primary: "#7c5cd6", radius: "round", density: "default", background: "pure", fontSize: 14 },
+  { key: "fresh", label: "清新", desc: "青碧 · 点阵", primary: "#12a594", radius: "round", density: "default", background: "dots", fontSize: 14 },
+  { key: "reading", label: "舒适阅读", desc: "大字号 · 宽松", primary: "#30a46c", radius: "default", density: "loose", background: "pure", fontSize: 15 },
+  { key: "warm", label: "暖色", desc: "琥珀 · 微噪点", primary: "#c47f17", radius: "round", density: "compact", background: "grain", fontSize: 13 },
 ];
 
 /**
@@ -310,6 +397,23 @@ if (typeof window !== "undefined") {
       if (lastBackground && lastBackground !== "pure") applyAppearance({ background: lastBackground });
     }, 200);
   });
+}
+
+/**
+ * 首帧外观（main.jsx 在 React 挂载前调用）：站点默认（上次缓存）+ 本地覆盖。
+ * 与 ThemeContext 的合并规则一致；ThemeProvider 挂载后会按最新 /api/status 再应用一次。
+ */
+export function bootAppearance() {
+  const site = readSiteAppearanceCache();
+  const local = {};
+  for (const [k, storageKey] of Object.entries(APPEARANCE_KEYS)) {
+    try {
+      const v = localStorage.getItem(storageKey);
+      if (v) local[k] = v;
+    } catch { /* ignore */ }
+  }
+  const merged = site.user_custom ? { ...site, ...normalizeAppearance(local, { partial: true }) } : site;
+  applyAppearance(normalizeAppearance(merged));
 }
 
 export function applyAppearance(opt = {}) {

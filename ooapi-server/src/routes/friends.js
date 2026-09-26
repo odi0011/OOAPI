@@ -5,7 +5,9 @@
 //    这样双方都可以独立拥有对好友的「自定义备注名」（remark），不互相干扰。
 // ② 好友申请防刷：同一对用户在 status=0（待处理）时重复申请只更新留言与时间，
 //    不生成多条垃圾记录。
-// ③ 实时推送联动：好友申请、同意申请、在线/离线状态通过 SSE (realtime.js)
+// ③ 互相申请直接成为好友：A 申请 B 时若 B 已有发给 A 的待处理申请，
+//    等价于 A 同意了 B —— 否则两边各挂一条「等待验证」，谁也不知道对方也在等。
+// ④ 实时推送联动：好友申请、同意申请、在线/离线状态通过 SSE (realtime.js)
 //    主动推送给对应在线连接，前端界面实时刷新红点。
 import { Router } from "express";
 import { pool } from "../db.js";
@@ -13,15 +15,10 @@ import { ok, fail, asyncHandler, now, idParam } from "../utils.js";
 import { notify } from "../services/notify-center.js";
 import { authRequired } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
-import { push, pushMany, onlineUserIds, isOnline } from "../services/realtime.js";
+import { push, isOnline } from "../services/realtime.js";
+import { openSingleRoom, avatarUrlOf } from "../services/chat-rooms.js";
 
 const router = Router();
-
-/** 单聊唯一键计算工具（两个用户 id 升序拼接） */
-function singleKey(a, b) {
-  const [x, y] = [Number(a) || 0, Number(b) || 0].sort((m, n) => m - n);
-  return `${x}:${y}`;
-}
 
 /** 用户简要公开信息查询 */
 async function userBrief(id) {
@@ -34,11 +31,40 @@ async function userBrief(id) {
     id: Number(u.id),
     username: u.username,
     display_name: u.display_name,
-    avatar_url: Number(u.avatar_media_id) ? `/api/media/avatar/${u.id}?v=${u.avatar_media_id}` : "",
+    avatar_url: avatarUrlOf(u),
     bio: u.bio || "",
     status: Number(u.status),
     online: isOnline(u.id),
   };
+}
+
+/**
+ * 建立双向好友关系并通知发起方（手动同意与「互相申请」共用）。
+ * 同时把两个方向上仍待处理的申请都标记为已同意 —— 否则对方那条申请
+ * 会一直挂在「新的朋友」里，点同意时报「对方已经是您的好友」。
+ */
+async function makeFriends(me, otherId) {
+  const ts = now();
+  await pool.query(
+    `UPDATE friend_requests SET status = 1, handled_time = ?
+      WHERE status = 0 AND ((from_user_id = ? AND to_user_id = ?) OR (from_user_id = ? AND to_user_id = ?))`,
+    [ts, otherId, me.id, me.id, otherId]
+  );
+  // 如之前存在过 status=2 已删除记录，则重新置为 1（备注保留，重新加回来时不用再填）
+  await pool.query(
+    `INSERT INTO friendships (user_id, friend_id, status, created_time)
+     VALUES (?, ?, 1, ?), (?, ?, 1, ?)
+     ON DUPLICATE KEY UPDATE status = 1, created_time = VALUES(created_time)`,
+    [me.id, otherId, ts, otherId, me.id, ts]
+  );
+  // 落库通知发起方（离线可见，见下面 friend_request 的说明）+ SSE 实时推送
+  await notify({ userId: otherId, actorId: me.id, type: "friend_accept" }).catch((e) =>
+    console.warn(`[friends] 好友通过通知写入失败：${e.message}`)
+  );
+  push(otherId, "friend_accepted", {
+    by: { id: me.id, username: me.username, display_name: me.display_name },
+    at: ts,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -58,7 +84,6 @@ router.get(
       [req.user.id]
     );
 
-    const activeOnlineIds = new Set(onlineUserIds());
     const friends = rows.map((r) => {
       const fid = Number(r.friend_id);
       return {
@@ -67,9 +92,9 @@ router.get(
         display_name: r.display_name,
         remark: r.remark || "",
         title: r.remark || r.display_name || r.username,
-        avatar_url: Number(r.avatar_media_id) ? `/api/media/avatar/${fid}?v=${r.avatar_media_id}` : "",
+        avatar_url: avatarUrlOf({ id: fid, avatar_media_id: r.avatar_media_id }),
         bio: r.bio || "",
-        online: activeOnlineIds.has(fid),
+        online: isOnline(fid),
         created_time: Number(r.created_time),
       };
     });
@@ -107,18 +132,16 @@ router.get(
       [req.user.id]
     );
 
-    const activeOnlineIds = new Set(onlineUserIds());
-
     const inList = incoming.map((r) => ({
       id: Number(r.id),
       from_user_id: Number(r.from_user_id),
       username: r.username,
       display_name: r.display_name,
-      avatar_url: Number(r.avatar_media_id) ? `/api/media/avatar/${r.from_user_id}?v=${r.avatar_media_id}` : "",
+      avatar_url: avatarUrlOf({ id: r.from_user_id, avatar_media_id: r.avatar_media_id }),
       bio: r.bio || "",
       message: r.message || "",
       status: Number(r.status),
-      online: activeOnlineIds.has(Number(r.from_user_id)),
+      online: isOnline(r.from_user_id),
       created_time: Number(r.created_time),
     }));
 
@@ -127,7 +150,7 @@ router.get(
       to_user_id: Number(r.to_user_id),
       username: r.username,
       display_name: r.display_name,
-      avatar_url: Number(r.avatar_media_id) ? `/api/media/avatar/${r.to_user_id}?v=${r.avatar_media_id}` : "",
+      avatar_url: avatarUrlOf({ id: r.to_user_id, avatar_media_id: r.avatar_media_id }),
       bio: r.bio || "",
       message: r.message || "",
       status: Number(r.status),
@@ -144,12 +167,42 @@ router.get(
 );
 
 // ---------------------------------------------------------------------------
-// 3. 发送好友申请
+// 3. 与某人的关系（个人主页 / 资料卡的按钮状态用）
+//    none | friend | pending_out（我已申请）| pending_in（对方申请了我）| self
+// ---------------------------------------------------------------------------
+router.get(
+  "/relation/:id",
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const otherId = idParam(req);
+    if (!otherId) return fail(res, "用户不存在", 404);
+    if (otherId === req.user.id) return ok(res, { relation: "self" });
+    const [[f]] = await pool.query(
+      "SELECT remark FROM friendships WHERE user_id = ? AND friend_id = ? AND status = 1",
+      [req.user.id, otherId]
+    );
+    if (f) return ok(res, { relation: "friend", remark: f.remark || "" });
+    const [[pending]] = await pool.query(
+      `SELECT id, from_user_id FROM friend_requests
+        WHERE status = 0 AND ((from_user_id = ? AND to_user_id = ?) OR (from_user_id = ? AND to_user_id = ?))
+        ORDER BY id DESC LIMIT 1`,
+      [req.user.id, otherId, otherId, req.user.id]
+    );
+    if (pending) {
+      const mine = Number(pending.from_user_id) === req.user.id;
+      return ok(res, { relation: mine ? "pending_out" : "pending_in", request_id: Number(pending.id) });
+    }
+    return ok(res, { relation: "none" });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// 4. 发送好友申请
 // ---------------------------------------------------------------------------
 router.post(
   "/requests",
-  rateLimit({ windowMs: 60_000, max: 20, keyPrefix: "friend-req", keyFn: (r) => r.user?.id || r.ip }),
   authRequired,
+  rateLimit({ windowMs: 60_000, max: 20, keyPrefix: "friend-req", keyFn: (r) => r.user?.id || r.ip }),
   asyncHandler(async (req, res) => {
     const toUserId = Number(req.body?.to_user_id) || 0;
     if (!toUserId) return fail(res, "请选择要添加的用户");
@@ -165,7 +218,19 @@ router.post(
     );
     if (alreadyFriend) return fail(res, "对方已经是您的好友");
 
-    const message = String(req.body?.message || "").trim().slice(0, 200);
+    // 对方已经申请过我：直接成为好友（见文件头 ③）
+    const [[reverse]] = await pool.query(
+      "SELECT id FROM friend_requests WHERE from_user_id = ? AND to_user_id = ? AND status = 0 LIMIT 1",
+      [toUserId, req.user.id]
+    );
+    if (reverse) {
+      await makeFriends(req.user, toUserId);
+      return ok(res, { id: Number(reverse.id), status: "accepted" }, "对方也申请过加你，已直接成为好友");
+    }
+
+    const raw = String(req.body?.message || "").trim();
+    if (raw.length > 200) return fail(res, `验证消息最长 200 字，当前 ${raw.length} 字`);
+    const message = raw;
 
     // 查看是否有历史待处理记录，防重复插入
     const [[existing]] = await pool.query(
@@ -194,11 +259,14 @@ router.post(
     // 「小号给主号发申请，主号通知页 0 条……不是我主动去翻那个五步路径，
     //   永远不知道有人加我。」SSE 只覆盖"此刻在线"的人，离线用户彻底错过。
     // 与社区通知同一套（notify 内部会顺带发 SSE，两者不冲突）。
-    await notify({
-      userId: toUserId,
-      actorId: req.user.id,
-      type: "friend_request",
-    }).catch((e) => console.warn(`[friends] 好友申请通知写入失败：${e.message}`));
+    // 重复申请（existing）不再重复落库：只更新留言，避免对方通知页被同一个人刷屏。
+    if (!existing) {
+      await notify({
+        userId: toUserId,
+        actorId: req.user.id,
+        type: "friend_request",
+      }).catch((e) => console.warn(`[friends] 好友申请通知写入失败：${e.message}`));
+    }
 
     // SSE 实时通知接收方
     push(toUserId, "friend_request", {
@@ -212,12 +280,12 @@ router.post(
       created_time: now(),
     });
 
-    return ok(res, { id: reqId }, "好友申请已发送");
+    return ok(res, { id: reqId, status: "pending" }, "好友申请已发送");
   })
 );
 
 // ---------------------------------------------------------------------------
-// 4. 处理好友申请（同意 / 拒绝）
+// 5. 处理好友申请（同意 / 拒绝）
 // ---------------------------------------------------------------------------
 router.put(
   "/requests/:id",
@@ -237,46 +305,37 @@ router.put(
     if (!["accept", "reject"].includes(action)) return fail(res, "无效的操作类型");
 
     const fromUserId = Number(record.from_user_id);
-    const ts = now();
 
     if (action === "accept") {
-      // 1. 更新申请状态
-      await pool.query("UPDATE friend_requests SET status = 1, handled_time = ? WHERE id = ?", [ts, id]);
-
-      // 2. 双向添加好友关系（如之前存在过 status=2 已删除记录，则重新置为 1）
-      await pool.query(
-        `INSERT INTO friendships (user_id, friend_id, status, created_time)
-         VALUES (?, ?, 1, ?), (?, ?, 1, ?)
-         ON DUPLICATE KEY UPDATE status = 1, created_time = VALUES(created_time)`,
-        [req.user.id, fromUserId, ts, fromUserId, req.user.id, ts]
-      );
-
-      // 3. 落库通知发起方（离线可见，见上面 friend_request 的说明）+ SSE 实时推送
-      await notify({
-        userId: fromUserId,
-        actorId: req.user.id,
-        type: "friend_accept",
-      }).catch((e) => console.warn(`[friends] 好友通过通知写入失败：${e.message}`));
-
-      push(fromUserId, "friend_accepted", {
-        by: {
-          id: req.user.id,
-          username: req.user.username,
-          display_name: req.user.display_name,
-        },
-        at: ts,
-      });
-
+      // 申请人可能在等待期间被封禁：同意一个不可用账号只会产生一个点不开的好友
+      const peer = await userBrief(fromUserId);
+      if (!peer || peer.status !== 1) return fail(res, "对方账号已不可用", 404);
+      await makeFriends(req.user, fromUserId);
       return ok(res, { status: "accepted" }, "已同意好友申请");
-    } else {
-      await pool.query("UPDATE friend_requests SET status = 2, handled_time = ? WHERE id = ?", [ts, id]);
-      return ok(res, { status: "rejected" }, "已拒绝好友申请");
     }
+    await pool.query("UPDATE friend_requests SET status = 2, handled_time = ? WHERE id = ?", [now(), id]);
+    return ok(res, { status: "rejected" }, "已拒绝好友申请");
+  })
+);
+
+// 撤回自己发出、对方尚未处理的申请（status=3 已撤回；前端「我发出的」据此显示）
+router.delete(
+  "/requests/:id",
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const id = idParam(req);
+    if (!id) return fail(res, "申请记录不存在", 404);
+    const [ret] = await pool.query(
+      "UPDATE friend_requests SET status = 3, handled_time = ? WHERE id = ? AND from_user_id = ? AND status = 0",
+      [now(), id, req.user.id]
+    );
+    if (!ret.affectedRows) return fail(res, "申请不存在或已被处理", 404);
+    return ok(res, null, "已撤回申请");
   })
 );
 
 // ---------------------------------------------------------------------------
-// 5. 修改好友备注名
+// 6. 修改好友备注名
 // ---------------------------------------------------------------------------
 router.put(
   "/:id/remark",
@@ -297,7 +356,7 @@ router.put(
 );
 
 // ---------------------------------------------------------------------------
-// 6. 删除好友（解除关系）
+// 7. 删除好友（解除关系）
 // ---------------------------------------------------------------------------
 router.delete(
   "/:id",
@@ -318,7 +377,7 @@ router.delete(
 );
 
 // ---------------------------------------------------------------------------
-// 7. 一键发起/打开与好友的单聊
+// 8. 一键发起/打开与好友的单聊
 // ---------------------------------------------------------------------------
 router.post(
   "/:id/chat",
@@ -326,26 +385,12 @@ router.post(
   asyncHandler(async (req, res) => {
     const friendId = idParam(req);
     if (!friendId) return fail(res, "用户不存在", 404);
-
-    const key = singleKey(req.user.id, friendId);
-    const [[exist]] = await pool.query("SELECT id FROM chat_rooms WHERE single_key = ? AND status = 1", [key]);
-
-    if (exist) {
-      return ok(res, { room_id: Number(exist.id) });
-    }
-
-    // 创建单聊房间
-    const r = await pool.query(
-      "INSERT INTO chat_rooms (type, name, owner_id, member_count, single_key, status, created_time) VALUES ('single', '', ?, 2, ?, 1, ?)",
-      [req.user.id, key, now()]
-    );
-    const roomId = Number(r[0].insertId);
-    await pool.query(
-      "INSERT INTO chat_room_members (room_id, user_id, role, joined_time) VALUES (?, ?, 'member', ?), (?, ?, 'member', ?)",
-      [roomId, req.user.id, now(), roomId, friendId, now()]
-    );
-
-    return ok(res, { room_id: roomId });
+    if (friendId === req.user.id) return fail(res, "不能和自己发起私聊");
+    // 原实现不校验对方账号：传任意 id（含不存在/已封禁的）都会建出一个房间
+    const peer = await userBrief(friendId);
+    if (!peer || peer.status !== 1) return fail(res, "对方账号不可用", 404);
+    const r = await openSingleRoom(req.user.id, friendId);
+    return ok(res, { room_id: r.id, existed: r.existed });
   })
 );
 

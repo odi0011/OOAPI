@@ -283,6 +283,17 @@ export function publicStatus() {
     default_collapse_sidebar: getBoolOption("default_collapse_sidebar"),
     enable_theme_switch: getBoolOption("enable_theme_switch"),
     enable_primary_switch: getBoolOption("enable_primary_switch"),
+    // 站点默认外观（管理员在「外观设置」保存）。原先只写库不下发 ——
+    // 「保存为站点默认，对所有未个性化用户生效」实际对谁都不生效（普通用户读不到 /api/option）。
+    // 前端规则：用户本地调过的项优先；user_custom=false 时一律用站点默认。
+    appearance: {
+      background: getOption("theme_background") || "pure",
+      radius: getOption("theme_radius") || "default",
+      density: getOption("theme_density") || "compact",
+      font_size: getNumberOption("theme_font_size") || 13,
+      accent: getOption("theme_accent") || "",
+      user_custom: getOption("theme_user_custom") !== "false",
+    },
     home_content: getOption("home_content"),
     home_show_models: getBoolOption("home_show_models"),
     home_show_pricing: getBoolOption("home_show_pricing"),

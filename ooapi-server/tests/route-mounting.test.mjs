@@ -84,7 +84,7 @@ console.log("\n=== ④ 关键挂载点的回归锚点（这几条各自出过或
 for (const [prefix, why] of [
   ["/api/dashboard", "数据看板（新用户第一个落地页）——曾漏挂载导致全站 404"],
   ["/api/community", "社区"],
-  ["/api/chatroom", "私信与群聊频道"],
+  ["/api/chatroom", "私聊与群聊"],
   ["/api/friends", "好友系统（已重构并替代旧小游戏）"],
   ["/v1", "对外网关（OpenAI 协议）"],
 ]) {
@@ -95,6 +95,14 @@ for (const [prefix, why] of [
 
 t("小游戏路由 /api/games 已彻底下线未挂载", () => {
   ck(!index.includes('"/api/games"'), "/api/games 仍残留在挂载或白名单中");
+});
+
+t("频道体系（/chatroom/guilds）已下线：路由与新装建表都不再存在", () => {
+  const cr = read("src/routes/chatroom.js");
+  const db = read("src/db.js");
+  ck(!/"\/guilds"/.test(cr), "chatroom.js 仍声明了 /guilds 路由");
+  ck(!/CREATE TABLE IF NOT EXISTS community_guilds/.test(db), "db.js 仍会在新装时建 community_guilds");
+  ck(/retireGuildRooms/.test(db), "缺少遗留频道房间的软解散迁移（老库会在会话列表里冒出频道房间）");
 });
 
 /* ===========================================================================

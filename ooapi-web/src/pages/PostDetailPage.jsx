@@ -171,6 +171,17 @@ export default function PostDetailPage() {
     }
   };
 
+  // 私信作者：频道下线后，「看到帖子 → 找作者细聊」是私聊最主要的入口
+  const messageAuthor = async () => {
+    if (!post?.user_id) return;
+    try {
+      const r = await API.post(`/friends/${post.user_id}/chat`, {});
+      navigate(`/messages/${r.room_id}`);
+    } catch (e) {
+      message.error(e.message);
+    }
+  };
+
   const sendComment = async () => {
     const content = input.trim();
     // 纯图评论也允许（「这张图你看」是很常见的用法），所以判据是「有字或有图」
@@ -390,16 +401,18 @@ export default function PostDetailPage() {
                   </div>
                 </Link>
                 {!isOwner && me ? (
-                  <Button
-                    size="small"
-                    type={post?.author_followed ? "default" : "primary"}
-                    icon={<UserAddOutlined />}
-                    loading={acting}
-                    onClick={toggleFollow}
-                    style={{ marginLeft: "auto" }}
-                  >
-                    {post?.author_followed ? "已关注" : "关注"}
-                  </Button>
+                  <Space size={6} style={{ marginLeft: "auto" }}>
+                    <Button size="small" icon={<MessageOutlined />} onClick={messageAuthor}>私信</Button>
+                    <Button
+                      size="small"
+                      type={post?.author_followed ? "default" : "primary"}
+                      icon={<UserAddOutlined />}
+                      loading={acting}
+                      onClick={toggleFollow}
+                    >
+                      {post?.author_followed ? "已关注" : "关注"}
+                    </Button>
+                  </Space>
                 ) : null}
               </div>
 
@@ -751,10 +764,23 @@ export default function PostDetailPage() {
         </div>
 
         <aside className="oo-read-aside">
-          <div className="oo-aside-card">
-            <div className="oo-section-title" style={{ marginBottom: 8 }}>关于本帖</div>
+          <div className="oo-aside-card oo-community-me">
+            <Link to={`/u/${post?.author?.id}`} className="oo-community-me-head" style={{ color: "inherit" }}>
+              <UserAvatar user={post?.author} size={40} />
+              <div style={{ minWidth: 0 }}>
+                <div className="oo-truncate" style={{ fontWeight: 600 }}>{post?.author?.display_name || post?.author?.username}</div>
+                <div className="oo-desc">@{post?.author?.username}</div>
+              </div>
+            </Link>
+            {!isOwner && me ? (
+              <div style={{ display: "flex", gap: 8 }}>
+                <Button block type={post?.author_followed ? "default" : "primary"} icon={<UserAddOutlined />} loading={acting} onClick={toggleFollow}>
+                  {post?.author_followed ? "已关注" : "关注"}
+                </Button>
+                <Button block icon={<MessageOutlined />} onClick={messageAuthor}>私信</Button>
+              </div>
+            ) : null}
             <div style={{ fontSize: 12.5, color: "var(--ink-3)", lineHeight: 1.9 }}>
-              <div>作者：{post?.author?.display_name || post?.author?.username}</div>
               <div>发布于：{fmtDate(post?.created_time, "YYYY-MM-DD HH:mm")}</div>
               <div>浏览：{fmtCompact(post?.view_count || 0)}</div>
             </div>
