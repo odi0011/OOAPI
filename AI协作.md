@@ -4930,6 +4930,63 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
   本批的所有服务端改动都以「幂等 + 只补缺」为原则（守护按进程存活判缺、
   资料脚本可重复执行、fb4.mjs 改动前做了 md5 防覆盖核对），两边的改动没有互相覆盖。
 
+<br>
+
+| 2026-09-26 | **第 77 批 · 审查 P2 收尾（索引/公示名单）+ 新增 Zcode / AutoClaw 反代厂商 + 上线**。
+
+  **一、第 76 批审查遗留的 P2 修复（已上线）**
+
+  1. **logs.token_name 加索引**（`idx_logs_token_name`）：/api/buildlog 按令牌前缀查
+     维护流量，公开接口 + 前端 15s 轮询，此前是全表扫描。建表语句与 INDEX_MIGRATIONS
+     两处都改了（老库靠迁移补，幂等忽略 ER_DUP_KEYNAME）。
+  2. **公示令牌名单收紧**：buildlog.js 优先按 `options.buildlog_state.tokens`
+     **精确名单**查维护调用（监工脚本维护），名单为空才退回 fb4*/cc* 前缀匹配 ——
+     前缀匹配的误伤面（普通用户自起令牌名撞上就把自己的调用流公示出去）由此关闭。
+     SQL 占位符与参数严格一一对应（maintWhere 返回 [where, params]）。
+
+  **二、新增两个反代厂商（按 Cline/Trae/Cursor 的工具反代规范）**
+
+  | 厂商 | 凭据 | 上游 | 说明 |
+  |---|---|---|---|
+  | **Zcode** | ZCode CLI 的 `%USERPROFILE%\.zcode\v2\credentials.json`（扁平键值对） | `https://api.z.ai/api/coding/paas/v4`（实测 401 确认路径） | 平台自动挑 coding-plan 的 api-key（长期有效），没有再用 oauth:zai:access_token；vendor 归 zhipu（跑的是真 GLM），定价复用已有 GLM 价目 |
+  | **AutoClaw** | 智谱开放平台 API Key（id.secret，AutoClaw 初始化时填的那把） | `https://open.bigmodel.cn/api/paas/v4`（实测 401 确认） | AutoClaw 是智谱的 OpenClaw 部署工具，其"国内模型镜像代理"就是 bigmodel；凭据 JSON 的 endpoint 字段可切国际端点 |
+
+  落点齐全：channel-types.js（OAUTH_METHODS + PROVIDERS + CRED_SPEC + LOCAL_LOGIN_GUIDE）、
+  router.js ADAPTERS、upstream/zcode.js + upstream/autoclaw.js（薄适配器，对话复用
+  openai-compat，**刻意不注入**指纹头 —— 官方 API 面没有 WorkBuddy 那类要求）、
+  VendorIcon.jsx（复用 zhipu.svg，两家都是智谱产品）、cred-spec.test.mjs 登记适配器文件、
+  新增 tests/zcode.test.mjs（15 项）与 tests/autoclaw.test.mjs（12 项，真实 HTTP 假上游）。
+
+  **门禁**：node --check 全部通过；npm test 全绿（exit 0）；adapter-registry 23/23、
+  vendor-icons 5/5、local-login 82/82、pricing-coverage 57/57、cred-spec 13/13；
+  vite build 通过。gateway-smoke 三协议部署后 9/9。
+
+  **三、本地跑门禁的一个假障碍（值得记住）**
+
+  npm test 在本机（Windows）失败于 rate-limit-429 的「未找到重试循环」——
+  正则 `\n  }\n}` 匹配不了 **CRLF 行尾**的文件。根因不是代码回归：
+  本机 git checkout 被 core.autocrlf 转成了 CRLF，而该门禁在服务器（LF）上一直全绿。
+  处置：还原文件行尾、不改动任何内容。教训：**在 Windows 本机跑「对源码做形状断言」
+  的测试前，先确认 checkout 的行尾策略**，别把环境差异当成回归。
+
+  **四、上线记录**
+
+  管理员登录（odi）→ POST /api/update/apply → 备份/拉取/构建/迁移/重启全部完成，
+  stamp=144cca8，/api/status 与 /api/buildlog 均 200，公开厂商清单已含 zcode/autoclaw。
+  部署期间无 CC 修复进程在跑（先检查后部署）。
+
+  **五、守护（fb4.service）首日事故与修复（工具侧，/root/fb4_supervisor.sh）**
+
+  上线后核查发现车队只剩 4/10，且守护从 16:16 到 19:13 长达 3 小时既没补人也没写日志
+  （19:13 的 4 个是主线监工会话手动拉起的）。守护进程 systemd 显示 active、循环在 sleep，
+  但补人路径卡死 —— 缺超时保护的操作（探活候选循环最坏 40×30s、mysql 无连接超时）
+  会把整个循环占住，而「active」完全看不出来。修法（已部署并验证）：
+  ① mysql 一律 `--connect-timeout=10`；② 探活加 90s 总时限；
+  ③ 启动子线改 `( cd && exec ... ) & disown`（不留中间 bash）；
+  ④ 每 10 个循环写心跳（在跑 N/10）。重启后 20:00-20:01 错峰补齐 6 个缺失人格，
+  车队回到 **10/10**，gateway-smoke 全绿。教训：**常驻脚本的"活着"必须用日志心跳证明，
+  systemd 的 active 只说明进程在，不说明循环在转。**
+
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 
 > 目标：把开源社区已有的「网页版反代 / 工具类反代」按**厂商**归类接入平台，
