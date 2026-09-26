@@ -1085,10 +1085,17 @@ router.get(
     }
 
     const lastError = rt.last_error || r.last_error || "";
-    // 「需要人工重新登录」的判定：认证类错误 + 冷却中，或本来就缺凭据
+    // 「需要人工重新登录」的判定：认证类错误 + 冷却中，或本来就缺凭据。
+    //
+    // 例外（2026-09-26）：CHANNEL_NOT_APPROVED（上游把账号标记为未批准/风控拦截，
+    // WorkBuddy 11128/11140 实测）**不是凭据问题** —— 它的报错里带 HTTP 403 字样，
+    // 会命中下面的正则，把管理员引进「重新绑定」的死胡同（实测同一账号连绑 4 次、
+    // 每次都 403，凭据明明是好的）。有该 code 时明确判定为不需要重登。
+    const notApproved = String(r.last_error_code || "") === "CHANNEL_NOT_APPROVED";
     const needsRelogin =
-      /AUTH|401|403|失效|过期|未配置|无效|重新登录|验证/i.test(String(lastError)) ||
-      (!r.api_key && !other.profile && method !== "api");
+      !notApproved &&
+      (/AUTH|401|403|失效|过期|未配置|无效|重新登录|验证/i.test(String(lastError)) ||
+        (!r.api_key && !other.profile && method !== "api"));
 
     return ok(res, {
       id: r.id,
@@ -1113,7 +1120,15 @@ router.get(
       // 本机浏览器登录指引（凭据在自己浏览器里的位置 + 可选的取码一行）。
       // 放在这里是为了让「重新登录」弹窗也能给分步说明 —— 否则它只能丢一句
       // 「粘贴登录态」，用户不知道该从哪抄（新增渠道面板用的是同一份数据）。
-      localLogin: { ...(localLoginGuide(r.type, method) || {}), entryUrl: mCfg.entryUrl || "" },
+      localLogin: (() => {
+        const guide = { ...(localLoginGuide(r.type, method) || {}), entryUrl: mCfg.entryUrl || "" };
+        // WorkBuddy 的登录页按账号 realm 分域（域错了会被网关 401，见 workbuddy.js 的说明）：
+        // 渠道凭据里存了 realm，找回时按它给出对的登录入口。
+        if (r.type === "workbuddy" && String(other.realm || "") === "cn") {
+          guide.entryUrl = "https://www.codebuddy.cn/";
+        }
+        return guide;
+      })(),
     });
   })
 );

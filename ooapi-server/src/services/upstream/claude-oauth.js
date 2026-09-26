@@ -13,6 +13,7 @@
 //      否则订阅 OAuth 会被拒绝（这是官方 CLI 的协议要求）。
 // ---------------------------------------------------------------------------
 import { normalizeContentToText } from "./content-text.js";
+import { isNotApprovedResponse } from "./http-error.js";
 import crypto from "node:crypto";
 import { claudeIdentity, CLI_VERSIONS } from "./cli-profile.js";
 import { persistOtherPatch, loadOther, withRefreshLock } from "./auth-store.js";
@@ -310,7 +311,10 @@ export async function chat({
       /* 保留原始文本 */
     }
     const code =
-      resp.status === 401
+      // 「账号未批准/风控标记」优先：这类标记不是凭据失效（见 http-error.js 的说明）
+      isNotApprovedResponse(text)
+        ? "CHANNEL_NOT_APPROVED"
+        : resp.status === 401
         ? "CHANNEL_AUTH_EXPIRED"
         : resp.status === 429
           ? "CHANNEL_RATE_LIMIT"

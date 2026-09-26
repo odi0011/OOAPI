@@ -16,6 +16,7 @@
 //   SSE 事件：response.output_text.delta、response.reasoning_summary_text.delta、response.completed
 // ---------------------------------------------------------------------------
 import { normalizeContentToText } from "./content-text.js";
+import { isNotApprovedResponse } from "./http-error.js";
 import { codexIdentity, CLI_VERSIONS } from "./cli-profile.js";
 import { persistOtherPatch, loadOther, withRefreshLock } from "./auth-store.js";
 import {
@@ -386,7 +387,11 @@ export async function chat({
         });
       }
       const code =
-        resp.status === 401
+        // 「账号未批准/风控标记」优先：11128/11140 这类标记不是凭据失效，
+        // 归错类会让管理员反复重绑无效凭据（见 http-error.js 的说明）。
+        isNotApprovedResponse(text)
+          ? "CHANNEL_NOT_APPROVED"
+          : resp.status === 401
           ? "CHANNEL_AUTH_EXPIRED"
           : resp.status === 429
             ? "CHANNEL_RATE_LIMIT"

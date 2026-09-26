@@ -21,7 +21,33 @@ export const UPSTREAM_ERROR = {
   RATE_LIMITED: "CHANNEL_RATE_LIMITED", // 限流/风控 → 可自愈，冷却后重试
   FORBIDDEN: "CHANNEL_FORBIDDEN", // 权限不足（模型档位/账号权限）→ 换模型或换号
   HTTP_ERROR: "CHANNEL_HTTP_ERROR", // 其余
+  NOT_APPROVED: "CHANNEL_NOT_APPROVED", // 账号被上游标记为未批准渠道（2026-09-26 新增，见下）
 };
+
+/**
+ * 「账号被上游标记为未批准的调用渠道」的响应特征。
+ *
+ * 实测（2026-09-26，WorkBuddy/CodeBuddy）：腾讯对个人账号转 API 的风控分两档 ——
+ *   11128（400）Illegal API invocation from an unapproved channel
+ *   11140（403）request illegal +「内容未通过安全审核」displayMsg
+ * 关键事实：**凭据是有效的**（同一时段老账号的真实流量成功，新绑定账号首调被拦），
+ * 归成「凭据失效」会把管理员引进重新绑定的死胡同（实测连绑 4 次全部无效）。
+ * 正确姿势：可换渠道重试（别的账号可能没事）+ 长冷却（execute.cooldownFor 6h），
+ * 且不进 AUTO_PAUSE_CODES（自动恢复 T1 上线前，停了就回不来）。
+ */
+const NOT_APPROVED_HINTS = [
+  "11128",
+  "11140",
+  "unapproved channel",
+  "illegal api invocation",
+  "request illegal",
+];
+
+/** 该上游响应是否为「账号未批准/风控标记」类（与具体 HTTP 状态码无关：400/403 都出现过） */
+export function isNotApprovedResponse(body = "") {
+  const text = String(body || "").toLowerCase();
+  return NOT_APPROVED_HINTS.some((h) => text.includes(h));
+}
 
 /** 响应体里出现这些字样，说明是风控/验证页而不是 API 响应 */
 const WAF_HINTS = [
@@ -50,6 +76,15 @@ const PERMISSION_HINTS = ["permission", "forbidden", "insufficient", "not allowe
 export function classifyUpstreamHttp(status, body = "") {
   const text = String(body || "").toLowerCase();
   const waf = WAF_HINTS.some((h) => text.includes(h));
+
+  // 「账号未批准/风控标记」优先于一切状态码判断：400 和 403 都出现过（11128/11140），
+  // 放在 403 分支之后会被「凭据失效」吞掉 —— 那正是实测踩过的误归类。
+  if (isNotApprovedResponse(body)) {
+    return {
+      code: UPSTREAM_ERROR.NOT_APPROVED,
+      hint: "上游把该账号标记为未批准的调用渠道（风控拦截）：非凭据问题，重新绑定无效；建议稍后重试或更换账号",
+    };
+  }
 
   if (status === 429) {
     return {

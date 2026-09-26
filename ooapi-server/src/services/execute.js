@@ -33,6 +33,11 @@ const RETRYABLE = new Set([
   "CHANNEL_UPSTREAM_BUSY",
   // 403 权限不足（免费号用了付费模型档位）：换号或换模型可解，重抓凭据无效
   "CHANNEL_FORBIDDEN",
+  // 上游把该账号标记为「未批准的调用渠道」（WorkBuddy 11128/11140 实测，2026-09-26）：
+  // 账号级风控，凭据本身有效 —— 换个渠道（账号）往往就能过，重绑凭据无效。
+  // 长冷却见 cooldownFor（6h）；刻意**不进** AUTO_PAUSE_CODES：自动恢复（T1）
+  // 上线前，自动停用等于永久下线。
+  "CHANNEL_NOT_APPROVED",
 ]);
 
 export function isRetryable(code) {
@@ -314,6 +319,11 @@ function cooldownFor(code, err) {
     case "CHANNEL_WAF":
     case "UNSUPPORTED_CHANNEL":
     case "CHANNEL_CONFIG_ERROR":
+      return 21600;
+    // 账号被上游标记为「未批准渠道/风控拦截」：账号级状态，短时间内不会自愈，
+    // 但也不是死罪（腾讯对新账号的首次调用常见，等账号信誉爬上来就好了）——
+    // 与登录态失效同档 6h，期间流量由其他渠道承担。
+    case "CHANNEL_NOT_APPROVED":
       return 21600;
     case "CHANNEL_CAPTCHA":
       return 3600;

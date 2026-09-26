@@ -554,6 +554,9 @@ export const PROVIDERS = [
         adapter: "workbuddy",
         label: "WorkBuddy",
         desc: "粘贴桌面端登录凭据，走腾讯托管模型",
+        // 凭据失效时「重新登录」弹窗的「打开登录页」按钮就是它；
+        // 国内 realm（codebuddy.cn）在 /recovery 里按渠道凭据动态替换（见 routes/channel.js）。
+        entryUrl: "https://www.workbuddy.ai/",
         loginModes: ["paste"],
         loginFields: oauthCredentialField(
           '{ "access_token": "...", "device_token": "...", "user_id": "...", "enterprise_id": "可选" }',
@@ -870,6 +873,8 @@ export const PROVIDERS = [
         adapter: "cline",
         label: "Cline 账号（一键绑定）",
         desc: "设备授权绑定 Cline 账号，自动续期；无需手工找 token",
+        // 凭据失效时的重登入口（CRED_SPEC 指引里说的 app.cline.bot 就是它）
+        entryUrl: "https://app.cline.bot/",
         loginModes: ["paste"],
         loginFields: [],
         pasteHint: "粘贴 Cline 的 refreshToken（或包含它的完整 JSON）；也可直接用上方「一键绑定」",
@@ -1042,6 +1047,8 @@ export const PROVIDERS = [
         adapter: "autoclaw",
         label: "AutoClaw",
         desc: "填 AutoClaw 初始化时用的智谱 API Key",
+        // Key 失效/被删时「重新登录」弹窗直接带去建 Key 的页面
+        entryUrl: "https://open.bigmodel.cn/usercenter/apikeys",
         loginModes: ["paste"],
         loginFields: oauthCredentialField(
           '{ "api_key": "id.secret" }',

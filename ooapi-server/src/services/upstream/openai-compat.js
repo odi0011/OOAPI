@@ -432,13 +432,24 @@ async function chatOnce({
     } catch {
       /* 保留原始文本 */
     }
+    // 「上游把这个账号/渠道标记为未批准」（WorkBuddy/CodeBuddy 的 11128/11140 实测，2026-09-26）：
+    //   11128 Illegal API invocation from an unapproved channel（400）
+    //   11140 request illegal +「内容未通过安全审核」displayMsg（403）
+    // 这**不是凭据失效** —— 凭据有效、域也对，是腾讯对账号的风控标记
+    // （实测：同一时段老账号的真实流量成功，新绑定账号的第一次调用就被拦）。
+    // 归成 CHANNEL_AUTH_EXPIRED 的后果是灾难性的：auto_ban 直接停渠道 +
+    // 管理员被引导反复重新绑定（实测绑了 4 次，全部无效）。独立归类：
+    // 可换渠道重试（别的账号可能没事）+ 长冷却（6h，见 execute.cooldownFor），
+    // 且**不进 AUTO_PAUSE_CODES** —— 自动恢复（T1）上线前，停了就回不来。
+    const notApproved = /11128|11140|unapproved\s+channel|Illegal\s+API\s+invocation|request\s+illegal/i.test(text);
     // 400/404/409/422 是请求本身的问题（模型名错、上下文超长等），换渠道也没用；
     // 这类错误不可重试，直接抛给调用方，避免把健康渠道全部冷却。
     // 5xx 单独归类为 CHANNEL_UPSTREAM_BUSY：那是**上游自己过载**（DeepSeek 的
     // 「Service is too busy」、各家网关的 502/504），不是这个渠道的凭据或配置有问题。
     // 交给 chat() 的循环原地重试；重试仍失败才算渠道异常。
-    const code =
-      resp.status === 401 || resp.status === 403
+    const code = notApproved
+      ? "CHANNEL_NOT_APPROVED"
+      : resp.status === 401 || resp.status === 403
         ? "CHANNEL_AUTH_EXPIRED"
         : resp.status === 429
           ? "CHANNEL_RATE_LIMIT"
@@ -447,7 +458,11 @@ async function chatOnce({
             : [400, 404, 409, 413, 422].includes(resp.status)
               ? "CHANNEL_BAD_REQUEST"
               : "CHANNEL_HTTP_ERROR";
-    throw Object.assign(new Error(`上游返回 HTTP ${resp.status}：${msg}`), { code, status: resp.status });
+    const hint =
+      code === "CHANNEL_NOT_APPROVED"
+        ? "（上游风控/安全审核拦截该账号：非凭据问题，重新绑定无效；建议稍后重测或更换账号）"
+        : "";
+    throw Object.assign(new Error(`上游返回 HTTP ${resp.status}：${msg}${hint}`), { code, status: resp.status });
   }
   if (!resp.body) {
     throw Object.assign(new Error("上游未返回内容流"), { code: "CHANNEL_BAD_RESPONSE" });

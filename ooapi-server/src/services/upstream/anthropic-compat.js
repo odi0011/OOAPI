@@ -1,4 +1,5 @@
 import { normalizeContentToText } from "./content-text.js";
+import { isNotApprovedResponse } from "./http-error.js";
 // 上游适配器：Anthropic 兼容 API（API Key）
 // ===========================================================================
 // 用途：接入**任何 Anthropic Messages 协议**的第三方服务（官方 api.anthropic.com、
@@ -133,7 +134,10 @@ export async function chat({ channel, model, prompt, messages, thinkingOverride,
       /* 保留原始文本 */
     }
     const code =
-      resp.status === 401 || resp.status === 403
+      // 「账号未批准/风控标记」优先：这类标记不是凭据失效（见 http-error.js 的说明）
+      isNotApprovedResponse(text)
+        ? "CHANNEL_NOT_APPROVED"
+        : resp.status === 401 || resp.status === 403
         ? "CHANNEL_AUTH_EXPIRED"
         : resp.status === 429
           ? "CHANNEL_RATE_LIMIT"
