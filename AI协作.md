@@ -5144,6 +5144,34 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
   服务器裸克隆 `git fetch x.bundle` 后 `git push origin from-local:main`
   （服务器 `credential.helper=store` 里存有 GitHub 凭据，推送可用）。
 
+  **八、追加（同日）：全渠道体检（9 个，真实测试 + 额度 + 模型可服务性）**
+
+  逐渠道跑平台自带测试（POST /channel/:id/test）+ 额度查询 + 分组路由核对：
+
+  | 渠道 | 结果 | 说明 |
+  |---|---|---|
+  | 11 OD中转站（openai） | ✅ 1.6s | 健康 |
+  | 12 Google Gemini（antigravity） | ✅ 1.9s | 周窗口已用 28.5%，充足 |
+  | 45 OpenCode（GO 套餐） | ✅ 0.4s | **7d 窗口已用 73%**，留意 |
+  | 46 Cline key | ✅ 0.4s | 此前 CHANNEL_TIMEOUT 已被成功测试清除 |
+  | 48 OpenRouter | ✅ 0.5s | 之前的 429 free-models-per-day 已自愈 |
+  | 61 WorkBuddy | ✅ 1.0s | 积分 350；**绑定后 group_list 为空 → 不可路由**（已修，见下） |
+  | 7 网页反代（deepseek 网页） | ❌ 上游返回空内容 | 账号登录态失效或上游改版；需重新登录抓凭据；且它绑着已知坏组「1」 |
+  | 8 游客token反代（glm） | ❌ 未填写 API Key | glm-5.3 系列当前无渠道可用；补凭据或删除 |
+  | 47 DS手机号登录Key | ❌ 402 余额 0 CNY | 充值后可用 |
+
+  **发现并修复的关键配置缺口**：渠道 61 绑定成功后 `group_list=[]`（一键绑定流程
+  不带分组），而本平台令牌必须按分组路由 —— 空分组渠道对所有令牌不可达，这正是
+  gateway-smoke `NO_CHANNEL` 的直接原因（#42 删除后 deepseek-v4.1-flash 无测试组渠道）。
+  已通过 `PUT /api/channel {id:61, groups:["测试","DeepSeek"]}` 补绑，端到端实测
+  「测试」组令牌调 deepseek-v4.1-flash 返回 200，gateway-smoke 恢复 **9/9**。
+  **教训：一键绑定流程创建的渠道要带分组（或在绑定完成后提示补分组），
+  「渠道测试通过」≠「令牌路由得到」。**
+
+  **模型可服务性现状**：deepseek-v4.1-flash 由 61（测试/DeepSeek 组）+ 45（DeepSeek 组）
+  承担；deepseek-flash / deepseek-v4-pro（渠道 7/47 坏）与 glm-5.3 系列（渠道 8 死）
+  当前**无健康渠道**，需要管理员处理对应渠道。
+
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 
 > 目标：把开源社区已有的「网页版反代 / 工具类反代」按**厂商**归类接入平台，
