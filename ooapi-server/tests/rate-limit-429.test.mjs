@@ -90,11 +90,20 @@ t("限流分支只写 last_error/last_error_code，不碰 recent_calls", () => {
     "限流路径没有「只写错误信息、不碰 recent_calls」的 UPDATE"
   );
 });
-t("手动测试（routes/channel.js）同样跳过 429 的 recordChannelCall", () => {
-  ck(/if \(!rateLimited\) \{\s*\n\s*await recordChannelCall/.test(channelRoute), "手动测试没有跳过限流的最近调用记录");
+t("测试报错一律不写入最近调用（2026-09-27 扩大：原只跳过 429，现在所有测试失败都不记）", () => {
+  ck(!/recordChannelCall\(id, false/.test(channelRoute), "手动测试失败仍写入最近调用");
+  ck(!/recordChannelCall\(row\.id, false/.test(autotest), "定时检测失败仍写入最近调用");
+  // 成功路径的记录保留：小绿条表达「渠道干活干得怎么样」
+  ck(/recordChannelCall\(id, true/.test(channelRoute), "手动测试的成功记录被误删");
+  ck(/recordChannelCall\(row\.id, true/.test(autotest), "定时检测的成功记录被误删");
 });
-t("定时检测（autotest.js）同样跳过", () => {
-  ck(/if \(!rateLimited\) \{\s*\n\s*await recordChannelCall/.test(autotest), "定时检测没有跳过限流的最近调用记录");
+t("测试失败即关状态（共享判据 testFailurePauses，网络/超时/取消除外）", () => {
+  ck(/export function testFailurePauses\(/.test(router), "router 没有共享判据");
+  const m = router.match(/export const TEST_TRANSIENT_CODES = new Set\(\[([\s\S]*?)\]\)/);
+  ck(m, "没有瞬态例外集合");
+  ck(/CHANNEL_NETWORK/.test(m[1]) && /CHANNEL_TIMEOUT/.test(m[1]) && /CHANNEL_ABORTED/.test(m[1]), "瞬态例外集合缺码");
+  ck(/testFailurePauses\(ec\)/.test(channelRoute), "手动测试没用共享判据");
+  ck(/testFailurePauses\(ec\)/.test(autotest), "定时检测没用共享判据");
 });
 
 console.log("\n=== 3. 429 直接停用渠道，并带自动恢复时刻 ===");
@@ -217,8 +226,11 @@ t("文案是「上游 429 + 恢复时刻」（够短，不被列宽截断）", (
 });
 t("RateLimitRow 挂在额度列（余额那一行的下方）", () => {
   // 必须出现在 quota 列的 render 里：先 <QuotaInline/>，随后紧跟 rateLimitRow
+  // （2026-09-27：rateLimitRow 里并列了 ChannelErrorRow —— 测试报错不再记条条，
+  //   统一用红色小 tag 展示原始返回，与 429 的橙黄 pill 并排。）
   ck(
-    /const rateLimitRow = <RateLimitRow r=\{r\} \/>/.test(page) && /<QuotaInline quota=\{q\} stats=\{stats\} \/[\s\S]{0,60}\{rateLimitRow\}/.test(page),
+    /const rateLimitRow = \(\s*<>\s*<RateLimitRow r=\{r\} \/>\s*<ChannelErrorRow r=\{r\} \/>\s*<\/>\s*\)/.test(page) &&
+      /<QuotaInline quota=\{q\} stats=\{stats\} \/[\s\S]{0,60}\{rateLimitRow\}/.test(page),
     "RateLimitRow 不在额度列（或没排在 QuotaInline 之后）"
   );
 });

@@ -2,12 +2,12 @@
 // 说明：
 //   · 只有管理员显式打开 auto_test 的渠道才会被检测（默认关闭，避免刷上游额度）；
 //   · 单进程串行 + 渠道间 1.5s 间隔，避免整点同时打上游；
-//   · 成功重置冷却并更新响应时间；失败写 last_error 与红条，不自动禁用（保留人工决策）。
+//   · 成功重置冷却并更新响应时间；失败写 last_error（2026-09-27 起失败**不再写红条**，
+//     报错走额度列的错误 tag），并按 testFailurePauses 决定是否关状态。
 import { pool } from "../db.js";
 import { now } from "../utils.js";
-import { rowToChannel, getAdapter, recordChannelCall, resetChannelState, setChannelRateLimit } from "./router.js";
+import { rowToChannel, getAdapter, recordChannelCall, resetChannelState, setChannelRateLimit, testFailurePauses, isRateLimitedCode, rateLimitPauseSec } from "./router.js";
 import { probeChannel } from "./channel-probe.js";
-import { AUTO_PAUSE_CODES, isRateLimitedCode, rateLimitPauseSec } from "./router.js";
 
 const CHECK_TICK_MS = 60_000;
 
@@ -34,7 +34,6 @@ export async function runDueChannelTests() {
     // 否则繁忙渠道的定时检测会被每次真实调用不断推迟（等于几乎不检测）
     const last = Math.max(Number(row.last_test_time) || 0, 0);
     if (last && Math.floor(Date.now() / 1000) - last < interval) continue;
-    const t0 = Date.now();
     const prompt = String(row.test_prompt || "hi").trim() || "hi";
     try {
       const r = await runOne(row);
@@ -55,16 +54,12 @@ export async function runDueChannelTests() {
       resetChannelState(row.id);
       console.log(`[autotest] #${row.id}「${row.name}」通过（首Token ${r.ttftMs || r.ms}ms / 总 ${r.ms}ms）`);
     } catch (e) {
-      const ms = Date.now() - t0;
-      // 自动检测失败同样按错误性质决定是否自动暂停（与手动测试、用户调用同一口径）：
-      //   · 凭据失效/被封/配置错 → 停用（status=3，人工处理）；
-      //   · 上游 429 限流 → 也停用，但带 `rate_limit_until`，到点自动恢复；
-      //   · 网络抖动/超时 → 只记错误，不动状态。
-      // 三重保护与 router.markChannelError 一致：错误码白名单 + auto_ban 开关 + 仅启用中。
+      // 自动检测失败同样按错误性质决定是否自动暂停（与手动测试共享 testFailurePauses）：
+      // 2026-09-27 用户要求（扩大自 429 那条）：测试报错（429/403/502 等非正常上游响应）
+      // 直接把渠道状态关掉；例外：网络/超时/取消（没收到上游响应，一次抖动不停好渠道）。
       const ec = String(e.code || "");
-      const fatal = AUTO_PAUSE_CODES.has(ec);
       const rateLimited = isRateLimitedCode(ec);
-      const pause = (fatal || rateLimited) && row.auto_ban !== 0 && Number(row.status) === 1;
+      const pause = testFailurePauses(ec) && row.auto_ban !== 0 && Number(row.status) === 1;
       const until = rateLimited ? now() + rateLimitPauseSec(e.cooldownSec) : 0;
       await pool.query(
         pause
@@ -74,11 +69,9 @@ export async function runDueChannelTests() {
           ? [String(e.message).slice(0, 480), ec, now(), rateLimited ? until : 0, row.id]
           : [String(e.message).slice(0, 480), ec, now(), row.id]
       );
-      // 429 不计入「最近调用」（与 router.markChannelError / 手动测试同一口径）：
-      // 被限流挡回的请求根本没被处理，记进去只会把真实成功率的含义搞乱。
-      if (!rateLimited) {
-        await recordChannelCall(row.id, false, ms, e.message, { prompt, reply: e.message, kind: "auto" });
-      }
+      // 测试报错**一律不写「最近调用」条条**（2026-09-27 用户要求，原实现只排除了 429）：
+      // 测试不是真实流量，失败条会把调用记录的含义搞乱；报错统一走额度列的
+      // 小错误 tag（前端按 last_error 渲染）与这里的 last_error 落库。
       if (pause) {
         resetChannelState(row.id);
         // resetChannelState 会清掉限流标记，限流那条要在之后补回内存

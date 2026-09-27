@@ -220,7 +220,17 @@ export async function runCompletion({
         kind: "chat",
         // 最近调用里显示调用方（管理端头像+名字，点击复制邮箱）
         user,
+        // DeepSeek 托管端点的安全审核标注被剥离（vendor-quirks stripDsSafety）：
+        // 最近调用记 safe=1（tip 展示「触发了 safe 机制」），渠道上落 last_safe_at。
+        safe: result.safetyStripped ? 1 : undefined,
       }).catch((e) => console.warn(`[execute] 渠道统计更新失败：${e.message}`));
+      // 渠道级标记：最近一次触发 safe 的时刻（凭证列的小 tag 用）。
+      // JSON_SET 原位更新 other，不整包读改写；失败无碍主流程。
+      if (result.safetyStripped) {
+        pool
+          .query("UPDATE channels SET other = JSON_SET(other, '$.last_safe_at', ?) WHERE id = ?", [Date.now(), channel.id])
+          .catch(() => {});
+      }
       await persistProfile(channel, result);
       // codex-state-kit：命中「思考截断/降智」指纹时内容照常返回，但给渠道一个短冷却，
       // 让后续请求优先换号（避免连续拿到降智/过载响应）。

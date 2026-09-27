@@ -16,7 +16,7 @@
 //     https://dashscope.aliyuncs.com/compatible-mode → /compatible-mode/v1/chat/completions
 import { now, assertPublicUrlCached } from "../../utils.js";
 import { assertNoContentError } from "./content-error.js";
-import { applyVendorRequest, effectiveModelOf, reasoningDeltaOf, splitThinkTags } from "./vendor-quirks.js";
+import { applyVendorRequest, effectiveModelOf, reasoningDeltaOf, splitThinkTags, stripDsSafety, makeDsSafetyFilter } from "./vendor-quirks.js";
 
 // 一次性文本读取必须有上限：SSE 路径有单行 8MB 限制，JSON/错误兜底却直接 resp.text()，
 // 异常或恶意上游可以用超大响应把内存打爆。分块读取并在超限时取消响应体。
@@ -490,9 +490,12 @@ async function chatOnce({
     let content = typeof msg.content === "string" ? msg.content : "";
     // 兜底剥离正文里的 <think> 块（理由见流式分支的同名处理）
     const split = splitThinkTags(content);
+    // 剥离 DeepSeek 托管端点漏进正文的安全审核标注 <ds_safety>…（见 vendor-quirks.js）
+    const cleaned = stripDsSafety(split.content);
+    const safetyStripped = cleaned !== split.content;
+    content = cleaned;
     if (split.reasoning) {
       reasoning += split.reasoning;
-      content = split.content;
     }
     if (reasoning && onReasoning) onReasoning(reasoning);
     if (content && onDelta) onDelta(content);
@@ -508,6 +511,8 @@ async function chatOnce({
       upstreamModel: j?.model || model,
       // 方舟自动降级：非流式响应同样带 service_status
       billModel: effectiveModelOf(j),
+      // 上游安全审核标注被剥离（execute 据此在渠道上标记「触发过 safe」）
+      safetyStripped,
     };
   }
 
@@ -522,6 +527,11 @@ async function chatOnce({
   // 上游「实际生效」的模型（方舟自动降级时会与请求的 model 不同）。
   // 与 upstreamModel 分开：后者是上游回显的名字，前者是**该按谁计费**的依据。
   let fallbackModel = "";
+  // DeepSeek 托管端点偶发把安全审核标注 <ds_safety>… 混进正文（可能跨增量）：
+  // 用带状态的过滤器逐增量清洗，并在真的剥到东西时向上游调用方报告
+  // （execute 会写进最近调用与渠道标记，前端展示「触发过 safe」的 tag）。
+  const dsFilter = makeDsSafetyFilter();
+  let safetyStripped = false;
 
   const handleLine = (line) => {
     const t = line.trim();
@@ -555,9 +565,10 @@ async function chatOnce({
       if (onReasoning) onReasoning(r);
     }
     if (typeof d.content === "string" && d.content) {
-      // 兜底剥离正文里的 <think> 块：个别版本/中转即使开了 reasoning_split
-      // 仍可能把思维链混在 content 里，那种内容不该当正文展示
-      const { content: c, reasoning: r2 } = splitThinkTags(d.content);
+      // 先过 <ds_safety> 过滤器（标注可能跨增量，必须用带状态的，见 makeDsSafetyFilter），
+      // 再兜底剥离 <think> 块：个别版本/中转即使开了 reasoning_split 仍可能漏
+      const raw = dsFilter(d.content);
+      const { content: c, reasoning: r2 } = splitThinkTags(raw);
       if (r2) {
         reasoning += r2;
         if (onReasoning) onReasoning(r2);
@@ -585,6 +596,13 @@ async function chatOnce({
       }
     }
     if (buf.trim()) handleLine(buf);
+    // 过滤器里可能还攒着被截断标签的尾巴（正常正文）：流结束后放行
+    const tailOut = dsFilter.flush();
+    if (tailOut) {
+      content += tailOut;
+      if (onDelta) onDelta(tailOut);
+    }
+    safetyStripped = dsFilter.hit();
   } finally {
     // 提前结束（空内容抛错、回调抛错、客户端断开）都要归还连接，否则响应体悬挂
     reader.cancel().catch(() => {});
@@ -608,6 +626,8 @@ async function chatOnce({
     upstreamModel,
     // 实际生效模型（方舟降级时非空）：计费按它算，见 vendor-quirks.js 的说明
     billModel: fallbackModel,
+    // 上游安全审核标注被剥离（execute 据此在渠道上标记「触发过 safe」）
+    safetyStripped,
   };
 }
 

@@ -212,10 +212,12 @@ const clip = (text, max) =>
     .trim()
     .slice(0, max);
 // 降智/通行证标记（仅订阅渠道会带）：d=本轮降智，st=注入了 292 通行证；k=来源(chat/test/auto)
+// sf=本轮剥离过上游安全审核标注 <ds_safety>（2026-09-27，触发「safe」tag 用）
 // u=发起本次调用的用户（管理端最近调用里显示头像+名字，点击复制邮箱）
 const flagsOf = (meta = {}) => ({
   ...(meta.degraded !== undefined ? { d: meta.degraded ? 1 : 0 } : {}),
   ...(meta.state !== undefined ? { st: meta.state ? 1 : 0 } : {}),
+  ...(meta.safe !== undefined ? { sf: meta.safe ? 1 : 0 } : {}),
   ...(meta.kind ? { k: meta.kind } : {}),
   ...(meta.user
     ? {
@@ -300,6 +302,23 @@ export const RATE_LIMIT_CODES = new Set(["CHANNEL_RATE_LIMIT", "CHANNEL_RATE_LIM
 
 export function isRateLimitedCode(code) {
   return RATE_LIMIT_CODES.has(String(code || ""));
+}
+
+// ---------------------------------------------------------------------------
+// 测试失败要不要把渠道状态关掉（2026-09-27 用户要求，扩大自 429 那条）：
+//   「碰到测试报错就不要记录在调用记录里条条了，直接将状态关掉即可。
+//     比如 429、403、502 等等非正常响应……显示报错的原返回字段即可」
+// 规则：上游返回了**非正常响应**（429/403/402/5xx/空内容/验证页等）→ 关（status=3）；
+// 例外：CHANNEL_NETWORK / CHANNEL_TIMEOUT / CHANNEL_ABORTED —— 压根没收到上游
+// 响应，一次网络抖动不该把好渠道停掉（沿用手动测试的既有口径）。
+// 手动测试与定时检测共用这一个判据，避免两处各写一份然后漂移（429 双码的老教训）。
+// 注意与 AUTO_PAUSE_CODES 分工：那张表管「真实调用失败」的自动停用；
+// 这条只管「测试失败」。CHANNEL_NOT_APPROVED（11140 风控）在测试路径会停用，
+// 但真实调用路径仍可换渠道重试、不自动停用（见 execute.js RETRYABLE 的注释）。
+export const TEST_TRANSIENT_CODES = new Set(["CHANNEL_NETWORK", "CHANNEL_TIMEOUT", "CHANNEL_ABORTED"]);
+
+export function testFailurePauses(code) {
+  return !TEST_TRANSIENT_CODES.has(String(code || ""));
 }
 
 /**

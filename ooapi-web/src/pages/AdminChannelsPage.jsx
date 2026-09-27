@@ -291,6 +291,37 @@ function RateLimitRow({ r }) {
   );
 }
 
+/** 上游错误小 tag（2026-09-27 用户要求）：测试报错（403/402/502/空内容等）不再记进
+ * 「最近调用」条条，统一在这里显示**原始返回**——一行省略，悬浮看全文。
+ * 429 有自己的恢复时刻 pill（RateLimitRow），那种行不重复显示；
+ * 成功的测试/调用会把 last_error 清空，tag 随之消失。 */
+function ChannelErrorRow({ r }) {
+  const err = String(r?.last_error || "").trim();
+  const limited = Number(r?.rate_limit_until) || 0;
+  if (!err || limited) return null;
+  return (
+    <Tooltip title={err}>
+      <span
+        style={{
+          display: "block",
+          maxWidth: "100%",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          padding: "1px 6px",
+          borderRadius: 4,
+          fontSize: 11,
+          lineHeight: "16px",
+          color: "var(--red)",
+          background: "var(--red-tint)",
+        }}
+      >
+        {err}
+      </span>
+    </Tooltip>
+  );
+}
+
 /** 时刻（epoch 秒）→ HH:MM（本地时区）。到秒级没有意义：这一行是「大概什么时候好」，
  * 精确到分足够，还能省下 3 个字符的宽度（额度列很窄）。 */
 function fmtClock(epochSeconds) {
@@ -1962,6 +1993,28 @@ export default function AdminChannelsPage() {
             ) : r.remark ? (
               <div style={{ fontSize: 11.5, color: "var(--ink-3)" }} className="oo-truncate" title={r.remark}>{r.remark}</div>
             ) : null}
+            {/* 上游安全审核（safe 机制）触发标记（2026-09-27 用户要求）：回复里的
+                <ds_safety> 标注被平台剥离时记录时刻 —— 该账号的安全审核在起作用，
+                本身不代表封号/异常；最近一次成功调用会不断把 last_error 清空，但
+                last_safe_at 保留，供管理员判断「这个号在被安全审核盯着」。 */}
+            {r.last_safe_at ? (
+              <Tooltip title={`上游安全审核（safe 机制）于 ${fmtClock(Number(r.last_safe_at) / 1000)} 触发过一次；回复里的审核标注已自动剥离，不影响内容。频繁出现说明该账号在被安全审核重点关照。`}>
+                <div
+                  style={{
+                    width: "fit-content",
+                    marginTop: 2,
+                    padding: "0 6px",
+                    borderRadius: 4,
+                    fontSize: 11,
+                    lineHeight: "16px",
+                    color: "var(--pill-amber-ink)",
+                    background: "var(--pill-amber-tint)",
+                  }}
+                >
+                  Safe · {fmtClock(Number(r.last_safe_at) / 1000)}
+                </div>
+              </Tooltip>
+            ) : null}
           </span>
         </span>
       ),
@@ -2058,7 +2111,14 @@ export default function AdminChannelsPage() {
         // tag 的下面新起一行，用橙黄色显示 上游 429，预计恢复时间 xxx」。
         // 放在 stats 之前渲染成独立一行，不受额度快照有没有取到影响 ——
         // 限流是**当下正在发生的事**，比额度数字更该先被看到。
-        const rateLimitRow = <RateLimitRow r={r} />;
+        // 2026-09-27 扩大：其他测试报错（403/402/502/空内容等）也不再记进最近调用
+        // 条条，统一在下面用红色小 tag 显示原始返回（ChannelErrorRow）。
+        const rateLimitRow = (
+          <>
+            <RateLimitRow r={r} />
+            <ChannelErrorRow r={r} />
+          </>
+        );
         if (q?.windows?.length || q?.credits || stats) {
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>

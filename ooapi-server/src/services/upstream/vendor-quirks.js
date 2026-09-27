@@ -171,3 +171,106 @@ export function splitThinkTags(text) {
   }
   return { content, reasoning };
 }
+
+/**
+ * 剥离正文里的 <ds_safety>…</ds_safety> 安全审核标注（2026-09-27）。
+ *
+ * 现象（用户截图实测）：对 "hi" 的回复正文里混着
+ *   <ds_safety>[用户未成年] 否 [类型] 他 [判定] 用户输入仅为简单问候… [规则] 无 </ds_safety>=Safe
+ * 这是 DeepSeek 托管端点（OpenCode / WorkBuddy 等转发）服务端安全审核组件把
+ * **审核判定过程**漏进了输出正文 —— 不是平台注入的（提示词原样透传），也不是
+ * 模型想说的内容。属于上游内部元数据，与 <think> 同类，按同一口径剥离。
+ * 结尾紧跟的 "=Safe" 是同一机械标注的一部分，一并去掉。
+ */
+const DS_SAFETY_OPEN = "<ds_safety>";
+const DS_SAFETY_CLOSE = "</ds_safety>";
+const DS_SAFETY_RE = /<ds_safety>[\s\S]*?<\/ds_safety>\s*(?:=Safe)?/gi;
+
+export function stripDsSafety(text) {
+  const s = String(text || "");
+  if (!s.toLowerCase().includes(DS_SAFETY_OPEN)) return s;
+  let out = s.replace(DS_SAFETY_RE, "");
+  // 未闭合的 <ds_safety>（流被截断/上游异常）：标注没有结束边界，其后内容按污染处理
+  const open = out.toLowerCase().indexOf(DS_SAFETY_OPEN);
+  if (open !== -1) out = out.slice(0, open);
+  return out;
+}
+
+/**
+ * 流式版剥离器：ds_safety 标注可能被上游拆在多个增量里（开/闭标签各占半截），
+ * 逐增量用正则会漏 —— 这里维护跨增量状态：见到开标签进入抑制态，直到闭标签
+ * （含紧跟的 =Safe）才放行后续正文。用法：每收到一个 content 增量调一次，
+ * 返回值才是该展示的部分。
+ * @returns {(delta: string) => string}
+ */
+export function makeDsSafetyFilter() {
+  let suppressing = false;
+  let justClosed = false; // 刚消费完 </ds_safety>：紧跟的 "=Safe" 尾巴要吞（可能被分到下一片）
+  let hit = false; // 是否真的剥到过标注（调用方据此在渠道上标记「触发过 safe」）
+  let tail = ""; // 可能是被切块截断的开/闭标签/「=Safe」前缀，攒到下一片再判
+  const keepTrailingPartial = (s, tag) => {
+    const max = Math.min(s.length, tag.length - 1);
+    for (let k = max; k > 0; k--) if (s.toLowerCase().endsWith(tag.slice(0, k).toLowerCase())) return k;
+    return 0;
+  };
+  /** 流结束后调用：把攒着的尾巴交还。抑制/等待 =Safe 尾巴状态下攒的内容是标注残片，丢弃。 */
+  const flush = () => {
+    const t = suppressing || justClosed ? "" : tail;
+    tail = "";
+    justClosed = false;
+    return t;
+  };
+  const filter = (delta) => {
+    let s = tail + String(delta || "");
+    tail = "";
+    let out = "";
+    for (;;) {
+      if (!suppressing) {
+        // 刚闭合：吞掉紧跟的 "=Safe"。它可能整片就是 "=Safe" 的残片（如 "="），
+        // 判定不了是不是完整尾巴时攒住等下一片；确定不是才当正文放行。
+        // 注意 s 为空时要**保持 justClosed**（上一片刚闭标签、这一片是空增量，
+        // "=Safe" 在更下一片 —— 复位它就会把尾巴漏进正文，实测踩过）。
+        if (justClosed) {
+          if (s.startsWith("=Safe")) {
+            s = s.slice("=Safe".length);
+            justClosed = false;
+          } else if (s && "=Safe".toLowerCase().startsWith(s.toLowerCase())) {
+            tail = s;
+            break;
+          } else if (s) {
+            justClosed = false;
+          } else {
+            tail = "";
+            break;
+          }
+        }
+        const i = s.toLowerCase().indexOf(DS_SAFETY_OPEN);
+        if (i === -1) {
+          const keep = keepTrailingPartial(s, DS_SAFETY_OPEN);
+          out += s.slice(0, s.length - keep);
+          tail = s.slice(s.length - keep);
+          break;
+        }
+        out += s.slice(0, i);
+        s = s.slice(i + DS_SAFETY_OPEN.length);
+        suppressing = true;
+        hit = true;
+      } else {
+        const i = s.toLowerCase().indexOf(DS_SAFETY_CLOSE);
+        if (i === -1) {
+          // 抑制态：除了可能是截断闭标签的尾巴，整片丢弃（这些不是正文）
+          const keep = keepTrailingPartial(s, DS_SAFETY_CLOSE);
+          tail = s.slice(s.length - keep);
+          break;
+        }
+        s = s.slice(i + DS_SAFETY_CLOSE.length);
+        suppressing = false;
+        justClosed = true;
+      }
+    }
+    return out;
+  };
+  filter.flush = flush;
+  filter.hit = () => hit;
+  return filter;
+}

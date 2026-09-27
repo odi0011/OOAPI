@@ -26,7 +26,7 @@ import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod, isApiKeyMethod, localLoginGuide } from "../services/channel-types.js";
 import { buildLoginUrl, exchangeCodeForCredential, interactiveLoginInfo, supportsInteractiveLogin, supportsInteractiveLoginMethod, supportsDeviceLogin, startDeviceLogin, pollDeviceLogin } from "../services/upstream/oauth-login.js";
-import { getAdapter, resetChannelState, forgetChannel, invalidateChannelCache, channelRuntimeState, channelRecent, rowToChannel, recordChannelCall, AUTO_PAUSE_CODES, isRateLimitedCode, setChannelRateLimit, rateLimitPauseSec } from "../services/router.js";
+import { getAdapter, resetChannelState, forgetChannel, invalidateChannelCache, channelRuntimeState, channelRecent, rowToChannel, recordChannelCall, isRateLimitedCode, testFailurePauses, setChannelRateLimit, rateLimitPauseSec } from "../services/router.js";
 import { clearGroupConfigCache } from "../services/group-rate.js";
 // 只留这两个：浏览器登录相关的辅助（截图/远程操作/读凭据）随「服务器浏览器登录」
 // 一起删除后已无调用点；这两个仍需（删渠道时清 profile、订阅渠道复制 profile）。
@@ -735,6 +735,8 @@ function rowToResp(r, { withKey = false } = {}) {
     quota: safeJson(r.quota),
     quota_time: Number(r.quota_time) || 0,
     quota_supported: quotaSupportFor({ type: r.type, method, base_url: r.base_url }).supported,
+    // 最近一次触发上游安全审核机制（<ds_safety> 被剥离）的时刻：凭证列小 tag 用
+    last_safe_at: Number(other.last_safe_at) || 0,
     // 统计
     used_count: Number(r.used_count) || 0,
     // 该渠道累计（额度列要显示：次数 / token / 消费）
@@ -2189,7 +2191,6 @@ router.post(
     const method = methodOf(row);
     const channel = rowToChannel(row);
     const adapter = await adapterOf(row.type, method);
-    const startedAt = Date.now();
     const prompt = String(row.test_prompt || "hi").trim() || "hi";
 
     try {
@@ -2230,15 +2231,12 @@ router.post(
       );
     } catch (e) {
       // 手动测试失败：记错误 + 决定要不要**自动暂停**。
-      // 用户要求「手动检测出错了则自动暂停」，但同样按错误性质区分：
-      //   · 凭据失效/被封/配置错 → 停用（status=3，人工处理）；
-      //   · 上游 429 限流 → 也停用，但带 `rate_limit_until`，到点自动恢复
-      //     （用户要求「如果哪个渠道报错 429，直接停止渠道状态」）；
-      //   · 网络/超时 → 只记错误（一次抖动不该把好渠道停掉）。
+      // 2026-09-27 用户要求（扩大自 429 那条）：测试报错（429/403/502 等非正常上游
+      // 响应）**直接把渠道状态关掉**；例外：网络/超时/取消（没收到上游响应，一次
+      // 抖动不该停掉好渠道）。判据与定时检测共享（testFailurePauses）。
       const ec = String(e.code || "");
-      const fatal = AUTO_PAUSE_CODES.has(ec);
       const rateLimited = isRateLimitedCode(ec);
-      const pause = (fatal || rateLimited) && row.auto_ban !== 0 && Number(row.status) === 1;
+      const pause = testFailurePauses(ec) && row.auto_ban !== 0 && Number(row.status) === 1;
       // 限流时长与 markChannelError 共用 rateLimitPauseSec（同一口径，不会漂移）
       const until = rateLimited ? now() + rateLimitPauseSec(e.cooldownSec) : 0;
       // 429 不计入「最近调用」：那条环形记录回答的是「渠道干活干得怎么样」，
@@ -2255,11 +2253,9 @@ router.post(
           id,
         ]);
       }
-      // 测试失败计入「最近调用」小绿条（失败 → 红色；tip 里带失败原因）。
-      // 429 例外：见上方注释。
-      if (!rateLimited) {
-        await recordChannelCall(id, false, Date.now() - startedAt, e.message, { prompt, reply: e.message, kind: "test" });
-      }
+      // 测试报错**一律不写「最近调用」条条**（2026-09-27 用户要求，原实现只排除了 429）：
+      // 测试不是真实流量，失败条会把调用记录的含义搞乱；报错统一走额度列的
+      // 小错误 tag（前端按 last_error 渲染）与这里的 last_error 落库。
       await writeLog({ req, user: req.user, type: LOG_TYPE.ERROR, content: `测试渠道「${row.name}」失败：${e.message}` });
       // 内存态：resetChannelState 会清掉冷却与限流标记，限流那条要在之后补回来
       if (pause) resetChannelState(id);
