@@ -988,6 +988,9 @@ export default function AdminChannelsPage() {
       if (gs.status === "fulfilled") setGroups(Array.isArray(gs.value) ? gs.value : []);
       const failed = [list, st, ps, gs].find((r) => r.status === "rejected");
       if (failed) message.error(failed.reason?.message || "部分数据加载失败");
+      // 返回最新列表：绑定/找回成功后的「额度自动回填」要按它找到刚写入的渠道行
+      // （调用方的闭包里只有旧的 state，直接 find 会找不到新渠道）。
+      return list.status === "fulfilled" ? list.value : undefined;
     } catch (e) {
       if (isLatest(token)) message.error(e.message);
     } finally {
@@ -1330,20 +1333,24 @@ export default function AdminChannelsPage() {
         const r = await API.post("/channel/login", payload, { timeoutMs: 90_000 });
         // 一键绑定：授权已成功但当时还没渠道，现在把暂存的凭据写进刚建的渠道。
         // 必须在 login 之后 —— 凭据要落到真实渠道 id 上。
+        let bindOk = true;
         if (bindTicketRef.current && r?.id) {
           try {
             await API.post("/channel/devices/claim", { ticket: bindTicketRef.current, channel_id: r.id });
             message.success(`渠道「${r.name}」已添加并完成账号绑定`);
           } catch (err) {
-            // 绑定失败不影响渠道本身：渠道已建好，用户可重新点「一键绑定」
+            // 绑定失败不影响渠道本身：渠道已建好，用户可重新点「一键绑定」。
+            // 此时渠道里**没有凭据**，后面的额度自动回填要跳过（查了也必然报凭据失效）。
+            bindOk = false;
             message.warning(`渠道已添加，但绑定失败：${err.message}。可在渠道列表点「重新绑定」`);
           }
           bindTicketRef.current = "";
         } else {
           message.success(`渠道「${r.name}」已添加`);
         }
+        if (bindOk) await autoQuotaAfterBind(r?.id);
       } else {
-        await API.post("/channel/", {
+        const created = await API.post("/channel/", {
           name: v.name,
           type: pickProvider.key,
           method: "api",
@@ -1356,6 +1363,8 @@ export default function AdminChannelsPage() {
           auto_ban: v.auto_ban,
         });
         message.success(`渠道「${v.name}」已创建`);
+        // API Key 渠道里也有支持余额/额度查询的（DeepSeek 官方 API 等）——同样回填一次
+        await autoQuotaAfterBind(created?.id);
       }
       setAddOpen(false);
       await load();
@@ -2216,6 +2225,10 @@ export default function AdminChannelsPage() {
       message.warning(r?.message || "凭据已写入，但上游校验未通过，请检查凭据是否有效");
     } else {
       message.success(`凭据已更新${r?.account ? `（${r.account}）` : ""}，渠道已恢复`);
+      // 找回成功 → 自动回填一次账号额度（与 submitAdd 的绑定成功同口径；
+      // 找回本来就是显式动作，紧随其后的一次性查询不增加风控面）。
+      // 校验未通过（healthy=false）时不回填：额度查询大概率同样失败，徒增报错噪音。
+      await autoQuotaAfterBind(reloginIdRef.current || reloginTarget?.id);
     }
     return r;
   };
@@ -2425,6 +2438,27 @@ export default function AdminChannelsPage() {
       else message.error(e.message);
     } finally {
       setQuotaBusyId(null);
+    }
+  };
+
+  // 绑定/登录成功后**自动回填一次**账号额度。
+  //
+  // 用户反馈（2026-09-27，WorkBuddy 绑定成功后）：「为什么额度没有自动显示当前账号的
+  // 额度信息？」—— 此前绑定完成后额度格里只有一个不起眼的「点击查询」，账号有多少
+  // 积分/订阅窗口要自己再点一下才知道。
+  // 为什么这样做不违背额度查询的设计原则（见 upstream/quota.js「风控优先」）：
+  // 那条原则禁的是「查询进对话主链路」与「无脑轮询」；而绑定/找回本身是管理员的
+  // 显式动作，紧随其后的**一次性**回填是同一动作的收尾，不增加风控面。
+  // 不支持的渠道（glm/kimi 等网页版）静默跳过 —— 它们的额度格本来就显示「不支持」。
+  const autoQuotaAfterBind = async (channelId, { silent } = {}) => {
+    const id = Number(channelId);
+    if (!id || quotaBusyId) return;
+    try {
+      const items = await load({ silent: true });
+      const row = (items || []).find((x) => Number(x.id) === id);
+      if (row?.quota_supported) await doQuota(row, {});
+    } catch {
+      // 额度回填失败不影响绑定/找回本身的结果（后端设计：查询失败不写错误不冷却）
     }
   };
 
