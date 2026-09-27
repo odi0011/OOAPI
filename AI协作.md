@@ -5106,6 +5106,25 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
   队列 11/11、e2e-modules 55 过（7 个失败全是已下线的 games 目录断言，旧遗留）；
   明暗/移动端截图已人工核对。
 
+<br>
+
+| 2026-09-27 | **第 78 批追加 · 一键绑定回滚「rest is not defined」—— 已修（渠道窗口）**。
+
+  用户重新发起 WorkBuddy 一键绑定，报「绑定失败，已撤销该渠道：rest is not defined」。
+  根因：`applyCredentialToChannel`（所有厂商凭据写回的公共落点）里引用了
+  `...(rest || {})`，而 `rest` 是「添加渠道」大处理器解构 req.body 的变量 ——
+  拷贝 importAuth 调用时被一起带了进来。设备绑定完成 → 写回凭据 → ReferenceError
+  → 绑定整体回滚。**只有这一条路径会炸**（node --check 抓不到，undefined-symbols
+  只扫前端 UPPER_SNAKE），WorkBuddy 有 importAuth 所以必经。
+  修法：删掉该残留（本函数入参只有 id/type/method/credential/vendor，无字段可透传）；
+  回归锁 `tests/apply-credential-scope.test.mjs`（剥离注释后扫描函数体内自由变量 rest，
+  并保留 MiMo 事故的 importAuth 优先路径锚点）。已上线（4009ee4）。
+  顺带更正一句另一窗口的记录：本机 `rate-limit-429` 的失败不是 openai-compat 改动所致，
+  是 Windows checkout 的 CRLF 行尾让「按 \n 断言函数形状」的正则失配 —— 服务器（LF）上
+  一直是绿的。注意：绑定若仍失败，现在报的会是**真实的**上游风控错误
+  （CHANNEL_NOT_APPROVED / 11140，见本批第一节）—— 那是账号级问题，不是凭据或代码问题；
+  换预热过的账号或稍后重测。
+
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 
 > 目标：把开源社区已有的「网页版反代 / 工具类反代」按**厂商**归类接入平台，
