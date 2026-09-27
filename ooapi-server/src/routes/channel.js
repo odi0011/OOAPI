@@ -931,7 +931,14 @@ async function applyCredentialToChannel({ id, type, method, credential, vendor }
     //
     // 适配器自带 importAuth 时它最懂自己的凭据形态（parseAuth 已兼容 cookies 数组、
     // 各种别名与裸串），所以只要 adapter.importAuth 存在就一定用它。
-    parsed = await adapter.importAuth({ token: raw, mode: "paste", ...(rest || {}) });
+    //
+    // 注意这里**没有** `...(rest || {})`：本函数的入参只有
+    // { id, type, method, credential, vendor }，`rest` 是「添加渠道」大处理器里
+    // 解构 req.body 的变量 —— 从那边拷贝 importAuth 调用时把它带了进来，
+    // 结果设备绑定一走到写回就 `rest is not defined`（ReferenceError 只在这一条
+    // 路径上抛，node --check 抓不到；实测 WorkBuddy 绑定被整体回滚，2026-09-27）。
+    // 真要透传额外字段时应显式加入本函数签名，而不是靠一个不存在的变量。
+    parsed = await adapter.importAuth({ token: raw, mode: "paste" });
   } else if (methodKey === "relay" || /-web(-ui)?$/.test(methodKey) || adapter === null) {
     // 网页版反代（DeepSeek / Kimi / GLM / 豆包 / 通义）没有 importAuth：
     // 它们的凭据形态就是「登录态 token（api_key）+ 可选 cookies（other.cookies）」，
