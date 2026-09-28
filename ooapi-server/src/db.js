@@ -370,7 +370,8 @@ const TABLES = [
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(40) NOT NULL UNIQUE,
     description VARCHAR(160) NOT NULL DEFAULT '',
-    icon VARCHAR(16) NOT NULL DEFAULT '' COMMENT 'emoji 或图标名',
+    icon VARCHAR(16) NOT NULL DEFAULT '' COMMENT '内置图标 key（第 80 批起不再用 emoji）',
+    image_media_id BIGINT NOT NULL DEFAULT 0 COMMENT '自定义图片（媒体库 id）；非 0 时优先于 icon',
     post_count INT NOT NULL DEFAULT 0 COMMENT '冗余计数：列表页按热度排序不查子表',
     sort INT NOT NULL DEFAULT 0 COMMENT '越大越靠前',
     status TINYINT NOT NULL DEFAULT 1 COMMENT '1=正常 2=停用（停用后不再接受新帖，历史帖仍可读）',
@@ -396,7 +397,11 @@ const TABLES = [
     deleted_time BIGINT NOT NULL DEFAULT 0,
     created_time BIGINT NOT NULL DEFAULT 0,
     updated_time BIGINT NOT NULL DEFAULT 0,
+    -- 最后回复（列表按「最新活动」排序 + 显示「XX 2 小时前回复」）；无回复时等于 created_time
+    last_reply_time BIGINT NOT NULL DEFAULT 0,
+    last_reply_user_id INT NOT NULL DEFAULT 0,
     KEY idx_post_list (status, is_pinned, id),
+    KEY idx_post_active (status, last_reply_time),
     KEY idx_post_topic (topic_id, status, id),
     KEY idx_post_user (user_id, status, id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
@@ -583,6 +588,10 @@ const COLUMN_MIGRATIONS = [
   // 评论附图（2026-09-24）：用户要求「评论也要能带图」。
   // 走列迁移而不是只改建表语句 —— 线上库的表已存在，CREATE TABLE IF NOT EXISTS 不会补列。
   { table: "community_comments", column: "media_ids", ddl: "TEXT" },
+  // 社区改版（第 80 批）：话题自定义图片 + 帖子最后回复（按最新活动排序）
+  { table: "community_topics", column: "image_media_id", ddl: "BIGINT NOT NULL DEFAULT 0" },
+  { table: "community_posts", column: "last_reply_time", ddl: "BIGINT NOT NULL DEFAULT 0" },
+  { table: "community_posts", column: "last_reply_user_id", ddl: "INT NOT NULL DEFAULT 0" },
   { table: "chat_room_messages", column: "client_id", ddl: "VARCHAR(40) NOT NULL DEFAULT ''" },
   // 单聊唯一键：本次上线时 chat_rooms 已按老建表语句建好（不含此列），
   // CREATE TABLE IF NOT EXISTS 不会补，必须走列迁移。
@@ -753,6 +762,8 @@ const INDEX_MIGRATIONS = [
   // 且前端 15s 轮询 —— 没有这个索引就是每次全表扫（logs 按调用量线性增长）。
   // 前缀 LIKE（'fb4%'）可以走 B+Tree 范围扫描。
   "CREATE INDEX idx_logs_token_name ON logs (token_name)",
+  // 社区「最新活动」排序
+  "CREATE INDEX idx_post_active ON community_posts (status, last_reply_time)",
 ];
 
 async function ensureIndexes() {
@@ -837,6 +848,31 @@ async function retireGuildRooms() {
   if (r?.affectedRows) console.log(`[migrate] 频道体系已下线：${r.affectedRows} 个频道房间置为已解散（消息保留）`);
 }
 
+/**
+ * 社区数据迁移（第 80 批，幂等）：
+ *   ① last_reply_time 为 0 的帖子回填：有评论取最后一条评论时间，否则取发帖时间；
+ *   ② 话题图标 emoji → 内置图标 key（用户要求「不要拿 emoji」）。只改已知的几个默认 emoji，
+ *      其余不认识的值清空（前端显示通用话题图标），管理员可在「话题管理」里重新选。
+ * 两步都只处理「还没迁移」的行，重复执行无副作用。
+ */
+async function migrateCommunity80() {
+  await pool
+    .query(
+      `UPDATE community_posts p
+          LEFT JOIN (SELECT post_id, MAX(created_time) AS t FROM community_comments WHERE status = 1 GROUP BY post_id) c
+            ON c.post_id = p.id
+          SET p.last_reply_time = GREATEST(p.created_time, COALESCE(c.t, 0))
+        WHERE p.last_reply_time = 0`
+    )
+    .catch((e) => console.warn(`[migrate] 帖子最后回复时间回填失败（忽略）：${e.message}`));
+  const EMOJI_TO_KEY = { "💬": "chat", "🐞": "bug", "🧪": "lab", "🔌": "plug", "🌊": "coffee", "💡": "bulb", "📢": "notice", "🚀": "rocket", "📚": "book", "🛠": "tool", "🛠️": "tool" };
+  const [rows] = await pool.query("SELECT id, icon FROM community_topics WHERE icon <> ''").catch(() => [[]]);
+  for (const r of rows) {
+    if (/^[a-z][a-z0-9-]*$/.test(r.icon)) continue; // 已经是图标 key
+    await pool.query("UPDATE community_topics SET icon = ? WHERE id = ?", [EMOJI_TO_KEY[r.icon] || "", r.id]).catch(() => {});
+  }
+}
+
 async function columnExists(table, column) {
   const [rows] = await pool.query(
     "SELECT COUNT(*) AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
@@ -854,6 +890,7 @@ export async function migrate() {
   await migrateGroupVendor();
   await ensureGroups();
   await retireGuildRooms();
+  await migrateCommunity80();
   if (!hadGroupRate) {
     // 本升级独有的清理：旧版按厂商自动种子出来的 default 分组行（非管理员创建）
     await pool.query("DELETE FROM channel_groups WHERE name = 'default'").catch(() => {});

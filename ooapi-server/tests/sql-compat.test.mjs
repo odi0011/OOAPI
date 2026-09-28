@@ -261,6 +261,68 @@ await t("个人主页：最近动态（JOIN topic）", () =>
   )
 );
 
+// ---------------------------------------------------------------------------
+// 第 80 批：看板北京时间聚合 / 令牌排行子查询 / 对话账号工具 / 社区最新活动排序
+// ---------------------------------------------------------------------------
+const TZ = 8 * 3600;
+await t("看板：按北京时间切天（GROUP BY 表达式与 SELECT 一致）", () =>
+  exec(
+    `SELECT FLOOR((created_at + ${TZ})/86400) AS bj_day, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
+       FROM logs WHERE created_at >= ? AND type = 2 GROUP BY FLOOR((created_at + ${TZ})/86400) ORDER BY bj_day`,
+    [0]
+  )
+);
+await t("看板：按北京时间切小时", () =>
+  exec(
+    `SELECT FLOOR(MOD(created_at + ${TZ}, 86400) / 3600) AS hour, COUNT(*) AS calls
+       FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ?
+      GROUP BY FLOOR(MOD(created_at + ${TZ}, 86400) / 3600) ORDER BY hour`,
+    [1, 0]
+  )
+);
+await t("看板：令牌排行（先聚合再 JOIN 名称与持有人）", () =>
+  exec(
+    `SELECT t.token_id, t.calls, t.units, k.name AS token_name, u.username, u.display_name
+       FROM (SELECT token_id, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
+               FROM logs WHERE type = 2 AND created_at >= ? AND token_id > 0
+              GROUP BY token_id ORDER BY units DESC LIMIT 10) t
+       LEFT JOIN tokens k ON k.id = t.token_id
+       LEFT JOIN users u ON u.id = k.user_id
+      ORDER BY t.units DESC`,
+    [0]
+  )
+);
+await t("对话账号工具：近 7 天按天", () =>
+  exec(
+    `SELECT FLOOR((created_at + 28800) / 86400) AS d, COUNT(*) AS n, COALESCE(SUM(quota),0) AS cost
+       FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ?
+      GROUP BY FLOOR((created_at + 28800) / 86400) ORDER BY d`,
+    [1, 0]
+  )
+);
+// 下面两条依赖第 80 批新列：未迁移的库（部署前）跳过，迁移后必须通过
+const [colRows] = await pool.query("SHOW COLUMNS FROM community_posts LIKE 'last_reply_time'").catch(() => [[]]);
+const has80 = colRows.length > 0;
+await t("社区：最新活动排序 + 近期热门打分", () =>
+  !has80 ? "skip" : exec(
+    `SELECT p.*, t.name AS topic_name, t.icon AS topic_icon, t.image_media_id AS topic_image
+       FROM community_posts p LEFT JOIN community_topics t ON t.id = p.topic_id
+      WHERE p.status = 1
+      ORDER BY p.is_pinned DESC, GREATEST(p.last_reply_time, p.created_time) DESC,
+               (p.like_count * 3 + p.comment_count * 2 + p.view_count / 20) DESC, p.id DESC
+      LIMIT 20 OFFSET 0`
+  )
+);
+await t("社区：帖子最后回复时间回填（UPDATE ... JOIN 聚合子查询）", () =>
+  !has80 ? "skip" : exec(
+    `UPDATE community_posts p
+        LEFT JOIN (SELECT post_id, MAX(created_time) AS t FROM community_comments WHERE status = 1 GROUP BY post_id) c
+          ON c.post_id = p.id
+        SET p.last_reply_time = GREATEST(p.created_time, COALESCE(c.t, 0))
+      WHERE p.last_reply_time = 0 AND p.id < 0`
+  )
+);
+
 await pool.end().catch(() => {});
 console.log(`\n${passed} 通过 / ${failed} 失败${skipped ? ` / ${skipped} 跳过` : ""}`);
 process.exit(failed ? 1 : 0);

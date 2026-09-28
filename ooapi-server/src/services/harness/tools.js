@@ -1,12 +1,14 @@
 // Harness 工具集
 // ---------------------------------------------------------------------------
 // 工具的共同约定：
-//   · 全部只读（检索 / 读网页）或只影响本会话自己的状态（待办清单），
-//     不触碰服务器文件系统与数据库其他表 —— 这是网关能安全暴露工具的边界；
+//   · 全部只读（检索 / 读网页 / 查**自己**的账号）或只影响本会话自己的状态（待办清单），
+//     不触碰服务器文件系统；读库的只有 account，且每条 SQL 都带 user_id = 当前用户 ——
+//     这是网关能安全暴露工具的边界（模型再怎么被提示注入，也读不到别人的数据）；
 //   · run() 永远返回 { ok, output }，失败也把原因当成「工具结果」交回模型，
 //     让模型自己决定换一种查法，而不是让整轮对话崩掉；
 //   · 每次工具调用的 token 都通过 ctx.record() 计入本轮账单（用户为真实消耗付费）。
 import { assertPublicUrl } from "../../utils.js";
+import { pool } from "../../db.js";
 import { runCompletion } from "../execute.js";
 import { modelForChannelMatch } from "../models.js";
 
@@ -281,6 +283,109 @@ export const TOOLS = {
       } catch (e) {
         return { ok: false, output: `读取 GitHub 失败：${e.message}` };
       }
+    },
+  },
+
+  account: {
+    id: "account",
+    name: "我的账号",
+    desc:
+      "查询**当前用户自己**的账号信息：余额与累计消耗、最近调用记录、API 令牌（不含密钥）、近 7 天用量与模型分布、最近的失败请求。" +
+      "用户问「我还剩多少钱 / 最近调用了什么 / 哪个令牌花得多 / 为什么报错」时使用。只读，看不到其他用户。",
+    args: '{"action":"overview|recent|tokens|usage|errors","limit":"recent/errors 可选，默认 10，最多 30"}',
+    async run(args, ctx) {
+      const uid = Number(ctx.user?.id) || 0;
+      if (!uid) return { ok: false, output: "当前会话没有登录用户，无法查询账号" };
+      const action = String(args?.action ?? "overview").toLowerCase();
+      const limit = Math.min(30, Math.max(1, Number(args?.limit) || 10));
+      const od = (units) => `${(Number(units || 0) / 10000).toFixed(4).replace(/\.?0+$/, "") || "0"} OD币`;
+      const t = (sec) => new Date(Number(sec) * 1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
+
+      if (action === "overview") {
+        const [[u]] = await pool.query(
+          "SELECT username, display_name, quota, used_quota, request_count, group_name, created_time FROM users WHERE id = ?",
+          [uid]
+        );
+        if (!u) return { ok: false, output: "账号不存在" };
+        const since = Math.floor(Date.now() / 1000) - 86400;
+        const [[d]] = await pool.query(
+          "SELECT COUNT(*) AS n, COALESCE(SUM(quota),0) AS cost FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ?",
+          [uid, since]
+        );
+        const [[k]] = await pool.query("SELECT COUNT(*) AS n, SUM(status = 1) AS on_ FROM tokens WHERE user_id = ?", [uid]);
+        return {
+          ok: true,
+          output: [
+            `用户：${u.display_name || u.username}（@${u.username}）`,
+            `余额：${od(u.quota)}（1 OD币 = 1 美元）`,
+            `累计消耗：${od(u.used_quota)}，累计请求 ${Number(u.request_count) || 0} 次`,
+            `近 24 小时：${Number(d.n) || 0} 次调用，消耗 ${od(d.cost)}`,
+            `分组：${u.group_name || "公共"}；API 令牌 ${Number(k.n) || 0} 个（启用 ${Number(k.on_) || 0} 个）`,
+            `注册时间：${t(u.created_time)}`,
+          ].join("\n"),
+        };
+      }
+
+      if (action === "recent" || action === "errors") {
+        const type = action === "errors" ? 4 : 2;
+        const [rows] = await pool.query(
+          `SELECT created_at, model, token_name, prompt_tokens, completion_tokens, quota, elapsed_ms, content
+             FROM logs WHERE user_id = ? AND type = ? ORDER BY id DESC LIMIT ?`,
+          [uid, type, limit]
+        );
+        if (!rows.length) return { ok: true, output: action === "errors" ? "最近没有失败的请求" : "还没有调用记录" };
+        const lines = rows.map((r) =>
+          type === 2
+            ? `${t(r.created_at)} · ${r.model || "?"} · 令牌「${r.token_name || "站内对话"}」 · 输入 ${r.prompt_tokens || 0} / 输出 ${r.completion_tokens || 0} tokens · ${od(r.quota)}${r.elapsed_ms ? ` · ${(r.elapsed_ms / 1000).toFixed(1)}s` : ""}`
+            : `${t(r.created_at)} · ${r.model || "?"} · ${String(r.content || "").replace(/\s+/g, " ").slice(0, 160)}`
+        );
+        return { ok: true, output: `${action === "errors" ? "最近失败的请求" : "最近调用"}（${rows.length} 条，新→旧）：\n${lines.join("\n")}` };
+      }
+
+      if (action === "tokens") {
+        // **绝不返回 key_str**：模型输出会进聊天记录，密钥一旦出现在对话里就等于泄露
+        const [rows] = await pool.query(
+          `SELECT name, status, remain_quota, unlimited_quota, used_quota, group_name, expired_time, accessed_time
+             FROM tokens WHERE user_id = ? ORDER BY id DESC LIMIT 50`,
+          [uid]
+        );
+        if (!rows.length) return { ok: true, output: "还没有创建 API 令牌（可在「令牌管理」页新建）" };
+        const st = { 1: "启用", 2: "禁用", 3: "已过期", 4: "额度用尽" };
+        const lines = rows.map(
+          (r) =>
+            `「${r.name}」 ${st[r.status] || `状态${r.status}`} · 剩余 ${Number(r.unlimited_quota) ? "不限" : od(r.remain_quota)} · 已用 ${od(r.used_quota)}` +
+            `${r.group_name ? ` · 分组 ${r.group_name}` : ""}${Number(r.expired_time) > 0 ? ` · ${t(r.expired_time)} 到期` : ""}` +
+            `${Number(r.accessed_time) ? ` · 最近使用 ${t(r.accessed_time)}` : ""}`
+        );
+        return { ok: true, output: `API 令牌（${rows.length} 个，不含密钥）：\n${lines.join("\n")}` };
+      }
+
+      if (action === "usage") {
+        const since = Math.floor(Date.now() / 1000) - 7 * 86400;
+        // 按天聚合用 FLOOR 秒级时间戳（不依赖会话时区）；GROUP BY 与 SELECT 同一表达式，ONLY_FULL_GROUP_BY 下合法
+        const [days] = await pool.query(
+          `SELECT FLOOR((created_at + 28800) / 86400) AS d, COUNT(*) AS n, COALESCE(SUM(quota),0) AS cost
+             FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ?
+            GROUP BY FLOOR((created_at + 28800) / 86400) ORDER BY d`,
+          [uid, since]
+        );
+        const [models] = await pool.query(
+          `SELECT model, COUNT(*) AS n, COALESCE(SUM(quota),0) AS cost
+             FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ? AND model <> ''
+            GROUP BY model ORDER BY cost DESC LIMIT 8`,
+          [uid, since]
+        );
+        if (!days.length) return { ok: true, output: "近 7 天没有调用" };
+        const dayLines = days.map((r) => {
+          // d 是「北京时间的第几天」：d*86400 秒按 UTC 读出的年月日就是北京日期
+          const dt = new Date(Number(r.d) * 86400 * 1000);
+          return `${dt.getUTCMonth() + 1}-${dt.getUTCDate()}：${r.n} 次，${od(r.cost)}`;
+        });
+        const modelLines = models.map((r) => `${r.model}：${r.n} 次，${od(r.cost)}`);
+        return { ok: true, output: `近 7 天按天（北京时间）：\n${dayLines.join("\n")}\n\n按模型（消耗降序）：\n${modelLines.join("\n")}` };
+      }
+
+      return { ok: false, output: `未知 action：${action}；可用 overview / recent / tokens / usage / errors` };
     },
   },
 

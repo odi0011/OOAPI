@@ -1,18 +1,25 @@
-// 帖子列表项 —— 社区大厅与个人主页共用
+// 帖子列表项 —— 社区大厅与个人主页共用（第 80 批重排）
 // ---------------------------------------------------------------------------
-// 形态依据（Gemini 评审第 4 点）：**单列列表式，不用卡片瀑布流**。
-// 开发者社区讨论的多是 Prompt 调试、网关报错日志、模型评测，
-// 卡片式在宽屏上极易让长标题折行破碎，也会破坏代码块与日志的阅读连续性。
+// 仍然是**单列列表式**（不用卡片瀑布流：开发者社区的长标题、日志、代码片段在卡片里会折行破碎）。
+// 这次调整的是行内的信息排布，参照 Discourse / V2EX / GitHub Discussions 的通行做法：
 //
-// 三条硬规则：
-//   ① 摘要严格 2 行截断（-webkit-line-clamp: 2），完整正文只在详情页展开；
-//   ② 多图不在流里展开九宫格 —— 只取前 3 张 56px 微缩图 + 「+N」；
-//   ③ 阅读流由「标签 + 标题」主导，摘要与缩略图只是辅助判读。
+//   [头像] 标题（置顶/状态）                              ┌──┐
+//          摘要（最多 2 行）                               │12│ ← 回复数：固定右列，扫一眼就知道哪帖在热议
+//          [微缩图 ×3]                                     └──┘
+//          [话题] 作者 · 3 小时前 · 赞 · 浏览 · 「XX 5 分钟前回复」
+//
+// 原排布的问题（用户：「帖子目前这种排列方式是否不方便观看」）：
+//   ① 作者头像 18px 挤在元信息行里，扫列表时分不清是谁发的；
+//   ② 话题是一个灰色小 Tag，与作者/时间混在一起，几乎看不见；
+//   ③ 缩略图有时出现在右侧有时没有，右边缘参差不齐，眼睛没有稳定的落点；
+//   ④ 只有发帖时间，看不出「这帖刚有人回复」—— 讨论区最重要的活跃信号缺失。
+// 三条硬规则保留：摘要 2 行截断；多图只给 3 张微缩图 + N；阅读流由标题主导。
 import React from "react";
 import { Tag, Skeleton, Empty, Tooltip } from "antd";
-import { LikeOutlined, MessageOutlined, EyeOutlined, PushpinFilled } from "@ant-design/icons";
+import { LikeOutlined, EyeOutlined, PushpinFilled, PictureOutlined } from "@ant-design/icons";
 import { Link } from "react-router-dom";
 import UserAvatar from "./UserAvatar";
+import TopicIcon from "./TopicIcon";
 import { fmtCompact } from "./Charts";
 import { fmtDate } from "../services/format";
 
@@ -28,11 +35,12 @@ export function relTime(ts) {
   return fmtDate(t, "YYYY-MM-DD");
 }
 
-export default function PostList({ items = [], loading, empty = "还没有帖子", onOpen, showStatus = false }) {
+export default function PostList({ items = [], loading, empty = "还没有帖子", onOpen, showStatus = false, onTopic }) {
   if (loading) {
     return (
       <div style={{ padding: 16 }}>
-        <Skeleton active paragraph={{ rows: 3 }} />
+        <Skeleton avatar active paragraph={{ rows: 2 }} />
+        <Skeleton avatar active paragraph={{ rows: 2 }} />
       </div>
     );
   }
@@ -44,15 +52,17 @@ export default function PostList({ items = [], loading, empty = "还没有帖子
     );
   }
   return (
-    <div>
+    <div className="oo-post-list">
       {items.map((p) => {
         const media = Array.isArray(p.media) ? p.media : [];
         const thumbs = media.slice(0, 3);
         const rest = media.length - thumbs.length;
+        const replied = Number(p.last_reply_user_id) > 0 && Number(p.last_reply_time) > Number(p.created_time);
+        const hotReplies = (p.comment_count || 0) >= 10;
         return (
-          <div
+          <article
             key={p.id}
-            className="oo-post-item"
+            className={`oo-post-item${p.is_pinned ? " is-pinned" : ""}`}
             role="button"
             tabIndex={0}
             onClick={() => onOpen?.(p)}
@@ -63,69 +73,85 @@ export default function PostList({ items = [], loading, empty = "还没有帖子
               }
             }}
           >
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {p.author ? (
+              <Link
+                to={`/u/${p.author.id}`}
+                className="oo-post-avatar"
+                onClick={(e) => e.stopPropagation()}
+                aria-label={`${p.author.display_name || p.author.username} 的主页`}
+              >
+                <UserAvatar user={p.author} size={38} />
+              </Link>
+            ) : (
+              <span className="oo-post-avatar" />
+            )}
+
+            <div className="oo-post-main">
+              <h3 className="oo-post-title">
                 {p.is_pinned ? (
                   <Tooltip title="置顶">
-                    <PushpinFilled style={{ color: "var(--orange)", fontSize: 12 }} />
+                    <PushpinFilled className="oo-post-pin" />
                   </Tooltip>
                 ) : null}
-                <span className="oo-post-title oo-truncate">{p.title}</span>
-                {/* 状态标记：**作者自己的已删帖（status=2）也会出现在列表里** ——
-                    这是后端 visibilityClause 的有意设计（作者能读自己的内容），
-                    但前端原先只处理了 status=3（已隐藏），没处理 status=2。
-                    后果（黑盒测试实测反馈）：作者删完帖子，列表里它照常显示、
-                    点进去内容也照常，看起来像「删除没生效」；评论列表是有
-                    「已删除」标记的（见 PostDetailPage），帖子列表漏了这一支。 */}
+                <span>{p.title}</span>
+                {/* 作者自己的已删/隐藏帖也会出现在自己的流里（后端 visibilityClause 的有意设计），
+                    必须标出状态，否则看起来像「删除没生效」（三个人格都报过） */}
                 {showStatus && Number(p.status) === 2 ? <Tag color="red">已删除</Tag> : null}
                 {showStatus && Number(p.status) === 3 ? <Tag color="orange">已隐藏</Tag> : null}
-              </div>
+              </h3>
 
-              {p.summary ? <div className="oo-post-summary">{p.summary}</div> : null}
+              {p.summary ? <p className="oo-post-summary">{p.summary}</p> : null}
+
+              {thumbs.length ? (
+                <div className="oo-post-thumbs">
+                  {thumbs.map((m) =>
+                    m.url ? (
+                      <img key={m.id} src={m.url} alt="" className="oo-post-thumb" loading="lazy" />
+                    ) : (
+                      <span key={m.id} className="oo-thumb-more"><PictureOutlined /></span>
+                    )
+                  )}
+                  {rest > 0 ? <span className="oo-thumb-more">+{rest}</span> : null}
+                </div>
+              ) : null}
 
               <div className="oo-post-meta">
-                {p.topic ? <Tag style={{ marginInlineEnd: 0 }}>{p.topic}</Tag> : null}
-                {p.author ? (
-                  <Link
-                    to={`/u/${p.author.id}`}
-                    onClick={(e) => e.stopPropagation()}
-                    style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "inherit" }}
+                {p.topic ? (
+                  <button
+                    type="button"
+                    className="oo-post-topic"
+                    onClick={(e) => {
+                      if (!onTopic) return;
+                      e.stopPropagation();
+                      onTopic(p.topic_id);
+                    }}
+                    tabIndex={onTopic ? 0 : -1}
                   >
-                    <UserAvatar user={p.author} size={18} />
-                    <span className="oo-truncate" style={{ maxWidth: 120 }}>
-                      {p.author.display_name || p.author.username}
-                    </span>
-                  </Link>
+                    <TopicIcon icon={p.topic_icon} imageUrl={p.topic_image_url} size={14} plain />
+                    {p.topic}
+                  </button>
                 ) : null}
-                <span>{relTime(p.created_time)}</span>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                  <LikeOutlined /> {fmtCompact(p.like_count || 0)}
-                </span>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                  <MessageOutlined /> {fmtCompact(p.comment_count || 0)}
-                </span>
-                {p.view_count !== undefined ? (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                    <EyeOutlined /> {fmtCompact(p.view_count || 0)}
+                {p.author ? <span className="oo-post-author">{p.author.display_name || p.author.username}</span> : null}
+                <span title={fmtDate(p.created_time, "YYYY-MM-DD HH:mm")}>{relTime(p.created_time)}</span>
+                {p.like_count ? (
+                  <span className="oo-post-stat"><LikeOutlined /> {fmtCompact(p.like_count)}</span>
+                ) : null}
+                {p.view_count ? (
+                  <span className="oo-post-stat"><EyeOutlined /> {fmtCompact(p.view_count)}</span>
+                ) : null}
+                {replied ? (
+                  <span className="oo-post-last">
+                    {p.last_reply_name || "有人"} {relTime(p.last_reply_time)}回复
                   </span>
                 ) : null}
               </div>
             </div>
 
-            {/* 微缩图：只在有图时出现，最多 3 张，其余用 +N 标注 */}
-            {thumbs.length ? (
-              <div className="oo-post-thumbs" style={{ alignSelf: "center" }}>
-                {thumbs.map((m) =>
-                  m.url ? (
-                    <img key={m.id} src={m.url} alt="" className="oo-post-thumb" loading="lazy" />
-                  ) : (
-                    <span key={m.id} className="oo-thumb-more">图</span>
-                  )
-                )}
-                {rest > 0 ? <span className="oo-thumb-more">+{rest}</span> : null}
-              </div>
-            ) : null}
-          </div>
+            <div className={`oo-post-replies${p.comment_count ? "" : " is-zero"}${hotReplies ? " is-hot" : ""}`} aria-label={`${p.comment_count || 0} 条回复`}>
+              <b>{fmtCompact(p.comment_count || 0)}</b>
+              <span>回复</span>
+            </div>
+          </article>
         );
       })}
     </div>

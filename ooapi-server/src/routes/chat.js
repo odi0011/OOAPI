@@ -794,8 +794,10 @@ function aggregate(calls = []) {
     if (Number(req.user.quota) <= 0) return fail(res, `${CURRENCY}余额不足，请联系管理员充值`, 403);
 
     const content = String(text || "").trim();
-    const agentId = agentOverride || session.agent;
-    const agent = findAgent(agentId);
+    // 第 80 批：智能体选择已取消，一律由 general 执行（老会话存的 research/coder 等也收拢到这里）。
+    // agentOverride 仍从 body 里解构以兼容旧前端，但不再生效。
+    void agentOverride;
+    const agent = findAgent("general");
     if (!agent) return fail(res, "智能体不存在");
     const model = modelOverride || session.model;
     if (!model) return fail(res, "请选择模型");
@@ -806,7 +808,10 @@ function aggregate(calls = []) {
     // 同一会话同时只允许一个运行：重复提交若被放行会跑两份、扣两次费
     if (isRunning(session.id)) return fail(res, "这个会话正在生成中，请稍候或先停止", 409);
 
-    const settings = sanitizeSettings(settingsPatch ?? {}, { previous: session.settings });
+    // 能力开关已取消：tools/search 一律回到智能体默认（老会话里存过的「关掉联网」等不再生效，
+    // 否则用户在新界面里既看不到开关、又被旧设置限制住，表现为「怎么问都不查资料」）。
+    // 深度思考（thinking）仍跟随会话设定；会话指令保留。
+    const settings = { ...sanitizeSettings(settingsPatch ?? {}, { previous: session.settings }), tools: null, search: null };
 
     // 图片：优先走媒体库（parts 只存 media_id，字节落盘）。
     //

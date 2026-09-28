@@ -5239,6 +5239,57 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
   b) 每渠道出站代理（住宅 IP）是社区标配，网关需支持 per-channel 出站代理
   （引入 undici ProxyAgent 依赖，需批准）；c) 粘贴登录并带 X-Device-Token 可显著
   降险（设备绑定拿不到该值）。
+| 2026-09-28 | **第 80 批 · 对话重构（工具乱码 / 账号自查 / 去开关 / 输入框）+ 全站图表与看板重构 + 社区话题与帖子列表 + 主题切换**。
+
+  **一、对话工具调用「乱码」（用户截图）**：DeepSeek 不按约定写 `<tool_call>`，吐出训练时的原生
+  `<｜DSML｜function_calls><｜DSML｜invoke name=…>` 标记；旧嗅探器只认 `<tool_call>` / `{"tool":…}`，
+  于是整段标记被当正文推给用户、工具也没执行。`harness/loop.js#StepStream` 重写：识别四类写法
+  （约定写法兼容 name/arguments、JSON 代码块/裸 JSON、function_calls/invoke/parameter 含各种 DSML
+  分隔符、V3 特殊 token）并**执行**；标记类一旦开头绝不按正文吐出（未闭合 → 判格式不合法让模型重试）；
+  剥掉 `<｜end▁of▁sentence｜>` 等模板 token；顺带修了旧版「裸 JSON 只看全文第一个 `{`」的 bug。
+  提示词加规则「只用 `<tool_call>`，不要 DSML/invoke」。回归：`tests/harness-sniffer.test.mjs`
+  65 项（截图原文 + 逐字符流式切碎）。
+
+  **二、助手可查询自己的账号**：新工具 `account`（overview/recent/tokens/usage/errors），每条 SQL 都带
+  `user_id = 当前用户`，**绝不查 key_str**；默认挂在助手上，提示词说明「问余额/调用记录时用它查真实数据」。
+
+  **三、取消智能体与能力开关**（用户：「不需要给用户提供智能体、功能开关的选项」）：顶部编排栏整条删除；
+  `/run` 一律用 general（老会话存的 research/coder 也收拢），并把 settings.tools/search 置空回落默认 ——
+  否则老会话里关过联网的人在新界面既看不到开关又被旧设置限制。会话指令保留在「设定」里。
+  **输入框重构**：两行结构（整行输入 / 工具行：附件·密钥·模型·发送），原单行 grid 按钮底对齐文字顶对齐
+  上下错位；密钥只在多把可用时显示。
+
+  **四、主题切换选中态被切割**：AntD Segmented 的滑块尺寸由内部计算，移动端 `.ant-segmented-item`
+  被强制 min-height 36px 后滑块不跟随 → 选中白底被切。改为自绘 `ThemeSwitch`（轨道/按钮/滑块同一组
+  CSS 变量，键盘左右切换，radiogroup 语义）。窄屏面包屑只留当前页名（原「工作台」被挤成竖排）。
+
+  **五、图表与看板**：`Charts.jsx` 重做（兼容旧签名）—— 整齐刻度（1/2/2.5/5×10ⁿ 替代 max×0.25 的任意小数）、
+  **左右双轴**（调用几百次与消费零点几 OD 同轴时消费线贴底）、提示框按序列格式化、排行改单色 + 序号 + 占比、
+  新增 Donut / KpiCard / ChartCard；颜色走 style 而不是 SVG 属性（属性里 var() 不解析）。
+  平台看板重排为 KPI（环比）→ 实时条（单独标注重启清零）→ 趋势 → 成本/占比/用户/令牌 → 渠道表 → 错误；
+  后端 `dashboard.js`：**按北京时间切天/切小时**（原按 UTC 零点切却标 UTC+8，0~8 点算进前一天；
+  小时统计原依赖 MySQL 会话时区）、返回上一周期 `previous` 与错误总数、令牌排行带名称与持有人。
+  个人看板与使用分析同步改用共享组件（UsageAnalysis 删掉私有折线实现，消费不再按「单位」显示）。
+  用户消费排行点进 `/log?keyword=用户名`。
+
+  **六、社区**：
+  · **修复进度盒核查**：线上 buildlog_state 最后更新 43 小时前、CC 日志不存在（监工已停），盒子却照常显示
+    「3/11 已完成」和早已修好的「公告写了不显示」；每 3 秒无条件轮询公开接口；颜色写死 + 引用不存在的
+    `--gray-3`。改为超 24h 对普通用户隐藏（管理员看到过期提示）、可见时 5s/30s 自适应轮询、隐藏页暂停、走令牌。
+    **监工脚本本身需要重新拉起**（本批不动它）。
+  · **话题管理**：原来能建/改/停用，**不能删**；且管理页读话题不带 `all=1` —— 停用后话题从管理页消失，
+    「启用」按钮永远点不到。新增 `DELETE /topics/:id`（有帖子必须 move_to 迁移）、`?all=1`。
+  · **不再用 emoji**：图标改为「内置线性图标 key（20 个，前后端白名单一致）或上传图片（image_media_id，登记媒体引用）」，
+    `components/TopicIcon.jsx`；迁移把默认 emoji 映射为 key。
+  · **帖子列表重排**（调研 Discourse/V2EX/GitHub Discussions）：头像列 + 标题 + 摘要 + 微缩图 + 元信息（话题胶囊可点筛选、
+    「XX 5 分钟前回复」）+ 固定宽度回复数列；默认排序改「最新活动」（新列 last_reply_time / last_reply_user_id，
+    评论时更新，迁移回填），「最热」改为近 30 天加权分（原全时段累计，老帖霸榜）。
+
+  **验证**：`npm test` 30 个文件全过（含新增 harness-sniffer 65 项、batch80 23 项）；persona-r1 过；vite build 无告警；
+  新 SQL 在线上库（ONLY_FULL_GROUP_BY）上只读验证 8/8（依赖新列的两条在 sql-compat 里未迁移时 skip）；
+  服务器临时预览（只挂 chat/dashboard/buildlog 新路由，不跑迁移）ui-smoke 23/23、截图人工核对。
+  **未完成**：真实模型对话端到端（账号工具被模型实际调用）因测试服务器 SSH 中途超时未跑成，部署后需补测一轮；
+  预览目录 `/tmp/ooapi-stage`（含 .env 副本）同因 SSH 中断**尚未清理**，恢复连接后需 `rm -rf /tmp/ooapi-stage /tmp/oo-stage.tgz` 并停掉 3999 端口的 preview 进程。
 
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 

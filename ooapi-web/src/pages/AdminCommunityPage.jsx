@@ -5,16 +5,17 @@
 //   · 内容：按状态筛选（正常/隐藏/已删），隐藏可恢复、置顶控制信息流；
 //   · 计数修复：帖子/评论/点赞的计数是冗余字段，极端并发下可能漂移，
 //     提供一键重算（不假设它永远准确，但提供修复手段）。
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Button, Table, Tag, Space, App as AntApp, Modal, Form, Input, InputNumber, Switch,
-  Alert, Popconfirm, Tooltip, Empty, Segmented,
+  Alert, Popconfirm, Tooltip, Empty, Segmented, Select,
 } from "antd";
 import {
   PlusOutlined, ReloadOutlined, EditOutlined, EyeOutlined, EyeInvisibleOutlined,
-  PushpinOutlined, DeleteOutlined, CalculatorOutlined, TagsOutlined, UndoOutlined,
+  PushpinOutlined, DeleteOutlined, CalculatorOutlined, TagsOutlined, UndoOutlined, UploadOutlined,
 } from "@ant-design/icons";
+import TopicIcon, { TOPIC_ICONS } from "../components/TopicIcon";
 import { API } from "../services/api";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
@@ -22,6 +23,28 @@ import StatCard from "../components/StatCard";
 import UserAvatar from "../components/UserAvatar";
 import { fmtCompact } from "../components/Charts";
 import { fmtDate } from "../services/format";
+
+/** 内置图标网格（受控：value = 图标 key，"" = 未选） */
+function IconGrid({ value, onChange }) {
+  return (
+    <div className="oo-icon-grid" role="radiogroup" aria-label="内置图标">
+      {TOPIC_ICONS.map((x) => (
+        <Tooltip key={x.key} title={x.label} mouseEnterDelay={0.3}>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={value === x.key}
+            aria-label={x.label}
+            className={value === x.key ? "is-on" : ""}
+            onClick={() => onChange?.(value === x.key ? "" : x.key)}
+          >
+            <TopicIcon icon={x.key} size={28} />
+          </button>
+        </Tooltip>
+      ))}
+    </div>
+  );
+}
 
 export default function AdminCommunityPage() {
   const navigate = useNavigate();
@@ -42,6 +65,11 @@ export default function AdminCommunityPage() {
   const [editingTopic, setEditingTopic] = useState(null);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm();
+  const [iconImageUrl, setIconImageUrl] = useState("");
+  const [uploadingIcon, setUploadingIcon] = useState(false);
+  const iconFileRef = useRef(null);
+  const [deleting, setDeleting] = useState(null);
+  const [moveTo, setMoveTo] = useState(undefined);
 
   const loadPosts = useCallback(async () => {
     const token = begin();
@@ -65,7 +93,9 @@ export default function AdminCommunityPage() {
 
   const loadTopics = useCallback(async () => {
     try {
-      const d = await API.get("/community/topics");
+      // all=1：包含已停用的话题。原先不带这个参数 —— 停用后的话题从管理页消失，
+      // 表格里那个「启用」按钮永远点不到（停用变成了事实上的不可逆删除）。
+      const d = await API.get("/community/topics", { params: { all: 1 } });
       setTopics(Array.isArray(d) ? d : []);
     } catch (e) {
       message.error(e.message);
@@ -122,6 +152,43 @@ export default function AdminCommunityPage() {
       message.error(e.message);
     } finally {
       setActing(false);
+    }
+  };
+
+  const uploadIcon = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setUploadingIcon(true);
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result || ""));
+        fr.onerror = () => reject(new Error("读取文件失败"));
+        fr.readAsDataURL(file);
+      });
+      const r = await API.post("/media", { dataUrl, name: file.name, source: "community" }, { timeoutMs: 120000 });
+      form.setFieldsValue({ image_media_id: r.id });
+      setIconImageUrl(r.url || "");
+    } catch (err) {
+      message.error(err.message || "上传失败");
+    } finally {
+      setUploadingIcon(false);
+    }
+  };
+
+  const removeTopic = async () => {
+    if (!deleting) return;
+    setSaving(true);
+    try {
+      await API.del(`/community/topics/${deleting.id}`, { params: moveTo ? { move_to: moveTo } : undefined });
+      message.success("话题已删除");
+      setDeleting(null);
+      await loadTopics();
+    } catch (e) {
+      message.error(e.message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -267,7 +334,8 @@ export default function AdminCommunityPage() {
                 onClick={() => {
                   setEditingTopic(null);
                   form.resetFields();
-                  form.setFieldsValue({ sort: 0, icon: "", description: "" });
+                  form.setFieldsValue({ sort: 0, icon: "chat", image_media_id: 0, description: "" });
+                  setIconImageUrl("");
                   setTopicOpen(true);
                 }}
               >
@@ -359,10 +427,10 @@ export default function AdminCommunityPage() {
             rowClassName={(r) => (Number(r.status) === 2 ? "oo-row-muted" : "")}
             columns={[
               { title: "话题", dataIndex: "name", render: (v, r) => (
-                <span>
-                  {r.icon ? `${r.icon} ` : ""}
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  <TopicIcon icon={r.icon} imageUrl={r.image_url} size={24} />
                   <b>{v}</b>
-                  {Number(r.status) === 2 ? <Tag style={{ marginLeft: 8 }}>已停用</Tag> : null}
+                  {Number(r.status) === 2 ? <Tag style={{ margin: 0 }}>已停用</Tag> : null}
                 </span>
               ) },
               { title: "说明", dataIndex: "description", ellipsis: true, render: (v) => v || <span style={{ color: "var(--ink-3)" }}>—</span> },
@@ -370,7 +438,7 @@ export default function AdminCommunityPage() {
               { title: "排序", dataIndex: "sort", width: 70, render: (v) => <span className="oo-num">{v}</span> },
               {
                 title: "操作",
-                width: 170,
+                width: 220,
                 render: (_, r) => (
                   <Space size={2}>
                     <Button
@@ -380,7 +448,8 @@ export default function AdminCommunityPage() {
                       onClick={() => {
                         setEditingTopic(r);
                         form.resetFields();
-                        form.setFieldsValue({ name: r.name, description: r.description, icon: r.icon, sort: r.sort });
+                        form.setFieldsValue({ name: r.name, description: r.description, icon: r.icon || "", image_media_id: r.image_media_id || 0, sort: r.sort });
+                        setIconImageUrl(r.image_url || "");
                         setTopicOpen(true);
                       }}
                     >
@@ -401,10 +470,13 @@ export default function AdminCommunityPage() {
                       okText="确定"
                       cancelText="取消"
                     >
-                      <Button type="link" size="small" danger={Number(r.status) !== 2}>
+                      <Button type="link" size="small">
                         {Number(r.status) === 2 ? "启用" : "停用"}
                       </Button>
                     </Popconfirm>
+                    <Button type="link" size="small" danger icon={<DeleteOutlined />} onClick={() => { setDeleting(r); setMoveTo(undefined); }}>
+                      删除
+                    </Button>
                   </Space>
                 ),
               },
@@ -433,13 +505,60 @@ export default function AdminCommunityPage() {
           <Form.Item name="description" label="说明">
             <Input placeholder="这个话题讨论什么（选填）" maxLength={160} />
           </Form.Item>
-          <Form.Item name="icon" label="图标" tooltip="可以是一个 emoji，例如 💡">
-            <Input placeholder="💡" maxLength={16} style={{ width: 120 }} />
+          {/* 图标：内置线性图标 或 上传图片（图片优先）。不再接受 emoji —— 各系统字形不一、与站内图标风格冲突 */}
+          <Form.Item label="图标" tooltip="选一个内置图标，或上传一张图片（上传的图片优先显示）">
+            <div className="oo-icon-picker">
+              <Form.Item name="icon" noStyle>
+                <IconGrid />
+              </Form.Item>
+              <Form.Item name="image_media_id" noStyle>
+                <Input type="hidden" />
+              </Form.Item>
+              <div className="oo-icon-upload">
+                {iconImageUrl ? (
+                  <>
+                    <TopicIcon imageUrl={iconImageUrl} size={40} />
+                    <Button size="small" onClick={() => { setIconImageUrl(""); form.setFieldsValue({ image_media_id: 0 }); }}>移除图片</Button>
+                  </>
+                ) : (
+                  <Button size="small" icon={<UploadOutlined />} loading={uploadingIcon} onClick={() => iconFileRef.current?.click()}>
+                    上传图片
+                  </Button>
+                )}
+                <span className="oo-desc">建议正方形，至少 64×64</span>
+                <input ref={iconFileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" hidden onChange={uploadIcon} />
+              </div>
+            </div>
           </Form.Item>
           <Form.Item name="sort" label="排序" tooltip="数值越大越靠前">
             <InputNumber style={{ width: 120 }} min={-9999} max={9999} />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={`删除话题「${deleting?.name || ""}」`}
+        open={Boolean(deleting)}
+        onCancel={() => setDeleting(null)}
+        okText="删除"
+        okButtonProps={{ danger: true, disabled: Boolean(deleting?.post_count) && !moveTo, loading: saving }}
+        onOk={removeTopic}
+        destroyOnClose
+      >
+        {deleting?.post_count ? (
+          <>
+            <p>这个话题下有 <b>{deleting.post_count}</b> 篇帖子，删除前需要把它们迁到另一个话题（帖子必须归属某个话题）。</p>
+            <Select
+              style={{ width: "100%" }}
+              placeholder="选择要迁入的话题"
+              value={moveTo}
+              onChange={setMoveTo}
+              options={topics.filter((t) => t.id !== deleting.id).map((t) => ({ value: t.id, label: t.name }))}
+            />
+          </>
+        ) : (
+          <p>话题下没有帖子，删除后无法恢复。只是想暂时不让大家发帖的话，用「停用」即可。</p>
+        )}
       </Modal>
     </div>
   );

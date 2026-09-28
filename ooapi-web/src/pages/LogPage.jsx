@@ -102,7 +102,14 @@ export default function LogPage() {
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
-  const [keyword, setKeyword] = useState("");
+  // ?keyword= 预填：平台看板「用户消费排行」点进来时按用户名筛选
+  const [keyword, setKeyword] = useState(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("keyword") || "";
+    } catch {
+      return "";
+    }
+  });
   const [model, setModel] = useState("");
   const [tokenId, setTokenId] = useState(0);
   const [group, setGroup] = useState("");
@@ -463,6 +470,7 @@ export default function LogPage() {
               size="small"
               placeholder={isAdmin ? "搜索用户 / 内容 / 模型" : "搜索内容 / 模型"}
               allowClear
+              defaultValue={keyword}
               style={{ width: 190 }}
               onChange={(e) => {
                 if (!e.target.value) {

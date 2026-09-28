@@ -36,6 +36,12 @@ const ChevronIcon = (
     <path d="M6 9l6 6 6-6" />
   </svg>
 );
+const KeyIcon = (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="7.5" cy="15.5" r="4.5" />
+    <path d="M10.7 12.3L21 2M17 6l3 3M14 9l2 2" />
+  </svg>
+);
 const TickIcon = (
   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
     <path d="M20 6L9 17l-5-5" />
@@ -77,7 +83,10 @@ export default function PromptBar({
   onPickFile,
   fileOk = true,
   visionOk = false,
-  toggles = [],
+  // 可用密钥（>1 把时在工具行显示切换器；只有 1 把就不打扰）
+  keys = [],
+  keyId = 0,
+  onKey,
   placeholder = "输入你的问题，或分享一个想法…",
   disabled = false,
   moreDisabled = false,
@@ -91,15 +100,16 @@ export default function PromptBar({
   const [modelOpen, setModelOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [keyOpen, setKeyOpen] = useState(false);
 
   const canSend = !disabled && (value.trim().length > 0 || chips.length > 0);
 
-  // 输入框自增高：使用 auto 准确度量，限制在 36px~160px 之间，超出平滑滚动
+  // 输入框自增高：使用 auto 准确度量，限制在 44px~200px 之间，超出平滑滚动
   useLayoutEffect(() => {
     const ta = taRef.current;
     if (!ta) return;
-    const minH = 36;
-    const maxH = 160;
+    const minH = 44;
+    const maxH = 200;
     ta.style.height = "auto";
     const h = ta.scrollHeight;
     ta.style.height = `${Math.min(Math.max(h, minH), maxH)}px`;
@@ -108,17 +118,30 @@ export default function PromptBar({
 
   // 点外面关菜单
   useEffect(() => {
-    if (!modelOpen && !cmdOpen && !attachOpen) return undefined;
+    if (!modelOpen && !cmdOpen && !attachOpen && !keyOpen) return undefined;
     const close = (e) => {
-      if (!e.target.closest?.("[data-promptbar-menu]")) {
+      // 点菜单本身或它的触发按钮都不关（触发按钮自己会切换开关，否则会「关了又开」）
+      if (!e.target.closest?.("[data-promptbar-menu], .bui-attachwrap, .bui-modelwrap")) {
         setModelOpen(false);
         setCmdOpen(false);
         setAttachOpen(false);
+        setKeyOpen(false);
+      }
+    };
+    const esc = (e) => {
+      if (e.key === "Escape") {
+        setModelOpen(false);
+        setAttachOpen(false);
+        setKeyOpen(false);
       }
     };
     document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
-  }, [modelOpen, cmdOpen, attachOpen]);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [modelOpen, cmdOpen, attachOpen, keyOpen]);
 
   // 输入 / 开头即打开命令菜单（官方用法）
   useEffect(() => {
@@ -150,6 +173,14 @@ export default function PromptBar({
       ? [{ vendor: "all", vendorName: "", models }]
       : [];
 
+  const closeAll = () => {
+    setModelOpen(false);
+    setCmdOpen(false);
+    setAttachOpen(false);
+    setKeyOpen(false);
+  };
+  const curKey = keys.find((k) => k.id === keyId);
+
   return (
     <div className="bui-promptbar" data-promptbar>
       {/* ---------- 命令菜单（/ 唤起，锚定在输入框上方） ---------- */}
@@ -176,7 +207,7 @@ export default function PromptBar({
         </div>
       ) : null}
 
-      <div className="bui-composer">
+      <div className={`bui-composer${disabled ? " is-disabled" : ""}`}>
         {chips.length > 0 ? (
           <div className="bui-chips">
             {chips.map((c, i) => (
@@ -193,7 +224,48 @@ export default function PromptBar({
           </div>
         ) : null}
 
-        <div className="bui-composer-row">
+        {/* 第一行：输入框独占整行（原先与 5 个按钮挤在一行：按钮底对齐、文字顶对齐，
+            单行时上下错位；多行时右侧一串按钮悬在最底部） */}
+        <textarea
+          ref={taRef}
+          rows={1}
+          value={value}
+          aria-label="消息内容"
+          disabled={disabled}
+          placeholder={busy ? "正在生成…" : placeholder}
+          onChange={(e) => onChange(e.target.value)}
+          // Ctrl+V 贴截图 → 交给上层走图片上传链路。
+          // 原先这里**完全没有 onPaste 处理**，于是"往输入框粘截图"什么都不发生
+          // （人格实测：「Ctrl+V 没有任何反应……而且是静默的」）。
+          // 只拦「剪贴板里有图片文件」的情况，其余（纯文本粘贴）不干预 ——
+          // 否则会把用户正常贴代码/贴文字也吃掉。
+          onPaste={(e) => {
+            if (!onPasteImage) return;
+            const items = Array.from(e.clipboardData?.items || []);
+            const imgs = items
+              .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+              .map((it) => it.getAsFile())
+              .filter(Boolean);
+            if (!imgs.length) return; // 没图就走默认行为
+            e.preventDefault();
+            onPasteImage(imgs);
+          }}
+          onKeyDown={(e) => {
+            if (cmdOpen && (e.key === "Escape" || e.key === "ArrowDown")) {
+              e.preventDefault();
+              setCmdOpen(false);
+              return;
+            }
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+              e.preventDefault();
+              if (canSend) onSend?.();
+            }
+          }}
+          className="bui-composer-input"
+        />
+
+        {/* 第二行：左 = 附件 / 密钥，右 = 模型 / 发送。所有控件同高、垂直居中 */}
+        <div className="bui-composer-bar">
           <div className="bui-attachwrap">
             <button
               type="button"
@@ -201,7 +273,7 @@ export default function PromptBar({
               title="添加图片或文档（PDF / Word / Excel / 文本）"
               aria-expanded={attachOpen}
               disabled={busy || (!onPickImage && !onPickFile)}
-              onClick={() => setAttachOpen((v) => !v)}
+              onClick={() => { const v = !attachOpen; closeAll(); setAttachOpen(v); }}
               className="bui-cbtn"
             >
               {PlusIcon}
@@ -218,8 +290,9 @@ export default function PromptBar({
                     if (visionOk) onPickImage?.();
                   }}
                 >
+                  {ImageIcon}
                   <span className="nm">图片</span>
-                  <span className="ds">{visionOk ? "截图、照片，最多 30 张" : "当前模型不支持图片"}</span>
+                  <span className="ds">{visionOk ? "截图、照片，也可直接粘贴" : "当前模型不支持图片"}</span>
                 </button>
                 <button
                   type="button"
@@ -231,6 +304,7 @@ export default function PromptBar({
                     onPickFile?.();
                   }}
                 >
+                  {FileIcon}
                   <span className="nm">文档</span>
                   <span className="ds">PDF / Word / Excel / 文本与代码</span>
                 </button>
@@ -238,60 +312,56 @@ export default function PromptBar({
             ) : null}
           </div>
 
-          <textarea
-            ref={taRef}
-            rows={1}
-            value={value}
-            aria-label="消息内容"
-            disabled={disabled}
-            placeholder={busy ? "正在生成…" : placeholder}
-            onChange={(e) => onChange(e.target.value)}
-            // Ctrl+V 贴截图 → 交给上层走图片上传链路。
-            //
-            // 原先这里**完全没有 onPaste 处理**，于是"往输入框粘截图"什么都不发生：
-            // 没缩略图、没 toast、没报错、输入框也没变化（人格实测原话：
-            // 「Ctrl+V 和直接派发 paste 事件都试了，没有任何反应……而且是静默的，
-            //   连失败都不告诉你。评论框在同一时期是支持粘贴的，对比之下更像漏了。」）
-            //
-            // 只拦「剪贴板里有图片文件」的情况，其余（纯文本粘贴）不干预 ——
-            // 否则会把用户正常贴代码/贴文字也吃掉。
-            onPaste={(e) => {
-              if (!onPasteImage) return;
-              const items = Array.from(e.clipboardData?.items || []);
-              const imgs = items
-                .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
-                .map((it) => it.getAsFile())
-                .filter(Boolean);
-              if (!imgs.length) return; // 没图就走默认行为
-              e.preventDefault();
-              onPasteImage(imgs);
-            }}
-            onKeyDown={(e) => {
-              if (cmdOpen && (e.key === "Escape" || e.key === "ArrowDown")) {
-                e.preventDefault();
-                setCmdOpen(false);
-                return;
-              }
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
-                e.preventDefault();
-                if (canSend) onSend?.();
-              }
-            }}
-            className="bui-composer-input"
-          />
+          {/* 密钥：只有一把可用密钥时不显示（没得选就不打扰） */}
+          {keys.length > 1 ? (
+            <div className="bui-modelwrap">
+              <button
+                type="button"
+                className="bui-selbtn"
+                aria-label="选择密钥"
+                aria-expanded={keyOpen}
+                disabled={busy}
+                title="密钥决定可用模型与计费分组"
+                onClick={() => { const v = !keyOpen; closeAll(); setKeyOpen(v); }}
+              >
+                {KeyIcon}
+                <span className="nm2">{curKey?.name || "选择密钥"}</span>
+                <span className="caret">{ChevronIcon}</span>
+              </button>
+              {keyOpen ? (
+                <div className="bui-upmenu is-model" data-promptbar-menu>
+                  {keys.map((k) => (
+                    <button
+                      key={k.id}
+                      type="button"
+                      className="bui-upmenu-row is-model"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setKeyOpen(false);
+                        onKey?.(k.id);
+                      }}
+                    >
+                      <span className="nm2">{k.name}</span>
+                      <span className="ds" style={{ flex: "0 1 auto" }}>{k.group_name || "公共池"}</span>
+                      <span className={`tick ${k.id === keyId ? "" : "is-off"}`}>{TickIcon}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          <span className="bui-composer-spacer" />
 
           {/* 模型选择：锚点绑在这个按钮的容器上，输入框长高也不会漂 */}
-          <div className="bui-modelwrap" ref={modelWrapRef}>
+          <div className="bui-modelwrap is-right" ref={modelWrapRef}>
             <button
               type="button"
               aria-label="选择模型"
               aria-expanded={modelOpen}
               disabled={busy}
-              onClick={() => {
-                setCmdOpen(false);
-                setModelOpen((c) => !c);
-              }}
-              className="bui-modelbtn"
+              onClick={() => { const v = !modelOpen; closeAll(); setModelOpen(v); }}
+              className="bui-selbtn"
             >
               <VendorIcon type={modelVendor} size={14} />
               <span className="nm2">{currentLabel}</span>
@@ -335,27 +405,12 @@ export default function PromptBar({
             ) : null}
           </div>
 
-          {toggles.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              aria-label={t.title || t.label}
-              title={t.title || t.label}
-              aria-pressed={t.on}
-              disabled={busy}
-              onClick={t.onClick}
-              className={`bui-cbtn ${t.on ? "is-accent" : ""}`}
-            >
-              {t.icon}
-            </button>
-          ))}
-
           {busy ? (
-            <button type="button" aria-label="停止生成" onClick={onStop} className="bui-cbtn is-stop">
+            <button type="button" aria-label="停止生成" title="停止生成" onClick={onStop} className="bui-cbtn is-stop">
               {StopIcon}
             </button>
           ) : (
-            <button type="button" aria-label="发送消息" disabled={!canSend} onClick={() => onSend?.()} className="bui-cbtn is-send">
+            <button type="button" aria-label="发送消息" title="发送（Enter）" disabled={!canSend} onClick={() => onSend?.()} className="bui-cbtn is-send">
               {SendIcon}
             </button>
           )}

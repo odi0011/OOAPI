@@ -111,6 +111,8 @@ async function postToResp(row, { withContent = true, authors = null } = {}) {
       : { id: Number(row.user_id), username: "", display_name: "", avatar_url: "" },
     topic_id: Number(row.topic_id) || 0,
     topic: row.topic_name || "",
+    topic_icon: row.topic_icon || "",
+    topic_image_url: Number(row.topic_image) ? await mediaUrl(Number(row.topic_image)) : "",
     title: row.title,
     content: withContent ? row.content : undefined,
     summary: withContent ? undefined : summarize(row.content, 160),
@@ -123,6 +125,8 @@ async function postToResp(row, { withContent = true, authors = null } = {}) {
     status: Number(row.status),
     created_time: Number(row.created_time),
     updated_time: Number(row.updated_time) || Number(row.created_time),
+    last_reply_time: Number(row.last_reply_time) || 0,
+    last_reply_user_id: Number(row.last_reply_user_id) || 0,
   };
 }
 
@@ -165,21 +169,63 @@ async function myReactions(userId, postIds) {
 // ---------------------------------------------------------------------------
 // 话题
 // ---------------------------------------------------------------------------
+// 话题图标（第 80 批）：不再接受 emoji（用户要求），二选一 ——
+//   ① 内置图标 key（与前端 components/TopicIcon.jsx 的 TOPIC_ICONS 一致）；
+//   ② 自定义图片 image_media_id（管理员上传到媒体库的图片），非 0 时优先。
+// 白名单校验：未知 key 一律拒绝，否则前端拿到一个渲染不出的值只能显示兜底图标。
+export const TOPIC_ICON_KEYS = [
+  "chat", "bug", "lab", "plug", "coffee", "bulb", "notice", "rocket", "book", "tool",
+  "code", "robot", "api", "image", "question", "star", "fire", "team", "shield", "gift",
+];
+function topicIconOf(v) {
+  const s = String(v ?? "").trim();
+  if (!s) return { ok: true, icon: "" };
+  return TOPIC_ICON_KEYS.includes(s) ? { ok: true, icon: s } : { ok: false };
+}
+
+async function topicToResp(r) {
+  const img = Number(r.image_media_id) || 0;
+  return {
+    id: Number(r.id),
+    name: r.name,
+    description: r.description,
+    icon: r.icon,
+    image_media_id: img,
+    image_url: img ? await mediaUrl(img) : "",
+    post_count: Number(r.post_count) || 0,
+    sort: Number(r.sort) || 0,
+    status: Number(r.status) || 1,
+  };
+}
+
+// 话题列表：普通用户只看启用的；管理员带 ?all=1 时包含停用的（话题管理页需要）
 router.get(
   "/topics",
   authRequired,
   asyncHandler(async (req, res) => {
+    const all = req.user.role >= 100 && String(req.query.all || "") === "1";
     const [rows] = await pool.query(
-      "SELECT id, name, description, icon, post_count, sort, status FROM community_topics WHERE status = 1 ORDER BY sort DESC, id ASC"
+      `SELECT id, name, description, icon, image_media_id, post_count, sort, status FROM community_topics
+        ${all ? "" : "WHERE status = 1"} ORDER BY status ASC, sort DESC, id ASC`
     );
-    return ok(res, rows.map((r) => ({
-      id: Number(r.id), name: r.name, description: r.description, icon: r.icon,
-      post_count: Number(r.post_count) || 0, sort: Number(r.sort) || 0,
-    })));
+    const out = [];
+    for (const r of rows) out.push(await topicToResp(r));
+    return ok(res, out);
   })
 );
 
-// 话题管理（管理员）：新建/改名/停用
+/** 话题图片：必须是管理员自己媒体库里的图片，并登记引用（否则会被孤儿回收删掉） */
+async function checkTopicImage(req, raw) {
+  const mid = Number(raw) || 0;
+  if (!mid) return { ok: true, id: 0 };
+  const { ok: owned } = await filterOwnedMediaIds([mid], req.user.id);
+  if (!owned.length) return { ok: false, msg: "图片不存在或不属于你" };
+  const [[m]] = await pool.query("SELECT kind FROM media WHERE id = ?", [mid]).catch(() => [[null]]);
+  if (m && !String(m.kind || "").startsWith("image")) return { ok: false, msg: "话题图标必须是图片" };
+  return { ok: true, id: mid };
+}
+
+// 话题管理（管理员）：新建/改名/换图标/排序/停用/删除
 router.post(
   "/topics",
   adminRequired,
@@ -187,14 +233,19 @@ router.post(
     const name = String(req.body?.name || "").trim().slice(0, 40);
     if (!name) return fail(res, "请输入话题名称");
     const description = String(req.body?.description || "").trim().slice(0, 160);
-    const icon = String(req.body?.icon || "").trim().slice(0, 16);
+    const ic = topicIconOf(req.body?.icon);
+    if (!ic.ok) return fail(res, "图标不在可选范围内");
+    const img = await checkTopicImage(req, req.body?.image_media_id);
+    if (!img.ok) return fail(res, img.msg);
     const sort = Number(req.body?.sort) || 0;
     try {
       const r = await pool.query(
-        "INSERT INTO community_topics (name, description, icon, sort, status, created_time) VALUES (?, ?, ?, ?, 1, ?)",
-        [name, description, icon, sort, now()]
+        "INSERT INTO community_topics (name, description, icon, image_media_id, sort, status, created_time) VALUES (?, ?, ?, ?, ?, 1, ?)",
+        [name, description, ic.icon, img.id, sort, now()]
       );
-      return ok(res, { id: Number(r[0].insertId) }, "话题已创建");
+      const topicId = Number(r[0].insertId);
+      if (img.id) await attachRef(img.id, { userId: req.user.id, refType: "community_topic", refId: String(topicId), slot: "icon" }).catch(() => {});
+      return ok(res, { id: topicId }, "话题已创建");
     } catch (e) {
       if (e.code === "ER_DUP_ENTRY") return fail(res, "该话题名称已存在");
       throw e;
@@ -221,8 +272,18 @@ router.put(
       args.push(String(req.body.description).trim().slice(0, 160));
     }
     if (req.body?.icon !== undefined) {
+      const ic = topicIconOf(req.body.icon);
+      if (!ic.ok) return fail(res, "图标不在可选范围内");
       sets.push("icon = ?");
-      args.push(String(req.body.icon).trim().slice(0, 16));
+      args.push(ic.icon);
+    }
+    let newImage = null;
+    if (req.body?.image_media_id !== undefined) {
+      const img = await checkTopicImage(req, req.body.image_media_id);
+      if (!img.ok) return fail(res, img.msg);
+      newImage = img.id;
+      sets.push("image_media_id = ?");
+      args.push(img.id);
     }
     if (req.body?.sort !== undefined) {
       sets.push("sort = ?");
@@ -240,7 +301,49 @@ router.put(
       if (e.code === "ER_DUP_ENTRY") return fail(res, "该话题名称已存在");
       throw e;
     }
+    // 换图：旧图解绑（可被回收），新图登记引用
+    if (newImage !== null) {
+      await releaseRefs("community_topic", [String(id)]).catch(() => {});
+      if (newImage) await attachRef(newImage, { userId: req.user.id, refType: "community_topic", refId: String(id), slot: "icon" }).catch(() => {});
+    }
     return ok(res, null, "已更新");
+  })
+);
+
+// 删除话题：话题下还有帖子时必须指定 move_to（把帖子迁到另一个话题），
+// 不允许「删话题 → 帖子变成无主散帖」—— 发帖要求必选话题，散帖会破坏检索与治理。
+router.delete(
+  "/topics/:id",
+  adminRequired,
+  asyncHandler(async (req, res) => {
+    const id = idParam(req);
+    if (!id) return fail(res, "话题不存在", 404);
+    const [[topic]] = await pool.query("SELECT id, name FROM community_topics WHERE id = ?", [id]);
+    if (!topic) return fail(res, "话题不存在", 404);
+    const [[cnt]] = await pool.query("SELECT COUNT(*) AS n FROM community_posts WHERE topic_id = ?", [id]);
+    const n = Number(cnt.n) || 0;
+    const moveTo = safeInt(req.body?.move_to ?? req.query.move_to, { min: 1 }) ?? 0;
+    if (n > 0) {
+      if (!moveTo) return fail(res, `该话题下还有 ${n} 篇帖子，请选择要迁入的话题`, 409, { post_count: n });
+      if (moveTo === id) return fail(res, "不能迁入被删除的话题本身");
+      const [[target]] = await pool.query("SELECT id, status FROM community_topics WHERE id = ?", [moveTo]);
+      if (!target) return fail(res, "迁入的话题不存在");
+      await pool.query("UPDATE community_posts SET topic_id = ? WHERE topic_id = ?", [moveTo, id]);
+      // 计数按真值重算（只重算目标话题：被删的话题马上就没了）
+      await pool.query(
+        "UPDATE community_topics SET post_count = (SELECT COUNT(*) FROM community_posts WHERE topic_id = ? AND status = 1) WHERE id = ?",
+        [moveTo, moveTo]
+      );
+    }
+    await pool.query("DELETE FROM community_topics WHERE id = ?", [id]);
+    await releaseRefs("community_topic", [String(id)]).catch(() => {});
+    await writeLog({
+      req,
+      user: req.user,
+      type: LOG_TYPE.MANAGE,
+      content: `删除社区话题「${topic.name}」${n ? `，${n} 篇帖子迁入话题 #${moveTo}` : ""}`,
+    }).catch(() => {});
+    return ok(res, { moved: n }, n ? `已删除，${n} 篇帖子已迁移` : "已删除");
   })
 );
 
@@ -302,26 +405,53 @@ router.get(
       );
       args.push(req.user.id);
     }
-    const clause = `WHERE ${where.join(" AND ")}`;
     // 排序白名单：拼接 SQL 前必须先过白名单（用户可控值不进 ORDER BY）
-    const sort = String(req.query.sort || "");
+    // 排序（第 80 批）：
+    //   active（默认）= 最新活动：有新回复的帖子浮上来 —— 讨论区的通行做法（Discourse / V2EX），
+    //                   只按发帖时间排时，昨天的提问今天有人回复了也沉在第三页，没人看得到；
+    //   new           = 最新发布；
+    //   hot           = 最热：点赞×3 + 评论×2 + 浏览/20，**只看近 30 天**（原先是全时段累计，
+    //                   一篇半年前的老帖永远霸榜，新内容没有机会）。
+    const sort = String(req.query.sort || "active");
+    const HOT_WINDOW = 30 * 86400;
     const order = isDeletedTab
       ? "p.deleted_time DESC, p.id DESC"
-      : (sort === "hot" ? "p.is_pinned DESC, p.like_count DESC, p.comment_count DESC, p.id DESC" : "p.is_pinned DESC, p.id DESC");
+      : sort === "hot"
+        ? "p.is_pinned DESC, (p.like_count * 3 + p.comment_count * 2 + p.view_count / 20) DESC, p.id DESC"
+        : sort === "new"
+          ? "p.is_pinned DESC, p.id DESC"
+          : "p.is_pinned DESC, GREATEST(p.last_reply_time, p.created_time) DESC, p.id DESC";
+    if (!isDeletedTab && sort === "hot") {
+      where.push("p.created_time >= ?");
+      args.push(now() - HOT_WINDOW);
+    }
+    const clauseSql = `WHERE ${where.join(" AND ")}`;
 
-    const [[cnt]] = await pool.query(`SELECT COUNT(*) AS n FROM community_posts p ${clause}`, args);
+    const [[cnt]] = await pool.query(`SELECT COUNT(*) AS n FROM community_posts p ${clauseSql}`, args);
     const [rows] = await pool.query(
-      `SELECT p.*, t.name AS topic_name FROM community_posts p
+      `SELECT p.*, t.name AS topic_name, t.icon AS topic_icon, t.image_media_id AS topic_image
+         FROM community_posts p
          LEFT JOIN community_topics t ON t.id = p.topic_id
-        ${clause} ORDER BY ${order} LIMIT ? OFFSET ?`,
+        ${clauseSql} ORDER BY ${order} LIMIT ? OFFSET ?`,
       [...args, size, offset]
     );
+    // 最后回复人：列表里显示「XX 2 小时前回复」，一次 IN 查询取回
+    const replierIds = [...new Set(rows.map((r) => Number(r.last_reply_user_id)).filter(Boolean))];
+    const repliers = new Map();
+    if (replierIds.length) {
+      const [us] = await pool.query(
+        `SELECT id, username, display_name FROM users WHERE id IN (${replierIds.map(() => "?").join(",")})`,
+        replierIds
+      );
+      for (const u of us) repliers.set(Number(u.id), u.display_name || u.username);
+    }
     const authors = await authorsOf(rows);
     const ids = rows.map((r) => Number(r.id));
     const mine = await myReactions(req.user.id, ids);
     const items = [];
     for (const r of rows) {
       const item = await postToResp(r, { withContent: false, authors });
+      item.last_reply_name = repliers.get(Number(r.last_reply_user_id)) || "";
       item.liked = mine.likes.has(Number(r.id));
       item.favorited = mine.favorites.has(Number(r.id));
       items.push(item);
@@ -338,7 +468,7 @@ router.get(
     const id = idParam(req);
     if (!id) return fail(res, "帖子不存在", 404);
     const [[row]] = await pool.query(
-      `SELECT p.*, t.name AS topic_name FROM community_posts p
+      `SELECT p.*, t.name AS topic_name, t.icon AS topic_icon, t.image_media_id AS topic_image FROM community_posts p
          LEFT JOIN community_topics t ON t.id = p.topic_id WHERE p.id = ?`,
       [id]
     );
@@ -387,10 +517,11 @@ router.post(
     // 停用话题不接受新帖（历史帖仍可读）—— 管理员下架话题时不必删内容
     if (Number(topic.status) !== 1) return fail(res, "该话题已停用，无法发帖");
 
+    // last_reply_time 初值 = 发帖时间：「最新活动」排序里新帖与刚被回复的帖子同等对待
     const r = await pool.query(
-      `INSERT INTO community_posts (user_id, topic_id, title, content, media_ids, status, created_time, updated_time)
-       VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
-      [req.user.id, topicId, title, content, JSON.stringify(mediaIds), now(), now()]
+      `INSERT INTO community_posts (user_id, topic_id, title, content, media_ids, status, created_time, updated_time, last_reply_time)
+       VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+      [req.user.id, topicId, title, content, JSON.stringify(mediaIds), now(), now(), now()]
     );
     const postId = Number(r[0].insertId);
     await pool.query("UPDATE community_topics SET post_count = post_count + 1 WHERE id = ?", [topicId]);
@@ -714,7 +845,11 @@ router.post(
       [postId, req.user.id, parentId, replyToUserId, content, JSON.stringify(mediaIds), now()]
     );
     const commentId = Number(r[0].insertId);
-    await pool.query("UPDATE community_posts SET comment_count = comment_count + 1 WHERE id = ?", [postId]);
+    // 顺带刷新「最后回复」：列表按最新活动排序、显示「XX 刚刚回复」都靠它
+    await pool.query(
+      "UPDATE community_posts SET comment_count = comment_count + 1, last_reply_time = ?, last_reply_user_id = ? WHERE id = ?",
+      [now(), req.user.id, postId]
+    );
     // 绑定媒体引用：评论删掉时图片才回收得掉（不绑就是永久孤儿，
     // 而且用户会发现自己的图「被引用」却找不到是哪条内容 —— 与发帖同一套逻辑）
     for (const mid of mediaIds) {

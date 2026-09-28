@@ -8,17 +8,22 @@
 //   3. 本平台跑在网关服务器上，不碰用户文件系统，所以工具全部是只读/无副作用
 //      （检索、读网页、更新自己的待办清单）—— 因此不需要 opencode 那样的逐次权限确认。
 // 默认模型留空表示「跟随会话当前模型」，避免预设模型被下线后智能体不可用。
+// 第 80 批：**不再让用户选智能体、也不给能力开关**（用户反馈：选项多且没意义）。
+// 对话一律由 general 执行，它拿全部工具、自己判断用不用；research/writer/coder 只为兼容
+// 老会话行里存的 agent 字段而保留定义（routes/chat.js 的 /run 会强制用 general）。
 export const AGENTS = [
   {
     id: "general",
-    name: "通用",
-    desc: "直接回答，需要时自己查资料。日常问答与轻量任务。",
+    name: "助手",
+    desc: "直接回答，需要时自己查资料、读网页/GitHub、查询你的账号。",
     icon: "sparkles",
     mode: "primary",
-    tools: ["search", "fetch", "github", "task", "todowrite"],
+    tools: ["account", "search", "fetch", "github", "task", "todowrite"],
     thinking: false,
     search: false,
-    role: "你是一个通用助手：先给结论，再给必要的推导。问题复杂时可以先列待办再逐条推进。",
+    role:
+      "你是 OOAPI 平台内置的助手：先给结论，再给必要的推导。问题复杂时可以先列待办再逐条推进。" +
+      "用户问到自己的余额、消耗、调用记录、令牌、报错原因时，用 account 工具查真实数据，不要猜。",
   },
   {
     id: "research",
@@ -119,6 +124,8 @@ export const TOOL_PROTOCOL = [
   "2. 输出调用块后立即停止，等待系统返回 <tool_result>；不要自己编造工具结果。",
   "3. 拿到结果后判断：还需要别的信息就继续调用，信息够了就直接给出最终回答（不要再输出调用块）。",
   "4. 已知的常识不要调用工具；不确定的事实（时间敏感的、具体数字、外部链接）必须调用。",
+  "5. 只用上面这一种写法：不要输出 function_calls / invoke / parameter / DSML 等其它调用格式，也不要把调用块放进代码块。",
+  "6. args 必须是合法 JSON 对象，键名与工具说明里的参数一致。",
 ].join("\n");
 
 /**
@@ -143,6 +150,9 @@ export function buildSystemPrompt({ agent, model, settings = {}, toolSpecs = [],
     "- 你运行在 OOAPI 模型网关的对话工作台里：**不能执行命令、不能读写用户文件、不能访问内网**，" +
       "获取外部信息只能通过下面的工具。"
   );
+  if (toolSpecs.some((t) => t.id === "account")) {
+    lines.push("- 当前用户的账号数据（余额、调用记录、令牌、用量）可用 account 工具查询；只能看到该用户自己的数据。");
+  }
   if (depth > 0) lines.push("- 你是被主智能体派发的子代理：只完成交办的这一件事，完成后直接给出结果，不要再派人。");
 
   if (toolSpecs.length) {

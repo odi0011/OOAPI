@@ -22,6 +22,7 @@ import PageHeader from "../components/PageHeader";
 import UserAvatar from "../components/UserAvatar";
 import Markdown from "../components/Markdown";
 import RichTextEditor from "../components/RichTextEditor";
+import TopicIcon from "../components/TopicIcon";
 import { relTime } from "../components/PostList";
 import { fmtCompact } from "../components/Charts";
 import { fmtDate } from "../services/format";
@@ -313,6 +314,7 @@ export default function PostDetailPage() {
           style={{ margin: 0, cursor: "pointer", borderRadius: 4 }}
           onClick={() => navigate(`/community?topic_id=${post?.topic_id || ""}`)}
         >
+          {post?.topic ? <TopicIcon icon={post.topic_icon} imageUrl={post.topic_image_url} size={14} plain /> : null}
           {post?.topic || "社区讨论"}
         </Tag>
 

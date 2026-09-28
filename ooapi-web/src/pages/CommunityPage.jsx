@@ -12,13 +12,14 @@ import {
 } from "antd";
 import {
   PlusOutlined, ReloadOutlined, FireOutlined, ClockCircleOutlined,
-  TagsOutlined, NotificationOutlined, PictureOutlined, DeleteOutlined, MessageOutlined,
+  TagsOutlined, NotificationOutlined, PictureOutlined, DeleteOutlined, MessageOutlined, CommentOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import PostList from "../components/PostList";
+import TopicIcon from "../components/TopicIcon";
 import UserAvatar from "../components/UserAvatar";
 import { fmtCompact } from "../components/Charts";
 import RichTextEditor from "../components/RichTextEditor";
@@ -34,7 +35,8 @@ export default function CommunityPage() {
   const isAdmin = Number(user?.role) >= 100;
   const topicId = Number(params.get("topic_id")) || 0;
   const rawSort = params.get("sort");
-  const sort = rawSort === "hot" ? "hot" : (isAdmin && rawSort === "deleted" ? "deleted" : "new");
+  // 默认「最新活动」（有新回复的帖子浮上来），见后端 routes/community.js 的排序说明
+  const sort = ["hot", "new"].includes(rawSort) ? rawSort : isAdmin && rawSort === "deleted" ? "deleted" : "active";
   const feed = ["all", "following", "favorited"].includes(params.get("feed") || "") ? params.get("feed") : "all";
 
   const [topics, setTopics] = useState([]);
@@ -53,7 +55,7 @@ export default function CommunityPage() {
       (prev) => {
         const next = new URLSearchParams(prev);
         for (const [k, v] of Object.entries(patch)) {
-          if (v === undefined || v === null || v === "" || v === "all" || (k === "sort" && v === "new")) next.delete(k);
+          if (v === undefined || v === null || v === "" || v === "all" || (k === "sort" && v === "active")) next.delete(k);
           else next.set(k, String(v));
         }
         return next;
@@ -259,7 +261,11 @@ export default function CommunityPage() {
         aria-pressed={active}
         onClick={() => patchParams({ topic_id: t ? t.id : "" })}
       >
-        <span className="oo-topic-icon" aria-hidden="true">{t ? t.icon || "#" : <TagsOutlined />}</span>
+        {t ? (
+          <TopicIcon icon={t.icon} imageUrl={t.image_url} size={20} />
+        ) : (
+          <span className="oo-topic-ico" style={{ width: 20, height: 20, fontSize: 11, "--hue": 220 }} aria-hidden="true"><TagsOutlined /></span>
+        )}
         <span className="oo-truncate">{t ? t.name : "全部话题"}</span>
         <span className="oo-topic-count">{t ? t.post_count : topicTotal}</span>
       </button>
@@ -320,8 +326,9 @@ export default function CommunityPage() {
                 value={sort}
                 onChange={(v) => patchParams({ sort: v })}
                 options={[
-                  { value: "new", label: "最新", icon: <ClockCircleOutlined /> },
-                  { value: "hot", label: "最热", icon: <FireOutlined /> },
+                  { value: "active", label: "最新活动", icon: <CommentOutlined /> },
+                  { value: "new", label: "最新发布", icon: <ClockCircleOutlined /> },
+                  { value: "hot", label: "近期热门", icon: <FireOutlined /> },
                   ...(isAdmin ? [{ value: "deleted", label: "已删除", icon: <DeleteOutlined /> }] : []),
                 ]}
               />
@@ -369,6 +376,7 @@ export default function CommunityPage() {
                           : "社区还没有内容，点击右上角「发帖」开启第一帖"
               }
               onOpen={(p) => navigate(`/community/${p.id}`)}
+              onTopic={(id) => patchParams({ topic_id: id })}
               // 后端对普通用户是「status=1 或 自己发的」，所以**自己删掉/被隐藏的帖子
               // 仍会出现在自己的信息流里**（本意是作者能找回误删内容，见 PostList 的注释）。
               // 但必须把状态标出来 —— 否则用户看到自己刚删的帖还在列表里，会以为删除失败
@@ -451,7 +459,15 @@ export default function CommunityPage() {
           <Form.Item name="topic_id" label="话题" rules={[{ required: true, message: "请选择话题" }]}>
             <Select
               placeholder="选择话题（必选，便于检索与治理）"
-              options={topics.map((t) => ({ value: t.id, label: `${t.icon || ""} ${t.name}`.trim() }))}
+              options={topics.map((t) => ({
+                value: t.id,
+                label: (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <TopicIcon icon={t.icon} imageUrl={t.image_url} size={18} />
+                    {t.name}
+                  </span>
+                ),
+              }))}
             />
           </Form.Item>
           <Form.Item

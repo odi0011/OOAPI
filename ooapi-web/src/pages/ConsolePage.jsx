@@ -20,73 +20,14 @@ import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
-import { LineChart, RankBar, Legend, SERIES_COLORS, fmtCompact, useResizeWidth } from "../components/Charts";
-import { copyText, fmtOd, odRateText, unitsPerOd, CURRENCY_NAME } from "../services/format";
+import { LineChart, BarChart, RankBar, Legend, Donut, ChartCard, SERIES_COLORS, fmtCompact } from "../components/Charts";
+import { copyText, fmtOd, odOf, odRateText, unitsPerOd, CURRENCY_NAME } from "../services/format";
 
 const RANGES = [
   { value: "7d", label: "近 7 天" },
   { value: "30d", label: "近 30 天" },
   { value: "90d", label: "近 90 天" },
 ];
-
-/** 图表卡：统一标题 + 右上口径说明 */
-/** 图表卡：统一标题 + 右上口径说明。
- *  full = 跨满整行（主趋势图用）。不要用固定 span=2 ——
- *  网格列数是自适应的（宽屏 3~4 列），写死跨 2 列会留下尴尬的空位。 */
-function ChartCard({ title, note, children, full }) {
-  return (
-    <div className="oo-chart-card" style={full ? { gridColumn: "1 / -1" } : undefined}>
-      <div className="oo-chart-card-head">
-        <span className="oo-chart-card-title">{title}</span>
-        {note ? <span className="oo-chart-card-note">{note}</span> : null}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-/** 按小时分布：0-23 的柱状（看个人作息与峰谷） */
-function HourBars({ hours }) {
-  const [wrapRef, W] = useResizeWidth(420);
-  const H = 124;
-  const PAD = { l: 34, r: 8, t: 8, b: 18 };
-  const n = hours?.length || 0;
-  if (!n) return <Empty description="暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
-  const max = Math.max(1, ...hours.map((h) => Number(h.calls) || 0));
-  const innerW = Math.max(10, W - PAD.l - PAD.r);
-  const innerH = H - PAD.t - PAD.b;
-  const bw = innerW / n;
-  return (
-    <div ref={wrapRef}>
-      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ display: "block", maxWidth: "100%" }}>
-        <line x1={PAD.l} y1={PAD.t + innerH} x2={W - PAD.r} y2={PAD.t + innerH} stroke="var(--line)" />
-        {hours.map((h, i) => {
-          const v = Number(h.calls) || 0;
-          const bh = (v / max) * innerH;
-          return (
-            <Tooltip key={h.hour} title={`${h.hour}:00 · ${v} 次调用`}>
-              <rect
-                x={PAD.l + i * bw + 1}
-                y={PAD.t + innerH - bh}
-                width={Math.max(1, bw - 2)}
-                height={Math.max(v ? 1 : 0, bh)}
-                fill="var(--accent)"
-                opacity={v ? 0.85 : 0.25}
-                rx={1}
-              />
-            </Tooltip>
-          );
-        })}
-        {[0, 6, 12, 18, 23].map((h) => (
-          <text key={h} x={PAD.l + h * bw + bw / 2} y={H - 5} textAnchor="middle" fontSize={9.5} fill="var(--ink-3)">
-            {h}
-          </text>
-        ))}
-        <text x={PAD.l - 5} y={PAD.t + 8} textAnchor="end" fontSize={9.5} fill="var(--ink-3)">{fmtCompact(max)}</text>
-      </svg>
-    </div>
-  );
-}
 
 export default function ConsolePage() {
   const navigate = useNavigate();
@@ -176,6 +117,19 @@ export default function ConsolePage() {
   const daysLeft = rawDaysLeft === null ? null : Math.min(rawDaysLeft, 999);
   const daysLeftCapped = rawDaysLeft !== null && rawDaysLeft > 999;
 
+  const od = (u) => odOf(u, perUnit);
+  const fmtOdVal = (v) => `${fmtCompact(v)} ${CURRENCY_NAME}`;
+  // 调用（几十几百次）与消费（零点几 OD币）量纲差几个数量级：消费走右轴，否则被压成贴底直线
+  const mainSeries = [
+    { name: "调用次数", color: SERIES_COLORS[0], format: (v) => `${fmtCompact(v)} 次`, values: trend.map((d) => ({ x: d.day, y: d.calls })) },
+    { name: `消费（${CURRENCY_NAME}）`, color: SERIES_COLORS[2], axis: "right", format: fmtOdVal, values: trend.map((d) => ({ x: d.day, y: od(d.units) })) },
+  ];
+  const tokenSeries = [
+    { name: "输入", color: SERIES_COLORS[0], values: trend.map((d) => ({ x: d.day, y: d.prompt_tokens })) },
+    { name: "输出", color: SERIES_COLORS[1], values: trend.map((d) => ({ x: d.day, y: d.completion_tokens })) },
+    { name: "缓存命中", color: SERIES_COLORS[3], area: false, values: trend.map((d) => ({ x: d.day, y: d.cache_tokens })) },
+  ];
+
   return (
     <div className="oo-page">
       <PageHeader
@@ -184,8 +138,8 @@ export default function ConsolePage() {
           <>
             <Tag icon={<DashboardOutlined />}>我的用量</Tag>
             {/* 时区必须显式声明：跨时区排查账单差异全靠它（Gemini 第 10 点） */}
-            <Tooltip title="所有按天聚合以此为基准，与服务器时区一致（按天重置）">
-              <Tag icon={<ClockCircleOutlined />}>时区 UTC+8</Tag>
+            <Tooltip title="按天聚合、时段统计都以北京时间（UTC+8）为准">
+              <Tag icon={<ClockCircleOutlined />}>北京时间</Tag>
             </Tooltip>
           </>
         }
@@ -208,8 +162,8 @@ export default function ConsolePage() {
         />
       ) : null}
 
-      {/* 汇总：紧凑统计卡（全站统一形态，一行放得下 7 张） */}
-      <div className="oo-stats-cards" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(104px, 1fr))" }}>
+      {/* 汇总：紧凑统计卡。每张至少 150px —— 原先 104px 时「剩余额度 9999.95 OD币」被挤成两行 */}
+      <div className="oo-stats-cards" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
         <StatCard
           label="剩余额度"
           value={loading ? "—" : fmtOd(quota, perUnit, 2, false)}
@@ -285,106 +239,49 @@ export default function ConsolePage() {
         />
       </div>
 
-      {/* 多图并列：一屏看全，不用来回切口径 */}
+      {/* 多图并列：一屏看全，不用来回切口径（图表组件全部来自 components/Charts.jsx） */}
       <div className="oo-chart-grid">
-        <ChartCard title="调用与消费趋势" note={`近 ${data?.range?.days || 30} 天 · 双口径`} full>
+        <ChartCard title="调用与消费趋势" note="左轴：调用次数 · 右轴：消费" full extra={<Legend series={mainSeries} />}>
           {loading && !trend.length ? (
-            <Skeleton active paragraph={{ rows: 3 }} />
-          ) : trend.length ? (
-            <>
-              <LineChart
-                height={160}
-                series={[
-                  { name: "调用次数", values: trend.map((d) => ({ x: d.day, y: d.calls })), color: SERIES_COLORS[0] },
-                  { name: `消费 (${CURRENCY_NAME})`, values: trend.map((d) => ({ x: d.day, y: Number((d.units / perUnit).toFixed(2)) })), color: SERIES_COLORS[2] },
-                ]}
-              />
-              <Legend
-                series={[
-                  { name: "调用次数", color: SERIES_COLORS[0] },
-                  { name: `消费 (${CURRENCY_NAME})`, color: SERIES_COLORS[2] },
-                ]}
-              />
-            </>
+            <Skeleton active paragraph={{ rows: 4 }} />
+          ) : trend.some((d) => d.calls) ? (
+            <LineChart series={mainSeries} height={230} />
           ) : (
             <Empty description="该时间范围内没有调用数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
           )}
         </ChartCard>
 
-        <ChartCard title="Token 用量结构" note="输入 / 输出 / 缓存">
-          {trend.length ? (
-            <>
-              <LineChart
-                height={130}
-                series={[
-                  { name: "输入", values: trend.map((d) => ({ x: d.day, y: d.prompt_tokens })), color: SERIES_COLORS[0] },
-                  { name: "输出", values: trend.map((d) => ({ x: d.day, y: d.completion_tokens })), color: SERIES_COLORS[1] },
-                  { name: "缓存命中", values: trend.map((d) => ({ x: d.day, y: d.cache_tokens })), color: SERIES_COLORS[5] },
-                ]}
-              />
-              <Legend
-                series={[
-                  { name: "输入", color: SERIES_COLORS[0] },
-                  { name: "输出", color: SERIES_COLORS[1] },
-                  { name: "缓存命中", color: SERIES_COLORS[5] },
-                ]}
-              />
-            </>
-          ) : (
-            <Empty description="暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-          )}
+        <ChartCard title="Token 用量" note={`缓存命中率 ${t?.cache_rate ?? 0}%`} extra={<Legend series={tokenSeries} />}>
+          {trend.some((d) => d.prompt_tokens) ? <LineChart series={tokenSeries} height={180} /> : <Empty description="暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
         </ChartCard>
 
-        <ChartCard title="调用时段分布" note="0-23 点（看作息与峰谷）">
-          <HourBars hours={data?.by_hour} />
+        <ChartCard title="调用时段" note="北京时间 0–23 点">
+          <BarChart bars={(data?.by_hour || []).map((h) => ({ label: String(h.hour), value: h.calls }))} height={180} valueFormat={(v) => fmtCompact(v)} />
         </ChartCard>
 
-        <ChartCard title="模型消费排行" note={`Top 12 · 按消费 (${CURRENCY_NAME})`}>
-          <RankBar items={(data?.by_model || []).map((m) => ({ name: m.model, value: Number((m.units / perUnit).toFixed(2)) }))} suffix={` ${CURRENCY_NAME}`} />
+        <ChartCard title="模型消费排行" note={`按 ${CURRENCY_NAME}`}>
+          <RankBar items={(data?.by_model || []).map((m) => ({ name: m.model, value: od(m.units), sub: `${fmtCompact(m.calls)} 次` }))} format={fmtOdVal} />
         </ChartCard>
 
-        <ChartCard title="模型调用量" note="按次数">
-          <RankBar items={(data?.by_model || []).map((m) => ({ name: m.model, value: m.calls }))} suffix=" 次" />
-        </ChartCard>
-
-        <ChartCard title="渠道分布" note={`按消费 (${CURRENCY_NAME})`}>
-          <RankBar items={(data?.by_channel || []).map((c) => ({ name: `渠道 #${c.channel_id}`, value: Number((c.units / perUnit).toFixed(2)) }))} suffix={` ${CURRENCY_NAME}`} />
+        <ChartCard title="模型调用占比" note="按次数">
+          <Donut items={(data?.by_model || []).map((m) => ({ name: m.model, value: m.calls }))} centerLabel="次调用" />
         </ChartCard>
 
         {community ? (
           <ChartCard title="我的社区与社交" note="点击可跳转">
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(84px, 1fr))", gap: 8 }}>
+            <div className="oo-mini-stats">
               {[
                 { label: "帖子", value: community.mine?.posts, to: `/u/${user?.id}` },
                 { label: "获赞", value: community.mine?.likes_received },
                 { label: "评论", value: community.mine?.comments },
                 { label: "粉丝", value: community.mine?.followers, to: `/u/${user?.id}` },
                 { label: "关注", value: community.mine?.following, to: `/u/${user?.id}` },
-                { label: "会话", value: community.mine?.rooms, to: "/messages" },
-                { label: "好友", value: community.mine?.friends, to: "/messages" },
+                { label: "好友", value: community.mine?.friends, to: "/messages?panel=requests" },
               ].map((x) => (
-                <div
-                  key={x.label}
-                  className="bui-chip"
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    padding: "6px 4px",
-                    height: "auto",
-                    background: "var(--inset)",
-                    border: "1px solid var(--line-soft)",
-                    borderRadius: 6,
-                    cursor: x.to ? "pointer" : "default",
-                  }}
-                  onClick={() => x.to && navigate(x.to)}
-                >
-                  <span style={{ fontSize: 11, color: "var(--ink-3)" }}>{x.label}</span>
-                  <span className="oo-num" style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-1)", marginTop: 2 }}>
-                    {x.value ?? 0}
-                  </span>
-                </div>
+                <button key={x.label} type="button" className="oo-mini-stat" disabled={!x.to} onClick={() => x.to && navigate(x.to)}>
+                  <b>{fmtCompact(x.value ?? 0)}</b>
+                  <span>{x.label}</span>
+                </button>
               ))}
             </div>
           </ChartCard>

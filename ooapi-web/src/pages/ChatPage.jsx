@@ -2,8 +2,10 @@
 // ---------------------------------------------------------------------------
 // 页面结构（opencode 风格的三段式）：
 //   左侧 Shelf  —— 会话列表（新建/切换/重命名/删除）+ harness 设定入口
-//   顶部编排栏  —— 智能体 / 模型 / 思考 / 联网 / 工具开关 / 最大步数 / 会话指令
 //   中间会话区  —— 消息按 parts 渲染（正文、思考链、工具 chip、待办清单）
+//   底部输入框  —— 附件 / 密钥（多把时）/ 模型 / 发送；会话指令在右上角「设定」里
+// 第 80 批：顶部「编排栏」（智能体 / 思考 / 联网 / 工具开关 / 最大步数）整条取消 ——
+// 用户反馈「不需要给用户提供智能体、功能开关的选项」。助手拿全部工具、自己判断要不要用。
 // 数据全部来自服务端：会话与设定落库（chat_sessions），消息落库（chat_messages），
 // 刷新页面不丢；本页只负责渲染与把用户操作发回服务端。
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -22,12 +24,10 @@ import {
   DeleteOutlined,
   EditOutlined,
   CompassOutlined,
-  BulbOutlined,
   CodeOutlined,
   EditFilled,
   SearchOutlined,
-  AudioOutlined,
-  ThunderboltOutlined,
+  WalletOutlined,
 } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { API, getToken } from "../services/api";
@@ -54,26 +54,16 @@ import {
   Notice,
   SuggestionCard,
   TodoPanel,
-  OrchestrationBar,
 } from "../components/beautifului-chat";
 import "../components/chat.css";
 
+// 欢迎页的快捷问题：不再绑定「智能体」（已取消选择），助手自己判断要不要查资料/查账号
 const SUGGESTS = [
-  { icon: <BulbOutlined />, title: "把复杂问题讲简单", desc: "从一个概念开始", prompt: "请用一个日常生活的例子解释：" },
-  { icon: <CompassOutlined />, title: "帮我查清一件事", desc: "联网检索 + 给出处", prompt: "请帮我查清楚这件事的来龙去脉，并给出信息来源：", agent: "research" },
-  { icon: <CodeOutlined />, title: "写出更好的代码", desc: "实现 + 边界情况", prompt: "请帮我实现下面的功能，并说明关键取舍：", agent: "coder" },
-  { icon: <EditFilled />, title: "打磨一段文字", desc: "改写、压缩、润色", prompt: "请帮我润色下面的文字，保留原意：", agent: "writer" },
+  { icon: <WalletOutlined />, title: "我的账号怎么样", desc: "余额、最近调用与消耗", prompt: "帮我看看我的账号：余额还剩多少，最近 10 次调用分别用了什么模型、花了多少？" },
+  { icon: <CompassOutlined />, title: "帮我查清一件事", desc: "联网检索 + 给出处", prompt: "请帮我查清楚这件事的来龙去脉，并给出信息来源：" },
+  { icon: <CodeOutlined />, title: "写出更好的代码", desc: "实现 + 边界情况", prompt: "请帮我实现下面的功能，并说明关键取舍：" },
+  { icon: <EditFilled />, title: "打磨一段文字", desc: "改写、压缩、润色", prompt: "请帮我润色下面的文字，保留原意：" },
 ];
-
-const AGENT_ICONS = {
-  sparkles: <ThunderboltOutlined />,
-  search: <SearchOutlined />,
-  compass: <CompassOutlined />,
-  edit: <EditOutlined />,
-  code: <CodeOutlined />,
-  check: <BulbOutlined />,
-  compress: <AudioOutlined />,
-};
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const ms = (p) => (p.ended && p.started ? Math.max(1, p.ended - p.started) : 0);
@@ -266,7 +256,6 @@ function SettingsSheet({ open, onClose, meta, session, settings, onSettings, sav
   }, [open, session?.title, settings?.instructions]);
 
   if (!open) return null;
-  const agent = meta?.agents?.find((a) => a.id === session?.agent);
 
   const save = async () => {
     const patch = {};
@@ -299,18 +288,14 @@ function SettingsSheet({ open, onClose, meta, session, settings, onSettings, sav
               onChange={(e) => setInstructions(e.target.value)}
               placeholder="例如：回答尽量简短；术语先给中文再给英文；代码用 TypeScript。"
             />
-            <small>只作用于当前会话，会叠加在智能体角色之上；{4000 - instructions.length} 字可用。</small>
+            <small>只作用于当前会话；{4000 - instructions.length} 字可用。</small>
           </div>
 
-          <div>
-            <div className="ui-chat2-agentcard">
-              <span style={{ display: "flex", color: "var(--accent)" }}>{AGENT_ICONS[agent?.icon] || <ThunderboltOutlined />}</span>
-              <span>
-                <strong>{agent?.name || "—"}</strong>
-                {agent?.desc || ""}
-                {agent?.tools?.length ? <><br />可用工具：{agent.tools.join("、")}</> : null}
-              </span>
-            </div>
+          <div className="ui-chat2-agentcard">
+            <span>
+              <strong>助手能做什么</strong>
+              联网检索、读取网页与 GitHub、查询你的账号（余额 / 调用记录 / 令牌 / 用量），需要时自动使用，不用手动开启。
+            </span>
           </div>
 
           <div>
@@ -413,23 +398,8 @@ export default function ChatPage() {
   busyRef.current = busy;
 
   const models = meta?.models || [];
-  const agents = (meta?.agents || []).filter((a) => a.mode === "primary");
   const curModel = models.find((m) => m.id === session?.model);
-  const agent = meta?.agents?.find((a) => a.id === session?.agent);
   const settings = session?.settings || {};
-  // 界面要显示「这一轮实际会怎么跑」：会话未显式设过思考/联网/工具时，
-  // 用智能体默认值兜底（后端 runHarness 也是同一套优先级），否则开关会显示成关闭却实际在联网。
-  const effective = useMemo(
-    () => ({
-      ...settings,
-      thinking: typeof settings.thinking === "boolean" ? settings.thinking : Boolean(agent?.thinking),
-      search: typeof settings.search === "boolean" ? settings.search : Boolean(agent?.search),
-      tools: settings.tools ?? agent?.tools ?? [],
-      maxSteps: settings.maxSteps || meta?.defaults?.maxSteps || 6,
-      instructions: settings.instructions || "",
-    }),
-    [settings, agent, meta]
-  );
   const quota = user?.quota != null ? fmtOd(user.quota, unitsPerOd(status), 2) : "—";
   // 对话必须通过密钥路由：没有可用密钥就没有可用模型，输入区与编排栏一并禁用。
   //
@@ -1200,16 +1170,19 @@ export default function ChatPage() {
     [patchSession]
   );
 
-  const setAgent = useCallback(
+  const onKeyPick = useCallback(
     (id) => {
-      const a = meta?.agents?.find((x) => x.id === id);
-      // 换智能体 = 换一套做事方式：思考/联网/工具回到该智能体的默认值（清空为 null 让后端按 agent 兜底），
-      // 只保留用户写的会话指令
-      const next = { thinking: null, search: null, tools: a?.tools || [], instructions: sessionRef.current?.settings?.instructions || "" };
-      setSession((prev) => (prev ? { ...prev, agent: id, settings: next } : prev));
-      patchSession({ agent: id, settings: next }, { silent: true });
+      // 切密钥 = 换一套路由身份：可用模型会变，重新拉 meta 并校正当前模型。
+      // 同时记住它是哪一把：刷新后不该被服务端的默认选择顶掉（见挂载处的注释）。
+      setKeyId(id);
+      try {
+        localStorage.setItem(LS_KEY_ID, String(id || ""));
+      } catch {
+        /* 隐私模式下 localStorage 可能不可写：记不住不影响功能 */
+      }
+      loadMeta(id);
     },
-    [meta, patchSession]
+    [loadMeta]
   );
 
   const setModel = useCallback(
@@ -1483,9 +1456,8 @@ export default function ChatPage() {
             </button>
             <h1>{session?.title || "对话"}</h1>
             <div className="meta">
-              {agent?.name ? <span>{agent.name}</span> : null}
-              {session?.model ? <span>· {session.model}</span> : null}
-              <span>· {msgs.length} 条消息</span>
+              <span>{msgs.length} 条消息</span>
+              {sessionCost ? <span>· 已用 {sessionCost} {CURRENCY_NAME}</span> : null}
             </div>
           </div>
           <div className="ui-chat2-head-actions">
@@ -1506,31 +1478,6 @@ export default function ChatPage() {
             </Tooltip>
           </div>
         </header>
-
-        <OrchestrationBar
-          agent={agent}
-          agents={agents}
-          settings={effective}
-          tools={meta?.tools || []}
-          modelCaps={curModel}
-          disabled={busy || !session || needKey}
-          keys={usableKeys}
-          keyId={keyId}
-          onKey={(id) => {
-            // 切密钥 = 换一套路由身份：可用模型会变，重新拉 meta 并校正当前模型。
-            // 同时记住它是哪一把：刷新后不该被服务端的默认选择顶掉（见挂载处的注释）。
-            setKeyId(id);
-            try {
-              localStorage.setItem(LS_KEY_ID, String(id || ""));
-            } catch {
-              /* 隐私模式下 localStorage 可能不可写：记不住不影响功能 */
-            }
-            loadMeta(id);
-          }}
-          onAgent={setAgent}
-          onSetting={patchSettings}
-          onOpenInstructions={() => setSheetOpen(true)}
-        />
 
         {metaError ? (
           <div style={{ padding: "10px 16px" }}>
@@ -1621,7 +1568,7 @@ export default function ChatPage() {
               <section className="ui-chat2-welcome">
                 <div className="bui-eyebrow">OOAPI · 对话</div>
                 <h2>今天，想弄清楚什么？</h2>
-                <p>直接提问即可。需要查资料、读网页时，智能体会自己调用工具，并把过程摊开给你看。</p>
+                <p>直接提问即可。需要查资料、读网页、查你的账号时，助手会自己调用工具，并把过程摊开给你看。</p>
                 <div className="bui-suggests">
                   {SUGGESTS.map((s) => (
                     <SuggestionCard
@@ -1630,7 +1577,6 @@ export default function ChatPage() {
                       title={s.title}
                       desc={s.desc}
                       onClick={() => {
-                        if (s.agent && agents.some((a) => a.id === s.agent)) setAgent(s.agent);
                         setInput(s.prompt);
                         taRef.current?.focus();
                       }}
@@ -1664,6 +1610,9 @@ export default function ChatPage() {
               vendorGroups={meta?.vendors || null}
               model={session?.model || ""}
               onModelChange={setModel}
+              keys={usableKeys}
+              keyId={keyId}
+              onKey={onKeyPick}
               chips={[
                 ...images.map((img, i) => ({ src: img.url || img.dataUrl, label: `图片 ${i + 1}`, kind: "image" })),
                 ...docs.map((d) => ({ label: d.name, kind: "file" })),
@@ -1685,8 +1634,8 @@ export default function ChatPage() {
                 { key: "archive", name: "archive", desc: "归档当前对话", run: () => archiveSession(session?.id) },
                 { key: "clear", name: "clear", desc: "清空当前会话消息", run: () => { setMsgs([]); setInput(""); setImages([]); setDocs([]); } },
                 { key: "file", name: "file", desc: "添加文档（PDF / Word / Excel / 文本）", run: () => docRef.current?.click() },
-                { key: "setting", name: "setting", desc: "打开会话设定", run: () => setSheetOpen(true) },
-                { key: "tools", name: "tools", desc: "切换工具开关（按智能体默认）", run: () => patchSettings("tools", agent?.tools || []) },
+                { key: "setting", name: "setting", desc: "打开会话设定（会话指令）", run: () => setSheetOpen(true) },
+                { key: "account", name: "account", desc: "问问我的账号情况", run: () => setInput("帮我看看我的账号：余额、最近的调用记录和消耗情况。") },
               ]}
             />
             <div className="ui-chat2-composer-foot">

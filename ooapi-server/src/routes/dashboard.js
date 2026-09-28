@@ -28,6 +28,12 @@ function rangeOf(query) {
   return { key, days, since: Math.floor(Date.now() / 1000) - days * 86400 };
 }
 
+// 北京时间偏移：看板页头写着「时区 UTC+8」，但原实现按 UTC 零点切天（FLOOR(created_at/86400)），
+// 于是每天 0~8 点的调用被算进了前一天 —— 用户看到的「今天」其实是昨天 8 点到今天 8 点。
+// 这里统一按 (ts + 8h) 切天/切小时；不依赖 MySQL 会话时区（FROM_UNIXTIME/HOUR 会随配置漂）。
+const TZ = 8 * 3600;
+const bjDay = (ts) => Math.floor((Number(ts) + TZ) / 86400);
+
 /** 按天趋势（消费 + 调用 + token + 缓存），缺数据的日期补 0（否则折线会断） */
 async function dailyTrend(userId, since, days) {
   const args = [since];
@@ -37,25 +43,26 @@ async function dailyTrend(userId, since, days) {
     args.push(userId);
   }
   const [rows] = await pool.query(
-    `SELECT FLOOR(created_at/86400)*86400 AS day_ts,
+    `SELECT FLOOR((created_at + ${TZ})/86400) AS bj_day,
             COUNT(*) AS calls,
             COALESCE(SUM(quota),0) AS units,
             COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
             COALESCE(SUM(completion_tokens),0) AS completion_tokens,
             COALESCE(SUM(cache_tokens),0) AS cache_tokens
-       FROM logs WHERE ${where} GROUP BY day_ts ORDER BY day_ts`,
+       FROM logs WHERE ${where} GROUP BY FLOOR((created_at + ${TZ})/86400) ORDER BY bj_day`,
     args
   );
-  const map = new Map(rows.map((r) => [Number(r.day_ts), r]));
+  const map = new Map(rows.map((r) => [Number(r.bj_day), r]));
   const out = [];
-  const today = Math.floor(Date.now() / 1000);
-  const startDay = Math.floor(since / 86400) * 86400;
+  const today = bjDay(Date.now() / 1000);
   // 补齐空白日期：前端折线图需要连续的时间轴，否则「中间没数据的那天」
   // 会被压掉，视觉上把两周的消费画成连续增长（误导）
-  for (let t = startDay; t <= today; t += 86400) {
-    const r = map.get(t);
+  for (let d = bjDay(since); d <= today; d += 1) {
+    const r = map.get(d);
+    const t = d * 86400 - TZ; // 北京时间当天零点的 unix 秒
     out.push({
-      day: new Date(t * 1000).toISOString().slice(0, 10),
+      // d*86400 按 UTC 读出的年月日就是北京日期
+      day: new Date(d * 86400 * 1000).toISOString().slice(0, 10),
       day_ts: t,
       calls: Number(r?.calls) || 0,
       units: Number(r?.units) || 0,
@@ -65,6 +72,51 @@ async function dailyTrend(userId, since, days) {
     });
   }
   return out;
+}
+
+/**
+ * 上一周期（等长、紧邻之前）的汇总：看板数字要能回答「比上期多了还是少了」，
+ * 只有绝对值时用户无法判断 1,234 次调用是涨是跌。
+ */
+async function previousTotals(userId, since, days) {
+  const from = since - days * 86400;
+  const args = [from, since];
+  let where = "type = 2 AND created_at >= ? AND created_at < ?";
+  if (userId) {
+    where += " AND user_id = ?";
+    args.push(userId);
+  }
+  const [[p]] = await pool.query(
+    `SELECT COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units,
+            COALESCE(SUM(prompt_tokens + completion_tokens),0) AS tokens, COUNT(DISTINCT user_id) AS users
+       FROM logs WHERE ${where}`,
+    args
+  );
+  const eargs = [from, since];
+  let ew = "type = 4 AND created_at >= ? AND created_at < ?";
+  if (userId) {
+    ew += " AND user_id = ?";
+    eargs.push(userId);
+  }
+  const [[e]] = await pool.query(`SELECT COUNT(*) AS n FROM logs WHERE ${ew}`, eargs);
+  return {
+    calls: Number(p.calls) || 0,
+    units: Number(p.units) || 0,
+    tokens: Number(p.tokens) || 0,
+    active_users: Number(p.users) || 0,
+    errors: Number(e.n) || 0,
+  };
+}
+
+async function errorCount(userId, since) {
+  const args = [since];
+  let where = "type = 4 AND created_at >= ?";
+  if (userId) {
+    where += " AND user_id = ?";
+    args.push(userId);
+  }
+  const [[e]] = await pool.query(`SELECT COUNT(*) AS n FROM logs WHERE ${where}`, args);
+  return Number(e.n) || 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,11 +154,13 @@ router.get(
     );
     // 按小时分布：看出「我什么时候在用」（对个人是最直观的节奏信息）
     const [byHour] = await pool.query(
-      `SELECT HOUR(FROM_UNIXTIME(created_at)) AS hour, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
+      `SELECT FLOOR(MOD(created_at + ${TZ}, 86400) / 3600) AS hour, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
          FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ?
-        GROUP BY hour ORDER BY hour`,
+        GROUP BY FLOOR(MOD(created_at + ${TZ}, 86400) / 3600) ORDER BY hour`,
       [uid, since]
     );
+    const errors = await errorCount(uid, since);
+    const prev = await previousTotals(uid, since, days);
     // 缓存命中率：分母是 prompt（prompt 已含缓存部分，不能再加一次）
     const prompt = Number(agg.prompt_tokens) || 0;
     const cache = Number(agg.cache_tokens) || 0;
@@ -123,7 +177,9 @@ router.get(
         uncached_tokens: Math.max(0, prompt - cache),
         cache_rate: prompt > 0 ? Number(((cache / prompt) * 100).toFixed(1)) : 0,
         models: Number(agg.models) || 0,
+        errors,
       },
+      previous: prev,
       // 余额单独给：它不是「区间消费」，混进 totals 会让「区间汇总」口径不清
       account: {
         quota: Number(req.user.quota) || 0,
@@ -205,12 +261,20 @@ router.get(
     );
     const errMap = new Map(channelErrors.map((e) => [Number(e.channel_id), Number(e.errors) || 0]));
     // 令牌维度：谁在用哪个 Key（管理员排查「某个 Key 在刷量」时的入口）
+    // 先按 token_id 聚合再关联名称与持有人（原先只给 id，看板上只能显示「令牌 #184」，
+    // 管理员还得去日志页反查是谁的 Key）。子查询聚合后再 JOIN，ONLY_FULL_GROUP_BY 下合法。
     const [topTokens] = await pool.query(
-      `SELECT token_id, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
-         FROM logs WHERE type = 2 AND created_at >= ? AND token_id > 0
-        GROUP BY token_id ORDER BY units DESC LIMIT 10`,
+      `SELECT t.token_id, t.calls, t.units, k.name AS token_name, u.username, u.display_name
+         FROM (SELECT token_id, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
+                 FROM logs WHERE type = 2 AND created_at >= ? AND token_id > 0
+                GROUP BY token_id ORDER BY units DESC LIMIT 10) t
+         LEFT JOIN tokens k ON k.id = t.token_id
+         LEFT JOIN users u ON u.id = k.user_id
+        ORDER BY t.units DESC`,
       [since]
     );
+    const errorsTotal = await errorCount(null, since);
+    const prev = await previousTotals(null, since, days);
     // 错误分布：错误日志是 type=4，与消费日志（type=2）分开记
     const [errorsByModel] = await pool.query(
       `SELECT model, COUNT(*) AS errors FROM logs
@@ -242,7 +306,9 @@ router.get(
         models: Number(agg.models) || 0,
         users_total: Number(users.n) || 0,
         users_new: Number(newUsers.n) || 0,
+        errors: errorsTotal,
       },
+      previous: prev,
       trend,
       top_users: topUsers.map((u) => ({
         user_id: Number(u.user_id) || 0,
@@ -271,7 +337,13 @@ router.get(
           avg_elapsed: Math.round(Number(c.avg_elapsed) || 0),
         };
       }),
-      top_tokens: topTokens.map((t) => ({ token_id: Number(t.token_id) || 0, calls: Number(t.calls) || 0, units: Number(t.units) || 0 })),
+      top_tokens: topTokens.map((t) => ({
+        token_id: Number(t.token_id) || 0,
+        name: t.token_name || `令牌 #${t.token_id}`,
+        owner: t.display_name || t.username || "",
+        calls: Number(t.calls) || 0,
+        units: Number(t.units) || 0,
+      })),
       errors_by_model: errorsByModel.map((e) => ({ model: e.model, errors: Number(e.errors) || 0 })),
       realtime: {
         inFlight: Number(snap.gateway.inFlight) || 0,
