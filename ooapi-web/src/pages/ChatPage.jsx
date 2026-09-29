@@ -167,9 +167,10 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
           </Tooltip>
           {msg.cost ? (
             <span className="sp">
+              {/* 图标即单位：不重复写「OD币」（用户要求，省空间） */}
               <OdCoin size={13} />
-              {msg.cost} {CURRENCY_NAME}
-              {msg.tokens ? ` · ${msg.tokens.prompt + msg.tokens.completion} tokens` : ""}
+              {msg.cost}
+              {msg.tokens ? <span className="oo-num"> · {msg.tokens.prompt + msg.tokens.completion} tokens</span> : ""}
             </span>
           ) : null}
         </div>
@@ -305,8 +306,9 @@ function SettingsSheet({ open, onClose, meta, session, settings, onSettings, sav
             </div>
             <div className="ui-chat2-kv">
               <span>本会话累计消耗</span>
-              <strong>
-                {session?.cost ?? 0} {CURRENCY_NAME}
+              <strong style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <OdCoin size={13} />
+                <span className="oo-num">{session?.cost ?? 0}</span>
               </strong>
             </div>
             <div className="ui-chat2-kv">
@@ -1438,7 +1440,11 @@ export default function ChatPage() {
 
         <div className="bui-shelf-foot">
           <div>余额 {quota} · 按实际用量计费</div>
-          {sessionCost ? <div>本会话已用 {sessionCost} {CURRENCY_NAME}</div> : null}
+          {sessionCost ? (
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              本会话已用 <OdCoin size={11} muted /> {sessionCost}
+            </div>
+          ) : null}
         </div>
       </Shelf>
 
@@ -1457,7 +1463,11 @@ export default function ChatPage() {
             <h1>{session?.title || "对话"}</h1>
             <div className="meta">
               <span>{msgs.length} 条消息</span>
-              {sessionCost ? <span>· 已用 {sessionCost} {CURRENCY_NAME}</span> : null}
+              {sessionCost ? (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  · 已用 <OdCoin size={11} muted /> {sessionCost}
+                </span>
+              ) : null}
             </div>
           </div>
           <div className="ui-chat2-head-actions">

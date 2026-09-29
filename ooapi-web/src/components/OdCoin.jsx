@@ -103,13 +103,15 @@ export function OdCoin({ size = 16, title = CURRENCY_NAME, style, className, mut
 }
 
 /**
- * 金额展示（图标 + 数字 + 币名）—— 表格、卡片里的推荐用法
+ * 金额展示（图标 + 数字）—— 表格、卡片里的推荐用法。
+ * 图标本身就是单位（用户要求：不再在数字后面重复写「OD币」，没意义还占空间）；
+ * 需要文字单位的场合（纯文本、无图标的窄位）显式传 unit。
  * @param {number} od 已经是 OD 的数值（不是额度单位）
  * @param {number} [digits] 小数位
  * @param {boolean} [icon] 是否显示币图标
- * @param {boolean} [unit] 是否显示「OD币」字样
+ * @param {boolean} [unit] 是否显示「OD币」字样（默认关：图标即单位）
  */
-export function OdValue({ od, digits = 2, icon = true, unit = true, size = 14, strong = false, style }) {
+export function OdValue({ od, digits = 2, icon = true, unit = false, size = 14, strong = false, style }) {
   const n = Number(od) || 0;
   return (
     <span
@@ -128,18 +130,16 @@ export function OdValue({ od, digits = 2, icon = true, unit = true, size = 14, s
 }
 
 /**
- * 大号金额展示（统计卡专用）—— 图标按字号比例缩放，视觉重心与数字对齐
+ * 大号金额展示（统计卡专用）—— 图标按字号比例缩放，视觉重心与数字对齐。
+ * 图标即单位，不再跟「OD币」文字（同 OdValue）。
  * @param {number} od 已经是 OD 的数值
  * @param {number} [digits] 小数位
  */
 export function OdStatValue({ od, digits = 2, size = 20 }) {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 9, minWidth: 0 }}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
       <OdCoin size={size} />
-      <span style={{ display: "inline-flex", alignItems: "baseline", gap: 5, minWidth: 0 }}>
-        <span className="oo-num">{(Number(od) || 0).toFixed(digits)}</span>
-        <span style={{ fontSize: "0.58em", fontWeight: 450, color: "var(--ink-3)", letterSpacing: 0 }}>{CURRENCY_NAME}</span>
-      </span>
+      <span className="oo-num" style={{ letterSpacing: "-0.01em" }}>{(Number(od) || 0).toFixed(digits)}</span>
     </span>
   );
 }

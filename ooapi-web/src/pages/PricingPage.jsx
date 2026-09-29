@@ -4,6 +4,7 @@ import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import PageHeader from "../components/PageHeader";
 import { ModelLabel } from "../components/VendorIcon";
+import { OdCoin } from "../components/OdCoin";
 import { CURRENCY_NAME, unitsPerOd } from "../services/format";
 
 /**
@@ -79,14 +80,24 @@ export default function PricingPage() {
       dataIndex: "input",
       width: 180,
       sorter: (a, b) => Number(a.input) - Number(b.input),
-      render: (v) => <span className="oo-num">{Number(v) || 0} {CURRENCY_NAME}</span>,
+      render: (v) => (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <OdCoin size={12} />
+          <span className="oo-num">{Number(v) || 0}</span>
+        </span>
+      ),
     },
     {
       title: "输出（每百万 token）",
       dataIndex: "output",
       width: 180,
       sorter: (a, b) => Number(a.output) - Number(b.output),
-      render: (v) => <span className="oo-num">{Number(v) || 0} {CURRENCY_NAME}</span>,
+      render: (v) => (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <OdCoin size={12} />
+          <span className="oo-num">{Number(v) || 0}</span>
+        </span>
+      ),
     },
     {
       title: "缓存命中（每百万 token）",
@@ -94,7 +105,10 @@ export default function PricingPage() {
       width: 190,
       render: (v) =>
         v ? (
-          <span className="oo-num">{Number(v)} {CURRENCY_NAME}</span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <OdCoin size={12} />
+            <span className="oo-num">{Number(v)}</span>
+          </span>
         ) : (
           <span style={{ color: "var(--ink-3)" }}>—</span>
         ),

@@ -7,6 +7,7 @@ import { ReloadOutlined, TeamOutlined, SearchOutlined } from "@ant-design/icons"
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import { fmtDate, fmtOd, unitsPerOd, CURRENCY_NAME } from "../services/format";
+import { OdCoin } from "../components/OdCoin";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
@@ -279,9 +280,8 @@ export default function AdminUsersPage() {
         <StatCard label="用户总数" value={loadError ? "—" : total} suffix="人" />
         <StatCard label="管理员" value={loadError ? "—" : admins} suffix="人" hint="本页统计" />
         <StatCard label="已禁用" value={loadError ? "—" : disabled} suffix="人" tone={!loadError && disabled ? "danger" : undefined} hint="本页统计" />
-        <StatCard label="累计消费" // fmtOd 默认已经带上单位（withUnit=true），再给 suffix 会显示成「0.52 OD币OD币」。
-        // 传 false 让它只出数字，单位由 suffix 统一负责（与其它 StatCard 一致）。
-        value={loadError ? "—" : fmtOd(totalUsed, perUnit, 2, false)} suffix={CURRENCY_NAME} hint="本页统计" />
+        <StatCard label="累计消费" // fmtOd 传 false 只出数字，单位由 suffix（OD 币图标）负责
+        value={loadError ? "—" : fmtOd(totalUsed, perUnit, 2, false)} suffix={<OdCoin size={12} muted />} hint="本页统计" />
       </div>
 
       <div className="oo-panel">

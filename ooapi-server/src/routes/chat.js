@@ -12,7 +12,7 @@ import { ok, fail, asyncHandler, now, safeInt, clientIp } from "../utils.js";
 import { authRequired, preAuthJwt } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
-import { getPrice, computeCost, splitTokens, estimateTokens, loadPrices, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
+import { getPrice, computeCost, splitTokens, sumCallTokens, estimateTokens, loadPrices, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { groupConfigOf, applyGroupRate, parseGroupKey, displayGroupName } from "../services/group-rate.js";
 import { allPublicModels, resolveAliasSync } from "../services/models.js";
 import { rowToChannel, channelInGroup, collectAvailableModels } from "../services/router.js";
@@ -627,7 +627,7 @@ router.post(
 // 与网关同一套原子扣费；harness 传进来的 tokens 是「每次上游调用分别 splitTokens 后求和」，
 // 混用 API 渠道（结构化 usage）与反代渠道（usage=null）时不会互相覆盖口径。
   async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0, keyName = "", startedAt = 0, firstTokenAt = 0, userAgent = "", ip = "", calls = null, tokenQuotaHold = 0 }) {
-    const { promptTokens, completionTokens, cacheTokens } =
+    let { promptTokens, completionTokens, cacheTokens } =
       tokens || splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
   const basePrice = await getPrice(resolveAliasSync(model));
@@ -657,6 +657,14 @@ router.post(
       sum += computeCost({ price: e.price, promptTokens: t.promptTokens, completionTokens: t.completionTokens, cacheTokens: t.cacheTokens });
     }
     units = applyGroupRate(sum, gcfg?.rate);
+    // 展示口径 = 计费口径：日志/消息统计里的 token 必须取自**逐调用计费**所用的
+    // 那一组汇总。线上事故（用户实测）：失败轮（对话（部分））没有可见正文时，
+    // 调用方的 tokens 还是 0/0，而钱按失败步的长上下文算出来了 ——
+    // 于是出现「收了费但 token 显示 0/0」。见 pricing.js#sumCallTokens。
+    const billed = sumCallTokens(calls);
+    promptTokens = billed.promptTokens;
+    completionTokens = billed.completionTokens;
+    cacheTokens = billed.cacheTokens;
     // 审计用：跨档时记 "peak+offpeak"，单档时记该档位
     eff = { phase: phases.size > 1 ? [...phases].join("+") : [...phases][0] || "peak", price: basePrice };
     price = basePrice;

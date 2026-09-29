@@ -394,7 +394,7 @@ export default function AdminPricingPage() {
         <StatCard
           label="最低输入价"
           value={loadError ? "—" : cheapest ? Number(cheapest.input_price).toFixed(4) : "-"}
-          suffix={CURRENCY_NAME}
+          suffix={<OdCoin size={12} muted />}
           hint={loadError ? "加载失败" : `对应模型：${cheapest?.model || "—"}`}
         />
         <StatCard

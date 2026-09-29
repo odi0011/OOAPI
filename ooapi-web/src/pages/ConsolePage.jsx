@@ -21,6 +21,7 @@ import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
 import { LineChart, BarChart, RankBar, Legend, Donut, ChartCard, SERIES_COLORS, fmtCompact } from "../components/Charts";
+import { OdCoin } from "../components/OdCoin";
 import { copyText, fmtOd, odOf, odRateText, unitsPerOd, CURRENCY_NAME } from "../services/format";
 
 const RANGES = [
@@ -167,7 +168,7 @@ export default function ConsolePage() {
         <StatCard
           label="剩余额度"
           value={loading ? "—" : fmtOd(quota, perUnit, 2, false)}
-          suffix={CURRENCY_NAME}
+          suffix={<OdCoin size={12} muted />}
           tone={quota < 0 ? "danger" : undefined}
           // 余额的悬浮说明要**先解释币是什么**，再说总数。
           //
@@ -192,7 +193,7 @@ export default function ConsolePage() {
         <StatCard
           label="已用额度"
           value={loading ? "—" : fmtOd(usedQuota, perUnit, 2, false)}
-          suffix={CURRENCY_NAME}
+          suffix={<OdCoin size={12} muted />}
           tone={usedPct >= 90 ? "danger" : usedPct >= 70 ? "warning" : undefined}
           hint={`占总额度 ${usedPct.toFixed(1)}%`}
         />
@@ -200,7 +201,7 @@ export default function ConsolePage() {
         <StatCard
           label={`区间消费`}
           value={loading ? "—" : fmtOd(t?.units || 0, perUnit, 2, false)}
-          suffix={CURRENCY_NAME}
+          suffix={<OdCoin size={12} muted />}
           hint={`近 ${data?.range?.days || 30} 天 · 应按上游实际用量计费`}
         />
         <StatCard label="区间调用" value={loading ? "—" : fmtCompact(t?.calls || 0)} suffix="次" hint={`${trend.filter((d) => d.calls > 0).length} 天有调用`} />

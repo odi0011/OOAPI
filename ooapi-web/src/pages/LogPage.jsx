@@ -3,6 +3,7 @@ import { Table, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, De
 import { ReloadOutlined, FileTextOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import { fmtDate, fmtOd, unitsPerOd, CURRENCY_NAME } from "../services/format";
+import { OdCoin } from "../components/OdCoin";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
@@ -300,8 +301,11 @@ export default function LogPage() {
         const n = Number(q) || 0;
         return n ? (
           <Tooltip title={`${fmtOd(n, perUnit, 6)}`}>
-            <span className="oo-num" style={{ fontWeight: 550 }}>{fmtOd(n, perUnit, 4, false)}</span>
-            <span style={{ fontSize: 11, color: "var(--ink-3)", marginLeft: 3 }}>{CURRENCY_NAME}</span>
+            {/* 图标即单位：不重复写「OD币」（用户要求） */}
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <OdCoin size={12} />
+              <span className="oo-num" style={{ fontWeight: 550 }}>{fmtOd(n, perUnit, 4, false)}</span>
+            </span>
           </Tooltip>
         ) : (
           <span style={{ color: "var(--ink-3)" }}>-</span>
@@ -509,7 +513,8 @@ export default function LogPage() {
               后者是汇率换算 —— 全站硬约束禁止新增换算与其他币名。
               用户看到 1:1 自己就能折算，不需要平台替他算。 */}
           <span className="bui-chip" title={`区间消耗（1 ${CURRENCY_NAME} = 1 美元）`}>
-            消耗 <b className="oo-num">{fmtOd(summary.units, perUnit, 4, false)}</b> {CURRENCY_NAME}
+            {/* 图标即单位；后面的「1 OD币 = 1 美元」是币制定义句，保留 */}
+            消耗 <OdCoin size={12} /> <b className="oo-num">{fmtOd(summary.units, perUnit, 4, false)}</b>
             <span style={{ color: "var(--ink-3)", fontWeight: 400 }}>
               （1 {CURRENCY_NAME} = 1 美元）
             </span>

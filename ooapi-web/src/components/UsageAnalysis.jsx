@@ -12,6 +12,7 @@
 import React, { useState } from "react";
 import { Spin, Empty } from "antd";
 import { LineChart, RankBar, Legend, Donut, ChartCard, SERIES_COLORS, fmtCompact } from "./Charts";
+import { OdCoin } from "./OdCoin";
 import { odOf, CURRENCY_NAME } from "../services/format";
 
 const WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
@@ -138,7 +139,9 @@ export default function UsageAnalysis({ byDay = [], byModel = [], modelSeries = 
         <div className="oo-stats-card-title">使用分析</div>
         <div className="oo-analysis-kpis">
           <span>调用 <b>{fmtCompact(sum.calls)}</b> 次</span>
-          <span>消费 <b>{fmtCompact(od(sum.units))}</b> {CURRENCY_NAME}</span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+            消费 <OdCoin size={12} /> <b>{fmtCompact(od(sum.units))}</b>
+          </span>
           <span>缓存命中 <b>{cacheRate}%</b></span>
           <span>平均耗时 <b>{(avgElapsed / 1000).toFixed(2)}</b> s</span>
           <span className="oo-analysis-tz">按北京时间（UTC+8）分天</span>

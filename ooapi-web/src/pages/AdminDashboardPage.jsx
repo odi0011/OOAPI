@@ -24,6 +24,7 @@ import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import UserAvatar from "../components/UserAvatar";
 import { LineChart, RankBar, Legend, Donut, KpiCard, ChartCard, SERIES_COLORS, fmtCompact } from "../components/Charts";
+import { OdCoin } from "../components/OdCoin";
 import { odOf, unitsPerOd, CURRENCY_NAME } from "../services/format";
 
 const RANGES = [
@@ -141,7 +142,7 @@ export default function AdminDashboardPage() {
       ) : (
         <div className="oo-kpi-grid">
           <KpiCard label="调用次数" value={fmtCompact(t.calls || 0)} unit="次" current={t.calls} previous={p.calls} spark={sparkCalls} />
-          <KpiCard label="消费总额" value={fmtCompact(od(t.units))} unit={CURRENCY_NAME} current={t.units} previous={p.units} spark={sparkUnits} />
+          <KpiCard label="消费总额" value={fmtCompact(od(t.units))} unit={<OdCoin size={13} />} current={t.units} previous={p.units} spark={sparkUnits} />
           <KpiCard label="活跃用户" value={t.active_users ?? 0} unit="人" current={t.active_users} previous={p.active_users} hint={`新增 ${t.users_new ?? 0} 人 · 启用 ${t.users_total ?? 0} 人`} />
           <KpiCard
             label="请求错误率"
