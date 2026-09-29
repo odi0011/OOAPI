@@ -1480,6 +1480,12 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 
 - Git 未加入 PATH，可用 GitHub Desktop 自带的：
   `& "$env:LOCALAPPDATA\GitHubDesktop\app-3.6.3\resources\app\git\cmd\git.exe"`
+- **本机直连 GitHub 经常不通**（git 全局代理指向 127.0.0.1 但代理进程未必在跑；
+  `git -c http.proxy= -c https.proxy= push` 绕过代理后仍可能连不上 443）。
+  推送不通时用「服务器代推」：本地 `git bundle create %TEMP%\p.bundle main`（**全量**，
+  不要加 `--not --remotes=origin` 排除——服务器 clone bundle 时没有前置提交会报 prerequisite），
+  scp 到服务器后 `git clone --bare` 成裸仓 → `git remote add gh https://github.com/odi0011/OOAPI.git`
+  → `git push gh main`（服务器可直连 GitHub）。
 - 网络受限时自行配置本机代理（每台机器的代理不同，**不要把代理地址写进本仓库**）。
 - `antigravity`（Google 订阅）需要在本机 `.env` 配置 `GOOGLE_OAUTH_CLIENT_ID` /
   `GOOGLE_OAUTH_CLIENT_SECRET`（**不提交仓库**）；未配置时该渠道会以 `CHANNEL_CONFIG_ERROR`
