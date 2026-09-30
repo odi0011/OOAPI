@@ -87,3 +87,16 @@ export function publicModels() {
 
 // 渠道应声明的模型（供渠道管理默认值）
 export const CHANNEL_MODELS = "deepseek-flash,deepseek-v4-pro";
+
+/**
+ * 兼容别名 → 平台规范名。
+ * DeepSeek 官方已把 V4.1-Flash 更名为 deepseek-flash（2026-09 官方公告，
+ * 用户确认"v4.1f 实际就是 flash"）—— 但 WorkBuddy / OpenCode 等托管上游的
+ * 模型清单仍是旧 id deepseek-v4.1-flash，用户与渠道两侧都会出现旧名。
+ * 这里把旧名归一到规范名：计费、白名单、渠道匹配都按 deepseek-flash 走
+ * （渠道匹配的别名感知见 router.js#channelSupportsModel；
+ *   托管上游只认旧 id 的发请求前翻译见 vendor-quirks.js#UPSTREAM_MODEL_MAP）。
+ */
+export const ALIASES = {
+  "deepseek-v4.1-flash": "deepseek-flash",
+};

@@ -5,7 +5,7 @@ import { pool } from "../db.js";
 import { now } from "../utils.js";
 import { isOAuthMethod, getMethod, getProvider, isApiKeyMethod } from "./channel-types.js";
 import { groupConfigOf } from "./group-rate.js";
-import { modelRegistrySync, modelInAllowList } from "./models.js";
+import { modelRegistrySync, modelInAllowList, canonicalModelName, vendorModelsSync } from "./models.js";
 
 // 适配器表（懒加载，避免未用到的适配器被引入）
 //
@@ -711,17 +711,15 @@ function vendorModelSet(channelType) {
   }
   const cache = vendorModelsCache.map;
   if (cache.has(t)) return cache.get(t);
+  // 厂商模型集合来自 models.js 的按厂商缓存（含该厂商别名条目的规范名 ——
+  // workbuddy 托管 deepseek 档 aliasOf 官方 deepseek-flash，空白声明渠道也要能服务它）。
   // 登记表没就绪（刚被失效、还没重新预热）时**不缓存 null**：
   // 一旦把 null 写进 60s TTL，所有「models 留空」的渠道会在整整一个周期内被判为不可用
   // ——渠道写操作（测试/查额度/保存）会让登记表失效，这会把「点一下测试」变成「全站 503」。
-  const reg = modelRegistrySync();
-  if (!reg) {
+  const set = vendorModelsSync(t);
+  if (!set) {
     ensureRegistryWarmup();
     return null;
-  }
-  const set = new Set();
-  for (const [model, info] of reg) {
-    if (String(info?.type || "") === t) set.add(model);
   }
   cache.set(t, set);
   return set;
@@ -745,21 +743,28 @@ export function invalidateVendorModels() {
   vendorModelsCache = { at: 0, map: null };
 }
 
-/** 渠道是否支持该模型（支持通配：deepseek-* 或 *） */
+/** 渠道是否支持该模型（支持通配：deepseek-* 或 *；精确项按**别名归一后**比较） */
 export function channelSupportsModel(channel, model) {
   const list = parseModels(channel.models);
   const m = String(model || "").toLowerCase();
+  // 规范名一次算好：精确项比较的是归一化后的名字 ——
+  // 渠道声明旧名（deepseek-v4.1-flash）、用户请求新名（deepseek-flash，官方更名后的 id），
+  // 两者是同一个模型，必须互相命中（用户实测：只按字面匹配会 503「没有可服务模型」）。
+  const cm = canonicalModelName(m);
   // 留空 = 该厂商全部模型（模型归属厂商，不归属账号）
   if (!list.length) {
     const vendorSet = vendorModelSet(channel.type);
     if (!vendorSet || !vendorSet.size) return false; // 没有厂商模型表（如 custom）：必须显式声明
-    return vendorSet.has(m);
+    if (vendorSet.has(m) || (Boolean(cm) && vendorSet.has(cm))) return true;
+    // 集合里可能存的是旧名/别名（登记表按渠道声明收录）：按归一比较兜底一遍
+    for (const s of vendorSet) if (canonicalModelName(s) === cm) return true;
+    return false;
   }
   return list.some((pattern) => {
     const p = pattern.toLowerCase();
     if (p === "*") return true;
     if (p.endsWith("*")) return m.startsWith(p.slice(0, -1));
-    return p === m;
+    return canonicalModelName(p) === cm;
   });
 }
 
@@ -785,7 +790,13 @@ export function collectAvailableModels(channelRows) {
           out.add("*");
           continue;
         }
-        out.add(t.toLowerCase());
+        // 口径与 channelSupportsModel 一致：声明名与它的别名都算「这个渠道能服务」
+        // （deepseek-v4.1-flash 与 deepseek-flash 是同一个模型，旧名也要进列表，
+        //  否则用户按旧名调得通、列表里却看不到）。
+        const lower = t.toLowerCase();
+        out.add(lower);
+        const cn = canonicalModelName(lower);
+        if (cn && cn !== lower) out.add(cn);
       }
       continue;
     }

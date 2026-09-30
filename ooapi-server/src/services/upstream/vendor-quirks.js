@@ -52,12 +52,41 @@ export function vendorKindOf(channel) {
 }
 
 /**
+ * 平台规范模型名 → 该上游实际服务的模型 id。
+ *
+ * 背景（2026-09，用户实测 + 官方公告）：DeepSeek 把 V4.1-Flash 更名为 deepseek-flash，
+ * 平台规范名随之归一（deepseek-models.js#ALIASES）；但 WorkBuddy（腾讯托管）与
+ * OpenCode(Zen/GO) 的上游模型清单**仍是旧 id deepseek-v4.1-flash**——
+ * 实测两个上游请求新名都会失败。路由层把两个名字视为同一模型（router.js#channelSupportsModel），
+ * 这里负责在**发请求前**把规范名翻译成各上游认识的 id；
+ * 用户直接请求旧名时不在表里、原样透传（上游本就认识）。
+ *
+ * 注意按 channel.type 分发（与 vendorKindOf 同一原则：不按 base_url，用户可能换自建中转）。
+ */
+const UPSTREAM_MODEL_MAP = {
+  workbuddy: { "deepseek-flash": "deepseek-v4.1-flash" },
+  opencode: { "deepseek-flash": "deepseek-v4.1-flash" },
+};
+
+export function upstreamModelOf(channelType, model) {
+  const map = UPSTREAM_MODEL_MAP[String(channelType || "").toLowerCase()];
+  if (!map) return model;
+  const id = String(model || "").toLowerCase();
+  return map[id] || model;
+}
+
+/**
  * 请求侧注入（在 buildMessages 之后、fetch 之前调用）。
  * 只改 body，不改其它状态；无法识别的厂商原样返回。
  */
 export function applyVendorRequest(body, { channel, model } = {}) {
   const kind = vendorKindOf(channel);
   const m = String(model || "").toLowerCase();
+
+  // 先做模型名翻译（见 UPSTREAM_MODEL_MAP）：平台规范名 → 上游实际 id。
+  // 必须在所有厂商分支之前 —— 它与厂商怪癖正交，任何兼容渠道都可能需要。
+  const upstream = upstreamModelOf(channel?.type, body.model || model);
+  if (upstream && upstream !== body.model) body.model = upstream;
 
   if (kind === "minimax") {
     // ① 强制拆分思维链：不开的话 <think> 会混进正文

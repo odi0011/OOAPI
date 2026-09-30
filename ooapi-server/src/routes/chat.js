@@ -357,6 +357,18 @@ async function availableModels(user, keyId = 0) {
     }
   }
 
+  // 6.5) 别名条目去重：规范名已在列表里时，不再重复展示旧名/托管名。
+  //
+  // 背景（用户实测）：DeepSeek 官方把 V4.1-Flash 更名为 deepseek-flash，而
+  // WorkBuddy 托管档登记的还是旧 id deepseek-v4.1-flash（aliasOf 指向规范名）——
+  // 同一分组里两个条目都指向同一个模型，下拉出现「v4.1f 和 flash 俩」。
+  // 只在**规范名确实也在列表里**时才隐藏：若分组里只有托管渠道（规范名不在），
+  // 保留别名条目，否则用户会没有任何 deepseek 可选（调得通但选不到，更糟）。
+  for (const [idLower, entry] of [...candidateModels]) {
+    const target = String(entry.aliasOf || "").toLowerCase();
+    if (target && candidateModels.has(target)) candidateModels.delete(idLower);
+  }
+
   // 7) 补充价格信息并生成最终结果
   const priceMap = await loadPrices();
   const result = [];

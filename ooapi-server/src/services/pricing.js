@@ -183,8 +183,10 @@ export const DEFAULT_PRICES = [
   { model: "glm-5v", input: 0.640835, output: 2.354694, cache: 0.11, type: "glm", remark: `视觉档与 glm-5.2 同价 ¥4.3/¥15.8 ÷ 6.71；来源 open.bigmodel.cn/pricing` },
   { model: "glm-4.6v", input: 0.298063, output: 1.19225, cache: 0.06, type: "glm", remark: `视觉档与 glm-4.6 同价 ¥2/¥8 ÷ 6.71；来源 open.bigmodel.cn/pricing` },
   { model: "glm-4v", input: 0.149031, output: 0.149031, cache: 0, type: "glm", remark: `官方 glm-4v ¥1/¥1 ÷ 6.71；来源 open.bigmodel.cn/pricing` },
-  // WorkBuddy（腾讯托管）的 DeepSeek 档：底层同名模型，按 DeepSeek 官方价计
-  { model: "deepseek-v4.1-flash", input: 0.30, output: 1.20, cache: 0.006, type: "deepseek", remark: "腾讯托管同名档，按 DeepSeek 官方 flash 价录入；来源 api-docs.deepseek.com/quick_start/pricing/" },
+  // WorkBuddy（腾讯托管）的 DeepSeek 档：与官方 deepseek-flash 是**同一个模型**
+  // （官方已把 V4.1-Flash 更名为 deepseek-flash，用户确认），不再单独定价 ——
+  // 托管渠道声明旧 id deepseek-v4.1-flash，路由按别名归一（deepseek-models.js#ALIASES），
+  // 计费走上面 deepseek-flash 一行（峰谷同价口径）。
   // 小米 MiMo / 美团 LongCat：官方未公布完整价表，按公开档位与同类轻量档估录，待官方页复核
   { model: "mimo-v2.6-pro", input: 0.50, output: 2.00, cache: 0.05, type: "mimo", remark: "官方未公布完整价表，按同类 pro 档估录，待复核" },
   { model: "longcat-2.0", input: 0.30, output: 1.20, cache: 0.03, type: "longcat", remark: "官方未公布完整价表，按同类轻量档估录，待复核" },

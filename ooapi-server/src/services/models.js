@@ -188,6 +188,7 @@ export function supportedVendorTypes() {
 //   3. 现有渠道 models 字段里声明的模型（覆盖 openai-compat 等自定义渠道）
 // 不在登记表里的 = 垃圾数据，定价导入必须拒绝。
 let registryCache = { at: 0, map: null };
+let typeModelsCache = { at: 0, map: null };
 const REGISTRY_TTL_MS = 60_000;
 
 /** 拆分渠道 models 字段（逗号/换行/空格分隔，去空去重） */
@@ -205,13 +206,28 @@ function splitModelList(raw) {
 export async function modelRegistry() {
   if (registryCache.map && Date.now() - registryCache.at < REGISTRY_TTL_MS) return registryCache.map;
   const map = new Map();
+  // 按厂商的「可服务模型集合」：vendorModelSet（渠道 models 留空的判定）用它。
+  // 与名字登记表分开维护 —— 别名条目不再是独立模型（不进名字表），但它的
+  // **规范名仍属于该厂商**（workbuddy 托管 deepseek 档 aliasOf 官方 deepseek-flash，
+  //  该厂商空白声明的渠道必须继续能服务这个模型）。
+  const byType = new Map();
+  const addTyped = (t, id) => {
+    const tt = String(t || "");
+    const k = String(id || "").toLowerCase().trim();
+    if (!tt || !k) return;
+    if (!byType.has(tt)) byType.set(tt, new Set());
+    byType.get(tt).add(k);
+  };
   const put = (id, type) => {
     const k = String(id || "").toLowerCase().trim();
     if (!k || map.has(k)) return;
     map.set(k, { model: String(id).trim(), type: String(type || "") });
   };
 
-  for (const p of DEFAULT_PRICES) put(p.model, p.type);
+  for (const p of DEFAULT_PRICES) {
+    put(p.model, p.type);
+    addTyped(p.type, p.model);
+  }
   for (const t of Object.keys(VENDOR_MODEL_MODULES)) {
     try {
       const mod = await VENDOR_MODEL_MODULES[t]();
@@ -219,8 +235,13 @@ export async function modelRegistry() {
       // 但不作为独立模型出现在定价表/导入白名单里（否则历史别名会一直被当成"合法垃圾"）。
       if (typeof mod.publicModels === "function") {
         for (const m of mod.publicModels()) {
-          if (m.deprecated || m.aliasOf) continue;
+          if (m.deprecated || m.aliasOf) {
+            // 别名条目：把它的**规范名**记到该厂商名下（上面的 put 不含它）
+            if (m.aliasOf) addTyped(t, m.aliasOf);
+            continue;
+          }
           put(m.id, t);
+          addTyped(t, m.id);
         }
       }
     } catch {
@@ -229,12 +250,18 @@ export async function modelRegistry() {
   }
   try {
     const [rows] = await pool.query("SELECT type, models FROM channels");
-    for (const r of rows) for (const m of splitModelList(r.models)) put(m, r.type);
+    for (const r of rows) {
+      for (const m of splitModelList(r.models)) {
+        put(m, r.type);
+        addTyped(r.type, m);
+      }
+    }
   } catch {
     /* 表不存在/查询失败时不影响前两类 */
   }
 
   registryCache = { at: Date.now(), map };
+  typeModelsCache = { at: Date.now(), map: byType };
   return map;
 }
 
@@ -244,7 +271,19 @@ export function invalidateModelRegistry() {
   // 置 null 会让所有 models 留空的渠道在重建完成前（约 200ms+）被误判为不可用 ——
   // 而渠道/定价的每次写操作都会触发失效，等于把「管理员点一下保存」变成「短暂全站 503」。
   registryCache.at = 0;
+  typeModelsCache.at = 0;
   scheduleRegistryWarmup();
+}
+
+/**
+ * 同步读取「某厂商的可服务模型集合」（含其别名条目的规范名）。
+ * 供 router.js#vendorModelSet 判定「models 留空的渠道支持哪些模型」；
+ * 未预热时返回 null（调用方按「厂商表未就绪」保守处理）。
+ */
+export function vendorModelsSync(type) {
+  const t = String(type || "").toLowerCase();
+  if (!t || !typeModelsCache.map) return null;
+  return typeModelsCache.map.get(t) || null;
 }
 
 let registryWarmupTimer = null;
