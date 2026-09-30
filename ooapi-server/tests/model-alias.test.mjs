@@ -69,6 +69,10 @@ console.log("\n=== ③ 上游名映射：规范名发到托管上游前翻译回
   const body = { model: "deepseek-flash" };
   applyVendorRequest(body, { channel: { type: "workbuddy" }, model: "deepseek-flash" });
   ck("applyVendorRequest 实际改写 body.model", body.model === "deepseek-v4.1-flash", body.model);
+  // 裸名 workbuddy/codebuddy（历史别名）也要翻译到上游认识的 id
+  const b2 = { model: "workbuddy" };
+  applyVendorRequest(b2, { channel: { type: "workbuddy" }, model: "workbuddy" });
+  ck("裸名 workbuddy 同样翻译", b2.model === "deepseek-v4.1-flash", b2.model);
 }
 
 console.log("\n=== ④ 定价归一：一份价格，两个名字 ===");

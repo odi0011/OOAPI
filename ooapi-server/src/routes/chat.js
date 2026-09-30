@@ -376,9 +376,9 @@ async function availableModels(user, keyId = 0) {
     const p = priceMap.get(String(m.id).toLowerCase());
     result.push({
       ...m,
-      price: p
-        ? { input: Number(p.input_price), output: Number(p.output_price), cache: Number(p.cache_price) }
-        : null,
+      // loadPrices 返回的键是 input/output/cache（已从列名 input_price 映射），
+      // 这里原先读 p.input_price → undefined → NaN → JSON null，下拉/弹窗价格全空（子代理复核发现）
+      price: p ? { input: Number(p.input), output: Number(p.output), cache: Number(p.cache) } : null,
     });
   }
 

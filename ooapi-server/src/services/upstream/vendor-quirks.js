@@ -1,4 +1,5 @@
 // OpenAI 兼容厂商的特化处理（请求注入 / 响应归一）
+import { canonicalModelName } from "../models.js";
 // ===========================================================================
 // 为什么单独一个文件：openai-compat.js 是所有 API 渠道的公共路径，
 // 把各厂商的怪癖塞进去会让它越来越难读。这里按「厂商一批差异」组织，
@@ -71,10 +72,12 @@ const UPSTREAM_MODEL_MAP = {
 export function upstreamModelOf(channelType, model) {
   const map = UPSTREAM_MODEL_MAP[String(channelType || "").toLowerCase()];
   if (!map) return model;
-  const id = String(model || "").toLowerCase();
-  return map[id] || model;
+  // 先归一到平台规范名再查表：用户可能用任一别名请求（workbuddy / codebuddy /
+  // deepseek-v4.1-flash / deepseek-flash），规范化后都落到 deepseek-flash，
+  // 统一翻译成该上游认识的 id。models.js 与本文件无循环依赖。
+  const canonical = String(canonicalModelName(model) || model || "").toLowerCase();
+  return map[canonical] || model;
 }
-
 /**
  * 请求侧注入（在 buildMessages 之后、fetch 之前调用）。
  * 只改 body，不改其它状态；无法识别的厂商原样返回。
