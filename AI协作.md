@@ -5408,6 +5408,59 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
       7. 管理端平台看板成功聚合总调用 83,025 次、总 Tokens 65,087,858 与均耗时 2698ms；
       8. 测试数据全部自动清理完成。
 
+| 2026-09-29 | **第 83 批 · 模型归属归一（deepseek 新旧名）+ 价格同步核实 + 0/0 记录治理**。
+
+  **一、模型归属（用户指令：深度搜索并归属好各个模型）**：
+  · 联网核实：DeepSeek 官方 API id 现为 **deepseek-flash**（V4.1-Flash 是发布名，官方更名）；
+    官方价 peak $0.30/$1.20、off-peak $0.15/$0.60、cache $0.003-0.006 每百万 token ——
+    与平台 deepseek-flash 行**完全一致**，价格无需改。后台出现「v4.1f 和 flash 俩」
+    是因为 WorkBuddy 托管档与 OpenCode 渠道声明用旧 id deepseek-v4.1-flash 且单独定价。
+  · 线上实验（改前）：请求 deepseek-flash 在 OpenCode/WorkBuddy 组全部 503「没有可服务模型」；
+    请求旧名 200 —— 证实映射断裂。
+  · 归一实现（四处落点，一个身份原则）：
+    ① `deepseek-models.js#ALIASES`：deepseek-v4.1-flash → deepseek-flash（规范名）；
+    ② `router.js#channelSupportsModel`：精确项按 `canonicalModelName` 归一比较（声明旧名/新名互相命中）；
+       `collectAvailableModels` 同口径把两个名字都列进可用集；
+    ③ `vendor-quirks.js#UPSTREAM_MODEL_MAP`：发请求前把规范名翻译成托管上游认识的旧 id
+       （workbuddy/opencode 上游清单仍是 deepseek-v4.1-flash，实测不认新名；先 canonical 再查表，
+       用户用任一别名——含裸名 workbuddy/codebuddy——都能正确翻译）；
+    ④ `pricing.js` 删除 deepseek-v4.1-flash 独立定价行（并入 deepseek-flash，值本就相同）；
+       `workbuddy-models.js` 条目标 `aliasOf`（登记表/下拉不再当独立模型）。
+  · `/meta` 下拉：别名条目在**规范名也在列表里**时去重（只留一个 deepseek-flash）；
+    分组里只有托管渠道时保留别名条目（否则选不到）。
+  · 线上验证（a8a00ab）：双名字 × 三分组（OpenCode/WorkBuddy/官方）全部路由成功
+    （官方渠道当时上游偶发「返回空内容」进入冷却，是既有上游问题，路由本身 ✓）；
+    /meta 只剩一个 deepseek-flash 且价格有值；定价 deepseek 系只剩 1 行。
+  · **明确不合并**（子代理核查结论，防跨代伪装）：glm-4.6→5.2、qwen3.7-max→3.8-max、
+    moonshot-v1-*→kimi-k2、claude-5→4.5（Kiro）等是**迁移/同档**不是同一模型 ——
+    它们参与 `modelInAllowList` 等价比较是既有风险，登记待办（见下），本次不动。
+
+  **二、「后台有的记录还是没有输入输出」复查结论**：
+  · 按 id 段复查：第 81 批部署（0/0 修复上线）后**零新增**；修复真实验证通过（p=963/c=1 与 content 一致）。
+  · 用户看到的 0/0 是**历史记录**，分两类：
+    ① 62 条（9/18-19，token 列建立前写入，数值只在 content 文本里）——已从 content
+       解析「提示 X / 补全 Y tokens（/ 缓存 Z）」**回填列**，使用记录页现在有数了；
+    ② 2 条（#85776/#85781，修复前的部分计费轮）——content 本身就是「提示 0 / 补全 0」，
+       当时的失败步没有采集任何 token 数据，无来源可回填，保持原样（诚实呈现）。
+  · 顺带修：/meta 的 price 字段读错键名（`p.input_price` → 应为 `p.input`），
+    导致对话模型下拉的价格信息全是 null（子代理复核发现，一行修复）。
+
+  **三、子代理全链路核查登记的遗留项（本次不动，按优先级）**：
+  · P0 定价解析分裂：`getPrice` 会剥 `vendor/` 前缀，OpenRouter 同步的全名行与管理员
+    改价可能互相错位；实际结算、`/resolve`、价格公示、待定价面板未共用同一解析器；
+    `:free/:batch` 等 SKU 被前缀归属规则吃进「exact」价。
+  · P1 白名单等价：跨代迁移 alias（glm-4.6→5.2 等）参与 `modelInAllowList`，
+    声明旧档会放行新档；站内对话的模型权限仍是 `id === l || id.startsWith(l)` 旧逻辑，
+    与网关精确白名单不一致。
+  · P1 站内 meta 价格键名（本批已修 input/output/cache）；harness 逐调用未存 billModel。
+  · P2 下拉 owner 元信息后写覆盖（同一模型多厂商暴露时 label 随模块顺序漂）；
+    通配 `deepseek-*` 在 /v1/models 里作为字面条目返回。
+  · 测试缺口：缺「三协议 × 新旧名 × 托管/官方」出站 payload 断言（现有 model-alias 测的是 helper 层）。
+
+  **验证**：32 个测试文件全过（新增 model-alias 25 项）；vite build 无告警；
+  线上部署 `a8a00ab` 后 ui-smoke 全过 + 上表四项终态验证全过。
+
+
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 
 > 目标：把开源社区已有的「网页版反代 / 工具类反代」按**厂商**归类接入平台，
