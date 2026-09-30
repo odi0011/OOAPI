@@ -531,6 +531,8 @@ export default function MonitorPage() {
   const [winKey, setWinKey] = useState("m5");
   // 并发维度（对齐 sub2api 的多维度切换：它按 platform/group/account/user，我们按账号/厂商/模型）
   const [concTab, setConcTab] = useState("channel");
+  // 运维大屏分组 Tab：彻底解决单页瀑布流发散堆叠问题
+  const [activeTab, setActiveTab] = useState("overview");
   const timerRef = useRef(null);
   const esRef = useRef(null);
 
@@ -751,419 +753,450 @@ export default function MonitorPage() {
         }
       />
 
-      {/* ① 健康分 + 智能诊断 */}
-      <HealthPanel health={health} diagnosis={data?.diagnosis} onRefresh={() => load()} loading={loading} />
-
-      {/* ② 概览小标签 */}
-      <Strip
-        items={[
-          { label: "在途", value: rt.inFlight ?? 0, color: (rt.inFlight ?? 0) > 20 ? "var(--orange)" : undefined },
-          { label: "峰值在途", value: g.peakInFlight ?? 0 },
-          { label: "SLA", value: rt.sla != null ? `${rt.sla}%` : "—", color: rt.sla != null && rt.sla < (thresholds.slaPercentMin || 99.5) ? "var(--red)" : undefined },
-          { label: "成功率", value: g.successRate != null ? `${g.successRate}%` : "—" },
-          { label: "错误率", value: g.errorRate != null ? `${g.errorRate}%` : "—", color: g.errorRate > (thresholds.errorRateMax || 5) ? "var(--red)" : undefined },
-          { label: "业务限制", value: g.businessLimited ?? 0 },
-          { label: "上游错误", value: g.upstream?.errors ?? 0, color: (g.upstream?.errors ?? 0) > 0 ? "var(--orange)" : undefined },
-          { label: "429/529", value: `${g.upstream?.count429 ?? 0}/${g.upstream?.count529 ?? 0}` },
-          { label: "换号次数", value: g.channelSwitches ?? 0 },
-          { label: "换号率", value: g.switchRate != null ? `${g.switchRate}%` : "—" },
-          { label: "总请求", value: g.requests ?? 0 },
-        ]}
-      />
-
-      {/* ②b 窗口口径（告警规则实际使用的口径，与进程累计值区分开） */}
-      <div className="oo-panel" style={{ padding: "10px 14px", marginBottom: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <Segmented
-            size="small"
-            value={winKey}
-            onChange={setWinKey}
-            options={[
-              { value: "m1", label: "近 1 分钟" },
-              { value: "m5", label: "近 5 分钟" },
-              { value: "m60", label: "近 60 分钟" },
-            ]}
-          />
-          <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>
-            窗口口径（告警规则按各自的「统计窗口」取这套值，不是进程累计）
-          </span>
-          {winStats?.partial ? <Tag color="gold">样本仅覆盖 {winStats.coveredMinutes}/{winStats.windowMin} 分钟</Tag> : null}
-        </div>
-        {winStats ? (
-          <Strip
-            items={[
-              { label: "请求", value: winStats.calls },
-              { label: "错误", value: winStats.errors, color: winStats.errors ? "var(--red)" : undefined },
-              { label: "成功率", value: winStats.successRate != null ? `${winStats.successRate}%` : "无样本" },
-              { label: "错误率", value: winStats.errorRate != null ? `${winStats.errorRate}%` : "无样本", color: winStats.errorRate > (thresholds.errorRateMax || 5) ? "var(--red)" : undefined },
-              { label: "Token", value: winStats.tokens },
-              { label: "平均 QPS", value: winStats.qps },
-              { label: "平均 TPS", value: winStats.tps },
-              { label: "平均首字", value: winStats.avgTtftMs ? `${winStats.avgTtftMs}ms` : "—" },
-            ]}
-          />
-        ) : null}
-      </div>
-
-      {/* ③ 吞吐实时 + 趋势 */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, marginBottom: 12 }}>
-        <div className="oo-panel" style={{ padding: 14 }}>
-          <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
-            <div className="oo-stats-card-title">吞吐趋势（近 60 分钟）</div>
-            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
-              QPS 峰值 {trend.qps?.peak ?? 0} · 均值 {trend.qps?.avg ?? 0} · TPS 峰值 {trend.tps?.peak ?? 0}
-            </span>
-          </div>
-          <Legend series={qpsSeries} />
-          <LineChart
-            series={qpsSeries}
-            height={190}
-            tipRender={(i) => {
-              const p = series[i];
-              if (!p) return null;
-              return (
-                <>
-                  <div style={{ fontWeight: 600 }}>{p.label}</div>
-                  <div className="oo-trend-tip-row">
-                    <i style={{ background: "#3b82f6" }} />
-                    QPS <span>{p.qps}</span>
-                  </div>
-                  <div className="oo-trend-tip-row">
-                    <i style={{ background: "#22c55e" }} />
-                    TPS <span>{p.tps}</span>
-                  </div>
-                  <div className="oo-trend-tip-row">
-                    调用 <span>{p.calls}</span>
-                  </div>
-                  <div className="oo-trend-tip-row">
-                    错误 <span>{p.errors}</span>
-                  </div>
-                </>
-              );
-            }}
-          />
-        </div>
-
-        <div className="oo-panel" style={{ padding: 14 }}>
-          <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
-            <div className="oo-stats-card-title">错误趋势（近 60 分钟）</div>
-            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>错误率 {g.errorRate ?? 0}%</span>
-          </div>
-          <Legend series={errSeries} />
-          <LineChart series={errSeries} height={190} />
-        </div>
-      </div>
-
-      {/* ④ 资源卡 */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginBottom: 12 }}>
-        <ResourceCard
-          label="CPU（系统）"
-          value={sys.cpuPercent != null ? `${sys.cpuPercent}%` : "计算中"}
-          percent={sys.cpuPercent}
-          foot={`${sys.cpuCount || 0} 核${sys.loadavg ? ` · 负载 ${sys.loadavg.join(" / ")}` : ""}`}
-        />
-        <ResourceCard
-          label="CPU（本进程）"
-          value={proc.cpu ? `${proc.cpu.percent}%` : "计算中"}
-          percent={proc.cpu?.percentOfMachine}
-          foot={proc.cpu ? `占整机 ${proc.cpu.percentOfMachine}% · 用户 ${proc.cpu.userMs}ms / 系统 ${proc.cpu.systemMs}ms` : "区分「机器忙」和「Node 卡」"}
-        />
-        <ResourceCard
-          label="内存（系统）"
-          value={`${sys.usedMemPercent ?? 0}%`}
-          percent={sys.usedMemPercent}
-          foot={`已用 ${fmtBytes((sys.totalMemBytes || 0) - (sys.freeMemBytes || 0))} / 共 ${fmtBytes(sys.totalMemBytes)}`}
-        />
-        <ResourceCard
-          label="内存（进程 RSS）"
-          value={fmtBytes(proc.rssBytes)}
-          percent={sys.totalMemBytes ? ((proc.rssBytes || 0) / sys.totalMemBytes) * 100 : null}
-          foot={`堆 ${fmtBytes(proc.heapUsedBytes)} / ${fmtBytes(proc.heapTotalBytes)} · 外部 ${fmtBytes(proc.externalBytes)}`}
-          extra={
-            (proc.externalBytes || 0) > 200 * 1024 * 1024 ? (
-              <Tooltip title="外部内存（Buffer）占比偏高，可能是流式响应的 Buffer 未释放">
-                <Tag color="orange" style={{ marginInlineEnd: 0 }}>Buffer 偏高</Tag>
-              </Tooltip>
-            ) : null
-          }
-        />
-        <ResourceCard
-          label="磁盘"
-          value={sys.disk ? `${sys.disk.usedPercent}%` : "不支持"}
-          percent={sys.disk?.usedPercent}
-          foot={sys.disk ? `剩余 ${fmtBytes(sys.disk.freeBytes)} / 共 ${fmtBytes(sys.disk.totalBytes)}` : "当前文件系统不支持 statfs"}
-        />
-        <ResourceCard
-          label="事件循环延迟"
-          value={data?.eventLoop?.p99Ms != null ? `${data.eventLoop.p99Ms} ms` : "计算中"}
-          percent={data?.eventLoop?.p99Ms != null ? Math.min(100, (data.eventLoop.p99Ms / 200) * 100) : null}
-          foot={
-            data?.eventLoop
-              ? `P50 ${data.eventLoop.p50Ms ?? "—"}ms · 最大 ${data.eventLoop.maxMs ?? "—"}ms · 利用率 ${((data.eventLoop.utilization ?? 0) * 100).toFixed(1)}%`
-              : "Node 被同步操作阻塞的程度"
-          }
-        />
-        <ResourceCard
-          label="数据库连接池"
-          value={`${data?.pool?.inUse ?? 0} / ${data?.pool?.total ?? 0}`}
-          percent={data?.pool?.total ? (data.pool.inUse / data.pool.total) * 100 : null}
-          foot={`空闲 ${data?.pool?.free ?? 0} · 排队 ${data?.pool?.queued ?? 0}`}
-          extra={(data?.pool?.queued ?? 0) > 0 ? <Tag color="orange" style={{ marginInlineEnd: 0 }}>有排队</Tag> : null}
-        />
-        <ResourceCard
-          label="活动句柄"
-          value={data?.resources?.activeHandles ?? "—"}
-          foot={
-            data?.resources?.resourceUsage
-              ? `非自愿上下文切换 ${data.resources.resourceUsage.involuntarySwitches} · 文件读写 ${data.resources.resourceUsage.fsRead}/${data.resources.resourceUsage.fsWrite}`
-              : "Node 没有 goroutine，用活动句柄作类比"
-          }
-        />
-      </div>
-
-      {/* ⑤⑥ 延迟 + 错误分析 */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12, marginBottom: 12 }}>
-        <div className="oo-panel" style={{ padding: 14 }}>
-          <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
-            <div className="oo-stats-card-title">请求延迟分位</div>
-            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>样本 {lat.samples ?? 0} 次</span>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(72px, 1fr))", gap: 8, marginBottom: 12 }}>
-            {[
-              ["平均", lat.avgMs],
-              ["P50", lat.p50Ms],
-              ["P90", lat.p90Ms],
-              ["P95", lat.p95Ms],
-              ["P99", lat.p99Ms],
-              ["最大", lat.maxMs],
-            ].map(([k, v]) => (
-              <div key={k} className="oo-stat-card">
-                <div className="oo-stat-card-num" style={{ fontSize: 16 }}>
-                  {v ?? 0}
-                  <span style={{ fontSize: 11, color: "var(--ink-3)", marginLeft: 2 }}>ms</span>
-                </div>
-                <div className="oo-stat-card-label">{k}</div>
-              </div>
-            ))}
-          </div>
-          <div className="oo-stats-card-title" style={{ marginBottom: 6 }}>
-            首 Token 延迟（TTFT）
-          </div>
-          {ttft ? (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(72px, 1fr))", gap: 8 }}>
-              {[
-                ["平均", ttft.avgMs],
-                ["P50", ttft.p50Ms],
-                ["P90", ttft.p90Ms],
-                ["P95", ttft.p95Ms],
-                ["P99", ttft.p99Ms],
-                ["最大", ttft.maxMs],
-              ].map(([k, v]) => (
-                <div key={k} className="oo-stat-card">
-                  <div
-                    className="oo-stat-card-num"
-                    style={{
-                      fontSize: 16,
-                      color: k === "P99" && v > (thresholds.ttftP99MsMax || 3000) ? "var(--red)" : undefined,
-                    }}
-                  >
-                    {v ?? 0}
-                    <span style={{ fontSize: 11, color: "var(--ink-3)", marginLeft: 2 }}>ms</span>
-                  </div>
-                  <div className="oo-stat-card-label">{k}</div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div style={{ fontSize: 12, color: "var(--ink-3)" }}>暂无流式请求样本（TTFT 只在流式响应里可测）</div>
-          )}
-        </div>
-
-        <div className="oo-panel" style={{ padding: 14 }}>
-          <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
-            <div className="oo-stats-card-title">延迟分布</div>
-            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>按耗时区间分桶</span>
-          </div>
-          <BarChart bars={hist} height={150} />
-
-          <div className="oo-stats-card-head" style={{ margin: "14px 0 8px" }}>
-            <div className="oo-stats-card-title">HTTP 状态码分布</div>
-          </div>
-          <BarChart
-            bars={(g.byStatus || []).map((s) => ({
-              label: String(s.status),
-              value: s.count,
-              color: s.status >= 500 ? "#ef4444" : s.status >= 400 ? "#f59e0b" : "#22c55e",
-            }))}
-            height={120}
-          />
-        </div>
-      </div>
-
-      {/* ⑦ 并发与队列 */}
-      <div className="oo-panel" style={{ padding: 14, marginBottom: 12 }}>
-        <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
-          <div className="oo-stats-card-title">并发与队列</div>
-          <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
-            在途 {channels.inflight ?? 0} · 冷却中 {channels.cooling ?? 0} · 启用 {channels.enabled ?? 0} · 近期有错误 {channels.errors ?? 0}
-          </span>
-        </div>
+      {/* 顶部监控导航标签：聚焦不同运维场景，消除单页瀑布流发散 */}
+      <div style={{ marginBottom: 14 }}>
         <Segmented
-          size="small"
-          value={concTab}
-          onChange={setConcTab}
+          size="middle"
+          value={activeTab}
+          onChange={setActiveTab}
           options={[
-            { value: "channel", label: "按账号" },
-            { value: "vendor", label: "按厂商" },
-            { value: "model", label: "按模型" },
+            { value: "overview", label: "🔥 核心状态与大屏" },
+            { value: "infra", label: "💻 系统资源与耗时" },
+            { value: "traffic", label: "🌐 流量调度与排行" },
+            { value: "alerts", label: "🔔 告警管理与维护" },
           ]}
-          style={{ marginBottom: 8 }}
+          style={{ fontWeight: 500 }}
         />
-        {concTab === "channel" ? (
-          <Table
-            rowKey="channelId"
-            size="small"
-            dataSource={(channels.list || []).filter((c) => c.inflight > 0 || c.coolingDown || c.queued > 0 || c.lastError)}
-            pagination={false}
-            scroll={{ x: 720, y: 240 }}
-            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有在途请求，也没有冷却中的账号" /> }}
-            columns={[
-              { title: "#", dataIndex: "channelId", width: 54 },
-              { title: "账号", dataIndex: "name", ellipsis: true },
-              { title: "厂商", dataIndex: "type", width: 100 },
-              { title: "在途", dataIndex: "inflight", width: 70, render: (v) => <span className="oo-num">{v}</span> },
-              {
-                title: "排队",
-                dataIndex: "queued",
-                width: 70,
-                render: (v) => (v ? <Badge count={v} size="small" /> : <span style={{ color: "var(--ink-3)" }}>—</span>),
-              },
-              {
-                title: "冷却",
-                dataIndex: "cooldownRemainSec",
-                width: 90,
-                render: (v) => (v ? <Tag color="orange">{Math.ceil(v / 60)} 分钟</Tag> : <span style={{ color: "var(--ink-3)" }}>—</span>),
-              },
-              { title: "累计调用", dataIndex: "usedCount", width: 90, render: (v) => <span className="oo-num">{v}</span> },
-              { title: "最近错误", dataIndex: "lastError", ellipsis: true },
-            ]}
-          />
-        ) : (
-          <Table
-            rowKey={concTab === "vendor" ? "vendor" : "model"}
-            size="small"
-            dataSource={
-              concTab === "vendor"
-                ? (g.topVendors || []).map((v) => ({
-                    vendor: v.vendor || "未登记",
-                    calls: v.calls,
-                    errors: v.errors,
-                    successRate: v.successRate,
-                    avgMs: v.avgMs,
-                    avgTtftMs: v.avgTtftMs,
-                  }))
-                : (g.topModels || []).map((v) => ({
-                    model: v.model,
-                    calls: v.calls,
-                    errors: v.errors,
-                    successRate: v.successRate,
-                    avgMs: v.avgMs,
-                    avgTtftMs: v.avgTtftMs,
-                  }))
-            }
-            pagination={false}
-            scroll={{ x: 640, y: 240 }}
-            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="本进程还没有调用记录" /> }}
-            columns={[
-              { title: concTab === "vendor" ? "厂商" : "模型", dataIndex: concTab === "vendor" ? "vendor" : "model", ellipsis: true },
-              { title: "调用", dataIndex: "calls", width: 80, render: (v) => <span className="oo-num">{v}</span> },
-              { title: "错误", dataIndex: "errors", width: 70, render: (v) => (v ? <Tag color="red">{v}</Tag> : <span style={{ color: "var(--ink-3)" }}>0</span>) },
-              {
-                title: "成功率",
-                dataIndex: "successRate",
-                width: 90,
-                render: (v) => <span className="oo-num" style={{ color: v != null && v < 95 ? "var(--red)" : undefined }}>{v != null ? `${v}%` : "—"}</span>,
-              },
-              { title: "平均耗时", dataIndex: "avgMs", width: 100, render: (v) => <span className="oo-num">{v ?? 0} ms</span> },
-              { title: "平均首字", dataIndex: "avgTtftMs", width: 100, render: (v) => <span className="oo-num">{v ? `${v} ms` : "—"}</span> },
-            ]}
-          />
-        )}
       </div>
 
-      {/* ⑧ 平台概览 */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12, marginBottom: 12 }}>
-        <div className="oo-panel" style={{ padding: 14 }}>
-          <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
-            <div className="oo-stats-card-title">平台概览</div>
-          </div>
+      {activeTab === "overview" && (
+        <>
+          {/* ① 健康分 + 智能诊断 */}
+          <HealthPanel health={health} diagnosis={data?.diagnosis} onRefresh={() => load()} loading={loading} />
+
+          {/* ② 概览小标签 */}
           <Strip
             items={[
-              { label: "渠道", value: `${overview.channels?.enabled ?? 0}/${overview.channels?.total ?? 0}` },
-              { label: "自动禁用", value: overview.channels?.autoDisabled ?? 0, color: overview.channels?.autoDisabled ? "var(--orange)" : undefined },
-              { label: "密钥", value: `${overview.tokens?.active ?? 0}/${overview.tokens?.total ?? 0}` },
-              { label: "用户", value: `${overview.users?.active ?? 0}/${overview.users?.total ?? 0}` },
-              { label: "低余额用户", value: overview.users?.lowBalance ?? 0 },
+              { label: "在途", value: rt.inFlight ?? 0, color: (rt.inFlight ?? 0) > 20 ? "var(--orange)" : undefined },
+              { label: "峰值在途", value: g.peakInFlight ?? 0 },
+              { label: "SLA", value: rt.sla != null ? `${rt.sla}%` : "—", color: rt.sla != null && rt.sla < (thresholds.slaPercentMin || 99.5) ? "var(--red)" : undefined },
+              { label: "成功率", value: g.successRate != null ? `${g.successRate}%` : "—" },
+              { label: "错误率", value: g.errorRate != null ? `${g.errorRate}%` : "—", color: g.errorRate > (thresholds.errorRateMax || 5) ? "var(--red)" : undefined },
+              { label: "业务限制", value: g.businessLimited ?? 0 },
+              { label: "上游错误", value: g.upstream?.errors ?? 0, color: (g.upstream?.errors ?? 0) > 0 ? "var(--orange)" : undefined },
+              { label: "429/529", value: `${g.upstream?.count429 ?? 0}/${g.upstream?.count529 ?? 0}` },
+              { label: "换号次数", value: g.channelSwitches ?? 0 },
+              { label: "换号率", value: g.switchRate != null ? `${g.switchRate}%` : "—" },
+              { label: "总请求", value: g.requests ?? 0 },
             ]}
           />
-          <Strip
-            items={[
-              { label: "近1小时调用", value: overview.lastHour?.calls ?? 0 },
-              { label: "近1小时失败", value: overview.lastHour?.errors ?? 0, color: overview.lastHour?.errors ? "var(--red)" : undefined },
-              { label: "近24小时调用", value: overview.last24h?.calls ?? 0 },
-              { label: "近24小时失败", value: overview.last24h?.errors ?? 0, color: overview.last24h?.errors ? "var(--red)" : undefined },
-              { label: "近24小时消费", value: `${overview.last24h?.units ?? 0} 单位` },
-            ]}
-          />
-        </div>
 
-        <div className="oo-panel" style={{ padding: 14 }}>
-          <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
-            <div className="oo-stats-card-title">数据表体积</div>
-            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>判断日志是否需要清理</span>
+          {/* ②b 窗口口径（告警规则实际使用的口径，与进程累计值区分开） */}
+          <div className="oo-panel" style={{ padding: "10px 14px", marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <Segmented
+                size="small"
+                value={winKey}
+                onChange={setWinKey}
+                options={[
+                  { value: "m1", label: "近 1 分钟" },
+                  { value: "m5", label: "近 5 分钟" },
+                  { value: "m60", label: "近 60 分钟" },
+                ]}
+              />
+              <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>
+                窗口口径（告警规则按各自的「统计窗口」取这套值，不是进程累计）
+              </span>
+              {winStats?.partial ? <Tag color="gold">样本仅覆盖 {winStats.coveredMinutes}/{winStats.windowMin} 分钟</Tag> : null}
+            </div>
+            {winStats ? (
+              <Strip
+                items={[
+                  { label: "请求", value: winStats.calls },
+                  { label: "错误", value: winStats.errors, color: winStats.errors ? "var(--red)" : undefined },
+                  { label: "成功率", value: winStats.successRate != null ? `${winStats.successRate}%` : "无样本" },
+                  { label: "错误率", value: winStats.errorRate != null ? `${winStats.errorRate}%` : "无样本", color: winStats.errorRate > (thresholds.errorRateMax || 5) ? "var(--red)" : undefined },
+                  { label: "Token", value: winStats.tokens },
+                  { label: "平均 QPS", value: winStats.qps },
+                  { label: "平均 TPS", value: winStats.tps },
+                  { label: "平均首字", value: winStats.avgTtftMs ? `${winStats.avgTtftMs}ms` : "—" },
+                ]}
+              />
+            ) : null}
           </div>
-          <RankBar
-            items={(overview.tables || []).map((t) => ({ name: t.name, mb: t.mb, rows: t.rows }))}
-            nameKey="name"
-            valueKey="mb"
-            suffix=" MB"
-          />
-        </div>
-      </div>
 
-      {/* ⑨ 排行 */}
-      <div className="oo-panel" style={{ padding: 14, marginBottom: 12 }}>
-        <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
-          <div className="oo-stats-card-title">调用排行（本进程累计）</div>
-          <Segmented
-            size="small"
-            value={rankTab}
-            onChange={setRankTab}
-            options={[
-              { value: "model", label: "模型" },
-              { value: "channel", label: "渠道" },
-              { value: "user", label: "用户" },
-              { value: "vendor", label: "厂商" },
-            ]}
-          />
-        </div>
-        <RankBar
-          items={rankSets[rankTab].items.map((m) => ({
-            name: m.name,
-            calls: m.calls,
-            rate: `${m.successRate ?? "—"}% · ${m.avgMs ?? 0}ms${m.avgTtftMs ? ` · 首字 ${m.avgTtftMs}ms` : ""}`,
-          }))}
-          nameKey="name"
-          valueKey="calls"
-          suffix=" 次"
-        />
-        <div style={{ marginTop: 8, fontSize: 11.5, color: "var(--ink-3)" }}>
-          {rankSets[rankTab].items.slice(0, 8).map((m) => `${m.name}：成功率 ${m.successRate ?? "—"}%（平均 ${m.avgMs ?? 0}ms${m.avgTtftMs ? `，首字 ${m.avgTtftMs}ms` : ""}）`).join(" · ") || "暂无调用记录"}
-        </div>
-      </div>
+          {/* ③ 吞吐实时 + 趋势 */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, marginBottom: 12 }}>
+            <div className="oo-panel" style={{ padding: 14 }}>
+              <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+                <div className="oo-stats-card-title">吞吐趋势（近 60 分钟）</div>
+                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                  QPS 峰值 {trend.qps?.peak ?? 0} · 均值 {trend.qps?.avg ?? 0} · TPS 峰值 {trend.tps?.peak ?? 0}
+                </span>
+              </div>
+              <Legend series={qpsSeries} />
+              <LineChart
+                series={qpsSeries}
+                height={190}
+                tipRender={(i) => {
+                  const p = series[i];
+                  if (!p) return null;
+                  return (
+                    <>
+                      <div style={{ fontWeight: 600 }}>{p.label}</div>
+                      <div className="oo-trend-tip-row">
+                        <i style={{ background: "#3b82f6" }} />
+                        QPS <span>{p.qps}</span>
+                      </div>
+                      <div className="oo-trend-tip-row">
+                        <i style={{ background: "#22c55e" }} />
+                        TPS <span>{p.tps}</span>
+                      </div>
+                      <div className="oo-trend-tip-row">
+                        调用 <span>{p.calls}</span>
+                      </div>
+                      <div className="oo-trend-tip-row">
+                        错误 <span>{p.errors}</span>
+                      </div>
+                    </>
+                  );
+                }}
+              />
+            </div>
 
-      {/* ⑩ 告警中心 */}
-      <AlertPanel data={data} onReload={() => load(true)} />
+            <div className="oo-panel" style={{ padding: 14 }}>
+              <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+                <div className="oo-stats-card-title">错误趋势（近 60 分钟）</div>
+                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>错误率 {g.errorRate ?? 0}%</span>
+              </div>
+              <Legend series={errSeries} />
+              <LineChart series={errSeries} height={190} />
+            </div>
+          </div>
+
+          {/* 平台概览卡 */}
+          <div className="oo-panel" style={{ padding: 14, marginBottom: 12 }}>
+            <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+              <div className="oo-stats-card-title">平台运行全局概览</div>
+            </div>
+            <Strip
+              items={[
+                { label: "渠道", value: `${overview.channels?.enabled ?? 0}/${overview.channels?.total ?? 0}` },
+                { label: "自动禁用", value: overview.channels?.autoDisabled ?? 0, color: overview.channels?.autoDisabled ? "var(--orange)" : undefined },
+                { label: "密钥", value: `${overview.tokens?.active ?? 0}/${overview.tokens?.total ?? 0}` },
+                { label: "用户", value: `${overview.users?.active ?? 0}/${overview.users?.total ?? 0}` },
+                { label: "低余额用户", value: overview.users?.lowBalance ?? 0 },
+              ]}
+            />
+            <Strip
+              items={[
+                { label: "近 1 小时调用", value: overview.lastHour?.calls ?? 0 },
+                { label: "近 1 小时失败", value: overview.lastHour?.errors ?? 0, color: overview.lastHour?.errors ? "var(--red)" : undefined },
+                { label: "近 24 小时调用", value: overview.last24h?.calls ?? 0 },
+                { label: "近 24 小时失败", value: overview.last24h?.errors ?? 0, color: overview.last24h?.errors ? "var(--red)" : undefined },
+                { label: "近 24 小时消费", value: `${overview.last24h?.units ?? 0} 单位` },
+              ]}
+            />
+          </div>
+        </>
+      )}
+
+      {activeTab === "infra" && (
+        <>
+          {/* ④ 资源卡 */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginBottom: 12 }}>
+            <ResourceCard
+              label="CPU（系统）"
+              value={sys.cpuPercent != null ? `${sys.cpuPercent}%` : "计算中"}
+              percent={sys.cpuPercent}
+              foot={`${sys.cpuCount || 0} 核${sys.loadavg ? ` · 负载 ${sys.loadavg.join(" / ")}` : ""}`}
+            />
+            <ResourceCard
+              label="CPU（本进程）"
+              value={proc.cpu ? `${proc.cpu.percent}%` : "计算中"}
+              percent={proc.cpu?.percentOfMachine}
+              foot={proc.cpu ? `占整机 ${proc.cpu.percentOfMachine}% · 用户 ${proc.cpu.userMs}ms / 系统 ${proc.cpu.systemMs}ms` : "区分「机器忙」和「Node 卡」"}
+            />
+            <ResourceCard
+              label="内存（系统）"
+              value={`${sys.usedMemPercent ?? 0}%`}
+              percent={sys.usedMemPercent}
+              foot={`已用 ${fmtBytes((sys.totalMemBytes || 0) - (sys.freeMemBytes || 0))} / 共 ${fmtBytes(sys.totalMemBytes)}`}
+            />
+            <ResourceCard
+              label="内存（进程 RSS）"
+              value={fmtBytes(proc.rssBytes)}
+              percent={sys.totalMemBytes ? ((proc.rssBytes || 0) / sys.totalMemBytes) * 100 : null}
+              foot={`堆 ${fmtBytes(proc.heapUsedBytes)} / ${fmtBytes(proc.heapTotalBytes)} · 外部 ${fmtBytes(proc.externalBytes)}`}
+              extra={
+                (proc.externalBytes || 0) > 200 * 1024 * 1024 ? (
+                  <Tooltip title="外部内存（Buffer）占比偏高，可能是流式响应的 Buffer 未释放">
+                    <Tag color="orange" style={{ marginInlineEnd: 0 }}>Buffer 偏高</Tag>
+                  </Tooltip>
+                ) : null
+              }
+            />
+            <ResourceCard
+              label="磁盘"
+              value={sys.disk ? `${sys.disk.usedPercent}%` : "不支持"}
+              percent={sys.disk?.usedPercent}
+              foot={sys.disk ? `剩余 ${fmtBytes(sys.disk.freeBytes)} / 共 ${fmtBytes(sys.disk.totalBytes)}` : "当前文件系统不支持 statfs"}
+            />
+            <ResourceCard
+              label="事件循环延迟"
+              value={data?.eventLoop?.p99Ms != null ? `${data.eventLoop.p99Ms} ms` : "计算中"}
+              percent={data?.eventLoop?.p99Ms != null ? Math.min(100, (data.eventLoop.p99Ms / 200) * 100) : null}
+              foot={
+                data?.eventLoop
+                  ? `P50 ${data.eventLoop.p50Ms ?? "—"}ms · 最大 ${data.eventLoop.maxMs ?? "—"}ms · 利用率 ${((data.eventLoop.utilization ?? 0) * 100).toFixed(1)}%`
+                  : "Node 被同步操作阻塞的程度"
+              }
+            />
+            <ResourceCard
+              label="数据库连接池"
+              value={`${data?.pool?.inUse ?? 0} / ${data?.pool?.total ?? 0}`}
+              percent={data?.pool?.total ? (data.pool.inUse / data.pool.total) * 100 : null}
+              foot={`空闲 ${data?.pool?.free ?? 0} · 排队 ${data?.pool?.queued ?? 0}`}
+              extra={(data?.pool?.queued ?? 0) > 0 ? <Tag color="orange" style={{ marginInlineEnd: 0 }}>有排队</Tag> : null}
+            />
+            <ResourceCard
+              label="活动句柄"
+              value={data?.resources?.activeHandles ?? "—"}
+              foot={
+                data?.resources?.resourceUsage
+                  ? `非自愿上下文切换 ${data.resources.resourceUsage.involuntarySwitches} · 文件读写 ${data.resources.resourceUsage.fsRead}/${data.resources.resourceUsage.fsWrite}`
+                  : "Node 没有 goroutine，用活动句柄作类比"
+              }
+            />
+          </div>
+
+          {/* ⑤ 延迟分析 */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12, marginBottom: 12 }}>
+            <div className="oo-panel" style={{ padding: 14 }}>
+              <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+                <div className="oo-stats-card-title">请求延迟分位</div>
+                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>样本 {lat.samples ?? 0} 次</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(72px, 1fr))", gap: 8, marginBottom: 12 }}>
+                {[
+                  ["平均", lat.avgMs],
+                  ["P50", lat.p50Ms],
+                  ["P90", lat.p90Ms],
+                  ["P95", lat.p95Ms],
+                  ["P99", lat.p99Ms],
+                  ["最大", lat.maxMs],
+                ].map(([k, v]) => (
+                  <div key={k} className="oo-stat-card">
+                    <div className="oo-stat-card-num" style={{ fontSize: 16 }}>
+                      {v ?? 0}
+                      <span style={{ fontSize: 11, color: "var(--ink-3)", marginLeft: 2 }}>ms</span>
+                    </div>
+                    <div className="oo-stat-card-label">{k}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="oo-stats-card-title" style={{ marginBottom: 6 }}>
+                首 Token 延迟（TTFT）
+              </div>
+              {ttft ? (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(72px, 1fr))", gap: 8 }}>
+                  {[
+                    ["平均", ttft.avgMs],
+                    ["P50", ttft.p50Ms],
+                    ["P90", ttft.p90Ms],
+                    ["P95", ttft.p95Ms],
+                    ["P99", ttft.p99Ms],
+                    ["最大", ttft.maxMs],
+                  ].map(([k, v]) => (
+                    <div key={k} className="oo-stat-card">
+                      <div
+                        className="oo-stat-card-num"
+                        style={{
+                          fontSize: 16,
+                          color: k === "P99" && v > (thresholds.ttftP99MsMax || 3000) ? "var(--red)" : undefined,
+                        }}
+                      >
+                        {v ?? 0}
+                        <span style={{ fontSize: 11, color: "var(--ink-3)", marginLeft: 2 }}>ms</span>
+                      </div>
+                      <div className="oo-stat-card-label">{k}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: "var(--ink-3)" }}>暂无流式请求样本（TTFT 只在流式响应里可测）</div>
+              )}
+            </div>
+
+            <div className="oo-panel" style={{ padding: 14 }}>
+              <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+                <div className="oo-stats-card-title">耗时区间分布</div>
+                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>按耗时区间分桶</span>
+              </div>
+              <BarChart bars={hist} height={180} />
+            </div>
+          </div>
+
+          {/* 数据表体积 */}
+          <div className="oo-panel" style={{ padding: 14, marginBottom: 12 }}>
+            <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+              <div className="oo-stats-card-title">MySQL 数据表体积分布</div>
+              <span style={{ fontSize: 12, color: "var(--ink-3)" }}>监控数据库日志表增长，判断是否需要执行归档清理</span>
+            </div>
+            <RankBar
+              items={(overview.tables || []).map((t) => ({ name: t.name, mb: t.mb, rows: t.rows }))}
+              nameKey="name"
+              valueKey="mb"
+              suffix=" MB"
+            />
+          </div>
+        </>
+      )}
+
+      {activeTab === "traffic" && (
+        <>
+          {/* 并发与队列 */}
+          <div className="oo-panel" style={{ padding: 14, marginBottom: 12 }}>
+            <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+              <div className="oo-stats-card-title">渠道并发与排队状态</div>
+              <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                在途 {channels.inflight ?? 0} · 冷却中 {channels.cooling ?? 0} · 启用 {channels.enabled ?? 0} · 近期有错误 {channels.errors ?? 0}
+              </span>
+            </div>
+            <Segmented
+              size="small"
+              value={concTab}
+              onChange={setConcTab}
+              options={[
+                { value: "channel", label: "按账号" },
+                { value: "vendor", label: "按厂商" },
+                { value: "model", label: "按模型" },
+              ]}
+              style={{ marginBottom: 8 }}
+            />
+            {concTab === "channel" ? (
+              <Table
+                rowKey="channelId"
+                size="small"
+                dataSource={(channels.list || []).filter((c) => c.inflight > 0 || c.coolingDown || c.queued > 0 || c.lastError)}
+                pagination={false}
+                scroll={{ x: 720, y: 240 }}
+                locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有在途请求，也没有冷却中的账号" /> }}
+                columns={[
+                  { title: "#", dataIndex: "channelId", width: 54 },
+                  { title: "账号", dataIndex: "name", ellipsis: true },
+                  { title: "厂商", dataIndex: "type", width: 100 },
+                  { title: "在途", dataIndex: "inflight", width: 70, render: (v) => <span className="oo-num">{v}</span> },
+                  {
+                    title: "排队",
+                    dataIndex: "queued",
+                    width: 70,
+                    render: (v) => (v ? <Badge count={v} size="small" /> : <span style={{ color: "var(--ink-3)" }}>—</span>),
+                  },
+                  {
+                    title: "冷却",
+                    dataIndex: "cooldownRemainSec",
+                    width: 90,
+                    render: (v) => (v ? <Tag color="orange">{Math.ceil(v / 60)} 分钟</Tag> : <span style={{ color: "var(--ink-3)" }}>—</span>),
+                  },
+                  { title: "累计调用", dataIndex: "usedCount", width: 90, render: (v) => <span className="oo-num">{v}</span> },
+                  { title: "最近错误", dataIndex: "lastError", ellipsis: true },
+                ]}
+              />
+            ) : (
+              <Table
+                rowKey={concTab === "vendor" ? "vendor" : "model"}
+                size="small"
+                dataSource={
+                  concTab === "vendor"
+                    ? (g.topVendors || []).map((v) => ({
+                        vendor: v.vendor || "未登记",
+                        calls: v.calls,
+                        errors: v.errors,
+                        successRate: v.successRate,
+                        avgMs: v.avgMs,
+                        avgTtftMs: v.avgTtftMs,
+                      }))
+                    : (g.topModels || []).map((v) => ({
+                        model: v.model,
+                        calls: v.calls,
+                        errors: v.errors,
+                        successRate: v.successRate,
+                        avgMs: v.avgMs,
+                        avgTtftMs: v.avgTtftMs,
+                      }))
+                }
+                pagination={false}
+                scroll={{ x: 640, y: 240 }}
+                locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="本进程还没有调用记录" /> }}
+                columns={[
+                  { title: concTab === "vendor" ? "厂商" : "模型", dataIndex: concTab === "vendor" ? "vendor" : "model", ellipsis: true },
+                  { title: "调用", dataIndex: "calls", width: 80, render: (v) => <span className="oo-num">{v}</span> },
+                  { title: "错误", dataIndex: "errors", width: 70, render: (v) => (v ? <Tag color="red">{v}</Tag> : <span style={{ color: "var(--ink-3)" }}>0</span>) },
+                  {
+                    title: "成功率",
+                    dataIndex: "successRate",
+                    width: 90,
+                    render: (v) => <span className="oo-num" style={{ color: v != null && v < 95 ? "var(--red)" : undefined }}>{v != null ? `${v}%` : "—"}</span>,
+                  },
+                  { title: "平均耗时", dataIndex: "avgMs", width: 100, render: (v) => <span className="oo-num">{v ?? 0} ms</span> },
+                  { title: "平均首字", dataIndex: "avgTtftMs", width: 100, render: (v) => <span className="oo-num">{v ? `${v} ms` : "—"}</span> },
+                ]}
+              />
+            )}
+          </div>
+
+          {/* HTTP 状态码分布 */}
+          <div className="oo-panel" style={{ padding: 14, marginBottom: 12 }}>
+            <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+              <div className="oo-stats-card-title">HTTP 响应状态码分布</div>
+            </div>
+            <BarChart
+              bars={(g.byStatus || []).map((s) => ({
+                label: String(s.status),
+                value: s.count,
+                color: s.status >= 500 ? "#ef4444" : s.status >= 400 ? "#f59e0b" : "#22c55e",
+              }))}
+              height={140}
+            />
+          </div>
+
+          {/* ⑨ 排行 */}
+          <div className="oo-panel" style={{ padding: 14, marginBottom: 12 }}>
+            <div className="oo-stats-card-head" style={{ marginBottom: 8 }}>
+              <div className="oo-stats-card-title">业务调用排行（本进程累计）</div>
+              <Segmented
+                size="small"
+                value={rankTab}
+                onChange={setRankTab}
+                options={[
+                  { value: "model", label: "模型" },
+                  { value: "channel", label: "渠道" },
+                  { value: "user", label: "用户" },
+                  { value: "vendor", label: "厂商" },
+                ]}
+              />
+            </div>
+            <RankBar
+              items={rankSets[rankTab].items.map((m) => ({
+                name: m.name,
+                calls: m.calls,
+                rate: `${m.successRate ?? "—"}% · ${m.avgMs ?? 0}ms${m.avgTtftMs ? ` · 首字 ${m.avgTtftMs}ms` : ""}`,
+              }))}
+              nameKey="name"
+              valueKey="calls"
+              suffix=" 次"
+            />
+          </div>
+        </>
+      )}
+
+      {activeTab === "alerts" && (
+        <>
+          {/* ⑩ 告警中心 */}
+          <AlertPanel data={data} onReload={() => load(true)} />
+        </>
+      )}
     </div>
   );
 }

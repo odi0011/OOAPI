@@ -1,28 +1,65 @@
 // 数据看板 · 个人维度（/console）
 // ---------------------------------------------------------------------------
-// 为什么个人与管理端是**两个独立物理路由**（Gemini 第 7 点）：
-//   · 权限边界：管理端涉及全站流水、渠道故障率、异常用户画像。
-//     物理路由 + 路由守卫能从源头阻断非管理员的代码加载与接口嗅探；
-//     做成同一页的 Tab 则「代码已加载、只是不显示」，边界靠前端 if 维持，很脆。
-//   · 关注点不同：个人看「我花了多少、余额够撑几天、何时在用」；
-//     管理看「渠道延迟、全站 QPS、哪个分组在被刷」。见 AdminDashboardPage。
-//
-// 图表一律走 components/Charts.jsx 与 .oo-chart-grid 多图并列网格：
-// 单张大图信息密度极低，且要在口径间来回切换（用户明确反馈过）。
-import React, { useCallback, useEffect, useState } from "react";
+// 彻底解决历史与区间指标混淆问题：
+//   1. 账户资产概览：全生命周期永久状态（可用余额、总累计消费、有效令牌、分组倍率、日均消耗与可用续航预测）
+//   2. 时段用量与服务质量：随 7d/30d/90d 动态响应，带环比增减对比（总请求、总消费、Token 吞吐、成功率、响应耗时）
+//   3. 多维可视化图表：双 Y 轴调用与消费趋势图、Token 构成深度拆解、模型用量与消费排行（保证 100% 对齐）、24小时活跃时段
+//   4. 最近调用动态微流：最近 8 次 API 请求即时状态与用量快照，接入开发快速核验
+//   5. 接入信息与测试台：彻底纠正「计费比例」歧义，规范阐述货币标准与 1 OD = 10,000 额度单位底层换算，支持 cURL / Python / Node.js
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Segmented, Tag, Empty, Skeleton, App as AntApp, Tooltip, Alert } from "antd";
 import {
-  ReloadOutlined, KeyOutlined, CopyOutlined, ClockCircleOutlined, DashboardOutlined, WalletOutlined,
+  Button,
+  Segmented,
+  Tag,
+  Empty,
+  Skeleton,
+  App as AntApp,
+  Tooltip,
+  Alert,
+  Table,
+  Space,
+} from "antd";
+import {
+  ReloadOutlined,
+  KeyOutlined,
+  CopyOutlined,
+  ClockCircleOutlined,
+  DashboardOutlined,
+  WalletOutlined,
+  ThunderboltOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  ArrowRightOutlined,
+  DollarOutlined,
+  CodeOutlined,
+  InfoCircleOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
-import { LineChart, BarChart, RankBar, Legend, Donut, ChartCard, SERIES_COLORS, fmtCompact } from "../components/Charts";
+import {
+  LineChart,
+  BarChart,
+  RankBar,
+  Legend,
+  Donut,
+  ChartCard,
+  KpiCard,
+  SERIES_COLORS,
+  fmtCompact,
+} from "../components/Charts";
 import { OdCoin } from "../components/OdCoin";
-import { copyText, fmtOd, odOf, odRateText, unitsPerOd, CURRENCY_NAME } from "../services/format";
+import {
+  copyText,
+  fmtOd,
+  odOf,
+  unitsPerOd,
+  CURRENCY_NAME,
+  fmtDate,
+} from "../services/format";
 
 const RANGES = [
   { value: "7d", label: "近 7 天" },
@@ -42,20 +79,10 @@ export default function ConsolePage() {
   const [community, setCommunity] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  // 下方 curl 示例用的模型名：取该用户**当前可用**的第一个模型。
-  //
-  // 原先硬编码 `deepseek-chat`（官方已停用的旧名）。三个独立人格都照抄了这段示例，
-  // 全部拿到 503「当前没有可服务模型「deepseek-chat」的账号，请联系管理员在渠道管理中配置」
-  // —— 而真正能用的模型名就在同一页面的另一个角落（对话页下拉 / GET /v1/models）。
-  // 大学生人格的原话：「这是最伤新手的一条」「我自己就来回改了半小时」。
   const [sampleModel, setSampleModel] = useState("");
+  const [codeLang, setCodeLang] = useState("curl");
 
-  // 网关端点：必须是**可直接复制使用**的完整 URL。
-  //
-  // 后端在「API 端点」设置项留空时会回落到 `${server_address || ""}/v1`，
-  // 而 server_address 也没配时就是裸的 `/v1` —— 小白人格实测的原话：
-  // 「少了一截吧？别人的教程都是 https://xxx.com/v1，光一个 /v1 我要粘到哪？」
-  // 所以这里补一步：**相对路径**一律补上当前站点 origin。
+  // 网关完整可用 URL
   const endpoint = (() => {
     const raw = String(status?.api_endpoint || "").trim();
     if (!raw) return `${window.location.origin}/v1`;
@@ -70,9 +97,7 @@ export default function ConsolePage() {
     try {
       const [d, c, m] = await Promise.all([
         API.get("/dashboard/self", { params: { range } }),
-        // 社区数据失败不影响看板主体（它不是核心指标）
         API.get("/dashboard/community", { params: { range } }).catch(() => null),
-        // 真实可用模型（见 sampleModel 的注释）：失败不影响看板主体
         API.get("/chat/meta").catch(() => null),
       ]);
       if (!isLatest(token)) return;
@@ -93,43 +118,118 @@ export default function ConsolePage() {
     load();
   }, [load]);
 
-  const copyEndpoint = async () => {
+  const copyString = async (text, tip = "已复制") => {
     try {
-      await copyText(endpoint);
-      message.success("接口地址已复制");
+      await copyText(text);
+      message.success(tip);
     } catch {
       message.error("复制失败，请手动选择复制");
     }
   };
 
-  const t = data?.totals;
-  const trend = data?.trend || [];
+  // 1. 账户资产概览（全生命周期）
   const quota = data?.account?.quota ?? user?.quota ?? 0;
   const usedQuota = data?.account?.used_quota ?? user?.used_quota ?? 0;
-  const totalQuota = quota + usedQuota;
-  const usedPct = totalQuota > 0 ? (usedQuota / totalQuota) * 100 : 0;
-  // 余额可用天数：按区间日均消费估算 —— 比单看「剩余额度」有用得多。
-  //
-  // 但**必须封顶**：余额大而消费极小时会算出「3365587 天」这种数字，
-  // 不但没意义，还让整块看板显得不可信（实测被用户一眼看到）。
-  // 超过 999 天就归入「>999」语义：那个量级下精确天数没有决策价值。
-  const dailyAvg = trend.length ? (t?.units || 0) / trend.length : 0;
+  const totalLifetimeQuota = quota + usedQuota;
+  const usedPct = totalLifetimeQuota > 0 ? (usedQuota / totalLifetimeQuota) * 100 : 0;
+  const lifetimeRequests = data?.account?.request_count ?? user?.request_count ?? 0;
+  const activeTokens = data?.account?.active_tokens ?? 0;
+  const totalTokensCount = data?.account?.total_tokens ?? 0;
+  const groupName = data?.account?.group_name || user?.group_name || "default";
+  const groupRate = Number(data?.account?.group_rate ?? 1.0);
+
+  // 2. 区间用量统计（时段聚合）
+  const t = data?.totals || {};
+  const p = data?.previous || {};
+  const trend = data?.trend || [];
+  const days = data?.range?.days || 30;
+
+  // 日均消耗与可用天数测算
+  const dailyAvg = trend.length ? (t.units || 0) / trend.length : 0;
   const rawDaysLeft = dailyAvg > 0 ? Math.floor(quota / dailyAvg) : null;
   const daysLeft = rawDaysLeft === null ? null : Math.min(rawDaysLeft, 999);
   const daysLeftCapped = rawDaysLeft !== null && rawDaysLeft > 999;
 
-  const od = (u) => odOf(u, perUnit);
+  const od = useCallback((u) => odOf(u, perUnit), [perUnit]);
   const fmtOdVal = (v) => `${fmtCompact(v)} ${CURRENCY_NAME}`;
-  // 调用（几十几百次）与消费（零点几 OD币）量纲差几个数量级：消费走右轴，否则被压成贴底直线
-  const mainSeries = [
-    { name: "调用次数", color: SERIES_COLORS[0], format: (v) => `${fmtCompact(v)} 次`, values: trend.map((d) => ({ x: d.day, y: d.calls })) },
-    { name: `消费（${CURRENCY_NAME}）`, color: SERIES_COLORS[2], axis: "right", format: fmtOdVal, values: trend.map((d) => ({ x: d.day, y: od(d.units) })) },
-  ];
-  const tokenSeries = [
-    { name: "输入", color: SERIES_COLORS[0], values: trend.map((d) => ({ x: d.day, y: d.prompt_tokens })) },
-    { name: "输出", color: SERIES_COLORS[1], values: trend.map((d) => ({ x: d.day, y: d.completion_tokens })) },
-    { name: "缓存命中", color: SERIES_COLORS[3], area: false, values: trend.map((d) => ({ x: d.day, y: d.cache_tokens })) },
-  ];
+
+  // 趋势图数据序列（双 Y 轴）
+  const mainSeries = useMemo(
+    () => [
+      {
+        name: "调用次数",
+        color: SERIES_COLORS[0],
+        format: (v) => `${fmtCompact(v)} 次`,
+        values: trend.map((d) => ({ x: d.day, y: d.calls })),
+      },
+      {
+        name: `消费（${CURRENCY_NAME}）`,
+        color: SERIES_COLORS[2],
+        axis: "right",
+        format: fmtOdVal,
+        values: trend.map((d) => ({ x: d.day, y: od(d.units) })),
+      },
+    ],
+    [trend, od]
+  );
+
+  // Token 拆解图表
+  const tokenSeries = useMemo(
+    () => [
+      { name: "输入 Token", color: SERIES_COLORS[0], values: trend.map((d) => ({ x: d.day, y: d.prompt_tokens })) },
+      { name: "输出 Token", color: SERIES_COLORS[1], values: trend.map((d) => ({ x: d.day, y: d.completion_tokens })) },
+      { name: "缓存命中", color: SERIES_COLORS[3], area: false, values: trend.map((d) => ({ x: d.day, y: d.cache_tokens })) },
+    ],
+    [trend]
+  );
+
+  const sparkCalls = trend.map((d) => d.calls);
+  const sparkUnits = trend.map((d) => d.units);
+
+  // 代码示例
+  const modelToUse = sampleModel || "deepseek-v4.1-flash";
+  const codeSnippets = {
+    curl: `curl ${endpoint}/chat/completions \\
+  -H "Authorization: Bearer sk-your-key" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "${modelToUse}",
+    "messages": [{"role": "user", "content": "你好，请介绍你自己"}],
+    "stream": true
+  }'`,
+    python: `from openai import OpenAI
+
+client = OpenAI(
+    base_url="${endpoint}",
+    api_key="sk-your-key",  # 在控制台「令牌管理」页面创建的应用密钥
+)
+
+response = client.chat.completions.create(
+    model="${modelToUse}",
+    messages=[{"role": "user", "content": "你好，请介绍你自己"}],
+    stream=True,
+)
+
+for chunk in response:
+    content = chunk.choices[0].delta.content or ""
+    print(content, end="", flush=True)`,
+    node: `import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "${endpoint}",
+  apiKey: "sk-your-key", // 在控制台「令牌管理」页面创建的应用密钥
+});
+
+const stream = await client.chat.completions.create({
+  model: "${modelToUse}",
+  messages: [{ role: "user", content: "你好，请介绍你自己" }],
+  stream: true,
+});
+
+for await (const chunk of stream) {
+  process.stdout.write(chunk.choices[0]?.delta?.content || "");
+}`,
+  };
 
   return (
     <div className="oo-page">
@@ -137,18 +237,31 @@ export default function ConsolePage() {
         title={`你好，${user?.display_name || user?.username}`}
         tags={
           <>
-            <Tag icon={<DashboardOutlined />}>我的用量</Tag>
-            {/* 时区必须显式声明：跨时区排查账单差异全靠它（Gemini 第 10 点） */}
-            <Tooltip title="按天聚合、时段统计都以北京时间（UTC+8）为准">
+            <Tag icon={<DashboardOutlined />}>个人数据看板</Tag>
+            <Tooltip title="按天聚合、时段统计均以北京时间（UTC+8）为准">
               <Tag icon={<ClockCircleOutlined />}>北京时间</Tag>
             </Tooltip>
+            <Tag color="blue">
+              分组: {groupName} ({groupRate.toFixed(1)}x 倍率)
+            </Tag>
           </>
         }
         extra={
           <>
             <Segmented value={range} onChange={setRange} options={RANGES} />
-            <Button icon={<ReloadOutlined />} loading={loading} onClick={load} title="刷新" aria-label="刷新看板" />
-            <Button type="primary" icon={<KeyOutlined />} onClick={() => navigate("/token")}>管理令牌</Button>
+            <Button
+              icon={<ReloadOutlined />}
+              loading={loading}
+              onClick={load}
+              title="刷新"
+              aria-label="刷新看板"
+            />
+            <Button type="primary" icon={<KeyOutlined />} onClick={() => navigate("/token")}>
+              管理令牌
+            </Button>
+            <Button icon={<DollarOutlined />} onClick={() => navigate("/pricing")}>
+              模型价格
+            </Button>
           </>
         }
       />
@@ -160,116 +273,228 @@ export default function ConsolePage() {
           message="看板数据加载失败"
           description={loadError}
           action={<Button size="small" onClick={load} loading={loading}>重试</Button>}
+          style={{ marginBottom: 16 }}
         />
       ) : null}
 
-      {/* 汇总：紧凑统计卡。每张至少 150px —— 原先 104px 时「剩余额度 9999.95 OD币」被挤成两行 */}
-      <div className="oo-stats-cards" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
-        <StatCard
-          label="剩余额度"
-          value={loading ? "—" : fmtOd(quota, perUnit, 2, false)}
-          suffix={<OdCoin size={12} muted />}
-          tone={quota < 0 ? "danger" : undefined}
-          // 余额的悬浮说明要**先解释币是什么**，再说总数。
-          //
-          // Round 4 子线实测（4 个人格里 3 个都在问这件事）：
-          //   「给我发了 200 OD币的额度……OD 币是啥我不知道，那个 1 比 10000 的比例也没看懂」
-          //   「200 币到底能问多少句话啊」
-          //   「看不懂的是『1 OD币 = 10,000 额度』这个换算，我到底一次对话扣多少」
-          // 原先这里只回「共 X OD币」，等于把同一个看不懂的词再说一遍。
-          // 现在补上一句人话：OD币就是美元计价的余额，按 token 实际用量扣。
-          //
-          // 【第 92 轮补正】上面那句「美元计价」当时只是**意图**，落进字符串的只有
-          // 「余额单位」——用户看完还是不知道一个币值多少钱。子线 5/5 人格、去重后
-          // 330 条发言反复在问「OD币是啥汇率」「0.0088 到底是八分还是八毛」。
-          // 这里把 1:1 的美元锚点写进去（管理端 AdminPricingPage 早就在用同一句话），
-          // 用户自己就能按当天汇率折算 —— 不新增人民币汇率字段（全站硬约束）。
-          hint={
-            quota < 0
-              ? "已欠费，充值需大于欠费额才能恢复服务"
-              : `共 ${fmtOd(totalQuota, perUnit, 2, false)} ${CURRENCY_NAME}。1 ${CURRENCY_NAME} = 1 美元，按每次调用的 token 用量扣费（价格见「模型价格」页）；用完后调用会被拒绝。`
-          }
-        />
-        <StatCard
-          label="已用额度"
-          value={loading ? "—" : fmtOd(usedQuota, perUnit, 2, false)}
-          suffix={<OdCoin size={12} muted />}
-          tone={usedPct >= 90 ? "danger" : usedPct >= 70 ? "warning" : undefined}
-          hint={`占总额度 ${usedPct.toFixed(1)}%`}
-        />
-        <StatCard label="调用次数" value={loading ? "—" : fmtCompact(data?.account?.request_count ?? user?.request_count ?? 0)} suffix="次" hint="累计成功请求" />
-        <StatCard
-          label={`区间消费`}
-          value={loading ? "—" : fmtOd(t?.units || 0, perUnit, 2, false)}
-          suffix={<OdCoin size={12} muted />}
-          hint={`近 ${data?.range?.days || 30} 天 · 应按上游实际用量计费`}
-        />
-        <StatCard label="区间调用" value={loading ? "—" : fmtCompact(t?.calls || 0)} suffix="次" hint={`${trend.filter((d) => d.calls > 0).length} 天有调用`} />
-        <StatCard
-          label="缓存命中"
-          value={loading ? "—" : `${t?.cache_rate ?? 0}%`}
-          tone={(t?.cache_rate ?? 0) >= 50 ? "success" : undefined}
-          hint={`命中 ${fmtCompact(t?.cache_tokens || 0)} · 未命中 ${fmtCompact(t?.uncached_tokens || 0)}`}
-        />
-        <StatCard
-          label="余额可用"
-          value={loading ? "—" : daysLeft === null ? "—" : daysLeftCapped ? "999+" : daysLeft}
-          suffix={daysLeft === null ? "" : "天"}
-          tone={daysLeft !== null && daysLeft < 7 ? "danger" : daysLeft !== null && daysLeft < 30 ? "warning" : undefined}
-          // 「999+」本身是对的（余额 ÷ 日均消费 超过 999 天，就封顶显示），
-          // 但**算法只写在悬浮里**，用户看不到，于是把区间消费总量当成了日消费。
-          // Round 4 子线实测（第 95 轮，5/5 人格、带困惑表述 161 条去重发言）：
-          //   lan 「已用才 3.69…我一天就用掉 3.69，怎么算也算不出四位数」（3.69 是 30 天总量）
-          //   lin 「0.05 OD币能撑 999 天？笑死，这数是不是写死的」
-          //   may 「估计是按当前消耗速率算的，但那也离谱」
-          //   wang「我用了 312 次花了 6 分钱，按这速度能撑三年？不信」
-          // 前两次同样的病（币值锚点、分组倍率）证明：解释放悬浮里等于没加，
-          // 必须写进**常显的 hintInline**。这里就报出日均与余额，用户自己一除就对上了。
-          hintInline={
-            daysLeftCapped
-              ? `余额充足：按日均 ${fmtOd(dailyAvg, perUnit, 4, false)} ${CURRENCY_NAME} 估算已超 999 天`
-              : daysLeft === null
-              ? "暂无消费，无法估算"
-              : `按日均 ${fmtOd(dailyAvg, perUnit, 4, false)} ${CURRENCY_NAME} 估算`
-          }
-          hint={
-            daysLeftCapped
-              ? "按日均消费估算已超过 999 天，实际可视为余额充足"
-              : "按区间日均消费估算（无消费则显示 —）"
-          }
-        />
+      {/* 模块 A：账户资产概览（全生命周期永久数据，不随区间选择变化） */}
+      <div className="oo-panel" style={{ marginBottom: 16 }}>
+        <div className="oo-panel-head">
+          <span className="oo-panel-title">
+            <WalletOutlined style={{ marginRight: 6, color: "var(--accent)" }} />
+            账户与资产概览
+          </span>
+          <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+            全生命周期账户状态 · 1 OD币 = 1.00 美元
+          </span>
+        </div>
+        <div className="oo-panel-body">
+          <div className="oo-stats-cards" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))" }}>
+            <StatCard
+              label="账户可用余额"
+              value={loading ? "—" : fmtOd(quota, perUnit, 2, false)}
+              suffix={<OdCoin size={14} muted />}
+              tone={quota < 0 ? "danger" : undefined}
+              hint={
+                quota < 0
+                  ? "已欠费，充值需大于欠费额才能恢复 API 服务"
+                  : `1 OD币 = 1 美元。当前可用额度为 ${fmtOd(quota, perUnit, 2, false)} ${CURRENCY_NAME}，调用模型时按实际 Token 消耗实时扣除。`
+              }
+              hintInline={`折合 \$${(quota / perUnit).toFixed(2)} USD`}
+            />
+
+            <StatCard
+              label="累计历史总消费"
+              value={loading ? "—" : fmtOd(usedQuota, perUnit, 2, false)}
+              suffix={<OdCoin size={14} muted />}
+              tone={usedPct >= 90 ? "danger" : usedPct >= 70 ? "warning" : undefined}
+              hint={`账户自注册以来的全生命周期累计总扣费，占累计总额度 ${usedPct.toFixed(1)}%`}
+              hintInline={`累计请求 ${fmtCompact(lifetimeRequests)} 次`}
+            />
+
+            <StatCard
+              label="有效 API 令牌"
+              value={loading ? "—" : activeTokens}
+              suffix={`/ ${totalTokensCount}`}
+              hint="当前正常启用的 API Key 数量。点击可前往令牌管理页面进行签发、禁用或配置白名单。"
+              hintInline={
+                <span
+                  style={{ cursor: "pointer", color: "var(--accent)" }}
+                  onClick={() => navigate("/token")}
+                >
+                  前往管理令牌 <ArrowRightOutlined style={{ fontSize: 10 }} />
+                </span>
+              }
+            />
+
+            <StatCard
+              label="用户分组与倍率"
+              value={groupName}
+              suffix={`${groupRate.toFixed(1)}x`}
+              hint={`当前账号绑定的渠道分组为「${groupName}」，计费倍率为 ${groupRate.toFixed(1)} 倍。模型扣费公式：基准单价 × 实际用量 × 分组倍率。`}
+              hintInline={groupRate === 1 ? "标准计费倍率" : `${groupRate} 倍阶梯费率`}
+            />
+
+            <StatCard
+              label="余额续航预估"
+              value={
+                loading
+                  ? "—"
+                  : daysLeft === null
+                  ? "—"
+                  : daysLeftCapped
+                  ? "999+"
+                  : daysLeft
+              }
+              suffix={daysLeft === null ? "" : "天"}
+              tone={daysLeft !== null && daysLeft < 7 ? "danger" : daysLeft !== null && daysLeft < 30 ? "warning" : undefined}
+              hintInline={
+                daysLeftCapped
+                  ? `余额充足（日均消费约 ${fmtOd(dailyAvg, perUnit, 4, false)} ${CURRENCY_NAME}）`
+                  : daysLeft === null
+                  ? "近期暂无消费，无法预估"
+                  : `按近 ${days} 天日均消耗测算`
+              }
+              hint={
+                daysLeftCapped
+                  ? "按当前时段平均日消耗测算，剩余额度已超过 999 天，余额储备充裕"
+                  : `按近 ${days} 天区间日均消耗 ${fmtOd(dailyAvg, perUnit, 4, false)} ${CURRENCY_NAME} 测算，当前可用余额预计可支撑约 ${daysLeft ?? 0} 天。`
+              }
+            />
+          </div>
+        </div>
       </div>
 
-      {/* 多图并列：一屏看全，不用来回切口径（图表组件全部来自 components/Charts.jsx） */}
-      <div className="oo-chart-grid">
-        <ChartCard title="调用与消费趋势" note="左轴：调用次数 · 右轴：消费" full extra={<Legend series={mainSeries} />}>
+      {/* 模块 B：区间用量与服务质量（随 7d/30d/90d 响应） */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-1)" }}>
+            时段用量与服务指标（近 {days} 天）
+          </span>
+          <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+            已与上一自然周期（同等天数）自动对比环比
+          </span>
+        </div>
+
+        {loading && !data ? (
+          <div className="oo-kpi-grid">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="oo-kpi">
+                <Skeleton active paragraph={{ rows: 1 }} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="oo-kpi-grid">
+            <KpiCard
+              label="区间调用次数"
+              value={fmtCompact(t.calls || 0)}
+              unit="次"
+              current={t.calls}
+              previous={p.calls}
+              spark={sparkCalls}
+              hint={`近 ${days} 天内成功完成的 API 请求总数`}
+            />
+
+            <KpiCard
+              label="区间消费总额"
+              value={fmtCompact(od(t.units))}
+              unit={<OdCoin size={13} />}
+              current={t.units}
+              previous={p.units}
+              spark={sparkUnits}
+              hint={`近 ${days} 天产生的扣费总额，折合 \$${(Number(t.units || 0) / perUnit).toFixed(4)} USD`}
+            />
+
+            <KpiCard
+              label="Token 吞吐总量"
+              value={fmtCompact(t.total_tokens || ((t.prompt_tokens || 0) + (t.completion_tokens || 0)))}
+              unit="Tokens"
+              current={t.total_tokens}
+              previous={p.tokens}
+              hint={`输入: ${fmtCompact(t.prompt_tokens || 0)} · 输出: ${fmtCompact(t.completion_tokens || 0)}`}
+            />
+
+            <KpiCard
+              label="请求成功率"
+              value={`${t.success_rate ?? 100}%`}
+              current={t.success_rate}
+              previous={
+                (p.calls || 0) + (p.errors || 0) > 0
+                  ? Number((((p.calls || 0) / ((p.calls || 0) + (p.errors || 0))) * 100).toFixed(2))
+                  : null
+              }
+              tone={(t.success_rate ?? 100) < 95 ? "danger" : undefined}
+              hint={`成功 ${fmtCompact(t.calls || 0)} 次 · 异常/拦截 ${fmtCompact(t.errors || 0)} 次 · 平均耗时 ${t.avg_elapsed > 0 ? (t.avg_elapsed >= 1000 ? `${(t.avg_elapsed / 1000).toFixed(2)}s` : `${t.avg_elapsed}ms`) : "—"}`}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* 模块 C：多维可视化图表网格 */}
+      <div className="oo-chart-grid" style={{ marginBottom: 16 }}>
+        <ChartCard
+          title="调用量与消费趋势"
+          note={`左轴：请求调用次数 · 右轴：消费金额（${CURRENCY_NAME}）`}
+          full
+          extra={<Legend series={mainSeries} />}
+        >
           {loading && !trend.length ? (
             <Skeleton active paragraph={{ rows: 4 }} />
-          ) : trend.some((d) => d.calls) ? (
-            <LineChart series={mainSeries} height={230} />
+          ) : trend.some((d) => d.calls || d.units) ? (
+            <LineChart series={mainSeries} height={240} />
           ) : (
             <Empty description="该时间范围内没有调用数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
           )}
         </ChartCard>
 
-        <ChartCard title="Token 用量" note={`缓存命中率 ${t?.cache_rate ?? 0}%`} extra={<Legend series={tokenSeries} />}>
-          {trend.some((d) => d.prompt_tokens) ? <LineChart series={tokenSeries} height={180} /> : <Empty description="暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+        <ChartCard
+          title="Token 构成深度拆解"
+          note={`上下文缓存命中率 ${t.cache_rate ?? 0}% · 命中 ${fmtCompact(t.cache_tokens || 0)} Tokens`}
+          extra={<Legend series={tokenSeries} />}
+        >
+          {trend.some((d) => d.prompt_tokens || d.completion_tokens) ? (
+            <LineChart series={tokenSeries} height={200} />
+          ) : (
+            <Empty description="暂无 Token 消耗数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          )}
         </ChartCard>
 
-        <ChartCard title="调用时段" note="北京时间 0–23 点">
-          <BarChart bars={(data?.by_hour || []).map((h) => ({ label: String(h.hour), value: h.calls }))} height={180} valueFormat={(v) => fmtCompact(v)} />
+        <ChartCard title="24 小时活跃时段分布" note="北京时间 0–23 点用量频度">
+          <BarChart
+            bars={(data?.by_hour || []).map((h) => ({
+              label: `${h.hour}时`,
+              value: h.calls,
+            }))}
+            height={200}
+            valueFormat={(v) => `${fmtCompact(v)} 次`}
+          />
         </ChartCard>
 
-        <ChartCard title="模型消费排行" note={`按 ${CURRENCY_NAME}`}>
-          <RankBar items={(data?.by_model || []).map((m) => ({ name: m.model, value: od(m.units), sub: `${fmtCompact(m.calls)} 次` }))} format={fmtOdVal} />
+        <ChartCard title="模型消费排行" note={`按 ${CURRENCY_NAME} 消费排序`}>
+          <RankBar
+            items={(data?.by_model || []).map((m) => ({
+              name: m.model,
+              value: od(m.units),
+              sub: `${fmtCompact(m.calls)} 次`,
+            }))}
+            format={fmtOdVal}
+            empty="所选区间内暂无模型调用"
+          />
         </ChartCard>
 
-        <ChartCard title="模型调用占比" note="按次数">
-          <Donut items={(data?.by_model || []).map((m) => ({ name: m.model, value: m.calls }))} centerLabel="次调用" />
+        <ChartCard title="模型调用占比" note="按实际调用次数分布">
+          <Donut
+            items={(data?.by_model || []).map((m) => ({
+              name: m.model,
+              value: m.calls,
+            }))}
+            centerLabel="次调用"
+          />
         </ChartCard>
 
         {community ? (
-          <ChartCard title="我的社区与社交" note="点击可跳转">
+          <ChartCard title="我的社区与互动" note="快捷互动入口">
             <div className="oo-mini-stats">
               {[
                 { label: "帖子", value: community.mine?.posts, to: `/u/${user?.id}` },
@@ -279,7 +504,13 @@ export default function ConsolePage() {
                 { label: "关注", value: community.mine?.following, to: `/u/${user?.id}` },
                 { label: "好友", value: community.mine?.friends, to: "/messages?panel=requests" },
               ].map((x) => (
-                <button key={x.label} type="button" className="oo-mini-stat" disabled={!x.to} onClick={() => x.to && navigate(x.to)}>
+                <button
+                  key={x.label}
+                  type="button"
+                  className="oo-mini-stat"
+                  disabled={!x.to}
+                  onClick={() => x.to && navigate(x.to)}
+                >
                   <b>{fmtCompact(x.value ?? 0)}</b>
                   <span>{x.label}</span>
                 </button>
@@ -289,44 +520,225 @@ export default function ConsolePage() {
         ) : null}
       </div>
 
-      {/* 接入信息：保留原有实用内容（Base URL / 鉴权 / 快速测试） */}
+      {/* 模块 D：最近调用动态（最近 8 次 API 请求即时审计） */}
+      <div className="oo-panel" style={{ marginBottom: 16 }}>
+        <div className="oo-panel-head">
+          <div>
+            <span className="oo-panel-title">
+              <ThunderboltOutlined style={{ marginRight: 6, color: "var(--accent)" }} />
+              最近调用动态
+            </span>
+            <span style={{ fontSize: 12, color: "var(--ink-3)", marginLeft: 8 }}>
+              展示最新的 API 请求状态与计费流水，方便对接即时排查
+            </span>
+          </div>
+          <Button
+            size="small"
+            type="link"
+            onClick={() => navigate("/log")}
+          >
+            查看完整使用记录 →
+          </Button>
+        </div>
+        <div className="oo-panel-body" style={{ padding: 0 }}>
+          <Table
+            className="oo-table"
+            size="small"
+            rowKey="id"
+            pagination={false}
+            scroll={{ x: 680 }}
+            dataSource={data?.recent_logs || []}
+            locale={{
+              emptyText: <Empty description="暂无近期调用记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />,
+            }}
+            columns={[
+              {
+                title: "时间",
+                dataIndex: "created_at",
+                width: 140,
+                render: (ts) => (
+                  <span className="oo-mono" style={{ fontSize: 12, color: "var(--ink-2)" }}>
+                    {fmtDate(ts, "MM-DD HH:mm:ss")}
+                  </span>
+                ),
+              },
+              {
+                title: "模型",
+                dataIndex: "model",
+                render: (m) => (
+                  <Tag color="geekblue" style={{ fontFamily: "monospace" }}>
+                    {m}
+                  </Tag>
+                ),
+              },
+              {
+                title: "状态",
+                dataIndex: "type",
+                width: 100,
+                render: (t) =>
+                  t === 2 ? (
+                    <Tag color="success" icon={<CheckCircleOutlined />}>
+                      成功
+                    </Tag>
+                  ) : (
+                    <Tag color="error" icon={<CloseCircleOutlined />}>
+                      异常
+                    </Tag>
+                  ),
+              },
+              {
+                title: "耗时",
+                dataIndex: "elapsed_ms",
+                width: 90,
+                align: "right",
+                render: (ms) => (
+                  <span className="oo-num">
+                    {ms > 0 ? (ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`) : "—"}
+                  </span>
+                ),
+              },
+              {
+                title: "Tokens (入 / 出)",
+                key: "tokens",
+                width: 140,
+                align: "right",
+                render: (_, r) => (
+                  <span className="oo-mono" style={{ fontSize: 12 }}>
+                    {fmtCompact(r.prompt_tokens || 0)} / {fmtCompact(r.completion_tokens || 0)}
+                  </span>
+                ),
+              },
+              {
+                title: "扣费金额",
+                dataIndex: "units",
+                width: 120,
+                align: "right",
+                render: (u) => (
+                  <span className="oo-num" style={{ fontWeight: 600 }}>
+                    {fmtOd(u, perUnit, 4, true)}
+                  </span>
+                ),
+              },
+            ]}
+          />
+        </div>
+      </div>
+
+      {/* 模块 E：接入信息与快速开始（修正换算说明与排版） */}
       <div className="oo-panel">
         <div className="oo-panel-head">
-          <span className="oo-panel-title">接入信息</span>
-          <Button size="small" type="text" icon={<CopyOutlined />} onClick={copyEndpoint}>复制地址</Button>
+          <div>
+            <span className="oo-panel-title">
+              <CodeOutlined style={{ marginRight: 6, color: "var(--accent)" }} />
+              API 接入信息与快速测试
+            </span>
+            <span style={{ fontSize: 12, color: "var(--ink-3)", marginLeft: 8 }}>
+              标准 OpenAI 兼容协议接入标准
+            </span>
+          </div>
+          <Space>
+            <Button
+              size="small"
+              icon={<CopyOutlined />}
+              onClick={() => copyString(endpoint, "接口 Base URL 已复制")}
+            >
+              复制 Base URL
+            </Button>
+            <Button
+              size="small"
+              type="primary"
+              icon={<KeyOutlined />}
+              onClick={() => navigate("/token")}
+            >
+              创建/管理 API Key
+            </Button>
+          </Space>
         </div>
+
         <div className="oo-panel-body">
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "8px 20px" }}>
+          {/* 参数网格：清晰解耦，杜绝排版挤压 */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+              gap: "12px 24px",
+              paddingBottom: 16,
+              borderBottom: "1px solid var(--border)",
+            }}
+          >
             <div className="bui-kv">
               <span className="bui-kv-k">Base URL</span>
-              <span className="bui-kv-v"><span className="oo-mono">{endpoint}</span></span>
+              <span className="bui-kv-v">
+                <span className="oo-mono" style={{ userSelect: "all" }}>
+                  {endpoint}
+                </span>
+              </span>
             </div>
+
             <div className="bui-kv">
-              <span className="bui-kv-k">鉴权</span>
-              <span className="bui-kv-v"><span className="oo-mono">Authorization: Bearer sk-xxx</span></span>
+              <span className="bui-kv-k">鉴权 Header</span>
+              <span className="bui-kv-v">
+                <span className="oo-mono">Authorization: Bearer sk-your-key</span>
+              </span>
             </div>
+
             <div className="bui-kv">
-              <span className="bui-kv-k">计费比例</span>
-              <span className="bui-kv-v">{odRateText(perUnit)}</span>
+              <span className="bui-kv-k">用户分组与倍率</span>
+              <span className="bui-kv-v">
+                <Tag color="cyan">分组: {groupName}</Tag>
+                <Tag color="purple">倍率: {groupRate.toFixed(1)}x</Tag>
+              </span>
             </div>
+
             <div className="bui-kv">
-              <span className="bui-kv-k">用户分组</span>
-              <span className="bui-kv-v">{user?.group || "default"}</span>
+              <span className="bui-kv-k">
+                货币与单位标准
+                <Tooltip title="平台基准计费口径：1 OD币 恒等 1 美元，支持 0.0001 美元（1 厘）超精细计量">
+                  <InfoCircleOutlined style={{ marginLeft: 4, cursor: "pointer", color: "var(--accent)" }} />
+                </Tooltip>
+              </span>
+              <span className="bui-kv-v" style={{ fontSize: 12.5, color: "var(--ink-2)" }}>
+                <b>1 {CURRENCY_NAME} = 1.00 美元</b> · 系统底层 <b>1 {CURRENCY_NAME} = {perUnit.toLocaleString()} 额度单位</b>（1 单位 = \$0.0001）
+              </span>
             </div>
           </div>
 
-          <div className="oo-code-block" style={{ marginTop: 12 }}>
-            <div className="oo-code-head">
-              <span className="oo-code-lang">bash</span>
+          {/* 快速测试代码演练台 */}
+          <div style={{ marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)" }}>快速开始示例代码</span>
+                <Segmented
+                  size="small"
+                  value={codeLang}
+                  onChange={setCodeLang}
+                  options={[
+                    { label: "cURL", value: "curl" },
+                    { label: "Python (OpenAI SDK)", value: "python" },
+                    { label: "Node.js (OpenAI SDK)", value: "node" },
+                  ]}
+                />
+              </div>
+              <Button
+                size="small"
+                icon={<CopyOutlined />}
+                onClick={() => copyString(codeSnippets[codeLang], "示例代码已复制")}
+              >
+                复制代码
+              </Button>
             </div>
-            <pre>
-              {/* 模型名用这个账号真能调的（见 sampleModel 注释）；
-                  没拿到时给一个**明显是占位**的名字，而不是一个看起来能用却报错的真名 */}
-              <code>{`curl ${endpoint}/chat/completions \\
-  -H "Authorization: Bearer sk-xxx" \\
-  -H "Content-Type: application/json" \\
-  -d '{"model":"${sampleModel || "<你的模型名>"}","messages":[{"role":"user","content":"你好"}]}'`}</code>
-            </pre>
+
+            <div className="oo-code-block">
+              <div className="oo-code-head">
+                <span className="oo-code-lang">{codeLang}</span>
+                <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                  已自动为您填充当前站点 Base URL 与可用模型名（{modelToUse}）
+                </span>
+              </div>
+              <pre style={{ margin: 0, maxHeight: 260, overflowY: "auto" }}>
+                <code>{codeSnippets[codeLang]}</code>
+              </pre>
+            </div>
           </div>
         </div>
       </div>

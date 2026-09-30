@@ -138,11 +138,19 @@ export default function AdminDashboardPage() {
       ) : null}
 
       {showSkeleton ? (
-        <div className="oo-kpi-grid">{[0, 1, 2, 3].map((i) => <div key={i} className="oo-kpi"><Skeleton active paragraph={{ rows: 1 }} /></div>)}</div>
+        <div className="oo-kpi-grid">{[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="oo-kpi"><Skeleton active paragraph={{ rows: 1 }} /></div>)}</div>
       ) : (
         <div className="oo-kpi-grid">
           <KpiCard label="调用次数" value={fmtCompact(t.calls || 0)} unit="次" current={t.calls} previous={p.calls} spark={sparkCalls} />
           <KpiCard label="消费总额" value={fmtCompact(od(t.units))} unit={<OdCoin size={13} />} current={t.units} previous={p.units} spark={sparkUnits} />
+          <KpiCard
+            label="Token 吞吐"
+            value={fmtCompact(t.total_tokens || ((t.prompt_tokens || 0) + (t.completion_tokens || 0)))}
+            unit="Tokens"
+            current={t.total_tokens}
+            previous={p.tokens}
+            hint={`输入 ${fmtCompact(t.prompt_tokens || 0)} · 输出 ${fmtCompact(t.completion_tokens || 0)} · 缓存命中率 ${t.cache_rate ?? 0}%`}
+          />
           <KpiCard label="活跃用户" value={t.active_users ?? 0} unit="人" current={t.active_users} previous={p.active_users} hint={`新增 ${t.users_new ?? 0} 人 · 启用 ${t.users_total ?? 0} 人`} />
           <KpiCard
             label="请求错误率"
@@ -154,18 +162,40 @@ export default function AdminDashboardPage() {
             tone={errRate(t.calls || 0, t.errors || 0) >= 5 ? "danger" : undefined}
             hint={`区间错误 ${fmtCompact(t.errors || 0)} 次（含余额不足等业务限制）`}
           />
+          <KpiCard
+            label="平均响应耗时"
+            value={t.avg_elapsed > 0 ? (t.avg_elapsed >= 1000 ? (t.avg_elapsed / 1000).toFixed(2) : t.avg_elapsed) : "—"}
+            unit={t.avg_elapsed >= 1000 ? "s" : "ms"}
+            hint="全站历史请求平均耗时"
+          />
         </div>
       )}
 
-      {/* 实时指标：进程内统计，重启清零 —— 单独一行，避免与历史数字混淆 */}
-      <div className="oo-realtime-strip">
-        <span className="oo-realtime-title"><ThunderboltOutlined /> 实时</span>
-        <span>在途请求 <b>{rt.inFlight ?? 0}</b></span>
-        <span>SLA <b style={{ color: rateColor(rt.sla) }}>{rt.sla == null ? "—" : `${rt.sla}%`}</b></span>
-        <span>上游错误率 <b style={{ color: rt.errorRate >= 5 ? "var(--red)" : undefined }}>{rt.errorRate == null ? "—" : `${rt.errorRate}%`}</b></span>
-        <span>P95 延迟 <b>{rt.p95Ms == null ? "—" : `${(rt.p95Ms / 1000).toFixed(2)}s`}</b></span>
-        {rt.uptimeSec ? <span className="oo-realtime-note">进程已运行 {fmtDuration(rt.uptimeSec)} · 重启后清零</span> : null}
-        <Button size="small" type="link" onClick={() => navigate("/admin/monitor")}>运维监控 →</Button>
+      {/* 实时指标：平台实时运维监控大屏条 */}
+      <div className="oo-panel" style={{ margin: "12px 0 16px", padding: "10px 16px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "var(--accent)", display: "flex", alignItems: "center", gap: 4 }}>
+              <ThunderboltOutlined /> 实时流量大屏
+            </span>
+            <span className="bui-chip">在途并发 <b>{rt.inFlight ?? 0}</b></span>
+            <span className="bui-chip">
+              可用性 SLA <b style={{ color: rateColor(rt.sla) }}>{rt.sla == null ? "—" : `${rt.sla}%`}</b>
+            </span>
+            <span className="bui-chip">
+              上游错误率 <b style={{ color: rt.errorRate >= 5 ? "var(--red)" : undefined }}>{rt.errorRate == null ? "—" : `${rt.errorRate}%`}</b>
+            </span>
+            <span className="bui-chip">P95 延迟 <b>{rt.p95Ms == null ? "—" : `${(rt.p95Ms / 1000).toFixed(2)}s`}</b></span>
+            {rt.uptimeSec ? (
+              <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                进程已运行 {fmtDuration(rt.uptimeSec)}
+              </span>
+            ) : null}
+          </div>
+          <Button size="small" type="primary" ghost onClick={() => navigate("/admin/monitor")}>
+            运维监控大屏 →
+          </Button>
+        </div>
       </div>
 
       <div className="oo-chart-grid">

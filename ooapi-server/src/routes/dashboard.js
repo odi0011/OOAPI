@@ -17,6 +17,7 @@ import { pool } from "../db.js";
 import { ok, fail, asyncHandler, safeInt } from "../utils.js";
 import { authRequired, adminRequired } from "../middleware/auth.js";
 import { snapshot } from "../services/metrics.js";
+import { groupConfigOf } from "../services/group-rate.js";
 
 const router = Router();
 
@@ -135,17 +136,38 @@ router.get(
               COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
               COALESCE(SUM(completion_tokens),0) AS completion_tokens,
               COALESCE(SUM(cache_tokens),0) AS cache_tokens,
-              COUNT(DISTINCT model) AS models
+              COUNT(DISTINCT model) AS models,
+              COALESCE(AVG(NULLIF(elapsed_ms,0)),0) AS avg_elapsed
          FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ?`,
       [uid, since]
     );
-    const [byModel] = await pool.query(
+
+    // 模型分布：保证分项与总和 100% 对齐。超出 12 个时将剩余部分归集入「其他模型」
+    const [allModels] = await pool.query(
       `SELECT model, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units,
               COALESCE(SUM(prompt_tokens),0) AS prompt_tokens, COALESCE(SUM(completion_tokens),0) AS completion_tokens
          FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ? AND model <> ''
-        GROUP BY model ORDER BY units DESC LIMIT 12`,
+        GROUP BY model ORDER BY units DESC`,
       [uid, since]
     );
+    let byModel = [];
+    if (allModels.length <= 12) {
+      byModel = allModels;
+    } else {
+      const top = allModels.slice(0, 11);
+      const rest = allModels.slice(11);
+      byModel = [
+        ...top,
+        {
+          model: "其他模型",
+          calls: rest.reduce((s, x) => s + (Number(x.calls) || 0), 0),
+          units: rest.reduce((s, x) => s + (Number(x.units) || 0), 0),
+          prompt_tokens: rest.reduce((s, x) => s + (Number(x.prompt_tokens) || 0), 0),
+          completion_tokens: rest.reduce((s, x) => s + (Number(x.completion_tokens) || 0), 0),
+        },
+      ];
+    }
+
     const [byChannel] = await pool.query(
       `SELECT channel_id, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
          FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ? AND channel_id > 0
@@ -164,27 +186,55 @@ router.get(
     // 缓存命中率：分母是 prompt（prompt 已含缓存部分，不能再加一次）
     const prompt = Number(agg.prompt_tokens) || 0;
     const cache = Number(agg.cache_tokens) || 0;
+    const comp = Number(agg.completion_tokens) || 0;
     const trend = await dailyTrend(uid, since, days);
+
+    // 用户有效令牌数与分组倍率
+    const [[tokRow]] = await pool.query(
+      "SELECT COUNT(*) AS total_tokens, COALESCE(SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END), 0) AS active_tokens FROM tokens WHERE user_id = ?",
+      [uid]
+    );
+    const userGroupName = req.user.group_name || "default";
+    const groupCfg = await groupConfigOf(userGroupName);
+    const groupRate = groupCfg?.rate ?? 1.0;
+
+    // 最近 8 条调用动态：让开发者第一时间知道接口是否调通、状态与消耗
+    const [recentLogs] = await pool.query(
+      `SELECT id, created_at, model, type, elapsed_ms, quota, prompt_tokens, completion_tokens, cache_tokens
+         FROM logs WHERE user_id = ? AND type IN (2, 4)
+        ORDER BY id DESC LIMIT 8`,
+      [uid]
+    );
+
+    const totalCalls = Number(agg.calls) || 0;
+    const succRate = totalCalls + errors > 0 ? Number(((totalCalls / (totalCalls + errors)) * 100).toFixed(2)) : 100;
 
     return ok(res, {
       range: { key, days },
       totals: {
-        calls: Number(agg.calls) || 0,
+        calls: totalCalls,
         units: Number(agg.units) || 0,
         prompt_tokens: prompt,
-        completion_tokens: Number(agg.completion_tokens) || 0,
+        completion_tokens: comp,
+        total_tokens: prompt + comp,
         cache_tokens: cache,
         uncached_tokens: Math.max(0, prompt - cache),
         cache_rate: prompt > 0 ? Number(((cache / prompt) * 100).toFixed(1)) : 0,
         models: Number(agg.models) || 0,
         errors,
+        avg_elapsed: Math.round(Number(agg.avg_elapsed) || 0),
+        success_rate: succRate,
       },
       previous: prev,
-      // 余额单独给：它不是「区间消费」，混进 totals 会让「区间汇总」口径不清
+      // 账户与钱包：全生命周期指标单独封装，与「区间时段」彻底隔离
       account: {
         quota: Number(req.user.quota) || 0,
         used_quota: Number(req.user.used_quota) || 0,
         request_count: Number(req.user.request_count) || 0,
+        group_name: userGroupName,
+        group_rate: groupRate,
+        active_tokens: Number(tokRow?.active_tokens) || 0,
+        total_tokens: Number(tokRow?.total_tokens) || 0,
       },
       trend,
       by_model: byModel.map((m) => ({
@@ -203,6 +253,16 @@ router.get(
         const hit = byHour.find((x) => Number(x.hour) === h);
         return { hour: h, calls: Number(hit?.calls) || 0, units: Number(hit?.units) || 0 };
       }),
+      recent_logs: recentLogs.map((l) => ({
+        id: l.id,
+        created_at: Number(l.created_at) || 0,
+        model: l.model || "—",
+        type: Number(l.type),
+        elapsed_ms: Number(l.elapsed_ms) || 0,
+        units: Number(l.quota) || 0,
+        prompt_tokens: Number(l.prompt_tokens) || 0,
+        completion_tokens: Number(l.completion_tokens) || 0,
+      })),
     });
   })
 );
@@ -223,7 +283,8 @@ router.get(
               COALESCE(SUM(completion_tokens),0) AS completion_tokens,
               COALESCE(SUM(cache_tokens),0) AS cache_tokens,
               COUNT(DISTINCT user_id) AS users,
-              COUNT(DISTINCT model) AS models
+              COUNT(DISTINCT model) AS models,
+              COALESCE(AVG(NULLIF(elapsed_ms,0)),0) AS avg_elapsed
          FROM logs WHERE type = 2 AND created_at >= ?`,
       [since]
     );
@@ -237,12 +298,27 @@ router.get(
         GROUP BY l.user_id ORDER BY units DESC LIMIT 10`,
       [since]
     );
-    const [topModels] = await pool.query(
+    const [allTopModels] = await pool.query(
       `SELECT model, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
          FROM logs WHERE type = 2 AND created_at >= ? AND model <> ''
-        GROUP BY model ORDER BY units DESC LIMIT 12`,
+        GROUP BY model ORDER BY units DESC`,
       [since]
     );
+    let topModels = [];
+    if (allTopModels.length <= 12) {
+      topModels = allTopModels;
+    } else {
+      const top = allTopModels.slice(0, 11);
+      const rest = allTopModels.slice(11);
+      topModels = [
+        ...top,
+        {
+          model: "其他模型",
+          calls: rest.reduce((s, x) => s + (Number(x.calls) || 0), 0),
+          units: rest.reduce((s, x) => s + (Number(x.units) || 0), 0),
+        },
+      ];
+    }
     const [byChannel] = await pool.query(
       `SELECT l.channel_id, COUNT(*) AS calls, COALESCE(SUM(l.quota),0) AS units,
               COALESCE(AVG(NULLIF(l.elapsed_ms,0)),0) AS avg_elapsed,
@@ -299,6 +375,7 @@ router.get(
         units: Number(agg.units) || 0,
         prompt_tokens: prompt,
         completion_tokens: Number(agg.completion_tokens) || 0,
+        total_tokens: prompt + (Number(agg.completion_tokens) || 0),
         cache_tokens: cache,
         uncached_tokens: Math.max(0, prompt - cache),
         cache_rate: prompt > 0 ? Number(((cache / prompt) * 100).toFixed(1)) : 0,
@@ -307,6 +384,7 @@ router.get(
         users_total: Number(users.n) || 0,
         users_new: Number(newUsers.n) || 0,
         errors: errorsTotal,
+        avg_elapsed: Math.round(Number(agg.avg_elapsed) || 0),
       },
       previous: prev,
       trend,

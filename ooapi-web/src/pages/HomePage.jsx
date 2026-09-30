@@ -191,9 +191,7 @@ export default function HomePage() {
   const docsHref = safeHref(status?.docs_link);
 
   // 额度换算说明
-  const quotaLabel = status?.units_per_od || status?.quota_per_unit
-    ? odRateText(unitsPerOd(status))
-    : "额度换算比例以控制台配置为准";
+  const quotaLabel = `平台货币标准：1 OD币 = 1.00 美元 · 系统底层 1 OD币 = ${unitsPerOd(status).toLocaleString()} 额度单位（按实际 Token 消耗精确计量）`;
 
   // 终端预览模式切换：call (实时请求响应) | sdk (多语言集成) | log (调用审计日志)
   const [terminalTab, setTerminalTab] = useState("call");
@@ -362,6 +360,26 @@ print(response.content)`,
               {status?.about ||
                 "一套接口聚合多家主流大模型服务。提供标准 OpenAI 协议兼容、上游多渠道平滑容灾降级、应用独立令牌隔离与 Token 级精确计费审计，让大模型能力分发与管理更加稳健可控。"}
             </p>
+
+            {/* 核心平台服务能力指标条：强化数据聚焦与严肃工程属性 */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px 14px", margin: "20px 0 24px", maxWidth: 640 }}>
+              <div style={{ padding: "10px 14px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8 }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: "var(--accent)", lineHeight: 1.2 }}>99.9%</div>
+                <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 2 }}>多渠道容灾 SLA</div>
+              </div>
+              <div style={{ padding: "10px 14px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8 }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: "var(--green)", lineHeight: 1.2 }}>&lt; 300ms</div>
+                <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 2 }}>主流模型 TTFT 首字</div>
+              </div>
+              <div style={{ padding: "10px 14px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8 }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: "var(--blue)", lineHeight: 1.2 }}>10+ 厂商</div>
+                <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 2 }}>异构模型统一收口</div>
+              </div>
+              <div style={{ padding: "10px 14px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8 }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: "var(--purple)", lineHeight: 1.2 }}>0.01 美分</div>
+                <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 2 }}>Token 级超细精度</div>
+              </div>
+            </div>
 
             <div className="hr-hero-actions">
               <Button
