@@ -5388,6 +5388,25 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
   · 后端语法检查：`node --check src/routes/dashboard.js` 语法通过。
   · 全套单元与静态逻辑测试：`npm test` 31 个测试套件全过（0 失败）。
   · 前端打包构建：`cd ooapi-web && npm run build` 打包通过（5.45s 零报错）。
+  · 生产环境热部署（commit `24a8b34`）：
+    - `ssh root@47.79.85.60` 触发 `performUpdate`，拉取最新代码、同步前后端、完成生产版 React 打包及数据库迁移并延迟重启。
+    - 服务状态验证：systemd `ooapi` 处于 active，版本戳 `.update-stamp.json` 刷新为 `24a8b34`。
+  · 真实浏览器 UI 冒烟测试 (`ui-smoke.mjs`)：
+    - 22 个路由全部正常渲染，零白屏、零运行期错误。
+    - 重点覆盖的重构页面 `/`、`/console`、`/admin/dashboard`、`/admin/monitor` 均完美通过。
+  · 网关三协议真实调用测试 (`gateway-smoke.mjs`)：
+    - OpenAI ChatCompletions (200，带 usage 36/13 tokens)、Anthropic Messages (200，stop_reason=end_turn)、Codex Responses (200) 全部通过（9/9）。
+  · 全链路端到端真实业务功能测试 (`verify-cloud-e2e.mjs`)：
+    - 完整测试「注册 -> 登录 -> 查初态看板 -> 建Key -> 真实调用API -> 查终态看板 -> 指标自洽性校验 -> 清理」闭环。
+    - 23/23 项断言全部 PASS：
+      1. 初态看板精准展示 50 OD 余额与 0 活跃密钥；
+      2. 创建密钥后看板活跃密钥动态更新为 1；
+      3. 真实打通 `/v1/chat/completions`（HTTP 200，消耗 28 tokens，耗时 1690ms）；
+      4. 模型分布切片调用总和与 totals.calls 100% 对齐；
+      5. 模型分布切片消费总和与 totals.units 100% 对齐；
+      6. 最近调用动态 `recent_logs` 成功捕获本次调用全要素明细；
+      7. 管理端平台看板成功聚合总调用 83,025 次、总 Tokens 65,087,858 与均耗时 2698ms；
+      8. 测试数据全部自动清理完成。
 
 ## 7. 第 27 批规划：工具/网页反代扩展（2026-09-19 调研）
 
