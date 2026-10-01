@@ -960,6 +960,10 @@ export default function AdminChannelsPage() {
   // 刻意分开维护 —— 混用会让「绑定成功后凭据去哪」变得含糊。
   const [bindInfo, setBindInfo] = useState(null);
   const bindTimerRef = useRef(null);
+  // 每次切换厂商/关闭弹窗都会递增，令旧的授权请求和轮询回调失效。
+  // 仅清定时器不够：已经发出的 poll 仍可能在切换后返回，并把旧授权码写回新厂商。
+  const bindFlowEpochRef = useRef(0);
+  const bindSessionRef = useRef("");
   // 绑定成功后暂存的凭据票据（新建渠道流程：先授权、再建渠道、最后 claim）
   const bindTicketRef = useRef("");
   // 绑定目标渠道：新建渠道时为 0（走 ticket 流程），重新绑定时为渠道 id
@@ -1156,6 +1160,8 @@ export default function AdminChannelsPage() {
   // 放在 isApi 之后声明：它依赖 pickMethod，而这段代码在渲染期立即求值 ——
   // 放在前面会踩 const 暂时性死区（本项目因此白屏过，见 AI协作.md 2.7 第 ④ 条）。
   const deviceBindSupported = Boolean(pickMethod && deviceBindVendors.includes(pickMethod.key));
+  // 再加一层渲染侧隔离：即使旧响应在极端时序下抵达，也不能把旧厂商的代码显示在当前表单。
+  const visibleBindInfo = bindInfo && bindInfo.vendor === pickMethod?.key ? bindInfo : null;
   // 非 API 的接入方式（relay 反代 / 订阅 OAuth）走同一套「凭据登录」提交流程
   const isRelay = Boolean(pickMethod) && !isApi;
 
@@ -1170,14 +1176,32 @@ export default function AdminChannelsPage() {
   const credId = pickMethod ? (isApi ? pickMethod.key : `${pickMethod.key}:${addMode}`) : "";
 
   // ---------- 添加 ----------
+  const resetBindFlow = ({ cancelServer = true } = {}) => {
+    bindFlowEpochRef.current += 1;
+    const sessionId = bindSessionRef.current || bindInfo?.sessionId || "";
+    bindSessionRef.current = "";
+    if (bindTimerRef.current) clearInterval(bindTimerRef.current);
+    bindTimerRef.current = null;
+    bindTicketRef.current = "";
+    setBindInfo(null);
+    setBindTargetChannelId(0);
+    if (cancelServer && sessionId) {
+      API.post("/channel/devices/cancel", { session_id: sessionId }).catch(() => {});
+    }
+  };
+
   const closeAdd = () => {
     oauthReadEpochRef.current += 1;
     setOauthReading(false);
+    resetBindFlow();
     setAddOpen(false);
   };
   const openAdd = () => {
     oauthReadEpochRef.current += 1;
     setOauthReading(false);
+    // destroyOnClose 只销毁 DOM，不会替我们清理 React state/ref。
+    // 每次重新打开必须从一条全新的授权流程开始。
+    resetBindFlow();
     setPickProvider(null);
     setPickMethod(null);
     setAddMode("password");
@@ -1187,6 +1211,7 @@ export default function AdminChannelsPage() {
   };
 
   const chooseProvider = (p) => {
+    resetBindFlow();
     setPickProvider(p);
     const mKey = p.defaultMethod || p.methods[0].key;
     applyMethod(p, p.methods.find((m) => m.key === mKey));
@@ -1233,6 +1258,7 @@ export default function AdminChannelsPage() {
 
   const applyMethod = (p, m, forceMode = null) => {
     if (!m) return;
+    resetBindFlow();
     // 旧文件可能仍在异步读取；换方式后不得把上一套凭据带进新表单。
     oauthReadEpochRef.current += 1;
     setOauthReading(false);
@@ -1664,6 +1690,16 @@ export default function AdminChannelsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pickProvider?.key, pickMethod?.oauth]);
 
+  // 页面卸载时停止设备授权轮询，避免隐藏页面继续占用请求并在下次打开时污染状态。
+  useEffect(() => () => {
+    if (deviceTimerRef.current) clearInterval(deviceTimerRef.current);
+    if (bindTimerRef.current) clearInterval(bindTimerRef.current);
+    deviceTimerRef.current = null;
+    bindTimerRef.current = null;
+    bindFlowEpochRef.current += 1;
+    bindSessionRef.current = "";
+  }, []);
+
   /** 取授权地址并返回（**不自己开窗**）：由调用方决定用哪种窗口打开 */
   const startOAuth = async () => {
     const type = pickProvider?.key;
@@ -1731,40 +1767,53 @@ export default function AdminChannelsPage() {
    * 不该经过浏览器。所以流程是「绑定成功后直接刷新渠道列表」。
    */
   const startBind = async () => {
-    if (!pickProvider) return;
+    if (!pickProvider || !pickMethod?.key) return;
+    // 「重新发起」必须令上一条授权失效，不能让两个厂商的轮询并行。
+    resetBindFlow();
+    const flowEpoch = bindFlowEpochRef.current;
+    const vendor = pickMethod.key;
+    const targetChannelId = bindTargetChannelId || undefined;
     setOauthBusy(true);
     try {
       const r = await API.post("/channel/devices/start", {
-        vendor: pickMethod.key,
+        vendor,
         start_url: addForm.getFieldValue("bind_start_url") || undefined,
         region: addForm.getFieldValue("bind_region") || undefined,
         realm: addForm.getFieldValue("bind_realm") || undefined,
       });
-      setBindInfo({ ...r, status: "pending" });
+      // 如果用户在 start 返回前切换了厂商/关闭了弹窗，丢弃这条旧响应。
+      if (bindFlowEpochRef.current !== flowEpoch) return;
+      bindSessionRef.current = r.sessionId || "";
+      setBindInfo({ ...r, vendor, status: "pending" });
       // 有链接就自动打开新窗口（用户不用手抄）
       if (r.verifyUrl) window.open(r.verifyUrl, "_blank", "noopener");
       if (bindTimerRef.current) clearInterval(bindTimerRef.current);
       const iv = Math.max(2, Number(r.intervalMs) / 1000 || 3) * 1000;
       const deadline = Date.now() + Math.min(900, Number(r.expiresIn) || 900) * 1000;
       bindTimerRef.current = setInterval(async () => {
+        if (bindFlowEpochRef.current !== flowEpoch || bindSessionRef.current !== r.sessionId) return;
         if (Date.now() > deadline) {
           clearInterval(bindTimerRef.current);
           bindTimerRef.current = null;
+          bindSessionRef.current = "";
           setBindInfo((d) => (d ? { ...d, status: "expired", error: "授权超时，请重新发起" } : d));
           return;
         }
         try {
           const p = await API.post("/channel/devices/poll", {
             session_id: r.sessionId,
-            vendor: pickMethod.key,
-            channel_id: bindTargetChannelId || undefined,
+            // 使用 start 时的快照；服务端也会以 session 绑定的厂商为准。
+            vendor,
+            channel_id: targetChannelId,
           });
+          if (bindFlowEpochRef.current !== flowEpoch || bindSessionRef.current !== r.sessionId) return;
           if (p.status === "pending") {
             setBindInfo((d) => (d ? { ...d, status: "pending" } : d));
             return;
           }
           clearInterval(bindTimerRef.current);
           bindTimerRef.current = null;
+          bindSessionRef.current = "";
           if (p.status === "success") {
             if (p.ticket) {
               // 还没有渠道（新建流程）：先把 ticket 记下，等提交后 claim
@@ -1787,23 +1836,23 @@ export default function AdminChannelsPage() {
           }
           setBindInfo((d) => (d ? { ...d, status: p.status, error: p.message || "" } : d));
         } catch (e) {
+          if (bindFlowEpochRef.current !== flowEpoch || bindSessionRef.current !== r.sessionId) return;
           clearInterval(bindTimerRef.current);
           bindTimerRef.current = null;
+          bindSessionRef.current = "";
           setBindInfo((d) => (d ? { ...d, status: "error", error: e.message } : d));
         }
       }, iv);
     } catch (e) {
-      message.error(e.message);
+      if (bindFlowEpochRef.current === flowEpoch) message.error(e.message);
     } finally {
-      setOauthBusy(false);
+      // 旧厂商的 start 可能晚于新流程返回；不能让它把新流程的 loading 提前关掉。
+      if (bindFlowEpochRef.current === flowEpoch) setOauthBusy(false);
     }
   };
 
   const cancelBind = () => {
-    if (bindTimerRef.current) clearInterval(bindTimerRef.current);
-    bindTimerRef.current = null;
-    if (bindInfo?.sessionId) API.post("/channel/devices/cancel", { session_id: bindInfo.sessionId }).catch(() => {});
-    setBindInfo(null);
+    resetBindFlow();
   };
 
   /**
@@ -3055,14 +3104,14 @@ export default function AdminChannelsPage() {
                               <Space direction="vertical" style={{ width: "100%" }} size={8}>
                                 <Space wrap>
                                   <Button type="primary" icon={<LinkOutlined />} onClick={startBind} loading={oauthBusy}>
-                                    {bindInfo ? "重新发起授权" : "一键绑定账号"}
+                                    {visibleBindInfo ? "重新发起授权" : "一键绑定账号"}
                                   </Button>
-                                  {bindInfo?.verifyUrl ? (
-                                    <Typography.Link href={bindInfo.verifyUrl} target="_blank" rel="noreferrer">
+                                  {visibleBindInfo?.verifyUrl ? (
+                                    <Typography.Link href={visibleBindInfo.verifyUrl} target="_blank" rel="noreferrer">
                                       在新窗口打开授权页
                                     </Typography.Link>
                                   ) : null}
-                                  {bindInfo ? (
+                                  {visibleBindInfo ? (
                                     <Button size="small" type="link" onClick={cancelBind} style={{ padding: 0 }}>
                                       取消
                                     </Button>
@@ -3070,7 +3119,7 @@ export default function AdminChannelsPage() {
                                 </Space>
 
                                 {/* 用户码：Kiro 需要用户在授权页输入这串码 */}
-                                {bindInfo?.userCode ? (
+                                {visibleBindInfo?.userCode ? (
                                   <div
                                     style={{
                                       padding: "8px 12px",
@@ -3080,30 +3129,30 @@ export default function AdminChannelsPage() {
                                     }}
                                   >
                                     在授权页输入代码：
-                                    <b style={{ letterSpacing: 2, marginLeft: 6, fontSize: 16 }}>{bindInfo.userCode}</b>
+                                    <b style={{ letterSpacing: 2, marginLeft: 6, fontSize: 16 }}>{visibleBindInfo.userCode}</b>
                                   </div>
                                 ) : null}
 
                                 {/* 状态：轮询中/成功/失败/超时都要有明确文案 */}
-                                {bindInfo ? (
+                                {visibleBindInfo ? (
                                   <span
                                     style={{
                                       fontSize: 12,
                                       color:
-                                        bindInfo.status === "pending"
+                                        visibleBindInfo.status === "pending"
                                           ? "var(--ink-3)"
-                                          : bindInfo.status === "ready" || bindInfo.status === "success"
+                                          : visibleBindInfo.status === "ready" || visibleBindInfo.status === "success"
                                             ? "var(--green)"
                                             : "var(--red)",
                                     }}
                                   >
-                                    {bindInfo.status === "pending"
+                                    {visibleBindInfo.status === "pending"
                                       ? "等待你在浏览器中确认授权…（完成后会自动继续）"
-                                      : bindInfo.status === "ready"
+                                      : visibleBindInfo.status === "ready"
                                         ? "授权成功，点下方「添加」完成绑定"
-                                        : bindInfo.status === "success"
-                                          ? `绑定成功${bindInfo.account ? `（${bindInfo.account}）` : ""}`
-                                          : bindInfo.error || "授权未完成，请重新发起"}
+                                        : visibleBindInfo.status === "success"
+                                          ? `绑定成功${visibleBindInfo.account ? `（${visibleBindInfo.account}）` : ""}`
+                                          : visibleBindInfo.error || "授权未完成，请重新发起"}
                                   </span>
                                 ) : null}
 
