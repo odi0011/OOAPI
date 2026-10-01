@@ -16,12 +16,21 @@ export function formatDuration(value) {
   return n ? (n >= 1000 ? `${(n / 1000).toFixed(2)}s` : `${n}ms`) : "—";
 }
 
+// 沿用使用记录原有的 5s / 15s 档位；两项独立判断，不能把颜色固定给某一行。
+function durationColor(value) {
+  const n = Number(value) || 0;
+  if (n <= 0 || !Number.isFinite(n)) return "var(--ink-3)";
+  if (n >= 15000) return "var(--red)";
+  if (n >= 5000) return "var(--orange)";
+  return "var(--green)";
+}
+
 // 首字和生成结束是两种体验，用同一格的两行表示，避免为同一请求多占一列。
 export function DurationCell({ firstTokenMs = 0, elapsedMs = 0 }) {
   return (
     <span className="oo-duration-cell" aria-label={`首字 ${formatDuration(firstTokenMs)}，总耗时 ${formatDuration(elapsedMs)}`}>
-      <span className="oo-duration-row oo-duration-row--first"><span>首字</span><b>{formatDuration(firstTokenMs)}</b></span>
-      <span className="oo-duration-row oo-duration-row--total"><span>总耗时</span><b>{formatDuration(elapsedMs)}</b></span>
+      <span className="oo-duration-row"><span>首字</span><b style={{ color: durationColor(firstTokenMs) }}>{formatDuration(firstTokenMs)}</b></span>
+      <span className="oo-duration-row"><span>总耗时</span><b style={{ color: durationColor(elapsedMs) }}>{formatDuration(elapsedMs)}</b></span>
     </span>
   );
 }

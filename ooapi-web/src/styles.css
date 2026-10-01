@@ -534,13 +534,10 @@ h1, h2, h3, h4 {
   flex-shrink: 0;
   display: inline-block;
 }
-.oo-duration-cell { display: inline-flex; flex-direction: column; gap: 2px; padding-left: 7px; border-left: 3px solid var(--green); font-size: 11px; line-height: 1.45; white-space: nowrap; position: relative; }
-.oo-duration-cell::before { content: ""; position: absolute; left: -3px; top: 0; height: 50%; width: 3px; background: var(--orange); }
+.oo-duration-cell { display: inline-flex; flex-direction: column; gap: 2px; font-size: 11px; line-height: 1.45; white-space: nowrap; }
 .oo-duration-row { display: flex; align-items: baseline; gap: 9px; }
 .oo-duration-row > span { color: var(--ink-3); min-width: 33px; }
 .oo-duration-row > b { font-family: var(--font-mono); font-weight: 500; font-variant-numeric: tabular-nums; }
-.oo-duration-row--first > b { color: var(--orange); }
-.oo-duration-row--total > b { color: var(--green); }
 .oo-token-cell { display: inline-flex; flex-direction: column; position: relative; gap: 3px; padding-right: 20px; max-width: 100%; font-size: 12px; line-height: 1.4; white-space: nowrap; }
 .oo-token-main { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 9px; }
 .oo-token-main > span { display: inline-flex; gap: 4px; align-items: center; }
