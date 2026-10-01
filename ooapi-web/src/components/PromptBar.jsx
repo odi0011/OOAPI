@@ -149,13 +149,16 @@ export default function PromptBar({
     else if (!value.startsWith("/")) setCmdOpen(false);
   }, [value, commands.length]);
 
-  // 当前模型的厂商（图标用）：优先从厂商分组里找，其次从平铺列表
-  const modelVendor = (() => {
+  // 图标跟随模型元信息；分组是展示容器，不能把组的渠道厂商当成模型厂商。
+  const vendorForModel = (id) => {
+    const vendor = models.find((m) => m.id === id)?.vendor;
+    if (vendor) return vendor;
     for (const g of vendorGroups || []) {
-      if (g.models.some((m) => m.id === model)) return g.vendor;
+      const hit = g.models.find((m) => m.id === id);
+      if (hit?.vendor) return hit.vendor;
     }
-    return models.find((m) => m.id === model)?.vendor;
-  })();
+  };
+  const modelVendor = vendorForModel(model);
 
   // 按钮上显示友好名称（label），没有 label 才退回 id
   const currentLabel = (() => {
@@ -359,7 +362,7 @@ export default function PromptBar({
               type="button"
               aria-label="选择模型"
               aria-expanded={modelOpen}
-              disabled={busy}
+              disabled={busy || disabled}
               onClick={() => { const v = !modelOpen; closeAll(); setModelOpen(v); }}
               className="bui-selbtn"
             >
@@ -374,7 +377,7 @@ export default function PromptBar({
                   <div key={g.vendor} className="bui-modelgroup">
                     {g.vendorName ? (
                       <div className="bui-modelgroup-head">
-                        <VendorIcon type={g.models[0]?.vendor} size={13} />
+                        <VendorIcon type={vendorForModel(g.models[0]?.id)} size={13} />
                         <span>{g.vendorName}</span>
                         <span className="ct">{g.models.length}</span>
                       </div>
@@ -385,6 +388,7 @@ export default function PromptBar({
                         type="button"
                         className="bui-upmenu-row is-model"
                         title={m.id}
+                        disabled={busy || disabled}
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={() => {
                           onModelChange?.(m.id);
@@ -392,7 +396,7 @@ export default function PromptBar({
                           taRef.current?.focus();
                         }}
                       >
-                        <VendorIcon type={m.vendor} size={14} />
+                        <VendorIcon type={vendorForModel(m.id)} size={14} />
                         <span className="nm2">{m.label || m.id}</span>
                         {m.deprecated ? <span className="badge">即将下线</span> : null}
                         <span className={`tick ${m.id === model ? "" : "is-off"}`}>{TickIcon}</span>

@@ -15,8 +15,8 @@ import { writeLog, LOG_TYPE } from "../services/log.js";
 import { logTexts } from "../services/log-text.js";
 import { getPrice, computeCost, splitTokens, sumCallTokens, loadPrices, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { groupConfigOf, applyGroupRate, parseGroupKey, displayGroupName } from "../services/group-rate.js";
-import { allPublicModels, resolveAliasSync, canonicalModelName, modelInAllowList } from "../services/models.js";
-import { rowToChannel, channelInGroup, collectAvailableModels } from "../services/router.js";
+import { allPublicModels, publicModelMetadataMap, modelVendorName, modelRegistry, resolveAliasSync, canonicalModelName, modelInAllowList } from "../services/models.js";
+import { rowToChannel, channelInGroup, channelSupportsModel, collectAvailableModels } from "../services/router.js";
 import { getBoolOption } from "../config.js";
 import { saveBuffer, getMedia, readBlob, mediaUrl, attachRef, releaseRefs } from "../services/media.js";
 import { runHarness } from "../services/harness/loop.js";
@@ -156,22 +156,6 @@ async function activeKeyOf(user, keyId = 0) {
   return rows[0] || null;
 }
 
-// 厂商推断规则（根据模型名特征归属到知名厂商，保持图标与分类准确）
-const VENDOR_PREFIX_RULES = [
-  { prefix: ["gpt-", "o1-", "o3-", "chatgpt-", "text-embedding-", "dall-e"], vendor: "openai", vendorName: "OpenAI" },
-  { prefix: ["claude-"], vendor: "anthropic", vendorName: "Anthropic" },
-  { prefix: ["gemini-"], vendor: "gemini", vendorName: "Google Gemini" },
-  { prefix: ["deepseek-"], vendor: "deepseek", vendorName: "DeepSeek" },
-  { prefix: ["glm-", "cogview-", "charglm-"], vendor: "glm", vendorName: "智谱 GLM" },
-  { prefix: ["qwen-", "qwq-", "wanx-"], vendor: "qwen", vendorName: "阿里通义千问" },
-  { prefix: ["kimi-", "moonshot-"], vendor: "kimi", vendorName: "Moonshot Kimi" },
-  { prefix: ["doubao-", "ep-"], vendor: "doubao", vendorName: "字节豆包" },
-  { prefix: ["minimax-", "abab-"], vendor: "minimax", vendorName: "MiniMax" },
-  { prefix: ["step-"], vendor: "stepfun", vendorName: "阶跃星辰" },
-  { prefix: ["grok-"], vendor: "grok", vendorName: "xAI Grok" },
-  { prefix: ["mimo-"], vendor: "mimo", vendorName: "小米 MiMo" },
-];
-
 const VENDOR_NAMES = {
   openai: "OpenAI",
   anthropic: "Anthropic",
@@ -236,19 +220,8 @@ async function availableModels(user, keyId = 0) {
    */
   const TEXT_ONLY_TYPES = new Set(["trae", "cursor"]);
   const channelCarriesImages = (r) => !TEXT_ONLY_TYPES.has(String(r.type || ""));
-  const anyChannelCarriesImages = (modelId) => {
-    const m = String(modelId || "").toLowerCase();
-    return channelsInGrp.some((r) => {
-      if (!channelCarriesImages(r)) return false;
-      const declared = String(r.models || "")
-        .split(/[,，\n]/)
-        .map((s) => s.trim().toLowerCase())
-        .filter(Boolean);
-      // 声明了 "*" 或留空 = 该厂商全部模型（与 channelSupportsModel 同口径）
-      if (!declared.length || declared.includes("*")) return true;
-      return declared.includes(m);
-    });
-  };
+  const supportingChannels = (modelId) => channelsInGrp.filter((r) => channelSupportsModel(rowToChannel(r), modelId));
+  const anyChannelCarriesImages = (modelId) => supportingChannels(modelId).some(channelCarriesImages);
 
   // 若当前分组没有可用渠道，严格返回空模型，绝不回退到全量默认模型
   if (!channelsInGrp.length) return [];
@@ -272,16 +245,17 @@ async function availableModels(user, keyId = 0) {
   };
 
   // 5) 汇总该分组渠道支持的模型集合
+  await modelRegistry();
   const supported = collectAvailableModels(channelsInGrp);
   if (supported.size === 0) return [];
 
   // 从公开模型库中筛选
-  const publicModels = await allPublicModels();
+  const publicModels = publicModelMetadataMap(await allPublicModels());
   const candidateModels = new Map(); // id.toLowerCase() -> modelObj
 
-  for (const pm of publicModels) {
+  for (const pm of publicModels.values()) {
     const idLower = String(pm.id).toLowerCase();
-    if (supported.has("*") || supported.has(idLower)) {
+    if (supportingChannels(pm.id).length) {
       if (groupAllows(pm.id) && keyAllows(pm.id)) {
         const v = pm.vendor || "other";
         candidateModels.set(idLower, {
@@ -296,7 +270,7 @@ async function availableModels(user, keyId = 0) {
           supportsThinking: pm.supportsThinking,
           deprecated: Boolean(pm.deprecated),
           vendor: v,
-          vendorName: pm.vendorName || VENDOR_NAMES[v] || v,
+          vendorName: modelVendorName(v),
           aliasOf: pm.aliasOf,
         });
       }
@@ -307,24 +281,19 @@ async function availableModels(user, keyId = 0) {
   for (const r of channelsInGrp) {
     const ch = rowToChannel(r);
     const declared = String(ch.models || "")
-      .split(/[,，\n]/)
+      .split(/[\s,，]+/)
       .map((s) => s.trim())
       .filter(Boolean);
-    for (const rawM of declared) {
-      if (rawM === "*") continue;
+    for (const rawM of new Set([...declared, ...collectAvailableModels([r])])) {
+      if (rawM.includes("*")) continue;
       const idLower = rawM.toLowerCase();
       if (candidateModels.has(idLower)) continue; // 去重
       if (!groupAllows(rawM) || !keyAllows(rawM)) continue;
+      if (!channelSupportsModel(ch, rawM)) continue;
 
-      let vendor = ch.type || "other";
-      let vendorName = VENDOR_NAMES[vendor] || ch.type || "其他厂商";
-      for (const rule of VENDOR_PREFIX_RULES) {
-        if (rule.prefix.some((p) => idLower.startsWith(p))) {
-          vendor = rule.vendor;
-          vendorName = rule.vendorName;
-          break;
-        }
-      }
+      // 平台未登记的模型只能取自当前支持它的渠道，不能凭 gpt-/claude- 等名字猜来源。
+      const vendor = ch.type || "other";
+      const vendorName = modelVendorName(vendor);
 
       candidateModels.set(idLower, {
         id: rawM,
@@ -354,6 +323,7 @@ async function availableModels(user, keyId = 0) {
         deprecated: false,
         vendor,
         vendorName,
+        channel_type: ch.type || "",
       });
     }
   }

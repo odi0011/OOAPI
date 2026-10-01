@@ -690,7 +690,7 @@ export function channelInGroup(channel, groupName) {
 
 function parseModels(modelsStr) {
   return String(modelsStr || "")
-    .split(",")
+    .split(/[\s,，]+/)
     .map((s) => s.trim())
     .filter(Boolean);
 }
@@ -790,6 +790,13 @@ export function collectAvailableModels(channelRows) {
           out.add("*");
           continue;
         }
+        // 下拉展示具体型号，不把 gpt-* 这种渠道匹配规则当作可调用的模型 ID。
+        if (t.endsWith("*")) {
+          for (const id of modelRegistrySync()?.keys() || []) {
+            if (channelSupportsModel(ch, id)) out.add(id);
+          }
+          continue;
+        }
         // 口径与 channelSupportsModel 一致：声明名与它的别名都算「这个渠道能服务」
         // （deepseek-v4.1-flash 与 deepseek-flash 是同一个模型，旧名也要进列表，
         //  否则用户按旧名调得通、列表里却看不到）。
@@ -803,7 +810,7 @@ export function collectAvailableModels(channelRows) {
     // 留空 = 该厂商全部模型
     const vendorSet = vendorModelSet(ch.type);
     if (vendorSet) for (const m of vendorSet) out.add(m);
-    else out.add("*"); // 厂商表还没就绪：先按「不限」放行，避免列表瞬间空掉
+    // 厂商表未就绪或未知厂商无声明时，实际调度也不会放行，目录不能擅自扩大为全库。
   }
   return out;
 }

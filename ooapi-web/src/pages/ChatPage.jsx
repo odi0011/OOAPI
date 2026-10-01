@@ -354,6 +354,7 @@ export default function ChatPage() {
 
   const [meta, setMeta] = useState(null);
   const [metaError, setMetaError] = useState("");
+  const [metaLoading, setMetaLoading] = useState(true);
   const [sessions, setSessions] = useState([]);
   const [projects, setProjects] = useState([]);
   const [counts, setCounts] = useState({ active: 0, archived: 0, byProject: {} });
@@ -398,6 +399,8 @@ export default function ChatPage() {
   const attachedRef = useRef(""); // 已经接上事件流的会话 id（防重复订阅导致内容重放叠加）
   const busyRef = useRef(busy);
   busyRef.current = busy;
+  const metaReadyRef = useRef(false);
+  metaReadyRef.current = Boolean(meta) && !metaLoading && !metaError;
   const sessionListGenRef = useRef(0);
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -414,13 +417,16 @@ export default function ChatPage() {
   // 后端若没给 usable（旧版本），退回 status===1 —— 不能因为字段缺失把所有人都挡住。
   const usableKeys = (meta?.keys || []).filter((k) => (k.usable === undefined ? k.status === 1 : k.usable));
   const needKey = Boolean(meta) && !usableKeys.length;
-  const unavailable = !session || !curModel || needKey || loadingSession;
+  const unavailable = !session || !curModel || needKey || loadingSession || metaLoading || Boolean(metaError);
 
   /* ---------- 加载：元信息 + 会话列表 ---------- */
   const metaGenRef = useRef(0);
   const loadMeta = useCallback(async (forKeyId = 0) => {
     // 快速切换密钥会连发多次 meta：旧响应后到会把新密钥的模型/能力覆盖掉
     const gen = ++metaGenRef.current;
+    // 同步封住发送/选模型，避免新密钥已选中而 React 还没有渲染禁用态时沿用旧元信息。
+    metaReadyRef.current = false;
+    setMetaLoading(true);
     setMetaError("");
     try {
       const data = await chatApi.meta(forKeyId);
@@ -443,7 +449,10 @@ export default function ChatPage() {
         return { ...prev, model: fallbackModel };
       });
     } catch (e) {
+      if (gen !== metaGenRef.current) return;
       setMetaError(e.message || "无法加载模型配置");
+    } finally {
+      if (gen === metaGenRef.current) setMetaLoading(false);
     }
   }, []);
 
@@ -493,6 +502,8 @@ export default function ChatPage() {
     () => () => {
       genRef.current += 1;
       sessionListGenRef.current += 1;
+      metaGenRef.current += 1;
+      metaReadyRef.current = false;
       runningRef.current?.abort();
     },
     []
@@ -857,6 +868,7 @@ export default function ChatPage() {
   const retryDocsRef = useRef([]);
   const send = useCallback(
     (overrideText) => {
+      if (!metaReadyRef.current) return;
       const extraDocs = retryDocsRef.current;
       retryDocsRef.current = [];
       const docsToSend = extraDocs.length ? extraDocs : docs;
@@ -1029,7 +1041,7 @@ export default function ChatPage() {
 
   const retry = useCallback(
     async (msg) => {
-      if (busyRef.current) return;
+      if (busyRef.current || !metaReadyRef.current) return;
       const list = msgsRef.current;
       const index = list.indexOf(msg);
       const userMsg = list[index - 1];
@@ -1200,7 +1212,9 @@ export default function ChatPage() {
 
   const setModel = useCallback(
     (id) => {
+      if (!metaReadyRef.current) return;
       const m = models.find((x) => x.id === id);
+      if (!m) return;
       const patch = { model: id };
       // 切到不支持联网的模型时关掉搜索，避免继续带着无效参数请求上游
       if (m?.supportsSearch === false) patch.settings = { ...(sessionRef.current?.settings || {}), search: false };
@@ -1506,7 +1520,7 @@ export default function ChatPage() {
               tone="error"
               title="模型配置加载失败"
               actions={
-                <Button size="small" onClick={loadMeta}>
+                <Button size="small" onClick={() => loadMeta(keyId)}>
                   重试
                 </Button>
               }
@@ -1579,7 +1593,7 @@ export default function ChatPage() {
                   // key 不能用 seq：done 事件回来时 seq 从 0 变成真实值，会让整条消息重挂载（动画重播）
                   key={m.key || `i${i}`}
                   msg={m}
-                  busy={busy}
+                  busy={busy || unavailable}
                   streaming={Boolean(m.streaming)}
                   onRetry={retry}
                   onCopy={copy}
@@ -1649,7 +1663,7 @@ export default function ChatPage() {
               onPickFile={() => docRef.current?.click()}
               fileOk={!reading}
               visionOk={supportsVision && !reading}
-              placeholder={busy ? "正在生成…" : "输入你的问题，或分享一个想法…"}
+              placeholder={busy ? "正在生成…" : metaLoading ? "正在加载密钥和可用模型…" : "输入你的问题，或分享一个想法…"}
               commands={[
                 { key: "new", name: "new", desc: "新建对话", run: newSession },
                 { key: "archive", name: "archive", desc: "归档当前对话", run: () => archiveSession(session?.id) },

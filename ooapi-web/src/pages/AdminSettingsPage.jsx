@@ -15,6 +15,7 @@ import {
   BgColorsOutlined, TeamOutlined, LockOutlined, ApiOutlined, MailOutlined, DatabaseOutlined, UserOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
+import { odOf, unitsPerOd } from "../services/format";
 import { useApp } from "../context/AppContext";
 import PageHeader from "../components/PageHeader";
 import { PRIMARY_PRESETS } from "../theme/presets";
@@ -92,7 +93,7 @@ const F = {
   units_per_od: { g: "billing", label: "额度换算", type: "number", disabled: true, hint: "固定 1 OD币 = 10,000 额度单位（计费代码写死）" },
   general_setting_quota_display: { g: "billing", label: "前台展示额度", type: "switch", bool: true },
   expose_pricing_to_user: { g: "billing", label: "允许用户查看定价", type: "switch", bool: true },
-  quota_for_new_user: { g: "billing", label: "新用户初始额度", type: "number", min: 0, step: 100000, hint: "单位：额度（10,000 = 1 OD币）" },
+  quota_for_new_user: { g: "billing", label: "注册赠送额度（OD币）", type: "number", min: 0, step: 0.0001, precision: 4, od: true },
   quota_remind_threshold: { g: "billing", label: "余额提醒阈值", type: "number", min: 0, hint: "低于该值前端提示" },
   topup_link: { g: "billing", label: "充值链接", type: "text" },
   invite_reward_inviter: { g: "billing", label: "邀请人奖励", type: "number", min: 0 },
@@ -199,7 +200,7 @@ function useSettingsForm() {
   const [error, setError] = useState("");
   const [superOnly, setSuperOnly] = useState([]);
   const { message } = AntApp.useApp();
-  const { refreshStatus, user } = useApp();
+  const { refreshStatus, user, status } = useApp();
 
   const load = async () => {
     setLoading(true);
@@ -215,7 +216,7 @@ function useSettingsForm() {
       for (const [k, spec] of Object.entries(F)) {
         if (spec.type !== "number") continue;
         const v = values[k];
-        norm[k] = v === "" || v === null || v === undefined ? undefined : Number(v);
+        norm[k] = v === "" || v === null || v === undefined ? undefined : spec.od ? odOf(v, unitsPerOd(status)) : Number(v);
       }
       form.setFieldsValue(norm);
     } catch (e) {
@@ -236,13 +237,18 @@ function useSettingsForm() {
         if (superOnly.includes(k)) continue;
         // 固定值不提交（units_per_od 由计费代码写死；后端也拒绝修改）
         if (k === "units_per_od") continue;
+        if (F[k].od && (v === undefined || v === null || v === "")) {
+          message.error("请填写注册赠送额度；不赠送请填 0");
+          return;
+        }
         // null/空串是「清空」的语义：必须提交空串把库里的旧值清掉。
         // 历史 bug：跳过空值 → 管理员清空公告保存后旧公告还在。
         if (v === undefined || v === null) {
           payload[k] = "";
           continue;
         }
-        payload[k] = typeof v === "boolean" ? String(v) : String(v);
+        // 此字段以 OD币输入，接口仍接收整数额度单位；四位小数对应最小一单位。
+        payload[k] = F[k].od ? String(Math.round(Number(v) * unitsPerOd(status))) : String(v);
       }
       if (!Object.keys(payload).length) {
         message.info("当前账号没有可修改的设置项");
@@ -269,7 +275,7 @@ function Field({ spec, name, locked = false, ...controlProps }) {
   const common = { ...controlProps, placeholder: spec.ph, disabled };
   if (spec.type === "switch") return <Switch {...controlProps} disabled={disabled} />;
   if (spec.type === "number") {
-    return <InputNumber {...controlProps} style={{ width: "100%" }} min={spec.min} max={spec.max} step={spec.step || 1} disabled={disabled} />;
+    return <InputNumber {...controlProps} style={{ width: "100%" }} min={spec.min} max={spec.max} step={spec.step || 1} precision={spec.precision} disabled={disabled} />;
   }
   if (spec.type === "select") return <Select {...controlProps} style={{ width: "100%" }} options={spec.options} allowClear={false} disabled={disabled} />;
   if (spec.type === "password") return <Input.Password {...common} autoComplete="new-password" />;
@@ -314,6 +320,7 @@ function SettingsTab({ group }) {
                 label={spec.label}
                 tooltip={s.superOnly.includes(key) ? "只有超级管理员可以修改此设置" : undefined}
                 valuePropName={spec.type === "switch" ? "checked" : "value"}
+                rules={spec.od ? [{ required: true, message: "请填写注册赠送额度；不赠送请填 0" }] : undefined}
               >
                 <Field spec={spec} name={key} locked={s.superOnly.includes(key)} />
               </Form.Item>

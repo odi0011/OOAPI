@@ -55,6 +55,70 @@ export async function allPublicModels(onlyTypes = null) {
   return out;
 }
 
+// 展示层用品牌名；订阅/OAuth 等接入方式只属于渠道，不属于模型厂商名称。
+const MODEL_VENDOR_NAMES = {
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  gemini: "Google Gemini",
+  grok: "xAI Grok",
+  deepseek: "DeepSeek",
+  glm: "智谱 GLM",
+  qwen: "阿里通义千问",
+  kimi: "Moonshot Kimi",
+  doubao: "字节豆包",
+  minimax: "MiniMax",
+  stepfun: "阶跃星辰",
+  mimo: "小米 MiMo",
+  ark: "火山方舟",
+  qoder: "Qoder",
+  workbuddy: "WorkBuddy / CodeBuddy",
+  opencode: "OpenCode",
+  openrouter: "OpenRouter",
+  siliconflow: "SiliconFlow",
+  custom: "自定义渠道",
+  other: "其他厂商",
+};
+
+export function modelVendorName(type) {
+  const key = String(type || "").trim().toLowerCase();
+  return MODEL_VENDOR_NAMES[key] || VENDORS.find((v) => v.channelType === key)?.name || key || MODEL_VENDOR_NAMES.other;
+}
+
+// 原厂条目可以提供未单独定价的新型号。聚合供应商支持同名模型，不能因此覆盖原厂
+// 的展示归属与完整能力信息（例如 OpenCode 的 Luna 曾覆盖 OpenAI 并隐藏思考开关）。
+const ORIGINAL_MODEL_VENDORS = new Set([
+  "deepseek", "glm", "kimi", "doubao", "qwen", "openai", "anthropic", "gemini", "grok",
+  "mimo", "minimax", "stepfun", "ark",
+]);
+const DEFAULT_MODEL_VENDORS = new Map();
+for (const p of DEFAULT_PRICES) {
+  const id = String(p.model || "").trim().toLowerCase();
+  const type = String(p.type || "").trim().toLowerCase();
+  if (id && type && !DEFAULT_MODEL_VENDORS.has(id)) DEFAULT_MODEL_VENDORS.set(id, type);
+}
+
+/**
+ * 公开模型的展示元信息：小写原始 ID → 平台归属对应的完整条目。
+ * 优先默认价表明确登记的厂商，其次原厂模块；同优先级按稳定内容排序，避免加载顺序
+ * 决定归属。只生成拷贝，不合并能力、不改渠道支持集合，也不把别名改成另一个 ID。
+ * 未出现在公开库的渠道模型不在此表中，由调用方从当前可用渠道取来源。
+ */
+export function publicModelMetadataMap(publicModels) {
+  const selected = new Map();
+  for (const m of Array.isArray(publicModels) ? publicModels : []) {
+    const id = String(m?.id || "").trim().toLowerCase();
+    if (!id) continue;
+    const vendor = String(m.vendor || "").trim().toLowerCase();
+    const preferred = DEFAULT_MODEL_VENDORS.get(id);
+    const rank = preferred && vendor === preferred ? 0 : ORIGINAL_MODEL_VENDORS.has(vendor) ? 1 : 2;
+    const stableKey = JSON.stringify(Object.keys(m).sort().map((k) => [k, m[k]]));
+    const previous = selected.get(id);
+    if (previous && (previous.rank < rank || (previous.rank === rank && previous.stableKey <= stableKey))) continue;
+    selected.set(id, { rank, stableKey, model: { ...m, vendor, vendorName: modelVendorName(vendor) } });
+  }
+  return new Map([...selected].map(([id, entry]) => [id, entry.model]));
+}
+
 /**
  * 渠道匹配用的模型名解析。
  * 注意：**不做跨厂商映射**，只把带能力后缀的名字归一化后原样返回，

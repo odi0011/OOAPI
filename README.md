@@ -365,7 +365,7 @@ print(resp.choices[0].message.content)
 | `system_name` | OOAPI | 站点名称 |
 | `logo` | /logo.jpg | 站点图标 |
 | `api_endpoint` | 空 | 首页展示的接口地址 |
-| `quota_for_new_user` | 2000000 | 新用户赠送额度（单位，200 OD = $200） |
+| `quota_for_new_user` | 10 | 注册赠送额度（10 单位 = 0.001 OD币；后台以 OD币输入） |
 | `password_register_enabled` | false | 是否开放注册（默认关闭，防止被刷号） |
 | `password_login_enabled` | true | 是否开放密码登录 |
 | `units_per_od` | 10000 | 1 OD 等于多少额度单位 |

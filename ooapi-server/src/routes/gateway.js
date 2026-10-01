@@ -26,12 +26,15 @@ import {
 import { groupConfigOf, applyGroupRate, displayGroupName } from "../services/group-rate.js";
 import {
   allPublicModels,
+  publicModelMetadataMap,
+  modelVendorName,
+  canonicalModelName,
   modelForChannelMatch,
   resolveAliasSync,
   modelRegistry,
   modelInAllowList,
 } from "../services/models.js";
-import { collectAvailableModels, channelInGroup, rowToChannel } from "../services/router.js";
+import { collectAvailableModels, channelInGroup, channelSupportsModel, rowToChannel } from "../services/router.js";
 import { PROTOCOLS } from "../services/gateway-protocols.js";
 import { holdTokenQuota } from "../services/token-quota.js";
 
@@ -123,6 +126,7 @@ router.get(
     //    所以 groupName 一定有值。
     const [rows] = await pool.query("SELECT * FROM channels WHERE status = 1");
     const inGroup = rows.filter((r) => channelInGroup(rowToChannel(r), groupName));
+    await modelRegistry();
     const available = collectAvailableModels(inGroup);
 
     // 分组下一个渠道都没有 → **空列表**，不是「不限」。
@@ -159,7 +163,7 @@ router.get(
     // 一个只能调 omen-alpha 的密钥拿到**空列表**（黑盒测试实测）。
     // 现在反过来：以渠道能力为准，再去公共目录取元信息（vendor/别名）丰富展示。
     const all = await allPublicModels();
-    const metaById = new Map(all.map((m) => [String(m.id).toLowerCase(), m]));
+    const metaById = publicModelMetadataMap(all);
     // 渠道声明了通配（models 留空或写 "*"）= 该渠道所属厂商的全部登记模型都可用
     const wildcard = available.has("*");
 
@@ -168,21 +172,27 @@ router.get(
     const pushModel = (id, meta) => {
       const key = String(id).toLowerCase();
       if (!key || seen.has(key)) return;
+      if (key.includes("*")) return;
       if (!allowedByGroup(key) || !allowedByToken(key)) return;
+      const source = inGroup.find((r) => channelSupportsModel(rowToChannel(r), key));
+      if (!source) return;
+      // 旧 ID 的托管条目不能把同源规范模型再归到另一个供应商。
+      const canonicalMeta = metaById.get(canonicalModelName(id));
+      const vendor = canonicalMeta?.vendor || meta?.vendor || source.type || "unknown";
       seen.add(key);
       out.push({
         id: meta?.id || id,
         object: "model",
         // owned_by 用厂商类型，便于客户端区分模型来源
-        owned_by: meta?.aliasOf ? meta.vendor : meta?.vendor || meta?.aliasOf || "unknown",
-        ...(meta?.vendorName ? { vendor_name: meta.vendorName } : {}),
+        owned_by: vendor,
+        vendor_name: modelVendorName(vendor),
         ...(meta?.aliasOf ? { alias_of: meta.aliasOf, deprecated: true } : {}),
       });
     };
 
     if (wildcard) {
       // 通配渠道：公共目录里该有的都给（保留别名与 vendor 元信息）
-      for (const m of all) pushModel(m.id, m);
+      for (const m of metaById.values()) pushModel(m.id, m);
     }
     // 渠道显式声明的模型：即使不在公共目录里也要给（这才是它们的真实来源）
     for (const id of available) {

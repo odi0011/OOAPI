@@ -52,7 +52,7 @@ export const DEFAULT_OPTIONS = {
   // 否则设置页会把 500000 写回库，migrate2 误判为旧库再次换算（历史事故根因之一）
   usd_rate: "1", // 旧键（保留兼容）；OD币固定 1 OD = 1 美元，无汇率换算
   general_setting_quota_display: "true",
-  quota_for_new_user: "2000000", // 新用户初始额度（1 OD = 10000 单位 → 200 OD = $200）
+  quota_for_new_user: "10", // 注册体验额度：0.001 OD（1 OD = 10000 单位），避免开放注册时自动赠送大额余额。
   topup_link: "",
   expose_pricing_to_user: "true", // 允许用户查看模型定价
   quota_remind_threshold: "100000", // 余额低于此值时前端提醒
