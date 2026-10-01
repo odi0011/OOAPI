@@ -86,5 +86,18 @@ console.log("\n=== ④ 定价归一：一份价格，两个名字 ===");
   ck("deepseek 模块导出 ALIASES（旧名→规范名）", /"deepseek-v4\.1-flash": "deepseek-flash"/.test(dm));
 }
 
+console.log("\n=== ⑤ 站内对话与网关同一套白名单 + 旧会话模型名仍可用 ===");
+{
+  const { modelInAllowList } = await import("../src/services/models.js");
+  // 旧逻辑 id.startsWith(l) 会把 deepseek-v4 放行成 deepseek-v4-pro；新逻辑只认精确/显式通配
+  ck("精确项不再隐式前缀放行", !modelInAllowList(["deepseek-v4"], "deepseek-v4-pro"));
+  ck("显式通配仍放行", modelInAllowList(["deepseek-*"], "deepseek-v4-pro"));
+  ck("白名单写旧名 = 放行规范名", modelInAllowList(["deepseek-v4.1-flash"], "deepseek-flash"));
+  const chat = read("src/routes/chat.js");
+  ck("chat.js 密钥限制不再用 startsWith 前缀匹配", !/limits\.some\(\(l\) => id === l \|\| id\.startsWith\(l\)\)/.test(chat));
+  ck("chat.js 分组/密钥限制走 modelInAllowList", /modelInAllowList\(groupModels, id\)/.test(chat) && /modelInAllowList\(limits, id\)/.test(chat));
+  ck("/run 按规范名匹配会话模型（旧会话存的旧名不被拒）", /canonicalModelName\(m\.id\) === wantCanon/.test(chat));
+}
+
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
 process.exit(fail ? 1 : 0);

@@ -14,7 +14,7 @@ import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { getPrice, computeCost, splitTokens, sumCallTokens, estimateTokens, loadPrices, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { groupConfigOf, applyGroupRate, parseGroupKey, displayGroupName } from "../services/group-rate.js";
-import { allPublicModels, resolveAliasSync } from "../services/models.js";
+import { allPublicModels, resolveAliasSync, canonicalModelName, modelInAllowList } from "../services/models.js";
 import { rowToChannel, channelInGroup, collectAvailableModels } from "../services/router.js";
 import { getBoolOption } from "../config.js";
 import { saveBuffer, getMedia, readBlob, mediaUrl, attachRef, releaseRefs } from "../services/media.js";
@@ -255,11 +255,9 @@ async function availableModels(user, keyId = 0) {
   // 3) 分组限制的模型（分组配了 models 就只给这些）
   const gcfg = groupName ? await groupConfigOf(groupName) : null;
   const groupModels = gcfg?.models?.length ? gcfg.models : null;
-  const groupAllows = (id) => {
-    if (!groupModels) return true;
-    const m = String(id).toLowerCase();
-    return groupModels.some((p) => p === "*" || (p.endsWith("*") ? m.startsWith(p.slice(0, -1)) : p === m));
-  };
+  // 与网关 / selectChannels 同一套判定（modelInAllowList：精确匹配规范名 + 显式通配）。
+  // 旧实现各写一套，站内与网关对同一个白名单会给出不同结论。
+  const groupAllows = (id) => (groupModels ? modelInAllowList(groupModels, id) : true);
 
   // 4) 密钥自身的模型白名单（管理员豁免）
   const limits = key
@@ -267,7 +265,9 @@ async function availableModels(user, keyId = 0) {
     : [];
   const keyAllows = (id) => {
     if (isAdmin || !limits.length) return true;
-    return limits.some((l) => id === l || id.startsWith(l));
+    // 旧逻辑 `id.startsWith(l)` 等于隐式前缀通配：限制 deepseek-v4.1-flash
+    // 会顺带放行 deepseek-v4.1-flash-xxx。网关早已改为精确匹配，这里对齐。
+    return modelInAllowList(limits, id);
   };
 
   // 5) 汇总该分组渠道支持的模型集合
@@ -990,9 +990,13 @@ function aggregate(calls = []) {
         return fail(res, "该密钥额度已用尽，请在对话页换一把密钥（或让管理员调整额度）", 403);
       }
       models = await availableModels(req.user, usableKey.id);
-      modelCaps = models.find((m) => m.id === model) || null;
+      // 按规范名比较：下拉已把别名去重（只留 deepseek-flash），但老会话里存的
+      // 可能还是 deepseek-v4.1-flash —— 精确比较会把这些会话全部判成「模型不可用」。
+      const wantCanon = canonicalModelName(model);
+      const sameModel = (m) => m.id === model || canonicalModelName(m.id) === wantCanon;
+      modelCaps = models.find((m) => m.id === model) || models.find(sameModel) || null;
       routeGroup = usableKey.group_name || null;
-      if (!models.some((m) => m.id === model)) {
+      if (!models.some(sameModel)) {
         finishRun(run);
         return fail(res, `模型「${model}」在当前密钥下不可用，请重新选择模型`);
       }
