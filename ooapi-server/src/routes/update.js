@@ -9,7 +9,7 @@
 // 实际重启交给 detached 子进程延迟执行，避免请求方只看到连接中断。
 import { Router } from "express";
 import { ok, fail, asyncHandler } from "../utils.js";
-import { adminRequired } from "../middleware/auth.js";
+import { adminRequired, superRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { checkUpdate, performUpdate, currentStamp, REPO_URL } from "../services/updater.js";
 
@@ -37,6 +37,7 @@ let running = false;
 
 router.post(
   "/apply",
+  superRequired,
   asyncHandler(async (req, res) => {
     if (running) return fail(res, "已有更新任务正在执行，请稍候");
     running = true;

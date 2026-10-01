@@ -57,4 +57,5 @@ console.log("\n=== chargeUser 的展示口径必须取自计费口径（源码�
 }
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
+await import("./log-text.test.mjs");
 process.exit(fail ? 1 : 0);

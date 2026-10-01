@@ -4,8 +4,8 @@
 //   · 全部只读（检索 / 读网页 / 查**自己**的账号）或只影响本会话自己的状态（待办清单），
 //     不触碰服务器文件系统；读库的只有 account，且每条 SQL 都带 user_id = 当前用户 ——
 //     这是网关能安全暴露工具的边界（模型再怎么被提示注入，也读不到别人的数据）；
-//   · run() 永远返回 { ok, output }，失败也把原因当成「工具结果」交回模型，
-//     让模型自己决定换一种查法，而不是让整轮对话崩掉；
+//   · 普通失败返回 { ok, output }，把原因当成「工具结果」交回模型；
+//     用户主动停止时原样抛出，避免继续调用或吞掉已产生用量；
 //   · 每次工具调用的 token 都通过 ctx.record() 计入本轮账单（用户为真实消耗付费）。
 import { assertPublicUrl } from "../../utils.js";
 import { pool } from "../../db.js";
@@ -72,9 +72,8 @@ async function safeFetch(rawUrl, signal) {
       if (signal.aborted) ctrl.abort();
       else signal.addEventListener("abort", onAbort, { once: true });
     }
-    let res;
     try {
-      res = await fetch(u, {
+      const res = await fetch(u, {
         redirect: "manual",
         signal: ctrl.signal,
         headers: {
@@ -82,22 +81,33 @@ async function safeFetch(rawUrl, signal) {
           "user-agent": "Mozilla/5.0 (compatible; OOAPI-Harness/1.0; +https://github.com/)",
         },
       });
+      const loc = res.headers.get("location");
+      if (res.status >= 300 && res.status < 400 && loc) {
+        await res.body?.cancel().catch(() => {});
+        target = new URL(loc, u).toString(); // 下一跳继续过 assertPublicUrl
+        continue;
+      }
+      if (!res.ok) {
+        await res.body?.cancel().catch(() => {});
+        throw new Error(`上游返回 HTTP ${res.status}`);
+      }
+      const type = String(res.headers.get("content-type") || "");
+      if (!/text\/|json|xml|javascript/i.test(type)) {
+        await res.body?.cancel().catch(() => {});
+        throw new Error(`不支持的内容类型：${type || "未知"}`);
+      }
+      const len = Number(res.headers.get("content-length") || 0);
+      if (len && len > FETCH_MAX_BYTES) {
+        await res.body?.cancel().catch(() => {});
+        throw new Error("页面过大，已放弃读取");
+      }
+      const body = (await readCapped(res, FETCH_MAX_BYTES)).slice(0, FETCH_MAX_BYTES);
+      return { url: u.toString(), type, body };
     } finally {
+      // fetch 只保证响应头已到；超时与停止必须一直覆盖到响应体读取完。
       clearTimeout(timer);
       if (signal) signal.removeEventListener("abort", onAbort);
     }
-    const loc = res.headers.get("location");
-    if (res.status >= 300 && res.status < 400 && loc) {
-      target = new URL(loc, u).toString(); // 下一跳继续过 assertPublicUrl
-      continue;
-    }
-    if (!res.ok) throw new Error(`上游返回 HTTP ${res.status}`);
-    const type = String(res.headers.get("content-type") || "");
-    if (!/text\/|json|xml|javascript/i.test(type)) throw new Error(`不支持的内容类型：${type || "未知"}`);
-    const len = Number(res.headers.get("content-length") || 0);
-    if (len && len > FETCH_MAX_BYTES) throw new Error("页面过大，已放弃读取");
-    const body = (await readCapped(res, FETCH_MAX_BYTES)).slice(0, FETCH_MAX_BYTES);
-    return { url: u.toString(), type, body };
   }
   throw new Error("重定向次数过多");
 }
@@ -105,6 +115,27 @@ async function safeFetch(rawUrl, signal) {
 const SEARCH_SYS =
   "你是检索助手：根据用户给出的查询做一次联网检索，回报与问题直接相关的要点（3-6 条），" +
   "每条尽量附上来源链接。只输出要点本身，不要写导语与总结。";
+
+/** 工具失败仍可交回模型，但它已经产生的上游用量必须进入本轮账单。 */
+export function recordFailedCall(err, ctx, fallback = {}) {
+  if (!err || err.billingRecorded || typeof ctx?.record !== "function") return false;
+  const output = String(err.billingOutput ?? fallback.output ?? "");
+  // 本地校验/无渠道不收费；已流出的内容本身也能证明上游开始过。
+  if (err.upstreamStarted !== true && !output) return false;
+  ctx.record({
+    prompt: String(err.billingPrompt ?? fallback.prompt ?? ""),
+    output,
+    usage: null,
+    channel: String(err.channelName || ""),
+    channelId: Number(err.channelId) || 0,
+    startedAt: Number(err.billingStartedAt) || Number(fallback.startedAt) || Date.now(),
+    firstTokenAt: Number(err.billingFirstTokenAt) || Number(fallback.firstTokenAt) || 0,
+    failed: true,
+  });
+  // 停止时同一个错误会继续冒泡到路由；路由不能再合成一条相同的失败调用。
+  err.billingRecorded = true;
+  return true;
+}
 
 export const TOOLS = {
   todowrite: {
@@ -141,23 +172,45 @@ export const TOOLS = {
       const query = String(args?.query ?? "").trim().slice(0, 300);
       if (!query) return { ok: false, output: "query 不能为空" };
       if (ctx.searchSupported === false) return { ok: false, output: "当前模型不支持联网检索，请改用 fetch 工具直接读已知网址" };
-      const r = await runCompletion({
-        model: modelForChannelMatch(ctx.model) || ctx.model,
-        prompt: `<｜User｜>${query}`,
-        messages: [{ role: "system", content: SEARCH_SYS }, { role: "user", content: query }],
-        thinking: false,
-        search: true,
-        images: [],
-        groupName: ctx.groupName,
-        user: ctx.user,
-        signal: ctx.signal,
-      });
+      const startedAt = Date.now();
+      let firstTokenAt = 0;
+      let output = "";
+      const capture = (text) => {
+        if (!text) return;
+        if (!firstTokenAt) firstTokenAt = Date.now();
+        output += text;
+      };
+      let r;
+      try {
+        r = await runCompletion({
+          model: modelForChannelMatch(ctx.model) || ctx.model,
+          prompt: `<｜User｜>${query}`,
+          messages: [{ role: "system", content: SEARCH_SYS }, { role: "user", content: query }],
+          thinking: false,
+          search: true,
+          images: [],
+          groupName: ctx.groupName,
+          user: ctx.user,
+          signal: ctx.signal,
+          onDelta: capture,
+          onReasoning: capture,
+        });
+      } catch (e) {
+        e.billingPrompt = `${SEARCH_SYS}\n\n${query}`;
+        e.billingOutput = output;
+        e.billingStartedAt = startedAt;
+        e.billingFirstTokenAt = firstTokenAt;
+        recordFailedCall(e, ctx);
+        throw e;
+      }
       ctx.record({
         prompt: `${SEARCH_SYS}\n\n${query}`,
         output: `${r.content || ""}${r.reasoning || ""}`,
         usage: r.usage,
         channel: r.channel?.name || "",
         channelId: Number(r.channel?.id) || 0,
+        startedAt,
+        firstTokenAt,
       });
       const text = clip(r.content || r.reasoning || "", 6000);
       if (!text) return { ok: false, output: "检索没有返回内容" };
@@ -180,6 +233,7 @@ export const TOOLS = {
         if (!out) return { ok: false, output: `${finalUrl} 没有可读文本（可能是纯前端渲染的页面）` };
         return { ok: true, output: `来源：${finalUrl}\n\n${out}` };
       } catch (e) {
+        if (ctx.signal?.aborted) throw e;
         return { ok: false, output: `读取失败：${e.message}` };
       }
     },
@@ -220,7 +274,8 @@ export const TOOLS = {
           if (res.status === 404) throw new Error("仓库或路径不存在（也可能是私有仓库）");
           if (res.status === 403) throw new Error("GitHub 接口限流（未登录每小时 60 次），请稍后再试");
           if (!res.ok) throw new Error(`GitHub 返回 HTTP ${res.status}`);
-          return res;
+          // JSON 解析也会继续读网络；这里读完后才解除超时与外层停止监听。
+          return await res.json();
         } finally {
           clearTimeout(timer);
           if (ctx.signal) ctx.signal.removeEventListener("abort", onAbort);
@@ -230,8 +285,7 @@ export const TOOLS = {
       try {
         if (action === "list") {
           const path = String(args?.path ?? "").replace(/^\/+|\/+$/g, "");
-          const res = await api(`/repos/${repo}/contents/${path}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`);
-          const data = await res.json();
+          const data = await api(`/repos/${repo}/contents/${path}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`);
           const list = Array.isArray(data) ? data : [data];
           if (!list.length) return { ok: false, output: `目录为空：${path || "（根目录）"}` };
           const lines = list.map((f) => `${f.type === "dir" ? "📁" : "📄"} ${f.path}${f.size ? `  (${f.size}B)` : ""}`);
@@ -241,8 +295,7 @@ export const TOOLS = {
         if (action === "search") {
           const q = String(args?.query ?? "").trim();
           if (!q) return { ok: false, output: "action=search 时需要 query" };
-          const res = await api(`/search/code?q=${encodeURIComponent(`${q} repo:${repo}`)}&per_page=20`);
-          const data = await res.json();
+          const data = await api(`/search/code?q=${encodeURIComponent(`${q} repo:${repo}`)}&per_page=20`);
           const items = data.items || [];
           if (!items.length) return { ok: false, output: `在 ${repo} 里没有搜到「${q}」` };
           const lines = items.map((i) => `${i.path}\n  ${String(i.html_url || "").replace("github.com", "github.com")}`);
@@ -254,20 +307,19 @@ export const TOOLS = {
         if (!path) {
           for (const name of ["README.md", "readme.md", "README.MD", "README"]) {
             try {
-              const r = await api(`/repos/${repo}/contents/${name}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`);
-              const j = await r.json();
+              const j = await api(`/repos/${repo}/contents/${name}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`);
               if (j?.content) {
                 path = name;
                 break;
               }
-            } catch {
+            } catch (e) {
+              if (ctx.signal?.aborted) throw e;
               /* 换下一个候选名 */
             }
           }
           if (!path) return { ok: false, output: `${repo} 没有找到 README，请用 action=list 看目录或用 path 指定文件` };
         }
-        const res = await api(`/repos/${repo}/contents/${path}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`);
-        const data = await res.json();
+        const data = await api(`/repos/${repo}/contents/${path}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`);
         if (Array.isArray(data)) {
           // 给的是目录：自动转成列表，别让模型以为读到了内容
           const lines = data.map((f) => `${f.type === "dir" ? "📁" : "📄"} ${f.path}`);
@@ -281,6 +333,7 @@ export const TOOLS = {
           output: `${repo}/${path}${ref ? ` @${ref}` : ""}（${data.size}B，.${lang}）\n\n${clip(text, 12000)}`,
         };
       } catch (e) {
+        if (ctx.signal?.aborted) throw e;
         return { ok: false, output: `读取 GitHub 失败：${e.message}` };
       }
     },
@@ -404,6 +457,8 @@ export const TOOLS = {
         if (!r?.text) return { ok: false, output: "子代理没有产出内容" };
         return { ok: true, output: clip(r.text, 8000) };
       } catch (e) {
+        recordFailedCall(e, ctx);
+        if (ctx.signal?.aborted) throw e;
         return { ok: false, output: `子代理执行失败：${e.message}` };
       }
     },
@@ -420,6 +475,7 @@ export async function runTool(id, args, ctx) {
   try {
     return await tool.run(args, ctx);
   } catch (e) {
+    if (ctx.signal?.aborted) throw e;
     // 工具自身异常（上游限流等）不终止整轮：把原因交给模型，它会换一种查法或直接作答
     return { ok: false, output: `工具执行异常：${e.message}` };
   }

@@ -45,6 +45,8 @@ html[data-theme="light"] {
   --accent-ink: oklch(55.6% 0.187 255.617);
   --accent-tint: oklch(96% 0.019 252.878);
   --green: oklch(60.3% 0.155 150.883);
+  --token-output: oklch(55% 0.19 295);
+  --token-cache: oklch(53% 0.12 220);
   --green-tint: oklch(95.8% 0.017 159.118);
   /* 调用记录小竖条的「成功绿」—— 与 --green 分开定义。
      用户反馈：「那个小条条绿色的颜色换一个换亮绿色，但是不要太亮，现在这个绿色太暗了」。
@@ -121,6 +123,8 @@ html[data-theme="dark"] {
   --accent-ink: oklch(78.8% 0.113 248.33);
   --accent-tint: oklch(68% 0.173 253.301 / 0.16);
   --green: oklch(70.5% 0.154 153.814);
+  --token-output: oklch(77% 0.14 295);
+  --token-cache: oklch(77% 0.12 220);
   --green-tint: oklch(70.5% 0.154 153.814 / 0.14);
   /* 暗色下 --green 已经是 L=70.5%，小竖条只需略微提亮拉开与背景的对比 */
   --green-bar: oklch(76% 0.163 153);
@@ -530,6 +534,30 @@ h1, h2, h3, h4 {
   flex-shrink: 0;
   display: inline-block;
 }
+.oo-duration-cell { display: inline-flex; flex-direction: column; gap: 2px; padding-left: 7px; border-left: 3px solid var(--green); font-size: 11px; line-height: 1.45; white-space: nowrap; position: relative; }
+.oo-duration-cell::before { content: ""; position: absolute; left: -3px; top: 0; height: 50%; width: 3px; background: var(--orange); }
+.oo-duration-row { display: flex; align-items: baseline; gap: 9px; }
+.oo-duration-row > span { color: var(--ink-3); min-width: 33px; }
+.oo-duration-row > b { font-family: var(--font-mono); font-weight: 500; font-variant-numeric: tabular-nums; }
+.oo-duration-row--first > b { color: var(--orange); }
+.oo-duration-row--total > b { color: var(--green); }
+.oo-token-cell { display: inline-flex; flex-direction: column; position: relative; gap: 3px; padding-right: 20px; max-width: 100%; font-size: 12px; line-height: 1.4; white-space: nowrap; }
+.oo-token-main { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 9px; }
+.oo-token-main > span { display: inline-flex; gap: 4px; align-items: center; }
+.oo-token-main b, .oo-token-detail b { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 500; }
+.oo-token-input { color: var(--green); }
+.oo-token-output { color: var(--token-output); }
+.oo-token-cache { display: inline-flex; gap: 5px; align-items: center; color: var(--token-cache); font-family: var(--font-mono); }
+.oo-token-info { position: absolute; right: 0; top: 50%; transform: translateY(-50%); padding: 0; border: 0; background: transparent; color: var(--accent); width: 18px; height: 20px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.oo-token-info:hover { color: var(--accent-ink); }
+.oo-token-info:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+.oo-token-detail { min-width: 195px; font-size: 12px; }
+.oo-token-detail > strong { display: block; margin-bottom: 5px; font-size: 12px; }
+.oo-token-detail > div { display: flex; justify-content: space-between; align-items: baseline; gap: 18px; }
+.oo-token-detail > div > span { opacity: .75; }
+.oo-token-detail-total { margin-top: 7px; padding-top: 6px; border-top: 1px solid currentColor; }
+.oo-token-detail-total > b { color: var(--token-cache); font-weight: 600; }
+
 .bui-dot--ok { background: var(--green); }
 .bui-dot--warn { background: var(--orange); }
 .bui-dot--err { background: var(--red); }

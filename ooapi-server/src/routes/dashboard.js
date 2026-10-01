@@ -200,7 +200,7 @@ router.get(
 
     // 最近 8 条调用动态：让开发者第一时间知道接口是否调通、状态与消耗
     const [recentLogs] = await pool.query(
-      `SELECT id, created_at, model, type, elapsed_ms, quota, prompt_tokens, completion_tokens, cache_tokens
+      `SELECT id, created_at, model, type, elapsed_ms, first_token_ms, quota, prompt_tokens, completion_tokens, cache_tokens
          FROM logs WHERE user_id = ? AND type IN (2, 4)
         ORDER BY id DESC LIMIT 8`,
       [uid]
@@ -259,9 +259,11 @@ router.get(
         model: l.model || "—",
         type: Number(l.type),
         elapsed_ms: Number(l.elapsed_ms) || 0,
+        first_token_ms: Number(l.first_token_ms) || 0,
         units: Number(l.quota) || 0,
         prompt_tokens: Number(l.prompt_tokens) || 0,
         completion_tokens: Number(l.completion_tokens) || 0,
+        cache_tokens: Number(l.cache_tokens) || 0,
       })),
     });
   })
@@ -322,6 +324,7 @@ router.get(
     const [byChannel] = await pool.query(
       `SELECT l.channel_id, COUNT(*) AS calls, COALESCE(SUM(l.quota),0) AS units,
               COALESCE(AVG(NULLIF(l.elapsed_ms,0)),0) AS avg_elapsed,
+              COALESCE(AVG(NULLIF(l.first_token_ms,0)),0) AS avg_first_token,
               c.name AS channel_name, c.type AS channel_type
          FROM logs l LEFT JOIN channels c ON c.id = l.channel_id
         WHERE l.type = 2 AND l.created_at >= ? AND l.channel_id > 0
@@ -413,6 +416,7 @@ router.get(
           // 所以它比监控页的 SLA 口径偏低，前端文案必须标「含限制」而不是当 SLA 用。
           success_rate: calls + errors > 0 ? Number(((calls / (calls + errors)) * 100).toFixed(1)) : null,
           avg_elapsed: Math.round(Number(c.avg_elapsed) || 0),
+          avg_first_token: Math.round(Number(c.avg_first_token) || 0),
         };
       }),
       top_tokens: topTokens.map((t) => ({

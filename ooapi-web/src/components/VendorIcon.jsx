@@ -1,7 +1,7 @@
-// 厂商图标 —— 使用各厂商官方 SVG / 品牌资源
+// 厂商图标 —— 统一使用品牌资源或用户指定素材
 // ---------------------------------------------------------------------------
 // 资源来源（均为官方或权威收录，非手绘）：
-//   deepseek.svg   DeepSeek 官网内联 logo（currentColor，自动适配明暗）
+//   deepseek.png   用户指定头像，裁去透明空边并保留原图圆角
 //   openai.svg     OpenAI 官方标志（Simple Icons 收录）
 //   claude.svg     Anthropic / Claude 官方标志（Simple Icons 收录）
 //   gemini.svg     Google Gemini 官方标志（Simple Icons 收录）
@@ -35,7 +35,7 @@ function iconSrc(file) {
 // 都要能用，避免调用方拿 type 直接渲染时掉到默认图标。
 const CHANNEL_ICON = {
   // 登录型厂商（官方品牌资源）
-  deepseek: "deepseek.png",   // 官方鲸鱼
+  deepseek: "deepseek.png",   // 用户指定头像（已裁去透明空边）
   kimi: "kimi.png",
   doubao: "doubao.png",
   moonshot: "kimi.png",

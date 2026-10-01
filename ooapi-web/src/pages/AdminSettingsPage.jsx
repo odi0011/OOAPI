@@ -184,26 +184,37 @@ const TABS = [
 
 const BOOL_KEYS = Object.entries(F).filter(([, v]) => v.bool).map(([k]) => k);
 
+// 兼容尚未下发权限元信息的旧后端：基础设施字段仍须先置灰，不能让管理员填完才吃 403。
+const SUPER_OPTION_FALLBACK = [
+  "smtp_enabled", "smtp_host", "smtp_port", "smtp_user", "smtp_pass", "smtp_from",
+  "smtp_ssl", "smtp_starttls", "smtp_insecure",
+  "request_timeout_ms", "retry_times", "gateway_ping_interval",
+  "backup_enabled", "backup_interval_hours", "backup_keep", "backup_dir",
+];
+
 function useSettingsForm() {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [superOnly, setSuperOnly] = useState([]);
   const { message } = AntApp.useApp();
-  const { refreshStatus } = useApp();
+  const { refreshStatus, user } = useApp();
 
   const load = async () => {
     setLoading(true);
     setError("");
     try {
       const data = await API.get("/option/");
-      const norm = { ...data };
+      const { super_only, is_super, ...values } = data || {};
+      setSuperOnly(Array.isArray(super_only) ? super_only : Number(user?.role) >= 1000 ? [] : SUPER_OPTION_FALLBACK);
+      const norm = { ...values };
       // 布尔归一化：库里存的是 "true"/"false" 字符串，Switch 需要真布尔
-      for (const k of BOOL_KEYS) norm[k] = data[k] === "true" || data[k] === true;
+      for (const k of BOOL_KEYS) norm[k] = values[k] === "true" || values[k] === true;
       // 数值项归一化：空串→undefined，避免 InputNumber 显示 0（与实际「未设置」不符）
       for (const [k, spec] of Object.entries(F)) {
         if (spec.type !== "number") continue;
-        const v = data[k];
+        const v = values[k];
         norm[k] = v === "" || v === null || v === undefined ? undefined : Number(v);
       }
       form.setFieldsValue(norm);
@@ -221,6 +232,8 @@ function useSettingsForm() {
       const payload = {};
       for (const [k, v] of Object.entries(values)) {
         if (!Object.prototype.hasOwnProperty.call(F, k)) continue;
+        // 禁用的字段仍可能在 Form 的值里；必须从提交体排除，避免整批保存被 403 拒绝。
+        if (superOnly.includes(k)) continue;
         // 固定值不提交（units_per_od 由计费代码写死；后端也拒绝修改）
         if (k === "units_per_od") continue;
         // null/空串是「清空」的语义：必须提交空串把库里的旧值清掉。
@@ -230,6 +243,10 @@ function useSettingsForm() {
           continue;
         }
         payload[k] = typeof v === "boolean" ? String(v) : String(v);
+      }
+      if (!Object.keys(payload).length) {
+        message.info("当前账号没有可修改的设置项");
+        return;
       }
       await API.put("/option/", payload);
       // 改站点名/外观默认值后必须刷新全局 status，否则全站展示仍用旧值
@@ -242,16 +259,19 @@ function useSettingsForm() {
     }
   };
 
-  return { form, loading, saving, error, load, save };
+  return { form, loading, saving, error, superOnly, load, save };
 }
 
-function Field({ spec, name }) {
-  const common = { placeholder: spec.ph, disabled: spec.disabled };
-  if (spec.type === "switch") return <Switch />;
+function Field({ spec, name, locked = false, ...controlProps }) {
+  const disabled = Boolean(spec.disabled || locked);
+  // Form.Item 把 value/checked/onChange 注入自定义 Field；必须继续传给实际控件，
+  // 否则用户改的是控件内部值，提交的仍是加载时的旧设置。
+  const common = { ...controlProps, placeholder: spec.ph, disabled };
+  if (spec.type === "switch") return <Switch {...controlProps} disabled={disabled} />;
   if (spec.type === "number") {
-    return <InputNumber style={{ width: "100%" }} min={spec.min} max={spec.max} step={spec.step || 1} disabled={spec.disabled} />;
+    return <InputNumber {...controlProps} style={{ width: "100%" }} min={spec.min} max={spec.max} step={spec.step || 1} disabled={disabled} />;
   }
-  if (spec.type === "select") return <Select style={{ width: "100%" }} options={spec.options} allowClear={false} />;
+  if (spec.type === "select") return <Select {...controlProps} style={{ width: "100%" }} options={spec.options} allowClear={false} disabled={disabled} />;
   if (spec.type === "password") return <Input.Password {...common} autoComplete="new-password" />;
   if (spec.type === "textarea") return <Input.TextArea rows={spec.rows || 3} {...common} />;
   return <Input {...common} maxLength={spec.maxLength} />;
@@ -283,7 +303,7 @@ function SettingsTab({ group }) {
             className="oo-settings-form"
             layout="vertical"
             onFinish={s.save}
-            disabled={s.loading || Boolean(s.error)}
+            disabled={s.loading || Boolean(s.error) || s.saving}
             requiredMark={false}
           >
             {fields.map(([key, spec]) => (
@@ -292,13 +312,14 @@ function SettingsTab({ group }) {
                 className={`oo-settings-field${spec.type === "textarea" ? " oo-settings-field--wide" : ""}`}
                 name={key}
                 label={spec.label}
+                tooltip={s.superOnly.includes(key) ? "只有超级管理员可以修改此设置" : undefined}
                 valuePropName={spec.type === "switch" ? "checked" : "value"}
               >
-                <Field spec={spec} name={key} />
+                <Field spec={spec} name={key} locked={s.superOnly.includes(key)} />
               </Form.Item>
             ))}
             <div className="oo-settings-actions">
-              <Button type="primary" htmlType="submit" loading={s.saving} icon={<SaveOutlined />}>
+              <Button type="primary" htmlType="submit" loading={s.saving} disabled={fields.every(([key, spec]) => s.superOnly.includes(key) || spec.disabled)} icon={<SaveOutlined />}>
                 保存设置
               </Button>
             </div>
@@ -312,6 +333,8 @@ function SettingsTab({ group }) {
 /* ============================ 在线更新 ============================ */
 function UpdateTab() {
   const { message, modal } = AntApp.useApp();
+  const { user } = useApp();
+  const isSuper = Number(user?.role) >= 1000;
   const [info, setInfo] = useState(null);
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -373,6 +396,7 @@ function UpdateTab() {
   };
 
   const apply = async () => {
+    if (!isSuper || applying) return;
     modal.confirm({
       title: "确认更新到最新版本？",
       content: `即将更新到版本 ${latest?.short || ""}：${latest?.message || ""}。更新将拉取 GitHub 最新代码、重新构建并热重启服务。`,
@@ -421,11 +445,12 @@ function UpdateTab() {
               description={latest?.message || "有新版本可用，点击下方按钮即可一键在线更新。"}
             />
           ) : null}
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <Button onClick={check} loading={checking}>检查更新</Button>
-            <Button type="primary" onClick={apply} loading={applying} disabled={!hasUpdate}>
+            <Button type="primary" onClick={apply} loading={applying} disabled={!hasUpdate || !isSuper}>
               立即更新
             </Button>
+            {!isSuper ? <Text type="secondary">只有超级管理员可以执行更新</Text> : null}
           </div>
           {steps.length ? (
             <div style={{ marginTop: 8 }}>

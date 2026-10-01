@@ -122,4 +122,5 @@ const p = parseInvokeMarkup('<invoke name="x"><parameter name="n">42</parameter>
 ck("parameter 按 JSON 解析数字，string=true 保留字符串", p.args.n === 42 && p.args.s === "42", JSON.stringify(p.args));
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
+await import("./harness-billing.test.mjs");
 process.exit(fail ? 1 : 0);

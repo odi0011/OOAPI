@@ -52,6 +52,8 @@ import {
   fmtCompact,
 } from "../components/Charts";
 import { OdCoin } from "../components/OdCoin";
+import { DurationCell, TokenCell } from "../components/UsageCells";
+import { ModelLabel } from "../components/VendorIcon";
 import {
   copyText,
   fmtOd,
@@ -565,11 +567,7 @@ for await (const chunk of stream) {
               {
                 title: "模型",
                 dataIndex: "model",
-                render: (m) => (
-                  <Tag color="geekblue" style={{ fontFamily: "monospace" }}>
-                    {m}
-                  </Tag>
-                ),
+                render: (m) => <ModelLabel model={m} title={m} />,
               },
               {
                 title: "状态",
@@ -589,24 +587,14 @@ for await (const chunk of stream) {
               {
                 title: "耗时",
                 dataIndex: "elapsed_ms",
-                width: 90,
-                align: "right",
-                render: (ms) => (
-                  <span className="oo-num">
-                    {ms > 0 ? (ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`) : "—"}
-                  </span>
-                ),
+                width: 112,
+                render: (ms, r) => <DurationCell firstTokenMs={r.first_token_ms} elapsedMs={ms} />,
               },
               {
-                title: "Tokens (入 / 出)",
+                title: "Tokens",
                 key: "tokens",
-                width: 140,
-                align: "right",
-                render: (_, r) => (
-                  <span className="oo-mono" style={{ fontSize: 12 }}>
-                    {fmtCompact(r.prompt_tokens || 0)} / {fmtCompact(r.completion_tokens || 0)}
-                  </span>
-                ),
+                width: 182,
+                render: (_, r) => <TokenCell promptTokens={r.prompt_tokens} completionTokens={r.completion_tokens} cacheTokens={r.cache_tokens} />,
               },
               {
                 title: "扣费金额",

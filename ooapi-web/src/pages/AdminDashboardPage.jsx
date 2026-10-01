@@ -24,6 +24,7 @@ import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import UserAvatar from "../components/UserAvatar";
 import { LineChart, RankBar, Legend, Donut, KpiCard, ChartCard, SERIES_COLORS, fmtCompact } from "../components/Charts";
+import { DurationCell } from "../components/UsageCells";
 import { OdCoin } from "../components/OdCoin";
 import { odOf, unitsPerOd, CURRENCY_NAME } from "../services/format";
 
@@ -271,7 +272,7 @@ export default function AdminDashboardPage() {
                   ),
               },
               { title: "错误", dataIndex: "errors", width: 80, align: "right", sorter: (a, b) => a.errors - b.errors, render: (v) => <span className="oo-num" style={{ color: v ? "var(--red)" : "var(--ink-3)" }}>{v || 0}</span> },
-              { title: "平均耗时", dataIndex: "avg_elapsed", width: 100, align: "right", sorter: (a, b) => a.avg_elapsed - b.avg_elapsed, render: (v) => <span className="oo-num">{v ? `${(v / 1000).toFixed(2)} s` : "—"}</span> },
+              { title: "平均耗时", dataIndex: "avg_elapsed", width: 112, sorter: (a, b) => a.avg_elapsed - b.avg_elapsed, render: (v, r) => <DurationCell firstTokenMs={r.avg_first_token} elapsedMs={v} /> },
             ]}
           />
         </ChartCard>

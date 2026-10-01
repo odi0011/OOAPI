@@ -184,13 +184,17 @@ export default function MessagesPage() {
 
   /* ==================== 打开会话 ==================== */
   useEffect(() => {
+    // 返回列表也要作废上一个会话的请求，避免迟到响应把已关闭的会话写回来。
+    const token = begin();
     setRoom(null);
     setMsgs([]);
     setTotal(0);
     setRoomError("");
     lastIdRef.current = 0;
-    if (!activeRoomId) return;
-    const token = begin();
+    if (!activeRoomId) {
+      setMsgsLoading(false);
+      return;
+    }
     setMsgsLoading(true);
     Promise.all([
       API.get(`/chatroom/rooms/${activeRoomId}`),
@@ -400,14 +404,16 @@ export default function MessagesPage() {
       setInflight((n) => n + 1);
       try {
         const saved = await API.post(`/chatroom/rooms/${rid}/messages`, { ...body, client_id: clientId });
-        if (saved?.id > lastIdRef.current) lastIdRef.current = saved.id;
         if (activeRef.current === rid) {
+          if (saved?.id > lastIdRef.current) lastIdRef.current = saved.id;
           setMsgs((prev) => sortMsgs([...prev.filter((x) => x.client_id !== clientId && x.id !== saved.id), saved]));
         }
         onIncoming(rid, saved);
       } catch (e) {
         // 失败标红保留在原位，可重试 / 删除（不静默丢弃 —— 用户以为发出去了其实没有）
-        setMsgs((prev) => prev.map((x) => (x.client_id === clientId ? { ...x, pending: false, failed: true, error: e.message } : x)));
+        if (activeRef.current === rid) {
+          setMsgs((prev) => prev.map((x) => (x.client_id === clientId ? { ...x, pending: false, failed: true, error: e.message } : x)));
+        }
       } finally {
         setInflight((n) => n - 1);
       }
@@ -417,7 +423,7 @@ export default function MessagesPage() {
 
   const doSend = (type = "text", content = input, mediaIds = []) => {
     const text = String(content || "").trim();
-    if (!activeRoomId || (!text && !mediaIds.length)) return;
+    if (!activeRoomId || activeRef.current !== activeRoomId || (!text && !mediaIds.length)) return;
     const clientId = `cli_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const opt = {
       id: -Date.now(),
@@ -448,9 +454,11 @@ export default function MessagesPage() {
   // 历史上两个真实问题（人格实测）：
   //   ① 发的是 content="[图片]" + media —— 气泡里图的上面多一行「[图片]」，像模板没渲染完；
   //   ② 把输入框里的字当 content 一起发走并清空 —— 「先打好一句话再点图片，输入框变空」。
-  // doSend 允许「只有图、没有字」，所以 content 传空串；并在发完后恢复草稿。
+  // doSend 允许「只有图、没有字」，所以 content 传空串。图片发送不改 input，
+  // 不再回填上传开始时的草稿，否则会覆盖上传期间继续输入的新文字。
   const handleUploadPic = async (file) => {
     if (!file || !activeRoomId) return;
+    const rid = activeRoomId;
     if (!String(file.type || "").startsWith("image/")) {
       toast.warning("只能发送图片文件");
       return;
@@ -459,9 +467,13 @@ export default function MessagesPage() {
     try {
       const dataUrl = await readFileAsDataUrl(file);
       const r = await API.post("/media", { dataUrl, name: file.name || "image.png", source: "chat" }, { timeoutMs: 120000 });
-      const draft = input;
+      // 用户在上传期间换了会话：图片仍在媒体库，发送需重新确认目标会话。
+      // 旧闭包直接 doSend 会把乐观消息插入新会话、请求却发给原来的联系人。
+      if (activeRef.current !== rid) {
+        toast.warning("已切换会话，图片已保存在媒体库，请在目标会话重新发送");
+        return;
+      }
       doSend("image", "", [r.id]);
-      setInput(draft);
     } catch (err) {
       toast.error(err.message || "图片上传失败");
     } finally {

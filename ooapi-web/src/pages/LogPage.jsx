@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { Table, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions, Space, Typography, Grid } from "antd";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { Table, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions, Space, Typography } from "antd";
 import { ReloadOutlined, FileTextOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import { fmtDate, fmtOd, unitsPerOd, CURRENCY_NAME } from "../services/format";
@@ -7,10 +7,10 @@ import { OdCoin } from "../components/OdCoin";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
-import StatCard from "../components/StatCard";
 import UsageAnalysis from "../components/UsageAnalysis";
-import { ModelLabel, GroupVendorIcons, GroupTag } from "../components/VendorIcon";
+import { ModelLabel, GroupTag } from "../components/VendorIcon";
 import UserAvatar from "../components/UserAvatar";
+import { DurationCell, TokenCell, formatDuration } from "../components/UsageCells";
 
 const { Text } = Typography;
 
@@ -20,20 +20,7 @@ function normalizeCurrency(text) {
   return String(text || "").replace(/(\d)\s*OD(?!币)/g, `$1 ${CURRENCY_NAME}`);
 }
 
-function ms(v) {
-  const n = Number(v) || 0;
-  if (!n) return "-";
-  return n >= 1000 ? `${(n / 1000).toFixed(2)}s` : `${n}ms`;
-}
-
-/** 耗时着色：慢请求要一眼能看出来（>5s 橙、>15s 红） */
-function msColor(v) {
-  const n = Number(v) || 0;
-  if (!n) return "var(--ink-3)";
-  if (n >= 15000) return "var(--red)";
-  if (n >= 5000) return "var(--orange)";
-  return "var(--ink)";
-}
+const ms = formatDuration;
 
 /**
  * 日志原文块（输入 / 输出内容）。
@@ -68,7 +55,7 @@ function LogTextBlock({ text, truncated, empty = "-" }) {
       </pre>
       {truncated ? (
         <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
-          已截断（仅保存前 4000 字符；完整内容会超出日志列的存储上限）
+          原文较长，已保留部分内容（最多 4000 字符）
         </span>
       ) : null}
     </div>
@@ -76,7 +63,7 @@ function LogTextBlock({ text, truncated, empty = "-" }) {
 }
 
 const RANGE_OPTIONS = [
-  { value: 1, label: "今天" },
+  { value: 1, label: "近 24 小时" },
   { value: 7, label: "近 7 天" },
   { value: 30, label: "近 30 天" },
   { value: 0, label: "全部时间" },
@@ -92,8 +79,6 @@ export default function LogPage() {
   const { message } = AntApp.useApp();
   const isAdmin = Number(user?.role) >= 100;
   const perUnit = unitsPerOd(status);
-  // < 768px（手机）：模型列要放宽，否则模型名被截成 `deepseek-v4.1-fl`
-  const isNarrow = !Grid.useBreakpoint().md;
 
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
@@ -191,31 +176,35 @@ export default function LogPage() {
   const [hourly, setHourly] = useState([]);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
+  const analysisRequest = useRef(0);
 
   const loadAnalysis = useCallback(
-    async (daysArg) => {
+    async () => {
+      const request = ++analysisRequest.current;
       setAnalysisLoading(true);
       setAnalysisError("");
       try {
-        const d = await API.get("/log/usage/analysis", { params: { days: daysArg } });
+        const d = await API.get("/log/usage/analysis", { params });
+        if (request !== analysisRequest.current) return;
         setByDay(Array.isArray(d?.byDay) ? d.byDay : []);
         setByModel(Array.isArray(d?.byModel) ? d.byModel : []);
         setModelSeries(Array.isArray(d?.modelSeries) ? d.modelSeries : []);
         setHourly(Array.isArray(d?.hourly) ? d.hourly : []);
       } catch (e) {
+        if (request !== analysisRequest.current) return;
         setAnalysisError(e.message || "分析数据加载失败");
       } finally {
-        setAnalysisLoading(false);
+        if (request === analysisRequest.current) setAnalysisLoading(false);
       }
     },
-    []
+    [params]
   );
 
   // 展开时按当前时间范围加载；切范围后重新拉
   useEffect(() => {
-    if (analysisOpen) loadAnalysis(days);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [analysisOpen, days]);
+    if (analysisOpen) loadAnalysis();
+    return () => { analysisRequest.current += 1; };
+  }, [analysisOpen, loadAnalysis]);
 
   // 筛选下拉的候选项（模型/密钥/分组）：与列表同一时间口径（含「全部」）
   useEffect(() => {
@@ -240,10 +229,10 @@ export default function LogPage() {
     {
       title: "时间",
       dataIndex: "created_at",
-      width: 165,
+      width: 115,
       sorter: (a, b) => (a.created_at || 0) - (b.created_at || 0),
       defaultSortOrder: "descend",
-      render: (t) => <span className="oo-num" style={{ whiteSpace: "nowrap" }}>{fmtDate(t)}</span>,
+      render: (t) => <span className="oo-num" title={fmtDate(t)} style={{ display: "inline-flex", flexDirection: "column", gap: 2, whiteSpace: "nowrap", fontSize: 12 }}><span>{fmtDate(t, "HH:mm:ss")}</span><span style={{ color: "var(--ink-3)", fontSize: 11 }}>{fmtDate(t, "YYYY-MM-DD")}</span></span>,
     },
     // 管理员：用户（头像 + 名字）；普通用户看到的是自己，不需要这一列
     ...(isAdmin
@@ -251,7 +240,7 @@ export default function LogPage() {
           {
             title: "用户",
             dataIndex: "username",
-            width: 130,
+            width: 115,
             render: (v, r) => <UserAvatar user={{ id: r.user_id, username: v }} size={22} showName />,
           },
         ]
@@ -261,7 +250,7 @@ export default function LogPage() {
       dataIndex: "model",
       // 窄屏加宽：模型名是这一列的核心信息，被截成 `deepseek-v4.1-fl`
       // 就失去意义了（黑盒测试在 390 视口实测：单元格 145px、内容 158px，被右侧裁掉）。
-      width: isNarrow ? 190 : 145,
+      width: 190,
       // channelType 是**兜底**：模型名判定不出来时（OpenCode 的 omen-alpha、
       // 聚合渠道的 openrouter/free）退回该渠道的厂商图标。
       // 用户要求：「应该是跟随其厂商的图标啊」——渠道就是这些模型的厂商来源。
@@ -281,7 +270,7 @@ export default function LogPage() {
           {
             title: "分组",
             dataIndex: "group_name",
-            width: 135,
+            width: 120,
             render: (v) => {
               const name = displayGroupName(v);
               // 「公共池」已废弃：空分组是历史数据的缺归属状态，显示为「未分组」
@@ -295,7 +284,7 @@ export default function LogPage() {
     {
       title: "计费",
       dataIndex: "quota",
-      width: 110,
+      width: 100,
       sorter: (a, b) => (Number(a.quota) || 0) - (Number(b.quota) || 0),
       render: (q) => {
         const n = Number(q) || 0;
@@ -315,35 +304,15 @@ export default function LogPage() {
     {
       title: "Tokens",
       dataIndex: "prompt_tokens",
-      width: 135,
-      render: (v, r) => (
-        <Tooltip title={`提示 ${v} · 补全 ${r.completion_tokens}${r.cache_tokens ? ` · 缓存 ${r.cache_tokens}` : ""}`}>
-          <span className="oo-num" style={{ fontSize: 12.5, whiteSpace: "nowrap" }}>
-            {Number(v) || 0}
-            <span style={{ color: "var(--ink-3)" }}> / </span>
-            {Number(r.completion_tokens) || 0}
-            {Number(r.cache_tokens) > 0 ? (
-              <span className="bui-chip bui-chip--green" style={{ fontSize: 10.5, height: 16, lineHeight: "16px", padding: "0 4px", marginLeft: 4 }}>
-                缓{r.cache_tokens}
-              </span>
-            ) : null}
-          </span>
-        </Tooltip>
-      ),
+      width: 164,
+      render: (v, r) => <TokenCell promptTokens={v} completionTokens={r.completion_tokens} cacheTokens={r.cache_tokens} />,
     },
     {
-      title: "总耗时",
+      title: "耗时",
       dataIndex: "elapsed_ms",
-      width: 88,
+      width: 112,
       sorter: (a, b) => (a.elapsed_ms || 0) - (b.elapsed_ms || 0),
-      render: (v) => <span className="oo-num" style={{ color: msColor(v) }}>{ms(v)}</span>,
-    },
-    {
-      title: "首Token",
-      dataIndex: "first_token_ms",
-      width: 88,
-      sorter: (a, b) => (a.first_token_ms || 0) - (b.first_token_ms || 0),
-      render: (v) => <span className="oo-num" style={{ color: msColor(v) }}>{ms(v)}</span>,
+      render: (v, r) => <DurationCell firstTokenMs={r.first_token_ms} elapsedMs={v} />,
     },
     // 管理员：渠道与密钥
     ...(isAdmin
@@ -351,7 +320,7 @@ export default function LogPage() {
           {
             title: "渠道",
             dataIndex: "channel_name",
-            width: 140,
+            width: 120,
             ellipsis: true,
             render: (v, r) =>
               v ? (
@@ -374,7 +343,7 @@ export default function LogPage() {
     {
       title: "密钥",
       dataIndex: "token_name",
-      width: 120,
+      width: 110,
       ellipsis: true,
       render: (v, r) =>
         v ? (
@@ -392,7 +361,7 @@ export default function LogPage() {
     {
       title: "调用内容",
       dataIndex: "content",
-      width: 220,
+      width: 185,
       ellipsis: true,
       render: (text) => (
         <Tooltip title={normalizeCurrency(text)}>
@@ -401,25 +370,11 @@ export default function LogPage() {
       ),
     },
     {
-      title: "IP",
+      title: "来源",
       dataIndex: "ip",
-      width: 115,
+      width: 150,
       ellipsis: true,
-      render: (v) => <span className="oo-num" style={{ color: "var(--ink-3)" }}>{v || "-"}</span>,
-    },
-    {
-      title: "设备",
-      dataIndex: "device",
-      width: 120,
-      ellipsis: true,
-      render: (v, r) =>
-        v ? (
-          <Tooltip title={isAdmin && r.user_agent ? r.user_agent : undefined}>
-            <span className="oo-truncate" style={{ fontSize: 12.5 }}>{v}</span>
-          </Tooltip>
-        ) : (
-          <span style={{ color: "var(--ink-3)" }}>-</span>
-        ),
+      render: (v, r) => <Tooltip title={isAdmin && r.user_agent ? r.user_agent : `${v || "—"} · ${r.device || "未知设备"}`}><span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, fontSize: 11 }}><span className="oo-num oo-truncate">{v || "—"}</span><span className="oo-truncate" style={{ color: "var(--ink-3)" }}>{r.device || "未知设备"}</span></span></Tooltip>,
     },
   ];
 
@@ -559,7 +514,7 @@ export default function LogPage() {
           loading={analysisLoading}
           error={analysisError}
           perUnit={perUnit}
-          onRefresh={() => loadAnalysis(days)}
+          onRefresh={loadAnalysis}
         />
       ) : null}
 
@@ -583,7 +538,7 @@ export default function LogPage() {
           // scroll.x 必须 ≥ 各列宽度之和，否则带 ellipsis 的列会被压成 0 宽（table-layout: fixed）
           // 窄屏总宽要跟着降：模型列加宽后仍按 1180 会挤压其他列。
           // 手机上主要靠横向滚动，但至少模型名要能在滚动后看全。
-          scroll={{ x: isAdmin ? 1720 : isNarrow ? 1240 : 1180 }}
+          scroll={{ x: columns.reduce((sum, col) => sum + (Number(col.width) || 0), 0) }}
           onRow={(r) => ({
             style: { cursor: "pointer" },
             // 键盘可达：整行是详情入口，只给 onClick 会让键盘用户无法打开
@@ -708,14 +663,14 @@ export default function LogPage() {
                 <Descriptions.Item label="输入内容">
                   <LogTextBlock
                     text={parsedDetail?.prompt_text}
-                    truncated={parsedDetail?.text_truncated}
+                    truncated={parsedDetail?.prompt_truncated ?? parsedDetail?.text_truncated}
                     empty="（该记录未存输入原文，可能是本次升级之前的调用）"
                   />
                 </Descriptions.Item>
                 <Descriptions.Item label="输出内容">
                   <LogTextBlock
                     text={parsedDetail?.output_text}
-                    truncated={parsedDetail?.text_truncated}
+                    truncated={parsedDetail?.output_truncated ?? parsedDetail?.text_truncated}
                     empty="（该记录未存输出原文，可能是本次升级之前的调用）"
                   />
                 </Descriptions.Item>

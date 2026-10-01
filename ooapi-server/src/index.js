@@ -237,7 +237,8 @@ async function bootstrap() {
     const hash = await bcrypt.hash(pwd, 10);
     const now = Math.floor(Date.now() / 1000);
     await pool.query(
-      "INSERT INTO users (username, password, display_name, role, status, quota, aff_code, group_name, created_time) VALUES (?,?,?,100,1,?,?,?,?)",
+      "INSERT INTO users (username, password, display_name, role, status, quota, aff_code, group_name, created_time) VALUES (?,?,?,1000,1,?,?,?,?)",
+      // 首次安装的拥有者必须能任免管理员；已有账号的角色不在启动时自动提升。
       // group_name 留空 = 公共池（"default" 是已废弃的历史值，只在启动清理时被归一）
       ["root", hash, "超级管理员", 10000000, "ROOT0001", "", now]
     );

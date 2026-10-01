@@ -1,0 +1,21 @@
+import assert from "node:assert/strict";
+import { logTexts } from "../src/services/log-text.js";
+
+const simple = logTexts({ calls: [{ prompt: "system\nuser question", output: "answer" }] });
+assert.equal(simple.prompt_text, "system\nuser question");
+assert.equal(simple.output_text, "answer");
+assert.equal(simple.text_truncated, false);
+const multiple = logTexts({ calls: [{ prompt: "first", output: "tool request" }, { prompt: "second", output: "final answer" }] });
+assert.match(multiple.prompt_text, /调用 1[\s\S]*first[\s\S]*调用 2[\s\S]*second/);
+assert.match(multiple.output_text, /tool request[\s\S]*final answer/);
+assert.equal(multiple.call_count, 2);
+const long = logTexts({ prompt: `SYSTEM${"x".repeat(8000)}LATEST USER QUESTION`, output: "y".repeat(7000) });
+assert.equal(long.prompt_text.length, 4000);
+assert.match(long.prompt_text, /^SYSTEM/);
+assert.match(long.prompt_text, /LATEST USER QUESTION$/);
+assert.equal(long.output_text.length, 4000);
+assert.equal(long.prompt_truncated, true);
+assert.equal(long.output_truncated, true);
+const json = JSON.stringify(logTexts({ prompt: "\u0000".repeat(9000), output: "\u0000".repeat(9000) }));
+assert.ok(Buffer.byteLength(json) < 65535);
+console.log("日志原文回归：单步、多步、首尾截断、逐字段标记、TEXT 容量均通过");

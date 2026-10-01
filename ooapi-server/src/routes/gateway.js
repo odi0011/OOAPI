@@ -603,6 +603,8 @@ async function settle({
       //      要复核「为什么这么贵」就得看到真正发出去的那段。
       prompt_text: String(prompt || "").slice(0, 4000),
       output_text: String(output || "").slice(0, 4000),
+      prompt_truncated: String(prompt || "").length > 4000,
+      output_truncated: String(output || "").length > 4000,
       // 被截断时明确标记 —— 否则管理员会误以为「模型只输出了 4000 字」
       text_truncated: String(prompt || "").length > 4000 || String(output || "").length > 4000,
       requestId}),

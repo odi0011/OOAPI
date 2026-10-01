@@ -12,7 +12,8 @@ import { ok, fail, asyncHandler, now, safeInt, clientIp } from "../utils.js";
 import { authRequired, preAuthJwt } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
-import { getPrice, computeCost, splitTokens, sumCallTokens, estimateTokens, loadPrices, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
+import { logTexts } from "../services/log-text.js";
+import { getPrice, computeCost, splitTokens, sumCallTokens, loadPrices, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { groupConfigOf, applyGroupRate, parseGroupKey, displayGroupName } from "../services/group-rate.js";
 import { allPublicModels, resolveAliasSync, canonicalModelName, modelInAllowList } from "../services/models.js";
 import { rowToChannel, channelInGroup, collectAvailableModels } from "../services/router.js";
@@ -638,7 +639,7 @@ router.post(
 // ---------- 计费（用户额度）----------
 // 与网关同一套原子扣费；harness 传进来的 tokens 是「每次上游调用分别 splitTokens 后求和」，
 // 混用 API 渠道（结构化 usage）与反代渠道（usage=null）时不会互相覆盖口径。
-  async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0, keyName = "", startedAt = 0, firstTokenAt = 0, userAgent = "", ip = "", calls = null, tokenQuotaHold = 0 }) {
+  async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0, keyName = "", startedAt = 0, firstTokenAt = 0, userAgent = "", ip = "", calls = null, tokenQuotaHold = 0, sessionId = "" }) {
     let { promptTokens, completionTokens, cacheTokens } =
       tokens || splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
@@ -744,6 +745,8 @@ router.post(
       channel_ids: Array.isArray(channelIds) && channelIds.length ? channelIds : undefined,
       model,
       kind,
+      ...logTexts({ prompt, output, calls }),
+      session_id: sessionId || undefined,
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
       cache_tokens: cacheTokens,
@@ -1161,6 +1164,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       tokens,
       // 逐次调用分别判峰谷档（整轮跨分界点时不再全部按发起时刻计价）
       calls: runCalls,
+      sessionId: session.id,
       channel: channelName ? { name: channelName } : null,
       channelIds: runChannelIds,
       groupName: routeGroup,
@@ -1216,8 +1220,6 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
 
     // 已消耗的部分照常计费（用户确实为这些 token 付了上游成本）：
     // 失败/中止时最后一次调用没有 usage，按 prompt/输出字符数估算补上。
-    const tokens = aggregate(runCalls);
-    const partial = runParts.filter((p) => p.type === "text").map((p) => p.text).join("");
     // 失败的那一步不进 runCalls（loop.js 只在 runCompletion 成功后才 record），
     // 若只按 runCalls 汇总，那一步的 prompt 完全不计费 —— 而失败步往往带着
     // 整轮最长的上下文（历史 + 工具结果），是漏收最多的一处。
@@ -1227,27 +1229,22 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
     // NO_CHANNEL / UNSUPPORTED_CHANNEL / VISION_NOT_SUPPORTED 这类错误发生在
     // 调上游**之前**，上游零消耗，对它们计费就是无中生有。
     const upstreamStarted = err?.upstreamStarted === true;
-    const failedCall = upstreamStarted
+    const failedCall = upstreamStarted && !err?.billingRecorded
       ? {
           prompt: err?.billingPrompt || "",
-          output: partial,
+          // 失败步只算自己的输出；整轮 parts 还含已经计费的前序正文，不能重复收费。
+          output: String(err?.billingOutput || ""),
           usage: null,
           startedAt: err?.billingStartedAt || startedAt,
+          firstTokenAt: err?.billingFirstTokenAt || 0,
+          channelId: Number(err?.channelId) || 0,
+          channel: err?.channelName || "",
           tokens: null,
         }
       : null;
-    // 门槛也要带上 failedCall.prompt：首步就失败且没有任何输出时
-    // （模型不支持、渠道未就绪、首步超时），三个旧条件全是 0/0/""，
-    // 整轮会被完全跳过 —— 而这类失败的上游其实已经吃掉了整段上下文。
-    if (!settled && (tokens.promptTokens || tokens.completionTokens || partial || failedCall?.prompt)) {
-      if (partial && !tokens.completionTokens) {
-        // 只有整轮都没有 usage（中途失败）才按字符估算；
-        // 已有精确 completion 计费时再按差额补会重复计费（估算值通常高于真实 token）。
-        tokens.completionTokens += estimateTokens(partial);
-        // prompt 用「失败步的完整上下文」估算，而不是只算本轮用户输入 ——
-        // 后者漏掉 system 提示与全部历史，而 harness 的 system 提示常常上万字符。
-        tokens.promptTokens += estimateTokens(failedCall?.prompt || content);
-      }
+    const billedCalls = failedCall ? [...runCalls, failedCall] : runCalls;
+    // 工具/子代理会提前记录失败消耗。统一以逐调用账单结算，既不漏收，也不把整轮正文重算。
+    if (!settled && billedCalls.length) {
       try {
         await chargeUser({
           user,
@@ -1255,12 +1252,13 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           prompt: "",
           output: "",
           usage: null,
-          tokens,
+          tokens: sumCallTokens(billedCalls),
           // 逐次调用计费。只有失败步时也要走 calls 分支，否则 chargeUser 会用
           // 上面那个被忽略的 tokens（有 usage 的情况下它并不完整）。
-          calls: failedCall ? [...runCalls, failedCall] : null,
-          channel: channelName ? { name: channelName } : null,
-          channelIds: [...new Set(runCalls.map((c) => Number(c.channelId) || 0).filter(Boolean))],
+          calls: billedCalls,
+          sessionId: session.id,
+          channel: (channelName || billedCalls.find((c) => c.channel)?.channel) ? { name: channelName || billedCalls.find((c) => c.channel)?.channel } : null,
+          channelIds: [...new Set(billedCalls.map((c) => Number(c.channelId) || 0).filter(Boolean))],
           groupName: routeGroup,
           kind: stopped ? "对话（已停止）" : "对话（部分）",
           keyId,
@@ -1268,7 +1266,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           ip,
           userAgent,
           startedAt,
-          firstTokenAt: (runCalls.find((c) => c.firstTokenAt) || {}).firstTokenAt || 0,
+          firstTokenAt: (billedCalls.find((c) => c.firstTokenAt) || {}).firstTokenAt || 0,
           tokenQuotaHold: quotaHold?.amount || 0,
         });
         quotaHold?.consume();

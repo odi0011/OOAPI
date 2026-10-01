@@ -18,6 +18,7 @@ import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import { VendorIcon, ModelLabel, GroupVendorIcons, GroupTag } from "../components/VendorIcon";
 import ModelPicker from "../components/ModelPicker";
+import { DurationCell } from "../components/UsageCells";
 import QuotaPanel, { QuotaInline } from "../components/ChannelQuota";
 // SERIES_COLORS：渠道「用量统计」弹窗里按模型画多条折线时取色。
 // 必须显式导入 —— 此前只有引用没有导入，打开该弹窗会抛
@@ -2212,7 +2213,7 @@ export default function AdminChannelsPage() {
     {
       title: "响应",
       dataIndex: "response_time",
-      width: 94,
+      width: 112,
       render: (v, r) => {
         if (!r.tested_time) return <Text type="secondary" style={{ fontSize: 12 }}>未测</Text>;
         // 展示**首 Token 耗时**（ttft_ms），总耗时放悬浮里。
@@ -2221,13 +2222,7 @@ export default function AdminChannelsPage() {
         // 首字到达才是体感上的「响应」，总耗时把整段生成/思考都算进去了。
         const ttft = Number(r.ttft_ms) || Number(v) || 0;
         const total = Number(v) || 0;
-        return (
-          <Tooltip title={total && total !== ttft ? `首 Token ${ttft}ms ｜ 总耗时 ${total}ms（含全部生成/思考）` : ""}>
-            <span className="oo-num" style={{ color: ttft > UPTIME_SLOW_MS ? "var(--orange)" : "var(--ink)" }}>
-              {ttft ? `${ttft}ms` : "-"}
-            </span>
-          </Tooltip>
-        );
+        return <DurationCell firstTokenMs={ttft} elapsedMs={total} />;
       },
     },
     {

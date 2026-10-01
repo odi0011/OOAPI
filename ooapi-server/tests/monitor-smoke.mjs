@@ -17,12 +17,19 @@ import jwt from "jsonwebtoken";
 const BASE = process.env.SMOKE_BASE || "http://127.0.0.1:3001";
 
 const { JWT_SECRET, pool } = await import("../src/db.js");
+const { DEFAULT_OPTIONS } = await import("../src/config.js");
 
 let passed = 0;
 let failed = 0;
+let skipped = 0;
+const SKIP = Symbol("skip");
 async function check(name, fn) {
   try {
-    await fn();
+    if (await fn() === SKIP) {
+      skipped += 1;
+      console.log(`  skip  ${name}`);
+      return;
+    }
     passed += 1;
     console.log(`  ok  ${name}`);
   } catch (e) {
@@ -32,7 +39,7 @@ async function check(name, fn) {
 }
 
 // 不依赖管理员密码：直接用 JWT_SECRET 签一个管理员令牌（本机测试专用）
-const [[admin]] = await pool.query("SELECT id, username, role, token_version FROM users WHERE role >= 100 LIMIT 1");
+const [[admin]] = await pool.query("SELECT id, username, role, token_version FROM users WHERE role >= 100 ORDER BY role DESC, id LIMIT 1");
 if (!admin) {
   console.error("数据库里没有管理员账号，无法测试");
   process.exit(1);
@@ -42,7 +49,9 @@ const token = jwt.sign(
   JWT_SECRET,
   { expiresIn: "10m" }
 );
-const H = { authorization: `Bearer ${token}` };
+// 用唯一 UA 精确清理本轮保存设置产生的日志，不删管理员其他操作。
+const smokeUa = `OOAPI-Monitor-Smoke/${Date.now()}-${process.pid}`;
+const H = { authorization: `Bearer ${token}`, "user-agent": smokeUa };
 
 const req = async (path, opts = {}) => {
   const r = await fetch(`${BASE}${path}`, {
@@ -59,7 +68,34 @@ const req = async (path, opts = {}) => {
   return { status: r.status, body };
 };
 
-console.log(`冒烟测试目标：${BASE}（管理员 ${admin.username}）\n`);
+// 静默必须覆盖求值，且恢复通知也要关闭；force=true 会跳过静默并真实外发。
+// 保存精确原值并恢复，原窗口已开启时不能被冒烟测试的「关闭」操作解除。
+async function withSilence(fn) {
+  const keys = ["alert_silence_enabled", "alert_silence_until", "alert_silence_reason", "alert_notify_resolved"];
+  const [rows] = await pool.query(`SELECT key_str, value FROM options WHERE key_str IN (${keys.map(() => "?").join(",")})`, keys);
+  const saved = new Map(rows.map((r) => [r.key_str, r.value]));
+  const restore = Object.fromEntries(keys.map((key) => [key, saved.get(key) ?? DEFAULT_OPTIONS[key]]));
+  try {
+    const notifications = await req("/api/option/", { method: "PUT", body: JSON.stringify({ alert_notify_resolved: "false" }) });
+    assert.equal(notifications.status, 200, "无法关闭恢复通知，拒绝继续真实求值");
+    const minutes = Math.max(5, Math.ceil((Number(restore.alert_silence_until) - Date.now()) / 60000));
+    const on = await req("/api/monitor/alert/silence", { method: "POST", body: JSON.stringify({ minutes, reason: "冒烟测试临时静默" }) });
+    assert.equal(on.status, 200, "无法开启静默，拒绝继续真实求值");
+    const cfg = await req("/api/monitor/alert/config");
+    assert.equal(cfg.body.data.silenced, true, "求值前必须确认静默生效");
+    return await fn();
+  } finally {
+    const restored = await req("/api/option/", { method: "PUT", body: JSON.stringify(restore) });
+    assert.equal(restored.status, 200, "原维护窗口恢复失败");
+    // 原先没有显式行时恢复为默认缓存值，并删除本轮新写的配置行。
+    const absent = keys.filter((key) => !saved.has(key));
+    if (absent.length) await pool.query(`DELETE FROM options WHERE key_str IN (${absent.map(() => "?").join(",")})`, absent);
+    const [after] = await pool.query(`SELECT key_str, value FROM options WHERE key_str IN (${keys.map(() => "?").join(",")})`, keys);
+    assert.deepEqual(after.sort((a, b) => a.key_str.localeCompare(b.key_str)), rows.sort((a, b) => a.key_str.localeCompare(b.key_str)), "维护设置必须按原值恢复");
+  }
+}
+
+console.log(`冒烟测试目标：${BASE}\n`);
 
 console.log("鉴权");
 await check("未带令牌访问监控接口应 401", async () => {
@@ -204,15 +240,25 @@ await check("GET /api/monitor/alert/config 返回通道状态", async () => {
 });
 
 await check("POST /api/monitor/alert/evaluate 能跑通求值", async () => {
-  const r = await req("/api/monitor/alert/evaluate", { method: "POST", body: JSON.stringify({ force: true }) });
-  assert.equal(r.status, 200, `HTTP ${r.status} ${JSON.stringify(r.body).slice(0, 200)}`);
-  assert.ok(typeof r.body.data.rules === "number", "缺 rules 计数");
-  assert.ok(Array.isArray(r.body.data.events), "缺 events");
+  // 已有 firing 事件可能被求值改成 resolved；真实维护窗口内不改其历史状态。
+  const [[active]] = await pool.query("SELECT COUNT(*) AS n FROM alert_events WHERE status = 'firing'");
+  if (Number(active.n)) {
+    console.log("  当前已有告警正在触发，保留既有事件状态，跳过真实求值");
+    return SKIP;
+  }
+  await withSilence(async () => {
+    const r = await req("/api/monitor/alert/evaluate", { method: "POST", body: JSON.stringify({ force: false }) });
+    assert.equal(r.status, 200, `HTTP ${r.status}`);
+    assert.ok(typeof r.body.data.rules === "number", "缺 rules 计数");
+    assert.ok(Array.isArray(r.body.data.events), "缺 events");
+    assert.equal(r.body.data.silenced, true, "求值必须保持静默");
+    assert.equal(r.body.data.events.length, 0, "静默求值不能创建/恢复既有告警事件");
+  });
 });
 
 await check("规则 CRUD 全流程（建→改→停用→删）", async () => {
   const body = {
-    name: "冒烟测试规则",
+    name: smokeUa,
     metric: "error_rate",
     operator: ">",
     threshold: 99,
@@ -220,12 +266,15 @@ await check("规则 CRUD 全流程（建→改→停用→删）", async () => {
     sustained_min: 5,
     cooldown_min: 60,
     severity: "P3",
+    notify_email: false,
+    notify_webhook: false,
   };
   const c = await req("/api/monitor/alert/rules", { method: "POST", body: JSON.stringify(body) });
   assert.equal(c.status, 200, `创建失败 HTTP ${c.status} ${JSON.stringify(c.body).slice(0, 200)}`);
   const id = c.body.data.id;
   assert.ok(id > 0, "创建未返回 id");
 
+  try {
   const u = await req(`/api/monitor/alert/rules/${id}`, { method: "PUT", body: JSON.stringify({ ...body, threshold: 88 }) });
   assert.equal(u.status, 200, `更新失败 ${JSON.stringify(u.body).slice(0, 200)}`);
 
@@ -242,6 +291,12 @@ await check("规则 CRUD 全流程（建→改→停用→删）", async () => {
   assert.equal(d.status, 200, `删除失败 ${JSON.stringify(d.body).slice(0, 200)}`);
   const after = await req("/api/monitor/alert/rules");
   assert.ok(!after.body.data.find((r) => r.id === id), "删除后不应还能查到");
+  } finally {
+    // 中途断言失败也只清理本轮创建的精确规则 id。
+    await pool.query("DELETE FROM alert_notify_logs WHERE rule_id = ?", [id]);
+    await pool.query("DELETE FROM alert_events WHERE rule_id = ?", [id]);
+    await pool.query("DELETE FROM alert_rules WHERE id = ?", [id]);
+  }
 });
 
 await check("非法规则被拒绝（避免静默失效的规则）", async () => {
@@ -257,15 +312,11 @@ await check("非法规则被拒绝（避免静默失效的规则）", async () =
   assert.equal(badOp.status, 400, `未知比较符应被拒绝，实际 HTTP ${badOp.status}`);
 });
 
-await check("维护窗口开关可切换", async () => {
-  const on = await req("/api/monitor/alert/silence", { method: "POST", body: JSON.stringify({ minutes: 5, reason: "冒烟测试" }) });
-  assert.equal(on.status, 200, `开启失败 ${JSON.stringify(on.body).slice(0, 200)}`);
-  const cfg = await req("/api/monitor/alert/config");
-  assert.equal(cfg.body.data.silenced, true, "开启后 silenced 应为 true");
-  const off = await req("/api/monitor/alert/silence", { method: "POST", body: JSON.stringify({ minutes: 0 }) });
-  assert.equal(off.status, 200, `关闭失败 ${JSON.stringify(off.body).slice(0, 200)}`);
-  const cfg2 = await req("/api/monitor/alert/config");
-  assert.equal(cfg2.body.data.silenced, false, "关闭后 silenced 应为 false");
+await check("维护窗口可开启且原有设置完整恢复", async () => {
+  await withSilence(async () => {
+    const cfg = await req("/api/monitor/alert/config");
+    assert.equal(cfg.body.data.silenced, true, "开启后 silenced 应为 true");
+  });
 });
 
 await check("清理接口拒绝 days<=0（防止一键清空历史）", async () => {
@@ -325,14 +376,13 @@ await check("媒体库统计三个 scope 的字段都是全的", async () => {
   for (const k of want) assert.ok(k in one, `用户视图缺字段 ${k}`);
 });
 
-await check("媒体库列表返回分页结构，且普通用户只能看到自己", async () => {
-  const list = (await req("/api/media/?p=1&page_size=5")).body.data;
+await check("媒体库管理员指定用户列表返回分页结构并按用户过滤", async () => {
+  const list = (await req(`/api/media/?p=1&page_size=5&user_id=${admin.id}`)).body.data;
   assert.ok(Array.isArray(list.items), "items 必须是数组");
   assert.ok(typeof list.total === "number", "缺 total");
   assert.equal(list.page, 1);
   assert.equal(list.page_size, 5);
-  // 每一行都必须属于当前用户（管理员在此接口里也只能按 user_id 过滤，
-  // 不带 user_id 时列表仍按登录用户过滤 —— 全站视图只体现在 stats 上）
+  // 管理员不带 user_id 是全站列表；显式指定用户才要求每行属于该用户。
   for (const it of list.items) {
     assert.equal(Number(it.user_id), admin.id, `列表出现了别人的文件：${JSON.stringify(it)}`);
     assert.ok(typeof it.url === "string" && it.url.includes("/api/media/"), "缺签名 url");
@@ -349,6 +399,7 @@ await check("读取签名 URL 可匿名访问（聊天里的 <img> 带不了 Aut
   assert.equal(r.headers.get("x-content-type-options"), "nosniff", "必须带 nosniff");
 });
 
+await pool.query("DELETE FROM logs WHERE user_id = ? AND user_agent = ?", [admin.id, smokeUa]);
 await pool.end().catch(() => {});
-console.log(`\n${passed} 通过 / ${failed} 失败`);
+console.log(`\n${passed} 通过 / ${failed} 失败 / ${skipped} 跳过`);
 process.exit(failed ? 1 : 0);

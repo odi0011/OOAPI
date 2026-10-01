@@ -251,13 +251,24 @@ router.delete(
     const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
     const user = rows[0];
     if (!user) return fail(res, "用户不存在", 404);
+    // 删除管理员与停用/任免同属权限变更，普通管理员不能删除同级或超管。
+    if (user.role >= 100 && req.user.role < 1000) {
+      return fail(res, "只有超级管理员可以删除管理员账号", 403);
+    }
     // 不能删掉最后一个启用的管理员（否则后台失联、只能改库恢复）
     if (user.role >= 100) {
       const [[{ admins }]] = await pool.query(
-        "SELECT COUNT(*) AS admins FROM users WHERE role >= 100 AND id <> ?",
+        "SELECT COUNT(*) AS admins FROM users WHERE role >= 100 AND status = 1 AND id <> ?",
         [id]
       );
-      if (!admins) return fail(res, "必须至少保留一个管理员");
+      if (!admins) return fail(res, "必须至少保留一个启用的管理员");
+    }
+    if (user.role >= 1000) {
+      const [[{ supers }]] = await pool.query(
+        "SELECT COUNT(*) AS supers FROM users WHERE role >= 1000 AND status = 1 AND id <> ?",
+        [id]
+      );
+      if (!supers) return fail(res, "必须至少保留一个启用的超级管理员");
     }
     // 事务级联删除：用户、令牌、对话数据要么一起删掉，要么一起保留。
     // 之前只删 users+tokens 且无事务，崩溃会留下孤儿令牌，会话/消息正文永久残留。
@@ -302,6 +313,10 @@ router.post(
     if (!id) return fail(res, "用户不存在", 404);
     const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [id]);
     if (!rows[0]) return fail(res, "用户不存在", 404);
+    // 临时令牌拥有目标账号的完整权限：不能让普通管理员借此取得管理员/超管身份。
+    if (rows[0].role >= 100 && req.user.role < 1000) {
+      return fail(res, "只有超级管理员可以签发管理员身份令牌", 403);
+    }
     await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `以用户 #${id} 身份签发临时令牌` });
     return ok(res, { token: signToken(rows[0]) });
   })

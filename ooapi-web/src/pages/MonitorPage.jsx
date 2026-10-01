@@ -20,7 +20,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   App as AntApp, Segmented, Spin, Empty, Tooltip, Table, Tag, Button, Modal, Form,
-  Input, InputNumber, Select, Switch, Space, Popconfirm, Badge, Alert as AntAlert, Divider,
+  Input, InputNumber, Select, Switch, Space, Popconfirm, Badge, Alert as AntAlert, Divider, Grid,
 } from "antd";
 import {
   ReloadOutlined, AlertOutlined, ThunderboltOutlined, PlusOutlined,
@@ -303,9 +303,10 @@ function AlertPanel({ data, onReload }) {
       API.get("/monitor/alert/events?days=7"),
       API.get("/monitor/alert/metrics"),
     ]);
-    if (r.status === "fulfilled") setRules(r.value?.data || []);
-    if (e.status === "fulfilled") setEvents(e.value?.data || { list: [], stat: {}, notify: [] });
-    if (m.status === "fulfilled") setMeta(m.value?.data || { metrics: [], operators: [], severities: [] });
+    // API 已统一解包 data；再次取 .data 会把正常响应读成空面板。
+    if (r.status === "fulfilled") setRules(r.value || []);
+    if (e.status === "fulfilled") setEvents(e.value || { list: [], stat: {}, notify: [] });
+    if (m.status === "fulfilled") setMeta(m.value || { metrics: [], operators: [], severities: [] });
   }, []);
 
   useEffect(() => {
@@ -377,7 +378,7 @@ function AlertPanel({ data, onReload }) {
       render: (_, r) => (
         <Space size={2}>
           <Button size="small" type="text" icon={<EditOutlined />} onClick={() => setRuleModal({ open: true, rule: r })} />
-          <Popconfirm title="删除这条规则？" onConfirm={() => act(() => API.delete(`/monitor/alert/rules/${r.id}`), "已删除")}>
+          <Popconfirm title="删除这条规则？" onConfirm={() => act(() => API.del(`/monitor/alert/rules/${r.id}`), "已删除")}>
             <Button size="small" type="text" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
@@ -520,6 +521,8 @@ const REFRESH_OPTIONS = [
 
 export default function MonitorPage() {
   const { message } = AntApp.useApp();
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.md;
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -542,7 +545,7 @@ export default function MonitorPage() {
       try {
         const r = await API.get("/monitor/snapshot");
         if (r?.success === false) throw new Error(r.message || "加载失败");
-        setData(r.data);
+        setData(r);
         setError("");
       } catch (e) {
         setError(e.message || "加载失败");
@@ -581,7 +584,7 @@ export default function MonitorPage() {
       if (closed) return;
       try {
         const r = await API.post("/monitor/stream-ticket");
-        const ticket = r?.data?.ticket;
+        const ticket = r?.ticket;
         if (!ticket || closed) return;
         es = new EventSource(`/api/monitor/stream?interval=3000&ticket=${encodeURIComponent(ticket)}`);
         esRef.current = es;
@@ -756,14 +759,16 @@ export default function MonitorPage() {
       {/* 顶部监控导航标签：聚焦不同运维场景，消除单页瀑布流发散 */}
       <div style={{ marginBottom: 14 }}>
         <Segmented
-          size="middle"
+          // 四个完整说明在手机上需要 559px；保留全部场景入口，用简洁标签均分可用宽度。
+          size={isMobile ? "small" : "middle"}
+          block={isMobile}
           value={activeTab}
           onChange={setActiveTab}
           options={[
-            { value: "overview", label: "🔥 核心状态与大屏" },
-            { value: "infra", label: "💻 系统资源与耗时" },
-            { value: "traffic", label: "🌐 流量调度与排行" },
-            { value: "alerts", label: "🔔 告警管理与维护" },
+            { value: "overview", label: isMobile ? "核心状态" : "🔥 核心状态与大屏" },
+            { value: "infra", label: isMobile ? "系统资源" : "💻 系统资源与耗时" },
+            { value: "traffic", label: isMobile ? "流量调度" : "🌐 流量调度与排行" },
+            { value: "alerts", label: isMobile ? "告警维护" : "🔔 告警管理与维护" },
           ]}
           style={{ fontWeight: 500 }}
         />

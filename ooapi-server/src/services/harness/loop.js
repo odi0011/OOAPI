@@ -395,7 +395,8 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
               signal,
               emit: null, // 子代理过程不直接展示，结果通过 task 工具返回
               onTodo: null,
-              onCall: record,
+              // 子循环共用 billing 数组；回调只通知路由，不能再经父 record 重复入账。
+              onCall,
               modelCaps},
             billing,
             depth + 1
@@ -431,6 +432,8 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
     // 本步耗时与首 token 时刻：只用于「使用记录」的延迟展示，不计入计费
     const stepStartedAt = Date.now();
     let stepFirstTokenAt = 0;
+    let stepContent = "";
+    let stepReasoning = "";
     const markStepFirstToken = () => {
       if (!stepFirstTokenAt) stepFirstTokenAt = Date.now();
     };
@@ -469,18 +472,25 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
         user,
         signal,
         onDelta: (t) => {
+          if (!t) return;
+          stepContent += t;
           markStepFirstToken();
           appendText(stream.push(t));
         },
         onReasoning: (t) => {
+          if (!t) return;
+          stepReasoning += t;
           markStepFirstToken();
           appendReasoning(t);
         }});
     } catch (e) {
-      // 带上计费上下文：失败步的 prompt 与发起时刻
+      // 只带当前失败步的原始输出（含思考），不能拿整轮 parts 补账：
+      // 之前的成功步已按 usage 计费，再拼进去会重复收取它们的正文。
       if (e && typeof e === "object") {
         e.billingPrompt = stepPrompt;
         e.billingStartedAt = stepStartedAt;
+        e.billingOutput = `${stepContent}${stepReasoning}`;
+        e.billingFirstTokenAt = stepFirstTokenAt;
       }
       throw e;
     }

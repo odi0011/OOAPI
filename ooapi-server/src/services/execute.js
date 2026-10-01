@@ -44,6 +44,16 @@ export function isRetryable(code) {
   return RETRYABLE.has(code);
 }
 
+// 这些错误在模型请求前的能力/配置检查就会抛出，不能因为进过 adapter.chat
+// 就估算收取输入费。适配器也可显式带 upstreamStarted=false 标记本地拒绝。
+const LOCAL_REJECTION_CODES = new Set([
+  "VISION_NOT_SUPPORTED",
+  "CHANNEL_UNSUPPORTED",
+  "UNSUPPORTED_CHANNEL",
+  "CHANNEL_CONFIG_ERROR",
+  "CHANNEL_NOT_READY",
+]);
+
 /**
  * 执行一次对话。会按优先级依次尝试可用渠道，首个成功的渠道返回结果。
  * @param {object} opts
@@ -123,6 +133,7 @@ export async function runCompletion({
     const started = Date.now();
     let sawOutput = false;
     let timedOut = false;
+    let attemptStarted = false;
 
     // 组合「客户端断开」与「单渠道超时」两个中止源
     const attemptCtrl = new AbortController();
@@ -168,12 +179,13 @@ export async function runCompletion({
         withChannelLimit(channel, () => {
           // 排队期间可能已经被 backstop 判超时：这时不必再发请求（上游会被 abort 立刻打断）
           if (settled) return Promise.reject(Object.assign(new Error("渠道排队超时"), { code: "CHANNEL_TIMEOUT" }));
+          if (attemptCtrl.signal.aborted) {
+            return Promise.reject(Object.assign(new Error("请求已取消"), { code: "ABORTED", upstreamStarted: false }));
+          }
           callStarted = Date.now();
           armDeadline();
-          // 标记「这次真的要打上游了」：失败时上游已经消耗了我们的上下文
-          // （提示词可能上万 token），计费侧据此决定是否补收。
-          // NO_CHANNEL / 参数类错误发生在更早的阶段，不会置位。
-          upstreamStarted = true;
+          // 先记进入适配器；失败时再排除明确本地拒绝，决定是否补收上下文。
+          attemptStarted = true;
           return adapter.chat({
             channel,
             model,
@@ -252,8 +264,14 @@ export async function runCompletion({
       return { ...result, channel, elapsed: Date.now() - started };
     } catch (err) {
       lastError = tagChannel(err, channel);
+      // 停止也要保留已消耗上下文的证据；原先在赋值前 throw，首步停止会漏账。
+      // 已输出内容优先于错误分类（它直接证明模型请求已开始）。
+      if (sawOutput || (attemptStarted && err.upstreamStarted !== false && !LOCAL_REJECTION_CODES.has(err.code))) {
+        upstreamStarted = true;
+      }
+      lastError.upstreamStarted = upstreamStarted;
       // 客户端主动断开：不再换渠道，直接结束
-      if (signal?.aborted) throw err;
+      if (signal?.aborted) throw lastError;
       // 本渠道超时：转换为可重试错误，换下一个渠道（消息同样只带编号，不带渠道名）
       if (timedOut) {
         lastError = tagChannel(

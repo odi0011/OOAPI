@@ -88,6 +88,13 @@ function visibilityClause(user, alias = "p") {
   return { sql: `AND ${alias}.status = 1`, args: [] };
 }
 
+/** 详情与评论入口共用父帖权限：隐藏仅作者/管理员可读，已删仅管理员可读。 */
+function canReadPost(row, user) {
+  if (!row) return false;
+  if (user?.role >= 100 || Number(row.status) === 1) return true;
+  return Number(row.status) === 3 && Number(row.user_id) === user?.id;
+}
+
 /** 媒体 id 列表 → 含签名 URL 的附件数组（列表页与详情页共用） */
 async function mediaList(raw) {
   const ids = safeJSONParse(raw, []) || [];
@@ -473,8 +480,7 @@ router.get(
       [id]
     );
     if (!row) return fail(res, "帖子不存在", 404);
-    const isOwner = Number(row.user_id) === req.user.id;
-    if (Number(row.status) !== 1 && req.user.role < 100 && !isOwner) return fail(res, "帖子不存在", 404);
+    if (!canReadPost(row, req.user)) return fail(res, "帖子不存在", 404);
     await pool.query("UPDATE community_posts SET view_count = view_count + 1 WHERE id = ?", [id]);
     const authors = await authorsOf([row]);
     const item = await postToResp({ ...row, view_count: Number(row.view_count) + 1 }, { authors });
@@ -690,7 +696,8 @@ router.post(
       sets.push("status = ?");
       args.push(st);
       if (st === 1) {
-        sets.push("deleted_by = NULL", "deleted_time = NULL");
+        // 这两列是 NOT NULL DEFAULT 0；恢复时写 NULL 会在严格 MySQL 中直接 500。
+        sets.push("deleted_by = 0", "deleted_time = 0");
       } else {
         sets.push("deleted_by = ?", "deleted_time = ?");
         args.push(req.user.id, now());
@@ -723,6 +730,9 @@ router.get(
   asyncHandler(async (req, res) => {
     const postId = idParam(req);
     if (!postId) return fail(res, "帖子不存在", 404);
+    // 不校验父帖会让隐藏/删除失效：猜到 id 就能读评论正文，甚至拿到附图签名 URL。
+    const [[post]] = await pool.query("SELECT id, user_id, status FROM community_posts WHERE id = ?", [postId]);
+    if (!canReadPost(post, req.user)) return fail(res, "帖子不存在", 404);
     const { p, size, offset } = pageParams(req.query, 50);
     const vis = visibilityClause(req.user, "c");
     const clause = `WHERE c.post_id = ? ${vis.sql}`;

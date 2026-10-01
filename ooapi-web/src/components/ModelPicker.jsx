@@ -322,7 +322,7 @@ export default function ModelPicker({
         onChange={onChange}
         placeholder="留空 = 该厂商全部模型（不限）；也可直接输入模型名后回车添加"
         options={options.length ? options : list.map((m) => ({ value: m, label: m }))}
-        optionRender={(opt) => <ModelLabel model={opt.value} size={14} />}
+        optionRender={(opt) => <ModelLabel model={opt.value} size={14} channelType={providerKey} />}
         // tags 模式下下拉里会出现「输入的内容 + 回车」的候选项，这里过滤掉纯输入项，
         // 避免它和真实模型名混在一起（antd 用 __rc_select__ 之类的伪选项标记）
         filterOption={(input, opt) => String(opt?.value || "").toLowerCase().includes(String(input || "").toLowerCase())}

@@ -398,6 +398,9 @@ export default function ChatPage() {
   const attachedRef = useRef(""); // 已经接上事件流的会话 id（防重复订阅导致内容重放叠加）
   const busyRef = useRef(busy);
   busyRef.current = busy;
+  const sessionListGenRef = useRef(0);
+  const viewRef = useRef(view);
+  viewRef.current = view;
 
   const models = meta?.models || [];
   const curModel = models.find((m) => m.id === session?.model);
@@ -445,7 +448,9 @@ export default function ChatPage() {
   }, []);
 
   const loadSessions = useCallback(
-    async (nextView = view) => {
+    async (nextView = viewRef.current) => {
+      if (nextView !== viewRef.current) return null;
+      const gen = ++sessionListGenRef.current;
       try {
         // 归档视图与项目视图各自拉取；计数与项目列表每次都刷新（移动/归档后侧栏要立刻更新）
         const archived = nextView === "archived" ? "true" : "false";
@@ -454,16 +459,20 @@ export default function ChatPage() {
           chatApi.listSessions({ archived, projectId }),
           chatApi.listProjects().catch(() => ({ projects: [] })),
         ]);
+        // 旧视图的响应不得覆盖当前列表；null 区分「已作废」与「确实没有会话」。
+        if (gen !== sessionListGenRef.current || nextView !== viewRef.current) return null;
         setSessions(data.sessions || []);
         setCounts(data.counts || { active: 0, archived: 0, byProject: {} });
         setProjects(proj.projects || []);
         return data.sessions || [];
       } catch (e) {
-        toast.error(e.message || "加载会话列表失败");
-        return [];
+        if (gen === sessionListGenRef.current && nextView === viewRef.current) {
+          toast.error(e.message || "加载会话列表失败");
+        }
+        return null;
       }
     },
-    [toast, view]
+    [toast]
   );
 
   /* 元信息只在挂载时加载一次；会话列表随视图变化；卸载时才中止流。
@@ -480,13 +489,10 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    loadSessions();
-  }, [loadSessions]);
-
   useEffect(
     () => () => {
       genRef.current += 1;
+      sessionListGenRef.current += 1;
       runningRef.current?.abort();
     },
     []
@@ -628,6 +634,8 @@ export default function ChatPage() {
   /* ---------- 侧栏：项目 / 归档 / 批量 ---------- */
   const switchView = useCallback(
     (next) => {
+      // 首屏由 boot 加载，切视图只在这里加载一次，避免再被依赖 view 的 effect 重复触发。
+      viewRef.current = next;
       setView(next);
       setSelected(new Set());
       loadSessions(next);
@@ -642,6 +650,7 @@ export default function ChatPage() {
         await chatApi.batch([id], "archive");
         toast.success("已归档");
         const list = await loadSessions();
+        if (!list) return;
         if (sessionRef.current?.id === id) {
           if (list[0]) openSession(list[0].id);
           else {
@@ -669,6 +678,7 @@ export default function ChatPage() {
         const stillThere = !ids.includes(sessionRef.current?.id) || action === "pin" || action === "unpin";
         setSelected(new Set());
         const list = await loadSessions();
+        if (!list) return;
         if (!stillThere && list[0]) openSession(list[0].id);
         else if (!stillThere) setSession(null);
       } catch (e) {
@@ -720,6 +730,7 @@ export default function ChatPage() {
     bootRef.current = true;
     (async () => {
       const list = await loadSessions();
+      if (!list) return;
       const target = (requestedSession && list.find((s) => s.id === requestedSession)?.id) || list[0]?.id;
       if (target) return openSession(target);
       try {

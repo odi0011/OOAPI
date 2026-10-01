@@ -110,7 +110,8 @@ router.get(
     // 告诉前端哪些项当前账号改不了：前端据此置灰，而不是让用户填完才报 403。
     // 后端依然会独立校验（前端置灰只是体验，不是权限边界）。
     const superOnly = req.user.role >= 1000 ? [] : [...SUPER_OPTIONS].filter((k) => k in DEFAULT_OPTIONS);
-    return ok(res, data, "", { super_only: superOnly, is_super: req.user.role >= 1000 });
+    // API 服务只把 data 交给页面；ok 没有第 4 参数，权限元信息必须一同放进 data。
+    return ok(res, { ...data, super_only: superOnly, is_super: req.user.role >= 1000 });
   })
 );
 
