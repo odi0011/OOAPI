@@ -8,7 +8,8 @@
 //   · Approval Card     → Notice（需要用户知晓/确认的一件事）
 //   · Recommendation    → SuggestionCard（欢迎页建议卡）
 //   · Records/Insight   → TodoPanel（会话待办清单，todowrite 工具产出）
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { Tooltip } from "antd";
 import { GroupVendorIcons } from "./VendorIcon";
 
 // 兜底名称：/meta 未返回某个工具时也不要在界面上暴露原始 id
@@ -60,56 +61,21 @@ export function ShelfGroup({ title, children, defaultOpen = true, action }) {
   );
 }
 
-export function ShelfItem({ active, icon, label, hint, onClick, actions, onRename, title }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(label);
-  const inputRef = useRef(null);
-
-  useLayoutEffect(() => {
-    if (editing) inputRef.current?.select();
-  }, [editing]);
-
-  const commit = () => {
-    setEditing(false);
-    const next = draft.trim();
-    if (next && next !== label) onRename?.(next);
-  };
-
-  if (editing) {
-    return (
-      <div className="bui-shelf-row is-editing">
-        <input
-          ref={inputRef}
-          className="bui-shelf-input"
-          value={draft}
-          maxLength={60}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") commit();
-            if (e.key === "Escape") {
-              setDraft(label);
-              setEditing(false);
-            }
-          }}
-        />
-      </div>
-    );
-  }
-
+export function ShelfItem({ active, icon, label, hint, onClick, actions, title }) {
   return (
-    <div className={`bui-shelf-row ${active ? "is-active" : ""}`} title={title || label}>
-      <button
-        type="button"
-        className="bui-shelf-item"
-        aria-current={active ? "true" : undefined}
-        onClick={onClick}
-        onDoubleClick={() => onRename && setEditing(true)}
-      >
-        {icon ? <span className="ic">{icon}</span> : null}
-        <span className="lb">{label}</span>
-        {hint ? <span className="hn">{hint}</span> : null}
-      </button>
+    <div className={`bui-shelf-row ${active ? "is-active" : ""}`}>
+      <Tooltip title={title || label} mouseEnterDelay={0.5}>
+        <button
+          type="button"
+          className="bui-shelf-item"
+          aria-current={active ? "true" : undefined}
+          onClick={onClick}
+        >
+          {icon ? <span className="ic">{icon}</span> : null}
+          <span className="lb">{label}</span>
+          {hint ? <span className="hn">{hint}</span> : null}
+        </button>
+      </Tooltip>
       {actions ? <div className="bui-shelf-actions">{actions}</div> : null}
     </div>
   );

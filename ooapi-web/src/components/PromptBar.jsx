@@ -1,4 +1,5 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Input } from "antd";
 import { VendorIcon } from "./VendorIcon";
 
 
@@ -95,6 +96,10 @@ export default function PromptBar({
 }) {
   const innerRef = useRef(null);
   const taRef = textareaRef || innerRef;
+  // 上层的粘贴、发送后聚焦仍需要真实文本节点；AntD 的 ref 是控件实例。
+  const setTextareaRef = useCallback((instance) => {
+    taRef.current = instance?.resizableTextArea?.textArea || null;
+  }, [taRef]);
   const modelWrapRef = useRef(null);
   const cmdWrapRef = useRef(null);
   const [modelOpen, setModelOpen] = useState(false);
@@ -229,8 +234,9 @@ export default function PromptBar({
 
         {/* 第一行：输入框独占整行（原先与 5 个按钮挤在一行：按钮底对齐、文字顶对齐，
             单行时上下错位；多行时右侧一串按钮悬在最底部） */}
-        <textarea
-          ref={taRef}
+        <Input.TextArea
+          ref={setTextareaRef}
+          variant="borderless"
           rows={1}
           value={value}
           aria-label="消息内容"

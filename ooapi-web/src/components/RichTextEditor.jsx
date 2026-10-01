@@ -7,7 +7,7 @@
 // 4. 强大的剪贴板与拖拽支持：在编辑框内直接 Ctrl+V 粘贴截图或拖拽图片，自动上传到媒体库并在光标处插入图片 Markdown；
 // 5. 快捷键拦截：Ctrl+B / Cmd+B (加粗)、Ctrl+I / Cmd+I (斜体)、Tab 缩进等。
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Tooltip, Popover, Space, Dropdown, Spin, message as antMessage } from "antd";
+import { App as AntApp, Input, Tooltip, Popover, Space, Dropdown, Spin } from "antd";
 import {
   BoldOutlined, ItalicOutlined, StrikethroughOutlined,
   CodeOutlined, LinkOutlined, PictureOutlined, SmileOutlined,
@@ -35,7 +35,11 @@ export default function RichTextEditor({
   onMediaUploaded, // 可选回调：上传成功后将媒体对象 { id, url, name } 回传给表单
   onUploadingChange, // 可选回调：编辑器内是否还有图片在上传（发布守卫要用，见下方注释）
 }) {
+  const { message: antMessage } = AntApp.useApp();
   const textareaRef = useRef(null);
+  const setTextareaRef = useCallback((instance) => {
+    textareaRef.current = instance?.resizableTextArea?.textArea || null;
+  }, []);
   const fileInputRef = useRef(null);
   const [mode, setMode] = useState("write"); // 'write' | 'split' | 'preview'
 
@@ -422,8 +426,9 @@ export default function RichTextEditor({
         {/* 编辑区 */}
         {(mode === "write" || mode === "split") && (
           <div className="oo-rich-textarea-box">
-            <textarea
-              ref={textareaRef}
+            <Input.TextArea
+              ref={setTextareaRef}
+              variant="borderless"
               className="oo-rich-textarea"
               style={{ minHeight, maxHeight }}
               value={text}

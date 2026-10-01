@@ -549,7 +549,8 @@ export default function PostDetailPage() {
                             />
                           </div>
                         )}
-                        <textarea
+                        <Input.TextArea
+                          variant="borderless"
                           className="oo-comment-raw-input"
                           value={input}
                           onChange={(e) => {

@@ -7,7 +7,7 @@ import {
   PlusOutlined, ReloadOutlined, ThunderboltOutlined, DeleteOutlined, EditOutlined,
   UndoOutlined, KeyOutlined, LoginOutlined, GlobalOutlined,
   InfoCircleOutlined, SafetyCertificateOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined,
-  ExclamationCircleOutlined, DashboardOutlined, LinkOutlined, CopyOutlined,
+  ExclamationCircleOutlined, DashboardOutlined, LinkOutlined, CopyOutlined, UploadOutlined,
   // 额度列的「上游 429，预计恢复时间」提示行用它（时钟语义）
   ClockCircleOutlined,
 } from "@ant-design/icons";
@@ -157,20 +157,7 @@ function UptimeBars({ calls = [], count = 20, onCopy }) {
  * 自动暂停（status=3，检测失败或用户调用出错时由后端写入）也能点 ——
  * 那正是最需要「修好后一键启用」的场景。
  */
-/**
- * 渠道启停开关（checkbox-41 造型）—— 用户提供的设计。
- *
- * 按项目约定转成纯 CSS（styles.css 的 .oo-toggle41），原稿改了三处：
- *   ① 不引入 styled-components —— 项目零新依赖，为一条控件加运行时样式库不划算，
- *      还会和现有 CSS 变量体系打架；
- *   ② 尺寸：原设计 --size:100px（100×50px）放不进 128px 的状态列 → 44px（44×22px）；
- *      原稿的 30px/100px 圆角是绝对 px，缩放后会失真，已按比例折成 em；
- *   ③ 颜色换成主题色：`#222` 边框 → `--ink-2`，`#fde881` 黄 → `--accent`，
- *      深浅主题自动适配（用户要求「颜色用我们的主题色」）。
- *
- * 无障碍：用真实 `<input type="checkbox">`（原设计也是），可聚焦、空格切换、
- * 读屏识别开关语义；且勾选态的圆角方向本身不同，不单靠颜色区分。
- */
+// 状态沿用原来的启停逻辑，控件与全站统一使用 AntD Switch。
 function ChannelSwitch({ checked, disabled, onToggle, title }) {
   return (
     <Tooltip
@@ -178,13 +165,14 @@ function ChannelSwitch({ checked, disabled, onToggle, title }) {
       // 用 pre-line 的容器保住分行（否则「冷却至 …」「原因：…」会挤成一坨）
       title={<span style={{ whiteSpace: "pre-line" }}>{title}</span>}
     >
-      <span className="oo-toggle41">
-        <input
-          type="checkbox"
+      <span>
+        <Switch
+          size="small"
           checked={Boolean(checked)}
           disabled={Boolean(disabled)}
+          loading={Boolean(disabled)}
           aria-label={title}
-          onChange={(e) => onToggle?.(e.target.checked)}
+          onChange={(next) => onToggle?.(next)}
         />
       </span>
     </Tooltip>
@@ -914,7 +902,13 @@ export default function AdminChannelsPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
   const [importBusy, setImportBusy] = useState(false);
+  const [importReading, setImportReading] = useState(false);
   const [importResult, setImportResult] = useState(null);
+  const importFileRef = useRef(null);
+  const oauthFileRef = useRef(null);
+  const importReadEpochRef = useRef(0);
+  const oauthReadEpochRef = useRef(0);
+  const [oauthReading, setOauthReading] = useState(false);
 
   // 添加流程：先选厂商，再选该厂商的接入方式
   const [pickProvider, setPickProvider] = useState(null);
@@ -1176,7 +1170,14 @@ export default function AdminChannelsPage() {
   const credId = pickMethod ? (isApi ? pickMethod.key : `${pickMethod.key}:${addMode}`) : "";
 
   // ---------- 添加 ----------
+  const closeAdd = () => {
+    oauthReadEpochRef.current += 1;
+    setOauthReading(false);
+    setAddOpen(false);
+  };
   const openAdd = () => {
+    oauthReadEpochRef.current += 1;
+    setOauthReading(false);
     setPickProvider(null);
     setPickMethod(null);
     setAddMode("password");
@@ -1232,6 +1233,9 @@ export default function AdminChannelsPage() {
 
   const applyMethod = (p, m, forceMode = null) => {
     if (!m) return;
+    // 旧文件可能仍在异步读取；换方式后不得把上一套凭据带进新表单。
+    oauthReadEpochRef.current += 1;
+    setOauthReading(false);
     // **保留用户已手填的内容**（渠道名称、备注），只重置与凭据/接入方式相关的字段。
     //
     // 这里踩过一个让管理员白填一遍的坑（黑盒测试实测）：
@@ -1274,7 +1278,7 @@ export default function AdminChannelsPage() {
 
   const submitAdd = async () => {
     if (!pickProvider || !pickMethod) return message.warning("请先选择厂商与接入方式");
-    if (addSubmitting) return; // 防重入：登录/创建耗时，双击会建出两条渠道
+    if (addSubmitting || oauthReading) return; // 读取凭据完成后再提交，双击也不重复创建。
     let v;
     try {
       v = await addForm.validateFields();
@@ -1415,7 +1419,14 @@ export default function AdminChannelsPage() {
   };
 
   // ---------- 批量导入（CPA / sub2api） ----------
+  const closeImport = () => {
+    importReadEpochRef.current += 1;
+    setImportReading(false);
+    setImportOpen(false);
+  };
   const openImport = () => {
+    importReadEpochRef.current += 1;
+    setImportReading(false);
     setImportText("");
     setImportResult(null);
     setImportOpen(true);
@@ -1423,25 +1434,33 @@ export default function AdminChannelsPage() {
   const readImportFile = async (e) => {
     const files = Array.from(e.target.files || []);
     e.target.value = "";
-    if (!files.length) return;
+    if (!files.length || importBusy || importReading) return;
     // 支持多选/目录一次导入：每个文件的文本按行拼接，后端按多个 JSON 对象逐个解析
-    const chunks = [];
-    for (const file of files) {
-      if (file.size > 2 * 1024 * 1024) {
-        message.warning(`${file.name} 超过 2MB，已跳过`);
-        continue;
+    const epoch = ++importReadEpochRef.current;
+    setImportReading(true);
+    try {
+      const chunks = [];
+      for (const file of files) {
+        if (epoch !== importReadEpochRef.current) return;
+        if (file.size > 2 * 1024 * 1024) {
+          message.warning(`${file.name} 超过 2MB，已跳过`);
+          continue;
+        }
+        try {
+          chunks.push(await file.text());
+        } catch {
+          if (epoch !== importReadEpochRef.current) return;
+          message.warning(`${file.name} 读取失败，已跳过`);
+        }
       }
-      try {
-        chunks.push(await file.text());
-      } catch {
-        message.warning(`${file.name} 读取失败，已跳过`);
-      }
+      if (epoch !== importReadEpochRef.current || !chunks.length) return;
+      setImportText((prev) => [prev, ...chunks].filter((s) => String(s || "").trim()).join("\n"));
+    } finally {
+      if (epoch === importReadEpochRef.current) setImportReading(false);
     }
-    if (!chunks.length) return;
-    setImportText((prev) => [prev, ...chunks].filter((s) => String(s || "").trim()).join("\n"));
   };
   const submitImport = async () => {
-    if (importBusy) return;
+    if (importBusy || importReading) return;
     if (!importText.trim()) return message.warning("请粘贴或选择要导入的 JSON 文件");
     setImportBusy(true);
     try {
@@ -1831,10 +1850,13 @@ export default function AdminChannelsPage() {
   const readOAuthFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file) return;
+    if (!file || addSubmitting || oauthReading) return;
     if (file.size > 2 * 1024 * 1024) return message.warning("文件过大（上限 2MB）");
+    const epoch = ++oauthReadEpochRef.current;
+    setOauthReading(true);
     try {
       const text = await file.text();
+      if (epoch !== oauthReadEpochRef.current) return;
       let payload = text;
       try {
         const j = JSON.parse(text);
@@ -1850,7 +1872,9 @@ export default function AdminChannelsPage() {
       addForm.setFieldsValue({ token: payload });
       message.success("已读取凭据文件，点「添加」会自动校验");
     } catch {
-      message.error("读取文件失败");
+      if (epoch === oauthReadEpochRef.current) message.error("读取文件失败");
+    } finally {
+      if (epoch === oauthReadEpochRef.current) setOauthReading(false);
     }
   };
 
@@ -2131,20 +2155,16 @@ export default function AdminChannelsPage() {
         if (r.quota_supported) {
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span
-                role="button"
-                tabIndex={0}
-                style={{ cursor: "pointer", fontSize: 12, color: "var(--ink-3)" }}
+              <Button
+                type="link"
+                size="small"
+                loading={quotaBusyId === r.id}
+                disabled={Boolean(quotaBusyId) && quotaBusyId !== r.id}
+                style={{ padding: 0, height: "auto", alignSelf: "flex-start", fontSize: 12, color: "var(--ink-3)" }}
                 onClick={() => doQuota(r, { openPanel: true })}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    doQuota(r, { openPanel: true });
-                  }
-                }}
               >
                 点击查询
-              </span>
+              </Button>
               {rateLimitRow}
             </div>
           );
@@ -2752,17 +2772,17 @@ export default function AdminChannelsPage() {
       <Modal
         title="添加渠道"
         open={addOpen}
-        onCancel={() => setAddOpen(false)}
+        onCancel={closeAdd}
         width={960}
         className="oo-channel-add-modal"
         destroyOnClose
         maskClosable={false}
         footer={
           <Space>
-            <button className="bui-btn" onClick={() => setAddOpen(false)}>取消</button>
-            <button className="bui-btn bui-btn--primary" onClick={submitAdd} disabled={!pickMethod || addSubmitting}>
+            <Button onClick={closeAdd}>取消</Button>
+            <Button type="primary" onClick={submitAdd} loading={addSubmitting} disabled={!pickMethod || oauthReading}>
               添加
-            </button>
+            </Button>
           </Space>
         }
       >
@@ -3268,15 +3288,22 @@ export default function AdminChannelsPage() {
                             <>
                               <Form.Item label="没有现成凭据？">
                                 <Space wrap>
-                                  <label className="bui-btn" style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                                    <input
-                                      type="file"
-                                      accept=".json,application/json,text/plain"
-                                      style={{ display: "none" }}
-                                      onChange={readOAuthFile}
-                                    />
+                                  <Button
+                                    icon={<UploadOutlined />}
+                                    loading={oauthReading}
+                                    disabled={addSubmitting}
+                                    onClick={() => oauthFileRef.current?.click()}
+                                  >
                                     导入凭据文件
-                                  </label>
+                                  </Button>
+                                  <input
+                                    ref={oauthFileRef}
+                                    type="file"
+                                    accept=".json,application/json,text/plain"
+                                    hidden
+                                    style={{ display: "none" }}
+                                    onChange={readOAuthFile}
+                                  />
                                 </Space>
                               </Form.Item>
                               <Row gutter={12}>
@@ -3652,16 +3679,27 @@ export default function AdminChannelsPage() {
       <Modal
         title="导入凭据（CPA / sub2api）"
         open={importOpen}
-        onCancel={() => setImportOpen(false)}
+        onCancel={closeImport}
         onOk={submitImport}
         confirmLoading={importBusy}
+        okButtonProps={{ disabled: importReading }}
         okText="开始导入"
         width={680}
       >
-                <input type="file" accept=".json,application/json,.txt,text/plain" multiple onChange={readImportFile} style={{ marginBottom: 10 }} />
+        <Button
+          icon={<UploadOutlined />}
+          loading={importReading}
+          disabled={importBusy}
+          onClick={() => importFileRef.current?.click()}
+          style={{ marginBottom: 10 }}
+        >
+          选择凭据文件（可多选）
+        </Button>
+        <input ref={importFileRef} type="file" accept=".json,application/json,.txt,text/plain" multiple hidden style={{ display: "none" }} onChange={readImportFile} />
         <Input.TextArea
           rows={10}
           value={importText}
+          disabled={importBusy}
           onChange={(e) => setImportText(e.target.value)}
           placeholder="粘贴 JSON 文件内容（例如 sub2api 导出、CPA auths/*.json）"
         />
@@ -3698,7 +3736,7 @@ export default function AdminChannelsPage() {
         title={`账号额度：${quotaTarget?.name || ""}`}
         open={quotaOpen}
         onCancel={() => setQuotaOpen(false)}
-        footer={<button type="button" className="bui-btn" onClick={() => setQuotaOpen(false)}>关闭</button>}
+        footer={<Button onClick={() => setQuotaOpen(false)}>关闭</Button>}
         destroyOnClose
         width={520}
       >

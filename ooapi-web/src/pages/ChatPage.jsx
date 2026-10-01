@@ -9,7 +9,7 @@
 // 数据全部来自服务端：会话与设定落库（chat_sessions），消息落库（chat_messages），
 // 刷新页面不丢；本页只负责渲染与把用户操作发回服务端。
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { App as AntApp, Button, Dropdown, Popconfirm, Tooltip } from "antd";
+import { App as AntApp, Alert, Button, Checkbox, Drawer, Dropdown, Form, Input, Modal, Popconfirm, Tooltip } from "antd";
 import {
   CopyOutlined,
   SelectOutlined,
@@ -28,6 +28,7 @@ import {
   EditFilled,
   SearchOutlined,
   WalletOutlined,
+  EllipsisOutlined,
 } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { API, getToken } from "../services/api";
@@ -195,35 +196,38 @@ function CommandPalette({ open, sessions, onClose, onPick, onNew }) {
     const list = [
       { key: "__new", label: "新建对话", hint: "Ctrl/⌘ + Shift + O", run: onNew, icon: <PlusOutlined /> },
       { key: "__settings", label: "打开设定", hint: "会话指令与统计", run: () => onPick("__settings"), icon: <SettingOutlined /> },
-      ...sessions.map((s) => ({ key: s.id, label: s.title, hint: `${s.message_count} 条`, run: () => onPick(s.id), icon: null })),
+      ...sessions.map((s) => ({ key: s.id, label: s.title, hint: `${s.message_count || 0} 条消息`, run: () => onPick(s.id), icon: null })),
     ];
     const key = q.trim().toLowerCase();
     return key ? list.filter((i) => i.label.toLowerCase().includes(key)) : list;
   }, [q, sessions, onNew, onPick]);
 
-  if (!open) return null;
   return (
-    <div className="bui-palette-mask" onMouseDown={onClose}>
-      <div className="bui-palette" role="dialog" aria-label="命令面板" onMouseDown={(e) => e.stopPropagation()}>
-        <input
+    <Modal open={open} title="命令面板" footer={null} onCancel={onClose} width={560} className="bui-command-modal" destroyOnClose>
+      <div className="bui-palette-search">
+        <Input
           ref={inputRef}
           value={q}
+          aria-label="搜索会话或操作"
+          prefix={<SearchOutlined />}
+          allowClear
           placeholder="搜索会话，或执行操作…"
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Escape") onClose();
-            if (e.key === "Enter" && items[0]) {
+            if (e.key === "Enter" && !e.nativeEvent.isComposing && items[0]) {
               onClose();
               items[0].run();
             }
           }}
         />
+      </div>
         <div className="bui-palette-list">
           {items.length ? (
             items.map((it) => (
-              <button
+              <Button
                 key={it.key}
-                type="button"
+                type="text"
                 className="bui-palette-row"
                 onClick={() => {
                   onClose();
@@ -233,64 +237,94 @@ function CommandPalette({ open, sessions, onClose, onPick, onNew }) {
                 <span className="ic">{it.icon}</span>
                 <span className="tx">{it.label}</span>
                 <span className="nm">{it.hint}</span>
-              </button>
+              </Button>
             ))
           ) : (
             <div className="bui-palette-empty">没有匹配的会话</div>
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
+  );
+}
+
+function NameDialog({ dialog, saving, error, onClose, onSave }) {
+  const [form] = Form.useForm();
+  const inputRef = useRef(null);
+  const project = dialog?.kind !== "session";
+  const label = project ? "项目名称" : "对话名称";
+  const maxLength = project ? 64 : 60;
+  useEffect(() => {
+    if (dialog) {
+      form.resetFields();
+      form.setFieldsValue({ name: dialog.name || "" });
+    }
+  }, [dialog, form]);
+  return (
+    <Modal
+      open={Boolean(dialog)}
+      title={dialog?.kind === "create-project" ? "新建项目" : project ? "重命名项目" : "重命名对话"}
+      okText={dialog?.kind === "create-project" ? "创建" : "保存"}
+      cancelText="取消"
+      confirmLoading={saving}
+      cancelButtonProps={{ disabled: saving }}
+      closable={!saving}
+      maskClosable={!saving}
+      keyboard={!saving}
+      onCancel={onClose}
+      onOk={() => form.submit()}
+      afterOpenChange={(open) => { if (open) inputRef.current?.focus({ cursor: "all" }); }}
+      forceRender
+    >
+      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} /> : null}
+      <Form form={form} layout="vertical" requiredMark={false} onFinish={onSave} disabled={saving}>
+        <Form.Item name="name" label={label} rules={[
+          { required: true, whitespace: true, message: `请输入${label}` },
+          { max: maxLength, message: `${label}最多 ${maxLength} 个字符` },
+        ]}>
+          <Input ref={inputRef} maxLength={maxLength} showCount placeholder={project ? "例如：工作、学习" : "给这个对话起个名字"} />
+        </Form.Item>
+      </Form>
+    </Modal>
   );
 }
 
 /* ============================ 会话指令 / 设定面板 ============================ */
-function SettingsSheet({ open, onClose, meta, session, settings, onSettings, saving, quotaText }) {
-  const [title, setTitle] = useState(session?.title || "");
-  const [instructions, setInstructions] = useState(settings?.instructions || "");
+function SettingsSheet({ open, onClose, session, settings, onSettings, saving, quotaText }) {
+  const [form] = Form.useForm();
+  const [error, setError] = useState("");
 
   useEffect(() => {
     if (open) {
-      setTitle(session?.title || "");
-      setInstructions(settings?.instructions || "");
+      form.setFieldsValue({ title: session?.title || "", instructions: settings?.instructions || "" });
+      setError("");
     }
-  }, [open, session?.title, settings?.instructions]);
+  }, [open, session?.id, session?.title, settings?.instructions, form]);
 
-  if (!open) return null;
-
-  const save = async () => {
+  const save = async ({ title, instructions = "" }) => {
     const patch = {};
     if (title.trim() && title.trim() !== session?.title) patch.title = title.trim();
     if (instructions !== (settings?.instructions || "")) patch.instructions = instructions;
-    await onSettings(patch);
+    setError("");
+    if (!await onSettings(patch)) setError("保存失败，请重试。输入内容已保留。");
   };
 
   return (
-    <div className="ui-chat2-sheet-mask" onMouseDown={onClose}>
-      <aside className="ui-chat2-sheet" role="dialog" aria-label="会话设定" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="ui-chat2-sheet-head">
-          <h3>会话设定</h3>
-          <button type="button" className="ui-chat2-iconbtn" aria-label="关闭" onClick={onClose}>
-            ✕
-          </button>
-        </div>
-        <div className="ui-chat2-sheet-body">
-          <div className="ui-chat2-field">
-            <label htmlFor="chat-title">会话名称</label>
-            <input id="chat-title" type="text" value={title} maxLength={60} onChange={(e) => setTitle(e.target.value)} placeholder="给这个会话起个名字" />
-          </div>
-
-          <div className="ui-chat2-field">
-            <label htmlFor="chat-sys">会话指令（系统提示词）</label>
-            <textarea
-              id="chat-sys"
-              value={instructions}
-              maxLength={4000}
-              onChange={(e) => setInstructions(e.target.value)}
-              placeholder="例如：回答尽量简短；术语先给中文再给英文；代码用 TypeScript。"
-            />
-            <small>只作用于当前会话；{4000 - instructions.length} 字可用。</small>
-          </div>
+    <Drawer
+      title="会话设定" open={open} width="min(440px, 100vw)" rootClassName="ui-chat2-settings"
+      onClose={saving ? undefined : onClose} closable={!saving} maskClosable={!saving} keyboard={!saving}
+      forceRender
+      footer={<div className="ui-chat2-settings-actions"><Button onClick={onClose} disabled={saving}>取消</Button><Button type="primary" loading={saving} onClick={() => form.submit()}>保存</Button></div>}
+    >
+      <div className="ui-chat2-sheet-body">
+        {error ? <Alert type="error" showIcon message={error} /> : null}
+        <Form form={form} layout="vertical" onFinish={save} requiredMark={false} disabled={saving}>
+          <Form.Item name="title" label="会话名称" rules={[{ required: true, whitespace: true, message: "请输入会话名称" }, { max: 60, message: "会话名称最多 60 个字符" }]}>
+            <Input maxLength={60} showCount placeholder="给这个会话起个名字" />
+          </Form.Item>
+          <Form.Item name="instructions" label="会话指令（系统提示词）" extra="只作用于当前会话" rules={[{ max: 4000, message: "会话指令最多 4000 个字符" }]}>
+            <Input.TextArea maxLength={4000} showCount autoSize={{ minRows: 5, maxRows: 12 }} placeholder="例如：回答尽量简短；术语先给中文再给英文；代码用 TypeScript。" />
+          </Form.Item>
+        </Form>
 
           <div className="ui-chat2-agentcard">
             <span>
@@ -332,22 +366,15 @@ function SettingsSheet({ open, onClose, meta, session, settings, onSettings, sav
           <Notice tone="info" title="关于计费">
             每轮对话按实际 token 计费，包括工具调用与子代理消耗的每一次上游请求；停止生成时，已产生的部分照常计费。
           </Notice>
-        </div>
-        <div className="ui-chat2-sheet-foot">
-          <Button onClick={onClose}>取消</Button>
-          <Button type="primary" loading={saving} onClick={save}>
-            保存
-          </Button>
-        </div>
-      </aside>
-    </div>
+      </div>
+    </Drawer>
   );
 }
 
 /* ============================ 页面 ============================ */
 export default function ChatPage() {
   const { user, status, refreshUser } = useApp();
-  const { message: toast } = AntApp.useApp();
+  const { message: toast, modal } = AntApp.useApp();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const requestedSession = params.get("s") || "";
@@ -369,6 +396,10 @@ export default function ChatPage() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [savingSheet, setSavingSheet] = useState(false);
+  const [nameDialog, setNameDialog] = useState(null);
+  const [savingName, setSavingName] = useState(false);
+  const [nameError, setNameError] = useState("");
+  const [shelfPending, setShelfPending] = useState("");
   const [input, setInput] = useState("");
   const [images, setImages] = useState([]);
   const [docs, setDocs] = useState([]); // 文档附件 [{name,size,type,dataUrl}]
@@ -399,6 +430,8 @@ export default function ChatPage() {
   const attachedRef = useRef(""); // 已经接上事件流的会话 id（防重复订阅导致内容重放叠加）
   const busyRef = useRef(busy);
   busyRef.current = busy;
+  const nameBusyRef = useRef(false);
+  const shelfPendingRef = useRef("");
   const metaReadyRef = useRef(false);
   metaReadyRef.current = Boolean(meta) && !metaLoading && !metaError;
   const sessionListGenRef = useRef(0);
@@ -691,12 +724,16 @@ export default function ChatPage() {
         const list = await loadSessions();
         if (!list) return;
         if (!stillThere && list[0]) openSession(list[0].id);
-        else if (!stillThere) setSession(null);
+        else if (!stillThere) {
+          setSession(null);
+          setMsgs([]);
+          setParams({}, { replace: true });
+        }
       } catch (e) {
         toast.error(e.message || "批量操作失败");
       }
     },
-    [selected, loadSessions, openSession, toast]
+    [selected, loadSessions, openSession, setParams, toast]
   );
 
   const toggleSelect = useCallback((id) => {
@@ -708,27 +745,58 @@ export default function ChatPage() {
     });
   }, []);
 
-  const createProject = useCallback(async () => {
-    const name = String(prompt("新项目名称") || "").trim();
-    if (!name) return;
+  const openNameDialog = useCallback((kind, item) => {
+    if (nameBusyRef.current) return;
+    setNameError("");
+    setNameDialog({ kind, id: item?.id, name: item?.name || item?.title || "" });
+  }, []);
+
+  const createProject = useCallback(() => openNameDialog("create-project"), [openNameDialog]);
+
+  const saveName = useCallback(async ({ name: rawName }) => {
+    if (!nameDialog || nameBusyRef.current) return;
+    const name = String(rawName || "").trim();
+    const maxLength = nameDialog.kind === "session" ? 60 : 64;
+    if (!name || name.length > maxLength) return;
+    nameBusyRef.current = true;
+    setSavingName(true);
+    setNameError("");
     try {
-      const p = await chatApi.createProject({ name });
-      setProjects((prev) => [p, ...prev]);
-      toast.success("项目已创建");
+      if (nameDialog.kind === "create-project") {
+        const project = await chatApi.createProject({ name });
+        setProjects((prev) => [project, ...prev]);
+      } else if (nameDialog.kind === "project") {
+        const project = await chatApi.updateProject(nameDialog.id, { name });
+        setProjects((prev) => prev.map((p) => p.id === nameDialog.id ? { ...p, name: project.name || name } : p));
+      } else {
+        const next = await chatApi.patchSession(nameDialog.id, { title: name });
+        const title = next.title || name;
+        setSessions((prev) => prev.map((s) => s.id === nameDialog.id ? { ...s, title } : s));
+        setSession((prev) => prev?.id === nameDialog.id ? { ...prev, title } : prev);
+      }
+      setNameDialog(null);
+      toast.success(nameDialog.kind === "create-project" ? "项目已创建" : "名称已保存");
     } catch (e) {
-      toast.error(e.message || "创建项目失败");
+      // 成功前不改列表名称：失败时既不需要猜回滚值，也能保留弹窗里的输入。
+      setNameError(e.message || "保存失败，请重试");
+    } finally {
+      nameBusyRef.current = false;
+      setSavingName(false);
     }
-  }, [toast]);
+  }, [nameDialog, toast]);
 
   const deleteProject = useCallback(
     async (id) => {
       try {
         await chatApi.deleteProject(id);
+        setProjects((prev) => prev.filter((p) => p.id !== id));
         toast.success("项目已删除（其中的对话已退回未归类）");
         if (view === id) switchView("active");
         else loadSessions();
+        return true;
       } catch (e) {
         toast.error(e.message || "删除项目失败");
+        return false;
       }
     },
     [view, switchView, loadSessions, toast]
@@ -827,14 +895,16 @@ export default function ChatPage() {
   const patchSession = useCallback(
     async (patch, { silent } = {}) => {
       const id = sessionRef.current?.id;
-      if (!id) return;
+      if (!id) return null;
       try {
         const next = await chatApi.patchSession(id, patch);
         setSession((prev) => (prev?.id === next.id ? next : prev));
         setSessions((prev) => prev.map((s) => (s.id === next.id ? { ...s, ...next } : s)));
         if (!silent) toast.success("已保存");
+        return next;
       } catch (e) {
         toast.error(e.message || "保存失败");
+        return null;
       }
     },
     [toast]
@@ -844,10 +914,10 @@ export default function ChatPage() {
     async (id) => {
       try {
         await chatApi.deleteSession(id);
-        const list = sessions.filter((s) => s.id !== id);
-        setSessions(list);
+        setSessions((prev) => prev.filter((s) => s.id !== id));
+        const list = await loadSessions();
         if (sessionRef.current?.id === id) {
-          if (list[0]) openSession(list[0].id);
+          if (list?.[0]) openSession(list[0].id);
           else {
             setSession(null);
             setMsgs([]);
@@ -855,12 +925,42 @@ export default function ChatPage() {
             bootRef.current = false;
           }
         }
+        return true;
       } catch (e) {
         toast.error(e.message || "删除失败");
+        return false;
       }
     },
-    [sessions, openSession, setParams, toast]
+    [loadSessions, openSession, setParams, toast]
   );
+
+  const sessionAction = useCallback(async (item, action, projectId) => {
+    if (shelfPendingRef.current) return;
+    shelfPendingRef.current = item.id;
+    setShelfPending(item.id);
+    try {
+      await chatApi.batch([item.id], action, projectId);
+      const patch = action === "pin" || action === "unpin" ? { pinned: action === "pin" }
+        : action === "archive" || action === "unarchive" ? { archived: action === "archive" }
+        : { project_id: projectId || "" };
+      setSession((prev) => prev?.id === item.id ? { ...prev, ...patch } : prev);
+      const list = await loadSessions();
+      if (list && sessionRef.current?.id === item.id && !list.some((s) => s.id === item.id)) {
+        if (list[0]) openSession(list[0].id);
+        else {
+          setSession(null);
+          setMsgs([]);
+          setParams({}, { replace: true });
+        }
+      }
+      toast.success({ pin: "已置顶", unpin: "已取消置顶", archive: "已归档", unarchive: "已取消归档", move: "已移动" }[action]);
+    } catch (e) {
+      toast.error(e.message || "操作失败");
+    } finally {
+      shelfPendingRef.current = "";
+      setShelfPending("");
+    }
+  }, [loadSessions, openSession, setParams, toast]);
 
   /* ---------- 运行一轮 ---------- */
   // 重新生成时把原消息里的附件（已解析文本）带回来：文件内容不再经过 dataUrl，
@@ -1290,9 +1390,7 @@ export default function ChatPage() {
           title="项目"
           defaultOpen
           action={
-            <button type="button" className="bui-shelf-act" aria-label="新建项目" title="新建项目" onClick={createProject}>
-              <PlusOutlined />
-            </button>
+            <Tooltip title="新建项目"><Button type="text" className="bui-shelf-act" aria-label="新建项目" icon={<PlusOutlined />} onClick={createProject} /></Tooltip>
           }
         >
           {projects.length ? (
@@ -1301,28 +1399,21 @@ export default function ChatPage() {
                 key={p.id}
                 active={view === p.id}
                 label={p.name}
-                title={`${p.name}（双击重命名）`}
-                hint={counts.byProject?.[p.id] ? String(counts.byProject[p.id]) : ""}
+                hint={`${counts.byProject?.[p.id] || 0} 个对话`}
                 onClick={() => {
                   switchView(p.id);
                   setShelfOpen(false);
                 }}
-                onRename={(name) => {
-                  setProjects((prev) => prev.map((x) => (x.id === p.id ? { ...x, name } : x)));
-                  chatApi.updateProject(p.id, { name }).catch((e) => toast.error(e.message || "重命名失败"));
-                }}
                 actions={
-                  <Popconfirm
-                    title="删除这个项目？"
-                    description="项目里的对话不会被删除，会退回「未归类」。"
-                    okText="删除"
-                    cancelText="取消"
-                    onConfirm={() => deleteProject(p.id)}
-                  >
-                    <button type="button" className="bui-shelf-act is-danger" aria-label={`删除项目 ${p.name}`} onClick={(e) => e.stopPropagation()}>
-                      <DeleteOutlined />
-                    </button>
-                  </Popconfirm>
+                  <Dropdown autoFocus trigger={["click"]} menu={{ items: [
+                    { key: "rename", label: "重命名项目", icon: <EditOutlined />, onClick: () => openNameDialog("project", p) },
+                    { key: "delete", label: "删除项目", icon: <DeleteOutlined />, danger: true, onClick: async () => { await modal.confirm({
+                      title: "删除这个项目？", content: "项目里的对话会退回未归类，保留全部消息。", okText: "删除", cancelText: "取消", okButtonProps: { danger: true },
+                      onOk: async () => { if (!await deleteProject(p.id)) throw new Error("删除项目失败，请重试"); },
+                    }); } },
+                  ] }}>
+                    <Button type="text" className="bui-shelf-act" icon={<EllipsisOutlined />} aria-label={`项目更多操作：${p.name}`} />
+                  </Dropdown>
                 }
               />
             ))
@@ -1366,9 +1457,10 @@ export default function ChatPage() {
                 )}
                 {projects.length ? (
                   <Dropdown
+                    autoFocus
                     trigger={["click"]}
                     menu={{
-                      items: projects.map((p) => ({ key: p.id, label: p.name, onClick: () => batchAction("move", p.id) })),
+                      items: projects.map((p) => ({ key: p.id, label: <span className="ui-chat2-menu-name">{p.name}</span>, onClick: () => batchAction("move", p.id) })),
                     }}
                   >
                     <button type="button" title="移动到项目">
@@ -1394,64 +1486,39 @@ export default function ChatPage() {
           {sessions.length ? (
             sessions.map((s) =>
               selectMode ? (
-                <label key={s.id} className="bui-shelf-pick">
-                  <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggleSelect(s.id)} />
-                  <span className="tx">{s.title}</span>
-                  {s.pinned ? <span className="hn">置顶</span> : null}
-                </label>
+                <div key={s.id} className="bui-shelf-pick">
+                  <Checkbox checked={selected.has(s.id)} onChange={() => toggleSelect(s.id)}>
+                    <span className="tx">{s.title}</span>
+                    {s.pinned ? <span className="hn">置顶</span> : null}
+                  </Checkbox>
+                </div>
               ) : (
                 <ShelfItem
                   key={s.id}
                   active={s.id === session?.id}
                   label={s.title}
-                  title={`${s.title}（双击重命名）`}
-                  hint={s.message_count ? String(s.message_count) : ""}
+                  icon={s.pinned ? <PushpinOutlined /> : null}
                   onClick={() => {
                     openSession(s.id);
                     setShelfOpen(false);
                   }}
-                  onRename={(title) => {
-                    setSessions((prev) => prev.map((x) => (x.id === s.id ? { ...x, title } : x)));
-                    if (s.id === sessionRef.current?.id) setSession((prev) => ({ ...prev, title }));
-                    chatApi.patchSession(s.id, { title }).catch((e) => toast.error(e.message || "重命名失败"));
-                  }}
                   actions={
-                    <>
-                      <Tooltip title={s.pinned ? "取消置顶" : "置顶"}>
-                        <button
-                          type="button"
-                          className="bui-shelf-act"
-                          aria-label={s.pinned ? `取消置顶 ${s.title}` : `置顶 ${s.title}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            chatApi
-                              .patchSession(s.id, { pinned: !s.pinned })
-                              .then(() => loadSessions())
-                              .catch((err) => toast.error(err.message || "操作失败"));
-                          }}
-                        >
-                          <PushpinOutlined />
-                        </button>
-                      </Tooltip>
-                      <Tooltip title="归档">
-                        <button
-                          type="button"
-                          className="bui-shelf-act"
-                          aria-label={`归档 ${s.title}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            archiveSession(s.id);
-                          }}
-                        >
-                          <InboxOutlined />
-                        </button>
-                      </Tooltip>
-                      <Popconfirm title="删除这个对话？" description="消息与统计一并删除，无法恢复。" okText="删除" cancelText="取消" onConfirm={() => deleteSession(s.id)}>
-                        <button type="button" className="bui-shelf-act is-danger" aria-label={`删除对话 ${s.title}`} onClick={(e) => e.stopPropagation()}>
-                          <DeleteOutlined />
-                        </button>
-                      </Popconfirm>
-                    </>
+                    <Dropdown autoFocus trigger={["click"]} disabled={Boolean(shelfPending)} menu={{ triggerSubMenuAction: "click", items: [
+                      { key: "rename", label: "重命名对话", icon: <EditOutlined />, onClick: () => openNameDialog("session", s) },
+                      { key: "pin", label: s.pinned ? "取消置顶" : "置顶", icon: <PushpinOutlined />, onClick: () => sessionAction(s, s.pinned ? "unpin" : "pin") },
+                      { key: "archive", label: view === "archived" || s.archived ? "取消归档" : "归档", icon: <InboxOutlined />, onClick: () => sessionAction(s, view === "archived" || s.archived ? "unarchive" : "archive") },
+                      { key: "move", label: "移动到项目", children: [
+                        { key: "move-none", label: "未归类", onClick: () => sessionAction(s, "move", "") },
+                        ...projects.map((p) => ({ key: `move-${p.id}`, label: <span className="ui-chat2-menu-name">{p.name}</span>, onClick: () => sessionAction(s, "move", p.id) })),
+                      ] },
+                      { type: "divider" },
+                      { key: "delete", label: "删除对话", icon: <DeleteOutlined />, danger: true, onClick: async () => { await modal.confirm({
+                        title: "删除这个对话？", content: "消息与统计一并删除，无法恢复。", okText: "删除", cancelText: "取消", okButtonProps: { danger: true },
+                        onOk: async () => { if (!await deleteSession(s.id)) throw new Error("删除失败，请重试"); },
+                      }); } },
+                    ] }}>
+                      <Button type="text" className="bui-shelf-act" icon={<EllipsisOutlined />} loading={shelfPending === s.id} disabled={Boolean(shelfPending)} aria-label={`对话更多操作：${s.title}`} />
+                    </Dropdown>
                   }
                 />
               )
@@ -1684,6 +1751,11 @@ export default function ChatPage() {
         </div>
       </div>
 
+      <NameDialog
+        dialog={nameDialog} saving={savingName} error={nameError} onSave={saveName}
+        onClose={() => { if (!nameBusyRef.current) { setNameDialog(null); setNameError(""); } }}
+      />
+
       <CommandPalette
         open={paletteOpen}
         sessions={sessions}
@@ -1708,8 +1780,10 @@ export default function ChatPage() {
               body.settings = { ...(sessionRef.current?.settings || {}), instructions: body.instructions };
               delete body.instructions;
             }
-            await patchSession(body);
+            const saved = await patchSession(body);
+            if (!saved) return false;
             setSheetOpen(false);
+            return true;
           } finally {
             setSavingSheet(false);
           }

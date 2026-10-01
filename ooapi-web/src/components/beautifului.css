@@ -319,7 +319,7 @@
 .bui-composer.is-disabled { opacity: 0.7; }
 html[data-theme="dark"] .bui-composer { box-shadow: 0 6px 24px oklch(0% 0 0 / 0.3); }
 
-.bui-composer-input {
+.bui-composer-input.ant-input {
   min-height: 44px;
   max-height: 200px;
   box-sizing: border-box;

@@ -526,7 +526,7 @@ export default function AdminCommunityPage() {
                   </Button>
                 )}
                 <span className="oo-desc">建议正方形，至少 64×64</span>
-                <input ref={iconFileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" hidden onChange={uploadIcon} />
+                <input ref={iconFileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" hidden style={{ display: "none" }} onChange={uploadIcon} />
               </div>
             </div>
           </Form.Item>

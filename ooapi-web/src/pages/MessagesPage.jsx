@@ -689,9 +689,10 @@ export default function MessagesPage() {
     return undefined;
   };
 
-  const leaveRoom = () => {
+  // await 开启 AntD 确认弹窗的失败重试模式，接口拒绝时保留弹窗且不产生未处理异常。
+  const leaveRoom = async () => {
     const single = room?.type === "single";
-    modal.confirm({
+    await modal.confirm({
       title: single ? "删除这个会话？" : `退出群聊「${room?.title}」？`,
       content: single
         ? "会话会从你的列表里移除，对方不会收到提示；对方再发消息时会话会重新出现。"
@@ -701,36 +702,53 @@ export default function MessagesPage() {
       okText: single ? "删除" : "退出",
       okType: "danger",
       onOk: async () => {
-        await API.del(`/chatroom/rooms/${activeRoomId}/members/me`);
-        setRooms((prev) => prev.filter((r) => r.id !== activeRoomId));
-        navigate("/messages", { replace: true });
+        try {
+          await API.del(`/chatroom/rooms/${activeRoomId}/members/me`);
+          setRooms((prev) => prev.filter((r) => r.id !== activeRoomId));
+          navigate("/messages", { replace: true });
+        } catch (e) {
+          toast.error(e.message || "操作失败，请重试");
+          throw e;
+        }
       },
     });
   };
 
-  const dissolveRoom = () =>
-    modal.confirm({
+  const dissolveRoom = async () => {
+    await modal.confirm({
       title: `解散群聊「${room?.title}」？`,
       content: "所有成员都会被移出，此操作无法撤销。",
       okText: "解散",
       okType: "danger",
       onOk: async () => {
-        await API.del(`/chatroom/rooms/${activeRoomId}`);
-        setRooms((prev) => prev.filter((r) => r.id !== activeRoomId));
-        navigate("/messages", { replace: true });
+        try {
+          await API.del(`/chatroom/rooms/${activeRoomId}`);
+          setRooms((prev) => prev.filter((r) => r.id !== activeRoomId));
+          navigate("/messages", { replace: true });
+        } catch (e) {
+          toast.error(e.message || "解散失败，请重试");
+          throw e;
+        }
       },
     });
+  };
 
-  const kickMember = (m) =>
-    modal.confirm({
+  const kickMember = async (m) => {
+    await modal.confirm({
       title: `将 ${m.display_name || m.username} 移出群聊？`,
       okText: "移出",
       okType: "danger",
       onOk: async () => {
-        await API.del(`/chatroom/rooms/${activeRoomId}/members/${m.id}`);
-        setRoom((prev) => (prev ? { ...prev, members: prev.members.filter((x) => x.id !== m.id) } : prev));
+        try {
+          await API.del(`/chatroom/rooms/${activeRoomId}/members/${m.id}`);
+          setRoom((prev) => (prev ? { ...prev, members: prev.members.filter((x) => x.id !== m.id) } : prev));
+        } catch (e) {
+          toast.error(e.message || "移出失败，请重试");
+          throw e;
+        }
       },
     });
+  };
 
   /* ==================== 渲染 ==================== */
   const unreadTotal = useMemo(() => rooms.reduce((n, r) => n + (Number(r.unread) || 0), 0), [rooms]);
