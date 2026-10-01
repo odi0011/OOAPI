@@ -4665,5 +4665,7 @@ html[data-theme="dark"] .oo-theme-switch-thumb { background: var(--hover-2); box
 .oo-log-status--stopped { background: var(--orange); box-shadow: 0 0 0 2px color-mix(in srgb, var(--orange) 16%, transparent); }
 .oo-log-status-label--error { color: var(--red); }
 .oo-log-status-label--stopped { color: var(--orange); }
+.oo-log-billing { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 3px 7px; min-width: 0; line-height: 1.35; }
+.oo-log-billing-muted { color: var(--ink-3); font-size: 11px; }
 
 html[data-theme="dark"] .oo-vendor-icon--mono { filter: invert(0.88); }

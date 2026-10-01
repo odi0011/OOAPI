@@ -260,12 +260,8 @@ export default function LogPage() {
       // title 属性兜底：真的放不下时还能看到全名。
       render: (v, r) =>
         v ? (
-          <span title={String(v)} style={{ display: "inline-flex", flexDirection: "column", gap: 3 }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <span className={`oo-log-status oo-log-status--${r.status || "success"}`} title={r.error_code || r.status || "成功"} aria-label={r.status === "error" ? "错误" : r.status === "stopped" ? "已停止" : "成功"} />
-              <ModelLabel model={v} size={14} channelType={r.channel_type || ""} />
-            </span>
-            {r.status === "error" || r.status === "stopped" ? <span className={`oo-log-status-label oo-log-status-label--${r.status}`} style={{ fontSize: 10.5, marginLeft: 13 }}>{r.status === "error" ? "调用失败" : "已停止"}</span> : null}
+          <span title={String(v)} style={{ display: "inline-flex", minWidth: 0 }}>
+            <ModelLabel model={v} size={14} channelType={r.channel_type || ""} />
           </span>
         ) : (
           <span style={{ color: "var(--ink-3)" }}>-</span>
@@ -291,21 +287,26 @@ export default function LogPage() {
     {
       title: "计费",
       dataIndex: "quota",
-      width: 100,
+      width: 112,
       sorter: (a, b) => (Number(a.quota) || 0) - (Number(b.quota) || 0),
       render: (q, r) => {
-        if (r.billing_known === false) return <Text type="warning" style={{ fontSize: 11 }}>费用待核查</Text>;
+        const failed = r.status === "error";
+        const stopped = r.status === "stopped";
+        const stateText = failed ? "调用失败" : stopped ? "已停止" : "";
         const n = Number(q) || 0;
-        return n ? (
-          <Tooltip title={`${fmtOd(n, perUnit, 6)}`}>
-            {/* 图标即单位：不重复写「OD币」（用户要求） */}
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-              <OdCoin size={12} />
-              <span className="oo-num" style={{ fontWeight: 550 }}>{fmtOd(n, perUnit, 4, false)}</span>
-            </span>
-          </Tooltip>
-        ) : (
-          <span style={{ color: "var(--ink-3)", fontSize: 11 }}>{r.status === "error" || r.status === "stopped" ? "未计费" : "0"}</span>
+        return (
+          <span className="oo-log-billing" title={failed && r.error_code ? `${stateText} · ${r.error_code}` : stateText || undefined}>
+            {stateText ? <span className={`oo-log-status-label oo-log-status-label--${r.status}`}>{stateText}</span> : null}
+            {r.billing_known === false ? <span className="oo-log-billing-muted">费用待核查</span> : n ? (
+              <Tooltip title={`${fmtOd(n, perUnit, 6)}`}>
+                {/* 图标即单位：不重复写「OD币」（用户要求） */}
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <OdCoin size={12} />
+                  <span className="oo-num" style={{ fontWeight: 550 }}>{fmtOd(n, perUnit, 4, false)}</span>
+                </span>
+              </Tooltip>
+            ) : <span className="oo-log-billing-muted">{stateText ? "未计费" : "0"}</span>}
+          </span>
         );
       },
     },
