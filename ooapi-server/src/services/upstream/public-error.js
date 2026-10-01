@@ -10,6 +10,7 @@ const MESSAGES = Object.freeze({
   CHANNEL_NETWORK: "上游连接中断，请稍后重试。",
   BILLING_FAILED: "本轮计费未完成，请联系管理员核查。",
   BILLING_UNCERTAIN: "本轮计费提交结果待核查，请联系管理员。",
+  TOOL_PROTOCOL_ERROR: "模型未能完成工具调用，无法取得所需的真实数据。请重试或更换模型；本轮已产生的用量保留在使用记录中。",
 });
 
 /** 返回可安全用于公开API、消息part、审计content与console的错误说明。 */

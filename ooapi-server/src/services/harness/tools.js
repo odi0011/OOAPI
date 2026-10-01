@@ -212,6 +212,7 @@ export const TOOLS = {
         usage: r.usage,
         channel: r.channel?.name || "",
         channelId: Number(r.channel?.id) || 0,
+        channelQuote: r.channelQuote,
         startedAt,
         firstTokenAt,
         elapsed: r.elapsed,
@@ -358,7 +359,10 @@ export const TOOLS = {
     async run(args, ctx) {
       const uid = Number(ctx.user?.id) || 0;
       if (!uid) return { ok: false, output: "当前会话没有登录用户，无法查询账号" };
-      const action = String(args?.action ?? "overview").toLowerCase();
+      const requestedAction = String(args?.action ?? "overview").trim().toLowerCase();
+      // balance 是模型常用且已在解析测试出现的写法；必须在真实执行层同样可用。
+      const aliases = { balance: "overview", logs: "recent", history: "recent" };
+      const action = Object.hasOwn(aliases, requestedAction) ? aliases[requestedAction] : requestedAction;
       const limit = Math.min(30, Math.max(1, Number(args?.limit) || 10));
       const od = (units) => `${(Number(units || 0) / 10000).toFixed(4).replace(/\.?0+$/, "") || "0"} OD币`;
       const t = (sec) => new Date(Number(sec) * 1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
@@ -481,6 +485,7 @@ export function toolSpecs(ids = []) {
 export async function runTool(id, args, ctx) {
   const tool = TOOLS[id];
   if (!tool) return { ok: false, output: `未知工具：${id}` };
+  if (!args || typeof args !== "object" || Array.isArray(args)) return { ok: false, output: "工具参数必须是 JSON 对象" };
   try {
     return await tool.run(args, ctx);
   } catch (e) {

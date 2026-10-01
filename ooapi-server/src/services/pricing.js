@@ -563,7 +563,7 @@ export function storedPriceTiers(p) {
   return list.length ? JSON.stringify(list) : null;
 }
 
-export function computeCost({ price, promptTokens = 0, completionTokens = 0, cacheTokens = 0, contextBilling = "auto" }) {
+function costAmounts({ price, promptTokens = 0, completionTokens = 0, cacheTokens = 0, contextBilling = "auto" }) {
   price = priceForTokens(price, promptTokens);
   // 缓存命中不能超过输入总量（上游字段异常时按输出去重，避免负基数）
   const cache = Math.max(0, Math.min(Number(cacheTokens) || 0, Number(promptTokens) || 0));
@@ -571,13 +571,75 @@ export function computeCost({ price, promptTokens = 0, completionTokens = 0, cac
   // 未配置缓存价（NULL/0）时回退输入价：直接按 0 计费等于对缓存命中部分免单
   const cachePrice = Number(price.cache) > 0 ? Number(price.cache) : Number(price.input) || 0;
   const outTokens = contextBilling === "input_only" ? 0 : Number(completionTokens) || 0;
-  const od =
-    (base / 1e6) * price.input +
-    (outTokens / 1e6) * price.output +
-    (cache / 1e6) * cachePrice;
+  const input = (base / 1e6) * price.input;
+  const output = (outTokens / 1e6) * price.output;
+  const cached = (cache / 1e6) * cachePrice;
+  return { price, base, outTokens, cache, cachePrice, input, output, cached, od: input + output + cached };
+}
+
+export function computeCost(args) {
+  const { od } = costAmounts(args);
   // 先做微小的浮点校正再向上取整，避免 0.0001 的表示误差多收 1 厘
   const units = od * UNITS_PER_OD;
   return Math.max(1, Math.ceil(Math.round(units * 1e6) / 1e6));
+}
+
+const auditNumber = (n) => Number(Number(n || 0).toFixed(12));
+
+/** 计费快照与真实扣费复用同一公式；不对各分项单独取整，避免改动金额。 */
+export function billingDetails({ calls = [], multiplier = 1, chargedUnits = 0, baseUnits = null } = {}) {
+  const rows = calls.map((call) => {
+    const t = call.tokens || {};
+    const a = costAmounts({ price: call.price, ...t, contextBilling: call.contextBilling || "auto" });
+    const component = (tokens, unitPrice, cost) => ({ tokens, unit_price: Number(unitPrice) || 0, cost_od: auditNumber(cost) });
+    return {
+      components: {
+        input: component(a.base, a.price.input, a.input),
+        output: component(a.outTokens, call.contextBilling === "input_only" ? 0 : a.price.output, a.output),
+        cache: component(a.cache, a.cachePrice, a.cached),
+      },
+      platform_price: { in: Number(a.price.input) || 0, out: call.contextBilling === "input_only" ? 0 : Number(a.price.output) || 0, cache: a.cachePrice },
+      raw_cost_od: auditNumber(a.od),
+      billable: call.billable !== false,
+      base_cost_units: call.billable === false ? 0 : computeCost({ price: call.price, ...t, contextBilling: call.contextBilling || "auto" }),
+      price_phase: call.phase || "peak", context_tier: Number(a.price.contextTier) || 0,
+      priced_at: Number(call.at) || 0, context_billing: call.contextBilling || "auto",
+      ...(call.requestedModel ? { requested_model: call.requestedModel } : {}),
+      ...(call.upstreamModel ? { upstream_model: call.upstreamModel } : {}),
+      ...(call.pricingModel ? { pricing_model: call.pricingModel } : {}),
+      channel_quote: call.channelQuote || null,
+    };
+  });
+  const components = {};
+  for (const key of ["input", "output", "cache"]) {
+    const prices = new Set(rows.map((r) => r.components[key].unit_price));
+    components[key] = { tokens: rows.reduce((n, r) => n + r.components[key].tokens, 0),
+      unit_price: prices.size === 1 ? [...prices][0] : null,
+      mixed: prices.size > 1,
+      cost_od: auditNumber(rows.reduce((n, r) => n + r.components[key].cost_od, 0)) };
+  }
+  const rawCost = auditNumber(rows.reduce((n, r) => n + r.raw_cost_od, 0));
+  const base = baseUnits === null ? rows.reduce((n, r) => n + r.base_cost_units, 0) : Number(baseUnits) || 0;
+  const rate = Number(multiplier) || 1;
+  const charged = chargedUnits === null ? null : Number(chargedUnits) || 0;
+  const phases = [...new Set(rows.map((r) => r.price_phase))];
+  const platformPrices = new Set(rows.map((r) => JSON.stringify(r.platform_price)));
+  const unitPrices = Object.fromEntries(["input", "output", "cache"].map((key) => [key,
+    [...new Set(rows.map((r) => r.components[key].unit_price))].slice(0, 40)]));
+  const usagePresent = rows.some((r) => Object.values(r.components).some((c) => c.tokens > 0));
+  return { version: 1, components,
+    platform_unit_prices: unitPrices, usage_present: usagePresent,
+    price_quoted: !usagePresent || rows.every((r) => !r.billable),
+    platform_price: platformPrices.size === 1 ? rows[0].platform_price : null,
+    price_mode: platformPrices.size > 1 ? "mixed" : "single",
+    raw_cost_od: rawCost, base_cost_units: base, base_cost_od: auditNumber(base / UNITS_PER_OD), multiplier: rate,
+    charged_cost_units: charged, charged_cost_od: charged === null ? null : auditNumber(charged / UNITS_PER_OD),
+    pre_rate_rounding_units: auditNumber(base - rawCost * UNITS_PER_OD),
+    adjustment_units: charged === null ? null : auditNumber(charged - base * rate),
+    price_phase: phases.join("+") || "peak", context_tier: rows.length === 1 ? rows[0].context_tier : null,
+    channel_quote: rows.length === 1 ? rows[0].channel_quote : null,
+    quote_mode: rows.length > 1 ? "mixed" : "single",
+    call_count: rows.length, calls: rows.slice(0, 40) };
 }
 
 /**

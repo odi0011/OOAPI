@@ -5,11 +5,13 @@ import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
 import { normalizeUsage } from "../src/services/pricing.js";
 import { USAGE_SQL } from "../src/services/log.js";
+import { channelPriceQuote } from "../src/services/channel-price-quote.js";
 
 const audit = {
   crypto,
   normalizeUsage,
   USAGE_SQL,
+  channelPriceQuote,
   complete: null,
   adapter: null,
   pool: { query: async () => [[], []] },
@@ -52,6 +54,7 @@ const executor = await loadMocked("../src/services/execute.js", `
   const resolveAliasSync=(v)=>v;
   const recordChannelSwitch=()=>{};
   const normalizeUsage=audit.normalizeUsage;
+  const channelPriceQuote=audit.channelPriceQuote;
 `);
 audit.executor = executor;
 
@@ -347,6 +350,8 @@ await test("账号overview/usage/recent含失败和停止使用，排除普通�
   };
   try {
     const ctx = { user: { id: 77 } };
+    for (const invalid of [null, "not-json", []]) assert.equal((await tools.runTool("account", invalid, ctx)).ok, false);
+    assert.equal(queries.length, 0, "非法参数不能默认执行overview");
     const overview = await tools.runTool("account", { action: "overview" }, ctx);
     assert.equal(overview.ok, true); assert.match(overview.output, /近 24 小时：3 次调用，消耗 0\.03 OD币/);
     const recent = await tools.runTool("account", { action: "recent" }, ctx);
@@ -356,6 +361,60 @@ await test("账号overview/usage/recent含失败和停止使用，排除普通�
     assert.equal(usage.ok, true); assert.match(usage.output, /failed-model/); assert.ok(!usage.output.includes("operation-error"));
     assert.equal(queries.filter(sql => sql.includes("FROM logs")).length, 4);
   } finally { audit.pool.query = originalQuery; }
+});
+
+for (const mode of ["whole", "char"]) {
+  await test(`线上 Laguna 两种真实格式完成账号工具与最终回答（${mode}）`, async () => {
+    const originalQuery = audit.pool.query;
+    const queries = [], calls = [];
+    audit.pool.query = async (sql, args) => {
+      assert.equal(args[0], 77, "模型参数不能改变当前账号");
+      assert.equal((sql.match(/\?/g) || []).length, args.length);
+      queries.push(sql);
+      if (sql.includes("FROM users")) return [[{ username: "fixture", quota: 12345, used_quota: 300, request_count: 2 }]];
+      if (sql.includes("FROM tokens")) return [[{ n: 1, on_: 1 }]];
+      if (sql.includes("ORDER BY id DESC")) return [[{ type: 2, model: "fixture-model", quota: 100, created_at: 1 }]];
+      return [[{ n: 2, cost: 300 }]];
+    };
+    let step = 0;
+    audit.complete = async (o) => {
+      step++;
+      if (step === 2) assert.ok(o.messages.some((m) => m.content.includes("余额：1.2345 OD币")));
+      if (step === 3) assert.ok(o.messages.some((m) => m.content.includes("最近调用（1 条") && m.content.includes("fixture-model")));
+      const content = step === 1
+        ? '<tool_call>account<arg_key>action</arg_key><arg_value>balance</arg_value><arg_key>user_id</arg_key><arg_value>999</arg_value></tool_call>'
+        : step === 2 ? '<tool_call>{"tool":"account","args":{"action":"recent","limit":5}}'
+        : "余额 1.2345 OD币，最近调用包含 fixture-model。";
+      for (const chunk of mode === "char" ? [...content] : [content]) o.onDelta(chunk);
+      return mockResult(content);
+    };
+    try {
+      const result = await harness.runHarness({ ...harnessOptions(["account"], calls), user: { id: 77 } });
+      assert.match(result.text, /1\.2345 OD币.*fixture-model/);
+      assert.deepEqual(result.parts.filter((p) => p.type === "tool").map((p) => p.status), ["done", "done"]);
+      assert.equal(calls.length, 3);
+      assert.equal(queries.length, 4);
+    } finally { audit.pool.query = originalQuery; }
+  });
+}
+await test("反复非法工具调用只纠正一次，真实用量保留且内部占位符不进历史", async () => {
+  for (const content of ['<tool_call>{"tool":"account","args":"not-json"}</tool_call>', '（工具调用格式不合法）', '（工具调用格式不合法）\n（工具调用格式不合法）']) {
+    let attempts = 0;
+    const calls = [];
+    audit.complete = async (o) => {
+      attempts++;
+      assert.ok(!o.messages.some((m) => m.role === "assistant" && m.content.includes("工具调用格式不合法")));
+      o.onDelta(content);
+      return mockResult(content);
+    };
+    await assert.rejects(() => harness.runHarness({ ...harnessOptions(["account"], calls), history: [{ role: "assistant", parts: [{ type: "text", text: "（工具调用格式不合法）\n（工具调用格式不合法）" }] }] }), (e) => {
+      assert.equal(e.code, "TOOL_PROTOCOL_ERROR");
+      assert.equal(e.calls.length, 2);
+      assert.equal(e.calls[0].usage.prompt_tokens, 10);
+      return true;
+    });
+    assert.equal(attempts, 2); assert.equal(calls.length, 2);
+  }
 });
 
 const originalFetch = globalThis.fetch;

@@ -1,0 +1,38 @@
+.oo-billing-trigger.ant-btn { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 3px; color: var(--ink); font-size: 12px; font-weight: 550; }
+.oo-billing-trigger.ant-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.oo-billing-amount { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.oo-billing-popover .ant-popover-inner { padding: 12px; }
+.oo-billing-details { min-width: 0; font-size: 12px; line-height: 1.5; color: var(--ink); }
+.oo-billing-details--compact { width: min(340px, calc(100vw - 48px)); max-height: min(70vh, 600px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.oo-billing-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.oo-billing-heading strong { font-size: 13px; }
+.oo-billing-heading > span, .oo-billing-note { color: var(--ink-3); font-size: 11px; }
+.oo-billing-breakdown { width: 100%; border-collapse: collapse; font-size: 11.5px; table-layout: fixed; }
+.oo-billing-breakdown th, .oo-billing-breakdown td { padding: 5px 0; text-align: right; font-weight: 400; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.oo-billing-breakdown th:first-child { width: 22%; text-align: left; }
+.oo-billing-breakdown thead { color: var(--ink-3); border-bottom: 1px solid var(--line); font-size: 10.5px; }
+.oo-billing-breakdown tbody tr:last-child { border-bottom: 1px solid var(--line); }
+.oo-billing-note { margin-top: 6px; overflow-wrap: anywhere; }
+.oo-billing-mixed { margin-top: 8px; }
+.oo-billing-mixed > div:not(:first-child) { display: flex; gap: 10px; margin-top: 4px; color: var(--ink-2); font-size: 11px; }
+.oo-billing-mixed > div:not(:first-child) > span { min-width: 45px; }
+.oo-billing-mixed b { font-weight: 400; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.oo-billing-totals { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+.oo-billing-totals > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.oo-billing-totals > div > span { color: var(--ink-2); }
+.oo-billing-totals b { font-weight: 550; font-variant-numeric: tabular-nums; }
+.oo-billing-totals small { color: var(--ink-3); font-size: 10px; }
+.oo-billing-charged { padding-top: 6px; border-top: 1px solid var(--line); }
+.oo-billing-charged b { color: var(--accent); }
+.oo-billing-channel { padding-top: 10px; margin-top: 10px; border-top: 1px solid var(--line); }
+.oo-billing-section-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-weight: 550; }
+.oo-billing-section-title > span { color: var(--ink-3); font-size: 10px; font-weight: 400; overflow-wrap: anywhere; }
+.oo-billing-prices { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-size: 11px; color: var(--ink-2); }
+.oo-billing-prices b { margin-left: 2px; font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }
+.oo-billing-sku { margin-top: 5px; color: var(--ink-3); font-size: 10px; overflow-wrap: anywhere; }
+.oo-billing-sku > span { margin-left: 4px; font-family: var(--font-mono); }
+.oo-billing-channel .ant-typography { display: inline-block; margin-top: 6px; font-size: 11px; }
+.oo-billing-calls .ant-collapse-header { padding: 10px 0 0 !important; font-size: 11px; }
+.oo-billing-calls .ant-collapse-content-box { padding: 8px 0 0 !important; }
+.oo-billing-call + .oo-billing-call { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.oo-log-billing-detail { padding: 12px; margin-bottom: 16px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); }

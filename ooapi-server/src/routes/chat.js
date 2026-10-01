@@ -13,7 +13,8 @@ import { authRequired, preAuthJwt } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { logTexts } from "../services/log-text.js";
-import { getPrice, originalModelPrice, priceForTokens, computeCost, splitTokens, sumCallTokens, loadPrices, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
+import { getPrice, originalModelPrice, priceForTokens, computeCost, billingDetails, splitTokens, sumCallTokens, loadPrices, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
+import { finalizeChannelQuote } from "../services/channel-price-quote.js";
 import { groupConfigOf, applyGroupRate, parseGroupKey, displayGroupName } from "../services/group-rate.js";
 import { allPublicModels, publicModelMetadataMap, modelVendorName, modelRegistry, resolveAliasSync, canonicalModelName, modelInAllowList } from "../services/models.js";
 import { getProvider } from "../services/channel-types.js";
@@ -639,7 +640,9 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
   let price;
   let eff;
   let units;
+  let baseUnits;
   const modelCalls = [];
+  const billingCalls = [];
   if (Array.isArray(calls) && calls.length) {
     let sum = 0;
     const phases = new Set();
@@ -652,10 +655,14 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
         c.tokens ||
         splitTokens({ prompt: c.prompt || "", output: c.output || "", upstreamTotal: c.usage || null });
       const tierPrice = priceForTokens(e.price, t.promptTokens);
+      billingCalls.push({ price: tierPrice, tokens: t, at, phase: e.phase,
+        requestedModel: c.requestedModel || model, upstreamModel: c.upstreamModel || "", pricingModel: canonicalModelName(callPrice.model),
+        channelQuote: finalizeChannelQuote(c.channelQuote, t.promptTokens) });
       modelCalls.push({ requested_model: c.requestedModel || model, upstream_model: c.upstreamModel || "", model: canonicalModelName(c.model || model), pricing_model: callPrice.model, price: { in: tierPrice.input, out: tierPrice.output, cache: tierPrice.cache }, price_phase: e.phase, context_tier: tierPrice.contextTier || 0 });
       sum += computeCost({ price: e.price, promptTokens: t.promptTokens, completionTokens: t.completionTokens, cacheTokens: t.cacheTokens });
     }
-    units = applyGroupRate(sum, gcfg?.rate);
+    baseUnits = sum;
+    units = applyGroupRate(baseUnits, gcfg?.rate);
     // 展示口径 = 计费口径：日志/消息统计里的 token 必须取自**逐调用计费**所用的
     // 那一组汇总。线上事故（用户实测）：失败轮（对话（部分））没有可见正文时，
     // 调用方的 tokens 还是 0/0，而钱按失败步的长上下文算出来了 ——
@@ -673,8 +680,12 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
     price = priceForTokens(eff.price, promptTokens);
     // 站内对话一轮可能跨多个渠道（harness 多步），无法对单次调用套用账号级
     // context_billing，这里保持既有的「全额」口径（与网关默认一致）。
-    units = applyGroupRate(computeCost({ price, promptTokens, completionTokens, cacheTokens }), gcfg?.rate);
+    baseUnits = computeCost({ price, promptTokens, completionTokens, cacheTokens });
+    units = applyGroupRate(baseUnits, gcfg?.rate);
+    billingCalls.push({ price, tokens: { promptTokens, completionTokens, cacheTokens }, at: startedAt,
+      phase: eff.phase, requestedModel: model, pricingModel: canonicalModelName(basePrice.model) });
   }
+  const bill = billingDetails({ calls: billingCalls, multiplier: gcfg?.rate, chargedUnits: units, baseUnits });
 
   // 注意：这里**不能**在余额为 0 时直接抛错。旧实现有这一行，后果是
   // 「整轮对话已经完整交付给用户，却一分钱不扣、连一条消费日志都不写」
@@ -735,7 +746,9 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
       upstream_model: modelCalls.at(-1)?.upstream_model || "",
       pricing_model: canonicalModelName(modelCalls.length === 1 ? modelCalls[0].pricing_model : basePrice.model || model),
       requested_price: { in: basePrice.input, out: basePrice.output, cache: basePrice.cache },
-      ...(originalPrice ? { original_price: originalPrice } : {}),
+      original_price: bill.channel_quote?.price || null,
+      ...(originalPrice ? { model_alias_price: originalPrice } : {}),
+      billing_details: bill,
       ...(modelCalls.length ? { model_calls: modelCalls.slice(0, 40) } : {}),
       kind,
       ...logTexts({ prompt, output, calls, inputText }),
@@ -781,11 +794,11 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
   });
     committing = true;
     await conn.commit();
-    return { units, promptTokens, completionTokens, cacheTokens, logId };
+    return { units, promptTokens, completionTokens, cacheTokens, logId, billingDetails: bill };
   } catch (e) {
     await conn.rollback().catch(() => {});
     // COMMIT发出后结果无法确认，禁止重试结算或再次退回已计入的预占。
-    throw Object.assign(new Error(committing ? "扣费提交结果不确定，请联系管理员核查" : "本轮计费未完成，请联系管理员核查"), { code: committing ? "BILLING_UNCERTAIN" : "BILLING_FAILED", cause: e, ...(committing ? { billingResult: { units, promptTokens, completionTokens, cacheTokens, logId } } : {}) });
+    throw Object.assign(new Error(committing ? "扣费提交结果不确定，请联系管理员核查" : "本轮计费未完成，请联系管理员核查"), { code: committing ? "BILLING_UNCERTAIN" : "BILLING_FAILED", cause: e, billingDetails: bill, ...(committing ? { billingResult: { units, promptTokens, completionTokens, cacheTokens, logId, billingDetails: bill } } : {}) });
   } finally { conn.release(); }
 }
 
@@ -1292,6 +1305,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
         settled = true;
       } catch (e2) {
         billingKnown = false;
+        if (e2.billingDetails) partialBilled.billingDetails = { ...e2.billingDetails, charged_cost_units: null, charged_cost_od: null, adjustment_units: null };
         if (e2.code === "BILLING_UNCERTAIN") { settled = true; quotaHold?.consume(); partialBilled = e2.billingResult || partialBilled; }
         console.error("[chat] 部分计费失败：", e2.message);
       }
@@ -1350,6 +1364,13 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       const failedPrice = await getPrice(model);
       const failedOriginalPrice = await originalModelPrice(model);
       const failedModel = canonicalModelName(err.billModel || model) || model;
+      const failedEff = effectivePrice(failedPrice, startedAt || Date.now());
+      const failedQuote = finalizeChannelQuote(err.channelQuote, 0);
+      const failedBill = partialBilled.billingDetails || billingDetails({
+        calls: [{ price: failedEff.price, tokens: { promptTokens: 0, completionTokens: 0, cacheTokens: 0 },
+          at: startedAt, phase: failedEff.phase, billable: false, requestedModel: model,
+          upstreamModel: err.upstreamModel || "", pricingModel: canonicalModelName(failedPrice.model), channelQuote: failedQuote }],
+        chargedUnits: billingKnown ? partialBilled.units : null, baseUnits: 0 });
       await writeLog({
         user,
         type: LOG_TYPE.ERROR,
@@ -1359,7 +1380,9 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           billing_known: billingKnown, requested_model: model, upstream_model: err.upstreamModel || "",
           pricing_model: canonicalModelName(failedPrice.model || model),
           requested_price: { in: failedPrice.input, out: failedPrice.output, cache: failedPrice.cache },
-          ...(failedOriginalPrice ? { original_price: failedOriginalPrice } : {}),
+          original_price: failedBill.channel_quote?.price || null,
+          ...(failedOriginalPrice ? { model_alias_price: failedOriginalPrice } : {}),
+          billing_details: failedBill,
           ...logTexts({ calls: billedCalls.length ? billedCalls : [{ prompt: err.billingPrompt || "", output: err.billingOutput || "" }], inputText }),
           session_id: session.id,
         }),

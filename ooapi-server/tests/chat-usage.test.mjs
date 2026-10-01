@@ -32,6 +32,9 @@ const frame = (v) => `data: ${JSON.stringify(v)}\n\n`;
 let behavior;
 let state;
 let channelId = 97000;
+let channelType = 'openai';
+let channelModels = model;
+let fixtureRate = 1;
 let userId = 98000;
 let queries = [];
 let messageFailures = 0;
@@ -67,10 +70,10 @@ const query = async (store, sql, args = []) => {
     { model: 'glm-4.7', input_price: .6, output_price: 2.2, cache_price: .11 }]];
   if (s === 'SELECT * FROM tokens WHERE id = ? AND user_id = ?') return [[clone(store.token)].filter((t) => t.id === Number(args[0]) && t.user_id === Number(args[1]))];
   if (s.includes('FROM tokens WHERE user_id = ?')) return [[clone(store.token)].filter((t) => t.user_id === Number(args[0]) && t.status === 1)];
-  if (s.includes('FROM channels')) return [[{ id: channelId, type: 'openai', name: 'fixture-channel', status: 1, models: model,
+  if (s.includes('FROM channels')) return [[{ id: channelId, type: channelType, name: 'fixture-channel', status: 1, models: channelModels,
     group_name: 'fixture', group_list: '["fixture"]', base_url: upstreamBase, api_key: 'fixture-upstream-only',
     other: JSON.stringify({ method: 'api', allow_private_upstream: true }) }]];
-  if (s.includes('FROM channel_groups')) return [[{ name: 'fixture', rate: 1, models: '[]' }]];
+  if (s.includes('FROM channel_groups')) return [[{ name: 'fixture', rate: fixtureRate, models: '[]' }]];
   if (s === 'SELECT * FROM chat_sessions WHERE id = ? AND user_id = ?' || s.startsWith('SELECT id FROM chat_sessions')) {
     return [[clone(store.session)].filter((v) => v.id === args[0] && v.user_id === Number(args[1]))];
   }
@@ -135,6 +138,7 @@ const query = async (store, sql, args = []) => {
       r.output_text ||= detail.output_text || ''; r.billing_unknown = detail.billing_known === false ? 1 : 0;
       r.input_truncated = detail.input_truncated ? 1 : 0; r.output_truncated = detail.output_truncated ? 1 : 0;
       r.request_prompt_truncated = detail.request_prompt_truncated ? 1 : 0;
+      r.billing_details = detail.billing_details || null;
       if (!s.includes(', detail, user_agent')) { delete r.detail; delete r.user_agent; delete r.request_prompt_text; } return r; })];
   }
   throw new Error(`Uncovered fixture SQL: ${s}`);
@@ -156,6 +160,7 @@ const server = http.createServer(app);
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${server.address().port}`;
 const reset = () => {
+  channelType = 'openai'; channelModels = model; fixtureRate = 1;
   userId++; channelId++; queries = []; requests = commits = rollbacks = messageFailures = tokenFailures = insertFailures = 0; ambiguousCommit = false;
   state = { user: { id: userId, username: 'fixture', role: 1, status: 1, token_version: 0, quota: initial, used_quota: 0, request_count: 0 },
     token: { id: userId + 1000, user_id: userId, name: 'fixture', key_str: 'fixture-chat-only', status: 1, expired_time: -1,
@@ -190,7 +195,11 @@ const finalMessage = (result, status) => {
 const oneLog = (status) => {
   assert.equal(state.logs.length, 1); const row = state.logs[0];
   assert.equal(row.is_usage, 1); assert.equal(row.status, status); assert.equal(row.input_text, input);
-  assert.equal(row.token_id, state.token.id); assert.equal(row.user_id, state.user.id); return row;
+  assert.equal(row.token_id, state.token.id); assert.equal(row.user_id, state.user.id);
+  const bill = JSON.parse(row.detail).billing_details;
+  assert.equal(bill.version, 1); assert.equal(bill.multiplier, fixtureRate);
+  if (JSON.parse(row.detail).billing_known !== false) assert.equal(bill.charged_cost_units, row.quota);
+  return row;
 };
 const sse = (frames) => { behavior = (_req, res) => { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(frames); }; };
 const seed = () => { state.messages = [
@@ -251,6 +260,50 @@ try {
     const message = finalMessage(await run({ keyId: 0 }), 'success'); const row = oneLog('success'); balance(row.quota);
     assert.equal(row.type, 2); assert.deepEqual(message.tokens, { prompt: 1700, completion: 300, cache: 500 });
     assert.equal(message.id, (await get(`/api/chat/sessions/${state.session.id}`)).messages[1].id);
+  });
+  for (const partial of [false, true]) await test(`Cline实际free SKU${partial ? '部分失败' : '成功'}渠道价0与平台原始费/倍率扣费分别保存`, async () => {
+    channelType = 'cline'; channelModels = `${model}:free`; fixtureRate = 1.7;
+    let sentModel;
+    behavior = (req, res) => {
+      let body = ''; req.on('data', (part) => { body += part; });
+      req.on('end', () => {
+        sentModel = JSON.parse(body).model;
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.end(frame({ model, choices: [{ delta: { content: 'FREE_SKU_RESULT' } }] }) + frame({ usage }) +
+          (partial ? frame({ error: { message: 'fixture partial failure' } }) : 'data: [DONE]\n\n'));
+      });
+    };
+    finalMessage(await run(), partial ? 'error' : 'success'); const row = oneLog(partial ? 'error' : 'success');
+    const bill = JSON.parse(row.detail).billing_details;
+    assert.equal(sentModel, `${model}:free`, '实际发出的SKU，而非SSE返回的规范名');
+    assert.deepEqual(bill.channel_quote.price, { in: 0, out: 0, cache: 0 });
+    assert.equal(bill.channel_quote.model, sentModel); assert.equal(bill.channel_quote.provider, 'cline');
+    assert.equal(bill.raw_cost_od, .00205); assert.equal(bill.base_cost_units, 21);
+    assert.equal(bill.multiplier, 1.7); assert.equal(bill.charged_cost_units, 36); balance(36);
+    const own = (await get('/api/log/usage')).items[0];
+    assert.equal(own.billing_details.raw_cost_od, .00205);
+    assert.equal(own.billing_details.charged_cost_units, 36);
+    assert.ok(!('channel_quote' in own.billing_details)); assert.ok(!('calls' in own.billing_details));
+    assert.ok(!JSON.stringify(own).includes('channel_free_sku'));
+    state.user.role = 100; jwt = signToken(state.user); const admin = (await get('/api/log/usage')).items[0];
+    assert.deepEqual(admin.original_price, { in: 0, out: 0, cache: 0 });
+  });
+  await test('连续两次非法工具协议持久化失败，真实两次calls各记费一次且刷新仍有错误', async () => {
+    sse(frame({ choices: [{ delta: { content: '<tool_call>这不是 JSON</tool_call>' } }] }) + frame({ usage }) + 'data: [DONE]\n\n');
+    const result = await run(); const message = finalMessage(result, 'error'); const row = oneLog('error');
+    const bill = JSON.parse(row.detail).billing_details;
+    assert.equal(requests, 2); assert.equal(row.error_code, 'TOOL_PROTOCOL_ERROR');
+    assert.equal(bill.call_count, 2); assert.equal(bill.calls.length, 2);
+    assert.equal(bill.base_cost_units, 42); assert.equal(bill.charged_cost_units, 42); balance(42);
+    assert.equal(row.prompt_tokens, 3400); assert.equal(row.completion_tokens, 600); assert.equal(row.cache_tokens, 1000);
+    assert.equal(bill.raw_cost_od, .0041); assert.equal(bill.components.input.tokens, 2400);
+    assert.ok(message.parts.some((p) => p.type === 'error' && p.code === 'TOOL_PROTOCOL_ERROR'));
+    assert.ok(!JSON.stringify(message.parts).includes('这不是 JSON'));
+    const saved = (await get(`/api/chat/sessions/${state.session.id}`)).messages[1];
+    assert.equal(saved.status, 'error'); assert.equal(saved.cost, .0042); assert.equal(saved.id, message.id);
+    assert.ok(saved.parts.some((p) => p.type === 'error' && p.code === 'TOOL_PROTOCOL_ERROR'));
+    const own = (await get('/api/log/usage?status=error')).items[0];
+    assert.equal(own.billing_details.call_count, 2); assert.ok(!('calls' in own.billing_details));
   });
   await test('Key更新失败账户/Key/消费日志一起回滚，费用显示待核查', async () => {
     sse(frame({ choices: [{ delta: { content: 'COMPLETE' } }] }) + frame({ usage }) + 'data: [DONE]\n\n'); tokenFailures = 1;

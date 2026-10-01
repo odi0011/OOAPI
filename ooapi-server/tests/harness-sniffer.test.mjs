@@ -79,11 +79,31 @@ const CASES = [
     visible: "查询中",
   },
   {
-    name: "裸 JSON 调用（出现在正文后面也能识别）",
-    text: '这里有个 {花括号} 不是调用。{"tool":"search","args":{"query":"y"}}',
+    name: "整个回答为裸 JSON 调用",
+    text: '{"tool":"search","args":{"query":"y"}}',
     tool: "search",
     args: { query: "y" },
-    visible: "这里有个 {花括号} 不是调用。",
+    visible: "",
+  },
+  {
+    name: "线上 Laguna arg_key/arg_value 原文",
+    text: '<tool_call>account<arg_key>action</arg_key><arg_value>overview</arg_value></tool_call>',
+    tool: "account", args: { action: "overview" }, visible: "",
+  },
+  {
+    name: "线上 Laguna 完整 JSON 漏结束标签",
+    text: '<tool_call>{"tool":"account","args":{"action":"overview"}}',
+    tool: "account", args: { action: "overview" }, visible: "",
+  },
+  {
+    name: "大写标签与 functions 前缀",
+    text: '<TOOL_CALL>{"name":"functions.account","arguments":"{\\"action\\":\\"recent\\",\\"limit\\":5}"}</TOOL_CALL>',
+    tool: "account", args: { action: "recent", limit: 5 }, visible: "",
+  },
+  {
+    name: "单条 OpenAI tool_calls 包装",
+    text: '<tool_call>{"tool_calls":[{"function":{"name":"account","arguments":"{\\"action\\":\\"overview\\"}"}}]}</tool_call>',
+    tool: "account", args: { action: "overview" }, visible: "",
   },
 ];
 
@@ -116,6 +136,29 @@ for (const mode of ["whole", "char"]) {
 
   const stray = run("回答完毕<｜end▁of▁sentence｜>", mode);
   ck(`对话模板特殊 token 被剥掉（${mode}）`, stray.shown === "回答完毕", JSON.stringify(stray.shown));
+
+  for (const example of [
+    '这是 JSON 示例，请勿执行：\n```json\n{"tool":"todowrite","args":{"todos":[{"content":"example"}]}}\n```',
+    '普通解释中的 {"tool":"account","args":{"action":"overview"}} 应显示为正文。',
+    '示例：`<tool_call>{"tool":"account","args":{}}</tool_call>`',
+    '> ~~~xml\n> <tool_call>{"tool":"account","args":{}}</tool_call>\n> ~~~',
+    '    <tool_call>{"tool":"account","args":{}}</tool_call>',
+  ]) {
+    const literal = run(example, mode);
+    ck(`普通代码/行内示例不执行且原样显示（${mode}）`, !literal.call && !literal.bad && literal.shown === example, JSON.stringify(literal));
+  }
+  for (const args of ['"not-json"', 'null', '[]']) {
+    const invalid = run(`<tool_call>{"tool":"account","args":${args}}</tool_call>`, mode);
+    ck(`非法参数 ${args} 不变成默认空参数（${mode}）`, invalid.bad && !invalid.call);
+    const markup = run(`<function_calls><invoke name="account"><parameter name="args">${args}</parameter></invoke></function_calls>`, mode);
+    ck(`XML参数 ${args} 不变成默认空参数（${mode}）`, markup.bad && !markup.call);
+  }
+  const partial = run('<tool_call>{"tool":"account","args":{"action":', mode);
+  ck(`未完成 JSON 不猜补并调用（${mode}）`, partial.bad && !partial.call);
+  for (const text of ['（工具调用格式不合法）', '（工具调用格式不合法）\n（工具调用格式不合法）']) {
+    const internal = run(text, mode);
+    ck(`内部错误占位符不能显示成成功回答（${mode}）`, internal.bad && !internal.call && !internal.shown);
+  }
 }
 
 const p = parseInvokeMarkup('<invoke name="x"><parameter name="n">42</parameter><parameter name="s" string="true">42</parameter></invoke>');

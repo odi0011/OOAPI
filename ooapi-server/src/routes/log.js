@@ -14,6 +14,24 @@ const router = Router();
 // 让前端拉全量再筛既费带宽，也会让操作日志被海量调用记录淹没。
 const USAGE_TYPE = LOG_TYPE.CONSUME;
 
+/** 只给本人平台费用快照；递归白名单，不能直接返回含渠道报价/上游ID的JSON。 */
+function publicBillingDetails(value) {
+  if (!value || value.version !== 1) return null;
+  const number = (v) => v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v);
+  const component = (v) => ({ tokens: number(v?.tokens), unit_price: number(v?.unit_price), cost_od: number(v?.cost_od), mixed: v?.mixed === true });
+  const price = value.platform_price && typeof value.platform_price === "object" ? Object.fromEntries(["in", "out", "cache"].map((k) => [k, number(value.platform_price[k])])) : null;
+  return { version: 1, components: { input: component(value.components?.input), output: component(value.components?.output), cache: component(value.components?.cache) },
+    platform_unit_prices: Object.fromEntries(["input", "output", "cache"].map((key) => [key,
+      (Array.isArray(value.platform_unit_prices?.[key]) ? value.platform_unit_prices[key] : []).map(number).filter((n) => n !== null && n >= 0).slice(0, 40)])),
+    price_quoted: value.price_quoted === true, usage_present: value.usage_present === true,
+    platform_price: price, price_mode: value.price_mode === "mixed" ? "mixed" : "single",
+    raw_cost_od: number(value.raw_cost_od), base_cost_units: number(value.base_cost_units), base_cost_od: number(value.base_cost_od),
+    multiplier: number(value.multiplier), charged_cost_units: number(value.charged_cost_units), charged_cost_od: number(value.charged_cost_od),
+    pre_rate_rounding_units: number(value.pre_rate_rounding_units), adjustment_units: number(value.adjustment_units),
+    price_phase: /^(peak|offpeak|flat)(\+(peak|offpeak|flat))*$/.test(String(value.price_phase)) ? value.price_phase : "",
+    context_tier: number(value.context_tier), call_count: number(value.call_count) };
+}
+
 /**
  * 日志 → 响应对象。
  * 敏感字段（渠道/令牌/分组/原始 UA/成本价/上游错误明细）只给管理员：
@@ -23,6 +41,9 @@ function mapLog(r, { isAdmin }) {
   let detail = {};
   try { detail = JSON.parse(r.detail || "{}"); } catch { /* 老操作日志不一定是JSON */ }
   if (!detail || typeof detail !== "object" || Array.isArray(detail)) detail = {};
+  let bill = detail.billing_details || r.billing_details || null;
+  if (typeof bill === "string") { try { bill = JSON.parse(bill); } catch { bill = null; } }
+  if (bill?.version !== 1) bill = null; // 不用当前配置或旧SKU价伪造历史渠道报价/费用。
   const base = {
     id: r.id,
     user_id: r.user_id,
@@ -44,6 +65,7 @@ function mapLog(r, { isAdmin }) {
     request_prompt_truncated: Boolean(Number(r.request_prompt_truncated) || detail.request_prompt_truncated || detail.prompt_truncated),
     content: r.content,
     quota: Number(r.quota),
+    billing_details: isAdmin ? bill : publicBillingDetails(bill),
     billing_known: Number(r.billing_unknown) !== 1 && detail.billing_known !== false,
     model: canonicalModelName(r.model) || r.model || "",
     prompt_tokens: Number(r.prompt_tokens) || 0,
@@ -78,7 +100,7 @@ function mapLog(r, { isAdmin }) {
     upstream_model: detail.upstream_model || "",
     pricing_model: detail.pricing_model || "",
     requested_price: detail.requested_price || null,
-    original_price: detail.original_price || null,
+    original_price: bill?.channel_quote?.status === "available" ? bill.channel_quote.price || null : null,
     effective_price: detail.price || null,
     model_calls: Array.isArray(detail.model_calls) ? detail.model_calls : [],
     request_prompt_text: r.request_prompt_text || detail.request_prompt_text || detail.prompt_text || "",
@@ -228,6 +250,7 @@ async function listLogs(req, res, kind) {
     "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.output_truncated')) = 'true' ELSE 0 END AS output_truncated",
     "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.request_prompt_truncated')) = 'true' ELSE 0 END AS request_prompt_truncated",
     "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.billing_known')) = 'false' ELSE 0 END AS billing_unknown",
+    "CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.billing_details') ELSE NULL END AS billing_details",
     // request_id 必须返回：一次调用可能产生两条记录（计费行 + 错误行，
     // 见「客户端提前断开」那个场景），没有这个字段用户在界面上**无法把两条对起来**。
     // 黑盒测试实测抱怨（运维人格）：「两页都没有 request_id，我只能下 SQL 才看得出来

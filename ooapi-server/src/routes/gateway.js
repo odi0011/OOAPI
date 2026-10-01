@@ -11,12 +11,14 @@ import { runCompletion, billableFailedCall } from "../services/execute.js";
 import { normalizeContentToText } from "../services/upstream/content-text.js";
 import { publicRunError } from "../services/upstream/public-error.js";
 import { logTexts } from "../services/log-text.js";
+import { channelPriceQuote, finalizeChannelQuote } from "../services/channel-price-quote.js";
 import { acquire, estimateRequestTokens } from "../services/user-limit.js";
 import {
   getPrice,
   originalModelPrice,
   priceForTokens,
   computeCost,
+  billingDetails,
   splitTokens,
   effectivePrice,
   isModelPriced,
@@ -466,6 +468,7 @@ async function settle({
   ip,
   requestId,
   channel,
+  channelQuote = null,
   startedAt = 0,
   firstTokenAt = 0,
   userAgent = "",
@@ -509,18 +512,21 @@ async function settle({
   // 分组倍率：Key 绑定分组后按分组倍率计费（rate=1 时不变）；
   // 与分时是两层独立乘数（时段决定单价，倍率决定加价倍数），顺序保持原样
   const gcfg = await groupConfigOf(token?.group_name || user?.group_name);
-  const units = applyGroupRate(
-    computeCost({
+  const contextBilling = channel?.other?.context_billing || "auto";
+  const baseUnits = computeCost({
       price,
       promptTokens,
       completionTokens,
       cacheTokens,
       // 账号级计费口径（渠道 other.context_billing）：input_only 的账号不计输出
       // （仅用于「上游按上下文长度计费、不按生成量计费」的账号，会改变用户实际扣费）
-      contextBilling: channel?.other?.context_billing || "auto",
-    }),
-    gcfg?.rate
-  );
+      contextBilling,
+    });
+  const units = applyGroupRate(baseUnits, gcfg?.rate);
+  const quote = finalizeChannelQuote(channelQuote || channelPriceQuote(channel, { model, at: startedAt }), promptTokens);
+  const bill = billingDetails({ calls: [{ price, tokens: { promptTokens, completionTokens, cacheTokens }, contextBilling,
+    at: startedAt, phase: eff.phase, channelQuote: quote, requestedModel: model, upstreamModel, pricingModel: canonicalModelName(priceModel) }],
+    multiplier: gcfg?.rate, chargedUnits: units, baseUnits });
   const od = (units / UNITS_PER_OD).toFixed(4);
 
   // 条件扣费：quota >= units 才扣。并发场景下「先读余额再写回」会超额透支，
@@ -600,7 +606,9 @@ async function settle({
       model: logModel,
       requested_model: model,
       requested_price: { in: requestedPrice.input, out: requestedPrice.output, cache: requestedPrice.cache },
-      ...(originalPrice ? { original_price: originalPrice } : {}),
+      original_price: quote?.price || null,
+      ...(originalPrice ? { model_alias_price: originalPrice } : {}),
+      billing_details: bill,
       pricing_model: canonicalModelName(priceModel),
       ...(billModel ? { billed_model: billModel } : {}),
       ...(upstreamModel ? { upstream_model: upstreamModel } : {}),
@@ -663,6 +671,7 @@ async function settle({
     // INSERT/UPDATE失败明确回滚；只有COMMIT发起后断线才无法判断是否提交，不能再补扣。
     throw Object.assign(new Error(committing ? "扣费提交结果不确定" : "扣费与使用记录已回滚"), {
       code: committing ? "BILLING_UNCERTAIN" : "BILLING_FAILED",
+      billingDetails: bill,
     });
   } finally {
     connection?.release();
@@ -1016,6 +1025,7 @@ async function handleCompletion(protocol, req, res) {
       ip,
       requestId,
       channel: result.channel,
+      channelQuote: result.channelQuote,
       // 上游真实档位（仅 GLM 等会与请求不一致的渠道回传）：用于按实际档位计费
       billModel: result.billModel || "",
       upstreamModel: result.upstreamModel || "",
@@ -1100,6 +1110,7 @@ async function handleCompletion(protocol, req, res) {
     let partialTokens = null;
     const failedCall = billableFailedCall(err, { prompt, output: partialOut, startedAt, firstTokenAt, model });
     let partialPricePhase = "";
+    let failedBillingDetails = err.billingDetails || null;
     const logStatus = stopped ? "stopped" : "error";
     let usageRecorded = settledOnce;
     if (!settledOnce && failedCall) {
@@ -1116,6 +1127,7 @@ async function handleCompletion(protocol, req, res) {
           // 失败渠道由 execute.tagChannel 挂在 error 上：带上它，这部分真实产生的用量
           // 才能归到渠道，否则在渠道统计里完全不可见（主查询与老记录回填都匹配不到）
           channel: err.channelId ? { id: err.channelId, name: err.channelName } : null,
+          channelQuote: err.channelQuote,
           startedAt,
           firstTokenAt,
           userAgent,
@@ -1140,6 +1152,7 @@ async function handleCompletion(protocol, req, res) {
         };
         partialPricePhase = partialSettled?.pricePhase || "";
       } catch (e2) {
+        if (e2.billingDetails) failedBillingDetails = e2.billingDetails;
         if (e2.code === "BILLING_UNCERTAIN") { settledOnce = true; usageRecorded = true; quotaHold.consume(); }
         console.error(`[gateway] ${requestId} 部分结算失败：${e2.code || "BILLING_FAILED"}`);
       }
@@ -1147,7 +1160,18 @@ async function handleCompletion(protocol, req, res) {
     // 错误行的措辞要能区分「客户端断开 / 上游断开 / 网关超时」——
     // 这三者的处置完全不同（前者不用管、中者要找上游、后者要调超时配置），
     // 而原先一律是上游那句英文原文（如 "This operation was aborted"），分不清。
-    if (!usageRecorded) await writeLog({
+    if (!usageRecorded) {
+    const failedPrice = await getPrice(model);
+    const failedQuote = finalizeChannelQuote(err.channelQuote, 0);
+    const failedEff = effectivePrice(failedPrice, startedAt || Date.now());
+    const failedBill = failedBillingDetails ? { ...failedBillingDetails,
+      charged_cost_units: partialUnits, charged_cost_od: partialUnits / UNITS_PER_OD,
+      adjustment_units: partialUnits - failedBillingDetails.base_cost_units * failedBillingDetails.multiplier,
+    } : billingDetails({ calls: [{ price: failedEff.price,
+      tokens: { promptTokens: 0, completionTokens: 0, cacheTokens: 0 }, at: startedAt, phase: failedEff.phase,
+      billable: false, requestedModel: model, upstreamModel: err.upstreamModel || "",
+      pricingModel: canonicalModelName(failedPrice.model), channelQuote: failedQuote }], chargedUnits: partialUnits, baseUnits: 0 });
+    await writeLog({
       user,
       type: LOG_TYPE.ERROR,
       isUsage: true,
@@ -1168,8 +1192,10 @@ async function handleCompletion(protocol, req, res) {
         bill_model: err.billModel || "", upstream_model: err.upstreamModel || "",
         requested_model: model, display_model: canonicalModelName(model) || model,
         pricing_model: canonicalModelName(model),
-        requested_price: await getPrice(model).then((p) => ({ in: p.input, out: p.output, cache: p.cache })),
-        original_price: await originalModelPrice(model),
+        requested_price: { in: failedPrice.input, out: failedPrice.output, cache: failedPrice.cache },
+        original_price: failedQuote?.price || null,
+        model_alias_price: await originalModelPrice(model),
+        billing_details: failedBill,
         billable: Boolean(failedCall),
         ...logTexts({ prompt, output: failedCall?.output || err.billingOutput || partialOut, inputText }) }),
       quota: partialUnits,
@@ -1195,6 +1221,7 @@ async function handleCompletion(protocol, req, res) {
     groupName: displayGroupName(token?.group_name || user?.group_name) || "(未绑定分组)",
       elapsedMs: Date.now() - startedAt,
       userAgent});
+    }
     // 错误码 → HTTP 状态要能区分「调用方请求错」与「网关/上游故障」，
     // 否则客户端会把 400/429 当成 502 盲目重试。
     const status =

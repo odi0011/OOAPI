@@ -120,6 +120,8 @@ export function publicAgents(list = AGENTS) {
 export const TOOL_PROTOCOL = [
   "需要外部信息时，你可以调用工具。调用写法（严格照抄，一次只调一个）：",
   '<tool_call>{"tool":"工具名","args":{...}}</tool_call>',
+  '查询余额示例：<tool_call>{"tool":"account","args":{"action":"overview"}}</tool_call>',
+  '查询最近记录示例：<tool_call>{"tool":"account","args":{"action":"recent","limit":5}}</tool_call>',
   "规则：",
   "1. 调用块必须是独立的一段，放在回复的最后；可以先用一句话说明为什么调用，但不要写调用结果的猜测。",
   "2. 输出调用块后立即停止，等待系统返回 <tool_result>；不要自己编造工具结果。",
@@ -127,6 +129,7 @@ export const TOOL_PROTOCOL = [
   "4. 已知的常识不要调用工具；不确定的事实（时间敏感的、具体数字、外部链接）必须调用。",
   "5. 只用上面这一种写法：不要输出 function_calls / invoke / parameter / DSML 等其它调用格式，也不要把调用块放进代码块。",
   "6. args 必须是合法 JSON 对象，键名与工具说明里的参数一致。",
+  "7. 开始与结束标签必须同时输出；不要复述系统的格式纠正说明。查询真实数据失败时明确说明失败，不能当成正常回答。",
 ].join("\n");
 
 /**

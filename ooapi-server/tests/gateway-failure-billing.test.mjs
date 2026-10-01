@@ -20,6 +20,8 @@ const unsafeMessage = "https://fixture-secret.invalid/?key=sk-fixture-DO_NOT_LEA
 let behavior;
 let state;
 let channelId = 9000;
+let channelType = "openai";
+let channelModels = model;
 let insertFailures = 0;
 let tokenFailures = 0;
 let ambiguousCommit = false;
@@ -41,8 +43,8 @@ const query = async (store, sql, params = []) => {
   if (/FROM users WHERE id =/.test(s)) return [[clone(store.user)]];
   if (/FROM model_prices/.test(s)) return [[{ model, input_price: 1, output_price: 2, cache_price: 0.5,
     offpeak_input_price: null, offpeak_output_price: null, offpeak_cache_price: null }]];
-  if (/FROM channels/.test(s)) return [[{ id: channelId, name: "fixture-channel", type: "openai", status: 1,
-    models: model, group_list: "[]", base_url: upstreamBase, api_key: "fixture-upstream-only",
+  if (/FROM channels/.test(s)) return [[{ id: channelId, name: "fixture-channel", type: channelType, status: 1,
+    models: channelModels, group_list: "[]", base_url: upstreamBase, api_key: "fixture-upstream-only",
     other: JSON.stringify({ method: "api", allow_private_upstream: true }) }]];
   if (/^UPDATE channels/.test(s)) { channelWrites.push({ sql: s, params: clone(params) }); return [{ affectedRows: 1 }]; }
   if (/^UPDATE users SET quota = quota -/.test(s)) {
@@ -104,6 +106,7 @@ const post = (path, extra = {}) => fetch(`${base}/v1/${path}`, {
   body: JSON.stringify(bodyOf(path, extra.stream)), ...extra,
 });
 const reset = () => {
+  channelType = "openai"; channelModels = model;
   state = { user: { id: 101, username: "fixture", status: 1, quota: initial, used_quota: 0, request_count: 0, group_name: "default" },
     token: { id: 102, user_id: 101, name: "fixture", key_str: "fixture-gateway-only", status: 1, expired_time: -1,
       group_name: "default", model_limits: model, remain_quota: initial, used_quota: 0, unlimited_quota: 0 }, logs: [] };
@@ -116,7 +119,10 @@ const log = () => {
   const row = state.logs[0]; assert.equal(row.is_usage, 1); assert.equal(row.model, model); assert.equal(row.channel_id, channelId);
   assert.equal(row.input_text, input, "raw final user text is preserved");
   assert.ok(row.request_prompt_text.includes(system)); assert.ok(row.request_prompt_text.includes(input));
-  assert.equal(row.token_id, 102); assert.ok(row.elapsed_ms >= 0); return row;
+  assert.equal(row.token_id, 102); assert.ok(row.elapsed_ms >= 0);
+  const bill = JSON.parse(row.detail).billing_details;
+  assert.equal(bill.version, 1); assert.equal(bill.charged_cost_units, row.quota);
+  return row;
 };
 const balance = (units) => {
   assert.equal(state.user.used_quota, units); assert.equal(state.user.quota, initial - units);
@@ -202,6 +208,25 @@ try {
       const r = await post(path); await r.text(); assert.equal(r.status, 200); const row = log();
       assert.equal(row.type, 2); assert.equal(row.status, "success"); assert.equal(row.output_text, "PARTIAL");
       balance(row.quota); assert.equal(commits, 1);
+    });
+    await test(`${path} Cline真实free SKU渠道报价0但平台三分项/原始费用独立保存`, async () => {
+      channelType = "cline"; channelModels = `${model}:free`;
+      let sentModel;
+      behavior = (req, res) => {
+        let body = ""; req.on("data", (part) => { body += part; });
+        req.on("end", () => { sentModel = JSON.parse(body).model;
+          res.writeHead(200, { "content-type": "text/event-stream" });
+          res.end(frame({ model, ...delta }) + frame({ usage: actualUsage }) + "data: [DONE]\n\n"); });
+      };
+      const r = await post(path); await r.text(); assert.equal(r.status, 200); const row = log();
+      const detail = JSON.parse(row.detail), b = detail.billing_details;
+      assert.equal(sentModel, `${model}:free`); assert.equal(b.channel_quote.model, sentModel);
+      assert.deepEqual(detail.original_price, { in: 0, out: 0, cache: 0 });
+      assert.deepEqual(b.channel_quote.price, detail.original_price);
+      assert.equal(b.raw_cost_od, .00205); assert.equal(b.components.input.tokens, 1200);
+      assert.equal(b.components.input.cost_od, .0012); assert.equal(b.components.output.cost_od, .0006);
+      assert.equal(b.components.cache.cost_od, .00025); assert.equal(b.base_cost_units, 21);
+      assert.equal(b.charged_cost_units, 21); balance(21); assert.equal(commits, 1);
     });
     for (const failure of ["insert", "token"]) {
       await test(`${path} ${failure}失败事务回滚，不留扣费无记录`, async () => {

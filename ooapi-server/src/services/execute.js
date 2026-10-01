@@ -6,6 +6,7 @@ import { selectChannels, getAdapter, markChannelError, markChannelOk, withChanne
 import { resolveAliasSync } from "./models.js";
 import { recordChannelSwitch } from "./metrics.js";
 import { normalizeUsage } from "./pricing.js";
+import { channelPriceQuote } from "./channel-price-quote.js";
 
 /** 请求已经发送不能证明消耗；只认上游返回的用量或实际生成的内容。 */
 export function hasBillableUsage(usage) {
@@ -30,6 +31,7 @@ export function billableFailedCall(err, fallback = {}) {
     model: String(err.billModel || err.model || fallback.model || ""),
     requestedModel: String(err.requestedModel || fallback.model || err.model || ""),
     upstreamModel: String(err.upstreamModel || fallback.upstreamModel || ""),
+    channelQuote: err.channelQuote || fallback.channelQuote || null,
     billModel: String(err.billModel || ""),
     retryCount: Math.max(0, Number(err.retryCount) || 0),
     errorCode: String(err.code || "CHANNEL_ERROR"),
@@ -167,6 +169,7 @@ export async function runCompletion({
     if (onChannelTry) onChannelTry(channel);
 
     const started = Date.now();
+    let attemptQuote = channelPriceQuote(channel, { model, at: started });
     let sawOutput = false;
     let timedOut = false;
     let attemptStarted = false;
@@ -223,6 +226,7 @@ export async function runCompletion({
             return Promise.reject(Object.assign(new Error("请求已取消"), { code: "ABORTED", upstreamStarted: false }));
           }
           callStarted = Date.now();
+          attemptQuote = channelPriceQuote(channel, { model, at: callStarted });
           armDeadline();
           // 先记进入适配器；失败时再排除明确本地拒绝，决定是否补收上下文。
           attemptStarted = true;
@@ -314,7 +318,7 @@ export async function runCompletion({
           }
         );
       }
-      return { ...result, channel, startedAt: callStarted || started, firstTokenAt,
+      return { ...result, channel, channelQuote: attemptQuote, startedAt: callStarted || started, firstTokenAt,
         retryCount: attempts - 1 + internalRetries, elapsed: Date.now() - runStartedAt };
     } catch (err) {
       lastError = tagChannel(err, channel);
@@ -346,6 +350,7 @@ export async function runCompletion({
       lastError.billingFirstTokenAt = Number(err.billingFirstTokenAt || err.firstTokenAt) || firstTokenAt;
       lastError.firstTokenAt = lastError.billingFirstTokenAt;
       lastError.model = err.model || model;
+      lastError.channelQuote = attemptQuote;
       lastError.elapsed = Date.now() - runStartedAt;
       lastError.retryCount = attempts - 1 + internalRetries;
       lastError.billable = Boolean(lastError.billingOutput) || hasBillableUsage(lastError.usage);

@@ -37,7 +37,7 @@ const CLOSE_TAG = "</tool_call>";
  * 原嗅探器只认 <tool_call> 与 {"tool":…}，于是这段标记被原样当正文推给用户（「乱码」），
  * 而工具也根本没被执行。现在四类写法都识别并执行：
  *   ① <tool_call>{"tool":"x","args":{}}</tool_call>（约定写法；也兼容 name/arguments）
- *   ② ```json {"tool":…} ``` / 裸 {"tool":…}
+ *   ② 整条回答为裸 {"tool":…}；Markdown 代码示例不执行
  *   ③ <function_calls><invoke name="x"><parameter name="k">v</parameter></invoke></function_calls>
  *      —— 含 DSML 分隔符的变体（｜DSML｜ / |DSML| 各种写法先归一化再解析）
  *   ④ DeepSeek V3 特殊 token：<｜tool▁calls▁begin｜>…<｜tool▁calls▁end｜>
@@ -47,11 +47,10 @@ const CLOSE_TAG = "</tool_call>";
 const D = "(?:[｜|]{1,2}\\s*DSML\\s*[｜|]{1,2}\\s*)?"; // 可选的 DSML 分隔符
 const START_RE = new RegExp(
   [
-    "<tool_call>",
+    "<tool_call\\s*>",
     `<\\s*${D}(?:function_)?calls\\s*>`,
     `<\\s*${D}invoke\\s+name\\s*=`,
     "<[｜|]\\s*tool[▁_]calls[▁_]begin\\s*[｜|]>",
-    '```[a-z]*\\s*\\{\\s*"tool"\\s*:',
     '\\{\\s*"tool"\\s*:',
   ].join("|"),
   "gi"
@@ -62,6 +61,10 @@ const CLOSE_V3_RE = /<[｜|]\s*tool[▁_]calls[▁_]end\s*[｜|]>/i;
 // 模型偶尔把对话模板的特殊 token 也吐进正文（<｜end▁of▁sentence｜> 等），显示前剥掉
 const STRAY_TOKEN_RE = /<[｜|]\s*(?:end▁of▁sentence|begin▁of▁sentence|Assistant|User|tool▁[a-z▁]+)\s*[｜|]>/g;
 const HOLD = 48; // 流式时末尾扣住的最大字符数（最长的起始标记约 40 字符）
+const INTERNAL_TOOL_ERRORS = ["（工具调用格式不合法）", "(工具调用格式不合法)"];
+const internalLines = (text) => String(text || "").trim().split(/\r?\n/).map((line) => line.trim());
+const isInternalToolError = (text) => internalLines(text).every((line) => INTERNAL_TOOL_ERRORS.includes(line));
+const couldBeInternalToolError = (text) => internalLines(text).every((line) => INTERNAL_TOOL_ERRORS.some((value) => value.startsWith(line)));
 
 function matchBraceJson(text, start) {
   let depth = 0;
@@ -93,22 +96,48 @@ const tryJson = (s) => {
   }
 };
 const asArgs = (v) => {
+  if (v === undefined) return {};
   if (v && typeof v === "object" && !Array.isArray(v)) return v;
   if (typeof v === "string") {
     const j = tryJson(v);
     if (j && typeof j === "object" && !Array.isArray(j)) return j;
   }
-  return {};
+  return null;
 };
 
 /** JSON 形态的调用：{"tool","args"} / {"name","arguments"} / {"function":{"name","arguments"}} */
 export function parseCall(jsonText) {
-  const v = typeof jsonText === "string" ? tryJson(jsonText) : jsonText;
+  let v = typeof jsonText === "string" ? tryJson(jsonText) : jsonText;
+  // 文本协议每步只接受一个调用；兼容单条原生包装，不能悄悄丢掉数组里的第二个调用。
+  if (Array.isArray(v?.tool_calls)) v = v.tool_calls;
+  if (Array.isArray(v)) { if (v.length !== 1) return null; v = v[0]; }
   if (!v || typeof v !== "object") return null;
   const fn = v.function && typeof v.function === "object" ? v.function : null;
   const tool = v.tool || v.name || fn?.name;
   if (!tool || typeof tool !== "string") return null;
-  return { tool: String(tool).trim(), args: asArgs(v.args ?? v.arguments ?? v.parameters ?? fn?.arguments) };
+  const name = String(tool).trim().replace(/^(?:functions|tools)\./, "");
+  const rawArgs = Object.hasOwn(v, "args") ? v.args : Object.hasOwn(v, "arguments") ? v.arguments : Object.hasOwn(v, "parameters") ? v.parameters : fn?.arguments;
+  const args = asArgs(rawArgs);
+  if (!name || !args) return null;
+  return { tool: name, args };
+}
+
+/** Laguna 等模型的训练格式：tool 名后跟 arg_key/arg_value，仍只接受完整配对参数。 */
+export function parseKeyValueCall(text) {
+  const head = String(text).match(/^\s*([\w.-]+)\s*(?=<arg_key>)/i);
+  if (!head) return null;
+  const args = {};
+  const rest = String(text).slice(head[0].length);
+  const pairs = /<arg_key>\s*([\w.-]+)\s*<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/gi;
+  let end = 0, pair, count = 0;
+  while ((pair = pairs.exec(rest))) {
+    if (rest.slice(end, pair.index).trim() || ["__proto__", "constructor", "prototype"].includes(pair[1]) || Object.hasOwn(args, pair[1])) return null;
+    const body = pair[2].trim(), json = tryJson(body);
+    args[pair[1]] = json === undefined ? body : json;
+    end = pairs.lastIndex; count++;
+  }
+  if (!count || rest.slice(end).trim()) return null;
+  return parseCall({ tool: head[1], args });
 }
 
 /** 把 DSML 分隔符归一化成普通 XML 写法 */
@@ -135,8 +164,9 @@ export function parseInvokeMarkup(raw) {
   }
   // 模型常把真正的参数整个塞进一个 args 参数（JSON 字符串），展开它
   let args = params;
-  if ("args" in params || "arguments" in params) {
-    const inner = asArgs(params.args ?? params.arguments);
+  if (Object.hasOwn(params, "args") || Object.hasOwn(params, "arguments")) {
+    const inner = asArgs(Object.hasOwn(params, "args") ? params.args : params.arguments);
+    if (!inner) return null;
     const { args: _a, arguments: _b, tool: _t, ...rest } = params;
     args = { ...rest, ...inner };
   }
@@ -150,14 +180,14 @@ function parseV3Markup(raw) {
   const start = m[2].indexOf("{");
   if (start < 0) return { tool: m[1], args: {} };
   const end = matchBraceJson(m[2], start);
-  return { tool: m[1], args: end < 0 ? {} : asArgs(m[2].slice(start, end + 1)) };
+  if (end < 0) return null;
+  return parseCall({ tool: m[1], args: asArgs(m[2].slice(start, end + 1)) });
 }
 
 function kindOf(matched) {
-  if (matched.startsWith("<tool_call>")) return "tag";
+  if (/^<tool_call\s*>$/i.test(matched)) return "tag";
   if (/tool[▁_]calls[▁_]begin/i.test(matched)) return "v3";
   if (matched.startsWith("<")) return /invoke/i.test(matched) ? "invoke" : "fc";
-  if (matched.startsWith("```")) return "fence";
   return "bare";
 }
 
@@ -165,9 +195,14 @@ function kindOf(matched) {
 function extractCall(acc, start, kind, final) {
   const rest = acc.slice(start);
   if (kind === "tag") {
-    const end = rest.indexOf(CLOSE_TAG, OPEN_TAG.length);
-    if (end < 0) return final ? { call: null, end: acc.length } : null;
-    return { call: parseCall(rest.slice(OPEN_TAG.length, end)), end: start + end + CLOSE_TAG.length };
+    const open = rest.match(/^<tool_call\s*>/i)?.[0]?.length || OPEN_TAG.length;
+    const close = /<\/tool_call\s*>/i.exec(rest.slice(open));
+    if (!close) {
+      // 真实线上 Laguna 漏结束标签，但 JSON 已完整；只恢复严格合法的完整 JSON，不补猜括号/引号。
+      return final ? { call: parseCall(rest.slice(open)), end: acc.length } : null;
+    }
+    const end = open + close.index, body = rest.slice(open, end);
+    return { call: parseCall(body) || parseKeyValueCall(body), end: start + end + close[0].length };
   }
   if (kind === "fc" || kind === "invoke") {
     let endAt = -1;
@@ -186,14 +221,34 @@ function extractCall(acc, start, kind, final) {
     if (!m) return final ? { call: null, end: acc.length } : null;
     return { call: parseV3Markup(rest.slice(0, m.index)), end: start + m.index + m[0].length };
   }
-  if (kind === "fence") {
-    const close = rest.indexOf("```", 3);
-    if (close < 0) return null; // JSON 类未闭合：流结束时按正文吐出（可能就是一段示例代码）
-    return { call: parseCall(rest.slice(3, close).replace(/^[a-z]*\s*/i, "")), end: start + close + 3 };
-  }
   const end = matchBraceJson(acc, start);
   if (end < 0) return null;
+  if (!final) return null;
+  // 普通解释里的 JSON 不是执行指令；无标签兼容仅限整个回答就是一个完整调用对象。
+  if (acc.slice(0, start).trim() || acc.slice(end + 1).trim()) return null;
   return { call: parseCall(acc.slice(start, end + 1)), end: end + 1 };
+}
+
+/** Markdown 示例是用户可见的代码，不是工具指令。流式分片也使用同一上下文判定。 */
+function insideCode(text, index) {
+  const prefix = text.slice(0, index);
+  const unquote = (line) => line.replace(/^(?: {0,3}>[ \t]?)+/, "");
+  const currentLine = unquote(prefix.slice(prefix.lastIndexOf("\n") + 1));
+  if (/^(?: {4}|\t)/.test(currentLine)) return true;
+  let fence = "", inline = "";
+  const markers = /`+|~{3,}/g;
+  let marker;
+  while ((marker = markers.exec(prefix))) {
+    const token = marker[0];
+    const lineStart = prefix.lastIndexOf("\n", marker.index - 1) + 1;
+    const linePrefix = unquote(prefix.slice(lineStart, marker.index)).replace(/^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/, "");
+    const atLineStart = /^[ \t]{0,3}$/.test(linePrefix);
+    if (fence) {
+      if (atLineStart && token[0] === fence[0] && token.length >= fence.length) fence = "";
+    } else if (!inline && token.length >= 3 && atLineStart) fence = token;
+    else if (token[0] === "`") { if (!inline) inline = token; else if (inline === token) inline = ""; }
+  }
+  return Boolean(fence || inline);
 }
 
 export function sanitizeVisible(s) {
@@ -238,10 +293,19 @@ export class StepStream {
 
   pump(final) {
     if (this.call || this.bad) return "";
+    // 旧会话可能已有内部错误占位符：模型复述时仍按失败处理，不能冒充最终回答。
+    const visible = this.acc.trim();
+    if (isInternalToolError(visible)) { if (final) this.bad = true; return ""; }
+    if (!final && couldBeInternalToolError(visible)) return "";
     let out = "";
     if (this.start < 0) {
       START_RE.lastIndex = this.emitted;
-      const m = START_RE.exec(this.acc);
+      let m;
+      while ((m = START_RE.exec(this.acc))) {
+        if (insideCode(this.acc, m.index)) continue;
+        if (kindOf(m[0]) === "bare" && this.acc.slice(0, m.index).trim()) continue;
+        break;
+      }
       if (!m) return this.take(final ? this.acc.length : Math.max(this.emitted, this.safeEnd()));
       this.start = m.index;
       this.kind = kindOf(m[0]);
@@ -254,7 +318,7 @@ export class StepStream {
       return out;
     }
     if (final) {
-      // 只有 JSON 类（fence/bare）会走到这里：没闭合，按正文吐出，不吞内容
+      // 裸 JSON 没闭合，按正文吐出，不吞掉用户可见的普通示例。
       this.start = -1;
       return out + this.take(this.acc.length);
     }
@@ -270,7 +334,7 @@ export function historyToMessages(history = []) {
   const out = [];
   for (const m of history) {
     const parts = Array.isArray(m.parts) ? m.parts : [];
-    const texts = parts.filter((p) => p.type === "text" && p.text).map((p) => p.text).join("\n\n").trim();
+    const texts = parts.filter((p) => p.type === "text" && p.text && !(m.role === "assistant" && isInternalToolError(p.text))).map((p) => p.text).join("\n\n").trim();
     const tools = [...new Set(parts.filter((p) => p.type === "tool").map((p) => p.name || p.tool))];
     const images = parts.filter((p) => p.type === "image").length;
     let content = texts;
@@ -412,6 +476,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
   const messages = [...historyToMessages(history), { role: "user", content: currentUserText }];
   let lastText = "";
   let hitLimit = false;
+  let formatFailures = 0;
 
   for (let step = 1; step <= maxSteps; step++) {
     if (signal?.aborted) throw Object.assign(new Error("已停止"), { code: "ABORTED" });
@@ -507,6 +572,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       usage: result.usage,
       channel: result.channel?.name || "",
       channelId: Number(result.channel?.id) || 0,
+      channelQuote: result.channelQuote,
       // 单步耗时与首 token：使用记录里按「整轮」汇总展示（见 chat.js 的 chargeUser）
       startedAt: stepStartedAt,
       firstTokenAt: stepFirstTokenAt,
@@ -522,7 +588,12 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
     if (!call && !bad) break; // 没有工具调用 → 最终回答
 
     if (bad) {
-      messages.push({ role: "assistant", content: stepText || "（工具调用格式不合法）" });
+      formatFailures++;
+      if (formatFailures > 1 || step === maxSteps) {
+        throw Object.assign(new Error("工具调用协议无法解析"), { code: "TOOL_PROTOCOL_ERROR" });
+      }
+      // 不把内部错误占位符伪装成助手回答；真实故障中模型在下一步原样复述了这个占位符。
+      if (stepText) messages.push({ role: "assistant", content: stepText });
       messages.push({
         role: "user",
         content:
@@ -532,6 +603,8 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       if (step === maxSteps) hitLimit = true;
       continue;
     }
+
+    formatFailures = 0;
 
     const spec = specs.find((s) => s.id === call.tool);
     const toolPart = { id: uid(), type: "tool", tool: call.tool, name: spec?.name || call.tool, args: call.args, status: "running", output: "", started: Date.now() };
