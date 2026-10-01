@@ -27,6 +27,7 @@ import NotificationsPage from "./pages/NotificationsPage";
 import AppearancePage from "./pages/AppearancePage";
 import AdminDashboardPage from "./pages/AdminDashboardPage";
 import AdminCommunityPage from "./pages/AdminCommunityPage";
+import OdBinancePage from "./pages/OdBinancePage";
 import { useApp } from "./context/AppContext";
 
 function RequireAuth({ children, admin = false }) {
@@ -87,6 +88,7 @@ export default function App() {
       <Route path="/register" element={<AuthPage initialTab="register" />} />
       <Route element={<RequireAuth><MainLayout /></RequireAuth>}>
         <Route path="/console" element={<ConsolePage />} />
+        <Route path="/od-binance" element={<OdBinancePage />} />
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/agent" element={<Navigate to="/chat?mode=agent" replace />} />
         {/* 社区：大厅 / 帖子详情 / 个人主页（统一路由，自己看与别人看同一入口） */}

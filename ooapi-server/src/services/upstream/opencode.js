@@ -24,10 +24,13 @@
 // 顺带说明两件事，避免以后再被误判：
 //   · 官方后台把请求显示成 `/inference/go/openai/v1/chat/completions` ——
 //     那是**他们内部的路径重写**，不是我们发错了地址；
-//   · Zen（按量付费）的文档里没有这条要求，但发这个头对它无害，
-//     所以两个接入方式统一注入，行为一致、少一个分支。
+//   · Zen 的免费档另有客户端限制；2026-10-02 实测仅这两个头会收到 403。
+//     Key 模式按官方开源 CLI 的请求头契约补齐，GO 仍按公开文档自述平台名称。
 import crypto from "node:crypto";
 import * as compat from "./openai-compat.js";
+import { opencodeIdentity } from "./cli-profile.js";
+import { applyVendorRequest } from "./vendor-quirks.js";
+import { chatNative, nativeProtocol } from "./opencode-native.js";
 
 /**
  * 该渠道的会话标识（稳定值，同一渠道永远相同）。
@@ -59,30 +62,53 @@ export function sessionIdOf(channel) {
  * 注意与 WorkBuddy 同样的坑：**绝不能重复设置 content-type / authorization**。
  * Fetch 的 Headers 对同名头是**逗号拼接**而不是覆盖，重复会让
  * `Bearer A` 变成 `Bearer A, Bearer A`，上游必然 401。
- * 这里只加 openai-compat 不会设置的那两个头。
+ * 默认只补客户端标识头，已有显式覆盖保持一次设置。
  */
-function decorated(channel) {
+function decorated(channel, { sessionId, requestId } = {}) {
   const o = channel?.other || {};
   const extra = o.extra_headers && typeof o.extra_headers === "object" ? o.extra_headers : {};
+  // Zen Key 使用官方开源客户端的请求契约；只补 GO 的两个头并不足以兼容 Zen 免费档。
+  // 依据 v1.18.34 的 session/llm/request.ts 与 effect/runtime-flags.ts（client 默认 cli）。
+  // GO 文档明确要求客户端自述 UA，继续使用平台名称，避免改变已可用的订阅请求。
+  const zen = String(o.method || "api") !== "go";
+  const identity = opencodeIdentity(channel);
+  const session = String(sessionId || o.oc_session_id || (zen ? identity.sessionId : sessionIdOf(channel))).slice(0, 128);
+  const headers = {
+    "user-agent": String(o.client_user_agent || (zen ? identity.userAgent : "OOAPI-Gateway/1.0")),
+    "x-opencode-client": String(o.oc_client || (zen ? "cli" : "ooapi")),
+    "x-opencode-session": session,
+    "x-opencode-session-id": session,
+    "x-opencode-request": String(requestId || identity.requestId).slice(0, 128),
+    // 未传入调用方 Git 项目时用官方 global；request 每次调用独立，避免日志误合并。
+    "x-opencode-project": String(o.oc_project_id || identity.projectId).slice(0, 128),
+  };
+  // HTTP 头大小写不敏感。先归一再覆盖，否则 User-Agent 与 user-agent 会被 Fetch 逗号拼接。
+  for (const [key, value] of Object.entries(extra)) headers[key.toLowerCase()] = value;
+  const extraNames = Object.keys(extra).map((key) => key.toLowerCase());
+  if (extraNames.includes("x-opencode-session") && !extraNames.includes("x-opencode-session-id")) {
+    headers["x-opencode-session-id"] = headers["x-opencode-session"];
+  }
+  // compat 的公共三头使用这些键名；显式覆盖也必须同名，不能重新引入逗号拼接。
+  const compatNames = { authorization: "Authorization", "content-type": "Content-Type", accept: "Accept" };
+  const extraHeaders = Object.fromEntries(Object.entries(headers).map(([key, value]) => [compatNames[key] || key, value]));
   return {
     ...channel,
     other: {
       ...o,
-      extra_headers: {
-        // 客户端自述标识：文档点名要求「用自己的 user agent，而不是通用 SDK/库名」。
-        // 不设的话 Node fetch 会发 `node`，正是它说的那种通用库名。
-        "user-agent": String(o.client_user_agent || "OOAPI-Gateway/1.0"),
-        "x-opencode-session": sessionIdOf(channel),
-        // 放在最后：渠道配置里的 extra_headers 是**更明确的用户意图**，
-        // 同名键应当覆盖上面的默认值（顺序反了会让用户显式指定的 session 失效）
-        ...extra,
-      },
+      extra_headers: extraHeaders,
     },
   };
 }
 
 export async function chat(args) {
-  return compat.chat({ ...args, channel: decorated(args.channel) });
+  const channel = decorated(args.channel, args);
+  if (String(channel.other?.method || "api") !== "go") {
+    const request = { model: args.model };
+    applyVendorRequest(request, { channel, model: args.model });
+    const protocol = nativeProtocol(request.model);
+    if (protocol) return chatNative({ ...args, channel }, protocol, request.model);
+  }
+  return compat.chat({ ...args, channel });
 }
 
 export async function verify(channel) {

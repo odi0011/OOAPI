@@ -169,7 +169,8 @@ export function LineChart({ series = [], height = 200, yFormat = fmtCompact, yFo
     return { left, right, plots };
   }, [series, n, innerW, innerH, hasRight, PAD.l, PAD.t]);
 
-  if (!n) return <Blank height={H} />;
+  // 保持测宽节点：先加载空数据再收到曲线时，不能让 ResizeObserver 留在已卸载的节点上。
+  if (!n) return <div ref={wrapRef} className="oo-trend-wrap"><Blank height={H} /></div>;
 
   // X 轴标签：按实测宽度决定能放几个（每个至少 56px），首尾优先保留
   const budget = Math.max(2, Math.min(maxXTicks, Math.floor(innerW / 56)));

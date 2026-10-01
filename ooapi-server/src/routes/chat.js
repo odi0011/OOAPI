@@ -16,6 +16,7 @@ import { logTexts } from "../services/log-text.js";
 import { getPrice, originalModelPrice, priceForTokens, computeCost, splitTokens, sumCallTokens, loadPrices, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { groupConfigOf, applyGroupRate, parseGroupKey, displayGroupName } from "../services/group-rate.js";
 import { allPublicModels, publicModelMetadataMap, modelVendorName, modelRegistry, resolveAliasSync, canonicalModelName, modelInAllowList } from "../services/models.js";
+import { getProvider } from "../services/channel-types.js";
 import { rowToChannel, channelInGroup, channelSupportsModel, collectAvailableModels } from "../services/router.js";
 import { getBoolOption } from "../config.js";
 import { saveBuffer, getMedia, readBlob, mediaUrl, attachRef, releaseRefs } from "../services/media.js";
@@ -247,33 +248,35 @@ async function availableModels(user, keyId = 0) {
   };
 
   // 5) 汇总该分组渠道支持的模型集合
-  const registry = await modelRegistry();
+  await modelRegistry();
   const supported = collectAvailableModels(channelsInGrp);
   if (supported.size === 0) return [];
 
   // 从公开模型库中筛选
   const publicModels = publicModelMetadataMap(await allPublicModels());
-  const candidateModels = new Map(); // id.toLowerCase() -> modelObj
+  // 接入厂商与模型开发厂商是两种身份：按接入厂商去重、选择和路由，价格仍按规范模型。
+  const candidateModels = new Map(); // channelType:canonicalModel -> modelObj
 
   for (const sourceModel of publicModels.values()) {
     const pm = publicModels.get(canonicalModelName(sourceModel.id)) || sourceModel;
     const idLower = String(pm.id).toLowerCase();
-    if (supportingChannels(pm.id).length) {
+    for (const r of supportingChannels(pm.id)) {
       if (groupAllows(pm.id) && keyAllows(pm.id)) {
-        const v = pm.vendor || "other";
-        candidateModels.set(idLower, {
-          id: pm.id,
+        const v = r.type || "other";
+        candidateModels.set(`${v}:${canonicalModelName(pm.id) || idLower}`, {
+          id: canonicalModelName(pm.id) || pm.id,
           label: pm.label || pm.id,
           desc: pm.desc || "",
           // 公开库里明确标了 true 就用它；否则看**服务这个模型的渠道**能不能带图。
           // 不能只信模型表里的 vision —— 那是人工猜的（已被证伪，见上方注释）。
-          vision: Boolean(pm.vision) || anyChannelCarriesImages(pm.id),
+          vision: !TEXT_ONLY_TYPES.has(v) && (Boolean(pm.vision) || anyChannelCarriesImages(pm.id)),
           thinkingDefault: pm.thinkingDefault,
           supportsSearch: pm.supportsSearch,
           supportsThinking: pm.supportsThinking,
           deprecated: Boolean(pm.deprecated),
           vendor: v,
-          vendorName: modelVendorName(v),
+          vendorName: getProvider(v)?.name || modelVendorName(v),
+          channel_type: v,
           aliasOf: pm.aliasOf,
         });
       }
@@ -291,16 +294,16 @@ async function availableModels(user, keyId = 0) {
       if (rawM.includes("*")) continue;
       const idLower = rawM.toLowerCase();
       const canonical = canonicalModelName(rawM);
-      if (candidateModels.has(canonical)) continue;
-      if (candidateModels.has(idLower)) continue; // 去重
+      const candidateKey = `${ch.type || "other"}:${canonical || idLower}`;
+      if (candidateModels.has(candidateKey)) continue;
       if (!groupAllows(rawM) || !keyAllows(rawM)) continue;
       if (!channelSupportsModel(ch, rawM)) continue;
 
-      // 平台未登记的模型只能取自当前支持它的渠道，不能凭 gpt-/claude- 等名字猜来源。
-      const vendor = registry.get(canonical)?.type || ch.type || "other";
-      const vendorName = modelVendorName(vendor);
+      // 即使模型已登记为 Qwen，Cline 提供的入口也必须显示 Cline，不能混成原厂渠道。
+      const vendor = ch.type || "other";
+      const vendorName = getProvider(vendor)?.name || modelVendorName(vendor);
 
-      candidateModels.set(canonical || idLower, {
+      candidateModels.set(candidateKey, {
         id: canonical || rawM,
         label: canonical || rawM,
         desc: "",
@@ -342,7 +345,8 @@ async function availableModels(user, keyId = 0) {
   // 保留别名条目，否则用户会没有任何 deepseek 可选（调得通但选不到，更糟）。
   for (const [idLower, entry] of [...candidateModels]) {
     const target = String(entry.aliasOf || "").toLowerCase();
-    if (target && candidateModels.has(target)) candidateModels.delete(idLower);
+    const targetKey = `${entry.vendor}:${canonicalModelName(target) || target}`;
+    if (target && targetKey !== idLower && candidateModels.has(targetKey)) candidateModels.delete(idLower);
   }
 
   // 7) 补充价格信息并生成最终结果
@@ -981,13 +985,16 @@ function aggregate(calls = []) {
       // 可能还是 deepseek-v4.1-flash —— 精确比较会把这些会话全部判成「模型不可用」。
       const wantCanon = canonicalModelName(model);
       const sameModel = (m) => m.id === model || canonicalModelName(m.id) === wantCanon;
-      modelCaps = models.find((m) => m.id === model) || models.find(sameModel) || null;
+      const eligible = models.filter((m) => !settings.channelType || m.vendor === settings.channelType);
+      modelCaps = eligible.find((m) => m.id === model) || eligible.find(sameModel) || null;
       routeGroup = usableKey.group_name || null;
-      if (!models.some(sameModel)) {
+      if (!modelCaps) {
         quotaHold.refund();
         finishRun(run);
         return reject(`模型「${model}」在当前密钥下不可用，请重新选择模型`);
       }
+      // 旧会话未保存接入厂商时与前端采用同一首项；之后每步及工具调用固定这个厂商。
+      settings.channelType = modelCaps.vendor;
 
       // 所有前置校验通过后才改写历史；retryFromSeq 回退与新用户消息在同一事务。
       const userParts = [{ id: `u${Date.now().toString(36)}`, type: "text", text: inputText }];

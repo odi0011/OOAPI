@@ -451,7 +451,10 @@ export default function ChatPage() {
   const [savingName, setSavingName] = useState(false);
   const [nameError, setNameError] = useState("");
   const [shelfPending, setShelfPending] = useState("");
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(() => {
+    const id = Number(params.get("binance_account"));
+    return id > 0 ? `请使用 binance 工具分析我的币安账户 ${id}：当前仓位、盈亏、方向敞口、保证金、强平距离和止盈止损。注明数据时间，并给出风险分析。` : "";
+  });
   const [images, setImages] = useState([]);
   const [docs, setDocs] = useState([]); // 文档附件 [{name,size,type,dataUrl}]
   // 选中密钥：站内对话扣账户额度，但路由配置（分组 → 可用模型/渠道/倍率）挂在密钥上。
@@ -496,13 +499,15 @@ export default function ChatPage() {
   const draftVersionRef = useRef(0);
   const draftSessionRef = useRef("");
   const draftSwitchRef = useRef(false);
+  const binancePromptRef = useRef(params.get("binance_account") ? input : "");
   useEffect(() => {
     const id = session?.id;
     if (!id || !user?.id || draftSessionRef.current === id) return;
     if (draftSessionRef.current) saveRecovery(user.id, `draft.${draftSessionRef.current}`, draftRef.current);
     const next = readRecovery(user?.id, `draft.${id}`) || {};
     draftSessionRef.current = id; draftSwitchRef.current = true;
-    setInput(next.input || ""); setImages(next.images || []); setDocs(next.docs || []);
+    setInput(binancePromptRef.current || next.input || ""); setImages(next.images || []); setDocs(next.docs || []);
+    binancePromptRef.current = "";
   }, [session?.id, user?.id]);
   useEffect(() => {
     if (draftSwitchRef.current) { draftSwitchRef.current = false; return; }
@@ -510,7 +515,7 @@ export default function ChatPage() {
   }, [input, images, docs, session?.id, user?.id]);
 
   const models = meta?.models || [];
-  const curModel = models.find((m) => m.id === session?.model);
+  const curModel = models.find((m) => m.id === session?.model && (!session?.settings?.channelType || m.vendor === session.settings.channelType));
   const settings = session?.settings || {};
   const quota = user?.quota != null ? fmtOd(user.quota, unitsPerOd(status), 2) : "—";
   // 对话必须通过密钥路由：没有可用密钥就没有可用模型，输入区与编排栏一并禁用。
@@ -544,13 +549,15 @@ export default function ChatPage() {
       setSession((prev) => {
         if (!prev) return prev;
         const availableList = data.models || [];
-        const ok = availableList.some((m) => m.id === prev.model);
+        const ok = availableList.some((m) => m.id === prev.model && (!prev.settings?.channelType || m.vendor === prev.settings.channelType));
         if (ok) return prev;
-        const fallbackModel = availableList[0]?.id || "";
+        const fallback = availableList.find((m) => m.id === prev.model) || availableList[0];
+        const fallbackModel = fallback?.id || "";
+        const fallbackSettings = { ...prev.settings, channelType: fallback?.vendor || "" };
         if (prev.id && fallbackModel) {
-          chatApi.patchSession(prev.id, { model: fallbackModel }).catch(() => {});
+          chatApi.patchSession(prev.id, { model: fallbackModel, settings: fallbackSettings }).catch(() => {});
         }
-        return { ...prev, model: fallbackModel };
+        return { ...prev, model: fallbackModel, settings: fallbackSettings };
       });
     } catch (e) {
       if (gen !== metaGenRef.current) return;
@@ -937,7 +944,8 @@ export default function ChatPage() {
       const target = (requestedSession && list.find((s) => s.id === requestedSession)?.id) || list[0]?.id;
       if (target) return openSession(target);
       try {
-        const created = await chatApi.createSession({ agent: meta.defaults?.agent || "general", model: models.find((m) => !m.deprecated)?.id || "" });
+        const initialModel = models.find((m) => !m.deprecated);
+        const created = await chatApi.createSession({ agent: meta.defaults?.agent || "general", model: initialModel?.id || "", settings: { channelType: initialModel?.vendor || "" } });
         if (!bootRef.current) return;
         setSession(created);
         setMsgs([]);
@@ -1308,13 +1316,13 @@ export default function ChatPage() {
   );
 
   const setModel = useCallback(
-    (id) => {
+    (id, channelType = "") => {
       if (!metaReadyRef.current || busyRef.current) return;
-      const m = models.find((x) => x.id === id);
+      const m = models.find((x) => x.id === id && (!channelType || x.vendor === channelType));
       if (!m) return;
-      const patch = { model: id };
+      const patch = { model: id, settings: { ...(sessionRef.current?.settings || {}), channelType: m.vendor } };
       // 切到不支持联网的模型时关掉搜索，避免继续带着无效参数请求上游
-      if (m?.supportsSearch === false) patch.settings = { ...(sessionRef.current?.settings || {}), search: false };
+      if (m?.supportsSearch === false) patch.settings.search = false;
       setSession((prev) => (prev ? { ...prev, ...patch, settings: patch.settings || prev.settings } : prev));
       patchSession(patch, { silent: true });
     },
@@ -1712,6 +1720,7 @@ export default function ChatPage() {
               models={models}
               vendorGroups={meta?.vendors || null}
               model={session?.model || ""}
+              channelType={curModel?.vendor || ""}
               onModelChange={setModel}
               keys={usableKeys}
               keyId={keyId}

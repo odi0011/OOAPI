@@ -28,13 +28,15 @@ const PROJECT_ROOT = path.resolve(SERVER_ROOT, "..");
 const WEB_ROOT = path.join(PROJECT_ROOT, "ooapi-web");
 const WEB_DIST = path.join(WEB_ROOT, "dist");
 const STATIC_WEB = path.join(SERVER_ROOT, "web");
+const BINANCE_ROOT = path.join(PROJECT_ROOT, "ooapi-binance");
+const BINANCE_PROTECTED = [".env", ".env.test", ".venv", "data", "__pycache__", ".pytest_cache", ".backup-*"];
 
 const REPO = process.env.GITHUB_REPO || "odi0011/OOAPI";
 const BRANCH = process.env.GITHUB_BRANCH || "main";
 export const REPO_URL = `https://github.com/${REPO}`;
 
 // 更新时**永不覆盖**的路径（相对 ooapi-server/）
-const PROTECTED = new Set([".env", ".jwt-secret", "node_modules", "data", "web"]);
+const PROTECTED = new Set([".env", ".env.local", ".env.test", ".jwt-secret", ".admin-password", "node_modules", "data", "web"]);
 
 /** 运行外部命令，返回 stdout；失败时抛出带 stderr 的错误 */
 async function run(cmd, args, opts = {}) {
@@ -66,12 +68,13 @@ async function backupSource() {
   const dest = path.join(SERVER_ROOT, `.backup-${stamp}`);
   await fs.mkdir(dest, { recursive: true });
   for (const entry of await fs.readdir(SERVER_ROOT)) {
-    if (PROTECTED.has(entry) || entry.startsWith(".backup-")) continue;
+    if (PROTECTED.has(entry) || entry.startsWith(".")) continue;
     await fs.cp(path.join(SERVER_ROOT, entry), path.join(dest, entry), { recursive: true });
   }
   // 只留最近 3 份，避免磁盘被备份堆满
   const all = (await fs.readdir(SERVER_ROOT))
-    .filter((n) => n.startsWith(".backup-"))
+    // 前端/静态产物备份有自己的前缀，不能把它们计入后端三份保留量并删掉本次备份。
+    .filter((n) => /^\.backup-\d{4}-\d{2}-\d{2}T/.test(n))
     .sort();
   for (const old of all.slice(0, Math.max(0, all.length - 3))) {
     await fs.rm(path.join(SERVER_ROOT, old), { recursive: true, force: true });
@@ -158,6 +161,13 @@ export async function checkUpdate() {
       const b = path.join(SERVER_ROOT, f);
       if (existsSync(a) && !(await sameFile(a, b))) changed.push(`ooapi-server/${f}`);
     }
+    const binanceSrc = path.join(tmp, "ooapi-binance");
+    if (existsSync(binanceSrc)) {
+      for (const rel of ["app", "migrations"]) await collectDiff(path.join(binanceSrc, rel), path.join(BINANCE_ROOT, rel), rel, changed, "ooapi-binance");
+      for (const rel of ["requirements.txt", "alembic.ini"]) {
+        if (!(await sameFile(path.join(binanceSrc, rel), path.join(BINANCE_ROOT, rel)))) changed.push(`ooapi-binance/${rel}`);
+      }
+    }
     const webSrc = path.join(tmp, "ooapi-web", "src");
     if (existsSync(webSrc)) {
       await collectDiff(webSrc, path.join(WEB_ROOT, "src"), "ooapi-web/src", changed);
@@ -201,7 +211,7 @@ async function sameFile(a, b) {
   }
 }
 
-async function collectDiff(srcDir, destDir, relPrefix, out) {
+async function collectDiff(srcDir, destDir, relPrefix, out, displayRoot = "ooapi-server") {
   const walk = async (s, d, rel) => {
     const entries = await fs.readdir(s, { withFileTypes: true });
     for (const ent of entries) {
@@ -211,7 +221,7 @@ async function collectDiff(srcDir, destDir, relPrefix, out) {
       if (ent.isDirectory()) {
         await walk(sp, dp, r);
       } else if (!(await sameFile(sp, dp))) {
-        out.push(`ooapi-server/${r}`);
+        out.push(`${displayRoot}/${r}`);
       }
     }
   };
@@ -237,7 +247,9 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
   if (!(await has("git"))) throw new Error("服务端未安装 git，无法在线更新");
 
   const tmp = path.join(process.env.TMPDIR || "/tmp", `ooapi-update-${Date.now()}`);
-  const result = { ok: false, steps: log, backup: "", webBackup: "", frontendBuilt: false, rolledBack: false };
+  const result = { ok: false, steps: log, backup: "", webBackup: "", staticWebBackup: "", binanceBackup: "", frontendBuilt: false, rolledBack: false };
+  let binanceServiceStopped = false;
+  let binanceConfigured = false;
 
   try {
     step("拉取仓库最新代码…");
@@ -262,6 +274,34 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
     const exclude = [".env", ".jwt-secret", "node_modules", "data", "web", ".backup-*", ".update-stamp.json"];
     await syncTree(path.join(tmp, "ooapi-server"), SERVER_ROOT, exclude);
 
+    if (existsSync(path.join(tmp, "ooapi-binance"))) {
+      // 引擎配置、加密密钥及虚拟环境属于运行数据，源码更新不得覆盖它们。
+      const python = process.env.OD_BINANCE_PYTHON || path.join(BINANCE_ROOT, ".venv/bin/python");
+      binanceConfigured = process.platform === "linux" && existsSync(python) && existsSync(path.join(BINANCE_ROOT, ".env")) && await has("systemctl", ["cat", "ooapi-binance.service"]);
+      if (existsSync(BINANCE_ROOT)) {
+        result.binanceBackup = path.join(BINANCE_ROOT, `.backup-${Date.now()}`);
+        await fs.mkdir(result.binanceBackup, { recursive: true });
+        for (const entry of await fs.readdir(BINANCE_ROOT)) {
+          if (BINANCE_PROTECTED.includes(entry) || entry.startsWith(".")) continue;
+          await fs.cp(path.join(BINANCE_ROOT, entry), path.join(result.binanceBackup, entry), { recursive: true });
+        }
+      }
+      if (binanceConfigured && restart) {
+        step("等待交易引擎结束当前请求…");
+        await run("systemctl", ["stop", "ooapi-binance.service"]);
+        binanceServiceStopped = true;
+      }
+      step("同步交易引擎源码（保留配置、数据及 Python 环境）…");
+      await syncTree(path.join(tmp, "ooapi-binance"), BINANCE_ROOT, BINANCE_PROTECTED);
+      // Linux 首次安装入口也要跟随更新，避免服务器永远只能调用旧脚本。
+      const installScript = path.join(tmp, "scripts/start-binance.sh");
+      if (existsSync(installScript)) {
+        await fs.mkdir(path.join(PROJECT_ROOT, "scripts"), { recursive: true });
+        await fs.copyFile(installScript, path.join(PROJECT_ROOT, "scripts/start-binance.sh"));
+      }
+      if (!binanceConfigured) step("交易引擎源码已同步；首次部署需要配置本机引擎服务");
+    }
+
     step("同步前端源码（保留 node_modules）…");
     if (existsSync(path.join(tmp, "ooapi-web"))) {
       // 先备份前端源码：回滚必须连同前端一起恢复，否则会留下半新半旧的前端
@@ -283,6 +323,11 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
     step(pkgChanged ? "依赖有变化，安装后端依赖…" : "安装后端依赖…");
     await run("npm", ["install", "--omit=dev", "--no-audit", "--no-fund"], { cwd: SERVER_ROOT });
 
+    if (existsSync(STATIC_WEB)) {
+      // 迁移/引擎更新可能在构建成功之后失败，回滚时必须恢复网页产物而非仅恢复源码。
+      result.staticWebBackup = path.join(SERVER_ROOT, `.backup-web-static-${Date.now()}`);
+      await fs.cp(STATIC_WEB, result.staticWebBackup, { recursive: true });
+    }
     step("构建前端…");
     try {
       // NODE_ENV 在这两步里的**取值不一样**，踩过坑：
@@ -375,6 +420,26 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
       throw new Error(`数据库迁移失败（已回滚源码，未重启）：${migrationErrors.join("；").slice(0, 400)}`);
     }
 
+    if (binanceConfigured && restart) {
+      step("更新交易引擎 Python 环境并启动服务…");
+      const python = process.env.OD_BINANCE_PYTHON || path.join(BINANCE_ROOT, ".venv/bin/python");
+      await run(python, ["-m", "pip", "install", "--disable-pip-version-check", "-r", "requirements.txt"], { cwd: BINANCE_ROOT });
+      // 引擎启动时会执行幂等 Alembic 迁移，必须确认数据库已可用才能写成功版本戳。
+      await run("systemctl", ["start", "ooapi-binance.service"]);
+      let healthy = false;
+      for (let attempt = 0; attempt < 30; attempt++) {
+        try {
+          const response = await fetch("http://127.0.0.1:8001/health", { signal: AbortSignal.timeout(2000) });
+          const health = await response.json();
+          if (response.ok && health.service === "od-binance" && health.database === "connected") { healthy = true; break; }
+        } catch { /* 启动与迁移期间稍后重试 */ }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      if (!healthy) throw new Error("交易引擎更新后未通过健康检查");
+      binanceServiceStopped = false;
+      step("交易引擎与数据库迁移完成");
+    }
+
     // 写入版本戳，供「检查更新」比对
     await fs.writeFile(
       path.join(SERVER_ROOT, ".update-stamp.json"),
@@ -425,11 +490,28 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
           await syncTree(result.webBackup, WEB_ROOT, ["node_modules", "dist", ".env"]);
           step("前端源码已回滚");
         }
+        if (result.staticWebBackup && existsSync(result.staticWebBackup)) {
+          await syncTree(result.staticWebBackup, STATIC_WEB, []);
+          result.frontendBuilt = false;
+          step("前端静态产物已回滚");
+        }
+        if (result.binanceBackup && existsSync(result.binanceBackup)) {
+          if (binanceConfigured && restart) await run("systemctl", ["stop", "ooapi-binance.service"]);
+          await syncTree(result.binanceBackup, BINANCE_ROOT, BINANCE_PROTECTED);
+          if (binanceConfigured && restart) {
+            await run("systemctl", ["start", "ooapi-binance.service"]);
+            binanceServiceStopped = false;
+          }
+          step("交易引擎源码已回滚");
+        }
         result.rolledBack = true;
         step(`已回滚到更新前源码（备份仍保留在 ${result.backup}）`);
       } catch (re) {
         step(`回滚失败，请手工从 ${result.backup} 恢复：${re.message}`);
       }
+    }
+    if (binanceServiceStopped) {
+      await run("systemctl", ["start", "ooapi-binance.service"]).catch(() => step("交易引擎未能恢复，请检查本机服务"));
     }
     await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
     // 哨兵只在「成功」或「回滚成功」时清除：回滚失败说明源码半新半旧，

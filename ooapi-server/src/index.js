@@ -28,6 +28,7 @@ import chatroomRoutes from "./routes/chatroom.js"; // 实时聊天（SSE）
 import friendsRoutes from "./routes/friends.js"; // 好友系统（申请/列表/备注）
 import profileRoutes from "./routes/profile.js"; // 个人主页（含匿名可达）
 import dashboardRoutes from "./routes/dashboard.js"; // 数据看板（个人 + 管理端）
+import binanceRoutes from "./routes/binance.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -79,6 +80,7 @@ app.use("/api/profile", profileRoutes); // 个人主页（匿名可达，只出�
 // 黑盒测试（新用户全旅程）实测复现。
 // 教训：import 了、加进白名单了，都**不等于**挂载了 —— 新增路由必须在这张表里出现。
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/binance", binanceRoutes); // OD Binance：OOAPI 鉴权 + 本机 Python 交易引擎
 app.use("/v1", gatewayRoutes); // 对外网关：OpenAI / Anthropic / Responses 兼容
 app.use("/api/v1", gatewayRoutes); // 兼容以 /api/v1 为 Base URL 的三方客户端
 

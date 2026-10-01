@@ -4,7 +4,7 @@
    令牌来源：从 beautifului.dev 运行时提取的计算样式（2026-09）
      · OKLCH 色彩空间，明暗两套同构令牌
      · 环形阴影体系（0 0 0 1px line + 极轻投影），非传统模糊阴影
-     · Inter 字体，14px 基准 / 13px 正文 / 12.5px 描述 / 11px 等宽标签
+     · 站酷快乐体，14px 基准 / 13px 正文 / 12.5px 描述 / 11px 等宽标签
      · 字距收紧 -0.14px（正文）至 -0.42px（标题）
      · 圆角阶梯：window 14 / card 10 / button 8 / chip 6 / pill full
      · 分区：padding 40px 32px，1px dashed 分隔线
@@ -12,6 +12,14 @@
      · 规范名（--surface / --ink / --line / --accent …）与 beautifului 一致
      · --oo-* 为兼容别名，指向规范令牌，旧页面自动继承新视觉
    ============================================================================ */
+
+@font-face {
+  font-family: "ZCOOL KuaiLe";
+  src: url("/fonts/zcool-kuaile.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
 
 /* ---------------------------------------------------------------------------
    1. 令牌 — 明亮
@@ -207,11 +215,9 @@ html[data-theme="dark"] {
   --header-h: 52px;
   --content-max: 1400px;
 
-  /* 字体：Noto Sans SC（本地打包）优先，系统 UI 字体兜底 */
-  --font-sans: "Noto Sans SC", "Noto Sans", ui-sans-serif, system-ui, -apple-system,
-    BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
-    "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+  /* 全局字体：正文、导航、标签和数字统一使用用户指定的站酷快乐体。 */
+  --font-sans: "ZCOOL KuaiLe", "Microsoft YaHei", sans-serif;
+  --font-mono: "ZCOOL KuaiLe", ui-monospace, SFMono-Regular, "SF Mono", Menlo,
     Consolas, "Liberation Mono", monospace;
 
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
@@ -2006,6 +2012,19 @@ h1, h2, h3, h4 {
 
 .oo-panel-body { padding: 14px; }
 .oo-panel-body--flush { padding: 0; }
+
+/* OD Binance 原生页面：只补布局，表格/输入/弹窗/主题继续走全站组件。 */
+.oo-binance { min-width: 0; }
+.oo-binance-stack { display: grid; gap: var(--sp-5); }
+.oo-binance > .ant-alert { margin-bottom: var(--sp-4); }
+.oo-binance-account-select { min-width: 180px; max-width: 240px; }
+.oo-binance-filter { width: 160px; }
+.oo-binance-full { width: 100%; }
+.oo-binance-health { display: flex; align-items: center; gap: var(--sp-5); flex-wrap: wrap; }
+.oo-binance-health > .ant-progress { flex: 1; min-width: 180px; }
+.oo-binance .ant-form-item:last-child { margin-bottom: 0; }
+.oo-binance .oo-panel-head { flex-wrap: wrap; }
+.oo-binance .oo-stats-cards { margin-bottom: 0; }
 
 /* 进度条 */
 .oo-bar {

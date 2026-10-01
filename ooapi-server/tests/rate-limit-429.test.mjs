@@ -133,7 +133,7 @@ t("存在 resumeRateLimitedChannels 且只挑 status=3 且 rate_limit_until>0", 
   const m = router.match(/export async function resumeRateLimitedChannels\(\)[\s\S]*?\n\}/);
   ck(m, "未找到 resumeRateLimitedChannels");
   ck(/status = 3 AND rate_limit_until > 0 AND rate_limit_until <= \?/.test(m[0]), "恢复条件不对（会把凭据失效的渠道也复活）");
-  ck(/UPDATE channels SET status = 1, rate_limit_until = 0, last_error = '' WHERE id = \? AND status = 3/.test(m[0]), "恢复 SQL 不对");
+  ck(/UPDATE channels SET status = 1, rate_limit_until = 0, last_error = '', last_error_code = '' WHERE id = \? AND status = 3/.test(m[0]), "恢复 SQL 必须同步清除旧错误码");
 });
 t("恢复后清内存态 + 失效缓存", () => {
   const m = router.match(/export async function resumeRateLimitedChannels\(\)[\s\S]*?\n\}/);

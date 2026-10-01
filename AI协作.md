@@ -694,6 +694,8 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 
 ## 3. 待办清单（按优先级）
 
+- [x] **2026-10-02 OD Binance 原生集成**：全体登录用户入口、按 OOAPI 用户隔离账户/仓位/订单/策略/回测/风控/连接配置，Agent 只读仓位分析工具，全局站酷快乐体，本机 MySQL/Python 交易引擎迁入项目。47 项 Python 测试、OOAPI 全套测试、服务桥接与分析测试、25 路由 UI 冒烟以及普通用户完整浏览器交易/回测流程通过。真实模型回答需本机 OOAPI 配置可用渠道后验证（当前本机新库无模型渠道；工具读取真实仓位数据已验证）。
+
 - [ ] **2026-10-02 第 89 批发布收尾**：本轮模型身份/原厂价格与对话视觉代码完成；服务器 47.79.85.60 的 HTTP 与 SSH 持续连接超时，最终候选门禁和生产更新尚未执行。恢复后按本轮最新 main 上传隔离候选，迁移 price_tiers/归档表，复跑最终构建后的 24 路由 ui-smoke、三协议 gateway-smoke 与模块 E2E；通过后调用既有 updater。生产先备份价格表，再显式调用 refreshVerifiedPrices 更新本轮 117 条官方价，syncUpstreamPrices({overwrite:false}) 补齐剩余规范目录，保留实际渠道 models/status；保护 .env/ADMIN_PASSWORD。发布辅助脚本在本机 TEMP/ooapi-price-release-refresh.mjs，须明确 production 参数；不要仅重启而漏更新旧价格。
 - [ ] **模型价格长期维护**：补核仅人民币来源的新 Ark 型号 OD 单价（当前只登记待定价，不猜汇率）；2027 年官方节假日发布后更新 DeepSeek offpeakDates。实际长上下文/日期价已可计费并展示分档，三价列尚不表达独立图片/音频、缓存写入或不同服务等级，新增这类计价须扩展统一 pricing 服务，不能用 SKU 别名冒充新模型。
 
@@ -1508,6 +1510,34 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 ---
 
 ## 5. 变更记录
+
+### 2026-10-02 — 对话接入厂商、去重与调度一致性
+
+- **本轮最终发布门禁**：针对最新冻结代码，在 `64.83.2.174` 的独立候选库完成构建后 25 路由 ui-smoke、全 npm test、模型元信息 14 项、原生 OpenCode 56 项、旧 TypeSafe 31 项、SQL 22 项、三协议网关 9 项、模块 E2E 76 项、Binance 桥接/更新回滚测试，均通过。模型浏览器 21 项及 Binance 普通用户浏览器 32 项用非安全 HTTP 来源复跑通过，桌面与 390px 明暗截图人工复核；Python 在专用 `quantpilot_test` 库复跑 49 项通过。测试最初因防误用数据库断言及 HTTP TestClient 的 secure cookie 配置停止，改用独立测试配置后通过，未改生产配置。发布目标为新服务器，原 `47.79.85.60` 的待办保持独立。
+- 用户线上反馈的 Qwen 条目来自 Cline，却被公开模型目录的原厂元信息分到通义下。站内模型目录改为按「接入厂商 + 规范模型」去重；同厂商多个渠道合并，同模型由不同接入厂商提供时分别可选，分组、图标均取实际渠道类型。模型能力和规范报价继续使用模型原厂元信息，不生成独立托管价格。
+- 会话设置持久化 `channelType`，创建、切换模型、切换密钥、刷新和新会话均保持一致；运行器、工具及子任务继承该设置，重试仅在选定厂商内进行，避免选择一家却由另一家处理。未指定厂商的外部网关仍沿用既有跨渠道调度。
+- 模型 HTTP 回归 14 项通过，覆盖托管 Qwen 原厂报价、同厂商去重、跨厂商同名选择、失败渠道排除及权限白名单。隔离 MySQL 实例的真实浏览器以非安全 HTTP 来源验证 21 项：线上 Cline 的 17 个声明模型完整、无虚构通义分组、原始 SKU 发往受控上游、OpenCode/OpenAI 同名模型 A→B→A 实际路由、刷新/新建保留厂商、390px 菜单边界；三协议网关 9/9、SQL 22/22、模块 E2E 76/76 通过。未将隔离测试数据写入生产库。
+
+### 2026-10-02 — OpenCode Zen Key 免费档请求与权限错误修复
+
+- 线上截图的 403 为免费档客户端限制，并非 API Key 过期。Key 模式原本已走专用适配器，但只有平台 UA 与 session 头；现按官方 v1.18.34 的 `session/llm/request.ts`、`effect/runtime-flags.ts`、`schema/identifier.ts` 补齐 UA、client、session/session-id、request、project。Zen 使用官方 `ses_`/`msg_` 编码形态，GO 保留自述平台 UA 和已有稳定 session；管理员显式客户端/头配置优先，大小写归一避免 Fetch 拼接重复鉴权头。来源：https://github.com/anomalyco/opencode/blob/v1.18.34/packages/opencode/src/session/llm/request.ts 。
+- 上游免费档/产品客户端拒绝归类 `CHANNEL_FORBIDDEN`，401 才提示认证失效；模型获取与校验保留错误原因，不再把拒绝伪装成空列表。用户消息显示权限错误，失败无上游用量时不计费。渠道页面优先结构化错误码，成功测试、换凭据、恢复和限流到期同步清除旧码及已解决的冷却标记；手动禁用状态保持，既有 OAuth 待绑定流程不变。
+- 按 Zen 官方端点表为已确认 Muse Spark 1.2/1.3（含 Contributor Free）使用 Responses，为 Jev 1.13（含 Free）使用 SystemOne；Jev 要求正式结构化判定输入，普通聊天明确返回能力说明。保留正文、思考、usage/cache、部分失败与取消；转发标准输出限额、采样及推理参数，正常限额截断不当成失败。GO 和其他模型沿用兼容协议，原生端点仍经过 SSRF 校验。原生协议真实受控 HTTP 15 项、渠道恢复 7 项、OpenCode 汇总 56 项、旧 TypeSafe 31 项及全 npm test 通过。来源：https://opencode.ai/docs/zen/ 、https://docs.typesafe.ai/api 。
+- 新增真实 HTTP 客户端头、403/401、失败零计费、模型获取和恢复路径回归，并接入现有 npm 测试链。官方最新 inference 的免费档 guard 不公开；客户端头兼容回归不代替真实渠道测试。已使用新适配器对 `64.83.2.174` 既有 OpenCode Key 做一次真实 `fledge-alpha-free` 探针，补齐标识仍返回同样 HTTP 403，正确分类为 `CHANNEL_FORBIDDEN`；未声称免费档已修通，未启用暂停渠道、替换凭据或重复试探。拦截请求另行确认实际发出的六类头形态与官方源码一致，不能推断私有 guard 的具体原因。
+
+### 2026-10-02 — OD Binance 原生集成与全局字体
+
+- **发布前代码与实际浏览器复审**：修复公网 IP 的 HTTP 来源没有 `crypto.randomUUID` 导致下单/平仓表单无法打开，改用安全随机字节生成一次性请求编号并在失败重试时保留；自动下单策略启动/评估增加 AntD 确认。修复账户刷新切回最新账户、旧请求完成后切回旧账户及旧回测结果覆盖新选择；默认与显式账户统一写入 URL。公开连接检测保存 HTTP 451 等原因；交易所错误中的 API Key / Secret 原文替换后再写记录。
+- **Linux 发布链路**：新增 `scripts/start-binance.sh`，预先配置独立交易库与随机私有密钥后启动回环 systemd 服务，不修改 OOAPI `.env` / `ADMIN_PASSWORD`，实盘默认关闭、不认领本机旧资产。updater 同步并备份交易引擎源码，保留 `.env`、`.venv`、桥接密钥及用户数据，更新后迁移/健康检查，失败恢复引擎、前后端源码及已切换的网页产物；前端备份不计入后端三份保留量，避免删除本次回滚点。平台管理员口令文件与隐藏配置不进入源码备份。
+- **本轮验收**：Python 49 项通过；`test:binance` 的 JWT/只读 Agent 隔离与成功更新/依赖失败回滚回归通过。隔离 MySQL/真实 Python 引擎与受控只读行情的浏览器 32 项通过：普通用户两账户、另一用户越权拒绝、公网 HTTP 下单、保护、50% 平仓、策略确认/取消、回测与账本、风控、实盘取消确认、451 原因、Agent 实际读取持久仓位及跨用户拒绝、390px 明暗布局与弹窗边界、刷新保留账户/仓位、分析预填。人工复核桌面总览/回测/连接错误及手机明暗/下单截图。未发送真实交易；64.83.2.174 对官方公共合约 REST 的实测为 HTTP 451，当前直连真实行情/实盘受外部限制，不能将受控测试称为真实币安成交。全站最终门禁与生产发布由本轮主任务统一执行。
+
+- `ooapi-web/src/pages/OdBinancePage.jsx` 与 `components/binance/` 在 OOAPI 现有壳层内提供总览、仓位、策略、回测、订单和配置。左侧只增加一个 OD Binance 项，全体登录用户可用；沿用 PageHeader、AntD 表格/表单/弹窗、全站 Charts 与 CSS 令牌。没有 iframe，也不依赖原 Next 前端。
+- `ooapi-binance/` 迁入既有 Python 交易引擎、Alembic 迁移和测试，沿用现有 Python 环境及 MySQL 交易库，不新增 npm 依赖。`0005` 增加账户 `owner_id` 与用户连接配置 `trading_profiles`；请求 Session 对账户及全部子资源强制应用归属条件，无法通过猜 ID 读取/修改他人数据。未认领的旧账户不向用户展示，也不执行自动化；旧资产只按 `-LegacyOwnerId` 显式迁入指定 OOAPI 用户。
+- `routes/binance.js` 挂到 `/api/binance`，使用现有 OOAPI JWT 鉴权。服务身份从已验证的 `req.user.id` 生成，忽略客户端身份头；Python 引擎绑定回环地址，只接受本机服务密钥，停用旧登录/用户接口。用户的代理与实盘开关各自独立；加密密钥、已有交易数据及 OOAPI 管理员凭据保持原状。
+- Agent 的 `binance` 工具直接挂入现有 harness，读取当前用户自己的账户、仓位、权益、订单、策略、回测和风控，提供总/净敞口和强平距离；不返回密钥、不提交订单。页面 Agent 分析按钮预填分析问题，模型调用与计费继续沿用原 OOAPI 流程。资金 USDT 与平台 OD币额度分别展示。
+- 全站字体改为本地 `public/fonts/zcool-kuaile.woff2`（附 OFL 授权），同步 CSS 正文/标签/数字与 AntD 字体 token，移除原 Noto 字体加载。修正共享 LineChart 的测宽节点在空数据/加载完成间被卸载导致宽度停在 200px 的问题。
+- 本机启动：先在 `ooapi-web` 执行 `npm run build`，再运行 `scripts/start-local.ps1`；首次可通过 `start-binance.ps1 -PythonPath <既有环境> -LegacyOwnerId <OOAPI 用户 ID>` 配置 Python 路径与旧账户归属。交易引擎配置放在被 Git 忽略的 `ooapi-binance/.env`；本机 OOAPI 数据库配置使用 `.env.local`，未修改线上 `.env` 或 `ADMIN_PASSWORD`。运行时凭据/日志/PID 位于被忽略的 `ooapi-server/data/`。
+- 验证：OOAPI 前端生产构建通过；`npm test` 全套通过；`npm run test:binance` 通过；Python 47 项通过（含 4 项多用户/越权回归）；25 个路由 UI 冒烟通过；监控冒烟 21 通过、1 条因既有告警保留而跳过；普通用户浏览器实测添加账户、保存风控/代理、创建策略/日志、模拟下单、保护、50%/100% 平仓、真实 K 线回测、历史曲线、Agent 预填、实际字体加载、明暗主题和 390px 手机布局通过。网关真实模型冒烟因本机无可用分组密钥跳过，未声称已验证模型回答或实盘成交。未发布到远程服务器。
 
 | 日期 | 内容 |
 |---|---|

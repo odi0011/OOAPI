@@ -174,14 +174,15 @@ function autoQuestion(prompt, state) {
 
 /** 人类可读的答案渲染（含概率/置信度），同时保留结构化字段供 x_ 返回 */
 export function renderAnswers(answers) {
-  const list = Array.isArray(answers) ? answers : [];
+  const list = Array.isArray(answers) ? answers : answers && typeof answers === "object"
+    ? Object.entries(answers).map(([id, answer]) => ({ ...answer, id })) : [];
   const lines = [];
   for (const a of list) {
     if (!a || typeof a !== "object") continue;
     const id = a.id ?? a.question_id ?? "?";
     const type = String(a.type || "").toLowerCase();
     // 概率字段名各家写法不一，逐个兜底（官方文档给的是 probability/confidence）
-    const p = a.probability ?? a.confidence ?? a.prob ?? a.value;
+    const p = a.probability ?? a.confidence ?? a.prob ?? (type === "noul" ? a.noul : undefined) ?? a.value;
     const pct = Number.isFinite(Number(p)) ? `（${(Number(p) * 100).toFixed(1)}%）` : "";
     if (type === "choice") {
       const chosen = a.choice ?? a.selected ?? a.answer ?? a.choice_id;
@@ -193,11 +194,41 @@ export function renderAnswers(answers) {
     } else {
       // noul：是/否
       const yes = a.answer ?? a.noul ?? a.value;
-      const word = yes === true || yes === "true" || yes === "yes" || yes === 1 ? "是" : "否";
+      const word = yes === true || yes === "true" || yes === "yes" || (typeof yes === "number" && yes >= 0.5) ? "是" : "否";
       lines.push(`${id}: ${word}${pct}`);
     }
   }
   return lines.join("\n");
+}
+
+/** 官方 SystemOne 输入是问题映射，不能把旧版 questions 数组发到原生端点。
+ * https://docs.typesafe.ai/api；只接受显式判断输入，不把普通聊天悄悄改成是/否。
+ * 供 OpenCode Jev 接入复用，既有 TypeSafe 接入流程保持独立。
+ */
+export function parseSystemOneInput(text) {
+  const raw = String(text || "").trim();
+  const fail = (message) => { throw Object.assign(new Error(message), {
+    code: "CHANNEL_BAD_REQUEST", capability: "systemone", upstreamStarted: false, billable: false,
+  }); };
+  let input;
+  try { input = JSON.parse(raw.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1] || raw); }
+  catch { fail("Jev 只支持结构化判断，请提供包含 state 与 questions 的 JSON"); }
+  const record = (value) => value && typeof value === "object" && !Array.isArray(value);
+  if (!record(input) || input.state == null || !record(input.questions) || !Object.keys(input.questions).length) {
+    fail("Jev 输入需要 state 与 questions 问题映射");
+  }
+  if (typeof input.state !== "string" && typeof input.state !== "object") fail("state 类型无效");
+  if (typeof input.state === "string" && !input.state.trim()) fail("state 不能为空");
+  const questions = Object.create(null);
+  for (const [id, q] of Object.entries(input.questions)) {
+    if (!record(q) || !["noul", "choice", "score"].includes(q.type) || q.instructions == null) fail("问题需要合法 type 与 instructions");
+    if (!["string", "object"].includes(typeof q.instructions) || (typeof q.instructions === "string" && !q.instructions.trim())) fail("问题 instructions 类型无效");
+    if (q.type === "choice" && (!record(q.criteria) || !Object.keys(q.criteria).length || Object.keys(q.criteria).length > MAX_CHOICES)) fail("choice 需要 1 至 255 项 criteria");
+    if (q.type === "score" && (!Array.isArray(q.criteria) || q.criteria.length < 2 || q.criteria.length > 10)) fail("score 需要 2 至 10 项 criteria");
+    if (q.type === "noul" && q.criteria != null && !record(q.criteria)) fail("noul criteria 必须是映射");
+    questions[id] = { type: q.type, instructions: q.instructions, ...(q.criteria == null ? {} : { criteria: q.criteria }) };
+  }
+  return { state: input.state, questions };
 }
 
 /* ---------------------------------------------------------------------------

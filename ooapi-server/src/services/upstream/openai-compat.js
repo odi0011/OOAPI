@@ -19,6 +19,7 @@ import { assertNoContentError } from "./content-error.js";
 import { applyVendorRequest, effectiveModelOf, reasoningDeltaOf, splitThinkTags, stripDsSafety, makeDsSafetyFilter } from "./vendor-quirks.js";
 import { normalizeUsage } from "../pricing.js";
 import { publicRunError } from "./public-error.js";
+import { classifyUpstreamHttp } from "./http-error.js";
 
 function consumedUsage(usage) {
   return normalizeUsage(usage).totalTokens > 0;
@@ -27,7 +28,7 @@ function consumedUsage(usage) {
 // 一次性文本读取必须有上限：SSE 路径有单行 8MB 限制，JSON/错误兜底却直接 resp.text()，
 // 异常或恶意上游可以用超大响应把内存打爆。分块读取并在超限时取消响应体。
 const MAX_TEXT_BUF = 8 * 1024 * 1024;
-async function readTextCapped(resp, max = MAX_TEXT_BUF) {
+export async function readTextCapped(resp, max = MAX_TEXT_BUF) {
   const cl = Number(resp.headers.get("content-length") || 0);
   if (cl && cl > max) {
     await resp.body?.cancel().catch(() => {});
@@ -102,7 +103,7 @@ function isPrivateUpstream(channel) {
  *
  * 例外：`allowPrivate` 为真时跳过公网校验（见 isPrivateUpstream）。
  */
-async function guardedFetch(url, init = {}, { allowPrivate = false } = {}) {
+export async function guardedFetch(url, init = {}, { allowPrivate = false } = {}) {
   const check = async (target) => {
     if (allowPrivate) return;
     await assertPublicUrlCached(target);
@@ -131,7 +132,7 @@ function listKeys(channel) {
     .map((s) => s.trim())
     .filter(Boolean);
 }
-function nextKey(channel) {
+export function nextKey(channel) {
   const keys = listKeys(channel);
   if (!keys.length) return "";
   const i = (keyCursor.get(channel.id) || 0) % keys.length;
@@ -139,7 +140,7 @@ function nextKey(channel) {
   return keys[i];
 }
 
-function authHeaders(channel, keyOverride) {
+export function authHeaders(channel, keyOverride) {
   const key = keyOverride || listKeys(channel)[0] || "";
   // 专属接入方式（WorkBuddy 等）通过 other.extra_headers 注入设备/企业风控头
   const extra = channel?.other?.extra_headers;
@@ -239,15 +240,11 @@ export async function verify(channel) {
   const timer = setTimeout(() => ac.abort(), 15000);
   try {
     const resp = await guardedFetch(models, { headers: authHeaders(channel), signal: ac.signal }, { allowPrivate: isPrivateUpstream(channel) });
-    if (resp.status === 401 || resp.status === 403) {
-      throw Object.assign(new Error(`上游拒绝鉴权（HTTP ${resp.status}），请检查 API Key`), {
-        code: "CHANNEL_AUTH_EXPIRED",
-      });
-    }
     if (!resp.ok) {
-      const body = await resp.text().catch(() => "");
+      const body = await readTextCapped(resp).catch(() => "");
+      const { code, hint } = classifyUpstreamHttp(resp.status, body);
       throw Object.assign(new Error(`上游返回 HTTP ${resp.status}${body ? `：${body.slice(0, 160)}` : ""}`), {
-        code: "CHANNEL_HTTP_ERROR",
+        code, status: resp.status, hint,
       });
     }
     return Date.now() - started;
@@ -274,9 +271,18 @@ export async function fetchUpstreamModels(channel) {
       { headers: authHeaders(channel), signal: ac.signal },
       { allowPrivate: isPrivateUpstream(channel) }
     );
-    const data = await resp.json().catch(() => null);
+    const text = await readTextCapped(resp);
+    if (!resp.ok) {
+      const { code, hint } = classifyUpstreamHttp(resp.status, text);
+      throw Object.assign(new Error(`上游返回 HTTP ${resp.status}：${text.slice(0, 160)}`), { code, status: resp.status, hint });
+    }
+    let data;
+    try { data = JSON.parse(text); } catch {
+      throw Object.assign(new Error("上游模型列表不是有效 JSON"), { code: "CHANNEL_BAD_RESPONSE" });
+    }
     return (data?.data || data?.models || []).map((m) => m.id || m.name).filter(Boolean);
   } catch (e) {
+    if (e.code) throw e;
     throw new Error(`获取模型列表失败：${e.message}`);
   } finally {
     clearTimeout(timer);
@@ -454,16 +460,16 @@ async function chatOnce({
     // 管理员被引导反复重新绑定（实测绑了 4 次，全部无效）。独立归类：
     // 可换渠道重试（别的账号可能没事）+ 长冷却（6h，见 execute.cooldownFor），
     // 且**不进 AUTO_PAUSE_CODES** —— 自动恢复（T1）上线前，停了就回不来。
-    const notApproved = /11128|11140|unapproved\s+channel|Illegal\s+API\s+invocation|request\s+illegal/i.test(text);
+    const classified = classifyUpstreamHttp(resp.status, text);
     // 400/404/409/422 是请求本身的问题（模型名错、上下文超长等），换渠道也没用；
     // 这类错误不可重试，直接抛给调用方，避免把健康渠道全部冷却。
     // 5xx 单独归类为 CHANNEL_UPSTREAM_BUSY：那是**上游自己过载**（DeepSeek 的
     // 「Service is too busy」、各家网关的 502/504），不是这个渠道的凭据或配置有问题。
     // 交给 chat() 的循环原地重试；重试仍失败才算渠道异常。
-    const code = notApproved
+    const code = classified.code === "CHANNEL_NOT_APPROVED"
       ? "CHANNEL_NOT_APPROVED"
       : resp.status === 401 || resp.status === 403
-        ? "CHANNEL_AUTH_EXPIRED"
+        ? classified.code
         : resp.status === 429
           ? "CHANNEL_RATE_LIMIT"
           : resp.status >= 500
@@ -474,7 +480,7 @@ async function chatOnce({
     const hint =
       code === "CHANNEL_NOT_APPROVED"
         ? "（上游风控/安全审核拦截该账号：非凭据问题，重新绑定无效；建议稍后重测或更换账号）"
-        : "";
+        : classified.hint ? `（${classified.hint}）` : "";
     if (rejectedUsage && onUsage) onUsage(rejectedUsage);
     throw Object.assign(new Error(`上游返回 HTTP ${resp.status}：${msg}${hint}`), {
       code, status: resp.status, usage: rejectedUsage, billable: consumedUsage(rejectedUsage), upstreamRejected: true, upstreamModel: body.model,

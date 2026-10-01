@@ -12,6 +12,7 @@ import { pool } from "../../db.js";
 import { runCompletion, billableFailedCall } from "../execute.js";
 import { modelForChannelMatch } from "../models.js";
 import { USAGE_SQL } from "../log.js";
+import { readBinanceAnalysis } from "../binance-analysis.js";
 
 const clip = (text, max) => {
   const s = String(text ?? "");
@@ -129,6 +130,16 @@ export function recordFailedCall(err, ctx, fallback = {}) {
 }
 
 export const TOOLS = {
+  binance: {
+    id: "binance",
+    name: "我的币安",
+    desc: "只读查询当前用户自己的币安账户、权益、仓位、订单、策略、风控与回测；分析方向敞口、杠杆、保证金、强平距离和止盈止损。数据按当前登录用户隔离，不返回密钥，不执行交易。",
+    args: '{"action":"accounts|overview|positions|orders|strategies|risk|backtests|analysis","account_id":"可选，只能是当前用户拥有的账户；risk 必填"}',
+    async run(args, ctx) {
+      try { return { ok: true, output: clip(JSON.stringify(await readBinanceAnalysis(args, ctx)), 24000) }; }
+      catch (e) { if (ctx.signal?.aborted) throw e; return { ok: false, output: `币安查询失败：${e.message}` }; }
+    },
+  },
   todowrite: {
     id: "todowrite",
     name: "待办清单",
@@ -181,6 +192,7 @@ export const TOOLS = {
           search: true,
           images: [],
           groupName: ctx.groupName,
+          channelType: ctx.channelType || "",
           user: ctx.user,
           signal: ctx.signal,
           onDelta: capture,

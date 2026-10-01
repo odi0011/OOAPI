@@ -249,9 +249,9 @@ function useAntdConfig(resolved, primary, appearance) {
         lineHeight: 1.5,
 
         fontFamily:
-          '"Noto Sans SC", "Noto Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif',
+          '"ZCOOL KuaiLe", "Microsoft YaHei", sans-serif',
         fontFamilyCode:
-          '"JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+          '"ZCOOL KuaiLe", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
 
         boxShadow: s.shadowCard,
         boxShadowSecondary: s.shadowOverlay,

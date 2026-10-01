@@ -38,7 +38,7 @@ export async function runDueChannelTests() {
     try {
       const r = await runOne(row);
       // 与手动测试同口径：同时落总耗时与首 Token 耗时，小竖条按首 Token 着色
-      await pool.query("UPDATE channels SET response_time = ?, ttft_ms = ?, tested_time = ?, last_error = '' WHERE id = ?", [
+      await pool.query("UPDATE channels SET response_time = ?, ttft_ms = ?, tested_time = ?, last_error = '', last_error_code = '', rate_limit_until = 0 WHERE id = ?", [
         r.ms,
         r.ttftMs || r.ms,
         now(),

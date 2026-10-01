@@ -56,6 +56,7 @@ const NAV_USER = [
     items: [
       { key: "/chat", icon: <MessageOutlined />, label: "对话" },
       { key: "/console", icon: <DashboardOutlined />, label: "数据看板" },
+      { key: "/od-binance", icon: <ThunderboltOutlined />, label: "OD Binance" },
     ],
   },
   {
@@ -111,6 +112,7 @@ const CRUMB = {
   "/chat": ["工作台", "对话"],
   "/agent": ["工作台", "智能体"],
   "/console": ["工作台", "数据看板"],
+  "/od-binance": ["工作台", "OD Binance"],
   "/community": ["社交", "社区"],
   "/messages": ["社交", "消息"],
   "/notifications": ["社交", "通知"],
@@ -284,7 +286,7 @@ export default function MainLayout() {
     const renderGroup = (group) => (
       <div className="oo-nav-group" key={group.title}>
         {!collapsed && <div className="oo-nav-label">{group.title}</div>}
-        {group.items.map((it) => (
+        {group.items.filter((it) => !it.adminOnly || isAdmin).map((it) => (
           <div
             key={it.key}
             className={`oo-nav-item${selectedKey === it.key ? " is-active" : ""}`}

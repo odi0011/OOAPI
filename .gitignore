@@ -31,6 +31,9 @@ web/
 Thumbs.db
 __pycache__/
 *.pyc
+.venv/
+.env.test
+.pytest_cache/
 ooapi-web/.qa-tmp/
 
 # 本地协作/测试脚手架：**.workbuddy-ai/qssh.py 里写着测试服务器的口令**，

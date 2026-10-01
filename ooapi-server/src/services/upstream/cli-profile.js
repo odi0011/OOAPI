@@ -66,6 +66,8 @@ export const CLI_VERSIONS = {
   antigravityNodeApi: "10.3.0",
   antigravityGoogApi: "gl-node/22.21.1",
   grok: "0.2.120",
+  // 官方发布 v1.18.34（2026-09-30）；与该 tag 的 session/llm/request.ts 保持一致。
+  opencode: "1.18.34",
 };
 
 export function codexUserAgent(channel) {
@@ -135,5 +137,34 @@ export function grokIdentity(channel) {
     sessionId: seededUuid(seed, "grok-session"),
     clientVersion: v,
     userAgent: `xai-grok-workspace/${v}`,
+  };
+}
+
+let opencodeLastTimestamp = 0;
+let opencodeRequestCounter = 0;
+
+/** OpenCode Zen：session 稳定派生，单次 request 使用官方 msg_ + 26 字符编码。 */
+export function opencodeIdentity(channel) {
+  const seed = profileSeed(channel);
+  const timestamp = Date.now();
+  if (timestamp !== opencodeLastTimestamp) {
+    opencodeLastTimestamp = timestamp;
+    opencodeRequestCounter = 0;
+  }
+  // v1.18.34 schema/identifier.ts：低 6 字节时间/计数 + 14 字符 base62 后缀。
+  const current = BigInt(timestamp) * 0x1000n + BigInt(++opencodeRequestCounter);
+  const time = Array.from({ length: 6 }, (_, index) =>
+    Number((current >> BigInt(40 - 8 * index)) & 0xffn).toString(16).padStart(2, "0"),
+  ).join("");
+  const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  const suffix = [...crypto.randomBytes(14)].map((byte) => alphabet[byte % 62]).join("");
+  const version = String(channel?.other?.client_version || CLI_VERSIONS.opencode).trim();
+  return {
+    // 官方 SessionID 只校验 ses 前缀；确定性后缀保持 26 字符，避免重启后身份改变。
+    sessionId: `ses_${digest(seed, "opencode-session", 16).slice(0, 26)}`,
+    requestId: `msg_${time}${suffix}`,
+    // 官方 ProjectID.global 是无 Git 项目时的标识，网关没有调用方的本地仓库信息。
+    projectId: "global",
+    userAgent: `opencode/${version}`,
   };
 }

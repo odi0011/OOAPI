@@ -67,6 +67,20 @@ const WAF_HINTS = [
 /** 权限/档位不足的字样 */
 const PERMISSION_HINTS = ["permission", "forbidden", "insufficient", "not allowed", "无权限", "未开通", "权限"];
 
+/** 免费模型或产品限定的客户端权限拒绝；这是有效凭据的权限边界，不能提示重新登录。 */
+export function isClientRestrictedResponse(body = "") {
+  return /(?:free\s+tier[\s\S]{0,100}only[\s\S]{0,100}(?:within|from|via)\s+opencode)|(?:only\s+(?:available|allowed|accessible|usable)[\s\S]{0,100}(?:within|via)\s+(?:opencode|cline))/i.test(String(body || ""));
+}
+
+/** 优先使用结构化错误码；旧记录没保存码时才兼容读取文案。 */
+export function needsCredentialRefresh(code, message = "") {
+  // 旧适配器曾把产品限制写成 AUTH_EXPIRED；不能让这条旧码继续盖过明确的限制原文。
+  if (isClientRestrictedResponse(message) || isNotApprovedResponse(message)) return false;
+  const value = String(code || "");
+  if (value) return value === UPSTREAM_ERROR.AUTH_EXPIRED;
+  return /AUTH|401|403|失效|过期|未配置|无效|重新登录|验证/i.test(String(message || ""));
+}
+
 /**
  * 给一个上游响应分类。
  * @param {number} status HTTP 状态码
@@ -93,6 +107,12 @@ export function classifyUpstreamHttp(status, body = "") {
     };
   }
   if (status === 403) {
+    if (isClientRestrictedResponse(body)) {
+      return {
+        code: UPSTREAM_ERROR.FORBIDDEN,
+        hint: "上游限制该模型只能从指定客户端使用（403 权限限制）；请核对客户端接入方式或改用可用模型，重新绑定凭据无法解除该限制",
+      };
+    }
     if (waf) {
       return {
         code: UPSTREAM_ERROR.RATE_LIMITED,

@@ -47,6 +47,7 @@ import {
   cancelDeviceBind,
 } from "../services/device-bind.js";
 import { randomBytes } from "node:crypto";
+import { needsCredentialRefresh } from "../services/upstream/http-error.js";
 
 const router = Router();
 
@@ -684,7 +685,7 @@ function rowToResp(r, { withKey = false } = {}) {
     canRecover: !isApi,
     canCaptureSession: Boolean(mCfg?.captureApi),
     // 认证类错误 → 前端把找回按钮标红并按「需要重新登录」提示
-    needsRelogin: /AUTH|401|403|失效|过期|无效|重新登录|验证/i.test(String(rt.last_error || r.last_error || "")),
+    needsRelogin: needsCredentialRefresh(r.last_error_code, rt.last_error || r.last_error || ""),
     // 配置
     base_url: r.base_url || mCfg?.baseUrl || "",
     models: String(r.models || "").split(",").map((s) => s.trim()).filter(Boolean),
@@ -982,7 +983,7 @@ async function applyCredentialToChannel({ id, type, method, credential, vendor }
   // 打「凭据代次」标记：适配器刷新写回时若发现代次已变，说明凭据被人工替换过，不再覆盖 token 字段
   merged.cred_epoch = (Number(merged.cred_epoch) || 0) + 1;
   merged.cred_updated_at = now();
-  await pool.query("UPDATE channels SET api_key = ?, other = ?, last_error = '' WHERE id = ?", [
+  await pool.query("UPDATE channels SET api_key = ?, other = ?, last_error = '', last_error_code = '', rate_limit_until = 0 WHERE id = ?", [
     nextToken,
     JSON.stringify(merged),
     id,
@@ -1100,11 +1101,9 @@ router.get(
     // WorkBuddy 11128/11140 实测）**不是凭据问题** —— 它的报错里带 HTTP 403 字样，
     // 会命中下面的正则，把管理员引进「重新绑定」的死胡同（实测同一账号连绑 4 次、
     // 每次都 403，凭据明明是好的）。有该 code 时明确判定为不需要重登。
-    const notApproved = String(r.last_error_code || "") === "CHANNEL_NOT_APPROVED";
     const needsRelogin =
-      !notApproved &&
-      (/AUTH|401|403|失效|过期|未配置|无效|重新登录|验证/i.test(String(lastError)) ||
-        (!r.api_key && !other.profile && method !== "api"));
+      needsCredentialRefresh(r.last_error_code, lastError) ||
+      (!r.api_key && !other.profile && method !== "api");
 
     return ok(res, {
       id: r.id,
@@ -1268,12 +1267,12 @@ router.post(
       const adapter = await adapterOf(fresh[0].type, methodOf(fresh[0]));
       if (adapter?.verify) {
         const ms = await adapter.verify(rowToChannel(fresh[0]));
-        await pool.query("UPDATE channels SET response_time = ?, tested_time = ?, last_error = '' WHERE id = ?", [ms, now(), id]);
+        await pool.query("UPDATE channels SET response_time = ?, tested_time = ?, last_error = '', last_error_code = '', rate_limit_until = 0 WHERE id = ?", [ms, now(), id]);
         healthy = true;
       }
     } catch (e) {
       healthy = false;
-      await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), id]);
+      await pool.query("UPDATE channels SET last_error = ?, last_error_code = ? WHERE id = ?", [String(e.message).slice(0, 480), String(e.code || ""), id]);
     }
     await writeLog({
       req,
@@ -1332,7 +1331,8 @@ router.post(
     // api_key 列是 TEXT（64KB）：多 Key 拼接后必须有上限，否则 MySQL 报错 500
     const joined = next.join("\n");
     if (joined.length > 60_000) return fail(res, "Key 总长度超出上限，请减少 Key 数量");
-    await pool.query("UPDATE channels SET api_key = ? WHERE id = ?", [joined, id]);
+    await pool.query("UPDATE channels SET api_key = ?, last_error = '', last_error_code = '', rate_limit_until = 0 WHERE id = ?", [joined, id]);
+    resetChannelState(id);
     await writeLog({
       req,
       user: req.user,
@@ -1412,7 +1412,7 @@ router.post(
       if (!rows.length) return fail(res, "渠道不存在", 404);
       // 与 /login 同语义：合并旧 other（保留 state_kit 等适配器不产出的字段），不整列覆盖
       const merged = { ...parseOther(rows[0]), ...other };
-      await pool.query("UPDATE channels SET name = ?, api_key = ?, other = ?, priority = ?, status = 1 WHERE id = ?", [
+      await pool.query("UPDATE channels SET name = ?, api_key = ?, other = ?, priority = ?, status = 1, last_error = '', last_error_code = '', rate_limit_until = 0 WHERE id = ?", [
         displayName,
         token,
         JSON.stringify(merged),
@@ -1434,7 +1434,7 @@ router.post(
     }
     if (existId) {
       const merged = { ...parseOther(rows.find((r) => r.id === existId) || {}), ...other };
-      await pool.query("UPDATE channels SET other = ?, api_key = ?, status = 1 WHERE id = ?", [
+      await pool.query("UPDATE channels SET other = ?, api_key = ?, status = 1, last_error = '', last_error_code = '', rate_limit_until = 0 WHERE id = ?", [
         JSON.stringify(merged),
         token,
         existId,
@@ -1734,7 +1734,7 @@ router.post(
       const prevOther = parseOther(exists[0]);
       const merged = { ...prevOther, ...other };
       await pool.query(
-        `UPDATE channels SET name = ?, api_key = ?, other = ?, last_error = '',
+        `UPDATE channels SET name = ?, api_key = ?, other = ?, last_error = '', last_error_code = '', rate_limit_until = 0,
            models = COALESCE(?, models),
            group_name = COALESCE(?, group_name), group_list = COALESCE(?, group_list),
            weight = COALESCE(?, weight), auto_ban = COALESCE(?, auto_ban),
@@ -1772,7 +1772,7 @@ router.post(
           const ms = await adapter.verify(rowToChannel(fresh[0]));
           await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `浏览器登录 ${provider.name} 成功（${ms}ms）` });
         } catch (e) {
-          await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), targetId]);
+          await pool.query("UPDATE channels SET last_error = ?, last_error_code = ? WHERE id = ?", [String(e.message).slice(0, 480), String(e.code || ""), targetId]);
           return fail(res, `渠道已创建但未就绪：${e.message}。请在渠道列表点「浏览器登录」完成人工登录`, 400);
         }
       }
@@ -1832,7 +1832,7 @@ router.post(
         const ms = await adapter.verify(rowToChannel(fresh[0]));
         await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `浏览器登录 ${provider.name} 成功（${ms}ms）` });
       } catch (e) {
-        await pool.query("UPDATE channels SET last_error = ? WHERE id = ?", [String(e.message).slice(0, 480), insertId]);
+        await pool.query("UPDATE channels SET last_error = ?, last_error_code = ? WHERE id = ?", [String(e.message).slice(0, 480), String(e.code || ""), insertId]);
         return fail(res, `渠道已创建但未就绪：${e.message}。请在渠道列表点「浏览器登录」完成人工登录`, 400);
       }
     } else {
@@ -2056,6 +2056,7 @@ router.put(
 
     const fields = [];
     const args = [];
+    let clearFailure = false;
     const setIf = (col, val) => {
       if (val === undefined) return;
       fields.push(`${col} = ?`);
@@ -2071,7 +2072,10 @@ router.put(
       }
     }
     setIf("base_url", b.base_url !== undefined ? String(b.base_url).trim().slice(0, 255) : undefined);
-    if (b.api_key !== undefined && String(b.api_key).trim()) setIf("api_key", String(b.api_key).trim().slice(0, 60_000));
+    if (b.api_key !== undefined && String(b.api_key).trim()) {
+      setIf("api_key", String(b.api_key).trim().slice(0, 60_000));
+      clearFailure = true;
+    }
     if (b.models !== undefined) {
       const m = Array.isArray(b.models) ? b.models.join(",") : String(b.models);
       // 允许清空：反代/订阅渠道留空表示「该厂商全部模型」（模型归厂商不归账号）。
@@ -2089,7 +2093,7 @@ router.put(
     if (b.status !== undefined) {
       const s = Number(b.status) === 2 ? 2 : 1;
       setIf("status", s);
-      if (s === 1) resetChannelState(id);
+      if (s === 1) clearFailure = true;
     }
     if (b.priority !== undefined) {
       const p = safeInt(b.priority, { min: 0, max: 1_000_000 });
@@ -2170,8 +2174,14 @@ router.put(
     }
 
     if (!fields.length) return fail(res, "没有需要更新的字段");
+    if (clearFailure) {
+      setIf("last_error", "");
+      setIf("last_error_code", "");
+      setIf("rate_limit_until", 0);
+    }
     args.push(id);
     await pool.query(`UPDATE channels SET ${fields.join(", ")} WHERE id = ?`, args);
+    if (clearFailure) resetChannelState(id);
     await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `编辑渠道「${cur.name}」` });
     const all = await listRows();
     return ok(res, rowToResp(all.find((r) => r.id === id)), "已更新");
@@ -2203,7 +2213,7 @@ router.post(
       // 同时落 ttft_ms：**慢渠道判定与前端展示都用首 Token 耗时**（用户实测反馈）。
       // 总耗时把「思考 + 生成全文」都算进去，思考型模型（GLM / o 系列）与长回答
       // 会被判成坏渠道；用户体感是「多久开始出字」。两个数都存，各司其职。
-      await pool.query("UPDATE channels SET response_time = ?, ttft_ms = ?, tested_time = ?, last_error = '' WHERE id = ?", [
+      await pool.query("UPDATE channels SET response_time = ?, ttft_ms = ?, tested_time = ?, last_error = '', last_error_code = '', rate_limit_until = 0 WHERE id = ?", [
         probe.ms,
         probe.ttftMs || probe.ms,
         now(),
@@ -2381,7 +2391,7 @@ router.post(
     const ph = list.map(() => "?").join(",");
 
     if (action === "enable") {
-      await pool.query(`UPDATE channels SET status = 1, last_error = '' WHERE id IN (${ph})`, list);
+      await pool.query(`UPDATE channels SET status = 1, last_error = '', last_error_code = '', rate_limit_until = 0 WHERE id IN (${ph})`, list);
       list.forEach((id) => resetChannelState(id));
     } else if (action === "disable") {
       await pool.query(`UPDATE channels SET status = 2 WHERE id IN (${ph})`, list);
@@ -2660,7 +2670,7 @@ router.post(
       return fail(res, `凭据写入失败：${e.message}`, 400);
     }
     // 凭据就位后启用渠道：它是以 status=2（禁用）建出来的，等这一步才入池
-    await pool.query("UPDATE channels SET status = 1, last_error = '' WHERE id = ?", [channelId]);
+    await pool.query("UPDATE channels SET status = 1, last_error = '', last_error_code = '', rate_limit_until = 0 WHERE id = ?", [channelId]);
     resetChannelState(channelId);
     invalidateChannelCache();
     await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `设备授权凭据已写入新建渠道 #${channelId} 并启用` });

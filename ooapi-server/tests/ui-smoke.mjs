@@ -21,6 +21,7 @@ const ROUTES = [
   ["/login", "登录页"],
   ["/register", "注册页"],
   ["/console", "控制台"],
+  ["/od-binance", "OD Binance"],
   ["/chat", "站内对话"],
   ["/community", "社区大厅"],
   ["/messages", "消息中心"],
@@ -63,7 +64,7 @@ const token = jwt.sign(
   { expiresIn: "20m" }
 );
 
-const browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
+const browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"], ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : {}) });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 await ctx.addInitScript((t) => localStorage.setItem("ooapi-token", t), token);
 

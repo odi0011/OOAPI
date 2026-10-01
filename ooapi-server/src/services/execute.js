@@ -114,6 +114,7 @@ export async function runCompletion({
   onSearchStatus,
   signal,
   groupName = null,
+  channelType = "",
   excludeChannelIds = null,
   onChannelTry,
   user = null,
@@ -123,13 +124,13 @@ export async function runCompletion({
   // 渠道声明的是真实模型名：先把兼容别名归一化再匹配，
   // 否则 kimi-latest / qwen-turbo 这类别名请求会直接 NO_CHANNEL
   const matchName = resolveAliasSync(model);
-  const channels = await selectChannels({ model: matchName, excludeIds: tried, groupName });
+  const channels = await selectChannels({ model: matchName, excludeIds: tried, groupName, channelType });
 
   if (!channels.length) {
     // 区分「没有渠道支持这个模型」和「渠道都在冷却」，否则排查方向会完全跑偏。
     // displayModel 传原始请求名：报错要回显用户写的那个名字，而不是归一化后的
     //（否则用户会去查一个自己没写过的模型名 —— 见 explainNoChannel 的注释）。
-    const why = await explainNoChannel({ model: matchName, displayModel: model, groupName }).catch(() => null);
+    const why = await explainNoChannel({ model: matchName, displayModel: model, groupName, channelType }).catch(() => null);
     throw Object.assign(
       new Error(why?.message || `没有可用渠道支持模型「${model}」，请在渠道管理中添加或启用对应渠道`),
       { code: "NO_CHANNEL", reason: why?.reason, model, billable: false, retryCount: 0, elapsed: Date.now() - runStartedAt }

@@ -469,6 +469,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
         search: typeof settings.search === "boolean" ? settings.search : Boolean(agent.search),
         images: step === 1 ? images : [],
         groupName,
+        channelType: settings.channelType || "",
         user,
         signal,
         onDelta: (t) => {
@@ -542,6 +543,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       ? await runTool(call.tool, call.args, {
           model,
           groupName,
+          channelType: settings.channelType || "",
           signal,
           record,
           runAgent: childRunAgent,

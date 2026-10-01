@@ -8,14 +8,7 @@ import { ThemeProvider } from "./theme/ThemeContext";
 import { bootAppearance } from "./theme/presets";
 import { AppProvider } from "./context/AppContext";
 import App from "./App";
-// 正文字体：Noto Sans SC（本地打包，避免依赖外网字体 CDN）
-// 按语种导入（chinese-simplified + latin），避免引入上百个未用子集
-import "@fontsource/noto-sans-sc/chinese-simplified-400.css";
-import "@fontsource/noto-sans-sc/latin-400.css";
-import "@fontsource/noto-sans-sc/chinese-simplified-500.css";
-import "@fontsource/noto-sans-sc/latin-500.css";
-import "@fontsource/noto-sans-sc/chinese-simplified-700.css";
-import "@fontsource/noto-sans-sc/latin-700.css";
+// 站酷快乐体从 public/fonts 本地加载，首次打开也不依赖字体 CDN。
 import "./styles.css";
 
 // antd 的日期组件（rc-picker）直接用 dayjs 取星期/周首日，不注册中文 locale

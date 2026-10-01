@@ -9,7 +9,7 @@ import { now, safeJSONParse } from "../../utils.js";
 
 export const MAX_STEPS_LIMIT = 16;
 export const DEFAULT_MAX_STEPS = 6;
-export const TOOL_IDS = ["account", "search", "fetch", "github", "task", "todowrite"];
+export const TOOL_IDS = ["account", "binance", "search", "fetch", "github", "task", "todowrite"];
 
 // 会话 id：短、可读、无歧义字符（前端会拼进 URL/命令面板）
 const ID_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz";
@@ -35,6 +35,7 @@ export function sanitizeSettings(raw = {}, { previous = {} } = {}) {
     tools: Array.isArray(tools) ? tools.filter((t) => TOOL_IDS.includes(t)) : null,
     maxSteps: clamp(Number(pick("maxSteps", base.maxSteps ?? DEFAULT_MAX_STEPS)) || DEFAULT_MAX_STEPS, 1, MAX_STEPS_LIMIT),
     instructions: String(pick("instructions", base.instructions ?? "")).slice(0, 4000),
+    channelType: String(pick("channelType", base.channelType ?? "")).trim().toLowerCase().slice(0, 32),
   };
 }
 

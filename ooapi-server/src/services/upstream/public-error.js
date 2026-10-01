@@ -5,6 +5,7 @@ const MESSAGES = Object.freeze({
   VISION_NOT_SUPPORTED: "当前渠道不支持图片，请移除图片或选择其他模型。",
   CHANNEL_RATE_LIMIT: "上游请求频率受限，请稍后重试。",
   CHANNEL_AUTH_EXPIRED: "上游服务鉴权失败，请联系管理员。",
+  CHANNEL_FORBIDDEN: "上游限制了此次调用的模型或客户端权限，请选择其他模型或联系管理员核查。",
   CHANNEL_TIMEOUT: "上游响应超时，请稍后重试。",
   CHANNEL_NETWORK: "上游连接中断，请稍后重试。",
   BILLING_FAILED: "本轮计费未完成，请联系管理员核查。",
@@ -14,6 +15,7 @@ const MESSAGES = Object.freeze({
 /** 返回可安全用于公开API、消息part、审计content与console的错误说明。 */
 export function publicRunError(err, { stopped = false } = {}) {
   if (stopped) return "已停止生成。本轮已产生的用量照常计费。";
+  if (err?.capability === "systemone") return "此模型仅支持结构化判断，请输入包含 state 和 questions 的 JSON，或选择对话模型。";
   const value = Number(err?.httpStatus || err?.status);
   const status = Number.isInteger(value) && value >= 400 && value <= 599 ? value : 0;
   const prefix = status ? `上游请求失败（HTTP ${status}）：` : "上游请求失败：";

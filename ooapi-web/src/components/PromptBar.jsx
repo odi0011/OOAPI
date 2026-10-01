@@ -73,6 +73,7 @@ export default function PromptBar({
   busy = false,
   models = [],
   vendorGroups = null,
+  channelType = "",
   model,
   onModelChange,
   chips = [],
@@ -164,15 +165,15 @@ export default function PromptBar({
       if (hit?.vendor) return hit.vendor;
     }
   };
-  const modelVendor = vendorForModel(model);
+  const modelVendor = channelType || vendorForModel(model);
 
   // 按钮上显示友好名称（label），没有 label 才退回 id
   const currentLabel = (() => {
     for (const g of vendorGroups || []) {
-      const hit = g.models.find((m) => m.id === model);
+      const hit = g.models.find((m) => m.id === model && (!channelType || m.vendor === channelType));
       if (hit) return hit.label || hit.id;
     }
-    const hit = models.find((m) => m.id === model);
+    const hit = models.find((m) => m.id === model && (!channelType || m.vendor === channelType));
     return hit ? hit.label || hit.id : model || "选择模型";
   })();
 
@@ -384,7 +385,7 @@ export default function PromptBar({
                   <div key={g.vendor} className="bui-modelgroup">
                     {g.vendorName ? (
                       <div className="bui-modelgroup-head">
-                        <VendorIcon type={vendorForModel(g.models[0]?.id)} size={13} />
+                        <VendorIcon type={g.vendor} size={13} />
                         <span>{g.vendorName}</span>
                         <span className="ct">{g.models.length}</span>
                       </div>
@@ -398,15 +399,15 @@ export default function PromptBar({
                         disabled={busy || disabled}
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={() => {
-                          onModelChange?.(m.id);
+                          onModelChange?.(m.id, m.vendor);
                           setModelOpen(false);
                           taRef.current?.focus();
                         }}
                       >
-                        <VendorIcon type={vendorForModel(m.id)} size={14} />
+                        <VendorIcon type={m.vendor || g.vendor} size={14} />
                         <span className="nm2">{m.label || m.id}</span>
                         {m.deprecated ? <span className="badge">即将下线</span> : null}
-                        <span className={`tick ${m.id === model ? "" : "is-off"}`}>{TickIcon}</span>
+                        <span className={`tick ${m.id === model && (!channelType || m.vendor === channelType) ? "" : "is-off"}`}>{TickIcon}</span>
                       </button>
                     ))}
                   </div>

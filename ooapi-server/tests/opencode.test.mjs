@@ -13,6 +13,8 @@
 // 不是断言源码里有没有字符串，而是看线上那条请求到底带了什么。
 import http from "node:http";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 let pass = 0;
 let fail = 0;
@@ -23,8 +25,19 @@ const ck = (n, c, extra = "") => {
 
 /* ---------- 记录请求头的假上游 ---------- */
 const seen = [];
+let forcedError = null;
+let requireZenClient = false;
 const server = http.createServer((req, res) => {
+  req.resume();
   seen.push({ url: req.url, headers: { ...req.headers } });
+  const restriction = "OpenCode's free tier can only be used from within OpenCode";
+  const error = forcedError || (requireZenClient &&
+    (!/^opencode\/[\d.]+$/.test(req.headers["user-agent"] || "") || req.headers["x-opencode-client"] !== "cli")
+    ? { status: 403, message: restriction } : null);
+  if (error) {
+    res.writeHead(error.status, { "content-type": "application/json" });
+    return res.end(JSON.stringify({ error: { message: error.message } }));
+  }
   if (req.url.endsWith("/models")) {
     res.writeHead(200, { "content-type": "application/json" });
     return res.end(JSON.stringify({ data: [{ id: "deepseek-v4.1-flash" }] }));
@@ -134,6 +147,91 @@ console.log("\n=== ⑤ 接入方式声明与适配器注册 ===");
     String(getMethod("opencode", "api")?.baseUrl));
 }
 
+/* ============ ⑥ Zen Key 真实请求的官方客户端契约 ============ */
+console.log("\n=== ⑥ Zen Key 的客户端头（官方 v1.18.34） ===");
+{
+  const { CLI_VERSIONS } = await import("../src/services/upstream/cli-profile.js");
+  const { getAdapter } = await import("../src/services/router.js");
+  const keyChannel = mk({ method: "api" });
+  const adapter = await getAdapter(keyChannel);
+  requireZenClient = true;
+  seen.length = 0;
+  const result = await adapter.chat({ channel: keyChannel, model: "space-bunny-free", prompt: "fixture coding task" });
+  ck("Key 方式经注册适配器发送官方头，受控上游接受", result.content === "OK");
+  const first = seen[0]?.headers || {};
+  ck("UA 使用已核对的官方版本", first["user-agent"] === `opencode/${CLI_VERSIONS.opencode}`);
+  ck("官方客户端标记为 cli", first["x-opencode-client"] === "cli");
+  ck("两种会话头一致", Boolean(first["x-opencode-session"]) && first["x-opencode-session"] === first["x-opencode-session-id"]);
+  ck("请求和项目标识均存在", Boolean(first["x-opencode-request"]) && Boolean(first["x-opencode-project"]));
+  ck("Zen 会话和请求采用官方前缀与26字符形态", /^ses_[a-f\d]{12}[a-z\d]{14}$/i.test(first["x-opencode-session"] || "") && /^msg_[a-f\d]{12}[a-z\d]{14}$/i.test(first["x-opencode-request"] || ""));
+  ck("无调用方 Git 仓库时用官方 global 项目标识", first["x-opencode-project"] === "global");
+  await adapter.chat({ channel: keyChannel, model: "space-bunny-free", prompt: "fixture continuation" });
+  const second = seen[1]?.headers || {};
+  ck("连续请求复用稳定会话和项目", first["x-opencode-session"] === second["x-opencode-session"] && first["x-opencode-project"] === second["x-opencode-project"]);
+  ck("不同调用的请求标识不重用", first["x-opencode-request"] !== second["x-opencode-request"]);
+  requireZenClient = false;
+
+  seen.length = 0;
+  await adapter.chat({ channel: mk({ method: "api", client_version: "1.18.35" }), model: "m", prompt: "fixture" });
+  ck("管理员可覆盖客户端版本", seen[0]?.headers["user-agent"] === "opencode/1.18.35");
+  seen.length = 0;
+  await adapter.chat({ channel: mk({ method: "api", client_user_agent: "custom-agent/2", extra_headers: {
+    "User-Agent": "explicit-agent/3", "X-OpenCode-Client": "desktop", "X-OpenCode-Session": "explicit-session",
+    "authorization": "Bearer fixture-explicit", "content-TYPE": "application/json",
+  } }), model: "m", prompt: "fixture" });
+  const explicit = seen[0]?.headers || {};
+  ck("不同大小写的自定义 UA 只发一个值", explicit["user-agent"] === "explicit-agent/3");
+  ck("不同大小写客户端标记可覆盖", explicit["x-opencode-client"] === "desktop");
+  ck("不同大小写鉴权与Content-Type覆盖不重复拼接", explicit.authorization === "Bearer fixture-explicit" && explicit["content-type"] === "application/json");
+  ck("自定义会话覆盖后两种头保持一致", explicit["x-opencode-session"] === "explicit-session" && explicit["x-opencode-session-id"] === "explicit-session");
+  seen.length = 0;
+  await adapter.chat({ channel: keyChannel, sessionId: "conversation-2", requestId: "request-2", model: "m", prompt: "fixture" });
+  ck("调用方会话与请求标识可透传", seen[0]?.headers["x-opencode-session"] === "conversation-2" && seen[0]?.headers["x-opencode-request"] === "request-2");
+}
+
+/* ============ ⑦ 免费客户端限制不是 Key 过期 ============ */
+console.log("\n=== ⑦ HTTP 403 权限分类与管理员恢复提示 ===");
+{
+  const { classifyUpstreamHttp, needsCredentialRefresh } = await import("../src/services/upstream/http-error.js");
+  const { publicRunError } = await import("../src/services/upstream/public-error.js");
+  const restriction = "OpenCode's free tier can only be used from within OpenCode";
+  ck("免费客户端限制分类 FORBIDDEN", classifyUpstreamHttp(403, restriction).code === "CHANNEL_FORBIDDEN");
+  ck("Cline 产品限制也不误判鉴权", classifyUpstreamHttp(403, "only available via Cline product surfaces").code === "CHANNEL_FORBIDDEN");
+  ck("新权限错误不要求重新登录", !needsCredentialRefresh("CHANNEL_FORBIDDEN", `HTTP 403 ${restriction}`));
+  ck("旧无错误码记录也识别免费限制", !needsCredentialRefresh("", `HTTP 403 ${restriction}`));
+  ck("旧误写鉴权码的产品限制也不引导换Key", !needsCredentialRefresh("CHANNEL_AUTH_EXPIRED", `HTTP 403 ${restriction}`));
+  ck("真实鉴权失效仍要求更新凭据", needsCredentialRefresh("CHANNEL_AUTH_EXPIRED", "HTTP 401 invalid key"));
+  for (const [name, invoke] of [
+    ["chat", () => oc.chat({ channel: mk({ method: "api" }), model: "space-bunny-free", prompt: "fixture" })],
+    ["verify", () => oc.verify(mk({ method: "api" }))],
+    ["models", () => oc.fetchUpstreamModels(mk({ method: "api" }))],
+  ]) {
+    forcedError = { status: 403, message: restriction };
+    seen.length = 0;
+    let err;
+    try { await invoke(); } catch (e) { err = e; }
+    ck(`${name} 保留 HTTP403 和权限错误码`, err?.status === 403 && err?.code === "CHANNEL_FORBIDDEN");
+    ck(`${name} 无原地重试`, seen.length === 1);
+    if (name === "chat") {
+      ck("拒绝未生成内容不收费", err?.billable === false && err?.upstreamRejected === true && !err?.usage);
+      ck("公开错误明确模型/客户端权限且不建议重新绑Key", /客户端权限/.test(publicRunError(err)) && !/鉴权失败/.test(publicRunError(err)));
+    }
+  }
+  forcedError = { status: 401, message: "invalid key" };
+  let authErr;
+  try { await oc.chat({ channel: mk({ method: "api" }), model: "m", prompt: "fixture" }); } catch (e) { authErr = e; }
+  ck("真实401仍归凭据失效", authErr?.code === "CHANNEL_AUTH_EXPIRED" && authErr?.status === 401);
+  forcedError = null;
+}
+
 server.close();
+const recovery = spawnSync(process.execPath, [fileURLToPath(new URL("./channel-recovery.test.mjs", import.meta.url))], { encoding: "utf8", timeout: 30000 });
+if (recovery.stdout) console.log(recovery.stdout.trim());
+if (recovery.stderr) console.error(recovery.stderr.trim());
+ck("渠道恢复真实HTTP回归通过", recovery.status === 0, recovery.error?.message || "");
+const native = spawnSync(process.execPath, [fileURLToPath(new URL("./opencode-native.test.mjs", import.meta.url))], { encoding: "utf8", timeout: 30000 });
+if (native.stdout) console.log(native.stdout.trim());
+if (native.stderr) console.error(native.stderr.trim());
+ck("OpenCode 原生协议真实HTTP回归通过", native.status === 0, native.error?.message || "");
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
 process.exit(fail ? 1 : 0);

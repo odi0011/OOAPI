@@ -446,7 +446,7 @@ export async function resumeRateLimitedChannels() {
     .catch(() => [[]]);
   for (const row of rows) {
     const [ret] = await pool
-      .query("UPDATE channels SET status = 1, rate_limit_until = 0, last_error = '' WHERE id = ? AND status = 3", [row.id])
+      .query("UPDATE channels SET status = 1, rate_limit_until = 0, last_error = '', last_error_code = '' WHERE id = ? AND status = 3", [row.id])
       .catch(() => [{ affectedRows: 0 }]);
     if (ret?.affectedRows) {
       // 内存态也要清：否则冷却计时还在，调度侧仍把它当坏渠道
@@ -867,7 +867,7 @@ export function rowToChannel(r) {
 // 轮询实现：同优先级内用模块级游标轮转，保证多账号均摊负载，
 // 无可用渠道时，说明到底卡在哪一步。
 // 只看「没有可用渠道」很容易被误判成模型不支持，实际多数是账号在冷却。
-export async function explainNoChannel({ model, displayModel = "", groupName = null } = {}) {
+export async function explainNoChannel({ model, displayModel = "", groupName = null, channelType = "" } = {}) {
   // 报错里回显的名字：优先用**用户请求的原始名**。
   // 传进来匹配的 `model` 已经被 modelForChannelMatch/resolveAliasSync 归一化过
   //（deepseek-chat → deepseek-flash），拿它当"你请求的模型"回显会让用户去查
@@ -900,7 +900,7 @@ export async function explainNoChannel({ model, displayModel = "", groupName = n
   }
   const [rows] = await pool.query("SELECT * FROM channels WHERE status = 1");
   const all = rows.map(rowToChannel);
-  const inGroup = all.filter((c) => channelInGroup(c, groupName));
+  const inGroup = all.filter((c) => channelInGroup(c, groupName) && (!channelType || c.type === channelType));
   const forModel = inGroup.filter((c) => channelSupportsModel(c, model));
   const cooling = forModel.filter((c) => isCoolingDown(c));
   const [[disabled]] = await pool.query("SELECT COUNT(*) AS c FROM channels WHERE status != 1");
@@ -954,7 +954,7 @@ export function invalidateChannelCache() {
   channelsCacheAt = 0;
 }
 
-export async function selectChannels({ model, excludeIds = null, groupName = null } = {}) {
+export async function selectChannels({ model, excludeIds = null, groupName = null, channelType = "" } = {}) {
   // 分组模型限制：分组配置了「支持的模型」时，请求模型不在列表内直接无渠道
   if (groupName) {
     const cfg = await groupConfigOf(groupName);
@@ -969,7 +969,7 @@ export async function selectChannels({ model, excludeIds = null, groupName = nul
       channelsCache = rows;
       channelsCacheAt = Date.now();
     } else {
-      return selectChannels({ model, excludeIds, groupName }); // 查询期间有变更：重查一次
+      return selectChannels({ model, excludeIds, groupName, channelType }); // 查询期间有变更：重查一次
     }
   }
   const rows = channelsCache;
@@ -977,6 +977,7 @@ export async function selectChannels({ model, excludeIds = null, groupName = nul
 
   const usable = rows
     .map(rowToChannel)
+    .filter((c) => !channelType || c.type === channelType)
     .filter((c) => !excluded.has(c.id))
     .filter((c) => !isCoolingDown(c))
     .filter((c) => channelSupportsModel(c, model))

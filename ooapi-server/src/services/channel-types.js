@@ -771,8 +771,8 @@ export const PROVIDERS = [
       {
         // Zen 保留 key="api"（历史渠道都用它，改 key 会让既有渠道解析不到适配器）
         key: "api",
-        // 走专用适配器：Go 订阅必须带 x-opencode-session 与自述 UA，
-        // 缺了会被 400 missing_session_id 拒绝（见 upstream/opencode.js）
+        // 走专用适配器：Zen Key 按官方 CLI 请求契约补齐 client/session/request/project 与 UA；
+        // Go 订阅继续带稳定 session 与自述平台 UA（见 upstream/opencode.js）。
         adapter: "opencode",
         label: "Zen（按量付费）",
         desc: "OpenCode Zen API Key（opencode.ai/zen，预充值按量计费，含 Claude/GPT/Gemini）",

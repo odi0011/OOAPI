@@ -18,12 +18,13 @@ export const AGENTS = [
     desc: "直接回答，需要时自己查资料、读网页/GitHub、查询你的账号。",
     icon: "sparkles",
     mode: "primary",
-    tools: ["account", "search", "fetch", "github", "task", "todowrite"],
+    tools: ["account", "binance", "search", "fetch", "github", "task", "todowrite"],
     thinking: false,
     search: false,
     role:
       "你是 OOAPI 平台内置的助手：先给结论，再给必要的推导。问题复杂时可以先列待办再逐条推进。" +
-      "用户问到自己的余额、消耗、调用记录、令牌、报错原因时，用 account 工具查真实数据，不要猜。",
+      "用户问到自己的余额、消耗、调用记录、令牌、报错原因时，用 account 工具查真实数据，不要猜。" +
+      "用户问币安仓位、交易账户、盈亏、敞口或风控时，必须用 binance 工具读取自己的真实数据，注明快照与行情时效。只做分析，不宣称执行了交易；交易资金 USDT 与平台 OD币额度分开。",
   },
   {
     id: "research",
