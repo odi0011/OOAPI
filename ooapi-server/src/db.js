@@ -35,12 +35,20 @@ export const pool = mysql.createPool({
 });
 
 const TABLES = [
+  // 归并聚合目录别名时保留原价，审计旧路由报价而不继续把它当独立计费模型。
+  `CREATE TABLE IF NOT EXISTS model_price_aliases (
+    alias VARCHAR(128) NOT NULL PRIMARY KEY,
+    model VARCHAR(128) NOT NULL,
+    original_price TEXT NOT NULL,
+    updated_time BIGINT NOT NULL DEFAULT 0
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   `CREATE TABLE IF NOT EXISTS model_prices (
     id INT AUTO_INCREMENT PRIMARY KEY,
     model VARCHAR(128) NOT NULL UNIQUE COMMENT '模型 id',
     input_price DECIMAL(14,6) NOT NULL DEFAULT 0 COMMENT '输入价格 OD币/百万token',
     output_price DECIMAL(14,6) NOT NULL DEFAULT 0 COMMENT '输出价格 OD币/百万token',
     cache_price DECIMAL(14,6) NOT NULL DEFAULT 0 COMMENT '缓存命中价格 OD币/百万token（高峰档）',
+    price_tiers TEXT COMMENT '长上下文单价档 JSON 数组；minInputTokens 为生效输入阈值',
     /* 分时（峰谷）定价：只有部分厂商按钟点差异定价（DeepSeek 官方工作日 9-12、14-18 为高峰，
        其余时段半价）。NULL = 不启用闲时价，行为与改造前完全一致（全时段按上面的价格）。
        之所以显式存闲时价而不是存折扣率：各家折扣不同（DeepSeek 半价、百炼/方舟窗口也不同），
@@ -674,6 +682,7 @@ const COLUMN_MIGRATIONS = [
   { table: "model_prices", column: "offpeak_output_price", ddl: "DECIMAL(14,6) DEFAULT NULL" },
   { table: "model_prices", column: "offpeak_cache_price", ddl: "DECIMAL(14,6) DEFAULT NULL" },
   { table: "model_prices", column: "offpeak_rule", ddl: "TEXT" },
+  { table: "model_prices", column: "price_tiers", ddl: "TEXT" },
   { table: "channel_groups", column: "rate", ddl: "DECIMAL(10,4) NOT NULL DEFAULT 1" },
   { table: "channel_groups", column: "models", ddl: "TEXT" },
   { table: "chat_sessions", column: "project_id", ddl: "VARCHAR(32) NOT NULL DEFAULT ''" },

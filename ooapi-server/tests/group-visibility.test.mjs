@@ -228,4 +228,5 @@ t("超限走协议层标准错误，而不是伪造模型回复", () => {
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
 // 真实目录响应还要与调度逐项对照：静态锚点抓不到同名厂商覆盖和分隔符漂移。
 await import("./model-metadata.test.mjs");
+await import("./model-price-identity.test.mjs");
 process.exit(fail ? 1 : 0);

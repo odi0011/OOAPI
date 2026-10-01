@@ -91,6 +91,13 @@ const ORIGINAL_MODEL_VENDORS = new Set([
   "mimo", "minimax", "stepfun", "ark",
 ]);
 const DEFAULT_MODEL_VENDORS = new Map();
+// 官网已发布但尚未核定 OD 单价的新型号，只用于管理目录，不扩大渠道能力。
+export const OFFICIAL_UNPRICED_MODELS = [
+  { model: "doubao-seed-evolving", type: "ark", source: "https://www.volcengine.com/docs/82379/1544106" },
+  { model: "doubao-seed-2-1-lite-260915", type: "ark", source: "https://www.volcengine.com/docs/82379/1544106" },
+  { model: "doubao-seed-character-260628", type: "ark", source: "https://www.volcengine.com/docs/82379/1544106" },
+  { model: "doubao-seed-translation-250915", type: "ark", source: "https://www.volcengine.com/docs/82379/1544106" },
+];
 for (const p of DEFAULT_PRICES) {
   const id = String(p.model || "").trim().toLowerCase();
   const type = String(p.type || "").trim().toLowerCase();
@@ -109,12 +116,20 @@ export function publicModelMetadataMap(publicModels) {
     const id = String(m?.id || "").trim().toLowerCase();
     if (!id) continue;
     const vendor = String(m.vendor || "").trim().toLowerCase();
-    const preferred = DEFAULT_MODEL_VENDORS.get(id);
+    const canonical = canonicalModelName(id);
+    const preferred = DEFAULT_MODEL_VENDORS.get(canonical) || DEFAULT_MODEL_VENDORS.get(id);
     const rank = preferred && vendor === preferred ? 0 : ORIGINAL_MODEL_VENDORS.has(vendor) ? 1 : 2;
     const stableKey = JSON.stringify(Object.keys(m).sort().map((k) => [k, m[k]]));
     const previous = selected.get(id);
     if (previous && (previous.rank < rank || (previous.rank === rank && previous.stableKey <= stableKey))) continue;
     selected.set(id, { rank, stableKey, model: { ...m, vendor, vendorName: modelVendorName(vendor) } });
+  }
+  // 原厂规范条目优先于聚合目录的同模型条目，供渠道别名查元信息时复用。
+  for (const [id, entry] of [...selected]) {
+    const canonical = canonicalModelName(id);
+    if (!canonical || canonical === id) continue;
+    const current = selected.get(canonical);
+    if (!current || entry.rank < current.rank) selected.set(canonical, entry);
   }
   return new Map([...selected].map(([id, entry]) => [id, entry.model]));
 }
@@ -128,7 +143,7 @@ export function publicModelMetadataMap(publicModels) {
 export function modelForChannelMatch(requested) {
   const raw = String(requested || "").trim();
   if (!raw) return "";
-  // 去掉能力后缀（-search / -thinking）—— 渠道声明的是基础模型名
+  // 此处保留聚合路由 SKU，真实上游仍可能需要它；身份归一走 canonicalModelName。
   return raw.replace(/-(search|thinking|agent|agent-swarm)$/i, "");
 }
 
@@ -144,7 +159,40 @@ const LEGACY_ALIASES = {
   // DeepSeek 官方旧 ID 已停用，适配器兜底把这类名字落到 flash（见 deepseek-models.js）
   "deepseek-chat": "deepseek-flash",
   "deepseek-reasoner": "deepseek-flash",
+  // 官方定价页明确：旧 V4 Flash ID 仍接受，但已由 V4.1-Flash 服务并按 Flash 计价。
+  "deepseek-v4-flash": "deepseek-flash",
+  "deepseek-v4-flash-vision-exp": "deepseek-flash",
+  // 聚合目录给同一档位加的商品名；只列已确认的名字，不泛化删除 -pro。
+  "gpt-6-sol-pro": "gpt-6-sol",
+  "gpt-6-luna-pro": "gpt-6-luna",
+  "gpt-6-astra-pro": "gpt-6-astra",
+  "gpt-5.6-terra-pro": "gpt-5.6-terra",
+  // MiniMax 官方 priority 是 service_tier；旧目录曾误当独立模型登记。
+  "minimax-m3-priority": "MiniMax-M3",
+  // 旧目录用小数点写版本，Anthropic 官方 API/SDK 使用连字符。
+  "claude-haiku-4.5": "claude-haiku-4-5",
+  "claude-sonnet-4.5": "claude-sonnet-4-5",
+  "claude-sonnet-4.6": "claude-sonnet-4-6",
+  "claude-opus-4.5": "claude-opus-4-5",
+  "claude-opus-4.6": "claude-opus-4-6",
+  "claude-opus-4.7": "claude-opus-4-7",
+  "claude-opus-4.8": "claude-opus-4-8",
+  "claude-fable-5.1": "claude-fable-5-1",
+  "claude-opus-5.5": "claude-opus-5-5",
+  "claude-sonnet-5.5": "claude-sonnet-5-5",
 };
+
+/** 去掉聚合供应商前缀、SKU 后缀与能力别名，得到模型身份。 */
+export function modelIdentity(raw) {
+  let s = String(raw || "").trim();
+  if (!s) return "";
+  if (s.startsWith("~")) s = s.slice(1);
+  const slash = s.lastIndexOf("/");
+  if (slash >= 0) s = s.slice(slash + 1);
+  s = s.replace(/:(free|batch|extended|thinking)$/i, "");
+  s = s.replace(/-(search|thinking|agent|agent-swarm)$/i, "");
+  return s;
+}
 
 export async function warmAliasMap() {
   const map = new Map();
@@ -152,14 +200,17 @@ export async function warmAliasMap() {
     try {
       const mod = await VENDOR_MODEL_MODULES[t]();
       for (const [alias, target] of Object.entries(mod.ALIASES || {})) {
-        const k = String(alias).toLowerCase();
+        const k = modelIdentity(alias).toLowerCase();
+        // 网页适配器会把旧档降级/兜底到新档；已独立登记的官方型号不能因此
+        // 丧失自己的身份和价格。只有明确的官方旧ID更名由 LEGACY_ALIASES 覆盖。
+        if (DEFAULT_MODEL_VENDORS.has(k) && k !== modelIdentity(target).toLowerCase() && !LEGACY_ALIASES[k]) continue;
         if (!map.has(k)) map.set(k, String(target));
       }
     } catch {
       /* 该厂商模型模块不可用时跳过 */
     }
   }
-  for (const [alias, target] of Object.entries(LEGACY_ALIASES)) map.set(alias, target);
+  for (const [alias, target] of Object.entries(LEGACY_ALIASES)) map.set(modelIdentity(alias).toLowerCase(), target);
   aliasCache = map;
   return map;
 }
@@ -167,9 +218,9 @@ export async function warmAliasMap() {
 /** 同步解析兼容别名 → 真实模型（结果不带能力后缀）；未命中/未预热时原样返回 */
 export function resolveAliasSync(requested) {
   const raw = String(requested || "").trim();
-  if (!raw || !aliasCache) return raw;
-  const base = raw.toLowerCase().replace(/-(search|thinking|agent|agent-swarm)$/i, "");
-  return aliasCache.get(base) || raw;
+  if (!raw) return raw;
+  const base = modelIdentity(raw).toLowerCase();
+  return aliasCache?.get(base) || LEGACY_ALIASES[base] || raw;
 }
 
 /**
@@ -183,7 +234,7 @@ export function resolveAliasSync(requested) {
  * 能调通并正常计费，而 `/v1/models` 里根本没有这个名字）。
  *
  * 归一化之后两边都在同一坐标系里比，语义变成：
- *   · `deepseek-v4.1-flash-thinking` → 规范名 `deepseek-v4.1-flash`
+ *   · `deepseek-v4.1-flash-thinking` → 规范名 `deepseek-flash`
  *     → 命中白名单（正确：它就是那个被允许的模型，只是开了思考）；
  *   · `deepseek-v4.1-flash-super`（上游将来新增的**另一个**模型）
  *     → 规范名原样保留，**不再**被 `deepseek-v4.1-flash` 的前缀蒙混放行。
@@ -191,7 +242,8 @@ export function resolveAliasSync(requested) {
 export function canonicalModelName(name) {
   const raw = String(name || "").trim();
   if (!raw) return "";
-  return String(modelForChannelMatch(resolveAliasSync(raw)) || "").toLowerCase();
+  const resolved = modelForChannelMatch(resolveAliasSync(raw));
+  return String(modelIdentity(resolved) || "").toLowerCase();
 }
 
 /**
@@ -281,17 +333,23 @@ export async function modelRegistry() {
     if (!tt || !k) return;
     if (!byType.has(tt)) byType.set(tt, new Set());
     byType.get(tt).add(k);
+    byType.get(tt).add(canonicalModelName(k));
   };
   const put = (id, type) => {
     const k = String(id || "").toLowerCase().trim();
     if (!k || map.has(k)) return;
-    map.set(k, { model: String(id).trim(), type: String(type || "") });
+    const identity = canonicalModelName(k);
+    const owner = DEFAULT_MODEL_VENDORS.get(identity) || String(type || "");
+    const entry = { model: identity || String(id).trim(), type: owner };
+    map.set(k, entry);
+    if (identity && !map.has(identity)) map.set(identity, entry);
   };
 
   for (const p of DEFAULT_PRICES) {
     put(p.model, p.type);
     addTyped(p.type, p.model);
   }
+  for (const p of OFFICIAL_UNPRICED_MODELS) put(p.model, p.type);
   for (const t of Object.keys(VENDOR_MODEL_MODULES)) {
     try {
       const mod = await VENDOR_MODEL_MODULES[t]();

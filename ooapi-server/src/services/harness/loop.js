@@ -511,7 +511,10 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       firstTokenAt: stepFirstTokenAt,
       elapsed: result.elapsed,
       retryCount: result.retryCount,
-      model: result.billModel || result.upstreamModel || model});
+      model: result.billModel || model,
+      requestedModel: model,
+      upstreamModel: result.upstreamModel || "",
+      billModel: result.billModel || ""});
 
     const stepText = (textPart?.text || "").trim();
     if (stepText) lastText = stepText;

@@ -29,6 +29,7 @@ import {
   SearchOutlined,
   WalletOutlined,
   EllipsisOutlined,
+  ClockCircleOutlined,
 } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { API, getToken } from "../services/api";
@@ -44,7 +45,7 @@ import { chatApi, runChatStream, resumeChatStream } from "../services/chat";
 import { useApp } from "../context/AppContext";
 import Markdown from "../components/Markdown";
 import { OdCoin } from "../components/OdCoin";
-import { DurationCell, TokenCell, formatDuration } from "../components/UsageCells";
+import { formatDuration } from "../components/UsageCells";
 import { CURRENCY_NAME, copyText, fmtOd, unitsPerOd } from "../services/format";
 import { LoadingState, ThinkingState, StreamingText } from "../components/beautifului";
 import PromptBar from "../components/PromptBar";
@@ -140,15 +141,21 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
   const textParts = parts.filter((p) => p.type === "text");
   const reasoning = parts.filter((p) => p.type === "reasoning");
   const tools = parts.filter((p) => p.type === "tool");
-  const errors = parts.filter((p) => p.type === "error");
+  // 重连和终态可能包含同一条错误，只呈现一次，保留该轮实际失败信息。
+  const errors = parts.filter((p) => p.type === "error").filter((p, i, list) =>
+    list.findIndex((other) => (other.message || other.text || "") === (p.message || p.text || "")) === i);
   // 待办来自 todowrite 工具的结果（落在 tool part 上，刷新后依然在），或流式期间的 todo 事件
   const todo = parts.filter((p) => Array.isArray(p.todo)).slice(-1)[0]?.todo || msg.todo;
   const hasText = textParts.some((p) => (p.text || "").trim());
   const working = Boolean(streaming) && !hasText;
   const reasoningWorking = Boolean(streaming) && !hasText && reasoning.length > 0;
-  const firstTokenText = msg.firstTokenMs === 0 ? "0ms"
-    : knownNumber(msg.firstTokenMs) ? formatDuration(msg.firstTokenMs) : "—";
+  const inputKnown = knownNumber(msg.tokens?.prompt);
+  const outputKnown = knownNumber(msg.tokens?.completion);
+  const firstTokenText = knownNumber(msg.firstTokenMs) && (Number(msg.firstTokenMs) > 0 || hasText || (outputKnown && Number(msg.tokens.completion) > 0)) ? formatDuration(msg.firstTokenMs) : "—";
   const elapsedText = msg.elapsedMs === 0 ? "0ms" : knownNumber(msg.elapsedMs) ? formatDuration(msg.elapsedMs) : "—";
+  const tokenCount = (value) => Number(value).toLocaleString("en-US");
+  const tokenSummary = inputKnown && outputKnown ? `${tokenCount(Number(msg.tokens.prompt) + Number(msg.tokens.completion))} Tokens` : "用量待确认";
+  const costText = knownNumber(msg.cost) ? fmtOd(Number(msg.cost) * unitsPerOd(), unitsPerOd(), 6, false).replace(/(\.\d*?[1-9])0+$|\.0+$/, "$1") : "—";
 
   return (
     <article className="ui-msg ui-msg-ai">
@@ -162,11 +169,18 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
         />
       ) : null}
 
-      {errors.map((part, i) => <Alert
-        key={part.id || `error-${i}`} type={msg.status === "stopped" ? "warning" : "error"} showIcon
-        className="ui-msg-error" message={part.message || part.text || "本轮生成失败，请重试"}
-        description={msg.local ? msg.cost === 0 ? "未发起上游调用，输入内容已保留。" : "发送状态尚未确认，请恢复连接核对后重试。" : undefined}
-      />)}
+      {errors.map((part, i) => {
+        const message = part.message || part.text || "本轮生成失败，请重试";
+        const httpStatus = message.match(/HTTP\s+(\d{3})/i)?.[1];
+        const reconnecting = Boolean(streaming) && part.id === "connection-error";
+        const explanation = message.replace(/^上游请求失败(?:（HTTP\s+\d{3}）)?[：，]\s*|^已停止生成。/, "");
+        return <Alert
+          key={part.id || `error-${i}`} type={reconnecting ? "info" : msg.status === "stopped" ? "warning" : "error"} showIcon
+          className="ui-msg-error"
+          message={<span className="ui-msg-error-title">{reconnecting ? "正在恢复连接" : msg.status === "stopped" ? "已停止生成" : "本轮生成失败"}{httpStatus ? <span>HTTP {httpStatus}</span> : null}</span>}
+          description={<div>{explanation}{msg.local ? <div className="ui-msg-error-note">{msg.cost === 0 ? "未发起上游调用，输入内容已保留。" : "发送状态尚未确认，请恢复连接核对后重试。"}</div> : null}</div>}
+        />;
+      })}
 
       {todo?.length ? <TodoPanel todo={todo} /> : null}
       <ToolChips calls={tools.map((t) => ({ ...t, ms: ms(t) }))} />
@@ -185,29 +199,31 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
 
       {!streaming ? (
         <div className="ui-msg-actions">
-          <Tooltip title="复制回答">
+          {hasText ? <Tooltip title="复制回答">
             <Button type="text" size="small" aria-label="复制回答" icon={<CopyOutlined />} disabled={!hasText} onClick={() => onCopy(textParts.map((p) => p.text).join("\n\n"))} />
-          </Tooltip>
+          </Tooltip> : null}
           <Tooltip title={errors.length ? "重试可能产生新的用量" : "重新生成会再次计费"}>
             <Popconfirm
               title={errors.length ? "重试这一轮？" : "重新生成这条回答？"}
               description="这会移除它之后的消息，并再次产生用量。"
               onConfirm={() => onRetry(msg)}
               disabled={busy}
-              okText="重新生成"
+              okText={errors.length ? "重试" : "重新生成"}
               cancelText="取消"
             >
-              <Button type="text" size="small" aria-label={errors.length ? "重试本轮" : "重新生成"} disabled={busy} icon={<ReloadOutlined />} />
+              <Button type="text" size="small" aria-label={errors.length ? "重试本轮" : "重新生成"} disabled={busy} icon={<ReloadOutlined />}>{errors.length ? "重试" : null}</Button>
             </Popconfirm>
           </Tooltip>
           <div className="ui-msg-stats">
-            <span className="ui-msg-cost" title="本轮成本（OD币）；— 表示尚未确认结算结果"><OdCoin size={13} />{knownNumber(msg.cost) ? fmtOd(Number(msg.cost) * unitsPerOd(), unitsPerOd(), 6, false) : "—"}</span>
-            {[msg.tokens?.prompt, msg.tokens?.completion, msg.tokens?.cache].every(knownNumber)
-              ? <TokenCell promptTokens={msg.tokens.prompt} completionTokens={msg.tokens.completion} cacheTokens={msg.tokens.cache} />
-              : <span className="ui-msg-token-unknown" title="— 表示服务端尚未提供统计"><span>输入 {knownNumber(msg.tokens?.prompt) ? msg.tokens.prompt : "—"} · 输出 {knownNumber(msg.tokens?.completion) ? msg.tokens.completion : "—"}</span><span>缓存 {knownNumber(msg.tokens?.cache) ? msg.tokens.cache : "—"}</span></span>}
-            {msg.elapsedMs === 0 || msg.firstTokenMs === 0
-              ? <span className="oo-duration-cell"><span className="oo-duration-row"><span>首字</span><b>{firstTokenText}</b></span><span className="oo-duration-row"><span>总耗时</span><b>{elapsedText}</b></span></span>
-              : <DurationCell firstTokenMs={msg.firstTokenMs} elapsedMs={msg.elapsedMs} />}
+            <Tooltip title="本轮成本（OD币）；— 表示尚未确认结算结果"><span className="ui-msg-cost"><OdCoin size={12} />{costText}</span></Tooltip>
+            <Tooltip trigger={["hover", "focus", "click"]} title={<div className="ui-msg-token-detail">
+              <span>输入 <b>{inputKnown ? tokenCount(msg.tokens.prompt) : "—"}</b></span>
+              <span>输出 <b>{outputKnown ? tokenCount(msg.tokens.completion) : "—"}</b></span>
+              <span>缓存读取 <b>{knownNumber(msg.tokens?.cache) ? tokenCount(msg.tokens.cache) : "—"}</b></span>
+            </div>}>
+              <Button type="text" size="small" className="ui-msg-token-stat" aria-label="查看本轮 Token 用量">{tokenSummary}</Button>
+            </Tooltip>
+            <span className="ui-msg-timing"><ClockCircleOutlined /><Tooltip title={firstTokenText === "—" ? "本轮没有首字统计" : "发出请求到首个输出 Token 的时间"}><span>首字 {firstTokenText}</span></Tooltip><Tooltip title={Number(msg.retryCount) > 0 ? `本轮总耗时，含上游自动重试 ${Number(msg.retryCount)} 次` : "本轮端到端总耗时"}><span>耗时 {elapsedText}</span></Tooltip></span>
           </div>
         </div>
       ) : null}

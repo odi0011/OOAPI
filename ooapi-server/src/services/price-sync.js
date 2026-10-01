@@ -19,16 +19,18 @@
 //   · 实测覆盖：anthropic 28 / openai 99 / google 41 / qwen 53 / deepseek 16 /
 //     x-ai 8 / moonshotai 8 / z-ai 18 / minimax 8 …（我们接入的厂商全在）。
 //   · 它带 `:batch` / `:free` 等变体，与 Cline 返回的 id 完全对得上 ——
-//     这正是「Cline 的模型价格对不上」要解决的那件事。
+//     如今这些商品变体统一到原厂身份，只有正常档报价可作为目录基准。
 //
 // 边界（必须说清，否则管理员会误以为它是万能的）：
-//   · 它给的是 OpenRouter 的挂牌价，通常等于厂商官方价，但不保证永远同步
+//   · 先取本轮复核的原厂单价；其余仅标记为 OpenRouter 挂牌价，不冒充官方报价。
+//     OpenRouter 的挂牌价不保证永远与厂商同步
 //     （中转站可能加价）。所以落库时把来源写进 remark，管理员能看到这是哪来的价；
 //   · 库里**已有的行默认不覆盖** —— 管理员手工调过的价不能被一次同步抹掉。
 //     要强制覆盖得显式传 `overwrite: true`（前端用「覆盖已有价」开关表达）。
 import { pool } from "../db.js";
 import { now } from "../utils.js";
-import { invalidatePrices, loadPrices } from "./pricing.js";
+import { invalidatePrices, loadPrices, DEFAULT_PRICES, consolidateModelPrices, storedPriceTiers } from "./pricing.js";
+import { normalizeClineModel } from "./cline-prices.js";
 
 const OPENROUTER_MODELS = "https://openrouter.ai/api/v1/models";
 const FETCH_TIMEOUT_MS = 25_000;
@@ -64,7 +66,7 @@ const VENDOR_TO_TYPE = {
 /** OpenRouter 的价格是「USD per token」字符串 → 我们的「OD/百万 token」数值 */
 function toPerMillion(v) {
   const n = Number(v);
-  if (!Number.isFinite(n) || n < 0) return 0;
+  if (v == null || v === "" || !Number.isFinite(n) || n < 0) return null;
   return Number((n * 1e6).toFixed(6));
 }
 
@@ -73,6 +75,7 @@ function toPerMillion(v) {
  * @returns {Promise<Array<{model:string,input:number,output:number,cache:number,type:string,name:string,isFree:boolean}>>}
  */
 export async function fetchUpstreamPriceList() {
+  const { canonicalModelName } = await import("./models.js");
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
   let j;
@@ -88,19 +91,22 @@ export async function fetchUpstreamPriceList() {
   }
   const list = Array.isArray(j?.data) ? j.data : [];
   if (!list.length) throw new Error("上游价目表为空");
-  const out = [];
+  const byModel = new Map();
   for (const m of list) {
     const id = String(m.id || "").trim();
     if (!id) continue;
     const p = m.pricing || {};
     const input = toPerMillion(p.prompt);
     const output = toPerMillion(p.completion);
-    const cache = toPerMillion(p.input_cache_read);
+    const cache = toPerMillion(p.input_cache_read) ?? 0;
+    if (input === null || output === null) continue; // 缺报价不是免费模型。
     const prefix = id.startsWith("~") ? id.slice(1) : id;
     const slash = prefix.indexOf("/");
     const vendor = slash > 0 ? prefix.slice(0, slash).toLowerCase() : "";
-    out.push({
-      model: id,
+    const isFree = /:free$/i.test(id) || (input === 0 && output === 0);
+    const normalized = canonicalModelName(id) || normalizeClineModel(id);
+    const item = {
+      model: normalized,
       input,
       output,
       cache,
@@ -108,10 +114,18 @@ export async function fetchUpstreamPriceList() {
       name: String(m.name || id),
       // 上游标的「免费」模型（:free 后缀，价格本来就是 0）：这不是「漏配价」，
       // 而是上游真的按 0 计费，所以允许它落 0（与「不能猜 0」是两回事）。
-      isFree: /:free$/i.test(id) || (input === 0 && output === 0),
-    });
+      isFree,
+      upstreamModel: id,
+    };
+    // :batch/:free 等变体只保留一条规范模型价；优先保留带实际非零挂牌价的条目，
+    // 避免目录顺序恰好先返回 :free 就把原厂正常价覆盖成 0。
+    const previous = byModel.get(normalized);
+    const rank = (x) => (x.isFree ? 4 : 0) + (/:(free|batch|extended|thinking)$/i.test(x.upstreamModel) ? 2 : 0)
+      + (canonicalModelName(x.upstreamModel) !== String(x.upstreamModel).replace(/^~?[^/]+\//, "").toLowerCase() ? 1 : 0);
+    if (!previous || rank(item) < rank(previous) || (rank(item) === rank(previous) && id.localeCompare(previous.upstreamModel) < 0)) byModel.set(normalized, item);
   }
-  return out;
+  // 只有 SKU、没有正常档报价时不能凭免费/批处理价生成原厂基准价。
+  return [...byModel.values()].filter((p) => !/:(free|batch|extended|thinking)$/i.test(p.upstreamModel));
 }
 
 /**
@@ -123,8 +137,17 @@ export async function fetchUpstreamPriceList() {
  * @returns {Promise<{fetched:number, inserted:number, updated:number, skipped:number, samples:Array}>}
  */
 export async function syncUpstreamPrices({ overwrite = false, only = null } = {}) {
+  const { canonicalModelName, invalidateModelRegistry } = await import("./models.js");
+  await consolidateModelPrices();
   const upstream = await fetchUpstreamPriceList();
-  const filter = Array.isArray(only) && only.length ? new Set(only.map((s) => String(s).trim())) : null;
+  // 已核实的原厂价格优先于聚合挂牌价，同时补入尚未进入聚合目录的新型号。
+  const catalog = new Map(upstream.map((p) => [p.model, p]));
+  for (const p of DEFAULT_PRICES) {
+    const model = canonicalModelName(p.model);
+    if (model !== String(p.model).toLowerCase()) continue;
+    catalog.set(model, { ...p, model, isFree: p.input === 0 && p.output === 0, officialRemark: p.remark });
+  }
+  const filter = Array.isArray(only) && only.length ? new Set(only.map(canonicalModelName)) : null;
   const [existing] = await pool.query("SELECT model FROM model_prices");
   const have = new Set(existing.map((r) => String(r.model)));
 
@@ -137,26 +160,29 @@ export async function syncUpstreamPrices({ overwrite = false, only = null } = {}
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    for (const p of upstream) {
-      if (filter && !filter.has(p.model)) continue;
-      const exists = have.has(p.model);
+    for (const p of catalog.values()) {
+      if (filter && !filter.has(String(p.model).toLowerCase())) continue;
+      const existingModel = [...have].find((x) => String(x).toLowerCase() === String(p.model).toLowerCase());
+      const exists = Boolean(existingModel);
       if (exists && !overwrite) {
         skipped += 1;
         continue;
       }
-      const remark = `上游价目同步（OpenRouter 挂牌价，USD/百万 token）；上游模型名 ${p.name}`.slice(0, 250);
+      const remark = (p.officialRemark || `聚合目录价（OpenRouter，USD/百万 token）；原路由 ${p.upstreamModel}`).slice(0, 250);
       if (exists) {
         await conn.query(
-          `UPDATE model_prices SET input_price=?, output_price=?, cache_price=?, channel_type=?, remark=?, updated_time=?
+          `UPDATE model_prices SET input_price=?, output_price=?, cache_price=?, channel_type=?, remark=?, updated_time=?,
+           offpeak_input_price=?, offpeak_output_price=?, offpeak_cache_price=?, offpeak_rule=?, price_tiers=?
            WHERE model=?`,
-          [p.input, p.output, p.cache, p.type, remark, ts, p.model]
+          [p.input, p.output, p.cache ?? 0, p.type, remark, ts, p.offpeakInput ?? null, p.offpeakOutput ?? null, p.offpeakCache ?? null, p.offpeakRule ? JSON.stringify(p.offpeakRule) : null, storedPriceTiers(p), existingModel]
         );
         updated += 1;
       } else {
         await conn.query(
-          `INSERT INTO model_prices (model, input_price, output_price, cache_price, channel_type, remark, updated_time)
-           VALUES (?,?,?,?,?,?,?)`,
-          [p.model, p.input, p.output, p.cache, p.type, remark, ts]
+          `INSERT INTO model_prices (model, input_price, output_price, cache_price, channel_type, remark, updated_time,
+           offpeak_input_price, offpeak_output_price, offpeak_cache_price, offpeak_rule, price_tiers)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [p.model, p.input, p.output, p.cache ?? 0, p.type, remark, ts, p.offpeakInput ?? null, p.offpeakOutput ?? null, p.offpeakCache ?? null, p.offpeakRule ? JSON.stringify(p.offpeakRule) : null, storedPriceTiers(p)]
         );
         inserted += 1;
       }
@@ -172,7 +198,8 @@ export async function syncUpstreamPrices({ overwrite = false, only = null } = {}
     conn.release();
   }
   if (inserted || updated) invalidatePrices();
-  return { fetched: upstream.length, inserted, updated, skipped, samples };
+  invalidateModelRegistry();
+  return { fetched: catalog.size, inserted, updated, skipped, samples };
 }
 
 /**
@@ -189,6 +216,7 @@ export async function syncUpstreamPrices({ overwrite = false, only = null } = {}
  * 所以这里复用同一套三级判定：精确 → 最长前缀 → 归属规则。
  */
 export async function missingFromUpstream() {
+  const { canonicalModelName } = await import("./models.js");
   const [rows] = await pool.query(
     "SELECT models FROM channels WHERE status = 1 AND models IS NOT NULL AND models <> ''"
   );
@@ -196,7 +224,7 @@ export async function missingFromUpstream() {
   for (const r of rows) {
     for (const raw of String(r.models || "").split(",")) {
       const m = raw.trim();
-      if (m && m !== "*") declared.add(m);
+      if (m && m !== "*") declared.add(canonicalModelName(m));
     }
   }
   const prices = await loadPrices();

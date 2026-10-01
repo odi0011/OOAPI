@@ -1,5 +1,6 @@
 // OpenAI 兼容厂商的特化处理（请求注入 / 响应归一）
 import { canonicalModelName } from "../models.js";
+import { REAL_MODELS as MINIMAX_MODELS } from "./minimax-models.js";
 // ===========================================================================
 // 为什么单独一个文件：openai-compat.js 是所有 API 渠道的公共路径，
 // 把各厂商的怪癖塞进去会让它越来越难读。这里按「厂商一批差异」组织，
@@ -65,6 +66,8 @@ export function vendorKindOf(channel) {
  * 注意按 channel.type 分发（与 vendorKindOf 同一原则：不按 base_url，用户可能换自建中转）。
  */
 const UPSTREAM_MODEL_MAP = {
+  // 空声明/通配渠道也要恢复官方 ID 的大小写；聚合渠道实际声明仍优先。
+  minimax: Object.fromEntries(MINIMAX_MODELS.map((m) => [m.id.toLowerCase(), m.id])),
   workbuddy: { "deepseek-flash": "deepseek-v4.1-flash" },
   opencode: { "deepseek-flash": "deepseek-v4.1-flash" },
 };
@@ -88,7 +91,14 @@ export function applyVendorRequest(body, { channel, model } = {}) {
 
   // 先做模型名翻译（见 UPSTREAM_MODEL_MAP）：平台规范名 → 上游实际 id。
   // 必须在所有厂商分支之前 —— 它与厂商怪癖正交，任何兼容渠道都可能需要。
-  const upstream = upstreamModelOf(channel?.type, body.model || model);
+  const requested = body.model || model;
+  const declared = String(channel?.models || "").split(/[\s,，]+/).filter((id) => id && !id.includes("*"));
+  // 规范身份只用于展示/权限/价格。发给聚合上游仍用它实际声明的路由 ID。
+  // 用户显式选择的 SKU 优先保留；裸模型优先正常档，避免目录顺序选中 batch/free。
+  const exact = declared.find((id) => id.toLowerCase() === String(requested).toLowerCase());
+  const matches = declared.filter((id) => canonicalModelName(id) === canonicalModelName(requested))
+    .sort((a, b) => Number(/:(free|batch|extended|thinking)$/i.test(a)) - Number(/:(free|batch|extended|thinking)$/i.test(b)) || a.localeCompare(b));
+  const upstream = exact || matches[0] || upstreamModelOf(channel?.type, requested);
   if (upstream && upstream !== body.model) body.model = upstream;
 
   if (kind === "minimax") {

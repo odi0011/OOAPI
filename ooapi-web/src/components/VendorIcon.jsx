@@ -24,6 +24,9 @@ const ICON_DIR = "/icons";
 // 平台自身 logo（自定义渠道使用）
 const PLATFORM_LOGO = "/logo.jpg";
 
+// 仅这些资源是透明背景的纯黑图形，深色主题需要变亮；彩色头像保留原色。
+const MONO_ICONS = new Set(["openai.svg", "claude.svg", "grok.svg", "openrouter.svg"]);
+
 // 文件名 → 完整地址。平台 logo 在站点根目录，厂商图标在 /icons 下，
 // 拼路径前必须判断，否则会出现 /icons//logo.jpg 这种坏地址。
 function iconSrc(file) {
@@ -307,7 +310,7 @@ export function VendorIcon({ type, size = 16, radius, title, className, style })
       height={size}
       loading="lazy"
       draggable={false}
-      className={className}
+      className={[className, MONO_ICONS.has(file) ? "oo-vendor-icon--mono" : ""].filter(Boolean).join(" ") || undefined}
       style={{
         width: size,
         height: size,
@@ -430,6 +433,7 @@ export function ModelLabel({ model, size = 15, showVendor = false, className, st
       <img
         src={iconSrc(file)}
         alt=""
+        className={MONO_ICONS.has(file) ? "oo-vendor-icon--mono" : undefined}
         width={size}
         height={size}
         loading="lazy"

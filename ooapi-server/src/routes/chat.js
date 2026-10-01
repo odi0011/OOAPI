@@ -13,7 +13,7 @@ import { authRequired, preAuthJwt } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { logTexts } from "../services/log-text.js";
-import { getPrice, computeCost, splitTokens, sumCallTokens, loadPrices, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
+import { getPrice, originalModelPrice, priceForTokens, computeCost, splitTokens, sumCallTokens, loadPrices, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { groupConfigOf, applyGroupRate, parseGroupKey, displayGroupName } from "../services/group-rate.js";
 import { allPublicModels, publicModelMetadataMap, modelVendorName, modelRegistry, resolveAliasSync, canonicalModelName, modelInAllowList } from "../services/models.js";
 import { rowToChannel, channelInGroup, channelSupportsModel, collectAvailableModels } from "../services/router.js";
@@ -247,7 +247,7 @@ async function availableModels(user, keyId = 0) {
   };
 
   // 5) 汇总该分组渠道支持的模型集合
-  await modelRegistry();
+  const registry = await modelRegistry();
   const supported = collectAvailableModels(channelsInGrp);
   if (supported.size === 0) return [];
 
@@ -255,7 +255,8 @@ async function availableModels(user, keyId = 0) {
   const publicModels = publicModelMetadataMap(await allPublicModels());
   const candidateModels = new Map(); // id.toLowerCase() -> modelObj
 
-  for (const pm of publicModels.values()) {
+  for (const sourceModel of publicModels.values()) {
+    const pm = publicModels.get(canonicalModelName(sourceModel.id)) || sourceModel;
     const idLower = String(pm.id).toLowerCase();
     if (supportingChannels(pm.id).length) {
       if (groupAllows(pm.id) && keyAllows(pm.id)) {
@@ -289,17 +290,19 @@ async function availableModels(user, keyId = 0) {
     for (const rawM of new Set([...declared, ...collectAvailableModels([r])])) {
       if (rawM.includes("*")) continue;
       const idLower = rawM.toLowerCase();
+      const canonical = canonicalModelName(rawM);
+      if (candidateModels.has(canonical)) continue;
       if (candidateModels.has(idLower)) continue; // 去重
       if (!groupAllows(rawM) || !keyAllows(rawM)) continue;
       if (!channelSupportsModel(ch, rawM)) continue;
 
       // 平台未登记的模型只能取自当前支持它的渠道，不能凭 gpt-/claude- 等名字猜来源。
-      const vendor = ch.type || "other";
+      const vendor = registry.get(canonical)?.type || ch.type || "other";
       const vendorName = modelVendorName(vendor);
 
-      candidateModels.set(idLower, {
-        id: rawM,
-        label: rawM,
+      candidateModels.set(canonical || idLower, {
+        id: canonical || rawM,
+        label: canonical || rawM,
         desc: "",
         // 渠道声明的模型（不在公开模型库里）：**默认允许附图**，而不是硬编码 false。
         //
@@ -346,7 +349,7 @@ async function availableModels(user, keyId = 0) {
   const priceMap = await loadPrices();
   const result = [];
   for (const m of candidateModels.values()) {
-    const p = priceMap.get(String(m.id).toLowerCase());
+    const p = priceMap.get(canonicalModelName(m.id)) || priceMap.get(String(m.id).toLowerCase());
     result.push({
       ...m,
       // loadPrices 返回的键是 input/output/cache（已从列名 input_price 映射），
@@ -612,10 +615,13 @@ router.post(
 // 与网关同一套原子扣费；harness 传进来的 tokens 是「每次上游调用分别 splitTokens 后求和」，
 // 混用 API 渠道（结构化 usage）与反代渠道（usage=null）时不会互相覆盖口径。
 async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0, keyName = "", startedAt = 0, firstTokenAt = 0, userAgent = "", ip = "", calls = null, tokenQuotaHold = 0, sessionId = "", inputText = "", status = "success", errorCode = "", retryCount = 0, isUsage = true, writeUsage = true, requestId = "", errorMessage = "", httpStatus = 0 }) {
-    let { promptTokens, completionTokens, cacheTokens } =
-      tokens || splitTokens({ prompt, output, upstreamTotal: usage });
+  const actualModel = Array.isArray(calls) && calls.length ? calls.at(-1).billModel || calls.at(-1).model || model : model;
+  const displayModel = canonicalModelName(actualModel) || model;
+  let { promptTokens, completionTokens, cacheTokens } =
+    tokens || splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
   const basePrice = await getPrice(resolveAliasSync(model));
+  const originalPrice = await originalModelPrice(model);
   // 分组倍率：用户绑定分组后按分组倍率计费（rate=1 时不变）
   // 倍率按本次实际路由的分组（选了密钥就是密钥的分组），与网关 /v1 口径一致
   const gcfg = await groupConfigOf(groupName);
@@ -629,6 +635,7 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
   let price;
   let eff;
   let units;
+  const modelCalls = [];
   if (Array.isArray(calls) && calls.length) {
     let sum = 0;
     const phases = new Set();
@@ -640,6 +647,8 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
       const t =
         c.tokens ||
         splitTokens({ prompt: c.prompt || "", output: c.output || "", upstreamTotal: c.usage || null });
+      const tierPrice = priceForTokens(e.price, t.promptTokens);
+      modelCalls.push({ requested_model: c.requestedModel || model, upstream_model: c.upstreamModel || "", model: canonicalModelName(c.model || model), pricing_model: callPrice.model, price: { in: tierPrice.input, out: tierPrice.output, cache: tierPrice.cache }, price_phase: e.phase, context_tier: tierPrice.contextTier || 0 });
       sum += computeCost({ price: e.price, promptTokens: t.promptTokens, completionTokens: t.completionTokens, cacheTokens: t.cacheTokens });
     }
     units = applyGroupRate(sum, gcfg?.rate);
@@ -653,10 +662,11 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
     cacheTokens = billed.cacheTokens;
     // 审计用：跨档时记 "peak+offpeak"，单档时记该档位
     eff = { phase: phases.size > 1 ? [...phases].join("+") : [...phases][0] || "peak", price: basePrice };
-    price = basePrice;
+    const onlyCall = modelCalls.length === 1 ? modelCalls[0] : null;
+    price = onlyCall ? { ...basePrice, input: onlyCall.price.in, output: onlyCall.price.out, cache: onlyCall.price.cache, contextTier: onlyCall.context_tier } : basePrice;
   } else {
     eff = effectivePrice(basePrice, startedAt || Date.now());
-    price = eff.price;
+    price = priceForTokens(eff.price, promptTokens);
     // 站内对话一轮可能跨多个渠道（harness 多步），无法对单次调用套用账号级
     // context_billing，这里保持既有的「全额」口径（与网关默认一致）。
     units = applyGroupRate(computeCost({ price, promptTokens, completionTokens, cacheTokens }), gcfg?.rate);
@@ -709,14 +719,20 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
     connection: conn,
     user,
     type: status === "success" ? LOG_TYPE.CONSUME : LOG_TYPE.ERROR,
-    content: `${kind} · ${model} · 提示 ${promptTokens} / 补全 ${completionTokens} tokens${
+    content: `${kind} · ${displayModel} · 提示 ${promptTokens} / 补全 ${completionTokens} tokens${
       cacheTokens ? ` / 缓存 ${cacheTokens}` : ""
     } · ${(units / UNITS_PER_OD).toFixed(4)} ${CURRENCY}`,
     detail: JSON.stringify({
       channel: channel?.name,
       channel_id: channel?.id || (Array.isArray(channelIds) && channelIds.length === 1 ? channelIds[0] : undefined),
       channel_ids: Array.isArray(channelIds) && channelIds.length ? channelIds : undefined,
-      model,
+      model: displayModel,
+      requested_model: model,
+      upstream_model: modelCalls.at(-1)?.upstream_model || "",
+      pricing_model: canonicalModelName(modelCalls.length === 1 ? modelCalls[0].pricing_model : basePrice.model || model),
+      requested_price: { in: basePrice.input, out: basePrice.output, cache: basePrice.cache },
+      ...(originalPrice ? { original_price: originalPrice } : {}),
+      ...(modelCalls.length ? { model_calls: modelCalls.slice(0, 40) } : {}),
       kind,
       ...logTexts({ prompt, output, calls, inputText }),
       session_id: sessionId || undefined,
@@ -726,6 +742,7 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
       // 分时审计：与网关同一口径（事后可复核按峰价还是谷价算的）
       price: { in: price.input, out: price.output, cache: price.cache },
       price_phase: eff.phase,
+      context_tier: price.contextTier || 0,
       priced_at: startedAt || Date.now(),
       rate: Number(gcfg?.rate) || 1,
       amount_units: units,
@@ -734,7 +751,7 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
     quota: units,
     // 使用记录明细（列存储）：站内对话不经 Key，但仍记录本次路由用的密钥与分组，
     // 这样管理员在记录页能看出「这次是按哪个分组/倍率算的」。
-    model,
+    model: displayModel,
     channelId: channel?.id || (Array.isArray(channelIds) && channelIds.length === 1 ? channelIds[0] : 0) || 0,
     channelName: channel?.name || "",
     tokenId: keyId || 0,
@@ -1322,34 +1339,45 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
     // 失败也写一条错误日志：与网关同一口径（模型/渠道/耗时/设备），
     // 否则站内对话的失败在看板上完全不可见。
     // 这里没有 req（executeRun 是后台任务），ip/userAgent 由调用方在 /run 时捕获后传入。
-    if (!partialBilled.logId) await writeLog({
-      user,
-      type: LOG_TYPE.ERROR,
-      content: `${stopped ? "对话已停止" : "对话失败"}：${model} · ${errorMessage}`,
-      detail: JSON.stringify({ code: errorCode, http_status: Number(err.httpStatus || err.status) || undefined, billing_known: billingKnown, ...logTexts({ calls: billedCalls.length ? billedCalls : [{ prompt: err.billingPrompt || "", output: err.billingOutput || "" }], inputText }), session_id: session.id }),
-      model,
-      channelId: Number(err.channelId) || 0,
-      channelName: err.channelName || "",
-      tokenId: keyId || 0,
-      tokenName: keyName,
-      groupName: routeGroup || "",
-      elapsedMs: startedAt ? Date.now() - startedAt : 0,
-      userAgent,
-      ip,
-      isUsage: true,
-      status,
-      errorCode,
-      retryCount,
-      inputText,
-      quota: partialBilled.units,
-      promptTokens: partialBilled.promptTokens,
-      completionTokens: partialBilled.completionTokens,
-      cacheTokens: partialBilled.cacheTokens,
-      firstTokenMs: run.finalMessage?.firstTokenMs ?? null,
-      elapsedMs: run.finalMessage?.elapsedMs || (startedAt ? Date.now() - startedAt : 0),
-      requestId: `${session.id}:${userMessage?.seq || 0}`,
-    });
-    else if (billedResult?.logId) await pool.query("UPDATE logs SET type = ?, status = ?, error_code = ? WHERE id = ? AND user_id = ?", [LOG_TYPE.ERROR, status, errorCode, billedResult.logId, user.id]);
+    if (!partialBilled.logId) {
+      const failedPrice = await getPrice(model);
+      const failedOriginalPrice = await originalModelPrice(model);
+      const failedModel = canonicalModelName(err.billModel || model) || model;
+      await writeLog({
+        user,
+        type: LOG_TYPE.ERROR,
+        content: `${stopped ? "对话已停止" : "对话失败"}：${failedModel} · ${errorMessage}`,
+        detail: JSON.stringify({
+          code: errorCode, http_status: Number(err.httpStatus || err.status) || undefined,
+          billing_known: billingKnown, requested_model: model, upstream_model: err.upstreamModel || "",
+          pricing_model: canonicalModelName(failedPrice.model || model),
+          requested_price: { in: failedPrice.input, out: failedPrice.output, cache: failedPrice.cache },
+          ...(failedOriginalPrice ? { original_price: failedOriginalPrice } : {}),
+          ...logTexts({ calls: billedCalls.length ? billedCalls : [{ prompt: err.billingPrompt || "", output: err.billingOutput || "" }], inputText }),
+          session_id: session.id,
+        }),
+        model: failedModel,
+        channelId: Number(err.channelId) || 0,
+        channelName: err.channelName || "",
+        tokenId: keyId || 0,
+        tokenName: keyName,
+        groupName: routeGroup || "",
+        userAgent,
+        ip,
+        isUsage: true,
+        status,
+        errorCode,
+        retryCount,
+        inputText,
+        quota: partialBilled.units,
+        promptTokens: partialBilled.promptTokens,
+        completionTokens: partialBilled.completionTokens,
+        cacheTokens: partialBilled.cacheTokens,
+        firstTokenMs: run.finalMessage?.firstTokenMs ?? null,
+        elapsedMs: run.finalMessage?.elapsedMs || (startedAt ? Date.now() - startedAt : 0),
+        requestId: `${session.id}:${userMessage?.seq || 0}`,
+      });
+    } else if (billedResult?.logId) await pool.query("UPDATE logs SET type = ?, status = ?, error_code = ? WHERE id = ? AND user_id = ?", [LOG_TYPE.ERROR, status, errorCode, billedResult.logId, user.id]);
     publish(run, {
       type: stopped ? "stopped" : "error",
       code: errorCode,

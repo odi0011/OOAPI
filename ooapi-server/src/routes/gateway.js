@@ -14,6 +14,8 @@ import { logTexts } from "../services/log-text.js";
 import { acquire, estimateRequestTokens } from "../services/user-limit.js";
 import {
   getPrice,
+  originalModelPrice,
+  priceForTokens,
   computeCost,
   splitTokens,
   effectivePrice,
@@ -129,7 +131,7 @@ router.get(
     //    所以 groupName 一定有值。
     const [rows] = await pool.query("SELECT * FROM channels WHERE status = 1");
     const inGroup = rows.filter((r) => channelInGroup(rowToChannel(r), groupName));
-    await modelRegistry();
+    const registry = await modelRegistry();
     const available = collectAvailableModels(inGroup);
 
     // 分组下一个渠道都没有 → **空列表**，不是「不限」。
@@ -181,7 +183,7 @@ router.get(
       if (!source) return;
       // 旧 ID 的托管条目不能把同源规范模型再归到另一个供应商。
       const canonicalMeta = metaById.get(canonicalModelName(id));
-      const vendor = canonicalMeta?.vendor || meta?.vendor || source.type || "unknown";
+      const vendor = canonicalMeta?.vendor || meta?.vendor || registry.get(canonicalModelName(id))?.type || source.type || "unknown";
       seen.add(key);
       out.push({
         id: meta?.id || id,
@@ -468,6 +470,7 @@ async function settle({
   firstTokenAt = 0,
   userAgent = "",
   billModel = "",
+  upstreamModel = "",
   tokenQuotaHold = 0,
   inputText = "",
   retryCount = 0,
@@ -496,10 +499,13 @@ async function settle({
     }
   }
   const basePrice = await getPrice(priceModel);
+  const logModel = canonicalModelName(billModel || model) || model;
+  const requestedPrice = await getPrice(model);
+  const originalPrice = await originalModelPrice(model);
   // 分时（峰谷）定价：按「请求发起时刻」归属时段，而不是结算时刻 ——
   // 一个 11:59 发起、12:01 结束的请求应当按高峰价算，用结算时刻会差出一倍。
   const eff = effectivePrice(basePrice, startedAt || Date.now());
-  const price = eff.price;
+  const price = priceForTokens(eff.price, promptTokens);
   // 分组倍率：Key 绑定分组后按分组倍率计费（rate=1 时不变）；
   // 与分时是两层独立乘数（时段决定单价，倍率决定加价倍数），顺序保持原样
   const gcfg = await groupConfigOf(token?.group_name || user?.group_name);
@@ -585,19 +591,26 @@ async function settle({
     inputText,
     requestPromptText: prompt,
     outputText: output,
-    content: `调用 ${model}${logStatus === "success" ? "" : ` 失败：${failReason}`} · 提示 ${promptTokens} / 补全 ${completionTokens} tokens${
+    content: `调用 ${logModel}${logStatus === "success" ? "" : ` 失败：${failReason}`} · 提示 ${promptTokens} / 补全 ${completionTokens} tokens${
       cacheTokens ? ` / 缓存 ${cacheTokens}` : ""
     } · ${od} ${CURRENCY}`,
     detail: JSON.stringify({
       channel: channel?.name,
       channel_id: channel?.id,
-      model,
+      model: logModel,
+      requested_model: model,
+      requested_price: { in: requestedPrice.input, out: requestedPrice.output, cache: requestedPrice.cache },
+      ...(originalPrice ? { original_price: originalPrice } : {}),
+      pricing_model: canonicalModelName(priceModel),
+      ...(billModel ? { billed_model: billModel } : {}),
+      ...(upstreamModel ? { upstream_model: upstreamModel } : {}),
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
       cache_tokens: cacheTokens,
       price: { in: price.input, out: price.output, cache: price.cache },
       // 分时审计：事后能复核「这次按峰价还是谷价算的」，以及用的是哪个时刻判档
       price_phase: eff.phase,
+      context_tier: price.contextTier || 0,
       priced_at: startedAt || Date.now(),
       rate: Number(gcfg?.rate) || 1,
       amount_units: units,
@@ -623,7 +636,7 @@ async function settle({
     ip,
     requestId,
     // 使用记录页直接展示的明细（列存储，便于筛选排序）
-    model,
+    model: logModel,
     channelId: channel?.id || 0,
     channelName: channel?.name || "",
     tokenId: token?.id || 0,
@@ -874,7 +887,7 @@ async function handleCompletion(protocol, req, res) {
       ok,
       status,
       ms: Date.now() - startedAt,
-      model,
+      model: canonicalModelName(model) || model,
       channel: channelName,
       ttftMs: firstTokenAt ? firstTokenAt - startedAt : 0,
       userId: token?.user_id || 0,
@@ -1005,6 +1018,7 @@ async function handleCompletion(protocol, req, res) {
       channel: result.channel,
       // 上游真实档位（仅 GLM 等会与请求不一致的渠道回传）：用于按实际档位计费
       billModel: result.billModel || "",
+      upstreamModel: result.upstreamModel || "",
       startedAt,
       firstTokenAt,
       userAgent,
@@ -1106,6 +1120,7 @@ async function handleCompletion(protocol, req, res) {
           firstTokenAt,
           userAgent,
           billModel: err.billModel || "",
+          upstreamModel: err.upstreamModel || "",
           tokenQuotaHold: quotaHold.amount,
           inputText,
           retryCount: err.retryCount,
@@ -1150,7 +1165,12 @@ async function handleCompletion(protocol, req, res) {
       detail: JSON.stringify({ code, requestId, partial_units: partialUnits, partial_tokens: partialTokens,
         http_status: Number(err.status || err.httpStatus) || 0,
         upstream_error_code: String(err.upstreamErrorCode || ""),
-        bill_model: err.billModel || "", billable: Boolean(failedCall),
+        bill_model: err.billModel || "", upstream_model: err.upstreamModel || "",
+        requested_model: model, display_model: canonicalModelName(model) || model,
+        pricing_model: canonicalModelName(model),
+        requested_price: await getPrice(model).then((p) => ({ in: p.input, out: p.output, cache: p.cache })),
+        original_price: await originalModelPrice(model),
+        billable: Boolean(failedCall),
         ...logTexts({ prompt, output: failedCall?.output || err.billingOutput || partialOut, inputText }) }),
       quota: partialUnits,
       promptTokens: partialTokens?.prompt || 0,
@@ -1160,7 +1180,7 @@ async function handleCompletion(protocol, req, res) {
       pricePhase: partialPricePhase,
       ip,
       requestId,
-      model,
+      model: canonicalModelName(model) || model,
       // 失败也归属到渠道：看板的「渠道成功率」按 logs 聚合，没有这个就只能靠 20 条环形缓冲
       channelId: err.channelId || 0,
       channelName: err.channelName || "",

@@ -110,11 +110,11 @@ export default function PromptBar({
   const composerDisabled = disabled || !model;
   const canSend = !composerDisabled && (value.trim().length > 0 || chips.length > 0);
 
-  // 输入框自增高：使用 auto 准确度量，限制在 44px~200px 之间，超出平滑滚动
+  // 输入框自增高：使用 auto 准确度量，限制在 36px~200px 之间，超出平滑滚动
   useLayoutEffect(() => {
     const ta = taRef.current;
     if (!ta) return;
-    const minH = 44;
+    const minH = 36;
     const maxH = 200;
     ta.style.height = "auto";
     const h = ta.scrollHeight;

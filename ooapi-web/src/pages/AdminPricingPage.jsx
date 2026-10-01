@@ -6,6 +6,7 @@ import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
 import { ModelLabel } from "../components/VendorIcon";
+import ModelPricingLabel from "../components/ModelPricingLabel";
 import { OdCoin } from "../components/OdCoin";
 import { CURRENCY_NAME } from "../services/format";
 
@@ -70,6 +71,7 @@ const importTemplate = {
 export default function AdminPricingPage() {
   const { message } = AntApp.useApp();
   const [items, setItems] = useState([]);
+  const [catalogPending, setCatalogPending] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [keyword, setKeyword] = useState("");
@@ -103,6 +105,7 @@ export default function AdminPricingPage() {
 
   useEffect(() => {
     loadAttrib();
+    API.get("/pricing/catalog-pending").then((list) => setCatalogPending(Array.isArray(list) ? list : [])).catch(() => {});
   }, [loadAttrib]);
 
   const doResolve = async () => {
@@ -166,7 +169,7 @@ export default function AdminPricingPage() {
       title: "模型 ID",
       dataIndex: "model",
       width: 230,
-      render: (v) => <ModelLabel model={v} size={15} />,
+      render: (v, r) => <ModelPricingLabel model={v} vendor={r.channel_type} tiers={r.tiers} />,
     },
     {
       title: "渠道类型",
@@ -354,8 +357,8 @@ export default function AdminPricingPage() {
               title="从上游同步价目表？"
               description={
                 <span style={{ fontSize: 12 }}>
-                  从上游模型目录（OpenRouter 公开接口）拉取真实价格，覆盖
-                  {overwrite ? "包括已有行在内的全部价格" : "仅补齐库里还没有的模型"}。
+                  已核实的内置厂商价优先，其余来自 OpenRouter 挂牌价。此操作
+                  {overwrite ? "覆盖已有价格" : "仅补齐库里还没有的模型"}；聚合路由别名合并为同一模型。
                   {overwrite ? "⚠️ 已开启「覆盖已有价」，管理员手改的价格会被冲掉。" : ""}
                 </span>
               }
@@ -404,6 +407,14 @@ export default function AdminPricingPage() {
         />
       </div>
 
+      {catalogPending.some((m) => (!type || m.type === type) && (!keyword || m.model.toLowerCase().includes(keyword.toLowerCase()))) ? <Alert
+        type="info" showIcon style={{ marginBottom: 16 }} message="新型号待定价"
+        description={<div>
+          <div style={{ marginBottom: 6 }}>官网已发布以下型号，尚未核定 OD 单价，可通过「导入定价」补充。</div>
+          {catalogPending.filter((m) => (!type || m.type === type) && (!keyword || m.model.toLowerCase().includes(keyword.toLowerCase()))).map((m) =>
+            <Tooltip key={m.model} title={`官方模型目录：${m.source}`}><Tag>{m.model}</Tag></Tooltip>)}
+        </div>}
+      /> : null}
       {/* 模型定价体检
           ----------------------------------------------------------------------
           用户反馈（原话）：「模型归属区域做的太模糊了我根本看不懂咋用，很反人类」。
@@ -443,7 +454,7 @@ export default function AdminPricingPage() {
             />
 
             {/* 四类价格来源：卡片形式，一眼看出「哪类是问题」 */}
-            <Row gutter={10} style={{ marginBottom: 10 }}>
+            <Row gutter={[10, 10]} style={{ marginBottom: 10 }}>
               {(attrib.sources || []).map((src) => {
                 const tone = {
                   green: { bg: "var(--pill-green-tint, #e7f6ec)", ink: "var(--pill-green-ink, #1a7f4b)" },
@@ -453,7 +464,7 @@ export default function AdminPricingPage() {
                 }[src.tone] || { bg: "transparent", ink: "var(--ink-2)" };
                 const isOpen = attribOpen === src.key;
                 return (
-                  <Col span={6} key={src.key}>
+                  <Col xs={12} sm={6} key={src.key}>
                     <div
                       role="button"
                       tabIndex={0}
@@ -571,20 +582,20 @@ export default function AdminPricingPage() {
                 <b>查一个模型</b>：输入模型名（可以是 <code>vendor/model</code> 这种带前缀的），
                 看它会被归到哪个厂商、按什么价收费、这个价是从哪来的。
               </div>
-              <Space wrap size={6}>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
                 <Input
                   size="small"
                   placeholder="如 anthropic/claude-sonnet-4.5、deepseek-flash"
                   value={resolveQ}
                   onChange={(e) => setResolveQ(e.target.value)}
                   onPressEnter={doResolve}
-                  style={{ width: 340 }}
+                  style={{ width: "100%", maxWidth: 340, flex: "1 1 220px", minWidth: 0 }}
                   prefix={<QuestionCircleOutlined style={{ color: "var(--ink-3)" }} />}
                 />
                 <Button size="small" type="primary" ghost loading={resolving} onClick={doResolve}>
                   查询
                 </Button>
-              </Space>
+              </div>
               {resolveR ? (
                 <div style={{ marginTop: 8, fontSize: 12 }}>
                   {resolveR.source === "none" ? (

@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pool, migrate } from "./db.js";
 import { loadOptions, publicStatus, getNumberOption } from "./config.js";
-import { seedDefaultPrices } from "./services/pricing.js";
+import { seedDefaultPrices, consolidateModelPrices } from "./services/pricing.js";
 import { buildId } from "./services/build-info.js";
 import { ok } from "./utils.js";
 import authRoutes from "./routes/auth.js";
@@ -206,6 +206,7 @@ async function bootstrap() {
   await migrate();
   await loadOptions();
   await seedDefaultPrices();
+  await consolidateModelPrices();
   // 预热兼容别名表（计费与渠道匹配共用；失败不影响启动）
   try {
     const { warmAliasMap } = await import("./services/models.js");

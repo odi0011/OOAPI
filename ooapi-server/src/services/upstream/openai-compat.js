@@ -477,7 +477,7 @@ async function chatOnce({
         : "";
     if (rejectedUsage && onUsage) onUsage(rejectedUsage);
     throw Object.assign(new Error(`上游返回 HTTP ${resp.status}：${msg}${hint}`), {
-      code, status: resp.status, usage: rejectedUsage, billable: consumedUsage(rejectedUsage), upstreamRejected: true,
+      code, status: resp.status, usage: rejectedUsage, billable: consumedUsage(rejectedUsage), upstreamRejected: true, upstreamModel: body.model,
     });
   }
   if (!resp.body) {
@@ -532,7 +532,7 @@ async function chatOnce({
       reasoning,
       usage: jsonUsage,
       httpStatus: resp.status,
-      upstreamModel: j?.model || model,
+      upstreamModel: j?.model || body.model,
       // 方舟自动降级：非流式响应同样带 service_status
       billModel: effectiveModelOf(j),
       // 上游安全审核标注被剥离（execute 据此在渠道上标记「触发过 safe」）
@@ -547,7 +547,7 @@ async function chatOnce({
   let content = "";
   let reasoning = "";
   let usage = null;
-  let upstreamModel = model;
+  let upstreamModel = body.model;
   // 上游「实际生效」的模型（方舟自动降级时会与请求的 model 不同）。
   // 与 upstreamModel 分开：后者是上游回显的名字，前者是**该按谁计费**的依据。
   let fallbackModel = "";

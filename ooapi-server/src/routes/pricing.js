@@ -4,9 +4,9 @@ import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
-import { invalidatePrices, loadPrices, DEFAULT_PRICES, describeRule } from "../services/pricing.js";
+import { invalidatePrices, loadPrices, DEFAULT_PRICES, describeRule, parsePriceTiers, storedPriceTiers } from "../services/pricing.js";
 import { pendingPricedModels } from "../services/pricing.js";
-import { modelRegistry, invalidateModelRegistry } from "../services/models.js";
+import { modelRegistry, invalidateModelRegistry, canonicalModelName, OFFICIAL_UNPRICED_MODELS } from "../services/models.js";
 import { clinePriceFor } from "../services/cline-prices.js";
 import { syncUpstreamPrices, missingFromUpstream } from "../services/price-sync.js";
 
@@ -40,6 +40,7 @@ router.get(
         model: p.model,
         input: p.input, // 每百万 input token 单价（OD币，1 OD = $1）
         output: p.output,
+        ...(p.tiers?.length ? { tiers: p.tiers } : {}),
         ...(p.cache ? { cache: p.cache } : {}),
         ...(p.type ? { vendor: p.type } : {}),
       }))
@@ -79,7 +80,11 @@ function parseRuleInput(v) {
   }
   const offset = Number(obj.offset || 0);
   if (!Number.isFinite(offset) || offset < -12 || offset > 14) throw new Error("offset 应为 -12 ~ 14 的小时偏移");
-  return JSON.stringify({ offset, days: obj.days || [1, 2, 3, 4, 5], peak });
+  if (obj.offpeakDates !== undefined) {
+    const validDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s) && Number.isFinite(Date.parse(s)) && new Date(s).toISOString().slice(0, 10) === s;
+    if (!Array.isArray(obj.offpeakDates) || obj.offpeakDates.length > 100 || obj.offpeakDates.some((r) => !Array.isArray(r) || r.length !== 2 || !r.every(validDate) || r[0] > r[1])) throw new Error("offpeakDates 应为有效日期范围数组，例如 [[\"2026-10-01\",\"2026-10-07\"]]");
+  }
+  return JSON.stringify({ offset, days: obj.days || [1, 2, 3, 4, 5], peak, ...(obj.offpeakDates ? { offpeakDates: obj.offpeakDates } : {}) });
 }
 
 // 列表
@@ -95,6 +100,11 @@ router.get(
     return ok(res, out);
   })
 );
+
+router.get("/catalog-pending", asyncHandler(async (req, res) => {
+  const prices = await loadPrices();
+  return ok(res, OFFICIAL_UNPRICED_MODELS.filter((m) => !prices.has(canonicalModelName(m.model))));
+}));
 
 router.get(
   "/",
@@ -121,6 +131,7 @@ router.get(
         input_price: Number(r.input_price),
         output_price: Number(r.output_price),
         cache_price: Number(r.cache_price),
+        tiers: parsePriceTiers(r.price_tiers),
         // 闲时价（NULL = 该模型不分时）
         offpeak_input_price: r.offpeak_input_price === null ? null : Number(r.offpeak_input_price),
         offpeak_output_price: r.offpeak_output_price === null ? null : Number(r.offpeak_output_price),
@@ -376,7 +387,7 @@ router.post(
         if (!offpeakRule && (offpeakInput !== null || offpeakOutput !== null || offpeakCache !== null)) {
           throw new Error("配置了闲时价格但缺少闲时规则，闲时价永远不会生效；请补上规则或清空闲时价");
         }
-        accepted.set(model.toLowerCase(), {
+        accepted.set(canonicalModelName(reg.model), {
           model: reg.model,
           input: num(entry.input ?? entry.input_price, "input", true),
           output: num(entry.output ?? entry.output_price, "output", true),
@@ -408,17 +419,18 @@ router.post(
           `INSERT INTO model_prices
              (model, input_price, output_price, cache_price,
               offpeak_input_price, offpeak_output_price, offpeak_cache_price, offpeak_rule,
-              channel_type, remark, updated_time)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)
+              channel_type, remark, updated_time, price_tiers)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
            ON DUPLICATE KEY UPDATE input_price=VALUES(input_price), output_price=VALUES(output_price),
             cache_price=VALUES(cache_price),
             offpeak_input_price=VALUES(offpeak_input_price), offpeak_output_price=VALUES(offpeak_output_price),
             offpeak_cache_price=VALUES(offpeak_cache_price), offpeak_rule=VALUES(offpeak_rule),
-            channel_type=VALUES(channel_type), remark=VALUES(remark), updated_time=VALUES(updated_time)`,
+            channel_type=VALUES(channel_type), remark=VALUES(remark), updated_time=VALUES(updated_time), price_tiers=COALESCE(VALUES(price_tiers),price_tiers)`,
           [
-            p.model, p.input, p.output, p.cache,
+            p.model, p.input, p.output, p.cache ?? 0,
             p.offpeakInput, p.offpeakOutput, p.offpeakCache, p.offpeakRule,
             p.type, p.remark, ts,
+            p.tiers ? JSON.stringify(p.tiers) : null,
           ]
         );
         if (ret.affectedRows === 1) inserted += 1;
@@ -528,22 +540,24 @@ router.post(
     try {
       await conn.beginTransaction();
       for (const p of DEFAULT_PRICES) {
+        if (canonicalModelName(p.model) !== String(p.model).toLowerCase()) continue;
         await conn.query(
           `INSERT INTO model_prices
              (model, input_price, output_price, cache_price,
               offpeak_input_price, offpeak_output_price, offpeak_cache_price, offpeak_rule,
-              channel_type, remark, updated_time)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)
+              channel_type, remark, updated_time, price_tiers)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
            ON DUPLICATE KEY UPDATE input_price=VALUES(input_price), output_price=VALUES(output_price),
             cache_price=VALUES(cache_price),
             offpeak_input_price=VALUES(offpeak_input_price), offpeak_output_price=VALUES(offpeak_output_price),
             offpeak_cache_price=VALUES(offpeak_cache_price), offpeak_rule=VALUES(offpeak_rule),
-            channel_type=VALUES(channel_type), remark=VALUES(remark), updated_time=VALUES(updated_time)`,
+            channel_type=VALUES(channel_type), remark=VALUES(remark), updated_time=VALUES(updated_time), price_tiers=VALUES(price_tiers)`,
           [
-            p.model, p.input, p.output, p.cache,
+            p.model, p.input, p.output, p.cache ?? 0,
             p.offpeakInput ?? null, p.offpeakOutput ?? null, p.offpeakCache ?? null,
             p.offpeakRule ? JSON.stringify(p.offpeakRule) : null,
             p.type, p.remark, ts,
+            storedPriceTiers(p),
           ]
         );
         updated += 1;
@@ -611,7 +625,7 @@ router.get(
       for (const raw of String(r.models || "").split(",")) {
         const m = raw.trim();
         if (!m || m === "*") continue;
-        const key = m.toLowerCase();
+        const key = canonicalModelName(m);
         const item = { model: m, channel: String(r.name || ""), channelId: Number(r.id) || 0 };
 
         // ① 库里精确命中
@@ -691,7 +705,7 @@ router.get(
     const model = String(req.query.model || "").trim();
     if (!model) return fail(res, "请提供 model 参数");
     const prices = await loadPrices();
-    const key = model.toLowerCase();
+    const key = canonicalModelName(model);
     const exact = prices.get(key);
     if (exact) {
       return ok(res, {
@@ -764,7 +778,8 @@ router.post(
         if (m && m !== "*") declared.add(m);
       }
     }
-    const candidate = explicit.length ? explicit : [...declared];
+    // 聚合供应商的前缀/SKU 只能增加路由信息，固化不能重新造出独立价格行。
+    const candidate = [...new Set((explicit.length ? explicit : [...declared]).map(canonicalModelName).filter(Boolean))];
 
     const ts = now();
     let inserted = 0;
@@ -776,13 +791,16 @@ router.post(
         // 已有定价行的跳过（不覆盖管理员的手工定价）
         const [exist] = await conn.query("SELECT model FROM model_prices WHERE model = ?", [m]);
         if (exist.length) { skipped += 1; continue; }
-        const p = clinePriceFor(m);
+        const p = DEFAULT_PRICES.find((p) => canonicalModelName(p.model) === m && p.model.toLowerCase() === m) || clinePriceFor(m);
         if (!p) { skipped += 1; continue; }
         if (vendor && p.type !== vendor) { skipped += 1; continue; }
         await conn.query(
-          `INSERT INTO model_prices (model, input_price, output_price, cache_price, channel_type, remark, updated_time)
-           VALUES (?,?,?,?,?,?,?)`,
-          [m, p.input, p.output, p.cache, p.type, p.remark, ts]
+          `INSERT INTO model_prices (model, input_price, output_price, cache_price, channel_type, remark, updated_time,
+             offpeak_input_price, offpeak_output_price, offpeak_cache_price, offpeak_rule, price_tiers)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [m, p.input, p.output, p.cache ?? 0, p.type, p.remark, ts,
+            p.offpeakInput ?? null, p.offpeakOutput ?? null, p.offpeakCache ?? null,
+            p.offpeakRule ? JSON.stringify(p.offpeakRule) : null, storedPriceTiers(p)]
         );
         inserted += 1;
       }

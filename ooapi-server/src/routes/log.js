@@ -3,6 +3,7 @@ import { pool } from "../db.js";
 import { ok, asyncHandler, pageParams, safeInt } from "../utils.js";
 import { authRequired, adminRequired, superRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE, LOG_TYPE_LABEL, USAGE_SQL } from "../services/log.js";
+import { canonicalModelName } from "../services/models.js";
 
 const router = Router();
 
@@ -44,7 +45,7 @@ function mapLog(r, { isAdmin }) {
     content: r.content,
     quota: Number(r.quota),
     billing_known: Number(r.billing_unknown) !== 1 && detail.billing_known !== false,
-    model: r.model || "",
+    model: canonicalModelName(r.model) || r.model || "",
     prompt_tokens: Number(r.prompt_tokens) || 0,
     completion_tokens: Number(r.completion_tokens) || 0,
     cache_tokens: Number(r.cache_tokens) || 0,
@@ -73,6 +74,13 @@ function mapLog(r, { isAdmin }) {
   if (!isAdmin) return base;
   return {
     ...base,
+    requested_model: detail.requested_model || r.model || "",
+    upstream_model: detail.upstream_model || "",
+    pricing_model: detail.pricing_model || "",
+    requested_price: detail.requested_price || null,
+    original_price: detail.original_price || null,
+    effective_price: detail.price || null,
+    model_calls: Array.isArray(detail.model_calls) ? detail.model_calls : [],
     request_prompt_text: r.request_prompt_text || detail.request_prompt_text || detail.prompt_text || "",
     channel_id: Number(r.channel_id) || 0,
     channel_name: r.channel_name || "",

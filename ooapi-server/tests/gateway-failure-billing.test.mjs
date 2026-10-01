@@ -146,8 +146,8 @@ try {
         assert.equal(r.status, 400); assert.equal(row.error_code, "CHANNEL_BAD_REQUEST");
         assert.equal(JSON.parse(row.detail).http_status, 400); assert.equal(row.model, model);
         assert.ok(!/fixture-secret\.invalid|DO_NOT_LEAK|Bearer/.test(text + JSON.stringify(row)), "body/URL/key never copied to public error or usage log");
-        assert.ok(text.includes(reason.startsWith("illegal") ? "蒸馏、心跳探测" : "HTTP 400"));
-        assert.ok(row.content.includes(reason.startsWith("illegal") ? "补充实际问题" : "稍后重试"));
+        assert.ok(text.includes(reason.startsWith("illegal") ? "上游按请求审核策略拒绝" : "HTTP 400"));
+        assert.ok(row.content.includes(reason.startsWith("illegal") ? "核查" : "稍后重试"));
       });
     }
     for (const status of [401, 502]) {

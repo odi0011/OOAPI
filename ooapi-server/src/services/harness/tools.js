@@ -120,7 +120,7 @@ const SEARCH_SYS =
 /** 工具失败仍可交回模型，但它已经产生的上游用量必须进入本轮账单。 */
 export function recordFailedCall(err, ctx, fallback = {}) {
   if (!err || err.billingRecorded || typeof ctx?.record !== "function") return false;
-  const call = billableFailedCall(err, fallback);
+  const call = billableFailedCall(err, { model: ctx.model, ...fallback });
   if (!call) return false;
   ctx.record(call);
   // 停止时同一个错误会继续冒泡到路由；路由不能再合成一条相同的失败调用。
@@ -204,7 +204,10 @@ export const TOOLS = {
         firstTokenAt,
         elapsed: r.elapsed,
         retryCount: r.retryCount,
-        model: r.billModel || r.upstreamModel || ctx.model,
+        model: r.billModel || ctx.model,
+        requestedModel: ctx.model,
+        upstreamModel: r.upstreamModel || "",
+        billModel: r.billModel || "",
       });
       const text = clip(r.content || r.reasoning || "", 6000);
       if (!text) return { ok: false, output: "检索没有返回内容" };

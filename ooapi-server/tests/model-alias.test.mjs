@@ -100,4 +100,5 @@ console.log("\n=== ⑤ 站内对话与网关同一套白名单 + 旧会话模型
 }
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
+await import("./model-price-identity.test.mjs");
 process.exit(fail ? 1 : 0);

@@ -21,7 +21,7 @@ export function publicRunError(err, { stopped = false } = {}) {
   if (err?.code === "CHANNEL_BAD_REQUEST" || [400, 413, 422].includes(status)) {
     const upstream = String(err?.message || "");
     if (/illegal[\s_-]+short[\s_-]+input|distillat(?:ion|ing|e)|heartbeat[\s_-]+(?:probing|probe)|非法短输入|蒸馏|心跳探测/i.test(upstream)) {
-      return `${prefix}上游拒绝了短输入，或将请求识别为蒸馏、心跳探测。请补充实际问题内容后重试。`;
+      return `${prefix}上游按请求审核策略拒绝了此次调用。可选择其他模型，或联系管理员核查。`;
     }
     if (/(?:input|message|prompt)[\s\S]{0,80}(?:too short|minimum.{0,20}length|at least.{0,12}(?:character|token))|(?:输入|消息|提问)[\s\S]{0,50}(?:太短|过短|至少)/i.test(upstream)) return `${prefix}输入内容过短，请补充内容后重试。`;
     if (/context.{0,30}(?:length|limit|exceed)|(?:上下文|输入|消息).{0,30}(?:过长|超长|超出|超过)/i.test(upstream)) return `${prefix}输入超过上下文长度限制，请缩短内容或新建会话。`;

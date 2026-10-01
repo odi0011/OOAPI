@@ -305,27 +305,27 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 10px 10px 8px;
-  border: 1px solid var(--line-strong);
-  border-radius: 18px;
+  padding: 8px 10px 6px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
   background: var(--surface);
-  box-shadow: 0 1px 2px oklch(0% 0 0 / 0.04), 0 6px 24px oklch(0% 0 0 / 0.06);
+  box-shadow: var(--shadow-card);
   transition: border-color 150ms, box-shadow 150ms;
 }
 .bui-composer:focus-within {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--line-strong));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent), 0 6px 24px oklch(0% 0 0 / 0.06);
+  box-shadow: var(--shadow-card);
 }
 .bui-composer.is-disabled { opacity: 0.7; }
-html[data-theme="dark"] .bui-composer { box-shadow: 0 6px 24px oklch(0% 0 0 / 0.3); }
+html[data-theme="dark"] .bui-composer { box-shadow: var(--shadow-card); }
 
 .bui-composer-input.ant-input {
-  min-height: 44px;
+  min-height: 36px;
   max-height: 200px;
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  padding: 4px 6px 6px;
+  padding: 4px 4px 6px;
   border: 0;
   background: transparent;
   color: var(--ink);
@@ -339,6 +339,17 @@ html[data-theme="dark"] .bui-composer { box-shadow: 0 6px 24px oklch(0% 0 0 / 0.
   overflow-y: auto;
 }
 .bui-composer-input::placeholder { color: var(--ink-3); }
+
+/* AntD 输入全局有 field 底色；对话框只使用外层容器，避免嵌套一块灰色输入框。 */
+.bui-composer .bui-composer-input.ant-input,
+.bui-composer .bui-composer-input.ant-input:hover,
+.bui-composer .bui-composer-input.ant-input:focus,
+.bui-composer .bui-composer-input.ant-input:disabled {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0;
+}
 
 .bui-composer-bar { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .bui-composer-spacer { flex: 1; min-width: 0; }

@@ -63,7 +63,8 @@ const query = async (store, sql, args = []) => {
   queries.push(s);
   assert.equal((s.match(/\?/g) || []).length, args.length, `SQL占位符: ${s}`);
   if (s === 'SELECT * FROM users WHERE id = ?') return [[clone(store.user)].filter((u) => u.id === Number(args[0]))];
-  if (s.includes('FROM model_prices')) return [[{ model, input_price: 1, output_price: 2, cache_price: .5 }]];
+  if (s.includes('FROM model_prices')) return [[{ model, input_price: 1, output_price: 2, cache_price: .5 },
+    { model: 'glm-4.7', input_price: .6, output_price: 2.2, cache_price: .11 }]];
   if (s === 'SELECT * FROM tokens WHERE id = ? AND user_id = ?') return [[clone(store.token)].filter((t) => t.id === Number(args[0]) && t.user_id === Number(args[1]))];
   if (s.includes('FROM tokens WHERE user_id = ?')) return [[clone(store.token)].filter((t) => t.user_id === Number(args[0]) && t.status === 1)];
   if (s.includes('FROM channels')) return [[{ id: channelId, type: 'openai', name: 'fixture-channel', status: 1, models: model,
@@ -225,12 +226,25 @@ try {
     balance(expected); assert.equal(row.quota, expected); assert.equal(message.cost, expected / 10000);
     assert.deepEqual(message.tokens, { prompt: 1700, completion: 300, cache: 500 }); assert.equal(row.output_text, 'PARTIAL');
     assert.equal(row.first_token_known, 1); assert.ok(message.parts.some((p) => p.text === 'PARTIAL'));
+    const audit = JSON.parse(row.detail).model_calls[0];
+    assert.equal(audit.requested_model, model); assert.equal(audit.upstream_model, model);
+    assert.equal(audit.pricing_model, model);
     assert.ok(message.parts.some((p) => p.type === 'error')); assert.equal(commits, 3); // user + settle + assistant
   });
   await test('usage-only失败有输入费用但首T未知', async () => {
     sse(frame({ usage: { prompt_tokens: 1700, completion_tokens: 0, cached_tokens: 500 } }) + frame({ error: { code: 'fixture_error', message: 'fixture failed' } }));
     const message = finalMessage(await run(), 'error'); const row = oneLog('error'); balance(row.quota);
     assert.ok(row.quota > 0); assert.equal(row.output_text, ''); assert.equal(message.firstTokenMs, null); assert.equal(row.first_token_known, 0);
+  });
+  await test('上游明确降档后部分失败按实际档扣费且顶层审计模型/单价一致', async () => {
+    sse(frame({ model: 'glm-4.7', service_status: { model_fallback: { fallback_triggered: true, original_model: model } },
+      choices: [{ delta: { content: 'FALLBACK_PARTIAL' } }] }) + frame({ usage }) + frame({ error: { message: 'fixture failed' } }));
+    finalMessage(await run(), 'error'); const row = oneLog('error'); const audit = JSON.parse(row.detail);
+    const price = await getPrice('glm-4.7'); const expected = computeCost({ price, promptTokens: 1700, completionTokens: 300, cacheTokens: 500 });
+    balance(expected); assert.equal(row.quota, expected); assert.equal(row.model, 'glm-4.7');
+    assert.equal(audit.requested_model, model); assert.equal(audit.upstream_model, 'glm-4.7');
+    assert.equal(audit.pricing_model, 'glm-4.7'); assert.deepEqual(audit.price, { in: .6, out: 2.2, cache: .11 });
+    assert.equal(audit.model_calls[0].pricing_model, audit.pricing_model);
   });
   await test('完整回复成功一行消费日志且默认Key正确扣费', async () => {
     sse(frame({ choices: [{ delta: { content: 'COMPLETE' } }] }) + frame({ usage }) + 'data: [DONE]\n\n');
@@ -350,7 +364,8 @@ try {
     behavior = (_req, res) => { res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: { message: 'Illegal short-input detected: distillation or heartbeat probing. https://private.invalid/credentials?key=DO_NOT_LEAK', code: 'fixture_error' } })); };
     const message = finalMessage(await run(), 'error'); const row = oneLog('error'); balance(0);
     const error = message.parts.find((p) => p.type === 'error'); assert.ok(error.message.includes('HTTP 400'));
-    assert.ok(error.message.includes('蒸馏、心跳探测')); assert.ok(!JSON.stringify(message).includes('DO_NOT_LEAK'));
+    assert.ok(error.message.includes('上游按请求审核策略拒绝')); assert.ok(!JSON.stringify(message).includes('DO_NOT_LEAK'));
+    assert.ok(!error.message.includes('补充实际问题'), '不能把上游审核结论当成用户提问无效');
     assert.ok(!row.content.includes('private.invalid')); assert.equal(row.error_code, 'CHANNEL_BAD_REQUEST');
   });
   await test('未知上游失败正文不转发，只保留HTTP状态与分类code', async () => {

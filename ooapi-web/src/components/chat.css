@@ -531,19 +531,34 @@
 .ui-msg-ai .prose > :first-child { margin-top: 0; }
 .ui-msg-actions {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-wrap: nowrap;
+  align-items: flex-start;
   gap: 4px;
   margin-top: 10px;
   font-size: var(--fs-label);
   color: var(--ink-3);
 }
-.ui-msg-error { margin: 8px 0; max-width: 100%; }
+.ui-msg-actions > .ant-btn { flex: 0 0 auto; }
+.ui-msg-error.ant-alert { margin: 8px 0 12px; width: fit-content; max-width: min(640px, 100%); padding: 12px 14px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--red) 15%, transparent); }
+.ui-msg-error.ant-alert-warning { border-color: color-mix(in srgb, var(--orange) 18%, transparent); }
+.ui-msg-error.ant-alert-info { border-color: color-mix(in srgb, var(--accent) 18%, transparent); }
+.ui-msg-error.ant-alert-with-description .ant-alert-icon { margin-inline-end: 10px; font-size: 15px; padding-top: 2px; }
+.ui-msg-error .ant-alert-message { margin-bottom: 4px; color: var(--ink); font-size: 13px; font-weight: 600; line-height: 1.55; }
+.ui-msg-error .ant-alert-description { color: var(--ink-2); font-size: 12.5px; line-height: 1.7; }
 .ui-msg-error .ant-alert-message,
 .ui-msg-error .ant-alert-description { overflow-wrap: anywhere; }
-.ui-msg-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-left: 6px; min-width: 0; font-size: 11px; }
+.ui-msg-error-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.ui-msg-error-title > span { font-size: 11px; font-weight: 400; color: var(--ink-3); }
+.ui-msg-error-note { margin-top: 5px; color: var(--ink-3); font-size: 11.5px; }
+.ui-msg-stats { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; gap: 0 10px; margin-left: 4px; min-width: 0; color: var(--ink-2); font-size: 11.5px; line-height: 24px; }
 .ui-msg-cost { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
-.ui-msg-token-unknown { display: inline-flex; flex-direction: column; gap: 2px; font-variant-numeric: tabular-nums; }
+.ui-msg-token-stat.ant-btn { height: 24px; padding: 0 2px; color: var(--ink-2); font: inherit; font-variant-numeric: tabular-nums; }
+.ui-msg-token-stat.ant-btn:hover { color: var(--ink-2); }
+.ui-msg-token-detail { display: flex; flex-direction: column; gap: 3px; min-width: 140px; font-size: 12px; }
+.ui-msg-token-detail > span { display: flex; justify-content: space-between; gap: 16px; }
+.ui-msg-token-detail b { font-weight: 500; font-variant-numeric: tabular-nums; }
+.ui-msg-timing { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; font-variant-numeric: tabular-nums; }
+.ui-msg-timing > .anticon { font-size: 12px; }
 .ui-msg-empty { color: var(--ink-3); }
 .ui-chat2-connection-error { margin: 10px 16px; }
 

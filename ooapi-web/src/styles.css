@@ -4665,3 +4665,5 @@ html[data-theme="dark"] .oo-theme-switch-thumb { background: var(--hover-2); box
 .oo-log-status--stopped { background: var(--orange); box-shadow: 0 0 0 2px color-mix(in srgb, var(--orange) 16%, transparent); }
 .oo-log-status-label--error { color: var(--red); }
 .oo-log-status-label--stopped { color: var(--orange); }
+
+html[data-theme="dark"] .oo-vendor-icon--mono { filter: invert(0.88); }

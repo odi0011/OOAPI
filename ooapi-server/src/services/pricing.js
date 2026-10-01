@@ -11,7 +11,7 @@
 //   向上取整，最低 1 厘（避免零计费刷量）。
 import { pool } from "../db.js";
 import { now } from "../utils.js";
-import { clinePriceFor } from "./cline-prices.js";
+import { clinePriceFor, normalizeClineModel } from "./cline-prices.js";
 
 export const UNITS_PER_OD = 10000; // 1 OD 币 = 10000 厘
 export const CURRENCY = "OD币";
@@ -35,6 +35,11 @@ export const CURRENCY = "OD币";
 //   · OpenAI https://openai.com/api/pricing/ · Anthropic https://www.anthropic.com/pricing
 //   · Google https://ai.google.dev/gemini-api/docs/pricing
 const CNY_PER_USD = 6.71; // 官方人民币价折算美元用（7.2 → 6.71，2026-09-28 按当日汇率重估；平台币制固定 1 OD = 1 USD）
+// 国办发明电〔2025〕7号；只登记已公布年度，不能把2026日期套到未来。
+// https://www.gov.cn/zhengce/content/202511/content_7047090.htm
+const CN_PUBLIC_HOLIDAYS_2026 = [["2026-01-01", "2026-01-03"], ["2026-02-15", "2026-02-23"],
+  ["2026-04-04", "2026-04-06"], ["2026-05-01", "2026-05-05"], ["2026-06-19", "2026-06-21"],
+  ["2026-09-25", "2026-09-27"], ["2026-10-01", "2026-10-07"]];
 export const DEFAULT_PRICES = [
   // --- DeepSeek：官方当前只有这两个模型（网页反代输出的也是 flash）---
   // 官方按钟点差异定价（2026-09 官方定价页脚注原文：Off-peak rates are half of the peak rates.
@@ -50,9 +55,9 @@ export const DEFAULT_PRICES = [
     offpeakInput: 0.15,
     offpeakOutput: 0.60,
     offpeakCache: 0.003,
-    offpeakRule: { offset: 8, days: [1, 2, 3, 4, 5], peak: [["09:00", "12:00"], ["14:00", "18:00"]] },
+    offpeakRule: { offset: 8, days: [1, 2, 3, 4, 5], peak: [["09:00", "12:00"], ["14:00", "18:00"]], offpeakDates: CN_PUBLIC_HOLIDAYS_2026 },
     type: "deepseek",
-    remark: "官方峰谷价（高峰=北京时间工作日 9-12/14-18，其余半价）；来源 api-docs.deepseek.com/quick_start/pricing/",
+    remark: "官方美元峰谷价（2026-10-01 复核）；周一至五9-12/14-18峰价，公共假期除外，已配置2026假期；来源 api-docs.deepseek.com/quick_start/pricing/；假期 gov.cn/zhengce/content/202511/content_7047090.htm",
   },
   {
     model: "deepseek-v4-pro",
@@ -62,38 +67,50 @@ export const DEFAULT_PRICES = [
     offpeakInput: 0.66,
     offpeakOutput: 1.98,
     offpeakCache: 0.022,
-    offpeakRule: { offset: 8, days: [1, 2, 3, 4, 5], peak: [["09:00", "12:00"], ["14:00", "18:00"]] },
+    offpeakRule: { offset: 8, days: [1, 2, 3, 4, 5], peak: [["09:00", "12:00"], ["14:00", "18:00"]], offpeakDates: CN_PUBLIC_HOLIDAYS_2026 },
     type: "deepseek",
-    remark: "官方峰谷价（高峰=北京时间工作日 9-12/14-18，其余半价）；来源 api-docs.deepseek.com/quick_start/pricing/",
+    remark: "官方美元峰谷价（2026-10-01 复核）；周一至五9-12/14-18峰价，公共假期除外，已配置2026假期；来源 api-docs.deepseek.com/quick_start/pricing/；假期 gov.cn/zhengce/content/202511/content_7047090.htm",
   },
 
-  // --- 智谱 GLM（官方人民币价 ÷ 7.2；来源 open.bigmodel.cn/pricing）---
-  { model: "glm-5.3", input: 1.19225, output: 4.172876, cache: 0.298063, type: "glm", remark: `官方 ¥8/¥28/缓存 ¥2 ÷ 6.71；来源 open.bigmodel.cn/pricing` },
-  { model: "glm-5.3-flash", input: 0.119225, output: 0.417288, cache: 0.034277, type: "glm", remark: `官方 ¥0.8/¥2.8/缓存 ¥0.23 ÷ 6.71；来源 open.bigmodel.cn/pricing` },
-  { model: "glm-5.2", input: 1.19225, output: 4.172876, cache: 0.298063, type: "glm", remark: `官方 ¥8/¥28/缓存 ¥2 ÷ 6.71；来源 open.bigmodel.cn/pricing` },
+  // --- 智谱 GLM（2026-10-01 复核 Z.AI 官方美元价，不使用人民币换算）---
+  { model: "glm-5.3", input: 1.40, output: 4.40, cache: 0.26, type: "glm", remark: "Z.AI 官方美元价（2026-10-01 复核）；来源 https://docs.z.ai/guides/overview/pricing" },
+  { model: "glm-5.3-flash", input: 0.15, output: 0.50, cache: 0.03, type: "glm", remark: "Z.AI 官方美元价（2026-10-01 复核）；来源 https://docs.z.ai/guides/overview/pricing" },
+  { model: "glm-5.3-flashx", input: 0.37, output: 1.25, cache: 0.075, type: "glm", remark: "Z.AI 官方美元价，FlashX 为独立 API ID（2026-10-01 复核）；来源 https://docs.z.ai/guides/overview/pricing 与 https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash" },
+  { model: "glm-5.2", input: 1.40, output: 4.40, cache: 0.26, type: "glm", remark: "Z.AI 官方美元价（2026-10-01 复核）；来源 https://docs.z.ai/guides/overview/pricing" },
   { model: "glm-5v-turbo", input: 0.745156, output: 3.278689, cache: 0.178838, type: "glm", remark: `官方 ≤32K 档 ¥5/¥22/缓存 ¥1.2 ÷ 6.71；来源 open.bigmodel.cn/pricing` },
-  { model: "glm-4.7", input: 0.298063, output: 1.19225, cache: 0.059613, type: "glm", remark: `官方 ¥2/¥8/缓存 ¥0.4 ÷ 6.71；来源 open.bigmodel.cn/pricing` },
-  { model: "glm-4.6", input: 0.298063, output: 1.19225, cache: 0.059613, type: "glm", remark: `官方 ¥2/¥8/缓存 ¥0.4 ÷ 6.71；来源 open.bigmodel.cn/pricing` },
-  { model: "glm-4.5", input: 0.119225, output: 0.298063, cache: 0, type: "glm", remark: `官方 ¥0.8/¥2（官方公告即将下线）÷ 6.71；来源 docs.bigmodel.cn` },
-  // glm-5 / glm-5.1：5.x 早期档，官方已由 5.2 取代；按 5.2 同档价录入，
-  // 避免落到兜底价（那会让这些档位比旗舰还贵）
-  { model: "glm-5", input: 1.192131, output: 4.172996, cache: 0.298301, type: "glm", remark: `按 5.2 同档价录入（官方页已下架 5/5.1）÷ 6.71；来源 open.bigmodel.cn/pricing` },
-  { model: "glm-5.1", input: 1.192131, output: 4.172996, cache: 0.298301, type: "glm", remark: `按 5.2 同档价录入（官方页已下架 5/5.1）÷ 6.71；来源 open.bigmodel.cn/pricing` },
-  { model: "glm-4.5-air", input: 0.119225, output: 0.298063, cache: 0.023845, type: "glm", remark: `官方 ¥0.8/¥2/缓存 ¥0.16 ÷ 6.71；来源 open.bigmodel.cn/pricing` },
+  { model: "glm-4.7", input: 0.60, output: 2.20, cache: 0.11, type: "glm", remark: "Z.AI 官方美元价（2026-10-01 复核）；来源 https://docs.z.ai/guides/overview/pricing" },
+  { model: "glm-4.6", input: 0.60, output: 2.20, cache: 0.11, type: "glm", remark: "Z.AI 官方美元价（2026-10-01 复核）；来源 https://docs.z.ai/guides/overview/pricing" },
+  { model: "glm-4.5", input: 0.60, output: 2.20, cache: 0.11, type: "glm", remark: "Z.AI 官方美元价（2026-10-01 复核）；来源 https://docs.z.ai/guides/overview/pricing" },
+  { model: "glm-5", input: 1.00, output: 3.20, cache: 0.20, type: "glm", remark: "Z.AI 官方美元价，独立于 5.1/5.2 档（2026-10-01 复核）；来源 https://docs.z.ai/guides/overview/pricing" },
+  { model: "glm-5.1", input: 1.40, output: 4.40, cache: 0.26, type: "glm", remark: "Z.AI 官方美元价（2026-10-01 复核）；来源 https://docs.z.ai/guides/overview/pricing" },
+  { model: "glm-4.5-air", input: 0.20, output: 1.10, cache: 0.03, type: "glm", remark: "Z.AI 官方美元价（2026-10-01 复核）；来源 https://docs.z.ai/guides/overview/pricing" },
 
-  // --- Kimi（官方美元价；来源 platform.kimi.com/docs/pricing/chat）---
-  { model: "kimi-k3", input: 3.00, output: 15.00, cache: 0.30, type: "kimi", remark: "官方定价，1M 上下文；来源 platform.kimi.com/docs/pricing/chat-k3" },
-  { model: "kimi-k2.6", input: 0.95, output: 4.00, cache: 0.16, type: "kimi", remark: "官方定价；来源 platform.kimi.com/docs/pricing/chat" },
+  // --- Kimi（2026-10-01 复核官方海外美元价；来源 platform.moonshot.ai/docs/pricing/chat）---
+  { model: "kimi-k3", input: 3.00, output: 15.00, cache: 0.30, type: "kimi", remark: "官方海外美元价，1M 上下文（2026-10-01 复核）；来源 https://platform.moonshot.ai/docs/pricing/chat" },
+  { model: "kimi-k2.6", input: 0.95, output: 4.00, cache: 0.16, type: "kimi", remark: "官方海外美元价（2026-10-01 复核）；来源 https://platform.moonshot.ai/docs/pricing/chat" },
+  { model: "kimi-k2.7-code", input: 0.95, output: 4.00, cache: 0.19, type: "kimi", remark: "官方海外美元价，256K 多模态编程模型（2026-10-01 复核）；来源 https://platform.moonshot.ai/docs/pricing/chat" },
+  { model: "kimi-k2.7-code-highspeed", input: 1.90, output: 8.00, cache: 0.38, type: "kimi", remark: "官方海外美元价，高速版为独立 API ID（2026-10-01 复核）；来源 https://platform.moonshot.ai/docs/pricing/chat" },
   // kimi-k2 是仍在注册表里的经典档（网页反代 SCENARIO_K2 会用到）。
   // 缺这一行会让它落到「同厂商最高档兜底」= 按 k3 旗舰价（3.00/15.00）计费，
   // 相对 k2.6 档最多多收约 3 倍。
   { model: "kimi-k2", input: 0.55, output: 2.20, cache: 0.10, type: "kimi", remark: "经典档，按上一代官方价录入（待官方页复核）；来源 platform.kimi.com/docs/pricing/chat" },
 
-  // --- 通义千问（官方人民币价 ÷ 7.2；来源 help.aliyun.com/zh/model-studio）---
-  { model: "qwen3.8-max", input: 1.788376, output: 5.365127, cache: 0.223547, type: "qwen", remark: `官方 ¥12/¥36/缓存 ¥1.5 ÷ 6.71；来源 help.aliyun.com/zh/model-studio/qwen3-8-max` },
-  { model: "qwen3.7-plus", input: 0.298063, output: 1.19225, cache: 0.04769, type: "qwen", remark: `官方 ¥2/¥8/缓存 ¥0.32 ÷ 6.71；来源 help.aliyun.com/zh/model-studio` },
-  { model: "qwen3-max", input: 0.372578, output: 1.490313, cache: 0, type: "qwen", remark: `官方 ¥2.5/¥10（未公布缓存档）÷ 6.71；来源 help.aliyun.com/zh/model-studio` },
-  { model: "qwen-plus", input: 0.119225, output: 0.298063, cache: 0, type: "qwen", remark: `官方 ¥0.8/¥2（≤128K 档）÷ 6.71；来源 help.aliyun.com/zh/model-studio` },
+  // --- 通义千问（2026-10-01 复核官网 China Beijing 美元目录，不使用人民币换算）---
+  // 与默认 DashScope API endpoint 的地区一致；缓存取普通隐式档（官网标准20%），
+  // 3.8 Max/Flash/2.4T 的缓存为官网明确例外，仅控制台公布，保留 null 而非猜价。
+  { model: "qwen3.8-max", input: 1.65, output: 4.951, cache: null, type: "qwen", remark: "官方Beijing美元价，≤1000000输入；缓存单价仅控制台公布（2026-10-01 复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing 与 https://www.alibabacloud.com/help/en/model-studio/context-cache" },
+  { model: "qwen3.8-max-prime", input: 3.301, output: 9.902, cache: null, type: "qwen", remark: "官方Beijing美元价，真实独立Prime API ID，≤1000000输入；无公开缓存单价（2026-10-01 复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing" },
+  { model: "qwen3.8-flash", input: 0.113, output: 0.382, cache: null, type: "qwen", remark: "官方Beijing美元价，≤1000000输入；缓存单价仅控制台公布（2026-10-01 复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing 与 https://www.alibabacloud.com/help/en/model-studio/context-cache" },
+  { model: "qwen3.8-2.4t-a95b", input: 1.65, output: 4.951, cache: null, type: "qwen", remark: "官方Beijing美元价，≤1000000输入；缓存单价仅控制台公布（2026-10-01 复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing 与 https://www.alibabacloud.com/help/en/model-studio/context-cache" },
+  { model: "qwen3.8-27b", input: 0.424, output: 1.696, cache: 0.0848, type: "qwen", remark: "官方Beijing美元价，≤1000000输入；缓存取官网隐式档20%，显式档另价（2026-10-01 复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing 与 https://www.alibabacloud.com/help/en/model-studio/context-cache" },
+  { model: "qwen3.7-plus", input: 0.276, output: 1.101, cache: 0.0552, tiers: [{ minInputTokens: 256001, input: 0.826, output: 3.301, cache: 0.1652 }], type: "qwen", remark: "官方Beijing美元list价，思考/非思考同价，>256000输入长档；缓存取隐式20%（2026-10-01 复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing 与 https://www.alibabacloud.com/help/en/model-studio/context-cache" },
+  { model: "qwen3.6-plus", input: 0.276, output: 1.651, cache: null, tiers: [{ minInputTokens: 256001, input: 1.101, output: 6.602, cache: null }], type: "qwen", remark: "官方Beijing美元价，思考/非思考同价，>256000输入长档；官网未列隐式缓存支持，显式缓存为不同请求模式，缓存价待确认（2026-10-01 复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing 与 https://www.alibabacloud.com/help/en/model-studio/context-cache" },
+  { model: "qwen3.5-plus", input: 0.115, output: 0.688, cache: null, tiers: [{ minInputTokens: 128001, input: 0.287, output: 1.72, cache: null }, { minInputTokens: 256001, input: 0.573, output: 3.44, cache: null }], type: "qwen", remark: "官方Beijing美元价，思考/非思考同价，>128000/>256000输入分档；官网未列隐式缓存支持，显式缓存为不同请求模式，缓存价待确认（2026-10-01 复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing 与 https://www.alibabacloud.com/help/en/model-studio/context-cache" },
+  { model: "qwen3-max", input: 0.359, output: 1.434, cache: 0.0718, tiers: [{ minInputTokens: 32001, input: 0.574, output: 2.294, cache: 0.1148 }, { minInputTokens: 128001, input: 1.004, output: 4.014, cache: 0.2008 }], type: "qwen", remark: "官方Beijing美元价，>32000/>128000输入分档；缓存取隐式20%（2026-10-01 复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing 与 https://www.alibabacloud.com/help/en/model-studio/context-cache" },
+  { model: "qwen-plus", input: 0.115, output: 0.287, cache: 0.023, tiers: [{ minInputTokens: 128001, input: 0.345, output: 2.868, cache: 0.069 }, { minInputTokens: 256001, input: 0.689, output: 6.881, cache: 0.1378 }], type: "qwen", remark: "官方Beijing非思考美元价，>128000/>256000输入分档；思考输出另为1.147/3.441/9.175；缓存取隐式20%（2026-10-01 复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing 与 https://www.alibabacloud.com/help/en/model-studio/context-cache" },
+  { model: "qwen3.7-flash", input: 0.028, output: 0.110, cache: 0.0056, tiers: [{ minInputTokens: 32001, input: 0.083, output: 0.330, cache: 0.0166 }, { minInputTokens: 256001, input: 0.165, output: 0.660, cache: 0.033 }], type: "qwen", remark: "官方Beijing美元价，>32000/>256000输入分档；缓存取隐式20%（2026-10-01 复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing 与 https://www.alibabacloud.com/help/en/model-studio/context-cache" },
+  { model: "qwen3.6-flash", input: 0.165, output: 0.99, cache: null, tiers: [{ minInputTokens: 256001, input: 0.66, output: 3.961, cache: null }], type: "qwen", remark: "官方Beijing美元价，>256000输入长档；官网未列隐式缓存支持，显式缓存为不同请求模式，缓存价待确认（2026-10-01 复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing 与 https://www.alibabacloud.com/help/en/model-studio/context-cache" },
+  { model: "qwen3.5-flash", input: 0.029, output: 0.287, cache: null, tiers: [{ minInputTokens: 128001, input: 0.115, output: 1.147, cache: null }, { minInputTokens: 256001, input: 0.172, output: 1.72, cache: null }], type: "qwen", remark: "官方Beijing美元价，>128000/>256000输入分档；官网未列隐式缓存支持，显式缓存为不同请求模式，缓存价待确认（2026-10-01 复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing 与 https://www.alibabacloud.com/help/en/model-studio/context-cache" },
 
   // --- 豆包（本平台 doubao-pro/lite 为通用档位，价格对应官方 Seed 2.0 Pro/Lite ≤32K 档）---
   { model: "doubao-pro", input: 0.4769, output: 2.384501, cache: 0.09538, type: "doubao", remark: `对应官方 Seed-2.0-Pro ≤32K：¥3.2/¥16/缓存 ¥0.64 ÷ 6.71；来源 ai.volcengine.com/model` },
@@ -111,18 +128,20 @@ export const DEFAULT_PRICES = [
   { model: "doubao-seed-1-6-flash", input: 0.030045, output: 0.298301, cache: 0, type: "ark", remark: `高速档按官方 flash 档折算 ÷ 6.71；来源 docs.volcengine.com 模型定价页` },
   { model: "doubao-seed-1-6-vision", input: 0.119106, output: 1.192131, cache: 0, type: "ark", remark: `视觉档按 Seed-1.6 同档折算 ÷ 6.71；来源 docs.volcengine.com 模型定价页` },
 
-  // --- 小米 MiMo（2026-09 接入；官方人民币价，海外另有美元价）---
-  { model: "mimo-v2.5-pro", input: 0.447094, output: 0.894188, cache: 0.003726, type: "mimo", remark: `官方 ¥3.00 入 / ¥6.00 出 / 缓存 ¥0.025 ÷ 6.71；来源 mimo.mi.com 定价页` },
-  { model: "mimo-v2.5", input: 0.149031, output: 0.298063, cache: 0.002981, type: "mimo", remark: `官方 ¥1.00 入 / ¥2.00 出 / 缓存 ¥0.02 ÷ 6.71；来源 mimo.mi.com 定价页` },
+  // --- 小米 MiMo（2026-10-01 复核官方海外美元价，不使用人民币换算）---
+  { model: "mimo-v2.5-pro", input: 0.435, output: 0.87, cache: 0.0036, type: "mimo", remark: "官方海外美元价（2026-10-01 复核）；2026-10-21 北京时间 10:00 下线；来源 https://mimo.mi.com/docs/en-US/price/pay-as-you-go" },
+  { model: "mimo-v2.5", input: 0.14, output: 0.28, cache: 0.0028, type: "mimo", remark: "官方海外美元价（2026-10-01 复核）；2026-10-21 北京时间 10:00 下线；来源 https://mimo.mi.com/docs/en-US/price/pay-as-you-go" },
+  { model: "mimo-v2.6-pro-ultraspeed", input: 4.35, output: 8.70, cache: 0.036, type: "mimo", remark: "官方海外美元价，UltraSpeed 为独立 API ID（2026-10-01 复核）；来源 https://mimo.mi.com/docs/en-US/price/pay-as-you-go" },
 
-  // --- MiniMax（2026-09 接入；国内人民币价，M3 按输入长度分档取 ≤512k 档）---
-  { model: "MiniMax-M3", input: 0.312966, output: 1.251863, cache: 0.062593, type: "minimax", remark: `官方 ≤512k 输入档 ¥2.10/¥8.40/缓存 ¥0.42（永久五折）÷ 6.71；>512k 档翻倍；来源 platform.minimax.io 定价页` },
-  { model: "MiniMax-M2.7", input: 0.312966, output: 1.251863, cache: 0.062593, type: "minimax", remark: `官方 ¥2.1/¥8.4/缓存 ¥0.42 ÷ 6.71；来源 platform.minimax.io 定价页` },
-  { model: "MiniMax-M2.7-highspeed", input: 0.625931, output: 2.503726, cache: 0.058, type: "minimax", remark: `高速档官方 ¥4.2/¥16.8 ÷ 6.71；来源 platform.minimax.io 定价页` },
-  { model: "MiniMax-M2.5", input: 0.313323, output: 1.252221, cache: 0.062235, type: "minimax", remark: `历史档按官方同档折算 ÷ 6.71；来源 platform.minimax.io 定价页` },
-  { model: "MiniMax-M2.1", input: 0.313323, output: 1.252221, cache: 0.062235, type: "minimax", remark: `历史档按官方同档折算 ÷ 6.71；来源 platform.minimax.io 定价页` },
-  { model: "MiniMax-M2", input: 0.313323, output: 1.252221, cache: 0.062235, type: "minimax", remark: `历史档按官方同档折算 ÷ 6.71；来源 platform.minimax.io 定价页` },
-  { model: "MiniMax-M3-priority", input: 0.438, output: 1.750, cache: 0.087, type: "minimax", remark: `service_tier=priority 为标准价 1.5 倍；来源 platform.minimax.io 定价页` },
+  // --- MiniMax（2026-10-01 复核官方美元价；M3 取 ≤512K 标准档，>512K 档翻倍）---
+  { model: "MiniMax-M3", input: 0.30, output: 1.20, cache: 0.06, tiers: [{ minInputTokens: 512001, input: 0.60, output: 2.40, cache: 0.12 }], type: "minimax", remark: "官方美元价，≤512k 输入标准档永久五折；>512k 输入全请求用长档，priority 参数为标准价 1.5 倍（2026-10-01 复核）；来源 https://platform.minimax.io/docs/guides/pricing-paygo" },
+  { model: "MiniMax-M2.7", input: 0.30, output: 1.20, cache: 0.06, type: "minimax", remark: "官方美元价（2026-10-01 复核）；来源 https://platform.minimax.io/docs/guides/pricing-paygo" },
+  { model: "MiniMax-M2.7-highspeed", input: 0.60, output: 2.40, cache: 0.06, type: "minimax", remark: "官方美元价，高速版为独立 API ID（2026-10-01 复核）；来源 https://platform.minimax.io/docs/guides/pricing-paygo" },
+  { model: "MiniMax-M2.5", input: 0.30, output: 1.20, cache: 0.03, type: "minimax", remark: "官方美元历史价（2026-10-01 复核）；来源 https://platform.minimax.io/docs/guides/pricing-paygo" },
+  { model: "MiniMax-M2.5-highspeed", input: 0.60, output: 2.40, cache: 0.03, type: "minimax", remark: "官方美元历史价，高速版为独立 API ID（2026-10-01 复核）；来源 https://platform.minimax.io/docs/guides/pricing-paygo" },
+  { model: "MiniMax-M2.1", input: 0.30, output: 1.20, cache: 0.03, type: "minimax", remark: "官方美元历史价（2026-10-01 复核）；来源 https://platform.minimax.io/docs/guides/pricing-paygo" },
+  { model: "MiniMax-M2.1-highspeed", input: 0.60, output: 2.40, cache: 0.03, type: "minimax", remark: "官方美元历史价，高速版为独立 API ID（2026-10-01 复核）；来源 https://platform.minimax.io/docs/guides/pricing-paygo" },
+  { model: "MiniMax-M2", input: 0.30, output: 1.20, cache: 0.03, type: "minimax", remark: "官方美元历史价（2026-10-01 复核）；来源 https://platform.minimax.io/docs/guides/pricing-paygo" },
 
   // --- 阶跃星辰 StepFun（2026-09 接入；官方人民币价，含缓存命中档）---
   { model: "step-5-preview", input: 1.043219, output: 2.980626, cache: 0.052161, type: "stepfun", remark: `官方 ¥7/¥20/缓存命中 ¥0.35 ÷ 6.71；来源 platform.stepfun.com 定价页` },
@@ -130,65 +149,106 @@ export const DEFAULT_PRICES = [
   { model: "step-3.5-flash", input: 0.104322, output: 0.312966, cache: 0.020864, type: "stepfun", remark: `官方 ¥0.7/¥2.1/缓存命中 ¥0.14 ÷ 6.71；来源 platform.stepfun.com 定价页` },
   { model: "step-3.5-flash-2603", input: 0.104083, output: 0.313323, cache: 0.020387, type: "stepfun", remark: `同 step-3.5-flash 官方档位 ÷ 6.71；来源 platform.stepfun.com 定价页` },
 
-  // --- OpenAI（美元牌价；官方页对爬虫 403，录入后需人工复核）---
-  { model: "gpt-4o", input: 2.50, output: 10.00, cache: 1.25, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
-  { model: "gpt-4o-mini", input: 0.15, output: 0.60, cache: 0.075, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
-  { model: "gpt-5", input: 1.25, output: 10.00, cache: 0.125, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
-  { model: "gpt-5-mini", input: 0.25, output: 2.00, cache: 0.025, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
-  { model: "gpt-5-nano", input: 0.05, output: 0.40, cache: 0.005, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
-  { model: "o3", input: 2.00, output: 8.00, cache: 0.50, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
-  { model: "o4-mini", input: 1.10, output: 4.40, cache: 0.275, type: "openai", remark: "官方牌价录入；来源 openai.com/api/pricing/" },
-  // 订阅/网页版反代产出的型号：按 OpenAI 同档次官方价录入（订阅渠道按 token 折算成本，
-  // 平台侧不区分「订阅额度已付」与「按量付费」，统一用官方牌价口径）。
-  // 缺少这些行会让 gpt-5.6-* 落到兜底档（比官方价低 3~8 倍 = 系统性少计费）。
-  { model: "gpt-5.6-sol", input: 1.75, output: 14.00, cache: 0.175, type: "openai", remark: "对标 gpt-5.x 旗舰档官方价；来源 openai.com/api/pricing/" },
-  { model: "gpt-5.6-terra", input: 1.25, output: 10.00, cache: 0.125, type: "openai", remark: "对标 gpt-5.x 主力档官方价；来源 openai.com/api/pricing/" },
-  { model: "gpt-5.6-luna", input: 0.25, output: 2.00, cache: 0.025, type: "openai", remark: "对标 gpt-5.x mini 档官方价；来源 openai.com/api/pricing/" },
-  { model: "gpt-5.5", input: 1.25, output: 10.00, cache: 0.125, type: "openai", remark: "对标 gpt-5 官方价；来源 openai.com/api/pricing/" },
+  // --- OpenAI（2026-10-01 官网 Standard 美元价；>272000 输入时全请求走长上下文档）---
+  // Fast/Flex/Batch 是处理模式，不能从聚合模型后缀直接断定已使用该折扣档。
+  { model: "gpt-6.1-sol", input: 2.00, output: 10.00, cache: 0.10, tiers: [{ minInputTokens: 272001, input: 4.00, output: 15.00, cache: 0.20 }], type: "openai", remark: "官方 Standard 美元价，最新 Sol；>272000 输入全请求用长档（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-6-sol", input: 2.00, output: 10.00, cache: 0.20, tiers: [{ minInputTokens: 272001, input: 4.00, output: 15.00, cache: 0.40 }], type: "openai", remark: "官方 Standard 美元价，独立于 6.1 Sol；>272000 输入全请求用长档（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-6-luna", input: 0.10, output: 0.50, cache: 0.01, tiers: [{ minInputTokens: 272001, input: 0.20, output: 0.75, cache: 0.02 }], type: "openai", remark: "官方 Standard 美元价；>272000 输入全请求用长档（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-4o", input: 2.50, output: 10.00, cache: 1.25, type: "openai", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-4o-mini", input: 0.15, output: 0.60, cache: 0.075, type: "openai", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5", input: 1.25, output: 10.00, cache: 0.125, type: "openai", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5-mini", input: 0.25, output: 2.00, cache: 0.025, type: "openai", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5-nano", input: 0.05, output: 0.40, cache: 0.005, type: "openai", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "o3", input: 2.00, output: 8.00, cache: 0.50, type: "openai", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "o4-mini", input: 1.10, output: 4.40, cache: 0.275, type: "openai", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5.6-sol", input: 4.00, output: 20.00, cache: 0.40, tiers: [{ minInputTokens: 272001, input: 8.00, output: 30.00, cache: 0.80 }], type: "openai", remark: "官方 Standard 美元促销价至少持续至2026-11-21；>272000 输入全请求用长档（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5.6-terra", input: 2.00, output: 12.00, cache: 0.20, tiers: [{ minInputTokens: 272001, input: 4.00, output: 18.00, cache: 0.40 }], type: "openai", remark: "官方 Standard 美元价；>272000 输入全请求用长档（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5.6-luna", input: 0.20, output: 1.20, cache: 0.02, tiers: [{ minInputTokens: 272001, input: 0.40, output: 1.80, cache: 0.04 }], type: "openai", remark: "官方 Standard 美元价；>272000 输入全请求用长档（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5.5", input: 5.00, output: 30.00, cache: 0.50, tiers: [{ minInputTokens: 272001, input: 10.00, output: 45.00, cache: 1.00 }], type: "openai", remark: "官方 Standard 美元价；>272000 输入全请求用长档（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5.5-pro", input: 30.00, output: 180.00, cache: null, tiers: [{ minInputTokens: 272001, input: 60.00, output: 270.00, cache: null }], type: "openai", remark: "官方真实独立 Pro 档，无缓存价；>272000 输入用长档（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5.4", input: 2.50, output: 15.00, cache: 0.25, tiers: [{ minInputTokens: 272001, input: 5.00, output: 22.50, cache: 0.50 }], type: "openai", remark: "官方 Standard 美元价；>272000 输入用长档（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5.4-pro", input: 30.00, output: 180.00, cache: null, tiers: [{ minInputTokens: 272001, input: 60.00, output: 270.00, cache: null }], type: "openai", remark: "官方真实独立 Pro 档，无缓存价；>272000 输入用长档（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5.4-mini", input: 0.75, output: 4.50, cache: 0.075, type: "openai", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5.4-nano", input: 0.20, output: 1.25, cache: 0.02, type: "openai", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5.2", input: 1.75, output: 14.00, cache: 0.175, type: "openai", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5.2-pro", input: 21.00, output: 168.00, cache: null, type: "openai", remark: "官方真实独立 Pro 档，无缓存价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5.1", input: 1.25, output: 10.00, cache: 0.125, type: "openai", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5-pro", input: 15.00, output: 120.00, cache: null, type: "openai", remark: "官方真实独立 Pro 档，无缓存价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-4.1", input: 2.00, output: 8.00, cache: 0.50, type: "openai", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-4.1-mini", input: 0.40, output: 1.60, cache: 0.10, type: "openai", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-4.1-nano", input: 0.10, output: 0.40, cache: 0.025, type: "openai", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "o1", input: 15.00, output: 60.00, cache: 7.50, type: "openai", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "o1-pro", input: 150.00, output: 600.00, cache: null, type: "openai", remark: "官方真实独立 Pro 档，无缓存价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "o3-pro", input: 20.00, output: 80.00, cache: null, type: "openai", remark: "官方真实独立 Pro 档，无缓存价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "o3-mini", input: 1.10, output: 4.40, cache: 0.55, type: "openai", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "chat-latest", input: 5.00, output: 30.00, cache: 0.50, type: "openai", remark: "官方 ChatGPT API 独立 ID，跟随最新（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5.3-codex", input: 1.75, output: 14.00, cache: 0.175, type: "openai", remark: "官方 Codex API 独立 ID（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5-search-api", input: 1.25, output: 10.00, cache: 0.125, type: "openai", remark: "官方 Search API 独立 ID；工具费另计，非本表 token 费（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5.6-cyber", input: 12.50, output: 75.00, cache: 1.25, type: "openai", remark: "官方 Daybreak 专用美元价；目录登记不表示当前渠道授权可用（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "gpt-5.5-cyber", input: 12.50, output: 75.00, cache: 1.25, type: "openai", remark: "官方 Daybreak 专用美元价；目录登记不表示当前渠道授权可用（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
   { model: "codex-auto-review", input: 0.25, output: 2.00, cache: 0.025, type: "openai", remark: "代码审查档，对标 gpt-5-mini 官方价；来源 openai.com/api/pricing/" },
 
   // --- Anthropic（美元牌价）--- 渠道类型统一用 anthropic（与 channel-types 的接入方式一致，
   // 之前写 "claude" 会和模型登记表/定价导入校验打架）
-  { model: "claude-opus-5", input: 5.00, output: 25.00, cache: 0.50, type: "anthropic", remark: "官方定价；来源 anthropic.com/pricing" },
-  { model: "claude-sonnet-5", input: 2.00, output: 10.00, cache: 0.20, type: "anthropic", remark: "官方定价；来源 anthropic.com/pricing" },
-  { model: "claude-haiku-4.5", input: 1.00, output: 5.00, cache: 0.10, type: "anthropic", remark: "官方定价；来源 anthropic.com/pricing" },
+  { model: "claude-fable-5-1", input: 10.00, output: 50.00, cache: 0.25, type: "anthropic", remark: "官方美元价，API ID 经官网发布页确认（2026-10-01 复核）；来源 https://www.anthropic.com/pricing 与 https://www.anthropic.com/claude-fable-and-mythos-5-1" },
+  { model: "claude-opus-5-5", input: 4.00, output: 20.00, cache: 0.20, type: "anthropic", remark: "官方美元价，API ID 经官网发布页确认（2026-10-01 复核）；来源 https://www.anthropic.com/pricing 与 https://www.anthropic.com/news/claude-opus-5-5" },
+  { model: "claude-sonnet-5-5", input: 2.00, output: 10.00, cache: 0.20, type: "anthropic", remark: "官方美元价，API ID 经官网模型页确认（2026-10-01 复核）；来源 https://www.anthropic.com/pricing 与 https://www.anthropic.com/claude/sonnet" },
+  { model: "claude-opus-5", input: 5.00, output: 25.00, cache: 0.50, type: "anthropic", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://www.anthropic.com/pricing" },
+  { model: "claude-sonnet-5", input: 2.00, output: 10.00, cache: 0.20, type: "anthropic", remark: "官方 Standard 美元价（2026-10-01 复核）；来源 https://www.anthropic.com/pricing" },
+  { model: "claude-haiku-4-5", input: 1.00, output: 5.00, cache: 0.10, type: "anthropic", remark: "官方 Standard 美元价，规范 API ID 经官方 SDK 确认（2026-10-01 复核）；来源 https://www.anthropic.com/pricing 与 https://github.com/anthropics/anthropic-sdk-typescript/blob/main/src/resources/messages/messages.ts" },
+  { model: "claude-fable-5", input: 10.00, output: 50.00, cache: 1.00, type: "anthropic", remark: "官方上一代 Fable 美元价，独立于5.1（2026-10-01 复核）；来源 https://www.anthropic.com/pricing 与 https://github.com/anthropics/anthropic-sdk-typescript/blob/main/src/resources/messages/messages.ts" },
+  { model: "claude-opus-4-8", input: 5.00, output: 25.00, cache: 0.50, type: "anthropic", remark: "官方美元历史价，规范 API ID 经官方 SDK 确认（2026-10-01 复核）；来源 https://www.anthropic.com/pricing 与 https://github.com/anthropics/anthropic-sdk-typescript/blob/main/src/resources/messages/messages.ts" },
+  { model: "claude-opus-4-7", input: 5.00, output: 25.00, cache: 0.50, type: "anthropic", remark: "官方美元历史价，规范 API ID 经官方 SDK 确认（2026-10-01 复核）；来源 https://www.anthropic.com/pricing 与 https://github.com/anthropics/anthropic-sdk-typescript/blob/main/src/resources/messages/messages.ts" },
+  { model: "claude-opus-4-6", input: 5.00, output: 25.00, cache: 0.50, type: "anthropic", remark: "官方美元历史价，规范 API ID 经官方 SDK 确认（2026-10-01 复核）；来源 https://www.anthropic.com/pricing 与 https://github.com/anthropics/anthropic-sdk-typescript/blob/main/src/resources/messages/messages.ts" },
 
   // --- Google（美元牌价）---
-  { model: "gemini-3.5-flash", input: 1.50, output: 9.00, cache: 0.15, type: "gemini", remark: "官方牌价录入；来源 ai.google.dev/gemini-api/docs/pricing" },
-  { model: "gemini-2.5-pro", input: 1.25, output: 10.00, cache: 0.125, type: "gemini", remark: "官方牌价录入；来源 ai.google.dev/gemini-api/docs/pricing" },
-  { model: "gemini-2.5-flash", input: 0.30, output: 2.50, cache: 0.03, type: "gemini", remark: "官方牌价录入；来源 ai.google.dev/gemini-api/docs/pricing" },
+  { model: "gemini-3.5-flash", input: 1.50, output: 9.00, cache: 0.15, type: "gemini", remark: "官方 Standard 文本美元价（2026-10-01 复核）；来源 https://ai.google.dev/gemini-api/docs/pricing" },
+  { model: "gemini-3.6-flash", input: 0.75, output: 3.75, cache: 0.075, scheduledPrices: [{ from: "2027-01-01T00:00:00Z", input: 1.50, output: 7.50, cache: 0.15 }], type: "gemini", remark: "官方 Standard 美元促销价至2026-12-31；2027-01-01起1.50/7.50/0.15，官网未明确切换时区，本表按UTC日期（2026-10-01 复核）；来源 https://ai.google.dev/gemini-api/docs/pricing" },
+  { model: "gemini-3.7-flash", input: 0.75, output: 3.75, cache: 0.075, scheduledPrices: [{ from: "2027-01-01T00:00:00Z", input: 1.50, output: 7.50, cache: 0.15 }], type: "gemini", remark: "官方 Standard 美元促销价至2026-12-31；2027-01-01起1.50/7.50/0.15，官网未明确切换时区，本表按UTC日期（2026-10-01 复核）；来源 https://ai.google.dev/gemini-api/docs/pricing" },
+  { model: "gemini-3.5-flash-lite", input: 0.30, output: 2.50, cache: 0.03, type: "gemini", remark: "官方 Standard 文本美元价（2026-10-01 复核）；来源 https://ai.google.dev/gemini-api/docs/pricing" },
+  { model: "gemini-3.1-flash-lite", input: 0.25, output: 1.50, cache: 0.025, type: "gemini", remark: "官方 Standard 文本美元价；音频输入0.50/缓存0.05不包含在此文本档（2026-10-01 复核）；来源 https://ai.google.dev/gemini-api/docs/pricing" },
+  { model: "gemini-3.1-pro-preview", input: 2.00, output: 12.00, cache: 0.20, tiers: [{ minInputTokens: 200001, input: 4.00, output: 18.00, cache: 0.40 }], type: "gemini", remark: "官方 Standard 美元价；>200000 输入全请求用长档（2026-10-01 复核）；来源 https://ai.google.dev/gemini-api/docs/pricing" },
+  { model: "gemini-3.1-pro-preview-customtools", input: 2.00, output: 12.00, cache: 0.20, tiers: [{ minInputTokens: 200001, input: 4.00, output: 18.00, cache: 0.40 }], type: "gemini", remark: "官方独立 Custom Tools endpoint，与3.1 Pro同价；>200000 输入用长档（2026-10-01 复核）；来源 https://ai.google.dev/gemini-api/docs/pricing" },
+  { model: "gemini-3-flash-preview", input: 0.50, output: 3.00, cache: 0.05, type: "gemini", remark: "官方 Standard 文本美元价；音频输入1.00/缓存0.10不包含在此文本档（2026-10-01 复核）；来源 https://ai.google.dev/gemini-api/docs/pricing" },
+  { model: "gemini-robotics-er-2-preview", input: 1.00, output: 5.00, cache: 0.10, scheduledPrices: [{ from: "2027-01-01T00:00:00Z", input: 2.00, output: 10.00, cache: 0.20 }], type: "gemini", remark: "官方 Standard 美元促销价至2026-12-31；2027-01-01起2.00/10.00/0.20，官网未明确切换时区，本表按UTC日期（2026-10-01 复核）；来源 https://ai.google.dev/gemini-api/docs/pricing" },
+  { model: "gemini-2.5-pro", input: 1.25, output: 10.00, cache: 0.125, tiers: [{ minInputTokens: 200001, input: 2.50, output: 15.00, cache: 0.25 }], type: "gemini", remark: "官方 Standard 美元价；>200000 输入全请求用长档；仅向已有活跃用户开放（2026-10-01 复核）；来源 https://ai.google.dev/gemini-api/docs/pricing" },
+  { model: "gemini-2.5-flash", input: 0.30, output: 2.50, cache: 0.03, type: "gemini", remark: "官方 Standard 文本美元价；音频输入1.00/缓存0.10不包含在此文本档（2026-10-01 复核）；来源 https://ai.google.dev/gemini-api/docs/pricing" },
 
   // --- xAI Grok（美元牌价，取自 docs.x.ai 页面内嵌的 __XAI_PUBLIC_MODELS__ 官方价表；
   //     价格为「每百万 token」，页面单位是 1e-4 美元）---
-  { model: "grok-4.6", input: 2.00, output: 6.00, cache: 0.50, type: "grok", remark: "官方价表（长上下文档 $2.2/$6.6）；来源 docs.x.ai/docs/models" },
-  { model: "grok-4.5", input: 2.00, output: 6.00, cache: 0.30, type: "grok", remark: "官方价表；来源 docs.x.ai/docs/models" },
-  { model: "grok-4.3", input: 1.25, output: 2.50, cache: 0.20, type: "grok", remark: "官方价表；来源 docs.x.ai/docs/models" },
+  { model: "grok-4.7", input: 2.00, output: 6.00, cache: 0.50, tiers: [{ minInputTokens: 200000, input: 4.00, output: 12.00, cache: 1.00 }], type: "grok", remark: "官方 global 美元价，最新 API ID；>=200000 输入全请求用长档；US区域另加10%（2026-10-01 复核）；来源 https://docs.x.ai/developers/pricing" },
+  { model: "grok-build-0.1", input: 1.00, output: 2.00, cache: 0.20, tiers: [{ minInputTokens: 200000, input: 2.00, output: 4.00, cache: 0.40 }], type: "grok", remark: "官方 global 美元价，独立 API ID；>=200000 输入用长档（2026-10-01 复核）；来源 https://docs.x.ai/developers/pricing" },
+  { model: "grok-4.6", input: 2.00, output: 6.00, cache: 0.50, tiers: [{ minInputTokens: 200000, input: 4.00, output: 12.00, cache: 1.00 }], type: "grok", remark: "官方 global 美元价；>=200000 输入全请求用长档；旧2.2/6.6为US区域短档而非长档（2026-10-01 复核）；来源 https://docs.x.ai/developers/pricing" },
+  { model: "grok-4.5", input: 2.00, output: 6.00, cache: 0.30, tiers: [{ minInputTokens: 200000, input: 4.00, output: 12.00, cache: 0.60 }], type: "grok", remark: "官方 global 美元价；>=200000 输入全请求用长档（2026-10-01 复核）；来源 https://docs.x.ai/developers/pricing" },
+  { model: "grok-4.3", input: 1.25, output: 2.50, cache: 0.20, tiers: [{ minInputTokens: 200000, input: 2.50, output: 5.00, cache: 0.40 }], type: "grok", remark: "官方 global 美元价；>=200000 输入全请求用长档（2026-10-01 复核）；来源 https://docs.x.ai/developers/pricing" },
+  { model: "grok-4.20-multi-agent-0309", input: 1.25, output: 2.50, cache: 0.20, tiers: [{ minInputTokens: 200000, input: 2.50, output: 5.00, cache: 0.40 }], type: "grok", remark: "官方独立 multi-agent API ID；>=200000 输入用长档（2026-10-01 复核）；来源 https://docs.x.ai/developers/pricing" },
+  { model: "grok-4.20-0309-reasoning", input: 1.25, output: 2.50, cache: 0.20, tiers: [{ minInputTokens: 200000, input: 2.50, output: 5.00, cache: 0.40 }], type: "grok", remark: "官方独立 reasoning API ID；>=200000 输入用长档（2026-10-01 复核）；来源 https://docs.x.ai/developers/pricing" },
+  { model: "grok-4.20-0309-non-reasoning", input: 1.25, output: 2.50, cache: 0.20, tiers: [{ minInputTokens: 200000, input: 2.50, output: 5.00, cache: 0.40 }], type: "grok", remark: "官方独立 non-reasoning API ID；>=200000 输入用长档（2026-10-01 复核）；来源 https://docs.x.ai/developers/pricing" },
   { model: "grok-3-mini", input: 0.30, output: 0.50, cache: 0.03, type: "grok", remark: "轻量档，按官方 4.3 档一半估录入，待官方页复核；来源 docs.x.ai/docs/models" },
 
   // --- 后续批次新接入的档位（此前落到兜底价 0.30/1.20 并打告警）---
   // 阿里通义：qwen-max 对应官方 max 档，turbo/flash 是轻量档
-  { model: "qwen-max", input: 0.372578, output: 1.490313, cache: 0, type: "qwen", remark: `对应官方 max 档 ¥2.5/¥10 ÷ 6.71（与 qwen3-max 同档）；来源 help.aliyun.com/zh/model-studio` },
+  { model: "qwen-max", input: 0.345, output: 1.377, cache: 0.069, type: "qwen", remark: "官方Beijing美元价，真实独立API ID无分档；缓存取隐式20%（2026-10-01 复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing 与 https://www.alibabacloud.com/help/en/model-studio/context-cache" },
   { model: "qwen-max-latest", input: 0.37234, output: 1.490432, cache: 0, type: "qwen", remark: `官方 max 最新版同档价 ÷ 6.71；来源 help.aliyun.com/zh/model-studio` },
-  { model: "qwen-turbo", input: 0.059613, output: 0.23845, cache: 0, type: "qwen", remark: `官方 turbo 档 ¥0.4/¥1.6 ÷ 6.71；来源 help.aliyun.com/zh/model-studio` },
-  { model: "qwen-flash", input: 0.029806, output: 0.119225, cache: 0, type: "qwen", remark: `官方 flash 档 ¥0.2/¥0.8 ÷ 6.71；来源 help.aliyun.com/zh/model-studio` },
-  { model: "qwen3.7-max", input: 0.372578, output: 1.490313, cache: 0.032787, type: "qwen", remark: `官方 3.7-max 与 max 同档 ¥2.5/¥10、缓存 ¥0.22 ÷ 6.71；来源 help.aliyun.com/zh/model-studio` },
-  // Google：3.8-flash 是 3.5-flash 的迭代档，官方同档价
-  { model: "gemini-3.8-flash", input: 1.50, output: 9.00, cache: 0.15, type: "gemini", remark: "与 3.5-flash 同档官方牌价；来源 ai.google.dev/gemini-api/docs/pricing" },
-  { model: "gemini-2.5-flash-lite", input: 0.10, output: 0.40, cache: 0.025, type: "gemini", remark: "官方牌价录入；来源 ai.google.dev/gemini-api/docs/pricing" },
+  { model: "qwen-turbo", input: 0.044, output: 0.087, cache: 0.0088, type: "qwen", remark: "官方Beijing非思考美元价；思考输出另为0.431，缓存取官网隐式20%（2026-10-01 复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing" },
+  { model: "qwen-flash", input: 0.022, output: 0.216, cache: 0.0044, tiers: [{ minInputTokens: 128001, input: 0.087, output: 0.861, cache: 0.0174 }, { minInputTokens: 256001, input: 0.173, output: 1.721, cache: 0.0346 }], type: "qwen", remark: "官方Beijing美元价，真实独立API ID；>128000/>256000输入分档；缓存取隐式20%（2026-10-01 复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing 与 https://www.alibabacloud.com/help/en/model-studio/context-cache" },
+  { model: "qwen3.7-max", input: 1.65, output: 4.951, cache: 0.33, type: "qwen", remark: "官方Beijing美元价，真实独立API ID，≤1000000输入；缓存取隐式20%（2026-10-01 复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing 与 https://www.alibabacloud.com/help/en/model-studio/context-cache" },
+  { model: "gemini-3.8-flash", input: 0.75, output: 3.75, cache: 0.075, scheduledPrices: [{ from: "2027-01-01T00:00:00Z", input: 1.50, output: 7.50, cache: 0.15 }], type: "gemini", remark: "官方 Standard 美元促销价至2026-12-31；2027-01-01起1.50/7.50/0.15，官网未明确切换时区，本表按UTC日期（2026-10-01 复核）；来源 https://ai.google.dev/gemini-api/docs/pricing" },
+  { model: "gemini-2.5-flash-lite", input: 0.10, output: 0.40, cache: 0.01, type: "gemini", remark: "官方 Standard 文本美元价；音频输入0.30/缓存0.03不包含在此文本档（2026-10-01 复核）；来源 https://ai.google.dev/gemini-api/docs/pricing" },
   // Anthropic：4.5 代 sonnet/haiku（旧代命名，按官方历史价录入）
-  { model: "claude-sonnet-4.6", input: 3.00, output: 15.00, cache: 0.30, type: "anthropic", remark: "4.6 代 sonnet 官方价（与 4.5 同档）；来源 anthropic.com/pricing" },
-  { model: "claude-sonnet-4.5", input: 3.00, output: 15.00, cache: 0.30, type: "anthropic", remark: "4.5 代 sonnet 官方价；来源 anthropic.com/pricing" },
-  { model: "claude-opus-4.5", input: 5.00, output: 25.00, cache: 0.50, type: "anthropic", remark: "4.5 代 opus 官方价；来源 anthropic.com/pricing" },
+  { model: "claude-sonnet-4-6", input: 3.00, output: 15.00, cache: 0.30, type: "anthropic", remark: "官方美元历史价，规范 API ID 经发布页确认（2026-10-01 复核）；来源 https://www.anthropic.com/pricing 与 https://www.anthropic.com/news/claude-sonnet-4-6" },
+  { model: "claude-sonnet-4-5", input: 3.00, output: 15.00, cache: 0.30, type: "anthropic", remark: "官方美元历史价，规范 API ID 经发布页确认（2026-10-01 复核）；2026-11-30下线；来源 https://www.anthropic.com/pricing 与 https://www.anthropic.com/news/claude-sonnet-4-5" },
+  { model: "claude-opus-4-5", input: 5.00, output: 25.00, cache: 0.50, type: "anthropic", remark: "官方美元历史价，规范 API ID 经官方 SDK 确认（2026-10-01 复核）；来源 https://www.anthropic.com/pricing 与 https://github.com/anthropics/anthropic-sdk-typescript/blob/main/src/resources/messages/messages.ts" },
   // 智谱视觉档：与对应文本档同价（官方视觉不加价）
   { model: "glm-5v", input: 0.640835, output: 2.354694, cache: 0.11, type: "glm", remark: `视觉档与 glm-5.2 同价 ¥4.3/¥15.8 ÷ 6.71；来源 open.bigmodel.cn/pricing` },
-  { model: "glm-4.6v", input: 0.298063, output: 1.19225, cache: 0.06, type: "glm", remark: `视觉档与 glm-4.6 同价 ¥2/¥8 ÷ 6.71；来源 open.bigmodel.cn/pricing` },
+  { model: "glm-4.6v", input: 0.30, output: 0.90, cache: 0.05, type: "glm", remark: "Z.AI 官方美元视觉档价（2026-10-01 复核）；来源 https://docs.z.ai/guides/overview/pricing" },
   { model: "glm-4v", input: 0.149031, output: 0.149031, cache: 0, type: "glm", remark: `官方 glm-4v ¥1/¥1 ÷ 6.71；来源 open.bigmodel.cn/pricing` },
   // WorkBuddy（腾讯托管）的 DeepSeek 档：与官方 deepseek-flash 是**同一个模型**
   // （官方已把 V4.1-Flash 更名为 deepseek-flash，用户确认），不再单独定价 ——
   // 托管渠道声明旧 id deepseek-v4.1-flash，路由按别名归一（deepseek-models.js#ALIASES），
   // 计费走上面 deepseek-flash 一行（峰谷同价口径）。
-  // 小米 MiMo / 美团 LongCat：官方未公布完整价表，按公开档位与同类轻量档估录，待官方页复核
-  { model: "mimo-v2.6-pro", input: 0.50, output: 2.00, cache: 0.05, type: "mimo", remark: "官方未公布完整价表，按同类 pro 档估录，待复核" },
+  { model: "mimo-v2.6-pro", input: 0.435, output: 0.87, cache: 0.0036, type: "mimo", remark: "官方海外美元价（2026-10-01 复核）；来源 https://mimo.mi.com/docs/en-US/price/pay-as-you-go" },
+  // 美团 LongCat：尚未取得官方美元价，保留历史平台价等待复核。
   { model: "longcat-2.0", input: 0.30, output: 1.20, cache: 0.03, type: "longcat", remark: "官方未公布完整价表，按同类轻量档估录，待复核" },
 
   // --- 上一代档位：仍在注册表里可被请求，不给价会按「同厂商最贵档」兜底，
@@ -207,13 +267,12 @@ export const DEFAULT_PRICES = [
   // 聚合渠道上的开源权重模型（OpenRouter / NIM 常用 `vendor/模型` 形式，
   // 前缀会被 getPrice 剥掉，这里按对应开源模型的托管价录入）
   { model: "deepseek-chat", input: 0.27, output: 1.10, cache: 0.07, type: "deepseek", remark: "DeepSeek-V3 对话档官方价（旧命名 deepseek-chat）；来源 api-docs.deepseek.com/quick_start/pricing/" },
-  { model: "deepseek-v3.2", input: 0.28, output: 0.42, cache: 0.028, type: "deepseek", remark: "V3.2 官方价（开源权重托管同价）；来源 api-docs.deepseek.com/quick_start/pricing/" },
   { model: "qwen3-235b-a22b", input: 0.20, output: 0.60, cache: 0.02, type: "qwen", remark: "Qwen3-235B 开源权重，按官方百炼托管价录入；来源 help.aliyun.com/zh/model-studio" },
 
   // --- 线上实测发现的「渠道在用但无价」的模型（新门禁会拦下它们，故补录）---
   // 补录依据：这些是上游渠道实际暴露的档位，官方页若未公布就按同档估录并在 remark 注明。
-  { model: "gpt-6-astra", input: 2.50, output: 20.00, cache: 0.25, type: "openai", remark: "未在官方价表找到，按 gpt-5.6-sol 旗舰档估录，待官方页复核" },
-  { model: "mimo-v2.6-flash", input: 0.15, output: 0.60, cache: 0.015, type: "mimo", remark: "小米 MiMo 轻量档，按同厂 v2.6-pro 的 1/3 估录，待官方页复核" },
+  { model: "gpt-6-astra", input: 10.00, output: 50.00, cache: 1.00, tiers: [{ minInputTokens: 272001, input: 20.00, output: 75.00, cache: 2.00 }], type: "openai", remark: "官方 Standard 美元价；>272000 输入全请求用长档（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
+  { model: "mimo-v2.6-flash", input: 0.14, output: 0.28, cache: 0.0028, type: "mimo", remark: "官方海外美元价（2026-10-01 复核）；来源 https://mimo.mi.com/docs/en-US/price/pay-as-you-go" },
   { model: "omen-alpha", input: 0.30, output: 1.20, cache: 0.03, type: "opencode", remark: "OpenCode 平台上的未公开档位，按同类轻量档估录，待复核" },
 ];
 
@@ -233,6 +292,7 @@ export async function loadPrices() {
       input: Number(r.input_price) || 0,
       output: Number(r.output_price) || 0,
       cache: Number(r.cache_price) || 0,
+      tiers: parsePriceTiers(r.price_tiers),
       // 闲时价：NULL 表示不启用分时（与改造前行为一致）
       offpeakInput: r.offpeak_input_price === null ? null : Number(r.offpeak_input_price),
       offpeakOutput: r.offpeak_output_price === null ? null : Number(r.offpeak_output_price),
@@ -292,6 +352,8 @@ export function isPeakAt(rule, atMs) {
   const offset = Number(r.offset) || 0;
   // 先偏移到规则所在时区，再用 UTC 取值：避免依赖进程时区设置
   const d = new Date(Number(atMs) + offset * 3600_000);
+  const date = Number.isFinite(d.getTime()) ? d.toISOString().slice(0, 10) : "";
+  if (Array.isArray(r.offpeakDates) && r.offpeakDates.some((range) => Array.isArray(range) && range.length === 2 && date >= range[0] && date <= range[1])) return false;
   const day = d.getUTCDay() === 0 ? 7 : d.getUTCDay();
   if (Array.isArray(r.days) && r.days.length && !r.days.includes(day)) return false;
   const min = d.getUTCHours() * 60 + d.getUTCMinutes();
@@ -311,6 +373,9 @@ export function isPeakAt(rule, atMs) {
  * @returns {{price: object, phase: "peak"|"offpeak"|"flat"}}
  */
 export function effectivePrice(price, atMs = Date.now()) {
+  const timed = parsePriceTiers(price?.tiers).filter((t) => t.from && Date.parse(t.from) <= Number(atMs))
+    .sort((a, b) => Date.parse(b.from) - Date.parse(a.from))[0];
+  if (timed) price = { ...price, input: timed.input ?? price.input, output: timed.output ?? price.output, cache: timed.cache ?? price.cache };
   const hasOff = price?.offpeakInput != null || price?.offpeakOutput != null || price?.offpeakCache != null;
   // 没配闲时价 → 全时段按基准价（flat），与改造前逐厘一致
   if (!hasOff) return { price, phase: "flat" };
@@ -334,7 +399,7 @@ export function describeRule(rule) {
   const tz = offset === 8 ? "北京" : offset === 0 ? "UTC" : `UTC${offset >= 0 ? "+" : ""}${offset}`;
   const days = Array.isArray(r.days) && r.days.length ? (r.days.length === 7 ? "每天" : `周${r.days.join("/")}`) : "每天";
   const wins = r.peak.map(([a, b]) => `${a}-${b}`).join("、");
-  return `${tz}时间 ${days} ${wins} 为高峰，其余半价`;
+  return `${tz}时间 ${days} ${wins} 为高峰，其余半价${r.offpeakDates?.length ? "（含已配置公共假期）" : ""}`;
 }
 
 // 取模型价格：精确匹配 → 最长前缀匹配 → 同厂商兜底 → 全局兜底
@@ -342,7 +407,14 @@ const warnedModels = new Set();
 const MAX_WARNED_MODELS = 500;
 export async function getPrice(model) {
   const prices = await loadPrices();
-  let m = String(model || "").toLowerCase();
+  // 统一聚合目录的模型 SKU：openai/gpt-6-sol:batch、~openai/gpt-6-sol
+  // 和 gpt-6-sol 都是同一模型。先去掉供应商前缀/变体后缀，再走兼容别名，
+  // 防止同步价表把 :batch/:free 误当成新的独立价格。
+  let m = String(model || "").trim().toLowerCase();
+  try {
+    const { canonicalModelName } = await import("./models.js");
+    m = canonicalModelName(model) || m;
+  } catch { m = normalizeClineModel(model); }
   // 聚合渠道（OpenRouter / NVIDIA NIM / HuggingFace 风格）的模型名带厂商前缀：
   // `zai-org/GLM-4.6`、`anthropic/claude-sonnet-4.5`、`Qwen/Qwen3-235B-A22B`。
   // 这些前缀只是路由标识，底层就是同名模型 —— 不去掉就会整片落到兜底价，
@@ -474,7 +546,25 @@ function priciestOfVendor(prices, vendor) {
  *   input_only = 只计输入（上游按上下文长度计费、不按生成量计费的账号；
  *                **会改变用户实际扣费**，仅在该账号确实如此计费时才设）
  */
+export function parsePriceTiers(raw) {
+  try { const list = typeof raw === "string" ? JSON.parse(raw) : raw; return Array.isArray(list) ? list.filter((t) => t && (t.from ? Number.isFinite(Date.parse(t.from)) : Number.isFinite(Number(t.minInputTokens)) && Number(t.minInputTokens) > 0) && [t.input, t.output, t.cache].every((v) => v == null || Number.isFinite(Number(v)) && Number(v) >= 0)) : []; }
+  catch { return []; }
+}
+
+/** 官方上下文档按整次输入量选价，不只给超过阈值的尾部 token 加价。 */
+export function priceForTokens(price, promptTokens = 0) {
+  const tier = parsePriceTiers(price?.tiers).filter((t) => !t.from && Number(promptTokens) >= Number(t.minInputTokens) && Number(t.minInputTokens) > 0)
+    .sort((a, b) => Number(b.minInputTokens) - Number(a.minInputTokens))[0];
+  return tier ? { ...price, input: tier.input ?? price.input, output: tier.output ?? price.output, cache: tier.cache ?? price.cache, contextTier: Number(tier.minInputTokens) } : price;
+}
+
+export function storedPriceTiers(p) {
+  const list = [...(p.tiers || []), ...(p.scheduledPrices || [])];
+  return list.length ? JSON.stringify(list) : null;
+}
+
 export function computeCost({ price, promptTokens = 0, completionTokens = 0, cacheTokens = 0, contextBilling = "auto" }) {
+  price = priceForTokens(price, promptTokens);
   // 缓存命中不能超过输入总量（上游字段异常时按输出去重，避免负基数）
   const cache = Math.max(0, Math.min(Number(cacheTokens) || 0, Number(promptTokens) || 0));
   const base = Math.max(0, (Number(promptTokens) || 0) - cache);
@@ -619,21 +709,24 @@ export function formatOd(units, digits = 4) {
  * 全新安装由启动流程调用，避免所有模型都落到「未配置价格」兜底档导致漏计费。
  */
 export async function seedDefaultPrices() {
+  const { canonicalModelName, warmAliasMap } = await import("./models.js");
+  await warmAliasMap();
   const ts = now();
   let added = 0;
   for (const p of DEFAULT_PRICES) {
+    if (canonicalModelName(p.model) !== String(p.model).toLowerCase()) continue;
     const [ret] = await pool.query(
       `INSERT INTO model_prices
          (model, input_price, output_price, cache_price,
           offpeak_input_price, offpeak_output_price, offpeak_cache_price, offpeak_rule,
-          channel_type, remark, updated_time)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)
+          channel_type, remark, updated_time, price_tiers)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
        ON DUPLICATE KEY UPDATE model = model`,
       [
         p.model,
         p.input,
         p.output,
-        p.cache,
+        p.cache ?? 0,
         p.offpeakInput ?? null,
         p.offpeakOutput ?? null,
         p.offpeakCache ?? null,
@@ -641,6 +734,7 @@ export async function seedDefaultPrices() {
         p.type,
         p.remark,
         ts,
+        storedPriceTiers(p),
       ]
     );
     if (ret.affectedRows === 1) added += 1;
@@ -649,6 +743,77 @@ export async function seedDefaultPrices() {
     invalidatePrices();
     console.log(`[init] 已写入默认模型价格 ${added} 条（可在「模型定价」中调整）`);
   }
+}
+
+/** 管理员发布本轮已复核的官方价；独立调用，不在重启时反复覆盖手动设置。 */
+export async function refreshVerifiedPrices() {
+  const { canonicalModelName } = await import("./models.js");
+  const conn = await pool.getConnection();
+  let updated = 0;
+  try {
+    await conn.beginTransaction();
+    for (const p of DEFAULT_PRICES) {
+      if (!p.remark?.includes("2026-10-01") || canonicalModelName(p.model) !== String(p.model).toLowerCase()) continue;
+      await conn.query(`INSERT INTO model_prices
+        (model,input_price,output_price,cache_price,offpeak_input_price,offpeak_output_price,offpeak_cache_price,offpeak_rule,channel_type,remark,updated_time,price_tiers)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE
+        input_price=VALUES(input_price),output_price=VALUES(output_price),cache_price=VALUES(cache_price),
+        offpeak_input_price=VALUES(offpeak_input_price),offpeak_output_price=VALUES(offpeak_output_price),offpeak_cache_price=VALUES(offpeak_cache_price),
+        offpeak_rule=VALUES(offpeak_rule),channel_type=VALUES(channel_type),remark=VALUES(remark),updated_time=VALUES(updated_time),price_tiers=VALUES(price_tiers)`,
+        [p.model, p.input, p.output, p.cache ?? 0, p.offpeakInput ?? null, p.offpeakOutput ?? null, p.offpeakCache ?? null, p.offpeakRule ? JSON.stringify(p.offpeakRule) : null, p.type, p.remark, now(), storedPriceTiers(p)]);
+      updated++;
+    }
+    await conn.commit();
+  } catch (err) { await conn.rollback(); throw err; }
+  finally { conn.release(); }
+  if (updated) invalidatePrices();
+  return { updated };
+}
+
+/** 一份规范价格，保留别名的旧报价供管理员审计；幂等且全部在事务内。 */
+export async function consolidateModelPrices() {
+  const { canonicalModelName, warmAliasMap } = await import("./models.js");
+  await warmAliasMap();
+  const conn = await pool.getConnection();
+  let merged = 0;
+  try {
+    await conn.beginTransaction();
+    const [rows] = await conn.query("SELECT * FROM model_prices FOR UPDATE");
+    const byName = new Map(rows.map((r) => [String(r.model).toLowerCase(), r]));
+    // 正常路由先于 batch/free，以免新库只有聚合条目时被半价 SKU 决定基准价。
+    const aliases = rows.filter((r) => canonicalModelName(r.model) !== String(r.model).toLowerCase())
+      .sort((a, b) => Number(/:(free|batch|extended|thinking)$/i.test(a.model)) - Number(/:(free|batch|extended|thinking)$/i.test(b.model)) || String(a.model).localeCompare(String(b.model)));
+    for (const r of aliases) {
+      const model = canonicalModelName(r.model);
+      if (!model) continue;
+      await conn.query("INSERT INTO model_price_aliases (alias,model,original_price,updated_time) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE model=VALUES(model), original_price=VALUES(original_price), updated_time=VALUES(updated_time)",
+        [r.model, model, JSON.stringify(r), now()]);
+      if (!byName.has(model) && !/:(free|batch|extended|thinking)$/i.test(r.model)) {
+        await conn.query("UPDATE model_prices SET model=? WHERE model=?", [model, r.model]);
+        byName.set(model, r);
+      } else {
+        await conn.query("DELETE FROM model_prices WHERE model=?", [r.model]);
+      }
+      merged++;
+    }
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally { conn.release(); }
+  if (merged) invalidatePrices();
+  return { merged };
+}
+
+/** 历史聚合 SKU 原报价，仅供审计；不能拿它替代规范模型计费。 */
+export async function originalModelPrice(model) {
+  const raw = String(model || "").trim();
+  const { canonicalModelName } = await import("./models.js");
+  if (canonicalModelName(raw) === raw.toLowerCase()) return null;
+  const [rows] = await pool.query("SELECT original_price FROM model_price_aliases WHERE alias=?", [raw]);
+  let p = null;
+  try { p = rows[0] ? JSON.parse(rows[0].original_price) : null; } catch { /* 不伪造旧价 */ }
+  return p ? { model: raw, in: Number(p.input_price), out: Number(p.output_price), cache: Number(p.cache_price), source: p.remark || "" } : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -678,6 +843,7 @@ export async function seedDefaultPrices() {
  */
 export async function pendingPricedModels() {
   const prices = await loadPrices();
+  const { canonicalModelName } = await import("./models.js");
   const [rows] = await pool.query(
     "SELECT id, name, type, models FROM channels WHERE status = 1 AND models IS NOT NULL AND models <> ''"
   );
@@ -686,7 +852,7 @@ export async function pendingPricedModels() {
     for (const raw of String(r.models || "").split(",")) {
       const m = raw.trim();
       if (!m || m === "*") continue;
-      const key = m.toLowerCase();
+      const key = canonicalModelName(m) || normalizeClineModel(m).toLowerCase();
       // 精确命中（含最长前缀命中）都算「已定价」—— 见 getPrice 的匹配顺序
       let priced = prices.has(key);
       if (!priced) {
@@ -698,8 +864,9 @@ export async function pendingPricedModels() {
       // Cline 归属规则（cline-prices.js）命中的同样算「已定价」——
       // 否则 Cline 那 454 个模型会整片出现在待定价徽标里（几百个数字，等于没提示）。
       if (clinePriceFor(key)) continue;
-      if (!byModel.has(m)) byModel.set(m, { model: m, type: String(r.type || ""), channels: [] });
-      byModel.get(m).channels.push({ id: Number(r.id), name: String(r.name || "") });
+      const identity = key || m;
+      if (!byModel.has(identity)) byModel.set(identity, { model: identity, type: String(r.type || ""), channels: [] });
+      byModel.get(identity).channels.push({ id: Number(r.id), name: String(r.name || "") });
     }
   }
   const models = [...byModel.values()].sort((a, b) => a.model.localeCompare(b.model));
@@ -715,7 +882,8 @@ export async function pendingPricedModels() {
  */
 export async function isModelPriced(model) {
   const prices = await loadPrices();
-  const m = String(model || "").toLowerCase();
+  const { canonicalModelName } = await import("./models.js");
+  const m = canonicalModelName(model) || normalizeClineModel(model);
   if (!m) return false;
   const stripped = m.includes("/") ? m.slice(m.lastIndexOf("/") + 1) : m;
   if (prices.has(m) || prices.has(stripped)) return true;
@@ -727,7 +895,6 @@ export async function isModelPriced(model) {
   // **只做加法**：这里返回 true 只会让「本来就会被 getPrice 算出价格」的模型
   // 不再被误判成未定价，不会让真没配价的模型蒙混放行。
   // 动态 import 是为了避开循环依赖（models.js 反过来 import 了本模块的 DEFAULT_PRICES）。
-  const { canonicalModelName } = await import("./models.js");
   const canon = canonicalModelName(m);
   if (canon && canon !== m) {
     if (prices.has(canon)) return true;

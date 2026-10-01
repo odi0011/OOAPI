@@ -21,6 +21,7 @@ function normalizeCurrency(text) {
 }
 
 const ms = formatDuration;
+const priceText = (p) => p ? `输入 ${p.in} · 输出 ${p.out} · 缓存 ${p.cache} OD币 / 百万 Token` : "（该记录未保存价格快照）";
 
 /**
  * 日志原文块（输入 / 输出内容）。
@@ -675,6 +676,12 @@ export default function LogPage() {
             <Descriptions.Item label="设备">{detail.device || "-"}</Descriptions.Item>
             {isAdmin ? (
               <>
+                <Descriptions.Item label="请求模型">{detail.requested_model || parsedDetail?.requested_model || detail.model || "-"}</Descriptions.Item>
+                <Descriptions.Item label="上游模型">{detail.upstream_model || parsedDetail?.upstream_model || "（该记录未保存上游模型名）"}</Descriptions.Item>
+                <Descriptions.Item label="计价模型">{detail.pricing_model || parsedDetail?.pricing_model || detail.model || "-"}</Descriptions.Item>
+                <Descriptions.Item label="实际单价">{detail.status !== "success" && Number(detail.quota) === 0 && !(detail.effective_price || parsedDetail?.price) ? "未计费" : priceText(detail.effective_price || parsedDetail?.price)}</Descriptions.Item>
+                <Descriptions.Item label="原模型报价">{priceText(detail.original_price || parsedDetail?.original_price || detail.requested_price || parsedDetail?.requested_price)}</Descriptions.Item>
+                {detail.model_calls?.length > 1 ? <Descriptions.Item label="逐次计价"><LogTextBlock text={detail.model_calls.map((c, i) => `调用 ${i + 1}：${c.model}\n上游 ${c.upstream_model || "—"}\n${priceText(c.price)}`).join("\n\n")} /></Descriptions.Item> : null}
                 <Descriptions.Item label="分组">{detail.group_name || "-"}</Descriptions.Item>
                 <Descriptions.Item label="密钥">
                   {detail.token_name ? `#${detail.token_id} ${detail.token_name}` : "账户额度（未用密钥）"}
