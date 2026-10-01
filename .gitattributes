@@ -1,0 +1,2 @@
+# Linux 启动入口必须以 LF 存入仓库，Windows 开发机的自动换行不能带入发布包。
+*.sh text eol=lf
