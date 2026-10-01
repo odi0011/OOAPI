@@ -5457,6 +5457,7 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
     通配 `deepseek-*` 在 /v1/models 里作为字面条目返回。
   · 测试缺口：缺「三协议 × 新旧名 × 托管/官方」出站 payload 断言（现有 model-alias 测的是 helper 层）。
   · 待复核：GLM-5.3 官方价信号不一致——第三方报 \$1.40/\$4.40 每百万（chineseaitools/CSDN 2026-07 对比文），平台记录 ¥8/¥28 ÷ 6.71 = \$1.19/\$4.17；官方定价页 docs.bigmodel.cn 为 JS 渲染且价格在交互控件后，本机与服务器 Playwright 均未抓到可靠数字（渲染层只有模型名）。按「以官方为准」规则未改价；复核时建议人工打开官方页核对 GLM-5.3 / 5.3-Flash（第三方还提了限时价，波动大），同步核对缓存价。
+  · **追加（2ada91b）已修 P1 白名单不一致**：站内对话 groupAllows/keyAllows 改用网关同一个 modelInAllowList（不再 startsWith 隐式前缀放行）；/run 按 canonicalModelName 匹配会话模型——旧会话存 deepseek-v4.1-flash 曾在下拉去重后被拒「当前密钥下不可用」。线上实测旧名会话 /chat/run 200，日志 p=989/c=2。model-alias 测试 31 项。
   · 价格复核子代理（各厂商官方页核对）因流断开失败，DeepSeek 已由主流程联网核实一致；GLM 见上；其余厂商（Kimi/Qwen/MiniMax/OpenAI/Anthropic/Gemini）本轮未逐户复核，登记待办。
 
   **验证**：32 个测试文件全过（新增 model-alias 25 项）；vite build 无告警；
