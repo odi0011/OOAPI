@@ -435,6 +435,7 @@ ck("他人不能读取已删帖评论", removed.status === 200 && deletedComment
 /* ============================ 已下线入口 ============================ */
 console.log("已下线游戏入口");
 ck("游戏目录已移除（404）", (await get("/api/games/list")).status === 404);
+ck("修复进度与维护日志公示接口已移除（404）", (await get("/api/buildlog")).status === 404);
 ck("游戏建房接口已移除（404）", (await post("/api/games/rooms", { game_key: "connect4" })).status === 404);
 
 /* ==================== 个人主页：公开字段边界 ==================== */

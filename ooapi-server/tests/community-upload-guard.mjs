@@ -56,7 +56,7 @@ await ctx.addInitScript((t) => localStorage.setItem("ooapi-token", t), token);
 /** 打开社区页 → 打开发帖弹窗 → 填好必填项，返回 page（弹窗已就绪） */
 async function openComposer(page) {
   await page.goto(`${BASE}/community`, { waitUntil: "networkidle", timeout: 40000 });
-  // 先等按钮出现、再等首屏布局稳定（Noto 字体 + 侧栏 BuildLogCard 落位会引起 reflow，
+  // 先等按钮出现、再等首屏布局稳定（Noto 字体与异步内容会引起 reflow，
   // 不等的话 Playwright 的「stable」检查会一直重试到超时）
   const fab = page.getByRole("button", { name: "发帖" }).first();
   await fab.waitFor({ state: "visible", timeout: 40000 });

@@ -26,6 +26,9 @@ import { pool } from "../src/db.js";
 const BASE = process.env.BASE || "http://127.0.0.1:3001";
 const GROUP = process.env.SMOKE_GROUP || "测试";
 const MODEL = process.env.SMOKE_MODEL || "deepseek-v4.1-flash";
+// 思考模型会先消耗输出预算；16 token 偶尔只能容纳思考，导致正文断言误报。
+// 保留正文断言，给短答足够预算；仍限制到 512，避免冒烟测试失控消耗。
+const MAX_TOKENS = Math.max(16, Math.min(512, Math.floor(Number(process.env.SMOKE_MAX_TOKENS) || 128)));
 
 let pass = 0;
 let fail = 0;
@@ -88,7 +91,7 @@ console.log(`网关冒烟 @ ${BASE}（模型 ${MODEL}）\n`);
 const chat = await hit("chat/completions", "/v1/chat/completions", {
   model: MODEL,
   messages: [{ role: "user", content: "Reply with exactly: pong" }],
-  max_tokens: 16,
+  max_tokens: MAX_TOKENS,
 });
 if (chat) {
   try {
@@ -103,7 +106,7 @@ if (chat) {
 const anth = await hit(
   "messages (Anthropic)",
   "/v1/messages",
-  { model: MODEL, max_tokens: 16, messages: [{ role: "user", content: "Reply with exactly: pong" }] },
+  { model: MODEL, max_tokens: MAX_TOKENS, messages: [{ role: "user", content: "Reply with exactly: pong" }] },
   // 官方 Anthropic SDK 默认只发 x-api-key：这里刻意不复用 Authorization
   { "anthropic-version": "2023-06-01" }
 );
@@ -118,7 +121,7 @@ if (anth) {
 const resp = await hit("responses", "/v1/responses", {
   model: MODEL,
   input: "Reply with exactly: pong",
-  max_output_tokens: 16,
+  max_output_tokens: MAX_TOKENS,
 });
 if (resp) {
   try {

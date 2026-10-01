@@ -13,6 +13,7 @@ import {
 import {
   PlusOutlined, ReloadOutlined, FireOutlined, ClockCircleOutlined,
   TagsOutlined, NotificationOutlined, PictureOutlined, DeleteOutlined, MessageOutlined, CommentOutlined,
+  ArrowRightOutlined, CloseOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
@@ -23,7 +24,6 @@ import TopicIcon from "../components/TopicIcon";
 import UserAvatar from "../components/UserAvatar";
 import { fmtCompact } from "../components/Charts";
 import RichTextEditor from "../components/RichTextEditor";
-import BuildLogCard from "../components/BuildLogCard";
 
 export default function CommunityPage() {
   const navigate = useNavigate();
@@ -217,9 +217,7 @@ export default function CommunityPage() {
     }
   };
 
-  // 全站公告：/api/status 下发的是 announcement + announcement_type（off/banner/modal）+ version。
-  // 原实现读 announcement_enabled / announcement_level —— 这两个键 status 里根本没有，
-  // 于是社区页的公告条**永远不显示**。关闭按版本记忆：管理员发新版本公告会重新出现。
+  // 公告收进信息流内的短卡片，全文按需打开；关闭按版本记忆，新公告重新出现。
   const announce = status?.announcement;
   const announceVersion = String(status?.announcement_version ?? 0);
   const [announceClosed, setAnnounceClosed] = useState(() => {
@@ -230,6 +228,7 @@ export default function CommunityPage() {
     }
   });
   const showAnnounce = Boolean(announce) && status?.announcement_type !== "off" && announceClosed !== announceVersion;
+  const [announceOpen, setAnnounceOpen] = useState(false);
   const closeAnnounce = () => {
     setAnnounceClosed(announceVersion);
     try {
@@ -285,10 +284,6 @@ export default function CommunityPage() {
         }
       />
 
-      {showAnnounce ? (
-        <Alert type="info" showIcon icon={<NotificationOutlined />} message={announce} closable onClose={closeAnnounce} />
-      ) : null}
-
       {/* 三栏：话题导轨 / 信息流 / 侧栏。窄屏话题导轨收成信息流上方的横向标签条 */}
       <div className="oo-read-shell oo-community-shell">
         <nav className="oo-topic-rail" aria-label="话题">
@@ -298,6 +293,27 @@ export default function CommunityPage() {
         </nav>
 
         <div className="oo-community-feed">
+          {showAnnounce ? (
+            <section className="oo-community-notice" aria-label="社区公告">
+              <button
+                type="button"
+                className="oo-community-notice-open"
+                aria-label="查看社区公告全文"
+                onClick={() => setAnnounceOpen(true)}
+              >
+                <span className="oo-community-notice-icon" aria-hidden="true"><NotificationOutlined /></span>
+                <span className="oo-community-notice-copy">
+                  <span className="oo-community-notice-label">社区公告</span>
+                  <span className="oo-community-notice-preview">{announce}</span>
+                </span>
+                <ArrowRightOutlined className="oo-community-notice-arrow" aria-hidden="true" />
+              </button>
+              <Tooltip title="关闭本条公告">
+                <Button type="text" icon={<CloseOutlined />} aria-label="关闭本条公告" onClick={closeAnnounce} />
+              </Tooltip>
+            </section>
+          ) : null}
+
           <button type="button" className="oo-compose-prompt" onClick={openComposer}>
             <UserAvatar user={user} size={34} />
             <span>分享经验、提问或发一段代码……{activeTopic ? `（发到「${activeTopic.name}」）` : ""}</span>
@@ -440,10 +456,18 @@ export default function CommunityPage() {
             )}
           </div>
 
-          {/* 平台修复进度（实时待办 + 维护调用流，公开数据） */}
-          <BuildLogCard />
         </aside>
       </div>
+
+      <Modal
+        title="社区公告"
+        open={announceOpen}
+        onCancel={() => setAnnounceOpen(false)}
+        footer={<Button type="primary" onClick={() => setAnnounceOpen(false)}>知道了</Button>}
+        width={560}
+      >
+        <div className="oo-community-notice-detail" tabIndex={0} aria-label="公告全文">{announce}</div>
+      </Modal>
 
       <Modal
         title="发布新帖"

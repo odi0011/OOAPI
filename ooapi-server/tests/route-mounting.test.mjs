@@ -97,6 +97,11 @@ t("小游戏路由 /api/games 已彻底下线未挂载", () => {
   ck(!index.includes('"/api/games"'), "/api/games 仍残留在挂载或白名单中");
 });
 
+t("修复进度公开接口与维护日志回显已下线", () => {
+  ck(!index.includes("buildlog"), "index.js 仍引用修复进度路由");
+  ck(!existsSync(path.join(root, "src/routes/buildlog.js")), "公开维护日志路由仍存在");
+});
+
 t("频道体系（/chatroom/guilds）已下线：路由与新装建表都不再存在", () => {
   const cr = read("src/routes/chatroom.js");
   const db = read("src/db.js");

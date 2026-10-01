@@ -134,8 +134,7 @@ const TABLES = [
     /* 渠道统计与模型筛选都是「type + 时间范围 + channel/model」的组合查询，
        复合索引才吃得下；单列索引在大表上仍需回表过滤。 */
     INDEX idx_logs_channel_type_created (channel_id, type, created_at),
-    INDEX idx_logs_model_type (model, type),
-    INDEX idx_logs_token_name (token_name)
+    INDEX idx_logs_model_type (model, type)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
   `CREATE TABLE IF NOT EXISTS options (
@@ -758,10 +757,6 @@ const INDEX_MIGRATIONS = [
   "CREATE INDEX idx_logs_channel_type_created ON logs (channel_id, type, created_at)",
   // 按模型筛选（列表页恒带 type=2）
   "CREATE INDEX idx_logs_model_type ON logs (model, type)",
-  // 修复进度公示（/api/buildlog）按令牌名前缀查维护流量（fb4*/cc*），该接口是公开的
-  // 且前端 15s 轮询 —— 没有这个索引就是每次全表扫（logs 按调用量线性增长）。
-  // 前缀 LIKE（'fb4%'）可以走 B+Tree 范围扫描。
-  "CREATE INDEX idx_logs_token_name ON logs (token_name)",
   // 社区「最新活动」排序
   "CREATE INDEX idx_post_active ON community_posts (status, last_reply_time)",
 ];
@@ -770,10 +765,11 @@ async function ensureIndexes() {
   // 先清掉被复合索引取代的旧单列索引：idx_logs_channel / idx_logs_model 是早期版本建的，
   // 现在的查询恒带 type + created_at，复合索引已完全覆盖它们的用途；
   // 留着只会让每次写日志多维护两棵 B+Tree（写放大）。
-  for (const name of ["idx_logs_channel", "idx_logs_model"]) {
+  // 修复进度接口已下线，也撤掉其专用令牌名索引，避免每次记日志继续维护它。
+  for (const name of ["idx_logs_channel", "idx_logs_model", "idx_logs_token_name"]) {
     try {
       await pool.query(`DROP INDEX ${name} ON logs`);
-      console.log(`[migrate] 已移除冗余索引 ${name}（复合索引已覆盖）`);
+      console.log(`[migrate] 已移除冗余日志索引 ${name}`);
     } catch {
       /* 不存在（新库）或权限不足：都不影响启动 */
     }
@@ -886,6 +882,8 @@ export async function migrate() {
   const hadGroupRate = await columnExists("channel_groups", "rate");
   await ensureColumns();
   await ensureIndexes();
+  // 修复进度公示已下线：只清其专属状态，不碰其他系统设置或历史使用记录。
+  await pool.query("DELETE FROM options WHERE key_str = ?", ["buildlog_state"]);
   await ensureColumnTypes();
   await migrateGroupVendor();
   await ensureGroups();
