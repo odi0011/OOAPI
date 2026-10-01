@@ -6,6 +6,7 @@ import { now } from "../utils.js";
 import { isOAuthMethod, getMethod, getProvider, isApiKeyMethod } from "./channel-types.js";
 import { groupConfigOf } from "./group-rate.js";
 import { modelRegistrySync, modelInAllowList, canonicalModelName, vendorModelsSync } from "./models.js";
+import { publicRunError } from "./upstream/public-error.js";
 
 // 适配器表（懒加载，避免未用到的适配器被引入）
 //
@@ -351,8 +352,10 @@ export function rateLimitPauseSec(cooldownSec) {
 export async function markChannelError(channel, message, cooldownSec = 300, meta = {}) {
   const s = st(channel.id);
   s.cooldownUntil = Date.now() + cooldownSec * 1000;
-  s.lastError = String(message).slice(0, 400);
   const code = String(meta.errorCode || "");
+  // 原始上游错误可能回显凭据。运行时、数据库和最近调用都只保存固定安全说明。
+  const httpStatus = Number(meta.httpStatus || meta.upstreamStatus) || Number(/HTTP\s+(\d{3})/i.exec(String(message))?.[1]) || 0;
+  s.lastError = publicRunError({ message, code, httpStatus });
   const rateLimited = isRateLimitedCode(code);
 
   // 429 不计入「最近调用」环形记录 —— 用户明确要求：「如果哪个渠道报错 429，
@@ -370,7 +373,7 @@ export async function markChannelError(channel, message, cooldownSec = 300, meta
         ok: 0,
         ms: 0,
         p: clip(meta.prompt, 160),
-        r: clip(meta.reply || message, 240),
+        r: clip(s.lastError, 240),
         ...flagsOf(meta),
       });
       await pool

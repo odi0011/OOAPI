@@ -531,13 +531,21 @@
 .ui-msg-ai .prose > :first-child { margin-top: 0; }
 .ui-msg-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   margin-top: 10px;
   font-size: var(--fs-label);
   color: var(--ink-3);
 }
-.ui-msg-actions .sp { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; }
+.ui-msg-error { margin: 8px 0; max-width: 100%; }
+.ui-msg-error .ant-alert-message,
+.ui-msg-error .ant-alert-description { overflow-wrap: anywhere; }
+.ui-msg-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-left: 6px; min-width: 0; font-size: 11px; }
+.ui-msg-cost { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+.ui-msg-token-unknown { display: inline-flex; flex-direction: column; gap: 2px; font-variant-numeric: tabular-nums; }
+.ui-msg-empty { color: var(--ink-3); }
+.ui-chat2-connection-error { margin: 10px 16px; }
 
 /* ============================ 产出物预览（Artifact） ============================ */
 /* 模型回的网页/SVG/React 代码：默认看代码，点「预览」在沙盒 iframe 里直接跑 */
@@ -910,7 +918,12 @@
   .ui-chat2 { height: calc(100dvh - var(--header-h) - 28px); min-height: 420px; }
   .ui-chat2-thread-inner { padding: 16px 12px 20px; }
   .ui-chat2-composer { padding: 8px 12px 10px; }
-  .ui-chat2-head { padding: 10px 12px; }
+  .ui-chat2-head { padding: 10px 12px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+  /* 手机把统计放到下一行，避免消息数/成本与操作按钮把会话标题挤成零宽。 */
+  .ui-chat2-title { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 2px 8px; }
+  .ui-chat2-title h1 { min-width: 0; max-width: none; }
+  .ui-chat2-title .meta { grid-column: 1 / -1; min-width: 0; flex-wrap: wrap; gap: 4px 8px; white-space: normal; }
+  .ui-chat2-head-actions .ui-chat2-iconbtn { flex-shrink: 0; }
   .bui-suggests { grid-template-columns: 1fr; gap: 8px; }
   .ui-msg-user .bubble { max-width: 90%; }
   .ui-msg-ai { max-width: none; }

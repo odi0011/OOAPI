@@ -7,7 +7,7 @@
 //   · 前端刷新后重新订阅同一会话即可看到完整过程与最终结果。
 // 边界：缓冲只在内存里（进程重启即丢失，那一轮按已产出内容照常计费），
 // 且同一个会话同一时刻只允许一个运行（重复提交直接拒绝，避免双份计费）。
-const MAX_EVENTS = 4000; // 单轮事件上限（超出丢最早的，只影响回放完整度）
+const MAX_EVENTS = 4000; // 增量事件有界；超过上限后用完整 part 快照恢复文本。
 
 const runs = new Map(); // sessionId -> run
 
@@ -37,6 +37,10 @@ export function startRun(sessionId, meta = {}) {
     events: [],
     subscribers: new Set(),
     error: null,
+    // 当增量事件超过环形缓冲时，保留每个 part 的最新快照，重连不会从一个
+    // 缺失的 `part` 开始应用 delta，导致长回答刷新后只剩半截。
+    snapshots: new Map(),
+    dropped: false,
   };
   runs.set(key, run);
   return run;
@@ -45,8 +49,17 @@ export function startRun(sessionId, meta = {}) {
 /** 记录一个事件：进缓冲 + 广播给所有订阅者 */
 export function publish(run, event) {
   if (!run) return;
+  if (event.type === "part" && event.part?.id) run.snapshots.set(event.part.id, { ...event.part });
+  else if (event.type === "part_update" && event.id && run.snapshots.has(event.id)) run.snapshots.set(event.id, { ...run.snapshots.get(event.id), ...event.patch });
+  else if (event.type === "delta" && event.id && run.snapshots.has(event.id)) {
+    const part = run.snapshots.get(event.id);
+    run.snapshots.set(event.id, { ...part, [event.field]: `${part[event.field] || ""}${event.delta || ""}` });
+  }
   run.events.push(event);
-  if (run.events.length > MAX_EVENTS) run.events.splice(0, run.events.length - MAX_EVENTS);
+  if (run.events.length > MAX_EVENTS) {
+    run.events.splice(0, run.events.length - MAX_EVENTS);
+    run.dropped = true;
+  }
   for (const fn of run.subscribers) {
     try {
       fn(event);
@@ -86,7 +99,12 @@ export function finishRun(run, finalEvent) {
  */
 export function subscribe(run, onEvent) {
   if (!run) return () => {};
+  if (run.dropped && run.snapshots.size) {
+    try { onEvent({ type: "snapshot", parts: [...run.snapshots.values()].map((p) => ({ ...p })) }); } catch { /* ignore */ }
+  }
   for (const ev of run.events) {
+    // snapshot 已包含所有增量文本；再次回放 delta 会把尾部重复追加。
+    if (run.dropped && ["part", "part_update", "delta"].includes(ev.type)) continue;
     try {
       onEvent(ev);
     } catch {

@@ -1,5 +1,6 @@
 import { normalizeContentToText } from "./content-text.js";
 import { isNotApprovedResponse } from "./http-error.js";
+import { normalizeUsage } from "../pricing.js";
 // 上游适配器：Anthropic 兼容 API（API Key）
 // ===========================================================================
 // 用途：接入**任何 Anthropic Messages 协议**的第三方服务（官方 api.anthropic.com、
@@ -94,10 +95,10 @@ function injectImages(blocks, images) {
   }
 }
 
-export async function chat({ channel, model, prompt, messages, thinkingOverride, images = [], onDelta, onReasoning, signal }) {
+export async function chat({ channel, model, prompt, messages, thinkingOverride, images = [], onDelta, onReasoning, onUsage, signal }) {
   const { messages: url } = endpoints(channel?.base_url);
   const key = nextKey(channel);
-  if (!key) throw Object.assign(new Error("未填写 API Key"), { code: "CHANNEL_AUTH_EXPIRED" });
+  if (!key) throw Object.assign(new Error("未填写 API Key"), { code: "CHANNEL_AUTH_EXPIRED", upstreamStarted: false });
   const useMessages = Array.isArray(messages) && messages.length ? messages : [{ role: "user", content: prompt }];
   const blocks = buildMessages(useMessages);
   if (images?.length) injectImages(blocks, images);
@@ -127,9 +128,17 @@ export async function chat({ channel, model, prompt, messages, thinkingOverride,
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     let msg = text.slice(0, 300);
+    let rejectedUsage = null;
     try {
       const j = JSON.parse(text);
       msg = j?.error?.message || j?.message || msg;
+      const u = j?.usage || j?.message?.usage;
+      if (u && typeof u === "object") {
+        const input = (Number(u.input_tokens) || 0) + (Number(u.cache_read_input_tokens) || 0) + (Number(u.cache_creation_input_tokens) || 0);
+        const output = Number(u.output_tokens) || 0;
+        rejectedUsage = { prompt_tokens: input, completion_tokens: output, total_tokens: input + output,
+          cached_tokens: Number(u.cache_read_input_tokens) || 0 };
+      }
     } catch {
       /* 保留原始文本 */
     }
@@ -144,7 +153,11 @@ export async function chat({ channel, model, prompt, messages, thinkingOverride,
           : [400, 404, 413, 422].includes(resp.status)
             ? "CHANNEL_BAD_REQUEST"
             : "CHANNEL_HTTP_ERROR";
-    throw Object.assign(new Error(`Anthropic 上游 HTTP ${resp.status}：${msg}`), { code, upstream: text.slice(0, 2000) });
+    if (rejectedUsage && onUsage) onUsage(rejectedUsage);
+    throw Object.assign(new Error(`Anthropic 上游 HTTP ${resp.status}：${msg}`), {
+      code, status: resp.status, upstreamRejected: true, usage: rejectedUsage,
+      billable: normalizeUsage(rejectedUsage).totalTokens > 0,
+    });
   }
   if (!resp.body) throw Object.assign(new Error("Anthropic 上游未返回内容流"), { code: "CHANNEL_BAD_RESPONSE" });
 
@@ -158,6 +171,18 @@ export async function chat({ channel, model, prompt, messages, thinkingOverride,
   let promptTokens = 0;
   let cacheRead = 0;
   let cacheCreate = 0;
+  let terminated = false;
+  let outTokens = 0;
+  const updateUsage = () => {
+    usage = {
+      // Anthropic 的 input_tokens 不含缓存读写，按 OpenAI 口径合并。
+      prompt_tokens: promptTokens + cacheRead + cacheCreate,
+      completion_tokens: outTokens,
+      total_tokens: promptTokens + cacheRead + cacheCreate + outTokens,
+      cached_tokens: cacheRead,
+    };
+    if (onUsage) onUsage(usage);
+  };
 
   const handle = (ev) => {
     const type = String(ev?.type || "");
@@ -167,6 +192,8 @@ export async function chat({ channel, model, prompt, messages, thinkingOverride,
       promptTokens = Number(u.input_tokens) || 0;
       cacheRead = Number(u.cache_read_input_tokens) || 0;
       cacheCreate = Number(u.cache_creation_input_tokens) || 0;
+      outTokens = Number(u.output_tokens) || 0;
+      if (ev.message.usage) updateUsage();
       return;
     }
     if (type === "content_block_delta" && ev.delta) {
@@ -182,14 +209,8 @@ export async function chat({ channel, model, prompt, messages, thinkingOverride,
     }
     if (type === "message_delta") {
       const u = ev.usage || {};
-      const outTokens = Number(u.output_tokens) || 0;
-      usage = {
-        // Anthropic 的 input_tokens 不含缓存读写，按 OpenAI 口径合并（与 claude-oauth 一致）
-        prompt_tokens: promptTokens + cacheRead + cacheCreate,
-        completion_tokens: outTokens,
-        total_tokens: promptTokens + cacheRead + cacheCreate + outTokens,
-        cached_tokens: cacheRead,
-      };
+      if (u.output_tokens != null) outTokens = Number(u.output_tokens) || 0;
+      updateUsage();
       if (ev.delta?.stop_reason === "max_tokens" && !content) {
         throw Object.assign(new Error("Anthropic 输出被 max_tokens 截断（无正文）"), { code: "CHANNEL_EMPTY" });
       }
@@ -197,8 +218,19 @@ export async function chat({ channel, model, prompt, messages, thinkingOverride,
     }
     if (type === "error") {
       const msg = ev.error?.message || "Anthropic 上游返回错误事件";
-      throw Object.assign(new Error(msg), { code: "CHANNEL_BIZ_ERROR" });
+      throw Object.assign(new Error(msg), { code: "CHANNEL_BIZ_ERROR", upstreamErrorCode: String(ev.error?.type || "") });
     }
+    if (type === "message_stop") terminated = true;
+  };
+
+  const handleLine = (line) => {
+    const t = line.trim();
+    if (!t.startsWith("data:")) return;
+    const payload = t.slice(5).trim();
+    if (!payload || payload === "[DONE]") return;
+    let ev;
+    try { ev = JSON.parse(payload); } catch { return; }
+    handle(ev);
   };
 
   try {
@@ -211,26 +243,27 @@ export async function chat({ channel, model, prompt, messages, thinkingOverride,
       }
       let i;
       while ((i = buf.indexOf("\n")) !== -1) {
-        const line = buf.slice(0, i).trim();
+        const line = buf.slice(0, i);
         buf = buf.slice(i + 1);
-        if (!line.startsWith("data:")) continue;
-        const payload = line.slice(5).trim();
-        if (!payload || payload === "[DONE]") continue;
-        let ev;
-        try {
-          ev = JSON.parse(payload);
-        } catch {
-          continue;
-        }
-        handle(ev);
+        handleLine(line);
       }
     }
+    buf += dec.decode();
+    if (buf.trim()) handleLine(buf);
+    if (!terminated) throw Object.assign(new Error("Anthropic 响应流提前结束，未收到 message_stop"), { code: "CHANNEL_STREAM_ERROR" });
+    if (!content) throw Object.assign(new Error(reasoning ? "Anthropic 只返回思考，没有正文" : "Anthropic 返回空内容"), { code: "CHANNEL_EMPTY" });
+  } catch (e) {
+    const failure = typeof e.code === "string" ? e : Object.assign(new Error(e.message || "Anthropic 响应流中断"), {
+      code: signal?.aborted ? "CHANNEL_ABORTED" : "CHANNEL_STREAM_ERROR",
+    });
+    Object.assign(failure, { status: resp.status, content, reasoning, usage, upstreamModel,
+      billable: Boolean(content || reasoning) || normalizeUsage(usage).totalTokens > 0 });
+    throw failure;
   } finally {
     reader.cancel().catch(() => {});
   }
 
-  if (!content && !reasoning) throw Object.assign(new Error("Anthropic 返回空内容"), { code: "CHANNEL_EMPTY" });
-  return { content: content || reasoning, reasoning, usage, upstreamModel };
+  return { content, reasoning, usage, upstreamModel, httpStatus: resp.status };
 }
 
 /** 健康检查：GET /v1/models（免费） */

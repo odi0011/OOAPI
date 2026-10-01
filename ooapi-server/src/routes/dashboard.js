@@ -18,6 +18,7 @@ import { ok, fail, asyncHandler, safeInt } from "../utils.js";
 import { authRequired, adminRequired } from "../middleware/auth.js";
 import { snapshot } from "../services/metrics.js";
 import { groupConfigOf } from "../services/group-rate.js";
+import { USAGE_SQL, usageLogWhere } from "../services/log.js";
 
 const router = Router();
 
@@ -34,11 +35,14 @@ function rangeOf(query) {
 // 这里统一按 (ts + 8h) 切天/切小时；不依赖 MySQL 会话时区（FROM_UNIXTIME/HOUR 会随配置漂）。
 const TZ = 8 * 3600;
 const bjDay = (ts) => Math.floor((Number(ts) + TZ) / 86400);
+// 新失败调用与部分计费只保留一行，不能再用「消费数 + 错误数」作分母。
+const FAILURE_SQL = "(type = 4 AND model <> '' AND status <> 'stopped')";
+const SUCCESS_SQL = "(type = 2 AND status IN ('', 'success'))";
 
 /** 按天趋势（消费 + 调用 + token + 缓存），缺数据的日期补 0（否则折线会断） */
 async function dailyTrend(userId, since, days) {
   const args = [since];
-  let where = "created_at >= ? AND type = 2";
+  let where = `created_at >= ? AND ${USAGE_SQL}`;
   if (userId) {
     where += " AND user_id = ?";
     args.push(userId);
@@ -82,19 +86,19 @@ async function dailyTrend(userId, since, days) {
 async function previousTotals(userId, since, days) {
   const from = since - days * 86400;
   const args = [from, since];
-  let where = "type = 2 AND created_at >= ? AND created_at < ?";
+  let where = `${USAGE_SQL} AND created_at >= ? AND created_at < ?`;
   if (userId) {
     where += " AND user_id = ?";
     args.push(userId);
   }
   const [[p]] = await pool.query(
-    `SELECT COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units,
+    `SELECT COUNT(*) AS calls, COALESCE(SUM(${SUCCESS_SQL}),0) AS successes, COALESCE(SUM(quota),0) AS units,
             COALESCE(SUM(prompt_tokens + completion_tokens),0) AS tokens, COUNT(DISTINCT user_id) AS users
        FROM logs WHERE ${where}`,
     args
   );
   const eargs = [from, since];
-  let ew = "type = 4 AND created_at >= ? AND created_at < ?";
+  let ew = `${FAILURE_SQL} AND created_at >= ? AND created_at < ?`;
   if (userId) {
     ew += " AND user_id = ?";
     eargs.push(userId);
@@ -102,6 +106,8 @@ async function previousTotals(userId, since, days) {
   const [[e]] = await pool.query(`SELECT COUNT(*) AS n FROM logs WHERE ${ew}`, eargs);
   return {
     calls: Number(p.calls) || 0,
+    successes: Number(p.successes) || 0,
+    success_rate: Number(p.calls) ? Number(((Number(p.successes) / Number(p.calls)) * 100).toFixed(2)) : 100,
     units: Number(p.units) || 0,
     tokens: Number(p.tokens) || 0,
     active_users: Number(p.users) || 0,
@@ -111,7 +117,7 @@ async function previousTotals(userId, since, days) {
 
 async function errorCount(userId, since) {
   const args = [since];
-  let where = "type = 4 AND created_at >= ?";
+  let where = `${FAILURE_SQL} AND created_at >= ?`;
   if (userId) {
     where += " AND user_id = ?";
     args.push(userId);
@@ -131,14 +137,14 @@ router.get(
     const uid = req.user.id;
 
     const [[agg]] = await pool.query(
-      `SELECT COUNT(*) AS calls,
+      `SELECT COUNT(*) AS calls, COALESCE(SUM(${SUCCESS_SQL}),0) AS successes,
               COALESCE(SUM(quota),0) AS units,
               COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
               COALESCE(SUM(completion_tokens),0) AS completion_tokens,
               COALESCE(SUM(cache_tokens),0) AS cache_tokens,
               COUNT(DISTINCT model) AS models,
               COALESCE(AVG(NULLIF(elapsed_ms,0)),0) AS avg_elapsed
-         FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ?`,
+         FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ?`,
       [uid, since]
     );
 
@@ -146,7 +152,7 @@ router.get(
     const [allModels] = await pool.query(
       `SELECT model, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units,
               COALESCE(SUM(prompt_tokens),0) AS prompt_tokens, COALESCE(SUM(completion_tokens),0) AS completion_tokens
-         FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ? AND model <> ''
+         FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ? AND model <> ''
         GROUP BY model ORDER BY units DESC`,
       [uid, since]
     );
@@ -170,14 +176,14 @@ router.get(
 
     const [byChannel] = await pool.query(
       `SELECT channel_id, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
-         FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ? AND channel_id > 0
+         FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ? AND channel_id > 0
         GROUP BY channel_id ORDER BY units DESC LIMIT 8`,
       [uid, since]
     );
     // 按小时分布：看出「我什么时候在用」（对个人是最直观的节奏信息）
     const [byHour] = await pool.query(
       `SELECT FLOOR(MOD(created_at + ${TZ}, 86400) / 3600) AS hour, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
-         FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ?
+         FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ?
         GROUP BY FLOOR(MOD(created_at + ${TZ}, 86400) / 3600) ORDER BY hour`,
       [uid, since]
     );
@@ -200,19 +206,21 @@ router.get(
 
     // 最近 8 条调用动态：让开发者第一时间知道接口是否调通、状态与消耗
     const [recentLogs] = await pool.query(
-      `SELECT id, created_at, model, type, elapsed_ms, first_token_ms, quota, prompt_tokens, completion_tokens, cache_tokens
-         FROM logs WHERE user_id = ? AND type IN (2, 4)
+      `SELECT id, created_at, model, type, status, elapsed_ms, first_token_ms, first_token_known, quota, prompt_tokens, completion_tokens, cache_tokens
+         FROM logs WHERE user_id = ? AND ${USAGE_SQL}
         ORDER BY id DESC LIMIT 8`,
       [uid]
     );
 
     const totalCalls = Number(agg.calls) || 0;
-    const succRate = totalCalls + errors > 0 ? Number(((totalCalls / (totalCalls + errors)) * 100).toFixed(2)) : 100;
+    const successes = Number(agg.successes) || 0;
+    const succRate = totalCalls > 0 ? Number(((successes / totalCalls) * 100).toFixed(2)) : 100;
 
     return ok(res, {
       range: { key, days },
       totals: {
         calls: totalCalls,
+        successes,
         units: Number(agg.units) || 0,
         prompt_tokens: prompt,
         completion_tokens: comp,
@@ -258,8 +266,9 @@ router.get(
         created_at: Number(l.created_at) || 0,
         model: l.model || "—",
         type: Number(l.type),
+        status: l.status || (Number(l.type) === 2 ? "success" : "error"),
         elapsed_ms: Number(l.elapsed_ms) || 0,
-        first_token_ms: Number(l.first_token_ms) || 0,
+        first_token_ms: Number(l.first_token_known) === 1 || Number(l.first_token_ms) > 0 ? Number(l.first_token_ms) || 0 : null,
         units: Number(l.quota) || 0,
         prompt_tokens: Number(l.prompt_tokens) || 0,
         completion_tokens: Number(l.completion_tokens) || 0,
@@ -287,7 +296,7 @@ router.get(
               COUNT(DISTINCT user_id) AS users,
               COUNT(DISTINCT model) AS models,
               COALESCE(AVG(NULLIF(elapsed_ms,0)),0) AS avg_elapsed
-         FROM logs WHERE type = 2 AND created_at >= ?`,
+         FROM logs WHERE ${USAGE_SQL} AND created_at >= ?`,
       [since]
     );
     // 用户排行：按消费额，同时给调用数与 token（只看消费额会漏掉「高频低耗」的用户）
@@ -296,13 +305,13 @@ router.get(
               COALESCE(SUM(l.prompt_tokens + l.completion_tokens),0) AS tokens,
               u.username, u.display_name, u.avatar_media_id
          FROM logs l LEFT JOIN users u ON u.id = l.user_id
-        WHERE l.type = 2 AND l.created_at >= ?
+        WHERE ${usageLogWhere('l')} AND l.created_at >= ?
         GROUP BY l.user_id ORDER BY units DESC LIMIT 10`,
       [since]
     );
     const [allTopModels] = await pool.query(
       `SELECT model, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
-         FROM logs WHERE type = 2 AND created_at >= ? AND model <> ''
+         FROM logs WHERE ${USAGE_SQL} AND created_at >= ? AND model <> ''
         GROUP BY model ORDER BY units DESC`,
       [since]
     );
@@ -322,20 +331,19 @@ router.get(
       ];
     }
     const [byChannel] = await pool.query(
-      `SELECT l.channel_id, COUNT(*) AS calls, COALESCE(SUM(l.quota),0) AS units,
+      `SELECT l.channel_id, COUNT(*) AS calls, COALESCE(SUM(l.type = 2 AND l.status IN ('', 'success')),0) AS successes, COALESCE(SUM(l.quota),0) AS units,
               COALESCE(AVG(NULLIF(l.elapsed_ms,0)),0) AS avg_elapsed,
               COALESCE(AVG(NULLIF(l.first_token_ms,0)),0) AS avg_first_token,
               c.name AS channel_name, c.type AS channel_type
          FROM logs l LEFT JOIN channels c ON c.id = l.channel_id
-        WHERE l.type = 2 AND l.created_at >= ? AND l.channel_id > 0
+        WHERE ${usageLogWhere('l')} AND l.created_at >= ? AND l.channel_id > 0
         GROUP BY l.channel_id ORDER BY units DESC LIMIT 12`,
       [since]
     );
-    // 渠道错误数单独查：错误是**独立的 type=4 日志行**（历史上就没有 status 列），
-    // 拿 type=2 的行去数「status <> 1」会一条都数不到（静默算成 0 错误）。
+    // 保留历史错误统计；新错误已包含在调用总数内，只计一次。
     const [channelErrors] = await pool.query(
       `SELECT channel_id, COUNT(*) AS errors FROM logs
-        WHERE type = 4 AND created_at >= ? AND channel_id > 0 GROUP BY channel_id`,
+        WHERE ${FAILURE_SQL} AND created_at >= ? AND channel_id > 0 GROUP BY channel_id`,
       [since]
     );
     const errMap = new Map(channelErrors.map((e) => [Number(e.channel_id), Number(e.errors) || 0]));
@@ -345,7 +353,7 @@ router.get(
     const [topTokens] = await pool.query(
       `SELECT t.token_id, t.calls, t.units, k.name AS token_name, u.username, u.display_name
          FROM (SELECT token_id, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
-                 FROM logs WHERE type = 2 AND created_at >= ? AND token_id > 0
+                 FROM logs WHERE ${USAGE_SQL} AND created_at >= ? AND token_id > 0
                 GROUP BY token_id ORDER BY units DESC LIMIT 10) t
          LEFT JOIN tokens k ON k.id = t.token_id
          LEFT JOIN users u ON u.id = k.user_id
@@ -357,7 +365,7 @@ router.get(
     // 错误分布：错误日志是 type=4，与消费日志（type=2）分开记
     const [errorsByModel] = await pool.query(
       `SELECT model, COUNT(*) AS errors FROM logs
-        WHERE type = 4 AND created_at >= ? AND model <> ''
+        WHERE ${FAILURE_SQL} AND created_at >= ? AND model <> ''
         GROUP BY model ORDER BY errors DESC LIMIT 10`,
       [since]
     );
@@ -411,10 +419,7 @@ router.get(
           calls,
           units: Number(c.units) || 0,
           errors,
-          // 成功率 = 1 - 错误日志数/成功调用数。注意这是**近似值**：
-          // 错误日志不区分「上游真实故障」与「业务限制」（余额不足等），
-          // 所以它比监控页的 SLA 口径偏低，前端文案必须标「含限制」而不是当 SLA 用。
-          success_rate: calls + errors > 0 ? Number(((calls / (calls + errors)) * 100).toFixed(1)) : null,
+          success_rate: calls > 0 ? Number(((Number(c.successes) / calls) * 100).toFixed(1)) : null,
           avg_elapsed: Math.round(Number(c.avg_elapsed) || 0),
           avg_first_token: Math.round(Number(c.avg_first_token) || 0),
         };

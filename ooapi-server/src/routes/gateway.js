@@ -7,7 +7,10 @@ import { getBoolOption } from "../config.js";
 import { now, clientIp, asyncHandler, assertPublicUrl } from "../utils.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { recordRequest, enterRequest, leaveRequest, classifyError } from "../services/metrics.js";
-import { runCompletion } from "../services/execute.js";
+import { runCompletion, billableFailedCall } from "../services/execute.js";
+import { normalizeContentToText } from "../services/upstream/content-text.js";
+import { publicRunError } from "../services/upstream/public-error.js";
+import { logTexts } from "../services/log-text.js";
 import { acquire, estimateRequestTokens } from "../services/user-limit.js";
 import {
   getPrice,
@@ -465,7 +468,14 @@ async function settle({
   firstTokenAt = 0,
   userAgent = "",
   billModel = "",
-  tokenQuotaHold = 0}) {
+  tokenQuotaHold = 0,
+  inputText = "",
+  retryCount = 0,
+  logStatus = "success",
+  errorCode = "",
+  failReason = "",
+  httpStatus = 0,
+  upstreamErrorCode = ""}) {
   // tokensEstimated：上游没给（或只给了一部分）usage，用量由字符数估算得到。
   // 下游要把它透出到日志/响应头 —— 估算值不能与精确值用同一个口径展示，
   // 否则管理员看到的是「精确数字」，实际偏差可能很大（第 46 批复审）。
@@ -516,14 +526,18 @@ async function settle({
   // 具体例子：用户余额 1 单位（0.0001 OD），跑了一个应收 52800 单位（5.28 OD）的
   // 请求，旧逻辑实收 0.0001 OD，平台净亏 5.2799 OD。
   // 现在记账成 -52799 单位：账目真实，且下一请求会被鉴权处的 `quota <= 0` 直接挡掉。
-  let ret;
+  let connection;
+  let committing = false;
+  let exhaustedToken = false;
   try {
-    [ret] = await pool.query(
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    let [ret] = await connection.query(
       "UPDATE users SET quota = quota - ?, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ? AND quota >= ?",
       [units, units, user.id, units]
     );
     if (!ret.affectedRows) {
-      await pool.query(
+      await connection.query(
         "UPDATE users SET quota = quota - ?, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ?",
         [units, units, user.id]
       );
@@ -531,17 +545,8 @@ async function settle({
         `[gateway] 用户 ${user.id} 余额不足仍完成请求，已记账为欠费 ${units} 单位（${od} ${CURRENCY}），后续请求将被拒绝直到充值`
       );
     }
-  } catch (e) {
-    // 扣费是否已提交无法确认：调用方据此跳过部分结算，避免重复扣费
-    throw Object.assign(new Error(`扣费结果不确定：${e.message}`), { code: "BILLING_UNCERTAIN" });
-  }
-  // 扣费后的令牌更新与日志写入是 best-effort：如果这里抛错，调用方 catch 会因
-  // settledOnce 还没置位而再次结算，导致用户额度被扣两次。
-  //
-  // 这两条 UPDATE 合并成一次（同一个 tokens 行），并与「写日志」并发执行：
-  // 原先三条串行语句在客户端拿到 [DONE] 之前逐一 await，本机约 1~2ms，
-  // 跨机数据库每往返 0.5~3ms，合计 3~15ms 的纯延迟，且直接推迟流式响应的收尾。
-  const tokenUpdates = pool
+  // 两类额度与唯一usage行同事务提交；日志故障也回滚，不能留下“扣费无记录”。
+  await connection
     .query(
       // remain_quota：先加回入口预占的 hold，再扣本次实际用量 —— 净效果 = 只扣实际用量。
       // 没预占时 hold=0，与旧行为完全一致。
@@ -564,24 +569,23 @@ async function settle({
       // 所以归零后就恒为 0，不会重复触发「从有到无」）。
       const limited = Number(token.unlimited_quota) ? 0 : 1;
       if (!limited || !ret?.affectedRows) return;
-      const [[cur]] = await pool
-        .query("SELECT remain_quota FROM tokens WHERE id = ? LIMIT 1", [token.id])
-        .catch(() => [[null]]);
+      const [[cur]] = await connection.query("SELECT remain_quota FROM tokens WHERE id = ? LIMIT 1", [token.id]);
       if (cur && Number(cur.remain_quota) === 0) {
-        const { notify } = await import("../services/notify-center.js");
-        await notify({
-          userId: user.id,
-          actorId: user.id,
-          type: "token_quota_exhausted",
-          target: { postTitle: token.name || `#${token.id}` },
-        }).catch(() => {});
+        exhaustedToken = true;
       }
-    })
-    .catch((e) => console.error("[gateway] 令牌额度更新失败：", e.message));
-  const logWrite = writeLog({
+    });
+  await writeLog({
+    connection,
     user,
-    type: LOG_TYPE.CONSUME,
-    content: `调用 ${model} · 提示 ${promptTokens} / 补全 ${completionTokens} tokens${
+    type: logStatus === "success" ? LOG_TYPE.CONSUME : LOG_TYPE.ERROR,
+    isUsage: true,
+    status: logStatus,
+    errorCode,
+    retryCount,
+    inputText,
+    requestPromptText: prompt,
+    outputText: output,
+    content: `调用 ${model}${logStatus === "success" ? "" : ` 失败：${failReason}`} · 提示 ${promptTokens} / 补全 ${completionTokens} tokens${
       cacheTokens ? ` / 缓存 ${cacheTokens}` : ""
     } · ${od} ${CURRENCY}`,
     detail: JSON.stringify({
@@ -597,6 +601,8 @@ async function settle({
       priced_at: startedAt || Date.now(),
       rate: Number(gcfg?.rate) || 1,
       amount_units: units,
+      ...(errorCode ? { code: errorCode, http_status: Number(httpStatus) || 0,
+        upstream_error_code: upstreamErrorCode, partial_units: units, billable: true } : {}),
       // 输入/输出**原文**（仅管理员可见）。
       //
       // 用户要求（原话）：「历史记录原始明细没存储输入和输出实际内容（仅管理员可见）？」
@@ -611,12 +617,7 @@ async function settle({
       //      不截断会让整行 INSERT 失败，连带这条日志一起丢。各留前 4000 字符。
       //   ③ 存的是**拼装后的完整 prompt**（含系统提示与历史消息）：计费按它算，
       //      要复核「为什么这么贵」就得看到真正发出去的那段。
-      prompt_text: String(prompt || "").slice(0, 4000),
-      output_text: String(output || "").slice(0, 4000),
-      prompt_truncated: String(prompt || "").length > 4000,
-      output_truncated: String(output || "").length > 4000,
-      // 被截断时明确标记 —— 否则管理员会误以为「模型只输出了 4000 字」
-      text_truncated: String(prompt || "").length > 4000 || String(output || "").length > 4000,
+      ...logTexts({ prompt, output, inputText }),
       requestId}),
     quota: units,
     ip,
@@ -637,15 +638,32 @@ async function settle({
     promptTokens,
     completionTokens,
     cacheTokens,
-    // 首 token 耗时：流式为首个增量到达时刻；非流式没有增量信号，按总耗时记
-    firstTokenMs: firstTokenAt && startedAt ? firstTokenAt - startedAt : startedAt ? Date.now() - startedAt : 0,
+    // 没有生成增量时首T未知，不能把总耗时冒充首T。
+    firstTokenMs: firstTokenAt && startedAt ? Math.max(0, firstTokenAt - startedAt) : null,
     elapsedMs: startedAt ? Date.now() - startedAt : 0,
     userAgent,
     pricePhase: eff.phase});
-  await Promise.all([tokenUpdates, logWrite]);
+    committing = true;
+    await connection.commit();
+  } catch (e) {
+    if (connection) await connection.rollback().catch(() => {});
+    // INSERT/UPDATE失败明确回滚；只有COMMIT发起后断线才无法判断是否提交，不能再补扣。
+    throw Object.assign(new Error(committing ? "扣费提交结果不确定" : "扣费与使用记录已回滚"), {
+      code: committing ? "BILLING_UNCERTAIN" : "BILLING_FAILED",
+    });
+  } finally {
+    connection?.release();
+  }
+  // 外部通知只能在事务成功后发起，回滚的请求不能产生“额度用尽”通知。
+  if (exhaustedToken) {
+    import("../services/notify-center.js").then(({ notify }) => notify({
+      userId: user.id, actorId: user.id, type: "token_quota_exhausted",
+      target: { postTitle: token.name || `#${token.id}` },
+    })).catch(() => {});
+  }
   // tokensEstimated 透出给调用方：上游没给 usage 时用量是字符估算值，
   // 响应头会带 X-Tokens-Estimated: 1，便于调用方与排查时区分口径。
-  return { units, promptTokens, completionTokens, cacheTokens, tokensEstimated };
+  return { units, promptTokens, completionTokens, cacheTokens, tokensEstimated, pricePhase: eff.phase };
 }
 
 // ---------- 聊天补全 ----------
@@ -670,6 +688,8 @@ async function handleCompletion(protocol, req, res) {
     return protocol.error(res, 400, { message: e.message, code: "invalid_request_error" }, { id: requestId });
   }
   const model = parsed.model;
+  // 原文不剥离客户自己写的前缀/模板/空白；与系统包裹后的上游输入分开保存。
+  const inputText = normalizeContentToText((parsed.messages || []).filter((m) => m?.role === "user").at(-1)?.content);
   const wantStream = parsed.stream === true;
   // 输出上限（max_tokens / max_output_tokens，见 onDelta 处的说明）。
   // 0 = 未指定，不限。要交给结算用，所以声明在这里而不是 onDelta 里。
@@ -764,7 +784,9 @@ async function handleCompletion(protocol, req, res) {
   }
   // 结算时会用 hold 的金额做「加回再扣实际」，所以这条只兜底「没走到结算」的路径
   //（上游直接失败、鉴权后异常等）；refund() 幂等，重复调用无害。
-  res.on("close", () => quotaHold.refund());
+  // close可能发生在部分用量结算前；此时先退hold、结算再加hold会重复退回额度。
+  // 在整个处理器finally退回，成功/部分消费已consume则自动不再退。
+  try {
 
   // 模型名归一化后透传给渠道层匹配（各厂商别名在适配器内部处理）；
   // 是否支持视觉也由适配器判断，网关不预设能力
@@ -888,6 +910,7 @@ async function handleCompletion(protocol, req, res) {
       user,
       signal: clientCtrl.signal,
       onDelta: (t) => {
+        if (!t) return;
         markFirstToken();
         // 输出上限（max_tokens / max_output_tokens）在这里**真正生效**。
         //
@@ -928,6 +951,7 @@ async function handleCompletion(protocol, req, res) {
         }
       },
       onReasoning: (t) => {
+        if (!t) return;
         markFirstToken();
         partialOut += t;
         // 推理内容**同样受输出上限约束**。
@@ -984,7 +1008,9 @@ async function handleCompletion(protocol, req, res) {
       startedAt,
       firstTokenAt,
       userAgent,
-      tokenQuotaHold: quotaHold.amount});
+      tokenQuotaHold: quotaHold.amount,
+      inputText,
+      retryCount: result.retryCount});
     // 结算已把预占计入（加回 hold、扣掉实际用量）→ 阻止响应结束时的兜底退回
     quotaHold.consume();
     settledOnce = true;
@@ -1030,7 +1056,23 @@ async function handleCompletion(protocol, req, res) {
     }
   } catch (err) {
     const code = err.code || "UPSTREAM_ERROR";
-    console.error(`[gateway] ${requestId} 失败：${code} ${err.message}`);
+    const stopped = clientCtrl.signal.aborted;
+    const failReason = publicRunError(err, { stopped });
+    // 监控/协议对象只接固定公开文案；真实usage、渠道、状态等分类元信息仍保留。
+    // 不复制cause或原始message，上游body与SQL异常可能夹带凭据。
+    const publicErr = Object.assign(new Error(failReason), {
+      code,
+      channelId: err.channelId,
+      channelName: err.channelName,
+      status: err.status,
+      httpStatus: err.httpStatus,
+      upstreamStatus: err.upstreamStatus || err.httpStatus || err.status,
+      upstreamErrorCode: err.upstreamErrorCode,
+      retryCount: err.retryCount,
+      usage: err.usage,
+      billModel: err.billModel,
+    });
+    console.error(`[gateway] ${requestId} 失败：${code}`);
     // 扣费结果不确定时跳过部分结算（防重复扣费）。
     // 同时把预占「消费掉」：那条 UPDATE 可能已经提交，此时再退回就会白送 1 个单位。
     // 宁可少退也不能多退 —— 多退会让额度阀门永远漏气（正是本次要修的缺陷）。
@@ -1038,24 +1080,23 @@ async function handleCompletion(protocol, req, res) {
       settledOnce = true;
       quotaHold.consume();
     }
-    // 已产生内容：按已产出部分结算（客户端已收到这些内容，不能零计费）。
-    // 条件不能只看 streamStarted：非流式请求（stream:false）适配器同样边流边回调，
-    // 中途失败时 partialOut 也有内容，却会漏计费。
-    // 部分结算的金额要留到错误日志里：否则「使用记录」里那笔真实扣费
-    // 与「操作日志」里那条 quota=0 的错误行对不上，管理员看不出这次花过钱。
-    // 黑盒测试实测抱怨（运维人格原话）：「错误行的 quota/pt/ct 全是 0，
-    // 看不出这次已经花了钱」。
+    // 只根据真实输出/usage结算；明确HTTP拒绝不估算整段输入费。
+    // 消费失败在结算事务内写唯一type4使用行，外层不再另写第二份。
     let partialUnits = 0;
     let partialTokens = null;
-    if (!settledOnce && partialOut) {
+    const failedCall = billableFailedCall(err, { prompt, output: partialOut, startedAt, firstTokenAt, model });
+    let partialPricePhase = "";
+    const logStatus = stopped ? "stopped" : "error";
+    let usageRecorded = settledOnce;
+    if (!settledOnce && failedCall) {
       try {
         const partialSettled = await settle({
           token,
           user,
           model,
           prompt,
-          output: partialOut,
-          usage: null,
+          output: failedCall.output,
+          usage: failedCall.usage,
           ip,
           requestId,
           // 失败渠道由 execute.tagChannel 挂在 error 上：带上它，这部分真实产生的用量
@@ -1064,40 +1105,59 @@ async function handleCompletion(protocol, req, res) {
           startedAt,
           firstTokenAt,
           userAgent,
-          tokenQuotaHold: quotaHold.amount});
+          billModel: err.billModel || "",
+          tokenQuotaHold: quotaHold.amount,
+          inputText,
+          retryCount: err.retryCount,
+          logStatus,
+          errorCode: code,
+          failReason,
+          httpStatus: err.status || err.httpStatus,
+          upstreamErrorCode: err.upstreamErrorCode || ""});
         quotaHold.consume();
+        settledOnce = true;
+        usageRecorded = true;
         partialUnits = Number(partialSettled?.units) || 0;
         partialTokens = {
           prompt: Number(partialSettled?.promptTokens) || 0,
           completion: Number(partialSettled?.completionTokens) || 0,
+          cache: Number(partialSettled?.cacheTokens) || 0,
         };
+        partialPricePhase = partialSettled?.pricePhase || "";
       } catch (e2) {
-        console.error(`[gateway] ${requestId} 部分结算失败：${e2.message}`);
+        if (e2.code === "BILLING_UNCERTAIN") { settledOnce = true; usageRecorded = true; quotaHold.consume(); }
+        console.error(`[gateway] ${requestId} 部分结算失败：${e2.code || "BILLING_FAILED"}`);
       }
     }
     // 错误行的措辞要能区分「客户端断开 / 上游断开 / 网关超时」——
     // 这三者的处置完全不同（前者不用管、中者要找上游、后者要调超时配置），
     // 而原先一律是上游那句英文原文（如 "This operation was aborted"），分不清。
-    const errKind = /abort/i.test(err.message)
-      ? clientCtrl.signal.aborted
-        ? "客户端提前断开"
-        : "上游中断"
-      : /timeout|timed out/i.test(err.message)
-        ? "超时"
-        : "";
-    const failReason = errKind ? `${errKind}：${err.message}` : err.message;
-    await writeLog({
+    if (!usageRecorded) await writeLog({
       user,
       type: LOG_TYPE.ERROR,
+      isUsage: true,
+      status: logStatus,
+      errorCode: code,
+      retryCount: err.retryCount,
+      inputText,
+      requestPromptText: prompt,
+      outputText: failedCall?.output || err.billingOutput || partialOut,
       // 已经部分结算过的，把金额写进文案里 —— 与「使用记录」那笔对得上
       content:
         `调用 ${model} 失败：${failReason}` +
         (partialUnits ? ` · 已按已产出内容计费 ${(partialUnits / UNITS_PER_OD).toFixed(4)} ${CURRENCY}` : ""),
       // 带上部分结算的金额与 token：两个日志页都能看出「这次其实花了钱」
-      detail: JSON.stringify({ code, requestId, partial_units: partialUnits, partial_tokens: partialTokens }),
+      detail: JSON.stringify({ code, requestId, partial_units: partialUnits, partial_tokens: partialTokens,
+        http_status: Number(err.status || err.httpStatus) || 0,
+        upstream_error_code: String(err.upstreamErrorCode || ""),
+        bill_model: err.billModel || "", billable: Boolean(failedCall),
+        ...logTexts({ prompt, output: failedCall?.output || err.billingOutput || partialOut, inputText }) }),
       quota: partialUnits,
       promptTokens: partialTokens?.prompt || 0,
       completionTokens: partialTokens?.completion || 0,
+      cacheTokens: partialTokens?.cache || 0,
+      firstTokenMs: firstTokenAt ? Math.max(0, firstTokenAt - startedAt) : null,
+      pricePhase: partialPricePhase,
       ip,
       requestId,
       model,
@@ -1122,7 +1182,7 @@ async function handleCompletion(protocol, req, res) {
         ? 400
         : code === "CHANNEL_AUTH_EXPIRED"
           ? 401
-          : code === "CHANNEL_RATE_LIMIT"
+          : code === "CHANNEL_RATE_LIMIT" || code === "CHANNEL_RATE_LIMITED"
             ? 429
             : code === "NO_CHANNEL" ||
                 code === "CHANNEL_MUTED" ||
@@ -1131,17 +1191,19 @@ async function handleCompletion(protocol, req, res) {
                 code === "CHANNEL_UNSUPPORTED"
               ? 503
               : 502;
-    finishMetric({ ok: false, status, channelName: err.channelName || "", err });
+    finishMetric({ ok: false, status, channelName: err.channelName || "", err: publicErr });
     // 错误也要按协议输出：Anthropic 客户端认 {type:"error",error:{...}}，
     // 拿 OpenAI 的 {error:{...}} 会解析失败并丢掉真正的错误信息。
-    const errObj = Object.assign(new Error(err.message), { code });
     if (streamStarted) {
-      protocol.errorInStream(res, protoState, errObj);
+      protocol.errorInStream(res, protoState, publicErr);
     } else if (!res.headersSent) {
-      protocol.error(res, status, errObj, { id: requestId });
+      protocol.error(res, status, publicErr, { id: requestId });
     } else {
       res.end();
     }
+  }
+  } finally {
+    quotaHold.refund();
   }
 }
 

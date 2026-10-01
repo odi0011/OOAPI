@@ -5,6 +5,36 @@ import { getNumberOption } from "../config.js";
 import { selectChannels, getAdapter, markChannelError, markChannelOk, withChannelLimit, explainNoChannel } from "./router.js";
 import { resolveAliasSync } from "./models.js";
 import { recordChannelSwitch } from "./metrics.js";
+import { normalizeUsage } from "./pricing.js";
+
+/** 请求已经发送不能证明消耗；只认上游返回的用量或实际生成的内容。 */
+export function hasBillableUsage(usage) {
+  const u = normalizeUsage(usage);
+  return u.promptTokens > 0 || u.completionTokens > 0 || u.totalTokens > 0;
+}
+
+/** 所有失败结算共用这个出口，工具已记录的调用不能再被外层合成。 */
+export function billableFailedCall(err, fallback = {}) {
+  if (!err || err.billingRecorded || err.billable !== true) return null;
+  const output = String(err.billingOutput ?? fallback.output ?? `${err.content || ""}${err.reasoning || ""}`);
+  if (!output && !hasBillableUsage(err.usage)) return null;
+  return {
+    prompt: String(err.billingPrompt ?? fallback.prompt ?? ""),
+    output,
+    usage: err.usage ?? null,
+    channel: String(err.channelName || fallback.channel || ""),
+    channelId: Number(err.channelId || fallback.channelId) || 0,
+    startedAt: Number(err.billingStartedAt || fallback.startedAt) || Date.now(),
+    firstTokenAt: Number(err.billingFirstTokenAt || err.firstTokenAt || fallback.firstTokenAt) || 0,
+    elapsed: Number(err.elapsed || fallback.elapsed) || 0,
+    model: String(err.billModel || err.model || fallback.model || ""),
+    retryCount: Math.max(0, Number(err.retryCount) || 0),
+    errorCode: String(err.code || "CHANNEL_ERROR"),
+    httpStatus: Number(err.status || err.httpStatus) || 0,
+    failed: true,
+    billable: true,
+  };
+}
 
 // 渠道异常码 → 是否需要换渠道重试
 const RETRYABLE = new Set([
@@ -85,6 +115,7 @@ export async function runCompletion({
   onChannelTry,
   user = null,
 }) {
+  const runStartedAt = Date.now();
   const tried = new Set(excludeChannelIds instanceof Set ? excludeChannelIds : []);
   // 渠道声明的是真实模型名：先把兼容别名归一化再匹配，
   // 否则 kimi-latest / qwen-turbo 这类别名请求会直接 NO_CHANNEL
@@ -98,7 +129,7 @@ export async function runCompletion({
     const why = await explainNoChannel({ model: matchName, displayModel: model, groupName }).catch(() => null);
     throw Object.assign(
       new Error(why?.message || `没有可用渠道支持模型「${model}」，请在渠道管理中添加或启用对应渠道`),
-      { code: "NO_CHANNEL", reason: why?.reason }
+      { code: "NO_CHANNEL", reason: why?.reason, model, billable: false, retryCount: 0, elapsed: Date.now() - runStartedAt }
     );
   }
 
@@ -117,8 +148,9 @@ export async function runCompletion({
   const maxAttempts = Math.min(channels.length, retryTimes + 1);
 
   let attempts = 0;
-  // 本轮是否真正发起过上游调用（用于失败时的计费判定，见上方注释）
+  // 传输是否开始仅供排查，不能作为收费证据。
   let upstreamStarted = false;
+  let internalRetries = 0;
   for (const channel of channels) {
     if (attempts >= maxAttempts) {
       // 预算用尽：带上最后一个错误抛出，让调用方看到真实失败原因
@@ -134,6 +166,12 @@ export async function runCompletion({
     let sawOutput = false;
     let timedOut = false;
     let attemptStarted = false;
+    let callStarted = 0;
+    let firstTokenAt = 0;
+    let attemptContent = "";
+    let attemptReasoning = "";
+    let attemptUsage = null;
+    let settled = false;
 
     // 组合「客户端断开」与「单渠道超时」两个中止源
     const attemptCtrl = new AbortController();
@@ -147,13 +185,11 @@ export async function runCompletion({
       const adapter = await getAdapter(channel);
       let hardTimer;
       let backstopTimer;
-      let callStarted = 0;
       let armDeadline = () => {};
       // race 是否已结束。用它防住一个隐蔽的定时器泄漏：
       // backstop 先触发（深队列时排队就超时）后，排队中的任务稍后才真正开始执行并调用
       // armDeadline()，那个 hardTimer 在 finally 之后才创建，没人清理，会空转一整个
       // timeoutMs（默认 10 分钟）并再次 abort + 把 timedOut 置真。
-      let settled = false;
       // 两段计时：
       //   · hardTimer 只包住真正的上游调用（排队不算，避免黄条失真/没发请求就超时）；
       //   · backstopTimer 覆盖「排队 + 调用」，防止同渠道前序任务悬挂导致本请求永远排不到队头。
@@ -196,13 +232,20 @@ export async function runCompletion({
             images,
             signal: attemptCtrl.signal,
             onDelta: (t) => {
+              if (settled || !t) return;
               sawOutput = true;
+              attemptContent += t;
+              if (!firstTokenAt) firstTokenAt = Date.now();
               if (onDelta) onDelta(t);
             },
             onReasoning: (t) => {
+              if (settled || !t) return;
               sawOutput = true;
+              attemptReasoning += t;
+              if (!firstTokenAt) firstTokenAt = Date.now();
               if (onReasoning) onReasoning(t);
             },
+            onUsage: (u) => { if (!settled) attemptUsage = u; },
             onSearchStatus: (s) => {
               if (onSearchStatus) onSearchStatus(s);
             },
@@ -214,6 +257,12 @@ export async function runCompletion({
         clearTimeout(hardTimer);
         clearTimeout(backstopTimer);
       });
+      attemptUsage = result.usage ?? attemptUsage;
+      internalRetries += Math.max(0, Number(result.retryCount) || 0);
+      if (!result.content && !result.reasoning) {
+        throw Object.assign(new Error("上游返回空内容"), { code: "CHANNEL_EMPTY", usage: attemptUsage,
+          status: result.httpStatus, upstreamModel: result.upstreamModel, billModel: result.billModel });
+      }
 
       // 渠道运行时统计与响应内容无关（也不影响计费）：不 await，
       // 否则多一次 DB 往返会推迟流式响应的收尾。失败只记日志。
@@ -235,7 +284,7 @@ export async function runCompletion({
         // DeepSeek 托管端点的安全审核标注被剥离（vendor-quirks stripDsSafety）：
         // 最近调用记 safe=1（tip 展示「触发了 safe 机制」），渠道上落 last_safe_at。
         safe: result.safetyStripped ? 1 : undefined,
-      }).catch((e) => console.warn(`[execute] 渠道统计更新失败：${e.message}`));
+      }).catch((e) => console.warn(`[execute] 渠道统计更新失败：${e.code || "DB_ERROR"}`));
       // 渠道级标记：最近一次触发 safe 的时刻（凭证列的小 tag 用）。
       // JSON_SET 原位更新 other，不整包读改写；失败无碍主流程。
       if (result.safetyStripped) {
@@ -261,7 +310,8 @@ export async function runCompletion({
           }
         );
       }
-      return { ...result, channel, elapsed: Date.now() - started };
+      return { ...result, channel, startedAt: callStarted || started, firstTokenAt,
+        retryCount: attempts - 1 + internalRetries, elapsed: Date.now() - runStartedAt };
     } catch (err) {
       lastError = tagChannel(err, channel);
       // 停止也要保留已消耗上下文的证据；原先在赋值前 throw，首步停止会漏账。
@@ -270,12 +320,10 @@ export async function runCompletion({
         upstreamStarted = true;
       }
       lastError.upstreamStarted = upstreamStarted;
-      // 客户端主动断开：不再换渠道，直接结束
-      if (signal?.aborted) throw lastError;
       // 本渠道超时：转换为可重试错误，换下一个渠道（消息同样只带编号，不带渠道名）
       if (timedOut) {
         lastError = tagChannel(
-          Object.assign(new Error(`上游渠道 #${channel.id} 响应超时（${timeoutMs}ms）`), {
+          Object.assign(new Error(`上游渠道 #${channel.id} 响应超时（${timeoutMs}ms）`), lastError, {
             code: "CHANNEL_TIMEOUT",
           }),
           channel
@@ -284,14 +332,29 @@ export async function runCompletion({
       // 计费上下文：这一轮是否真的打到过上游（决定失败时要不要补收）。
       // 挂在同一个错误对象上，随 throw 冒泡到站内对话的结算逻辑。
       lastError.upstreamStarted = upstreamStarted;
+      internalRetries += Math.max(0, Number(err.retryCount) || 0);
+      lastError.usage = err.usage ?? attemptUsage;
+      lastError.content = err.content ?? attemptContent;
+      lastError.reasoning = err.reasoning ?? attemptReasoning;
+      lastError.billingOutput = String(err.billingOutput ?? `${lastError.content || ""}${lastError.reasoning || ""}`);
+      lastError.billingPrompt = String(err.billingPrompt ?? prompt ?? "");
+      lastError.billingStartedAt = Number(err.billingStartedAt) || callStarted || started;
+      lastError.billingFirstTokenAt = Number(err.billingFirstTokenAt || err.firstTokenAt) || firstTokenAt;
+      lastError.firstTokenAt = lastError.billingFirstTokenAt;
+      lastError.model = err.model || model;
+      lastError.elapsed = Date.now() - runStartedAt;
+      lastError.retryCount = attempts - 1 + internalRetries;
+      lastError.billable = Boolean(lastError.billingOutput) || hasBillableUsage(lastError.usage);
+      // 客户端主动断开：先保留消耗证据，再结束；不把零输出停止估成整段输入费。
+      if (signal?.aborted) throw lastError;
       const code = lastError.code || "CHANNEL_ERROR";
 
-      // 已经流式输出过内容就不能换渠道了（否则客户端会收到拼接错乱的内容），
+      // 已经输出或报告真实用量就不能换渠道（否则会拼接内容或漏掉上一尝试的账单），
       // 但故障渠道仍要冷却与记录，否则下一请求还会优先命中它、反复失败。
       // 冷却用与下方同一条计算函数：已流出内容只决定「不换渠道」，不该影响「冷却多久」——
       // 之前这里硬编码 300s，会把 DeepSeek WAF（6h）、429（15min）等档位压成 5 分钟，
       // 等于立刻回去撞同一个账号。
-      if (sawOutput) {
+      if (sawOutput || lastError.billable) {
         await markChannelError(channel, lastError.message, cooldownFor(code, lastError), {
           prompt,
           reply: lastError.message,
@@ -318,7 +381,7 @@ export async function runCompletion({
       });
       // 监控页「账号切换率」：每换一次号记一次，趋势突然抬升说明渠道集体不稳
       recordChannelSwitch();
-      console.warn(`[execute] 渠道「${channel.name}」失败（${code}），切换下一渠道：${lastError.message}`);
+      console.warn(`[execute] 渠道「${channel.name}」失败（${code}），切换下一渠道`);
     } finally {
       if (signal) signal.removeEventListener("abort", onOuterAbort);
     }
@@ -410,6 +473,6 @@ async function persistProfile(channel, result) {
     await pool.query("UPDATE channels SET other = ? WHERE id = ?", [JSON.stringify(latest), channel.id]);
     channel.other = latest;
   } catch (e) {
-    console.warn(`[execute] 渠道「${channel.name}」指纹持久化失败：${e.message}`);
+    console.warn(`[execute] 渠道「${channel.name}」指纹持久化失败：${e.code || "DB_ERROR"}`);
   }
 }

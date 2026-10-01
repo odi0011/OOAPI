@@ -17,10 +17,17 @@ export const LOG_TYPE_LABEL = {
   5: "登录",
 };
 
-// 使用记录页只展示「消费」；操作日志页展示其余管理/错误/登录类。
+// 使用记录页展示消费与显式标记的失败调用；操作日志页展示其余管理/历史错误/登录类。
 // 之所以在服务端定义而不是前端过滤：日志量会随调用数线性增长，
 // 让前端拉全量再过滤既费带宽又会让操作日志被消费日志淹没。
 export const CONSUME_TYPE = LOG_TYPE.CONSUME;
+// 历史消费无需回填；历史错误不猜测为使用，避免旧版“消费+错误”被重复统计。
+export function usageLogWhere(alias = "") {
+  if (alias && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(alias)) throw new Error("非法日志表别名");
+  const p = alias ? `${alias}.` : "";
+  return `(${p}type = 2 OR (${p}type = 4 AND ${p}is_usage = 1))`;
+}
+export const USAGE_SQL = usageLogWhere();
 
 /**
  * 写日志。
@@ -50,23 +57,49 @@ export async function writeLog({
   promptTokens = 0,
   completionTokens = 0,
   cacheTokens = 0,
-  firstTokenMs = 0,
+  firstTokenMs = null,
   elapsedMs = 0,
   userAgent = "",
   device = "",
   pricePhase = "",
+  isUsage = type === LOG_TYPE.CONSUME,
+  status = "",
+  errorCode = "",
+  retryCount = 0,
+  inputText = null,
+  requestPromptText = null,
+  outputText = null,
+  connection = null,
 }) {
   // 未显式传 ip/UA 时从 req 兜底：调用方通常只关心 content，不该被迫重复写这两行
   const finalIp = ip || (req ? clientIp(req) : "");
   const finalUa = String(userAgent || (req ? req.headers?.["user-agent"] : "") || "").slice(0, 255);
+  let audit = {};
+  try { audit = JSON.parse(detail || "{}"); } catch { /* 非JSON管理日志保持原样 */ }
+  if (!audit || typeof audit !== "object" || Array.isArray(audit)) audit = {};
+  const text = (value) => String(value ?? "").slice(0, 4000);
+  const input = text(inputText ?? audit.input_text);
+  const requestPrompt = text(requestPromptText ?? audit.request_prompt_text ?? audit.prompt_text);
+  const output = text(outputText ?? audit.output_text);
+  if (isUsage) {
+    audit.input_truncated = Boolean(audit.input_truncated || String(inputText ?? audit.input_text ?? "").length > 4000);
+    audit.output_truncated = Boolean(audit.output_truncated || String(outputText ?? audit.output_text ?? "").length > 4000);
+    audit.request_prompt_truncated = Boolean(audit.request_prompt_truncated || audit.prompt_truncated || String(requestPromptText ?? audit.request_prompt_text ?? audit.prompt_text ?? "").length > 4000);
+  }
+  if (isUsage && audit && typeof audit === "object" && !Array.isArray(audit)) {
+    // 原文分别存TEXT列，避免JSON转义或重复字段把detail挤过64KB。
+    for (const key of ["input_text", "request_prompt_text", "prompt_text", "output_text"]) delete audit[key];
+    detail = JSON.stringify(audit);
+  }
   try {
-    await pool.query(
+    const [ret] = await (connection || pool).query(
       `INSERT INTO logs (
          user_id, username, created_at, type, content, detail, ip, request_id, quota,
          model, channel_id, channel_name, token_id, token_name, group_name,
          prompt_tokens, completion_tokens, cache_tokens, first_token_ms, elapsed_ms,
-         user_agent, device, price_phase
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         user_agent, device, price_phase, input_text, request_prompt_text, output_text,
+         is_usage, status, error_code, retry_count, first_token_known
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         user?.id ?? 0,
         user?.username ?? "system",
@@ -91,9 +124,18 @@ export async function writeLog({
         finalUa,
         String(device || (finalUa ? deviceFromUa(finalUa) : "")).slice(0, 64),
         String(pricePhase || "").slice(0, 16),
+        input, requestPrompt, output,
+        isUsage ? 1 : 0,
+        String(status || (isUsage ? (type === LOG_TYPE.ERROR ? "error" : "success") : "")).slice(0, 16),
+        String(errorCode || "").slice(0, 64),
+        Math.max(0, Math.round(Number(retryCount) || 0)),
+        firstTokenMs !== null && firstTokenMs !== undefined && Number.isFinite(Number(firstTokenMs)) ? 1 : 0,
       ]
     );
+    return Number(ret.insertId) || 0;
   } catch (e) {
-    console.error("[log] write failed:", e.message);
+    if (connection) throw e; // 扣费事务中的审计行也必须一起提交或回滚。
+    console.error("[log] write failed:", e.code || "DB_ERROR");
+    return 0;
   }
 }

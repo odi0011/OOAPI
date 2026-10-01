@@ -99,6 +99,7 @@ export default function LogPage() {
   const [model, setModel] = useState("");
   const [tokenId, setTokenId] = useState(0);
   const [group, setGroup] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
   const [days, setDays] = useState(30);
   const [detail, setDetail] = useState(null);
   // 分组元信息（倍率/备注/成员厂商）：分组列按「折叠态厂商图标 + 分组名」展示
@@ -129,8 +130,9 @@ export default function LogPage() {
       model: model || undefined,
       token_id: tokenId || undefined,
       group: group || undefined,
+      status: statusFilter || undefined,
     }),
-    [days, keyword, model, tokenId, group]
+    [days, keyword, model, tokenId, group, statusFilter]
   );
 
   const load = useCallback(async () => {
@@ -209,7 +211,7 @@ export default function LogPage() {
   // 筛选下拉的候选项（模型/密钥/分组）：与列表同一时间口径（含「全部」）
   useEffect(() => {
     let alive = true;
-    API.get("/log/usage/filters", { params: { days } })
+    API.get("/log/usage/filters", { params: { days, status: statusFilter || undefined } })
       .then((d) => {
         if (alive) {
           setFilters({
@@ -223,7 +225,7 @@ export default function LogPage() {
     return () => {
       alive = false;
     };
-  }, [days]);
+  }, [days, statusFilter]);
 
   const columns = [
     {
@@ -257,8 +259,12 @@ export default function LogPage() {
       // title 属性兜底：真的放不下时还能看到全名。
       render: (v, r) =>
         v ? (
-          <span title={String(v)}>
-            <ModelLabel model={v} size={14} channelType={r.channel_type || ""} />
+          <span title={String(v)} style={{ display: "inline-flex", flexDirection: "column", gap: 3 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span className={`oo-log-status oo-log-status--${r.status || "success"}`} title={r.error_code || r.status || "成功"} aria-label={r.status === "error" ? "错误" : r.status === "stopped" ? "已停止" : "成功"} />
+              <ModelLabel model={v} size={14} channelType={r.channel_type || ""} />
+            </span>
+            {r.status === "error" || r.status === "stopped" ? <span className={`oo-log-status-label oo-log-status-label--${r.status}`} style={{ fontSize: 10.5, marginLeft: 13 }}>{r.status === "error" ? "调用失败" : "已停止"}</span> : null}
           </span>
         ) : (
           <span style={{ color: "var(--ink-3)" }}>-</span>
@@ -286,7 +292,8 @@ export default function LogPage() {
       dataIndex: "quota",
       width: 100,
       sorter: (a, b) => (Number(a.quota) || 0) - (Number(b.quota) || 0),
-      render: (q) => {
+      render: (q, r) => {
+        if (r.billing_known === false) return <Text type="warning" style={{ fontSize: 11 }}>费用待核查</Text>;
         const n = Number(q) || 0;
         return n ? (
           <Tooltip title={`${fmtOd(n, perUnit, 6)}`}>
@@ -297,7 +304,7 @@ export default function LogPage() {
             </span>
           </Tooltip>
         ) : (
-          <span style={{ color: "var(--ink-3)" }}>-</span>
+          <span style={{ color: "var(--ink-3)", fontSize: 11 }}>{r.status === "error" || r.status === "stopped" ? "未计费" : "0"}</span>
         );
       },
     },
@@ -425,6 +432,15 @@ export default function LogPage() {
               placeholder="全部密钥"
               options={filters.tokens.map((t) => ({ value: t.id, label: `${t.name}（${t.count}）` }))}
             />
+            <Select
+              size="small"
+              value={statusFilter || undefined}
+              onChange={(v) => { setStatusFilter(v || ""); setPage(1); }}
+              style={{ width: 105 }}
+              allowClear
+              placeholder="全部状态"
+              options={[{ value: "success", label: "成功" }, { value: "error", label: "错误" }, { value: "stopped", label: "已停止" }]}
+            />
             <Input.Search
               size="small"
               placeholder={isAdmin ? "搜索用户 / 内容 / 模型" : "搜索内容 / 模型"}
@@ -454,6 +470,8 @@ export default function LogPage() {
           <span className="bui-chip" title="区间调用次数">
             调用 <b className="oo-num">{summary.calls}</b>
           </span>
+          {summary.errors > 0 ? <span className="bui-chip" style={{ color: "var(--red)" }} title="失败调用，部分已产生用量的调用仍按实际用量计费">错误 <b className="oo-num">{summary.errors}</b></span> : null}
+          {summary.stopped > 0 ? <span className="bui-chip" title="用户停止的调用">已停止 <b className="oo-num">{summary.stopped}</b></span> : null}
           {/* 对账页必须说清「币是什么」。
               Round 4 子线实测（第 94 轮）：这一页是困惑最集中的地方 ——
               check_usage_log 的发言里 15/98 在问汇率，原话：
@@ -587,7 +605,7 @@ export default function LogPage() {
         title="调用详情"
         open={Boolean(detail)}
         onClose={() => setDetail(null)}
-        width={520}
+        width="min(520px, 100vw)"
         destroyOnClose
       >
         {detail ? (() => {
@@ -631,10 +649,19 @@ export default function LogPage() {
             <Descriptions.Item label="首Token / 总耗时">
               {ms(detail.first_token_ms)} / {ms(detail.elapsed_ms)}
             </Descriptions.Item>
-            <Descriptions.Item label="计费">{fmtOd(Number(detail.quota) || 0, perUnit, 6)}</Descriptions.Item>
-            {/* 请求 id：客户端提前断开时一次调用会产生两条记录（计费行 + 错误行），
-                这是把它们对起来的唯一线索（黑盒测试实测抱怨过没有它）。
-                等宽字体 + 可选中，方便复制去搜另一条。 */}
+            <Descriptions.Item label="计费">{detail.billing_known === false ? "费用待核查" : fmtOd(Number(detail.quota) || 0, perUnit, 6)}</Descriptions.Item>
+            <Descriptions.Item label="状态">
+              <span className={`oo-log-status-label oo-log-status-label--${detail.status || "success"}`}>
+                {detail.status === "error" ? `错误${detail.error_code ? ` · ${detail.error_code}` : ""}` : detail.status === "stopped" ? "已停止" : "成功"}
+              </span>
+            </Descriptions.Item>
+            <Descriptions.Item label="实际输入">
+              <LogTextBlock text={detail.input_text} truncated={detail.input_truncated} empty={detail.input_recorded ? "（本次输入没有文本）" : "（该记录未保存用户输入）"} />
+            </Descriptions.Item>
+            <Descriptions.Item label="输出内容">
+              <LogTextBlock text={detail.output_text} truncated={detail.output_truncated} empty={detail.output_recorded ? "（本次调用没有输出）" : "（该记录未保存输出原文）"} />
+            </Descriptions.Item>
+            {/* 请求 ID 用于追溯同一调用；失败账单与状态保存在同一行。 */}
             <Descriptions.Item label="请求 ID">
               {detail.request_id ? (
                 <span className="oo-mono" style={{ fontSize: 12, userSelect: "all" }}>
@@ -656,22 +683,12 @@ export default function LogPage() {
                   {detail.channel_name ? `#${detail.channel_id} ${detail.channel_name}` : "-"}
                 </Descriptions.Item>
                 <Descriptions.Item label="User-Agent">{detail.user_agent || "-"}</Descriptions.Item>
-                {/* 输入 / 输出原文 —— 用户要求：「历史记录原始明细没存储输入和输出实际内容
-                    （仅管理员可见）？」。整块在 isAdmin 分支里，普通用户连 detail 列都取不到
-                    （后端按 isAdmin 裁剪列，见 routes/log.js）。
-                    后端各截断到 4000 字符并带 text_truncated 标记，这里照实提示。 */}
-                <Descriptions.Item label="输入内容">
+                {/* 用户原文独立展示；完整上游上下文只对管理员开放。 */}
+                <Descriptions.Item label="上游上下文">
                   <LogTextBlock
-                    text={parsedDetail?.prompt_text}
-                    truncated={parsedDetail?.prompt_truncated ?? parsedDetail?.text_truncated}
-                    empty="（该记录未存输入原文，可能是本次升级之前的调用）"
-                  />
-                </Descriptions.Item>
-                <Descriptions.Item label="输出内容">
-                  <LogTextBlock
-                    text={parsedDetail?.output_text}
-                    truncated={parsedDetail?.output_truncated ?? parsedDetail?.text_truncated}
-                    empty="（该记录未存输出原文，可能是本次升级之前的调用）"
+                    text={detail.request_prompt_text || parsedDetail?.prompt_text}
+                    truncated={detail.prompt_truncated ?? parsedDetail?.prompt_truncated ?? parsedDetail?.text_truncated}
+                    empty="（未保存上游上下文）"
                   />
                 </Descriptions.Item>
                 <Descriptions.Item label="原始明细">

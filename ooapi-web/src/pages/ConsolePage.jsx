@@ -421,13 +421,9 @@ for await (const chunk of stream) {
               label="请求成功率"
               value={`${t.success_rate ?? 100}%`}
               current={t.success_rate}
-              previous={
-                (p.calls || 0) + (p.errors || 0) > 0
-                  ? Number((((p.calls || 0) / ((p.calls || 0) + (p.errors || 0))) * 100).toFixed(2))
-                  : null
-              }
+              previous={p.success_rate ?? null}
               tone={(t.success_rate ?? 100) < 95 ? "danger" : undefined}
-              hint={`成功 ${fmtCompact(t.calls || 0)} 次 · 异常/拦截 ${fmtCompact(t.errors || 0)} 次 · 平均耗时 ${t.avg_elapsed > 0 ? (t.avg_elapsed >= 1000 ? `${(t.avg_elapsed / 1000).toFixed(2)}s` : `${t.avg_elapsed}ms`) : "—"}`}
+              hint={`成功 ${fmtCompact(t.successes ?? t.calls ?? 0)} 次 · 错误 ${fmtCompact(t.errors || 0)} 次 · 平均耗时 ${t.avg_elapsed > 0 ? (t.avg_elapsed >= 1000 ? `${(t.avg_elapsed / 1000).toFixed(2)}s` : `${t.avg_elapsed}ms`) : "—"}`}
             />
           </div>
         )}

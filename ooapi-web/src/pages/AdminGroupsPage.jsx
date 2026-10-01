@@ -356,7 +356,7 @@ export default function AdminGroupsPage() {
         width={680}
       >
         <Form form={form} layout="vertical" requiredMark={false}>
-          <Space size={12} align="start" style={{ display: "flex" }}>
+          <Space wrap size={12} align="start" style={{ display: "flex" }}>
             <Form.Item name="name" label="分组名" rules={[{ required: true, message: "请填写分组名" }]} style={{ width: 200 }}>
               <Input placeholder="如 vip" maxLength={32} />
             </Form.Item>

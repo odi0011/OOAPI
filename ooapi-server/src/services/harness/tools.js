@@ -9,8 +9,9 @@
 //   · 每次工具调用的 token 都通过 ctx.record() 计入本轮账单（用户为真实消耗付费）。
 import { assertPublicUrl } from "../../utils.js";
 import { pool } from "../../db.js";
-import { runCompletion } from "../execute.js";
+import { runCompletion, billableFailedCall } from "../execute.js";
 import { modelForChannelMatch } from "../models.js";
+import { USAGE_SQL } from "../log.js";
 
 const clip = (text, max) => {
   const s = String(text ?? "");
@@ -119,19 +120,9 @@ const SEARCH_SYS =
 /** 工具失败仍可交回模型，但它已经产生的上游用量必须进入本轮账单。 */
 export function recordFailedCall(err, ctx, fallback = {}) {
   if (!err || err.billingRecorded || typeof ctx?.record !== "function") return false;
-  const output = String(err.billingOutput ?? fallback.output ?? "");
-  // 本地校验/无渠道不收费；已流出的内容本身也能证明上游开始过。
-  if (err.upstreamStarted !== true && !output) return false;
-  ctx.record({
-    prompt: String(err.billingPrompt ?? fallback.prompt ?? ""),
-    output,
-    usage: null,
-    channel: String(err.channelName || ""),
-    channelId: Number(err.channelId) || 0,
-    startedAt: Number(err.billingStartedAt) || Number(fallback.startedAt) || Date.now(),
-    firstTokenAt: Number(err.billingFirstTokenAt) || Number(fallback.firstTokenAt) || 0,
-    failed: true,
-  });
+  const call = billableFailedCall(err, fallback);
+  if (!call) return false;
+  ctx.record(call);
   // 停止时同一个错误会继续冒泡到路由；路由不能再合成一条相同的失败调用。
   err.billingRecorded = true;
   return true;
@@ -197,7 +188,7 @@ export const TOOLS = {
         });
       } catch (e) {
         e.billingPrompt = `${SEARCH_SYS}\n\n${query}`;
-        e.billingOutput = output;
+        e.billingOutput = output || e.billingOutput || "";
         e.billingStartedAt = startedAt;
         e.billingFirstTokenAt = firstTokenAt;
         recordFailedCall(e, ctx);
@@ -211,6 +202,9 @@ export const TOOLS = {
         channelId: Number(r.channel?.id) || 0,
         startedAt,
         firstTokenAt,
+        elapsed: r.elapsed,
+        retryCount: r.retryCount,
+        model: r.billModel || r.upstreamModel || ctx.model,
       });
       const text = clip(r.content || r.reasoning || "", 6000);
       if (!text) return { ok: false, output: "检索没有返回内容" };
@@ -362,7 +356,7 @@ export const TOOLS = {
         if (!u) return { ok: false, output: "账号不存在" };
         const since = Math.floor(Date.now() / 1000) - 86400;
         const [[d]] = await pool.query(
-          "SELECT COUNT(*) AS n, COALESCE(SUM(quota),0) AS cost FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ?",
+          `SELECT COUNT(*) AS n, COALESCE(SUM(quota),0) AS cost FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ?`,
           [uid, since]
         );
         const [[k]] = await pool.query("SELECT COUNT(*) AS n, SUM(status = 1) AS on_ FROM tokens WHERE user_id = ?", [uid]);
@@ -380,16 +374,16 @@ export const TOOLS = {
       }
 
       if (action === "recent" || action === "errors") {
-        const type = action === "errors" ? 4 : 2;
+        const failureOnly = action === "errors";
         const [rows] = await pool.query(
-          `SELECT created_at, model, token_name, prompt_tokens, completion_tokens, quota, elapsed_ms, content
-             FROM logs WHERE user_id = ? AND type = ? ORDER BY id DESC LIMIT ?`,
-          [uid, type, limit]
+          `SELECT created_at, type, status, model, token_name, prompt_tokens, completion_tokens, quota, elapsed_ms, content
+             FROM logs WHERE user_id = ? AND ${failureOnly ? "type = 4" : USAGE_SQL} ORDER BY id DESC LIMIT ?`,
+          [uid, limit]
         );
         if (!rows.length) return { ok: true, output: action === "errors" ? "最近没有失败的请求" : "还没有调用记录" };
         const lines = rows.map((r) =>
-          type === 2
-            ? `${t(r.created_at)} · ${r.model || "?"} · 令牌「${r.token_name || "站内对话"}」 · 输入 ${r.prompt_tokens || 0} / 输出 ${r.completion_tokens || 0} tokens · ${od(r.quota)}${r.elapsed_ms ? ` · ${(r.elapsed_ms / 1000).toFixed(1)}s` : ""}`
+          !failureOnly
+            ? `${t(r.created_at)} · ${r.model || "?"} · 令牌「${r.token_name || "站内对话"}」 · 输入 ${r.prompt_tokens || 0} / 输出 ${r.completion_tokens || 0} tokens · ${od(r.quota)}${r.elapsed_ms ? ` · ${(r.elapsed_ms / 1000).toFixed(1)}s` : ""}${Number(r.type) === 4 ? ` · ${r.status === "stopped" ? "已停止" : "失败"}` : ""}`
             : `${t(r.created_at)} · ${r.model || "?"} · ${String(r.content || "").replace(/\s+/g, " ").slice(0, 160)}`
         );
         return { ok: true, output: `${action === "errors" ? "最近失败的请求" : "最近调用"}（${rows.length} 条，新→旧）：\n${lines.join("\n")}` };
@@ -418,13 +412,13 @@ export const TOOLS = {
         // 按天聚合用 FLOOR 秒级时间戳（不依赖会话时区）；GROUP BY 与 SELECT 同一表达式，ONLY_FULL_GROUP_BY 下合法
         const [days] = await pool.query(
           `SELECT FLOOR((created_at + 28800) / 86400) AS d, COUNT(*) AS n, COALESCE(SUM(quota),0) AS cost
-             FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ?
+             FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ?
             GROUP BY FLOOR((created_at + 28800) / 86400) ORDER BY d`,
           [uid, since]
         );
         const [models] = await pool.query(
           `SELECT model, COUNT(*) AS n, COALESCE(SUM(quota),0) AS cost
-             FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ? AND model <> ''
+             FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ? AND model <> ''
             GROUP BY model ORDER BY cost DESC LIMIT 8`,
           [uid, since]
         );

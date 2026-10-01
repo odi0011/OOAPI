@@ -198,21 +198,23 @@ t("openrouter/ 前缀有图标（原先掉平台 logo）", () => {
   ck(/openrouter:\\?\/\//.test(vicon) || /\^openrouter/.test(vicon), "没有 openrouter 图标规则");
 });
 
-console.log("\n=== ⑦ 消费日志存输入/输出原文（仅管理员） ===");
-t("网关写入 prompt_text / output_text", () => {
-  ck(/prompt_text: String\(prompt \|\| ""\)\.slice/.test(gateway), "没有存输入原文");
-  ck(/output_text: String\(output \|\| ""\)\.slice/.test(gateway), "没有存输出原文");
+console.log("\n=== ⑦ 使用记录：本人原文与管理员上游上下文 ===");
+t("网关写入独立用户原文、上游输入和输出", () => {
+  ck(/inputText,/.test(gateway) && /requestPromptText: prompt/.test(gateway), "没有存用户原文和上游输入");
+  ck(/outputText: output/.test(gateway) && /logTexts\(\{ prompt, output, inputText \}\)/.test(gateway), "没有存输出原文");
 });
 t("必须截断（否则 TEXT 列写不下会让整条日志失败）", () => {
-  ck(/slice\(0, 4000\)/.test(gateway), "没有截断到 4000 字符");
-  ck(/text_truncated/.test(gateway), "没有标记被截断");
+  const helper = read("src/services/log-text.js");
+  ck(/const LIMIT = 4000/.test(helper) && /logTexts\(/.test(gateway), "没有使用统一4000字符截断");
+  ck(/text_truncated/.test(helper), "没有标记被截断");
 });
 t("只在管理员能看的地方（detail 列按 isAdmin 裁剪）", () => {
   ck(/\.\.\.\(isAdmin \? \["detail", "user_agent"\] : \[\]\)/.test(logRoute), "detail 列没有按 isAdmin 裁剪");
 });
-t("前端在管理员分支里渲染输入/输出块", () => {
-  ck(/label="输入内容"/.test(logPage), "没有输入内容块");
+t("前端展示本人实际输入/输出，单独标注管理员上游上下文", () => {
+  ck(/label="实际输入"/.test(logPage) && /text=\{detail\.input_text\}/.test(logPage), "没有独立用户原文块");
   ck(/label="输出内容"/.test(logPage), "没有输出内容块");
+  ck(/label="上游上下文"/.test(logPage) && /detail\.request_prompt_text/.test(logPage), "没有管理员上游上下文块");
   ck(/function LogTextBlock/.test(logPage), "没有原文展示组件（会在详情里撑爆布局）");
   ck(/parsedDetail/.test(logPage), "没有解析 detail JSON");
 });

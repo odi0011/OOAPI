@@ -14,7 +14,7 @@ import "dotenv/config";
 import assert from "node:assert/strict";
 import jwt from "jsonwebtoken";
 
-const BASE = process.env.SMOKE_BASE || "http://127.0.0.1:3001";
+const BASE = process.env.BASE || process.env.SMOKE_BASE || "http://127.0.0.1:3001";
 
 const { JWT_SECRET, pool } = await import("../src/db.js");
 const { DEFAULT_OPTIONS } = await import("../src/config.js");

@@ -107,7 +107,8 @@ export default function PromptBar({
   const [attachOpen, setAttachOpen] = useState(false);
   const [keyOpen, setKeyOpen] = useState(false);
 
-  const canSend = !disabled && (value.trim().length > 0 || chips.length > 0);
+  const composerDisabled = disabled || !model;
+  const canSend = !composerDisabled && (value.trim().length > 0 || chips.length > 0);
 
   // 输入框自增高：使用 auto 准确度量，限制在 44px~200px 之间，超出平滑滚动
   useLayoutEffect(() => {
@@ -240,7 +241,7 @@ export default function PromptBar({
           rows={1}
           value={value}
           aria-label="消息内容"
-          disabled={disabled}
+          disabled={composerDisabled}
           placeholder={busy ? "正在生成…" : placeholder}
           onChange={(e) => onChange(e.target.value)}
           // Ctrl+V 贴截图 → 交给上层走图片上传链路。

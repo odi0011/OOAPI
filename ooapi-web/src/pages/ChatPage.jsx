@@ -44,6 +44,7 @@ import { chatApi, runChatStream, resumeChatStream } from "../services/chat";
 import { useApp } from "../context/AppContext";
 import Markdown from "../components/Markdown";
 import { OdCoin } from "../components/OdCoin";
+import { DurationCell, TokenCell, formatDuration } from "../components/UsageCells";
 import { CURRENCY_NAME, copyText, fmtOd, unitsPerOd } from "../services/format";
 import { LoadingState, ThinkingState, StreamingText } from "../components/beautifului";
 import PromptBar from "../components/PromptBar";
@@ -72,6 +73,29 @@ const ms = (p) => (p.ended && p.started ? Math.max(1, p.ended - p.started) : 0);
 // 用它当 key 会让消息在回答完成的一刻重挂载（入场动画重播、折叠态丢失）。
 // 因此进入列表时固定一个本地 key，重发/回退整体替换时同样重新生成一遍。
 const withKeys = (list = []) => list.map((m, i) => ({ ...m, key: m.key || `m${m.seq || 0}-${i}-${uid()}` }));
+const knownNumber = (v) => v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v)) && Number(v) >= 0;
+const recoveryKey = (userId, sessionId) => `oo.chat.recovery.${userId}.${sessionId}`;
+const readRecovery = (userId, sessionId) => {
+  try { return JSON.parse(sessionStorage.getItem(recoveryKey(userId, sessionId)) || "null"); } catch { return null; }
+};
+const saveRecovery = (userId, sessionId, value) => {
+  try {
+    if (value) sessionStorage.setItem(recoveryKey(userId, sessionId), JSON.stringify(value));
+    else sessionStorage.removeItem(recoveryKey(userId, sessionId));
+  } catch { /* 隐私模式或附件超过浏览器存储限制时，内存中的草稿仍保留 */ }
+};
+const hydrateMessages = (messages, previous = []) => withKeys((messages || []).map((m) => ({
+  ...m, key: previous.find((p) => p.seq > 0 && p.seq === m.seq && p.role === m.role)?.key,
+})));
+const mergeRecovery = (userId, sessionId, messages) => {
+  const saved = readRecovery(userId, sessionId);
+  if (!saved || !Array.isArray(saved.messages)) return messages;
+  if (messages.some((m) => m.seq > saved.baselineSeq)) {
+    saveRecovery(userId, sessionId, null);
+    return messages;
+  }
+  return [...messages, ...saved.messages];
+};
 
 /* ---------------------------------------------------------------------------
  * 一条消息的渲染：
@@ -116,11 +140,15 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
   const textParts = parts.filter((p) => p.type === "text");
   const reasoning = parts.filter((p) => p.type === "reasoning");
   const tools = parts.filter((p) => p.type === "tool");
+  const errors = parts.filter((p) => p.type === "error");
   // 待办来自 todowrite 工具的结果（落在 tool part 上，刷新后依然在），或流式期间的 todo 事件
   const todo = parts.filter((p) => Array.isArray(p.todo)).slice(-1)[0]?.todo || msg.todo;
   const hasText = textParts.some((p) => (p.text || "").trim());
   const working = Boolean(streaming) && !hasText;
   const reasoningWorking = Boolean(streaming) && !hasText && reasoning.length > 0;
+  const firstTokenText = msg.firstTokenMs === 0 ? "0ms"
+    : knownNumber(msg.firstTokenMs) ? formatDuration(msg.firstTokenMs) : "—";
+  const elapsedText = msg.elapsedMs === 0 ? "0ms" : knownNumber(msg.elapsedMs) ? formatDuration(msg.elapsedMs) : "—";
 
   return (
     <article className="ui-msg ui-msg-ai">
@@ -133,6 +161,12 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
           steps={reasoning.map((p) => ({ content: p.text, status: streaming ? "running" : "done" }))}
         />
       ) : null}
+
+      {errors.map((part, i) => <Alert
+        key={part.id || `error-${i}`} type={msg.status === "stopped" ? "warning" : "error"} showIcon
+        className="ui-msg-error" message={part.message || part.text || "本轮生成失败，请重试"}
+        description={msg.local ? msg.cost === 0 ? "未发起上游调用，输入内容已保留。" : "发送状态尚未确认，请恢复连接核对后重试。" : undefined}
+      />)}
 
       {todo?.length ? <TodoPanel todo={todo} /> : null}
       <ToolChips calls={tools.map((t) => ({ ...t, ms: ms(t) }))} />
@@ -147,33 +181,34 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
         </StreamingText>
       ) : working ? (
         <LoadingState label={tools.some((t) => t.status === "running") ? "正在调用工具" : "正在生成回答"} />
-      ) : null}
+      ) : !streaming && !errors.length && !reasoning.length && !tools.length ? <span className="ui-msg-empty">本轮没有返回文本内容。</span> : null}
 
       {!streaming ? (
         <div className="ui-msg-actions">
           <Tooltip title="复制回答">
             <Button type="text" size="small" aria-label="复制回答" icon={<CopyOutlined />} disabled={!hasText} onClick={() => onCopy(textParts.map((p) => p.text).join("\n\n"))} />
           </Tooltip>
-          <Tooltip title="重新生成会再次计费">
+          <Tooltip title={errors.length ? "重试可能产生新的用量" : "重新生成会再次计费"}>
             <Popconfirm
-              title="重新生成这条回答？"
+              title={errors.length ? "重试这一轮？" : "重新生成这条回答？"}
               description="这会移除它之后的消息，并再次产生用量。"
               onConfirm={() => onRetry(msg)}
               disabled={busy}
               okText="重新生成"
               cancelText="取消"
             >
-              <Button type="text" size="small" aria-label="重新生成" disabled={busy} icon={<ReloadOutlined />} />
+              <Button type="text" size="small" aria-label={errors.length ? "重试本轮" : "重新生成"} disabled={busy} icon={<ReloadOutlined />} />
             </Popconfirm>
           </Tooltip>
-          {msg.cost ? (
-            <span className="sp">
-              {/* 图标即单位：不重复写「OD币」（用户要求，省空间） */}
-              <OdCoin size={13} />
-              {msg.cost}
-              {msg.tokens ? <span className="oo-num"> · {msg.tokens.prompt + msg.tokens.completion} tokens</span> : ""}
-            </span>
-          ) : null}
+          <div className="ui-msg-stats">
+            <span className="ui-msg-cost" title="本轮成本（OD币）；— 表示尚未确认结算结果"><OdCoin size={13} />{knownNumber(msg.cost) ? fmtOd(Number(msg.cost) * unitsPerOd(), unitsPerOd(), 6, false) : "—"}</span>
+            {[msg.tokens?.prompt, msg.tokens?.completion, msg.tokens?.cache].every(knownNumber)
+              ? <TokenCell promptTokens={msg.tokens.prompt} completionTokens={msg.tokens.completion} cacheTokens={msg.tokens.cache} />
+              : <span className="ui-msg-token-unknown" title="— 表示服务端尚未提供统计"><span>输入 {knownNumber(msg.tokens?.prompt) ? msg.tokens.prompt : "—"} · 输出 {knownNumber(msg.tokens?.completion) ? msg.tokens.completion : "—"}</span><span>缓存 {knownNumber(msg.tokens?.cache) ? msg.tokens.cache : "—"}</span></span>}
+            {msg.elapsedMs === 0 || msg.firstTokenMs === 0
+              ? <span className="oo-duration-cell"><span className="oo-duration-row"><span>首字</span><b>{firstTokenText}</b></span><span className="oo-duration-row"><span>总耗时</span><b>{elapsedText}</b></span></span>
+              : <DurationCell firstTokenMs={msg.firstTokenMs} elapsedMs={msg.elapsedMs} />}
+          </div>
         </div>
       ) : null}
     </article>
@@ -409,6 +444,7 @@ export default function ChatPage() {
   const [busy, setBusy] = useState(false);
   const [away, setAway] = useState(false);
   const [reading, setReading] = useState(false);
+  const [connectionError, setConnectionError] = useState("");
 
   const threadRef = useRef(null);
   const taRef = useRef(null);
@@ -437,6 +473,25 @@ export default function ChatPage() {
   const sessionListGenRef = useRef(0);
   const viewRef = useRef(view);
   viewRef.current = view;
+  const streamGenRef = useRef(0);
+  const updateBusy = useCallback((value) => { busyRef.current = value; setBusy(value); }, []);
+  const draftRef = useRef({ input, images, docs });
+  draftRef.current = { input, images, docs };
+  const draftVersionRef = useRef(0);
+  const draftSessionRef = useRef("");
+  const draftSwitchRef = useRef(false);
+  useEffect(() => {
+    const id = session?.id;
+    if (!id || !user?.id || draftSessionRef.current === id) return;
+    if (draftSessionRef.current) saveRecovery(user.id, `draft.${draftSessionRef.current}`, draftRef.current);
+    const next = readRecovery(user?.id, `draft.${id}`) || {};
+    draftSessionRef.current = id; draftSwitchRef.current = true;
+    setInput(next.input || ""); setImages(next.images || []); setDocs(next.docs || []);
+  }, [session?.id, user?.id]);
+  useEffect(() => {
+    if (draftSwitchRef.current) { draftSwitchRef.current = false; return; }
+    if (session?.id && user?.id && draftSessionRef.current === session.id) saveRecovery(user.id, `draft.${session.id}`, { input, images, docs });
+  }, [input, images, docs, session?.id, user?.id]);
 
   const models = meta?.models || [];
   const curModel = models.find((m) => m.id === session?.model);
@@ -450,7 +505,7 @@ export default function ChatPage() {
   // 后端若没给 usable（旧版本），退回 status===1 —— 不能因为字段缺失把所有人都挡住。
   const usableKeys = (meta?.keys || []).filter((k) => (k.usable === undefined ? k.status === 1 : k.usable));
   const needKey = Boolean(meta) && !usableKeys.length;
-  const unavailable = !session || !curModel || needKey || loadingSession || metaLoading || Boolean(metaError);
+  const unavailable = !session || !curModel || needKey || loadingSession || metaLoading || Boolean(metaError) || Boolean(connectionError);
 
   /* ---------- 加载：元信息 + 会话列表 ---------- */
   const metaGenRef = useRef(0);
@@ -551,13 +606,14 @@ export default function ChatPage() {
       runningRef.current?.abort();
       runningRef.current = null;
       attachedRef.current = ""; // 换会话：上一个会话的订阅标记作废
-      setBusy(false);
+      updateBusy(true);
+      setConnectionError("");
       setLoadingSession(true);
       try {
         const data = await chatApi.getSession(id);
         if (genRef.current !== gen) return;
         setSession(data.session);
-        setMsgs(withKeys(data.messages));
+        setMsgs(withKeys(mergeRecovery(user?.id, id, data.messages || [])));
         setParams({ s: id }, { replace: true });
         // 换会话必须重置滚动状态：否则上一个会话滚到中间时留下的「回到最新」会跟着新会话显示
         stickyRef.current = true;
@@ -567,112 +623,164 @@ export default function ChatPage() {
         // 走 ref：attachRunning 定义在本函数之后，直接进依赖数组会在渲染期触发 TDZ。
         attachRunningRef.current?.(id, gen);
       } catch (e) {
-        if (genRef.current === gen) toast.error(e.message || "打开会话失败");
+        if (genRef.current === gen) { updateBusy(false); setConnectionError(e.message || "打开会话失败"); }
       } finally {
         if (genRef.current === gen) setLoadingSession(false);
       }
     },
-    [setParams, toast]
+    [setParams, toast, user?.id, updateBusy]
   );
+
+  /* 发送和续传共享一套状态机：只有服务端终态才完成；网络断开只恢复订阅，绝不重发 POST。 */
+  const observeRun = useCallback((sessionId, gen, aiKey, options = {}) => {
+    const connection = ++streamGenRef.current;
+    const valid = () => genRef.current === gen && streamGenRef.current === connection;
+    let finished = false, reconnects = 0, recovering = false, accepted = false;
+    let startedAt = Date.now();
+    const beforeMessages = options.beforeMessages || msgsRef.current;
+    const baselineSeq = options.baselineSeq ?? Math.max(0, ...beforeMessages.filter((m) => !m.local).map((m) => Number(m.seq) || 0));
+    const patchAi = (fn) => {
+      if (!valid()) return;
+      setMsgs((prev) => {
+        const index = prev.findIndex((m) => m.key === aiKey);
+        if (index < 0) return prev;
+        const next = prev.slice(); next[index] = fn(prev[index]); return next;
+      });
+    };
+    const storeFailure = (error, data = {}) => {
+      if (!valid()) return;
+      const message = error?.message || "本轮生成失败，请重试";
+      patchAi((m) => {
+        const local = data.local ?? !data.seq;
+        const next = { ...m, ...data, key: aiKey, local, streaming: false, status: data.status || "error", elapsedMs: data.elapsedMs ?? Date.now() - startedAt,
+          parts: data.parts || [...m.parts.filter((p) => p.id !== "connection-error"), { id: "connection-error", type: "error", code: error?.code, message }],
+        };
+        if (next.local) saveRecovery(user?.id, sessionId, { baselineSeq, messages: [...(options.userMessage ? [options.userMessage] : []), next] });
+        return next;
+      });
+    };
+    const finish = () => {
+      if (finished || !valid()) return;
+      finished = true; attachedRef.current = "";
+      patchAi((m) => ({ ...m, streaming: false }));
+      runningRef.current = null; updateBusy(false);
+      refreshUser?.(); loadSessions();
+    };
+    const reconcile = async () => {
+      const data = await chatApi.getSession(sessionId);
+      if (!valid()) return false;
+      const complete = (data.messages || []).some((m) => m.role === "assistant" && (options.request?.retryFromSeq
+        ? m.id && !beforeMessages.some((old) => old.id === m.id)
+        : m.seq > baselineSeq));
+      if (!complete) return false;
+      if (!accepted) { accepted = true; options.onAccepted?.(); }
+      saveRecovery(user?.id, sessionId, null);
+      setSession(data.session);
+      setMsgs((prev) => hydrateMessages(data.messages, prev));
+      return true;
+    };
+    const recover = async (error) => {
+      if (finished || recovering || !valid()) return;
+      recovering = true;
+      const detail = error?.data?.data || error?.data || {};
+      if (detail.accepted === true && !accepted) { accepted = true; options.onAccepted?.(); }
+      if (detail.accepted === false && error?.status !== 409) {
+        storeFailure(error, { cost: 0, tokens: { prompt: 0, completion: 0, cache: 0 }, firstTokenMs: 0 });
+        finish();
+        return;
+      }
+      patchAi((m) => ({ ...m, parts: [...m.parts.filter((p) => p.id !== "connection-error"), { id: "connection-error", type: "error", message: "连接中断，正在恢复已有生成…" }] }));
+      while (reconnects < 3 && valid()) {
+        reconnects++;
+        try {
+          const state = await chatApi.running(sessionId);
+          if (!valid()) return;
+          if (state?.running) {
+            await new Promise((resolve) => setTimeout(resolve, reconnects * 500));
+            if (!valid()) return;
+            recovering = false;
+            connect(true);
+            return;
+          }
+          if (detail.accepted === false || !await reconcile()) {
+            if (detail.message?.parts) {
+              storeFailure(error, detail.message);
+              if (detail.userMessage && options.userMessage) setMsgs((prev) => prev.map((m) => m.key === options.userMessage.key ? { ...m, ...detail.userMessage } : m));
+              if (detail.session) setSession(detail.session);
+            } else storeFailure(error, detail.accepted === false ? { cost: 0, tokens: { prompt: 0, completion: 0, cache: 0 }, firstTokenMs: 0 } : {});
+          }
+          finish();
+          return;
+        } catch {
+          if (reconnects < 3) await new Promise((resolve) => setTimeout(resolve, reconnects * 500));
+        }
+      }
+      storeFailure(Object.assign(new Error(`${error?.message || "连接已断开"}。请刷新确认本轮状态后重试，已收到的内容保留。`), { code: error?.code }));
+      if (valid()) setConnectionError("暂时无法确认本轮生成状态。请恢复连接后继续，避免重复提交。");
+      finish();
+    };
+    const onEvent = (ev) => {
+      if (!valid() || finished) return;
+      if (ev.type === "start" || ev.type === "resumed") {
+        startedAt = ev.startedAt || startedAt;
+        // 回放从初始 part 开始，先清空该占位消息，避免旧 delta 与回放重复。
+        if (ev.type === "resumed") patchAi((m) => ({ ...m, parts: [], streaming: true }));
+        if (ev.userMessage && options.request?.retryFromSeq) setMsgs((prev) => [...prev.filter((m) => !m.local && m.seq > 0 && m.seq < options.request.retryFromSeq), { ...ev.userMessage, key: `u-${uid()}` }, ...prev.filter((m) => m.key === aiKey)]);
+        else if (ev.userMessage && options.userMessage) setMsgs((prev) => prev.map((m) => m.key === options.userMessage.key ? { ...m, ...ev.userMessage, local: false, parts: (ev.userMessage.parts || m.parts).map((p, i) => p.type === "image" && !p.url ? { ...p, url: m.parts[i]?.url } : p) } : m));
+        setConnectionError("");
+        if (!accepted) { accepted = true; options.onAccepted?.(); }
+      } else if (ev.type === "part") patchAi((m) => ({ ...m, parts: m.parts.some((p) => p.id === ev.part.id) ? m.parts.map((p) => p.id === ev.part.id ? ev.part : p) : [...m.parts, ev.part] }));
+      else if (ev.type === "snapshot") patchAi((m) => ({ ...m, parts: (ev.parts || []).map((p) => ({ ...p })) }));
+      else if (ev.type === "part_update") patchAi((m) => ({ ...m, parts: m.parts.map((p) => p.id === ev.id ? { ...p, ...ev.patch } : p) }));
+      else if (ev.type === "delta") patchAi((m) => ({ ...m, parts: m.parts.map((p) => p.id === ev.id ? { ...p, [ev.field]: (p[ev.field] || "") + ev.delta } : p) }));
+      else if (ev.type === "todo") patchAi((m) => ({ ...m, todo: ev.todo }));
+      else if (["done", "error", "stopped"].includes(ev.type)) {
+        if (ev.message && typeof ev.message === "object") {
+          patchAi((m) => ({ ...m, ...ev.message, key: aiKey, streaming: false, todo: ev.todo }));
+          saveRecovery(user?.id, sessionId, null);
+        } else if (ev.type !== "done") storeFailure(new Error(ev.message || "本轮生成失败"), { local: false, status: ev.type === "stopped" ? "stopped" : "error", parts: ev.parts });
+        if (ev.session) {
+          setSession(ev.session);
+          setSessions((prev) => prev.map((s) => s.id === ev.session.id ? { ...s, ...ev.session } : s));
+        }
+        finish();
+      }
+    };
+    const connect = (resume) => {
+      if (!valid() || finished) return;
+      attachedRef.current = sessionId; updateBusy(true);
+      const handlers = { token: getToken(), onEvent, onError: recover, onDone: () => { if (!finished) recover(new Error("生成连接已结束，正在确认结果")); } };
+      runningRef.current = resume ? resumeChatStream(sessionId, handlers) : runChatStream(options.request, handlers);
+    };
+    connect(!options.request);
+  }, [loadSessions, refreshUser, updateBusy, user?.id]);
 
   /* ---------- 断线续传：接回服务端正在跑的生成 ---------- */
-  // 刷新 / 切页回来时，服务端那一轮可能还在跑（也可能已跑完）。
-  // 这里先问一次状态，在跑就订阅 /stream：服务端会先回放已缓冲的事件，界面无缝恢复。
-  const attachRunning = useCallback(
-    (sessionId, gen) => {
-      if (!sessionId) return;
-      // 同一会话只允许接一次：StrictMode 双挂载 / 重复打开会话都会调进来，
-      // 订阅两次会把已缓冲的事件重放两遍，界面上就是思考链和正文被叠加。
+  const attachRunning = useCallback(async (sessionId, gen) => {
+    if (!sessionId || attachedRef.current === sessionId) return;
+    updateBusy(true);
+    try {
+      const state = await chatApi.running(sessionId);
+      if (genRef.current !== gen) return;
+      if (!state?.running) {
+        // getSession 与 running 之间可能刚好完成：再取终态避免刷新停在只有 user 的旧快照。
+        const data = await chatApi.getSession(sessionId);
+        if (genRef.current !== gen) return;
+        setSession(data.session); setMsgs((prev) => hydrateMessages(mergeRecovery(user?.id, sessionId, data.messages || []), prev));
+        setConnectionError(""); updateBusy(false); return;
+      }
       if (attachedRef.current === sessionId) return;
-      (async () => {
-        let running = false;
-        try {
-          const st = await chatApi.running(sessionId);
-          running = Boolean(st?.running);
-        } catch {
-          return; // 没有在跑（404）或出错了，静默即可
-        }
-        if (!running || genRef.current !== gen) return;
-        if (attachedRef.current === sessionId) return; // 期间已被另一次调用接上
-        attachedRef.current = sessionId;
-
-        const aiKey = `a-${uid()}`;
-        const aiMsg = { key: aiKey, seq: 0, role: "assistant", parts: [], streaming: true };
-        setMsgs((prev) => [...prev, aiMsg]);
-        setBusy(true);
-        stickyRef.current = true;
-
-        // 与 send 里同一套事件处理：按 part.id 增量更新最后一条消息
-        const patchAi = (fn) => {
-          if (genRef.current !== gen) return;
-          setMsgs((prev) => {
-            const idx = prev.length - 1;
-            const last = prev[idx];
-            if (!last || last.key !== aiKey) return prev;
-            const next = fn(last);
-            if (next === last) return prev;
-            const copy = prev.slice();
-            copy[idx] = next;
-            return copy;
-          });
-        };
-        let finished = false;
-        const finish = () => {
-          if (finished) return;
-          finished = true;
-          attachedRef.current = "";
-          patchAi((m) => ({ ...m, streaming: false }));
-          runningRef.current = null;
-          setBusy(false);
-          refreshUser?.();
-          loadSessions();
-        };
-
-        runningRef.current = resumeChatStream(sessionId, {
-          token: getToken(),
-          onEvent: (ev) => {
-            if (genRef.current !== gen) return;
-            // 同一个 part 可能被推两次（重连回放 + 实时事件交错）：按 id 覆盖而不是追加，
-            // 否则界面会出现两份内容
-            if (ev.type === "part")
-              patchAi((m) => ({
-                ...m,
-                parts: m.parts.some((p) => p.id === ev.part.id) ? m.parts.map((p) => (p.id === ev.part.id ? ev.part : p)) : [...m.parts, ev.part],
-              }));
-            else if (ev.type === "part_update")
-              patchAi((m) => ({ ...m, parts: m.parts.map((p) => (p.id === ev.id ? { ...p, ...ev.patch } : p)) }));
-            else if (ev.type === "delta")
-              patchAi((m) => ({ ...m, parts: m.parts.map((p) => (p.id === ev.id ? { ...p, [ev.field]: (p[ev.field] || "") + ev.delta } : p)) }));
-            else if (ev.type === "todo") patchAi((m) => ({ ...m, todo: ev.todo }));
-            else if (ev.type === "done") {
-              patchAi((m) => ({ ...m, ...ev.message, streaming: false, todo: ev.todo }));
-              if (ev.session) {
-                setSession(ev.session);
-                setSessions((prev) => prev.map((x) => (x.id === ev.session.id ? { ...x, ...ev.session } : x)));
-              }
-              finish();
-            } else if (ev.type === "stopped") {
-              patchAi((m) => ({ ...m, parts: [...m.parts, { id: uid(), type: "error", message: ev.message }] }));
-              finish();
-            } else if (ev.type === "error") {
-              // 错误属于全局运行提示，不再占用消息流的大块布局；同时立即解除生成状态。
-              toast.error(ev.message || "本轮生成失败");
-              patchAi((m) => ({ ...m, streaming: false }));
-              finish();
-            }
-          },
-          onError: (e) => {
-            // 错误统一走右上角 toast，避免在消息流里插入大块警告卡片。
-            toast.error(e?.message || "与服务器的连接已断开");
-            patchAi((m) => ({ ...m, streaming: false }));
-            finish();
-          },
-          onDone: finish,
-        });
-      })();
-    },
-    [refreshUser, loadSessions, toast]
-  );
+      const aiKey = `a-${uid()}`;
+      setMsgs((prev) => [...prev.filter((m) => !m.streaming), { key: aiKey, seq: 0, role: "assistant", parts: [], streaming: true }]);
+      stickyRef.current = true;
+      observeRun(sessionId, gen, aiKey);
+    } catch (error) {
+      if (genRef.current !== gen) return;
+      updateBusy(false);
+      // 无法确认运行状态时保留历史，并明确提示，不能静默当作没有在运行。
+      setConnectionError(error.message || "无法确认生成状态，请刷新重试");
+    }
+  }, [observeRun, updateBusy, user?.id]);
   attachRunningRef.current = attachRunning;
 
   /* ---------- 侧栏：项目 / 归档 / 批量 ---------- */
@@ -869,17 +977,19 @@ export default function ChatPage() {
   /* ---------- 会话列表操作 ---------- */
   const newSession = useCallback(async () => {
     if (busyRef.current) return;
+    const gen = ++genRef.current;
+    runningRef.current?.abort(); runningRef.current = null; attachedRef.current = "";
+    updateBusy(true);
     try {
       const created = await chatApi.createSession({
         agent: sessionRef.current?.agent || meta?.defaults?.agent || "general",
         model: sessionRef.current?.model || models.find((m) => !m.deprecated)?.id || "",
         settings: sessionRef.current?.settings || {},
       });
+      if (genRef.current !== gen) return;
       setSessions((prev) => [created, ...prev]);
       setSession(created);
       setMsgs([]);
-      setInput("");
-      setImages([]);
       stickyRef.current = true;
       awayRef.current = false;
       setAway(false);
@@ -887,10 +997,12 @@ export default function ChatPage() {
       setShelfOpen(false);
       taRef.current?.focus();
     } catch (e) {
-      toast.error(e.message || "创建会话失败");
+      if (genRef.current === gen) toast.error(e.message || "创建会话失败");
+    } finally {
+      if (genRef.current === gen) updateBusy(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meta, models, setParams, toast]);
+  }, [meta, models, setParams, toast, updateBusy]);
 
   const patchSession = useCallback(
     async (patch, { silent } = {}) => {
@@ -963,216 +1075,82 @@ export default function ChatPage() {
   }, [loadSessions, openSession, setParams, toast]);
 
   /* ---------- 运行一轮 ---------- */
-  // 重新生成时把原消息里的附件（已解析文本）带回来：文件内容不再经过 dataUrl，
-  // 由服务端 /run 的 docs 参数直接接收（否则重发会丢掉附件上下文）
-  const retryDocsRef = useRef([]);
-  const send = useCallback(
-    (overrideText) => {
-      if (!metaReadyRef.current) return;
-      const extraDocs = retryDocsRef.current;
-      retryDocsRef.current = [];
-      const docsToSend = extraDocs.length ? extraDocs : docs;
-      const text = String(overrideText ?? input).trim();
-      const current = sessionRef.current;
-      if (
-        (!text && !images.length && !docsToSend.length) ||
-        busyRef.current ||
-        !current ||
-        loadingSession ||
-        (activeIdRef.current && current.id !== activeIdRef.current)
-      )
-        return;
-      if (current.settings?.tools?.length && curModel?.supportsSearch === false) {
-        // 搜索工具在部分模型上不可用：不阻断，只提示（工具本身也会返回失败原因）
-        // eslint-disable-next-line no-console
-        console.debug("[chat] 当前模型不支持联网检索");
-      }
-
-      const userMsg = {
-        key: `u-${uid()}`,
-        seq: 0,
-        role: "user",
-        parts: [
-          { id: uid(), type: "text", text },
-          // 本地渲染优先用签名 URL（媒体库），回退 dataUrl（上传失败的那批）
-          ...images.map((img) => ({ id: uid(), type: "image", url: img.url || img.dataUrl })),
-          // 文件只放元信息，正文由服务端解析后回填（避免把大段文本塞进前端状态）
-          ...docsToSend.map((d) => ({ id: uid(), type: "file", name: d.name, bytes: d.size ?? d.bytes })),
-        ],
-      };
-      const aiMsg = { key: `a-${uid()}`, seq: 0, role: "assistant", parts: [], streaming: true, agent: current.agent, model: current.model };
-      setMsgs((prev) => [...prev, userMsg, aiMsg]);
-      if (overrideText == null) {
-        setInput("");
-        setImages([]);
-        setDocs([]);
-      }
-      stickyRef.current = true;
-      awayRef.current = false;
-      setAway(false);
-      setBusy(true);
-
-      const myGen = genRef.current;
-      let finished = false;
-      // 流式期间只改最后一条消息：按 id 命中，避免整表 map 带来的无谓拷贝
-      const patchAi = (fn) => {
-        if (genRef.current !== myGen) return;
-        setMsgs((prev) => {
-          const idx = prev.length - 1;
-          const last = prev[idx];
-          if (!last || last.role !== "assistant" || !last.streaming) return prev;
-          const next = fn(last);
-          if (next === last) return prev;
-          const copy = prev.slice();
-          copy[idx] = next;
-          return copy;
-        });
-      };
-      const finish = () => {
-        if (finished) return;
-        finished = true;
-        // 卸载/切会话/登出触发的 abort 也会走到这里：gen 已变就不再写状态、不再发请求
-        if (genRef.current !== myGen) return;
-        attachedRef.current = "";
-        patchAi((m) => ({ ...m, streaming: false }));
-        runningRef.current = null;
-        setBusy(false);
-        refreshUser?.();
-        loadSessions();
-      };
-
-      runningRef.current = runChatStream(
-        {
-          sessionId: current.id,
-          text,
-          // 新格式：带 media_id 的走 id，没传上的（上传失败）回退 dataUrl
-          images: images.map((img) => (img.mediaId ? { mediaId: img.mediaId } : { dataUrl: img.dataUrl })),
-          files: docsToSend.map((d) => ({ name: d.name, type: d.type, dataUrl: d.dataUrl })).filter((f) => f.dataUrl),
-          // 重发历史消息时附件没有 dataUrl，用已解析文本走 docs 通道
-          docs: docsToSend.some((d) => !d.dataUrl) ? docsToSend.map((d) => ({ name: d.name, kind: d.kind, bytes: d.bytes, text: d.text })) : undefined,
-          keyId,
-          model: current.model,
-          agent: current.agent,
-          settings: current.settings,
-        },
-        {
-          token: getToken(),
-          onEvent: (ev) => {
-            if (genRef.current !== myGen) return;
-            // 同一个 part 可能被推两次（重连回放 + 实时事件交错）：按 id 覆盖而不是追加，
-            // 否则界面会出现两份内容
-            if (ev.type === "part")
-              patchAi((m) => ({
-                ...m,
-                parts: m.parts.some((p) => p.id === ev.part.id) ? m.parts.map((p) => (p.id === ev.part.id ? ev.part : p)) : [...m.parts, ev.part],
-              }));
-            else if (ev.type === "part_update")
-              patchAi((m) => ({ ...m, parts: m.parts.map((p) => (p.id === ev.id ? { ...p, ...ev.patch } : p)) }));
-            else if (ev.type === "delta")
-              patchAi((m) => ({ ...m, parts: m.parts.map((p) => (p.id === ev.id ? { ...p, [ev.field]: (p[ev.field] || "") + ev.delta } : p)) }));
-            else if (ev.type === "todo") patchAi((m) => ({ ...m, todo: ev.todo }));
-            else if (ev.type === "done") {
-              patchAi((m) => ({ ...m, ...ev.message, streaming: false, todo: ev.todo }));
-              if (ev.session) {
-                setSession(ev.session);
-                setSessions((prev) => prev.map((s) => (s.id === ev.session.id ? { ...s, ...ev.session } : s)));
-              }
-              finish();
-            } else if (ev.type === "error") {
-              // 错误属于全局运行提示，不再占用消息流的大块布局；同时立即解除生成状态。
-              toast.error(ev.message || "本轮生成失败");
-              patchAi((m) => ({ ...m, streaming: false }));
-              finish();
-            }
-          },
-          onError: (e) => {
-            if (genRef.current !== myGen) return;
-            toast.error(e.message || "网络连接失败");
-            patchAi((m) => ({ ...m, streaming: false }));
-            finish();
-          },
-          onDone: finish,
+  const send = useCallback((overrideText, retryPayload) => {
+    const current = sessionRef.current;
+    if (!metaReadyRef.current || busyRef.current || loadingSession || readingRef.current || connectionError || !current || !curModel) return;
+    const draft = draftRef.current;
+    const draftVersion = draftVersionRef.current;
+    const text = String(retryPayload?.text ?? overrideText ?? draft.input).trim();
+    const sendImages = retryPayload?.images || draft.images.map((img) => img.mediaId ? { mediaId: img.mediaId } : { dataUrl: img.dataUrl });
+    const sendFiles = retryPayload?.files || draft.docs.filter((d) => d.dataUrl).map((d) => ({ name: d.name, type: d.type, dataUrl: d.dataUrl }));
+    const sendDocs = retryPayload?.docs || draft.docs.filter((d) => !d.dataUrl).map((d) => ({ name: d.name, kind: d.kind, bytes: d.bytes, text: d.text }));
+    if (!text && !sendImages.length && !sendFiles.length && !sendDocs.length) return;
+    const request = { sessionId: current.id, text, images: sendImages, files: sendFiles, docs: sendDocs, keyId, model: current.model, agent: current.agent, settings: current.settings,
+      ...(retryPayload?.retryFromSeq ? { retryFromSeq: retryPayload.retryFromSeq } : {}),
+    };
+    const userMessage = { key: `u-${uid()}`, seq: 0, role: "user", local: true, parts: [
+      { id: uid(), type: "text", text },
+      ...(!retryPayload ? draft.images.map((img) => ({ id: uid(), type: "image", url: img.url || img.dataUrl, media_id: img.mediaId })) : (retryPayload.userParts || []).filter((p) => p.type === "image")),
+      ...(!retryPayload ? draft.docs.map((d) => ({ id: uid(), type: "file", name: d.name, bytes: d.size ?? d.bytes, ...d })) : (retryPayload.userParts || []).filter((p) => p.type === "file")),
+    ] };
+    const aiKey = `a-${uid()}`;
+    const aiMessage = { key: aiKey, seq: 0, role: "assistant", parts: [], streaming: true, model: current.model, request };
+    const beforeMessages = msgsRef.current;
+    // 重试先保留原历史，等 start 确认服务端事务提交后才替换旧轮。
+    setMsgs((prev) => [...prev.filter((m) => !m.local), ...(!request.retryFromSeq ? [userMessage] : []), aiMessage]);
+    stickyRef.current = true; awayRef.current = false; setAway(false); updateBusy(true);
+    observeRun(current.id, genRef.current, aiKey, { request, userMessage: request.retryFromSeq ? null : userMessage, beforeMessages,
+      onAccepted: () => {
+        if (!retryPayload) {
+          // 用户在等待首包期间输入的新草稿不能被这一轮的迟到 start 清空。
+          if (draftVersionRef.current === draftVersion) setInput("");
+          if (draftRef.current.images === draft.images) setImages([]);
+          if (draftRef.current.docs === draft.docs) setDocs([]);
         }
-      );
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [input, images, docs, keyId, curModel, refreshUser, loadSessions, loadingSession]
-  );
+      },
+    });
+  }, [keyId, curModel, loadingSession, connectionError, observeRun, updateBusy]);
   sendRef.current = send;
 
-  const stop = useCallback(() => {
-    // 必须先通知服务端真正中止：断线不会中止后端运行，否则界面显示已停止、后台还在跑并计费
-    const sid = sessionRef.current?.id;
-    if (sid) chatApi.stop(sid).catch(() => {});
-    runningRef.current?.abort();
-    runningRef.current = null;
-    setMsgs((prev) =>
-      prev.map((m, i) =>
-        i === prev.length - 1 && m.streaming ? { ...m, streaming: false, parts: [...m.parts, { id: uid(), type: "error", message: "已停止接收。本轮已产生的用量照常计费。" }] } : m
-      )
-    );
-    // 服务端收尾（部分结算/消息落库）需要一点时间：轮询到 isRunning=false 再解锁，
-    // 否则立刻发送会拿到 409，且本地新消息不会被服务端保存
-    if (!sid) {
-      setBusy(false);
-      setTimeout(() => refreshUser?.(), 1500);
-      loadSessions();
-      return;
+  const stop = useCallback(async () => {
+    const id = sessionRef.current?.id, gen = genRef.current, connection = streamGenRef.current;
+    const valid = () => genRef.current === gen && streamGenRef.current === connection;
+    if (!id) return;
+    try {
+      await chatApi.stop(id);
+      if (!valid()) return;
+      // 保留订阅直到服务端发出停止终态；断开浏览器连接本身不会停止上游。
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const state = await chatApi.running(id);
+        if (!valid()) return;
+        if (!state?.running) {
+          const data = await chatApi.getSession(id);
+          if (!valid()) return;
+          setSession(data.session); setMsgs((prev) => hydrateMessages(data.messages, prev));
+          runningRef.current?.abort(); runningRef.current = null; attachedRef.current = "";
+          updateBusy(false); refreshUser?.(); loadSessions(); return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      if (valid()) setConnectionError("停止请求已提交，尚未确认生成结束。请恢复连接查看状态。");
+    } catch (error) {
+      if (valid()) setConnectionError(error.message || "停止失败，生成可能仍在继续，请重试");
     }
-    let tries = 0;
-    const timer = setInterval(async () => {
-      tries++;
-      try {
-        const r = await chatApi.running(sid);
-        if (!r?.running || tries > 20) {
-          clearInterval(timer);
-          setBusy(false);
-          refreshUser?.();
-          loadSessions();
-        }
-      } catch {
-        if (tries > 20) {
-          clearInterval(timer);
-          setBusy(false);
-        }
-      }
-    }, 500);
-  }, [refreshUser, loadSessions]);
-
-  const retry = useCallback(
-    async (msg) => {
-      if (busyRef.current || !metaReadyRef.current) return;
-      const list = msgsRef.current;
-      const index = list.indexOf(msg);
-      const userMsg = list[index - 1];
-      if (!userMsg || userMsg.role !== "user") return;
-      const text = (userMsg.parts || []).filter((p) => p.type === "text").map((p) => p.text).join("\n");
-      const imgs = (userMsg.parts || []).filter((p) => p.type === "image").map((p) => p.url);
-      // 附件正文已在历史消息里（file part 带 text）：重新生成时按 docs 通道带回，
-      // 否则 rewind 删掉原消息后附件上下文永久丢失
-      retryDocsRef.current = (userMsg.parts || [])
-        .filter((p) => p.type === "file" && p.text)
-        .map((p) => ({ name: p.name, kind: p.kind, bytes: p.bytes, text: p.text }));
-      // 服务端回退：这一轮问答要从库里删掉，否则重发后上下文里同一个问题会出现两遍
-      if (userMsg.seq) {
-        try {
-          const data = await chatApi.rewind(sessionRef.current.id, userMsg.seq);
-          setSession(data.session);
-          setSessions((prev) => prev.map((s) => (s.id === data.session.id ? { ...s, ...data.session } : s)));
-          setMsgs(withKeys(data.messages));
-        } catch (e) {
-          toast.error(e.message || "重新生成失败");
-          return;
-        }
-      } else {
-        setMsgs(list.slice(0, index - 1));
-      }
-      setImages(imgs);
-      setTimeout(() => sendRef.current?.(text), 0);
-    },
-    [toast]
-  );
-
+  }, [refreshUser, loadSessions, updateBusy]);
+  const retry = useCallback((msg) => {
+    if (busyRef.current || !metaReadyRef.current || loadingSession) return;
+    const list = msgsRef.current;
+    const index = list.findIndex((m) => m.key === msg.key);
+    const userMessage = list.slice(0, index).reverse().find((m) => m.role === "user");
+    if (!userMessage && !msg.request) return;
+    const parts = userMessage?.parts || [];
+    const payload = msg.request || {
+      text: parts.filter((p) => p.type === "text").map((p) => p.text).join("\n"),
+      images: parts.filter((p) => p.type === "image").map((p) => ({ mediaId: p.media_id || p.mediaId || 0, ...(p.url?.startsWith("data:") ? { dataUrl: p.url } : {}) })),
+      docs: parts.filter((p) => p.type === "file" && p.text).map((p) => ({ name: p.name, kind: p.kind, bytes: p.bytes, text: p.text })),
+    };
+    sendRef.current?.(undefined, { ...payload, userParts: parts, retryFromSeq: msg.request?.retryFromSeq || userMessage?.seq || undefined });
+  }, [loadingSession]);
   const copy = useCallback(
     async (text) => {
       try {
@@ -1209,6 +1187,7 @@ export default function ChatPage() {
       return;
     }
     readingRef.current = true;
+    const gen = genRef.current;
     setReading(true);
     try {
       const loaded = await Promise.all(
@@ -1228,7 +1207,7 @@ export default function ChatPage() {
           }
         })
       );
-      setImages((prev) => [...prev, ...loaded]);
+      if (genRef.current === gen) setImages((prev) => [...prev, ...loaded]);
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -1261,6 +1240,7 @@ export default function ChatPage() {
       return;
     }
     readingRef.current = true;
+    const gen = genRef.current;
     setReading(true);
     try {
       const loaded = await Promise.all(
@@ -1274,7 +1254,7 @@ export default function ChatPage() {
             })
         )
       );
-      setDocs((prev) => [...prev, ...loaded]);
+      if (genRef.current === gen) setDocs((prev) => [...prev, ...loaded]);
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -1297,6 +1277,7 @@ export default function ChatPage() {
 
   const onKeyPick = useCallback(
     (id) => {
+      if (busyRef.current) return;
       // 切密钥 = 换一套路由身份：可用模型会变，重新拉 meta 并校正当前模型。
       // 同时记住它是哪一把：刷新后不该被服务端的默认选择顶掉（见挂载处的注释）。
       setKeyId(id);
@@ -1312,7 +1293,7 @@ export default function ChatPage() {
 
   const setModel = useCallback(
     (id) => {
-      if (!metaReadyRef.current) return;
+      if (!metaReadyRef.current || busyRef.current) return;
       const m = models.find((x) => x.id === id);
       if (!m) return;
       const patch = { model: id };
@@ -1581,6 +1562,8 @@ export default function ChatPage() {
           </div>
         </header>
 
+        {connectionError ? <Alert className="ui-chat2-connection-error" type="error" showIcon message={connectionError}
+          action={<Button size="small" onClick={() => openSession(sessionRef.current?.id)}>恢复连接</Button>} /> : null}
         {metaError ? (
           <div style={{ padding: "10px 16px" }}>
             <Notice
@@ -1703,11 +1686,13 @@ export default function ChatPage() {
             <PromptBar
               textareaRef={taRef}
               value={input}
-              onChange={setInput}
+              onChange={(value) => { draftVersionRef.current += 1; setInput(value); }}
               onSend={() => send()}
               onStop={stop}
               busy={busy}
-              disabled={unavailable || reading}
+              // 还没有选择模型时必须允许打开模型菜单；否则「请先选择模型」会变成死锁。
+              // 只有输入框/发送按钮继续由 PromptBar 根据 model 是否为空禁用。
+              disabled={needKey || loadingSession || metaLoading || Boolean(metaError) || Boolean(connectionError) || reading}
               models={models}
               vendorGroups={meta?.vendors || null}
               model={session?.model || ""}

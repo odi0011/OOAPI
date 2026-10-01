@@ -20,6 +20,8 @@ import { rowToChannel, channelInGroup, channelSupportsModel, collectAvailableMod
 import { getBoolOption } from "../config.js";
 import { saveBuffer, getMedia, readBlob, mediaUrl, attachRef, releaseRefs } from "../services/media.js";
 import { runHarness } from "../services/harness/loop.js";
+import { billableFailedCall } from "../services/execute.js";
+import { publicRunError } from "../services/upstream/public-error.js";
 import { AGENTS, findAgent, publicAgents, PRIMARY_AGENTS } from "../services/harness/agents.js";
 import { toolSpecs } from "../services/harness/tools.js";
 import { extractFileText, MAX_UPLOAD_FILES, MAX_UPLOAD_BYTES, TEXT_FILE_EXTS } from "../services/harness/files.js";
@@ -609,7 +611,7 @@ router.post(
 // ---------- 计费（用户额度）----------
 // 与网关同一套原子扣费；harness 传进来的 tokens 是「每次上游调用分别 splitTokens 后求和」，
 // 混用 API 渠道（结构化 usage）与反代渠道（usage=null）时不会互相覆盖口径。
-  async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0, keyName = "", startedAt = 0, firstTokenAt = 0, userAgent = "", ip = "", calls = null, tokenQuotaHold = 0, sessionId = "" }) {
+async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0, keyName = "", startedAt = 0, firstTokenAt = 0, userAgent = "", ip = "", calls = null, tokenQuotaHold = 0, sessionId = "", inputText = "", status = "success", errorCode = "", retryCount = 0, isUsage = true, writeUsage = true, requestId = "", errorMessage = "", httpStatus = 0 }) {
     let { promptTokens, completionTokens, cacheTokens } =
       tokens || splitTokens({ prompt, output, upstreamTotal: usage });
   // 兼容别名必须按真实模型计价（否则落到默认兜底档，偏差可达 3~10 倍）
@@ -632,7 +634,8 @@ router.post(
     const phases = new Set();
     for (const c of calls) {
       const at = Number(c.startedAt) || startedAt || Date.now();
-      const e = effectivePrice(basePrice, at);
+      const callPrice = c.model ? await getPrice(resolveAliasSync(c.model)) : basePrice;
+      const e = effectivePrice(callPrice, at);
       phases.add(e.phase);
       const t =
         c.tokens ||
@@ -664,25 +667,25 @@ router.post(
   // （余额被并发请求清零或管理员扣款时命中，16 步 harness 白送）。
   // 正确做法是照常记账：余额不够就扣成负数（见下），让鉴权处的余额检查
   // 去挡住**下一个**请求，而不是让已经发生的这一轮凭空消失。
-  let ret;
+  const conn = await pool.getConnection();
+  let committing = false;
+  let logId = 0;
   try {
-    [ret] = await pool.query(
+    await conn.beginTransaction();
+    const [ret] = await conn.query(
       "UPDATE users SET quota = quota - ?, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ? AND quota >= ?",
       [units, units, user.id, units]
     );
     if (!ret.affectedRows) {
-      await pool.query(
+      const [fallback] = await conn.query(
         "UPDATE users SET quota = quota - ?, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ?",
         [units, units, user.id]
       );
+      if (!fallback.affectedRows) throw new Error("计费账户已不存在");
       console.warn(
         `[chat] 用户 ${user.id} 余额不足仍完成对话，已记账为欠费 ${units} 单位，后续请求将被拒绝直到充值`
       );
     }
-  } catch (e) {
-    // 扣费是否已提交无法确认：抛专用错误，调用方不得再次结算（宁可少扣不可重复扣）
-    throw Object.assign(new Error(`扣费结果不确定：${e.message}`), { code: "BILLING_UNCERTAIN" });
-  }
   // **令牌侧的 used_quota / remain_quota 也要一起记**。
   //
   // 黑盒测试实测（原话）：「Token 的 used_quota 不含站内对话 —— 两本账对不上」：
@@ -694,18 +697,18 @@ router.post(
   //
   // 与 gateway 的 settle 同一口径：加回入口预占的 hold，再扣本次实际用量。
   if (keyId) {
-    await pool
-      .query(
+    const [tokenRet] = await conn.query(
         `UPDATE tokens SET used_quota = used_quota + ?, accessed_time = ?,
                 remain_quota = IF(unlimited_quota = 1, remain_quota, GREATEST(0, remain_quota + ? - ?))
-          WHERE id = ?`,
-        [units, now(), Number(tokenQuotaHold) || 0, units, keyId]
-      )
-      .catch((e) => console.error("[chat] 令牌额度更新失败：", e.message));
+          WHERE id = ? AND user_id = ?`,
+        [units, now(), Number(tokenQuotaHold) || 0, units, keyId, user.id]
+      );
+    if (!tokenRet.affectedRows) throw new Error("计费密钥已不存在");
   }
-  await writeLog({
+  if (writeUsage) logId = await writeLog({
+    connection: conn,
     user,
-    type: LOG_TYPE.CONSUME,
+    type: status === "success" ? LOG_TYPE.CONSUME : LOG_TYPE.ERROR,
     content: `${kind} · ${model} · 提示 ${promptTokens} / 补全 ${completionTokens} tokens${
       cacheTokens ? ` / 缓存 ${cacheTokens}` : ""
     } · ${(units / UNITS_PER_OD).toFixed(4)} ${CURRENCY}`,
@@ -715,7 +718,7 @@ router.post(
       channel_ids: Array.isArray(channelIds) && channelIds.length ? channelIds : undefined,
       model,
       kind,
-      ...logTexts({ prompt, output, calls }),
+      ...logTexts({ prompt, output, calls, inputText }),
       session_id: sessionId || undefined,
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
@@ -726,6 +729,7 @@ router.post(
       priced_at: startedAt || Date.now(),
       rate: Number(gcfg?.rate) || 1,
       amount_units: units,
+      ...(errorCode ? { code: errorCode, http_status: Number(httpStatus) || undefined, error_message: errorMessage } : {}),
     }),
     quota: units,
     // 使用记录明细（列存储）：站内对话不经 Key，但仍记录本次路由用的密钥与分组，
@@ -740,13 +744,28 @@ router.post(
     promptTokens,
     completionTokens,
     cacheTokens,
-    firstTokenMs: firstTokenAt && startedAt ? firstTokenAt - startedAt : 0,
+    firstTokenMs: firstTokenAt && startedAt ? firstTokenAt - startedAt : null,
     elapsedMs: startedAt ? Date.now() - startedAt : 0,
     userAgent,
     ip,
     pricePhase: eff.phase,
+    isUsage,
+    status,
+    errorCode,
+    retryCount,
+    inputText,
+    requestPromptText: logTexts({ prompt, output, calls, inputText }).request_prompt_text,
+    outputText: logTexts({ prompt, output, calls, inputText }).output_text,
+    requestId,
   });
-  return { units, promptTokens, completionTokens, cacheTokens };
+    committing = true;
+    await conn.commit();
+    return { units, promptTokens, completionTokens, cacheTokens, logId };
+  } catch (e) {
+    await conn.rollback().catch(() => {});
+    // COMMIT发出后结果无法确认，禁止重试结算或再次退回已计入的预占。
+    throw Object.assign(new Error(committing ? "扣费提交结果不确定，请联系管理员核查" : "本轮计费未完成，请联系管理员核查"), { code: committing ? "BILLING_UNCERTAIN" : "BILLING_FAILED", cause: e, ...(committing ? { billingResult: { units, promptTokens, completionTokens, cacheTokens, logId } } : {}) });
+  } finally { conn.release(); }
 }
 
 // 逐条调用 → 汇总 token（失败时也算出已消耗的部分）
@@ -776,30 +795,34 @@ function aggregate(calls = []) {
     // 是本站成本最高的入口。给一个宽松但存在的上限，防脚本化刷量与误连点。
     rateLimit({ windowMs: 60_000, max: 20, keyPrefix: "chat-run", keyFn: (r) => r.user?.id || r.ip }),
     asyncHandler(async (req, res) => {
-    const { sessionId, text = "", model: modelOverride, agent: agentOverride, settings: settingsPatch, images = [], files = [], keyId = 0 } = req.body || {};
+    const reject = (message, status = 400, data = {}) => fail(res, message, status, { accepted: false, ...data });
+    const { sessionId, text = "", model: modelOverride, agent: agentOverride, settings: settingsPatch, images = [], files = [], keyId = 0, retryFromSeq: retryRaw = 0 } = req.body || {};
+    const retryFromSeq = retryRaw ? safeInt(retryRaw, { min: 1, fallback: 0 }) : 0;
+    if (retryRaw && !retryFromSeq) return reject("retryFromSeq 无效", 400, { accepted: false });
     // 令牌额度预占：在**发起上游调用之前**原子占位，避免并发的多个请求
     // 共享同一次「余额 > 0」检查全部放行（见 services/token-quota.js 的说明）
     let quotaHold = { ok: true, amount: 0, consume() {}, refund() {} };
 
     const session = await getSession(req.user.id, sessionId);
-    if (!session) return fail(res, "会话不存在", 404);
-    if (!getBoolOption("chat_enabled")) return fail(res, "站内对话功能已关闭", 403);
-    if (Number(req.user.quota) <= 0) return fail(res, `${CURRENCY}余额不足，请联系管理员充值`, 403);
+    if (!session) return reject("会话不存在", 404);
+    if (!getBoolOption("chat_enabled")) return reject("站内对话功能已关闭", 403);
+    if (Number(req.user.quota) <= 0) return reject(`${CURRENCY}余额不足，请联系管理员充值`, 403);
 
-    const content = String(text || "").trim();
+    const inputText = String(text || "");
+    const content = inputText.trim();
     // 第 80 批：智能体选择已取消，一律由 general 执行（老会话存的 research/coder 等也收拢到这里）。
     // agentOverride 仍从 body 里解构以兼容旧前端，但不再生效。
     void agentOverride;
     const agent = findAgent("general");
-    if (!agent) return fail(res, "智能体不存在");
+    if (!agent) return reject("智能体不存在");
     const model = modelOverride || session.model;
-    if (!model) return fail(res, "请选择模型");
-    if (!content && !(Array.isArray(images) && images.length) && !(Array.isArray(files) && files.length)) {
-      return fail(res, "请输入内容或添加附件");
+    if (!model) return reject("请选择模型");
+    if (!content && !(Array.isArray(images) && images.length) && !(Array.isArray(files) && files.length) && !(Array.isArray(req.body?.docs) && req.body.docs.length)) {
+      return reject("请输入内容或添加附件");
     }
 
     // 同一会话同时只允许一个运行：重复提交若被放行会跑两份、扣两次费
-    if (isRunning(session.id)) return fail(res, "这个会话正在生成中，请稍候或先停止", 409);
+    if (isRunning(session.id)) return reject("这个会话正在生成中，请稍候或先停止", 409);
 
     // 能力开关已取消：tools/search 一律回到智能体默认（老会话里存过的「关掉联网」等不再生效，
     // 否则用户在新界面里既看不到开关、又被旧设置限制住，表现为「怎么问都不查资料」）。
@@ -822,10 +845,10 @@ function aggregate(calls = []) {
       if (mid) {
         const row = await getMedia(mid);
         if (!row || Number(row.user_id) !== req.user.id || !String(row.kind).startsWith("image")) {
-          return fail(res, "图片不存在或无权使用");
+          return reject("图片不存在或无权使用");
         }
         const buf = await readBlob(row);
-        if (!buf) return fail(res, "图片内容缺失，请重新上传");
+        if (!buf) return reject("图片内容缺失，请重新上传");
         imgs.push({ buffer: buf, mimeType: row.mime || "image/png", filename: row.orig_name || "image" });
         imgMediaIds.push(mid);
         continue;
@@ -860,7 +883,7 @@ function aggregate(calls = []) {
     //   POST /api/chat/run {images: [4 张]} → 400「最多 3 张图片」
     // 站内上传的图是 base64 内嵌（前端已经读进内存），代价只有解码与内存，
     // 不存在外链抓取的 SSRF/DoS 面 —— 所以和网关一致按 30 张放行。
-    if (imgs.length > MAX_CHAT_IMAGES) return fail(res, `最多 ${MAX_CHAT_IMAGES} 张图片，请分批发送`);
+    if (imgs.length > MAX_CHAT_IMAGES) return reject(`最多 ${MAX_CHAT_IMAGES} 张图片，请分批发送`);
 
     // 文档附件：前端传 base64，这里解析成文本（PDF/Word/Excel/文本/代码），
     // 解析结果作为 user 消息的 file part 落库 —— 历史里保留文件名与正文，
@@ -871,13 +894,13 @@ function aggregate(calls = []) {
       if (!mm) continue;
       const buf = Buffer.from(mm[2], "base64");
       if (buf.length > MAX_UPLOAD_BYTES) {
-        return fail(res, `文件「${String(f.name || "未命名").slice(0, 60)}」超过 ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB 上限`);
+        return reject(`文件「${String(f.name || "未命名").slice(0, 60)}」超过 ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB 上限`);
       }
       const r = extractFileText({ buffer: buf, filename: f.name || "", mimeType: mm[1] || f.type || "" });
-      if (!r.ok) return fail(res, `文件「${String(f.name || "未命名").slice(0, 60)}」无法读取：${r.error}`);
+      if (!r.ok) return reject(`文件「${String(f.name || "未命名").slice(0, 60)}」无法读取：${r.error}`);
       docs.push({ name: String(f.name || "未命名文件").slice(0, 120), kind: r.kind, bytes: buf.length, text: clipFileText(r.text) });
     }
-    if (docs.length > MAX_UPLOAD_FILES) return fail(res, `最多同时上传 ${MAX_UPLOAD_FILES} 个文件`);
+    if (docs.length > MAX_UPLOAD_FILES) return reject(`最多同时上传 ${MAX_UPLOAD_FILES} 个文件`);
 
     // 「重新生成」重发历史消息时附件没有 dataUrl：前端把已解析文本走 docs 通道带回来。
     // 这里做和 files 相同的上限与剪裁，逻辑保持单一入口。
@@ -892,11 +915,13 @@ function aggregate(calls = []) {
         text: clipFileText(text),
       });
     }
+    if (docs.length > MAX_UPLOAD_FILES) return reject(`最多同时上传 ${MAX_UPLOAD_FILES} 个文件`);
+    if (!content && !imgs.length && !docs.length) return reject("请输入内容或添加有效附件");
 
     // 先原子占位、再做落库等副作用：并发提交的第二个请求会在这里直接 409，
     // 不会留下重复的用户消息或被改错的标题（原实现先落库后占位，存在这个竞态）。
     const run = startRun(session.id, { userId: req.user.id });
-    if (!run) return fail(res, "这个会话正在生成中，请稍候或先停止", 409);
+    if (!run) return reject("这个会话正在生成中，请稍候或先停止", 409);
 
     let history;
     let models;
@@ -909,43 +934,15 @@ function aggregate(calls = []) {
     // 就是这个（每次站内对话都 500/中断，且影响该轮收尾与计费审计）。
     // `node --check` 查不出这类作用域错误（语法合法），必须有真实调用路径的断言。
     let usableKey;
+    let userMessage;
     try {
       history = await getSessionMessages(session.id);
-
-      // 用户消息先落库再跑：即使执行失败，对话历史也是完整的。
-      // 图片 part 只存 media_id（字节在媒体库），渲染时由服务端补签名 URL ——
-      // 这样 parts 不再承载 base64，彻底避开 MEDIUMTEXT 溢出。
-      const userParts = [{ id: `u${Date.now().toString(36)}`, type: "text", text: content }];
-      for (let i = 0; i < imgMediaIds.length; i += 1) {
-        const mid = imgMediaIds[i];
-        if (!mid) continue; // 存库失败的（回退路径）不写进历史，避免留下坏引用
-        userParts.push({ id: `i${Math.random().toString(36).slice(2, 8)}`, type: "image", media_id: mid });
-      }
-      for (const d of docs) {
-        userParts.push({ id: `f${Math.random().toString(36).slice(2, 8)}`, type: "file", name: d.name, kind: d.kind, bytes: d.bytes, text: d.text });
-      }
-      // appendMessage 返回消息 id：图片引用要绑到这个 id 上（删除消息时据此释放）
-      const userMsgId = await appendMessage({ sessionId: session.id, userId: req.user.id, role: "user", parts: userParts });
-      for (const mid of imgMediaIds) {
-        if (!mid) continue;
-        await attachRef(mid, {
-          userId: req.user.id,
-          refType: "chat_message",
-          refId: String(userMsgId),
-          slot: `m${mid}`,
-        }).catch((e) => console.warn(`[chat] 绑定图片引用失败：${e.message}`));
-      }
-
-      // 首条消息直接当标题（比再调一次模型便宜；用户之后可手动改名）
-      if (session.message_count === 0 && session.title === "新对话") {
-        await updateSession(req.user.id, session.id, { title: titleFromText(content || docs[0]?.name || "图片对话") });
-      }
 
       // 路由分组：必须通过密钥路由（分组决定渠道/模型/倍率），没有可用密钥不开跑
       usableKey = await activeKeyOf(req.user, keyId);
       if (!usableKey) {
         finishRun(run);
-        return fail(res, "请先在「令牌管理」创建可用密钥，并在对话页选择它（密钥的分组决定可用模型与倍率）", 403);
+        return reject("请先在「令牌管理」创建可用密钥，并在对话页选择它（密钥的分组决定可用模型与倍率）", 403);
       }
       // 密钥额度在站内对话同样生效（与网关 authorize 的 insufficient_quota 同一口径）。
       //
@@ -954,13 +951,13 @@ function aggregate(calls = []) {
       // 站内却还能无限继续」——正是黑盒测试报的「密钥额度形同虚设」的另一种形态。
       if (!usableKey.unlimited_quota && Number(usableKey.remain_quota) <= 0) {
         finishRun(run);
-        return fail(res, "该密钥额度已用尽，请在对话页换一把密钥（或让管理员调整额度）", 403);
+        return reject("该密钥额度已用尽，请在对话页换一把密钥（或让管理员调整额度）", 403);
       }
       // 原子预占：并发下只有一个请求能拿到这 1 个单位，其余在这里就被拒
       quotaHold = await holdTokenQuota(usableKey);
       if (!quotaHold.ok) {
         finishRun(run);
-        return fail(res, "该密钥额度已用尽，请在对话页换一把密钥（或让管理员调整额度）", 403);
+        return reject("该密钥额度已用尽，请在对话页换一把密钥（或让管理员调整额度）", 403);
       }
       models = await availableModels(req.user, usableKey.id);
       // 按规范名比较：下拉已把别名去重（只留 deepseek-flash），但老会话里存的
@@ -970,17 +967,32 @@ function aggregate(calls = []) {
       modelCaps = models.find((m) => m.id === model) || models.find(sameModel) || null;
       routeGroup = usableKey.group_name || null;
       if (!models.some(sameModel)) {
+        quotaHold.refund();
         finishRun(run);
-        return fail(res, `模型「${model}」在当前密钥下不可用，请重新选择模型`);
+        return reject(`模型「${model}」在当前密钥下不可用，请重新选择模型`);
       }
+
+      // 所有前置校验通过后才改写历史；retryFromSeq 回退与新用户消息在同一事务。
+      const userParts = [{ id: `u${Date.now().toString(36)}`, type: "text", text: inputText }];
+      for (const mid of imgMediaIds.filter(Boolean)) userParts.push({ id: `i${Math.random().toString(36).slice(2, 8)}`, type: "image", media_id: mid });
+      for (const d of docs) userParts.push({ id: `f${Math.random().toString(36).slice(2, 8)}`, type: "file", name: d.name, kind: d.kind, bytes: d.bytes, text: d.text });
+      const savedUser = await appendMessage({ sessionId: session.id, userId: req.user.id, role: "user", parts: userParts, returnMessage: true, retryFromSeq });
+      userMessage = { ...savedUser, role: "user", parts: userParts, status: "success", cost: 0, tokens: { prompt: 0, completion: 0, cache: 0 }, firstTokenMs: null, elapsedMs: 0, retryCount: 0 };
+      // 与GET历史消息同一渲染合同，库里仍只存media_id，签名URL不写入数据库。
+      userMessage.parts = await Promise.all(userParts.map(async (p) => p.type === "image" && p.media_id ? { ...p, url: await mediaUrl(p.media_id).catch(() => "") } : p));
+      if (retryFromSeq) history = history.filter((m) => m.seq < retryFromSeq);
+      for (const mid of imgMediaIds.filter(Boolean)) await attachRef(mid, { userId: req.user.id, refType: "chat_message", refId: String(savedUser.id), slot: `m${mid}` }).catch((e) => console.warn(`[chat] 绑定图片引用失败：${e.message}`));
+      if (session.message_count === 0 && session.title === "新对话") await updateSession(req.user.id, session.id, { title: titleFromText(content || docs[0]?.name || "图片对话") }).catch(() => {});
     } catch (e) {
       // 占位后到真正开跑前的任何异常都要释放，否则会话会永远显示"生成中"
       finishRun(run);
-      throw e;
+      quotaHold.refund();
+      return reject(["NO_SESSION", "BAD_RETRY"].includes(e.code) ? e.message : "无法开始生成，请稍后重试", e.status || 500, { accepted: false, code: e.code || "START_FAILED" });
     }
     const ctrl = new AbortController();
     run.abort = () => ctrl.abort();
-    publish(run, { type: "start", sessionId: session.id, startedAt: run.startedAt });
+    run.userMessage = userMessage;
+    publish(run, { type: "start", sessionId: session.id, startedAt: run.startedAt, userMessage, retryFromSeq });
 
     // 后台跑：不 await，HTTP 层只负责把事件流出去
     executeRun({
@@ -993,10 +1005,12 @@ function aggregate(calls = []) {
       settings,
       history,
       content,
+      inputText,
+      userMessage,
       imgs,
       docs,
       routeGroup,
-      keyId,
+      keyId: Number(usableKey.id),
       // 密钥名也要落日志：只有 id 的话「使用记录」的密钥列会显示成「账户额度」（见 chargeUser）
       keyName: usableKey?.name || "",
       modelCaps,
@@ -1076,7 +1090,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const session = await getSession(req.user.id, req.params.id);
     if (!session) return fail(res, "会话不存在", 404);
-    return ok(res, runStatus(session.id));
+    return ok(res, { ...runStatus(session.id), userMessage: getRun(session.id)?.userMessage || null });
   })
 );
 
@@ -1084,12 +1098,13 @@ router.get(
  * 真正执行一轮：跑 harness、计费、落库、发布事件。
  * 无论客户端是否还在，都必须跑到最后一步（这就是断线续传的前提）。
  */
-async function executeRun({ run, ctrl, user, session, agent, model, settings, history, content, imgs, docs = [], routeGroup, keyId = 0, keyName = "", modelCaps, ip = "", userAgent = "", startedAt = 0, quotaHold = null }) {
+async function executeRun({ run, ctrl, user, session, agent, model, settings, history, content, inputText = content, userMessage = null, imgs, docs = [], routeGroup, keyId = 0, keyName = "", modelCaps, ip = "", userAgent = "", startedAt = 0, quotaHold = null }) {
   const runCalls = [];
   let runParts = [];
   let runTodo = session.todo || [];
   let channelName = "";
   let settled = false;
+  let billedResult = null;
   // 助手消息是否已落库：catch 分支据此避免重复写入（见下方 appendMessage 处说明）
   let saved = false;
 
@@ -1146,19 +1161,28 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       startedAt,
       firstTokenAt: firstCall?.firstTokenAt || 0,
       tokenQuotaHold: quotaHold?.amount || 0,
+      inputText,
+      retryCount: runCalls.reduce((n, c) => n + (Number(c.retryCount) || 0), 0),
+      requestId: `${session.id}:${userMessage?.seq || 0}`,
     });
     // 结算已把预占计入（加回 hold、扣掉实际用量）→ 阻止 finally 里的兜底退回
     quotaHold?.consume();
     settled = true;
+    billedResult = billed;
 
     const message = {
+      id: 0,
       seq: 0,
       role: "assistant",
       parts: runParts,
       agent: agent.id,
       model,
       cost: Number((billed.units / UNITS_PER_OD).toFixed(6)),
-      tokens: { prompt: billed.promptTokens, completion: billed.completionTokens },
+      tokens: { prompt: billed.promptTokens, completion: billed.completionTokens, cache: billed.cacheTokens },
+      status: "success",
+      firstTokenMs: firstCall?.firstTokenAt && startedAt ? firstCall.firstTokenAt - startedAt : null,
+      elapsedMs: startedAt ? Date.now() - startedAt : 0,
+      retryCount: runCalls.reduce((n, c) => n + (Number(c.retryCount) || 0), 0),
       created_time: now(),
     };
     // 落库成功标记（saved 声明在 try 之外）：catch 分支据此判断
@@ -1166,7 +1190,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
     // （updateSession / getSession / publish）抛错都会走到 catch 的兜底落库，
     // 同一轮回答在 chat_messages 里出现两条 —— 用户看到重复回答，
     // 下一轮模型上下文里同一答案还会再出现一次。
-    message.seq = await appendMessage({
+    const savedAssistant = await appendMessage({
       sessionId: session.id,
       userId: user.id,
       role: "assistant",
@@ -1176,47 +1200,41 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       cost: message.cost,
       promptTokens: billed.promptTokens,
       completionTokens: billed.completionTokens,
+      cacheTokens: billed.cacheTokens,
+      status: "success",
+      firstTokenMs: message.firstTokenMs,
+      elapsedMs: message.elapsedMs,
+      retryCount: message.retryCount,
+      returnMessage: true,
     });
+    message.id = savedAssistant.id;
+    message.seq = savedAssistant.seq;
+    message.created_time = savedAssistant.created_time;
     saved = true;
-    await updateSession(user.id, session.id, { todo: runTodo });
+    await updateSession(user.id, session.id, { todo: runTodo }).catch((e) => console.error("[chat] 待办同步失败：", e.code || "DB_ERROR"));
 
-    publish(run, { type: "done", message, todo: runTodo, session: await getSession(user.id, session.id) });
+    publish(run, { type: "done", message, userMessage, todo: runTodo, session: await getSession(user.id, session.id).catch(() => null) });
   } catch (err) {
-    console.error("[chat] 运行失败：", err.code || "", err.message);
+    console.error("[chat] 运行失败：", err.code || "ERROR");
     if (Array.isArray(err.parts) && err.parts.length) runParts = err.parts;
     const stopped = ctrl.signal.aborted || err.code === "ABORTED";
+    const errorCode = /^[\w.:-]{1,64}$/.test(String(err.code || "")) ? String(err.code) : "ERROR";
+    const errorMessage = publicRunError(err, { stopped });
+    let billingKnown = !["BILLING_UNCERTAIN", "BILLING_FAILED"].includes(err.code);
     // 扣费结果不确定时不再补结算（防重复扣费）；余额不足等“确定未扣”的错误才走部分结算
-    if (err?.code === "BILLING_UNCERTAIN") settled = true;
+    if (err?.code === "BILLING_UNCERTAIN") { settled = true; quotaHold?.consume(); billedResult = err.billingResult || null; }
 
-    // 已消耗的部分照常计费（用户确实为这些 token 付了上游成本）：
-    // 失败/中止时最后一次调用没有 usage，按 prompt/输出字符数估算补上。
-    // 失败的那一步不进 runCalls（loop.js 只在 runCompletion 成功后才 record），
-    // 若只按 runCalls 汇总，那一步的 prompt 完全不计费 —— 而失败步往往带着
-    // 整轮最长的上下文（历史 + 工具结果），是漏收最多的一处。
-    // 这里补一条合成调用，让它按自己的时刻判档、按估算用量计费。
-    //
-    // 条件是 `upstreamStarted`：只有真正发起过上游调用才计费。
-    // NO_CHANNEL / UNSUPPORTED_CHANNEL / VISION_NOT_SUPPORTED 这类错误发生在
-    // 调上游**之前**，上游零消耗，对它们计费就是无中生有。
-    const upstreamStarted = err?.upstreamStarted === true;
-    const failedCall = upstreamStarted && !err?.billingRecorded
-      ? {
-          prompt: err?.billingPrompt || "",
-          // 失败步只算自己的输出；整轮 parts 还含已经计费的前序正文，不能重复收费。
-          output: String(err?.billingOutput || ""),
-          usage: null,
-          startedAt: err?.billingStartedAt || startedAt,
-          firstTokenAt: err?.billingFirstTokenAt || 0,
-          channelId: Number(err?.channelId) || 0,
-          channel: err?.channelName || "",
-          tokens: null,
-        }
-      : null;
+    // 只有真实usage或已生成正文能证明消耗；HTTP拒绝与零输出停止不估算整段输入费。
+    // 工具已经record的失败调用不会被helper再次合成。
+    const failedCall = billableFailedCall(err, { prompt: err?.billingPrompt || "", output: err?.billingOutput || "", startedAt });
     const billedCalls = failedCall ? [...runCalls, failedCall] : runCalls;
+    let partialBilled = billedResult || { units: 0, ...sumCallTokens(billedCalls), logId: 0 };
+    const status = stopped ? "stopped" : "error";
+    const retryCount = Math.max(Number(err.retryCount) || 0, billedCalls.reduce((n, c) => n + (Number(c.retryCount) || 0), 0));
     // 工具/子代理会提前记录失败消耗。统一以逐调用账单结算，既不漏收，也不把整轮正文重算。
-    if (!settled && billedCalls.length) {
+    if (!settled && billedCalls.length && !["BILLING_UNCERTAIN", "BILLING_FAILED"].includes(err.code)) {
       try {
-        await chargeUser({
+        partialBilled = await chargeUser({
           user,
           model,
           prompt: "",
@@ -1238,47 +1256,113 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           startedAt,
           firstTokenAt: (billedCalls.find((c) => c.firstTokenAt) || {}).firstTokenAt || 0,
           tokenQuotaHold: quotaHold?.amount || 0,
+          inputText,
+          status,
+          errorCode,
+          errorMessage,
+          httpStatus: err.httpStatus || err.status || 0,
+          retryCount,
+          requestId: `${session.id}:${userMessage?.seq || 0}`,
         });
         quotaHold?.consume();
+        settled = true;
       } catch (e2) {
+        billingKnown = false;
+        if (e2.code === "BILLING_UNCERTAIN") { settled = true; quotaHold?.consume(); partialBilled = e2.billingResult || partialBilled; }
         console.error("[chat] 部分计费失败：", e2.message);
       }
     }
 
     // 只有「尚未落库」时才补写：成功路径可能已经写过（saved=true），
     // 若此处再写一次，同一轮回答会在库里出现两条。
-    if (!saved && runParts.length) {
+    if (!saved) {
       try {
-        await appendMessage({ sessionId: session.id, userId: user.id, role: "assistant", parts: runParts, agent: agent.id, model });
+        const errorPart = { id: `e${Date.now().toString(36)}`, type: "error", code: errorCode, message: errorMessage, billing_known: billingKnown };
+        const finalParts = [...runParts, errorPart];
+        const finalMessage = await appendMessage({
+          sessionId: session.id,
+          userId: user.id,
+          role: "assistant",
+          parts: finalParts,
+          agent: agent.id,
+          model,
+          cost: billingKnown ? Number((partialBilled.units / UNITS_PER_OD).toFixed(6)) : null,
+          promptTokens: partialBilled.promptTokens,
+          completionTokens: partialBilled.completionTokens,
+          cacheTokens: partialBilled.cacheTokens,
+          status: stopped ? "stopped" : "error",
+          firstTokenMs: (billedCalls.find((c) => c.firstTokenAt) || {}).firstTokenAt && startedAt ? (billedCalls.find((c) => c.firstTokenAt) || {}).firstTokenAt - startedAt : null,
+          elapsedMs: startedAt ? Date.now() - startedAt : 0,
+          retryCount,
+          returnMessage: true,
+        });
+        runParts = finalParts;
+        run.finalMessage = {
+          ...finalMessage,
+          role: "assistant",
+          parts: finalParts,
+          agent: agent.id,
+          model,
+          cost: billingKnown ? Number((partialBilled.units / UNITS_PER_OD).toFixed(6)) : null,
+          tokens: { prompt: partialBilled.promptTokens, completion: partialBilled.completionTokens, cache: partialBilled.cacheTokens },
+          status: stopped ? "stopped" : "error",
+          error_code: errorCode,
+          retryCount,
+          firstTokenMs: (billedCalls.find((c) => c.firstTokenAt) || {}).firstTokenAt && startedAt ? (billedCalls.find((c) => c.firstTokenAt) || {}).firstTokenAt - startedAt : null,
+          elapsedMs: startedAt ? Date.now() - startedAt : 0,
+        };
         saved = true;
         await updateSession(user.id, session.id, { todo: runTodo });
       } catch (e2) {
-        console.error("[chat] 失败消息落库异常：", e2.message);
+        console.error("[chat] 失败消息落库异常：", e2.code || "DB_ERROR");
       }
     }
 
-    run.error = { code: err.code || "ERROR", message: err.message };
+    run.error = { code: errorCode, message: errorMessage };
     // 失败也写一条错误日志：与网关同一口径（模型/渠道/耗时/设备），
     // 否则站内对话的失败在看板上完全不可见。
     // 这里没有 req（executeRun 是后台任务），ip/userAgent 由调用方在 /run 时捕获后传入。
-    await writeLog({
+    if (!partialBilled.logId) await writeLog({
       user,
       type: LOG_TYPE.ERROR,
-      content: `${stopped ? "对话已停止" : "对话失败"}：${model} · ${err.message}`,
-      detail: JSON.stringify({ code: err.code || "ERROR" }),
+      content: `${stopped ? "对话已停止" : "对话失败"}：${model} · ${errorMessage}`,
+      detail: JSON.stringify({ code: errorCode, http_status: Number(err.httpStatus || err.status) || undefined, billing_known: billingKnown, ...logTexts({ calls: billedCalls.length ? billedCalls : [{ prompt: err.billingPrompt || "", output: err.billingOutput || "" }], inputText }), session_id: session.id }),
       model,
       channelId: Number(err.channelId) || 0,
       channelName: err.channelName || "",
       tokenId: keyId || 0,
+      tokenName: keyName,
       groupName: routeGroup || "",
       elapsedMs: startedAt ? Date.now() - startedAt : 0,
       userAgent,
       ip,
-    }).catch(() => {});    publish(run, {
+      isUsage: true,
+      status,
+      errorCode,
+      retryCount,
+      inputText,
+      quota: partialBilled.units,
+      promptTokens: partialBilled.promptTokens,
+      completionTokens: partialBilled.completionTokens,
+      cacheTokens: partialBilled.cacheTokens,
+      firstTokenMs: run.finalMessage?.firstTokenMs ?? null,
+      elapsedMs: run.finalMessage?.elapsedMs || (startedAt ? Date.now() - startedAt : 0),
+      requestId: `${session.id}:${userMessage?.seq || 0}`,
+    });
+    else if (billedResult?.logId) await pool.query("UPDATE logs SET type = ?, status = ?, error_code = ? WHERE id = ? AND user_id = ?", [LOG_TYPE.ERROR, status, errorCode, billedResult.logId, user.id]);
+    publish(run, {
       type: stopped ? "stopped" : "error",
-      code: err.code || "ERROR",
-      message: stopped ? "已停止生成。本轮已产生的用量照常计费。" : err.message,
+      code: errorCode,
+      errorMessage,
       parts: runParts,
+      message: run.finalMessage || null,
+      userMessage,
+      status,
+      cost: billingKnown ? Number((partialBilled.units / UNITS_PER_OD).toFixed(6)) : null,
+      tokens: { prompt: partialBilled.promptTokens, completion: partialBilled.completionTokens, cache: partialBilled.cacheTokens },
+      firstTokenMs: run.finalMessage?.firstTokenMs ?? null,
+      elapsedMs: run.finalMessage?.elapsedMs || (startedAt ? Date.now() - startedAt : 0),
+      retryCount,
       session: await getSession(user.id, session.id).catch(() => null),
     });
   } finally {

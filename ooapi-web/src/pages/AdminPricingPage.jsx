@@ -691,13 +691,13 @@ export default function AdminPricingPage() {
           <div className="bui-kv">
             <span className="bui-kv-k">数据来源</span>
             <span className="bui-kv-v">
-              每条来源写在「价格来源」列（官方定价页地址）；人民币计价的厂商按固定汇率折算为美元。
+              每条来源写在「价格来源」列（官方定价页地址）；平台统一使用 OD币计价。
               禁止填写「同上」等无意义说明。
             </span>
           </div>
           <div className="bui-kv">
             <span className="bui-kv-k">DeepSeek</span>
-            <span className="bui-kv-v">取官方高峰时段价；非高峰时段官方减半，本表未区分。网页反代与官方 API 是同一批模型</span>
+            <span className="bui-kv-v">已配置闲时价的模型按请求发起时刻匹配峰谷时段；未配置闲时价时按基准价计费。具体价格与时段见表格</span>
           </div>
         </div>
       </div>

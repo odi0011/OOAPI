@@ -140,21 +140,30 @@ export async function getSessionMessages(sessionId, { limit = 200 } = {}) {
   // 模型会答非所问、反复回到旧话题。
   const n = clamp(Number(limit) || 200, 1, 500);
   const [rows] = await pool.query(
-    "SELECT seq, role, parts, agent, model, cost, prompt_tokens, completion_tokens, created_time FROM chat_messages WHERE session_id = ? ORDER BY seq DESC LIMIT ?",
+    "SELECT id, seq, role, parts, agent, model, cost, prompt_tokens, completion_tokens, cache_tokens, status, first_token_ms, elapsed_ms, retry_count, created_time FROM chat_messages WHERE session_id = ? ORDER BY seq DESC LIMIT ?",
     [String(sessionId), n]
   );
   // 反转为升序：调用方（渲染与上下文构造）都按时间正序消费
   rows.reverse();
-  const out = rows.map((r) => ({
+  const out = rows.map((r) => {
+    const decoded = safeJSONParse(r.parts, []);
+    const parts = Array.isArray(decoded) ? decoded : [];
+    return {
+    id: Number(r.id),
     seq: Number(r.seq),
     role: r.role,
-    parts: safeJSONParse(r.parts, []),
+    parts,
     agent: r.agent || "",
     model: r.model || "",
-    cost: Number(r.cost) || 0,
-    tokens: { prompt: Number(r.prompt_tokens) || 0, completion: Number(r.completion_tokens) || 0 },
+    cost: parts.some((p) => p?.type === "error" && p.billing_known === false) ? null : Number(r.cost) || 0,
+    tokens: { prompt: Number(r.prompt_tokens) || 0, completion: Number(r.completion_tokens) || 0, cache: Number(r.cache_tokens) || 0 },
+    status: r.status || (parts.some((p) => p?.type === "error") ? "error" : "success"),
+    firstTokenMs: r.first_token_ms == null ? null : Number(r.first_token_ms),
+    elapsedMs: Number(r.elapsed_ms) || 0,
+    retryCount: Number(r.retry_count) || 0,
     created_time: Number(r.created_time) || 0,
-  }));
+    };
+  });
 
   // 图片 part 只存 media_id（字节在媒体库），渲染前补上签名 URL。
   // 老消息里可能是内联 dataURL（媒体库上线前写入的），原样保留即可 ——
@@ -175,7 +184,7 @@ export async function getSessionMessages(sessionId, { limit = 200 } = {}) {
 }
 
 /**
- * 追加一条消息。seq 由数据库端算（派生表取 MAX+1），避免并发两条消息抢同一个序号。
+ * 追加一条消息。锁住所属会话后取 MAX+1，避免并发两条消息抢同一个序号。
  * 会话上的计数/花费/时间戳同步更新，供会话列表直接展示。
  */
 export async function appendMessage({
@@ -188,14 +197,38 @@ export async function appendMessage({
   cost = 0,
   promptTokens = 0,
   completionTokens = 0,
+  cacheTokens = 0,
+  status = "success",
+  firstTokenMs = null,
+  elapsedMs = 0,
+  retryCount = 0,
+  returnMessage = false,
+  retryFromSeq = 0,
 }) {
   const t = now();
-  const [ret] = await pool.query(
-    `INSERT INTO chat_messages (session_id, user_id, seq, role, parts, agent, model, cost, prompt_tokens, completion_tokens, created_time)
-     SELECT ?,?, COALESCE(MAX(seq),0)+1, ?,?,?,?,?,?,?,? FROM chat_messages WHERE session_id = ?`,
+  const conn = await pool.getConnection();
+  let removedIds = [];
+  let result;
+  try {
+    await conn.beginTransaction();
+    const [owned] = await conn.query("SELECT id FROM chat_sessions WHERE id = ? AND user_id = ? FOR UPDATE", [String(sessionId), userId]);
+    if (!owned.length) throw Object.assign(new Error("会话不存在"), { code: "NO_SESSION", status: 404 });
+    if (retryFromSeq) {
+      const [target] = await conn.query("SELECT id, role FROM chat_messages WHERE session_id = ? AND seq = ? AND user_id = ?", [String(sessionId), retryFromSeq, userId]);
+      if (!target.length || target[0].role !== "user") throw Object.assign(new Error("重试消息不存在或不是用户消息"), { code: "BAD_RETRY", status: 400 });
+      const [removed] = await conn.query("SELECT id FROM chat_messages WHERE session_id = ? AND seq >= ?", [String(sessionId), retryFromSeq]);
+      removedIds = removed.map((r) => Number(r.id));
+      await conn.query("DELETE FROM chat_messages WHERE session_id = ? AND seq >= ?", [String(sessionId), retryFromSeq]);
+    }
+    const [[maxSeq]] = await conn.query("SELECT COALESCE(MAX(seq), 0) AS seq FROM chat_messages WHERE session_id = ?", [String(sessionId)]);
+    const nextSeq = Number(maxSeq?.seq) + 1;
+  const [ret] = await conn.query(
+    `INSERT INTO chat_messages (session_id, user_id, seq, role, parts, agent, model, cost, prompt_tokens, completion_tokens, cache_tokens, status, first_token_ms, elapsed_ms, retry_count, created_time)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       String(sessionId),
       userId,
+      nextSeq,
       role,
       JSON.stringify(parts),
       String(agent).slice(0, 32),
@@ -203,16 +236,30 @@ export async function appendMessage({
       Number(cost) || 0,
       Number(promptTokens) || 0,
       Number(completionTokens) || 0,
+      Math.max(0, Number(cacheTokens) || 0),
+      String(status || "success").slice(0, 16),
+      firstTokenMs == null ? null : Math.max(0, Math.round(Number(firstTokenMs) || 0)),
+      Math.max(0, Math.round(Number(elapsedMs) || 0)),
+      Math.max(0, Math.round(Number(retryCount) || 0)),
       t,
-      String(sessionId),
     ]
   );
   const costUnits = Math.round((Number(cost) || 0) * 10000);
-  await pool.query(
-    "UPDATE chat_sessions SET message_count = message_count + 1, cost_units = cost_units + ?, prompt_tokens = prompt_tokens + ?, completion_tokens = completion_tokens + ?, updated_time = ? WHERE id = ? AND user_id = ?",
-    [costUnits, Number(promptTokens) || 0, Number(completionTokens) || 0, t, String(sessionId), userId]
+  const [[countRow]] = await conn.query("SELECT COUNT(*) AS c FROM chat_messages WHERE session_id = ?", [String(sessionId)]);
+  await conn.query(
+    "UPDATE chat_sessions SET message_count = ?, cost_units = cost_units + ?, prompt_tokens = prompt_tokens + ?, completion_tokens = completion_tokens + ?, updated_time = ? WHERE id = ? AND user_id = ?",
+    [Number(countRow?.c) || 0, costUnits, Number(promptTokens) || 0, Number(completionTokens) || 0, t, String(sessionId), userId]
   );
-  return Number(ret.insertId) || 0;
+    const [rows] = await conn.query("SELECT id, seq, created_time FROM chat_messages WHERE id = ? AND session_id = ? AND user_id = ?", [ret.insertId, String(sessionId), userId]);
+    result = { id: Number(ret.insertId) || 0, seq: Number(rows[0]?.seq) || 0, created_time: Number(rows[0]?.created_time) || t };
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    throw err;
+  } finally { conn.release(); }
+  // 新引用由调用方绑定到新message id，旧媒体引用只在删除事务提交后释放。
+  if (removedIds.length) await releaseMediaRefs(removedIds);
+  return returnMessage ? result : result.id;
 }
 
 export async function updateSession(userId, id, patch = {}) {

@@ -58,29 +58,38 @@ function streamRequest(url, { method, body }, { onEvent, onDone, onError, token 
         err.data = data;
         throw err;
       }
+      if (!res.headers.get("content-type")?.includes("text/event-stream")) {
+        let message = "服务器未返回对话事件流，请重试";
+        try { const data = await res.json(); message = data?.message || data?.error?.message || message; } catch { /* 非 JSON 响应 */ }
+        throw Object.assign(new Error(message), { code: "STREAM_FORMAT" });
+      }
       if (!res.body) throw new Error("响应无可读内容流");
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = "";
+      let dataLines = [];
+      let terminal = false;
 
-      const handle = (line) => {
-        const t = line.replace(/\r$/, "");
-        if (!t.startsWith("data:")) return;
-        const payload = t.slice(5).trim();
-        if (payload === "[DONE]") return;
+      const dispatch = () => {
+        if (!dataLines.length) return;
+        const payload = dataLines.join("\n").trim();
+        dataLines = [];
+        if (payload === "[DONE]") { terminal = true; return; }
         let ev;
         try {
           ev = JSON.parse(payload);
         } catch {
-          return; // 非 JSON 行（心跳/注释）直接忽略
+          throw Object.assign(new Error("对话事件格式异常，正在确认生成状态"), { code: "STREAM_FORMAT" });
         }
-        try {
-          onEvent?.(ev);
-        } catch (e) {
-          // 业务回调异常不能被当成"非 JSON 行"静默吞掉
-          console.error("[stream] onEvent 处理失败：", e);
-        }
+        if (["done", "error", "stopped"].includes(ev.type)) terminal = true;
+        // 回调异常走 onError，不能吞掉后再把这轮标成成功。
+        onEvent?.(ev);
+      };
+      const handle = (line) => {
+        const t = line.replace(/\r$/, "");
+        if (!t) return dispatch();
+        if (t.startsWith("data:")) dataLines.push(t.slice(5).replace(/^ /, ""));
       };
 
       try {
@@ -94,15 +103,18 @@ function streamRequest(url, { method, body }, { onEvent, onDone, onError, token 
             buf = buf.slice(idx + 1);
           }
         }
-        if (buf.trim()) handle(buf.trim());
+        buf += decoder.decode();
+        if (buf.trim()) handle(buf);
+        dispatch();
       } finally {
         // 客户端 abort / 回调抛错时归还连接
         reader.cancel().catch(() => {});
       }
+      if (!terminal) throw Object.assign(new Error("连接在生成完成前中断，正在确认生成状态"), { code: "STREAM_INTERRUPTED" });
       onDone?.();
     } catch (e) {
       if (e.name === "AbortError") {
-        onDone?.();
+        // 切页/刷新只断开订阅，显式停止由 /stop 收尾；abort 不能当成功。
         return;
       }
       onError?.(e);

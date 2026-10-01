@@ -12,8 +12,9 @@ const compact = (v) => {
 };
 
 export function formatDuration(value) {
+  if (value == null || value === "" || !Number.isFinite(Number(value)) || Number(value) < 0) return "—";
   const n = count(value);
-  return n ? (n >= 1000 ? `${(n / 1000).toFixed(2)}s` : `${n}ms`) : "—";
+  return n >= 1000 ? `${(n / 1000).toFixed(2)}s` : `${n}ms`;
 }
 
 // 沿用使用记录原有的 5s / 15s 档位；两项独立判断，不能把颜色固定给某一行。
@@ -26,7 +27,7 @@ function durationColor(value) {
 }
 
 // 首字和生成结束是两种体验，用同一格的两行表示，避免为同一请求多占一列。
-export function DurationCell({ firstTokenMs = 0, elapsedMs = 0 }) {
+export function DurationCell({ firstTokenMs = null, elapsedMs = null }) {
   return (
     <span className="oo-duration-cell" aria-label={`首字 ${formatDuration(firstTokenMs)}，总耗时 ${formatDuration(elapsedMs)}`}>
       <span className="oo-duration-row"><span>首字</span><b style={{ color: durationColor(firstTokenMs) }}>{formatDuration(firstTokenMs)}</b></span>

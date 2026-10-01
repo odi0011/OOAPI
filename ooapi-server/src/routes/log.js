@@ -2,13 +2,13 @@ import { Router } from "express";
 import { pool } from "../db.js";
 import { ok, asyncHandler, pageParams, safeInt } from "../utils.js";
 import { authRequired, adminRequired, superRequired } from "../middleware/auth.js";
-import { writeLog, LOG_TYPE, LOG_TYPE_LABEL } from "../services/log.js";
+import { writeLog, LOG_TYPE, LOG_TYPE_LABEL, USAGE_SQL } from "../services/log.js";
 
 const router = Router();
 
 // 使用记录页与操作日志页的数据来源：
-//   usage    = 只有消费（type=2）：模型/渠道/令牌/tokens/耗时/设备，是「用量审计」
-//   operation= 其余（充值/管理/错误/登录）：是「谁做了什么」，与用量无关
+//   usage    = 消费与显式标记的失败调用：一调用一行，失败partial费用也在此审计。
+//   operation= 其余充值/管理/历史错误/登录：是「谁做了什么」，与用量无关。
 // 之所以在服务端按 type 切分而不是前端过滤：日志量随调用数线性增长，
 // 让前端拉全量再筛既费带宽，也会让操作日志被海量调用记录淹没。
 const USAGE_TYPE = LOG_TYPE.CONSUME;
@@ -19,6 +19,9 @@ const USAGE_TYPE = LOG_TYPE.CONSUME;
  * 普通用户看到「自己的用量」即可，看到渠道等于泄露上游供应商。
  */
 function mapLog(r, { isAdmin }) {
+  let detail = {};
+  try { detail = JSON.parse(r.detail || "{}"); } catch { /* 老操作日志不一定是JSON */ }
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) detail = {};
   const base = {
     id: r.id,
     user_id: r.user_id,
@@ -26,20 +29,32 @@ function mapLog(r, { isAdmin }) {
     created_at: r.created_at,
     type: r.type,
     type_label: LOG_TYPE_LABEL[r.type] || "其他",
+    is_usage: Number(r.type) === LOG_TYPE.CONSUME || Number(r.is_usage) === 1,
+    status: r.status || (Number(r.type) === LOG_TYPE.ERROR ? "error" : "success"),
+    error_code: r.error_code || detail.code || "",
+    retry_count: Number(r.retry_count) || 0,
+    input_text: r.input_text || "", // 旧prompt含系统模板，绝不回填成用户原文。
+    output_text: r.output_text || detail.output_text || "",
+    input_recorded: r.input_recorded === undefined ? r.input_text != null : Number(r.input_recorded) === 1,
+    output_recorded: r.output_recorded === undefined ? r.output_text != null || Object.hasOwn(detail, "output_text") : Number(r.output_recorded) === 1,
+    input_truncated: Boolean(Number(r.input_truncated) || detail.input_truncated),
+    output_truncated: Boolean(Number(r.output_truncated) || detail.output_truncated),
+    prompt_truncated: Boolean(detail.prompt_truncated),
+    request_prompt_truncated: Boolean(Number(r.request_prompt_truncated) || detail.request_prompt_truncated || detail.prompt_truncated),
     content: r.content,
     quota: Number(r.quota),
+    billing_known: Number(r.billing_unknown) !== 1 && detail.billing_known !== false,
     model: r.model || "",
     prompt_tokens: Number(r.prompt_tokens) || 0,
     completion_tokens: Number(r.completion_tokens) || 0,
     cache_tokens: Number(r.cache_tokens) || 0,
-    first_token_ms: Number(r.first_token_ms) || 0,
+    first_token_ms: Number(r.first_token_known) === 1 || Number(r.first_token_ms) > 0 ? Number(r.first_token_ms) || 0 : null,
     elapsed_ms: Number(r.elapsed_ms) || 0,
     // IP 是「自己的访问来源」，本人可见；设备同理（下面 device 无条件给，
     // 原始 UA 串只给管理员，避免被用来做指纹拼接）
     ip: r.ip || "",
     device: r.device || "",
-    // 关联键：一次调用若产生两条记录（计费 + 错误，客户端提前断开时会这样），
-    // 靠它才能把两条对起来。本人可见（就是他自己的调用）。
+    // 关联一次运行与它的审计行，本人可见。新失败调用只产生一条usage行。
     request_id: r.request_id || "",
     // 令牌与分组**对本人可见**。
     //
@@ -58,6 +73,7 @@ function mapLog(r, { isAdmin }) {
   if (!isAdmin) return base;
   return {
     ...base,
+    request_prompt_text: r.request_prompt_text || detail.request_prompt_text || detail.prompt_text || "",
     channel_id: Number(r.channel_id) || 0,
     channel_name: r.channel_name || "",
     user_agent: r.user_agent || "",
@@ -105,12 +121,10 @@ function buildQuery({ isAdmin, userId, kind, query, defaultDays = 0 }) {
   const conds = [];
   const args = [];
   if (kind === "usage") {
-    conds.push("type = ?");
-    args.push(USAGE_TYPE);
+    conds.push(USAGE_SQL);
   } else {
     // 操作日志排除消费：消费记录在「使用记录」页，两页内容不重叠
-    conds.push("type <> ?");
-    args.push(USAGE_TYPE);
+    conds.push(`NOT ${USAGE_SQL}`);
   }
   if (!isAdmin) {
     conds.push("user_id = ?");
@@ -131,6 +145,11 @@ function buildQuery({ isAdmin, userId, kind, query, defaultDays = 0 }) {
   // 使用记录专有筛选
   if (kind === "usage") {
     const model = String(query.model || "").trim();
+    const status = String(query.status || "");
+    if (["success", "error", "stopped"].includes(status)) {
+      conds.push("COALESCE(NULLIF(status, ''), IF(type = 4, 'error', 'success')) = ?");
+      args.push(status);
+    }
     if (model) {
       conds.push("model = ?");
       args.push(model.slice(0, 128));
@@ -191,12 +210,23 @@ async function listLogs(req, res, kind) {
     "model", "channel_id", "channel_name", "token_id", "token_name", "group_name",
     "prompt_tokens", "completion_tokens", "cache_tokens", "first_token_ms", "elapsed_ms",
     "device", "price_phase",
+    "input_text",
+    "(input_text IS NOT NULL) AS input_recorded",
+    "(output_text IS NOT NULL OR CASE WHEN JSON_VALID(detail) THEN JSON_CONTAINS_PATH(detail, 'one', '$.output_text') ELSE 0 END) AS output_recorded",
+    // 历史输出仍是模型正文，允许本人读取；历史prompt包含系统模板，不回填为用户输入。
+    "COALESCE(NULLIF(output_text,''), CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.output_text')) ELSE NULL END, '') AS output_text",
+    "is_usage", "status", "error_code", "retry_count", "first_token_known",
+    "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.input_truncated')) = 'true' ELSE 0 END AS input_truncated",
+    "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.output_truncated')) = 'true' ELSE 0 END AS output_truncated",
+    "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.request_prompt_truncated')) = 'true' ELSE 0 END AS request_prompt_truncated",
+    "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.billing_known')) = 'false' ELSE 0 END AS billing_unknown",
     // request_id 必须返回：一次调用可能产生两条记录（计费行 + 错误行，
     // 见「客户端提前断开」那个场景），没有这个字段用户在界面上**无法把两条对起来**。
     // 黑盒测试实测抱怨（运维人格）：「两页都没有 request_id，我只能下 SQL 才看得出来
     // 是同一次调用」—— 排查断连/重试问题时它是唯一的关联键。
     "request_id",
     ...(isAdmin ? ["detail", "user_agent"] : []),
+    ...(isAdmin ? ["request_prompt_text"] : []),
   ].join(", ");
   const [rows] = await pool.query(`SELECT ${cols} FROM logs ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`, [
     ...args,
@@ -281,26 +311,26 @@ router.get(
     const sinceArgs = since ? [since] : [];
     const [models] = await pool.query(
       `SELECT model, COUNT(*) AS c FROM logs
-        WHERE type = ? ${sinceCond} AND model <> '' ${whereUser}
+        WHERE ${USAGE_SQL} ${sinceCond} AND model <> '' ${whereUser}
         GROUP BY model ORDER BY c DESC LIMIT 100`,
-      [USAGE_TYPE, ...sinceArgs, ...args]
+      [...sinceArgs, ...args]
     );
     const [tokens] = await pool.query(
       `SELECT token_id, token_name, COUNT(*) AS c FROM logs
-        WHERE type = ? ${sinceCond} AND token_id > 0 ${whereUser}
+        WHERE ${USAGE_SQL} ${sinceCond} AND token_id > 0 ${whereUser}
         GROUP BY token_id, token_name ORDER BY c DESC LIMIT 100`,
-      [USAGE_TYPE, ...sinceArgs, ...args]
+      [...sinceArgs, ...args]
     );
     const [groups] = await pool.query(
       `SELECT group_name, COUNT(*) AS c FROM logs
-        WHERE type = ? ${sinceCond} AND group_name IS NOT NULL AND group_name <> '' AND group_name <> 'default' ${whereUser}
+        WHERE ${USAGE_SQL} ${sinceCond} AND group_name IS NOT NULL AND group_name <> '' AND group_name <> 'default' ${whereUser}
         GROUP BY group_name ORDER BY c DESC LIMIT 50`,
-      [USAGE_TYPE, ...sinceArgs, ...args]
+      [...sinceArgs, ...args]
     );
     const [[publicGroup]] = await pool.query(
       `SELECT COUNT(*) AS c FROM logs
-        WHERE type = ? ${sinceCond} AND (group_name IS NULL OR group_name = '' OR group_name = 'default') ${whereUser}`,
-      [USAGE_TYPE, ...sinceArgs, ...args]
+        WHERE ${USAGE_SQL} ${sinceCond} AND (group_name IS NULL OR group_name = '' OR group_name = 'default') ${whereUser}`,
+      [...sinceArgs, ...args]
     );
     return ok(res, {
       models: models.map((m) => ({ model: m.model, count: Number(m.c) })),
@@ -347,6 +377,9 @@ router.get(
     });
     const [[row]] = await pool.query(
       `SELECT COUNT(*) AS calls,
+              SUM(CASE WHEN COALESCE(NULLIF(status,''), IF(type = 4,'error','success')) = 'success' THEN 1 ELSE 0 END) AS success_calls,
+              SUM(CASE WHEN status = 'error' OR (status = '' AND type = 4) THEN 1 ELSE 0 END) AS error_calls,
+              SUM(CASE WHEN status = 'stopped' THEN 1 ELSE 0 END) AS stopped_calls,
               COALESCE(SUM(quota),0) AS units,
               COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
               COALESCE(SUM(completion_tokens),0) AS completion_tokens,
@@ -365,6 +398,12 @@ router.get(
     const uncached = Math.max(0, prompt - cache);
     return ok(res, {
       calls: Number(row.calls) || 0,
+      success_calls: Number(row.success_calls) || 0,
+      error_calls: Number(row.error_calls) || 0,
+      stopped_calls: Number(row.stopped_calls) || 0,
+      successes: Number(row.success_calls) || 0,
+      errors: Number(row.error_calls) || 0,
+      stopped: Number(row.stopped_calls) || 0,
       units: Number(row.units) || 0,
       prompt_tokens: prompt,
       completion_tokens: Number(row.completion_tokens) || 0,

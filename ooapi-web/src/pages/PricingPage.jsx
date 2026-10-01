@@ -168,6 +168,7 @@ export default function PricingPage() {
         size="small"
         columns={columns}
         dataSource={rows}
+        scroll={{ x: 700 }}
         pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (t) => `共 ${t} 个模型` }}
       />
     </div>

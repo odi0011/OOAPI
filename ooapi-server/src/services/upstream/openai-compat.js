@@ -17,6 +17,12 @@
 import { now, assertPublicUrlCached } from "../../utils.js";
 import { assertNoContentError } from "./content-error.js";
 import { applyVendorRequest, effectiveModelOf, reasoningDeltaOf, splitThinkTags, stripDsSafety, makeDsSafetyFilter } from "./vendor-quirks.js";
+import { normalizeUsage } from "../pricing.js";
+import { publicRunError } from "./public-error.js";
+
+function consumedUsage(usage) {
+  return normalizeUsage(usage).totalTokens > 0;
+}
 
 // 一次性文本读取必须有上限：SSE 路径有单行 8MB 限制，JSON/错误兜底却直接 resp.text()，
 // 异常或恶意上游可以用超大响应把内存打爆。分块读取并在超限时取消响应体。
@@ -307,6 +313,7 @@ export async function chat({
   images = [],
   onDelta,
   onReasoning,
+  onUsage,
   signal,
   // 可选：解包上游的响应包封（Cline 官方 SDK 定义里带 responseEnvelope: "success-data"，
   // 社区报告非流式会把 choices 包在 data 里）。传进来的函数对「标准形状」应原样返回，
@@ -325,17 +332,17 @@ export async function chat({
   const BUSY_RETRIES = 2;
   let sawOutput = false;
   const emitDelta = (t) => {
-    sawOutput = true;
+    if (t) sawOutput = true;
     if (onDelta) onDelta(t);
   };
   const emitReasoning = (t) => {
-    sawOutput = true;
+    if (t) sawOutput = true;
     if (onReasoning) onReasoning(t);
   };
 
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await chatOnce({
+      const result = await chatOnce({
         channel,
         model,
         prompt,
@@ -344,17 +351,20 @@ export async function chat({
         images,
         onDelta: emitDelta,
         onReasoning: emitReasoning,
+        onUsage,
         signal,
         unwrap,
       });
+      return { ...result, retryCount: attempt };
     } catch (e) {
+      e.retryCount = attempt;
       const busy = e?.code === "CHANNEL_UPSTREAM_BUSY";
-      if (!busy || attempt >= BUSY_RETRIES || sawOutput || signal?.aborted) throw e;
+      if (!busy || attempt >= BUSY_RETRIES || sawOutput || consumedUsage(e.usage) || signal?.aborted) throw e;
       const waitMs = 600 * 3 ** attempt;
-      console.warn(`[openai-compat] 上游过载（${e.message.slice(0, 80)}），${waitMs}ms 后原地重试（第 ${attempt + 1}/${BUSY_RETRIES} 次）`);
+      console.warn(`[openai-compat] 上游过载（${publicRunError(e)}），${waitMs}ms 后原地重试（第 ${attempt + 1}/${BUSY_RETRIES} 次）`);
       await new Promise((r) => setTimeout(r, waitMs));
       // 等待期间客户端可能已断开：别白打一次上游
-      if (signal?.aborted) throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
+      if (signal?.aborted) throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED", retryCount: attempt, billable: false });
     }
   }
 }
@@ -368,15 +378,16 @@ async function chatOnce({
   images = [],
   onDelta,
   onReasoning,
+  onUsage,
   signal,
   unwrap,
 }) {
   const { chat: url } = endpoints(channel.base_url);
   if (!url) {
-    throw Object.assign(new Error("未填写接口地址（Base URL）"), { code: "CHANNEL_NOT_READY" });
+    throw Object.assign(new Error("未填写接口地址（Base URL）"), { code: "CHANNEL_NOT_READY", upstreamStarted: false });
   }
   if (!String(channel.api_key || "").trim()) {
-    throw Object.assign(new Error("未填写 API Key"), { code: "CHANNEL_AUTH_EXPIRED" });
+    throw Object.assign(new Error("未填写 API Key"), { code: "CHANNEL_AUTH_EXPIRED", upstreamStarted: false });
   }
 
   const body = {
@@ -426,9 +437,11 @@ async function chatOnce({
   if (!resp.ok) {
     const text = await readTextCapped(resp).catch(() => "");
     let msg = text.slice(0, 200);
+    let rejectedUsage = null;
     try {
       const j = JSON.parse(text);
       msg = j?.error?.message || j?.message || msg;
+      rejectedUsage = pickUsage(j?.usage);
     } catch {
       /* 保留原始文本 */
     }
@@ -462,7 +475,10 @@ async function chatOnce({
       code === "CHANNEL_NOT_APPROVED"
         ? "（上游风控/安全审核拦截该账号：非凭据问题，重新绑定无效；建议稍后重测或更换账号）"
         : "";
-    throw Object.assign(new Error(`上游返回 HTTP ${resp.status}：${msg}${hint}`), { code, status: resp.status });
+    if (rejectedUsage && onUsage) onUsage(rejectedUsage);
+    throw Object.assign(new Error(`上游返回 HTTP ${resp.status}：${msg}${hint}`), {
+      code, status: resp.status, usage: rejectedUsage, billable: consumedUsage(rejectedUsage), upstreamRejected: true,
+    });
   }
   if (!resp.body) {
     throw Object.assign(new Error("上游未返回内容流"), { code: "CHANNEL_BAD_RESPONSE" });
@@ -480,6 +496,12 @@ async function chatOnce({
       throw Object.assign(new Error("上游返回了非法的 JSON"), { code: "CHANNEL_BAD_RESPONSE" });
     }
     const msg = j?.choices?.[0]?.message || {};
+    const jsonUsage = pickUsage(j?.usage);
+    if (jsonUsage && onUsage) onUsage(jsonUsage);
+    if (j?.error) throw Object.assign(new Error(j.error.message || "上游返回错误响应"), {
+      code: "CHANNEL_BIZ_ERROR", upstreamErrorCode: String(j.error.code || j.error.type || ""),
+      status: resp.status, usage: jsonUsage, billable: consumedUsage(jsonUsage),
+    });
     // 思维链字段各家不同：reasoning_content / reasoning / MiniMax 的 reasoning_details
     let reasoning =
       typeof msg.reasoning_content === "string"
@@ -502,12 +524,14 @@ async function chatOnce({
     if (!content) {
       throw Object.assign(new Error(reasoning ? "上游只返回了思考内容，没有正文" : "上游返回空内容"), {
         code: "CHANNEL_EMPTY",
+        status: resp.status, usage: jsonUsage, content, reasoning,
       });
     }
     return {
       content,
       reasoning,
-      usage: pickUsage(j?.usage),
+      usage: jsonUsage,
+      httpStatus: resp.status,
       upstreamModel: j?.model || model,
       // 方舟自动降级：非流式响应同样带 service_status
       billModel: effectiveModelOf(j),
@@ -532,12 +556,14 @@ async function chatOnce({
   // （execute 会写进最近调用与渠道标记，前端展示「触发过 safe」的 tag）。
   const dsFilter = makeDsSafetyFilter();
   let safetyStripped = false;
+  let terminated = false;
 
   const handleLine = (line) => {
     const t = line.trim();
     if (!t.startsWith("data:")) return;
     const payload = t.slice(5).trim();
-    if (!payload || payload === "[DONE]") return;
+    if (!payload) return;
+    if (payload === "[DONE]") { terminated = true; return; }
     let ev;
     try {
       ev = JSON.parse(payload);
@@ -554,7 +580,14 @@ async function chatOnce({
     const eff = effectiveModelOf(ev);
     if (eff) fallbackModel = eff;
     if (ev.model) upstreamModel = ev.model;
-    if (ev.usage) usage = ev.usage;
+    if (ev.usage) {
+      usage = pickUsage(ev.usage);
+      if (onUsage) onUsage(usage);
+    }
+    if (ev.error) throw Object.assign(new Error(ev.error.message || "上游返回错误事件"), {
+      code: "CHANNEL_BIZ_ERROR", upstreamErrorCode: String(ev.error.code || ev.error.type || ""),
+    });
+    if (ev.choices?.some((c) => c?.finish_reason != null)) terminated = true;
     const d = ev.choices?.[0]?.delta;
     if (!d) return;
     // 部分厂商把思考链放在 reasoning_content，另有 reasoning 的写法；
@@ -603,21 +636,26 @@ async function chatOnce({
       if (onDelta) onDelta(tailOut);
     }
     safetyStripped = dsFilter.hit();
+    if (!terminated) throw Object.assign(new Error("上游响应流提前结束，未收到结束帧"), { code: "CHANNEL_STREAM_ERROR" });
+    if (!content) throw Object.assign(new Error(reasoning ? "上游只返回了思考内容，没有正文" : "上游返回空内容"), { code: "CHANNEL_EMPTY" });
+    assertNoContentError(content, "上游");
+  } catch (e) {
+    // DOMException.code 是只读数字（AbortError=20），不能拿来当业务错误码或原位覆写。
+    const failure = typeof e.code === "string" ? e : Object.assign(new Error(e.message || "上游响应流中断"), {
+      code: signal?.aborted ? "CHANNEL_ABORTED" : "CHANNEL_STREAM_ERROR",
+    });
+    Object.assign(failure, { status: resp.status, content, reasoning, usage, upstreamModel, billModel: fallbackModel,
+      billable: Boolean(content || reasoning) || consumedUsage(usage) });
+    throw failure;
   } finally {
     // 提前结束（空内容抛错、回调抛错、客户端断开）都要归还连接，否则响应体悬挂
     reader.cancel().catch(() => {});
   }
 
-  // 只返回思维链、没有正文的响应按失败处理：
-  // 否则用户拿到空回答还会被正常计费（思考 token 已经产生，但答案缺失）。
-  if (!content) {
-    throw Object.assign(new Error(reasoning ? "上游只返回了思考内容，没有正文" : "上游返回空内容"), { code: "CHANNEL_EMPTY" });
-  }
   // 上游可能把错误写成正常正文（模型下线/权限不足/额度耗尽），HTTP 200 且
   // 有正文。这类响应按成功处理会让渠道测试写 ok=1、重置冷却，而真实用户
   // 必然失败（线上实测抓到过，见 AI协作.md 第 46 批）。这里是**所有走
   // openai-compat 的渠道**的公共出口，一处拦截覆盖大部分厂商。
-  assertNoContentError(content, "上游");
 
   return {
     content,
@@ -628,6 +666,7 @@ async function chatOnce({
     billModel: fallbackModel,
     // 上游安全审核标注被剥离（execute 据此在渠道上标记「触发过 safe」）
     safetyStripped,
+    httpStatus: resp.status,
   };
 }
 

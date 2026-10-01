@@ -9,6 +9,7 @@
 // 让 MySQL 自己判定合法性（比人肉推断可靠，也不会被本机 sql_mode 差异骗过）。
 // 需要 .env 的数据库配置；无数据库时跳过（不算失败）。
 import "dotenv/config";
+import { USAGE_SQL, usageLogWhere } from "../src/services/log.js";
 
 let passed = 0;
 let failed = 0;
@@ -49,42 +50,7 @@ async function exec(sql, args = []) {
 // ---------------------------------------------------------------------------
 // 游戏：排行榜（曾经线上 500 的那条）
 // ---------------------------------------------------------------------------
-await t("游戏排行榜（每人最高分，一人一行）", () =>
-  exec(
-    `SELECT t.user_id, t.score, t.duration_ms, t.created_time,
-            u.username, u.display_name, u.avatar_media_id
-       FROM game_records t
-       JOIN users u ON u.id = t.user_id
-       JOIN (
-         SELECT user_id, MAX(score) AS best_score, MIN(id) AS best_id
-           FROM game_records WHERE game_key = ?
-          GROUP BY user_id
-       ) b ON b.user_id = t.user_id AND t.score = b.best_score
-      WHERE t.game_key = ? AND u.status = 1
-        AND t.id = (
-          SELECT MIN(t2.id) FROM game_records t2
-           WHERE t2.user_id = t.user_id AND t2.game_key = t.game_key AND t2.score = t.score
-        )
-      ORDER BY t.score DESC, t.created_time ASC
-      LIMIT 15 OFFSET 0`,
-    ["g2048", "g2048"]
-  )
-);
-
-await t("游戏：我的最高分与局数", () =>
-  exec("SELECT COALESCE(MAX(score),0) AS best, COUNT(*) AS plays FROM game_records WHERE user_id = ? AND game_key = ?", [1, "g2048"])
-);
-
-await t("游戏：对局列表（LEFT JOIN 双方用户名）", () =>
-  exec(
-    `SELECT r.*, h.username AS host_name, g.username AS guest_name
-       FROM game_rooms r
-       LEFT JOIN users h ON h.id = r.host_id
-       LEFT JOIN users g ON g.id = r.guest_id
-      WHERE r.status IN ('waiting','playing')
-      ORDER BY r.status = 'waiting' DESC, r.id DESC LIMIT 50`
-  )
-);
+// 游戏已下线，不再让全新安装缺失旧游戏表被误判为现行功能失败。
 
 // ---------------------------------------------------------------------------
 // 看板：所有 GROUP BY 聚合
@@ -92,7 +58,7 @@ await t("游戏：对局列表（LEFT JOIN 双方用户名）", () =>
 await t("看板：按天趋势（个人）", () =>
   exec(
     `SELECT FLOOR(created_at/86400)*86400 AS day_ts, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
-       FROM logs WHERE created_at >= ? AND type = 2 AND user_id = ? GROUP BY day_ts ORDER BY day_ts`,
+       FROM logs WHERE created_at >= ? AND ${USAGE_SQL} AND user_id = ? GROUP BY day_ts ORDER BY day_ts`,
     [0, 1]
   )
 );
@@ -103,7 +69,7 @@ await t("看板：用户排行（JOIN users 后按 l.user_id 分组）", () =>
             COALESCE(SUM(l.prompt_tokens + l.completion_tokens),0) AS tokens,
             u.username, u.display_name, u.avatar_media_id
        FROM logs l LEFT JOIN users u ON u.id = l.user_id
-      WHERE l.type = 2 AND l.created_at >= ?
+      WHERE ${usageLogWhere('l')} AND l.created_at >= ?
       GROUP BY l.user_id ORDER BY units DESC LIMIT 10`,
     [0]
   )
@@ -111,11 +77,11 @@ await t("看板：用户排行（JOIN users 后按 l.user_id 分组）", () =>
 
 await t("看板：渠道表现（JOIN channels 后按 l.channel_id 分组）", () =>
   exec(
-    `SELECT l.channel_id, COUNT(*) AS calls, COALESCE(SUM(l.quota),0) AS units,
+    `SELECT l.channel_id, COUNT(*) AS calls, COALESCE(SUM(l.type = 2 AND l.status IN ('', 'success')),0) AS successes, COALESCE(SUM(l.quota),0) AS units,
             COALESCE(AVG(NULLIF(l.elapsed_ms,0)),0) AS avg_elapsed,
             c.name AS channel_name, c.type AS channel_type
        FROM logs l LEFT JOIN channels c ON c.id = l.channel_id
-      WHERE l.type = 2 AND l.created_at >= ? AND l.channel_id > 0
+      WHERE ${usageLogWhere('l')} AND l.created_at >= ? AND l.channel_id > 0
       GROUP BY l.channel_id ORDER BY units DESC LIMIT 12`,
     [0]
   )
@@ -125,7 +91,7 @@ await t("看板：按小时×星期（热点图）", () =>
   exec(
     `SELECT HOUR(FROM_UNIXTIME(created_at)) AS hour, WEEKDAY(FROM_UNIXTIME(created_at)) AS weekday,
             COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
-       FROM logs WHERE type = 2 AND created_at >= ? GROUP BY hour, weekday`,
+       FROM logs WHERE ${USAGE_SQL} AND created_at >= ? GROUP BY hour, weekday`,
     [0]
   )
 );
@@ -142,9 +108,8 @@ await t("看板：社区概况（多子查询）", () =>
        (SELECT COUNT(*) FROM community_comments WHERE status = 1) AS comments,
        (SELECT COUNT(*) FROM users WHERE status = 1) AS users,
        (SELECT COUNT(*) FROM chat_rooms WHERE status = 1) AS rooms,
-       (SELECT COUNT(*) FROM chat_room_messages WHERE status = 1 AND created_time >= ?) AS messages_new,
-       (SELECT COUNT(*) FROM game_records WHERE created_time >= ?) AS game_plays_new`,
-    [0, 0, 0]
+       (SELECT COUNT(*) FROM chat_room_messages WHERE status = 1 AND created_time >= ?) AS messages_new`,
+    [0, 0]
   )
 );
 
@@ -156,7 +121,7 @@ await t("使用分析：模型×按天序列", () =>
     `SELECT model, FLOOR(created_at/86400)*86400 AS day_ts,
             COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units,
             COALESCE(SUM(prompt_tokens + completion_tokens),0) AS tokens
-       FROM logs WHERE type = 2 AND created_at >= ? AND model IN (?,?)
+       FROM logs WHERE ${USAGE_SQL} AND created_at >= ? AND model IN (?,?)
       GROUP BY model, day_ts ORDER BY day_ts ASC`,
     [0, "a", "b"]
   )
@@ -191,9 +156,8 @@ await t("社区：我的社区汇总（多子查询）", () =>
        (SELECT COUNT(*) FROM community_comments WHERE user_id = ? AND status <> 2) AS comments,
        (SELECT COUNT(*) FROM community_follows WHERE follower_id = ?) AS following,
        (SELECT COUNT(*) FROM community_follows WHERE followee_id = ?) AS followers,
-       (SELECT COUNT(*) FROM chat_room_members WHERE user_id = ?) AS rooms,
-       (SELECT COUNT(*) FROM game_records WHERE user_id = ?) AS game_plays`,
-    [1, 1, 1, 1, 1, 1, 1]
+       (SELECT COUNT(*) FROM chat_room_members WHERE user_id = ?) AS rooms`,
+    [1, 1, 1, 1, 1, 1]
   )
 );
 
@@ -275,7 +239,7 @@ await t("看板：按北京时间切天（GROUP BY 表达式与 SELECT 一致）
 await t("看板：按北京时间切小时", () =>
   exec(
     `SELECT FLOOR(MOD(created_at + ${TZ}, 86400) / 3600) AS hour, COUNT(*) AS calls
-       FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ?
+       FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ?
       GROUP BY FLOOR(MOD(created_at + ${TZ}, 86400) / 3600) ORDER BY hour`,
     [1, 0]
   )
@@ -284,7 +248,7 @@ await t("看板：令牌排行（先聚合再 JOIN 名称与持有人）", () =>
   exec(
     `SELECT t.token_id, t.calls, t.units, k.name AS token_name, u.username, u.display_name
        FROM (SELECT token_id, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
-               FROM logs WHERE type = 2 AND created_at >= ? AND token_id > 0
+               FROM logs WHERE ${USAGE_SQL} AND created_at >= ? AND token_id > 0
               GROUP BY token_id ORDER BY units DESC LIMIT 10) t
        LEFT JOIN tokens k ON k.id = t.token_id
        LEFT JOIN users u ON u.id = k.user_id
@@ -295,7 +259,7 @@ await t("看板：令牌排行（先聚合再 JOIN 名称与持有人）", () =>
 await t("对话账号工具：近 7 天按天", () =>
   exec(
     `SELECT FLOOR((created_at + 28800) / 86400) AS d, COUNT(*) AS n, COALESCE(SUM(quota),0) AS cost
-       FROM logs WHERE user_id = ? AND type = 2 AND created_at >= ?
+       FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ?
       GROUP BY FLOOR((created_at + 28800) / 86400) ORDER BY d`,
     [1, 0]
   )

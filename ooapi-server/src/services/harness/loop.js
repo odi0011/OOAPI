@@ -489,9 +489,11 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       if (e && typeof e === "object") {
         e.billingPrompt = stepPrompt;
         e.billingStartedAt = stepStartedAt;
-        e.billingOutput = `${stepContent}${stepReasoning}`;
-        e.billingFirstTokenAt = stepFirstTokenAt;
+        e.billingOutput = `${stepContent}${stepReasoning}` || e.billingOutput || "";
+        e.billingFirstTokenAt = stepFirstTokenAt || e.billingFirstTokenAt || 0;
       }
+      // 流中断也要放出 sniffer 暂存的普通文本；否则短回复会有账单却在刷新后消失。
+      appendText(stream.finish().text);
       throw e;
     }
 
@@ -506,7 +508,10 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       channelId: Number(result.channel?.id) || 0,
       // 单步耗时与首 token：使用记录里按「整轮」汇总展示（见 chat.js 的 chargeUser）
       startedAt: stepStartedAt,
-      firstTokenAt: stepFirstTokenAt || stepStartedAt});
+      firstTokenAt: stepFirstTokenAt,
+      elapsed: result.elapsed,
+      retryCount: result.retryCount,
+      model: result.billModel || result.upstreamModel || model});
 
     const stepText = (textPart?.text || "").trim();
     if (stepText) lastText = stepText;
@@ -528,7 +533,9 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
     const toolPart = { id: uid(), type: "tool", tool: call.tool, name: spec?.name || call.tool, args: call.args, status: "running", output: "", started: Date.now() };
     emitPart(toolPart);
 
-    const res = spec
+    let res;
+    try {
+      res = spec
       ? await runTool(call.tool, call.args, {
           model,
           groupName,
@@ -541,6 +548,11 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
           // 某些上游（如网页版反代）不支持联网搜索：工具要据此拒绝，而不是发一次必定失败的请求
           searchSupported: modelCaps?.supportsSearch !== false})
       : { ok: false, output: `工具「${call.tool}」在本轮不可用；可用工具：${specs.map((s) => s.id).join("、") || "（无）"}` };
+    } catch (e) {
+      // 主动停止也要结束工具的运行状态，刷新后不能永久显示“执行中”。
+      patchPart(toolPart, { status: "failed", output: signal?.aborted ? "工具已停止" : String(e.message || "工具执行失败"), ended: Date.now() });
+      throw e;
+    }
 
     const patch = { status: res.ok ? "done" : "failed", output: String(res.output || "").slice(0, 12000), ended: Date.now() };
     if (res.meta) patch.meta = res.meta;

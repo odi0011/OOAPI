@@ -23,7 +23,7 @@ import { Router } from "express";
 import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now, assertPublicUrl, idParam, safeInt } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
-import { writeLog, LOG_TYPE } from "../services/log.js";
+import { writeLog, LOG_TYPE, USAGE_SQL } from "../services/log.js";
 import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod, isApiKeyMethod, localLoginGuide } from "../services/channel-types.js";
 import { buildLoginUrl, exchangeCodeForCredential, interactiveLoginInfo, supportsInteractiveLogin, supportsInteractiveLoginMethod, supportsDeviceLogin, startDeviceLogin, pollDeviceLogin } from "../services/upstream/oauth-login.js";
 import { getAdapter, resetChannelState, forgetChannel, invalidateChannelCache, channelRuntimeState, channelRecent, rowToChannel, recordChannelCall, isRateLimitedCode, testFailurePauses, setChannelRateLimit, rateLimitPauseSec } from "../services/router.js";
@@ -473,19 +473,19 @@ router.get(
         // 只在回填查询里取会让「列存在但为空」的行显示成 "-"
         `SELECT created_at, quota, model, prompt_tokens, completion_tokens, cache_tokens, detail
            FROM logs
-          WHERE type = ? AND created_at >= ? AND channel_id = ?`,
-        [LOG_TYPE.CONSUME, since, id]
+          WHERE ${USAGE_SQL} AND created_at >= ? AND channel_id = ?`,
+        [since, id]
       );
       logs = ls;
       // 老记录（列还没写）回填：只查一次，量小
       const [old] = await pool.query(
         `SELECT created_at, quota, model, prompt_tokens, completion_tokens, cache_tokens, detail
            FROM logs
-          WHERE type = ? AND created_at >= ? AND channel_id = 0
+          WHERE ${USAGE_SQL} AND created_at >= ? AND channel_id = 0
             AND JSON_VALID(detail)
             AND (JSON_UNQUOTE(JSON_EXTRACT(detail, '$.channel_id')) = ?
                  OR JSON_CONTAINS(JSON_EXTRACT(detail, '$.channel_ids'), ?))`,
-        [LOG_TYPE.CONSUME, since, String(id), String(id)]
+        [since, String(id), String(id)]
       );
       logs = logs.concat(old);
     } catch (e) {
@@ -550,8 +550,8 @@ router.get(
                 COALESCE(SUM(prompt_tokens), 0) AS pt,
                 COALESCE(SUM(completion_tokens), 0) AS ct
            FROM logs
-          WHERE type = ? AND channel_id = ?`,
-        [LOG_TYPE.CONSUME, id]
+          WHERE ${USAGE_SQL} AND channel_id = ?`,
+        [id]
       );
       allTime = {
         calls: Number(at.calls) || 0,
@@ -566,11 +566,11 @@ router.get(
                 COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(detail, '$.prompt_tokens')) AS UNSIGNED)), 0) AS pt,
                 COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(detail, '$.completion_tokens')) AS UNSIGNED)), 0) AS ct
            FROM logs
-          WHERE type = ? AND channel_id = 0
+          WHERE ${USAGE_SQL} AND channel_id = 0
             AND JSON_VALID(detail)
             AND (JSON_UNQUOTE(JSON_EXTRACT(detail, '$.channel_id')) = ?
                  OR JSON_CONTAINS(JSON_EXTRACT(detail, '$.channel_ids'), ?))`,
-        [LOG_TYPE.CONSUME, String(id), String(id)]
+        [String(id), String(id)]
       );
       allTime = {
         calls: allTime.calls + (Number(oldAt.calls) || 0),
@@ -806,9 +806,9 @@ async function attachChannelTotals(rows) {
       `SELECT channel_id AS cid, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units,
               COALESCE(SUM(prompt_tokens),0) + COALESCE(SUM(completion_tokens),0) AS tokens
          FROM logs
-        WHERE type = ? AND channel_id IN (?)
+        WHERE ${USAGE_SQL} AND channel_id IN (?)
         GROUP BY channel_id`,
-      [LOG_TYPE.CONSUME, ids]
+      [ids]
     );
     for (const x of list) add(Number(x.cid), x);
     // 老记录（channel_id 列还没写）回落到 detail JSON：只处理 channel_id = 0 的行，
@@ -819,10 +819,10 @@ async function attachChannelTotals(rows) {
               COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(detail, '$.prompt_tokens')) AS UNSIGNED)),0)
             + COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(detail, '$.completion_tokens')) AS UNSIGNED)),0) AS tokens
          FROM logs
-        WHERE type = ? AND channel_id = 0 AND JSON_VALID(detail)
+        WHERE ${USAGE_SQL} AND channel_id = 0 AND JSON_VALID(detail)
           AND JSON_EXTRACT(detail, '$.channel_id') IS NOT NULL
         GROUP BY cid`,
-      [LOG_TYPE.CONSUME]
+      []
     );
     for (const x of old) {
       if (ids.includes(Number(x.cid))) add(Number(x.cid), x);

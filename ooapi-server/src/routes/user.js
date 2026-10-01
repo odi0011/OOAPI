@@ -4,7 +4,7 @@ import { pool } from "../db.js";
 import { ok, fail, asyncHandler, userToResponse, pageParams, idParam, now } from "../utils.js";
 import { authRequired, adminRequired, signToken } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
-import { writeLog, LOG_TYPE } from "../services/log.js";
+import { writeLog, LOG_TYPE, USAGE_SQL } from "../services/log.js";
 
 const router = Router();
 
@@ -94,10 +94,10 @@ router.get(
     // 近 30 天按天聚合消费
     const [daily] = await pool.query(
       `SELECT FROM_UNIXTIME(created_at, '%Y-%m-%d') AS day,
-              COALESCE(SUM(CASE WHEN type = 2 THEN quota ELSE 0 END),0) AS quota,
+              COALESCE(SUM(quota),0) AS quota,
               COUNT(*) AS calls
        FROM logs
-       WHERE user_id = ? AND type = 2 AND created_at >= UNIX_TIMESTAMP() - 30 * 86400
+       WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= UNIX_TIMESTAMP() - 30 * 86400
        GROUP BY day ORDER BY day`,
       [req.user.id]
     );
