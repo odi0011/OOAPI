@@ -409,12 +409,15 @@ if (typeof window !== "undefined") {
 }
 
 /**
- * 首帧外观（main.jsx 在 React 挂载前调用）：仅使用站点设置的上次缓存。
+ * 首帧外观（main.jsx 在 React 挂载前调用）：读取站点缓存与本浏览器的明暗偏好。
  * 与 ThemeContext 的合并规则一致；ThemeProvider 挂载后会按最新 /api/status 再应用一次。
  */
 export function bootAppearance() {
   const site = readSiteAppearanceCache();
-  const dark = site.mode === "dark" || (site.mode === "system" && window.matchMedia?.("(prefers-color-scheme: dark)").matches);
+  let mode = site.mode;
+  try { const personal = localStorage.getItem('ooapi-color-mode'); if (personal === 'light' || personal === 'dark') mode = personal; }
+  catch { /* 存储不可用时使用站点默认值。 */ }
+  const dark = mode === "dark" || (mode === "system" && window.matchMedia?.("(prefers-color-scheme: dark)").matches);
   applyCssVars(dark ? "dark" : "light", isHexColor(site.accent) ? site.accent : DEFAULT_PRIMARY);
   applyAppearance(normalizeAppearance(site));
 }

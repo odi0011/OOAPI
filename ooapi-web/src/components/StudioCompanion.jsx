@@ -1,13 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { PauseOutlined, CaretRightOutlined } from '@ant-design/icons';
 const SCENES=[
- {pose:'wave',action:'hop',text:'喵！新的好点子，准备好了吗？'},
- {pose:'key',action:'sway',text:'你的密钥，我帮你看着。记得别分享给别人哦。'},
- {pose:'code',action:'bounce',text:'键盘就位，灵感开工。'},
- {pose:'nap',action:'breathe',text:'我眯一小会儿，你继续发光。'},
- {pose:'play',action:'roll',text:'伸个懒腰，下一步会更顺。'},
- {pose:'teach',action:'sway',text:'接入指南在上面。三步，就能开始。'},
- {pose:'friends',action:'hop',text:'带了个新朋友，一起陪你做东西。'},
+ {pose:'wave',action:'hop',text:'喵～'},
+ {pose:'key',action:'sway',text:'记得保管好应用令牌。'},
+ {pose:'code',action:'bounce',text:'让我看看你在写什么。'},
+ {pose:'nap',action:'breathe',text:'困了，睡一会儿。'},
+ {pose:'play',action:'roll',text:'要不要休息一下？'},
+ {pose:'teach',action:'sway',text:'接入代码可以直接复制。'},
+ {pose:'friends',action:'hop',text:'兔兔也来了。'},
+ {pose:'stretch',action:'sway',text:'伸个懒腰。'},
+ {pose:'read',action:'breathe',text:'我在看文档。'},
+ {pose:'listen',action:'sway',text:'这首歌好听。'},
 ];
 export default function StudioCompanion({motion,preferredPose='wave'}) {
  const [scene,setScene]=useState({...SCENES[0],pose:preferredPose});const [speaking,setSpeaking]=useState(false);const [paused,setPaused]=useState(false);const [manual,setManual]=useState(false);

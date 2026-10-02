@@ -46,7 +46,7 @@ try {
   check('两侧快捷入口白色且 hover 无矩形背景边框', await shortcut.evaluate(e => { const s = getComputedStyle(e); return s.color === 'rgb(255, 255, 255)' && s.backgroundColor === 'rgba(0, 0, 0, 0)' && s.borderTopWidth === '0px'; }));
   check('悬停光晕与图标弹性位移生效', await shortcut.evaluate(e => getComputedStyle(e, '::before').opacity === '1' && getComputedStyle(e.firstElementChild).transform !== 'none'));
   const guest = await browser.newContext(); const auth = await guest.newPage(); auth.on('pageerror', e => errors.push(e.message));
-  for (const route of ['/login', '/register']) { await auth.goto(BASE + route, { waitUntil: 'networkidle' }); check(route + ' 使用管理员品牌图', await auth.locator('.studio-brand img').getAttribute('src') === logo && await auth.locator('.studio-auth-scene-label').innerText().then(s => s.includes('Studio QA'))); }
+  for (const route of ['/login', '/register']) { await auth.goto(BASE + route, { waitUntil: 'networkidle' }); check(route + ' 使用管理员品牌图', await auth.locator('.studio-brand img').getAttribute('src') === logo && await auth.locator('.auth-showcase-brand').innerText().then(s => s.includes('Studio QA'))); }
   await api('/option', { favicon: '' }); await auth.reload({ waitUntil: 'networkidle' });
   check('清空独立 favicon 后回落当前 Logo', await auth.locator('link[rel=icon]').getAttribute('href') === logo);
   await auth.route('**/api/status', async route => { const res = await route.fetch(); const d = await res.json(); d.data.logo = '/missing-brand-fixture.png'; await route.fulfill({ json: d }); });

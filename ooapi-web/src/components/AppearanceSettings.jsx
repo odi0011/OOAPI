@@ -80,12 +80,12 @@ export default function AppearanceSettings() {
   };
   if (!draft) return error ? <Alert type="error" showIcon message={error} action={<Button onClick={() => setReload((n) => n + 1)}>重试</Button>} /> : <Skeleton active />;
   return <div className="oo-site-appearance">
-    <div className="oo-site-appearance-heading"><div><h2>全站外观</h2><span>管理员统一设置，保存后生效</span></div><Tag>{dirty ? "预览中 · 未保存" : "已保存"}</Tag></div>
+    <div className="oo-site-appearance-heading"><div><h2>全站外观</h2><span>站点默认外观，保存后生效</span></div><Tag>{dirty ? "预览中 · 未保存" : "已保存"}</Tag></div>
     {error && <Alert type="error" showIcon message={error} />}
     <div className="oo-site-appearance-grid">
       <div className="oo-site-appearance-controls" aria-busy={busy}>
         <section className="oo-site-appearance-section"><h3>主题与配色</h3>
-          <Row label="明暗模式"><Segmented aria-label="站点明暗模式" disabled={busy} value={draft.default_theme} onChange={(v) => change("default_theme", v)} options={[{ label: "浅色", value: "light" }, { label: "深色", value: "dark" }, { label: "跟随系统", value: "system" }]} /></Row>
+          <Row label="默认明暗模式"><Segmented aria-label="站点明暗模式" disabled={busy} value={draft.default_theme} onChange={(v) => change("default_theme", v)} options={[{ label: "浅色", value: "light" }, { label: "深色", value: "dark" }, { label: "跟随系统", value: "system" }]} /></Row>
           <Row label="主题色"><div className="oo-site-appearance-colors">{PRIMARY_PRESETS.map((p) => <Button key={p.key} disabled={busy} aria-label={p.label} aria-pressed={draft.theme_accent.toLowerCase() === p.color.toLowerCase()} title={p.label} className="oo-site-appearance-swatch" style={{ background: p.color }} onClick={() => change("theme_accent", p.color)} icon={draft.theme_accent.toLowerCase() === p.color.toLowerCase() ? <CheckOutlined /> : undefined} />)}<ColorPicker disabled={busy} value={draft.theme_accent} disabledAlpha onChangeComplete={(color) => change("theme_accent", color.toHexString())} /></div></Row>
           <Row label="页面背景"><div className="oo-site-appearance-backgrounds">{BACKGROUNDS.map((p) => <Button disabled={busy} key={p.key} aria-pressed={draft.theme_background === p.key} className={draft.theme_background === p.key ? "is-selected" : ""} onClick={() => change("theme_background", p.key)}><i data-pattern={p.key} /><span>{p.label}</span></Button>)}</div></Row>
         </section>
