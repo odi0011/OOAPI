@@ -1518,6 +1518,7 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 - 在 64.83.2.174 临时运行官方 GitHub 发布的 v1.18.34 客户端，凭据仅从既有渠道读取到进程内存。同 Key 的 fledge-alpha-free 和 mimo-v2.6-flash-free 均返回与平台相同的 FreeTierError / 403；官方公开请求层没有独立 device ID 头，不能据此断言私有 guard 的具体原因。没有用受控回归代替免费档真实成功，没有安装持久 CLI、启用暂停渠道或替换凭据；临时程序、缓存与授权配置已清理。来源：https://github.com/anomalyco/opencode/blob/v1.18.34/packages/opencode/src/session/llm/request.ts 、https://github.com/anomalyco/opencode/blob/v1.18.34/packages/opencode/src/id/id.ts 。
 - 修复实际链路中 runCompletion 丢失会话上下文、导致不同用户/对话使用同一渠道 session 的缺陷。站内 harness 传递持久会话 ID，子代理独立会话，每轮/步骤独立请求；三协议网关接受 x-opencode-session / x-opencode-session-id / x-session-id / session-id，没有会话头时每次逻辑调用独立。执行器重试保留上下文，OpenCode 在统一 cli-profile 内按已鉴权用户、渠道和会话派生 ses_ 标识，任意数字/UUID 不再原文充当官方 ID；msg_ 保持时间/计数和合法后缀。GO 自述 UA 与管理员显式头配置保持兼容。
 - 语法检查、全 npm test 通过；OpenCode 适配器汇总 60 项、harness 29 项、网关失败账单 HTTP 回归 63 项通过。新增三种协议 × Key/GO 的真实 HTTP 调度验证，覆盖跨轮稳定、不同对话/用户隔离、无头请求独立、请求 ID 唯一及所有调用落库；子代理和换渠道回归也核对上下文。生产 gateway-smoke 因无测试分组无限额 Key 跳过，另在现有事务内存账本与受控 HTTP 上游上执行同一 gateway-smoke 脚本，三协议/模型列表/JSON 404 共 9/9 通过。部署前生产 25 路由 ui-smoke 通过；此次未修改前端样式。
+- 修复提交 2ed9c7a 已经既有 updater 部署到 64.83.2.174，版本戳一致，OOAPI / OD Binance 均 active；更新后的 25 路由 ui-smoke 再次通过。发布前后快照核对 .env、管理员凭据、用户状态、渠道模型/状态与分组保持一致。新版本一次真实 fledge-alpha-free 请求确认 UA=opencode/1.18.34、client=cli、两种 session 头一致且 ses_/msg_ 格式正确，仍为 CHANNEL_FORBIDDEN / 403，上游日志 ID 为 42becf3b-a0a6-47b1-a1a2-590cfada46bd；未因此启用该渠道。
 
 ### 2026-10-02 — Laguna 账号工具格式与失败回答修复
 
