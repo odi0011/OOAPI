@@ -65,6 +65,14 @@ const INTERNAL_TOOL_ERRORS = ["（工具调用格式不合法）", "(工具调�
 const internalLines = (text) => String(text || "").trim().split(/\r?\n/).map((line) => line.trim());
 const isInternalToolError = (text) => internalLines(text).every((line) => INTERNAL_TOOL_ERRORS.includes(line));
 const couldBeInternalToolError = (text) => internalLines(text).every((line) => INTERNAL_TOOL_ERRORS.some((value) => value.startsWith(line)));
+// 线上模型复述过内部的“调用工具 account recent”占位文字。它不是调用，也不是最终回答。
+const TOOL_STATUS_LINE = /^[（(]\s*(?:(?:调用|使用|执行)工具\s+[\w.-]+(?:\s+[\w.-]+)?|本轮使用过工具[：:][^）)]+)\s*[）)]$/;
+const TOOL_STATUS_PREFIXES = ["（调用工具 ", "(调用工具 ", "（使用工具 ", "(使用工具 ", "（执行工具 ", "(执行工具 ", "（本轮使用过工具：", "(本轮使用过工具:"];
+const isToolStatusOnly = (text) => Boolean(String(text || "").trim()) && internalLines(text).every(line => TOOL_STATUS_LINE.test(line));
+const couldBeToolStatus = (text) => {
+  return internalLines(text).every(value => value.length <= 200 && TOOL_STATUS_PREFIXES.some(prefix => prefix.startsWith(value) ||
+    (value.startsWith(prefix) && /^[\w.\s\-:：、\u4e00-\u9fff]*[）)]?$/.test(value.slice(prefix.length)))));
+};
 
 function matchBraceJson(text, start) {
   let depth = 0;
@@ -264,6 +272,7 @@ export class StepStream {
     this.kind = "";
     this.call = null;
     this.bad = false;
+    this.failureCode = "";
   }
 
   push(delta) {
@@ -274,7 +283,7 @@ export class StepStream {
   /** 流结束：返回剩余正文 */
   finish() {
     const rest = this.pump(true);
-    return { text: rest, call: this.call, bad: this.bad };
+    return { text: rest, call: this.call, bad: this.bad, failureCode: this.failureCode };
   }
 
   take(upto) {
@@ -297,6 +306,11 @@ export class StepStream {
     const visible = this.acc.trim();
     if (isInternalToolError(visible)) { if (final) this.bad = true; return ""; }
     if (!final && couldBeInternalToolError(visible)) return "";
+    if (isToolStatusOnly(visible)) {
+      if (final) { this.bad = true; this.failureCode = "TOOL_RESPONSE_ERROR"; }
+      return "";
+    }
+    if (!final && couldBeToolStatus(visible)) return "";
     let out = "";
     if (this.start < 0) {
       START_RE.lastIndex = this.emitted;
@@ -334,8 +348,7 @@ export function historyToMessages(history = []) {
   const out = [];
   for (const m of history) {
     const parts = Array.isArray(m.parts) ? m.parts : [];
-    const texts = parts.filter((p) => p.type === "text" && p.text && !(m.role === "assistant" && isInternalToolError(p.text))).map((p) => p.text).join("\n\n").trim();
-    const tools = [...new Set(parts.filter((p) => p.type === "tool").map((p) => p.name || p.tool))];
+    const texts = parts.filter((p) => p.type === "text" && p.text && !(m.role === "assistant" && (isInternalToolError(p.text) || isToolStatusOnly(p.text)))).map((p) => p.text).join("\n\n").trim();
     const images = parts.filter((p) => p.type === "image").length;
     let content = texts;
     // 文档附件的正文要留在上下文里：用户上传后往往会追问「第几段什么意思」，
@@ -354,7 +367,7 @@ export function historyToMessages(history = []) {
       }
       content = [content, chunks.join("\n\n")].filter(Boolean).join("\n\n").trim();
     }
-    if (m.role === "assistant" && tools.length) content = `${content}\n（本轮使用过工具：${tools.join("、")}）`.trim();
+    // 没有最终正文的旧工具轮次不能伪装成助手回答；已完成的正文也不追加内部状态占位符。
     if (m.role === "user" && images) content = `${content}\n（用户附了 ${images} 张图片）`.trim();
     if (!content) continue;
     out.push({ role: m.role === "assistant" ? "assistant" : "user", content: content.slice(0, 20000) });
@@ -439,7 +452,8 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
   };
 
   const tools = (settings.tools ?? agent.tools ?? []).filter((t) => (depth >= MAX_DEPTH ? t !== "task" : true));
-  const maxSteps = depth === 0 ? Math.max(1, Math.min(settings.maxSteps || DEFAULT_MAX_STEPS, 16)) : SUBAGENT_MAX_STEPS;
+  const requestedSteps = Number(settings.maxSteps);
+  const maxSteps = depth === 0 ? Math.max(1, Math.min(Number.isFinite(requestedSteps) && requestedSteps > 0 ? Math.floor(requestedSteps) : DEFAULT_MAX_STEPS, 16)) : SUBAGENT_MAX_STEPS;
   let todo = Array.isArray(session?.todo) ? session.todo : [];
 
   // 子代理的 runAgent：主智能体通过 task 工具调用；深度到顶后为 null（工具会拒绝）
@@ -568,7 +582,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       throw e;
     }
 
-    const { text: tail, call, bad } = stream.finish();
+    const { text: tail, call, bad, failureCode } = stream.finish();
     appendText(tail);
 
     record({
@@ -595,16 +609,16 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
     if (bad) {
       formatFailures++;
       if (formatFailures > 1 || step === maxSteps) {
-        throw Object.assign(new Error("工具调用协议无法解析"), { code: "TOOL_PROTOCOL_ERROR" });
+        throw Object.assign(new Error(failureCode ? "模型只返回工具状态，未完成回答" : "工具调用协议无法解析"), { code: failureCode || "TOOL_PROTOCOL_ERROR" });
       }
       // 不把内部错误占位符伪装成助手回答；真实故障中模型在下一步原样复述了这个占位符。
       if (stepText) messages.push({ role: "assistant", content: stepText });
       messages.push({
         role: "user",
         content:
-          "你上一条的工具调用格式无法解析。调用必须严格写成：\n" +
+          (failureCode ? "你上一条只有工具状态描述，没有回答用户的问题。已有工具结果仍在上文；需要更多信息时必须输出实际调用，不能复述调用状态。\n" : "你上一条的工具调用格式无法解析。调用必须严格写成：\n") +
           `${OPEN_TAG}{"tool":"工具名","args":{...}}${CLOSE_TAG}\n` +
-          "请重新输出合法的调用，或者直接给出最终回答。"});
+          "请重新输出合法的调用，或者依据工具结果完整回答用户本轮提出的所有问题。"});
       if (step === maxSteps) hitLimit = true;
       continue;
     }
@@ -647,7 +661,8 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
     }
     patchPart(toolPart, patch);
 
-    messages.push({ role: "assistant", content: stepText || `（调用工具 ${call.tool}）` });
+    // 把已执行的真实调用（含参数）交回模型，而不是让它学习并复述内部占位文字。
+    messages.push({ role: "assistant", content: [stepText, `${OPEN_TAG}${JSON.stringify(call)}${CLOSE_TAG}`].filter(Boolean).join("\n") });
     messages.push({
       role: "user",
       content:
@@ -657,8 +672,8 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
   }
 
   if (hitLimit) {
-    const notice = { id: uid(), type: "error", message: `已达到本轮最大步数（${maxSteps}）并停止继续调用工具；需要继续请再发一条消息。` };
-    emitPart(notice);
+    // 只有工具结果、没有最终回答时不能以 success 收尾；路由统一持久化错误、实际用量与重试入口。
+    throw Object.assign(new Error(`已达到本轮最大步数（${maxSteps}），尚未完成最终回答`), { code: "TOOL_STEP_LIMIT" });
   }
 
   return { parts, text: lastText, todo };

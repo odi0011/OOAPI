@@ -11,6 +11,8 @@ const MESSAGES = Object.freeze({
   BILLING_FAILED: "本轮计费未完成，请联系管理员核查。",
   BILLING_UNCERTAIN: "本轮计费提交结果待核查，请联系管理员。",
   TOOL_PROTOCOL_ERROR: "模型未能完成工具调用，无法取得所需的真实数据。请重试或更换模型；本轮已产生的用量保留在使用记录中。",
+  TOOL_RESPONSE_ERROR: "模型只返回了工具状态，未完成实际回答。请重试或更换模型；已取得的工具结果与本轮用量已保留。",
+  TOOL_STEP_LIMIT: "本轮已达到工具步骤上限，尚未完成最终回答。工具结果和已产生的用量已保留，可继续提问或重试。",
 });
 
 /** 返回可安全用于公开API、消息part、审计content与console的错误说明。 */

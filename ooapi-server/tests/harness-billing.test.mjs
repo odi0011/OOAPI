@@ -394,7 +394,7 @@ await test("账号overview/usage/recent含失败和停止使用，排除普通�
   } finally { audit.pool.query = originalQuery; }
 });
 
-for (const mode of ["whole", "char"]) {
+  for (const mode of ["whole", "char"]) {
   await test(`线上 Laguna 两种真实格式完成账号工具与最终回答（${mode}）`, async () => {
     const originalQuery = audit.pool.query;
     const queries = [], calls = [];
@@ -428,6 +428,72 @@ for (const mode of ["whole", "char"]) {
     } finally { audit.pool.query = originalQuery; }
   });
 }
+for (const mode of ["whole", "char"]) {
+  await test(`线上只返回account recent占位符后纠正、取到两项数据并最终回答（${mode}）`, async () => {
+    const originalQuery = audit.pool.query;
+    const calls = [], queries = [], emitted = [];
+    audit.pool.query = async (sql, args) => {
+      assert.equal(args[0], 77);
+      queries.push(sql);
+      if (sql.includes("FROM users")) return [[{ username: "fixture", quota: 12345 }]];
+      if (sql.includes("FROM tokens")) return [[{ n: 1, on_: 1 }]];
+      if (sql.includes("ORDER BY id DESC")) return [[{ type: 2, model: "fixture-model", quota: 100, created_at: 1 }]];
+      return [[{ n: 2, cost: 300 }]];
+    };
+    let count = 0;
+    audit.complete = async o => {
+      count++;
+      assert.ok(!o.messages.some(m => m.role === "assistant" && /调用工具|本轮使用过工具/.test(m.content)), "不把内部状态作为助手消息交回模型");
+      if (count >= 2) assert.ok(o.messages.some(m => m.content.includes('<tool_call>{"tool":"account","args":{"action":"overview"}}</tool_call>')), "上下文保留真实调用与参数");
+      if (count >= 3) assert.ok(o.messages.some(m => m.content.includes("余额：1.2345 OD币")), "纠正不丢失已经取得的真实结果");
+      const content = count === 1 ? '<tool_call>{"tool":"account","args":{"action":"overview"}}</tool_call>'
+        : count === 2 ? '（调用工具 account recent）'
+          : count === 3 ? '<tool_call>{"tool":"account","args":{"action":"recent","limit":5}}</tool_call>'
+            : '余额 1.2345 OD币；最近调用包含 fixture-model。';
+      for (const chunk of mode === "char" ? [...content] : [content]) o.onDelta(chunk);
+      return mockResult(content);
+    };
+    try {
+      const result = await harness.runHarness({ ...harnessOptions(["account"], calls), user: { id: 77 }, history: [{role:"assistant",parts:[{type:"tool",tool:"account"},{type:"text",text:"（调用工具 account recent）"}]}], emit:e => emitted.push(structuredClone(e)) });
+      assert.match(result.text, /1\.2345 OD币.*fixture-model/);
+      assert.equal(count, 4); assert.equal(calls.length, 4);
+      assert.equal(queries.filter(s => s.includes("ORDER BY id DESC")).length, 1, "占位符不会被猜测为工具调用");
+      assert.ok(!JSON.stringify(result.parts).includes("调用工具 account recent"));
+      assert.ok(!JSON.stringify(emitted).includes("调用工具 account recent"));
+      assert.deepEqual(result.parts.filter(p => p.type === "tool").map(p => p.args.action), ["overview", "recent"]);
+    } finally { audit.pool.query = originalQuery; }
+  });
+}
+await test("工具已完成但反复只返回状态时失败退出且保留工具结果/真实用量", async () => {
+  const originalQuery = audit.pool.query;
+  audit.pool.query = async sql => sql.includes("FROM users") ? [[{username:"fixture",quota:12345}]] : [[{n:1,on_:1,cost:0}]];
+  let count = 0; const calls = [];
+  audit.complete = async o => {
+    const content = ++count === 1 ? '<tool_call>{"tool":"account","args":{"action":"overview"}}</tool_call>' : "（调用工具 account recent）";
+    o.onDelta(content); return mockResult(content);
+  };
+  try {
+    await assert.rejects(() => harness.runHarness({...harnessOptions(["account"],calls),user:{id:77}}), e => {
+      assert.equal(e.code,"TOOL_RESPONSE_ERROR"); assert.equal(e.calls.length,3);
+      assert.equal(e.parts.filter(p=>p.type==="tool").length,1);
+      assert.ok(e.parts.find(p=>p.type==="tool").output.includes("余额：1.2345 OD币"));
+      assert.ok(!e.parts.some(p=>p.type==="text" && p.text.includes("调用工具")));
+      return true;
+    });
+    assert.equal(count,3); assert.equal(calls.length,3);
+  } finally { audit.pool.query = originalQuery; }
+});
+await test("最后一步执行工具但未生成最终回答时明确失败，不能以success收尾", async () => {
+  audit.complete = async o => { const content='<tool_call>{"tool":"todowrite","args":{"todos":[{"content":"pending","status":"pending"}]}}</tool_call>';o.onDelta(content);return mockResult(content); };
+  for(const maxSteps of [1,1.5]){
+    const calls=[];
+    await assert.rejects(()=>harness.runHarness({...harnessOptions(["todowrite"],calls),settings:{tools:["todowrite"],maxSteps}}),e=>{
+      assert.equal(e.code,"TOOL_STEP_LIMIT");assert.equal(e.calls.length,1);
+      assert.equal(e.parts.find(p=>p.type==="tool").status,"done");return true;
+    });
+    assert.equal(calls.length,1);
+  }
+});
 await test("反复非法工具调用只纠正一次，真实用量保留且内部占位符不进历史", async () => {
   for (const content of ['<tool_call>{"tool":"account","args":"not-json"}</tool_call>', '（工具调用格式不合法）', '（工具调用格式不合法）\n（工具调用格式不合法）']) {
     let attempts = 0;

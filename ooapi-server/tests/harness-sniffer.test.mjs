@@ -159,6 +159,14 @@ for (const mode of ["whole", "char"]) {
     const internal = run(text, mode);
     ck(`内部错误占位符不能显示成成功回答（${mode}）`, internal.bad && !internal.call && !internal.shown);
   }
+  for (const text of ['（调用工具 account recent）', '(调用工具 account)', '（本轮使用过工具：我的账号）', '（调用工具 account recent）\n（调用工具 account recent）']) {
+    const internal = run(text, mode);
+    ck(`工具状态占位符不显示、不执行、不当成最终答案（${mode}）`, internal.bad && !internal.call && !internal.shown, JSON.stringify(internal));
+  }
+  for (const text of ['（调用工具 account recent）之后需要写出实际结果。', '示例：`（调用工具 account recent）`', '（这是一段普通说明）']) {
+    const literal = run(text, mode);
+    ck(`工具状态说明和普通括号原文保留（${mode}）`, !literal.bad && !literal.call && literal.shown === text, JSON.stringify(literal));
+  }
 }
 
 const p = parseInvokeMarkup('<invoke name="x"><parameter name="n">42</parameter><parameter name="s" string="true">42</parameter></invoke>');
