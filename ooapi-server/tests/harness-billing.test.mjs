@@ -6,12 +6,14 @@ import { readFileSync } from "node:fs";
 import { normalizeUsage } from "../src/services/pricing.js";
 import { USAGE_SQL } from "../src/services/log.js";
 import { channelPriceQuote } from "../src/services/channel-price-quote.js";
+import { userDataVisibility } from "../src/services/user-data-visibility.js";
 
 const audit = {
   crypto,
   normalizeUsage,
   USAGE_SQL,
   channelPriceQuote,
+  userDataVisibility,
   complete: null,
   adapter: null,
   pool: { query: async () => [[], []] },
@@ -31,6 +33,7 @@ const tools = await loadMocked("../src/services/harness/tools.js", `
   const modelForChannelMatch=(v)=>v;
   const setTimeout=audit.setTimeout;
   const USAGE_SQL=audit.USAGE_SQL;
+  const userDataVisibility=audit.userDataVisibility;
 `);
 audit.tools = tools;
 const harness = await loadMocked("../src/services/harness/loop.js", `

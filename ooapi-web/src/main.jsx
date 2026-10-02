@@ -15,18 +15,6 @@ import "./styles.css";
 // 会显示英文缩写且周首日为周日
 dayjs.locale("zh-cn");
 
-// 启动前先应用持久化主题，避免首帧闪烁
-try {
-  const mode = localStorage.getItem("ooapi-theme") || "system";
-  const dark =
-    mode === "dark" ||
-    (mode === "system" && window.matchMedia?.("(prefers-color-scheme: dark)").matches);
-  document.documentElement.dataset.theme = dark ? "dark" : "light";
-  document.documentElement.style.colorScheme = dark ? "dark" : "light";
-} catch {
-  /* ignore */
-}
-
 // 背景底纹层：必须在 React 挂载前就存在于 DOM 里，
 // 否则 applyAppearance 找不到节点会让底纹静默失效（设置里选了却没效果）。
 {
@@ -36,7 +24,7 @@ try {
   document.body.insertBefore(layer, document.body.firstChild);
 }
 
-// 启动前应用外观（站点默认的上次缓存 + 本地偏好），避免先按写死的默认渲染再跳变。
+// 启动前应用外观（站点设置的上次缓存），避免先按写死的默认渲染再跳变。
 // 挂载后由 ThemeProvider 接管（它会按最新 /api/status 再算一次）。
 try {
   bootAppearance();

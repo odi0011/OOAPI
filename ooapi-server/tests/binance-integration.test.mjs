@@ -33,6 +33,8 @@ try {
   const headers = { Authorization: "Bearer test-only", "X-OOAPI-User": "999", "X-OOAPI-Bridge": "spoofed", Cookie: "qp_session=spoofed" };
   assert.equal((await fetch(`${base}/accounts`, { headers })).status, 200);
   assert.equal((await fetch(`${base}/auth/login`, { method: "POST", headers })).status, 404);
+  assert.equal((await fetch(`${base}/analysis`, { method: "POST", headers })).status, 404);
+  assert.equal((await fetch(`${base}/agent-analysis`, { headers })).status, 404);
   assert.equal((await fetch(`${base}/accounts?account_id=../1`, { headers })).status, 400);
   assert.equal(forwarded, 1);
   const records = [];
@@ -51,6 +53,7 @@ try {
   await assert.rejects(() => readBinanceAnalysis({ action: "positions", account_id: 999 }, { user: { id: 7 } }, read), /账户不存在/);
   assert.equal(records.length, before + 1);
   assert(records.every((endpoint) => !/\/orders$/.test(endpoint) || endpoint.startsWith("/api/")));
+  await import('./binance-tool.test.mjs');
   console.log("BINANCE_INTEGRATION_PASS: JWT identity, restricted routes, agent ownership and risk calculations");
 } finally {
   await new Promise((resolve) => server.close(resolve));

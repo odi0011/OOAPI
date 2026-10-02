@@ -2,7 +2,8 @@
 import { Router } from "express";
 import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now } from "../utils.js";
-import { adminRequired } from "../middleware/auth.js";
+import { adminRequired, optionalAuth } from "../middleware/auth.js";
+import { userDataVisibility } from "../services/user-data-visibility.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { invalidatePrices, loadPrices, DEFAULT_PRICES, describeRule, parsePriceTiers, storedPriceTiers } from "../services/pricing.js";
 import { pendingPricedModels } from "../services/pricing.js";
@@ -28,9 +29,9 @@ const router = Router();
 // 放在后面会被管理员门禁拦住（与 token.js 里 /reconcile 被 /:id 吞掉是同一类坑）。
 router.get(
   "/public",
+  optionalAuth,
   asyncHandler(async (req, res) => {
-    const { getBoolOption } = await import("../config.js");
-    if (!getBoolOption("expose_pricing_to_user")) {
+    if (!userDataVisibility(req.user).pricing) {
       return fail(res, "本站未开放价格查询", 403);
     }
     const prices = await loadPrices();

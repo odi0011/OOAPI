@@ -27,6 +27,7 @@ import {
 } from "@ant-design/icons";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";
+import { userDataVisibility } from "../services/visibility";
 import { API } from "../services/api";
 import { useTheme } from "../theme/ThemeContext";
 import ThemeSwitch from "./ThemeSwitch";
@@ -71,7 +72,6 @@ const NAV_USER = [
       // 独立开发者人格实测：「价格表完全找不到，我只能反推实际扣费，
       // 无法核对标价与实收是否一致。」
       { key: "/pricing", icon: <DollarOutlined />, label: "模型价格" },
-      { key: "/settings/appearance", icon: <BgColorsOutlined />, label: "外观设置" },
       { key: "/profile", icon: <UserOutlined />, label: "个人设置" },
     ],
   },
@@ -110,7 +110,6 @@ const CRUMB = {
   "/operation-log": ["开发", "操作日志"],
   "/media": ["账户", "媒体库"],
   "/pricing": ["账户", "模型价格"],
-  "/settings/appearance": ["账户", "外观设置"],
   "/profile": ["账户", "个人设置"],
   "/home": ["首页"],
   "/admin/dashboard": ["平台管理", "平台看板"],
@@ -221,6 +220,7 @@ export default function MainLayout() {
   }, [location.pathname, refreshBadges]);
 
   const isAdmin = user?.role >= 100;
+  const visibility = userDataVisibility(status, user);
   const navKeys = useMemo(
     () => [...NAV_USER, ...NAV_ADMIN].flatMap((g) => g.items.map((it) => it.key)).concat(Object.keys(CRUMB)),
     []
@@ -259,7 +259,7 @@ export default function MainLayout() {
     const renderGroup = (group) => (
       <div className="oo-nav-group" key={group.title}>
         {!collapsed && <div className="oo-nav-label">{group.title}</div>}
-        {group.items.filter((it) => !it.adminOnly || isAdmin).map((it) => (
+        {group.items.filter((it) => (!it.adminOnly || isAdmin) && (it.key !== "/log" || visibility.usage_records) && (it.key !== "/pricing" || visibility.pricing)).map((it) => (
           <div
             key={it.key}
             className={`oo-nav-item${selectedKey === it.key ? " is-active" : ""}`}
@@ -303,7 +303,7 @@ export default function MainLayout() {
         )}
       </nav>
     );
-  }, [collapsed, selectedKey, isAdmin, isMobile, navigate, badges]);
+  }, [collapsed, selectedKey, isAdmin, isMobile, navigate, badges, visibility.usage_records, visibility.pricing]);
 
   const brand = (
     <div className="oo-brand">

@@ -1,4 +1,5 @@
 import { pool } from "./db.js";
+import { configuredUserDataVisibility } from "./services/user-data-visibility.js";
 
 // 系统设置默认值（管理员可在后台修改，存于 options 表）
 // 分组约定（与后台「系统设置」页签一致）：站点 / 外观 / 认证 / 计费 / 用户 / 安全 / 网关 / 邮件 / 备份
@@ -30,8 +31,8 @@ export const DEFAULT_OPTIONS = {
   default_theme: "system", // light / dark / system
   default_primary: "blue",
   default_collapse_sidebar: "false",
-  enable_theme_switch: "true",
-  enable_primary_switch: "true",
+  enable_theme_switch: "false",
+  enable_primary_switch: "false",
   login_page_notice: "",
   home_show_models: "true",
   home_show_pricing: "true",
@@ -68,6 +69,7 @@ export const DEFAULT_OPTIONS = {
   // ---------- 用户默认值 ----------
   default_user_group: "", // 新用户默认分组（空=公共池）
   user_visible_quota_detail: "full", // full / summary / hidden
+  user_data_visibility: "", // 留空兼容旧粒度；新设置是 version:1 的逐项布尔权限。
   allow_user_edit_profile: "true",
   chat_enabled: "true", // 是否开放站内对话（对话工作台合并了原智能体功能，一并由此开关控制）
   // 用户默认并发与限速（0 = 不限）
@@ -142,9 +144,10 @@ export const DEFAULT_OPTIONS = {
   theme_radius: "default", // sharp | default | round
   theme_density: "compact", // compact | default | loose
   theme_font_size: "13", // 13 | 14 | 15（正文基准 px；13 是既有观感，改默认会全站变样）
-  theme_accent: "", // 留空 = 用主题内置主色；否则是 oklch/hsl 色值
-  // 用户能否自行改外观（关闭后所有人固定用站点默认）
-  theme_user_custom: "true",
+  theme_accent: "", // 留空使用默认主题色，否则使用 #RRGGBB
+  // 兼容旧设置键；外观统一由管理员设定。
+  theme_user_custom: "false",
+  theme_font_family: "playful", // system | playful | serif
 
   // ---------- 站点设定（参考 newapi；均为公开展示项，前端经 /api/status 读取）----------
   site_name: "", // 留空 = 用 system_name
@@ -218,6 +221,8 @@ export async function loadOptions() {
 }
 
 export function getOption(key) {
+  if (["theme_user_custom", "enable_theme_switch", "enable_primary_switch"].includes(key)) return "false";
+  if (["currency_name", "currency_symbol"].includes(key)) return "OD币";
   return cache.has(key) ? cache.get(key) : DEFAULT_OPTIONS[key] ?? "";
 }
 
@@ -241,6 +246,8 @@ export async function setOption(key, value) {
 // 公开给前端的 /api/status 配置子集
 // 原则：只下发「前端渲染必须知道」的项；敏感项（smtp_pass）与纯后台项一律不下发。
 export function publicStatus() {
+  const visibility = configuredUserDataVisibility();
+  const primary = { blue: "#3b6ef5", indigo: "#5b5bd6", violet: "#7c5cd6", cyan: "#0d9bb5", teal: "#12a594", green: "#30a46c", amber: "#c47f17", rose: "#d6409f" };
   return {
     system_name: getOption("system_name"),
     logo: getOption("logo"),
@@ -260,7 +267,8 @@ export function publicStatus() {
     // 额度换算固定 10000：计费代码（pricing.UNITS_PER_OD）是硬编码的，
     // 这里若读库可能和实际扣费漂移（历史：设置页可改该值 → 展示缩水但扣费不变）
     units_per_od: 10000,
-    general_setting_quota_display: getBoolOption("general_setting_quota_display"),
+    general_setting_quota_display: visibility.balance,
+    user_data_visibility: visibility,
     quota_for_new_user: getNumberOption("quota_for_new_user"),
     password_register_enabled: getBoolOption("password_register_enabled"),
     password_login_enabled: getBoolOption("password_login_enabled"),
@@ -286,21 +294,22 @@ export function publicStatus() {
     enable_theme_switch: getBoolOption("enable_theme_switch"),
     enable_primary_switch: getBoolOption("enable_primary_switch"),
     // 站点默认外观（管理员在「外观设置」保存）。原先只写库不下发 ——
-    // 「保存为站点默认，对所有未个性化用户生效」实际对谁都不生效（普通用户读不到 /api/option）。
-    // 前端规则：用户本地调过的项优先；user_custom=false 时一律用站点默认。
+    // 站点保存值统一下发，个人浏览器历史偏好不再覆盖。
     appearance: {
+      mode: getOption("default_theme") || "system",
+      font_family: getOption("theme_font_family") || "playful",
       background: getOption("theme_background") || "pure",
       radius: getOption("theme_radius") || "default",
       density: getOption("theme_density") || "compact",
       font_size: getNumberOption("theme_font_size") || 13,
-      accent: getOption("theme_accent") || "",
-      user_custom: getOption("theme_user_custom") !== "false",
+      accent: getOption("theme_accent") || primary[getOption("default_primary")] || primary.blue,
+      user_custom: false,
     },
     home_content: getOption("home_content"),
     home_show_models: getBoolOption("home_show_models"),
     home_show_pricing: getBoolOption("home_show_pricing"),
     chat_enabled: getBoolOption("chat_enabled"),
-    expose_pricing_to_user: getBoolOption("expose_pricing_to_user"),
+    expose_pricing_to_user: visibility.pricing,
     // 注册相关（注册页据此显示/隐藏字段）
     register_email_required: getBoolOption("register_email_required"),
     register_invite_only: getBoolOption("register_invite_only"),

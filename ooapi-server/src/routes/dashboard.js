@@ -19,6 +19,7 @@ import { authRequired, adminRequired } from "../middleware/auth.js";
 import { snapshot } from "../services/metrics.js";
 import { groupConfigOf } from "../services/group-rate.js";
 import { USAGE_SQL, usageLogWhere } from "../services/log.js";
+import { userDataVisibility, visibleAccountData } from "../services/user-data-visibility.js";
 
 const router = Router();
 
@@ -39,6 +40,14 @@ const bjDay = (ts) => Math.floor((Number(ts) + TZ) / 86400);
 // 新失败调用与部分计费只保留一行，不能再用「消费数 + 错误数」作分母。
 const FAILURE_SQL = "(type = 4 AND is_usage = 1 AND status <> 'stopped')";
 const SUCCESS_SQL = "(type = 2 AND status IN ('', 'success'))";
+
+function recentUsageRow(l) {
+  return { id: l.id, created_at: Number(l.created_at) || 0, model: l.model || "—", type: Number(l.type),
+    status: l.status || (Number(l.type) === 2 ? "success" : "error"), elapsed_ms: Number(l.elapsed_ms) || 0,
+    first_token_ms: Number(l.first_token_known) === 1 || Number(l.first_token_ms) > 0 ? Number(l.first_token_ms) || 0 : null,
+    units: Number(l.quota) || 0, prompt_tokens: Number(l.prompt_tokens) || 0,
+    completion_tokens: Number(l.completion_tokens) || 0, cache_tokens: Number(l.cache_tokens) || 0 };
+}
 
 /** 按天趋势（消费 + 调用 + token + 缓存），缺数据的日期补 0（否则折线会断） */
 async function dailyTrend(userId, since, days) {
@@ -136,6 +145,13 @@ router.get(
   asyncHandler(async (req, res) => {
     const { key, days, since } = rangeOf(req.query);
     const uid = req.user.id;
+    const visibility = userDataVisibility(req.user);
+    if (!visibility.usage_summary) {
+      const [recent] = visibility.usage_records ? await pool.query(
+        `SELECT id, created_at, model, type, status, elapsed_ms, first_token_ms, first_token_known, quota, prompt_tokens, completion_tokens, cache_tokens FROM logs WHERE user_id = ? AND ${USAGE_SQL} ORDER BY id DESC LIMIT 8`, [uid]) : [[]];
+      return ok(res, { range: { key, days }, account: visibleAccountData({ quota: Number(req.user.quota) || 0, group_name: req.user.group_name || "" }, req.user),
+        recent_logs: recent.map(recentUsageRow) });
+    }
 
     const [[agg]] = await pool.query(
       `SELECT COUNT(*) AS calls, COALESCE(SUM(${SUCCESS_SQL}),0) AS successes,
@@ -236,7 +252,7 @@ router.get(
       },
       previous: prev,
       // 账户与钱包：全生命周期指标单独封装，与「区间时段」彻底隔离
-      account: {
+      account: visibleAccountData({
         quota: Number(req.user.quota) || 0,
         used_quota: Number(req.user.used_quota) || 0,
         request_count: Number(req.user.request_count) || 0,
@@ -244,7 +260,7 @@ router.get(
         group_rate: groupRate,
         active_tokens: Number(tokRow?.active_tokens) || 0,
         total_tokens: Number(tokRow?.total_tokens) || 0,
-      },
+      }, req.user),
       trend,
       by_model: byModel.map((m) => ({
         model: m.model || "未记录模型",
@@ -253,28 +269,16 @@ router.get(
         prompt_tokens: Number(m.prompt_tokens) || 0,
         completion_tokens: Number(m.completion_tokens) || 0,
       })),
-      by_channel: byChannel.map((c) => ({
+      ...(Number(req.user.role) >= 100 ? { by_channel: byChannel.map((c) => ({
         channel_id: Number(c.channel_id) || 0,
         calls: Number(c.calls) || 0,
         units: Number(c.units) || 0,
-      })),
+      })) } : {}),
       by_hour: Array.from({ length: 24 }, (_, h) => {
         const hit = byHour.find((x) => Number(x.hour) === h);
         return { hour: h, calls: Number(hit?.calls) || 0, units: Number(hit?.units) || 0 };
       }),
-      recent_logs: recentLogs.map((l) => ({
-        id: l.id,
-        created_at: Number(l.created_at) || 0,
-        model: l.model || "—",
-        type: Number(l.type),
-        status: l.status || (Number(l.type) === 2 ? "success" : "error"),
-        elapsed_ms: Number(l.elapsed_ms) || 0,
-        first_token_ms: Number(l.first_token_known) === 1 || Number(l.first_token_ms) > 0 ? Number(l.first_token_ms) || 0 : null,
-        units: Number(l.quota) || 0,
-        prompt_tokens: Number(l.prompt_tokens) || 0,
-        completion_tokens: Number(l.completion_tokens) || 0,
-        cache_tokens: Number(l.cache_tokens) || 0,
-      })),
+      recent_logs: visibility.usage_records ? recentLogs.map(recentUsageRow) : [],
     });
   })
 );

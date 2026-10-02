@@ -5,6 +5,7 @@ import { ok, fail, asyncHandler, userToResponse, pageParams, idParam, now } from
 import { authRequired, adminRequired, signToken } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE, USAGE_SQL } from "../services/log.js";
+import { userDataVisibility, visibleAccountData } from "../services/user-data-visibility.js";
 
 const router = Router();
 
@@ -31,7 +32,7 @@ router.put(
       ]
     );
     const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [req.user.id]);
-    return ok(res, userToResponse(rows[0]), "保存成功");
+    return ok(res, visibleAccountData(userToResponse(rows[0]), req.user), "保存成功");
   })
 );
 
@@ -90,6 +91,8 @@ router.get(
   authRequired,
   asyncHandler(async (req, res) => {
     // 累计消费直接取 users.used_quota（与计费同源），不再全量扫该用户历史日志
+    const visibility = userDataVisibility(req.user);
+    if (!visibility.usage_summary) return ok(res, visibleAccountData({ quota: Number(req.user.quota) }, req.user));
     const consume = Number(req.user.used_quota) || 0;
     // 近 30 天按天聚合消费
     const [daily] = await pool.query(
@@ -101,12 +104,12 @@ router.get(
        GROUP BY day ORDER BY day`,
       [req.user.id]
     );
-    return ok(res, {
+    return ok(res, visibleAccountData({
       quota: Number(req.user.quota),
       used_quota: Number(req.user.used_quota),
       request_count: req.user.request_count,
       consume_in_logs: consume,
-      daily});
+      daily}, req.user));
   })
 );
 

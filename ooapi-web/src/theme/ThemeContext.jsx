@@ -3,154 +3,45 @@ import { ConfigProvider, theme as antdTheme } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import {
   SURFACES, applyCssVars, applyAppearance, DEFAULT_PRIMARY, tint, oklchToHex,
-  RADIUS_PRESETS, DENSITY_PRESETS, APPEARANCE_KEYS, normalizeAppearance, isHexColor,
+  RADIUS_PRESETS, DENSITY_PRESETS, FONT_FAMILIES, normalizeAppearance, isHexColor,
   readSiteAppearanceCache, writeSiteAppearanceCache,
 } from "./presets";
 
-const MODE_KEY = "ooapi-theme";
-const PRIMARY_KEY = "ooapi-primary";
-
 const ThemeContext = createContext(null);
+const safeMode = (value) => ["light", "dark", "system"].includes(value) ? value : "system";
 
-function systemResolved() {
-  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
-
-function load(key, fallback) {
-  try {
-    return localStorage.getItem(key) || fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function save(key, value) {
-  try {
-    if (value === null || value === undefined || value === "") localStorage.removeItem(key);
-    else localStorage.setItem(key, String(value));
-  } catch { /* 隐私模式写不了：本次会话仍生效 */ }
-}
-
-// 非法主题值（脏数据/被篡改）会让 SURFACES[resolved] 取到 undefined 而白屏，
-// 且坏值留在 localStorage 里刷新也无法自愈，这里统一归一化
-function safeMode(m) {
-  return ["light", "dark", "system"].includes(m) ? m : "system";
-}
-
-/** 读用户本地覆盖的外观项（只返回真正存过的键；没存过 = 跟随站点默认） */
-function loadOverrides() {
-  const out = {};
-  for (const [k, storageKey] of Object.entries(APPEARANCE_KEYS)) {
-    const v = load(storageKey, "");
-    if (v) out[k] = v;
-  }
-  return normalizeAppearance(out, { partial: true });
-}
-
-/**
- * 主题状态的唯一来源。
- *
- * 外观（底纹/圆角/密度/字号）原先只由 AppearancePage 直接 setProperty，
- * 状态不进 React —— 于是有三个问题：
- *   ① AntD 组件的圆角/控件高度/字号是 ConfigProvider token，只改 CSS 变量
- *      对按钮、输入框、弹窗**完全不生效**（选「直角」后只有自绘组件变直角）；
- *   ② 页面初值是写死的默认值而不是当前生效值（普通用户读不到 /api/option，
- *      刷新后外观页显示「标准」，实际生效的是自己上次选的「宽松」）；
- *   ③ 站点默认外观从未下发给普通用户。
- * 现在：站点默认（/api/status.appearance）+ 用户本地覆盖 → 生效值，
- * 同时驱动 CSS 变量与 AntD token。
- */
+// 站点外观为唯一持久化来源；编辑器预览不写缓存，离开编辑器即恢复。
 export function ThemeProvider({ children }) {
-  const [mode, setModeState] = useState(() => safeMode(load(MODE_KEY, "system")));
-  const [primaryOverride, setPrimaryOverride] = useState(() => {
-    const v = load(PRIMARY_KEY, "");
-    return isHexColor(v) ? v : "";
-  });
-  const [overrides, setOverrides] = useState(loadOverrides);
   const [site, setSite] = useState(readSiteAppearanceCache);
-  const [exempt, setExempt] = useState(false);
-  const [systemDark, setSystemDark] = useState(() => systemResolved() === "dark");
-
+  const [canPreview, setCanPreview] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [systemDark, setSystemDark] = useState(() => !!window.matchMedia?.("(prefers-color-scheme: dark)").matches);
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = (e) => setSystemDark(e.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
+    const update = (e) => setSystemDark(e.matches);
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
   }, []);
-
+  const current = canPreview && preview ? { ...site, ...preview } : site;
+  const mode = safeMode(current.mode);
   const resolved = mode === "system" ? (systemDark ? "dark" : "light") : mode;
-  const siteLocked = site.user_custom === false;
-  const userCustom = !siteLocked || exempt;
-
-  // 生效值：允许个性化时「本地覆盖 > 站点默认」，否则一律站点默认
-  const appearance = useMemo(
-    () => normalizeAppearance(userCustom ? { ...site, ...overrides } : site),
-    [site, overrides, userCustom]
-  );
-  const primary = (userCustom && primaryOverride) || (isHexColor(site.accent) ? site.accent : "") || DEFAULT_PRIMARY;
-
-  useEffect(() => {
-    applyCssVars(resolved, primary);
-  }, [resolved, primary]);
-
-  useEffect(() => {
-    applyAppearance(appearance);
-  }, [appearance]);
-
-  const setMode = useCallback((m) => {
-    const safe = safeMode(m);
-    setModeState(safe);
-    save(MODE_KEY, safe);
-  }, []);
-
-  const setPrimary = useCallback((c) => {
-    const v = isHexColor(c) ? c : "";
-    setPrimaryOverride(v);
-    save(PRIMARY_KEY, v);
-  }, []);
-
-  /** 改外观（可只传改动项）：写本地覆盖，立刻生效 */
-  const setAppearance = useCallback((patch) => {
-    const clean = normalizeAppearance(patch, { partial: true });
-    setOverrides((prev) => ({ ...prev, ...clean }));
-    for (const [k, v] of Object.entries(clean)) save(APPEARANCE_KEYS[k], v);
-  }, []);
-
-  /** 清掉本地覆盖，回到站点默认（主题色一并清） */
-  const resetAppearance = useCallback(() => {
-    setOverrides({});
-    for (const storageKey of Object.values(APPEARANCE_KEYS)) save(storageKey, "");
-    setPrimaryOverride("");
-    save(PRIMARY_KEY, "");
-  }, []);
-
-  /** AppContext 拿到 /api/status 后调用；exempt=true（管理员）不受「禁止个性化」约束 */
-  const setSiteAppearance = useCallback((a, exemptFlag = false) => {
-    setExempt(Boolean(exemptFlag));
+  const appearance = useMemo(() => normalizeAppearance(current), [site, preview, canPreview]);
+  const primary = isHexColor(current.accent) ? current.accent : DEFAULT_PRIMARY;
+  useEffect(() => { applyCssVars(resolved, primary); }, [resolved, primary]);
+  useEffect(() => { applyAppearance(appearance); }, [appearance]);
+  const previewAppearance = useCallback((draft) => setPreview(draft), []);
+  const setSiteAppearance = useCallback((a, administrator = false) => {
+    setCanPreview(Boolean(administrator));
+    if (!administrator) setPreview(null);
     if (!a || typeof a !== "object") return;
-    const next = { ...normalizeAppearance(a), accent: isHexColor(a.accent) ? a.accent : "", user_custom: a.user_custom !== false };
+    const next = { ...normalizeAppearance(a), mode: safeMode(a.mode), accent: isHexColor(a.accent) ? a.accent : "", user_custom: false };
     writeSiteAppearanceCache(next);
-    setSite((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+    setSite((prev) => JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
   }, []);
-
   const antdConfig = useAntdConfig(resolved, primary, appearance);
-
-  const value = useMemo(
-    () => ({
-      mode, setMode, resolved, primary, setPrimary, primaryOverride,
-      appearance, overrides, setAppearance, resetAppearance,
-      site, setSiteAppearance, userCustom, siteLocked,
-    }),
-    [mode, setMode, resolved, primary, setPrimary, primaryOverride, appearance, overrides, setAppearance, resetAppearance, site, setSiteAppearance, userCustom, siteLocked]
-  );
-
-  return (
-    <ThemeContext.Provider value={value}>
-      <ConfigProvider locale={zhCN} theme={antdConfig}>
-        {children}
-      </ConfigProvider>
-    </ThemeContext.Provider>
-  );
+  const value = useMemo(() => ({ mode, resolved, primary, appearance, site, setSiteAppearance, previewAppearance, userCustom: false, siteLocked: true }),
+    [mode, resolved, primary, appearance, site, setSiteAppearance, previewAppearance]);
+  return <ThemeContext.Provider value={value}><ConfigProvider locale={zhCN} theme={antdConfig}>{children}</ConfigProvider></ThemeContext.Provider>;
 }
 
 export function useTheme() {
@@ -248,10 +139,8 @@ function useAntdConfig(resolved, primary, appearance) {
         fontSizeXL: fs + 5,
         lineHeight: 1.5,
 
-        fontFamily:
-          '"ZCOOL KuaiLe", "Microsoft YaHei", sans-serif',
-        fontFamilyCode:
-          '"ZCOOL KuaiLe", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+        fontFamily: FONT_FAMILIES.find((f) => f.key === appearance.fontFamily)?.css,
+        fontFamilyCode: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
 
         boxShadow: s.shadowCard,
         boxShadowSecondary: s.shadowOverlay,

@@ -14,6 +14,7 @@ import { pool } from "../db.js";
 import { ok, fail, asyncHandler, pageParams, safeJSONParse } from "../utils.js";
 import { authRequired, optionalAuth } from "../middleware/auth.js";
 import { mediaUrl } from "../services/media.js";
+import { userDataVisibility, visibleAccountData } from "../services/user-data-visibility.js";
 
 const router = Router();
 
@@ -35,7 +36,7 @@ function publicProfile(u, extra = {}) {
 }
 
 /** 用户的社区与用量统计。用量部分只看自己/管理员（公开主页不返回）。 */
-async function statsOf(userId, { withUsage = false } = {}) {
+async function statsOf(userId, { withUsage = false, viewer = null } = {}) {
   const [[posts]] = await pool.query(
     "SELECT COUNT(*) AS n, COALESCE(SUM(like_count),0) AS likes, COALESCE(SUM(view_count),0) AS views FROM community_posts WHERE user_id = ? AND status <> 2",
     [userId]
@@ -65,15 +66,16 @@ async function statsOf(userId, { withUsage = false } = {}) {
     favorites: Number(favs.n) || 0,
     friends_count: Number(friends_count) || 0,
   };
-  if (withUsage) {
+  const visibility = userDataVisibility(viewer);
+  if (withUsage && (visibility.balance || visibility.usage_summary)) {
     // 用量数据只给本人与管理员：它是账号信息，不是公开资料
     const [[u]] = await pool.query("SELECT quota, used_quota, request_count, created_time, last_login_time FROM users WHERE id = ?", [userId]);
-    out.usage = {
+    out.usage = visibleAccountData({
       quota: Number(u?.quota) || 0,
       used_quota: Number(u?.used_quota) || 0,
       request_count: Number(u?.request_count) || 0,
       last_login_time: Number(u?.last_login_time) || 0,
-    };
+    }, viewer);
   }
   return out;
 }
@@ -95,7 +97,7 @@ router.get(
     const isSelf = viewer && Number(viewer.id) === uid;
     const isAdmin = viewer && viewer.role >= 100;
     // 用量只在「本人或管理员」时返回（含余额，绝不能出现在公开响应里）
-    const stats = await statsOf(uid, { withUsage: Boolean(isSelf || isAdmin) });
+    const stats = await statsOf(uid, { withUsage: Boolean(isSelf || isAdmin), viewer: req.user });
 
     // 关注状态与关注按钮：匿名访客没有关注状态，但仍要能看主页
     let following = false;
@@ -151,7 +153,7 @@ router.get(
   authRequired,
   asyncHandler(async (req, res) => {
     const u = req.user;
-    const stats = await statsOf(u.id, { withUsage: true });
+    const stats = await statsOf(u.id, { withUsage: true, viewer: req.user });
     const [recent] = await pool.query(
       `SELECT p.id, p.title, p.content, p.like_count, p.comment_count, p.view_count, p.created_time, t.name AS topic_name
          FROM community_posts p LEFT JOIN community_topics t ON t.id = p.topic_id

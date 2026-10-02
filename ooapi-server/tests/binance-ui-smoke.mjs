@@ -10,6 +10,7 @@ import jwt from "jsonwebtoken";
 import { chromium } from "playwright";
 import { pool, JWT_SECRET } from "../src/db.js";
 import { TOOLS } from "../src/services/harness/tools.js";
+import { FONT_FAMILIES } from "../../ooapi-web/src/theme/presets.js";
 
 const BASE = process.env.BASE || "http://127.0.0.1:3999";
 const origin = new URL(BASE);
@@ -43,6 +44,12 @@ page.on("pageerror", (error) => errors.push(error.message));
 page.on("dialog", (dialog) => { errors.push(`Native dialog: ${dialog.type()}`); dialog.dismiss(); });
 let checks = 0;
 const check = (value, message) => { assert(value, message); checks++; };
+let restoreTheme = null, administratorToken = null;
+const setThemeMode = async (value) => {
+  const response = await fetch(`${BASE}/api/option/`, { method: "PUT", headers: { Authorization: `Bearer ${administratorToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ key: "default_theme", value }) });
+  const result = await response.json();
+  assert(response.ok && result.success, "Isolated administrator needs to set or restore system theme");
+};
 const waitForData = async (predicate) => {
   for (let attempt = 0; attempt < 60; attempt++) {
     if (await predicate()) return;
@@ -53,6 +60,12 @@ const waitForData = async (predicate) => {
 const tab = async (name) => { await page.getByRole("tab", { name, exact: true }).first().click(); };
 const modal = () => page.getByRole("dialog");
 try {
+  const [[administrator]] = await pool.query("SELECT id, role, token_version FROM users WHERE role >= 100 AND status = 1 ORDER BY role DESC LIMIT 1");
+  assert(administrator, "Isolated theme fixture requires an administrator");
+  administratorToken = jwt.sign({ id: administrator.id, role: administrator.role, tv: Number(administrator.token_version) || 0 }, JWT_SECRET, { expiresIn: "30m" });
+  const status = await (await fetch(`${BASE}/api/status`)).json();
+  restoreTheme = status.data.default_theme;
+  await setThemeMode("system");
   check((await api("/accounts", { authorization: "invalid-test-only" })).status === 401, "Unauthenticated requests must fail");
   await page.goto(`${BROWSER_BASE}/od-binance?view=settings`, { waitUntil: "networkidle" });
   check(await page.evaluate(() => !window.isSecureContext && typeof crypto.randomUUID !== "function"), "Review must reproduce public HTTP crypto restrictions");
@@ -124,6 +137,37 @@ try {
   const analysis = await TOOLS.binance.run({ action: "analysis", account_id: analysisAccount.id }, { user: users[0] });
   check(analysis.ok && JSON.parse(analysis.output).positions[0]?.quantity === 0.5, "Agent tool must read the real user's persisted position");
   check(!(await TOOLS.binance.run({ action: "analysis", account_id: analysisAccount.id }, { user: users[1] })).ok, "Agent tool cannot read another user's account");
+  // 不由页面预填账号，直接验证系统对话工具面对真实隔离引擎的缺省多账户读取。
+  const toolRead = async (action, user = users[0]) => {
+    const result = await TOOLS.binance.run({ action }, { user });
+    check(result.ok, `Read-only Binance ${action} needs a valid result`);
+    return JSON.parse(result.output);
+  };
+  const listed = await toolRead("accounts");
+  check(listed.accounts.length === 2 && listed.accounts.every((row) => accounts.some((owned) => owned.id === row.id)), "Natural account question must list both owned accounts without page selection");
+  const currentPositions = await toolRead("positions");
+  check(currentPositions.positions.length === 1 && currentPositions.positions[0].quantity === 0.5 && currentPositions.positions[0].accountId === analysisAccount.id, "Natural position question must read persisted owned positions");
+  const recentOrders = await toolRead("orders");
+  check(recentOrders.orders.length === 2 && recentOrders.orders.every((row) => row.accountId === analysisAccount.id), "Natural recent-order question must read the own persisted ledger");
+  const currentStrategies = await toolRead("strategies");
+  check(currentStrategies.strategies.length === 1 && currentStrategies.strategies[0].accountId === analysisAccount.id, "Natural strategy question must read the owned paused strategy");
+  const overview = await toolRead("overview");
+  check(overview.snapshots.length === 2 && overview.snapshots.every((row) => row.status !== "not_recorded") && Number.isFinite(overview.summary.totalEquity), "Multi-account overview must use saved engine snapshots");
+  const empty = await toolRead("analysis", users[1]);
+  check(empty.status === "no_accounts" && empty.summary === null && empty.positions.length === 0, "New user's empty tool result cannot expose the first user's balance or positions");
+  const isolatedName = `隔离账户 ${suffix}`;
+  const isolatedAccount = await api("/accounts", { method: "POST", body: { name: isolatedName, environment: "demo" }, authorization: secondToken });
+  check(isolatedAccount.status === 200 && isolatedAccount.data.environment === "demo", "Second user's fixture is confined to a demo account");
+  const secondListed = await toolRead("accounts", users[1]);
+  check(secondListed.accounts.length === 1 && secondListed.accounts[0].name === isolatedName, "Second user must list exactly its own account");
+  const stillOwned = await toolRead("accounts");
+  check(stillOwned.accounts.length === 2 && !stillOwned.accounts.some((row) => row.id === isolatedAccount.data.id), "First user's directory cannot include the second user's account");
+  for (const [action, field] of [["positions", "positions"], ["orders", "orders"], ["strategies", "strategies"]]) {
+    const ownEmpty = await toolRead(action, users[1]);
+    check(ownEmpty[field].length === 0 && ownEmpty.accounts.length === 1, `Second user's ${action} cannot include first-user resources`);
+    const foreign = await TOOLS.binance.run({ action, account_id: isolatedAccount.data.id }, { user: users[0] });
+    check(!foreign.ok, `First user cannot read second-user ${action} by explicit ID`);
+  }
   await tab("配置");
   await tab("风控");
   await page.getByLabel("单笔金额 · USDT", { exact: true }).fill("750");
@@ -150,12 +194,26 @@ try {
   await modal().getByRole("button", { name: /^取\s*消$/ }).click();
   check((await api("/platform")).data.allow_live_trading === false, "Canceling live confirmation must preserve disabled state");
   await tab("总览");
-  check(await page.evaluate(async () => { await document.fonts.ready; return document.fonts.check('14px "ZCOOL KuaiLe"'); }), "Local Chinese font must load");
+  const fontPreset = FONT_FAMILIES.find((font) => font.key === status.data.appearance.font_family);
+  check(!!fontPreset, "Public site status must select a supported font preset");
+  await page.waitForFunction((key) => document.documentElement.dataset.fontFamily === key, fontPreset.key);
+  const fontState = await page.evaluate(async (preset) => {
+    const sample = "币安账户 USDT", shorthand = `14px ${preset.css}`;
+    const faces = await document.fonts.load(shorthand, sample);
+    await document.fonts.ready;
+    return { key: document.documentElement.dataset.fontFamily, css: getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim(),
+      loaded: document.fonts.check(shorthand, sample), faces: faces.map((face) => ({ family: face.family, status: face.status })),
+      localPlayful: performance.getEntriesByType("resource").some((entry) => { const url = new URL(entry.name); return url.origin === location.origin && url.pathname === "/fonts/zcool-kuaile.woff2"; }) };
+  }, fontPreset);
+  check(fontState.key === fontPreset.key && fontState.css === fontPreset.css && fontState.loaded, "Actual font preset and loaded font must follow the saved site appearance");
+  if (fontPreset.key === "playful") check(fontState.faces.some((face) => face.family.includes("ZCOOL KuaiLe") && face.status === "loaded") && fontState.localPlayful, "Playful preset must load the bundled local Chinese font");
   await page.screenshot({ path: path.join(screenshots, "desktop-overview.png"), fullPage: true });
   for (const mode of ["light", "dark"]) {
-    await page.evaluate((value) => localStorage.setItem("ooapi-theme", value), mode);
+    await page.emulateMedia({ colorScheme: mode });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload({ waitUntil: "networkidle" });
+    await page.waitForFunction((expected) => document.documentElement.dataset.theme === expected, mode);
+    check(await page.evaluate((expected) => document.documentElement.dataset.theme === expected, mode), `${mode} mobile theme must follow the emulated system preference`);
     check((await page.locator(".oo-binance-account-select .ant-select-selection-item").textContent()) === names[0], `${mode} reload must preserve the selected account`);
     check((await api(`/positions?account_id=${ownerAccount.id}`)).data[0]?.quantity === 0.5, `${mode} reload must preserve the traded position`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${mode} mobile document must not overflow`);
@@ -173,15 +231,15 @@ try {
     await tab("总览");
   }
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.getByRole("button", { name: "Agent 分析", exact: true }).click();
-  await page.waitForURL(/\/chat\?binance_account=/);
-  check((await page.locator("textarea").first().inputValue()).includes("binance 工具"), "Agent handoff must preserve the actual account prompt");
+  check(await page.getByRole("button", { name: "Agent 分析", exact: true }).count() === 0, "Binance page must use the common system chat rather than a separate analysis entry");
   check(errors.length === 0, `Browser runtime errors: ${errors.join("; ")}`);
   console.log(`BINANCE_UI_PASS: ${checks} checks, ordinary-user CRUD/order/protection/backtest/isolation, insecure HTTP and mobile themes`);
 } catch (error) {
   await page.screenshot({ path: path.join(screenshots, "failed-flow.png"), fullPage: true }).catch(() => {});
   throw error;
 } finally {
-  await browser.close();
-  await pool.end();
+  try {
+    await browser.close();
+    if (restoreTheme !== null && administratorToken) await setThemeMode(restoreTheme);
+  } finally { await pool.end(); }
 }

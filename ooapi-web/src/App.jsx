@@ -109,7 +109,7 @@ export default function App() {
         {/* 模型价格（只读）：用户端比价用；后台可关（expose_pricing_to_user） */}
         <Route path="/pricing" element={<PricingPage />} />
         <Route path="/profile" element={<ProfilePage />} />
-        {/* 外观设置：即时热注入，改动立刻生效 */}
+        {/* 旧外观入口兼容跳转；编辑统一放在管理员系统设置。 */}
         <Route path="/settings/appearance" element={<AppearancePage />} />
           <Route path="/admin/channel" element={<RequireAuth admin><AdminChannelsPage /></RequireAuth>} />
           <Route path="/admin/groups" element={<RequireAuth admin><AdminGroupsPage /></RequireAuth>} />

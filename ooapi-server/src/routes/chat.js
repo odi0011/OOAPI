@@ -15,6 +15,7 @@ import { writeLog, LOG_TYPE } from "../services/log.js";
 import { logTexts } from "../services/log-text.js";
 import { getPrice, originalModelPrice, priceForTokens, computeCost, billingDetails, splitTokens, sumCallTokens, loadPrices, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { finalizeChannelQuote } from "../services/channel-price-quote.js";
+import { userDataVisibility, visibleAccountData, visibleChatAudit } from "../services/user-data-visibility.js";
 import { groupConfigOf, applyGroupRate, parseGroupKey, displayGroupName } from "../services/group-rate.js";
 import { allPublicModels, publicModelMetadataMap, modelVendorName, modelRegistry, resolveAliasSync, canonicalModelName, modelInAllowList } from "../services/models.js";
 import { getProvider } from "../services/channel-types.js";
@@ -59,6 +60,12 @@ const router = express.Router();
 // 只验 JWT 签名（不查库），完整 authRequired 仍在各路由上。
 router.use(preAuthJwt);
 router.use(express.json({ limit: "20mb" }));
+// 对话读取/CRUD的统一返回投影；保留库里的真实金额与用量用于后续计费审计。
+router.use((req, res, next) => {
+  const json = res.json.bind(res);
+  res.json = (body) => json(body?.data ? { ...body, data: visibleChatAudit(body.data, userDataVisibility(req.user), { isAdmin: Number(req.user?.role) >= 100 }) } : body);
+  next();
+});
 
 /**
  * 用户的「密钥」列表（前端选 Key 用）。
@@ -118,7 +125,7 @@ export async function listUserKeys(user) {
       group: t.group_name || "",
       group_name: gkey?.name || "",
       group_remark: gm?.remark || "",
-      group_rate: gm?.rate || 1,
+      ...(userDataVisibility(user).pricing ? { group_rate: gm?.rate || 1 } : {}),
       group_vendors: gm ? [...gm.vendors] : [],
       model_limits: String(t.model_limits || "").split(",").map((s) => s.trim()).filter(Boolean),
     };
@@ -361,7 +368,7 @@ async function availableModels(user, keyId = 0) {
       ...m,
       // loadPrices 返回的键是 input/output/cache（已从列名 input_price 映射），
       // 这里原先读 p.input_price → undefined → NaN → JSON null，下拉/弹窗价格全空（子代理复核发现）
-      price: p ? { input: Number(p.input), output: Number(p.output), cache: Number(p.cache) } : null,
+      ...(userDataVisibility(user).pricing ? { price: p ? { input: Number(p.input), output: Number(p.output), cache: Number(p.cache) } : null } : {}),
     });
   }
 
@@ -450,8 +457,7 @@ router.get(
     return ok(res, {
       currency: CURRENCY,
       units_per_od: UNITS_PER_OD,
-      quota: Number(req.user.quota),
-      used_quota: Number(req.user.used_quota),
+      ...visibleAccountData({ quota: Number(req.user.quota), used_quota: Number(req.user.used_quota) }, req.user),
       models,
       // 厂商分组：前端模型下拉按厂商归类展示（带厂商图标），无重复模型且分类准确
       vendors: groupModelsByVendor(models),
@@ -1079,6 +1085,8 @@ function aggregate(calls = []) {
 
 /** 把某个运行的 SSE 流接到本次 HTTP 响应：先回放缓冲，再续播实时事件 */
 function streamFromRun(req, res, run, extra = null) {
+  const visibility = userDataVisibility(req.user);
+  const auditOptions = { isAdmin: Number(req.user?.role) >= 100 };
   res.status(200);
   res.setHeader("content-type", "text/event-stream; charset=utf-8");
   res.setHeader("cache-control", "no-cache");
@@ -1087,7 +1095,7 @@ function streamFromRun(req, res, run, extra = null) {
   res.flushHeaders?.();
 
   const write = (obj) => {
-    if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`);
+    if (!res.writableEnded) res.write(`data: ${JSON.stringify(visibleChatAudit(obj, visibility, auditOptions))}\n\n`);
   };
   if (extra) write({ type: "resumed", ...extra });
 

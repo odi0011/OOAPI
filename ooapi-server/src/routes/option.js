@@ -3,6 +3,7 @@ import { ok, fail, asyncHandler } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
 import { getOption, setOption, DEFAULT_OPTIONS, SECRET_OPTIONS, SUPER_OPTIONS } from "../config.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
+import { parseUserDataVisibility, configuredUserDataVisibility } from "../services/user-data-visibility.js";
 
 const router = Router();
 
@@ -73,10 +74,23 @@ const ENUM_OPTIONS = {
   theme_radius: ["sharp", "default", "round"],
   theme_density: ["compact", "default", "loose"],
   theme_font_size: ["13", "14", "15"],
-  theme_user_custom: ["true", "false"],
+  theme_user_custom: ["false"],
+  enable_theme_switch: ["false"],
+  enable_primary_switch: ["false"],
+  theme_font_family: ["system", "playful", "serif"],
+  default_theme: ["system", "light", "dark"],
+  user_visible_quota_detail: ["full", "summary", "hidden"],
+  general_setting_quota_display: ["true", "false"],
+  expose_pricing_to_user: ["true", "false"],
+  currency_name: ["OD币"],
+  currency_symbol: ["OD币"],
 };
 
 function validateOptionValue(key, raw) {
+  if (key === "user_data_visibility") {
+    try { parseUserDataVisibility(raw); return null; }
+    catch { return "必须是完整的 version:1 数据可见权限对象（五项仅接受布尔值）"; }
+  }
   if (ENUM_OPTIONS[key]) {
     return ENUM_OPTIONS[key].includes(String(raw)) ? null : `取值必须是 ${ENUM_OPTIONS[key].join(" / ")} 之一`;
   }
@@ -111,7 +125,7 @@ router.get(
     // 后端依然会独立校验（前端置灰只是体验，不是权限边界）。
     const superOnly = req.user.role >= 1000 ? [] : [...SUPER_OPTIONS].filter((k) => k in DEFAULT_OPTIONS);
     // API 服务只把 data 交给页面；ok 没有第 4 参数，权限元信息必须一同放进 data。
-    return ok(res, { ...data, super_only: superOnly, is_super: req.user.role >= 1000 });
+    return ok(res, { ...data, user_data_visibility: configuredUserDataVisibility(), super_only: superOnly, is_super: req.user.role >= 1000 });
   })
 );
 
@@ -138,7 +152,7 @@ router.put(
       if (gerr) return fail(res, gerr, SUPER_OPTIONS.has(key) ? 403 : 400);
       const verr = validateOptionValue(key, body.value);
       if (verr) return fail(res, `设置项 ${key} ${verr}`);
-      await setOption(key, body.value);
+      await setOption(key, key === "user_data_visibility" ? JSON.stringify(parseUserDataVisibility(body.value)) : body.value);
     } else {
       // 批量更新：先整体校验再写，避免写一半失败留下混合状态
       for (const [key, value] of Object.entries(body)) {
@@ -154,7 +168,7 @@ router.put(
         if (!isSuper && SUPER_OPTIONS.has(key)) continue; // 已在上面拦住，这里兜底
         // 掩码值 = 前端把「原样未改」的敏感项回传了，跳过不写（否则会把密码写成 ********）
         if (SECRET_OPTIONS.has(key) && String(value ?? "") === MASK) continue;
-        const v = typeof value === "boolean" ? String(value) : String(value ?? "");
+        const v = key === "user_data_visibility" ? JSON.stringify(parseUserDataVisibility(value)) : typeof value === "boolean" ? String(value) : String(value ?? "");
         await setOption(key, v);
         changed.push(key);
       }

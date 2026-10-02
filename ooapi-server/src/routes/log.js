@@ -4,6 +4,7 @@ import { ok, asyncHandler, pageParams, safeInt } from "../utils.js";
 import { authRequired, adminRequired, superRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE, LOG_TYPE_LABEL, USAGE_SQL } from "../services/log.js";
 import { canonicalModelName } from "../services/models.js";
+import { userDataVisibility, requireUserData } from "../services/user-data-visibility.js";
 
 const router = Router();
 
@@ -37,7 +38,7 @@ function publicBillingDetails(value) {
  * 敏感字段（渠道/令牌/分组/原始 UA/成本价/上游错误明细）只给管理员：
  * 普通用户看到「自己的用量」即可，看到渠道等于泄露上游供应商。
  */
-function mapLog(r, { isAdmin }) {
+function mapLog(r, { isAdmin, user = null }) {
   let detail = {};
   try { detail = JSON.parse(r.detail || "{}"); } catch { /* 老操作日志不一定是JSON */ }
   if (!detail || typeof detail !== "object" || Array.isArray(detail)) detail = {};
@@ -93,7 +94,23 @@ function mapLog(r, { isAdmin }) {
     token_name: r.token_name || "",
     group_name: r.group_name || "",
   };
-  if (!isAdmin) return base;
+  if (!isAdmin) {
+    const visibility = userDataVisibility(user);
+    if (!visibility.pricing) base.billing_details = null;
+    if (!visibility.usage_records && Number(r.type) === LOG_TYPE.ERROR) {
+      // 旧调用错误位于操作日志：不能借兼容入口绕过逐次使用记录权限。
+      for (const key of ["model", "quota", "prompt_tokens", "completion_tokens", "cache_tokens", "first_token_ms", "elapsed_ms", "retry_count", "price_phase", "billing_details", "request_id", "token_id", "token_name", "group_name"]) delete base[key];
+    }
+    if (!visibility.request_content) {
+      for (const key of ["input_text", "output_text", "input_recorded", "output_recorded", "input_truncated", "output_truncated", "prompt_truncated", "request_prompt_truncated"]) delete base[key];
+      if (base.is_usage || Number(r.type) === LOG_TYPE.ERROR) base.content = base.status === "stopped" ? "调用已停止" : base.status === "error" ? "调用失败" : "模型调用";
+    }
+    if (!visibility.balance && !visibility.usage_summary && !base.is_usage) {
+      delete base.quota;
+      if (Number(r.type) === LOG_TYPE.TOPUP || /额度|充值|赠送|余额/.test(String(base.content || ""))) base.content = "账户额度变更";
+    }
+    return base;
+  }
   return {
     ...base,
     requested_model: detail.requested_model || r.model || "",
@@ -147,7 +164,7 @@ function timeRange(query = {}, defaultDays = 0) {
  * @param {"usage"|"operation"} opts.kind
  * @param {number} [opts.defaultDays] 未传时间范围时的默认窗口（聚合查询用）
  */
-function buildQuery({ isAdmin, userId, kind, query, defaultDays = 0 }) {
+function buildQuery({ isAdmin, userId, kind, query, defaultDays = 0, showContent = false }) {
   const conds = [];
   const args = [];
   if (kind === "usage") {
@@ -169,8 +186,8 @@ function buildQuery({ isAdmin, userId, kind, query, defaultDays = 0 }) {
   }
   const kw = String(query.keyword || "").trim();
   if (kw) {
-    conds.push("(username LIKE ? OR content LIKE ? OR model LIKE ?)");
-    args.push(`%${kw}%`, `%${kw}%`, `%${kw}%`);
+    conds.push(showContent ? "(username LIKE ? OR content LIKE ? OR model LIKE ?)" : "(username LIKE ? OR model LIKE ?)");
+    args.push(...Array(showContent ? 3 : 2).fill(`%${kw}%`));
   }
   // 使用记录专有筛选
   if (kind === "usage") {
@@ -219,6 +236,8 @@ function buildQuery({ isAdmin, userId, kind, query, defaultDays = 0 }) {
 
 async function listLogs(req, res, kind) {
   const isAdmin = Number(req.user.role) >= 100;
+  const visibility = userDataVisibility(req.user);
+  if (kind === "usage" && !visibility.usage_records) return res.status(403).json({ success: false, message: "管理员未开放使用记录查看权限" });
   const { p, size, offset } = pageParams(req.query);
   // 默认 30 天窗口：与 /usage/summary、/usage/filters 保持同一口径。
   // 不这么做的后果是「裸调接口（不带 days）时列表是全量、卡片是近 30 天」——
@@ -229,6 +248,7 @@ async function listLogs(req, res, kind) {
     kind,
     query: req.query,
     defaultDays: 30,
+    showContent: visibility.request_content,
   });
   const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total FROM logs ${where}`, args);
   // 显式列出需要的列而不是 SELECT *：
@@ -291,7 +311,7 @@ async function listLogs(req, res, kind) {
 
   return ok(res, {
     items: rows.map((r) => ({
-      ...mapLog(r, { isAdmin }),
+      ...mapLog(r, { isAdmin, user: req.user }),
       // 渠道类型：前端 ModelLabel 的 channelType 兜底（图标跟随厂商）。
       //
       // **只随 mapLog 一起对管理员开放**（2026-09-26）：channel_type 看似只是个
@@ -328,6 +348,7 @@ router.get(
 router.get(
   "/usage/filters",
   authRequired,
+  requireUserData("usage_records"),
   asyncHandler(async (req, res) => {
     const isAdmin = Number(req.user.role) >= 100;
     const whereUser = isAdmin ? "" : "AND user_id = ?";
@@ -395,6 +416,7 @@ router.get(
 router.get(
   "/usage/summary",
   authRequired,
+  requireUserData("usage_summary"),
   asyncHandler(async (req, res) => {
     const isAdmin = Number(req.user.role) >= 100;
     // 默认 30 天窗口：不带参数的聚合查询在大表上是全表 COUNT/SUM/AVG，
@@ -405,6 +427,7 @@ router.get(
       kind: "usage",
       query: req.query,
       defaultDays: 30,
+      showContent: userDataVisibility(req.user).request_content,
     });
     const [[row]] = await pool.query(
       `SELECT COUNT(*) AS calls,
@@ -455,6 +478,7 @@ router.get(
 router.get(
   "/usage/analysis",
   authRequired,
+  requireUserData("usage_summary"),
   asyncHandler(async (req, res) => {
     const isAdmin = Number(req.user.role) >= 100;
     const { where, args } = buildQuery({
@@ -463,6 +487,7 @@ router.get(
       kind: "usage",
       query: req.query,
       defaultDays: 30,
+      showContent: userDataVisibility(req.user).request_content,
     });
     // 按天：用 FLOOR(created_at/86400)*86400 做桶（纯算术，能走 created_at 索引范围扫描）
     const [days] = await pool.query(

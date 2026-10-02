@@ -403,7 +403,6 @@ export default function AdminPricingPage() {
         <StatCard
           label="统一币制"
           value={<span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><OdCoin size={18} />{CURRENCY_NAME}</span>}
-          hint={`1 ${CURRENCY_NAME} = 1 美元（1:1 精确核算）`}
         />
       </div>
 
@@ -691,7 +690,7 @@ export default function AdminPricingPage() {
         <div className="oo-panel-body">
           <div className="bui-kv">
             <span className="bui-kv-k">币制</span>
-            <span className="bui-kv-v">1 {CURRENCY_NAME} = 1 美元（1:1），最小计费单位 0.0001 {CURRENCY_NAME}</span>
+            <span className="bui-kv-v">最小计费单位 0.0001 {CURRENCY_NAME}</span>
           </div>
           <div className="bui-kv">
             <span className="bui-kv-k">计费公式</span>

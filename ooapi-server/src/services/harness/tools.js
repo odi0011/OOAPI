@@ -13,6 +13,7 @@ import { runCompletion, billableFailedCall } from "../execute.js";
 import { modelForChannelMatch } from "../models.js";
 import { USAGE_SQL } from "../log.js";
 import { readBinanceAnalysis } from "../binance-analysis.js";
+import { userDataVisibility } from "../user-data-visibility.js";
 
 const clip = (text, max) => {
   const s = String(text ?? "");
@@ -134,7 +135,7 @@ export const TOOLS = {
     id: "binance",
     name: "我的币安",
     desc: "只读查询当前用户自己的币安账户、权益、仓位、订单、策略、风控与回测；分析方向敞口、杠杆、保证金、强平距离和止盈止损。数据按当前登录用户隔离，不返回密钥，不执行交易。",
-    args: '{"action":"accounts|overview|positions|orders|strategies|risk|backtests|analysis","account_id":"可选，只能是当前用户拥有的账户；risk 必填"}',
+    args: '{"action":"accounts|overview|positions|orders|strategies|risk|backtests|analysis","account_id":"可选正整数；省略时读取本人全部启用账户，先用accounts查看编号"}',
     async run(args, ctx) {
       try { return { ok: true, output: clip(JSON.stringify(await readBinanceAnalysis(args, ctx)), 24000) }; }
       catch (e) { if (ctx.signal?.aborted) throw e; return { ok: false, output: `币安查询失败：${e.message}` }; }
@@ -359,11 +360,15 @@ export const TOOLS = {
     async run(args, ctx) {
       const uid = Number(ctx.user?.id) || 0;
       if (!uid) return { ok: false, output: "当前会话没有登录用户，无法查询账号" };
+      const visibility = userDataVisibility(ctx.user);
       const requestedAction = String(args?.action ?? "overview").trim().toLowerCase();
       // balance 是模型常用且已在解析测试出现的写法；必须在真实执行层同样可用。
       const aliases = { balance: "overview", logs: "recent", history: "recent" };
       const action = Object.hasOwn(aliases, requestedAction) ? aliases[requestedAction] : requestedAction;
       const limit = Math.min(30, Math.max(1, Number(args?.limit) || 10));
+      if ((["recent", "errors"].includes(action) && !visibility.usage_records) || (action === "usage" && !visibility.usage_summary)) {
+        return { ok: false, output: "管理员未开放此项数据查看权限" };
+      }
       const od = (units) => `${(Number(units || 0) / 10000).toFixed(4).replace(/\.?0+$/, "") || "0"} OD币`;
       const t = (sec) => new Date(Number(sec) * 1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
 
@@ -374,18 +379,18 @@ export const TOOLS = {
         );
         if (!u) return { ok: false, output: "账号不存在" };
         const since = Math.floor(Date.now() / 1000) - 86400;
-        const [[d]] = await pool.query(
+        const [[d]] = visibility.usage_summary ? await pool.query(
           `SELECT COUNT(*) AS n, COALESCE(SUM(quota),0) AS cost FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ?`,
           [uid, since]
-        );
+        ) : [[{}]];
         const [[k]] = await pool.query("SELECT COUNT(*) AS n, SUM(status = 1) AS on_ FROM tokens WHERE user_id = ?", [uid]);
         return {
           ok: true,
           output: [
             `用户：${u.display_name || u.username}（@${u.username}）`,
-            `余额：${od(u.quota)}（1 OD币 = 1 美元）`,
-            `累计消耗：${od(u.used_quota)}，累计请求 ${Number(u.request_count) || 0} 次`,
-            `近 24 小时：${Number(d.n) || 0} 次调用，消耗 ${od(d.cost)}`,
+            ...(visibility.balance ? [`余额：${od(u.quota)}`] : []),
+            ...(visibility.usage_summary ? [`累计消耗：${od(u.used_quota)}，累计请求 ${Number(u.request_count) || 0} 次`,
+              `近 24 小时：${Number(d.n) || 0} 次调用，消耗 ${od(d.cost)}`] : []),
             `分组：${u.group_name || "公共"}；API 令牌 ${Number(k.n) || 0} 个（启用 ${Number(k.on_) || 0} 个）`,
             `注册时间：${t(u.created_time)}`,
           ].join("\n"),
@@ -403,7 +408,7 @@ export const TOOLS = {
         const lines = rows.map((r) =>
           !failureOnly
             ? `${t(r.created_at)} · ${r.model || "?"} · 令牌「${r.token_name || "站内对话"}」 · 输入 ${r.prompt_tokens || 0} / 输出 ${r.completion_tokens || 0} tokens · ${od(r.quota)}${r.elapsed_ms ? ` · ${(r.elapsed_ms / 1000).toFixed(1)}s` : ""}${Number(r.type) === 4 ? ` · ${r.status === "stopped" ? "已停止" : "失败"}` : ""}`
-            : `${t(r.created_at)} · ${r.model || "?"} · ${String(r.content || "").replace(/\s+/g, " ").slice(0, 160)}`
+            : `${t(r.created_at)} · ${r.model || "?"} · ${visibility.request_content ? String(r.content || "").replace(/\s+/g, " ").slice(0, 160) : "调用失败"}`
         );
         return { ok: true, output: `${action === "errors" ? "最近失败的请求" : "最近调用"}（${rows.length} 条，新→旧）：\n${lines.join("\n")}` };
       }
@@ -419,7 +424,9 @@ export const TOOLS = {
         const st = { 1: "启用", 2: "禁用", 3: "已过期", 4: "额度用尽" };
         const lines = rows.map(
           (r) =>
-            `「${r.name}」 ${st[r.status] || `状态${r.status}`} · 剩余 ${Number(r.unlimited_quota) ? "不限" : od(r.remain_quota)} · 已用 ${od(r.used_quota)}` +
+            `「${r.name}」 ${st[r.status] || `状态${r.status}`}` +
+            (visibility.balance ? ` · 剩余 ${Number(r.unlimited_quota) ? "不限" : od(r.remain_quota)}` : "") +
+            (visibility.usage_summary ? ` · 已用 ${od(r.used_quota)}` : "") +
             `${r.group_name ? ` · 分组 ${r.group_name}` : ""}${Number(r.expired_time) > 0 ? ` · ${t(r.expired_time)} 到期` : ""}` +
             `${Number(r.accessed_time) ? ` · 最近使用 ${t(r.accessed_time)}` : ""}`
         );

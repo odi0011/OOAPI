@@ -3,6 +3,7 @@ import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now, genApiKey, tokenToResponse, randomString, idParam, safeInt } from "../utils.js";
 import { authRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
+import { visibleAccountData, requireUserData } from "../services/user-data-visibility.js";
 
 const router = Router();
 router.use(authRequired);
@@ -42,7 +43,7 @@ router.get(
         } catch {
           /* ignore */
         }
-        return {
+        return visibleAccountData({
           // name 既是展示名也是绑定值；vendor 仅用于展示厂商筛选标签
           type: g.name,
           name: g.name,
@@ -51,7 +52,7 @@ router.get(
           rate: Number(g.rate) || 1,
           models,
           vendors: [...(vendorsOf.get(g.name) || [])],
-        };
+        }, req.user);
       })
     );
   })
@@ -94,7 +95,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const [rows] = await pool.query("SELECT * FROM tokens WHERE user_id = ? ORDER BY id DESC", [req.user.id]);
     const items = rows.map((t) => {
-      const r = tokenToResponse(t);
+      const r = visibleAccountData(tokenToResponse(t), req.user);
       // 掩码只留前缀与后 4 位，避免泄露可用密钥
       return { ...r, key: r.key.slice(0, 3) + "******************" + r.key.slice(-4) };
     });
@@ -185,7 +186,7 @@ router.post(
     // 用 insertId 精确回查：按 user_id ORDER BY id DESC 并发时会返回别人刚建的令牌（含完整 Key）
     const [rows] = await pool.query("SELECT * FROM tokens WHERE id = ?", [ins.insertId]);
     await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `新建令牌「${rows[0].name}」` });
-    return ok(res, tokenToResponse(rows[0]), "令牌创建成功");
+    return ok(res, visibleAccountData(tokenToResponse(rows[0]), req.user), "令牌创建成功");
   })
 );
 
@@ -274,7 +275,7 @@ router.put(
         content: `修改令牌「${fresh[0].name || cur.name}」(#${token})：${changes.join("；")}`,
       });
     }
-    return ok(res, tokenToResponse(fresh[0]), "令牌已更新");
+    return ok(res, visibleAccountData(tokenToResponse(fresh[0]), req.user), "令牌已更新");
   })
 );
 
@@ -297,6 +298,7 @@ router.put(
 router.get(
   "/reconcile",
   authRequired,
+  requireUserData("usage_summary"),
   asyncHandler(async (req, res) => {
     const [[u]] = await pool.query("SELECT used_quota FROM users WHERE id = ? LIMIT 1", [req.user.id]);
     const accountUsed = Number(u?.used_quota) || 0;

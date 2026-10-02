@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, App as AntApp, Button, Select, Space, Tabs } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import { useSearchParams } from "react-router-dom";
-import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import { binanceApi, EnvTag } from "../components/binance/shared";
 import Overview from "../components/binance/Overview";
@@ -17,7 +16,6 @@ const empty = { accounts: [], positions: [], strategies: [], orders: [], curve: 
 
 export default function OdBinancePage() {
   const { message } = AntApp.useApp();
-  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const tab = views.includes(params.get("view")) ? params.get("view") : "overview";
   const requestedAccount = Number(params.get("account")) || 0;
@@ -111,7 +109,6 @@ export default function OdBinancePage() {
   ];
   return <div className="oo-binance">
     <PageHeader title="OD Binance" tags={account && <EnvTag value={account.environment} />} extra={<Space wrap>
-      <Button disabled={!accountId} onClick={() => navigate(`/chat?binance_account=${accountId}`)}>Agent 分析</Button>
       <Select aria-label="币安账户" className="oo-binance-account-select" value={accountId || undefined} placeholder="选择账户"
         options={data.accounts.filter((item) => item.active).map((item) => ({ value: item.id, label: item.name }))}
         onChange={(value) => { setAccountId(value); change("account", String(value)); }} />

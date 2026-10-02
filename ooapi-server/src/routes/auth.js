@@ -6,6 +6,7 @@ import { authRequired, signToken } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { getBoolOption, getNumberOption } from "../config.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
+import { visibleAccountData } from "../services/user-data-visibility.js";
 
 const router = Router();
 
@@ -60,7 +61,7 @@ router.post(
       [ts, ip, user.id]
     );
     await writeLog({ user, type: LOG_TYPE.LOGIN, content: "用户登录", ip });
-    return ok(res, { token: signToken(user), user: userToResponse(user) }, "登录成功");
+    return ok(res, { token: signToken(user), user: visibleAccountData(userToResponse(user), user) }, "登录成功");
   })
 );
 
@@ -127,14 +128,14 @@ router.post(
     const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [ret.insertId]);
     const user = rows[0];
     await writeLog({ user, type: LOG_TYPE.MANAGE, content: `新用户注册，赠送额度 ${quota}`, ip: clientIp(req) });
-    return ok(res, { token: signToken(user), user: userToResponse(user) }, "注册成功");
+    return ok(res, { token: signToken(user), user: visibleAccountData(userToResponse(user), user) }, "注册成功");
   })
 );
 
 router.get(
   "/self",
   authRequired,
-  asyncHandler(async (req, res) => ok(res, userToResponse(req.user)))
+  asyncHandler(async (req, res) => ok(res, visibleAccountData(userToResponse(req.user), req.user)))
 );
 
 router.post("/logout", asyncHandler(async (req, res) => ok(res, null, "已退出登录")));

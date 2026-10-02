@@ -12,6 +12,7 @@ import { ModelLabel, GroupTag } from "../components/VendorIcon";
 import UserAvatar from "../components/UserAvatar";
 import { DurationCell, TokenCell, formatDuration } from "../components/UsageCells";
 import { BillingAmount, BillingDetails } from "../components/BillingDetails";
+import { userDataVisibility } from "../services/visibility";
 
 const { Text } = Typography;
 
@@ -79,6 +80,7 @@ export default function LogPage() {
   const { user, status } = useApp();
   const { message } = AntApp.useApp();
   const isAdmin = Number(user?.role) >= 100;
+  const visibility = userDataVisibility(status, user);
   const perUnit = unitsPerOd(status);
 
   const [items, setItems] = useState([]);
@@ -89,6 +91,7 @@ export default function LogPage() {
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [denied, setDenied] = useState(false);
   // ?keyword= 预填：平台看板「用户消费排行」点进来时按用户名筛选
   const [keyword, setKeyword] = useState(() => {
     try {
@@ -108,10 +111,11 @@ export default function LogPage() {
   const { begin, isLatest } = useLatest();
 
   useEffect(() => {
+    if (!visibility.usage_records) return;
     API.get("/token/groups")
       .then((list) => setGroupMeta(Array.isArray(list) ? list : []))
       .catch(() => setGroupMeta([]));
-  }, []);
+  }, [visibility.usage_records]);
 
   /** 历史绑定可能带 "厂商:" 前缀（新格式就是分组名）；展示时统一剥掉 */
   const displayGroupName = (raw) => {
@@ -138,20 +142,23 @@ export default function LogPage() {
 
   const load = useCallback(async () => {
     const token = begin();
+    if (!visibility.usage_records) { setLoading(false); setItems([]); setSummary(null); setDetail(null); return; }
     setLoading(true);
     setLoadError("");
     // 列表与汇总分开取：汇总走聚合 SQL（COUNT/SUM/AVG），比列表更容易慢或失败，
     // 用 allSettled 保证「汇总挂了列表照常显示」，而不是整页空白。
     const [listRes, sumRes] = await Promise.allSettled([
       API.get("/log/usage", { params: { ...params, p: page, page_size: pageSize } }),
-      API.get("/log/usage/summary", { params }),
+      visibility.usage_summary ? API.get("/log/usage/summary", { params }) : Promise.resolve(null),
     ]);
     if (!isLatest(token)) return;
     if (listRes.status === "fulfilled") {
       setItems(listRes.value.items || []);
       setTotal(listRes.value.total || 0);
       setLoadError("");
+      setDenied(false);
     } else {
+      if (listRes.reason?.status === 403) { setDenied(true); setItems([]); setSummary(null); setLoading(false); return; }
       const msg = listRes.reason?.message || "使用记录加载失败";
       setLoadError(msg);
       message.error(msg);
@@ -164,7 +171,7 @@ export default function LogPage() {
       setSummary(null);
     }
     setLoading(false);
-  }, [params, page, pageSize, message, begin, isLatest]);
+  }, [params, page, pageSize, message, begin, isLatest, visibility.usage_records, visibility.usage_summary]);
 
   useEffect(() => {
     load();
@@ -183,6 +190,7 @@ export default function LogPage() {
 
   const loadAnalysis = useCallback(
     async () => {
+      if (!visibility.usage_records || !visibility.usage_summary) return;
       const request = ++analysisRequest.current;
       setAnalysisLoading(true);
       setAnalysisError("");
@@ -200,17 +208,18 @@ export default function LogPage() {
         if (request === analysisRequest.current) setAnalysisLoading(false);
       }
     },
-    [params]
+    [params, visibility.usage_records, visibility.usage_summary]
   );
 
   // 展开时按当前时间范围加载；切范围后重新拉
   useEffect(() => {
-    if (analysisOpen) loadAnalysis();
+    if (analysisOpen && visibility.usage_summary) loadAnalysis();
     return () => { analysisRequest.current += 1; };
-  }, [analysisOpen, loadAnalysis]);
+  }, [analysisOpen, loadAnalysis, visibility.usage_summary]);
 
   // 筛选下拉的候选项（模型/密钥/分组）：与列表同一时间口径（含「全部」）
   useEffect(() => {
+    if (!visibility.usage_records) return;
     let alive = true;
     API.get("/log/usage/filters", { params: { days, status: statusFilter || undefined } })
       .then((d) => {
@@ -226,7 +235,7 @@ export default function LogPage() {
     return () => {
       alive = false;
     };
-  }, [days, statusFilter]);
+  }, [days, statusFilter, visibility.usage_records]);
 
   const columns = [
     {
@@ -296,7 +305,7 @@ export default function LogPage() {
         return (
           <span className="oo-log-billing">
             {stateText ? <span className={`oo-log-status-label oo-log-status-label--${r.status}`}>{stateText}</span> : null}
-            <BillingAmount record={r} isAdmin={isAdmin} perUnit={perUnit} />
+            {visibility.pricing ? <BillingAmount record={r} isAdmin={isAdmin} perUnit={perUnit} /> : <span className="oo-num">{r.billing_known === false ? "费用待核查" : r.quota === undefined || r.quota === null ? "—" : fmtOd(r.quota, perUnit, 4)}</span>}
           </span>
         );
       },
@@ -378,6 +387,8 @@ export default function LogPage() {
     },
   ];
 
+  if (!visibility.usage_records || denied) return <div className="oo-page"><PageHeader title="使用记录" /><Alert type="info" showIcon message="管理员未开放使用记录" /></div>;
+
   return (
     <div className="oo-page">
       <PageHeader
@@ -436,7 +447,7 @@ export default function LogPage() {
             />
             <Input.Search
               size="small"
-              placeholder={isAdmin ? "搜索用户 / 内容 / 模型" : "搜索内容 / 模型"}
+              placeholder={visibility.request_content ? isAdmin ? "搜索用户 / 内容 / 模型" : "搜索内容 / 模型" : isAdmin ? "搜索用户 / 模型" : "搜索模型"}
               allowClear
               defaultValue={keyword}
               style={{ width: 190 }}
@@ -458,32 +469,15 @@ export default function LogPage() {
 
       {/* 汇总用小 tag 展示，不用大卡片 —— 这一页的主体是记录表，统计只做辅助。
           需要看图表分析时点「分析」展开（与渠道统计弹窗同一套视觉规范）。 */}
-      {summary ? (
+      {visibility.usage_summary && summary ? (
         <div className="oo-stats-strip">
           <span className="bui-chip" title="区间调用次数">
             调用 <b className="oo-num">{summary.calls}</b>
           </span>
           {summary.errors > 0 ? <span className="bui-chip" style={{ color: "var(--red)" }} title="失败调用，部分已产生用量的调用仍按实际用量计费">错误 <b className="oo-num">{summary.errors}</b></span> : null}
           {summary.stopped > 0 ? <span className="bui-chip" title="用户停止的调用">已停止 <b className="oo-num">{summary.stopped}</b></span> : null}
-          {/* 对账页必须说清「币是什么」。
-              Round 4 子线实测（第 94 轮）：这一页是困惑最集中的地方 ——
-              check_usage_log 的发言里 15/98 在问汇率，原话：
-                「折合人民币我是真算不出来，页面只给币不给汇率，服了」
-                「OD币到底是啥汇率啊，服了」
-                「我得知道 0.5 个币等于多少钱，才能算这 2582 次调用划不划算」
-              而 /pricing 加了同一句锚点后，该类困惑从 739 降到 113 每千轮
-              （该页只剩 1/24）。所以这里补同一句。
-
-              为什么写成「1 OD币 = 1 美元」而**不是**「≈ 3.69 美元」：
-              前者是币制定义句（管理端 AdminPricingPage 早就这么写），
-              后者是汇率换算 —— 全站硬约束禁止新增换算与其他币名。
-              用户看到 1:1 自己就能折算，不需要平台替他算。 */}
-          <span className="bui-chip" title={`区间消耗（1 ${CURRENCY_NAME} = 1 美元）`}>
-            {/* 图标即单位；后面的「1 OD币 = 1 美元」是币制定义句，保留 */}
-            消耗 <OdCoin size={12} /> <b className="oo-num">{fmtOd(summary.units, perUnit, 4, false)}</b>
-            <span style={{ color: "var(--ink-3)", fontWeight: 400 }}>
-              （1 {CURRENCY_NAME} = 1 美元）
-            </span>
+          <span className="bui-chip" title="区间消耗">
+            消耗 <OdCoin size={12} /> <b className="oo-num">{summary.units === undefined || summary.units === null ? "—" : fmtOd(summary.units, perUnit, 4, false)}</b>
           </span>
           <span className="bui-chip" title={`提示 ${summary.prompt_tokens} / 补全 ${summary.completion_tokens}`}>
             Tokens <b className="oo-num">{summary.prompt_tokens + summary.completion_tokens}</b>
@@ -516,7 +510,7 @@ export default function LogPage() {
         </div>
       ) : null}
 
-      {analysisOpen ? (
+      {visibility.usage_summary && analysisOpen ? (
         <UsageAnalysis
           byDay={byDay}
           byModel={byModel}
@@ -613,7 +607,7 @@ export default function LogPage() {
           }
           return (
           <>
-          <div className="oo-log-billing-detail"><BillingDetails record={detail} isAdmin={isAdmin} perUnit={perUnit} /></div>
+          {visibility.pricing ? <div className="oo-log-billing-detail"><BillingDetails record={detail} isAdmin={isAdmin} perUnit={perUnit} /></div> : null}
           <Descriptions column={1} size="small" bordered labelStyle={{ width: 120 }}>
             <Descriptions.Item label="时间">{fmtDate(detail.created_at)}</Descriptions.Item>
             <Descriptions.Item label="用户">
@@ -650,12 +644,12 @@ export default function LogPage() {
                 {detail.status === "error" ? `错误${detail.error_code ? ` · ${detail.error_code}` : ""}` : detail.status === "stopped" ? "已停止" : "成功"}
               </span>
             </Descriptions.Item>
-            <Descriptions.Item label="实际输入">
+            {visibility.request_content ? <><Descriptions.Item label="实际输入">
               <LogTextBlock text={detail.input_text} truncated={detail.input_truncated} empty={detail.input_recorded ? "（本次输入没有文本）" : "（该记录未保存用户输入）"} />
             </Descriptions.Item>
             <Descriptions.Item label="输出内容">
               <LogTextBlock text={detail.output_text} truncated={detail.output_truncated} empty={detail.output_recorded ? "（本次调用没有输出）" : "（该记录未保存输出原文）"} />
-            </Descriptions.Item>
+            </Descriptions.Item></> : null}
             {/* 请求 ID 用于追溯同一调用；失败账单与状态保存在同一行。 */}
             <Descriptions.Item label="请求 ID">
               {detail.request_id ? (

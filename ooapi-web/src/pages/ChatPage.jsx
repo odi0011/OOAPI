@@ -8,6 +8,7 @@
 // 用户反馈「不需要给用户提供智能体、功能开关的选项」。助手拿全部工具、自己判断要不要用。
 // 数据全部来自服务端：会话与设定落库（chat_sessions），消息落库（chat_messages），
 // 刷新页面不丢；本页只负责渲染与把用户操作发回服务端。
+import { userDataVisibility } from "../services/visibility";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as AntApp, Alert, Button, Checkbox, Drawer, Dropdown, Form, Input, Modal, Popconfirm, Tooltip } from "antd";
 import {
@@ -103,7 +104,7 @@ const mergeRecovery = (userId, sessionId, messages) => {
  *   user      → 右侧气泡（文字 + 图片）
  *   assistant → 无气泡正文，按 parts 顺序渲染：思考链 / 工具 chip / 正文 / 待办 / 提示
  * ------------------------------------------------------------------------- */
-const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, streaming }) {
+const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, streaming, visibility }) {
   if (msg.role === "user") {
     const text = (msg.parts || []).filter((p) => p.type === "text").map((p) => p.text).join("\n");
     const imgs = (msg.parts || []).filter((p) => p.type === "image").map((p) => p.url);
@@ -215,7 +216,7 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
             </Popconfirm>
           </Tooltip>
           <div className="ui-msg-stats">
-            <Tooltip title="本轮成本（OD币）；— 表示尚未确认结算结果"><span className="ui-msg-cost"><OdCoin size={12} />{costText}</span></Tooltip>
+            {visibility.usage_records && <><Tooltip title="本轮成本（OD币）；— 表示尚未确认结算结果"><span className="ui-msg-cost"><OdCoin size={12} />{costText}</span></Tooltip>
             <Tooltip trigger={["hover", "focus", "click"]} title={<div className="ui-msg-token-detail">
               <span>输入 <b>{inputKnown ? tokenCount(msg.tokens.prompt) : "—"}</b></span>
               <span>输出 <b>{outputKnown ? tokenCount(msg.tokens.completion) : "—"}</b></span>
@@ -223,7 +224,7 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
             </div>}>
               <Button type="text" size="small" className="ui-msg-token-stat" aria-label="查看本轮 Token 用量">{tokenSummary}</Button>
             </Tooltip>
-            <span className="ui-msg-timing"><ClockCircleOutlined /><Tooltip title={firstTokenText === "—" ? "本轮没有首字统计" : "发出请求到首个输出 Token 的时间"}><span>首字 {firstTokenText}</span></Tooltip><Tooltip title={Number(msg.retryCount) > 0 ? `本轮总耗时，含上游自动重试 ${Number(msg.retryCount)} 次` : "本轮端到端总耗时"}><span>耗时 {elapsedText}</span></Tooltip></span>
+            </>}<span className="ui-msg-timing"><ClockCircleOutlined /><Tooltip title={firstTokenText === "—" ? "本轮没有首字统计" : "发出请求到首个输出 Token 的时间"}><span>首字 {firstTokenText}</span></Tooltip><Tooltip title={Number(msg.retryCount) > 0 ? `本轮总耗时，含上游自动重试 ${Number(msg.retryCount)} 次` : "本轮端到端总耗时"}><span>耗时 {elapsedText}</span></Tooltip></span>
           </div>
         </div>
       ) : null}
@@ -340,7 +341,7 @@ function NameDialog({ dialog, saving, error, onClose, onSave }) {
 }
 
 /* ============================ 会话指令 / 设定面板 ============================ */
-function SettingsSheet({ open, onClose, session, settings, onSettings, saving, quotaText }) {
+function SettingsSheet({ open, onClose, session, settings, onSettings, saving, quotaText, visibility }) {
   const [form] = Form.useForm();
   const [error, setError] = useState("");
 
@@ -389,7 +390,7 @@ function SettingsSheet({ open, onClose, session, settings, onSettings, saving, q
               <span>消息数</span>
               <strong>{session?.message_count ?? 0}</strong>
             </div>
-            <div className="ui-chat2-kv">
+            {visibility.usage_records && <><div className="ui-chat2-kv">
               <span>本会话累计消耗</span>
               <strong style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                 <OdCoin size={13} />
@@ -402,16 +403,16 @@ function SettingsSheet({ open, onClose, session, settings, onSettings, saving, q
                 {session?.prompt_tokens ?? 0} / {session?.completion_tokens ?? 0}
               </strong>
             </div>
-            <div className="ui-chat2-kv">
+            </>}<div className="ui-chat2-kv">
               <span>创建时间</span>
               <strong>{session?.created_time ? new Date(session.created_time * 1000).toLocaleString("zh-CN") : "—"}</strong>
             </div>
-            <div className="ui-chat2-kv">
+            {visibility.balance && <div className="ui-chat2-kv">
               <span>账户余额</span>
               <strong>
                 <OdCoin size={13} /> {quotaText}
               </strong>
-            </div>
+            </div>}
           </div>
 
           <Notice tone="info" title="关于计费">
@@ -425,6 +426,7 @@ function SettingsSheet({ open, onClose, session, settings, onSettings, saving, q
 /* ============================ 页面 ============================ */
 export default function ChatPage() {
   const { user, status, refreshUser } = useApp();
+  const visibility = userDataVisibility(status, user);
   const { message: toast, modal } = AntApp.useApp();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -451,10 +453,7 @@ export default function ChatPage() {
   const [savingName, setSavingName] = useState(false);
   const [nameError, setNameError] = useState("");
   const [shelfPending, setShelfPending] = useState("");
-  const [input, setInput] = useState(() => {
-    const id = Number(params.get("binance_account"));
-    return id > 0 ? `请使用 binance 工具分析我的币安账户 ${id}：当前仓位、盈亏、方向敞口、保证金、强平距离和止盈止损。注明数据时间，并给出风险分析。` : "";
-  });
+  const [input, setInput] = useState("");
   const [images, setImages] = useState([]);
   const [docs, setDocs] = useState([]); // 文档附件 [{name,size,type,dataUrl}]
   // 选中密钥：站内对话扣账户额度，但路由配置（分组 → 可用模型/渠道/倍率）挂在密钥上。
@@ -499,15 +498,13 @@ export default function ChatPage() {
   const draftVersionRef = useRef(0);
   const draftSessionRef = useRef("");
   const draftSwitchRef = useRef(false);
-  const binancePromptRef = useRef(params.get("binance_account") ? input : "");
   useEffect(() => {
     const id = session?.id;
     if (!id || !user?.id || draftSessionRef.current === id) return;
     if (draftSessionRef.current) saveRecovery(user.id, `draft.${draftSessionRef.current}`, draftRef.current);
     const next = readRecovery(user?.id, `draft.${id}`) || {};
     draftSessionRef.current = id; draftSwitchRef.current = true;
-    setInput(binancePromptRef.current || next.input || ""); setImages(next.images || []); setDocs(next.docs || []);
-    binancePromptRef.current = "";
+    setInput(next.input || ""); setImages(next.images || []); setDocs(next.docs || []);
   }, [session?.id, user?.id]);
   useEffect(() => {
     if (draftSwitchRef.current) { draftSwitchRef.current = false; return; }
@@ -1536,8 +1533,8 @@ export default function ChatPage() {
         </ShelfGroup>
 
         <div className="bui-shelf-foot">
-          <div>余额 {quota} · 按实际用量计费</div>
-          {sessionCost ? (
+          {visibility.balance && <div>余额 {quota}</div>}
+          {visibility.usage_records && sessionCost ? (
             <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
               本会话已用 <OdCoin size={11} muted /> {sessionCost}
             </div>
@@ -1560,7 +1557,7 @@ export default function ChatPage() {
             <h1>{session?.title || "对话"}</h1>
             <div className="meta">
               <span>{msgs.length} 条消息</span>
-              {sessionCost ? (
+              {visibility.usage_records && sessionCost ? (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                   · 已用 <OdCoin size={11} muted /> {sessionCost}
                 </span>
@@ -1664,6 +1661,7 @@ export default function ChatPage() {
             ) : msgs.length ? (
               msgs.map((m, i) => (
                 <Message
+                  visibility={visibility}
                   // key 不能用 seq：done 事件回来时 seq 从 0 变成真实值，会让整条消息重挂载（动画重播）
                   key={m.key || `i${i}`}
                   msg={m}
@@ -1782,6 +1780,7 @@ export default function ChatPage() {
         settings={settings}
         saving={savingSheet}
         quotaText={quota}
+        visibility={visibility}
         onSettings={async (patch) => {
           setSavingSheet(true);
           try {

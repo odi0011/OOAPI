@@ -246,8 +246,13 @@ export const DENSITY_PRESETS = [
 ];
 
 export const FONT_SIZES = [13, 14, 15];
+export const FONT_FAMILIES = [
+  { key: "system", label: "系统字体", css: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif' },
+  { key: "playful", label: "站酷快乐体", css: '"ZCOOL KuaiLe", "Microsoft YaHei", sans-serif' },
+  { key: "serif", label: "衬线字体", css: '"Noto Serif SC", "Songti SC", SimSun, serif' },
+];
 
-/** 外观项 → localStorage 键（沿用历史键名，老用户的偏好不丢） */
+/** 历史个人外观键，仅保留兼容标识，启动不再读取。 */
 export const APPEARANCE_KEYS = {
   background: "ooapi-bg",
   radius: "ooapi-radius",
@@ -264,7 +269,9 @@ export const SITE_APPEARANCE_FALLBACK = {
   density: "compact",
   fontSize: 13,
   accent: "",
-  user_custom: true,
+  user_custom: false,
+  mode: "system",
+  fontFamily: "playful",
 };
 
 export function isHexColor(v) {
@@ -281,6 +288,7 @@ export function normalizeAppearance(raw = {}, { partial = false } = {}) {
     if (value !== undefined && value !== null && value !== "" && ok(value)) out[key] = value;
     else if (!partial) out[key] = SITE_APPEARANCE_FALLBACK[key];
   };
+  pick("fontFamily", raw.fontFamily ?? raw.font_family, (v) => FONT_FAMILIES.some((f) => f.key === v));
   pick("background", raw.background, (v) => BACKGROUNDS.some((b) => b.key === v));
   pick("radius", raw.radius, (v) => RADIUS_PRESETS.some((p) => p.key === v));
   pick("density", raw.density, (v) => DENSITY_PRESETS.some((p) => p.key === v));
@@ -297,7 +305,8 @@ export function readSiteAppearanceCache() {
     return {
       ...normalizeAppearance(v),
       accent: isHexColor(v.accent) ? v.accent : "",
-      user_custom: v.user_custom !== false,
+      user_custom: false,
+      mode: ["light", "dark", "system"].includes(v.mode) ? v.mode : "system",
     };
   } catch {
     return SITE_APPEARANCE_FALLBACK;
@@ -400,26 +409,26 @@ if (typeof window !== "undefined") {
 }
 
 /**
- * 首帧外观（main.jsx 在 React 挂载前调用）：站点默认（上次缓存）+ 本地覆盖。
+ * 首帧外观（main.jsx 在 React 挂载前调用）：仅使用站点设置的上次缓存。
  * 与 ThemeContext 的合并规则一致；ThemeProvider 挂载后会按最新 /api/status 再应用一次。
  */
 export function bootAppearance() {
   const site = readSiteAppearanceCache();
-  const local = {};
-  for (const [k, storageKey] of Object.entries(APPEARANCE_KEYS)) {
-    try {
-      const v = localStorage.getItem(storageKey);
-      if (v) local[k] = v;
-    } catch { /* ignore */ }
-  }
-  const merged = site.user_custom ? { ...site, ...normalizeAppearance(local, { partial: true }) } : site;
-  applyAppearance(normalizeAppearance(merged));
+  const dark = site.mode === "dark" || (site.mode === "system" && window.matchMedia?.("(prefers-color-scheme: dark)").matches);
+  applyCssVars(dark ? "dark" : "light", isHexColor(site.accent) ? site.accent : DEFAULT_PRIMARY);
+  applyAppearance(normalizeAppearance(site));
 }
 
 export function applyAppearance(opt = {}) {
   const r = document.documentElement;
   const set = (k, v) => r.style.setProperty(k, v);
 
+  if (opt.fontFamily !== undefined) {
+    const font = FONT_FAMILIES.find((f) => f.key === opt.fontFamily) || FONT_FAMILIES[1];
+    set("--font-sans", font.css);
+    set("--font-mono", "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace");
+    r.dataset.fontFamily = font.key;
+  }
   if (opt.background !== undefined) {
     lastBackground = String(opt.background);
     const bg = backgroundImage(String(opt.background));

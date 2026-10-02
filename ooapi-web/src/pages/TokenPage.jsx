@@ -12,12 +12,14 @@ import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import { VendorIcon, ModelLabel, GroupVendorIcons, GroupRateBadge, GroupTag } from "../components/VendorIcon";
+import { userDataVisibility } from "../services/visibility";
 
 const { Text } = Typography;
 
 export default function TokenPage() {
   const { message } = AntApp.useApp();
-  const { status } = useApp();
+  const { status, user } = useApp();
+  const visibility = userDataVisibility(status, user);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -67,11 +69,11 @@ export default function TokenPage() {
                 </div>
               </div>
             </div>
-            <GroupRateBadge rate={g.rate} />
+            {visibility.pricing && g.rate !== undefined && g.rate !== null ? <GroupRateBadge rate={g.rate} /> : null}
           </div>
         ),
       })),
-    [groupList]
+    [groupList, visibility.pricing]
   );
 
   // 由绑定值反查分组：先按整串精确匹配（新格式就是分组名）；
@@ -146,7 +148,7 @@ export default function TokenPage() {
       name: record.name,
       unlimited_quota: record.unlimited_quota,
       // 后端存的是额度单位，展示/编辑统一换算成 OD 币
-      remain_quota: odOf(record.remain_quota, perUnit),
+      remain_quota: record.remain_quota === undefined || record.remain_quota === null ? undefined : odOf(record.remain_quota, perUnit),
       never_expire: record.expired_time === -1,
       expired_time: record.expired_time > 0 ? dayjs(record.expired_time * 1000) : null,
       group_name: record.group || undefined,
@@ -164,8 +166,8 @@ export default function TokenPage() {
     }
     const payload = {
       name: v.name,
-      remain_quota: v.unlimited_quota ? 0 : Math.round(Number(v.remain_quota) * perUnit),
-      unlimited_quota: v.unlimited_quota,
+      // 预算未公开时，编辑名称/分组不回写未知余额；新建沿用服务端默认预算。
+      ...(visibility.balance ? { remain_quota: v.unlimited_quota ? 0 : Math.round(Number(v.remain_quota) * perUnit), unlimited_quota: v.unlimited_quota } : {}),
       expired_time: v.never_expire ? -1 : Math.floor(v.expired_time.valueOf() / 1000),
       model_limits: [],
       group_name: v.group_name || "",
@@ -256,8 +258,8 @@ export default function TokenPage() {
   // 真正的动作是「复制」。所以窄屏把它收成一列只放复制按钮，把宽度让给名称/状态/额度。
   const W = { name: isNarrow ? 130 : 170, key: isNarrow ? 56 : 280 };
   const scrollX = isNarrow
-    ? W.name + W.key + 92 + 130 + 170 // 名称+密钥(仅按钮)+状态+额度+操作
-    : 1480;
+    ? W.name + W.key + 92 + (visibility.balance ? 130 : 0) + 180
+    : 1480 - (visibility.balance ? 0 : 130) - (visibility.usage_summary ? 0 : 110);
 
   const columns = [
     {
@@ -314,7 +316,7 @@ export default function TokenPage() {
     // 收起冗余列后，第一屏能直接看到「这把 Key 是什么状态、还剩多少额度」。
     // 桌面端不受影响（md/lg 以上照旧全显示）。
     { title: "状态", dataIndex: "status", width: 92, render: statusTag },
-    {
+    ...(visibility.balance ? [{
       title: "额度",
       width: 130,
       // 精度要**自适应**，不能固定 2 位。
@@ -329,17 +331,17 @@ export default function TokenPage() {
           <Tag color="geekblue">无限</Tag>
         ) : (
           <span className="oo-num">
-            {fmtOd(r.remain_quota, perUnit, odOf(r.remain_quota, perUnit) < 0.01 ? 4 : 2)}
+            {r.remain_quota === undefined || r.remain_quota === null ? "—" : fmtOd(r.remain_quota, perUnit, odOf(r.remain_quota, perUnit) < 0.01 ? 4 : 2)}
           </span>
         ),
-    },
-    {
+    }] : []),
+    ...(visibility.usage_summary ? [{
       title: "已用",
       dataIndex: "used_quota",
       width: 110,
       responsive: ["md"],
-      render: (q) => <span className="oo-num">{fmtOd(q, perUnit, 4)}</span>,
-    },
+      render: (q) => <span className="oo-num">{q === undefined || q === null ? "—" : fmtOd(q, perUnit, 4)}</span>,
+    }] : []),
       {
         title: "分组",
         dataIndex: "group",
@@ -361,7 +363,7 @@ export default function TokenPage() {
             );
           }
           const meta = groupMetaOf(g);
-          return <GroupTag name={meta?.name || g} meta={meta} />;
+          return visibility.pricing ? <GroupTag name={meta?.name || g} meta={meta} /> : <Tag>{meta?.name || g}</Tag>;
         },
       },
 
@@ -485,7 +487,7 @@ export default function TokenPage() {
             <Input placeholder="例如：my-app" maxLength={64} />
           </Form.Item>
 
-          <div className="oo-form-grid__pair">
+          {visibility.balance ? <div className="oo-form-grid__pair">
             <Form.Item name="unlimited_quota" label="无限额度" valuePropName="checked">
               <Switch />
             </Form.Item>
@@ -505,7 +507,7 @@ export default function TokenPage() {
                 ) : null
               }
             </Form.Item>
-          </div>
+          </div> : null}
 
           <div className="oo-form-grid__pair">
             <Form.Item name="never_expire" label="永不过期" valuePropName="checked">

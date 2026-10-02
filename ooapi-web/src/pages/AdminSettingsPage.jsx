@@ -7,18 +7,21 @@
 //
 // 分组：站点 / 外观 / 认证 / 计费 / 用户 / 安全 / 网关 / 邮件 / 备份（+ 更新）
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
-  Form, Input, Button, Switch, InputNumber, App as AntApp, Tabs, Typography, Alert, Spin, Select,
+  Form, Input, Button, Switch, InputNumber, App as AntApp, Tabs, Typography, Alert, Spin, Select, Tooltip,
 } from "antd";
 import {
   SettingOutlined, DollarOutlined, SafetyCertificateOutlined, SaveOutlined, CloudDownloadOutlined,
-  BgColorsOutlined, TeamOutlined, LockOutlined, ApiOutlined, MailOutlined, DatabaseOutlined, UserOutlined,
+  BgColorsOutlined, LockOutlined, ApiOutlined, MailOutlined, DatabaseOutlined, UserOutlined, CheckCircleOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { odOf, unitsPerOd } from "../services/format";
 import { useApp } from "../context/AppContext";
 import PageHeader from "../components/PageHeader";
-import { PRIMARY_PRESETS } from "../theme/presets";
+import AppearanceSettings from "../components/AppearanceSettings";
+import { OdCoin } from "../components/OdCoin";
+import "./admin-settings.css";
 
 const { Text } = Typography;
 
@@ -57,25 +60,6 @@ const F = {
   legal_privacy_policy: { g: "site", label: "隐私政策", type: "textarea", rows: 4, ph: "支持 Markdown；留空则不展示" },
   header_nav_links: { g: "site", label: "顶部导航链接", type: "textarea", rows: 2, ph: "每行一个：名称|地址" },
 
-  // ---------- 外观 ----------
-  default_theme: {
-    g: "appearance", label: "默认明暗模式", type: "select",
-    options: [
-      { value: "system", label: "跟随系统" },
-      { value: "light", label: "浅色" },
-      { value: "dark", label: "深色" },
-    ],
-  },
-  default_primary: {
-    g: "appearance", label: "默认主题色", type: "select",
-    options: PRIMARY_PRESETS.map((p) => ({ value: p.key, label: p.label })),
-  },
-  default_collapse_sidebar: { g: "appearance", label: "默认折叠侧边栏", type: "switch", bool: true },
-  enable_theme_switch: { g: "appearance", label: "允许用户切换明暗", type: "switch", bool: true },
-  enable_primary_switch: { g: "appearance", label: "允许用户切换主题色", type: "switch", bool: true },
-  home_show_models: { g: "appearance", label: "首页展示模型列表", type: "switch", bool: true },
-  home_show_pricing: { g: "appearance", label: "首页展示定价入口", type: "switch", bool: true },
-
   // ---------- 认证 ----------
   password_login_enabled: { g: "auth", label: "允许密码登录", type: "switch", bool: true },
   password_register_enabled: { g: "auth", label: "允许注册", type: "switch", bool: true },
@@ -88,30 +72,18 @@ const F = {
   session_days: { g: "auth", label: "登录有效期（天）", type: "number", min: 1, max: 365 },
 
   // ---------- 计费 ----------
-  currency_name: { g: "billing", label: "货币名称", type: "text" },
-  currency_symbol: { g: "billing", label: "货币符号", type: "text" },
-  units_per_od: { g: "billing", label: "额度换算", type: "number", disabled: true, hint: "固定 1 OD币 = 10,000 额度单位（计费代码写死）" },
-  general_setting_quota_display: { g: "billing", label: "前台展示额度", type: "switch", bool: true },
-  expose_pricing_to_user: { g: "billing", label: "允许用户查看定价", type: "switch", bool: true },
   quota_for_new_user: { g: "billing", label: "注册赠送额度（OD币）", type: "number", min: 0, step: 0.0001, precision: 4, od: true },
-  quota_remind_threshold: { g: "billing", label: "余额提醒阈值", type: "number", min: 0, hint: "低于该值前端提示" },
+  quota_remind_threshold: { g: "billing", label: "余额提醒阈值（OD币）", type: "number", min: 0, step: 0.0001, precision: 4, od: true },
   topup_link: { g: "billing", label: "充值链接", type: "text" },
-  invite_reward_inviter: { g: "billing", label: "邀请人奖励", type: "number", min: 0 },
-  invite_reward_invitee: { g: "billing", label: "被邀请人奖励", type: "number", min: 0 },
+  invite_reward_inviter: { g: "billing", label: "邀请人奖励（OD币）", type: "number", min: 0, step: 0.0001, precision: 4, od: true },
+  invite_reward_invitee: { g: "billing", label: "被邀请人奖励（OD币）", type: "number", min: 0, step: 0.0001, precision: 4, od: true },
   checkin_enabled: { g: "billing", label: "启用签到", type: "switch", bool: true },
-  checkin_min_quota: { g: "billing", label: "签到最小奖励", type: "number", min: 0 },
-  checkin_max_quota: { g: "billing", label: "签到最大奖励", type: "number", min: 0 },
+  checkin_min_quota: { g: "billing", label: "签到最小奖励（OD币）", type: "number", min: 0, step: 0.0001, precision: 4, od: true },
+  checkin_max_quota: { g: "billing", label: "签到最大奖励（OD币）", type: "number", min: 0, step: 0.0001, precision: 4, od: true },
 
   // ---------- 用户 ----------
   default_user_group: { g: "user", label: "新用户默认分组", type: "text", ph: "留空 = 新用户无分组（需管理员指定）" },
-  user_visible_quota_detail: {
-    g: "user", label: "用户可见额度粒度", type: "select",
-    options: [
-      { value: "full", label: "完整（余额 + 明细）" },
-      { value: "summary", label: "仅余额" },
-      { value: "hidden", label: "不显示" },
-    ],
-  },
+  user_data_visibility: { g: "user", label: "用户可见数据", type: "visibility" },
   allow_user_edit_profile: { g: "user", label: "允许用户改资料", type: "switch", bool: true },
   chat_enabled: { g: "user", label: "开放站内对话", type: "switch", bool: true },
   default_user_concurrency: { g: "user", label: "新用户默认并发", type: "number", min: 0, hint: "0 = 不限" },
@@ -141,7 +113,7 @@ const F = {
   channel_disable_threshold: { g: "security", label: "自动禁用阈值", type: "number", min: 1, hint: "连续失败几次" },
   auto_disable_status_codes: { g: "security", label: "自动禁用状态码", type: "text", ph: "401,403" },
   auto_disable_keywords: { g: "security", label: "自动禁用关键词", type: "text", ph: "逗号分隔" },
-  auto_test_channel_enabled: { g: "security", label: "定时检测渠道", type: "switch", bool: true, hint: "总闸（每渠道的开关是子开关）" },
+  auto_test_channel_enabled: { g: "security", label: "定时检测渠道", type: "switch", bool: true, hint: "各渠道仍需开启独立检测" },
   auto_test_channel_minutes: { g: "security", label: "检测间隔（分钟）", type: "number", min: 1, max: 1440 },
   auto_test_concurrency: { g: "security", label: "检测并发", type: "number", min: 1, max: 32 },
   perf_metrics_enabled: { g: "security", label: "性能指标采集", type: "switch", bool: true },
@@ -183,6 +155,64 @@ const TABS = [
   { key: "backup", label: "备份", icon: <DatabaseOutlined /> },
 ];
 
+// 分区只组织布局；字段定义仍是归一化与提交白名单的唯一来源。
+const SECTIONS = {
+  site: [
+    { title: "站点标识", fields: ["system_name", "logo", "favicon"] },
+    { title: "访问地址", fields: ["server_address", "api_endpoint", "docs_link", "header_nav_links"] },
+    { title: "页面内容", fields: ["about", "home_content", "footer", "login_page_notice"] },
+    { title: "公告", fields: ["announcement_type", "announcement", "announcement_version"] },
+    { title: "联系与支持", fields: ["contact_email", "contact_qq_group", "contact_telegram", "contact_discord"] },
+    { title: "协议与备案", fields: ["legal_user_agreement", "legal_privacy_policy", "icp_number", "police_number"] },
+  ],
+  auth: [
+    { title: "登录与注册", fields: ["password_login_enabled", "password_register_enabled", "register_email_required", "register_invite_only", "register_ip_limit"] },
+    { title: "账号安全", fields: ["password_min_length", "session_days", "login_fail_lock_count", "login_fail_lock_minutes"] },
+  ],
+  billing: [
+    { title: "平台币种", fixedCurrency: true, fields: [] },
+    { title: "余额与充值", fields: ["quota_remind_threshold", "topup_link"] },
+    { title: "注册与邀请奖励", fields: ["quota_for_new_user", "invite_reward_inviter", "invite_reward_invitee"] },
+    { title: "签到奖励", fields: ["checkin_enabled", "checkin_min_quota", "checkin_max_quota"] },
+  ],
+  user: [
+    { title: "用户可见数据", visibility: true, fields: ["user_data_visibility"] },
+    { title: "权限与默认限额", fields: ["default_user_group", "allow_user_edit_profile", "chat_enabled", "default_user_concurrency", "default_user_rpm", "default_user_tpm"] },
+    { title: "记录与看板", fields: ["log_retention_days", "data_export_enabled", "data_export_interval", "data_export_default_range"] },
+  ],
+  security: [
+    { title: "请求限流", fields: ["rate_limit_enabled", "rate_limit_window_minutes", "rate_limit_count"] },
+    { title: "敏感词过滤", fields: ["sensitive_check_enabled", "sensitive_check_on_prompt", "sensitive_words"] },
+    { title: "渠道健康", fields: ["auto_disable_channel", "auto_enable_channel", "channel_disable_threshold", "auto_disable_status_codes", "auto_disable_keywords", "auto_test_channel_enabled", "auto_test_channel_minutes", "auto_test_concurrency"] },
+    { title: "性能指标", fields: ["perf_metrics_enabled", "perf_metrics_retention_days"] },
+  ],
+  gateway: [{ title: "请求与流式响应", fields: ["request_timeout_ms", "retry_times", "gateway_ping_interval", "gateway_log_body"] }],
+  email: [
+    { title: "SMTP 连接", fields: ["smtp_enabled", "smtp_host", "smtp_port", "smtp_user", "smtp_pass", "smtp_from"] },
+    { title: "传输安全", fields: ["smtp_ssl", "smtp_starttls", "smtp_insecure"] },
+  ],
+  backup: [{ title: "自动备份", fields: ["backup_enabled", "backup_interval_hours", "backup_keep", "backup_dir"] }],
+};
+
+const VISIBILITY_FIELDS = [
+  { key: "balance", label: "余额", hint: "账户余额与令牌剩余预算" },
+  { key: "usage_summary", label: "用量汇总", hint: "累计消耗、调用数与汇总趋势" },
+  { key: "usage_records", label: "使用记录", hint: "逐次调用、最近记录与明细导出" },
+  { key: "request_content", label: "请求与回复正文", hint: "使用记录中的输入、输出内容" },
+  { key: "pricing", label: "定价与费率", hint: "价格表、调用单价与分组倍率" },
+];
+
+function normalizeVisibility(value, legacy = {}) {
+  let parsed = value;
+  if (typeof parsed === "string") { try { parsed = JSON.parse(parsed); } catch { parsed = null; } }
+  if (parsed?.version === 1 && VISIBILITY_FIELDS.every(({ key }) => typeof parsed[key] === "boolean")) {
+    return { version: 1, ...Object.fromEntries(VISIBILITY_FIELDS.map(({ key }) => [key, key === "request_content" ? parsed.usage_records && parsed[key] : parsed[key]])) };
+  }
+  const enabled = legacy.general_setting_quota_display !== "false" && legacy.user_visible_quota_detail !== "hidden";
+  const detailed = enabled && legacy.user_visible_quota_detail !== "summary";
+  return { version: 1, balance: enabled, usage_summary: enabled, usage_records: detailed, request_content: detailed, pricing: legacy.expose_pricing_to_user !== "false" };
+}
+
 const BOOL_KEYS = Object.entries(F).filter(([, v]) => v.bool).map(([k]) => k);
 
 // 兼容尚未下发权限元信息的旧后端：基础设施字段仍须先置灰，不能让管理员填完才吃 403。
@@ -198,6 +228,7 @@ function useSettingsForm() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [saveState, setSaveState] = useState({ kind: "", text: "" });
   const [superOnly, setSuperOnly] = useState([]);
   const { message } = AntApp.useApp();
   const { refreshStatus, user, status } = useApp();
@@ -210,6 +241,7 @@ function useSettingsForm() {
       const { super_only, is_super, ...values } = data || {};
       setSuperOnly(Array.isArray(super_only) ? super_only : Number(user?.role) >= 1000 ? [] : SUPER_OPTION_FALLBACK);
       const norm = { ...values };
+      norm.user_data_visibility = normalizeVisibility(values.user_data_visibility, values);
       // 布尔归一化：库里存的是 "true"/"false" 字符串，Switch 需要真布尔
       for (const k of BOOL_KEYS) norm[k] = values[k] === "true" || values[k] === true;
       // 数值项归一化：空串→undefined，避免 InputNumber 显示 0（与实际「未设置」不符）
@@ -219,6 +251,7 @@ function useSettingsForm() {
         norm[k] = v === "" || v === null || v === undefined ? undefined : spec.od ? odOf(v, unitsPerOd(status)) : Number(v);
       }
       form.setFieldsValue(norm);
+      setSaveState({ kind: "", text: "" });
     } catch (e) {
       setError(e.message || "无法加载设置");
       message.error(e.message);
@@ -229,6 +262,7 @@ function useSettingsForm() {
 
   const save = async (values) => {
     setSaving(true);
+    setSaveState({ kind: "", text: "" });
     try {
       const payload = {};
       for (const [k, v] of Object.entries(values)) {
@@ -236,9 +270,13 @@ function useSettingsForm() {
         // 禁用的字段仍可能在 Form 的值里；必须从提交体排除，避免整批保存被 403 拒绝。
         if (superOnly.includes(k)) continue;
         // 固定值不提交（units_per_od 由计费代码写死；后端也拒绝修改）
-        if (k === "units_per_od") continue;
+        if (["units_per_od", "currency_name", "currency_symbol"].includes(k)) continue;
+        if (k === "user_data_visibility") {
+          payload[k] = normalizeVisibility(v);
+          continue;
+        }
         if (F[k].od && (v === undefined || v === null || v === "")) {
-          message.error("请填写注册赠送额度；不赠送请填 0");
+          message.error(`请填写${F[k].label}；无额度请填 0`);
           return;
         }
         // null/空串是「清空」的语义：必须提交空串把库里的旧值清掉。
@@ -257,22 +295,25 @@ function useSettingsForm() {
       await API.put("/option/", payload);
       // 改站点名/外观默认值后必须刷新全局 status，否则全站展示仍用旧值
       await refreshStatus();
+      setSaveState({ kind: "saved", text: "已保存" });
       message.success("设置已保存");
     } catch (e) {
+      setSaveState({ kind: "error", text: e.message || "保存失败，请重试" });
       message.error(e.message);
     } finally {
       setSaving(false);
     }
   };
 
-  return { form, loading, saving, error, superOnly, load, save };
+  return { form, loading, saving, error, superOnly, saveState, setSaveState, load, save };
 }
 
 function Field({ spec, name, locked = false, ...controlProps }) {
-  const disabled = Boolean(spec.disabled || locked);
+  const disabled = Boolean(spec.disabled || locked || controlProps.disabled);
   // Form.Item 把 value/checked/onChange 注入自定义 Field；必须继续传给实际控件，
   // 否则用户改的是控件内部值，提交的仍是加载时的旧设置。
   const common = { ...controlProps, placeholder: spec.ph, disabled };
+  if (spec.type === "visibility") return <VisibilityFields {...controlProps} disabled={disabled} />;
   if (spec.type === "switch") return <Switch {...controlProps} disabled={disabled} />;
   if (spec.type === "number") {
     return <InputNumber {...controlProps} style={{ width: "100%" }} min={spec.min} max={spec.max} step={spec.step || 1} precision={spec.precision} disabled={disabled} />;
@@ -283,6 +324,31 @@ function Field({ spec, name, locked = false, ...controlProps }) {
   return <Input {...common} maxLength={spec.maxLength} />;
 }
 
+function VisibilityFields({ value, onChange, disabled }) {
+  const visibility = normalizeVisibility(value);
+  return <div className="oo-admin-visibility">
+    <div className="oo-admin-settings-note">仅限制普通用户，管理员始终可查看。</div>
+    {VISIBILITY_FIELDS.map(({ key, label, hint }) => <div className="oo-admin-visibility-row" key={key}>
+      <div><label htmlFor={`visibility-${key}`}>{label}</label><span>{hint}</span></div>
+      <Switch id={`visibility-${key}`} aria-label={label} checked={visibility[key]} disabled={disabled || key === "request_content" && !visibility.usage_records} onChange={(checked) => {
+        const next = { ...visibility, [key]: checked };
+        if (key === "usage_records" && !checked) next.request_content = false;
+        onChange?.(next);
+      }} />
+    </div>)}
+  </div>;
+}
+
+function SettingsField({ name, spec, locked, busy }) {
+  const inputId = `system-setting-${name}`;
+  return <div className={`oo-admin-setting-row oo-admin-setting-row--${spec.type}`}>
+    <div className="oo-admin-setting-label"><label htmlFor={inputId}>{spec.label}</label>{locked ? <Tooltip title="仅超级管理员可修改"><LockOutlined aria-label="仅超级管理员可修改" /></Tooltip> : null}</div>
+    <Form.Item name={name} className="oo-admin-setting-control" valuePropName={spec.type === "switch" ? "checked" : "value"} extra={spec.type === "password" ? "保持原值可保留凭据；清空后保存会删除。" : spec.hint} rules={spec.od ? [{ required: true, message: "请填写额度，无额度请填 0" }] : undefined}>
+      <Field id={inputId} aria-label={spec.label} spec={spec} name={name} locked={locked} disabled={busy} />
+    </Form.Item>
+  </div>;
+}
+
 function SettingsTab({ group }) {
   const s = useSettingsForm();
   useEffect(() => {
@@ -290,8 +356,11 @@ function SettingsTab({ group }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const fields = useMemo(() => Object.entries(F).filter(([, v]) => v.g === group), [group]);
+  const sections = SECTIONS[group] || [];
+  const editable = fields.some(([key, spec]) => !s.superOnly.includes(key) && !spec.disabled);
+  const label = TABS.find((item) => item.key === group)?.label;
   return (
-    <div className="oo-panel" style={{ opacity: s.loading || s.error ? 0.72 : 1 }}>
+    <div className="oo-admin-settings-tab">
       {s.error ? (
         <Alert
           type="error"
@@ -299,40 +368,36 @@ function SettingsTab({ group }) {
           message="设置加载失败"
           description={s.error}
           action={<Button size="small" onClick={s.load} loading={s.loading}>重试</Button>}
-          style={{ margin: "16px 24px" }}
+          className="oo-admin-settings-load-error"
         />
       ) : null}
-      <div className="oo-panel-body">
         <Spin spinning={s.loading}>
           <Form
             form={s.form}
-            className="oo-settings-form"
+            className="oo-admin-settings-form"
             layout="vertical"
             onFinish={s.save}
+            onValuesChange={() => s.setSaveState({ kind: "dirty", text: "有未保存的修改" })}
             disabled={s.loading || Boolean(s.error) || s.saving}
             requiredMark={false}
           >
-            {fields.map(([key, spec]) => (
-              <Form.Item
-                key={key}
-                className={`oo-settings-field${spec.type === "textarea" ? " oo-settings-field--wide" : ""}`}
-                name={key}
-                label={spec.label}
-                tooltip={s.superOnly.includes(key) ? "只有超级管理员可以修改此设置" : undefined}
-                valuePropName={spec.type === "switch" ? "checked" : "value"}
-                rules={spec.od ? [{ required: true, message: "请填写注册赠送额度；不赠送请填 0" }] : undefined}
-              >
-                <Field spec={spec} name={key} locked={s.superOnly.includes(key)} />
-              </Form.Item>
-            ))}
-            <div className="oo-settings-actions">
-              <Button type="primary" htmlType="submit" loading={s.saving} disabled={fields.every(([key, spec]) => s.superOnly.includes(key) || spec.disabled)} icon={<SaveOutlined />}>
-                保存设置
+            {sections.map((section) => <section className="oo-panel oo-admin-settings-section" key={section.title}>
+              <div className="oo-admin-settings-section-head"><h2>{section.title}</h2></div>
+              <div className="oo-admin-settings-section-body">
+                {section.fixedCurrency ? <div className="oo-admin-fixed-currency"><OdCoin size={36} /><div><strong>OD币</strong></div></div> : null}
+                {section.visibility ? <Form.Item name="user_data_visibility" className="oo-admin-visibility-field"><Field spec={F.user_data_visibility} name="user_data_visibility" locked={s.superOnly.includes("user_data_visibility")} disabled={s.loading || Boolean(s.error) || s.saving} /></Form.Item> : section.fields.map((key) => <SettingsField key={key} name={key} spec={F[key]} locked={s.superOnly.includes(key)} busy={s.loading || Boolean(s.error) || s.saving} />)}
+              </div>
+            </section>)}
+            <div className="oo-admin-settings-actions">
+              <div className={`oo-admin-settings-save-state${s.saveState.kind ? ` oo-admin-settings-save-state--${s.saveState.kind}` : ""}`} role="status" aria-live="polite">
+                {s.saveState.kind === "saved" ? <CheckCircleOutlined /> : null}{s.saveState.text || (!editable ? "当前账号仅可查看此标签" : `${label}设置`)}
+              </div>
+              <Button type="primary" htmlType="submit" aria-label={`保存${label}设置`} loading={s.saving} disabled={!editable} icon={<SaveOutlined />}>
+                保存{label}设置
               </Button>
             </div>
           </Form>
         </Spin>
-      </div>
     </div>
   );
 }
@@ -348,6 +413,7 @@ function UpdateTab() {
   const [steps, setSteps] = useState([]);
   const [error, setError] = useState("");
   const timerRef = useRef(null);
+  const cancelPollRef = useRef(null);
 
   const check = async () => {
     setChecking(true);
@@ -366,6 +432,7 @@ function UpdateTab() {
   useEffect(() => {
     check();
     return () => {
+      cancelPollRef.current?.();
       if (timerRef.current) clearInterval(timerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -382,24 +449,47 @@ function UpdateTab() {
   );
 
   const poll = (targetCommit) => {
-    if (timerRef.current) clearInterval(timerRef.current);
+    cancelPollRef.current?.();
     let attempts = 0;
-    timerRef.current = setInterval(async () => {
+    let inFlight = false;
+    let finished = false;
+    let timerId = null;
+    const stop = () => {
+      finished = true;
+      clearInterval(timerId);
+      if (timerRef.current === timerId) timerRef.current = null;
+      if (cancelPollRef.current === stop) cancelPollRef.current = null;
+    };
+    const timeout = () => {
+      if (finished || attempts < 40) return;
+      stop();
+      setApplying(false);
+      setError("尚未确认更新完成，请刷新检查版本");
+    };
+    timerId = setInterval(async () => {
+      // 状态请求可能跨过多个轮询间隔；完成或离开页面后忽略迟到响应。
+      if (finished || inFlight) return;
+      inFlight = true;
       attempts++;
       try {
         const r = await API.get("/update/status", { timeoutMs: 15_000 });
+        if (finished) return;
         const currentCommit = r?.stamp?.commit;
-        if ((targetCommit && currentCommit === targetCommit) || r?.done || attempts >= 40) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
+        if ((targetCommit && currentCommit === targetCommit) || r?.done === true) {
+          stop();
           setApplying(false);
           message.success("更新完成，服务已就绪");
           await check();
-        }
+        } else timeout();
       } catch {
         // 更新期间服务会重启，轮询失败是正常的：继续等
+        timeout();
+      } finally {
+        inFlight = false;
       }
     }, 3000);
+    timerRef.current = timerId;
+    cancelPollRef.current = stop;
   };
 
   const apply = async () => {
@@ -411,6 +501,7 @@ function UpdateTab() {
       cancelText: "取消",
       onOk: async () => {
         setApplying(true);
+        setError("");
         setSteps([]);
         try {
           const res = await API.post("/update/apply", undefined, { timeoutMs: 300_000 });
@@ -427,19 +518,19 @@ function UpdateTab() {
   };
 
   return (
-    <div className="oo-panel">
+    <div className="oo-panel oo-admin-update">
       <div className="oo-panel-body">
         {error ? (
-          <Alert type="error" showIcon message="检查更新失败" description={error} style={{ marginBottom: 12 }} />
+          <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} />
         ) : null}
         <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
-          <div>
-            当前版本：<Text code>{current?.short || "—"}</Text>
-            {current?.message ? <span style={{ color: "var(--ink-3)" }}> · {current.message}</span> : null}
+          <div className="oo-admin-update-version">
+            <span>当前版本</span><div><Text code>{current?.short || "—"}</Text>
+            {current?.message ? <span style={{ color: "var(--ink-3)" }}> · {current.message}</span> : null}</div>
           </div>
-          <div>
-            最新版本：<Text code>{latest?.short || "—"}</Text>
-            {latest?.message ? <span style={{ color: "var(--ink-3)" }}> · {latest.message}</span> : null}
+          <div className="oo-admin-update-version">
+            <span>最新版本</span><div><Text code>{latest?.short || "—"}</Text>
+            {latest?.message ? <span style={{ color: "var(--ink-3)" }}> · {latest.message}</span> : null}</div>
           </div>
           {info && !hasUpdate ? (
             <Alert type="success" showIcon message="已是最新版本" />
@@ -449,10 +540,10 @@ function UpdateTab() {
               type="info"
               showIcon
               message={`发现新版本：${latest?.short || ""}`}
-              description={latest?.message || "有新版本可用，点击下方按钮即可一键在线更新。"}
+              description={latest?.message || undefined}
             />
           ) : null}
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <div className="oo-admin-update-actions">
             <Button onClick={check} loading={checking}>检查更新</Button>
             <Button type="primary" onClick={apply} loading={applying} disabled={!hasUpdate || !isSuper}>
               立即更新
@@ -460,9 +551,9 @@ function UpdateTab() {
             {!isSuper ? <Text type="secondary">只有超级管理员可以执行更新</Text> : null}
           </div>
           {steps.length ? (
-            <div style={{ marginTop: 8 }}>
+            <div className="oo-admin-update-steps">
               {steps.map((s, i) => (
-                <div key={i} style={{ fontSize: 12, color: "var(--ink-3)", fontFamily: "var(--font-mono)" }}>{s}</div>
+                <div key={i}>{s}</div>
               ))}
             </div>
           ) : null}
@@ -473,10 +564,15 @@ function UpdateTab() {
 }
 
 export default function AdminSettingsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = searchParams.get("tab");
+  const activeKey = [...TABS.map(({ key }) => key), "update"].includes(tab) ? tab : "site";
   return (
-    <div className="oo-page">
+    <div className="oo-page oo-admin-settings-page">
       <PageHeader title="系统设置" />
       <Tabs
+        activeKey={activeKey}
+        onChange={(key) => { const next = new URLSearchParams(searchParams); next.set("tab", key); setSearchParams(next, { replace: true }); }}
         destroyInactiveTabPane
         items={[
           ...TABS.map((t) => ({
@@ -486,7 +582,7 @@ export default function AdminSettingsPage() {
                 {t.icon} {t.label}
               </span>
             ),
-            children: <SettingsTab group={t.key} />,
+            children: t.key === "appearance" ? <AppearanceSettings /> : <SettingsTab group={t.key} />,
           })),
           {
             key: "update",
