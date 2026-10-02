@@ -1,11 +1,11 @@
+import OdAmount from "../components/OdAmount";
 import React, { useCallback, useEffect, useState } from "react";
 import { Table, Input, Tag, Alert, App as AntApp } from "antd";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import PageHeader from "../components/PageHeader";
 import ModelPricingLabel from "../components/ModelPricingLabel";
-import { OdCoin } from "../components/OdCoin";
-import { CURRENCY_NAME } from "../services/format";
+
 import { userDataVisibility } from "../services/visibility";
 
 /** 公开报价受逐项策略控制；直达页面也不请求未开放的接口。 */
@@ -67,8 +67,7 @@ export default function PricingPage() {
       sorter: (a, b) => Number(a.input) - Number(b.input),
       render: (v) => (
         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-          <OdCoin size={12} />
-          <span className="oo-num">{v === null || v === undefined ? "—" : Number(v)}</span>
+          <OdAmount>{v === null || v === undefined ? "—" : Number(v)}</OdAmount>
         </span>
       ),
     },
@@ -79,8 +78,7 @@ export default function PricingPage() {
       sorter: (a, b) => Number(a.output) - Number(b.output),
       render: (v) => (
         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-          <OdCoin size={12} />
-          <span className="oo-num">{v === null || v === undefined ? "—" : Number(v)}</span>
+          <OdAmount>{v === null || v === undefined ? "—" : Number(v)}</OdAmount>
         </span>
       ),
     },
@@ -91,8 +89,7 @@ export default function PricingPage() {
       render: (v) =>
         v !== null && v !== undefined ? (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-            <OdCoin size={12} />
-            <span className="oo-num">{Number(v)}</span>
+            <OdAmount>{Number(v)}</OdAmount>
           </span>
         ) : (
           <span style={{ color: "var(--ink-3)" }}>—</span>
@@ -106,7 +103,7 @@ export default function PricingPage() {
         title="模型价格"
         tags={
           <span style={{ fontSize: 12.5, color: "var(--ink-3)" }}>
-            共 {items.length} 个模型 · {CURRENCY_NAME} / 百万 Token
+            共 {items.length} 个模型 · 每百万 Token
           </span>
         }
       />

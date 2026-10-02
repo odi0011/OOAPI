@@ -11,7 +11,7 @@
 //     顺带一个好处 —— 固定色的 SVG 序列化后能正确渲染，方便截图核对。
 //
 // 尺寸实测（放大采样对比过）：14px 起字母清晰，13px 开始发糊，18px 以上细节充分。
-// 所以不要用小于 14px；表头这类极紧凑位置直接用纯文字「OD币」。
+// 金额统一使用数字后的图标，紧凑位置也不改回文字单位。
 import React from "react";
 
 /* --------------------------------------------------------------------------
@@ -63,8 +63,8 @@ export function OdCoin({ size = 16, title = CURRENCY_NAME, style, className, mut
       viewBox="0 0 24 24"
       role="img"
       aria-label={title}
-      className={className}
-      style={{ display: "block", flexShrink: 0, opacity: muted ? 0.75 : 1, ...style }}
+      className={`oo-od-coin ${className || ""}`}
+      style={{ display: "inline-block", verticalAlign: "-0.15em", flexShrink: 0, opacity: muted ? 0.75 : 1, ...style }}
     >
       {/* 厚度：底层圆往右偏，露出的月牙就是「币的侧面」 */}
       <circle cx={12 + G.depth} cy={12} r={G.r} fill={COLORS.edge} />
@@ -103,28 +103,21 @@ export function OdCoin({ size = 16, title = CURRENCY_NAME, style, className, mut
 }
 
 /**
- * 金额展示（图标 + 数字）—— 表格、卡片里的推荐用法。
+ * 已换算金额展示（数字 + 图标），额度值优先使用 OdAmount。
  * 图标本身就是单位（用户要求：不再在数字后面重复写「OD币」，没意义还占空间）；
- * 需要文字单位的场合（纯文本、无图标的窄位）显式传 unit。
  * @param {number} od 已经是 OD 的数值（不是额度单位）
  * @param {number} [digits] 小数位
- * @param {boolean} [icon] 是否显示币图标
- * @param {boolean} [unit] 是否显示「OD币」字样（默认关：图标即单位）
  */
-export function OdValue({ od, digits = 2, icon = true, unit = false, size = 14, strong = false, style }) {
+export function OdValue({ od, digits = 2, size = 14, strong = false, style }) {
   const n = Number(od) || 0;
   return (
     <span
       style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0, ...style }}
-      title={`${n.toFixed(digits)} ${CURRENCY_NAME}`}
     >
-      {icon ? <OdCoin size={size} /> : null}
       <span className="oo-num" style={strong ? { fontWeight: 600 } : undefined}>
         {n.toFixed(digits)}
       </span>
-      {unit ? (
-        <span style={{ fontSize: "0.88em", color: "var(--ink-3)", fontWeight: 450 }}>{CURRENCY_NAME}</span>
-      ) : null}
+      <OdCoin size={size} />
     </span>
   );
 }
@@ -138,8 +131,8 @@ export function OdValue({ od, digits = 2, icon = true, unit = false, size = 14, 
 export function OdStatValue({ od, digits = 2, size = 20 }) {
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-      <OdCoin size={size} />
       <span className="oo-num" style={{ letterSpacing: "-0.01em" }}>{(Number(od) || 0).toFixed(digits)}</span>
+      <OdCoin size={size} />
     </span>
   );
 }

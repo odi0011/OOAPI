@@ -11,6 +11,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Tooltip } from "antd";
 import { GroupVendorIcons } from "./VendorIcon";
+import { OdText } from "./OdAmount";
 
 // 兜底名称：/meta 未返回某个工具时也不要在界面上暴露原始 id
 const TOOL_FALLBACK_NAMES = {
@@ -108,7 +109,7 @@ export function ToolChips({ calls = [], className = "" }) {
             </button>
             <div className={`bui-collapse ${expanded ? "is-open" : "is-closed"}`}>
               <div className="inner">
-                <pre className="bui-toolchip-body">{c.output || (c.status === "running" ? "执行中…" : "（无输出）")}</pre>
+                <pre className="bui-toolchip-body">{c.tool === "account" && c.output ? <OdText>{c.output}</OdText> : c.output || (c.status === "running" ? "执行中…" : "（无输出）")}</pre>
               </div>
             </div>
           </div>

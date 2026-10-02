@@ -1,3 +1,4 @@
+import OdAmount from "../components/OdAmount";
 import React, { useCallback, useEffect, useState } from "react";
 import { Table, Input, Select, App as AntApp, Typography, Modal, Upload, Alert, Space, Button, Popconfirm, Tag, Tooltip, Checkbox, Row, Col } from "antd";
 import { ReloadOutlined, SearchOutlined, DollarOutlined, UploadOutlined, ClearOutlined, CloudDownloadOutlined, ApartmentOutlined, QuestionCircleOutlined } from "@ant-design/icons";
@@ -8,15 +9,14 @@ import StatCard from "../components/StatCard";
 import { ModelLabel } from "../components/VendorIcon";
 import ModelPricingLabel from "../components/ModelPricingLabel";
 import { OdCoin } from "../components/OdCoin";
-import { CURRENCY_NAME } from "../services/format";
+
 
 const { Text } = Typography;
 
-// 价格列表头：币种只在表头标一次，不在每一行重复（28 行 × 3 列会太吵）
+// 表头标计量范围，币种统一放在每个金额末尾。
 const priceTitle = (label) => (
   <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-    <OdCoin size={14} style={{ opacity: 0.8 }} />
-    {label}
+    {label} / 百万
   </span>
 );
 
@@ -182,21 +182,21 @@ export default function AdminPricingPage() {
       dataIndex: "input_price",
       width: 120,
       sorter: (a, b) => a.input_price - b.input_price,
-      render: (v) => <span className="oo-num">{Number(v).toFixed(4)}</span>,
+      render: (v) => <OdAmount>{v == null ? "—" : Number(v).toFixed(4)}</OdAmount>,
     },
     {
       title: priceTitle("输出"),
       dataIndex: "output_price",
       width: 120,
       sorter: (a, b) => a.output_price - b.output_price,
-      render: (v) => <span className="oo-num">{Number(v).toFixed(4)}</span>,
+      render: (v) => <OdAmount>{v == null ? "—" : Number(v).toFixed(4)}</OdAmount>,
     },
     {
       title: priceTitle("缓存命中"),
       dataIndex: "cache_price",
       width: 110,
       render: (v) =>
-        Number(v) > 0 ? <span className="oo-num">{Number(v).toFixed(4)}</span> : <Text type="secondary" style={{ fontSize: 12 }}>—</Text>,
+        v != null ? <OdAmount>{v == null ? "—" : Number(v).toFixed(4)}</OdAmount> : <Text type="secondary" style={{ fontSize: 12 }}>—</Text>,
     },
     {
       title: "价格来源",
@@ -235,8 +235,8 @@ export default function AdminPricingPage() {
               <div style={{ fontSize: 12 }}>
                 <div>{v}</div>
                 <div style={{ marginTop: 4 }}>
-                  闲时：输入 {r.offpeak_input_price ?? "—"} / 输出 {r.offpeak_output_price ?? "—"} / 缓存{" "}
-                  {r.offpeak_cache_price ?? "—"}
+                  闲时：输入 <OdAmount>{r.offpeak_input_price ?? "—"}</OdAmount> / 输出 <OdAmount>{r.offpeak_output_price ?? "—"}</OdAmount> / 缓存{" "}
+                  <OdAmount>{r.offpeak_cache_price ?? "—"}</OdAmount>
                 </div>
               </div>
             }
@@ -402,14 +402,14 @@ export default function AdminPricingPage() {
         />
         <StatCard
           label="统一币制"
-          value={<span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><OdCoin size={18} />{CURRENCY_NAME}</span>}
+          value={<OdCoin size={22} />}
         />
       </div>
 
       {catalogPending.some((m) => (!type || m.type === type) && (!keyword || m.model.toLowerCase().includes(keyword.toLowerCase()))) ? <Alert
         type="info" showIcon style={{ marginBottom: 16 }} message="新型号待定价"
         description={<div>
-          <div style={{ marginBottom: 6 }}>官网已发布以下型号，尚未核定 OD 单价，可通过「导入定价」补充。</div>
+          <div style={{ marginBottom: 6 }}>官网已发布以下型号，尚未核定单价，可通过「导入定价」补充。</div>
           {catalogPending.filter((m) => (!type || m.type === type) && (!keyword || m.model.toLowerCase().includes(keyword.toLowerCase()))).map((m) =>
             <Tooltip key={m.model} title={`官方模型目录：${m.source}`}><Tag>{m.model}</Tag></Tooltip>)}
         </div>}
@@ -549,7 +549,7 @@ export default function AdminPricingPage() {
                         render: (_, r) =>
                           r.input !== undefined ? (
                             <span className="oo-num">
-                              {Number(r.input).toFixed(4)} / {Number(r.output).toFixed(4)}
+                              <OdAmount>{Number(r.input).toFixed(4)}</OdAmount> / <OdAmount>{Number(r.output).toFixed(4)}</OdAmount>
                             </span>
                           ) : (
                             <Text type="secondary">未知</Text>
@@ -616,8 +616,8 @@ export default function AdminPricingPage() {
                       <span style={{ color: "var(--ink-3)" }}>→</span>
                       <Tag color="blue">{TYPE_LABEL[resolveR.type] || resolveR.type || "未知厂商"}</Tag>
                       <span className="oo-num">
-                        输入 {Number(resolveR.input).toFixed(4)} / 输出 {Number(resolveR.output).toFixed(4)}
-                        {Number(resolveR.cache) ? ` / 缓存 ${Number(resolveR.cache).toFixed(4)}` : ""}
+                        输入 <OdAmount>{Number(resolveR.input).toFixed(4)}</OdAmount> / 输出 <OdAmount>{Number(resolveR.output).toFixed(4)}</OdAmount>
+                        {resolveR.cache != null ? <> / 缓存 <OdAmount>{Number(resolveR.cache).toFixed(4)}</OdAmount></> : null}
                       </span>
                       <Tag color={resolveR.source === "rule" ? "cyan" : resolveR.source === "db" ? "green" : "default"}>
                         {{
@@ -690,7 +690,7 @@ export default function AdminPricingPage() {
         <div className="oo-panel-body">
           <div className="bui-kv">
             <span className="bui-kv-k">币制</span>
-            <span className="bui-kv-v">最小计费单位 0.0001 {CURRENCY_NAME}</span>
+            <span className="bui-kv-v">最小计费单位 <OdAmount>0.0001</OdAmount></span>
           </div>
           <div className="bui-kv">
             <span className="bui-kv-k">计费公式</span>
@@ -701,7 +701,7 @@ export default function AdminPricingPage() {
           <div className="bui-kv">
             <span className="bui-kv-k">数据来源</span>
             <span className="bui-kv-v">
-              每条来源写在「价格来源」列（官方定价页地址）；平台统一使用 OD币计价。
+              每条来源写在「价格来源」列（官方定价页地址）；
               禁止填写「同上」等无意义说明。
             </span>
           </div>
@@ -734,7 +734,7 @@ export default function AdminPricingPage() {
                 <b>模型 ID 必须与平台已注册模型严格一致</b>（渠道里声明过的模型），否则视为垃圾数据拒绝；
                 渠道类型如填写也须与厂商一致
               </li>
-              <li>价格单位：{CURRENCY_NAME} / 百万 token，0 ≤ 单价 ≤ 100000；文件 ≤ 1 MB、单次 ≤ 2000 行</li>
+              <li>价格单位：<OdCoin size={14} /> / 百万 token，0 ≤ 单价 ≤ 100000；文件 ≤ 1 MB、单次 ≤ 2000 行</li>
             </ul>
           }
         />

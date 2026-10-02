@@ -1,9 +1,9 @@
+import OdAmount, { OdText } from "../components/OdAmount";
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { Table, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions, Space, Typography } from "antd";
 import { ReloadOutlined, FileTextOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
-import { fmtDate, fmtOd, unitsPerOd, CURRENCY_NAME } from "../services/format";
-import { OdCoin } from "../components/OdCoin";
+import { fmtDate, unitsPerOd, CURRENCY_NAME } from "../services/format";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
@@ -303,7 +303,7 @@ export default function LogPage() {
         return (
           <span className="oo-log-billing">
             {stateText ? <span className={`oo-log-status-label oo-log-status-label--${r.status}`}>{stateText}</span> : null}
-            {visibility.pricing ? <BillingAmount record={r} isAdmin={isAdmin} perUnit={perUnit} /> : <span className="oo-num">{r.billing_known === false ? "费用待核查" : r.quota === undefined || r.quota === null ? "—" : fmtOd(r.quota, perUnit, 4)}</span>}
+            {visibility.pricing ? <BillingAmount record={r} isAdmin={isAdmin} perUnit={perUnit} /> : <span className="oo-num">{r.billing_known === false ? "费用待核查" : r.quota === undefined || r.quota === null ? "—" : <OdAmount quota={r.quota} perUnit={perUnit} digits={4} />}</span>}
           </span>
         );
       },
@@ -371,8 +371,8 @@ export default function LogPage() {
       width: 185,
       ellipsis: true,
       render: (text) => (
-        <Tooltip title={normalizeCurrency(text)}>
-          <span style={{ fontSize: 12.5 }}>{normalizeCurrency(text)}</span>
+        <Tooltip title={<OdText>{normalizeCurrency(text)}</OdText>}>
+          <span style={{ fontSize: 12.5 }}><OdText>{normalizeCurrency(text)}</OdText></span>
         </Tooltip>
       ),
     },
@@ -475,7 +475,7 @@ export default function LogPage() {
           {summary.errors > 0 ? <span className="bui-chip" style={{ color: "var(--red)" }} title="失败调用，部分已产生用量的调用仍按实际用量计费">错误 <b className="oo-num">{summary.errors}</b></span> : null}
           {summary.stopped > 0 ? <span className="bui-chip" title="用户停止的调用">已停止 <b className="oo-num">{summary.stopped}</b></span> : null}
           <span className="bui-chip" title="区间消耗">
-            消耗 <OdCoin size={12} /> <b className="oo-num">{summary.units === undefined || summary.units === null ? "—" : fmtOd(summary.units, perUnit, 4, false)}</b>
+            消耗 <OdAmount quota={summary.units} perUnit={perUnit} digits={4} />
           </span>
           <span className="bui-chip" title={`提示 ${summary.prompt_tokens} / 补全 ${summary.completion_tokens}`}>
             Tokens <b className="oo-num">{summary.prompt_tokens + summary.completion_tokens}</b>
@@ -614,7 +614,7 @@ export default function LogPage() {
             <Descriptions.Item label="模型">
               <ModelLabel model={detail.model} size={15} channelTypes={Array.isArray(detail.source_vendors) ? detail.source_vendors : detail.channel_type ? [detail.channel_type] : []} />
             </Descriptions.Item>
-            <Descriptions.Item label="调用内容">{normalizeCurrency(detail.content)}</Descriptions.Item>
+            <Descriptions.Item label="调用内容"><OdText>{normalizeCurrency(detail.content)}</OdText></Descriptions.Item>
             <Descriptions.Item label="Tokens">
               {/* 升级前的旧记录没写 token 列（当时的 detail 里也没有），显示 0 会让人
                   误以为"这次没消耗" —— 但同一行的「调用内容」里明明写着「提示 3 / 补全 570」。
@@ -636,7 +636,7 @@ export default function LogPage() {
             <Descriptions.Item label="首Token / 总耗时">
               {ms(detail.first_token_ms)} / {ms(detail.elapsed_ms)}
             </Descriptions.Item>
-            <Descriptions.Item label="计费">{detail.billing_known === false ? "费用待核查" : fmtOd(Number(detail.quota) || 0, perUnit, 6)}</Descriptions.Item>
+            <Descriptions.Item label="计费">{detail.billing_known === false ? "费用待核查" : <OdAmount quota={detail.quota} perUnit={perUnit} digits={6} />}</Descriptions.Item>
             <Descriptions.Item label="状态">
               <span className={`oo-log-status-label oo-log-status-label--${detail.status || "success"}`}>
                 {detail.status === "error" ? `错误${detail.error_code ? ` · ${detail.error_code}` : ""}` : detail.status === "stopped" ? "已停止" : "成功"}

@@ -9,9 +9,9 @@ import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
 import UserAvatar from "../components/UserAvatar";
 import AvatarUploader from "../components/AvatarUploader";
-import { fmtDate, odOf, unitsPerOd } from "../services/format";
+import { fmtDate, unitsPerOd } from "../services/format";
 import { userDataVisibility } from "../services/visibility";
-import { OdStatValue } from "../components/OdCoin";
+import OdAmount from "../components/OdAmount";
 
 const { Text } = Typography;
 
@@ -77,7 +77,7 @@ function ProfileTab() {
       <div className="oo-stats-cards">
         {visibility.balance ? <StatCard
           label="剩余额度"
-          value={user?.quota === undefined || user?.quota === null ? "—" : <OdStatValue od={odOf(user.quota, perUnit)} />}
+          value={<OdAmount quota={user?.quota} perUnit={perUnit} size={20} />}
           icon={<UserOutlined />}
         /> : null}
         <StatCard

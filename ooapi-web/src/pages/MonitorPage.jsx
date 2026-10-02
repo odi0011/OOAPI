@@ -1,3 +1,4 @@
+import OdAmount from "../components/OdAmount";
 // 运维监控：进程实时指标与数据库历史用量分开展示，告警保留独立操作区。
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -13,7 +14,7 @@ import PageHeader from "../components/PageHeader";
 import { LineChart, BarChart, RankBar, Legend, ChartCard, KpiCard, SERIES_COLORS, fmtCompact } from "../components/Charts";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
-import { fmtOd, unitsPerOd } from "../services/format";
+import { unitsPerOd } from "../services/format";
 import { VendorIcon } from "../components/VendorIcon";
 import "../dashboard.css";
 
@@ -569,7 +570,7 @@ export default function MonitorPage() {
         </div>
         <div className="oo-monitor-chart-grid">
           <ChartCard title="网关服务质量" note="当前进程累计 · 重启清零"><dl className="oo-dashboard-facts">{[["全部请求", g.requests ?? 0], ["SLA（排除业务限制）", percentText(g.sla)], ["请求失败率", percentText(g.errorRate)], ["上游真实错误", g.upstream?.errors ?? 0], ["业务限制", g.businessLimited ?? 0], ["上游 429 / 529", (g.upstream?.count429 ?? 0) + " / " + (g.upstream?.count529 ?? 0)], ["渠道切换次数", g.channelSwitches ?? 0]].map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{value}</dd></div>)}</dl></ChartCard>
-          <ChartCard title="平台概况" note="数据库快照 · 用量为最近 24 小时"><dl className="oo-dashboard-facts">{[["启用 / 全部渠道", (overview.channels?.enabled ?? 0) + " / " + (overview.channels?.total ?? 0)], ["启用 / 全部用户", (overview.users?.active ?? 0) + " / " + (overview.users?.total ?? 0)], ["近 24 小时请求", fmtCompact(overview.last24h?.calls)], ["近 24 小时失败", fmtCompact(overview.last24h?.errors)], ["近 24 小时消费", fmtOd(overview.last24h?.units, perUnit, 4, true)], ["低余额用户", overview.users?.lowBalance ?? 0]].map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{value}</dd></div>)}</dl></ChartCard>
+          <ChartCard title="平台概况" note="数据库快照 · 用量为最近 24 小时"><dl className="oo-dashboard-facts">{[["启用 / 全部渠道", (overview.channels?.enabled ?? 0) + " / " + (overview.channels?.total ?? 0)], ["启用 / 全部用户", (overview.users?.active ?? 0) + " / " + (overview.users?.total ?? 0)], ["近 24 小时请求", fmtCompact(overview.last24h?.calls)], ["近 24 小时失败", fmtCompact(overview.last24h?.errors)], ["近 24 小时消费", <OdAmount quota={overview.last24h?.units} perUnit={perUnit} digits={4} />], ["低余额用户", overview.users?.lowBalance ?? 0]].map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{value}</dd></div>)}</dl></ChartCard>
         </div>
       </div>}
       {activeTab === "infra" && <div className="oo-monitor-view">

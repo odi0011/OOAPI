@@ -1,3 +1,4 @@
+import { OdCoin } from "./OdCoin";
 import React, { useState } from 'react';
 import { ApiOutlined, ArrowUpOutlined, CheckOutlined, CodeOutlined, FileTextOutlined, KeyOutlined, MessageOutlined, PlusOutlined, LockOutlined } from '@ant-design/icons';
 import BrandLogo, { BrandName } from './BrandLogo';
@@ -21,7 +22,7 @@ export default function AuthShowcase({ isRegister, privateFocus, motion }) {
           <div className="auth-workspace-content" key={view}>
             {view === 'chat' ? <><div className="auth-preview-title"><span>新对话</span><PlusOutlined/></div><div className="auth-message user">帮我检查这段接口代码。</div><div className="auth-message assistant"><BrandLogo size={21}/><p>可以。贴上代码和报错信息。<span className="auth-text-cursor"/></p></div><div className="auth-context-chip"><CodeOutlined/> 支持代码与附件</div><div className="auth-composer"><span>输入消息</span><i><ArrowUpOutlined/></i></div></>
             : view === 'keys' ? <><div className="auth-preview-title"><span>应用令牌</span><KeyOutlined/></div><div className="auth-token-preview"><span>我的应用 <CheckOutlined/></span><code>•••• •••• •••• ••••</code><div><span>模型范围</span><b>按应用配置</b></div><div><span>额度上限</span><b>单独设置</b></div></div><div className="auth-preview-caption">每个应用使用独立令牌</div></>
-            : <><div className="auth-preview-title"><span>调用记录</span><FileTextOutlined/></div><div className="auth-log-header"><span>记录字段</span><span>详情</span></div>{[['请求状态','成功 / 失败'],['Token 用量','输入 / 输出 / 缓存'],['响应时间','首字 / 总耗时'],['实际扣费','OD币']].map(([k,v],i) => <div className="auth-log-row" key={k} style={{ '--row': i }}><span><i/>{k}</span><b>{v}</b></div>)}<div className="auth-preview-caption">支持按时间和模型筛选</div></>}
+            : <><div className="auth-preview-title"><span>调用记录</span><FileTextOutlined/></div><div className="auth-log-header"><span>记录字段</span><span>详情</span></div>{[['请求状态','成功 / 失败'],['Token 用量','输入 / 输出 / 缓存'],['响应时间','首字 / 总耗时'],['实际扣费',<OdCoin size={14} />]].map(([k,v],i) => <div className="auth-log-row" key={k} style={{ '--row': i }}><span><i/>{k}</span><b>{v}</b></div>)}<div className="auth-preview-caption">支持按时间和模型筛选</div></>}
           </div>
         </div>
         <div className="auth-workspace-status"><span><i/> <BrandName/> workspace</span><span>API / CHAT / USAGE</span></div>

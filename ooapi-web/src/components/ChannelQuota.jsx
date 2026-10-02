@@ -1,3 +1,4 @@
+import OdAmount, { OdText } from "./OdAmount";
 // 账号额度展示 —— 渠道列表 / 详情共用
 // ---------------------------------------------------------------------------
 // 样式参考 sub2api：一行一个窗口，左侧是「窗口标签（5h / 7d / 30d）」，
@@ -9,7 +10,6 @@
 import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button, Tooltip } from "antd";
 import { ApiOutlined, DatabaseOutlined, ThunderboltOutlined } from "@ant-design/icons";
-import { fmtOd } from "../services/format";
 import { quotaNumber } from "./quota-order.js";
 
 /** 把秒数转成 sub2api 那样的短标签：18000→5h、604800→7d、2592000→30d */
@@ -334,7 +334,7 @@ export function QuotaTip({ quota }) {
           ))}
           {quota.credits?.balance ? <InfoPill>余额 {quota.credits.balance}</InfoPill> : null}
           {quotaNumber(quota.credits?.prepaidBalance) !== null ? (
-            <InfoPill>预付费 {fmtOd(quota.credits.prepaidBalance, 1)}</InfoPill>
+            <InfoPill>预付费 <OdAmount quota={quota.credits.prepaidBalance} perUnit={1} /></InfoPill>
           ) : null}
         </div>
       ) : null}
@@ -412,8 +412,8 @@ export function QuotaInline({ quota, stats }) {
   // 余额/积分为「账户存量」，视觉上排在最前 —— 用户要求：
   // 「workbuddy 或者 gpt 的 free 带积分的这种，如果被折叠了，则余额显示为第一个 tag」。
   // 它比套餐名更能回答「还能不能用」，所以即使不折叠也放最前。
-  if (hasBalance) chips.unshift({ key: "bal", node: <>余额 {c.balance}{c.unit ? ` ${c.unit}` : ""}</> });
-  if (hasPrepaid) chips.push({ key: "pre", node: <>预付费 {fmtOd(c.prepaidBalance, 1)}</> });
+  if (hasBalance) chips.unshift({ key: "bal", node: <>余额 <OdText>{`${c.balance}${c.unit ? ` ${c.unit}` : ""}`}</OdText></> });
+  if (hasPrepaid) chips.push({ key: "pre", node: <>预付费 <OdAmount quota={c.prepaidBalance} perUnit={1} /></> });
 
   // 余额/积分 chip 单独摘出来（chips 里 key==="bal" 那条）恒放行首。
   // 用户明确要求：「workbuddy 或者 gpt 的 free 带积分的这种，如果被折叠了，
@@ -457,10 +457,10 @@ export function QuotaInline({ quota, stats }) {
             {fmtToken(st.tokens ?? 0)}
           </StatTag>
           <StatTag
-            icon={st.costUnit === "credits" ? <ThunderboltOutlined /> : <OdCoinIcon />}
-            title={`当前渠道累计消费 ${st.costText || ""}`}
+            icon={st.costUnit === "credits" ? <ThunderboltOutlined /> : null}
+            title={<>当前渠道累计消费 {st.costUnit === "credits" ? st.costText || "0" : <OdAmount>{st.costText || "0"}</OdAmount>}</>}
           >
-            {st.costText || "0"}
+            {st.costUnit === "credits" ? st.costText || "0" : <OdAmount>{st.costText || "0"}</OdAmount>}
           </StatTag>
         </div>
       ) : null}
@@ -693,7 +693,7 @@ function StatTag({ icon, children, title }) {
           whiteSpace: "nowrap",
         }}
       >
-        <span style={{ display: "inline-flex", fontSize: 11, color: "var(--ink-3)" }}>{icon}</span>
+        {icon ? <span style={{ display: "inline-flex", fontSize: 11, color: "var(--ink-3)" }}>{icon}</span> : null}
         <span className="oo-num">{children}</span>
       </span>
     </Tooltip>
@@ -717,16 +717,6 @@ function fmtCompact(n) {
 function fmtFull(n) {
   return String(Number(n) || 0);
 }
-/** OD 币图标（内联 SVG，避免为一个小图标引入图片资源） */
-function OdCoinIcon() {
-  return (
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 7v10M9 10h6" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 /** 弹窗/详情块形态：完整窗口 + 余额 + 刷新（账号与抓取时间按需求无需展示） */
 export default function QuotaPanel({ quota, loading, onRefresh, error }) {
   if (loading) return <div style={{ fontSize: 12, color: "var(--ink-3)" }}>正在查询账号额度…</div>;
@@ -777,7 +767,7 @@ export default function QuotaPanel({ quota, loading, onRefresh, error }) {
       {[
         ["prepaidBalance", "预付费余额"], ["onDemandCap", "按需消费上限"], ["onDemandUsed", "按需已消费"],
       ].map(([key, label]) => quotaNumber(quota.credits?.[key]) !== null ? (
-        <div key={key} style={{ fontSize: 12 }}>{label}：{fmtOd(quota.credits[key], 1)}</div>
+        <div key={key} style={{ fontSize: 12 }}>{label}：<OdAmount quota={quota.credits[key]} perUnit={1} /></div>
       ) : null)}
       {onRefresh ? (
         <Button size="small" style={{ alignSelf: "flex-start" }} onClick={onRefresh}>

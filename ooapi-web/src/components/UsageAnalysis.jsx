@@ -1,3 +1,4 @@
+import OdAmount from "./OdAmount";
 // 使用记录页的图表分析区
 // ---------------------------------------------------------------------------
 // 第 80 批：私有的 MiniTrend / ShareBar / smoothPath 删掉，统一用 Charts.jsx ——
@@ -12,8 +13,7 @@
 import React, { useState } from "react";
 import { Spin, Empty } from "antd";
 import { LineChart, RankBar, Legend, Donut, ChartCard, SERIES_COLORS, fmtCompact } from "./Charts";
-import { OdCoin } from "./OdCoin";
-import { odOf, CURRENCY_NAME } from "../services/format";
+import { odOf } from "../services/format";
 
 const WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 
@@ -51,7 +51,7 @@ function HourHeatmap({ hourly, perUnit }) {
       <div className="oo-heat-foot">
         {tip ? (
           <span>
-            {WEEKDAYS[tip.wd]} {String(tip.hour).padStart(2, "0")}:00 · <b>{tip.calls}</b> 次 · {fmtCompact(odOf(tip.units, perUnit))} {CURRENCY_NAME}
+            {WEEKDAYS[tip.wd]} {String(tip.hour).padStart(2, "0")}:00 · <b>{tip.calls}</b> 次 · <OdAmount>{fmtCompact(odOf(tip.units, perUnit))}</OdAmount>
           </span>
         ) : (
           <span>悬停格子查看明细</span>
@@ -95,7 +95,7 @@ export default function UsageAnalysis({ byDay = [], byModel = [], modelSeries = 
   }
 
   const od = (u) => odOf(u, perUnit);
-  const fmtOdVal = (v) => `${fmtCompact(v)} ${CURRENCY_NAME}`;
+  const fmtOdVal = (v) => <OdAmount>{fmtCompact(v)}</OdAmount>;
   const sum = byDay.reduce(
     (a, d) => ({
       calls: a.calls + (d.calls || 0),
@@ -126,7 +126,7 @@ export default function UsageAnalysis({ byDay = [], byModel = [], modelSeries = 
 
   const main = [
     { name: "调用次数", color: SERIES_COLORS[0], format: (v) => `${fmtCompact(v)} 次`, values: byDay.map((d) => ({ x: d.day, y: d.calls || 0 })) },
-    { name: `消费（${CURRENCY_NAME}）`, color: SERIES_COLORS[2], axis: "right", format: fmtOdVal, values: byDay.map((d) => ({ x: d.day, y: od(d.units) })) },
+    { name: "消费", color: SERIES_COLORS[2], axis: "right", format: fmtOdVal, values: byDay.map((d) => ({ x: d.day, y: od(d.units) })) },
   ];
   const tokenLines = [
     { name: "输入 Token", color: SERIES_COLORS[0], values: byDay.map((d) => ({ x: d.day, y: d.tokens || 0 })) },
@@ -140,7 +140,7 @@ export default function UsageAnalysis({ byDay = [], byModel = [], modelSeries = 
         <div className="oo-analysis-kpis">
           <span>调用 <b>{fmtCompact(sum.calls)}</b> 次</span>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-            消费 <OdCoin size={12} /> <b>{fmtCompact(od(sum.units))}</b>
+            消费 <OdAmount>{fmtCompact(od(sum.units))}</OdAmount>
           </span>
           <span>缓存命中 <b>{cacheRate}%</b></span>
           <span>平均耗时 <b>{(avgElapsed / 1000).toFixed(2)}</b> s</span>
@@ -177,7 +177,7 @@ export default function UsageAnalysis({ byDay = [], byModel = [], modelSeries = 
         <ChartCard title="时段热点" note="近 7 天 × 24 小时 · 调用密度">
           <HourHeatmap hourly={hourly} perUnit={perUnit} />
         </ChartCard>
-        <ChartCard title="模型消费排行" note={`按 ${CURRENCY_NAME}`}>
+        <ChartCard title="模型消费排行" note="按消费排序">
           <RankBar items={byModel.map((m) => ({ name: m.model, value: od(m.units) }))} format={fmtOdVal} />
         </ChartCard>
         <ChartCard title="模型调用占比" note="按次数">

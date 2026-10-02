@@ -1,3 +1,5 @@
+import OdAmount from "../components/OdAmount";
+import { OdCoin } from "../components/OdCoin";
 import React, { useEffect, useState, useCallback } from "react";
 import {
   Button, Table, Modal, Form, Input, Switch, InputNumber, DatePicker,
@@ -7,7 +9,7 @@ import {
 import { PlusOutlined, CopyOutlined, ReloadOutlined, KeyOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
 import { API } from "../services/api";
-import { copyText, fmtDate, fmtOd, odOf, unitsPerOd, CURRENCY_NAME } from "../services/format";
+import { copyText, fmtDate, odOf, unitsPerOd } from "../services/format";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
@@ -332,7 +334,7 @@ export default function TokenPage() {
           <Tag color="geekblue">无限</Tag>
         ) : (
           <span className="oo-num">
-            {r.remain_quota === undefined || r.remain_quota === null ? "—" : fmtOd(r.remain_quota, perUnit, odOf(r.remain_quota, perUnit) < 0.01 ? 4 : 2)}
+            {r.remain_quota === undefined || r.remain_quota === null ? "—" : <OdAmount quota={r.remain_quota} perUnit={perUnit} digits={odOf(r.remain_quota, perUnit) < 0.01 ? 4 : 2} />}
           </span>
         ),
     }] : []),
@@ -341,7 +343,7 @@ export default function TokenPage() {
       dataIndex: "used_quota",
       width: 110,
       responsive: ["md"],
-      render: (q) => <span className="oo-num">{q === undefined || q === null ? "—" : fmtOd(q, perUnit, 4)}</span>,
+      render: (q) => <span className="oo-num">{q === undefined || q === null ? "—" : <OdAmount quota={q} perUnit={perUnit} digits={4} />}</span>,
     }] : []),
       {
         title: "分组",
@@ -497,13 +499,13 @@ export default function TokenPage() {
             <Form.Item noStyle shouldUpdate={(p, c) => p.unlimited_quota !== c.unlimited_quota}>
               {({ getFieldValue }) =>
                 !getFieldValue("unlimited_quota") ? (
-                  <Form.Item name="remain_quota" label={`额度上限（${CURRENCY_NAME}）`} rules={[{ required: true, message: "请输入额度" }]}>
+                  <Form.Item name="remain_quota" label="额度上限" rules={[{ required: true, message: "请输入额度" }]}>
                     <InputNumber
                       style={{ width: "100%" }}
                       min={0}
                       step={1}
                       precision={4}
-                      formatter={(v) => `${v} ${CURRENCY_NAME}`}
+                      suffix={<OdCoin size={14} />}
                       parser={(v) => String(v).replace(/[^\d.]/g, "")}
                     />
                   </Form.Item>

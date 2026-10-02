@@ -25,7 +25,7 @@ import {
   BellOutlined,
   BgColorsOutlined,
 } from "@ant-design/icons";
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";
 import { userDataVisibility } from "../services/visibility";
 import { API } from "../services/api";
@@ -307,10 +307,10 @@ export default function MainLayout() {
   }, [collapsed, selectedKey, isAdmin, isMobile, navigate, badges, visibility.usage_records, visibility.pricing]);
 
   const brand = (
-    <div className="oo-brand">
+    <Link to="/" className="oo-brand" aria-label="返回首页" onClick={() => setDrawer(false)}>
       <BrandLogo size={30} alt={`${status?.system_name || 'OOAPI'} Logo`} />
       {!collapsed && <span className="oo-brand-name">{status?.system_name || "OOAPI"}</span>}
-    </div>
+    </Link>
   );
 
   return (
@@ -327,27 +327,7 @@ export default function MainLayout() {
         >
           {brand}
           {nav}
-          <div className="oo-sider-foot">
-            {/* 收起/展开在内容区顶部已有按钮，这里放「返回首页」更合适 */}
-            <div
-              className="oo-nav-item"
-              role="button"
-              tabIndex={0}
-              aria-label="返回首页"
-              title={collapsed ? "返回首页" : undefined}
-              onClick={() => navigate("/home")}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  navigate("/home");
-                }
-              }}
-              style={{ margin: 0 }}
-            >
-              <HomeOutlined />
-              {!collapsed && <span>返回首页</span>}
-            </div>
-          </div>
+
         </Sider>
       )}
 
@@ -358,7 +338,7 @@ export default function MainLayout() {
           open={drawer}
           onClose={() => setDrawer(false)}
           closable={false}
-          styles={{ body: { padding: 0, background: "var(--page)" }, header: { display: "none" } }}
+          styles={{ body: { padding: 0, background: "var(--page)", display: "flex", flexDirection: "column", overflow: "hidden" }, header: { display: "none" } }}
         >
           {brand}
           {nav}

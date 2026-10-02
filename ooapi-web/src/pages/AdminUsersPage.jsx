@@ -6,8 +6,10 @@ import {
 import { ReloadOutlined, TeamOutlined, SearchOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
-import { fmtDate, fmtOd, unitsPerOd, CURRENCY_NAME } from "../services/format";
+import { fmtDate, unitsPerOd } from "../services/format";
 import { OdCoin } from "../components/OdCoin";
+import OdAmount from "../components/OdAmount";
+import UserAvatar from "../components/UserAvatar";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
@@ -155,11 +157,14 @@ export default function AdminUsersPage() {
       dataIndex: "username",
       width: 190,
       render: (v, r) => (
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontWeight: 560 }}>{r.display_name || v}</div>
-          {r.display_name && r.display_name !== v ? (
-            <div style={{ fontSize: 12, color: "var(--ink-3)" }}>{v}</div>
-          ) : null}
+        <div className="oo-user-identity">
+          <UserAvatar user={r} size={30} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 560 }}>{r.display_name || v}</div>
+            {r.display_name && r.display_name !== v ? (
+              <div style={{ fontSize: 12, color: "var(--ink-3)" }}>{v}</div>
+            ) : null}
+          </div>
         </div>
       ),
     },
@@ -190,13 +195,13 @@ export default function AdminUsersPage() {
       dataIndex: "quota",
       width: 116,
       sorter: (a, b) => a.quota - b.quota,
-      render: (q) => <span className="oo-num">{fmtOd(q, perUnit, 2)}</span>,
+      render: (q) => <OdAmount quota={q} perUnit={perUnit} />,
     },
     {
       title: "已用额度",
       dataIndex: "used_quota",
       width: 116,
-      render: (q) => <span className="oo-num" style={{ color: "var(--ink-3)" }}>{fmtOd(q, perUnit, 4)}</span>,
+      render: (q) => <OdAmount quota={q} perUnit={perUnit} digits={4} style={{ color: "var(--ink-3)" }} />,
     },
     {
       title: "调用",
@@ -280,8 +285,7 @@ export default function AdminUsersPage() {
         <StatCard label="用户总数" value={loadError ? "—" : total} suffix="人" />
         <StatCard label="管理员" value={loadError ? "—" : admins} suffix="人" hint="本页统计" />
         <StatCard label="已禁用" value={loadError ? "—" : disabled} suffix="人" tone={!loadError && disabled ? "danger" : undefined} hint="本页统计" />
-        <StatCard label="累计消费" // fmtOd 传 false 只出数字，单位由 suffix（OD 币图标）负责
-        value={loadError ? "—" : fmtOd(totalUsed, perUnit, 2, false)} suffix={<OdCoin size={12} muted />} hint="本页统计" />
+        <StatCard label="累计消费" value={loadError ? "—" : <OdAmount quota={totalUsed} perUnit={perUnit} />} hint="本页统计" />
       </div>
 
       <div className="oo-panel">
@@ -371,14 +375,14 @@ export default function AdminUsersPage() {
           <div className="oo-user-form-grid oo-user-quota-grid">
             <Form.Item
               name="quota"
-              label={`额度变化量（${CURRENCY_NAME}）`}
+              label="额度变化量"
               rules={[{ required: true, message: "请输入额度变化量" }]}
             >
-              <InputNumber style={{ width: "100%" }} step={10} precision={4} />
+              <InputNumber style={{ width: "100%" }} step={10} precision={4} suffix={<OdCoin size={14} />} />
             </Form.Item>
             <div className="oo-user-quota-balance" aria-label="当前余额">
               <span className="oo-user-quota-label">当前余额</span>
-              <span className="oo-num">{fmtOd(quotaTarget?.quota || 0, perUnit, 2)} {CURRENCY_NAME}</span>
+              <OdAmount quota={quotaTarget?.quota} perUnit={perUnit} />
             </div>
           </div>
         </Form>

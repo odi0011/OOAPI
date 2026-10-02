@@ -1,8 +1,9 @@
+import OdAmount, { OdText } from "../components/OdAmount";
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { Table, Tag, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions } from "antd";
 import { ReloadOutlined, HistoryOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
-import { fmtDate, fmtOd, unitsPerOd } from "../services/format";
+import { fmtDate, unitsPerOd } from "../services/format";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
@@ -101,7 +102,7 @@ export default function OperationLogPage() {
       title: "内容",
       dataIndex: "content",
       ellipsis: true,
-      render: (v) => <span style={{ fontSize: 12.5 }}>{v}</span>,
+      render: (v) => <span style={{ fontSize: 12.5 }}><OdText>{v}</OdText></span>,
     },
     // 额度变动（充值/扣减）单独一列，便于核对账目
     {
@@ -115,7 +116,7 @@ export default function OperationLogPage() {
         return (
           <span className="oo-num" style={{ color: r.type === 1 ? "var(--green)" : "var(--ink)" }}>
             {sign}
-            {fmtOd(n, perUnit, 4)}
+            <OdAmount quota={n} perUnit={perUnit} digits={4} />
           </span>
         );
       },
@@ -238,11 +239,11 @@ export default function OperationLogPage() {
               <UserAvatar user={{ id: detail.user_id, username: detail.username }} size={20} showName />
             </Descriptions.Item>
             <Descriptions.Item label="类型">{detail.type_label}</Descriptions.Item>
-            <Descriptions.Item label="内容">{detail.content}</Descriptions.Item>
+            <Descriptions.Item label="内容"><OdText>{detail.content}</OdText></Descriptions.Item>
             {Number(detail.quota) ? (
               <Descriptions.Item label="额度变动">
                 {detail.type === 1 ? "+" : "-"}
-                {fmtOd(Number(detail.quota), perUnit, 4)}
+                <OdAmount quota={detail.quota} perUnit={perUnit} digits={4} />
               </Descriptions.Item>
             ) : null}
             <Descriptions.Item label="IP">{detail.ip || "-"}</Descriptions.Item>

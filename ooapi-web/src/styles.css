@@ -1033,6 +1033,8 @@ h1, h2, h3, h4 {
 }
 
 .oo-brand {
+  color: var(--ink);
+  text-decoration: none;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -1063,11 +1065,18 @@ h1, h2, h3, h4 {
 }
 
 .oo-nav {
+  min-height: 0;
+  scrollbar-width: none;
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 10px 8px 14px;
 }
+
+.oo-nav::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.oo-brand:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.oo-od-amount { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; vertical-align: baseline; }
+.oo-user-identity { display: flex; align-items: center; gap: 9px; min-width: 0; }
 
 .oo-nav-group + .oo-nav-group { margin-top: 16px; }
 
@@ -1128,19 +1137,18 @@ h1, h2, h3, h4 {
   outline-offset: 3px;
 }
 
-/* antd Sider 的内层容器需要独立 flex 列，否则「导航滚动 + 底部固定」不生效 */
+/* antd Sider 的内层容器使用 flex 列，Logo 固定，菜单内部滚动。 */
 .oo-shell .oo-sider .ant-layout-sider-children {
   display: flex;
   flex-direction: column;
 }
 
 .oo-shell .oo-sider .oo-nav {
+  min-height: 0;
+  scrollbar-width: none;
   flex: 1;
   overflow: auto;
-  min-height: 0;
 }
-
-.oo-shell .oo-sider .oo-sider-foot { position: static; }
 
 /* 对话页整页锁定高度，内部各自滚动 */
 .oo-content.ui-chat-content { padding: 24px; overflow: hidden; }
@@ -1166,12 +1174,6 @@ h1, h2, h3, h4 {
   background: var(--field);
   color: var(--ink-3);
   flex-shrink: 0;
-}
-
-.oo-sider-foot {
-  flex-shrink: 0;
-  border-top: 1px solid var(--line);
-  padding: 8px;
 }
 
 /* --- 顶栏 --- */

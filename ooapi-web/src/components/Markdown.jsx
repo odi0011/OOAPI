@@ -1,3 +1,4 @@
+import { OdText } from "./OdAmount";
 // 轻量 Markdown 渲染（对话与智能体输出用）
 // 仅覆盖模型常用输出：代码块、行内代码、标题、粗体、列表、引用、链接。
 // 输出为 React 节点，避免 dangerouslySetInnerHTML 带来的注入风险。
@@ -80,28 +81,28 @@ function renderInline(text, keyPrefix) {
   let m;
   let i = 0;
   while ((m = re.exec(text)) !== null) {
-    if (m.index > last) nodes.push(text.slice(last, m.index));
+    if (m.index > last) nodes.push(<OdText key={`${keyPrefix}-t${i++}`}>{text.slice(last, m.index)}</OdText>);
     const tok = m[0];
     if (tok.startsWith("`")) {
       nodes.push(<code key={`${keyPrefix}-c${i++}`}>{tok.slice(1, -1)}</code>);
     } else if (tok.startsWith("**")) {
-      nodes.push(<strong key={`${keyPrefix}-b${i++}`}>{tok.slice(2, -2)}</strong>);
+      nodes.push(<strong key={`${keyPrefix}-b${i++}`}><OdText>{tok.slice(2, -2)}</OdText></strong>);
     } else {
       const mm = /\[([^\]]+)\]\(([^)]+)\)/.exec(tok);
       const href = safeHref(mm[2]);
       nodes.push(
         href ? (
           <a key={`${keyPrefix}-a${i++}`} href={href} target="_blank" rel="noreferrer">
-            {mm[1]}
+            <OdText>{mm[1]}</OdText>
           </a>
         ) : (
-          <span key={`${keyPrefix}-a${i++}`}>{mm[1]}</span>
+          <span key={`${keyPrefix}-a${i++}`}><OdText>{mm[1]}</OdText></span>
         )
       );
     }
     last = m.index + tok.length;
   }
-  if (last < text.length) nodes.push(text.slice(last));
+  if (last < text.length) nodes.push(<OdText key={`${keyPrefix}-t${i++}`}>{text.slice(last)}</OdText>);
   return nodes;
 }
 

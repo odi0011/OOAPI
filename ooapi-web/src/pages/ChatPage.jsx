@@ -1,3 +1,4 @@
+import OdAmount from "../components/OdAmount";
 // 对话页（原「对话工作台」）
 // ---------------------------------------------------------------------------
 // 页面结构（opencode 风格的三段式）：
@@ -46,9 +47,8 @@ import { chatApi, runChatStream, resumeChatStream } from "../services/chat";
 import { useApp } from "../context/AppContext";
 import BrandLogo, { BrandName } from "../components/BrandLogo";
 import Markdown from "../components/Markdown";
-import { OdCoin } from "../components/OdCoin";
 import { formatDuration } from "../components/UsageCells";
-import { CURRENCY_NAME, copyText, fmtOd, unitsPerOd } from "../services/format";
+import { copyText, fmtOd, unitsPerOd } from "../services/format";
 import { LoadingState, ThinkingState, StreamingText } from "../components/beautifului";
 import PromptBar from "../components/PromptBar";
 import {
@@ -217,7 +217,7 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
             </Popconfirm>
           </Tooltip>
           <div className="ui-msg-stats">
-            {visibility.usage_records && <><Tooltip title="本轮成本（OD币）；— 表示尚未确认结算结果"><span className="ui-msg-cost"><OdCoin size={12} />{costText}</span></Tooltip>
+            {visibility.usage_records && <><Tooltip title="本轮成本；— 表示尚未确认结算结果"><span className="ui-msg-cost"><OdAmount>{costText}</OdAmount></span></Tooltip>
             <Tooltip trigger={["hover", "focus", "click"]} title={<div className="ui-msg-token-detail">
               <span>输入 <b>{inputKnown ? tokenCount(msg.tokens.prompt) : "—"}</b></span>
               <span>输出 <b>{outputKnown ? tokenCount(msg.tokens.completion) : "—"}</b></span>
@@ -394,8 +394,7 @@ function SettingsSheet({ open, onClose, session, settings, onSettings, saving, q
             {visibility.usage_records && <><div className="ui-chat2-kv">
               <span>本会话累计消耗</span>
               <strong style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                <OdCoin size={13} />
-                <span className="oo-num">{session?.cost ?? 0}</span>
+                <OdAmount>{session?.cost ?? 0}</OdAmount>
               </strong>
             </div>
             <div className="ui-chat2-kv">
@@ -411,7 +410,7 @@ function SettingsSheet({ open, onClose, session, settings, onSettings, saving, q
             {visibility.balance && <div className="ui-chat2-kv">
               <span>账户余额</span>
               <strong>
-                <OdCoin size={13} /> {quotaText}
+                {quotaText}
               </strong>
             </div>}
           </div>
@@ -515,7 +514,7 @@ export default function ChatPage() {
   const models = meta?.models || [];
   const curModel = models.find((m) => m.id === session?.model && (!session?.settings?.channelType || m.vendor === session.settings.channelType));
   const settings = session?.settings || {};
-  const quota = user?.quota != null ? fmtOd(user.quota, unitsPerOd(status), 2) : "—";
+  const quota = user?.quota != null ? <OdAmount quota={user.quota} perUnit={unitsPerOd(status)} /> : "—";
   // 对话必须通过密钥路由：没有可用密钥就没有可用模型，输入区与编排栏一并禁用。
   //
   // 判据用后端给的 `usable`（= 已启用 + 未过期 + **已绑定分组**），不能只看 status：
@@ -1537,7 +1536,7 @@ export default function ChatPage() {
           {visibility.balance && <div>余额 {quota}</div>}
           {visibility.usage_records && sessionCost ? (
             <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-              本会话已用 <OdCoin size={11} muted /> {sessionCost}
+              本会话已用 <OdAmount>{sessionCost}</OdAmount>
             </div>
           ) : null}
         </div>
@@ -1560,7 +1559,7 @@ export default function ChatPage() {
               <span>{msgs.length} 条消息</span>
               {visibility.usage_records && sessionCost ? (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                  · 已用 <OdCoin size={11} muted /> {sessionCost}
+                  · 已用 <OdAmount>{sessionCost}</OdAmount>
                 </span>
               ) : null}
             </div>

@@ -1,3 +1,4 @@
+import OdAmount from "../components/OdAmount";
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
   Table, Space, Typography, Input, Popconfirm, Modal, Form, Select, Switch,
@@ -13,7 +14,7 @@ import {
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
-import { fmtDate, CURRENCY_NAME, copyText, odOf, unitsPerOd } from "../services/format";
+import { fmtDate, copyText, odOf, unitsPerOd } from "../services/format";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import { VendorIcon, ModelLabel, GroupVendorIcons, GroupTag } from "../components/VendorIcon";
@@ -4095,7 +4096,7 @@ export default function AdminChannelsPage() {
                 value={fmtCompact(statsPeak.tokens)}
                 hint={statsPeak.day ? `${statsPeak.day} · ${fmtFull(statsPeak.tokens)} tokens` : "暂无数据"}
               />
-              <StatCard label={`累计消费（${CURRENCY_NAME}）`} value={statsAll.od} hint={`${fmtFull(statsAll.units)} 额度单位`} />
+              <StatCard label="累计消费" value={<OdAmount>{statsAll.od}</OdAmount>} hint={`${fmtFull(statsAll.units)} 额度单位`} />
               <StatCard label="当前连续天数" value={`${statsStreaks.current} 天`} />
               <StatCard label="最长连续天数" value={`${statsStreaks.longest} 天`} />
             </div>
@@ -4112,7 +4113,7 @@ export default function AdminChannelsPage() {
             <div className="oo-stats-card-head">
               <div className="oo-stats-card-title">最近调用</div>
               <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                近 {statsData.days} 天：调用 {statsData.totals.calls} · Tokens {fmtFull(statsData.totals.tokens)} · 消费 {statsData.totals.od} {CURRENCY_NAME}
+                近 {statsData.days} 天：调用 {statsData.totals.calls} · Tokens {fmtFull(statsData.totals.tokens)} · 消费 <OdAmount>{statsData.totals.od}</OdAmount>
               </span>
             </div>
             <div className="oo-stats-recent">

@@ -1,3 +1,5 @@
+import OdAmount from "../components/OdAmount";
+import { OdCoin } from "../components/OdCoin";
 import React, { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Alert, App as AntApp, Button, Empty, Segmented, Skeleton, Table, Tag } from "antd";
@@ -42,13 +44,13 @@ export default function AdminDashboardPage() {
   const trend = data?.trend || [];
   const days = data?.range?.days || parseInt(range, 10);
   const err = errorRate(t);
-  const series = [{ name: metric === 'calls' ? '调用次数' : '消费（OD币）', values: trend.map((d) => ({ x: d.day, y: metric === 'calls' ? d.calls : odOf(d.units, perUnit) })), format: (v) => `${fmtCompact(v)} ${metric === 'calls' ? '次' : 'OD币'}` }];
+  const series = [{ name: metric === 'calls' ? '调用次数' : '消费', values: trend.map((d) => ({ x: d.day, y: metric === 'calls' ? d.calls : odOf(d.units, perUnit) })), format: (v) => metric === 'calls' ? `${fmtCompact(v)} 次` : <OdAmount>{fmtCompact(v)}</OdAmount> }];
   const tokenSeries = [
     { name: "输入（含缓存）", values: trend.map((d) => ({ x: d.day, y: d.prompt_tokens })) },
     { name: "输出", color: SERIES_COLORS[1], values: trend.map((d) => ({ x: d.day, y: d.completion_tokens })) },
   ];
   const rankItems = (rows, name) => (rows || []).map((r) => ({ name: r[name], value: odOf(r.units, perUnit), sub: `${fmtCompact(r.calls)} 次调用` }));
-  const money = (v) => `${fmtCompact(v)} OD币`;
+  const money = (v) => <OdAmount>{fmtCompact(v)}</OdAmount>;
 
   return <div className="oo-page oo-dashboard">
     <PageHeader title="平台看板" tags={<Tag>全站用量</Tag>} extra={<><Segmented value={range} options={RANGES} onChange={setRange} /><Button icon={<ReloadOutlined />} loading={loading} onClick={load} aria-label="刷新平台看板" /></>} />
@@ -57,7 +59,7 @@ export default function AdminDashboardPage() {
     {!data ? loading && <div className="oo-panel oo-dashboard-loading"><Skeleton active paragraph={{ rows: 8 }} /></div> : <>
       <div className="oo-kpi-grid">
         <KpiCard label="调用次数" value={fmtCompact(t.calls)} unit="次" current={t.calls} previous={p.calls} spark={trend.map((d) => d.calls)} hint="全部使用记录；失败与停止请求已包含在内" />
-        <KpiCard label="消费金额" value={fmtOd(t.units, perUnit, 4, false)} unit="OD币" current={t.units} previous={p.units} spark={trend.map((d) => d.units)} />
+        <KpiCard label="消费金额" value={fmtOd(t.units, perUnit, 4, false)} unit={<OdCoin size={16} />} current={t.units} previous={p.units} spark={trend.map((d) => d.units)} />
         <KpiCard label="活跃用户" value={fmtCompact(t.active_users)} unit="人" current={t.active_users} previous={p.active_users} hint={`区间新增 ${t.users_new ?? 0} 人 · 当前启用 ${t.users_total ?? 0} 人`} />
         <KpiCard label="请求失败率" value={err == null ? '—' : `${err.toFixed(2)}%`} hint={err == null ? '所选区间暂无请求样本' : `失败 ${fmtCompact(t.errors)} / 全部 ${fmtCompact(t.calls)} 次；含业务限制，不含主动停止`} tone={err != null && err >= 5 ? 'warning' : undefined} />
       </div>
@@ -80,7 +82,7 @@ export default function AdminDashboardPage() {
         <Table className="oo-table" rowKey="channel_id" size="small" pagination={false} scroll={{ x: 790 }} dataSource={data.by_channel || []} locale={{ emptyText: <Empty description="所选区间暂无渠道调用" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }} columns={[
           { title: '渠道', dataIndex: 'name', render: (v, r) => <span className="oo-dashboard-channel"><VendorIcon type={r.type} size={24} /><span><b>{v}</b><small>#{r.channel_id}</small></span></span> },
           { title: '调用', dataIndex: 'calls', width: 95, align: 'right', sorter: (a, b) => a.calls - b.calls, render: fmtCompact },
-          { title: '消费', dataIndex: 'units', width: 140, align: 'right', sorter: (a, b) => a.units - b.units, defaultSortOrder: 'descend', render: (v) => fmtOd(v, perUnit, 4, true) },
+          { title: '消费', dataIndex: 'units', width: 140, align: 'right', sorter: (a, b) => a.units - b.units, defaultSortOrder: 'descend', render: (v) => <OdAmount quota={v} perUnit={perUnit} digits={4} /> },
           { title: '成功率', dataIndex: 'success_rate', width: 110, align: 'right', render: (v) => <span style={{ color: v != null && v < 95 ? 'var(--orange)' : undefined }}>{rate(v)}</span> },
           { title: '失败', dataIndex: 'errors', width: 90, align: 'right', render: fmtCompact },
           { title: '平均耗时', dataIndex: 'avg_elapsed', width: 120, render: (v, r) => <DurationCell elapsedMs={v} firstTokenMs={r.avg_first_token} /> },
