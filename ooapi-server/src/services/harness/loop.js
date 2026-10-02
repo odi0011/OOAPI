@@ -16,7 +16,7 @@ import { modelForChannelMatch } from "../models.js";
 import { buildSystemPrompt, SUBAGENTS } from "./agents.js";
 import { toolSpecs, nativeToolSpecs, runTool } from "./tools.js";
 import { callsText, chatCalls, textToolMessages } from "../tool-wire.js";
-import { DEFAULT_MAX_STEPS } from "./sessions.js";
+import { DEFAULT_MAX_STEPS, MAX_STEPS_LIMIT } from "./sessions.js";
 
 const MAX_DEPTH = 1; // 子代理不允许再派子代理
 const SUBAGENT_MAX_STEPS = 3;
@@ -454,12 +454,18 @@ async function loop(opts, billing, depth = 0) {
     return await loopInner(opts, billing, depth, sink);
   } catch (err) {
     // 已产生的 parts 带出去：前端能保留已看到的内容，route 也能把它落库
+    const track = sink.parts.find((p) => p.type === "trajectory");
+    if (track) {
+      const patch = { status: opts.signal?.aborted ? "stopped" : "failed", ended: Date.now() };
+      Object.assign(track, patch);
+      opts.emit?.({ type: "part_update", id: track.id, patch });
+    }
     err.parts = sink.parts;
     throw err;
   }
 }
 
-async function loopInner({ session, agent, model, settings = {}, history = [], userText = "", images = [], docs = [], groupName = null, user = null, signal, emit, onTodo, onCall, modelCaps = null }, billing, depth, sink) {
+async function loopInner({ session, agent, model, settings = {}, history = [], userText = "", images = [], docs = [], groupName = null, user = null, signal, emit, onTodo, onCall, authorizeTool, modelCaps = null }, billing, depth, sink) {
   // 同一站内对话跨轮保留会话，每轮/工具步独立请求；子代理也有自己的上下文。
   const conversationId = String(session?.id || crypto.randomUUID());
   const turnId = crypto.randomUUID();
@@ -472,6 +478,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
   // 如果事件只存引用，断线续传回放时会把「最终文本」当成创建时的事件推一次，
   // 再叠加后续 delta，界面上就出现内容重复。字符串不可变，浅拷贝即可定格当时状态。
   const emitPart = (part) => {
+    part.created ||= Date.now();
     parts.push(part);
     emit?.({ type: "part", part: { ...part } });
   };
@@ -482,7 +489,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
 
   const tools = (settings.tools ?? agent.tools ?? []).filter((t) => (depth >= MAX_DEPTH ? t !== "task" : true));
   const requestedSteps = Number(settings.maxSteps);
-  const maxSteps = depth === 0 ? Math.max(1, Math.min(Number.isFinite(requestedSteps) && requestedSteps > 0 ? Math.floor(requestedSteps) : DEFAULT_MAX_STEPS, 16)) : SUBAGENT_MAX_STEPS;
+  const maxSteps = depth === 0 ? Math.max(1, Math.min(Number.isFinite(requestedSteps) && requestedSteps > 0 ? Math.floor(requestedSteps) : DEFAULT_MAX_STEPS, MAX_STEPS_LIMIT)) : SUBAGENT_MAX_STEPS;
   let todo = Array.isArray(session?.todo) ? session.todo : [];
 
   // 子代理的 runAgent：主智能体通过 task 工具调用；深度到顶后为 null（工具会拒绝）
@@ -496,7 +503,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
               session: { id: `${conversationId}:task:${uid()}`, todo: [] },
               agent: sub,
               model,
-              settings: { ...settings, tools: sub.tools, maxSteps: SUBAGENT_MAX_STEPS },
+              settings: { ...settings, tools: sub.tools.filter((id) => tools.includes(id)), maxSteps: SUBAGENT_MAX_STEPS },
               history: [],
               userText: prompt,
               images: [],
@@ -507,6 +514,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
               onTodo: null,
               // 子循环共用 billing 数组；回调只通知路由，不能再经父 record 重复入账。
               onCall,
+              authorizeTool,
               modelCaps},
             billing,
             depth + 1
@@ -521,13 +529,21 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
     : userText;
   const messages = [...historyToMessages(history), { role: "user", content: currentUserText }];
   let lastText = "";
-  let hitLimit = false;
   let formatFailures = 0;
+  let finalizeReason = "";
+  const attempted = new Map();
+  let consecutiveFailures = 0;
+  const trajectory = { id: uid(), type: "trajectory", step: 0, budget: maxSteps, status: "running", started: Date.now() };
+  emitPart(trajectory);
 
-  for (let step = 1; step <= maxSteps; step++) {
+  // 工具预算之外固定预留一次无工具收尾，不再把已有结果丢给一个步数错误。
+  for (let step = 1; step <= maxSteps + 1; step++) {
     if (signal?.aborted) throw Object.assign(new Error("已停止"), { code: "ABORTED" });
-
-    const specs = toolSpecs(tools);
+    const finalizing = Boolean(finalizeReason) || step > maxSteps;
+    const activeTools = finalizing ? [] : tools;
+    if (finalizing) messages.push({ role: "user", content: "本轮工具阶段已结束。请根据上文真实工具结果直接给出最终答复，说明尚未核实的部分；不要再次调用工具，不要编造数据。" });
+    patchPart(trajectory, { step, status: finalizing ? "summarizing" : "running", reason: finalizeReason || (finalizing ? "budget" : "") });
+    const specs = toolSpecs(activeTools);
     const system = buildSystemPrompt({
       agent,
       model,
@@ -576,7 +592,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
         model: modelForChannelMatch(model) || model,
         prompt: stepPrompt,
         messages: [{ role: "system", content: system }, ...messages],
-        tools: nativeToolSpecs(tools),
+        tools: nativeToolSpecs(activeTools),
         prepareRequest: ({ nativeTools }) => {
           const instructions = nativeTools ? buildSystemPrompt({ agent, model, settings, toolSpecs: specs, todo, subagents: SUBAGENTS, depth, nativeTools: true }) : system;
           const prepared = nativeTools ? messages : textToolMessages(messages);
@@ -648,11 +664,18 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
 
     const stepText = (textPart?.text || "").trim();
     if (stepText) lastText = stepText;
-    if (!stepCalls.length && !bad) break; // 没有工具调用 → 最终回答
+    if (!stepCalls.length && !bad && stepText) break; // 有实际正文才算最终回答
+    if (finalizing) {
+      // 不配合收尾的模型仍保留真实结果，明确剩余工作，不能冒充完成。
+      appendText("\n\n本轮工具查询已结束，模型未给出完整总结。可在执行过程查看已取得的结果，或继续追问尚未完成的部分。");
+      lastText = textPart.text;
+      patchPart(trajectory, { partial: true });
+      break;
+    }
 
     if (bad) {
       formatFailures++;
-      if (formatFailures > 1 || step === maxSteps) {
+      if (formatFailures > 1) {
         throw Object.assign(new Error(failureCode ? "模型只返回工具状态，未完成回答" : "工具调用协议无法解析"), { code: failureCode || "TOOL_PROTOCOL_ERROR" });
       }
       // 不把内部错误占位符伪装成助手回答；真实故障中模型在下一步原样复述了这个占位符。
@@ -663,7 +686,6 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
           (failureCode ? "你上一条只有工具状态描述，没有回答用户的问题。已有工具结果仍在上文；需要更多信息时必须输出实际调用，不能复述调用状态。\n" : "你上一条的工具调用格式无法解析。调用必须严格写成：\n") +
           (result.toolMode === "native" ? "请通过原生工具接口传入合法 JSON 对象参数。\n" : `${OPEN_TAG}{"tool":"工具名","args":{...}}${CLOSE_TAG}\n`) +
           "请重新输出合法的调用，或者依据工具结果完整回答用户本轮提出的所有问题。"});
-      if (step === maxSteps) hitLimit = true;
       continue;
     }
 
@@ -673,12 +695,19 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
     for (const call of stepCalls) {
       if (signal?.aborted) throw Object.assign(new Error("已停止"), { code: "ABORTED" });
       const spec = specs.find((s) => s.id === call.tool);
-      const toolPart = { id: uid(), type: "tool", tool: call.tool, name: spec?.name || call.tool, args: call.args, status: "running", output: "", started: Date.now() };
+      const toolPart = { id: uid(), type: "tool", tool: call.tool, name: spec?.name || call.tool, args: call.args, step, status: "running", output: "", started: Date.now() };
       emitPart(toolPart);
 
       let res;
       try {
-        res = spec
+        const fingerprint = JSON.stringify([call.tool, Object.entries(call.args || {}).sort(([a], [b]) => a.localeCompare(b))]);
+        const previous = attempted.get(fingerprint);
+        if (settings.permissionMode === "ask" && spec && !previous && call.tool !== "todowrite") patchPart(toolPart, { status: "awaiting_approval" });
+        const approved = spec && !previous ? (authorizeTool ? await authorizeTool({ tool: call.tool, name: spec.name, args: call.args }) : settings.permissionMode !== "ask") : true;
+        patchPart(toolPart, { status: "running", started: Date.now(), reused: Boolean(previous) });
+        res = previous ? { ...previous, output: `${previous.output}\n（相同查询已有结果，请使用这些结果或更换查询方式。）` }
+        : !approved ? { ok: false, output: "用户未批准此工具调用；不要重复请求同一操作，请说明限制并完成可回答的部分。" }
+        : spec
         ? await runTool(call.tool, call.args, {
             model,
             groupName,
@@ -692,6 +721,9 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
             // 某些上游（如网页版反代）不支持联网搜索：工具要据此拒绝，而不是发一次必定失败的请求
             searchSupported: modelCaps?.supportsSearch !== false})
         : { ok: false, output: `工具「${call.tool}」在本轮不可用；可用工具：${specs.map((s) => s.id).join("、") || "（无）"}` };
+        attempted.set(fingerprint, res);
+        consecutiveFailures = previous || !res.ok ? consecutiveFailures + 1 : 0;
+        if (consecutiveFailures >= 3) finalizeReason = "no_progress";
       } catch (e) {
         // 主动停止也要结束工具的运行状态，刷新后不能永久显示“执行中”。
         patchPart(toolPart, { status: "failed", output: signal?.aborted ? "工具已停止" : String(e.message || "工具执行失败"), ended: Date.now() });
@@ -713,13 +745,9 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
     // 把已执行的真实调用（含参数）交回模型，而不是让它学习并复述内部占位文字。
     messages.push({ role: "assistant", content: stepText, ...result.assistantExtras, tool_calls: chatCalls(stepCalls.map(c => ({ id: c.id, name: c.tool, arguments: JSON.stringify(c.args), thoughtSignature: c.thoughtSignature }))) });
     messages.push(...toolResults);
-    if (step === maxSteps) hitLimit = true;
   }
 
-  if (hitLimit) {
-    // 只有工具结果、没有最终回答时不能以 success 收尾；路由统一持久化错误、实际用量与重试入口。
-    throw Object.assign(new Error(`已达到本轮最大步数（${maxSteps}），尚未完成最终回答`), { code: "TOOL_STEP_LIMIT" });
-  }
+  patchPart(trajectory, { status: "done", ended: Date.now() });
 
   return { parts, text: lastText, todo };
 }

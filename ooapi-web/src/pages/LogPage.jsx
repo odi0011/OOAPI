@@ -1,3 +1,4 @@
+import CodeBlock from "../components/CodeBlock";
 import OdAmount, { OdText } from "../components/OdAmount";
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { Table, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions, Space, Typography } from "antd";
@@ -37,24 +38,7 @@ function LogTextBlock({ text, truncated, empty = "-" }) {
   if (!text) return <span style={{ color: "var(--ink-3)", fontSize: 12 }}>{empty}</span>;
   return (
     <div>
-      <pre
-        style={{
-          margin: 0,
-          maxHeight: 220,
-          overflow: "auto",
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
-          fontFamily: "var(--font-mono)",
-          fontSize: 11.5,
-          lineHeight: 1.55,
-          background: "var(--inset)",
-          border: "1px solid var(--line)",
-          borderRadius: "var(--r-sm)",
-          padding: "6px 9px",
-        }}
-      >
-        {text}
-      </pre>
+      <CodeBlock lang="text" code={text}/>
       {truncated ? (
         <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
           原文较长，已保留部分内容（最多 4000 字符）

@@ -1,3 +1,4 @@
+import CodeBlock from "./CodeBlock";
 // 产出物预览（Artifact）
 // ---------------------------------------------------------------------------
 // 模型经常回一坨 HTML/CSS/JS/SVG 或 React 组件代码。纯文本贴出来用户还得自己复制去跑，
@@ -142,9 +143,7 @@ export function ArtifactPreview({ lang, code }) {
           referrerPolicy="no-referrer"
         />
       ) : (
-        <pre className="bui-artifact-code" data-lang={lang || undefined}>
-          <code>{code}</code>
-        </pre>
+        <CodeBlock lang={lang} code={code}/>
       )}
 
       {full ? (

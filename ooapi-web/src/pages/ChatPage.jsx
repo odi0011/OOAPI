@@ -1,3 +1,5 @@
+import AgentTrajectory, { ToolApproval } from "../components/AgentTrajectory";
+import ChatMascot from "../components/ChatMascot";
 import OdAmount from "../components/OdAmount";
 // 对话页（原「对话工作台」）
 // ---------------------------------------------------------------------------
@@ -11,7 +13,7 @@ import OdAmount from "../components/OdAmount";
 // 刷新页面不丢；本页只负责渲染与把用户操作发回服务端。
 import { userDataVisibility } from "../services/visibility";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { App as AntApp, Alert, Button, Checkbox, Drawer, Dropdown, Form, Input, Modal, Popconfirm, Tooltip } from "antd";
+import { App as AntApp, Alert, Button, Checkbox, Drawer, Dropdown, Form, Input, Modal, Popconfirm, Tooltip, Radio, InputNumber } from "antd";
 import {
   CopyOutlined,
   SelectOutlined,
@@ -49,18 +51,18 @@ import BrandLogo, { BrandName } from "../components/BrandLogo";
 import Markdown from "../components/Markdown";
 import { formatDuration } from "../components/UsageCells";
 import { copyText, fmtOd, unitsPerOd } from "../services/format";
-import { LoadingState, ThinkingState, StreamingText } from "../components/beautifului";
+import { LoadingState, StreamingText } from "../components/beautifului";
 import PromptBar from "../components/PromptBar";
 import {
   Shelf,
   ShelfGroup,
   ShelfItem,
-  ToolChips,
   Notice,
   SuggestionCard,
   TodoPanel,
 } from "../components/beautifului-chat";
 import "../components/chat.css";
+import "../components/chat-workspace.css";
 
 // 欢迎页的快捷问题：不再绑定「智能体」（已取消选择），助手自己判断要不要查资料/查账号
 const SUGGESTS = [
@@ -105,7 +107,7 @@ const mergeRecovery = (userId, sessionId, messages) => {
  *   user      → 右侧气泡（文字 + 图片）
  *   assistant → 无气泡正文，按 parts 顺序渲染：思考链 / 工具 chip / 正文 / 待办 / 提示
  * ------------------------------------------------------------------------- */
-const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, streaming, visibility }) {
+const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, streaming, visibility, onApprove }) {
   if (msg.role === "user") {
     const text = (msg.parts || []).filter((p) => p.type === "text").map((p) => p.text).join("\n");
     const imgs = (msg.parts || []).filter((p) => p.type === "image").map((p) => p.url);
@@ -140,7 +142,10 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
   }
 
   const parts = msg.parts || [];
-  const textParts = parts.filter((p) => p.type === "text");
+  const allTextParts = parts.filter((p) => p.type === "text");
+  const lastToolIndex = parts.reduce((last, p, i) => p.type === "tool" ? i : last, -1);
+  const textParts = allTextParts.filter((p) => parts.indexOf(p) > lastToolIndex);
+  const finalTextId = textParts.at(-1)?.id;
   const reasoning = parts.filter((p) => p.type === "reasoning");
   const tools = parts.filter((p) => p.type === "tool");
   // 重连和终态可能包含同一条错误，只呈现一次，保留该轮实际失败信息。
@@ -150,7 +155,6 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
   const todo = parts.filter((p) => Array.isArray(p.todo)).slice(-1)[0]?.todo || msg.todo;
   const hasText = textParts.some((p) => (p.text || "").trim());
   const working = Boolean(streaming) && !hasText;
-  const reasoningWorking = Boolean(streaming) && !hasText && reasoning.length > 0;
   const inputKnown = knownNumber(msg.tokens?.prompt);
   const outputKnown = knownNumber(msg.tokens?.completion);
   const firstTokenText = knownNumber(msg.firstTokenMs) && (Number(msg.firstTokenMs) > 0 || hasText || (outputKnown && Number(msg.tokens.completion) > 0)) ? formatDuration(msg.firstTokenMs) : "—";
@@ -161,15 +165,8 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
 
   return (
     <article className="ui-msg ui-msg-ai">
-      {reasoning.length ? (
-        <ThinkingState
-          variant="Reasoning"
-          working={reasoningWorking}
-          activeTitle="正在思考"
-          doneTitle="已完成思考"
-          steps={reasoning.map((p) => ({ content: p.text, status: streaming ? "running" : "done" }))}
-        />
-      ) : null}
+      <AgentTrajectory parts={parts} streaming={streaming} finalTextId={finalTextId}/>
+      {parts.filter((p) => p.type === "approval" && p.status === "pending").map((p) => <ToolApproval key={p.id} part={p} active={streaming} onDecide={onApprove}/>)}
 
       {errors.map((part, i) => {
         const message = part.message || part.text || "本轮生成失败，请重试";
@@ -185,7 +182,7 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
       })}
 
       {todo?.length ? <TodoPanel todo={todo} /> : null}
-      <ToolChips calls={tools.map((t) => ({ ...t, ms: ms(t) }))} />
+
 
       {hasText ? (
         <StreamingText streaming={Boolean(streaming)} actions={[]}>
@@ -196,7 +193,7 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
           </div>
         </StreamingText>
       ) : working ? (
-        <LoadingState label={tools.some((t) => t.status === "running") ? "正在调用工具" : "正在生成回答"} />
+        <div className="chat-response-wait" role="status"><span/><span/><span/></div>
       ) : !streaming && !errors.length && !reasoning.length && !tools.length ? <span className="ui-msg-empty">本轮没有返回文本内容。</span> : null}
 
       {!streaming ? (
@@ -348,13 +345,14 @@ function SettingsSheet({ open, onClose, session, settings, onSettings, saving, q
 
   useEffect(() => {
     if (open) {
-      form.setFieldsValue({ title: session?.title || "", instructions: settings?.instructions || "" });
+      form.resetFields();
+      form.setFieldsValue({ title: session?.title || "", instructions: settings?.instructions || "", permissionMode: settings?.permissionMode || "auto", maxSteps: settings?.maxSteps || 12, tools: settings?.tools ?? ["account", "binance", "search", "fetch", "github", "task", "todowrite"] });
       setError("");
     }
   }, [open, session?.id, session?.title, settings?.instructions, form]);
 
-  const save = async ({ title, instructions = "" }) => {
-    const patch = {};
+  const save = async ({ title, instructions = "", permissionMode, maxSteps, tools }) => {
+    const patch = { settings: { ...settings, permissionMode, maxSteps, tools } };
     if (title.trim() && title.trim() !== session?.title) patch.title = title.trim();
     if (instructions !== (settings?.instructions || "")) patch.instructions = instructions;
     setError("");
@@ -376,6 +374,15 @@ function SettingsSheet({ open, onClose, session, settings, onSettings, saving, q
           </Form.Item>
           <Form.Item name="instructions" label="会话指令（系统提示词）" extra="只作用于当前会话" rules={[{ max: 4000, message: "会话指令最多 4000 个字符" }]}>
             <Input.TextArea maxLength={4000} showCount autoSize={{ minRows: 5, maxRows: 12 }} placeholder="例如：回答尽量简短；术语先给中文再给英文；代码用 TypeScript。" />
+          </Form.Item>
+          <Form.Item name="permissionMode" label="工具执行权限">
+            <Radio.Group options={[{ label: "允许已启用的工具", value: "auto" }, { label: "每次执行前询问", value: "ask" }]}/>
+          </Form.Item>
+          <Form.Item name="tools" label="可用工具" extra="始终遵循当前账号的数据权限；任务清单自动更新。">
+            <Checkbox.Group options={[{label:"我的账号",value:"account"},{label:"我的币安",value:"binance"},{label:"联网检索",value:"search"},{label:"读取网页",value:"fetch"},{label:"GitHub",value:"github"},{label:"子任务",value:"task"},{label:"任务清单",value:"todowrite"}]}/>
+          </Form.Item>
+          <Form.Item name="maxSteps" label="每轮探索预算" extra="1–32 轮；达到预算或连续无进展后自动整理已有结果。">
+            <InputNumber min={1} max={32} precision={0} addonAfter="轮"/>
           </Form.Item>
         </Form>
 
@@ -1669,13 +1676,14 @@ export default function ChatPage() {
                   streaming={Boolean(m.streaming)}
                   onRetry={retry}
                   onCopy={copy}
+                  onApprove={(id, decision) => chatApi.approve(session.id, id, decision)}
                 />
               ))
             ) : (
               <section className="ui-chat2-welcome">
                 <div className="bui-eyebrow"><BrandLogo size={17}/> <BrandName/> · 对话</div>
                 <h2>今天，想弄清楚什么？</h2>
-                <p>直接提问即可。需要查资料、读网页、查你的账号时，助手会自己调用工具，并把过程摊开给你看。</p>
+                <p>提问、查资料，或一起完成一件事。</p>
                 <div className="bui-suggests">
                   {SUGGESTS.map((s) => (
                     <SuggestionCard
@@ -1705,6 +1713,7 @@ export default function ChatPage() {
           ) : null}
 
           <div className="ui-chat2-composer-inner">
+            <ChatMascot perch state={busy ? msgs.some((m) => m.streaming && m.parts?.some((p) => p.type === "approval" && p.status === "pending")) ? "waiting" : msgs.some((m) => m.streaming && m.parts?.some((p) => p.type === "tool" && p.status === "running")) ? "working" : "thinking" : input ? "attentive" : "idle"}/>
             <PromptBar
               textareaRef={taRef}
               value={input}
@@ -1786,7 +1795,7 @@ export default function ChatPage() {
           try {
             const body = { ...patch };
             if (body.instructions !== undefined) {
-              body.settings = { ...(sessionRef.current?.settings || {}), instructions: body.instructions };
+              body.settings = { ...(sessionRef.current?.settings || {}), ...body.settings, instructions: body.instructions };
               delete body.instructions;
             }
             const saved = await patchSession(body);

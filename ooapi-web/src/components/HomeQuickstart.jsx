@@ -1,3 +1,4 @@
+import CodeBlock from "./CodeBlock";
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { App as AntApp, Button, Segmented } from 'antd';
@@ -23,10 +24,6 @@ function example(step, language, endpoint) {
   if (language === 'Python') return `import os\nfrom openai import OpenAI\n\nclient = OpenAI(\n    base_url="${endpoint}",\n    api_key=os.environ["OOAPI_API_KEY"]\n)${step === 2 ? '\n\nfor model in client.models.list().data:\n    print(model.id)' : ''}`;
   return `import OpenAI from "openai";\n\nconst client = new OpenAI({\n  baseURL: "${endpoint}",\n  apiKey: process.env.OOAPI_API_KEY\n});${step === 2 ? '\n\nconst models = await client.models.list();\nfor (const model of models.data) {\n  console.log(model.id);\n}' : ''}`;
 }
-function CodeLine({ text }) {
-  const tokens = text.split(/("[^"\n]*"|'[^'\n]*'|#[^\n]*|\/\/[^\n]*|\b(?:import|from|const|new|await|for|in|of|export|print|curl)\b)/g);
-  return tokens.map((token, i) => <span key={i} className={/^(#|\/\/)/.test(token) ? 'qs-comment' : /^["']/.test(token) ? 'qs-string' : /^(import|from|const|new|await|for|in|of|export|print|curl)$/.test(token) ? 'qs-keyword' : undefined}>{token}</span>);
-}
 export default function HomeQuickstart({ endpoint, docs }) {
   const [step, setStep] = useState(2);
   const [language, setLanguage] = useState('Python');
@@ -43,9 +40,8 @@ export default function HomeQuickstart({ endpoint, docs }) {
       }}><span className="qs-step-number">0{i + 1}</span><span><b>{s.title}</b><small>{s.label}</small></span><ArrowRightOutlined/></button>)}</div>
       <div className="quickstart-body" id="quickstart-panel" role="tabpanel" aria-labelledby={`qs-tab-${step}`}>
         <div className="quickstart-editor">
-          <div className="qs-editor-toolbar"><span><i/><i/><i/></span><Segmented aria-label="示例语言" size="small" value={language} onChange={setLanguage} options={['cURL', 'Python', 'Node.js']}/><Button type="text" aria-label="复制示例" icon={<CopyOutlined/>} onClick={() => copy(command)}/></div>
-          <div className="qs-file-tab"><CodeOutlined/>{language === 'Python' ? 'connect.py' : language === 'Node.js' ? 'connect.mjs' : 'terminal.sh'}<span>可复制示例</span></div>
-          <pre className="qs-code" key={`${step}-${language}`}><code>{command.split('\n').map((line, i) => <span className="qs-code-line" key={i}><span className="qs-line-number" aria-hidden="true">{i + 1}</span><span><CodeLine text={line || ' '}/></span>{'\n'}</span>)}</code></pre>
+          <div className="qs-editor-toolbar"><Segmented aria-label="示例语言" size="small" value={language} onChange={setLanguage} options={['cURL', 'Python', 'Node.js']}/></div>
+          <CodeBlock lang={language} title={language === "Python" ? "connect.py" : language === "Node.js" ? "connect.mjs" : "terminal.sh"} code={command}/>
           <div className="qs-editor-status"><span><span className="studio-status-dot"/> HTTP / JSON</span><span>{language === 'cURL' ? '使用系统终端' : 'OpenAI SDK'}</span></div>
         </div>
         <div className="quickstart-context" key={step}>

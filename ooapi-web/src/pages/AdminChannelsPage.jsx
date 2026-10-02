@@ -1,3 +1,4 @@
+import CodeBlock from "../components/CodeBlock";
 import OdAmount from "../components/OdAmount";
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
@@ -3748,18 +3749,7 @@ export default function AdminChannelsPage() {
           placeholder="粘贴 JSON 文件内容（例如 sub2api 导出、CPA auths/*.json）"
         />
         {importResult ? (
-          <pre
-            style={{
-              marginTop: 12,
-              maxHeight: 220,
-              overflow: "auto",
-              fontSize: 12,
-                background: "var(--inset)",
-              padding: 10,
-              borderRadius: 8,
-            }}
-          >
-            {JSON.stringify(
+          <CodeBlock lang="json" code={JSON.stringify(
               {
                 成功: importResult.created,
                 跳过: importResult.skipped,
@@ -3770,8 +3760,7 @@ export default function AdminChannelsPage() {
               },
               null,
               2
-            )}
-          </pre>
+            )}/>
         ) : null}
       </Modal>
 

@@ -48,6 +48,7 @@ const harness = await loadMocked("../src/services/harness/loop.js", `
   const {toolSpecs,nativeToolSpecs,runTool}=audit.tools;
   const {callsText,chatCalls,textToolMessages}=audit.toolWire;
   const DEFAULT_MAX_STEPS=8;
+  const MAX_STEPS_LIMIT=32;
 `);
 const executor = await loadMocked("../src/services/execute.js", `
   const crypto=audit.crypto;
@@ -545,15 +546,15 @@ await test("工具已完成但反复只返回状态时失败退出且保留工�
     assert.equal(count,3); assert.equal(calls.length,3);
   } finally { audit.pool.query = originalQuery; }
 });
-await test("最后一步执行工具但未生成最终回答时明确失败，不能以success收尾", async () => {
+await test("预算后预留无工具收尾，模型拒绝收尾时明确标记未完成", async () => {
   audit.complete = async o => { const content='<tool_call>{"tool":"todowrite","args":{"todos":[{"content":"pending","status":"pending"}]}}</tool_call>';o.onDelta(content);return mockResult(content); };
   for(const maxSteps of [1,1.5]){
     const calls=[];
-    await assert.rejects(()=>harness.runHarness({...harnessOptions(["todowrite"],calls),settings:{tools:["todowrite"],maxSteps}}),e=>{
-      assert.equal(e.code,"TOOL_STEP_LIMIT");assert.equal(e.calls.length,1);
-      assert.equal(e.parts.find(p=>p.type==="tool").status,"done");return true;
-    });
-    assert.equal(calls.length,1);
+    const out=await harness.runHarness({...harnessOptions(["todowrite"],calls),settings:{tools:["todowrite"],maxSteps}});
+    assert.equal(calls.length,2);
+    assert.equal(out.parts.filter(p=>p.type==="tool").length,1);
+    assert.equal(out.parts.find(p=>p.type==="trajectory").partial,true);
+    assert.match(out.text,/未给出完整总结/);
   }
 });
 await test("反复非法工具调用只纠正一次，真实用量保留且内部占位符不进历史", async () => {
@@ -694,9 +695,29 @@ await test("换到网页渠道时工具定义采用文本协议，已执行结�
   }finally{audit.channels=null;audit.nativeMode=false;}
 });
 
+await test("探索预算用完后请求没有工具，结果正常收尾且保留用量", async () => {
+  let attempts=0; const calls=[];
+  audit.complete=async o=>{ attempts++; const content=attempts===1?'<tool_call>{"tool":"todowrite","args":{"todos":[{"content":"done","status":"completed"}]}}</tool_call>':"已完成查询，结果如下。"; if(attempts===2) assert.deepEqual(o.tools,[]);o.onDelta(content);return mockResult(content); };
+  const out=await harness.runHarness({...harnessOptions(["todowrite"],calls),settings:{maxSteps:1,tools:["todowrite"]}});
+  assert.equal(out.text,"已完成查询，结果如下。");assert.equal(calls.length,2);assert.equal(out.parts.find(p=>p.type==="trajectory").status,"done");
+});
+await test("相同查询复用结果，连续无进展自动收尾", async () => {
+  let attempts=0,executed=0;
+  audit.complete=async o=>{attempts++;const content=o.tools.length?'<tool_call>{"tool":"todowrite","args":{"todos":[{"content":"same","status":"pending"}]}}</tool_call>':"信息不足，已停止重复查询。";o.onDelta(content);return mockResult(content);};
+  const out=await harness.runHarness({...harnessOptions(["todowrite"],[]),authorizeTool:async()=>{executed++;return true;}});
+  assert.equal(executed,1);assert.equal(attempts,5);assert.match(out.text,/信息不足/);assert.equal(out.parts.find(p=>p.type==="trajectory").reason,"no_progress");
+});
+await test("审批拒绝后工具不执行，禁用工具无法通过调用参数重新开启", async()=>{
+  let attempts=0;
+  audit.complete=async o=>{const content=++attempts===1?'<tool_call>{"tool":"todowrite","args":{"todos":[{"content":"should not run","status":"completed"}]}}</tool_call>':"未获得许可。";o.onDelta(content);return mockResult(content);};
+  const out=await harness.runHarness({...harnessOptions(["todowrite"],[]),authorizeTool:async()=>false});
+  assert.deepEqual(out.todo,[]);assert.equal(out.parts.find(p=>p.type==="tool").status,"failed");
+});
 console.log(`  harness 执行/计费回归 ${passed} 项通过`);
 // 真实环回 HTTP 覆盖错误日志、事务和前置失败，不能只验证记录函数的调用次数。
 await import("./upstream-failures.test.mjs");
 await import("./gateway-failure-billing.test.mjs");
 await import("./chat-usage.test.mjs");
 await import("./harness-runs.test.mjs");
+
+await import("./harness-approvals.test.mjs");

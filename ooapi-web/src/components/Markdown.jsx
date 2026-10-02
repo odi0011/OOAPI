@@ -6,63 +6,10 @@ import { OdText } from "./OdAmount";
 // 性能约定：本组件被 React.memo 包裹，且解析结果按 text 做 useMemo 缓存。
 // 流式对话里每个 token 都会携带新的 text，只有当前这条消息会重新解析；
 // 其余消息因 props 未变而整棵跳过重渲染（长会话不掉帧的关键）。
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
+import CodeBlock from "./CodeBlock";
+import MessageChart from "./MessageChart";
 import { ArtifactPreview, canPreviewArtifact } from "./ArtifactPreview";
-
-/**
- * 代码块（带一键复制 + 超长自动折叠）
- *
- * 为什么开发者场景必须要这两个功能：
- *   · cURL / JSON payload / 堆栈报错基本都是「复制走用」，让用户手选很容易漏行；
- *   · 一条几百行的日志会把整段对话刷屏，折叠后默认只露 18 行，需要时再展开。
- */
-function CodeBlock({ lang, code }) {
-  const [copied, setCopied] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-  const lines = String(code || "").split("\n");
-  // 折叠阈值：超过 18 行即折叠（约等于一屏能读的量），避免长日志刷屏
-  const COLLAPSE_AT = 18;
-  const long = lines.length > COLLAPSE_AT;
-  const shown = long && !expanded ? lines.slice(0, COLLAPSE_AT).join("\n") : code;
-
-  const copy = async () => {
-    try {
-      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(code);
-      else {
-        // 非安全上下文（http 局域网访问）没有 clipboard API，用 textarea 兜底
-        const ta = document.createElement("textarea");
-        ta.value = code;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-      }
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* 复制失败不弹错：用户可手动选择 */
-    }
-  };
-
-  return (
-    <div className="oo-code-block" data-lang={lang || undefined}>
-      <div className="oo-code-head">
-        <span className="oo-code-lang">{lang || "text"}</span>
-        <button type="button" className="oo-code-btn" onClick={copy} title="复制代码">
-          {copied ? "已复制" : "复制"}
-        </button>
-      </div>
-      <pre>
-        <code>{shown}</code>
-      </pre>
-      {long ? (
-        <button type="button" className="oo-code-more" onClick={() => setExpanded((v) => !v)}>
-          {expanded ? "收起" : `展开全部 ${lines.length} 行`}
-        </button>
-      ) : null}
-    </div>
-  );
-}
 
 // 只允许安全协议的链接，避免模型输出 javascript:/data: 等危险 href
 // （HomePage 的 docs_link 等管理员可写字段也复用此函数）
@@ -138,7 +85,7 @@ function parseMarkdown(src) {
         i++;
       }
       blocks.push(
-        <table className="md-table" key={`p${k++}`}>
+        <div className="md-table-scroll" key={`p${k++}`} tabIndex={0}><table className="md-table">
           <thead>
             <tr>
               {head.map((c, idx) => (
@@ -159,7 +106,7 @@ function parseMarkdown(src) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       );
       continue;
     }
@@ -177,7 +124,7 @@ function parseMarkdown(src) {
       const body = buf.join("\n");
       // 可运行的产出物（网页 / SVG / React）给「代码 | 预览」双视图，一键在线跑
       blocks.push(
-        canPreviewArtifact(lang) ? (
+        lang === "oo-chart" ? <MessageChart key={`p${k++}`} source={body}/> : canPreviewArtifact(lang) ? (
           <ArtifactPreview key={`p${k++}`} lang={lang} code={body} />
         ) : (
           <CodeBlock key={`p${k++}`} lang={lang} code={body} />

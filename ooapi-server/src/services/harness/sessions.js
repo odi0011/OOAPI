@@ -7,8 +7,8 @@ import crypto from "node:crypto";
 import { pool } from "../../db.js";
 import { now, safeJSONParse } from "../../utils.js";
 
-export const MAX_STEPS_LIMIT = 16;
-export const DEFAULT_MAX_STEPS = 6;
+export const MAX_STEPS_LIMIT = 32;
+export const DEFAULT_MAX_STEPS = 12;
 export const TOOL_IDS = ["account", "binance", "search", "fetch", "github", "task", "todowrite"];
 
 // 会话 id：短、可读、无歧义字符（前端会拼进 URL/命令面板）
@@ -33,6 +33,7 @@ export function sanitizeSettings(raw = {}, { previous = {} } = {}) {
     thinking: boolOrNull(pick("thinking", base.thinking ?? null), null),
     search: boolOrNull(pick("search", base.search ?? null), null),
     tools: Array.isArray(tools) ? tools.filter((t) => TOOL_IDS.includes(t)) : null,
+    permissionMode: ["auto", "ask"].includes(pick("permissionMode", base.permissionMode)) ? pick("permissionMode", base.permissionMode) : "auto",
     maxSteps: clamp(Number(pick("maxSteps", base.maxSteps ?? DEFAULT_MAX_STEPS)) || DEFAULT_MAX_STEPS, 1, MAX_STEPS_LIMIT),
     instructions: String(pick("instructions", base.instructions ?? "")).slice(0, 4000),
     channelType: String(pick("channelType", base.channelType ?? "")).trim().toLowerCase().slice(0, 32),

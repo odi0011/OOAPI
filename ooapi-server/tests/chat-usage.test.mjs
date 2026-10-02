@@ -69,7 +69,7 @@ const query = async (store, sql, args = []) => {
   const s = String(sql).replace(/\s+/g, ' ').trim();
   queries.push(s);
   assert.equal((s.match(/\?/g) || []).length, args.length, `SQL占位符: ${s}`);
-  if (s === 'SELECT * FROM users WHERE id = ?') return [[clone(store.user)].filter((u) => u.id === Number(args[0]))];
+  if (s === 'SELECT * FROM users WHERE id = ?' || s === 'SELECT status FROM users WHERE id = ?') return [[clone(store.user)].filter((u) => u.id === Number(args[0]))];
   if (s.includes('FROM model_prices')) return [[{ model, input_price: 1, output_price: 2, cache_price: .5 },
     { model: 'glm-4.7', input_price: .6, output_price: 2.2, cache_price: .11 }]];
   if (s === 'SELECT * FROM tokens WHERE id = ? AND user_id = ?') return [[clone(store.token)].filter((t) => t.id === Number(args[0]) && t.user_id === Number(args[1]))];

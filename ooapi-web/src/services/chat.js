@@ -17,6 +17,7 @@ export const chatApi = {
   rewind: (id, fromSeq) => API.post(`/chat/sessions/${encodeURIComponent(id)}/rewind`, { fromSeq }),
   // 显式停止（只有用户点停止才真的中止上游；切页/刷新不会）
   stop: (id) => API.post(`/chat/sessions/${encodeURIComponent(id)}/stop`),
+  approve: (id, approvalId, decision) => API.post(`/chat/sessions/${encodeURIComponent(id)}/approvals/${encodeURIComponent(approvalId)}`, { decision }),
   // 这个会话是否正在生成（刷新后据此决定要不要接回事件流）
   running: (id) => API.get(`/chat/sessions/${encodeURIComponent(id)}/running`),
   // 项目

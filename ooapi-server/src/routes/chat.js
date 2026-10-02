@@ -24,6 +24,7 @@ import { rowToChannel, channelInGroup, channelSupportsModel, collectAvailableMod
 import { getBoolOption } from "../config.js";
 import { saveBuffer, getMedia, readBlob, mediaUrl, attachRef, releaseRefs } from "../services/media.js";
 import { runHarness } from "../services/harness/loop.js";
+import { requestApproval, decideApproval } from "../services/harness/approvals.js";
 import { billableFailedCall } from "../services/execute.js";
 import { publicRunError } from "../services/upstream/public-error.js";
 import { AGENTS, findAgent, publicAgents, PRIMARY_AGENTS } from "../services/harness/agents.js";
@@ -1152,6 +1153,15 @@ router.post(
   })
 );
 
+router.post("/sessions/:id/approvals/:approvalId", authRequired, asyncHandler(async (req, res) => {
+  const session = await getSession(req.user.id, req.params.id);
+  if (!session) return fail(res, "会话不存在", 404);
+  if (!decideApproval(getRun(session.id), req.user.id, req.params.approvalId, req.body?.decision)) {
+    return fail(res, "此审批已处理或已过期", 409);
+  }
+  return ok(res, { accepted: true });
+}));
+
 /** 这个会话现在有没有在跑（前端刷新后据此决定要不要接回事件流） */
 router.get(
   "/sessions/:id/running",
@@ -1191,6 +1201,19 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       user,
       signal: ctrl.signal,
       modelCaps,
+      authorizeTool: async (call) => {
+        // 长运行中账号可能被禁用；同意审批不等于绕过实时账号权限。
+        const refreshPermissions = async () => {
+          const [[current]] = await pool.query("SELECT * FROM users WHERE id = ?", [user.id]);
+          if (!current || Number(current.status) !== 1) throw Object.assign(new Error("账号不可用"), { code: "AUTH_FAILED" });
+          user.role = current.role;
+        };
+        await refreshPermissions();
+        if (settings.permissionMode !== "ask" || call.tool === "todowrite") return true;
+        const approved = await requestApproval(run, call, { signal: ctrl.signal, emit: (ev) => publish(run, ev) });
+        if (approved) await refreshPermissions();
+        return approved;
+      },
       emit: (ev) => {
         if (ev.type === "todo") runTodo = ev.todo;
         publish(run, ev);
@@ -1201,7 +1224,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       onCall: (c) => runCalls.push(c),
     });
 
-    runParts = out.parts;
+    runParts = [...out.parts, ...[...run.snapshots.values()].filter((p) => p.type === "approval")];
     runTodo = out.todo;
     // 最后一步刚结束时退出也可能先于结算发生；沿停止分支保存已有calls/parts。
     if (ctrl.signal.aborted) throw Object.assign(new Error("已停止"), { code: "ABORTED", parts: runParts });
@@ -1288,6 +1311,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
   } catch (err) {
     console.error("[chat] 运行失败：", err.code || "ERROR");
     if (Array.isArray(err.parts) && err.parts.length) runParts = err.parts;
+    runParts = [...runParts.filter((p) => p.type !== "approval"), ...[...run.snapshots.values()].filter((p) => p.type === "approval")];
     const stopped = ctrl.signal.aborted || err.code === "ABORTED";
     const errorCode = /^[\w.:-]{1,64}$/.test(String(err.code || "")) ? String(err.code) : "ERROR";
     const errorMessage = publicRunError(err, { stopped });

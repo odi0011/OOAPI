@@ -179,7 +179,7 @@ export function buildSystemPrompt({ agent, model, settings = {}, toolSpecs = [],
     lines.push("本轮没有可用工具，请直接基于已有知识回答；不确定的地方明确说明，不要编造。");
   }
 
-  if (agent.tools.includes("todowrite") && depth === 0) {
+  if (toolSpecs.some((t) => t.id === "todowrite") && depth === 0) {
     lines.push("");
     lines.push("# 待办清单");
     lines.push(
@@ -191,7 +191,7 @@ export function buildSystemPrompt({ agent, model, settings = {}, toolSpecs = [],
     }
   }
 
-  if (subagents.length && agent.tools.includes("task")) {
+  if (subagents.length && toolSpecs.some((t) => t.id === "task")) {
     lines.push("");
     lines.push("# 可派发的子代理（task 工具）");
     for (const s of subagents) lines.push(`- ${s.id}：${s.desc}`);
@@ -209,5 +209,6 @@ export function buildSystemPrompt({ agent, model, settings = {}, toolSpecs = [],
   lines.push("- 用 Markdown；中文回答，除非用户使用其他语言。");
   lines.push("- 先给结论/结果，再给依据；不要复述用户的原话，不要写「好的，我来帮你」这类开场白。");
   lines.push("- 不复述工具的原始报文，只给结论与必要出处（链接）。");
+  lines.push('- 数据图表使用 oo-chart 围栏，内容为 JSON：{"type":"bar|line|rank","title":"标题","labels":["甲","乙"],"series":[{"name":"数量","values":[1,2]}]}。只使用真实结果里的数值；不需要图表时不生成。');
   return lines.join("\n");
 }

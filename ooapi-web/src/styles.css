@@ -754,29 +754,12 @@ h1, h2, h3, h4 {
 }
 .bui-prose a:hover { border-bottom-color: var(--accent); }
 
-/* 表格（Markdown 解析出的对比表）：横向可滚动，避免长内容撑破对话列 */
-.bui-prose .md-table {
-  width: 100%;
-  margin: 10px 0;
-  border-collapse: collapse;
-  font-size: 13px;
-  display: block;
-  overflow-x: auto;
-}
-.bui-prose .md-table th,
-.bui-prose .md-table td {
-  padding: 7px 10px;
-  border: 1px solid var(--line);
-  text-align: left;
-  vertical-align: top;
-  white-space: normal;
-}
-.bui-prose .md-table th {
-  background: var(--inset);
-  font-weight: 600;
-  color: var(--ink);
-}
-.bui-prose .md-table tr:nth-child(even) td { background: color-mix(in srgb, var(--inset) 55%, transparent); }
+/* Markdown 表格由外层容器滚动，table 本身保持整行宽度。 */
+.bui-prose .md-table-scroll { max-width:100%;overflow:auto;margin:20px 0;border:1px solid var(--line);border-radius:var(--r-md); }
+.bui-prose .md-table { width:100%;margin:0;border:0;border-collapse:collapse;display:table;font-size:13px; }
+.bui-prose .md-table th { background:var(--inset);text-align:left;font-weight:600;white-space:nowrap; }
+.bui-prose .md-table th,.bui-prose .md-table td { padding:11px 14px;border:0;border-bottom:1px solid var(--line);min-width:90px;vertical-align:top; }
+.bui-prose .md-table tr:last-child td { border-bottom:0; }
 
 /* --- 思考过程（beautifului Thinking：可折叠 + 分段控件切换）--- */
 .bui-think {
@@ -3341,58 +3324,7 @@ html[data-theme="dark"] .oo-topic-ico { background: hsl(var(--hue) 35% 24%); col
   justify-content: center;
 }
 
-/* --- 代码块（Markdown）：一键复制 + 超长折叠 --- */
-.oo-code-block {
-  position: relative;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  overflow: hidden;
-  margin: 6px 0;
-  background: var(--inset);
-}
-.oo-code-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 3px 8px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
-}
-.oo-code-lang {
-  font-size: 11px;
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  text-transform: lowercase;
-}
-.oo-code-btn {
-  border: 0;
-  background: transparent;
-  color: var(--ink-3);
-  font-size: 11.5px;
-  cursor: pointer;
-  padding: 1px 6px;
-  border-radius: var(--r-xs);
-}
-.oo-code-btn:hover { background: var(--hover); color: var(--ink); }
-.oo-code-block pre {
-  margin: 0;
-  padding: 8px 10px;
-  overflow-x: auto;
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-.oo-code-more {
-  display: block;
-  width: 100%;
-  border: 0;
-  border-top: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--ink-3);
-  font-size: 11.5px;
-  padding: 4px;
-  cursor: pointer;
-}
-.oo-code-more:hover { color: var(--accent-ink); background: var(--hover); }
+/* 全站代码块样式统一由 components/code-block.css 提供。 */
 
 /* 消息里的超长文本自动折叠（粘长 JSON/日志不刷屏）。
    渐隐色取气泡自己的底色（--bubble-bg），「我的」气泡与对方气泡各自正确 */
