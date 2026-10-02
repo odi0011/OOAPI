@@ -19,6 +19,7 @@
 import crypto from "node:crypto";
 import { assertNoContentError } from "./content-error.js";
 import { throwUpstreamHttpError } from "./http-error.js";
+import { parseCookieInput, cookieValue, credentialText } from "./cookie-input.js";
 
 const SITE = "https://agent.minimaxi.com";
 const STREAM_HOST = "https://agent-stream.minimaxi.com";
@@ -31,7 +32,7 @@ const md5 = (s) => crypto.createHash("md5").update(s, "utf8").digest("hex");
 export async function importAuth(input = {}) {
   // 同 mimo-web：对象形态下只取字段，避免 String({}) → "[object Object]" 混进渠道
   // （那种假凭据能建成渠道但永远 401）
-  const raw = String(typeof input === "string" ? input : (input.token ?? input.json ?? "")).trim();
+  const raw = credentialText(input);
   if (!raw) throw Object.assign(new Error("粘贴内容为空"), { code: "CHANNEL_BAD_PARAMS" });
 
   let obj = null;
@@ -45,11 +46,10 @@ export async function importAuth(input = {}) {
   let token = "";
   let fp = {};
   if (obj && typeof obj === "object" && !Array.isArray(obj)) {
-    token = String(obj.token || obj.access_token || obj.accessToken || "").trim();
+    token = String(obj.token || obj.access_token || obj.accessToken || cookieValue(parseCookieInput(obj.cookies ?? obj.cookie ?? obj.cookies_raw), "token") || "").trim();
     fp = obj.fingerprint || obj.fp || obj;
-  } else if (/token=/.test(raw)) {
-    const m = /(?:^|;\s*)token=([^;]+)/i.exec(raw);
-    token = m ? decodeURIComponent(m[1].trim().replace(/^"|"$/g, "")) : "";
+  } else if (Array.isArray(obj) || parseCookieInput(raw).length) {
+    token = cookieValue(parseCookieInput(obj ?? raw), "token");
   } else {
     token = raw;
   }

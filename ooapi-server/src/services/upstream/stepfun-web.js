@@ -24,6 +24,7 @@
 import crypto from "node:crypto";
 import { assertNoContentError } from "./content-error.js";
 import { throwUpstreamHttpError } from "./http-error.js";
+import { parseCookieInput, cookieHeader, credentialText } from "./cookie-input.js";
 
 const SITE = "https://www.stepfun.com";
 const API = `${SITE}/api`;
@@ -95,7 +96,10 @@ function createFrameDecoder(onMessage) {
 
 /** 统一请求头 */
 function headers(channel, { connect = true, cookie } = {}) {
-  const ck = cookie !== undefined ? cookie : (channel?.other?.cookies || "");
+  // `other.cookies` 统一落库为对象数组；fetch 的 Headers 不会把数组转换成
+  // Cookie 语法，而是变成 `[object Object],...`，上游会把它当成未登录。
+  // 粘贴完整 Request Headers 后必须在真正发请求前重新拼回 name=value 串。
+  const ck = cookieStr(cookie !== undefined ? cookie : (channel?.other?.cookies || ""));
   return {
     "content-type": connect ? "application/connect+json" : "application/json",
     ...(connect ? { "connect-protocol-version": "1" } : {}),
@@ -112,25 +116,16 @@ function headers(channel, { connect = true, cookie } = {}) {
 
 /** cookie 串 → 对象数组（与其它反代渠道的 other.cookies 形态一致） */
 function parseCookies(str) {
-  return String(str || "")
-    .split(";")
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map((pair) => {
-      const i = pair.indexOf("=");
-      return i > 0 ? { name: pair.slice(0, i), value: pair.slice(i + 1) } : null;
-    })
-    .filter(Boolean);
+  return parseCookieInput(str);
 }
 function cookieStr(list) {
-  if (typeof list === "string") return list;
-  return (Array.isArray(list) ? list : []).map((c) => `${c.name}=${c.value}`).join("; ");
+  return cookieHeader(list);
 }
 
 /** 适配器契约：解析粘贴的凭据 */
 export async function importAuth(input = {}) {
   // 同 mimo-web：对象形态下只取字段，避免 String({}) → "[object Object]" 混进渠道
-  const raw = String(typeof input === "string" ? input : (input.token ?? input.json ?? "")).trim();
+  const raw = credentialText(input);
   if (!raw) throw Object.assign(new Error("粘贴内容为空"), { code: "CHANNEL_BAD_PARAMS" });
 
   let obj = null;
@@ -141,9 +136,9 @@ export async function importAuth(input = {}) {
   }
   let ck = "";
   if (obj && typeof obj === "object") {
-    ck = Array.isArray(obj.cookies) ? cookieStr(obj.cookies) : String(obj.cookie || obj.cookies || "").trim();
+    ck = cookieStr(obj.cookies ?? obj.cookie ?? obj.token ?? obj);
   } else {
-    ck = raw;
+    ck = cookieStr(raw);
   }
   // cookie 串必须至少含一个 `name=value` —— 否则用户多半粘错了东西
   // （比如把密码或别家的 token 粘进来，那种情况要在提交时就拒绝，不能等到调用时才报错）

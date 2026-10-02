@@ -13,6 +13,7 @@
 import { createGlmParser } from "./glm-parser.js";
 import { resolveModel, REAL_MODELS, friendlyId, CHANNEL_MODELS } from "./glm-models.js";
 import { resolveProfile } from "./shared-profile.js";
+export { importBrowserCookieAuth as importAuth } from "./cookie-input.js";
 import {
   getSession,
   installHook,
@@ -80,6 +81,7 @@ export async function verify(channel) {
     channelId: channel.id,
     entryUrl: ENTRY_URL,
     profile,
+    cookies: channel?.other?.cookies,
   });
 
   return withLock(session, async () => {
@@ -145,6 +147,7 @@ export async function chat({
     channelId: channel.id,
     entryUrl: ENTRY_URL,
     profile,
+    cookies: channel?.other?.cookies,
   });
 
   return withLock(session, async () => {

@@ -245,26 +245,27 @@ async function rebuildPage(session, { vendor, channelId, entryUrl }) {
  * cookies 支持两种形态：
  *   · [{ name, value }]                      ← 其它反代渠道的既有形态
  *   · [{ name, value, domain, path, ... }]   ← ctx.cookies() 的完整对象
- * 缺 domain/path 时按 url 补全（用页面当前 URL 推断）。
+ * 缺 domain/path 时按 url 补全。首建页面还是 about:blank，必须传入登录入口地址。
  */
-export async function restoreCookies(ctx, page, cookies) {
+export async function restoreCookies(ctx, page, cookies, entryUrl = "") {
   const list = Array.isArray(cookies) ? cookies.filter((c) => c && c.name) : [];
   if (!list.length) return 0;
   let fallbackUrl = "";
   try {
-    fallbackUrl = page?.url?.() || "";
+    const current = page?.url?.() || "";
+    fallbackUrl = /^https?:\/\//i.test(current) ? current : entryUrl;
   } catch {
-    fallbackUrl = "";
+    fallbackUrl = entryUrl;
   }
   const normalized = list.map((c) => ({
     name: String(c.name),
     value: String(c.value ?? ""),
-    ...(c.domain ? { domain: String(c.domain) } : { url: c.url || fallbackUrl }),
-    ...(c.path ? { path: String(c.path) } : {}),
+    ...(c.domain ? { domain: String(c.domain), path: String(c.path || "/") } : { url: c.url || fallbackUrl }),
     ...(c.expires !== undefined && Number(c.expires) > 0 ? { expires: Number(c.expires) } : {}),
     ...(c.httpOnly !== undefined ? { httpOnly: Boolean(c.httpOnly) } : {}),
     ...(c.secure !== undefined ? { secure: Boolean(c.secure) } : {}),
-    ...(c.sameSite ? { sameSite: c.sameSite } : {}),
+    ...({ strict: "Strict", lax: "Lax", none: "None", no_restriction: "None" }[String(c.sameSite || "").toLowerCase()]
+      ? { sameSite: { strict: "Strict", lax: "Lax", none: "None", no_restriction: "None" }[String(c.sameSite).toLowerCase()] } : {}),
   }));
   try {
     await ctx.addCookies(normalized);
@@ -278,7 +279,8 @@ export async function restoreCookies(ctx, page, cookies) {
       await ctx.addCookies([c]).then(() => { ok += 1; }).catch(() => {});
     }
     if (!ok) {
-      throw Object.assign(new Error(`登录态 cookies 注入失败：${e?.message || e}`), { code: "CHANNEL_NOT_READY" });
+      // Chromium 错误可能包含 Cookie 值，不能把原异常写入日志或返回管理员。
+      throw Object.assign(new Error("登录态 Cookie 注入失败，请检查导出的 Cookie 域名和格式"), { code: "CHANNEL_NOT_READY" });
     }
     return ok;
   }
@@ -348,9 +350,7 @@ async function createSession({ vendor, channelId, key, entryUrl, profile, visibl
     // 先注入保存的登录态再导航：顺序反了会先以未登录状态请求一次页面，
     // 有些站会据此写下"匿名访客"的 cookie，把真正的登录态盖掉。
     if (cookies?.length) {
-      await restoreCookies(ctx, page, cookies).catch((e) => {
-        console.warn(`[browser-driver] 会话 ${key} 注入登录态失败：${e?.message || e}`);
-      });
+      await restoreCookies(ctx, page, cookies, entryUrl);
     }
     await page.goto(entryUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT }).catch(() => {});
     await page.waitForTimeout(4000);

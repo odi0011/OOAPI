@@ -16,6 +16,7 @@ import crypto from "node:crypto";
 import { createKimiParser, createFrameDecoder } from "./kimi-parser.js";
 import { resolveModel } from "./kimi-models.js";
 import { resolveProfile, buildBrowserHeaders, buildCookie } from "./shared-profile.js";
+import { parseCookieInput, cookieValue, credentialText } from "./cookie-input.js";
 
 const BASE = "https://www.kimi.com";
 const CHAT_PATH = "/apiv2/kimi.gateway.chat.v1.ChatService/Chat";
@@ -80,6 +81,44 @@ function wafBlocked(resp, text) {
 
 function isJwt(t) {
   return /^ey[A-Za-z0-9_-]+\./.test(String(t || ""));
+}
+
+function parsePastedCredential(input) {
+  const raw = credentialText(input);
+  if (!raw) throw Object.assign(new Error("粘贴内容为空"), { code: "LOGIN_BAD_PARAMS" });
+  let obj = null;
+  try { obj = JSON.parse(raw); } catch { /* 可能是 JWT 或 Cookie 串 */ }
+
+  let cookies = [];
+  let token = "";
+  if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+    const rawCookies = obj.cookies ?? obj.cookie ?? obj.cookies_raw ?? "";
+    cookies = parseCookieInput(rawCookies);
+    token = String(
+      obj.token || obj.access_token || obj.accessToken || obj["kimi-auth"] || obj.kimi_auth ||
+      cookieValue(cookies, "kimi-auth") || ""
+    ).trim();
+  } else {
+    cookies = parseCookieInput(obj ?? raw);
+    token = cookieValue(cookies, "kimi-auth") || raw;
+  }
+  if (!isJwt(token)) {
+    throw Object.assign(
+      new Error("格式不正确：应填写浏览器 Cookie 中 kimi-auth 的值（JWT，以 eyJ 开头），也可直接粘贴完整 Cookie 串"),
+      { code: "LOGIN_BAD_PARAMS" },
+    );
+  }
+  return { token, cookies };
+}
+
+/** 粘贴 kimi-auth 值或完整 Request Headers Cookie，统一落成 api_key + cookies。 */
+export async function importAuth(input = {}) {
+  const { token, cookies } = parsePastedCredential(input);
+  return {
+    token,
+    other: { method: "relay", ...(cookies.length ? { cookies } : {}) },
+    accountLabel: "Kimi",
+  };
 }
 
 // ---------- 健康检查 ----------
@@ -269,15 +308,8 @@ export function loginModes() {
 
 /** 校验粘贴的登录态 */
 export async function verifyPastedToken({ token }) {
-  const t = String(token || "").trim();
-  if (!t) throw Object.assign(new Error("请填写登录态 token"), { code: "LOGIN_BAD_PARAMS" });
-  if (!isJwt(t)) {
-    throw Object.assign(
-      new Error("格式不正确：应填写浏览器 cookie 中 kimi-auth 的值（JWT，以 eyJ 开头）"),
-      { code: "LOGIN_BAD_PARAMS" }
-    );
-  }
-  const fake = { id: 0, api_key: t, other: {} };
+  const { token: t, cookies } = parsePastedCredential(token);
+  const fake = { id: 0, api_key: t, other: { cookies } };
   await verify(fake);
   let account = "已登录";
   try {

@@ -84,6 +84,12 @@ export function adapterKeyFor(channel) {
   if (isApiKeyMethod(type, method)) return "openai-compat";
   if (isOAuthMethod(method)) return method;
 
+  // 传统网页反代方式通常只登记为 `relay`，但适配器键是厂商名（kimi、
+  // deepseek、doubao、qwen、glm）。只要这个厂商确实有注册适配器，就直接
+  // 走它；否则旧的通用回退会看到同厂商的 `api`，误选 openai-compat，
+  // 造成 Cookie 已保存却永远按 API 协议请求的隐蔽故障。
+  if (mCfg && Object.prototype.hasOwnProperty.call(ADAPTERS, type)) return type;
+
   // 走到这里说明「按 method 查不到接入方式配置」，而 method 又不为空 ——
   // 典型是**历史渠道存的是通用值 `relay`，而该厂商的网页反代方法名叫别的**
   //（MiMo 是 `mimo-web`、MiniMax 是 `minimax-web`、StepFun 是 `stepfun-web`）。
@@ -101,7 +107,8 @@ export function adapterKeyFor(channel) {
   const provider = type ? getProvider(type) : null;
   if (provider) {
     const codes = provider.methods
-      .map((m2) => m2.adapter || (isApiKeyMethod(type, m2.key) ? "openai-compat" : m2.key))
+      .map((m2) => m2.adapter || (isApiKeyMethod(type, m2.key) ? "openai-compat"
+        : m2.key === "relay" && Object.prototype.hasOwnProperty.call(ADAPTERS, type) ? type : m2.key))
       .filter((k2) => k2 && Object.prototype.hasOwnProperty.call(ADAPTERS, k2));
     // 多个候选时优先「网页反代」类（这类渠道几乎都是反代账号），
     // 否则取第一个有适配器的 —— 总之不会返回一个不存在的 key。

@@ -3210,7 +3210,6 @@ export default function AdminChannelsPage() {
                                 · `why` 只解释「为什么是这东西」（一句话），注意事项留给报错信息，
                                   不再堆成一墙小字。 */}
                           <Form.Item
-                            name="token"
                             label={
                               oauthUrl
                                 ? "回调地址 / 授权码"
@@ -3220,17 +3219,11 @@ export default function AdminChannelsPage() {
                                   : pickMethod.credSpec?.values?.length
                                     ? // 多值时也要说清是哪类东西（几个 cookie / 凭据文件）
                                       credLabelMulti(pickMethod.credSpec)
-                                    : pickMethod.oauth
-                                      ? "凭据 JSON"
-                                      : "登录凭据"
+                                      : pickMethod.oauth
+                                        ? "凭据 JSON"
+                                        : "登录凭据"
                             }
-                            rules={
-                              pickMethod.oauth
-                                ? []
-                                : pickMethod.credSpec?.blankOk
-                                  ? [] // 系统驱动型：服务器浏览器登录，凭据可留空
-                                  : [{ required: true, message: "请先按上面的清单取到值再粘贴" }]
-                            }
+                            required={!oauthUrl && !pickMethod.oauth && !pickMethod.credSpec?.blankOk}
                             extra={
                               oauthUrl
                                 ? "粘贴形如 http://localhost:51121/oauth-callback?code=... 的完整地址"
@@ -3315,23 +3308,35 @@ export default function AdminChannelsPage() {
                                 ) : null}
                               </div>
                             ) : null}
-                            <Input.TextArea
-                              rows={pickMethod.oauth ? 6 : 3}
-                              placeholder={
-                                // 占位文案要贴合当前接入方式的**凭据形态**：
-                                // 不能一律写「官方 CLI 凭据文件」—— Qoder 的凭据是 PAT、
-                                // 网页反代是登录态值，写错会让人以为要去找一个不存在的文件
-                                //（用户实测反馈过：「手动填凭证也没引导用户要拿哪个字段啊」）。
-                                // 有 credSpec 时按清单第一项给（与上面的标签一致）；
-                                // 否则退回 loginFields 的 placeholder（那是各方式自己声明的）。
-                                pickMethod.credSpec?.values?.length === 1
-                                  ? `粘贴 ${pickMethod.credSpec.values[0].field}`
+                            <Form.Item
+                              name="token"
+                              noStyle
+                              rules={
+                                pickMethod.oauth
+                                  ? []
                                   : pickMethod.credSpec?.blankOk
-                                    ? "可留空"
-                                    : pickMethod.loginFields?.[0]?.placeholder ||
-                                      (pickMethod.oauth ? "粘贴凭据 JSON" : "粘贴上面列出的内容")
+                                    ? [] // 系统驱动型：服务器浏览器登录，凭据可留空
+                                    : [{ required: true, message: "请先按上面的清单取到值再粘贴" }]
                               }
-                            />
+                            >
+                              <Input.TextArea
+                                rows={pickMethod.oauth ? 6 : 3}
+                                placeholder={
+                                  // 占位文案要贴合当前接入方式的**凭据形态**：
+                                  // 不能一律写「官方 CLI 凭据文件」—— Qoder 的凭据是 PAT、
+                                  // 网页反代是登录态值，写错会让人以为要去找一个不存在的文件
+                                  //（用户实测反馈过：「手动填凭证也没引导用户要拿哪个字段啊」）。
+                                  // 有 credSpec 时按清单第一项给（与上面的标签一致）；
+                                  // 否则退回 loginFields 的 placeholder（那是各方式自己声明的）。
+                                  pickMethod.credSpec?.values?.length === 1
+                                    ? `粘贴 ${pickMethod.credSpec.values[0].field}`
+                                    : pickMethod.credSpec?.blankOk
+                                      ? "可留空"
+                                      : pickMethod.loginFields?.[0]?.placeholder ||
+                                        (pickMethod.oauth ? "粘贴凭据 JSON" : "粘贴上面列出的内容")
+                                }
+                              />
+                            </Form.Item>
                           </Form.Item>
                           {pickMethod.oauth ? (
                             <>
@@ -3369,7 +3374,7 @@ export default function AdminChannelsPage() {
                               </Row>
                             </>
                           ) : (
-                            <Form.Item name="cookies" label="Cookies（可选，建议填写）" extra='JSON 数组，例如 [{"name":"ds_session_id","value":"..."}]'>
+                            <Form.Item name="cookies" label="补充 Cookies（可选）" extra="可粘贴完整 Cookie 串或导出的 JSON 数组；主框已包含完整 Cookie 时无需重复填写。">
                               <Input.TextArea rows={2} placeholder='[{"name":"...","value":"..."}]' />
                             </Form.Item>
                           )}

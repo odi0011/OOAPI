@@ -9,6 +9,10 @@ import assert from "node:assert/strict";
 const mimo = await import("../src/services/upstream/mimo-web.js");
 const minimax = await import("../src/services/upstream/minimax-web.js");
 const stepfun = await import("../src/services/upstream/stepfun-web.js");
+const kimi = await import("../src/services/upstream/kimi.js");
+const { adapterKeyFor } = await import("../src/services/router.js");
+const { parseCookieInput, cookieHeader, cookieValue } = await import("../src/services/upstream/cookie-input.js");
+const { restoreCookies } = await import("../src/services/upstream/browser-driver.js");
 
 let passed = 0;
 let failed = 0;
@@ -50,6 +54,8 @@ await t("MiMo：只给裸 serviceToken 也能建渠道（不报错）", async ()
   assert.equal(r.token, "st-bare-token-value");
   assert.equal(r.other.user_id, "");
   assert.equal(r.other.ph, "");
+  const padded = await mimo.importAuth({ token: "test-base64-value==" });
+  assert.equal(padded.token, "test-base64-value==", "带等号的裸凭据不能误当 Cookie");
 });
 
 await t("MiMo：空内容必须报错（不能静默建出坏渠道）", async () => {
@@ -101,10 +107,135 @@ await t("StepFun：cookie 串解析为 other.cookies 数组", async () => {
   assert.match(r.token, /sessionid=s-1/);
 });
 
+await t("StepFun：发送请求时把 cookies 数组还原成 Cookie 串", async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (_url, init) => {
+    request = init;
+    return new Response("{}", { status: 200 });
+  };
+  try {
+    await stepfun.verify({
+      id: 7,
+      api_key: "sessionid=s-1; active-token=t-2",
+      other: { cookies: [{ name: "sessionid", value: "s-1" }, { name: "active-token", value: "t-2" }] },
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(request && new Headers(request.headers).get("cookie"), "sessionid=s-1; active-token=t-2");
+});
+
 await t("StepFun：粘贴不含等号的内容必须报错（多半粘错了东西）", async () => {
   // 用户可能把密码、别家的 token 粘进来 —— 要在提交时就拒绝，
   // 不能等调用时才报错（那时用户已经以为配好了）
   await assert.rejects(() => stepfun.importAuth({ token: "just-a-random-string" }), /没有解析到 Cookie/);
+});
+
+/* ============================ Kimi / 通用 relay ============================ */
+await t("Kimi：完整 Cookie 串自动提取 kimi-auth 并保留其它 Cookie", async () => {
+  const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig";
+  const r = await kimi.importAuth({ token: `foo=bar; kimi-auth=${jwt}; device_id=d-1` });
+  assert.equal(r.token, jwt);
+  assert.equal(r.other.method, "relay");
+  assert.deepEqual(r.other.cookies, [
+    { name: "foo", value: "bar" },
+    { name: "kimi-auth", value: jwt },
+    { name: "device_id", value: "d-1" },
+  ]);
+});
+
+await t("Kimi：JSON Cookie 数组也能自动提取 kimi-auth", async () => {
+  const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIyIn0.sig";
+  const r = await kimi.importAuth({ token: JSON.stringify({ cookies: [
+    { name: "kimi-auth", value: jwt },
+    { name: "foo", value: "bar" },
+  ] }) });
+  assert.equal(r.token, jwt);
+  assert.equal(r.other.cookies.length, 2);
+});
+
+await t("网页 relay 渠道按厂商适配器路由，不误走 openai-compat", async () => {
+  for (const [type, expected] of [["deepseek", "deepseek"], ["glm", "glm"], ["kimi", "kimi"], ["doubao", "doubao"], ["qwen", "qwen"]]) {
+    assert.equal(adapterKeyFor({ type, other: { method: "relay" } }), expected, `${type} 应走 ${expected}`);
+    assert.equal(adapterKeyFor({ type, other: {} }), expected, "历史无 method 的网页渠道也应走厂商适配器");
+    assert.equal(adapterKeyFor({ type, other: { method: "api" } }), "openai-compat", "API Key 模式继续走兼容 API");
+  }
+});
+
+/* ============================ Cookie 输入矩阵 ============================ */
+const matrixJwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.sig";
+for (const [name, mod, fields, expected] of [
+  ["StepFun", stepfun, { "Oasis-Token": "test-step-value==", "Oasis-Webid": "test-device" }, "Oasis-Token=test-step-value==; Oasis-Webid=test-device"],
+  ["MiMo", mimo, { xiaomichatbot_serviceToken: "test-mimo", userId: "test-user", xiaomichatbot_ph: "test-ph" }, "test-mimo"],
+  ["MiniMax", minimax, { token: matrixJwt, device: "test-device" }, matrixJwt],
+  ["Kimi", kimi, { "kimi-auth": matrixJwt, device: "test-device" }, matrixJwt],
+]) {
+  const entries = Object.entries(fields).map(([name, value]) => ({ name, value }));
+  for (const [format, value] of [
+    ["Request Headers", "Cookie: " + cookieHeader(entries)],
+    ["扩展 Cookie 数组", JSON.stringify(entries)],
+    ["Cookie 对象映射", JSON.stringify({ cookies: fields })],
+    ["JSON 包装 Cookie 串", JSON.stringify({ cookies: cookieHeader(entries) })],
+    ["辅助 Cookies 字段", null],
+  ]) {
+    await t(name + "：" + format + " 自动解析为具名凭据", async () => {
+      const r = await mod.importAuth(value == null ? { cookies: JSON.stringify(entries) } : { token: value });
+      assert.equal(r.token, expected);
+      if (name === "MiMo") {
+        assert.equal(r.other.user_id, "test-user");
+        assert.equal(r.other.ph, "test-ph");
+      }
+    });
+  }
+}
+
+for (const name of ["glm", "doubao", "qwen"]) {
+  await t(name + "：主框、辅助框与扩展 Cookie 保留为浏览器可注入结构", async () => {
+    const mod = await import("../src/services/upstream/" + name + ".js");
+    for (const input of [
+      { token: "Cookie: session=test-session; device=test-device" },
+      { token: JSON.stringify([{ name: "session", value: "test-session" }, { name: "device", value: "test-device" }]) },
+      { cookies: "session=test-session; device=test-device" },
+      { token: "test-token", cookies: '{"session":"test-session","device":"test-device"}' },
+    ]) {
+      const r = await mod.importAuth(input);
+      assert.equal(cookieHeader(r.other.cookies), "session=test-session; device=test-device");
+      assert.equal(r.other.method, "relay");
+      if (input.token === "test-token") assert.equal(r.token, input.token);
+    }
+    await assert.rejects(() => mod.importAuth({ token: "", cookies: "invalid-cookies" }), (e) => e.code === "CHANNEL_BAD_PARAMS");
+    await assert.rejects(() => mod.importAuth({ token: "{invalid-json" }), (e) => e.code === "CHANNEL_BAD_PARAMS");
+  });
+}
+
+await t("Cookie 保留签名中的等号；单独提取 token 才安全解码", () => {
+  const list = parseCookieInput("Cookie: session=a%2Fb==; quoted=\"a%3Db\"; bad=raw%QQ");
+  assert.equal(cookieHeader(list), 'session=a%2Fb==; quoted="a%3Db"; bad=raw%QQ');
+  assert.equal(cookieValue(list, "session"), "a/b==");
+  assert.equal(cookieValue(list, "quoted"), "a=b");
+  assert.equal(cookieValue(list, "bad"), "raw%QQ");
+  assert.equal(cookieHeader([{ name: "bad\r\nname", value: "x" }, { name: "bad", value: "x\r\nsecret" }]), "");
+});
+
+await t("浏览器首建 about:blank 的 Cookie 使用登录入口 URL，并补齐域名路径", async () => {
+  let submitted;
+  const count = await restoreCookies({ addCookies: async (list) => { submitted = list; } },
+    { url: () => "about:blank" }, [{ name: "session", value: "test-value" }], "https://example.com/login");
+  assert.equal(count, 1);
+  assert.equal(submitted[0].url, "https://example.com/login");
+  await restoreCookies({ addCookies: async (list) => { submitted = list; } }, null,
+    [{ name: "session", value: "test-value", domain: ".example.com", sameSite: "no_restriction" }]);
+  assert.equal(submitted[0].path, "/");
+  assert.equal(submitted[0].sameSite, "None");
+});
+
+await t("浏览器 Cookie 注入失败不泄露值，不悄悄以游客状态继续", async () => {
+  await assert.rejects(
+    () => restoreCookies({ addCookies: async () => { throw new Error("test-private-cookie-value"); } },
+      { url: () => "about:blank" }, [{ name: "session", value: "test-private-cookie-value" }]),
+    (e) => e.code === "CHANNEL_NOT_READY" && !e.message.includes("test-private-cookie-value"),
+  );
 });
 
 /* ============================ 适配器契约 ============================ */

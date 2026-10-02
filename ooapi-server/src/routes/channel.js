@@ -33,6 +33,7 @@ import { clearGroupConfigCache } from "../services/group-rate.js";
 import { isReady as browserReady, removeProfile, copyProfile } from "../services/upstream/browser-driver.js";
 import { invalidateModelRegistry } from "../services/models.js";
 import { parseCredentialFile } from "../services/upstream/auth-import.js";
+import { parseCookieInput } from "../services/upstream/cookie-input.js";
 import { clineModelGroups } from "../services/cline-prices.js";
 import { probeChannel } from "../services/channel-probe.js";
 import { fetchQuota, quotaSupportFor, clampQuotaPayload } from "../services/upstream/quota.js";
@@ -954,20 +955,7 @@ async function applyCredentialToChannel({ id, type, method, credential, vendor }
     }
     const token = String((obj && (obj.token ?? obj.access_token)) ?? raw).trim().slice(0, 60_000);
     if (!token) throw Object.assign(new Error("没有可用的登录态"), { code: "LOGIN_BAD_PARAMS" });
-    let cookies;
-    const rawCookies = obj?.cookies;
-    if (Array.isArray(rawCookies) && rawCookies.length) cookies = rawCookies;
-    else if (typeof rawCookies === "string" && rawCookies.trim()) {
-      cookies = rawCookies
-        .split(";")
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .map((pair) => {
-          const i = pair.indexOf("=");
-          return i > 0 ? { name: pair.slice(0, i), value: pair.slice(i + 1) } : null;
-        })
-        .filter(Boolean);
-    }
+    const cookies = parseCookieInput(obj?.cookies ?? obj?.cookie ?? obj?.cookies_raw);
     parsed = { token, other: cookies?.length ? { cookies } : {}, accountLabel: "" };
   } else {
     throw Object.assign(new Error("该接入方式不支持凭据写回"), { code: "LOGIN_BAD_PARAMS" });
@@ -1690,29 +1678,8 @@ router.post(
         }
         token = t;
         if (rest.cookies) {
-          let list = [];
-          if (Array.isArray(rest.cookies)) list = rest.cookies;
-          else {
-            const raw = String(rest.cookies).trim();
-            try {
-              const p = JSON.parse(raw);
-              list = Array.isArray(p) ? p : [];
-            } catch {
-              // 兼容浏览器抓取回的 `name=value; name2=value2` 串（前端直接回填的就是这种）
-              list = raw
-                .split(";")
-                .map((s) => s.trim())
-                .filter(Boolean)
-                .map((pair) => {
-                  const i = pair.indexOf("=");
-                  return i > 0 ? { name: pair.slice(0, i), value: pair.slice(i + 1) } : null;
-                })
-                .filter(Boolean);
-            }
-            if (!list.length) {
-              return fail(res, 'Cookies 需为 JSON 数组或 name=value; ... 串，例如 [{"name":"kimi-auth","value":"..."}]');
-            }
-          }
+          const list = parseCookieInput(rest.cookies);
+          if (!list.length) return fail(res, 'Cookies 需为 JSON 数组、对象映射或 name=value; ... 串');
           if (list.length) other.cookies = list;
         }
         }

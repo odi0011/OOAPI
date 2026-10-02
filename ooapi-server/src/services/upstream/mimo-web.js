@@ -21,6 +21,7 @@
 import { randomUUID } from "node:crypto";
 import { assertNoContentError } from "./content-error.js";
 import { throwUpstreamHttpError } from "./http-error.js";
+import { parseCookieInput, cookieValue, credentialText } from "./cookie-input.js";
 
 const SITE = "https://aistudio.xiaomimimo.com";
 const API = `${SITE}/open-apis`;
@@ -63,7 +64,7 @@ export function parseAuth(raw) {
   // 原先只认 ①，于是用户粘 ② 时报「没有解析到 serviceToken」，
   // 而他手里那份凭据明明是完整有效的 —— 这是最让人火大的那类报错。
   const cookieMap = (() => {
-    const c = obj?.cookies;
+    const c = parseCookieInput(Array.isArray(obj) ? obj : obj?.cookies ?? obj?.cookie ?? obj?.cookies_raw);
     if (Array.isArray(c)) {
       const m = {};
       for (const it of c) {
@@ -71,7 +72,7 @@ export function parseAuth(raw) {
       }
       return m;
     }
-    return c && typeof c === "object" ? c : {};
+    return {};
   })();
   const pick = (...names) => {
     for (const n of names) {
@@ -104,7 +105,9 @@ export function parseAuth(raw) {
   }
 
   // 形态二：浏览器里直接复制的 cookie 串
-  if (/serviceToken=/.test(text) || text.includes(";")) return parseCookieString(text);
+  if (Array.isArray(obj) || /^cookie\s*:/i.test(text) || /serviceToken=/i.test(text) || text.includes(";")) {
+    return parseCookieString(text);
+  }
 
   // 形态三：只给了裸 serviceToken（最常见 —— 用户从 DevTools 里复制单个值）
   return { service_token: text, user_id: "", ph: "" };
@@ -112,10 +115,8 @@ export function parseAuth(raw) {
 
 /** 从 "a=b; c=d" 里取三个需要的值 */
 function parseCookieString(str) {
-  const get = (name) => {
-    const m = new RegExp(`(?:^|;\\s*)${name}=([^;]*)`, "i").exec(str);
-    return m ? decodeURIComponent(m[1].trim().replace(/^"|"$/g, "")) : "";
-  };
+  const cookies = parseCookieInput(str);
+  const get = (name) => cookieValue(cookies, name);
   return {
     // 两个名字都认（DevTools 里显示的是 xiaomichatbot_serviceToken，
     // 而手册/扩展导出里常写成 serviceToken）
@@ -130,7 +131,7 @@ export async function importAuth(input = {}) {
   // 取凭据文本：显式传 token/json 时用它，否则用 input 本身（可能是裸字符串）。
   // **对象形态下必须取字段** —— 直接把整个对象 String() 会得到 "[object Object]"，
   // 这种假凭据能通过校验并建成渠道，但永远 401（用户以为配好了）。
-  const raw = typeof input === "string" ? input : (input.token ?? input.json ?? "");
+  const raw = credentialText(input);
   const cred = parseAuth(raw);
   if (!cred.service_token) {
     throw Object.assign(new Error("没有解析到 serviceToken，请确认复制的是小米 MiMo Studio 的登录态"), {

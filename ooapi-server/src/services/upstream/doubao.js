@@ -11,6 +11,7 @@
 import { createDoubaoParser} from "./doubao-parser.js";
 import { resolveModel, CHANNEL_MODELS } from "./doubao-models.js";
 import { resolveProfile } from "./shared-profile.js";
+export { importBrowserCookieAuth as importAuth } from "./cookie-input.js";
 import {
   getSession,
   installHook,
@@ -43,7 +44,9 @@ export async function verify(channel) {
     vendor: "doubao",
     channelId: channel.id,
     entryUrl: ENTRY_URL,
-    profile});
+    profile,
+    cookies: channel?.other?.cookies,
+  });
 
   return withLock(session, async () => {
     const { page } = session;
@@ -97,7 +100,9 @@ export async function chat({
     vendor: "doubao",
     channelId: channel.id,
     entryUrl: ENTRY_URL,
-    profile});
+    profile,
+    cookies: channel?.other?.cookies,
+  });
 
   return withLock(session, async () => {
     const { page } = session;
