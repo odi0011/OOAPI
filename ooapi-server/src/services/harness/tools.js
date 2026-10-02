@@ -489,6 +489,21 @@ export function toolSpecs(ids = []) {
   return ids.map((id) => TOOLS[id]).filter(Boolean).map(({ id, name, desc, args }) => ({ id, name, desc, args }));
 }
 
+// 原生协议用真实类型描述参数，避免模型把说明文字当成参数值。
+export function nativeToolSpecs(ids = []) {
+  const str = (description) => ({ type: "string", description });
+  const schemas = {
+    account: { properties: { action: { type: "string", enum: ["overview", "recent", "tokens", "usage", "errors"] }, limit: { type: "integer", minimum: 1, maximum: 30 } }, required: ["action"] },
+    binance: { properties: { action: { type: "string", enum: ["accounts", "overview", "positions", "orders", "strategies", "risk", "backtests", "analysis"] }, account_id: { type: "integer", minimum: 1 } }, required: ["action"] },
+    search: { properties: { query: str("检索关键词") }, required: ["query"] },
+    fetch: { properties: { url: str("公开网页 URL") }, required: ["url"] },
+    github: { properties: { action: { type: "string", enum: ["list", "file", "search"] }, repo: str("owner/name"), path: str("文件或目录路径"), ref: str("分支、标签或 commit"), query: str("检索关键词") }, required: ["action", "repo"] },
+    task: { properties: { agent: str("子代理 id"), prompt: str("自包含的任务说明") }, required: ["agent", "prompt"] },
+    todowrite: { properties: { todos: { type: "array", items: { type: "object", properties: { content: str("步骤描述"), status: { type: "string", enum: ["pending", "in_progress", "completed"] } }, required: ["content", "status"], additionalProperties: false } } }, required: ["todos"] },
+  };
+  return toolSpecs(ids).map((t) => ({ name: t.id, description: t.desc, parameters: { type: "object", ...schemas[t.id], additionalProperties: false } }));
+}
+
 export async function runTool(id, args, ctx) {
   const tool = TOOLS[id];
   if (!tool) return { ok: false, output: `未知工具：${id}` };

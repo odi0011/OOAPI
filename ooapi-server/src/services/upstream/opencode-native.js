@@ -1,3 +1,4 @@
+import { ToolCallBuffer, applyToolDefinitions, responsesMessages } from "../tool-wire.js";
 // Zen 官方端点表明确区分 Responses 与 SystemOne。仅转换已确认的模型，
 // 不把 Jev 的结构化判定伪造成聊天，也不影响 GO 的兼容接口。
 // 来源：opencode.ai/docs/zen/；docs.typesafe.ai/api。
@@ -48,6 +49,7 @@ function responsesBody(args, model) {
     }
     return { role, content };
   });
+  if (messages.some(m => m.tool_calls || m.role === "tool")) input.splice(0, input.length, ...responsesMessages(messages));
   if (args.images?.length) {
     const last = [...input].reverse().find((m) => m.role === "user");
     if (last) for (const img of args.images) last.content.push({ type: "input_image", image_url: `data:${img.mimeType || "image/png"};base64,${img.buffer.toString("base64")}` });
@@ -62,6 +64,7 @@ function responsesBody(args, model) {
     body.reasoning = Object.fromEntries(["effort", "summary"].filter((key) => args.reasoning[key] != null).map((key) => [key, args.reasoning[key]]));
   } else if (args.reasoning_effort != null) body.reasoning = { effort: String(args.reasoning_effort) };
   else if (args.thinkingOverride != null) body.reasoning = { effort: args.thinkingOverride ? "medium" : "none" };
+  applyToolDefinitions(body, args.tools, args.toolChoice, "responses");
   return body;
 }
 
@@ -74,6 +77,7 @@ function responseText(response, reasoning = false) {
 
 export async function chatNative(args, protocol, model) {
   const { channel, onDelta, onReasoning, onUsage } = args;
+  const toolBuffer = new ToolCallBuffer(args.onToolCall);
   const url = nativeUrl(channel.base_url, protocol);
   if (!url) throw makeError("未填写接口地址", "CHANNEL_NOT_READY", { upstreamStarted: false, billable: false });
   const key = nextKey(channel);
@@ -84,6 +88,9 @@ export async function chatNative(args, protocol, model) {
     const last = [...(args.messages || [])].reverse().find((m) => m?.role === "user");
     body = { model, ...parseSystemOneInput(normalizeContentToText(last?.content ?? args.prompt)) };
   } else body = responsesBody(args, model);
+  // 免费档在最后一刻补 agent 工具（仅 Responses；SystemOne 是结构化判定请求，
+  // 不是 agent 流量，注入流式或工具定义反而会被上游拒绝）
+  if (protocol !== "systemone" && typeof args.bodyHook === "function") args.bodyHook(body);
   const signal = args.signal || AbortSignal.timeout(getNumberOption("request_timeout_ms") || 60_000);
   let content = "", reasoning = "", usage, upstreamModel = model, status = 0, truncated = false;
   const acceptUsage = (value) => {
@@ -96,6 +103,7 @@ export async function chatNative(args, protocol, model) {
     else { content += text; onDelta?.(text); }
   };
   const finalResponse = (response) => {
+    toolBuffer.responses({ response });
     upstreamModel = response?.model || upstreamModel;
     acceptUsage(response?.usage);
     for (const think of [false, true]) {
@@ -127,7 +135,7 @@ export async function chatNative(args, protocol, model) {
         const rendered = renderAnswers(json?.answers);
         if (!rendered) throw makeError("SystemOne 未返回判断答案", "CHANNEL_BAD_RESPONSE");
         emit(rendered);
-        return { content, reasoning, usage, upstreamModel, retryCount: 0, structured: { model: upstreamModel, answers: json.answers, usage: json.usage } };
+        return { content, reasoning, usage, upstreamModel, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras, retryCount: 0, structured: { model: upstreamModel, answers: json.answers, usage: json.usage } };
       }
       finalResponse(json);
       truncated = json.status === "incomplete" && json.incomplete_details?.reason === "max_output_tokens";
@@ -141,6 +149,7 @@ export async function chatNative(args, protocol, model) {
         if (!data || data === "[DONE]") return;
         let ev;
         try { ev = JSON.parse(data); } catch { throw makeError("上游返回无效 SSE 数据", "CHANNEL_BAD_RESPONSE"); }
+        toolBuffer.responses(ev);
         if (ev.type === "response.output_text.delta") emit(String(ev.delta || ""));
         else if (["response.reasoning_summary_text.delta", "response.reasoning_text.delta"].includes(ev.type)) emit(String(ev.delta || ""), true);
         if (ev.response) { upstreamModel = ev.response.model || upstreamModel; acceptUsage(ev.response.usage); }
@@ -173,8 +182,9 @@ export async function chatNative(args, protocol, model) {
         if (!terminal) throw makeError("Responses 未收到完成事件", "CHANNEL_STREAM_ERROR");
       } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
     }
-    if (!content && !reasoning) throw makeError("上游未返回内容", "CHANNEL_BAD_RESPONSE");
-    return { content, reasoning, usage, upstreamModel, retryCount: 0, ...(truncated ? { truncated: true, finishReason: "length" } : {}) };
+    if (truncated && toolBuffer.size) throw makeError("工具调用响应被截断", "CHANNEL_STREAM_ERROR");
+    if (!content && !reasoning && !toolBuffer.size) throw makeError("上游未返回内容", "CHANNEL_BAD_RESPONSE");
+    return { content, reasoning, usage, upstreamModel, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras, retryCount: 0, ...(truncated ? { truncated: true, finishReason: "length" } : {}) };
   } catch (error) {
     const addressRejected = !status && /内网|协议不允许|携带凭据|解析|重定向/.test(String(error.message || ""));
     const code = typeof error.code === "string" && error.code.startsWith("CHANNEL_") ? error.code

@@ -171,6 +171,14 @@ function responsesInput(body) {
       continue;
     }
     if (!it || typeof it !== "object") continue;
+    if (it.type === "function_call") {
+      out.push(...canonicalizeMessage({ role: "assistant", content: "", toolCalls: [{ id: it.call_id, name: it.name, arguments: it.arguments }] }));
+      continue;
+    }
+    if (it.type === "function_call_output") {
+      out.push({ role: "tool", tool_call_id: String(it.call_id || ""), content: plainText(it.output) });
+      continue;
+    }
     const role = String(it.role || "user");
     // Responses 的 content 可能是 string 或 [{type:"input_text",text}] 等
     let text = "";
@@ -458,7 +466,8 @@ const chatCompletions = {
     if (ev.first) tc.id = ev.id || newId("call");
     state.send({ tool_calls: [tc] });
   },
-  done(res, state, { settled } = {}) {
+  done(res, state, { settled, toolCalls = [] } = {}) {
+    toolCalls.forEach((call, index) => chatCompletions.toolCall(state, { ...call, index, first: true, args: call.arguments }));
     // 被输出上限截断时必须回 "length"，这是 OpenAI 协议里客户端判断
     // 「回答没写完」的唯一信号（原先永远是 "stop"）。
     // 有工具调用时必须是 "tool_calls"，否则客户端不会去执行工具（见 finishReasonOf）。
@@ -578,17 +587,20 @@ const anthropicMessages = {
       // 网关的图片计数/抓取/限额全靠 `type === "image_url"` 的分片 ——
       // 只给纯文本的话图片会被静默丢弃、防护也一并失效（见 anthropicText 的说明）。
       const imgs = extractImagesFromAnthropicContent(m.content);
-      if (!text && !imgs.length) continue;
-      msgs.push({
+      const { uses, results } = anthropicToolBlocks(m.content);
+      for (const result of results) msgs.push({ role: "tool", ...result });
+      if (!text && !imgs.length && !uses.length) continue;
+      msgs.push(...canonicalizeMessage({
         role: String(m.role || "user"),
         content: imgs.length
           ? [{ type: "text", text }, ...imgs]
           : text,
-      });
+        toolCalls: uses,
+      }));
     }
     // Anthropic 的 max_tokens 在官方规范里是**必填**。这里不强制（宽容旧客户端），
     // 但给了就按它截断。
-    return { model, messages: msgs, stream: body?.stream === true, maxTokens: pickMaxTokens(body?.max_tokens) };
+    return { model, messages: msgs, stream: body?.stream === true, maxTokens: pickMaxTokens(body?.max_tokens), tools: normalizeTools(body?.tools), toolChoice: normalizeToolChoice(body?.tool_choice) };
   },
   openStream(res, id, model) {
     res.status(200);
@@ -647,14 +659,22 @@ const anthropicMessages = {
     const i = anthropicMessages.openBlock(state, "thinking");
     state.send("content_block_delta", { index: i, delta: { type: "thinking_delta", thinking: text } });
   },
-  done(res, state, { settled } = {}) {
+  toolCall(state, ev) {
+    if (state.cur) state.send("content_block_stop", { index: state.blockCount - 1 });
+    const index = state.blockCount++;
+    state.cur = "tool_use";
+    state.send("content_block_start", { index, content_block: { type: "tool_use", id: ev.id, name: ev.name, input: {} } });
+    state.send("content_block_delta", { index, delta: { type: "input_json_delta", partial_json: ev.args || "{}" } });
+  },
+  done(res, state, { settled, toolCalls = [] } = {}) {
+    for (const call of toolCalls) anthropicMessages.toolCall(state, { ...call, args: call.arguments });
     // 空回复也要有一个块：客户端拿到「一个 content block 都没有的 message」
     // 时部分 SDK 会判为解析失败。
     if (!state.cur) anthropicMessages.openBlock(state, "text");
     state.send("content_block_stop", { index: state.blockCount - 1 });
     state.send("message_delta", {
       // 截断时回 "max_tokens"（Anthropic 规范），否则 "end_turn"
-      delta: { stop_reason: settled?.truncated ? "max_tokens" : "end_turn", stop_sequence: null },
+      delta: { stop_reason: stopReasonOf(settled), stop_sequence: null },
       usage: {
         input_tokens: settled?.promptTokens || 0,
         output_tokens: settled?.completionTokens || 0,
@@ -663,7 +683,7 @@ const anthropicMessages = {
     state.send("message_stop", {});
     res.end();
   },
-  finish(res, { id, model, content, reasoning, settled }) {
+  finish(res, { id, model, content, reasoning, settled, toolCalls = [] }) {
     res.json({
       id,
       type: "message",
@@ -674,10 +694,11 @@ const anthropicMessages = {
         // 用 Anthropic SDK 的调用方（Claude Code 等）开了思考却什么都看不到，
         // 也不报错，属于静默丢数据。
         ...(reasoning ? [{ type: "thinking", thinking: reasoning, signature: "" }] : []),
-        { type: "text", text: content },
+        ...(content || !toolCalls.length ? [{ type: "text", text: content }] : []),
+        ...toolCalls.map(c => ({ type: "tool_use", id: c.id, name: c.name, input: JSON.parse(c.arguments || "{}") })),
       ],
       // 截断时回 "max_tokens"（Anthropic 规范）
-      stop_reason: settled?.truncated ? "max_tokens" : "end_turn",
+      stop_reason: stopReasonOf({ ...settled, toolCalls: toolCalls.length }),
       stop_sequence: null,
       usage: {
         input_tokens: settled.promptTokens,
@@ -721,6 +742,7 @@ const openaiResponses = {
       messages,
       stream: body?.stream === true,
       maxTokens: pickMaxTokens(body?.max_output_tokens),
+      tools: normalizeTools(body?.tools), toolChoice: normalizeToolChoice(body?.tool_choice),
     };
   },
   openStream(res, id, model) {
@@ -754,7 +776,7 @@ const openaiResponses = {
       content_index: 0,
       part: { type: "output_text", text: "", annotations: [] },
     });
-    return { send, itemId, id, text: "", reasoning: "", createdAt, model };
+    return { send, itemId, id, text: "", reasoning: "", createdAt, model, toolItems: [] };
   },
   delta(state, text) {
     state.text += text;
@@ -775,7 +797,17 @@ const openaiResponses = {
       delta: text,
     });
   },
-  done(res, state, { settled } = {}) {
+  toolCall(state, ev) {
+    const output_index = state.toolItems.length + 1, id = newId("fc");
+    const item = { id, type: "function_call", call_id: ev.id, name: ev.name, arguments: ev.args || "{}", status: "completed" };
+    state.send("response.output_item.added", { output_index, item: { ...item, arguments: "", status: "in_progress" } });
+    state.send("response.function_call_arguments.delta", { output_index, item_id: id, delta: item.arguments });
+    state.send("response.function_call_arguments.done", { output_index, item_id: id, arguments: item.arguments });
+    state.send("response.output_item.done", { output_index, item });
+    state.toolItems.push(item);
+  },
+  done(res, state, { settled, toolCalls = [] } = {}) {
+    for (const call of toolCalls) openaiResponses.toolCall(state, { ...call, args: call.arguments });
     const text = state.text || "";
     const reasoning = state.reasoning || "";
     state.send("response.output_text.done", {
@@ -815,6 +847,7 @@ const openaiResponses = {
         output: [
           ...(reasoning ? [{ type: "reasoning", summary: [{ type: "summary_text", text: reasoning }] }] : []),
           messageItem,
+          ...state.toolItems,
         ],
         usage: {
           input_tokens: settled?.promptTokens || 0,
@@ -825,7 +858,7 @@ const openaiResponses = {
     });
     res.end();
   },
-  finish(res, { id, model, content, reasoning, settled }) {
+  finish(res, { id, model, content, reasoning, settled, toolCalls = [] }) {
     res.json({
       id,
       object: "response",
@@ -845,6 +878,7 @@ const openaiResponses = {
           role: "assistant",
           content: [{ type: "output_text", text: content, annotations: [] }],
         },
+        ...toolCalls.map(c => ({ type: "function_call", id: newId("fc"), call_id: c.id, name: c.name, arguments: c.arguments, status: "completed" })),
       ],
       usage: {
         input_tokens: settled.promptTokens,

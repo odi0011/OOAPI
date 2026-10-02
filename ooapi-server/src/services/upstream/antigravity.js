@@ -1,3 +1,4 @@
+import { ToolCallBuffer, applyToolDefinitions, geminiMessages } from "../tool-wire.js";
 // 上游适配器：antigravity（Google 订阅 · Antigravity / Gemini Code Assist OAuth）
 // ===========================================================================
 // 协议来源：参考开源项目 CLIProxyAPI（router-for-me/CLIProxyAPI）的 antigravity 实现。
@@ -305,6 +306,7 @@ function toContents(messages, images, fallbackPrompt) {
     if (prev && prev.role === role) prev.parts[0].text += `\n\n${text}`;
     else contents.push({ role, parts: [{ text }] });
   }
+  if (use.some(m => m.tool_calls || m.role === "tool")) contents.splice(0, contents.length, ...geminiMessages(use));
   if (images?.length) {
     for (let i = contents.length - 1; i >= 0; i--) {
       if (contents[i].role !== "user") continue;
@@ -328,7 +330,7 @@ function extractSystem(messages, prompt) {
   return text ? { parts: [{ text }] } : undefined;
 }
 
-export async function chat({
+export async function chat({ tools = [], toolChoice, onToolCall,
   channel,
   model,
   prompt,
@@ -350,6 +352,9 @@ export async function chat({
   if (systemInstruction) request.systemInstruction = systemInstruction;
   if (thinkingOverride === true) request.generationConfig = { thinkingConfig: { includeThoughts: true } };
 
+  applyToolDefinitions(request, tools, toolChoice, "gemini");
+  const toolBuffer = new ToolCallBuffer(onToolCall);
+  let terminated = false, toolIndex = 0;
   const envelope = {
     model,
     userAgent: "antigravity",
@@ -430,8 +435,14 @@ export async function chat({
           cached_tokens: Number(r.usageMetadata.cachedContentTokenCount) || 0,
         };
       }
-      for (const cand of r.candidates || []) {
+      for (const cand of (r.candidates || []).slice(0, 1)) {
+        if (cand.finishReason === "STOP") terminated = true;
+        else if (cand.finishReason && toolBuffer.size) throw Object.assign(new Error("Gemini工具响应被截断"), { code: "CHANNEL_STREAM_ERROR" });
         for (const part of cand?.content?.parts || []) {
+          if (part.functionCall) {
+            const c = part.functionCall;
+            toolBuffer.add(c.id || toolIndex++, { id: c.id, name: c.name, arguments: JSON.stringify(c.args || {}), thoughtSignature: part.thoughtSignature }, true);
+          }
           if (typeof part?.text !== "string" || !part.text) continue;
           if (part.thought) {
             reasoning += part.text;
@@ -479,7 +490,8 @@ export async function chat({
     reader.cancel().catch(() => {});
   }
 
-  if (!content) {
+  if (toolBuffer.size && !terminated) throw Object.assign(new Error("Gemini工具响应未完成"), { code: "CHANNEL_STREAM_ERROR", content, reasoning, usage });
+  if (!content && !toolBuffer.size) {
     throw Object.assign(new Error(reasoning ? "Antigravity 只返回了思考内容，没有正文" : "Antigravity 返回空内容"), {
       code: "CHANNEL_EMPTY",
     });
@@ -489,7 +501,7 @@ export async function chat({
   // 只看「有正文」就判健康，会让这类渠道测试写入 ok=1 并重置冷却，
   // 而真实请求必然失败（第 46 批复审点名的线上问题）。这里补一道内容级识别。
   assertNoContentError(content, "Antigravity");
-  return { content, reasoning, usage, upstreamModel };
+  return { content, reasoning, usage, upstreamModel, toolCalls: toolBuffer.finish() };
 }
 
 /** 健康检查：loadCodeAssist（轻量、只验证凭据与项目） */

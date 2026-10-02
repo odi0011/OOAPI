@@ -7,7 +7,7 @@ import { getBoolOption } from "../config.js";
 import { now, clientIp, asyncHandler, assertPublicUrl } from "../utils.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { recordRequest, enterRequest, leaveRequest, classifyError } from "../services/metrics.js";
-import { runCompletion, billableFailedCall } from "../services/execute.js";
+import { runCompletion, billableFailedCall, hasBillableUsage } from "../services/execute.js";
 import { normalizeContentToText } from "../services/upstream/content-text.js";
 import { publicRunError } from "../services/upstream/public-error.js";
 import { logTexts } from "../services/log-text.js";
@@ -44,6 +44,8 @@ import {
 import { collectAvailableModels, channelInGroup, channelSupportsModel, rowToChannel } from "../services/router.js";
 import { PROTOCOLS } from "../services/gateway-protocols.js";
 import { holdTokenQuota } from "../services/token-quota.js";
+import { callsText, textToolMessages } from "../services/tool-wire.js";
+import { StepStream } from "../services/harness/loop.js";
 
 const router = express.Router();
 // 必须在 express.json 之前完成真实鉴权：旧实现只查 Authorization 头存在性，
@@ -706,6 +708,11 @@ async function handleCompletion(protocol, req, res) {
   let parsed;
   try {
     parsed = protocol.parse(body);
+    for (const m of parsed.messages || []) for (const c of m.tool_calls || []) {
+      let args;
+      try { args = JSON.parse(c.arguments || "{}"); } catch { throw new Error("历史工具调用的 arguments 必须是合法 JSON 对象"); }
+      if (!c.id || !c.name || !args || typeof args !== "object" || Array.isArray(args)) throw new Error("历史工具调用需要编号、名称与 JSON 对象参数");
+    }
   } catch (e) {
     return protocol.error(res, 400, { message: e.message, code: "invalid_request_error" }, { id: requestId });
   }
@@ -864,7 +871,7 @@ async function handleCompletion(protocol, req, res) {
   // 这里不再有「伪造一条模型回复」的分支 —— 那是用户实测反馈的核心问题：
   // 明明是一个参数错误，却伪装成模型的回答，比报错更难排查。
 
-  const prompt = messagesToPrompt(messages);
+  const prompt = messagesToPrompt(textToolMessages(messages)) + (parsed.tools?.length ? "\n" + JSON.stringify(parsed.tools) : "");
   let streamStarted = false;
   // 已流出的内容：上游中途失败时按实际产出结算，避免「答了一半却零计费」
   let partialOut = "";
@@ -912,6 +919,7 @@ async function handleCompletion(protocol, req, res) {
   // （chat.completions 是 data: {...chunk}；messages 是 event: content_block_delta；
   //   responses 是 event: response.output_text.delta），这里不再手写其中一种。
   let protoState = null;
+  let textToolMode = false, toolText = "";
   const startStream = () => {
     if (streamStarted || !wantStream) return;
     protoState = protocol.openStream(res, requestId, model);
@@ -925,6 +933,17 @@ async function handleCompletion(protocol, req, res) {
       // API 接入方式需要保留消息角色（system/user/assistant）；
       // 反代适配器忽略它，仍用拼好的 prompt
       messages,
+      tools: parsed.tools || [],
+      toolChoice: parsed.toolChoice,
+      prepareRequest: ({ nativeTools }) => {
+        textToolMode = !nativeTools && Boolean(parsed.tools?.length);
+        if (nativeTools) return { prompt, messages };
+        const fallback = textToolMessages(messages);
+        if (textToolMode) fallback.unshift({ role: "system", content:
+          `工具定义：${JSON.stringify(parsed.tools)}\n工具选择：${JSON.stringify(parsed.toolChoice || "auto")}\n` +
+          '调用工具时输出 <tool_call>{"tool":"工具名","args":{参数}}</tool_call> 后停止；不要编造工具结果。tool_choice=none时禁止调用。' });
+        return { messages: fallback, prompt: messagesToPrompt(fallback) };
+      },
       thinking: thinkingOverride,
       search: wantSearch,
       images,
@@ -934,9 +953,11 @@ async function handleCompletion(protocol, req, res) {
       sessionId: req.get("x-opencode-session") || req.get("x-opencode-session-id") || req.get("x-session-id") || req.get("session-id") || "",
       requestId,
       signal: clientCtrl.signal,
+      onToolCall: () => markFirstToken(),
       onDelta: (t) => {
         if (!t) return;
         markFirstToken();
+        if (textToolMode) { toolText += t; partialOut += t; return; }
         // 输出上限（max_tokens / max_output_tokens）在这里**真正生效**。
         //
         // 背景（黑盒测试实测）：三个协议都接受该参数却完全不用它 ——
@@ -1004,6 +1025,41 @@ async function handleCompletion(protocol, req, res) {
         }
       }});
 
+    // 对外API只返回调用，不执行客户端的工具。网页渠道的调用块也归一成原生协议结果。
+    let toolCalls = result.toolCalls || [];
+    const rawOutput = `${result.content || toolText || ""}${result.reasoning || ""}${callsText(toolCalls)}`;
+    // 适配器已成功产出，但协议校验失败仍需保留真实用量与渠道归属。
+    const toolProtocolError = (message) => Object.assign(new Error(message), {
+      code: "TOOL_PROTOCOL_ERROR", usage: result.usage, billingOutput: rawOutput,
+      billable: Boolean(rawOutput) || hasBillableUsage(result.usage),
+      billingPrompt: result.requestPrompt || prompt, billingStartedAt: startedAt,
+      billingFirstTokenAt: firstTokenAt, elapsed: result.elapsed,
+      channelId: result.channel?.id, channelName: result.channel?.name, channelQuote: result.channelQuote,
+      billModel: result.billModel, upstreamModel: result.upstreamModel, retryCount: result.retryCount,
+    });
+    if (textToolMode) {
+      const parser = new StepStream(), head = parser.push(toolText || result.content || ""), tail = parser.finish();
+      if (tail.bad) throw toolProtocolError("工具调用协议无法解析");
+      toolCalls = tail.calls.map(c => ({ id: `call_${crypto.randomBytes(12).toString("hex")}`, name: c.tool, arguments: JSON.stringify(c.args) }));
+      result.content = head + tail.text;
+    }
+    // 在结算和渲染前校验工具参数，防止Anthropic JSON解析失败发生在扣款之后。
+    for (const c of toolCalls) {
+      let valid;
+      try { const args = JSON.parse(c.arguments || "{}"); valid = args && typeof args === "object" && !Array.isArray(args); } catch { valid = false; }
+      if (!valid || !(parsed.tools || []).some(t => t.name === c.name) || parsed.toolChoice === "none")
+        throw toolProtocolError("上游返回无效或未声明的工具调用");
+    }
+    if (!outputTruncated && result.content?.startsWith(emitted) && result.content.length > emitted.length) {
+      let rest = result.content.slice(emitted.length);
+      if (maxOutTokens > 0 && estimateTokens(emitted + reasoningOut + rest) > maxOutTokens) {
+        outputTruncated = true; rest = rest.slice(0, Math.max(0, maxOutTokens * 3 - emitted.length - reasoningOut.length));
+      }
+      if (rest) { markFirstToken(); emitted += rest; if (wantStream) { startStream(); protocol.delta(protoState, rest); } }
+    }
+    if (toolCalls.length && maxOutTokens > 0 && estimateTokens(emitted + reasoningOut + callsText(toolCalls)) > maxOutTokens) outputTruncated = true;
+    if (outputTruncated) toolCalls = [];
+
     // 被 max_tokens 截断时，**按实际发给客户端的内容**计费。
     //
     // 为什么不能按上游全量算：上游不受我们控制（网页版反代根本没有这个参数），
@@ -1015,7 +1071,7 @@ async function handleCompletion(protocol, req, res) {
       token,
       user,
       model,
-      prompt,
+      prompt: result.requestPrompt || prompt,
       // 截断时按**实际交付的内容**计费：正文用 emitted（已截断），
       // 推理用 reasoningOut（现在也受上限约束）。
       // 不再用 result.reasoning —— 那是上游的**全量**推理，
@@ -1023,7 +1079,7 @@ async function handleCompletion(protocol, req, res) {
       // 不该按它计费）。
       output: cutThis
         ? emitted + reasoningOut
-        : result.content + (result.reasoning || ""),
+        : rawOutput,
       usage: cutThis ? null : result.usage,
       ip,
       requestId,
@@ -1066,12 +1122,13 @@ async function handleCompletion(protocol, req, res) {
       // 这是客户端判断「回答是否完整」的唯一正规信号
       //（黑盒测试实测：原先永远是 "stop"/"end_turn"，依赖它的 agent 会误判）。
       truncated: cutThis,
+      toolCalls: toolCalls.length,
     };
     if (settled.tokensEstimated && !res.headersSent) res.setHeader("X-Tokens-Estimated", "1");
     if (cutThis && !res.headersSent) res.setHeader("X-Output-Truncated", String(maxOutTokens));
     if (wantStream) {
       if (!streamStarted) startStream();
-      protocol.done(res, protoState, { settled: settledForClient });
+      protocol.done(res, protoState, { settled: settledForClient, toolCalls });
     } else {
       protocol.finish(res, {
         id: requestId,
@@ -1079,6 +1136,7 @@ async function handleCompletion(protocol, req, res) {
         content: cutThis ? emitted : result.content,
         reasoning: result.reasoning,
         settled: settledForClient,
+        toolCalls,
       });
     }
   } catch (err) {

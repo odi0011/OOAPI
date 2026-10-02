@@ -1,3 +1,4 @@
+import { ToolCallBuffer, applyToolDefinitions, responsesMessages } from "../tool-wire.js";
 // 上游适配器：grok（xAI Grok 订阅 · OAuth device-code）
 // ===========================================================================
 // 协议来源：参考开源项目 CLIProxyAPI（router-for-me/CLIProxyAPI）的 xai 实现。
@@ -247,6 +248,7 @@ function toResponsesInput(messages, images, fallbackPrompt) {
     const contentType = role === "assistant" ? "output_text" : "input_text";
     out.push({ type: "message", role, content: [{ type: contentType, text: normalizeContentToText(m.content) }] });
   }
+  if ((messages || []).some(m => m.tool_calls || m.role === "tool")) out.splice(0, out.length, ...responsesMessages(messages));
   if (images?.length) {
     for (let i = out.length - 1; i >= 0; i--) {
       if (out[i].role !== "user") continue;
@@ -264,7 +266,7 @@ function instructionsOf(messages) {
   return (messages || []).filter((m) => m && m.role === "system").map((m) => normalizeContentToText(m.content)).join("\n\n");
 }
 
-export async function chat({ channel, model, prompt, messages, thinkingOverride, images = [], onDelta, onReasoning, signal }) {
+export async function chat({ tools = [], toolChoice, onToolCall, channel, model, prompt, messages, thinkingOverride, images = [], onDelta, onReasoning, signal }) {
   const identity = grokIdentity(channel);
   const base = chatBase(channel);
   const body = {
@@ -278,6 +280,9 @@ export async function chat({ channel, model, prompt, messages, thinkingOverride,
   };
   if (thinkingOverride === true) body.reasoning = { effort: "medium" };
 
+  applyToolDefinitions(body, tools, toolChoice, "responses");
+  const toolBuffer = new ToolCallBuffer(onToolCall);
+  let terminated = false;
   const buildInit = (token) => ({
     method: "POST",
     headers: buildHeaders(channel, token, identity, base),
@@ -326,7 +331,10 @@ export async function chat({ channel, model, prompt, messages, thinkingOverride,
 
   const handleEvent = (obj) => {
     if (!obj || typeof obj !== "object") return;
+    toolBuffer.responses(obj);
     const type = String(obj.type || "");
+    if (["response.completed", "response.done"].includes(type)) terminated = true;
+    if (type === "response.incomplete" && toolBuffer.size) throw Object.assign(new Error("工具调用响应被截断"), { code: "CHANNEL_STREAM_ERROR" });
     if (obj.response?.model) upstreamModel = obj.response.model;
     if (type === "response.output_text.delta") {
       const d = String(obj.delta || "");
@@ -411,12 +419,13 @@ export async function chat({ channel, model, prompt, messages, thinkingOverride,
   }
 
   const finalContent = content || finalOutput;
-  if (!finalContent) {
+  if (toolBuffer.size && !terminated) throw Object.assign(new Error("工具响应未完成"), { code: "CHANNEL_STREAM_ERROR", content, reasoning, usage });
+  if (!finalContent && !toolBuffer.size) {
     throw Object.assign(new Error(reasoning ? "Grok 只返回了思考内容，没有正文" : "Grok 返回空内容"), {
       code: "CHANNEL_EMPTY",
     });
   }
-  return { content: finalContent, reasoning, usage, upstreamModel };
+  return { content: finalContent, reasoning, usage, upstreamModel, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras };
 }
 
 /** 健康检查：最小 responses 请求，读首帧即断开 */

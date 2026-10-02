@@ -7,8 +7,10 @@ import { normalizeUsage } from "../src/services/pricing.js";
 import { USAGE_SQL } from "../src/services/log.js";
 import { channelPriceQuote } from "../src/services/channel-price-quote.js";
 import { userDataVisibility } from "../src/services/user-data-visibility.js";
+import * as toolWire from "../src/services/tool-wire.js";
 
 const audit = {
+  toolWire,
   crypto,
   normalizeUsage,
   USAGE_SQL,
@@ -38,11 +40,12 @@ const tools = await loadMocked("../src/services/harness/tools.js", `
 audit.tools = tools;
 const harness = await loadMocked("../src/services/harness/loop.js", `
   const crypto=audit.crypto;
-  const runCompletion=(o)=>audit.complete(o);
+  const runCompletion=(o)=>audit.complete({...o,...o.prepareRequest?.({nativeTools:audit.nativeMode===true})});
   const modelForChannelMatch=(v)=>v;
   const buildSystemPrompt=()=>"SYSTEM_CONTEXT";
   const SUBAGENTS=[{id:"explore",tools:[]}];
-  const {toolSpecs,runTool}=audit.tools;
+  const {toolSpecs,nativeToolSpecs,runTool}=audit.tools;
+  const {callsText,chatCalls,textToolMessages}=audit.toolWire;
   const DEFAULT_MAX_STEPS=8;
 `);
 const executor = await loadMocked("../src/services/execute.js", `
@@ -51,6 +54,8 @@ const executor = await loadMocked("../src/services/execute.js", `
   const getNumberOption=(key)=>key==="request_timeout_ms"?1000:(audit.retryTimes || 0);
   const selectChannels=async ()=>audit.channels || [{id:1,name:"mock",type:"mock"}];
   const getAdapter=async ()=>audit.adapter;
+  const adapterKeyFor=(c)=>c.type;
+  const {callsText}=audit.toolWire;
   const markChannelError=async ()=>{};
   const markChannelOk=async ()=>{};
   const withChannelLimit=(_channel,fn)=>fn();
@@ -446,7 +451,7 @@ for (const mode of ["whole", "char"]) {
       const content = ++count === 1 ? '<tool_call>{"tool":"account","args":{"action":"overview"}}<tool_call>{"tool":"account","args":{"action":"recent","limit":5}}'
         : '余额 1.2345 OD币；最近调用包含 fixture-model。';
       if (count === 2) {
-        const results = o.messages.find(m => m.content.includes('<tool_result'))?.content || '';
+        const results = o.messages.filter(m => m.content.includes('<tool_result')).map(m => m.content).join('\n');
         assert.match(results, /余额：1\.2345 OD币/); assert.match(results, /fixture-model/);
         assert.equal((results.match(/<tool_result /g) || []).length, 2);
       }
@@ -602,6 +607,91 @@ try {
   globalThis.fetch = originalFetch;
   delete globalThis.__ooHarnessAudit;
 }
+await test("原生工具经过执行器、账号权限、结果回传及最终回答，两次模型调用只记两单", async () => {
+  const originalQuery = audit.pool.query;
+  let count = 0;
+  audit.nativeMode = true;
+  audit.channels = [{ id: 1, type: "kiro", name: "fixture" }];
+  audit.pool.query = async (sql, args) => {
+    assert.equal(args[0],77);
+    if (sql.includes("FROM users")) return [[{username:"fixture",quota:12345}]];
+    if (sql.includes("ORDER BY id DESC")) return [[{type:2,model:"fixture-model",quota:100,created_at:1}]];
+    return [[{n:1,on_:1,cost:0}]];
+  };
+  audit.adapter = { chat: async o => {
+    assert.equal(o.tools[0].name,"account");
+    if (++count === 1) {
+      const toolCalls = ["overview","recent"].map((action,i)=>({id:`call_${i}`,name:"account",arguments:JSON.stringify({action})}));
+      toolCalls.forEach((c,index)=>o.onToolCall({index,...c}));
+      return {...mockResult(""),toolCalls};
+    }
+    const previous=o.messages.find(m=>m.tool_calls);
+    const results=o.messages.filter(m=>m.role==="tool");
+    assert.equal(previous.tool_calls.length,2);assert.equal(results.length,2);
+    assert.equal(results[0].tool_call_id,previous.tool_calls[0].id);
+    assert.match(results[0].content,/余额：1\.2345 OD币/);assert.match(results[1].content,/fixture-model/);
+    o.onDelta("余额 1.2345 OD币；最近调用包含 fixture-model。");
+    return mockResult("余额 1.2345 OD币；最近调用包含 fixture-model。");
+  }};
+  audit.complete=o=>executor.runCompletion(o);
+  try {
+    const out=await harness.runHarness({...harnessOptions(["account"],[]),user:{id:77}});
+    assert.equal(count,2);assert.equal(out.calls.length,2);assert.match(out.text,/fixture-model/);
+    assert.deepEqual(out.parts.filter(p=>p.type==="tool").map(p=>p.status),["done","done"]);
+    assert.ok(out.calls[0].firstTokenAt>0);assert.match(out.calls[0].output,/overview/);
+  } finally { audit.pool.query=originalQuery;audit.channels=null;audit.nativeMode=false; }
+});
+
+await test("原生参数损坏时整批不执行，越权工具拒绝且不会执行本机命令",async()=>{
+  audit.nativeMode=true;
+  let count=0;
+  audit.complete=async o=>{
+    if (++count===1) return {...mockResult(""),toolMode:"native",toolCalls:[{id:"a",name:"todowrite",arguments:'{"todos":[]}'},{id:"b",name:"account",arguments:'{"broken"'}]};
+    assert.match(o.messages.at(-1).content,/原生工具接口/);
+    o.onDelta("无法读取"); return mockResult("无法读取");
+  };
+  try {
+    const out=await harness.runHarness(harnessOptions(["todowrite"],[]));
+    assert.equal(out.parts.filter(p=>p.type==="tool").length,0);
+    count=0;
+    audit.complete=async o=>{
+      if(++count===1)return {...mockResult(""),toolCalls:[{id:"a",name:"bash",arguments:'{"command":"fixture"}'}]};
+      assert.match(o.messages.at(-1).content,/本轮不可用/);o.onDelta("不可用");return mockResult("不可用");
+    };
+    const refused=await harness.runHarness(harnessOptions(["account"],[]));
+    assert.equal(refused.parts.find(p=>p.type==="tool").status,"failed");
+  } finally {audit.nativeMode=false;}
+});
+
+await test("原生工具产生增量后中断不重试，保留参数用量供单次结算",async()=>{
+  audit.channels=[{id:1,type:"kiro",name:"fixture"},{id:2,type:"kiro",name:"other"}];audit.retryTimes=1;
+  let count=0;
+  audit.adapter={chat:async o=>{count++;o.onToolCall({index:0,id:"a",name:"account",arguments:'{"action":'});throw interrupted();}};
+  try {
+    await assert.rejects(()=>executor.runCompletion({model:"auto",prompt:"fixture",tools:tools.nativeToolSpecs(["account"])}),e=>{
+      assert.match(e.billingOutput,/account/);assert.equal(e.billable,true);assert.ok(e.firstTokenAt>0);return true;
+    });assert.equal(count,1);
+  } finally {audit.channels=null;audit.retryTimes=0;}
+});
+
+await test("换到网页渠道时工具定义采用文本协议，已执行结果不丢；最终快照无delta仍能展示",async()=>{
+  audit.nativeMode=true;
+  audit.channels=[{id:1,type:"web-fixture",name:"fixture"}];
+  let count=0;
+  audit.adapter={chat:async o=>{
+    assert.deepEqual(o.tools,[]);
+    if(++count===1)return mockResult('<tool_call>{"tool":"todowrite","args":{"todos":[{"content":"fixture","status":"completed"}]}}</tool_call>');
+    assert.ok(o.messages.some(m=>m.content.includes('<tool_result')));
+    assert.ok(!o.messages.some(m=>m.role==="tool"));
+    return mockResult('工具执行完毕，这是最终快照回答。');
+  }};
+  audit.complete=o=>executor.runCompletion(o);
+  try{
+    const result=await harness.runHarness(harnessOptions(["todowrite"],[]));
+    assert.equal(result.text,'工具执行完毕，这是最终快照回答。');assert.equal(result.calls.length,2);
+  }finally{audit.channels=null;audit.nativeMode=false;}
+});
+
 console.log(`  harness 执行/计费回归 ${passed} 项通过`);
 // 真实环回 HTTP 覆盖错误日志、事务和前置失败，不能只验证记录函数的调用次数。
 await import("./upstream-failures.test.mjs");

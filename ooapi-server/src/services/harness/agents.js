@@ -118,8 +118,8 @@ export function publicAgents(list = AGENTS) {
 }
 
 // 工具协议：本平台的渠道里既有 OpenAI 兼容 API，也有网页版反代，
-// 后者不支持原生 tool calling，所以统一走「提示词 + 严格 JSON 调用块」协议，
-// 由 harness/loop.js 解析。协议只有一种写法，减少模型自由发挥。
+// 后者不支持原生 tool calling，保留「提示词 + 严格 JSON 调用块」作为网页渠道协议。
+// 支持原生工具的渠道使用单独指令，避免同时教模型两种冲突格式。
 export const TOOL_PROTOCOL = [
   "需要外部信息时，你可以调用工具。调用写法（严格照抄，一次只调一个）：",
   '<tool_call>{"tool":"工具名","args":{...}}</tool_call>',
@@ -147,7 +147,7 @@ export const TOOL_PROTOCOL = [
  * @param {Array}  p.subagents 可派发的子代理
  * @param {number} p.depth     0=主智能体，1=子代理
  */
-export function buildSystemPrompt({ agent, model, settings = {}, toolSpecs = [], todo = [], subagents = [], depth = 0 }) {
+export function buildSystemPrompt({ agent, model, settings = {}, toolSpecs = [], todo = [], subagents = [], depth = 0, nativeTools = false }) {
   const lines = [];
   lines.push(`${agent.role || agent.desc}`);
   lines.push("");
@@ -168,7 +168,11 @@ export function buildSystemPrompt({ agent, model, settings = {}, toolSpecs = [],
     lines.push("# 可用工具");
     for (const t of toolSpecs) lines.push(`- ${t.id}：${t.desc}\n  参数：${t.args}`);
     lines.push("");
-    lines.push(TOOL_PROTOCOL);
+    lines.push(nativeTools ? [
+      "通过本次请求声明的原生工具调用接口使用工具，不能在正文里输出工具调用标记或伪造结果。",
+      "查询余额、调用记录及 Binance 数据时必须读取对应工具。用户同时问余额和最近记录时，分别调用 account overview 和 recent，然后完整回答。",
+      "调用后等待真实工具结果；失败时如实说明，绝不能编造账号数据。工具状态描述不能代替最终答案。",
+    ].join("\n") : TOOL_PROTOCOL);
   } else {
     lines.push("");
     lines.push("# 工具");

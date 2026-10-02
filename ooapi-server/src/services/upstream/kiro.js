@@ -12,6 +12,8 @@
 // 说明：本适配器把 Kiro 暴露的 Claude 模型按 Anthropic 厂商计费；
 // 由于 Kiro 的 modelId 命名与平台登记表不同，请求时做一次映射（映射不到就原样透传）。
 import crypto from "node:crypto";
+import { ToolCallBuffer, callOf } from "../tool-wire.js";
+import { normalizeContentToText } from "./content-text.js";
 import { persistOtherPatch, loadOther, withRefreshLock } from "./auth-store.js";
 import { createAwsEventStreamParser } from "./kiro-eventstream.js";
 import { parseAuthJson, kiroModelId, safeRegion } from "./kiro-auth.js";
@@ -116,39 +118,38 @@ function headers(channel, token) {
 }
 
 /** 组装 conversationState：历史 + 当前消息 */
-function buildBody(channel, model, prompt, messages) {
+export function buildBody(channel, model, prompt, messages, tools = [], sessionId = "") {
   const history = [];
-  const list = Array.isArray(messages) && messages.length ? messages : [];
+  const list = Array.isArray(messages) && messages.length ? messages : [{ role: "user", content: prompt || "" }];
+  const system = list.filter((m) => ["system", "developer"].includes(m?.role)).map((m) => normalizeContentToText(m.content)).filter(Boolean).join("\n\n");
   for (const m of list) {
-    if (!m || typeof m !== "object" || m.role === "system") continue;
-    const content = typeof m.content === "string" ? m.content : String(m.content ?? "");
-    if (!content) continue;
-    if (m.role === "assistant") history.push({ assistantResponseMessage: { content } });
-    else history.push({ userInputMessage: { content, modelId: kiroModelId(model), origin: "AI_EDITOR" } });
+    if (!m || ["system", "developer"].includes(m.role)) continue;
+    const content = normalizeContentToText(m.content);
+    if (m.role === "assistant") {
+      const toolUses = (m.tool_calls || []).map((c) => { const v = callOf(c); return { toolUseId: v.id, name: v.name, input: JSON.parse(v.arguments) }; });
+      history.push({ assistantResponseMessage: { content: content || " ", ...(toolUses.length ? { toolUses } : {}) } });
+    } else {
+      const toolResults = m.role === "tool" ? [{ toolUseId: m.tool_call_id, content: [{ text: content }], status: m.is_error ? "error" : "success" }] : [];
+      const previous = history.at(-1)?.userInputMessage;
+      if (previous) {
+        if (m.role !== "tool" && content) previous.content += "\n" + content;
+        if (toolResults.length) { previous.userInputMessageContext ||= {}; (previous.userInputMessageContext.toolResults ||= []).push(...toolResults); }
+      } else history.push({ userInputMessage: { content: m.role === "tool" ? "工具执行结果如下。" : content || " ", modelId: kiroModelId(model), origin: "AI_EDITOR", ...(toolResults.length ? { userInputMessageContext: { toolResults } } : {}) } });
+    }
   }
-  // 当前消息：优先最后一条 user，否则用 prompt
-  let current = String(prompt || "");
-  if (history.length && history[history.length - 1].userInputMessage) {
-    current = history.pop().userInputMessage.content;
+  let current = history.at(-1)?.userInputMessage ? history.pop().userInputMessage : { content: "继续", modelId: kiroModelId(model), origin: "AI_EDITOR" };
+  // Kiro没有顶层system字段：必须把平台系统指令明确放入当前上下文，不能像旧实现直接丢弃。
+  if (system) current.content = `<system_instructions>\n${system}\n</system_instructions>\n\n${current.content}`;
+  if (tools.length) {
+    current.userInputMessageContext ||= {};
+    current.userInputMessageContext.tools = tools.map((t) => ({ toolSpecification: { name: t.name, description: t.description, inputSchema: { json: t.parameters } } }));
   }
-  const conversationState = {
-    conversationId: crypto.randomUUID(),
-    chatTriggerType: "MANUAL",
-    currentMessage: {
-      userInputMessage: {
-        content: current,
-        modelId: kiroModelId(model),
-        origin: "AI_EDITOR",
-      },
-    },
-    history,
-  };
-  const body = { conversationState };
-  if (channel?.other?.profile_arn) body.profileArn = String(channel.other.profile_arn);
-  return body;
+  const conversationState = { conversationId: sessionId ? crypto.createHash("sha256").update(`${channel.id}:${sessionId}`).digest("hex").slice(0, 32).replace(/^(........)(....)(....)(....)(............)$/, "$1-$2-$3-$4-$5") : crypto.randomUUID(), chatTriggerType: "MANUAL", currentMessage: { userInputMessage: current }, history };
+  return { conversationState, ...(channel?.other?.profile_arn ? { profileArn: String(channel.other.profile_arn) } : {}) };
 }
 
 export async function chat({
+  tools = [], onToolCall, onUsage, sessionId,
   channel,
   model,
   prompt,
@@ -163,7 +164,7 @@ export async function chat({
     fetch(url, {
       method: "POST",
       headers: headers(channel, token),
-      body: JSON.stringify(buildBody(channel, model, prompt, messages)),
+      body: JSON.stringify(buildBody(channel, model, prompt, messages, tools, sessionId)),
       signal,
     });
 
@@ -210,6 +211,9 @@ export async function chat({
   let reasoning = "";
   let usage = null;
   let upstreamError = null;
+  const toolBuffer = new ToolCallBuffer(onToolCall);
+  let currentToolId = "";
+  const finishedTools = new Set();
 
   try {
     for (;;) {
@@ -243,14 +247,23 @@ export async function chat({
             }
             break;
           }
+          case "toolUseEvent": {
+            const p = ev.payload || {};
+            currentToolId = p.toolUseId || currentToolId;
+            if (!currentToolId) throw Object.assign(new Error("Kiro工具调用缺少编号"), { code: "CHANNEL_BAD_RESPONSE" });
+            toolBuffer.add(currentToolId, { id: currentToolId, name: p.name, ...(p.input != null ? { arguments: typeof p.input === "string" ? p.input : JSON.stringify(p.input) } : {}) }, p.input != null && typeof p.input !== "string");
+            if (p.stop === true) finishedTools.add(currentToolId);
+            break;
+          }
           case "messageMetadataEvent": {
             const u = ev.payload?.tokenUsage || ev.payload?.usage;
             if (u) {
               usage = {
-                prompt_tokens: Number(u.uncachedInputTokens || u.inputTokens || u.prompt_tokens || 0),
+                prompt_tokens: u.uncachedInputTokens != null ? Number(u.uncachedInputTokens) + Number(u.cacheReadInputTokens || 0) + Number(u.cacheWriteInputTokens || 0) : Number(u.inputTokens ?? u.prompt_tokens ?? 0),
                 completion_tokens: Number(u.outputTokens || u.completion_tokens || 0),
-                cache_tokens: Number(u.cacheReadInputTokens || u.cached_tokens || 0),
+                cached_tokens: Number(u.cacheReadInputTokens || u.cached_tokens || 0),
               };
+              onUsage?.(usage);
             }
             break;
           }
@@ -259,23 +272,26 @@ export async function chat({
             break;
           }
           default:
-            break; // codeReference/toolUse/contextUsage 等暂不处理
+            break; // codeReference/contextUsage 等暂不处理
         }
       }
     }
+  } catch (e) {
+    throw Object.assign(new Error(e.message || "Kiro响应中断"), { code: typeof e.code === "string" ? e.code : signal?.aborted ? "CHANNEL_ABORTED" : "CHANNEL_STREAM_ERROR", content, reasoning, usage });
   } finally {
     reader.cancel().catch(() => {});
   }
 
+  if (toolBuffer.size && finishedTools.size !== toolBuffer.size) throw Object.assign(new Error("Kiro工具响应未完成"), { code: "CHANNEL_STREAM_ERROR", content, reasoning, usage });
   if (upstreamError) {
     throw Object.assign(new Error(`Kiro 上游错误：${upstreamError}`), { code: "CHANNEL_BIZ_ERROR" });
   }
-  if (!content) {
+  if (!content && !toolBuffer.size) {
     throw Object.assign(new Error(reasoning ? "Kiro 只返回了思考内容，没有正文" : "Kiro 返回空内容"), {
       code: "CHANNEL_EMPTY",
     });
   }
-  return { content, reasoning, usage, upstreamModel: kiroModelId(model) };
+  return { content, reasoning, usage, toolCalls: toolBuffer.finish(), upstreamModel: kiroModelId(model) };
 }
 
 /** 健康检查：只验证凭据可刷新（不消耗对话额度） */

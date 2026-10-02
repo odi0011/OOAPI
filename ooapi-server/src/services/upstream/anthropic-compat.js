@@ -1,3 +1,4 @@
+import { ToolCallBuffer, applyToolDefinitions, anthropicMessages } from "../tool-wire.js";
 import { normalizeContentToText } from "./content-text.js";
 import { isNotApprovedResponse } from "./http-error.js";
 import { normalizeUsage } from "../pricing.js";
@@ -95,12 +96,12 @@ function injectImages(blocks, images) {
   }
 }
 
-export async function chat({ channel, model, prompt, messages, thinkingOverride, images = [], onDelta, onReasoning, onUsage, signal }) {
+export async function chat({ tools = [], toolChoice, onToolCall, channel, model, prompt, messages, thinkingOverride, images = [], onDelta, onReasoning, onUsage, signal }) {
   const { messages: url } = endpoints(channel?.base_url);
   const key = nextKey(channel);
   if (!key) throw Object.assign(new Error("未填写 API Key"), { code: "CHANNEL_AUTH_EXPIRED", upstreamStarted: false });
   const useMessages = Array.isArray(messages) && messages.length ? messages : [{ role: "user", content: prompt }];
-  const blocks = buildMessages(useMessages);
+  const blocks = tools.length || useMessages.some(m => m.tool_calls || m.role === "tool") ? anthropicMessages(useMessages) : buildMessages(useMessages);
   if (images?.length) injectImages(blocks, images);
   const thinking = thinkingOverride === true;
   const body = {
@@ -112,6 +113,8 @@ export async function chat({ channel, model, prompt, messages, thinkingOverride,
   const system = systemOf(useMessages);
   if (system) body.system = system;
   if (thinking) body.thinking = { type: "enabled", budget_tokens: 12000 };
+  applyToolDefinitions(body, tools, toolChoice, "anthropic");
+  const toolBuffer = new ToolCallBuffer(onToolCall);
 
   let resp;
   try {
@@ -185,6 +188,7 @@ export async function chat({ channel, model, prompt, messages, thinkingOverride,
   };
 
   const handle = (ev) => {
+    toolBuffer.anthropic(ev);
     const type = String(ev?.type || "");
     if (type === "message_start" && ev.message) {
       if (ev.message.model) upstreamModel = ev.message.model;
@@ -251,7 +255,7 @@ export async function chat({ channel, model, prompt, messages, thinkingOverride,
     buf += dec.decode();
     if (buf.trim()) handleLine(buf);
     if (!terminated) throw Object.assign(new Error("Anthropic 响应流提前结束，未收到 message_stop"), { code: "CHANNEL_STREAM_ERROR" });
-    if (!content) throw Object.assign(new Error(reasoning ? "Anthropic 只返回思考，没有正文" : "Anthropic 返回空内容"), { code: "CHANNEL_EMPTY" });
+    if (!content && !toolBuffer.size) throw Object.assign(new Error(reasoning ? "Anthropic 只返回思考，没有正文" : "Anthropic 返回空内容"), { code: "CHANNEL_EMPTY" });
   } catch (e) {
     const failure = typeof e.code === "string" ? e : Object.assign(new Error(e.message || "Anthropic 响应流中断"), {
       code: signal?.aborted ? "CHANNEL_ABORTED" : "CHANNEL_STREAM_ERROR",
@@ -263,7 +267,7 @@ export async function chat({ channel, model, prompt, messages, thinkingOverride,
     reader.cancel().catch(() => {});
   }
 
-  return { content, reasoning, usage, upstreamModel, httpStatus: resp.status };
+  return { content, reasoning, usage, upstreamModel, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras, httpStatus: resp.status };
 }
 
 /** 健康检查：GET /v1/models（免费） */

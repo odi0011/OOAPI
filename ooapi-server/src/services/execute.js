@@ -3,7 +3,8 @@
 import crypto from "node:crypto";
 import { pool } from "../db.js";
 import { getNumberOption } from "../config.js";
-import { selectChannels, getAdapter, markChannelError, markChannelOk, withChannelLimit, explainNoChannel } from "./router.js";
+import { selectChannels, getAdapter, adapterKeyFor, markChannelError, markChannelOk, withChannelLimit, explainNoChannel } from "./router.js";
+import { callsText } from "./tool-wire.js";
 import { resolveAliasSync } from "./models.js";
 import { recordChannelSwitch } from "./metrics.js";
 import { normalizeUsage } from "./pricing.js";
@@ -108,6 +109,7 @@ const LOCAL_REJECTION_CODES = new Set([
  * @param {string} opts.requestId     本次逻辑调用的标识
  */
 export async function runCompletion({
+  tools = [], toolChoice, onToolCall, prepareRequest,
   model,
   prompt,
   messages = null,
@@ -185,6 +187,8 @@ export async function runCompletion({
     let firstTokenAt = 0;
     let attemptContent = "";
     let attemptReasoning = "";
+    let attemptTools = "", prepared = null;
+    const attemptToolCalls = new Map();
     let attemptUsage = null;
     let settled = false;
 
@@ -198,6 +202,11 @@ export async function runCompletion({
 
     try {
       const adapter = await getAdapter(channel);
+      const key = adapterKeyFor(channel);
+      const nativeTools = ["openai-compat", "anthropic-compat", "cline", "opencode", "kiro", "codex", "claude-oauth", "antigravity", "grok", "workbuddy", "qoder", "zcode", "autoclaw"].includes(key)
+        && !(key === "opencode" && /(?:^|\/)jev-/i.test(model));
+      if (tools.length && !nativeTools && !prepareRequest) throw Object.assign(new Error("当前渠道不支持原生工具调用"), { code: "TOOLS_NOT_SUPPORTED", upstreamStarted: false });
+      prepared = prepareRequest ? prepareRequest({ nativeTools, channel }) : { prompt, messages };
       let hardTimer;
       let backstopTimer;
       let armDeadline = () => {};
@@ -241,8 +250,17 @@ export async function runCompletion({
           return adapter.chat({
             channel,
             model,
-            prompt,
-            messages,
+            prompt: prepared.prompt,
+            messages: prepared.messages,
+            tools: nativeTools ? tools : [], toolChoice: nativeTools ? toolChoice : undefined,
+            onToolCall: (call) => {
+              if (settled) return;
+              sawOutput = true;
+              attemptToolCalls.set(call.index ?? call.id, call);
+              attemptTools = callsText([...attemptToolCalls.values()]);
+              if (!firstTokenAt) firstTokenAt = Date.now();
+              onToolCall?.(call);
+            },
             sessionId: callSessionId,
             requestId: callRequestId,
             userId: user?.id,
@@ -278,7 +296,7 @@ export async function runCompletion({
       });
       attemptUsage = result.usage ?? attemptUsage;
       internalRetries += Math.max(0, Number(result.retryCount) || 0);
-      if (!result.content && !result.reasoning) {
+      if (!result.content && !result.reasoning && !result.toolCalls?.length) {
         throw Object.assign(new Error("上游返回空内容"), { code: "CHANNEL_EMPTY", usage: attemptUsage,
           status: result.httpStatus, upstreamModel: result.upstreamModel, billModel: result.billModel });
       }
@@ -329,7 +347,7 @@ export async function runCompletion({
           }
         );
       }
-      return { ...result, channel, channelQuote: attemptQuote, startedAt: callStarted || started, firstTokenAt,
+      return { ...result, toolMode: nativeTools ? "native" : "text", requestPrompt: prepared.billingPrompt || prepared.prompt, channel, channelQuote: attemptQuote, startedAt: callStarted || started, firstTokenAt,
         retryCount: attempts - 1 + internalRetries, elapsed: Date.now() - runStartedAt };
     } catch (err) {
       lastError = tagChannel(err, channel);
@@ -355,8 +373,8 @@ export async function runCompletion({
       lastError.usage = err.usage ?? attemptUsage;
       lastError.content = err.content ?? attemptContent;
       lastError.reasoning = err.reasoning ?? attemptReasoning;
-      lastError.billingOutput = String(err.billingOutput ?? `${lastError.content || ""}${lastError.reasoning || ""}`);
-      lastError.billingPrompt = String(err.billingPrompt ?? prompt ?? "");
+      lastError.billingOutput = String(err.billingOutput ?? `${lastError.content || ""}${lastError.reasoning || ""}${callsText(err.toolCalls) || attemptTools}`);
+      lastError.billingPrompt = String(err.billingPrompt ?? prepared?.billingPrompt ?? prepared?.prompt ?? prompt ?? "");
       lastError.billingStartedAt = Number(err.billingStartedAt) || callStarted || started;
       lastError.billingFirstTokenAt = Number(err.billingFirstTokenAt || err.firstTokenAt) || firstTokenAt;
       lastError.firstTokenAt = lastError.billingFirstTokenAt;

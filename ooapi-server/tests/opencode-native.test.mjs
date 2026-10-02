@@ -56,13 +56,14 @@ await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const base = `http://127.0.0.1:${server.address().port}/zen/v1`;
 const channel = { id: 99123, type: "opencode", base_url: base, api_key: "fixture-native-key", models: "muse-spark-1.2-contributor-free,muse-spark-1.3-contributor-free,jev-1.13-free,jev-1.13,mimo-v2.6-free", other: { method: "api", allow_private_upstream: true } };
 const chat = (model = "muse-spark-1.3-contributor-free", extra = {}) => adapter.chat({ channel, model, prompt: "说明这次判断", ...extra });
-const assertHeaders = (request) => {
-  assert.equal(request.headers.authorization, "Bearer fixture-native-key");
+const assertHeaders = (request, auth = "Bearer fixture-native-key") => {
+  assert.equal(request.headers.authorization, auth);
   assert.equal(request.headers["x-opencode-client"], "cli");
   assert.match(request.headers["x-opencode-session"], /^ses_/);
   assert.match(request.headers["x-opencode-request"], /^msg_/);
   assert.equal(request.headers["x-opencode-session"], request.headers["x-opencode-session-id"]);
 };
+const FREE_TOOLS = ["bash", "edit", "glob", "grep", "read"];
 const structured = { state: { ticket: "我的付款失败了" }, questions: {
   urgent: { type: "noul", instructions: "需要紧急处理吗？" },
   team: { type: "choice", instructions: "归哪个团队？", criteria: { billing: "付款", support: "技术" } },
@@ -75,8 +76,11 @@ try {
       { role: "system", content: "system fixture" }, { role: "assistant", content: "previous" },
       { role: "user", content: [{ type: "text", text: "user fixture" }] },
     ], images: [{ mimeType: "image/png", buffer: Buffer.from("fixture-image") }], onDelta: (x) => deltas.push(x), onReasoning: (x) => reasoning.push(x), onUsage: (x) => usages.push(x) });
-    const request = seen[0]; assertHeaders(request);
+    const request = seen[0]; assertHeaders(request, "Bearer public");
     assert.equal(request.url, "/zen/v1/responses"); assert.equal(request.body.model, "muse-spark-1.3-contributor-free");
+    // 免费档请求体必须是 agent 形态：Responses 工具为顶层扁平结构，只看名字
+    assert.deepEqual(FREE_TOOLS.filter((n) => (request.body.tools || []).some((t) => t?.name === n)), FREE_TOOLS);
+    assert.equal(request.body.stream, true);
     assert.equal(request.body.instructions, "system fixture"); assert.equal(request.body.input[0].content[0].type, "output_text");
     assert.equal(request.body.input[1].content[0].text, "user fixture"); assert.match(request.body.input[1].content[1].image_url, /^data:image\/png;base64,/);
     assert.equal(request.body.messages, undefined); assert.equal(request.body.stream_options, undefined);
@@ -119,8 +123,10 @@ try {
   await test("Jev 原生问题映射、判断概率和实际输出 token 正确保留", async () => {
     mode = "systemone"; seen = []; const deltas = [];
     const result = await chat("jev-1.13-free", { prompt: JSON.stringify(structured), onDelta: (x) => deltas.push(x) });
-    const request = seen[0]; assertHeaders(request); assert.equal(request.url, "/zen/v1/systemone");
+    const request = seen[0]; assertHeaders(request, "Bearer public"); assert.equal(request.url, "/zen/v1/systemone");
+    // SystemOne 是结构化判定请求而非 agent 流量：免费档只换匿名凭据，请求体保持原样
     assert.deepEqual(request.body.state, structured.state); assert.deepEqual(request.body.questions, structured.questions); assert.equal(request.body.stream, undefined);
+    assert.equal(request.body.tools, undefined);
     assert.match(result.content, /urgent: 是（95.0%）/); assert.match(result.content, /low: 否（5.0%）/); assert.match(result.content, /team: billing/);
     assert.equal(result.structured.answers.urgent.noul, .95); assert.equal(result.usage.completion_tokens, 20); assert.equal(deltas.join(""), result.content);
     assert.equal(result.upstreamModel, "jev-1.13.0");
@@ -147,6 +153,11 @@ try {
     assert.equal((await chat("mimo-v2.6-free")).content, "compat");
     assert.equal((await chat(undefined, { channel: { ...channel, other: { ...channel.other, method: "go" } } })).content, "compat");
     assert.equal(seen[0].url, "/zen/v1/chat/completions"); assert.equal(seen[1].url, "/zen/v1/chat/completions");
+    // Zen 免费档（mimo-v2.6-free）走匿名凭据 + 核心工具；GO 订阅保持 keyed 原样
+    assert.equal(seen[0].headers.authorization, "Bearer public");
+    assert.deepEqual(FREE_TOOLS.filter((n) => (seen[0].body.tools || []).some((t) => t?.function?.name === n)), FREE_TOOLS);
+    assert.equal(seen[1].headers.authorization, "Bearer fixture-native-key");
+    assert.equal(seen[1].body.tools, undefined);
     assert.equal(seen[1].headers["user-agent"], "OOAPI-Gateway/1.0");
   });
   await test("原生端点仍有公网 SSRF 检查", async () => {

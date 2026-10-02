@@ -1,3 +1,4 @@
+import { ToolCallBuffer, applyToolDefinitions, anthropicMessages } from "../tool-wire.js";
 // 上游适配器：claude-oauth（Anthropic Claude 订阅 · Claude Code OAuth）
 // ===========================================================================
 // 协议来源：参考开源项目 CLIProxyAPI（router-for-me/CLIProxyAPI）的 Claude Code 实现。
@@ -245,7 +246,7 @@ const BETA_BASE = [
   "extended-cache-ttl-2025-04-11",
 ];
 
-export async function chat({
+export async function chat({ tools = [], toolChoice, onToolCall,
   channel,
   model,
   prompt,
@@ -258,7 +259,7 @@ export async function chat({
 }) {
   const identity = claudeIdentity(channel);
   const useMessages = Array.isArray(messages) && messages.length ? messages : [{ role: "user", content: prompt }];
-  const msgBlocks = buildClaudeMessages(useMessages);
+  const msgBlocks = tools.length || useMessages.some(m => m.tool_calls || m.role === "tool") ? anthropicMessages(useMessages) : buildClaudeMessages(useMessages);
   if (images?.length) injectImages(msgBlocks, images);
 
   const thinking = thinkingOverride === true;
@@ -271,6 +272,8 @@ export async function chat({
     metadata: { user_id: identity.userId },
   };
   if (thinking) body.thinking = { type: "enabled", budget_tokens: 12000 };
+  applyToolDefinitions(body, tools, toolChoice, "anthropic");
+  const toolBuffer = new ToolCallBuffer(onToolCall);
 
   const buildInit = (token) => ({
     method: "POST",
@@ -332,10 +335,13 @@ export async function chat({
   let reasoning = "";
   let usage = null;
   let upstreamModel = model;
+  let terminated = false;
 
   const handleEvent = (obj) => {
     if (!obj || typeof obj !== "object") return;
+    toolBuffer.anthropic(obj);
     const type = String(obj.type || "");
+    if (type === "message_stop") terminated = true;
     if (type === "message_start" && obj.message) {
       if (obj.message.model) upstreamModel = obj.message.model;
       const u = obj.message.usage || {};
@@ -424,12 +430,13 @@ export async function chat({
     reader.cancel().catch(() => {});
   }
 
-  if (!content) {
+  if (toolBuffer.size && !terminated) throw Object.assign(new Error("Claude工具响应未完成"), { code: "CHANNEL_STREAM_ERROR", content, reasoning, usage });
+  if (!content && !toolBuffer.size) {
     throw Object.assign(new Error(reasoning ? "Claude 只返回了思考内容，没有正文" : "Claude 返回空内容"), {
       code: "CHANNEL_EMPTY",
     });
   }
-  return { content, reasoning, usage, upstreamModel };
+  return { content, reasoning, usage, upstreamModel, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras };
 }
 
 /** 健康检查：最小的 messages 调用 */

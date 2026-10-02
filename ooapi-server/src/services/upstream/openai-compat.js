@@ -18,6 +18,7 @@ import { now, assertPublicUrlCached } from "../../utils.js";
 import { assertNoContentError } from "./content-error.js";
 import { applyVendorRequest, effectiveModelOf, reasoningDeltaOf, splitThinkTags, stripDsSafety, makeDsSafetyFilter } from "./vendor-quirks.js";
 import { normalizeUsage } from "../pricing.js";
+import { ToolCallBuffer, applyToolDefinitions, callOf } from "../tool-wire.js";
 import { publicRunError } from "./public-error.js";
 import { classifyUpstreamHttp } from "./http-error.js";
 
@@ -176,7 +177,7 @@ function buildMessages({ messages, prompt, images }) {
     // 过滤非对象元素（防御性）：调用方已过滤，这里兜底避免 TypeError 打断整条渠道链
     const out = messages
       .filter((m) => m && typeof m === "object")
-      .map((m) => ({ role: m.role, content: m.content ?? "" }));
+      .map((m) => ({ role: m.role, content: m.content ?? "", ...(m.tool_calls ? { tool_calls: m.tool_calls.map(c => { const v = callOf(c); return { id: v.id, type: "function", function: { name: v.name, arguments: v.arguments } }; }) } : {}), ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}), ...(m.reasoning_content ? { reasoning_content: m.reasoning_content } : {}) }));
     // 图片挂在最后一条 user 消息上
     if (images?.length) {
       for (let i = out.length - 1; i >= 0; i--) {
@@ -311,6 +312,7 @@ function pickUsage(u) {
  * @returns {Promise<{content, reasoning, usage, upstreamModel}>}
  */
 export async function chat({
+  tools = [], toolChoice, onToolCall,
   channel,
   model,
   prompt,
@@ -325,6 +327,9 @@ export async function chat({
   // 社区报告非流式会把 choices 包在 data 里）。传进来的函数对「标准形状」应原样返回，
   // 只有真存在包封时才解 —— 这样对绝大多数厂商是零影响的空操作。
   unwrap,
+  // 可选：请求体最后一刻的定制钩子（OpenCode 免费档注入核心 agent 工具用）。
+  // 在厂商 quirks 之后、fetch 之前调用；未传时零影响。
+  bodyHook,
 }) {
   // 上游 5xx（503 Service is too busy / 502 Bad Gateway …）是**上游瞬时过载**，
   // 不是这个渠道坏了 —— 线上实测：DeepSeek 官方 API 的 503 是随机的，
@@ -360,6 +365,8 @@ export async function chat({
         onUsage,
         signal,
         unwrap,
+        bodyHook,
+        tools, toolChoice, onToolCall: (call) => { sawOutput = true; onToolCall?.(call); },
       });
       return { ...result, retryCount: attempt };
     } catch (e) {
@@ -376,6 +383,7 @@ export async function chat({
 }
 
 async function chatOnce({
+  tools = [], toolChoice, onToolCall,
   channel,
   model,
   prompt,
@@ -387,6 +395,7 @@ async function chatOnce({
   onUsage,
   signal,
   unwrap,
+  bodyHook,
 }) {
   const { chat: url } = endpoints(channel.base_url);
   if (!url) {
@@ -403,6 +412,8 @@ async function chatOnce({
     // 让上游把用量一并带回来，便于精确计费
     stream_options: { include_usage: true },
   };
+  applyToolDefinitions(body, tools, toolChoice);
+  const toolBuffer = new ToolCallBuffer(onToolCall);
 
   // 深度思考开关：不同厂商字段名不同。
   // 默认**不下发**厂商私有字段 —— OpenAI 等对未知请求字段直接 400。
@@ -420,6 +431,9 @@ async function chatOnce({
   // 厂商协议差异在这统一落地（MiniMax 的 reasoning_split 必须开、
   // 方舟的 thinking 格式与 max_tokens 互斥、StepFun 的参数裁剪），见 vendor-quirks.js
   applyVendorRequest(body, { channel, model });
+
+  // 特殊通道的最后一刻定制（OpenCode 免费档注入核心 agent 工具）；未传时零影响
+  if (typeof bodyHook === "function") bodyHook(body);
 
   const resp = await guardedFetch(
     url,
@@ -501,7 +515,9 @@ async function chatOnce({
     } catch {
       throw Object.assign(new Error("上游返回了非法的 JSON"), { code: "CHANNEL_BAD_RESPONSE" });
     }
+    if (unwrap) j = unwrap(j) || j;
     const msg = j?.choices?.[0]?.message || {};
+    for (const [i, c] of (msg.tool_calls || []).entries()) toolBuffer.add(i, callOf(c), true);
     const jsonUsage = pickUsage(j?.usage);
     if (jsonUsage && onUsage) onUsage(jsonUsage);
     if (j?.error) throw Object.assign(new Error(j.error.message || "上游返回错误响应"), {
@@ -527,7 +543,7 @@ async function chatOnce({
     }
     if (reasoning && onReasoning) onReasoning(reasoning);
     if (content && onDelta) onDelta(content);
-    if (!content) {
+    if (!content && !toolBuffer.size) {
       throw Object.assign(new Error(reasoning ? "上游只返回了思考内容，没有正文" : "上游返回空内容"), {
         code: "CHANNEL_EMPTY",
         status: resp.status, usage: jsonUsage, content, reasoning,
@@ -535,6 +551,8 @@ async function chatOnce({
     }
     return {
       content,
+      toolCalls: toolBuffer.finish(),
+      assistantExtras: { reasoning_content: reasoning },
       reasoning,
       usage: jsonUsage,
       httpStatus: resp.status,
@@ -593,9 +611,13 @@ async function chatOnce({
     if (ev.error) throw Object.assign(new Error(ev.error.message || "上游返回错误事件"), {
       code: "CHANNEL_BIZ_ERROR", upstreamErrorCode: String(ev.error.code || ev.error.type || ""),
     });
-    if (ev.choices?.some((c) => c?.finish_reason != null)) terminated = true;
+    if (ev.choices?.[0]?.finish_reason != null) {
+      terminated = true;
+      if (["length", "content_filter"].includes(ev.choices[0].finish_reason) && toolBuffer.size) throw Object.assign(new Error("上游工具调用被截断"), { code: "CHANNEL_STREAM_ERROR" });
+    }
     const d = ev.choices?.[0]?.delta;
     if (!d) return;
+    for (const c of d.tool_calls || []) toolBuffer.add(c.index ?? 0, { id: c.id, name: c.function?.name, arguments: c.function?.arguments });
     // 部分厂商把思考链放在 reasoning_content，另有 reasoning 的写法；
     // MiniMax 开 reasoning_split 后放在 reasoning_details（数组）——统一在这里读
     const r = d.reasoning_content ?? d.reasoning ?? reasoningDeltaOf(d);
@@ -643,7 +665,7 @@ async function chatOnce({
     }
     safetyStripped = dsFilter.hit();
     if (!terminated) throw Object.assign(new Error("上游响应流提前结束，未收到结束帧"), { code: "CHANNEL_STREAM_ERROR" });
-    if (!content) throw Object.assign(new Error(reasoning ? "上游只返回了思考内容，没有正文" : "上游返回空内容"), { code: "CHANNEL_EMPTY" });
+    if (!content && !toolBuffer.size) throw Object.assign(new Error(reasoning ? "上游只返回了思考内容，没有正文" : "上游返回空内容"), { code: "CHANNEL_EMPTY" });
     assertNoContentError(content, "上游");
   } catch (e) {
     // DOMException.code 是只读数字（AbortError=20），不能拿来当业务错误码或原位覆写。
@@ -665,6 +687,8 @@ async function chatOnce({
 
   return {
     content,
+    toolCalls: toolBuffer.finish(),
+    assistantExtras: { reasoning_content: reasoning },
     reasoning,
     usage: pickUsage(usage),
     upstreamModel,

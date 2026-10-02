@@ -1,3 +1,4 @@
+import { ToolCallBuffer, applyToolDefinitions, responsesMessages } from "../tool-wire.js";
 // 上游适配器：codex（OpenAI ChatGPT 订阅 · Codex OAuth）
 // ===========================================================================
 // 协议来源：参考开源项目 CLIProxyAPI（router-for-me/CLIProxyAPI）的 codex 实现，
@@ -217,6 +218,7 @@ function toResponsesInput(messages, images) {
     const contentType = role === "assistant" ? "output_text" : "input_text";
     out.push({ type: "message", role, content: [{ type: contentType, text: normalizeContentToText(m.content) }] });
   }
+  if ((messages || []).some(m => m.tool_calls || m.role === "tool")) out.splice(0, out.length, ...responsesMessages(messages));
   if (images?.length) {
     // 图片挂在最后一条 user 消息上
     for (let i = out.length - 1; i >= 0; i--) {
@@ -264,7 +266,9 @@ function parseJsonCompletion(text) {
     }
     content = parts.join("");
   }
-  if (!content) return null;
+  const toolBuffer = new ToolCallBuffer();
+  toolBuffer.responses({ response: j });
+  if (!content && !toolBuffer.size) return null;
   const u = j.usage || {};
   return {
     content,
@@ -278,10 +282,11 @@ function parseJsonCompletion(text) {
       reasoning_tokens: Number(u.output_tokens_details?.reasoning_tokens ?? u.reasoning_tokens) || 0,
     },
     upstreamModel: j.model || "",
+    toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras,
   };
 }
 
-export async function chat({
+export async function chat({ tools = [], toolChoice, onToolCall,
   channel,
   model,
   prompt,
@@ -323,6 +328,9 @@ export async function chat({
   const stateUsed = Boolean(stateHdr["x-codex-turn-state"]) || Boolean(bodyStateValue);
 
   let injectState = true;
+  applyToolDefinitions(body, tools, toolChoice, "responses");
+  const toolBuffer = new ToolCallBuffer(onToolCall);
+  let terminated = false;
   const buildInit = (token) => ({
     method: "POST",
     headers: {
@@ -420,7 +428,10 @@ export async function chat({
     if (!obj || typeof obj !== "object") return;
     // state kit：从 SSE metadata/headers 捕获通行证（网页协议下走事件而非响应头）
     captureFromEvent(channel, model, obj);
+    toolBuffer.responses(obj);
     const type = String(obj.type || "");
+    if (["response.completed", "response.done"].includes(type)) terminated = true;
+    if (type === "response.incomplete" && toolBuffer.size) throw Object.assign(new Error("工具调用响应被截断"), { code: "CHANNEL_STREAM_ERROR" });
     if (obj.response?.model) upstreamModel = obj.response.model;
     if (type === "response.output_text.delta") {
       const d = String(obj.delta || "");
@@ -512,7 +523,8 @@ export async function chat({
   }
 
   const finalContent = content || finalOutput;
-  if (!finalContent) {
+  if (toolBuffer.size && !terminated) throw Object.assign(new Error("工具响应未完成"), { code: "CHANNEL_STREAM_ERROR", content, reasoning, usage });
+  if (!finalContent && !toolBuffer.size) {
     throw Object.assign(new Error(reasoning ? "Codex 只返回了思考内容，没有正文" : "Codex 返回空内容"), {
       code: "CHANNEL_EMPTY",
     });
@@ -522,6 +534,7 @@ export async function chat({
   const degradeSignal = detectSignal({ usage });
   return {
     content: finalContent,
+    toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras,
     reasoning,
     usage,
     upstreamModel,

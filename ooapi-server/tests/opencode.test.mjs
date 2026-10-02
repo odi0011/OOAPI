@@ -23,31 +23,37 @@ const ck = (n, c, extra = "") => {
   else { fail++; console.log(`  ✗ ${n}${extra ? `  ← ${extra}` : ""}`); }
 };
 
-/* ---------- 记录请求头的假上游 ---------- */
+/* ---------- 记录请求头与请求体的假上游 ---------- */
 const seen = [];
 let forcedError = null;
 let requireZenClient = false;
 const server = http.createServer((req, res) => {
   req.resume();
-  seen.push({ url: req.url, headers: { ...req.headers } });
-  const restriction = "OpenCode's free tier can only be used from within OpenCode";
-  const error = forcedError || (requireZenClient &&
-    (!/^opencode\/[\d.]+$/.test(req.headers["user-agent"] || "") || req.headers["x-opencode-client"] !== "cli")
-    ? { status: 403, message: restriction } : null);
-  if (error) {
-    res.writeHead(error.status, { "content-type": "application/json" });
-    return res.end(JSON.stringify({ error: { message: error.message } }));
-  }
-  if (req.url.endsWith("/models")) {
-    res.writeHead(200, { "content-type": "application/json" });
-    return res.end(JSON.stringify({ data: [{ id: "deepseek-v4.1-flash" }] }));
-  }
-  res.writeHead(200, { "content-type": "text/event-stream" });
-  res.write(`data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" } }] })}\n\n`);
-  res.write(`data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "OK" } }] })}\n\n`);
-  res.write(`data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`);
-  res.write("data: [DONE]\n\n");
-  res.end();
+  const chunks = [];
+  req.on("data", (c) => chunks.push(c));
+  req.on("end", () => {
+    let body = {};
+    try { body = JSON.parse(Buffer.concat(chunks).toString() || "{}"); } catch { /* 记录为空对象 */ }
+    seen.push({ url: req.url, headers: { ...req.headers }, body });
+    const restriction = "OpenCode's free tier can only be used from within OpenCode";
+    const error = forcedError || (requireZenClient &&
+      (!/^opencode\/[\d.]+$/.test(req.headers["user-agent"] || "") || req.headers["x-opencode-client"] !== "cli")
+      ? { status: 403, message: restriction } : null);
+    if (error) {
+      res.writeHead(error.status, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ error: { message: error.message } }));
+    }
+    if (req.url.endsWith("/models")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ data: [{ id: "deepseek-v4.1-flash" }] }));
+    }
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write(`data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" } }] })}\n\n`);
+    res.write(`data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "OK" } }] })}\n\n`);
+    res.write(`data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`);
+    res.write("data: [DONE]\n\n");
+    res.end();
+  });
 });
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const PORT = server.address().port;
@@ -156,9 +162,11 @@ console.log("\n=== ⑥ Zen Key 的客户端头（官方 v1.18.34） ===");
   const adapter = await getAdapter(keyChannel);
   requireZenClient = true;
   seen.length = 0;
-  const result = await adapter.chat({ channel: keyChannel, model: "space-bunny-free", prompt: "fixture coding task" });
+  // 免费模型（id 含 free）走匿名通道，Key 通道契约用付费模型验证
+  const result = await adapter.chat({ channel: keyChannel, model: "deepseek-v4.1-flash", prompt: "fixture coding task" });
   ck("Key 方式经注册适配器发送官方头，受控上游接受", result.content === "OK");
   const first = seen[0]?.headers || {};
+  ck("付费档用渠道 Key 鉴权", first.authorization === "Bearer oc_sk_test", String(first.authorization));
   ck("UA 使用已核对的官方版本", first["user-agent"] === `opencode/${CLI_VERSIONS.opencode}`);
   ck("官方客户端标记为 cli", first["x-opencode-client"] === "cli");
   ck("两种会话头一致", Boolean(first["x-opencode-session"]) && first["x-opencode-session"] === first["x-opencode-session-id"]);
@@ -230,6 +238,45 @@ console.log("\n=== ⑦ HTTP 403 权限分类与管理员恢复提示 ===");
   try { await oc.chat({ channel: mk({ method: "api" }), model: "m", prompt: "fixture" }); } catch (e) { authErr = e; }
   ck("真实401仍归凭据失效", authErr?.code === "CHANNEL_AUTH_EXPIRED" && authErr?.status === 401);
   forcedError = null;
+}
+
+/* ============ ⑧ Zen 免费档走匿名通道（2026-10-02 实测 200 的契约） ============ */
+console.log("\n=== ⑧ 免费档：Bearer public + 核心 agent 工具 ===");
+{
+  ck("免费模型判定：id 含 free 即免费档",
+    oc.isFreeTierModel("fledge-alpha-free")
+    && oc.isFreeTierModel("Muse-Spark-1.3-Contributor-Free")
+    && !oc.isFreeTierModel("deepseek-v4.1-flash"));
+
+  seen.length = 0;
+  await oc.chat({ channel: mk({ method: "api" }), model: "fledge-alpha-free", prompt: "fixture", messages: [{ role: "user", content: "fixture" }], images: [], onDelta: () => {} });
+  let h = seen[0]?.headers || {};
+  let b = seen[0]?.body || {};
+  ck("免费档不带自家 Key，改用共享匿名凭据", h.authorization === "Bearer public", String(h.authorization));
+  ck("请求体注入五个核心 agent 工具（上游按工具名判 agent 流量）",
+    ["bash", "edit", "glob", "grep", "read"].every((n) => (b.tools || []).some((t) => t?.function?.name === n)),
+    JSON.stringify((b.tools || []).map((t) => t?.function?.name)));
+  ck("免费档强制流式", b.stream === true);
+  ck("客户端头仍保留官方契约", h["x-opencode-client"] === "cli" && /^opencode\//.test(h["user-agent"] || ""), String(h["user-agent"]));
+  ck("会话为官方 ses_ 编码形态", /^ses_[a-f\d]{12}[a-z\d]{14}$/i.test(h["x-opencode-session"] || ""), String(h["x-opencode-session"]));
+
+  seen.length = 0;
+  await oc.chat({ channel: mk({ method: "api" }), model: "deepseek-v4.1-flash", prompt: "fixture", messages: [{ role: "user", content: "fixture" }], images: [], onDelta: () => {} });
+  h = seen[0]?.headers || {}; b = seen[0]?.body || {};
+  ck("付费档继续用渠道 Key 鉴权", h.authorization === "Bearer oc_sk_test", String(h.authorization));
+  ck("付费档不注入工具", b.tools === undefined, JSON.stringify(b.tools));
+
+  seen.length = 0;
+  await oc.chat({
+    channel: mk({ method: "api", extra_headers: { authorization: "Bearer admin-wins" } }),
+    model: "fledge-alpha-free", prompt: "fixture", messages: [{ role: "user", content: "fixture" }], images: [], onDelta: () => {},
+  });
+  ck("管理员显式鉴权头仍优先于匿名凭据", seen[0]?.headers.authorization === "Bearer admin-wins", String(seen[0]?.headers.authorization));
+
+  seen.length = 0;
+  await oc.chat({ channel: mk({ method: "go" }), model: "space-bunny-free", prompt: "fixture", messages: [{ role: "user", content: "fixture" }], images: [], onDelta: () => {} });
+  h = seen[0]?.headers || {}; b = seen[0]?.body || {};
+  ck("GO 订阅通道不启用匿名档（keyed 行为不变）", h.authorization === "Bearer oc_sk_test" && b.tools === undefined, `${h.authorization} / ${JSON.stringify(b.tools)}`);
 }
 
 server.close();

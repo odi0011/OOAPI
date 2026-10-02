@@ -135,6 +135,51 @@ let passed = 0;
 const test = async (name, fn) => { reset(); await fn(); passed += 1; console.log(`  ok  ${name}`); };
 try {
   for (const path of paths) {
+    for (const stream of [false, true]) {
+      await test(`${path} 原生工具${stream ? "流式" : "非流式"}穿透真实路由且按一单结算`, async () => {
+        let captured;
+        behavior = (req, res) => {
+          let body = ""; req.on("data", c => body += c); req.on("end", () => {
+            captured = JSON.parse(body);
+            res.writeHead(200, { "content-type": "text/event-stream" });
+            res.end(frame({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_lookup", function: { name: "lookup", arguments: '{"query":"fixture"}' } }] } }] }) +
+              frame({ choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: actualUsage }) + "data: [DONE]\n\n");
+          });
+        };
+        const fn = { name: "lookup", description: "Fixture external function", parameters: { type: "object", properties: { query: { type: "string" } } } };
+        const definitions = path === "messages" ? [{ name: fn.name, description: fn.description, input_schema: fn.parameters }] : path === "responses" ? [{type:"function",...fn}] : [{type:"function",function:fn}];
+        const response = await post(path, { body: JSON.stringify({...bodyOf(path,stream),tools:definitions}) });
+        const raw = await response.text();assert.equal(response.status,200,raw);
+        assert.equal(captured.tools[0].function.name,"lookup");
+        const events = stream ? raw.split('\n').filter(l=>l.startsWith('data: ')&& !l.includes('[DONE]')).map(l=>JSON.parse(l.slice(6))) : [];
+        const j = stream ? null : JSON.parse(raw);
+        if (path === "chat/completions") {
+          const c=stream?events.flatMap(e=>e.choices||[]).flatMap(c=>c.delta?.tool_calls||[])[0]:j.choices[0].message.tool_calls[0];
+          assert.equal(c.id,"call_lookup");assert.equal(c.function.arguments,'{"query":"fixture"}');
+          assert.equal(stream?events.flatMap(e=>e.choices||[]).find(c=>c.finish_reason)?.finish_reason:j.choices[0].finish_reason,"tool_calls");
+        } else if (path === "messages") {
+          const c=stream?events.find(e=>e.content_block?.type==="tool_use").content_block:j.content.find(c=>c.type==="tool_use");
+          assert.equal(c.id,"call_lookup");assert.equal(c.name,"lookup");
+          assert.equal(stream?events.find(e=>e.type==="message_delta").delta.stop_reason:j.stop_reason,"tool_use");
+          if(stream)assert.equal(events.find(e=>e.delta?.type==="input_json_delta").delta.partial_json,'{"query":"fixture"}');else assert.equal(c.input.query,"fixture");
+        } else {
+          const c=(stream?events.find(e=>e.type==="response.completed").response:j).output.find(c=>c.type==="function_call");
+          assert.equal(c.call_id,"call_lookup");assert.equal(c.arguments,'{"query":"fixture"}');
+        }
+        const row=log();assert.equal(row.status,"success");assert.match(row.output_text,/lookup/);balance(row.quota);assert.equal(commits,1);assert.equal(upstreamRequests,1);
+      });
+    }
+    await test(`${path} 非法原生工具参数不下发但真实用量与渠道归属仍结算一次`, async () => {
+      sse(frame({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_bad", function: { name: "lookup", arguments: '{broken' } }] } }] }) +
+        frame({ choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: actualUsage }) + "data: [DONE]\n\n");
+      const fn = { name: "lookup", parameters: { type: "object", properties: {} } };
+      const definitions = path === "messages" ? [{ name: fn.name, input_schema: fn.parameters }] : path === "responses" ? [{type:"function",...fn}] : [{type:"function",function:fn}];
+      const response = await post(path, { body: JSON.stringify({...bodyOf(path),tools:definitions}) });
+      const raw = await response.text(); assert.notEqual(response.status, 200); assert.ok(!raw.includes('{broken'));
+      const row = log(); assert.equal(row.error_code,"TOOL_PROTOCOL_ERROR"); assert.equal(row.status,"error");
+      assert.equal(row.prompt_tokens,1700); assert.equal(row.completion_tokens,300); assert.ok(row.quota>0);
+      assert.match(row.output_text,/broken/); balance(row.quota); assert.equal(commits,1); assert.equal(upstreamRequests,1);
+    });
     for (const method of ["api", "go"]) {
       await test(`${path} OpenCode ${method} 真实调度保留对话且跨用户隔离`, async () => {
         channelType = "opencode"; channelMethod = method;

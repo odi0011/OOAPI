@@ -8,14 +8,14 @@
 //        · 没有   → 这就是最终回答，本轮结束
 //   ④ 步数上限（maxSteps）兜底，防止模型自己绕圈把用户额度烧穿
 //
-// 为什么用「提示词 + JSON 调用块」而不是原生 tool calling：
-//   本平台渠道既有 OpenAI 兼容 API，也有网页版反代，后者不支持 tools 参数。
-//   统一走文本协议，所有渠道行为一致；代价是解析要靠嗅探器（见 StepStream）。
+// 原生 API 发送结构化 tools；网页反代保留文本协议（StepStream）。
+// 内部消息统一保留调用编号和 role:tool，执行器按实际选中的渠道转换，换渠道不丢结果。
 import crypto from "node:crypto";
 import { runCompletion } from "../execute.js";
 import { modelForChannelMatch } from "../models.js";
 import { buildSystemPrompt, SUBAGENTS } from "./agents.js";
-import { toolSpecs, runTool } from "./tools.js";
+import { toolSpecs, nativeToolSpecs, runTool } from "./tools.js";
+import { callsText, chatCalls, textToolMessages } from "../tool-wire.js";
 import { DEFAULT_MAX_STEPS } from "./sessions.js";
 
 const MAX_DEPTH = 1; // 子代理不允许再派子代理
@@ -569,13 +569,19 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
     // 本步的完整上下文（system + 历史 + 工具结果）在失败时也要能计费：
     // 失败步不进 billing（只有成功才 record），但它的 prompt 往往是整轮最长的。
     // 挂在错误对象上由 chat.js 的失败结算读取，避免在计费路径重新拼一遍上下文。
-    const stepPrompt = flattenPrompt(system, messages);
+    const stepPrompt = flattenPrompt(system, textToolMessages(messages));
     let result;
     try {
       result = await runCompletion({
         model: modelForChannelMatch(model) || model,
         prompt: stepPrompt,
         messages: [{ role: "system", content: system }, ...messages],
+        tools: nativeToolSpecs(tools),
+        prepareRequest: ({ nativeTools }) => {
+          const instructions = nativeTools ? buildSystemPrompt({ agent, model, settings, toolSpecs: specs, todo, subagents: SUBAGENTS, depth, nativeTools: true }) : system;
+          const prepared = nativeTools ? messages : textToolMessages(messages);
+          return { messages: [{ role: "system", content: instructions }, ...prepared], prompt: flattenPrompt(instructions, textToolMessages(messages)) };
+        },
         thinking: typeof settings.thinking === "boolean" ? settings.thinking : agent.thinking,
         search: typeof settings.search === "boolean" ? settings.search : Boolean(agent.search),
         images: step === 1 ? images : [],
@@ -585,6 +591,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
         sessionId: conversationId,
         requestId: `${turnId}:${step}`,
         signal,
+        onToolCall: markStepFirstToken,
         onDelta: (t) => {
           if (!t) return;
           stepContent += t;
@@ -601,9 +608,9 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       // 只带当前失败步的原始输出（含思考），不能拿整轮 parts 补账：
       // 之前的成功步已按 usage 计费，再拼进去会重复收取它们的正文。
       if (e && typeof e === "object") {
-        e.billingPrompt = stepPrompt;
+        e.billingPrompt ||= stepPrompt;
         e.billingStartedAt = stepStartedAt;
-        e.billingOutput = `${stepContent}${stepReasoning}` || e.billingOutput || "";
+        e.billingOutput ||= `${stepContent}${stepReasoning}`;
         e.billingFirstTokenAt = stepFirstTokenAt || e.billingFirstTokenAt || 0;
       }
       // 流中断也要放出 sniffer 暂存的普通文本；否则短回复会有账单却在刷新后消失。
@@ -611,19 +618,27 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       throw e;
     }
 
-    const { text: tail, calls: stepCalls, bad, failureCode } = stream.finish();
+    // Responses等上游有时只在最终快照给正文，不发delta；仍需展示并持久化最终答案。
+    if (result.content?.startsWith(stepContent) && result.content.length > stepContent.length) appendText(stream.push(result.content.slice(stepContent.length)));
+    if (result.reasoning?.startsWith(stepReasoning) && result.reasoning.length > stepReasoning.length) appendReasoning(result.reasoning.slice(stepReasoning.length));
+    const { text: tail, calls: textCalls, bad: textBad, failureCode } = stream.finish();
+    // 原生与文本不能在同一步重复执行；整批参数校验成功后才执行任何工具。
+    const nativeCalls = result.toolCalls || [];
+    const parsed = nativeCalls.map((c) => { const p = parseCall(c); return p ? { ...p, id: c.id, thoughtSignature: c.thoughtSignature } : null; });
+    const stepCalls = (nativeCalls.length ? parsed : textCalls).filter(Boolean).map((c) => ({ ...c, id: c.id || `call_${uid()}` }));
+    const bad = nativeCalls.length ? parsed.some((c) => !c) || stepCalls.length > MAX_TOOL_CALLS_PER_STEP || new Set(stepCalls.map(c => c.id)).size !== stepCalls.length : textBad;
     appendText(tail);
 
     record({
-      prompt: flattenPrompt(system, messages),
-      output: `${result.content || ""}${result.reasoning || ""}`,
+      prompt: result.requestPrompt || stepPrompt,
+      output: `${result.content || ""}${result.reasoning || ""}${callsText(nativeCalls)}`,
       usage: result.usage,
       channel: result.channel?.name || "",
       channelId: Number(result.channel?.id) || 0,
       channelQuote: result.channelQuote,
       // 单步耗时与首 token：使用记录里按「整轮」汇总展示（见 chat.js 的 chargeUser）
       startedAt: stepStartedAt,
-      firstTokenAt: stepFirstTokenAt,
+      firstTokenAt: stepFirstTokenAt || result.firstTokenAt,
       elapsed: result.elapsed,
       retryCount: result.retryCount,
       model: result.billModel || model,
@@ -646,7 +661,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
         role: "user",
         content:
           (failureCode ? "你上一条只有工具状态描述，没有回答用户的问题。已有工具结果仍在上文；需要更多信息时必须输出实际调用，不能复述调用状态。\n" : "你上一条的工具调用格式无法解析。调用必须严格写成：\n") +
-          `${OPEN_TAG}{"tool":"工具名","args":{...}}${CLOSE_TAG}\n` +
+          (result.toolMode === "native" ? "请通过原生工具接口传入合法 JSON 对象参数。\n" : `${OPEN_TAG}{"tool":"工具名","args":{...}}${CLOSE_TAG}\n`) +
           "请重新输出合法的调用，或者依据工具结果完整回答用户本轮提出的所有问题。"});
       if (step === maxSteps) hitLimit = true;
       continue;
@@ -692,16 +707,12 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
         emit?.({ type: "todo", todo });
       }
       patchPart(toolPart, patch);
-      toolResults.push(`<tool_result tool="${call.tool}" ok="${res.ok}">\n${patch.output}\n</tool_result>`);
+      toolResults.push({ role: "tool", tool_call_id: call.id, name: call.tool, content: patch.output, is_error: !res.ok });
     }
 
     // 把已执行的真实调用（含参数）交回模型，而不是让它学习并复述内部占位文字。
-    messages.push({ role: "assistant", content: [stepText, ...stepCalls.map(call => `${OPEN_TAG}${JSON.stringify(call)}${CLOSE_TAG}`)].filter(Boolean).join("\n") });
-    messages.push({
-      role: "user",
-      content:
-        `${toolResults.join("\n")}\n` +
-        (step === maxSteps ? "这已经是最后一步：不要再调用工具，请直接给出最终回答。" : "需要更多信息就继续调用工具，否则直接给出最终回答。")});
+    messages.push({ role: "assistant", content: stepText, ...result.assistantExtras, tool_calls: chatCalls(stepCalls.map(c => ({ id: c.id, name: c.tool, arguments: JSON.stringify(c.args), thoughtSignature: c.thoughtSignature }))) });
+    messages.push(...toolResults);
     if (step === maxSteps) hitLimit = true;
   }
 
