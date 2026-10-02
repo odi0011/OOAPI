@@ -20,7 +20,7 @@
 //   · DeepSeek API GET  api.deepseek.com/user/balance                     （官方文档端点）
 //   其余（GLM/Kimi/豆包/通义的网页版）上游没有可读额度接口 → 明确返回不支持。
 // ---------------------------------------------------------------------------
-import { codexIdentity, claudeIdentity } from "./cli-profile.js";
+import { codexIdentity, claudeIdentity, grokIdentity } from "./cli-profile.js";
 
 const QUOTA_TIMEOUT_MS = 25_000;
 /** 同一渠道的额度查询串行化：并发打同一账号是最容易被风控标记的行为之一 */
@@ -311,14 +311,15 @@ async function quotaWorkbuddy(channel) {
 async function quotaGrok(channel) {
   const mod = await import("./grok.js");
   const token = await freshToken(channel, mod);
+  const identity = grokIdentity(channel);
   const j = await getJson("https://cli-chat-proxy.grok.com/v1/billing?format=credits", {
     headers: {
       authorization: `Bearer ${token}`,
       // 缺这两个头会被网关直接拒（426 / 401）
       "x-xai-token-auth": "xai-grok-cli",
-      "x-grok-client-version": "0.2.112",
+      "x-grok-client-version": identity.clientVersion,
       "x-grok-client-mode": "interactive",
-      "user-agent": "grok-pager/0.2.112 grok-shell/0.2.112",
+      "user-agent": `grok-pager/${identity.clientVersion} grok-shell/${identity.clientVersion}`,
     },
   });
   const cfg = j.config || j;

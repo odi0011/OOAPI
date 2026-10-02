@@ -65,7 +65,9 @@ export const CLI_VERSIONS = {
   antigravity: "2.9.1",
   antigravityNodeApi: "10.3.0",
   antigravityGoogApi: "gl-node/22.21.1",
-  grok: "0.2.120",
+  // xAI CLI 目前拒绝低于 1.0.13 的客户端（HTTP 426）。
+  // 这里是最低兼容版本；更高版本可通过渠道 other.client_version 覆盖。
+  grok: "1.0.13",
   // 官方发布 v1.18.34（2026-09-30）；与该 tag 的 session/llm/request.ts 保持一致。
   opencode: "1.18.34",
 };
@@ -129,10 +131,30 @@ export function antigravityIdentity(channel) {
   };
 }
 
+/**
+ * Grok CLI 版本归一化。
+ *
+ * 旧渠道可能在 other.client_version 里保存过 0.2.x；如果直接沿用，
+ * xAI 会返回 HTTP 426「Your Grok CLI version is outdated」。低于最低兼容
+ * 版本或格式无法解析时回落到当前最低版本，高版本自定义值保持不动。
+ */
+export function grokClientVersion(channel) {
+  const configured = String(channel?.other?.client_version || "").trim().replace(/^v/i, "");
+  const match = configured.match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return CLI_VERSIONS.grok;
+  const current = match.slice(1).map(Number);
+  const minimum = CLI_VERSIONS.grok.split(".").map(Number);
+  for (let i = 0; i < minimum.length; i += 1) {
+    if (current[i] > minimum[i]) return configured;
+    if (current[i] < minimum[i]) return CLI_VERSIONS.grok;
+  }
+  return configured;
+}
+
 /** Grok（xAI）：会话 id 同时用于 x-grok-conv-id 头与 prompt_cache_key */
 export function grokIdentity(channel) {
   const seed = profileSeed(channel);
-  const v = String(channel?.other?.client_version || "").trim() || CLI_VERSIONS.grok;
+  const v = grokClientVersion(channel);
   return {
     sessionId: seededUuid(seed, "grok-session"),
     clientVersion: v,
