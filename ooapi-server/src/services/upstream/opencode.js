@@ -33,7 +33,7 @@ import { applyVendorRequest } from "./vendor-quirks.js";
 import { chatNative, nativeProtocol } from "./opencode-native.js";
 
 /**
- * 该渠道的会话标识（稳定值，同一渠道永远相同）。
+ * 无对话上下文的 GO 探测入口使用的稳定后备标识。真实对话必须传入自己的会话。
  *
  * 为什么必须**稳定**而不能每个请求随机：文档要它正是为了
  * 「optimize routing and prompt caching」—— 每次换 ID 等于每隔一次就开新会话，
@@ -64,21 +64,22 @@ export function sessionIdOf(channel) {
  * `Bearer A` 变成 `Bearer A, Bearer A`，上游必然 401。
  * 默认只补客户端标识头，已有显式覆盖保持一次设置。
  */
-function decorated(channel, { sessionId, requestId } = {}) {
+function decorated(channel, { sessionId, requestId, userId } = {}) {
   const o = channel?.other || {};
   const extra = o.extra_headers && typeof o.extra_headers === "object" ? o.extra_headers : {};
-  // Zen Key 使用官方开源客户端的请求契约；只补 GO 的两个头并不足以兼容 Zen 免费档。
+  // Zen Key 使用官方开源客户端的请求契约；这些头不保证通过上游私有免费档限制。
   // 依据 v1.18.34 的 session/llm/request.ts 与 effect/runtime-flags.ts（client 默认 cli）。
   // GO 文档明确要求客户端自述 UA，继续使用平台名称，避免改变已可用的订阅请求。
   const zen = String(o.method || "api") !== "go";
-  const identity = opencodeIdentity(channel);
-  const session = String(sessionId || o.oc_session_id || (zen ? identity.sessionId : sessionIdOf(channel))).slice(0, 128);
+  const identity = opencodeIdentity(channel, { sessionId, requestId, userId });
+  // 不直接把 UUID/数字等调用方 ID 塞进 Zen 的 ses_ 头；派生时包含已鉴权用户，隔离相同外部会话名。
+  const session = String(sessionId ? identity.sessionId : o.oc_session_id || (zen ? identity.sessionId : sessionIdOf(channel))).slice(0, 128);
   const headers = {
     "user-agent": String(o.client_user_agent || (zen ? identity.userAgent : "OOAPI-Gateway/1.0")),
     "x-opencode-client": String(o.oc_client || (zen ? "cli" : "ooapi")),
     "x-opencode-session": session,
     "x-opencode-session-id": session,
-    "x-opencode-request": String(requestId || identity.requestId).slice(0, 128),
+    "x-opencode-request": identity.requestId,
     // 未传入调用方 Git 项目时用官方 global；request 每次调用独立，避免日志误合并。
     "x-opencode-project": String(o.oc_project_id || identity.projectId).slice(0, 128),
   };

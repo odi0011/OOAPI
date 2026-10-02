@@ -418,6 +418,9 @@ async function loop(opts, billing, depth = 0) {
 }
 
 async function loopInner({ session, agent, model, settings = {}, history = [], userText = "", images = [], docs = [], groupName = null, user = null, signal, emit, onTodo, onCall, modelCaps = null }, billing, depth, sink) {
+  // 同一站内对话跨轮保留会话，每轮/工具步独立请求；子代理也有自己的上下文。
+  const conversationId = String(session?.id || crypto.randomUUID());
+  const turnId = crypto.randomUUID();
   const record = (c) => {
     billing.push(c);
     if (onCall) onCall(c);
@@ -447,7 +450,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
           if (!sub) throw Object.assign(new Error("没有可用的子代理"), { code: "NO_SUBAGENT" });
           const r = await loop(
             {
-              session: { todo: [] },
+              session: { id: `${conversationId}:task:${uid()}`, todo: [] },
               agent: sub,
               model,
               settings: { ...settings, tools: sub.tools, maxSteps: SUBAGENT_MAX_STEPS },
@@ -536,6 +539,8 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
         groupName,
         channelType: settings.channelType || "",
         user,
+        sessionId: conversationId,
+        requestId: `${turnId}:${step}`,
         signal,
         onDelta: (t) => {
           if (!t) return;

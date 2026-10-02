@@ -1,5 +1,6 @@
 // 统一执行器：模型 → 渠道选择 → 失败切换 → 返回结果
 // 网关（/v1）与站内对话/智能体共用此逻辑，保证行为一致。
+import crypto from "node:crypto";
 import { pool } from "../db.js";
 import { getNumberOption } from "../config.js";
 import { selectChannels, getAdapter, markChannelError, markChannelOk, withChannelLimit, explainNoChannel } from "./router.js";
@@ -103,6 +104,8 @@ const LOCAL_REJECTION_CODES = new Set([
  * @param {string} opts.groupName     用户分组（过滤渠道）
  * @param {Set}    opts.excludeChannelIds 已试过的渠道 id
  * @param {Function} opts.onChannelTry 每次尝试渠道前回调
+ * @param {string} opts.sessionId     调用方会话；未提供时仅本次调用共享，不能退回渠道级会话
+ * @param {string} opts.requestId     本次逻辑调用的标识
  */
 export async function runCompletion({
   model,
@@ -120,8 +123,13 @@ export async function runCompletion({
   excludeChannelIds = null,
   onChannelTry,
   user = null,
+  sessionId = "",
+  requestId = "",
 }) {
   const runStartedAt = Date.now();
+  // 重试沿用同一次调用的上下文；无会话头的 API 请求各自独立，避免不同用户共用渠道会话。
+  const callRequestId = requestId || crypto.randomUUID();
+  const callSessionId = sessionId || callRequestId;
   const tried = new Set(excludeChannelIds instanceof Set ? excludeChannelIds : []);
   // 渠道声明的是真实模型名：先把兼容别名归一化再匹配，
   // 否则 kimi-latest / qwen-turbo 这类别名请求会直接 NO_CHANNEL
@@ -235,6 +243,9 @@ export async function runCompletion({
             model,
             prompt,
             messages,
+            sessionId: callSessionId,
+            requestId: callRequestId,
+            userId: user?.id,
             thinkingOverride: thinking,
             search,
             images,

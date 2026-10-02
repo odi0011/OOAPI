@@ -43,6 +43,7 @@ const harness = await loadMocked("../src/services/harness/loop.js", `
   const DEFAULT_MAX_STEPS=8;
 `);
 const executor = await loadMocked("../src/services/execute.js", `
+  const crypto=audit.crypto;
   const pool=audit.pool;
   const getNumberOption=(key)=>key==="request_timeout_ms"?1000:(audit.retryTimes || 0);
   const selectChannels=async ()=>audit.channels || [{id:1,name:"mock",type:"mock"}];
@@ -98,8 +99,10 @@ await test("失败步上下文只含该步原始正文和思考，不重复成�
 
 await test("成功子代理与主代理每个实际调用只记一次", async () => {
   const calls = [];
+  const contexts = [];
   let count = 0;
   audit.complete = async (o) => {
+    contexts.push({ sessionId: o.sessionId, requestId: o.requestId });
     const content = ++count === 1
       ? '<tool_call>{"tool":"task","args":{"agent":"explore","prompt":"child"}}</tool_call>'
       : `answer-${count}`;
@@ -110,6 +113,21 @@ await test("成功子代理与主代理每个实际调用只记一次", async ()
   assert.equal(count, 3);
   assert.equal(calls.length, 3);
   assert.equal(out.calls.length, 3);
+  assert.equal(contexts[0].sessionId, contexts[2].sessionId, "主代理工具前后仍为同一会话");
+  assert.notEqual(contexts[0].sessionId, contexts[1].sessionId, "子代理有独立会话");
+  assert.equal(new Set(contexts.map(c => c.requestId)).size, 3, "三个模型步骤请求各自独立");
+});
+
+await test("站内对话跨轮保持session且新对话独立", async () => {
+  const contexts = [];
+  audit.complete = async o => { contexts.push(o); o.onDelta("answer"); return mockResult("answer"); };
+  for (const id of ["fixture-conversation", "fixture-conversation", "fixture-other-conversation"]) {
+    await harness.runHarness({ ...harnessOptions([], []), session: { id }, user: { id: 77 } });
+  }
+  assert.equal(contexts[0].sessionId, contexts[1].sessionId);
+  assert.notEqual(contexts[0].requestId, contexts[1].requestId);
+  assert.notEqual(contexts[0].sessionId, contexts[2].sessionId);
+  assert.ok(contexts.every(o => o.user.id === 77));
 });
 
 await test("子代理部分失败可继续回答，已产生的失败调用仍只记一次", async () => {
@@ -285,15 +303,28 @@ await test("执行器部分失败保留真实usage、正文、推理和首token�
 await test("零消费拒绝可换渠道，所有原地/换渠道重试次数保留且仅成功一单", async () => {
   audit.channels = [{ id: 1, name: "first" }, { id: 2, name: "second" }]; audit.retryTimes = 1;
   const tried = [];
-  audit.adapter = { chat: async ({ channel, onDelta }) => {
+  const contexts = [];
+  audit.adapter = { chat: async ({ channel, onDelta, sessionId, requestId, userId }) => {
     tried.push(channel.id);
+    contexts.push({ sessionId, requestId, userId });
     if (channel.id === 1) throw Object.assign(new Error("busy"), { code: "CHANNEL_UPSTREAM_BUSY", status: 502, retryCount: 2 });
     onDelta("OK"); return { ...mockResult("OK"), retryCount: 0 };
   } };
   try {
-    const r = await executor.runCompletion({ model: "mock", prompt: "context" });
+    const r = await executor.runCompletion({ model: "mock", prompt: "context", sessionId: "conversation", requestId: "turn", user: { id: 77 } });
     assert.deepEqual(tried, [1, 2]); assert.equal(r.retryCount, 3); assert.equal(r.channel.id, 2);
+    assert.deepEqual(contexts, [{ sessionId: "conversation", requestId: "turn", userId: 77 }, { sessionId: "conversation", requestId: "turn", userId: 77 }]);
   } finally { delete audit.channels; delete audit.retryTimes; }
+});
+
+await test("没有会话上下文的执行请求不共用渠道session", async () => {
+  const contexts = [];
+  audit.adapter = { chat: async o => { contexts.push(o); o.onDelta("OK"); return mockResult("OK"); } };
+  await executor.runCompletion({ model: "mock", prompt: "context" });
+  await executor.runCompletion({ model: "mock", prompt: "context" });
+  assert.ok(contexts[0].sessionId && contexts[0].requestId);
+  assert.notEqual(contexts[0].sessionId, contexts[1].sessionId);
+  assert.notEqual(contexts[0].requestId, contexts[1].requestId);
 });
 
 await test("真实usage无输出也不能换渠道重复生成或漏掉前次账单", async () => {

@@ -694,6 +694,8 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 
 ## 3. 待办清单（按优先级）
 
+- [ ] **2026-10-02 OpenCode Zen 免费档真实 403**：同一生产服务器、同一既有 Key，官方 OpenCode v1.18.34 分别调用 fledge-alpha-free 与 mimo-v2.6-flash-free，均返回 FreeTierError / HTTP 403。公开客户端源码的标识契约不等于私有免费档 guard；会话隔离修复不代表解除此限制。需要上游核实账号/出口/免费模型的准入策略，保持既有渠道禁用状态，不重复试探或误导重新绑 Key。两次官方请求的上游日志 ID 分别为 69fb3ddc-c74c-42e1-9e40-8271e1c175de、2c09ce85-5735-4f5e-af5b-3136e6b5cb03，可用于人工反馈。
+
 - [x] **2026-10-02 OD Binance 原生集成**：全体登录用户入口、按 OOAPI 用户隔离账户/仓位/订单/策略/回测/风控/连接配置，Agent 只读仓位分析工具，全局站酷快乐体，本机 MySQL/Python 交易引擎迁入项目。47 项 Python 测试、OOAPI 全套测试、服务桥接与分析测试、25 路由 UI 冒烟以及普通用户完整浏览器交易/回测流程通过。真实模型回答需本机 OOAPI 配置可用渠道后验证（当前本机新库无模型渠道；工具读取真实仓位数据已验证）。
 
 - [ ] **2026-10-02 第 89 批发布收尾**：本轮模型身份/原厂价格与对话视觉代码完成；服务器 47.79.85.60 的 HTTP 与 SSH 持续连接超时，最终候选门禁和生产更新尚未执行。恢复后按本轮最新 main 上传隔离候选，迁移 price_tiers/归档表，复跑最终构建后的 24 路由 ui-smoke、三协议 gateway-smoke 与模块 E2E；通过后调用既有 updater。生产先备份价格表，再显式调用 refreshVerifiedPrices 更新本轮 117 条官方价，syncUpstreamPrices({overwrite:false}) 补齐剩余规范目录，保留实际渠道 models/status；保护 .env/ADMIN_PASSWORD。发布辅助脚本在本机 TEMP/ooapi-price-release-refresh.mjs，须明确 production 参数；不要仅重启而漏更新旧价格。
@@ -1510,6 +1512,12 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 ---
 
 ## 5. 变更记录
+
+### 2026-10-02 — OpenCode 官方客户端对照与真实对话标识隔离
+
+- 在 64.83.2.174 临时运行官方 GitHub 发布的 v1.18.34 客户端，凭据仅从既有渠道读取到进程内存。同 Key 的 fledge-alpha-free 和 mimo-v2.6-flash-free 均返回与平台相同的 FreeTierError / 403；官方公开请求层没有独立 device ID 头，不能据此断言私有 guard 的具体原因。没有用受控回归代替免费档真实成功，没有安装持久 CLI、启用暂停渠道或替换凭据；临时程序、缓存与授权配置已清理。来源：https://github.com/anomalyco/opencode/blob/v1.18.34/packages/opencode/src/session/llm/request.ts 、https://github.com/anomalyco/opencode/blob/v1.18.34/packages/opencode/src/id/id.ts 。
+- 修复实际链路中 runCompletion 丢失会话上下文、导致不同用户/对话使用同一渠道 session 的缺陷。站内 harness 传递持久会话 ID，子代理独立会话，每轮/步骤独立请求；三协议网关接受 x-opencode-session / x-opencode-session-id / x-session-id / session-id，没有会话头时每次逻辑调用独立。执行器重试保留上下文，OpenCode 在统一 cli-profile 内按已鉴权用户、渠道和会话派生 ses_ 标识，任意数字/UUID 不再原文充当官方 ID；msg_ 保持时间/计数和合法后缀。GO 自述 UA 与管理员显式头配置保持兼容。
+- 语法检查、全 npm test 通过；OpenCode 适配器汇总 60 项、harness 29 项、网关失败账单 HTTP 回归 63 项通过。新增三种协议 × Key/GO 的真实 HTTP 调度验证，覆盖跨轮稳定、不同对话/用户隔离、无头请求独立、请求 ID 唯一及所有调用落库；子代理和换渠道回归也核对上下文。生产 gateway-smoke 因无测试分组无限额 Key 跳过，另在现有事务内存账本与受控 HTTP 上游上执行同一 gateway-smoke 脚本，三协议/模型列表/JSON 404 共 9/9 通过。部署前生产 25 路由 ui-smoke 通过；此次未修改前端样式。
 
 ### 2026-10-02 — Laguna 账号工具格式与失败回答修复
 

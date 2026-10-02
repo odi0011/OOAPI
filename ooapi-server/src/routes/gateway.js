@@ -930,6 +930,9 @@ async function handleCompletion(protocol, req, res) {
       images,
       groupName: token.group_name || null,
       user,
+      // 客户端可显式标记一段对话；适配器再按已鉴权用户和渠道派生上游会话，不能跨用户混用。
+      sessionId: req.get("x-opencode-session") || req.get("x-opencode-session-id") || req.get("x-session-id") || req.get("session-id") || "",
+      requestId,
       signal: clientCtrl.signal,
       onDelta: (t) => {
         if (!t) return;

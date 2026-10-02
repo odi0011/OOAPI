@@ -165,25 +165,28 @@ export function grokIdentity(channel) {
 let opencodeLastTimestamp = 0;
 let opencodeRequestCounter = 0;
 
-/** OpenCode Zen：session 稳定派生，单次 request 使用官方 msg_ + 26 字符编码。 */
-export function opencodeIdentity(channel) {
+/** OpenCode Zen：按用户/会话隔离；只有探测等无调用上下文的入口使用渠道级后备标识。 */
+export function opencodeIdentity(channel, { sessionId = "", requestId = "", userId = "" } = {}) {
   const seed = profileSeed(channel);
+  const sessionSeed = sessionId ? JSON.stringify([seed, String(userId), String(sessionId)]) : seed;
   const timestamp = Date.now();
   if (timestamp !== opencodeLastTimestamp) {
     opencodeLastTimestamp = timestamp;
     opencodeRequestCounter = 0;
   }
-  // v1.18.34 schema/identifier.ts：低 6 字节时间/计数 + 14 字符 base62 后缀。
+  // v1.18.34 id/id.ts：低 6 字节时间/计数 + 14 字符 base62 后缀。
   const current = BigInt(timestamp) * 0x1000n + BigInt(++opencodeRequestCounter);
   const time = Array.from({ length: 6 }, (_, index) =>
     Number((current >> BigInt(40 - 8 * index)) & 0xffn).toString(16).padStart(2, "0"),
   ).join("");
   const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-  const suffix = [...crypto.randomBytes(14)].map((byte) => alphabet[byte % 62]).join("");
+  const suffix = requestId
+    ? digest(seed, JSON.stringify(["opencode-request", String(userId), String(requestId)]), 16).slice(0, 14)
+    : [...crypto.randomBytes(14)].map((byte) => alphabet[byte % 62]).join("");
   const version = String(channel?.other?.client_version || CLI_VERSIONS.opencode).trim();
   return {
     // 官方 SessionID 只校验 ses 前缀；确定性后缀保持 26 字符，避免重启后身份改变。
-    sessionId: `ses_${digest(seed, "opencode-session", 16).slice(0, 26)}`,
+    sessionId: `ses_${digest(sessionSeed, "opencode-session", 16).slice(0, 26)}`,
     requestId: `msg_${time}${suffix}`,
     // 官方 ProjectID.global 是无 Git 项目时的标识，网关没有调用方的本地仓库信息。
     projectId: "global",

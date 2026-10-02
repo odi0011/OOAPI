@@ -21,6 +21,7 @@ let behavior;
 let state;
 let channelId = 9000;
 let channelType = "openai";
+let channelMethod = "api";
 let channelModels = model;
 let insertFailures = 0;
 let tokenFailures = 0;
@@ -45,7 +46,7 @@ const query = async (store, sql, params = []) => {
     offpeak_input_price: null, offpeak_output_price: null, offpeak_cache_price: null }]];
   if (/FROM channels/.test(s)) return [[{ id: channelId, name: "fixture-channel", type: channelType, status: 1,
     models: channelModels, group_list: "[]", base_url: upstreamBase, api_key: "fixture-upstream-only",
-    other: JSON.stringify({ method: "api", allow_private_upstream: true }) }]];
+    other: JSON.stringify({ method: channelMethod, allow_private_upstream: true }) }]];
   if (/^UPDATE channels/.test(s)) { channelWrites.push({ sql: s, params: clone(params) }); return [{ affectedRows: 1 }]; }
   if (/^UPDATE users SET quota = quota -/.test(s)) {
     const [units] = params;
@@ -102,11 +103,12 @@ const bodyOf = (path, stream = false) => path === "responses"
   : path === "messages" ? { model, stream, system, max_tokens: 200, messages: [{ role: "user", content: input }] }
     : { model, stream, messages: [{ role: "system", content: system }, { role: "user", content: [{ type: "text", text: input }] }] };
 const post = (path, extra = {}) => fetch(`${base}/v1/${path}`, {
-  method: "POST", headers: { authorization: "Bearer fixture-gateway-only", "content-type": "application/json" },
+  method: "POST",
   body: JSON.stringify(bodyOf(path, extra.stream)), ...extra,
+  headers: { authorization: "Bearer fixture-gateway-only", "content-type": "application/json", ...extra.headers },
 });
 const reset = () => {
-  channelType = "openai"; channelModels = model;
+  channelType = "openai"; channelMethod = "api"; channelModels = model;
   state = { user: { id: 101, username: "fixture", status: 1, quota: initial, used_quota: 0, request_count: 0, group_name: "default" },
     token: { id: 102, user_id: 101, name: "fixture", key_str: "fixture-gateway-only", status: 1, expired_time: -1,
       group_name: "default", model_limits: model, remain_quota: initial, used_quota: 0, unlimited_quota: 0 }, logs: [] };
@@ -133,6 +135,31 @@ let passed = 0;
 const test = async (name, fn) => { reset(); await fn(); passed += 1; console.log(`  ok  ${name}`); };
 try {
   for (const path of paths) {
+    for (const method of ["api", "go"]) {
+      await test(`${path} OpenCode ${method} 真实调度保留对话且跨用户隔离`, async () => {
+        channelType = "opencode"; channelMethod = method;
+        const headers = [];
+        behavior = (req, res) => {
+          headers.push(req.headers);
+          res.writeHead(200, { "content-type": "text/event-stream" });
+          res.end(frame(delta) + frame({ usage: actualUsage }) + "data: [DONE]\n\n");
+        };
+        for (const h of [{ "x-session-id": "dialogue-a" }, { "x-opencode-session-id": "dialogue-a" }, { "session-id": "dialogue-b" }]) {
+          const r = await post(path, { headers: h }); await r.text(); assert.equal(r.status, 200);
+        }
+        state.user.id = 103; state.token.user_id = 103;
+        const r = await post(path, { headers: { "x-opencode-session": "dialogue-a" } }); await r.text(); assert.equal(r.status, 200);
+        for (let i = 0; i < 2; i++) { const r = await post(path); await r.text(); assert.equal(r.status, 200); }
+        assert.equal(headers.length, 6);
+        const sessions = headers.map(h => h["x-opencode-session"]);
+        assert.equal(sessions[0], sessions[1], "同一用户同一对话跨请求稳定");
+        assert.equal(new Set([sessions[0], ...sessions.slice(2)]).size, 5, "其他会话、其他用户及无会话头调用独立");
+        assert.equal(new Set(headers.map(h => h["x-opencode-request"])).size, 6);
+        assert.ok(headers.every(h => h["x-opencode-session-id"] === h["x-opencode-session"]));
+        assert.ok(headers.every(h => /^ses_[a-f\d]{12}[a-z\d]{14}$/i.test(h["x-opencode-session"]) && /^msg_[a-f\d]{12}[a-z\d]{14}$/i.test(h["x-opencode-request"])));
+        assert.equal(state.logs.length, 6, "所有实际调用继续各自落库");
+      });
+    }
     for (const status of [400, 401, 429, 502]) {
       await test(`${path} HTTP${status}一份失败usage，余额/预占不变`, async () => {
         behavior = (_req, res) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(fail)); };

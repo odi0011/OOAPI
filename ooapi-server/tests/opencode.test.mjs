@@ -186,7 +186,15 @@ console.log("\n=== ⑥ Zen Key 的客户端头（官方 v1.18.34） ===");
   ck("自定义会话覆盖后两种头保持一致", explicit["x-opencode-session"] === "explicit-session" && explicit["x-opencode-session-id"] === "explicit-session");
   seen.length = 0;
   await adapter.chat({ channel: keyChannel, sessionId: "conversation-2", requestId: "request-2", model: "m", prompt: "fixture" });
-  ck("调用方会话与请求标识可透传", seen[0]?.headers["x-opencode-session"] === "conversation-2" && seen[0]?.headers["x-opencode-request"] === "request-2");
+  const scoped = seen[0]?.headers || {};
+  ck("调用方任意ID归一为官方编码而非原文透传", /^ses_[a-f\d]{12}[a-z\d]{14}$/i.test(scoped["x-opencode-session"]) && /^msg_[a-f\d]{12}[a-z\d]{14}$/i.test(scoped["x-opencode-request"]));
+  await adapter.chat({ channel: keyChannel, sessionId: "conversation-2", requestId: "request-3", model: "m", prompt: "fixture" });
+  ck("同一实际对话稳定且请求各自独立", scoped["x-opencode-session"] === seen[1]?.headers["x-opencode-session"] && scoped["x-opencode-request"] !== seen[1]?.headers["x-opencode-request"]);
+  await adapter.chat({ channel: keyChannel, sessionId: "conversation-3", model: "m", prompt: "fixture" });
+  ck("同渠道不同对话不共用session", scoped["x-opencode-session"] !== seen[2]?.headers["x-opencode-session"]);
+  await adapter.chat({ channel: keyChannel, sessionId: "conversation-2", userId: 2, model: "m", prompt: "fixture" });
+  ck("不同用户的同名对话也隔离", scoped["x-opencode-session"] !== seen[3]?.headers["x-opencode-session"]);
+  ck("会话头不暴露用户或原始会话名", !Object.values(scoped).some(value => String(value).includes("conversation-2")));
 }
 
 /* ============ ⑦ 免费客户端限制不是 Key 过期 ============ */
