@@ -184,7 +184,7 @@ t("已流出内容就不再重试（否则客户端会收到两份拼接）", ()
   ck(/!busy \|\| attempt >= BUSY_RETRIES \|\| sawOutput/.test(pingyi), "重试条件里没有 sawOutput");
 });
 t("等待期间客户端断开就放弃", () => {
-  const m = pingyi.match(/for \(let attempt = 0; ; attempt \+= 1\)[\s\S]*?\n  \}\n\}/);
+  const m = pingyi.match(/for \(let attempt = 0; ; attempt \+= 1\)[\s\S]*?\r?\n  \}\r?\n\}/);
   ck(m, "未找到重试循环");
   ck(/signal\?\.aborted/.test(m[0]), "重试前没有检查 abort");
 });

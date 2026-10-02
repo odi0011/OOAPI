@@ -27,6 +27,7 @@ const uid = () => crypto.randomBytes(6).toString("hex");
 
 const OPEN_TAG = "<tool_call>";
 const CLOSE_TAG = "</tool_call>";
+const MAX_TOOL_CALLS_PER_STEP = 4;
 
 /* ------------------------------------------------------------------ *
  * 工具调用嗅探：既要「边流边显示」，又不能把调用块当正文显示出来。
@@ -148,6 +149,35 @@ export function parseKeyValueCall(text) {
   return parseCall({ tool: head[1], args });
 }
 
+/** 真实 Laguna 会连续输出两个完整 JSON 并省略结束标签。先校验整批，再执行，不能吞掉第二个调用。 */
+function parseTaggedCalls(raw) {
+  const calls = [];
+  let cursor = 0;
+  while (raw.slice(cursor).trim()) {
+    const open = /^\s*<tool_call\s*>\s*/i.exec(raw.slice(cursor));
+    if (!open || calls.length >= MAX_TOOL_CALLS_PER_STEP) return null;
+    cursor += open[0].length;
+    let call;
+    if (raw[cursor] === "{") {
+      const end = matchBraceJson(raw, cursor);
+      if (end < 0) return null;
+      call = parseCall(raw.slice(cursor, end + 1));
+      cursor = end + 1;
+      const close = /^\s*<\/tool_call\s*>/i.exec(raw.slice(cursor));
+      if (close) cursor += close[0].length;
+    } else {
+      const close = /<\/tool_call\s*>/i.exec(raw.slice(cursor));
+      if (!close) return null;
+      const body = raw.slice(cursor, cursor + close.index);
+      call = parseCall(body) || parseKeyValueCall(body);
+      cursor += close.index + close[0].length;
+    }
+    if (!call) return null;
+    calls.push(call);
+  }
+  return calls.length ? calls : null;
+}
+
 /** 把 DSML 分隔符归一化成普通 XML 写法 */
 export function normalizeMarkup(s) {
   return String(s)
@@ -202,16 +232,6 @@ function kindOf(matched) {
 /** 从 start 起找调用块的结束。返回 { call, end } | null（还没结束）。call 为 null 表示格式不合法 */
 function extractCall(acc, start, kind, final) {
   const rest = acc.slice(start);
-  if (kind === "tag") {
-    const open = rest.match(/^<tool_call\s*>/i)?.[0]?.length || OPEN_TAG.length;
-    const close = /<\/tool_call\s*>/i.exec(rest.slice(open));
-    if (!close) {
-      // 真实线上 Laguna 漏结束标签，但 JSON 已完整；只恢复严格合法的完整 JSON，不补猜括号/引号。
-      return final ? { call: parseCall(rest.slice(open)), end: acc.length } : null;
-    }
-    const end = open + close.index, body = rest.slice(open, end);
-    return { call: parseCall(body) || parseKeyValueCall(body), end: start + end + close[0].length };
-  }
   if (kind === "fc" || kind === "invoke") {
     let endAt = -1;
     const fc = kind === "fc" ? CLOSE_FC_RE.exec(rest) : null;
@@ -271,6 +291,7 @@ export class StepStream {
     this.start = -1;
     this.kind = "";
     this.call = null;
+    this.calls = [];
     this.bad = false;
     this.failureCode = "";
   }
@@ -283,7 +304,7 @@ export class StepStream {
   /** 流结束：返回剩余正文 */
   finish() {
     const rest = this.pump(true);
-    return { text: rest, call: this.call, bad: this.bad, failureCode: this.failureCode };
+    return { text: rest, call: this.call, calls: this.calls, bad: this.bad, failureCode: this.failureCode };
   }
 
   take(upto) {
@@ -325,9 +346,17 @@ export class StepStream {
       this.kind = kindOf(m[0]);
       out = this.take(this.start);
     }
+    if (this.kind === "tag") {
+      // 流结束前不确认第一条：后面可能还有调用或损坏的参数，整批无效时不能先执行一半。
+      if (!final) return out;
+      const calls = parseTaggedCalls(this.acc.slice(this.start));
+      if (calls) { this.calls = calls; this.call = calls[0]; }
+      else this.bad = true;
+      return out;
+    }
     const r = extractCall(this.acc, this.start, this.kind, final);
     if (r) {
-      if (r.call) this.call = r.call;
+      if (r.call) { this.call = r.call; this.calls = [r.call]; }
       else this.bad = true;
       return out;
     }
@@ -582,7 +611,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
       throw e;
     }
 
-    const { text: tail, call, bad, failureCode } = stream.finish();
+    const { text: tail, calls: stepCalls, bad, failureCode } = stream.finish();
     appendText(tail);
 
     record({
@@ -604,7 +633,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
 
     const stepText = (textPart?.text || "").trim();
     if (stepText) lastText = stepText;
-    if (!call && !bad) break; // 没有工具调用 → 最终回答
+    if (!stepCalls.length && !bad) break; // 没有工具调用 → 最终回答
 
     if (bad) {
       formatFailures++;
@@ -625,48 +654,53 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
 
     formatFailures = 0;
 
-    const spec = specs.find((s) => s.id === call.tool);
-    const toolPart = { id: uid(), type: "tool", tool: call.tool, name: spec?.name || call.tool, args: call.args, status: "running", output: "", started: Date.now() };
-    emitPart(toolPart);
+    const toolResults = [];
+    for (const call of stepCalls) {
+      if (signal?.aborted) throw Object.assign(new Error("已停止"), { code: "ABORTED" });
+      const spec = specs.find((s) => s.id === call.tool);
+      const toolPart = { id: uid(), type: "tool", tool: call.tool, name: spec?.name || call.tool, args: call.args, status: "running", output: "", started: Date.now() };
+      emitPart(toolPart);
 
-    let res;
-    try {
-      res = spec
-      ? await runTool(call.tool, call.args, {
-          model,
-          groupName,
-          channelType: settings.channelType || "",
-          signal,
-          record,
-          runAgent: childRunAgent,
-          todo,
-          // 最近调用里显示调用方（工具触发的上游请求也归属到同一次对话的用户）
-          user,
-          // 某些上游（如网页版反代）不支持联网搜索：工具要据此拒绝，而不是发一次必定失败的请求
-          searchSupported: modelCaps?.supportsSearch !== false})
-      : { ok: false, output: `工具「${call.tool}」在本轮不可用；可用工具：${specs.map((s) => s.id).join("、") || "（无）"}` };
-    } catch (e) {
-      // 主动停止也要结束工具的运行状态，刷新后不能永久显示“执行中”。
-      patchPart(toolPart, { status: "failed", output: signal?.aborted ? "工具已停止" : String(e.message || "工具执行失败"), ended: Date.now() });
-      throw e;
-    }
+      let res;
+      try {
+        res = spec
+        ? await runTool(call.tool, call.args, {
+            model,
+            groupName,
+            channelType: settings.channelType || "",
+            signal,
+            record,
+            runAgent: childRunAgent,
+            todo,
+            // 最近调用里显示调用方（工具触发的上游请求也归属到同一次对话的用户）
+            user,
+            // 某些上游（如网页版反代）不支持联网搜索：工具要据此拒绝，而不是发一次必定失败的请求
+            searchSupported: modelCaps?.supportsSearch !== false})
+        : { ok: false, output: `工具「${call.tool}」在本轮不可用；可用工具：${specs.map((s) => s.id).join("、") || "（无）"}` };
+      } catch (e) {
+        // 主动停止也要结束工具的运行状态，刷新后不能永久显示“执行中”。
+        patchPart(toolPart, { status: "failed", output: signal?.aborted ? "工具已停止" : String(e.message || "工具执行失败"), ended: Date.now() });
+        throw e;
+      }
 
-    const patch = { status: res.ok ? "done" : "failed", output: String(res.output || "").slice(0, 12000), ended: Date.now() };
-    if (res.meta) patch.meta = res.meta;
-    if (Array.isArray(res.todo)) {
-      todo = res.todo;
-      patch.todo = todo;
-      onTodo?.(todo);
-      emit?.({ type: "todo", todo });
+      const patch = { status: res.ok ? "done" : "failed", output: String(res.output || "").slice(0, 12000), ended: Date.now() };
+      if (res.meta) patch.meta = res.meta;
+      if (Array.isArray(res.todo)) {
+        todo = res.todo;
+        patch.todo = todo;
+        onTodo?.(todo);
+        emit?.({ type: "todo", todo });
+      }
+      patchPart(toolPart, patch);
+      toolResults.push(`<tool_result tool="${call.tool}" ok="${res.ok}">\n${patch.output}\n</tool_result>`);
     }
-    patchPart(toolPart, patch);
 
     // 把已执行的真实调用（含参数）交回模型，而不是让它学习并复述内部占位文字。
-    messages.push({ role: "assistant", content: [stepText, `${OPEN_TAG}${JSON.stringify(call)}${CLOSE_TAG}`].filter(Boolean).join("\n") });
+    messages.push({ role: "assistant", content: [stepText, ...stepCalls.map(call => `${OPEN_TAG}${JSON.stringify(call)}${CLOSE_TAG}`)].filter(Boolean).join("\n") });
     messages.push({
       role: "user",
       content:
-        `<tool_result tool="${call.tool}" ok="${res.ok}">\n${patch.output}\n</tool_result>\n` +
+        `${toolResults.join("\n")}\n` +
         (step === maxSteps ? "这已经是最后一步：不要再调用工具，请直接给出最终回答。" : "需要更多信息就继续调用工具，否则直接给出最终回答。")});
     if (step === maxSteps) hitLimit = true;
   }

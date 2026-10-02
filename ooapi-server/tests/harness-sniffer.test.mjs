@@ -23,7 +23,7 @@ function run(text, mode) {
   if (mode === "whole") shown += s.push(text);
   else for (const ch of text) shown += s.push(ch);
   const f = s.finish();
-  return { shown: shown + f.text, call: f.call, bad: f.bad };
+  return { shown: shown + f.text, call: f.call, calls: f.calls, bad: f.bad };
 }
 
 const SCREENSHOT =
@@ -121,6 +121,16 @@ for (const c of CASES) {
 
 console.log("\n=== 异常与边界 ===");
 for (const mode of ["whole", "char"]) {
+  for (const ending of ["</tool_call>", ""]) {
+    const batch = run(`<tool_call>{"tool":"account","args":{"action":"overview"}}${ending}<tool_call>{"tool":"account","args":{"action":"recent","limit":5}}${ending}`, mode);
+    ck(`连续两个完整查询都保留（${mode}，结束标签${ending ? "完整" : "缺失"}）`, !batch.bad && batch.calls.length === 2 && batch.calls[1].args.action === "recent" && !batch.shown);
+  }
+  for (const suffix of ['<tool_call>{"tool":"account","args":{"action":', '<tool_call>{"tool":"account","args":null}</tool_call>', '这是调用后的额外正文', '<tool_call>{"tool":"account","args":{}}</tool_call>'.repeat(4)]) {
+    const invalidBatch = run('<tool_call>{"tool":"account","args":{"action":"overview"}}</tool_call>' + suffix, mode);
+    ck(`后续调用损坏、正文混杂或超限时整批拒绝（${mode}）`, invalidBatch.bad && !invalidBatch.call && !invalidBatch.calls.length && !invalidBatch.shown);
+  }
+  const quotedMarker = run('<tool_call>{"tool":"search","args":{"query":"<tool_call> </tool_call>"}}</tool_call>', mode);
+  ck(`JSON字符串内的标签不是下一条调用（${mode}）`, !quotedMarker.bad && quotedMarker.calls.length === 1 && quotedMarker.call.args.query === '<tool_call> </tool_call>');
   const cut = run('稍等<｜DSML｜function_calls><｜DSML｜invoke name="github"><｜DSML｜parameter name="args">{"repo":', mode);
   ck(`未闭合的 DSML 标记不当正文吐出（${mode}）`, !/DSML|invoke/.test(cut.shown), JSON.stringify(cut.shown));
   ck(`未闭合的 DSML 标记判为格式不合法（让模型重试）（${mode}）`, cut.bad === true && !cut.call);

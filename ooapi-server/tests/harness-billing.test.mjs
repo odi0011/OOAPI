@@ -429,6 +429,58 @@ await test("账号overview/usage/recent含失败和停止使用，排除普通�
   });
 }
 for (const mode of ["whole", "char"]) {
+  await test(`线上连续两个漏结束标签的查询均执行并汇总，模型用量不按工具个数重复（${mode}）`, async () => {
+    const originalQuery = audit.pool.query, calls = [], queries = [];
+    audit.pool.query = async (sql, args) => {
+      assert.equal(args[0], 77, "整批查询均限定当前用户");
+      queries.push(sql);
+      if (sql.includes("FROM users")) return [[{username:"fixture",quota:12345}]];
+      if (sql.includes("ORDER BY id DESC")) return [[{type:2,model:"fixture-model",quota:100,created_at:1}]];
+      return [[{n:1,on_:1,cost:0}]];
+    };
+    let count = 0;
+    audit.complete = async o => {
+      const content = ++count === 1 ? '<tool_call>{"tool":"account","args":{"action":"overview"}}<tool_call>{"tool":"account","args":{"action":"recent","limit":5}}'
+        : '余额 1.2345 OD币；最近调用包含 fixture-model。';
+      if (count === 2) {
+        const results = o.messages.find(m => m.content.includes('<tool_result'))?.content || '';
+        assert.match(results, /余额：1\.2345 OD币/); assert.match(results, /fixture-model/);
+        assert.equal((results.match(/<tool_result /g) || []).length, 2);
+      }
+      for (const chunk of mode === "char" ? [...content] : [content]) o.onDelta(chunk);
+      return mockResult(content);
+    };
+    try {
+      const result = await harness.runHarness({...harnessOptions(["account"],calls),user:{id:77}});
+      assert.match(result.text,/1\.2345 OD币.*fixture-model/);
+      assert.deepEqual(result.parts.filter(p=>p.type==='tool').map(p=>[p.args.action,p.status]),[['overview','done'],['recent','done']]);
+      assert.equal(calls.length,2); assert.equal(count,2); assert.equal(queries.length,4);
+    } finally { audit.pool.query = originalQuery; }
+  });
+  await test(`整批含损坏的第二调用时不先执行第一调用（${mode}）`, async () => {
+    const originalQuery = audit.pool.query, calls = []; let count = 0, queried = false;
+    audit.pool.query = async () => { queried = true; return [[],[]]; };
+    audit.complete = async o => {
+      const content = ++count === 1 ? '<tool_call>{"tool":"account","args":{"action":"overview"}}</tool_call><tool_call>{"tool":"account","args":{"action":' : '无法执行查询。';
+      for(const chunk of mode === "char" ? [...content] : [content]) o.onDelta(chunk);
+      return mockResult(content);
+    };
+    try {
+      const result=await harness.runHarness({...harnessOptions(["account"],calls),user:{id:77}});
+      assert.equal(queried,false); assert.equal(result.parts.filter(p=>p.type==='tool').length,0); assert.equal(calls.length,2);
+    } finally { audit.pool.query = originalQuery; }
+  });
+  await test(`在第一工具后停止时不执行批次余下的工具（${mode}）`, async () => {
+    const ctrl = new AbortController(), calls = [];
+    audit.complete = async o => {
+      const content='<tool_call>{"tool":"todowrite","args":{"todos":[{"content":"first","status":"pending"}]}}</tool_call><tool_call>{"tool":"todowrite","args":{"todos":[{"content":"second","status":"pending"}]}}</tool_call>';
+      for(const chunk of mode === "char" ? [...content] : [content]) o.onDelta(chunk);
+      return mockResult(content);
+    };
+    await assert.rejects(()=>harness.runHarness({...harnessOptions(["todowrite"],calls),signal:ctrl.signal,onTodo:()=>ctrl.abort()}),e=>{
+      assert.equal(e.code,'ABORTED'); assert.equal(e.parts.filter(p=>p.type==='tool').length,1); assert.equal(e.calls.length,1); return true;
+    });
+  });
   await test(`线上只返回account recent占位符后纠正、取到两项数据并最终回答（${mode}）`, async () => {
     const originalQuery = audit.pool.query;
     const calls = [], queries = [], emitted = [];

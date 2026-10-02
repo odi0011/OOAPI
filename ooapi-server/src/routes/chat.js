@@ -28,6 +28,8 @@ import { AGENTS, findAgent, publicAgents, PRIMARY_AGENTS } from "../services/har
 import { toolSpecs } from "../services/harness/tools.js";
 import { extractFileText, MAX_UPLOAD_FILES, MAX_UPLOAD_BYTES, TEXT_FILE_EXTS } from "../services/harness/files.js";
 import { startRun, getRun, isRunning, publish, subscribe, finishRun, runStatus } from "../services/harness/runs.js";
+import { isChatDraining, trackChatRun } from "../services/harness/drain.js";
+export { drainChatRuns } from "../services/harness/drain.js";
 import { holdTokenQuota } from "../services/token-quota.js";
 import {
   createSession,
@@ -830,6 +832,8 @@ function aggregate(calls = []) {
     rateLimit({ windowMs: 60_000, max: 20, keyPrefix: "chat-run", keyFn: (r) => r.user?.id || r.ip }),
     asyncHandler(async (req, res) => {
     const reject = (message, status = 400, data = {}) => fail(res, message, status, { accepted: false, ...data });
+    const rejectDraining = () => reject("服务正在重启，请稍后重试", 503, { code: "SERVER_DRAINING" });
+    if (isChatDraining()) return rejectDraining();
     const { sessionId, text = "", model: modelOverride, agent: agentOverride, settings: settingsPatch, images = [], files = [], keyId = 0, retryFromSeq: retryRaw = 0 } = req.body || {};
     const retryFromSeq = retryRaw ? safeInt(retryRaw, { min: 1, fallback: 0 }) : 0;
     if (retryRaw && !retryFromSeq) return reject("retryFromSeq 无效", 400, { accepted: false });
@@ -954,8 +958,17 @@ function aggregate(calls = []) {
 
     // 先原子占位、再做落库等副作用：并发提交的第二个请求会在这里直接 409，
     // 不会留下重复的用户消息或被改错的标题（原实现先落库后占位，存在这个竞态）。
+    // 附件读取会让出事件循环；退出可能已在此期间开始，不能再登记新运行。
+    if (isChatDraining()) return rejectDraining();
     const run = startRun(session.id, { userId: req.user.id });
     if (!run) return reject("这个会话正在生成中，请稍候或先停止", 409);
+    const ctrl = new AbortController();
+    const completeRun = trackChatRun(ctrl);
+    run.abort = () => ctrl.abort();
+    const finishBeforeStart = async () => {
+      try { await quotaHold.refund(); }
+      finally { finishRun(run); completeRun(); }
+    };
 
     let history;
     let models;
@@ -975,7 +988,7 @@ function aggregate(calls = []) {
       // 路由分组：必须通过密钥路由（分组决定渠道/模型/倍率），没有可用密钥不开跑
       usableKey = await activeKeyOf(req.user, keyId);
       if (!usableKey) {
-        finishRun(run);
+        await finishBeforeStart();
         return reject("请先在「令牌管理」创建可用密钥，并在对话页选择它（密钥的分组决定可用模型与倍率）", 403);
       }
       // 密钥额度在站内对话同样生效（与网关 authorize 的 insufficient_quota 同一口径）。
@@ -984,13 +997,13 @@ function aggregate(calls = []) {
       // 也会扣它的 remain_quota），如果不在这里拦，就会出现「Key 早就用尽了、
       // 站内却还能无限继续」——正是黑盒测试报的「密钥额度形同虚设」的另一种形态。
       if (!usableKey.unlimited_quota && Number(usableKey.remain_quota) <= 0) {
-        finishRun(run);
+        await finishBeforeStart();
         return reject("该密钥额度已用尽，请在对话页换一把密钥（或让管理员调整额度）", 403);
       }
       // 原子预占：并发下只有一个请求能拿到这 1 个单位，其余在这里就被拒
       quotaHold = await holdTokenQuota(usableKey);
       if (!quotaHold.ok) {
-        finishRun(run);
+        await finishBeforeStart();
         return reject("该密钥额度已用尽，请在对话页换一把密钥（或让管理员调整额度）", 403);
       }
       models = await availableModels(req.user, usableKey.id);
@@ -1002,12 +1015,17 @@ function aggregate(calls = []) {
       modelCaps = eligible.find((m) => m.id === model) || eligible.find(sameModel) || null;
       routeGroup = usableKey.group_name || null;
       if (!modelCaps) {
-        quotaHold.refund();
-        finishRun(run);
+        await finishBeforeStart();
         return reject(`模型「${model}」在当前密钥下不可用，请重新选择模型`);
       }
       // 旧会话未保存接入厂商时与前端采用同一首项；之后每步及工具调用固定这个厂商。
       settings.channelType = modelCaps.vendor;
+
+      // preflight也在排空集合内：还没保存用户消息时直接拒绝，重试旧轮不会被删。
+      if (ctrl.signal.aborted) {
+        await finishBeforeStart();
+        return isChatDraining() ? rejectDraining() : reject("生成已停止", 400, { code: "ABORTED" });
+      }
 
       // 所有前置校验通过后才改写历史；retryFromSeq 回退与新用户消息在同一事务。
       const userParts = [{ id: `u${Date.now().toString(36)}`, type: "text", text: inputText }];
@@ -1022,12 +1040,9 @@ function aggregate(calls = []) {
       if (session.message_count === 0 && session.title === "新对话") await updateSession(req.user.id, session.id, { title: titleFromText(content || docs[0]?.name || "图片对话") }).catch(() => {});
     } catch (e) {
       // 占位后到真正开跑前的任何异常都要释放，否则会话会永远显示"生成中"
-      finishRun(run);
-      quotaHold.refund();
+      await finishBeforeStart();
       return reject(["NO_SESSION", "BAD_RETRY"].includes(e.code) ? e.message : "无法开始生成，请稍后重试", e.status || 500, { accepted: false, code: e.code || "START_FAILED" });
     }
-    const ctrl = new AbortController();
-    run.abort = () => ctrl.abort();
     run.userMessage = userMessage;
     publish(run, { type: "start", sessionId: session.id, startedAt: run.startedAt, userMessage, retryFromSeq });
 
@@ -1056,7 +1071,7 @@ function aggregate(calls = []) {
       userAgent: String(req.headers["user-agent"] || "").slice(0, 255),
       startedAt: run.startedAt || Date.now(),
       quotaHold,
-    }).catch((e) => console.error("[chat] 后台运行异常：", e?.message || e));
+    }).catch((e) => console.error("[chat] 后台运行异常：", e?.code || "ERROR")).finally(completeRun);
 
     streamFromRun(req, res, run);
   })
@@ -1171,6 +1186,8 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
 
     runParts = out.parts;
     runTodo = out.todo;
+    // 最后一步刚结束时退出也可能先于结算发生；沿停止分支保存已有calls/parts。
+    if (ctrl.signal.aborted) throw Object.assign(new Error("已停止"), { code: "ABORTED", parts: runParts });
     channelName = runCalls.find((c) => c.channel)?.channel || "";
     const runChannelIds = [...new Set(runCalls.map((c) => Number(c.channelId) || 0).filter(Boolean))];
 
@@ -1426,8 +1443,8 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
   } finally {
     // 没走到结算（上游直接失败、无任何产出）就退回预占的 1 个单位。
     // consume() 过的（结算已计入）会在这里自动让路；refund() 幂等，重复调用无害。
-    quotaHold?.refund();
-    finishRun(run);
+    try { await quotaHold?.refund(); }
+    finally { finishRun(run); }
   }
 }
 

@@ -22,7 +22,8 @@ const { invalidatePrices, getPrice, computeCost } = await import('../src/service
 const { invalidateChannelCache, resetChannelState } = await import('../src/services/router.js');
 const { clearGroupConfigCache } = await import('../src/services/group-rate.js');
 const { signToken } = await import('../src/middleware/auth.js');
-const { default: chat } = await import('../src/routes/chat.js');
+const { default: chat, drainChatRuns } = await import('../src/routes/chat.js');
+const { getRun } = await import('../src/services/harness/runs.js');
 const { default: logs } = await import('../src/routes/log.js');
 const model = 'fixture-chat-billing-model';
 const initial = 1000000;
@@ -41,6 +42,9 @@ let messageFailures = 0;
 let tokenFailures = 0;
 let insertFailures = 0;
 let ambiguousCommit = false;
+let beforeAssistantInsert = null;
+let beforeChannelsRead = null;
+let beforeQuotaRefund = null;
 let requests = 0;
 let commits = 0;
 let rollbacks = 0;
@@ -70,9 +74,12 @@ const query = async (store, sql, args = []) => {
     { model: 'glm-4.7', input_price: .6, output_price: 2.2, cache_price: .11 }]];
   if (s === 'SELECT * FROM tokens WHERE id = ? AND user_id = ?') return [[clone(store.token)].filter((t) => t.id === Number(args[0]) && t.user_id === Number(args[1]))];
   if (s.includes('FROM tokens WHERE user_id = ?')) return [[clone(store.token)].filter((t) => t.user_id === Number(args[0]) && t.status === 1)];
-  if (s.includes('FROM channels')) return [[{ id: channelId, type: channelType, name: 'fixture-channel', status: 1, models: channelModels,
+  if (s.includes('FROM channels')) {
+    if (beforeChannelsRead) await beforeChannelsRead();
+    return [[{ id: channelId, type: channelType, name: 'fixture-channel', status: 1, models: channelModels,
     group_name: 'fixture', group_list: '["fixture"]', base_url: upstreamBase, api_key: 'fixture-upstream-only',
     other: JSON.stringify({ method: 'api', allow_private_upstream: true }) }]];
+  }
   if (s.includes('FROM channel_groups')) return [[{ name: 'fixture', rate: fixtureRate, models: '[]' }]];
   if (s === 'SELECT * FROM chat_sessions WHERE id = ? AND user_id = ?' || s.startsWith('SELECT id FROM chat_sessions')) {
     return [[clone(store.session)].filter((v) => v.id === args[0] && v.user_id === Number(args[1]))];
@@ -89,6 +96,7 @@ const query = async (store, sql, args = []) => {
     if (messageFailures > 0) { messageFailures--; throw new Error('fixture message insert failed'); }
     const cols = s.match(/^INSERT INTO chat_messages \((.*?)\) VALUES/)[1].split(',').map((v) => v.trim());
     const row = Object.fromEntries(cols.map((v, i) => [v, args[i]])); row.id = ++store.nextMessage;
+    if (row.role === 'assistant' && beforeAssistantInsert) await beforeAssistantInsert();
     store.messages.push(row); return [{ affectedRows: 1, insertId: row.id }];
   }
   if (s.startsWith('UPDATE chat_sessions SET message_count')) {
@@ -106,7 +114,10 @@ const query = async (store, sql, args = []) => {
     if (store.token.remain_quota < args[0]) return [{ affectedRows: 0 }];
     store.token.remain_quota -= args[0]; return [{ affectedRows: 1 }];
   }
-  if (s.startsWith('UPDATE tokens SET remain_quota = remain_quota +')) { store.token.remain_quota += args[0]; return [{ affectedRows: 1 }]; }
+  if (s.startsWith('UPDATE tokens SET remain_quota = remain_quota +')) {
+    if (beforeQuotaRefund) await beforeQuotaRefund();
+    store.token.remain_quota += args[0]; return [{ affectedRows: 1 }];
+  }
   if (s.startsWith('UPDATE tokens SET used_quota')) {
     if (tokenFailures) { tokenFailures--; throw new Error('fixture token write failed'); }
     assert.equal(args[4], store.token.id); assert.equal(args[5], store.user.id);
@@ -181,7 +192,7 @@ const run = async (extra = {}) => {
   return { status: res.status, events, final: events.findLast((e) => ['done', 'error', 'stopped'].includes(e.type)) };
 };
 const get = async (url) => { const res = await api(url); assert.equal(res.status, 200); return (await res.json()).data; };
-const until = async (predicate) => { for (let i = 0; i < 100; i++) { if (await predicate()) return; await new Promise((r) => setTimeout(r, 5)); } throw new Error('fixture等待超时'); };
+const until = async (predicate, attempts = 100) => { for (let i = 0; i < attempts; i++) { if (await predicate()) return; await new Promise((r) => setTimeout(r, 5)); } throw new Error('fixture等待超时'); };
 const balance = (units) => {
   assert.equal(state.user.quota, initial - units); assert.equal(state.user.used_quota, units);
   assert.equal(state.token.remain_quota, initial - units); assert.equal(state.token.used_quota, units);
@@ -209,6 +220,35 @@ const seed = () => { state.messages = [
 let passed = 0;
 const test = async (name, fn) => { reset(); await fn(); passed++; console.log(`  ok  ${name}`); };
 try {
+  if (process.argv.includes('--drain-preflight')) {
+    await test('preflight异步查询中退出不删重试旧轮，排空等待唯一预占退款', async () => {
+      seed(); const old = clone(state.messages);
+      let releaseChannels, releaseRefund, reachedChannels = false, reachedRefund = false, drained = false;
+      const channelsGate = new Promise((r) => { releaseChannels = r; });
+      const refundGate = new Promise((r) => { releaseRefund = r; });
+      beforeChannelsRead = async () => { reachedChannels = true; await channelsGate; };
+      beforeQuotaRefund = async () => { reachedRefund = true; await refundGate; };
+      const pending = run({ retryFromSeq: 1 });
+      await until(() => reachedChannels); assert.equal(state.token.remain_quota, initial - 1);
+      const draining = drainChatRuns({ timeoutMs: 2000 }).then((result) => { drained = true; return result; });
+      try {
+        const rejected = await run({ retryFromSeq: 1 });
+        assert.equal(rejected.status, 503); assert.equal(rejected.data.data.accepted, false);
+        assert.equal(drained, false, '不能忽略已登记的preflight');
+        releaseChannels(); beforeChannelsRead = null;
+        await until(() => reachedRefund); assert.equal(drained, false, '退款仍在写DB');
+        assert.deepEqual(state.messages, old); assert.equal(requests, 0);
+        releaseRefund(); beforeQuotaRefund = null;
+        assert.deepEqual(await draining, { total: 1, completed: 1, pending: 0, timedOut: false });
+        const response = await pending;
+        assert.equal(response.status, 503); assert.equal(response.data.data.code, 'SERVER_DRAINING');
+        assert.equal(response.data.data.accepted, false); assert.deepEqual(state.messages, old);
+        balance(0); assert.equal(state.logs.length, 0); assert.equal(requests, 0);
+        assert.equal(queries.filter((s) => s.startsWith('UPDATE tokens SET remain_quota = remain_quota +')).length, 1);
+        assert.equal((await get(`/api/chat/sessions/${state.session.id}/running`)).running, false);
+      } finally { releaseChannels(); releaseRefund(); beforeChannelsRead = beforeQuotaRefund = null; }
+    });
+  } else {
   for (const status of [400, 401, 429, 502]) await test(`HTTP${status}仅失败usage且刷新保留错误/0费用/未知首T`, async () => {
     behavior = (_req, res) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end('{"error":{"message":"https://secret.invalid/?key=DO_NOT_LEAK","code":"fixture_error"}}'); };
     const result = await run(); const message = finalMessage(result, 'error'); const row = oneLog('error'); balance(0);
@@ -428,9 +468,57 @@ try {
     assert.ok(!JSON.stringify(message).includes('DO_NOT_LEAK')); assert.ok(!row.content.includes('private.invalid'));
     assert.equal(row.error_code, 'CHANNEL_BAD_REQUEST'); assert.equal(JSON.parse(row.detail).http_status, 400);
   });
+  await test('服务退出停止在途工具/正文，等助手落库后再结束排空并拒绝新运行', async () => {
+    behavior = (_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      if (requests < 3) {
+        const content = `<tool_call>{"tool":"todowrite","args":{"todos":[{"content":"shutdown-${requests}","status":"completed"}]}}</tool_call>`;
+        res.end(frame({ choices: [{ delta: { content } }] }) + frame({ usage }) + 'data: [DONE]\n\n');
+      } else {
+        res.write(frame({ choices: [{ delta: { content: 'SHUTDOWN_PARTIAL' } }] }) + frame({ usage }));
+      }
+    };
+    const pending = run();
+    await until(() => requests === 3 && [...(getRun(state.session.id)?.snapshots.values() || [])].filter((p) => p.type === 'tool' && p.status === 'done').length === 2, 1200);
+    await new Promise((r) => setTimeout(r, 20)); // 短正文先留在sniffer中，abort后才完整放出。
+    let releaseAssistant, reachedAssistant = false, drained = false;
+    const assistantGate = new Promise((r) => { releaseAssistant = r; });
+    beforeAssistantInsert = async () => { reachedAssistant = true; await assistantGate; };
+    const draining = drainChatRuns({ timeoutMs: 2000 }).then((result) => { drained = true; return result; });
+    try {
+      const rejected = await run();
+      assert.equal(rejected.status, 503); assert.equal(rejected.data.data.accepted, false);
+      assert.equal(rejected.data.data.code, 'SERVER_DRAINING'); assert.equal(requests, 3);
+      await until(() => reachedAssistant); assert.equal(drained, false, 'DB仍在写消息时不能关闭pool');
+    } finally { releaseAssistant(); beforeAssistantInsert = null; }
+    assert.deepEqual(await draining, { total: 1, completed: 1, pending: 0, timedOut: false });
+    const message = finalMessage(await pending, 'stopped'); const row = oneLog('stopped');
+    const price = await getPrice(model); const expected = 3 * computeCost({ price, promptTokens: 1700, completionTokens: 300, cacheTokens: 500 });
+    balance(expected); assert.equal(row.quota, expected); assert.equal(JSON.parse(row.detail).billing_details.call_count, 3);
+    assert.equal(message.parts.filter((p) => p.type === 'tool' && p.status === 'done').length, 2);
+    assert.ok(message.parts.some((p) => p.type === 'text' && p.text === 'SHUTDOWN_PARTIAL'));
+    const saved = (await get(`/api/chat/sessions/${state.session.id}`)).messages[1];
+    assert.equal(saved.status, 'stopped'); assert.equal(saved.id, message.id);
+    assert.equal((await get(`/api/chat/sessions/${state.session.id}/running`)).running, false);
+    assert.deepEqual(await drainChatRuns(), { total: 0, completed: 0, pending: 0, timedOut: false });
+  });
+  // 退出态不会在当前进程恢复；另起隔离fixture验证开始前的异步赛跑。
+  await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [filename, '--drain-preflight'], { stdio: 'inherit', windowsHide: true });
+    child.once('error', reject);
+    child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`chat preflight退出回归失败(${code})`)));
+  });
+  await import('./chat-drain.test.mjs');
+  }
   console.log(`  chat 失败/原文/账单 HTTP 回归 ${passed} 项通过`);
 } finally {
-  pool.query = originalQuery; pool.getConnection = originalConnection;
+  // 用例断言中断也先停后台运行，不能恢复真实pool后让迟到的结算访问本机DB。
+  const drained = await drainChatRuns({ timeoutMs: 2000 });
+  if (!drained.pending) { pool.query = originalQuery; pool.getConnection = originalConnection; }
+  else {
+    pool.query = async () => { throw new Error('fixture已结束，禁止访问真实DB'); };
+    pool.getConnection = pool.query;
+  }
   invalidatePrices(); clearGroupConfigCache(); invalidateChannelCache();
   await new Promise((r) => server.close(r)); await new Promise((r) => upstream.close(r)); await pool.end();
 }

@@ -47,6 +47,7 @@ export async function holdTokenQuota(token) {
   // 只允许「退回」或「被结算消费」其中之一生效，否则额度会凭空变多：
   // 结算路径自己做了 `remain_quota + hold - units`，此时再退一次 hold 就是双重加回。
   let settledOrRefunded = false;
+  let refundPromise;
   return {
     ok: true,
     amount: amt,
@@ -55,11 +56,13 @@ export async function holdTokenQuota(token) {
       settledOrRefunded = true;
     },
     refund() {
-      if (settledOrRefunded) return;
+      if (settledOrRefunded) return refundPromise;
       settledOrRefunded = true;
-      pool
+      // 退出排空须能等待退款；重复调用复用同一Promise，不会多加额度。
+      refundPromise = pool
         .query("UPDATE tokens SET remain_quota = remain_quota + ? WHERE id = ? AND unlimited_quota = 0", [amt, token.id])
         .catch((e) => console.error("[token-quota] 预占额度退回失败：", e.message));
+      return refundPromise;
     },
   };
 }

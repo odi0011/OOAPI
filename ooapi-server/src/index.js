@@ -353,8 +353,8 @@ async function bootstrap() {
     console.error("[init] 实时推送心跳启动失败：", e.message);
   }
 
-  // 退出：先停接收新连接排空在途请求（分钟级上游/日志写入不能被硬截断），
-  // 再关浏览器、PoW worker 与数据库连接池；10s 兜底强制退出。
+  // SSE断开后站内生成仍在后台；先停止并等待消息、费用保存，再关闭上游资源和数据库。
+  // 超时必须报告未结算数量；15s兜底退出，给8s对话排空后的资源关闭留出时间。
   let shuttingDown = false;
   for (const sig of ["SIGTERM", "SIGINT"]) {
     process.on(sig, async () => {
@@ -365,8 +365,15 @@ async function bootstrap() {
       } catch {
         /* ignore */
       }
-      const force = setTimeout(() => process.exit(0), 10_000);
+      const force = setTimeout(() => process.exit(0), 15_000);
       force.unref?.();
+      try {
+        const { drainChatRuns } = await import("./routes/chat.js");
+        const drained = await drainChatRuns({ timeoutMs: 8000 });
+        if (drained.pending) console.error(`[shutdown] 对话结算超时：仍有 ${drained.pending} 个运行未完成`);
+      } catch (e) {
+        console.error("[shutdown] 对话排空失败：", e.code || "ERROR");
+      }
       try {
         const { closeAll } = await import("./services/upstream/browser-driver.js");
         await closeAll();
