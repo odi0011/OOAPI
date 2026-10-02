@@ -5,7 +5,11 @@ import { channelPriceQuote, finalizeChannelQuote } from "../src/services/channel
 import { applyGroupRate } from "../src/services/group-rate.js";
 import { warmAliasMap } from "../src/services/models.js";
 import { billableFailedCall } from "../src/services/execute.js";
+import { pool } from "../src/db.js";
+const savedQuery = pool.query;
+pool.query = async () => [[]];
 await warmAliasMap();
+pool.query = savedQuery;
 let passed = 0;
 const test = (name, run) => { run(); passed++; console.log(`  ok  ${name}`); };
 const price = { input: 1, output: 2, cache: .5 };
@@ -109,3 +113,6 @@ test("失败call继承同次snapshot且工具已记账时不合成第二份", ()
   err.billingRecorded = true; assert.equal(billableFailedCall(err), null);
 });
 console.log(`  费用明细/渠道报价 ${passed} 项通过`);
+
+const freeZen = channelPriceQuote({ type:"opencode", models:"mimo-v2.6-flash-free", other:{method:"api"} }, {model:"mimo-v2.6-flash-free"});
+assert.equal(freeZen.status,"available");assert.deepEqual(freeZen.price,{in:0,out:0,cache:0});

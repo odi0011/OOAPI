@@ -69,10 +69,6 @@ const NAV_USER = [
     title: "账户",
     items: [
       { key: "/media", icon: <FolderOpenOutlined />, label: "媒体库" },
-      // 模型价格（只读）：用户端比价入口。原先完全没有 ——
-      // 独立开发者人格实测：「价格表完全找不到，我只能反推实际扣费，
-      // 无法核对标价与实收是否一致。」
-      { key: "/pricing", icon: <DollarOutlined />, label: "模型价格" },
       { key: "/profile", icon: <UserOutlined />, label: "个人设置" },
     ],
   },
@@ -82,7 +78,6 @@ const NAV_ADMIN = [
   {
     title: "平台管理",
     items: [
-      { key: "/admin/dashboard", icon: <DashboardOutlined />, label: "平台看板" },
       { key: "/admin/channel", icon: <ApiOutlined />, label: "渠道管理" },
       { key: "/admin/groups", icon: <GroupOutlined />, label: "分组管理" },
       // badge: "pendingPrices" —— 待定价模型数的红色徽标。
@@ -110,10 +105,8 @@ const CRUMB = {
   "/log": ["开发", "使用记录"],
   "/operation-log": ["开发", "操作日志"],
   "/media": ["账户", "媒体库"],
-  "/pricing": ["账户", "模型价格"],
   "/profile": ["账户", "个人设置"],
   "/home": ["首页"],
-  "/admin/dashboard": ["平台管理", "平台看板"],
   "/admin/channel": ["平台管理", "渠道管理"],
   "/admin/groups": ["平台管理", "分组管理"],
   "/admin/pricing": ["平台管理", "模型定价"],
@@ -260,7 +253,7 @@ export default function MainLayout() {
     const renderGroup = (group) => (
       <div className="oo-nav-group" key={group.title}>
         {!collapsed && <div className="oo-nav-label">{group.title}</div>}
-        {group.items.filter((it) => (!it.adminOnly || isAdmin) && (it.key !== "/log" || visibility.usage_records) && (it.key !== "/pricing" || visibility.pricing)).map((it) => (
+        {group.items.filter((it) => (!it.adminOnly || isAdmin) && (it.key !== "/log" || visibility.usage_records)).map((it) => (
           <div
             key={it.key}
             className={`oo-nav-item${selectedKey === it.key ? " is-active" : ""}`}

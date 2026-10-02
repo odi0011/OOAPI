@@ -129,10 +129,8 @@ t("路由与前端接的是新接口", () => {
 t("预检与体检用同一套判定（两处不一致会给出互相矛盾的数字）", () => {
   const m = priceSync.match(/export async function missingFromUpstream[\s\S]*?\n\}/);
   ck(m, "未找到 missingFromUpstream");
-  ck(/clinePriceFor\(m\)/.test(m[0]), "预检没认归属规则（会与体检数字打架）");
-  ck(/bestLen/.test(m[0]), "预检没认前缀命中");
-  // 上游拉不到时不能让整个预检失败（它只是提示，不是关键路径）
-  ck(/fetchUpstreamPriceList\(\)\.catch/.test(m[0]), "上游不可达时预检会直接抛错");
+  ck(m[0].includes("pendingPricedModels()"), "预检必须共用严格定价门禁");
+  ck(!/bestLen|clinePriceFor/.test(m[0]), "禁止相似名称被当作已定价");
 });
 t("sync-defaults 保留但注释说明它不发现新模型", () => {
   ck(/"\/sync-defaults"/.test(pricingRoute), "sync-defaults 被删了（历史兼容）");
@@ -140,23 +138,10 @@ t("sync-defaults 保留但注释说明它不发现新模型", () => {
 });
 
 console.log("\n=== ⑤ 定价体检：可操作而不是罗列内部指标 ===");
-t("后端按「价格来源」分四类且各带下一步", () => {
-  ck(/const SRC = \{/.test(pricingRoute), "没有来源分类");
-  for (const k of ["exact", "rule", "fallback", "none"]) {
-    ck(new RegExp(`${k}: \\{ key: "${k}"`).test(pricingRoute), `缺 ${k} 分类`);
-  }
-  ck(/action|desc:/.test(pricingRoute), "分类没有给「该怎么办」的说明");
-});
-t("「会被拦下」与「走兜底」分开统计（对管理员是两种事）", () => {
-  ck(/counts\.fallback/.test(pricingRoute) && /counts\.none/.test(pricingRoute), "两类没有分开");
-  ck(/会被直接拦下/.test(pricingRoute), "summary 没说清后果");
-});
-t("前端有可读的结论 + 可展开的清单 + 单条自检", () => {
-  ck(/attrib\.summary/.test(pricingPage), "没有一句话结论");
-  ck(/定价体检/.test(pricingPage), "没有标题");
-  ck(/查一个模型/.test(pricingPage), "没有单条自检入口");
-  ck(/来自定价表（你配的）/.test(pricingPage), "自检没有说清价格来源");
-  ck(/怎么补价？/.test(pricingPage), "缺价时没有引导");
+t("管理员确认归属，待定价均被拦截", () => {
+  ck(pricingRoute.includes("pendingPricedModels()"), "缺少待定价清单");
+  ck(pricingRoute.includes("INSERT INTO model_attributions"), "缺少确认归属");
+  ck(pricingPage.includes("<ModelAttributions"), "缺少归属编辑器");
 });
 t("旧版那些内部指标不再直接甩给管理员", () => {
   // ruleCount（「归属规则 212 条」）是引擎内部指标：既不是问题、也不能操作。

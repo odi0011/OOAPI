@@ -36,6 +36,12 @@ export const pool = mysql.createPool({
 
 const TABLES = [
   // 归并聚合目录别名时保留原价，审计旧路由报价而不继续把它当独立计费模型。
+  `CREATE TABLE IF NOT EXISTS model_attributions (
+    alias VARCHAR(128) NOT NULL PRIMARY KEY,
+    model VARCHAR(128) NOT NULL,
+    confirmed_by INT NOT NULL DEFAULT 0,
+    updated_time BIGINT NOT NULL DEFAULT 0
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   `CREATE TABLE IF NOT EXISTS model_price_aliases (
     alias VARCHAR(128) NOT NULL PRIMARY KEY,
     model VARCHAR(128) NOT NULL,

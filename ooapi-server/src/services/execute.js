@@ -7,7 +7,7 @@ import { selectChannels, getAdapter, adapterKeyFor, markChannelError, markChanne
 import { callsText } from "./tool-wire.js";
 import { resolveAliasSync } from "./models.js";
 import { recordChannelSwitch } from "./metrics.js";
-import { normalizeUsage } from "./pricing.js";
+import { normalizeUsage, assertModelPriced } from "./pricing.js";
 import { channelPriceQuote } from "./channel-price-quote.js";
 
 /** 请求已经发送不能证明消耗；只认上游返回的用量或实际生成的内容。 */
@@ -128,6 +128,7 @@ export async function runCompletion({
   sessionId = "",
   requestId = "",
 }) {
+  await assertModelPriced(model);
   const runStartedAt = Date.now();
   // 重试沿用同一次调用的上下文；无会话头的 API 请求各自独立，避免不同用户共用渠道会话。
   const callRequestId = requestId || crypto.randomUUID();

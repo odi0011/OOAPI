@@ -98,7 +98,6 @@ export default function AppearanceSettings() {
         </section>
         <section className="oo-site-appearance-section"><h3>首页展示</h3>
           <Row label="模型列表"><Switch disabled={busy} aria-label="首页模型列表" checked={draft.home_show_models} onChange={(v) => change("home_show_models", v)} /></Row>
-          <Row label="定价入口"><Switch disabled={busy} aria-label="首页定价入口" checked={draft.home_show_pricing} onChange={(v) => change("home_show_pricing", v)} /></Row>
         </section>
         <section className="oo-site-appearance-section"><h3>首页背景</h3>
           <p className="oo-wallpaper-description">分别设置亮色与暗色主题的背景，首页会随明暗模式自动切换。填写图片地址，留空使用默认背景。</p>

@@ -83,7 +83,7 @@ export default function HomePage() {
     <StudioHeader status={status} motion={motion} user={user} />
     <HomeWallpaper />
     <aside className="studio-shortcuts shortcuts-left" aria-label="桌面快捷入口">
-      {[[<HomeOutlined />, '首页', '#top'], [<ApiOutlined />, '工作方式', '#products'], ...(status?.home_show_models !== false ? [[<CodeOutlined />, '厂商目录', '#providers']] : []), ...(status?.home_show_pricing !== false ? [[<WalletOutlined />, '模型定价', '/pricing']] : []), [<FileTextOutlined />, '接入文档', '#quickstart'], [<MessageOutlined />, '开始对话', '/chat']].map(([icon, label, href]) => <a key={label} href={href}><span>{icon}</span><b>{label}</b></a>)}
+      {[[<HomeOutlined />, '首页', '#top'], [<ApiOutlined />, '工作方式', '#products'], ...(status?.home_show_models !== false ? [[<CodeOutlined />, '厂商目录', '#providers']] : []), [<FileTextOutlined />, '接入文档', '#quickstart'], [<MessageOutlined />, '开始对话', '/chat']].map(([icon, label, href]) => <a key={label} href={href}><span>{icon}</span><b>{label}</b></a>)}
     </aside>
     <aside className="studio-shortcuts shortcuts-right" aria-label="工作台快捷入口">
       {[[<DashboardOutlined />, '数据看板', '/console'], [<KeyOutlined />, 'API 令牌', '/token'], [<FileTextOutlined />, '使用记录', '/log'], [<TeamOutlined />, '社区', '/community'], ...(user?.role >= 100 ? [[<MonitorOutlined />, '运维监控', '/admin/monitor']] : [])].map(([icon, label, href]) => <a key={label} href={href}><span>{icon}</span><b>{label}</b></a>)}
@@ -102,7 +102,7 @@ export default function HomePage() {
         </div>
         <div className="studio-start-wrap" data-reveal>
           <StudioCat pose="peek" className="studio-start-cat" eager />
-          <div className="studio-start-card"><h2><strong><BrandLogo size={21}/> {name}</strong> 控制台</h2><ul><li><CheckOutlined /> 三种兼容协议，连接已有应用</li><li><CheckOutlined /> 独立应用令牌，额度与权限可控</li><li><CheckOutlined /> 按实际用量计费，调用明细可查</li></ul><div><Link className="studio-button" to={entry}>{entryLabel}</Link><a className="studio-button studio-button-secondary" href="#quickstart">阅读接入指南</a></div><small>模型价格以定价页为准</small></div>
+          <div className="studio-start-card"><h2><strong><BrandLogo size={21}/> {name}</strong> 控制台</h2><ul><li><CheckOutlined /> 三种兼容协议，连接已有应用</li><li><CheckOutlined /> 独立应用令牌，额度与权限可控</li><li><CheckOutlined /> 按实际用量计费，调用明细可查</li></ul><div><Link className="studio-button" to={entry}>{entryLabel}</Link><a className="studio-button studio-button-secondary" href="#quickstart">阅读接入指南</a></div></div>
         </div>
       </section>
 

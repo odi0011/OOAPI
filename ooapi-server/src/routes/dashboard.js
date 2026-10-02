@@ -48,17 +48,18 @@ function recentUsageRow(l) {
     first_token_ms: Number(l.first_token_known) === 1 || Number(l.first_token_ms) > 0 ? Number(l.first_token_ms) || 0 : null,
     units: Number(l.quota) || 0, prompt_tokens: Number(l.prompt_tokens) || 0,
     completion_tokens: Number(l.completion_tokens) || 0, cache_tokens: Number(l.cache_tokens) || 0,
-    source_vendors: sourceVendors(l.source_vendors) };
+    model_vendor: l.model_vendor || "", source_vendors: sourceVendors(l.source_vendors) };
 }
 
 /** 按天趋势（消费 + 调用 + token + 缓存），缺数据的日期补 0（否则折线会断） */
-async function dailyTrend(userId, since, days) {
+async function dailyTrend(userId, since, days, tokenId = 0) {
   const args = [since];
   let where = `created_at >= ? AND ${USAGE_SQL}`;
   if (userId) {
     where += " AND user_id = ?";
     args.push(userId);
   }
+  if (tokenId) { where += " AND token_id = ?"; args.push(tokenId); }
   const [rows] = await pool.query(
     `SELECT FLOOR((created_at + ${TZ})/86400) AS bj_day,
             COUNT(*) AS calls,
@@ -95,7 +96,7 @@ async function dailyTrend(userId, since, days) {
  * 上一周期（等长、紧邻之前）的汇总：看板数字要能回答「比上期多了还是少了」，
  * 只有绝对值时用户无法判断 1,234 次调用是涨是跌。
  */
-async function previousTotals(userId, since, days) {
+async function previousTotals(userId, since, days, tokenId = 0) {
   const from = since - days * 86400;
   const args = [from, since];
   let where = `${USAGE_SQL} AND created_at >= ? AND created_at < ?`;
@@ -103,6 +104,7 @@ async function previousTotals(userId, since, days) {
     where += " AND user_id = ?";
     args.push(userId);
   }
+  if (tokenId) { where += " AND token_id = ?"; args.push(tokenId); }
   const [[p]] = await pool.query(
     `SELECT COUNT(*) AS calls, COALESCE(SUM(${SUCCESS_SQL}),0) AS successes, COALESCE(SUM(quota),0) AS units,
             COALESCE(SUM(prompt_tokens + completion_tokens),0) AS tokens, COUNT(DISTINCT user_id) AS users
@@ -115,6 +117,7 @@ async function previousTotals(userId, since, days) {
     ew += " AND user_id = ?";
     eargs.push(userId);
   }
+  if (tokenId) { ew += " AND token_id = ?"; eargs.push(tokenId); }
   const [[e]] = await pool.query(`SELECT COUNT(*) AS n FROM logs WHERE ${ew}`, eargs);
   return {
     calls: Number(p.calls) || 0,
@@ -127,13 +130,14 @@ async function previousTotals(userId, since, days) {
   };
 }
 
-async function errorCount(userId, since) {
+async function errorCount(userId, since, tokenId = 0) {
   const args = [since];
   let where = `${FAILURE_SQL} AND created_at >= ?`;
   if (userId) {
     where += " AND user_id = ?";
     args.push(userId);
   }
+  if (tokenId) { where += " AND token_id = ?"; args.push(tokenId); }
   const [[e]] = await pool.query(`SELECT COUNT(*) AS n FROM logs WHERE ${where}`, args);
   return Number(e.n) || 0;
 }
@@ -293,13 +297,33 @@ router.get(
 // ---------------------------------------------------------------------------
 // 管理端维度
 // ---------------------------------------------------------------------------
+router.get("/filters", adminRequired, asyncHandler(async (req, res) => {
+  const userId = safeInt(req.query.user_id, { min: 1, fallback: 0 });
+  const [users] = await pool.query("SELECT id,username,display_name FROM users ORDER BY id");
+  const [tokens] = await pool.query(`SELECT t.id,t.name,COALESCE(NULLIF(u.display_name,''),u.username) AS owner FROM tokens t JOIN users u ON u.id=t.user_id ${userId ? "WHERE t.user_id = ?" : ""} ORDER BY t.id`, userId ? [userId] : []);
+  return ok(res, { users, tokens });
+}));
+
 router.get(
   "/admin",
   adminRequired,
   asyncHandler(async (req, res) => {
     const { key, days, since } = rangeOf(req.query);
 
-    const [[agg]] = await pool.query(
+    const userId = safeInt(req.query.user_id, { min: 1, fallback: 0 }), tokenId = safeInt(req.query.token_id, { min: 1, fallback: 0 });
+    if (tokenId) {
+      const [[token]] = await pool.query("SELECT user_id FROM tokens WHERE id = ?", [tokenId]);
+      if (!token || (userId && Number(token.user_id) !== userId)) return fail(res, "密钥不属于所选用户", 400);
+    }
+    const query = (sql, args = []) => {
+      if (!/FROM logs\b/.test(sql)) return pool.query(sql, args);
+      const prefix = /FROM logs l\b/.test(sql) ? "l." : "";
+      const conds = [], values = [];
+      if (userId) { conds.push(`${prefix}user_id = ?`); values.push(userId); }
+      if (tokenId) { conds.push(`${prefix}token_id = ?`); values.push(tokenId); }
+      return pool.query(conds.length ? sql.replace(/WHERE /, `WHERE ${conds.join(" AND ")} AND `) : sql, [...values, ...args]);
+    };
+    const [[agg]] = await query(
       `SELECT COUNT(*) AS calls,
               COALESCE(SUM(quota),0) AS units,
               COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
@@ -312,7 +336,7 @@ router.get(
       [since]
     );
     // 用户排行：按消费额，同时给调用数与 token（只看消费额会漏掉「高频低耗」的用户）
-    const [topUsers] = await pool.query(
+    const [topUsers] = await query(
       `SELECT l.user_id, COUNT(*) AS calls, COALESCE(SUM(l.quota),0) AS units,
               COALESCE(SUM(l.prompt_tokens + l.completion_tokens),0) AS tokens,
               u.username, u.display_name, u.avatar_media_id
@@ -321,7 +345,7 @@ router.get(
         GROUP BY l.user_id, u.username, u.display_name, u.avatar_media_id ORDER BY units DESC LIMIT 10`,
       [since]
     );
-    const [allTopModels] = await pool.query(
+    const [allTopModels] = await query(
       `SELECT model, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
          FROM logs WHERE ${USAGE_SQL} AND created_at >= ?
         GROUP BY model ORDER BY units DESC`,
@@ -342,7 +366,7 @@ router.get(
         },
       ];
     }
-    const [byChannel] = await pool.query(
+    const [byChannel] = await query(
       `SELECT l.channel_id, COUNT(*) AS calls, COALESCE(SUM(l.type = 2 AND l.status IN ('', 'success')),0) AS successes, COALESCE(SUM(l.quota),0) AS units,
               COALESCE(AVG(NULLIF(l.elapsed_ms,0)),0) AS avg_elapsed,
               AVG(CASE WHEN l.first_token_known = 1 OR l.first_token_ms > 0 THEN l.first_token_ms END) AS avg_first_token,
@@ -353,7 +377,7 @@ router.get(
       [since]
     );
     // 保留历史错误统计；新错误已包含在调用总数内，只计一次。
-    const [channelErrors] = await pool.query(
+    const [channelErrors] = await query(
       `SELECT channel_id, COUNT(*) AS errors FROM logs
         WHERE ${FAILURE_SQL} AND created_at >= ? AND channel_id > 0 GROUP BY channel_id`,
       [since]
@@ -362,7 +386,7 @@ router.get(
     // 令牌维度：谁在用哪个 Key（管理员排查「某个 Key 在刷量」时的入口）
     // 先按 token_id 聚合再关联名称与持有人（原先只给 id，看板上只能显示「令牌 #184」，
     // 管理员还得去日志页反查是谁的 Key）。子查询聚合后再 JOIN，ONLY_FULL_GROUP_BY 下合法。
-    const [topTokens] = await pool.query(
+    const [topTokens] = await query(
       `SELECT t.token_id, t.calls, t.units, k.name AS token_name, u.username, u.display_name
          FROM (SELECT token_id, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
                  FROM logs WHERE ${USAGE_SQL} AND created_at >= ? AND token_id > 0
@@ -372,10 +396,10 @@ router.get(
         ORDER BY t.units DESC`,
       [since]
     );
-    const errorsTotal = await errorCount(null, since);
-    const prev = await previousTotals(null, since, days);
+    const errorsTotal = await errorCount(userId, since, tokenId);
+    const prev = await previousTotals(userId, since, days, tokenId);
     // 失败调用分布：与汇总使用相同口径，排除停止和旧版重复错误日志。
-    const [errorsByModel] = await pool.query(
+    const [errorsByModel] = await query(
       `SELECT model, COUNT(*) AS errors FROM logs
         WHERE ${FAILURE_SQL} AND created_at >= ?
         GROUP BY model ORDER BY errors DESC LIMIT 10`,
@@ -386,7 +410,7 @@ router.get(
 
     const prompt = Number(agg.prompt_tokens) || 0;
     const cache = Number(agg.cache_tokens) || 0;
-    const trend = await dailyTrend(null, since, days);
+    const trend = await dailyTrend(userId, since, days, tokenId);
     // 实时指标（进程内，重启清零）与历史指标（logs 表）**分开返回**，
     // 前端也要分开标注，不能让用户以为「今天的数字」包含历史累计
     const snap = snapshot();

@@ -54,7 +54,7 @@ export function channelPriceQuote(channel, { model = "", at = Date.now() } = {})
     captured_at: Number(at) || Date.now(),
   };
   // 只对本次实际聚合渠道的显式免费SKU确认0；规范名本身不能证明免费。
-  if (["cline", "openrouter", "opencode"].includes(provider) && /:free$/i.test(routeModel)) {
+  if ((["cline", "openrouter", "opencode"].includes(provider) && /:free$/i.test(routeModel)) || (provider === "opencode" && /-free$/i.test(routeModel))) {
     return { ...quote, status: "available", currency: "USD", source: "channel_free_sku", price: { in: 0, out: 0, cache: 0 } };
   }
   const method = String(channel?.other?.method || "");

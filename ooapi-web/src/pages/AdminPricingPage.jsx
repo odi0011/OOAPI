@@ -1,3 +1,4 @@
+import ModelAttributions from "../components/ModelAttributions";
 import OdAmount from "../components/OdAmount";
 import React, { useCallback, useEffect, useState } from "react";
 import { Table, Input, Select, App as AntApp, Typography, Modal, Upload, Alert, Space, Button, Popconfirm, Tag, Tooltip, Checkbox, Row, Col } from "antd";
@@ -83,64 +84,9 @@ export default function AdminPricingPage() {
   const [importResult, setImportResult] = useState(null);
   const [cleaning, setCleaning] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  // 模型归属（把 `anthropic/claude-sonnet-4.5` 这类上游 id 自动对到真实厂商与价格）：
-  //   attrib    —— 归属概览（规则覆盖了多少、多少落到 DB 价、多少没着落）
-  //   resolveQ  —— 管理员贴一个模型名，即时看「会被当成谁、按什么价算」
-  //   resolveR  —— 上一条的查询结果
-  //   fixing    —— 「固化为定价」进行中
-  const [attrib, setAttrib] = useState(null);
-  const [attribOpen, setAttribOpen] = useState(""); // "" = 未展开；否则是展开的来源 key
-  const [resolveQ, setResolveQ] = useState("");
-  const [resolveR, setResolveR] = useState(null);
-  const [resolving, setResolving] = useState(false);
-  const [fixing, setFixing] = useState("");
-
-  const loadAttrib = useCallback(async () => {
-    try {
-      setAttrib(await API.get("/pricing/attribution"));
-    } catch {
-      /* 归属概览是辅助信息：拿不到就整块不显示，不能让定价页主体跟着报错 */
-    }
-  }, []);
-
   useEffect(() => {
-    loadAttrib();
-    API.get("/pricing/catalog-pending").then((list) => setCatalogPending(Array.isArray(list) ? list : [])).catch(() => {});
-  }, [loadAttrib]);
-
-  const doResolve = async () => {
-    const q = String(resolveQ || "").trim();
-    if (!q) return message.warning("请先输入要检查的模型名");
-    setResolving(true);
-    try {
-      setResolveR(await API.get("/pricing/resolve", { params: { model: q } }));
-    } catch (e) {
-      message.error(e.message || "查询失败");
-    } finally {
-      setResolving(false);
-    }
-  };
-
-  // 固化：把归属规则写进定价表，之后可在上方列表里逐条微调。
-  // `vendor` 为空 = 固化全部有归属的模型；给了 vendor 就只固化归到该厂商的那批。
-  const doMaterialize = async (vendor = "") => {
-    const who = vendor ? `归到「${TYPE_LABEL[vendor] || vendor}」的模型` : "全部有归属的模型";
-    setFixing(vendor || "__all__");
-    try {
-      const r = await API.post("/pricing/materialize", vendor ? { vendor } : {});
-      if (r.inserted) {
-        message.success(`已固化 ${r.inserted} 条定价（跳过 ${r.skipped} 条已定价/不适用）`);
-        await load();
-        await loadAttrib();
-      } else {
-        message.info("没有需要固化的模型（都已定价或不适用）");
-      }
-    } catch (e) {
-      message.error(e.message || "固化失败");
-    } finally {
-      setFixing("");
-    }
-  };
+    API.get("/pricing/catalog-pending").then(list => setCatalogPending(Array.isArray(list) ? list : [])).catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     const token = begin();
@@ -334,9 +280,8 @@ export default function AdminPricingPage() {
       if (r.inserted) bits.push(`新增 ${r.inserted}`);
       if (r.updated) bits.push(`更新 ${r.updated}`);
       if (r.skipped) bits.push(`跳过 ${r.skipped}`);
-      message.success(`已同步上游 ${r.fetched} 条价目${bits.length ? `（${bits.join("、")}）` : ""}`);
+      message.success(`已同步 ${r.fetched} 条已复核价目${bits.length ? `（${bits.join("、")}）` : ""}`);
       await load();
-      loadAttrib();
     } catch (e) {
       message.error(e.message || "同步失败");
     } finally {
@@ -357,7 +302,7 @@ export default function AdminPricingPage() {
               title="从上游同步价目表？"
               description={
                 <span style={{ fontSize: 12 }}>
-                  已核实的内置厂商价优先，其余来自 OpenRouter 挂牌价。此操作
+                  只同步已核实的厂商报价，未核价的型号继续等待管理员配置。此操作
                   {overwrite ? "覆盖已有价格" : "仅补齐库里还没有的模型"}；聚合路由别名合并为同一模型。
                   {overwrite ? "⚠️ 已开启「覆盖已有价」，管理员手改的价格会被冲掉。" : ""}
                 </span>
@@ -424,219 +369,7 @@ export default function AdminPricingPage() {
             ③ 我怎么确认某个模型会被按什么价收费？（查一个看看）
           所以这一版改成**按「价格来源」分组**：每个来源是一个人话标签 + 数量 +
           「该怎么处理」，点开就是具体模型清单（带渠道名），每条还能直接跳去定价表改价。 */}
-      {attrib ? (
-        <div className="oo-panel">
-          <div className="oo-panel-head">
-            <span className="oo-panel-title">
-              <ApartmentOutlined style={{ marginRight: 6 }} />
-              定价体检
-            </span>
-            <Space size={6}>
-              <Button size="small" icon={<ReloadOutlined />} onClick={loadAttrib}>
-                刷新
-              </Button>
-            </Space>
-          </div>
-          <div className="oo-panel-body">
-            {/* 一句话结论：不展开也能知道有没有问题 */}
-            <Alert
-              type={attrib.counts?.none || attrib.counts?.fallback ? "warning" : "success"}
-              showIcon
-              style={{ marginBottom: 10 }}
-              message={attrib.summary}
-              description={
-                <span style={{ fontSize: 12 }}>
-                  平台在用的模型共 <b>{attrib.total}</b> 个（只统计启用渠道声明过的）。
-                  下面是每个模型按什么价收费 —— 点某一类可以展开看具体是哪些模型。
-                </span>
-              }
-            />
-
-            {/* 四类价格来源：卡片形式，一眼看出「哪类是问题」 */}
-            <Row gutter={[10, 10]} style={{ marginBottom: 10 }}>
-              {(attrib.sources || []).map((src) => {
-                const tone = {
-                  green: { bg: "var(--pill-green-tint, #e7f6ec)", ink: "var(--pill-green-ink, #1a7f4b)" },
-                  cyan: { bg: "var(--pill-cyan-tint, #e3f5f8)", ink: "var(--pill-cyan-ink, #0d7490)" },
-                  orange: { bg: "var(--pill-amber-tint)", ink: "var(--pill-amber-ink)" },
-                  red: { bg: "var(--pill-red-tint)", ink: "var(--pill-red-ink)" },
-                }[src.tone] || { bg: "transparent", ink: "var(--ink-2)" };
-                const isOpen = attribOpen === src.key;
-                return (
-                  <Col xs={12} sm={6} key={src.key}>
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setAttribOpen(isOpen ? "" : src.key)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          setAttribOpen(isOpen ? "" : src.key);
-                        }
-                      }}
-                      style={{
-                        cursor: "pointer",
-                        padding: "8px 10px",
-                        borderRadius: 6,
-                        height: "100%",
-                        border: `1px solid ${isOpen ? tone.ink : "var(--line)"}`,
-                        background: isOpen ? tone.bg : "transparent",
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                        <span style={{ fontSize: 20, fontWeight: 600, color: tone.ink }}>{src.count}</span>
-                        <span style={{ fontSize: 12, color: tone.ink }}>{src.label}</span>
-                      </div>
-                      <div style={{ fontSize: 11, color: "var(--ink-3)", lineHeight: 1.4, marginTop: 2 }}>{src.desc}</div>
-                    </div>
-                  </Col>
-                );
-              })}
-            </Row>
-
-            {/* 点开某一类 → 具体模型清单（带渠道名，一眼知道是哪个渠道带进来的） */}
-            {attribOpen ? (() => {
-              const src = (attrib.sources || []).find((x) => x.key === attribOpen);
-              if (!src) return null;
-              const rows = src.models || [];
-              return (
-                <div style={{ marginBottom: 12 }}>
-                  <Space size={8} style={{ marginBottom: 6 }} wrap>
-                    <Text strong style={{ fontSize: 13 }}>{src.label}（{src.count} 个）</Text>
-                    {src.key === "rule" || src.key === "fallback" ? (
-                      <Popconfirm
-                        title={`把「${src.label}」里的模型固化成定价行？`}
-                        description="已存在的定价行不会被覆盖（管理员手改的价保住）。固化后可在上方列表里逐条微调。"
-                        onConfirm={() => doMaterialize("")}
-                        okText="固化"
-                        cancelText="取消"
-                      >
-                        <Button size="small" type="primary" ghost loading={fixing === "__all__"}>
-                          一键固化为定价
-                        </Button>
-                      </Popconfirm>
-                    ) : null}
-                    {src.key === "fallback" || src.key === "none" ? (
-                      <Button
-                        size="small"
-                        onClick={() => {
-                          window.scrollTo({ top: 0, behavior: "smooth" });
-                          message.info("用顶部的「同步上游价目」能从上游补齐这些模型的价格");
-                        }}
-                      >
-                        怎么补价？
-                      </Button>
-                    ) : null}
-                    <Button size="small" onClick={() => setAttribOpen("")}>收起</Button>
-                  </Space>
-                  <Table
-                    size="small"
-                    rowKey={(r) => `${r.model}@${r.channelId}`}
-                    dataSource={rows}
-                    pagination={rows.length > 20 ? { pageSize: 20, size: "small" } : false}
-                    columns={[
-                      { title: "模型", dataIndex: "model", render: (v, r) => <ModelLabel model={v} channelTypes={Array.isArray(r.source_vendors) ? r.source_vendors : r.channel_type ? [r.channel_type] : []} size={14} /> },
-                      { title: "来自渠道", dataIndex: "channel", width: 150, ellipsis: true },
-                      {
-                        title: "归属 / 命中",
-                        dataIndex: "got",
-                        width: 170,
-                        render: (v) => (v ? <span className="bui-chip">{TYPE_LABEL[v] || v}</span> : <Text type="secondary">—</Text>),
-                      },
-                      {
-                        title: "输入 / 输出",
-                        width: 150,
-                        render: (_, r) =>
-                          r.input !== undefined ? (
-                            <span className="oo-num">
-                              <OdAmount>{Number(r.input).toFixed(4)}</OdAmount> / <OdAmount>{Number(r.output).toFixed(4)}</OdAmount>
-                            </span>
-                          ) : (
-                            <Text type="secondary">未知</Text>
-                          ),
-                      },
-                      {
-                        title: "操作",
-                        width: 90,
-                        render: (_, r) => (
-                          <Button size="small" type="link" onClick={() => setKeyword(r.model)}>
-                            改价
-                          </Button>
-                        ),
-                      },
-                    ]}
-                  />
-                  {src.count > rows.length ? (
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      只显示前 {rows.length} 个（共 {src.count} 个）
-                    </Text>
-                  ) : null}
-                </div>
-              );
-            })() : null}
-
-            {/* 单条自检：最直白的入口 ——「我这个模型会被按什么价收费？」 */}
-            <div style={{ padding: "8px 10px", border: "1px solid var(--line)", borderRadius: 6 }}>
-              <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 6 }}>
-                <b>查一个模型</b>：输入模型名（可以是 <code>vendor/model</code> 这种带前缀的），
-                看它会被归到哪个厂商、按什么价收费、这个价是从哪来的。
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
-                <Input
-                  size="small"
-                  placeholder="如 anthropic/claude-sonnet-4.5、deepseek-flash"
-                  value={resolveQ}
-                  onChange={(e) => setResolveQ(e.target.value)}
-                  onPressEnter={doResolve}
-                  style={{ width: "100%", maxWidth: 340, flex: "1 1 220px", minWidth: 0 }}
-                  prefix={<QuestionCircleOutlined style={{ color: "var(--ink-3)" }} />}
-                />
-                <Button size="small" type="primary" ghost loading={resolving} onClick={doResolve}>
-                  查询
-                </Button>
-              </div>
-              {resolveR ? (
-                <div style={{ marginTop: 8, fontSize: 12 }}>
-                  {resolveR.source === "none" ? (
-                    <Alert
-                      type="error"
-                      showIcon
-                      message={`「${resolveR.model}」没有确切价格`}
-                      description={
-                        <span>
-                          {resolveR.remark}
-                          <br />
-                          它被调用时会被闸门拦下。请到顶部点「同步上游价目」补齐，或在这张表里手工加一行。
-                        </span>
-                      }
-                    />
-                  ) : (
-                    <Space size={8} wrap>
-                      <ModelLabel model={resolveR.model} channelType={resolveR.type || ""} catalog size={14} />
-                      <span style={{ color: "var(--ink-3)" }}>→</span>
-                      <Tag color="blue">{TYPE_LABEL[resolveR.type] || resolveR.type || "未知厂商"}</Tag>
-                      <span className="oo-num">
-                        输入 <OdAmount>{Number(resolveR.input).toFixed(4)}</OdAmount> / 输出 <OdAmount>{Number(resolveR.output).toFixed(4)}</OdAmount>
-                        {resolveR.cache != null ? <> / 缓存 <OdAmount>{Number(resolveR.cache).toFixed(4)}</OdAmount></> : null}
-                      </span>
-                      <Tag color={resolveR.source === "rule" ? "cyan" : resolveR.source === "db" ? "green" : "default"}>
-                        {{
-                          db: "来自定价表（你配的）",
-                          "db-prefix": `命中定价表前缀「${resolveR.matched || ""}」`,
-                          rule: "来自归属规则（自动）",
-                        }[resolveR.source] || resolveR.source}
-                      </Tag>
-                      {resolveR.remark ? (
-                        <Text type="secondary" style={{ fontSize: 11 }}>{resolveR.remark}</Text>
-                      ) : null}
-                    </Space>
-                  )}
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <ModelAttributions revision={items} onChange={load} />
 
       <div className="oo-panel">
         {loadError ? (

@@ -30,6 +30,7 @@ const loadMocked = async (relativePath, prelude) => {
 const tools = await loadMocked("../src/services/harness/tools.js", `
   const assertPublicUrl=async (v)=>new URL(v);
   const pool=audit.pool;
+  const assertModelPriced=async()=>{};
   const runCompletion=(o)=>audit.complete(o);
   const billableFailedCall=(...args)=>audit.executor.billableFailedCall(...args);
   const modelForChannelMatch=(v)=>v;
@@ -51,6 +52,7 @@ const harness = await loadMocked("../src/services/harness/loop.js", `
 const executor = await loadMocked("../src/services/execute.js", `
   const crypto=audit.crypto;
   const pool=audit.pool;
+  const assertModelPriced=async()=>{};
   const getNumberOption=(key)=>key==="request_timeout_ms"?1000:(audit.retryTimes || 0);
   const selectChannels=async ()=>audit.channels || [{id:1,name:"mock",type:"mock"}];
   const getAdapter=async ()=>audit.adapter;

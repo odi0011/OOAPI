@@ -68,7 +68,7 @@ export default function TokenPage() {
                 <div className="oo-truncate oo-group-select-item__desc" style={{ opacity: 0.75 }}>
                   {Array.isArray(g.models) && g.models.length
                     ? `仅 ${g.models.slice(0, 3).join("、")}${g.models.length > 3 ? ` 等 ${g.models.length} 个` : ""}`
-                    : "支持全量模型"}
+                    : "暂无已定价的可用模型"}
                 </div>
               </div>
             </div>
@@ -379,7 +379,7 @@ export default function TokenPage() {
           const meta = groupMetaOf(g);
           const list = meta?.models || [];
           if (!g) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
-          if (!list.length) return <Text type="secondary" style={{ fontSize: 12 }}>不限</Text>;
+          if (!list.length) return <Text type="secondary" style={{ fontSize: 12 }}>暂无可用模型</Text>;
           return (
             <Tooltip
               title={
@@ -547,8 +547,8 @@ export default function TokenPage() {
               options={groupOptions}
               optionRender={(opt) => opt.data?.renderItem || opt.label}
               filterOption={(input, option) => (option?.search || "").includes(input.toLowerCase())}
-              popupMatchSelectWidth={false}
-              dropdownStyle={{ minWidth: 380, padding: "6px" }}
+              popupMatchSelectWidth
+              dropdownStyle={{ maxWidth: "calc(100vw - 32px)", padding: "6px" }}
               notFoundContent={<span style={{ fontSize: 12 }}>还没有分组，请先到「分组管理」创建一个</span>}
             />
           </Form.Item>

@@ -69,6 +69,7 @@ function mapLog(r, { isAdmin, user = null }) {
     billing_details: isAdmin ? bill : publicBillingDetails(bill),
     billing_known: Number(r.billing_unknown) !== 1 && detail.billing_known !== false,
     model: canonicalModelName(r.model) || r.model || "",
+    model_vendor: r.model_vendor || "",
     prompt_tokens: Number(r.prompt_tokens) || 0,
     completion_tokens: Number(r.completion_tokens) || 0,
     cache_tokens: Number(r.cache_tokens) || 0,
@@ -100,7 +101,7 @@ function mapLog(r, { isAdmin, user = null }) {
     if (!visibility.pricing) base.billing_details = null;
     if (!visibility.usage_records && Number(r.type) === LOG_TYPE.ERROR) {
       // 旧调用错误位于操作日志：不能借兼容入口绕过逐次使用记录权限。
-      for (const key of ["model", "quota", "prompt_tokens", "completion_tokens", "cache_tokens", "first_token_ms", "elapsed_ms", "retry_count", "price_phase", "billing_details", "request_id", "token_id", "token_name", "group_name", "source_vendors"]) delete base[key];
+      for (const key of ["model", "model_vendor", "quota", "prompt_tokens", "completion_tokens", "cache_tokens", "first_token_ms", "elapsed_ms", "retry_count", "price_phase", "billing_details", "request_id", "token_id", "token_name", "group_name", "source_vendors"]) delete base[key];
     }
     if (!visibility.request_content) {
       for (const key of ["input_text", "output_text", "input_recorded", "output_recorded", "input_truncated", "output_truncated", "prompt_truncated", "request_prompt_truncated"]) delete base[key];
@@ -114,6 +115,7 @@ function mapLog(r, { isAdmin, user = null }) {
   }
   return {
     ...base,
+    original_model: detail.upstream_model || detail.requested_model || r.model || "",
     requested_model: detail.requested_model || r.model || "",
     upstream_model: detail.upstream_model || "",
     pricing_model: detail.pricing_model || "",

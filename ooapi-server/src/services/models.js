@@ -155,6 +155,7 @@ export function modelForChannelMatch(requested) {
 // 别名请求也会因为渠道没声明别名而 NO_CHANNEL。
 // 别名表从各厂商 *-models.js 的 ALIASES 汇总，启动时预热；未就绪时原样返回。
 let aliasCache = null;
+let confirmedAliases = new Map();
 const LEGACY_ALIASES = {
   // DeepSeek 官方旧 ID 已停用，适配器兜底把这类名字落到 flash（见 deepseek-models.js）
   "deepseek-chat": "deepseek-flash",
@@ -188,9 +189,12 @@ export function modelIdentity(raw) {
   if (!s) return "";
   if (s.startsWith("~")) s = s.slice(1);
   const slash = s.lastIndexOf("/");
+  // 动态路由保留供应商命名空间；不能因SKU/能力后缀再次串成裸auto。
+  const namespace = slash >= 0 ? s.slice(0, slash) : "";
   if (slash >= 0) s = s.slice(slash + 1);
   s = s.replace(/:(free|batch|extended|thinking)$/i, "");
   s = s.replace(/-(search|thinking|agent|agent-swarm)$/i, "");
+  if (namespace && /^(auto|default|latest)$/i.test(s)) return `${namespace}/${s}`;
   return s;
 }
 
@@ -211,6 +215,11 @@ export async function warmAliasMap() {
     }
   }
   for (const [alias, target] of Object.entries(LEGACY_ALIASES)) map.set(modelIdentity(alias).toLowerCase(), target);
+  const [approved] = await pool.query("SELECT alias,model FROM model_attributions").catch((e) => {
+    if (e.code === "ER_NO_SUCH_TABLE") return [[]];
+    throw e;
+  });
+  confirmedAliases = new Map(approved.map(r => [String(r.alias).toLowerCase(), String(r.model).toLowerCase()]));
   aliasCache = map;
   return map;
 }
@@ -220,6 +229,8 @@ export function resolveAliasSync(requested) {
   const raw = String(requested || "").trim();
   if (!raw) return raw;
   const base = modelIdentity(raw).toLowerCase();
+  const approved = confirmedAliases.get(raw.toLowerCase()) || confirmedAliases.get(base);
+  if (approved) return approved;
   return aliasCache?.get(base) || LEGACY_ALIASES[base] || raw;
 }
 

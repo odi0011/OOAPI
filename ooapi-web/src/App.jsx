@@ -8,7 +8,6 @@ import AuthPage from "./pages/AuthPage";
 import ConsolePage from "./pages/ConsolePage";
 import ChatPage from "./pages/ChatPage";
 import TokenPage from "./pages/TokenPage";
-import PricingPage from "./pages/PricingPage";
 import LogPage from "./pages/LogPage";
 import OperationLogPage from "./pages/OperationLogPage";
 import MediaPage from "./pages/MediaPage";
@@ -25,7 +24,6 @@ import PostDetailPage from "./pages/PostDetailPage";
 import MessagesPage from "./pages/MessagesPage";
 import NotificationsPage from "./pages/NotificationsPage";
 import AppearancePage from "./pages/AppearancePage";
-import AdminDashboardPage from "./pages/AdminDashboardPage";
 import AdminCommunityPage from "./pages/AdminCommunityPage";
 import OdBinancePage from "./pages/OdBinancePage";
 import { useApp } from "./context/AppContext";
@@ -106,8 +104,7 @@ export default function App() {
         <Route path="/operation-log" element={<OperationLogPage />} />
         {/* 媒体库：普通用户看自己的；管理员可用 ?user_id 切到指定用户 */}
         <Route path="/media" element={<MediaPage />} />
-        {/* 模型价格（只读）：用户端比价用；后台可关（expose_pricing_to_user） */}
-        <Route path="/pricing" element={<PricingPage />} />
+        <Route path="/pricing" element={<Navigate to="/console" replace />} />
         <Route path="/profile" element={<ProfilePage />} />
         {/* 旧外观入口兼容跳转；编辑统一放在管理员系统设置。 */}
         <Route path="/settings/appearance" element={<AppearancePage />} />
@@ -118,7 +115,7 @@ export default function App() {
         <Route path="/admin/settings" element={<RequireAuth admin><AdminSettingsPage /></RequireAuth>} />
         <Route path="/admin/monitor" element={<RequireAuth admin><MonitorPage /></RequireAuth>} />
         {/* 管理端看板：与个人看板（/console）物理分离，权限边界靠路由守卫 */}
-        <Route path="/admin/dashboard" element={<RequireAuth admin><AdminDashboardPage /></RequireAuth>} />
+        <Route path="/admin/dashboard" element={<Navigate to="/console" replace />} />
         <Route path="/admin/community" element={<RequireAuth admin><AdminCommunityPage /></RequireAuth>} />
         <Route path="/admin" element={<Navigate to="/admin/channel" replace />} />
       </Route>

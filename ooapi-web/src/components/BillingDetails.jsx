@@ -1,6 +1,6 @@
 import OdAmount from "./OdAmount";
 import React, { useRef, useState } from "react";
-import { Button, Collapse, Grid, Popover, Typography } from "antd";
+import { Button, Grid, Popover, Typography } from "antd";
 import { fmtOd, odOf } from "../services/format";
 import "./billing.css";
 
@@ -24,6 +24,7 @@ function ChannelQuote({ quote }) {
   const available = quote?.status === "available" && quote?.currency === "USD" && quote?.price;
   const doc = safeUrl(quote?.url);
   const source = { channel_free_sku: "渠道标明的免费 SKU", official_channel_published: "该渠道官方公布价", channel_catalog: "渠道模型目录价" }[quote?.source];
+  if (!available) return null;
   return <div className="oo-billing-channel">
     <div className="oo-billing-section-title">渠道原始报价 <span>每百万 Token</span></div>
     {available ? <>
@@ -38,6 +39,9 @@ function ChannelQuote({ quote }) {
 /** 只展示服务端保存的账单，不根据当前模型价或旧 SKU 价格重新算费。 */
 export function BillingDetails({ record, isAdmin = false, perUnit = 10000, compactView = false }) {
   const bill = record?.billing_details?.version === 1 ? record.billing_details : null;
+  const quotes = (Array.isArray(bill?.calls) ? bill.calls : []).map(c => c?.channel_quote).filter(Boolean);
+  const sameQuote = quotes.length === Number(bill?.call_count) && quotes.every(q => q.status === "available" && q.provider === quotes[0]?.provider && q.model === quotes[0]?.model && JSON.stringify(q.price) === JSON.stringify(quotes[0]?.price));
+  const channelQuote = bill?.channel_quote || (sameQuote ? quotes[0] : null);
   const charged = record?.billing_known === false ? null : finite(bill?.charged_cost_od) ?? (finite(record?.quota) === null ? null : odOf(record.quota, perUnit));
   const rows = [["input", "输入"], ["output", "输出"], ["cache", "缓存读取"]];
   const raw = finite(bill?.raw_cost_od), base = finite(bill?.base_cost_od);
@@ -64,21 +68,14 @@ export function BillingDetails({ record, isAdmin = false, perUnit = 10000, compa
         <div><span>分组倍率</span><b>{finite(bill.multiplier) === null ? "—" : `× ${compact(bill.multiplier, 6)}`}</b></div>
         <div className="oo-billing-charged"><span>用户扣费</span><b>{charged === null ? "待核查" : odText(charged, perUnit)}</b></div>
       </div>
-      <div className="oo-billing-note">原始费用是三项费用合计，倍率作用于计费取整后的金额。</div>
-      {rounding || Number(bill.adjustment_units || 0) !== 0 ? <div className="oo-billing-note">扣费按额度单位取整，每次有消耗的调用包含最低计费。</div> : null}
       {bill.price_quoted ? <div className="oo-billing-note">本次未产生计费消耗，单价为请求报价。</div> : null}
     </> : <>
       <div className="oo-billing-note">该记录未保存费用分解、单价与倍率快照；不按当前价格回填。</div>
       <div className="oo-billing-totals"><div className="oo-billing-charged"><span>用户扣费</span><b>{charged === null ? "待核查" : odText(charged, perUnit)}</b></div></div>
       {isAdmin && record?.effective_price ? <div className="oo-billing-channel"><div className="oo-billing-section-title">已保存的平台单价 <span>每百万 Token</span></div><PriceList price={record.effective_price} /></div> : null}
     </>}
-    {isAdmin ? bill?.quote_mode === "mixed" ? <div className="oo-billing-channel"><div className="oo-billing-section-title">渠道原始报价</div><div className="oo-billing-note">本次有多次调用，实际渠道 SKU 的报价见下方逐次调用。</div></div> : <ChannelQuote quote={bill?.channel_quote} /> : null}
-    {isAdmin && bill?.calls?.length > 1 ? <Collapse ghost size="small" className="oo-billing-calls" items={[{ key: "calls", label: `逐次调用（${bill.calls.length} 次）`, children: bill.calls.map((call, index) => <div className="oo-billing-call" key={index}>
-      <div className="oo-billing-section-title">第 {index + 1} 次 <span>{call.model || call.pricing_model || ""}</span></div>
-      <div className="oo-billing-note">平台单价（每百万 Token）</div><PriceList price={call.platform_price} />
-      <div className="oo-billing-note">原始费用 {odText(call.raw_cost_od, perUnit)}</div>
-      <ChannelQuote quote={call.channel_quote} />
-    </div>) }]} /> : null}
+    {isAdmin ? <ChannelQuote quote={channelQuote} /> : null}
+
   </div>;
 }
 

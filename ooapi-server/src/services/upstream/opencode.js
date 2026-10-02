@@ -168,6 +168,9 @@ function decorated(channel, { sessionId, requestId, userId, model } = {}) {
 }
 
 export async function chat(args) {
+  const requestModel = { model: args.model };
+  applyVendorRequest(requestModel, { channel: args.channel, model: args.model });
+  args = { ...args, model: requestModel.model };
   const channel = decorated(args.channel, args);
   const zen = String(channel.other?.method || "api") !== "go";
   const free = zen && isFreeTierModel(args.model);

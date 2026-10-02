@@ -267,8 +267,9 @@ export default function LogPage() {
       // title 属性兜底：真的放不下时还能看到全名。
       render: (v, r) =>
         v ? (
-          <span title={String(v)} style={{ display: "inline-flex", minWidth: 0 }}>
-            <ModelLabel model={v} size={14} channelTypes={Array.isArray(r.source_vendors) ? r.source_vendors : r.channel_type ? [r.channel_type] : []} />
+          <span title={String(v)} style={{ display: "inline-flex", flexDirection: "column", gap: 4, minWidth: 0, maxWidth: "100%" }}>
+            <ModelLabel model={v} modelVendor={r.model_vendor} size={14} channelTypes={Array.isArray(r.source_vendors) ? r.source_vendors : r.channel_type ? [r.channel_type] : []} />
+            {isAdmin && r.original_model && r.original_model !== v ? <span className="oo-model-origin">↳ <ModelLabel model={r.original_model} size={11} channelTypes={r.source_vendors || []} /></span> : null}
           </span>
         ) : (
           <span style={{ color: "var(--ink-3)" }}>-</span>
@@ -612,7 +613,7 @@ export default function LogPage() {
               <UserAvatar user={{ id: detail.user_id, username: detail.username }} size={20} showName />
             </Descriptions.Item>
             <Descriptions.Item label="模型">
-              <ModelLabel model={detail.model} size={15} channelTypes={Array.isArray(detail.source_vendors) ? detail.source_vendors : detail.channel_type ? [detail.channel_type] : []} />
+              <ModelLabel model={detail.model} modelVendor={detail.model_vendor} size={15} channelTypes={Array.isArray(detail.source_vendors) ? detail.source_vendors : detail.channel_type ? [detail.channel_type] : []} />
             </Descriptions.Item>
             <Descriptions.Item label="调用内容"><OdText>{normalizeCurrency(detail.content)}</OdText></Descriptions.Item>
             <Descriptions.Item label="Tokens">

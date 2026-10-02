@@ -419,7 +419,8 @@ export function VendorLabel({ type, label, size = 15, gap = 7, className, style 
  * 运行模型必须显式传来源；同一模型来自多个渠道厂商时保留所有来源。
  * 只有 catalog=true 的原厂价格目录才能从型号推断品牌，缺来源不能冒用平台头像。
  */
-export function ModelIcon({ model, channelType = "", channelTypes = [], catalog = false, size = 15 }) {
+export function ModelIcon({ model, modelVendor = "", channelType = "", channelTypes = [], catalog = false, size = 15 }) {
+  if (modelVendor) return <VendorIcon type={modelVendor} size={size} />;
   const vendors = normalizeSourceVendors(channelType ? [channelType] : channelTypes);
   if (!catalog && vendors.length) return <GroupVendorIcons vendors={vendors} size={size} label="来源厂商" />;
   const file = catalog ? iconFileForModel(model) : PLATFORM_LOGO;
@@ -432,13 +433,13 @@ export function ModelIcon({ model, channelType = "", channelTypes = [], catalog 
     style={{ width: size, height: size, objectFit: "contain", borderRadius: Math.max(3, Math.round(size * 0.22)), flexShrink: 0, display: "block" }} />;
 }
 
-export function ModelLabel({ model, size = 15, showVendor = false, className, style, title, channelType = "", channelTypes = [], catalog = false }) {
+export function ModelLabel({ model, modelVendor = "", size = 15, showVendor = false, className, style, title, channelType = "", channelTypes = [], catalog = false }) {
   const vendors = normalizeSourceVendors(channelType ? [channelType] : channelTypes);
   return (
     <span className={className} title={title} data-model-name={model}
       data-model-sources={catalog ? "catalog" : vendors.join(",")}
       style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0, maxWidth: "100%", ...style }}>
-      <ModelIcon model={model} channelType={channelType} channelTypes={channelTypes} catalog={catalog} size={size} />
+      <ModelIcon model={model} modelVendor={modelVendor} channelType={channelType} channelTypes={channelTypes} catalog={catalog} size={size} />
       <span className="oo-truncate" style={{ fontFamily: "var(--font-mono)", fontSize: "0.95em" }}>{model}</span>
       {showVendor ? <span style={{ fontSize: "0.85em", color: "var(--ink-3)" }}>{catalog ? vendorNameForModel(model) : vendors.join("、")}</span> : null}
     </span>

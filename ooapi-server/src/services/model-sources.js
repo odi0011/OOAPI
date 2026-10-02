@@ -83,5 +83,11 @@ export async function logsWithSourceVendors(rows) {
     const vendors = new Map(channels.map((c) => [Number(c.id), sourceVendors([c.type])]));
     for (const row of pending) row.source_vendors = vendors.get(Number(row.channel_id)) || [];
   }
+  const { loadPrices } = await import("./pricing.js");
+  const prices = await loadPrices();
+  for (const row of out) {
+    const model = canonicalModelName(row.model), price = prices.get(model);
+    row.model_vendor = price?.type || (/^(auto|default|latest)$/.test(model) ? row.source_vendors[0] : "") || "";
+  }
   return out;
 }

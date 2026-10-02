@@ -365,8 +365,12 @@ async function availableModels(user, keyId = 0) {
   const result = [];
   for (const m of candidateModels.values()) {
     const p = priceMap.get(canonicalModelName(m.id)) || priceMap.get(String(m.id).toLowerCase());
+    if (!p) continue;
+    const identity = p.model;
+    if (result.some(item => item.id === identity)) continue;
     result.push({
-      ...m,
+      ...m, id: identity, label: identity, vendor: p.type || m.vendor, vendorName: modelVendorName(p.type || m.vendor),
+      channel_type: "", model_vendor: p.type || m.vendor,
       // loadPrices 返回的键是 input/output/cache（已从列名 input_price 映射），
       // 这里原先读 p.input_price → undefined → NaN → JSON null，下拉/弹窗价格全空（子代理复核发现）
       ...(userDataVisibility(user).pricing ? { price: p ? { input: Number(p.input), output: Number(p.output), cache: Number(p.cache) } : null } : {}),
@@ -657,7 +661,9 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
     const phases = new Set();
     for (const c of calls) {
       const at = Number(c.startedAt) || startedAt || Date.now();
-      const callPrice = c.model ? await getPrice(resolveAliasSync(c.model)) : basePrice;
+      const reportedPrice = c.model ? await getPrice(resolveAliasSync(c.model)) : basePrice;
+      // 上游可能回内部部署名，不能把已明确配价的请求变成零单价。
+      const callPrice = reportedPrice.exact ? reportedPrice : basePrice;
       const e = effectivePrice(callPrice, at);
       phases.add(e.phase);
       const t =
@@ -1019,15 +1025,15 @@ function aggregate(calls = []) {
       // 可能还是 deepseek-v4.1-flash —— 精确比较会把这些会话全部判成「模型不可用」。
       const wantCanon = canonicalModelName(model);
       const sameModel = (m) => m.id === model || canonicalModelName(m.id) === wantCanon;
-      const eligible = models.filter((m) => !settings.channelType || m.vendor === settings.channelType);
+      const eligible = models;
       modelCaps = eligible.find((m) => m.id === model) || eligible.find(sameModel) || null;
       routeGroup = usableKey.group_name || null;
       if (!modelCaps) {
         await finishBeforeStart();
         return reject(`模型「${model}」在当前密钥下不可用，请重新选择模型`);
       }
-      // 旧会话未保存接入厂商时与前端采用同一首项；之后每步及工具调用固定这个厂商。
-      settings.channelType = modelCaps.vendor;
+      // 展示按模型开发商归组；实际渠道由密钥分组与调度策略决定。
+      settings.channelType = "";
 
       // preflight也在排空集合内：还没保存用户消息时直接拒绝，重试旧轮不会被删。
       if (ctrl.signal.aborted) {

@@ -14,7 +14,7 @@ import { logTexts } from "../services/log-text.js";
 import { channelPriceQuote, finalizeChannelQuote } from "../services/channel-price-quote.js";
 import { acquire, estimateRequestTokens } from "../services/user-limit.js";
 import {
-  getPrice,
+  getPrice, loadPrices,
   originalModelPrice,
   priceForTokens,
   computeCost,
@@ -176,10 +176,12 @@ router.get(
     // 渠道声明了通配（models 留空或写 "*"）= 该渠道所属厂商的全部登记模型都可用
     const wildcard = available.has("*");
 
+    const listedPrices = await loadPrices();
     const out = [];
     const seen = new Set();
     const pushModel = (id, meta) => {
-      const key = String(id).toLowerCase();
+      const key = canonicalModelName(id);
+      if (!listedPrices.has(key)) return;
       if (!key || seen.has(key)) return;
       if (key.includes("*")) return;
       if (!allowedByGroup(key) || !allowedByToken(key)) return;
@@ -187,10 +189,10 @@ router.get(
       if (!source) return;
       // 旧 ID 的托管条目不能把同源规范模型再归到另一个供应商。
       const canonicalMeta = metaById.get(canonicalModelName(id));
-      const vendor = canonicalMeta?.vendor || meta?.vendor || registry.get(canonicalModelName(id))?.type || source.type || "unknown";
+      const vendor = listedPrices.get(key)?.type || canonicalMeta?.vendor || meta?.vendor || registry.get(canonicalModelName(id))?.type || source.type || "unknown";
       seen.add(key);
       out.push({
-        id: meta?.id || id,
+        id: key,
         object: "model",
         // owned_by 用厂商类型，便于客户端区分模型来源
         owned_by: vendor,

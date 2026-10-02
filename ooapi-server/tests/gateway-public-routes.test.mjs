@@ -28,6 +28,7 @@ const ck = (n, cond, extra = "") => {
 const originalQuery = pool.query;
 pool.query = async (sql, params) => {
   const s = String(sql || "");
+  if (s.includes("FROM model_prices")) return [["gpt-4o", "claude-3-5-sonnet", "deepseek-r1"].map(model => ({ model, input_price:1, output_price:2, channel_type:"openai" }))];
   if (s.includes("FROM tokens WHERE key_str = ?")) {
     if (params && params[0] === "sk-valid-test-key") {
       return [[{

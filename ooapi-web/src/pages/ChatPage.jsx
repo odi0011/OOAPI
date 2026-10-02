@@ -512,7 +512,7 @@ export default function ChatPage() {
   }, [input, images, docs, session?.id, user?.id]);
 
   const models = meta?.models || [];
-  const curModel = models.find((m) => m.id === session?.model && (!session?.settings?.channelType || m.vendor === session.settings.channelType));
+  const curModel = models.find((m) => m.id === session?.model);
   const settings = session?.settings || {};
   const quota = user?.quota != null ? <OdAmount quota={user.quota} perUnit={unitsPerOd(status)} /> : "—";
   // 对话必须通过密钥路由：没有可用密钥就没有可用模型，输入区与编排栏一并禁用。
@@ -546,11 +546,11 @@ export default function ChatPage() {
       setSession((prev) => {
         if (!prev) return prev;
         const availableList = data.models || [];
-        const ok = availableList.some((m) => m.id === prev.model && (!prev.settings?.channelType || m.vendor === prev.settings.channelType));
+        const ok = availableList.some((m) => m.id === prev.model);
         if (ok) return prev;
         const fallback = availableList.find((m) => m.id === prev.model) || availableList[0];
         const fallbackModel = fallback?.id || "";
-        const fallbackSettings = { ...prev.settings, channelType: fallback?.vendor || "" };
+        const fallbackSettings = { ...prev.settings, channelType: "" };
         if (prev.id && fallbackModel) {
           chatApi.patchSession(prev.id, { model: fallbackModel, settings: fallbackSettings }).catch(() => {});
         }
@@ -942,7 +942,7 @@ export default function ChatPage() {
       if (target) return openSession(target);
       try {
         const initialModel = models.find((m) => !m.deprecated);
-        const created = await chatApi.createSession({ agent: meta.defaults?.agent || "general", model: initialModel?.id || "", settings: { channelType: initialModel?.vendor || "" } });
+        const created = await chatApi.createSession({ agent: meta.defaults?.agent || "general", model: initialModel?.id || "", settings: { channelType: "" } });
         if (!bootRef.current) return;
         setSession(created);
         setMsgs([]);
@@ -1317,7 +1317,7 @@ export default function ChatPage() {
       if (!metaReadyRef.current || busyRef.current) return;
       const m = models.find((x) => x.id === id && (!channelType || x.vendor === channelType));
       if (!m) return;
-      const patch = { model: id, settings: { ...(sessionRef.current?.settings || {}), channelType: m.vendor } };
+      const patch = { model: id, settings: { ...(sessionRef.current?.settings || {}), channelType: "" } };
       // 切到不支持联网的模型时关掉搜索，避免继续带着无效参数请求上游
       if (m?.supportsSearch === false) patch.settings.search = false;
       setSession((prev) => (prev ? { ...prev, ...patch, settings: patch.settings || prev.settings } : prev));

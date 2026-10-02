@@ -19,6 +19,7 @@ let pending;
 let sqlCount = 0;
 const query = async (sql, args = [], tx = null) => {
   sqlCount++;
+  if (sql.includes("FROM model_attributions")) return [[]];
   const state = tx || { prices, archives };
   if (sql === "SELECT * FROM model_prices FOR UPDATE" || sql.startsWith("SELECT * FROM model_prices")) return [structuredClone(state.prices), []];
   if (sql.startsWith("INSERT INTO model_price_aliases")) { state.archives.set(args[0], { model: args[1], original_price: args[2] }); return [{ affectedRows: 1 }, []]; }

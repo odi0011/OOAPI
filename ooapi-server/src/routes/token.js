@@ -5,7 +5,8 @@ import { authRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { visibleAccountData, requireUserData } from "../services/user-data-visibility.js";
 import { groupModelVendors, sourceVendors } from "../services/model-sources.js";
-import { modelRegistry } from "../services/models.js";
+import { modelRegistry, canonicalModelName } from "../services/models.js";
+import { loadPrices } from "../services/pricing.js";
 
 const router = Router();
 router.use(authRequired);
@@ -22,6 +23,7 @@ router.get(
     );
     // 成员账号的厂商集合：前端按「单厂商=单个图标 / 多厂商=折叠态图标」渲染
     const [chans] = await pool.query("SELECT type, status, models, group_list, group_name FROM channels");
+    const prices = await loadPrices();
     const vendorsOf = new Map();
     for (const c of chans) {
       let list = [];
@@ -46,6 +48,8 @@ router.get(
         } catch {
           /* ignore */
         }
+        const available = groupModelVendors(g, chans, { activeOnly: true });
+        models = [...new Set(Object.keys(available).filter(m => available[m].length).map(canonicalModelName))].filter(m => prices.has(m));
         return visibleAccountData({
           // name 既是展示名也是绑定值；vendor 仅用于展示厂商筛选标签
           type: g.name,
@@ -56,7 +60,7 @@ router.get(
           models,
           vendors: [...(vendorsOf.get(g.name) || [])],
           source_vendors: sourceVendors([...(vendorsOf.get(g.name) || [])]),
-          model_vendors: groupModelVendors(g, chans, { activeOnly: true }),
+          model_vendors: Object.fromEntries(models.map(m => [m, [prices.get(m).type].filter(Boolean)])),
         }, req.user);
       })
     );

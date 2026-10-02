@@ -156,21 +156,12 @@ t("空输入不炸", () => {
 
 console.log("\n=== 5. 与 pricing.js 的接入 ===");
 const pricing = read("src/services/pricing.js");
-t("getPrice 在 DB 命中之后、同族兜底之前查规则", () => {
-  const gi = pricing.indexOf("const clineHit = clinePriceFor(m)");
-  ck(gi > 0, "getPrice 没有调用 clinePriceFor");
-  const family = pricing.indexOf("// 同族匹配：请求名是某个已配价模型名的前缀");
-  ck(family > 0 && gi < family, "规则的插入位置不对（应在同族兜底之前）");
-});
-t("isModelPriced 认规则（否则闸门会把整个 Cline 拦下来）", () => {
-  const m = pricing.match(/export async function isModelPriced\(model\)[\s\S]*?\n\}/);
-  ck(m, "未找到 isModelPriced");
-  ck(/clinePriceFor\(m\)/.test(m[0]), "isModelPriced 没有认归属规则");
-});
-t("pendingPricedModels 认规则（否则徽标挂着几百个虚高数字）", () => {
-  const m = pricing.match(/export async function pendingPricedModels\(\)[\s\S]*?\n\}/);
-  ck(m, "未找到 pendingPricedModels");
-  ck(/clinePriceFor\(key\)/.test(m[0]), "pendingPricedModels 没有认归属规则");
+t("计价、门禁及待定价列表均不再采用猜价规则", () => {
+  for (const name of ["getPrice", "isModelPriced", "pendingPricedModels"]) {
+    const body = pricing.slice(pricing.indexOf(`export async function ${name}(`)).split("\n}")[0];
+    ck(body.includes("loadPrices()"), `${name} 必须读取明确价表`);
+    ck(!body.includes("clinePriceFor"), `${name} 不能采用推测价格`);
+  }
 });
 
 console.log("\n=== 6. 图标归属（前端）===");
@@ -211,22 +202,12 @@ t("后端有 /attribution 与 /resolve", () => {
   ck(/"\/attribution"/.test(route), "没有 /attribution 接口");
   ck(/"\/resolve"/.test(route), "没有 /resolve 接口");
 });
-t("后端有 /materialize 且不覆盖已有定价", () => {
-  ck(/"\/materialize"/.test(route), "没有 /materialize 接口");
-  // 取 router.post("/materialize", ...) 到该 handler 结束（文件末尾的 export 之前）
-  const start = route.indexOf('"/materialize"');
-  ck(start > 0, "未找到 materialize 路由");
-  const body = route.slice(start, route.indexOf("export default router", start));
-  ck(/SELECT model FROM model_prices WHERE model = \?/.test(body), "没有查重（会覆盖管理员手工定价）");
-  ck(/if \(exist\.length\) \{ skipped \+= 1; continue; \}/.test(body), "重复时没有跳过");
-  ck(/invalidatePrices\(\)/.test(body), "写入后没有失效价格缓存（新价 30s 内不生效）");
+t("推测价格不能固化，归属确认单独执行", () => {
+  ck(route.includes('router.post("/attribution"'), "缺少管理员归属确认");
+  ck(route.includes('推测规则已停用'), "旧固化入口必须拒绝");
+  ck(page.includes("<ModelAttributions"), "缺少可视归属配置");
 });
-t("前端有归属功能区（概览 + 自检 + 固化）", () => {
-  ck(/模型归属/.test(page), "没有归属功能区标题");
-  ck(/doMaterialize/.test(page), "没有固化操作");
-  ck(/pricing\/resolve/.test(page), "没有单条自检");
-  ck(/pricing\/attribution/.test(page), "没有概览拉取");
-});
+
 t("获取模型时就返回分组（不是等管理员手动点）", () => {
   const ch = read("src/routes/channel.js");
   ck(/clineGroupsFor/.test(ch), "channel.js 没有分组逻辑");

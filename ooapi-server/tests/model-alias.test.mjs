@@ -26,9 +26,13 @@ const ck = (name, cond, extra = "") => {
   }
 };
 
+import { pool } from "../src/db.js";
+const savedQuery = pool.query;
+pool.query = async () => [[]];
 await warmAliasMap();
 // 空白声明渠道走 vendorModelSet → modelRegistrySync：登记表必须先预热
 await modelRegistry();
+pool.query = savedQuery;
 
 const mk = (type, models) => ({ type, models, groups: ["g"] });
 

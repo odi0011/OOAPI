@@ -11,7 +11,7 @@
 //   向上取整，最低 1 厘（避免零计费刷量）。
 import { pool } from "../db.js";
 import { now } from "../utils.js";
-import { clinePriceFor, normalizeClineModel } from "./cline-prices.js";
+import { normalizeClineModel } from "./cline-prices.js";
 
 export const UNITS_PER_OD = 10000; // 1 OD 币 = 10000 厘
 export const CURRENCY = "OD币";
@@ -186,7 +186,8 @@ export const DEFAULT_PRICES = [
   { model: "gpt-5-search-api", input: 1.25, output: 10.00, cache: 0.125, type: "openai", remark: "官方 Search API 独立 ID；工具费另计，非本表 token 费（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
   { model: "gpt-5.6-cyber", input: 12.50, output: 75.00, cache: 1.25, type: "openai", remark: "官方 Daybreak 专用美元价；目录登记不表示当前渠道授权可用（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
   { model: "gpt-5.5-cyber", input: 12.50, output: 75.00, cache: 1.25, type: "openai", remark: "官方 Daybreak 专用美元价；目录登记不表示当前渠道授权可用（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
-  { model: "codex-auto-review", input: 0.25, output: 2.00, cache: 0.025, type: "openai", remark: "代码审查档，对标 gpt-5-mini 官方价；来源 openai.com/api/pricing/" },
+
+  { model: "qwen3-coder-next", input: 0.144, output: 0.574, cache: null, tiers: [{ minInputTokens: 32001, input: 0.216, output: 0.861, cache: null }, { minInputTokens: 128001, input: 0.359, output: 1.434, cache: null }], type: "qwen", remark: "官方Beijing美元价；>32K/>128K输入分档，缓存待确认（2026-10-02复核）；来源 https://www.alibabacloud.com/help/en/model-studio/model-pricing" },
 
   // --- Anthropic（美元牌价）--- 渠道类型统一用 anthropic（与 channel-types 的接入方式一致，
   // 之前写 "claude" 会和模型登记表/定价导入校验打架）
@@ -200,6 +201,13 @@ export const DEFAULT_PRICES = [
   { model: "claude-opus-4-8", input: 5.00, output: 25.00, cache: 0.50, type: "anthropic", remark: "官方美元历史价，规范 API ID 经官方 SDK 确认（2026-10-01 复核）；来源 https://www.anthropic.com/pricing 与 https://github.com/anthropics/anthropic-sdk-typescript/blob/main/src/resources/messages/messages.ts" },
   { model: "claude-opus-4-7", input: 5.00, output: 25.00, cache: 0.50, type: "anthropic", remark: "官方美元历史价，规范 API ID 经官方 SDK 确认（2026-10-01 复核）；来源 https://www.anthropic.com/pricing 与 https://github.com/anthropics/anthropic-sdk-typescript/blob/main/src/resources/messages/messages.ts" },
   { model: "claude-opus-4-6", input: 5.00, output: 25.00, cache: 0.50, type: "anthropic", remark: "官方美元历史价，规范 API ID 经官方 SDK 确认（2026-10-01 复核）；来源 https://www.anthropic.com/pricing 与 https://github.com/anthropics/anthropic-sdk-typescript/blob/main/src/resources/messages/messages.ts" },
+
+  { model: "claude-mythos-5-1", input: 10, output: 50, cache: 0.25, type: "anthropic", remark: "官方Standard美元价（2026-10-02复核）；来源 https://platform.claude.com/docs/en/about-claude/pricing" },
+  { model: "claude-mythos-5", input: 10, output: 50, cache: 1, type: "anthropic", remark: "官方Standard美元价（2026-10-02复核）；来源 https://platform.claude.com/docs/en/about-claude/pricing" },
+  { model: "claude-opus-4-1", input: 15, output: 75, cache: 1.5, type: "anthropic", remark: "官方Standard美元价（2026-10-02复核）；来源 https://platform.claude.com/docs/en/about-claude/pricing" },
+  { model: "claude-opus-4", input: 15, output: 75, cache: 1.5, type: "anthropic", remark: "官方Standard美元价（2026-10-02复核）；来源 https://platform.claude.com/docs/en/about-claude/pricing" },
+  { model: "claude-sonnet-4", input: 3, output: 15, cache: 0.3, type: "anthropic", remark: "官方Standard美元价（2026-10-02复核）；来源 https://platform.claude.com/docs/en/about-claude/pricing" },
+  { model: "claude-haiku-3-5", input: 0.8, output: 4, cache: 0.08, type: "anthropic", remark: "官方Standard美元价（2026-10-02复核）；来源 https://platform.claude.com/docs/en/about-claude/pricing" },
 
   // --- Google（美元牌价）---
   { model: "gemini-3.5-flash", input: 1.50, output: 9.00, cache: 0.15, type: "gemini", remark: "官方 Standard 文本美元价（2026-10-01 复核）；来源 https://ai.google.dev/gemini-api/docs/pricing" },
@@ -224,7 +232,6 @@ export const DEFAULT_PRICES = [
   { model: "grok-4.20-multi-agent-0309", input: 1.25, output: 2.50, cache: 0.20, tiers: [{ minInputTokens: 200000, input: 2.50, output: 5.00, cache: 0.40 }], type: "grok", remark: "官方独立 multi-agent API ID；>=200000 输入用长档（2026-10-01 复核）；来源 https://docs.x.ai/developers/pricing" },
   { model: "grok-4.20-0309-reasoning", input: 1.25, output: 2.50, cache: 0.20, tiers: [{ minInputTokens: 200000, input: 2.50, output: 5.00, cache: 0.40 }], type: "grok", remark: "官方独立 reasoning API ID；>=200000 输入用长档（2026-10-01 复核）；来源 https://docs.x.ai/developers/pricing" },
   { model: "grok-4.20-0309-non-reasoning", input: 1.25, output: 2.50, cache: 0.20, tiers: [{ minInputTokens: 200000, input: 2.50, output: 5.00, cache: 0.40 }], type: "grok", remark: "官方独立 non-reasoning API ID；>=200000 输入用长档（2026-10-01 复核）；来源 https://docs.x.ai/developers/pricing" },
-  { model: "grok-3-mini", input: 0.30, output: 0.50, cache: 0.03, type: "grok", remark: "轻量档，按官方 4.3 档一半估录入，待官方页复核；来源 docs.x.ai/docs/models" },
 
   // --- 后续批次新接入的档位（此前落到兜底价 0.30/1.20 并打告警）---
   // 阿里通义：qwen-max 对应官方 max 档，turbo/flash 是轻量档
@@ -249,7 +256,6 @@ export const DEFAULT_PRICES = [
   // 计费走上面 deepseek-flash 一行（峰谷同价口径）。
   { model: "mimo-v2.6-pro", input: 0.435, output: 0.87, cache: 0.0036, type: "mimo", remark: "官方海外美元价（2026-10-01 复核）；来源 https://mimo.mi.com/docs/en-US/price/pay-as-you-go" },
   // 美团 LongCat：尚未取得官方美元价，保留历史平台价等待复核。
-  { model: "longcat-2.0", input: 0.30, output: 1.20, cache: 0.03, type: "longcat", remark: "官方未公布完整价表，按同类轻量档估录，待复核" },
 
   // --- 上一代档位：仍在注册表里可被请求，不给价会按「同厂商最贵档」兜底，
   //     即用旗舰价收轻量档的钱（最多差 20 倍）。按官方历史价补录。---
@@ -270,10 +276,9 @@ export const DEFAULT_PRICES = [
   { model: "qwen3-235b-a22b", input: 0.20, output: 0.60, cache: 0.02, type: "qwen", remark: "Qwen3-235B 开源权重，按官方百炼托管价录入；来源 help.aliyun.com/zh/model-studio" },
 
   // --- 线上实测发现的「渠道在用但无价」的模型（新门禁会拦下它们，故补录）---
-  // 补录依据：这些是上游渠道实际暴露的档位，官方页若未公布就按同档估录并在 remark 注明。
+  // 仅收录可核实的官方报价；未公布价格的型号保留待定价。
   { model: "gpt-6-astra", input: 10.00, output: 50.00, cache: 1.00, tiers: [{ minInputTokens: 272001, input: 20.00, output: 75.00, cache: 2.00 }], type: "openai", remark: "官方 Standard 美元价；>272000 输入全请求用长档（2026-10-01 复核）；来源 https://developers.openai.com/api/docs/pricing" },
   { model: "mimo-v2.6-flash", input: 0.14, output: 0.28, cache: 0.0028, type: "mimo", remark: "官方海外美元价（2026-10-01 复核）；来源 https://mimo.mi.com/docs/en-US/price/pay-as-you-go" },
-  { model: "omen-alpha", input: 0.30, output: 1.20, cache: 0.03, type: "opencode", remark: "OpenCode 平台上的未公开档位，按同类轻量档估录，待复核" },
 ];
 
 // 价格缓存（避免每请求查库）
@@ -287,6 +292,7 @@ export async function loadPrices() {
   const [rows] = await pool.query("SELECT * FROM model_prices");
   const m = new Map();
   for (const r of rows) {
+    if (/估录|对标 .*官方价|归属规则/.test(r.remark || "")) continue;
     m.set(String(r.model).toLowerCase(), {
       model: r.model,
       input: Number(r.input_price) || 0,
@@ -402,137 +408,20 @@ export function describeRule(rule) {
   return `${tz}时间 ${days} ${wins} 为高峰，其余半价${r.offpeakDates?.length ? "（含已配置公共假期）" : ""}`;
 }
 
-// 取模型价格：精确匹配 → 最长前缀匹配 → 同厂商兜底 → 全局兜底
-const warnedModels = new Set();
-const MAX_WARNED_MODELS = 500;
+// 只认定价表里的规范模型，不再把前缀相似、聚合规则或同厂商档位当作定价。
 export async function getPrice(model) {
-  const prices = await loadPrices();
-  // 统一聚合目录的模型 SKU：openai/gpt-6-sol:batch、~openai/gpt-6-sol
-  // 和 gpt-6-sol 都是同一模型。先去掉供应商前缀/变体后缀，再走兼容别名，
-  // 防止同步价表把 :batch/:free 误当成新的独立价格。
-  let m = String(model || "").trim().toLowerCase();
-  try {
-    const { canonicalModelName } = await import("./models.js");
-    m = canonicalModelName(model) || m;
-  } catch { m = normalizeClineModel(model); }
-  // 聚合渠道（OpenRouter / NVIDIA NIM / HuggingFace 风格）的模型名带厂商前缀：
-  // `zai-org/GLM-4.6`、`anthropic/claude-sonnet-4.5`、`Qwen/Qwen3-235B-A22B`。
-  // 这些前缀只是路由标识，底层就是同名模型 —— 不去掉就会整片落到兜底价，
-  // 而兜底价比实际价可能差几倍（用户按贵档付费）。统一剥成裸模型名再匹配。
-  const slash = m.lastIndexOf("/");
-  if (slash > 0 && slash < m.length - 1) m = m.slice(slash + 1);
-  // 兜底链的返回值统一带 exact:false —— 调用方（如「按上游实际档位计价」）
-  // 需要知道这个价格是查到的还是猜的，靠 remark 字符串匹配太脆弱。
-  if (prices.has(m)) return { ...prices.get(m), exact: true };
-  // 模糊匹配：deepseek-chat-search → deepseek-chat。
-  // 必须取「命中长度最长」的前缀，不能取 Map 里第一个命中的：
-  // 短前缀可能贵 10 倍（如 glm-5.3-flash-search 先命中 glm-5.3 而不是 glm-5.3-flash）。
-  let best = null;
-  let bestLen = -1;
-  for (const [k, v] of prices) {
-    if (k.length > bestLen && m.startsWith(k)) {
-      best = v;
-      bestLen = k.length;
-    }
-  }
-  if (best) return { ...best, exact: true }; // 前缀命中：仍算精确（deepseek-chat-search → deepseek-chat）
-  // Cline 转发目录（454 个模型，形如 `anthropic/claude-sonnet-4.5`、`~openai/gpt-luna-latest`）：
-  // 上游只给 {id, object, created, owned_by}，**没有任何价格字段**（实测核对过），
-  // 所以价格由 cline-prices.js 的归属规则定。位置刻意放在 DB 命中之后、同族兜底之前：
-  //   · DB 里的价格永远优先 —— 管理员在「模型定价」显式配的那条说了算；
-  //   · 规则比「同族兜底」准得多（同族兜底会拿最贵档，实测 mimo-v2.6-flash 被按
-  //     claude-opus-5 收费）；规则表里每条都写明了归属到哪个型号或哪家官方价。
-  const clineHit = clinePriceFor(m);
-  if (clineHit) {
-    return {
-      model,
-      input: clineHit.input,
-      output: clineHit.output,
-      cache: clineHit.cache,
-      type: clineHit.type,
-      exact: false, // 是归属价而非逐条配置：调用方（与管理员）要知道这一点
-      remark: clineHit.remark,
-    };
-  }
-  // 同族匹配：请求名是某个已配价模型名的前缀（kimi-k2 → kimi-k2.6、deepseek-v4 → deepseek-v4-pro）。
-  // 取「最短的那个」（最贴近的族），比直接跳到「同厂商最贵档」准确得多 ——
-  // 按最贵档兜底会让上一代/中端模型被按旗舰价收（kimi-k2 落到 kimi-k3 就是 3 倍）。
-  let family = null;
-  let familyLen = Infinity;
-  for (const [k, v] of prices) {
-    if (k.length < m.length) continue; // 只考虑比请求名更长的
-    if (k.startsWith(m) && k.length < familyLen) {
-      family = v;
-      familyLen = k.length;
-    }
-  }
-  if (family) return { ...family, model, remark: `${family.model} 同族兜底（原模型未单独定价）` };
-  // 兜底不能一律按 DeepSeek 价：反代/订阅渠道产出的模型（gpt-5.6-*、grok-* 等）单价是
-  // DeepSeek flash 的 3~10 倍，一律按它算等于系统性少计费。这里再退一步按「同厂商最贵档」
-  // （宁可高估不可漏收），真的连厂商都判定不出来才退回 DeepSeek 档。
-  const vendor = await vendorOfModel(model);
-  const vendorPrice = vendor ? priciestOfVendor(prices, vendor) : null;
-  // 告警集合设上限：渠道声明 models="*" 时，调用方可用任意模型名无限撑大内存。
-  if (m && !warnedModels.has(m) && warnedModels.size < MAX_WARNED_MODELS) {
-    warnedModels.add(m);
-    console.warn(
-      `[pricing] 模型「${model}」未配置价格，暂按${vendorPrice ? `同厂商（${vendor}）最高档` : "全表最贵档"}计费，请在「模型定价」中补充`
-    );
-  }
-  if (vendorPrice) {
-    return { ...vendorPrice, model, remark: `未配置价格，按同厂商（${vendor}）最高档兜底` };
-  }
-  // 判定不出厂商（custom/中转渠道的自定义模型名，例如挂在第三方聚合站上的 claude-opus）
-  // 时，绝不能退回 DeepSeek 最低档：那比真实成本低约 20 倍，等于系统性少收。
-  // 改为取「全表最贵档」——宁可高估后由管理员改价，也不要静默漏收。
-  const anyPrice = priciestOfAll(prices);
-  if (anyPrice) {
-    return { ...anyPrice, model, remark: `未配置价格且无法判定厂商，按全表最贵档（${anyPrice.model}）兜底` };
-  }
-  return { model, input: 0.30, output: 1.20, cache: 0.006, type: "", remark: "未配置价格，按默认档计价" };
+  const { canonicalModelName } = await import("./models.js");
+  const key = canonicalModelName(model);
+  const price = (await loadPrices()).get(key);
+  if (price) return { ...price, exact: true };
+  // 失败审计可以记录零消耗，但执行入口必须先通过 assertModelPriced。
+  return { model: key, input: 0, output: 0, cache: 0, type: "", exact: false, unpriced: true };
 }
 
-/** 全表最贵档（按输出价，其次输入价）——用于无法判定厂商时的兜底 */
-function priciestOfAll(prices) {
-  let best = null;
-  for (const v of prices.values()) {
-    if (!best) {
-      best = v;
-      continue;
-    }
-    const out = Number(v.output) || 0;
-    const bestOut = Number(best.output) || 0;
-    if (out > bestOut || (out === bestOut && (Number(v.input) || 0) > (Number(best.input) || 0))) best = v;
-  }
-  return best;
+export async function assertModelPriced(model) {
+  if (!await isModelPriced(model)) throw Object.assign(new Error(`模型「${model}」尚未定价，请联系管理员确认归属或配置价格`), { code: "MODEL_NOT_PRICED", status: 400, model, billable: false });
 }
 
-/** 该模型归属的厂商（渠道类型）——复用模型登记表，避免定价与归属两处口径分裂 */
-async function vendorOfModel(model) {
-  try {
-    const { modelRegistry } = await import("./models.js");
-    const reg = await modelRegistry();
-    return reg.get(String(model || "").toLowerCase())?.type || "";
-  } catch {
-    return "";
-  }
-}
-
-/** 某厂商已登记的最贵档价格（按输出价排序；同价取输入价更高的） */
-function priciestOfVendor(prices, vendor) {
-  let best = null;
-  for (const v of prices.values()) {
-    if (String(v.type || "") !== String(vendor)) continue;
-    if (!best) {
-      best = v;
-      continue;
-    }
-    const out = Number(v.output) || 0;
-    const bestOut = Number(best.output) || 0;
-    if (out > bestOut || (out === bestOut && (Number(v.input) || 0) > (Number(best.input) || 0))) best = v;
-  }
-  return best;
-}
 
 // 计费：返回「厘」为单位的整数
 /**
@@ -905,62 +794,34 @@ export async function originalModelPrice(model) {
  */
 export async function pendingPricedModels() {
   const prices = await loadPrices();
-  const { canonicalModelName } = await import("./models.js");
-  const [rows] = await pool.query(
-    "SELECT id, name, type, models FROM channels WHERE status = 1 AND models IS NOT NULL AND models <> ''"
-  );
-  const byModel = new Map();
-  for (const r of rows) {
-    for (const raw of String(r.models || "").split(",")) {
-      const m = raw.trim();
-      if (!m || m === "*") continue;
-      const key = canonicalModelName(m) || normalizeClineModel(m).toLowerCase();
-      // 精确命中（含最长前缀命中）都算「已定价」—— 见 getPrice 的匹配顺序
-      let priced = prices.has(key);
-      if (!priced) {
-        let bestLen = -1;
-        for (const k of prices.keys()) if (key.startsWith(k) && k.length > bestLen) bestLen = k.length;
-        priced = bestLen >= 0;
+  const { canonicalModelName, modelIdentity, modelRegistry } = await import("./models.js");
+  await modelRegistry();
+  const { collectAvailableModels } = await import("./router.js");
+  const [rows] = await pool.query("SELECT id,name,type,models FROM channels");
+  const pending = new Map();
+  for (const row of rows) {
+    for (const raw of collectAvailableModels([row])) {
+      if (raw.includes("*")) continue;
+      const key = canonicalModelName(raw);
+      if (prices.has(key)) continue;
+      if (!pending.has(key)) {
+        const plain = modelIdentity(raw).toLowerCase();
+        const candidates = /^(auto|default|latest)$/.test(plain) ? [] : [...prices.values()]
+          .filter(p => plain !== p.model.toLowerCase() && new RegExp("^" + p.model.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[-:]").test(plain))
+          .sort((a,b) => b.model.length - a.model.length).slice(0, 8)
+          .map(p => ({ model: p.model, type: p.type, input: p.input, output: p.output, cache: p.cache }));
+        pending.set(key, { model: key, type: row.type, channels: [], candidates });
       }
-      if (priced) continue;
-      // Cline 归属规则（cline-prices.js）命中的同样算「已定价」——
-      // 否则 Cline 那 454 个模型会整片出现在待定价徽标里（几百个数字，等于没提示）。
-      if (clinePriceFor(key)) continue;
-      const identity = key || m;
-      if (!byModel.has(identity)) byModel.set(identity, { model: identity, type: String(r.type || ""), channels: [] });
-      byModel.get(identity).channels.push({ id: Number(r.id), name: String(r.name || "") });
+      const item = pending.get(key);
+      if (!item.channels.some(c => c.id === row.id)) item.channels.push({ id: row.id, name: row.name, type: row.type, model: raw });
+      if (item.type !== row.type) item.type = "other";
     }
   }
-  const models = [...byModel.values()].sort((a, b) => a.model.localeCompare(b.model));
+  const models = [...pending.values()].sort((a,b) => a.model.localeCompare(b.model));
   return { models, count: models.length };
 }
 
-/**
- * 该模型是否已定价（可放行）。与 getPrice 的匹配顺序保持一致：
- * 精确命中 / 最长前缀命中 / Cline 归属规则 都算「已定价」。
- *
- * 第三项不能少：Cline 的 454 个模型里绝大多数靠归属规则定价（DB 里没有逐条记录），
- * 少了它会让「无价即不放行」把整个 Cline 渠道全拦下来。
- */
 export async function isModelPriced(model) {
-  const prices = await loadPrices();
   const { canonicalModelName } = await import("./models.js");
-  const m = canonicalModelName(model) || normalizeClineModel(model);
-  if (!m) return false;
-  const stripped = m.includes("/") ? m.slice(m.lastIndexOf("/") + 1) : m;
-  if (prices.has(m) || prices.has(stripped)) return true;
-  for (const key of [m, stripped]) {
-    for (const k of prices.keys()) if (key.startsWith(k)) return true;
-  }
-  // 规范名兜底：兼容别名（kimi-latest → kimi-k3）与能力后缀（-thinking/-search）
-  // 归一化之后再查一次，与 getPrice 的别名/前缀口径保持一致。
-  // **只做加法**：这里返回 true 只会让「本来就会被 getPrice 算出价格」的模型
-  // 不再被误判成未定价，不会让真没配价的模型蒙混放行。
-  // 动态 import 是为了避开循环依赖（models.js 反过来 import 了本模块的 DEFAULT_PRICES）。
-  const canon = canonicalModelName(m);
-  if (canon && canon !== m) {
-    if (prices.has(canon)) return true;
-    for (const k of prices.keys()) if (canon.startsWith(k)) return true;
-  }
-  return Boolean(clinePriceFor(m));
+  return (await loadPrices()).has(canonicalModelName(model));
 }

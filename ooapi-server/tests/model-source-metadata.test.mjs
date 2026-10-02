@@ -51,6 +51,7 @@ const queries = [], settings = new Map();
 let sourceReads = 0, throwSourceRead = false;
 const originalQuery = pool.query;
 pool.query = async (sql, args = []) => {
+  if (String(sql).includes("FROM model_attributions")) return [[]];
   sql = String(sql); queries.push({ sql, args });
   assert.equal((sql.match(/\?/g) || []).length, args.length, "SQL placeholder count");
   if (/SELECT key_str, value FROM options/.test(sql)) return [[...settings].map(([key_str, value]) => ({ key_str, value }))];
@@ -143,14 +144,14 @@ try {
   });
   await test("普通令牌分组HTTP包含来源映射，models原样保留且不泄露账号", async () => {
     const r = await call("/api/token/groups"); assert.equal(r.status, 200);
-    const g = r.data.find((v) => v.name === "shared"); assert.deepEqual(g.models, [luna, sku, "mystery-model"]);
-    assert.deepEqual(g.model_vendors[luna], ["cline", "openai"]); assert.deepEqual(g.model_vendors[sku], ["cline", "openai"]);
+    const g = r.data.find((v) => v.name === "shared"); assert.deepEqual(g.models, [luna]);
+    assert.deepEqual(g.model_vendors[luna], ["openai"]); assert.ok(!Object.hasOwn(g.model_vendors, sku));
     assert.ok(!Object.hasOwn(g, "channel_ids")); assert.ok(!JSON.stringify(r.data).includes(secret));
   });
   await test("普通分组HTTP真实展开空声明和通配，原始models权限不扩大", async () => {
     const r = await call("/api/token/groups"); assert.equal(r.status, 200);
-    const g = r.data.find((v) => v.name === "capabilities"); assert.deepEqual(g.models, [luna, "fixture-unknown-capability"]);
-    assert.deepEqual(g.model_vendors[luna], ["cline", "mimo", "openai"]); assert.deepEqual(g.model_vendors["fixture-unknown-capability"], ["mimo"]);
+    const g = r.data.find((v) => v.name === "capabilities"); assert.deepEqual(g.models, [luna]);
+    assert.deepEqual(g.model_vendors[luna], ["openai"]); assert.ok(!Object.hasOwn(g.model_vendors, "fixture-unknown-capability"));
     assert.ok(Object.keys(g.model_vendors).every((id) => ["fixture-unknown-capability", luna].includes(canonicalModelName(id))));
   });
   await test("管理员分组HTTP含配置成员来源，普通用户不能越权", async () => {
@@ -187,7 +188,7 @@ try {
   await test("关闭价格不会隐藏来源或单次扣费，也不会再公开渠道报价", async () => {
     await policy({ ...all(true), request_content: false, pricing: false }); const r = await call("/api/log/usage"); assert.equal(r.status, 200);
     assert.deepEqual(r.data.items[0].source_vendors, ["cline", "openai"]); assert.equal(r.data.items[0].quota, 9); assert.equal(r.data.items[0].billing_details, null);
-    const g = await call("/api/token/groups"); assert.ok(!Object.hasOwn(g.data[0], "rate")); assert.deepEqual(g.data[0].model_vendors[luna], ["cline", "openai"]);
+    const g = await call("/api/token/groups"); assert.ok(!Object.hasOwn(g.data[0], "rate")); assert.deepEqual(g.data[0].model_vendors[luna], ["openai"]);
   });
   await test("关闭记录后接口403且不读取日志/来源，个人近期为空", async () => {
     await policy({ ...all(true), usage_records: false, request_content: false }); const start = queries.length;
@@ -205,8 +206,8 @@ try {
   await test("管理员归属分析实际接入品牌，公开定价目录仍按开发商", async () => {
     await policy(all(true)); assert.equal((await call("/api/pricing/attribution")).status, 403);
     const r = await call("/api/pricing/attribution", 100); assert.equal(r.status, 200, JSON.stringify(r));
-    const entries = r.data.sources.flatMap((s) => s.models || []), fromCline = entries.find((v) => v.channelId === 11 && v.model === sku);
-    assert.ok(fromCline); assert.equal(fromCline.channel_type, "cline"); assert.deepEqual(fromCline.source_vendors, ["cline"]);
+    assert.ok(r.data.models.some(m => m.model === "mystery-model"));
+    assert.ok(!r.data.models.some(m => m.model === luna));
     const catalog = await call("/api/pricing/public"); assert.equal(catalog.status, 200); assert.equal(catalog.data.items.find((v) => v.model === luna).vendor, "openai");
   });
   await test("消费及失败日志写入实际来源快照，原账单金额/SQL参数不变", async () => {

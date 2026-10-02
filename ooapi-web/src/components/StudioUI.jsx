@@ -52,7 +52,6 @@ export function StudioHeader({ status, motion, auth = false, user }) {
     { label: "使用记录", hint: "调用详情、用量与扣费", to: "/log" },
     { label: "社区", hint: "讨论、分享与交流", to: "/community" },
     ...(status?.home_show_models !== false ? [{ label: "厂商目录", hint: "平台实际集成的厂商与接入方式", to: "/#providers" }] : []),
-    ...(status?.home_show_pricing !== false ? [{ label: "模型定价", hint: "查看当前模型价格", to: "/pricing" }] : []),
     ...(user?.role >= 100 ? [{ label: "运维监控", hint: "系统资源、渠道与告警", to: "/admin/monitor" }] : []),
   ];
   const results = destinations.filter((d) => `${d.label} ${d.hint}`.toLowerCase().includes(query.trim().toLowerCase()));
@@ -65,7 +64,7 @@ export function StudioHeader({ status, motion, auth = false, user }) {
   const menu = (items) => ({ items: items.map((d) => ({ key: d.to, label: <Link className="studio-menu-item" to={d.to}><b>{d.label}</b><span>{d.hint}</span></Link> })) });
   return <header className="studio-header">
     <Link to="/" className="studio-brand"><BrandLogo size={29}/><b>{name}</b><span>模型网关</span></Link>
-    {!auth && <nav aria-label="首页导航"><Dropdown menu={menu(destinations.filter((d) => ["工作方式", "对话工作台", "API 令牌", "数据看板", "使用记录"].includes(d.label)))} trigger={["hover", "click"]}><button className="studio-menu-trigger" type="button">工作方式 <DownOutlined /></button></Dropdown>{status?.home_show_models !== false && <a href="#providers">厂商目录</a>}{status?.home_show_pricing !== false && <Link to="/pricing">定价</Link>}<a href="#quickstart">文档</a><Link to="/community">社区</Link></nav>}
+    {!auth && <nav aria-label="首页导航"><Dropdown menu={menu(destinations.filter((d) => ["工作方式", "对话工作台", "API 令牌", "数据看板", "使用记录"].includes(d.label)))} trigger={["hover", "click"]}><button className="studio-menu-trigger" type="button">工作方式 <DownOutlined /></button></Dropdown>{status?.home_show_models !== false && <a href="#providers">厂商目录</a>}<a href="#quickstart">文档</a><Link to="/community">社区</Link></nav>}
     <div className="studio-header-actions">
       {!auth && <Button type="text" icon={<SearchOutlined />} aria-label="搜索页面" title="搜索页面 · Ctrl K" onClick={() => setSearchOpen(true)} />}
       <ThemeSwitch size="small" />

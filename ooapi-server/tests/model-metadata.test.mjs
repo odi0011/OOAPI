@@ -57,6 +57,7 @@ const channel = (id, type, models, extra = {}) => ({
 
 // 必须模拟 SQL 的筛选，而非一律返回所有 fixtures：这样才能验证禁用渠道与外组隔离。
 pool.query = async (sql, params = []) => {
+  if (String(sql).includes("FROM model_attributions")) return [[]];
   queryCount++;
   const s = String(sql).replace(/\s+/g, " ").trim();
   assert.equal((s.match(/\?/g) || []).length, params.length, "SQL 占位符与参数必须一致");
@@ -120,7 +121,9 @@ try {
     assert.equal(res.status, 200, `${path} 应成功（${body.message || body.error?.message || res.status}）`);
     return body;
   };
-  const reset = async (channels, { groupModels = [], keyModels = [], prices = [] } = {}) => {
+  const { DEFAULT_PRICES } = await import("../src/services/pricing.js");
+  const catalogPrices = DEFAULT_PRICES.map(p => ({ model:p.model,input_price:p.input,output_price:p.output,cache_price:p.cache,channel_type:p.type }));
+  const reset = async (channels, { groupModels = [], keyModels = [], prices = catalogPrices } = {}) => {
     fixture = { channels, groupModels, keyModels, prices };
     token.model_limits = keyModels.join(",");
     clearGroupConfigCache();
@@ -148,16 +151,16 @@ try {
       assert.ok(!m.id.includes("*"), `目录不能把通配 ${m.id} 当成模型发给客户端`);
       const sameGroup = fixture.channels.filter((c) => c.status === 1 && routing.channelInGroup(routing.rowToChannel(c), groupName));
       assert.ok(sameGroup.some((c) => routing.channelSupportsModel(routing.rowToChannel(c), m.id)), `目录模型 ${m.id} 缺少同组支持渠道`);
-      const selected = await routing.selectChannels({ model: m.id, groupName, channelType: m.vendor || "" });
+      const selected = await routing.selectChannels({ model: m.id, groupName, channelType: "" });
       assert.ok(selected.length > 0, `目录模型 ${m.id} 必须有真实可选渠道`);
       assert.ok(selected.every((c) => c.status === 1 && routing.channelInGroup(c, groupName)), "选择器不能使用禁用或外组渠道");
-      if (m.vendor) assert.ok(selected.every((c) => c.type === m.vendor), "站内选定的接入厂商不能串到另一家");
+      assert.ok(selected.length, "真实开发商用于显示，渠道仍按组调度");
       assert.ok(models.modelInAllowList(fixture.groupModels, m.id), "目录模型必须通过组白名单");
       assert.ok(models.modelInAllowList(fixture.keyModels, m.id), "普通用户目录模型必须通过密钥白名单");
       const counterpart = gateway.find((g) => models.canonicalModelName(g.id) === models.canonicalModelName(m.id));
       if (m.vendor) {
         assert.ok(counterpart, `站内目录模型 ${m.id} 必须同时出现在网关目录`);
-        assert.equal(m.channel_type, m.vendor, "站内条目必须携带实际接入厂商");
+        assert.equal(m.channel_type, "", "显示厂商不限制上游渠道");
       }
     }
     return { chat, gateway };
@@ -179,16 +182,16 @@ try {
     await reset([channel(87101, "openai", "gpt-5.6-luna")]);
     expectLuna(await directory());
   });
-  await test("仅 OpenCode 提供 Luna：站内归 OpenCode，能力和 API 原厂信息仍归 OpenAI", async () => {
+  await test("仅 OpenCode 提供 Luna：两端都按实际开发商展示", async () => {
     await reset([channel(87102, "opencode", "gpt-5.6-luna")]);
-    expectLuna(await directory(), "opencode");
+    expectLuna(await directory());
   });
   await test("同名跨厂商分别可选、同厂商去重，交换渠道顺序不改变结果", async () => {
     const channels = [channel(87103, "opencode", "gpt-5.6-luna"), channel(87104, "openai", "gpt-5.6-luna"), channel(87116, "opencode", "gpt-5.6-luna")];
     await reset(channels);
     const first = await directory();
-    assert.equal(first.chat.models.length, 2);
-    assert.deepEqual(first.chat.models.map((m) => m.vendor).sort(), ["openai", "opencode"]);
+    assert.equal(first.chat.models.length, 1);
+    assert.deepEqual(first.chat.models.map((m) => m.vendor).sort(), ["openai"]);
     assert.ok(first.chat.models.every((m) => m.supportsThinking));
     expectIds(first.gateway, ["gpt-5.6-luna"]);
     assert.equal((await routing.selectChannels({ model: "gpt-5.6-luna", groupName, channelType: "opencode", excludeIds: new Set([87103, 87116]) })).length, 0, "所选厂商的渠道都失败后不能重试其他厂商");
@@ -199,17 +202,15 @@ try {
   await test("Cline 托管 Qwen：列表跟随 Cline，报价仍是 Qwen 原厂报价", async () => {
     const raw = "qwen/qwen3.8-27b:free";
     await reset([channel(87117, "cline", raw), channel(87118, "qwen", "qwen3.8-27b")], {
-      groupModels: [raw], prices: [{ model: "qwen3.8-27b", input_price: 0.424, output_price: 1.696, cache_price: 0.0848, type: "qwen" }],
+      groupModels: [raw], prices: [{ model: "qwen3.8-27b", input_price: 0.424, output_price: 1.696, cache_price: 0.0848, channel_type: "qwen" }],
     });
     const { chat } = await directory();
-    const hosted = chat.models.find((m) => m.vendor === "cline");
-    const original = chat.models.find((m) => m.vendor === "qwen");
-    assert.ok(hosted && original, "同一个 Qwen 模型应分别列在 Cline 和通义渠道下");
+    assert.equal(chat.models.length, 1);
+    const hosted = chat.models[0];
     assert.equal(hosted.id, "qwen3.8-27b");
-    assert.match(hosted.vendorName, /Cline/i);
-    assert.deepEqual(hosted.price, { input: 0.424, output: 1.696, cache: 0.0848 });
-    assert.deepEqual(hosted.price, original.price, "托管渠道不得覆盖模型原厂报价");
-    assert.equal((await routing.selectChannels({ model: hosted.id, groupName, channelType: "opencode" })).length, 0, "选定厂商没有模型时不得借其他厂商发送");
+    assert.equal(hosted.vendor, "qwen");
+    assert.deepEqual(hosted.price, { input: .424, output: 1.696, cache: .0848 });
+
   });
   await test("公开目录供应商/原厂输入顺序翻转：helper 保持原厂元信息", async () => {
     const catalog = (await models.allPublicModels()).filter((m) => m.id === "gpt-5.6-luna");
@@ -221,11 +222,11 @@ try {
     assert.equal(first.supportsThinking, true);
     assert.deepEqual(first, reversed);
   });
-  await test("未知 gpt 前缀及普通模型：跟随实际 WorkBuddy 渠道", async () => {
+  await test("未知前缀和未定价模型从两端目录排除", async () => {
     await reset([channel(87107, "workbuddy", "gpt-private-fixture,metadata-unknown-fixture")]);
     const { chat, gateway } = await directory();
-    expectIds(chat.models, ["gpt-private-fixture", "metadata-unknown-fixture"]);
-    expectIds(gateway, ["gpt-private-fixture", "metadata-unknown-fixture"]);
+    expectIds(chat.models, []);
+    expectIds(gateway, []);
     assert.ok(chat.models.every((m) => m.vendor === "workbuddy"));
     assert.ok(gateway.every((m) => m.owned_by === "workbuddy"));
   });
@@ -242,7 +243,7 @@ try {
     const { chat, gateway } = await directory();
     assert.equal(chat.models.length, 1);
     assert.equal(models.canonicalModelName(chat.models[0].id), "deepseek-flash");
-    assert.equal(chat.models[0].vendor, "workbuddy");
+    assert.equal(chat.models[0].vendor, "deepseek");
     assert.ok(gateway.length > 0 && gateway.every((m) => models.canonicalModelName(m.id) === "deepseek-flash" && m.owned_by === "deepseek"));
     assert.equal((await routing.selectChannels({ model: "deepseek-v4.1-flash", groupName })).length, 1);
   });
