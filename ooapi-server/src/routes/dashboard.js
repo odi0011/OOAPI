@@ -25,9 +25,10 @@ const router = Router();
 const RANGE_DAYS = { "7d": 7, "30d": 30, "90d": 90 };
 
 function rangeOf(query) {
-  const key = String(query.range || "30d");
-  const days = RANGE_DAYS[key] || 30;
-  return { key, days, since: Math.floor(Date.now() / 1000) - days * 86400 };
+  const key = Object.hasOwn(RANGE_DAYS, String(query.range)) ? String(query.range) : "30d";
+  const days = RANGE_DAYS[key];
+  // 包含今天的 N 个北京日期。滚动 N*24h 会跨 N+1 个日期，导致趋势和日均消费错位。
+  return { key, days, since: (bjDay(Date.now() / 1000) - days + 1) * 86400 - TZ };
 }
 
 // 北京时间偏移：看板页头写着「时区 UTC+8」，但原实现按 UTC 零点切天（FLOOR(created_at/86400)），
@@ -36,7 +37,7 @@ function rangeOf(query) {
 const TZ = 8 * 3600;
 const bjDay = (ts) => Math.floor((Number(ts) + TZ) / 86400);
 // 新失败调用与部分计费只保留一行，不能再用「消费数 + 错误数」作分母。
-const FAILURE_SQL = "(type = 4 AND model <> '' AND status <> 'stopped')";
+const FAILURE_SQL = "(type = 4 AND is_usage = 1 AND status <> 'stopped')";
 const SUCCESS_SQL = "(type = 2 AND status IN ('', 'success'))";
 
 /** 按天趋势（消费 + 调用 + token + 缓存），缺数据的日期补 0（否则折线会断） */
@@ -107,7 +108,7 @@ async function previousTotals(userId, since, days) {
   return {
     calls: Number(p.calls) || 0,
     successes: Number(p.successes) || 0,
-    success_rate: Number(p.calls) ? Number(((Number(p.successes) / Number(p.calls)) * 100).toFixed(2)) : 100,
+    success_rate: Number(p.calls) ? Number(((Number(p.successes) / Number(p.calls)) * 100).toFixed(2)) : null,
     units: Number(p.units) || 0,
     tokens: Number(p.tokens) || 0,
     active_users: Number(p.users) || 0,
@@ -152,7 +153,7 @@ router.get(
     const [allModels] = await pool.query(
       `SELECT model, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units,
               COALESCE(SUM(prompt_tokens),0) AS prompt_tokens, COALESCE(SUM(completion_tokens),0) AS completion_tokens
-         FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ? AND model <> ''
+         FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ?
         GROUP BY model ORDER BY units DESC`,
       [uid, since]
     );
@@ -197,10 +198,10 @@ router.get(
 
     // 用户有效令牌数与分组倍率
     const [[tokRow]] = await pool.query(
-      "SELECT COUNT(*) AS total_tokens, COALESCE(SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END), 0) AS active_tokens FROM tokens WHERE user_id = ?",
-      [uid]
+      "SELECT COUNT(*) AS total_tokens, COALESCE(SUM(status = 1 AND (expired_time <= 0 OR expired_time > ?) AND (unlimited_quota = 1 OR remain_quota > 0)), 0) AS active_tokens FROM tokens WHERE user_id = ?",
+      [Math.floor(Date.now() / 1000), uid]
     );
-    const userGroupName = req.user.group_name || "default";
+    const userGroupName = req.user.group_name || "";
     const groupCfg = await groupConfigOf(userGroupName);
     const groupRate = groupCfg?.rate ?? 1.0;
 
@@ -214,7 +215,7 @@ router.get(
 
     const totalCalls = Number(agg.calls) || 0;
     const successes = Number(agg.successes) || 0;
-    const succRate = totalCalls > 0 ? Number(((successes / totalCalls) * 100).toFixed(2)) : 100;
+    const succRate = totalCalls > 0 ? Number(((successes / totalCalls) * 100).toFixed(2)) : null;
 
     return ok(res, {
       range: { key, days },
@@ -246,7 +247,7 @@ router.get(
       },
       trend,
       by_model: byModel.map((m) => ({
-        model: m.model,
+        model: m.model || "未记录模型",
         calls: Number(m.calls) || 0,
         units: Number(m.units) || 0,
         prompt_tokens: Number(m.prompt_tokens) || 0,
@@ -306,12 +307,12 @@ router.get(
               u.username, u.display_name, u.avatar_media_id
          FROM logs l LEFT JOIN users u ON u.id = l.user_id
         WHERE ${usageLogWhere('l')} AND l.created_at >= ?
-        GROUP BY l.user_id ORDER BY units DESC LIMIT 10`,
+        GROUP BY l.user_id, u.username, u.display_name, u.avatar_media_id ORDER BY units DESC LIMIT 10`,
       [since]
     );
     const [allTopModels] = await pool.query(
       `SELECT model, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
-         FROM logs WHERE ${USAGE_SQL} AND created_at >= ? AND model <> ''
+         FROM logs WHERE ${USAGE_SQL} AND created_at >= ?
         GROUP BY model ORDER BY units DESC`,
       [since]
     );
@@ -333,11 +334,11 @@ router.get(
     const [byChannel] = await pool.query(
       `SELECT l.channel_id, COUNT(*) AS calls, COALESCE(SUM(l.type = 2 AND l.status IN ('', 'success')),0) AS successes, COALESCE(SUM(l.quota),0) AS units,
               COALESCE(AVG(NULLIF(l.elapsed_ms,0)),0) AS avg_elapsed,
-              COALESCE(AVG(NULLIF(l.first_token_ms,0)),0) AS avg_first_token,
+              AVG(CASE WHEN l.first_token_known = 1 OR l.first_token_ms > 0 THEN l.first_token_ms END) AS avg_first_token,
               c.name AS channel_name, c.type AS channel_type
          FROM logs l LEFT JOIN channels c ON c.id = l.channel_id
         WHERE ${usageLogWhere('l')} AND l.created_at >= ? AND l.channel_id > 0
-        GROUP BY l.channel_id ORDER BY units DESC LIMIT 12`,
+        GROUP BY l.channel_id, c.name, c.type ORDER BY units DESC LIMIT 12`,
       [since]
     );
     // 保留历史错误统计；新错误已包含在调用总数内，只计一次。
@@ -362,10 +363,10 @@ router.get(
     );
     const errorsTotal = await errorCount(null, since);
     const prev = await previousTotals(null, since, days);
-    // 错误分布：错误日志是 type=4，与消费日志（type=2）分开记
+    // 失败调用分布：与汇总使用相同口径，排除停止和旧版重复错误日志。
     const [errorsByModel] = await pool.query(
       `SELECT model, COUNT(*) AS errors FROM logs
-        WHERE ${FAILURE_SQL} AND created_at >= ? AND model <> ''
+        WHERE ${FAILURE_SQL} AND created_at >= ?
         GROUP BY model ORDER BY errors DESC LIMIT 10`,
       [since]
     );
@@ -408,7 +409,7 @@ router.get(
         units: Number(u.units) || 0,
         tokens: Number(u.tokens) || 0,
       })),
-      top_models: topModels.map((m) => ({ model: m.model, calls: Number(m.calls) || 0, units: Number(m.units) || 0 })),
+      top_models: topModels.map((m) => ({ model: m.model || "未记录模型", calls: Number(m.calls) || 0, units: Number(m.units) || 0 })),
       by_channel: byChannel.map((c) => {
         const errors = errMap.get(Number(c.channel_id)) || 0;
         const calls = Number(c.calls) || 0;
@@ -421,7 +422,7 @@ router.get(
           errors,
           success_rate: calls > 0 ? Number(((Number(c.successes) / calls) * 100).toFixed(1)) : null,
           avg_elapsed: Math.round(Number(c.avg_elapsed) || 0),
-          avg_first_token: Math.round(Number(c.avg_first_token) || 0),
+          avg_first_token: c.avg_first_token == null ? null : Math.round(Number(c.avg_first_token)),
         };
       }),
       top_tokens: topTokens.map((t) => ({
@@ -431,12 +432,12 @@ router.get(
         calls: Number(t.calls) || 0,
         units: Number(t.units) || 0,
       })),
-      errors_by_model: errorsByModel.map((e) => ({ model: e.model, errors: Number(e.errors) || 0 })),
+      errors_by_model: errorsByModel.map((e) => ({ model: e.model || "未记录模型", errors: Number(e.errors) || 0 })),
       realtime: {
         inFlight: Number(snap.gateway.inFlight) || 0,
         sla: snap.gateway.sla,
-        errorRate: snap.gateway.errorRate,
-        p95Ms: snap.gateway.latency?.p95Ms ?? null,
+        errorRate: snap.gateway.upstream?.rate ?? null,
+        p95Ms: snap.gateway.latency?.samples ? snap.gateway.latency.p95Ms : null,
         uptimeSec: Math.round(Number(snap.process?.uptimeSec) || 0),
       },
     });

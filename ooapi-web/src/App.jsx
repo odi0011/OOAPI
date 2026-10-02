@@ -29,6 +29,7 @@ import AdminDashboardPage from "./pages/AdminDashboardPage";
 import AdminCommunityPage from "./pages/AdminCommunityPage";
 import OdBinancePage from "./pages/OdBinancePage";
 import { useApp } from "./context/AppContext";
+import BuildUpdateNotice from "./components/BuildUpdateNotice";
 
 function RequireAuth({ children, admin = false }) {
   const { user, loading, authError, refreshUser } = useApp();
@@ -80,6 +81,7 @@ export default function App() {
     // 而不是纯白页（真实事故：一个未定义标识符就让 5 个页面同时白屏，
     // 用户连导航都没了。见 components/ErrorBoundary.jsx 的说明）。
     <ErrorBoundary>
+    <BuildUpdateNotice />
     <Routes>
       <Route path="/" element={<HomePage />} />
       {/* 侧边栏「返回首页」的兼容路由：跳出控制台布局回公开首页 */}

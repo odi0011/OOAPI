@@ -10,7 +10,7 @@ export const DEFAULT_OPTIONS = {
   footer: "© 2026 OOAPI · 大模型 API 网关",
   about: "OOAPI 是新一代大模型 API 网关与分发系统，支持多模型统一接入、令牌分发与用量统计。",
   api_endpoint: "",
-  docs_link: "https://docs.newapi.pro",
+  docs_link: "/#quickstart",
   server_address: "",
   icp_number: "",
   police_number: "",
@@ -248,7 +248,9 @@ export function publicStatus() {
     footer: getOption("footer"),
     about: getOption("about"),
     api_endpoint: getOption("api_endpoint") || `${getOption("server_address") || ""}/v1`,
-    docs_link: getOption("docs_link"),
+    // 旧安装也可能已将模板地址存进 options；只修正这个已知默认值，保留站长自定义地址。
+    docs_link: /^https?:\/\/docs\.newapi\.pro\/?$/i.test(String(getOption("docs_link") || "").trim())
+      ? "/#quickstart" : getOption("docs_link") || "/#quickstart",
     start_time: START_TIME,
     quota_per_unit: getNumberOption("quota_per_unit"),
     usd_rate: getNumberOption("usd_rate"),

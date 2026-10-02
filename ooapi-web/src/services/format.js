@@ -17,6 +17,15 @@ export { CURRENCY_NAME, CURRENCY_CODE };
 
 export const DEFAULT_UNITS_PER_OD = 10000;
 
+/** 管理员留空或填写相对路径时补全站点地址；无效配置不能让公开首页白屏。 */
+export function apiEndpoint(raw, origin = window.location.origin) {
+  try {
+    const url = new URL(String(raw || "/v1").trim(), origin);
+    if (["http:", "https:"].includes(url.protocol)) return url.href.replace(/\/+$/, "");
+  } catch { /* 无效的站点配置使用当前站点的标准网关路径 */ }
+  return origin + "/v1";
+}
+
 /** 从 /api/status 读取「多少额度单位 = 1 OD」，读不到就用默认值 */
 export function unitsPerOd(status) {
   const n = Number(status?.units_per_od ?? status?.quota_per_unit);

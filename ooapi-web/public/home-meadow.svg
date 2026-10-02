@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="700" viewBox="0 0 700 700">
+  <defs><filter id="paper"><feTurbulence type="fractalNoise" baseFrequency=".045" numOctaves="3" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="linear" slope=".09"/></feComponentTransfer><feBlend in="SourceGraphic" mode="soft-light"/></filter>
+  <g id="grass"><path d="M0 26 -12 -7 4 13 11 -18 13 17 29 -4 21 27Z" fill="#668342" opacity=".32"/><path d="m4 25 7-43 2 35 16-21-8 31Z" fill="#c5d68a" opacity=".32"/></g><g id="leaf"><ellipse rx="5" ry="11" fill="#59793e" opacity=".28" transform="rotate(-35)"/></g></defs>
+  <g filter="url(#paper)"><path d="M0 0h700v700H0Z" fill="#afbf87" opacity=".12"/><path d="M-20 610q210-140 420-100T760 440" fill="none" stroke="#d6dbaa" stroke-width="60" opacity=".12"/>
+  <use href="#grass" x="34" y="60"/><use href="#grass" x="220" y="148"/><use href="#grass" x="594" y="47"/><use href="#grass" x="459" y="293"/><use href="#grass" x="89" y="403"/><use href="#grass" x="299" y="600"/><use href="#grass" x="645" y="567"/><use href="#grass" x="473" y="690"/>
+  <use href="#leaf" x="141" y="239"/><use href="#leaf" x="157" y="254"/><use href="#leaf" x="530" y="420"/><use href="#leaf" x="543" y="399"/><use href="#leaf" x="568" y="411"/><use href="#leaf" x="335" y="47"/><use href="#leaf" x="352" y="39"/>
+  <g fill="#dce2bc" opacity=".23"><path d="m84 572 23-14 28 13-24 16Z"/><path d="m391 191 15-7 17 8-19 7Z"/><path d="m612 327 24-10 21 9-24 13Z"/></g></g>
+</svg>

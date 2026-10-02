@@ -29,6 +29,7 @@ import friendsRoutes from "./routes/friends.js"; // 好友系统（申请/列表
 import profileRoutes from "./routes/profile.js"; // 个人主页（含匿名可达）
 import dashboardRoutes from "./routes/dashboard.js"; // 数据看板（个人 + 管理端）
 import binanceRoutes from "./routes/binance.js";
+import { publicProviders } from "./services/channel-types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -55,6 +56,13 @@ app.use(
 // build_id：当前部署的前端 bundle 名。前端拿它和自己的 script src 比对，
 // 不一致说明页面还是旧包（SPA 打开后不会再取 index.html），提示刷新。
 app.get("/api/status", (req, res) => ok(res, { ...publicStatus(), build_id: buildId() }));
+// 首页只公开系统已集成的厂商目录，不暴露部署中的账号、渠道名称或凭据。
+app.get("/api/catalog", (req, res) => ok(res, {
+  providers: publicProviders().filter((p) => p.key !== "custom").map((p) => ({
+    key: p.key, name: p.name, icon: p.icon,
+    methods: p.methods.map((m) => m.label),
+  })),
+}));
 app.get("/health", (req, res) => res.send("ok"));
 
 app.use("/api/user", authRoutes);

@@ -304,7 +304,8 @@ export function Legend({ series = [] }) {
 export function BarChart({ bars = [], height = 170, valueFormat = fmtCompact, showValue = true, color }) {
   const [hover, setHover] = useState(null);
   const [wrapRef, W] = useResizeWidth(520);
-  if (!bars.length) return <Blank height={height} />;
+  // 空态与有数据时保留同一个测宽节点，避免异步加载后一直使用兜底宽度。
+  if (!bars.length) return <div ref={wrapRef} className="oo-trend-wrap"><Blank height={height} /></div>;
   const H = height;
   const PAD = { l: 40, r: 8, t: 14, b: 22 };
   const innerW = Math.max(10, W - PAD.l - PAD.r);

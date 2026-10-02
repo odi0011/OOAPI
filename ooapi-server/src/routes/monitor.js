@@ -16,6 +16,7 @@ import { runtimeConcurrency } from "../services/router.js";
 import { evaluateAlerts, engineStatus, METRICS, OPERATORS, SEVERITIES, DEFAULT_RULES, silenceActive } from "../services/alert.js";
 import { sendTestMail, sendWebhook, webhookPlatform, smtpConfig } from "../services/notify.js";
 import { START_TIME, VERSION, getNumberOption, getBoolOption, getOption } from "../config.js";
+import { USAGE_SQL } from "../services/log.js";
 
 const router = Router();
 // 注意：/stream 走「一次性票据」自鉴权（EventSource 无法带 Authorization 头），
@@ -64,13 +65,13 @@ async function platformOverview() {
   );
   const nowSec = now();
   const [[h1]] = await pool.query(
-    `SELECT SUM(type = 2) AS calls, SUM(type = 4) AS errors, COALESCE(SUM(quota),0) AS units
-       FROM logs WHERE created_at >= ?`,
+    `SELECT COUNT(*) AS calls, SUM(type = 4 AND status <> 'stopped') AS errors, COALESCE(SUM(quota),0) AS units
+       FROM logs WHERE created_at >= ? AND ${USAGE_SQL}`,
     [nowSec - 3600]
   );
   const [[h24]] = await pool.query(
-    `SELECT SUM(type = 2) AS calls, SUM(type = 4) AS errors, COALESCE(SUM(quota),0) AS units
-       FROM logs WHERE created_at >= ?`,
+    `SELECT COUNT(*) AS calls, SUM(type = 4 AND status <> 'stopped') AS errors, COALESCE(SUM(quota),0) AS units
+       FROM logs WHERE created_at >= ? AND ${USAGE_SQL}`,
     [nowSec - 86400]
   );
   // 注意这里是 `const [tbl]` 而不是 `const [[tbl]]`：

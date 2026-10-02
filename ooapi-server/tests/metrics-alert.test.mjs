@@ -26,6 +26,10 @@ function t(name, fn) {
   }
 }
 
+t("尚无首 Token 样本时不虚报 0ms", () => {
+  assert.equal(windowStats(5).avgTtftMs, null);
+});
+
 console.log("错误归类（SLA 口径的核心）");
 t("业务限制错误码单独计数，不算上游故障", () => {
   const before = snapshot().gateway;

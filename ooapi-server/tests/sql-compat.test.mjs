@@ -39,12 +39,15 @@ try {
   process.exit(0);
 }
 
-const [[mode]] = await pool.query("SELECT @@sql_mode AS m");
+// 所有断言固定使用同一连接，并只修改该会话的模式，不能依赖本机默认宽松设置。
+const connection = await pool.getConnection();
+await connection.query("SET SESSION sql_mode = CONCAT_WS(',', @@sql_mode, 'ONLY_FULL_GROUP_BY')");
+const [[mode]] = await connection.query("SELECT @@sql_mode AS m");
 console.log(`sql_mode: ${mode.m.includes("ONLY_FULL_GROUP_BY") ? "含 ONLY_FULL_GROUP_BY（与线上一致）" : "不含（本机宽松模式，测不出问题）"}\n`);
 
 /** 断言：一条 SQL 能被 MySQL 解析并执行（只看语法/语义合法性，不看结果） */
 async function exec(sql, args = []) {
-  await pool.query(sql, args);
+  await connection.query(sql, args);
 }
 
 // ---------------------------------------------------------------------------
@@ -70,7 +73,7 @@ await t("看板：用户排行（JOIN users 后按 l.user_id 分组）", () =>
             u.username, u.display_name, u.avatar_media_id
        FROM logs l LEFT JOIN users u ON u.id = l.user_id
       WHERE ${usageLogWhere('l')} AND l.created_at >= ?
-      GROUP BY l.user_id ORDER BY units DESC LIMIT 10`,
+      GROUP BY l.user_id, u.username, u.display_name, u.avatar_media_id ORDER BY units DESC LIMIT 10`,
     [0]
   )
 );
@@ -82,7 +85,7 @@ await t("看板：渠道表现（JOIN channels 后按 l.channel_id 分组）", (
             c.name AS channel_name, c.type AS channel_type
        FROM logs l LEFT JOIN channels c ON c.id = l.channel_id
       WHERE ${usageLogWhere('l')} AND l.created_at >= ? AND l.channel_id > 0
-      GROUP BY l.channel_id ORDER BY units DESC LIMIT 12`,
+      GROUP BY l.channel_id, c.name, c.type ORDER BY units DESC LIMIT 12`,
     [0]
   )
 );
@@ -287,6 +290,7 @@ await t("社区：帖子最后回复时间回填（UPDATE ... JOIN 聚合子查�
   )
 );
 
+connection.release();
 await pool.end().catch(() => {});
 console.log(`\n${passed} 通过 / ${failed} 失败${skipped ? ` / ${skipped} 跳过` : ""}`);
 process.exit(failed ? 1 : 0);

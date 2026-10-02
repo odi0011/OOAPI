@@ -454,7 +454,7 @@ export function windowStats(windowMin = 5) {
     tokens,
     successRate: calls ? Number((((calls - errors) / calls) * 100).toFixed(2)) : null,
     errorRate: calls ? Number(((errors / calls) * 100).toFixed(2)) : null,
-    avgTtftMs: ttftCount ? Math.round(ttftSum / ttftCount) : 0,
+    avgTtftMs: ttftCount ? Math.round(ttftSum / ttftCount) : null,
     qps: Number((calls / (w * 60)).toFixed(3)),
     tps: Number((tokens / (w * 60)).toFixed(2)),
   };
