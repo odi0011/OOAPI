@@ -44,6 +44,7 @@ const MAX_CHAT_IMAGES = 30;
 const LS_KEY_ID = "oo.chat.keyId";
 import { chatApi, runChatStream, resumeChatStream } from "../services/chat";
 import { useApp } from "../context/AppContext";
+import BrandLogo, { BrandName } from "../components/BrandLogo";
 import Markdown from "../components/Markdown";
 import { OdCoin } from "../components/OdCoin";
 import { formatDuration } from "../components/UsageCells";
@@ -1673,7 +1674,7 @@ export default function ChatPage() {
               ))
             ) : (
               <section className="ui-chat2-welcome">
-                <div className="bui-eyebrow">OOAPI · 对话</div>
+                <div className="bui-eyebrow"><BrandLogo size={17}/> <BrandName/> · 对话</div>
                 <h2>今天，想弄清楚什么？</h2>
                 <p>直接提问即可。需要查资料、读网页、查你的账号时，助手会自己调用工具，并把过程摊开给你看。</p>
                 <div className="bui-suggests">

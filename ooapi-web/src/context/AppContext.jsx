@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { API, getToken, setToken } from "../services/api";
 import { useTheme } from "../theme/ThemeContext";
+import { brandImageUrl } from "../services/branding";
 
 const AppContext = createContext(null);
 
@@ -19,10 +20,10 @@ export function AppProvider({ children }) {
       const s = await API.get("/status");
       setStatus(s);
       if (s?.system_name) document.title = s.system_name;
-      if (s?.logo) {
-        const link = document.querySelector("link[rel='icon']");
-        if (link) link.href = s.logo;
-      }
+      let link = document.querySelector("link[rel='icon']");
+      if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.appendChild(link); }
+      link.removeAttribute('type');
+      link.href = brandImageUrl(s?.favicon, brandImageUrl(s?.logo));
     } catch {
       /* 状态接口失败不阻塞 */
     }
@@ -96,8 +97,8 @@ export function AppProvider({ children }) {
     return data.user;
   }, []);
 
-  const register = useCallback(async (username, password) => {
-    const data = await API.post("/user/register", { username, password });
+  const register = useCallback(async (username, password, { email, invite_code } = {}) => {
+    const data = await API.post("/user/register", { username, password, email, invite_code });
     sessionEpoch.current += 1;
     setToken(data.token);
     setUser(data.user);

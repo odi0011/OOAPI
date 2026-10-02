@@ -1,246 +1,93 @@
-import React, { useEffect, useState } from "react";
-import { Tabs, Form, Input, Button, App as AntApp, Space, Alert } from "antd";
-import {
-  UserOutlined,
-  LockOutlined,
-  ApiOutlined,
-  KeyOutlined,
-  FundOutlined,
-} from "@ant-design/icons";
-import { useNavigate, useLocation, Navigate } from "react-router-dom";
+import React, { useRef, useState } from "react";
+import { Form, Input, Button, App as AntApp, Alert, Modal, Spin } from "antd";
+import { ArrowRightOutlined, CheckOutlined, LockOutlined, MailOutlined, KeyOutlined, UserOutlined } from "@ant-design/icons";
+import { useNavigate, useLocation, Navigate, Link } from "react-router-dom";
 import { useApp } from "../context/AppContext";
-import ThemeSwitch from "../components/ThemeSwitch";
+import BrandLogo, { BrandName } from "../components/BrandLogo";
+import { StudioPage, StudioHeader, StudioFooter, StudioCat, useStudioMotion } from "../components/StudioUI";
 
-const POINTS = [
-  { icon: <ApiOutlined />, text: "OpenAI 兼容接口，改个 baseURL 即可接入" },
-  { icon: <KeyOutlined />, text: "独立令牌分发，支持额度上限与模型白名单" },
-  { icon: <FundOutlined />, text: "按 token 精确计费，用量与账单实时可查" },
-];
-
-export default function AuthPage({ initialTab = "login" }) {
-  const { user, status, login, register, loading } = useApp();
+export default function AuthPage() {
+  const { user, status, login, register, loading, refreshStatus } = useApp();
   const { message } = AntApp.useApp();
   const navigate = useNavigate();
   const location = useLocation();
-  const [tab, setTab] = useState(initialTab);
+  const motion = useStudioMotion();
+  const tab = location.pathname === "/register" ? "register" : "login";
+  const isRegister = tab === "register";
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [privateFocus, setPrivateFocus] = useState(false);
+  const [legal, setLegal] = useState(null);
+  const pending = useRef(false);
   const [loginForm] = Form.useForm();
   const [regForm] = Form.useForm();
+  const minLength = Math.max(6, Number(status?.password_min_length) || 8);
+  const closed = isRegister ? status?.password_register_enabled === false : status?.password_login_enabled === false;
+  const from = location.state?.from;
+  const requested = from ? `${from.pathname || "/console"}${from.search || ""}${from.hash || ""}` : "/console";
+  const destination = requested.startsWith("/") && !requested.startsWith("//") ? requested : "/console";
+  if (!loading && user) return <Navigate to={destination} replace />;
 
-  useEffect(() => {
-    setTab(location.pathname === "/register" ? "register" : "login");
-  }, [location.pathname]);
-
-  if (!loading && user) return <Navigate to="/console" replace />;
-
-  const onFinish = async (kind, values) => {
-    setBusy(true);
-    try {
-      if (kind === "login") {
-        await login(values.username, values.password);
-        message.success("登录成功");
-      } else {
-        await register(values.username, values.password);
-        message.success("注册成功");
-      }
-      // 回跳保留 query/hash：仅用 pathname 会丢掉筛选条件、深链接参数
-      const from = location.state?.from;
-      const to = from ? `${from.pathname || "/console"}${from.search || ""}${from.hash || ""}` : "/console";
-      navigate(to, { replace: true });
-    } catch (e) {
-      message.error(e.message || "操作失败");
-    } finally {
-      setBusy(false);
-    }
+  const changeTab = (next) => {
+    setError(""); setPrivateFocus(false);
+    navigate(next === "register" ? "/register" : "/login", { replace: true, state: from ? { from } : undefined });
   };
+  const onFinish = async (values) => {
+    if (pending.current || closed || !status) return;
+    pending.current = true; setBusy(true); setError("");
+    try {
+      if (isRegister) await register(values.username.trim(), values.password, { email: values.email?.trim(), invite_code: values.invite_code?.trim() });
+      else await login(values.username.trim(), values.password);
+      message.success(isRegister ? "注册成功，欢迎加入" : "欢迎回来");
+      navigate(destination, { replace: true });
+    } catch (e) {
+      const text = e.message || "操作失败，请稍后再试";
+      setError(text); message.error(text);
+    } finally { pending.current = false; setBusy(false); }
+  };
+  const passwordRules = [{ required: true, message: "请输入密码" }, ...(isRegister ? [
+    { min: minLength, message: `密码至少 ${minLength} 位` },
+    { validator: (_, v) => !v || (/\S/.test(v) && !/^[0-9]+$/.test(v) && !/^[a-zA-Z]+$/.test(v)) ? Promise.resolve() : Promise.reject(new Error("密码不能全是空格、纯字母或纯数字")) },
+    { validator: (_, v) => !v || new TextEncoder().encode(v).length <= 72 ? Promise.resolve() : Promise.reject(new Error("密码过长（最多 72 字节）")) },
+  ] : [])];
 
-  const nameInput = (
-    <Form.Item
-      name="username"
-      label="用户名"
-      rules={[
-        { required: true, message: "请输入用户名" },
-        { pattern: /^[a-zA-Z0-9_]{2,32}$/, message: "2-32 位字母、数字或下划线" },
-      ]}
-    >
-      <Input prefix={<UserOutlined style={{ color: "var(--ink-3)" }} />} placeholder="用户名" size="large" autoComplete="username" />
-    </Form.Item>
-  );
-
-  // 登录只要求非空：历史密码可能不满足当前强度规则，强度校验只用于注册/改密
-  const loginPwdRules = [{ required: true, message: "请输入密码" }];
-
-  const registerPwdRules = [
-    { required: true, message: "请输入密码" },
-    { min: 8, message: "密码至少 8 位" },
-    {
-      validator: (_, v) =>
-        !v || /^[0-9]+$/.test(v) || /^[a-zA-Z]+$/.test(v)
-          ? Promise.reject(new Error("密码需同时包含字母和数字"))
-          : Promise.resolve(),
-    },
-  ];
-
-  const loginFormEl = (
-    <>
-      {status?.password_login_enabled === false ? (
-        <Alert
-          type="warning"
-          showIcon
-          style={{ marginBottom: 14 }}
-          message="管理员已关闭密码登录"
-          description="如有需要请联系管理员开启，或使用其他管理员提供的登录方式。"
-        />
-      ) : null}
-      <Form
-        form={loginForm}
-        layout="vertical"
-        onFinish={(v) => onFinish("login", v)}
-        disabled={busy || status?.password_login_enabled === false}
-        requiredMark={false}
-      >
-        {nameInput}
-        <Form.Item name="password" label="密码" rules={loginPwdRules}>
-          <Input.Password
-            prefix={<LockOutlined style={{ color: "var(--ink-3)" }} />}
-            placeholder="密码"
-            size="large"
-            autoComplete="current-password"
-          />
-        </Form.Item>
-        <Button type="primary" htmlType="submit" size="large" block loading={busy} style={{ marginTop: 4 }}>
-          登录
-        </Button>
-      </Form>
-    </>
-  );
-
-  const registerFormEl = (
-    <Form form={regForm} layout="vertical" onFinish={(v) => onFinish("register", v)} disabled={busy} requiredMark={false}>
-      {nameInput}
-      <Form.Item name="password" label="密码" rules={registerPwdRules}>
-        <Input.Password
-          prefix={<LockOutlined style={{ color: "var(--ink-3)" }} />}
-          placeholder="8 位以上，字母 + 数字"
-          size="large"
-          autoComplete="new-password"
-        />
-      </Form.Item>
-      <Form.Item
-        name="confirm"
-        label="确认密码"
-        dependencies={["password"]}
-        rules={[
-          { required: true, message: "请再次输入密码" },
-          ({ getFieldValue }) => ({
-            validator(_, v) {
-              return !v || getFieldValue("password") === v
-                ? Promise.resolve()
-                : Promise.reject(new Error("两次密码不一致"));
-            },
-          }),
-        ]}
-      >
-        <Input.Password
-          prefix={<LockOutlined style={{ color: "var(--ink-3)" }} />}
-          placeholder="确认密码"
-          size="large"
-          autoComplete="new-password"
-        />
-      </Form.Item>
-      <Button type="primary" htmlType="submit" size="large" block loading={busy} style={{ marginTop: 4 }}>
-        创建账户
-      </Button>
-    </Form>
-  );
-
-  return (
-    <div className="oo-auth">
-      {/* 左侧：品牌面板（网格 + 辉光） */}
-      <div className="oo-auth-brand">
-        <div className="oo-auth-brand-inner">
-          <Space size={10} align="center">
-            <img
-              src={status?.logo || "/logo.jpg"}
-              alt="logo"
-              style={{ width: 34, height: 34, borderRadius: 9, objectFit: "cover", border: "1px solid var(--line)" }}
-            />
-            <span style={{ fontWeight: 650, fontSize: 16 }}>{status?.system_name || "OOAPI"}</span>
-          </Space>
-
-          <h1 className="oo-auth-headline">
-            大模型 API
-            <br />
-            网关与分发平台
-          </h1>
-          <p className="oo-auth-sub">
-            {status?.about || "统一接入多家大模型，签发令牌、精确计费、全链路审计，开箱即用。"}
-          </p>
-
-          <div className="oo-auth-points">
-            {POINTS.map((p) => (
-              <div className="oo-auth-point" key={p.text}>
-                {p.icon}
-                <span>{p.text}</span>
-              </div>
-            ))}
-          </div>
+  return <StudioPage motion={motion} className="studio-auth">
+    <StudioHeader status={status} motion={motion} auth />
+    <main className="studio-auth-main">
+      <section className="studio-auth-story" aria-label="欢迎来到工作室">
+        <span className="studio-eyebrow"><span className="studio-status-dot" /> 你的灵感，有个落脚的地方</span>
+        <h1>{isRegister ? <>好点子，<br />在这里<span>发芽。</span></> : <>回来啦。<br />一起做点<span>好东西。</span></>}</h1>
+        <p>模型、应用与下一次灵感，<br />在同一个工作台里相遇。</p>
+        <div className="studio-auth-scene"><img className="studio-auth-garden" src="/illustrations/studio-world.webp" alt="纸雕云端工作室" /><div className="studio-auth-scene-label"><span><BrandLogo size={19}/> <BrandName/> MODEL WORKSPACE</span><i>一个入口 · 三种兼容协议</i></div><StudioCat pose={privateFocus ? "nap" : isRegister ? "wave" : "code"} interactive={!privateFocus} motion={motion.active} className={`studio-auth-cat${privateFocus ? " is-sleeping" : ""}`} eager /><span className="studio-auth-cat-caption" aria-live="polite">{privateFocus ? "我先闭会儿眼，你慢慢输入。" : isRegister ? "你好，新朋友。" : "给灵感留个位，也给小猫留个位。"}</span></div>
+        <div className="studio-auth-points"><span><CheckOutlined /> 熟悉的 API</span><span><CheckOutlined /> 独立应用令牌</span><span><CheckOutlined /> 清晰的用量记录</span></div>
+      </section>
+      <section className="studio-auth-form-area">
+        <div className="studio-auth-paper">
+          <span className="studio-auth-paper-mark" aria-hidden="true">✳</span>
+          <div className="studio-auth-switch" role="tablist" aria-label="账户入口"><Button type="text" role="tab" aria-selected={!isRegister} disabled={busy} onClick={() => changeTab("login")} className={!isRegister ? "is-active" : ""}>登录</Button><Button type="text" role="tab" aria-selected={isRegister} disabled={busy} onClick={() => changeTab("register")} className={isRegister ? "is-active" : ""}>注册</Button></div>
+          <div className="studio-auth-heading"><span className="studio-eyebrow">{isRegister ? "NICE TO MEET YOU" : "GOOD TO SEE YOU AGAIN"}</span><h2>{isRegister ? "创建你的工作台" : "欢迎回到工作台"}</h2><p>{isRegister ? "从一个账号，开始下一件作品。" : "继续你的对话、应用和未完的好点子。"}</p></div>
+          {status?.login_page_notice && <Alert type="info" showIcon message={status.login_page_notice} />}
+          {!status ? <div className="studio-auth-config">{loading ? <Spin tip="正在读取站点设置" /> : <Alert type="warning" showIcon message="暂时无法读取登录设置" action={<Button onClick={refreshStatus}>重试</Button>} />}</div> : closed ? <div className="studio-auth-closed"><LockOutlined /><h3>{isRegister ? "工作室暂未开放注册" : "密码登录暂未开放"}</h3><p>{isRegister ? "已有账号可以直接登录。新账号请联系管理员开通。" : "请联系管理员获取当前可用的登录方式。"}</p>{isRegister && <Button onClick={() => changeTab("login")}>我有账号，去登录 <ArrowRightOutlined /></Button>}</div> : <Form
+            key={tab} form={isRegister ? regForm : loginForm} name={tab} layout="vertical" onFinish={onFinish} disabled={busy} requiredMark={false}
+            className="studio-auth-fields" onValuesChange={() => setError("")} onFocusCapture={(e) => setPrivateFocus(/password|confirm/.test(e.target.id || ""))} onBlurCapture={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setPrivateFocus(false); }}
+          >
+            {error && <Alert type="error" showIcon message={error} role="alert" />}
+            <Form.Item name="username" label="用户名" rules={[{ required: true, message: "请输入用户名" }, { pattern: /^[a-zA-Z0-9_]{2,32}$/, message: "2–32 位字母、数字或下划线" }]}><Input prefix={<UserOutlined />} placeholder={isRegister ? "给你的账号取个名字" : "输入用户名"} size="large" autoComplete="username" maxLength={32} /></Form.Item>
+            {isRegister && status.register_email_required && <Form.Item name="email" label="邮箱" rules={[{ required: true, message: "请输入邮箱" }, { type: "email", message: "请输入有效邮箱" }]}><Input prefix={<MailOutlined />} placeholder="用于账号联系的邮箱" size="large" autoComplete="email" /></Form.Item>}
+            {isRegister && status.register_invite_only && <Form.Item name="invite_code" label="邀请码" rules={[{ required: true, message: "请输入邀请码" }]}><Input prefix={<KeyOutlined />} placeholder="输入邀请人提供的邀请码" size="large" autoComplete="off" /></Form.Item>}
+            <Form.Item name="password" label="密码" rules={passwordRules} extra={isRegister ? `至少 ${minLength} 位，不能仅由字母或数字组成` : undefined}><Input.Password prefix={<LockOutlined />} placeholder={isRegister ? "设置一个可靠的密码" : "输入密码"} size="large" autoComplete={isRegister ? "new-password" : "current-password"} /></Form.Item>
+            {isRegister && <Form.Item name="confirm" label="确认密码" dependencies={["password"]} rules={[{ required: true, message: "请再次输入密码" }, ({ getFieldValue }) => ({ validator: (_, value) => !value || getFieldValue("password") === value ? Promise.resolve() : Promise.reject(new Error("两次密码不一致")) })]}><Input.Password prefix={<LockOutlined />} placeholder="再输入一次，确认无误" size="large" autoComplete="new-password" /></Form.Item>}
+            <Button className="studio-button studio-auth-submit" htmlType="submit" size="large" block loading={busy}>{isRegister ? "创建账户，开始构建" : "登录工作台"}<ArrowRightOutlined /></Button>
+          </Form>}
+          <div className="studio-auth-help">{isRegister ? "已经有账号？" : "第一次来这里？"}<Button type="link" disabled={busy} onClick={() => changeTab(isRegister ? "login" : "register")}>{isRegister ? "欢迎回来" : status?.password_register_enabled === false ? "查看注册说明" : "创建一个账号"}<ArrowRightOutlined /></Button></div>
+          {(status?.legal_user_agreement || status?.legal_privacy_policy) && <div className="studio-auth-legal">{status?.legal_user_agreement && <Button type="link" onClick={() => setLegal("terms")}>用户协议</Button>}{status?.legal_privacy_policy && <Button type="link" onClick={() => setLegal("privacy")}>隐私政策</Button>}</div>}
         </div>
-
-        <div className="oo-auth-brand-inner" style={{ fontSize: 12, color: "var(--ink-3)" }}>
-          {status?.footer || `© ${new Date().getFullYear()} OOAPI`}
-        </div>
-      </div>
-
-      {/* 右侧：表单区 */}
-      <div className="oo-auth-form">
-        <div style={{ position: "absolute", top: 20, right: 20 }}>
-          <ThemeSwitch size="small" />
-        </div>
-
-        <div className="oo-auth-box">
-          <img className="oo-auth-logo" src={status?.logo || "/logo.jpg"} alt="logo" />
-          <h2 className="oo-auth-title">{tab === "login" ? "欢迎回来" : "创建账户"}</h2>
-          <div className="oo-auth-desc">
-            {tab === "login" ? "登录以管理你的令牌与用量" : "注册后即可创建令牌并调用接口"}
-          </div>
-
-          <Tabs
-            activeKey={tab}
-            onChange={(k) => {
-              setTab(k);
-              const from = location.state?.from;
-              navigate(k === "register" ? "/register" : "/login", {
-                replace: true,
-                state: from ? { from } : undefined,
-              });
-            }}
-            items={[
-              { key: "login", label: "登录", children: loginFormEl },
-              {
-                key: "register",
-                label: "注册",
-                children:
-                  status?.password_register_enabled === false ? (
-                    <div
-                      style={{
-                        padding: "36px 0",
-                        textAlign: "center",
-                        color: "var(--ink-2)",
-                        fontSize: 13,
-                      }}
-                    >
-                      <LockOutlined style={{ fontSize: 26, display: "block", margin: "0 auto 12px", color: "var(--ink-3)" }} />
-                      系统当前未开放注册，请联系管理员开通
-                    </div>
-                  ) : (
-                    registerFormEl
-                  ),
-              },
-            ]}
-          />
-        </div>
-      </div>
-    </div>
-  );
+        <Link className="studio-auth-guide" to="/#quickstart"><CodeHint /> 第一次接入 API？从这份指南开始 <ArrowRightOutlined /></Link>
+      </section>
+    </main>
+    <StudioFooter status={status} />
+    <Modal open={Boolean(legal)} title={legal === "terms" ? "用户协议" : "隐私政策"} footer={null} onCancel={() => setLegal(null)}><div className="studio-legal-content">{legal === "terms" ? status?.legal_user_agreement : status?.legal_privacy_policy}</div></Modal>
+  </StudioPage>;
 }
+
+function CodeHint() { return <span aria-hidden="true">⌘</span>; }

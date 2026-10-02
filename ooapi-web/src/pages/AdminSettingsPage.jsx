@@ -21,6 +21,7 @@ import { useApp } from "../context/AppContext";
 import PageHeader from "../components/PageHeader";
 import AppearanceSettings from "../components/AppearanceSettings";
 import { OdCoin } from "../components/OdCoin";
+import BrandLogo from "../components/BrandLogo";
 import "./admin-settings.css";
 
 const { Text } = Typography;
@@ -31,8 +32,8 @@ const { Text } = Typography;
 const F = {
   // ---------- 站点 ----------
   system_name: { g: "site", label: "系统名称", type: "text", ph: "OOAPI" },
-  logo: { g: "site", label: "Logo 地址", type: "text", ph: "/logo.jpg" },
-  favicon: { g: "site", label: "站点图标", type: "text", ph: "留空则复用 Logo" },
+  logo: { g: "site", label: "Logo 地址", type: "image", ph: "/logo.jpg", hint: "全站统一使用：导航、首页演示、登录注册页与平台默认标识。支持图片 URL 或站内路径。" },
+  favicon: { g: "site", label: "站点图标", type: "image", ph: "留空则复用 Logo", hint: "浏览器标签页图标；留空跟随上面的 Logo。" },
   server_address: { g: "site", label: "服务器地址", type: "text", ph: "https://api.example.com" },
   api_endpoint: { g: "site", label: "API 端点", type: "text", ph: "留空自动拼接 服务器地址/v1" },
   docs_link: { g: "site", label: "文档链接", type: "text", ph: "https://..." },
@@ -313,6 +314,7 @@ function Field({ spec, name, locked = false, ...controlProps }) {
   // Form.Item 把 value/checked/onChange 注入自定义 Field；必须继续传给实际控件，
   // 否则用户改的是控件内部值，提交的仍是加载时的旧设置。
   const common = { ...controlProps, placeholder: spec.ph, disabled };
+  if (spec.type === "image") return <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><BrandLogo src={controlProps.value} size={36} style={{ borderRadius: 7, padding: 3, background: 'var(--field)' }}/><Input {...common} /></div>;
   if (spec.type === "visibility") return <VisibilityFields {...controlProps} disabled={disabled} />;
   if (spec.type === "switch") return <Switch {...controlProps} disabled={disabled} />;
   if (spec.type === "number") {

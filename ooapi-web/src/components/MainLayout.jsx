@@ -32,6 +32,7 @@ import { API } from "../services/api";
 import { useTheme } from "../theme/ThemeContext";
 import ThemeSwitch from "./ThemeSwitch";
 import UserAvatar from "./UserAvatar";
+import BrandLogo from "./BrandLogo";
 
 const { Header, Sider, Content } = Layout;
 const { useBreakpoint } = Grid;
@@ -307,7 +308,7 @@ export default function MainLayout() {
 
   const brand = (
     <div className="oo-brand">
-      <img src={status?.logo || "/logo.jpg"} alt="logo" />
+      <BrandLogo size={30} alt={`${status?.system_name || 'OOAPI'} Logo`} />
       {!collapsed && <span className="oo-brand-name">{status?.system_name || "OOAPI"}</span>}
     </div>
   );

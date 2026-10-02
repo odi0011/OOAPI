@@ -18,6 +18,7 @@
 import React from "react";
 import { Tooltip } from "antd";
 import { TeamOutlined } from "@ant-design/icons";
+import BrandLogo from "./BrandLogo";
 
 const ICON_DIR = "/icons";
 
@@ -302,6 +303,8 @@ export function vendorNameForModel(model) {
  */
 export function VendorIcon({ type, size = 16, radius, title, className, style }) {
   const file = iconFileForChannel(type);
+  if (file === PLATFORM_LOGO) return <BrandLogo size={size} alt={title || type || ''} className={className}
+    loading="lazy" style={{ borderRadius: radius ?? Math.max(3, Math.round(size * .22)), display: 'block', ...style }} />;
   return (
     <img
       src={iconSrc(file)}
@@ -430,7 +433,7 @@ export function ModelLabel({ model, size = 15, showVendor = false, className, st
       title={title}
       style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0, ...style }}
     >
-      <img
+      {file === PLATFORM_LOGO ? <BrandLogo size={size} loading="lazy" style={{ borderRadius: Math.max(3, Math.round(size * .22)), display: 'block' }}/> : <img
         src={iconSrc(file)}
         alt=""
         className={MONO_ICONS.has(file) ? "oo-vendor-icon--mono" : undefined}
@@ -446,7 +449,7 @@ export function ModelLabel({ model, size = 15, showVendor = false, className, st
           flexShrink: 0,
           display: "block",
         }}
-      />
+      />}
       <span className="oo-truncate" style={{ fontFamily: "var(--font-mono)", fontSize: "0.95em" }}>
         {model}
       </span>

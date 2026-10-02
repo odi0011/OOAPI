@@ -1,0 +1,8 @@
+Use case: stylized-concept
+Make ONE high-detail production atlas with FOUR isolated illustrations of the owner-approved cat in image 1. Image 2 shows the approved identity's intended actions. The cat has neutral SILVER GREY and WHITE fur, large dark-pupil eyes, broad rounded cheeks, short compact muzzle, pink nose, irregular white forehead blaze. Match image 1 identity EXACTLY. No brown or tan fur; neutral lighting.
+Canvas 1536x1024, 2 equal columns x 2 equal rows; each cell is 768x512. Leave 50px empty margins all around each group. Full objects visible without cropping. Clean delicate editorial ink illustration, detailed soft fur, no sepia shading. Use one identical style across four cells.
+TOP LEFT: head and upper chest peeking above an invisible panel edge with both white front paws draped down. No actual ledge, no line across body, no background shape.
+TOP RIGHT: full-body seated grey-white cat holding a large silver key against its chest with both paws, gentle face, curled tail.
+BOTTOM LEFT: cat sitting at a small graphite open laptop, paws typing, face visible, curled tail fully visible, no logo.
+BOTTOM RIGHT: cat curled asleep, white paws near pink nose, grey tail around body, small yellow plush fish on head.
+Every empty pixel is flat solid chroma key MAGENTA #ff00ff. No magenta spill, glow, shadows, floor, rectangles, halos, text, labels, watermark, other animals or extra props. Each of four illustrations must remain entirely inside its own quadrant without touching adjacent artwork. This is a single production sheet with four large sprites, NOT four separate images. Keep the same face and grey coat consistently.

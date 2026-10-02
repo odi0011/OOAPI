@@ -25,7 +25,7 @@ try{
    check(name+' '+theme+' '+width+' 无页面横向溢出',await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth + 1));
    await page.screenshot({path:path.join(OUT,name+'-'+theme+'-'+width+'.png')});
    if(route==='/'){
-    check('文档入口是本站指南',await page.locator('.home-menubar a').filter({hasText:'文档'}).getAttribute('href')==='#quickstart');
+    check('文档入口是本站指南',await page.locator('.studio-header a').filter({hasText:'文档'}).getAttribute('href')==='#quickstart');
     const catalog=await (await page.request.get(BASE+'/api/catalog')).json();
     check('首页厂商数量匹配真实注册表',await page.locator('.home-vendor').count()===catalog.data.providers.length);
     await page.getByRole('tab',{name:'选择模型与厂商'}).click();check('厂商标签页可切换',await page.locator('.home-provider-demo').isVisible());
@@ -49,7 +49,7 @@ try{
  await page.goto(BASE+'/console',{waitUntil:'networkidle'});
  await page.getByRole('link',{name:'接入指南'}).click();
  await page.waitForTimeout(300);
- check('从看板可跳到首页接入文档',await page.locator('#quickstart').evaluate(e=>location.hash === '#quickstart' && scrollY > 0 && e.getBoundingClientRect().top >= 0 && e.getBoundingClientRect().bottom <= innerHeight));
+ check('从看板可跳到首页接入文档',await page.locator('#quickstart').evaluate(e=>location.hash === '#quickstart' && document.querySelector(".studio-window-scroll").scrollTop > 0 && e.getBoundingClientRect().top >= 0 && e.getBoundingClientRect().bottom <= innerHeight));
  await page.goto(BASE+'/console',{waitUntil:'networkidle'});
  const status=(await (await page.request.get(BASE+'/api/status')).json());
  let changed=false;
