@@ -4,6 +4,8 @@ import { ok, fail, asyncHandler, now, genApiKey, tokenToResponse, randomString, 
 import { authRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { visibleAccountData, requireUserData } from "../services/user-data-visibility.js";
+import { groupModelVendors, sourceVendors } from "../services/model-sources.js";
+import { modelRegistry } from "../services/models.js";
 
 const router = Router();
 router.use(authRequired);
@@ -14,11 +16,12 @@ router.use(authRequired);
 router.get(
   "/groups",
   asyncHandler(async (req, res) => {
+    await modelRegistry(); // 只读登记预热，使空声明/通配来源与真实路由能力一致。
     const [rows] = await pool.query(
       "SELECT vendor, name, remark, rate, models FROM channel_groups ORDER BY name"
     );
     // 成员账号的厂商集合：前端按「单厂商=单个图标 / 多厂商=折叠态图标」渲染
-    const [chans] = await pool.query("SELECT type, group_list, group_name FROM channels");
+    const [chans] = await pool.query("SELECT type, status, models, group_list, group_name FROM channels");
     const vendorsOf = new Map();
     for (const c of chans) {
       let list = [];
@@ -52,6 +55,8 @@ router.get(
           rate: Number(g.rate) || 1,
           models,
           vendors: [...(vendorsOf.get(g.name) || [])],
+          source_vendors: sourceVendors([...(vendorsOf.get(g.name) || [])]),
+          model_vendors: groupModelVendors(g, chans, { activeOnly: true }),
         }, req.user);
       })
     );

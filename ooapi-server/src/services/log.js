@@ -1,5 +1,6 @@
 import { pool } from "../db.js";
 import { now, deviceFromUa, clientIp } from "../utils.js";
+import { billingSourceVendors, sourceVendors } from "./model-sources.js";
 
 export const LOG_TYPE = {
   TOPUP: 1,
@@ -82,6 +83,9 @@ export async function writeLog({
   const requestPrompt = text(requestPromptText ?? audit.request_prompt_text ?? audit.prompt_text);
   const output = text(outputText ?? audit.output_text);
   if (isUsage) {
+    // 复用本次报价快照的实际接入品牌，不查库/猜型号；渠道改名/删除不改历史来源。
+    const sources = Object.hasOwn(audit, "source_vendors") ? sourceVendors(audit.source_vendors) : billingSourceVendors(audit.billing_details);
+    if (Object.hasOwn(audit, "source_vendors") || sources.length) audit.source_vendors = sources;
     audit.input_truncated = Boolean(audit.input_truncated || String(inputText ?? audit.input_text ?? "").length > 4000);
     audit.output_truncated = Boolean(audit.output_truncated || String(outputText ?? audit.output_text ?? "").length > 4000);
     audit.request_prompt_truncated = Boolean(audit.request_prompt_truncated || audit.prompt_truncated || String(requestPromptText ?? audit.request_prompt_text ?? audit.prompt_text ?? "").length > 4000);

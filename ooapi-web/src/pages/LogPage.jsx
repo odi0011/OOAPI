@@ -263,14 +263,12 @@ export default function LogPage() {
       // 窄屏加宽：模型名是这一列的核心信息，被截成 `deepseek-v4.1-fl`
       // 就失去意义了（黑盒测试在 390 视口实测：单元格 145px、内容 158px，被右侧裁掉）。
       width: 190,
-      // channelType 是**兜底**：模型名判定不出来时（OpenCode 的 omen-alpha、
-      // 聚合渠道的 openrouter/free）退回该渠道的厂商图标。
-      // 用户要求：「应该是跟随其厂商的图标啊」——渠道就是这些模型的厂商来源。
+      // 使用记录反映实际渠道来源；多次调用可有多个来源，不能按模型名猜原厂。
       // title 属性兜底：真的放不下时还能看到全名。
       render: (v, r) =>
         v ? (
           <span title={String(v)} style={{ display: "inline-flex", minWidth: 0 }}>
-            <ModelLabel model={v} size={14} channelType={r.channel_type || ""} />
+            <ModelLabel model={v} size={14} channelTypes={Array.isArray(r.source_vendors) ? r.source_vendors : r.channel_type ? [r.channel_type] : []} />
           </span>
         ) : (
           <span style={{ color: "var(--ink-3)" }}>-</span>
@@ -614,7 +612,7 @@ export default function LogPage() {
               <UserAvatar user={{ id: detail.user_id, username: detail.username }} size={20} showName />
             </Descriptions.Item>
             <Descriptions.Item label="模型">
-              <ModelLabel model={detail.model} size={15} channelType={detail.channel_type || ""} />
+              <ModelLabel model={detail.model} size={15} channelTypes={Array.isArray(detail.source_vendors) ? detail.source_vendors : detail.channel_type ? [detail.channel_type] : []} />
             </Descriptions.Item>
             <Descriptions.Item label="调用内容">{normalizeCurrency(detail.content)}</Descriptions.Item>
             <Descriptions.Item label="Tokens">

@@ -13,7 +13,7 @@
 //
 // 这个测试把它变成**确定性检查**：清单里的厂商必须在图标表里、
 // 且映射的文件必须真实存在于 public/icons/。漏了直接红，不用等用户发现。
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -127,6 +127,25 @@ t("cursor 与 trae 都有独立图标且文件存在", () => {
     ck(map[k] !== "__PLATFORM_LOGO__", `${k} 仍是平台 logo 兜底，应当是厂商自己的图标`);
     ck(existsSync(path.join(iconDir, map[k])), `${k} 映射的文件 ${map[k]} 不存在`);
   }
+});
+
+t("所有模型展示点都必须声明运行来源或原厂目录语义", () => {
+  const missing = [];
+  const visit = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) { visit(file); continue; }
+      if (!entry.name.endsWith(".jsx")) continue;
+      const src = readFileSync(file, "utf8");
+      for (const call of src.matchAll(/<ModelLabel\b[\s\S]*?\/>/g)) {
+        if (!/\b(?:channelType|channelTypes)\s*=|\bcatalog(?:\s|=|\/)/.test(call[0])) {
+          missing.push(`${path.relative(web, file)}:${src.slice(0, call.index).split("\n").length}`);
+        }
+      }
+    }
+  };
+  visit(path.join(web, "src"));
+  ck(!missing.length, `这些模型展示丢失来源上下文：${missing.join("、")}`);
 });
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);

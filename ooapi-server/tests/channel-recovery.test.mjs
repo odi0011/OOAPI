@@ -24,6 +24,7 @@ pool.query = async (sql, params = []) => {
   const q = String(sql).replace(/\s+/g, " ").trim();
   assert.equal((q.match(/\?/g) || []).length, params.length, `SQL parameter mismatch: ${q}`);
   if (q.startsWith("SELECT * FROM users")) return [[{ ...user }]];
+  if (q === "SELECT models FROM channel_groups") return [[]];
   if (q.startsWith("SELECT") && q.includes("FROM channels")) {
     if (q.includes("auto_test = 1")) return [[...(row.auto_test && row.status === 1 ? [{ ...row }] : [])]];
     if (q.includes("rate_limit_until > 0")) return [[...(row.status === 3 && row.rate_limit_until > 0 && row.rate_limit_until <= params[0] ? [{ ...row }] : [])]];

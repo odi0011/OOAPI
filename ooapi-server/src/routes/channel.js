@@ -28,6 +28,8 @@ import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod, i
 import { buildLoginUrl, exchangeCodeForCredential, interactiveLoginInfo, supportsInteractiveLogin, supportsInteractiveLoginMethod, supportsDeviceLogin, startDeviceLogin, pollDeviceLogin } from "../services/upstream/oauth-login.js";
 import { getAdapter, resetChannelState, forgetChannel, invalidateChannelCache, channelRuntimeState, channelRecent, rowToChannel, recordChannelCall, isRateLimitedCode, testFailurePauses, setChannelRateLimit, rateLimitPauseSec } from "../services/router.js";
 import { clearGroupConfigCache } from "../services/group-rate.js";
+import { groupModelVendors, channelModelVendors, sourceVendors } from "../services/model-sources.js";
+import { modelRegistry } from "../services/models.js";
 // 只留这两个：浏览器登录相关的辅助（截图/远程操作/读凭据）随「服务器浏览器登录」
 // 一起删除后已无调用点；这两个仍需（删渠道时清 profile、订阅渠道复制 profile）。
 import { isReady as browserReady, removeProfile, copyProfile } from "../services/upstream/browser-driver.js";
@@ -251,19 +253,23 @@ function groupResp(g, memberMap) {
     models: parseGroupModels(g.models),
     // 成员账号的厂商（去重）：前端按「单厂商=单个图标 / 多厂商=折叠态图标」渲染
     vendors: [...m.vendors],
+    source_vendors: sourceVendors([...m.vendors]),
+    model_vendors: groupModelVendors(g, m.channels || []),
     channel_ids: m.ids,
     count: m.ids.length,
   };
 }
 
 async function groupMemberMap() {
-  const [chans] = await pool.query("SELECT id, type, group_list, group_name FROM channels");
+  await modelRegistry();
+  const [chans] = await pool.query("SELECT id, type, status, models, group_list, group_name FROM channels");
   const memberMap = new Map(); // 分组名 -> { ids: [], vendors: Set }
   for (const c of chans) {
     for (const g of parseGroups(c)) {
-      if (!memberMap.has(g)) memberMap.set(g, { ids: [], vendors: new Set() });
+      if (!memberMap.has(g)) memberMap.set(g, { ids: [], vendors: new Set(), channels: [] });
       const m = memberMap.get(g);
       m.ids.push(Number(c.id));
+      m.channels.push(c);
       if (c.type) m.vendors.add(String(c.type));
     }
   }
@@ -690,6 +696,7 @@ function rowToResp(r, { withKey = false } = {}) {
     // 配置
     base_url: r.base_url || mCfg?.baseUrl || "",
     models: String(r.models || "").split(",").map((s) => s.trim()).filter(Boolean),
+    model_vendors: r._model_vendors || channelModelVendors(r),
       group_name: r.group_name || "",
       groups: parseGroups(r),
     priority: Number(r.priority) || 0,
@@ -755,7 +762,7 @@ function rowToResp(r, { withKey = false } = {}) {
   };
 }
 
-async function listRows({ type, keyword, status, method } = {}) {
+async function listRows({ type, keyword, status, method, includeSavedModels = false } = {}) {
   const conds = [];
   const args = [];
   if (type) {
@@ -777,7 +784,14 @@ async function listRows({ type, keyword, status, method } = {}) {
   }
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
   const [rows] = await pool.query(`SELECT * FROM channels ${where} ORDER BY priority DESC, id ASC`, args);
+  await modelRegistry(); // 元信息只展开本地登记；不发起上游取模型或更改声明。
   const filtered = method ? rows.filter((r) => methodOf(r) === method) : rows;
+  // 旧分组可能保存别名/思考后缀；逐渠道按真实能力确认，只补来源映射，不改原始声明。
+  if (includeSavedModels) {
+    const [savedGroups] = await pool.query("SELECT models FROM channel_groups");
+    const savedModels = [...new Set(savedGroups.flatMap((g) => parseGroupModels(g.models)))];
+    for (const r of filtered) r._model_vendors = channelModelVendors(r, savedModels);
+  }
   // 批量挂上「该渠道累计」三个数（列表页额度列要显示：调用次数 / token / 消费）。
   // **一次聚合查询算全部渠道**，不逐行查 —— 逐行是 N+1，几十个渠道就是几十次往返。
   await attachChannelTotals(filtered);
@@ -862,6 +876,7 @@ router.get(
       keyword: req.query.keyword ? String(req.query.keyword) : null,
       status: req.query.status ? Number(req.query.status) : null,
       method: req.query.method ? String(req.query.method) : null,
+      includeSavedModels: true,
     });
     return ok(res, rows.map((r) => rowToResp(r)));
   })

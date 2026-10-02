@@ -16,6 +16,7 @@ import { logTexts } from "../services/log-text.js";
 import { getPrice, originalModelPrice, priceForTokens, computeCost, billingDetails, splitTokens, sumCallTokens, loadPrices, effectivePrice, UNITS_PER_OD, CURRENCY } from "../services/pricing.js";
 import { finalizeChannelQuote } from "../services/channel-price-quote.js";
 import { userDataVisibility, visibleAccountData, visibleChatAudit } from "../services/user-data-visibility.js";
+import { sourceVendors } from "../services/model-sources.js";
 import { groupConfigOf, applyGroupRate, parseGroupKey, displayGroupName } from "../services/group-rate.js";
 import { allPublicModels, publicModelMetadataMap, modelVendorName, modelRegistry, resolveAliasSync, canonicalModelName, modelInAllowList } from "../services/models.js";
 import { getProvider } from "../services/channel-types.js";
@@ -757,6 +758,7 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
       original_price: bill.channel_quote?.price || null,
       ...(originalPrice ? { model_alias_price: originalPrice } : {}),
       billing_details: bill,
+      source_vendors: sourceVendors([channel?.type, ...billingCalls.map((c) => c.channelQuote?.provider)]),
       ...(modelCalls.length ? { model_calls: modelCalls.slice(0, 40) } : {}),
       kind,
       ...logTexts({ prompt, output, calls, inputText }),
@@ -1409,6 +1411,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           original_price: failedBill.channel_quote?.price || null,
           ...(failedOriginalPrice ? { model_alias_price: failedOriginalPrice } : {}),
           billing_details: failedBill,
+          source_vendors: sourceVendors([err.channelQuote?.provider, ...billedCalls.map((c) => c.channelQuote?.provider)]),
           ...logTexts({ calls: billedCalls.length ? billedCalls : [{ prompt: err.billingPrompt || "", output: err.billingOutput || "" }], inputText }),
           session_id: session.id,
         }),

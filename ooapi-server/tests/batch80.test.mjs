@@ -215,5 +215,6 @@ console.log("\n=== ④ 管理角色与父帖评论权限（真实 HTTP，数据�
 }
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
+if (!fail) await import("./model-source-metadata.test.mjs");
 if (!fail) await import("./user-data-visibility.test.mjs");
 process.exit(fail ? 1 : 0);

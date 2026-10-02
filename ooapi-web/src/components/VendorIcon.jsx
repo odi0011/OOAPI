@@ -14,10 +14,12 @@
 //
 // 用法：
 //   <VendorIcon type="deepseek" />           渠道类型图标
-//   <ModelLabel model="deepseek-flash" />    模型名（自动带对应厂商图标）
+//   <ModelLabel model="deepseek-flash" channelType="opencode" />  实际来源
+//   <ModelLabel model="deepseek-flash" catalog />                原厂价格目录
 import React from "react";
 import { Tooltip } from "antd";
-import { TeamOutlined } from "@ant-design/icons";
+import { TeamOutlined, ApiOutlined } from "@ant-design/icons";
+import { normalizeSourceVendors } from "../services/model-sources";
 import BrandLogo from "./BrandLogo";
 
 const ICON_DIR = "/icons";
@@ -146,7 +148,8 @@ const MODEL_ICON = [
   // 名字里没有厂商线索，这里**不猜**——由调用方传 channelType 用渠道图标兜底。
 ];
 
-// 厂商前缀 → 图标文件（`vendor/model` 形式的目录型渠道用）。
+// 厂商前缀 → 原厂目录图标。下列历史推断规则仅限 catalog=true；
+// 渠道、分组、对话、调用记录一律通过 ModelIcon 读取真实接入来源。
 //
 // 为什么单独一张表：Cline 之类的聚合渠道返回的是 `anthropic/claude-sonnet-4.5`、
 // `x-ai/grok-4.3`、`~openai/gpt-luna-latest` —— 前缀是**厂商**，但和我们的渠道 key
@@ -333,7 +336,7 @@ export function VendorIcon({ type, size = 16, radius, title, className, style })
  *   · 多厂商账号 → 折叠成叠放的图标堆（+N 表示还有几个）
  *   · 无成员厂商 → 不显示（由调用方决定占位文案）
  */
-export function GroupVendorIcons({ vendors = [], size = 14, max = 3, className, style }) {
+export function GroupVendorIcons({ vendors = [], size = 14, max = 3, className, style, label = "成员厂商" }) {
   const list = [...new Set((vendors || []).map((v) => String(v || "").trim()).filter(Boolean))];
   if (!list.length) return null;
   if (list.length === 1) {
@@ -341,7 +344,7 @@ export function GroupVendorIcons({ vendors = [], size = 14, max = 3, className, 
   }
   const shown = list.slice(0, max);
   return (
-    <Tooltip title={`成员厂商：${list.join("、")}`}>
+    <Tooltip title={`${label}：${list.join("、")}`}>
       <span
         className={className}
         style={{ display: "inline-flex", alignItems: "center", flexShrink: 0, ...style }}
@@ -361,6 +364,7 @@ export function GroupVendorIcons({ vendors = [], size = 14, max = 3, className, 
             }}
           />
         ))}
+        {list.length > shown.length ? <span style={{ marginInlineStart: 3, fontSize: 10, color: "var(--ink-3)" }}>+{list.length - shown.length}</span> : null}
       </span>
     </Tooltip>
   );
@@ -412,48 +416,31 @@ export function VendorLabel({ type, label, size = 15, gap = 7, className, style 
 }
 
 /**
- * 模型名（带厂商图标）—— 全站统一使用
- * @param {object} props { model, size, showVendor, monoClassName, style }
+ * 运行模型必须显式传来源；同一模型来自多个渠道厂商时保留所有来源。
+ * 只有 catalog=true 的原厂价格目录才能从型号推断品牌，缺来源不能冒用平台头像。
  */
-export function ModelLabel({ model, size = 15, showVendor = false, className, style, title, channelType = "" }) {
-  // 图标解析：先按模型名匹配厂商；**匹配不到时用「渠道」的图标**。
-  // 用户要求：「如果渠道里有一些我们系统本身没有的模型，则模型图标就直接使用对应
-  // 哪个渠道的就行」—— 那些模型（omen-alpha、mimo-v2.6-flash 之类）在模型表里
-  // 没有对应厂商，退回平台 logo 等于把「未知」和「本平台」混在一起；
-  // 用渠道图标既指明了来源，又不假装认识它。
-  const file = (() => {
-    const byModel = iconFileForModel(model);
-    if (byModel !== PLATFORM_LOGO) return byModel;
-    const byChannel = CHANNEL_ICON[String(channelType || "").toLowerCase()];
-    return byChannel || byModel;
-  })();
+export function ModelIcon({ model, channelType = "", channelTypes = [], catalog = false, size = 15 }) {
+  const vendors = normalizeSourceVendors(channelType ? [channelType] : channelTypes);
+  if (!catalog && vendors.length) return <GroupVendorIcons vendors={vendors} size={size} label="来源厂商" />;
+  const file = catalog ? iconFileForModel(model) : PLATFORM_LOGO;
+  if (file === PLATFORM_LOGO) {
+    if (catalog && vendors.length) return <GroupVendorIcons vendors={vendors} size={size} />;
+    return <ApiOutlined aria-label="来源未标注" style={{ fontSize: size, color: "var(--ink-3)", flexShrink: 0 }} />;
+  }
+  return <img src={iconSrc(file)} alt="" width={size} height={size} loading="lazy" draggable={false}
+    className={MONO_ICONS.has(file) ? "oo-vendor-icon--mono" : undefined}
+    style={{ width: size, height: size, objectFit: "contain", borderRadius: Math.max(3, Math.round(size * 0.22)), flexShrink: 0, display: "block" }} />;
+}
+
+export function ModelLabel({ model, size = 15, showVendor = false, className, style, title, channelType = "", channelTypes = [], catalog = false }) {
+  const vendors = normalizeSourceVendors(channelType ? [channelType] : channelTypes);
   return (
-    <span
-      className={className}
-      title={title}
-      style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0, ...style }}
-    >
-      {file === PLATFORM_LOGO ? <BrandLogo size={size} loading="lazy" style={{ borderRadius: Math.max(3, Math.round(size * .22)), display: 'block' }}/> : <img
-        src={iconSrc(file)}
-        alt=""
-        className={MONO_ICONS.has(file) ? "oo-vendor-icon--mono" : undefined}
-        width={size}
-        height={size}
-        loading="lazy"
-        draggable={false}
-        style={{
-          width: size,
-          height: size,
-          objectFit: "contain",
-          borderRadius: Math.max(3, Math.round(size * 0.22)),
-          flexShrink: 0,
-          display: "block",
-        }}
-      />}
-      <span className="oo-truncate" style={{ fontFamily: "var(--font-mono)", fontSize: "0.95em" }}>
-        {model}
-      </span>
-      {showVendor ? <span style={{ fontSize: "0.85em", color: "var(--ink-3)" }}>{vendorNameForModel(model)}</span> : null}
+    <span className={className} title={title} data-model-name={model}
+      data-model-sources={catalog ? "catalog" : vendors.join(",")}
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0, maxWidth: "100%", ...style }}>
+      <ModelIcon model={model} channelType={channelType} channelTypes={channelTypes} catalog={catalog} size={size} />
+      <span className="oo-truncate" style={{ fontFamily: "var(--font-mono)", fontSize: "0.95em" }}>{model}</span>
+      {showVendor ? <span style={{ fontSize: "0.85em", color: "var(--ink-3)" }}>{catalog ? vendorNameForModel(model) : vendors.join("、")}</span> : null}
     </span>
   );
 }

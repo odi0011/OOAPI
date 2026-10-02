@@ -4,6 +4,7 @@ import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now } from "../utils.js";
 import { adminRequired, optionalAuth } from "../middleware/auth.js";
 import { userDataVisibility } from "../services/user-data-visibility.js";
+import { sourceVendors } from "../services/model-sources.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { invalidatePrices, loadPrices, DEFAULT_PRICES, describeRule, parsePriceTiers, storedPriceTiers } from "../services/pricing.js";
 import { pendingPricedModels } from "../services/pricing.js";
@@ -627,7 +628,8 @@ router.get(
         const m = raw.trim();
         if (!m || m === "*") continue;
         const key = canonicalModelName(m);
-        const item = { model: m, channel: String(r.name || ""), channelId: Number(r.id) || 0 };
+        const item = { model: m, channel: String(r.name || ""), channelId: Number(r.id) || 0,
+          channel_type: sourceVendors([r.type])[0] || "", source_vendors: sourceVendors([r.type]) };
 
         // ① 库里精确命中
         if (prices.has(key)) {

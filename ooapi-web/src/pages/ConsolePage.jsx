@@ -81,7 +81,7 @@ export default function ConsolePage() {
       {visibility.usage_records && Array.isArray(data.recent_logs) ? <section className="oo-panel oo-dashboard-table"><div className="oo-panel-head"><div><span className="oo-panel-title">最近调用</span><span className="oo-dashboard-caption">最新 8 条</span></div><Button type="text" size="small" onClick={() => navigate('/log')}>全部使用记录 <ArrowRightOutlined /></Button></div>
         <Table className="oo-table" rowKey="id" size="small" pagination={false} scroll={{ x: 780 }} dataSource={data.recent_logs || []} locale={{ emptyText: <Empty description="尚未发起调用，创建令牌后即可开始" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }} columns={[
           { title: '时间', dataIndex: 'created_at', width: 142, render: (v) => fmtDate(v, 'MM-DD HH:mm:ss') },
-          { title: '模型', dataIndex: 'model', render: (v) => <ModelLabel model={v} title={v} /> },
+          { title: '模型', dataIndex: 'model', render: (v, r) => <ModelLabel model={v} channelTypes={Array.isArray(r.source_vendors) ? r.source_vendors : r.channel_type ? [r.channel_type] : []} title={v} /> },
           { title: '结果', dataIndex: 'status', width: 96, render: (v, r) => { const [label, color] = RESULT[v] || (r.type === 2 ? RESULT.success : RESULT.error); return <Tag color={color}>{label}</Tag>; } },
           { title: '耗时', dataIndex: 'elapsed_ms', width: 112, render: (v, r) => <DurationCell elapsedMs={v} firstTokenMs={r.first_token_ms} /> },
           { title: 'Tokens', width: 180, render: (_, r) => <TokenCell promptTokens={r.prompt_tokens} completionTokens={r.completion_tokens} cacheTokens={r.cache_tokens} /> },

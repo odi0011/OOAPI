@@ -13,6 +13,7 @@ import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
 import { VendorIcon, ModelLabel, GroupVendorIcons, GroupRateBadge, GroupTag } from "../components/VendorIcon";
 import { userDataVisibility } from "../services/visibility";
+import { modelSourceVendors } from "../services/model-sources";
 
 const { Text } = Typography;
 
@@ -373,19 +374,21 @@ export default function TokenPage() {
         width: 170,
         responsive: ["lg"],
         render: (g) => {
-          const list = groupMetaOf(g)?.models || [];
+          const meta = groupMetaOf(g);
+          const list = meta?.models || [];
           if (!g) return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
           if (!list.length) return <Text type="secondary" style={{ fontSize: 12 }}>不限</Text>;
           return (
             <Tooltip
               title={
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {list.map((m) => <ModelLabel key={m} model={m} size={13} mono />)}
+                  {/* 同一组的不同模型可能来自不同渠道，只读逐模型来源映射。 */}
+                  {list.map((m) => <ModelLabel key={m} model={m} channelTypes={modelSourceVendors(m, meta?.model_vendors)} size={13} />)}
                 </div>
               }
             >
               <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                <ModelLabel model={list[0]} size={13} />
+                <ModelLabel model={list[0]} channelTypes={modelSourceVendors(list[0], meta?.model_vendors)} size={13} />
                 {list.length > 1 ? <span className="bui-chip">+{list.length - 1}</span> : null}
               </span>
             </Tooltip>

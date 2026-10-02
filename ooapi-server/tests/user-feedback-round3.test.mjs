@@ -188,11 +188,14 @@ t("后端给日志附上 channel_type", () => {
   ck(/channel_type: chanType\.get/.test(logRoute), "日志接口没有附 channel_type");
   ck(/SELECT id, type FROM channels WHERE id IN/.test(logRoute), "没有查渠道类型");
 });
-t("前端把 channelType 传给 ModelLabel（列表与详情）", () => {
-  const hits = page.match(/channelType=\{r\.channel_type \|\| ""\}/g) || [];
-  const logHits = logPage.match(/channelType=\{detail\.channel_type \|\| ""\}|channelType=\{r\.channel_type \|\| ""\}/g) || [];
-  ck(logHits.length >= 2, `LogPage 只有 ${logHits.length} 处传了 channelType（列表+详情应各一处）`);
-  ck(hits.length === 0 || true, "");
+t("前端把实际渠道 source_vendors 传给 ModelLabel（列表与详情）", () => {
+  // 多次调用可跨渠道；列表与抽屉都必须保留品牌数组，不能按模型名称推断原厂。
+  const labels = logPage.match(/<ModelLabel\b[^>]*\/>/g) || [];
+  const row = labels.find((label) => /model=\{v\}/.test(label));
+  const detail = labels.find((label) => /model=\{detail\.model\}/.test(label));
+  ck(row && /channelTypes=\{Array\.isArray\(r\.source_vendors\) \? r\.source_vendors\b/.test(row), "日志列表未保留实际渠道来源数组（含明确未知的空数组）");
+  ck(detail && /channelTypes=\{Array\.isArray\(detail\.source_vendors\) \? detail\.source_vendors\b/.test(detail), "日志详情未保留实际渠道来源数组（含明确未知的空数组）");
+  ck(!/\bcatalog\b/.test(row + detail), "使用记录不能使用原厂价格目录图标规则");
 });
 t("openrouter/ 前缀有图标（原先掉平台 logo）", () => {
   ck(/openrouter:\\?\/\//.test(vicon) || /\^openrouter/.test(vicon), "没有 openrouter 图标规则");

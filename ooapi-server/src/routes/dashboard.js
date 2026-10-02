@@ -20,6 +20,7 @@ import { snapshot } from "../services/metrics.js";
 import { groupConfigOf } from "../services/group-rate.js";
 import { USAGE_SQL, usageLogWhere } from "../services/log.js";
 import { userDataVisibility, visibleAccountData } from "../services/user-data-visibility.js";
+import { logsWithSourceVendors, sourceVendors } from "../services/model-sources.js";
 
 const router = Router();
 
@@ -46,7 +47,8 @@ function recentUsageRow(l) {
     status: l.status || (Number(l.type) === 2 ? "success" : "error"), elapsed_ms: Number(l.elapsed_ms) || 0,
     first_token_ms: Number(l.first_token_known) === 1 || Number(l.first_token_ms) > 0 ? Number(l.first_token_ms) || 0 : null,
     units: Number(l.quota) || 0, prompt_tokens: Number(l.prompt_tokens) || 0,
-    completion_tokens: Number(l.completion_tokens) || 0, cache_tokens: Number(l.cache_tokens) || 0 };
+    completion_tokens: Number(l.completion_tokens) || 0, cache_tokens: Number(l.cache_tokens) || 0,
+    source_vendors: sourceVendors(l.source_vendors) };
 }
 
 /** 按天趋势（消费 + 调用 + token + 缓存），缺数据的日期补 0（否则折线会断） */
@@ -148,9 +150,12 @@ router.get(
     const visibility = userDataVisibility(req.user);
     if (!visibility.usage_summary) {
       const [recent] = visibility.usage_records ? await pool.query(
-        `SELECT id, created_at, model, type, status, elapsed_ms, first_token_ms, first_token_known, quota, prompt_tokens, completion_tokens, cache_tokens FROM logs WHERE user_id = ? AND ${USAGE_SQL} ORDER BY id DESC LIMIT 8`, [uid]) : [[]];
+        `SELECT id, created_at, model, type, status, elapsed_ms, first_token_ms, first_token_known, quota, prompt_tokens, completion_tokens, cache_tokens, channel_id,
+          CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.source_vendors') ELSE NULL END AS source_vendors,
+          CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.billing_details') ELSE NULL END AS billing_details
+          FROM logs WHERE user_id = ? AND ${USAGE_SQL} ORDER BY id DESC LIMIT 8`, [uid]) : [[]];
       return ok(res, { range: { key, days }, account: visibleAccountData({ quota: Number(req.user.quota) || 0, group_name: req.user.group_name || "" }, req.user),
-        recent_logs: recent.map(recentUsageRow) });
+        recent_logs: (await logsWithSourceVendors(recent)).map(recentUsageRow) });
     }
 
     const [[agg]] = await pool.query(
@@ -223,7 +228,9 @@ router.get(
 
     // 最近 8 条调用动态：让开发者第一时间知道接口是否调通、状态与消耗
     const [recentLogs] = await pool.query(
-      `SELECT id, created_at, model, type, status, elapsed_ms, first_token_ms, first_token_known, quota, prompt_tokens, completion_tokens, cache_tokens
+      `SELECT id, created_at, model, type, status, elapsed_ms, first_token_ms, first_token_known, quota, prompt_tokens, completion_tokens, cache_tokens, channel_id,
+              CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.source_vendors') ELSE NULL END AS source_vendors,
+              CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.billing_details') ELSE NULL END AS billing_details
          FROM logs WHERE user_id = ? AND ${USAGE_SQL}
         ORDER BY id DESC LIMIT 8`,
       [uid]
@@ -278,7 +285,7 @@ router.get(
         const hit = byHour.find((x) => Number(x.hour) === h);
         return { hour: h, calls: Number(hit?.calls) || 0, units: Number(hit?.units) || 0 };
       }),
-      recent_logs: visibility.usage_records ? recentLogs.map(recentUsageRow) : [],
+      recent_logs: visibility.usage_records ? (await logsWithSourceVendors(recentLogs)).map(recentUsageRow) : [],
     });
   })
 );

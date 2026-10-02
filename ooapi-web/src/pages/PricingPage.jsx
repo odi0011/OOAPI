@@ -3,7 +3,6 @@ import { Table, Input, Tag, Alert, App as AntApp } from "antd";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import PageHeader from "../components/PageHeader";
-import { ModelLabel } from "../components/VendorIcon";
 import ModelPricingLabel from "../components/ModelPricingLabel";
 import { OdCoin } from "../components/OdCoin";
 import { CURRENCY_NAME } from "../services/format";
@@ -59,7 +58,7 @@ export default function PricingPage() {
     {
       title: "模型",
       dataIndex: "model",
-      render: (v, r) => <ModelPricingLabel model={v} channelType={r.vendor} tiers={r.tiers} size={14} />,
+      render: (v, r) => <ModelPricingLabel model={v} vendor={r.vendor} tiers={r.tiers} size={14} />,
     },
     {
       title: "输入（每百万 token）",

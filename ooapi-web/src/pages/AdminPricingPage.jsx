@@ -535,7 +535,7 @@ export default function AdminPricingPage() {
                     dataSource={rows}
                     pagination={rows.length > 20 ? { pageSize: 20, size: "small" } : false}
                     columns={[
-                      { title: "模型", dataIndex: "model", render: (v) => <ModelLabel model={v} size={14} /> },
+                      { title: "模型", dataIndex: "model", render: (v, r) => <ModelLabel model={v} channelTypes={Array.isArray(r.source_vendors) ? r.source_vendors : r.channel_type ? [r.channel_type] : []} size={14} /> },
                       { title: "来自渠道", dataIndex: "channel", width: 150, ellipsis: true },
                       {
                         title: "归属 / 命中",
@@ -612,7 +612,7 @@ export default function AdminPricingPage() {
                     />
                   ) : (
                     <Space size={8} wrap>
-                      <ModelLabel model={resolveR.model} size={14} />
+                      <ModelLabel model={resolveR.model} channelType={resolveR.type || ""} catalog size={14} />
                       <span style={{ color: "var(--ink-3)" }}>→</span>
                       <Tag color="blue">{TYPE_LABEL[resolveR.type] || resolveR.type || "未知厂商"}</Tag>
                       <span className="oo-num">

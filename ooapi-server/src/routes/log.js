@@ -5,6 +5,7 @@ import { authRequired, adminRequired, superRequired } from "../middleware/auth.j
 import { writeLog, LOG_TYPE, LOG_TYPE_LABEL, USAGE_SQL } from "../services/log.js";
 import { canonicalModelName } from "../services/models.js";
 import { userDataVisibility, requireUserData } from "../services/user-data-visibility.js";
+import { logsWithSourceVendors, sourceVendors } from "../services/model-sources.js";
 
 const router = Router();
 
@@ -35,8 +36,7 @@ function publicBillingDetails(value) {
 
 /**
  * 日志 → 响应对象。
- * 敏感字段（渠道/令牌/分组/原始 UA/成本价/上游错误明细）只给管理员：
- * 普通用户看到「自己的用量」即可，看到渠道等于泄露上游供应商。
+ * 渠道ID/名称/上游明细仍只给管理员；source_vendors仅是用户授权展示的注册厂商品牌。
  */
 function mapLog(r, { isAdmin, user = null }) {
   let detail = {};
@@ -93,13 +93,14 @@ function mapLog(r, { isAdmin, user = null }) {
     token_id: Number(r.token_id) || 0,
     token_name: r.token_name || "",
     group_name: r.group_name || "",
+    source_vendors: sourceVendors(r.source_vendors),
   };
   if (!isAdmin) {
     const visibility = userDataVisibility(user);
     if (!visibility.pricing) base.billing_details = null;
     if (!visibility.usage_records && Number(r.type) === LOG_TYPE.ERROR) {
       // 旧调用错误位于操作日志：不能借兼容入口绕过逐次使用记录权限。
-      for (const key of ["model", "quota", "prompt_tokens", "completion_tokens", "cache_tokens", "first_token_ms", "elapsed_ms", "retry_count", "price_phase", "billing_details", "request_id", "token_id", "token_name", "group_name"]) delete base[key];
+      for (const key of ["model", "quota", "prompt_tokens", "completion_tokens", "cache_tokens", "first_token_ms", "elapsed_ms", "retry_count", "price_phase", "billing_details", "request_id", "token_id", "token_name", "group_name", "source_vendors"]) delete base[key];
     }
     if (!visibility.request_content) {
       for (const key of ["input_text", "output_text", "input_recorded", "output_recorded", "input_truncated", "output_truncated", "prompt_truncated", "request_prompt_truncated"]) delete base[key];
@@ -271,6 +272,7 @@ async function listLogs(req, res, kind) {
     "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.request_prompt_truncated')) = 'true' ELSE 0 END AS request_prompt_truncated",
     "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.billing_known')) = 'false' ELSE 0 END AS billing_unknown",
     "CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.billing_details') ELSE NULL END AS billing_details",
+    "CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.source_vendors') ELSE NULL END AS source_vendors",
     // request_id 必须返回：一次调用可能产生两条记录（计费行 + 错误行，
     // 见「客户端提前断开」那个场景），没有这个字段用户在界面上**无法把两条对起来**。
     // 黑盒测试实测抱怨（运维人格）：「两页都没有 request_id，我只能下 SQL 才看得出来
@@ -300,8 +302,7 @@ async function listLogs(req, res, kind) {
   // 单独查一次拿 id→type 映射更简单也更安全。
   const chanIds = [...new Set(rows.map((r) => Number(r.channel_id) || 0).filter(Boolean))];
   const chanType = new Map();
-  // 非管理员根本拿不到 channel_type（见下面的返回），这次查询也就不必做 ——
-  // 顺带少一次对渠道表的读取（普通用户的请求不该碰渠道信息，哪怕只是 SELECT）。
+  // 管理员兼容字段channel_type保留；普通用户只取安全来源数组，优先读历史快照。
   if (isAdmin && chanIds.length) {
     const [ch] = await pool
       .query(`SELECT id, type FROM channels WHERE id IN (${chanIds.map(() => "?").join(",")})`, chanIds)
@@ -309,15 +310,12 @@ async function listLogs(req, res, kind) {
     for (const c of ch) chanType.set(Number(c.id), String(c.type || ""));
   }
 
+  const sourcedRows = await logsWithSourceVendors(rows);
   return ok(res, {
-    items: rows.map((r) => ({
+    items: sourcedRows.map((r) => ({
       ...mapLog(r, { isAdmin, user: req.user }),
-      // 渠道类型：前端 ModelLabel 的 channelType 兜底（图标跟随厂商）。
-      //
-      // **只随 mapLog 一起对管理员开放**（2026-09-26）：channel_type 看似只是个
-      // 图标提示，但 glm / deepseek / openrouter 这些值本身就是供应商身份 ——
-      // 用户原话：「不管是啥渠道，用户都不能看到啊，谁家中转站把自己号池给用户看？」。
-      // 普通用户拿到 undefined 后 ModelLabel 自会落回按模型名判图标，展示不受影响。
+      // source_vendors已提供实际来源图标；channel_type仅保留管理员旧接口兼容。
+      // 普通用户仍拿不到渠道ID/名称/凭据，其品牌展示遵循使用记录可见权限。
       ...(isAdmin ? { channel_type: chanType.get(Number(r.channel_id) || 0) || "" } : {}),
     })),
     total,

@@ -6,6 +6,7 @@ import {
 import { ReloadOutlined, PlusOutlined, SearchOutlined, ApiOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import PageHeader from "../components/PageHeader";
+import { modelSourceMap, modelSourceVendors } from "../services/model-sources";
 import { VendorIcon, ModelLabel, GroupVendorIcons, GroupRateBadge, GroupTag } from "../components/VendorIcon";
 
 const { Text } = Typography;
@@ -86,18 +87,22 @@ export default function AdminGroupsPage() {
     }));
   }, [channels, vendorFilter]);
 
-  const modelOptions = useMemo(() => {
-    if (!memberIds.length) return [];
-    const pool = channels.filter((c) => memberIds.includes(c.id));
-    return [...new Set(pool.flatMap((c) => (Array.isArray(c.models) ? c.models : [])))].sort().map((m) => ({ value: m, label: m }));
-  }, [channels, memberIds]);
+  const selectedModelSources = useMemo(() => modelSourceMap(
+    channels.filter((c) => memberIds.map(Number).includes(Number(c.id))), models
+  ), [channels, memberIds, models]);
+  const modelOptions = useMemo(() => Object.keys(selectedModelSources).sort().map((m) => ({ value: m, label: m })), [selectedModelSources]);
+  const groupModelSources = useMemo(() => new Map(groups.map((g) => {
+    const ids = (g.channel_ids || []).map(Number);
+    // 服务端还提供规范别名的映射；编辑中的渠道列表负责及时反映增删成员。
+    return [g.id, { ...modelSourceMap(channels.filter((c) => ids.includes(Number(c.id)))), ...g.model_vendors }];
+  })), [groups, channels]);
 
   // 分组图标 = **成员渠道**涉及到的厂商（去重）
   const iconsOfGroup = useCallback(
     (g) => {
       const ids = Array.isArray(g.channel_ids) ? g.channel_ids.map(Number) : [];
       if (!ids.length) return [];
-      return [...new Set(channels.filter((c) => ids.includes(c.id)).map((c) => c.type).filter(Boolean))];
+      return [...new Set(channels.filter((c) => ids.includes(Number(c.id))).map((c) => c.type).filter(Boolean))];
     },
     [channels]
   );
@@ -210,7 +215,7 @@ export default function AdminGroupsPage() {
       title: "模型范围",
       dataIndex: "models",
       width: 190,
-      render: (list) => {
+      render: (list, g) => {
         if (!list || !list.length) {
           return (
             <Tooltip title="未限制模型：该分组的密钥可直接使用关联渠道支持的全部模型">
@@ -226,13 +231,13 @@ export default function AdminGroupsPage() {
               <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 300, overflow: "auto" }}>
                 <div style={{ fontSize: 11, color: "var(--ink-3)", marginBottom: 2 }}>支持以下 {list.length} 个模型：</div>
                 {list.map((m) => (
-                  <ModelLabel key={m} model={m} size={13} />
+                  <ModelLabel key={m} model={m} size={13} channelTypes={modelSourceVendors(m, groupModelSources.get(g.id))} />
                 ))}
               </div>
             }
           >
             <span style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "default" }}>
-              <ModelLabel model={list[0]} size={13} />
+              <ModelLabel model={list[0]} size={13} channelTypes={modelSourceVendors(list[0], groupModelSources.get(g.id))} />
               {list.length > 1 ? (
                 <span className="bui-chip" style={{ fontSize: 10.5, height: 16, lineHeight: "16px", padding: "0 4px" }}>
                   +{list.length - 1}
@@ -253,7 +258,7 @@ export default function AdminGroupsPage() {
       },
       render: (_, g) => {
         const ids = Array.isArray(g.channel_ids) ? g.channel_ids.map(Number) : [];
-        const bound = channels.filter((c) => ids.includes(c.id));
+        const bound = channels.filter((c) => ids.includes(Number(c.id)));
         const count = ids.length || g.count || 0;
         if (!count) {
           return <span style={{ color: "var(--ink-3)", fontSize: 12 }}>—</span>;
@@ -406,12 +411,15 @@ export default function AdminGroupsPage() {
                 setMemberIds(v);
                 // 渠道变了 → 已选模型可能已不在可选范围内，剔除掉，避免「分组里有
                 // 没有任何账号支持的模型」这种静默失效配置
-                const pool = channels.filter((c) => (v || []).includes(c.id));
-                const allowed = new Set(pool.flatMap((c) => (Array.isArray(c.models) ? c.models : [])));
-                setModels((prev) => prev.filter((m) => allowed.has(m)));
+                const pool = channels.filter((c) => (v || []).map(Number).includes(Number(c.id)));
+                setModels((prev) => {
+                  const allowed = modelSourceMap(pool, prev);
+                  return prev.filter((m) => Object.hasOwn(allowed, m));
+                });
               }}
               options={channelOptions}
               optionFilterProp="label"
+              optionRender={(opt) => <span style={{ display: "flex", alignItems: "center", gap: 6 }}><VendorIcon type={channels.find((c) => Number(c.id) === Number(opt.value))?.type} size={14} />{opt.label}</span>}
               maxTagCount={6}
             />
           </Form.Item>
@@ -449,7 +457,8 @@ export default function AdminGroupsPage() {
                 value={models}
                 onChange={setModels}
                 options={modelOptions}
-                optionRender={(opt) => <ModelLabel model={opt.value} size={14} />}
+                optionRender={(opt) => <ModelLabel model={opt.value} size={14} channelTypes={modelSourceVendors(opt.value, selectedModelSources)} />}
+                labelRender={(opt) => <ModelLabel model={opt.value} size={12} channelTypes={modelSourceVendors(opt.value, selectedModelSources)} />}
                 maxTagCount={10}
                 maxTagPlaceholder={(omitted) => `+${omitted.length}`}
                 style={{ width: "100%" }}

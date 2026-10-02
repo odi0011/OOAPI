@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Input } from "antd";
-import { VendorIcon } from "./VendorIcon";
+import { ModelIcon, VendorIcon } from "./VendorIcon";
 
 
 /* ---------- 图标（与官方同为 15-16px 线性图标） ---------- */
@@ -156,8 +156,8 @@ export default function PromptBar({
     else if (!value.startsWith("/")) setCmdOpen(false);
   }, [value, commands.length]);
 
-  // 图标跟随模型元信息；分组是展示容器，不能把组的渠道厂商当成模型厂商。
-  const vendorForModel = (id) => {
+  // 元信息的 vendor 是可调用渠道来源；同名模型不能按模型名称猜开发厂商。
+  const sourceForModel = (id) => {
     const vendor = models.find((m) => m.id === id)?.vendor;
     if (vendor) return vendor;
     for (const g of vendorGroups || []) {
@@ -165,7 +165,7 @@ export default function PromptBar({
       if (hit?.vendor) return hit.vendor;
     }
   };
-  const modelVendor = channelType || vendorForModel(model);
+  const modelChannelType = channelType || sourceForModel(model);
 
   // 按钮上显示友好名称（label），没有 label 才退回 id
   const currentLabel = (() => {
@@ -374,7 +374,7 @@ export default function PromptBar({
               onClick={() => { const v = !modelOpen; closeAll(); setModelOpen(v); }}
               className="bui-selbtn"
             >
-              <VendorIcon type={modelVendor} size={14} />
+              <ModelIcon model={model} channelType={modelChannelType} size={14} />
               <span className="nm2">{currentLabel}</span>
               <span className="caret">{ChevronIcon}</span>
             </button>
@@ -404,7 +404,7 @@ export default function PromptBar({
                           taRef.current?.focus();
                         }}
                       >
-                        <VendorIcon type={m.vendor || g.vendor} size={14} />
+                        <ModelIcon model={m.id} channelType={m.vendor || g.vendor} size={14} />
                         <span className="nm2">{m.label || m.id}</span>
                         {m.deprecated ? <span className="badge">即将下线</span> : null}
                         <span className={`tick ${m.id === model && (!channelType || m.vendor === channelType) ? "" : "is-off"}`}>{TickIcon}</span>

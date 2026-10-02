@@ -4,7 +4,7 @@
 // 1. 点击「从上游获取模型」：成功后直接自动填入下方模型字段，无需用户二次操作；
 // 2. 「全选」与「清空」合二为一：根据当前选中状态智能切换（未全选时显示「全选全部」，全选后显示「清空所选」）；
 // 3. 友好清洗上游报错（提炼 token_revoked / 401 等常见异常，杜绝倾倒原始 JSON）。
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { Select, Button, Space, Tooltip, Tag, App as AntApp, Alert, Segmented } from "antd";
 import { CloudDownloadOutlined, CheckSquareOutlined, ClearOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
@@ -61,6 +61,7 @@ export default function ModelPicker({
   const [note, setNote] = useState("");
   const [errNote, setErrNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const requestVersion = useRef(0);
   // 上游返回的分组（目前只有 Cline 这类 `vendor/model` 目录型渠道会给）。
   // 454 个模型平铺进多选框时，管理员既看不出「哪些便宜、哪些是旗舰」，
   // 也不知道选中之后按什么价收费 —— 而这两件事恰好决定该选哪些。
@@ -72,13 +73,15 @@ export default function ModelPicker({
 
   const list = Array.isArray(value) ? value : [];
 
-  // 渠道编辑弹窗打开时，静默拉取候选供下拉筛选（不覆盖用户已配置的选择）
+  // 切换渠道或未保存凭据时，旧请求不能把别家模型填回当前选择器。
   useEffect(() => {
-    if (channelId) {
-      fetchModels(false);
-    }
+    requestVersion.current += 1;
+    setOptions([]); setGroups(null); setSource(""); setNote(""); setErrNote(""); setBusy(false);
+    if (channelId) fetchModels(false);
+    return () => { requestVersion.current += 1; };
+    // fetchModels只读取本次输入，不能把随value变化的函数加进依赖。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channelId]);
+  }, [channelId, providerKey, baseUrl, apiKey]);
 
   const fetchModels = async (isManual = false) => {
     // 两条路径：
@@ -93,6 +96,7 @@ export default function ModelPicker({
       if (isManual) message.warning("请先填写 API Key，填好后即可直接从上游获取模型");
       return;
     }
+    const version = ++requestVersion.current;
     setBusy(true);
     setErrNote("");
     try {
@@ -102,6 +106,7 @@ export default function ModelPicker({
           { base_url: baseUrl, api_key: apiKey, type: providerKey },
           { timeoutMs: 90_000 }
         );
+        if (version !== requestVersion.current) return;
         // 后端返回 `{ models, source, clineGroups? }`；旧版是**裸数组**，两种都要认
         //（这条分支曾经只认数组，于是新形状被当成空清单：添加渠道时明明拉到了 457 个
         //  模型，界面却显示「上游未返回模型清单」+「未探测」，分组选择器也不出现 ——
@@ -130,6 +135,7 @@ export default function ModelPicker({
         return;
       }
       const r = await API.post(`/channel/${channelId}/upstream-models`, undefined, { timeoutMs: 90_000 });
+      if (version !== requestVersion.current) return;
       const models = Array.isArray(r?.models) ? r.models : [];
       setOptions(models.map((m) => ({ value: m, label: m })));
       setSource(r?.source || "none");
@@ -163,12 +169,13 @@ export default function ModelPicker({
         }
       }
     } catch (e) {
+      if (version !== requestVersion.current) return;
       setSource("none");
       const cleanErr = formatErrorMessage(e.message);
       setErrNote(cleanErr);
       if (isManual) message.error(cleanErr || "拉取上游模型失败");
     } finally {
-      setBusy(false);
+      if (version === requestVersion.current) setBusy(false);
     }
   };
 
@@ -323,6 +330,7 @@ export default function ModelPicker({
         placeholder="留空 = 该厂商全部模型（不限）；也可直接输入模型名后回车添加"
         options={options.length ? options : list.map((m) => ({ value: m, label: m }))}
         optionRender={(opt) => <ModelLabel model={opt.value} size={14} channelType={providerKey} />}
+        labelRender={(opt) => <ModelLabel model={opt.value} size={12} channelType={providerKey} />}
         // tags 模式下下拉里会出现「输入的内容 + 回车」的候选项，这里过滤掉纯输入项，
         // 避免它和真实模型名混在一起（antd 用 __rc_select__ 之类的伪选项标记）
         filterOption={(input, opt) => String(opt?.value || "").toLowerCase().includes(String(input || "").toLowerCase())}
