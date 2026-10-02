@@ -6,6 +6,7 @@ import { useApp } from "../context/AppContext";
 import { useTheme } from "../theme/ThemeContext";
 import { BACKGROUNDS, DENSITY_PRESETS, FONT_FAMILIES, FONT_SIZES, PRIMARY_PRESETS, RADIUS_PRESETS, DEFAULT_PRIMARY } from "../theme/presets";
 import { OdCoin } from "./OdCoin";
+import { HOME_WALLPAPERS, homeWallpaperUrl } from "../services/home-wallpaper";
 import "./appearance-settings.css";
 
 const bool = (v) => v === true || v === "true";
@@ -18,10 +19,28 @@ function fromOptions(o) {
     theme_font_family: o.theme_font_family || "playful",
     default_collapse_sidebar: bool(o.default_collapse_sidebar),
     home_show_models: bool(o.home_show_models), home_show_pricing: bool(o.home_show_pricing),
+    home_background_light: o.home_background_light || "", home_background_dark: o.home_background_dark || "",
   };
 }
 function Row({ label, children }) {
   return <div className="oo-site-appearance-row"><div className="oo-site-appearance-label">{label}</div><div>{children}</div></div>;
+}
+
+function WallpaperField({ mode, value, disabled, onChange }) {
+  const label = mode === "dark" ? "暗色主题背景" : "亮色主题背景";
+  const source = homeWallpaperUrl(value, mode);
+  const [failedSource, setFailedSource] = useState("");
+  const invalid = !!value.trim() && source === HOME_WALLPAPERS[mode] && value.trim() !== source;
+  const failed = failedSource === source;
+  return <div className="oo-wallpaper-field">
+    <div className="oo-wallpaper-field-heading"><label htmlFor={`wallpaper-${mode}`}>{label}</label><span>{mode === "dark" ? "NIGHT" : "DAY"}</span></div>
+    <div className="oo-wallpaper-preview" data-mode={mode}>
+      <img key={source} src={source} alt={`${label}预览`} referrerPolicy="no-referrer" onLoad={() => setFailedSource("")} onError={() => setFailedSource(source)} hidden={failed} />
+      {failed && <span>图片无法加载，请检查地址</span>}
+    </div>
+    <Input id={`wallpaper-${mode}`} aria-label={label} value={value} disabled={disabled} status={invalid || failed ? "error" : undefined} placeholder="留空使用默认背景" onChange={(e) => onChange(e.target.value)} allowClear />
+    <div className="oo-wallpaper-field-footer"><span>{invalid ? "请填写 http(s) 地址或站内图片路径" : value.trim() ? "自定义图片" : "使用内置背景"}</span><Button type="link" size="small" disabled={disabled || !value} onClick={() => onChange("")}>恢复默认</Button></div>
+  </div>;
 }
 
 export default function AppearanceSettings() {
@@ -80,6 +99,10 @@ export default function AppearanceSettings() {
         <section className="oo-site-appearance-section"><h3>首页展示</h3>
           <Row label="模型列表"><Switch disabled={busy} aria-label="首页模型列表" checked={draft.home_show_models} onChange={(v) => change("home_show_models", v)} /></Row>
           <Row label="定价入口"><Switch disabled={busy} aria-label="首页定价入口" checked={draft.home_show_pricing} onChange={(v) => change("home_show_pricing", v)} /></Row>
+        </section>
+        <section className="oo-site-appearance-section"><h3>首页背景</h3>
+          <p className="oo-wallpaper-description">分别设置亮色与暗色主题的背景，首页会随明暗模式自动切换。填写图片地址，留空使用默认背景。</p>
+          <div className="oo-wallpaper-fields">{["light", "dark"].map((mode) => <WallpaperField key={mode} mode={mode} value={draft[`home_background_${mode}`]} disabled={busy} onChange={(v) => change(`home_background_${mode}`, v)} />)}</div>
         </section>
       </div>
       <aside className="oo-site-appearance-preview" aria-label="外观预览"><div className="oo-site-appearance-preview-title">实时预览</div><div className="oo-site-appearance-preview-window"><div className="oo-site-appearance-preview-bar"><i /><i /><i /></div><div className="oo-site-appearance-preview-content"><h3>工作台</h3><div className="oo-site-appearance-sample-card"><span>可用余额</span><strong><OdCoin /> 128.50</strong><Tag color="success">运行正常</Tag></div><Input placeholder="搜索模型" aria-label="预览搜索模型" /><div className="oo-site-appearance-preview-buttons"><Button type="primary">主要按钮</Button><Button>次要按钮</Button></div><div className="oo-site-appearance-sample-message">帮我整理今天的使用情况</div><p>可以，我会先查询你的调用记录。</p></div></div></aside>

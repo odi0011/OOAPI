@@ -364,6 +364,8 @@ print(resp.choices[0].message.content)
 |---|---|---|
 | `system_name` | OOAPI | 站点名称 |
 | `logo` | /logo.jpg | 站点图标 |
+| `home_background_light` | 留空 | 首页亮色背景图片地址；留空使用内置白天图 |
+| `home_background_dark` | 留空 | 首页暗色背景图片地址；留空使用内置夜景图 |
 | `api_endpoint` | 空 | 首页展示的接口地址 |
 | `quota_for_new_user` | 10 | 注册赠送额度（10 单位 = 0.001 OD币；后台以 OD币输入） |
 | `password_register_enabled` | false | 是否开放注册（默认关闭，防止被刷号） |

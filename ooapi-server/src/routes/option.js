@@ -87,6 +87,18 @@ const ENUM_OPTIONS = {
 };
 
 function validateOptionValue(key, raw) {
+  if (key === "home_background_light" || key === "home_background_dark") {
+    const value = String(raw ?? "").trim();
+    if (!value) return null;
+    // 背景只保存地址，不接收内联图片或可执行协议；站内静态资源也可直接引用。
+    if (value.length > 4096 || /[\s\\]/.test(value)) return "图片地址过长或包含无效字符";
+    if (/^\/(?!\/)/.test(value)) return null;
+    try {
+      const url = new URL(value);
+      if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password) return null;
+    } catch { /* 下方统一返回可读错误 */ }
+    return "请填写 http(s) 图片地址或以 / 开头的站内路径，留空使用默认背景";
+  }
   if (key === "user_data_visibility") {
     try { parseUserDataVisibility(raw); return null; }
     catch { return "必须是完整的 version:1 数据可见权限对象（五项仅接受布尔值）"; }

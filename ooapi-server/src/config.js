@@ -36,6 +36,8 @@ export const DEFAULT_OPTIONS = {
   login_page_notice: "",
   home_show_models: "true",
   home_show_pricing: "true",
+  home_background_light: "", // 留空使用内置白天背景
+  home_background_dark: "", // 留空使用内置夜间背景
 
   // ---------- 认证 ----------
   password_register_enabled: "false",
@@ -308,6 +310,8 @@ export function publicStatus() {
     home_content: getOption("home_content"),
     home_show_models: getBoolOption("home_show_models"),
     home_show_pricing: getBoolOption("home_show_pricing"),
+    home_background_light: getOption("home_background_light"),
+    home_background_dark: getOption("home_background_dark"),
     chat_enabled: getBoolOption("chat_enabled"),
     expose_pricing_to_user: visibility.pricing,
     // 注册相关（注册页据此显示/隐藏字段）

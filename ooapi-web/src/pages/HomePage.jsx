@@ -11,6 +11,7 @@ import { StudioPage, StudioHeader, StudioFooter, StudioCat, useStudioMotion } fr
 import { ConnectionDemo, ProviderDemo, UsageDemo } from "../components/HomeExperience";
 import ProviderExplorer from "../components/ProviderExplorer";
 import BrandLogo from "../components/BrandLogo";
+import HomeWallpaper from "../components/HomeWallpaper";
 import StudioBento from "../components/StudioBento";
 import StudioCompanion from "../components/StudioCompanion";
 import StudioWindow, { useStudioCarousel } from "../components/StudioWindow";
@@ -91,7 +92,7 @@ export default function HomePage() {
 
   return <StudioPage motion={motion} className="studio-home studio-desktop" onClickCapture={openAnchor}>
     <StudioHeader status={status} motion={motion} user={user} />
-    <div className="studio-desktop-wallpaper" aria-hidden="true" />
+    <HomeWallpaper />
     <aside className="studio-shortcuts shortcuts-left" aria-label="桌面快捷入口">
       {[[<HomeOutlined />, '首页', '#top'], [<ApiOutlined />, '工作方式', '#products'], ...(status?.home_show_models !== false ? [[<CodeOutlined />, '厂商目录', '#providers']] : []), ...(status?.home_show_pricing !== false ? [[<WalletOutlined />, '模型定价', '/pricing']] : []), [<FileTextOutlined />, '接入文档', '#quickstart'], [<MessageOutlined />, '开始对话', '/chat']].map(([icon, label, href]) => <a key={label} href={href}><span>{icon}</span><b>{label}</b></a>)}
     </aside>
