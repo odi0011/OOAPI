@@ -41,11 +41,13 @@ function withQuotaLock(channelId, task) {
  * 用启发式会让「0.1%」这种小数值被乘 100 放大成 10%（Kiro 1/1000、Antigravity 剩余 99.5% 都会中招）。
  */
 function clampPct(v) {
+  if (!["number", "string"].includes(typeof v) || String(v).trim() === "") return null;
   const n = Number(v);
   if (!Number.isFinite(n)) return null;
   return Math.max(0, Math.min(100, Math.round(n * 10) / 10));
 }
 function pctFromFraction(v) {
+  if (!["number", "string"].includes(typeof v) || String(v).trim() === "") return null;
   const n = Number(v);
   if (!Number.isFinite(n)) return null;
   return clampPct(n * 100);
@@ -318,27 +320,49 @@ async function quotaGrok(channel) {
       // 缺这两个头会被网关直接拒（426 / 401）
       "x-xai-token-auth": "xai-grok-cli",
       "x-grok-client-version": identity.clientVersion,
+      "x-grok-client-identifier": "grok-shell",
       "x-grok-client-mode": "interactive",
       "user-agent": `grok-pager/${identity.clientVersion} grok-shell/${identity.clientVersion}`,
     },
   });
-  const cfg = j.config || j;
+  return normalizeGrokQuota(j, channel?.other);
+}
+
+/** 上游可能只给结算周期和现金余额；缺少用量不能伪装成已用 0%。 */
+export function normalizeGrokQuota(j = {}, other = {}) {
+  const cfg = j?.config || j || {};
   const used = pctFromPercent(cfg.creditUsagePercent);
   const period = cfg.currentPeriod || {};
   const windows = [];
-  if (used !== null) {
+  const periods = {
+    USAGE_PERIOD_TYPE_WEEKLY: ["本周额度", "7d", 604800],
+    USAGE_PERIOD_TYPE_MONTHLY: ["本月额度", "月", 0],
+    USAGE_PERIOD_TYPE_DAILY: ["今日额度", "1d", 86400],
+  };
+  const [label, tag, seconds] = periods[period.type] || ["账号额度", "额度", 0];
+  if (used !== null || period.type || period.start || period.end) {
     windows.push({
       key: "credits",
-      label: period.type === "USAGE_PERIOD_TYPE_MONTHLY" ? "本月额度" : "本周额度",
+      label,
+      tag,
+      windowSeconds: seconds,
       usedPercent: used,
       resetAt: epochOf(period.end),
-      note: period.start ? `${period.start} ~ ${period.end || ""}` : "",
+      note: used === null ? "上游未返回额度总量或已用比例，不能据此判断是否用完。" : "",
     });
   }
-  const cents = (v) => (v === undefined || v === null ? null : Number(v?.val ?? v) / 100);
+  const cents = (v) => {
+    const raw = v && typeof v === "object" ? v.val : v;
+    if (!["number", "string"].includes(typeof raw) || String(raw).trim() === "") return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n / 100 : null;
+  };
+  const plan = String(cfg.subscriptionTier || cfg.planType || other?.subscription_tier || other?.plan_type || "");
   return {
-    account: String(channel?.other?.email || channel?.other?.user_id || ""),
-    plan: String(channel?.other?.subscription_tier || ""),
+    account: String(other?.email || other?.user_id || ""),
+    plan,
+    usageUnavailable: used === null,
+    notice: used === null ? "上游未返回已用比例；预付费余额不代表账号剩余额度。" : "",
     windows,
     credits: {
       prepaidBalance: cents(cfg.prepaidBalance),

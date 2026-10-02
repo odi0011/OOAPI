@@ -1,4 +1,10 @@
 // 额度展示选取规则 —— **全局统一规范**（所有厂商共用一份，改规则只改这里）
+/** null/空串是未知值，Number(null) 的 0 不能当成真实余额或用量。 */
+export function quotaNumber(value) {
+  if (!["number", "string"].includes(typeof value) || String(value).trim() === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
 // ===========================================================================
 // 单独成文件（而不是留在 ChannelQuota.jsx 里）有两个原因：
 //   ① 它是**纯函数规则**，不依赖 React/DOM，可以被单测直接 import 验证；

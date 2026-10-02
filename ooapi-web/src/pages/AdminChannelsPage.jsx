@@ -2193,35 +2193,24 @@ export default function AdminChannelsPage() {
             <ChannelErrorRow r={r} />
           </>
         );
-        if (q?.windows?.length || q?.credits || stats) {
-          return (
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <QuotaInline quota={q} stats={stats} />
-              {rateLimitRow}
-            </div>
-          );
-        }
-        if (r.quota_supported) {
-          return (
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        // 平台统计始终有值，不能让它提前返回并挡住账号额度的查询入口。
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <QuotaInline quota={q} stats={stats} />
+            {rateLimitRow}
+            {r.quota_supported ? (
               <Button
                 type="link"
                 size="small"
+                aria-label={`${q ? "查看" : "查询"} ${r.name} 账号额度`}
                 loading={quotaBusyId === r.id}
                 disabled={Boolean(quotaBusyId) && quotaBusyId !== r.id}
                 style={{ padding: 0, height: "auto", alignSelf: "flex-start", fontSize: 12, color: "var(--ink-3)" }}
                 onClick={() => doQuota(r, { openPanel: true })}
               >
-                点击查询
+                {q ? "额度详情" : "查询额度"}
               </Button>
-              {rateLimitRow}
-            </div>
-          );
-        }
-        return (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <Text type="secondary" style={{ fontSize: 12 }}>不支持</Text>
-            {rateLimitRow}
+            ) : !q ? <Text type="secondary" style={{ fontSize: 11 }}>上游暂未提供额度</Text> : null}
           </div>
         );
       },

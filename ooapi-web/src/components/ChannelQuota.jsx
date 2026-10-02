@@ -7,8 +7,10 @@
 //   · 百分比取整显示（88%），悬浮才给精确值与重置时间，列表里不堆字；
 //   · 颜色按用量分档：<70% 主色、70-90% 橙、>90% 红，一眼看出快用完的账号。
 import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Tooltip } from "antd";
+import { Button, Tooltip } from "antd";
 import { ApiOutlined, DatabaseOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import { fmtOd } from "../services/format";
+import { quotaNumber } from "./quota-order.js";
 
 /** 把秒数转成 sub2api 那样的短标签：18000→5h、604800→7d、2592000→30d */
 function windowTag(seconds) {
@@ -179,7 +181,7 @@ function fmtReset(epochSeconds, resetAfterSeconds) {
  * index 决定静态色序（第一窗口靛蓝、第二翠绿…），用量档位再覆盖成琥珀/红。
  */
 function WindowRow({ w, index = 0, showScope = true, compact = false }) {
-  const hasPct = Number.isFinite(Number(w.usedPercent));
+  const hasPct = quotaNumber(w.usedPercent) !== null;
   const pct = hasPct ? Math.max(0, Math.min(100, Number(w.usedPercent))) : 0;
   const pill = pillOf(index, hasPct ? pct : NaN);
   const identity = windowIdentity(w);
@@ -254,11 +256,11 @@ function WindowRow({ w, index = 0, showScope = true, compact = false }) {
         </>
       ) : (
         <span className="oo-num" style={{ color: "var(--ink-3)", flexShrink: 0 }}>
-          {Number.isFinite(Number(w.limit))
-            ? `${w.used ?? 0}/${w.limit}`
-            : Number.isFinite(Number(w.remaining))
+          {quotaNumber(w.limit) !== null
+            ? `${quotaNumber(w.used) === null ? "—" : w.used}/${w.limit}`
+            : quotaNumber(w.remaining) !== null
               ? `剩 ${w.remaining}`
-              : "—"}
+              : "用量未返回"}
         </span>
       )}
     </div>
@@ -325,14 +327,14 @@ export function QuotaTip({ quota }) {
         </div>
       ))}
       {/* 余额类信息也走灰胶囊：与窗口彩色胶囊形成层次，不再是一条条裸文本 */}
-      {quota.credits?.lines?.length || quota.credits?.balance || Number.isFinite(Number(quota.credits?.prepaidBalance)) ? (
+      {quota.credits?.lines?.length || quota.credits?.balance || quotaNumber(quota.credits?.prepaidBalance) !== null ? (
         <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
           {(quota.credits?.lines || []).map((c, i) => (
             <InfoPill key={i}>{c.label} {c.total ?? c.used ?? 0}</InfoPill>
           ))}
           {quota.credits?.balance ? <InfoPill>余额 {quota.credits.balance}</InfoPill> : null}
-          {Number.isFinite(Number(quota.credits?.prepaidBalance)) ? (
-            <InfoPill>预付费 ${Number(quota.credits.prepaidBalance).toFixed(2)}</InfoPill>
+          {quotaNumber(quota.credits?.prepaidBalance) !== null ? (
+            <InfoPill>预付费 {fmtOd(quota.credits.prepaidBalance, 1)}</InfoPill>
           ) : null}
         </div>
       ) : null}
@@ -373,7 +375,7 @@ export function QuotaInline({ quota, stats }) {
   const c = quota?.credits;
 
   const hasBalance = Boolean(c && c.balance !== undefined && c.balance !== null && c.balance !== "");
-  const hasPrepaid = Number.isFinite(Number(c?.prepaidBalance));
+  const hasPrepaid = quotaNumber(c?.prepaidBalance) !== null;
   const hasLines = Boolean(c?.lines?.length);
 
   // 汇总 chips：套餐 / 余额 / 积分包…全部作为「横向标签」平铺，超出收进 +N
@@ -411,7 +413,7 @@ export function QuotaInline({ quota, stats }) {
   // 「workbuddy 或者 gpt 的 free 带积分的这种，如果被折叠了，则余额显示为第一个 tag」。
   // 它比套餐名更能回答「还能不能用」，所以即使不折叠也放最前。
   if (hasBalance) chips.unshift({ key: "bal", node: <>余额 {c.balance}{c.unit ? ` ${c.unit}` : ""}</> });
-  if (hasPrepaid) chips.push({ key: "pre", node: <>预付费 ${Number(c.prepaidBalance).toFixed(2)}</> });
+  if (hasPrepaid) chips.push({ key: "pre", node: <>预付费 {fmtOd(c.prepaidBalance, 1)}</> });
 
   // 余额/积分 chip 单独摘出来（chips 里 key==="bal" 那条）恒放行首。
   // 用户明确要求：「workbuddy 或者 gpt 的 free 带积分的这种，如果被折叠了，
@@ -728,11 +730,18 @@ function OdCoinIcon() {
 /** 弹窗/详情块形态：完整窗口 + 余额 + 刷新（账号与抓取时间按需求无需展示） */
 export default function QuotaPanel({ quota, loading, onRefresh, error }) {
   if (loading) return <div style={{ fontSize: 12, color: "var(--ink-3)" }}>正在查询账号额度…</div>;
-  if (error) return <div style={{ fontSize: 12, color: "var(--red)" }}>{error}</div>;
+  if (error) return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ fontSize: 12, color: "var(--red)" }}>{error}</div>
+      {onRefresh ? <Button size="small" style={{ alignSelf: "flex-start" }} onClick={onRefresh}>重新查询</Button> : null}
+    </div>
+  );
   if (!quota) return <div style={{ fontSize: 12, color: "var(--ink-3)" }}>该渠道暂时没有额度快照。</div>;
   const wins = Array.isArray(quota.windows) ? quota.windows : [];
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {!quota.plan && quota.provider === "grok-oauth" ? <div style={{ fontSize: 12, color: "var(--ink-3)" }}>套餐：上游未返回</div> : null}
+      {quota.notice ? <div style={{ fontSize: 12, color: "var(--ink-3)" }}>{quota.notice}</div> : null}
       {quota.plan || quota.limitReached ? (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {quota.plan ? <span className="bui-chip">套餐 {quota.plan}</span> : null}
@@ -750,7 +759,7 @@ export default function QuotaPanel({ quota, loading, onRefresh, error }) {
           </div>
         ))
       ) : (
-        <div style={{ fontSize: 12, color: "var(--ink-3)" }}>该账号没有返回额度窗口，只有余额信息。</div>
+        <div style={{ fontSize: 12, color: "var(--ink-3)" }}>上游未返回额度窗口。</div>
       )}
       {quota.credits?.lines?.length ? (
         <div style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
@@ -762,13 +771,18 @@ export default function QuotaPanel({ quota, loading, onRefresh, error }) {
           ))}
         </div>
       ) : null}
-      {quota.credits && quota.credits.balance ? (
+      {quota.credits && quota.credits.balance !== undefined && quota.credits.balance !== null && quota.credits.balance !== "" ? (
         <div style={{ fontSize: 12 }}>余额：{quota.credits.balance}</div>
       ) : null}
+      {[
+        ["prepaidBalance", "预付费余额"], ["onDemandCap", "按需消费上限"], ["onDemandUsed", "按需已消费"],
+      ].map(([key, label]) => quotaNumber(quota.credits?.[key]) !== null ? (
+        <div key={key} style={{ fontSize: 12 }}>{label}：{fmtOd(quota.credits[key], 1)}</div>
+      ) : null)}
       {onRefresh ? (
-        <button type="button" className="bui-btn" style={{ alignSelf: "flex-start" }} onClick={onRefresh}>
+        <Button size="small" style={{ alignSelf: "flex-start" }} onClick={onRefresh}>
           重新查询
-        </button>
+        </Button>
       ) : null}
     </div>
   );
