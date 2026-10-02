@@ -192,6 +192,17 @@ const run = async (extra = {}) => {
   return { status: res.status, events, final: events.findLast((e) => ['done', 'error', 'stopped'].includes(e.type)) };
 };
 const get = async (url) => { const res = await api(url); assert.equal(res.status, 200); return (await res.json()).data; };
+const replayFinal = async (message) => {
+  const callsBefore = requests, logsBefore = state.logs.length, quotaBefore = state.token.remain_quota;
+  assert.equal((await get(`/api/chat/sessions/${state.session.id}/running`)).running, false);
+  const response = await api(`/api/chat/sessions/${state.session.id}/stream`);
+  assert.equal(response.status, 200, '刚结束的运行可回放，不能把状态检查/订阅竞态当成404');
+  const body = await response.text(); assert.ok(body.includes('data: [DONE]'));
+  const events = body.split('\n').filter(l=>l.startsWith('data: {')).map(l=>JSON.parse(l.slice(6)));
+  const final = events.findLast(e=>['done','error','stopped'].includes(e.type));
+  assert.equal(final.message.id,message.id); assert.equal(final.message.status,message.status); assert.equal(final.message.cost,message.cost);
+  assert.equal(requests,callsBefore); assert.equal(state.logs.length,logsBefore); assert.equal(state.token.remain_quota,quotaBefore);
+};
 const until = async (predicate, attempts = 100) => { for (let i = 0; i < attempts; i++) { if (await predicate()) return; await new Promise((r) => setTimeout(r, 5)); } throw new Error('fixture等待超时'); };
 const balance = (units) => {
   assert.equal(state.user.quota, initial - units); assert.equal(state.user.used_quota, units);
@@ -252,6 +263,7 @@ try {
   for (const status of [400, 401, 429, 502]) await test(`HTTP${status}仅失败usage且刷新保留错误/0费用/未知首T`, async () => {
     behavior = (_req, res) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end('{"error":{"message":"https://secret.invalid/?key=DO_NOT_LEAK","code":"fixture_error"}}'); };
     const result = await run(); const message = finalMessage(result, 'error'); const row = oneLog('error'); balance(0);
+    await replayFinal(message);
     assert.equal(row.type, 4); assert.equal(row.prompt_tokens, 0); assert.equal(row.completion_tokens, 0); assert.equal(row.quota, 0);
     assert.equal(message.cost, 0); assert.equal(message.firstTokenMs, null); assert.equal(row.first_token_known, 0);
     assert.ok(row.request_prompt_text.includes('用户原文')); assert.ok(row.request_prompt_text !== input);
@@ -298,6 +310,7 @@ try {
   await test('完整回复成功一行消费日志且默认Key正确扣费', async () => {
     sse(frame({ choices: [{ delta: { content: 'COMPLETE' } }] }) + frame({ usage }) + 'data: [DONE]\n\n');
     const message = finalMessage(await run({ keyId: 0 }), 'success'); const row = oneLog('success'); balance(row.quota);
+    await replayFinal(message);
     assert.equal(row.type, 2); assert.deepEqual(message.tokens, { prompt: 1700, completion: 300, cache: 500 });
     assert.equal(message.id, (await get(`/api/chat/sessions/${state.session.id}`)).messages[1].id);
   });

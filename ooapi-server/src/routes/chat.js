@@ -1116,7 +1116,8 @@ router.get(
     const session = await getSession(req.user.id, req.params.id);
     if (!session) return fail(res, "会话不存在", 404);
     const run = getRun(session.id);
-    if (!run || run.settled) return fail(res, "没有进行中的生成", 404);
+    // running检查与订阅之间可能刚好完成；缓存仍保留5分钟，subscribe会回放终态并结束流。
+    if (!run) return fail(res, "没有进行中的生成", 404);
     streamFromRun(req, res, run, { startedAt: run.startedAt, events: run.events.length });
   })
 );
