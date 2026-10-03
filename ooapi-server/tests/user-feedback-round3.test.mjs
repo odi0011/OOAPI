@@ -212,7 +212,7 @@ t("必须截断（否则 TEXT 列写不下会让整条日志失败）", () => {
   ck(/text_truncated/.test(helper), "没有标记被截断");
 });
 t("只在管理员能看的地方（detail 列按 isAdmin 裁剪）", () => {
-  ck(/\.\.\.\(isAdmin \? \["detail", "user_agent"\] : \[\]\)/.test(logRoute), "detail 列没有按 isAdmin 裁剪");
+  ck(/\.\.\.\(isAdmin \? \["detail"(?:, "user_agent")?\] : \[\]\)/.test(logRoute), "detail 列没有按 isAdmin 裁剪");
 });
 t("前端展示本人实际输入/输出，单独标注管理员上游上下文", () => {
   ck(/label="实际输入"/.test(logPage) && /text=\{detail\.input_text\}/.test(logPage), "没有独立用户原文块");

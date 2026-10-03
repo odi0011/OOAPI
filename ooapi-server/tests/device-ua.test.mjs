@@ -40,3 +40,4 @@ for (const [ua, want] of cases) {
 }
 console.log(bad === 0 ? "UA_PARSE_ALL_PASS" : `UA_PARSE_FAILURES=${bad}`);
 process.exit(bad === 0 ? 0 : 1);
+import "./client-agents.test.mjs";

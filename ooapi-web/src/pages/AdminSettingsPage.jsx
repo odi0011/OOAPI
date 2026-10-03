@@ -16,6 +16,7 @@ import {
   BgColorsOutlined, LockOutlined, ApiOutlined, MailOutlined, DatabaseOutlined, UserOutlined, CheckCircleOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
+import AgentRoutingSettings, { routingValue } from "../components/AgentRoutingSettings";
 import { odOf, unitsPerOd } from "../services/format";
 import { useApp } from "../context/AppContext";
 import PageHeader from "../components/PageHeader";
@@ -121,6 +122,9 @@ const F = {
   perf_metrics_retention_days: { g: "security", label: "指标保留天数", type: "number", min: 0, hint: "0 = 永久" },
 
   // ---------- 网关 ----------
+  gateway_agent_detection: { g: "gateway", label: "识别调用 Agent", type: "switch", bool: true, hint: "记录客户端与版本，并启用符合条件的 Agent 路由规则" },
+  gateway_agent_rules: { g: "gateway", label: "Agent 路由规则", type: "agent-rules" },
+  gateway_empty_cooldown_seconds: { g: "gateway", label: "空回复冷却（秒）", type: "number", min: 1, max: 300, hint: "上游未返回可用内容时暂缓使用该渠道，默认 30 秒" },
   request_timeout_ms: { g: "gateway", label: "单请求超时（毫秒）", type: "number", min: 1000, max: 86400000, step: 1000 },
   retry_times: { g: "gateway", label: "换渠道重试次数", type: "number", min: 0, max: 10 },
   gateway_ping_interval: { g: "gateway", label: "流式保活心跳（秒）", type: "number", min: 0, max: 600, hint: "0 = 关闭；长思考模型建议 15~30 防反代断流" },
@@ -187,7 +191,7 @@ const SECTIONS = {
     { title: "渠道健康", fields: ["auto_disable_channel", "auto_enable_channel", "channel_disable_threshold", "auto_disable_status_codes", "auto_disable_keywords", "auto_test_channel_enabled", "auto_test_channel_minutes", "auto_test_concurrency"] },
     { title: "性能指标", fields: ["perf_metrics_enabled", "perf_metrics_retention_days"] },
   ],
-  gateway: [{ title: "请求与流式响应", fields: ["request_timeout_ms", "retry_times", "gateway_ping_interval", "gateway_log_body"] }],
+  gateway: [{ title: "请求与流式响应", fields: ["request_timeout_ms", "retry_times", "gateway_ping_interval", "gateway_log_body", "gateway_empty_cooldown_seconds"] }, { title: "Agent 识别与路由", fields: ["gateway_agent_detection", "gateway_agent_rules"] }],
   email: [
     { title: "SMTP 连接", fields: ["smtp_enabled", "smtp_host", "smtp_port", "smtp_user", "smtp_pass", "smtp_from"] },
     { title: "传输安全", fields: ["smtp_ssl", "smtp_starttls", "smtp_insecure"] },
@@ -221,6 +225,7 @@ const SUPER_OPTION_FALLBACK = [
   "smtp_enabled", "smtp_host", "smtp_port", "smtp_user", "smtp_pass", "smtp_from",
   "smtp_ssl", "smtp_starttls", "smtp_insecure",
   "request_timeout_ms", "retry_times", "gateway_ping_interval",
+  "gateway_agent_detection", "gateway_agent_rules", "gateway_empty_cooldown_seconds",
   "backup_enabled", "backup_interval_hours", "backup_keep", "backup_dir",
 ];
 
@@ -242,6 +247,7 @@ function useSettingsForm() {
       const { super_only, is_super, ...values } = data || {};
       setSuperOnly(Array.isArray(super_only) ? super_only : Number(user?.role) >= 1000 ? [] : SUPER_OPTION_FALLBACK);
       const norm = { ...values };
+      norm.gateway_agent_rules = routingValue(values.gateway_agent_rules ?? { version: 1, rules: [] });
       norm.user_data_visibility = normalizeVisibility(values.user_data_visibility, values);
       // 布尔归一化：库里存的是 "true"/"false" 字符串，Switch 需要真布尔
       for (const k of BOOL_KEYS) norm[k] = values[k] === "true" || values[k] === true;
@@ -276,6 +282,7 @@ function useSettingsForm() {
           payload[k] = normalizeVisibility(v);
           continue;
         }
+        if (k === "gateway_agent_rules") { payload[k] = v; continue; }
         if (F[k].od && (v === undefined || v === null || v === "")) {
           message.error(`请填写${F[k].label}；无额度请填 0`);
           return;
@@ -316,6 +323,7 @@ function Field({ spec, name, locked = false, ...controlProps }) {
   const common = { ...controlProps, placeholder: spec.ph, disabled };
   if (spec.type === "image") return <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><BrandLogo src={controlProps.value} size={36} style={{ borderRadius: 7, padding: 3, background: 'var(--field)' }}/><Input {...common} /></div>;
   if (spec.type === "visibility") return <VisibilityFields {...controlProps} disabled={disabled} />;
+  if (spec.type === "agent-rules") return <AgentRoutingSettings {...controlProps} disabled={disabled} />;
   if (spec.type === "switch") return <Switch {...controlProps} disabled={disabled} />;
   if (spec.type === "number") {
     return <InputNumber {...controlProps} style={{ width: "100%" }} min={spec.min} max={spec.max} step={spec.step || 1} precision={spec.precision} disabled={disabled} />;

@@ -1,4 +1,5 @@
 import OdAmount, { OdText } from "../components/OdAmount";
+import ClientAgentBadge from "../components/ClientAgentBadge";
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { Table, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions, Space, Typography } from "antd";
 import { ReloadOutlined, FileTextOutlined } from "@ant-design/icons";
@@ -26,7 +27,7 @@ const ms = formatDuration;
 const reasoningLabel = value => String(value || "").split(",").map(level => ({default:"模型默认",enabled:"开启",disabled:"关闭",none:"关闭",minimal:"最低",low:"低",medium:"中",high:"高",xhigh:"极高",max:"最高"})[level] || level).filter(Boolean).join(" / ") || "未记录";
 function EndpointCell({ record, isAdmin }) {
   const row = (label, value, key) => <span className="oo-endpoint-row" key={key || label}><small>{label}</small><span title={value || "历史记录未保存"}>{value || "未记录"}</span></span>;
-  return <span className="oo-endpoints">{row("入站", record.inbound_endpoint)}{isAdmin && (record.upstream_endpoints?.length ? record.upstream_endpoints.map((path,i) => row(i ? "" : "上游", path, i)) : row("上游", ""))}</span>;
+  return <span className="oo-endpoints"><ClientAgentBadge record={record} />{row("入站", record.inbound_endpoint)}{isAdmin && (record.upstream_endpoints?.length ? record.upstream_endpoints.map((path,i) => row(i ? "" : "上游", path, i)) : row("上游", ""))}</span>;
 }
 
 /**

@@ -106,6 +106,9 @@ export const DEFAULT_OPTIONS = {
   retry_times: "3", // 换渠道重试次数
   gateway_ping_interval: "0", // 流式保活心跳（秒，0=关闭）
   gateway_log_body: "false", // 是否在日志里记录提示词/回复摘要（更占空间但便于排障）
+  gateway_agent_detection: "true",
+  gateway_agent_rules: '{"version":1,"rules":[]}',
+  gateway_empty_cooldown_seconds: "30", // 空回复常与单次输入有关，短冷却避免一次空回复封住整个渠道五分钟。
 
   // ---------- 邮件（SMTP）----------
   smtp_enabled: "false",
@@ -208,6 +211,7 @@ export const SUPER_OPTIONS = new Set([
   "smtp_ssl", "smtp_starttls", "smtp_insecure",
   "alert_webhook_url", "alert_webhook_secret", "alert_email_to",
   "request_timeout_ms", "retry_times", "gateway_ping_interval",
+  "gateway_agent_detection", "gateway_agent_rules", "gateway_empty_cooldown_seconds",
   "backup_enabled", "backup_interval_hours", "backup_keep", "backup_dir",
 ]);
 

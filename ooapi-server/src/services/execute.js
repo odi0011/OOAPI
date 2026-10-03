@@ -11,6 +11,8 @@ import { resolveAliasSync } from "./models.js";
 import { recordChannelSwitch } from "./metrics.js";
 import { normalizeUsage, assertModelPriced } from "./pricing.js";
 import { channelPriceQuote } from "./channel-price-quote.js";
+import { clientAgentContext } from "./client-agent-context.js";
+import { agentReasoning, orderAgentChannels } from "./agent-routing.js";
 
 /** 请求已经发送不能证明消耗；只认上游返回的用量或实际生成的内容。 */
 export function hasBillableUsage(usage) {
@@ -136,8 +138,14 @@ export async function runCompletion({
   requestId = "",
 }) {
   await assertModelPriced(model);
-  const reasoningConfig = reasoningSelection(model, reasoningEffort);
   const capabilities = modelCapabilities(model);
+  const clientContext = clientAgentContext();
+  const agentRule = clientContext?.rule;
+  const requestedReasoning = agentReasoning(agentRule, reasoningEffort, capabilities);
+  let reasoningConfig;
+  try { reasoningConfig = reasoningSelection(model, requestedReasoning); }
+  catch (e) { e.reasoningEffort = requestedReasoning; throw e; }
+  if (clientContext) clientContext.applied = reasoningConfig.level || "default";
   const outputLimit = maxOutputTokens ? Math.min(Number(maxOutputTokens), Number(capabilities.maxOutputTokens) || Infinity) : capabilities.customized ? capabilities.maxOutputTokens || undefined : undefined;
   const runStartedAt = Date.now();
   // 重试沿用同一次调用的上下文；无会话头的 API 请求各自独立，避免不同用户共用渠道会话。
@@ -147,7 +155,7 @@ export async function runCompletion({
   // 渠道声明的是真实模型名：先把兼容别名归一化再匹配，
   // 否则 kimi-latest / qwen-turbo 这类别名请求会直接 NO_CHANNEL
   const matchName = resolveAliasSync(model);
-  const channels = await selectChannels({ model: matchName, excludeIds: tried, groupName, channelType });
+  const channels = orderAgentChannels(await selectChannels({ model: matchName, excludeIds: tried, groupName, channelType }), agentRule);
 
   if (!channels.length) {
     // 区分「没有渠道支持这个模型」和「渠道都在冷却」，否则排查方向会完全跑偏。
@@ -164,14 +172,14 @@ export async function runCompletion({
 
   // 单渠道超时：取后台设置（request_timeout_ms），而不是整条重试链共用一个时限。
   // 否则第一个渠道耗掉大部分预算后，后续渠道会「秒败」。
-  const timeoutMs = Math.max(1000, getNumberOption("request_timeout_ms") || 600000);
+  const timeoutMs = agentRule?.timeoutMs ?? Math.max(1000, getNumberOption("request_timeout_ms") || 600000);
 
   // 重试预算：`retry_times` 设置项此前是死配置（没有任何代码读取），
   // 实际重试次数等于「匹配到的渠道总数」——10 个渠道集体故障时，
   // 单个客户端请求最坏会挂 10 × timeoutMs（默认 10 分钟 = 100 分钟），
   // 而客户端早就断开了，服务端还在逐个试错、逐个写渠道错误。
   // 语义：retry_times = 换渠道重试次数，故总尝试次数 = retry_times + 1（至少试 1 个）。
-  const retryTimes = Math.max(0, Math.min(10, Number(getNumberOption("retry_times")) || 0));
+  const retryTimes = agentRule?.retries ?? Math.max(0, Math.min(10, Number(getNumberOption("retry_times")) || 0));
   const maxAttempts = Math.min(channels.length, retryTimes + 1);
 
   let attempts = 0;
@@ -460,6 +468,8 @@ function cooldownFor(code, err) {
   const requested = Number(err?.cooldownSec);
   if (Number.isFinite(requested) && requested > 0) return Math.min(86400, Math.max(30, Math.floor(requested)));
   switch (code) {
+    case "CHANNEL_EMPTY":
+      return Math.min(300, Math.max(1, getNumberOption("gateway_empty_cooldown_seconds") || 30));
     case "CHANNEL_MUTED":
       return 1800;
     case "CHANNEL_AUTH_EXPIRED":

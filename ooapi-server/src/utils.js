@@ -92,6 +92,7 @@ export function deviceFromUa(ua) {
   // 既没版本号也没斜杠，必须单独匹配，否则会掉到「未知设备」
   else if (/curl/i.test(s)) browser = "curl";
   else if (/python-requests|python\/|httpx/i.test(s)) browser = "Python";
+  else if ((m = /(?:runtime\/)?node\.js\/(\d+)/i.exec(s))) browser = `Node.js ${m[1]}`;
   else if (/node-fetch|undici|axios|node\/|^node$/i.test(s)) browser = "Node.js";
   else if (/okhttp/i.test(s)) browser = "OkHttp";
   else if (/Go-http-client/i.test(s)) browser = "Go";

@@ -154,7 +154,7 @@ const query = async (store, sql, args = []) => {
       r.billing_details = detail.billing_details || null;
       r.inbound_endpoint = detail.inbound_endpoint || null;
       r.reasoning_effort = detail.reasoning_effort || null;
-      if (!s.includes(', detail, user_agent')) { delete r.detail; delete r.user_agent; delete r.request_prompt_text; } return r; })];
+      if (!/,\s*detail(?:,|\s+FROM)/.test(s)) { delete r.detail; delete r.request_prompt_text; } return r; })];
   }
   throw new Error(`Uncovered fixture SQL: ${s}`);
 };

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { parseAgentRouting } from "../services/agent-routing.js";
 import { ok, fail, asyncHandler } from "../utils.js";
 import { adminRequired } from "../middleware/auth.js";
 import { getOption, setOption, DEFAULT_OPTIONS, SECRET_OPTIONS, SUPER_OPTIONS } from "../config.js";
@@ -10,6 +11,7 @@ const router = Router();
 // 数值型设置项的白名单与取值范围（管理员误填 Infinity/负值/超大值会破坏运行期行为：
 // 历史隐患：request_timeout_ms = Infinity 会让 setTimeout 溢出成 1ms，所有上游瞬间超时）
 const NUMERIC_OPTIONS = {
+  gateway_empty_cooldown_seconds: { min: 1, max: 300, int: true },
   quota_per_unit: { min: 1, max: 1e9, int: true },
   units_per_od: { min: 1, max: 1e9, int: true },
   quota_for_new_user: { min: 0, max: 1e12, int: true },
@@ -70,6 +72,7 @@ const FIXED_OPTIONS = new Set(["units_per_od"]);
 // 外观项经 /api/status 下发给所有访客，并直接进 CSS 变量与 AntD token：
 // 非法值（拼错的预设名、非 hex 颜色）会让全站主色退化成黑色或圆角失效，写库前就拦下。
 const ENUM_OPTIONS = {
+  gateway_agent_detection: ["true", "false"],
   theme_background: ["pure", "blueprint", "dots", "grain"],
   theme_radius: ["sharp", "default", "round"],
   theme_density: ["compact", "default", "loose"],
@@ -87,6 +90,9 @@ const ENUM_OPTIONS = {
 };
 
 function validateOptionValue(key, raw) {
+  if (key === "gateway_agent_rules") {
+    try { parseAgentRouting(raw); return null; } catch (e) { return e instanceof SyntaxError ? "Agent 规则 JSON 格式无效" : e.message; }
+  }
   if (key === "home_background_light" || key === "home_background_dark") {
     const value = String(raw ?? "").trim();
     if (!value) return null;
@@ -164,7 +170,7 @@ router.put(
       if (gerr) return fail(res, gerr, SUPER_OPTIONS.has(key) ? 403 : 400);
       const verr = validateOptionValue(key, body.value);
       if (verr) return fail(res, `设置项 ${key} ${verr}`);
-      await setOption(key, key === "user_data_visibility" ? JSON.stringify(parseUserDataVisibility(body.value)) : body.value);
+      await setOption(key, key === "gateway_agent_rules" ? JSON.stringify(parseAgentRouting(body.value)) : key === "user_data_visibility" ? JSON.stringify(parseUserDataVisibility(body.value)) : body.value);
     } else {
       // 批量更新：先整体校验再写，避免写一半失败留下混合状态
       for (const [key, value] of Object.entries(body)) {
@@ -180,7 +186,7 @@ router.put(
         if (!isSuper && SUPER_OPTIONS.has(key)) continue; // 已在上面拦住，这里兜底
         // 掩码值 = 前端把「原样未改」的敏感项回传了，跳过不写（否则会把密码写成 ********）
         if (SECRET_OPTIONS.has(key) && String(value ?? "") === MASK) continue;
-        const v = key === "user_data_visibility" ? JSON.stringify(parseUserDataVisibility(value)) : typeof value === "boolean" ? String(value) : String(value ?? "");
+        const v = key === "gateway_agent_rules" ? JSON.stringify(parseAgentRouting(value)) : key === "user_data_visibility" ? JSON.stringify(parseUserDataVisibility(value)) : typeof value === "boolean" ? String(value) : String(value ?? "");
         await setOption(key, v);
         changed.push(key);
       }

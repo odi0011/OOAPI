@@ -1,0 +1,17 @@
+[
+  {"id":"zcode","name":"ZCode","icon":"zcode.png","source":"https://zcode.z.ai/favicon-192x192.png?v=20260707-transparent"},
+  {"id":"opencode","name":"OpenCode","icon":"opencode.png","source":"https://opencode.ai/favicon-96x96-v3.png"},
+  {"id":"qoder","name":"Qoder","icon":"qoder.svg","source":"https://qoder.com/favIcon.svg"},
+  {"id":"openclaw","name":"OpenClaw","icon":"openclaw.svg","source":"https://openclaw.ai/favicon.svg"},
+  {"id":"codex","name":"Codex","icon":"codex.svg","mono":true,"source":"https://openai.com/brand/"},
+  {"id":"claude-code","name":"Claude Code","icon":"claude-code.png","source":"https://code.claude.com/docs/_mintlify/favicons/claude-code/pLsy-mRpNksna2sx/_generated/favicon/favicon-32x32.png"},
+  {"id":"cursor","name":"Cursor","icon":"cursor.svg","mono":true,"source":"https://cursor.com/marketing-static/favicon-light.svg"},
+  {"id":"cline","name":"Cline","icon":"cline.png","source":"https://cline.bot/assets/branding/favicons/favicon-32x32.png"},
+  {"id":"kilo","name":"Kilo","icon":"kilo.svg","source":"https://kilo.ai/favicon/favicon.svg?v=2"},
+  {"id":"kiro","name":"Kiro","icon":"kiro.svg","mono":true,"source":"https://kiro.dev/icon.svg"},
+  {"id":"gemini-cli","name":"Gemini CLI","icon":"gemini-cli.png","source":"https://geminicli.com/icon.png"},
+  {"id":"trae","name":"TRAE","icon":"trae.png","source":"https://lf-static.traecdn.us/obj/trae-ai-tx/trae_website/favicon.png"},
+  {"id":"workbuddy","name":"WorkBuddy","icon":"workbuddy.svg","source":"https://www.workbuddy.ai/"},
+  {"id":"codebuddy","name":"CodeBuddy","icon":"codebuddy.svg","source":"https://download.codebuddy.cn/web/website/a156fee78f35e874d407848198e5f96a4cf383ef/assets/logo.svg"},
+  {"id":"windsurf","name":"Windsurf","icon":"","source":"https://windsurf.com/","note":"原官网已跳转 Devin，历史产品图标待核实，使用中性图形。"}
+]

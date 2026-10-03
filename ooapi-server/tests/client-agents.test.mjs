@@ -1,0 +1,65 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import { CLIENT_AGENTS, detectClientAgent, publicClientAgent, safeReasoning } from "../src/services/client-agents.js";
+import { parseAgentRouting, matchAgentRule, agentReasoning, orderAgentChannels } from "../src/services/agent-routing.js";
+import { deviceFromUa } from "../src/utils.js";
+import { publicRunError } from "../src/services/upstream/public-error.js";
+import { mapLog } from "../src/routes/log.js";
+import { withClientAgent, clientAgentAudit } from "../src/services/client-agent-context.js";
+const z = "ZCode/3.14.3 ai-sdk/provider-utils/4.0.39 runtime/node.js/24";
+const o = "opencode/1.18.31 ai-sdk/provider-utils/4.0.23 runtime/node.js/24";
+assert.deepEqual(detectClientAgent({ "user-agent": z }), { id: "zcode", version: "3.14.3", source: "user-agent", conflict: false });
+assert.equal(detectClientAgent({ "user-agent": o }).id, "opencode");
+assert.equal(deviceFromUa(z), "Node.js 24");
+assert.equal(deviceFromUa(o), "Node.js 24");
+assert.equal(detectClientAgent({ "user-agent": "node" }).id, "");
+assert.equal(detectClientAgent({ "user-agent": "OpenAI/JS 5.0" }).id, "");
+assert.equal(detectClientAgent({ "user-agent": "Anthropic/JS 1.0" }).id, "");
+assert.equal(detectClientAgent({ "user-agent": "codex_cli_rs/0.123.0 (Windows 10.0)" }).id, "codex");
+assert.equal(detectClientAgent({ "user-agent": "claude-cli/2.1.0 (external, cli)" }).id, "claude-code");
+assert.equal(detectClientAgent({ "x-ooapi-agent": "unknown-value" }).id, "");
+assert.equal(detectClientAgent({ "user-agent": z, "x-ooapi-agent": "opencode" }).conflict, true);
+assert.equal(detectClientAgent({ "user-agent": z, "x-ooapi-agent": "zcode" }).version, "3.14.3");
+assert.equal(detectClientAgent({ "user-agent": z }, false).source, "disabled");
+assert.equal(publicClientAgent(undefined, z).id, "zcode");
+const historical = { id: 1, type: 2, device: "未知设备", user_agent: z, detail: "{}" };
+const publicLog = mapLog(historical, { isAdmin: false });
+assert.equal(publicLog.client_agent.id, "zcode");
+assert.equal(publicLog.device, "Node.js 24");
+assert.equal(Object.hasOwn(publicLog, "user_agent"), false);
+assert.equal(Object.hasOwn(publicLog, "detail"), false);
+assert.equal(mapLog(historical, { isAdmin: true }).user_agent, z);
+const concurrent = await Promise.all([z, o].map((ua, i) => withClientAgent({ headers: { "user-agent": ua }, body: { model: "deepseek-flash", reasoning: { effort: i ? "high" : "max" } } }, async () => {
+  await new Promise(resolve => setTimeout(resolve, i ? 1 : 15));
+  return clientAgentAudit();
+})));
+assert.deepEqual(concurrent.map(a => [a.client_agent.id, a.reasoning_requested]), [["zcode", "max"], ["opencode", "high"]]);
+assert.deepEqual(clientAgentAudit(), {});
+assert.equal(publicClientAgent({ id: "zcode", version: "<script>", source: "secret" }).version, "");
+assert.equal(safeReasoning(" HIGH "), "high");
+assert.equal(safeReasoning("private invalid content"), "invalid");
+assert.equal(publicRunError({ code: "INVALID_REASONING", status: 400, message: "该模型不支持所选思考强度" }), "该模型不支持所选思考强度，请在会话设定中选择模型默认。");
+assert.match(publicRunError({ code: "NO_CHANNEL", reason: "COOLING" }), /冷却/);
+const rule = { id: "test", enabled: true, agent: "zcode", models: ["deepseek-flash"], preferredChannels: [9, 2], reasoning: "unsupported-default", timeoutMs: 1000, retries: 0 };
+const config = parseAgentRouting({ version: 1, rules: [rule] });
+assert.equal(matchAgentRule(config, { id: "zcode" }, "deepseek-flash").id, "test");
+assert.equal(matchAgentRule(config, { id: "zcode", conflict: true }, "deepseek-flash"), null);
+assert.equal(matchAgentRule(config, { id: "opencode" }, "deepseek-flash"), null);
+assert.equal(matchAgentRule(config, { id: "zcode" }, "other-model"), null);
+const candidates = [{ id: 1 }, { id: 2 }, { id: 3 }];
+assert.deepEqual(orderAgentChannels(candidates, rule).map(c => c.id), [2, 1, 3]);
+assert.deepEqual(candidates.map(c => c.id), [1, 2, 3]);
+const caps = { reasoning: { levels: ["low", "high", "max"] } };
+assert.equal(agentReasoning(rule, "xhigh", caps), "");
+assert.equal(agentReasoning(rule, "max", caps), "max");
+assert.equal(agentReasoning({ ...rule, reasoning: "high" }, "max", caps), "high");
+for (const patch of [{ agent: "arbitrary" }, { enabled: "false" }, { timeoutMs: Infinity }, { retries: -1 }, { preferredChannels: ["2"] }, { reasoning: "ignore" }, { models: ["model*arbitrary"] }]) {
+  assert.throws(() => parseAgentRouting({ version: 1, rules: [{ ...rule, ...patch }] }));
+}
+assert.throws(() => parseAgentRouting({ version: 1, rules: [rule, rule] }));
+for (const a of CLIENT_AGENTS) if (a.icon) {
+  const file = new URL(`../../ooapi-web/public/icons/agents/${a.icon}`, import.meta.url);
+  assert.ok(fs.statSync(file).size > 0, `${a.name} missing icon`);
+  if (a.icon.endsWith("svg")) assert.match(fs.readFileSync(file, "utf8"), /<svg\b/);
+}
+console.log("Agent：真实 UA、设备解析、冲突降级、历史补展示、参数校验、权限内重排与官方图标检查通过");

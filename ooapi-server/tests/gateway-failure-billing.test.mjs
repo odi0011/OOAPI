@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
 import { pool } from "../src/db.js";
+import { setOption } from "../src/config.js";
 import gateway from "../src/routes/gateway.js";
 import { invalidateChannelCache, resetChannelState, channelRuntimeState } from "../src/services/router.js";
 import { computeCost, splitTokens, getPrice } from "../src/services/pricing.js";
@@ -40,6 +41,7 @@ const clone = (v) => structuredClone(v);
 const query = async (store, sql, params = []) => {
   const s = String(sql).replace(/\s+/g, " ").trim();
   assert.equal((s.match(/\?/g) || []).length, params.length, `SQL placeholder count: ${s}`);
+  if (/^INSERT INTO options/.test(s)) return [{ affectedRows: 1 }];
   if (/FROM tokens WHERE key_str =/.test(s)) return [[clone(store.token)]];
   if (/FROM users WHERE id =/.test(s)) return [[clone(store.user)]];
   if (/FROM model_prices/.test(s)) return [[{ model, input_price: 1, output_price: 2, cache_price: 0.5,
@@ -132,8 +134,43 @@ const balance = (units) => {
   assert.equal(state.user.request_count, units > 0 ? 1 : 0);
 };
 let passed = 0;
-const test = async (name, fn) => { reset(); await fn(); passed += 1; console.log(`  ok  ${name}`); };
+const test = async (name, fn) => {
+  reset();
+  await setOption("gateway_agent_detection", "true");
+  await setOption("gateway_agent_rules", '{"version":1,"rules":[]}');
+  await fn(); passed += 1; console.log(`  ok  ${name}`);
+};
 try {
+  for (const path of paths) {
+    await test(`${path} Agent 推理拒绝保留原档位且不触发上游/冷却/扣费`, async () => {
+      const response = await post(path, { headers: { "user-agent": "ZCode/3.14.3 runtime/node.js/24" }, body: JSON.stringify({ ...bodyOf(path), reasoning: { effort: "xhigh" } }) });
+      const body = await response.json();
+      assert.equal(response.status, 400);
+      assert.match(body.error.message, /思考强度/);
+      assert.equal(upstreamRequests, 0); balance(0);
+      assert.equal(channelWrites.length, 0);
+      assert.equal(state.logs.length, 1);
+      const audit = JSON.parse(state.logs[0].detail);
+      assert.equal(audit.client_agent.id, "zcode");
+      assert.equal(audit.reasoning_requested, "xhigh");
+      assert.equal(audit.reasoning_selected, "");
+      assert.equal(state.logs[0].device, "Node.js 24");
+    });
+    await test(`${path} 明确启用兼容规则后保持入站协议与唯一账单`, async () => {
+      await setOption("gateway_agent_rules", JSON.stringify({ version: 1, rules: [{ id: "zcode-fixture", agent: "zcode", enabled: true, models: [model], preferredChannels: [999999], reasoning: "unsupported-default", timeoutMs: 2000, retries: 0 }] }));
+      sse(frame(delta) + frame({ choices: [{ delta: {}, finish_reason: "stop" }], usage: actualUsage }) + "data: [DONE]\n\n");
+      const response = await post(path, { headers: { "user-agent": "ZCode/3.14.3 runtime/node.js/24" }, body: JSON.stringify({ ...bodyOf(path, true), reasoning: { effort: "xhigh" } }) });
+      const text = await response.text();
+      assert.equal(response.status, 200); assert.equal(upstreamRequests, 1);
+      assert.ok(text.includes(path === "responses" ? "response.completed" : path === "messages" ? "message_stop" : "[DONE]"));
+      const row = log(), audit = JSON.parse(row.detail); balance(row.quota);
+      assert.equal(audit.client_agent.id, "zcode");
+      assert.equal(audit.reasoning_requested, "xhigh");
+      assert.equal(audit.reasoning_selected, "default");
+      assert.equal(audit.agent_routing.id, "zcode-fixture");
+      assert.match(audit.agent_routing.version, /^[a-f0-9]{12}$/);
+    });
+  }
   for (const path of paths) {
     for (const stream of [false, true]) {
       await test(`${path} 原生工具${stream ? "流式" : "非流式"}穿透真实路由且按一单结算`, async () => {

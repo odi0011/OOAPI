@@ -21,6 +21,10 @@ const MESSAGES = Object.freeze({
 /** 返回可安全用于公开API、消息part、审计content与console的错误说明。 */
 export function publicRunError(err, { stopped = false } = {}) {
   if (stopped) return "已停止生成。本轮已产生的用量照常计费。";
+  // 本地校验错误也带 400，必须先看业务码，不能被下方“模型不支持”关键词吞掉。
+  if (err?.code === "INVALID_REASONING") return MESSAGES.INVALID_REASONING;
+  if (err?.code === "NO_CHANNEL" && err?.reason === "COOLING") return "可用渠道暂处于故障冷却中，请稍后重试；管理员可在渠道管理中查看状态。";
+  if (err?.code === "CHANNEL_EMPTY") return "上游未返回可用内容，请稍后重试；已产生的用量保留在使用记录中。";
   if (err?.capability === "systemone") return "此模型仅支持结构化判断，请输入包含 state 和 questions 的 JSON，或选择对话模型。";
   const value = Number(err?.httpStatus || err?.status);
   const status = Number.isInteger(value) && value >= 400 && value <= 599 ? value : 0;

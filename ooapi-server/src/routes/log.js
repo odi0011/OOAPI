@@ -1,7 +1,8 @@
 import { endpointPath, endpointList } from "../services/endpoint-audit.js";
 import { Router } from "express";
 import { pool } from "../db.js";
-import { ok, asyncHandler, pageParams, safeInt } from "../utils.js";
+import { ok, asyncHandler, pageParams, safeInt, deviceFromUa } from "../utils.js";
+import { publicClientAgent, safeReasoning } from "../services/client-agents.js";
 import { authRequired, adminRequired, superRequired } from "../middleware/auth.js";
 import { writeLog, LOG_TYPE, LOG_TYPE_LABEL, USAGE_SQL } from "../services/log.js";
 import { canonicalModelName } from "../services/models.js";
@@ -39,7 +40,7 @@ function publicBillingDetails(value) {
  * 日志 → 响应对象。
  * 渠道ID/名称/上游明细仍只给管理员；source_vendors仅是用户授权展示的注册厂商品牌。
  */
-function mapLog(r, { isAdmin, user = null }) {
+export function mapLog(r, { isAdmin, user = null }) {
   let detail = {};
   try { detail = JSON.parse(r.detail || "{}"); } catch { /* 老操作日志不一定是JSON */ }
   if (!detail || typeof detail !== "object" || Array.isArray(detail)) detail = {};
@@ -70,6 +71,14 @@ function mapLog(r, { isAdmin, user = null }) {
     billing_details: isAdmin ? bill : publicBillingDetails(bill),
     billing_known: Number(r.billing_unknown) !== 1 && detail.billing_known !== false,
     model: canonicalModelName(r.model) || r.model || "",
+    client_agent: publicClientAgent(r.client_agent || detail.client_agent, r.user_agent),
+    reasoning_requested: safeReasoning(r.reasoning_requested ?? detail.reasoning_requested),
+    reasoning_selected: safeReasoning(r.reasoning_selected ?? detail.reasoning_selected),
+    agent_routing: (() => {
+      let route = r.agent_routing || detail.agent_routing;
+      if (typeof route === "string") { try { route = JSON.parse(route); } catch { return null; } }
+      return route && /^[a-zA-Z0-9_-]{1,40}$/.test(route.id) && /^[a-f0-9]{12}$/.test(route.version) ? { id: route.id, version: route.version } : null;
+    })(),
     reasoning_effort: String(r.reasoning_effort || detail.reasoning_effort || ""),
     inbound_endpoint: endpointPath(r.inbound_endpoint || detail.inbound_endpoint || ""),
     reasoning_applied: r.reasoning_applied === true || Number(r.reasoning_applied) === 1 || detail.reasoning_applied === true,
@@ -82,7 +91,7 @@ function mapLog(r, { isAdmin, user = null }) {
     // IP 是「自己的访问来源」，本人可见；设备同理（下面 device 无条件给，
     // 原始 UA 串只给管理员，避免被用来做指纹拼接）
     ip: r.ip || "",
-    device: r.device || "",
+    device: !r.device || r.device === "未知设备" ? deviceFromUa(r.user_agent) || r.device || "" : r.device,
     // 关联一次运行与它的审计行，本人可见。新失败调用只产生一条usage行。
     request_id: r.request_id || "",
     // 令牌与分组**对本人可见**。
@@ -104,6 +113,7 @@ function mapLog(r, { isAdmin, user = null }) {
     const visibility = userDataVisibility(user);
     if (!visibility.pricing) base.billing_details = null;
     if (!visibility.usage_records && Number(r.type) === LOG_TYPE.ERROR) {
+      for (const key of ["client_agent", "agent_routing", "reasoning_requested", "reasoning_selected"]) delete base[key];
       // 旧调用错误位于操作日志：不能借兼容入口绕过逐次使用记录权限。
       for (const key of ["model", "model_vendor", "quota", "prompt_tokens", "completion_tokens", "cache_tokens", "first_token_ms", "elapsed_ms", "retry_count", "price_phase", "billing_details", "request_id", "token_id", "token_name", "group_name", "source_vendors", "inbound_endpoint", "reasoning_effort", "reasoning_applied"]) delete base[key];
     }
@@ -288,7 +298,13 @@ async function listLogs(req, res, kind) {
     // 黑盒测试实测抱怨（运维人格）：「两页都没有 request_id，我只能下 SQL 才看得出来
     // 是同一次调用」—— 排查断连/重试问题时它是唯一的关联键。
     "request_id",
-    ...(isAdmin ? ["detail", "user_agent"] : []),
+    // 只在服务端用 UA 补识别历史记录；mapLog 仍仅向管理员返回原始 UA。
+    "user_agent",
+    "CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.client_agent') ELSE NULL END AS client_agent",
+    "CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.agent_routing') ELSE NULL END AS agent_routing",
+    "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.reasoning_requested')) ELSE NULL END AS reasoning_requested",
+    "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.reasoning_selected')) ELSE NULL END AS reasoning_selected",
+    ...(isAdmin ? ["detail"] : []),
     ...(isAdmin ? ["request_prompt_text"] : []),
   ].join(", ");
   const [rows] = await pool.query(`SELECT ${cols} FROM logs ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`, [

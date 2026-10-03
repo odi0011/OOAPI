@@ -1,6 +1,8 @@
 // OpenAI 兼容网关：/v1/chat/completions、/v1/models
 // 按模型路由到渠道，OD 币 1:1 计费。
 import { endpointPath, endpointList } from "../services/endpoint-audit.js";
+import { withClientAgent } from "../services/client-agent-context.js";
+import { safeReasoning } from "../services/client-agents.js";
 import express from "express";
 import crypto from "node:crypto";
 import { pool } from "../db.js";
@@ -956,7 +958,7 @@ async function handleCompletion(protocol, req, res) {
         return { messages: fallback, prompt: messagesToPrompt(fallback) };
       },
       thinking: thinkingOverride,
-      reasoningEffort: String(body.reasoning_effort || body.reasoning?.effort || ""),
+      reasoningEffort: safeReasoning(body.reasoning_effort ?? body.reasoning?.effort),
       maxOutputTokens: maxOutTokens || undefined,
       search: wantSearch,
       images,
@@ -1309,7 +1311,7 @@ async function handleCompletion(protocol, req, res) {
     // 错误码 → HTTP 状态要能区分「调用方请求错」与「网关/上游故障」，
     // 否则客户端会把 400/429 当成 502 盲目重试。
     const status =
-      code === "CHANNEL_BAD_REQUEST" || code === "LOGIN_BAD_PARAMS"
+      code === "CHANNEL_BAD_REQUEST" || code === "LOGIN_BAD_PARAMS" || code === "INVALID_REASONING"
         ? 400
         : code === "CHANNEL_AUTH_EXPIRED"
           ? 401
@@ -1340,8 +1342,8 @@ async function handleCompletion(protocol, req, res) {
 
 // 三个协议各自注册路由，共用 handleCompletion。
 // 路径与官方一致：/v1/chat/completions、/v1/messages、/v1/responses
-router.post("/chat/completions", asyncHandler((req, res) => handleCompletion(PROTOCOLS.chat, req, res)));
-router.post("/messages", asyncHandler((req, res) => handleCompletion(PROTOCOLS.messages, req, res)));
-router.post("/responses", asyncHandler((req, res) => handleCompletion(PROTOCOLS.responses, req, res)));
+router.post("/chat/completions", asyncHandler((req, res) => withClientAgent(req, () => handleCompletion(PROTOCOLS.chat, req, res))));
+router.post("/messages", asyncHandler((req, res) => withClientAgent(req, () => handleCompletion(PROTOCOLS.messages, req, res))));
+router.post("/responses", asyncHandler((req, res) => withClientAgent(req, () => handleCompletion(PROTOCOLS.responses, req, res))));
 
 export default router;
