@@ -6,6 +6,7 @@
 //   · 工具调用、思考链、待办清单都在同一条 SSE 流里推送（事件见 /run 注释）。
 //   · 计费仍走 services/pricing.js：harness 把每次上游调用记为一条 {prompt,output,usage}，
 //     这里逐条 splitTokens 后求和 —— 与网关/旧智能体同一套口径，禁止自行折算。
+import { endpointList } from "../services/endpoint-audit.js";
 import express from "express";
 import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now, safeInt, clientIp } from "../utils.js";
@@ -773,6 +774,8 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
       requested_model: model,
       reasoning_effort: [...new Set((calls || []).map(c => c.reasoningEffort || "default"))].join(",") || "default",
       reasoning_applied: (calls || []).some(c => c.reasoningApplied === true),
+      inbound_endpoint: "/api/chat/run",
+      upstream_endpoints: endpointList((calls || []).map(c => c.upstreamEndpoints)),
       upstream_model: modelCalls.at(-1)?.upstream_model || "",
       pricing_model: canonicalModelName(modelCalls.length === 1 ? modelCalls[0].pricing_model : basePrice.model || model),
       requested_price: { in: basePrice.input, out: basePrice.output, cache: basePrice.cache },
@@ -1451,6 +1454,9 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
         detail: JSON.stringify({
           code: errorCode, http_status: Number(err.httpStatus || err.status) || undefined,
           billing_known: billingKnown, requested_model: model, upstream_model: err.upstreamModel || "",
+          inbound_endpoint: "/api/chat/run", upstream_endpoints: endpointList([...billedCalls.map(c => c.upstreamEndpoints), err.upstreamEndpoints]),
+          reasoning_effort: [...new Set(billedCalls.map(c => c.reasoningEffort || "default"))].join(",") || err.reasoningEffort || settings.reasoningEffort || "default",
+          reasoning_applied: billedCalls.some(c => c.reasoningApplied === true),
           pricing_model: canonicalModelName(failedPrice.model || model),
           requested_price: { in: failedPrice.input, out: failedPrice.output, cache: failedPrice.cache },
           original_price: failedBill.channel_quote?.price || null,

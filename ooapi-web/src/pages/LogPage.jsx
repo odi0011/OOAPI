@@ -23,6 +23,11 @@ function normalizeCurrency(text) {
 }
 
 const ms = formatDuration;
+const reasoningLabel = value => String(value || "").split(",").map(level => ({default:"模型默认",enabled:"开启",disabled:"关闭",none:"关闭",minimal:"最低",low:"低",medium:"中",high:"高",xhigh:"极高",max:"最高"})[level] || level).filter(Boolean).join(" / ") || "未记录";
+function EndpointCell({ record, isAdmin }) {
+  const row = (label, value, key) => <span className="oo-endpoint-row" key={key || label}><small>{label}</small><span title={value || "历史记录未保存"}>{value || "未记录"}</span></span>;
+  return <span className="oo-endpoints">{row("入站", record.inbound_endpoint)}{isAdmin && (record.upstream_endpoints?.length ? record.upstream_endpoints.map((path,i) => row(i ? "" : "上游", path, i)) : row("上游", ""))}</span>;
+}
 
 /**
  * 日志原文块（输入 / 输出内容）。
@@ -253,11 +258,18 @@ export default function LogPage() {
           <span title={String(v)} style={{ display: "inline-flex", flexDirection: "column", gap: 4, minWidth: 0, maxWidth: "100%" }}>
             <ModelLabel model={v} modelVendor={r.model_vendor} size={14} channelTypes={Array.isArray(r.source_vendors) ? r.source_vendors : r.channel_type ? [r.channel_type] : []} />
             {isAdmin && r.original_model && r.original_model !== v ? <span className="oo-model-origin">↳ <ModelLabel model={r.original_model} size={11} channelTypes={r.source_vendors || []} /></span> : null}
-            {r.reasoning_effort && <small style={{color:"var(--ink-3)",fontSize:11}}>思考 · {({default:"模型默认",enabled:"开启",disabled:"关闭"})[r.reasoning_effort] || r.reasoning_effort}</small>}
           </span>
         ) : (
           <span style={{ color: "var(--ink-3)" }}>-</span>
         ),
+    },
+    {
+      title: "推理强度", dataIndex: "reasoning_effort", width: 104,
+      render: (value, record) => <Tooltip title={value ? record.reasoning_applied ? "推理参数已下发" : "使用渠道默认或未下发推理参数" : "历史记录未保存"}><span className="oo-reasoning-level">{reasoningLabel(value)}</span></Tooltip>,
+    },
+    {
+      title: "端点", dataIndex: "inbound_endpoint", width: 210,
+      render: (_, record) => <EndpointCell record={record} isAdmin={isAdmin} />,
     },
     // 管理员：分组（独立 Tag 包含专属图标与标题）
     ...(isAdmin
@@ -575,7 +587,8 @@ export default function LogPage() {
         title="调用详情"
         open={Boolean(detail)}
         onClose={() => setDetail(null)}
-        width="min(520px, 100vw)"
+        width="min(760px, 100vw)"
+        rootClassName="oo-log-drawer"
         destroyOnClose
       >
         {detail ? (() => {
@@ -600,7 +613,8 @@ export default function LogPage() {
               <ModelLabel model={detail.model} modelVendor={detail.model_vendor} size={15} channelTypes={Array.isArray(detail.source_vendors) ? detail.source_vendors : detail.channel_type ? [detail.channel_type] : []} />
             </Descriptions.Item>
             <Descriptions.Item label="调用内容"><OdText>{normalizeCurrency(detail.content)}</OdText></Descriptions.Item>
-            <Descriptions.Item label="思考强度">{detail.reasoning_effort ? `${({ default: "模型默认", enabled: "开启", disabled: "关闭" })[detail.reasoning_effort] || detail.reasoning_effort}${detail.reasoning_applied ? " · 已下发" : " · 渠道默认或未下发"}` : "历史记录未保存"}</Descriptions.Item>
+            <Descriptions.Item label="推理强度">{detail.reasoning_effort ? `${reasoningLabel(detail.reasoning_effort)}${detail.reasoning_applied ? " · 已下发" : " · 渠道默认或未下发"}` : "历史记录未保存"}</Descriptions.Item>
+            <Descriptions.Item label="端点"><EndpointCell record={detail} isAdmin={isAdmin} /></Descriptions.Item>
             <Descriptions.Item label="Tokens">
               {/* 升级前的旧记录没写 token 列（当时的 detail 里也没有），显示 0 会让人
                   误以为"这次没消耗" —— 但同一行的「调用内容」里明明写着「提示 3 / 补全 570」。

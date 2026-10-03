@@ -53,7 +53,7 @@ export function visibleChatAudit(value, policy, { isAdmin = false } = {}) {
   const out = { ...value };
   if (!policy.usage_records) for (const key of ["cost", "cost_units", "tokens", "usage", "promptTokens", "completionTokens", "cacheTokens", "prompt_tokens", "completion_tokens", "cache_tokens", "firstTokenMs", "elapsedMs", "retryCount", "first_token_ms", "elapsed_ms", "retry_count"]) delete out[key];
   if (!policy.pricing) for (const key of ["price", "unit_price", "rate", "group_rate", "billing_details"]) delete out[key];
-  if (!isAdmin) for (const key of ["channel", "channelId", "channel_id", "channel_name", "channelQuote", "channel_quote", "upstream_model", "request_prompt_text"]) delete out[key];
+  if (!isAdmin) for (const key of ["channel", "channelId", "channel_id", "channel_name", "channelQuote", "channel_quote", "upstream_model", "upstreamEndpoints", "upstream_endpoints", "request_prompt_text"]) delete out[key];
   for (const key of ["session", "sessions", "messages", "message", "userMessage", "parts", "part", "patch"]) {
     if (out[key] && typeof out[key] === "object") out[key] = visibleChatAudit(out[key], policy, { isAdmin });
   }

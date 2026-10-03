@@ -167,6 +167,8 @@ try {
           assert.equal(c.call_id,"call_lookup");assert.equal(c.arguments,'{"query":"fixture"}');
         }
         const row=log();assert.equal(row.status,"success");assert.match(row.output_text,/lookup/);balance(row.quota);assert.equal(commits,1);assert.equal(upstreamRequests,1);
+        assert.equal(JSON.parse(row.detail).inbound_endpoint, `/v1/${path}`);
+        assert.deepEqual(JSON.parse(row.detail).upstream_endpoints, ['/v1/chat/completions']);
       });
     }
     await test(`${path} 非法原生工具参数不下发但真实用量与渠道归属仍结算一次`, async () => {

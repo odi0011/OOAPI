@@ -50,10 +50,11 @@ export function BillingDetails({ record, isAdmin = false, perUnit = 10000, compa
     <div className="oo-billing-heading"><strong>计费明细</strong></div>
     {bill ? <>
       <table className="oo-billing-breakdown">
+        <colgroup><col style={{width:"17%"}}/><col style={{width:"19%"}}/><col style={{width:"26%"}}/><col style={{width:"38%"}}/></colgroup>
         <thead><tr><th>类别</th><th>Token</th><th>单价 / 百万</th><th>费用</th></tr></thead>
         <tbody>{rows.map(([key, label]) => {
           const item = bill.components?.[key];
-          return <tr key={key}><th>{label}</th><td>{finite(item?.tokens) === null ? "—" : Number(item.tokens).toLocaleString()}</td><td>{item?.mixed ? "多档" : <OdAmount>{compact(item?.unit_price)}</OdAmount>}</td><td>{odText(item?.cost_od, perUnit)}</td></tr>;
+          return <tr key={key}><th scope="row">{label}</th><td data-label="Token">{finite(item?.tokens) === null ? "—" : Number(item.tokens).toLocaleString()}</td><td data-label="单价 / 百万">{item?.mixed ? "多档" : <OdAmount>{compact(item?.unit_price)}</OdAmount>}</td><td data-label="费用">{odText(item?.cost_od, perUnit)}</td></tr>;
         })}</tbody>
       </table>
       {bill.price_mode === "mixed" ? <div className="oo-billing-mixed">

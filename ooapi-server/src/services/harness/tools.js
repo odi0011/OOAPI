@@ -221,6 +221,9 @@ export const TOOLS = {
         model: r.billModel || ctx.model,
         requestedModel: ctx.model,
         upstreamModel: r.upstreamModel || "",
+        upstreamEndpoints: r.upstreamEndpoints || [],
+        reasoningEffort: r.reasoningEffort || "default",
+        reasoningApplied: r.reasoningApplied === true,
         billModel: r.billModel || "",
       });
       const text = clip(r.content || r.reasoning || "", 6000);

@@ -1,3 +1,4 @@
+import { endpointPath, endpointList } from "../services/endpoint-audit.js";
 import { Router } from "express";
 import { pool } from "../db.js";
 import { ok, asyncHandler, pageParams, safeInt } from "../utils.js";
@@ -70,6 +71,7 @@ function mapLog(r, { isAdmin, user = null }) {
     billing_known: Number(r.billing_unknown) !== 1 && detail.billing_known !== false,
     model: canonicalModelName(r.model) || r.model || "",
     reasoning_effort: String(r.reasoning_effort || detail.reasoning_effort || ""),
+    inbound_endpoint: endpointPath(r.inbound_endpoint || detail.inbound_endpoint || ""),
     reasoning_applied: r.reasoning_applied === true || Number(r.reasoning_applied) === 1 || detail.reasoning_applied === true,
     model_vendor: r.model_vendor || "",
     prompt_tokens: Number(r.prompt_tokens) || 0,
@@ -103,7 +105,7 @@ function mapLog(r, { isAdmin, user = null }) {
     if (!visibility.pricing) base.billing_details = null;
     if (!visibility.usage_records && Number(r.type) === LOG_TYPE.ERROR) {
       // 旧调用错误位于操作日志：不能借兼容入口绕过逐次使用记录权限。
-      for (const key of ["model", "model_vendor", "quota", "prompt_tokens", "completion_tokens", "cache_tokens", "first_token_ms", "elapsed_ms", "retry_count", "price_phase", "billing_details", "request_id", "token_id", "token_name", "group_name", "source_vendors"]) delete base[key];
+      for (const key of ["model", "model_vendor", "quota", "prompt_tokens", "completion_tokens", "cache_tokens", "first_token_ms", "elapsed_ms", "retry_count", "price_phase", "billing_details", "request_id", "token_id", "token_name", "group_name", "source_vendors", "inbound_endpoint", "reasoning_effort", "reasoning_applied"]) delete base[key];
     }
     if (!visibility.request_content) {
       for (const key of ["input_text", "output_text", "input_recorded", "output_recorded", "input_truncated", "output_truncated", "prompt_truncated", "request_prompt_truncated"]) delete base[key];
@@ -117,6 +119,7 @@ function mapLog(r, { isAdmin, user = null }) {
   }
   return {
     ...base,
+    upstream_endpoints: endpointList(detail.upstream_endpoints),
     original_model: detail.upstream_model || detail.requested_model || r.model || "",
     requested_model: detail.requested_model || r.model || "",
     upstream_model: detail.upstream_model || "",
@@ -278,6 +281,7 @@ async function listLogs(req, res, kind) {
     "CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.billing_details') ELSE NULL END AS billing_details",
     "CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.source_vendors') ELSE NULL END AS source_vendors",
     "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.reasoning_effort')) ELSE NULL END AS reasoning_effort",
+    "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.inbound_endpoint')) ELSE NULL END AS inbound_endpoint",
     "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.reasoning_applied')) = 'true' ELSE 0 END AS reasoning_applied",
     // request_id 必须返回：一次调用可能产生两条记录（计费行 + 错误行，
     // 见「客户端提前断开」那个场景），没有这个字段用户在界面上**无法把两条对起来**。

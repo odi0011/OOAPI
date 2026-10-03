@@ -4625,5 +4625,15 @@ html[data-theme="dark"] .oo-vendor-icon--mono { filter: invert(0.88); }
 
 .oo-model-origin { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; width: fit-content; padding: 1px 7px; border-radius: 999px; font-size: 11px; color: var(--ink-3); background: var(--inset); }
 .log-detail-fields .ant-descriptions-view table {table-layout:fixed;width:100%;}
-.log-detail-fields .ant-descriptions-item-content {min-width:0;overflow-wrap:anywhere;}
+.log-detail-fields .ant-descriptions-item-content {min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;}
+.log-detail-fields .ant-descriptions-item-content > * {max-width:100%;min-width:0;}
+.log-detail-fields .ant-descriptions-item-content .oo-num,.log-detail-fields .ant-descriptions-item-content .oo-mono {white-space:normal;overflow-wrap:anywhere;}
+.log-detail-fields .ant-descriptions-item-content .oo-od-amount {white-space:normal;}
+.oo-log-drawer .ant-drawer-body {min-width:0;}
+@media(max-width:600px) {.oo-log-drawer .ant-drawer-body {padding:16px 12px;}.log-detail-fields .ant-descriptions-item-label {width:76px!important;padding:8px!important;}.log-detail-fields .ant-descriptions-item-content {padding:8px!important;}}
 .log-plain-text {max-height:340px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;padding:10px 12px;border-radius:var(--r-sm);background:var(--inset);color:var(--ink-2);font-family:inherit;font-size:12px;line-height:1.75;}
+.oo-endpoints { display:flex;flex-direction:column;gap:4px;min-width:0;max-width:100%;font-size:11px; }
+.oo-endpoint-row { display:flex;gap:6px;min-width:0;max-width:100%;align-items:baseline; }
+.oo-endpoint-row>small { flex:0 0 26px;color:var(--ink-3);font-size:11px; }
+.oo-endpoint-row>span { min-width:0;overflow-wrap:anywhere;white-space:normal;font-family:var(--font-mono); }
+.oo-reasoning-level { font-size:12px;overflow-wrap:anywhere; }

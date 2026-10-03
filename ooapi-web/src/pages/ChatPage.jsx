@@ -1,5 +1,6 @@
 import AgentTrajectory, { ToolApproval } from "../components/AgentTrajectory";
 import ChatMascot from "../components/ChatMascot";
+import ChatScene from "../components/ChatScene";
 import OdAmount from "../components/OdAmount";
 // 对话页（原「对话工作台」）
 // ---------------------------------------------------------------------------
@@ -27,11 +28,7 @@ import {
   SettingOutlined,
   DeleteOutlined,
   EditOutlined,
-  CompassOutlined,
-  CodeOutlined,
-  EditFilled,
   SearchOutlined,
-  WalletOutlined,
   EllipsisOutlined,
   ClockCircleOutlined,
 } from "@ant-design/icons";
@@ -47,30 +44,20 @@ const MAX_CHAT_IMAGES = 30;
 const LS_KEY_ID = "oo.chat.keyId";
 import { chatApi, runChatStream, resumeChatStream } from "../services/chat";
 import { useApp } from "../context/AppContext";
-import BrandLogo, { BrandName } from "../components/BrandLogo";
 import Markdown from "../components/Markdown";
 import { formatDuration } from "../components/UsageCells";
 import { copyText, fmtOd, unitsPerOd } from "../services/format";
-import { LoadingState, StreamingText } from "../components/beautifului";
+import { StreamingText } from "../components/beautifului";
 import PromptBar from "../components/PromptBar";
 import {
   Shelf,
   ShelfGroup,
   ShelfItem,
   Notice,
-  SuggestionCard,
   TodoPanel,
 } from "../components/beautifului-chat";
 import "../components/chat.css";
 import "../components/chat-workspace.css";
-
-// 欢迎页的快捷问题：不再绑定「智能体」（已取消选择），助手自己判断要不要查资料/查账号
-const SUGGESTS = [
-  { icon: <WalletOutlined />, title: "我的账号怎么样", desc: "余额、最近调用与消耗", prompt: "帮我看看我的账号：余额还剩多少，最近 10 次调用分别用了什么模型、花了多少？" },
-  { icon: <CompassOutlined />, title: "帮我查清一件事", desc: "联网检索 + 给出处", prompt: "请帮我查清楚这件事的来龙去脉，并给出信息来源：" },
-  { icon: <CodeOutlined />, title: "写出更好的代码", desc: "实现 + 边界情况", prompt: "请帮我实现下面的功能，并说明关键取舍：" },
-  { icon: <EditFilled />, title: "打磨一段文字", desc: "改写、压缩、润色", prompt: "请帮我润色下面的文字，保留原意：" },
-];
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const ms = (p) => (p.ended && p.started ? Math.max(1, p.ended - p.started) : 0);
@@ -1649,10 +1636,10 @@ export default function ChatPage() {
           </div>
         ) : null}
 
-        <div className="ui-chat2-thread" ref={threadRef} onScroll={onThreadScroll}>
+        <div className={`ui-chat2-thread ${loadingSession || !msgs.length ? "is-empty" : ""}`} ref={threadRef} onScroll={onThreadScroll} aria-busy={loadingSession}>
           <div className="ui-chat2-thread-inner">
             {loadingSession ? (
-              <LoadingState label="正在打开会话" />
+              <ChatScene loading />
             ) : msgs.length ? (
               msgs.map((m, i) => (
                 <Message
@@ -1668,25 +1655,7 @@ export default function ChatPage() {
                 />
               ))
             ) : (
-              <section className="ui-chat2-welcome">
-                <div className="bui-eyebrow"><BrandLogo size={17}/> <BrandName/> · 对话</div>
-                <h2>今天，想弄清楚什么？</h2>
-                <p>提问、查资料，或一起完成一件事。</p>
-                <div className="bui-suggests">
-                  {SUGGESTS.map((s) => (
-                    <SuggestionCard
-                      key={s.title}
-                      icon={s.icon}
-                      title={s.title}
-                      desc={s.desc}
-                      onClick={() => {
-                        setInput(s.prompt);
-                        taRef.current?.focus();
-                      }}
-                    />
-                  ))}
-                </div>
-              </section>
+              <ChatScene onStart={() => taRef.current?.focus()} />
             )}
           </div>
         </div>
@@ -1709,7 +1678,7 @@ export default function ChatPage() {
               onChange={(value) => { draftVersionRef.current += 1; setInput(value); }}
               onSend={() => send()}
               onStop={stop}
-              busy={busy}
+              busy={busy && !loadingSession}
               // 还没有选择模型时必须允许打开模型菜单；否则「请先选择模型」会变成死锁。
               // 只有输入框/发送按钮继续由 PromptBar 根据 model 是否为空禁用。
               disabled={needKey || loadingSession || metaLoading || Boolean(metaError) || Boolean(connectionError) || reading}
@@ -1736,7 +1705,7 @@ export default function ChatPage() {
               onPickFile={() => docRef.current?.click()}
               fileOk={!reading}
               visionOk={supportsVision && !reading}
-              placeholder={busy ? "正在生成…" : metaLoading ? "正在加载密钥和可用模型…" : "输入你的问题，或分享一个想法…"}
+              placeholder={loadingSession ? "正在打开会话…" : busy ? "正在生成…" : metaLoading ? "正在加载密钥和可用模型…" : "输入你的问题，或分享一个想法…"}
               commands={[
                 { key: "new", name: "new", desc: "新建对话", run: newSession },
                 { key: "archive", name: "archive", desc: "归档当前对话", run: () => archiveSession(session?.id) },

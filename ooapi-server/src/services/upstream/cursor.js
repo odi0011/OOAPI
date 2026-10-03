@@ -43,6 +43,7 @@
 //   **不需要**：x-cursor-checksum（伪造值也能进认证层；CLI 客户端根本不发它）、
 //               x-cursor-client-version、x-request-id（发了更像官方客户端，但不门控）
 //   仍然带上后三个：它们让流量看起来像官方客户端（降低风控概率），成本为零。
+import { recordUpstreamEndpoint } from "../endpoint-audit.js";
 import crypto from "node:crypto";
 import { now } from "../../utils.js";
 import { withRefreshLock, persistOtherPatch } from "./auth-store.js";
@@ -217,6 +218,7 @@ export async function chat({ channel, model, messages, prompt, onDelta, onReason
   let sawAny = false;
   let upstreamErr = null;
 
+  recordUpstreamEndpoint(STREAM_CHAT);
   const { status } = await connectPost({
     url: STREAM_CHAT,
     headers: baseHeaders(token),

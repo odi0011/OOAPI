@@ -12,6 +12,7 @@
 //   1. 每账号一个常驻浏览器上下文（持久化 profile 目录），指纹天然稳定一致
 //   2. 同账号请求串行，不并发（并发是非人类特征）
 //   3. 闲置自动回收，避免长期占用内存
+import { recordUpstreamEndpoint } from "../endpoint-audit.js";
 import { chromium } from "playwright";
 import { mkdirSync, existsSync, writeFileSync, rmSync, cpSync, renameSync, readlinkSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -978,11 +979,13 @@ export async function streamCapture(page, {
       done: Boolean(window.__ooCap?.done),
       err: window.__ooCap?.error || null,
       started: window.__ooCap?.startedAt || 0,
+      endpoint: window.__ooCap?.url || "",
       patchError: window.__ooPatchError || null,
       patchSkipped: window.__ooPatchSkipped || null,
       lastBody: window.__ooLastBody || null,
     }), cursor);
 
+    if (st.started && st.endpoint) recordUpstreamEndpoint(st.endpoint);
     if (st.patchError) patchError = st.patchError;
     if (Array.isArray(st.patchSkipped) && st.patchSkipped.length) patchSkipped = st.patchSkipped;
     if (st.lastBody) lastBody = st.lastBody;

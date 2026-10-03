@@ -1,5 +1,6 @@
 // OpenAI 兼容网关：/v1/chat/completions、/v1/models
 // 按模型路由到渠道，OD 币 1:1 计费。
+import { endpointPath, endpointList } from "../services/endpoint-audit.js";
 import express from "express";
 import crypto from "node:crypto";
 import { pool } from "../db.js";
@@ -480,6 +481,8 @@ async function settle({
   upstreamModel = "",
   reasoningEffort = "default",
   reasoningApplied = false,
+  inboundEndpoint = "",
+  upstreamEndpoints = [],
   tokenQuotaHold = 0,
   inputText = "",
   retryCount = 0,
@@ -626,6 +629,8 @@ async function settle({
       price_phase: eff.phase,
       reasoning_effort: reasoningEffort,
       reasoning_applied: reasoningApplied,
+      inbound_endpoint: endpointPath(inboundEndpoint),
+      upstream_endpoints: endpointList(upstreamEndpoints),
       context_tier: price.contextTier || 0,
       priced_at: startedAt || Date.now(),
       rate: Number(gcfg?.rate) || 1,
@@ -1076,6 +1081,8 @@ async function handleCompletion(protocol, req, res) {
     // 截断时上游的 usage 也不再可信（它算的是全量），所以整段用估算。
     const cutThis = outputTruncated && maxOutTokens > 0;
     const settled = await settle({
+      inboundEndpoint: req.originalUrl,
+      upstreamEndpoints: result.upstreamEndpoints,
       reasoningEffort: result.reasoningEffort,
       reasoningApplied: result.reasoningApplied,
       token,
@@ -1187,6 +1194,8 @@ async function handleCompletion(protocol, req, res) {
     if (!settledOnce && failedCall) {
       try {
         const partialSettled = await settle({
+          inboundEndpoint: req.originalUrl,
+          upstreamEndpoints: failedCall.upstreamEndpoints,
           reasoningEffort: failedCall.reasoningEffort,
           reasoningApplied: failedCall.reasoningApplied,
           token,
@@ -1260,6 +1269,8 @@ async function handleCompletion(protocol, req, res) {
         (partialUnits ? ` · 已按已产出内容计费 ${(partialUnits / UNITS_PER_OD).toFixed(4)} ${CURRENCY}` : ""),
       // 带上部分结算的金额与 token：两个日志页都能看出「这次其实花了钱」
       detail: JSON.stringify({ code, requestId, partial_units: partialUnits, partial_tokens: partialTokens,
+        inbound_endpoint: endpointPath(req.originalUrl), upstream_endpoints: endpointList(err.upstreamEndpoints),
+        reasoning_effort: err.reasoningEffort || "", reasoning_applied: err.reasoningApplied === true,
         http_status: Number(err.status || err.httpStatus) || 0,
         upstream_error_code: String(err.upstreamErrorCode || ""),
         bill_model: err.billModel || "", upstream_model: err.upstreamModel || "",

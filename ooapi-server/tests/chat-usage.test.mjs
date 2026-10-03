@@ -152,6 +152,8 @@ const query = async (store, sql, args = []) => {
       r.input_truncated = detail.input_truncated ? 1 : 0; r.output_truncated = detail.output_truncated ? 1 : 0;
       r.request_prompt_truncated = detail.request_prompt_truncated ? 1 : 0;
       r.billing_details = detail.billing_details || null;
+      r.inbound_endpoint = detail.inbound_endpoint || null;
+      r.reasoning_effort = detail.reasoning_effort || null;
       if (!s.includes(', detail, user_agent')) { delete r.detail; delete r.user_agent; delete r.request_prompt_text; } return r; })];
   }
   throw new Error(`Uncovered fixture SQL: ${s}`);
@@ -222,6 +224,7 @@ const oneLog = (status) => {
   assert.equal(row.is_usage, 1); assert.equal(row.status, status); assert.equal(row.input_text, input);
   assert.equal(row.token_id, state.token.id); assert.equal(row.user_id, state.user.id);
   const bill = JSON.parse(row.detail).billing_details;
+  assert.equal(JSON.parse(row.detail).inbound_endpoint, '/api/chat/run');
   assert.equal(bill.version, 1); assert.equal(bill.multiplier, fixtureRate);
   if (JSON.parse(row.detail).billing_known !== false) assert.equal(bill.charged_cost_units, row.quota);
   return row;
@@ -423,6 +426,25 @@ try {
     behavior = (_req, res) => { res.writeHead(400); res.end('{"error":{"message":"fixture fail"}}'); }; await run();
     state.user.role = 100; jwt = signToken(state.user); const admin = (await get('/api/log/usage')).items[0];
     assert.equal(admin.input_text, input); assert.ok(admin.request_prompt_text.includes('用户原文')); assert.ok('detail' in admin);
+    assert.equal(admin.inbound_endpoint, '/api/chat/run');
+    assert.deepEqual(admin.upstream_endpoints, ['/v1/chat/completions']);
+  });
+  await test('端点成功落库，本人仅入站、管理员可查上游，旧记录不猜测端点', async () => {
+    sse(frame({ choices: [{ delta: { content: 'ENDPOINT_OK' } }] }) + frame({ usage }) + 'data: [DONE]\n\n');
+    finalMessage(await run(), 'success');
+    const row = oneLog('success');
+    assert.deepEqual(JSON.parse(row.detail).upstream_endpoints, ['/v1/chat/completions']);
+    const own = (await get('/api/log/usage')).items[0];
+    assert.equal(own.inbound_endpoint, '/api/chat/run');
+    assert.equal(own.reasoning_effort, 'default');
+    assert.ok(!('upstream_endpoints' in own)); assert.ok(!('detail' in own));
+    assert.ok(!JSON.stringify(own).includes('/v1/chat/completions'));
+    state.user.role = 100; jwt = signToken(state.user);
+    const admin = (await get('/api/log/usage')).items[0];
+    assert.deepEqual(admin.upstream_endpoints, ['/v1/chat/completions']);
+    state.logs[0].detail = '{}';
+    const old = (await get('/api/log/usage')).items[0];
+    assert.equal(old.inbound_endpoint, ''); assert.deepEqual(old.upstream_endpoints, []);
   });
   for (const partial of [false, true]) await test(`${partial ? '部分输出' : '零输出'}停止落库stopped并只收费真实消耗`, async () => {
     behavior = (_req, res) => {

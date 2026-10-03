@@ -1,6 +1,7 @@
 // 统一执行器：模型 → 渠道选择 → 失败切换 → 返回结果
 // 网关（/v1）与站内对话/智能体共用此逻辑，保证行为一致。
 import crypto from "node:crypto";
+import { withEndpointAudit } from "./endpoint-audit.js";
 import { modelCapabilities, reasoningSelection } from "./model-capabilities.js";
 import { pool } from "../db.js";
 import { getNumberOption } from "../config.js";
@@ -39,6 +40,7 @@ export function billableFailedCall(err, fallback = {}) {
     retryCount: Math.max(0, Number(err.retryCount) || 0),
     reasoningEffort: err.reasoningEffort || fallback.reasoningEffort || "default",
     reasoningApplied: err.reasoningApplied === true,
+    upstreamEndpoints: err.upstreamEndpoints || [],
     errorCode: String(err.code || "CHANNEL_ERROR"),
     httpStatus: Number(err.status || err.httpStatus) || 0,
     failed: true,
@@ -209,6 +211,7 @@ export async function runCompletion({
       else signal.addEventListener("abort", onOuterAbort, { once: true });
     }
 
+    const endpointAudit = { endpoints: [], closed: false };
     try {
       const adapter = await getAdapter(channel);
       const key = adapterKeyFor(channel);
@@ -256,7 +259,7 @@ export async function runCompletion({
           armDeadline();
           // 先记进入适配器；失败时再排除明确本地拒绝，决定是否补收上下文。
           attemptStarted = true;
-          return adapter.chat({
+          return withEndpointAudit(endpointAudit, () => adapter.chat({
             channel,
             model,
             prompt: prepared.prompt,
@@ -297,11 +300,12 @@ export async function runCompletion({
             onSearchStatus: (s) => {
               if (onSearchStatus) onSearchStatus(s);
             },
-          });
+          }));
         }),
         deadline,
       ]).finally(() => {
         settled = true;
+        endpointAudit.closed = true;
         clearTimeout(hardTimer);
         clearTimeout(backstopTimer);
       });
@@ -358,10 +362,12 @@ export async function runCompletion({
           }
         );
       }
-      return { ...result, reasoningEffort: reasoningConfig.level || (thinking === true ? "enabled" : thinking === false ? "disabled" : "default"), reasoningApplied: result.reasoningApplied === true, toolMode: nativeTools ? "native" : "text", requestPrompt: prepared.billingPrompt || prepared.prompt, channel, channelQuote: attemptQuote, startedAt: callStarted || started, firstTokenAt,
+      return { ...result, upstreamEndpoints: endpointAudit.endpoints, reasoningEffort: reasoningConfig.level || (thinking === true ? "enabled" : thinking === false ? "disabled" : "default"), reasoningApplied: result.reasoningApplied === true, toolMode: nativeTools ? "native" : "text", requestPrompt: prepared.billingPrompt || prepared.prompt, channel, channelQuote: attemptQuote, startedAt: callStarted || started, firstTokenAt,
         retryCount: attempts - 1 + internalRetries, elapsed: Date.now() - runStartedAt };
     } catch (err) {
       lastError = tagChannel(err, channel);
+      endpointAudit.closed = true;
+      lastError.upstreamEndpoints = endpointAudit.endpoints;
       lastError.reasoningEffort = reasoningConfig.level || (thinking === true ? "enabled" : thinking === false ? "disabled" : "default");
       // 停止也要保留已消耗上下文的证据；原先在赋值前 throw，首步停止会漏账。
       // 已输出内容优先于错误分类（它直接证明模型请求已开始）。

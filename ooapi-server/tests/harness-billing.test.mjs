@@ -10,9 +10,10 @@ import { userDataVisibility } from "../src/services/user-data-visibility.js";
 import * as toolWire from "../src/services/tool-wire.js";
 import * as contextTools from "../src/services/harness/context.js";
 import * as capabilities from "../src/services/model-capabilities.js";
+import { withEndpointAudit } from "../src/services/endpoint-audit.js";
 
 const audit = {
-  contextTools, capabilities,
+  contextTools, capabilities, withEndpointAudit,
   toolWire,
   crypto,
   normalizeUsage,
@@ -55,6 +56,7 @@ const harness = await loadMocked("../src/services/harness/loop.js", `
   const MAX_STEPS_LIMIT=32;
 `);
 const executor = await loadMocked("../src/services/execute.js", `
+  const withEndpointAudit = audit.withEndpointAudit;
   const {modelCapabilities, reasoningSelection} = audit.capabilities;
   const crypto=audit.crypto;
   const pool=audit.pool;
