@@ -1,0 +1,90 @@
+/* 边界局部坐标：y=0 就是输入框外沿，身体只在 y<0 可见，爪尖覆盖边线 3px。 */
+.lele-companion-marker {position:absolute;width:0;height:0;pointer-events:none;}
+.lele-perch-anchor {position:absolute;width:58px;height:0;z-index:4;pointer-events:none;transform-origin:29px 0;}
+.lele-perch-anchor.at-top {top:0;}
+.lele-perch-anchor.at-left {left:-29px;transform:rotate(-90deg);}
+.lele-perch-anchor.at-right {left:calc(100% - 29px);transform:rotate(90deg);}
+.lele-perch-anchor.at-bottom {bottom:0;transform:rotate(180deg);}
+.lele-perch-anchor.is-questioning {transition:left .78s cubic-bezier(.22,.8,.28,1);}
+.lele-edge-viewport {position:absolute;bottom:0;left:-12px;width:82px;height:68px;overflow:hidden;contain:paint;}
+.lele-edge-actor {position:absolute;left:12px;bottom:-21px;width:58px;height:58px;transform-origin:50% 64%;--rest-y:0px;--rest-angle:0deg;--rest-sx:1;--rest-sy:1;transform:translateY(var(--rest-y)) rotate(var(--rest-angle)) scale(var(--rest-sx),var(--rest-sy));}
+.lele-edge-actor>.chat-mascot {width:58px;height:58px;animation:none!important;transform:none;}
+.lele-edge-actor>.chat-mascot>svg {clip-path:none;}
+.lele-edge-grip {position:absolute;left:14px;right:12px;top:-3px;display:flex;justify-content:space-between;transform-origin:50% 0;}
+.lele-edge-grip i {width:9px;height:6px;box-sizing:border-box;border:1.5px solid #62676e;background:#f4f5f6;border-radius:3px 3px 4px 4px;box-shadow:inset 2px -1px #dfe2e5;transform-origin:50% 80%;}
+.lele-perch-anchor.phase-enter .lele-edge-grip {animation:lele-grip-arrive .62s cubic-bezier(.22,1.25,.4,1) both;}
+.lele-perch-anchor.phase-exit .lele-edge-grip {animation:lele-grip-release .26s ease-in both;}
+.lele-perch-anchor.phase-enter .lele-edge-actor {animation:lele-climb-in .8s cubic-bezier(.18,.72,.3,1) both;}
+.lele-perch-anchor.phase-exit .lele-edge-actor {animation:lele-duck-out .26s cubic-bezier(.55,0,.85,.4) both;}
+.lele-perch-anchor.pose-peek .lele-edge-actor {--rest-y:9px;}
+.lele-perch-anchor.pose-peek.phase-enter .lele-edge-actor,.lele-perch-anchor.pose-shy.phase-enter .lele-edge-actor {animation:lele-peek-in 1.25s cubic-bezier(.16,.7,.24,1) both;}
+.lele-perch-anchor.pose-paws .lele-edge-actor {--rest-y:42px;}
+.lele-perch-anchor.pose-paws.phase-enter .lele-edge-grip {animation:lele-paws-hello 1.4s ease both;}
+.lele-perch-anchor.pose-wave.phase-enter .lele-edge-actor {animation:lele-wave-in .7s cubic-bezier(.18,.8,.32,1) both;}
+.lele-perch-anchor.pose-wave.phase-exit .lele-edge-actor,.lele-perch-anchor.pose-wink.phase-exit .lele-edge-actor {animation:lele-dash-out .24s cubic-bezier(.55,0,.85,.4) both;}
+.lele-perch-anchor.pose-wave .lele-edge-grip i:first-child {animation:lele-grip-wave 2.8s .8s infinite;}
+.lele-perch-anchor.pose-sleep .lele-edge-actor,.lele-perch-anchor.pose-curl .lele-edge-actor {--rest-y:8px;--rest-angle:-9deg;--rest-sx:1.08;--rest-sy:.87;}
+.lele-perch-anchor.pose-sleep.phase-enter .lele-edge-actor,.lele-perch-anchor.pose-curl.phase-enter .lele-edge-actor {animation:lele-settle-in 1.7s cubic-bezier(.2,.7,.4,1) both;}
+.lele-perch-anchor.pose-sleep.phase-exit .lele-edge-actor,.lele-perch-anchor.pose-curl.phase-exit .lele-edge-actor {animation:lele-roll-out .28s ease-in both;}
+.lele-perch-anchor.pose-stretch .lele-edge-actor {--rest-y:-2px;--rest-sy:1.06;}
+.lele-perch-anchor.pose-stretch.phase-enter .lele-edge-actor {animation:lele-stretch-in 1.25s ease both;}
+.lele-perch-anchor.pose-look .cat-face {animation:lele-face-look 4.2s ease-in-out infinite;}
+.lele-perch-anchor.pose-curl .cat-eyes {display:none;}.lele-perch-anchor.pose-curl .cat-sleep-eyes {display:block;}
+.lele-perch-anchor .chat-mascot.gesture-sleep .lele-sleep {top:0;right:0;animation:lele-dream 3s ease-in-out infinite;}
+.lele-perch-anchor .lele-sleep span {transform:translateY(-4px);}.lele-perch-anchor .lele-sleep b {transform:translateY(-8px);}
+.lele-perch-anchor .chat-mascot.gesture-wink .cat-eyes {animation:cat-blink 3s infinite;}
+
+/* 等询问时会抬眼、侧耳、举爪、轻轻探头；头和脸一起转，爪子仍握住实体边。 */
+.chat-mascot.is-asking .cat-eyes {display:none;}.chat-mascot.is-asking .cat-asking-eyes {display:block;animation:lele-ask-blink 4.4s infinite;transform-origin:16px 13px;}
+.lele-question-mark {position:absolute;right:0;top:-3px;color:var(--accent);font-size:14px;font-weight:650;transform:rotate(12deg);animation:lele-question-bob 3s ease-in-out infinite;}
+.lele-perch-anchor.pose-curious .lele-edge-actor {--rest-angle:-5deg;--rest-y:0px;}
+.lele-perch-anchor.pose-listen .lele-edge-actor {--rest-angle:8deg;--rest-y:4px;}
+.lele-perch-anchor.pose-invite .lele-edge-actor {--rest-y:-1px;}
+.lele-perch-anchor.pose-invite .lele-edge-grip i:last-child {animation:lele-invite-paw 3.5s .8s infinite;}
+.lele-perch-anchor.pose-shy .lele-edge-actor {--rest-y:8px;--rest-angle:-3deg;}
+.lele-perch-anchor.is-questioning .lele-edge-actor {transition:transform .78s cubic-bezier(.22,.8,.28,1);}
+
+/* 气泡用同一条曲线跟随头顶，尾巴是曲线而不是箭头；展开与收起均以尾尖为原点。 */
+.lele-speech {position:absolute;z-index:8;box-sizing:border-box;margin:0;padding:0;border:0;display:block;color:var(--ink-2);font-size:12px;transform-origin:var(--speech-tail) calc(100% + 22px);transition:left .78s cubic-bezier(.22,.8,.28,1),bottom .78s cubic-bezier(.22,.8,.28,1);animation:lele-speech-open .62s cubic-bezier(.16,.85,.3,1.12) both;}
+.lele-speech-card {display:flex;flex-direction:column;max-height:var(--speech-height);box-sizing:border-box;background:var(--surface);border:1px solid color-mix(in srgb,var(--accent) 25%,var(--line));border-radius:22px;box-shadow:0 12px 42px color-mix(in srgb,var(--ink) 11%,transparent),0 2px 6px color-mix(in srgb,var(--ink) 3%,transparent);overflow:hidden;}
+.lele-speech-heading {padding:17px 20px 12px;flex-shrink:0;}
+.lele-speech-heading>span {font-size:10px;letter-spacing:.06em;color:var(--ink-3);}
+.lele-speech-heading h3 {font-size:15px;font-weight:600;line-height:1.65;color:var(--ink);margin:5px 0 0;overflow-wrap:anywhere;}
+.lele-speech-content {padding:0 20px;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin;}
+.lele-operation {display:flex;align-items:center;gap:7px;margin:2px 0 6px;color:var(--ink);font-size:12px;}
+.lele-operation-dot {width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 9%,transparent);flex-shrink:0;}
+.lele-operation-description {margin:0 0 12px;color:var(--ink-2);font-size:12px;line-height:1.8;overflow-wrap:anywhere;}
+.lele-operation-fields {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 18px;border:1px solid var(--line);background:color-mix(in srgb,var(--inset) 70%,var(--surface));border-radius:12px;padding:12px 14px;margin:0 0 10px;}
+.lele-operation-fields>div {min-width:0;}.lele-operation-fields>.is-wide {grid-column:1 / -1;}
+.lele-operation-fields dt {color:var(--ink-3);font-size:10px;line-height:1.6;margin-bottom:3px;}
+.lele-operation-fields dd {margin:0;color:var(--ink);font-size:12px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere;}
+.lele-operation-scope {margin:8px 0 0;color:var(--ink-3);font-size:10px;line-height:1.7;overflow-wrap:anywhere;}
+.lele-speech .tool-approval-actions {display:flex;flex-shrink:0;justify-content:flex-end;gap:9px;padding:13px 18px 16px;margin:0;}
+.lele-speech .ant-btn {margin:0;border-radius:10px;font-size:12px;box-shadow:none;}
+.lele-speech .ant-btn-default {border-color:transparent;background:transparent;color:var(--ink-2);}
+.lele-approval-error {color:var(--orange);margin:8px 0 0;font-size:12px;overflow-wrap:anywhere;}
+.lele-speech-tail {position:absolute;left:calc(var(--speech-tail) - 22px);top:calc(100% - 1px);overflow:visible;transition:left .78s cubic-bezier(.22,.8,.28,1);pointer-events:none;}
+.lele-speech-tail path {fill:var(--surface);stroke:color-mix(in srgb,var(--accent) 25%,var(--line));stroke-width:1px;}
+.lele-speech.is-closing {animation:lele-speech-close .25s cubic-bezier(.55,0,.75,.35) both;pointer-events:none;}
+
+@keyframes lele-climb-in {0%{transform:translateY(43px) scale(.9,1.08)}65%{transform:translateY(-3px) scale(1.03,.97)}100%{transform:translateY(var(--rest-y)) rotate(var(--rest-angle)) scale(var(--rest-sx),var(--rest-sy))}}
+@keyframes lele-peek-in {0%{transform:translateY(43px)}35%{transform:translateY(21px) rotate(-6deg)}58%{transform:translateY(21px) rotate(-6deg)}100%{transform:translateY(var(--rest-y)) rotate(var(--rest-angle))}}
+@keyframes lele-wave-in {0%{transform:translate(9px,43px) rotate(14deg)}70%{transform:translate(-2px,-3px) rotate(-4deg)}100%{transform:none}}
+@keyframes lele-settle-in {0%{transform:translate(-12px,43px) rotate(-20deg)}48%{transform:translateY(-2px)}100%{transform:translateY(var(--rest-y)) rotate(var(--rest-angle)) scale(var(--rest-sx),var(--rest-sy))}}
+@keyframes lele-stretch-in {0%{transform:translateY(43px) scale(.8,1.2)}60%{transform:translateY(-5px) scale(.94,1.12)}100%{transform:translateY(var(--rest-y)) scale(1,var(--rest-sy))}}
+@keyframes lele-duck-out {0%{transform:translateY(var(--rest-y)) rotate(var(--rest-angle)) scale(var(--rest-sx),var(--rest-sy))}25%{transform:translateY(1px) scale(1.07,.94)}100%{transform:translateY(46px) scale(.9,1.1)}}
+@keyframes lele-dash-out {0%{transform:none}18%{transform:translate(-3px,-2px) rotate(-5deg)}100%{transform:translate(-22px,48px) rotate(-20deg)}}
+@keyframes lele-roll-out {0%{transform:translateY(var(--rest-y)) rotate(var(--rest-angle)) scale(var(--rest-sx),var(--rest-sy))}100%{transform:translate(16px,48px) rotate(24deg) scale(.9)}}
+@keyframes lele-grip-arrive {0%,22%{transform:scaleY(0) translateY(-3px)}60%{transform:scaleY(1.15)}100%{transform:none}}
+@keyframes lele-grip-release {0%,38%{transform:none}100%{transform:translateY(-3px) scaleY(0)}}
+@keyframes lele-paws-hello {0%{transform:scaleY(0)}25%{transform:scaleY(1)}48%{transform:translateY(-5px) rotate(-8deg)}68%{transform:translateY(-5px) rotate(8deg)}100%{transform:none}}
+@keyframes lele-grip-wave {0%,60%,100%{transform:none}14%,38%{transform:translateY(-8px) rotate(-18deg)}26%,50%{transform:translateY(-7px) rotate(12deg)}}
+@keyframes lele-invite-paw {0%,65%,100%{transform:none}20%,42%{transform:translateY(-5px) rotate(14deg)}31%,52%{transform:translateY(-3px) rotate(-8deg)}}
+@keyframes lele-face-look {0%,20%,100%{transform:none}35%,55%{transform:translateX(1px)}70%,85%{transform:translateX(-1px)}}
+@keyframes lele-dream {0%,100%{transform:translate(0,2px) rotate(-8deg)}50%{transform:translate(2px,-4px) rotate(3deg)}}
+@keyframes lele-ask-blink {0%,44%,49%,100%{transform:scaleY(1)}46%{transform:scaleY(.12)}}
+@keyframes lele-question-bob {0%,100%{transform:translateY(0) rotate(12deg)}50%{transform:translateY(-3px) rotate(0)}}
+@keyframes lele-speech-open {0%{transform:translateY(6px) scale(.08,.04)}65%{transform:translateY(-2px) scale(1.025,1.035)}100%{transform:none}}
+@keyframes lele-speech-close {0%{transform:none}100%{transform:translateY(4px) scale(.02,.015)}}
+@media(max-width:700px) {.lele-speech-heading{padding:14px 16px 10px;}.lele-speech-content{padding:0 16px;}.lele-speech .tool-approval-actions{padding:11px 14px 13px;}.lele-speech-heading h3{font-size:14px;}.lele-operation-fields{gap:10px;padding:10px;}}
+@media(prefers-reduced-motion:reduce) {.lele-perch-anchor,.lele-perch-anchor *,.lele-speech,.lele-speech *{animation:none!important;transition:none!important;}.lele-speech.is-closing{visibility:hidden;}}

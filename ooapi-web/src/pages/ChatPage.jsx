@@ -1,4 +1,4 @@
-import AgentTrajectory, { ToolApproval } from "../components/AgentTrajectory";
+import AgentTrajectory from "../components/AgentTrajectory";
 import ChatRunFlow from "../components/ChatRunFlow";
 import ChatScene from "../components/ChatScene";
 import OdAmount from "../components/OdAmount";
@@ -1671,8 +1671,9 @@ export default function ChatPage() {
           ) : null}
 
           <div className="ui-chat2-composer-inner">
-            {msgs.filter(m => m.streaming).flatMap(m => m.parts || []).filter(p => p.type === "approval" && p.status === "pending").map(p => <ToolApproval key={p.id} part={p} active={busy} onDecide={(id, decision) => chatApi.approve(session.id, id, decision)}/>)}
             <PromptBar
+              approvals={busy ? msgs.filter(m => m.streaming).flatMap(m => m.parts || []).filter(p => p.type === "approval" && p.status === "pending") : []}
+              onApproval={(id, decision) => chatApi.approve(session.id, id, decision)}
               mascotState={busy ? msgs.some((m) => m.streaming && m.parts?.some((p) => p.type === "approval" && p.status === "pending")) ? "waiting" : msgs.some((m) => m.streaming && m.parts?.some((p) => p.type === "tool" && p.status === "running")) ? "working" : "thinking" : input ? "attentive" : "idle"}
               reasoningLevels={curModel?.capabilities?.reasoning?.levels || []}
               reasoningEffort={settings.reasoningEffort || ""}

@@ -1,3 +1,4 @@
+import { TOOL_PRESENTATIONS } from "./tool-presentation.js";
 // Harness 工具集
 // ---------------------------------------------------------------------------
 // 工具的共同约定：
@@ -133,6 +134,7 @@ export function recordFailedCall(err, ctx, fallback = {}) {
 export const TOOLS = {
   binance: {
     id: "binance",
+    presentation: TOOL_PRESENTATIONS.binance,
     name: "我的币安",
     desc: "只读查询当前用户自己的币安账户、权益、仓位、订单、策略、风控与回测；分析方向敞口、杠杆、保证金、强平距离和止盈止损。数据按当前登录用户隔离，不返回密钥，不执行交易。",
     args: '{"action":"accounts|overview|positions|orders|strategies|risk|backtests|analysis","account_id":"可选正整数；省略时读取本人全部启用账户，先用accounts查看编号"}',
@@ -143,6 +145,7 @@ export const TOOLS = {
   },
   todowrite: {
     id: "todowrite",
+    presentation: TOOL_PRESENTATIONS.todowrite,
     name: "待办清单",
     desc: "创建/更新本会话的待办清单（全量覆盖）。任务超过 3 步时用它把计划显式化，并让用户看到进度。",
     args: '{"todos":[{"content":"步骤描述","status":"pending|in_progress|completed"}]}',
@@ -168,6 +171,7 @@ export const TOOLS = {
 
   search: {
     id: "search",
+    presentation: TOOL_PRESENTATIONS.search,
     name: "联网检索",
     desc: "用搜索引擎查一次资料，返回要点与来源链接。适合时效性信息、具体数字、外部事实。",
     args: '{"query":"检索关键词"}',
@@ -234,6 +238,7 @@ export const TOOLS = {
 
   fetch: {
     id: "fetch",
+    presentation: TOOL_PRESENTATIONS.fetch,
     name: "读取网页",
     desc: "抓取一个公网 URL 并转成纯文本（HTML 会去掉标签）。适合读已知来源的原文，不能访问内网地址。",
     args: '{"url":"https://example.com/page"}',
@@ -255,6 +260,7 @@ export const TOOLS = {
 
   github: {
     id: "github",
+    presentation: TOOL_PRESENTATIONS.github,
     name: "读 GitHub",
     desc:
       "读取 GitHub 公开仓库：列目录、读文件、搜代码。适合看开源项目的真实实现与文档。" +
@@ -355,6 +361,7 @@ export const TOOLS = {
 
   account: {
     id: "account",
+    presentation: TOOL_PRESENTATIONS.account,
     name: "我的账号",
     desc:
       "查询**当前用户自己**的账号信息：余额与累计消耗、最近调用记录、API 令牌（不含密钥）、近 7 天用量与模型分布、最近的失败请求。" +
@@ -467,6 +474,7 @@ export const TOOLS = {
 
   task: {
     id: "task",
+    presentation: TOOL_PRESENTATIONS.task,
     name: "派发子代理",
     desc: "把一个独立的子任务交给专职子代理（见下方清单），它会把结果整理好返回。用于并行调研、审阅成稿。",
     args: '{"agent":"子代理 id","prompt":"要交办的具体问题（自包含，子代理看不到我们的对话）"}',
@@ -489,7 +497,7 @@ export const TOOLS = {
 };
 
 export function toolSpecs(ids = []) {
-  return ids.map((id) => TOOLS[id]).filter(Boolean).map(({ id, name, desc, args }) => ({ id, name, desc, args }));
+  return ids.map((id) => TOOLS[id]).filter(Boolean).map(({ id, name, desc, args, presentation }) => ({ id, name, desc, args, presentation }));
 }
 
 // 原生协议用真实类型描述参数，避免模型把说明文字当成参数值。

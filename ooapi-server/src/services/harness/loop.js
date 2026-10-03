@@ -1,3 +1,4 @@
+import { toolPresentation } from "./tool-presentation.js";
 // Harness 运行循环（对话机制 + 智能体编排的执行体）
 // ---------------------------------------------------------------------------
 // 一轮对话怎么跑（对应 opencode 的「一次会话 = 若干 step」）：
@@ -739,7 +740,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
     for (const call of stepCalls) {
       if (signal?.aborted) throw Object.assign(new Error("已停止"), { code: "ABORTED" });
       const spec = specs.find((s) => s.id === call.tool);
-      const toolPart = { id: uid(), type: "tool", tool: call.tool, name: spec?.name || call.tool, args: call.args, step, status: "running", output: "", started: Date.now() };
+      const toolPart = { id: uid(), type: "tool", tool: call.tool, name: spec?.name || call.tool, args: call.args, presentation: toolPresentation(call.tool, call.args), step, status: "running", output: "", started: Date.now() };
       emitPart(toolPart);
 
       let res;

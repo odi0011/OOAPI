@@ -5,23 +5,6 @@ import { OdText } from "./OdAmount";
 
 import { executionEntries, presentation, taskSummary, toolName } from "./executionPresentation";
 
-export function ToolApproval({ part, onDecide, active }) {
-  const { message } = App.useApp();
-  const [saving, setSaving] = useState(false);
-  if (!active || part.status !== "pending") return null;
-  const decide = async decision => {
-    setSaving(true);
-    try { await onDecide(part.id, decision); }
-    catch (e) { message.error(e.message || "确认失败，请重试"); }
-    finally { setSaving(false); }
-  };
-  return <section className="tool-approval is-pending" role="region" aria-label="乐乐需要你的确认">
-    <div className="tool-approval-heading"><ChatMascot state="waiting"/><strong>允许{part.name}？</strong></div>
-    <dl className="tool-approval-args">{Object.entries(part.args || {}).map(([key, value]) => <div key={key}><dt>{({ action:"操作", limit:"条数", query:"搜索", url:"网页", repo:"仓库", prompt:"任务" })[key] || key}</dt><dd>{typeof value === "object" ? JSON.stringify(value) : String(value)}</dd></div>)}</dl>
-    <div className="tool-approval-actions"><Button disabled={saving} onClick={() => decide("denied")}>拒绝</Button><Button type="primary" loading={saving} onClick={() => decide("approved")}>仅允许这次</Button></div>
-  </section>;
-}
-
 function ExecutionPill({ part, active }) {
   const [open, setOpen] = useState(false);
   const [visited, setVisited] = useState(false);

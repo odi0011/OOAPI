@@ -1,3 +1,6 @@
+import * as toolPresentation from "../src/services/harness/tool-presentation.js";
+import * as toolWire from "../src/services/tool-wire.js";
+import * as contextTools from "../src/services/harness/context.js";
 // 真实工具/对话循环，账户与上游均为内存fixture；不访问数据库、交易引擎或收费模型。
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
@@ -100,11 +103,12 @@ await test("动作大小写/空白归一，畸形数据失败且停止信号不�
 });
 
 // 工具结果实际进入下一步模型上下文，不能只测read函数或页面按钮跳转。
-const audit = { crypto, request, readBinanceAnalysis, complete: null, buildSystemPrompt, SUBAGENTS };
+const audit = {
+  toolPresentation, toolWire, contextTools, crypto, request, readBinanceAnalysis, complete: null, buildSystemPrompt, SUBAGENTS };
 globalThis.__ooBinanceToolAudit = audit;
 const mocked = async (path, prelude) => {
   const source = readFileSync(new URL(path, import.meta.url), "utf8").replace(/^import .*;\r?\n/gm, "");
-  return import(`data:text/javascript;base64,${Buffer.from(`const audit=globalThis.__ooBinanceToolAudit;\n${prelude}\n${source}`).toString("base64")}`);
+  return import(`data:text/javascript;base64,${Buffer.from(`const audit=globalThis.__ooBinanceToolAudit;\nconst { TOOL_PRESENTATIONS, toolPresentation } = audit.toolPresentation;\n${prelude}\n${source}`).toString("base64")}`);
 };
 try {
   audit.tools = await mocked("../src/services/harness/tools.js", `
@@ -115,11 +119,14 @@ try {
   `);
   const harness = await mocked("../src/services/harness/loop.js", `
     const crypto=audit.crypto;
-    const runCompletion=o=>audit.complete(o);
+    const runCompletion=o=>audit.complete({...o,...o.prepareRequest?.({nativeTools:false})});
     const modelForChannelMatch=v=>v;
     const buildSystemPrompt=audit.buildSystemPrompt, SUBAGENTS=audit.SUBAGENTS;
-    const {toolSpecs,runTool}=audit.tools;
+    const {toolSpecs,nativeToolSpecs,runTool}=audit.tools;
+    const {callsText,chatCalls,textToolMessages}=audit.toolWire;
+    const {contextBudget,messageTokens,compressionSplit,latestMemory}=audit.contextTools;
     const DEFAULT_MAX_STEPS=8;
+    const MAX_STEPS_LIMIT=32;
   `);
   for (const mode of ["whole", "char"]) await test(`通用系统对话${mode}无需预填直接读accounts/仓位/最近订单/策略并据结果回答`, async () => {
     let count = 0;

@@ -1,50 +1,11 @@
-import React, { useEffect, useRef, useState } from "react";
-// 使用用户提供的像素猫；各部件用 class，多个实例不会产生重复 SVG id。
-export default function ChatMascot({ state = "idle", perch = false }) {
-  const [gesture, setGesture] = useState("");
-  const [position, setPosition] = useState("top");
+import React, { useEffect, useState } from "react";
+export default function ChatMascot({ state = "idle", gesture = "" }) {
   const [visible, setVisible] = useState(!document.hidden);
-  const previousState = useRef(state);
-  const stateRef = useRef(state);
-  stateRef.current = state;
-  useEffect(() => {
-    const change = () => setVisible(!document.hidden);
-    document.addEventListener("visibilitychange", change);
-    return () => document.removeEventListener("visibilitychange", change);
-  }, []);
-  useEffect(() => {
-    const wasBusy = ["thinking", "working", "waiting"].includes(previousState.current);
-    previousState.current = state;
-    if (perch && wasBusy && state === "idle") { setGesture("hop"); const timer = setTimeout(() => setGesture(""), 1600); return () => clearTimeout(timer); }
-  }, [state, perch]);
-  useEffect(() => {
-    if (!perch) return;
-    let timer, moveTimer;
-    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const schedule = () => {
-      clearTimeout(timer); clearTimeout(moveTimer);
-      setVisible(!document.hidden);
-      if (document.hidden || motion.matches) { setGesture(""); return; }
-      timer = setTimeout(() => {
-        // 先缩回边缘再从新位置探头，不横穿输入内容；间隔始终是 5–10 秒。
-        setGesture("hide");
-        moveTimer = setTimeout(() => {
-          setPosition(old => { const next = ["left", "right", "top", "bottom"].filter(p => p !== old); return next[Math.floor(Math.random() * next.length)]; });
-          const poses = ["peek", "wave", "sleep", "paws", "stretch", "wink", "curl", "look"];
-          setGesture(["idle", "attentive"].includes(stateRef.current) ? poses[Math.floor(Math.random() * poses.length)] : "peek");
-          schedule();
-        }, 280);
-      }, 5000 + Math.random() * 4500);
-    };
-    document.addEventListener("visibilitychange", schedule); motion.addEventListener("change", schedule);
-    schedule();
-    return () => { clearTimeout(timer); clearTimeout(moveTimer); document.removeEventListener("visibilitychange", schedule); motion.removeEventListener("change", schedule); };
-  }, [perch]);
-  useEffect(() => { if (!["idle", "attentive"].includes(state)) setGesture(""); }, [state]);
-  const cat = <span className={`chat-mascot is-${state} ${perch ? "is-perched" : ""} ${gesture ? `gesture-${gesture}` : ""}`} data-motion={visible ? "on" : "off"} aria-hidden="true">
+  useEffect(() => { const change = () => setVisible(!document.hidden); document.addEventListener("visibilitychange", change); return () => document.removeEventListener("visibilitychange", change); }, []);
+  return <span className={`chat-mascot is-${state} ${gesture ? `gesture-${gesture}` : ""}`} data-motion={visible ? "on" : "off"} aria-hidden="true">
 {["thinking", "working", "compressing", "loading"].includes(state) && <span className="lele-sparks"><i/><i/><i/></span>}
 <span className="lele-sleep" aria-hidden="true">z<span>Z</span><b>Z</b></span>
-<span className="lele-perch-paws"><i/><i/></span>
+{state === "asking" && <span className="lele-question-mark">?</span>}
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="64" height="64" aria-hidden="true" shapeRendering="crispEdges">
 
   <g className="cat-shadow" fill="#30343b" opacity="0.25">
@@ -185,6 +146,7 @@ export default function ChatMascot({ state = "idle", perch = false }) {
     <path className="cat-happy-eyes" fill="none" stroke="#30343b" strokeWidth="1.5" d="M8 14l2-2 2 2m8 0 2-2 2 2"/>
     <path className="cat-sleep-eyes" fill="none" stroke="#30343b" strokeWidth="1.5" d="M8 14h4m8 0h4"/>
 
+    <g className="cat-asking-eyes" fill="#30343b"><path d="M8 11h4v4H8zm12 0h4v4h-4z"/><path fill="#fff" d="M9 11h2v2H9zm12 0h2v2h-2z"/><path fill="#85898e" d="M8 9h4v1H8zm12 0h4v1h-4z"/></g>
     <g className="cat-eyes">
 
       <path fill="#30343b" d="M8,12 h4 v1 h-4 z M7,13 h1 v1 h-1 z M12,13 h1 v1 h-1 z M8,14 h4 v1 h-4 z" />
@@ -221,5 +183,4 @@ export default function ChatMascot({ state = "idle", perch = false }) {
 </svg>
 
   </span>;
-  return perch ? <span className={`lele-perch-anchor at-${position} ${gesture === "hide" ? "is-hiding" : ""}`} aria-hidden="true">{cat}</span> : cat;
 }

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Input } from "antd";
-import ChatMascot from "./ChatMascot";
+import ComposerCompanion from "./ComposerCompanion";
 import { ModelIcon, VendorIcon } from "./VendorIcon";
 
 
@@ -82,6 +82,8 @@ export default function PromptBar({
   onReasoningChange,
   settingsSaving = false,
   mascotState,
+  approvals = [],
+  onApproval,
   chips = [],
   onRemoveChip,
   onPickImage,
@@ -235,7 +237,7 @@ export default function PromptBar({
         </div>
       ) : null}
 
-      {mascotState && <ChatMascot perch state={mascotState}/>}
+      {mascotState && <ComposerCompanion state={mascotState} approvals={approvals} onDecide={onApproval}/>}
       <div className={`bui-composer${disabled ? " is-disabled" : ""}`}>
         {chips.length > 0 ? (
           <div className="bui-chips">

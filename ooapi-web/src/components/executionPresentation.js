@@ -28,7 +28,8 @@ export function presentation(part, active) {
   const waiting = part.status === "awaiting_approval" || part.type === "approval" && part.status === "pending";
   const tool = part.tool || Object.keys(names).find(k => names[k] === part.name) || "other";
   const kind = thought || part.type === "compaction" ? part.type : tool === "account" && part.args?.action === "recent" ? "recent" : tool;
-  const choices = phrases[kind] || phrases.other;
+  const configured = part.presentation?.capsulePhrases?.filter(p => typeof p === "string" && p);
+  const choices = configured?.length ? configured : phrases[kind] || phrases.other;
   // 同一条执行记录固定文案；流式片段、刷新和主题切换都不会重新抽签。
   const seed = Array.from(String(part.id || part.type)).reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 0);
   const label = failed ? ({ denied: "这次先不查啦", expired: "确认时间到啦", stopped: "这一步停下啦", cancelled: "这一步取消啦" }[part.status] || "这一步遇到问题啦")
@@ -37,6 +38,7 @@ export function presentation(part, active) {
   return { thought, failed, label, state: failed ? "sad" : !active ? "success" : waiting ? "waiting" : part.type === "compaction" ? "compressing" : thought ? "thinking" : "working" };
 }
 export function taskSummary(part) {
+  if (part.presentation?.title) return part.presentation.title;
   const a = part.args || {};
   if (part.tool === "account" || part.name === "我的账号") {
     return ({ recent: `查看最近${a.limit ? ` ${a.limit} 条` : ""}调用`, profile: "查看个人信息", balance: "查看账户余额", usage: "查看账户用量", tokens: "查看令牌概况" })[a.action] || "查看你的账号情况";

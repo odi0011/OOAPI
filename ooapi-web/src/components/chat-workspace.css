@@ -25,12 +25,8 @@
 .agent-trajectory-list summary small { margin-left:10px;color:var(--ink-3);font-size:11px; }
 .trajectory-output { max-height:260px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:12px;background:var(--inset);border-radius:var(--r-md);font-size:12px;line-height:1.7; }
 .trajectory-args .oo-code-block { margin:8px 0; }.trajectory-args .oo-code-block pre { max-height:180px; }
-.tool-approval { display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0 16px;padding:10px 14px;border:1px solid var(--line);border-radius:var(--r-md);color:var(--ink-2);font-size:12px; }
-.tool-approval.is-pending { border-color:var(--accent);background:color-mix(in srgb,var(--accent) 5%,var(--surface)); }
-.tool-approval .ant-btn { margin-left:auto; }
 .chat-mascot { display:inline-flex;width:32px;height:32px;flex-shrink:0;transform-origin:50% 100%;pointer-events:none; }
 .chat-mascot svg { width:100%;height:100%;overflow:visible;image-rendering:pixelated; }
-.chat-mascot.is-perched { width:58px;height:58px;position:absolute;right:24px;top:-49px;z-index:2; }
 .chat-mascot .cat-eyes { transform-box:fill-box;transform-origin:center;animation:cat-blink 4s infinite; }
 .chat-mascot .cat-tail { transform-origin:26px 24px;animation:cat-tail 3.8s ease-in-out infinite; }
 .chat-mascot.is-thinking { animation:cat-think 2.2s ease-in-out infinite; }
@@ -53,7 +49,7 @@
 @keyframes cat-stretch { 0%,100%{transform:scale(1)}50%{transform:scale(.93,1.12)} }
 @keyframes cat-peek { 0%,100%{transform:rotate(0)}40%{transform:rotate(-9deg)}70%{transform:rotate(6deg)} }
 @keyframes chat-breathe { 0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)} }
-@media(max-width:700px) { .ui-chat2 .ui-chat2-thread-inner { padding:20px 16px 36px; }.ui-chat2 .ui-msg-ai .prose { font-size:14px; }.ui-chat2 .ui-msg { margin-bottom:28px; }.chat-mascot.is-perched { right:18px;width:44px;height:44px;top:-37px; }.ui-chat2 .ui-chat2-composer { padding-top:26px; }.agent-trajectory-toggle>small { font-size:10px; }.message-chart { padding:10px; } }
+@media(max-width:700px) { .ui-chat2 .ui-chat2-thread-inner { padding:20px 16px 36px; }.ui-chat2 .ui-msg-ai .prose { font-size:14px; }.ui-chat2 .ui-msg { margin-bottom:28px; }.ui-chat2 .ui-chat2-composer { padding-top:26px; }.agent-trajectory-toggle>small { font-size:10px; }.message-chart { padding:10px; } }
 @media(prefers-reduced-motion:reduce) { .chat-mascot,.chat-mascot *,.chat-response-wait span { animation:none!important;transition:none!important; }.ui-msg * { scroll-behavior:auto!important; } }
 @media(max-width:700px) {
   .ui-chat2 .bui-composer-bar .bui-modelwrap { flex:1;min-width:0; }
@@ -80,15 +76,7 @@
 .lele-sparks i:nth-child(2) {left:10px;animation-delay:.6s;background:var(--orange);}.lele-sparks i:nth-child(3) {left:0;animation-delay:1.2s;background:var(--green);}
 .ui-chat2-composer-inner {isolation:isolate;}
 .ui-chat2 .bui-composer {position:relative;z-index:2;background:var(--surface);}
-.ui-chat2 .chat-mascot.is-perched {right:30px;top:-39px;width:58px;height:58px;z-index:1;}
-.chat-mascot.is-perched>svg {clip-path:inset(0 0 11px 0);transition:transform .6s cubic-bezier(.2,1.35,.4,1);}
-.lele-perch-paws,.lele-sleep,.cat-happy-eyes,.cat-sleep-eyes {display:none;}
-.chat-mascot.is-perched .lele-perch-paws {display:flex;position:absolute;left:14px;right:12px;top:36px;justify-content:space-between;z-index:4;}
-.lele-perch-paws i {display:block;width:10px;height:7px;background:var(--surface);border:2px solid var(--ink-3);border-top:0;border-radius:2px 2px 5px 5px;}
-.chat-mascot.is-perched.gesture-paws>svg {transform:translateY(29px);clip-path:inset(0 0 40px 0);}
-.chat-mascot.is-perched.gesture-peek>svg {transform:translateY(13px);clip-path:inset(0 0 24px 0);}
-.chat-mascot.gesture-wave .lele-perch-paws i:first-child,.chat-mascot.gesture-paws .lele-perch-paws i:first-child {animation:lele-wave .7s ease-in-out infinite alternate;}
-.chat-mascot.gesture-sleep>svg {transform:translateY(12px) rotate(-8deg);clip-path:inset(0 0 23px 0);}
+.lele-sleep,.cat-happy-eyes,.cat-sleep-eyes,.cat-asking-eyes {display:none;}
 .chat-mascot.gesture-sleep .cat-eyes,.chat-mascot.is-success .cat-eyes {display:none;}
 .chat-mascot.gesture-sleep .cat-sleep-eyes,.chat-mascot.is-success .cat-happy-eyes {display:block;}
 .chat-mascot.gesture-sleep .lele-sleep {display:flex;position:absolute;top:-10px;right:-14px;gap:3px;color:var(--ink-3);font-size:9px;animation:lele-preview 2.4s infinite;}
@@ -96,22 +84,12 @@
 .chat-mascot.is-success *,.chat-mascot.is-sad * {animation:none!important;}
 .chat-mascot.is-success .cat-tail {transform:rotate(-10deg);}.chat-mascot.is-sad {transform:rotate(-7deg);}
 .chat-mascot.is-compressing {animation:cat-stretch 1.3s ease-in-out infinite;}
-.ui-chat2-composer-inner>.tool-approval {position:absolute;left:0;bottom:calc(100% + 12px);z-index:5;display:block;width:min(460px,100%);box-sizing:border-box;margin:0;padding:16px 18px;border-radius:20px;background:var(--surface);box-shadow:0 12px 36px color-mix(in srgb,var(--ink) 12%,transparent);transform-origin:50% 100%;animation:lele-ask .55s cubic-bezier(.2,1.3,.4,1);max-height:min(360px,45vh);overflow:auto;}
-.tool-approval-heading {display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ink);}
-.tool-approval-args {margin:10px 0;font-size:12px;}.tool-approval-args>div {display:flex;gap:14px;margin:5px 0;}.tool-approval-args dt {color:var(--ink-3);min-width:40px;}.tool-approval-args dd {margin:0;white-space:pre-wrap;overflow-wrap:anywhere;min-width:0;}
-.tool-approval-actions {display:flex;justify-content:flex-end;gap:8px;margin-top:12px;}.tool-approval .ant-btn {margin-left:0;}
 @keyframes lele-unfold {from{opacity:0;transform:scaleX(.8) translateY(5px)}to{opacity:1;transform:none}}
-@keyframes lele-ask {from{opacity:0;transform:translateY(24px) scale(.96,.65)}to{opacity:1;transform:none}}
 @keyframes lele-wave {to{transform:translateY(-9px) rotate(-16deg)}}
 @keyframes lele-preview {0%,100%{opacity:.55}50%{opacity:1}}
 @keyframes lele-particle {0%{opacity:0;transform:translateY(7px) scale(.4)}35%{opacity:.9}100%{opacity:0;transform:translateY(-10px) scale(1.2)}}
-@media(max-width:700px) {.execution-pill-preview{max-width:16ch;}.ui-chat2 .chat-mascot.is-perched{right:22px;}.execution-pill-label{font-size:11px;}.ui-chat2 .ui-chat2-composer{padding-top:46px;}}
+@media(max-width:700px) {.execution-pill-preview{max-width:16ch;}.execution-pill-label{font-size:11px;}.ui-chat2 .ui-chat2-composer{padding-top:46px;}}
 @media(prefers-reduced-motion:reduce) {.execution-pill,.execution-pill *,.execution-detail,.tool-approval,.chat-mascot *{animation:none!important;transition:none!important;}}
-.ui-chat2 .chat-mascot.is-perched {z-index:3;}
-.chat-mascot.is-perched>svg {clip-path:inset(0 0 19px 0);}
-.chat-mascot.is-perched.gesture-paws>svg {clip-path:inset(0 0 48px 0);}
-.chat-mascot.is-perched.gesture-peek>svg {clip-path:inset(0 0 32px 0);}
-.chat-mascot.gesture-sleep>svg {clip-path:inset(0 0 31px 0);}
 /* 独立测量自然宽度：测量层不跟随胶囊的过渡尺寸。 */
 .ui-chat2 .ui-chat2-thread-inner {width:100%;box-sizing:border-box;}
 .ui-chat2 .ui-msg-ai {min-width:0;}
@@ -141,16 +119,7 @@
 .lele-sparks i:nth-child(2) {left:auto;right:3px;top:17px;animation-delay:.65s;}
 .lele-sparks i:nth-child(3) {left:50%;top:5px;animation-delay:1.3s;}
 /* 锚点负责位置，猫负责动作；切换前缩回边缘，不横穿输入内容。 */
-.lele-perch-anchor {position:absolute;z-index:3;width:58px;height:58px;pointer-events:none;transform-origin:50% 50%;transition:opacity .25s;}
-.lele-perch-anchor.is-hiding {opacity:0;}
-.lele-perch-anchor.at-top {left:calc(70% - 29px);top:-39px;}
-.lele-perch-anchor.at-left {left:-27px;top:3px;transform:rotate(-90deg) scale(.85);}
-.lele-perch-anchor.at-right {right:-27px;top:3px;transform:rotate(90deg) scale(.85);}
-.lele-perch-anchor.at-bottom {left:calc(34% - 29px);bottom:-37px;transform:rotate(180deg) scale(.8);}
-.ui-chat2 .chat-mascot.is-perched {position:relative;left:auto;right:auto;top:auto;width:58px;height:58px;}
 .chat-mascot.gesture-wink .cat-eyes {animation:cat-blink 1.8s infinite;}
-.chat-mascot.gesture-look .cat-head {animation:cat-peek 2.6s ease-in-out infinite;transform-origin:16px 19px;}
-.chat-mascot.gesture-curl>svg {transform:translateY(9px) rotate(-16deg) scale(1.06,.8);}
 .chat-mascot[data-motion="off"] * {animation-play-state:paused!important;}
 .ui-chat2 .bui-composer-bar .bui-modelwrap {min-width:0;flex:0 1 auto;}
 .ui-chat2 .bui-composer-bar .is-model-select {max-width:280px;}
@@ -168,6 +137,6 @@
   .ui-chat2 .bui-composer-bar .bui-selbtn {padding:0 4px;gap:4px;}
   .ui-chat2 .bui-composer-bar .is-key>.bui-selbtn .nm2,.ui-chat2 .bui-composer-bar .is-key>.bui-selbtn .caret {display:none;}
   .ui-chat2 .bui-modelwrap>.bui-upmenu.is-reasoning {left:auto;right:0;}
-  .lele-perch-anchor.at-left {left:-20px;}.lele-perch-anchor.at-right {right:-20px;}
+
 }
 @media(prefers-reduced-motion:reduce) {.execution-pill,.execution-pill *,.execution-detail,.lele-perch-anchor{animation:none!important;transition:none!important;}}

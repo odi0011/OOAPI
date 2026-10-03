@@ -1,3 +1,4 @@
+import * as toolPresentation from "../src/services/harness/tool-presentation.js";
 // 真跑 harness/工具/执行器的内存上游：验证失败步只收一次、停止可打断响应体。
 // 只替换模块依赖，不访问数据库/公网，不需要额外运行参数或测试依赖。
 import assert from "node:assert/strict";
@@ -13,6 +14,7 @@ import * as capabilities from "../src/services/model-capabilities.js";
 import { withEndpointAudit } from "../src/services/endpoint-audit.js";
 
 const audit = {
+  toolPresentation,
   contextTools, capabilities, withEndpointAudit,
   toolWire,
   crypto,
@@ -29,7 +31,7 @@ const audit = {
 globalThis.__ooHarnessAudit = audit;
 const loadMocked = async (relativePath, prelude) => {
   const source = readFileSync(new URL(relativePath, import.meta.url), "utf8").replace(/^import .*;\r?\n/gm, "");
-  return import(`data:text/javascript;base64,${Buffer.from(`const audit=globalThis.__ooHarnessAudit;\n${prelude}\n${source}`).toString("base64")}`);
+  return import(`data:text/javascript;base64,${Buffer.from(`const audit=globalThis.__ooHarnessAudit;\nconst { TOOL_PRESENTATIONS, toolPresentation } = audit.toolPresentation;\n${prelude}\n${source}`).toString("base64")}`);
 };
 const tools = await loadMocked("../src/services/harness/tools.js", `
   const assertPublicUrl=async (v)=>new URL(v);
