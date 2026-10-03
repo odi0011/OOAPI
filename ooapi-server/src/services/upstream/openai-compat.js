@@ -1,3 +1,4 @@
+import { reasoningBody } from "../model-capabilities.js";
 // 通用 OpenAI 兼容适配器
 // ===========================================================================
 // 用途：所有「官方 API」接入方式的渠道都走这里。
@@ -318,6 +319,7 @@ export async function chat({
   prompt,
   messages,
   thinkingOverride,
+  reasoningConfig, maxOutputTokens,
   images = [],
   onDelta,
   onReasoning,
@@ -359,6 +361,7 @@ export async function chat({
         prompt,
         messages,
         thinkingOverride,
+  reasoningConfig, maxOutputTokens,
         images,
         onDelta: emitDelta,
         onReasoning: emitReasoning,
@@ -368,7 +371,7 @@ export async function chat({
         bodyHook,
         tools, toolChoice, onToolCall: (call) => { sawOutput = true; onToolCall?.(call); },
       });
-      return { ...result, retryCount: attempt };
+      return { ...result, reasoningApplied: Object.keys(reasoningBody(reasoningConfig, "chat")).length > 0, retryCount: attempt };
     } catch (e) {
       e.retryCount = attempt;
       const busy = e?.code === "CHANNEL_UPSTREAM_BUSY";
@@ -389,6 +392,7 @@ async function chatOnce({
   prompt,
   messages,
   thinkingOverride,
+  reasoningConfig, maxOutputTokens,
   images = [],
   onDelta,
   onReasoning,
@@ -431,6 +435,9 @@ async function chatOnce({
   // 厂商协议差异在这统一落地（MiniMax 的 reasoning_split 必须开、
   // 方舟的 thinking 格式与 max_tokens 互斥、StepFun 的参数裁剪），见 vendor-quirks.js
   applyVendorRequest(body, { channel, model });
+  const mappedReasoning = reasoningBody(reasoningConfig, "chat");
+  Object.assign(body, mappedReasoning);
+  if (maxOutputTokens) body[/^(gpt-[5-9]|o[134])/.test(model) ? "max_completion_tokens" : "max_tokens"] = maxOutputTokens;
 
   // 特殊通道的最后一刻定制（OpenCode 免费档注入核心 agent 工具）；未传时零影响
   if (typeof bodyHook === "function") bodyHook(body);

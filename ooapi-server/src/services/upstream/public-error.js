@@ -1,6 +1,9 @@
 // 上游message可能夹带响应正文、供应商网址或凭据。公开说明只能从固定文案生成，
 // 识别原文仅用于选取参数错误类别；不能把原文“截短/替换几个关键字”后继续下发。
 const MESSAGES = Object.freeze({
+  INVALID_REASONING: "该模型不支持所选思考强度，请在会话设定中选择模型默认。",
+  CONTEXT_COMPACTION_FAILED: "上下文压缩未完成，历史消息仍保留。请缩短附件或新建会话后继续。",
+  CONTEXT_LENGTH: "当前问题或附件超过可用上下文，请拆分内容后继续。历史消息仍保留。",
   NO_CHANNEL: "当前没有可用渠道，请稍后重试或选择其他模型。",
   VISION_NOT_SUPPORTED: "当前渠道不支持图片，请移除图片或选择其他模型。",
   CHANNEL_RATE_LIMIT: "上游请求频率受限，请稍后重试。",

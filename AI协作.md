@@ -698,6 +698,9 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 
 ## 3. 待办清单（按优先级）
 
+- [x] **2026-10-03 乐乐交互、模型管理与运行中删密钥结算修复**：使用记录普通文本与思考强度、平台统一工具策略、模型能力预设、真正的上下文压缩、可保存节点编排、独立执行胶囊与输入框内确认卡片完成；验证与资料边界见本日记录。
+- [ ] **模型能力资料维护**：165 个规范型号均有来源记录，68 项原厂资料、56 项服务商资料、41 项尚无完整公开规格。待核实字段保持 null，不用托管上限冒充原厂承诺；后续按原厂页面补齐。图片/视频生成类型仅是模型分类，不代表新增了生成端点。
+
 - [x] **2026-10-03 对话工作台与工具执行重构**：工具预算改为探索＋独立收尾，重复调用复用、连续无进展停止探索；单列执行轨迹、服务端一次性审批与逐项工具开关；用户提供的像素猫状态动画、统一代码块/表格与安全 JSON 图表。发布门禁与线上实测见本日记录。
 
 
@@ -1535,6 +1538,17 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 ---
 
 ## 5. 变更记录
+
+### 2026-10-03 — 乐乐胶囊、模型管理、记忆压缩与删密钥结算
+
+- **结算核验**：旧站内对话在 tokens UPDATE affectedRows=0 时抛错，确实导致账户扣费/日志事务回滚。改为密钥统计可缺席，账户账单仍提交；保留事务中真正的 SQL 失败处理和提交不确定时禁止重复扣费。正常完成、主动停止均补回归，独立 MySQL 候选中通过真实 DELETE API 删除本轮临时密钥后断言只扣一次、原密钥 id/name 审计仍在。未删除用户的任何既有密钥。
+- **使用记录与会话设定**：详情原文恢复普通文本、自然换行与局部滚动，固定详情表格布局消除横向撑宽；对话和网关记录所选思考等级及参数是否实际下发，失败调用也保留等级。普通用户界面移除工具集合、探索步数和冗余能力介绍；运行时统一应用管理员编排策略，旧会话/直接请求不能覆盖平台工具配置，账号权限及执行确认继续生效。
+- **模型管理**：保留旧 `/admin/pricing` 链接，页面统一为模型管理，参数能力与价格计费两页签；支持上下文、最大输出、输入/输出类型、模型分类、结构化输出、原生联网、系统消息、工具调用、自定义推理等级及参数映射。仅管理员可写，设置保存在 options，源码预设与手动配置分离，不覆盖现有价格。上下文用于压缩预算、配置输出上限用于支持该参数的适配器，非对话类别不再进入站内对话候选。
+- **模型资料**：按原厂模型/推理页及服务商目录整理 `model-capabilities.json`，165 项全部有来源、核对日期、可信层级。OpenAI、Anthropic、Google、DeepSeek、智谱、Moonshot、通义、xAI、MiMo、MiniMax、StepFun、火山方舟及聚合服务均检查；直接文档无法取得规格时保持待核实。来源包括 [OpenAI](https://developers.openai.com/api/docs/models)、[Claude](https://platform.claude.com/docs/en/about-claude/models/overview)、[Gemini](https://ai.google.dev/gemini-api/docs/models)、[DeepSeek](https://api-docs.deepseek.com/quick_start/pricing)、[智谱](https://docs.bigmodel.cn/cn/guide/start/model-overview)、[Moonshot](https://platform.moonshot.cn/docs/llms.txt)、[通义](https://help.aliyun.com/zh/model-studio/models)、[xAI](https://docs.x.ai/developers/models)、[MiMo](https://platform.xiaomimimo.com/docs)、[MiniMax](https://platform.minimax.io/docs/guides/models-intro)、[StepFun](https://platform.stepfun.com/docs/zh/guides/models/overview.md)、[方舟](https://www.volcengine.com/docs/82379/1330310)、[OpenRouter](https://openrouter.ai/api/v1/models)。网页/订阅接入不一定接受模型原厂参数，日志区分所选与已下发，不能把未下发写成生效。
+- **真正的压缩**：按模型上下文与输出预留计算阈值，超限分块生成摘要并按实际模型调用记账；摘要保留目标/约束/事实/未完事项，近期消息与完整工具调用组原样保留。摘要及覆盖序号作为 compaction part 落库、下一轮复用；同一轮工具结果过长也可压缩。原始消息不删除，失败不伪造成功摘要，输入实在超限时明确返回错误。
+- **编排与交互**：新增管理员 `/admin/agent`，参考 [Beautiful UI Flowchart](https://www.beautifului.dev/) 的点阵画布/曲线节点，支持拖动、键盘移动、缩放适配、平台指令、工具分支与压缩参数保存，轨迹演示及本人真实会话轨迹查看；受控五节点组合，不执行任意代码。思考/工具/压缩独立胶囊，执行时单行预览、粒子与乐乐动作，完成收回并定格表情；询问卡片从输入框弹出。乐乐随机露头/爪子/招呼/睡觉，减少动画模式停用。修复实际审查发现的漏导入 Checkbox、等待确认误显示完成、猫头裁切及误用 4px 进度条样式导致工具栏隐藏。
+- **发布门禁**：本机后端改动语法检查、npm test、harness 执行计费与 31 项 chat HTTP 回归、165 项预设校验、前端构建通过。64.83.2.174 的独立数据库/候选服务验证三协议 9 项、26 路由 UI、工作台 18 项、监控 22 项、模块 E2E 76 项；真实浏览器验证模型编辑保存、编排保存/演示/真实轨迹、明暗与手机布局，截图人工检查。最终发布与实测结果在下条补记；未修改线上环境文件或管理员口令，零新依赖。
+
 
 ### 2026-10-03 — 对话工作台、审批轨迹与像素猫
 

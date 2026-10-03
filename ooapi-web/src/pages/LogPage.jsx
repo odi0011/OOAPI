@@ -1,4 +1,3 @@
-import CodeBlock from "../components/CodeBlock";
 import OdAmount, { OdText } from "../components/OdAmount";
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { Table, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions, Space, Typography } from "antd";
@@ -37,8 +36,8 @@ const ms = formatDuration;
 function LogTextBlock({ text, truncated, empty = "-" }) {
   if (!text) return <span style={{ color: "var(--ink-3)", fontSize: 12 }}>{empty}</span>;
   return (
-    <div>
-      <CodeBlock lang="text" code={text}/>
+    <div style={{ minWidth: 0, width: "100%" }}>
+      <div className="log-plain-text">{text}</div>
       {truncated ? (
         <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
           原文较长，已保留部分内容（最多 4000 字符）
@@ -254,6 +253,7 @@ export default function LogPage() {
           <span title={String(v)} style={{ display: "inline-flex", flexDirection: "column", gap: 4, minWidth: 0, maxWidth: "100%" }}>
             <ModelLabel model={v} modelVendor={r.model_vendor} size={14} channelTypes={Array.isArray(r.source_vendors) ? r.source_vendors : r.channel_type ? [r.channel_type] : []} />
             {isAdmin && r.original_model && r.original_model !== v ? <span className="oo-model-origin">↳ <ModelLabel model={r.original_model} size={11} channelTypes={r.source_vendors || []} /></span> : null}
+            {r.reasoning_effort && <small style={{color:"var(--ink-3)",fontSize:11}}>思考 · {({default:"模型默认",enabled:"开启",disabled:"关闭"})[r.reasoning_effort] || r.reasoning_effort}</small>}
           </span>
         ) : (
           <span style={{ color: "var(--ink-3)" }}>-</span>
@@ -591,7 +591,7 @@ export default function LogPage() {
           return (
           <>
           {visibility.pricing ? <div className="oo-log-billing-detail"><BillingDetails record={detail} isAdmin={isAdmin} perUnit={perUnit} /></div> : null}
-          <Descriptions column={1} size="small" bordered labelStyle={{ width: 120 }}>
+          <Descriptions className="log-detail-fields" column={1} size="small" bordered labelStyle={{ width: 92 }}>
             <Descriptions.Item label="时间">{fmtDate(detail.created_at)}</Descriptions.Item>
             <Descriptions.Item label="用户">
               <UserAvatar user={{ id: detail.user_id, username: detail.username }} size={20} showName />
@@ -600,6 +600,7 @@ export default function LogPage() {
               <ModelLabel model={detail.model} modelVendor={detail.model_vendor} size={15} channelTypes={Array.isArray(detail.source_vendors) ? detail.source_vendors : detail.channel_type ? [detail.channel_type] : []} />
             </Descriptions.Item>
             <Descriptions.Item label="调用内容"><OdText>{normalizeCurrency(detail.content)}</OdText></Descriptions.Item>
+            <Descriptions.Item label="思考强度">{detail.reasoning_effort ? `${({ default: "模型默认", enabled: "开启", disabled: "关闭" })[detail.reasoning_effort] || detail.reasoning_effort}${detail.reasoning_applied ? " · 已下发" : " · 渠道默认或未下发"}` : "历史记录未保存"}</Descriptions.Item>
             <Descriptions.Item label="Tokens">
               {/* 升级前的旧记录没写 token 列（当时的 detail 里也没有），显示 0 会让人
                   误以为"这次没消耗" —— 但同一行的「调用内容」里明明写着「提示 3 / 补全 570」。

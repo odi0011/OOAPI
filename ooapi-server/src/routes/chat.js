@@ -9,7 +9,9 @@
 import express from "express";
 import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now, safeInt, clientIp } from "../utils.js";
-import { authRequired, preAuthJwt } from "../middleware/auth.js";
+import { authRequired, preAuthJwt, adminRequired } from "../middleware/auth.js";
+import { agentFlow, agentPolicy, saveAgentFlow } from "../services/harness/policy.js";
+import { modelCapabilities, reasoningSelection } from "../services/model-capabilities.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
 import { logTexts } from "../services/log-text.js";
@@ -62,6 +64,11 @@ const router = express.Router();
 // 只验 JWT 签名（不查库），完整 authRequired 仍在各路由上。
 router.use(preAuthJwt);
 router.use(express.json({ limit: "20mb" }));
+router.get("/flow", authRequired, adminRequired, asyncHandler(async (_req, res) => ok(res, agentFlow())));
+router.put("/flow", authRequired, adminRequired, asyncHandler(async (req, res) => {
+  try { return ok(res, await saveAgentFlow(req.body)); }
+  catch (e) { return fail(res, e.message, 400); }
+}));
 // 对话读取/CRUD的统一返回投影；保留库里的真实金额与用量用于后续计费审计。
 router.use((req, res, next) => {
   const json = res.json.bind(res);
@@ -368,9 +375,13 @@ async function availableModels(user, keyId = 0) {
     const p = priceMap.get(canonicalModelName(m.id)) || priceMap.get(String(m.id).toLowerCase());
     if (!p) continue;
     const identity = p.model;
+    const capabilities = modelCapabilities(identity);
+    if (!["chat", "decision"].includes(capabilities.category)) continue;
     if (result.some(item => item.id === identity)) continue;
     result.push({
       ...m, id: identity, label: identity, vendor: p.type || m.vendor, vendorName: modelVendorName(p.type || m.vendor),
+      capabilities,
+      vision: m.vision !== false && (capabilities.verification === "unverified" && !capabilities.customized || capabilities.inputTypes.includes("image")),
       channel_type: "", model_vendor: p.type || m.vendor,
       // loadPrices 返回的键是 input/output/cache（已从列名 input_price 映射），
       // 这里原先读 p.input_price → undefined → NaN → JSON null，下拉/弹窗价格全空（子代理复核发现）
@@ -738,13 +749,14 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
   //
   // 与 gateway 的 settle 同一口径：加回入口预占的 hold，再扣本次实际用量。
   if (keyId) {
-    const [tokenRet] = await conn.query(
+    await conn.query(
         `UPDATE tokens SET used_quota = used_quota + ?, accessed_time = ?,
                 remain_quota = IF(unlimited_quota = 1, remain_quota, GREATEST(0, remain_quota + ? - ?))
           WHERE id = ? AND user_id = ?`,
         [units, now(), Number(tokenQuotaHold) || 0, units, keyId, user.id]
       );
-    if (!tokenRet.affectedRows) throw new Error("计费密钥已不存在");
+    // 运行与连接解绑，用户可能在上游执行期间删除密钥。密钥统计允许缺席，
+    // 已消耗的账户费用与审计日志必须照常提交（与网关 settle 一致）。
   }
   if (writeUsage) logId = await writeLog({
     connection: conn,
@@ -759,6 +771,8 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
       channel_ids: Array.isArray(channelIds) && channelIds.length ? channelIds : undefined,
       model: displayModel,
       requested_model: model,
+      reasoning_effort: [...new Set((calls || []).map(c => c.reasoningEffort || "default"))].join(",") || "default",
+      reasoning_applied: (calls || []).some(c => c.reasoningApplied === true),
       upstream_model: modelCalls.at(-1)?.upstream_model || "",
       pricing_model: canonicalModelName(modelCalls.length === 1 ? modelCalls[0].pricing_model : basePrice.model || model),
       requested_price: { in: basePrice.input, out: basePrice.output, cache: basePrice.cache },
@@ -880,7 +894,7 @@ function aggregate(calls = []) {
     // 能力开关已取消：tools/search 一律回到智能体默认（老会话里存过的「关掉联网」等不再生效，
     // 否则用户在新界面里既看不到开关、又被旧设置限制住，表现为「怎么问都不查资料」）。
     // 深度思考（thinking）仍跟随会话设定；会话指令保留。
-    const settings = { ...sanitizeSettings(settingsPatch ?? {}, { previous: session.settings }), tools: null, search: null };
+    const settings = { ...sanitizeSettings(settingsPatch ?? {}, { previous: session.settings }), ...agentPolicy(), search: null };
 
     // 图片：优先走媒体库（parts 只存 media_id，字节落盘）。
     //
@@ -1188,6 +1202,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
   let saved = false;
 
   try {
+    reasoningSelection(model, settings.reasoningEffort);
     const out = await runHarness({
       session,
       agent,

@@ -1,0 +1,16 @@
+/* Based on Beautiful UI Flowchart (MIT, Shane Levine), semantic theme adaptation. */
+.agent-flow-layout {display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:20px;}
+.agent-flow-layout>div {min-width:0;}
+.agent-flow-zoom {display:flex;align-items:center;gap:8px;margin-bottom:10px;color:var(--ink-3);font-size:12px;}
+.agent-flow-scroll {overflow:auto;max-height:780px;border:1px solid var(--line);border-radius:var(--r-lg,18px);background:var(--page);}
+.agent-flow-canvas {position:relative;width:920px;height:780px;background-image:radial-gradient(var(--line-strong,var(--line)) 1px,transparent 1.25px);background-size:22px 22px;}
+.agent-flow-edges {position:absolute;inset:0;pointer-events:none;}.agent-flow-edges path {fill:none;stroke:var(--line-strong,var(--line));stroke-width:1.5;transition:stroke .3s;}.agent-flow-edges path.is-active {stroke:var(--accent);stroke-dasharray:5 7;animation:agent-edge-travel 1s linear infinite;}
+.agent-flow-node {position:absolute;width:250px;transform:translateX(-50%);touch-action:none;}
+.agent-flow-kind {display:inline-flex;align-items:center;border-radius:6px;padding:4px 9px;margin-bottom:7px;font-size:11px;background:color-mix(in srgb,var(--accent) 10%,var(--page));color:var(--accent);}
+.agent-flow-node button {display:flex;align-items:center;gap:12px;padding:16px;width:100%;border:1px solid var(--line);border-radius:18px;background:var(--surface);color:var(--ink);text-align:left;cursor:grab;box-shadow:0 2px 8px color-mix(in srgb,var(--ink) 4%,transparent);transition:box-shadow .2s,border-color .2s;touch-action:none;}
+.agent-flow-node button:active{cursor:grabbing}.agent-flow-node strong {display:block;font-size:13px;font-weight:550;}.agent-flow-node small {display:block;margin-top:5px;font-size:11px;color:var(--ink-3);}.agent-flow-node.is-selected button,.agent-flow-node.is-active button {border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent);}
+.agent-flow-inspector {padding:20px;height:max-content;}.agent-flow-inspector label {display:flex;flex-direction:column;gap:9px;margin-top:20px;font-size:12px;color:var(--ink-2);}.agent-flow-inspector .ant-checkbox-wrapper {margin:0!important;display:flex;flex-direction:row;gap:0;}.agent-flow-inspector .ant-checkbox-group {gap:10px;}.agent-flow-inspector p {font-size:12px;color:var(--ink-3);line-height:1.8;margin-top:20px;}.agent-flow-inspector .ant-switch {align-self:flex-start;}
+.agent-flow-demo-label {position:absolute;left:20px;top:20px;font-size:12px;color:var(--accent);}
+@keyframes agent-edge-travel {to{stroke-dashoffset:-24}}
+@media(max-width:1000px){.agent-flow-layout{grid-template-columns:1fr;}.agent-flow-scroll{max-height:580px;}}
+@media(prefers-reduced-motion:reduce){.agent-flow-edges path{animation:none!important;transition:none!important;}}

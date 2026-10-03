@@ -1,0 +1,5883 @@
+{
+  "chat-latest": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "claude-fable-5": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "anthropic/claude-fable-5"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "claude-fable-5-1": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": false,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "parameter": "output_config.effort",
+      "defaultLevel": "high",
+      "values": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://platform.claude.com/docs/en/models/fable-5-1/overview",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "anthropic/claude-fable-5.1"
+      },
+      {
+        "url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "claude-haiku-3-5": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://platform.claude.com/docs/en/models/overview",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "claude-haiku-4-5": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 64000,
+    "inputTypes": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": false,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "parameter": "",
+      "defaultLevel": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://platform.claude.com/docs/en/models/haiku-4-5/overview",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "anthropic/claude-haiku-4.5"
+      },
+      {
+        "url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "claude-mythos-5": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://platform.claude.com/docs/en/models/overview",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "claude-mythos-5-1": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://platform.claude.com/docs/en/models/overview",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "claude-opus-4": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://platform.claude.com/docs/en/models/overview",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "claude-opus-4-1": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://platform.claude.com/docs/en/models/overview",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "claude-opus-4-5": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 64000,
+    "inputTypes": [
+      "pdf",
+      "image",
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "anthropic/claude-opus-4.5"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "claude-opus-4-6": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": false,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "parameter": "output_config.effort",
+      "defaultLevel": "high",
+      "values": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "max": "max"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://platform.claude.com/docs/en/models/opus-4-6/overview",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "anthropic/claude-opus-4.6"
+      },
+      {
+        "url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "claude-opus-4-7": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "anthropic/claude-opus-4.7"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "claude-opus-4-8": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "anthropic/claude-opus-4.8"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "claude-opus-5": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": false,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "parameter": "output_config.effort",
+      "defaultLevel": "high",
+      "values": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://platform.claude.com/docs/en/models/opus-5/overview",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "anthropic/claude-opus-5"
+      },
+      {
+        "url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "claude-opus-5-5": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": false,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "parameter": "output_config.effort",
+      "defaultLevel": "medium",
+      "values": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://platform.claude.com/docs/en/models/opus-5-5/overview",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "anthropic/claude-opus-5.5"
+      },
+      {
+        "url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "claude-sonnet-4": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 64000,
+    "inputTypes": [
+      "image",
+      "text",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": false,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "anthropic/claude-sonnet-4"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "claude-sonnet-4-5": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "inputTypes": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "anthropic/claude-sonnet-4.5"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "claude-sonnet-4-6": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": false,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "parameter": "output_config.effort",
+      "defaultLevel": "high",
+      "values": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "max": "max"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://platform.claude.com/docs/en/models/sonnet-4-6/overview",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "anthropic/claude-sonnet-4.6"
+      },
+      {
+        "url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "claude-sonnet-5": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": false,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "parameter": "output_config.effort",
+      "defaultLevel": "high",
+      "values": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://platform.claude.com/docs/en/models/sonnet-5/overview",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "anthropic/claude-sonnet-5"
+      },
+      {
+        "url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "claude-sonnet-5-5": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": false,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "parameter": "output_config.effort",
+      "defaultLevel": "high",
+      "values": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://platform.claude.com/docs/en/models/sonnet-5-5/overview",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "anthropic/claude-sonnet-5.5"
+      },
+      {
+        "url": "https://platform.claude.com/docs/en/build-with-claude/effort",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "codex-auto-review": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "decision",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "deepseek-flash": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 384000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "high",
+        "max"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "high",
+      "values": {
+        "low": "low",
+        "high": "high",
+        "max": "max"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://api-docs.deepseek.com/quick_start/pricing",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "deepseek/deepseek-v4-flash-vision-exp"
+      },
+      {
+        "url": "https://api-docs.deepseek.com/guides/thinking_mode",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "deepseek-v3.2": {
+    "contextWindow": 163840,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "deepseek/deepseek-v3.2"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "deepseek-v4-pro": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 384000,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "high",
+        "max"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "high",
+      "values": {
+        "low": "low",
+        "high": "high",
+        "max": "max"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://api-docs.deepseek.com/quick_start/pricing",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "deepseek/deepseek-v4-pro"
+      },
+      {
+        "url": "https://api-docs.deepseek.com/guides/thinking_mode",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "doubao-lite": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://www.volcengine.com/docs/82379/1330310",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "doubao-pro": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://www.volcengine.com/docs/82379/1330310",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "doubao-seed-1-6-flash": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 32768,
+    "inputTypes": [
+      "image",
+      "text",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 对应型号",
+        "checkedAt": "2026-10-03",
+        "model": "bytedance-seed/seed-1.6-flash"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数取自服务商对应型号；已核对型号名称，实际直连渠道限制可能不同。"
+  },
+  "doubao-seed-1-6-vision": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://www.volcengine.com/docs/82379/1330310",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "doubao-seed-1.6": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 32768,
+    "inputTypes": [
+      "image",
+      "text",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 对应型号",
+        "checkedAt": "2026-10-03",
+        "model": "bytedance-seed/seed-1.6"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数取自服务商对应型号；已核对型号名称，实际直连渠道限制可能不同。"
+  },
+  "doubao-seed-1.8": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://www.volcengine.com/docs/82379/1330310",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "doubao-seed-2-0-code": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 对应型号",
+        "checkedAt": "2026-10-03",
+        "model": "bytedance-seed/seed-2.0-code"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数取自服务商对应型号；已核对型号名称，实际直连渠道限制可能不同。"
+  },
+  "doubao-seed-2-0-lite": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 对应型号",
+        "checkedAt": "2026-10-03",
+        "model": "bytedance-seed/seed-2.0-lite"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数取自服务商对应型号；已核对型号名称，实际直连渠道限制可能不同。"
+  },
+  "doubao-seed-2-0-mini": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 对应型号",
+        "checkedAt": "2026-10-03",
+        "model": "bytedance-seed/seed-2.0-mini"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数取自服务商对应型号；已核对型号名称，实际直连渠道限制可能不同。"
+  },
+  "doubao-seed-2-0-pro": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://www.volcengine.com/docs/82379/1330310",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "doubao-seed-2-1-lite-260915": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://www.volcengine.com/docs/82379/1330310",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "doubao-seed-2-1-pro": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://www.volcengine.com/docs/82379/1330310",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "doubao-seed-2-1-turbo": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 235929,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 对应型号",
+        "checkedAt": "2026-10-03",
+        "model": "bytedance-seed/seed-2-1-turbo"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数取自服务商对应型号；已核对型号名称，实际直连渠道限制可能不同。"
+  },
+  "doubao-seed-character-260628": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://www.volcengine.com/docs/82379/1330310",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "doubao-seed-evolving": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://www.volcengine.com/docs/82379/1330310",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "doubao-seed-translation-250915": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://www.volcengine.com/docs/82379/1330310",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "gemini-2.5-flash": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text",
+      "image",
+      "video",
+      "audio"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/thinking",
+        "scope": "原厂推理等级",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂输入窗口与输出上限；Google 搜索需配置 grounding 工具。推理映射用于 Gemini 接入；兼容端点与订阅服务限制独立。"
+  },
+  "gemini-2.5-flash-lite": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text",
+      "image",
+      "video",
+      "audio",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-lite",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/thinking",
+        "scope": "原厂推理等级",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂输入窗口与输出上限；Google 搜索需配置 grounding 工具。推理映射用于 Gemini 接入；兼容端点与订阅服务限制独立。"
+  },
+  "gemini-2.5-pro": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text",
+      "image",
+      "video",
+      "audio",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-pro",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/thinking",
+        "scope": "原厂推理等级",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂输入窗口与输出上限；Google 搜索需配置 grounding 工具。推理映射用于 Gemini 接入；兼容端点与订阅服务限制独立。"
+  },
+  "gemini-3-flash-preview": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text",
+      "image",
+      "video",
+      "audio",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ],
+      "parameter": "thinkingConfig.thinkingLevel",
+      "defaultLevel": "",
+      "values": {
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/models/gemini-3-flash-preview",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/thinking",
+        "scope": "原厂推理等级",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂输入窗口与输出上限；Google 搜索需配置 grounding 工具。推理映射用于 Gemini 接入；兼容端点与订阅服务限制独立。"
+  },
+  "gemini-3.1-flash-lite": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text",
+      "image",
+      "video",
+      "audio",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-lite",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/thinking",
+        "scope": "原厂推理等级",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂输入窗口与输出上限；Google 搜索需配置 grounding 工具。推理映射用于 Gemini 接入；兼容端点与订阅服务限制独立。"
+  },
+  "gemini-3.1-pro-preview": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text",
+      "image",
+      "video",
+      "audio",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "parameter": "thinkingConfig.thinkingLevel",
+      "defaultLevel": "",
+      "values": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/models/gemini-3.1-pro-preview",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/thinking",
+        "scope": "原厂推理等级",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂输入窗口与输出上限；Google 搜索需配置 grounding 工具。推理映射用于 Gemini 接入；兼容端点与订阅服务限制独立。"
+  },
+  "gemini-3.1-pro-preview-customtools": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text",
+      "audio",
+      "image",
+      "video",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "google/gemini-3.1-pro-preview-customtools"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "gemini-3.5-flash": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text",
+      "image",
+      "video",
+      "audio",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ],
+      "parameter": "thinkingConfig.thinkingLevel",
+      "defaultLevel": "",
+      "values": {
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/thinking",
+        "scope": "原厂推理等级",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂输入窗口与输出上限；Google 搜索需配置 grounding 工具。推理映射用于 Gemini 接入；兼容端点与订阅服务限制独立。"
+  },
+  "gemini-3.5-flash-lite": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text",
+      "image",
+      "video",
+      "audio",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ],
+      "parameter": "thinkingConfig.thinkingLevel",
+      "defaultLevel": "",
+      "values": {
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/thinking",
+        "scope": "原厂推理等级",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂输入窗口与输出上限；Google 搜索需配置 grounding 工具。推理映射用于 Gemini 接入；兼容端点与订阅服务限制独立。"
+  },
+  "gemini-3.6-flash": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text",
+      "image",
+      "video",
+      "audio",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ],
+      "parameter": "thinkingConfig.thinkingLevel",
+      "defaultLevel": "",
+      "values": {
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/models/gemini-3.6-flash",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/thinking",
+        "scope": "原厂推理等级",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂输入窗口与输出上限；Google 搜索需配置 grounding 工具。推理映射用于 Gemini 接入；兼容端点与订阅服务限制独立。"
+  },
+  "gemini-3.7-flash": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text",
+      "image",
+      "video",
+      "audio",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "parameter": "thinkingConfig.thinkingLevel",
+      "defaultLevel": "",
+      "values": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/models/gemini-3.7-flash",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/thinking",
+        "scope": "原厂推理等级",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂输入窗口与输出上限；Google 搜索需配置 grounding 工具。推理映射用于 Gemini 接入；兼容端点与订阅服务限制独立。"
+  },
+  "gemini-3.8-flash": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text",
+      "image",
+      "video",
+      "audio",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "parameter": "thinkingConfig.thinkingLevel",
+      "defaultLevel": "",
+      "values": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/thinking",
+        "scope": "原厂推理等级",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂输入窗口与输出上限；Google 搜索需配置 grounding 工具。推理映射用于 Gemini 接入；兼容端点与订阅服务限制独立。"
+  },
+  "gemini-robotics-er-2-preview": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text",
+      "image",
+      "video",
+      "audio"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "decision",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ],
+      "parameter": "thinkingConfig.thinkingLevel",
+      "defaultLevel": "",
+      "values": {
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/models/gemini-robotics-er-2-preview",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/thinking",
+        "scope": "原厂推理等级",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂输入窗口与输出上限；Google 搜索需配置 grounding 工具。推理映射用于 Gemini 接入；兼容端点与订阅服务限制独立。"
+  },
+  "glm-4": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://docs.bigmodel.cn/cn/guide/start/model-overview",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "glm-4-air": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://docs.bigmodel.cn/cn/guide/start/model-overview",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "glm-4-flash": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://docs.bigmodel.cn/cn/guide/start/model-overview",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "glm-4-flashx": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://docs.bigmodel.cn/cn/guide/start/model-overview",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "glm-4-plus": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://docs.bigmodel.cn/cn/guide/start/model-overview",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "glm-4.5": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 98304,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "z-ai/glm-4.5"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "glm-4.5-air": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 98304,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": false,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "z-ai/glm-4.5-air"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "glm-4.6": {
+    "contextWindow": 204800,
+    "maxOutputTokens": 16384,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "z-ai/glm-4.6"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "glm-4.6v": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 32768,
+    "inputTypes": [
+      "image",
+      "text",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "z-ai/glm-4.6v"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "glm-4.7": {
+    "contextWindow": 204800,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "z-ai/glm-4.7"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "glm-4v": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://docs.bigmodel.cn/cn/guide/start/model-overview",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "glm-5": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "off",
+        "on"
+      ],
+      "parameter": "thinking.type",
+      "defaultLevel": "on",
+      "values": {
+        "off": "disabled",
+        "on": "enabled"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://docs.bigmodel.cn/cn/guide/models/text/glm-5",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "z-ai/glm-5"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "glm-5.1": {
+    "contextWindow": 204800,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "z-ai/glm-5.1"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "glm-5.2": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 943718,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "z-ai/glm-5.2"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "glm-5.3": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "high",
+        "max"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "max",
+      "values": {
+        "low": "low",
+        "high": "high",
+        "max": "max"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://docs.bigmodel.cn/cn/guide/models/text/glm-5.3",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "z-ai/glm-5.3"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "glm-5.3-flash": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 943718,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "z-ai/glm-5.3-flash"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "glm-5.3-flashx": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "z-ai/glm-5.3-flashx"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "glm-5v": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://docs.bigmodel.cn/cn/guide/start/model-overview",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "glm-5v-turbo": {
+    "contextWindow": 202752,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "image",
+      "text",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "z-ai/glm-5v-turbo"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "gpt-4.1": {
+    "contextWindow": 1047576,
+    "maxOutputTokens": 32768,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-4.1",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-4.1-mini": {
+    "contextWindow": 1047576,
+    "maxOutputTokens": 32768,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-4.1-mini",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-4.1-nano": {
+    "contextWindow": 1047576,
+    "maxOutputTokens": 32768,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": false,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-4.1-nano",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-4o": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 16384,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-4o",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-4o-mini": {
+    "contextWindow": 128000,
+    "maxOutputTokens": 16384,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-4o-mini",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5-mini": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5-mini",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5-nano": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5-nano",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5-pro": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 272000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "high"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "high": "high"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5-pro",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5-search-api": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "gpt-5.1": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "none",
+        "low",
+        "medium",
+        "high"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "none": "none",
+        "low": "low",
+        "medium": "medium",
+        "high": "high"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5.1",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5.2": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "none": "none",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5.2",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5.2-pro": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": false,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5.2-pro",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5.3-codex": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5.3-codex",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5.4": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "none": "none",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5.4",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5.4-mini": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "none": "none",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5.4-mini",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5.4-nano": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "none": "none",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5.4-nano",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5.4-pro": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": false,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5.4-pro",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5.5": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "none": "none",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5.5",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5.5-cyber": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "gpt-5.5-pro": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5.5-pro",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5.6-cyber": {
+    "contextWindow": 400000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5.6-cyber",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5.6-luna": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "none": "none",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5.6-sol": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "none": "none",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-5.6-terra": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "none": "none",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-6-astra": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "gpt-6-luna": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "none": "none",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-6-luna",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。 Chat Completions 的工具调用仅支持 none 思考强度，其他等级应使用 Responses 接入。"
+  },
+  "gpt-6-sol": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "none": "none",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-6-sol",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。 Chat Completions 的工具调用仅支持 none 思考强度，其他等级应使用 Responses 接入。"
+  },
+  "gpt-6.1-sol": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "grok-3-mini": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://docs.x.ai/developers/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "grok-4.20-0309-non-reasoning": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://docs.x.ai/developers/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "grok-4.20-0309-reasoning": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://docs.x.ai/developers/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "grok-4.20-multi-agent-0309": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://docs.x.ai/developers/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "grok-4.3": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 900000,
+    "inputTypes": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "x-ai/grok-4.3"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "grok-4.5": {
+    "contextWindow": 500000,
+    "maxOutputTokens": 450000,
+    "inputTypes": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "high",
+      "values": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://docs.x.ai/developers/model-capabilities/text/reasoning",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "x-ai/grok-4.5"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "grok-4.6": {
+    "contextWindow": 500000,
+    "maxOutputTokens": 450000,
+    "inputTypes": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "high",
+      "values": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://docs.x.ai/developers/model-capabilities/text/reasoning",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "x-ai/grok-4.6"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "grok-4.7": {
+    "contextWindow": 500000,
+    "maxOutputTokens": 450000,
+    "inputTypes": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "high",
+      "values": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://docs.x.ai/developers/model-capabilities/text/reasoning",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "x-ai/grok-4.7"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "grok-build-0.1": {
+    "contextWindow": 256000,
+    "maxOutputTokens": 230400,
+    "inputTypes": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "x-ai/grok-build-0.1"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "kimi": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://platform.kimi.com/docs/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "kimi-k2": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 98304,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": false,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "moonshotai/kimi-k2"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "kimi-k2.6": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 235929,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "on"
+      ],
+      "parameter": "thinking.type",
+      "defaultLevel": "on",
+      "values": {
+        "on": "enabled"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://platform.kimi.com/docs/guide/kimi-k2-7-code-quickstart",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "moonshotai/kimi-k2.6"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "kimi-k2.7-code": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 235929,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "on"
+      ],
+      "parameter": "thinking.type",
+      "defaultLevel": "on",
+      "values": {
+        "on": "enabled"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://platform.kimi.com/docs/guide/kimi-k2-7-code-quickstart",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "moonshotai/kimi-k2.7-code"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "kimi-k2.7-code-highspeed": {
+    "contextWindow": 262144,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "on"
+      ],
+      "parameter": "thinking.type",
+      "defaultLevel": "on",
+      "values": {
+        "on": "enabled"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://platform.kimi.com/docs/guide/kimi-k2-7-code-quickstart",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "kimi-k3": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 943718,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "high",
+        "max"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "max",
+      "values": {
+        "low": "low",
+        "high": "high",
+        "max": "max"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://platform.kimi.com/docs/guide/kimi-k3-quickstart",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "moonshotai/kimi-k3"
+      },
+      {
+        "url": "https://platform.kimi.com/docs/guide/use-reasoning-effort",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "kimi-latest": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 943718,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "~moonshotai/kimi-latest"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "longcat-2.0": {
+    "contextWindow": 1048756,
+    "maxOutputTokens": 262144,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": false,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "meituan/longcat-2.0"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "mimo-v2.5": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text",
+      "audio",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "xiaomi/mimo-v2.5"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "mimo-v2.5-pro": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "xiaomi/mimo-v2.5-pro"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "mimo-v2.6-flash": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text",
+      "image",
+      "video",
+      "audio"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "xiaomi/mimo-v2.6-flash"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "mimo-v2.6-pro": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text",
+      "image",
+      "video",
+      "audio"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "xiaomi/mimo-v2.6-pro"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "mimo-v2.6-pro-ultraspeed": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text",
+      "image",
+      "video",
+      "audio"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "xiaomi/mimo-v2.6-pro-ultraspeed"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "minimax-m2": {
+    "contextWindow": 204800,
+    "maxOutputTokens": 176947,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "minimax/minimax-m2"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "minimax-m2.1": {
+    "contextWindow": 204800,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "minimax/minimax-m2.1"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "minimax-m2.1-highspeed": {
+    "contextWindow": 204800,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "minimax/minimax-m2.1"
+      }
+    ],
+    "verification": "provider",
+    "notes": "高速档参数取自对应基础模型服务目录；原厂高速档仅改变吞吐，额度以接入渠道为准。"
+  },
+  "minimax-m2.5": {
+    "contextWindow": 204800,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "minimax/minimax-m2.5"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "minimax-m2.5-highspeed": {
+    "contextWindow": 204800,
+    "maxOutputTokens": 128000,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "minimax/minimax-m2.5"
+      }
+    ],
+    "verification": "provider",
+    "notes": "高速档参数取自对应基础模型服务目录；原厂高速档仅改变吞吐，额度以接入渠道为准。"
+  },
+  "minimax-m2.7": {
+    "contextWindow": 204800,
+    "maxOutputTokens": 176947,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "minimax/minimax-m2.7"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "minimax-m2.7-highspeed": {
+    "contextWindow": 204800,
+    "maxOutputTokens": 176947,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "minimax/minimax-m2.7"
+      }
+    ],
+    "verification": "provider",
+    "notes": "高速档参数取自对应基础模型服务目录；原厂高速档仅改变吞吐，额度以接入渠道为准。"
+  },
+  "minimax-m3": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 512000,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "minimax/minimax-m3"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "moonshot-v1-128k": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://platform.kimi.com/docs/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "moonshot-v1-32k": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://platform.kimi.com/docs/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "moonshot-v1-8k": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://platform.kimi.com/docs/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "o1": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 100000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": false,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/o1",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "o1-pro": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 100000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": false,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/o1-pro",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "o3": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 100000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/o3",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "o3-mini": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 100000,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": false,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/o3-mini",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "o3-pro": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 100000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/o3-pro",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "o4-mini": {
+    "contextWindow": 200000,
+    "maxOutputTokens": 100000,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": true,
+    "systemMessages": true,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://developers.openai.com/api/docs/models/o4-mini",
+        "scope": "原厂模型规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "参数按原厂模型页核对；联网等内置工具需对应端点启用，订阅/网页渠道限制独立。"
+  },
+  "qwen-flash": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://www.alibabacloud.com/help/en/model-studio/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "qwen-max": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://www.alibabacloud.com/help/en/model-studio/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "qwen-max-latest": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://www.alibabacloud.com/help/en/model-studio/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "qwen-plus": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 32768,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "qwen/qwen-plus"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "qwen-turbo": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://www.alibabacloud.com/help/en/model-studio/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "qwen3-235b-a22b": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 8192,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "qwen/qwen3-235b-a22b"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "qwen3-coder-next": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 235929,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "qwen/qwen3-coder-next"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "qwen3-max": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "qwen/qwen3-max"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "qwen3.5-flash": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://www.alibabacloud.com/help/en/model-studio/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "qwen3.5-plus": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://www.alibabacloud.com/help/en/model-studio/models",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "qwen3.6-flash": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "qwen/qwen3.6-flash"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "qwen3.6-plus": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "qwen/qwen3.6-plus"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "qwen3.7-flash": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "qwen/qwen3.7-flash"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "qwen3.7-max": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "qwen/qwen3.7-max"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "qwen3.7-plus": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "qwen/qwen3.7-plus"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "qwen3.8-2.4t-a95b": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "qwen/qwen3.8-2.4t-a95b"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "qwen3.8-27b": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "qwen/qwen3.8-27b"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "qwen3.8-flash": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "qwen/qwen3.8-flash"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "qwen3.8-max": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 对应型号",
+        "checkedAt": "2026-10-03",
+        "model": "qwen/qwen3.8-max-0902"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数取自服务商对应型号；已核对型号名称，实际直连渠道限制可能不同。"
+  },
+  "qwen3.8-max-preview": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://docs.qoder.com/models/overview",
+        "scope": "已检索原厂目录，未取得该型号完整规格",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "qwen3.8-max-prime": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "qwen/qwen3.8-max-prime"
+      }
+    ],
+    "verification": "provider",
+    "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "step-3.5-flash": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": false,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://platform.stepfun.com/docs/zh/guides/models/step-3.5-flash",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "stepfun/step-3.5-flash"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "step-3.5-flash-2603": {
+    "contextWindow": 262144,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "high"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "",
+      "values": {
+        "low": "low",
+        "high": "high"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://platform.stepfun.com/docs/zh/guides/models/step-3.5-flash",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "step-3.7-flash": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 230400,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "parameter": "reasoning_effort",
+      "defaultLevel": "medium",
+      "values": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high"
+      }
+    },
+    "sources": [
+      {
+        "url": "https://platform.stepfun.com/docs/zh/guides/models/step-3.7-flash",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "OpenRouter 服务目录",
+        "checkedAt": "2026-10-03",
+        "model": "stepfun/step-3.7-flash"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "step-5-preview": {
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://platform.stepfun.com/docs/zh/guides/models/step-5-preview",
+        "scope": "原厂文档",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "official",
+    "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  }
+}

@@ -9,15 +9,18 @@ export default function ChatMascot({ state = "idle", perch = false }) {
     if (perch && wasBusy && state === "idle") { setGesture("hop"); const timer = setTimeout(() => setGesture(""), 1600); return () => clearTimeout(timer); }
   }, [state, perch]);
   useEffect(() => {
+    if (state !== "idle") setGesture("");
     if (!perch || state !== "idle" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     let timer;
     const schedule = () => { timer = setTimeout(() => {
-      if (!document.hidden) setGesture(["peek", "stretch", "hop"][Math.floor(Math.random() * 3)]);
-      timer = setTimeout(() => { setGesture(""); schedule(); }, 1600);
-    }, 12000 + Math.random() * 14000); };
+      if (!document.hidden) setGesture(["peek", "wave", "sleep", "paws", "stretch"][Math.floor(Math.random() * 5)]);
+      timer = setTimeout(() => { setGesture(""); schedule(); }, 4800 + Math.random() * 2200);
+    }, 6000 + Math.random() * 10000); };
     schedule(); return () => clearTimeout(timer);
   }, [perch, state]);
   return <span className={`chat-mascot is-${state} ${perch ? "is-perched" : ""} ${gesture ? `gesture-${gesture}` : ""}`} aria-hidden="true">
+<span className="lele-sleep" aria-hidden="true">z<span>Z</span><b>Z</b></span>
+<span className="lele-perch-paws"><i/><i/></span>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="64" height="64" aria-hidden="true" shapeRendering="crispEdges">
 
   <g className="cat-shadow" fill="#28201c" opacity="0.25">
@@ -155,6 +158,8 @@ export default function ChatMascot({ state = "idle", perch = false }) {
 
 
   <g className="cat-face">
+    <path className="cat-happy-eyes" fill="none" stroke="#28201c" strokeWidth="1.5" d="M8 14l2-2 2 2m8 0 2-2 2 2"/>
+    <path className="cat-sleep-eyes" fill="none" stroke="#28201c" strokeWidth="1.5" d="M8 14h4m8 0h4"/>
 
     <g className="cat-eyes">
 

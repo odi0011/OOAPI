@@ -40,6 +40,7 @@ let userId = 98000;
 let queries = [];
 let messageFailures = 0;
 let tokenFailures = 0;
+let tokenDeleted = false;
 let insertFailures = 0;
 let ambiguousCommit = false;
 let beforeAssistantInsert = null;
@@ -119,6 +120,7 @@ const query = async (store, sql, args = []) => {
     store.token.remain_quota += args[0]; return [{ affectedRows: 1 }];
   }
   if (s.startsWith('UPDATE tokens SET used_quota')) {
+    if (tokenDeleted) return [{ affectedRows: 0 }];
     if (tokenFailures) { tokenFailures--; throw new Error('fixture token write failed'); }
     assert.equal(args[4], store.token.id); assert.equal(args[5], store.user.id);
     store.token.used_quota += args[0]; store.token.remain_quota = Math.max(0, store.token.remain_quota + args[2] - args[3]);
@@ -171,6 +173,7 @@ const server = http.createServer(app);
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${server.address().port}`;
 const reset = () => {
+  tokenDeleted = false;
   channelType = 'openai'; channelModels = model; fixtureRate = 1;
   userId++; channelId++; queries = []; requests = commits = rollbacks = messageFailures = tokenFailures = insertFailures = 0; ambiguousCommit = false;
   state = { user: { id: userId, username: 'fixture', role: 1, status: 1, token_version: 0, quota: initial, used_quota: 0, request_count: 0 },
@@ -357,6 +360,27 @@ try {
     assert.ok(saved.parts.some((p) => p.type === 'error' && p.code === 'TOOL_PROTOCOL_ERROR'));
     const own = (await get('/api/log/usage?status=error')).items[0];
     assert.equal(own.billing_details.call_count, 2); assert.ok(!('calls' in own.billing_details));
+  });
+  for (const stopped of [false, true]) await test(`运行中删除Key后${stopped ? '停止' : '完成'}仍结算账户并保留原密钥审计`, async () => {
+    let upstreamResponse;
+    behavior = (_req, res) => {
+      upstreamResponse = res;
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write(frame({ choices: [{ delta: { content: 'DELIVERED_BEFORE_DELETE' } }] }) + frame({ usage }));
+    };
+    const pending = run(); await until(() => requests === 1);
+    await new Promise(r => setTimeout(r, 25));
+    tokenDeleted = true;
+    if (stopped) assert.equal((await api(`/api/chat/sessions/${state.session.id}/stop`, {})).status, 200);
+    else upstreamResponse.end('data: [DONE]\n\n');
+    finalMessage(await pending, stopped ? 'stopped' : 'success');
+    const row = oneLog(stopped ? 'stopped' : 'success');
+    assert.ok(row.quota > 0);
+    assert.equal(state.user.quota, initial - row.quota);
+    assert.equal(state.user.used_quota, row.quota);
+    assert.equal(row.token_id, state.token.id);
+    assert.equal(row.token_name, 'fixture');
+    assert.equal(rollbacks, 0);
   });
   await test('Key更新失败账户/Key/消费日志一起回滚，费用显示待核查', async () => {
     sse(frame({ choices: [{ delta: { content: 'COMPLETE' } }] }) + frame({ usage }) + 'data: [DONE]\n\n'); tokenFailures = 1;

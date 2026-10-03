@@ -10,6 +10,7 @@ import { invalidatePrices, loadPrices, DEFAULT_PRICES, describeRule, parsePriceT
 import { pendingPricedModels } from "../services/pricing.js";
 import { modelRegistry, invalidateModelRegistry, canonicalModelName, modelIdentity, OFFICIAL_UNPRICED_MODELS } from "../services/models.js";
 import { syncUpstreamPrices, missingFromUpstream } from "../services/price-sync.js";
+import { modelCapabilities, saveModelCapabilities, REASONING_PARAMETERS } from "../services/model-capabilities.js";
 
 const router = Router();
 
@@ -51,6 +52,20 @@ router.get(
 );
 
 router.use(adminRequired);
+
+router.get("/capabilities", asyncHandler(async (_req, res) => {
+  const registry = await modelRegistry();
+  return ok(res, { items: [...new Map([...registry.values()].map(m => [m.model, { ...modelCapabilities(m.model), vendor: m.type }])).values()], reasoningParameters: REASONING_PARAMETERS });
+}));
+router.put("/capabilities", asyncHandler(async (req, res) => {
+  const model = canonicalModelName(req.body?.model), registry = await modelRegistry();
+  if (!registry.has(model)) return fail(res, "请先在渠道中登记模型", 400);
+  let value;
+  try { value = await saveModelCapabilities(model, req.body?.capabilities); }
+  catch (e) { return fail(res, e.message, 400); }
+  await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `更新模型能力：${model}` });
+  return ok(res, value);
+}));
 
 // 闲时规则入参校验：只接受 JSON 字符串或对象，且必须是可解析的结构。
 // 为什么要在这里校验而不是留给计费时兜底：计费失败的代价是「用户被多扣费」，

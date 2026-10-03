@@ -1,3 +1,4 @@
+import { reasoningBody } from "../model-capabilities.js";
 import { ToolCallBuffer, applyToolDefinitions, responsesMessages } from "../tool-wire.js";
 // 上游适配器：grok（xAI Grok 订阅 · OAuth device-code）
 // ===========================================================================
@@ -266,7 +267,7 @@ function instructionsOf(messages) {
   return (messages || []).filter((m) => m && m.role === "system").map((m) => normalizeContentToText(m.content)).join("\n\n");
 }
 
-export async function chat({ tools = [], toolChoice, onToolCall, channel, model, prompt, messages, thinkingOverride, images = [], onDelta, onReasoning, signal }) {
+export async function chat({ tools = [], toolChoice, onToolCall, channel, model, prompt, messages, thinkingOverride, reasoningConfig, maxOutputTokens, images = [], onDelta, onReasoning, signal }) {
   const identity = grokIdentity(channel);
   const base = chatBase(channel);
   const body = {
@@ -279,6 +280,8 @@ export async function chat({ tools = [], toolChoice, onToolCall, channel, model,
     include: ["reasoning.encrypted_content"],
   };
   if (thinkingOverride === true) body.reasoning = { effort: "medium" };
+  Object.assign(body, reasoningBody(reasoningConfig, "responses"));
+  if (maxOutputTokens) body.max_output_tokens = maxOutputTokens;
 
   applyToolDefinitions(body, tools, toolChoice, "responses");
   const toolBuffer = new ToolCallBuffer(onToolCall);
@@ -425,7 +428,7 @@ export async function chat({ tools = [], toolChoice, onToolCall, channel, model,
       code: "CHANNEL_EMPTY",
     });
   }
-  return { content: finalContent, reasoning, usage, upstreamModel, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras };
+  return { reasoningApplied: Object.keys(reasoningBody(reasoningConfig, "responses")).length > 0, content: finalContent, reasoning, usage, upstreamModel, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras };
 }
 
 /** 健康检查：最小 responses 请求，读首帧即断开 */

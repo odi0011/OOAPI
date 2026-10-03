@@ -1,3 +1,4 @@
+import { reasoningBody } from "../model-capabilities.js";
 import { ToolCallBuffer, applyToolDefinitions, anthropicMessages } from "../tool-wire.js";
 // 上游适配器：claude-oauth（Anthropic Claude 订阅 · Claude Code OAuth）
 // ===========================================================================
@@ -252,6 +253,7 @@ export async function chat({ tools = [], toolChoice, onToolCall,
   prompt,
   messages,
   thinkingOverride,
+  reasoningConfig, maxOutputTokens,
   images = [],
   onDelta,
   onReasoning,
@@ -272,6 +274,8 @@ export async function chat({ tools = [], toolChoice, onToolCall,
     metadata: { user_id: identity.userId },
   };
   if (thinking) body.thinking = { type: "enabled", budget_tokens: 12000 };
+  Object.assign(body, reasoningBody(reasoningConfig, "anthropic"));
+  if (maxOutputTokens) body.max_tokens = maxOutputTokens;
   applyToolDefinitions(body, tools, toolChoice, "anthropic");
   const toolBuffer = new ToolCallBuffer(onToolCall);
 
@@ -436,7 +440,7 @@ export async function chat({ tools = [], toolChoice, onToolCall,
       code: "CHANNEL_EMPTY",
     });
   }
-  return { content, reasoning, usage, upstreamModel, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras };
+  return { reasoningApplied: Object.keys(reasoningBody(reasoningConfig, "anthropic")).length > 0, content, reasoning, usage, upstreamModel, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras };
 }
 
 /** 健康检查：最小的 messages 调用 */

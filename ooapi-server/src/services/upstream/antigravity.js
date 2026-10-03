@@ -1,3 +1,4 @@
+import { reasoningBody } from "../model-capabilities.js";
 import { ToolCallBuffer, applyToolDefinitions, geminiMessages } from "../tool-wire.js";
 // 上游适配器：antigravity（Google 订阅 · Antigravity / Gemini Code Assist OAuth）
 // ===========================================================================
@@ -336,6 +337,7 @@ export async function chat({ tools = [], toolChoice, onToolCall,
   prompt,
   messages,
   thinkingOverride,
+  reasoningConfig, maxOutputTokens,
   images = [],
   onDelta,
   onReasoning,
@@ -351,6 +353,7 @@ export async function chat({ tools = [], toolChoice, onToolCall,
   const systemInstruction = extractSystem(messages, prompt);
   if (systemInstruction) request.systemInstruction = systemInstruction;
   if (thinkingOverride === true) request.generationConfig = { thinkingConfig: { includeThoughts: true } };
+  request.generationConfig = { ...request.generationConfig, ...reasoningBody(reasoningConfig, "gemini"), ...(maxOutputTokens ? { maxOutputTokens } : {}) };
 
   applyToolDefinitions(request, tools, toolChoice, "gemini");
   const toolBuffer = new ToolCallBuffer(onToolCall);
@@ -501,7 +504,7 @@ export async function chat({ tools = [], toolChoice, onToolCall,
   // 只看「有正文」就判健康，会让这类渠道测试写入 ok=1 并重置冷却，
   // 而真实请求必然失败（第 46 批复审点名的线上问题）。这里补一道内容级识别。
   assertNoContentError(content, "Antigravity");
-  return { content, reasoning, usage, upstreamModel, toolCalls: toolBuffer.finish() };
+  return { reasoningApplied: Object.keys(reasoningBody(reasoningConfig, "gemini")).length > 0, content, reasoning, usage, upstreamModel, toolCalls: toolBuffer.finish() };
 }
 
 /** 健康检查：loadCodeAssist（轻量、只验证凭据与项目） */

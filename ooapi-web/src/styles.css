@@ -4624,3 +4624,6 @@ html[data-theme="dark"] .oo-theme-switch-thumb { background: var(--hover-2); box
 html[data-theme="dark"] .oo-vendor-icon--mono { filter: invert(0.88); }
 
 .oo-model-origin { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; width: fit-content; padding: 1px 7px; border-radius: 999px; font-size: 11px; color: var(--ink-3); background: var(--inset); }
+.log-detail-fields .ant-descriptions-view table {table-layout:fixed;width:100%;}
+.log-detail-fields .ant-descriptions-item-content {min-width:0;overflow-wrap:anywhere;}
+.log-plain-text {max-height:340px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;padding:10px 12px;border-radius:var(--r-sm);background:var(--inset);color:var(--ink-2);font-family:inherit;font-size:12px;line-height:1.75;}

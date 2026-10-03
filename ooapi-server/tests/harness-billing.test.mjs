@@ -8,8 +8,11 @@ import { USAGE_SQL } from "../src/services/log.js";
 import { channelPriceQuote } from "../src/services/channel-price-quote.js";
 import { userDataVisibility } from "../src/services/user-data-visibility.js";
 import * as toolWire from "../src/services/tool-wire.js";
+import * as contextTools from "../src/services/harness/context.js";
+import * as capabilities from "../src/services/model-capabilities.js";
 
 const audit = {
+  contextTools, capabilities,
   toolWire,
   crypto,
   normalizeUsage,
@@ -40,6 +43,7 @@ const tools = await loadMocked("../src/services/harness/tools.js", `
 `);
 audit.tools = tools;
 const harness = await loadMocked("../src/services/harness/loop.js", `
+  const { contextBudget, messageTokens, compressionSplit, latestMemory } = audit.contextTools;
   const crypto=audit.crypto;
   const runCompletion=(o)=>audit.complete({...o,...o.prepareRequest?.({nativeTools:audit.nativeMode===true})});
   const modelForChannelMatch=(v)=>v;
@@ -51,6 +55,7 @@ const harness = await loadMocked("../src/services/harness/loop.js", `
   const MAX_STEPS_LIMIT=32;
 `);
 const executor = await loadMocked("../src/services/execute.js", `
+  const {modelCapabilities, reasoningSelection} = audit.capabilities;
   const crypto=audit.crypto;
   const pool=audit.pool;
   const assertModelPriced=async()=>{};
@@ -83,6 +88,35 @@ const harnessOptions = (toolIds, calls) => ({
 });
 const interrupted = () => Object.assign(new Error("mock stream interrupted"), {
   code: "CHANNEL_STREAM_ERROR", upstreamStarted: true, billable: true, channelId: 1, channelName: "mock",
+});
+
+await test("长上下文产生独立计费摘要，保留近期消息并在下一轮复用记忆", async () => {
+  const calls=[], events=[];
+  const history=Array.from({length:24},(_,i)=>({seq:i+1,role:i%2?"assistant":"user",parts:[{type:"text",text:(i===0?"重要约束：只能用中文。":"历史材料")+"事实资料".repeat(180)}]}));
+  const original=structuredClone(history);
+  let summaries=0;
+  audit.complete=async o=>{
+    if(o.requestId.includes(":compact:")){summaries++;return mockResult("用户约束：只能用中文。已核实历史事实，继续处理最新问题。");}
+    assert.ok(o.messages.some(m=>m.content?.includes("只能用中文")));
+    assert.ok(o.messages.some(m=>m.content==="继续处理"));
+    o.onDelta("继续用中文处理。");return mockResult("继续用中文处理。");
+  };
+  const out=await harness.runHarness({...harnessOptions([],calls),history,userText:"继续处理",modelCaps:{contextWindow:12000,maxOutputTokens:2048},emit:e=>events.push(e)});
+  const memory=out.parts.find(p=>p.type==="compaction");
+  assert.equal(memory.status,"done");assert.ok(memory.beforeTokens>memory.afterTokens);assert.ok(memory.throughSeq>0&&memory.throughSeq<24);
+  assert.equal(calls.length,summaries+1);assert.equal(calls.filter(c=>c.purpose==="compaction").length,summaries);
+  assert.deepEqual(history,original,"压缩不能删除存储历史");
+  const next=harness.historyToMessages([...history,{seq:25,role:"assistant",parts:out.parts}]);
+  assert.match(next[0].content,/只能用中文/);assert.ok(next.some(m=>m.content===history.at(-1).parts[0].text));
+  assert.ok(next.length<history.length);
+});
+
+await test("无效压缩不伪造成功摘要，已消耗的摘要请求仍记账",async()=>{
+  const calls=[];
+  audit.complete=async()=>mockResult("重复".repeat(4000));
+  await assert.rejects(()=>harness.runHarness({...harnessOptions([],calls),history:Array.from({length:20},(_,i)=>({seq:i+1,role:i%2?"assistant":"user",parts:[{type:"text",text:"资料".repeat(800)}]})),modelCaps:{contextWindow:12000,maxOutputTokens:2048}}),e=>{
+    assert.equal(e.code,"CONTEXT_COMPACTION_FAILED");assert.equal(e.parts.find(p=>p.type==="compaction").status,"failed");return true;
+  });assert.equal(calls.length,1);
 });
 
 await test("失败步上下文只含该步原始正文和思考，不重复成功步", async () => {

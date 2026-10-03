@@ -13,7 +13,7 @@ import OdAmount from "../components/OdAmount";
 // 刷新页面不丢；本页只负责渲染与把用户操作发回服务端。
 import { userDataVisibility } from "../services/visibility";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { App as AntApp, Alert, Button, Checkbox, Drawer, Dropdown, Form, Input, Modal, Popconfirm, Tooltip, Radio, InputNumber } from "antd";
+import { App as AntApp, Alert, Button, Checkbox, Drawer, Dropdown, Form, Input, Modal, Popconfirm, Tooltip, Radio, Select } from "antd";
 import {
   CopyOutlined,
   SelectOutlined,
@@ -166,7 +166,6 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
   return (
     <article className="ui-msg ui-msg-ai">
       <AgentTrajectory parts={parts} streaming={streaming} finalTextId={finalTextId}/>
-      {parts.filter((p) => p.type === "approval" && p.status === "pending").map((p) => <ToolApproval key={p.id} part={p} active={streaming} onDecide={onApprove}/>)}
 
       {errors.map((part, i) => {
         const message = part.message || part.text || "本轮生成失败，请重试";
@@ -339,20 +338,20 @@ function NameDialog({ dialog, saving, error, onClose, onSave }) {
 }
 
 /* ============================ 会话指令 / 设定面板 ============================ */
-function SettingsSheet({ open, onClose, session, settings, onSettings, saving, quotaText, visibility }) {
+function SettingsSheet({ open, onClose, session, settings, onSettings, saving, quotaText, visibility, modelCaps }) {
   const [form] = Form.useForm();
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (open) {
       form.resetFields();
-      form.setFieldsValue({ title: session?.title || "", instructions: settings?.instructions || "", permissionMode: settings?.permissionMode || "auto", maxSteps: settings?.maxSteps || 12, tools: settings?.tools ?? ["account", "binance", "search", "fetch", "github", "task", "todowrite"] });
+      form.setFieldsValue({ title: session?.title || "", instructions: settings?.instructions || "", permissionMode: settings?.permissionMode || "auto", reasoningEffort: settings?.reasoningEffort || "" });
       setError("");
     }
   }, [open, session?.id, session?.title, settings?.instructions, form]);
 
-  const save = async ({ title, instructions = "", permissionMode, maxSteps, tools }) => {
-    const patch = { settings: { ...settings, permissionMode, maxSteps, tools } };
+  const save = async ({ title, instructions = "", permissionMode, reasoningEffort }) => {
+    const patch = { settings: { permissionMode, reasoningEffort: reasoningEffort || "" } };
     if (title.trim() && title.trim() !== session?.title) patch.title = title.trim();
     if (instructions !== (settings?.instructions || "")) patch.instructions = instructions;
     setError("");
@@ -376,22 +375,11 @@ function SettingsSheet({ open, onClose, session, settings, onSettings, saving, q
             <Input.TextArea maxLength={4000} showCount autoSize={{ minRows: 5, maxRows: 12 }} placeholder="例如：回答尽量简短；术语先给中文再给英文；代码用 TypeScript。" />
           </Form.Item>
           <Form.Item name="permissionMode" label="工具执行权限">
-            <Radio.Group options={[{ label: "允许已启用的工具", value: "auto" }, { label: "每次执行前询问", value: "ask" }]}/>
+            <Radio.Group options={[{ label: "自动执行", value: "auto" }, { label: "执行前询问", value: "ask" }]}/>
           </Form.Item>
-          <Form.Item name="tools" label="可用工具" extra="始终遵循当前账号的数据权限；任务清单自动更新。">
-            <Checkbox.Group options={[{label:"我的账号",value:"account"},{label:"我的币安",value:"binance"},{label:"联网检索",value:"search"},{label:"读取网页",value:"fetch"},{label:"GitHub",value:"github"},{label:"子任务",value:"task"},{label:"任务清单",value:"todowrite"}]}/>
-          </Form.Item>
-          <Form.Item name="maxSteps" label="每轮探索预算" extra="1–32 轮；达到预算或连续无进展后自动整理已有结果。">
-            <InputNumber min={1} max={32} precision={0} addonAfter="轮"/>
-          </Form.Item>
+          <Form.Item name="reasoningEffort" label="思考强度"><Select options={[{value:"",label:"模型默认"},...(modelCaps?.reasoning?.levels || []).map(value=>({value,label:value}))]}/></Form.Item>
         </Form>
 
-          <div className="ui-chat2-agentcard">
-            <span>
-              <strong>助手能做什么</strong>
-              联网检索、读取网页与 GitHub、查询你的账号（余额 / 调用记录 / 令牌 / 用量），需要时自动使用，不用手动开启。
-            </span>
-          </div>
 
           <div>
             <div className="ui-chat2-kv">
@@ -1324,7 +1312,7 @@ export default function ChatPage() {
       if (!metaReadyRef.current || busyRef.current) return;
       const m = models.find((x) => x.id === id && (!channelType || x.vendor === channelType));
       if (!m) return;
-      const patch = { model: id, settings: { ...(sessionRef.current?.settings || {}), channelType: "" } };
+      const patch = { model: id, settings: { ...(sessionRef.current?.settings || {}), channelType: "", reasoningEffort: "" } };
       // 切到不支持联网的模型时关掉搜索，避免继续带着无效参数请求上游
       if (m?.supportsSearch === false) patch.settings.search = false;
       setSession((prev) => (prev ? { ...prev, ...patch, settings: patch.settings || prev.settings } : prev));
@@ -1713,6 +1701,7 @@ export default function ChatPage() {
           ) : null}
 
           <div className="ui-chat2-composer-inner">
+            {msgs.filter(m => m.streaming).flatMap(m => m.parts || []).filter(p => p.type === "approval" && p.status === "pending").map(p => <ToolApproval key={p.id} part={p} active={busy} onDecide={(id, decision) => chatApi.approve(session.id, id, decision)}/>)}
             <ChatMascot perch state={busy ? msgs.some((m) => m.streaming && m.parts?.some((p) => p.type === "approval" && p.status === "pending")) ? "waiting" : msgs.some((m) => m.streaming && m.parts?.some((p) => p.type === "tool" && p.status === "running")) ? "working" : "thinking" : input ? "attentive" : "idle"}/>
             <PromptBar
               textareaRef={taRef}
@@ -1782,6 +1771,7 @@ export default function ChatPage() {
       />
 
       <SettingsSheet
+        modelCaps={curModel?.capabilities}
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
         meta={meta}

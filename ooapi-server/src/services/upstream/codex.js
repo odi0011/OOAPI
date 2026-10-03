@@ -1,3 +1,4 @@
+import { reasoningBody } from "../model-capabilities.js";
 import { ToolCallBuffer, applyToolDefinitions, responsesMessages } from "../tool-wire.js";
 // 上游适配器：codex（OpenAI ChatGPT 订阅 · Codex OAuth）
 // ===========================================================================
@@ -292,6 +293,7 @@ export async function chat({ tools = [], toolChoice, onToolCall,
   prompt,
   messages,
   thinkingOverride,
+  reasoningConfig, maxOutputTokens,
   images = [],
   onDelta,
   onReasoning,
@@ -318,6 +320,7 @@ export async function chat({ tools = [], toolChoice, onToolCall,
   if (ns) body.client_metadata.namespace = ns;
   // 深度思考：显式开启时请求推理摘要（默认交给上游模型默认档）
   if (thinkingOverride === true) body.reasoning = { effort: "medium", summary: "auto" };
+  Object.assign(body, reasoningBody(reasoningConfig, "responses"));
 
   // state kit：注入当前「渠道+模型」的通行证；需要 body 字段的网关走 state_in_body 开关
   const stateHdr = stateHeaders(channel, model);
@@ -533,6 +536,7 @@ export async function chat({ tools = [], toolChoice, onToolCall,
   // 让后续请求优先轮换到其他账号（execute 会消费 rotateNext/rotateCooldownSec）
   const degradeSignal = detectSignal({ usage });
   return {
+    reasoningApplied: Object.keys(reasoningBody(reasoningConfig, "responses")).length > 0,
     content: finalContent,
     toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras,
     reasoning,

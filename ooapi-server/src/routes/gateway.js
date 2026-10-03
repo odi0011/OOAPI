@@ -478,6 +478,8 @@ async function settle({
   userAgent = "",
   billModel = "",
   upstreamModel = "",
+  reasoningEffort = "default",
+  reasoningApplied = false,
   tokenQuotaHold = 0,
   inputText = "",
   retryCount = 0,
@@ -622,6 +624,8 @@ async function settle({
       price: { in: price.input, out: price.output, cache: price.cache },
       // 分时审计：事后能复核「这次按峰价还是谷价算的」，以及用的是哪个时刻判档
       price_phase: eff.phase,
+      reasoning_effort: reasoningEffort,
+      reasoning_applied: reasoningApplied,
       context_tier: price.contextTier || 0,
       priced_at: startedAt || Date.now(),
       rate: Number(gcfg?.rate) || 1,
@@ -947,6 +951,8 @@ async function handleCompletion(protocol, req, res) {
         return { messages: fallback, prompt: messagesToPrompt(fallback) };
       },
       thinking: thinkingOverride,
+      reasoningEffort: String(body.reasoning_effort || body.reasoning?.effort || ""),
+      maxOutputTokens: maxOutTokens || undefined,
       search: wantSearch,
       images,
       groupName: token.group_name || null,
@@ -1070,6 +1076,8 @@ async function handleCompletion(protocol, req, res) {
     // 截断时上游的 usage 也不再可信（它算的是全量），所以整段用估算。
     const cutThis = outputTruncated && maxOutTokens > 0;
     const settled = await settle({
+      reasoningEffort: result.reasoningEffort,
+      reasoningApplied: result.reasoningApplied,
       token,
       user,
       model,
@@ -1179,6 +1187,8 @@ async function handleCompletion(protocol, req, res) {
     if (!settledOnce && failedCall) {
       try {
         const partialSettled = await settle({
+          reasoningEffort: failedCall.reasoningEffort,
+          reasoningApplied: failedCall.reasoningApplied,
           token,
           user,
           model,

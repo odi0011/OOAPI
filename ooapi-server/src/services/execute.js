@@ -1,6 +1,7 @@
 // 统一执行器：模型 → 渠道选择 → 失败切换 → 返回结果
 // 网关（/v1）与站内对话/智能体共用此逻辑，保证行为一致。
 import crypto from "node:crypto";
+import { modelCapabilities, reasoningSelection } from "./model-capabilities.js";
 import { pool } from "../db.js";
 import { getNumberOption } from "../config.js";
 import { selectChannels, getAdapter, adapterKeyFor, markChannelError, markChannelOk, withChannelLimit, explainNoChannel } from "./router.js";
@@ -36,6 +37,8 @@ export function billableFailedCall(err, fallback = {}) {
     channelQuote: err.channelQuote || fallback.channelQuote || null,
     billModel: String(err.billModel || ""),
     retryCount: Math.max(0, Number(err.retryCount) || 0),
+    reasoningEffort: err.reasoningEffort || fallback.reasoningEffort || "default",
+    reasoningApplied: err.reasoningApplied === true,
     errorCode: String(err.code || "CHANNEL_ERROR"),
     httpStatus: Number(err.status || err.httpStatus) || 0,
     failed: true,
@@ -114,6 +117,8 @@ export async function runCompletion({
   prompt,
   messages = null,
   thinking,
+  reasoningEffort = "",
+  maxOutputTokens,
   search = false,
   images = [],
   onDelta,
@@ -129,6 +134,9 @@ export async function runCompletion({
   requestId = "",
 }) {
   await assertModelPriced(model);
+  const reasoningConfig = reasoningSelection(model, reasoningEffort);
+  const capabilities = modelCapabilities(model);
+  const outputLimit = maxOutputTokens ? Math.min(Number(maxOutputTokens), Number(capabilities.maxOutputTokens) || Infinity) : capabilities.customized ? capabilities.maxOutputTokens || undefined : undefined;
   const runStartedAt = Date.now();
   // 重试沿用同一次调用的上下文；无会话头的 API 请求各自独立，避免不同用户共用渠道会话。
   const callRequestId = requestId || crypto.randomUUID();
@@ -265,7 +273,9 @@ export async function runCompletion({
             sessionId: callSessionId,
             requestId: callRequestId,
             userId: user?.id,
-            thinkingOverride: thinking,
+            thinkingOverride: reasoningConfig.level ? undefined : thinking,
+            reasoningConfig,
+            maxOutputTokens: outputLimit,
             search,
             images,
             signal: attemptCtrl.signal,
@@ -348,10 +358,11 @@ export async function runCompletion({
           }
         );
       }
-      return { ...result, toolMode: nativeTools ? "native" : "text", requestPrompt: prepared.billingPrompt || prepared.prompt, channel, channelQuote: attemptQuote, startedAt: callStarted || started, firstTokenAt,
+      return { ...result, reasoningEffort: reasoningConfig.level || (thinking === true ? "enabled" : thinking === false ? "disabled" : "default"), reasoningApplied: result.reasoningApplied === true, toolMode: nativeTools ? "native" : "text", requestPrompt: prepared.billingPrompt || prepared.prompt, channel, channelQuote: attemptQuote, startedAt: callStarted || started, firstTokenAt,
         retryCount: attempts - 1 + internalRetries, elapsed: Date.now() - runStartedAt };
     } catch (err) {
       lastError = tagChannel(err, channel);
+      lastError.reasoningEffort = reasoningConfig.level || (thinking === true ? "enabled" : thinking === false ? "disabled" : "default");
       // 停止也要保留已消耗上下文的证据；原先在赋值前 throw，首步停止会漏账。
       // 已输出内容优先于错误分类（它直接证明模型请求已开始）。
       if (sawOutput || (attemptStarted && err.upstreamStarted !== false && !LOCAL_REJECTION_CODES.has(err.code))) {

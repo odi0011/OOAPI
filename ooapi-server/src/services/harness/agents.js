@@ -14,7 +14,7 @@
 export const AGENTS = [
   {
     id: "general",
-    name: "助手",
+    name: "乐乐",
     desc: "直接回答，需要时自己查资料、读网页/GitHub、查询你的账号。",
     icon: "sparkles",
     mode: "primary",
@@ -198,6 +198,7 @@ export function buildSystemPrompt({ agent, model, settings = {}, toolSpecs = [],
   }
 
   const extra = String(settings.instructions || "").trim();
+  if (settings.policyInstructions) lines.push(`平台工作约定：\n${settings.policyInstructions}`);
   if (extra) {
     lines.push("");
     lines.push("# 用户会话指令（优先级高于默认风格，但不得越过上面的边界）");

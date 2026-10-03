@@ -69,6 +69,8 @@ function mapLog(r, { isAdmin, user = null }) {
     billing_details: isAdmin ? bill : publicBillingDetails(bill),
     billing_known: Number(r.billing_unknown) !== 1 && detail.billing_known !== false,
     model: canonicalModelName(r.model) || r.model || "",
+    reasoning_effort: String(r.reasoning_effort || detail.reasoning_effort || ""),
+    reasoning_applied: r.reasoning_applied === true || Number(r.reasoning_applied) === 1 || detail.reasoning_applied === true,
     model_vendor: r.model_vendor || "",
     prompt_tokens: Number(r.prompt_tokens) || 0,
     completion_tokens: Number(r.completion_tokens) || 0,
@@ -275,6 +277,8 @@ async function listLogs(req, res, kind) {
     "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.billing_known')) = 'false' ELSE 0 END AS billing_unknown",
     "CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.billing_details') ELSE NULL END AS billing_details",
     "CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.source_vendors') ELSE NULL END AS source_vendors",
+    "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.reasoning_effort')) ELSE NULL END AS reasoning_effort",
+    "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.reasoning_applied')) = 'true' ELSE 0 END AS reasoning_applied",
     // request_id 必须返回：一次调用可能产生两条记录（计费行 + 错误行，
     // 见「客户端提前断开」那个场景），没有这个字段用户在界面上**无法把两条对起来**。
     // 黑盒测试实测抱怨（运维人格）：「两页都没有 request_id，我只能下 SQL 才看得出来

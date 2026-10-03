@@ -83,7 +83,8 @@ const NAV_ADMIN = [
       // badge: "pendingPrices" —— 待定价模型数的红色徽标。
       // 模型被「从上游获取到」的瞬间就该让管理员看见（而不是等他某天去定价页翻），
       // 徽标挂在「模型定价」上，点进去就是配置处。
-      { key: "/admin/pricing", icon: <DollarOutlined />, label: "模型定价", badge: "pendingPrices" },
+      { key: "/admin/pricing", icon: <DollarOutlined />, label: "模型管理", badge: "pendingPrices" },
+      { key: "/admin/agent", icon: <SettingOutlined />, label: "智能体编排" },
       { key: "/admin/users", icon: <TeamOutlined />, label: "用户管理" },
       { key: "/admin/community", icon: <ReadOutlined />, label: "社区管理" },
       { key: "/admin/monitor", icon: <MonitorOutlined />, label: "运维监控" },
@@ -109,7 +110,8 @@ const CRUMB = {
   "/home": ["首页"],
   "/admin/channel": ["平台管理", "渠道管理"],
   "/admin/groups": ["平台管理", "分组管理"],
-  "/admin/pricing": ["平台管理", "模型定价"],
+  "/admin/pricing": ["平台管理", "模型管理"],
+  "/admin/agent": ["平台管理", "智能体编排"],
   "/admin/users": ["平台管理", "用户管理"],
   "/admin/community": ["平台管理", "社区管理"],
   "/admin/monitor": ["平台管理", "运维监控"],

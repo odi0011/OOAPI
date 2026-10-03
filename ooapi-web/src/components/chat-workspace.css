@@ -7,7 +7,7 @@
 .ui-chat2 .ui-msg-ai .prose { font-size:15px;line-height:1.85;overflow-wrap:anywhere; }
 .ui-chat2 .ui-msg-actions { opacity:.75;gap:12px;margin-top:18px;flex-wrap:wrap; }
 .ui-chat2 .ui-msg-actions:hover { opacity:1; }
-.ui-chat2 .ui-chat2-composer { padding-top:34px;background:linear-gradient(transparent,var(--page) 30%); }
+.ui-chat2 .ui-chat2-composer { padding-top:46px;background:linear-gradient(transparent,var(--page) 30%); }
 .ui-chat2 .ui-chat2-composer-inner { position:relative;max-width:796px;margin:auto; }
 .ui-chat2 .ui-chat2-welcome { padding:32px 0; }
 .ui-chat2 .ui-chat2-welcome h2 { font-weight:550;letter-spacing:-.035em; }
@@ -61,3 +61,54 @@
   .ui-chat2 .bui-composer-spacer { display:none; }
   .ui-chat2 .bui-composer-bar .bui-cbtn,.ui-chat2 .bui-attachwrap { flex-shrink:0; }
 }
+/* 乐乐执行胶囊与输入框交互：颜色跟随主题，动画可由系统关闭。 */
+.agent-trajectory {display:flex;flex-direction:column;gap:9px;margin:0 0 18px;min-width:0;}
+.execution-step {min-width:0;max-width:100%;}
+.execution-pill {display:block;width:max-content;max-width:100%;padding:4px 12px;border:1px solid var(--line);border-radius:24px;color:var(--ink-2);background:var(--surface);cursor:pointer;text-align:left;overflow:hidden;animation:lele-unfold .55s cubic-bezier(.2,1.35,.4,1);}
+.execution-pill-content {display:flex;align-items:center;gap:7px;max-width:100%;min-height:28px;}
+.execution-pill-label {flex-shrink:0;font-size:12px;}
+.execution-pill-preview {min-width:0;max-width:34ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-3);font-size:12px;animation:lele-preview 2s ease-in-out infinite;}
+.execution-step.is-running .execution-pill {border-color:color-mix(in srgb,var(--accent) 28%,var(--line));background:color-mix(in srgb,var(--accent) 4%,var(--surface));}
+.execution-step.is-failed .execution-pill {border-color:var(--orange);}
+.execution-pill .chat-mascot {width:28px;height:28px;}
+.execution-detail {display:grid;grid-template-rows:0fr;transition:grid-template-rows .4s cubic-bezier(.2,1.2,.4,1);}
+.execution-detail.is-open {grid-template-rows:1fr;}
+.execution-detail>div {overflow:hidden;min-height:0;max-height:360px;}
+.execution-detail.is-open>div {overflow:auto;padding:12px 14px;margin-top:7px;border-left:2px solid var(--line);}
+.lele-sparks {position:relative;width:16px;height:20px;flex-shrink:0;}
+.lele-sparks i {position:absolute;left:4px;top:9px;width:3px;height:3px;border-radius:50%;background:var(--accent);animation:lele-particle 1.8s ease-out infinite;}
+.lele-sparks i:nth-child(2) {left:10px;animation-delay:.6s;background:var(--orange);}.lele-sparks i:nth-child(3) {left:0;animation-delay:1.2s;background:var(--green);}
+.ui-chat2-composer-inner {isolation:isolate;}
+.ui-chat2 .bui-composer {position:relative;z-index:2;background:var(--surface);}
+.ui-chat2 .chat-mascot.is-perched {right:30px;top:-39px;width:58px;height:58px;z-index:1;}
+.chat-mascot.is-perched>svg {clip-path:inset(0 0 11px 0);transition:transform .6s cubic-bezier(.2,1.35,.4,1);}
+.lele-perch-paws,.lele-sleep,.cat-happy-eyes,.cat-sleep-eyes {display:none;}
+.chat-mascot.is-perched .lele-perch-paws {display:flex;position:absolute;left:14px;right:12px;top:36px;justify-content:space-between;z-index:4;}
+.lele-perch-paws i {display:block;width:10px;height:7px;background:var(--surface);border:2px solid var(--ink-3);border-top:0;border-radius:2px 2px 5px 5px;}
+.chat-mascot.is-perched.gesture-paws>svg {transform:translateY(29px);clip-path:inset(0 0 40px 0);}
+.chat-mascot.is-perched.gesture-peek>svg {transform:translateY(13px);clip-path:inset(0 0 24px 0);}
+.chat-mascot.gesture-wave .lele-perch-paws i:first-child,.chat-mascot.gesture-paws .lele-perch-paws i:first-child {animation:lele-wave .7s ease-in-out infinite alternate;}
+.chat-mascot.gesture-sleep>svg {transform:translateY(12px) rotate(-8deg);clip-path:inset(0 0 23px 0);}
+.chat-mascot.gesture-sleep .cat-eyes,.chat-mascot.is-success .cat-eyes {display:none;}
+.chat-mascot.gesture-sleep .cat-sleep-eyes,.chat-mascot.is-success .cat-happy-eyes {display:block;}
+.chat-mascot.gesture-sleep .lele-sleep {display:flex;position:absolute;top:-10px;right:-14px;gap:3px;color:var(--ink-3);font-size:9px;animation:lele-preview 2.4s infinite;}
+.lele-sleep span {transform:translateY(-5px);}.lele-sleep b {transform:translateY(-10px);}
+.chat-mascot.is-success *,.chat-mascot.is-sad * {animation:none!important;}
+.chat-mascot.is-success .cat-tail {transform:rotate(-10deg);}.chat-mascot.is-sad {transform:rotate(-7deg);}
+.chat-mascot.is-compressing {animation:cat-stretch 1.3s ease-in-out infinite;}
+.ui-chat2-composer-inner>.tool-approval {position:absolute;left:0;bottom:calc(100% + 12px);z-index:5;display:block;width:min(460px,100%);box-sizing:border-box;margin:0;padding:16px 18px;border-radius:20px;background:var(--surface);box-shadow:0 12px 36px color-mix(in srgb,var(--ink) 12%,transparent);transform-origin:50% 100%;animation:lele-ask .55s cubic-bezier(.2,1.3,.4,1);max-height:min(360px,45vh);overflow:auto;}
+.tool-approval-heading {display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ink);}
+.tool-approval-args {margin:10px 0;font-size:12px;}.tool-approval-args>div {display:flex;gap:14px;margin:5px 0;}.tool-approval-args dt {color:var(--ink-3);min-width:40px;}.tool-approval-args dd {margin:0;white-space:pre-wrap;overflow-wrap:anywhere;min-width:0;}
+.tool-approval-actions {display:flex;justify-content:flex-end;gap:8px;margin-top:12px;}.tool-approval .ant-btn {margin-left:0;}
+@keyframes lele-unfold {from{opacity:0;transform:scaleX(.8) translateY(5px)}to{opacity:1;transform:none}}
+@keyframes lele-ask {from{opacity:0;transform:translateY(24px) scale(.96,.65)}to{opacity:1;transform:none}}
+@keyframes lele-wave {to{transform:translateY(-9px) rotate(-16deg)}}
+@keyframes lele-preview {0%,100%{opacity:.55}50%{opacity:1}}
+@keyframes lele-particle {0%{opacity:0;transform:translateY(7px) scale(.4)}35%{opacity:.9}100%{opacity:0;transform:translateY(-10px) scale(1.2)}}
+@media(max-width:700px) {.execution-pill-preview{max-width:16ch;}.ui-chat2 .chat-mascot.is-perched{right:22px;}.execution-pill-label{font-size:11px;}.ui-chat2 .ui-chat2-composer{padding-top:46px;}}
+@media(prefers-reduced-motion:reduce) {.execution-pill,.execution-pill *,.execution-detail,.tool-approval,.chat-mascot *{animation:none!important;transition:none!important;}}
+.ui-chat2 .chat-mascot.is-perched {z-index:3;}
+.chat-mascot.is-perched>svg {clip-path:inset(0 0 19px 0);}
+.chat-mascot.is-perched.gesture-paws>svg {clip-path:inset(0 0 48px 0);}
+.chat-mascot.is-perched.gesture-peek>svg {clip-path:inset(0 0 32px 0);}
+.chat-mascot.gesture-sleep>svg {clip-path:inset(0 0 31px 0);}

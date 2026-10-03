@@ -30,6 +30,7 @@ export function sanitizeSettings(raw = {}, { previous = {} } = {}) {
   const boolOrNull = (v, fallback) => (typeof v === "boolean" ? v : v === null ? null : fallback);
   const tools = pick("tools", base.tools);
   return {
+    reasoningEffort: /^[a-z0-9_-]{1,24}$/.test(String(pick("reasoningEffort", base.reasoningEffort) || "")) ? String(pick("reasoningEffort", base.reasoningEffort)) : "",
     thinking: boolOrNull(pick("thinking", base.thinking ?? null), null),
     search: boolOrNull(pick("search", base.search ?? null), null),
     tools: Array.isArray(tools) ? tools.filter((t) => TOOL_IDS.includes(t)) : null,
