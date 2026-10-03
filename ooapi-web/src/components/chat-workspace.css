@@ -2,7 +2,7 @@
 .ui-chat2 .ui-chat2-head { border-bottom-color:transparent;background:transparent; }
 .ui-chat2 .ui-chat2-thread-inner { max-width:860px;margin:auto;padding:28px 32px 64px; }
 .ui-chat2 .ui-msg { margin-bottom:36px; }
-.ui-chat2 .ui-msg-user .bubble { border:1px solid color-mix(in srgb,var(--accent) 16%,var(--line));background:color-mix(in srgb,var(--accent) 9%,var(--surface));color:var(--ink);border-radius:20px;padding:13px 19px;font-size:15px;line-height:1.7;max-width:min(680px,88%); }
+.ui-chat2 .ui-msg-user .bubble { border:0;background:color-mix(in srgb,var(--accent) 9%,var(--surface));color:var(--ink);border-radius:20px;padding:13px 19px;font-size:15px;line-height:1.7;max-width:min(680px,88%); }
 .ui-chat2 .ui-msg-ai { width:100%;max-width:none; }
 .ui-chat2 .ui-msg-ai .prose { font-size:15px;line-height:1.85;overflow-wrap:anywhere; }
 .ui-chat2 .ui-msg-actions { opacity:.75;gap:12px;margin-top:18px;flex-wrap:wrap; }
@@ -157,18 +157,56 @@
 .execution-step[data-execution-tool="todowrite"] .execution-pill { border-color:color-mix(in srgb,var(--token-cache) 38%,var(--line)); background:color-mix(in srgb,var(--token-cache) 7%,var(--surface)); }
 .execution-step .execution-pill-label { max-width:28ch; overflow:hidden; text-overflow:ellipsis; }
 .execution-step[data-execution-type="reasoning"] .execution-pill-preview { max-width:24ch; }
-.chat-mascot.gesture-think .cat-face { animation:cat-think-face 1.6s ease-in-out infinite; }
 .execution-step[data-execution-tool="binance"] .execution-pill {border-color:color-mix(in srgb,var(--orange) 25%,var(--line));background:color-mix(in srgb,var(--orange) 4%,var(--surface));}
-.execution-step .cat-cranium {transform-origin:16px 19px;}
-.execution-step.is-running[data-execution-tool="account"] .cat-cranium {animation:lele-face-look 3s ease-in-out infinite;}
-.execution-step.is-running[data-execution-tool="search"] .cat-cranium {animation:cat-wait 1.6s ease-in-out infinite;}
-.execution-step.is-running[data-execution-tool="fetch"] .cat-cranium {animation:cat-think 2s ease-in-out infinite;}
-.execution-step.is-running[data-execution-tool="github"] .cat-paw-left {animation:cat-paws .35s ease-in-out infinite alternate;}
-.execution-step.is-running[data-execution-tool="task"] .cat-paw-left {animation:lele-paw-bat .7s ease-in-out infinite alternate;transform-origin:11px 25px;}
-.execution-step.is-running[data-execution-tool="todowrite"] .cat-paw-right {animation:cat-paws .5s ease-in-out infinite alternate;}
-.execution-step[data-execution-tool="search"] .is-success .cat-cranium {transform:rotate(-5deg);}
-.execution-step[data-execution-tool="fetch"] .is-success .cat-cranium {transform:rotate(5deg);}
-.execution-step[data-execution-tool="task"] .is-success .cat-paw-left {transform:translateY(-3px);}
 .execution-step.is-failed .execution-pill {border-color:var(--red);background:color-mix(in srgb,var(--red) 5%,var(--surface));}
-@keyframes cat-think-face { 0%,100%{transform:translateX(0)} 50%{transform:translateX(1px) rotate(-2deg)} }
 @media(max-width:700px) { .agent-trajectory { column-gap:6px; row-gap:7px; }.execution-step{max-width:100%;}.execution-pill-preview{max-width:20ch;} }
+
+.execution-step[hidden] {display:none;}
+.ui-chat2-shelf-toolbar {display:flex;align-items:center;gap:4px;margin-bottom:8px;}
+.ui-chat2-shelf-toolbar .bui-shelf-new {flex:1;min-width:0;margin:0;}
+.ui-chat2-shelf-toolbar .ui-chat2-iconbtn {flex-shrink:0;}
+.ui-chat2-thread-wrap {position:relative;display:flex;flex:1;min-height:0;min-width:0;}
+.ui-chat2-thread-wrap>.ui-chat2-thread {width:100%;min-width:0;}
+.conversation-rail {position:absolute;z-index:4;left:0;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;max-height:60%;width:26px;overflow-y:auto;scrollbar-width:none;}
+.conversation-rail::-webkit-scrollbar {display:none;}
+.conversation-rail button {display:flex;align-items:center;justify-content:center;width:26px;height:12px;min-height:9px;padding:0;border:0;background:transparent;cursor:pointer;flex-shrink:0;}
+.conversation-rail button span {height:2px;width:7px;border-radius:2px;background:var(--ink-3);opacity:.45;transition:width .2s,opacity .2s,background .2s;}
+.conversation-rail button:hover span,.conversation-rail button:focus-visible span {width:17px;opacity:1;background:var(--accent);}
+.conversation-rail button.is-current span {width:23px;opacity:1;background:var(--ink);}
+.conversation-rail button:focus-visible {outline:1px solid var(--accent);outline-offset:-1px;border-radius:3px;}
+.conversation-rail-preview {max-width:min(320px,calc(100vw - 68px));font-size:12px;line-height:1.7;}
+.conversation-rail-preview strong {display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.conversation-rail-preview p {margin:3px 0 0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;opacity:.65;overflow-wrap:anywhere;}
+@media(max-width:700px) {.conversation-rail,.conversation-rail button{width:12px;}.conversation-rail button.is-current span{width:11px;}.conversation-rail button:hover span{width:10px;}}
+
+/* 各方法使用原有身体分组摆出自己的动作，完成时保留这一姿态与工作道具。 */
+.execution-pill .chat-mascot {animation:none;--cap-head:translate(0,0);--cap-left:translate(0,0);--cap-right:translate(0,0);--cap-body:translate(0,0);--cap-tail:rotate(-10deg);}
+.execution-pill .chat-mascot .cat-cranium {transform:var(--cap-head);transform-origin:16px 19px;}
+.execution-pill .chat-mascot .cat-body {transform:var(--cap-body);transform-origin:16px 29px;}
+.execution-pill .chat-mascot .cat-paw-left {transform:var(--cap-left);transform-origin:11px 26px;}
+.execution-pill .chat-mascot .cat-paw-right {transform:var(--cap-right);transform-origin:21px 26px;}
+.execution-pill .chat-mascot .cat-tail {transform:var(--cap-tail);}
+.execution-pill .chat-mascot .cat-paw-ground {display:none;}
+.execution-pill .gesture-capsule-think {--cap-head:rotate(-14deg);--cap-left:translate(4px,-9px) rotate(20deg);}
+.execution-pill .gesture-capsule-wave {--cap-head:rotate(8deg);--cap-right:translate(1px,-11px) rotate(-28deg);}
+.execution-pill .gesture-capsule-notebook {--cap-head:translate(0,2px) rotate(12deg);--cap-left:translate(4px,-4px);--cap-right:translate(-3px,-3px);}
+.execution-pill .gesture-capsule-inspect {--cap-head:translate(-2px,1px) rotate(-17deg);--cap-left:translate(-1px,-6px) rotate(-25deg);--cap-tail:rotate(35deg);}
+.execution-pill .gesture-capsule-key {--cap-head:rotate(-7deg);--cap-right:translate(3px,-7px) rotate(-35deg);--cap-left:translateY(-2px);}
+.execution-pill .gesture-capsule-chart {--cap-head:translateY(-2px);--cap-left:translate(-2px,-6px) rotate(-18deg);--cap-right:translate(2px,-6px) rotate(18deg);}
+.execution-pill .gesture-capsule-coin {--cap-head:rotate(13deg);--cap-body:scale(1.1,.85);--cap-left:translate(3px,-2px);--cap-right:translate(-3px,-2px);}
+.execution-pill .gesture-capsule-search {--cap-head:translate(2px,-1px) rotate(16deg);--cap-right:translate(-2px,-10px) rotate(-20deg);--cap-tail:rotate(30deg);}
+.execution-pill .gesture-capsule-read {--cap-head:translate(0,3px) rotate(-8deg);--cap-body:scale(1.08,.88);--cap-left:translate(2px,-4px) rotate(10deg);--cap-right:translate(-2px,-4px) rotate(-10deg);}
+.execution-pill .gesture-capsule-type {--cap-head:translate(0,1px);--cap-left:translate(2px,-5px) rotate(20deg);--cap-right:translate(-2px,-3px) rotate(-20deg);}
+.execution-pill .gesture-capsule-reach {--cap-head:translateY(-2px) rotate(-12deg);--cap-body:scale(.9,1.15);--cap-left:translate(0,-13px) rotate(30deg);--cap-right:translate(0,-10px) rotate(-30deg);}
+.execution-pill .gesture-capsule-list {--cap-head:rotate(12deg);--cap-right:translate(2px,-4px) rotate(-55deg);}
+.execution-pill .gesture-capsule-pack {--cap-head:translate(0,3px);--cap-body:scale(1.12,.8);--cap-left:translate(3px,-4px);--cap-right:translate(-3px,-4px);--cap-tail:rotate(-35deg);}
+.execution-pill :is(.gesture-capsule-think,.gesture-capsule-inspect,.gesture-capsule-search,.gesture-capsule-read) .cat-happy-eyes {display:none;}
+.execution-pill :is(.gesture-capsule-think,.gesture-capsule-inspect,.gesture-capsule-search,.gesture-capsule-read) .cat-eyes {display:block;}
+.execution-pill .chat-mascot>.capsule-accessory {position:absolute;z-index:2;right:-3px;bottom:-1px;width:12px;height:12px;color:var(--accent);overflow:visible;filter:drop-shadow(0 1px 0 var(--surface));}
+.execution-pill .chat-mascot>.accessory-think,.execution-pill .chat-mascot>.accessory-wave {top:-1px;bottom:auto;width:9px;height:9px;color:var(--token-output);}
+.execution-pill .chat-mascot>.accessory-coin,.execution-pill .chat-mascot>.accessory-key {color:var(--orange);}
+.execution-pill .chat-mascot>.accessory-inspect {color:var(--orange);}
+.execution-step.is-running .chat-mascot .cat-cranium {animation:capsule-head-work 2s ease-in-out infinite;}
+.execution-step.is-running .chat-mascot .cat-paw-right {animation:capsule-paw-work .9s ease-in-out infinite;}
+@keyframes capsule-head-work {0%,100%{transform:var(--cap-head)}50%{transform:var(--cap-head) translateY(-1px)}}
+@keyframes capsule-paw-work {0%,100%{transform:var(--cap-right)}50%{transform:var(--cap-right) translateY(-2px)}}

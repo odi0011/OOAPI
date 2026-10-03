@@ -1,5 +1,5 @@
 import AgentTrajectory from "../components/AgentTrajectory";
-import ChatRunFlow from "../components/ChatRunFlow";
+import ConversationRail from "../components/ConversationRail";
 import ChatScene from "../components/ChatScene";
 import OdAmount from "../components/OdAmount";
 // 对话页（原「对话工作台」）
@@ -95,13 +95,13 @@ const mergeRecovery = (userId, sessionId, messages) => {
  *   user      → 右侧气泡（文字 + 图片）
  *   assistant → 无气泡正文，按 parts 顺序渲染：思考链 / 工具 chip / 正文 / 待办 / 提示
  * ------------------------------------------------------------------------- */
-const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, streaming, visibility, onApprove }) {
+const Message = React.memo(function Message({ msg, index, busy, onRetry, onCopy, streaming, visibility, onApprove }) {
   if (msg.role === "user") {
     const text = (msg.parts || []).filter((p) => p.type === "text").map((p) => p.text).join("\n");
     const imgs = (msg.parts || []).filter((p) => p.type === "image").map((p) => p.url);
     const files = (msg.parts || []).filter((p) => p.type === "file");
     return (
-      <div className="ui-msg ui-msg-user">
+      <div className="ui-msg ui-msg-user" data-message-index={index}>
         <div className="bubble">
           {text}
           {imgs.length ? (
@@ -1341,13 +1341,17 @@ export default function ChatPage() {
         className={shelfOpen ? "is-open" : ""}
         // 移动端：点空白处收起（桌面端常驻）
       >
-        {/* 新建对话（ChatGPT 式：最上面一个显眼的动作） */}
+        <div className="ui-chat2-shelf-toolbar">
         <button type="button" className="bui-shelf-new" onClick={newSession} disabled={busy}>
           <span className="ic">
             <PlusOutlined />
           </span>
           新建对话
         </button>
+        <Tooltip title="命令面板（Ctrl/⌘ + K）">
+          <button type="button" className="ui-chat2-iconbtn" aria-label="命令面板" onClick={() => { setShelfOpen(false); setPaletteOpen(true); }}><SearchOutlined /></button>
+        </Tooltip>
+        </div>
 
         {/* 视图切换：进行中 / 已归档 */}
         <div className="bui-shelf-tabs">
@@ -1547,20 +1551,9 @@ export default function ChatPage() {
             </div>
           </div>
           <div className="ui-chat2-head-actions">
-            {!loadingSession && <ChatRunFlow key={session?.id || "empty"} message={msgs.findLast(m => m.role === "assistant")}/>}
-            <Tooltip title="命令面板（Ctrl/⌘ + K）">
-              <button type="button" className="ui-chat2-iconbtn" aria-label="命令面板" onClick={() => setPaletteOpen(true)}>
-                <SearchOutlined />
-              </button>
-            </Tooltip>
             <Tooltip title="会话设定">
               <button type="button" className="ui-chat2-iconbtn" aria-label="会话设定" onClick={() => setSheetOpen(true)}>
                 <SettingOutlined />
-              </button>
-            </Tooltip>
-            <Tooltip title="新建对话（Ctrl/⌘ + Shift + O）">
-              <button type="button" className="ui-chat2-iconbtn" aria-label="新建对话" onClick={newSession} disabled={busy}>
-                <PlusOutlined />
               </button>
             </Tooltip>
           </div>
@@ -1638,6 +1631,8 @@ export default function ChatPage() {
           </div>
         ) : null}
 
+        <div className="ui-chat2-thread-wrap">
+        {!loadingSession && <ConversationRail key={session?.id || "empty"} messages={msgs} threadRef={threadRef} onNavigate={() => { stickyRef.current = false; awayRef.current = true; setAway(true); }}/>}
         <div className={`ui-chat2-thread ${loadingSession || !msgs.length ? "is-empty" : ""}`} ref={threadRef} onScroll={onThreadScroll} aria-busy={loadingSession}>
           <div className="ui-chat2-thread-inner">
             {loadingSession ? (
@@ -1649,6 +1644,7 @@ export default function ChatPage() {
                   // key 不能用 seq：done 事件回来时 seq 从 0 变成真实值，会让整条消息重挂载（动画重播）
                   key={m.key || `i${i}`}
                   msg={m}
+                  index={i}
                   busy={busy || unavailable}
                   streaming={Boolean(m.streaming)}
                   onRetry={retry}
@@ -1660,6 +1656,7 @@ export default function ChatPage() {
               <ChatScene onStart={() => taRef.current?.focus()} />
             )}
           </div>
+        </div>
         </div>
 
         {/* 输入区：官方 PromptBar 是「悬空的浮岛」——只有输入框本体有底色，

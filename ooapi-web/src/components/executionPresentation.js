@@ -17,9 +17,10 @@ export const failedPart = p => ["failed", "stopped", "cancelled", "denied", "exp
 export const toolName = p => p.name || names[p.tool] || p.tool || "执行任务";
 export function capsuleGesture(part = {}) {
   const tool = part.tool || "";
-  if (part.type === "reasoning" || part.type === "text") return "think";
-  if (part.type === "compaction") return "stretch";
-  return ({ account: "look", search: "curious", fetch: "peek", github: "look", task: "wave", todowrite: "paws", binance: "look" }[tool] || "peek");
+  if (part.type === "reasoning" || part.type === "text") return "capsule-think";
+  if (part.type === "compaction") return "capsule-pack";
+  if (tool === "account") return `capsule-${({ recent:"notebook", errors:"inspect", tokens:"key", usage:"chart", balance:"coin", profile:"wave" })[part.args?.action] || "wave"}`;
+  return `capsule-${({ search:"search", fetch:"read", github:"type", task:"reach", todowrite:"list", binance:"chart" })[tool] || "wave"}`;
 }
 export function executionEntries(parts = [], streaming = false, finalTextId) {
   const lastTool = parts.findLastIndex(p => p.type === "tool");

@@ -44,6 +44,18 @@ try {
   const menuGeometry=await page.evaluate(()=>{const a=document.querySelector(".lele-edge-viewport").getBoundingClientRect(),m=document.querySelector(".bui-upmenu.is-model").getBoundingClientRect();return {bottom:a.bottom,top:m.top,x:a.x,right:a.right};});
   check(Math.abs(menuGeometry.bottom-menuGeometry.top)<1,"遮挡后乐乐依附实际菜单上沿");
   await page.screenshot({path:OUT+"/menu-perch.png",fullPage:true});
+  for (const label of ["推理强度", "选择模型", "推理强度"]) {
+    await page.getByRole("button",{name:label,exact:true}).click();
+    await page.waitForTimeout(850);
+    const g=await page.evaluate(()=>{const a=document.querySelector(".lele-edge-viewport").getBoundingClientRect(),m=document.querySelector("[data-promptbar-menu]").getBoundingClientRect();return {bottom:a.bottom,top:m.top,x:a.x+a.width/2,left:m.left,right:m.right};});
+    check(Math.abs(g.bottom-g.top)<1 && g.x>g.left && g.x<g.right,"直接切到"+label+"后重新落在实际菜单上沿");
+  }
+  await page.screenshot({path:OUT+"/menu-switch.png",fullPage:true});
+  for (const label of ["选择模型","推理强度","选择模型","推理强度"]) {
+    await page.getByRole("button",{name:label,exact:true}).click();await page.waitForTimeout(90);
+  }
+  await page.waitForTimeout(850);
+  check(await page.evaluate(()=>Math.abs(document.querySelector(".lele-edge-viewport").getBoundingClientRect().bottom-document.querySelector("[data-promptbar-menu]").getBoundingClientRect().top)<1),"快速切换打断动画后仍落到最后一个菜单");
   await page.keyboard.press("Escape");await page.locator(".pose-drop.phase-enter").waitFor({state:"attached"});
   check(true,"菜单关闭触发从菜单高度落下的动作");
   await page.waitForTimeout(180);await page.screenshot({path:OUT+"/menu-drop.png",fullPage:true});
@@ -59,6 +71,7 @@ try {
       const element=page.locator(".lele-perch-anchor");
       const g=await element.evaluate(n=>({edge:["top","left","right","bottom"].find(e=>n.classList.contains("at-"+e)),grip:!!n.querySelector(".lele-edge-grip")}));
       if(["belly","sleep","curl","zzz","pop","walk","toy","lick","groom","wash"].includes(pose)) check(!g.grip,pose+"不附加抓边爪子");
+      if(pose==="wash") check(await element.locator(".cat-paw-right .cat-paw-ground").evaluate(n=>getComputedStyle(n).display==="none"),"洗脸抬爪不带脚掌底部黑条");
       seen.set(pose,g);
       await element.evaluate(n=>{ for(const a of n.getAnimations({subtree:true})) { a.pause(); const timing=a.effect.getTiming(); a.currentTime=Number(timing.duration)*(timing.iterations===Infinity?.45:1); } });
       await page.screenshot({path:OUT+"/pose-"+pose+".png",fullPage:true});

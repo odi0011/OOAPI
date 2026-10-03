@@ -9,6 +9,7 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
 {["toy", "proud"].includes(gesture) && <span className="lele-heart" aria-hidden="true">♥</span>}
 {gesture === "toy" && <span className="lele-toy" aria-hidden="true"/>}
 {gesture === "drop" && <span className="lele-exclaim" aria-hidden="true">!</span>}
+{gesture.startsWith("capsule-") && <CapsuleAccessory kind={gesture.slice(8)}/>}
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="64" height="64" aria-hidden="true" shapeRendering="crispEdges">
 
   <g className="cat-shadow" fill="#30343b" opacity="0.25">
@@ -172,14 +173,14 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
     <g className="cat-paw-left">
     <rect x="9" y="25" width="4" height="3" fill="#ffffff" />
     <rect x="8" y="27" width="1" height="2" fill="#dfe2e5" />
-    <rect x="8" y="28" width="5" height="1" fill="#30343b" />
+    <rect className="cat-paw-ground" x="8" y="28" width="5" height="1" fill="#30343b" />
     <rect x="11" y="27" width="1" height="1" fill="#dfe2e5" />
 
     </g>
     <g className="cat-paw-right">
     <rect x="19" y="25" width="4" height="3" fill="#ffffff" />
     <rect x="23" y="27" width="1" height="2" fill="#dfe2e5" />
-    <rect x="19" y="28" width="5" height="1" fill="#30343b" />
+    <rect className="cat-paw-ground" x="19" y="28" width="5" height="1" fill="#30343b" />
     <rect x="20" y="27" width="1" height="1" fill="#dfe2e5" />
 
     </g>
@@ -191,4 +192,24 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
 </svg>
 
   </span>;
+}
+
+// 工作道具独立于乐乐原来的像素身体；完成后的姿势由各方法分别定格。
+function CapsuleAccessory({ kind }) {
+  const shapes = {
+    think:<path d="M4 3v3M1 5h6M7 0v2M6 1h2"/>,
+    wave:<path d="M1 2q4 0 4 4M2 0q5 1 5 5"/>,
+    notebook:<><path d="M1 1h6v7H1zM3 1v7M4 3h2M4 5h2"/></>,
+    inspect:<><circle cx="3" cy="3" r="2.5"/><path d="m5 5 3 3M3 2v2"/></>,
+    search:<><circle cx="3" cy="3" r="2.5"/><path d="m5 5 3 3M2 3h2M3 2v2"/></>,
+    key:<><circle cx="2.5" cy="2.5" r="2"/><path d="m4 4 4 4M6 6l1-1"/></>,
+    chart:<path d="M1 1v7h7M3 6V4M5 6V2M7 6V1"/>,
+    coin:<><circle cx="4" cy="4" r="3.5"/><path d="M4 2v4"/></>,
+    read:<path d="M4 2Q2 0 0 1v6q2-1 4 1 2-2 4-1V1Q6 0 4 2v6"/>,
+    type:<path d="M1 0h6v5H1zM0 7h8M2 7v1M6 7v1"/>,
+    reach:<path d="M4 0v8M0 4h8M1 1l6 6M1 7l6-6"/>,
+    list:<path d="M0 1h1M3 1h5M0 4h1M3 4h5M0 7h1M3 7h5"/>,
+    pack:<path d="m0 2 4-2 4 2v5L4 9 0 7V2l4 2 4-2M4 4v5"/>,
+  };
+  return <svg className={`capsule-accessory accessory-${kind}`} viewBox="-1 -1 11 11" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">{shapes[kind] || shapes.wave}</svg>;
 }

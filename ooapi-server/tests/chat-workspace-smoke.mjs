@@ -40,9 +40,8 @@ try {
   page.on("pageerror", e => errors.push(e.message));
   await page.goto(BASE + "/chat?s=" + session.id, { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "仅允许这次", exact: true }).waitFor();
-  await page.locator(".chat-run-flow.is-open").waitFor();
-  check(await page.locator(".chat-run-flow [aria-current=step]").innerText().then(t => t.includes("账号")), "浮窗跟随真实的账号工具等待阶段");
-  check(await page.locator(".chat-run-flow input,.chat-run-flow select,.agent-flow-inspector").count() === 0, "执行流程只读且位于对话内");
+  check(await page.locator(".chat-run-flow").count() === 0, "进度浮窗已移除");
+  check(await page.locator(".ui-chat2-shelf-toolbar [aria-label=命令面板]").count() === 1, "命令面板位于左侧新建按钮旁");
   await page.waitForTimeout(800);
   const widths = await page.locator(".execution-step.is-running .execution-pill").first().evaluate(async el => {
     const samples = [];
@@ -99,9 +98,8 @@ try {
   const stored = (await api(`/sessions/${session.id}`)).data;
   check(stored.messages.some(m => m.parts?.some(p => p.type === "approval" && p.status === "approved")), "审批轨迹已持久化");
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "查看本轮执行流程" }).click();
-  await page.waitForTimeout(2800);
-  check(await page.locator(".chat-run-flow.is-open").count() === 1, "历史会话手动展开流程不被初始化定时器关掉");
-  check(await page.locator(".chat-run-flow-body").evaluate(n => n.getBoundingClientRect().height > 100), "流程展开时实际节点可见");
+  await page.locator(".conversation-rail button").first().waitFor();
+  check(await page.locator(".conversation-rail button").count() === 1, "历史会话生成对应消息定位刻度");
+  check(await page.locator(".ui-chat2-head-actions [aria-label=新建对话]").count() === 0, "右侧重复新建入口已移除");
   console.log(`聊天工作台 HTTP / 浏览器回归 ${checks} 项通过`);
 } finally { await browser?.close(); await pool.end(); }

@@ -111,6 +111,7 @@
 .lele-perch-anchor:is(.pose-wash,.pose-groom,.pose-lick) .cat-paws {animation:none;}
 .lele-perch-anchor.pose-lick .cat-paw-left {animation:lele-paw-to-mouth 1.2s ease-in-out infinite;transform-origin:11px 26px;}
 .lele-perch-anchor.pose-wash .cat-paw-right {animation:lele-face-wash 1.8s ease-in-out infinite;transform-origin:21px 26px;}
+.lele-perch-anchor.pose-wash .cat-paw-right .cat-paw-ground,.lele-perch-anchor.pose-lick .cat-paw-left .cat-paw-ground {display:none;}
 .lele-perch-anchor.pose-groom .cat-cranium {animation:lele-groom-body 2.4s ease-in-out infinite;transform-origin:16px 19px;}
 .lele-perch-anchor.pose-toy .cat-paws {animation:none;}
 .lele-perch-anchor.pose-toy .cat-paw-right {animation:lele-paw-bat .8s ease-in-out infinite alternate;transform-origin:21px 25px;}
@@ -118,6 +119,9 @@
 .lele-perch-anchor.pose-knead .lele-edge-grip i:last-child {animation-delay:-.7s;}
 .lele-perch-anchor.pose-drop .lele-edge-viewport {height:calc(80px - var(--fall-from,-48px));}
 .lele-perch-anchor.pose-drop.phase-enter .lele-edge-actor {animation:lele-fall-from-menu .8s cubic-bezier(.3,.1,.75,1) both;}
+.lele-perch-anchor.pose-transfer.phase-enter .lele-edge-viewport {overflow:visible;contain:none;}
+.lele-perch-anchor.pose-transfer.phase-enter .lele-edge-actor {animation:lele-menu-transfer .7s cubic-bezier(.3,.1,.6,1) both;}
+@keyframes lele-menu-transfer {0%{transform:translate(var(--travel-x),var(--travel-y)) rotate(-8deg)}42%{transform:translate(calc(var(--travel-x) * .5),var(--travel-arc)) rotate(10deg)}82%{transform:translate(0,3px) scale(1.06,.92)}100%{transform:none}}
 .lele-perch-anchor.is-questioning .lele-edge-actor {animation:none!important;transition:none!important;transform:translateY(var(--rest-y)) rotate(var(--rest-angle)) scale(var(--rest-sx),var(--rest-sy));}
 .lele-perch-anchor.is-questioning .chat-mascot *,.lele-perch-anchor.is-questioning .lele-edge-grip,.lele-perch-anchor.is-questioning .lele-edge-grip i {animation:none!important;transition:none!important;}
 @keyframes lele-two-steps {0%,15%{transform:translate(0,-16px)}32%{transform:translate(10px,-19px) rotate(4deg)}48%{transform:translate(18px,-16px)}64%{transform:translate(28px,-19px) rotate(-4deg)}80%,100%{transform:translate(35px,-16px)}}
@@ -200,4 +204,4 @@
 @keyframes lele-speech-open {0%{transform:translateY(6px) scale(.08,.04)}65%{transform:translateY(-2px) scale(1.025,1.035)}100%{transform:none}}
 @keyframes lele-speech-close {0%{transform:none}100%{transform:translateY(4px) scale(.02,.015)}}
 @media(max-width:700px) {.lele-speech-heading{padding:14px 16px 10px;}.lele-speech-content{padding:0 16px;}.lele-speech .tool-approval-actions{padding:11px 14px 13px;}.lele-speech-heading h3{font-size:14px;}.lele-operation-fields{gap:10px;padding:10px;}}
-@media(prefers-reduced-motion:reduce) {.lele-perch-anchor,.lele-perch-anchor *,.lele-speech,.lele-speech *{animation:none!important;transition:none!important;}.lele-speech.is-closing{visibility:hidden;}}
+@media(prefers-reduced-motion:reduce) {.lele-perch-anchor,.lele-perch-anchor *,.lele-speech,.lele-speech *{animation:none!important;transition:none!important;}.lele-perch-anchor.pose-transfer .lele-edge-viewport{overflow:clip;contain:paint;}.lele-speech.is-closing{visibility:hidden;}}

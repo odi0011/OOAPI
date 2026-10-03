@@ -117,7 +117,7 @@ export default function PromptBar({
   const [attachOpen, setAttachOpen] = useState(false);
   const [keyOpen, setKeyOpen] = useState(false);
   const [reasoningOpen, setReasoningOpen] = useState(false);
-  const menuOpen = modelOpen || cmdOpen || attachOpen || keyOpen || reasoningOpen;
+  const menuOpen = modelOpen ? "model" : reasoningOpen ? "reasoning" : keyOpen ? "key" : attachOpen ? "attach" : cmdOpen ? "command" : "";
 
   const composerDisabled = disabled || settingsSaving || !model;
   const canSend = !composerDisabled && (value.trim().length > 0 || chips.length > 0);
