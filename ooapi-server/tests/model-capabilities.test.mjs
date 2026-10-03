@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { pool } from "../src/db.js";
+import { getOption, setOption } from "../src/config.js";
+import { modelPricePreset, validateModelPricing, effectivePrice, priceForTokens } from "../src/services/pricing.js";
 import { modelCapabilities, modelCapabilityPresets, modelCapabilityDocumentation, validateCapabilities, reasoningBody, reasoningSelection } from "../src/services/model-capabilities.js";
 import { validateAgentFlow, DEFAULT_AGENT_FLOW } from "../src/services/harness/policy.js";
 import { compressionSplit, latestMemory, contextBudget } from "../src/services/harness/context.js";
@@ -16,6 +19,40 @@ assert.equal(modelCapabilityDocumentation("3-auto", "kiro"), "https://kiro.dev/d
 assert.equal(modelCapabilityDocumentation("gpt-6.1-sol", "openai"), presets["gpt-6.1-sol"].sources[0].url);
 assert.equal(modelCapabilityDocumentation("deepseek-flash", "deepseek"), presets["deepseek-flash"].sources[0].url);
 assert.equal(modelCapabilityDocumentation("fixture-unknown", "custom"), "");
+for (const preset of quickPresets) {
+  const price = modelPricePreset(preset.model);
+  assert(price, `${preset.model} 必须包含价格预设`);
+  assert.doesNotThrow(()=>validateModelPricing({...price,presetModel:preset.model}));
+}
+const longPrice = modelPricePreset("gpt-6.1-sol");
+assert(priceForTokens(longPrice, 300000).input > longPrice.input, "同步预设必须保留长上下文整次计价");
+const timedPrice = modelPricePreset("gemini-3.8-flash");
+assert(effectivePrice(timedPrice, Date.parse("2027-01-02")).price.input > timedPrice.input, "促销结束后的价格不能丢失");
+const offpeakPrice = modelPricePreset("deepseek-flash");
+assert.equal(effectivePrice(offpeakPrice, Date.parse("2026-10-04T00:00:00Z")).price.input, offpeakPrice.offpeakInput);
+longPrice.tiers[0].input = 999;
+assert.notEqual(modelPricePreset("gpt-6.1-sol").tiers[0].input, 999);
+for (const invalid of [null, "", -1, Infinity, true, [], 100001]) assert.throws(()=>validateModelPricing({input:invalid,output:1,cache:0}));
+assert.equal(validateModelPricing({input:0,output:0,cache:0}).input, 0, "合法的零价格不能被当作未配置");
+assert.throws(()=>validateModelPricing({input:1,output:1,cache:0,presetModel:"fixture-missing"}));
+assert.throws(()=>validateModelPricing({input:1,output:1,cache:0,keepRules:"false"}));
+// 关联价格写入失败及提交失败都不能让能力缓存先于数据库生效。
+const originalConnection = pool.getConnection;
+let rolledBack = 0, released = 0, failCommit = false;
+const connection = {beginTransaction:async()=>{},query:async()=>[{}],commit:async()=>{if(failCommit)throw new Error("fixture commit failure");},rollback:async()=>{rolledBack++;},release:()=>{released++;}};
+pool.getConnection = async()=>connection;
+try {
+  await setOption("fixture_atomic_config", "before", async()=>{});
+  await assert.rejects(()=>setOption("fixture_atomic_config", "after", async()=>{assert.equal(getOption("fixture_atomic_config"),"before");throw new Error("fixture price failure");}),/fixture price failure/);
+  assert.equal(getOption("fixture_atomic_config"),"before");
+  failCommit = true;
+  await assert.rejects(()=>setOption("fixture_atomic_config", "after", async()=>{}),/fixture commit failure/);
+  assert.equal(getOption("fixture_atomic_config"),"before");
+  failCommit = false;
+  await setOption("fixture_atomic_config", "after", async()=>{assert.equal(getOption("fixture_atomic_config"),"before");});
+  assert.equal(getOption("fixture_atomic_config"),"after");
+  assert.equal(rolledBack,2); assert.equal(released,4);
+} finally { pool.getConnection = originalConnection; }
 for (const [id, preset] of Object.entries(presets)) {
   assert.doesNotThrow(() => validateCapabilities(preset), id);
   assert.ok(preset.sources.length > 0 && preset.sources.every(s => /^https:\/\//.test(s.url)), `${id} 缺少来源`);

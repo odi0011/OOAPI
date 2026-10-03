@@ -69,7 +69,7 @@ const importTemplate = {
   ],
 };
 
-export default function AdminPricingPage() {
+export default function AdminPricingPage({ refreshKey = 0 }) {
   const { message } = AntApp.useApp();
   const [items, setItems] = useState([]);
   const [catalogPending, setCatalogPending] = useState([]);
@@ -86,7 +86,7 @@ export default function AdminPricingPage() {
   const [syncing, setSyncing] = useState(false);
   useEffect(() => {
     API.get("/pricing/catalog-pending").then(list => setCatalogPending(Array.isArray(list) ? list : [])).catch(() => {});
-  }, []);
+  }, [refreshKey]);
 
   const load = useCallback(async () => {
     const token = begin();
@@ -108,7 +108,7 @@ export default function AdminPricingPage() {
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, refreshKey]);
 
   const columns = [
     {

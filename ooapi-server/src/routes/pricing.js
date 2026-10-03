@@ -6,11 +6,11 @@ import { adminRequired, optionalAuth } from "../middleware/auth.js";
 import { userDataVisibility } from "../services/user-data-visibility.js";
 import { sourceVendors } from "../services/model-sources.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
-import { invalidatePrices, loadPrices, DEFAULT_PRICES, describeRule, parsePriceTiers, storedPriceTiers } from "../services/pricing.js";
+import { invalidatePrices, loadPrices, DEFAULT_PRICES, describeRule, parsePriceTiers, storedPriceTiers, modelPricePreset, validateModelPricing, saveModelPricing } from "../services/pricing.js";
 import { pendingPricedModels } from "../services/pricing.js";
 import { modelRegistry, invalidateModelRegistry, canonicalModelName, modelIdentity, OFFICIAL_UNPRICED_MODELS } from "../services/models.js";
 import { syncUpstreamPrices, missingFromUpstream } from "../services/price-sync.js";
-import { modelCapabilities, modelCapabilityPresets, modelCapabilityDocumentation, saveModelCapabilities, REASONING_PARAMETERS } from "../services/model-capabilities.js";
+import { modelCapabilities, modelCapabilityPresets, modelCapabilityDocumentation, validateCapabilities, saveModelCapabilities, REASONING_PARAMETERS } from "../services/model-capabilities.js";
 
 const router = Router();
 
@@ -53,18 +53,33 @@ router.get(
 
 router.use(adminRequired);
 
-router.get("/capabilities", asyncHandler(async (_req, res) => {
+router.get("/capabilities", asyncHandler(async (req, res) => {
   const registry = await modelRegistry();
-  return ok(res, { items: [...new Map([...registry.values()].map(m => [m.model, { ...modelCapabilities(m.model), vendor: m.type, documentationUrl: modelCapabilityDocumentation(m.model, m.type) }])).values()], reasoningParameters: REASONING_PARAMETERS, presets: modelCapabilityPresets() });
+  const prices = await loadPrices(), requested = req.query.model ? canonicalModelName(req.query.model) : "";
+  return ok(res, {
+    items: [...new Map([...registry.values()].filter(m => !requested || m.model === requested).map(m => [m.model, {
+      ...modelCapabilities(m.model), vendor: m.type, documentationUrl: modelCapabilityDocumentation(m.model, m.type), pricing: prices.get(m.model) || null,
+    }])).values()],
+    reasoningParameters: REASONING_PARAMETERS,
+    presets: modelCapabilityPresets().map(p => ({ ...p, pricing: modelPricePreset(p.model) })),
+  });
 }));
 router.put("/capabilities", asyncHandler(async (req, res) => {
   const model = canonicalModelName(req.body?.model), registry = await modelRegistry();
   if (!registry.has(model)) return fail(res, "请先在渠道中登记模型", 400);
-  let value;
-  try { value = await saveModelCapabilities(model, req.body?.capabilities); }
+  let capabilities, pricing;
+  try {
+    capabilities = validateCapabilities(req.body?.capabilities);
+    if (req.body?.pricing !== undefined) {
+      pricing = validateModelPricing(req.body.pricing);
+      if (pricing.presetModel && !modelCapabilityPresets().some(p => p.model === pricing.presetModel)) throw new Error("价格预设不可用");
+    }
+  }
   catch (e) { return fail(res, e.message, 400); }
-  await writeLog({ user: req.user, type: LOG_TYPE.MANAGE, content: `更新模型能力：${model}` });
-  return ok(res, value);
+  const value = await saveModelCapabilities(model, capabilities, pricing ? connection => saveModelPricing(connection, model, registry.get(model).type, pricing) : undefined);
+  if (pricing) invalidatePrices();
+  await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `更新模型${pricing ? "能力与价格" : "能力"}：${model}` });
+  return ok(res, { ...value, pricing: (await loadPrices()).get(model) || null });
 }));
 
 // 闲时规则入参校验：只接受 JSON 字符串或对象，且必须是可解析的结构。

@@ -90,9 +90,9 @@ export function validateCapabilities(raw) {
   out.notes = String(raw.notes || "").slice(0, 1200);
   return out;
 }
-export async function saveModelCapabilities(model, raw) {
+export async function saveModelCapabilities(model, raw, writeRelated) {
   const value = validateCapabilities(raw);
-  await setOption(`model_caps:${canonicalModelName(model)}`, JSON.stringify(value));
+  await setOption(`model_caps:${canonicalModelName(model)}`, JSON.stringify(value), writeRelated);
   return modelCapabilities(model);
 }
 export function reasoningSelection(model, requested) {

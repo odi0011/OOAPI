@@ -317,6 +317,48 @@ export function invalidatePrices() {
   priceCacheAt = 0;
 }
 
+/** 预设取系统内置价目表，分档和定时调价也必须跟随，不能只复制三个基准价。 */
+export function modelPricePreset(model) {
+  const price = DEFAULT_PRICES.find(p => p.model === model);
+  if (!price) return null;
+  const { scheduledPrices, ...value } = price;
+  return structuredClone({ ...value, tiers: parsePriceTiers(storedPriceTiers(price)) });
+}
+
+export function validateModelPricing(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("模型价格必须是对象");
+  const value = {};
+  for (const [key, label] of [["input", "输入价格"], ["output", "输出价格"], ["cache", "缓存价格"]]) {
+    const n = Number(raw[key]);
+    if (!["number", "string"].includes(typeof raw[key]) || String(raw[key]).trim() === "" || !Number.isFinite(n) || n < 0 || n > 100000) throw new Error(`${label}应为 0–100000 的数字`);
+    value[key] = Number(n.toFixed(6));
+  }
+  if (raw.keepRules !== undefined && typeof raw.keepRules !== "boolean") throw new Error("价格规则开关无效");
+  value.keepRules = raw.keepRules !== false;
+  value.presetModel = raw.presetModel || "";
+  if (value.presetModel && !modelPricePreset(value.presetModel)) throw new Error("价格预设不存在");
+  return value;
+}
+
+/** 由能力保存事务调用；手动改基准价时保留当前附加规则，切换预设时完整替换。 */
+export async function saveModelPricing(connection, model, vendor, value) {
+  const preset = value.presetModel ? modelPricePreset(value.presetModel) : null;
+  const replaceRules = Boolean(preset) || !value.keepRules;
+  const rules = value.keepRules ? preset : null;
+  const ruleText = rules?.offpeakRule ? (typeof rules.offpeakRule === "string" ? rules.offpeakRule : JSON.stringify(rules.offpeakRule)) : null;
+  await connection.query(
+    `INSERT INTO model_prices (model, input_price, output_price, cache_price, price_tiers,
+      offpeak_input_price, offpeak_output_price, offpeak_cache_price, offpeak_rule, channel_type, remark, updated_time)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+     ON DUPLICATE KEY UPDATE input_price=VALUES(input_price), output_price=VALUES(output_price), cache_price=VALUES(cache_price),
+      ${replaceRules ? "price_tiers=VALUES(price_tiers), offpeak_input_price=VALUES(offpeak_input_price), offpeak_output_price=VALUES(offpeak_output_price), offpeak_cache_price=VALUES(offpeak_cache_price), offpeak_rule=VALUES(offpeak_rule)," : ""}
+      channel_type=VALUES(channel_type), remark=VALUES(remark), updated_time=VALUES(updated_time)`,
+    [model, value.input, value.output, value.cache, rules ? storedPriceTiers(rules) : null,
+      rules?.offpeakInput ?? null, rules?.offpeakOutput ?? null, rules?.offpeakCache ?? null, ruleText,
+      String(vendor || "").slice(0, 32), preset ? `模型配置：采用 ${preset.model} 价格预设，可手动调整` : "模型配置：手动定价", now()]
+  );
+}
+
 // ---------------------------------------------------------------------------
 // 分时（峰谷）定价
 // ---------------------------------------------------------------------------

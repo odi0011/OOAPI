@@ -240,12 +240,24 @@ export function getNumberOption(key) {
   return Number(getOption(key)) || 0;
 }
 
-export async function setOption(key, value) {
+export async function setOption(key, value, writeRelated) {
   const v = String(value);
-  await pool.query(
-    "INSERT INTO options (key_str, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)",
-    [key, v]
-  );
+  const sql = "INSERT INTO options (key_str, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)";
+  if (writeRelated) {
+    // 能力与价格共用一次事务；失败时不能提前发布 options 内存缓存。
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.query(sql, [key, v]);
+      await writeRelated(connection);
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally { connection.release(); }
+  } else {
+    await pool.query(sql, [key, v]);
+  }
   cache.set(key, v);
 }
 
