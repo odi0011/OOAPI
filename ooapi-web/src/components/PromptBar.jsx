@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Input } from "antd";
+import ChatMascot from "./ChatMascot";
 import { ModelIcon, VendorIcon } from "./VendorIcon";
 
 
@@ -76,6 +77,11 @@ export default function PromptBar({
   channelType = "",
   model,
   onModelChange,
+  reasoningLevels = [],
+  reasoningEffort = "",
+  onReasoningChange,
+  settingsSaving = false,
+  mascotState,
   chips = [],
   onRemoveChip,
   onPickImage,
@@ -107,8 +113,9 @@ export default function PromptBar({
   const [cmdOpen, setCmdOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [keyOpen, setKeyOpen] = useState(false);
+  const [reasoningOpen, setReasoningOpen] = useState(false);
 
-  const composerDisabled = disabled || !model;
+  const composerDisabled = disabled || settingsSaving || !model;
   const canSend = !composerDisabled && (value.trim().length > 0 || chips.length > 0);
 
   // 输入框自增高：使用 auto 准确度量，限制在 36px~200px 之间，超出平滑滚动
@@ -125,21 +132,21 @@ export default function PromptBar({
 
   // 点外面关菜单
   useEffect(() => {
-    if (!modelOpen && !cmdOpen && !attachOpen && !keyOpen) return undefined;
+    if (!modelOpen && !cmdOpen && !attachOpen && !keyOpen && !reasoningOpen) return undefined;
     const close = (e) => {
       // 点菜单本身或它的触发按钮都不关（触发按钮自己会切换开关，否则会「关了又开」）
       if (!e.target.closest?.("[data-promptbar-menu], .bui-attachwrap, .bui-modelwrap")) {
         setModelOpen(false);
         setCmdOpen(false);
         setAttachOpen(false);
-        setKeyOpen(false);
+        setKeyOpen(false); setReasoningOpen(false);
       }
     };
     const esc = (e) => {
       if (e.key === "Escape") {
         setModelOpen(false);
         setAttachOpen(false);
-        setKeyOpen(false);
+        setKeyOpen(false); setReasoningOpen(false);
       }
     };
     document.addEventListener("pointerdown", close);
@@ -148,7 +155,7 @@ export default function PromptBar({
       document.removeEventListener("pointerdown", close);
       document.removeEventListener("keydown", esc);
     };
-  }, [modelOpen, cmdOpen, attachOpen, keyOpen]);
+  }, [modelOpen, cmdOpen, attachOpen, keyOpen, reasoningOpen]);
 
   // 输入 / 开头即打开命令菜单（官方用法）
   useEffect(() => {
@@ -187,12 +194,23 @@ export default function PromptBar({
     setModelOpen(false);
     setCmdOpen(false);
     setAttachOpen(false);
-    setKeyOpen(false);
+    setKeyOpen(false); setReasoningOpen(false);
   };
   const curKey = keys.find((k) => k.id === keyId);
 
   return (
-    <div className="bui-promptbar" data-promptbar>
+    <div className="bui-promptbar" data-promptbar onKeyDown={e => {
+      const menu = e.target.closest?.("[data-promptbar-menu]");
+      if (!menu) return;
+      if (e.key === "Escape") menu.parentElement.querySelector("button")?.focus();
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+      const items = [...menu.querySelectorAll("button:not(:disabled)")];
+      if (!items.length) return;
+      e.preventDefault();
+      const current = items.indexOf(document.activeElement);
+      const next = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : (current + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      items[next].focus();
+    }}>
       {/* ---------- 命令菜单（/ 唤起，锚定在输入框上方） ---------- */}
       {cmdOpen && commands.length > 0 ? (
         <div className="bui-upmenu" data-promptbar-menu ref={cmdWrapRef}>
@@ -217,6 +235,7 @@ export default function PromptBar({
         </div>
       ) : null}
 
+      {mascotState && <ChatMascot perch state={mascotState}/>}
       <div className={`bui-composer${disabled ? " is-disabled" : ""}`}>
         {chips.length > 0 ? (
           <div className="bui-chips">
@@ -275,7 +294,7 @@ export default function PromptBar({
           className="bui-composer-input"
         />
 
-        {/* 第二行：左 = 附件 / 密钥，右 = 模型 / 发送。所有控件同高、垂直居中 */}
+        {/* 第二行：模型紧跟附件，推理模式跟随模型；发送固定在最右侧 */}
         <div className="bui-composer-bar">
           <div className="bui-attachwrap">
             <button
@@ -323,54 +342,13 @@ export default function PromptBar({
             ) : null}
           </div>
 
-          {/* 密钥：只有一把可用密钥时不显示（没得选就不打扰） */}
-          {keys.length > 1 ? (
-            <div className="bui-modelwrap">
-              <button
-                type="button"
-                className="bui-selbtn"
-                aria-label="选择密钥"
-                aria-expanded={keyOpen}
-                disabled={busy}
-                title="密钥决定可用模型与计费分组"
-                onClick={() => { const v = !keyOpen; closeAll(); setKeyOpen(v); }}
-              >
-                {KeyIcon}
-                <span className="nm2">{curKey?.name || "选择密钥"}</span>
-                <span className="caret">{ChevronIcon}</span>
-              </button>
-              {keyOpen ? (
-                <div className="bui-upmenu is-model" data-promptbar-menu>
-                  {keys.map((k) => (
-                    <button
-                      key={k.id}
-                      type="button"
-                      className="bui-upmenu-row is-model"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        setKeyOpen(false);
-                        onKey?.(k.id);
-                      }}
-                    >
-                      <span className="nm2">{k.name}</span>
-                      <span className="ds" style={{ flex: "0 1 auto" }}>{k.group_name || "公共池"}</span>
-                      <span className={`tick ${k.id === keyId ? "" : "is-off"}`}>{TickIcon}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          <span className="bui-composer-spacer" />
-
           {/* 模型选择：锚点绑在这个按钮的容器上，输入框长高也不会漂 */}
-          <div className="bui-modelwrap is-right" ref={modelWrapRef}>
+          <div className="bui-modelwrap is-model-select" ref={modelWrapRef}>
             <button
               type="button"
               aria-label="选择模型"
               aria-expanded={modelOpen}
-              disabled={busy || disabled}
+              disabled={busy || disabled || settingsSaving}
               onClick={() => { const v = !modelOpen; closeAll(); setModelOpen(v); }}
               className="bui-selbtn"
             >
@@ -396,7 +374,7 @@ export default function PromptBar({
                         type="button"
                         className="bui-upmenu-row is-model"
                         title={m.id}
-                        disabled={busy || disabled}
+                        disabled={busy || disabled || settingsSaving}
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={() => {
                           onModelChange?.(m.id, m.vendor);
@@ -416,6 +394,58 @@ export default function PromptBar({
               </div>
             ) : null}
           </div>
+
+          {reasoningLevels.length > 0 && <div className="bui-modelwrap is-reasoning">
+            <button type="button" className="bui-selbtn" aria-label="推理强度" aria-expanded={reasoningOpen} disabled={busy || disabled || settingsSaving} onClick={() => { const v = !reasoningOpen; closeAll(); setReasoningOpen(v); }}>
+              <span className="nm2">{reasoningEffort || "默认"}</span><span className="caret">{ChevronIcon}</span>
+            </button>
+            {reasoningOpen && <div className="bui-upmenu is-reasoning" data-promptbar-menu role="menu" aria-label="选择推理强度">
+              {["", ...reasoningLevels.filter(v => v !== "")].map(level => <button key={level} type="button" className="bui-upmenu-row" role="menuitemradio" aria-checked={level === reasoningEffort} disabled={busy || disabled || settingsSaving} onClick={() => { closeAll(); onReasoningChange?.(level); taRef.current?.focus(); }}>
+                <span className="nm2">{level || "模型默认"}</span><span className={`tick ${level === reasoningEffort ? "" : "is-off"}`}>{TickIcon}</span>
+              </button>)}
+            </div>}
+          </div>}
+          <span className="bui-composer-spacer" />
+          {/* 密钥：只有一把可用密钥时不显示（没得选就不打扰） */}
+          {keys.length > 1 ? (
+            <div className="bui-modelwrap is-key is-right">
+              <button
+                type="button"
+                className="bui-selbtn"
+                aria-label="选择密钥"
+                aria-expanded={keyOpen}
+                disabled={busy || disabled || settingsSaving}
+                title="密钥决定可用模型与计费分组"
+                onClick={() => { const v = !keyOpen; closeAll(); setKeyOpen(v); }}
+              >
+                {KeyIcon}
+                <span className="nm2">{curKey?.name || "选择密钥"}</span>
+                <span className="caret">{ChevronIcon}</span>
+              </button>
+              {keyOpen ? (
+                <div className="bui-upmenu is-model" data-promptbar-menu>
+                  {keys.map((k) => (
+                    <button
+                      key={k.id}
+                      type="button"
+                      className="bui-upmenu-row is-model"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setKeyOpen(false); setReasoningOpen(false);
+                        onKey?.(k.id);
+                      }}
+                    >
+                      <span className="nm2">{k.name}</span>
+                      <span className="ds" style={{ flex: "0 1 auto" }}>{k.group_name || "公共池"}</span>
+                      <span className={`tick ${k.id === keyId ? "" : "is-off"}`}>{TickIcon}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+
 
           {busy ? (
             <button type="button" aria-label="停止生成" title="停止生成" onClick={onStop} className="bui-cbtn is-stop">

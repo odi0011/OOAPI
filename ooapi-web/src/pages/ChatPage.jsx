@@ -1,5 +1,5 @@
 import AgentTrajectory, { ToolApproval } from "../components/AgentTrajectory";
-import ChatMascot from "../components/ChatMascot";
+import ChatRunFlow from "../components/ChatRunFlow";
 import ChatScene from "../components/ChatScene";
 import OdAmount from "../components/OdAmount";
 // 对话页（原「对话工作台」）
@@ -14,7 +14,7 @@ import OdAmount from "../components/OdAmount";
 // 刷新页面不丢；本页只负责渲染与把用户操作发回服务端。
 import { userDataVisibility } from "../services/visibility";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { App as AntApp, Alert, Button, Checkbox, Drawer, Dropdown, Form, Input, Modal, Popconfirm, Tooltip, Radio, Select } from "antd";
+import { App as AntApp, Alert, Button, Checkbox, Drawer, Dropdown, Form, Input, Modal, Popconfirm, Tooltip, Radio } from "antd";
 import {
   CopyOutlined,
   SelectOutlined,
@@ -141,7 +141,6 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
   // 待办来自 todowrite 工具的结果（落在 tool part 上，刷新后依然在），或流式期间的 todo 事件
   const todo = parts.filter((p) => Array.isArray(p.todo)).slice(-1)[0]?.todo || msg.todo;
   const hasText = textParts.some((p) => (p.text || "").trim());
-  const working = Boolean(streaming) && !hasText;
   const inputKnown = knownNumber(msg.tokens?.prompt);
   const outputKnown = knownNumber(msg.tokens?.completion);
   const firstTokenText = knownNumber(msg.firstTokenMs) && (Number(msg.firstTokenMs) > 0 || hasText || (outputKnown && Number(msg.tokens.completion) > 0)) ? formatDuration(msg.firstTokenMs) : "—";
@@ -178,8 +177,6 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
             ))}
           </div>
         </StreamingText>
-      ) : working ? (
-        <div className="chat-response-wait" role="status"><span/><span/><span/></div>
       ) : !streaming && !errors.length && !reasoning.length && !tools.length ? <span className="ui-msg-empty">本轮没有返回文本内容。</span> : null}
 
       {!streaming ? (
@@ -325,20 +322,20 @@ function NameDialog({ dialog, saving, error, onClose, onSave }) {
 }
 
 /* ============================ 会话指令 / 设定面板 ============================ */
-function SettingsSheet({ open, onClose, session, settings, onSettings, saving, quotaText, visibility, modelCaps }) {
+function SettingsSheet({ open, onClose, session, settings, onSettings, saving, quotaText, visibility }) {
   const [form] = Form.useForm();
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (open) {
       form.resetFields();
-      form.setFieldsValue({ title: session?.title || "", instructions: settings?.instructions || "", permissionMode: settings?.permissionMode || "auto", reasoningEffort: settings?.reasoningEffort || "" });
+      form.setFieldsValue({ title: session?.title || "", instructions: settings?.instructions || "", permissionMode: settings?.permissionMode || "auto" });
       setError("");
     }
   }, [open, session?.id, session?.title, settings?.instructions, form]);
 
-  const save = async ({ title, instructions = "", permissionMode, reasoningEffort }) => {
-    const patch = { settings: { permissionMode, reasoningEffort: reasoningEffort || "" } };
+  const save = async ({ title, instructions = "", permissionMode }) => {
+    const patch = { settings: { permissionMode } };
     if (title.trim() && title.trim() !== session?.title) patch.title = title.trim();
     if (instructions !== (settings?.instructions || "")) patch.instructions = instructions;
     setError("");
@@ -364,7 +361,6 @@ function SettingsSheet({ open, onClose, session, settings, onSettings, saving, q
           <Form.Item name="permissionMode" label="工具执行权限">
             <Radio.Group options={[{ label: "自动执行", value: "auto" }, { label: "执行前询问", value: "ask" }]}/>
           </Form.Item>
-          <Form.Item name="reasoningEffort" label="思考强度"><Select options={[{value:"",label:"模型默认"},...(modelCaps?.reasoning?.levels || []).map(value=>({value,label:value}))]}/></Form.Item>
         </Form>
 
 
@@ -431,6 +427,8 @@ export default function ChatPage() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [savingSheet, setSavingSheet] = useState(false);
+  const [composerSaving, setComposerSaving] = useState(false);
+  const composerSaveRef = useRef(false);
   const [nameDialog, setNameDialog] = useState(null);
   const [savingName, setSavingName] = useState(false);
   const [nameError, setNameError] = useState("");
@@ -1080,7 +1078,7 @@ export default function ChatPage() {
   /* ---------- 运行一轮 ---------- */
   const send = useCallback((overrideText, retryPayload) => {
     const current = sessionRef.current;
-    if (!metaReadyRef.current || busyRef.current || loadingSession || readingRef.current || connectionError || !current || !curModel) return;
+    if (!metaReadyRef.current || busyRef.current || composerSaveRef.current || loadingSession || readingRef.current || connectionError || !current || !curModel) return;
     const draft = draftRef.current;
     const draftVersion = draftVersionRef.current;
     const text = String(retryPayload?.text ?? overrideText ?? draft.input).trim();
@@ -1267,20 +1265,20 @@ export default function ChatPage() {
   };
 
   /* ---------- 设定改动 ---------- */
-  const patchSettings = useCallback(
-    async (key, value) => {
+  const setReasoning = useCallback(
+    async (value) => {
       const current = sessionRef.current;
-      if (!current) return;
-      const next = { ...(current.settings || {}), [key]: value };
-      setSession((prev) => ({ ...prev, settings: next })); // 先乐观更新，界面不卡
-      await patchSession({ settings: next }, { silent: true });
+      if (!current || busyRef.current || composerSaveRef.current || (value && !curModel?.capabilities?.reasoning?.levels?.includes(value))) return;
+      composerSaveRef.current = true; setComposerSaving(true);
+      try { await patchSession({ settings: { ...(current.settings || {}), reasoningEffort: value } }, { silent: true }); }
+      finally { composerSaveRef.current = false; setComposerSaving(false); }
     },
-    [patchSession]
+    [patchSession, curModel]
   );
 
   const onKeyPick = useCallback(
     (id) => {
-      if (busyRef.current) return;
+      if (busyRef.current || composerSaveRef.current) return;
       // 切密钥 = 换一套路由身份：可用模型会变，重新拉 meta 并校正当前模型。
       // 同时记住它是哪一把：刷新后不该被服务端的默认选择顶掉（见挂载处的注释）。
       setKeyId(id);
@@ -1295,15 +1293,16 @@ export default function ChatPage() {
   );
 
   const setModel = useCallback(
-    (id, channelType = "") => {
-      if (!metaReadyRef.current || busyRef.current) return;
+    async (id, channelType = "") => {
+      if (!metaReadyRef.current || busyRef.current || composerSaveRef.current) return;
       const m = models.find((x) => x.id === id && (!channelType || x.vendor === channelType));
       if (!m) return;
       const patch = { model: id, settings: { ...(sessionRef.current?.settings || {}), channelType: "", reasoningEffort: "" } };
       // 切到不支持联网的模型时关掉搜索，避免继续带着无效参数请求上游
       if (m?.supportsSearch === false) patch.settings.search = false;
-      setSession((prev) => (prev ? { ...prev, ...patch, settings: patch.settings || prev.settings } : prev));
-      patchSession(patch, { silent: true });
+      composerSaveRef.current = true; setComposerSaving(true);
+      try { await patchSession(patch, { silent: true }); }
+      finally { composerSaveRef.current = false; setComposerSaving(false); }
     },
     [models, patchSession]
   );
@@ -1547,6 +1546,7 @@ export default function ChatPage() {
             </div>
           </div>
           <div className="ui-chat2-head-actions">
+            {!loadingSession && <ChatRunFlow key={session?.id || "empty"} message={msgs.findLast(m => m.role === "assistant")}/>}
             <Tooltip title="命令面板（Ctrl/⌘ + K）">
               <button type="button" className="ui-chat2-iconbtn" aria-label="命令面板" onClick={() => setPaletteOpen(true)}>
                 <SearchOutlined />
@@ -1564,6 +1564,7 @@ export default function ChatPage() {
             </Tooltip>
           </div>
         </header>
+
 
         {connectionError ? <Alert className="ui-chat2-connection-error" type="error" showIcon message={connectionError}
           action={<Button size="small" onClick={() => openSession(sessionRef.current?.id)}>恢复连接</Button>} /> : null}
@@ -1671,8 +1672,12 @@ export default function ChatPage() {
 
           <div className="ui-chat2-composer-inner">
             {msgs.filter(m => m.streaming).flatMap(m => m.parts || []).filter(p => p.type === "approval" && p.status === "pending").map(p => <ToolApproval key={p.id} part={p} active={busy} onDecide={(id, decision) => chatApi.approve(session.id, id, decision)}/>)}
-            <ChatMascot perch state={busy ? msgs.some((m) => m.streaming && m.parts?.some((p) => p.type === "approval" && p.status === "pending")) ? "waiting" : msgs.some((m) => m.streaming && m.parts?.some((p) => p.type === "tool" && p.status === "running")) ? "working" : "thinking" : input ? "attentive" : "idle"}/>
             <PromptBar
+              mascotState={busy ? msgs.some((m) => m.streaming && m.parts?.some((p) => p.type === "approval" && p.status === "pending")) ? "waiting" : msgs.some((m) => m.streaming && m.parts?.some((p) => p.type === "tool" && p.status === "running")) ? "working" : "thinking" : input ? "attentive" : "idle"}
+              reasoningLevels={curModel?.capabilities?.reasoning?.levels || []}
+              reasoningEffort={settings.reasoningEffort || ""}
+              onReasoningChange={setReasoning}
+              settingsSaving={composerSaving}
               textareaRef={taRef}
               value={input}
               onChange={(value) => { draftVersionRef.current += 1; setInput(value); }}
@@ -1740,7 +1745,6 @@ export default function ChatPage() {
       />
 
       <SettingsSheet
-        modelCaps={curModel?.capabilities}
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
         meta={meta}

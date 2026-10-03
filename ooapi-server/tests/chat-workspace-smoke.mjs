@@ -40,6 +40,17 @@ try {
   page.on("pageerror", e => errors.push(e.message));
   await page.goto(BASE + "/chat?s=" + session.id, { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "仅允许这次", exact: true }).waitFor();
+  await page.locator(".chat-run-flow.is-open").waitFor();
+  check(await page.locator(".chat-run-flow [aria-current=step]").innerText().then(t => t.includes("账号")), "浮窗跟随真实的账号工具等待阶段");
+  check(await page.locator(".chat-run-flow input,.chat-run-flow select,.agent-flow-inspector").count() === 0, "执行流程只读且位于对话内");
+  await page.waitForTimeout(800);
+  const widths = await page.locator(".execution-step.is-running .execution-pill").first().evaluate(async el => {
+    const samples = [];
+    for (let i = 0; i < 24; i++) { samples.push(el.getBoundingClientRect().width); await new Promise(r => setTimeout(r, 80)); }
+    return samples;
+  });
+  check(Math.min(...widths) > 130 && Math.max(...widths) - Math.min(...widths) < 1, "执行胶囊稳定，不循环变窄或闪动");
+  check(await page.locator(".execution-pill-toggle>.lele-sparks").count() === 0, "粒子跟随乐乐而非文本尾部");
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "仅允许这次", exact: true }).click();
   await stream;
@@ -49,8 +60,22 @@ try {
   check(await page.locator(".md-table th").count() >= 2, "表格按统一样式渲染");
   check(await page.locator(".oo-code-lights").count() >= 1, "代码使用用户提供的三灯卡片");
   check(await page.locator(".execution-detail.is-open").count() === 0, "完成胶囊自动收回");
-  await page.locator(".execution-pill").first().click();
+  await page.locator(".execution-pill-toggle").first().click();
   check(await page.locator(".execution-detail.is-open").count() === 1, "各项执行胶囊可独立展开");
+  check(await page.locator(".execution-pill .execution-detail.is-open").count() === 1, "思考与工具详情在胶囊内部展开");
+  check(await page.locator(".execution-detail .tool-approval-args").count() === 0, "工具详情不用原始参数表");
+  const align = await page.locator(".ui-msg-ai").last().evaluate(el => ({ pill:el.querySelector(".execution-pill").getBoundingClientRect().x, body:el.querySelector(".prose").getBoundingClientRect().x }));
+  check(Math.abs(align.pill - align.body) < 1, "胶囊与回答共享左边线");
+  const positions = await page.locator(".bui-composer-bar").evaluate(el => ({ plus:el.querySelector(".bui-attachwrap").getBoundingClientRect().right, model:el.querySelector(".is-model-select").getBoundingClientRect().left }));
+  check(positions.model >= positions.plus && positions.model - positions.plus < 10, "模型紧邻附件按钮");
+  const meta = (await api(`/meta?keyId=${key.id}`)).data;
+  const levels = meta.models.find(m => m.id === "deepseek-flash")?.capabilities?.reasoning?.levels || [];
+  if (levels.length) {
+    await page.getByRole("button", { name: "推理强度", exact: true }).click();
+    await page.getByRole("menuitemradio", { name: levels.at(-1), exact: true }).click();
+    await page.waitForFunction(value => document.querySelector(".is-reasoning>.bui-selbtn")?.textContent.includes(value), levels.at(-1));
+    check((await api(`/sessions/${session.id}`)).data.session.settings.reasoningEffort === levels.at(-1), "输入栏选择的推理强度保存到会话");
+  }
   await fs.mkdir("/var/tmp/ooapi-chat-evidence", { recursive: true });
   await page.screenshot({ animations: "disabled", path: "/var/tmp/ooapi-chat-evidence/desktop.png", fullPage: true });
   await page.getByRole("button", { name: "会话设定", exact: true }).click();

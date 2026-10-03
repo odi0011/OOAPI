@@ -18,7 +18,6 @@ import AdminChannelsPage from "./pages/AdminChannelsPage";
 import AdminGroupsPage from "./pages/AdminGroupsPage";
 import AdminPricingPage from "./pages/AdminPricingPage";
 import ModelManagementPage from "./pages/ModelManagementPage";
-import AgentFlowPage from "./pages/AgentFlowPage";
 import MonitorPage from "./pages/MonitorPage";
 import ProfileViewPage from "./pages/ProfileViewPage";
 import CommunityPage from "./pages/CommunityPage";
@@ -113,7 +112,7 @@ export default function App() {
           <Route path="/admin/channel" element={<RequireAuth admin><AdminChannelsPage /></RequireAuth>} />
           <Route path="/admin/groups" element={<RequireAuth admin><AdminGroupsPage /></RequireAuth>} />
           <Route path="/admin/pricing" element={<RequireAuth admin><ModelManagementPage /></RequireAuth>} />
-          <Route path="/admin/agent" element={<RequireAuth admin><AgentFlowPage /></RequireAuth>} />
+          <Route path="/admin/agent" element={<RequireAuth><Navigate to="/chat" replace /></RequireAuth>} />
         <Route path="/admin/users" element={<RequireAuth admin><AdminUsersPage /></RequireAuth>} />
         <Route path="/admin/settings" element={<RequireAuth admin><AdminSettingsPage /></RequireAuth>} />
         <Route path="/admin/monitor" element={<RequireAuth admin><MonitorPage /></RequireAuth>} />

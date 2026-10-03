@@ -39,7 +39,7 @@ const ROUTES = [
   ["/admin/channel", "渠道管理"],
   ["/admin/groups", "分组管理"],
   ["/admin/pricing", "模型管理"],
-  ["/admin/agent", "智能体编排"],
+  ["/admin/agent", "旧编排地址转入对话"],
   ["/admin/users", "用户管理"],
   ["/admin/settings", "系统设置"],
   ["/admin/monitor", "运维监控"],

@@ -112,3 +112,61 @@
 .chat-mascot.is-perched.gesture-paws>svg {clip-path:inset(0 0 48px 0);}
 .chat-mascot.is-perched.gesture-peek>svg {clip-path:inset(0 0 32px 0);}
 .chat-mascot.gesture-sleep>svg {clip-path:inset(0 0 31px 0);}
+/* 独立测量自然宽度：测量层不跟随胶囊的过渡尺寸。 */
+.ui-chat2 .ui-chat2-thread-inner {width:100%;box-sizing:border-box;}
+.ui-chat2 .ui-msg-ai {min-width:0;}
+.ui-chat2 .ui-chat2-composer-foot {padding-top:24px;}
+.ui-chat2 .bui-promptbar {position:relative;}
+.agent-trajectory:empty {display:none;}
+.execution-step {position:relative;}
+.execution-measure {position:absolute;visibility:hidden;pointer-events:none;display:inline-flex;align-items:center;gap:8px;width:max-content;max-width:100%;padding:4px 12px 4px 7px;box-sizing:border-box;border:1px solid transparent;}
+.execution-mascot-space {width:28px;height:28px;flex-shrink:0;}
+.execution-pill {box-sizing:border-box;padding:0;border-radius:20px;cursor:default;transition:width .45s cubic-bezier(.22,1.12,.4,1),border-radius .35s,background .25s;animation:lele-enter .4s cubic-bezier(.2,1.2,.4,1);}
+.execution-pill.is-open {border-radius:18px;}
+.execution-pill-toggle {display:flex;align-items:center;gap:8px;width:100%;min-width:0;min-height:36px;padding:4px 12px 4px 7px;box-sizing:border-box;border:0;color:inherit;background:transparent;cursor:pointer;text-align:left;}
+.execution-pill-toggle:focus-visible {outline:2px solid var(--accent);outline-offset:-3px;border-radius:18px;}
+.execution-pill-label {min-width:0;max-width:calc(100% - 36px);line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.execution-pill-preview {animation:none;}
+.execution-detail {visibility:hidden;transition:grid-template-rows .38s cubic-bezier(.2,1.15,.4,1),visibility .38s;}
+.execution-detail.is-open {visibility:visible;}
+.execution-detail>div {max-height:300px;}
+.execution-detail.is-open>div {overflow-y:auto;overflow-x:hidden;margin:0 14px 14px 43px;padding:8px 0 0;border-left:0;border-top:1px solid var(--line);}
+.execution-thought,.execution-detail .trajectory-output {margin:0;padding:0;background:transparent;border:0;max-height:none;overflow:visible;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.8;color:var(--ink-2);}
+.execution-task>span {font-size:11px;color:var(--ink-3);}
+.execution-task>p {margin:4px 0 10px;overflow-wrap:anywhere;font-size:12px;}
+.chat-mascot {position:relative;}
+.chat-mascot>.lele-sparks {position:absolute;inset:-2px;width:auto;height:auto;pointer-events:none;}
+.lele-sparks i {left:4px;top:12px;width:2px;height:2px;animation-duration:2s;}
+.lele-sparks i:nth-child(2) {left:auto;right:3px;top:17px;animation-delay:.65s;}
+.lele-sparks i:nth-child(3) {left:50%;top:5px;animation-delay:1.3s;}
+/* 锚点负责位置，猫负责动作；切换前缩回边缘，不横穿输入内容。 */
+.lele-perch-anchor {position:absolute;z-index:3;width:58px;height:58px;pointer-events:none;transform-origin:50% 50%;transition:opacity .25s;}
+.lele-perch-anchor.is-hiding {opacity:0;}
+.lele-perch-anchor.at-top {left:calc(70% - 29px);top:-39px;}
+.lele-perch-anchor.at-left {left:-27px;top:3px;transform:rotate(-90deg) scale(.85);}
+.lele-perch-anchor.at-right {right:-27px;top:3px;transform:rotate(90deg) scale(.85);}
+.lele-perch-anchor.at-bottom {left:calc(34% - 29px);bottom:-37px;transform:rotate(180deg) scale(.8);}
+.ui-chat2 .chat-mascot.is-perched {position:relative;left:auto;right:auto;top:auto;width:58px;height:58px;}
+.chat-mascot.gesture-wink .cat-eyes {animation:cat-blink 1.8s infinite;}
+.chat-mascot.gesture-look .cat-head {animation:cat-peek 2.6s ease-in-out infinite;transform-origin:16px 19px;}
+.chat-mascot.gesture-curl>svg {transform:translateY(9px) rotate(-16deg) scale(1.06,.8);}
+.chat-mascot[data-motion="off"] * {animation-play-state:paused!important;}
+.ui-chat2 .bui-composer-bar .bui-modelwrap {min-width:0;flex:0 1 auto;}
+.ui-chat2 .bui-composer-bar .is-model-select {max-width:280px;}
+.ui-chat2 .bui-composer-bar .bui-selbtn {min-width:0;max-width:100%;}
+.ui-chat2 .bui-composer-bar .is-reasoning {flex:0 0 auto;max-width:110px;}
+.ui-chat2 .bui-composer-bar .is-reasoning>.bui-selbtn {background:var(--inset);border-radius:8px;}
+.ui-chat2 .bui-composer-bar .is-key {max-width:160px;}
+.ui-chat2 .bui-composer-spacer {display:block;flex:1;}
+.ui-chat2 .bui-modelwrap>.bui-upmenu.is-reasoning {left:0;right:auto;width:150px;}
+.ui-chat2 .bui-modelwrap.is-model-select>.bui-upmenu {max-width:min(300px,calc(100vw - 100px));}
+.ui-chat2 .bui-cbtn,.ui-chat2 .bui-attachwrap {flex-shrink:0;}
+@keyframes lele-enter {from{transform:translateY(3px) scale(.97)}to{transform:none}}
+@media(max-width:700px) {
+  .ui-chat2 .bui-composer-bar .is-model-select {flex:0 1 auto;max-width:45%;}
+  .ui-chat2 .bui-composer-bar .bui-selbtn {padding:0 4px;gap:4px;}
+  .ui-chat2 .bui-composer-bar .is-key>.bui-selbtn .nm2,.ui-chat2 .bui-composer-bar .is-key>.bui-selbtn .caret {display:none;}
+  .ui-chat2 .bui-modelwrap>.bui-upmenu.is-reasoning {left:auto;right:0;}
+  .lele-perch-anchor.at-left {left:-20px;}.lele-perch-anchor.at-right {right:-20px;}
+}
+@media(prefers-reduced-motion:reduce) {.execution-pill,.execution-pill *,.execution-detail,.lele-perch-anchor{animation:none!important;transition:none!important;}}
