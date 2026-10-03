@@ -4,33 +4,48 @@ import { OdText } from "./OdAmount";
 
 import { capsuleGesture, executionEntries, presentation, taskSummary, toolName } from "./executionPresentation";
 
-function ExecutionPill({ part, active, open, hidden, onOpen }) {
+function ExecutionPill({ part, active, open, hidden, layout, onOpen, onCollapsed }) {
   const [visited, setVisited] = useState(false);
-  const [width, setWidth] = useState(null);
-  const measureRef = useRef(null), stepRef = useRef(null);
+  const measureRef = useRef(null), stepRef = useRef(null), pillRef = useRef(null);
+  const focusedRef = useRef(false);
   const detailId = useId();
   const { thought, failed, state, label } = presentation(part, active);
   const summary = taskSummary(part);
   const preview = active && !open ? String(thought ? part.text || "" : summary).replace(/\s+/g, " ") : "";
   useEffect(() => { if (!active) onOpen(false); }, [active]);
-  // 测量独立的自然宽度，绝不能观察正在过渡的胶囊，否则会循环缩小、反复闪动。
+  // 同行隐藏后用整行承接详情，从原点击位置向空处展开；宽度与左边距同步变化，
+  // 始终包含原来的按钮范围，避免重排凭空触发 pointerleave 又立即收起。
+  // 测量层独立于动画，ResizeObserver 不观察正在变化的胶囊。
   useLayoutEffect(() => {
+    const pill = pillRef.current, focused = !!layout;
+    const naturalWidth = () => Math.ceil(Math.min(stepRef.current.parentElement.clientWidth, measureRef.current.getBoundingClientRect().width || 180));
+    if (focused !== focusedRef.current) {
+      pill.style.transition = "none";
+      pill.style.width = `${layout?.width || naturalWidth()}px`;
+      pill.style.marginLeft = `${layout?.left || 0}px`;
+      // 在同一帧建立起点，不能等下一帧才补位置，否则鼠标已离开原按钮。
+      pill.getBoundingClientRect();
+      pill.style.transition = "";
+      focusedRef.current = focused;
+    }
     const update = () => {
       if (stepRef.current?.hidden) return;
-      const natural = measureRef.current?.getBoundingClientRect().width || 180;
-      const available = stepRef.current?.parentElement?.clientWidth || natural;
-      setWidth(Math.ceil(Math.min(available, open ? Math.max(natural, 520) : natural)));
+      const natural = naturalWidth(), available = stepRef.current.parentElement.clientWidth;
+      const width = Math.min(available, open ? Math.max(natural, 520, (layout?.left || 0) + (layout?.width || 0)) : natural);
+      pill.style.width = `${width}px`;
+      pill.style.marginLeft = `${layout && !open ? Math.min(layout.left, Math.max(0, available - width)) : 0}px`;
     };
     const observer = new ResizeObserver(update);
     observer.observe(measureRef.current); observer.observe(stepRef.current.parentElement); update();
     return () => observer.disconnect();
-  }, [open]);
+  }, [open, layout]);
   const tool = part.tool || part.type || "other";
-  return <div ref={stepRef} hidden={hidden} data-execution-id={part.id} data-execution-type={part.type} data-execution-tool={tool} className={`execution-step ${active ? "is-running" : "is-settled"} ${failed ? "is-failed" : ""}`}>
+  return <div ref={stepRef} hidden={hidden} data-execution-id={part.id} data-execution-type={part.type} data-execution-tool={tool} className={`execution-step ${active ? "is-running" : "is-settled"} ${failed ? "is-failed" : ""} ${layout ? "is-focused" : ""}`}>
     <span ref={measureRef} className="execution-measure" aria-hidden="true"><span className="execution-mascot-space"/><span className="execution-pill-label">{label}</span>{preview && <span className="execution-pill-preview">{preview}</span>}</span>
-    <div className={`execution-pill ${open ? "is-open" : ""}`} style={width ? { width } : undefined}
+    <div ref={pillRef} className={`execution-pill ${open ? "is-open" : ""}`}
       onPointerLeave={e => { if (e.pointerType !== "touch") onOpen(false); }}
       onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) onOpen(false); }}
+      onTransitionEnd={e => { if (e.target === e.currentTarget && e.propertyName === "width" && !open) onCollapsed(); }}
       onKeyDown={e => { if (e.key === "Escape") { onOpen(false); e.stopPropagation(); } }}>
       <button type="button" className="execution-pill-toggle" aria-expanded={open} aria-controls={detailId} onClick={() => { setVisited(true); onOpen(!open, stepRef.current); }}>
         <ChatMascot state={state} gesture={capsuleGesture(part)}/><span className="execution-pill-label">{label}</span>{preview && <span className="execution-pill-preview">{preview}</span>}
@@ -45,21 +60,38 @@ function ExecutionPill({ part, active, open, hidden, onOpen }) {
 
 export default function AgentTrajectory({ parts = [], streaming, finalTextId }) {
   const [expanded, setExpanded] = useState(null);
+  const trajectoryRef = useRef(null);
   const entries = executionEntries(parts, streaming, finalTextId);
   const change = (id, open, node) => {
-    if (!open) { setExpanded(previous => previous?.id === id ? null : previous); return; }
+    if (!open) { setExpanded(previous => previous?.id === id && previous.open ? { ...previous, open: false } : previous); return; }
+    if (expanded?.id === id) { setExpanded({ ...expanded, open: true }); return; }
     // 在展开改变宽度之前记下同行记录；下面的行保持可见，不用互相挤压。
     const top = node.offsetTop;
     const peers = [...node.parentElement.children].filter(n => n !== node && Math.abs(n.offsetTop - top) < 2).map(n => n.dataset.executionId);
-    setExpanded({ id, peers });
+    const left = node.getBoundingClientRect().left - node.parentElement.getBoundingClientRect().left;
+    const width = node.querySelector(".execution-pill").getBoundingClientRect().width;
+    setExpanded({ id, peers, left, width, open: true });
   };
+  // 收回动画结束才恢复同行，避免其他按钮在逐帧变窄的详情旁反复换行。
+  const collapsed = id => setExpanded(previous => previous?.id === id && !previous.open ? null : previous);
   useEffect(() => {
-    const close = () => setExpanded(null);
-    window.addEventListener("resize", close);
-    return () => window.removeEventListener("resize", close);
+    if (!expanded || expanded.open) return;
+    const timer = setTimeout(() => collapsed(expanded.id), window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 500);
+    return () => clearTimeout(timer);
+  }, [expanded]);
+  useLayoutEffect(() => {
+    let width = trajectoryRef.current.getBoundingClientRect().width;
+    // 只有宽度变化会让原来的同行划分失效；地址栏/键盘等高度变化不应打断阅读。
+    const observer = new ResizeObserver(([entry]) => {
+      if (Math.abs(entry.contentRect.width - width) < 1) return;
+      width = entry.contentRect.width;
+      setExpanded(null);
+    });
+    observer.observe(trajectoryRef.current);
+    return () => observer.disconnect();
   }, []);
   if (streaming && !entries.some(p => p.active) && !parts.some(p => p.type === "text" && p.id === finalTextId)) entries.push({part:{type:"reasoning",id:"waiting"},active:true});
-  return <section className="agent-trajectory" aria-label="乐乐的执行过程">
-    {entries.map(({part, active}, i) => <ExecutionPill key={part.id || i} part={part} active={active} open={expanded?.id === part.id} hidden={expanded?.peers.includes(part.id)} onOpen={(open, node) => change(part.id, open, node)}/>)}
+  return <section ref={trajectoryRef} className="agent-trajectory" aria-label="乐乐的执行过程">
+    {entries.map(({part, active}, i) => <ExecutionPill key={part.id || i} part={part} active={active} open={expanded?.id === part.id && expanded.open} layout={expanded?.id === part.id ? expanded : null} hidden={expanded?.peers.includes(part.id)} onOpen={(open, node) => change(part.id, open, node)} onCollapsed={() => collapsed(part.id)}/>)}
   </section>;
 }

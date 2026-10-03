@@ -48,6 +48,63 @@ try {
  check(await trajectory.locator(".execution-detail.is-open").count()===0 && await trajectory.locator("[hidden]").count()===0,"移出胶囊后自动收回并恢复同行");
  await trajectory.locator(".execution-pill-toggle").first().focus();await page.keyboard.press("Enter");await page.keyboard.press("Escape");
  check(await trajectory.locator(".execution-detail.is-open").count()===0,"键盘可展开并按 Escape 收回");
+ await page.waitForTimeout(550);
+ // 必须逐枚点：只测首枚发现不了隐藏前置同伴后，按钮移走触发 pointerleave 的回归。
+ const exerciseCapsules=async(group,label)=>{
+  const buttons=group.locator(".execution-pill-toggle"),count=await buttons.count();
+  for(let i=0;i<count;i++) {
+   await page.mouse.move(1,90);await group.evaluate(n=>n.scrollIntoView({block:"center"}));await page.waitForTimeout(100);
+   const button=buttons.nth(i),step=group.locator(".execution-step").nth(i);
+   await button.scrollIntoViewIfNeeded();
+   const original=await group.evaluate((n,i)=>{
+    const nodes=[...n.children],selected=nodes[i];return {peers:nodes.filter(c=>c!==selected&&Math.abs(c.offsetTop-selected.offsetTop)<2).map(c=>c.dataset.executionId),boxes:nodes.map(c=>({x:c.offsetLeft,y:c.offsetTop}))};
+   },i);
+   // 用真实鼠标点击并逐帧检查命中区域，不能用 evaluate().click() 绕过浏览器指针事件。
+   await button.evaluate(n=>n.addEventListener("click",e=>{
+    window.__capsuleFrames=[];const pill=n.closest(".execution-pill"),start=performance.now();
+    const sample=()=>{const r=pill.getBoundingClientRect();window.__capsuleFrames.push({open:pill.classList.contains("is-open"),inside:e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom});if(performance.now()-start<650)requestAnimationFrame(sample);};requestAnimationFrame(sample);
+   },{once:true}));
+   await button.click();await page.waitForTimeout(1000);
+   const frames=await page.evaluate(()=>window.__capsuleFrames);
+   assert.ok(frames.length>10&&frames.every(f=>f.open&&f.inside),`${label} 第 ${i+1} 枚展开动画不得移走鼠标命中区：${JSON.stringify(frames)}`);
+   assert.equal(await button.getAttribute("aria-expanded"),"true",`${label} 第 ${i+1} 枚停留一秒仍展开`);
+   assert.ok(await step.evaluate(n=>Math.abs(n.querySelector(".execution-pill").getBoundingClientRect().left-n.parentElement.getBoundingClientRect().left)<1),"展开详情与回答保持同一左边线");
+   assert.deepEqual((await group.locator("[hidden]").evaluateAll(ns=>ns.map(n=>n.dataset.executionId))).sort(),original.peers.sort());
+   const detail=step.locator(".execution-detail.is-open>div"),box=await detail.boundingBox();assert.ok(box&&box.height>20,"详情实际占有可读高度");
+   // 从原点击点连续移入正文，经过动画后的按钮边缘，详情不能提前关闭。
+   await page.mouse.move(box.x+Math.min(60,box.width/2),box.y+Math.min(25,box.height/2),{steps:12});await page.waitForTimeout(100);
+   assert.equal(await button.getAttribute("aria-expanded"),"true","鼠标连续进入详情仍展开");
+   if(i===0) {await page.mouse.wheel(0,180);await page.waitForTimeout(120);assert.ok(await detail.evaluate(n=>n.scrollTop>0),"长思考详情可实际滚动阅读");}
+   if(i===count-1||i===3) {
+    // 会话已有自己的滚动容器，拍摄真实视口；fullPage 会临时改动浏览器视口与命中环境。
+    await page.screenshot({path:OUT+`/expanded-${label}-${i}.png`});
+    assert.equal(await button.getAttribute("aria-expanded"),"true","截图后的详情仍展开，不能只验证截图之前的状态");
+   }
+   await page.mouse.move(1,90,{steps:8});await page.waitForTimeout(650);
+   assert.equal(await group.locator(".execution-detail.is-open,[hidden]").count(),0,"真正移出后恢复同行");
+   const restored=await group.evaluate(n=>[...n.children].map(c=>({x:c.offsetLeft,y:c.offsetTop})));
+   assert.deepEqual(restored,original.boxes,"收回后每枚胶囊恢复原来的行和位置");
+   check(true,`${label} 第 ${i+1} 枚：逐帧展开、停留、移入阅读、移出复位`);
+  }
+ };
+ await exerciseCapsules(trajectory,"desktop");
+ const rapid=trajectory.locator(".execution-pill-toggle").nth(3);
+ await trajectory.evaluate(n=>n.scrollIntoView({block:"center"}));await rapid.click();await page.waitForTimeout(70);
+ const clickHeader=async()=>{const b=await rapid.boundingBox();await page.mouse.click(b.x+b.width/2,b.y+b.height/2);};
+ await clickHeader();await page.waitForTimeout(80);await clickHeader();await page.waitForTimeout(700);
+ check(await rapid.getAttribute("aria-expanded")==="true","快速收回途中再次点击仍能完整展开");
+ await page.mouse.move(1,90);await page.waitForTimeout(550);
+ await page.emulateMedia({reducedMotion:"reduce"});await rapid.click();await page.waitForTimeout(250);
+ check(await rapid.getAttribute("aria-expanded")==="true","减少动画模式下后置胶囊仍稳定展开");
+ await page.mouse.move(1,90);await page.waitForTimeout(50);
+ check(await trajectory.locator("[hidden]").count()===0,"减少动画模式即时恢复同行");await page.emulateMedia({reducedMotion:"no-preference"});
+ await rapid.click();await page.waitForTimeout(600);await page.mouse.move(1,90);await page.waitForTimeout(550);
+ await rapid.focus();await page.keyboard.press("Enter");await page.waitForTimeout(600);
+ await page.setViewportSize({width:1440,height:1050});await page.waitForTimeout(150);
+ check(await rapid.getAttribute("aria-expanded")==="true","只有视口高度变化时不打断详情阅读");
+ await page.setViewportSize({width:1200,height:1050});await page.waitForTimeout(550);
+ check(await trajectory.locator("[hidden],.execution-detail.is-open").count()===0,"内容宽度变化后重新排布恢复胶囊");
+ await page.setViewportSize({width:1440,height:1000});
  check(await page.locator(".ui-msg-user .bubble").first().evaluate(n=>getComputedStyle(n).borderTopWidth==="0px"),"用户气泡没有边框");
  check(await page.locator(".chat-run-flow").count()===0 && await page.locator(".ui-chat2-head-actions [aria-label=新建对话]").count()===0,"进度浮窗和重复新建入口移除");
  await page.locator(".ui-chat2-shelf-toolbar [aria-label=命令面板]").click();await page.getByRole("dialog").waitFor();
@@ -57,7 +114,13 @@ try {
    await rail.locator("button").first().click();await page.waitForTimeout(700);
    check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),`${width} ${theme} 无横向溢出`);
    await page.screenshot({path:OUT+`/layout-${width}-${theme}.png`,fullPage:true});
+   if(width!==1440||theme==="dark") await exerciseCapsules(page.locator(".agent-trajectory").last(),`${width}-${theme}-last-turn`);
  }
+ const touch=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
+ await touch.addInitScript(t=>localStorage.setItem("ooapi-token",t),token);await touch.goto(BASE+"/chat?s="+session.id,{waitUntil:"networkidle"});
+ const touchPill=touch.locator(".agent-trajectory").last().locator(".execution-pill-toggle").nth(3);await touchPill.tap();await touch.waitForTimeout(700);
+ check(await touchPill.getAttribute("aria-expanded")==="true","触屏点击后详情保持可读");await touchPill.tap();await touch.waitForTimeout(600);
+ check(await touchPill.getAttribute("aria-expanded")==="false","触屏再次点击收回");await touch.close();
  check(errors.length===0,"多轮导航与胶囊交互无运行错误");console.log(`会话导航与胶囊专项 ${checks} 项通过`);
 }catch(e){await page.screenshot({path:OUT+"/failure.png",fullPage:true}).catch(()=>{});throw e;}
 finally {await api("/sessions/batch",{ids:[session.id],action:"archive"});await browser.close();await pool.end();}
