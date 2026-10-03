@@ -9,6 +9,7 @@ export function endpointPath(value) {
   let path;
   try { path = new URL(value, "https://endpoint.invalid").pathname; } catch { return ""; }
   if (path === "/api/chat/run") return path;
+  if (["/responses/compact", "/v1/responses/compact", "/api/v1/responses/compact"].includes(path)) return path;
   if (!/(?:\/(?:chat|completions?|responses|messages?|systemone|generateAssistantResponse|streamGenerateContent|generateContent|StreamChat|ChatStream|conversation)|:(?:streamGenerateContent|generateContent))\/?$/i.test(path)) return "";
   return ("/" + path.split("/").filter(Boolean).map(part => {
     if (publicSegments.has(part)) return part;

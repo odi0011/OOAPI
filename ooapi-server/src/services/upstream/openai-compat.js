@@ -572,6 +572,7 @@ export async function chatOnce({
       assistantExtras: { reasoning_content: reasoning },
       reasoning,
       usage: jsonUsage,
+      truncated: ["length", "content_filter"].includes(j?.choices?.[0]?.finish_reason),
       httpStatus: resp.status,
       reasoningApplied: Object.keys(mappedReasoning).length > 0,
       upstreamModel: j?.model || body.model,
@@ -599,6 +600,7 @@ export async function chatOnce({
   const dsFilter = makeDsSafetyFilter();
   let safetyStripped = false;
   let terminated = false;
+  let truncated = false;
 
   const handleLine = (line) => {
     const t = line.trim();
@@ -631,6 +633,7 @@ export async function chatOnce({
     });
     if (ev.choices?.[0]?.finish_reason != null) {
       terminated = true;
+      truncated ||= ["length", "content_filter"].includes(ev.choices[0].finish_reason);
       if (["length", "content_filter"].includes(ev.choices[0].finish_reason) && toolBuffer.size) throw Object.assign(new Error("上游工具调用被截断"), { code: "CHANNEL_STREAM_ERROR" });
     }
     const d = ev.choices?.[0]?.delta;
@@ -709,6 +712,7 @@ export async function chatOnce({
     assistantExtras: { reasoning_content: reasoning },
     reasoning,
     usage: pickUsage(usage),
+    truncated,
     upstreamModel,
     // 实际生效模型（方舟降级时非空）：计费按它算，见 vendor-quirks.js 的说明
     billModel: fallbackModel,

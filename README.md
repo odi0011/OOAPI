@@ -35,6 +35,16 @@
 - **三层权限**：普通用户 / 管理员 / 超管 —— 不可逆操作（任免角色、清空日志、
   基础设施配置）仅超管可执行
 
+## API 倍率查询与上下文压缩
+
+- `GET /v1/billing`：使用调用模型时的 `Authorization: Bearer <API_KEY>`（或 `x-api-key`），返回**当前密钥绑定分组**的 `group_rate_multiplier`、`resolved_rate_multiplier`、`effective_rate_multiplier` 与查询时间。查询不调用模型、不计费；不接受指定其他分组。倍率基于本站配置的模型单价，模型分时/长上下文价格与最小额度舍入仍以实际账单为准。
+- `GET /v1/sub2api/billing`：相同倍率数据，返回 Sub2API 探测所需的 `sub2api.key_billing` schema v1。可直接用于 Sub2API 的“上游声明倍率”刷新；其他客户端建议使用通用 `/v1/billing`。
+- `POST /v1/responses`：在完整 `input` 历史末尾追加 `{"type":"compaction_trigger"}`，执行一次压缩。支持 SSE 与 JSON；成功输出 `type: "compaction"` 的加密状态，下一轮将该项连同新消息放回 `input`。旧客户端可使用非流式 `POST /v1/responses/compact`。
+
+压缩由所选模型生成真实摘要，共用普通请求的分组、权限、限流与计费。`X-Compaction-Mode: gateway_summary` 表明这是网关摘要压缩，**不是原厂私有状态透传**。压缩状态绑定本站、密钥及其分组；不能拿到其他服务使用，也不能导入外部服务的私有压缩状态。完整原始历史必须由调用方提供，不支持通过 `previous_response_id` 或 `conversation` 引用服务端历史。压缩失败或摘要被截断时不返回成功压缩项，调用方应保留原历史；已产生的模型用量按实际结算。
+
+以上接口同时支持 `/api/v1` 前缀和省略 `/v1` 的根路径。
+
 ## 技术栈
 
 | 层 | 技术 |

@@ -106,7 +106,10 @@ const GATEWAY_ENDPOINTS = [
   "POST /v1/chat/completions",
   "POST /v1/messages",
   "POST /v1/responses",
+  "POST /v1/responses/compact",
   "GET /v1/models",
+  "GET /v1/billing",
+  "GET /v1/sub2api/billing",
 ];
 app.use(["/v1", "/api/v1"], (req, res) => {
   res.status(404).json({
@@ -134,6 +137,11 @@ app.post("/responses", (req, res, next) => {
   req.url = "/responses";
   gatewayRoutes(req, res, next);
 });
+app.post("/responses/compact", (req, res, next) => {
+  req.url = "/responses/compact";
+  gatewayRoutes(req, res, next);
+});
+app.get(["/billing", "/sub2api/billing"], (req, res, next) => gatewayRoutes(req, res, next));
 
 // 静态资源：logo 与前端构建产物（index.js 位于 src/，web 与 public 在包根目录）
 app.use(express.static(path.join(__dirname, "..", "public")));

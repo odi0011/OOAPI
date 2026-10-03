@@ -189,7 +189,7 @@ export async function chatOnce({ endpoint, tools = [], toolChoice, onToolCall, c
       if (content) onDelta?.(content);
       if (j.stop_reason === "max_tokens" && toolBuffer.size) throw Object.assign(new Error("工具调用被截断"), { code: "CHANNEL_STREAM_ERROR" });
       if (!content && !toolBuffer.size) throw Object.assign(new Error("Anthropic 返回空正文"), { code: "CHANNEL_EMPTY" });
-      return { content, reasoning, usage, upstreamModel: j.model || body.model, httpStatus: resp.status, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras, reasoningApplied: Object.keys(mapping).length > 0 };
+      return { content, reasoning, usage, truncated: j.stop_reason === "max_tokens", upstreamModel: j.model || body.model, httpStatus: resp.status, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras, reasoningApplied: Object.keys(mapping).length > 0 };
     } catch (error) { throw Object.assign(error, { content, reasoning, usage, status: resp.status, billable: Boolean(content || reasoning || toolBuffer.size) || normalizeUsage(usage).totalTokens > 0 }); }
   }
 
@@ -204,6 +204,7 @@ export async function chatOnce({ endpoint, tools = [], toolChoice, onToolCall, c
   let cacheRead = 0;
   let cacheCreate = 0;
   let terminated = false;
+  let truncated = false;
   let outTokens = 0;
   const updateUsage = () => {
     usage = {
@@ -241,6 +242,7 @@ export async function chatOnce({ endpoint, tools = [], toolChoice, onToolCall, c
       return;
     }
     if (type === "message_delta") {
+      truncated ||= ev.delta?.stop_reason === "max_tokens";
       const u = ev.usage || {};
       if (u.output_tokens != null) outTokens = Number(u.output_tokens) || 0;
       updateUsage();
@@ -296,7 +298,7 @@ export async function chatOnce({ endpoint, tools = [], toolChoice, onToolCall, c
     reader.cancel().catch(() => {});
   }
 
-  return { content, reasoning, usage, upstreamModel, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras, httpStatus: resp.status, reasoningApplied: Object.keys(mapping).length > 0 };
+  return { content, reasoning, usage, truncated, upstreamModel, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras, httpStatus: resp.status, reasoningApplied: Object.keys(mapping).length > 0 };
 }
 
 /** 健康检查：GET /v1/models（免费） */

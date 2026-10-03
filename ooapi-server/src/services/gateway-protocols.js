@@ -167,6 +167,10 @@ function responsesInput(body) {
   }
   if (!Array.isArray(input)) return out;
   for (const it of input) {
+    // 必须由网关先执行压缩/恢复；其他调用方也不能把控制项静默降级为普通对话。
+    if (it?.type === "compaction_trigger" || it?.type === "compaction") {
+      throw new Error("压缩控制项必须先经网关压缩处理。");
+    }
     if (typeof it === "string") {
       out.push({ role: "user", content: it });
       continue;

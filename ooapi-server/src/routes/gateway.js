@@ -5,7 +5,7 @@ import { withClientAgent } from "../services/client-agent-context.js";
 import { safeReasoning } from "../services/client-agents.js";
 import express from "express";
 import crypto from "node:crypto";
-import { pool } from "../db.js";
+import { pool, JWT_SECRET } from "../db.js";
 import { getBoolOption } from "../config.js";
 import { now, clientIp, asyncHandler, assertPublicUrl } from "../utils.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
@@ -33,7 +33,7 @@ import {
 // 但此前**没有导入**：每次成功请求都会在写日志时抛
 // ReferenceError: displayGroupName is not defined，把一次本来成功的调用
 // 变成 500（用户只看到"服务器内部错误"，日志里却只有一条引用错误）。
-import { groupConfigOf, applyGroupRate, displayGroupName } from "../services/group-rate.js";
+import { groupConfigOf, applyGroupRate, displayGroupName, parseGroupKey } from "../services/group-rate.js";
 import {
   allPublicModels,
   publicModelMetadataMap,
@@ -46,6 +46,8 @@ import {
 } from "../services/models.js";
 import { collectAvailableModels, channelInGroup, channelSupportsModel, rowToChannel } from "../services/router.js";
 import { PROTOCOLS } from "../services/gateway-protocols.js";
+import { prepareResponseCompaction, compactionProtocol, sealCompaction } from "../services/response-compaction.js";
+import { keyBillingInfo } from "../services/key-billing.js";
 import { holdTokenQuota } from "../services/token-quota.js";
 import { callsText, textToolMessages } from "../services/tool-wire.js";
 import { StepStream } from "../services/harness/loop.js";
@@ -62,6 +64,15 @@ router.use(
   })
 );
 router.use(express.json({ limit: "50mb" }));
+
+// 通用发现端点与 Sub2API 的严格 schema 共用实际结算的倍率来源；不能接收 group 参数越权查询。
+router.get(["/billing", "/sub2api/billing"], asyncHandler(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  const group = req.auth.token.group_name;
+  const config = await groupConfigOf(group);
+  if (!config && parseGroupKey(group)) return res.status(503).json({ error: { code: "billing_info_unavailable", message: "当前分组倍率暂不可用，请稍后重试。" } });
+  res.json(keyBillingInfo(displayGroupName(group) || "default", config?.rate ?? 1, { compatibility: req.path === "/sub2api/billing" }));
+}));
 
 // ---------- 对外可用模型列表（平台真实模型 + 兼容别名）----------
 // 与 OpenAI 一致需要鉴权，避免匿名枚举全量模型目录
@@ -713,15 +724,26 @@ async function settle({
  * 中间的鉴权、限流、渠道选择、计费、日志**只有这一份实现** ——
  * 为每个协议复制一份主流程是重复扣费与漏记日志的典型来源。
  */
-async function handleCompletion(protocol, req, res) {
+async function handleCompletion(protocol, req, res, { legacyCompact = false } = {}) {
   const prefix = protocol.name === "messages" ? "msg" : protocol.name === "responses" ? "resp" : "chatcmpl";
   const requestId = `${prefix}-` + crypto.randomBytes(12).toString("hex");
   const ip = clientIp(req);
-  const body = req.body || {};
+  let body = req.body || {};
+  let compact = false;
+  const compactionContext = { auth: req.auth, secret: JWT_SECRET };
 
   // 请求解析（各协议字段名不同：messages / input / system 的位置都不一样）
   let parsed;
   try {
+    if (protocol.name === "responses") {
+      const prepared = prepareResponseCompaction(body, compactionContext, { legacy: legacyCompact });
+      body = prepared.body;
+      compact = prepared.compact;
+      if (compact) {
+        protocol = compactionProtocol(protocol, { legacy: legacyCompact });
+        res.setHeader("X-Compaction-Mode", "gateway_summary");
+      }
+    }
     parsed = protocol.parse(body);
     for (const m of parsed.messages || []) for (const c of m.tool_calls || []) {
       let args;
@@ -729,7 +751,7 @@ async function handleCompletion(protocol, req, res) {
       if (!c.id || !c.name || !args || typeof args !== "object" || Array.isArray(args)) throw new Error("历史工具调用需要编号、名称与 JSON 对象参数");
     }
   } catch (e) {
-    return protocol.error(res, 400, { message: e.message, code: "invalid_request_error" }, { id: requestId });
+    return protocol.error(res, 400, { message: e.message, code: e.code || "invalid_request_error" }, { id: requestId });
   }
   const model = parsed.model;
   // 原文不剥离客户自己写的前缀/模板/空白；与系统包裹后的上游输入分开保存。
@@ -1053,6 +1075,7 @@ async function handleCompletion(protocol, req, res) {
       billingFirstTokenAt: firstTokenAt, elapsed: result.elapsed,
       channelId: result.channel?.id, channelName: result.channel?.name, channelQuote: result.channelQuote,
       billModel: result.billModel, upstreamModel: result.upstreamModel, retryCount: result.retryCount,
+      upstreamEndpoints: result.upstreamEndpoints, endpointAttempts: result.endpointAttempts,
     });
     if (textToolMode) {
       const parser = new StepStream(), head = parser.push(toolText || result.content || ""), tail = parser.finish();
@@ -1076,6 +1099,17 @@ async function handleCompletion(protocol, req, res) {
     }
     if (toolCalls.length && maxOutTokens > 0 && estimateTokens(emitted + reasoningOut + callsText(toolCalls)) > maxOutTokens) outputTruncated = true;
     if (outputTruncated) toolCalls = [];
+
+    let compactionItem;
+    if (compact) {
+      try {
+        if (outputTruncated || result.truncated || result.finishReason === "length" || !result.content?.trim()) throw new Error();
+        compactionItem = sealCompaction(result.content, compactionContext);
+      } catch {
+        // 已生成的真实用量仍由统一失败结算处理，但不交付残缺状态让客户端丢掉历史。
+        throw Object.assign(toolProtocolError("上下文压缩未完成"), { code: "CONTEXT_COMPACTION_FAILED" });
+      }
+    }
 
     // 被 max_tokens 截断时，**按实际发给客户端的内容**计费。
     //
@@ -1150,7 +1184,7 @@ async function handleCompletion(protocol, req, res) {
     if (cutThis && !res.headersSent) res.setHeader("X-Output-Truncated", String(maxOutTokens));
     if (wantStream) {
       if (!streamStarted) startStream();
-      protocol.done(res, protoState, { settled: settledForClient, toolCalls });
+      protocol.done(res, protoState, { settled: settledForClient, toolCalls, compactionItem });
     } else {
       protocol.finish(res, {
         id: requestId,
@@ -1159,6 +1193,7 @@ async function handleCompletion(protocol, req, res) {
         reasoning: result.reasoning,
         settled: settledForClient,
         toolCalls,
+        compactionItem,
       });
     }
   } catch (err) {
@@ -1350,5 +1385,6 @@ async function handleCompletion(protocol, req, res) {
 router.post("/chat/completions", asyncHandler((req, res) => withClientAgent(req, () => handleCompletion(PROTOCOLS.chat, req, res))));
 router.post("/messages", asyncHandler((req, res) => withClientAgent(req, () => handleCompletion(PROTOCOLS.messages, req, res))));
 router.post("/responses", asyncHandler((req, res) => withClientAgent(req, () => handleCompletion(PROTOCOLS.responses, req, res))));
+router.post("/responses/compact", asyncHandler((req, res) => withClientAgent(req, () => handleCompletion(PROTOCOLS.responses, req, res, { legacyCompact: true }))));
 
 export default router;
