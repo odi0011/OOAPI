@@ -32,6 +32,7 @@ import { billableFailedCall } from "../services/execute.js";
 import { publicRunError } from "../services/upstream/public-error.js";
 import { AGENTS, findAgent, publicAgents, PRIMARY_AGENTS } from "../services/harness/agents.js";
 import { toolSpecs } from "../services/harness/tools.js";
+import { needsToolApproval } from "../services/harness/platform-catalog.js";
 import { extractFileText, MAX_UPLOAD_FILES, MAX_UPLOAD_BYTES, TEXT_FILE_EXTS } from "../services/harness/files.js";
 import { startRun, getRun, isRunning, publish, subscribe, finishRun, runStatus } from "../services/harness/runs.js";
 import { isChatDraining, trackChatRun } from "../services/harness/drain.js";
@@ -490,7 +491,7 @@ router.get(
           }
         : null,
       agents: publicAgents(AGENTS),
-      tools: toolSpecs(TOOL_IDS).map(({ id, name, desc }) => ({ id, name, desc })),
+      tools: toolSpecs(TOOL_IDS, req.user).map(({ id, name, desc }) => ({ id, name, desc })),
       defaults: { agent: PRIMARY_AGENTS[0]?.id || "general", maxSteps: DEFAULT_MAX_STEPS, maxStepsLimit: MAX_STEPS_LIMIT },
       chat_enabled: getBoolOption("chat_enabled"),
       // 附件能力（前端文件选择器据此显示可选类型）
@@ -1230,7 +1231,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           user.role = current.role;
         };
         await refreshPermissions();
-        if (settings.permissionMode !== "ask" || call.tool === "todowrite") return true;
+        if ((settings.permissionMode !== "ask" && !needsToolApproval(call.tool, call.args)) || call.tool === "todowrite") return true;
         const approved = await requestApproval(run, call, { signal: ctrl.signal, emit: (ev) => publish(run, ev) });
         if (approved) await refreshPermissions();
         return approved;

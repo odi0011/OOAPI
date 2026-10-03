@@ -499,8 +499,8 @@ router.get(
 
 router.post(
   "/posts",
-  rateLimit({ windowMs: 60_000, max: 8, keyPrefix: "post-create", keyFn: (r) => r.user?.id || r.ip }),
   authRequired,
+  rateLimit({ windowMs: 60_000, max: 8, keyPrefix: "post-create", keyFn: (r) => r.user.id }),
   asyncHandler(async (req, res) => {
     const titleRaw = String(req.body?.title || "").trim();
     const contentRaw = String(req.body?.content || "").trim();
@@ -800,8 +800,8 @@ router.get(
 
 router.post(
   "/posts/:id/comments",
-  rateLimit({ windowMs: 60_000, max: 20, keyPrefix: "comment-create", keyFn: (r) => r.user?.id || r.ip }),
   authRequired,
+  rateLimit({ windowMs: 60_000, max: 20, keyPrefix: "comment-create", keyFn: (r) => r.user.id }),
   asyncHandler(async (req, res) => {
     const postId = idParam(req);
     if (!postId) return fail(res, "帖子不存在", 404);

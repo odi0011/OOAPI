@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
 export default function ChatMascot({ state = "idle", gesture = "" }) {
+  const airborne = ["leap", "transfer", "drop"].includes(gesture);
+  const turning = ["chase", "spin"].includes(gesture);
   const [visible, setVisible] = useState(!document.hidden);
   useEffect(() => { const change = () => setVisible(!document.hidden); document.addEventListener("visibilitychange", change); return () => document.removeEventListener("visibilitychange", change); }, []);
   return <span className={`chat-mascot is-${state} ${gesture ? `gesture-${gesture}` : ""}`} data-motion={visible ? "on" : "off"} aria-hidden="true">
@@ -8,7 +10,6 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
 {state === "asking" && <span className="lele-question-mark">?</span>}
 {["toy", "proud"].includes(gesture) && <span className="lele-heart" aria-hidden="true">♥</span>}
 {gesture === "toy" && <span className="lele-toy" aria-hidden="true"/>}
-{gesture === "drop" && <span className="lele-exclaim" aria-hidden="true">!</span>}
 {gesture.startsWith("capsule-") && <CapsuleAccessory kind={gesture.slice(8)}/>}
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="64" height="64" aria-hidden="true" shapeRendering="crispEdges">
 
@@ -68,6 +69,10 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
   </g>
 
 
+  {airborne && <g className="cat-hindlegs" fill="#85898e" stroke="#62676e" strokeWidth=".6">
+    <g className="cat-hind-left"><path d="M7 22h4v5H7z"/><path fill="#fff" d="M6 26h5v3H6z"/></g>
+    <g className="cat-hind-right"><path d="M21 22h4v5h-4z"/><path fill="#fff" d="M21 26h5v3h-5z"/></g>
+  </g>}
   <g className="cat-cranium">
   <g className="cat-head">
 
@@ -167,11 +172,18 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
       <rect x="28" y="16" width="2" height="1" />
     </g>
   </g>
+  {turning && <g className="cat-head-back">
+    {/* 转到背面时沿用原头型和灰白毛区，脸留在前面，不翻到后脑勺。 */}
+    <path fill="#62676e" d="M7 3h1v4h16V3h1v2h2v5h2v6h-1v2h-2v2H6v-2H4v-2H3v-6h2V5h2z"/>
+    <path fill="#85898e" d="M7 5h1v4h16V5h1v5h2v6h-2v2H7v-2H5v-6h2z"/>
+    <path fill="#dfe2e5" d="M12 8h8v4h-1v3h4v3H9v-3h4v-3h-1z"/>
+    <path fill="#fff" d="M9 17h14v2H9z"/>
+  </g>}
   </g>
   <g className="cat-paws">
 
     <g className="cat-paw-left">
-    {["feet-kick", "foot-dangle"].includes(gesture) && <g className="cat-leg-reach"><path fill="#62676e" d="M9 16h4v10H9z M8 25h1v3H8z M9 28h4v1H9z M13 25h1v3h-1z"/><path fill="#85898e" d="M10 16h3v8h-3z"/><path fill="#dfe2e5" d="M10 23h3v3h-3z"/></g>}
+    {(airborne || ["feet-kick", "foot-dangle"].includes(gesture)) && <g className="cat-leg-reach"><path fill="#62676e" d="M9 16h4v10H9z M8 25h1v3H8z M9 28h4v1H9z M13 25h1v3h-1z"/><path fill="#85898e" d="M10 16h3v8h-3z"/><path fill="#dfe2e5" d="M10 23h3v3h-3z"/></g>}
     <rect x="9" y="25" width="4" height="3" fill="#ffffff" />
     <rect x="8" y="27" width="1" height="2" fill="#dfe2e5" />
     <rect className="cat-paw-ground" x="8" y="28" width="5" height="1" fill="#30343b" />
@@ -179,7 +191,7 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
 
     </g>
     <g className="cat-paw-right">
-    {["feet-kick", "foot-dangle", "side-paw", "side-tap"].includes(gesture) && <g className="cat-leg-reach"><path fill="#62676e" d="M19 16h4v10h-4z M18 25h1v3h-1z M19 28h4v1h-4z M23 25h1v3h-1z"/><path fill="#85898e" d="M19 16h3v8h-3z"/><path fill="#dfe2e5" d="M19 23h3v3h-3z"/></g>}
+    {(airborne || ["feet-kick", "foot-dangle", "side-paw", "side-tap"].includes(gesture)) && <g className="cat-leg-reach"><path fill="#62676e" d="M19 16h4v10h-4z M18 25h1v3h-1z M19 28h4v1h-4z M23 25h1v3h-1z"/><path fill="#85898e" d="M19 16h3v8h-3z"/><path fill="#dfe2e5" d="M19 23h3v3h-3z"/></g>}
     <rect x="19" y="25" width="4" height="3" fill="#ffffff" />
     <rect x="23" y="27" width="1" height="2" fill="#dfe2e5" />
     <rect className="cat-paw-ground" x="19" y="28" width="5" height="1" fill="#30343b" />

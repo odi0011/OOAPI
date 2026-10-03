@@ -1,5 +1,7 @@
 import * as toolPresentation from "../src/services/harness/tool-presentation.js";
 import { callFingerprint } from "../src/services/harness/tool-call-guards.js";
+import * as platformTools from "../src/services/harness/platform-tools.js";
+import * as platformCatalog from "../src/services/harness/platform-catalog.js";
 // 真跑 harness/工具/执行器的内存上游：验证失败步只收一次、停止可打断响应体。
 // 只替换模块依赖，不访问数据库/公网，不需要额外运行参数或测试依赖。
 import assert from "node:assert/strict";
@@ -18,6 +20,7 @@ import * as channelModels from "../src/services/channel-models.js";
 import { canonicalModelName, modelRegistrySync } from "../src/services/models.js";
 
 const audit = {
+  platformTools, platformCatalog,
   callFingerprint,
   toolPresentation,
   contextTools, capabilities, withEndpointAudit,
@@ -41,6 +44,8 @@ const loadMocked = async (relativePath, prelude) => {
   return import(`data:text/javascript;base64,${Buffer.from(`const audit=globalThis.__ooHarnessAudit;\nconst { TOOL_PRESENTATIONS, toolPresentation } = audit.toolPresentation;\n${prelude}\n${source}`).toString("base64")}`);
 };
 const tools = await loadMocked("../src/services/harness/tools.js", `
+  const {platformToolSpecs,platformNativeSchema,runPlatformTool}=audit.platformTools;
+  const {PLATFORM_TOOL_IDS}=audit.platformCatalog;
   const assertPublicUrl=async (v)=>new URL(v);
   const pool=audit.pool;
   const assertModelPriced=async()=>{};
@@ -53,6 +58,8 @@ const tools = await loadMocked("../src/services/harness/tools.js", `
 `);
 audit.tools = tools;
 const harness = await loadMocked("../src/services/harness/loop.js", `
+  const {needsToolApproval,PLATFORM_TOOL_IDS}=audit.platformCatalog;
+  const {grantToolCall,platformRequest,cleanPlatformResult}=audit.platformTools;
   const callFingerprint=audit.callFingerprint;
   const { contextBudget, messageTokens, compressionSplit, latestMemory } = audit.contextTools;
   const crypto=audit.crypto;

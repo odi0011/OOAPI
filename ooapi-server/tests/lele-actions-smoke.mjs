@@ -40,13 +40,13 @@ try {
   check(await page.locator(".pose-shy").count()===1,"悬停能触发害羞/跑开");
   await page.evaluate(()=>{Math.random=window.__originalRandom;});
   await page.getByRole("button",{name:"选择模型",exact:true}).click();
-  await page.locator(".lele-perch-anchor.at-menu").waitFor({state:"attached"});await page.waitForTimeout(850);
+  await page.locator(".lele-perch-anchor.at-menu").waitFor({state:"attached"});await page.waitForTimeout(1400);
   const menuGeometry=await page.evaluate(()=>{const a=document.querySelector(".lele-edge-viewport").getBoundingClientRect(),m=document.querySelector(".bui-upmenu.is-model").getBoundingClientRect();return {bottom:a.bottom,top:m.top,x:a.x,right:a.right};});
   check(Math.abs(menuGeometry.bottom-menuGeometry.top)<1,"遮挡后乐乐依附实际菜单上沿");
   await page.screenshot({path:OUT+"/menu-perch.png",fullPage:true});
   for (const label of ["推理强度", "选择模型", "推理强度"]) {
     await page.getByRole("button",{name:label,exact:true}).click();
-    await page.waitForTimeout(850);
+    await page.waitForTimeout(1400);
     const g=await page.evaluate(()=>{const a=document.querySelector(".lele-edge-viewport").getBoundingClientRect(),m=document.querySelector("[data-promptbar-menu]").getBoundingClientRect();return {bottom:a.bottom,top:m.top,x:a.x+a.width/2,left:m.left,right:m.right};});
     check(Math.abs(g.bottom-g.top)<1 && g.x>g.left && g.x<g.right,"直接切到"+label+"后重新落在实际菜单上沿");
   }
@@ -54,7 +54,7 @@ try {
   for (const label of ["选择模型","推理强度","选择模型","推理强度"]) {
     await page.getByRole("button",{name:label,exact:true}).click();await page.waitForTimeout(90);
   }
-  await page.waitForTimeout(850);
+  await page.waitForTimeout(1400);
   check(await page.evaluate(()=>Math.abs(document.querySelector(".lele-edge-viewport").getBoundingClientRect().bottom-document.querySelector("[data-promptbar-menu]").getBoundingClientRect().top)<1),"快速切换打断动画后仍落到最后一个菜单");
   await page.keyboard.press("Escape");await page.locator(".pose-drop.phase-enter").waitFor({state:"attached"});
   check(true,"菜单关闭触发从菜单高度落下的动作");

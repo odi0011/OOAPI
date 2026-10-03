@@ -6,10 +6,11 @@
 import crypto from "node:crypto";
 import { pool } from "../../db.js";
 import { now, safeJSONParse } from "../../utils.js";
+import { PLATFORM_TOOL_IDS } from "./platform-catalog.js";
 
 export const MAX_STEPS_LIMIT = 32;
 export const DEFAULT_MAX_STEPS = 12;
-export const TOOL_IDS = ["account", "binance", "search", "fetch", "github", "task", "todowrite"];
+export const TOOL_IDS = ["account", "binance", "search", "fetch", "github", "task", "todowrite", ...PLATFORM_TOOL_IDS];
 
 // 会话 id：短、可读、无歧义字符（前端会拼进 URL/命令面板）
 const ID_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz";

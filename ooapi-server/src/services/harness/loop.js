@@ -1,4 +1,6 @@
 import { toolPresentation } from "./tool-presentation.js";
+import { needsToolApproval, PLATFORM_TOOL_IDS } from "./platform-catalog.js";
+import { grantToolCall, platformRequest, cleanPlatformResult } from "./platform-tools.js";
 // Harness 运行循环（对话机制 + 智能体编排的执行体）
 // ---------------------------------------------------------------------------
 // 一轮对话怎么跑（对应 opencode 的「一次会话 = 若干 step」）：
@@ -583,7 +585,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
     const activeTools = finalizing ? [] : tools;
     if (finalizing) messages.push({ role: "user", content: "本轮工具阶段已结束。请根据上文真实工具结果直接给出最终答复，说明尚未核实的部分；不要再次调用工具，不要编造数据。" });
     patchPart(trajectory, { step, status: finalizing ? "summarizing" : "running", reason: finalizeReason || (finalizing ? "budget" : "") });
-    const specs = toolSpecs(activeTools);
+    const specs = toolSpecs(activeTools, user);
     const system = buildSystemPrompt({
       agent,
       model,
@@ -633,7 +635,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
         model: modelForChannelMatch(model) || model,
         prompt: stepPrompt,
         messages: [{ role: "system", content: system }, ...messages],
-        tools: nativeToolSpecs(activeTools),
+        tools: nativeToolSpecs(activeTools, user),
         prepareRequest: ({ nativeTools }) => {
           const instructions = nativeTools ? buildSystemPrompt({ agent, model, settings, toolSpecs: specs, todo, subagents: SUBAGENTS, depth, nativeTools: true }) : system;
           const prepared = nativeTools ? messages : textToolMessages(messages);
@@ -751,15 +753,21 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
         if (++consecutiveFailures >= 3) finalizeReason = "no_progress";
         continue;
       }
+      let inputError = "";
+      if (PLATFORM_TOOL_IDS.includes(call.tool) && call.tool !== "platform" && call.args?.action !== "describe") {
+        try { platformRequest(call.tool, call.args, user, session?.id); }
+        catch (e) { inputError = e.message; call.args = cleanPlatformResult(call.args); }
+      }
       const toolPart = { id: uid(), type: "tool", tool: call.tool, name: spec?.name || call.tool, args: call.args, presentation: toolPresentation(call.tool, call.args), step, status: "running", output: "", started: Date.now() };
       emitPart(toolPart);
 
       let res;
       try {
-        if (settings.permissionMode === "ask" && spec && call.tool !== "todowrite") patchPart(toolPart, { status: "awaiting_approval" });
-        const approved = spec ? (authorizeTool ? await authorizeTool({ tool: call.tool, name: spec.name, args: call.args }) : settings.permissionMode !== "ask") : true;
+        const mustAsk = settings.permissionMode === "ask" || needsToolApproval(call.tool, call.args);
+        if (mustAsk && spec && !inputError && call.tool !== "todowrite") patchPart(toolPart, { status: "awaiting_approval" });
+        const approved = spec && !inputError ? (authorizeTool ? await authorizeTool({ tool: call.tool, name: spec.name, args: call.args }) : !mustAsk) : true;
         patchPart(toolPart, { status: "running", started: Date.now() });
-        res = !approved ? { ok: false, output: "用户未批准此工具调用；不要重复请求同一操作，请说明限制并完成可回答的部分。" }
+        res = inputError ? { ok: false, output: inputError } : !approved ? { ok: false, output: "用户未批准此工具调用；不要重复请求同一操作，请说明限制并完成可回答的部分。" }
         : spec
         ? await runTool(call.tool, call.args, {
             model,
@@ -771,6 +779,8 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
             todo,
             // 最近调用里显示调用方（工具触发的上游请求也归属到同一次对话的用户）
             user,
+            sessionId: session?.id,
+            toolGrant: approved && needsToolApproval(call.tool, call.args) ? grantToolCall(call.tool, call.args, user?.id) : null,
             // 某些上游（如网页版反代）不支持联网搜索：工具要据此拒绝，而不是发一次必定失败的请求
             searchSupported: modelCaps?.supportsSearch !== false})
         : { ok: false, output: `工具「${call.tool}」在本轮不可用；可用工具：${specs.map((s) => s.id).join("、") || "（无）"}` };
@@ -783,7 +793,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
         throw e;
       }
 
-      const patch = { status: res.ok ? "done" : "failed", output: String(res.output || "").slice(0, 12000), ended: Date.now() };
+      const patch = { status: res.ok ? "done" : "failed", output: String(res.output || "").slice(0, PLATFORM_TOOL_IDS.includes(call.tool) ? 24000 : 12000), ended: Date.now() };
       if (res.meta) patch.meta = res.meta;
       if (Array.isArray(res.todo)) {
         todo = res.todo;

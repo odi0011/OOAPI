@@ -2,6 +2,7 @@ import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "reac
 import { Button } from "antd";
 import ChatMascot from "./ChatMascot";
 import "./composer-companion.css";
+import "./lele-locomotion.css";
 
 const hash = value => Array.from(String(value || "lele")).reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 0);
 const choose = values => values[Math.floor(Math.random() * values.length)];
@@ -86,7 +87,7 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
       if (g.width >= 480 && g.viewportHeight + g.viewportTop - g.bottom > 62) edges.push("bottom");
       const edge = choose([...edges, "top", "top"]);
       const gesture = choose(edge === "top"
-        ? ["pop", "walk", "tumble", "toy", "belly", "cute", "lick", "groom", "wash", "stretch", "wink", "curl", "sleep", "zzz", "peek", "wave", "paws", "look", "chase", "knead", "shake", "shy"].filter(p => p !== current.pose.gesture)
+        ? ["pop", "walk", "spin", "toy", "belly", "cute", "lick", "groom", "wash", "stretch", "wink", "curl", "sleep", "zzz", "peek", "wave", "paws", "look", "chase", "knead", "shake", "shy"].filter(p => p !== current.pose.gesture)
         : (edge === "bottom" ? bottomGestures : sideGestures).filter(p => p !== current.pose.gesture));
       setPhase("exit");
       move = setTimeout(() => { setPose({ edge, gesture, at: edge === "bottom" ? choose([.16, .84]) : .2 + Math.random() * .6 }); setPhase("enter"); schedule(); }, 300);
@@ -96,7 +97,7 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
   }, [quiet, pending?.id, menuOpen]);
 
   useEffect(() => {
-    if (quiet || pending || menuOpen || pose.edge !== "top" || !["walk", "pop", "tumble"].includes(pose.gesture)) return;
+    if (quiet || pending || menuOpen || pose.edge !== "top" || !["walk", "pop", "spin"].includes(pose.gesture)) return;
     let hide;
     const finish = setTimeout(() => { setPhase("exit"); hide = setTimeout(() => setPhase("hidden"), 300); }, 4400);
     return () => { clearTimeout(finish); clearTimeout(hide); };
@@ -105,7 +106,7 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
   // 只有菜单实际遮住乐乐才避让，位置取菜单外沿；关闭时从真实高度落回输入框。
   useEffect(() => {
     if (pending) return undefined;
-    let timer, frame, observer;
+    let frame, observer;
     if (menuOpen) {
       const align = () => {
         const parent = marker.current?.parentElement;
@@ -118,24 +119,17 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
         const previous = menuWasOpen.current;
         if (!previous && !(r.left < cat.right && r.right > cat.left && r.top < cat.bottom && menu.getBoundingClientRect().bottom > cat.top)) return;
         const top = r.top, x = Math.min(r.right - 30, Math.max(r.left + 30, cat.x + cat.width / 2));
-        const next = { edge: "menu", at: (x - base.left) / base.width, gesture: previous ? "transfer" : "annoyed", y: top - base.top };
+        const next = { edge: "menu", at: (x - base.left) / base.width, gesture: previous ? "transfer" : "leap", y: top - base.top, floor: base.top - top };
         if (previous && Math.abs(previous.y - next.y) < .5 && Math.abs(previous.at - next.at) * base.width < .5) return;
-        if (previous) {
-          // 菜单之间直接移动；距离来自两个真实上沿，不能沿用模型菜单的旧高度。
-          const anchor = parent.querySelector(".lele-perch-anchor").getBoundingClientRect();
-          const transform = getComputedStyle(parent.querySelector(".lele-edge-actor")).transform;
-          const matrix = transform === "none" ? { m41: 0, m42: 0 } : new DOMMatrixReadOnly(transform);
-          next.travelX = anchor.left + 29 + matrix.m41 - x;
-          next.travelY = anchor.top + matrix.m42 - top;
-          next.motion = ++travelId.current;
-        }
+        // 从当前可见身体起跳；快速切菜单时同样采样当前帧，不瞬移到旧落点。
+        const actor = parent.querySelector(".lele-edge-actor").getBoundingClientRect();
+        next.travelX = actor.left - (x - 29);
+        next.travelY = actor.top - (top - 54);
+        next.falling = previous && next.travelY < -45;
+        next.duration = Math.min(1200, Math.max(820, 720 + Math.abs(next.travelY) * 1.05));
+        next.motion = ++travelId.current;
         menuWasOpen.current = next;
-        clearTimeout(timer);
-        if (previous) { setPose(next); setPhase(quiet ? "rest" : "enter"); }
-        else {
-          setPhase("exit");
-          timer = setTimeout(() => { setPose(next); setPhase(quiet ? "rest" : "enter"); }, quiet ? 0 : 280);
-        }
+        setPose(next); setPhase(quiet ? "rest" : "enter");
       };
       frame = requestAnimationFrame(() => {
         align();
@@ -146,12 +140,11 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
       });
     } else if (menuWasOpen.current) {
       menuWasOpen.current = false;
-      const parent = marker.current.parentElement, anchor = parent.querySelector(".lele-perch-anchor").getBoundingClientRect(), base = parent.getBoundingClientRect();
-      const transform = getComputedStyle(parent.querySelector(".lele-edge-actor")).transform;
-      const matrix = transform === "none" ? { m41: 0, m42: 0 } : new DOMMatrixReadOnly(transform);
-      setPose({ edge: "top", at: (anchor.left + 29 + matrix.m41 - base.left) / base.width, gesture: "drop", fallFrom: Math.min(0, anchor.top + matrix.m42 - base.top) }); setPhase(quiet ? "rest" : "enter");
+      const parent = marker.current.parentElement, actor = parent.querySelector(".lele-edge-actor").getBoundingClientRect(), base = parent.getBoundingClientRect();
+      const travelY = Math.min(0, actor.top - (base.top - 54));
+      setPose({ edge: "top", at: (actor.left + 29 - base.left) / base.width, gesture: "drop", falling: true, travelY, duration: Math.min(1200, 820 + Math.abs(travelY) * .8), motion: ++travelId.current }); setPhase(quiet ? "rest" : "enter");
     }
-    return () => { clearTimeout(timer); cancelAnimationFrame(frame); observer?.disconnect(); };
+    return () => { cancelAnimationFrame(frame); observer?.disconnect(); };
   }, [menuOpen, quiet, pending?.id]);
 
   // 输入、发送、复制、重试都给乐乐一个短促的专属反应；反应结束才交还给随机动作。
@@ -230,11 +223,11 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
   const clearance = -(pose.head || -29) + 20;
   const height = Math.min(440, Math.max(130, geometry.top - geometry.viewportTop - clearance - 14));
   const fragment = ["left", "right", "bottom"].includes(pose.edge);
-  const anchorStyle = pose.edge === "left" || pose.edge === "right" ? { top: Math.max(34, Math.min(geometry.height - 34, geometry.height * pose.at)) - 29 } : { left: `calc(${pose.at * 100}% - 29px)`, ...(pose.edge === "menu" ? { top: pose.y } : {}), ...(pose.fallFrom ? { "--fall-from": `${pose.fallFrom}px` } : {}), "--travel-x": `${pose.travelX || 0}px`, "--travel-y": `${pose.travelY || 0}px`, "--travel-arc": `${Math.min(0, pose.travelY || 0) - 22}px` };
+  const anchorStyle = pose.edge === "left" || pose.edge === "right" ? { top: Math.max(34, Math.min(geometry.height - 34, geometry.height * pose.at)) - 29 } : { left: `calc(${pose.at * 100}% - 29px)`, ...(pose.edge === "menu" ? { top: pose.y } : {}), "--edge-floor": `${pose.floor || 0}px`, "--travel-x": `${pose.travelX || 0}px`, "--travel-y": `${pose.travelY || 0}px`, "--travel-arc": `${Math.min(0, pose.travelY || 0) - 32}px`, "--flight-duration": `${pose.duration || 1000}ms` };
 
   return <>
     <span ref={marker} className="lele-companion-marker" aria-hidden="true"/>
-    <span className={`lele-perch-anchor at-${pose.edge} pose-${pose.gesture} phase-${phase} ${fragment ? "is-fragment" : ""} ${asking ? "is-questioning" : ""}`} style={anchorStyle} data-pose={pose.gesture} aria-hidden="true" onMouseEnter={onHover} onAnimationEnd={e => { if (e.target.classList.contains("lele-edge-actor") && phase === "enter") setPhase(fragment ? "hidden" : "rest"); }}>
+    <span className={`lele-perch-anchor at-${pose.edge} pose-${pose.gesture} phase-${phase} ${pose.falling ? "is-falling" : ""} ${fragment ? "is-fragment" : ""} ${asking ? "is-questioning" : ""}`} style={anchorStyle} data-pose={pose.gesture} aria-hidden="true" onMouseEnter={onHover} onAnimationEnd={e => { if (e.target.classList.contains("lele-edge-actor") && phase === "enter") setPhase(fragment ? "hidden" : "rest"); }}>
       <span className="lele-edge-viewport"><span key={pose.motion || "idle"} className="lele-edge-actor"><ChatMascot state={asking ? "asking" : state} gesture={pose.gesture}/></span></span>
       {["paws", "wave", "invite", "listen", "knead"].includes(pose.gesture) && <span className="lele-edge-grip"><i/><i/></span>}
     </span>

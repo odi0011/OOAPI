@@ -1,5 +1,7 @@
 import * as toolPresentation from "../src/services/harness/tool-presentation.js";
 import { callFingerprint } from "../src/services/harness/tool-call-guards.js";
+import * as platformTools from "../src/services/harness/platform-tools.js";
+import * as platformCatalog from "../src/services/harness/platform-catalog.js";
 import * as toolWire from "../src/services/tool-wire.js";
 import * as contextTools from "../src/services/harness/context.js";
 // 真实工具/对话循环，账户与上游均为内存fixture；不访问数据库、交易引擎或收费模型。
@@ -105,6 +107,7 @@ await test("动作大小写/空白归一，畸形数据失败且停止信号不�
 
 // 工具结果实际进入下一步模型上下文，不能只测read函数或页面按钮跳转。
 const audit = {
+  platformTools, platformCatalog,
   callFingerprint,
   toolPresentation, toolWire, contextTools, crypto, request, readBinanceAnalysis, complete: null, buildSystemPrompt, SUBAGENTS };
 globalThis.__ooBinanceToolAudit = audit;
@@ -114,12 +117,16 @@ const mocked = async (path, prelude) => {
 };
 try {
   audit.tools = await mocked("../src/services/harness/tools.js", `
+    const {platformToolSpecs,platformNativeSchema,runPlatformTool}=audit.platformTools;
+    const {PLATFORM_TOOL_IDS}=audit.platformCatalog;
     const readBinanceAnalysis=(args,ctx)=>audit.readBinanceAnalysis(args,ctx,audit.request);
     const pool={query:async()=>{throw new Error('禁止真实DB')}};
     const runCompletion=o=>audit.complete(o);
     const modelForChannelMatch=v=>v;
   `);
   const harness = await mocked("../src/services/harness/loop.js", `
+    const {needsToolApproval,PLATFORM_TOOL_IDS}=audit.platformCatalog;
+    const {grantToolCall,platformRequest,cleanPlatformResult}=audit.platformTools;
     const callFingerprint=audit.callFingerprint;
     const crypto=audit.crypto;
     const runCompletion=o=>audit.complete({...o,...o.prepareRequest?.({nativeTools:false})});

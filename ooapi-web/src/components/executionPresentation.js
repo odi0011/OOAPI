@@ -20,6 +20,9 @@ export function capsuleGesture(part = {}) {
   if (part.type === "reasoning" || part.type === "text") return "capsule-think";
   if (part.type === "compaction") return "capsule-pack";
   if (tool === "account") return `capsule-${({ recent:"notebook", errors:"inspect", tokens:"key", usage:"chart", balance:"coin", profile:"wave" })[part.args?.action] || "wave"}`;
+  if (tool === "community") return `capsule-${["publish", "comment", "edit"].includes(part.args?.action) ? "type" : ["like", "favorite", "follow"].includes(part.args?.action) ? "reach" : "read"}`;
+  const platformGestures = { platform:"list", models:"inspect", notifications:"notebook", people:"wave", messages:"type", workspace:"pack", tokens:"key", media:"read", usage:"chart", trading:"coin", channels:"reach", pricing:"coin", users:"wave", monitor:"inspect", system:"list" };
+  if (platformGestures[tool]) return `capsule-${platformGestures[tool]}`;
   return `capsule-${({ search:"search", fetch:"read", github:"type", task:"reach", todowrite:"list", binance:"chart" })[tool] || "wave"}`;
 }
 export function executionEntries(parts = [], streaming = false, finalTextId) {

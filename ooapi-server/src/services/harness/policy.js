@@ -1,5 +1,6 @@
 import { getOption, setOption } from "../../config.js";
 import { TOOL_IDS } from "./sessions.js";
+import { PLATFORM_TOOL_IDS } from "./platform-catalog.js";
 
 // 编排只组合已有服务端能力，不执行浏览器提交的代码或任意工具名。
 export const DEFAULT_AGENT_FLOW = {
@@ -39,7 +40,13 @@ export function validateAgentFlow(raw) {
   return { version: 1, instructions: String(raw.instructions || "").slice(0, 4000), nodes, edges };
 }
 export function agentFlow() {
-  try { return validateAgentFlow(JSON.parse(getOption("agent_flow") || "null")); }
+  try {
+    const raw = JSON.parse(getOption("agent_flow") || "null");
+    // 旧默认全工具配置随本次能力扩展升级；人工收窄过的清单保持原来的限制。
+    const oldTools = raw?.nodes?.find(n => n.kind === "tools")?.config?.tools;
+    if (raw?.version === 1 && Array.isArray(oldTools) && oldTools.length === 7 && ["account", "binance", "search", "fetch", "github", "task", "todowrite"].every(id => oldTools.includes(id))) oldTools.push(...PLATFORM_TOOL_IDS);
+    return validateAgentFlow(raw);
+  }
   catch { return structuredClone(DEFAULT_AGENT_FLOW); }
 }
 export function agentPolicy() {

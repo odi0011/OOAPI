@@ -1,10 +1,11 @@
 import { TOOL_PRESENTATIONS } from "./tool-presentation.js";
+import { platformToolSpecs, platformNativeSchema, runPlatformTool } from "./platform-tools.js";
+import { PLATFORM_TOOL_IDS } from "./platform-catalog.js";
 // Harness 工具集
 // ---------------------------------------------------------------------------
 // 工具的共同约定：
-//   · 全部只读（检索 / 读网页 / 查**自己**的账号）或只影响本会话自己的状态（待办清单），
-//     不触碰服务器文件系统；读库的只有 account，且每条 SQL 都带 user_id = 当前用户 ——
-//     这是网关能安全暴露工具的边界（模型再怎么被提示注入，也读不到别人的数据）；
+//   · 查询沿用账号可见性；平台写方法先绑定一次审批，再走原业务路由的权限和归属校验。
+//     不触碰服务器文件系统、不向模型返回密钥；不能通过工具冒用其他用户身份。
 //   · 普通失败返回 { ok, output }，把原因当成「工具结果」交回模型；
 //     用户主动停止时原样抛出，避免继续调用或吞掉已产生用量；
 //   · 每次工具调用的 token 都通过 ctx.record() 计入本轮账单（用户为真实消耗付费）。
@@ -134,6 +135,7 @@ export function recordFailedCall(err, ctx, fallback = {}) {
 }
 
 export const TOOLS = {
+  ...Object.fromEntries(platformToolSpecs().map(spec => [spec.id, { ...spec, run: (args, ctx) => runPlatformTool(spec.id, args, ctx) }])),
   binance: {
     id: "binance",
     presentation: TOOL_PRESENTATIONS.binance,
@@ -519,12 +521,13 @@ export const TOOLS = {
   },
 };
 
-export function toolSpecs(ids = []) {
-  return ids.map((id) => TOOLS[id]).filter(Boolean).map(({ id, name, desc, args, presentation }) => ({ id, name, desc, args, presentation }));
+export function toolSpecs(ids = [], user = null) {
+  const platform = new Map(platformToolSpecs(user ? Number(user.role) : 1000).map(s => [s.id, s]));
+  return ids.map((id) => PLATFORM_TOOL_IDS.includes(id) ? platform.get(id) : TOOLS[id]).filter(Boolean).map(({ id, name, desc, args, presentation }) => ({ id, name, desc, args, presentation: presentation || TOOL_PRESENTATIONS[id] }));
 }
 
 // 原生协议用真实类型描述参数，避免模型把说明文字当成参数值。
-export function nativeToolSpecs(ids = []) {
+export function nativeToolSpecs(ids = [], user = null) {
   const str = (description) => ({ type: "string", description });
   const schemas = {
     account: { properties: { action: { type: "string", enum: ["overview", "recent", "tokens", "usage", "errors", "error_help"] }, limit: { type: "integer", minimum: 1, maximum: 30 }, error_code: str("系统错误码；error_help 时使用，省略可查看全部错误词典") }, required: ["action"] },
@@ -535,7 +538,7 @@ export function nativeToolSpecs(ids = []) {
     task: { properties: { agent: str("子代理 id"), prompt: str("自包含的任务说明") }, required: ["agent", "prompt"] },
     todowrite: { properties: { todos: { type: "array", items: { type: "object", properties: { content: str("步骤描述"), status: { type: "string", enum: ["pending", "in_progress", "completed"] } }, required: ["content", "status"], additionalProperties: false } } }, required: ["todos"] },
   };
-  return toolSpecs(ids).map((t) => ({ name: t.id, description: t.desc, parameters: { type: "object", ...schemas[t.id], additionalProperties: false } }));
+  return toolSpecs(ids, user).map((t) => ({ name: t.id, description: t.desc, parameters: PLATFORM_TOOL_IDS.includes(t.id) ? platformNativeSchema(t.id, user ? Number(user.role) : 1000) : { type: "object", ...schemas[t.id], additionalProperties: false } }));
 }
 
 export async function runTool(id, args, ctx) {

@@ -1,3 +1,4 @@
+import { PLATFORM_CATALOG, platformAction } from "./platform-catalog.js";
 // 两组文案属于工具自身的展示元数据，不是模型可填的调用参数。
 // 每次事件保存所用文案与操作说明；前端按事件编号抽取，刷新不换词。
 function copy(topic, receipt, inquiry = [], capsule = []) {
@@ -69,6 +70,43 @@ export const TOOL_PRESENTATIONS = {
 };
 
 const text = (v, max = 1800) => String(v ?? "").trim().slice(0, max);
+const writeCopy = title => ({
+  inquiryPhrases: [`这份「${title}」准备好了，要这样办吗？`, `我把内容列好啦，你看看再点头？`, `按下面这些内容执行，可以吗？`, `这一步会改动平台数据，帮我核对一下吧～`, `目标和内容都在下面，这样安排好吗？`, `最后核对一遍，这份内容可以出发了吗？`, `我准备按这份内容办事，交给我吗？`, `请看看下面的目标和正文，是你想要的吗？`, `你点头后，我就按下面的内容执行～`, `小爪子先停住，等你确认这一份～`, `这一步准备就绪，确认后我再动手～`, `我把这一步摊开啦，核对好就出发？`],
+  capsulePhrases: [`${title}完成啦～`, `这一步办妥咯`, `按你确认的内容完成啦`, `结果带回来啦～`, `这一项已经办好啦`, `操作完成，结果放这儿啦`, `这一小步完成咯`, `刚才确认的事情办好啦`, `事情办妥，给你回个信～`, `执行结果收到啦`, `这一份处理好咯`, `已完成这次操作～`],
+});
+TOOL_PRESENTATIONS.platform = { ...copy("平台的工具目录", "工具目录"), title: "查看平台工具目录", description: "查看当前账号能使用的方法及参数。", scope: "按当前用户权限展示" };
+const operationDescriptions = {
+  "community.publish": "把下面的标题和正文发布到所选社区话题，署名为你的账号。",
+  "community.comment": "使用你的账号，在指定帖子下发布这段评论；回复对象也会列在下面。",
+  "community.edit": "将指定帖子修改为下面的内容。",
+  "community.delete": "删除指定帖子，并按平台规则处理它的评论和媒体引用。",
+  "messages.send": "把下面的消息发送到指定私聊或群聊，请核对收件会话和正文。",
+  "usage.clear_logs": "这会永久清空全站全部使用记录和操作日志，无法只清理其中一部分。",
+  "system.update_apply": "更新会构建并重启平台，可能短暂影响正在进行的请求。",
+  "trading.create_strategy": "创建下面的交易策略；如果开启自动执行，策略将按账户模式持续交易。",
+  "trading.edit_strategy": "修改或启停指定策略。运行中的自动策略可能继续提交交易。",
+  "trading.order": "请核对账户、交易模式、标的、方向和数量；真实模式会使用真实资金。",
+  "trading.close": "按下方比例平掉指定仓位；真实账户的平仓会影响真实资金。",
+  "trading.set_platform": "保存你的交易连接配置；开启真实交易后，账户可提交真实资金订单。",
+  "tokens.create": "创建一个属于你的 API 令牌。密钥明文在令牌管理页查看。",
+};
+for (const g of Object.values(PLATFORM_CATALOG)) TOOL_PRESENTATIONS[g.id] = {
+  ...copy(g.name, g.name), title: g.name, description: `使用平台已有的${g.name}功能。`, scope: "沿用当前账号的权限与资源归属", methods: Object.fromEntries(Object.values(g.actions).map(a => [a.action, {
+    ...(a.write ? writeCopy(a.title) : copy(a.title, a.title.replace(/^(查看|查询|阅读|搜索或浏览|浏览)/, ""))), title: a.title,
+    description: operationDescriptions[`${g.id}.${a.action}`] || (a.write ? "请核对下方的目标和内容；确认后，我会使用你的账号执行这一次操作。" : "读取平台中的真实数据来回答你的问题。"), scope: a.write ? "仅执行本次确认的目标与内容" : "只读取当前账号可见的数据",
+  }])) };
+const fieldLabels = { id: "目标编号", userId: "用户编号", topic_id: "话题编号", title: "标题", content: "正文", name: "名称", remark: "备注", q: "搜索内容", sort: "排序", p: "页码", size: "每页条数", action: "操作方式", ids: "目标编号列表", media_ids: "附带媒体编号", parent_id: "回复的评论编号", reply_to_user_id: "回复对象编号", to_user_id: "收件人编号", user_ids: "成员编号", user_id: "用户编号", account_id: "交易账户编号", model: "模型", group_name: "分组", role: "角色", status: "状态", quota: "额度单位（10000 = 1 OD）", remain_quota: "剩余额度单位（10000 = 1 OD）", symbol: "交易标的", side: "方向", quantity: "数量", mode: "交易模式", percentage: "平仓比例", auto_execute: "策略自动执行", allow_live_trading: "允许真实交易" };
+Object.assign(fieldLabels, {
+  active: "账户启用", alias: "模型别名", all: "包括停用项", announcement: "群公告", archived: "已归档", auto_ban: "自动禁用异常渠道", auto_test: "自动测试", auto_test_interval: "自动测试间隔", base_url: "接入地址", bio: "个人介绍", capabilities: "模型能力", channel: "通知渠道", channel_id: "渠道编号", channel_ids: "渠道编号列表", channel_type: "接入类型", client_id: "消息去重编号", client_order_id: "订单去重编号", concurrency: "并发上限", context_billing: "上下文计费", cooldown_min: "冷却分钟数", days: "天数", description: "说明", display_name: "昵称", email: "邮箱", enabled: "启用", end: "结束时间", expired_time: "过期时间（Unix 秒）", fast_period: "快线周期", favorited: "仅收藏", fee_rate: "手续费率", filters: "筛选条件", fingerprint_mode: "指纹模式", following: "仅关注", force: "强制执行", fromSeq: "回退起始消息序号", group: "分组", groups: "分组列表", icon: "图标", image_media_id: "封面媒体编号", initial_balance: "初始余额", is_pinned: "置顶", keyId: "API 令牌编号", keyword: "关键词", kind: "类别", limit: "数量上限", liquidation_buffer_pct: "强平缓冲比例", location: "所在地", max_daily_loss: "每日亏损上限", max_leverage: "杠杆上限", max_margin_ratio: "保证金比例上限", max_open_positions: "持仓数量上限", max_order_notional: "单笔名义价值上限", max_per_min: "每分钟请求上限", message: "申请留言", message_id: "消息编号", method: "接入方式", metric: "监控指标", min_gap_ms: "请求最小间隔（毫秒）", minutes: "分钟数", model_limits: "模型白名单", models: "模型列表", move_to: "迁移至话题编号", namespace: "命名空间", notify_email: "邮件通知", notify_emails: "通知收件邮箱", notify_webhook: "回调通知", offpeak_rule: "低峰时段规则", operator: "比较方式", orig_name: "媒体名称", overwrite: "覆盖已有配置", parameters: "策略参数", payload: "批量修改内容", position_side: "持仓方向", priority: "优先级", projectId: "项目编号", proxy_url: "代理地址", rate: "分组倍率", reason: "原因", reduce_only: "仅减仓", settings: "偏好设置", severity: "严重程度", since_id: "起始消息编号", slippage: "滑点", slow_period: "慢线周期", start: "开始时间", stop_loss: "止损价", strategy_id: "策略编号", strategy_type: "策略类型", sustained_min: "持续分钟数", tab: "列表范围", take_profit: "止盈价", test_model: "测试模型", test_prompt: "测试提问", text: "导入内容", threshold: "阈值", timeframe: "K 线周期", to: "通知接收人", todo: "会话待办", token_id: "API 令牌编号", trading_halted: "暂停交易", trailing_pct: "移动止盈比例", type: "类型", unlimited_quota: "不限令牌额度", url: "目标地址", vendor: "厂商", webhook_url: "通知回调地址", website: "个人网站", weight: "权重", window_min: "统计窗口（分钟）",
+  input_price: "输入单价（OD/百万 Token）", output_price: "输出单价（OD/百万 Token）", cache_price: "缓存单价（OD/百万 Token）", offpeak_input_price: "低峰输入单价（OD/百万 Token）", offpeak_output_price: "低峰输出单价（OD/百万 Token）", offpeak_cache_price: "低峰缓存单价（OD/百万 Token）",
+});
+function operationValue(value) {
+  if (typeof value === "string") return value;
+  if (typeof value === "boolean") return value ? "是" : "否";
+  if (Array.isArray(value)) return value.map(operationValue).join("、") || "空列表";
+  if (value && typeof value === "object") return Object.entries(value).map(([key, item]) => `${fieldLabels[key] || key}：${operationValue(item)}`).join("\n");
+  return value == null ? "未设置" : String(value);
+}
 const fallback = { ...copy("这一步的内容", "本次结果"), title: "执行这一步", description: "乐乐准备进行下一步操作。", scope: "仅本次操作" };
 export function toolPresentation(id, input = {}) {
   const args = input && typeof input === "object" && !Array.isArray(input) ? input : {};
@@ -78,6 +116,12 @@ export function toolPresentation(id, input = {}) {
   const { methods: _methods, ...common } = base;
   const selected = { ...common, ...(base.methods?.[action] || {}) };
   let fields = selected.fields || [];
+  if (PLATFORM_CATALOG[id]) {
+    const actionSpec = platformAction(id, args);
+    fields = Object.entries({ ...(args.params || {}), ...(args.data || {}) }).map(([key, value]) => [fieldLabels[key] || key, operationValue(value)]);
+    if (!fields.length) fields = [["查询范围", actionSpec?.title || "当前账号可见的方法与参数"]];
+  }
+  if (id === "platform") fields = [["工具范围", text(args.group) || "当前账号可用的全部平台工具"]];
   if (id === "account" && ["recent", "errors"].includes(action)) fields = [["记录范围", `最近 ${Math.min(30, Math.max(1, Number(args.limit) || 10))} 条${action === "errors" ? "失败调用" : "调用"}`], ["查看内容", action === "errors" ? "发生时间 · 模型 · 失败原因" : "模型 · 用量 · 消耗 · 耗时"]];
   if (id === "account" && action === "error_help") fields = [["错误码", text(args.error_code, 64) || "全部系统错误"], ["查看内容", "中文含义 · 排查建议"]];
   if (id === "binance") fields = [["账户范围", args.account_id ? `你的账户 #${text(args.account_id, 20)}` : action === "accounts" ? "你配置的全部账户" : "你启用的全部账户"], ["资料来源", "平台已同步的账户数据"]];
