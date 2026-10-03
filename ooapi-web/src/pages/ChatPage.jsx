@@ -13,6 +13,7 @@ import OdAmount from "../components/OdAmount";
 // 数据全部来自服务端：会话与设定落库（chat_sessions），消息落库（chat_messages），
 // 刷新页面不丢；本页只负责渲染与把用户操作发回服务端。
 import { userDataVisibility } from "../services/visibility";
+import { hasReasoningText } from "../services/reasoning-display";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as AntApp, Alert, Button, Checkbox, Drawer, Dropdown, Form, Input, Modal, Popconfirm, Tooltip, Radio } from "antd";
 import {
@@ -134,7 +135,7 @@ const Message = React.memo(function Message({ msg, index, busy, onRetry, onCopy,
   const lastToolIndex = parts.reduce((last, p, i) => p.type === "tool" ? i : last, -1);
   const textParts = allTextParts.filter((p) => parts.indexOf(p) > lastToolIndex);
   const finalTextId = textParts.at(-1)?.id;
-  const reasoning = parts.filter((p) => p.type === "reasoning");
+  const reasoning = parts.filter((p) => p.type === "reasoning" && hasReasoningText(p.text));
   const tools = parts.filter((p) => p.type === "tool");
   // 重连和终态可能包含同一条错误，只呈现一次，保留该轮实际失败信息。
   const errors = parts.filter((p) => p.type === "error").filter((p, i, list) =>

@@ -1,3 +1,5 @@
+import { hasReasoningText } from "../services/reasoning-display.js";
+
 const names = { account: "我的账号", binance: "币安分析", search: "联网检索", fetch: "读取网页", github: "GitHub", task: "子任务", todowrite: "任务清单" };
 const phrases = {
   account: ["账号信息查到咯～", "账号的小账本翻好啦", "你的账号信息准备好啦"],
@@ -26,6 +28,7 @@ export function capsuleGesture(part = {}) {
   return `capsule-${({ search:"search", fetch:"read", github:"type", task:"reach", todowrite:"list", binance:"chart" })[tool] || "wave"}`;
 }
 export function executionEntries(parts = [], streaming = false, finalTextId) {
+  parts = parts.filter(p => p.type !== "reasoning" || hasReasoningText(p.text));
   const lastTool = parts.findLastIndex(p => p.type === "tool");
   const latest = parts.findLast(p => ["reasoning", "text", "tool", "compaction"].includes(p.type));
   return parts.flatMap((p, i) => {
@@ -34,6 +37,7 @@ export function executionEntries(parts = [], streaming = false, finalTextId) {
   });
 }
 export function presentation(part, active) {
+  if (part.type === "waiting") return { thought: false, failed: false, label: "正在等待模型响应…", state: "loading" };
   const thought = ["reasoning", "text"].includes(part.type), failed = failedPart(part);
   const waiting = part.status === "awaiting_approval" || part.type === "approval" && part.status === "pending";
   const tool = part.tool || Object.keys(names).find(k => names[k] === part.name) || "other";

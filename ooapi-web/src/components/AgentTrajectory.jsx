@@ -94,7 +94,7 @@ export default function AgentTrajectory({ parts = [], streaming, finalTextId }) 
     observer.observe(trajectoryRef.current);
     return () => observer.disconnect();
   }, []);
-  if (streaming && !entries.some(p => p.active) && !parts.some(p => p.type === "text" && p.id === finalTextId)) entries.push({part:{type:"reasoning",id:"waiting"},active:true});
+  if (streaming && !entries.some(p => p.active) && !parts.some(p => p.type === "text" && p.id === finalTextId)) entries.push({part:{type:"waiting",id:"waiting"},active:true});
   return <section ref={trajectoryRef} className="agent-trajectory" aria-label="乐乐的执行过程">
     {entries.map(({part, active}, i) => <ExecutionPill key={part.id || i} part={part} active={active} open={expanded?.id === part.id && expanded.open} layout={expanded?.id === part.id ? expanded : null} hidden={expanded?.peers.includes(part.id)} onOpen={(open, node) => change(part.id, open, node)} onCollapsed={() => collapsed(part.id)}/>)}
   </section>;

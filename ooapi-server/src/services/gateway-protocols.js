@@ -20,6 +20,7 @@
 //   finish(res, data)       → 非流式成功响应
 // state 由 openStream(res, id, model) 创建并随请求传递。
 import crypto from "node:crypto";
+import { createReasoningFilter, hasReasoningText } from "./reasoning-content.js";
 
 const now = () => Math.floor(Date.now() / 1000);
 const newId = (prefix) => `${prefix}-${crypto.randomBytes(12).toString("hex")}`;
@@ -464,10 +465,13 @@ const chatCompletions = {
     return { send };
   },
   delta(state, text) {
+    if (!text) return;
+    state.reasoningFilter?.boundary();
     state.send({ content: text });
   },
   reasoning(state, text) {
-    state.send({ reasoning_content: text });
+    state.reasoningFilter ||= createReasoningFilter(chunk => state.send({ reasoning_content: chunk }));
+    state.reasoningFilter.push(text);
   },
   /**
    * 工具调用增量。OpenAI 流式协议里 tool_calls 是**按 index 累积**的：
@@ -476,6 +480,7 @@ const chatCompletions = {
    * 透传，绝不能在这里 JSON.parse）。
    */
   toolCall(state, ev) {
+    state.reasoningFilter?.boundary();
     const fn = { arguments: ev.args || "" };
     // 只有首帧带 name：重复发会让部分严格客户端把名字拼成 "BashBash"
     if (ev.first) fn.name = ev.name || "";
@@ -484,6 +489,7 @@ const chatCompletions = {
     state.send({ tool_calls: [tc] });
   },
   done(res, state, { settled, toolCalls = [] } = {}) {
+    state.reasoningFilter?.finish();
     toolCalls.forEach((call, index) => chatCompletions.toolCall(state, { ...call, index, first: true, args: call.arguments }));
     // 被输出上限截断时必须回 "length"，这是 OpenAI 协议里客户端判断
     // 「回答没写完」的唯一信号（原先永远是 "stop"）。
@@ -536,7 +542,7 @@ const chatCompletions = {
             // 只有工具调用时 content 必须是 null（不是空串）：OpenAI 规范如此，
             // 且部分客户端把 "" 当成「模型说了空话」而不是「模型要调工具」
             content: calls.length && !content ? null : content,
-            ...(reasoning ? { reasoning_content: reasoning } : {}),
+            ...(hasReasoningText(reasoning) ? { reasoning_content: reasoning } : {}),
             ...(calls.length
               ? {
                   tool_calls: calls.map((c, i) => ({
@@ -669,14 +675,20 @@ const anthropicMessages = {
     return index;
   },
   delta(state, text) {
+    if (!text) return;
+    state.reasoningFilter?.boundary();
     const i = anthropicMessages.openBlock(state, "text");
     state.send("content_block_delta", { index: i, delta: { type: "text_delta", text } });
   },
   reasoning(state, text) {
-    const i = anthropicMessages.openBlock(state, "thinking");
-    state.send("content_block_delta", { index: i, delta: { type: "thinking_delta", thinking: text } });
+    state.reasoningFilter ||= createReasoningFilter(chunk => {
+      const i = anthropicMessages.openBlock(state, "thinking");
+      state.send("content_block_delta", { index: i, delta: { type: "thinking_delta", thinking: chunk } });
+    });
+    state.reasoningFilter.push(text);
   },
   toolCall(state, ev) {
+    state.reasoningFilter?.boundary();
     if (state.cur) state.send("content_block_stop", { index: state.blockCount - 1 });
     const index = state.blockCount++;
     state.cur = "tool_use";
@@ -684,6 +696,7 @@ const anthropicMessages = {
     state.send("content_block_delta", { index, delta: { type: "input_json_delta", partial_json: ev.args || "{}" } });
   },
   done(res, state, { settled, toolCalls = [] } = {}) {
+    state.reasoningFilter?.finish();
     for (const call of toolCalls) anthropicMessages.toolCall(state, { ...call, args: call.arguments });
     // 空回复也要有一个块：客户端拿到「一个 content block 都没有的 message」
     // 时部分 SDK 会判为解析失败。
@@ -710,7 +723,7 @@ const anthropicMessages = {
         // 思考内容作为独立的 thinking 块返回。原先非流式**完全丢弃** reasoning ——
         // 用 Anthropic SDK 的调用方（Claude Code 等）开了思考却什么都看不到，
         // 也不报错，属于静默丢数据。
-        ...(reasoning ? [{ type: "thinking", thinking: reasoning, signature: "" }] : []),
+        ...(hasReasoningText(reasoning) ? [{ type: "thinking", thinking: reasoning, signature: "" }] : []),
         ...(content || !toolCalls.length ? [{ type: "text", text: content }] : []),
         ...toolCalls.map(c => ({ type: "tool_use", id: c.id, name: c.name, input: JSON.parse(c.arguments || "{}") })),
       ],
@@ -827,6 +840,7 @@ const openaiResponses = {
   },
   delta(state, text) {
     if (!text) return;
+    state.reasoningFilter?.boundary();
     const { item, index } = openResponsePart(state, "textPart");
     state.text += text;
     item.content[0].text += text;
@@ -838,18 +852,18 @@ const openaiResponses = {
     });
   },
   reasoning(state, text) {
-    if (!text) return;
-    const { item, index } = openResponsePart(state, "reasoningPart");
-    state.reasoning = (state.reasoning || "") + text;
-    item.summary[0].text += text;
-    state.send("response.reasoning_summary_text.delta", {
-      item_id: item.id,
-      output_index: index,
-      summary_index: 0,
-      delta: text,
+    state.reasoningFilter ||= createReasoningFilter(chunk => {
+      const { item, index } = openResponsePart(state, "reasoningPart");
+      state.reasoning = (state.reasoning || "") + chunk;
+      item.summary[0].text += chunk;
+      state.send("response.reasoning_summary_text.delta", {
+        item_id: item.id, output_index: index, summary_index: 0, delta: chunk,
+      });
     });
+    state.reasoningFilter.push(text);
   },
   toolCall(state, ev) {
+    state.reasoningFilter?.boundary();
     closeResponsePart(state, "reasoningPart");
     closeResponsePart(state, "textPart");
     const output_index = state.items.length, id = newId("fc");
@@ -862,6 +876,7 @@ const openaiResponses = {
     state.items.push(item);
   },
   done(res, state, { settled, toolCalls = [] } = {}) {
+    state.reasoningFilter?.finish();
     closeResponsePart(state, "reasoningPart");
     closeResponsePart(state, "textPart");
     for (const call of toolCalls) openaiResponses.toolCall(state, { ...call, args: call.arguments });
@@ -902,7 +917,7 @@ const openaiResponses = {
         : {}),
       model,
       output: [
-        ...(reasoning
+        ...(hasReasoningText(reasoning)
           ? [{ id: newId("rs"), type: "reasoning", summary: [{ type: "summary_text", text: reasoning }] }]
           : []),
         {

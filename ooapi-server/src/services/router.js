@@ -2,6 +2,7 @@
 // 所有上游（含 DeepSeek 网页版反代）都作为 channels 表的一行，
 // 由 type 区分适配器，优先级/权重决定调度顺序 —— 与 new-api 一致。
 import { pool } from "../db.js";
+import { normalizeReasoningAdapter } from "./reasoning-content.js";
 import { now } from "../utils.js";
 import { isOAuthMethod, getMethod, getProvider, isApiKeyMethod } from "./channel-types.js";
 import { groupConfigOf } from "./group-rate.js";
@@ -1053,5 +1054,5 @@ export async function getAdapter(typeOrChannel) {
     const provider = typeof typeOrChannel === "object" ? typeOrChannel?.type : "";
     throw Object.assign(new Error(`不支持的渠道类型：${provider || key}`), { code: "UNSUPPORTED_CHANNEL" });
   }
-  return loader();
+  return normalizeReasoningAdapter(await loader());
 }
