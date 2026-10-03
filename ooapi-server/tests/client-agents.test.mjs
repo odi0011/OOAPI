@@ -50,9 +50,17 @@ const candidates = [{ id: 1 }, { id: 2 }, { id: 3 }];
 assert.deepEqual(orderAgentChannels(candidates, rule).map(c => c.id), [2, 1, 3]);
 assert.deepEqual(candidates.map(c => c.id), [1, 2, 3]);
 const caps = { reasoning: { levels: ["low", "high", "max"] } };
-assert.equal(agentReasoning(rule, "xhigh", caps), "");
+assert.equal(agentReasoning(rule, "xhigh", caps), "xhigh");
 assert.equal(agentReasoning(rule, "max", caps), "max");
 assert.equal(agentReasoning({ ...rule, reasoning: "high" }, "max", caps), "high");
+assert.equal(agentReasoning({ ...rule, reasoning: "high" }, "", caps), "");
+for (const [ua,id] of [["sub2api/1.0.0","sub2api"],["New API","new-api"],["One-API/v0.6.1","one-api"],["litellm/1.80.0","litellm"],["OneHub/1.0","one-hub"]]) assert.equal(detectClientAgent({"user-agent":ua}).id,id);
+assert.equal(detectClientAgent({"user-agent":"Go-http-client/1.1"}).id,"");
+assert.equal(detectClientAgent({"user-agent":"claude-cli/2.1.0","x-ooapi-agent":"sub2api"}).conflict,false);
+assert.equal(detectClientAgent({"user-agent":"NewAPI/1.0 opencode/1.18"}).id,"new-api");
+assert.equal(detectClientAgent({"x-ooapi-agent":"ooapi"}).id,"");
+assert.equal(mapLog({...historical,inbound_endpoint:"/api/chat/run"},{isAdmin:false}).client_agent.id,"ooapi");
+assert.equal(detectClientAgent({"x-title":"One API","http-referer":"https://github.com/songquanpeng/one-api"}).id,"one-api");
 for (const patch of [{ agent: "arbitrary" }, { enabled: "false" }, { timeoutMs: Infinity }, { retries: -1 }, { preferredChannels: ["2"] }, { reasoning: "ignore" }, { models: ["model*arbitrary"] }]) {
   assert.throws(() => parseAgentRouting({ version: 1, rules: [{ ...rule, ...patch }] }));
 }

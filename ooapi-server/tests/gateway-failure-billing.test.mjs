@@ -138,22 +138,48 @@ const test = async (name, fn) => {
   reset();
   await setOption("gateway_agent_detection", "true");
   await setOption("gateway_agent_rules", '{"version":1,"rules":[]}');
+  await setOption(`model_caps:${model}`, JSON.stringify({ reasoning: { levels: ["high", "max"], defaultLevel: "high", parameter: "reasoning_effort", values: { high: "high", max: "max" } } }));
   await fn(); passed += 1; console.log(`  ok  ${name}`);
 };
 try {
+  for (const path of paths) for (const stream of [false, true]) {
+    await test(`${path} 切换 Responses 上游后保留${stream ? "流式" : "非流式"}入站协议并只结算一次`, async () => {
+      behavior = (req, res) => {
+        if (req.url !== "/responses") {
+          res.writeHead(req.url.includes("chat/completions") ? 400 : 404, { "content-type": "application/json" });
+          res.end(JSON.stringify(fail)); return;
+        }
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.end(frame({ type: "response.output_text.delta", delta: "FALLBACK_OK" }) + frame({ type: "response.completed", response: {
+          status: "completed", model, output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "FALLBACK_OK" }] }],
+          usage: { input_tokens: 1700, output_tokens: 300, input_tokens_details: { cached_tokens: 500 } },
+        } }));
+      };
+      const response = await post(path, { stream });
+      const raw = await response.text();
+      assert.equal(response.status, 200, raw);
+      assert.ok(raw.includes("FALLBACK_OK"));
+      if (stream) assert.ok(raw.includes(path === "responses" ? "response.completed" : path === "messages" ? "message_stop" : "[DONE]"));
+      else assert.equal(JSON.parse(raw).object || JSON.parse(raw).type, path === "responses" ? "response" : path === "messages" ? "message" : "chat.completion");
+      const row = log(), audit = JSON.parse(row.detail);
+      assert.equal(row.status, "success"); assert.equal(row.prompt_tokens, 1700); assert.equal(row.completion_tokens, 300);
+      assert.equal(row.retry_count, 3); assert.equal(upstreamRequests, 4); assert.equal(commits, 1); balance(row.quota);
+      assert.deepEqual(audit.endpoint_attempts.map(a => a.status), [400, 400, 404, 200]);
+      assert.equal(audit.inbound_endpoint, `/v1/${path}`); assert.equal(audit.upstream_endpoints.at(-1), "/responses");
+    });
+  }
   for (const path of paths) {
-    await test(`${path} Agent 推理拒绝保留原档位且不触发上游/冷却/扣费`, async () => {
+    await test(`${path} 未配置推理档位自动用最强，保留原档位和唯一账单`, async () => {
+      sse(frame(delta) + frame({ choices: [{ delta: {}, finish_reason: "stop" }], usage: actualUsage }) + "data: [DONE]\n\n");
       const response = await post(path, { headers: { "user-agent": "ZCode/3.14.3 runtime/node.js/24" }, body: JSON.stringify({ ...bodyOf(path), reasoning: { effort: "xhigh" } }) });
       const body = await response.json();
-      assert.equal(response.status, 400);
-      assert.match(body.error.message, /思考强度/);
-      assert.equal(upstreamRequests, 0); balance(0);
-      assert.equal(channelWrites.length, 0);
+      assert.equal(response.status, 200);
+      assert.equal(upstreamRequests, 1); balance(state.logs[0].quota);
       assert.equal(state.logs.length, 1);
       const audit = JSON.parse(state.logs[0].detail);
       assert.equal(audit.client_agent.id, "zcode");
       assert.equal(audit.reasoning_requested, "xhigh");
-      assert.equal(audit.reasoning_selected, "");
+      assert.equal(audit.reasoning_selected, "max");
       assert.equal(state.logs[0].device, "Node.js 24");
     });
     await test(`${path} 明确启用兼容规则后保持入站协议与唯一账单`, async () => {
@@ -166,7 +192,7 @@ try {
       const row = log(), audit = JSON.parse(row.detail); balance(row.quota);
       assert.equal(audit.client_agent.id, "zcode");
       assert.equal(audit.reasoning_requested, "xhigh");
-      assert.equal(audit.reasoning_selected, "default");
+      assert.equal(audit.reasoning_selected, "max");
       assert.equal(audit.agent_routing.id, "zcode-fixture");
       assert.match(audit.agent_routing.version, /^[a-f0-9]{12}$/);
     });
@@ -251,8 +277,8 @@ try {
         assert.equal(r.status, status); const row = log(); balance(0);
         assert.equal(row.type, 4); assert.equal(row.status, "error"); assert.equal(row.quota, 0);
         assert.equal(row.prompt_tokens, 0); assert.equal(row.completion_tokens, 0); assert.equal(row.first_token_known, 0);
-        assert.equal(JSON.parse(row.detail).http_status, status); assert.equal(row.retry_count, status === 502 ? 2 : 0);
-        assert.equal(upstreamRequests, status === 502 ? 3 : 1); assert.equal(commits, 0);
+        assert.equal(JSON.parse(row.detail).http_status, status); assert.equal(row.retry_count, status === 502 ? 2 : status === 400 ? 5 : 0);
+        assert.equal(upstreamRequests, status === 502 ? 3 : status === 400 ? 6 : 1); assert.equal(commits, 0);
       });
     }
     for (const reason of ["illegal short-input; distillation; heartbeat probing", "unknown upstream failure"]) {

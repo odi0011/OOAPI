@@ -485,6 +485,7 @@ async function settle({
   reasoningApplied = false,
   inboundEndpoint = "",
   upstreamEndpoints = [],
+  endpointAttempts = [],
   tokenQuotaHold = 0,
   inputText = "",
   retryCount = 0,
@@ -633,6 +634,7 @@ async function settle({
       reasoning_applied: reasoningApplied,
       inbound_endpoint: endpointPath(inboundEndpoint),
       upstream_endpoints: endpointList(upstreamEndpoints),
+      endpoint_attempts: endpointAttempts,
       context_tier: price.contextTier || 0,
       priced_at: startedAt || Date.now(),
       rate: Number(gcfg?.rate) || 1,
@@ -1085,6 +1087,7 @@ async function handleCompletion(protocol, req, res) {
     const settled = await settle({
       inboundEndpoint: req.originalUrl,
       upstreamEndpoints: result.upstreamEndpoints,
+      endpointAttempts: result.endpointAttempts,
       reasoningEffort: result.reasoningEffort,
       reasoningApplied: result.reasoningApplied,
       token,
@@ -1198,6 +1201,7 @@ async function handleCompletion(protocol, req, res) {
         const partialSettled = await settle({
           inboundEndpoint: req.originalUrl,
           upstreamEndpoints: failedCall.upstreamEndpoints,
+          endpointAttempts: failedCall.endpointAttempts,
           reasoningEffort: failedCall.reasoningEffort,
           reasoningApplied: failedCall.reasoningApplied,
           token,
@@ -1272,6 +1276,7 @@ async function handleCompletion(protocol, req, res) {
       // 带上部分结算的金额与 token：两个日志页都能看出「这次其实花了钱」
       detail: JSON.stringify({ code, requestId, partial_units: partialUnits, partial_tokens: partialTokens,
         inbound_endpoint: endpointPath(req.originalUrl), upstream_endpoints: endpointList(err.upstreamEndpoints),
+        endpoint_attempts: err.endpointAttempts || [],
         reasoning_effort: err.reasoningEffort || "", reasoning_applied: err.reasoningApplied === true,
         http_status: Number(err.status || err.httpStatus) || 0,
         upstream_error_code: String(err.upstreamErrorCode || ""),

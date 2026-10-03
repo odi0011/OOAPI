@@ -46,8 +46,8 @@ try {
         scenario = (_req, res) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(fail)); };
         const e = await reject(adapter, { status, billable: false, upstreamRejected: true });
         assert.equal(normalizeUsage(e.usage).totalTokens, 0);
-        assert.equal(requests, name === "OpenAI" && status === 502 ? 3 : 1);
-        if (name === "OpenAI") assert.equal(e.retryCount, status === 502 ? 2 : 0);
+        assert.equal(requests, status === 400 ? 6 : name === "OpenAI" && status === 502 ? 3 : 1);
+        if (name === "OpenAI") assert.equal(e.retryCount, status === 400 ? 5 : status === 502 ? 2 : 0);
       });
     }
   }

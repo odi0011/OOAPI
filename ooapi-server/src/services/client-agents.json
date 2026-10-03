@@ -1,4 +1,10 @@
 [
+  {"id":"ooapi","name":"站内会话","icon":"","internal":true},
+  {"id":"sub2api","name":"sub2api","kind":"relay","icon":"sub2api.svg","source":"https://github.com/Wei-Shaw/sub2api/blob/main/frontend/public/logo.svg"},
+  {"id":"new-api","name":"New API","kind":"relay","icon":"new-api.png","source":"https://github.com/QuantumNous/new-api/blob/main/web/public/logo.png"},
+  {"id":"one-api","name":"One API","kind":"relay","icon":"one-api.png","source":"https://github.com/songquanpeng/one-api/blob/main/web/default/public/logo.png"},
+  {"id":"litellm","name":"LiteLLM","kind":"relay","icon":"litellm.svg","source":"https://docs.litellm.ai/img/brand/litellm-favicon.svg"},
+  {"id":"one-hub","name":"One Hub","kind":"relay","icon":"one-hub.svg","source":"https://github.com/MartialBE/one-hub/blob/main/web/src/assets/images/logo.svg"},
   {"id":"zcode","name":"ZCode","icon":"zcode.png","source":"https://zcode.z.ai/favicon-192x192.png?v=20260707-transparent"},
   {"id":"opencode","name":"OpenCode","icon":"opencode.png","source":"https://opencode.ai/favicon-96x96-v3.png"},
   {"id":"qoder","name":"Qoder","icon":"qoder.svg","source":"https://qoder.com/favIcon.svg"},

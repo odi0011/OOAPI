@@ -71,6 +71,7 @@ const query = async (store, sql, args = []) => {
   queries.push(s);
   assert.equal((s.match(/\?/g) || []).length, args.length, `SQL占位符: ${s}`);
   if (s === 'SELECT * FROM users WHERE id = ?' || s === 'SELECT status FROM users WHERE id = ?') return [[clone(store.user)].filter((u) => u.id === Number(args[0]))];
+  if (s.startsWith('SELECT id, display_name, avatar_media_id FROM users WHERE id IN')) return [[clone(store.user)].filter(u=>args.includes(u.id))];
   if (s.includes('FROM model_prices')) return [[{ model, input_price: 1, output_price: 2, cache_price: .5 },
     { model: 'glm-4.7', input_price: .6, output_price: 2.2, cache_price: .11 }]];
   if (s === 'SELECT * FROM tokens WHERE id = ? AND user_id = ?') return [[clone(store.token)].filter((t) => t.id === Number(args[0]) && t.user_id === Number(args[1]))];
@@ -274,13 +275,14 @@ try {
     assert.equal(message.cost, 0); assert.equal(message.firstTokenMs, null); assert.equal(row.first_token_known, 0);
     assert.ok(row.request_prompt_text.includes('用户原文')); assert.ok(row.request_prompt_text !== input);
     assert.equal(JSON.parse(row.detail).http_status, status);
-    assert.equal(row.retry_count, status === 502 ? 2 : 0); assert.equal(message.retryCount, row.retry_count);
+    assert.equal(row.retry_count, status === 502 ? 2 : status === 400 ? 5 : 0); assert.equal(message.retryCount, row.retry_count);
     assert.ok(!JSON.stringify(message).includes('DO_NOT_LEAK')); assert.ok(!row.content.includes('DO_NOT_LEAK'));
     const history = (await get(`/api/chat/sessions/${state.session.id}`)).messages;
     assert.equal(history[1].id, message.id); assert.equal(history[1].seq, message.seq); assert.equal(history[1].status, 'error');
     assert.ok(history[1].parts.some((p) => p.type === 'error')); assert.deepEqual(history[1].tokens, message.tokens);
     assert.equal(history[1].cost, 0); assert.equal(history[1].firstTokenMs, null);
     const own = await get('/api/log/usage?status=error'); assert.equal(own.total, 1); assert.equal(own.items[0].input_text, input);
+    assert.equal(own.items[0].client_agent.id, 'ooapi');
     assert.equal(own.items[0].input_recorded, true); assert.equal(own.items[0].output_recorded, true);
     assert.ok(!('request_prompt_text' in own.items[0])); assert.ok(!('detail' in own.items[0]));
     assert.equal((await get('/api/log/operation')).total, 0); const summary = await get('/api/log/usage/summary?status=error');
@@ -427,7 +429,7 @@ try {
     state.user.role = 100; jwt = signToken(state.user); const admin = (await get('/api/log/usage')).items[0];
     assert.equal(admin.input_text, input); assert.ok(admin.request_prompt_text.includes('用户原文')); assert.ok('detail' in admin);
     assert.equal(admin.inbound_endpoint, '/api/chat/run');
-    assert.deepEqual(admin.upstream_endpoints, ['/v1/chat/completions']);
+    assert.deepEqual(admin.upstream_endpoints, ['/v1/chat/completions', '/chat/completions', '/v1/responses', '/responses', '/v1/messages', '/messages']);
   });
   await test('端点成功落库，本人仅入站、管理员可查上游，旧记录不猜测端点', async () => {
     sse(frame({ choices: [{ delta: { content: 'ENDPOINT_OK' } }] }) + frame({ usage }) + 'data: [DONE]\n\n');
@@ -436,7 +438,7 @@ try {
     assert.deepEqual(JSON.parse(row.detail).upstream_endpoints, ['/v1/chat/completions']);
     const own = (await get('/api/log/usage')).items[0];
     assert.equal(own.inbound_endpoint, '/api/chat/run');
-    assert.equal(own.reasoning_effort, 'default');
+    assert.equal(own.reasoning_effort, 'none');
     assert.ok(!('upstream_endpoints' in own)); assert.ok(!('detail' in own));
     assert.ok(!JSON.stringify(own).includes('/v1/chat/completions'));
     state.user.role = 100; jwt = signToken(state.user);

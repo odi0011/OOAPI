@@ -2,6 +2,10 @@ import { ToolCallBuffer, applyToolDefinitions, anthropicMessages } from "../tool
 import { normalizeContentToText } from "./content-text.js";
 import { isNotApprovedResponse } from "./http-error.js";
 import { normalizeUsage } from "../pricing.js";
+import { reasoningBody } from "../model-capabilities.js";
+import { guardedFetch, readTextCapped } from "./openai-compat.js";
+import { runEndpointFallback } from "./endpoint-fallback.js";
+import { upstreamModelOf } from "./vendor-quirks.js";
 // 上游适配器：Anthropic 兼容 API（API Key）
 // ===========================================================================
 // 用途：接入**任何 Anthropic Messages 协议**的第三方服务（官方 api.anthropic.com、
@@ -55,7 +59,7 @@ function headers(channel, key) {
 function buildMessages(messages) {
   const out = [];
   for (const m of messages || []) {
-    if (!m || typeof m !== "object" || m.role === "system") continue;
+    if (!m || typeof m !== "object" || ["system", "developer"].includes(m.role)) continue;
     const role = m.role === "assistant" ? "assistant" : "user";
     const text = normalizeContentToText(m.content);
     if (!out.length && role !== "user") continue;
@@ -70,7 +74,7 @@ function buildMessages(messages) {
 
 function systemOf(messages) {
   return (messages || [])
-    .filter((m) => m && m.role === "system")
+    .filter((m) => m && ["system", "developer"].includes(m.role))
     .map((m) => normalizeContentToText(m.content))
     .join("\n\n");
 }
@@ -96,8 +100,11 @@ function injectImages(blocks, images) {
   }
 }
 
-export async function chat({ tools = [], toolChoice, onToolCall, channel, model, prompt, messages, thinkingOverride, images = [], onDelta, onReasoning, onUsage, signal }) {
-  const { messages: url } = endpoints(channel?.base_url);
+export async function chat(args) {
+  return runEndpointFallback({ ...args, channel: { ...args.channel, base_url: args.channel.base_url || DEFAULT_BASE, api_key: nextKey(args.channel) } }, "anthropic", chatOnce);
+}
+export async function chatOnce({ endpoint, tools = [], toolChoice, onToolCall, channel, model, prompt, messages, thinkingOverride, reasoningConfig, maxOutputTokens, images = [], onDelta, onReasoning, onUsage, signal }) {
+  const url = endpoint || endpoints(channel?.base_url).messages;
   const key = nextKey(channel);
   if (!key) throw Object.assign(new Error("未填写 API Key"), { code: "CHANNEL_AUTH_EXPIRED", upstreamStarted: false });
   const useMessages = Array.isArray(messages) && messages.length ? messages : [{ role: "user", content: prompt }];
@@ -105,31 +112,34 @@ export async function chat({ tools = [], toolChoice, onToolCall, channel, model,
   if (images?.length) injectImages(blocks, images);
   const thinking = thinkingOverride === true;
   const body = {
-    model,
-    max_tokens: thinking ? 16000 : 8192,
+    model: upstreamModelOf(channel.type, model),
+    max_tokens: maxOutputTokens || (thinking ? 16000 : 8192),
     messages: blocks,
     stream: true,
   };
   const system = systemOf(useMessages);
   if (system) body.system = system;
   if (thinking) body.thinking = { type: "enabled", budget_tokens: 12000 };
+  const mapping = reasoningBody(reasoningConfig, "anthropic");
+  Object.assign(body, mapping);
+  if (body.thinking?.budget_tokens >= body.max_tokens) body.thinking.budget_tokens = Math.max(1, body.max_tokens - 1);
   applyToolDefinitions(body, tools, toolChoice, "anthropic");
   const toolBuffer = new ToolCallBuffer(onToolCall);
 
   let resp;
   try {
-    resp = await fetch(url, {
+    resp = await guardedFetch(url, {
       method: "POST",
       headers: headers(channel, key),
       body: JSON.stringify(body),
       signal,
-    });
+    }, { allowPrivate: channel.other?.allow_private_upstream === true });
   } catch (e) {
     if (e.name === "AbortError") throw Object.assign(new Error("请求已取消"), { code: "CHANNEL_ABORTED" });
     throw Object.assign(new Error(`无法连接 Anthropic 上游：${e.message}`), { code: "CHANNEL_NETWORK" });
   }
   if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
+    const text = await readTextCapped(resp).catch(() => "");
     let msg = text.slice(0, 300);
     let rejectedUsage = null;
     try {
@@ -163,6 +173,25 @@ export async function chat({ tools = [], toolChoice, onToolCall, channel, model,
     });
   }
   if (!resp.body) throw Object.assign(new Error("Anthropic 上游未返回内容流"), { code: "CHANNEL_BAD_RESPONSE" });
+
+  if ((resp.headers.get("content-type") || "").includes("application/json")) {
+    let j;
+    try { j = JSON.parse(await readTextCapped(resp)); } catch { throw Object.assign(new Error("Anthropic 返回非法 JSON"), { code: "CHANNEL_BAD_RESPONSE" }); }
+    const u = j.usage || {}, input = (Number(u.input_tokens) || 0) + (Number(u.cache_read_input_tokens) || 0) + (Number(u.cache_creation_input_tokens) || 0);
+    const usage = { prompt_tokens: input, completion_tokens: Number(u.output_tokens) || 0, cached_tokens: Number(u.cache_read_input_tokens) || 0 };
+    if (j.usage) onUsage?.(usage);
+    const content = (j.content || []).filter(b => b.type === "text").map(b => b.text || "").join("");
+    const reasoning = (j.content || []).filter(b => b.type === "thinking").map(b => b.thinking || "").join("");
+    try {
+      if (j.error) throw Object.assign(new Error("Anthropic 返回错误响应"), { code: "CHANNEL_BIZ_ERROR" });
+      for (const [index, block] of (j.content || []).entries()) toolBuffer.anthropic({ type: "content_block_start", index, content_block: block });
+      if (reasoning) onReasoning?.(reasoning);
+      if (content) onDelta?.(content);
+      if (j.stop_reason === "max_tokens" && toolBuffer.size) throw Object.assign(new Error("工具调用被截断"), { code: "CHANNEL_STREAM_ERROR" });
+      if (!content && !toolBuffer.size) throw Object.assign(new Error("Anthropic 返回空正文"), { code: "CHANNEL_EMPTY" });
+      return { content, reasoning, usage, upstreamModel: j.model || body.model, httpStatus: resp.status, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras, reasoningApplied: Object.keys(mapping).length > 0 };
+    } catch (error) { throw Object.assign(error, { content, reasoning, usage, status: resp.status, billable: Boolean(content || reasoning || toolBuffer.size) || normalizeUsage(usage).totalTokens > 0 }); }
+  }
 
   const reader = resp.body.getReader();
   const dec = new TextDecoder();
@@ -267,7 +296,7 @@ export async function chat({ tools = [], toolChoice, onToolCall, channel, model,
     reader.cancel().catch(() => {});
   }
 
-  return { content, reasoning, usage, upstreamModel, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras, httpStatus: resp.status };
+  return { content, reasoning, usage, upstreamModel, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras, httpStatus: resp.status, reasoningApplied: Object.keys(mapping).length > 0 };
 }
 
 /** 健康检查：GET /v1/models（免费） */

@@ -1,5 +1,6 @@
 import OdAmount, { OdText } from "../components/OdAmount";
 import ClientAgentBadge from "../components/ClientAgentBadge";
+import { reasoningLabel, requestedReasoningLabel } from "../services/reasoning-display";
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { Table, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions, Space, Typography } from "antd";
 import { ReloadOutlined, FileTextOutlined } from "@ant-design/icons";
@@ -24,10 +25,15 @@ function normalizeCurrency(text) {
 }
 
 const ms = formatDuration;
-const reasoningLabel = value => String(value || "").split(",").map(level => ({default:"模型默认",enabled:"开启",disabled:"关闭",none:"关闭",minimal:"最低",low:"低",medium:"中",high:"高",xhigh:"极高",max:"最高"})[level] || level).filter(Boolean).join(" / ") || "未记录";
-function EndpointCell({ record, isAdmin }) {
+function ReasoningCell({ record }) {
+  const selected = record.reasoning_selected || (record.error_code === "INVALID_REASONING" ? "" : record.reasoning_effort);
+  return <Tooltip title={record.reasoning_applied ? "推理参数已下发" : "上游未确认该档位已下发；不支持关闭的模型可能仍按自身策略思考"}><span className="oo-reasoning-audit"><span className="oo-reasoning-actual">{selected ? reasoningLabel(selected) : record.error_code === "INVALID_REASONING" ? "未应用" : "未记录"}</span>{record.reasoning_recorded ? <span className="oo-reasoning-requested">（传入：{requestedReasoningLabel(record.reasoning_requested)}）</span> : null}</span></Tooltip>;
+}
+function EndpointCell({ record, isAdmin, showAgent = true }) {
   const row = (label, value, key) => <span className="oo-endpoint-row" key={key || label}><small>{label}</small><span title={value || "历史记录未保存"}>{value || "未记录"}</span></span>;
-  return <span className="oo-endpoints"><ClientAgentBadge record={record} />{row("入站", record.inbound_endpoint)}{isAdmin && (record.upstream_endpoints?.length ? record.upstream_endpoints.map((path,i) => row(i ? "" : "上游", path, i)) : row("上游", ""))}</span>;
+  const paths = isAdmin ? record.upstream_endpoints || [] : record.resolved_endpoint ? [record.resolved_endpoint] : [];
+  const attempts = record.endpoint_attempts?.map(a => `${a.endpoint} · HTTP ${a.status || "—"}`).join(" → ");
+  return <span className="oo-endpoints">{showAgent && <ClientAgentBadge record={record} />}{row("入站", record.inbound_endpoint)}{paths.length ? <Tooltip title={attempts || paths.join(" → ")}>{row("↳", paths.at(-1))}</Tooltip> : null}</span>;
 }
 
 /**
@@ -242,7 +248,7 @@ export default function LogPage() {
             title: "用户",
             dataIndex: "username",
             width: 115,
-            render: (v, r) => <UserAvatar user={{ id: r.user_id, username: v }} size={22} showName />,
+            render: (v, r) => <UserAvatar user={{ ...r, id: r.user_id, username: v }} size={22} showName />,
           },
         ]
       : []),
@@ -265,8 +271,8 @@ export default function LogPage() {
         ),
     },
     {
-      title: "推理强度", dataIndex: "reasoning_effort", width: 104,
-      render: (value, record) => <Tooltip title={value ? record.reasoning_applied ? "推理参数已下发" : "使用渠道默认或未下发推理参数" : "历史记录未保存"}><span className="oo-reasoning-level">{reasoningLabel(value)}</span></Tooltip>,
+      title: "推理强度", dataIndex: "reasoning_effort", width: 175,
+      render: (_, record) => <ReasoningCell record={record} />,
     },
     {
       title: "端点", dataIndex: "inbound_endpoint", width: 250,
@@ -608,14 +614,15 @@ export default function LogPage() {
           <Descriptions className="log-detail-fields" column={1} size="small" bordered labelStyle={{ width: 92 }}>
             <Descriptions.Item label="时间">{fmtDate(detail.created_at)}</Descriptions.Item>
             <Descriptions.Item label="用户">
-              <UserAvatar user={{ id: detail.user_id, username: detail.username }} size={20} showName />
+              <UserAvatar user={{ ...detail, id: detail.user_id }} size={20} showName />
             </Descriptions.Item>
             <Descriptions.Item label="模型">
               <ModelLabel model={detail.model} modelVendor={detail.model_vendor} size={15} channelTypes={Array.isArray(detail.source_vendors) ? detail.source_vendors : detail.channel_type ? [detail.channel_type] : []} />
             </Descriptions.Item>
             <Descriptions.Item label="调用内容"><OdText>{normalizeCurrency(detail.content)}</OdText></Descriptions.Item>
-            <Descriptions.Item label="推理强度">{detail.reasoning_effort ? `${reasoningLabel(detail.reasoning_effort)}${detail.reasoning_applied ? " · 已下发" : " · 渠道默认或未下发"}` : "历史记录未保存"}</Descriptions.Item>
-            <Descriptions.Item label="端点"><EndpointCell record={detail} isAdmin={isAdmin} /></Descriptions.Item>
+            <Descriptions.Item label="推理强度"><ReasoningCell record={detail} /></Descriptions.Item>
+            {detail.client_agent?.id ? <Descriptions.Item label="Agent"><ClientAgentBadge record={detail} /></Descriptions.Item> : null}
+            <Descriptions.Item label="端点"><EndpointCell record={detail} isAdmin={isAdmin} showAgent={false} /></Descriptions.Item>
             <Descriptions.Item label="Tokens">
               {/* 升级前的旧记录没写 token 列（当时的 detail 里也没有），显示 0 会让人
                   误以为"这次没消耗" —— 但同一行的「调用内容」里明明写着「提示 3 / 补全 570」。

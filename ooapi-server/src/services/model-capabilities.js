@@ -57,17 +57,32 @@ export async function saveModelCapabilities(model, raw) {
 }
 export function reasoningSelection(model, requested) {
   const caps = modelCapabilities(model), r = caps.reasoning;
-  const level = requested || r.defaultLevel || "";
-  if (requested && !r.levels.includes(requested)) throw Object.assign(new Error("该模型不支持所选思考强度"), { code: "INVALID_REASONING", status: 400 });
-  return { level, parameter: r.parameter, value: r.values[level] ?? level };
+  const input = String(requested ?? "").trim().toLowerCase();
+  if (!input || ["none", "disabled", "off"].includes(input)) {
+    const off = r.levels.find(l => ["none", "disabled", "off"].includes(l));
+    if (off) return { level: "none", parameter: r.parameter, value: r.values[off] ?? off, disabled: true };
+    // DeepSeek 的 effort 只接受开启后的档位；关闭必须使用 thinking.type，不能传 effort=none。
+    const parameter = /^deepseek-/.test(caps.model) ? "thinking.type" : r.parameter;
+    const values = { "thinking.type": "disabled", "enable_thinking": false, "thinking.budget_tokens": 0, "thinking_budget": 0, "thinkingConfig.thinkingBudget": 0, "output_config.effort": "disabled" };
+    return { level: "none", parameter: Object.hasOwn(values, parameter) ? parameter : "", value: values[parameter], disabled: true };
+  }
+  const rank = { minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6 };
+  const enabled = r.levels.filter(l => !["none", "disabled", "off"].includes(l));
+  const strongest = [...enabled].sort((a, b) => {
+    if (rank[a] && rank[b]) return rank[a] - rank[b];
+    if (typeof r.values[a] === "number" && typeof r.values[b] === "number") return r.values[a] - r.values[b];
+    return enabled.indexOf(a) - enabled.indexOf(b);
+  }).at(-1);
+  const level = r.levels.includes(input) ? input : strongest;
+  return level ? { level, parameter: r.parameter, value: r.values[level] ?? level } : { level: "none", parameter: "", disabled: true };
 }
 export function reasoningBody(selection, protocol = "chat") {
-  const { level, parameter, value } = selection || {};
+  const { level, parameter, value, disabled } = selection || {};
   if (!level || !parameter) return {};
   if (protocol === "responses" && ["reasoning_effort", "reasoning.effort"].includes(parameter)) return { reasoning: { effort: value, summary: "auto" } };
   if (protocol === "gemini" && parameter.startsWith("thinkingConfig.")) return { thinkingConfig: { [parameter.split(".")[1]]: value, includeThoughts: true } };
-  if (protocol === "anthropic" && parameter === "output_config.effort") return { thinking: { type: "adaptive" }, output_config: { effort: value } };
-  if (parameter === "thinking.budget_tokens") return { thinking: { type: "enabled", budget_tokens: value } };
+  if (protocol === "anthropic" && parameter === "output_config.effort") return disabled ? { thinking: { type: "disabled" } } : { thinking: { type: "adaptive" }, output_config: { effort: value } };
+  if (parameter === "thinking.budget_tokens") return disabled ? { thinking: { type: "disabled" } } : { thinking: { type: "enabled", budget_tokens: value } };
   if (parameter === "thinking.type") return { thinking: { type: value } };
   if (protocol === "chat" && ["reasoning_effort", "enable_thinking", "thinking_budget"].includes(parameter)) return { [parameter]: value };
   // API 网关与订阅协议的字段不同，不把不相容的映射透传给上游。

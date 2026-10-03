@@ -90,7 +90,7 @@ export default function OperationLogPage() {
       title: "操作者",
       dataIndex: "username",
       width: 150,
-      render: (v, r) => <UserAvatar user={{ id: r.user_id, username: v }} size={22} showName />,
+      render: (v, r) => <UserAvatar user={{ ...r, id: r.user_id, username: v }} size={22} showName />,
     },
     {
       title: "类型",
@@ -236,7 +236,7 @@ export default function OperationLogPage() {
           <Descriptions column={1} size="small" bordered labelStyle={{ width: 120 }}>
             <Descriptions.Item label="时间">{fmtDate(detail.created_at)}</Descriptions.Item>
             <Descriptions.Item label="操作者">
-              <UserAvatar user={{ id: detail.user_id, username: detail.username }} size={20} showName />
+              <UserAvatar user={{ ...detail, id: detail.user_id }} size={20} showName />
             </Descriptions.Item>
             <Descriptions.Item label="类型">{detail.type_label}</Descriptions.Item>
             <Descriptions.Item label="内容"><OdText>{detail.content}</OdText></Descriptions.Item>

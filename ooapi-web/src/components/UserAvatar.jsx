@@ -8,6 +8,7 @@
 //   3. 用户没上传头像时也不该出现「灰色小方块」这种一眼像坏数据的占位。
 // 上传的自定义头像（avatar 字段）优先，加载失败自动回退到首字母。
 import React from "react";
+import { useApp } from "../context/AppContext";
 
 /** 由用户标识派生稳定色相（0-359）。种子只用稳定字段：id 优先，其次用户名。 */
 export function hueOf(seed) {
@@ -37,18 +38,20 @@ export function displayNameOf(userOrName) {
  * @param {string} props.nameClass     名字的 class（便于各页控制字号）
  */
 export default function UserAvatar({ user, size = 24, showName = false, nameClass = "", style, title }) {
+  const { user: currentUser } = useApp();
+  const id = typeof user === "object" ? user?.id ?? user?.user_id : null;
   const [broken, setBroken] = React.useState(false);
   const name = displayNameOf(user);
   // 优先用后端下发的 avatar_url（媒体库里的真实头像，URL 带 v= 版本号）；
   // 回退到调用方直接传的 avatar 字段（例如日志页从别处拿到的地址）。
   // 两者都没有 / 加载失败 → 走下面的首字母色块（无头像时的默认表现）。
   const avatar =
-    typeof user === "object" ? String(user?.avatar_url || user?.avatar || "") : "";
+    id && Number(id) === Number(currentUser?.id) ? String(currentUser.avatar_url || "") : typeof user === "object" ? String(user?.avatar_url || user?.avatar || "") : "";
   // 头像地址变了（比如刚上传新头像）要重置失败标记，否则会一直显示色块
   React.useEffect(() => {
     setBroken(false);
   }, [avatar]);
-  const seed = typeof user === "object" ? user?.id ?? user?.username : user;
+  const seed = typeof user === "object" ? id ?? user?.username : user;
   const hue = hueOf(seed);
   const initial = (name || "?").slice(0, 1).toUpperCase();
 

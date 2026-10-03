@@ -30,6 +30,15 @@ channel("undici:request:create").subscribe(({ request }) => {
   if (request?.method === "POST") recordUpstreamEndpoint(request.path);
 });
 export const withEndpointAudit = (state, fn) => attempts.run(state, fn);
+export function recordEndpointAttempt(url, protocol, status, code = "", upstreamCode = "") {
+  const state = attempts.getStore();
+  if (!state || state.closed) return;
+  const entries = state.attempts ||= [];
+  if (entries.length >= 36) return;
+  entries.push({ endpoint: endpointPath(url), protocol, status: Number(status) || 0,
+    code: /^CHANNEL_[A-Z_]{1,48}$/.test(code) ? code : "",
+    upstream_code: /^[a-zA-Z0-9_-]{1,40}$/.test(String(upstreamCode)) ? String(upstreamCode) : "" });
+}
 export function endpointList(values) {
   return [...new Set((Array.isArray(values) ? values : []).flatMap(value => Array.isArray(value) ? value : [value]).map(endpointPath).filter(Boolean))].slice(0, 12);
 }

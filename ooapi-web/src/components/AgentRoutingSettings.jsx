@@ -4,7 +4,7 @@ import { ArrowUpOutlined, DeleteOutlined, PlusOutlined } from "@ant-design/icons
 import ClientAgentBadge, { CLIENT_AGENTS } from "./ClientAgentBadge";
 
 const reasoningOptions = [
-  ["preserve", "保留客户端参数"], ["unsupported-default", "不支持的档位使用模型默认"], ["model-default", "始终使用模型默认"],
+  ["preserve", "沿用通用适配（未传关闭，超出范围选最强）"], ["unsupported-default", "不支持的档位使用模型最强"], ["model-default", "使用模型默认档位（未传仍关闭）"],
   ["none", "关闭（none）"], ["low", "低（low）"], ["medium", "中（medium）"], ["high", "高（high）"], ["xhigh", "极高（xhigh）"], ["max", "最高（max）"],
 ].map(([value, label]) => ({ value, label }));
 
@@ -30,7 +30,7 @@ export default function AgentRoutingSettings({ value, onChange, disabled }) {
         <Button size="small" type="text" danger icon={<DeleteOutlined />} aria-label={`删除规则 ${index + 1}`} disabled={disabled} onClick={() => update(rules.filter((_, i) => i !== index))} />
       </div>
       <div className="oo-agent-rule-grid">
-        <label>调用 Agent<Select aria-label={`规则 ${index + 1} Agent`} value={r.agent} disabled={disabled} options={CLIENT_AGENTS.map(a => ({ value: a.id, label: a.name }))} onChange={agent => patch(index, { agent })} /></label>
+        <label>调用 Agent<Select aria-label={`规则 ${index + 1} Agent`} value={r.agent} disabled={disabled} options={CLIENT_AGENTS.filter(a => !a.internal).map(a => ({ value: a.id, label: a.name }))} onChange={agent => patch(index, { agent })} /></label>
         <label>适用模型<Select aria-label={`规则 ${index + 1} 模型`} mode="tags" value={r.models} disabled={disabled} tokenSeparators={[","]} placeholder="留空匹配所有模型，可输入多个型号" onChange={models => patch(index, { models })} /></label>
         <label>思考强度<Select aria-label={`规则 ${index + 1} 思考强度`} value={r.reasoning} options={reasoningOptions} disabled={disabled} onChange={reasoning => patch(index, { reasoning })} /></label>
         <label>优先渠道编号<Select aria-label={`规则 ${index + 1} 优先渠道`} mode="tags" value={r.preferredChannels.map(String)} disabled={disabled} tokenSeparators={[",", " "]} placeholder="按顺序输入渠道编号，如 6、8" onChange={values => patch(index, { preferredChannels: values.map(v => /^\d+$/.test(v) ? Number(v) : v) })} /></label>
@@ -39,6 +39,6 @@ export default function AgentRoutingSettings({ value, onChange, disabled }) {
       </div>
     </div>)}
     <Button aria-label="添加 Agent 规则" icon={<PlusOutlined />} disabled={disabled || rules.length >= 40} onClick={() => update([...rules, { id: `agent-${Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7)}`, enabled: false, agent: "zcode", models: [], preferredChannels: [], reasoning: "preserve", timeoutMs: null, retries: null }])}>添加 Agent 规则</Button>
-    <p className="oo-admin-settings-note">可通过 X-OOAPI-Agent 声明客户端，X-OOAPI-Agent-Version 声明版本；已有明确 User-Agent 时自动识别。声明冲突时使用通用路由。</p>
+    <p className="oo-admin-settings-note">可通过 X-OOAPI-Agent 声明客户端，X-OOAPI-Agent-Version 声明版本；已有明确 User-Agent 时自动识别。中转站可声明 sub2api、new-api、one-api、litellm 或 one-hub；只转发原客户端信息时无法自动判断中转项目。声明冲突时使用通用路由。</p>
   </div>;
 }

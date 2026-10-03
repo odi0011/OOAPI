@@ -29,9 +29,10 @@ export function matchAgentRule(config, agent, model, canonical = x => x) {
 }
 export function agentReasoning(rule, requested, capabilities) {
   const level = safeReasoning(requested);
+  if (!level) return "";
   if (!rule || rule.reasoning === "preserve") return level;
-  if (rule.reasoning === "model-default") return "";
-  if (rule.reasoning === "unsupported-default") return capabilities.reasoning.levels.includes(level) ? level : "";
+  if (rule.reasoning === "model-default") return capabilities.reasoning.defaultLevel || level;
+  if (rule.reasoning === "unsupported-default") return level;
   return rule.reasoning;
 }
 export function orderAgentChannels(channels, rule) {

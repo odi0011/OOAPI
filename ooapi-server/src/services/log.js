@@ -85,6 +85,7 @@ export async function writeLog({
   const output = text(outputText ?? audit.output_text);
   if (isUsage) {
     Object.assign(audit, clientAgentAudit());
+    if (audit.inbound_endpoint === "/api/chat/run") audit.client_agent = { id: "ooapi", version: "", source: "internal", conflict: false };
     // 复用本次报价快照的实际接入品牌，不查库/猜型号；渠道改名/删除不改历史来源。
     const sources = Object.hasOwn(audit, "source_vendors") ? sourceVendors(audit.source_vendors) : billingSourceVendors(audit.billing_details);
     if (Object.hasOwn(audit, "source_vendors") || sources.length) audit.source_vendors = sources;

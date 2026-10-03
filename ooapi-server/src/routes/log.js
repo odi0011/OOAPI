@@ -51,6 +51,8 @@ export function mapLog(r, { isAdmin, user = null }) {
     id: r.id,
     user_id: r.user_id,
     username: r.username,
+    display_name: r.display_name || r.username || "",
+    avatar_url: Number(r.avatar_media_id) ? `/api/media/avatar/${r.user_id}?v=${Number(r.avatar_media_id)}` : "",
     created_at: r.created_at,
     type: r.type,
     type_label: LOG_TYPE_LABEL[r.type] || "其他",
@@ -71,9 +73,16 @@ export function mapLog(r, { isAdmin, user = null }) {
     billing_details: isAdmin ? bill : publicBillingDetails(bill),
     billing_known: Number(r.billing_unknown) !== 1 && detail.billing_known !== false,
     model: canonicalModelName(r.model) || r.model || "",
-    client_agent: publicClientAgent(r.client_agent || detail.client_agent, r.user_agent),
-    reasoning_requested: safeReasoning(r.reasoning_requested ?? detail.reasoning_requested),
-    reasoning_selected: safeReasoning(r.reasoning_selected ?? detail.reasoning_selected),
+    client_agent: (r.inbound_endpoint || detail.inbound_endpoint) === "/api/chat/run" ? { id: "ooapi", version: "", source: "internal", conflict: false } : publicClientAgent(r.client_agent || detail.client_agent, r.user_agent),
+    reasoning_requested: String(r.reasoning_requested ?? detail.reasoning_requested ?? "").split(",").slice(0, 20).map(safeReasoning).filter(Boolean).join(","),
+    reasoning_selected: String(r.reasoning_selected ?? detail.reasoning_selected ?? "").split(",").slice(0, 20).map(safeReasoning).filter(Boolean).join(","),
+    reasoning_recorded: r.reasoning_requested != null || Object.hasOwn(detail, "reasoning_requested"),
+    resolved_endpoint: (() => {
+      let paths = r.upstream_endpoints || detail.upstream_endpoints;
+      if (typeof paths === "string") { try { paths = JSON.parse(paths); } catch { paths = []; } }
+      const last = endpointList(paths).at(-1) || "";
+      return ["/chat/completions", "/responses", "/messages"].find(p => last.endsWith(p)) || "";
+    })(),
     agent_routing: (() => {
       let route = r.agent_routing || detail.agent_routing;
       if (typeof route === "string") { try { route = JSON.parse(route); } catch { return null; } }
@@ -113,7 +122,7 @@ export function mapLog(r, { isAdmin, user = null }) {
     const visibility = userDataVisibility(user);
     if (!visibility.pricing) base.billing_details = null;
     if (!visibility.usage_records && Number(r.type) === LOG_TYPE.ERROR) {
-      for (const key of ["client_agent", "agent_routing", "reasoning_requested", "reasoning_selected"]) delete base[key];
+      for (const key of ["client_agent", "agent_routing", "reasoning_requested", "reasoning_selected", "reasoning_recorded", "resolved_endpoint"]) delete base[key];
       // 旧调用错误位于操作日志：不能借兼容入口绕过逐次使用记录权限。
       for (const key of ["model", "model_vendor", "quota", "prompt_tokens", "completion_tokens", "cache_tokens", "first_token_ms", "elapsed_ms", "retry_count", "price_phase", "billing_details", "request_id", "token_id", "token_name", "group_name", "source_vendors", "inbound_endpoint", "reasoning_effort", "reasoning_applied"]) delete base[key];
     }
@@ -130,6 +139,7 @@ export function mapLog(r, { isAdmin, user = null }) {
   return {
     ...base,
     upstream_endpoints: endpointList(detail.upstream_endpoints),
+    endpoint_attempts: Array.isArray(detail.endpoint_attempts) ? detail.endpoint_attempts : [],
     original_model: detail.upstream_model || detail.requested_model || r.model || "",
     requested_model: detail.requested_model || r.model || "",
     upstream_model: detail.upstream_model || "",
@@ -302,6 +312,7 @@ async function listLogs(req, res, kind) {
     "user_agent",
     "CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.client_agent') ELSE NULL END AS client_agent",
     "CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.agent_routing') ELSE NULL END AS agent_routing",
+    "CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.upstream_endpoints') ELSE NULL END AS upstream_endpoints",
     "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.reasoning_requested')) ELSE NULL END AS reasoning_requested",
     "CASE WHEN JSON_VALID(detail) THEN JSON_UNQUOTE(JSON_EXTRACT(detail, '$.reasoning_selected')) ELSE NULL END AS reasoning_selected",
     ...(isAdmin ? ["detail"] : []),
@@ -337,9 +348,16 @@ async function listLogs(req, res, kind) {
   }
 
   const sourcedRows = await logsWithSourceVendors(rows);
+  // 头像是用户当前资料，不写进历史用量快照；一页只批量查一次，避免每行请求用户接口。
+  const userIds = [...new Set(rows.map(r => Number(r.user_id)).filter(id => id > 0))];
+  const profiles = new Map();
+  if (userIds.length) {
+    const [users] = await pool.query(`SELECT id, display_name, avatar_media_id FROM users WHERE id IN (${userIds.map(() => "?").join(",")})`, userIds);
+    for (const profile of users) profiles.set(Number(profile.id), profile);
+  }
   return ok(res, {
     items: sourcedRows.map((r) => ({
-      ...mapLog(r, { isAdmin, user: req.user }),
+      ...mapLog({ ...r, display_name: profiles.get(Number(r.user_id))?.display_name, avatar_media_id: profiles.get(Number(r.user_id))?.avatar_media_id }, { isAdmin, user: req.user }),
       // source_vendors已提供实际来源图标；channel_type仅保留管理员旧接口兼容。
       // 普通用户仍拿不到渠道ID/名称/凭据，其品牌展示遵循使用记录可见权限。
       ...(isAdmin ? { channel_type: chanType.get(Number(r.channel_id) || 0) || "" } : {}),

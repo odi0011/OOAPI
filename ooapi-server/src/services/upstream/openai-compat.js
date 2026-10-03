@@ -1,4 +1,5 @@
 import { reasoningBody } from "../model-capabilities.js";
+import { runEndpointFallback } from "./endpoint-fallback.js";
 // 通用 OpenAI 兼容适配器
 // ===========================================================================
 // 用途：所有「官方 API」接入方式的渠道都走这里。
@@ -312,7 +313,12 @@ function pickUsage(u) {
  * 执行一次对话（流式）
  * @returns {Promise<{content, reasoning, usage, upstreamModel}>}
  */
-export async function chat({
+export async function chat(args) {
+  return runEndpointFallback({ ...args, channel: { ...args.channel, api_key: nextKey(args.channel) } }, "chat", chatWithBusyRetry);
+}
+
+async function chatWithBusyRetry({
+  endpoint,
   tools = [], toolChoice, onToolCall,
   channel,
   model,
@@ -356,6 +362,7 @@ export async function chat({
   for (let attempt = 0; ; attempt += 1) {
     try {
       const result = await chatOnce({
+        endpoint,
         channel,
         model,
         prompt,
@@ -385,7 +392,8 @@ export async function chat({
   }
 }
 
-async function chatOnce({
+export async function chatOnce({
+  endpoint,
   tools = [], toolChoice, onToolCall,
   channel,
   model,
@@ -401,7 +409,7 @@ async function chatOnce({
   unwrap,
   bodyHook,
 }) {
-  const { chat: url } = endpoints(channel.base_url);
+  const url = endpoint || endpoints(channel.base_url).chat;
   if (!url) {
     throw Object.assign(new Error("未填写接口地址（Base URL）"), { code: "CHANNEL_NOT_READY", upstreamStarted: false });
   }
@@ -464,10 +472,12 @@ async function chatOnce({
   if (!resp.ok) {
     const text = await readTextCapped(resp).catch(() => "");
     let msg = text.slice(0, 200);
-    let rejectedUsage = null;
+    let rejectedUsage = null, upstreamErrorCode = "";
     try {
       const j = JSON.parse(text);
       msg = j?.error?.message || j?.message || msg;
+      const rawCode = String(j?.error?.code ?? j?.code ?? j?.error?.type ?? "");
+      upstreamErrorCode = /^[a-zA-Z0-9_-]{1,40}$/.test(rawCode) ? rawCode : "";
       rejectedUsage = pickUsage(j?.usage);
     } catch {
       /* 保留原始文本 */
@@ -504,7 +514,7 @@ async function chatOnce({
         : classified.hint ? `（${classified.hint}）` : "";
     if (rejectedUsage && onUsage) onUsage(rejectedUsage);
     throw Object.assign(new Error(`上游返回 HTTP ${resp.status}：${msg}${hint}`), {
-      code, status: resp.status, usage: rejectedUsage, billable: consumedUsage(rejectedUsage), upstreamRejected: true, upstreamModel: body.model,
+      code, status: resp.status, upstreamErrorCode, usage: rejectedUsage, billable: consumedUsage(rejectedUsage), upstreamRejected: true, upstreamModel: body.model,
     });
   }
   if (!resp.body) {
@@ -563,6 +573,7 @@ async function chatOnce({
       reasoning,
       usage: jsonUsage,
       httpStatus: resp.status,
+      reasoningApplied: Object.keys(mappedReasoning).length > 0,
       upstreamModel: j?.model || body.model,
       // 方舟自动降级：非流式响应同样带 service_status
       billModel: effectiveModelOf(j),
@@ -704,6 +715,7 @@ async function chatOnce({
     // 上游安全审核标注被剥离（execute 据此在渠道上标记「触发过 safe」）
     safetyStripped,
     httpStatus: resp.status,
+    reasoningApplied: Object.keys(mappedReasoning).length > 0,
   };
 }
 

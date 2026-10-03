@@ -57,6 +57,7 @@ pool.query = async (sql, args = []) => {
   if (/SELECT key_str, value FROM options/.test(sql)) return [[...settings].map(([key_str, value]) => ({ key_str, value }))];
   if (/INSERT INTO options/.test(sql)) { settings.set(args[0], args[1]); return [{ affectedRows: 1 }]; }
   if (/SELECT \* FROM users WHERE id/.test(sql)) return [[users.get(Number(args[0]))].filter(Boolean)];
+  if (/SELECT id, display_name, avatar_media_id FROM users WHERE id IN/.test(sql)) return [[...users.values()].filter(u => args.includes(u.id))];
   if (/FROM channel_groups/.test(sql)) return [[...groups.filter((g) => !sql.includes("WHERE name") || g.name === args[0])]];
   if (/FROM channels WHERE id IN/.test(sql)) {
     sourceReads++; if (throwSourceRead) throw Object.assign(new Error("Fixture unavailable"), { code: "FIXTURE_DB_DOWN" });

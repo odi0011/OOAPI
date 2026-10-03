@@ -43,6 +43,8 @@ export function billableFailedCall(err, fallback = {}) {
     reasoningEffort: err.reasoningEffort || fallback.reasoningEffort || "default",
     reasoningApplied: err.reasoningApplied === true,
     upstreamEndpoints: err.upstreamEndpoints || [],
+    endpointAttempts: err.endpointAttempts || [],
+    reasoningRequested: err.reasoningRequested || "",
     errorCode: String(err.code || "CHANNEL_ERROR"),
     httpStatus: Number(err.status || err.httpStatus) || 0,
     failed: true,
@@ -284,7 +286,7 @@ export async function runCompletion({
             sessionId: callSessionId,
             requestId: callRequestId,
             userId: user?.id,
-            thinkingOverride: reasoningConfig.level ? undefined : thinking,
+            thinkingOverride: reasoningConfig.disabled ? false : reasoningConfig.level ? undefined : thinking,
             reasoningConfig,
             maxOutputTokens: outputLimit,
             search,
@@ -370,12 +372,14 @@ export async function runCompletion({
           }
         );
       }
-      return { ...result, upstreamEndpoints: endpointAudit.endpoints, reasoningEffort: reasoningConfig.level || (thinking === true ? "enabled" : thinking === false ? "disabled" : "default"), reasoningApplied: result.reasoningApplied === true, toolMode: nativeTools ? "native" : "text", requestPrompt: prepared.billingPrompt || prepared.prompt, channel, channelQuote: attemptQuote, startedAt: callStarted || started, firstTokenAt,
+      return { ...result, endpointAttempts: endpointAudit.attempts || [], reasoningRequested: reasoningEffort, upstreamEndpoints: endpointAudit.endpoints, reasoningEffort: reasoningConfig.level || (thinking === true ? "enabled" : thinking === false ? "disabled" : "default"), reasoningApplied: result.reasoningApplied === true, toolMode: nativeTools ? "native" : "text", requestPrompt: prepared.billingPrompt || prepared.prompt, channel, channelQuote: attemptQuote, startedAt: callStarted || started, firstTokenAt,
         retryCount: attempts - 1 + internalRetries, elapsed: Date.now() - runStartedAt };
     } catch (err) {
       lastError = tagChannel(err, channel);
       endpointAudit.closed = true;
       lastError.upstreamEndpoints = endpointAudit.endpoints;
+      lastError.endpointAttempts = endpointAudit.attempts || [];
+      lastError.reasoningRequested = reasoningEffort;
       lastError.reasoningEffort = reasoningConfig.level || (thinking === true ? "enabled" : thinking === false ? "disabled" : "default");
       // 停止也要保留已消耗上下文的证据；原先在赋值前 throw，首步停止会漏账。
       // 已输出内容优先于错误分类（它直接证明模型请求已开始）。

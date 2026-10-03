@@ -21,7 +21,12 @@ assert.throws(() => validateCapabilities({...unknown,reasoning:{levels:["high"],
 assert.deepEqual(reasoningBody({level:"high",parameter:"reasoning_effort",value:"high"},"responses"),{reasoning:{effort:"high",summary:"auto"}});
 assert.deepEqual(reasoningBody({level:"high",parameter:"output_config.effort",value:"high"},"anthropic"),{thinking:{type:"adaptive"},output_config:{effort:"high"}});
 assert.deepEqual(reasoningBody({level:"high",parameter:"output_config.effort",value:"high"},"chat"),{});
-assert.throws(()=>reasoningSelection("fixture-unknown","arbitrary"),{code:"INVALID_REASONING"});
+assert.equal(reasoningSelection("fixture-unknown","arbitrary").level,"none");
+assert.equal(reasoningSelection("deepseek-flash","medium").level,"max");
+assert.equal(reasoningSelection("gpt-5.4","max").level,"xhigh");
+assert.equal(reasoningSelection("deepseek-flash","").level,"none");
+assert.deepEqual(reasoningBody(reasoningSelection("deepseek-flash","")),{thinking:{type:"disabled"}});
+assert.equal(reasoningSelection("deepseek-flash"," HIGH ").level,"high");
 const conversation=[{role:"user",content:"old"},{role:"assistant",content:"done"},{role:"user",content:"new"},{role:"assistant",tool_calls:[{id:"call-a"}]},{role:"tool",tool_call_id:"call-a",content:"result"}];
 const split=compressionSplit(conversation,1);
 assert.equal(split.head.length,2);

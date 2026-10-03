@@ -31,3 +31,4 @@ try {
   assert.ok(!JSON.stringify([a,b]).includes("private"));
   console.log("端点：真实并发HTTP、协议路径脱敏、非调用请求排除与结束后冻结通过");
 } finally { await new Promise(r => server.close(r)); }
+import "./endpoint-fallback.test.mjs";
