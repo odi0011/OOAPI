@@ -37,7 +37,10 @@ export function publicRunError(err, { stopped = false } = {}) {
     }
     if (/(?:input|message|prompt)[\s\S]{0,80}(?:too short|minimum.{0,20}length|at least.{0,12}(?:character|token))|(?:输入|消息|提问)[\s\S]{0,50}(?:太短|过短|至少)/i.test(upstream)) return `${prefix}输入内容过短，请补充内容后重试。`;
     if (/context.{0,30}(?:length|limit|exceed)|(?:上下文|输入|消息).{0,30}(?:过长|超长|超出|超过)/i.test(upstream)) return `${prefix}输入超过上下文长度限制，请缩短内容或新建会话。`;
-    if (/model.{0,30}(?:not found|not exist|invalid|unsupported)|模型.{0,30}(?:不存在|无效|不支持)/i.test(upstream)) return `${prefix}所选模型不可用，请选择其他模型。`;
+    // model_param_invalid / invalid_request_error 说的是参数，不是模型不存在。
+    // WorkBuddy 的 11133 会带这两个字段；宽泛的 model...invalid 曾误报为模型不可用。
+    if (/model[\s_-]+param(?:eter)?[\s_-]+invalid|invalid[\s_-]+request[\s_-]+parameters|request parameters.{0,60}(?:reject|invalid)|请求参数.{0,30}(?:不符合|无效)/i.test(upstream)) return `${prefix}请求参数或工具调用历史不符合上游要求，请联系管理员核查协议转换。`;
+    if (/\bmodel(?:[\s:="']+.{0,24})?\s+(?:not found|not exist|is invalid|is unsupported)|\b(?:invalid|unsupported)[\s_-]+model\b|模型.{0,30}(?:不存在|无效|不支持)/i.test(upstream)) return `${prefix}所选模型不可用，请选择其他模型。`;
   }
   return MESSAGES[err?.code] || (status ? `上游请求失败（HTTP ${status}），请检查模型或稍后重试。` : "生成失败，请稍后重试或联系管理员。");
 }

@@ -475,7 +475,7 @@ export async function chatOnce({
     let rejectedUsage = null, upstreamErrorCode = "";
     try {
       const j = JSON.parse(text);
-      msg = j?.error?.message || j?.message || msg;
+      msg = j?.error?.message || j?.message || j?.msg || msg;
       const rawCode = String(j?.error?.code ?? j?.code ?? j?.error?.type ?? "");
       upstreamErrorCode = /^[a-zA-Z0-9_-]{1,40}$/.test(rawCode) ? rawCode : "";
       rejectedUsage = pickUsage(j?.usage);

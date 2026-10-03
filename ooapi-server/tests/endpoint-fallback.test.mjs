@@ -5,6 +5,8 @@ import { chat as anthropic } from "../src/services/upstream/anthropic-compat.js"
 import { endpointCandidates } from "../src/services/upstream/endpoint-fallback.js";
 import { withEndpointAudit } from "../src/services/endpoint-audit.js";
 import { reasoningSelection } from "../src/services/model-capabilities.js";
+import { PROTOCOLS } from "../src/services/gateway-protocols.js";
+import { publicRunError } from "../src/services/upstream/public-error.js";
 
 const seen = []; let handler, id = 41000;
 const server = http.createServer(async (req, res) => {
@@ -26,6 +28,49 @@ async function test(name, run) { seen.length=0; await run(); checks++; console.l
 try {
   assert.equal(endpointCandidates("https://example.com/api/v3").length,3);
   assert.equal(endpointCandidates("https://example.com/custom/responses")[0].url,"https://example.com/custom/responses");
+  await test("Responses 并行工具历史转换后满足上游消息顺序，正文与跨轮结果完整保留",async()=>{
+    const input=[
+      {role:'system',content:'system instructions'}, {role:'user',content:'review both files'},
+      {role:'assistant',content:[{type:'output_text',text:'Read both.'}]},
+      {type:'function_call',call_id:'a',name:'read',arguments:'{"file":"a"}'},
+      {type:'reasoning',summary:[{type:'summary_text',text:'provider summary'}]},
+      {type:'function_call',call_id:'b',name:'read',arguments:'{"file":"b"}'},
+      {role:'assistant',content:[{type:'output_text',text:'Then compare.'}]},
+      {type:'function_call_output',call_id:'b',output:'result B'},
+      {type:'function_call_output',call_id:'a',output:'result A'},
+      {role:'assistant',content:'Next round.'},
+      {type:'function_call',call_id:'c',name:'read',arguments:'{"file":"c"}'},
+      {type:'function_call_output',call_id:'c',output:'result C'},
+      {role:'user',content:'continue the review'},
+    ];
+    const original=JSON.stringify(input);
+    const parsed=PROTOCOLS.responses.parse({model:'deepseek-flash',input,max_output_tokens:384000,tools:[{type:'function',name:'read',parameters:{type:'object',properties:{file:{type:'string'}}}}]});
+    handler=(_req,res,body)=>{
+      const pending=new Set();
+      for(const message of body.messages){
+        if(message.role==='tool') { assert.ok(pending.delete(message.tool_call_id),'tool result must match the current assistant turn'); }
+        else { assert.equal(pending.size,0,'no assistant or user may interrupt unanswered tool calls');for(const c of message.tool_calls||[])pending.add(c.id); }
+      }
+      assert.equal(pending.size,0);
+      assert.deepEqual(body.messages.filter(m=>m.tool_calls).map(m=>[m.content,m.tool_calls.map(c=>c.id)]),[['Read both.Then compare.',['a','b']],['Next round.',['c']]]);
+      assert.deepEqual(body.messages.filter(m=>m.role==='tool').map(m=>[m.tool_call_id,m.content]),[['b','result B'],['a','result A'],['c','result C']]);
+      assert.equal(body.messages[2].tool_calls[0].function.arguments,'{"file":"a"}');
+      assert.equal(body.max_tokens,384000);assert.equal(body.reasoning_effort,'max');
+      json(res,completedChat);
+    };
+    const a={...args('/v2'),messages:parsed.messages,tools:parsed.tools,maxOutputTokens:parsed.maxTokens};
+    assert.equal((await chat(a)).content,'OK');assert.equal(seen.length,1);assert.equal(JSON.stringify(input),original);
+  });
+  await test("WorkBuddy msg 参数拒绝不混入原始响应，也不误报模型不可用",async()=>{
+    handler=(_req,res)=>json(res,{code:11133,msg:'Invalid request parameters',extError:{code:'model_param_invalid',message:'the request parameters were rejected by the model provider'},private:'fixture-private-response'},400);
+    await assert.rejects(chat(args('/v2')),e=>{
+      assert.equal(e.upstreamErrorCode,'11133');assert.equal(e.message,'上游返回 HTTP 400：Invalid request parameters');
+      assert.match(publicRunError(e),/请求参数或工具调用历史/);assert.doesNotMatch(publicRunError(e),/模型不可用|fixture-private|model_param/);return true;
+    });
+    assert.equal(seen.length,3);
+    assert.match(publicRunError({code:'CHANNEL_BAD_REQUEST',status:400,message:'{"extError":{"code":"model_param_invalid"}}'}),/请求参数或工具调用历史/);
+    for(const message of ['model not found','model example is invalid','unsupported model','模型不存在'])assert.match(publicRunError({code:'CHANNEL_BAD_REQUEST',status:400,message}),/模型不可用/);
+  });
   await test("v1 路径回退保留前缀，成功后复用路径",async()=>{
     handler=(req,res)=>req.url==="/prefix/chat/completions"?json(res,completedChat):reject(res);
     const a=args('/prefix/v1');assert.equal((await chat(a)).content,'OK');assert.deepEqual(seen.map(x=>x.path),['/prefix/v1/chat/completions','/prefix/chat/completions']);

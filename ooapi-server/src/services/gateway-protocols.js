@@ -172,7 +172,14 @@ function responsesInput(body) {
     }
     if (!it || typeof it !== "object") continue;
     if (it.type === "function_call") {
-      out.push(...canonicalizeMessage({ role: "assistant", content: "", toolCalls: [{ id: it.call_id, name: it.name, arguments: it.arguments }] }));
+      const [message] = canonicalizeMessage({ role: "assistant", content: "", toolCalls: [{ id: it.call_id, name: it.name, arguments: it.arguments }] });
+      const previous = out.at(-1);
+      // Responses 把同一轮的正文和并行工具调用拆成多个 item；Chat 却要求它们
+      // 属于同一条 assistant，随后紧跟全部 tool 结果。逐 item 建消息会使第二个
+      // assistant 插进尚未应答的工具调用之间，WorkBuddy/DeepSeek 实测返回 11133。
+      if (previous?.role === "assistant") {
+        previous.tool_calls = [...(previous.tool_calls || []), ...message.tool_calls];
+      } else out.push(message);
       continue;
     }
     if (it.type === "function_call_output") {
@@ -191,10 +198,20 @@ function responsesInput(body) {
     // 图片同样要作为标准分片保留（否则被静默丢弃 + 绕过数量防护）
     const imgs = extractImagesFromResponsesInput([it]);
     if (!text && !imgs.length) continue;
-    out.push({
+    const message = {
       role,
       content: imgs.length ? [{ type: "text", text }, ...imgs] : text,
-    });
+    };
+    const previous = out.at(-1);
+    // 同一输出轮也可能在 function_call 后带正文；保留顺序和内容，不能让正文
+    // 再拆开待应答的工具组。遇到 user/system/tool 已自然结束该轮，绝不跨轮合并。
+    if (role === "assistant" && previous?.role === "assistant") {
+      if (typeof previous.content === "string" && typeof message.content === "string") previous.content += message.content;
+      else {
+        const parts = value => Array.isArray(value) ? value : value ? [{ type: "text", text: value }] : [];
+        previous.content = [...parts(previous.content), ...parts(message.content)];
+      }
+    } else out.push(message);
   }
   return out;
 }
