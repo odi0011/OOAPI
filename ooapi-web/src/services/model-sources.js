@@ -1,5 +1,7 @@
 // 运行模型的来源只读渠道元信息；原厂推断仅用于模型价格目录。
 // 不在前端裁切模型名/能力后缀，以免把两个不同模型的来源合到一起。
+import { channelPublicModel } from "../../../ooapi-server/src/services/channel-models.js";
+export { channelPublicModel };
 export function normalizeSourceVendors(values) {
   return [...new Set((Array.isArray(values) ? values : [values])
     .map((value) => typeof value === "string" ? value.trim().toLowerCase() : "")
@@ -18,7 +20,7 @@ export function modelSourceMap(channels = [], selectedModels = []) {
     // 已保存的规范名可能不同于上游ID；只接受服务端明确确认的映射，避免展开所有别名造成重复候选。
     for (const model of [...candidates, ...selectedModels.filter((m) => Object.hasOwn(channel.model_vendors || {}, m))]) {
       if (typeof model !== "string" || !model.trim()) continue;
-      const name = model.trim();
+      const name = channelPublicModel(channel, model);
       result[name] = normalizeSourceVendors([...(result[name] || []), ...vendors]);
     }
   }

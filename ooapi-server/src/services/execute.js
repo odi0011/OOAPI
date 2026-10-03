@@ -7,7 +7,8 @@ import { pool } from "../db.js";
 import { getNumberOption } from "../config.js";
 import { selectChannels, getAdapter, adapterKeyFor, markChannelError, markChannelOk, withChannelLimit, explainNoChannel } from "./router.js";
 import { callsText } from "./tool-wire.js";
-import { resolveAliasSync } from "./models.js";
+import { resolveAliasSync, canonicalModelName, modelRegistrySync } from "./models.js";
+import { autoChannelId, channelUpstreamModel } from "./channel-models.js";
 import { recordChannelSwitch } from "./metrics.js";
 import { normalizeUsage, assertModelPriced } from "./pricing.js";
 import { channelPriceQuote } from "./channel-price-quote.js";
@@ -200,6 +201,8 @@ export async function runCompletion({
     if (onChannelTry) onChannelTry(channel);
 
     const started = Date.now();
+    const scopedAuto = autoChannelId(model);
+    const upstreamRequestModel = channelUpstreamModel(channel, model, modelRegistrySync()?.get(canonicalModelName(model))?.upstreamModel);
     let attemptQuote = channelPriceQuote(channel, { model, at: started });
     let sawOutput = false;
     let timedOut = false;
@@ -271,7 +274,7 @@ export async function runCompletion({
           attemptStarted = true;
           return withEndpointAudit(endpointAudit, () => adapter.chat({
             channel,
-            model,
+            model: upstreamRequestModel,
             prompt: prepared.prompt,
             messages: prepared.messages,
             tools: nativeTools ? tools : [], toolChoice: nativeTools ? toolChoice : undefined,
@@ -320,6 +323,8 @@ export async function runCompletion({
         clearTimeout(backstopTimer);
       });
       attemptUsage = result.usage ?? attemptUsage;
+      // auto 的实际输出档位只作为上游证据，价格始终使用管理员给该渠道配置的独立项。
+      if (scopedAuto && result.billModel) result.billModel = canonicalModelName(model);
       internalRetries += Math.max(0, Number(result.retryCount) || 0);
       if (!result.content && !result.reasoning && !result.toolCalls?.length) {
         throw Object.assign(new Error("上游返回空内容"), { code: "CHANNEL_EMPTY", usage: attemptUsage,
@@ -408,7 +413,8 @@ export async function runCompletion({
       lastError.billingStartedAt = Number(err.billingStartedAt) || callStarted || started;
       lastError.billingFirstTokenAt = Number(err.billingFirstTokenAt || err.firstTokenAt) || firstTokenAt;
       lastError.firstTokenAt = lastError.billingFirstTokenAt;
-      lastError.model = err.model || model;
+      lastError.model = scopedAuto ? canonicalModelName(model) : err.model || model;
+      if (scopedAuto && lastError.billModel) lastError.billModel = canonicalModelName(model);
       lastError.channelQuote = attemptQuote;
       lastError.elapsed = Date.now() - runStartedAt;
       lastError.retryCount = attempts - 1 + internalRetries;

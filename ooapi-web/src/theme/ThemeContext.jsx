@@ -236,7 +236,7 @@ function useAntdConfig(resolved, primary, appearance) {
         // 见上面 `token.colorFill` 处的注释（我第一版写在这里，实测无效）。
         Empty: { colorTextDescription: s.ink3 },
         Message: { contentBg: s.surface },
-        Tooltip: { colorBgSpotlight: s.tooltipBg, colorTextLightSolid: s.tooltipFg, borderRadius: rBtn },
+        Tooltip: { colorBgSpotlight: s.tooltipBg, colorTextLightSolid: s.tooltipFg, borderRadius: rCard },
         Popover: { borderRadiusLG: rCard },
       },
     };

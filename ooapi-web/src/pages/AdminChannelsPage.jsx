@@ -14,6 +14,7 @@ import {
   ClockCircleOutlined,
 } from "@ant-design/icons";
 import { API } from "../services/api";
+import { channelPublicModel } from "../services/model-sources";
 import { useApp } from "../context/AppContext";
 import { fmtDate, copyText, odOf, unitsPerOd } from "../services/format";
 import useLatest from "../hooks/useLatest";
@@ -2133,7 +2134,7 @@ export default function AdminChannelsPage() {
           <Tooltip
             title={
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <div style={{ fontSize: 11, color: "#aaa" }}>
+                <div style={{ fontSize: 11, color: "var(--tooltip-muted)" }}>
                   {probed.length ? `上游实际可用：${probed.length} 个` : `共 ${own.length} 个`}
                 </div>
                 {/* 每个模型后面标出**该厂商自己的单价**（用户要求）。
@@ -2144,7 +2145,7 @@ export default function AdminChannelsPage() {
                   const pr = pricesFor(r.id, m);
                   return (
                     <div key={m} style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
-                      <ModelLabel model={m} size={13} channelType={r.type} />
+                      <ModelLabel model={channelPublicModel(r, m)} size={13} channelType={r.type} />
                       {pr ? (
                         <span style={{ fontSize: 11, color: "var(--ink-3)", whiteSpace: "nowrap" }}>
                           {pr.unit === "credits" ? <ThunderboltOutlined style={{ marginInlineEnd: 3 }} /> : null}
@@ -2158,7 +2159,7 @@ export default function AdminChannelsPage() {
             }
           >
             <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap", overflow: "hidden" }}>
-              {merged.slice(0, 2).map((m) => <ModelLabel key={m} model={m} size={14} channelType={r.type} />)}
+              {merged.slice(0, 2).map((m) => <ModelLabel key={m} model={channelPublicModel(r, m)} size={14} channelType={r.type} />)}
               {merged.length > 2 ? <span className="bui-chip">+{merged.length - 2}</span> : null}
             </span>
           </Tooltip>

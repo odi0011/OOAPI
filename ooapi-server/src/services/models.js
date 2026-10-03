@@ -7,6 +7,7 @@
 import { VENDORS } from "./vendors.js";
 import { DEFAULT_PRICES } from "./pricing.js";
 import { pool } from "../db.js";
+import { isAutoModel, autoChannelId, channelPublicModel } from "./channel-models.js";
 
 // 各厂商的模型定义（懒加载，避免循环依赖）
 const VENDOR_MODEL_MODULES = {
@@ -229,6 +230,7 @@ export function resolveAliasSync(requested) {
   const raw = String(requested || "").trim();
   if (!raw) return raw;
   const base = modelIdentity(raw).toLowerCase();
+  if (autoChannelId(base)) return base;
   const approved = confirmedAliases.get(raw.toLowerCase()) || confirmedAliases.get(base);
   if (approved) return approved;
   return aliasCache?.get(base) || LEGACY_ALIASES[base] || raw;
@@ -279,6 +281,11 @@ export function modelInAllowList(patterns, requested) {
     const raw = p.toLowerCase();
     if (raw === "*") return true;
     if (raw.endsWith("*")) return m.startsWith(raw.slice(0, -1));
+    // 旧分组/密钥里保存的 auto 只展开到原本同名的上游路由器。
+    // 新保存的编号模型仍精确隔离，不因这一兼容规则放行其他渠道。
+    if (isAutoModel(raw) && autoChannelId(m)) {
+      return modelIdentity(registryCache.map?.get(m)?.upstreamModel).toLowerCase() === modelIdentity(raw).toLowerCase();
+    }
     // 白名单项本身也走归一化：写 `deepseek-chat` 等同于写它实际落到的 `deepseek-flash`
     return (canonicalModelName(p) || raw) === m;
   });
@@ -348,7 +355,7 @@ export async function modelRegistry() {
   };
   const put = (id, type) => {
     const k = String(id || "").toLowerCase().trim();
-    if (!k || map.has(k)) return;
+    if (!k || isAutoModel(k) || map.has(k)) return;
     const identity = canonicalModelName(k);
     const owner = DEFAULT_MODEL_VENDORS.get(identity) || String(type || "");
     const entry = { model: identity || String(id).trim(), type: owner };
@@ -382,11 +389,20 @@ export async function modelRegistry() {
     }
   }
   try {
-    const [rows] = await pool.query("SELECT type, models FROM channels");
+    const [rows] = await pool.query("SELECT id, type, models FROM channels");
     for (const r of rows) {
       for (const m of splitModelList(r.models)) {
-        put(m, r.type);
-        addTyped(r.type, m);
+        if (!isAutoModel(m) && !autoChannelId(m)) put(m, r.type);
+        if (!autoChannelId(m)) addTyped(r.type, m);
+      }
+    }
+    for (const r of rows) {
+      const declared = splitModelList(r.models);
+      const candidates = declared.length && !declared.includes("*") ? declared : [...(byType.get(r.type) || [])];
+      const upstreamModel = candidates.find(isAutoModel) || (declared.some(m => autoChannelId(m) === Number(r.id)) ? "auto" : "");
+      if (upstreamModel) {
+        const model = channelPublicModel(r, upstreamModel);
+        if (autoChannelId(model)) map.set(model, { model, type: r.type, channelId: Number(r.id), upstreamModel });
       }
     }
   } catch {

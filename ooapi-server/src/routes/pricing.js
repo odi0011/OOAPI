@@ -610,7 +610,7 @@ router.post("/attribution", asyncHandler(async (req, res) => {
   const alias = String(req.body?.alias || "").trim().toLowerCase();
   const target = String(req.body?.model || "").trim().toLowerCase();
   if (!alias || alias.length > 128 || !target || target.length > 128 || /[\s*]/.test(alias + target)) return fail(res, "请提供有效的型号与归属模型");
-  if ([alias,target].some(m => /^(auto|default|latest)$/.test(modelIdentity(m).split("/").pop()))) return fail(res, "动态路由不能建立固定模型归属；请配置渠道独立价格");
+  if ([alias,target].some(m => /^(?:\d+-auto|auto|default|latest)$/.test(modelIdentity(m).split("/").pop()))) return fail(res, "动态路由不能建立固定模型归属；请配置渠道独立价格");
   const prices = await loadPrices();
   if (!prices.has(target) || canonicalModelName(target) !== target || canonicalModelName(target) === alias) return fail(res, "归属目标必须是已定价的独立模型，不能循环归属");
   const registry = await modelRegistry();

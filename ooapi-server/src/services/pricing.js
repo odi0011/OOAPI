@@ -806,7 +806,7 @@ export async function pendingPricedModels() {
       if (prices.has(key)) continue;
       if (!pending.has(key)) {
         const plain = modelIdentity(raw).toLowerCase();
-        const candidates = /^(auto|default|latest)$/.test(plain) ? [] : [...prices.values()]
+        const candidates = /^(?:\d+-auto|auto|default|latest)$/.test(plain.split("/").pop()) ? [] : [...prices.values()]
           .filter(p => plain !== p.model.toLowerCase() && new RegExp("^" + p.model.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[-:]").test(plain))
           .sort((a,b) => b.model.length - a.model.length).slice(0, 8)
           .map(p => ({ model: p.model, type: p.type, input: p.input, output: p.output, cache: p.cache }));

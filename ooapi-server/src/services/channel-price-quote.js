@@ -1,7 +1,8 @@
 // 渠道报价与平台计价是两份事实。这里只取本次渠道可确认的公开报价，
 // 不读取管理员价表、不查历史 alias 价、不发网络请求，更不保存渠道凭据。
 import { DEFAULT_PRICES, effectivePrice, parsePriceTiers, storedPriceTiers, priceForTokens } from "./pricing.js";
-import { canonicalModelName } from "./models.js";
+import { canonicalModelName, modelRegistrySync } from "./models.js";
+import { channelUpstreamModel } from "./channel-models.js";
 import { applyVendorRequest } from "./upstream/vendor-quirks.js";
 
 const DOCUMENTS = {
@@ -44,8 +45,9 @@ export function channelPriceQuote(channel, { model = "", at = Date.now() } = {})
   let host = "";
   try { const u = new URL(channel?.base_url || ""); if (u.protocol === "https:") host = u.hostname.toLowerCase(); } catch { /* 不从未知反代猜报价 */ }
   const documentKey = provider === "glm" && host === "api.z.ai" ? "glm-global" : provider;
-  const body = { model };
-  if (channel) applyVendorRequest(body, { channel, model });
+  const upstreamModel = channelUpstreamModel(channel, model, modelRegistrySync()?.get(canonicalModelName(model))?.upstreamModel);
+  const body = { model: upstreamModel };
+  if (channel) applyVendorRequest(body, { channel, model: upstreamModel });
   const routeModel = String(body.model || model || "");
   const quote = {
     status: CREDIT_CHANNELS.has(provider) ? "credits" : "unavailable",

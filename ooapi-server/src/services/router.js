@@ -7,6 +7,7 @@ import { isOAuthMethod, getMethod, getProvider, isApiKeyMethod } from "./channel
 import { groupConfigOf } from "./group-rate.js";
 import { modelRegistrySync, modelInAllowList, canonicalModelName, vendorModelsSync } from "./models.js";
 import { publicRunError } from "./upstream/public-error.js";
+import { isAutoModel, autoChannelId, channelPublicModel } from "./channel-models.js";
 
 // 适配器表（懒加载，避免未用到的适配器被引入）
 //
@@ -761,6 +762,14 @@ export function channelSupportsModel(channel, model) {
   // 渠道声明旧名（deepseek-v4.1-flash）、用户请求新名（deepseek-flash，官方更名后的 id），
   // 两者是同一个模型，必须互相命中（用户实测：只按字面匹配会 503「没有可服务模型」）。
   const cm = canonicalModelName(m);
+  // 编号路由必须先于通配符判断；即使其他渠道声明 * 也不能抢走这个 auto。
+  const owner = autoChannelId(cm);
+  if (isAutoModel(cm)) return false;
+  if (owner) {
+    if (owner !== Number(channel.id)) return false;
+    if (list.length) return list.some(p => isAutoModel(p) || autoChannelId(p) === owner || p === "*");
+    return [...(vendorModelSet(channel.type) || [])].some(isAutoModel);
+  }
   // 留空 = 该厂商全部模型（模型归属厂商，不归属账号）
   if (!list.length) {
     const vendorSet = vendorModelSet(channel.type);
@@ -798,6 +807,8 @@ export function collectAvailableModels(channelRows) {
         // 里完全看不到，但实际调用又能成功（列表与真实能力不一致）。
         if (t === "*") {
           out.add("*");
+          const scoped = `${ch.id}-auto`;
+          if (modelRegistrySync()?.has(scoped) && channelSupportsModel(ch, scoped)) out.add(scoped);
           continue;
         }
         // 下拉展示具体型号，不把 gpt-* 这种渠道匹配规则当作可调用的模型 ID。
@@ -810,7 +821,8 @@ export function collectAvailableModels(channelRows) {
         // 口径与 channelSupportsModel 一致：声明名与它的别名都算「这个渠道能服务」
         // （deepseek-v4.1-flash 与 deepseek-flash 是同一个模型，旧名也要进列表，
         //  否则用户按旧名调得通、列表里却看不到）。
-        const lower = t.toLowerCase();
+        const lower = channelPublicModel(ch, t).toLowerCase();
+        if ((isAutoModel(lower) || autoChannelId(lower)) && !channelSupportsModel(ch, lower)) continue;
         out.add(lower);
         const cn = canonicalModelName(lower);
         if (cn && cn !== lower) out.add(cn);
@@ -819,7 +831,10 @@ export function collectAvailableModels(channelRows) {
     }
     // 留空 = 该厂商全部模型
     const vendorSet = vendorModelSet(ch.type);
-    if (vendorSet) for (const m of vendorSet) out.add(m);
+    if (vendorSet) for (const m of vendorSet) {
+      const id = channelPublicModel(ch, m).toLowerCase();
+      if (!isAutoModel(id) && (!autoChannelId(id) || autoChannelId(id) === Number(ch.id))) out.add(id);
+    }
     // 厂商表未就绪或未知厂商无声明时，实际调度也不会放行，目录不能擅自扩大为全库。
   }
   return out;

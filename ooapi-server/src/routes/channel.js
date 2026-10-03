@@ -28,7 +28,7 @@ import { getProvider, getMethod, providerKeys, publicProviders, isOAuthMethod, i
 import { buildLoginUrl, exchangeCodeForCredential, interactiveLoginInfo, supportsInteractiveLogin, supportsInteractiveLoginMethod, supportsDeviceLogin, startDeviceLogin, pollDeviceLogin } from "../services/upstream/oauth-login.js";
 import { getAdapter, resetChannelState, forgetChannel, invalidateChannelCache, channelRuntimeState, channelRecent, rowToChannel, recordChannelCall, isRateLimitedCode, testFailurePauses, setChannelRateLimit, rateLimitPauseSec } from "../services/router.js";
 import { clearGroupConfigCache } from "../services/group-rate.js";
-import { groupModelVendors, channelModelVendors, sourceVendors } from "../services/model-sources.js";
+import { groupModelVendors, channelModelVendors, channelModelLimits, sourceVendors } from "../services/model-sources.js";
 import { modelRegistry } from "../services/models.js";
 // 只留这两个：浏览器登录相关的辅助（截图/远程操作/读凭据）随「服务器浏览器登录」
 // 一起删除后已无调用点；这两个仍需（删渠道时清 profile、订阅渠道复制 profile）。
@@ -250,7 +250,7 @@ function groupResp(g, memberMap) {
     typeName: vendor ? getProvider(vendor)?.name || vendor : "",
     remark: g.remark || "",
     rate: Number(g.rate) || 1,
-    models: parseGroupModels(g.models),
+    models: channelModelLimits(parseGroupModels(g.models), m.channels || []),
     // 成员账号的厂商（去重）：前端按「单厂商=单个图标 / 多厂商=折叠态图标」渲染
     vendors: [...m.vendors],
     source_vendors: sourceVendors([...m.vendors]),

@@ -36,7 +36,7 @@ try {
   const pending = await pendingPricedModels();
   assert.equal(pending.count, 2);
   assert.equal(pending.models.find(m => m.model === sku).candidates[0].model, model);
-  assert.deepEqual(pending.models.find(m => m.model === "auto").candidates, []);
+  assert.deepEqual(pending.models.find(m => m.model === "2-auto").candidates, []);
   approved = [{ alias: sku, model }]; await reset();
   assert.equal(canonicalModelName(sku), model);
   assert.equal(await isModelPriced(sku), true);
@@ -49,3 +49,4 @@ try {
   assert.equal(await isModelPriced(sku), false, "revocation immediately restores the pricing gate");
   console.log("严格定价门禁：动态路由隔离、未配价阻断、候选、确认、SKU恢复、撤销全部通过");
 } finally { pool.query = original; invalidatePrices(); invalidateModelRegistry(); }
+await import("./channel-auto-model.test.mjs");

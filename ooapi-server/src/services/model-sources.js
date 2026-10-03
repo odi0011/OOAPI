@@ -3,6 +3,17 @@ import { providerKeys } from "./channel-types.js";
 import { canonicalModelName, modelInAllowList, modelRegistrySync } from "./models.js";
 import { collectAvailableModels, channelSupportsModel } from "./router.js";
 import { pool } from "../db.js";
+import { isAutoModel } from "./channel-models.js";
+
+/** 旧组白名单中的 auto 展开为成员渠道自己的公共名称，保持已有权限范围。 */
+export function channelModelLimits(patterns, channels) {
+  const available = [...collectAvailableModels(channels)].filter(m => !m.includes("*"));
+  return [...new Set(patterns.flatMap(pattern => {
+    if (!isAutoModel(pattern)) return [pattern];
+    const matches = available.filter(m => modelInAllowList([pattern], m));
+    return matches.length ? matches : [pattern];
+  }))];
+}
 
 const TYPES = new Set(providerKeys());
 export function sourceVendors(values) {

@@ -87,10 +87,10 @@ html[data-theme="light"] {
   --pill-track: #e5e7eb;
 
   /* 气泡提示 */
-  --tooltip-bg: oklch(27.2% 0.008 264.435);
-  --tooltip-fg: oklch(97.6% 0.002 247.839);
-  --tooltip-muted: oklch(73.1% 0.008 260.731);
-  --tooltip-border: oklch(35.6% 0.007 264.474);
+  --tooltip-bg: var(--surface);
+  --tooltip-fg: var(--ink);
+  --tooltip-muted: var(--ink-2);
+  --tooltip-border: var(--line);
 
   /* 环形阴影体系 */
   --shadow-hairline: 0 0 0 1px var(--line);
@@ -151,10 +151,10 @@ html[data-theme="dark"] {
   --pill-gray-tint: oklch(100% 0 0 / 0.08);        --pill-gray-ink: oklch(78% 0.005 260);   --pill-gray-bar: oklch(66% 0.005 260);
   --pill-track: oklch(100% 0 0 / 0.1);
 
-  --tooltip-bg: oklch(18.2% 0.004 264.459);
-  --tooltip-fg: oklch(96.4% 0.002 247.839);
-  --tooltip-muted: oklch(73.1% 0.008 260.731);
-  --tooltip-border: oklch(30.8% 0.006 258.354);
+  --tooltip-bg: var(--surface);
+  --tooltip-fg: var(--ink);
+  --tooltip-muted: var(--ink-2);
+  --tooltip-border: var(--line);
 
   --shadow-hairline: 0 0 0 1px var(--line);
   --shadow-btn: 0 0 0 1px oklch(100% 0 0 / 0.1), 0 1px 2px oklch(0% 0 0 / 0.3);
@@ -2455,6 +2455,15 @@ h1, h2, h3, h4 {
   font-size: var(--fs-body);
   font-weight: 600;
   letter-spacing: var(--ls-title);
+}
+
+/* 悬浮提示与计费明细共享表面、圆角和阴影；箭头颜色由同一主题 token 提供。 */
+.ant-tooltip .ant-tooltip-inner,
+.ant-popover .ant-popover-inner {
+  color: var(--tooltip-fg);
+  background: var(--tooltip-bg);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-overlay);
 }
 
 /* 模态框 */

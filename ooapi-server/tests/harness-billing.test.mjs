@@ -14,12 +14,15 @@ import * as contextTools from "../src/services/harness/context.js";
 import * as capabilities from "../src/services/model-capabilities.js";
 import * as agentRouting from "../src/services/agent-routing.js";
 import { withEndpointAudit } from "../src/services/endpoint-audit.js";
+import * as channelModels from "../src/services/channel-models.js";
+import { canonicalModelName, modelRegistrySync } from "../src/services/models.js";
 
 const audit = {
   callFingerprint,
   toolPresentation,
   contextTools, capabilities, withEndpointAudit,
   agentRouting,
+  channelModels, canonicalModelName, modelRegistrySync,
   toolWire,
   crypto,
   normalizeUsage,
@@ -63,6 +66,8 @@ const harness = await loadMocked("../src/services/harness/loop.js", `
   const MAX_STEPS_LIMIT=32;
 `);
 const executor = await loadMocked("../src/services/execute.js", `
+  const { autoChannelId, channelUpstreamModel } = audit.channelModels;
+  const { canonicalModelName, modelRegistrySync } = audit;
   const clientAgentContext = () => undefined;
   const { agentReasoning, orderAgentChannels } = audit.agentRouting;
   const withEndpointAudit = audit.withEndpointAudit;
