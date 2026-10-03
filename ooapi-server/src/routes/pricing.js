@@ -10,7 +10,7 @@ import { invalidatePrices, loadPrices, DEFAULT_PRICES, describeRule, parsePriceT
 import { pendingPricedModels } from "../services/pricing.js";
 import { modelRegistry, invalidateModelRegistry, canonicalModelName, modelIdentity, OFFICIAL_UNPRICED_MODELS } from "../services/models.js";
 import { syncUpstreamPrices, missingFromUpstream } from "../services/price-sync.js";
-import { modelCapabilities, saveModelCapabilities, REASONING_PARAMETERS } from "../services/model-capabilities.js";
+import { modelCapabilities, modelCapabilityPresets, modelCapabilityDocumentation, saveModelCapabilities, REASONING_PARAMETERS } from "../services/model-capabilities.js";
 
 const router = Router();
 
@@ -55,7 +55,7 @@ router.use(adminRequired);
 
 router.get("/capabilities", asyncHandler(async (_req, res) => {
   const registry = await modelRegistry();
-  return ok(res, { items: [...new Map([...registry.values()].map(m => [m.model, { ...modelCapabilities(m.model), vendor: m.type }])).values()], reasoningParameters: REASONING_PARAMETERS });
+  return ok(res, { items: [...new Map([...registry.values()].map(m => [m.model, { ...modelCapabilities(m.model), vendor: m.type, documentationUrl: modelCapabilityDocumentation(m.model, m.type) }])).values()], reasoningParameters: REASONING_PARAMETERS, presets: modelCapabilityPresets() });
 }));
 router.put("/capabilities", asyncHandler(async (req, res) => {
   const model = canonicalModelName(req.body?.model), registry = await modelRegistry();

@@ -1,10 +1,21 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { modelCapabilities, validateCapabilities, reasoningBody, reasoningSelection } from "../src/services/model-capabilities.js";
+import { modelCapabilities, modelCapabilityPresets, modelCapabilityDocumentation, validateCapabilities, reasoningBody, reasoningSelection } from "../src/services/model-capabilities.js";
 import { validateAgentFlow, DEFAULT_AGENT_FLOW } from "../src/services/harness/policy.js";
 import { compressionSplit, latestMemory, contextBudget } from "../src/services/harness/context.js";
 const unknown = modelCapabilities("fixture-unknown");
 const presets = JSON.parse(fs.readFileSync(new URL("../src/services/model-capabilities.json", import.meta.url), "utf8"));
+const quickPresets = modelCapabilityPresets();
+assert.equal(quickPresets.length, 5);
+assert(quickPresets.some(p => p.model === "claude-opus-5-5"));
+assert(quickPresets.some(p => p.model === "gemini-3.8-flash"));
+for (const preset of quickPresets) assert.deepEqual(validateCapabilities(preset.capabilities), validateCapabilities(presets[preset.model]));
+quickPresets[0].capabilities.reasoning.levels.push("fixture");
+assert(!modelCapabilityPresets()[0].capabilities.reasoning.levels.includes("fixture"), "回填不能污染后续预设");
+assert.equal(modelCapabilityDocumentation("3-auto", "kiro"), "https://kiro.dev/docs/models/");
+assert.equal(modelCapabilityDocumentation("gpt-6.1-sol", "openai"), presets["gpt-6.1-sol"].sources[0].url);
+assert.equal(modelCapabilityDocumentation("deepseek-flash", "deepseek"), presets["deepseek-flash"].sources[0].url);
+assert.equal(modelCapabilityDocumentation("fixture-unknown", "custom"), "");
 for (const [id, preset] of Object.entries(presets)) {
   assert.doesNotThrow(() => validateCapabilities(preset), id);
   assert.ok(preset.sources.length > 0 && preset.sources.every(s => /^https:\/\//.test(s.url)), `${id} 缺少来源`);

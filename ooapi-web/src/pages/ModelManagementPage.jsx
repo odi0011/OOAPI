@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { App, Alert, Button, Drawer, Form, Input, InputNumber, Select, Space, Table, Tabs, Tag } from "antd";
+import { LinkOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import PageHeader from "../components/PageHeader";
 import { ModelLabel } from "../components/VendorIcon";
@@ -15,15 +16,22 @@ function Capabilities() {
   const { message } = App.useApp(), [form] = Form.useForm();
   const [data, setData] = useState([]), [parameters, setParameters] = useState([]), [loading, setLoading] = useState(true), [error, setError] = useState("");
   const [query, setQuery] = useState(""), [editing, setEditing] = useState(null), [saving, setSaving] = useState(false);
+  const [presets, setPresets] = useState([]), [selectedPreset, setSelectedPreset] = useState("");
   const levels = Form.useWatch("levels", form) || [];
   useEffect(() => {
     let live = true;
-    API.get("/pricing/capabilities").then(r => { if (live) { setData(r.items); setParameters(r.reasoningParameters); } }).catch(e => { if (live) setError(e.message); }).finally(() => { if (live) setLoading(false); });
+    API.get("/pricing/capabilities").then(r => { if (live) { setData(r.items); setParameters(r.reasoningParameters); setPresets(r.presets || []); } }).catch(e => { if (live) setError(e.message); }).finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, []);
-  const edit = row => {
+  const fillForm = row => {
+    // 清掉上一预设的推理映射和空值，仅回填可编辑参数，保持当前模型身份与文档来源。
     form.resetFields();
-    form.setFieldsValue({ ...row, ...Object.fromEntries(Object.keys(flags).map(k => [k, row[k] == null ? "unknown" : row[k] ? "yes" : "no"])), levels: row.reasoning.levels, defaultLevel: row.reasoning.defaultLevel, parameter: row.reasoning.parameter, values: JSON.stringify(row.reasoning.values, null, 2) });
+    const reasoning = row.reasoning || {};
+    form.setFieldsValue({ category: row.category, contextWindow: row.contextWindow ?? null, maxOutputTokens: row.maxOutputTokens ?? null, inputTypes: [...(row.inputTypes || [])], outputTypes: [...(row.outputTypes || [])], notes: row.notes || "", ...Object.fromEntries(Object.keys(flags).map(k => [k, row[k] == null ? "unknown" : row[k] ? "yes" : "no"])), levels: [...(reasoning.levels || [])], defaultLevel: reasoning.defaultLevel || undefined, parameter: reasoning.parameter || "", values: JSON.stringify(reasoning.values || {}, null, 2) });
+  };
+  const edit = row => {
+    fillForm(row);
+    setSelectedPreset("");
     setEditing(row);
   };
   const save = async () => {
@@ -49,12 +57,19 @@ function Capabilities() {
       { title:"",width:75,render:(_,r)=><Button size="small" type="link" onClick={()=>edit(r)}>配置</Button> },
     ]}/>
     <Drawer title={editing ? `配置 ${editing.model}` : "模型能力"} open={Boolean(editing)} onClose={()=>!saving&&setEditing(null)} width="min(600px,100vw)" forceRender footer={<Space><Button disabled={saving} onClick={()=>setEditing(null)}>取消</Button><Button type="primary" loading={saving} onClick={save}>保存</Button></Space>}>
-      <Form form={form} layout="vertical" disabled={saving}>
+      <div style={{marginBottom:20}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginBottom:10,fontSize:12}}>
+          <span style={{color:"var(--ink-2)"}}>快速预设</span>
+          {editing?.documentationUrl && <a href={editing.documentationUrl} target="_blank" rel="noopener noreferrer"><LinkOutlined/> 厂商文档</a>}
+        </div>
+        <Space size={[6,8]} wrap>{presets.map(preset=><Button key={preset.model} size="small" disabled={saving} type={selectedPreset===preset.model?"primary":"default"} aria-pressed={selectedPreset===preset.model} onClick={()=>{fillForm(preset.capabilities);setSelectedPreset(preset.model);}}>{preset.label}</Button>)}</Space>
+        <div role="status" style={{marginTop:8,fontSize:12,color:"var(--ink-3)"}}>{selectedPreset?`已回填 ${presets.find(p=>p.model===selectedPreset)?.label || selectedPreset}，保存后生效。`:"选择预设回填全部参数，可继续调整后保存。"}</div>
+      </div>
+      <Form form={form} layout="vertical" disabled={saving} onValuesChange={()=>setSelectedPreset("")}>
         <Form.Item name="category" label="模型类型"><Select options={options(categories)}/></Form.Item>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>{[["contextWindow","上下文窗口"],["maxOutputTokens","最大输出 tokens"]].map(([name,label])=><Form.Item key={name} name={name} label={label}><InputNumber min={1} max={10000000} precision={0} placeholder="未核实" style={{width:"100%"}}/></Form.Item>)}</div>
         <Form.Item name="inputTypes" label="原生输入类型"><Select mode="multiple" options={options(types)}/></Form.Item>
         <Form.Item name="outputTypes" label="输出类型"><Select mode="multiple" options={options(types)}/></Form.Item>
-        <p style={{color:"var(--ink-3)",fontSize:12}}>站内对话可发送文本和图片，PDF 等文档提取文字后发送。视频、音频及生图/生视频模型需要对应的接入协议。</p>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>{Object.entries(flags).map(([name,label])=><Form.Item key={name} name={name} label={label}><Select options={tri}/></Form.Item>)}</div>
         <Form.Item name="levels" label="自定义推理等级"><Select mode="tags" placeholder="如 low、medium、high" tokenSeparators={[","," "]}/></Form.Item>
         <Form.Item name="defaultLevel" label="默认思考强度"><Select allowClear options={levels.map(value=>({value,label:value}))}/></Form.Item>

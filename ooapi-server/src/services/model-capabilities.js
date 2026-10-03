@@ -6,6 +6,46 @@ import { canonicalModelName } from "./models.js";
 const presets = JSON.parse(fs.readFileSync(new URL("./model-capabilities.json", import.meta.url), "utf8"));
 export const REASONING_PARAMETERS = ["", "reasoning_effort", "reasoning.effort", "thinking.type", "thinking.budget_tokens", "enable_thinking", "thinking_budget", "thinkingConfig.thinkingBudget", "thinkingConfig.thinkingLevel", "output_config.effort"];
 const blank = { contextWindow: null, maxOutputTokens: null, inputTypes: ["text"], outputTypes: ["text"], category: "chat", structuredOutput: null, nativeSearch: null, systemMessages: null, toolCalling: null, reasoning: { levels: [], defaultLevel: "", parameter: "", values: {} }, verification: "unverified", sources: [], notes: "尚无可核实的参数；运行时使用保守上下文预算。" };
+const QUICK_PRESETS = [
+  ["gpt-6.1-sol", "GPT 6.1 Sol"], ["gpt-6-astra", "GPT 6 Astra"],
+  ["deepseek-flash", "DeepSeek Flash"], ["claude-opus-5-5", "Claude Opus 5.5"],
+  ["gemini-3.8-flash", "Gemini 3.8 Flash"],
+];
+const VENDOR_DOCUMENTATION = {
+  openai: "https://developers.openai.com/api/docs/models",
+  anthropic: "https://platform.claude.com/docs/en/about-claude/models/overview",
+  deepseek: "https://api-docs.deepseek.com/",
+  gemini: "https://ai.google.dev/gemini-api/docs/models",
+  kiro: "https://kiro.dev/docs/models/",
+  openrouter: "https://openrouter.ai/docs/guides/overview/models",
+  opencode: "https://opencode.ai/docs/zen/", cline: "https://docs.cline.bot/",
+  cursor: "https://docs.cursor.com/", qoder: "https://docs.qoder.com/",
+  workbuddy: "https://www.codebuddy.ai/docs/", trae: "https://docs.trae.ai/",
+  glm: "https://docs.bigmodel.cn/", qwen: "https://help.aliyun.com/zh/model-studio/",
+  kimi: "https://platform.moonshot.ai/docs/", grok: "https://docs.x.ai/docs/models",
+  mimo: "https://mimo.mi.com/docs/", minimax: "https://platform.minimax.io/docs/",
+  stepfun: "https://platform.stepfun.com/docs/", doubao: "https://www.volcengine.com/docs/82379/",
+  ark: "https://www.volcengine.com/docs/82379/", siliconflow: "https://docs.siliconflow.cn/",
+  zcode: "https://docs.z.ai/", autoclaw: "https://docs.bigmodel.cn/",
+  typesafe: "https://docs.typesafe.ai/api", chutes: "https://docs.chutes.ai/",
+  nvidia: "https://docs.api.nvidia.com/", cerebras: "https://inference-docs.cerebras.ai/",
+  hunyuan: "https://cloud.tencent.com/document/product/1729", meta: "https://dev.meta.ai/",
+};
+
+/** 快速回填只读取内置目录，不能把某位管理员的自定义值传播到其他模型。 */
+export function modelCapabilityPresets() {
+  return QUICK_PRESETS.filter(([model]) => presets[model]).map(([model, label]) => ({
+    model, label, capabilities: structuredClone({ ...blank, ...presets[model] }),
+  }));
+}
+
+/** 文档属于正在配置的模型；套用其他厂商预设不会改变此链接。 */
+export function modelCapabilityDocumentation(model, vendor) {
+  const sources = presets[canonicalModelName(model)]?.sources || [];
+  const source = sources.find(s => /原厂|官方/.test(s.scope || "") && /^https:\/\//.test(s.url || ""));
+  return source?.url || VENDOR_DOCUMENTATION[vendor] || "";
+}
+
 export function modelCapabilities(model) {
   const id = canonicalModelName(model);
   const preset = presets[id] || blank;
