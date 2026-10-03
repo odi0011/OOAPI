@@ -748,6 +748,45 @@ const anthropicMessages = {
 };
 
 /* ============================= ③ OpenAI Responses ============================= */
+// 每个输出项拥有独立 ID 和稳定的下标；SDK 依据 added/done 建立与关闭片段。
+// reasoning delta 不能借用 message 的 ID，否则 ZCode 的 AI SDK 找不到 reasoning-start
+// 对应的片段，会主动断流，网关最终只能记录成 CHANNEL_ABORTED。
+function closeResponsePart(state, type) {
+  const active = state[type];
+  if (!active) return;
+  const { item, index } = active;
+  if (type === "reasoningPart") {
+    const text = item.summary[0].text;
+    state.send("response.reasoning_summary_text.done", { item_id: item.id, output_index: index, summary_index: 0, text });
+    state.send("response.reasoning_summary_part.done", { item_id: item.id, output_index: index, summary_index: 0, part: { type: "summary_text", text } });
+  } else {
+    const text = item.content[0].text;
+    state.send("response.output_text.done", { item_id: item.id, output_index: index, content_index: 0, text });
+    state.send("response.content_part.done", { item_id: item.id, output_index: index, content_index: 0, part: { type: "output_text", text, annotations: [] } });
+  }
+  item.status = "completed";
+  state.send("response.output_item.done", { output_index: index, item });
+  state[type] = null;
+}
+
+function openResponsePart(state, type) {
+  closeResponsePart(state, type === "reasoningPart" ? "textPart" : "reasoningPart");
+  if (state[type]) return state[type];
+  const reasoning = type === "reasoningPart";
+  const item = reasoning
+    ? { id: newId("rs"), type: "reasoning", status: "in_progress", summary: [] }
+    : { id: newId("msg"), type: "message", status: "in_progress", role: "assistant", content: [] };
+  const index = state.items.length;
+  state.items.push(item);
+  state.send("response.output_item.added", { output_index: index, item });
+  const part = reasoning ? { type: "summary_text", text: "" } : { type: "output_text", text: "", annotations: [] };
+  state.send(reasoning ? "response.reasoning_summary_part.added" : "response.content_part.added", {
+    item_id: item.id, output_index: index, [reasoning ? "summary_index" : "content_index"]: 0, part,
+  });
+  item[reasoning ? "summary" : "content"].push(part);
+  return state[type] = { item, index };
+}
+
 const openaiResponses = {
   name: "responses",
   parse(body) {
@@ -769,10 +808,10 @@ const openaiResponses = {
     res.setHeader("connection", "keep-alive");
     res.setHeader("x-accel-buffering", "no");
     res.flushHeaders?.();
-    const itemId = newId("msg");
     const createdAt = now();
+    let sequence = 0;
     const send = (type, payload) => {
-      res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...payload })}\n\n`);
+      res.write(`event: ${type}\ndata: ${JSON.stringify({ type, sequence_number: sequence++, ...payload })}\n\n`);
     };
     // 一个 response 对象的形状只在这里定义一次：created 与 completed 必须给出
     // 同一组字段（id/object/created_at/model/output/...）。官方 SDK（如 Codex 用
@@ -783,72 +822,52 @@ const openaiResponses = {
     send("response.created", {
       response: { ...respBase(), status: "in_progress", output: [] },
     });
-    send("response.output_item.added", {
-      output_index: 0,
-      item: { id: itemId, type: "message", status: "in_progress", role: "assistant", content: [] },
-    });
-    send("response.content_part.added", {
-      item_id: itemId,
-      output_index: 0,
-      content_index: 0,
-      part: { type: "output_text", text: "", annotations: [] },
-    });
-    return { send, itemId, id, text: "", reasoning: "", createdAt, model, toolItems: [] };
+    send("response.in_progress", { response: { ...respBase(), status: "in_progress", output: [] } });
+    return { send, id, text: "", reasoning: "", createdAt, model, items: [], toolItems: [], textPart: null, reasoningPart: null };
   },
   delta(state, text) {
+    if (!text) return;
+    const { item, index } = openResponsePart(state, "textPart");
     state.text += text;
+    item.content[0].text += text;
     state.send("response.output_text.delta", {
-      item_id: state.itemId,
-      output_index: 0,
+      item_id: item.id,
+      output_index: index,
       content_index: 0,
       delta: text,
     });
   },
   reasoning(state, text) {
-    // Responses 把思考放在 reasoning summary 事件里
+    if (!text) return;
+    const { item, index } = openResponsePart(state, "reasoningPart");
     state.reasoning = (state.reasoning || "") + text;
+    item.summary[0].text += text;
     state.send("response.reasoning_summary_text.delta", {
-      item_id: state.itemId,
-      output_index: 0,
+      item_id: item.id,
+      output_index: index,
       summary_index: 0,
       delta: text,
     });
   },
   toolCall(state, ev) {
-    const output_index = state.toolItems.length + 1, id = newId("fc");
+    closeResponsePart(state, "reasoningPart");
+    closeResponsePart(state, "textPart");
+    const output_index = state.items.length, id = newId("fc");
     const item = { id, type: "function_call", call_id: ev.id, name: ev.name, arguments: ev.args || "{}", status: "completed" };
     state.send("response.output_item.added", { output_index, item: { ...item, arguments: "", status: "in_progress" } });
     state.send("response.function_call_arguments.delta", { output_index, item_id: id, delta: item.arguments });
     state.send("response.function_call_arguments.done", { output_index, item_id: id, arguments: item.arguments });
     state.send("response.output_item.done", { output_index, item });
     state.toolItems.push(item);
+    state.items.push(item);
   },
   done(res, state, { settled, toolCalls = [] } = {}) {
+    closeResponsePart(state, "reasoningPart");
+    closeResponsePart(state, "textPart");
     for (const call of toolCalls) openaiResponses.toolCall(state, { ...call, args: call.arguments });
-    const text = state.text || "";
-    const reasoning = state.reasoning || "";
-    state.send("response.output_text.done", {
-      item_id: state.itemId,
-      output_index: 0,
-      content_index: 0,
-      text,
-    });
-    state.send("response.content_part.done", {
-      item_id: state.itemId,
-      output_index: 0,
-      content_index: 0,
-      part: { type: "output_text", text, annotations: [] },
-    });
-    const messageItem = {
-      id: state.itemId,
-      type: "message",
-      status: "completed",
-      role: "assistant",
-      content: [{ type: "output_text", text, annotations: [] }],
-    };
-    state.send("response.output_item.done", { output_index: 0, item: messageItem });
+    if (!state.items.length) { openResponsePart(state, "textPart"); closeResponsePart(state, "textPart"); }
     // 与 openStream 的 respBase 保持同一组字段；output 为最终产物列表
-    // （有思考时先放 reasoning 项，与 finish 的非流式形状一致）
+    // 必须沿用流中已公布的 ID/下标，不能在 completed 里重新插入无 ID 的思考项。
     // 截断时走 response.incomplete（Responses 协议里没有 finish_reason，
     // 状态从 completed 变成 incomplete 就是「没写完」的信号）
     state.send(settled?.truncated ? "response.incomplete" : "response.completed", {
@@ -861,15 +880,12 @@ const openaiResponses = {
           ? { incomplete_details: { reason: "max_output_tokens" } }
           : {}),
         model: state.model,
-        output: [
-          ...(reasoning ? [{ type: "reasoning", summary: [{ type: "summary_text", text: reasoning }] }] : []),
-          messageItem,
-          ...state.toolItems,
-        ],
+        output: state.items,
         usage: {
           input_tokens: settled?.promptTokens || 0,
           output_tokens: settled?.completionTokens || 0,
           total_tokens: (settled?.promptTokens || 0) + (settled?.completionTokens || 0),
+          ...(settled?.cacheTokens ? { input_tokens_details: { cached_tokens: settled.cacheTokens } } : {}),
         },
       },
     });
@@ -887,9 +903,10 @@ const openaiResponses = {
       model,
       output: [
         ...(reasoning
-          ? [{ type: "reasoning", summary: [{ type: "summary_text", text: reasoning }] }]
+          ? [{ id: newId("rs"), type: "reasoning", summary: [{ type: "summary_text", text: reasoning }] }]
           : []),
         {
+          id: newId("msg"),
           type: "message",
           status: "completed",
           role: "assistant",

@@ -1,6 +1,7 @@
 // 三协议网关单测：请求解析 + 响应渲染。
 // 不起 HTTP 服务，直接测协议对象 —— 它俩是纯函数，能覆盖最易错的字段映射。
 import { PROTOCOLS } from "../src/services/gateway-protocols.js";
+import assert from "node:assert/strict";
 
 let pass = 0;
 let fail = 0;
@@ -281,6 +282,56 @@ console.log("\n=== ⑤ 复审修复项回归 ===");
       const keys = ["id", "object", "created_at", "model"];
       return keys.every((k) => k in cr && k in cc);
     })());
+}
+
+// 按客户端状态机消费 SSE，而不只检查最终 completed 是否存在。缺 reasoning-start
+// 时最终 JSON 仍可看似正常，真实 AI SDK 却会在首个 reasoning delta 主动断流。
+console.log("\n=== ⑥ Responses 输出项生命周期 ===");
+for (const [name, emit, types, truncated] of [
+  ["思考后正文", p => { p.reasoning("think"); p.reasoning(" more"); p.delta("answer"); }, ["reasoning", "message"]],
+  ["纯思考", p => p.reasoning("think"), ["reasoning"]],
+  ["纯正文", p => p.delta("answer"), ["message"]],
+  ["思考后工具", p => { p.reasoning("think"); p.tool(); }, ["reasoning", "function_call"]],
+  ["纯工具", p => p.tool(), ["function_call"]],
+  ["交替思考正文", p => { p.reasoning("one"); p.delta("first"); p.reasoning("two"); p.delta("last"); p.tool(); }, ["reasoning", "message", "reasoning", "message", "function_call"]],
+  ["空产物", () => {}, ["message"]],
+  ["思考截断", p => p.reasoning("partial"), ["reasoning"], true],
+]) {
+  const r = fakeRes(), protocol = PROTOCOLS.responses, state = protocol.openStream(r, "fixture-response", "fixture-model");
+  const calls = [];
+  emit({ reasoning: text => protocol.reasoning(state, text), delta: text => protocol.delta(state, text), tool: () => calls.push({ id: "fixture-call", name: "read", arguments: '{"file":"a"}' }) });
+  protocol.done(r, state, { settled: { promptTokens: 10, completionTokens: 5, cacheTokens: 3, truncated }, toolCalls: calls });
+  const events = sseData(r), items = [], active = new Map(), completed = new Map(), text = new Map();
+  let terminal;
+  for (const [sequence, event] of events.entries()) {
+    assert.equal(event.sequence_number, sequence);
+    if (event.type === "response.output_item.added") {
+      assert.equal(event.output_index, items.length); assert.ok(event.item.id); assert.ok(!active.has(event.item.id));
+      items.push(event.item); active.set(event.item.id, event.item); text.set(event.item.id, "");
+    } else if (event.item_id) {
+      const item = active.get(event.item_id);
+      assert.ok(item, `item must be opened before ${event.type}`); assert.equal(items[event.output_index].id, event.item_id);
+      if (event.type.includes("reasoning_summary")) { assert.equal(item.type, "reasoning"); assert.equal(event.summary_index, 0); }
+      if (event.type === "response.reasoning_summary_text.delta" || event.type === "response.output_text.delta" || event.type === "response.function_call_arguments.delta") text.set(item.id, text.get(item.id) + event.delta);
+      if (event.type === "response.reasoning_summary_text.done" || event.type === "response.output_text.done") assert.equal(event.text, text.get(item.id));
+      if (event.type === "response.function_call_arguments.done") assert.equal(event.arguments, text.get(item.id));
+    } else if (event.type === "response.output_item.done") {
+      assert.ok(active.delete(event.item.id)); assert.equal(items[event.output_index].id, event.item.id);
+      assert.equal(event.item.type, items[event.output_index].type); completed.set(event.item.id, event.item);
+    } else if (["response.completed", "response.incomplete"].includes(event.type)) terminal = event;
+  }
+  assert.equal(active.size, 0); assert.equal(completed.size, items.length);
+  assert.deepEqual(terminal.response.output, items.map(item => completed.get(item.id)));
+  assert.deepEqual(terminal.response.output.map(item => item.type), types);
+  assert.equal(terminal.response.usage.input_tokens_details.cached_tokens, 3);
+  assert.equal(terminal.type, truncated ? "response.incomplete" : "response.completed");
+  const reasoningEvents = events.filter(e => e.type.includes("reasoning_summary"));
+  for (const item of items.filter(i => i.type === "reasoning")) {
+    const lifecycle = reasoningEvents.filter(e => e.item_id === item.id).map(e => e.type);
+    assert.equal(lifecycle[0], "response.reasoning_summary_part.added");
+    assert.equal(lifecycle.at(-2), "response.reasoning_summary_text.done"); assert.equal(lifecycle.at(-1), "response.reasoning_summary_part.done");
+  }
+  ck(`responses：${name}的 ID、下标、片段开闭和最终快照一致`, true);
 }
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
