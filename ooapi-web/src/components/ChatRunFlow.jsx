@@ -7,6 +7,7 @@ import "./chat-run-flow.css";
 export default function ChatRunFlow({ message }) {
   const [open, setOpen] = useState(Boolean(message?.streaming));
   const bodyId = useId(), listRef = useRef(null);
+  const collapseTimer = useRef(null), wasStreaming = useRef(Boolean(message?.streaming));
   const streaming = Boolean(message?.streaming);
   const parts = message?.parts || [];
   const final = parts.findLast(p => p.type === "text" && parts.indexOf(p) > parts.findLastIndex(v => v.type === "tool"));
@@ -15,16 +16,18 @@ export default function ChatRunFlow({ message }) {
   const active = entries.findLast(p => p.active);
   const current = active ? presentation(active.part, true).label : streaming ? final ? "正在写回答…" : "正在接着想…" : failed ? "这一轮停下啦" : "这一轮完成啦～";
   useEffect(() => {
-    if (streaming) { setOpen(true); return; }
-    const timer = setTimeout(() => setOpen(false), 2400);
-    return () => clearTimeout(timer);
+    clearTimeout(collapseTimer.current);
+    if (streaming) setOpen(true);
+    else if (wasStreaming.current) collapseTimer.current = setTimeout(() => setOpen(false), 2400);
+    wasStreaming.current = streaming;
+    return () => clearTimeout(collapseTimer.current);
   }, [streaming, message?.key]);
   useEffect(() => {
     if (open && listRef.current) listRef.current.scrollTo({ top: listRef.current.scrollHeight, behavior: "auto" });
   }, [open, entries.length, active?.part.id, Boolean(final)]);
   if (!message) return null;
   return <aside className={`chat-run-flow ${open ? "is-open" : ""} ${streaming ? "is-live" : ""}`} aria-label="本轮执行流程">
-    <button className="chat-run-flow-toggle" type="button" aria-label="查看本轮执行流程" title={current} aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen(v => !v)}>
+    <button className="chat-run-flow-toggle" type="button" aria-label="查看本轮执行流程" title={current} aria-expanded={open} aria-controls={bodyId} onClick={() => { clearTimeout(collapseTimer.current); setOpen(v => !v); }}>
       <ChatMascot state={streaming ? active ? presentation(active.part, true).state : "thinking" : failed ? "sad" : "success"}/>
       <span><strong>乐乐的进度</strong><small>{current}</small></span><span className="chat-run-flow-fold" aria-hidden="true">{open ? "−" : "+"}</span>
     </button>

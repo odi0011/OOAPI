@@ -43,7 +43,7 @@ function ExecutionPill({ part, active }) {
     observer.observe(measureRef.current); observer.observe(stepRef.current); update();
     return () => observer.disconnect();
   }, [open]);
-  return <div ref={stepRef} className={`execution-step ${active ? "is-running" : "is-settled"} ${failed ? "is-failed" : ""}`}>
+  return <div ref={stepRef} data-execution-type={part.type} className={`execution-step ${active ? "is-running" : "is-settled"} ${failed ? "is-failed" : ""}`}>
     <span ref={measureRef} className="execution-measure" aria-hidden="true"><span className="execution-mascot-space"/><span className="execution-pill-label">{label}</span>{preview && <span className="execution-pill-preview">{preview}</span>}</span>
     <div className={`execution-pill ${open ? "is-open" : ""}`} style={width ? { width } : undefined}>
       <button type="button" className="execution-pill-toggle" aria-expanded={open} aria-controls={detailId} onClick={() => { setVisited(true); setOpen(v => !v); }}>

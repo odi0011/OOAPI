@@ -60,6 +60,8 @@ try {
   check(await page.locator(".md-table th").count() >= 2, "表格按统一样式渲染");
   check(await page.locator(".oo-code-lights").count() >= 1, "代码使用用户提供的三灯卡片");
   check(await page.locator(".execution-detail.is-open").count() === 0, "完成胶囊自动收回");
+  await page.waitForTimeout(600);
+  check(await page.locator(".execution-pill-toggle .execution-pill-label").evaluateAll(nodes => nodes.every(n => n.scrollWidth <= n.clientWidth + 1)), "完成短句完整显示，不提前省略");
   await page.locator(".execution-pill-toggle").first().click();
   check(await page.locator(".execution-detail.is-open").count() === 1, "各项执行胶囊可独立展开");
   check(await page.locator(".execution-pill .execution-detail.is-open").count() === 1, "思考与工具详情在胶囊内部展开");
@@ -96,5 +98,10 @@ try {
   check(errors.length === 0, "对话与审批无运行期异常");
   const stored = (await api(`/sessions/${session.id}`)).data;
   check(stored.messages.some(m => m.parts?.some(p => p.type === "approval" && p.status === "approved")), "审批轨迹已持久化");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "查看本轮执行流程" }).click();
+  await page.waitForTimeout(2800);
+  check(await page.locator(".chat-run-flow.is-open").count() === 1, "历史会话手动展开流程不被初始化定时器关掉");
+  check(await page.locator(".chat-run-flow-body").evaluate(n => n.getBoundingClientRect().height > 100), "流程展开时实际节点可见");
   console.log(`聊天工作台 HTTP / 浏览器回归 ${checks} 项通过`);
 } finally { await browser?.close(); await pool.end(); }

@@ -1,6 +1,6 @@
 .ui-chat2 .ui-chat2-main {position:relative;}
 .chat-run-flow {position:relative;z-index:5;width:170px;flex-shrink:0;border:1px solid var(--line);border-radius:18px;background:var(--surface);}
-.chat-run-flow-toggle {display:flex;align-items:center;gap:6px;width:100%;padding:2px 8px 2px 4px;border:0;background:transparent;color:var(--ink-2);text-align:left;cursor:pointer;}
+.chat-run-flow-toggle {display:flex;align-items:center;gap:6px;width:100%;padding:2px 8px 2px 4px;border:0;font:inherit;background:transparent;color:var(--ink-2);text-align:left;cursor:pointer;}
 .chat-run-flow-toggle>span:nth-child(2) {flex:1;min-width:0;}
 .chat-run-flow-toggle strong,.chat-run-flow-toggle small {display:block;font-size:11px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .chat-run-flow-toggle small {margin-top:3px;color:var(--ink-3);font-size:10px;}

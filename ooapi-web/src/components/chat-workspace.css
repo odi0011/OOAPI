@@ -121,9 +121,10 @@
 .execution-step {position:relative;}
 .execution-measure {position:absolute;visibility:hidden;pointer-events:none;display:inline-flex;align-items:center;gap:8px;width:max-content;max-width:100%;padding:4px 12px 4px 7px;box-sizing:border-box;border:1px solid transparent;}
 .execution-mascot-space {width:28px;height:28px;flex-shrink:0;}
+.execution-measure .execution-pill-label {max-width:none;flex-shrink:0;}
 .execution-pill {box-sizing:border-box;padding:0;border-radius:20px;cursor:default;transition:width .45s cubic-bezier(.22,1.12,.4,1),border-radius .35s,background .25s;animation:lele-enter .4s cubic-bezier(.2,1.2,.4,1);}
 .execution-pill.is-open {border-radius:18px;}
-.execution-pill-toggle {display:flex;align-items:center;gap:8px;width:100%;min-width:0;min-height:36px;padding:4px 12px 4px 7px;box-sizing:border-box;border:0;color:inherit;background:transparent;cursor:pointer;text-align:left;}
+.execution-pill-toggle {display:flex;align-items:center;gap:8px;width:100%;min-width:0;min-height:36px;padding:4px 12px 4px 7px;box-sizing:border-box;border:0;font:inherit;color:inherit;background:transparent;cursor:pointer;text-align:left;}
 .execution-pill-toggle:focus-visible {outline:2px solid var(--accent);outline-offset:-3px;border-radius:18px;}
 .execution-pill-label {min-width:0;max-width:calc(100% - 36px);line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .execution-pill-preview {animation:none;}
