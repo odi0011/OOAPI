@@ -6,6 +6,9 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
 {["thinking", "working", "compressing", "loading"].includes(state) && <span className="lele-sparks"><i/><i/><i/></span>}
 <span className="lele-sleep" aria-hidden="true">z<span>Z</span><b>Z</b></span>
 {state === "asking" && <span className="lele-question-mark">?</span>}
+{["toy", "proud"].includes(gesture) && <span className="lele-heart" aria-hidden="true">♥</span>}
+{gesture === "toy" && <span className="lele-toy" aria-hidden="true"/>}
+{gesture === "drop" && <span className="lele-exclaim" aria-hidden="true">!</span>}
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="64" height="64" aria-hidden="true" shapeRendering="crispEdges">
 
   <g className="cat-shadow" fill="#30343b" opacity="0.25">
@@ -64,23 +67,7 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
   </g>
 
 
-  <g className="cat-paws">
-
-    <rect x="9" y="25" width="4" height="3" fill="#ffffff" />
-    <rect x="8" y="27" width="1" height="2" fill="#dfe2e5" />
-    <rect x="8" y="28" width="5" height="1" fill="#30343b" />
-    <rect x="11" y="27" width="1" height="1" fill="#dfe2e5" />
-
-    <rect x="19" y="25" width="4" height="3" fill="#ffffff" />
-    <rect x="23" y="27" width="1" height="2" fill="#dfe2e5" />
-    <rect x="19" y="28" width="5" height="1" fill="#30343b" />
-    <rect x="20" y="27" width="1" height="1" fill="#dfe2e5" />
-
-    <rect x="6" y="27" width="2" height="1" fill="#ffffff" />
-    <rect x="24" y="27" width="2" height="1" fill="#ffffff" />
-  </g>
-
-
+  <g className="cat-cranium">
   <g className="cat-head">
 
     <path fill="#30343b" d="
@@ -146,7 +133,6 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
     <path className="cat-happy-eyes" fill="none" stroke="#30343b" strokeWidth="1.5" d="M8 14l2-2 2 2m8 0 2-2 2 2"/>
     <path className="cat-sleep-eyes" fill="none" stroke="#30343b" strokeWidth="1.5" d="M8 14h4m8 0h4"/>
 
-    <g className="cat-asking-eyes" fill="#30343b"><path d="M8 11h4v4H8zm12 0h4v4h-4z"/><path fill="#fff" d="M9 11h2v2H9zm12 0h2v2h-2z"/><path fill="#85898e" d="M8 9h4v1H8zm12 0h4v1h-4z"/></g>
     <g className="cat-eyes">
 
       <path fill="#30343b" d="M8,12 h4 v1 h-4 z M7,13 h1 v1 h-1 z M12,13 h1 v1 h-1 z M8,14 h4 v1 h-4 z" />
@@ -180,6 +166,28 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
       <rect x="28" y="16" width="2" height="1" />
     </g>
   </g>
+  </g>
+  <g className="cat-paws">
+
+    <g className="cat-paw-left">
+    <rect x="9" y="25" width="4" height="3" fill="#ffffff" />
+    <rect x="8" y="27" width="1" height="2" fill="#dfe2e5" />
+    <rect x="8" y="28" width="5" height="1" fill="#30343b" />
+    <rect x="11" y="27" width="1" height="1" fill="#dfe2e5" />
+
+    </g>
+    <g className="cat-paw-right">
+    <rect x="19" y="25" width="4" height="3" fill="#ffffff" />
+    <rect x="23" y="27" width="1" height="2" fill="#dfe2e5" />
+    <rect x="19" y="28" width="5" height="1" fill="#30343b" />
+    <rect x="20" y="27" width="1" height="1" fill="#dfe2e5" />
+
+    </g>
+    <rect x="6" y="27" width="2" height="1" fill="#ffffff" />
+    <rect x="24" y="27" width="2" height="1" fill="#ffffff" />
+  </g>
+
+
 </svg>
 
   </span>;

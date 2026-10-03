@@ -82,6 +82,7 @@ export default function PromptBar({
   onReasoningChange,
   settingsSaving = false,
   mascotState,
+  onMascotAction,
   approvals = [],
   onApproval,
   chips = [],
@@ -116,6 +117,7 @@ export default function PromptBar({
   const [attachOpen, setAttachOpen] = useState(false);
   const [keyOpen, setKeyOpen] = useState(false);
   const [reasoningOpen, setReasoningOpen] = useState(false);
+  const menuOpen = modelOpen || cmdOpen || attachOpen || keyOpen || reasoningOpen;
 
   const composerDisabled = disabled || settingsSaving || !model;
   const canSend = !composerDisabled && (value.trim().length > 0 || chips.length > 0);
@@ -237,7 +239,7 @@ export default function PromptBar({
         </div>
       ) : null}
 
-      {mascotState && <ComposerCompanion state={mascotState} approvals={approvals} onDecide={onApproval}/>}
+      {mascotState && <ComposerCompanion state={mascotState} approvals={approvals} onDecide={onApproval} menuOpen={menuOpen}/>}
       <div className={`bui-composer${disabled ? " is-disabled" : ""}`}>
         {chips.length > 0 ? (
           <div className="bui-chips">
@@ -257,7 +259,7 @@ export default function PromptBar({
 
         {/* 第一行：输入框独占整行（原先与 5 个按钮挤在一行：按钮底对齐、文字顶对齐，
             单行时上下错位；多行时右侧一串按钮悬在最底部） */}
-        <Input.TextArea
+            <Input.TextArea
           ref={setTextareaRef}
           variant="borderless"
           rows={1}
@@ -265,7 +267,7 @@ export default function PromptBar({
           aria-label="消息内容"
           disabled={composerDisabled}
           placeholder={busy ? "正在生成…" : placeholder}
-          onChange={(e) => onChange(e.target.value)}
+              onChange={(e) => { onChange(e.target.value); onMascotAction?.("typing"); }}
           // Ctrl+V 贴截图 → 交给上层走图片上传链路。
           // 原先这里**完全没有 onPaste 处理**，于是"往输入框粘截图"什么都不发生
           // （人格实测：「Ctrl+V 没有任何反应……而且是静默的」）。
@@ -290,7 +292,7 @@ export default function PromptBar({
             }
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
               e.preventDefault();
-              if (canSend) onSend?.();
+              if (canSend) { onMascotAction?.("send"); onSend?.(); }
             }
           }}
           className="bui-composer-input"
@@ -305,7 +307,7 @@ export default function PromptBar({
               title="添加图片或文档（PDF / Word / Excel / 文本）"
               aria-expanded={attachOpen}
               disabled={busy || (!onPickImage && !onPickFile)}
-              onClick={() => { const v = !attachOpen; closeAll(); setAttachOpen(v); }}
+              onClick={() => { const v = !attachOpen; closeAll(); setAttachOpen(v); onMascotAction?.("attach"); }}
               className="bui-cbtn"
             >
               {PlusIcon}
@@ -454,7 +456,7 @@ export default function PromptBar({
               {StopIcon}
             </button>
           ) : (
-            <button type="button" aria-label="发送消息" title="发送（Enter）" disabled={!canSend} onClick={() => onSend?.()} className="bui-cbtn is-send">
+            <button type="button" aria-label="发送消息" title="发送（Enter）" disabled={!canSend} onClick={() => { onMascotAction?.("send"); onSend?.(); }} className="bui-cbtn is-send">
               {SendIcon}
             </button>
           )}

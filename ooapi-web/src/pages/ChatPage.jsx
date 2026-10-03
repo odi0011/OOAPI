@@ -60,6 +60,7 @@ import "../components/chat.css";
 import "../components/chat-workspace.css";
 
 const uid = () => Math.random().toString(36).slice(2, 10);
+const signalLele = (action) => window.dispatchEvent(new CustomEvent("lele-action", { detail: action }));
 const ms = (p) => (p.ended && p.started ? Math.max(1, p.ended - p.started) : 0);
 // 消息列表的渲染 key：seq 在流式期间是 0、done 之后才变成真实值，
 // 用它当 key 会让消息在回答完成的一刻重挂载（入场动画重播、折叠态丢失）。
@@ -182,13 +183,13 @@ const Message = React.memo(function Message({ msg, busy, onRetry, onCopy, stream
       {!streaming ? (
         <div className="ui-msg-actions">
           {hasText ? <Tooltip title="复制回答">
-            <Button type="text" size="small" aria-label="复制回答" icon={<CopyOutlined />} disabled={!hasText} onClick={() => onCopy(textParts.map((p) => p.text).join("\n\n"))} />
+            <Button type="text" size="small" aria-label="复制回答" icon={<CopyOutlined />} disabled={!hasText} onClick={() => { signalLele("copy"); onCopy(textParts.map((p) => p.text).join("\n\n")); }} />
           </Tooltip> : null}
           <Tooltip title={errors.length ? "重试可能产生新的用量" : "重新生成会再次计费"}>
             <Popconfirm
               title={errors.length ? "重试这一轮？" : "重新生成这条回答？"}
               description="这会移除它之后的消息，并再次产生用量。"
-              onConfirm={() => onRetry(msg)}
+              onConfirm={() => { signalLele("retry"); onRetry(msg); }}
               disabled={busy}
               okText={errors.length ? "重试" : "重新生成"}
               cancelText="取消"
@@ -1678,6 +1679,7 @@ export default function ChatPage() {
               reasoningLevels={curModel?.capabilities?.reasoning?.levels || []}
               reasoningEffort={settings.reasoningEffort || ""}
               onReasoningChange={setReasoning}
+              onMascotAction={signalLele}
               settingsSaving={composerSaving}
               textareaRef={taRef}
               value={input}

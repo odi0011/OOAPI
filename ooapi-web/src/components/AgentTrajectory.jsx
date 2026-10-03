@@ -1,9 +1,8 @@
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { Button, App } from "antd";
 import ChatMascot from "./ChatMascot";
 import { OdText } from "./OdAmount";
 
-import { executionEntries, presentation, taskSummary, toolName } from "./executionPresentation";
+import { capsuleGesture, executionEntries, presentation, taskSummary, toolName } from "./executionPresentation";
 
 function ExecutionPill({ part, active }) {
   const [open, setOpen] = useState(false);
@@ -19,18 +18,19 @@ function ExecutionPill({ part, active }) {
   useLayoutEffect(() => {
     const update = () => {
       const natural = measureRef.current?.getBoundingClientRect().width || 180;
-      const available = stepRef.current?.clientWidth || natural;
+      const available = stepRef.current?.parentElement?.clientWidth || natural;
       setWidth(Math.ceil(Math.min(available, open ? Math.max(natural, 520) : natural)));
     };
     const observer = new ResizeObserver(update);
-    observer.observe(measureRef.current); observer.observe(stepRef.current); update();
+    observer.observe(measureRef.current); observer.observe(stepRef.current.parentElement); update();
     return () => observer.disconnect();
   }, [open]);
-  return <div ref={stepRef} data-execution-type={part.type} className={`execution-step ${active ? "is-running" : "is-settled"} ${failed ? "is-failed" : ""}`}>
+  const tool = part.tool || part.type || "other";
+  return <div ref={stepRef} data-execution-type={part.type} data-execution-tool={tool} className={`execution-step ${active ? "is-running" : "is-settled"} ${failed ? "is-failed" : ""}`}>
     <span ref={measureRef} className="execution-measure" aria-hidden="true"><span className="execution-mascot-space"/><span className="execution-pill-label">{label}</span>{preview && <span className="execution-pill-preview">{preview}</span>}</span>
     <div className={`execution-pill ${open ? "is-open" : ""}`} style={width ? { width } : undefined}>
       <button type="button" className="execution-pill-toggle" aria-expanded={open} aria-controls={detailId} onClick={() => { setVisited(true); setOpen(v => !v); }}>
-        <ChatMascot state={state}/><span className="execution-pill-label">{label}</span>{preview && <span className="execution-pill-preview">{preview}</span>}
+        <ChatMascot state={state} gesture={capsuleGesture(part)}/><span className="execution-pill-label">{label}</span>{preview && <span className="execution-pill-preview">{preview}</span>}
       </button>
       <div id={detailId} className={`execution-detail ${open ? "is-open" : ""}`} inert={!open ? "" : undefined}><div>{visited && (thought ? <p className="execution-thought">{part.text || "正在整理思路…"}</p> : <>
         <div className="execution-task"><span>{part.type === "compaction" ? "整理上下文" : toolName(part)}</span>{summary && <p>{summary}</p>}</div>

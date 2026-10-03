@@ -1,12 +1,12 @@
 /* 边界局部坐标：y=0 就是输入框外沿，身体只在 y<0 可见，爪尖覆盖边线 3px。 */
 .lele-companion-marker {position:absolute;width:0;height:0;pointer-events:none;}
-.lele-perch-anchor {position:absolute;width:58px;height:0;z-index:4;pointer-events:none;transform-origin:29px 0;}
+.lele-perch-anchor {position:absolute;width:58px;height:0;z-index:4;pointer-events:auto;transform-origin:29px 0;cursor:default;}
 .lele-perch-anchor.at-top {top:0;}
 .lele-perch-anchor.at-left {left:-29px;transform:rotate(-90deg);}
 .lele-perch-anchor.at-right {left:calc(100% - 29px);transform:rotate(90deg);}
 .lele-perch-anchor.at-bottom {bottom:0;transform:rotate(180deg);}
 .lele-perch-anchor.is-questioning {transition:left .78s cubic-bezier(.22,.8,.28,1);}
-.lele-edge-viewport {position:absolute;bottom:0;left:-12px;width:82px;height:68px;overflow:hidden;contain:paint;}
+.lele-edge-viewport {position:absolute;bottom:0;left:-12px;width:82px;height:68px;overflow:clip;contain:paint;}
 .lele-edge-actor {position:absolute;left:12px;bottom:-21px;width:58px;height:58px;transform-origin:50% 64%;--rest-y:0px;--rest-angle:0deg;--rest-sx:1;--rest-sy:1;transform:translateY(var(--rest-y)) rotate(var(--rest-angle)) scale(var(--rest-sx),var(--rest-sy));}
 .lele-edge-actor>.chat-mascot {width:58px;height:58px;animation:none!important;transform:none;}
 .lele-edge-actor>.chat-mascot>svg {clip-path:none;}
@@ -28,14 +28,13 @@
 .lele-perch-anchor.pose-sleep.phase-exit .lele-edge-actor,.lele-perch-anchor.pose-curl.phase-exit .lele-edge-actor {animation:lele-roll-out .28s ease-in both;}
 .lele-perch-anchor.pose-stretch .lele-edge-actor {--rest-y:-2px;--rest-sy:1.06;}
 .lele-perch-anchor.pose-stretch.phase-enter .lele-edge-actor {animation:lele-stretch-in 1.25s ease both;}
-.lele-perch-anchor.pose-look .cat-face {animation:lele-face-look 4.2s ease-in-out infinite;}
+.lele-perch-anchor.pose-look .cat-cranium {animation:lele-face-look 4.2s ease-in-out infinite;}
 .lele-perch-anchor.pose-curl .cat-eyes {display:none;}.lele-perch-anchor.pose-curl .cat-sleep-eyes {display:block;}
 .lele-perch-anchor .chat-mascot.gesture-sleep .lele-sleep {top:0;right:0;animation:lele-dream 3s ease-in-out infinite;}
 .lele-perch-anchor .lele-sleep span {transform:translateY(-4px);}.lele-perch-anchor .lele-sleep b {transform:translateY(-8px);}
 .lele-perch-anchor .chat-mascot.gesture-wink .cat-eyes {animation:cat-blink 3s infinite;}
 
 /* 等询问时会抬眼、侧耳、举爪、轻轻探头；头和脸一起转，爪子仍握住实体边。 */
-.chat-mascot.is-asking .cat-eyes {display:none;}.chat-mascot.is-asking .cat-asking-eyes {display:block;animation:lele-ask-blink 4.4s infinite;transform-origin:16px 13px;}
 .lele-question-mark {position:absolute;right:0;top:-3px;color:var(--accent);font-size:14px;font-weight:650;transform:rotate(12deg);animation:lele-question-bob 3s ease-in-out infinite;}
 .lele-perch-anchor.pose-curious .lele-edge-actor {--rest-angle:-5deg;--rest-y:0px;}
 .lele-perch-anchor.pose-listen .lele-edge-actor {--rest-angle:8deg;--rest-y:4px;}
@@ -43,6 +42,94 @@
 .lele-perch-anchor.pose-invite .lele-edge-grip i:last-child {animation:lele-invite-paw 3.5s .8s infinite;}
 .lele-perch-anchor.pose-shy .lele-edge-actor {--rest-y:8px;--rest-angle:-3deg;}
 .lele-perch-anchor.is-questioning .lele-edge-actor {transition:transform .78s cubic-bezier(.22,.8,.28,1);}
+
+/* 乐乐不是一个循环图标：不同动作有不同的重心、进入方向和离场速度。 */
+.lele-perch-anchor.pose-pop .lele-edge-viewport,.lele-perch-anchor.pose-walk .lele-edge-viewport,.lele-perch-anchor.pose-tumble .lele-edge-viewport,.lele-perch-anchor.pose-belly .lele-edge-viewport,.lele-perch-anchor.pose-toy .lele-edge-viewport {height:84px;bottom:0;}
+.lele-perch-anchor.pose-pop.phase-enter .lele-edge-actor {animation:lele-pop-in .72s cubic-bezier(.16,1.55,.28,1) both;}
+.lele-perch-anchor.pose-walk.phase-enter .lele-edge-actor {animation:lele-walk-in 1.65s cubic-bezier(.18,.8,.25,1) both;}
+.lele-perch-anchor.pose-walk.phase-rest .lele-edge-actor {animation:lele-walk-step 1.8s ease-in-out infinite;}
+.lele-perch-anchor.pose-tumble.phase-enter .lele-edge-actor {animation:lele-tumble-in .92s cubic-bezier(.28,1.4,.35,1) both;}
+.lele-perch-anchor.pose-belly .lele-edge-actor {--rest-y:5px;--rest-angle:180deg;--rest-sy:.88;}
+.lele-perch-anchor.pose-belly.phase-enter .lele-edge-actor {animation:lele-belly-flop 1.1s cubic-bezier(.2,1.3,.4,1) both;}
+.lele-perch-anchor.pose-toy .lele-edge-actor {--rest-y:3px;}
+.lele-perch-anchor.pose-toy.phase-enter .lele-edge-actor {animation:lele-toy-pounce .95s cubic-bezier(.2,1.4,.4,1) both;}
+.lele-perch-anchor.pose-toy .cat-paws {animation:lele-paw-bat .8s ease-in-out infinite alternate;transform-origin:16px 24px;}
+.lele-perch-anchor.pose-cute .lele-edge-actor {--rest-angle:-7deg;--rest-y:1px;}
+.lele-perch-anchor.pose-cute.phase-enter .lele-edge-actor {animation:lele-cute-bounce 1s cubic-bezier(.2,1.4,.35,1) both;}
+.lele-perch-anchor.pose-cute .cat-eyes {display:none;}.lele-perch-anchor.pose-cute .cat-happy-eyes {display:block;animation:lele-cute-blink 3.2s infinite;}
+.lele-perch-anchor.pose-lick .lele-edge-actor {--rest-angle:6deg;--rest-y:2px;}
+.lele-perch-anchor.pose-lick .cat-paws {animation:lele-lick-paw .9s ease-in-out infinite alternate;transform-origin:14px 24px;}
+.lele-perch-anchor.pose-lick .cat-nose-mouth {animation:lele-lick-face .9s ease-in-out infinite alternate;transform-origin:16px 16px;}
+.lele-perch-anchor.pose-chase .cat-tail {animation:lele-tail-chase .48s linear infinite;}
+.lele-perch-anchor.pose-groom .cat-cranium,.lele-perch-anchor.pose-wash .cat-cranium {animation:lele-groom-face 1.8s ease-in-out infinite;transform-origin:16px 16px;}
+.lele-perch-anchor.pose-groom .cat-paws,.lele-perch-anchor.pose-wash .cat-paws {animation:lele-wash-paws 1.15s ease-in-out infinite alternate;transform-origin:16px 25px;}
+.lele-perch-anchor.pose-knead .lele-edge-grip i {animation:lele-knead .7s ease-in-out infinite alternate;}
+.lele-perch-anchor.pose-shake .lele-edge-actor {animation:lele-shake .75s ease-in-out infinite;}
+.lele-perch-anchor.pose-zzz .lele-edge-actor {--rest-y:19px;opacity:.25;}
+.lele-perch-anchor.pose-zzz .lele-sleep {display:flex!important;position:absolute;top:-13px;right:-12px;gap:3px;color:var(--ink-3);font-size:10px;animation:lele-dream 2.5s ease-in-out infinite;}
+.lele-perch-anchor.pose-climb .lele-edge-actor,.lele-perch-anchor.pose-cling .lele-edge-actor {--rest-angle:8deg;--rest-y:3px;}
+.lele-perch-anchor.pose-climb.phase-enter .lele-edge-actor {animation:lele-climb-side-in .95s cubic-bezier(.18,.9,.3,1) both;}
+.lele-perch-anchor.pose-cling .lele-edge-actor {animation:lele-cling .9s ease-in-out infinite alternate;}
+.lele-perch-anchor.pose-slide.phase-enter .lele-edge-actor {animation:lele-slide-side .72s cubic-bezier(.55,0,.8,.35) both;}
+.lele-perch-anchor.pose-drop.phase-enter .lele-edge-actor {animation:lele-drop-in .9s cubic-bezier(.2,1.5,.35,1) both;}
+.lele-perch-anchor.pose-annoyed .lele-edge-actor {--rest-angle:-9deg;--rest-y:-3px;}
+.lele-perch-anchor.pose-annoyed.phase-enter .lele-edge-actor {animation:lele-annoyed-hop .7s cubic-bezier(.2,1.4,.35,1) both;}
+.lele-perch-anchor.pose-proud .lele-edge-actor {animation:lele-proud .9s ease both;}
+.lele-perch-anchor.pose-spin .lele-edge-actor {animation:lele-spin .9s cubic-bezier(.2,.8,.35,1) both;}
+.chat-mascot.gesture-annoyed .cat-cranium {animation:lele-annoyed-face .7s ease-in-out infinite alternate;}
+.chat-mascot.gesture-zzz .cat-eyes,.chat-mascot.gesture-zzz .cat-happy-eyes {display:none;}
+.chat-mascot.gesture-zzz .cat-sleep-eyes {display:block;}
+.chat-mascot.gesture-zzz .lele-sleep {display:flex;position:absolute;top:-10px;right:-14px;gap:3px;color:var(--ink-3);font-size:9px;}
+.chat-mascot.gesture-proud .cat-happy-eyes {display:block;}.chat-mascot.gesture-proud .cat-eyes {display:none;}
+.lele-heart,.lele-toy,.lele-exclaim {position:absolute;z-index:3;font-weight:700;pointer-events:none;}
+.lele-heart {right:-7px;top:-9px;color:var(--red);font-size:11px;animation:lele-heart-pop 1.2s ease both;}
+.lele-toy {left:-8px;top:-4px;color:var(--accent);font-size:13px;animation:lele-toy-float .8s ease-in-out infinite alternate;}
+.lele-exclaim {right:-5px;top:-10px;color:var(--orange);font-size:14px;}
+
+/* 仅给原有像素分组加骨骼变换，不增画眉毛、眼睛或改变毛色轮廓。 */
+.lele-perch-anchor.at-menu {z-index:30;}
+.lele-edge-viewport {pointer-events:none;}
+.lele-edge-actor {pointer-events:auto;}
+.lele-perch-anchor.phase-hidden .lele-edge-actor {transform:translateY(90px);animation:none;pointer-events:none;}
+.lele-perch-anchor.phase-hidden .lele-edge-grip {visibility:hidden;}
+.lele-perch-anchor:is(.pose-pop,.pose-walk,.pose-tumble,.pose-toy,.pose-cute,.pose-proud,.pose-spin,.pose-stretch,.pose-chase,.pose-groom,.pose-wash,.pose-lick) .lele-edge-actor {--rest-y:-16px;}
+.lele-perch-anchor.pose-walk .lele-edge-viewport {left:-52px;width:162px;}
+.lele-perch-anchor.pose-walk .lele-edge-actor {left:52px;}
+.lele-perch-anchor.pose-walk.phase-rest .lele-edge-actor {animation:lele-two-steps 3s ease-in-out both;}
+.lele-perch-anchor:is(.pose-pop,.pose-walk,.pose-tumble).phase-exit .lele-edge-actor {animation:lele-jump-away .3s cubic-bezier(.6,0,.9,.5) both;}
+.lele-perch-anchor.pose-zzz .lele-edge-actor {--rest-y:0px;opacity:1;}
+.lele-perch-anchor.pose-zzz .chat-mascot>svg {visibility:hidden;}
+.lele-perch-anchor.pose-zzz .lele-sleep {top:0;right:8px;}
+.lele-perch-anchor:is(.pose-sleep,.pose-curl) .lele-edge-actor {--rest-y:-8px;--rest-angle:72deg;--rest-sx:.95;--rest-sy:.9;transform-origin:50% 50%;}
+.lele-perch-anchor.pose-curl .cat-tail {transform:rotate(-70deg) translate(-3px,-1px);animation:none;}
+.lele-perch-anchor.pose-sleep .cat-cranium {transform:rotate(-7deg);transform-origin:16px 19px;}
+.lele-perch-anchor:is(.pose-sleep,.pose-curl) .cat-body {animation:lele-sleep-breath 3.6s ease-in-out infinite;transform-origin:16px 24px;}
+.lele-perch-anchor.pose-belly .lele-edge-actor {--rest-y:-11px;--rest-angle:105deg;--rest-sy:1;transform-origin:50% 50%;}
+.lele-perch-anchor.pose-belly .cat-paws {animation:lele-belly-paws 1.5s ease-in-out infinite;transform-origin:16px 26px;}
+.lele-perch-anchor.pose-chase .lele-edge-actor {animation:lele-chase-turn 3s ease-in-out infinite;}
+.lele-perch-anchor.pose-stretch.phase-rest .cat-body {animation:lele-long-stretch 5s ease-in-out infinite;transform-origin:16px 29px;}
+.lele-perch-anchor:is(.pose-wash,.pose-groom,.pose-lick) .cat-paws {animation:none;}
+.lele-perch-anchor.pose-lick .cat-paw-left {animation:lele-paw-to-mouth 1.2s ease-in-out infinite;transform-origin:11px 26px;}
+.lele-perch-anchor.pose-wash .cat-paw-right {animation:lele-face-wash 1.8s ease-in-out infinite;transform-origin:21px 26px;}
+.lele-perch-anchor.pose-groom .cat-cranium {animation:lele-groom-body 2.4s ease-in-out infinite;transform-origin:16px 19px;}
+.lele-perch-anchor.pose-toy .cat-paws {animation:none;}
+.lele-perch-anchor.pose-toy .cat-paw-right {animation:lele-paw-bat .8s ease-in-out infinite alternate;transform-origin:21px 25px;}
+.lele-toy {width:10px;height:10px;top:37px;left:47px;border:1px solid var(--accent);border-radius:50%;background:repeating-linear-gradient(35deg,var(--accent-tint) 0 2px,var(--accent) 3px 4px);}
+.lele-perch-anchor.pose-knead .lele-edge-grip i:last-child {animation-delay:-.7s;}
+.lele-perch-anchor.pose-drop .lele-edge-viewport {height:calc(80px - var(--fall-from,-48px));}
+.lele-perch-anchor.pose-drop.phase-enter .lele-edge-actor {animation:lele-fall-from-menu .8s cubic-bezier(.3,.1,.75,1) both;}
+.lele-perch-anchor.is-questioning .lele-edge-actor {animation:none!important;transition:none!important;transform:translateY(var(--rest-y)) rotate(var(--rest-angle)) scale(var(--rest-sx),var(--rest-sy));}
+.lele-perch-anchor.is-questioning .chat-mascot *,.lele-perch-anchor.is-questioning .lele-edge-grip,.lele-perch-anchor.is-questioning .lele-edge-grip i {animation:none!important;transition:none!important;}
+@keyframes lele-two-steps {0%,15%{transform:translate(0,-16px)}32%{transform:translate(10px,-19px) rotate(4deg)}48%{transform:translate(18px,-16px)}64%{transform:translate(28px,-19px) rotate(-4deg)}80%,100%{transform:translate(35px,-16px)}}
+@keyframes lele-jump-away {0%{transform:translateY(-16px)}25%{transform:translate(5px,-24px) rotate(10deg)}100%{transform:translate(23px,70px) rotate(28deg)}}
+@keyframes lele-sleep-breath {50%{transform:scale(1.04,1.03)}}
+@keyframes lele-belly-paws {50%{transform:translateY(-2px) scaleX(.85)}}
+@keyframes lele-chase-turn {0%,100%{transform:translateY(-16px) rotate(0)}30%{transform:translateY(-20px) rotate(110deg)}65%{transform:translateY(-20px) rotate(330deg)}}
+@keyframes lele-long-stretch {0%,80%,100%{transform:none}40%,60%{transform:scale(.93,1.23)}}
+@keyframes lele-paw-to-mouth {0%,100%{transform:none}30%,75%{transform:translate(3px,-9px) rotate(25deg)}45%,60%{transform:translate(4px,-10px) rotate(18deg)}}
+@keyframes lele-face-wash {0%,100%{transform:none}25%,65%{transform:translate(-2px,-14px) rotate(-25deg)}45%,80%{transform:translate(-4px,-9px) rotate(-10deg)}}
+@keyframes lele-groom-body {0%,100%{transform:none}25%,70%{transform:translate(3px,4px) rotate(18deg)}45%,90%{transform:translate(2px,3px) rotate(10deg)}}
+@keyframes lele-fall-from-menu {0%{transform:translateY(var(--fall-from,-48px)) rotate(-8deg)}78%{transform:translateY(-4px) rotate(10deg)}89%{transform:translateY(4px) scale(1.1,.85)}100%{transform:none}}
 
 /* 气泡用同一条曲线跟随头顶，尾巴是曲线而不是箭头；展开与收起均以尾尖为原点。 */
 .lele-speech {position:absolute;z-index:8;box-sizing:border-box;margin:0;padding:0;border:0;display:block;color:var(--ink-2);font-size:12px;transform-origin:var(--speech-tail) calc(100% + 22px);transition:left .78s cubic-bezier(.22,.8,.28,1),bottom .78s cubic-bezier(.22,.8,.28,1);animation:lele-speech-open .62s cubic-bezier(.16,.85,.3,1.12) both;}
@@ -84,6 +171,32 @@
 @keyframes lele-dream {0%,100%{transform:translate(0,2px) rotate(-8deg)}50%{transform:translate(2px,-4px) rotate(3deg)}}
 @keyframes lele-ask-blink {0%,44%,49%,100%{transform:scaleY(1)}46%{transform:scaleY(.12)}}
 @keyframes lele-question-bob {0%,100%{transform:translateY(0) rotate(12deg)}50%{transform:translateY(-3px) rotate(0)}}
+@keyframes lele-pop-in {0%{transform:translateY(68px) scale(.65,.8)}38%{transform:translateY(-9px) scale(1.08,.92)}62%{transform:translateY(2px) scale(.94,1.05)}100%{transform:translateY(var(--rest-y)) rotate(var(--rest-angle)) scale(var(--rest-sx),var(--rest-sy))}}
+@keyframes lele-walk-in {0%{transform:translate(-34px,43px) rotate(-12deg)}35%{transform:translate(-20px,3px) rotate(5deg)}58%{transform:translate(8px,-2px) rotate(-4deg)}78%{transform:translate(18px,2px) rotate(4deg)}100%{transform:translateY(var(--rest-y)) rotate(var(--rest-angle))}}
+@keyframes lele-walk-step {0%,100%{transform:translateX(-2px)}50%{transform:translateX(3px) rotate(2deg)}}
+@keyframes lele-tumble-in {0%{transform:translate(-8px,48px) rotate(-180deg) scale(.7)}70%{transform:translate(4px,-4px) rotate(18deg) scale(1.05)}100%{transform:translateY(var(--rest-y))}}
+@keyframes lele-belly-flop {0%{transform:translateY(42px) rotate(-12deg) scale(.92,1.1)}55%{transform:translateY(-3px) rotate(190deg) scale(1.06,.85)}100%{transform:translateY(var(--rest-y)) rotate(var(--rest-angle)) scale(var(--rest-sx),var(--rest-sy))}}
+@keyframes lele-toy-pounce {0%{transform:translateY(45px) scale(.82,1.1)}42%{transform:translateY(-12px) scale(1.02,.95)}70%{transform:translateY(0) scale(.96,1.04)}100%{transform:translateY(var(--rest-y))}}
+@keyframes lele-paw-bat {from{transform:rotate(-8deg)}to{transform:rotate(12deg) translateY(-2px)}}
+@keyframes lele-tail-chase {0%{transform:rotate(-8deg)}25%{transform:rotate(35deg)}50%{transform:rotate(80deg)}75%{transform:rotate(30deg)}100%{transform:rotate(-8deg)}}
+@keyframes lele-groom-face {0%,100%{transform:rotate(-6deg)}50%{transform:rotate(8deg) translateX(1px)}}
+@keyframes lele-wash-paws {from{transform:translateY(0) rotate(-8deg)}to{transform:translateY(-3px) rotate(8deg)}}
+@keyframes lele-knead {from{transform:translateY(0) rotate(-5deg)}to{transform:translateY(-4px) rotate(6deg)}}
+@keyframes lele-shake {0%,100%{transform:rotate(0)}25%{transform:rotate(-8deg)}75%{transform:rotate(8deg)}}
+@keyframes lele-climb-side-in {0%{transform:translateY(48px) rotate(20deg)}45%{transform:translateY(-8px) rotate(-10deg)}100%{transform:translateY(var(--rest-y)) rotate(var(--rest-angle))}}
+@keyframes lele-cling {from{transform:translateY(-2px) rotate(5deg)}to{transform:translateY(4px) rotate(-4deg)}}
+@keyframes lele-slide-side {0%{transform:translate(28px,0) rotate(20deg)}100%{transform:translateY(var(--rest-y)) rotate(var(--rest-angle))}}
+@keyframes lele-drop-in {0%{transform:translateY(-48px) rotate(-12deg)}60%{transform:translateY(7px) rotate(9deg)}100%{transform:translateY(var(--rest-y)) rotate(var(--rest-angle))}}
+@keyframes lele-annoyed-hop {0%{transform:translateX(18px) translateY(42px) rotate(10deg)}60%{transform:translateX(-3px) translateY(-8px) rotate(-10deg)}100%{transform:translateY(var(--rest-y)) rotate(var(--rest-angle))}}
+@keyframes lele-annoyed-face {from{transform:translateX(-1px) rotate(-2deg)}to{transform:translateX(1px) rotate(3deg)}}
+@keyframes lele-proud {0%{transform:translateY(30px) scale(.9)}55%{transform:translateY(-7px) scale(1.08)}100%{transform:none}}
+@keyframes lele-spin {0%{transform:translateY(24px) rotate(-90deg) scale(.8)}100%{transform:none}}
+@keyframes lele-heart-pop {0%{opacity:0;transform:scale(.3) translateY(4px)}45%{opacity:1;transform:scale(1.2) translateY(-2px)}100%{opacity:0;transform:scale(.9) translateY(-9px)}}
+@keyframes lele-toy-float {from{transform:translateY(2px) rotate(-8deg)}to{transform:translateY(-5px) rotate(12deg)}}
+@keyframes lele-cute-bounce {0%{transform:translateY(40px) scale(.8)}45%{transform:translateY(-8px) rotate(-8deg) scale(1.08)}70%{transform:translateY(1px) rotate(8deg)}100%{transform:translateY(var(--rest-y)) rotate(var(--rest-angle))}}
+@keyframes lele-cute-blink {0%,38%,44%,100%{transform:scaleY(1)}41%{transform:scaleY(.15)}}
+@keyframes lele-lick-paw {from{transform:translate(-1px,1px) rotate(-8deg)}to{transform:translate(3px,-4px) rotate(12deg)}}
+@keyframes lele-lick-face {from{transform:translateX(-1px)}to{transform:translateX(1px) rotate(4deg)}}
 @keyframes lele-speech-open {0%{transform:translateY(6px) scale(.08,.04)}65%{transform:translateY(-2px) scale(1.025,1.035)}100%{transform:none}}
 @keyframes lele-speech-close {0%{transform:none}100%{transform:translateY(4px) scale(.02,.015)}}
 @media(max-width:700px) {.lele-speech-heading{padding:14px 16px 10px;}.lele-speech-content{padding:0 16px;}.lele-speech .tool-approval-actions{padding:11px 14px 13px;}.lele-speech-heading h3{font-size:14px;}.lele-operation-fields{gap:10px;padding:10px;}}

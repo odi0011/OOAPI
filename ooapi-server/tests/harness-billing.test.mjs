@@ -1,4 +1,5 @@
 import * as toolPresentation from "../src/services/harness/tool-presentation.js";
+import { callFingerprint } from "../src/services/harness/tool-call-guards.js";
 // 真跑 harness/工具/执行器的内存上游：验证失败步只收一次、停止可打断响应体。
 // 只替换模块依赖，不访问数据库/公网，不需要额外运行参数或测试依赖。
 import assert from "node:assert/strict";
@@ -14,6 +15,7 @@ import * as capabilities from "../src/services/model-capabilities.js";
 import { withEndpointAudit } from "../src/services/endpoint-audit.js";
 
 const audit = {
+  callFingerprint,
   toolPresentation,
   contextTools, capabilities, withEndpointAudit,
   toolWire,
@@ -46,6 +48,7 @@ const tools = await loadMocked("../src/services/harness/tools.js", `
 `);
 audit.tools = tools;
 const harness = await loadMocked("../src/services/harness/loop.js", `
+  const callFingerprint=audit.callFingerprint;
   const { contextBudget, messageTokens, compressionSplit, latestMemory } = audit.contextTools;
   const crypto=audit.crypto;
   const runCompletion=(o)=>audit.complete({...o,...o.prepareRequest?.({nativeTools:audit.nativeMode===true})});
@@ -744,6 +747,25 @@ await test("相同查询复用结果，连续无进展自动收尾", async () =>
   audit.complete=async o=>{attempts++;const content=o.tools.length?'<tool_call>{"tool":"todowrite","args":{"todos":[{"content":"same","status":"pending"}]}}</tool_call>':"信息不足，已停止重复查询。";o.onDelta(content);return mockResult(content);};
   const out=await harness.runHarness({...harnessOptions(["todowrite"],[]),authorizeTool:async()=>{executed++;return true;}});
   assert.equal(executed,1);assert.equal(attempts,5);assert.match(out.text,/信息不足/);assert.equal(out.parts.find(p=>p.type==="trajectory").reason,"no_progress");
+  assert.equal(out.parts.filter(p=>p.type==="tool").length,1,"复用不能制造重复胶囊");
+});
+await test("同批和跨步的相同原生调用只执行及展示一次，所有调用编号都有结果", async()=>{
+  const events=[];let rounds=0,executed=0; audit.nativeMode=true;
+  const one={todos:[{content:"same",status:"pending"}]}, same={todos:[{status:"pending",content:"same"}]};
+  audit.complete=async o=>{
+    rounds++;
+    if(rounds===1)return {...mockResult(""),toolMode:"native",toolCalls:[{id:"first",name:"todowrite",arguments:JSON.stringify(one)},{id:"second",name:"todowrite",arguments:JSON.stringify(same)}]};
+    const results=o.messages.filter(m=>m.role==="tool");
+    assert.ok(results.some(m=>m.tool_call_id==="first"));assert.ok(results.some(m=>m.tool_call_id==="second"));
+    if(rounds===2)return {...mockResult(""),toolMode:"native",toolCalls:[{id:"third",name:"todowrite",arguments:JSON.stringify(one)}]};
+    assert.ok(results.some(m=>m.tool_call_id==="third"));return mockResult("小清单已经更新。");
+  };
+  try {
+    const out=await harness.runHarness({...harnessOptions(["todowrite"],[]),emit:e=>events.push(e),authorizeTool:async()=>{executed++;return true;}});
+    assert.equal(executed,1);assert.equal(out.parts.filter(p=>p.type==="tool").length,1);
+    const ids=new Set(events.filter(e=>e.type==="part").map(e=>e.part.id));
+    assert.ok(events.filter(e=>e.type==="part_update").every(e=>ids.has(e.id)),"不能更新从未创建的胶囊");
+  } finally { audit.nativeMode=false; }
 });
 await test("审批拒绝后工具不执行，禁用工具无法通过调用参数重新开启", async()=>{
   let attempts=0;

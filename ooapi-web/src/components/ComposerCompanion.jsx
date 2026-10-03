@@ -15,7 +15,7 @@ const idlePose = { edge: "top", at: .72, gesture: "peek", head: -24 };
 
 // 同一处边线同时约束猫、爪子、气泡尾巴。身体在裁剪层外侧，爪子独立握住边线。
 // 不观察动画自身的宽高，避免位置测量与动画互相触发。
-export default function ComposerCompanion({ state, approvals = [], onDecide }) {
+export default function ComposerCompanion({ state, approvals = [], onDecide, menuOpen = false }) {
   const pending = approvals[0] || null;
   const [retained, setRetained] = useState(pending);
   const [pose, setPose] = useState(() => pending ? askPoses[hash(pending.id) % askPoses.length] : idlePose);
@@ -24,8 +24,9 @@ export default function ComposerCompanion({ state, approvals = [], onDecide }) {
   const [quiet, setQuiet] = useState(() => document.hidden || window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [saving, setSaving] = useState(false), [error, setError] = useState("");
   const marker = useRef(null), locked = useRef(false), hover = useRef(false), focused = useRef(false);
-  const live = useRef({ pose, geometry, pending, retained, saving });
-  live.current = { pose, geometry, pending, retained, saving };
+  const menuWasOpen = useRef(false), reactionTimer = useRef(null), reactionPhase = useRef(null), hoverUntil = useRef(0);
+  const live = useRef();
+  live.current = { pose, geometry, pending, retained, saving, menuOpen };
   const labelId = useId();
   const part = pending || retained, closing = Boolean(part && !pending);
 
@@ -60,18 +61,18 @@ export default function ComposerCompanion({ state, approvals = [], onDecide }) {
       const timer = setTimeout(() => { setPose(askPoses[hash(pending.id) % askPoses.length]); setPhase("enter"); }, quiet ? 0 : 300);
       return () => clearTimeout(timer);
     }
-    setPose(askPoses[hash(pending.id) % askPoses.length]); setPhase("enter");
+    setPose(p => ({ ...askPoses[hash(pending.id) % askPoses.length], at: p.at })); setPhase("rest");
   }, [pending?.id, quiet]);
 
   useEffect(() => {
-    if (quiet) return;
+    if (quiet || pending || menuOpen) return;
     let timer, move;
     const schedule = () => { timer = setTimeout(() => {
       const current = live.current;
-      if (hover.current || focused.current || current.saving || current.retained && !current.pending) { schedule(); return; }
+      if (hover.current || focused.current || current.saving || current.menuOpen || reactionPhase.current || current.retained && !current.pending) { schedule(); return; }
       if (current.pending) {
-        setPose(choose(askPoses.filter(p => p.gesture !== current.pose.gesture)));
-        schedule(); return;
+        // 询问期间乐乐和气泡是一套稳定的界面锚点，不在用户阅读和点击时换姿势。
+        return;
       }
       const g = current.geometry;
       const edges = ["top"];
@@ -79,18 +80,95 @@ export default function ComposerCompanion({ state, approvals = [], onDecide }) {
       if (g.left > 48 && g.height > 84) edges.push("left");
       if (g.viewportWidth - g.left - g.width > 48 && g.height > 84) edges.push("right");
       if (g.width >= 480 && g.viewportHeight + g.viewportTop - g.bottom > 62) edges.push("bottom");
-      const edge = choose(edges.filter(e => e !== current.pose.edge).length ? edges.filter(e => e !== current.pose.edge) : edges);
-      const gesture = choose(edge === "top" ? ["peek", "wave", "sleep", "paws", "stretch", "wink", "curl", "look"].filter(p => p !== current.pose.gesture) : ["peek", "wave", "paws", "look"]);
+      const edge = choose([...edges, "top", "top"]);
+      const gesture = choose(edge === "top"
+        ? ["pop", "walk", "tumble", "toy", "belly", "cute", "lick", "groom", "wash", "stretch", "wink", "curl", "sleep", "zzz", "peek", "wave", "paws", "look", "chase", "knead", "shake", "shy"].filter(p => p !== current.pose.gesture)
+        : ["climb", "cling", "slide", "wave", "look", "peek", "groom", "wash"].filter(p => p !== current.pose.gesture));
       setPhase("exit");
       move = setTimeout(() => { setPose({ edge, gesture, at: edge === "bottom" ? choose([.16, .84]) : .2 + Math.random() * .6 }); setPhase("enter"); schedule(); }, 300);
-    }, 5000 + Math.random() * 4500); };
+    }, 12000 + Math.random() * 12000); };
     schedule();
     return () => { clearTimeout(timer); clearTimeout(move); };
-  }, [quiet, pending?.id]);
+  }, [quiet, pending?.id, menuOpen]);
+
+  useEffect(() => {
+    if (quiet || pending || menuOpen || pose.edge !== "top" || !["walk", "pop", "tumble"].includes(pose.gesture)) return;
+    let hide;
+    const finish = setTimeout(() => { setPhase("exit"); hide = setTimeout(() => setPhase("hidden"), 300); }, 4400);
+    return () => { clearTimeout(finish); clearTimeout(hide); };
+  }, [pose.gesture, pose.edge, quiet, pending?.id, menuOpen]);
+
+  // 只有菜单实际遮住乐乐才避让，位置取菜单外沿；关闭时从真实高度落回输入框。
+  useEffect(() => {
+    if (pending) return undefined;
+    let timer, frame;
+    if (menuOpen) {
+      frame = requestAnimationFrame(() => {
+        const parent = marker.current?.parentElement;
+        const cat = parent?.querySelector(".lele-edge-viewport")?.getBoundingClientRect();
+        const menu = [...(parent?.querySelectorAll("[data-promptbar-menu]") || [])].find(n => {
+          const r = n.getBoundingClientRect();
+          return cat && r.left < cat.right && r.right > cat.left && r.top < cat.bottom && r.bottom > cat.top;
+        });
+        if (!menu) return;
+        // 菜单入场带缩放，取布局坐标以免把动画中的矩形误当最终边线。
+        const origin = menu.offsetParent.getBoundingClientRect(), base = parent.getBoundingClientRect();
+        const r = { top: origin.top + menu.offsetTop, left: origin.left + menu.offsetLeft, right: origin.left + menu.offsetLeft + menu.offsetWidth };
+        const top = Math.max(62, r.top), x = Math.min(r.right - 36, Math.max(r.left + 36, cat.x + cat.width / 2));
+        const next = { edge: "menu", at: (x - base.left) / base.width, gesture: "annoyed", y: top - base.top };
+        menuWasOpen.current = next;
+        setPhase("exit");
+        timer = setTimeout(() => { setPose(next); setPhase(quiet ? "rest" : "enter"); }, quiet ? 0 : 280);
+      });
+    } else if (menuWasOpen.current) {
+      const previous = menuWasOpen.current;
+      menuWasOpen.current = false;
+      setPose({ edge: "top", at: previous.at, gesture: "drop", fallFrom: previous.y }); setPhase(quiet ? "rest" : "enter");
+    }
+    return () => { clearTimeout(timer); cancelAnimationFrame(frame); };
+  }, [menuOpen, quiet, pending?.id]);
+
+  // 输入、发送、复制、重试都给乐乐一个短促的专属反应；反应结束才交还给随机动作。
+  useEffect(() => {
+    const react = e => {
+      const action = typeof e.detail === "string" ? e.detail : e.detail?.action;
+      if (!action || quiet || pending || menuOpen || saving) return;
+      const gestures = { typing: "listen", send: "pop", copy: "proud", retry: "spin", attach: "curious" };
+      const gesture = gestures[action];
+      if (!gesture) return;
+      clearTimeout(reactionTimer.current);
+      reactionPhase.current = gesture;
+      const current = live.current.pose;
+      if (current.gesture !== gesture) {
+        setPose({ edge: "top", at: current.edge === "top" ? current.at : .72, gesture, head: -25 });
+        setPhase("enter");
+      }
+      reactionTimer.current = setTimeout(() => {
+        if (reactionPhase.current !== gesture) return;
+        setPhase("exit");
+        reactionTimer.current = setTimeout(() => { setPose({ ...idlePose, at: live.current.pose.at }); setPhase("enter"); reactionPhase.current = null; }, 300);
+      }, action === "typing" ? 900 : 1500);
+    };
+    window.addEventListener("lele-action", react);
+    return () => { window.removeEventListener("lele-action", react); clearTimeout(reactionTimer.current); reactionPhase.current = null; };
+  }, [quiet, pending?.id, menuOpen, saving]);
+
+  const onHover = () => {
+    if (quiet || pending || retained || menuOpen || ["exit", "hidden"].includes(phase) || Date.now() < hoverUntil.current) return;
+    hoverUntil.current = Date.now() + 4000;
+    if (Math.random() < .35) {
+      setPhase("exit");
+      clearTimeout(reactionTimer.current);
+      reactionTimer.current = setTimeout(() => { setPose({ edge: "top", at: pose.at < .5 ? .8 : .2, gesture: "shy", head: -25 }); setPhase("enter"); }, 260);
+    } else {
+      setPose({ ...pose, gesture: "shy" });
+      setPhase("enter");
+    }
+  };
 
   useEffect(() => {
     const g = geometry;
-    const fits = pose.edge === "top" || pose.edge === "left" && g.left > 48 || pose.edge === "right" && g.viewportWidth - g.left - g.width > 48 || pose.edge === "bottom" && g.width >= 480 && g.viewportHeight + g.viewportTop - g.bottom > 62;
+    const fits = pose.edge === "menu" || pose.edge === "top" || pose.edge === "left" && g.left > 48 || pose.edge === "right" && g.viewportWidth - g.left - g.width > 48 || pose.edge === "bottom" && g.width >= 480 && g.viewportHeight + g.viewportTop - g.bottom > 62;
     if (!fits) { setPose(idlePose); setPhase("enter"); }
   }, [geometry, pose.edge]);
 
@@ -110,13 +188,13 @@ export default function ComposerCompanion({ state, approvals = [], onDecide }) {
   const tail = Math.max(24, Math.min(width - 24, headX - left));
   const clearance = -(pose.head || -29) + 20;
   const height = Math.min(440, Math.max(130, geometry.top - geometry.viewportTop - clearance - 14));
-  const anchorStyle = pose.edge === "left" || pose.edge === "right" ? { top: "50%" } : { left: `calc(${pose.at * 100}% - 29px)` };
+  const anchorStyle = pose.edge === "left" || pose.edge === "right" ? { top: "50%" } : { left: `calc(${pose.at * 100}% - 29px)`, ...(pose.edge === "menu" ? { top: pose.y } : {}), ...(pose.fallFrom ? { "--fall-from": `${pose.fallFrom}px` } : {}) };
 
   return <>
     <span ref={marker} className="lele-companion-marker" aria-hidden="true"/>
-    <span className={`lele-perch-anchor at-${pose.edge} pose-${pose.gesture} phase-${phase} ${asking ? "is-questioning" : ""}`} style={anchorStyle} data-pose={pose.gesture} aria-hidden="true" onAnimationEnd={e => { if (e.target.classList.contains("lele-edge-actor") && phase === "enter") setPhase("rest"); }}>
+    <span className={`lele-perch-anchor at-${pose.edge} pose-${pose.gesture} phase-${phase} ${asking ? "is-questioning" : ""}`} style={anchorStyle} data-pose={pose.gesture} aria-hidden="true" onMouseEnter={onHover} onAnimationEnd={e => { if (e.target.classList.contains("lele-edge-actor") && phase === "enter") setPhase("rest"); }}>
       <span className="lele-edge-viewport"><span className="lele-edge-actor"><ChatMascot state={asking ? "asking" : state} gesture={pose.gesture}/></span></span>
-      <span className="lele-edge-grip"><i/><i/></span>
+      {["paws", "wave", "invite", "listen", "cling", "climb", "knead"].includes(pose.gesture) && <span className="lele-edge-grip"><i/><i/></span>}
     </span>
     {asking && <section key={part.id} className={`tool-approval lele-speech ${closing ? "is-closing" : "is-pending"}`} role="region" aria-label="乐乐需要你的确认" aria-labelledby={labelId}
       style={{ width, left, bottom: `calc(100% + ${clearance}px)`, "--speech-tail": `${tail}px`, "--speech-height": `${height}px` }}

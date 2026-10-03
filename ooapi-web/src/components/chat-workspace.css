@@ -2,7 +2,7 @@
 .ui-chat2 .ui-chat2-head { border-bottom-color:transparent;background:transparent; }
 .ui-chat2 .ui-chat2-thread-inner { max-width:860px;margin:auto;padding:28px 32px 64px; }
 .ui-chat2 .ui-msg { margin-bottom:36px; }
-.ui-chat2 .ui-msg-user .bubble { border:0;background:var(--inset);color:var(--ink);border-radius:20px;padding:13px 19px;font-size:15px;line-height:1.7;max-width:min(680px,88%); }
+.ui-chat2 .ui-msg-user .bubble { border:1px solid color-mix(in srgb,var(--accent) 16%,var(--line));background:color-mix(in srgb,var(--accent) 9%,var(--surface));color:var(--ink);border-radius:20px;padding:13px 19px;font-size:15px;line-height:1.7;max-width:min(680px,88%); }
 .ui-chat2 .ui-msg-ai { width:100%;max-width:none; }
 .ui-chat2 .ui-msg-ai .prose { font-size:15px;line-height:1.85;overflow-wrap:anywhere; }
 .ui-chat2 .ui-msg-actions { opacity:.75;gap:12px;margin-top:18px;flex-wrap:wrap; }
@@ -140,3 +140,35 @@
 
 }
 @media(prefers-reduced-motion:reduce) {.execution-pill,.execution-pill *,.execution-detail,.lele-perch-anchor{animation:none!important;transition:none!important;}}
+
+/* 执行记录按步骤横向流动，长内容在胶囊里收短，详情仍在点击后向下展开。 */
+.agent-trajectory { flex-direction:row; flex-wrap:wrap; align-items:flex-start; column-gap:9px; row-gap:8px; }
+.execution-step { flex:0 1 auto; max-width:min(100%,680px); }
+.execution-pill { max-width:100%; }
+.execution-measure {max-width:none;}
+.execution-pill-toggle { gap:8px; }
+.execution-step[data-execution-type="reasoning"] .execution-pill,.execution-step[data-execution-type="text"] .execution-pill { border-color:color-mix(in srgb,var(--token-output) 35%,var(--line)); background:color-mix(in srgb,var(--token-output) 7%,var(--surface)); }
+.execution-step[data-execution-type="compaction"] .execution-pill { border-color:color-mix(in srgb,var(--token-cache) 38%,var(--line)); background:color-mix(in srgb,var(--token-cache) 7%,var(--surface)); }
+.execution-step[data-execution-tool="account"] .execution-pill { border-color:color-mix(in srgb,var(--accent) 34%,var(--line)); background:color-mix(in srgb,var(--accent) 7%,var(--surface)); }
+.execution-step[data-execution-tool="search"] .execution-pill { border-color:color-mix(in srgb,var(--orange) 38%,var(--line)); background:color-mix(in srgb,var(--orange) 7%,var(--surface)); }
+.execution-step[data-execution-tool="fetch"] .execution-pill { border-color:color-mix(in srgb,var(--green) 38%,var(--line)); background:color-mix(in srgb,var(--green) 7%,var(--surface)); }
+.execution-step[data-execution-tool="github"] .execution-pill { border-color:color-mix(in srgb,var(--ink-2) 38%,var(--line)); background:color-mix(in srgb,var(--ink-2) 7%,var(--surface)); }
+.execution-step[data-execution-tool="task"] .execution-pill { border-color:color-mix(in srgb,var(--red) 38%,var(--line)); background:color-mix(in srgb,var(--red) 7%,var(--surface)); }
+.execution-step[data-execution-tool="todowrite"] .execution-pill { border-color:color-mix(in srgb,var(--token-cache) 38%,var(--line)); background:color-mix(in srgb,var(--token-cache) 7%,var(--surface)); }
+.execution-step .execution-pill-label { max-width:28ch; overflow:hidden; text-overflow:ellipsis; }
+.execution-step[data-execution-type="reasoning"] .execution-pill-preview { max-width:24ch; }
+.chat-mascot.gesture-think .cat-face { animation:cat-think-face 1.6s ease-in-out infinite; }
+.execution-step[data-execution-tool="binance"] .execution-pill {border-color:color-mix(in srgb,var(--orange) 25%,var(--line));background:color-mix(in srgb,var(--orange) 4%,var(--surface));}
+.execution-step .cat-cranium {transform-origin:16px 19px;}
+.execution-step.is-running[data-execution-tool="account"] .cat-cranium {animation:lele-face-look 3s ease-in-out infinite;}
+.execution-step.is-running[data-execution-tool="search"] .cat-cranium {animation:cat-wait 1.6s ease-in-out infinite;}
+.execution-step.is-running[data-execution-tool="fetch"] .cat-cranium {animation:cat-think 2s ease-in-out infinite;}
+.execution-step.is-running[data-execution-tool="github"] .cat-paw-left {animation:cat-paws .35s ease-in-out infinite alternate;}
+.execution-step.is-running[data-execution-tool="task"] .cat-paw-left {animation:lele-paw-bat .7s ease-in-out infinite alternate;transform-origin:11px 25px;}
+.execution-step.is-running[data-execution-tool="todowrite"] .cat-paw-right {animation:cat-paws .5s ease-in-out infinite alternate;}
+.execution-step[data-execution-tool="search"] .is-success .cat-cranium {transform:rotate(-5deg);}
+.execution-step[data-execution-tool="fetch"] .is-success .cat-cranium {transform:rotate(5deg);}
+.execution-step[data-execution-tool="task"] .is-success .cat-paw-left {transform:translateY(-3px);}
+.execution-step.is-failed .execution-pill {border-color:var(--red);background:color-mix(in srgb,var(--red) 5%,var(--surface));}
+@keyframes cat-think-face { 0%,100%{transform:translateX(0)} 50%{transform:translateX(1px) rotate(-2deg)} }
+@media(max-width:700px) { .agent-trajectory { column-gap:6px; row-gap:7px; }.execution-step{max-width:100%;}.execution-pill-preview{max-width:20ch;} }

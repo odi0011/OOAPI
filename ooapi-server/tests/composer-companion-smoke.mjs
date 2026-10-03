@@ -23,7 +23,7 @@ const page = await context.newPage(); page.on("pageerror", e => errors.push(e.me
 let checks = 0;
 const check = (v, label) => { assert.ok(v, label); checks++; console.log("PASS", label); };
 const geometry = () => page.evaluate(() => {
-  const rect = s => { const r = document.querySelector(s).getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, right: r.right, bottom: r.bottom }; };
+  const rect = s => { const n = document.querySelector(s); if (!n) return null; const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, right: r.right, bottom: r.bottom }; };
   return { composer: rect(".bui-composer"), anchor: rect(".lele-perch-anchor"), body: rect(".lele-edge-viewport"), grip: rect(".lele-edge-grip"), bubble: rect(".lele-speech"), tail: rect(".lele-speech-tail"), overflow: document.documentElement.scrollWidth > innerWidth + 1 };
 });
 async function begin(text) {
@@ -46,13 +46,17 @@ try {
   check(await page.locator(".lele-perch-anchor.is-questioning.at-top .is-asking").count() === 1, "询问状态在上沿切换为专用表情");
   await page.mouse.move(1, 1);
   const first = await page.locator(".lele-perch-anchor").getAttribute("data-pose");
-  await page.waitForFunction(p => document.querySelector(".lele-perch-anchor").dataset.pose !== p, first, { timeout: 12000 });
-  await page.waitForTimeout(950);
-  check(await page.locator(".lele-perch-anchor.at-top").count() === 1, "询问期间自动换姿势仍留在上沿");
+  const beforeInquiry = await page.locator(".lele-perch-anchor").boundingBox();
+  await page.waitForTimeout(26000);
+  check(await page.locator(".lele-perch-anchor").getAttribute("data-pose") === first, "询问期间保持当前位置和姿势");
+  check(JSON.stringify(await page.locator(".lele-perch-anchor").boundingBox()) === JSON.stringify(beforeInquiry), "询问超过一次最长换位周期仍保持原位");
+  check(await page.locator(".lele-perch-anchor .cat-asking-eyes,.lele-perch-anchor .cat-annoyed-eyes").count() === 0, "原有建模没有新增眉眼叠层");
+  check(await page.locator(".lele-perch-anchor").evaluate(n => n.getAnimations({subtree:true}).filter(a=>a.playState==="running").length === 0), "询问期间身体、表情、爪子均停止动画");
+  check(await page.locator(".lele-perch-anchor.at-top").count() === 1, "询问期间乐乐稳定留在上沿");
   let g = await geometry();
   check(Math.abs(g.tail.x + 22 - g.anchor.x - 29) < 2, "气泡尾尖跟随乐乐头顶锚点");
   check(Math.abs(g.body.bottom - g.composer.y) < 1, "身体裁剪边与输入框上边严密相接");
-  check(Math.abs(g.grip.y - g.composer.y + 3) < 1, "爪子实际握住边线，没有悬空间距");
+  check(!g.grip || Math.abs(g.grip.y - g.composer.y + 3) < 1, "需要爪子时实际握住边线，没有悬空间距");
   await page.locator(".lele-speech").hover();
   const frozen = await page.locator(".lele-perch-anchor").getAttribute("data-pose");
   await page.waitForTimeout(10300);
@@ -92,8 +96,10 @@ try {
   check(await page.locator(".lele-edge-actor").evaluate(n => getComputedStyle(n).animationName === "none"), "减少动画模式静止显示完整姿态");
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.setViewportSize({ width: 1440, height: 1000 }); await page.mouse.move(1, 1);
-  await page.waitForFunction(() => !document.querySelector(".lele-perch-anchor").classList.contains("at-top"), null, { timeout: 14000 });
+  await page.evaluate(() => { window.__originalRandom = Math.random; Math.random = () => .3; });
+  await page.waitForFunction(() => !document.querySelector(".lele-perch-anchor").classList.contains("at-top"), null, { timeout: 28000 });
   await page.waitForTimeout(1700);
+  await page.evaluate(() => { Math.random = window.__originalRandom; });
   const edgeGeometry = await page.locator(".lele-perch-anchor").evaluate(n => {
     const c = document.querySelector(".bui-composer").getBoundingClientRect(), b = n.querySelector(".lele-edge-viewport").getBoundingClientRect();
     return { touches: n.classList.contains("at-left") ? Math.abs(b.right - c.left) : n.classList.contains("at-right") ? Math.abs(b.left - c.right) : Math.abs(b.top - c.bottom), opacity: getComputedStyle(n).opacity };

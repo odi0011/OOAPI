@@ -19,6 +19,7 @@ import { toolSpecs, nativeToolSpecs, runTool } from "./tools.js";
 import { callsText, chatCalls, textToolMessages } from "../tool-wire.js";
 import { DEFAULT_MAX_STEPS, MAX_STEPS_LIMIT } from "./sessions.js";
 import { contextBudget, messageTokens, compressionSplit, latestMemory } from "./context.js";
+import { callFingerprint } from "./tool-call-guards.js";
 
 const MAX_DEPTH = 1; // 子代理不允许再派子代理
 const SUBAGENT_MAX_STEPS = 3;
@@ -740,18 +741,23 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
     for (const call of stepCalls) {
       if (signal?.aborted) throw Object.assign(new Error("已停止"), { code: "ABORTED" });
       const spec = specs.find((s) => s.id === call.tool);
+      const fingerprint = callFingerprint(call);
+      const previous = attempted.get(fingerprint);
+      // 保留每个原生调用编号及结果回传；复用不产生新的执行事件或审批。
+      if (previous) {
+        toolResults.push({ role: "tool", tool_call_id: call.id, name: call.tool, content: `${previous.output}\n（相同查询已有结果，请使用这些结果或更换查询方式。）`, is_error: !previous.ok });
+        if (++consecutiveFailures >= 3) finalizeReason = "no_progress";
+        continue;
+      }
       const toolPart = { id: uid(), type: "tool", tool: call.tool, name: spec?.name || call.tool, args: call.args, presentation: toolPresentation(call.tool, call.args), step, status: "running", output: "", started: Date.now() };
       emitPart(toolPart);
 
       let res;
       try {
-        const fingerprint = JSON.stringify([call.tool, Object.entries(call.args || {}).sort(([a], [b]) => a.localeCompare(b))]);
-        const previous = attempted.get(fingerprint);
-        if (settings.permissionMode === "ask" && spec && !previous && call.tool !== "todowrite") patchPart(toolPart, { status: "awaiting_approval" });
-        const approved = spec && !previous ? (authorizeTool ? await authorizeTool({ tool: call.tool, name: spec.name, args: call.args }) : settings.permissionMode !== "ask") : true;
-        patchPart(toolPart, { status: "running", started: Date.now(), reused: Boolean(previous) });
-        res = previous ? { ...previous, output: `${previous.output}\n（相同查询已有结果，请使用这些结果或更换查询方式。）` }
-        : !approved ? { ok: false, output: "用户未批准此工具调用；不要重复请求同一操作，请说明限制并完成可回答的部分。" }
+        if (settings.permissionMode === "ask" && spec && call.tool !== "todowrite") patchPart(toolPart, { status: "awaiting_approval" });
+        const approved = spec ? (authorizeTool ? await authorizeTool({ tool: call.tool, name: spec.name, args: call.args }) : settings.permissionMode !== "ask") : true;
+        patchPart(toolPart, { status: "running", started: Date.now() });
+        res = !approved ? { ok: false, output: "用户未批准此工具调用；不要重复请求同一操作，请说明限制并完成可回答的部分。" }
         : spec
         ? await runTool(call.tool, call.args, {
             model,
@@ -767,7 +773,7 @@ async function loopInner({ session, agent, model, settings = {}, history = [], u
             searchSupported: modelCaps?.supportsSearch !== false})
         : { ok: false, output: `工具「${call.tool}」在本轮不可用；可用工具：${specs.map((s) => s.id).join("、") || "（无）"}` };
         attempted.set(fingerprint, res);
-        consecutiveFailures = previous || !res.ok ? consecutiveFailures + 1 : 0;
+        consecutiveFailures = !res.ok ? consecutiveFailures + 1 : 0;
         if (consecutiveFailures >= 3) finalizeReason = "no_progress";
       } catch (e) {
         // 主动停止也要结束工具的运行状态，刷新后不能永久显示“执行中”。

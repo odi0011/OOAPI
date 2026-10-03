@@ -15,6 +15,12 @@ const phrases = {
 };
 export const failedPart = p => ["failed", "stopped", "cancelled", "denied", "expired"].includes(p.status);
 export const toolName = p => p.name || names[p.tool] || p.tool || "执行任务";
+export function capsuleGesture(part = {}) {
+  const tool = part.tool || "";
+  if (part.type === "reasoning" || part.type === "text") return "think";
+  if (part.type === "compaction") return "stretch";
+  return ({ account: "look", search: "curious", fetch: "peek", github: "look", task: "wave", todowrite: "paws", binance: "look" }[tool] || "peek");
+}
 export function executionEntries(parts = [], streaming = false, finalTextId) {
   const lastTool = parts.findLastIndex(p => p.type === "tool");
   const latest = parts.findLast(p => ["reasoning", "text", "tool", "compaction"].includes(p.type));
