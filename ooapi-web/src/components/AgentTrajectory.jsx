@@ -11,7 +11,11 @@ function ExecutionPill({ part, active, open, hidden, layout, onOpen, onCollapsed
   const detailId = useId();
   const { thought, failed, state, label } = presentation(part, active);
   const summary = taskSummary(part);
-  const preview = active && !open ? String(thought ? part.text || "" : summary).replace(/\s+/g, " ") : "";
+  // 思考是不断追加的文本，折叠时保留末尾；不能把整段右侧省略，永远停在开头。
+  const preview = active && !open ? (thought
+    ? Array.from(String(part.text || "").slice(-512).replace(/\s+/g, " ").trim()).slice(-120).join("")
+    : String(summary).replace(/\s+/g, " ")) : "";
+  const previewContent = preview && <span className={`execution-pill-preview ${thought ? "is-latest" : ""}`}><span>{preview}</span></span>;
   useEffect(() => { if (!active) onOpen(false); }, [active]);
   // 同行隐藏后用整行承接详情，从原点击位置向空处展开；宽度与左边距同步变化，
   // 始终包含原来的按钮范围，避免重排凭空触发 pointerleave 又立即收起。
@@ -41,14 +45,14 @@ function ExecutionPill({ part, active, open, hidden, layout, onOpen, onCollapsed
   }, [open, layout]);
   const tool = part.tool || part.type || "other";
   return <div ref={stepRef} hidden={hidden} data-execution-id={part.id} data-execution-type={part.type} data-execution-tool={tool} className={`execution-step ${active ? "is-running" : "is-settled"} ${failed ? "is-failed" : ""} ${layout ? "is-focused" : ""}`}>
-    <span ref={measureRef} className="execution-measure" aria-hidden="true"><span className="execution-mascot-space"/><span className="execution-pill-label">{label}</span>{preview && <span className="execution-pill-preview">{preview}</span>}</span>
+    <span ref={measureRef} className="execution-measure" aria-hidden="true"><span className="execution-mascot-space"/><span className="execution-pill-label">{label}</span>{previewContent}</span>
     <div ref={pillRef} className={`execution-pill ${open ? "is-open" : ""}`}
       onPointerLeave={e => { if (e.pointerType !== "touch") onOpen(false); }}
       onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) onOpen(false); }}
       onTransitionEnd={e => { if (e.target === e.currentTarget && e.propertyName === "width" && !open) onCollapsed(); }}
       onKeyDown={e => { if (e.key === "Escape") { onOpen(false); e.stopPropagation(); } }}>
       <button type="button" className="execution-pill-toggle" aria-expanded={open} aria-controls={detailId} onClick={() => { setVisited(true); onOpen(!open, stepRef.current); }}>
-        <ChatMascot state={state} gesture={capsuleGesture(part)}/><span className="execution-pill-label">{label}</span>{preview && <span className="execution-pill-preview">{preview}</span>}
+        <ChatMascot state={state} gesture={capsuleGesture(part)}/><span className="execution-pill-label">{label}</span>{previewContent}
       </button>
       <div id={detailId} className={`execution-detail ${open ? "is-open" : ""}`} inert={!open ? "" : undefined}><div>{visited && (thought ? <p className="execution-thought">{part.text || "正在整理思路…"}</p> : <>
         <div className="execution-task"><span>{part.type === "compaction" ? "整理上下文" : toolName(part)}</span>{summary && <p>{summary}</p>}</div>

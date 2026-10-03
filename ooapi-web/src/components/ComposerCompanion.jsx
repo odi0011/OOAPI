@@ -12,6 +12,9 @@ const askPoses = [
   { edge: "top", at: .82, gesture: "shy", head: -23 },
 ];
 const idlePose = { edge: "top", at: .72, gesture: "peek", head: -24 };
+// 下沿只露尾巴/后腿，侧沿只探头/伸爪；不能把上沿的整只猫旋转后复用。
+const sideGestures = ["side-peek", "side-scout", "side-paw", "side-tap"];
+const bottomGestures = ["tail-slip", "tail-tip", "feet-kick", "foot-dangle"];
 
 // 同一处边线同时约束猫、爪子、气泡尾巴。身体在裁剪层外侧，爪子独立握住边线。
 // 不观察动画自身的宽高，避免位置测量与动画互相触发。
@@ -24,7 +27,7 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
   const [quiet, setQuiet] = useState(() => document.hidden || window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [saving, setSaving] = useState(false), [error, setError] = useState("");
   const marker = useRef(null), locked = useRef(false), hover = useRef(false), focused = useRef(false);
-  const menuWasOpen = useRef(false), reactionTimer = useRef(null), reactionPhase = useRef(null), hoverUntil = useRef(0);
+  const menuWasOpen = useRef(false), reactionTimer = useRef(null), reactionMove = useRef(null), reactionPhase = useRef(null), hoverUntil = useRef(0);
   const travelId = useRef(0);
   const live = useRef();
   live.current = { pose, geometry, pending, retained, saving, menuOpen };
@@ -84,7 +87,7 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
       const edge = choose([...edges, "top", "top"]);
       const gesture = choose(edge === "top"
         ? ["pop", "walk", "tumble", "toy", "belly", "cute", "lick", "groom", "wash", "stretch", "wink", "curl", "sleep", "zzz", "peek", "wave", "paws", "look", "chase", "knead", "shake", "shy"].filter(p => p !== current.pose.gesture)
-        : ["climb", "cling", "slide", "wave", "look", "peek", "groom", "wash"].filter(p => p !== current.pose.gesture));
+        : (edge === "bottom" ? bottomGestures : sideGestures).filter(p => p !== current.pose.gesture));
       setPhase("exit");
       move = setTimeout(() => { setPose({ edge, gesture, at: edge === "bottom" ? choose([.16, .84]) : .2 + Math.random() * .6 }); setPhase("enter"); schedule(); }, 300);
     }, 12000 + Math.random() * 12000); };
@@ -163,8 +166,11 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
       reactionPhase.current = gesture;
       const current = live.current.pose;
       if (current.gesture !== gesture) {
-        setPose({ edge: "top", at: current.edge === "top" ? current.at : .72, gesture, head: -25 });
-        setPhase("enter");
+        const arrive = () => { reactionMove.current = null; setPose({ edge: "top", at: current.edge === "top" ? current.at : .72, gesture, head: -25 }); setPhase("enter"); };
+        if (["left", "right", "bottom"].includes(current.edge)) {
+          // 用户操作打断局部小动作时，先缩回当前边，不能把半条腿瞬移成上沿整只猫。
+          if (!reactionMove.current) { setPhase("exit"); reactionMove.current = setTimeout(arrive, 260); }
+        } else arrive();
       }
       reactionTimer.current = setTimeout(() => {
         if (reactionPhase.current !== gesture) return;
@@ -173,12 +179,24 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
       }, action === "typing" ? 900 : 1500);
     };
     window.addEventListener("lele-action", react);
-    return () => { window.removeEventListener("lele-action", react); clearTimeout(reactionTimer.current); reactionPhase.current = null; };
+    return () => { window.removeEventListener("lele-action", react); clearTimeout(reactionTimer.current); clearTimeout(reactionMove.current); reactionMove.current = null; reactionPhase.current = null; };
   }, [quiet, pending?.id, menuOpen, saving]);
 
   const onHover = () => {
     if (quiet || pending || retained || menuOpen || ["exit", "hidden"].includes(phase) || Date.now() < hoverUntil.current) return;
     hoverUntil.current = Date.now() + 4000;
+    if (["left", "right", "bottom"].includes(pose.edge)) {
+      // 局部动作被发现时仍缩回同一条边，不突然换成一只倒挂的害羞猫。
+      if (Math.random() < .35) {
+        setPhase("exit");
+        clearTimeout(reactionTimer.current);
+        reactionTimer.current = setTimeout(() => setPhase("hidden"), 260);
+      } else {
+        const gesture = pose.edge === "bottom" ? (pose.gesture.startsWith("tail-") ? "tail-tip" : "feet-kick") : (["side-paw", "side-tap"].includes(pose.gesture) ? "side-tap" : "side-scout");
+        setPose({ ...pose, gesture, motion: ++travelId.current }); setPhase("enter");
+      }
+      return;
+    }
     if (Math.random() < .35) {
       setPhase("exit");
       clearTimeout(reactionTimer.current);
@@ -211,13 +229,14 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
   const tail = Math.max(24, Math.min(width - 24, headX - left));
   const clearance = -(pose.head || -29) + 20;
   const height = Math.min(440, Math.max(130, geometry.top - geometry.viewportTop - clearance - 14));
-  const anchorStyle = pose.edge === "left" || pose.edge === "right" ? { top: "50%" } : { left: `calc(${pose.at * 100}% - 29px)`, ...(pose.edge === "menu" ? { top: pose.y } : {}), ...(pose.fallFrom ? { "--fall-from": `${pose.fallFrom}px` } : {}), "--travel-x": `${pose.travelX || 0}px`, "--travel-y": `${pose.travelY || 0}px`, "--travel-arc": `${Math.min(0, pose.travelY || 0) - 22}px` };
+  const fragment = ["left", "right", "bottom"].includes(pose.edge);
+  const anchorStyle = pose.edge === "left" || pose.edge === "right" ? { top: Math.max(34, Math.min(geometry.height - 34, geometry.height * pose.at)) - 29 } : { left: `calc(${pose.at * 100}% - 29px)`, ...(pose.edge === "menu" ? { top: pose.y } : {}), ...(pose.fallFrom ? { "--fall-from": `${pose.fallFrom}px` } : {}), "--travel-x": `${pose.travelX || 0}px`, "--travel-y": `${pose.travelY || 0}px`, "--travel-arc": `${Math.min(0, pose.travelY || 0) - 22}px` };
 
   return <>
     <span ref={marker} className="lele-companion-marker" aria-hidden="true"/>
-    <span className={`lele-perch-anchor at-${pose.edge} pose-${pose.gesture} phase-${phase} ${asking ? "is-questioning" : ""}`} style={anchorStyle} data-pose={pose.gesture} aria-hidden="true" onMouseEnter={onHover} onAnimationEnd={e => { if (e.target.classList.contains("lele-edge-actor") && phase === "enter") setPhase("rest"); }}>
+    <span className={`lele-perch-anchor at-${pose.edge} pose-${pose.gesture} phase-${phase} ${fragment ? "is-fragment" : ""} ${asking ? "is-questioning" : ""}`} style={anchorStyle} data-pose={pose.gesture} aria-hidden="true" onMouseEnter={onHover} onAnimationEnd={e => { if (e.target.classList.contains("lele-edge-actor") && phase === "enter") setPhase(fragment ? "hidden" : "rest"); }}>
       <span className="lele-edge-viewport"><span key={pose.motion || "idle"} className="lele-edge-actor"><ChatMascot state={asking ? "asking" : state} gesture={pose.gesture}/></span></span>
-      {["paws", "wave", "invite", "listen", "cling", "climb", "knead"].includes(pose.gesture) && <span className="lele-edge-grip"><i/><i/></span>}
+      {["paws", "wave", "invite", "listen", "knead"].includes(pose.gesture) && <span className="lele-edge-grip"><i/><i/></span>}
     </span>
     {asking && <section key={part.id} className={`tool-approval lele-speech ${closing ? "is-closing" : "is-pending"}`} role="region" aria-label="乐乐需要你的确认" aria-labelledby={labelId}
       style={{ width, left, bottom: `calc(100% + ${clearance}px)`, "--speech-tail": `${tail}px`, "--speech-height": `${height}px` }}

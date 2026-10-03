@@ -171,6 +171,7 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
   <g className="cat-paws">
 
     <g className="cat-paw-left">
+    {["feet-kick", "foot-dangle"].includes(gesture) && <g className="cat-leg-reach"><path fill="#62676e" d="M9 16h4v10H9z M8 25h1v3H8z M9 28h4v1H9z M13 25h1v3h-1z"/><path fill="#85898e" d="M10 16h3v8h-3z"/><path fill="#dfe2e5" d="M10 23h3v3h-3z"/></g>}
     <rect x="9" y="25" width="4" height="3" fill="#ffffff" />
     <rect x="8" y="27" width="1" height="2" fill="#dfe2e5" />
     <rect className="cat-paw-ground" x="8" y="28" width="5" height="1" fill="#30343b" />
@@ -178,6 +179,7 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
 
     </g>
     <g className="cat-paw-right">
+    {["feet-kick", "foot-dangle", "side-paw", "side-tap"].includes(gesture) && <g className="cat-leg-reach"><path fill="#62676e" d="M19 16h4v10h-4z M18 25h1v3h-1z M19 28h4v1h-4z M23 25h1v3h-1z"/><path fill="#85898e" d="M19 16h3v8h-3z"/><path fill="#dfe2e5" d="M19 23h3v3h-3z"/></g>}
     <rect x="19" y="25" width="4" height="3" fill="#ffffff" />
     <rect x="23" y="27" width="1" height="2" fill="#dfe2e5" />
     <rect className="cat-paw-ground" x="19" y="28" width="5" height="1" fill="#30343b" />

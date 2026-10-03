@@ -110,7 +110,8 @@ try {
   await page.evaluate(() => {
     const source = document.querySelector(".lele-perch-anchor"), board = document.createElement("section"); board.id = "motion-review";
     board.style.cssText = "position:relative;z-index:9999;background:var(--page);color:var(--ink);display:grid;grid-template-columns:repeat(3,320px);gap:70px 80px;padding:70px;width:max-content";
-    const cases = [["top","peek"],["top","wave"],["top","sleep"],["top","paws"],["top","stretch"],["top","curl"],["left","look"],["right","wave"],["bottom","peek"]];
+    // 边缘局部动作另由 lele-edges-smoke 的真实调度逐帧验证，这里只保留上沿姿态台。
+    const cases = [["top","peek"],["top","wave"],["top","sleep"],["top","paws"],["top","stretch"],["top","curl"]];
     for (const [edge, pose] of cases) {
       const box = document.createElement("div"); box.className = "motion-case"; box.style.cssText = "position:relative;height:88px;box-sizing:border-box;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:20px;font-size:12px";
       box.textContent = edge + " / " + pose;
