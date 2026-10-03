@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 export default function ChatMascot({ state = "idle", gesture = "" }) {
   const airborne = ["leap", "transfer", "drop"].includes(gesture);
   const turning = ["chase", "spin"].includes(gesture);
+  const draped = gesture === "drape";
   const [visible, setVisible] = useState(!document.hidden);
   useEffect(() => { const change = () => setVisible(!document.hidden); document.addEventListener("visibilitychange", change); return () => document.removeEventListener("visibilitychange", change); }, []);
   return <span className={`chat-mascot is-${state} ${gesture ? `gesture-${gesture}` : ""}`} data-motion={visible ? "on" : "off"} aria-hidden="true">
@@ -11,7 +12,7 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
 {["toy", "proud"].includes(gesture) && <span className="lele-heart" aria-hidden="true">♥</span>}
 {gesture === "toy" && <span className="lele-toy" aria-hidden="true"/>}
 {gesture.startsWith("capsule-") && <CapsuleAccessory kind={gesture.slice(8)}/>}
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="64" height="64" aria-hidden="true" shapeRendering="crispEdges">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox={draped ? "0 0 64 54" : "0 0 32 32"} width={draped ? "112" : "64"} height={draped ? "94.5" : "64"} aria-hidden="true" shapeRendering="crispEdges">
 
   <g className="cat-shadow" fill="#30343b" opacity="0.25">
     <rect x="7" y="29" width="18" height="1" />
@@ -73,6 +74,7 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
     <g className="cat-hind-left"><path d="M7 22h4v5H7z"/><path fill="#fff" d="M6 26h5v3H6z"/></g>
     <g className="cat-hind-right"><path d="M21 22h4v5h-4z"/><path fill="#fff" d="M21 26h5v3h-5z"/></g>
   </g>}
+  {draped && <DrapedBody/>}
   <g className="cat-cranium">
   <g className="cat-head">
 
@@ -206,6 +208,52 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
 </svg>
 
   </span>;
+}
+
+// 同一只乐乐的侧卧肢体：沿用灰白毛区和原脸，肩、肘、髋、尾根独立活动。
+// y=28 是输入框边沿；只有放松的小腿和尾端可以越过这条边。
+function DrapedBody() {
+  return <g className="cat-lounge-rig">
+    <g className="lounge-tail" data-drape-contact="tail">
+      <path fill="none" stroke="#62676e" strokeWidth="3.5" strokeLinecap="round" d="M48 22C55 22 55 28 54 33S56 40 52 43"/>
+      <path fill="none" stroke="#85898e" strokeWidth="2" strokeLinecap="round" d="M48 22C54 23 54 28 53.5 33S55 39 52 42.5"/>
+    </g>
+    <g className="lounge-body">
+      <path fill="#62676e" d="M20 18h2v-3h4v-2h6v-1h9v1h5v2h3v3h2v5h-1v2h-3v2h-7v1H23v-1h-4v-3h-1v-4h2z"/>
+      <path fill="#85898e" d="M21 18h2v-2h4v-2h6v-1h7v1h5v2h3v3h2v4h-2v2h-3v1h-6v1H24v-1h-4v-3h-1v-2h2z"/>
+      <path fill="#a2a6aa" d="M28 15h5v-1h7v1h4v1H28z M45 17h2v2h-2z"/>
+      <path fill="#62676e" d="M41 20h5v1h-2v2h-2v2h-2v-3h1z"/>
+      <path fill="#dfe2e5" d="M22 24h5v1h5v1h8v1H24v-1h-3v-1h1z"/>
+    </g>
+    <g className="lounge-folded-paw">
+      <path fill="#62676e" d="M29 21h4v5h-2v2h-6v-3h4z"/>
+      <path fill="#85898e" d="M30 22h2v3h-3v1h-2v-1h3z"/>
+      <path fill="#dfe2e5" d="M26 25h5v2h-5z"/>
+      <path fill="#fff" d="M27 25h3v1h-3z"/>
+    </g>
+    {/* 照片中垂下的是近侧前腿和近侧后腿，分别从肩、髋伸出；远侧后腿被侧卧躯干遮住。 */}
+    <g className="lounge-hanging-leg lounge-hind-leg" style={{"--joint-x":"44px","--joint-y":"23px"}} data-drape-contact="hind-leg">
+      <path fill="#62676e" d="M41 21h7v3h1v5h-2v5h-5v-4h-2v-5h1z"/>
+      <path fill="#85898e" d="M42 22h5v3h1v3h-2v5h-3v-4h-2v-3h1z"/>
+      <path fill="#a2a6aa" d="M42 23h2v5h-2z"/>
+      <g className="lounge-hock">
+        <path fill="#62676e" d="M42 31h5v5h-1v6h-1v2h-4v-1h-1v-4h1v-5h1z"/>
+        <path fill="#85898e" d="M43 32h3v3h-1v6h-3v-2h-1v-3h1v-3h1z"/>
+        <path fill="#dfe2e5" d="M41 40h4v3h-4z"/>
+        <path fill="#fff" d="M42 40h2v2h-2z"/>
+      </g>
+    </g>
+    <g className="lounge-hanging-leg lounge-front-leg" style={{"--joint-x":"25px","--joint-y":"24px"}} data-drape-contact="front-leg">
+      <path fill="#62676e" d="M22 22h6v5h-1v5h-5v-3h-1v-4h1z"/>
+      <path fill="#85898e" d="M23 22h4v5h-1v4h-3v-3h-1v-3h1z"/>
+      <g className="lounge-wrist">
+        <path fill="#62676e" d="M22 29h5v5h-1v6h-1v1h-4v-1h-1v-3h1v-8z"/>
+        <path fill="#85898e" d="M23 29h3v5h-1v5h-3v-3h1z"/>
+        <path fill="#dfe2e5" d="M21 38h4v3h-1v1h-3z"/>
+        <path fill="#fff" d="M22 39h2v2h-2z"/>
+      </g>
+    </g>
+  </g>;
 }
 
 // 工作道具独立于乐乐原来的像素身体；完成后的姿势由各方法分别定格。

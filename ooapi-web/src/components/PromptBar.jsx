@@ -239,7 +239,7 @@ export default function PromptBar({
         </div>
       ) : null}
 
-      {mascotState && <ComposerCompanion state={mascotState} approvals={approvals} onDecide={onApproval} menuOpen={menuOpen}/>}
+      {mascotState && <ComposerCompanion state={mascotState} approvals={approvals} onDecide={onApproval} menuOpen={menuOpen} inputValue={value} inputRef={taRef}/>}
       <div className={`bui-composer${disabled ? " is-disabled" : ""}`}>
         {chips.length > 0 ? (
           <div className="bui-chips">

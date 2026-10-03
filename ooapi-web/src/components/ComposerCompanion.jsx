@@ -3,6 +3,8 @@ import { Button } from "antd";
 import ChatMascot from "./ChatMascot";
 import "./composer-companion.css";
 import "./lele-locomotion.css";
+import "./lele-drape.css";
+import { composerTextRects, textNearDrapedCat } from "./composerTextCollision";
 
 const hash = value => Array.from(String(value || "lele")).reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 0);
 const choose = values => values[Math.floor(Math.random() * values.length)];
@@ -19,7 +21,7 @@ const bottomGestures = ["tail-slip", "tail-tip", "feet-kick", "foot-dangle"];
 
 // 同一处边线同时约束猫、爪子、气泡尾巴。身体在裁剪层外侧，爪子独立握住边线。
 // 不观察动画自身的宽高，避免位置测量与动画互相触发。
-export default function ComposerCompanion({ state, approvals = [], onDecide, menuOpen = false }) {
+export default function ComposerCompanion({ state, approvals = [], onDecide, menuOpen = false, inputValue = "", inputRef }) {
   const pending = approvals[0] || null;
   const [retained, setRetained] = useState(pending);
   const [pose, setPose] = useState(() => pending ? askPoses[hash(pending.id) % askPoses.length] : idlePose);
@@ -31,7 +33,7 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
   const menuWasOpen = useRef(false), reactionTimer = useRef(null), reactionMove = useRef(null), reactionPhase = useRef(null), hoverUntil = useRef(0);
   const travelId = useRef(0);
   const live = useRef();
-  live.current = { pose, geometry, pending, retained, saving, menuOpen };
+  live.current = { pose, phase, geometry, pending, retained, saving, menuOpen };
   const labelId = useId();
   const part = pending || retained, closing = Boolean(part && !pending);
 
@@ -75,6 +77,8 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
     const schedule = () => { timer = setTimeout(() => {
       const current = live.current;
       if (hover.current || focused.current || current.saving || current.menuOpen || reactionPhase.current || current.retained && !current.pending) { schedule(); return; }
+      // 趴睡有自己的睡醒/离场时序，普通换位计时器不能在中途把身体换掉。
+      if (current.pose.gesture === "drape" && current.phase !== "hidden") { schedule(); return; }
       if (current.pending) {
         // 询问期间乐乐和气泡是一套稳定的界面锚点，不在用户阅读和点击时换姿势。
         return;
@@ -87,10 +91,12 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
       if (g.width >= 480 && g.viewportHeight + g.viewportTop - g.bottom > 62) edges.push("bottom");
       const edge = choose([...edges, "top", "top"]);
       const gesture = choose(edge === "top"
-        ? ["pop", "walk", "spin", "toy", "belly", "cute", "lick", "groom", "wash", "stretch", "wink", "curl", "sleep", "zzz", "peek", "wave", "paws", "look", "chase", "knead", "shake", "shy"].filter(p => p !== current.pose.gesture)
+        ? ["pop", "walk", "spin", "toy", "belly", "cute", "lick", "groom", "wash", "stretch", "wink", "curl", "sleep", "zzz", "peek", "wave", "paws", "look", "chase", "knead", "shake", "shy", "drape"].filter(p => p !== current.pose.gesture)
         : (edge === "bottom" ? bottomGestures : sideGestures).filter(p => p !== current.pose.gesture));
-      setPhase("exit");
-      move = setTimeout(() => { setPose({ edge, gesture, at: edge === "bottom" ? choose([.16, .84]) : .2 + Math.random() * .6 }); setPhase("enter"); schedule(); }, 300);
+      const arrive = () => { setPose({ edge, gesture, at: edge === "bottom" ? choose([.16, .84]) : gesture === "drape" ? .34 + Math.random() * .32 : .2 + Math.random() * .6 }); setPhase("enter"); schedule(); };
+      // 已经藏到框后的猫不能再播一次离场，否则旧睡姿会闪回 300ms。
+      if (current.phase === "hidden") arrive();
+      else { setPhase("exit"); move = setTimeout(arrive, 300); }
     }, 12000 + Math.random() * 12000); };
     schedule();
     return () => { clearTimeout(timer); clearTimeout(move); };
@@ -103,9 +109,45 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
     return () => { clearTimeout(finish); clearTimeout(hide); };
   }, [pose.gesture, pose.edge, quiet, pending?.id, menuOpen]);
 
+  useEffect(() => {
+    if (pose.gesture !== "drape" || pending || menuOpen) return;
+    if (quiet) { setPhase("hidden"); return; }
+    // 无人打扰也会自然睡醒，起身伸展之后才跑走，不能突然淡出或换位置。
+    const timer = setTimeout(() => {
+      if (["enter", "rest"].includes(live.current.phase)) setPhase("stretch");
+    }, 28000 + Math.random() * 12000);
+    return () => clearTimeout(timer);
+  }, [pose.gesture, pose.motion, pending?.id, menuOpen, quiet]);
+
+  useEffect(() => {
+    if (pose.gesture !== "drape" || !["startle", "stretch"].includes(phase) || pending) return;
+    const timer = setTimeout(() => setPhase("hidden"), quiet ? 0 : phase === "startle" ? 1720 : 3520);
+    return () => clearTimeout(timer);
+  }, [pose.gesture, phase, pending?.id, quiet]);
+
+  useLayoutEffect(() => {
+    if (pose.gesture !== "drape" || !["enter", "rest"].includes(phase) || pending || menuOpen) return;
+    let frame, text = [];
+    const inspect = () => {
+      const anchor = marker.current?.parentElement?.querySelector(".pose-drape");
+      cancelAnimationFrame(frame);
+      if (textNearDrapedCat(inputRef?.current, anchor, 7, text)) setPhase(quiet ? "hidden" : "startle");
+      else if (phase === "enter" && text.length) frame = requestAnimationFrame(inspect);
+    };
+    const measure = () => { text = composerTextRects(inputRef?.current); inspect(); };
+    // 等父组件完成输入框增高；输入法合成、粘贴和文本滚动同样使用实际字形矩形。
+    const textarea = inputRef?.current; frame = requestAnimationFrame(measure);
+    textarea?.addEventListener("scroll", measure, { passive: true });
+    return () => { cancelAnimationFrame(frame); textarea?.removeEventListener("scroll", measure); };
+  }, [inputValue, inputRef, geometry, pose.gesture, phase, pending?.id, menuOpen, quiet]);
+
   // 只有菜单实际遮住乐乐才避让，位置取菜单外沿；关闭时从真实高度落回输入框。
   useEffect(() => {
     if (pending) return undefined;
+    if (live.current.pose.gesture === "drape") {
+      if (menuOpen && ["enter", "rest"].includes(live.current.phase)) setPhase(quiet ? "hidden" : "startle");
+      return undefined;
+    }
     let frame, observer;
     if (menuOpen) {
       const align = () => {
@@ -152,6 +194,10 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
     const react = e => {
       const action = typeof e.detail === "string" ? e.detail : e.detail?.action;
       if (!action || quiet || pending || menuOpen || saving) return;
+      if (live.current.pose.gesture === "drape") {
+        if (action !== "typing" && ["enter", "rest"].includes(live.current.phase)) setPhase("startle");
+        return;
+      }
       const gestures = { typing: "listen", send: "pop", copy: "proud", retry: "spin", attach: "curious" };
       const gesture = gestures[action];
       if (!gesture) return;
@@ -177,6 +223,10 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
 
   const onHover = () => {
     if (quiet || pending || retained || menuOpen || ["exit", "hidden"].includes(phase) || Date.now() < hoverUntil.current) return;
+    if (pose.gesture === "drape") {
+      if (["enter", "rest"].includes(phase)) setPhase("startle");
+      return;
+    }
     hoverUntil.current = Date.now() + 4000;
     if (["left", "right", "bottom"].includes(pose.edge)) {
       // 局部动作被发现时仍缩回同一条边，不突然换成一只倒挂的害羞猫。
@@ -223,11 +273,11 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
   const clearance = -(pose.head || -29) + 20;
   const height = Math.min(440, Math.max(130, geometry.top - geometry.viewportTop - clearance - 14));
   const fragment = ["left", "right", "bottom"].includes(pose.edge);
-  const anchorStyle = pose.edge === "left" || pose.edge === "right" ? { top: Math.max(34, Math.min(geometry.height - 34, geometry.height * pose.at)) - 29 } : { left: `calc(${pose.at * 100}% - 29px)`, ...(pose.edge === "menu" ? { top: pose.y } : {}), "--edge-floor": `${pose.floor || 0}px`, "--travel-x": `${pose.travelX || 0}px`, "--travel-y": `${pose.travelY || 0}px`, "--travel-arc": `${Math.min(0, pose.travelY || 0) - 32}px`, "--flight-duration": `${pose.duration || 1000}ms` };
+  const anchorStyle = pose.edge === "left" || pose.edge === "right" ? { top: Math.max(34, Math.min(geometry.height - 34, geometry.height * pose.at)) - 29 } : { left: `calc(${pose.at * 100}% - 29px)`, ...(pose.edge === "menu" ? { top: pose.y } : {}), "--edge-floor": `${pose.floor || 0}px`, "--travel-x": `${pose.travelX || 0}px`, "--travel-y": `${pose.travelY || 0}px`, "--travel-arc": `${Math.min(0, pose.travelY || 0) - 32}px`, "--flight-duration": `${pose.duration || 1000}ms`, "--drape-run-x": `${-Math.min(84, Math.max(12, headX - 68))}px` };
 
   return <>
     <span ref={marker} className="lele-companion-marker" aria-hidden="true"/>
-    <span className={`lele-perch-anchor at-${pose.edge} pose-${pose.gesture} phase-${phase} ${pose.falling ? "is-falling" : ""} ${fragment ? "is-fragment" : ""} ${asking ? "is-questioning" : ""}`} style={anchorStyle} data-pose={pose.gesture} aria-hidden="true" onMouseEnter={onHover} onAnimationEnd={e => { if (e.target.classList.contains("lele-edge-actor") && phase === "enter") setPhase(fragment ? "hidden" : "rest"); }}>
+    <span className={`lele-perch-anchor at-${pose.edge} pose-${pose.gesture} phase-${phase} ${pose.falling ? "is-falling" : ""} ${fragment ? "is-fragment" : ""} ${asking ? "is-questioning" : ""}`} style={anchorStyle} data-pose={pose.gesture} aria-hidden="true" onMouseEnter={onHover} onAnimationEnd={e => { if (!e.target.classList.contains("lele-edge-actor")) return; if (pose.gesture === "drape" && ["startle", "stretch"].includes(phase)) setPhase("hidden"); else if (phase === "enter") setPhase(fragment ? "hidden" : "rest"); }}>
       <span className="lele-edge-viewport"><span key={pose.motion || "idle"} className="lele-edge-actor"><ChatMascot state={asking ? "asking" : state} gesture={pose.gesture}/></span></span>
       {["paws", "wave", "invite", "listen", "knead"].includes(pose.gesture) && <span className="lele-edge-grip"><i/><i/></span>}
     </span>
