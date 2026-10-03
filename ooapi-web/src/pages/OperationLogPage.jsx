@@ -1,4 +1,5 @@
 import OdAmount, { OdText } from "../components/OdAmount";
+import LogDiagnosticDetails from "../components/LogDiagnosticDetails";
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { Table, Tag, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions } from "antd";
 import { ReloadOutlined, HistoryOutlined } from "@ant-design/icons";
@@ -252,9 +253,7 @@ export default function OperationLogPage() {
               <>
                 <Descriptions.Item label="User-Agent">{detail.user_agent || "-"}</Descriptions.Item>
                 <Descriptions.Item label="原始明细">
-                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, wordBreak: "break-all" }}>
-                    {detail.detail || "-"}
-                  </span>
+                  <LogDiagnosticDetails value={detail.detail} />
                 </Descriptions.Item>
               </>
             ) : null}

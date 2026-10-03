@@ -24,6 +24,7 @@ export const TOOL_PRESENTATIONS = {
       overview: method("查看账户概况", "整理账号可见的余额、近期调用和令牌概况。", "你的账户概况", "账户概况", [["查询范围", "当前登录账号"], ["关注内容", "余额 · 近期调用 · 令牌概况"]]),
       recent: method("查看最近调用", "按时间查看最近的模型调用、用量和消耗。", "你最近的调用记录", "最近调用记录"),
       errors: method("查看失败记录", "查看最近未成功的调用，整理失败原因和发生时间。", "最近没成功的调用", "失败记录"),
+      error_help: { ...method("解释系统错误", "查询错误码的中文含义、可能范围与排查建议。", "这个错误的含义", "错误说明"), scope: "只读系统错误词典" },
       tokens: method("查看令牌概况", "查看令牌名称、状态和可见额度，不读取密钥内容。", "你的令牌使用情况", "令牌概况", [["查询范围", "你创建的令牌"], ["关注内容", "名称 · 状态 · 可见额度"]]),
       usage: method("整理用量统计", "把这周的调用次数与消耗按日期、模型汇总，找出主要用量。", "你这周的用量", "这周的用量", [["时间范围", "最近 7 天"], ["统计方式", "按日期 · 按模型"]]),
     },
@@ -78,6 +79,7 @@ export function toolPresentation(id, input = {}) {
   const selected = { ...common, ...(base.methods?.[action] || {}) };
   let fields = selected.fields || [];
   if (id === "account" && ["recent", "errors"].includes(action)) fields = [["记录范围", `最近 ${Math.min(30, Math.max(1, Number(args.limit) || 10))} 条${action === "errors" ? "失败调用" : "调用"}`], ["查看内容", action === "errors" ? "发生时间 · 模型 · 失败原因" : "模型 · 用量 · 消耗 · 耗时"]];
+  if (id === "account" && action === "error_help") fields = [["错误码", text(args.error_code, 64) || "全部系统错误"], ["查看内容", "中文含义 · 排查建议"]];
   if (id === "binance") fields = [["账户范围", args.account_id ? `你的账户 #${text(args.account_id, 20)}` : action === "accounts" ? "你配置的全部账户" : "你启用的全部账户"], ["资料来源", "平台已同步的账户数据"]];
   if (id === "search") fields = [["检索关键词", text(args.query, 300)]];
   if (id === "fetch") fields = [["阅读地址", text(args.url)]];

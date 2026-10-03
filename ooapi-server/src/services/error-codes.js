@@ -1,0 +1,91 @@
+// 页面与站内工具共用的应用错误词典；不使用上游原始 message 生成公开解释。
+const catalog = {};
+function define(codes, title, meaning, action) {
+  for (const code of codes.split(" ")) catalog[code] = Object.freeze({ title, meaning, action });
+}
+define("CHANNEL_BAD_REQUEST", "上游拒绝请求", "上游不接受此次请求，可能涉及参数、模型、消息格式、上下文或请求审核策略。该码本身不能确定具体根因。", "结合 HTTP 状态、上游编号和端点尝试记录，核对模型映射、推理参数、工具消息与长度限制；不能仅据此认定密钥失效。");
+define("CHANNEL_AUTH_EXPIRED", "上游鉴权失败", "上游未接受渠道凭据，登录态可能过期、无效或缺失。", "检查渠道凭据是否完整并重新授权；确认没有重复 Authorization 请求头。");
+define("CHANNEL_FORBIDDEN", "上游权限受限", "上游不允许当前账号、模型或客户端使用此次能力。", "核对订阅、模型授权及客户端权限；不要通过反复切端点处理权限问题。");
+define("CHANNEL_RATE_LIMIT CHANNEL_RATE_LIMITED", "上游限流", "上游限制了请求频率、并发或配额窗口。", "降低并发与调用频率，等待限流窗口恢复，并检查渠道限速配置。");
+define("CHANNEL_QUOTA_EXCEEDED", "上游额度不足", "渠道账号的可用额度或套餐配额不足。", "查看上游账号额度、套餐及重置时间，补充额度或切换可用渠道。");
+define("CHANNEL_TIMEOUT", "上游响应超时", "连接、排队或生成未在本次渠道超时预算内完成。", "核对渠道响应速度、排队和超时配置；重试前先检查是否已产生输出或用量。");
+define("CHANNEL_NETWORK", "上游连接异常", "网关与上游的连接建立或传输失败。", "检查网络、DNS、代理及上游连通性；核对本次是否已产生用量。");
+define("CHANNEL_STREAM_ERROR", "上游响应流不完整", "响应流提前断开、缺少结束帧，或工具调用被截断。", "检查上游流式协议、代理超时与输出上限；已产生的内容或用量不能当作零消费。");
+define("CHANNEL_EMPTY CHANNEL_EMPTY_RESPONSE", "上游没有有效回答", "上游未返回可用正文或工具调用，可能只有思考内容。", "核对模型状态、输出上限及返回结构；检查记录中的实际用量后再决定重试。");
+define("CHANNEL_BAD_RESPONSE", "上游响应格式异常", "上游返回的数据无法按约定协议解析，或响应帧超出限制。", "核对渠道协议、Content-Type、JSON/SSE 结构及网关适配器。");
+define("CHANNEL_BIZ_ERROR", "上游返回业务错误", "上游通过响应正文或事件声明失败；HTTP 200 也可能出现此错误。", "结合安全保存的上游编号、模型和账号状态排查，不能只看 HTTP 状态判断成功。");
+define("CHANNEL_HTTP_ERROR", "上游 HTTP 请求失败", "上游返回了未被更具体分类覆盖的 HTTP 错误。", "查看 HTTP 状态与各次端点尝试，检查上游服务及渠道配置。");
+define("CHANNEL_UPSTREAM_BUSY", "上游繁忙", "上游处于瞬时过载或服务暂不可用状态。", "检查重试次数和上游状态，适当降低并发或稍后再试。");
+define("CHANNEL_DEGRADED", "上游服务降级", "上游返回了适配器识别到的过载或降级信号。", "检查渠道冷却状态和上游服务恢复情况。");
+define("CHANNEL_NOT_APPROVED", "上游账号未获准使用", "上游认为当前账号尚未获准使用或受到风控限制。", "检查上游账号审核与使用资格；重新填写同一凭据未必能解决。");
+define("CHANNEL_MUTED", "上游账号被限制", "渠道账号被上游风控或静默限制。", "在上游核对账号状态，等待恢复或联系上游支持。");
+define("CHANNEL_CAPTCHA LOGIN_CAPTCHA", "需要人机验证", "上游要求完成验证码或人机验证。", "打开渠道登录或绑定流程完成验证，然后重新检查登录态。");
+define("CHANNEL_WAF LOGIN_WAF", "上游访问防护拦截", "请求被上游网站的访问防护拦截。", "检查正常登录流程、网络出口及上游服务状态。");
+define("CHANNEL_POW_FAILED", "上游挑战计算失败", "上游要求的工作量证明计算超时或执行失败。", "检查计算进程、资源占用及渠道状态。");
+define("CHANNEL_NOT_READY", "渠道尚未就绪", "渠道地址、登录页面、会话或浏览器连接尚未准备好。", "检查 Base URL、登录态和浏览器会话，重新执行渠道检测。");
+define("CHANNEL_CONFIG_ERROR", "渠道配置不完整", "当前接入方式依赖的配置未正确提供。", "检查渠道接入方式及必要的部署配置，按实际缺项修正。");
+define("CHANNEL_BAD_PARAMS", "渠道参数格式错误", "渠道输入的凭据或配置数据格式不符合要求。", "核对完整的凭据格式、Cookie 或 JSON，避免遗漏或额外嵌套。");
+define("CHANNEL_UNSUPPORTED UNSUPPORTED_CHANNEL", "渠道能力不可用", "当前渠道类型、接入方式或能力无法完成请求。", "检查渠道接入方式和对应适配器。");
+define("CHANNEL_ERROR", "渠道调用失败", "渠道执行失败，但没有得到更具体的系统分类。", "结合请求 ID、HTTP 状态及上游编号进一步排查。");
+define("NO_CHANNEL", "没有可用渠道", "没有满足模型、分组、权限、状态或冷却条件的渠道。", "检查密钥分组、模型白名单、渠道启用与冷却状态。");
+define("VISION_NOT_SUPPORTED", "渠道不支持图片", "此次请求包含图片，但所选渠道没有对应视觉能力。", "选择支持图片的模型和渠道，或移除图片。");
+define("TOOLS_NOT_SUPPORTED", "渠道不支持工具调用", "当前渠道不能处理请求的原生工具协议。", "选择支持原生工具调用的接入方式。");
+define("INVALID_REASONING", "推理档位不受支持", "记录中的推理档位不被当时的模型配置接受。当前网关会将超出配置范围的档位适配为最强档位。", "检查模型能力配置、请求档位与实际下发值，并确认运行版本。");
+define("CONTEXT_LENGTH", "上下文超出限制", "输入、历史或附件超过模型可用上下文。", "缩短内容、拆分附件，或新建会话。");
+define("CONTEXT_COMPACTION_FAILED", "上下文压缩失败", "历史摘要未成功生成，或压缩后仍超过上下文预算。", "历史消息仍保留；缩短附件或新建会话后继续。");
+define("TOOL_PROTOCOL_ERROR", "工具调用格式错误", "模型给出的工具名称、参数或调用协议无法被正确解析。", "核对模型工具能力与参数结构，必要时更换模型；已产生的用量仍保留。");
+define("TOOL_RESPONSE_ERROR", "工具流程未产出回答", "模型只返回工具状态，没有完成用户所需回答。", "查看已取得的工具结果，继续提问或更换模型。");
+define("TOOL_STEP_LIMIT", "达到工具步骤上限", "本轮达到工具执行步数上限，尚未完成最终回答。", "查看已保存的工具结果，缩小任务范围或继续下一轮。");
+define("BILLING_FAILED", "计费处理失败", "本轮结算写入或扣费未能正常完成。", "管理员应按请求 ID 核对用量、账单事务和数据库错误，避免手动重复扣费。");
+define("BILLING_UNCERTAIN", "计费结果待核查", "提交时连接异常，当前无法确认账单事务是否已成功。", "先按请求 ID 查询既有账单与余额，确认后再处理；不要直接重复结算。");
+define("MODEL_NOT_PRICED", "模型尚未配置价格", "平台没有可用于本次调用的有效定价。", "在模型管理中核对模型归一化名称及价格配置。");
+define("ABORTED CHANNEL_ABORTED", "调用已停止", "请求被用户取消，或在服务排空期间停止。", "检查停止时间和已有用量；需要时继续会话。");
+define("SERVER_DRAINING", "服务正在更新或重启", "服务正在等待已有任务结束，并暂时拒绝新任务。", "等待服务恢复后重试。");
+define("AUTH_FAILED", "平台账号鉴权失败", "当前登录身份无效或账号不再可用。", "重新登录，并检查账号状态。");
+define("USER_DISABLED USER_BANNED", "平台账号不可用", "当前平台账号被禁用或受到限制。", "由管理员核对账号状态与限制原因。");
+define("USER_CONCURRENCY_LIMIT", "达到用户并发上限", "用户正在进行的请求数达到平台允许的并发数。", "等待在途请求结束，或由管理员调整用户并发限额。");
+define("USER_RPM_LIMIT", "达到用户请求频率上限", "用户在当前时间窗口内的请求数超过限制。", "降低调用频率，等待窗口恢复，或核对用户 RPM 配置。");
+define("USER_TPM_LIMIT", "达到用户令牌速率上限", "用户在当前时间窗口内的令牌预占或用量超过限制。", "减少单次上下文或最大输出，等待窗口恢复，并核对 TPM 配置。");
+define("LOGIN_BAD_PARAMS", "登录参数不完整", "渠道登录或凭据写回所需参数缺失、过大或不受支持。", "核对登录方式、渠道及提交内容。");
+define("LOGIN_BAD_RESPONSE", "登录响应格式异常", "上游登录响应无法按预期解析。", "检查上游登录服务和适配器是否需要更新。");
+define("LOGIN_FAILED", "渠道登录失败", "渠道登录流程未成功完成。", "核对账号状态和登录过程中的具体提示。");
+define("LOGIN_NEED_2FA", "需要二次验证", "上游要求额外的双重认证步骤。", "在登录流程中完成验证码或二次验证。");
+define("LOGIN_NETWORK", "登录连接失败", "访问上游登录服务时发生网络异常。", "检查网络、代理及登录服务状态。");
+define("LOGIN_NO_TOKEN", "登录后未取得凭据", "登录流程未捕获到可用的访问令牌。", "确认已完成登录并使用受支持的绑定流程。");
+define("LOGIN_PAGE_CHANGED", "登录页面结构变化", "上游页面结构与当前自动登录适配器不匹配。", "更新登录适配器，或按支持的方式手动导入凭据。");
+define("LOGIN_PAGE_UNAVAILABLE", "登录页面不可用", "当前登录页面或浏览器会话无法访问。", "重新打开登录流程并检查浏览器服务。");
+define("BIND_VENDOR_MISMATCH", "绑定厂商不匹配", "绑定会话的厂商与目标渠道不一致或缺失。", "为正确的渠道重新发起绑定。");
+define("TOTP_BAD_SECRET", "动态验证码密钥无效", "二次验证密钥缺失或格式不正确。", "重新核对二次验证配置，不要把密钥写入日志或对话。");
+define("MEDIA_DISABLED", "媒体库已关闭", "平台当前未启用媒体库功能。", "由管理员检查媒体库开关。");
+define("MEDIA_EMPTY", "上传文件为空", "上传内容没有有效字节。", "重新选择非空文件。");
+define("MEDIA_TOO_LARGE", "上传文件过大", "文件大小超过平台允许的上限。", "压缩文件或调整允许的大小限制。");
+define("MEDIA_QUOTA", "媒体空间不足", "当前账号的媒体存储额度已用尽。", "清理不再需要的媒体，或由管理员调整额度。");
+define("MEDIA_TYPE", "不支持的文件类型", "文件类型不在媒体库支持范围内。", "使用受支持的图片、PDF 或文本格式。");
+define("NO_PROJECT NO_SESSION NO_SUBAGENT", "目标对象不可用", "目标项目、会话或子代理不存在，或不属于当前可访问范围。", "重新选择有权访问的对象，检查是否已删除或停用。");
+define("BAD_RETRY", "无法重试该消息", "重试目标不存在或不是可重试的用户消息。", "刷新会话后选择正确的用户消息。");
+define("BAD_ACTION", "不支持的操作", "请求中的操作类型未被当前功能支持。", "核对客户端提交的操作参数。");
+define("BAD_URL", "地址不符合访问要求", "地址格式无效，或不符合平台的公开网络访问限制。", "检查 URL 协议和目标地址，使用允许访问的公开地址。");
+define("QUOTA_UNSUPPORTED", "无法查询上游额度", "当前接入方式没有支持的额度查询接口。", "在上游平台查看额度；此码不表示对话调用一定失败。");
+define("ENDPOINT_NOT_SUPPORTED", "接口端点不受支持", "请求的端点没有对应实现。", "使用已提供的 Chat Completions、Responses 或 Messages 端点。");
+define("INSUFFICIENT_QUOTA", "API 密钥额度不足", "当前 API 密钥的可用调用额度已耗尽。", "在令牌管理中检查额度限制。");
+define("INSUFFICIENT_USER_QUOTA", "账户余额不足", "当前平台账户余额不足以预占或结算调用。", "检查账户余额并补充额度。");
+define("QUOTA_EXHAUSTED", "可用额度耗尽", "当前调用命中了额度耗尽限制。", "区分平台账户、调用密钥和上游账号，核对对应额度。");
+define("TOKEN_INVALID TOKEN_DISABLED", "API 密钥不可用", "调用密钥无效、已停用或不再允许访问。", "核对所用密钥及令牌管理中的状态。");
+define("MODEL_NOT_ALLOWED", "模型不在授权范围", "当前身份或调用密钥没有该模型的使用权限。", "检查模型白名单和所属分组。");
+define("GROUP_UNAVAILABLE", "调用分组不可用", "当前分组不存在、不可访问或没有可用资源。", "核对密钥分组与渠道成员配置。");
+define("RATE_LIMITED_LOCAL", "平台限流", "请求触发了平台侧频率或并发限制。", "查看用户、密钥和渠道的限流配置，等待窗口恢复。");
+define("INVALID_REQUEST_ERROR", "请求不符合接口要求", "请求参数缺失、格式无效，或请求的模型未获当前密钥允许。", "结合接口中文提示检查请求体、模型白名单及协议。");
+define("TOKEN_GROUP_REQUIRED", "API 密钥未绑定分组", "调用密钥没有有效的渠道分组。", "在令牌管理中选择可用分组。");
+define("TOO_MANY_IMAGES TOO_MANY_REMOTE_IMAGES", "请求图片数量超限", "本次请求的图片或远程图片数量超过限制。", "减少图片数量后重试。");
+
+export const ERROR_CODES = Object.freeze(catalog);
+export function errorInfo(value) {
+  const raw = String(value || "").trim();
+  const code = /^[a-zA-Z0-9][a-zA-Z0-9_]{0,63}$/.test(raw) ? raw : "";
+  const info = catalog[code.toUpperCase()];
+  return { code, known: Boolean(info), ...(info || { title: "未收录的错误", meaning: "该错误编号没有已确认的释义，不能仅凭编号推断原因。", action: "结合请求 ID、HTTP 状态和对应组件的诊断信息排查。" }) };
+}
+export function errorHelp(value) {
+  const info = errorInfo(value);
+  return `${info.title}${info.code ? `（${info.code}）` : ""}：${info.meaning} 排查建议：${info.action}`;
+}

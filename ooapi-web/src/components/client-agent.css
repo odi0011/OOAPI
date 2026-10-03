@@ -2,8 +2,11 @@
 .oo-client-agent img,.oo-client-agent>.anticon { width:14px;height:14px;flex:0 0 14px;object-fit:contain; }
 .oo-client-agent>span:last-child { overflow:hidden;text-overflow:ellipsis; }
 .oo-reasoning-audit { display:inline;line-height:1.65;overflow-wrap:anywhere; }
-.oo-reasoning-actual { color:var(--green);font-weight:600; }
+.oo-reasoning-actual { color:inherit;font-weight:400; }
+.oo-reasoning-actual.is-adjusted { color:var(--green); }
 .oo-reasoning-requested { color:var(--ink-3);font-size:11px;margin-left:4px; }
+.oo-endpoint-adaptation.oo-model-origin { align-self:flex-start;margin-left:32px;max-width:calc(100% - 32px);font-weight:400; }
+.oo-endpoint-adaptation>span { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono); }
 [data-theme="dark"] .oo-client-agent-mono { filter:invert(1); }
 .oo-agent-rules { width:100%;min-width:0; }
 .oo-agent-rules-empty { padding:var(--sp-4);color:var(--ink-3);border:1px dashed var(--line);border-radius:var(--r-md);margin-bottom:var(--sp-3); }

@@ -1,5 +1,6 @@
 import OdAmount, { OdText } from "../components/OdAmount";
 import ClientAgentBadge from "../components/ClientAgentBadge";
+import LogDiagnosticDetails, { ErrorCodeText } from "../components/LogDiagnosticDetails";
 import { reasoningLabel, requestedReasoningLabel } from "../services/reasoning-display";
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { Table, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions, Space, Typography } from "antd";
@@ -27,13 +28,23 @@ function normalizeCurrency(text) {
 const ms = formatDuration;
 function ReasoningCell({ record }) {
   const selected = record.reasoning_selected || (record.error_code === "INVALID_REASONING" ? "" : record.reasoning_effort);
-  return <Tooltip title={record.reasoning_applied ? "推理参数已下发" : "上游未确认该档位已下发；不支持关闭的模型可能仍按自身策略思考"}><span className="oo-reasoning-audit"><span className="oo-reasoning-actual">{selected ? reasoningLabel(selected) : record.error_code === "INVALID_REASONING" ? "未应用" : "未记录"}</span>{record.reasoning_recorded ? <span className="oo-reasoning-requested">（传入：{requestedReasoningLabel(record.reasoning_requested)}）</span> : null}</span></Tooltip>;
+  const comparable = value => String(value || "none").split(",").map(v => ["", "off", "disabled"].includes(v.trim().toLowerCase()) ? "none" : v.trim().toLowerCase()).join(",");
+  const adjusted = record.reasoning_recorded && record.reasoning_applied && selected && comparable(selected) !== comparable(record.reasoning_requested);
+  return <Tooltip title={record.reasoning_applied ? "推理参数已下发" : "上游未确认该档位已下发；不支持关闭的模型可能仍按自身策略思考"}><span className="oo-reasoning-audit"><span className={`oo-reasoning-actual${adjusted ? " is-adjusted" : ""}`}>{selected ? reasoningLabel(selected) : record.error_code === "INVALID_REASONING" ? "未应用" : "未记录"}</span>{record.reasoning_recorded ? <span className="oo-reasoning-requested">{requestedReasoningLabel(record.reasoning_requested)}</span> : null}</span></Tooltip>;
 }
 function EndpointCell({ record, isAdmin, showAgent = true }) {
   const row = (label, value, key) => <span className="oo-endpoint-row" key={key || label}><small>{label}</small><span title={value || "历史记录未保存"}>{value || "未记录"}</span></span>;
   const paths = isAdmin ? record.upstream_endpoints || [] : record.resolved_endpoint ? [record.resolved_endpoint] : [];
   const attempts = record.endpoint_attempts?.map(a => `${a.endpoint} · HTTP ${a.status || "—"}`).join(" → ");
-  return <span className="oo-endpoints">{showAgent && <ClientAgentBadge record={record} />}{row("入站", record.inbound_endpoint)}{paths.length ? <Tooltip title={attempts || paths.join(" → ")}>{row("↳", paths.at(-1))}</Tooltip> : null}</span>;
+  const protocolOf = path => ["/chat/completions", "/responses", "/messages"].find(p => String(path || "").endsWith(p));
+  const incoming = protocolOf(record.inbound_endpoint), resolved = protocolOf(paths.at(-1));
+  const successful = record.endpoint_attempts?.findLast(a => a.status >= 200 && a.status < 300);
+  const switchedPath = successful && record.endpoint_attempts.some(a => a.endpoint !== successful.endpoint);
+  // 入站协议的转换与上游渠道的真实路径分开显示；/v1 → /v2 本身不代表回退。
+  const adapted = record.status === "success" && incoming && resolved
+    ? incoming !== resolved ? record.inbound_endpoint.slice(0, -incoming.length) + resolved : switchedPath ? successful.endpoint : ""
+    : "";
+  return <span className="oo-endpoints">{showAgent && <ClientAgentBadge record={record} />}{row("入站", record.inbound_endpoint)}{adapted ? <Tooltip title={attempts || "已自动适配请求端点"}><span className="oo-endpoint-adaptation oo-model-origin">↳ <span>{adapted}</span></span></Tooltip> : null}{paths.length || isAdmin ? <Tooltip title={attempts || paths.join(" → ")}>{row("上游", paths.at(-1))}</Tooltip> : null}</span>;
 }
 
 /**
@@ -647,7 +658,7 @@ export default function LogPage() {
             <Descriptions.Item label="计费">{detail.billing_known === false ? "费用待核查" : <OdAmount quota={detail.quota} perUnit={perUnit} digits={6} />}</Descriptions.Item>
             <Descriptions.Item label="状态">
               <span className={`oo-log-status-label oo-log-status-label--${detail.status || "success"}`}>
-                {detail.status === "error" ? `错误${detail.error_code ? ` · ${detail.error_code}` : ""}` : detail.status === "stopped" ? "已停止" : "成功"}
+                {detail.status === "error" ? detail.error_code ? <ErrorCodeText code={detail.error_code} /> : "调用失败（未记录错误分类）" : detail.status === "stopped" ? "已停止" : "成功"}
               </span>
             </Descriptions.Item>
             {visibility.request_content ? <><Descriptions.Item label="实际输入">
@@ -690,9 +701,7 @@ export default function LogPage() {
                   />
                 </Descriptions.Item>
                 <Descriptions.Item label="原始明细">
-                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, wordBreak: "break-all" }}>
-                    {detail.detail || "-"}
-                  </span>
+                  <LogDiagnosticDetails value={detail.detail} />
                 </Descriptions.Item>
               </>
             ) : null}

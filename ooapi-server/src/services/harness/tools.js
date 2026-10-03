@@ -15,6 +15,8 @@ import { modelForChannelMatch } from "../models.js";
 import { USAGE_SQL } from "../log.js";
 import { readBinanceAnalysis } from "../binance-analysis.js";
 import { userDataVisibility } from "../user-data-visibility.js";
+import { ERROR_CODES, errorHelp, errorInfo } from "../error-codes.js";
+import { endpointList, endpointPath } from "../endpoint-audit.js";
 
 const clip = (text, max) => {
   const s = String(text ?? "");
@@ -365,8 +367,8 @@ export const TOOLS = {
     name: "我的账号",
     desc:
       "查询**当前用户自己**的账号信息：余额与累计消耗、最近调用记录、API 令牌（不含密钥）、近 7 天用量与模型分布、最近的失败请求。" +
-      "用户问「我还剩多少钱 / 最近调用了什么 / 哪个令牌花得多 / 为什么报错」时使用。只读，看不到其他用户。",
-    args: '{"action":"overview|recent|tokens|usage|errors","limit":"recent/errors 可选，默认 10，最多 30"}',
+      "用户问「我还剩多少钱 / 最近调用了什么 / 哪个令牌花得多 / 为什么报错」时使用。error_help 查询系统错误码的中文含义及排查建议；不传 error_code 列出完整词典。排错先查 errors，再按码查释义，不把系统分类当成已确认根因，也不猜测上游自定义编号。只读，看不到其他用户。",
+    args: '{"action":"overview|recent|tokens|usage|errors|error_help","limit":"recent/errors 可选，默认 10，最多 30","error_code":"error_help 可选，例如 CHANNEL_BAD_REQUEST；省略时列出系统错误词典"}',
     async run(args, ctx) {
       const uid = Number(ctx.user?.id) || 0;
       if (!uid) return { ok: false, output: "当前会话没有登录用户，无法查询账号" };
@@ -376,6 +378,9 @@ export const TOOLS = {
       const aliases = { balance: "overview", logs: "recent", history: "recent" };
       const action = Object.hasOwn(aliases, requestedAction) ? aliases[requestedAction] : requestedAction;
       const limit = Math.min(30, Math.max(1, Number(args?.limit) || 10));
+      if (action === "error_help") {
+        return { ok: true, output: args?.error_code ? errorHelp(args.error_code) : "系统错误词典（用 error_help + error_code 查询完整解释）：\n" + Object.entries(ERROR_CODES).map(([code, info]) => `${code}：${info.title}`).join("\n") };
+      }
       if ((["recent", "errors"].includes(action) && !visibility.usage_records) || (action === "usage" && !visibility.usage_summary)) {
         return { ok: false, output: "管理员未开放此项数据查看权限" };
       }
@@ -410,16 +415,34 @@ export const TOOLS = {
       if (action === "recent" || action === "errors") {
         const failureOnly = action === "errors";
         const [rows] = await pool.query(
-          `SELECT created_at, type, status, model, token_name, prompt_tokens, completion_tokens, quota, elapsed_ms, content
+          `SELECT created_at, type, status, error_code, request_id, model, token_name, prompt_tokens, completion_tokens, quota, elapsed_ms, content${Number(ctx.user?.role) >= 100 ? ", detail" : ""}
              FROM logs WHERE user_id = ? AND ${failureOnly ? "type = 4" : USAGE_SQL} ORDER BY id DESC LIMIT ?`,
           [uid, limit]
         );
         if (!rows.length) return { ok: true, output: action === "errors" ? "最近没有失败的请求" : "还没有调用记录" };
-        const lines = rows.map((r) =>
-          !failureOnly
+        const lines = rows.map((r) => {
+          const summary = !failureOnly
             ? `${t(r.created_at)} · ${r.model || "?"} · 令牌「${r.token_name || "站内对话"}」 · 输入 ${r.prompt_tokens || 0} / 输出 ${r.completion_tokens || 0} tokens · ${od(r.quota)}${r.elapsed_ms ? ` · ${(r.elapsed_ms / 1000).toFixed(1)}s` : ""}${Number(r.type) === 4 ? ` · ${r.status === "stopped" ? "已停止" : "失败"}` : ""}`
-            : `${t(r.created_at)} · ${r.model || "?"} · ${visibility.request_content ? String(r.content || "").replace(/\s+/g, " ").slice(0, 160) : "调用失败"}`
-        );
+            : `${t(r.created_at)} · ${r.model || "?"} · ${visibility.request_content ? String(r.content || "").replace(/\s+/g, " ").slice(0, 160) : "调用失败"}`;
+          if (!r.error_code) return summary;
+          const diagnosis = [summary, errorHelp(r.error_code)];
+          if (r.request_id) diagnosis.push(`请求 ID：${r.request_id}`);
+          if (Number(ctx.user?.role) >= 100 && r.detail) {
+            let detail = {}; try { detail = JSON.parse(r.detail); } catch { /* 旧明细可能不是 JSON */ }
+            if (detail && typeof detail === "object") {
+              if (Number(detail.http_status)) diagnosis.push(`上游 HTTP：${Number(detail.http_status)}`);
+              const upstreamCode = errorInfo(detail.upstream_error_code).code;
+              if (upstreamCode) diagnosis.push(`上游自定义编号：${upstreamCode}（没有已确认映射时，不推断其含义）`);
+              const paths = endpointList(detail.upstream_endpoints);
+              if (paths.length) diagnosis.push(`上游端点：${paths.join(" → ")}`);
+              for (const attempt of (Array.isArray(detail.endpoint_attempts) ? detail.endpoint_attempts : []).slice(0, 12)) {
+                const info = errorInfo(attempt?.code);
+                diagnosis.push(`端点尝试：${endpointPath(attempt?.endpoint) || "未记录"} · HTTP ${Number(attempt?.status) || "未取得"}${info.code ? ` · ${info.title}（${info.code}）` : ""}`);
+              }
+            }
+          }
+          return diagnosis.join("\n");
+        });
         return { ok: true, output: `${action === "errors" ? "最近失败的请求" : "最近调用"}（${rows.length} 条，新→旧）：\n${lines.join("\n")}` };
       }
 
@@ -468,7 +491,7 @@ export const TOOLS = {
         return { ok: true, output: `近 7 天按天（北京时间）：\n${dayLines.join("\n")}\n\n按模型（消耗降序）：\n${modelLines.join("\n")}` };
       }
 
-      return { ok: false, output: `未知 action：${action}；可用 overview / recent / tokens / usage / errors` };
+      return { ok: false, output: `未知 action：${action}；可用 overview / recent / tokens / usage / errors / error_help` };
     },
   },
 
@@ -504,7 +527,7 @@ export function toolSpecs(ids = []) {
 export function nativeToolSpecs(ids = []) {
   const str = (description) => ({ type: "string", description });
   const schemas = {
-    account: { properties: { action: { type: "string", enum: ["overview", "recent", "tokens", "usage", "errors"] }, limit: { type: "integer", minimum: 1, maximum: 30 } }, required: ["action"] },
+    account: { properties: { action: { type: "string", enum: ["overview", "recent", "tokens", "usage", "errors", "error_help"] }, limit: { type: "integer", minimum: 1, maximum: 30 }, error_code: str("系统错误码；error_help 时使用，省略可查看全部错误词典") }, required: ["action"] },
     binance: { properties: { action: { type: "string", enum: ["accounts", "overview", "positions", "orders", "strategies", "risk", "backtests", "analysis"] }, account_id: { type: "integer", minimum: 1 } }, required: ["action"] },
     search: { properties: { query: str("检索关键词") }, required: ["query"] },
     fetch: { properties: { url: str("公开网页 URL") }, required: ["url"] },
