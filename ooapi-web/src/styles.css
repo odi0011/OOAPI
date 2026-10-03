@@ -4636,4 +4636,5 @@ html[data-theme="dark"] .oo-vendor-icon--mono { filter: invert(0.88); }
 .oo-endpoint-row { display:flex;gap:6px;min-width:0;max-width:100%;align-items:baseline; }
 .oo-endpoint-row>small { flex:0 0 26px;color:var(--ink-3);font-size:11px; }
 .oo-endpoint-row>span { min-width:0;overflow-wrap:anywhere;white-space:normal;font-family:var(--font-mono); }
+.ant-table .oo-endpoint-row>span { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 .oo-reasoning-level { font-size:12px;overflow-wrap:anywhere; }

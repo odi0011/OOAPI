@@ -268,7 +268,7 @@ export default function LogPage() {
       render: (value, record) => <Tooltip title={value ? record.reasoning_applied ? "推理参数已下发" : "使用渠道默认或未下发推理参数" : "历史记录未保存"}><span className="oo-reasoning-level">{reasoningLabel(value)}</span></Tooltip>,
     },
     {
-      title: "端点", dataIndex: "inbound_endpoint", width: 210,
+      title: "端点", dataIndex: "inbound_endpoint", width: 250,
       render: (_, record) => <EndpointCell record={record} isAdmin={isAdmin} />,
     },
     // 管理员：分组（独立 Tag 包含专属图标与标题）
