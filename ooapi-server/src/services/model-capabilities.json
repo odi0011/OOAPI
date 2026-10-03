@@ -1,4 +1,72 @@
 {
+  "apodex-1.1-mini": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 235929,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://api.cline.bot/api/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "apodex-1.1-mini"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "apodex/apodex-1.1-mini:free",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
+  },
+  "auto": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://kiro.dev/docs/chat/model-selection/",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "auto"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "Kiro 自动选择型号；窗口与输出限制随实际选择变化，不套用其他平台同名 auto 的规格。"
+  },
   "chat-latest": {
     "contextWindow": null,
     "maxOutputTokens": null,
@@ -831,6 +899,37 @@
     "verification": "unverified",
     "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
   },
+  "deepseek-3.2": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://kiro.dev/docs/chat/model-selection/",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "deepseek-3.2"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "该接入目录未公布完整参数；窗口与推理等级保持未核实。"
+  },
   "deepseek-flash": {
     "contextWindow": 1000000,
     "maxOutputTokens": 384000,
@@ -960,6 +1059,44 @@
     ],
     "verification": "official",
     "notes": "原厂公开规格；模型能力与本站当前接入协议分别生效。"
+  },
+  "dots-3-note-preview": {
+    "contextWindow": 512000,
+    "maxOutputTokens": 460800,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://api.cline.bot/api/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "dots-3-note-preview"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "dots-studio/dots-3-note-preview:free",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
   },
   "doubao-lite": {
     "contextWindow": null,
@@ -2033,6 +2170,84 @@
     ],
     "verification": "official",
     "notes": "原厂输入窗口与输出上限；Google 搜索需配置 grounding 工具。推理映射用于 Gemini 接入；兼容端点与订阅服务限制独立。"
+  },
+  "gemma-4-26b-a4b-it": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 235929,
+    "inputTypes": [
+      "image",
+      "text",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://api.cline.bot/api/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "gemma-4-26b-a4b-it"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "google/gemma-4-26b-a4b-it",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
+  },
+  "gemma-4-31b-it": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 16384,
+    "inputTypes": [
+      "image",
+      "text",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://api.cline.bot/api/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "gemma-4-31b-it"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "google/gemma-4-31b-it",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
   },
   "glm-4": {
     "contextWindow": null,
@@ -4083,6 +4298,120 @@
     "verification": "provider",
     "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
   },
+  "inkling": {
+    "contextWindow": 524288,
+    "maxOutputTokens": 262144,
+    "inputTypes": [
+      "text",
+      "image",
+      "audio"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": false,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://api.cline.bot/api/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "inkling"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "thinkingmachines/inkling",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
+  },
+  "inkling-small": {
+    "contextWindow": 524288,
+    "maxOutputTokens": 262144,
+    "inputTypes": [
+      "text",
+      "image",
+      "audio"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": false,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://api.cline.bot/api/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "inkling-small"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "thinkingmachines/inkling-small",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
+  },
+  "jev-1.13-free": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "decision",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": false,
+    "toolCalling": false,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://opencode.ai/zen/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "jev-1.13-free"
+      },
+      {
+        "url": "https://docs.typesafe.ai/api",
+        "scope": "SystemOne 判定协议",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "专用 SystemOne 判定模型，使用 state/questions 结构；不是通用聊天或生图模型。窗口未公开。"
+  },
   "kimi": {
     "contextWindow": null,
     "maxOutputTokens": null,
@@ -4348,6 +4677,154 @@
     "verification": "provider",
     "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
   },
+  "laguna-s-2.1": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": false,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://api.cline.bot/api/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "laguna-s-2.1"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "poolside/laguna-s-2.1",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
+  },
+  "laguna-xs-2.1": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 32768,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": false,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://api.cline.bot/api/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "laguna-xs-2.1"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "poolside/laguna-xs-2.1",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
+  },
+  "lfm-2.5-2.6b": {
+    "contextWindow": 65536,
+    "maxOutputTokens": 8192,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://api.cline.bot/api/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "lfm-2.5-2.6b"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "liquid/lfm-2.5-2.6b:free",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
+  },
+  "ling-3.0-flash-sante": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 32768,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": false,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://api.cline.bot/api/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "ling-3.0-flash-sante"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "inclusionai/ling-3.0-flash-sante:free",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
+  },
   "longcat-2.0": {
     "contextWindow": 1048756,
     "maxOutputTokens": 262144,
@@ -4378,6 +4855,37 @@
     ],
     "verification": "provider",
     "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "longcat-2.5-preview-free": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://opencode.ai/zen/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "longcat-2.5-preview-free"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "该接入目录未公布完整参数；窗口与推理等级保持未核实。"
   },
   "mimo-v2.5": {
     "contextWindow": 1050000,
@@ -4412,6 +4920,46 @@
     ],
     "verification": "provider",
     "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "mimo-v2.5-free": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text",
+      "audio",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://opencode.ai/zen/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "mimo-v2.5-free"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "xiaomi/mimo-v2.5",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
   },
   "mimo-v2.5-pro": {
     "contextWindow": 1050000,
@@ -4477,6 +5025,46 @@
     ],
     "verification": "provider",
     "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "mimo-v2.6-flash-free": {
+    "contextWindow": 1050000,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text",
+      "image",
+      "video",
+      "audio"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://opencode.ai/zen/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "mimo-v2.6-flash-free"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "xiaomi/mimo-v2.6-flash",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
   },
   "mimo-v2.6-pro": {
     "contextWindow": 1050000,
@@ -4885,6 +5473,347 @@
     ],
     "verification": "unverified",
     "notes": "未取得该型号的完整公开规格。未核实字段保留空值；订阅/网页服务实际限制以当前渠道为准。"
+  },
+  "muse-spark-1.2-contributor-free": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 943718,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://opencode.ai/zen/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "muse-spark-1.2-contributor-free"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "meta/muse-spark-1.2-contributor",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
+  },
+  "muse-spark-1.3-contributor-free": {
+    "contextWindow": 1048576,
+    "maxOutputTokens": 943718,
+    "inputTypes": [
+      "text",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://opencode.ai/zen/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "muse-spark-1.3-contributor-free"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "meta/muse-spark-1.3-contributor",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
+  },
+  "nemotron-3-nano-omni-30b-a3b-reasoning": {
+    "contextWindow": 256000,
+    "maxOutputTokens": 65536,
+    "inputTypes": [
+      "text",
+      "audio",
+      "image",
+      "video"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": false,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://api.cline.bot/api/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "nemotron-3-nano-omni-30b-a3b-reasoning"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
+  },
+  "nemotron-3-super-120b-a12b": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 235929,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://api.cline.bot/api/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "nemotron-3-super-120b-a12b"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "nvidia/nemotron-3-super-120b-a12b",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
+  },
+  "nemotron-3-ultra-550b-a55b": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 16384,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://api.cline.bot/api/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "nemotron-3-ultra-550b-a55b"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "nvidia/nemotron-3-ultra-550b-a55b",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
+  },
+  "nemotron-3.5-content-safety": {
+    "contextWindow": 131072,
+    "maxOutputTokens": 117964,
+    "inputTypes": [
+      "text",
+      "image"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "decision",
+    "structuredOutput": false,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": false,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://api.cline.bot/api/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "nemotron-3.5-content-safety"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "nvidia/nemotron-3.5-content-safety",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
+  },
+  "nemotron-3.5-lightning": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://api.cline.bot/api/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "nemotron-3.5-lightning"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "nvidia/nemotron-3.5-lightning",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
+  },
+  "nemotron-3.5-lightning-free": {
+    "contextWindow": 262144,
+    "maxOutputTokens": 131072,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": true,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://opencode.ai/zen/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "nemotron-3.5-lightning-free"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "nvidia/nemotron-3.5-lightning",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
+  },
+  "north-mini-code": {
+    "contextWindow": 256000,
+    "maxOutputTokens": 64000,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": false,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": true,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://api.cline.bot/api/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "north-mini-code"
+      },
+      {
+        "url": "https://openrouter.ai/api/v1/models",
+        "scope": "服务商公开参数目录",
+        "model": "cohere/north-mini-code:free",
+        "checkedAt": "2026-10-03"
+      }
+    ],
+    "verification": "provider",
+    "notes": "参数来自服务商目录，同名型号的直连/订阅限制可能不同。服务目录只声明支持 reasoning 时不据此猜测可选等级。"
   },
   "o1": {
     "contextWindow": 200000,
@@ -5729,6 +6658,37 @@
     ],
     "verification": "provider",
     "notes": "窗口和能力来自 OpenRouter 对该型号的服务目录；直连或订阅渠道可能有独立限制。"
+  },
+  "space-bunny-free": {
+    "contextWindow": null,
+    "maxOutputTokens": null,
+    "inputTypes": [
+      "text"
+    ],
+    "outputTypes": [
+      "text"
+    ],
+    "category": "chat",
+    "structuredOutput": null,
+    "nativeSearch": null,
+    "systemMessages": null,
+    "toolCalling": null,
+    "reasoning": {
+      "levels": [],
+      "defaultLevel": "",
+      "parameter": "",
+      "values": {}
+    },
+    "sources": [
+      {
+        "url": "https://opencode.ai/zen/v1/models",
+        "scope": "实际接入服务的模型目录",
+        "checkedAt": "2026-10-03",
+        "model": "space-bunny-free"
+      }
+    ],
+    "verification": "unverified",
+    "notes": "该接入目录未公布完整参数；窗口与推理等级保持未核实。"
   },
   "step-3.5-flash": {
     "contextWindow": 262144,

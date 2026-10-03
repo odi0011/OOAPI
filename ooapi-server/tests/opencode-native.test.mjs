@@ -70,6 +70,13 @@ const structured = { state: { ticket: "我的付款失败了" }, questions: {
   mood: { type: "score", instructions: "用户有多生气？", criteria: ["平静", "不满", "生气"] },
 } };
 try {
+  await test("模型管理的统一输出上限与推理映射下发到 Responses", async () => {
+    mode = "sse"; seen = [];
+    const result = await chat(undefined, {maxOutputTokens: 1024, reasoningConfig: {level:"low",parameter:"reasoning_effort",value:"low"}});
+    assert.equal(seen[0].body.max_output_tokens, 1024);
+    assert.equal(seen[0].body.reasoning.effort, "low");
+    assert.equal(result.reasoningApplied, true);
+  });
   await test("Muse Spark SSE 使用 Responses 输入并保留角色、图片与系统指令", async () => {
     mode = "sse"; seen = []; const deltas = [], reasoning = [], usages = [];
     const result = await chat(undefined, { messages: [

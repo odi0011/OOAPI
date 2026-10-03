@@ -1,4 +1,5 @@
 import { ToolCallBuffer, applyToolDefinitions, responsesMessages } from "../tool-wire.js";
+import { reasoningBody } from "../model-capabilities.js";
 // Zen 官方端点表明确区分 Responses 与 SystemOne。仅转换已确认的模型，
 // 不把 Jev 的结构化判定伪造成聊天，也不影响 GO 的兼容接口。
 // 来源：opencode.ai/docs/zen/；docs.typesafe.ai/api。
@@ -55,7 +56,7 @@ function responsesBody(args, model) {
     if (last) for (const img of args.images) last.content.push({ type: "input_image", image_url: `data:${img.mimeType || "image/png"};base64,${img.buffer.toString("base64")}` });
   }
   const body = { model, input, ...(instructions ? { instructions } : {}), stream: true, store: false };
-  const max = Number(args.max_output_tokens ?? args.max_completion_tokens ?? args.max_tokens ?? args.maxTokens);
+  const max = Number(args.maxOutputTokens ?? args.max_output_tokens ?? args.max_completion_tokens ?? args.max_tokens ?? args.maxTokens);
   if (Number.isFinite(max) && max > 0) body.max_output_tokens = Math.floor(max);
   for (const name of ["temperature", "top_p"]) {
     if (args[name] != null && Number.isFinite(Number(args[name]))) body[name] = Number(args[name]);
@@ -64,6 +65,7 @@ function responsesBody(args, model) {
     body.reasoning = Object.fromEntries(["effort", "summary"].filter((key) => args.reasoning[key] != null).map((key) => [key, args.reasoning[key]]));
   } else if (args.reasoning_effort != null) body.reasoning = { effort: String(args.reasoning_effort) };
   else if (args.thinkingOverride != null) body.reasoning = { effort: args.thinkingOverride ? "medium" : "none" };
+  Object.assign(body, reasoningBody(args.reasoningConfig, "responses"));
   applyToolDefinitions(body, args.tools, args.toolChoice, "responses");
   return body;
 }
@@ -184,7 +186,7 @@ export async function chatNative(args, protocol, model) {
     }
     if (truncated && toolBuffer.size) throw makeError("工具调用响应被截断", "CHANNEL_STREAM_ERROR");
     if (!content && !reasoning && !toolBuffer.size) throw makeError("上游未返回内容", "CHANNEL_BAD_RESPONSE");
-    return { content, reasoning, usage, upstreamModel, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras, retryCount: 0, ...(truncated ? { truncated: true, finishReason: "length" } : {}) };
+    return { content, reasoning, usage, upstreamModel, reasoningApplied: Object.keys(reasoningBody(args.reasoningConfig, "responses")).length > 0, toolCalls: toolBuffer.finish(), assistantExtras: toolBuffer.assistantExtras, retryCount: 0, ...(truncated ? { truncated: true, finishReason: "length" } : {}) };
   } catch (error) {
     const addressRejected = !status && /内网|协议不允许|携带凭据|解析|重定向/.test(String(error.message || ""));
     const code = typeof error.code === "string" && error.code.startsWith("CHANNEL_") ? error.code
