@@ -1,17 +1,154 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import "./chat-mascot.css";
+
+// 业务状态与身体动作分开描述，样式不再靠互相覆盖来猜测当前表情。
+const AIRBORNE_GESTURES = new Set(["leap", "transfer", "drop"]);
+const TURNING_GESTURES = new Set(["chase", "spin"]);
+const LEFT_REACH_GESTURES = new Set(["feet-kick", "foot-dangle", "pawtap"]);
+const RIGHT_REACH_GESTURES = new Set(["feet-kick", "foot-dangle", "side-paw", "side-tap"]);
+const HEART_GESTURES = new Set(["toy", "proud"]);
+const DROWSY_GESTURES = new Set(["loaf", "drowsy"]);
+const SLEEP_GESTURES = new Set(["sleep", "curl", "zzz"]);
+
+const STATE_META = {
+  idle: { expression: "neutral", action: "rest" },
+  attentive: { expression: "attentive", action: "notice" },
+  loading: { expression: "focused", action: "wait" },
+  thinking: { expression: "focused", action: "think" },
+  working: { expression: "focused", action: "work" },
+  compressing: { expression: "focused", action: "compress" },
+  waiting: { expression: "attentive", action: "wait" },
+  asking: { expression: "asking", action: "ask" },
+  success: { expression: "happy", action: "celebrate" },
+  sad: { expression: "sad", action: "comfort" },
+};
+
+const GESTURE_EXPRESSIONS = {
+  annoyed: "sad",
+  curl: "sleepy",
+  cute: "happy",
+  drape: "drowsy",
+  drowsy: "drowsy",
+  loaf: "drowsy",
+  proud: "happy",
+  sleep: "sleepy",
+  wink: "playful",
+  yawn: "sleepy",
+  zzz: "sleepy",
+};
+
+function token(value, fallback = "") {
+  const clean = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return clean.replace(/[^a-z0-9_-]/g, "") || fallback;
+}
+
+function useMotionState() {
+  const [motion, setMotion] = useState(() => typeof document === "undefined" || !document.hidden ? "on" : "off");
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const sync = () => setMotion(document.hidden || media.matches ? "off" : "on");
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    media.addEventListener("change", sync);
+    return () => {
+      document.removeEventListener("visibilitychange", sync);
+      media.removeEventListener("change", sync);
+    };
+  }, []);
+  return motion;
+}
+
+const BLEND_PARTS = ".cat-cranium,.cat-body,.cat-tail,.cat-paw-left,.cat-paw-right,.cat-paws";
+
+function usePoseBlend(ref, state, gesture, motion) {
+  const previous = useRef(null);
+  useLayoutEffect(() => {
+    const root = ref.current;
+    const signature = `${state}:${gesture}`;
+    const rig = gesture === "drape" ? "drape" : "sit";
+    const parts = root ? [...root.querySelectorAll(BLEND_PARTS)] : [];
+    const blends = [];
+    const canBlend = motion === "on" && !document.hidden && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (canBlend && previous.current?.rig === rig && previous.current.signature !== signature) {
+      for (const part of parts) {
+        const before = previous.current.transforms.get(part);
+        const after = getComputedStyle(part).transform;
+        if (!before || before === after || !part.animate || getComputedStyle(part).display === "none") continue;
+        // 短暂固定底层动作的当前帧，过渡结束原位续播，避免结束时跳到已前进的动画帧。
+        // 正脸/后脑勺与转头共用时钟，不能让显隐先跑到背面、头部还在过渡。
+        const faceTimeline = part.classList.contains("cat-cranium")
+          ? [...root.querySelectorAll(".cat-face,.cat-head-back")].flatMap(face => face.getAnimations()) : [];
+        const paused = [...part.getAnimations(), ...faceTimeline].filter(animation => animation.playState === "running");
+        paused.forEach(animation => animation.pause());
+        const animation = part.animate([{ transform: before }, { transform: after }], {
+          duration: 380,
+          easing: "cubic-bezier(.22,.75,.25,1)",
+        });
+        const finish = () => {
+          animation.onfinish = null;
+          animation.cancel();
+          paused.forEach(active => { if (active.playState === "paused") active.play(); });
+        };
+        animation.onfinish = finish;
+        blends.push(finish);
+      }
+    }
+    return () => {
+      // 新姿态先从屏幕上的实际部位位置接续；反复悬停也不会回到动画首帧。
+      const currentParts = ref.current ? [...ref.current.querySelectorAll(BLEND_PARTS)] : [];
+      previous.current = { signature, rig, transforms: new Map(currentParts.map(part => [part, getComputedStyle(part).transform])) };
+      blends.forEach(finish => finish());
+    };
+  }, [ref, state, gesture, motion]);
+}
+
+function PoseBlend({ mascot, state, gesture, motion }) {
+  // 放在父 span 的第一个子节点：React 先清理子布局效果、再更新父 class，才能采到旧姿态。
+  usePoseBlend(mascot, state, gesture, motion);
+  return null;
+}
+
 export default function ChatMascot({ state = "idle", gesture = "" }) {
-  const airborne = ["leap", "transfer", "drop"].includes(gesture);
-  const turning = ["chase", "spin"].includes(gesture);
-  const draped = gesture === "drape";
-  const [visible, setVisible] = useState(!document.hidden);
-  useEffect(() => { const change = () => setVisible(!document.hidden); document.addEventListener("visibilitychange", change); return () => document.removeEventListener("visibilitychange", change); }, []);
-  return <span className={`chat-mascot is-${state} ${gesture ? `gesture-${gesture}` : ""}`} data-motion={visible ? "on" : "off"} aria-hidden="true">
-{["thinking", "working", "compressing", "loading"].includes(state) && <span className="lele-sparks"><i/><i/><i/></span>}
+  const stateToken = token(state, "idle");
+  const gestureToken = token(gesture);
+  const stateMeta = STATE_META[stateToken] || STATE_META.idle;
+  const expression = stateToken !== "idle" ? stateMeta.expression : GESTURE_EXPRESSIONS[gestureToken] || stateMeta.expression;
+  const airborne = AIRBORNE_GESTURES.has(gestureToken);
+  const turning = TURNING_GESTURES.has(gestureToken);
+  const draped = gestureToken === "drape";
+  const sleeping = SLEEP_GESTURES.has(gestureToken);
+  const showDrowseEyes = DROWSY_GESTURES.has(gestureToken);
+  const showHeart = HEART_GESTURES.has(gestureToken);
+  const capsuleKind = gestureToken.startsWith("capsule-") ? gestureToken.slice(8) : "";
+  const motion = useMotionState();
+  const mascot = useRef(null);
+  const mascotClasses = [
+    "chat-mascot",
+    `is-${stateToken}`,
+    `state-${stateToken}`,
+    gestureToken && `gesture-${gestureToken}`,
+    `expression-${expression}`,
+    draped && "is-draped",
+    airborne && "is-airborne",
+    turning && "is-turning",
+    sleeping && "is-sleeping",
+    showDrowseEyes && "is-drowsy",
+  ].filter(Boolean).join(" ");
+
+  return <span ref={mascot} className={mascotClasses}
+    data-state={stateToken}
+    data-gesture={gestureToken || undefined}
+    data-expression={expression}
+    data-action={stateMeta.action}
+    data-motion={motion}
+    aria-hidden="true">
+<PoseBlend mascot={mascot} state={stateToken} gesture={gestureToken} motion={motion}/>
+<span className="lele-sparks" data-effect="busy"><i/><i/><i/></span>
 <span className="lele-sleep" aria-hidden="true">z<span>Z</span><b>Z</b></span>
-{state === "asking" && <span className="lele-question-mark">?</span>}
-{["toy", "proud"].includes(gesture) && <span className="lele-heart" aria-hidden="true">♥</span>}
-{gesture === "toy" && <span className="lele-toy" aria-hidden="true"/>}
-{gesture.startsWith("capsule-") && <CapsuleAccessory kind={gesture.slice(8)}/>}
+<span className="lele-question-mark" data-effect="question">?</span>
+{showHeart && <span className="lele-heart" data-effect="heart" aria-hidden="true">♥</span>}
+{gestureToken === "toy" && <span className="lele-toy" data-effect="toy" aria-hidden="true"/>}
+{capsuleKind && <CapsuleAccessory kind={capsuleKind}/>}
 <svg xmlns="http://www.w3.org/2000/svg" viewBox={draped ? "0 0 64 54" : "0 0 32 32"} width={draped ? "112" : "64"} height={draped ? "94.5" : "64"} aria-hidden="true" shapeRendering="crispEdges">
 
   <g className="cat-shadow" fill="#30343b" opacity="0.25">
@@ -140,19 +277,28 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
   <g className="cat-face">
     <path className="cat-happy-eyes" fill="none" stroke="#30343b" strokeWidth="1.5" d="M8 14l2-2 2 2m8 0 2-2 2 2"/>
     <path className="cat-sleep-eyes" fill="none" stroke="#30343b" strokeWidth="1.5" d="M8 14h4m8 0h4"/>
+    <path className="cat-drowse-eyes" fill="none" stroke="#30343b" strokeWidth="1.4" strokeLinecap="round" d="M8 14c1.1.7 2.6.7 3.8 0m8.4 0c1.1.7 2.6.7 3.8 0"/>
 
     <g className="cat-eyes">
 
+      <g className="cat-eye-left">
       <path fill="#30343b" d="M8,12 h4 v1 h-4 z M7,13 h1 v1 h-1 z M12,13 h1 v1 h-1 z M8,14 h4 v1 h-4 z" />
       <rect x="8" y="13" width="4" height="1" fill="#526842" />
+      <g className="cat-pupils cat-pupil-left">
       <rect x="9" y="13" width="1" height="1" fill="#ffffff" />
       <rect x="10" y="13" width="1" height="1" fill="#1c221e" />
+      </g>
+      </g>
 
 
+      <g className="cat-eye-right">
       <path fill="#30343b" d="M20,12 h4 v1 h-4 z M19,13 h1 v1 h-1 z M24,13 h1 v1 h-1 z M20,14 h4 v1 h-4 z" />
       <rect x="20" y="13" width="4" height="1" fill="#526842" />
+      <g className="cat-pupils cat-pupil-right">
       <rect x="21" y="13" width="1" height="1" fill="#ffffff" />
       <rect x="22" y="13" width="1" height="1" fill="#1c221e" />
+      </g>
+      </g>
     </g>
 
 
@@ -164,6 +310,7 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
 
       <rect x="14" y="17" width="1" height="1" fill="#85898e" />
       <rect x="17" y="17" width="1" height="1" fill="#85898e" />
+      {gestureToken === "yawn" && <g className="cat-yawn-mouth"><rect x="15" y="16.5" width="2" height="2" rx="1" fill="#d97d86" /><rect x="15.3" y="17" width="1.4" height="1.2" rx="0.5" fill="#f4a0a8" /></g>}
     </g>
 
 
@@ -185,7 +332,7 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
   <g className="cat-paws">
 
     <g className="cat-paw-left">
-    {(airborne || ["feet-kick", "foot-dangle"].includes(gesture)) && <g className="cat-leg-reach"><path fill="#62676e" d="M9 16h4v10H9z M8 25h1v3H8z M9 28h4v1H9z M13 25h1v3h-1z"/><path fill="#85898e" d="M10 16h3v8h-3z"/><path fill="#dfe2e5" d="M10 23h3v3h-3z"/></g>}
+    {(airborne || LEFT_REACH_GESTURES.has(gestureToken)) && <g className="cat-leg-reach"><path fill="#62676e" d="M9 16h4v10H9z M8 25h1v3H8z M9 28h4v1H9z M13 25h1v3h-1z"/><path fill="#85898e" d="M10 16h3v8h-3z"/><path fill="#dfe2e5" d="M10 23h3v3h-3z"/></g>}
     <rect x="9" y="25" width="4" height="3" fill="#ffffff" />
     <rect x="8" y="27" width="1" height="2" fill="#dfe2e5" />
     <rect className="cat-paw-ground" x="8" y="28" width="5" height="1" fill="#30343b" />
@@ -193,7 +340,7 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
 
     </g>
     <g className="cat-paw-right">
-    {(airborne || ["feet-kick", "foot-dangle", "side-paw", "side-tap"].includes(gesture)) && <g className="cat-leg-reach"><path fill="#62676e" d="M19 16h4v10h-4z M18 25h1v3h-1z M19 28h4v1h-4z M23 25h1v3h-1z"/><path fill="#85898e" d="M19 16h3v8h-3z"/><path fill="#dfe2e5" d="M19 23h3v3h-3z"/></g>}
+    {(airborne || RIGHT_REACH_GESTURES.has(gestureToken)) && <g className="cat-leg-reach"><path fill="#62676e" d="M19 16h4v10h-4z M18 25h1v3h-1z M19 28h4v1h-4z M23 25h1v3h-1z"/><path fill="#85898e" d="M19 16h3v8h-3z"/><path fill="#dfe2e5" d="M19 23h3v3h-3z"/></g>}
     <rect x="19" y="25" width="4" height="3" fill="#ffffff" />
     <rect x="23" y="27" width="1" height="2" fill="#dfe2e5" />
     <rect className="cat-paw-ground" x="19" y="28" width="5" height="1" fill="#30343b" />
@@ -224,12 +371,14 @@ function DrapedBody() {
       <path fill="#a2a6aa" d="M28 15h5v-1h7v1h4v1H28z M45 17h2v2h-2z"/>
       <path fill="#62676e" d="M41 20h5v1h-2v2h-2v2h-2v-3h1z"/>
       <path fill="#dfe2e5" d="M22 24h5v1h5v1h8v1H24v-1h-3v-1h1z"/>
+      <g className="lounge-belly-spot"><rect x="37" y="25.5" width="3" height="2" rx="1" fill="#ea8a94"/><rect x="37.8" y="26" width="1.4" height="1" rx="0.5" fill="#f8b6be"/></g>
     </g>
     <g className="lounge-folded-paw">
       <path fill="#62676e" d="M29 21h4v5h-2v2h-6v-3h4z"/>
       <path fill="#85898e" d="M30 22h2v3h-3v1h-2v-1h3z"/>
       <path fill="#dfe2e5" d="M26 25h5v2h-5z"/>
       <path fill="#fff" d="M27 25h3v1h-3z"/>
+      <rect x="28" y="24" width="3" height="2" rx="1" fill="#ffffff"/><rect x="29" y="25" width="1.4" height="0.8" fill="#f2c4c8"/>
     </g>
     {/* 照片中垂下的是近侧前腿和近侧后腿，分别从肩、髋伸出；远侧后腿被侧卧躯干遮住。 */}
     <g className="lounge-hanging-leg lounge-hind-leg" style={{"--joint-x":"44px","--joint-y":"23px"}} data-drape-contact="hind-leg">

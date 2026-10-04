@@ -4,6 +4,7 @@ import ChatMascot from "./ChatMascot";
 import "./composer-companion.css";
 import "./lele-locomotion.css";
 import "./lele-drape.css";
+import "./lele-motion.css";
 import { composerTextRects, textNearDrapedCat } from "./composerTextCollision";
 
 const hash = value => Array.from(String(value || "lele")).reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 0);
@@ -18,6 +19,11 @@ const idlePose = { edge: "top", at: .72, gesture: "peek", head: -24 };
 // 下沿只露尾巴/后腿，侧沿只探头/伸爪；不能把上沿的整只猫旋转后复用。
 const sideGestures = ["side-peek", "side-scout", "side-paw", "side-tap"];
 const bottomGestures = ["tail-slip", "tail-tip", "feet-kick", "foot-dangle"];
+const HOVER_ARM_MS = 140;
+const HOVER_RELEASE_MS = 260;
+const EXIT_MS = 360;
+// React 在指针离开浏览器窗口时可能传入 Window；contains 只接受 DOM 节点。
+const staysInside = event => event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget);
 
 // 同一处边线同时约束猫、爪子、气泡尾巴。身体在裁剪层外侧，爪子独立握住边线。
 // 不观察动画自身的宽高，避免位置测量与动画互相触发。
@@ -28,12 +34,18 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
   const [phase, setPhase] = useState("enter");
   const [geometry, setGeometry] = useState({ width: 320, top: 700, height: 100, left: 40, bottom: 800, viewportWidth: 1440, viewportHeight: 1000, viewportTop: 0 });
   const [quiet, setQuiet] = useState(() => document.hidden || window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const [pageHidden, setPageHidden] = useState(() => document.hidden);
+  const [hovered, setHovered] = useState(false);
   const [saving, setSaving] = useState(false), [error, setError] = useState("");
   const marker = useRef(null), locked = useRef(false), hover = useRef(false), focused = useRef(false);
-  const menuWasOpen = useRef(false), reactionTimer = useRef(null), reactionMove = useRef(null), reactionPhase = useRef(null), hoverUntil = useRef(0);
+  const menuWasOpen = useRef(false), reactionTimer = useRef(null), reactionMove = useRef(null), reactionPhase = useRef(null);
+  const hoverArmTimer = useRef(null), hoverReleaseTimer = useRef(null), hoverInside = useRef(false), hoverSession = useRef(0);
+  const reactionSequence = useRef(0), deferredReaction = useRef(null);
+  const wasSuspended = useRef(quiet || pageHidden);
+  const scheduleTimer = useRef(null), scheduleMove = useRef(null);
   const travelId = useRef(0);
   const live = useRef();
-  live.current = { pose, phase, geometry, pending, retained, saving, menuOpen };
+  live.current = { pose, phase, geometry, pending, retained, saving, menuOpen, hovered, state };
   const labelId = useId();
   const part = pending || retained, closing = Boolean(part && !pending);
 
@@ -51,67 +63,157 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const update = () => setQuiet(document.hidden || media.matches);
+    const update = () => { setPageHidden(document.hidden); setQuiet(document.hidden || media.matches); };
     document.addEventListener("visibilitychange", update); media.addEventListener("change", update);
     return () => { document.removeEventListener("visibilitychange", update); media.removeEventListener("change", update); };
   }, []);
 
+  // 所有延时都集中清理，避免切页/隐藏标签后旧回调把新动作拉回去。
+  useEffect(() => () => {
+    clearTimeout(hoverArmTimer.current);
+    clearTimeout(hoverReleaseTimer.current);
+    clearTimeout(reactionTimer.current);
+    clearTimeout(reactionMove.current);
+    clearTimeout(scheduleTimer.current);
+    clearTimeout(scheduleMove.current);
+  }, []);
+
   useEffect(() => {
+    const resume = wasSuspended.current;
+    wasSuspended.current = quiet || pageHidden;
+    if (quiet || pageHidden) {
+      clearTimeout(hoverArmTimer.current);
+      clearTimeout(hoverReleaseTimer.current);
+      clearTimeout(reactionTimer.current);
+      clearTimeout(reactionMove.current);
+      clearTimeout(scheduleTimer.current);
+      clearTimeout(scheduleMove.current);
+      reactionSequence.current += 1;
+      deferredReaction.current = null;
+      reactionPhase.current = null;
+      reactionMove.current = null;
+      menuWasOpen.current = false;
+      hoverInside.current = false;
+      hover.current = false;
+      setHovered(false);
+      if (!pending) {
+        setPose(p => ({ ...idlePose, at: p.edge === "top" ? p.at : idlePose.at, motion: p.motion }));
+        setPhase(pageHidden ? "hidden" : "rest");
+      }
+    } else if (resume && !pending) {
+      // 恢复时只回安全的上沿待机，不复活被中断的离场、趴睡或菜单轨迹。
+      setPose(p => ({ ...idlePose, at: p.edge === "top" ? p.at : idlePose.at, motion: p.motion }));
+      setPhase("rest");
+    }
+  }, [quiet, pageHidden, pending?.id]);
+
+  useEffect(() => {
+    clearTimeout(hoverArmTimer.current);
+    clearTimeout(hoverReleaseTimer.current);
+    hoverInside.current = false;
+    hover.current = false;
+    setHovered(false);
     if (!pending) {
-      const timer = setTimeout(() => { setRetained(null); hover.current = false; focused.current = false; }, quiet ? 0 : 260);
+      const timer = setTimeout(() => { setRetained(null); focused.current = false; }, quiet ? 0 : HOVER_RELEASE_MS);
       return () => clearTimeout(timer);
     }
     setRetained(pending); setError("");
+    menuWasOpen.current = false;
+    if (live.current.pose.gesture === "drape" && live.current.phase !== "hidden") {
+      // 趴着的是独立骨骼，先完成收身再露出询问姿态，不能在同一帧硬换形。
+      setPhase("startle");
+      const timer = setTimeout(() => {
+        setPose({ ...askPoses[hash(pending.id) % askPoses.length], at: live.current.pose.at });
+        setPhase(quiet ? "rest" : "enter");
+      }, quiet ? 0 : 1600);
+      return () => clearTimeout(timer);
+    }
     // 从侧面/下沿先收爪缩回，再从上沿探出。气泡等乐乐就位后才展开。
     if (live.current.pose.edge !== "top") {
       setPhase("exit");
-      const timer = setTimeout(() => { setPose(askPoses[hash(pending.id) % askPoses.length]); setPhase("enter"); }, quiet ? 0 : 300);
+      const timer = setTimeout(() => { setPose(askPoses[hash(pending.id) % askPoses.length]); setPhase(quiet ? "rest" : "enter"); }, quiet ? 0 : EXIT_MS);
       return () => clearTimeout(timer);
     }
-    setPose(p => ({ ...askPoses[hash(pending.id) % askPoses.length], at: p.at })); setPhase("rest");
+    setPose(p => ({ ...p, ...askPoses[hash(pending.id) % askPoses.length], at: p.at }));
+    setPhase(!quiet && live.current.phase === "hidden" ? "enter" : "rest");
   }, [pending?.id, quiet]);
 
   useEffect(() => {
-    if (quiet || pending || menuOpen) return;
-    let timer, move;
-    const schedule = () => { timer = setTimeout(() => {
-      const current = live.current;
-      if (hover.current || focused.current || current.saving || current.menuOpen || reactionPhase.current || current.retained && !current.pending) { schedule(); return; }
-      // 趴睡有自己的睡醒/离场时序，普通换位计时器不能在中途把身体换掉。
-      if (current.pose.gesture === "drape" && current.phase !== "hidden") { schedule(); return; }
-      if (current.pending) {
-        // 询问期间乐乐和气泡是一套稳定的界面锚点，不在用户阅读和点击时换姿势。
-        return;
-      }
-      const g = current.geometry;
-      const edges = ["top"];
-      // 两侧需要真实留白；底部还要给页脚与屏幕边缘留足空间。
-      if (g.left > 48 && g.height > 84) edges.push("left");
-      if (g.viewportWidth - g.left - g.width > 48 && g.height > 84) edges.push("right");
-      if (g.width >= 480 && g.viewportHeight + g.viewportTop - g.bottom > 62) edges.push("bottom");
-      const edge = choose([...edges, "top", "top"]);
-      const gesture = choose(edge === "top"
-        ? ["pop", "walk", "spin", "toy", "belly", "cute", "lick", "groom", "wash", "stretch", "wink", "curl", "sleep", "zzz", "peek", "wave", "paws", "look", "chase", "knead", "shake", "shy", "drape"].filter(p => p !== current.pose.gesture)
-        : (edge === "bottom" ? bottomGestures : sideGestures).filter(p => p !== current.pose.gesture));
-      const arrive = () => { setPose({ edge, gesture, at: edge === "bottom" ? choose([.16, .84]) : gesture === "drape" ? .34 + Math.random() * .32 : .2 + Math.random() * .6 }); setPhase("enter"); schedule(); };
-      // 已经藏到框后的猫不能再播一次离场，否则旧睡姿会闪回 300ms。
-      if (current.phase === "hidden") arrive();
-      else { setPhase("exit"); move = setTimeout(arrive, 300); }
-    }, 12000 + Math.random() * 12000); };
+    clearTimeout(scheduleTimer.current);
+    clearTimeout(scheduleMove.current);
+    if (quiet || pending || menuOpen) return undefined;
+    let cancelled = false;
+    const schedule = (delay = 18000 + Math.random() * 16000) => {
+      clearTimeout(scheduleTimer.current);
+      scheduleTimer.current = setTimeout(() => {
+        if (cancelled) return;
+        const current = live.current;
+        // 用户正在等回答时，状态表情负责反馈，不再随机跑动抢走注意力。
+        if (["thinking", "working", "loading", "compressing", "waiting"].includes(current.state)) {
+          schedule(5000);
+          return;
+        }
+        if (hover.current || focused.current || current.saving || current.menuOpen || current.hovered || reactionPhase.current || current.retained && !current.pending) {
+          schedule(2600);
+          return;
+        }
+        // 趴睡有自己的睡醒/离场时序，普通换位计时器不能在中途把身体换掉。
+        if (current.pose.gesture === "drape" && current.phase !== "hidden") {
+          schedule(4200);
+          return;
+        }
+        if (current.pending) return;
+        const g = current.geometry;
+        const edges = ["top"];
+        if (g.left > 48 && g.height > 84) edges.push("left");
+        if (g.viewportWidth - g.left - g.width > 48 && g.height > 84) edges.push("right");
+        if (g.width >= 480 && g.viewportHeight + g.viewportTop - g.bottom > 62) edges.push("bottom");
+        const edge = choose([...edges, ...Array(12).fill("top")]);
+        const candidates = edge === "top"
+          ? ["pop", "walk", "spin", "toy", "belly", "cute", "lick", "groom", "wash", "stretch", "wink", "curl", "sleep", "zzz", "peek", "wave", "paws", "look", "chase", "knead", "shake", "shy", "drape", "loaf", "yawn", "drowsy", "pawtap"]
+          : (edge === "bottom" ? bottomGestures : sideGestures);
+        const gesture = choose(candidates.filter(p => p !== current.pose.gesture));
+        const arrive = () => {
+          if (cancelled) return;
+          scheduleMove.current = null;
+          if (reactionPhase.current || live.current.pending || live.current.menuOpen || hover.current) {
+            if (hover.current && !reactionPhase.current && live.current.phase === "exit") setPhase("rest");
+            schedule(2600);
+            return;
+          }
+          const at = edge === "bottom" ? choose([.16, .84]) : gesture === "drape"
+            ? (g.width < 420 ? .42 + Math.random() * .16 : .34 + Math.random() * .32)
+            : .2 + Math.random() * .6;
+          setPose({ edge, gesture, at, motion: ++travelId.current });
+          setPhase(quiet ? "rest" : "enter");
+          schedule();
+        };
+        if (current.phase === "hidden" || quiet) arrive();
+        else {
+          setPhase("exit");
+          clearTimeout(scheduleMove.current);
+          scheduleMove.current = setTimeout(arrive, EXIT_MS);
+        }
+      }, delay);
+    };
     schedule();
-    return () => { clearTimeout(timer); clearTimeout(move); };
+    return () => { cancelled = true; clearTimeout(scheduleTimer.current); clearTimeout(scheduleMove.current); };
   }, [quiet, pending?.id, menuOpen]);
 
   useEffect(() => {
     if (quiet || pending || menuOpen || pose.edge !== "top" || !["walk", "pop", "spin"].includes(pose.gesture)) return;
     let hide;
-    const finish = setTimeout(() => { setPhase("exit"); hide = setTimeout(() => setPhase("hidden"), 300); }, 4400);
+    const finish = setTimeout(() => {
+      if (reactionPhase.current || hover.current) return;
+      setPhase("exit");
+      hide = setTimeout(() => { if (!reactionPhase.current && !hover.current) setPhase("hidden"); }, EXIT_MS);
+    }, 4400);
     return () => { clearTimeout(finish); clearTimeout(hide); };
   }, [pose.gesture, pose.edge, quiet, pending?.id, menuOpen]);
 
   useEffect(() => {
     if (pose.gesture !== "drape" || pending || menuOpen) return;
-    if (quiet) { setPhase("hidden"); return; }
+    if (quiet) return;
     // 无人打扰也会自然睡醒，起身伸展之后才跑走，不能突然淡出或换位置。
     const timer = setTimeout(() => {
       if (["enter", "rest"].includes(live.current.phase)) setPhase("stretch");
@@ -143,14 +245,16 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
 
   // 只有菜单实际遮住乐乐才避让，位置取菜单外沿；关闭时从真实高度落回输入框。
   useEffect(() => {
-    if (pending) return undefined;
+    if (pending) { menuWasOpen.current = false; return undefined; }
+    if (pageHidden) return undefined;
     if (live.current.pose.gesture === "drape") {
-      if (menuOpen && ["enter", "rest"].includes(live.current.phase)) setPhase(quiet ? "hidden" : "startle");
+      if (!quiet && menuOpen && ["enter", "rest"].includes(live.current.phase)) setPhase("startle");
       return undefined;
     }
     let frame, observer;
     if (menuOpen) {
       const align = () => {
+        if (["hidden", "exit"].includes(live.current.phase) || ["left", "right", "bottom"].includes(live.current.pose.edge)) return;
         const parent = marker.current?.parentElement;
         const cat = parent?.querySelector(".lele-edge-viewport")?.getBoundingClientRect();
         const menu = parent?.querySelector("[data-promptbar-menu]");
@@ -187,67 +291,104 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
       setPose({ edge: "top", at: (actor.left + 29 - base.left) / base.width, gesture: "drop", falling: true, travelY, duration: Math.min(1200, 820 + Math.abs(travelY) * .8), motion: ++travelId.current }); setPhase(quiet ? "rest" : "enter");
     }
     return () => { cancelAnimationFrame(frame); observer?.disconnect(); };
-  }, [menuOpen, quiet, pending?.id]);
+  }, [menuOpen, quiet, pageHidden, pending?.id]);
 
   // 输入、发送、复制、重试都给乐乐一个短促的专属反应；反应结束才交还给随机动作。
   useEffect(() => {
     const react = e => {
       const action = typeof e.detail === "string" ? e.detail : e.detail?.action;
       if (!action || quiet || pending || menuOpen || saving) return;
-      if (live.current.pose.gesture === "drape") {
+      if (live.current.pose.gesture === "drape" && live.current.phase !== "hidden") {
         if (action !== "typing" && ["enter", "rest"].includes(live.current.phase)) setPhase("startle");
         return;
       }
       const gestures = { typing: "listen", send: "pop", copy: "proud", retry: "spin", attach: "curious" };
       const gesture = gestures[action];
       if (!gesture) return;
-      clearTimeout(reactionTimer.current);
+      const current = live.current.pose, currentPhase = live.current.phase;
+      const alreadyReacting = reactionPhase.current === gesture;
+      const sequence = ++reactionSequence.current;
       reactionPhase.current = gesture;
-      const current = live.current.pose;
-      if (current.gesture !== gesture) {
-        const arrive = () => { reactionMove.current = null; setPose({ edge: "top", at: current.edge === "top" ? current.at : .72, gesture, head: -25 }); setPhase("enter"); };
+      clearTimeout(reactionTimer.current);
+      const release = () => {
+        reactionTimer.current = setTimeout(() => {
+          if (reactionSequence.current !== sequence) return;
+          reactionPhase.current = null;
+          setPose(p => p.edge === "top" ? { ...p, gesture: idlePose.gesture, head: idlePose.head } : p);
+          setPhase("rest");
+        }, action === "typing" ? 1800 : 1600);
+      };
+      if (current.edge === "top" && currentPhase === "enter") {
+        // 只排队最新反应，让已开始的入场完整落地；不截断 translate，也不重建身体。
+        deferredReaction.current = () => {
+          if (reactionSequence.current !== sequence || live.current.pending || live.current.menuOpen) return;
+          setPose(p => ({ ...p, gesture, head: -25 }));
+          setPhase("rest");
+          release();
+        };
+        return;
+      }
+      deferredReaction.current = null;
+      if (!alreadyReacting) {
+        clearTimeout(reactionMove.current);
+        reactionMove.current = null;
+        const arrive = () => {
+          if (reactionPhase.current !== gesture || live.current.pending || live.current.menuOpen) return;
+          reactionMove.current = null;
+          setPose({ edge: "top", at: .72, gesture, head: -25, motion: ++travelId.current });
+          setPhase("enter");
+        };
         if (["left", "right", "bottom"].includes(current.edge)) {
           // 用户操作打断局部小动作时，先缩回当前边，不能把半条腿瞬移成上沿整只猫。
-          if (!reactionMove.current) { setPhase("exit"); reactionMove.current = setTimeout(arrive, 260); }
-        } else arrive();
+          if (currentPhase === "hidden") arrive();
+          else {
+            setPhase("exit");
+            reactionMove.current = setTimeout(arrive, EXIT_MS);
+          }
+        } else {
+          // 同一条上沿只改变姿态，保留 DOM 和锚点，让 CSS 从当前帧自然接续。
+          setPose(p => ({ ...p, gesture, head: -25 }));
+          setPhase(currentPhase === "hidden" ? "enter" : "rest");
+        }
       }
-      reactionTimer.current = setTimeout(() => {
-        if (reactionPhase.current !== gesture) return;
-        setPhase("exit");
-        reactionTimer.current = setTimeout(() => { setPose({ ...idlePose, at: live.current.pose.at }); setPhase("enter"); reactionPhase.current = null; }, 300);
-      }, action === "typing" ? 900 : 1500);
+      // 连续输入只延长同一段反应，不重复触发入场动画。
+      release();
     };
     window.addEventListener("lele-action", react);
-    return () => { window.removeEventListener("lele-action", react); clearTimeout(reactionTimer.current); clearTimeout(reactionMove.current); reactionMove.current = null; reactionPhase.current = null; };
+    return () => { window.removeEventListener("lele-action", react); clearTimeout(reactionTimer.current); clearTimeout(reactionMove.current); reactionSequence.current += 1; deferredReaction.current = null; reactionMove.current = null; reactionPhase.current = null; };
   }, [quiet, pending?.id, menuOpen, saving]);
 
-  const onHover = () => {
-    if (quiet || pending || retained || menuOpen || ["exit", "hidden"].includes(phase) || Date.now() < hoverUntil.current) return;
-    if (pose.gesture === "drape") {
-      if (["enter", "rest"].includes(phase)) setPhase("startle");
-      return;
-    }
-    hoverUntil.current = Date.now() + 4000;
-    if (["left", "right", "bottom"].includes(pose.edge)) {
-      // 局部动作被发现时仍缩回同一条边，不突然换成一只倒挂的害羞猫。
-      if (Math.random() < .35) {
-        setPhase("exit");
-        clearTimeout(reactionTimer.current);
-        reactionTimer.current = setTimeout(() => setPhase("hidden"), 260);
-      } else {
-        const gesture = pose.edge === "bottom" ? (pose.gesture.startsWith("tail-") ? "tail-tip" : "feet-kick") : (["side-paw", "side-tap"].includes(pose.gesture) ? "side-tap" : "side-scout");
-        setPose({ ...pose, gesture, motion: ++travelId.current }); setPhase("enter");
-      }
-      return;
-    }
-    if (Math.random() < .35) {
-      setPhase("exit");
-      clearTimeout(reactionTimer.current);
-      reactionTimer.current = setTimeout(() => { setPose({ edge: "top", at: pose.at < .5 ? .8 : .2, gesture: "shy", head: -25 }); setPhase("enter"); }, 260);
-    } else {
-      setPose({ ...pose, gesture: "shy" });
-      setPhase("enter");
-    }
+  // Hover 是一个稳定的交互状态：先确认用户真的停留，再触发一次轻微反应。
+  // 事件挂在锚点上而不是动画身体上，配合 CSS 的 ::before 热区后，身体移动不会反复出入场。
+  const armHover = e => {
+    if (e?.pointerType === "touch" || quiet || pending || retained || menuOpen) return;
+    if (staysInside(e)) return;
+    clearTimeout(hoverArmTimer.current);
+    clearTimeout(hoverReleaseTimer.current);
+    hoverInside.current = true;
+    hover.current = true;
+    const session = ++hoverSession.current;
+    hoverArmTimer.current = setTimeout(() => {
+      if (!hoverInside.current || hoverSession.current !== session) return;
+      const current = live.current;
+      if (current.pending || current.menuOpen || current.saving || current.phase === "exit" || current.phase === "hidden") return;
+      setHovered(true);
+      // Hover 只叠加微表情，动作本身与 DOM 身份保持连续；睡熟后才会被轻轻惊醒。
+      if (current.pose.gesture === "drape" && current.phase === "rest") setPhase("startle");
+    }, quiet ? 0 : HOVER_ARM_MS);
+  };
+
+  const releaseHover = e => {
+    if (staysInside(e)) return;
+    hoverInside.current = false;
+    clearTimeout(hoverArmTimer.current);
+    clearTimeout(hoverReleaseTimer.current);
+    const session = ++hoverSession.current;
+    hoverReleaseTimer.current = setTimeout(() => {
+      if (hoverInside.current || hoverSession.current !== session) return;
+      hover.current = false;
+      setHovered(false);
+    }, quiet ? 0 : HOVER_RELEASE_MS);
   };
 
   useEffect(() => {
@@ -266,25 +407,39 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
   const info = part?.presentation || { title: part?.name || "执行下一步", description: "乐乐想接着处理这一步。", scope: "仅本次操作", fields: [] };
   const choices = info.inquiryPhrases?.filter(p => typeof p === "string" && p) || [];
   const inquiry = choices.length ? choices[hash(part?.id) % choices.length] : "这一步交给我看看，好吗？";
-  const asking = Boolean(part && pose.edge === "top" && phase !== "exit");
+  const asking = Boolean(part && pose.edge === "top" && pose.gesture !== "drape" && !["exit", "hidden", "startle", "stretch"].includes(phase));
   const width = Math.min(430, geometry.width), headX = geometry.width * pose.at;
   const left = Math.max(0, Math.min(geometry.width - width, headX - width * .56));
   const tail = Math.max(24, Math.min(width - 24, headX - left));
   const clearance = -(pose.head || -29) + 20;
   const height = Math.min(440, Math.max(130, geometry.top - geometry.viewportTop - clearance - 14));
   const fragment = ["left", "right", "bottom"].includes(pose.edge);
-  const anchorStyle = pose.edge === "left" || pose.edge === "right" ? { top: Math.max(34, Math.min(geometry.height - 34, geometry.height * pose.at)) - 29 } : { left: `calc(${pose.at * 100}% - 29px)`, ...(pose.edge === "menu" ? { top: pose.y } : {}), "--edge-floor": `${pose.floor || 0}px`, "--travel-x": `${pose.travelX || 0}px`, "--travel-y": `${pose.travelY || 0}px`, "--travel-arc": `${Math.min(0, pose.travelY || 0) - 32}px`, "--flight-duration": `${pose.duration || 1000}ms`, "--drape-run-x": `${-Math.min(84, Math.max(12, headX - 68))}px` };
+  const anchorStyle = pose.edge === "left" || pose.edge === "right" ? { top: Math.max(34, Math.min(geometry.height - 34, geometry.height * pose.at)) - 29 } : { left: `calc(${pose.at * 100}% - 29px)`, ...(pose.edge === "menu" ? { top: pose.y } : {}), "--edge-floor": `${pose.floor || 0}px`, "--travel-x": `${pose.travelX || 0}px`, "--travel-y": `${pose.travelY || 0}px`, "--travel-arc": `${Math.min(0, pose.travelY || 0) - 32}px`, "--flight-duration": `${pose.duration || 1000}ms`, "--drape-run-x": `${-Math.min(geometry.width < 400 ? 56 : 84, Math.max(12, headX - 32))}px` };
+  const companionState = asking ? (closing ? "asking-closing" : "asking") : menuOpen ? "menu" : reactionPhase.current ? "reacting" : hovered ? "hover" : phase === "hidden" ? "hidden" : "idle";
+  const finishMotion = e => {
+    if (!e.target.classList.contains("lele-edge-actor")) return;
+    if (pose.gesture === "drape" && ["startle", "stretch"].includes(phase)) {
+      if (!pending) setPhase("hidden");
+    } else if (phase === "enter") {
+      setPhase(fragment ? "hidden" : "rest");
+      if (!fragment) {
+        const deferred = deferredReaction.current;
+        deferredReaction.current = null;
+        deferred?.();
+      }
+    }
+  };
 
   return <>
     <span ref={marker} className="lele-companion-marker" aria-hidden="true"/>
-    <span className={`lele-perch-anchor at-${pose.edge} pose-${pose.gesture} phase-${phase} ${pose.falling ? "is-falling" : ""} ${fragment ? "is-fragment" : ""} ${asking ? "is-questioning" : ""}`} style={anchorStyle} data-pose={pose.gesture} aria-hidden="true" onMouseEnter={onHover} onAnimationEnd={e => { if (!e.target.classList.contains("lele-edge-actor")) return; if (pose.gesture === "drape" && ["startle", "stretch"].includes(phase)) setPhase("hidden"); else if (phase === "enter") setPhase(fragment ? "hidden" : "rest"); }}>
+    <span className={`lele-perch-anchor at-${pose.edge} pose-${pose.gesture} phase-${phase} ${pose.falling ? "is-falling" : ""} ${fragment ? "is-fragment" : ""} ${asking ? "is-questioning" : ""} ${hovered ? "is-hovered" : ""} ${quiet ? "is-reduced-motion" : ""}`} style={anchorStyle} data-pose={pose.gesture} data-companion-state={companionState} data-phase={phase} data-hovered={hovered ? "true" : "false"} aria-hidden="true" onPointerEnter={armHover} onPointerLeave={releaseHover} onAnimationEnd={finishMotion}>
       <span className="lele-edge-viewport"><span key={pose.motion || "idle"} className="lele-edge-actor"><ChatMascot state={asking ? "asking" : state} gesture={pose.gesture}/></span></span>
       {["paws", "wave", "invite", "listen", "knead"].includes(pose.gesture) && <span className="lele-edge-grip"><i/><i/></span>}
     </span>
     {asking && <section key={part.id} className={`tool-approval lele-speech ${closing ? "is-closing" : "is-pending"}`} role="region" aria-label="乐乐需要你的确认" aria-labelledby={labelId}
       style={{ width, left, bottom: `calc(100% + ${clearance}px)`, "--speech-tail": `${tail}px`, "--speech-height": `${height}px` }}
       inert={closing ? "" : undefined} onPointerEnter={() => { hover.current = true; }} onPointerLeave={() => { hover.current = false; }}
-      onFocusCapture={() => { focused.current = true; }} onBlurCapture={e => { if (!e.currentTarget.contains(e.relatedTarget)) focused.current = false; }}>
+      onFocusCapture={() => { focused.current = true; }} onBlurCapture={e => { if (!staysInside(e)) focused.current = false; }}>
       <div className="lele-speech-card">
         <header className="lele-speech-heading"><span>乐乐的小询问{approvals.length > 1 ? ` · 还有 ${approvals.length - 1} 件` : ""}</span><h3 id={labelId}>{inquiry}</h3></header>
         <div className="lele-speech-content">

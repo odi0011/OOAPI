@@ -1,8 +1,8 @@
 /* 行走方向由头、身体、脚步和尾巴共同变化；不旋转整张正脸冒充转身。 */
 .lele-perch-anchor:is(.pose-chase,.pose-spin) .lele-edge-viewport {height:86px;width:110px;left:-26px;}
 .lele-perch-anchor:is(.pose-chase,.pose-spin) .lele-edge-actor {left:26px;bottom:-4px;--rest-y:0px;animation:none;transform:none;}
-.lele-perch-anchor:is(.pose-chase,.pose-spin) .chat-mascot {--turn-time:3.6s;--turn-count:infinite;}
-.lele-perch-anchor.pose-spin .chat-mascot {--turn-time:1.5s;--turn-count:1;}
+.lele-perch-anchor:is(.pose-chase,.pose-spin) .chat-mascot {--turn-time:5.8s;--turn-count:1;}
+.lele-perch-anchor.pose-spin .chat-mascot {--turn-time:1.8s;--turn-count:1;}
 .lele-perch-anchor:is(.pose-chase,.pose-spin) .cat-cranium {transform-origin:16px 19px;animation:lele-turn-head var(--turn-time) ease-in-out var(--turn-count);}
 .lele-perch-anchor:is(.pose-chase,.pose-spin) .cat-body {transform-origin:16px 26px;animation:lele-turn-body var(--turn-time) ease-in-out var(--turn-count);}
 .lele-perch-anchor:is(.pose-chase,.pose-spin) .cat-head-back {visibility:hidden;animation:lele-turn-back var(--turn-time) steps(1) var(--turn-count);}
@@ -12,7 +12,7 @@
 .lele-perch-anchor:is(.pose-chase,.pose-spin) .cat-paw-right {transform-origin:21px 26px;animation:lele-step-right var(--turn-time) ease-in-out var(--turn-count);}
 .lele-perch-anchor:is(.pose-chase,.pose-spin) .cat-tail {transform-origin:26px 23px;animation:lele-turn-tail var(--turn-time) ease-in-out var(--turn-count);}
 .lele-perch-anchor:is(.pose-chase,.pose-spin) .cat-shadow {animation:lele-turn-shadow var(--turn-time) ease-in-out var(--turn-count);transform-origin:16px 30px;}
-@keyframes lele-turn-head {0%,8%,90%,100%{transform:none}20%{transform:translate(4px,1px) scaleX(.66) rotate(5deg)}40%,52%{transform:translate(0,-1px) scaleX(.96)}67%{transform:translate(-4px,1px) scaleX(.66) rotate(-5deg)}80%{transform:translate(-2px,0) scaleX(.88)}}
+@keyframes lele-turn-head {0%,8%,90%,100%{transform:none}20%{transform:translate(2px,.4px) scaleX(.74) rotate(2deg)}28%{transform:translate(1px,0) scaleX(.28)}40%,52%{transform:translate(0,-.5px) scaleX(.96)}73%{transform:translate(-1px,0) scaleX(.28)}80%{transform:translate(-1px,0) scaleX(.78)}}
 @keyframes lele-turn-body {0%,8%,90%,100%{transform:none}23%{transform:translate(2px,0) scaleX(.68)}43%,53%{transform:translate(0,-1px) scaleX(.92)}70%{transform:translate(-2px,0) scaleX(.68)}}
 @keyframes lele-turn-back {0%,27%,74%,100%{visibility:hidden}28%,73%{visibility:visible}}
 @keyframes lele-turn-face {0%,27%,74%,100%{visibility:visible}28%,73%{visibility:hidden}}
@@ -50,11 +50,11 @@
 .lele-perch-anchor.is-falling.phase-enter .cat-eyes {transform-origin:center;animation:lele-startled-eyes var(--flight-duration) linear both;}
 @keyframes lele-jump-route {0%,16%{transform:translate(var(--travel-x),var(--travel-y));animation-timing-function:cubic-bezier(.18,.75,.26,1)}48%{transform:translate(calc(var(--travel-x) * .42),var(--travel-arc));animation-timing-function:cubic-bezier(.55,0,.85,.45)}79%,100%{transform:none}}
 @keyframes lele-fall-route {0%,12%{transform:translate(var(--travel-x),var(--travel-y))}24%{transform:translate(calc(var(--travel-x) * .92),calc(var(--travel-y) + 3px));animation-timing-function:cubic-bezier(.6,0,.88,.45)}79%,100%{transform:none}}
-@keyframes lele-jump-body {0%,100%{transform:none}16%{transform:translateY(1px) scale(1.12,.72)}29%{transform:translateY(-2px) scale(.86,1.15)}51%,65%{transform:translateY(-1px) scale(.9,.88)}79%{transform:scale(1.05,.84)}88%{transform:scale(1.12,.68)}95%{transform:scale(.98,1.04)}}
+@keyframes lele-jump-body {0%,100%{transform:none}16%{transform:translateY(1px) scale(1.06,.87)}29%{transform:translateY(-2px) scale(.94,1.08)}51%,65%{transform:translateY(-1px) scale(.9,.88)}79%{transform:scale(1.05,.84)}88%{transform:scale(1.07,.85)}95%{transform:scale(.98,1.04)}}
 @keyframes lele-jump-head {0%,100%{transform:none}16%{transform:translateY(3px) rotate(-5deg)}30%{transform:translateY(-2px) rotate(4deg)}60%{transform:translateY(-1px) rotate(-3deg)}79%{transform:translateY(1px)}88%{transform:translateY(4px) rotate(4deg)}95%{transform:translateY(-1px)}}
 @keyframes lele-reach-left {0%,100%{transform:translate(1px,-2px)}16%{transform:translate(-1px,0) rotate(-14deg)}32%,52%{transform:translate(-3px,-7px) rotate(32deg)}68%{transform:translate(-2px,-2px) rotate(15deg)}79%{transform:translate(-1px,0)}88%{transform:translate(1px,-1px) rotate(-12deg)}}
 @keyframes lele-reach-right {0%,100%{transform:translate(-1px,-2px)}16%{transform:translate(1px,0) rotate(14deg)}32%,52%{transform:translate(3px,-7px) rotate(-32deg)}68%{transform:translate(2px,-2px) rotate(-15deg)}79%{transform:translate(1px,0)}88%{transform:translate(-1px,-1px) rotate(12deg)}}
-@keyframes lele-kick-off-left {0%,100%{transform:none}16%{transform:translate(1px,-1px) rotate(-20deg)}30%{transform:translate(-1px,1px) rotate(18deg)}48%,64%{transform:translate(3px,-4px) rotate(-24deg)}79%{transform:none}88%{transform:scale(1.1,.75)}}
+@keyframes lele-kick-off-left {0%,100%{transform:none}16%{transform:translate(1px,-1px) rotate(-20deg)}30%{transform:translate(-1px,1px) rotate(18deg)}48%,64%{transform:translate(3px,-4px) rotate(-24deg)}79%{transform:none}88%{transform:scale(1.04,.88)}}
 @keyframes lele-kick-off-right {0%,100%{transform:none}16%{transform:translate(-1px,-1px) rotate(20deg)}30%{transform:translate(1px,1px) rotate(-18deg)}48%,64%{transform:translate(-3px,-4px) rotate(24deg)}79%{transform:none}88%{transform:scale(1.1,.75)}}
 @keyframes lele-air-tail {0%,100%{transform:none}16%{transform:rotate(-32deg)}35%{transform:rotate(-55deg) translateY(-1px)}60%{transform:rotate(28deg)}79%{transform:rotate(-14deg)}90%{transform:rotate(12deg)}}
 @keyframes lele-air-shadow {0%,16%,100%{opacity:.25;transform:none}25%,72%{opacity:0;transform:scaleX(.3)}79%,88%{opacity:.25;transform:scaleX(1.08)}}

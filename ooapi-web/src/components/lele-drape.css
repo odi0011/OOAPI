@@ -6,16 +6,18 @@
 .pose-drape .lele-edge-actor>.chat-mascot {width:112px;height:94.5px;}
 .pose-drape .chat-mascot>svg {width:112px;height:94.5px;overflow:visible;}
 .pose-drape :is(.cat-tail,.cat-body,.cat-paws,.cat-shadow,.lele-sparks,.lele-sleep,.cat-happy-eyes) {display:none!important;}
-.pose-drape .cat-cranium {transform:translate(0px,8px) rotate(-7deg);transform-origin:16px 19px;animation:none;}
+.pose-drape .cat-cranium {transform:translate(0px,8px) rotate(-7deg);transform-origin:16px 19px;animation:lele-drape-head-breathe 4.8s ease-in-out infinite;}
 .pose-drape .cat-eyes {display:none;animation:none;transform-origin:center;}
-.pose-drape .cat-sleep-eyes {display:block;}
+.pose-drape .cat-sleep-eyes {display:none;}
+.pose-drape .cat-drowse-eyes {display:block;opacity:1;animation:lele-drape-flutter 7.2s ease-in-out infinite;}
 .pose-drape .lounge-body {transform-origin:35px 28px;animation:lele-drape-breathe 4.8s ease-in-out infinite;}
+.pose-drape .lounge-belly-spot {transform-origin:38px 26px;animation:lele-drape-belly-breathe 4.8s ease-in-out infinite;}
 .pose-drape .lounge-tail {transform-origin:48px 22px;animation:lele-drape-tail 6s ease-in-out infinite;}
 .pose-drape .lounge-hanging-leg {transform-origin:var(--joint-x) var(--joint-y);}
 .pose-drape .lounge-front-leg {animation:lele-drape-paw 5.7s ease-in-out infinite;}
 .pose-drape .lounge-hind-leg {animation:lele-drape-paw 6.5s -2s ease-in-out infinite reverse;}
-.pose-drape .lounge-wrist {transform-origin:25px 30px;}
-.pose-drape .lounge-hock {transform-origin:44px 33px;}
+.pose-drape .lounge-wrist {transform-origin:25px 30px;animation:lele-drape-wrist-sway 5.7s -.4s ease-in-out infinite;}
+.pose-drape .lounge-hock {transform-origin:44px 33px;animation:lele-drape-hock-sway 6.5s -2.4s ease-in-out infinite;}
 .pose-drape .lounge-folded-paw {transform-origin:30px 24px;}
 .pose-drape.phase-enter .lele-edge-actor {animation:lele-drape-arrive 1.9s ease-in-out both;}
 .pose-drape.phase-enter .lele-edge-viewport {animation:lele-drape-uncover 1.9s steps(1) both;}
@@ -25,8 +27,8 @@
 .pose-drape.phase-startle .lele-edge-actor {animation:lele-drape-hop-hide 1.6s linear both;}
 .pose-drape.phase-startle .lele-edge-viewport {animation:lele-drape-cover 1.6s steps(1) both;}
 .pose-drape.phase-startle .cat-cranium {animation:lele-drape-startled-head 1.6s linear both;}
-.pose-drape.phase-startle .cat-eyes {display:block;animation:lele-drape-wide-eyes 1.6s linear both;}
-.pose-drape.phase-startle .cat-sleep-eyes {display:none;}
+.pose-drape.phase-startle .cat-eyes {display:block;opacity:1;animation:lele-drape-wide-eyes 1.6s linear both;}
+.pose-drape.phase-startle :is(.cat-sleep-eyes,.cat-drowse-eyes) {display:none;}
 .pose-drape.phase-startle .lounge-body {animation:lele-drape-startled-body 1.6s linear both;}
 .pose-drape.phase-startle .lounge-tail {animation:lele-drape-tail-up 1.6s linear both;}
 .pose-drape.phase-startle .lounge-front-leg {animation:lele-drape-fling-near 1.6s linear both;}
@@ -44,11 +46,17 @@
 .pose-drape.phase-stretch .lounge-wrist {animation:lele-drape-wrist-step 3.4s linear both;}
 .pose-drape.phase-stretch .lounge-hock {animation:lele-drape-hock-step 3.4s linear both;}
 .pose-drape.phase-stretch .lounge-folded-paw {animation:lele-drape-hind-step 3.4s linear both;}
-.pose-drape.phase-stretch .cat-eyes {display:block;animation:lele-drape-drowsy-eyes 3.4s linear both;}
-.pose-drape.phase-stretch .cat-sleep-eyes {display:none;}
+.pose-drape.phase-stretch .cat-eyes {display:block;opacity:1;animation:lele-drape-drowsy-eyes 3.4s linear both;}
+.pose-drape.phase-stretch :is(.cat-sleep-eyes,.cat-drowse-eyes) {display:none;}
 .pose-drape.phase-hidden .lele-edge-actor {visibility:hidden;pointer-events:none;animation:none;transform:translateY(120px);}
 
-@keyframes lele-drape-breathe {0%,100%{transform:scaleY(1)}50%{transform:scaleY(1.035)}}
+/* 头和胸腹同频呼吸，四肢只保留重力下的小幅拖曳。 */
+@keyframes lele-drape-head-breathe {0%,100%{transform:translate(0,8px) rotate(-7deg)}50%{transform:translate(0,7.7px) rotate(-6.5deg)}}
+@keyframes lele-drape-belly-breathe {0%,100%{transform:scale(1)}50%{transform:scale(1.02,.99)}}
+@keyframes lele-drape-flutter {0%,55%,61%,100%{transform:scaleY(1)}58%{transform:scaleY(.7)}}
+@keyframes lele-drape-wrist-sway {0%,100%{transform:rotate(0)}50%{transform:rotate(1.5deg)}}
+@keyframes lele-drape-hock-sway {0%,100%{transform:rotate(0)}50%{transform:rotate(-1.5deg)}}
+@keyframes lele-drape-breathe {0%,100%{transform:scaleY(1)}50%{transform:scaleY(1.02)}}
 @keyframes lele-drape-tail {0%,100%{transform:rotate(0)}45%{transform:rotate(3deg)}75%{transform:rotate(-2deg)}}
 @keyframes lele-drape-paw {0%,100%{transform:rotate(0)}50%{transform:rotate(3deg)}}
 @keyframes lele-drape-arrive {0%{transform:translate(-16px,104px)}30%{transform:translate(-8px,-6px)}52%{transform:translate(0,-3px)}75%,100%{transform:none}}

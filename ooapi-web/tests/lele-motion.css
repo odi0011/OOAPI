@@ -1,0 +1,143 @@
+:root {
+  font-family: system-ui, "Microsoft YaHei", sans-serif;
+  color: #3b434b;
+  background: #f2f2ee;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+
+main {
+  --ink: #3b434b;
+  --ink-2: #69716e;
+  --ink-3: #8a918a;
+  --surface: #fff;
+  --page: #f2f2ee;
+  --inset: #f4f5f1;
+  --line: #dde0d6;
+  --accent: #5e8b70;
+  --accent-tint: #e8f1e9;
+  --orange: #c09b62;
+  --red: #cc847f;
+  --green: #65937b;
+  --token-output: #739174;
+  max-width: 1060px;
+  min-height: 100vh;
+  margin: auto;
+  padding: 44px 48px 32px;
+  color: var(--ink);
+  background: var(--page);
+}
+
+main[data-dark="true"] {
+  --ink: #e1e6df;
+  --ink-2: #b3bdb4;
+  --ink-3: #91a196;
+  --surface: #252c28;
+  --page: #1b221e;
+  --inset: #202a24;
+  --line: #35433a;
+  --accent: #8bc6a3;
+  --accent-tint: #263c2d;
+}
+
+/* 仅预览夹具暂停当前画面；保持原动画、姿态和系统减少动态设置。 */
+main.is-paused *,
+main.is-paused *::before,
+main.is-paused *::after {
+  animation-play-state: paused !important;
+}
+
+header span { font-size: 11px; letter-spacing: 3px; color: var(--accent); }
+h1 { font-size: 32px; font-weight: 500; margin: 10px 0; }
+header p { font-size: 14px; color: var(--ink-2); }
+.controls { display: flex; gap: 8px; flex-wrap: wrap; margin: 24px 0; }
+.controls .ant-select { min-width: 130px; }
+.label { display: block; font-size: 11px; color: var(--ink-3); letter-spacing: .08em; }
+.director, .live, .gallery { margin-top: 32px; }
+
+.perch-demo {
+  position: relative;
+  height: 120px;
+  margin: 96px 18px 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+
+.perch-demo > p { font-size: 12px; color: var(--ink-3); padding: 30px 24px; }
+
+.bui-composer {
+  position: relative;
+  margin-top: 100px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  isolation: isolate;
+}
+
+textarea {
+  position: relative;
+  width: 100%;
+  min-height: 60px;
+  padding: 0 4px;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--ink);
+}
+
+.bar { display: flex; gap: 7px; flex-wrap: wrap; }
+
+.test-menu {
+  position: absolute;
+  z-index: 20;
+  right: 12px;
+  bottom: 100%;
+  width: 85%;
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px #0001;
+  font-size: 12px;
+}
+
+.test-menu p { color: var(--ink-3); }
+
+.tiles {
+  display: flex;
+  justify-content: space-around;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin: 20px 0;
+  padding: 20px;
+  background: var(--surface);
+  border-radius: 18px;
+}
+
+.tile {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.tile .chat-mascot { width: 64px; height: 64px; }
+.lele-scene { margin-top: 24px; }
+
+@media (max-width: 600px) {
+  main { padding: 24px 18px; }
+  .perch-demo { margin-inline: 0; }
+  .controls { gap: 6px; }
+  .controls .ant-btn { font-size: 12px; }
+  .bar .ant-btn { font-size: 11px; padding: 3px 7px; }
+}

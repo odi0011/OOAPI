@@ -13,9 +13,10 @@
 .lele-scene-character { position: absolute; left: 34px; bottom: 13px; display: grid; place-items: center; width: 112px; height: 112px; padding: 0; border: 0; border-radius: 50%; color: inherit; background: transparent; }
 button.lele-scene-character { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 button.lele-scene-character:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
-.lele-scene-character .chat-mascot { width: 88px; height: 88px; transition: transform .4s cubic-bezier(.2,1.5,.4,1); }
-button.lele-scene-character:hover .chat-mascot { transform: translateY(-5px) rotate(-5deg); }
-.lele-scene.is-greeted .lele-scene-character { animation: cat-hop .8s cubic-bezier(.2,1.3,.4,1); }
+.lele-scene-character .chat-mascot { width: 88px; height: 88px; transition: transform .56s cubic-bezier(.22,.82,.24,1), filter .26s ease; }
+button.lele-scene-character:hover .chat-mascot { transform: translateY(-3px) rotate(-2deg) scale(1.02); filter: drop-shadow(0 4px 3px color-mix(in srgb, var(--ink) 10%, transparent)); }
+button.lele-scene-character:active .chat-mascot { transform: translateY(0) scale(.985); transition-duration: .18s; }
+.lele-scene.is-greeted .lele-scene-character {animation:lele-scene-greet 1.1s cubic-bezier(.22,.75,.25,1) both;}
 .lele-scene-orbit { position: absolute; left: 6px; bottom: 5px; width: 168px; height: 36px; border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent); border-radius: 50%; background: radial-gradient(ellipse, color-mix(in srgb, var(--accent) 8%, transparent), transparent 65%); }
 .lele-scene-orbit::before, .lele-scene-orbit::after { content: ""; position: absolute; width: 4px; height: 4px; border-radius: 50%; background: var(--accent); top: 15px; left: -2px; opacity: .6; }
 .lele-scene-orbit::after { left: auto; right: 12px; top: 26px; background: var(--orange); }
@@ -27,9 +28,9 @@ button.lele-scene-character:hover .chat-mascot { transform: translateY(-5px) rot
 .lele-scene.is-loading { min-height: 180px; }
 .lele-scene.is-loading .lele-scene-art { opacity: .55; }
 .lele-scene.is-loading .lele-scene-stage { transform: scale(.72); margin-bottom: -10px; }
-.lele-scene.is-loading .lele-scene-character { animation: lele-scene-loading 1.4s ease-in-out infinite; }
-.lele-scene.is-loading .cat-paws { animation: cat-paws .35s ease-in-out infinite alternate; }
-.lele-scene.is-loading .cat-tail { animation-duration: .7s; }
+.lele-scene.is-loading .lele-scene-character {animation:none;}
+
+
 .lele-scene-loading { margin: 0; color: var(--ink-3); font-size: 12px; line-height: 1.8; }
 .lele-scene-loading>span { animation: lele-preview 1.4s infinite; }
 .lele-scene-trail { position: absolute; left: 5px; bottom: 42px; display: flex; gap: 5px; }
@@ -43,3 +44,6 @@ button.lele-scene-character:hover .chat-mascot { transform: translateY(-5px) rot
 .lele-scene[data-motion="off"] * { animation-play-state: paused !important; }
 @media (max-width: 700px), (max-height: 650px) { .lele-scene { min-height: 250px; }.lele-scene-stage { transform: scale(.85); margin-bottom: 0; }.lele-scene-caption { font-size: 12px; } }
 @media (prefers-reduced-motion: reduce) { .lele-scene *, .lele-scene *::before, .lele-scene *::after { animation: none !important; transition: none !important; } }
+
+@keyframes lele-scene-greet {0%,100%{transform:none}20%{transform:translateY(2px) scale(1.02,.97)}48%{transform:translateY(-6px)}72%{transform:translateY(1px) scale(1.02,.98)}88%{transform:translateY(-.5px)}}
+@media(prefers-reduced-motion:reduce) {button.lele-scene-character:is(:hover,:active) .chat-mascot {transform:none;filter:none;}}

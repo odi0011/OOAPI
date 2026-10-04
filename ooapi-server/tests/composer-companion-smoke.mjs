@@ -47,11 +47,13 @@ try {
   await page.mouse.move(1, 1);
   const first = await page.locator(".lele-perch-anchor").getAttribute("data-pose");
   const beforeInquiry = await page.locator(".lele-perch-anchor").boundingBox();
+  const beforeSpeech = await geometry();
   await page.waitForTimeout(26000);
   check(await page.locator(".lele-perch-anchor").getAttribute("data-pose") === first, "询问期间保持当前位置和姿势");
   check(JSON.stringify(await page.locator(".lele-perch-anchor").boundingBox()) === JSON.stringify(beforeInquiry), "询问超过一次最长换位周期仍保持原位");
   check(await page.locator(".lele-perch-anchor .cat-asking-eyes,.lele-perch-anchor .cat-annoyed-eyes").count() === 0, "原有建模没有新增眉眼叠层");
-  check(await page.locator(".lele-perch-anchor").evaluate(n => n.getAnimations({subtree:true}).filter(a=>a.playState==="running").length === 0), "询问期间身体、表情、爪子均停止动画");
+  const afterSpeech = await geometry();
+  check(await page.locator(".lele-perch-anchor").getAttribute("data-pose") === first && ["bubble", "tail"].every(key => Math.abs(afterSpeech[key].x - beforeSpeech[key].x) < .5 && Math.abs(afterSpeech[key].y - beforeSpeech[key].y) < .5), "询问微表情不改变当前姿势、气泡和尾尖锚点");
   check(await page.locator(".lele-perch-anchor.at-top").count() === 1, "询问期间乐乐稳定留在上沿");
   let g = await geometry();
   check(Math.abs(g.tail.x + 22 - g.anchor.x - 29) < 2, "气泡尾尖跟随乐乐头顶锚点");
@@ -61,9 +63,11 @@ try {
   const frozen = await page.locator(".lele-perch-anchor").getAttribute("data-pose");
   await page.waitForTimeout(10300);
   check(await page.locator(".lele-perch-anchor").getAttribute("data-pose") === frozen, "鼠标进入询问框停止换位");
+  check(JSON.stringify(await page.locator(".lele-perch-anchor").boundingBox()) === JSON.stringify(beforeInquiry), "鼠标停留询问框时身体锚点不跳动");
   await page.getByRole("button", { name: "拒绝", exact: true }).focus(); await page.mouse.move(1, 1);
   await page.waitForTimeout(10300);
   check(await page.locator(".lele-perch-anchor").getAttribute("data-pose") === frozen, "键盘焦点位于按钮时停止换位");
+  check(JSON.stringify(await page.locator(".lele-perch-anchor").boundingBox()) === JSON.stringify(beforeInquiry), "审批按钮获焦时身体锚点不跳动");
   for (const width of [1440, 768, 390, 320]) {
     for (const theme of ["light", "dark"]) {
       await page.setViewportSize({ width, height: width < 500 ? 844 : 1000 });
@@ -123,15 +127,37 @@ try {
     document.body.append(board);
   });
   await page.locator("#motion-review").screenshot({ path: OUT + "/edge-poses.png" });
-  const animationKinds = await page.locator("#motion-review .lele-perch-anchor").evaluateAll(ns => ns.slice(0, 3).map(n => {
-    n.classList.replace("phase-rest", "phase-enter"); const actor = n.querySelector(".lele-edge-actor"); const name = getComputedStyle(actor).animationName;
-    const animation = actor.getAnimations()[0]; if (animation) { animation.pause(); animation.currentTime = Number(animation.effect.getTiming().duration) * .6; }
-    return name;
+  const entries = await page.locator("#motion-review .lele-perch-anchor").evaluateAll(ns => ns.slice(0, 3).map(n => {
+    const actor = n.querySelector(".lele-edge-actor"), rest = actor.getBoundingClientRect(), anchor = n.getBoundingClientRect();
+    n.classList.replace("phase-rest", "phase-enter");
+    const name = getComputedStyle(actor).animationName, animation = actor.getAnimations().find(a => a.animationName === name);
+    if (!animation) return { name, valid: false };
+    animation.pause();
+    const duration = Number(animation.effect.getTiming().duration), samples = [];
+    for (let i = 0; i <= 100; i++) { animation.currentTime = duration * i / 100; const r = actor.getBoundingClientRect(); samples.push({ x: r.x, y: r.y }); }
+    const first = samples[0], last = samples.at(-1), after = n.getBoundingClientRect();
+    const maxStep = Math.max(...samples.slice(1).map((p, i) => Math.hypot(p.x - samples[i].x, p.y - samples[i].y)));
+    const valid = duration > 0 && first.y > rest.y + 40 && Math.abs(last.x - rest.x) < .5 && Math.abs(last.y - rest.y) < .5 && Math.abs(after.x - anchor.x) < .5 && Math.abs(after.y - anchor.y) < .5 && maxStep < 8;
+    animation.currentTime = duration * .6;
+    return { name, valid };
   }));
-  check(new Set(animationKinds).size === 3, "探头、招呼、入睡具有各自的出场轨迹");
+  check(entries.every(e => e.valid), "探头、招呼、入睡均连续入场，最终回到各自静止姿态且锚点不跳动");
   await page.locator("#motion-review").screenshot({ path: OUT + "/entry-frames.png" });
-  const exitKinds = await page.locator("#motion-review .lele-perch-anchor").evaluateAll(ns => ns.slice(0, 3).map(n => { n.classList.replace("phase-enter", "phase-exit"); return getComputedStyle(n.querySelector(".lele-edge-actor")).animationName; }));
-  check(new Set(exitKinds).size === 3, "探头、招呼、入睡具有各自的离场轨迹");
+  const exits = await page.locator("#motion-review .lele-perch-anchor").evaluateAll(ns => ns.slice(0, 3).map(n => {
+    const actor = n.querySelector(".lele-edge-actor"), anchor = n.getBoundingClientRect();
+    n.classList.replace("phase-enter", "phase-exit");
+    const name = getComputedStyle(actor).animationName, animation = actor.getAnimations().find(a => a.animationName === name);
+    if (!animation) return { name, valid: false };
+    animation.pause();
+    const duration = Number(animation.effect.getTiming().duration), samples = [];
+    for (let i = 0; i <= 100; i++) { animation.currentTime = duration * i / 100; const r = actor.getBoundingClientRect(); samples.push({ x: r.x, y: r.y }); }
+    const first = samples[0], last = samples.at(-1), after = n.getBoundingClientRect(), viewport = n.querySelector(".lele-edge-viewport").getBoundingClientRect();
+    const maxStep = Math.max(...samples.slice(1).map((p, i) => Math.hypot(p.x - samples[i].x, p.y - samples[i].y)));
+    const valid = duration > 0 && last.y > first.y + 40 && last.y >= viewport.bottom - 1 && Math.abs(after.x - anchor.x) < .5 && Math.abs(after.y - anchor.y) < .5 && maxStep < 8;
+    n.classList.replace("phase-exit", "phase-hidden");
+    return { name, valid: valid && getComputedStyle(actor).visibility === "hidden" };
+  }));
+  check(exits.every(e => e.valid), "探头、招呼、入睡均连续离场，最终完整收回边线后隐藏");
   await page.locator("#motion-review").evaluate(n => n.remove());
   check(errors.length === 0, "全过程没有页面运行异常");
   console.log(`询问气泡专项 ${checks} 项通过`);

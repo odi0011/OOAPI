@@ -32,15 +32,33 @@ try {
   await page.locator(".pose-proud").waitFor({state:"attached"});
   check(true,"复制反馈使用独立动作");
   await page.waitForTimeout(3400);
-  // 指针真正进入猫的可见区域；固定随机分支只用于测试逃跑的可达性。
-  await page.evaluate(()=>{window.__originalRandom=Math.random;Math.random=()=>.1;});
+  // Hover 只叠加微表情；身体和热区锚点必须连续，不能触发随机换姿/逃跑。
+  const beforeHover=await page.locator(".lele-perch-anchor").evaluate(n=>{const r=n.getBoundingClientRect();return {pose:n.dataset.pose,x:r.x,y:r.y};});
   await page.locator(".lele-edge-actor").hover({position:{x:29,y:20},force:true});
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(220);
+  const duringHover=await page.locator(".lele-perch-anchor").evaluate(n=>{const r=n.getBoundingClientRect();return {pose:n.dataset.pose,hovered:n.dataset.hovered,x:r.x,y:r.y};});
+  check(duringHover.hovered==="true" && duringHover.pose===beforeHover.pose && Math.abs(duringHover.x-beforeHover.x)<.5 && Math.abs(duringHover.y-beforeHover.y)<.5,"悬停确认后叠加微表情，姿势和锚点保持不变");
   await page.mouse.move(1,1);
-  check(await page.locator(".pose-shy").count()===1,"悬停能触发害羞/跑开");
-  await page.evaluate(()=>{Math.random=window.__originalRandom;});
+  await page.waitForTimeout(320);
+  check(await page.locator(".lele-perch-anchor").getAttribute("data-hovered")==="false","移出热区后平滑解除悬停状态");
+  const beforeMenu=await page.locator(".lele-perch-anchor").evaluate(n=>{const a=n.getBoundingClientRect(),v=n.querySelector(".lele-edge-viewport").getBoundingClientRect();return {x:a.x,y:a.y,cat:{left:v.left,right:v.right,top:v.top,bottom:v.bottom}};});
   await page.getByRole("button",{name:"选择模型",exact:true}).click();
-  await page.locator(".lele-perch-anchor.at-menu").waitFor({state:"attached"});await page.waitForTimeout(1400);
+  await page.locator("[data-promptbar-menu]").waitFor();
+  const menuBounds=await page.locator("[data-promptbar-menu]").evaluate(n=>{const p=n.offsetParent.getBoundingClientRect();return {left:p.left+n.offsetLeft,right:p.left+n.offsetLeft+n.offsetWidth,top:p.top+n.offsetTop,bottom:p.top+n.offsetTop+n.offsetHeight};});
+  const occluded=menuBounds.left<beforeMenu.cat.right && menuBounds.right>beforeMenu.cat.left && menuBounds.top<beforeMenu.cat.bottom && menuBounds.bottom>beforeMenu.cat.top;
+  await page.waitForTimeout(1400);
+  if(occluded) {
+    check(await page.locator(".lele-perch-anchor.at-menu").count()===1,"菜单真实遮挡身体时才跳上菜单");
+  } else {
+    const still=await page.locator(".lele-perch-anchor").boundingBox();
+    check(await page.locator(".lele-perch-anchor.at-menu").count()===0 && Math.abs(still.x-beforeMenu.x)<.5 && Math.abs(still.y-beforeMenu.y)<.5,"菜单没有遮挡身体时保留原位");
+    await page.keyboard.press("Escape");await page.locator("[data-promptbar-menu]").waitFor({state:"detached"});
+    // 仅在测试浏览器把现有锚点放入已测菜单范围，制造明确遮挡来覆盖跳跃路径。
+    await page.locator(".lele-perch-anchor").evaluate((n,m)=>{const p=n.parentElement.getBoundingClientRect(),x=(m.left+m.right)/2;n.style.left=`${x-p.left-29}px`;},menuBounds);
+    await page.getByRole("button",{name:"选择模型",exact:true}).click();
+    await page.locator(".lele-perch-anchor.at-menu").waitFor({state:"attached"});await page.waitForTimeout(1400);
+    check(true,"受控遮挡位置触发菜单跳跃，不依赖悬停逃跑");
+  }
   const menuGeometry=await page.evaluate(()=>{const a=document.querySelector(".lele-edge-viewport").getBoundingClientRect(),m=document.querySelector(".bui-upmenu.is-model").getBoundingClientRect();return {bottom:a.bottom,top:m.top,x:a.x,right:a.right};});
   check(Math.abs(menuGeometry.bottom-menuGeometry.top)<1,"遮挡后乐乐依附实际菜单上沿");
   await page.screenshot({path:OUT+"/menu-perch.png",fullPage:true});
