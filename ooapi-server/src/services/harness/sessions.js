@@ -11,7 +11,7 @@ import { normalizeHarnessBudget } from "./runtime.js";
 
 export const MAX_STEPS_LIMIT = 256;
 export const DEFAULT_MAX_STEPS = 96;
-export const TOOL_IDS = ["account", "binance", "search", "fetch", "github", "task", "todowrite", "local", ...PLATFORM_TOOL_IDS];
+export const TOOL_IDS = ["account", "binance", "search", "fetch", "github", "task", "todowrite", ...PLATFORM_TOOL_IDS];
 
 // 会话 id：短、可读、无歧义字符（前端会拼进 URL/命令面板）
 const ID_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz";
@@ -38,7 +38,8 @@ export function sanitizeSettings(raw = {}, { previous = {} } = {}) {
     tools: Array.isArray(tools) ? tools.filter((t) => TOOL_IDS.includes(t)) : null,
     permissionMode: ["auto", "ask"].includes(pick("permissionMode", base.permissionMode)) ? pick("permissionMode", base.permissionMode) : "auto",
     maxSteps: clamp(Math.floor(Number(pick("maxSteps", base.maxSteps ?? DEFAULT_MAX_STEPS))) || DEFAULT_MAX_STEPS, 1, MAX_STEPS_LIMIT),
-    budget: normalizeHarnessBudget(pick("budget", base.budget) || {}),
+    // 执行保护由服务端统一管理，不再沿用已下线表单保存的极低任务预算。
+    budget: normalizeHarnessBudget(),
     instructions: String(pick("instructions", base.instructions ?? "")).slice(0, 4000),
     channelType: String(pick("channelType", base.channelType ?? "")).trim().toLowerCase().slice(0, 32),
   };
@@ -358,13 +359,12 @@ export async function deleteSession(userId, id) {
   return Boolean(ret.affectedRows);
 }
 
-// 没有外键级联，删除本人会话成功后显式释放其云端编排与工作区关联。
-// 本机工作区、文件与执行 journal 属于设备，删除聊天不会触碰它们。
+// 没有外键级联，删除本人会话成功后显式释放其云端任务和运行记录。
 async function cleanupSessionRuntime(userId, sessionIds) {
   const ids = [...new Set(sessionIds.map(String))];
   if (!ids.length) return;
   const placeholders = ids.map(() => "?").join(",");
-  for (const table of ["chat_agent_tasks", "chat_agent_runs", "local_session_workspaces"]) {
+  for (const table of ["chat_agent_tasks", "chat_agent_runs"]) {
     await pool.query(`DELETE FROM ${table} WHERE user_id = ? AND session_id IN (${placeholders})`, [userId, ...ids]);
   }
 }

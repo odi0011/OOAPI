@@ -16,7 +16,18 @@ export function harnessInterruption(signal) {
   if (reason?.kind === "pause" || reason?.code === "HARNESS_PAUSED") return Object.assign(new Error("任务已暂停，可从已保存的位置继续"), { code: "HARNESS_PAUSED" });
   return Object.assign(new Error("已停止"), { code: "ABORTED" });
 }
-const exceeded = reason => Object.assign(new Error(`任务预算已用完（${reason}），已保存当前进度`), { code: "HARNESS_BUDGET", reason });
+const exceeded = reason => Object.assign(new Error(`本次执行达到安全上限（${reason}），已保存当前进度，可以继续任务`), { code: "HARNESS_BUDGET", reason });
+
+// 用户显式继续达到上限的任务时重新开启执行窗口；原检查点、调用与结算账本保留。
+export function resumeSafetyWindow(state, budget, errorCode = "") {
+  if (!state?.budget) return state;
+  const limits = normalizeHarnessBudget(budget), usage = state.budget;
+  const exhausted = errorCode === "HARNESS_BUDGET" || Number(usage.elapsedMs) >= limits.maxWallTimeMs
+    || Number(usage.modelCalls) >= limits.maxModelCalls || Number(usage.tokens) >= limits.maxTokens
+    || Boolean(limits.maxOd && Number(usage.od) >= limits.maxOd);
+  if (!exhausted) return state;
+  return { ...state, budget: { ...usage, windowId: crypto.randomUUID(), elapsedMs: 0, modelCalls: 0, tokens: 0, od: 0 } };
+}
 
 // 预算与额度结算分开：只计实际调用的已知消耗，价格必须由调用方复用 pricing.js 提供。
 // 父子代理和检索共用同一实例；请求发起前预留 token，防并发子任务同时透支。
@@ -30,12 +41,13 @@ export function createHarnessRuntime({ budget = {}, state = {}, signal, costOfCa
     od: Math.max(0, Number(state.od) || 0),
   };
   const started = Date.now(), reservations = new Map();
+  const windowId = typeof state.windowId === "string" ? state.windowId : crypto.randomUUID();
   let sensitive = Boolean(state.sensitive), closed = false, persistenceTail = Promise.resolve(), budgetFailure;
   const aborted = () => controller.abort(signal.reason);
   if (signal?.aborted) aborted(); else signal?.addEventListener("abort", aborted, { once: true });
   const timer = setTimeout(() => controller.abort(exceeded("运行时间")), Math.max(1, limits.maxWallTimeMs - usage.elapsedMs));
   timer.unref?.();
-  const snapshot = () => ({ ...usage, elapsedMs: usage.elapsedMs + Date.now() - started, sensitive, limits });
+  const snapshot = () => ({ ...usage, windowId, elapsedMs: usage.elapsedMs + Date.now() - started, sensitive, limits });
   const check = () => {
     if (budgetFailure) throw budgetFailure;
     if (controller.signal.aborted) throw harnessInterruption(controller.signal);

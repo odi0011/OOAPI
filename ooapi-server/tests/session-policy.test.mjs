@@ -20,7 +20,7 @@ const PLATFORM_TOOL_IDS=["models","pricing"];const getOption=()=>null;const setO
 const { agentPolicy, resolveSessionPolicySettings } = await import(`data:text/javascript;base64,${Buffer.from(policyPrelude + policySource).toString("base64")}`);
 const { sanitizeSettings, sessionToResponse, DEFAULT_MAX_STEPS, MAX_STEPS_LIMIT } = sessions;
 
-test("新会话默认96步，明确设置的旧12步和当前预算保留", () => {
+test("新会话默认96步，明确设置的旧12步保留，执行保护由服务端管理", () => {
   assert.equal(DEFAULT_MAX_STEPS, 96);
   assert.equal(sanitizeSettings().maxSteps, 96);
   assert.equal(sanitizeSettings({}, { previous: { maxSteps: 12 } }).maxSteps, 12);
@@ -29,14 +29,14 @@ test("新会话默认96步，明确设置的旧12步和当前预算保留", () =
   assert.equal(sanitizeSettings({ maxSteps: 999 }).maxSteps, MAX_STEPS_LIMIT);
 });
 
-test("用户步数与管理员上限取较小值，不覆盖用户预算和审批设定", () => {
+test("用户步数与管理员上限取较小值，审批设定保留，旧用户预算不再生效", () => {
   const policy = agentPolicy();
   const requested = sanitizeSettings({ maxSteps: 1, permissionMode: "ask", instructions: "保持简短", budget: { maxModelCalls: 3 } });
   const effective = resolveSessionPolicySettings(requested, policy);
   assert.equal(effective.maxSteps, 1);
   assert.equal(effective.permissionMode, "ask");
   assert.equal(effective.instructions, "保持简短");
-  assert.equal(effective.budget.maxModelCalls, 3);
+  assert.equal(effective.budget.maxModelCalls, 64, "已移除的任务预算不能继续限制普通对话");
   assert.equal(resolveSessionPolicySettings(sanitizeSettings({ maxSteps: 256 }), policy).maxSteps, 96);
   assert.equal(resolveSessionPolicySettings(sanitizeSettings({ maxSteps: 256 }), { ...policy, maxSteps: 7 }).maxSteps, 7);
   assert.equal(resolveSessionPolicySettings(sanitizeSettings({}, { previous: { maxSteps: 12 } }), policy).maxSteps, 12);

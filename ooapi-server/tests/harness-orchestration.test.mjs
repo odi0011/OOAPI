@@ -2,16 +2,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import crypto from "node:crypto";
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import * as runtime from "../src/services/harness/runtime.js";
 import * as context from "../src/services/harness/context.js";
 import * as wire from "../src/services/tool-wire.js";
 import { splitTokens } from "../src/services/pricing.js";
 import { callFingerprint } from "../src/services/harness/tool-call-guards.js";
 import { createTaskRuntime } from "../src/services/harness/task-runtime.js";
-import { createExecutor } from "../../ooapi-companion/runner.mjs";
 
 const fixture = { crypto, runtime, context, wire, splitTokens, callFingerprint, complete: null, tool: null };
 globalThis.__ooOrchestrationFixture = fixture;
@@ -45,6 +41,20 @@ const options = extra => ({ session: { id: "fixture-root" }, model: "fixture", a
   settings: { tools: ["pricing", "account", "task", "todowrite", "local"] }, userText: "执行任务", authorizeTool: async () => true, ...extra });
 let count = 0;
 async function test(name, fn) { await fn(); count++; console.log(`  ok  ${name}`); }
+
+await test("显式继续安全上限任务重新计数，保留原检查点与账单；普通暂停沿用原窗口", async () => {
+  const checkpoint = { messages: [{ role: "assistant", content: "已保存的进度" }], completedWrites: [["write-id", { ok: true }]], budget: { modelCalls: 2, tokens: 27, elapsedMs: 12, od: .04 } };
+  const previous = structuredClone(checkpoint), bills = [{ usage: { prompt_tokens: 17, completion_tokens: 10 } }];
+  const renewed = runtime.resumeSafetyWindow(checkpoint, { maxModelCalls: 2 }, "HARNESS_BUDGET");
+  assert.notEqual(renewed, checkpoint); assert.deepEqual(renewed.messages, checkpoint.messages);
+  assert.deepEqual(renewed.completedWrites, checkpoint.completedWrites); assert.deepEqual(checkpoint, previous);
+  assert.equal(renewed.budget.modelCalls, 0); assert.equal(renewed.budget.tokens, 0); assert.equal(renewed.budget.od, 0);
+  const active = runtime.createHarnessRuntime({ budget: { maxModelCalls: 2 }, state: renewed.budget });
+  try { const permit = await active.beforeModel({ promptTokens: 17 }); await active.settleModel(permit, bills[0]); assert.equal(active.snapshot().modelCalls, 1); assert.equal(active.snapshot().tokens, 27); }
+  finally { active.dispose(); }
+  assert.equal(runtime.resumeSafetyWindow(checkpoint, { maxModelCalls: 3 }, "HARNESS_PAUSED"), checkpoint);
+  assert.deepEqual(bills, [{ usage: { prompt_tokens: 17, completion_tokens: 10 } }]);
+});
 
 await test("改价后相同读取必须重新执行，失败查询允许恢复，重复写不重发", async () => {
   let value = 1, reads = 0, writes = 0, step = 0;
@@ -187,13 +197,16 @@ await test("本地设备明确未派发的写入恢复可以首次执行，不�
   await runHarness(options({ resumeState: state })); assert.equal(writes, 2);
 });
 
-await test("提高预算后从已暂停检查点继续，满预算的最终结果仍能无调用恢复", async () => {
-  let step = 0, state;
-  fixture.complete = async () => step++ === 0 ? { content: "", toolCalls: [call("budget-read", "account", { action: "overview" })] } : answer("预算扩大后完成");
-  fixture.tool = async () => ({ ok: true, output: "id=55" });
+await test("同一安全上限下继续原检查点，原工具不重跑，满限额最终结果无调用恢复", async () => {
+  let step = 0, state, reads = 0;
+  fixture.complete = async () => step++ === 0 ? { content: "", toolCalls: [call("budget-read", "account", { action: "overview" })] } : answer("继续原进度完成");
+  fixture.tool = async () => (reads++, { ok: true, output: "id=55" });
   await assert.rejects(runHarness(options({ settings: { tools: ["account"], budget: { maxModelCalls: 1 } }, onCheckpoint: async s => { state = structuredClone(s); } })), { code: "HARNESS_BUDGET" });
-  const resumed = await runHarness(options({ resumeState: state, settings: { tools: ["account"], budget: { maxModelCalls: 2 } } }));
-  assert.equal(resumed.text, "预算扩大后完成"); assert.equal(resumed.budget.modelCalls, 2);
+  const prior = structuredClone(state);
+  const resumed = await runHarness(options({ resumeState: runtime.resumeSafetyWindow(state, { maxModelCalls: 1 }, "HARNESS_BUDGET"), settings: { tools: ["account"], budget: { maxModelCalls: 1 } } }));
+  assert.equal(resumed.text, "继续原进度完成"); assert.equal(resumed.budget.modelCalls, 1);
+  assert.equal(reads, 1); assert.equal(step, 2); assert.equal(resumed.calls.length, 1);
+  assert.deepEqual(state, prior); assert.ok(resumed.checkpoint.messages.some(message => message.role === "tool" && message.content === "id=55"));
   const exhausted = { ...resumed.checkpoint, budget: { ...resumed.budget, elapsedMs: 2000, tokens: 256 } };
   fixture.complete = async () => { throw new Error("最终结果恢复不能消费额外预算"); };
   const recovered = await runHarness(options({ recoverFinal: true, resumeState: exhausted, settings: { budget: { maxModelCalls: 1, maxTokens: 256, maxWallTimeMs: 1000 } } }));
@@ -264,61 +277,6 @@ await test("短原生调用编号映射稳定设备执行编号，恢复从本�
   };
   await runHarness(options({ resumeState: state, localResults: { get: async id => { assert.equal(id, executionId); return { found: true, ok: true, output: resultText }; } } }));
   assert.equal(writes, 1);
-});
-
-await test("上游跨步及续段复用编号时实际本机 journal 不碰撞，暂停恢复仍复用原写入编号", async () => {
-  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "ooapi-call-id-fixture-"));
-  const workspaceId = crypto.randomUUID(), executionIds = [];
-  let reads = 0, writes = 0, executions = 0, step = 0, state;
-  const executor = await createExecutor({ stateDirectory: path.join(temporary, "private"), workspaceId,
-    root: path.join(temporary, "workspace"), allowWrite: true, allowExec: true,
-    workspaceFactory: async root => ({ root, capabilities: { read: true, write: true, exec: true, docker: true },
-      execute: async action => action === "read" ? (reads++, { content: "synthetic source", sha256: "a".repeat(64) })
-        : action === "write" ? (writes++, { verified: true, changed: true })
-          : (executions++, { exitCode: 0, output: "synthetic command result" }) }) });
-  try {
-    const ctrl = new AbortController();
-    fixture.complete = async () => ({ content: "", toolCalls: [++step === 1
-      ? call("0", "local", { action: "read", path: "synthetic.txt" })
-      : call("0", "local", { action: "write", path: "synthetic.txt", content: "updated", expectedSha256: "a".repeat(64) })] });
-    fixture.tool = async (_, args, ctx) => {
-      executionIds.push(ctx.callId);
-      const result = await executor.execute({ callId: ctx.callId, workspaceId, action: args.action, args });
-      assert.equal(result.ok, true, result.output);
-      if (args.action === "write") { ctrl.abort({ kind: "pause" }); throw Object.assign(new Error("synthetic response lost"), { code: "ABORTED" }); }
-      return result;
-    };
-    await assert.rejects(runHarness(options({ signal: ctrl.signal, localSensitive: true,
-      onCheckpoint: async s => { state = structuredClone(s); } })), { code: "HARNESS_PAUSED" });
-    assert.equal(state.pendingCalls[0].status, "unknown");
-    assert.equal(state.pendingCalls[0].executionId, executionIds[1]);
-    assert.notEqual(executionIds[0], executionIds[1]);
-    fixture.complete = async o => {
-      assert.ok(o.messages.some(m => m.role === "tool" && m.tool_call_id === "0" && m.content.includes('"verified":true')));
-      return answer("写入日志已核实");
-    };
-    const restored = await runHarness(options({ resumeState: state, localSensitive: true, localResults: {
-      get: async callId => {
-        assert.equal(callId, executionIds[1]);
-        const result = await executor.execute({ callId: `lookup_${crypto.randomBytes(16).toString("hex")}`, workspaceId,
-          action: "result_get", args: { callId } });
-        return JSON.parse(result.output);
-      },
-    } }));
-    assert.equal(reads, 1); assert.equal(writes, 1);
-    step = 0;
-    fixture.complete = async () => ++step === 1 ? { content: "", toolCalls: [call("0", "local", { action: "exec", command: "synthetic fixture command" })] } : answer("续段已核实");
-    fixture.tool = async (_, args, ctx) => {
-      executionIds.push(ctx.callId);
-      const result = await executor.execute({ callId: ctx.callId, workspaceId, action: args.action, args });
-      assert.equal(result.ok, true, result.output); return result;
-    };
-    const continued = await runHarness(options({ resumeState: restored.checkpoint, userText: "继续执行新的本机任务", localSensitive: true }));
-    assert.equal(continued.checkpoint.turnId, restored.checkpoint.turnId);
-    assert.equal(continued.text, "续段已核实");
-    assert.equal(executions, 1); assert.equal(new Set(executionIds).size, 3);
-    assert.equal(reads, 1); assert.equal(writes, 1);
-  } finally { executor.stop(); await fs.rm(temporary, { recursive: true, force: true }); }
 });
 
 await test("本地命令非零退出保留已执行结果不重跑；明确未执行时允许重新批准", async () => {

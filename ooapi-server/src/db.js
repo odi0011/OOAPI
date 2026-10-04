@@ -232,7 +232,7 @@ const TABLES = [
     INDEX idx_chat_sessions_user (user_id, updated_time)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
-  // 长任务只持久化可恢复的编排状态；本地工作区内容由本机运行器保存。
+  // 长任务持久化可恢复的编排状态；本机运行器已移除，旧私有任务只能停止。
   `CREATE TABLE IF NOT EXISTS chat_agent_runs (
     id VARCHAR(64) NOT NULL PRIMARY KEY,
     session_id VARCHAR(32) NOT NULL,
@@ -265,31 +265,6 @@ const TABLES = [
     updated_at BIGINT NOT NULL DEFAULT 0,
     INDEX idx_agent_tasks_run (user_id, session_id, run_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-  `CREATE TABLE IF NOT EXISTS local_devices (
-    id VARCHAR(64) NOT NULL PRIMARY KEY,
-    user_id INT NOT NULL,
-    token_hash CHAR(64) NOT NULL,
-    status TINYINT NOT NULL DEFAULT 1,
-    created_at BIGINT NOT NULL DEFAULT 0,
-    last_seen_at BIGINT NOT NULL DEFAULT 0,
-    UNIQUE KEY uniq_local_device_token (token_hash),
-    INDEX idx_local_devices_user (user_id)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-  `CREATE TABLE IF NOT EXISTS local_workspaces (
-    id VARCHAR(64) NOT NULL PRIMARY KEY,
-    device_id VARCHAR(64) NOT NULL,
-    user_id INT NOT NULL,
-    created_at BIGINT NOT NULL DEFAULT 0,
-    INDEX idx_local_workspace_user (user_id, device_id)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-  `CREATE TABLE IF NOT EXISTS local_session_workspaces (
-    session_id VARCHAR(64) NOT NULL PRIMARY KEY,
-    user_id INT NOT NULL,
-    workspace_id VARCHAR(64) NOT NULL,
-    created_at BIGINT NOT NULL DEFAULT 0,
-    INDEX idx_local_bindings_user (user_id, workspace_id)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-
   // 对话项目（ChatGPT 式的「项目」概念）：把会话归档到一个项目下便于分类。
   // 项目只是组织手段，不影响计费与路由；一个会话最多属于一个项目（可随时移出）。
   `CREATE TABLE IF NOT EXISTS chat_projects (
@@ -675,7 +650,6 @@ const COLUMN_MIGRATIONS = [
   { table: "chat_agent_runs", column: "lease_owner", ddl: "VARCHAR(64) NOT NULL DEFAULT ''" },
   { table: "chat_agent_runs", column: "lease_until", ddl: "BIGINT NOT NULL DEFAULT 0" },
   { table: "chat_agent_tasks", column: "checkpoint", ddl: "MEDIUMTEXT" },
-  { table: "local_devices", column: "last_seen_at", ddl: "BIGINT NOT NULL DEFAULT 0" },
   { table: "users", column: "token_version", ddl: "INT NOT NULL DEFAULT 0" },
   // 社区/聊天（第 37 批）：评论扁平化的 @ 目标 + 消息的客户端临时 id（乐观队列）
   { table: "community_comments", column: "reply_to_user_id", ddl: "INT NOT NULL DEFAULT 0" },

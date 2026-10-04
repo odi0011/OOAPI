@@ -628,29 +628,39 @@ try {
     const price = await getPrice(model), unit = computeCost({ price, promptTokens: 1700, completionTokens: 300, cacheTokens: 500 });
     balance(3 * unit); assert.equal(state.agentRun.billing_segment, 2); assert.equal(state.agentRun.assistant_segment, 1);
   });
-  await test('模型预算暂停可提高预算继续，工作状态不能跨会话所有者读取', async () => {
+  await test('遗留极小客户端预算被忽略，两次模型调用只结算一单，工作状态仍隔离所有者', async () => {
     behavior = (_req, res) => {
-      const content = requests === 1 ? '<tool_call>{"tool":"todowrite","args":{"todos":[{"content":"已完成预算内读取","status":"completed"}]}}</tool_call>' : '预算增加后完成';
+      const content = requests === 1 ? '<tool_call>{"tool":"todowrite","args":{"todos":[{"content":"已完成这一步","status":"completed"}]}}</tool_call>' : '继续核实后完成';
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       res.end(frame({ choices: [{ delta: { content } }] }) + frame({ usage }) + 'data: [DONE]\n\n');
     };
-    const paused = await run({ settings: { budget: { maxModelCalls: 1 } } });
-    assert.equal(paused.final?.type, 'paused'); assert.equal(paused.final?.code, 'HARNESS_BUDGET'); assert.equal(requests, 1);
-    assert.equal((await get(`/api/chat/sessions/${state.session.id}/work`)).run.budget.modelCalls, 1);
+    const completed = await run({ settings: { budget: { maxModelCalls: 1, maxTokens: 256, maxWallTimeMs: 1000, maxOd: .000001 } } });
+    assert.equal(completed.final?.type, 'done'); assert.equal(requests, 2);
+    const work = await get(`/api/chat/sessions/${state.session.id}/work`);
+    assert.equal(work.run.status, 'completed'); assert.equal(work.run.budget.modelCalls, 2);
+    assert.equal(work.run.budget.limits.maxModelCalls, 64);
+    assert.equal(work.run.budget.limits.maxTokens, 1000000);
+    assert.equal(work.run.budget.limits.maxWallTimeMs, 1800000);
+    assert.equal(work.run.budget.limits.maxOd, undefined);
     const owner = state.session.user_id; state.session.user_id = owner + 1;
     try { assert.equal((await api(`/api/chat/sessions/${state.session.id}/work`)).status, 404); }
     finally { state.session.user_id = owner; }
-    const completed = await run({ resume: true, text: '', settings: { budget: { maxModelCalls: 3 } } });
-    assert.equal(completed.final?.type, 'done'); assert.equal(requests, 2);
     assert.equal(state.messages.filter(m => m.role === 'user').length, 1);
-    assert.equal(state.logs.length, 2); assert.equal(state.agentRun.billing_segment, 2);
+    assert.equal(state.messages.filter(m => m.role === 'assistant').length, 1);
+    const row = oneLog('success'); assert.equal(JSON.parse(row.detail).billing_details.call_count, 2);
+    assert.equal(state.agentRun.billing_segment, 1); assert.equal(state.agentRun.assistant_segment, 0);
     const price = await getPrice(model), unit = computeCost({ price, promptTokens: 1700, completionTokens: 300, cacheTokens: 500 });
     balance(2 * unit);
   });
   await test('暂停的持久任务可以明确停止，停止后不得继续原任务', async () => {
-    const content = '<tool_call>{"tool":"todowrite","args":{"todos":[{"content":"已完成这一步","status":"completed"}]}}</tool_call>';
-    sse(frame({ choices: [{ delta: { content } }] }) + frame({ usage }) + 'data: [DONE]\n\n');
-    const paused = await run({ settings: { budget: { maxModelCalls: 1 } } });
+    behavior = (_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write(frame({ choices: [{ delta: { content: 'PAUSE_BEFORE_STOP' } }] }) + frame({ usage }));
+    };
+    const pending = run(); await until(() => requests === 1, 1000);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal((await api(`/api/chat/sessions/${state.session.id}/pause`, {})).status, 200);
+    const paused = await pending;
     assert.equal(paused.final?.type, 'paused');
     assert.equal(getRun(state.session.id)?.settled, true, '暂停流结束后后台运行必须已经结算保存');
     assert.equal((await api(`/api/chat/sessions/${state.session.id}/stop`, {})).status, 200);
@@ -661,7 +671,7 @@ try {
   });
   await test('最终检查点后父状态暂停，恢复回放同一助手和结算段，不重复模型或扣费', async () => {
     sse(frame({ choices: [{ delta: { content: '最终结果已经核实' } }] }) + frame({ usage }) + 'data: [DONE]\n\n');
-    const first = await run({ settings: { budget: { maxModelCalls: 1 } } });
+    const first = await run();
     const original = finalMessage(first, 'success'); assert.equal(first.final?.type, 'done');
     assert.equal(JSON.parse(state.agentRun.checkpoint).phase, 'done');
     const recordedBill = clone(JSON.parse(state.logs[0].detail).billing_details);

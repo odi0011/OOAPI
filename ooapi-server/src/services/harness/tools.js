@@ -1,6 +1,5 @@
 import { TOOL_PRESENTATIONS } from "./tool-presentation.js";
 import { platformToolSpecs, platformNativeSchema, runPlatformTool } from "./platform-tools.js";
-import { runLocalTool } from "./local-workspaces.js";
 import { PLATFORM_TOOL_IDS } from "./platform-catalog.js";
 // Harness 工具集
 // ---------------------------------------------------------------------------
@@ -530,17 +529,6 @@ export const TOOLS = {
       }
     },
   },
-  local: {
-    id: "local", name: "本地工作区", sensitive: true,
-    desc: "在用户已连接的本机工作区列目录、读文件、搜索、修改和沙盒执行。文件和命令均在本机。先读取sha256再改文件，写入/命令需本次确认；不能把远端平台角色当成本机授权。无连接时说明需要连接工作区，不能改到服务器执行。",
-    args: '{"action":"list|read|search|write|patch|exec","path":"工作区相对路径","query":"搜索文字","content":"完整文件内容","expectedSha256":"读取返回的校验值；新增文件为null","patches":[{"find":"唯一匹配原文","replace":"替换内容"}],"cwd":"命令的相对工作目录","command":"沙盒命令"}',
-    async run(args, ctx) {
-      if (["write", "patch", "exec"].includes(args.action) && !ctx.localApproved) return { ok: false, output: "本地修改或命令尚未获得本次授权。" };
-      const result = await runLocalTool(args.action, args, { userId: ctx.user?.id, sessionId: ctx.workspaceSessionId || ctx.sessionId, signal: ctx.signal,
-        callId: ctx.callId, expectedWorkspaceId: ctx.expectedWorkspaceId, onState: ctx.onLocalState, approved: Boolean(ctx.localApproved) });
-      return { ...result, outcome: result.meta?.outcome || (result.ok ? "executed" : "not_executed"), sensitive: true, localRef: { callId: ctx.callId, ...result.meta?.localRef } };
-    },
-  },
 };
 
 export function toolSpecs(ids = [], user = null) {
@@ -558,7 +546,6 @@ export function nativeToolSpecs(ids = [], user = null) {
     fetch: { properties: { url: str("公开网页 URL") }, required: ["url"] },
     github: { properties: { action: { type: "string", enum: ["list", "file", "search"] }, repo: str("owner/name"), path: str("文件或目录路径"), ref: str("分支、标签或 commit"), query: str("检索关键词") }, required: ["action", "repo"] },
     task: { properties: { action: { type: "string", enum: ["run", "start", "status", "wait", "message", "cancel"] }, agent: str("子代理 id"), prompt: str("自包含的任务说明"), label: str("任务标题"), id: str("子任务编号"), ids: { type: "array", items: { type: "string" } }, dependencies: { type: "array", items: { type: "string" } }, message: str("后续指令"), timeoutMs: { type: "integer", minimum: 0, maximum: 60000 } }, required: [] },
-    local: { properties: { action: { type: "string", enum: ["list", "read", "search", "write", "patch", "exec"] }, path: str("工作区相对路径"), cwd: str("命令的工作区相对目录"), query: str("搜索内容"), content: str("写入内容"), expectedSha256: { type: ["string", "null"] }, command: str("隔离容器内执行的命令"), timeoutMs: { type: "integer", minimum: 100, maximum: 1800000 }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 2000 }, find: str("兼容单处替换的原文"), replace: str("兼容单处替换的新内容"), patches: { type: "array", minItems: 1, maxItems: 50, items: { type: "object", properties: { find: str("精确待替换文本"), replace: str("替换后文本") }, required: ["find", "replace"], additionalProperties: false } } }, required: ["action"] },
     todowrite: { properties: { todos: { type: "array", items: { type: "object", properties: { content: str("步骤描述"), status: { type: "string", enum: ["pending", "in_progress", "completed"] } }, required: ["content", "status"], additionalProperties: false } } }, required: ["todos"] },
   };
   return toolSpecs(ids, user).map((t) => ({ name: t.id, description: t.desc, parameters: PLATFORM_TOOL_IDS.includes(t.id) ? platformNativeSchema(t.id, user ? Number(user.role) : 1000) : { type: "object", ...schemas[t.id], additionalProperties: false } }));

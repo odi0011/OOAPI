@@ -1,7 +1,6 @@
 import AgentTrajectory from "../components/AgentTrajectory";
 import ConversationRail from "../components/ConversationRail";
 import ChatScene from "../components/ChatScene";
-import AgentWorkPanel from "../components/AgentWorkPanel";
 import OdAmount from "../components/OdAmount";
 // 对话页（原「对话工作台」）
 // ---------------------------------------------------------------------------
@@ -17,7 +16,7 @@ import { userDataVisibility } from "../services/visibility";
 import { hasReasoningText } from "../services/reasoning-display";
 import { chatErrorDetails, chatErrorPart } from "../services/chat-error-display";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { App as AntApp, Alert, Button, Checkbox, Drawer, Dropdown, Form, Input, InputNumber, Modal, Popconfirm, Tooltip, Radio } from "antd";
+import { App as AntApp, Alert, Button, Checkbox, Drawer, Dropdown, Form, Input, Modal, Popconfirm, Tooltip, Radio } from "antd";
 import {
   CopyOutlined,
   SelectOutlined,
@@ -34,6 +33,8 @@ import {
   SearchOutlined,
   EllipsisOutlined,
   ClockCircleOutlined,
+  FolderOutlined,
+  RightOutlined,
 } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { API, getToken } from "../services/api";
@@ -100,12 +101,12 @@ const mergeRecovery = (userId, sessionId, messages) => {
  * ------------------------------------------------------------------------- */
 const CONTROL_NOTICES = {
   "HARNESS_PAUSED": "任务已暂停，进度已保存。",
-  "HARNESS_BUDGET": "已达到任务预算，进度已保存。可以调整预算后继续。",
-  "HARNESS_BUDGET_CONFIGURATION": "暂时无法核实任务预算，已暂停。请核对预算后继续。",
-  "LOCAL_CONTEXT_MISSING": "原工作区连接已变化，请重新连接原工作区后继续。",
-  "WAITING_LOCAL": "本地连接暂时不可用，已保存的进度会保留。",
-  "LOCAL_CHECKPOINT_UNAVAILABLE": "本机任务进度暂时不可用，请连接原工作区后继续。",
-  "LOCAL_OUTCOME_UNKNOWN": "本地操作结果尚未确认。请先连接本机核对结果，再继续任务。",
+  "HARNESS_BUDGET": "任务已暂停，进度已保存，可以继续执行。",
+  "HARNESS_BUDGET_CONFIGURATION": "任务暂时无法继续，进度已保存，请稍后重试。",
+  "LOCAL_CONTEXT_MISSING": "旧本机功能已移除，记录已保留，请在原设备核实文件操作。",
+  "WAITING_LOCAL": "旧本机功能已移除，记录已保留，请在原设备核实文件操作。",
+  "LOCAL_CHECKPOINT_UNAVAILABLE": "旧本机功能已移除，记录已保留，请在原设备核实文件操作。",
+  "LOCAL_OUTCOME_UNKNOWN": "旧本机功能已移除，记录已保留，请在原设备核实文件操作。",
 };
 const Message = React.memo(function Message({ msg, index, busy, onRetry, onCopy, streaming, visibility, onApprove, resumable }) {
   if (msg.role === "user") {
@@ -173,7 +174,7 @@ const Message = React.memo(function Message({ msg, index, busy, onRetry, onCopy,
         const detail = chatErrorDetails(part);
         const control = CONTROL_NOTICES[part.code];
         if (control) return <div key={part.id || `error-${i}`} className="ui-msg-error prose agent-work-control-notice" role="status" aria-label="任务已暂停">
-          <p className="ui-msg-error-reason">{control}</p><p className="ui-msg-error-note">通过上方或任务工作台的“继续任务”接着执行，已经完成的内容会保留。</p>
+          <p className="ui-msg-error-reason">{control}</p><p className="ui-msg-error-note">{["LOCAL_CONTEXT_MISSING", "WAITING_LOCAL", "LOCAL_CHECKPOINT_UNAVAILABLE", "LOCAL_OUTCOME_UNKNOWN"].includes(part.code) ? "停止旧任务后，可以继续普通对话。" : "通过上方的“继续任务”接着执行，已经完成的内容会保留。"}</p>
         </div>;
         return <div key={part.id || `error-${i}`} className="ui-msg-error prose" role="status" aria-label="调用失败详情">
           <p className="ui-msg-error-reason">{detail.message}</p>
@@ -326,6 +327,7 @@ function NameDialog({ dialog, saving, error, onClose, onSave }) {
       forceRender
     >
       {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} /> : null}
+      {dialog?.kind === "create-project" ? <p className="ui-chat2-project-description">项目用于整理相关对话，当前不会绑定或读取本机文件夹。</p> : null}
       <Form form={form} layout="vertical" requiredMark={false} onFinish={onSave} disabled={saving}>
         <Form.Item name="name" label={label} rules={[
           { required: true, whitespace: true, message: `请输入${label}` },
@@ -339,25 +341,21 @@ function NameDialog({ dialog, saving, error, onClose, onSave }) {
 }
 
 /* ============================ 会话指令 / 设定面板 ============================ */
-function SettingsSheet({ open, onClose, session, settings, onSettings, saving, quotaText, visibility, meta }) {
+function SettingsSheet({ open, onClose, session, settings, onSettings, saving, quotaText, visibility }) {
   const [form] = Form.useForm();
   const [error, setError] = useState("");
-  const maxStepsLimit = Math.max(1, Math.min(256, Number(meta?.defaults?.maxStepsLimit) || 256));
 
   useEffect(() => {
     if (open) {
       form.resetFields();
-      form.setFieldsValue({ title: session?.title || "", instructions: settings?.instructions || "", permissionMode: settings?.permissionMode || "auto",
-        maxSteps: Math.min(settings?.maxSteps || meta?.defaults?.maxSteps || 96, maxStepsLimit), maxMinutes: (settings?.budget?.maxWallTimeMs || 1800000) / 60000,
-        maxModelCalls: settings?.budget?.maxModelCalls || 64, maxTokens: settings?.budget?.maxTokens || 1000000, maxOd: settings?.budget?.maxOd ?? null });
+      form.setFieldsValue({ title: session?.title || "", instructions: settings?.instructions || "", permissionMode: settings?.permissionMode || "auto" });
       setError("");
     }
-  }, [open, session?.id, session?.title, settings?.instructions, settings?.permissionMode, settings?.maxSteps, settings?.budget, meta?.defaults?.maxSteps, maxStepsLimit, form]);
+  }, [open, session?.id, session?.title, settings?.instructions, settings?.permissionMode, form]);
 
-  const save = async ({ title, instructions = "", permissionMode, maxSteps, maxMinutes, maxModelCalls, maxTokens, maxOd }) => {
-    const budget = { ...(settings?.budget || {}), maxWallTimeMs: Math.round(maxMinutes * 60000), maxModelCalls, maxTokens };
-    if (maxOd > 0) budget.maxOd = maxOd; else delete budget.maxOd;
-    const patch = { settings: { ...settings, permissionMode, maxSteps, budget } };
+  const save = async ({ title, instructions = "", permissionMode }) => {
+    const { budget: _budget, maxSteps: _maxSteps, ...editableSettings } = settings || {};
+    const patch = { settings: { ...editableSettings, permissionMode } };
     if (title.trim() && title.trim() !== session?.title) patch.title = title.trim();
     if (instructions !== (settings?.instructions || "")) patch.instructions = instructions;
     setError("");
@@ -383,17 +381,6 @@ function SettingsSheet({ open, onClose, session, settings, onSettings, saving, q
           <Form.Item name="permissionMode" label="工具执行权限">
             <Radio.Group options={[{ label: "自动执行", value: "auto" }, { label: "执行前询问", value: "ask" }]}/>
           </Form.Item>
-          <details className="agent-work-advanced"><summary>任务预算</summary>
-            <p>达到预算后会保存进度并暂停。需要继续时，可以增加预算；费用仍按实际使用结算。</p>
-            <p>{`平台最多 ${maxStepsLimit} 步`}</p>
-            <div className="agent-work-budget-fields">
-              <Form.Item name="maxSteps" label="最多执行步数" rules={[{ required: true, type: "number", min: 1, max: maxStepsLimit }]}><InputNumber min={1} max={maxStepsLimit} precision={0}/></Form.Item>
-              <Form.Item name="maxMinutes" label="最长运行时间（分钟）" rules={[{ required: true, type: "number", min: 1 / 60, max: 240 }]}><InputNumber min={1 / 60} max={240} precision={2}/></Form.Item>
-              <Form.Item name="maxModelCalls" label="最多模型调用次数" rules={[{ required: true, type: "number", min: 1, max: 512 }]}><InputNumber min={1} max={512} precision={0}/></Form.Item>
-              <Form.Item name="maxTokens" label="最多 Token" rules={[{ required: true, type: "number", min: 256, max: 16000000 }]}><InputNumber min={256} max={16000000} precision={0}/></Form.Item>
-              <Form.Item name="maxOd" label="消耗上限（OD币）" rules={[{ type: "number", min: .000001, max: 10000 }]}><InputNumber min={.000001} max={10000} precision={6} placeholder="不额外限制"/></Form.Item>
-            </div>
-          </details>
         </Form>
 
 
@@ -449,8 +436,9 @@ export default function ChatPage() {
   const [sessions, setSessions] = useState([]);
   const [projects, setProjects] = useState([]);
   const [counts, setCounts] = useState({ active: 0, archived: 0, byProject: {} });
-  // 侧栏视图：active=进行中 / archived=已归档 / 某个项目 id
+  // 项目展开独立于会话视图，不能用项目筛选覆盖普通对话列表。
   const [view, setView] = useState("active");
+  const [expandedProjects, setExpandedProjects] = useState(() => new Set());
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
   const [session, setSession] = useState(null);
@@ -474,7 +462,6 @@ export default function ChatPage() {
   const [keyId, setKeyId] = useState(0);
   const [busy, setBusy] = useState(false);
   const [longRun, setLongRun] = useState(null);
-  const [workRevision, setWorkRevision] = useState(0);
   const longRunRef = useRef(longRun);
   longRunRef.current = longRun;
   const [away, setAway] = useState(false);
@@ -499,7 +486,6 @@ export default function ChatPage() {
   const sendRef = useRef(null);
   const attachRunningRef = useRef(null);
   const attachedRef = useRef(""); // 已经接上事件流的会话 id（防重复订阅导致内容重放叠加）
-  const workSessionPromiseRef = useRef(null);
   const busyRef = useRef(busy);
   busyRef.current = busy;
   const nameBusyRef = useRef(false);
@@ -587,16 +573,15 @@ export default function ChatPage() {
       if (nextView !== viewRef.current) return null;
       const gen = ++sessionListGenRef.current;
       try {
-        // 归档视图与项目视图各自拉取；计数与项目列表每次都刷新（移动/归档后侧栏要立刻更新）
-        const archived = nextView === "archived" ? "true" : "false";
-        const projectId = nextView !== "active" && nextView !== "archived" ? nextView : "";
+        // 服务端分别限量，归档记录不能挤掉正常对话；另一视图的缓存供命令面板使用。
         const [data, proj] = await Promise.all([
-          chatApi.listSessions({ archived, projectId }),
-          chatApi.listProjects().catch(() => ({ projects: [] })),
+          chatApi.listSessions({ archived: nextView === "archived" ? "true" : "false" }),
+          chatApi.listProjects(),
         ]);
         // 旧视图的响应不得覆盖当前列表；null 区分「已作废」与「确实没有会话」。
         if (gen !== sessionListGenRef.current || nextView !== viewRef.current) return null;
-        setSessions(data.sessions || []);
+        const fresh = data.sessions || [], freshIds = new Set(fresh.map((item) => item.id));
+        setSessions((prev) => [...prev.filter((item) => !freshIds.has(item.id) && Boolean(item.archived) !== (nextView === "archived")), ...fresh]);
         setCounts(data.counts || { active: 0, archived: 0, byProject: {} });
         setProjects(proj.projects || []);
         return data.sessions || [];
@@ -651,6 +636,12 @@ export default function ChatPage() {
       try {
         const data = await chatApi.getSession(id);
         if (genRef.current !== gen) return;
+        const nextView = data.session?.archived ? "archived" : "active";
+        const changedView = viewRef.current !== nextView;
+        viewRef.current = nextView; setView(nextView); setSelected(new Set());
+        if (data.session?.project_id) setExpandedProjects((prev) => new Set(prev).add(data.session.project_id));
+        setSessions((prev) => prev.some((item) => item.id === id) ? prev.map((item) => item.id === id ? data.session : item) : [data.session, ...prev]);
+        if (changedView) loadSessions(nextView);
         setSession(data.session);
         setMsgs(withKeys(mergeRecovery(user?.id, id, data.messages || [])));
         setParams({ s: id }, { replace: true });
@@ -667,7 +658,7 @@ export default function ChatPage() {
         if (genRef.current === gen) setLoadingSession(false);
       }
     },
-    [setParams, toast, user?.id, updateBusy]
+    [setParams, toast, user?.id, updateBusy, loadSessions]
   );
 
   /* 发送和续传共享一套状态机：只有服务端终态才完成；网络断开只恢复订阅，绝不重发 POST。 */
@@ -703,7 +694,6 @@ export default function ChatPage() {
       finished = true; attachedRef.current = "";
       patchAi((m) => ({ ...m, streaming: false }));
       runningRef.current = null; updateBusy(false);
-      setWorkRevision((v) => v + 1);
       refreshUser?.(); loadSessions();
     };
     const reconcile = async () => {
@@ -939,6 +929,7 @@ export default function ChatPage() {
       if (nameDialog.kind === "create-project") {
         const project = await chatApi.createProject({ name });
         setProjects((prev) => [project, ...prev]);
+        setExpandedProjects((prev) => new Set(prev).add(project.id));
       } else if (nameDialog.kind === "project") {
         const project = await chatApi.updateProject(nameDialog.id, { name });
         setProjects((prev) => prev.map((p) => p.id === nameDialog.id ? { ...p, name: project.name || name } : p));
@@ -964,38 +955,20 @@ export default function ChatPage() {
       try {
         await chatApi.deleteProject(id);
         setProjects((prev) => prev.filter((p) => p.id !== id));
-        toast.success("项目已删除（其中的对话已退回未归类）");
-        if (view === id) switchView("active");
-        else loadSessions();
+        setExpandedProjects((prev) => { const next = new Set(prev); next.delete(id); return next; });
+        setSession((prev) => prev?.project_id === id ? { ...prev, project_id: "" } : prev);
+        toast.success("项目已删除，其中的对话已移到独立对话。");
+        loadSessions();
         return true;
       } catch (e) {
         toast.error(e.message || "删除项目失败");
         return false;
       }
     },
-    [view, switchView, loadSessions, toast]
+    [loadSessions, toast]
   );
 
   /* 首屏：优先打开 URL 里的会话，否则用最近一条，都没有就新建 */
-  const ensureWorkSession = useCallback(() => {
-    if (sessionRef.current?.id) return Promise.resolve(sessionRef.current.id);
-    if (workSessionPromiseRef.current) return workSessionPromiseRef.current;
-    if (!metaReadyRef.current) return Promise.reject(new Error("模型配置尚未就绪，请稍后重试。"));
-    const gen = ++genRef.current;
-    updateBusy(true);
-    const creating = (async () => {
-      try {
-        const created = await chatApi.createSession({ agent: meta?.defaults?.agent || "general", model: models.find((m) => !m.deprecated)?.id || "", settings: { channelType: "" } });
-        if (gen !== genRef.current) throw new Error("当前对话已切换，请重新打开工作区。");
-        sessionRef.current = created;
-        setSession(created); setMsgs([]); setLongRun(null);
-        setSessions((prev) => [created, ...prev]); setParams({ s: created.id }, { replace: true });
-        return created.id;
-      } finally { if (gen === genRef.current) updateBusy(false); workSessionPromiseRef.current = null; }
-    })();
-    workSessionPromiseRef.current = creating;
-    return creating;
-  }, [meta, models, setParams, updateBusy]);
   const bootRef = useRef(false);
   useEffect(() => {
     if (bootRef.current || !meta) return;
@@ -1003,10 +976,10 @@ export default function ChatPage() {
     (async () => {
       const list = await loadSessions();
       if (!list) return;
-      const target = (requestedSession && list.find((s) => s.id === requestedSession)?.id) || list[0]?.id;
+      const target = requestedSession || list.find((s) => !s.archived)?.id;
       if (target) return openSession(target);
       try {
-        await ensureWorkSession();
+        await newSession();
       } catch (e) {
         toast.error(e.message || "创建会话失败");
       }
@@ -1055,9 +1028,10 @@ export default function ChatPage() {
   };
 
   /* ---------- 会话列表操作 ---------- */
-  const newSession = useCallback(async () => {
+  const newSession = useCallback(async (projectId = "") => {
     if (busyRef.current) return;
     const gen = ++genRef.current;
+    sessionListGenRef.current += 1;
     runningRef.current?.abort(); runningRef.current = null; attachedRef.current = "";
     updateBusy(true);
     try {
@@ -1065,9 +1039,16 @@ export default function ChatPage() {
         agent: sessionRef.current?.agent || meta?.defaults?.agent || "general",
         model: sessionRef.current?.model || models.find((m) => !m.deprecated)?.id || "",
         settings: sessionRef.current?.settings || {},
+        projectId: typeof projectId === "string" ? projectId : "",
       });
       if (genRef.current !== gen) return;
       setSessions((prev) => [created, ...prev]);
+      setCounts((prev) => ({ ...prev, active: prev.active + 1, byProject: { ...prev.byProject, [created.project_id || ""]: (prev.byProject[created.project_id || ""] || 0) + 1 } }));
+      const changedView = viewRef.current !== "active";
+      viewRef.current = "active"; setView("active"); setSelected(new Set());
+      if (changedView) loadSessions("active");
+      if (created.project_id) setExpandedProjects((prev) => new Set(prev).add(created.project_id));
+      setLongRun(null); setConnectionError("");
       setSession(created);
       setMsgs([]);
       stickyRef.current = true;
@@ -1082,7 +1063,7 @@ export default function ChatPage() {
       if (genRef.current === gen) updateBusy(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meta, models, setParams, toast, updateBusy]);
+  }, [meta, models, setParams, toast, updateBusy, loadSessions]);
 
   const patchSession = useCallback(
     async (patch, { silent } = {}) => {
@@ -1136,6 +1117,7 @@ export default function ChatPage() {
         : action === "archive" || action === "unarchive" ? { archived: action === "archive" }
         : { project_id: projectId || "" };
       setSession((prev) => prev?.id === item.id ? { ...prev, ...patch } : prev);
+      if (action === "move" && projectId) setExpandedProjects((prev) => new Set(prev).add(projectId));
       const list = await loadSessions();
       if (list && sessionRef.current?.id === item.id && !list.some((s) => s.id === item.id)) {
         if (list[0]) openSession(list[0].id);
@@ -1164,13 +1146,13 @@ export default function ChatPage() {
     if (longRunRef.current?.resumable) {
       if (retryPayload) { toast.info("当前任务已保存进度，请先继续或停止任务。"); return; }
       if (!text) return;
-      if (draft.images.length || draft.docs.length) { toast.info("补充要求暂不支持附件，请在任务工作台输入文字，或停止任务后发起新任务。"); return; }
+      if (draft.images.length || draft.docs.length) { toast.info("补充要求暂不支持附件，请先移除附件再补充文字，或停止任务后发起新任务。"); return; }
       composerSaveRef.current = true; setComposerSaving(true);
       const id = current.id, gen = genRef.current;
       chatApi.workMessage(id, text).then(() => {
         if (genRef.current !== gen) return;
         if (draftVersionRef.current === draftVersion) setInput("");
-        setWorkRevision((v) => v + 1); toast.success("补充要求已保存，继续任务时会使用。");
+        toast.success("补充要求已保存，继续任务时会使用。");
       }).catch((e) => { if (genRef.current === gen) toast.error(e.message || "补充要求未保存，请重试。"); })
         .finally(() => { composerSaveRef.current = false; setComposerSaving(false); });
       return;
@@ -1220,6 +1202,7 @@ export default function ChatPage() {
         if (!state?.running) {
           const data = await chatApi.getSession(id);
           if (!valid()) return;
+          setLongRun(state?.longRun || null);
           setSession(data.session); setMsgs((prev) => hydrateMessages(data.messages, prev));
           runningRef.current?.abort(); runningRef.current = null; attachedRef.current = "";
           updateBusy(false); refreshUser?.(); loadSessions(); return;
@@ -1425,6 +1408,32 @@ export default function ChatPage() {
 
   const supportsVision = curModel?.vision === true;
   const sessionCost = session?.cost ?? 0;
+  const visibleSessions = useMemo(() => {
+    const wantArchived = view === "archived";
+    return sessions.filter((item) => Boolean(item.archived) === wantArchived);
+  }, [sessions, view]);
+  const projectSessions = useMemo(() => {
+    const map = new Map(projects.map((project) => [String(project.id), []]));
+    visibleSessions.forEach((item) => { if (item.project_id && map.has(String(item.project_id))) map.get(String(item.project_id)).push(item); });
+    return map;
+  }, [projects, visibleSessions]);
+  const standaloneSessions = useMemo(() => visibleSessions.filter((item) => !item.project_id), [visibleSessions]);
+  const renderSession = (s, nested = false) => <div key={s.id} data-session-id={s.id}>{selectMode ? (
+    <div key={s.id} className={`bui-shelf-pick ${nested ? "is-nested" : ""}`}>
+      <Checkbox checked={selected.has(s.id)} onChange={() => toggleSelect(s.id)}><span className="tx">{s.title}</span>{s.pinned ? <span className="hn">置顶</span> : null}</Checkbox>
+    </div>
+  ) : (
+    <ShelfItem key={s.id} active={s.id === session?.id} label={s.title} icon={s.pinned ? <PushpinOutlined /> : null} onClick={() => { openSession(s.id); setShelfOpen(false); }} actions={
+      <Dropdown autoFocus trigger={["click"]} disabled={Boolean(shelfPending)} menu={{ triggerSubMenuAction: "click", items: [
+        { key: "rename", label: "重命名对话", icon: <EditOutlined />, onClick: () => openNameDialog("session", s) },
+        { key: "pin", label: s.pinned ? "取消置顶" : "置顶", icon: <PushpinOutlined />, onClick: () => sessionAction(s, s.pinned ? "unpin" : "pin") },
+        { key: "archive", label: s.archived ? "取消归档" : "归档", icon: <InboxOutlined />, onClick: () => sessionAction(s, s.archived ? "unarchive" : "archive") },
+        { key: "move", label: "移动到项目", children: [{ key: "move-none", label: "独立对话", onClick: () => sessionAction(s, "move", "") }, ...projects.map((p) => ({ key: `move-${p.id}`, label: <span className="ui-chat2-menu-name">{p.name}</span>, onClick: () => sessionAction(s, "move", p.id) }))] },
+        { type: "divider" },
+        { key: "delete", label: "删除对话", icon: <DeleteOutlined />, danger: true, onClick: async () => { await modal.confirm({ title: "删除这个对话？", content: "消息与统计一并删除，无法恢复。", okText: "删除", cancelText: "取消", okButtonProps: { danger: true }, onOk: async () => { if (!await deleteSession(s.id)) throw new Error("删除失败，请重试"); } }); } },
+      ] }}><Button type="text" className="bui-shelf-act" icon={<EllipsisOutlined />} loading={shelfPending === s.id} disabled={Boolean(shelfPending)} aria-label={`对话更多操作：${s.title}`} /></Dropdown>
+    } />
+  )}</div>;
 
   /* ---------- 渲染 ---------- */
   return (
@@ -1434,7 +1443,7 @@ export default function ChatPage() {
         // 移动端：点空白处收起（桌面端常驻）
       >
         <div className="ui-chat2-shelf-toolbar">
-        <button type="button" className="bui-shelf-new" onClick={newSession} disabled={busy}>
+        <button type="button" className="bui-shelf-new" aria-label="新建对话" onClick={() => newSession("")} disabled={busy}>
           <span className="ic">
             <PlusOutlined />
           </span>
@@ -1465,7 +1474,7 @@ export default function ChatPage() {
           </button>
         </div>
 
-        {/* 项目（分类）：点进去只看该项目下的对话 */}
+        {/* 项目分组：项目内会话嵌套显示，独立对话保持单独列表。 */}
         <ShelfGroup
           title="项目"
           defaultOpen
@@ -1475,38 +1484,41 @@ export default function ChatPage() {
         >
           {projects.length ? (
             projects.map((p) => (
-              <ShelfItem
-                key={p.id}
-                active={view === p.id}
-                label={p.name}
-                hint={`${counts.byProject?.[p.id] || 0} 个对话`}
-                onClick={() => {
-                  switchView(p.id);
-                  setShelfOpen(false);
-                }}
-                actions={
+              <div key={p.id} className={`ui-chat2-project ${session?.project_id === p.id ? "is-current" : ""}`} data-project-id={p.id}>
+                <div className="ui-chat2-project-head">
+                  <button type="button" className="ui-chat2-project-toggle" aria-label={`项目：${p.name}`} aria-expanded={expandedProjects.has(p.id)}
+                    onClick={() => setExpandedProjects((prev) => { const next = new Set(prev); next.has(p.id) ? next.delete(p.id) : next.add(p.id); return next; })}>
+                    <RightOutlined className="ui-chat2-project-chevron" /><FolderOutlined />
+                    <span className="ui-chat2-project-name">{p.name}</span>
+                    <small>{(projectSessions.get(String(p.id)) || []).length}</small>
+                  </button>
+                  <Tooltip title="在项目中新建对话"><Button type="text" className="bui-shelf-act" aria-label={`在项目中新建对话：${p.name}`} icon={<PlusOutlined />} disabled={busy} onClick={() => newSession(p.id)} /></Tooltip>
                   <Dropdown autoFocus trigger={["click"]} menu={{ items: [
                     { key: "rename", label: "重命名项目", icon: <EditOutlined />, onClick: () => openNameDialog("project", p) },
                     { key: "delete", label: "删除项目", icon: <DeleteOutlined />, danger: true, onClick: async () => { await modal.confirm({
-                      title: "删除这个项目？", content: "项目里的对话会退回未归类，保留全部消息。", okText: "删除", cancelText: "取消", okButtonProps: { danger: true },
+                      title: "删除这个项目？", content: "项目里的对话会移到独立对话，保留全部消息。", okText: "删除", cancelText: "取消", okButtonProps: { danger: true },
                       onOk: async () => { if (!await deleteProject(p.id)) throw new Error("删除项目失败，请重试"); },
                     }); } },
                   ] }}>
                     <Button type="text" className="bui-shelf-act" icon={<EllipsisOutlined />} aria-label={`项目更多操作：${p.name}`} />
                   </Dropdown>
-                }
-              />
+                </div>
+                {expandedProjects.has(p.id) ? <div className="ui-chat2-project-children">
+                  {(projectSessions.get(String(p.id)) || []).length ? (projectSessions.get(String(p.id)) || []).map((item) => renderSession(item, true)) : <div className="bui-shelf-empty">{view === "archived" ? "项目里还没有归档的对话。" : "项目里还没有对话，点上面的加号开始。"}</div>}
+                </div> : null}
+              </div>
             ))
           ) : (
             <div className="bui-shelf-empty">还没有项目。用项目把对话分类，例如「工作」「学习」。</div>
           )}
         </ShelfGroup>
 
-        {/* 对话列表：支持多选批量（归档 / 删除 / 移动项目） */}
+        {/* 独立对话只显示没有所属项目的会话；批量操作同样可选项目内的会话。 */}
+        <div className="ui-chat2-standalone">
         <ShelfGroup
-          title={view === "archived" ? "已归档的对话" : "对话"}
+          title={<>{view === "archived" ? "已归档的独立对话" : "独立对话"}<span className="ui-chat2-standalone-count">{standaloneSessions.length}</span></>}
           action={
-            sessions.length ? (
+            visibleSessions.length ? (
               <button
                 type="button"
                 className={`bui-shelf-act ${selectMode ? "is-on" : ""}`}
@@ -1540,7 +1552,7 @@ export default function ChatPage() {
                     autoFocus
                     trigger={["click"]}
                     menu={{
-                      items: projects.map((p) => ({ key: p.id, label: <span className="ui-chat2-menu-name">{p.name}</span>, onClick: () => batchAction("move", p.id) })),
+                      items: [{ key: "none", label: "独立对话", onClick: () => batchAction("move", "") }, ...projects.map((p) => ({ key: p.id, label: <span className="ui-chat2-menu-name">{p.name}</span>, onClick: () => batchAction("move", p.id) }))],
                     }}
                   >
                     <button type="button" title="移动到项目">
@@ -1563,52 +1575,15 @@ export default function ChatPage() {
             </div>
           ) : null}
 
-          {sessions.length ? (
-            sessions.map((s) =>
-              selectMode ? (
-                <div key={s.id} className="bui-shelf-pick">
-                  <Checkbox checked={selected.has(s.id)} onChange={() => toggleSelect(s.id)}>
-                    <span className="tx">{s.title}</span>
-                    {s.pinned ? <span className="hn">置顶</span> : null}
-                  </Checkbox>
-                </div>
-              ) : (
-                <ShelfItem
-                  key={s.id}
-                  active={s.id === session?.id}
-                  label={s.title}
-                  icon={s.pinned ? <PushpinOutlined /> : null}
-                  onClick={() => {
-                    openSession(s.id);
-                    setShelfOpen(false);
-                  }}
-                  actions={
-                    <Dropdown autoFocus trigger={["click"]} disabled={Boolean(shelfPending)} menu={{ triggerSubMenuAction: "click", items: [
-                      { key: "rename", label: "重命名对话", icon: <EditOutlined />, onClick: () => openNameDialog("session", s) },
-                      { key: "pin", label: s.pinned ? "取消置顶" : "置顶", icon: <PushpinOutlined />, onClick: () => sessionAction(s, s.pinned ? "unpin" : "pin") },
-                      { key: "archive", label: view === "archived" || s.archived ? "取消归档" : "归档", icon: <InboxOutlined />, onClick: () => sessionAction(s, view === "archived" || s.archived ? "unarchive" : "archive") },
-                      { key: "move", label: "移动到项目", children: [
-                        { key: "move-none", label: "未归类", onClick: () => sessionAction(s, "move", "") },
-                        ...projects.map((p) => ({ key: `move-${p.id}`, label: <span className="ui-chat2-menu-name">{p.name}</span>, onClick: () => sessionAction(s, "move", p.id) })),
-                      ] },
-                      { type: "divider" },
-                      { key: "delete", label: "删除对话", icon: <DeleteOutlined />, danger: true, onClick: async () => { await modal.confirm({
-                        title: "删除这个对话？", content: "消息与统计一并删除，无法恢复。", okText: "删除", cancelText: "取消", okButtonProps: { danger: true },
-                        onOk: async () => { if (!await deleteSession(s.id)) throw new Error("删除失败，请重试"); },
-                      }); } },
-                    ] }}>
-                      <Button type="text" className="bui-shelf-act" icon={<EllipsisOutlined />} loading={shelfPending === s.id} disabled={Boolean(shelfPending)} aria-label={`对话更多操作：${s.title}`} />
-                    </Dropdown>
-                  }
-                />
-              )
-            )
+          {standaloneSessions.length ? (
+            standaloneSessions.map((s) => renderSession(s))
           ) : (
             <div className="bui-shelf-empty">
-              {view === "archived" ? "还没有归档的对话。" : "还没有对话，点上面「新建对话」开始。"}
+              {view === "archived" ? "还没有归档的独立对话。" : "还没有独立对话，点上面「新建对话」开始。"}
             </div>
           )}
         </ShelfGroup>
+        </div>
 
         <div className="bui-shelf-foot">
           {visibility.balance && <div>余额 {quota}</div>}
@@ -1634,6 +1609,7 @@ export default function ChatPage() {
             </button>
             <h1>{session?.title || "对话"}</h1>
             <div className="meta">
+              <span className="ui-chat2-session-location">{projects.find((project) => project.id === session?.project_id)?.name || "独立对话"}</span>
               <span>{msgs.length} 条消息</span>
               {visibility.usage_records && sessionCost ? (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
@@ -1643,7 +1619,6 @@ export default function ChatPage() {
             </div>
           </div>
           <div className="ui-chat2-head-actions">
-            <AgentWorkPanel sessionId={session?.id} busy={busy && !loadingSession} revision={workRevision} onResume={resumeWork} onRunState={setLongRun} onEnsureSession={ensureWorkSession}/>
             <Tooltip title="会话设定">
               <button type="button" className="ui-chat2-iconbtn" aria-label="会话设定" onClick={() => setSheetOpen(true)}>
                 <SettingOutlined />
@@ -1656,9 +1631,9 @@ export default function ChatPage() {
         {connectionError ? <Alert className="ui-chat2-connection-error" type="error" showIcon message={connectionError}
           action={<Button size="small" onClick={() => openSession(sessionRef.current?.id)}>恢复连接</Button>} /> : null}
         {longRun?.resumable && !busy ? <Alert className="agent-work-state-notice" type="info" showIcon
-          message={longRun.status === "waiting_local" ? "本地连接暂时不可用，任务进度已保存。" : "任务进度已保存，可以继续。"}
-          description="可以在输入框补充文字要求；继续执行前，也可以在会话设定里调整预算。"
-          action={<Button size="small" onClick={() => { try { resumeWork(); } catch (e) { toast.error(e.message); } }}>继续任务</Button>}/> : null}
+          message={longRun.local ? "旧任务依赖的本机运行器已移除。" : "任务进度已保存，可以继续。"}
+          description={longRun.local ? "停止旧任务后即可继续普通对话，原设备上的文件请自行核实。" : "可以在输入框补充文字要求，再继续执行。"}
+          action={<div className="ui-chat2-resume-actions">{!longRun.local ? <Button size="small" onClick={() => { try { resumeWork(); } catch (e) { toast.error(e.message); } }}>继续任务</Button> : null}<Button size="small" onClick={stop}>停止任务</Button></div>}/> : null}
         {metaError ? (
           <div style={{ padding: "10px 16px" }}>
             <Notice
@@ -1839,13 +1814,12 @@ export default function ChatPage() {
         sessions={sessions}
         onClose={() => setPaletteOpen(false)}
         onPick={pickFromPalette}
-        onNew={newSession}
+        onNew={() => newSession("")}
       />
 
       <SettingsSheet
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
-        meta={meta}
         session={session}
         settings={settings}
         saving={savingSheet}
@@ -1856,7 +1830,7 @@ export default function ChatPage() {
           try {
             const body = { ...patch };
             if (body.instructions !== undefined) {
-              body.settings = { ...(sessionRef.current?.settings || {}), ...body.settings, instructions: body.instructions };
+              body.settings = { ...body.settings, instructions: body.instructions };
               delete body.instructions;
             }
             const saved = await patchSession(body);

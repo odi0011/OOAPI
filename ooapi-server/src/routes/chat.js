@@ -27,7 +27,7 @@ import { rowToChannel, channelInGroup, channelSupportsModel, collectAvailableMod
 import { getBoolOption } from "../config.js";
 import { saveBuffer, getMedia, readBlob, mediaUrl, attachRef, releaseRefs } from "../services/media.js";
 import { runHarness } from "../services/harness/loop.js";
-import { harnessInterruption } from "../services/harness/runtime.js";
+import { harnessInterruption, resumeSafetyWindow } from "../services/harness/runtime.js";
 import { requestApproval, decideApproval } from "../services/harness/approvals.js";
 import { billableFailedCall } from "../services/execute.js";
 import { publicRunError } from "../services/upstream/public-error.js";
@@ -43,8 +43,6 @@ import { holdTokenQuota } from "../services/token-quota.js";
 import { longRunStore, publicLongRun } from "../services/harness/long-runs.js";
 import { createTaskRuntime } from "../services/harness/task-runtime.js";
 import { persistedWorkspaceParts, persistedBillCall } from "../services/harness/workspace-privacy.js";
-import { getSessionWorkspace, saveLocalCheckpoint, loadLocalCheckpoint, getLocalResult } from "../services/harness/local-workspaces.js";
-import { archiveLocalMessage, hydrateLocalMessages } from "../services/harness/local-history.js";
 import {
   createSession,
   listSessions,
@@ -598,26 +596,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const session = await getSession(req.user.id, req.params.id);
     if (!session) return fail(res, "会话不存在", 404);
-    let messages = await getSessionMessages(session.id);
-    const workspace = await getSessionWorkspace(req.user.id, session.id);
-    if (workspace?.online) {
-      const durable = await longRunStore.get(req.user.id, session.id);
-      const fallbackRefs = new Set();
-      if (durable?.config.workspaceId === workspace.id && durable.status !== "running" && durable.assistantSegment >= 0) {
-        const ref = `${durable.id}-message-${durable.assistantSegment}`;
-        fallbackRefs.add(ref);
-        // 旧版本已完成任务没有归档引用时，仅恢复该任务实际落库的最后一条消息。
-        messages = messages.map(message => Number(message.id) === durable.assistantMessageId && message.role === "assistant" && !message.parts?.some(p => p.type === "local_context")
-          ? { ...message, parts: [...(message.parts || []), { type: "local_context", ref, workspaceId: workspace.id }] } : message);
-      }
-      const controller = new AbortController();
-      const disconnected = () => { if (!res.writableEnded) controller.abort(); };
-      res.once("close", disconnected);
-      try {
-        messages = await hydrateLocalMessages(messages, { workspace, signal: controller.signal, fallbackRefs,
-          load: (ref, { signal }) => loadLocalCheckpoint({ userId: req.user.id, sessionId: session.id, signal, expectedWorkspaceId: workspace.id }, ref) });
-      } finally { res.removeListener("close", disconnected); }
-    }
+    const messages = await getSessionMessages(session.id);
     return ok(res, { session, messages });
   })
 );
@@ -931,6 +910,8 @@ function aggregate(calls = []) {
     const session = await getSession(req.user.id, sessionId);
     if (!session) return reject("会话不存在", 404);
     const previousRun = await longRunStore.get(req.user.id, session.id);
+    // 旧本机任务只保留状态与占位，不能把缺失的私有检查点当作普通云端任务恢复。
+    if (resume && (previousRun?.config.workspaceId || previousRun?.checkpoint?.requiresLocalContext || previousRun?.checkpoint?.sensitive)) return reject("此旧任务依赖已移除的本机执行器，请停止旧任务后新建对话。", 409, { code: "LOCAL_WORKSPACE_DISABLED" });
     if (previousRun && ["running", "paused", "waiting_local", "interrupted"].includes(previousRun.status) && !resume) return reject("这个会话有未结束的任务，请继续或停止它。", 409, { longRun: publicLongRun(previousRun) });
     if (resume && (!previousRun || !["paused", "waiting_local", "interrupted"].includes(previousRun.status))) return reject("没有可以恢复的任务。", 409);
     if (!getBoolOption("chat_enabled")) return reject("站内对话功能已关闭", 403);
@@ -953,7 +934,7 @@ function aggregate(calls = []) {
     if (isRunning(session.id)) return reject("这个会话正在生成中，请稍候或先停止", 409);
 
     // 旧 tools/search 隐藏开关不再生效；本次显式提交的工具清单仅能收窄平台策略。
-    // 会话步数是用户预算，平台步数是管理员上限，必须取较小值而不是用策略覆盖用户预算。
+    // 会话执行保护与管理员上限取较小值，避免策略绕过服务端限制。
     const sessionSettings = sanitizeSettings(settingsPatch ?? {}, { previous: session.settings });
     const policy = agentPolicy();
     const settings = resolveSessionPolicySettings(sessionSettings, policy, { requestedTools: settingsPatch?.tools });
@@ -1075,10 +1056,7 @@ function aggregate(calls = []) {
     let userMessage;
     let durableRun;
     let resumeState;
-    let workspace;
     try {
-      workspace = await getSessionWorkspace(req.user.id, session.id);
-      if (workspace && !workspace.online) throw Object.assign(new Error("本机工作区尚未连接，请先启动本地执行器。"), { code: "LOCAL_OFFLINE", status: 409 });
       history = await getSessionMessages(session.id);
 
       // 路由分组：必须通过密钥路由（分组决定渠道/模型/倍率），没有可用密钥不开跑
@@ -1124,28 +1102,19 @@ function aggregate(calls = []) {
       }
 
       if (resume) {
-        if (previousRun.config.workspaceId && workspace?.id !== previousRun.config.workspaceId) throw Object.assign(new Error("请重新连接原工作区后继续任务。"), { code: "LOCAL_CONTEXT_MISSING", status: 409 });
-        resumeState = previousRun.config.workspaceId
-          ? await loadLocalCheckpoint({ userId: req.user.id, sessionId: session.id, signal: ctrl.signal, expectedWorkspaceId: workspace?.id }, previousRun.id)
-          : previousRun.checkpoint;
+        resumeState = previousRun.checkpoint;
         if (!resumeState) throw Object.assign(new Error("任务没有可恢复的检查点。"), { code: "NO_CHECKPOINT" });
         durableRun = await longRunStore.claim(req.user.id, session.id);
         if (previousRun.checkpoint?.pendingCalls && resumeState?.pendingCalls) {
           const statuses = new Map(previousRun.checkpoint.pendingCalls.map(c => [c.id, c]));
           resumeState.pendingCalls = resumeState.pendingCalls.map(c => ({ ...c, status: statuses.get(c.id)?.status || c.status }));
         }
-        inputText = previousRun.config.inputText || "继续本地工作区任务";
+        inputText = previousRun.config.inputText || "继续任务";
         content = inputText;
         userMessage = history.find(m => m.seq === previousRun.config.userSeq && m.role === "user") || null;
       } else {
-        if (workspace && previousRun?.config.workspaceId === workspace.id && previousRun.status === "completed") {
-          try {
-            const memory = await loadLocalCheckpoint({ userId: req.user.id, sessionId: session.id, signal: ctrl.signal, expectedWorkspaceId: workspace.id }, previousRun.id);
-            if (memory?.messages) resumeState = { ...memory, phase: "done", parts: [], todo: [], pendingCalls: [], completedWrites: [], nextStep: 1, readEpoch: 0, formatFailures: 0, turnId: undefined, budget: undefined, finalizeReason: "", lastText: "" };
-          } catch (e) { if (ctrl.signal.aborted) throw e; /* 私有历史不可用时只处理新指令，不猜测旧文件内容。 */ }
-        }
         durableRun = await longRunStore.begin(req.user.id, session.id, { model, agent: agent.id, settings, keyId: Number(usableKey.id),
-          workspaceId: workspace?.id || "", inputText: workspace ? "本地工作区任务" : inputText });
+          inputText });
       }
       // 所有前置校验通过后才改写历史；恢复原任务不会重复添加用户消息。
       if (!resume) {
@@ -1201,7 +1170,7 @@ function aggregate(calls = []) {
       userAgent: String(req.headers["user-agent"] || "").slice(0, 255),
       startedAt: run.startedAt || Date.now(),
       quotaHold,
-      durableRun, resumeState, workspace,
+      durableRun, resumeState, resumeErrorCode: resume ? previousRun.errorCode : "",
       recoverFinal: completedWork,
     }).catch((e) => console.error("[chat] 后台运行异常：", e?.code || "ERROR")).finally(completeRun);
 
@@ -1342,7 +1311,7 @@ router.get(
  * 真正执行一轮：跑 harness、计费、落库、发布事件。
  * 无论客户端是否还在，都必须跑到最后一步（这就是断线续传的前提）。
  */
-async function executeRun({ run, ctrl, user, session, agent, model, settings, history, content, inputText = content, userMessage = null, imgs, docs = [], routeGroup, keyId = 0, keyName = "", modelCaps, ip = "", userAgent = "", startedAt = 0, quotaHold = null, durableRun = null, resumeState = null, workspace = null, recoverFinal = false }) {
+async function executeRun({ run, ctrl, user, session, agent, model, settings, history, content, inputText = content, userMessage = null, imgs, docs = [], routeGroup, keyId = 0, keyName = "", modelCaps, ip = "", userAgent = "", startedAt = 0, quotaHold = null, durableRun = null, resumeState = null, resumeErrorCode = "", recoverFinal = false }) {
   const runCalls = [...(durableRun?.calls || [])];
   let runParts = [];
   let runTodo = session.todo || [];
@@ -1353,34 +1322,18 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
   let saved = false;
   let persistence = Promise.resolve();
   let persistenceError;
-  let sensitive = Boolean(workspace);
+  let sensitive = false;
   let tasks;
   let finalRunStatus = "error";
-  const localCtx = { userId: user.id, sessionId: session.id, signal: ctrl.signal, expectedWorkspaceId: workspace?.id };
+  let finalRunErrorCode = "";
   const billingSegment = recoverFinal ? Number(resumeState?.billingSegment ?? Math.max(0, (durableRun?.billingSegment || 0) - 1)) : durableRun?.billingSegment || 0;
   const logRequestId = durableRun ? `${durableRun.id}:${billingSegment}` : `${session.id}:${userMessage?.seq || 0}`;
-  const messagePartsForStorage = async parts => {
-    const stored = persistedWorkspaceParts(parts, sensitive);
-    if (sensitive && workspace && durableRun) stored.push(await archiveLocalMessage({ workspace, run: durableRun, segment: billingSegment, parts,
-      save: (ref, state) => saveLocalCheckpoint({ ...localCtx, runId: ref }, state) }));
-    return stored;
-  };
+  const messagePartsForStorage = async parts => persistedWorkspaceParts(parts, sensitive);
   const heartbeat = durableRun ? setInterval(() => { longRunStore.heartbeat(durableRun).catch(() => ctrl.abort(Object.assign(new Error("无法保存任务状态"), { code: "HARNESS_PAUSED", kind: "pause" }))); }, 30000) : null;
   heartbeat?.unref?.();
   const persistCheckpoint = async (state, meta = {}) => {
     sensitive ||= Boolean(meta.sensitive);
-    let stored = { ...(meta.persistable || state), billingSegment };
-    if (sensitive) {
-      try {
-        const { ref } = await saveLocalCheckpoint(localCtx, { ...state, billingSegment, runId: durableRun.id });
-        stored = { ...stored, localRef: ref };
-      } catch (e) {
-        if (!["WAITING_LOCAL", "LOCAL_CONTEXT_MISSING", "LOCAL_OUTCOME_UNKNOWN", "ABORTED"].includes(e.code)) throw e;
-        stored.localRef = durableRun.checkpoint?.localRef || null;
-        await longRunStore.checkpoint(durableRun, stored, { calls: runCalls.map(persistedBillCall) });
-        throw Object.assign(new Error("等待本机保存任务上下文"), { code: "WAITING_LOCAL", outcome: "not_executed" });
-      }
-    }
+    const stored = { ...(meta.persistable || state), billingSegment };
     if (durableRun) await longRunStore.checkpoint(durableRun, stored, { calls: runCalls.map(persistedBillCall) });
     if (durableRun?.config.inbox?.length && !run.inbox?.length) {
       run.controlPersistence = (run.controlPersistence || Promise.resolve()).then(async () => {
@@ -1396,25 +1349,19 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
     reasoningSelection(model, settings.reasoningEffort);
     const existingTasks = durableRun ? await longRunStore.tasks(user.id, session.id, durableRun.id) : [];
     if (resumeState?.budget) {
-      for (const task of existingTasks) for (const key of ["modelCalls", "tokens", "od", "elapsedMs"]) {
-        resumeState.budget[key] = Math.max(Number(resumeState.budget[key]) || 0, Number(task.checkpoint?.budget?.[key]) || 0);
+      for (const task of existingTasks) {
+        // 子任务旧窗口的累计消耗不能重新灌进用户已确认继续的新执行窗口。
+        if (resumeState.budget.windowId && task.checkpoint?.budget?.windowId !== resumeState.budget.windowId) continue;
+        for (const key of ["modelCalls", "tokens", "od", "elapsedMs"]) {
+          resumeState.budget[key] = Math.max(Number(resumeState.budget[key]) || 0, Number(task.checkpoint?.budget?.[key]) || 0);
+        }
       }
+      if (!recoverFinal) resumeState = resumeSafetyWindow(resumeState, settings.budget, resumeErrorCode);
     }
     tasks = createTaskRuntime({ initial: existingTasks, sensitive, emit: ev => publish(run, ev),
       save: task => longRunStore.saveTask(user.id, session.id, durableRun.id, task, durableRun.owner),
-      savePrivate: task => saveLocalCheckpoint(localCtx, { ...task, runId: `${task.id}-meta` }),
-      hydrate: async task => {
-        if (!sensitive) return task.checkpoint;
-        if (task.recovering || task.prompt === "[任务内容保存在本机]") {
-          const original = await loadLocalCheckpoint(localCtx, `${task.id}-meta`);
-          if (original) Object.assign(task, { prompt: original.prompt, inbox: original.inbox, summary: original.summary });
-        }
-        return task.checkpoint ? await loadLocalCheckpoint(localCtx, task.id) : null;
-      },
-      checkpoint: async (task, state, meta = {}) => {
-        if (sensitive || meta.sensitive) { const { ref } = await saveLocalCheckpoint(localCtx, { ...state, runId: task.id }); return { ...(meta.persistable || {}), localRef: ref }; }
-        return meta.persistable || state;
-      },
+      hydrate: async task => task.checkpoint,
+      checkpoint: async (_task, state, meta = {}) => meta.persistable || state,
     });
     run.tasks = tasks;
     Object.defineProperty(run, "taskControls", { get: () => tasks.controls });
@@ -1433,14 +1380,10 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       signal: ctrl.signal,
       modelCaps,
       keyId,
-      localSensitive: sensitive,
-      workspaceSessionId: session.id,
-      expectedWorkspaceId: workspace?.id,
       taskRuntime: tasks,
       resumeState,
       recoverFinal,
       inbox: { drain: () => (run.inbox || []).splice(0).map(text => ({ role: "user", content: text })) },
-      localResults: { get: callId => getLocalResult(localCtx, callId) },
       onCheckpoint: persistCheckpoint,
       beforeModel: async () => {
         const [[live]] = await pool.query("SELECT * FROM users WHERE id = ?", [user.id]);
@@ -1584,7 +1527,8 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
     finalRunStatus = paused ? ["WAITING_LOCAL", "LOCAL_CONTEXT_MISSING", "LOCAL_OUTCOME_UNKNOWN", "LOCAL_CHECKPOINT_UNAVAILABLE"].includes(err.code) ? "waiting_local" : "paused" : stopped ? "stopped" : "error";
     run.finalStatus = finalRunStatus;
     const errorCode = /^[\w.:-]{1,64}$/.test(String(err.code || "")) ? String(err.code) : "ERROR";
-    const errorMessage = paused ? "任务已暂停，可连接本机或调整预算后继续。" : sensitive ? "本地任务执行未完成，请查看执行记录。" : publicRunError(err, { stopped });
+    finalRunErrorCode = errorCode;
+    const errorMessage = paused ? err.code === "HARNESS_BUDGET" ? "本次执行达到安全上限，已保存当前进度，点击继续即可接着完成。" : "任务已暂停，已保存当前进度，可以继续。" : sensitive ? "任务执行未完成，请查看执行记录。" : publicRunError(err, { stopped });
     // 仅使用适配器捕获并脱敏的真实返回；历史、本轮事件和用量日志保持一致。
     const errorDiagnostics = sensitive ? {} : publicErrorDiagnostics(err);
     let billingKnown = !["BILLING_UNCERTAIN", "BILLING_FAILED"].includes(err.code);
@@ -1773,7 +1717,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
     try {
       await tasks?.settle({ cancel: true });
       await persistence;
-      if (durableRun) await longRunStore.finish(durableRun, finalRunStatus, { calls: settled ? [] : runCalls.map(persistedBillCall) });
+      if (durableRun) await longRunStore.finish(durableRun, finalRunStatus, { calls: settled ? [] : runCalls.map(persistedBillCall), errorCode: finalRunErrorCode });
     } catch { run.error = { code: "CHECKPOINT_FAILED", message: "任务最终状态暂未确认，请重新读取后继续。" }; }
     // 没走到结算（上游直接失败、无任何产出）就退回预占的 1 个单位。
     // consume() 过的（结算已计入）会在这里自动让路；refund() 幂等，重复调用无害。

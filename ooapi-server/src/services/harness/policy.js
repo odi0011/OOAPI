@@ -44,9 +44,9 @@ export function agentFlow() {
     const raw = JSON.parse(getOption("agent_flow") || "null");
     // 旧默认全工具配置随本次能力扩展升级；人工收窄过的清单保持原来的限制。
     const oldTools = raw?.nodes?.find(n => n.kind === "tools")?.config?.tools;
+    // 移除停用能力时只收窄旧策略，不能因校验失败回落成全工具默认。
+    if (Array.isArray(oldTools)) for (let index = oldTools.length - 1; index >= 0; index--) if (oldTools[index] === "local") oldTools.splice(index, 1);
     if (raw?.version === 1 && Array.isArray(oldTools) && oldTools.length === 7 && ["account", "binance", "search", "fetch", "github", "task", "todowrite"].every(id => oldTools.includes(id))) oldTools.push(...PLATFORM_TOOL_IDS);
-    // 旧全工具默认随版本接入本地能力；管理员刻意收窄的策略保持原样。
-    if (raw?.version === 1 && Array.isArray(oldTools) && oldTools.length === TOOL_IDS.length - 1 && TOOL_IDS.filter(id => id !== "local").every(id => oldTools.includes(id))) oldTools.push("local");
     const toolNode = raw?.nodes?.find(n => n.kind === "tools");
     if (raw?.version === 1 && toolNode?.config?.maxSteps === 12 && oldTools?.length === TOOL_IDS.length && DEFAULT_AGENT_FLOW.nodes.every(n => raw.nodes.some(r => r.id === n.id && r.label === n.label)) && !raw.instructions) toolNode.config.maxSteps = 96;
     return validateAgentFlow(raw);
@@ -57,7 +57,7 @@ export function agentPolicy() {
   const flow = agentFlow(), tools = flow.nodes.find(n => n.kind === "tools").config;
   return { tools: flow.edges.some(e => e.to === "tools") ? tools.tools : [], maxSteps: tools.maxSteps, compaction: flow.nodes.find(n => n.kind === "context").config, policyInstructions: flow.instructions };
 }
-/** 会话预算可低于平台上限；工具只响应本次显式收窄，历史隐藏开关不重新启用。 */
+/** 会话执行保护遵守平台上限；工具只响应本次显式收窄，历史隐藏开关不重新启用。 */
 export function resolveSessionPolicySettings(sessionSettings, policy, { requestedTools } = {}) {
   return {
     ...sessionSettings,

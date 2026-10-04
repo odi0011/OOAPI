@@ -21,7 +21,7 @@ const fixture = { crypto, normalizeHarnessBudget, now: () => 1234, pool: {
       return [{ affectedRows: removed.length }];
     }
     if (s.startsWith("DELETE FROM chat_messages")) return [{ affectedRows: 0 }];
-    const table = s.match(/^DELETE FROM (chat_agent_tasks|chat_agent_runs|local_session_workspaces) /)?.[1];
+    const table = s.match(/^DELETE FROM (chat_agent_tasks|chat_agent_runs) /)?.[1];
     if (table) {
       const removed = cleanupStore[table].filter(row => row.user_id === args[0] && args.slice(1).includes(row.session_id));
       cleanupStore[table] = cleanupStore[table].filter(row => !removed.includes(row));
@@ -128,22 +128,22 @@ await test("任务账本不能跨用户/会话使用，非助手与非法段号�
 });
 const seedCleanup = () => {
   cleanupStore = { sessions: [{ id: "owned", user_id: 7 }, { id: "foreign", user_id: 8 }], queries: [] };
-  for (const table of ["chat_agent_tasks", "chat_agent_runs", "local_session_workspaces"]) cleanupStore[table] = [{ user_id: 7, session_id: "owned" }, { user_id: 8, session_id: "foreign" }];
+  for (const table of ["chat_agent_tasks", "chat_agent_runs"]) cleanupStore[table] = [{ user_id: 7, session_id: "owned" }, { user_id: 8, session_id: "foreign" }];
 };
 await test("单会话删除只清理本人成功删除会话的运行、任务与设备关联", async () => {
   seedCleanup();
   assert.equal(await deleteSession(7, "foreign"), false);
-  assert.equal(cleanupStore.queries.filter(s => /DELETE FROM (chat_agent_tasks|chat_agent_runs|local_session_workspaces)/.test(s)).length, 0);
+  assert.equal(cleanupStore.queries.filter(s => /DELETE FROM (chat_agent_tasks|chat_agent_runs)/.test(s)).length, 0);
   assert.equal(await deleteSession(7, "owned"), true);
-  for (const table of ["chat_agent_tasks", "chat_agent_runs", "local_session_workspaces"]) assert.deepEqual(cleanupStore[table], [{ user_id: 8, session_id: "foreign" }]);
+  for (const table of ["chat_agent_tasks", "chat_agent_runs"]) assert.deepEqual(cleanupStore[table], [{ user_id: 8, session_id: "foreign" }]);
 });
 await test("批量删除先限定归属；删除未成功时不得继续清理编排记录", async () => {
   seedCleanup(); cleanupStore.noDelete = true;
   assert.deepEqual(await batchSessions({ userId: 7, ids: ["owned", "foreign"], action: "delete" }), { affected: 0 });
-  assert.equal(cleanupStore.queries.filter(s => /DELETE FROM (chat_agent_tasks|chat_agent_runs|local_session_workspaces)/.test(s)).length, 0);
+  assert.equal(cleanupStore.queries.filter(s => /DELETE FROM (chat_agent_tasks|chat_agent_runs)/.test(s)).length, 0);
   cleanupStore.noDelete = false;
   assert.deepEqual(await batchSessions({ userId: 7, ids: ["owned", "foreign"], action: "delete" }), { affected: 1 });
-  for (const table of ["chat_agent_tasks", "chat_agent_runs", "local_session_workspaces"]) assert.deepEqual(cleanupStore[table], [{ user_id: 8, session_id: "foreign" }]);
+  for (const table of ["chat_agent_tasks", "chat_agent_runs"]) assert.deepEqual(cleanupStore[table], [{ user_id: 8, session_id: "foreign" }]);
 });
 delete globalThis.__ooSessionLedgerFixture;
 console.log(`  助手消息原子账本回归 ${passed} 项通过`);
