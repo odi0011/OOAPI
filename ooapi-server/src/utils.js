@@ -107,8 +107,10 @@ export function deviceFromUa(ua) {
   else if (/Windows/i.test(s)) os = "Windows";
   else if (/iPhone|iPad|iPod/i.test(s)) os = "iOS";
   else if (/Android/i.test(s)) os = "Android";
-  else if (/Mac OS X|Macintosh/i.test(s)) os = "macOS";
+  else if (/Mac OS(?: X)?|Macintosh|Darwin/i.test(s)) os = "macOS";
   else if (/CrOS/i.test(s)) os = "ChromeOS";
+  else if ((m = /Ubuntu(?:[ /]([\d.]+))?/i.exec(s))) os = `Ubuntu${m[1] ? ` ${m[1]}` : ""}`;
+  else if (/Debian/i.test(s)) os = "Debian";
   else if (/Linux/i.test(s)) os = "Linux";
 
   const parts = [browser, os].filter(Boolean);

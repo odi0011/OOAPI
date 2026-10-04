@@ -1,7 +1,7 @@
 // 标准 Responses 协议；鉴权沿用渠道 Key，不附加 Codex OAuth 或客户端身份。
 import { guardedFetch, readTextCapped, authHeaders } from "./openai-compat.js";
 import { classifyUpstreamHttp } from "./http-error.js";
-import { upstreamModelOf } from "./vendor-quirks.js";
+import { upstreamModelForChannel } from "./vendor-quirks.js";
 import { normalizeContentToText } from "./content-text.js";
 import { ToolCallBuffer, applyToolDefinitions, responsesMessages } from "../tool-wire.js";
 import { reasoningBody } from "../model-capabilities.js";
@@ -17,7 +17,7 @@ export async function chatOnce({ channel, endpoint, model, prompt, messages, ima
     for (const img of images) last.content.push({ type: "input_image", image_url: `data:${img.mimeType || "image/png"};base64,${img.buffer.toString("base64")}` });
   }
   const mapping = reasoningBody(reasoningConfig, "responses");
-  const body = { model: upstreamModelOf(channel.type, model), input, stream: true, store: false, ...mapping };
+  const body = { model: upstreamModelForChannel(channel, model), input, stream: true, store: false, ...mapping };
   const instructions = source.filter(m => ["system", "developer"].includes(m.role)).map(m => normalizeContentToText(m.content)).join("\n\n");
   if (instructions) body.instructions = instructions;
   if (maxOutputTokens) body.max_output_tokens = maxOutputTokens;

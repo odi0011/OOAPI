@@ -28,11 +28,18 @@ import { REAL_MODELS as MINIMAX_MODELS } from "./minimax-models.js";
 
 /** 从 base_url 推测厂商（仅用于「自定义」渠道） */
 export function guessVendorFromUrl(baseUrl) {
-  const u = String(baseUrl || "").toLowerCase();
-  if (u.includes("minimax")) return "minimax";
-  if (u.includes("volces.com") || u.includes("ark.cn-beijing")) return "ark";
-  if (u.includes("stepfun")) return "stepfun";
-  if (u.includes("xiaomimimo") || u.includes("mimo.mi.com")) return "mimo";
+  let hostname;
+  try {
+    const url = new URL(String(baseUrl || ""));
+    if (!["https:", "http:"].includes(url.protocol)) return "";
+    hostname = url.hostname.toLowerCase().replace(/\.$/, "");
+  } catch { return ""; }
+  // path/query/用户名中的厂商单词不能改变请求格式，也不识别 example-minimax.com。
+  const within = domain => hostname === domain || hostname.endsWith(`.${domain}`);
+  if (within("minimax.cn") || within("minimax.io")) return "minimax";
+  if (within("volces.com")) return "ark";
+  if (within("stepfun.com")) return "stepfun";
+  if (within("xiaomimimo.com") || within("mimo.mi.com")) return "mimo";
   return "";
 }
 
@@ -75,11 +82,28 @@ const UPSTREAM_MODEL_MAP = {
 export function upstreamModelOf(channelType, model) {
   const map = UPSTREAM_MODEL_MAP[String(channelType || "").toLowerCase()];
   if (!map) return model;
+  // 用户显式指定的聚合路由或计价 SKU 不能退回裸模型；否则 :free 可能误发到正价档。
+  if (/[/:]/.test(String(model || "")) || /-(free|batch|extended)$/i.test(String(model || ""))) return model;
   // 先归一到平台规范名再查表：用户可能用任一别名请求（workbuddy / codebuddy /
   // deepseek-v4.1-flash / deepseek-flash），规范化后都落到 deepseek-flash，
   // 统一翻译成该上游认识的 id。models.js 与本文件无循环依赖。
   const canonical = String(canonicalModelName(model) || model || "").toLowerCase();
   return map[canonical] || model;
+}
+
+/** 三种标准 API 协议共用真实 SKU 选择，协议回退不能把 vendor/model 丢掉。 */
+export function upstreamModelForChannel(channel, requested) {
+  const declared = (Array.isArray(channel?.models) ? channel.models : String(channel?.models || "").split(/[\s,，]+/))
+    .map(id => String(id).trim()).filter(id => id && !id.includes("*"));
+  const raw = String(requested || "");
+  const exact = declared.find(id => id.toLowerCase() === raw.toLowerCase());
+  if (exact) return exact;
+  // 原样 SKU 优先级高于规范身份匹配，不能被一个同本体的普通档位替换。
+  if (/[/:]/.test(raw) || /-(free|batch|extended)$/i.test(raw)) return upstreamModelOf(channel?.type, requested);
+  const canonical = canonicalModelName(requested);
+  const matches = declared.filter(id => canonicalModelName(id) === canonical)
+    .sort((a, b) => Number(/:(free|batch|extended|thinking)$/i.test(a)) - Number(/:(free|batch|extended|thinking)$/i.test(b)) || a.localeCompare(b));
+  return matches[0] || upstreamModelOf(channel?.type, requested);
 }
 /**
  * 请求侧注入（在 buildMessages 之后、fetch 之前调用）。
@@ -92,13 +116,7 @@ export function applyVendorRequest(body, { channel, model } = {}) {
   // 先做模型名翻译（见 UPSTREAM_MODEL_MAP）：平台规范名 → 上游实际 id。
   // 必须在所有厂商分支之前 —— 它与厂商怪癖正交，任何兼容渠道都可能需要。
   const requested = body.model || model;
-  const declared = String(channel?.models || "").split(/[\s,，]+/).filter((id) => id && !id.includes("*"));
-  // 规范身份只用于展示/权限/价格。发给聚合上游仍用它实际声明的路由 ID。
-  // 用户显式选择的 SKU 优先保留；裸模型优先正常档，避免目录顺序选中 batch/free。
-  const exact = declared.find((id) => id.toLowerCase() === String(requested).toLowerCase());
-  const matches = declared.filter((id) => canonicalModelName(id) === canonicalModelName(requested))
-    .sort((a, b) => Number(/:(free|batch|extended|thinking)$/i.test(a)) - Number(/:(free|batch|extended|thinking)$/i.test(b)) || a.localeCompare(b));
-  const upstream = exact || matches[0] || upstreamModelOf(channel?.type, requested);
+  const upstream = upstreamModelForChannel(channel, requested);
   if (upstream && upstream !== body.model) body.model = upstream;
 
   if (kind === "minimax") {

@@ -6,7 +6,7 @@ import { reasoningBody } from "../model-capabilities.js";
 import { attachUpstreamDiagnostics } from "./error-diagnostics.js";
 import { guardedFetch, readTextCapped } from "./openai-compat.js";
 import { runEndpointFallback } from "./endpoint-fallback.js";
-import { upstreamModelOf } from "./vendor-quirks.js";
+import { upstreamModelForChannel } from "./vendor-quirks.js";
 // 上游适配器：Anthropic 兼容 API（API Key）
 // ===========================================================================
 // 用途：接入**任何 Anthropic Messages 协议**的第三方服务（官方 api.anthropic.com、
@@ -113,7 +113,7 @@ export async function chatOnce({ endpoint, tools = [], toolChoice, onToolCall, c
   if (images?.length) injectImages(blocks, images);
   const thinking = thinkingOverride === true;
   const body = {
-    model: upstreamModelOf(channel.type, model),
+    model: upstreamModelForChannel(channel, model),
     max_tokens: maxOutputTokens || (thinking ? 16000 : 8192),
     messages: blocks,
     stream: true,

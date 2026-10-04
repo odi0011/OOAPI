@@ -92,6 +92,8 @@ const ORIGINAL_MODEL_VENDORS = new Set([
   "mimo", "minimax", "stepfun", "ark",
 ]);
 const DEFAULT_MODEL_VENDORS = new Map();
+// 原厂模块中已明确登记但尚未定价的型号，也可以确定开发厂商；这不意味着它已定价。
+let catalogModelVendors = new Map();
 // 官网已发布但尚未核定 OD 单价的新型号，只用于管理目录，不扩大渠道能力。
 export const OFFICIAL_UNPRICED_MODELS = [
   { model: "doubao-seed-evolving", type: "ark", source: "https://www.volcengine.com/docs/82379/1544106" },
@@ -209,7 +211,7 @@ export function modelIdentity(raw) {
 // 尤其 :free 仍遵循既有 Cline 路由，-free 则保持管理员可独立定价的 SKU。
 function knownVendorOf(name) {
   const key = String(name || "").trim().toLowerCase();
-  const vendor = DEFAULT_MODEL_VENDORS.get(key) || OFFICIAL_UNPRICED_MODELS.find(p => p.model.toLowerCase() === key)?.type;
+  const vendor = DEFAULT_MODEL_VENDORS.get(key) || OFFICIAL_UNPRICED_MODELS.find(p => p.model.toLowerCase() === key)?.type || catalogModelVendors.get(key);
   return ORIGINAL_MODEL_VENDORS.has(vendor) ? vendor : "";
 }
 
@@ -239,9 +241,17 @@ export function modelIdentityInfo(raw) {
 
 export async function warmAliasMap() {
   const map = new Map();
+  const catalogOwners = new Map();
   for (const t of Object.keys(VENDOR_MODEL_MODULES)) {
     try {
       const mod = await VENDOR_MODEL_MODULES[t]();
+      if (ORIGINAL_MODEL_VENDORS.has(t)) {
+        for (const item of typeof mod.publicModels === "function" ? mod.publicModels() : []) {
+          if (item.deprecated || item.aliasOf || isAutoModel(item.id) || autoChannelId(item.id)) continue;
+          const key = modelIdentity(item.id).toLowerCase();
+          if (key && !catalogOwners.has(key)) catalogOwners.set(key, t);
+        }
+      }
       for (const [alias, target] of Object.entries(mod.ALIASES || {})) {
         const k = modelIdentity(alias).toLowerCase();
         // 网页适配器会把旧档降级/兜底到新档；已独立登记的官方型号不能因此
@@ -259,6 +269,7 @@ export async function warmAliasMap() {
     throw e;
   });
   confirmedAliases = new Map(approved.map(r => [String(r.alias).toLowerCase(), String(r.model).toLowerCase()]));
+  catalogModelVendors = catalogOwners;
   aliasCache = map;
   return map;
 }

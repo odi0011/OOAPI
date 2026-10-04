@@ -13,7 +13,7 @@ export function ErrorCodeText({ code, compact = false }) {
 const labels = {
   code: "系统错误", error_code: "系统错误", requestId: "请求 ID", request_id: "请求 ID", http_status: "HTTP 状态", upstream_error_code: "上游错误编号", upstream_code: "上游错误编号", reason: "分类原因",
   endpoint_attempts: "端点尝试", inbound_endpoint: "入站端点", upstream_endpoints: "上游路径", endpoint: "端点", protocol: "协议", status: "状态", retry_count: "重试次数",
-  client_agent: "调用 Agent", agent_routing: "Agent 路由规则", id: "编号", version: "版本", source: "识别来源", conflict: "标记冲突",
+  client_agent: "调用 Agent", agent_routing: "Agent 路由规则", id: "编号", version: "版本", source: "识别来源", confidence: "识别依据", reported_client: "请求标记的客户端", conflict: "标记冲突",
   model: "模型", requested_model: "请求模型", upstream_model: "上游模型", bill_model: "计费模型", pricing_model: "计价模型", display_model: "展示模型", model_calls: "模型调用明细",
   reasoning_effort: "实际推理档位", reasoning_requested: "传入推理档位", reasoning_selected: "选择的推理档位", reasoning_applied: "推理参数已下发",
   billing_details: "计费明细", billing_known: "计费结果已确认", billable: "存在可计费用量", partial_units: "部分结算单位", partial_tokens: "部分用量", usage: "用量",
@@ -49,7 +49,7 @@ function Value({ value, field, depth = 0 }) {
     if (depth >= 10) return <pre className="oo-diagnostic-json">{JSON.stringify(value, null, 2)}</pre>;
     const entries = Object.entries(value);
     if (!entries.length) return <span className="oo-diagnostic-muted">{Array.isArray(value) ? "空列表" : "空对象"}</span>;
-    return <details className="oo-diagnostic-object" open={depth === 0}><summary>{Array.isArray(value) ? `${entries.length} 项` : `${entries.length} 个字段`}</summary>
+    return <details className="oo-diagnostic-object"><summary>{Array.isArray(value) ? `${entries.length} 项` : `${entries.length} 个字段`}</summary>
       <dl>{entries.map(([key, item]) => <div className="oo-diagnostic-field" key={key}><dt title={key}>{Array.isArray(value) ? `第 ${Number(key) + 1} 项` : labels[key] || key}</dt><dd><Value value={item} field={key} depth={depth + 1} /></dd></div>)}</dl>
     </details>;
   }
@@ -61,9 +61,9 @@ export default function LogDiagnosticDetails({ value }) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return <Value value={parsed} />;
   const assigned = new Set(groups.flatMap(([, keys]) => keys));
   const sections = [...groups, ["其他字段", Object.keys(parsed).filter(k => !assigned.has(k))]];
-  return <div className="oo-log-diagnostics">{sections.map(([title, keys], index) => {
+  return <div className="oo-log-diagnostics">{sections.map(([title, keys]) => {
     const present = keys.filter(k => Object.hasOwn(parsed, k));
-    return present.length ? <details key={title} className="oo-diagnostic-section" open={index < 2}><summary>{title}<small>{present.length} 项</small></summary>
+    return present.length ? <details key={title} className="oo-diagnostic-section"><summary>{title}<small>{present.length} 项</small></summary>
       <dl>{present.map(key => <div className="oo-diagnostic-field" key={key}><dt title={key}>{labels[key] || key}</dt><dd><Value value={parsed[key]} field={key} /></dd></div>)}</dl>
     </details> : null;
   })}<details className="oo-diagnostic-section"><summary>查看 JSON</summary><pre className="oo-diagnostic-json">{JSON.stringify(parsed, null, 2)}</pre></details></div>;

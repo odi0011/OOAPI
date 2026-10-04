@@ -10,6 +10,15 @@ export function parseAgentRouting(raw) {
   const v = typeof raw === "string" ? JSON.parse(raw) : raw;
   if (!v || v.version !== 1 || !Array.isArray(v.rules) || v.rules.length > 40) throw new Error("Agent 规则格式无效，最多 40 条");
   if (JSON.stringify(v).length > 40000) throw new Error("Agent 规则过大");
+  if (v.bindings !== undefined && (!Array.isArray(v.bindings) || v.bindings.length > 100)) throw new Error("Agent 密钥绑定最多 100 条");
+  const bound = new Set();
+  const bindings = (v.bindings || []).map(b => {
+    if (!b || !Number.isSafeInteger(b.tokenId) || b.tokenId < 1 || bound.has(b.tokenId)) throw new Error("密钥编号须为唯一的正整数");
+    const agent = agentId(b.agent);
+    if (!agent || agent === "ooapi") throw new Error("请选择有效的外部 Agent 或中转项目");
+    bound.add(b.tokenId);
+    return { tokenId: b.tokenId, agent };
+  });
   const seen = new Set();
   const rules = v.rules.map(r => {
     if (!r || !/^[a-zA-Z0-9_-]{1,40}$/.test(r.id) || seen.has(r.id)) throw new Error("规则编号无效或重复");
@@ -21,7 +30,7 @@ export function parseAgentRouting(raw) {
     return { id: r.id, enabled: r.enabled, agent: agentId(r.agent), models: [...new Set(r.models)], preferredChannels: [...new Set(r.preferredChannels)], reasoning: r.reasoning,
       timeoutMs: numeric(r.timeoutMs, 1000, 86400000, "超时"), retries: numeric(r.retries, 0, 10, "重试次数") };
   });
-  return { version: 1, rules };
+  return { version: 1, rules, bindings };
 }
 export function matchAgentRule(config, agent, model, canonical = x => x) {
   if (!agent?.id || agent.conflict) return null;

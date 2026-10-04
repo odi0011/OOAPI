@@ -19,13 +19,15 @@ const userName = `agent_qa_${crypto.randomBytes(4).toString("hex")}`;
 const [insert] = await pool.query("INSERT INTO users (username,password,display_name,role,status,quota,group_name) VALUES (?,?,?,?,?,?,?)", [userName, "fixture-no-password-login", "Agent 测试用户", 1, 1, 1000000, "测试"]);
 const userJwt = sign({ id: insert.insertId, role: 1 });
 const key = crypto.randomBytes(24).toString("hex");
-await pool.query("INSERT INTO tokens (user_id,name,key_str,status,unlimited_quota,group_name) VALUES (?,?,?,?,?,?)", [insert.insertId, "Agent QA fixture", key, 1, 1, "测试"]);
+const [tokenInsert] = await pool.query("INSERT INTO tokens (user_id,name,key_str,status,unlimited_quota,group_name) VALUES (?,?,?,?,?,?)", [insert.insertId, "Agent QA fixture", key, 1, 1, "测试"]);
+const unboundKey = crypto.randomBytes(24).toString("hex");
+await pool.query("INSERT INTO tokens (user_id,name,key_str,status,unlimited_quota,group_name) VALUES (?,?,?,?,?,?)", [insert.insertId, "Agent QA unbound fixture", unboundKey, 1, 1, "测试"]);
 const api = async (path, auth = adminJwt, method = "GET", body) => {
   const r = await fetch(base + "/api" + path, { method, headers: { authorization: `Bearer ${auth}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
   return { status: r.status, body: await r.json() };
 };
-const call = async (agent, effort = "medium", extra = {}) => {
-  const r = await fetch(base + "/v1/responses", { method: "POST", headers: { authorization: `Bearer ${key}`, "content-type": "application/json", "user-agent": agent, ...extra },
+const call = async (agent, effort = "medium", extra = {}, apiKey = key) => {
+  const r = await fetch(base + "/v1/responses", { method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json", "user-agent": agent, ...extra },
     body: JSON.stringify({ model: "deepseek-flash", input: "Describe the purpose of this isolated gateway test.", reasoning: { effort } }) });
   return { status: r.status, body: await r.json() };
 };
@@ -74,7 +76,43 @@ try {
   check((await api("/option/")).body.data.gateway_agent_rules === JSON.stringify(saved), "invalid write keeps the last valid rules");
   for (const name of ["sub2api", "new-api", "one-api", "litellm", "one-hub"]) check((await call("Go-http-client/1.1", "", { "x-ooapi-agent": name })).status === 200, `relay declaration accepted: ${name}`);
   await call("Go-http-client/1.1", "");
+  const codexUa = "codex-tui/0.123.0 (Windows 10.0; x86_64)";
+  check((await call(codexUa, "high", {}, unboundKey)).status === 200, "unbound Codex TUI request succeeds");
+  await page.goto(base + "/admin/settings?tab=gateway", { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "添加 Agent 规则", exact: true }).click();
+  await page.getByRole("switch", { name: "启用规则 2", exact: true }).click();
+  await page.getByRole("combobox", { name: "规则 2 Agent", exact: true }).press("ArrowDown");
+  await page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option-content').getByText("sub2api", { exact: true }).click();
+  await page.getByRole("combobox", { name: "规则 2 思考强度", exact: true }).press("ArrowDown");
+  await page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option-content').getByText("关闭（none）", { exact: true }).click();
+  await page.getByRole("button", { name: "添加密钥绑定", exact: true }).click();
+  check(await page.getByRole("spinbutton", { name: "绑定 1 密钥编号", exact: true }).inputValue() === "", "new binding does not select a real key automatically");
+  await page.getByRole("spinbutton", { name: "绑定 1 密钥编号", exact: true }).fill(String(tokenInsert.insertId));
+  await page.getByRole("combobox", { name: "绑定 1 Agent", exact: true }).press("ArrowDown");
+  await page.getByRole("combobox", { name: "绑定 1 Agent", exact: true }).press("Home");
+  await page.getByRole("combobox", { name: "绑定 1 Agent", exact: true }).press("Enter");
+  await page.getByRole("button", { name: "保存网关设置", exact: true }).click();
+  await page.getByText("设置已保存", { exact: true }).waitFor();
+  await page.reload({ waitUntil: "networkidle" });
+  check(await page.getByRole("spinbutton", { name: "绑定 1 密钥编号", exact: true }).inputValue() === String(tokenInsert.insertId), "key binding survives reload");
+  const boundConfig = JSON.parse((await api("/option/")).body.data.gateway_agent_rules);
+  check(boundConfig.rules.length === 2 && boundConfig.bindings[0].tokenId === tokenInsert.insertId && boundConfig.bindings[0].agent === "sub2api", "binding edits retain existing Agent rules");
+  check((await call(codexUa, "high", { "x-ooapi-agent": "zcode" })).status === 200, "authenticated key binding overrides spoofed Agent header");
+  const boundLogs = (await api("/log/usage?page_size=100", userJwt)).body.data.items;
+  const boundLog = boundLogs.find(r => r.token_id === tokenInsert.insertId && r.client_agent?.source === "api-key");
+  check(boundLog?.client_agent.id === "sub2api" && boundLog.client_agent.confidence === "configured" && boundLog.client_agent.reported_client?.id === "codex" && !boundLog.client_agent.conflict, "bound relay and client request mark are separately audited");
+  check(boundLog?.agent_routing?.id === boundConfig.rules[1].id && boundLog.reasoning_selected === "none", "bound Agent actually selects its enabled routing rule");
+  check(boundLogs.some(r => r.client_agent?.id === "codex" && r.client_agent.source === "user-agent" && r.client_agent.confidence === "heuristic"), "unbound Codex TUI keeps qualified User-Agent recognition");
+  const boundBadge = page.locator('.oo-agent-rule').filter({ has: page.getByRole("spinbutton", { name: "绑定 1 密钥编号", exact: true }) }).locator('.oo-client-agent[data-agent="sub2api"]');
+  await boundBadge.hover();
+  check((await page.locator('.ant-tooltip:not(.ant-tooltip-hidden)').last().innerText()).includes("按已鉴权密钥"), "binding tooltip describes configured identity");
+  await page.getByRole("button", { name: "删除绑定 1", exact: true }).click();
+  await page.getByRole("button", { name: "保存网关设置", exact: true }).click();
+  await page.getByText("设置已保存", { exact: true }).waitFor();
+  const removedBinding = JSON.parse((await api("/option/")).body.data.gateway_agent_rules);
+  check(removedBinding.bindings.length === 0 && removedBinding.rules.length === 2, "deleting key binding retains all rules");
   const fixtureUser = { id: insert.insertId, username: userName };
+  const blankAgentLogId = await writeLog({ user: fixtureUser, type: 2, content: "历史空 Agent 回补测试", model: "deepseek-flash", userAgent: codexUa, tokenId: tokenInsert.insertId, detail: JSON.stringify({ inbound_endpoint: "/v1/responses", client_agent: { id: "", source: "unknown", version: "", conflict: false } }) });
   await writeLog({ user: fixtureUser, type: 2, content: "内部会话测试", model: "deepseek-flash", detail: JSON.stringify({ inbound_endpoint: "/api/chat/run" }) });
   await writeLog({ user: fixtureUser, type: 3, content: "头像关联测试" });
   await writeLog({ user: fixtureUser, type: 2, content: "同协议展示测试", model: "deepseek-flash", detail: JSON.stringify({ inbound_endpoint: "/v1/chat/completions", upstream_endpoints: ["/v2/chat/completions"], reasoning_requested: "high", reasoning_selected: "high", reasoning_applied: true }) });
@@ -107,6 +145,7 @@ try {
         check(await page.locator('.oo-client-agent[data-agent="unknown"]').count() === 0, "unknown Agent stays hidden");
         const internal = page.locator('.oo-client-agent[data-agent="ooapi"]').first();
         check(await internal.locator('[data-brand-logo="true"]').count() === 1, "internal chat uses site logo");
+        check(await page.locator(`tr[data-row-key="${blankAgentLogId}"] .oo-client-agent[data-agent="codex"]`).count() === 1, "historical empty Agent gets Codex TUI badge from recorded UA");
         const badge = page.locator('.oo-client-agent[data-agent="zcode"]').first();
         await badge.scrollIntoViewIfNeeded();
         check(await badge.isVisible(), `Agent badge visible ${width} ${theme}`);
@@ -154,11 +193,16 @@ try {
   const failedDrawer=page.locator('.ant-drawer-content');
   check((await failedDrawer.locator('.oo-error-explanation').first().innerText()).includes('上游拒绝请求'), "failure status explains the system error in Chinese");
   check((await failedDrawer.locator('.oo-error-action').first().innerText()).includes('HTTP'), "failure explanation includes concrete diagnostic guidance");
+  check(await failedDrawer.locator('.oo-log-diagnostics details[open]').count() === 0, "all raw diagnostic sections and nested objects start closed");
+  await failedDrawer.getByText('故障与重试', {exact:false}).first().click();
   check(await failedDrawer.locator('.oo-diagnostic-attempts>li').count()===3, "endpoint failures render as three structured attempts");
   check((await failedDrawer.locator('.oo-diagnostic-upstream-code').innerText()).includes('11133'), "upstream code stays separate from the system error");
   check(await failedDrawer.locator('.oo-endpoint-adaptation').count()===0, "failed attempts are not presented as a successful adaptation");
   await failedDrawer.getByText('计费与用量',{exact:false}).first().click();
   check(await failedDrawer.locator('.oo-diagnostic-object').count()>0, "nested billing details can be expanded");
+  check(await failedDrawer.locator('.oo-diagnostic-object[open]').count() === 0, "expanding a group keeps all its nested objects closed");
+  await failedDrawer.locator('.oo-diagnostic-section').filter({ hasText: "计费与用量" }).first().locator('.oo-diagnostic-object>summary').first().click();
+  check(await failedDrawer.locator('.oo-diagnostic-object[open]').count() === 1, "nested object expands only when explicitly clicked");
   await failedDrawer.getByText('查看 JSON',{exact:true}).click();
   check((await failedDrawer.locator('.oo-diagnostic-json').innerText()).includes('\n  "code"'), "optional JSON retains formatting and original keys");
   check(!await page.evaluate(()=>window.fixtureUnsafe), "raw detail text is escaped");
