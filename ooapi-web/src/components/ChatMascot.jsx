@@ -362,41 +362,41 @@ export default function ChatMascot({ state = "idle", gesture = "" }) {
 function DrapedBody() {
   return <g className="cat-lounge-rig">
     <g className="lounge-tail" data-drape-contact="tail">
-      <path fill="none" stroke="#62676e" strokeWidth="3.5" strokeLinecap="round" d="M48 22C55 22 55 28 54 33S56 40 52 43"/>
-      <path fill="none" stroke="#85898e" strokeWidth="2" strokeLinecap="round" d="M48 22C54 23 54 28 53.5 33S55 39 52 42.5"/>
+      <path fill="none" stroke="#62676e" strokeWidth="3.2" strokeLinecap="round" d="M47 22C53 23 53.5 28 52 32S53 37 50 40"/>
+      <path fill="none" stroke="#85898e" strokeWidth="1.8" strokeLinecap="round" d="M47 22C52 23 52.5 28 51.5 32S52 36 50 39.5"/>
     </g>
     <g className="lounge-body">
-      <path fill="#62676e" d="M20 18h2v-3h4v-2h6v-1h9v1h5v2h3v3h2v5h-1v2h-3v2h-7v1H23v-1h-4v-3h-1v-4h2z"/>
-      <path fill="#85898e" d="M21 18h2v-2h4v-2h6v-1h7v1h5v2h3v3h2v4h-2v2h-3v1h-6v1H24v-1h-4v-3h-1v-2h2z"/>
-      <path fill="#a2a6aa" d="M28 15h5v-1h7v1h4v1H28z M45 17h2v2h-2z"/>
-      <path fill="#62676e" d="M41 20h5v1h-2v2h-2v2h-2v-3h1z"/>
-      <path fill="#dfe2e5" d="M22 24h5v1h5v1h8v1H24v-1h-3v-1h1z"/>
-      <g className="lounge-belly-spot"><rect x="37" y="25.5" width="3" height="2" rx="1" fill="#ea8a94"/><rect x="37.8" y="26" width="1.4" height="1" rx="0.5" fill="#f8b6be"/></g>
+      <path fill="#62676e" d="M21 20h2v-2h4v-2h6v-1h8v1h5v2h3v3h2v4h-2v2h-5v1H25v-1h-4v-2h-2v-3h2z"/>
+      <path fill="#85898e" d="M22 20h2v-2h4v-2h6v-1h7v1h4v2h3v3h2v3h-2v2h-5v1H26v-1h-4v-2h-1v-2h1z"/>
+      <path fill="#a2a6aa" d="M29 16h5v-1h6v1h5v1H29z M45 18h2v2h-2z"/>
+      <path fill="#62676e" d="M40 20h6v1h-2v2h-2v2h-2v-3h1z"/>
+      <path fill="#dfe2e5" d="M23 24h5v1h5v1h8v1H26v-1h-3v-1h1z"/>
+      <g className="lounge-belly-spot"><rect x="37" y="25" width="3" height="2" rx="1" fill="#dfe2e5"/></g>
     </g>
     <g className="lounge-folded-paw">
-      <path fill="#62676e" d="M29 21h4v5h-2v2h-6v-3h4z"/>
-      <path fill="#85898e" d="M30 22h2v3h-3v1h-2v-1h3z"/>
-      <path fill="#dfe2e5" d="M26 25h5v2h-5z"/>
-      <path fill="#fff" d="M27 25h3v1h-3z"/>
-      <rect x="28" y="24" width="3" height="2" rx="1" fill="#ffffff"/><rect x="29" y="25" width="1.4" height="0.8" fill="#f2c4c8"/>
+      <path fill="#62676e" d="M24 23h4v2h4v3h-8v-1h-2v-3h2z"/>
+      <path fill="#85898e" d="M25 24h4v1h2v2h-6v-1h-1v-1h1z"/>
+      <path fill="#dfe2e5" d="M24 26h7v2h-7z"/>
+      <path fill="#fff" d="M25 26h4v1h-4z"/>
+      <rect x="26" y="25" width="3" height="2" rx="1" fill="#ffffff"/>
     </g>
     {/* 照片中垂下的是近侧前腿和近侧后腿，分别从肩、髋伸出；远侧后腿被侧卧躯干遮住。 */}
     <g className="lounge-hanging-leg lounge-hind-leg" style={{"--joint-x":"44px","--joint-y":"23px"}} data-drape-contact="hind-leg">
-      <path fill="#62676e" d="M41 21h7v3h1v5h-2v5h-5v-4h-2v-5h1z"/>
-      <path fill="#85898e" d="M42 22h5v3h1v3h-2v5h-3v-4h-2v-3h1z"/>
-      <path fill="#a2a6aa" d="M42 23h2v5h-2z"/>
+      <path fill="#62676e" d="M41 21h7v3h1v4h-2v5h-5v-4h-2v-5h1z"/>
+      <path fill="#85898e" d="M42 22h5v3h1v2h-2v5h-3v-4h-2v-3h1z"/>
+      <path fill="#a2a6aa" d="M42 23h2v4h-2z"/>
       <g className="lounge-hock">
-        <path fill="#62676e" d="M42 31h5v5h-1v6h-1v2h-4v-1h-1v-4h1v-5h1z"/>
-        <path fill="#85898e" d="M43 32h3v3h-1v6h-3v-2h-1v-3h1v-3h1z"/>
-        <path fill="#dfe2e5" d="M41 40h4v3h-4z"/>
-        <path fill="#fff" d="M42 40h2v2h-2z"/>
+        <path fill="#62676e" d="M42 30h5v5h-1v5h-1v2h-4v-1h-1v-4h1v-5h1z"/>
+        <path fill="#85898e" d="M43 31h3v3h-1v5h-3v-2h-1v-3h1v-2h1z"/>
+        <path fill="#dfe2e5" d="M41 39h4v3h-4z"/>
+        <path fill="#fff" d="M42 39h2v2h-2z"/>
       </g>
     </g>
     <g className="lounge-hanging-leg lounge-front-leg" style={{"--joint-x":"25px","--joint-y":"24px"}} data-drape-contact="front-leg">
-      <path fill="#62676e" d="M22 22h6v5h-1v5h-5v-3h-1v-4h1z"/>
-      <path fill="#85898e" d="M23 22h4v5h-1v4h-3v-3h-1v-3h1z"/>
+      <path fill="#62676e" d="M22 22h6v5h-1v4h-5v-3h-1v-4h1z"/>
+      <path fill="#85898e" d="M23 22h4v5h-1v3h-3v-3h-1v-3h1z"/>
       <g className="lounge-wrist">
-        <path fill="#62676e" d="M22 29h5v5h-1v6h-1v1h-4v-1h-1v-3h1v-8z"/>
+        <path fill="#62676e" d="M22 29h5v5h-1v5h-1v1h-4v-1h-1v-3h1v-7z"/>
         <path fill="#85898e" d="M23 29h3v5h-1v5h-3v-3h1z"/>
         <path fill="#dfe2e5" d="M21 38h4v3h-1v1h-3z"/>
         <path fill="#fff" d="M22 39h2v2h-2z"/>

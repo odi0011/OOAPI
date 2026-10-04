@@ -22,6 +22,7 @@ const bottomGestures = ["tail-slip", "tail-tip", "feet-kick", "foot-dangle"];
 const HOVER_ARM_MS = 140;
 const HOVER_RELEASE_MS = 260;
 const EXIT_MS = 360;
+const DRAPE_PHASE_MS = { enter: 1500, startle: 1400, stretch: 2400 };
 // React 在指针离开浏览器窗口时可能传入 Window；contains 只接受 DOM 节点。
 const staysInside = event => event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget);
 
@@ -41,13 +42,97 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
   const menuWasOpen = useRef(false), reactionTimer = useRef(null), reactionMove = useRef(null), reactionPhase = useRef(null);
   const hoverArmTimer = useRef(null), hoverReleaseTimer = useRef(null), hoverInside = useRef(false), hoverSession = useRef(0);
   const reactionSequence = useRef(0), deferredReaction = useRef(null);
+  const drapeNextPhase = useRef(null), motionToken = useRef(null), completedMotion = useRef(null);
+  const flightCapture = useRef(null);
   const wasSuspended = useRef(quiet || pageHidden);
   const scheduleTimer = useRef(null), scheduleMove = useRef(null);
   const travelId = useRef(0);
+  if (!motionToken.current || motionToken.current.phase !== phase || motionToken.current.gesture !== pose.gesture || motionToken.current.motion !== pose.motion || motionToken.current.flight !== pose.flight) {
+    motionToken.current = { phase, gesture: pose.gesture, motion: pose.motion, flight: pose.flight };
+  }
   const live = useRef();
-  live.current = { pose, phase, geometry, pending, retained, saving, menuOpen, hovered, state };
+  live.current = { pose, phase, geometry, pending, retained, saving, menuOpen, hovered, state, quiet, pageHidden };
   const labelId = useId();
   const part = pending || retained, closing = Boolean(part && !pending);
+
+  const captureFlight = actor => {
+    const parts = new Map();
+    for (const node of [actor, ...actor.querySelectorAll(".cat-cranium,.cat-body,.cat-paw-left,.cat-paw-right,.cat-hind-left,.cat-hind-right,.cat-tail,.cat-shadow,.cat-eyes")]) {
+      const style = getComputedStyle(node);
+      parts.set(node, { transform: style.transform, translate: style.translate, rotate: style.rotate, scale: style.scale, opacity: style.opacity, transformOrigin: style.transformOrigin });
+    }
+    flightCapture.current = { actor, parts };
+  };
+  useLayoutEffect(() => {
+    const capture = flightCapture.current;
+    if (!pose.flight || !capture) return;
+    flightCapture.current = null;
+    if (quiet || !capture.actor.isConnected) return;
+    // 同一身体接新路线：先把新关键帧的起点接到当前肢体姿态，再重新计时。
+    // 不靠 key 重挂载，快速切菜单时头、脚和尾巴都沿用上一帧的重心。
+    for (const animation of capture.actor.getAnimations({ subtree: true })) {
+      if (!(animation instanceof CSSAnimation) || !/^lele-(jump|fall|reach|kick-off|air|startled|scramble|splay)/.test(animation.animationName)) continue;
+      const node = animation.effect.target, previous = capture.parts.get(node);
+      if (!previous) continue;
+      const frames = animation.effect.getKeyframes();
+      if (node === capture.actor) {
+        const old = new DOMMatrix(previous.transform === "none" ? undefined : previous.transform);
+        const [ox, oy] = getComputedStyle(node).transformOrigin.split(" ").map(parseFloat);
+        const corners = [[0, 0], [node.offsetWidth, 0], [0, node.offsetHeight], [node.offsetWidth, node.offsetHeight]].map(([x, y]) => ({ x: ox + old.a * (x - ox) + old.c * (y - oy), y: oy + old.b * (x - ox) + old.d * (y - oy) }));
+        const x = (pose.travelX || 0) - Math.min(...corners.map(p => p.x));
+        const y = (pose.travelY || 0) - Math.min(...corners.map(p => p.y));
+        frames[0] = { ...frames[0], transform: `matrix(${old.a},${old.b},${old.c},${old.d},${x},${y})`, translate: "none", rotate: "none", scale: "none" };
+      } else frames[0] = { ...frames[0], ...previous };
+      animation.effect.setKeyframes(frames);
+      animation.currentTime = 0;
+      animation.play();
+    }
+  }, [pose.flight, quiet]);
+
+  const showDrapeQuestion = current => {
+    drapeNextPhase.current = null;
+    setPose({ ...askPoses[hash(current.pending.id) % askPoses.length], at: current.pose.at, motion: ++travelId.current });
+    setPhase(current.quiet ? "rest" : "enter");
+  };
+  const requestDrapePhase = (next = "startle") => {
+    const current = live.current;
+    if (current.quiet || current.pageHidden || current.pose.gesture !== "drape") return;
+    if (current.phase === "enter") {
+      // 起身必须从已经落稳的侧躺姿态开始，入场中的身体不能倒回另一段 0% 关键帧。
+      if (next === "startle" || !drapeNextPhase.current) drapeNextPhase.current = next;
+    } else if (current.phase === "rest") {
+      drapeNextPhase.current = null;
+      setPhase(next);
+    }
+    // 已经在收身/伸展就继续播放；审批在它完成后从隐藏处接上询问入场。
+  };
+  const completeMotion = token => {
+    if (token !== motionToken.current || completedMotion.current === token) return;
+    const current = live.current;
+    if (current.quiet || current.pageHidden) return;
+    completedMotion.current = token;
+    if (current.pose.gesture === "drape") {
+      if (current.phase === "enter") {
+        const next = current.pending ? "startle" : drapeNextPhase.current;
+        drapeNextPhase.current = null;
+        setPhase(next || "rest");
+      } else if (["startle", "stretch"].includes(current.phase)) {
+        drapeNextPhase.current = null;
+        if (current.pending) showDrapeQuestion(current);
+        else setPhase("hidden");
+      }
+      return;
+    }
+    if (current.phase === "enter") {
+      const fragment = ["left", "right", "bottom"].includes(current.pose.edge);
+      setPhase(fragment ? "hidden" : "rest");
+      if (!fragment) {
+        const deferred = deferredReaction.current;
+        deferredReaction.current = null;
+        deferred?.();
+      }
+    }
+  };
 
   useLayoutEffect(() => {
     const parent = marker.current?.parentElement;
@@ -90,6 +175,7 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
       clearTimeout(scheduleMove.current);
       reactionSequence.current += 1;
       deferredReaction.current = null;
+      drapeNextPhase.current = null;
       reactionPhase.current = null;
       reactionMove.current = null;
       menuWasOpen.current = false;
@@ -119,14 +205,11 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
     }
     setRetained(pending); setError("");
     menuWasOpen.current = false;
-    if (live.current.pose.gesture === "drape" && live.current.phase !== "hidden") {
-      // 趴着的是独立骨骼，先完成收身再露出询问姿态，不能在同一帧硬换形。
-      setPhase("startle");
-      const timer = setTimeout(() => {
-        setPose({ ...askPoses[hash(pending.id) % askPoses.length], at: live.current.pose.at });
-        setPhase(quiet ? "rest" : "enter");
-      }, quiet ? 0 : 1600);
-      return () => clearTimeout(timer);
+    if (live.current.pose.gesture === "drape") {
+      // 审批只登记下一步；已经在起身/伸展时沿用剩余动画，不另起整段等待。
+      if (quiet || live.current.phase === "hidden") showDrapeQuestion(live.current);
+      else requestDrapePhase();
+      return undefined;
     }
     // 从侧面/下沿先收爪缩回，再从上沿探出。气泡等乐乐就位后才展开。
     if (live.current.pose.edge !== "top") {
@@ -215,17 +298,24 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
     if (pose.gesture !== "drape" || pending || menuOpen) return;
     if (quiet) return;
     // 无人打扰也会自然睡醒，起身伸展之后才跑走，不能突然淡出或换位置。
-    const timer = setTimeout(() => {
-      if (["enter", "rest"].includes(live.current.phase)) setPhase("stretch");
-    }, 28000 + Math.random() * 12000);
+    const timer = setTimeout(() => requestDrapePhase("stretch"), 28000 + Math.random() * 12000);
     return () => clearTimeout(timer);
   }, [pose.gesture, pose.motion, pending?.id, menuOpen, quiet]);
 
   useEffect(() => {
-    if (pose.gesture !== "drape" || !["startle", "stretch"].includes(phase) || pending) return;
-    const timer = setTimeout(() => setPhase("hidden"), quiet ? 0 : phase === "startle" ? 1720 : 3520);
+    if (quiet || pose.gesture !== "drape" || !DRAPE_PHASE_MS[phase]) return;
+    // animationend 是唯一的续接逻辑；浏览器漏事件时用相同时长加少量余量兜底。
+    const token = motionToken.current;
+    const timer = setTimeout(() => completeMotion(token), DRAPE_PHASE_MS[phase] + 120);
     return () => clearTimeout(timer);
-  }, [pose.gesture, phase, pending?.id, quiet]);
+  }, [pose.gesture, pose.motion, phase, quiet]);
+
+  useEffect(() => {
+    if (quiet || !pose.flight || phase !== "enter" || !["leap", "transfer", "drop"].includes(pose.gesture)) return;
+    const token = motionToken.current;
+    const timer = setTimeout(() => completeMotion(token), pose.duration + 120);
+    return () => clearTimeout(timer);
+  }, [pose.flight, pose.gesture, pose.duration, phase, quiet]);
 
   useLayoutEffect(() => {
     if (pose.gesture !== "drape" || !["enter", "rest"].includes(phase) || pending || menuOpen) return;
@@ -233,7 +323,7 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
     const inspect = () => {
       const anchor = marker.current?.parentElement?.querySelector(".pose-drape");
       cancelAnimationFrame(frame);
-      if (textNearDrapedCat(inputRef?.current, anchor, 7, text)) setPhase(quiet ? "hidden" : "startle");
+      if (textNearDrapedCat(inputRef?.current, anchor, 7, text)) requestDrapePhase();
       else if (phase === "enter" && text.length) frame = requestAnimationFrame(inspect);
     };
     const measure = () => { text = composerTextRects(inputRef?.current); inspect(); };
@@ -248,7 +338,7 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
     if (pending) { menuWasOpen.current = false; return undefined; }
     if (pageHidden) return undefined;
     if (live.current.pose.gesture === "drape") {
-      if (!quiet && menuOpen && ["enter", "rest"].includes(live.current.phase)) setPhase("startle");
+      if (menuOpen) requestDrapePhase();
       return undefined;
     }
     let frame, observer;
@@ -268,12 +358,14 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
         const next = { edge: "menu", at: (x - base.left) / base.width, gesture: previous ? "transfer" : "leap", y: top - base.top, floor: base.top - top };
         if (previous && Math.abs(previous.y - next.y) < .5 && Math.abs(previous.at - next.at) * base.width < .5) return;
         // 从当前可见身体起跳；快速切菜单时同样采样当前帧，不瞬移到旧落点。
-        const actor = parent.querySelector(".lele-edge-actor").getBoundingClientRect();
+        const actorElement = parent.querySelector(".lele-edge-actor"), actor = actorElement.getBoundingClientRect();
+        captureFlight(actorElement);
         next.travelX = actor.left - (x - 29);
         next.travelY = actor.top - (top - 54);
         next.falling = previous && next.travelY < -45;
-        next.duration = Math.min(1200, Math.max(820, 720 + Math.abs(next.travelY) * 1.05));
-        next.motion = ++travelId.current;
+        next.duration = Math.min(960, Math.max(580, 500 + Math.hypot(next.travelX, next.travelY) * .9));
+        next.motion = live.current.pose.motion;
+        next.flight = ++travelId.current;
         menuWasOpen.current = next;
         setPose(next); setPhase(quiet ? "rest" : "enter");
       };
@@ -286,9 +378,10 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
       });
     } else if (menuWasOpen.current) {
       menuWasOpen.current = false;
-      const parent = marker.current.parentElement, actor = parent.querySelector(".lele-edge-actor").getBoundingClientRect(), base = parent.getBoundingClientRect();
+      const parent = marker.current.parentElement, actorElement = parent.querySelector(".lele-edge-actor"), actor = actorElement.getBoundingClientRect(), base = parent.getBoundingClientRect();
+      captureFlight(actorElement);
       const travelY = Math.min(0, actor.top - (base.top - 54));
-      setPose({ edge: "top", at: (actor.left + 29 - base.left) / base.width, gesture: "drop", falling: true, travelY, duration: Math.min(1200, 820 + Math.abs(travelY) * .8), motion: ++travelId.current }); setPhase(quiet ? "rest" : "enter");
+      setPose({ edge: "top", at: (actor.left + 29 - base.left) / base.width, gesture: "drop", falling: true, travelY, duration: Math.min(920, Math.max(600, 520 + Math.abs(travelY) * .85)), motion: live.current.pose.motion, flight: ++travelId.current }); setPhase(quiet ? "rest" : "enter");
     }
     return () => { cancelAnimationFrame(frame); observer?.disconnect(); };
   }, [menuOpen, quiet, pageHidden, pending?.id]);
@@ -299,7 +392,7 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
       const action = typeof e.detail === "string" ? e.detail : e.detail?.action;
       if (!action || quiet || pending || menuOpen || saving) return;
       if (live.current.pose.gesture === "drape" && live.current.phase !== "hidden") {
-        if (action !== "typing" && ["enter", "rest"].includes(live.current.phase)) setPhase("startle");
+        if (action !== "typing") requestDrapePhase();
         return;
       }
       const gestures = { typing: "listen", send: "pop", copy: "proud", retry: "spin", attach: "curious" };
@@ -374,7 +467,7 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
       if (current.pending || current.menuOpen || current.saving || current.phase === "exit" || current.phase === "hidden") return;
       setHovered(true);
       // Hover 只叠加微表情，动作本身与 DOM 身份保持连续；睡熟后才会被轻轻惊醒。
-      if (current.pose.gesture === "drape" && current.phase === "rest") setPhase("startle");
+      if (current.pose.gesture === "drape") requestDrapePhase();
     }, quiet ? 0 : HOVER_ARM_MS);
   };
 
@@ -418,16 +511,12 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
   const companionState = asking ? (closing ? "asking-closing" : "asking") : menuOpen ? "menu" : reactionPhase.current ? "reacting" : hovered ? "hover" : phase === "hidden" ? "hidden" : "idle";
   const finishMotion = e => {
     if (!e.target.classList.contains("lele-edge-actor")) return;
-    if (pose.gesture === "drape" && ["startle", "stretch"].includes(phase)) {
-      if (!pending) setPhase("hidden");
-    } else if (phase === "enter") {
-      setPhase(fragment ? "hidden" : "rest");
-      if (!fragment) {
-        const deferred = deferredReaction.current;
-        deferredReaction.current = null;
-        deferred?.();
-      }
+    if (pose.flight && phase === "enter" && ["leap", "transfer", "drop"].includes(pose.gesture)) {
+      // 同一 DOM 上重启路线后，旧 animationend 仍可能已进入事件队列；只接受当前路线末帧。
+      const active = e.target.getAnimations().find(a => a instanceof CSSAnimation && a.animationName === e.animationName && a.effect.target === e.target);
+      if (!active || Number(active.currentTime) < Number(active.effect.getComputedTiming().endTime) - 20) return;
     }
+    completeMotion(motionToken.current);
   };
 
   return <>
