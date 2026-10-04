@@ -10,12 +10,12 @@
 // 用法（服务器上，需 xvfb）：
 //   cd ooapi-server && xvfb-run -a node tests/ui-smoke.mjs
 //   BASE=http://127.0.0.1:3999 xvfb-run -a node tests/ui-smoke.mjs   # 指定地址
+//   UI_SMOKE_LOGIN=1：通过标准输入的一行 JSON 读取 username/password，走真实登录表单；不保存凭据。
 import "dotenv/config";
 import { chromium } from "playwright";
-import jwt from "jsonwebtoken";
-import { JWT_SECRET, pool } from "../src/db.js";
 
 const BASE = process.env.BASE || "http://127.0.0.1:3001";
+const LOGIN_MODE = process.env.UI_SMOKE_LOGIN === "1";
 const ROUTES = [
   ["/", "公开首页"],
   ["/login", "登录页"],
@@ -54,23 +54,107 @@ const IGNORE = [
   /antd: Tabs/i,
 ];
 
-const [[admin]] = await pool.query("SELECT id, role, token_version, username FROM users WHERE role >= 100 LIMIT 1");
-if (!admin) {
-  console.error("数据库里没有管理员账号，无法检查管理页");
-  process.exit(1);
+async function readLoginCredentials() {
+  const input = process.stdin;
+  const wasRaw = Boolean(input.isRaw);
+  // PTY 默认会回显输入；必须先关闭回显，再通知调用方可以发送凭据。
+  if (input.isTTY) input.setRawMode(true);
+  input.setEncoding("utf8");
+  let buffer = "";
+  try {
+    const line = await new Promise((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        input.off("data", onData);
+        input.off("end", onEnd);
+        input.off("error", onError);
+      };
+      const finish = (error, value) => {
+        cleanup();
+        if (error) reject(error); else resolve(value);
+      };
+      const onData = chunk => {
+        buffer += chunk;
+        if (buffer.includes("\u0003")) return finish(new Error("已取消登录输入"));
+        if (buffer.length > 8192) return finish(new Error("登录输入过长"));
+        const end = buffer.search(/[\r\n]/);
+        if (end >= 0) finish(null, buffer.slice(0, end));
+      };
+      const onEnd = () => finish(null, buffer);
+      const onError = () => finish(new Error("无法读取登录输入"));
+      const timer = setTimeout(() => finish(new Error("等待登录输入超时")), 120000);
+      input.on("data", onData);
+      input.once("end", onEnd);
+      input.once("error", onError);
+      input.resume();
+      console.log("UI_SMOKE_LOGIN_READY");
+    });
+    let credentials;
+    try { credentials = JSON.parse(line); }
+    catch { throw new Error("登录输入必须是单行 JSON"); }
+    if (!credentials || typeof credentials.username !== "string" || !credentials.username.trim() || typeof credentials.password !== "string" || !credentials.password) {
+      throw new Error("登录输入缺少用户名或密码");
+    }
+    return credentials;
+  } finally {
+    buffer = "";
+    if (input.isTTY) input.setRawMode(wasRaw);
+    input.pause();
+  }
 }
-const token = jwt.sign(
-  { id: admin.id, role: admin.role, tv: Number(admin.token_version) || 0 },
-  JWT_SECRET,
-  { expiresIn: "20m" }
-);
+
+let pool, token;
+if (!LOGIN_MODE) {
+  const [{ default: jwt }, db] = await Promise.all([import("jsonwebtoken"), import("../src/db.js")]);
+  pool = db.pool;
+  const [[admin]] = await pool.query("SELECT id, role, token_version, username FROM users WHERE role >= 100 LIMIT 1");
+  if (!admin) {
+    console.error("数据库里没有管理员账号，无法检查管理页");
+    await pool.end().catch(() => {});
+    process.exit(1);
+  }
+  token = jwt.sign(
+    { id: admin.id, role: admin.role, tv: Number(admin.token_version) || 0 },
+    db.JWT_SECRET,
+    { expiresIn: "20m" }
+  );
+}
 
 const browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"], ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : {}) });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-await ctx.addInitScript((t) => localStorage.setItem("ooapi-token", t), token);
+if (LOGIN_MODE) {
+  let credentials;
+  const loginPage = await ctx.newPage();
+  try {
+    credentials = await readLoginCredentials();
+    await loginPage.goto(BASE + "/login", { waitUntil: "networkidle", timeout: 40000 });
+    await loginPage.getByLabel("用户名", { exact: true }).fill(credentials.username);
+    await loginPage.getByLabel("密码", { exact: true }).fill(credentials.password);
+    const [response] = await Promise.all([
+      loginPage.waitForResponse(r => new URL(r.url()).pathname === "/api/user/login" && r.request().method() === "POST", { timeout: 30000 }),
+      loginPage.getByRole("button", { name: "登录工作台" }).click(),
+    ]);
+    const result = await response.json();
+    if (!response.ok() || result.success === false || Number(result.data?.user?.role) < 100 || !Number.isFinite(Number(result.data?.user?.role))) {
+      throw new Error("登录未取得管理员权限");
+    }
+    await loginPage.waitForURL(url => !["/login", "/register"].includes(url.pathname), { timeout: 30000 });
+    console.log("UI_SMOKE_LOGIN_OK");
+  } catch {
+    // Playwright 的调用日志可能带 fill 参数，登录失败时只输出固定提示。
+    console.error("UI 冒烟登录失败：请检查登录输入、管理员权限与站点登录表单。");
+    await browser.close();
+    process.exit(1);
+  } finally {
+    if (credentials) { credentials.username = ""; credentials.password = ""; }
+    await loginPage.close().catch(() => {});
+  }
+} else {
+  await ctx.addInitScript((t) => localStorage.setItem("ooapi-token", t), token);
+}
 
 let failed = 0;
-console.log(`UI 冒烟：${BASE}（管理员 ${admin.username}）\n`);
+console.log(`UI 冒烟：${BASE}（管理员${LOGIN_MODE ? "表单登录" : "数据库认证"}）\n`);
 
 for (const [route, label] of ROUTES) {
   const page = await ctx.newPage();
@@ -86,6 +170,9 @@ for (const [route, label] of ROUTES) {
     errors.push(`加载失败: ${e.message}`);
   }
   await page.waitForTimeout(2000);
+  if (!["/", "/login", "/register"].includes(route) && ["/login", "/register"].includes(new URL(page.url()).pathname)) {
+    errors.push("认证失效：受保护页面退回登录入口");
+  }
 
   const info = await page.evaluate(() => {
     const el = document.getElementById("root");
@@ -101,6 +188,6 @@ for (const [route, label] of ROUTES) {
 }
 
 await browser.close();
-await pool.end().catch(() => {});
+if (pool) await pool.end().catch(() => {});
 console.log(`\n${failed === 0 ? "全部页面正常渲染" : `${failed} 个页面存在问题`}`);
 process.exit(failed ? 1 : 0);
