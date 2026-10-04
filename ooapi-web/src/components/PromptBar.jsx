@@ -117,10 +117,18 @@ export default function PromptBar({
   const [attachOpen, setAttachOpen] = useState(false);
   const [keyOpen, setKeyOpen] = useState(false);
   const [reasoningOpen, setReasoningOpen] = useState(false);
+  const focusAfterKeyRef = useRef(false);
   const menuOpen = modelOpen ? "model" : reasoningOpen ? "reasoning" : keyOpen ? "key" : attachOpen ? "attach" : cmdOpen ? "command" : "";
 
   const composerDisabled = disabled || settingsSaving || !model;
   const canSend = !composerDisabled && (value.trim().length > 0 || chips.length > 0);
+
+  // 切换密钥会刷新元信息并短暂禁用输入框，等刷新完成后再把焦点还给输入框。
+  useEffect(() => {
+    if (!focusAfterKeyRef.current || disabled || settingsSaving || busy || !model || keyOpen) return;
+    focusAfterKeyRef.current = false;
+    requestAnimationFrame(() => taRef.current?.focus());
+  }, [disabled, settingsSaving, busy, model, keyOpen, taRef]);
 
   // 输入框自增高：使用 auto 准确度量，限制在 36px~200px 之间，超出平滑滚动
   useLayoutEffect(() => {
@@ -438,8 +446,7 @@ export default function PromptBar({
                       onClick={() => {
                         setKeyOpen(false); setReasoningOpen(false);
                         onKey?.(k.id);
-                        // 切密钥会触发元信息刷新并重渲染；下一帧再聚焦，避免刷新态把焦点吞掉。
-                        requestAnimationFrame(() => taRef.current?.focus());
+                        focusAfterKeyRef.current = true;
                       }}
                     >
                       <span className="nm2">{k.name}</span>
