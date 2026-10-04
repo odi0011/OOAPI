@@ -98,6 +98,8 @@
 .ui-chat2 .bui-composer-bar .is-reasoning {flex:0 0 auto;max-width:110px;}
 .ui-chat2 .bui-composer-bar .is-reasoning>.bui-selbtn {background:var(--inset);border-radius:8px;}
 .ui-chat2 .bui-composer-bar .is-key {max-width:160px;}
+.ui-chat2 .bui-composer-bar .is-key>.bui-selbtn {width:100%;}
+.ui-chat2 .bui-composer-bar .is-key>.bui-upmenu.is-model {max-width:min(300px,calc(100vw - 24px));}
 .ui-chat2 .bui-composer-spacer {display:block;flex:1;}
 .ui-chat2 .bui-modelwrap>.bui-upmenu.is-reasoning {left:0;right:auto;width:150px;}
 .ui-chat2 .bui-modelwrap.is-model-select>.bui-upmenu {max-width:min(300px,calc(100vw - 100px));}
@@ -106,7 +108,9 @@
 @media(max-width:700px) {
   .ui-chat2 .bui-composer-bar .is-model-select {flex:0 1 auto;max-width:45%;}
   .ui-chat2 .bui-composer-bar .bui-selbtn {padding:0 4px;gap:4px;}
-  .ui-chat2 .bui-composer-bar .is-key>.bui-selbtn .nm2,.ui-chat2 .bui-composer-bar .is-key>.bui-selbtn .caret {display:none;}
+  /* 密钥按钮不能只剩图标：保留短名称和箭头，空间不足时由 nm2 自然省略。 */
+  .ui-chat2 .bui-composer-bar .is-key>.bui-selbtn .nm2 {display:block;max-width:8ch;}
+  .ui-chat2 .bui-composer-bar .is-key>.bui-selbtn .caret {display:flex;}
   .ui-chat2 .bui-modelwrap>.bui-upmenu.is-reasoning {left:auto;right:0;}
 
 }
@@ -196,6 +200,7 @@
 .ui-chat2-project-toggle[aria-expanded="true"]>.ui-chat2-project-chevron {transform:rotate(90deg);}
 .ui-chat2-project-name {min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ui-chat2-project.is-current .ui-chat2-project-name {color:var(--accent-ink);font-weight:600;}
+.ui-chat2-project.is-current .ui-chat2-project-head {background:transparent;box-shadow:none;}
 .ui-chat2-project-toggle small {color:var(--ink-3);font-size:11px;font-variant-numeric:tabular-nums;}
 .ui-chat2-project-head>.bui-shelf-act.ant-btn {width:28px;height:32px;flex-shrink:0;}
 /* 项目行保持像导航项，辅助动作只在当前行需要时出现，避免每行都露出三个符号。 */
@@ -205,7 +210,7 @@
 .ui-chat2-project-head:focus-within>.bui-shelf-act.ant-btn,
 .ui-chat2-project-head:hover>.ant-dropdown .bui-shelf-act.ant-btn,
 .ui-chat2-project-head:focus-within>.ant-dropdown .bui-shelf-act.ant-btn {opacity:1;}
-.ui-chat2-project-children {margin:2px 0 10px 17px;padding:2px 0 2px 7px;border-left:1px solid color-mix(in srgb, var(--accent) 28%, var(--line));min-width:0;}
+.ui-chat2-project-children {margin:2px 0 10px;padding:2px 0 2px 24px;border-left:0;min-width:0;}
 .ui-chat2-project-children .bui-shelf-item {padding-left:8px;}
 .ui-chat2-project-children .bui-shelf-empty {padding:9px 8px;font-size:11px;}
 .ui-chat2-standalone {margin-top:14px;}

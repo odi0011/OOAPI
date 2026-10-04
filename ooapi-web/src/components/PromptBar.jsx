@@ -94,7 +94,7 @@ export default function PromptBar({
   onPickFile,
   fileOk = true,
   visionOk = false,
-  // 可用密钥（>1 把时在工具行显示切换器；只有 1 把就不打扰）
+  // 可用密钥。即使只有一把也显示当前路由身份，避免用户看不到模型/计费分组来源。
   keys = [],
   keyId = 0,
   onKey,
@@ -200,7 +200,8 @@ export default function PromptBar({
     setAttachOpen(false);
     setKeyOpen(false); setReasoningOpen(false);
   };
-  const curKey = keys.find((k) => k.id === keyId);
+  const normalizedKeyId = Number(keyId) || 0;
+  const curKey = keys.find((k) => Number(k.id) === normalizedKeyId) || (keys.length === 1 ? keys[0] : null);
 
   return (
     <div className="bui-promptbar" data-promptbar onKeyDown={e => {
@@ -410,8 +411,8 @@ export default function PromptBar({
             </div>}
           </div>}
           <span className="bui-composer-spacer" />
-          {/* 密钥：只有一把可用密钥时不显示（没得选就不打扰） */}
-          {keys.length > 1 ? (
+          {/* 密钥：单密钥也保留入口，用户需要知道当前模型来自哪套路由身份。 */}
+          {keys.length > 0 ? (
             <div className="bui-modelwrap is-key is-right">
               <button
                 type="button"
@@ -437,11 +438,12 @@ export default function PromptBar({
                       onClick={() => {
                         setKeyOpen(false); setReasoningOpen(false);
                         onKey?.(k.id);
+                        taRef.current?.focus();
                       }}
                     >
                       <span className="nm2">{k.name}</span>
                       <span className="ds" style={{ flex: "0 1 auto" }}>{k.group_name || "公共池"}</span>
-                      <span className={`tick ${k.id === keyId ? "" : "is-off"}`}>{TickIcon}</span>
+                      <span className={`tick ${Number(k.id) === normalizedKeyId ? "" : "is-off"}`}>{TickIcon}</span>
                     </button>
                   ))}
                 </div>

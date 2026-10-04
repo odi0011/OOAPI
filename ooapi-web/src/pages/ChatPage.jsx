@@ -1417,6 +1417,12 @@ export default function ChatPage() {
     visibleSessions.forEach((item) => { if (item.project_id && map.has(String(item.project_id))) map.get(String(item.project_id)).push(item); });
     return map;
   }, [projects, visibleSessions]);
+  // 归档视图只展示确实含有归档对话的项目；否则项目标题会在切换归档后留下
+  // 空壳，用户会误以为项目本身也被归档了。进行中视图保留空项目，方便从项目行新建对话。
+  const visibleProjects = useMemo(
+    () => view === "archived" ? projects.filter((project) => (projectSessions.get(String(project.id)) || []).length > 0) : projects,
+    [projects, projectSessions, view]
+  );
   const standaloneSessions = useMemo(() => visibleSessions.filter((item) => !item.project_id), [visibleSessions]);
   const renderSession = (s, nested = false) => <div key={s.id} data-session-id={s.id}>{selectMode ? (
     <div key={s.id} className={`bui-shelf-pick ${nested ? "is-nested" : ""}`}>
@@ -1482,8 +1488,8 @@ export default function ChatPage() {
             <Tooltip title="新建项目"><Button type="text" className="bui-shelf-act" aria-label="新建项目" icon={<PlusOutlined />} onClick={createProject} /></Tooltip>
           }
         >
-          {projects.length ? (
-            projects.map((p) => (
+          {visibleProjects.length ? (
+            visibleProjects.map((p) => (
               <div key={p.id} className={`ui-chat2-project ${session?.project_id === p.id ? "is-current" : ""}`} data-project-id={p.id}>
                 <div className="ui-chat2-project-head">
                   <button type="button" className="ui-chat2-project-toggle" aria-label={`项目：${p.name}`} aria-expanded={expandedProjects.has(p.id)}
@@ -1509,7 +1515,7 @@ export default function ChatPage() {
               </div>
             ))
           ) : (
-            <div className="bui-shelf-empty">还没有项目。用项目把对话分类，例如「工作」「学习」。</div>
+            <div className="bui-shelf-empty">{view === "archived" ? "还没有归档的项目。" : "还没有项目。用项目把对话分类，例如「工作」「学习」。"}</div>
           )}
         </ShelfGroup>
 
