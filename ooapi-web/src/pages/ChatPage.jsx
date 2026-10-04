@@ -1516,7 +1516,7 @@ export default function ChatPage() {
         {/* 独立对话只显示没有所属项目的会话；批量操作同样可选项目内的会话。 */}
         <div className="ui-chat2-standalone">
         <ShelfGroup
-          title={<>{view === "archived" ? "已归档的独立对话" : "独立对话"}<span className="ui-chat2-standalone-count">{standaloneSessions.length}</span></>}
+          title={<>{view === "archived" ? "已归档" : "最近"}<span className="ui-chat2-standalone-count">{standaloneSessions.length}</span></>}
           action={
             visibleSessions.length ? (
               <button
@@ -1579,7 +1579,7 @@ export default function ChatPage() {
             standaloneSessions.map((s) => renderSession(s))
           ) : (
             <div className="bui-shelf-empty">
-              {view === "archived" ? "还没有归档的独立对话。" : "还没有独立对话，点上面「新建对话」开始。"}
+              {view === "archived" ? "还没有归档的对话。" : "还没有直接对话，点上面「新建对话」开始。"}
             </div>
           )}
         </ShelfGroup>
