@@ -229,9 +229,14 @@ const flagsOf = (meta = {}) => ({
   ...(meta.state !== undefined ? { st: meta.state ? 1 : 0 } : {}),
   ...(meta.safe !== undefined ? { sf: meta.safe ? 1 : 0 } : {}),
   ...(meta.kind ? { k: meta.kind } : {}),
+  ...(meta.model ? { m: clip(meta.model, 160) } : {}),
+  ...(meta.billModel && meta.billModel !== meta.model ? { bm: clip(meta.billModel, 160), b: clip(meta.billModel, 160) } : {}),
+  ...(meta.ttft !== undefined ? { ft: Math.max(0, Math.round(Number(meta.ttft) || 0)) } : {}),
   ...(meta.user
     ? {
+        uid: Number(meta.user.id) || 0,
         u: {
+          i: Number(meta.user.id) || 0,
           n: clip(meta.user.display_name || meta.user.username, 40),
           e: clip(meta.user.email, 80),
         },
@@ -250,6 +255,9 @@ export async function recordChannelCall(channelId, ok, ms, error = "", meta = {}
       ms: Math.max(0, Math.round(Number(ms) || 0)),
       p: clip(meta.prompt, 160),
       r: clip(meta.reply || error, 240),
+      ...(meta.model ? { model: clip(meta.model, 160) } : {}),
+      ...(meta.billModel && meta.billModel !== meta.model ? { billModel: clip(meta.billModel, 160) } : {}),
+      ...(meta.ttft !== undefined ? { ft: Math.max(0, Math.round(Number(meta.ttft) || 0)) } : {}),
       ...flagsOf(meta),
     });
     await pool
@@ -492,6 +500,9 @@ export async function markChannelOk(channel, elapsedMs, meta = {}) {
       ms: Math.max(0, Math.round(Number(elapsedMs) || 0)),
       p: clip(meta.prompt, 160),
       r: clip(meta.reply, 240),
+      ...(meta.model ? { model: clip(meta.model, 160) } : {}),
+      ...(meta.billModel && meta.billModel !== meta.model ? { billModel: clip(meta.billModel, 160) } : {}),
+      ...(meta.ttft !== undefined ? { ft: Math.max(0, Math.round(Number(meta.ttft) || 0)) } : {}),
       ...flagsOf(meta),
     });
     await pool

@@ -336,6 +336,9 @@ export async function runCompletion({
       markChannelOk(channel, Date.now() - (callStarted || started), {
         prompt,
         reply: result.content || result.reasoning || "",
+        model: result.upstreamModel || model,
+        billModel: result.billModel || model,
+        ttft: firstTokenAt ? firstTokenAt - (callStarted || started) : undefined,
         // codex-state-kit：记录本轮是否降智 / 是否携带 292 通行证（tip 展示）。
         // **必须显式区分「不支持检测」与「检测为否」**：
         // `result.rotateNext ? 1 : 0` 对不支持该机制的适配器（除 codex 外全部）
@@ -373,6 +376,8 @@ export async function runCompletion({
             reply: String(result.rotateReason || "上游降智信号"),
             degraded: 1,
             kind: "chat",
+            model: result.upstreamModel || model,
+            billModel: result.billModel || model,
             user,
           }
         );
@@ -433,6 +438,8 @@ export async function runCompletion({
           prompt,
           reply: lastError.message,
           kind: "chat",
+          model: lastError.upstreamModel || model,
+          billModel: lastError.billModel || model,
           user,
           errorCode: code,
         }).catch(() => {});
@@ -449,6 +456,8 @@ export async function runCompletion({
         prompt,
         reply: lastError.message,
         kind: "chat",
+        model: lastError.upstreamModel || model,
+        billModel: lastError.billModel || model,
         user,
         // 带上错误码：不可自愈的错误（凭据失效/被封/权限不足）由 router 自动暂停渠道
         errorCode: code,

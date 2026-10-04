@@ -47,6 +47,7 @@ export async function runDueChannelTests() {
       await recordChannelCall(row.id, true, r.ttftMs || r.ms, "", {
         prompt,
         reply: r.reply,
+        model: r.model || row.test_model || "",
         degraded: r.degraded,
         state: r.state,
         kind: "auto",

@@ -45,6 +45,8 @@ const shortUser = (n) => {
 function UptimeTip({ c }) {
   const p = cleanSummary(c.p);
   const r = cleanSummary(c.r);
+  const model = c.m || c.model;
+  const billModel = c.b || c.bm || c.billModel;
   return (
     <div className="oo-uptime-tip">
       <div className="oo-uptime-tip-head">
@@ -82,6 +84,12 @@ function UptimeTip({ c }) {
           </div>
         </div>
       ) : null}
+      {model ? (
+        <div className="oo-uptime-tip-row">
+          <span className="oo-uptime-tip-label">模型</span>
+          <div>{model}{billModel && billModel !== model ? <span style={{ opacity: 0.7 }}> ↳ {billModel}</span> : null}</div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -115,6 +123,8 @@ const modelOptionRender = (vendor) => (opt) => (
 // 最近调用记录：小竖条（绿=快 / 黄=慢 / 红=失败），悬浮显示提示词与 AI 回复。
 // 样式参考 aceternity 的 uptime bars：只保留小竖条与 hover 放大效果。
 const UPTIME_SLOW_MS = 3000; // 超过该耗时视为「慢」（黄色）
+const UPTIME_VERY_SLOW_MS = 5000; // 首 T 超过该耗时视为「很慢」（红色）
+const uptimeClass = (c) => !c?.ok ? "is-fail" : (Number(c?.ft ?? c?.ms) >= UPTIME_VERY_SLOW_MS ? "is-very-slow" : Number(c?.ft ?? c?.ms) >= UPTIME_SLOW_MS ? "is-slow" : "is-ok");
 
 function UptimeBars({ calls = [], count = 20, onCopy }) {
   const list = (calls || []).slice(-count);
@@ -129,7 +139,7 @@ function UptimeBars({ calls = [], count = 20, onCopy }) {
         c ? (
           <Tooltip key={i} title={<UptimeTip c={c} />}>
             <i
-              className={`oo-uptime-bar is-clickable ${!c.ok ? "is-fail" : c.ms >= UPTIME_SLOW_MS ? "is-slow" : "is-ok"}`}
+              className={`oo-uptime-bar is-clickable ${uptimeClass(c)}`}
               role="button"
               tabIndex={0}
               title="点击复制原始返回结果"
@@ -2201,19 +2211,7 @@ export default function AdminChannelsPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <QuotaInline quota={q} stats={stats} />
             {rateLimitRow}
-            {r.quota_supported ? (
-              <Button
-                type="link"
-                size="small"
-                aria-label={`${q ? "查看" : "查询"} ${r.name} 账号额度`}
-                loading={quotaBusyId === r.id}
-                disabled={Boolean(quotaBusyId) && quotaBusyId !== r.id}
-                style={{ padding: 0, height: "auto", alignSelf: "flex-start", fontSize: 12, color: "var(--ink-3)" }}
-                onClick={() => doQuota(r, { openPanel: true })}
-              >
-                {q ? "额度详情" : "查询额度"}
-              </Button>
-            ) : !q ? <Text type="secondary" style={{ fontSize: 11 }}>上游暂未提供额度</Text> : null}
+            {!q && !r.quota_supported ? <Text type="secondary" style={{ fontSize: 11 }}>上游暂未提供额度</Text> : null}
           </div>
         );
       },
@@ -4091,26 +4089,28 @@ export default function AdminChannelsPage() {
               <StatCard label="最长连续天数" value={`${statsStreaks.longest} 天`} />
             </div>
 
-            <TokenActivity byDay={statsData.byDay} />
-
-            <TokenTrend
-              byDay={statsData.byDay}
-              series={statsData.series || []}
-              range={trendRange}
-              onRangeChange={setTrendRange}
-            />
-
-            <div className="oo-stats-card-head">
-              <div className="oo-stats-card-title">最近调用</div>
-              <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                近 {statsData.days} 天：调用 {statsData.totals.calls} · Tokens {fmtFull(statsData.totals.tokens)} · 消费 <OdAmount>{statsData.totals.od}</OdAmount>
-              </span>
-            </div>
-            <div className="oo-stats-recent">
+            <div className="oo-stats-layout">
+              <div className="oo-stats-layout-data">
+                <TokenActivity byDay={statsData.byDay} />
+                <TokenTrend
+                  byDay={statsData.byDay}
+                  series={statsData.series || []}
+                  range={trendRange}
+                  onRangeChange={setTrendRange}
+                />
+              </div>
+              <div className="oo-stats-layout-recent">
+                <div className="oo-stats-card-head">
+                  <div className="oo-stats-card-title">最近调用</div>
+                  <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                    近 {statsData.days} 天：调用 {statsData.totals.calls} · Tokens {fmtFull(statsData.totals.tokens)} · 消费 <OdAmount>{statsData.totals.od}</OdAmount>
+                  </span>
+                </div>
+                <div className="oo-stats-recent">
               {(statsData.recent || []).slice(-10).reverse().map((c, i) => (
                 <div className="oo-stats-recent-row" key={i}>
                   <span
-                    className={`oo-uptime-bar is-clickable ${!c.ok ? "is-fail" : c.ms >= UPTIME_SLOW_MS ? "is-slow" : "is-ok"}`}
+                    className={`oo-uptime-bar is-clickable ${uptimeClass(c)}`}
                     role="button"
                     tabIndex={0}
                     title="点击复制原始返回结果"
@@ -4127,7 +4127,7 @@ export default function AdminChannelsPage() {
                     {c.u ? (
                       <Tooltip title={`${c.u.n || "用户"}${c.u.e ? ` · ${c.u.e}` : ""}（点击复制）`}>
                         <button type="button" className="bui-user-tag" onClick={() => copyUserContact(c.u)}>
-                          <Avatar size={16} style={{ background: "var(--accent)", fontSize: 10 }}>
+                          <Avatar size={16} src={c.u.a || undefined} style={{ background: "var(--accent)", fontSize: 10 }}>
                             {String(c.u.n || "?").slice(0, 1)}
                           </Avatar>
                           <span className="oo-truncate" style={{ maxWidth: 46 }}>{shortUser(c.u.n)}</span>
@@ -4143,6 +4143,18 @@ export default function AdminChannelsPage() {
                       <span className="bui-chip" style={{ opacity: 0.6 }}>其他</span>
                     )}
                   </span>
+                  <span style={{ width: 150, minWidth: 0, display: "flex", flexDirection: "column", gap: 1, fontSize: 11.5 }}>
+                    {(() => {
+                      const model = c.m || c.model;
+                      const billModel = c.b || c.bm || c.billModel;
+                      return (
+                        <>
+                          {model ? <ModelLabel model={model} size={12} channelType={statsData.channel?.type} /> : <span className="oo-truncate" style={{ color: "var(--ink-3)" }}>未知模型</span>}
+                          {billModel && billModel !== model ? <span className="oo-truncate" style={{ color: "var(--ink-3)" }}>↳ {billModel}</span> : null}
+                        </>
+                      );
+                    })()}
+                  </span>
                   <span className="oo-num" style={{ width: 56, textAlign: "right", fontSize: 12 }}>{c.ms ? `${c.ms}ms` : "-"}</span>
                   <span
                     className="oo-truncate"
@@ -4154,6 +4166,8 @@ export default function AdminChannelsPage() {
                 </div>
               ))}
               {!(statsData.recent || []).length ? <Text type="secondary" style={{ fontSize: 12 }}>暂无记录</Text> : null}
+                </div>
+              </div>
             </div>
           </>
         ) : (

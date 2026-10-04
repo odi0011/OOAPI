@@ -1307,6 +1307,10 @@ h1, h2, h3, h4 {
   background: var(--orange);
 }
 
+.oo-uptime-bar.is-very-slow {
+  background: var(--red);
+}
+
 .oo-uptime-bar.is-fail {
   background: var(--red);
 }
@@ -1446,6 +1450,57 @@ h1, h2, h3, h4 {
 
 .oo-stats-recent-row .oo-uptime-bar {
   height: 14px;
+}
+
+/* 渠道用量统计：数据区与最近调用分栏，各自承担滚动，避免记录把图表整体推到弹窗底部。 */
+.oo-stats-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.oo-stats-layout-data {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.oo-stats-layout-data .oo-stats-card {
+  margin-bottom: 12px;
+}
+.oo-stats-layout-recent {
+  min-width: 0;
+  max-height: min(62vh, 560px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 12px 14px;
+  background: var(--surface);
+}
+.oo-stats-layout-recent .oo-stats-card-head {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.oo-stats-layout-recent .oo-stats-recent {
+  max-height: calc(min(62vh, 560px) - 58px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-inline-end: 4px;
+}
+@media (max-width: 760px) {
+  .oo-stats-layout {
+    grid-template-columns: 1fr;
+  }
+  .oo-stats-layout-data {
+    grid-template-columns: 1fr;
+  }
+  .oo-stats-layout-recent {
+    max-height: 360px;
+  }
+  .oo-stats-layout-recent .oo-stats-recent {
+    max-height: 300px;
+  }
 }
 
 /* 社区 · 小游戏板块（原独立 Playground 页面并入社区页） */

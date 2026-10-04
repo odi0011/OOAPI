@@ -607,6 +607,29 @@ router.get(
       });
     }
 
+    const recent = channelRecent(id, channel.recent_calls);
+    // 记录只持久化用户 ID；头像与显示名每次从 users 表回填，历史记录随用户资料更新。
+    const userIds = [...new Set(recent.map((c) => Number(c?.u?.i || c?.uid)).filter((n) => n > 0))];
+    if (userIds.length) {
+      try {
+        const [users] = await pool.query(
+          `SELECT id, username, display_name, avatar_media_id FROM users WHERE id IN (${userIds.map(() => "?").join(",")})`,
+          userIds
+        );
+        const profiles = new Map(users.map((u) => [Number(u.id), u]));
+        for (const c of recent) {
+          const uid = Number(c?.u?.i || c?.uid);
+          const u = profiles.get(uid);
+          if (!u) continue;
+          if (!c.u) c.u = {};
+          c.u.n = u.display_name || u.username || c.u.n || "用户";
+          c.u.a = Number(u.avatar_media_id) ? `/api/media/avatar/${uid}?v=${Number(u.avatar_media_id)}` : "";
+        }
+      } catch (e) {
+        console.warn("[channel] 最近调用头像回填失败：", e.message);
+      }
+    }
+
     return ok(res, {
       channel: {
         id: channel.id,
@@ -630,7 +653,7 @@ router.get(
       byModel: [...byModel.values()].sort((a, b) => b.units - a.units).slice(0, 20),
       byDay: dayList,
       series,
-      recent: channelRecent(id, channel.recent_calls),
+      recent,
     });
   })
 );
@@ -2205,6 +2228,7 @@ router.post(
       await recordChannelCall(id, true, probe.ttftMs || probe.ms, "", {
         prompt,
         reply: probe.reply,
+        model: probe.model || row.test_model || "",
         degraded: probe.degraded,
         state: probe.state,
         kind: "test",
