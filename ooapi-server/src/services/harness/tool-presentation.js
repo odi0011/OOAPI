@@ -67,6 +67,16 @@ export const TOOL_PRESENTATIONS = {
     ...copy("这份任务清单", "任务清单", ["我把接下来的步骤记好，可以吗？", "一起把这份小清单更新一下，好吗？", "我想把进度标清楚，行吗？"], ["小清单更新好啦～", "接下来做什么记住啦", "任务进度标好咯"]),
     title: "更新本次任务清单", description: "用这份清单替换本会话的待办，展示接下来的步骤和进度。", scope: "仅更新当前会话的清单",
   },
+  local: {
+    ...copy("本机工作区", "本机执行结果"), title: "处理本机工作区", description: "由你连接的本机运行器执行。", scope: "仅当前对话绑定的本机工作区", methods: {
+      list: method("查看本机目录", "列出授权目录中的文件；隐藏凭据文件，不跟随符号链接。", "工作区目录", "目录列表"),
+      read: method("读取本机文件", "读取文件及版本校验值，必要片段临时交给本轮模型处理。", "这个本机文件", "文件内容"),
+      search: method("搜索本机内容", "在授权目录中按字面文本查找，返回实际文件和行号。", "工作区中的线索", "文件检索结果"),
+      write: { ...method("保存本机文件", "请核对目标和完整新内容。校验读取时的文件版本后，在本机保存；版本变化则拒绝覆盖。", "这份文件修改", "文件保存结果"), scope: "修改当前授权目录内的一份文件" },
+      patch: { ...method("修改本机文件", "请核对每一处原文与新内容。所有替换成功且文件版本未变时，才统一保存。", "这些文件替换", "文件修改结果"), scope: "修改当前授权目录内的一份文件" },
+      exec: { ...method("运行本机隔离命令", "请核对下面的完整命令。在本机 Docker 容器执行，禁网络、限制资源，挂载整个授权工作区；命令可以读取其中的数据。", "这条本机命令", "命令执行结果"), scope: "本机已有镜像；不会在平台服务器或宿主 shell 执行" },
+    },
+  },
 };
 
 const text = (v, max = 1800) => String(v ?? "").trim().slice(0, max);
@@ -108,7 +118,18 @@ function operationValue(value) {
   return value == null ? "未设置" : String(value);
 }
 const fallback = { ...copy("这一步的内容", "本次结果"), title: "执行这一步", description: "乐乐准备进行下一步操作。", scope: "仅本次操作" };
+// 准备阶段的旧值来自服务端读取，不能允许模型通过工具参数伪造审批差异。
+const preparedPresentations = new WeakMap();
+export function platformChangePresentation(id, args, before, after) {
+  const presentation = toolPresentation(id, args);
+  const changes = Object.keys(after).filter(key => JSON.stringify(before?.[key]) !== JSON.stringify(after[key]));
+  const fields = changes.map(key => ({ label: `${fieldLabels[key] || key} · 修改前 → 修改后`, value: `${operationValue(before?.[key])}\n→ ${operationValue(after[key])}` }));
+  const out = { ...presentation, description: `${presentation.description || ""} 未指定的配置保持原值；执行前检查原值未变化，完成后读取保存结果核对。`, fields: [...fields, ...presentation.fields] };
+  preparedPresentations.set(args, out);
+  return out;
+}
 export function toolPresentation(id, input = {}) {
+  if (input && typeof input === "object" && preparedPresentations.has(input)) return preparedPresentations.get(input);
   const args = input && typeof input === "object" && !Array.isArray(input) ? input : {};
   const base = TOOL_PRESENTATIONS[id] || fallback;
   const rawAction = text(args.action).toLowerCase();
@@ -129,6 +150,12 @@ export function toolPresentation(id, input = {}) {
   if (id === "fetch") fields = [["阅读地址", text(args.url)]];
   if (id === "github") fields = [["公开仓库", text(args.repo, 200)], ["版本", text(args.ref, 200) || "默认分支"], ...(action === "search" ? [["检索内容", text(args.query, 300)]] : [[action === "list" ? "目录" : "文件", text(args.path, 600) || (action === "list" ? "仓库根目录" : "README")]])];
   if (id === "task") fields = [["小帮手", text(args.agent, 80)], ["任务说明", text(args.prompt, 2400)]];
+  if (id === "local") {
+    fields = action === "exec" ? [["执行目录", String(args.cwd || ".")], ["完整命令", String(args.command || "")], ["最长执行时间", `${Math.min(1800000, Math.max(1000, Number(args.timeoutMs) || 120000)) / 1000} 秒`]]
+      : [["本机相对路径", String(args.path || ".")], ...(action === "search" ? [["检索文字", String(args.query || "")]] : []), ...(["write", "patch"].includes(action) ? [["文件版本", args.expectedSha256 === null ? "新增文件，必须尚不存在" : String(args.expectedSha256 || "缺少版本，无法修改")]] : [])];
+    if (action === "write") fields.push(["保存后的完整内容", String(args.content ?? "") || "（空文件）"]);
+    if (action === "patch") for (const [i, patch] of (Array.isArray(args.patches) ? args.patches : [{ find: args.find, replace: args.replace }]).entries()) fields.push([`替换 ${i + 1} · 原文 → 新内容`, `${String(patch.find ?? "")}\n→ ${String(patch.replace ?? "")}`]);
+  }
   if (id === "todowrite") fields = [["步骤数量", `${Array.isArray(args.todos) ? Math.min(args.todos.length, 20) : 0} 项`], ["任务步骤", Array.isArray(args.todos) ? args.todos.slice(0, 20).map(t => `${({pending:"待处理",in_progress:"进行中",completed:"已完成"})[t?.status] || "待处理"} · ${text(t?.content, 200)}`).join("\n") : "尚未提供步骤"]];
   return { ...selected, fields: fields.map(([label, value]) => ({ label, value: value || "尚未提供" })) };
 }

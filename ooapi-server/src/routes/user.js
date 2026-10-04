@@ -6,6 +6,7 @@ import { authRequired, adminRequired, signToken } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE, USAGE_SQL } from "../services/log.js";
 import { userDataVisibility, visibleAccountData } from "../services/user-data-visibility.js";
+import { withConfigPrecondition } from "../services/config-precondition.js";
 
 const router = Router();
 
@@ -74,12 +75,16 @@ router.put(
   "/self/settings",
   authRequired,
   asyncHandler(async (req, res) => {
-    const setting = req.body || {};
+    const wrapped = Object.hasOwn(req.body || {}, "_internal_setting");
+    if (wrapped && !Object.hasOwn(req.body, "_internal_expected")) return fail(res, "缺少原设置快照", 400);
+    const setting = wrapped ? req.body._internal_setting : req.body || {};
     if (typeof setting !== "object" || Array.isArray(setting)) return fail(res, "参数错误");
     // setting 列是 TEXT(64KB)：限制体积防写库报错
     const json = JSON.stringify(setting);
     if (json.length > 16_000) return fail(res, "设置内容过大");
-    await pool.query("UPDATE users SET setting = ? WHERE id = ?", [json, req.user.id]);
+    try { await withConfigPrecondition(pool, "settings", req.user.id, wrapped ? req.body._internal_expected : undefined,
+      connection => connection.query("UPDATE users SET setting = ? WHERE id = ?", [json, req.user.id])); }
+    catch (e) { if (e.code === "CONFIG_CHANGED") return fail(res, e.message, 409); throw e; }
     return ok(res, setting, "设置已保存");
   })
 );

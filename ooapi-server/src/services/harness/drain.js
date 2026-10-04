@@ -24,7 +24,7 @@ export async function drainChatRuns({ timeoutMs = 8000 } = {}) {
   draining = true;
   const tasks = [...active];
   for (const task of tasks) {
-    try { task.controller.abort(); } catch { /* 一个中止失败不能漏掉其他运行 */ }
+    try { task.controller.abort(Object.assign(new Error("服务重启，任务暂停"), { code: "HARNESS_PAUSED", kind: "pause" })); } catch { /* 一个中止失败不能漏掉其他运行 */ }
   }
   const budget = Number.isFinite(Number(timeoutMs)) ? Math.max(1, Math.min(60000, Number(timeoutMs))) : 8000;
   let timer;

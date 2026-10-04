@@ -1,5 +1,5 @@
 import { getOption, setOption } from "../../config.js";
-import { TOOL_IDS } from "./sessions.js";
+import { TOOL_IDS, MAX_STEPS_LIMIT } from "./sessions.js";
 import { PLATFORM_TOOL_IDS } from "./platform-catalog.js";
 
 // 编排只组合已有服务端能力，不执行浏览器提交的代码或任意工具名。
@@ -10,7 +10,7 @@ export const DEFAULT_AGENT_FLOW = {
     { id: "input", kind: "input", label: "接住你的问题", x: 300, y: 35, config: {} },
     { id: "memory", kind: "context", label: "整理记忆", x: 300, y: 175, config: { threshold: 0.7, keepRecent: 6 } },
     { id: "model", kind: "model", label: "思考与规划", x: 300, y: 315, config: {} },
-    { id: "tools", kind: "tools", label: "执行工具", x: 610, y: 455, config: { tools: TOOL_IDS, maxSteps: 12 } },
+    { id: "tools", kind: "tools", label: "执行工具", x: 610, y: 455, config: { tools: TOOL_IDS, maxSteps: 96 } },
     { id: "answer", kind: "answer", label: "整理好，交给你", x: 300, y: 595, config: {} },
   ],
   edges: [{ from: "input", to: "memory" }, { from: "memory", to: "model" }, { from: "model", to: "tools" }, { from: "tools", to: "model" }, { from: "model", to: "answer" }],
@@ -27,7 +27,7 @@ export function validateAgentFlow(raw) {
       config = { threshold: n.config.threshold, keepRecent: n.config.keepRecent };
     }
     if (n.kind === "tools") {
-      if (!Array.isArray(n.config?.tools) || n.config.tools.some(t => !TOOL_IDS.includes(t)) || !Number.isInteger(n.config.maxSteps) || n.config.maxSteps < 1 || n.config.maxSteps > 32) throw new Error("工具或探索步数无效");
+      if (!Array.isArray(n.config?.tools) || n.config.tools.some(t => !TOOL_IDS.includes(t)) || !Number.isInteger(n.config.maxSteps) || n.config.maxSteps < 1 || n.config.maxSteps > MAX_STEPS_LIMIT) throw new Error("工具或探索步数无效");
       config = { tools: [...new Set(n.config.tools)], maxSteps: n.config.maxSteps };
     }
     return { ...template, label: String(n.label || template.label).slice(0, 40), x: n.x, y: n.y, config };
@@ -45,6 +45,10 @@ export function agentFlow() {
     // 旧默认全工具配置随本次能力扩展升级；人工收窄过的清单保持原来的限制。
     const oldTools = raw?.nodes?.find(n => n.kind === "tools")?.config?.tools;
     if (raw?.version === 1 && Array.isArray(oldTools) && oldTools.length === 7 && ["account", "binance", "search", "fetch", "github", "task", "todowrite"].every(id => oldTools.includes(id))) oldTools.push(...PLATFORM_TOOL_IDS);
+    // 旧全工具默认随版本接入本地能力；管理员刻意收窄的策略保持原样。
+    if (raw?.version === 1 && Array.isArray(oldTools) && oldTools.length === TOOL_IDS.length - 1 && TOOL_IDS.filter(id => id !== "local").every(id => oldTools.includes(id))) oldTools.push("local");
+    const toolNode = raw?.nodes?.find(n => n.kind === "tools");
+    if (raw?.version === 1 && toolNode?.config?.maxSteps === 12 && oldTools?.length === TOOL_IDS.length && DEFAULT_AGENT_FLOW.nodes.every(n => raw.nodes.some(r => r.id === n.id && r.label === n.label)) && !raw.instructions) toolNode.config.maxSteps = 96;
     return validateAgentFlow(raw);
   }
   catch { return structuredClone(DEFAULT_AGENT_FLOW); }
@@ -52,6 +56,16 @@ export function agentFlow() {
 export function agentPolicy() {
   const flow = agentFlow(), tools = flow.nodes.find(n => n.kind === "tools").config;
   return { tools: flow.edges.some(e => e.to === "tools") ? tools.tools : [], maxSteps: tools.maxSteps, compaction: flow.nodes.find(n => n.kind === "context").config, policyInstructions: flow.instructions };
+}
+/** 会话预算可低于平台上限；工具只响应本次显式收窄，历史隐藏开关不重新启用。 */
+export function resolveSessionPolicySettings(sessionSettings, policy, { requestedTools } = {}) {
+  return {
+    ...sessionSettings,
+    ...policy,
+    maxSteps: Math.min(sessionSettings.maxSteps, policy.maxSteps),
+    tools: Array.isArray(requestedTools) ? policy.tools.filter(id => requestedTools.includes(id)) : [...policy.tools],
+    search: null,
+  };
 }
 export async function saveAgentFlow(raw) {
   const flow = validateAgentFlow(raw);

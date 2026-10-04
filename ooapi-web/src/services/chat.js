@@ -20,6 +20,16 @@ export const chatApi = {
   approve: (id, approvalId, decision) => API.post(`/chat/sessions/${encodeURIComponent(id)}/approvals/${encodeURIComponent(approvalId)}`, { decision }),
   // 这个会话是否正在生成（刷新后据此决定要不要接回事件流）
   running: (id) => API.get(`/chat/sessions/${encodeURIComponent(id)}/running`),
+  work: (id) => API.get(`/chat/sessions/${encodeURIComponent(id)}/work`),
+  pause: (id) => API.post(`/chat/sessions/${encodeURIComponent(id)}/pause`),
+  workMessage: (id, message, taskId) => API.post(`/chat/sessions/${encodeURIComponent(id)}/message`, { message, ...(taskId ? { taskId } : {}) }),
+  cancelTask: (id, taskId) => API.post(`/chat/sessions/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}/cancel`),
+  localWorkspaces: () => API.get("/local-workspaces/workspaces"),
+  sessionWorkspace: (id) => API.get(`/local-workspaces/sessions/${encodeURIComponent(id)}`),
+  bindWorkspace: (id, workspaceId) => API.put(`/local-workspaces/sessions/${encodeURIComponent(id)}`, { workspaceId: workspaceId || null }),
+  pairWorkspace: (code) => API.post("/local-workspaces/pair/confirm", { code }),
+  revokeDevice: (deviceId) => API.del(`/local-workspaces/devices/${encodeURIComponent(deviceId)}`),
+  downloadCompanion: () => API.download("/local-workspaces/download", { filename: "ooapi-companion.zip" }),
   // 项目
   listProjects: () => API.get("/chat/projects"),
   createProject: (body) => API.post("/chat/projects", body),
@@ -39,6 +49,7 @@ export const chatApi = {
  *   {type:"todo", todo}            待办清单更新
  *   {type:"done", message, todo, session}
  *   {type:"error", message}
+ *   {type:"paused"|"waiting_local", message?, run?} 已保存进度；显式继续才重新执行
  */
 export function runChatStream(body, { token, onEvent, onDone, onError }) {
   return streamPost("/api/chat/run", body, { token, onEvent, onDone, onError });

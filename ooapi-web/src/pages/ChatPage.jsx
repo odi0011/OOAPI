@@ -1,6 +1,7 @@
 import AgentTrajectory from "../components/AgentTrajectory";
 import ConversationRail from "../components/ConversationRail";
 import ChatScene from "../components/ChatScene";
+import AgentWorkPanel from "../components/AgentWorkPanel";
 import OdAmount from "../components/OdAmount";
 // 对话页（原「对话工作台」）
 // ---------------------------------------------------------------------------
@@ -16,7 +17,7 @@ import { userDataVisibility } from "../services/visibility";
 import { hasReasoningText } from "../services/reasoning-display";
 import { chatErrorDetails, chatErrorPart } from "../services/chat-error-display";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { App as AntApp, Alert, Button, Checkbox, Drawer, Dropdown, Form, Input, Modal, Popconfirm, Tooltip, Radio } from "antd";
+import { App as AntApp, Alert, Button, Checkbox, Drawer, Dropdown, Form, Input, InputNumber, Modal, Popconfirm, Tooltip, Radio } from "antd";
 import {
   CopyOutlined,
   SelectOutlined,
@@ -97,7 +98,16 @@ const mergeRecovery = (userId, sessionId, messages) => {
  *   user      → 右侧气泡（文字 + 图片）
  *   assistant → 无气泡正文，按 parts 顺序渲染：思考链 / 工具 chip / 正文 / 待办 / 提示
  * ------------------------------------------------------------------------- */
-const Message = React.memo(function Message({ msg, index, busy, onRetry, onCopy, streaming, visibility, onApprove }) {
+const CONTROL_NOTICES = {
+  "HARNESS_PAUSED": "任务已暂停，进度已保存。",
+  "HARNESS_BUDGET": "已达到任务预算，进度已保存。可以调整预算后继续。",
+  "HARNESS_BUDGET_CONFIGURATION": "暂时无法核实任务预算，已暂停。请核对预算后继续。",
+  "LOCAL_CONTEXT_MISSING": "原工作区连接已变化，请重新连接原工作区后继续。",
+  "WAITING_LOCAL": "本地连接暂时不可用，已保存的进度会保留。",
+  "LOCAL_CHECKPOINT_UNAVAILABLE": "本机任务进度暂时不可用，请连接原工作区后继续。",
+  "LOCAL_OUTCOME_UNKNOWN": "本地操作结果尚未确认。请先连接本机核对结果，再继续任务。",
+};
+const Message = React.memo(function Message({ msg, index, busy, onRetry, onCopy, streaming, visibility, onApprove, resumable }) {
   if (msg.role === "user") {
     const text = (msg.parts || []).filter((p) => p.type === "text").map((p) => p.text).join("\n");
     const imgs = (msg.parts || []).filter((p) => p.type === "image").map((p) => p.url);
@@ -141,6 +151,7 @@ const Message = React.memo(function Message({ msg, index, busy, onRetry, onCopy,
   // 重连和终态可能包含同一条错误，只呈现一次，保留该轮实际失败信息。
   const errors = parts.filter((p) => p.type === "error").filter((p, i, list) =>
     list.findIndex((other) => (other.message || other.text || "") === (p.message || p.text || "")) === i);
+  const canResume = resumable || ["paused", "waiting_local", "interrupted"].includes(msg.status) || errors.some(part => Object.hasOwn(CONTROL_NOTICES, part.code || ""));
   // 待办来自 todowrite 工具的结果（落在 tool part 上，刷新后依然在），或流式期间的 todo 事件
   const todo = parts.filter((p) => Array.isArray(p.todo)).slice(-1)[0]?.todo || msg.todo;
   const hasText = textParts.some((p) => (p.text || "").trim());
@@ -160,6 +171,10 @@ const Message = React.memo(function Message({ msg, index, busy, onRetry, onCopy,
 
       {errors.map((part, i) => {
         const detail = chatErrorDetails(part);
+        const control = CONTROL_NOTICES[part.code];
+        if (control) return <div key={part.id || `error-${i}`} className="ui-msg-error prose agent-work-control-notice" role="status" aria-label="任务已暂停">
+          <p className="ui-msg-error-reason">{control}</p><p className="ui-msg-error-note">通过上方或任务工作台的“继续任务”接着执行，已经完成的内容会保留。</p>
+        </div>;
         return <div key={part.id || `error-${i}`} className="ui-msg-error prose" role="status" aria-label="调用失败详情">
           <p className="ui-msg-error-reason">{detail.message}</p>
           {detail.metadata ? <p className="ui-msg-error-meta">{detail.metadata}</p> : null}
@@ -186,7 +201,7 @@ const Message = React.memo(function Message({ msg, index, busy, onRetry, onCopy,
           {hasText ? <Tooltip title="复制回答">
             <Button type="text" size="small" aria-label="复制回答" icon={<CopyOutlined />} disabled={!hasText} onClick={() => { signalLele("copy"); onCopy(textParts.map((p) => p.text).join("\n\n")); }} />
           </Tooltip> : null}
-          <Tooltip title={errors.length ? "重试可能产生新的用量" : "重新生成会再次计费"}>
+          {!canResume ? <Tooltip title={errors.length ? "重试可能产生新的用量" : "重新生成会再次计费"}>
             <Popconfirm
               title={errors.length ? "重试这一轮？" : "重新生成这条回答？"}
               description="这会移除它之后的消息，并再次产生用量。"
@@ -197,7 +212,7 @@ const Message = React.memo(function Message({ msg, index, busy, onRetry, onCopy,
             >
               <Button type="text" size="small" aria-label={errors.length ? "重试本轮" : "重新生成"} disabled={busy} icon={<ReloadOutlined />}>{errors.length ? "重试" : null}</Button>
             </Popconfirm>
-          </Tooltip>
+          </Tooltip> : null}
           <div className="ui-msg-stats">
             {visibility.usage_records && <>{showCost ? <Tooltip title="本轮成本；— 表示尚未确认结算结果"><span className="ui-msg-cost"><OdAmount>{costText}</OdAmount></span></Tooltip> : null}
             {showTokens ? <Tooltip trigger={["hover", "focus", "click"]} title={<div className="ui-msg-token-detail">
@@ -324,20 +339,25 @@ function NameDialog({ dialog, saving, error, onClose, onSave }) {
 }
 
 /* ============================ 会话指令 / 设定面板 ============================ */
-function SettingsSheet({ open, onClose, session, settings, onSettings, saving, quotaText, visibility }) {
+function SettingsSheet({ open, onClose, session, settings, onSettings, saving, quotaText, visibility, meta }) {
   const [form] = Form.useForm();
   const [error, setError] = useState("");
+  const maxStepsLimit = Math.max(1, Math.min(256, Number(meta?.defaults?.maxStepsLimit) || 256));
 
   useEffect(() => {
     if (open) {
       form.resetFields();
-      form.setFieldsValue({ title: session?.title || "", instructions: settings?.instructions || "", permissionMode: settings?.permissionMode || "auto" });
+      form.setFieldsValue({ title: session?.title || "", instructions: settings?.instructions || "", permissionMode: settings?.permissionMode || "auto",
+        maxSteps: Math.min(settings?.maxSteps || meta?.defaults?.maxSteps || 96, maxStepsLimit), maxMinutes: (settings?.budget?.maxWallTimeMs || 1800000) / 60000,
+        maxModelCalls: settings?.budget?.maxModelCalls || 64, maxTokens: settings?.budget?.maxTokens || 1000000, maxOd: settings?.budget?.maxOd ?? null });
       setError("");
     }
-  }, [open, session?.id, session?.title, settings?.instructions, form]);
+  }, [open, session?.id, session?.title, settings?.instructions, settings?.permissionMode, settings?.maxSteps, settings?.budget, meta?.defaults?.maxSteps, maxStepsLimit, form]);
 
-  const save = async ({ title, instructions = "", permissionMode }) => {
-    const patch = { settings: { permissionMode } };
+  const save = async ({ title, instructions = "", permissionMode, maxSteps, maxMinutes, maxModelCalls, maxTokens, maxOd }) => {
+    const budget = { ...(settings?.budget || {}), maxWallTimeMs: Math.round(maxMinutes * 60000), maxModelCalls, maxTokens };
+    if (maxOd > 0) budget.maxOd = maxOd; else delete budget.maxOd;
+    const patch = { settings: { ...settings, permissionMode, maxSteps, budget } };
     if (title.trim() && title.trim() !== session?.title) patch.title = title.trim();
     if (instructions !== (settings?.instructions || "")) patch.instructions = instructions;
     setError("");
@@ -349,7 +369,7 @@ function SettingsSheet({ open, onClose, session, settings, onSettings, saving, q
       title="会话设定" open={open} width="min(440px, 100vw)" rootClassName="ui-chat2-settings"
       onClose={saving ? undefined : onClose} closable={!saving} maskClosable={!saving} keyboard={!saving}
       forceRender
-      footer={<div className="ui-chat2-settings-actions"><Button onClick={onClose} disabled={saving}>取消</Button><Button type="primary" loading={saving} onClick={() => form.submit()}>保存</Button></div>}
+      footer={<div className="ui-chat2-settings-actions"><Button onClick={onClose} disabled={saving}>取消</Button><Button type="primary" aria-label="保存" loading={saving} onClick={() => form.submit()}>保存</Button></div>}
     >
       <div className="ui-chat2-sheet-body">
         {error ? <Alert type="error" showIcon message={error} /> : null}
@@ -363,6 +383,17 @@ function SettingsSheet({ open, onClose, session, settings, onSettings, saving, q
           <Form.Item name="permissionMode" label="工具执行权限">
             <Radio.Group options={[{ label: "自动执行", value: "auto" }, { label: "执行前询问", value: "ask" }]}/>
           </Form.Item>
+          <details className="agent-work-advanced"><summary>任务预算</summary>
+            <p>达到预算后会保存进度并暂停。需要继续时，可以增加预算；费用仍按实际使用结算。</p>
+            <p>{`平台最多 ${maxStepsLimit} 步`}</p>
+            <div className="agent-work-budget-fields">
+              <Form.Item name="maxSteps" label="最多执行步数" rules={[{ required: true, type: "number", min: 1, max: maxStepsLimit }]}><InputNumber min={1} max={maxStepsLimit} precision={0}/></Form.Item>
+              <Form.Item name="maxMinutes" label="最长运行时间（分钟）" rules={[{ required: true, type: "number", min: 1 / 60, max: 240 }]}><InputNumber min={1 / 60} max={240} precision={2}/></Form.Item>
+              <Form.Item name="maxModelCalls" label="最多模型调用次数" rules={[{ required: true, type: "number", min: 1, max: 512 }]}><InputNumber min={1} max={512} precision={0}/></Form.Item>
+              <Form.Item name="maxTokens" label="最多 Token" rules={[{ required: true, type: "number", min: 256, max: 16000000 }]}><InputNumber min={256} max={16000000} precision={0}/></Form.Item>
+              <Form.Item name="maxOd" label="消耗上限（OD币）" rules={[{ type: "number", min: .000001, max: 10000 }]}><InputNumber min={.000001} max={10000} precision={6} placeholder="不额外限制"/></Form.Item>
+            </div>
+          </details>
         </Form>
 
 
@@ -442,6 +473,10 @@ export default function ChatPage() {
   // 0 = 用账户默认分组，与老行为一致。
   const [keyId, setKeyId] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [longRun, setLongRun] = useState(null);
+  const [workRevision, setWorkRevision] = useState(0);
+  const longRunRef = useRef(longRun);
+  longRunRef.current = longRun;
   const [away, setAway] = useState(false);
   const [reading, setReading] = useState(false);
   const [connectionError, setConnectionError] = useState("");
@@ -464,6 +499,7 @@ export default function ChatPage() {
   const sendRef = useRef(null);
   const attachRunningRef = useRef(null);
   const attachedRef = useRef(""); // 已经接上事件流的会话 id（防重复订阅导致内容重放叠加）
+  const workSessionPromiseRef = useRef(null);
   const busyRef = useRef(busy);
   busyRef.current = busy;
   const nameBusyRef = useRef(false);
@@ -608,6 +644,7 @@ export default function ChatPage() {
       runningRef.current?.abort();
       runningRef.current = null;
       attachedRef.current = ""; // 换会话：上一个会话的订阅标记作废
+      setLongRun(null);
       updateBusy(true);
       setConnectionError("");
       setLoadingSession(true);
@@ -666,6 +703,7 @@ export default function ChatPage() {
       finished = true; attachedRef.current = "";
       patchAi((m) => ({ ...m, streaming: false }));
       runningRef.current = null; updateBusy(false);
+      setWorkRevision((v) => v + 1);
       refreshUser?.(); loadSessions();
     };
     const reconcile = async () => {
@@ -697,12 +735,21 @@ export default function ChatPage() {
         try {
           const state = await chatApi.running(sessionId);
           if (!valid()) return;
+          setLongRun(state?.longRun || null);
           if (state?.running) {
             await new Promise((resolve) => setTimeout(resolve, reconnects * 500));
             if (!valid()) return;
             recovering = false;
             connect(true);
             return;
+          }
+          if (state?.longRun?.resumable) {
+            // 暂停不是连接失败，恢复同一轮已保存的正文，不能另造一条错误消息。
+            const saved = await chatApi.getSession(sessionId);
+            if (!valid()) return;
+            setSession(saved.session);
+            setMsgs((prev) => hydrateMessages(saved.messages || [], prev).map((m) => ({ ...m, streaming: false, parts: (m.parts || []).filter((p) => p.id !== "connection-error") })));
+            setConnectionError(""); finish(); return;
           }
           if (detail.accepted === false || !await reconcile()) {
             if (detail.message?.parts) {
@@ -736,11 +783,14 @@ export default function ChatPage() {
       else if (ev.type === "part_update") patchAi((m) => ({ ...m, parts: m.parts.map((p) => p.id === ev.id ? { ...p, ...ev.patch } : p) }));
       else if (ev.type === "delta") patchAi((m) => ({ ...m, parts: m.parts.map((p) => p.id === ev.id ? { ...p, [ev.field]: (p[ev.field] || "") + ev.delta } : p) }));
       else if (ev.type === "todo") patchAi((m) => ({ ...m, todo: ev.todo }));
-      else if (["done", "error", "stopped"].includes(ev.type)) {
+      else if (["done", "error", "stopped", "paused", "waiting_local"].includes(ev.type)) {
+        const paused = ev.type === "paused" || ev.type === "waiting_local";
         if (ev.message && typeof ev.message === "object") {
           patchAi((m) => ({ ...m, ...ev.message, key: aiKey, streaming: false, todo: ev.todo }));
           saveRecovery(user?.id, sessionId, null);
-        } else if (ev.type !== "done") storeFailure(ev, { local: false, status: ev.type === "stopped" ? "stopped" : "error", parts: ev.parts });
+        } else if (paused) patchAi((m) => ({ ...m, streaming: false, status: ev.type, parts: ev.parts || m.parts.filter((p) => p.id !== "connection-error") }));
+        else if (ev.type !== "done") storeFailure(ev, { local: false, status: ev.type === "stopped" ? "stopped" : "error", parts: ev.parts });
+        setLongRun(ev.longRun || (paused ? { ...(longRunRef.current || {}), status: ev.type, resumable: true } : null));
         if (ev.session) {
           setSession(ev.session);
           setSessions((prev) => prev.map((s) => s.id === ev.session.id ? { ...s, ...ev.session } : s));
@@ -764,6 +814,7 @@ export default function ChatPage() {
     try {
       const state = await chatApi.running(sessionId);
       if (genRef.current !== gen) return;
+      setLongRun(state?.longRun || null);
       if (!state?.running) {
         // getSession 与 running 之间可能刚好完成：再取终态避免刷新停在只有 user 的旧快照。
         const data = await chatApi.getSession(sessionId);
@@ -784,6 +835,19 @@ export default function ChatPage() {
     }
   }, [observeRun, updateBusy, user?.id]);
   attachRunningRef.current = attachRunning;
+
+  const resumeWork = useCallback(() => {
+    const current = sessionRef.current;
+    if (!current || busyRef.current || loadingSession || composerSaveRef.current) throw new Error("请等待当前操作完成，再继续任务。");
+    const beforeMessages = msgsRef.current;
+    const last = beforeMessages.findLast((m) => m.role === "assistant");
+    // 继续使用原来的助手消息；完整 snapshot 会替换它，避免暂停/恢复生成重复气泡。
+    const existing = last?.role === "assistant" ? last : null;
+    const aiKey = existing?.key || `a-${uid()}`;
+    setMsgs((prev) => existing ? prev.map((m) => m.key === aiKey ? { ...m, streaming: true } : m) : [...prev, { key: aiKey, seq: 0, role: "assistant", parts: [], streaming: true }]);
+    setConnectionError(""); updateBusy(true);
+    observeRun(current.id, genRef.current, aiKey, { beforeMessages, request: { sessionId: current.id, resume: true, keyId, model: current.model, settings: current.settings } });
+  }, [observeRun, updateBusy, keyId, loadingSession]);
 
   /* ---------- 侧栏：项目 / 归档 / 批量 ---------- */
   const switchView = useCallback(
@@ -913,6 +977,25 @@ export default function ChatPage() {
   );
 
   /* 首屏：优先打开 URL 里的会话，否则用最近一条，都没有就新建 */
+  const ensureWorkSession = useCallback(() => {
+    if (sessionRef.current?.id) return Promise.resolve(sessionRef.current.id);
+    if (workSessionPromiseRef.current) return workSessionPromiseRef.current;
+    if (!metaReadyRef.current) return Promise.reject(new Error("模型配置尚未就绪，请稍后重试。"));
+    const gen = ++genRef.current;
+    updateBusy(true);
+    const creating = (async () => {
+      try {
+        const created = await chatApi.createSession({ agent: meta?.defaults?.agent || "general", model: models.find((m) => !m.deprecated)?.id || "", settings: { channelType: "" } });
+        if (gen !== genRef.current) throw new Error("当前对话已切换，请重新打开工作区。");
+        sessionRef.current = created;
+        setSession(created); setMsgs([]); setLongRun(null);
+        setSessions((prev) => [created, ...prev]); setParams({ s: created.id }, { replace: true });
+        return created.id;
+      } finally { if (gen === genRef.current) updateBusy(false); workSessionPromiseRef.current = null; }
+    })();
+    workSessionPromiseRef.current = creating;
+    return creating;
+  }, [meta, models, setParams, updateBusy]);
   const bootRef = useRef(false);
   useEffect(() => {
     if (bootRef.current || !meta) return;
@@ -923,13 +1006,7 @@ export default function ChatPage() {
       const target = (requestedSession && list.find((s) => s.id === requestedSession)?.id) || list[0]?.id;
       if (target) return openSession(target);
       try {
-        const initialModel = models.find((m) => !m.deprecated);
-        const created = await chatApi.createSession({ agent: meta.defaults?.agent || "general", model: initialModel?.id || "", settings: { channelType: "" } });
-        if (!bootRef.current) return;
-        setSession(created);
-        setMsgs([]);
-        setSessions((prev) => [created, ...prev]);
-        setParams({ s: created.id }, { replace: true });
+        await ensureWorkSession();
       } catch (e) {
         toast.error(e.message || "创建会话失败");
       }
@@ -1084,6 +1161,20 @@ export default function ChatPage() {
     const draft = draftRef.current;
     const draftVersion = draftVersionRef.current;
     const text = String(retryPayload?.text ?? overrideText ?? draft.input).trim();
+    if (longRunRef.current?.resumable) {
+      if (retryPayload) { toast.info("当前任务已保存进度，请先继续或停止任务。"); return; }
+      if (!text) return;
+      if (draft.images.length || draft.docs.length) { toast.info("补充要求暂不支持附件，请在任务工作台输入文字，或停止任务后发起新任务。"); return; }
+      composerSaveRef.current = true; setComposerSaving(true);
+      const id = current.id, gen = genRef.current;
+      chatApi.workMessage(id, text).then(() => {
+        if (genRef.current !== gen) return;
+        if (draftVersionRef.current === draftVersion) setInput("");
+        setWorkRevision((v) => v + 1); toast.success("补充要求已保存，继续任务时会使用。");
+      }).catch((e) => { if (genRef.current === gen) toast.error(e.message || "补充要求未保存，请重试。"); })
+        .finally(() => { composerSaveRef.current = false; setComposerSaving(false); });
+      return;
+    }
     const sendImages = retryPayload?.images || draft.images.map((img) => img.mediaId ? { mediaId: img.mediaId } : { dataUrl: img.dataUrl });
     const sendFiles = retryPayload?.files || draft.docs.filter((d) => d.dataUrl).map((d) => ({ name: d.name, type: d.type, dataUrl: d.dataUrl }));
     const sendDocs = retryPayload?.docs || draft.docs.filter((d) => !d.dataUrl).map((d) => ({ name: d.name, kind: d.kind, bytes: d.bytes, text: d.text }));
@@ -1112,7 +1203,7 @@ export default function ChatPage() {
         }
       },
     });
-  }, [keyId, curModel, loadingSession, connectionError, observeRun, updateBusy]);
+  }, [keyId, curModel, loadingSession, connectionError, observeRun, updateBusy, toast]);
   sendRef.current = send;
 
   const stop = useCallback(async () => {
@@ -1552,6 +1643,7 @@ export default function ChatPage() {
             </div>
           </div>
           <div className="ui-chat2-head-actions">
+            <AgentWorkPanel sessionId={session?.id} busy={busy && !loadingSession} revision={workRevision} onResume={resumeWork} onRunState={setLongRun} onEnsureSession={ensureWorkSession}/>
             <Tooltip title="会话设定">
               <button type="button" className="ui-chat2-iconbtn" aria-label="会话设定" onClick={() => setSheetOpen(true)}>
                 <SettingOutlined />
@@ -1563,6 +1655,10 @@ export default function ChatPage() {
 
         {connectionError ? <Alert className="ui-chat2-connection-error" type="error" showIcon message={connectionError}
           action={<Button size="small" onClick={() => openSession(sessionRef.current?.id)}>恢复连接</Button>} /> : null}
+        {longRun?.resumable && !busy ? <Alert className="agent-work-state-notice" type="info" showIcon
+          message={longRun.status === "waiting_local" ? "本地连接暂时不可用，任务进度已保存。" : "任务进度已保存，可以继续。"}
+          description="可以在输入框补充文字要求；继续执行前，也可以在会话设定里调整预算。"
+          action={<Button size="small" onClick={() => { try { resumeWork(); } catch (e) { toast.error(e.message); } }}>继续任务</Button>}/> : null}
         {metaError ? (
           <div style={{ padding: "10px 16px" }}>
             <Notice
@@ -1647,6 +1743,7 @@ export default function ChatPage() {
                   msg={m}
                   index={i}
                   busy={busy || unavailable}
+                  resumable={Boolean(longRun?.resumable && !msgs.slice(i + 1).some((next) => next.role === "assistant"))}
                   streaming={Boolean(m.streaming)}
                   onRetry={retry}
                   onCopy={copy}

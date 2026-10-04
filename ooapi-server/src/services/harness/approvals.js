@@ -2,10 +2,10 @@ import { toolPresentation } from "./tool-presentation.js";
 // 审批绑定当前运行与一次调用；浏览器只能提交决定，不能替换工具或参数。
 import crypto from "node:crypto";
 
-export function requestApproval(run, { tool, name, args }, { signal, emit, timeoutMs = 300000 } = {}) {
+export function requestApproval(run, { tool, name, args, presentation }, { signal, emit, timeoutMs = 300000 } = {}) {
   if (signal?.aborted || run.settled) return Promise.reject(Object.assign(new Error("已停止"), { code: "ABORTED" }));
   const id = crypto.randomUUID();
-  const part = { id, type: "approval", tool, name, args: structuredClone(args), presentation: toolPresentation(tool, args), status: "pending", created: Date.now(), expiresAt: Date.now() + timeoutMs };
+  const part = { id, type: "approval", tool, name, args: structuredClone(args), presentation: presentation || toolPresentation(tool, args), status: "pending", created: Date.now(), expiresAt: Date.now() + timeoutMs };
   run.approvals ||= new Map();
   return new Promise((resolve, reject) => {
     let timer;

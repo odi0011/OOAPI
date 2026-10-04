@@ -88,6 +88,40 @@ async function request(method, path, { body, params, silent, timeoutMs = 30000 }
 }
 
 export const API = {
+  download: async (path, { filename = "download", params, timeoutMs = 30000 } = {}) => {
+    let urlPath = `/api${path}`;
+    if (params) {
+      const qs = new URLSearchParams();
+      for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== null && value !== "") qs.set(key, value);
+      const query = qs.toString();
+      if (query) urlPath += `?${query}`;
+    }
+    const ctrl = new AbortController();
+    const timer = timeoutMs > 0 ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+    try {
+      const res = await fetch(urlPath, { headers: { Authorization: `Bearer ${getToken()}` }, signal: ctrl.signal });
+      if (!res.ok) {
+        let data = null;
+        try { data = await res.json(); }
+        catch (e) { if (ctrl.signal.aborted || e?.name === "AbortError") throw e; /* binary/error response */ }
+        throw new ApiError(data?.message || "下载失败，请重试", res.status, data?.data);
+      }
+      const blob = await res.blob();
+      const header = res.headers.get("content-disposition") || "";
+      const match = header.match(/filename\*=UTF-8''([^;]+)|filename=\"?([^;\"]+)/i);
+      let suggested = match?.[1] || match?.[2] || filename;
+      try { suggested = decodeURIComponent(suggested); } catch { /* keep fallback */ }
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = objectUrl; a.download = suggested; a.style.display = "none";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      return { filename: suggested, size: blob.size, type: blob.type };
+    } catch (e) {
+      if (ctrl.signal.aborted || e?.name === "AbortError") throw new ApiError("请求超时，请稍后重试", 408);
+      if (e instanceof ApiError) throw e;
+      throw new ApiError("网络连接失败，请检查网络后重试", 0);
+    } finally { if (timer) clearTimeout(timer); }
+  },
   get: (p, opts) => request("GET", p, opts),
   post: (p, body, opts) => request("POST", p, { ...opts, body }),
   put: (p, body, opts) => request("PUT", p, { ...opts, body }),

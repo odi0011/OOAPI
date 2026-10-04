@@ -70,7 +70,51 @@ const query = async (store, sql, args = []) => {
   const s = String(sql).replace(/\s+/g, ' ').trim();
   queries.push(s);
   assert.equal((s.match(/\?/g) || []).length, args.length, `SQL占位符: ${s}`);
-  if (s === 'SELECT * FROM users WHERE id = ?' || s === 'SELECT status FROM users WHERE id = ?') return [[clone(store.user)].filter((u) => u.id === Number(args[0]))];
+  if (s === 'SELECT * FROM users WHERE id = ?' || s === 'SELECT status FROM users WHERE id = ?' || s === 'SELECT status,token_version,quota FROM users WHERE id=?') return [[clone(store.user)].filter((u) => u.id === Number(args[0]))];
+  if (s.includes('FROM local_session_workspaces')) return [[]]; // 原用量测试没有绑定本地设备。
+  if (s.startsWith('SELECT') && s.includes('FROM chat_agent_tasks')) return [[]];
+  if (s.startsWith('UPDATE chat_agent_tasks')) return [{ affectedRows: 0 }]; // 用量夹具没有派发子任务。
+  if (s.startsWith('SELECT') && s.includes('FROM chat_agent_runs')) {
+    const where = s.slice(s.indexOf('WHERE'));
+    const matches = [...where.matchAll(/\b(id|session_id|user_id)\s*=\s*\?/g)];
+    const rows = store.agentRun ? [store.agentRun] : [];
+    return [rows.filter(row => matches.every(m => {
+      const offset = (s.slice(0, s.indexOf('WHERE') + m.index).match(/\?/g) || []).length;
+      return String(row[m[1]]) === String(args[offset]);
+    })).map(clone)];
+  }
+  if (s.startsWith('INSERT INTO chat_agent_runs')) {
+    const cols = s.match(/^INSERT INTO chat_agent_runs \((.*?)\) VALUES/)[1].split(',').map(v => v.trim());
+    store.agentRun = { assistant_segment: -1, assistant_message_id: 0, billing_segment: 0,
+      ...Object.fromEntries(cols.map((v, i) => [v, args[i]])) };
+    return [{ affectedRows: 1 }];
+  }
+  if (s.startsWith('UPDATE chat_agent_runs')) {
+    const row = store.agentRun, whereIndex = s.indexOf(' WHERE'), where = s.slice(whereIndex);
+    const argumentAt = index => args[(s.slice(0, index).match(/\?/g) || []).length];
+    let match = Boolean(row);
+    for (const m of where.matchAll(/\b(id|session_id|user_id|lease_owner)\s*=\s*\?/g)) match &&= String(row[m[1]]) === String(argumentAt(whereIndex + m.index));
+    const claiming = where.includes("status IN ('paused','waiting_local','interrupted') OR");
+    for (const m of where.matchAll(/\b(assistant_segment|lease_until)\s*<\s*\?/g)) {
+      if (!claiming || m[1] !== 'lease_until') match &&= Number(row[m[1]]) < Number(argumentAt(whereIndex + m.index));
+    }
+    if (claiming) match &&= ['paused', 'waiting_local', 'interrupted'].includes(row.status)
+      || (row.status === 'running' && Number(row.lease_until) < Number(args.at(-1)));
+    else if (where.includes("status='running'")) match &&= row.status === 'running';
+    if (where.includes("status IN ('paused','waiting_local','interrupted')") && !claiming) match &&= ['paused', 'waiting_local', 'interrupted'].includes(row.status);
+    if (where.includes("status NOT IN ('completed','stopped')")) match &&= !['completed', 'stopped'].includes(row.status);
+    if (!match) return [{ affectedRows: 0 }];
+    const set = s.slice(s.indexOf(' SET') + 4, whereIndex);
+    for (const m of set.matchAll(/\b(\w+)\s*=\s*(GREATEST\(billing_segment,\s*\?\s*\+\s*1\)|version\s*\+\s*1|\?|NULL|'[^']*'|0)/g)) {
+      const expression = m[2];
+      const value = expression === '?' ? argumentAt(s.indexOf(' SET') + 4 + m.index)
+        : expression.startsWith('GREATEST') ? Math.max(Number(row.billing_segment) || 0, Number(argumentAt(s.indexOf(' SET') + 4 + m.index)) + 1)
+        : expression.startsWith('version') ? Number(row.version) + 1 : expression === 'NULL' ? null
+        : expression.startsWith("'") ? expression.slice(1, -1) : 0;
+      row[m[1]] = value;
+    }
+    return [{ affectedRows: 1 }];
+  }
   if (s.startsWith('SELECT id, display_name, avatar_media_id FROM users WHERE id IN')) return [[clone(store.user)].filter(u=>args.includes(u.id))];
   if (s.includes('FROM model_prices')) return [[{ model, input_price: 1, output_price: 2, cache_price: .5 },
     { model: 'glm-4.7', input_price: .6, output_price: 2.2, cache_price: .11 }]];
@@ -116,7 +160,8 @@ const query = async (store, sql, args = []) => {
     if (store.token.remain_quota < args[0]) return [{ affectedRows: 0 }];
     store.token.remain_quota -= args[0]; return [{ affectedRows: 1 }];
   }
-  if (s.startsWith('UPDATE tokens SET remain_quota = remain_quota +')) {
+  if (s.startsWith('UPDATE tokens SET remain_quota = remain_quota +') || s.startsWith('UPDATE tokens SET remain_quota=remain_quota+')) {
+    if (s.includes('AND user_id=?') && (tokenDeleted || store.token.id !== args[1] || store.user.id !== args[2] || Number(store.token.unlimited_quota) !== 0)) return [{ affectedRows: 0 }];
     if (beforeQuotaRefund) await beforeQuotaRefund();
     store.token.remain_quota += args[0]; return [{ affectedRows: 1 }];
   }
@@ -139,6 +184,7 @@ const query = async (store, sql, args = []) => {
     if (row) { row.type = args[0]; row.status = args[1]; row.error_code = args[2]; } return [{ affectedRows: row ? 1 : 0 }];
   }
   if (s.includes('FROM logs')) {
+    if (s.includes('request_id=?')) return [store.logs.filter(r => r.request_id === args[0] && r.user_id === Number(args[1])).map(clone)];
     const rows = filteredLogs(store, s, args);
     if (s.startsWith('SELECT COUNT(*) AS total')) return [[{ total: rows.length }]];
     if (s.startsWith('SELECT COUNT(*) AS calls')) return [[{ calls: rows.length,
@@ -165,7 +211,10 @@ pool.getConnection = async () => {
   let committed = false;
   return {
     beginTransaction: async () => { pending = clone(state); }, query: (sql, args) => query(pending, sql, args),
-    commit: async () => { state = pending; committed = true; commits++;
+    commit: async () => {
+      // 控制面的运行建档事务单独处理，保留原用量断言对 user + settle + assistant 的计数口径。
+      const accountingChanged = JSON.stringify([state.messages, state.logs, state.user, state.token]) !== JSON.stringify([pending.messages, pending.logs, pending.user, pending.token]);
+      state = pending; committed = true; if (accountingChanged) commits++;
       if (ambiguousCommit && pending.logs.length) { ambiguousCommit = false; throw new Error('fixture committed then connection lost'); } },
     rollback: async () => { if (!committed) rollbacks++; }, release() {},
   };
@@ -183,7 +232,7 @@ const reset = () => {
     token: { id: userId + 1000, user_id: userId, name: 'fixture', key_str: 'fixture-chat-only', status: 1, expired_time: -1,
       group_name: 'fixture', model_limits: model, remain_quota: initial, used_quota: 0, unlimited_quota: 0 },
     session: { id: `fixture-${userId}`, user_id: userId, title: '测试会话', model, agent: 'general', settings: '{}', todo: '[]',
-      message_count: 0, cost_units: 0, prompt_tokens: 0, completion_tokens: 0 }, messages: [], logs: [], nextMessage: 0, nextLog: 0 };
+      message_count: 0, cost_units: 0, prompt_tokens: 0, completion_tokens: 0 }, messages: [], logs: [], nextMessage: 0, nextLog: 0, agentRun: null };
   jwt = signToken(state.user); invalidatePrices(); clearGroupConfigCache(); invalidateChannelCache(); resetChannelState(channelId);
 };
 const api = (url, body = null) => fetch(base + url, { method: body ? 'POST' : 'GET',
@@ -195,7 +244,7 @@ const run = async (extra = {}) => {
   if (res.status !== 200) return { status: res.status, data: JSON.parse(body) };
   await new Promise((r) => setTimeout(r, 10)); // refund完成后比较余额
   const events = body.split('\n').filter((l) => l.startsWith('data: {')).map((l) => JSON.parse(l.slice(6)));
-  return { status: res.status, events, final: events.findLast((e) => ['done', 'error', 'stopped'].includes(e.type)) };
+  return { status: res.status, events, final: events.findLast((e) => ['done', 'error', 'stopped', 'paused', 'waiting_local'].includes(e.type)) };
 };
 const get = async (url) => { const res = await api(url); assert.equal(res.status, 200); return (await res.json()).data; };
 const replayFinal = async (message) => {
@@ -539,6 +588,117 @@ try {
     assert.ok(!JSON.stringify(message).includes('DO_NOT_LEAK')); assert.ok(!row.content.includes('private.invalid'));
     assert.equal(row.error_code, 'CHANNEL_BAD_REQUEST'); assert.equal(JSON.parse(row.detail).http_status, 400);
   });
+  await test('HTTP暂停后保存补充说明并恢复；用户消息不重复、各段调用只结算一次', async () => {
+    let resumedPrompt;
+    behavior = (req, res) => {
+      if (requests === 1) {
+        const content = '<tool_call>{"tool":"todowrite","args":{"todos":[{"content":"第一步已核实","status":"completed"}]}}</tool_call>';
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        return res.end(frame({ choices: [{ delta: { content } }] }) + frame({ usage }) + 'data: [DONE]\n\n');
+      }
+      if (requests === 2) {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.write(frame({ choices: [{ delta: { content: 'PAUSE_PARTIAL' } }] }) + frame({ usage }));
+        return;
+      }
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        resumedPrompt = JSON.parse(body);
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.end(frame({ choices: [{ delta: { content: '补充条件已核实，任务完成' } }] }) + frame({ usage }) + 'data: [DONE]\n\n');
+      });
+    };
+    const pending = run(); await until(() => requests === 2, 1000);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal((await api(`/api/chat/sessions/${state.session.id}/pause`, {})).status, 200);
+    const paused = await pending;
+    assert.equal(paused.final?.type, 'paused'); assert.equal(paused.final?.longRun.status, 'paused');
+    assert.equal((await get(`/api/chat/sessions/${state.session.id}/work`)).run.status, 'paused');
+    const supplement = '补充说明：请同时检查编号 777';
+    const accepted = await api(`/api/chat/sessions/${state.session.id}/message`, { message: supplement });
+    assert.equal(accepted.status, 200); assert.equal((await accepted.json()).data.pending, true);
+    const continued = await run({ resume: true, text: '' });
+    assert.equal(continued.status, 200); assert.equal(continued.final?.type, 'done');
+    assert.ok(JSON.stringify(resumedPrompt).includes(supplement));
+    assert.equal(state.messages.filter(m => m.role === 'user').length, 1);
+    assert.equal(state.messages.filter(m => m.role === 'assistant').length, 2);
+    assert.equal(state.logs.length, 2); assert.equal(new Set(state.logs.map(r => r.request_id)).size, 2);
+    assert.deepEqual(state.logs.map(r => JSON.parse(r.detail).billing_details.call_count), [2, 1]);
+    const price = await getPrice(model), unit = computeCost({ price, promptTokens: 1700, completionTokens: 300, cacheTokens: 500 });
+    balance(3 * unit); assert.equal(state.agentRun.billing_segment, 2); assert.equal(state.agentRun.assistant_segment, 1);
+  });
+  await test('模型预算暂停可提高预算继续，工作状态不能跨会话所有者读取', async () => {
+    behavior = (_req, res) => {
+      const content = requests === 1 ? '<tool_call>{"tool":"todowrite","args":{"todos":[{"content":"已完成预算内读取","status":"completed"}]}}</tool_call>' : '预算增加后完成';
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end(frame({ choices: [{ delta: { content } }] }) + frame({ usage }) + 'data: [DONE]\n\n');
+    };
+    const paused = await run({ settings: { budget: { maxModelCalls: 1 } } });
+    assert.equal(paused.final?.type, 'paused'); assert.equal(paused.final?.code, 'HARNESS_BUDGET'); assert.equal(requests, 1);
+    assert.equal((await get(`/api/chat/sessions/${state.session.id}/work`)).run.budget.modelCalls, 1);
+    const owner = state.session.user_id; state.session.user_id = owner + 1;
+    try { assert.equal((await api(`/api/chat/sessions/${state.session.id}/work`)).status, 404); }
+    finally { state.session.user_id = owner; }
+    const completed = await run({ resume: true, text: '', settings: { budget: { maxModelCalls: 3 } } });
+    assert.equal(completed.final?.type, 'done'); assert.equal(requests, 2);
+    assert.equal(state.messages.filter(m => m.role === 'user').length, 1);
+    assert.equal(state.logs.length, 2); assert.equal(state.agentRun.billing_segment, 2);
+    const price = await getPrice(model), unit = computeCost({ price, promptTokens: 1700, completionTokens: 300, cacheTokens: 500 });
+    balance(2 * unit);
+  });
+  await test('暂停的持久任务可以明确停止，停止后不得继续原任务', async () => {
+    const content = '<tool_call>{"tool":"todowrite","args":{"todos":[{"content":"已完成这一步","status":"completed"}]}}</tool_call>';
+    sse(frame({ choices: [{ delta: { content } }] }) + frame({ usage }) + 'data: [DONE]\n\n');
+    const paused = await run({ settings: { budget: { maxModelCalls: 1 } } });
+    assert.equal(paused.final?.type, 'paused');
+    assert.equal(getRun(state.session.id)?.settled, true, '暂停流结束后后台运行必须已经结算保存');
+    assert.equal((await api(`/api/chat/sessions/${state.session.id}/stop`, {})).status, 200);
+    assert.equal(state.agentRun.status, 'stopped', 'fixture停止更新必须修改当前账本');
+    assert.equal((await get(`/api/chat/sessions/${state.session.id}/work`)).run.status, 'stopped', queries.slice(-5).join('\n'));
+    assert.equal((await run({ resume: true, text: '' })).status, 409);
+    assert.equal(requests, 1); assert.equal(state.logs.length, 1);
+  });
+  await test('最终检查点后父状态暂停，恢复回放同一助手和结算段，不重复模型或扣费', async () => {
+    sse(frame({ choices: [{ delta: { content: '最终结果已经核实' } }] }) + frame({ usage }) + 'data: [DONE]\n\n');
+    const first = await run({ settings: { budget: { maxModelCalls: 1 } } });
+    const original = finalMessage(first, 'success'); assert.equal(first.final?.type, 'done');
+    assert.equal(JSON.parse(state.agentRun.checkpoint).phase, 'done');
+    const recordedBill = clone(JSON.parse(state.logs[0].detail).billing_details);
+    assert.equal(recordedBill.call_count, 1); assert.equal(recordedBill.components.output.tokens, usage.completion_tokens);
+    // 恢复时倍率已经改变且无新 calls，仍应展示原账单的价格/用量快照。
+    fixtureRate = 2; clearGroupConfigCache();
+    // 模拟完成检查点后迟到的暂停；账本和助手已提交，恢复必须复用原段。
+    state.agentRun.status = 'paused';
+    const paid = state.user.used_quota, continued = await run({ resume: true, text: '' });
+    assert.equal(continued.final?.type, 'done'); assert.equal(continued.final.message.id, original.id);
+    assert.equal(requests, 1); assert.equal(state.logs.length, 1); assert.equal(state.messages.length, 2);
+    assert.equal(state.agentRun.billing_segment, 1); assert.equal(state.agentRun.assistant_segment, 0);
+    assert.deepEqual(JSON.parse(state.logs[0].detail).billing_details, recordedBill);
+    const visibleBill = (await get('/api/log/usage')).items[0].billing_details;
+    assert.equal(visibleBill.multiplier, recordedBill.multiplier); assert.deepEqual(visibleBill.components, recordedBill.components);
+    assert.ok(queries.some(sql => /^SELECT id,quota,prompt_tokens,completion_tokens,cache_tokens,detail FROM logs WHERE request_id=/.test(sql)), '重用账单必须读取已提交的明细快照');
+    balance(paid);
+  });
+  await test('完成检查点后的补充说明必须启动后续模型，不应误当成原结果回放', async () => {
+    let continuedBody;
+    behavior = (req, res) => {
+      let body = ''; req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        if (requests > 1) continuedBody = JSON.parse(body);
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.end(frame({ choices: [{ delta: { content: requests === 1 ? '原结果已核实' : '追加条件已核实' } }] }) + frame({ usage }) + 'data: [DONE]\n\n');
+      });
+    };
+    const first = await run(); assert.equal(first.final?.type, 'done'); state.agentRun.status = 'paused';
+    const supplement = 'DONE_CHECKPOINT_NEW_INSTRUCTION：增加第二项核对';
+    assert.equal((await api(`/api/chat/sessions/${state.session.id}/message`, { message: supplement })).status, 200);
+    const continued = await run({ resume: true, text: '' }); assert.equal(continued.final?.type, 'done');
+    assert.equal(requests, 2); assert.ok(JSON.stringify(continuedBody).includes(supplement));
+    assert.equal(state.messages.filter(m => m.role === 'user').length, 1);
+    assert.equal(state.messages.filter(m => m.role === 'assistant').length, 2); assert.equal(state.logs.length, 2);
+    assert.equal(state.agentRun.billing_segment, 2); assert.equal(state.agentRun.assistant_segment, 1);
+  });
   await test('服务退出停止在途工具/正文，等助手落库后再结束排空并拒绝新运行', async () => {
     behavior = (_req, res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -563,13 +723,15 @@ try {
       await until(() => reachedAssistant); assert.equal(drained, false, 'DB仍在写消息时不能关闭pool');
     } finally { releaseAssistant(); beforeAssistantInsert = null; }
     assert.deepEqual(await draining, { total: 1, completed: 1, pending: 0, timedOut: false });
-    const message = finalMessage(await pending, 'stopped'); const row = oneLog('stopped');
+    const drainedResult = await pending;
+    assert.equal(drainedResult.final?.type, 'paused'); assert.equal(drainedResult.final?.longRun.status, 'paused');
+    const message = finalMessage(drainedResult, 'error'); const row = oneLog('error');
     const price = await getPrice(model); const expected = 3 * computeCost({ price, promptTokens: 1700, completionTokens: 300, cacheTokens: 500 });
     balance(expected); assert.equal(row.quota, expected); assert.equal(JSON.parse(row.detail).billing_details.call_count, 3);
     assert.equal(message.parts.filter((p) => p.type === 'tool' && p.status === 'done').length, 2);
     assert.ok(message.parts.some((p) => p.type === 'text' && p.text === 'SHUTDOWN_PARTIAL'));
     const saved = (await get(`/api/chat/sessions/${state.session.id}`)).messages[1];
-    assert.equal(saved.status, 'stopped'); assert.equal(saved.id, message.id);
+    assert.equal(saved.status, 'error'); assert.equal(saved.id, message.id);
     assert.equal((await get(`/api/chat/sessions/${state.session.id}/running`)).running, false);
     assert.deepEqual(await drainChatRuns(), { total: 0, completed: 0, pending: 0, timedOut: false });
   });

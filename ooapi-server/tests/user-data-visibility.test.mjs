@@ -52,6 +52,8 @@ pool.query = async (sql, args = []) => {
   }
   if (/FROM community_posts p/.test(sql)) return [[]];
   if (/FROM community_|FROM friendships/.test(sql)) return [[{ n: 0, likes: 0, views: 0, following: 0, followers: 0 }]];
+  // 此权限夹具没有绑定本机；会话加载仍需检查真实关联，不能猜测本机状态。
+  if (/FROM local_session_workspaces|FROM local_workspaces|FROM local_devices|FROM chat_agent_runs|FROM chat_agent_tasks/.test(sql)) return [[]];
   if (/FROM chat_sessions/.test(sql)) return [[{ id: "fixture-session", user_id: 1, title: "Fixture", agent: "general", model: "fixture-model", settings: "{}", cost_units: 300, prompt_tokens: 123, completion_tokens: 45 }]];
   if (/FROM chat_messages/.test(sql)) return [[{ id: 1, seq: 1, role: "assistant", parts: JSON.stringify([{ id: "p", type: "text", text: "Own conversation" }]), cost: .03, prompt_tokens: 123, completion_tokens: 45 }]];
   throw new Error(`Unhandled fixture SQL: ${sql.slice(0, 100)}`);

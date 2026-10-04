@@ -18,6 +18,7 @@ import optionRoutes from "./routes/option.js";
 import channelRoutes from "./routes/channel.js";
 import gatewayRoutes from "./routes/gateway.js";
 import chatRoutes from "./routes/chat.js";
+import localWorkspaceRoutes from "./routes/local-workspaces.js";
 import pricingRoutes from "./routes/pricing.js";
 // 旧的账号管理接口已并入 /api/channel（routes/deepseek.js 与 services/deepseek/ 已删除）
 import updateRoutes from "./routes/update.js";
@@ -72,6 +73,7 @@ app.use("/api/log", logRoutes);
 app.use("/api/option", optionRoutes);
 app.use("/api/channel", channelRoutes);
 app.use("/api/chat", chatRoutes); // 站内对话 + 智能体
+app.use("/api/local-workspaces", localWorkspaceRoutes); // 本机主动连接，云端只保存设备和工作区标识
 app.use("/api/pricing", pricingRoutes); // 管理端：模型定价
 app.use("/api/update", updateRoutes); // 管理端：从 GitHub 拉取最新代码在线更新
 app.use("/api/monitor", monitorRoutes); // 管理端：运维监控（系统资源 + 网关运行时）

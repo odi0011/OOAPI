@@ -1,5 +1,6 @@
 import { TOOL_PRESENTATIONS } from "./tool-presentation.js";
 import { platformToolSpecs, platformNativeSchema, runPlatformTool } from "./platform-tools.js";
+import { runLocalTool } from "./local-workspaces.js";
 import { PLATFORM_TOOL_IDS } from "./platform-catalog.js";
 // Harness 工具集
 // ---------------------------------------------------------------------------
@@ -193,7 +194,7 @@ export const TOOLS = {
       };
       let r;
       try {
-        r = await runCompletion({
+        r = await (ctx.complete || runCompletion)({
           model: modelForChannelMatch(ctx.model) || ctx.model,
           prompt: `<｜User｜>${query}`,
           messages: [{ role: "system", content: SEARCH_SYS }, { role: "user", content: query }],
@@ -502,8 +503,18 @@ export const TOOLS = {
     presentation: TOOL_PRESENTATIONS.task,
     name: "派发子代理",
     desc: "把一个独立的子任务交给专职子代理（见下方清单），它会把结果整理好返回。用于并行调研、审阅成稿。",
-    args: '{"agent":"子代理 id","prompt":"要交办的具体问题（自包含，子代理看不到我们的对话）"}',
+    args: '{"action":"run|start|status|wait|message|cancel","agent":"子代理 id","prompt":"任务说明","id":"子任务编号","dependencies":["前置任务编号"],"message":"后续指令"}',
     async run(args, ctx) {
+      const action = args.action || "run";
+      if (action !== "run") {
+        if (!ctx.tasks) return { ok: false, output: "当前运行没有任务调度能力。" };
+        const result = action === "start" ? await ctx.tasks.start({ ...args, agentId: args.agent })
+          : action === "status" ? await ctx.tasks.get(args.id)
+          : action === "wait" ? await ctx.tasks.wait({ ids: args.ids, taskId: args.id, timeoutMs: args.timeoutMs })
+          : action === "message" ? await ctx.tasks.steer(args.id, args.message)
+          : action === "cancel" ? await ctx.tasks.cancel(args.id) : null;
+        return result ? { ok: true, output: JSON.stringify(result), meta: { action } } : { ok: false, output: "未知任务操作。" };
+      }
       const agentId = String(args?.agent ?? "").trim();
       const prompt = String(args?.prompt ?? "").trim().slice(0, 4000);
       if (!prompt) return { ok: false, output: "prompt 不能为空" };
@@ -519,11 +530,22 @@ export const TOOLS = {
       }
     },
   },
+  local: {
+    id: "local", name: "本地工作区", sensitive: true,
+    desc: "在用户已连接的本机工作区列目录、读文件、搜索、修改和沙盒执行。文件和命令均在本机。先读取sha256再改文件，写入/命令需本次确认；不能把远端平台角色当成本机授权。无连接时说明需要连接工作区，不能改到服务器执行。",
+    args: '{"action":"list|read|search|write|patch|exec","path":"工作区相对路径","query":"搜索文字","content":"完整文件内容","expectedSha256":"读取返回的校验值；新增文件为null","patches":[{"find":"唯一匹配原文","replace":"替换内容"}],"cwd":"命令的相对工作目录","command":"沙盒命令"}',
+    async run(args, ctx) {
+      if (["write", "patch", "exec"].includes(args.action) && !ctx.localApproved) return { ok: false, output: "本地修改或命令尚未获得本次授权。" };
+      const result = await runLocalTool(args.action, args, { userId: ctx.user?.id, sessionId: ctx.workspaceSessionId || ctx.sessionId, signal: ctx.signal,
+        callId: ctx.callId, expectedWorkspaceId: ctx.expectedWorkspaceId, onState: ctx.onLocalState, approved: Boolean(ctx.localApproved) });
+      return { ...result, outcome: result.meta?.outcome || (result.ok ? "executed" : "not_executed"), sensitive: true, localRef: { callId: ctx.callId, ...result.meta?.localRef } };
+    },
+  },
 };
 
 export function toolSpecs(ids = [], user = null) {
   const platform = new Map(platformToolSpecs(user ? Number(user.role) : 1000).map(s => [s.id, s]));
-  return ids.map((id) => PLATFORM_TOOL_IDS.includes(id) ? platform.get(id) : TOOLS[id]).filter(Boolean).map(({ id, name, desc, args, presentation }) => ({ id, name, desc, args, presentation: presentation || TOOL_PRESENTATIONS[id] }));
+  return ids.map((id) => PLATFORM_TOOL_IDS.includes(id) ? platform.get(id) : TOOLS[id]).filter(Boolean).map(({ id, name, desc, args, presentation, sensitive }) => ({ id, name, desc, args, sensitive, presentation: presentation || TOOL_PRESENTATIONS[id] }));
 }
 
 // 原生协议用真实类型描述参数，避免模型把说明文字当成参数值。
@@ -535,7 +557,8 @@ export function nativeToolSpecs(ids = [], user = null) {
     search: { properties: { query: str("检索关键词") }, required: ["query"] },
     fetch: { properties: { url: str("公开网页 URL") }, required: ["url"] },
     github: { properties: { action: { type: "string", enum: ["list", "file", "search"] }, repo: str("owner/name"), path: str("文件或目录路径"), ref: str("分支、标签或 commit"), query: str("检索关键词") }, required: ["action", "repo"] },
-    task: { properties: { agent: str("子代理 id"), prompt: str("自包含的任务说明") }, required: ["agent", "prompt"] },
+    task: { properties: { action: { type: "string", enum: ["run", "start", "status", "wait", "message", "cancel"] }, agent: str("子代理 id"), prompt: str("自包含的任务说明"), label: str("任务标题"), id: str("子任务编号"), ids: { type: "array", items: { type: "string" } }, dependencies: { type: "array", items: { type: "string" } }, message: str("后续指令"), timeoutMs: { type: "integer", minimum: 0, maximum: 60000 } }, required: [] },
+    local: { properties: { action: { type: "string", enum: ["list", "read", "search", "write", "patch", "exec"] }, path: str("工作区相对路径"), cwd: str("命令的工作区相对目录"), query: str("搜索内容"), content: str("写入内容"), expectedSha256: { type: ["string", "null"] }, command: str("隔离容器内执行的命令"), timeoutMs: { type: "integer", minimum: 100, maximum: 1800000 }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 2000 }, find: str("兼容单处替换的原文"), replace: str("兼容单处替换的新内容"), patches: { type: "array", minItems: 1, maxItems: 50, items: { type: "object", properties: { find: str("精确待替换文本"), replace: str("替换后文本") }, required: ["find", "replace"], additionalProperties: false } } }, required: ["action"] },
     todowrite: { properties: { todos: { type: "array", items: { type: "object", properties: { content: str("步骤描述"), status: { type: "string", enum: ["pending", "in_progress", "completed"] } }, required: ["content", "status"], additionalProperties: false } } }, required: ["todos"] },
   };
   return toolSpecs(ids, user).map((t) => ({ name: t.id, description: t.desc, parameters: PLATFORM_TOOL_IDS.includes(t.id) ? platformNativeSchema(t.id, user ? Number(user.role) : 1000) : { type: "object", ...schemas[t.id], additionalProperties: false } }));
@@ -548,7 +571,7 @@ export async function runTool(id, args, ctx) {
   try {
     return await tool.run(args, ctx);
   } catch (e) {
-    if (ctx.signal?.aborted) throw e;
+    if (ctx.signal?.aborted || ["WAITING_LOCAL", "LOCAL_CONTEXT_MISSING", "LOCAL_OUTCOME_UNKNOWN", "LOCAL_CHECKPOINT_UNAVAILABLE", "HARNESS_PAUSED", "HARNESS_BUDGET", "HARNESS_BUDGET_CONFIGURATION"].includes(e.code)) throw e;
     // 工具自身异常（上游限流等）不终止整轮：把原因交给模型，它会换一种查法或直接作答
     return { ok: false, output: `工具执行异常：${e.message}` };
   }

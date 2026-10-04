@@ -30,6 +30,7 @@ export function startRun(sessionId, meta = {}) {
   const existing = runs.get(key);
   if (existing && !existing.settled) return null;
   const run = {
+    id: meta.runId || meta.id || "",
     sessionId: key,
     userId: meta.userId,
     startedAt: meta.startedAt || Date.now(),
@@ -37,6 +38,9 @@ export function startRun(sessionId, meta = {}) {
     events: [],
     subscribers: new Set(),
     error: null,
+    status: meta.status || "running",
+    checkpoint: meta.checkpoint || null,
+    resumed: Boolean(meta.checkpoint),
     // 当增量事件超过环形缓冲时，保留每个 part 的最新快照，重连不会从一个
     // 缺失的 `part` 开始应用 delta，导致长回答刷新后只剩半截。
     snapshots: new Map(),
@@ -49,6 +53,7 @@ export function startRun(sessionId, meta = {}) {
 /** 记录一个事件：进缓冲 + 广播给所有订阅者 */
 export function publish(run, event) {
   if (!run) return;
+  if (event.type === "run_status" && typeof event.status === "string") run.status = event.status;
   if (event.type === "part" && event.part?.id) run.snapshots.set(event.part.id, { ...event.part });
   else if (event.type === "part_update" && event.id && run.snapshots.has(event.id)) run.snapshots.set(event.id, { ...run.snapshots.get(event.id), ...event.patch });
   else if (event.type === "delta" && event.id && run.snapshots.has(event.id)) {
@@ -77,6 +82,8 @@ export function finishRun(run, finalEvent) {
   if (!run) return;
   if (finalEvent) publish(run, finalEvent);
   run.settled = true;
+  if (finalEvent?.type === "paused" || finalEvent?.type === "waiting_local") run.status = finalEvent.type;
+  else if (["error", "stopped", "done"].includes(finalEvent?.type)) run.status = finalEvent.type;
   run.endedAt = Date.now();
   const subs = [...run.subscribers];
   run.subscribers.clear();
@@ -124,7 +131,10 @@ export function runStatus(sessionId) {
   const run = runs.get(String(sessionId));
   if (!run) return { running: false };
   return {
+    id: run.id,
     running: !run.settled,
+    status: run.status,
+    resumable: ["paused", "waiting_local", "interrupted"].includes(run.status),
     startedAt: run.startedAt,
     endedAt: run.endedAt || 0,
     events: run.events.length,

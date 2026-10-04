@@ -11,7 +11,7 @@ import express from "express";
 import { pool } from "../db.js";
 import { ok, fail, asyncHandler, now, safeInt, clientIp } from "../utils.js";
 import { authRequired, preAuthJwt, adminRequired } from "../middleware/auth.js";
-import { agentFlow, agentPolicy, saveAgentFlow } from "../services/harness/policy.js";
+import { agentFlow, agentPolicy, saveAgentFlow, resolveSessionPolicySettings } from "../services/harness/policy.js";
 import { modelCapabilities, reasoningSelection } from "../services/model-capabilities.js";
 import { rateLimit } from "../middleware/ratelimit.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
@@ -27,6 +27,7 @@ import { rowToChannel, channelInGroup, channelSupportsModel, collectAvailableMod
 import { getBoolOption } from "../config.js";
 import { saveBuffer, getMedia, readBlob, mediaUrl, attachRef, releaseRefs } from "../services/media.js";
 import { runHarness } from "../services/harness/loop.js";
+import { harnessInterruption } from "../services/harness/runtime.js";
 import { requestApproval, decideApproval } from "../services/harness/approvals.js";
 import { billableFailedCall } from "../services/execute.js";
 import { publicRunError } from "../services/upstream/public-error.js";
@@ -39,6 +40,11 @@ import { startRun, getRun, isRunning, publish, subscribe, finishRun, runStatus }
 import { isChatDraining, trackChatRun } from "../services/harness/drain.js";
 export { drainChatRuns } from "../services/harness/drain.js";
 import { holdTokenQuota } from "../services/token-quota.js";
+import { longRunStore, publicLongRun } from "../services/harness/long-runs.js";
+import { createTaskRuntime } from "../services/harness/task-runtime.js";
+import { persistedWorkspaceParts, persistedBillCall } from "../services/harness/workspace-privacy.js";
+import { getSessionWorkspace, saveLocalCheckpoint, loadLocalCheckpoint, getLocalResult } from "../services/harness/local-workspaces.js";
+import { archiveLocalMessage, hydrateLocalMessages } from "../services/harness/local-history.js";
 import {
   createSession,
   listSessions,
@@ -474,6 +480,7 @@ router.get(
       availableModels(req.user, keyId),
       keyId ? activeKeyOf(req.user, keyId) : null,
     ]);
+    const policy = agentPolicy();
     return ok(res, {
       currency: CURRENCY,
       units_per_od: UNITS_PER_OD,
@@ -492,8 +499,8 @@ router.get(
           }
         : null,
       agents: publicAgents(AGENTS),
-      tools: toolSpecs(TOOL_IDS, req.user).map(({ id, name, desc }) => ({ id, name, desc })),
-      defaults: { agent: PRIMARY_AGENTS[0]?.id || "general", maxSteps: DEFAULT_MAX_STEPS, maxStepsLimit: MAX_STEPS_LIMIT },
+      tools: toolSpecs(policy.tools, req.user).map(({ id, name, desc }) => ({ id, name, desc })),
+      defaults: { agent: PRIMARY_AGENTS[0]?.id || "general", maxSteps: Math.min(DEFAULT_MAX_STEPS, policy.maxSteps), maxStepsLimit: policy.maxSteps, hardMaxStepsLimit: MAX_STEPS_LIMIT },
       chat_enabled: getBoolOption("chat_enabled"),
       // 附件能力（前端文件选择器据此显示可选类型）
       upload: { max_files: MAX_UPLOAD_FILES, max_bytes: MAX_UPLOAD_BYTES, text_types: TEXT_FILE_EXTS },
@@ -591,7 +598,27 @@ router.get(
   asyncHandler(async (req, res) => {
     const session = await getSession(req.user.id, req.params.id);
     if (!session) return fail(res, "会话不存在", 404);
-    return ok(res, { session, messages: await getSessionMessages(session.id) });
+    let messages = await getSessionMessages(session.id);
+    const workspace = await getSessionWorkspace(req.user.id, session.id);
+    if (workspace?.online) {
+      const durable = await longRunStore.get(req.user.id, session.id);
+      const fallbackRefs = new Set();
+      if (durable?.config.workspaceId === workspace.id && durable.status !== "running" && durable.assistantSegment >= 0) {
+        const ref = `${durable.id}-message-${durable.assistantSegment}`;
+        fallbackRefs.add(ref);
+        // 旧版本已完成任务没有归档引用时，仅恢复该任务实际落库的最后一条消息。
+        messages = messages.map(message => Number(message.id) === durable.assistantMessageId && message.role === "assistant" && !message.parts?.some(p => p.type === "local_context")
+          ? { ...message, parts: [...(message.parts || []), { type: "local_context", ref, workspaceId: workspace.id }] } : message);
+      }
+      const controller = new AbortController();
+      const disconnected = () => { if (!res.writableEnded) controller.abort(); };
+      res.once("close", disconnected);
+      try {
+        messages = await hydrateLocalMessages(messages, { workspace, signal: controller.signal, fallbackRefs,
+          load: (ref, { signal }) => loadLocalCheckpoint({ userId: req.user.id, sessionId: session.id, signal, expectedWorkspaceId: workspace.id }, ref) });
+      } finally { res.removeListener("close", disconnected); }
+    }
+    return ok(res, { session, messages });
   })
 );
 
@@ -647,7 +674,7 @@ router.post(
 // ---------- 计费（用户额度）----------
 // 与网关同一套原子扣费；harness 传进来的 tokens 是「每次上游调用分别 splitTokens 后求和」，
 // 混用 API 渠道（结构化 usage）与反代渠道（usage=null）时不会互相覆盖口径。
-async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0, keyName = "", startedAt = 0, firstTokenAt = 0, userAgent = "", ip = "", calls = null, tokenQuotaHold = 0, sessionId = "", inputText = "", status = "success", errorCode = "", retryCount = 0, isUsage = true, writeUsage = true, requestId = "", errorMessage = "", httpStatus = 0, errorDiagnostics = {} }) {
+async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0, keyName = "", startedAt = 0, firstTokenAt = 0, userAgent = "", ip = "", calls = null, tokenQuotaHold = 0, sessionId = "", inputText = "", status = "success", errorCode = "", retryCount = 0, isUsage = true, writeUsage = true, requestId = "", errorMessage = "", httpStatus = 0, errorDiagnostics = {}, sensitive = false, billingRunId = "", billingSegment = 0, leaseOwner = "" }) {
   const actualModel = Array.isArray(calls) && calls.length ? calls.at(-1).billModel || calls.at(-1).model || model : model;
   const displayModel = canonicalModelName(actualModel) || model;
   let { promptTokens, completionTokens, cacheTokens } =
@@ -725,8 +752,29 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
   const conn = await pool.getConnection();
   let committing = false;
   let logId = 0;
+  let reusedBilling = null;
   try {
     await conn.beginTransaction();
+    if (billingRunId) {
+      const [[durable]] = await conn.query("SELECT id,lease_owner FROM chat_agent_runs WHERE id=? AND user_id=? FOR UPDATE", [billingRunId, user.id]);
+      if (!durable) throw Object.assign(new Error("任务结算记录不存在"), { code: "BILLING_FAILED" });
+      if (leaseOwner && durable.lease_owner !== leaseOwner) throw Object.assign(new Error("任务租约已改变"), { code: "RUN_CHANGED" });
+      const [[already]] = await conn.query("SELECT id,quota,prompt_tokens,completion_tokens,cache_tokens,detail FROM logs WHERE request_id=? AND user_id=? AND is_usage=1 LIMIT 1", [requestId, user.id]);
+      if (already) {
+        // 完成检查点恢复没有新 calls；原账单价格/分项以日志快照为准，不能按现在价格重算。
+        let recordedBill = null;
+        try {
+          const audit = typeof already.detail === "object" && !Buffer.isBuffer(already.detail) ? already.detail : JSON.parse(String(already.detail || "{}"));
+          if (audit?.billing_details && typeof audit.billing_details === "object" && !Array.isArray(audit.billing_details)) recordedBill = audit.billing_details;
+        } catch { /* 历史账单没有明细时保持未知，扣费和 token 仍取已提交的列。 */ }
+        // 恢复只复用旧账单，但入口仍占了本次额度；同事务退回，不能留下额外扣减。
+        if (keyId && Number(tokenQuotaHold) > 0) await conn.query("UPDATE tokens SET remain_quota=remain_quota+? WHERE id=? AND user_id=? AND unlimited_quota=0", [Number(tokenQuotaHold), keyId, user.id]);
+        reusedBilling = { units: Number(already.quota) || 0, promptTokens: Number(already.prompt_tokens) || 0, completionTokens: Number(already.completion_tokens) || 0, cacheTokens: Number(already.cache_tokens) || 0, logId: already.id, billingDetails: recordedBill };
+        committing = true;
+        await conn.commit();
+        return reusedBilling;
+      }
+    }
     const [ret] = await conn.query(
       "UPDATE users SET quota = quota - ?, used_quota = used_quota + ?, request_count = request_count + 1 WHERE id = ? AND quota >= ?",
       [units, units, user.id, units]
@@ -790,7 +838,7 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
       source_vendors: sourceVendors([channel?.type, ...billingCalls.map((c) => c.channelQuote?.provider)]),
       ...(modelCalls.length ? { model_calls: modelCalls.slice(0, 40) } : {}),
       kind,
-      ...logTexts({ prompt, output, calls, inputText }),
+      ...(sensitive ? {} : logTexts({ prompt, output, calls, inputText })),
       session_id: sessionId || undefined,
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
@@ -826,18 +874,20 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
     status,
     errorCode,
     retryCount,
-    inputText,
-    requestPromptText: logTexts({ prompt, output, calls, inputText }).request_prompt_text,
-    outputText: logTexts({ prompt, output, calls, inputText }).output_text,
+    inputText: sensitive ? "本地工作区任务" : inputText,
+    requestPromptText: sensitive ? "" : logTexts({ prompt, output, calls, inputText }).request_prompt_text,
+    outputText: sensitive ? "" : logTexts({ prompt, output, calls, inputText }).output_text,
     requestId,
+    connection: conn,
   });
+    if (billingRunId) await conn.query("UPDATE chat_agent_runs SET bill_calls='[]',billing_segment=GREATEST(billing_segment,?+1) WHERE id=? AND user_id=?", [billingSegment, billingRunId, user.id]);
     committing = true;
     await conn.commit();
     return { units, promptTokens, completionTokens, cacheTokens, logId, billingDetails: bill };
   } catch (e) {
     await conn.rollback().catch(() => {});
     // COMMIT发出后结果无法确认，禁止重试结算或再次退回已计入的预占。
-    throw Object.assign(new Error(committing ? "扣费提交结果不确定，请联系管理员核查" : "本轮计费未完成，请联系管理员核查"), { code: committing ? "BILLING_UNCERTAIN" : "BILLING_FAILED", cause: e, billingDetails: bill, ...(committing ? { billingResult: { units, promptTokens, completionTokens, cacheTokens, logId, billingDetails: bill } } : {}) });
+    throw Object.assign(new Error(committing ? "扣费提交结果不确定，请联系管理员核查" : "本轮计费未完成，请联系管理员核查"), { code: committing ? "BILLING_UNCERTAIN" : "BILLING_FAILED", cause: e, billingDetails: reusedBilling ? reusedBilling.billingDetails : bill, ...(committing ? { billingResult: reusedBilling || { units, promptTokens, completionTokens, cacheTokens, logId, billingDetails: bill } } : {}) });
   } finally { conn.release(); }
 }
 
@@ -845,7 +895,7 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
 function aggregate(calls = []) {
   const sum = { promptTokens: 0, completionTokens: 0, cacheTokens: 0 };
   for (const c of calls) {
-    const s = splitTokens({ prompt: c.prompt, output: c.output, upstreamTotal: c.usage });
+    const s = c.tokens || splitTokens({ prompt: c.prompt, output: c.output, upstreamTotal: c.usage });
     sum.promptTokens += s.promptTokens;
     sum.completionTokens += s.completionTokens;
     sum.cacheTokens += s.cacheTokens;
@@ -871,7 +921,7 @@ function aggregate(calls = []) {
     const reject = (message, status = 400, data = {}) => fail(res, message, status, { accepted: false, ...data });
     const rejectDraining = () => reject("服务正在重启，请稍后重试", 503, { code: "SERVER_DRAINING" });
     if (isChatDraining()) return rejectDraining();
-    const { sessionId, text = "", model: modelOverride, agent: agentOverride, settings: settingsPatch, images = [], files = [], keyId = 0, retryFromSeq: retryRaw = 0 } = req.body || {};
+    const { sessionId, text = "", model: modelOverride, agent: agentOverride, settings: settingsPatch, images = [], files = [], keyId = 0, retryFromSeq: retryRaw = 0, resume = false } = req.body || {};
     const retryFromSeq = retryRaw ? safeInt(retryRaw, { min: 1, fallback: 0 }) : 0;
     if (retryRaw && !retryFromSeq) return reject("retryFromSeq 无效", 400, { accepted: false });
     // 令牌额度预占：在**发起上游调用之前**原子占位，避免并发的多个请求
@@ -880,29 +930,33 @@ function aggregate(calls = []) {
 
     const session = await getSession(req.user.id, sessionId);
     if (!session) return reject("会话不存在", 404);
+    const previousRun = await longRunStore.get(req.user.id, session.id);
+    if (previousRun && ["running", "paused", "waiting_local", "interrupted"].includes(previousRun.status) && !resume) return reject("这个会话有未结束的任务，请继续或停止它。", 409, { longRun: publicLongRun(previousRun) });
+    if (resume && (!previousRun || !["paused", "waiting_local", "interrupted"].includes(previousRun.status))) return reject("没有可以恢复的任务。", 409);
     if (!getBoolOption("chat_enabled")) return reject("站内对话功能已关闭", 403);
     if (Number(req.user.quota) <= 0) return reject(`${CURRENCY}余额不足，请联系管理员充值`, 403);
 
-    const inputText = String(text || "");
-    const content = inputText.trim();
+    let inputText = String(text || "");
+    let content = inputText.trim();
     // 第 80 批：智能体选择已取消，一律由 general 执行（老会话存的 research/coder 等也收拢到这里）。
     // agentOverride 仍从 body 里解构以兼容旧前端，但不再生效。
     void agentOverride;
     const agent = findAgent("general");
     if (!agent) return reject("智能体不存在");
-    const model = modelOverride || session.model;
+    const model = resume ? previousRun.config.model : modelOverride || session.model;
     if (!model) return reject("请选择模型");
-    if (!content && !(Array.isArray(images) && images.length) && !(Array.isArray(files) && files.length) && !(Array.isArray(req.body?.docs) && req.body.docs.length)) {
+    if (!resume && !content && !(Array.isArray(images) && images.length) && !(Array.isArray(files) && files.length) && !(Array.isArray(req.body?.docs) && req.body.docs.length)) {
       return reject("请输入内容或添加附件");
     }
 
     // 同一会话同时只允许一个运行：重复提交若被放行会跑两份、扣两次费
     if (isRunning(session.id)) return reject("这个会话正在生成中，请稍候或先停止", 409);
 
-    // 能力开关已取消：tools/search 一律回到智能体默认（老会话里存过的「关掉联网」等不再生效，
-    // 否则用户在新界面里既看不到开关、又被旧设置限制住，表现为「怎么问都不查资料」）。
-    // 深度思考（thinking）仍跟随会话设定；会话指令保留。
-    const settings = { ...sanitizeSettings(settingsPatch ?? {}, { previous: session.settings }), ...agentPolicy(), search: null };
+    // 旧 tools/search 隐藏开关不再生效；本次显式提交的工具清单仅能收窄平台策略。
+    // 会话步数是用户预算，平台步数是管理员上限，必须取较小值而不是用策略覆盖用户预算。
+    const sessionSettings = sanitizeSettings(settingsPatch ?? {}, { previous: session.settings });
+    const policy = agentPolicy();
+    const settings = resolveSessionPolicySettings(sessionSettings, policy, { requestedTools: settingsPatch?.tools });
 
     // 图片：优先走媒体库（parts 只存 media_id，字节落盘）。
     //
@@ -991,7 +1045,7 @@ function aggregate(calls = []) {
       });
     }
     if (docs.length > MAX_UPLOAD_FILES) return reject(`最多同时上传 ${MAX_UPLOAD_FILES} 个文件`);
-    if (!content && !imgs.length && !docs.length) return reject("请输入内容或添加有效附件");
+    if (!resume && !content && !imgs.length && !docs.length) return reject("请输入内容或添加有效附件");
 
     // 先原子占位、再做落库等副作用：并发提交的第二个请求会在这里直接 409，
     // 不会留下重复的用户消息或被改错的标题（原实现先落库后占位，存在这个竞态）。
@@ -1001,7 +1055,7 @@ function aggregate(calls = []) {
     if (!run) return reject("这个会话正在生成中，请稍候或先停止", 409);
     const ctrl = new AbortController();
     const completeRun = trackChatRun(ctrl);
-    run.abort = () => ctrl.abort();
+    run.abort = (reason) => ctrl.abort(reason);
     const finishBeforeStart = async () => {
       try { await quotaHold.refund(); }
       finally { finishRun(run); completeRun(); }
@@ -1019,11 +1073,16 @@ function aggregate(calls = []) {
     // `node --check` 查不出这类作用域错误（语法合法），必须有真实调用路径的断言。
     let usableKey;
     let userMessage;
+    let durableRun;
+    let resumeState;
+    let workspace;
     try {
+      workspace = await getSessionWorkspace(req.user.id, session.id);
+      if (workspace && !workspace.online) throw Object.assign(new Error("本机工作区尚未连接，请先启动本地执行器。"), { code: "LOCAL_OFFLINE", status: 409 });
       history = await getSessionMessages(session.id);
 
       // 路由分组：必须通过密钥路由（分组决定渠道/模型/倍率），没有可用密钥不开跑
-      usableKey = await activeKeyOf(req.user, keyId);
+      usableKey = await activeKeyOf(req.user, resume ? previousRun.config.keyId : keyId);
       if (!usableKey) {
         await finishBeforeStart();
         return reject("请先在「令牌管理」创建可用密钥，并在对话页选择它（密钥的分组决定可用模型与倍率）", 403);
@@ -1064,7 +1123,32 @@ function aggregate(calls = []) {
         return isChatDraining() ? rejectDraining() : reject("生成已停止", 400, { code: "ABORTED" });
       }
 
-      // 所有前置校验通过后才改写历史；retryFromSeq 回退与新用户消息在同一事务。
+      if (resume) {
+        if (previousRun.config.workspaceId && workspace?.id !== previousRun.config.workspaceId) throw Object.assign(new Error("请重新连接原工作区后继续任务。"), { code: "LOCAL_CONTEXT_MISSING", status: 409 });
+        resumeState = previousRun.config.workspaceId
+          ? await loadLocalCheckpoint({ userId: req.user.id, sessionId: session.id, signal: ctrl.signal, expectedWorkspaceId: workspace?.id }, previousRun.id)
+          : previousRun.checkpoint;
+        if (!resumeState) throw Object.assign(new Error("任务没有可恢复的检查点。"), { code: "NO_CHECKPOINT" });
+        durableRun = await longRunStore.claim(req.user.id, session.id);
+        if (previousRun.checkpoint?.pendingCalls && resumeState?.pendingCalls) {
+          const statuses = new Map(previousRun.checkpoint.pendingCalls.map(c => [c.id, c]));
+          resumeState.pendingCalls = resumeState.pendingCalls.map(c => ({ ...c, status: statuses.get(c.id)?.status || c.status }));
+        }
+        inputText = previousRun.config.inputText || "继续本地工作区任务";
+        content = inputText;
+        userMessage = history.find(m => m.seq === previousRun.config.userSeq && m.role === "user") || null;
+      } else {
+        if (workspace && previousRun?.config.workspaceId === workspace.id && previousRun.status === "completed") {
+          try {
+            const memory = await loadLocalCheckpoint({ userId: req.user.id, sessionId: session.id, signal: ctrl.signal, expectedWorkspaceId: workspace.id }, previousRun.id);
+            if (memory?.messages) resumeState = { ...memory, phase: "done", parts: [], todo: [], pendingCalls: [], completedWrites: [], nextStep: 1, readEpoch: 0, formatFailures: 0, turnId: undefined, budget: undefined, finalizeReason: "", lastText: "" };
+          } catch (e) { if (ctrl.signal.aborted) throw e; /* 私有历史不可用时只处理新指令，不猜测旧文件内容。 */ }
+        }
+        durableRun = await longRunStore.begin(req.user.id, session.id, { model, agent: agent.id, settings, keyId: Number(usableKey.id),
+          workspaceId: workspace?.id || "", inputText: workspace ? "本地工作区任务" : inputText });
+      }
+      // 所有前置校验通过后才改写历史；恢复原任务不会重复添加用户消息。
+      if (!resume) {
       const userParts = [{ id: `u${Date.now().toString(36)}`, type: "text", text: inputText }];
       for (const mid of imgMediaIds.filter(Boolean)) userParts.push({ id: `i${Math.random().toString(36).slice(2, 8)}`, type: "image", media_id: mid });
       for (const d of docs) userParts.push({ id: `f${Math.random().toString(36).slice(2, 8)}`, type: "file", name: d.name, kind: d.kind, bytes: d.bytes, text: d.text });
@@ -1075,12 +1159,21 @@ function aggregate(calls = []) {
       if (retryFromSeq) history = history.filter((m) => m.seq < retryFromSeq);
       for (const mid of imgMediaIds.filter(Boolean)) await attachRef(mid, { userId: req.user.id, refType: "chat_message", refId: String(savedUser.id), slot: `m${mid}` }).catch((e) => console.warn(`[chat] 绑定图片引用失败：${e.message}`));
       if (session.message_count === 0 && session.title === "新对话") await updateSession(req.user.id, session.id, { title: titleFromText(content || docs[0]?.name || "图片对话") }).catch(() => {});
+      durableRun.config.userSeq = savedUser.seq;
+      await longRunStore.config(durableRun, durableRun.config);
+      }
     } catch (e) {
       // 占位后到真正开跑前的任何异常都要释放，否则会话会永远显示"生成中"
       await finishBeforeStart();
-      return reject(["NO_SESSION", "BAD_RETRY"].includes(e.code) ? e.message : "无法开始生成，请稍后重试", e.status || 500, { accepted: false, code: e.code || "START_FAILED" });
+      if (durableRun && !resume) await longRunStore.finish(durableRun, "error", { errorCode: e.code || "START_FAILED" });
+      return reject(["NO_SESSION", "BAD_RETRY", "RUN_PENDING", "LOCAL_OFFLINE", "LOCAL_CONTEXT_MISSING", "NO_CHECKPOINT"].includes(e.code) ? e.message : "无法开始生成，请稍后重试", e.status || 500, { accepted: false, code: e.code || "START_FAILED" });
     }
     run.userMessage = userMessage;
+    run.durable = durableRun;
+    run.inbox = [...(durableRun.config.inbox || [])];
+    const finishedCheckpoint = Boolean(resume && resumeState?.phase === "done" && !run.inbox.length && !resumeState.todo?.some(t => t.status !== "completed") && !resumeState.parts?.some(p => p.type === "trajectory" && p.partial));
+    const checkpointTasks = finishedCheckpoint ? await longRunStore.tasks(req.user.id, session.id, durableRun.id).catch(() => null) : null;
+    const completedWork = Boolean(finishedCheckpoint && checkpointTasks && !checkpointTasks.some(t => !["completed", "done", "cancelled"].includes(t.status)));
     publish(run, { type: "start", sessionId: session.id, startedAt: run.startedAt, userMessage, retryFromSeq });
 
     // 后台跑：不 await，HTTP 层只负责把事件流出去
@@ -1108,6 +1201,8 @@ function aggregate(calls = []) {
       userAgent: String(req.headers["user-agent"] || "").slice(0, 255),
       startedAt: run.startedAt || Date.now(),
       quotaHold,
+      durableRun, resumeState, workspace,
+      recoverFinal: completedWork,
     }).catch((e) => console.error("[chat] 后台运行异常：", e?.code || "ERROR")).finally(completeRun);
 
     streamFromRun(req, res, run);
@@ -1169,11 +1264,59 @@ router.post(
     const session = await getSession(req.user.id, req.params.id);
     if (!session) return fail(res, "会话不存在", 404);
     const run = getRun(session.id);
-    if (!run || run.settled) return fail(res, "没有进行中的生成", 404);
+    if (!run || run.settled) {
+      if (await longRunStore.stop(req.user.id, session.id)) return ok(res, { stopped: true });
+      return fail(res, "没有进行中的生成", 404);
+    }
     run.abort?.();
     return ok(res, { stopped: true, startedAt: run.startedAt });
   })
 );
+
+router.get("/sessions/:id/work", authRequired, asyncHandler(async (req, res) => {
+  if (!await getSession(req.user.id, req.params.id)) return fail(res, "会话不存在", 404);
+  const durable = await longRunStore.get(req.user.id, req.params.id), live = getRun(req.params.id);
+  const tasks = live && !live.settled && live.durable?.id === durable?.id && live.tasks?.snapshots || (durable ? await longRunStore.tasks(req.user.id, req.params.id, durable.id) : []);
+  return ok(res, { run: publicLongRun(live && !live.settled && live.durable?.id === durable?.id && live.finalStatus ? { ...durable, status: live.finalStatus } : durable), tasks: tasks.map(({ id, agentId, label, dependencies, status, summary, error, createdAt, updatedAt }) => ({ id, agentId, label, dependencies, status, summary, error, createdAt, updatedAt })) });
+}));
+router.post("/sessions/:id/pause", authRequired, asyncHandler(async (req, res) => {
+  if (!await getSession(req.user.id, req.params.id)) return fail(res, "会话不存在", 404);
+  const live = getRun(req.params.id);
+  if (!live || live.settled) return fail(res, "当前没有运行中的任务", 409);
+  live.abort?.(Object.assign(new Error("用户暂停任务"), { code: "HARNESS_PAUSED", kind: "pause" }));
+  return ok(res, { pausing: true });
+}));
+router.post("/sessions/:id/message", authRequired, asyncHandler(async (req, res) => {
+  if (!await getSession(req.user.id, req.params.id)) return fail(res, "会话不存在", 404);
+  const text = String(req.body?.message || "").trim();
+  if (!text || text.length > 12000) return fail(res, "补充说明需要 1–12000 字符", 400);
+  const live = getRun(req.params.id);
+  if (live && !live.settled) {
+    if (req.body.taskId) {
+      if (!live.taskControls) return fail(res, "子任务尚未启动", 409);
+      return ok(res, { task: await live.taskControls.steer(req.body.taskId, text), accepted: true });
+    }
+    if ((live.inbox || []).length >= 20) return fail(res, "待处理说明较多，请等当前任务接收后再补充", 429);
+    (live.inbox ||= []).push(text);
+    live.controlPersistence = (live.controlPersistence || Promise.resolve()).then(async () => {
+      await longRunStore.config(live.durable, { ...live.durable.config, inbox: [...live.inbox] });
+    });
+    await live.controlPersistence;
+    publish(live, { type: "work_message", message: text });
+    return ok(res, { accepted: true });
+  }
+  const durable = await longRunStore.get(req.user.id, req.params.id);
+  if (!durable || !["paused", "waiting_local", "interrupted"].includes(durable.status)) return fail(res, "没有可以补充的未完成任务", 409);
+  if (req.body.taskId) return fail(res, "请先继续主任务，再向子任务补充说明", 409);
+  await longRunStore.config(durable, { ...durable.config, inbox: [...(durable.config.inbox || []).slice(-19), text] });
+  return ok(res, { accepted: true, pending: true });
+}));
+router.post("/sessions/:id/tasks/:taskId/cancel", authRequired, asyncHandler(async (req, res) => {
+  if (!await getSession(req.user.id, req.params.id)) return fail(res, "会话不存在", 404);
+  const live = getRun(req.params.id);
+  if (!live || live.settled || !live.taskControls) return fail(res, "子任务没有运行", 409);
+  return ok(res, { task: await live.taskControls.cancel(req.params.taskId) });
+}));
 
 router.post("/sessions/:id/approvals/:approvalId", authRequired, asyncHandler(async (req, res) => {
   const session = await getSession(req.user.id, req.params.id);
@@ -1191,7 +1334,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const session = await getSession(req.user.id, req.params.id);
     if (!session) return fail(res, "会话不存在", 404);
-    return ok(res, { ...runStatus(session.id), userMessage: getRun(session.id)?.userMessage || null });
+    return ok(res, { ...runStatus(session.id), longRun: publicLongRun(await longRunStore.get(req.user.id, session.id)), userMessage: getRun(session.id)?.userMessage || null });
   })
 );
 
@@ -1199,8 +1342,8 @@ router.get(
  * 真正执行一轮：跑 harness、计费、落库、发布事件。
  * 无论客户端是否还在，都必须跑到最后一步（这就是断线续传的前提）。
  */
-async function executeRun({ run, ctrl, user, session, agent, model, settings, history, content, inputText = content, userMessage = null, imgs, docs = [], routeGroup, keyId = 0, keyName = "", modelCaps, ip = "", userAgent = "", startedAt = 0, quotaHold = null }) {
-  const runCalls = [];
+async function executeRun({ run, ctrl, user, session, agent, model, settings, history, content, inputText = content, userMessage = null, imgs, docs = [], routeGroup, keyId = 0, keyName = "", modelCaps, ip = "", userAgent = "", startedAt = 0, quotaHold = null, durableRun = null, resumeState = null, workspace = null, recoverFinal = false }) {
+  const runCalls = [...(durableRun?.calls || [])];
   let runParts = [];
   let runTodo = session.todo || [];
   let channelName = "";
@@ -1208,9 +1351,74 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
   let billedResult = null;
   // 助手消息是否已落库：catch 分支据此避免重复写入（见下方 appendMessage 处说明）
   let saved = false;
+  let persistence = Promise.resolve();
+  let persistenceError;
+  let sensitive = Boolean(workspace);
+  let tasks;
+  let finalRunStatus = "error";
+  const localCtx = { userId: user.id, sessionId: session.id, signal: ctrl.signal, expectedWorkspaceId: workspace?.id };
+  const billingSegment = recoverFinal ? Number(resumeState?.billingSegment ?? Math.max(0, (durableRun?.billingSegment || 0) - 1)) : durableRun?.billingSegment || 0;
+  const logRequestId = durableRun ? `${durableRun.id}:${billingSegment}` : `${session.id}:${userMessage?.seq || 0}`;
+  const messagePartsForStorage = async parts => {
+    const stored = persistedWorkspaceParts(parts, sensitive);
+    if (sensitive && workspace && durableRun) stored.push(await archiveLocalMessage({ workspace, run: durableRun, segment: billingSegment, parts,
+      save: (ref, state) => saveLocalCheckpoint({ ...localCtx, runId: ref }, state) }));
+    return stored;
+  };
+  const heartbeat = durableRun ? setInterval(() => { longRunStore.heartbeat(durableRun).catch(() => ctrl.abort(Object.assign(new Error("无法保存任务状态"), { code: "HARNESS_PAUSED", kind: "pause" }))); }, 30000) : null;
+  heartbeat?.unref?.();
+  const persistCheckpoint = async (state, meta = {}) => {
+    sensitive ||= Boolean(meta.sensitive);
+    let stored = { ...(meta.persistable || state), billingSegment };
+    if (sensitive) {
+      try {
+        const { ref } = await saveLocalCheckpoint(localCtx, { ...state, billingSegment, runId: durableRun.id });
+        stored = { ...stored, localRef: ref };
+      } catch (e) {
+        if (!["WAITING_LOCAL", "LOCAL_CONTEXT_MISSING", "LOCAL_OUTCOME_UNKNOWN", "ABORTED"].includes(e.code)) throw e;
+        stored.localRef = durableRun.checkpoint?.localRef || null;
+        await longRunStore.checkpoint(durableRun, stored, { calls: runCalls.map(persistedBillCall) });
+        throw Object.assign(new Error("等待本机保存任务上下文"), { code: "WAITING_LOCAL", outcome: "not_executed" });
+      }
+    }
+    if (durableRun) await longRunStore.checkpoint(durableRun, stored, { calls: runCalls.map(persistedBillCall) });
+    if (durableRun?.config.inbox?.length && !run.inbox?.length) {
+      run.controlPersistence = (run.controlPersistence || Promise.resolve()).then(async () => {
+        if (!run.inbox?.length) await longRunStore.config(durableRun, { ...durableRun.config, inbox: [] });
+      });
+      await run.controlPersistence;
+    }
+    run.checkpoint = state;
+    publish(run, { type: "work_status", run: publicLongRun(durableRun) });
+  };
 
   try {
     reasoningSelection(model, settings.reasoningEffort);
+    const existingTasks = durableRun ? await longRunStore.tasks(user.id, session.id, durableRun.id) : [];
+    if (resumeState?.budget) {
+      for (const task of existingTasks) for (const key of ["modelCalls", "tokens", "od", "elapsedMs"]) {
+        resumeState.budget[key] = Math.max(Number(resumeState.budget[key]) || 0, Number(task.checkpoint?.budget?.[key]) || 0);
+      }
+    }
+    tasks = createTaskRuntime({ initial: existingTasks, sensitive, emit: ev => publish(run, ev),
+      save: task => longRunStore.saveTask(user.id, session.id, durableRun.id, task, durableRun.owner),
+      savePrivate: task => saveLocalCheckpoint(localCtx, { ...task, runId: `${task.id}-meta` }),
+      hydrate: async task => {
+        if (!sensitive) return task.checkpoint;
+        if (task.recovering || task.prompt === "[任务内容保存在本机]") {
+          const original = await loadLocalCheckpoint(localCtx, `${task.id}-meta`);
+          if (original) Object.assign(task, { prompt: original.prompt, inbox: original.inbox, summary: original.summary });
+        }
+        return task.checkpoint ? await loadLocalCheckpoint(localCtx, task.id) : null;
+      },
+      checkpoint: async (task, state, meta = {}) => {
+        if (sensitive || meta.sensitive) { const { ref } = await saveLocalCheckpoint(localCtx, { ...state, runId: task.id }); return { ...(meta.persistable || {}), localRef: ref }; }
+        return meta.persistable || state;
+      },
+    });
+    run.tasks = tasks;
+    Object.defineProperty(run, "taskControls", { get: () => tasks.controls });
+    const groupRate = await groupConfigOf(routeGroup);
     const out = await runHarness({
       session,
       agent,
@@ -1224,6 +1432,33 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       user,
       signal: ctrl.signal,
       modelCaps,
+      keyId,
+      localSensitive: sensitive,
+      workspaceSessionId: session.id,
+      expectedWorkspaceId: workspace?.id,
+      taskRuntime: tasks,
+      resumeState,
+      recoverFinal,
+      inbox: { drain: () => (run.inbox || []).splice(0).map(text => ({ role: "user", content: text })) },
+      localResults: { get: callId => getLocalResult(localCtx, callId) },
+      onCheckpoint: persistCheckpoint,
+      beforeModel: async () => {
+        const [[live]] = await pool.query("SELECT * FROM users WHERE id = ?", [user.id]);
+        if (!live || Number(live.status) !== 1 || Number(live.token_version) !== Number(user.token_version)) throw Object.assign(new Error("账号授权已改变，请重新登录。"), { code: "AUTH_FAILED" });
+        user.role = live.role;
+        const key = await activeKeyOf(user, keyId);
+        if (!key || (!key.unlimited_quota && Number(key.remain_quota) <= 0) || Number(live.quota) <= 0) throw Object.assign(new Error("额度或密钥权限已改变，任务已暂停。"), { code: "HARNESS_PAUSED", kind: "pause" });
+        const group = await groupConfigOf(key.group_name);
+        if (key.group_name !== routeGroup || group?.models?.length && !modelInAllowList(group.models, model)
+          || Number(user.role) < 100 && String(key.model_limits || "").trim() && !modelInAllowList(String(key.model_limits).split(",").map(s => s.trim()), model)) {
+          throw Object.assign(new Error("当前模型的路由权限已改变，任务已暂停。"), { code: "HARNESS_PAUSED", kind: "pause" });
+        }
+      },
+      costOfCall: async c => {
+        const price = await getPrice(resolveAliasSync(c.model || model));
+        const t = c.tokens || splitTokens({ prompt: c.prompt || "", output: c.output || "", upstreamTotal: c.usage });
+        return applyGroupRate(computeCost({ price: effectivePrice(price, c.startedAt || Date.now()).price, ...t }), groupRate?.rate) / UNITS_PER_OD;
+      },
       authorizeTool: async (call) => {
         // 长运行中账号可能被禁用；同意审批不等于绕过实时账号权限。
         const refreshPermissions = async () => {
@@ -1232,7 +1467,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           user.role = current.role;
         };
         await refreshPermissions();
-        if ((settings.permissionMode !== "ask" && !needsToolApproval(call.tool, call.args)) || call.tool === "todowrite") return true;
+        if ((settings.permissionMode !== "ask" && !needsToolApproval(call.tool, call.args) && !(call.tool === "local" && ["write", "patch", "exec"].includes(call.args.action))) || call.tool === "todowrite") return true;
         const approved = await requestApproval(run, call, { signal: ctrl.signal, emit: (ev) => publish(run, ev) });
         if (approved) await refreshPermissions();
         return approved;
@@ -1244,19 +1479,22 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       onTodo: (todo) => {
         runTodo = todo;
       },
-      onCall: (c) => runCalls.push(c),
+      onCall: (c) => { runCalls.push(c); if (durableRun) persistence = persistence.then(() => longRunStore.calls(durableRun, runCalls.map(persistedBillCall))).catch(e => { persistenceError = e; ctrl.abort({ code: "HARNESS_PAUSED", kind: "pause" }); }); },
     });
 
+    sensitive ||= out.sensitive;
     runParts = [...out.parts, ...[...run.snapshots.values()].filter((p) => p.type === "approval")];
     runTodo = out.todo;
     // 最后一步刚结束时退出也可能先于结算发生；沿停止分支保存已有calls/parts。
-    if (ctrl.signal.aborted) throw Object.assign(new Error("已停止"), { code: "ABORTED", parts: runParts });
+    if (ctrl.signal.aborted) throw Object.assign(harnessInterruption(ctrl.signal), { parts: runParts });
     channelName = runCalls.find((c) => c.channel)?.channel || "";
     const runChannelIds = [...new Set(runCalls.map((c) => Number(c.channelId) || 0).filter(Boolean))];
 
     const tokens = aggregate(runCalls);
     // 首 token / 总耗时：按「本轮的第一次上游调用」算首 token，整轮总耗时从请求进入算起
     const firstCall = runCalls.find((c) => c.firstTokenAt) || null;
+    await persistence;
+    if (persistenceError) throw Object.assign(new Error("任务账单尚未保存"), { code: "HARNESS_PAUSED" });
     const billed = await chargeUser({
       user,
       model,
@@ -1280,7 +1518,9 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       tokenQuotaHold: quotaHold?.amount || 0,
       inputText,
       retryCount: runCalls.reduce((n, c) => n + (Number(c.retryCount) || 0), 0),
-      requestId: `${session.id}:${userMessage?.seq || 0}`,
+      requestId: logRequestId,
+      sensitive, billingRunId: durableRun?.id || "",
+      billingSegment, leaseOwner: durableRun?.owner || "",
     });
     // 结算已把预占计入（加回 hold、扣掉实际用量）→ 阻止 finally 里的兜底退回
     quotaHold?.consume();
@@ -1311,7 +1551,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       sessionId: session.id,
       userId: user.id,
       role: "assistant",
-      parts: runParts,
+      parts: await messagePartsForStorage(runParts),
       agent: agent.id,
       model,
       cost: message.cost,
@@ -1323,23 +1563,30 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       elapsedMs: message.elapsedMs,
       retryCount: message.retryCount,
       returnMessage: true,
+      durableRunId: durableRun?.id || "", billingSegment, leaseOwner: durableRun?.owner || "",
     });
     message.id = savedAssistant.id;
     message.seq = savedAssistant.seq;
     message.created_time = savedAssistant.created_time;
     saved = true;
-    await updateSession(user.id, session.id, { todo: runTodo }).catch((e) => console.error("[chat] 待办同步失败：", e.code || "DB_ERROR"));
+    finalRunStatus = out.partial ? "paused" : "completed";
+    run.finalStatus = finalRunStatus;
+    await updateSession(user.id, session.id, { todo: sensitive ? runTodo.map((t, i) => ({ content: `本地任务 ${i + 1}`, status: t.status })) : runTodo }).catch((e) => console.error("[chat] 待办同步失败：", e.code || "DB_ERROR"));
 
-    publish(run, { type: "done", message, userMessage, todo: runTodo, session: await getSession(user.id, session.id).catch(() => null) });
+    publish(run, { type: "done", message, userMessage, todo: runTodo, partial: Boolean(out.partial), longRun: publicLongRun({ ...durableRun, status: finalRunStatus }), session: await getSession(user.id, session.id).catch(() => null) });
   } catch (err) {
+    sensitive ||= err.sensitive;
     console.error("[chat] 运行失败：", err.code || "ERROR");
     if (Array.isArray(err.parts) && err.parts.length) runParts = err.parts;
     runParts = [...runParts.filter((p) => p.type !== "approval"), ...[...run.snapshots.values()].filter((p) => p.type === "approval")];
-    const stopped = ctrl.signal.aborted || err.code === "ABORTED";
+    const paused = ["HARNESS_PAUSED", "HARNESS_BUDGET", "HARNESS_BUDGET_CONFIGURATION", "WAITING_LOCAL", "LOCAL_CONTEXT_MISSING", "LOCAL_OUTCOME_UNKNOWN", "LOCAL_CHECKPOINT_UNAVAILABLE"].includes(err.code);
+    const stopped = !paused && (ctrl.signal.aborted || err.code === "ABORTED");
+    finalRunStatus = paused ? ["WAITING_LOCAL", "LOCAL_CONTEXT_MISSING", "LOCAL_OUTCOME_UNKNOWN", "LOCAL_CHECKPOINT_UNAVAILABLE"].includes(err.code) ? "waiting_local" : "paused" : stopped ? "stopped" : "error";
+    run.finalStatus = finalRunStatus;
     const errorCode = /^[\w.:-]{1,64}$/.test(String(err.code || "")) ? String(err.code) : "ERROR";
-    const errorMessage = publicRunError(err, { stopped });
+    const errorMessage = paused ? "任务已暂停，可连接本机或调整预算后继续。" : sensitive ? "本地任务执行未完成，请查看执行记录。" : publicRunError(err, { stopped });
     // 仅使用适配器捕获并脱敏的真实返回；历史、本轮事件和用量日志保持一致。
-    const errorDiagnostics = publicErrorDiagnostics(err);
+    const errorDiagnostics = sensitive ? {} : publicErrorDiagnostics(err);
     let billingKnown = !["BILLING_UNCERTAIN", "BILLING_FAILED"].includes(err.code);
     // 扣费结果不确定时不再补结算（防重复扣费）；余额不足等“确定未扣”的错误才走部分结算
     if (err?.code === "BILLING_UNCERTAIN") { settled = true; quotaHold?.consume(); billedResult = err.billingResult || null; }
@@ -1347,13 +1594,14 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
     // 只有真实usage或已生成正文能证明消耗；HTTP拒绝与零输出停止不估算整段输入费。
     // 工具已经record的失败调用不会被helper再次合成。
     const failedCall = billableFailedCall(err, { prompt: err?.billingPrompt || "", output: err?.billingOutput || "", startedAt });
-    const billedCalls = failedCall ? [...runCalls, failedCall] : runCalls;
+    const billedCalls = failedCall ? [...runCalls, sensitive ? persistedBillCall(failedCall) : failedCall] : runCalls;
     let partialBilled = billedResult || { units: 0, ...sumCallTokens(billedCalls), logId: 0 };
     const status = stopped ? "stopped" : "error";
     const retryCount = Math.max(Number(err.retryCount) || 0, billedCalls.reduce((n, c) => n + (Number(c.retryCount) || 0), 0));
     // 工具/子代理会提前记录失败消耗。统一以逐调用账单结算，既不漏收，也不把整轮正文重算。
     if (!settled && billedCalls.length && !["BILLING_UNCERTAIN", "BILLING_FAILED"].includes(err.code)) {
       try {
+        await persistence;
         partialBilled = await chargeUser({
           user,
           model,
@@ -1383,7 +1631,9 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           errorDiagnostics,
           httpStatus: err.httpStatus || err.status || 0,
           retryCount,
-          requestId: `${session.id}:${userMessage?.seq || 0}`,
+          requestId: logRequestId,
+          sensitive, billingRunId: durableRun?.id || "",
+          billingSegment, leaseOwner: durableRun?.owner || "",
         });
         quotaHold?.consume();
         settled = true;
@@ -1405,7 +1655,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           sessionId: session.id,
           userId: user.id,
           role: "assistant",
-          parts: finalParts,
+          parts: await messagePartsForStorage(finalParts),
           agent: agent.id,
           model,
           cost: billingKnown ? Number((partialBilled.units / UNITS_PER_OD).toFixed(6)) : null,
@@ -1417,6 +1667,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           elapsedMs: startedAt ? Date.now() - startedAt : 0,
           retryCount,
           returnMessage: true,
+          durableRunId: durableRun?.id || "", billingSegment, leaseOwner: durableRun?.owner || "",
         });
         runParts = finalParts;
         run.finalMessage = {
@@ -1434,7 +1685,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           elapsedMs: startedAt ? Date.now() - startedAt : 0,
         };
         saved = true;
-        await updateSession(user.id, session.id, { todo: runTodo });
+        await updateSession(user.id, session.id, { todo: sensitive ? runTodo.map((t, i) => ({ content: `本地任务 ${i + 1}`, status: t.status })) : runTodo });
       } catch (e2) {
         console.error("[chat] 失败消息落库异常：", e2.code || "DB_ERROR");
       }
@@ -1475,7 +1726,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           ...(failedOriginalPrice ? { model_alias_price: failedOriginalPrice } : {}),
           billing_details: failedBill,
           source_vendors: sourceVendors([err.channelQuote?.provider, ...billedCalls.map((c) => c.channelQuote?.provider)]),
-          ...logTexts({ calls: billedCalls.length ? billedCalls : [{ prompt: err.billingPrompt || "", output: err.billingOutput || "" }], inputText }),
+          ...(sensitive ? {} : logTexts({ calls: billedCalls.length ? billedCalls : [{ prompt: err.billingPrompt || "", output: err.billingOutput || "" }], inputText })),
           session_id: session.id,
         }),
         model: failedModel,
@@ -1490,18 +1741,19 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
         status,
         errorCode,
         retryCount,
-        inputText,
+        inputText: sensitive ? "本地工作区任务" : inputText,
         quota: partialBilled.units,
         promptTokens: partialBilled.promptTokens,
         completionTokens: partialBilled.completionTokens,
         cacheTokens: partialBilled.cacheTokens,
         firstTokenMs: run.finalMessage?.firstTokenMs ?? null,
         elapsedMs: run.finalMessage?.elapsedMs || (startedAt ? Date.now() - startedAt : 0),
-        requestId: `${session.id}:${userMessage?.seq || 0}`,
+        requestId: logRequestId,
       });
     } else if (billedResult?.logId) await pool.query("UPDATE logs SET type = ?, status = ?, error_code = ? WHERE id = ? AND user_id = ?", [LOG_TYPE.ERROR, status, errorCode, billedResult.logId, user.id]);
     publish(run, {
-      type: stopped ? "stopped" : "error",
+      type: paused ? finalRunStatus : stopped ? "stopped" : "error",
+      longRun: publicLongRun({ ...durableRun, status: finalRunStatus }),
       code: errorCode,
       errorMessage,
       ...errorDiagnostics,
@@ -1517,6 +1769,12 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       session: await getSession(user.id, session.id).catch(() => null),
     });
   } finally {
+    clearInterval(heartbeat);
+    try {
+      await tasks?.settle({ cancel: true });
+      await persistence;
+      if (durableRun) await longRunStore.finish(durableRun, finalRunStatus, { calls: settled ? [] : runCalls.map(persistedBillCall) });
+    } catch { run.error = { code: "CHECKPOINT_FAILED", message: "任务最终状态暂未确认，请重新读取后继续。" }; }
     // 没走到结算（上游直接失败、无任何产出）就退回预占的 1 个单位。
     // consume() 过的（结算已计入）会在这里自动让路；refund() 幂等，重复调用无害。
     try { await quotaHold?.refund(); }

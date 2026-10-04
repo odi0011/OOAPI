@@ -30,6 +30,8 @@ const WEB_DIST = path.join(WEB_ROOT, "dist");
 const STATIC_WEB = path.join(SERVER_ROOT, "web");
 const BINANCE_ROOT = path.join(PROJECT_ROOT, "ooapi-binance");
 const BINANCE_PROTECTED = [".env", ".env.test", ".venv", "data", "__pycache__", ".pytest_cache", ".backup-*"];
+const COMPANION_ROOT = path.join(PROJECT_ROOT, "ooapi-companion");
+const COMPANION_FILES = ["package.json", "start.mjs", "cli.mjs", "runner.mjs", "workspace.mjs", "journal.mjs", "README.md"];
 
 const REPO = process.env.GITHUB_REPO || "odi0011/OOAPI";
 const BRANCH = process.env.GITHUB_BRANCH || "main";
@@ -169,6 +171,9 @@ export async function checkUpdate() {
       }
     }
     const webSrc = path.join(tmp, "ooapi-web", "src");
+    for (const filename of COMPANION_FILES) {
+      if (existsSync(path.join(tmp, "ooapi-companion", filename)) && !(await sameFile(path.join(tmp, "ooapi-companion", filename), path.join(COMPANION_ROOT, filename)))) changed.push(`ooapi-companion/${filename}`);
+    }
     if (existsSync(webSrc)) {
       await collectDiff(webSrc, path.join(WEB_ROOT, "src"), "ooapi-web/src", changed);
     }
@@ -247,7 +252,7 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
   if (!(await has("git"))) throw new Error("服务端未安装 git，无法在线更新");
 
   const tmp = path.join(process.env.TMPDIR || "/tmp", `ooapi-update-${Date.now()}`);
-  const result = { ok: false, steps: log, backup: "", webBackup: "", staticWebBackup: "", binanceBackup: "", frontendBuilt: false, rolledBack: false };
+  const result = { ok: false, steps: log, backup: "", webBackup: "", staticWebBackup: "", binanceBackup: "", companionBackup: "", frontendBuilt: false, rolledBack: false };
   let binanceServiceStopped = false;
   let binanceConfigured = false;
 
@@ -273,6 +278,15 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
     step("同步后端源码（保留 .env / data / node_modules / web）…");
     const exclude = [".env", ".jwt-secret", "node_modules", "data", "web", ".backup-*", ".update-stamp.json"];
     await syncTree(path.join(tmp, "ooapi-server"), SERVER_ROOT, exclude);
+
+    if (existsSync(path.join(tmp, "ooapi-companion"))) {
+      result.companionBackup = path.join(SERVER_ROOT, `.backup-companion-${Date.now()}`);
+      await fs.mkdir(result.companionBackup, { recursive: true });
+      for (const filename of COMPANION_FILES) if (existsSync(path.join(COMPANION_ROOT, filename))) await fs.copyFile(path.join(COMPANION_ROOT, filename), path.join(result.companionBackup, filename));
+      step("同步本地运行器下载源码…");
+      await fs.mkdir(COMPANION_ROOT, { recursive: true });
+      for (const filename of COMPANION_FILES) await fs.copyFile(path.join(tmp, "ooapi-companion", filename), path.join(COMPANION_ROOT, filename));
+    }
 
     if (existsSync(path.join(tmp, "ooapi-binance"))) {
       // 引擎配置、加密密钥及虚拟环境属于运行数据，源码更新不得覆盖它们。
@@ -503,6 +517,14 @@ export async function performUpdate(onStep = () => {}, { restart = true } = {}) 
             binanceServiceStopped = false;
           }
           step("交易引擎源码已回滚");
+        }
+        if (result.companionBackup && existsSync(result.companionBackup)) {
+          for (const filename of COMPANION_FILES) {
+            const original = path.join(result.companionBackup, filename), current = path.join(COMPANION_ROOT, filename);
+            if (existsSync(original)) await fs.copyFile(original, current);
+            else await fs.unlink(current).catch(error => { if (error.code !== "ENOENT") throw error; });
+          }
+          step("本地运行器下载源码已回滚");
         }
         result.rolledBack = true;
         step(`已回滚到更新前源码（备份仍保留在 ${result.backup}）`);

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { PLATFORM_CATALOG, PLATFORM_TOOL_IDS, visiblePlatformCatalog } from "../src/services/harness/platform-catalog.js";
-import { runPlatformTool, grantToolCall, platformRequest, cleanPlatformResult } from "../src/services/harness/platform-tools.js";
+import { runPlatformTool, grantToolCall, platformRequest, cleanPlatformResult, preparePlatformCall } from "../src/services/harness/platform-tools.js";
 import { toolSpecs, nativeToolSpecs } from "../src/services/harness/tools.js";
 import { toolPresentation } from "../src/services/harness/tool-presentation.js";
 const user = { id: 77, role: 1000, token_version: 0 };
@@ -11,7 +11,7 @@ const response = value => new Response(JSON.stringify({ success: true, data: val
 test("每个方法都有真实业务路由、完整参数目录和双文案；角色过滤落到原生声明", () => {
   let count = 0;
   for (const g of Object.values(PLATFORM_CATALOG)) for (const a of Object.values(g.actions)) {
-    const segments = a.path.split("/"), routeFile = ({ users: "user", catalog: "index", status: "index" })[segments[2]] || segments[2];
+    const segments = a.path.split("/"), routeFile = ({ users: "user", user: "auth", catalog: "index", status: "index" })[segments[2]] || segments[2];
     const source = fs.readFileSync(new URL(routeFile === "index" ? "../src/index.js" : `../src/routes/${routeFile}.js`, import.meta.url), "utf8");
     const local = "/" + segments.slice(3).join("/");
     if (routeFile !== "binance" && routeFile !== "index") assert.ok(source.includes(`"${local}"`), `${g.id}.${a.action} 缺少真实路由`);
@@ -31,13 +31,27 @@ test("每个方法都有真实业务路由、完整参数目录和双文案；�
 });
 test("所有写方法缺少确认均不发请求；已确认只执行一次并使用固定路由", async () => {
   for (const g of Object.values(PLATFORM_CATALOG)) for (const a of Object.values(g.actions).filter(a => a.write)) {
-    const args = { action: a.action, params: Object.fromEntries([...a.path.matchAll(/:(\w+)/g)].map(m => [m[1], m[1] === "model" ? "sample-model" : "12"])), data: {} };
+    let args = { action: a.action, params: Object.fromEntries([...a.path.matchAll(/:(\w+)/g)].map(m => [m[1], m[1] === "model" ? "sample-model" : "12"])), data: {} };
+    if (g.id === "pricing" && a.action === "set") args.data = { model: "sample-model", input_price: 1, output_price: 2 };
     let calls = 0;
-    const fetchImpl = async (url, options) => { calls++; assert.equal(new URL(url).hostname, "127.0.0.1"); assert.equal(options.method, a.verb); assert.equal(options.redirect, "error"); return response({ id: 12 }); };
+    let price = null, setting = {};
+    const fetchImpl = async (url, options) => {
+      assert.equal(new URL(url).hostname, "127.0.0.1"); assert.equal(options.redirect, "error");
+      if (options.method === "GET") return response(new URL(url).pathname === "/api/pricing" ? price ? [price] : [] : { setting });
+      calls++; assert.equal(options.method, a.verb);
+      if (g.id === "pricing" && a.action === "set") price = JSON.parse(options.body);
+      if (g.id === "people" && a.action === "settings") setting = JSON.parse(options.body)._internal_setting;
+      return response({ id: 12 });
+    };
     assert.equal((await runPlatformTool(g.id, args, { user }, { fetchImpl })).ok, false, g.id + "." + a.action);
     assert.equal(calls, 0);
+    let prepared = null;
+    if (g.id === "pricing" && a.action === "set" || g.id === "people" && a.action === "settings") {
+      const result = await preparePlatformCall(g.id, args, { user }, { fetchImpl });
+      args = result.canonicalArgs; prepared = result.prepared;
+    }
     const grant = grantToolCall(g.id, args, user.id);
-    assert.equal((await runPlatformTool(g.id, args, { user, toolGrant: grant }, { fetchImpl })).ok, true);
+    assert.equal((await runPlatformTool(g.id, args, { user, toolGrant: grant, platformPrepared: prepared }, { fetchImpl })).ok, true);
     assert.equal((await runPlatformTool(g.id, args, { user, toolGrant: grant }, { fetchImpl })).ok, false);
     assert.equal(calls, 1);
   }

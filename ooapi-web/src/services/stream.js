@@ -82,7 +82,7 @@ function streamRequest(url, { method, body }, { onEvent, onDone, onError, token 
         } catch {
           throw Object.assign(new Error("对话事件格式异常，正在确认生成状态"), { code: "STREAM_FORMAT" });
         }
-        if (["done", "error", "stopped"].includes(ev.type)) terminal = true;
+        if (["done", "error", "stopped", "paused", "waiting_local"].includes(ev.type)) terminal = true;
         // 回调异常走 onError，不能吞掉后再把这轮标成成功。
         onEvent?.(ev);
       };

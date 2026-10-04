@@ -7,7 +7,8 @@ import * as platformCatalog from "../src/services/harness/platform-catalog.js";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
-import { normalizeUsage } from "../src/services/pricing.js";
+import { normalizeUsage, splitTokens } from "../src/services/pricing.js";
+import * as harnessRuntime from "../src/services/harness/runtime.js";
 import { USAGE_SQL } from "../src/services/log.js";
 import { channelPriceQuote } from "../src/services/channel-price-quote.js";
 import { userDataVisibility } from "../src/services/user-data-visibility.js";
@@ -20,6 +21,7 @@ import * as channelModels from "../src/services/channel-models.js";
 import { canonicalModelName, modelRegistrySync } from "../src/services/models.js";
 
 const audit = {
+  harnessRuntime, splitTokens,
   platformTools, platformCatalog,
   callFingerprint,
   toolPresentation,
@@ -59,7 +61,9 @@ const tools = await loadMocked("../src/services/harness/tools.js", `
 audit.tools = tools;
 const harness = await loadMocked("../src/services/harness/loop.js", `
   const {needsToolApproval,PLATFORM_TOOL_IDS}=audit.platformCatalog;
-  const {grantToolCall,platformRequest,cleanPlatformResult}=audit.platformTools;
+  const {grantToolCall,platformRequest,cleanPlatformResult,preparePlatformCall}=audit.platformTools;
+  const {createHarnessRuntime,harnessInterruption,isLocalTool,fingerprintHash,privateToolPart,sanitizeCheckpoint,mapConcurrent}=audit.harnessRuntime;
+  const splitTokens=audit.splitTokens;
   const callFingerprint=audit.callFingerprint;
   const { contextBudget, messageTokens, compressionSplit, latestMemory } = audit.contextTools;
   const crypto=audit.crypto;

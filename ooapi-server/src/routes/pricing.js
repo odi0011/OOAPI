@@ -11,6 +11,7 @@ import { pendingPricedModels } from "../services/pricing.js";
 import { modelRegistry, invalidateModelRegistry, canonicalModelName, modelIdentity, OFFICIAL_UNPRICED_MODELS } from "../services/models.js";
 import { syncUpstreamPrices, missingFromUpstream } from "../services/price-sync.js";
 import { modelCapabilities, modelCapabilityPresets, modelCapabilityDocumentation, validateCapabilities, saveModelCapabilities, REASONING_PARAMETERS } from "../services/model-capabilities.js";
+import { withConfigPrecondition } from "../services/config-precondition.js";
 
 const router = Router();
 
@@ -228,7 +229,7 @@ router.put(
     if (!ruleText && hasOffpeakPrice) {
       return fail(res, "配置了闲时价格但缺少闲时规则，闲时价永远不会生效；请补上规则或清空闲时价");
     }
-    await pool.query(
+    try { await withConfigPrecondition(pool, "pricing", String(reg.model).slice(0, 128), req.body?._internal_expected, connection => connection.query(
       `INSERT INTO model_prices
          (model, input_price, output_price, cache_price,
           offpeak_input_price, offpeak_output_price, offpeak_cache_price, offpeak_rule,
@@ -252,7 +253,7 @@ router.put(
         String(remark || "").slice(0, 255),
         now(),
       ]
-    );
+    )); } catch (e) { if (e.code === "CONFIG_CHANGED") return fail(res, e.message, 409); throw e; }
     invalidatePrices();
     await writeLog({ req, user: req.user, type: LOG_TYPE.MANAGE, content: `保存模型定价「${m}」` });
     return ok(res, null, "定价已保存");

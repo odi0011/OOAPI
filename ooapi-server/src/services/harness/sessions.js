@@ -7,10 +7,11 @@ import crypto from "node:crypto";
 import { pool } from "../../db.js";
 import { now, safeJSONParse } from "../../utils.js";
 import { PLATFORM_TOOL_IDS } from "./platform-catalog.js";
+import { normalizeHarnessBudget } from "./runtime.js";
 
-export const MAX_STEPS_LIMIT = 32;
-export const DEFAULT_MAX_STEPS = 12;
-export const TOOL_IDS = ["account", "binance", "search", "fetch", "github", "task", "todowrite", ...PLATFORM_TOOL_IDS];
+export const MAX_STEPS_LIMIT = 256;
+export const DEFAULT_MAX_STEPS = 96;
+export const TOOL_IDS = ["account", "binance", "search", "fetch", "github", "task", "todowrite", "local", ...PLATFORM_TOOL_IDS];
 
 // 会话 id：短、可读、无歧义字符（前端会拼进 URL/命令面板）
 const ID_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz";
@@ -36,7 +37,8 @@ export function sanitizeSettings(raw = {}, { previous = {} } = {}) {
     search: boolOrNull(pick("search", base.search ?? null), null),
     tools: Array.isArray(tools) ? tools.filter((t) => TOOL_IDS.includes(t)) : null,
     permissionMode: ["auto", "ask"].includes(pick("permissionMode", base.permissionMode)) ? pick("permissionMode", base.permissionMode) : "auto",
-    maxSteps: clamp(Number(pick("maxSteps", base.maxSteps ?? DEFAULT_MAX_STEPS)) || DEFAULT_MAX_STEPS, 1, MAX_STEPS_LIMIT),
+    maxSteps: clamp(Math.floor(Number(pick("maxSteps", base.maxSteps ?? DEFAULT_MAX_STEPS))) || DEFAULT_MAX_STEPS, 1, MAX_STEPS_LIMIT),
+    budget: normalizeHarnessBudget(pick("budget", base.budget) || {}),
     instructions: String(pick("instructions", base.instructions ?? "")).slice(0, 4000),
     channelType: String(pick("channelType", base.channelType ?? "")).trim().toLowerCase().slice(0, 32),
   };
@@ -208,7 +210,15 @@ export async function appendMessage({
   retryCount = 0,
   returnMessage = false,
   retryFromSeq = 0,
+  durableRunId = "",
+  billingSegment = 0,
+  leaseOwner = "",
 }) {
+  const durable = String(durableRunId || "");
+  const segment = Number(billingSegment);
+  if (durable && (role !== "assistant" || retryFromSeq || !Number.isSafeInteger(segment) || segment < 0)) {
+    throw Object.assign(new Error("任务消息的结算段无效"), { code: "BAD_RUN_SEGMENT", status: 400 });
+  }
   const t = now();
   const conn = await pool.getConnection();
   let removedIds = [];
@@ -217,6 +227,19 @@ export async function appendMessage({
     await conn.beginTransaction();
     const [owned] = await conn.query("SELECT id FROM chat_sessions WHERE id = ? AND user_id = ? FOR UPDATE", [String(sessionId), userId]);
     if (!owned.length) throw Object.assign(new Error("会话不存在"), { code: "NO_SESSION", status: 404 });
+    if (durable) {
+      const [[run]] = await conn.query("SELECT id, assistant_segment, assistant_message_id, lease_owner FROM chat_agent_runs WHERE id = ? AND user_id = ? AND session_id = ? FOR UPDATE", [durable, userId, String(sessionId)]);
+      if (!run || (leaseOwner && run.lease_owner !== leaseOwner)) throw Object.assign(new Error("任务执行权已改变，请重新读取。"), { code: "RUN_CHANGED", status: 409 });
+      const prior = run.assistant_segment == null ? -1 : Number(run.assistant_segment);
+      if (prior > segment) throw Object.assign(new Error("这个结算段已结束，请读取当前任务。"), { code: "RUN_SEGMENT_CHANGED", status: 409 });
+      if (prior === segment) {
+        const [[existing]] = await conn.query("SELECT id, seq, created_time FROM chat_messages WHERE id = ? AND session_id = ? AND user_id = ?", [run.assistant_message_id, String(sessionId), userId]);
+        if (!existing) throw Object.assign(new Error("已记录的任务消息不存在，无法安全重放。"), { code: "RUN_MESSAGE_MISSING", status: 409 });
+        result = { id: Number(existing.id), seq: Number(existing.seq), created_time: Number(existing.created_time) };
+        await conn.commit();
+        return returnMessage ? result : result.id;
+      }
+    }
     if (retryFromSeq) {
       const [target] = await conn.query("SELECT id, role FROM chat_messages WHERE session_id = ? AND seq = ? AND user_id = ?", [String(sessionId), retryFromSeq, userId]);
       if (!target.length || target[0].role !== "user") throw Object.assign(new Error("重试消息不存在或不是用户消息"), { code: "BAD_RETRY", status: 400 });
@@ -256,6 +279,15 @@ export async function appendMessage({
   );
     const [rows] = await conn.query("SELECT id, seq, created_time FROM chat_messages WHERE id = ? AND session_id = ? AND user_id = ?", [ret.insertId, String(sessionId), userId]);
     result = { id: Number(ret.insertId) || 0, seq: Number(rows[0]?.seq) || 0, created_time: Number(rows[0]?.created_time) || t };
+    // 消息与结算段账本同事务提交：进程在 COMMIT 后退出，恢复仍返回同一条助手消息。
+    // 与 chargeUser 的费用账本分开，不能用“已扣费”推断“助手消息已保存”。
+    if (durable) {
+      const [marked] = await conn.query(
+        `UPDATE chat_agent_runs SET assistant_segment = ?, assistant_message_id = ? WHERE id = ? AND user_id = ? AND session_id = ? AND assistant_segment < ?${leaseOwner ? " AND lease_owner = ?" : ""}`,
+        [segment, result.id, durable, userId, String(sessionId), segment, ...(leaseOwner ? [leaseOwner] : [])]
+      );
+      if (!marked.affectedRows) throw Object.assign(new Error("任务消息状态已改变，请重新读取。"), { code: "RUN_CHANGED", status: 409 });
+    }
     await conn.commit();
   } catch (err) {
     await conn.rollback().catch(() => {});
@@ -320,9 +352,21 @@ export async function deleteSession(userId, id) {
   const [ret] = await pool.query("DELETE FROM chat_sessions WHERE id = ? AND user_id = ?", [String(id), userId]);
   if (ret.affectedRows) {
     await pool.query("DELETE FROM chat_messages WHERE session_id = ?", [String(id)]);
+    await cleanupSessionRuntime(userId, [String(id)]);
     await releaseMediaRefs(msgIds);
   }
   return Boolean(ret.affectedRows);
+}
+
+// 没有外键级联，删除本人会话成功后显式释放其云端编排与工作区关联。
+// 本机工作区、文件与执行 journal 属于设备，删除聊天不会触碰它们。
+async function cleanupSessionRuntime(userId, sessionIds) {
+  const ids = [...new Set(sessionIds.map(String))];
+  if (!ids.length) return;
+  const placeholders = ids.map(() => "?").join(",");
+  for (const table of ["chat_agent_tasks", "chat_agent_runs", "local_session_workspaces"]) {
+    await pool.query(`DELETE FROM ${table} WHERE user_id = ? AND session_id IN (${placeholders})`, [userId, ...ids]);
+  }
 }
 
 /** 会话/消息 id 列表（用于释放媒体引用） */
@@ -479,7 +523,9 @@ export async function batchSessions({ userId, ids = [], action, projectId = "" }
       userId,
       ...ownedIds,
     ]);
+    if (!ret.affectedRows) return { affected: 0 };
     await pool.query(`DELETE FROM chat_messages WHERE session_id IN (${ph2})`, ownedIds);
+    await cleanupSessionRuntime(userId, ownedIds);
     await releaseMediaRefs(msgRows.map((r) => Number(r.id)));
     return { affected: ret.affectedRows };
   }

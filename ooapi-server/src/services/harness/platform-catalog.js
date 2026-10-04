@@ -8,7 +8,7 @@ function group(id, name, role, rows) {
   })) };
 }
 group("models", "平台模型", 1, `
-available|GET|/api/chat/meta|查询当前可用模型与能力||keyId q vendor p size|按本人的密钥分组、模型白名单和渠道交集返回；keyId 省略时使用首个启用密钥。支持关键词、厂商和分页。
+available|GET|/api/chat/meta|查询当前可用模型与能力||keyId q vendor p size|按本人的密钥分组、模型白名单和渠道交集返回；keyId 省略时沿用当前对话选中的密钥，非对话调用才使用首个启用密钥。支持关键词、厂商和分页。
 prices|GET|/api/pricing/public|查询公开模型价格||q p size|每百万 Token 的 OD 单价；遵守平台价格可见性。
 providers|GET|/api/catalog|查看平台集成厂商
 status|GET|/api/status|查看站点公开状态
@@ -43,11 +43,12 @@ delete|DELETE|/api/community/notifications/:id|删除通知
 `);
 group("people", "个人资料与好友", 1, `
 me|GET|/api/profile/me|阅读自己的个人主页
+preferences|GET|/api/user/self|读取自己的当前偏好设置|||只返回当前账号的非敏感设置，修改偏好时服务端保留未提及的项。
 profile|GET|/api/profile/u/:id|阅读用户公开主页
 posts|GET|/api/profile/u/:id/posts|阅读用户公开帖子||p size
 follows|GET|/api/profile/u/:id/follows|查看关注或粉丝||p size kind|kind=following 或 followers。
 edit_profile|PUT|/api/users/self|修改自己的公开资料|display_name email bio website location
-settings|PUT|/api/users/self/settings|保存个人偏好|*||全量设置，先读取个人资料中的原设置并合并，不能清空未提及的项。
+settings|PUT|/api/users/self/settings|修改个人偏好|*||只提交用户要求修改的字段；服务端读取原设置并递归合并，审批显示变更，写入后读回核对。数组按完整新数组替换。
 friends|GET|/api/friends|查看好友列表
 requests|GET|/api/friends/requests|查看好友申请
 relation|GET|/api/friends/relation/:id|查看与用户的关系
@@ -60,10 +61,10 @@ chat|POST|/api/friends/:id/chat|打开与好友的私聊
 `);
 group("messages", "站内私信与群聊", 1, `
 online|GET|/api/chatroom/online|查看在线用户
-search|GET|/api/chatroom/search|搜索可见聊天内容||q
+search|GET|/api/chatroom/search|搜索可见聊天内容||q p size
 users|GET|/api/chatroom/users|查找聊天用户||q
 unread|GET|/api/chatroom/unread|查看聊天未读数量
-rooms|GET|/api/chatroom/rooms|查看自己的会话列表
+rooms|GET|/api/chatroom/rooms|查看自己的会话列表||p size
 room|GET|/api/chatroom/rooms/:id|查看群聊或私聊详情
 history|GET|/api/chatroom/rooms/:id/messages|阅读聊天消息||since_id p size
 create|POST|/api/chatroom/rooms|创建私聊或群聊|type name user_ids user_id||type=single、group 或 discussion；成员必须符合平台好友规则。
@@ -134,7 +135,7 @@ groups|GET|/api/channel/groups|查看渠道分组
 create_group|POST|/api/channel/groups|创建渠道分组|vendor type name remark rate models channel_ids
 edit_group|PUT|/api/channel/groups/:id|修改渠道分组|vendor name remark rate models channel_ids
 delete_group|DELETE|/api/channel/groups/:id|删除渠道分组
-edit|PUT|/api/channel|修改渠道非凭据配置|id name status models groups group_name priority weight base_url remark auto_ban auto_test auto_test_interval test_prompt test_model concurrency min_gap_ms max_per_min fingerprint_mode context_billing namespace
+edit|PUT|/api/channel|修改渠道非凭据配置|id name status models groups group_name priority weight base_url remark auto_ban auto_test auto_test_interval test_prompt test_model concurrency min_gap_ms max_per_min fingerprint_mode context_billing namespace probe_timeout_sec
 delete|DELETE|/api/channel/:id|删除渠道
 batch|POST|/api/channel/batch|批量操作渠道|ids action payload||action=enable、disable、delete、set_priority、set_group、add_models；payload 对应目标配置。
 test|POST|/api/channel/:id/test|测试渠道可用性|model||测试可能产生上游用量。
@@ -143,11 +144,11 @@ upstream_models|POST|/api/channel/:id/upstream-models|探测渠道上游模型
 `);
 group("pricing", "模型价格与能力管理", 100, `
 list|GET|/api/pricing|查询模型定价||keyword type
-capabilities|GET|/api/pricing/capabilities|查询模型能力
-set_capabilities|PUT|/api/pricing/capabilities|设置模型能力|model capabilities
+capabilities|GET|/api/pricing/capabilities|查询模型能力||model
+set_capabilities|PUT|/api/pricing/capabilities|设置模型能力与完整价格|model capabilities pricing||pricing 支持管理页的完整定价对象；能力与价格须传完整配置，可先 capabilities 按 model 查询原值。
 pending|GET|/api/pricing/pending|查看待定价模型
 catalog_pending|GET|/api/pricing/catalog-pending|查看待确认模型目录
-set|PUT|/api/pricing|设置模型价格|model input_price output_price cache_price channel_type remark offpeak_input_price offpeak_output_price offpeak_cache_price offpeak_rule||单价为 OD/百万 Token，不进行人民币换算。
+set|PUT|/api/pricing|修改模型价格|model input_price output_price cache_price channel_type remark offpeak_input_price offpeak_output_price offpeak_cache_price offpeak_rule||单价为 OD/百万 Token。只提交需修改字段，服务端先读原值保留缓存价、闲时价和备注，审批展示修改前后，写入后读回核对；新模型必须给出输入和输出单价。
 delete|DELETE|/api/pricing/:model|删除模型定价
 import|POST|/api/pricing/import|批量导入模型定价|text||text 为 JSON 或 CSV 格式的价格数据，沿用原导入校验。
 prune|POST|/api/pricing/prune|清理未使用模型定价
@@ -225,6 +226,7 @@ export const PLATFORM_CATALOG = groups;
 export const PLATFORM_TOOL_IDS = ["platform", ...Object.keys(groups)];
 export function platformAction(tool, args) { const actions = Object.hasOwn(groups, tool) ? groups[tool].actions : null; const action = String(args?.action || ""); return actions && Object.hasOwn(actions, action) ? actions[action] : null; }
 export const needsToolApproval = (tool, args) => platformAction(tool, args)?.write === true;
-export function visiblePlatformCatalog(role = 1) {
-  return Object.values(groups).filter(g => g.role <= role).map(g => ({ id: g.id, name: g.name, actions: Object.values(g.actions).filter(a => a.role <= role).map(({ path, verb, ...a }) => ({ ...a, params: [...path.matchAll(/:(\w+)/g)].map(m => m[1]) })) }));
+export function visiblePlatformCatalog(role = 1, enabledTools = null) {
+  const enabled = enabledTools == null ? null : new Set(enabledTools);
+  return Object.values(groups).filter(g => g.role <= role && (!enabled || enabled.has(g.id))).map(g => ({ id: g.id, name: g.name, actions: Object.values(g.actions).filter(a => a.role <= role).map(({ path, verb, ...a }) => ({ ...a, params: [...path.matchAll(/:(\w+)/g)].map(m => m[1]) })) }));
 }
