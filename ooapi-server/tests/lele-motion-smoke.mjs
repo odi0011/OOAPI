@@ -63,6 +63,7 @@ try {
     check(await actor.evaluate(n => n.isConnected), action + ' 保留角色身份');
   }
   await page.waitForTimeout(2100);
+  const menuHead = await anchor.locator('.cat-cranium').elementHandle();
   await page.getByRole('button', { name: '切换菜单', exact: true }).click();
   await page.waitForTimeout(1450);
   check(await anchor.getAttribute('data-companion-state') === 'menu', '菜单打开进入避让状态');
@@ -71,6 +72,22 @@ try {
   for (let i = 0; i < 4; i++) { await page.getByRole('button', { name: '切换菜单', exact: true }).click(); await page.waitForTimeout(100); }
   await page.waitForTimeout(1500);
   check((await landed()) < 2, '快速切换菜单后准确落地');
+  check(await actor.evaluate(n => n.isConnected && n === document.querySelector('.live .lele-edge-actor')) && await menuHead.evaluate(n => n.isConnected && n === document.querySelector('.live .cat-cranium')), '菜单跳起及快速切换保留角色和头部 DOM');
+  // 在真实飞行的尾段切换菜单：原路线结束时，新路线仍应继续播放。
+  await page.getByRole('button', { name: '切换菜单', exact: true }).click();
+  await anchor.evaluate(async n => {
+    const flight = n.querySelector('.lele-edge-actor').getAnimations().find(a => /^lele-(jump|fall)-route$/.test(a.animationName));
+    if (!flight) throw new Error('菜单转移没有启动真实飞行动画');
+    const end = flight.effect.getComputedTiming().endTime;
+    const started = performance.now();
+    while (flight.currentTime < end - 110 && performance.now() - started < end + 500) await new Promise(requestAnimationFrame);
+    if (flight.currentTime < end - 110) throw new Error('菜单飞行动画未进入尾段');
+  });
+  await page.getByRole('button', { name: '切换菜单', exact: true }).click();
+  await page.waitForTimeout(200);
+  const lateFlightContinues = await anchor.getAttribute('data-phase') === 'enter';
+  await page.waitForTimeout(1100);
+  check(lateFlightContinues && await anchor.getAttribute('data-phase') === 'rest' && (await landed()) < 2, '飞行尾段切换菜单不会被旧结束事件提前终止，最终准确落地');
   await page.getByRole('button', { name: '关闭菜单', exact: true }).click();
   await page.waitForTimeout(1500);
   check(await anchor.getAttribute('data-phase') === 'rest', '关闭菜单后落回框沿');
