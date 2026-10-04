@@ -438,7 +438,8 @@ export default function PromptBar({
                       onClick={() => {
                         setKeyOpen(false); setReasoningOpen(false);
                         onKey?.(k.id);
-                        taRef.current?.focus();
+                        // 切密钥会触发元信息刷新并重渲染；下一帧再聚焦，避免刷新态把焦点吞掉。
+                        requestAnimationFrame(() => taRef.current?.focus());
                       }}
                     >
                       <span className="nm2">{k.name}</span>
