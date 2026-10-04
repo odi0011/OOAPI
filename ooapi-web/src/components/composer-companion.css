@@ -8,7 +8,6 @@
 .lele-perch-anchor.at-menu {z-index:30;}
 .lele-perch-anchor.at-top::before {content:"";position:absolute;left:0;bottom:0;width:58px;height:48px;pointer-events:auto;}
 .lele-perch-anchor:is(.phase-exit,.phase-hidden)::before {pointer-events:none;}
-.lele-perch-anchor.pose-drape::before {left:-18px;width:92px;height:40px;}
 .lele-edge-viewport {position:absolute;bottom:0;left:-12px;width:82px;height:80px;overflow:clip;contain:paint;pointer-events:none;}
 .lele-edge-actor {position:absolute;left:12px;bottom:-4px;width:58px;height:58px;pointer-events:auto;--rest-y:17px;--rest-angle:0deg;--rest-sx:1;--rest-sy:1;transform-origin:50% 64%;transform:translateY(var(--rest-y)) rotate(var(--rest-angle)) scale(var(--rest-sx),var(--rest-sy));transition:transform .52s var(--lele-ease);}
 .lele-edge-actor>.chat-mascot {width:58px;height:58px;}

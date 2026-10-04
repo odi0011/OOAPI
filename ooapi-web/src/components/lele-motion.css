@@ -1,6 +1,6 @@
 /* 出入场用 translate，重心用 transform，hover 用部位的 rotate：三者可以同时平滑变化。 */
-.lele-perch-anchor:not(.is-fragment):not(.pose-drape):not(.pose-leap):not(.pose-transfer):not(.pose-drop).phase-enter .lele-edge-actor {animation:lele-arrive .86s var(--lele-ease) both;}
-.lele-perch-anchor:not(.is-fragment):not(.pose-drape).phase-exit .lele-edge-actor {animation:lele-retreat .36s ease-in both;}
+.lele-perch-anchor:not(.is-fragment):not(.pose-leap):not(.pose-transfer):not(.pose-drop).phase-enter .lele-edge-actor {animation:lele-arrive .86s var(--lele-ease) both;}
+.lele-perch-anchor:not(.is-fragment).phase-exit .lele-edge-actor {animation:lele-retreat .36s ease-in both;}
 .lele-perch-anchor.phase-enter .lele-edge-grip {animation:lele-grip-arrive .86s var(--lele-ease) both;}
 .lele-perch-anchor.phase-exit .lele-edge-grip {animation:lele-grip-leave .36s ease-in both;}
 .lele-perch-anchor.pose-peek .lele-edge-actor {--rest-y:24px;}
@@ -57,9 +57,9 @@
 .lele-perch-anchor.pose-pop .cat-body {animation:lele-greet-body 1.2s ease-in-out both;}
 
 /* 身体不离开原位置，抚摸只叠加歪头和轻轻眯眼；快速划过不触发。 */
-.lele-perch-anchor.is-hovered:not(.is-fragment):not(.pose-drape):not(.pose-leap):not(.pose-transfer):not(.pose-drop) .cat-cranium {rotate:-5deg;translate:0 -.5px;}
-.lele-perch-anchor.is-hovered:not(.is-fragment):not(.pose-drape) .cat-eyes {scale:1 .68;}
-.lele-perch-anchor.is-hovered:not(.is-fragment):not(.pose-drape) .cat-pupils {translate:0 -.3px;}
+.lele-perch-anchor.is-hovered:not(.is-fragment):not(.pose-leap):not(.pose-transfer):not(.pose-drop) .cat-cranium {rotate:-5deg;translate:0 -.5px;}
+.lele-perch-anchor.is-hovered:not(.is-fragment) .cat-eyes {scale:1 .68;}
+.lele-perch-anchor.is-hovered:not(.is-fragment) .cat-pupils {translate:0 -.3px;}
 .lele-perch-anchor.is-questioning .lele-edge-actor {transition:transform .6s var(--lele-ease);}
 .lele-perch-anchor.is-questioning .cat-cranium {animation:lele-head-idle 6.8s ease-in-out infinite;}
 .lele-speech,.lele-speech-tail {transition-timing-function:var(--lele-ease);transition-duration:.52s;}

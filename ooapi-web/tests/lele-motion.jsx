@@ -11,7 +11,7 @@ const POSES = [
   "peek", "curious", "listen", "shy", "wave", "invite", "paws", "look",
   "cute", "proud", "pop", "walk", "spin", "chase", "toy", "belly", "lick",
   "groom", "wash", "stretch", "wink", "curl", "sleep", "zzz", "knead",
-  "shake", "loaf", "yawn", "drowsy", "pawtap", "drape", "side-peek",
+  "shake", "loaf", "yawn", "drowsy", "pawtap", "side-peek",
   "side-scout", "side-paw", "side-tap", "tail-slip", "tail-tip", "feet-kick", "foot-dangle",
 ];
 const BUSINESS_STATES = [
@@ -56,7 +56,7 @@ function MotionDirector({ state, pose, phase, replayKey, onPhaseChange }) {
         className={anchorClasses}
         data-pose={pose}
         data-phase={phase}
-        style={{ left: isSide ? 0 : "55%", top: isSide ? 36 : undefined, "--drape-run-x": "-60px" }}
+        style={{ left: isSide ? 0 : "55%", top: isSide ? 36 : undefined }}
         onAnimationEnd={finishEntry}
       >
         <span className="lele-edge-viewport">
@@ -138,8 +138,6 @@ function Preview() {
       <Button onClick={() => replay("enter")}>重播入场</Button>
       <Button onClick={() => replay("rest")}>重播姿态</Button>
       <Button onClick={() => setPhase("exit")}>收回</Button>
-      <Button onClick={() => setPhase("startle")}>侧卧惊醒</Button>
-      <Button onClick={() => setPhase("stretch")}>侧卧伸展</Button>
       <Button onClick={() => setDark(value => !value)}>切换明暗</Button>
       <Button aria-pressed={paused} onClick={() => setPaused(value => !value)}>{paused ? "继续动画" : "静止展示"}</Button>
     </section>

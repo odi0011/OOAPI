@@ -22,17 +22,17 @@
 .chat-mascot .cat-yawn-mouth {transform-box:fill-box;transform-origin:center;animation:lele-yawn-mouth 3.6s ease-in-out both;}
 
 /* 工作时更专注，等待时仍有呼吸。完成和失败不会把所有部位突然定住。 */
-.chat-mascot:where(.is-thinking:not(.is-draped)) .cat-cranium {animation:lele-head-think 7s ease-in-out infinite;}
-.chat-mascot:where(.is-working:not(.is-draped),.is-loading:not(.is-draped)) .cat-paw-right {animation:lele-work-paw 3.6s ease-in-out infinite;}
-.chat-mascot:where(.is-working:not(.is-draped),.is-loading:not(.is-draped)) .cat-tail {animation-duration:4.6s;}
-.chat-mascot:where(.is-compressing:not(.is-draped)) .cat-paw-left {animation:lele-pack-left 4s ease-in-out infinite;}
-.chat-mascot:where(.is-compressing:not(.is-draped)) .cat-paw-right {animation:lele-pack-right 4s ease-in-out infinite;}
-.chat-mascot:where(.is-waiting:not(.is-draped)) .cat-cranium {animation:lele-head-wait 8.4s ease-in-out infinite;}
-.chat-mascot:where(.is-attentive:not(.is-draped)) .cat-cranium {rotate:-3deg;translate:0 -.4px;}
-.chat-mascot:where(.is-asking:not(.is-draped)) .cat-cranium {rotate:-4deg;}
-.chat-mascot:where(.is-success:not(.is-draped)) .cat-cranium {animation:lele-nod 1.1s ease-in-out 1,lele-head-idle 6.8s 1.1s ease-in-out infinite;}
-.chat-mascot:where(.is-sad:not(.is-draped)) .cat-cranium {rotate:3deg;translate:0 .8px;}
-.chat-mascot:where(.is-sad:not(.is-draped)) .cat-tail {animation-duration:9s;}
+.chat-mascot:where(.is-thinking) .cat-cranium {animation:lele-head-think 7s ease-in-out infinite;}
+.chat-mascot:where(.is-working,.is-loading) .cat-paw-right {animation:lele-work-paw 3.6s ease-in-out infinite;}
+.chat-mascot:where(.is-working,.is-loading) .cat-tail {animation-duration:4.6s;}
+.chat-mascot:where(.is-compressing) .cat-paw-left {animation:lele-pack-left 4s ease-in-out infinite;}
+.chat-mascot:where(.is-compressing) .cat-paw-right {animation:lele-pack-right 4s ease-in-out infinite;}
+.chat-mascot:where(.is-waiting) .cat-cranium {animation:lele-head-wait 8.4s ease-in-out infinite;}
+.chat-mascot:where(.is-attentive) .cat-cranium {rotate:-3deg;translate:0 -.4px;}
+.chat-mascot:where(.is-asking) .cat-cranium {rotate:-4deg;}
+.chat-mascot:where(.is-success) .cat-cranium {animation:lele-nod 1.1s ease-in-out 1,lele-head-idle 6.8s 1.1s ease-in-out infinite;}
+.chat-mascot:where(.is-sad) .cat-cranium {rotate:3deg;translate:0 .8px;}
+.chat-mascot:where(.is-sad) .cat-tail {animation-duration:9s;}
 .chat-mascot.gesture-wink .cat-eyes {animation:none;}
 .chat-mascot.gesture-wink .cat-eye-right {transform-box:fill-box;transform-origin:center;animation:lele-wink 4.8s ease-in-out infinite;}
 .chat-mascot.gesture-hop .cat-body {animation:lele-greet-body 1.2s ease-in-out both;}

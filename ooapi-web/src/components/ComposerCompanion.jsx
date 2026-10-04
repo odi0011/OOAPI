@@ -3,9 +3,7 @@ import { Button } from "antd";
 import ChatMascot from "./ChatMascot";
 import "./composer-companion.css";
 import "./lele-locomotion.css";
-import "./lele-drape.css";
 import "./lele-motion.css";
-import { composerTextRects, textNearDrapedCat } from "./composerTextCollision";
 
 const hash = value => Array.from(String(value || "lele")).reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 0);
 const choose = values => values[Math.floor(Math.random() * values.length)];
@@ -22,7 +20,6 @@ const bottomGestures = ["tail-slip", "tail-tip", "feet-kick", "foot-dangle"];
 const HOVER_ARM_MS = 140;
 const HOVER_RELEASE_MS = 260;
 const EXIT_MS = 360;
-const DRAPE_PHASE_MS = { enter: 1500, startle: 1400, stretch: 2400 };
 // React 在指针离开浏览器窗口时可能传入 Window；contains 只接受 DOM 节点。
 const staysInside = event => event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget);
 
@@ -42,7 +39,7 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
   const menuWasOpen = useRef(false), reactionTimer = useRef(null), reactionMove = useRef(null), reactionPhase = useRef(null);
   const hoverArmTimer = useRef(null), hoverReleaseTimer = useRef(null), hoverInside = useRef(false), hoverSession = useRef(0);
   const reactionSequence = useRef(0), deferredReaction = useRef(null);
-  const drapeNextPhase = useRef(null), motionToken = useRef(null), completedMotion = useRef(null);
+  const motionToken = useRef(null), completedMotion = useRef(null);
   const flightCapture = useRef(null);
   const wasSuspended = useRef(quiet || pageHidden);
   const scheduleTimer = useRef(null), scheduleMove = useRef(null);
@@ -89,40 +86,11 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
     }
   }, [pose.flight, quiet]);
 
-  const showDrapeQuestion = current => {
-    drapeNextPhase.current = null;
-    setPose({ ...askPoses[hash(current.pending.id) % askPoses.length], at: current.pose.at, motion: ++travelId.current });
-    setPhase(current.quiet ? "rest" : "enter");
-  };
-  const requestDrapePhase = (next = "startle") => {
-    const current = live.current;
-    if (current.quiet || current.pageHidden || current.pose.gesture !== "drape") return;
-    if (current.phase === "enter") {
-      // 起身必须从已经落稳的侧躺姿态开始，入场中的身体不能倒回另一段 0% 关键帧。
-      if (next === "startle" || !drapeNextPhase.current) drapeNextPhase.current = next;
-    } else if (current.phase === "rest") {
-      drapeNextPhase.current = null;
-      setPhase(next);
-    }
-    // 已经在收身/伸展就继续播放；审批在它完成后从隐藏处接上询问入场。
-  };
   const completeMotion = token => {
     if (token !== motionToken.current || completedMotion.current === token) return;
     const current = live.current;
     if (current.quiet || current.pageHidden) return;
     completedMotion.current = token;
-    if (current.pose.gesture === "drape") {
-      if (current.phase === "enter") {
-        const next = current.pending ? "startle" : drapeNextPhase.current;
-        drapeNextPhase.current = null;
-        setPhase(next || "rest");
-      } else if (["startle", "stretch"].includes(current.phase)) {
-        drapeNextPhase.current = null;
-        if (current.pending) showDrapeQuestion(current);
-        else setPhase("hidden");
-      }
-      return;
-    }
     if (current.phase === "enter") {
       const fragment = ["left", "right", "bottom"].includes(current.pose.edge);
       setPhase(fragment ? "hidden" : "rest");
@@ -175,7 +143,6 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
       clearTimeout(scheduleMove.current);
       reactionSequence.current += 1;
       deferredReaction.current = null;
-      drapeNextPhase.current = null;
       reactionPhase.current = null;
       reactionMove.current = null;
       menuWasOpen.current = false;
@@ -205,12 +172,6 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
     }
     setRetained(pending); setError("");
     menuWasOpen.current = false;
-    if (live.current.pose.gesture === "drape") {
-      // 审批只登记下一步；已经在起身/伸展时沿用剩余动画，不另起整段等待。
-      if (quiet || live.current.phase === "hidden") showDrapeQuestion(live.current);
-      else requestDrapePhase();
-      return undefined;
-    }
     // 从侧面/下沿先收爪缩回，再从上沿探出。气泡等乐乐就位后才展开。
     if (live.current.pose.edge !== "top") {
       setPhase("exit");
@@ -240,11 +201,6 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
           schedule(2600);
           return;
         }
-        // 趴睡有自己的睡醒/离场时序，普通换位计时器不能在中途把身体换掉。
-        if (current.pose.gesture === "drape" && current.phase !== "hidden") {
-          schedule(4200);
-          return;
-        }
         if (current.pending) return;
         const g = current.geometry;
         const edges = ["top"];
@@ -253,7 +209,7 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
         if (g.width >= 480 && g.viewportHeight + g.viewportTop - g.bottom > 62) edges.push("bottom");
         const edge = choose([...edges, ...Array(12).fill("top")]);
         const candidates = edge === "top"
-          ? ["pop", "walk", "spin", "toy", "belly", "cute", "lick", "groom", "wash", "stretch", "wink", "curl", "sleep", "zzz", "peek", "wave", "paws", "look", "chase", "knead", "shake", "shy", "drape", "loaf", "yawn", "drowsy", "pawtap"]
+          ? ["pop", "walk", "spin", "toy", "belly", "cute", "lick", "groom", "wash", "stretch", "wink", "curl", "sleep", "zzz", "peek", "wave", "paws", "look", "chase", "knead", "shake", "shy", "loaf", "yawn", "drowsy", "pawtap"]
           : (edge === "bottom" ? bottomGestures : sideGestures);
         const gesture = choose(candidates.filter(p => p !== current.pose.gesture));
         const arrive = () => {
@@ -264,9 +220,7 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
             schedule(2600);
             return;
           }
-          const at = edge === "bottom" ? choose([.16, .84]) : gesture === "drape"
-            ? (g.width < 420 ? .42 + Math.random() * .16 : .34 + Math.random() * .32)
-            : .2 + Math.random() * .6;
+          const at = edge === "bottom" ? choose([.16, .84]) : .2 + Math.random() * .6;
           setPose({ edge, gesture, at, motion: ++travelId.current });
           setPhase(quiet ? "rest" : "enter");
           schedule();
@@ -295,52 +249,16 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
   }, [pose.gesture, pose.edge, quiet, pending?.id, menuOpen]);
 
   useEffect(() => {
-    if (pose.gesture !== "drape" || pending || menuOpen) return;
-    if (quiet) return;
-    // 无人打扰也会自然睡醒，起身伸展之后才跑走，不能突然淡出或换位置。
-    const timer = setTimeout(() => requestDrapePhase("stretch"), 28000 + Math.random() * 12000);
-    return () => clearTimeout(timer);
-  }, [pose.gesture, pose.motion, pending?.id, menuOpen, quiet]);
-
-  useEffect(() => {
-    if (quiet || pose.gesture !== "drape" || !DRAPE_PHASE_MS[phase]) return;
-    // animationend 是唯一的续接逻辑；浏览器漏事件时用相同时长加少量余量兜底。
-    const token = motionToken.current;
-    const timer = setTimeout(() => completeMotion(token), DRAPE_PHASE_MS[phase] + 120);
-    return () => clearTimeout(timer);
-  }, [pose.gesture, pose.motion, phase, quiet]);
-
-  useEffect(() => {
     if (quiet || !pose.flight || phase !== "enter" || !["leap", "transfer", "drop"].includes(pose.gesture)) return;
     const token = motionToken.current;
     const timer = setTimeout(() => completeMotion(token), pose.duration + 120);
     return () => clearTimeout(timer);
   }, [pose.flight, pose.gesture, pose.duration, phase, quiet]);
 
-  useLayoutEffect(() => {
-    if (pose.gesture !== "drape" || !["enter", "rest"].includes(phase) || pending || menuOpen) return;
-    let frame, text = [];
-    const inspect = () => {
-      const anchor = marker.current?.parentElement?.querySelector(".pose-drape");
-      cancelAnimationFrame(frame);
-      if (textNearDrapedCat(inputRef?.current, anchor, 7, text)) requestDrapePhase();
-      else if (phase === "enter" && text.length) frame = requestAnimationFrame(inspect);
-    };
-    const measure = () => { text = composerTextRects(inputRef?.current); inspect(); };
-    // 等父组件完成输入框增高；输入法合成、粘贴和文本滚动同样使用实际字形矩形。
-    const textarea = inputRef?.current; frame = requestAnimationFrame(measure);
-    textarea?.addEventListener("scroll", measure, { passive: true });
-    return () => { cancelAnimationFrame(frame); textarea?.removeEventListener("scroll", measure); };
-  }, [inputValue, inputRef, geometry, pose.gesture, phase, pending?.id, menuOpen, quiet]);
-
   // 只有菜单实际遮住乐乐才避让，位置取菜单外沿；关闭时从真实高度落回输入框。
   useEffect(() => {
     if (pending) { menuWasOpen.current = false; return undefined; }
     if (pageHidden) return undefined;
-    if (live.current.pose.gesture === "drape") {
-      if (menuOpen) requestDrapePhase();
-      return undefined;
-    }
     let frame, observer;
     if (menuOpen) {
       const align = () => {
@@ -391,10 +309,6 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
     const react = e => {
       const action = typeof e.detail === "string" ? e.detail : e.detail?.action;
       if (!action || quiet || pending || menuOpen || saving) return;
-      if (live.current.pose.gesture === "drape" && live.current.phase !== "hidden") {
-        if (action !== "typing") requestDrapePhase();
-        return;
-      }
       const gestures = { typing: "listen", send: "pop", copy: "proud", retry: "spin", attach: "curious" };
       const gesture = gestures[action];
       if (!gesture) return;
@@ -467,7 +381,6 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
       if (current.pending || current.menuOpen || current.saving || current.phase === "exit" || current.phase === "hidden") return;
       setHovered(true);
       // Hover 只叠加微表情，动作本身与 DOM 身份保持连续；睡熟后才会被轻轻惊醒。
-      if (current.pose.gesture === "drape") requestDrapePhase();
     }, quiet ? 0 : HOVER_ARM_MS);
   };
 
@@ -500,14 +413,14 @@ export default function ComposerCompanion({ state, approvals = [], onDecide, men
   const info = part?.presentation || { title: part?.name || "执行下一步", description: "乐乐想接着处理这一步。", scope: "仅本次操作", fields: [] };
   const choices = info.inquiryPhrases?.filter(p => typeof p === "string" && p) || [];
   const inquiry = choices.length ? choices[hash(part?.id) % choices.length] : "这一步交给我看看，好吗？";
-  const asking = Boolean(part && pose.edge === "top" && pose.gesture !== "drape" && !["exit", "hidden", "startle", "stretch"].includes(phase));
+  const asking = Boolean(part && pose.edge === "top" && !["exit", "hidden"].includes(phase));
   const width = Math.min(430, geometry.width), headX = geometry.width * pose.at;
   const left = Math.max(0, Math.min(geometry.width - width, headX - width * .56));
   const tail = Math.max(24, Math.min(width - 24, headX - left));
   const clearance = -(pose.head || -29) + 20;
   const height = Math.min(440, Math.max(130, geometry.top - geometry.viewportTop - clearance - 14));
   const fragment = ["left", "right", "bottom"].includes(pose.edge);
-  const anchorStyle = pose.edge === "left" || pose.edge === "right" ? { top: Math.max(34, Math.min(geometry.height - 34, geometry.height * pose.at)) - 29 } : { left: `calc(${pose.at * 100}% - 29px)`, ...(pose.edge === "menu" ? { top: pose.y } : {}), "--edge-floor": `${pose.floor || 0}px`, "--travel-x": `${pose.travelX || 0}px`, "--travel-y": `${pose.travelY || 0}px`, "--travel-arc": `${Math.min(0, pose.travelY || 0) - 32}px`, "--flight-duration": `${pose.duration || 1000}ms`, "--drape-run-x": `${-Math.min(geometry.width < 400 ? 56 : 84, Math.max(12, headX - 32))}px` };
+  const anchorStyle = pose.edge === "left" || pose.edge === "right" ? { top: Math.max(34, Math.min(geometry.height - 34, geometry.height * pose.at)) - 29 } : { left: `calc(${pose.at * 100}% - 29px)`, ...(pose.edge === "menu" ? { top: pose.y } : {}), "--edge-floor": `${pose.floor || 0}px`, "--travel-x": `${pose.travelX || 0}px`, "--travel-y": `${pose.travelY || 0}px`, "--travel-arc": `${Math.min(0, pose.travelY || 0) - 32}px`, "--flight-duration": `${pose.duration || 1000}ms` };
   const companionState = asking ? (closing ? "asking-closing" : "asking") : menuOpen ? "menu" : reactionPhase.current ? "reacting" : hovered ? "hover" : phase === "hidden" ? "hidden" : "idle";
   const finishMotion = e => {
     if (!e.target.classList.contains("lele-edge-actor")) return;

@@ -101,7 +101,7 @@ try {
   await page.getByRole('button', { name: '拒绝', exact: true }).click();
   await approval.waitFor({ state: 'hidden' });
   check(true, '确认入口可正常关闭');
-  const ordinary = ['peek', 'curious', 'listen', 'shy', 'wave', 'invite', 'paws', 'look', 'cute', 'proud', 'pop', 'walk', 'spin', 'chase', 'toy', 'belly', 'lick', 'groom', 'wash', 'stretch', 'wink', 'curl', 'sleep', 'zzz', 'knead', 'shake', 'loaf', 'yawn', 'drowsy', 'pawtap', 'drape'];
+  const ordinary = ['peek', 'curious', 'listen', 'shy', 'wave', 'invite', 'paws', 'look', 'cute', 'proud', 'pop', 'walk', 'spin', 'chase', 'toy', 'belly', 'lick', 'groom', 'wash', 'stretch', 'wink', 'curl', 'sleep', 'zzz', 'knead', 'shake', 'loaf', 'yawn', 'drowsy', 'pawtap'];
   for (const gesture of ordinary) {
     await pose(gesture);
     check(await visibleEyes(director) === 1, gesture + ' 仅显示一套眼形');
@@ -131,16 +131,9 @@ try {
   }
   await page.getByRole('combobox', { name: '业务状态', exact: true }).fill('idle');
   await page.getByRole('option', { name: 'idle', exact: true }).click();
-  await pose('drape');
-  const anatomy = await director.evaluate(n => ({ body: n.querySelector('.lounge-body').getBoundingClientRect().bottom - n.getBoundingClientRect().top, limbs: [...n.querySelectorAll('[data-drape-contact]')].map(e => e.getBoundingClientRect().bottom - n.getBoundingClientRect().top) }));
-  check(Math.abs(anatomy.body) < 2 && anatomy.limbs.every(y => y > 8), '侧卧贴边且前后腿自然下垂');
-  await page.getByRole('button', { name: '侧卧惊醒', exact: true }).click();
-  await page.waitForTimeout(180);
-  check(await director.locator('.cat-eyes').evaluate(n => getComputedStyle(n).display !== 'none' && getComputedStyle(n).opacity === '1'), '惊醒时恢复原有睁眼');
-  await page.waitForTimeout(1600);
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 900 });
-    await pose('drape');
+    await pose('peek');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), width + 'px 无横向溢出');
     if (process.env.EVIDENCE_DIR) { await fs.mkdir(process.env.EVIDENCE_DIR, { recursive: true }); await page.screenshot({ path: `${process.env.EVIDENCE_DIR}/lele-${width}.png`, fullPage: true }); }
   }
