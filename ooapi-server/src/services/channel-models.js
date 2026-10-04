@@ -21,8 +21,21 @@ export function channelPublicModel(channel, model) {
   return isAutoModel(model) && Number.isSafeInteger(id) && id > 0 ? `${id}-auto` : String(model || "").trim();
 }
 
-export function channelUpstreamModel(channel, model, fallback = "auto") {
-  if (autoChannelId(model) !== Number(channel?.id)) return model;
-  const declared = Array.isArray(channel.models) ? channel.models : String(channel.models || "").split(/[\s,，]+/);
-  return declared.find(isAutoModel) || (isAutoModel(fallback) ? fallback : "auto");
+export function channelUpstreamModel(channel, model, fallback = "auto", canonicalize = autoModelIdentity) {
+  const declared = Array.isArray(channel?.models) ? channel.models : String(channel?.models || "").split(/[\s,，]+/);
+  const owner = autoChannelId(model);
+  if (owner === Number(channel?.id)) return declared.find(isAutoModel) || (isAutoModel(fallback) ? fallback : "auto");
+  if (owner || channel?.other?.method !== "antigravity") return model;
+
+  // 展示、权限和计费会归一掉 -thinking，但 Antigravity 将它作为真正的模型 SKU。
+  // 渠道探针保留原名；真实对话也必须从本渠道声明恢复，不能拿其他渠道的目录兜底。
+  const ids = [...new Set(declared.map(id => String(id).trim()).filter(id => id && !id.includes("*")))];
+  const requested = String(model || "").trim().toLowerCase();
+  const exact = ids.find(id => id.toLowerCase() === requested);
+  if (exact) return exact;
+  // 此模块也被前端复用；服务端传入统一别名解析器，不能在这里引入数据库/适配器。
+  const canonical = canonicalize(model);
+  const matches = canonical ? ids.filter(id => canonicalize(id) === canonical) : [];
+  // 同身份多个变体时不按目录顺序猜档位；只有唯一声明可以无歧义地恢复。
+  return matches.length === 1 ? matches[0] : model;
 }

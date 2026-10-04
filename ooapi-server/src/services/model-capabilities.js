@@ -1,7 +1,7 @@
 // 模型能力与价格分开维护；null 表示未核实，不把聚合服务的上限冒充原厂承诺。
 import fs from "node:fs";
 import { getOption, setOption } from "../config.js";
-import { canonicalModelName } from "./models.js";
+import { canonicalModelName, modelIdentityInfo } from "./models.js";
 
 const presets = JSON.parse(fs.readFileSync(new URL("./model-capabilities.json", import.meta.url), "utf8"));
 export const REASONING_PARAMETERS = ["", "reasoning_effort", "reasoning.effort", "thinking.type", "thinking.budget_tokens", "enable_thinking", "thinking_budget", "thinkingConfig.thinkingBudget", "thinkingConfig.thinkingLevel", "output_config.effort"];
@@ -41,14 +41,16 @@ export function modelCapabilityPresets() {
 
 /** 文档属于正在配置的模型；套用其他厂商预设不会改变此链接。 */
 export function modelCapabilityDocumentation(model, vendor) {
-  const sources = presets[canonicalModelName(model)]?.sources || [];
+  const identity = modelIdentityInfo(model);
+  const sources = [...(presets[identity.model]?.sources || []), ...(presets[identity.matchedModel]?.sources || [])];
   const source = sources.find(s => /原厂|官方/.test(s.scope || "") && /^https:\/\//.test(s.url || ""));
-  return source?.url || VENDOR_DOCUMENTATION[vendor] || "";
+  return source?.url || VENDOR_DOCUMENTATION[identity.developerVendor || vendor] || "";
 }
 
 export function modelCapabilities(model) {
-  const id = canonicalModelName(model);
-  const preset = presets[id] || blank;
+  const identity = modelIdentityInfo(model), id = identity.model;
+  // SKU 可以有自己的上限/价格；只在没有独立规格时复用已确认本体的内置参数。
+  const preset = presets[id] || presets[identity.matchedModel] || blank;
   let saved;
   try { saved = JSON.parse(getOption(`model_caps:${id}`) || "null"); } catch { /* 无效旧配置回退预设 */ }
   return structuredClone({ ...blank, ...preset, ...(saved || {}), model: id, customized: Boolean(saved) });

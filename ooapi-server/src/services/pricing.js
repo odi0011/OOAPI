@@ -286,9 +286,29 @@ let priceCache = new Map();
 let priceCacheAt = 0;
 const PRICE_TTL_MS = 30_000;
 
+// 已证实的渠道变体复用本体的当前平台价，但保持自己的请求 ID。
+// 只在内存中派生：不覆盖管理员独立定价，也不把渠道名称含 free 当作零价依据。
+async function withModelIdentityPrices(stored) {
+  const { modelIdentityInfo, modelRegistry } = await import("./models.js");
+  const registry = await modelRegistry();
+  const effective = new Map(stored);
+  for (const [id, price] of effective) {
+    const info = modelIdentityInfo(id);
+    if (info.developerVendor && info.developerVendor !== price.type) effective.set(id, { ...price, type: info.developerVendor });
+  }
+  for (const entry of registry.values()) {
+    const info = modelIdentityInfo(entry.model);
+    if (!info.model || effective.has(info.model) || !info.matchedModel || info.matchedModel === info.model) continue;
+    const source = stored.get(info.matchedModel);
+    if (!source) continue;
+    effective.set(info.model, { ...source, model: info.model, type: info.developerVendor || source.type, pricingSourceModel: source.model });
+  }
+  return effective;
+}
+
 export async function loadPrices() {
   // 注意用时间戳判断而不是 size：空表也是合法结果，否则每次调用都会查库
-  if (Date.now() - priceCacheAt < PRICE_TTL_MS) return priceCache;
+  if (Date.now() - priceCacheAt < PRICE_TTL_MS) return withModelIdentityPrices(priceCache);
   const [rows] = await pool.query("SELECT * FROM model_prices");
   const m = new Map();
   for (const r of rows) {
@@ -310,7 +330,7 @@ export async function loadPrices() {
   }
   priceCache = m;
   priceCacheAt = Date.now();
-  return m;
+  return withModelIdentityPrices(m);
 }
 
 export function invalidatePrices() {
@@ -319,7 +339,8 @@ export function invalidatePrices() {
 
 /** 预设取系统内置价目表，分档和定时调价也必须跟随，不能只复制三个基准价。 */
 export function modelPricePreset(model) {
-  const price = DEFAULT_PRICES.find(p => p.model === model);
+  const raw = String(model || "").trim().toLowerCase();
+  const price = DEFAULT_PRICES.find(p => String(p.model).toLowerCase() === raw);
   if (!price) return null;
   const { scheduledPrices, ...value } = price;
   return structuredClone({ ...value, tiers: parsePriceTiers(storedPriceTiers(price)) });
@@ -452,10 +473,12 @@ export function describeRule(rule) {
 
 // 只认定价表里的规范模型，不再把前缀相似、聚合规则或同厂商档位当作定价。
 export async function getPrice(model) {
-  const { canonicalModelName } = await import("./models.js");
-  const key = canonicalModelName(model);
-  const price = (await loadPrices()).get(key);
-  if (price) return { ...price, exact: true };
+  const { modelIdentityInfo } = await import("./models.js");
+  const info = modelIdentityInfo(model), prices = await loadPrices();
+  // 独立 SKU（free/batch 等）优先读取自己的管理员价格；没有独立配置才复用已确认本体价格。
+  const key = info.model || String(model || "").trim().toLowerCase();
+  const price = prices.get(key.toLowerCase()) || (info.matchedModel ? prices.get(info.matchedModel.toLowerCase()) : null);
+  if (price) return { ...price, model: key, ...(price.model !== key ? { pricingSourceModel: price.model } : {}), type: info.developerVendor || price.type, exact: true };
   // 失败审计可以记录零消耗，但执行入口必须先通过 assertModelPriced。
   return { model: key, input: 0, output: 0, cache: 0, type: "", exact: false, unpriced: true };
 }
@@ -836,7 +859,7 @@ export async function originalModelPrice(model) {
  */
 export async function pendingPricedModels() {
   const prices = await loadPrices();
-  const { canonicalModelName, modelIdentity, modelRegistry } = await import("./models.js");
+  const { canonicalModelName, modelIdentity, modelIdentityInfo, modelRegistry } = await import("./models.js");
   await modelRegistry();
   const { collectAvailableModels } = await import("./router.js");
   const [rows] = await pool.query("SELECT id,name,type,models FROM channels");
@@ -845,7 +868,9 @@ export async function pendingPricedModels() {
     for (const raw of collectAvailableModels([row])) {
       if (raw.includes("*")) continue;
       const key = canonicalModelName(raw);
-      if (prices.has(key)) continue;
+      // 与执行入口相同：独立 SKU 有自己的价格时优先，否则可以复用已确认本体价格。
+      const identity = modelIdentityInfo(raw);
+      if (prices.has(key) || (identity.matchedModel && prices.has(identity.matchedModel))) continue;
       if (!pending.has(key)) {
         const plain = modelIdentity(raw).toLowerCase();
         const candidates = /^(?:\d+-auto|auto|default|latest)$/.test(plain.split("/").pop()) ? [] : [...prices.values()]
@@ -864,6 +889,7 @@ export async function pendingPricedModels() {
 }
 
 export async function isModelPriced(model) {
-  const { canonicalModelName } = await import("./models.js");
-  return (await loadPrices()).has(canonicalModelName(model));
+  const { modelIdentityInfo } = await import("./models.js");
+  const info = modelIdentityInfo(model), prices = await loadPrices();
+  return prices.has(String(info.model || model).toLowerCase()) || Boolean(info.matchedModel && prices.has(info.matchedModel.toLowerCase()));
 }

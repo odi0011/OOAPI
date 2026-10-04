@@ -14,6 +14,7 @@ import OdAmount from "../components/OdAmount";
 // 刷新页面不丢；本页只负责渲染与把用户操作发回服务端。
 import { userDataVisibility } from "../services/visibility";
 import { hasReasoningText } from "../services/reasoning-display";
+import { chatErrorDetails, chatErrorPart } from "../services/chat-error-display";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as AntApp, Alert, Button, Checkbox, Drawer, Dropdown, Form, Input, Modal, Popconfirm, Tooltip, Radio } from "antd";
 import {
@@ -150,22 +151,21 @@ const Message = React.memo(function Message({ msg, index, busy, onRetry, onCopy,
   const tokenCount = (value) => Number(value).toLocaleString("en-US");
   const tokenSummary = inputKnown && outputKnown ? `${tokenCount(Number(msg.tokens.prompt) + Number(msg.tokens.completion))} Tokens` : "用量待确认";
   const costText = knownNumber(msg.cost) ? fmtOd(Number(msg.cost) * unitsPerOd(), unitsPerOd(), 6, false).replace(/(\.\d*?[1-9])0+$|\.0+$/, "$1") : "—";
+  const showCost = !knownNumber(msg.cost) || Number(msg.cost) > 0;
+  const showTokens = !inputKnown || !outputKnown || Number(msg.tokens.prompt) > 0 || Number(msg.tokens.completion) > 0 || Number(msg.tokens?.cache) > 0;
 
   return (
     <article className="ui-msg ui-msg-ai">
       <AgentTrajectory parts={parts} streaming={streaming} finalTextId={finalTextId}/>
 
       {errors.map((part, i) => {
-        const message = part.message || part.text || "本轮生成失败，请重试";
-        const httpStatus = message.match(/HTTP\s+(\d{3})/i)?.[1];
-        const reconnecting = Boolean(streaming) && part.id === "connection-error";
-        const explanation = message.replace(/^上游请求失败(?:（HTTP\s+\d{3}）)?[：，]\s*|^已停止生成。/, "");
-        return <Alert
-          key={part.id || `error-${i}`} type={reconnecting ? "info" : msg.status === "stopped" ? "warning" : "error"} showIcon
-          className="ui-msg-error"
-          message={<span className="ui-msg-error-title">{reconnecting ? "正在恢复连接" : msg.status === "stopped" ? "已停止生成" : "本轮生成失败"}{httpStatus ? <span>HTTP {httpStatus}</span> : null}</span>}
-          description={<div>{explanation}{msg.local ? <div className="ui-msg-error-note">{msg.cost === 0 ? "未发起上游调用，输入内容已保留。" : "发送状态尚未确认，请恢复连接核对后重试。"}</div> : null}</div>}
-        />;
+        const detail = chatErrorDetails(part);
+        return <div key={part.id || `error-${i}`} className="ui-msg-error prose" role="status" aria-label="调用失败详情">
+          <p className="ui-msg-error-reason">{detail.message}</p>
+          {detail.metadata ? <p className="ui-msg-error-meta">{detail.metadata}</p> : null}
+          {detail.response ? <pre className="ui-msg-error-response" aria-label="接口返回">{detail.response}</pre> : null}
+          {msg.local ? <p className="ui-msg-error-note">{msg.cost === 0 ? "未发起上游调用，输入内容已保留。" : "发送状态尚未确认，请恢复连接核对后重试。"}</p> : null}
+        </div>;
       })}
 
       {todo?.length ? <TodoPanel todo={todo} /> : null}
@@ -199,14 +199,14 @@ const Message = React.memo(function Message({ msg, index, busy, onRetry, onCopy,
             </Popconfirm>
           </Tooltip>
           <div className="ui-msg-stats">
-            {visibility.usage_records && <><Tooltip title="本轮成本；— 表示尚未确认结算结果"><span className="ui-msg-cost"><OdAmount>{costText}</OdAmount></span></Tooltip>
-            <Tooltip trigger={["hover", "focus", "click"]} title={<div className="ui-msg-token-detail">
+            {visibility.usage_records && <>{showCost ? <Tooltip title="本轮成本；— 表示尚未确认结算结果"><span className="ui-msg-cost"><OdAmount>{costText}</OdAmount></span></Tooltip> : null}
+            {showTokens ? <Tooltip trigger={["hover", "focus", "click"]} title={<div className="ui-msg-token-detail">
               <span>输入 <b>{inputKnown ? tokenCount(msg.tokens.prompt) : "—"}</b></span>
               <span>输出 <b>{outputKnown ? tokenCount(msg.tokens.completion) : "—"}</b></span>
               <span>缓存读取 <b>{knownNumber(msg.tokens?.cache) ? tokenCount(msg.tokens.cache) : "—"}</b></span>
             </div>}>
               <Button type="text" size="small" className="ui-msg-token-stat" aria-label="查看本轮 Token 用量">{tokenSummary}</Button>
-            </Tooltip>
+            </Tooltip> : null}
             </>}<span className="ui-msg-timing"><ClockCircleOutlined /><Tooltip title={firstTokenText === "—" ? "本轮没有首字统计" : "发出请求到首个输出 Token 的时间"}><span>首字 {firstTokenText}</span></Tooltip><Tooltip title={Number(msg.retryCount) > 0 ? `本轮总耗时，含上游自动重试 ${Number(msg.retryCount)} 次` : "本轮端到端总耗时"}><span>耗时 {elapsedText}</span></Tooltip></span>
           </div>
         </div>
@@ -651,11 +651,11 @@ export default function ChatPage() {
     };
     const storeFailure = (error, data = {}) => {
       if (!valid()) return;
-      const message = error?.message || "本轮生成失败，请重试";
+      const errorPart = chatErrorPart(error);
       patchAi((m) => {
         const local = data.local ?? !data.seq;
         const next = { ...m, ...data, key: aiKey, local, streaming: false, status: data.status || "error", elapsedMs: data.elapsedMs ?? Date.now() - startedAt,
-          parts: data.parts || [...m.parts.filter((p) => p.id !== "connection-error"), { id: "connection-error", type: "error", code: error?.code, message }],
+          parts: data.parts || [...m.parts.filter((p) => p.id !== "connection-error"), { id: "connection-error", ...errorPart }],
         };
         if (next.local) saveRecovery(user?.id, sessionId, { baselineSeq, messages: [...(options.userMessage ? [options.userMessage] : []), next] });
         return next;
@@ -717,7 +717,7 @@ export default function ChatPage() {
           if (reconnects < 3) await new Promise((resolve) => setTimeout(resolve, reconnects * 500));
         }
       }
-      storeFailure(Object.assign(new Error(`${error?.message || "连接已断开"}。请刷新确认本轮状态后重试，已收到的内容保留。`), { code: error?.code }));
+      storeFailure({ ...chatErrorPart(error), message: `${error?.message || "连接已断开"}。请刷新确认本轮状态后重试，已收到的内容保留。` });
       if (valid()) setConnectionError("暂时无法确认本轮生成状态。请恢复连接后继续，避免重复提交。");
       finish();
     };
@@ -740,7 +740,7 @@ export default function ChatPage() {
         if (ev.message && typeof ev.message === "object") {
           patchAi((m) => ({ ...m, ...ev.message, key: aiKey, streaming: false, todo: ev.todo }));
           saveRecovery(user?.id, sessionId, null);
-        } else if (ev.type !== "done") storeFailure(new Error(ev.message || "本轮生成失败"), { local: false, status: ev.type === "stopped" ? "stopped" : "error", parts: ev.parts });
+        } else if (ev.type !== "done") storeFailure(ev, { local: false, status: ev.type === "stopped" ? "stopped" : "error", parts: ev.parts });
         if (ev.session) {
           setSession(ev.session);
           setSessions((prev) => prev.map((s) => s.id === ev.session.id ? { ...s, ...ev.session } : s));

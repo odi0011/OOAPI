@@ -3,6 +3,7 @@ import { normalizeContentToText } from "./content-text.js";
 import { isNotApprovedResponse } from "./http-error.js";
 import { normalizeUsage } from "../pricing.js";
 import { reasoningBody } from "../model-capabilities.js";
+import { attachUpstreamDiagnostics } from "./error-diagnostics.js";
 import { guardedFetch, readTextCapped } from "./openai-compat.js";
 import { runEndpointFallback } from "./endpoint-fallback.js";
 import { upstreamModelOf } from "./vendor-quirks.js";
@@ -140,7 +141,7 @@ export async function chatOnce({ endpoint, tools = [], toolChoice, onToolCall, c
   }
   if (!resp.ok) {
     const text = await readTextCapped(resp).catch(() => "");
-    let msg = text.slice(0, 300);
+    let msg = text;
     let rejectedUsage = null;
     try {
       const j = JSON.parse(text);
@@ -167,10 +168,10 @@ export async function chatOnce({ endpoint, tools = [], toolChoice, onToolCall, c
             ? "CHANNEL_BAD_REQUEST"
             : "CHANNEL_HTTP_ERROR";
     if (rejectedUsage && onUsage) onUsage(rejectedUsage);
-    throw Object.assign(new Error(`Anthropic 上游 HTTP ${resp.status}：${msg}`), {
+    throw attachUpstreamDiagnostics(Object.assign(new Error(`Anthropic 上游 HTTP ${resp.status}：${msg}`), {
       code, status: resp.status, upstreamRejected: true, usage: rejectedUsage,
       billable: normalizeUsage(rejectedUsage).totalTokens > 0,
-    });
+    }), { status: resp.status, body: text, channel });
   }
   if (!resp.body) throw Object.assign(new Error("Anthropic 上游未返回内容流"), { code: "CHANNEL_BAD_RESPONSE" });
 
@@ -183,7 +184,7 @@ export async function chatOnce({ endpoint, tools = [], toolChoice, onToolCall, c
     const content = (j.content || []).filter(b => b.type === "text").map(b => b.text || "").join("");
     const reasoning = (j.content || []).filter(b => b.type === "thinking").map(b => b.thinking || "").join("");
     try {
-      if (j.error) throw Object.assign(new Error("Anthropic 返回错误响应"), { code: "CHANNEL_BIZ_ERROR" });
+      if (j.error) throw attachUpstreamDiagnostics(Object.assign(new Error("Anthropic 返回错误响应"), { code: "CHANNEL_BIZ_ERROR" }), { status: resp.status, body: j, channel });
       for (const [index, block] of (j.content || []).entries()) toolBuffer.anthropic({ type: "content_block_start", index, content_block: block });
       if (reasoning) onReasoning?.(reasoning);
       if (content) onDelta?.(content);
@@ -253,7 +254,7 @@ export async function chatOnce({ endpoint, tools = [], toolChoice, onToolCall, c
     }
     if (type === "error") {
       const msg = ev.error?.message || "Anthropic 上游返回错误事件";
-      throw Object.assign(new Error(msg), { code: "CHANNEL_BIZ_ERROR", upstreamErrorCode: String(ev.error?.type || "") });
+      throw attachUpstreamDiagnostics(Object.assign(new Error(msg), { code: "CHANNEL_BIZ_ERROR", upstreamErrorCode: String(ev.error?.type || "") }), { status: resp.status, body: ev, channel });
     }
     if (type === "message_stop") terminated = true;
   };
@@ -313,15 +314,16 @@ export async function verify(channel) {
   try {
     const resp = await fetch(models, { headers: headers(channel, listKeys(channel)[0]), signal: ac.signal });
     if (resp.status === 401 || resp.status === 403) {
-      throw Object.assign(new Error(`上游拒绝鉴权（HTTP ${resp.status}），请检查 API Key`), {
+      const body = await readTextCapped(resp).catch(() => "");
+      throw attachUpstreamDiagnostics(Object.assign(new Error(`上游拒绝鉴权（HTTP ${resp.status}），请检查 API Key`), {
         code: "CHANNEL_AUTH_EXPIRED",
-      });
+      }), { status: resp.status, body, channel });
     }
     if (!resp.ok) {
-      const body = await resp.text().catch(() => "");
-      throw Object.assign(new Error(`上游返回 HTTP ${resp.status}${body ? `：${body.slice(0, 160)}` : ""}`), {
+      const body = await readTextCapped(resp).catch(() => "");
+      throw attachUpstreamDiagnostics(Object.assign(new Error(`上游返回 HTTP ${resp.status}`), {
         code: "CHANNEL_HTTP_ERROR",
-      });
+      }), { status: resp.status, body, channel });
     }
     return Date.now() - started;
   } catch (e) {
@@ -339,7 +341,7 @@ export async function fetchUpstreamModels(channel) {
   const key = listKeys(channel)[0];
   if (!key) throw new Error("未填写 API Key");
   const resp = await fetch(models, { headers: headers(channel, key), signal: AbortSignal.timeout(15000) });
-  if (!resp.ok) throw new Error(`获取模型列表失败：HTTP ${resp.status}`);
+  if (!resp.ok) throw attachUpstreamDiagnostics(Object.assign(new Error(`获取模型列表失败：HTTP ${resp.status}`), { code: "CHANNEL_HTTP_ERROR" }), { status: resp.status, body: await readTextCapped(resp).catch(() => ""), channel });
   const data = await resp.json().catch(() => null);
   return (data?.data || data?.models || []).map((m) => m.id || m.name).filter(Boolean);
 }

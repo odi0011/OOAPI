@@ -6,6 +6,7 @@ import { normalizeContentToText } from "./content-text.js";
 import { ToolCallBuffer, applyToolDefinitions, responsesMessages } from "../tool-wire.js";
 import { reasoningBody } from "../model-capabilities.js";
 import { normalizeUsage } from "../pricing.js";
+import { attachUpstreamDiagnostics } from "./error-diagnostics.js";
 
 export async function chatOnce({ channel, endpoint, model, prompt, messages, images = [], tools = [], toolChoice, reasoningConfig, maxOutputTokens, onDelta, onReasoning, onToolCall, onUsage, signal }) {
   const source = messages?.length ? messages : [{ role: "user", content: prompt || "" }];
@@ -34,12 +35,12 @@ export async function chatOnce({ channel, endpoint, model, prompt, messages, ima
     const message = j?.error?.message || j?.message || "上游拒绝请求";
     const classified = classifyUpstreamHttp(status, message);
     const rawCode = String(j?.error?.code ?? j?.error?.type ?? j?.code ?? "");
-    return Object.assign(new Error(message), { status, code: classified.code === "CHANNEL_NOT_APPROVED" || [401, 403].includes(status) ? classified.code : status === 429 ? "CHANNEL_RATE_LIMIT" : [400, 404, 405, 415, 422].includes(status) ? "CHANNEL_BAD_REQUEST" : "CHANNEL_HTTP_ERROR",
-      upstreamRejected: true, upstreamErrorCode: /^[a-zA-Z0-9_-]{1,40}$/.test(rawCode) ? rawCode : "" });
+    return attachUpstreamDiagnostics(Object.assign(new Error(message), { status, code: classified.code === "CHANNEL_NOT_APPROVED" || [401, 403].includes(status) ? classified.code : status === 429 ? "CHANNEL_RATE_LIMIT" : [400, 404, 405, 415, 422].includes(status) ? "CHANNEL_BAD_REQUEST" : "CHANNEL_HTTP_ERROR",
+      upstreamRejected: true, upstreamErrorCode: /^[a-zA-Z0-9_-]{1,40}$/.test(rawCode) ? rawCode : "" }), { status, body: j, channel });
   };
   if (!resp.ok) {
     const text = await readTextCapped(resp); let j;
-    try { j = JSON.parse(text); } catch { j = { message: text.slice(0, 200) }; }
+    try { j = JSON.parse(text); } catch { j = { message: text }; }
     updateUsage(j?.usage);
     throw Object.assign(errorOf(j, resp.status), { usage, billable: normalizeUsage(usage).totalTokens > 0 });
   }

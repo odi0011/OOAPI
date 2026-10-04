@@ -117,17 +117,23 @@ export function publicModelMetadataMap(publicModels) {
     const id = String(m?.id || "").trim().toLowerCase();
     if (!id) continue;
     const vendor = String(m.vendor || "").trim().toLowerCase();
-    const canonical = canonicalModelName(id);
-    const preferred = DEFAULT_MODEL_VENDORS.get(canonical) || DEFAULT_MODEL_VENDORS.get(id);
+    const identity = modelIdentityInfo(id), canonical = identity.model;
+    const preferred = identity.developerVendor || DEFAULT_MODEL_VENDORS.get(canonical) || DEFAULT_MODEL_VENDORS.get(id);
     const rank = preferred && vendor === preferred ? 0 : ORIGINAL_MODEL_VENDORS.has(vendor) ? 1 : 2;
     const stableKey = JSON.stringify(Object.keys(m).sort().map((k) => [k, m[k]]));
     const previous = selected.get(id);
     if (previous && (previous.rank < rank || (previous.rank === rank && previous.stableKey <= stableKey))) continue;
-    selected.set(id, { rank, stableKey, model: { ...m, vendor, vendorName: modelVendorName(vendor) } });
+    const owner = identity.developerVendor || vendor;
+    selected.set(id, { rank, stableKey, model: { ...m, vendor: owner, vendorName: modelVendorName(owner) } });
   }
   // 原厂规范条目优先于聚合目录的同模型条目，供渠道别名查元信息时复用。
   for (const [id, entry] of [...selected]) {
-    const canonical = canonicalModelName(id);
+    const identity = modelIdentityInfo(id), canonical = identity.model;
+    const original = selected.get(identity.matchedModel);
+    if (original && original !== entry && original.rank < entry.rank) {
+      // 原厂提供能力，聚合 SKU 保留自身 ID；接入渠道来源由 sourceVendors 单独展示。
+      selected.set(id, { ...entry, model: { ...entry.model, ...original.model, id: entry.model.id } });
+    }
     if (!canonical || canonical === id) continue;
     const current = selected.get(canonical);
     if (!current || entry.rank < current.rank) selected.set(canonical, entry);
@@ -197,6 +203,38 @@ export function modelIdentity(raw) {
   s = s.replace(/-(search|thinking|agent|agent-swarm)$/i, "");
   if (namespace && /^(auto|default|latest)$/i.test(s)) return `${namespace}/${s}`;
   return s;
+}
+
+// 归属只补充元信息，不改变 canonicalModelName 的历史权限/调度/计价合同。
+// 尤其 :free 仍遵循既有 Cline 路由，-free 则保持管理员可独立定价的 SKU。
+function knownVendorOf(name) {
+  const key = String(name || "").trim().toLowerCase();
+  const vendor = DEFAULT_MODEL_VENDORS.get(key) || OFFICIAL_UNPRICED_MODELS.find(p => p.model.toLowerCase() === key)?.type;
+  return ORIGINAL_MODEL_VENDORS.has(vendor) ? vendor : "";
+}
+
+/** 已确认 alias 优先；仅已知原厂的精确本体可提供 SKU 的规格，未知名字不猜测。 */
+export function modelIdentityInfo(raw) {
+  const requestedModel = String(raw || "").trim();
+  const model = canonicalModelName(requestedModel);
+  const base = modelIdentity(requestedModel).toLowerCase();
+  const approved = confirmedAliases.get(requestedModel.toLowerCase()) || confirmedAliases.get(base);
+  const result = { requestedModel, model, pricingModel: model, matchedModel: "", source: "unknown", developerVendor: "", known: false, suffixes: [] };
+  if (!model) return result;
+  if (isAutoModel(model) || autoChannelId(model) || /(?:^|\/)(?:default|latest)$/i.test(model)) return { ...result, source: "dynamic" };
+  let matchedModel = model;
+  let developerVendor = knownVendorOf(matchedModel);
+  // 完整型号若已登记就保持其身份；只对尚未登记的明确 SKU 后缀寻找本体。
+  const variant = model.match(/-(free|batch|extended)$/i);
+  if (!developerVendor && variant && !approved) {
+    const core = model.slice(0, -variant[0].length);
+    const target = canonicalModelName(core);
+    const owner = knownVendorOf(target);
+    if (owner) { matchedModel = target; developerVendor = owner; result.suffixes = [variant[1].toLowerCase()]; }
+  }
+  if (!developerVendor) return { ...result, source: approved ? "confirmed" : "unknown" };
+  return { ...result, matchedModel, developerVendor, known: true,
+    source: approved ? "confirmed" : matchedModel !== model ? "variant" : model !== base ? "alias" : "exact" };
 }
 
 export async function warmAliasMap() {
@@ -300,9 +338,9 @@ export async function modelBelongsToVendor(model, channelType) {
   try {
     const mod = await loader();
     if (typeof mod.publicModels !== "function") return false;
-    const names = mod.publicModels().map((m) => m.id.toLowerCase());
-    const m = String(model || "").toLowerCase().replace(/-(search|thinking)$/i, "");
-    return names.some((n) => n === m);
+    const names = mod.publicModels().map((m) => canonicalModelName(m.id));
+    const identity = modelIdentityInfo(model);
+    return identity.developerVendor === channelType || names.includes(identity.model) || Boolean(identity.matchedModel && names.includes(identity.matchedModel));
   } catch {
     return false;
   }
@@ -356,9 +394,9 @@ export async function modelRegistry() {
   const put = (id, type) => {
     const k = String(id || "").toLowerCase().trim();
     if (!k || isAutoModel(k) || map.has(k)) return;
-    const identity = canonicalModelName(k);
-    const owner = DEFAULT_MODEL_VENDORS.get(identity) || String(type || "");
-    const entry = { model: identity || String(id).trim(), type: owner };
+    const info = modelIdentityInfo(k), identity = info.model;
+    const owner = info.developerVendor || DEFAULT_MODEL_VENDORS.get(identity) || String(type || "");
+    const entry = { model: identity || String(id).trim(), type: owner, ...(info.matchedModel && info.matchedModel !== identity ? { matchedModel: info.matchedModel } : {}) };
     map.set(k, entry);
     if (identity && !map.has(identity)) map.set(identity, entry);
   };

@@ -539,16 +539,11 @@
   color: var(--ink-3);
 }
 .ui-msg-actions > .ant-btn { flex: 0 0 auto; }
-.ui-msg-error.ant-alert { margin: 8px 0 12px; width: fit-content; max-width: min(640px, 100%); padding: 12px 14px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--red) 15%, transparent); }
-.ui-msg-error.ant-alert-warning { border-color: color-mix(in srgb, var(--orange) 18%, transparent); }
-.ui-msg-error.ant-alert-info { border-color: color-mix(in srgb, var(--accent) 18%, transparent); }
-.ui-msg-error.ant-alert-with-description .ant-alert-icon { margin-inline-end: 10px; font-size: 15px; padding-top: 2px; }
-.ui-msg-error .ant-alert-message { margin-bottom: 4px; color: var(--ink); font-size: 13px; font-weight: 600; line-height: 1.55; }
-.ui-msg-error .ant-alert-description { color: var(--ink-2); font-size: 12.5px; line-height: 1.7; }
-.ui-msg-error .ant-alert-message,
-.ui-msg-error .ant-alert-description { overflow-wrap: anywhere; }
-.ui-msg-error-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
-.ui-msg-error-title > span { font-size: 11px; font-weight: 400; color: var(--ink-3); }
+.ui-msg-error { margin: 8px 0 12px; color: var(--ink); overflow-wrap: anywhere; }
+.ui-msg-error p { margin: 0 0 8px; }
+.ui-msg-error-reason { white-space: pre-wrap; }
+.ui-msg-error-meta { color: var(--ink-3); font-size: var(--fs-label); }
+.ui-msg-error pre.ui-msg-error-response { margin: 8px 0 0; padding: 0; border: 0; border-radius: 0; background: none; color: var(--ink-2); font-size: var(--fs-body); line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ui-msg-error-note { margin-top: 5px; color: var(--ink-3); font-size: 11.5px; }
 .ui-msg-stats { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; gap: 0 10px; margin-left: 4px; min-width: 0; color: var(--ink-2); font-size: 11.5px; line-height: 24px; }
 .ui-msg-cost { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }

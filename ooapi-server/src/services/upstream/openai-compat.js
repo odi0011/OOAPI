@@ -1,4 +1,5 @@
 import { reasoningBody } from "../model-capabilities.js";
+import { attachUpstreamDiagnostics } from "./error-diagnostics.js";
 import { runEndpointFallback } from "./endpoint-fallback.js";
 // 通用 OpenAI 兼容适配器
 // ===========================================================================
@@ -246,9 +247,9 @@ export async function verify(channel) {
     if (!resp.ok) {
       const body = await readTextCapped(resp).catch(() => "");
       const { code, hint } = classifyUpstreamHttp(resp.status, body);
-      throw Object.assign(new Error(`上游返回 HTTP ${resp.status}${body ? `：${body.slice(0, 160)}` : ""}`), {
+      throw attachUpstreamDiagnostics(Object.assign(new Error(`上游返回 HTTP ${resp.status}`), {
         code, status: resp.status, hint,
-      });
+      }), { status: resp.status, body, channel });
     }
     return Date.now() - started;
   } catch (e) {
@@ -277,7 +278,7 @@ export async function fetchUpstreamModels(channel) {
     const text = await readTextCapped(resp);
     if (!resp.ok) {
       const { code, hint } = classifyUpstreamHttp(resp.status, text);
-      throw Object.assign(new Error(`上游返回 HTTP ${resp.status}：${text.slice(0, 160)}`), { code, status: resp.status, hint });
+      throw attachUpstreamDiagnostics(Object.assign(new Error(`上游返回 HTTP ${resp.status}`), { code, status: resp.status, hint }), { status: resp.status, body: text, channel });
     }
     let data;
     try { data = JSON.parse(text); } catch {
@@ -471,7 +472,7 @@ export async function chatOnce({
 
   if (!resp.ok) {
     const text = await readTextCapped(resp).catch(() => "");
-    let msg = text.slice(0, 200);
+    let msg = text;
     let rejectedUsage = null, upstreamErrorCode = "";
     try {
       const j = JSON.parse(text);
@@ -513,9 +514,9 @@ export async function chatOnce({
         ? "（上游风控/安全审核拦截该账号：非凭据问题，重新绑定无效；建议稍后重测或更换账号）"
         : classified.hint ? `（${classified.hint}）` : "";
     if (rejectedUsage && onUsage) onUsage(rejectedUsage);
-    throw Object.assign(new Error(`上游返回 HTTP ${resp.status}：${msg}${hint}`), {
+    throw attachUpstreamDiagnostics(Object.assign(new Error(`上游返回 HTTP ${resp.status}：${msg}${hint}`), {
       code, status: resp.status, upstreamErrorCode, usage: rejectedUsage, billable: consumedUsage(rejectedUsage), upstreamRejected: true, upstreamModel: body.model,
-    });
+    }), { status: resp.status, body: text, channel });
   }
   if (!resp.body) {
     throw Object.assign(new Error("上游未返回内容流"), { code: "CHANNEL_BAD_RESPONSE" });
@@ -537,10 +538,10 @@ export async function chatOnce({
     for (const [i, c] of (msg.tool_calls || []).entries()) toolBuffer.add(i, callOf(c), true);
     const jsonUsage = pickUsage(j?.usage);
     if (jsonUsage && onUsage) onUsage(jsonUsage);
-    if (j?.error) throw Object.assign(new Error(j.error.message || "上游返回错误响应"), {
+    if (j?.error) throw attachUpstreamDiagnostics(Object.assign(new Error(j.error.message || "上游返回错误响应"), {
       code: "CHANNEL_BIZ_ERROR", upstreamErrorCode: String(j.error.code || j.error.type || ""),
       status: resp.status, usage: jsonUsage, billable: consumedUsage(jsonUsage),
-    });
+    }), { status: resp.status, body: j, channel });
     // 思维链字段各家不同：reasoning_content / reasoning / MiniMax 的 reasoning_details
     let reasoning =
       typeof msg.reasoning_content === "string"
@@ -628,9 +629,9 @@ export async function chatOnce({
       usage = pickUsage(ev.usage);
       if (onUsage) onUsage(usage);
     }
-    if (ev.error) throw Object.assign(new Error(ev.error.message || "上游返回错误事件"), {
+    if (ev.error) throw attachUpstreamDiagnostics(Object.assign(new Error(ev.error.message || "上游返回错误事件"), {
       code: "CHANNEL_BIZ_ERROR", upstreamErrorCode: String(ev.error.code || ev.error.type || ""),
-    });
+    }), { status: resp.status, body: ev, channel });
     if (ev.choices?.[0]?.finish_reason != null) {
       terminated = true;
       truncated ||= ["length", "content_filter"].includes(ev.choices[0].finish_reason);

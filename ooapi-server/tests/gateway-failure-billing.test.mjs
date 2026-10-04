@@ -290,7 +290,7 @@ try {
         assert.equal(JSON.parse(row.detail).http_status, 400); assert.equal(row.model, model);
         assert.ok(!/fixture-secret\.invalid|DO_NOT_LEAK|Bearer/.test(text + JSON.stringify(row)), "body/URL/key never copied to public error or usage log");
         assert.ok(text.includes(reason.startsWith("illegal") ? "上游按请求审核策略拒绝" : "HTTP 400"));
-        assert.ok(row.content.includes(reason.startsWith("illegal") ? "核查" : "稍后重试"));
+        assert.ok(row.content.includes(reason.startsWith("illegal") ? "核查" : "上游拒绝了请求参数"));
       });
     }
     for (const status of [401, 502]) {

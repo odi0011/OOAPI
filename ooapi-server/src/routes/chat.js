@@ -30,6 +30,7 @@ import { runHarness } from "../services/harness/loop.js";
 import { requestApproval, decideApproval } from "../services/harness/approvals.js";
 import { billableFailedCall } from "../services/execute.js";
 import { publicRunError } from "../services/upstream/public-error.js";
+import { publicErrorDiagnostics } from "../services/upstream/error-diagnostics.js";
 import { AGENTS, findAgent, publicAgents, PRIMARY_AGENTS } from "../services/harness/agents.js";
 import { toolSpecs } from "../services/harness/tools.js";
 import { needsToolApproval } from "../services/harness/platform-catalog.js";
@@ -646,7 +647,7 @@ router.post(
 // ---------- 计费（用户额度）----------
 // 与网关同一套原子扣费；harness 传进来的 tokens 是「每次上游调用分别 splitTokens 后求和」，
 // 混用 API 渠道（结构化 usage）与反代渠道（usage=null）时不会互相覆盖口径。
-async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0, keyName = "", startedAt = 0, firstTokenAt = 0, userAgent = "", ip = "", calls = null, tokenQuotaHold = 0, sessionId = "", inputText = "", status = "success", errorCode = "", retryCount = 0, isUsage = true, writeUsage = true, requestId = "", errorMessage = "", httpStatus = 0 }) {
+async function chargeUser({ user, model, prompt, output, usage, channel, channelIds, tokens, kind, groupName = null, keyId = 0, keyName = "", startedAt = 0, firstTokenAt = 0, userAgent = "", ip = "", calls = null, tokenQuotaHold = 0, sessionId = "", inputText = "", status = "success", errorCode = "", retryCount = 0, isUsage = true, writeUsage = true, requestId = "", errorMessage = "", httpStatus = 0, errorDiagnostics = {} }) {
   const actualModel = Array.isArray(calls) && calls.length ? calls.at(-1).billModel || calls.at(-1).model || model : model;
   const displayModel = canonicalModelName(actualModel) || model;
   let { promptTokens, completionTokens, cacheTokens } =
@@ -801,7 +802,7 @@ async function chargeUser({ user, model, prompt, output, usage, channel, channel
       priced_at: startedAt || Date.now(),
       rate: Number(gcfg?.rate) || 1,
       amount_units: units,
-      ...(errorCode ? { code: errorCode, http_status: Number(httpStatus) || undefined, error_message: errorMessage } : {}),
+      ...(errorCode ? { code: errorCode, http_status: Number(httpStatus) || undefined, error_message: errorMessage, ...errorDiagnostics } : {}),
     }),
     quota: units,
     // 使用记录明细（列存储）：站内对话不经 Key，但仍记录本次路由用的密钥与分组，
@@ -1337,6 +1338,8 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
     const stopped = ctrl.signal.aborted || err.code === "ABORTED";
     const errorCode = /^[\w.:-]{1,64}$/.test(String(err.code || "")) ? String(err.code) : "ERROR";
     const errorMessage = publicRunError(err, { stopped });
+    // 仅使用适配器捕获并脱敏的真实返回；历史、本轮事件和用量日志保持一致。
+    const errorDiagnostics = publicErrorDiagnostics(err);
     let billingKnown = !["BILLING_UNCERTAIN", "BILLING_FAILED"].includes(err.code);
     // 扣费结果不确定时不再补结算（防重复扣费）；余额不足等“确定未扣”的错误才走部分结算
     if (err?.code === "BILLING_UNCERTAIN") { settled = true; quotaHold?.consume(); billedResult = err.billingResult || null; }
@@ -1377,6 +1380,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
           status,
           errorCode,
           errorMessage,
+          errorDiagnostics,
           httpStatus: err.httpStatus || err.status || 0,
           retryCount,
           requestId: `${session.id}:${userMessage?.seq || 0}`,
@@ -1395,7 +1399,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
     // 若此处再写一次，同一轮回答会在库里出现两条。
     if (!saved) {
       try {
-        const errorPart = { id: `e${Date.now().toString(36)}`, type: "error", code: errorCode, message: errorMessage, billing_known: billingKnown };
+        const errorPart = { id: `e${Date.now().toString(36)}`, type: "error", code: errorCode, message: errorMessage, ...errorDiagnostics, billing_known: billingKnown };
         const finalParts = [...runParts, errorPart];
         const finalMessage = await appendMessage({
           sessionId: session.id,
@@ -1436,7 +1440,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       }
     }
 
-    run.error = { code: errorCode, message: errorMessage };
+    run.error = { code: errorCode, message: errorMessage, ...errorDiagnostics };
     // 失败也写一条错误日志：与网关同一口径（模型/渠道/耗时/设备），
     // 否则站内对话的失败在看板上完全不可见。
     // 这里没有 req（executeRun 是后台任务），ip/userAgent 由调用方在 /run 时捕获后传入。
@@ -1457,6 +1461,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
         content: `${stopped ? "对话已停止" : "对话失败"}：${failedModel} · ${errorMessage}`,
         detail: JSON.stringify({
           code: errorCode, http_status: Number(err.httpStatus || err.status) || undefined,
+          ...errorDiagnostics,
           billing_known: billingKnown, requested_model: model, upstream_model: err.upstreamModel || "",
           inbound_endpoint: "/api/chat/run", upstream_endpoints: endpointList([...billedCalls.map(c => c.upstreamEndpoints), err.upstreamEndpoints]),
           endpoint_attempts: [...billedCalls.flatMap(c => c.endpointAttempts || []), ...(err.endpointAttempts || [])].slice(0, 36),
@@ -1499,6 +1504,7 @@ async function executeRun({ run, ctrl, user, session, agent, model, settings, hi
       type: stopped ? "stopped" : "error",
       code: errorCode,
       errorMessage,
+      ...errorDiagnostics,
       parts: runParts,
       message: run.finalMessage || null,
       userMessage,

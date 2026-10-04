@@ -281,6 +281,13 @@ try {
     assert.equal(history[1].id, message.id); assert.equal(history[1].seq, message.seq); assert.equal(history[1].status, 'error');
     assert.ok(history[1].parts.some((p) => p.type === 'error')); assert.deepEqual(history[1].tokens, message.tokens);
     assert.equal(history[1].cost, 0); assert.equal(history[1].firstTokenMs, null);
+    const diagnostic = message.parts.find((p) => p.type === 'error');
+    assert.equal(diagnostic.http_status, status);
+    assert.equal(diagnostic.upstream_error_code, 'fixture_error');
+    assert.equal(diagnostic.upstream_response.error.message, '[上游地址已隐藏]');
+    assert.deepEqual(history[1].parts.find((p) => p.type === 'error'), diagnostic);
+    assert.deepEqual(JSON.parse(row.detail).upstream_response, diagnostic.upstream_response);
+    assert.deepEqual(result.final.upstream_response, diagnostic.upstream_response);
     const own = await get('/api/log/usage?status=error'); assert.equal(own.total, 1); assert.equal(own.items[0].input_text, input);
     assert.equal(own.items[0].client_agent.id, 'ooapi');
     assert.equal(own.items[0].input_recorded, true); assert.equal(own.items[0].output_recorded, true);
@@ -299,6 +306,8 @@ try {
     assert.equal(audit.requested_model, model); assert.equal(audit.upstream_model, model);
     assert.equal(audit.pricing_model, model);
     assert.ok(message.parts.some((p) => p.type === 'error')); assert.equal(commits, 3); // user + settle + assistant
+    assert.equal(message.parts.find((p) => p.type === 'error').upstream_response.error.message, 'fixture failed');
+    assert.equal(JSON.parse(row.detail).upstream_response.error.message, 'fixture failed');
   });
   await test('usage-only失败有输入费用但首T未知', async () => {
     sse(frame({ usage: { prompt_tokens: 1700, completion_tokens: 0, cached_tokens: 500 } }) + frame({ error: { code: 'fixture_error', message: 'fixture failed' } }));
@@ -522,10 +531,11 @@ try {
     assert.ok(!error.message.includes('补充实际问题'), '不能把上游审核结论当成用户提问无效');
     assert.ok(!row.content.includes('private.invalid')); assert.equal(row.error_code, 'CHANNEL_BAD_REQUEST');
   });
-  await test('未知上游失败正文不转发，只保留HTTP状态与分类code', async () => {
+  await test('未知上游失败正文只公开脱敏投影，同时保存HTTP状态与分类code', async () => {
     behavior = (_req, res) => { res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: { message: 'unknown private body Authorization=Bearer DO_NOT_LEAK at https://private.invalid/internal', code: 'fixture_error' } })); };
     const message = finalMessage(await run(), 'error'); const row = oneLog('error'); balance(0);
-    const error = message.parts.find((p) => p.type === 'error'); assert.equal(error.message, '上游请求失败（HTTP 400），请检查模型或稍后重试。');
+    const error = message.parts.find((p) => p.type === 'error'); assert.equal(error.message, '上游请求失败（HTTP 400）：上游拒绝了请求参数，请核对模型、消息格式及工具定义。');
+    assert.equal(error.upstream_response.error.message, 'unknown private body Authorization: [已隐藏]');
     assert.ok(!JSON.stringify(message).includes('DO_NOT_LEAK')); assert.ok(!row.content.includes('private.invalid'));
     assert.equal(row.error_code, 'CHANNEL_BAD_REQUEST'); assert.equal(JSON.parse(row.detail).http_status, 400);
   });

@@ -222,6 +222,20 @@ try {
     assert.equal(first.supportsThinking, true);
     assert.deepEqual(first, reversed);
   });
+  await test("聚合渠道已知 free 变体自动继承开发商/规格/价格，目录仍保留可调用SKU", async () => {
+    const sku = 'deepseek-v4.1-flash-free';
+    await reset([channel(87120, 'opencode', sku)], { groupModels: [sku] });
+    const { chat, gateway } = await directory();
+    expectIds(chat.models, [sku]); expectIds(gateway, [sku]);
+    assert.equal(chat.models[0].vendor, 'deepseek');
+    assert.equal(gateway[0].owned_by, 'deepseek');
+    assert.equal(chat.models[0].capabilities.contextWindow, 1000000);
+    assert.ok(chat.models[0].price.input > 0, 'free 不自动把平台价格改为0');
+    const body = { model: sku };
+    const { applyVendorRequest } = await import('../src/services/upstream/vendor-quirks.js');
+    applyVendorRequest(body, { channel: fixture.channels[0] });
+    assert.equal(body.model, sku);
+  });
   await test("未知前缀和未定价模型从两端目录排除", async () => {
     await reset([channel(87107, "workbuddy", "gpt-private-fixture,metadata-unknown-fixture")]);
     const { chat, gateway } = await directory();

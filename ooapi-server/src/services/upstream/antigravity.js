@@ -1,4 +1,6 @@
 import { reasoningBody } from "../model-capabilities.js";
+import { attachUpstreamDiagnostics } from "./error-diagnostics.js";
+import { normalizeUsage } from "../pricing.js";
 import { ToolCallBuffer, applyToolDefinitions, geminiMessages } from "../tool-wire.js";
 // 上游适配器：antigravity（Google 订阅 · Antigravity / Gemini Code Assist OAuth）
 // ===========================================================================
@@ -124,9 +126,9 @@ export async function refreshAuth(channel, { force = false } = {}) {
     });
     const text = await resp.text();
     if (!resp.ok) {
-      throw Object.assign(new Error(`刷新 Google 登录态失败（HTTP ${resp.status}）：${text.slice(0, 160)}`), {
+      throw attachUpstreamDiagnostics(Object.assign(new Error(`刷新 Google 登录态失败（HTTP ${resp.status}）`), {
         code: "CHANNEL_AUTH_EXPIRED",
-      });
+      }), { status: resp.status, body: text, channel });
     }
     let j;
     try {
@@ -213,7 +215,7 @@ async function loadProject(channel, token) {
   if (!resp.ok) {
     const code =
       resp.status === 401 ? "CHANNEL_AUTH_EXPIRED" : resp.status === 429 ? "CHANNEL_RATE_LIMIT" : "CHANNEL_HTTP_ERROR";
-    throw Object.assign(new Error(`Antigravity 引导失败（HTTP ${resp.status}）：${text.slice(0, 200)}`), { code });
+    throw attachUpstreamDiagnostics(Object.assign(new Error(`Antigravity 引导失败（HTTP ${resp.status}）`), { code }), { status: resp.status, body: text, channel });
   }
   let j;
   try {
@@ -245,9 +247,9 @@ async function onboard(channel, token, tier) {
   });
   const text = await resp.text();
   if (!resp.ok) {
-    throw Object.assign(new Error(`Antigravity 开通失败（HTTP ${resp.status}）：${text.slice(0, 200)}`), {
+    throw attachUpstreamDiagnostics(Object.assign(new Error(`Antigravity 开通失败（HTTP ${resp.status}）`), {
       code: "CHANNEL_HTTP_ERROR",
-    });
+    }), { status: resp.status, body: text, channel });
   }
   let j;
   try {
@@ -384,7 +386,7 @@ export async function chat({ tools = [], toolChoice, onToolCall,
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
-    let msg = text.slice(0, 300);
+    let msg = text;
     try {
       const j = JSON.parse(text);
       msg = j?.error?.message || j?.message || msg;
@@ -402,11 +404,12 @@ export async function chat({ tools = [], toolChoice, onToolCall,
           : [400, 404, 409, 413, 422].includes(resp.status)
             ? "CHANNEL_BAD_REQUEST"
             : "CHANNEL_HTTP_ERROR";
-    throw Object.assign(new Error(`Antigravity 上游 HTTP ${resp.status}：${msg}`), { code });
+    throw attachUpstreamDiagnostics(Object.assign(new Error(`Antigravity 上游 HTTP ${resp.status}：${msg}`), { code }), { status: resp.status, body: text, channel });
   }
   if (!resp.body) throw Object.assign(new Error("Antigravity 上游未返回内容流"), { code: "CHANNEL_BAD_RESPONSE" });
 
   const reader = resp.body.getReader();
+  const jsonResponse = (resp.headers.get("content-type") || "").includes("application/json");
   const dec = new TextDecoder();
   let buf = "";
   let content = "";
@@ -438,6 +441,13 @@ export async function chat({ tools = [], toolChoice, onToolCall,
           cached_tokens: Number(r.usageMetadata.cachedContentTokenCount) || 0,
         };
       }
+      if (r.error || item?.error) {
+        const body = r.error ? r : item;
+        const value = Number(body.error?.code);
+        const code = [400, 404, 409, 413, 422].includes(value) ? "CHANNEL_BAD_REQUEST" : value === 429 ? "CHANNEL_RATE_LIMIT" : value === 401 ? "CHANNEL_AUTH_EXPIRED" : "CHANNEL_BIZ_ERROR";
+        // HTTP 200 的流内错误仍是失败；HTTP状态和业务错误码分开保留。
+        throw attachUpstreamDiagnostics(Object.assign(new Error(body.error?.message || "Antigravity 返回错误事件"), { code }), { status: resp.status, body, channel });
+      }
       for (const cand of (r.candidates || []).slice(0, 1)) {
         if (cand.finishReason === "STOP") terminated = true;
         else if (cand.finishReason && toolBuffer.size) throw Object.assign(new Error("Gemini工具响应被截断"), { code: "CHANNEL_STREAM_ERROR" });
@@ -467,6 +477,7 @@ export async function chat({ tools = [], toolChoice, onToolCall,
       if (buf.length > MAX_SSE_BUF) {
         throw Object.assign(new Error("Antigravity 数据帧异常（单行超过 8MB）"), { code: "CHANNEL_BAD_RESPONSE" });
       }
+      if (jsonResponse) continue;
       let i;
       while ((i = buf.indexOf("\n")) !== -1) {
         const line = buf.slice(0, i).trim();
@@ -478,17 +489,17 @@ export async function chat({ tools = [], toolChoice, onToolCall,
       }
     }
     // 收尾：末尾不带换行符的残帧不能丢（可能是最后一个文本增量或 usage）
+    buf += dec.decode();
     const tail = buf.trim();
-    if (tail.startsWith("data:")) {
+    if (jsonResponse) handlePayload(tail);
+    else if (tail.startsWith("data:")) {
       const payload = tail.slice(5).trim();
-      if (payload && payload !== "[DONE]") {
-        try {
-          handlePayload(payload);
-        } catch {
-          /* ignore */
-        }
-      }
+      if (payload && payload !== "[DONE]") handlePayload(payload);
     }
+  } catch (error) {
+    const failure = typeof error.code === "string" ? error : Object.assign(new Error("Antigravity 响应流中断"), { code: signal?.aborted ? "CHANNEL_ABORTED" : "CHANNEL_STREAM_ERROR" });
+    throw Object.assign(failure, { status: resp.status, content, reasoning, usage, upstreamModel,
+      billable: Boolean(content || reasoning || toolBuffer.size) || normalizeUsage(usage).totalTokens > 0 });
   } finally {
     reader.cancel().catch(() => {});
   }
@@ -496,7 +507,7 @@ export async function chat({ tools = [], toolChoice, onToolCall,
   if (toolBuffer.size && !terminated) throw Object.assign(new Error("Gemini工具响应未完成"), { code: "CHANNEL_STREAM_ERROR", content, reasoning, usage });
   if (!content && !toolBuffer.size) {
     throw Object.assign(new Error(reasoning ? "Antigravity 只返回了思考内容，没有正文" : "Antigravity 返回空内容"), {
-      code: "CHANNEL_EMPTY",
+      code: "CHANNEL_EMPTY", content, reasoning, usage, upstreamModel,
     });
   }
   // 上游会用**正常正文**说错误（实测抓到过：
@@ -532,9 +543,9 @@ export async function fetchUpstreamModels(channel) {
   const resp = await fetchWithAuthRetry(channel, buildInit, MODELS_URL);
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
-    throw Object.assign(new Error(`拉取模型失败（HTTP ${resp.status}）：${text.slice(0, 160)}`), {
+    throw attachUpstreamDiagnostics(Object.assign(new Error(`拉取模型失败（HTTP ${resp.status}）`), {
       code: resp.status === 401 || resp.status === 403 ? "CHANNEL_AUTH_EXPIRED" : "CHANNEL_HTTP_ERROR",
-    });
+    }), { status: resp.status, body: text, channel });
   }
   const j = await resp.json().catch(() => null);
   const models = j?.models || {};

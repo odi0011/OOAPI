@@ -29,6 +29,8 @@ export function publicRunError(err, { stopped = false } = {}) {
   const value = Number(err?.httpStatus || err?.status);
   const status = Number.isInteger(value) && value >= 400 && value <= 599 ? value : 0;
   const prefix = status ? `上游请求失败（HTTP ${status}）：` : "上游请求失败：";
+  if (status === 404 || /^(?:404|NOT_FOUND|not_found_error)$/i.test(String(err?.upstreamErrorCode || ""))) return `${prefix}上游未找到请求的接口或模型，请核对接口路径和模型映射。`;
+  if (/^(?:INVALID_ARGUMENT|invalid_request_error|BAD_REQUEST)$/i.test(String(err?.upstreamErrorCode || ""))) return `${prefix}上游拒绝了请求参数，请核对消息格式及工具定义。`;
   // HTTP参数拒绝可给出行动建议，但实际响应中的数字、模型名和账号信息均不复制。
   if (err?.code === "CHANNEL_BAD_REQUEST" || [400, 413, 422].includes(status)) {
     const upstream = String(err?.message || "");
@@ -41,6 +43,8 @@ export function publicRunError(err, { stopped = false } = {}) {
     // WorkBuddy 的 11133 会带这两个字段；宽泛的 model...invalid 曾误报为模型不可用。
     if (/model[\s_-]+param(?:eter)?[\s_-]+invalid|invalid[\s_-]+request[\s_-]+parameters|request parameters.{0,60}(?:reject|invalid)|请求参数.{0,30}(?:不符合|无效)/i.test(upstream)) return `${prefix}请求参数或工具调用历史不符合上游要求，请联系管理员核查协议转换。`;
     if (/\bmodel(?:[\s:="']+.{0,24})?\s+(?:not found|not exist|is invalid|is unsupported)|\b(?:invalid|unsupported)[\s_-]+model\b|模型.{0,30}(?:不存在|无效|不支持)/i.test(upstream)) return `${prefix}所选模型不可用，请选择其他模型。`;
+    if (/function[_ ]declarations?|parameters[_ ]json[_ ]schema|(?:unknown|unsupported|invalid)[\s\S]{0,60}(?:schema|additionalProperties)|(?:schema|additionalProperties)[\s\S]{0,60}(?:unsupported|invalid|not allowed)/i.test(upstream)) return `${prefix}工具定义的参数格式不符合上游接口要求，请联系管理员核查工具协议转换。`;
+    return `${prefix}上游拒绝了请求参数，请核对模型、消息格式及工具定义。`;
   }
   return MESSAGES[err?.code] || (status ? `上游请求失败（HTTP ${status}），请检查模型或稍后重试。` : "生成失败，请稍后重试或联系管理员。");
 }

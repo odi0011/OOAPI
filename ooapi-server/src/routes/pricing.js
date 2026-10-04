@@ -6,7 +6,7 @@ import { adminRequired, optionalAuth } from "../middleware/auth.js";
 import { userDataVisibility } from "../services/user-data-visibility.js";
 import { sourceVendors } from "../services/model-sources.js";
 import { writeLog, LOG_TYPE } from "../services/log.js";
-import { invalidatePrices, loadPrices, DEFAULT_PRICES, describeRule, parsePriceTiers, storedPriceTiers, modelPricePreset, validateModelPricing, saveModelPricing } from "../services/pricing.js";
+import { invalidatePrices, loadPrices, getPrice, DEFAULT_PRICES, describeRule, parsePriceTiers, storedPriceTiers, modelPricePreset, validateModelPricing, saveModelPricing } from "../services/pricing.js";
 import { pendingPricedModels } from "../services/pricing.js";
 import { modelRegistry, invalidateModelRegistry, canonicalModelName, modelIdentity, OFFICIAL_UNPRICED_MODELS } from "../services/models.js";
 import { syncUpstreamPrices, missingFromUpstream } from "../services/price-sync.js";
@@ -56,10 +56,13 @@ router.use(adminRequired);
 router.get("/capabilities", asyncHandler(async (req, res) => {
   const registry = await modelRegistry();
   const prices = await loadPrices(), requested = req.query.model ? canonicalModelName(req.query.model) : "";
+  const capabilityItems = await Promise.all([...new Map([...registry.values()].filter(m => !requested || m.model === requested).map(m => [m.model, m])).values()]
+    .map(async (m) => {
+      const pricing = prices.get(m.model) || await getPrice(m.model);
+      return { ...modelCapabilities(m.model), vendor: m.type, documentationUrl: modelCapabilityDocumentation(m.model, m.type), pricing: pricing?.exact === false ? null : pricing };
+    }));
   return ok(res, {
-    items: [...new Map([...registry.values()].filter(m => !requested || m.model === requested).map(m => [m.model, {
-      ...modelCapabilities(m.model), vendor: m.type, documentationUrl: modelCapabilityDocumentation(m.model, m.type), pricing: prices.get(m.model) || null,
-    }])).values()],
+    items: capabilityItems,
     reasoningParameters: REASONING_PARAMETERS,
     presets: modelCapabilityPresets().map(p => ({ ...p, pricing: modelPricePreset(p.model) })),
   });

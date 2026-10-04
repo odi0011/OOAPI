@@ -202,7 +202,7 @@ export async function runCompletion({
 
     const started = Date.now();
     const scopedAuto = autoChannelId(model);
-    const upstreamRequestModel = channelUpstreamModel(channel, model, modelRegistrySync()?.get(canonicalModelName(model))?.upstreamModel);
+    const upstreamRequestModel = channelUpstreamModel(channel, model, modelRegistrySync()?.get(canonicalModelName(model))?.upstreamModel, canonicalModelName);
     let attemptQuote = channelPriceQuote(channel, { model, at: started });
     let sawOutput = false;
     let timedOut = false;

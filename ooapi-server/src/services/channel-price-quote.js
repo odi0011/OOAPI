@@ -45,7 +45,7 @@ export function channelPriceQuote(channel, { model = "", at = Date.now() } = {})
   let host = "";
   try { const u = new URL(channel?.base_url || ""); if (u.protocol === "https:") host = u.hostname.toLowerCase(); } catch { /* 不从未知反代猜报价 */ }
   const documentKey = provider === "glm" && host === "api.z.ai" ? "glm-global" : provider;
-  const upstreamModel = channelUpstreamModel(channel, model, modelRegistrySync()?.get(canonicalModelName(model))?.upstreamModel);
+  const upstreamModel = channelUpstreamModel(channel, model, modelRegistrySync()?.get(canonicalModelName(model))?.upstreamModel, canonicalModelName);
   const body = { model: upstreamModel };
   if (channel) applyVendorRequest(body, { channel, model: upstreamModel });
   const routeModel = String(body.model || model || "");
