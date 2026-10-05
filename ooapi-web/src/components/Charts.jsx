@@ -364,11 +364,12 @@ export function BarChart({ bars = [], height = 170, valueFormat = fmtCompact, sh
  * @param {Array} items [{ name, value, sub?, onClick? }]
  * @param {function} format 数值格式（默认 fmtCompact + suffix）
  */
-export function RankBar({ items = [], nameKey = "name", valueKey = "value", suffix = "", max: maxProp, empty = "暂无数据", format, limit = 8 }) {
+export function RankBar({ items = [], nameKey = "name", valueKey = "value", suffix = "", max: maxProp, total: totalProp, empty = "暂无数据", format, limit = 8 }) {
   if (!items.length) return <Blank height={120} text={empty} />;
   const list = items.slice(0, limit);
   const max = maxProp || Math.max(1, ...list.map((m) => Number(m[valueKey]) || 0));
-  const total = items.reduce((n, m) => n + (Number(m[valueKey]) || 0), 0) || 1;
+  // 后端只返回前 N 项时，允许使用区间总量作分母，避免把榜单内占比冒充全量占比。
+  const total = (totalProp == null ? items.reduce((n, m) => n + (Number(m[valueKey]) || 0), 0) : Number(totalProp)) || 1;
   const fmt = format || ((v) => `${fmtCompact(v)}${suffix}`);
   return (
     <ol className="oo-rank">

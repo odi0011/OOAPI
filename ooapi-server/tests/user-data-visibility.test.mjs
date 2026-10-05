@@ -23,7 +23,7 @@ const logRow = { id: 42, user_id: 1, username: "fixture_1", created_at: 1, type:
   input_text: sentinel, output_text: sentinel, model: "fixture-model", prompt_tokens: 123, completion_tokens: 45, cache_tokens: 0,
   detail: JSON.stringify({ billing_details: bill, request_prompt_text: sentinel }), billing_details: bill };
 const keyRow = { id: 1, user_id: 1, name: "Fixture key", status: 1, key_str: "fixture-local-unused", remain_quota: 7654321, used_quota: 3456789, unlimited_quota: 0, group_name: "fixture", expired_time: -1 };
-const originalQuery = pool.query;
+const originalQuery = pool.query, originalConnection = pool.getConnection;
 pool.query = async (sql, args = []) => {
   sql = String(sql); queries.push({ sql, args });
   assert.equal((sql.match(/\?/g) || []).length, args.length, "SQL placeholder count");
@@ -58,6 +58,10 @@ pool.query = async (sql, args = []) => {
   if (/FROM chat_messages/.test(sql)) return [[{ id: 1, seq: 1, role: "assistant", parts: JSON.stringify([{ id: "p", type: "text", text: "Own conversation" }]), cost: .03, prompt_tokens: 123, completion_tokens: 45 }]];
   throw new Error(`Unhandled fixture SQL: ${sql.slice(0, 100)}`);
 };
+pool.getConnection = async () => ({
+  query: (sql, args) => /^(SET TRANSACTION|START TRANSACTION)/.test(String(sql)) ? Promise.resolve([[]]) : pool.query(sql, args),
+  commit: async () => {}, rollback: async () => {}, release: () => {}, destroy: () => {},
+});
 let scenarios = 0;
 const test = async (name, run) => { await run(); scenarios++; console.log(`  ok  ${name}`); };
 const app = express(); app.use(express.json());
@@ -223,7 +227,7 @@ try {
   });
   console.log(`  数据可见权限真实HTTP ${scenarios} 场景通过（数据库/收费上游请求0）`);
 } finally {
-  pool.query = originalQuery;
+  pool.query = originalQuery; pool.getConnection = originalConnection;
   server.closeAllConnections?.(); await new Promise((resolve) => server.close(resolve));
   await pool.end();
 }

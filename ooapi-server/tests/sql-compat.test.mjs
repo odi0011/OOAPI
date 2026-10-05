@@ -60,9 +60,13 @@ async function exec(sql, args = []) {
 // ---------------------------------------------------------------------------
 await t("看板：按天趋势（个人）", () =>
   exec(
-    `SELECT FLOOR(created_at/86400)*86400 AS day_ts, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
-       FROM logs WHERE created_at >= ? AND ${USAGE_SQL} AND user_id = ? GROUP BY day_ts ORDER BY day_ts`,
-    [0, 1]
+    `SELECT FLOOR((created_at + 28800)/86400) AS bj_day, COUNT(*) AS calls,
+            COALESCE(SUM(type = 2 AND status IN ('', 'success')),0) AS successes,
+            COALESCE(SUM(type = 4 AND is_usage = 1 AND status <> 'stopped'),0) AS errors,
+            COALESCE(SUM(status = 'stopped'),0) AS stopped, COALESCE(SUM(quota),0) AS units
+       FROM logs WHERE created_at >= ? AND created_at < ? AND ${USAGE_SQL} AND user_id = ?
+       GROUP BY FLOOR((created_at + 28800)/86400) ORDER BY bj_day`,
+    [0, Math.floor(Date.now()/1000)+1, 1]
   )
 );
 
@@ -72,36 +76,53 @@ await t("看板：用户排行（JOIN users 后按 l.user_id 分组）", () =>
             COALESCE(SUM(l.prompt_tokens + l.completion_tokens),0) AS tokens,
             u.username, u.display_name, u.avatar_media_id
        FROM logs l LEFT JOIN users u ON u.id = l.user_id
-      WHERE ${usageLogWhere('l')} AND l.created_at >= ?
+      WHERE ${usageLogWhere('l')} AND l.created_at >= ? AND l.created_at < ?
       GROUP BY l.user_id, u.username, u.display_name, u.avatar_media_id ORDER BY units DESC LIMIT 10`,
-    [0]
+    [0, Math.floor(Date.now()/1000)+1]
   )
 );
 
 await t("看板：渠道表现（JOIN channels 后按 l.channel_id 分组）", () =>
   exec(
     `SELECT l.channel_id, COUNT(*) AS calls, COALESCE(SUM(l.type = 2 AND l.status IN ('', 'success')),0) AS successes, COALESCE(SUM(l.quota),0) AS units,
+            COALESCE(SUM(l.prompt_tokens + l.completion_tokens),0) AS total_tokens,
             COALESCE(AVG(NULLIF(l.elapsed_ms,0)),0) AS avg_elapsed,
+            AVG(CASE WHEN l.first_token_known = 1 OR l.first_token_ms > 0 THEN l.first_token_ms END) AS avg_first_token,
             c.name AS channel_name, c.type AS channel_type
        FROM logs l LEFT JOIN channels c ON c.id = l.channel_id
-      WHERE ${usageLogWhere('l')} AND l.created_at >= ? AND l.channel_id > 0
+      WHERE ${usageLogWhere('l')} AND l.created_at >= ? AND l.created_at < ? AND l.channel_id > 0
       GROUP BY l.channel_id, c.name, c.type ORDER BY units DESC LIMIT 12`,
-    [0]
+    [0, Math.floor(Date.now()/1000)+1]
   )
 );
 
-await t("看板：按小时×星期（热点图）", () =>
+await t("看板：北京时间调用时段", () =>
   exec(
-    `SELECT HOUR(FROM_UNIXTIME(created_at)) AS hour, WEEKDAY(FROM_UNIXTIME(created_at)) AS weekday,
+    `SELECT FLOOR(MOD(created_at + 28800, 86400)/3600) AS hour,
             COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
-       FROM logs WHERE ${USAGE_SQL} AND created_at >= ? GROUP BY hour, weekday`,
-    [0]
+       FROM logs WHERE ${USAGE_SQL} AND created_at >= ? AND created_at < ?
+       GROUP BY FLOOR(MOD(created_at + 28800, 86400)/3600) ORDER BY hour`,
+    [0, Math.floor(Date.now()/1000)+1]
   )
 );
 
 await t("看板：渠道错误数", () =>
-  exec("SELECT channel_id, COUNT(*) AS errors FROM logs WHERE type = 4 AND created_at >= ? AND channel_id > 0 GROUP BY channel_id", [0])
+  exec("SELECT channel_id, COUNT(*) AS errors FROM logs WHERE type = 4 AND is_usage = 1 AND status <> 'stopped' AND created_at >= ? AND created_at < ? AND channel_id > 0 GROUP BY channel_id", [0, Math.floor(Date.now()/1000)+1])
 );
+
+await t("看板：模型完整汇总与历史实际来源快照", () => exec(
+  `SELECT l.model, COUNT(*) AS calls, COALESCE(SUM(l.quota),0) AS units,
+    COALESCE(SUM(l.prompt_tokens),0) AS prompt_tokens, COALESCE(SUM(l.completion_tokens),0) AS completion_tokens,
+    COALESCE(SUM(l.cache_tokens),0) AS cache_tokens,
+    COALESCE(SUM(l.type = 2 AND l.status IN ('', 'success')),0) AS successes,
+    COALESCE(SUM(l.type = 4 AND l.is_usage = 1 AND l.status <> 'stopped'),0) AS errors,
+    GROUP_CONCAT(DISTINCT CASE WHEN JSON_VALID(l.detail) THEN JSON_UNQUOTE(JSON_EXTRACT(l.detail, '$.source_vendors')) END SEPARATOR '\\n') AS source_snapshots,
+    GROUP_CONCAT(DISTINCT CASE WHEN (CASE WHEN JSON_VALID(l.detail) THEN JSON_EXTRACT(l.detail, '$.source_vendors') END) IS NULL THEN c.type END) AS legacy_source_vendors
+   FROM logs l LEFT JOIN channels c ON c.id = l.channel_id
+   WHERE l.user_id = ? AND l.token_id = ? AND ${usageLogWhere('l')} AND l.created_at >= ? AND l.created_at < ?
+   GROUP BY l.model ORDER BY units DESC, calls DESC, l.model`,
+  [1, 1, 0, Math.floor(Date.now()/1000)+1]
+));
 
 await t("看板：社区概况（多子查询）", () =>
   exec(

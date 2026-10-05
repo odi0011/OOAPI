@@ -49,14 +49,14 @@ const logs = [
 ];
 const queries = [], settings = new Map();
 let sourceReads = 0, throwSourceRead = false;
-const originalQuery = pool.query;
+const originalQuery = pool.query, originalConnection = pool.getConnection;
 pool.query = async (sql, args = []) => {
   if (String(sql).includes("FROM model_attributions")) return [[]];
   sql = String(sql); queries.push({ sql, args });
   assert.equal((sql.match(/\?/g) || []).length, args.length, "SQL placeholder count");
   if (/SELECT key_str, value FROM options/.test(sql)) return [[...settings].map(([key_str, value]) => ({ key_str, value }))];
   if (/INSERT INTO options/.test(sql)) { settings.set(args[0], args[1]); return [{ affectedRows: 1 }]; }
-  if (/SELECT \* FROM users WHERE id/.test(sql)) return [[users.get(Number(args[0]))].filter(Boolean)];
+  if (/SELECT \* FROM users WHERE id|SELECT quota, used_quota, request_count, group_name FROM users WHERE id/.test(sql)) return [[users.get(Number(args[0]))].filter(Boolean)];
   if (/SELECT id, display_name, avatar_media_id FROM users WHERE id IN/.test(sql)) return [[...users.values()].filter(u => args.includes(u.id))];
   if (/FROM channel_groups/.test(sql)) return [[...groups.filter((g) => !sql.includes("WHERE name") || g.name === args[0])]];
   if (/FROM channels WHERE id IN/.test(sql)) {
@@ -74,6 +74,10 @@ pool.query = async (sql, args = []) => {
   }
   throw new Error(`Unhandled fixture SQL: ${sql.slice(0, 100)}`);
 };
+pool.getConnection = async () => ({
+  query: (sql, args) => /^(SET TRANSACTION|START TRANSACTION)/.test(String(sql)) ? Promise.resolve([[]]) : pool.query(sql, args),
+  commit: async () => {}, rollback: async () => {}, release: () => {}, destroy: () => {},
+});
 const app = express(); app.use(express.json());
 for (const [name, router] of routes) app.use(`/api/${name}`, router);
 app.use((err, req, res, next) => res.status(500).json({ success: false, message: err.message }));
@@ -227,7 +231,7 @@ try {
   });
   console.log(`  模型实际接入来源 ${scenarios} 场景通过（真实数据库/收费上游请求0）`);
 } finally {
-  invalidatePrices(); invalidateModelRegistry(); pool.query = originalQuery;
+  invalidatePrices(); invalidateModelRegistry(); pool.query = originalQuery; pool.getConnection = originalConnection;
   server.closeAllConnections?.(); await new Promise((resolve) => server.close(resolve));
   if (process.argv[1] === fileURLToPath(import.meta.url)) await pool.end();
 }

@@ -21,6 +21,8 @@ import { groupConfigOf } from "../services/group-rate.js";
 import { USAGE_SQL, usageLogWhere } from "../services/log.js";
 import { userDataVisibility, visibleAccountData } from "../services/user-data-visibility.js";
 import { logsWithSourceVendors, sourceVendors } from "../services/model-sources.js";
+import { canonicalModelName } from "../services/models.js";
+import { withDashboardSnapshot } from "../services/dashboard-snapshot.js";
 
 const router = Router();
 
@@ -30,7 +32,8 @@ function rangeOf(query) {
   const key = Object.hasOwn(RANGE_DAYS, String(query.range)) ? String(query.range) : "30d";
   const days = RANGE_DAYS[key];
   // 包含今天的 N 个北京日期。滚动 N*24h 会跨 N+1 个日期，导致趋势和日均消费错位。
-  return { key, days, since: (bjDay(Date.now() / 1000) - days + 1) * 86400 - TZ };
+  const generatedAt = Math.floor(Date.now() / 1000);
+  return { key, days, since: (bjDay(generatedAt) - days + 1) * 86400 - TZ, until: generatedAt + 1, generatedAt };
 }
 
 // 北京时间偏移：看板页头写着「时区 UTC+8」，但原实现按 UTC 零点切天（FLOOR(created_at/86400)），
@@ -41,28 +44,87 @@ const bjDay = (ts) => Math.floor((Number(ts) + TZ) / 86400);
 // 新失败调用与部分计费只保留一行，不能再用「消费数 + 错误数」作分母。
 const FAILURE_SQL = "(type = 4 AND is_usage = 1 AND status <> 'stopped')";
 const SUCCESS_SQL = "(type = 2 AND status IN ('', 'success'))";
+const STOPPED_SQL = "(status = 'stopped')";
+const percent = (n, total) => total > 0 ? Number(((n / total) * 100).toFixed(2)) : null;
+function rangeMetadata(range) {
+  return { key: range.key, days: range.days, from: range.since, to: range.generatedAt,
+    timezone: "Asia/Shanghai", generated_at: range.generatedAt, includes_today: true };
+}
 
-function recentUsageRow(l) {
-  return { id: l.id, created_at: Number(l.created_at) || 0, model: l.model || "—", type: Number(l.type),
+const recentFields = (prefix = "") => ["id", "created_at", "model", "type", "status", "elapsed_ms", "first_token_ms", "first_token_known", "quota", "prompt_tokens", "completion_tokens", "cache_tokens", "channel_id", "detail"].map((field) => prefix + field).join(", ");
+
+function recentUsageRow(l, includeUser = false) {
+  let detail = {};
+  try { detail = typeof l.detail === "string" ? JSON.parse(l.detail) : l.detail || {}; } catch { /* 旧非 JSON 日志仍显示常规字段。 */ }
+  return { id: l.id, created_at: Number(l.created_at) || 0, model: canonicalModelName(l.model) || l.model || "—", type: Number(l.type),
     status: l.status || (Number(l.type) === 2 ? "success" : "error"), elapsed_ms: Number(l.elapsed_ms) || 0,
     first_token_ms: Number(l.first_token_known) === 1 || Number(l.first_token_ms) > 0 ? Number(l.first_token_ms) || 0 : null,
     units: Number(l.quota) || 0, prompt_tokens: Number(l.prompt_tokens) || 0,
     completion_tokens: Number(l.completion_tokens) || 0, cache_tokens: Number(l.cache_tokens) || 0,
-    model_vendor: l.model_vendor || "", source_vendors: sourceVendors(l.source_vendors) };
+    model_vendor: l.model_vendor || "", source_vendors: sourceVendors(l.source_vendors),
+    // 只返回模型名称，detail 内的正文、报价和渠道私有数据不能进入看板表格。
+    requested_model: String(detail.requested_model || l.model || ""),
+    billing_model: canonicalModelName(detail.bill_model || detail.pricing_model || l.model) || "",
+    ...(includeUser ? { upstream_model: String(detail.upstream_model || ""),
+      original_model: String(detail.upstream_model || detail.requested_model || l.model || ""),
+      user_id: Number(l.user_id) || 0, username: l.username || "已删除",
+      display_name: l.display_name || l.username || "", avatar_url: Number(l.avatar_media_id) ? `/api/media/avatar/${l.user_id}?v=${l.avatar_media_id}` : "" } : {}) };
+}
+
+/** 模型聚合保留全部行，让调用/消费排序都能从同一份完整数据中选择。 */
+async function modelSummaries(query, since, until) {
+  const [models] = await query(`SELECT l.model, COUNT(*) AS calls,
+      COALESCE(SUM(l.quota),0) AS units, COALESCE(SUM(l.prompt_tokens),0) AS prompt_tokens,
+      COALESCE(SUM(l.completion_tokens),0) AS completion_tokens, COALESCE(SUM(l.cache_tokens),0) AS cache_tokens,
+      COALESCE(SUM(l.type = 2 AND l.status IN ('', 'success')),0) AS successes,
+      COALESCE(SUM(l.type = 4 AND l.is_usage = 1 AND l.status <> 'stopped'),0) AS errors,
+      COALESCE(SUM(l.status = 'stopped'),0) AS stopped,
+      COALESCE(SUM(l.status = 'partial'),0) AS partial,
+      GROUP_CONCAT(DISTINCT CASE WHEN JSON_VALID(l.detail) THEN JSON_UNQUOTE(JSON_EXTRACT(l.detail, '$.source_vendors')) END SEPARATOR '\\n') AS source_snapshots,
+      GROUP_CONCAT(DISTINCT CASE WHEN (CASE WHEN JSON_VALID(l.detail) THEN JSON_EXTRACT(l.detail, '$.source_vendors') END) IS NULL THEN c.type END) AS legacy_source_vendors
+    FROM logs l LEFT JOIN channels c ON c.id = l.channel_id
+    WHERE ${usageLogWhere('l')} AND l.created_at >= ? AND l.created_at < ?
+    GROUP BY l.model ORDER BY units DESC, calls DESC, l.model`, [since, until]);
+  return models;
+}
+
+// 品牌/归属目录只在统计事务释放连接后读取，避免所有连接被看板占用后互等元数据查询。
+async function enrichModelSummaries(models) {
+  const enriched = await logsWithSourceVendors(models.map((m) => {
+    const sources = String(m.legacy_source_vendors || "").split(",");
+    for (const raw of String(m.source_snapshots || "").split("\n")) {
+      try { sources.push(...sourceVendors(JSON.parse(raw))); } catch { /* GROUP_CONCAT 截断/旧坏快照不猜来源。 */ }
+    }
+    return { ...m, source_vendors: sourceVendors(sources) };
+  }));
+  const merged = new Map();
+  // 历史别名只合并统计身份；不改原日志、不把渠道专属 auto 合并、不重新计价。
+  for (const m of enriched) {
+    const model = canonicalModelName(m.model) || m.model || "未记录模型";
+    const target = merged.get(model) || { model, model_vendor: m.model_vendor || "", source_vendors: [],
+      calls: 0, units: 0, prompt_tokens: 0, completion_tokens: 0, cache_tokens: 0,
+      successes: 0, errors: 0, stopped: 0, partial: 0 };
+    for (const field of ["calls", "units", "prompt_tokens", "completion_tokens", "cache_tokens", "successes", "errors", "stopped", "partial"]) target[field] += Number(m[field]) || 0;
+    target.source_vendors = sourceVendors([...target.source_vendors, ...m.source_vendors]);
+    merged.set(model, target);
+  }
+  return [...merged.values()].map((m) => ({ ...m, total_tokens: m.prompt_tokens + m.completion_tokens,
+    success_rate: percent(m.successes, m.calls) })).sort((a, b) => b.units - a.units || b.calls - a.calls || a.model.localeCompare(b.model));
 }
 
 /** 按天趋势（消费 + 调用 + token + 缓存），缺数据的日期补 0（否则折线会断） */
-async function dailyTrend(userId, since, days, tokenId = 0) {
-  const args = [since];
-  let where = `created_at >= ? AND ${USAGE_SQL}`;
+async function dailyTrend(userId, since, days, tokenId = 0, until, query) {
+  const args = [since, until];
+  let where = `created_at >= ? AND created_at < ? AND ${USAGE_SQL}`;
   if (userId) {
     where += " AND user_id = ?";
     args.push(userId);
   }
   if (tokenId) { where += " AND token_id = ?"; args.push(tokenId); }
-  const [rows] = await pool.query(
+  const [rows] = await query(
     `SELECT FLOOR((created_at + ${TZ})/86400) AS bj_day,
-            COUNT(*) AS calls,
+            COUNT(*) AS calls, COALESCE(SUM(${SUCCESS_SQL}),0) AS successes,
+            COALESCE(SUM(${FAILURE_SQL}),0) AS errors, COALESCE(SUM(${STOPPED_SQL}),0) AS stopped,
             COALESCE(SUM(quota),0) AS units,
             COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
             COALESCE(SUM(completion_tokens),0) AS completion_tokens,
@@ -72,10 +134,9 @@ async function dailyTrend(userId, since, days, tokenId = 0) {
   );
   const map = new Map(rows.map((r) => [Number(r.bj_day), r]));
   const out = [];
-  const today = bjDay(Date.now() / 1000);
   // 补齐空白日期：前端折线图需要连续的时间轴，否则「中间没数据的那天」
   // 会被压掉，视觉上把两周的消费画成连续增长（误导）
-  for (let d = bjDay(since); d <= today; d += 1) {
+  for (let d = bjDay(since); d < bjDay(since) + days; d += 1) {
     const r = map.get(d);
     const t = d * 86400 - TZ; // 北京时间当天零点的 unix 秒
     out.push({
@@ -83,10 +144,12 @@ async function dailyTrend(userId, since, days, tokenId = 0) {
       day: new Date(d * 86400 * 1000).toISOString().slice(0, 10),
       day_ts: t,
       calls: Number(r?.calls) || 0,
+      successes: Number(r?.successes) || 0, errors: Number(r?.errors) || 0, stopped: Number(r?.stopped) || 0,
       units: Number(r?.units) || 0,
       prompt_tokens: Number(r?.prompt_tokens) || 0,
       completion_tokens: Number(r?.completion_tokens) || 0,
       cache_tokens: Number(r?.cache_tokens) || 0,
+      total_tokens: (Number(r?.prompt_tokens) || 0) + (Number(r?.completion_tokens) || 0),
     });
   }
   return out;
@@ -96,7 +159,7 @@ async function dailyTrend(userId, since, days, tokenId = 0) {
  * 上一周期（等长、紧邻之前）的汇总：看板数字要能回答「比上期多了还是少了」，
  * 只有绝对值时用户无法判断 1,234 次调用是涨是跌。
  */
-async function previousTotals(userId, since, days, tokenId = 0) {
+async function previousTotals(userId, since, days, tokenId = 0, query) {
   const from = since - days * 86400;
   const args = [from, since];
   let where = `${USAGE_SQL} AND created_at >= ? AND created_at < ?`;
@@ -105,7 +168,7 @@ async function previousTotals(userId, since, days, tokenId = 0) {
     args.push(userId);
   }
   if (tokenId) { where += " AND token_id = ?"; args.push(tokenId); }
-  const [[p]] = await pool.query(
+  const [[p]] = await query(
     `SELECT COUNT(*) AS calls, COALESCE(SUM(${SUCCESS_SQL}),0) AS successes, COALESCE(SUM(quota),0) AS units,
             COALESCE(SUM(prompt_tokens + completion_tokens),0) AS tokens, COUNT(DISTINCT user_id) AS users
        FROM logs WHERE ${where}`,
@@ -118,7 +181,7 @@ async function previousTotals(userId, since, days, tokenId = 0) {
     eargs.push(userId);
   }
   if (tokenId) { ew += " AND token_id = ?"; eargs.push(tokenId); }
-  const [[e]] = await pool.query(`SELECT COUNT(*) AS n FROM logs WHERE ${ew}`, eargs);
+  const [[e]] = await query(`SELECT COUNT(*) AS n FROM logs WHERE ${ew}`, eargs);
   return {
     calls: Number(p.calls) || 0,
     successes: Number(p.successes) || 0,
@@ -130,15 +193,15 @@ async function previousTotals(userId, since, days, tokenId = 0) {
   };
 }
 
-async function errorCount(userId, since, tokenId = 0) {
-  const args = [since];
-  let where = `${FAILURE_SQL} AND created_at >= ?`;
+async function errorCount(userId, since, tokenId = 0, until, query) {
+  const args = [since, until];
+  let where = `${FAILURE_SQL} AND created_at >= ? AND created_at < ?`;
   if (userId) {
     where += " AND user_id = ?";
     args.push(userId);
   }
   if (tokenId) { where += " AND token_id = ?"; args.push(tokenId); }
-  const [[e]] = await pool.query(`SELECT COUNT(*) AS n FROM logs WHERE ${where}`, args);
+  const [[e]] = await query(`SELECT COUNT(*) AS n FROM logs WHERE ${where}`, args);
   return Number(e.n) || 0;
 }
 
@@ -149,148 +212,127 @@ router.get(
   "/self",
   authRequired,
   asyncHandler(async (req, res) => {
-    const { key, days, since } = rangeOf(req.query);
+    const range = rangeOf(req.query);
+    const { key, days, since, until } = range;
     const uid = req.user.id;
     const visibility = userDataVisibility(req.user);
-    if (!visibility.usage_summary) {
-      const [recent] = visibility.usage_records ? await pool.query(
-        `SELECT id, created_at, model, type, status, elapsed_ms, first_token_ms, first_token_known, quota, prompt_tokens, completion_tokens, cache_tokens, channel_id,
-          CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.source_vendors') ELSE NULL END AS source_vendors,
-          CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.billing_details') ELSE NULL END AS billing_details
-          FROM logs WHERE user_id = ? AND ${USAGE_SQL} ORDER BY id DESC LIMIT 8`, [uid]) : [[]];
-      return ok(res, { range: { key, days }, account: visibleAccountData({ quota: Number(req.user.quota) || 0, group_name: req.user.group_name || "" }, req.user),
-        recent_logs: (await logsWithSourceVendors(recent)).map(recentUsageRow) });
-    }
+    const data = await withDashboardSnapshot(async (query) => {
+      const [[accountRow]] = await query("SELECT quota, used_quota, request_count, group_name FROM users WHERE id = ?", [uid]);
+      const account = accountRow || {};
+      if (!visibility.usage_summary) {
+        const [recent] = visibility.usage_records ? await query(
+          `SELECT ${recentFields()} FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ? AND created_at < ? ORDER BY id DESC LIMIT 8`, [uid, since, until]) : [[]];
+        return { range: rangeMetadata(range), account: visibleAccountData({ quota: Number(account.quota) || 0, group_name: account.group_name || "" }, req.user),
+          recent_logs: recent };
+      }
 
-    const [[agg]] = await pool.query(
-      `SELECT COUNT(*) AS calls, COALESCE(SUM(${SUCCESS_SQL}),0) AS successes,
-              COALESCE(SUM(quota),0) AS units,
-              COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
-              COALESCE(SUM(completion_tokens),0) AS completion_tokens,
-              COALESCE(SUM(cache_tokens),0) AS cache_tokens,
-              COUNT(DISTINCT model) AS models,
-              COALESCE(AVG(NULLIF(elapsed_ms,0)),0) AS avg_elapsed
-         FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ?`,
-      [uid, since]
-    );
+      const [[agg]] = await query(
+        `SELECT COUNT(*) AS calls, COALESCE(SUM(${SUCCESS_SQL}),0) AS successes,
+                COALESCE(SUM(${STOPPED_SQL}),0) AS stopped, COALESCE(SUM(status = 'partial'),0) AS partial,
+                COALESCE(SUM(quota),0) AS units,
+                COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
+                COALESCE(SUM(completion_tokens),0) AS completion_tokens,
+                COALESCE(SUM(cache_tokens),0) AS cache_tokens,
+                COUNT(DISTINCT model) AS models,
+                COALESCE(AVG(NULLIF(elapsed_ms,0)),0) AS avg_elapsed,
+                AVG(CASE WHEN first_token_known = 1 OR first_token_ms > 0 THEN first_token_ms END) AS avg_first_token
+           FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ? AND created_at < ?`,
+        [uid, since, until]
+      );
 
-    // 模型分布：保证分项与总和 100% 对齐。超出 12 个时将剩余部分归集入「其他模型」
-    const [allModels] = await pool.query(
-      `SELECT model, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units,
-              COALESCE(SUM(prompt_tokens),0) AS prompt_tokens, COALESCE(SUM(completion_tokens),0) AS completion_tokens
-         FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ?
-        GROUP BY model ORDER BY units DESC`,
-      [uid, since]
-    );
-    let byModel = [];
-    if (allModels.length <= 12) {
-      byModel = allModels;
-    } else {
-      const top = allModels.slice(0, 11);
-      const rest = allModels.slice(11);
-      byModel = [
-        ...top,
-        {
-          model: "其他模型",
-          calls: rest.reduce((s, x) => s + (Number(x.calls) || 0), 0),
-          units: rest.reduce((s, x) => s + (Number(x.units) || 0), 0),
-          prompt_tokens: rest.reduce((s, x) => s + (Number(x.prompt_tokens) || 0), 0),
-          completion_tokens: rest.reduce((s, x) => s + (Number(x.completion_tokens) || 0), 0),
+      const byModel = await modelSummaries((sql, args) => query(sql.replace("WHERE ", "WHERE l.user_id = ? AND "), [uid, ...args]), since, until);
+
+      const [byChannel] = await query(
+        `SELECT channel_id, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
+           FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ? AND created_at < ? AND channel_id > 0
+          GROUP BY channel_id ORDER BY units DESC LIMIT 8`,
+        [uid, since, until]
+      );
+      // 按小时分布：看出「我什么时候在用」（对个人是最直观的节奏信息）
+      const [byHour] = await query(
+        `SELECT FLOOR(MOD(created_at + ${TZ}, 86400) / 3600) AS hour, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
+           FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ? AND created_at < ?
+          GROUP BY FLOOR(MOD(created_at + ${TZ}, 86400) / 3600) ORDER BY hour`,
+        [uid, since, until]
+      );
+      const errors = await errorCount(uid, since, 0, until, query);
+      const prev = await previousTotals(uid, since, days, 0, query);
+      // 缓存命中率：分母是 prompt（prompt 已含缓存部分，不能再加一次）
+      const prompt = Number(agg.prompt_tokens) || 0;
+      const cache = Number(agg.cache_tokens) || 0;
+      const comp = Number(agg.completion_tokens) || 0;
+      const trend = await dailyTrend(uid, since, days, 0, until, query);
+
+      // 用户有效令牌数与分组倍率
+      const [[tokRow]] = await query(
+        "SELECT COUNT(*) AS total_tokens, COALESCE(SUM(status = 1 AND (expired_time <= 0 OR expired_time > ?) AND (unlimited_quota = 1 OR remain_quota > 0)), 0) AS active_tokens FROM tokens WHERE user_id = ?",
+        [range.generatedAt, uid]
+      );
+      const userGroupName = account.group_name || "";
+
+      // 最近 8 条调用动态：让开发者第一时间知道接口是否调通、状态与消耗
+      const [recentLogs] = await query(
+        `SELECT ${recentFields()} FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ? AND created_at < ?
+          ORDER BY id DESC LIMIT 8`,
+        [uid, since, until]
+      );
+
+      const totalCalls = Number(agg.calls) || 0;
+      const successes = Number(agg.successes) || 0;
+      const succRate = totalCalls > 0 ? Number(((successes / totalCalls) * 100).toFixed(2)) : null;
+
+      return {
+        range: rangeMetadata(range),
+        totals: {
+          calls: totalCalls,
+          successes,
+          stopped: Number(agg.stopped) || 0, partial: Number(agg.partial) || 0,
+          remaining: Math.max(0, totalCalls - successes - errors - (Number(agg.stopped) || 0)),
+          units: Number(agg.units) || 0,
+          prompt_tokens: prompt,
+          completion_tokens: comp,
+          total_tokens: prompt + comp,
+          cache_tokens: cache,
+          uncached_tokens: Math.max(0, prompt - cache),
+          cache_rate: prompt > 0 ? Number(((Math.min(cache, prompt) / prompt) * 100).toFixed(1)) : null,
+          models: byModel.length,
+          errors,
+          avg_elapsed: Math.round(Number(agg.avg_elapsed) || 0),
+          avg_first_token: agg.avg_first_token == null ? null : Math.round(Number(agg.avg_first_token)),
+          success_rate: succRate,
         },
-      ];
-    }
-
-    const [byChannel] = await pool.query(
-      `SELECT channel_id, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
-         FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ? AND channel_id > 0
-        GROUP BY channel_id ORDER BY units DESC LIMIT 8`,
-      [uid, since]
-    );
-    // 按小时分布：看出「我什么时候在用」（对个人是最直观的节奏信息）
-    const [byHour] = await pool.query(
-      `SELECT FLOOR(MOD(created_at + ${TZ}, 86400) / 3600) AS hour, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
-         FROM logs WHERE user_id = ? AND ${USAGE_SQL} AND created_at >= ?
-        GROUP BY FLOOR(MOD(created_at + ${TZ}, 86400) / 3600) ORDER BY hour`,
-      [uid, since]
-    );
-    const errors = await errorCount(uid, since);
-    const prev = await previousTotals(uid, since, days);
-    // 缓存命中率：分母是 prompt（prompt 已含缓存部分，不能再加一次）
-    const prompt = Number(agg.prompt_tokens) || 0;
-    const cache = Number(agg.cache_tokens) || 0;
-    const comp = Number(agg.completion_tokens) || 0;
-    const trend = await dailyTrend(uid, since, days);
-
-    // 用户有效令牌数与分组倍率
-    const [[tokRow]] = await pool.query(
-      "SELECT COUNT(*) AS total_tokens, COALESCE(SUM(status = 1 AND (expired_time <= 0 OR expired_time > ?) AND (unlimited_quota = 1 OR remain_quota > 0)), 0) AS active_tokens FROM tokens WHERE user_id = ?",
-      [Math.floor(Date.now() / 1000), uid]
-    );
-    const userGroupName = req.user.group_name || "";
-    const groupCfg = await groupConfigOf(userGroupName);
-    const groupRate = groupCfg?.rate ?? 1.0;
-
-    // 最近 8 条调用动态：让开发者第一时间知道接口是否调通、状态与消耗
-    const [recentLogs] = await pool.query(
-      `SELECT id, created_at, model, type, status, elapsed_ms, first_token_ms, first_token_known, quota, prompt_tokens, completion_tokens, cache_tokens, channel_id,
-              CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.source_vendors') ELSE NULL END AS source_vendors,
-              CASE WHEN JSON_VALID(detail) THEN JSON_EXTRACT(detail, '$.billing_details') ELSE NULL END AS billing_details
-         FROM logs WHERE user_id = ? AND ${USAGE_SQL}
-        ORDER BY id DESC LIMIT 8`,
-      [uid]
-    );
-
-    const totalCalls = Number(agg.calls) || 0;
-    const successes = Number(agg.successes) || 0;
-    const succRate = totalCalls > 0 ? Number(((successes / totalCalls) * 100).toFixed(2)) : null;
-
-    return ok(res, {
-      range: { key, days },
-      totals: {
-        calls: totalCalls,
-        successes,
-        units: Number(agg.units) || 0,
-        prompt_tokens: prompt,
-        completion_tokens: comp,
-        total_tokens: prompt + comp,
-        cache_tokens: cache,
-        uncached_tokens: Math.max(0, prompt - cache),
-        cache_rate: prompt > 0 ? Number(((cache / prompt) * 100).toFixed(1)) : 0,
-        models: Number(agg.models) || 0,
-        errors,
-        avg_elapsed: Math.round(Number(agg.avg_elapsed) || 0),
-        success_rate: succRate,
-      },
-      previous: prev,
-      // 账户与钱包：全生命周期指标单独封装，与「区间时段」彻底隔离
-      account: visibleAccountData({
-        quota: Number(req.user.quota) || 0,
-        used_quota: Number(req.user.used_quota) || 0,
-        request_count: Number(req.user.request_count) || 0,
-        group_name: userGroupName,
-        group_rate: groupRate,
-        active_tokens: Number(tokRow?.active_tokens) || 0,
-        total_tokens: Number(tokRow?.total_tokens) || 0,
-      }, req.user),
-      trend,
-      by_model: byModel.map((m) => ({
-        model: m.model || "未记录模型",
-        calls: Number(m.calls) || 0,
-        units: Number(m.units) || 0,
-        prompt_tokens: Number(m.prompt_tokens) || 0,
-        completion_tokens: Number(m.completion_tokens) || 0,
-      })),
-      ...(Number(req.user.role) >= 100 ? { by_channel: byChannel.map((c) => ({
-        channel_id: Number(c.channel_id) || 0,
-        calls: Number(c.calls) || 0,
-        units: Number(c.units) || 0,
-      })) } : {}),
-      by_hour: Array.from({ length: 24 }, (_, h) => {
-        const hit = byHour.find((x) => Number(x.hour) === h);
-        return { hour: h, calls: Number(hit?.calls) || 0, units: Number(hit?.units) || 0 };
-      }),
-      recent_logs: visibility.usage_records ? (await logsWithSourceVendors(recentLogs)).map(recentUsageRow) : [],
+        previous: prev,
+        // 账户与钱包：全生命周期指标单独封装，与「区间时段」彻底隔离
+        account: visibleAccountData({
+          quota: Number(account.quota) || 0,
+          used_quota: Number(account.used_quota) || 0,
+          request_count: Number(account.request_count) || 0,
+          group_name: userGroupName,
+          active_tokens: Number(tokRow?.active_tokens) || 0,
+          total_tokens: Number(tokRow?.total_tokens) || 0,
+        }, req.user),
+        trend,
+        by_model: byModel,
+        ...(Number(req.user.role) >= 100 ? { by_channel: byChannel.map((c) => ({
+          channel_id: Number(c.channel_id) || 0,
+          calls: Number(c.calls) || 0,
+          units: Number(c.units) || 0,
+        })) } : {}),
+        by_hour: Array.from({ length: 24 }, (_, h) => {
+          const hit = byHour.find((x) => Number(x.hour) === h);
+          return { hour: h, calls: Number(hit?.calls) || 0, units: Number(hit?.units) || 0 };
+        }),
+        recent_logs: visibility.usage_records ? recentLogs : [],
+      };
     });
+    if (data.totals) {
+      data.by_model = await enrichModelSummaries(data.by_model);
+      data.totals.models = data.by_model.length;
+      const groupCfg = await groupConfigOf(data.account.group_name);
+      data.account = visibleAccountData({ ...data.account, group_rate: groupCfg?.rate ?? 1.0 }, req.user);
+    }
+    data.recent_logs = (await logsWithSourceVendors(data.recent_logs)).map((row) => recentUsageRow(row));
+    return ok(res, data);
   })
 );
 
@@ -308,174 +350,177 @@ router.get(
   "/admin",
   adminRequired,
   asyncHandler(async (req, res) => {
-    const { key, days, since } = rangeOf(req.query);
+    const range = rangeOf(req.query);
+    const { key, days, since, until } = range;
 
     const userId = safeInt(req.query.user_id, { min: 1, fallback: 0 }), tokenId = safeInt(req.query.token_id, { min: 1, fallback: 0 });
-    if (tokenId) {
-      const [[token]] = await pool.query("SELECT user_id FROM tokens WHERE id = ?", [tokenId]);
-      if (!token || (userId && Number(token.user_id) !== userId)) return fail(res, "密钥不属于所选用户", 400);
-    }
-    const query = (sql, args = []) => {
-      if (!/FROM logs\b/.test(sql)) return pool.query(sql, args);
-      const prefix = /FROM logs l\b/.test(sql) ? "l." : "";
-      const conds = [], values = [];
-      if (userId) { conds.push(`${prefix}user_id = ?`); values.push(userId); }
-      if (tokenId) { conds.push(`${prefix}token_id = ?`); values.push(tokenId); }
-      return pool.query(conds.length ? sql.replace(/WHERE /, `WHERE ${conds.join(" AND ")} AND `) : sql, [...values, ...args]);
-    };
-    const [[agg]] = await query(
-      `SELECT COUNT(*) AS calls,
-              COALESCE(SUM(quota),0) AS units,
-              COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
-              COALESCE(SUM(completion_tokens),0) AS completion_tokens,
-              COALESCE(SUM(cache_tokens),0) AS cache_tokens,
-              COUNT(DISTINCT user_id) AS users,
-              COUNT(DISTINCT model) AS models,
-              COALESCE(AVG(NULLIF(elapsed_ms,0)),0) AS avg_elapsed
-         FROM logs WHERE ${USAGE_SQL} AND created_at >= ?`,
-      [since]
-    );
-    // 用户排行：按消费额，同时给调用数与 token（只看消费额会漏掉「高频低耗」的用户）
-    const [topUsers] = await query(
-      `SELECT l.user_id, COUNT(*) AS calls, COALESCE(SUM(l.quota),0) AS units,
-              COALESCE(SUM(l.prompt_tokens + l.completion_tokens),0) AS tokens,
-              u.username, u.display_name, u.avatar_media_id
-         FROM logs l LEFT JOIN users u ON u.id = l.user_id
-        WHERE ${usageLogWhere('l')} AND l.created_at >= ?
-        GROUP BY l.user_id, u.username, u.display_name, u.avatar_media_id ORDER BY units DESC LIMIT 10`,
-      [since]
-    );
-    const [allTopModels] = await query(
-      `SELECT model, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
-         FROM logs WHERE ${USAGE_SQL} AND created_at >= ?
-        GROUP BY model ORDER BY units DESC`,
-      [since]
-    );
-    let topModels = [];
-    if (allTopModels.length <= 12) {
-      topModels = allTopModels;
-    } else {
-      const top = allTopModels.slice(0, 11);
-      const rest = allTopModels.slice(11);
-      topModels = [
-        ...top,
-        {
-          model: "其他模型",
-          calls: rest.reduce((s, x) => s + (Number(x.calls) || 0), 0),
-          units: rest.reduce((s, x) => s + (Number(x.units) || 0), 0),
+    const data = await withDashboardSnapshot(async (snapshotQuery) => {
+      if (tokenId) {
+        const [[token]] = await snapshotQuery("SELECT user_id FROM tokens WHERE id = ?", [tokenId]);
+        if (!token || (userId && Number(token.user_id) !== userId)) return { invalid_token: true };
+      }
+      const query = (sql, args = []) => {
+        if (!/FROM logs\b/.test(sql)) return snapshotQuery(sql, args);
+        const prefix = /FROM logs l\b/.test(sql) ? "l." : "";
+        const conds = [], values = [];
+        if (userId) { conds.push(`${prefix}user_id = ?`); values.push(userId); }
+        if (tokenId) { conds.push(`${prefix}token_id = ?`); values.push(tokenId); }
+        return snapshotQuery(conds.length ? sql.replace(/WHERE /, `WHERE ${conds.join(" AND ")} AND `) : sql, [...values, ...args]);
+      };
+      const [[agg]] = await query(
+        `SELECT COUNT(*) AS calls, COALESCE(SUM(${SUCCESS_SQL}),0) AS successes,
+                COALESCE(SUM(${STOPPED_SQL}),0) AS stopped, COALESCE(SUM(status = 'partial'),0) AS partial,
+                COALESCE(SUM(quota),0) AS units,
+                COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
+                COALESCE(SUM(completion_tokens),0) AS completion_tokens,
+                COALESCE(SUM(cache_tokens),0) AS cache_tokens,
+                COUNT(DISTINCT user_id) AS users,
+                COUNT(DISTINCT model) AS models,
+                COALESCE(AVG(NULLIF(elapsed_ms,0)),0) AS avg_elapsed,
+                AVG(CASE WHEN first_token_known = 1 OR first_token_ms > 0 THEN first_token_ms END) AS avg_first_token
+           FROM logs WHERE ${USAGE_SQL} AND created_at >= ? AND created_at < ?`,
+        [since, until]
+      );
+      // 用户排行：按消费额，同时给调用数与 token（只看消费额会漏掉「高频低耗」的用户）
+      const [topUsers] = await query(
+        `SELECT l.user_id, COUNT(*) AS calls, COALESCE(SUM(l.quota),0) AS units,
+                COALESCE(SUM(l.prompt_tokens + l.completion_tokens),0) AS tokens,
+                u.username, u.display_name, u.avatar_media_id
+           FROM logs l LEFT JOIN users u ON u.id = l.user_id
+          WHERE ${usageLogWhere('l')} AND l.created_at >= ? AND l.created_at < ?
+          GROUP BY l.user_id, u.username, u.display_name, u.avatar_media_id ORDER BY units DESC, calls DESC LIMIT 10`,
+        [since, until]
+      );
+      const topModels = await modelSummaries(query, since, until);
+      const [byChannel] = await query(
+        `SELECT l.channel_id, COUNT(*) AS calls, COALESCE(SUM(l.type = 2 AND l.status IN ('', 'success')),0) AS successes, COALESCE(SUM(l.quota),0) AS units,
+                COALESCE(SUM(l.prompt_tokens + l.completion_tokens),0) AS total_tokens,
+                COALESCE(AVG(NULLIF(l.elapsed_ms,0)),0) AS avg_elapsed,
+                AVG(CASE WHEN l.first_token_known = 1 OR l.first_token_ms > 0 THEN l.first_token_ms END) AS avg_first_token,
+                c.name AS channel_name, c.type AS channel_type
+           FROM logs l LEFT JOIN channels c ON c.id = l.channel_id
+          WHERE ${usageLogWhere('l')} AND l.created_at >= ? AND l.created_at < ? AND l.channel_id > 0
+          GROUP BY l.channel_id, c.name, c.type ORDER BY units DESC, calls DESC`,
+        [since, until]
+      );
+      // 保留历史错误统计；新错误已包含在调用总数内，只计一次。
+      const [channelErrors] = await query(
+        `SELECT channel_id, COUNT(*) AS errors FROM logs
+          WHERE ${FAILURE_SQL} AND created_at >= ? AND created_at < ? AND channel_id > 0 GROUP BY channel_id`,
+        [since, until]
+      );
+      const errMap = new Map(channelErrors.map((e) => [Number(e.channel_id), Number(e.errors) || 0]));
+      // 令牌维度：谁在用哪个 Key（管理员排查「某个 Key 在刷量」时的入口）
+      // 先按 token_id 聚合再关联名称与持有人（原先只给 id，看板上只能显示「令牌 #184」，
+      // 管理员还得去日志页反查是谁的 Key）。子查询聚合后再 JOIN，ONLY_FULL_GROUP_BY 下合法。
+      const [topTokens] = await query(
+        `SELECT t.token_id, t.calls, t.units, k.name AS token_name, u.username, u.display_name
+           FROM (SELECT token_id, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
+                   FROM logs WHERE ${USAGE_SQL} AND created_at >= ? AND created_at < ? AND token_id > 0
+                  GROUP BY token_id ORDER BY units DESC, calls DESC LIMIT 10) t
+           LEFT JOIN tokens k ON k.id = t.token_id
+           LEFT JOIN users u ON u.id = k.user_id
+          ORDER BY t.units DESC`,
+        [since, until]
+      );
+      const errorsTotal = await errorCount(userId, since, tokenId, until, snapshotQuery);
+      const prev = await previousTotals(userId, since, days, tokenId, snapshotQuery);
+      // 失败调用分布：与汇总使用相同口径，排除停止和旧版重复错误日志。
+      const [errorsByModel] = await query(
+        `SELECT model, COUNT(*) AS errors FROM logs
+          WHERE ${FAILURE_SQL} AND created_at >= ? AND created_at < ?
+          GROUP BY model ORDER BY errors DESC LIMIT 10`,
+        [since, until]
+      );
+      const [[users]] = await snapshotQuery("SELECT COUNT(*) AS n FROM users WHERE status = 1");
+      const [[newUsers]] = await snapshotQuery("SELECT COUNT(*) AS n FROM users WHERE created_time >= ? AND created_time < ?", [since, until]);
+      const [recentLogs] = await query(`SELECT ${recentFields('l.')}, l.user_id, u.username, u.display_name, u.avatar_media_id
+        FROM logs l LEFT JOIN users u ON u.id = l.user_id
+        WHERE ${usageLogWhere('l')} AND l.created_at >= ? AND l.created_at < ?
+        ORDER BY l.id DESC LIMIT 8`, [since, until]);
+
+      const prompt = Number(agg.prompt_tokens) || 0;
+      const cache = Number(agg.cache_tokens) || 0;
+      const trend = await dailyTrend(userId, since, days, tokenId, until, snapshotQuery);
+      // 实时指标（进程内，重启清零）与历史指标（logs 表）**分开返回**，
+      // 前端也要分开标注，不能让用户以为「今天的数字」包含历史累计
+      const snap = snapshot();
+
+      return {
+        range: rangeMetadata(range),
+        scope: { kind: userId || tokenId ? "filtered" : "site", user_id: userId || null, token_id: tokenId || null },
+        totals: {
+          calls: Number(agg.calls) || 0,
+          successes: Number(agg.successes) || 0, stopped: Number(agg.stopped) || 0, partial: Number(agg.partial) || 0,
+          remaining: Math.max(0, (Number(agg.calls) || 0) - (Number(agg.successes) || 0) - errorsTotal - (Number(agg.stopped) || 0)),
+          success_rate: percent(Number(agg.successes) || 0, Number(agg.calls) || 0),
+          units: Number(agg.units) || 0,
+          prompt_tokens: prompt,
+          completion_tokens: Number(agg.completion_tokens) || 0,
+          total_tokens: prompt + (Number(agg.completion_tokens) || 0),
+          cache_tokens: cache,
+          uncached_tokens: Math.max(0, prompt - cache),
+          cache_rate: prompt > 0 ? Number(((Math.min(cache, prompt) / prompt) * 100).toFixed(1)) : null,
+          active_users: Number(agg.users) || 0,
+          models: topModels.length,
+          users_total: Number(users.n) || 0,
+          users_new: Number(newUsers.n) || 0,
+          errors: errorsTotal,
+          avg_elapsed: Math.round(Number(agg.avg_elapsed) || 0),
+          avg_first_token: agg.avg_first_token == null ? null : Math.round(Number(agg.avg_first_token)),
         },
-      ];
-    }
-    const [byChannel] = await query(
-      `SELECT l.channel_id, COUNT(*) AS calls, COALESCE(SUM(l.type = 2 AND l.status IN ('', 'success')),0) AS successes, COALESCE(SUM(l.quota),0) AS units,
-              COALESCE(AVG(NULLIF(l.elapsed_ms,0)),0) AS avg_elapsed,
-              AVG(CASE WHEN l.first_token_known = 1 OR l.first_token_ms > 0 THEN l.first_token_ms END) AS avg_first_token,
-              c.name AS channel_name, c.type AS channel_type
-         FROM logs l LEFT JOIN channels c ON c.id = l.channel_id
-        WHERE ${usageLogWhere('l')} AND l.created_at >= ? AND l.channel_id > 0
-        GROUP BY l.channel_id, c.name, c.type ORDER BY units DESC LIMIT 12`,
-      [since]
-    );
-    // 保留历史错误统计；新错误已包含在调用总数内，只计一次。
-    const [channelErrors] = await query(
-      `SELECT channel_id, COUNT(*) AS errors FROM logs
-        WHERE ${FAILURE_SQL} AND created_at >= ? AND channel_id > 0 GROUP BY channel_id`,
-      [since]
-    );
-    const errMap = new Map(channelErrors.map((e) => [Number(e.channel_id), Number(e.errors) || 0]));
-    // 令牌维度：谁在用哪个 Key（管理员排查「某个 Key 在刷量」时的入口）
-    // 先按 token_id 聚合再关联名称与持有人（原先只给 id，看板上只能显示「令牌 #184」，
-    // 管理员还得去日志页反查是谁的 Key）。子查询聚合后再 JOIN，ONLY_FULL_GROUP_BY 下合法。
-    const [topTokens] = await query(
-      `SELECT t.token_id, t.calls, t.units, k.name AS token_name, u.username, u.display_name
-         FROM (SELECT token_id, COUNT(*) AS calls, COALESCE(SUM(quota),0) AS units
-                 FROM logs WHERE ${USAGE_SQL} AND created_at >= ? AND token_id > 0
-                GROUP BY token_id ORDER BY units DESC LIMIT 10) t
-         LEFT JOIN tokens k ON k.id = t.token_id
-         LEFT JOIN users u ON u.id = k.user_id
-        ORDER BY t.units DESC`,
-      [since]
-    );
-    const errorsTotal = await errorCount(userId, since, tokenId);
-    const prev = await previousTotals(userId, since, days, tokenId);
-    // 失败调用分布：与汇总使用相同口径，排除停止和旧版重复错误日志。
-    const [errorsByModel] = await query(
-      `SELECT model, COUNT(*) AS errors FROM logs
-        WHERE ${FAILURE_SQL} AND created_at >= ?
-        GROUP BY model ORDER BY errors DESC LIMIT 10`,
-      [since]
-    );
-    const [[users]] = await pool.query("SELECT COUNT(*) AS n FROM users WHERE status = 1");
-    const [[newUsers]] = await pool.query("SELECT COUNT(*) AS n FROM users WHERE created_time >= ?", [since]);
-
-    const prompt = Number(agg.prompt_tokens) || 0;
-    const cache = Number(agg.cache_tokens) || 0;
-    const trend = await dailyTrend(userId, since, days, tokenId);
-    // 实时指标（进程内，重启清零）与历史指标（logs 表）**分开返回**，
-    // 前端也要分开标注，不能让用户以为「今天的数字」包含历史累计
-    const snap = snapshot();
-
-    return ok(res, {
-      range: { key, days },
-      totals: {
-        calls: Number(agg.calls) || 0,
-        units: Number(agg.units) || 0,
-        prompt_tokens: prompt,
-        completion_tokens: Number(agg.completion_tokens) || 0,
-        total_tokens: prompt + (Number(agg.completion_tokens) || 0),
-        cache_tokens: cache,
-        uncached_tokens: Math.max(0, prompt - cache),
-        cache_rate: prompt > 0 ? Number(((cache / prompt) * 100).toFixed(1)) : 0,
-        active_users: Number(agg.users) || 0,
-        models: Number(agg.models) || 0,
-        users_total: Number(users.n) || 0,
-        users_new: Number(newUsers.n) || 0,
-        errors: errorsTotal,
-        avg_elapsed: Math.round(Number(agg.avg_elapsed) || 0),
-      },
-      previous: prev,
-      trend,
-      top_users: topUsers.map((u) => ({
-        user_id: Number(u.user_id) || 0,
-        username: u.username || "已删除",
-        display_name: u.display_name || u.username || "",
-        avatar_url: Number(u.avatar_media_id) ? `/api/media/avatar/${u.user_id}?v=${u.avatar_media_id}` : "",
-        calls: Number(u.calls) || 0,
-        units: Number(u.units) || 0,
-        tokens: Number(u.tokens) || 0,
-      })),
-      top_models: topModels.map((m) => ({ model: m.model || "未记录模型", calls: Number(m.calls) || 0, units: Number(m.units) || 0 })),
-      by_channel: byChannel.map((c) => {
-        const errors = errMap.get(Number(c.channel_id)) || 0;
-        const calls = Number(c.calls) || 0;
-        return {
-          channel_id: Number(c.channel_id) || 0,
-          name: c.channel_name || `渠道 #${c.channel_id}`,
-          type: c.channel_type || "",
-          calls,
-          units: Number(c.units) || 0,
-          errors,
-          success_rate: calls > 0 ? Number(((Number(c.successes) / calls) * 100).toFixed(1)) : null,
-          avg_elapsed: Math.round(Number(c.avg_elapsed) || 0),
-          avg_first_token: c.avg_first_token == null ? null : Math.round(Number(c.avg_first_token)),
-        };
-      }),
-      top_tokens: topTokens.map((t) => ({
-        token_id: Number(t.token_id) || 0,
-        name: t.token_name || `令牌 #${t.token_id}`,
-        owner: t.display_name || t.username || "",
-        calls: Number(t.calls) || 0,
-        units: Number(t.units) || 0,
-      })),
-      errors_by_model: errorsByModel.map((e) => ({ model: e.model || "未记录模型", errors: Number(e.errors) || 0 })),
-      realtime: {
-        inFlight: Number(snap.gateway.inFlight) || 0,
-        sla: snap.gateway.sla,
-        errorRate: snap.gateway.upstream?.rate ?? null,
-        p95Ms: snap.gateway.latency?.samples ? snap.gateway.latency.p95Ms : null,
-        uptimeSec: Math.round(Number(snap.process?.uptimeSec) || 0),
-      },
+        previous: prev,
+        trend,
+        top_users: topUsers.map((u) => ({
+          user_id: Number(u.user_id) || 0,
+          username: u.username || "已删除",
+          display_name: u.display_name || u.username || "",
+          avatar_url: Number(u.avatar_media_id) ? `/api/media/avatar/${u.user_id}?v=${u.avatar_media_id}` : "",
+          calls: Number(u.calls) || 0,
+          units: Number(u.units) || 0,
+          tokens: Number(u.tokens) || 0,
+        })),
+        top_models: topModels,
+        recent_logs: recentLogs,
+        by_channel: byChannel.map((c) => {
+          const errors = errMap.get(Number(c.channel_id)) || 0;
+          const calls = Number(c.calls) || 0;
+          return {
+            channel_id: Number(c.channel_id) || 0,
+            name: c.channel_name || `渠道 #${c.channel_id}`,
+            type: c.channel_type || "",
+            calls,
+            units: Number(c.units) || 0,
+            total_tokens: Number(c.total_tokens) || 0,
+            errors,
+            success_rate: calls > 0 ? Number(((Number(c.successes) / calls) * 100).toFixed(1)) : null,
+            avg_elapsed: Math.round(Number(c.avg_elapsed) || 0),
+            avg_first_token: c.avg_first_token == null ? null : Math.round(Number(c.avg_first_token)),
+          };
+        }),
+        top_tokens: topTokens.map((t) => ({
+          token_id: Number(t.token_id) || 0,
+          name: t.token_name || `令牌 #${t.token_id}`,
+          owner: t.display_name || t.username || "",
+          calls: Number(t.calls) || 0,
+          units: Number(t.units) || 0,
+        })),
+        errors_by_model: errorsByModel.map((e) => ({ model: e.model || "未记录模型", errors: Number(e.errors) || 0 })),
+        realtime: {
+          scope: "site", since_process_start: true,
+          inFlight: Number(snap.gateway.inFlight) || 0,
+          sla: snap.gateway.sla,
+          errorRate: snap.gateway.upstream?.rate ?? null,
+          p95Ms: snap.gateway.latency?.samples ? snap.gateway.latency.p95Ms : null,
+          uptimeSec: Math.round(Number(snap.process?.uptimeSec) || 0),
+        },
+      };
     });
+    if (data.invalid_token) return fail(res, "密钥不属于所选用户", 400);
+    data.top_models = await enrichModelSummaries(data.top_models);
+    data.totals.models = data.top_models.length;
+    data.recent_logs = (await logsWithSourceVendors(data.recent_logs)).map((row) => recentUsageRow(row, true));
+    return ok(res, data);
   })
 );
 
