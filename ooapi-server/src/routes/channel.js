@@ -464,13 +464,21 @@ router.delete(
 router.get(
   "/:id/stats",
   asyncHandler(async (req, res) => {
+    // 一次请求只取一个时间锚点，数据库查询跨午夜时也不会出现日期列表与聚合窗口错位。
+    const requestNow = now();
     const id = idParam(req);
     if (!id) return fail(res, "渠道不存在", 404);
     const [rows] = await pool.query("SELECT * FROM channels WHERE id = ?", [id]);
     if (!rows.length) return fail(res, "渠道不存在", 404);
     const channel = rows[0];
     const days = safeInt(req.query.days, { min: 1, max: 366, fallback: 30 }) || 30;
-    const since = now() - days * 86400;
+    // 渠道统计与使用分析统一按北京时间分天；窗口包含今日，首日从完整午夜开始。
+    const utc8Offset = 8 * 3600;
+    const todayStart = Math.floor((requestNow + utc8Offset) / 86400) * 86400 - utc8Offset;
+    const since = todayStart - (days - 1) * 86400;
+    const hourSince = todayStart - 30 * 86400;
+    // 小时活动固定保留最近 31 个日历日，短趋势窗口也能切换到近 30 天活动。
+    const querySince = Math.min(since, hourSince);
 
     let logs = [];
     try {
@@ -482,7 +490,7 @@ router.get(
         `SELECT created_at, quota, model, prompt_tokens, completion_tokens, cache_tokens, detail
            FROM logs
           WHERE ${USAGE_SQL} AND created_at >= ? AND channel_id = ?`,
-        [since, id]
+        [querySince, id]
       );
       logs = ls;
       // 老记录（列还没写）回填：只查一次，量小
@@ -493,7 +501,7 @@ router.get(
             AND JSON_VALID(detail)
             AND (JSON_UNQUOTE(JSON_EXTRACT(detail, '$.channel_id')) = ?
                  OR JSON_CONTAINS(JSON_EXTRACT(detail, '$.channel_ids'), ?))`,
-        [since, String(id), String(id)]
+        [querySince, String(id), String(id)]
       );
       logs = logs.concat(old);
     } catch (e) {
@@ -501,12 +509,16 @@ router.get(
       console.warn("[channel] 用量统计查询失败：", e.message);
     }
 
-    const totals = { calls: logs.length, units: 0, promptTokens: 0, completionTokens: 0, cacheTokens: 0 };
+    const totals = { calls: 0, units: 0, promptTokens: 0, completionTokens: 0, cacheTokens: 0 };
     const byModel = new Map();
     const byDay = new Map();
+    const byHour = new Map();
     // 模型 × 天 的 Token 矩阵（趋势图多线序列用）
     const modelDay = new Map();
     for (const l of logs) {
+      const createdAt = Number(l.created_at) || 0;
+      // 不把异常的未来日志涂到今日尚未发生的小时上。
+      if (createdAt < querySince || createdAt > requestNow) continue;
       let d = {};
       try {
         d = JSON.parse(l.detail || "{}");
@@ -519,6 +531,16 @@ router.get(
       const pt = Number(l.prompt_tokens) || Number(d.prompt_tokens) || 0;
       const ct = Number(l.completion_tokens) || Number(d.completion_tokens) || 0;
       const cat = Number(l.cache_tokens) || Number(d.cache_tokens) || 0;
+      if (createdAt >= hourSince) {
+        const time = Math.floor(createdAt / 3600) * 3600;
+        const hour = byHour.get(time) || { time, calls: 0, tokens: 0 };
+        hour.calls += 1;
+        hour.tokens += pt + ct;
+        byHour.set(time, hour);
+      }
+      // 额外读取的小时活动记录不能混入调用方指定的趋势/汇总窗口。
+      if (createdAt < since) continue;
+      totals.calls += 1;
       const units = Number(l.quota) || 0;
       totals.units += units;
       totals.promptTokens += pt;
@@ -531,7 +553,7 @@ router.get(
       m.promptTokens += pt;
       m.completionTokens += ct;
       byModel.set(model, m);
-      const day = new Date(l.created_at * 1000).toISOString().slice(0, 10);
+      const day = new Date((createdAt + utc8Offset) * 1000).toISOString().slice(0, 10);
       const dd = byDay.get(day) || { day, calls: 0, units: 0, tokens: 0 };
       dd.calls += 1;
       dd.units += units;
@@ -543,7 +565,7 @@ router.get(
     }
     const dayList = [];
     for (let i = days - 1; i >= 0; i--) {
-      const d = new Date((now() - i * 86400) * 1000).toISOString().slice(0, 10);
+      const d = new Date((todayStart - i * 86400 + utc8Offset) * 1000).toISOString().slice(0, 10);
       dayList.push(byDay.get(d) || { day: d, calls: 0, units: 0, tokens: 0 });
     }
 
@@ -640,6 +662,8 @@ router.get(
         groups: parseGroups(channel),
       },
       days,
+      generatedAt: requestNow,
+      timezone: "Asia/Shanghai",
       totals: {
         ...totals,
         od: Number((totals.units / 10000).toFixed(6)),
@@ -652,6 +676,7 @@ router.get(
       },
       byModel: [...byModel.values()].sort((a, b) => b.units - a.units).slice(0, 20),
       byDay: dayList,
+      byHour: [...byHour.values()].sort((a, b) => a.time - b.time),
       series,
       recent,
     });

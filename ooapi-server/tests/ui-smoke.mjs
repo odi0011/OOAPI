@@ -11,11 +11,21 @@
 //   cd ooapi-server && xvfb-run -a node tests/ui-smoke.mjs
 //   BASE=http://127.0.0.1:3999 xvfb-run -a node tests/ui-smoke.mjs   # 指定地址
 //   UI_SMOKE_LOGIN=1：通过标准输入的一行 JSON 读取 username/password，走真实登录表单；不保存凭据。
+//   UI_SMOKE_FIXTURE=1：加载候选 dist 与隔离 API 样本，不读数据库、不代表生产 DB 业务验收。
 import "dotenv/config";
 import { chromium } from "playwright";
 
-const BASE = process.env.BASE || "http://127.0.0.1:3001";
+let BASE = process.env.BASE || "http://127.0.0.1:3001";
 const LOGIN_MODE = process.env.UI_SMOKE_LOGIN === "1";
+const FIXTURE_MODE = process.env.UI_SMOKE_FIXTURE === "1";
+let fixtureServer, installFixtures;
+if (FIXTURE_MODE) {
+  if (LOGIN_MODE) throw new Error("隔离 fixture 模式与真实登录模式不能同时启用");
+  const helper = await import("./ui-smoke-fixtures.mjs");
+  fixtureServer = await helper.serveCandidate();
+  installFixtures = helper.installSmokeFixtures;
+  BASE = fixtureServer.base;
+}
 const ROUTES = [
   ["/", "公开首页"],
   ["/login", "登录页"],
@@ -104,7 +114,7 @@ async function readLoginCredentials() {
 }
 
 let pool, token;
-if (!LOGIN_MODE) {
+if (!LOGIN_MODE && !FIXTURE_MODE) {
   const [{ default: jwt }, db] = await Promise.all([import("jsonwebtoken"), import("../src/db.js")]);
   pool = db.pool;
   const [[admin]] = await pool.query("SELECT id, role, token_version, username FROM users WHERE role >= 100 LIMIT 1");
@@ -122,7 +132,10 @@ if (!LOGIN_MODE) {
 
 const browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"], ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : {}) });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-if (LOGIN_MODE) {
+let rejectedWrites = [];
+if (FIXTURE_MODE) {
+  rejectedWrites = await installFixtures(ctx);
+} else if (LOGIN_MODE) {
   let credentials;
   const loginPage = await ctx.newPage();
   try {
@@ -154,13 +167,13 @@ if (LOGIN_MODE) {
 }
 
 let failed = 0;
-console.log(`UI 冒烟：${BASE}（管理员${LOGIN_MODE ? "表单登录" : "数据库认证"}）\n`);
+console.log(`UI 冒烟：${BASE}（${FIXTURE_MODE ? "隔离候选 API 数据，不代表生产 DB 业务验收" : "管理员" + (LOGIN_MODE ? "表单登录" : "数据库认证")}）\n`);
 
 for (const [route, label] of ROUTES) {
   const page = await ctx.newPage();
   const errors = [];
   page.on("console", (m) => {
-    if (m.type() === "error" && !IGNORE.some((re) => re.test(m.text()))) errors.push(m.text());
+    if (m.type() === "error" && !IGNORE.some((re) => re.test(m.text()))) errors.push(m.text() + (FIXTURE_MODE && m.location().url ? ` [${m.location().url}]` : ""));
   });
   page.on("pageerror", (e) => errors.push(`[pageerror] ${e.message}`));
 
@@ -189,5 +202,7 @@ for (const [route, label] of ROUTES) {
 
 await browser.close();
 if (pool) await pool.end().catch(() => {});
+if (fixtureServer) await fixtureServer.close();
+if (FIXTURE_MODE) console.log(`隔离模式已拒绝 ${rejectedWrites.length} 次非 GET API；真实数据库/上游请求 0`);
 console.log(`\n${failed === 0 ? "全部页面正常渲染" : `${failed} 个页面存在问题`}`);
 process.exit(failed ? 1 : 0);

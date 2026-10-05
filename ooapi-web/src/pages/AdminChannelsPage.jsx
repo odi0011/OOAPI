@@ -15,6 +15,7 @@ import {
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { channelPublicModel } from "../services/model-sources";
+import { channelActivityView } from "../services/channel-activity";
 import { useApp } from "../context/AppContext";
 import { fmtDate, copyText, odOf, unitsPerOd } from "../services/format";
 import useLatest from "../hooks/useLatest";
@@ -405,82 +406,16 @@ function smoothPath(rawPts) {
 }
 
 /**
- * Token 活动热力图（GitHub 贡献图样式）：近 365 天，行为星期、列为周。
- * 三种口径：每日 / 每周（该周合计）/ 累计（截至当天）。
+ * 时间范围改变的是实际统计窗口：今日每小时、近七天/三十天每天一个独立格子。
+ * 使用独立样式，避免使用记录的 7×24 时段图覆盖格子行高、挤掉纵向间距。
  */
-function TokenActivity({ byDay = [] }) {
+function TokenActivity({ byHour = [], generatedAt }) {
   const [mode, setMode] = useState("day");
-
-  const view = useMemo(() => {
-    if (!byDay.length) return { cells: [], months: [], cols: 0, hasData: false };
-    const perDay = new Map();
-    const weekSum = new Map();
-    const cumMap = new Map();
-    let cum = 0;
-    for (const d of byDay) {
-      const tokens = d.tokens || 0;
-      perDay.set(d.day, { tokens, calls: d.calls || 0 });
-      cum += tokens;
-      cumMap.set(d.day, cum);
-      const dt = new Date(`${d.day}T00:00:00Z`);
-      dt.setUTCDate(dt.getUTCDate() - dt.getUTCDay());
-      const wk = dt.toISOString().slice(0, 10);
-      weekSum.set(wk, (weekSum.get(wk) || 0) + tokens);
-    }
-    const firstIso = byDay[0].day;
-    const end = new Date(`${byDay[byDay.length - 1].day}T00:00:00Z`);
-    const gridStart = new Date(end);
-    gridStart.setUTCDate(gridStart.getUTCDate() - 364);
-    gridStart.setUTCDate(gridStart.getUTCDate() - gridStart.getUTCDay());
-
-    const cells = [];
-    const months = [];
-    let cur = new Date(gridStart);
-    let i = 0;
-    let prevMonth = -1;
-    let max = 0;
-    while (cur <= end) {
-      const iso = cur.toISOString().slice(0, 10);
-      const inRange = iso >= firstIso;
-      const rec = perDay.get(iso);
-      let value = 0;
-      if (inRange) {
-        if (mode === "day") value = rec?.tokens || 0;
-        else if (mode === "week") {
-          const wk = new Date(cur);
-          wk.setUTCDate(wk.getUTCDate() - wk.getUTCDay());
-          value = weekSum.get(wk.toISOString().slice(0, 10)) || 0;
-        } else value = cumMap.get(iso) || 0;
-      }
-      if (value > max) max = value;
-      if (i % 7 === 0) {
-        const m = cur.getUTCMonth();
-        if (m !== prevMonth) {
-          months.push({ col: Math.floor(i / 7) + 1, label: `${m + 1}月` });
-          prevMonth = m;
-        }
-      }
-      cells.push({ i, iso, inRange, value, calls: rec?.calls || 0 });
-      cur = new Date(cur);
-      cur.setUTCDate(cur.getUTCDate() + 1);
-      i += 1;
-    }
-    const withLevel = cells.map((c) => ({
-      ...c,
-      level: c.value > 0 && max > 0 ? Math.max(1, Math.ceil((c.value / max) * 4)) : 0,
-    }));
-    return { cells: withLevel, months, cols: Math.ceil(cells.length / 7), hasData: max > 0 };
-  }, [byDay, mode]);
-
-  const tip = (c) => {
-    if (!c.inRange) return `${c.iso} · 无数据`;
-    if (mode === "week") return `${c.iso} 所在周合计 · ${fmtFull(c.value)} tokens`;
-    if (mode === "cum") return `截至 ${c.iso} 累计 · ${fmtFull(c.value)} tokens`;
-    return `${c.iso} · ${fmtFull(c.value)} tokens · ${c.calls} 次调用`;
-  };
+  const view = useMemo(() => channelActivityView(byHour, mode, generatedAt), [byHour, mode, generatedAt]);
+  const tip = (cell) => `${cell.period} · ${cell.future ? "尚未到此时段" : `${fmtFull(cell.tokens)} tokens · ${cell.calls} 次调用`}（UTC+8）`;
 
   return (
-    <div className="oo-stats-card">
+    <div className="oo-stats-card oo-channel-activity">
       <div className="oo-stats-card-head">
         <div className="oo-stats-card-title">Token 活动</div>
         <Segmented
@@ -491,36 +426,40 @@ function TokenActivity({ byDay = [] }) {
           options={[
             { label: "每日", value: "day" },
             { label: "每周", value: "week" },
-            { label: "累计", value: "cum" },
+            { label: "每月", value: "month" },
           ]}
         />
       </div>
-      <div className="oo-heat-scroll">
-        <div className="oo-heat-grid" style={{ gridTemplateColumns: `repeat(${view.cols}, 11px)` }}>
-          {view.cells.map((c) => (
-            <Tooltip key={c.i} title={tip(c)}>
-              <i className={`oo-heat-cell${c.level ? ` lv${c.level}` : ""}`} style={{ opacity: c.inRange ? 1 : 0.45 }} />
+      <div className="oo-channel-activity-meta">
+        <span>{view.rangeLabel}</span>
+        <span>UTC+8</span>
+      </div>
+      {mode === "month" ? (
+        <div className="oo-channel-activity-weekdays" aria-hidden="true">
+          {["一", "二", "三", "四", "五", "六", "日"].map((day) => <span key={day}>{day}</span>)}
+        </div>
+      ) : null}
+      <div className="oo-channel-activity-grid" style={{ gridTemplateColumns: `repeat(${view.columns}, minmax(0, 1fr))` }}>
+        {Array.from({ length: view.leading }, (_, i) => <span key={`padding-${i}`} aria-hidden="true" />)}
+        {view.cells.map((cell) => (
+          <div className="oo-channel-activity-slot" key={cell.key}>
+            <Tooltip title={tip(cell)} trigger={["hover", "focus"]}>
+              <button type="button" className={`oo-channel-activity-cell lv${cell.level}${cell.future ? " is-future" : ""}`} aria-label={tip(cell)} />
             </Tooltip>
-          ))}
-        </div>
-        <div className="oo-heat-months" style={{ gridTemplateColumns: `repeat(${view.cols}, 11px)` }}>
-          {view.months.map((m) => (
-            <span key={`${m.col}-${m.label}`} style={{ gridColumn: m.col, gridRow: 1 }}>{m.label}</span>
-          ))}
-        </div>
+            <span className="oo-channel-activity-label">{mode === "day" ? cell.label : cell.label.slice(-2)}</span>
+            {mode === "week" ? <span className="oo-channel-activity-label">{cell.weekday}</span> : null}
+          </div>
+        ))}
       </div>
-      <div className="oo-heat-foot">
-        <span>少</span>
-        <span className="oo-heat-scale">
-          <i className="oo-heat-cell" />
-          <i className="oo-heat-cell lv1" />
-          <i className="oo-heat-cell lv2" />
-          <i className="oo-heat-cell lv3" />
-          <i className="oo-heat-cell lv4" />
+      <div className="oo-channel-activity-foot">
+        <span>{fmtFull(view.tokens)} tokens · {view.calls} 次调用</span>
+        <span className="oo-channel-activity-scale">
+          少
+          {[0, 1, 2, 3, 4].map((level) => <i key={level} className={`oo-channel-activity-cell lv${level}`} />)}
+          多
         </span>
-        <span>多</span>
       </div>
-      {!view.hasData ? <div className="oo-trend-empty">所选窗口内暂无 Token 消耗记录</div> : null}
+      {!view.calls ? <div className="oo-channel-activity-empty">此时间范围暂无调用</div> : null}
     </div>
   );
 }
@@ -4092,7 +4031,7 @@ export default function AdminChannelsPage() {
 
             <div className="oo-stats-layout">
               <div className="oo-stats-layout-data">
-                <TokenActivity byDay={statsData.byDay} />
+                <TokenActivity byHour={statsData.byHour} generatedAt={statsData.generatedAt} />
                 <div className="oo-stats-trend-block">
                   <TokenTrend
                     byDay={statsData.byDay}
