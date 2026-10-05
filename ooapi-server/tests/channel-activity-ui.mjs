@@ -10,7 +10,7 @@ const sec = (iso) => Date.parse(iso) / 1000;
 const generatedAt = sec("2026-10-05T05:30:00Z");
 const midnight = sec("2026-10-04T16:00:00Z");
 const byHour = Array.from({ length: 30 * 24 }, (_, i) => ({ time: midnight - 29 * 86400 + i * 3600, tokens: (i % 17) * 310 * (Math.floor(i / 24) % 7 + 1), calls: i % 5 })).filter((h) => h.time <= generatedAt);
-const byDay = Array.from({ length: 365 }, (_, i) => ({ day: new Date((midnight - (364 - i) * 86400 + 8 * 3600) * 1000).toISOString().slice(0, 10), tokens: i >= 335 ? (i % 7 + 1) * 10000 : 0, calls: i >= 335 ? i % 7 + 1 : 0, units: 0, cacheTokens: 0, avgElapsed: 1000 }));
+const byDay = Array.from({ length: 365 }, (_, i) => ({ day: new Date((midnight - (364 - i) * 86400 + 8 * 3600) * 1000).toISOString().slice(0, 10), tokens: i % 11 === 0 ? 0 : (i % 7 + 1) * 10000, calls: i % 11 === 0 ? 0 : i % 7 + 1, units: 0, cacheTokens: 0, avgElapsed: 1000 }));
 const channel = { id: 7, name: "隔离热力图渠道", type: "openai", status: 1, models: ["gpt-test"], groups: [], recent_calls: [], has_credential: true, isApiKey: true, priority: 0, weight: 1, totals: { calls: 10, tokens: 3000, units: 0 } };
 const recent = Array.from({ length: 10 }, (_, i) => ({ t: generatedAt - i * 60, ok: true, m: "gpt-test", b: "gpt-test-upstream", k: "chat", ms: 1000 + i * 500, ft: 1000 + i * 500, p: "隔离测试提示词", r: "仅使用内存样本，无真实上游调用", u: { n: "测试用户", a: "/icons/openai.svg" } }));
 const hourly = Array.from({ length: 7 }, (_, wd) => Array.from({ length: 24 }, (_, hour) => ({ hour, calls: (wd + hour) % 5, units: 0 })));
@@ -29,7 +29,7 @@ try {
       if (pathname === "/api/channel/") return [channel];
       if (pathname === "/api/channel/providers") return publicProviders();
       if (pathname === "/api/channel/stats") return { total: 1, enabled: 1, disabled: 0, byType: { openai: 1 } };
-      if (pathname === "/api/channel/7/stats") return { generatedAt, timezone: "Asia/Shanghai", days: 365, channel, byHour: empty ? [] : byHour, byDay, recent, series: [{ model: "gpt-test", values: byDay.map((d) => d.tokens) }], totals: { calls: 10, tokens: 3000, units: 0, od: 0 } };
+      if (pathname === "/api/channel/7/stats") return { generatedAt, timezone: "Asia/Shanghai", days: 365, channel, byHour: empty ? [] : byHour, byDay: empty ? byDay.map((d) => ({ ...d, tokens: 0, calls: 0 })) : byDay, recent, series: [{ model: "gpt-test", values: byDay.map((d) => d.tokens) }], totals: { calls: 10, tokens: 3000, units: 0, od: 0 } };
       if (pathname === "/api/log/usage/analysis") return { byDay: byDay.slice(-7), byModel: [{ model: "gpt-test", calls: 10, units: 0 }], hourly, modelSeries: [] };
       return smokeFixtureData(pathname);
     });
@@ -41,23 +41,38 @@ try {
     const activity = page.locator(".oo-channel-activity");
     await activity.waitFor();
     await page.waitForFunction(() => Number(getComputedStyle(document.querySelector(".oo-stats-modal")).opacity) > 0.99);
+    await page.waitForTimeout(300); // 几何断言在窗口入场缩放过渡完成后读取，避免误测子像素。
     check(await activity.locator(".oo-heat-grid, .oo-heat-cell").count() === 0, "渠道活动图不继承旧共享 heat class");
-    for (const [mode, count, columns] of [["每日", 24, 6], ["每周", 7, 7], ["每月", 30, 7]]) {
-      await activity.getByText(mode, { exact: true }).click();
+    check(await activity.locator(".ant-segmented").count() === 0, "Token活动固定近一年，没有日周月开关");
+    {
       const cells = activity.locator(".oo-channel-activity-grid button");
-      check(await cells.count() === count, `${width} ${theme} ${mode}: 实际格子数 ${count}`);
+      check(await cells.count() === 365, `${width} ${theme}: 近一年恰有365个日期格`);
+      const ariaLabels = await cells.evaluateAll((nodes) => nodes.map((el) => el.getAttribute("aria-label")));
+      check(ariaLabels.every((label) => /\d{4}-\d{2}-\d{2}/.test(label) && label.includes("tokens") && label.includes("次调用") && label.includes("UTC+8")), "所有日期均保留完整日期、tokens、调用数和时区的无障碍明细");
+      check(ariaLabels.every((label, i) => label.includes(byDay[i].day) && label.includes(`${byDay[i].tokens.toLocaleString()} tokens`) && label.includes(`${byDay[i].calls} 次调用`)), "365个日期格均关联对应日期的真实tokens与调用数");
+      check(ariaLabels[0].includes("2025-10-06") && ariaLabels.at(-1).includes("2026-10-05"), "全年显示正确北京首末日期");
       const dimensions = await cells.evaluateAll((nodes) => nodes.map((el) => {
         const r = el.getBoundingClientRect();
         return { x: r.x, y: r.y, width: r.width, height: r.height };
       }));
-      check(dimensions.every((r) => Math.abs(r.width - 12) < 0.1 && Math.abs(r.height - 12) < 0.1), `${mode} 格子固定12px正方形`);
-      check(dimensions.every((r) => r.x >= 0 && r.x + r.width <= width + 1), `${width} ${mode} 每个格子在视口内`);
-      const css = await activity.locator(".oo-channel-activity-grid").evaluate((el) => ({ columns: getComputedStyle(el).gridTemplateColumns.split(" ").length, rowGap: parseFloat(getComputedStyle(el).rowGap), columnGap: parseFloat(getComputedStyle(el).columnGap), width: el.clientWidth, overflow: el.scrollWidth }));
-      check(css.columns === columns && css.rowGap === 3 && css.columnGap === 3 && css.width <= 105 && css.overflow <= css.width + 1, `${width} ${mode} 固定列宽与3px横纵间距、总宽<=105px ${JSON.stringify(css)}`);
+      check(dimensions.every((r) => Math.abs(r.width - r.height) < 0.1 && r.width >= 11.9), `贡献格为正方形，最小约12px（浏览器子像素宽${Math.min(...dimensions.map((r) => r.width))}–${Math.max(...dimensions.map((r) => r.width))}px）`);
+      const css = await activity.locator(".oo-channel-activity-grid").evaluate((el) => ({ columns: getComputedStyle(el).gridTemplateColumns.split(" ").length, rows: getComputedStyle(el).gridTemplateRows.split(" ").length, rowGap: parseFloat(getComputedStyle(el).rowGap), columnGap: parseFloat(getComputedStyle(el).columnGap), width: el.clientWidth, overflow: el.scrollWidth }));
+      check([53, 54].includes(css.columns) && css.rows === 7 && css.rowGap === 3 && css.columnGap === 3 && css.overflow <= css.width + 1, `${width} 贡献图为53/54列7行、3px横纵间距 ${JSON.stringify(css)}`);
+      check(await activity.locator(".oo-channel-activity-grid > span[aria-hidden=true]").count() === css.columns * 7 - 365, "范围外补齐格均为不可交互占位，不污染365日统计");
       const physicalRows = [...new Set(dimensions.map((r) => r.y))].sort((a, b) => a - b);
-      check(physicalRows.every((y, i) => !i || Math.abs(y - physicalRows[i - 1] - 15) < 0.1), `${mode} 实际上下格距3px，不靠标签垫高`);
+      check(physicalRows.length === 7 && physicalRows.every((y, i) => !i || Math.abs(y - physicalRows[i - 1] - dimensions[0].height - 3) < 0.1), `实际7行，上下方格之间3px不被共享样式覆盖（行Y=${physicalRows.join(",")}；格高=${dimensions[0].height}）`);
       check(await activity.locator(".oo-channel-activity-label").count() === 0, "每格日期与时段仅在悬浮和无障碍标签显示");
-      check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${width} ${mode} 页面不横向溢出`);
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${width} 页面不横向溢出`);
+      const activityPlacement = await activity.evaluate((el) => ({ parent: el.parentElement.className, cardWidth: el.getBoundingClientRect().width, bodyWidth: el.closest(".ant-modal-body").getBoundingClientRect().width }));
+      check(activityPlacement.cardWidth >= activityPlacement.bodyWidth * 0.9 && !activityPlacement.parent.includes("oo-stats-layout-data"), "活动卡跨统计弹窗整行，宽度>=90%，不挤在左栏");
+      check(await activity.locator(".oo-channel-activity-months").innerText().then((text) => /月/.test(text) && text.match(/月/g).length >= 12), "月份标题覆盖整个近一年");
+      const scroll = activity.locator(".oo-channel-activity-scroll");
+      const scrolling = await scroll.evaluate((el) => ({ width: el.clientWidth, scrollWidth: el.scrollWidth, overflowX: getComputedStyle(el).overflowX }));
+      if (width < 760) {
+        check(scrolling.scrollWidth > scrolling.width && scrolling.overflowX === "auto", "窄屏只在贡献图内部横向滚动");
+        await scroll.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+        check(await scroll.evaluate((el) => el.scrollLeft > 0), "移动贡献图能横滚到最新日期");
+      } else check(css.width >= activityPlacement.cardWidth * 0.9, "桌面贡献方格密集铺满整行而不是缩成角落");
       const target = cells.first();
       await target.scrollIntoViewIfNeeded();
       await target.focus();
@@ -69,11 +84,14 @@ try {
       const focusedTip = page.locator(".ant-tooltip:not(.ant-tooltip-hidden)").last();
       await focusedTip.waitFor();
       check((await focusedTip.innerText()).includes("UTC+8"), "键盘聚焦也显示时段明细");
+      await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).focus();
+      await page.mouse.move(width - 1, 1);
+      await page.waitForTimeout(350); // 先结束键盘提示，避免浮层遮住紧邻的鼠标目标。
       await target.hover();
       const tip = page.locator(".ant-tooltip:not(.ant-tooltip-hidden)").last();
       await tip.waitFor();
       const text = await tip.innerText();
-      check(text.includes("UTC+8") && text.includes("tokens") && text.includes("次调用"), `${mode} 悬浮含真实窗口/token/调用数`);
+      check(text.includes("UTC+8") && text.includes("tokens") && text.includes("次调用"), "悬浮含实际日期/token/调用数");
       const bg = await tip.locator(".ant-tooltip-inner").evaluate((el) => {
         const canvas = document.createElement("canvas"), ctx = canvas.getContext("2d");
         ctx.fillStyle = getComputedStyle(el).backgroundColor;
@@ -83,30 +101,19 @@ try {
       check(theme === "dark" || bg.slice(0, 3).every((v) => v >= 248), "浅色 tooltip 为白色背景");
       await page.mouse.move(width - 1, 1);
       await page.locator(".oo-stats-modal .ant-modal-title").click();
-      await page.waitForTimeout(350); // 截图需等 Segmented 滑块、Tooltip 退出过渡结束。
-      if (mode === "每月") {
-        check(await activity.locator(".oo-channel-activity-weekdays span").allTextContents().then((labels) => labels.join("") === "一二三四五六日"), "月视图星期头周一至周日");
-        check(await activity.locator(".oo-channel-activity-grid > span[aria-hidden]").count() === 6, "月视图日期按星期对齐");
-        const weekHead = await activity.locator(".oo-channel-activity-weekdays").evaluate((el) => ({ width: el.clientWidth, gap: parseFloat(getComputedStyle(el).columnGap), columns: getComputedStyle(el).gridTemplateColumns.split(" ") }));
-        check(weekHead.width <= 105 && weekHead.gap === 3 && weekHead.columns.length === 7 && weekHead.columns.every((v) => parseFloat(v) === 12), "星期标题也使用固定12px列和3px间距，与格子对齐");
-        const activityHeight = (await activity.boundingBox()).height;
-        const maxActivityHeight = width < 760 ? 270 : 220; // 窄屏保留控件触控高度与汇总自然换行。
-        check(activityHeight <= maxActivityHeight, `${width} ${theme} 月活动卡高度<=${maxActivityHeight}px（实际${activityHeight}px）`);
-      }
+      await page.waitForTimeout(350); // 截图需等Tooltip退出过渡结束。
+      check(await activity.locator("button.is-future").count() === 0, "补齐周列的未来格不伪装为日期按钮");
+      check(await activity.locator(".oo-channel-activity-grid button").count() === 365, "首尾占位补齐周列后日期按钮仍恰为365格");
+      if (width < 760) await scroll.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
       if (output) {
-        await page.screenshot({ path: path.join(output, `channel-activity-${width}-${theme}-${mode}.png`), fullPage: true });
-        await activity.screenshot({ path: path.join(output, `activity-card-${width}-${theme}-${mode}.png`) });
+        await page.screenshot({ path: path.join(output, `channel-activity-${width}-${theme}-year.png`), fullPage: true });
+        await activity.screenshot({ path: path.join(output, `activity-card-${width}-${theme}-year.png`) });
       }
     }
-    await activity.getByText("每日", { exact: true }).click();
-    check(await activity.locator("button.is-future").count() === 10, "北京13:30之后10个未来小时单独标记");
-    const future = activity.locator("button.is-future").first();
-    check((await future.getAttribute("aria-label")).includes("尚未到此时段"), "未来时段无误导消费提示");
     const closeBox = await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).boundingBox();
     check(closeBox && closeBox.y >= 0 && closeBox.y + closeBox.height <= 1000, "长弹窗关闭按钮始终在视口内");
     if (width === 1440 && theme === "light") {
       await page.setViewportSize({ width, height: 720 });
-      await activity.getByText("每月", { exact: true }).click();
       await activity.locator(".oo-channel-activity-grid button").last().scrollIntoViewIfNeeded();
       const scrolls = await page.locator(".oo-stats-layout").evaluate((el) => {
         const data = el.querySelector(".oo-stats-layout-data"), recent = el.querySelector(".oo-stats-layout-recent");
@@ -139,7 +146,7 @@ try {
     empty = true;
     await page.getByRole("button", { name: "隔离热力图渠道 用量统计", exact: true }).click();
     await activity.getByText("此时间范围暂无调用", { exact: true }).waitFor();
-    check(await activity.locator(".oo-channel-activity-grid button.lv0").count() === 24, "空数据依然显示24个空时段");
+    check(await activity.locator(".oo-channel-activity-grid button.lv0").count() === 365, "空数据依然显示365个灰色日期格");
     await page.goto(server.base + "/log", { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "展开分析", exact: true }).click();
     const usageGrid = page.locator(".oo-analysis .oo-heat-grid");
@@ -154,7 +161,7 @@ try {
     if (output) await page.screenshot({ path: path.join(output, `usage-analysis-${width}-${theme}.png`), fullPage: true });
     check(errors.length === 0, "无页面运行错误：" + errors.join("; "));
     check(rejected.length === 0, "专项只有 GET，不触发写入");
-    console.log(`  ok 隔离 Chromium ${width}px ${theme}: 三种活动窗口、悬浮、键盘、空数据、使用分析`);
+    console.log(`  ok 隔离 Chromium ${width}px ${theme}: 全年贡献图、悬浮、键盘、空数据、使用分析`);
     await ctx.close();
   }
   console.log(`渠道活动浏览器回归 ${passed} 项通过；真实数据库/上游请求 0`);

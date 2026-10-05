@@ -15,7 +15,7 @@ import {
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import { channelPublicModel } from "../services/model-sources";
-import { channelActivityView } from "../services/channel-activity";
+import { channelActivityCalendar } from "../services/channel-activity";
 import { useApp } from "../context/AppContext";
 import { fmtDate, copyText, odOf, unitsPerOd } from "../services/format";
 import useLatest from "../hooks/useLatest";
@@ -406,48 +406,49 @@ function smoothPath(rawPts) {
 }
 
 /**
- * 时间范围改变的是实际统计窗口：今日每小时、近七天/三十天每天一个独立格子。
- * 使用独立样式，避免使用记录的 7×24 时段图覆盖格子行高、挤掉纵向间距。
+ * 一年逐日贡献图：七行表示星期、每列表示一周，月份仅标一次。
+ * 图形铺满卡片，窄屏在图内滚动；不再把年度活动切成几个稀疏的小日历。
  */
-function TokenActivity({ byHour = [], generatedAt }) {
-  const [mode, setMode] = useState("day");
-  const view = useMemo(() => channelActivityView(byHour, mode, generatedAt), [byHour, mode, generatedAt]);
-  const tip = (cell) => `${cell.period} · ${cell.future ? "尚未到此时段" : `${fmtFull(cell.tokens)} tokens · ${cell.calls} 次调用`}（UTC+8）`;
+function TokenActivity({ byDay = [], generatedAt }) {
+  const view = useMemo(() => channelActivityCalendar(byDay, generatedAt), [byDay, generatedAt]);
+  const scrollRef = useRef(null);
+  useEffect(() => {
+    // 手机打开时先看到最近日期；桌面没有横向溢出时自然保持完整一年的视图。
+    const scroll = scrollRef.current;
+    if (scroll) scroll.scrollLeft = scroll.scrollWidth;
+  }, [view]);
+  const tip = (cell) => `${cell.date} · ${fmtFull(cell.tokens)} tokens · ${cell.calls} 次调用（UTC+8）`;
 
   return (
     <div className="oo-stats-card oo-channel-activity">
       <div className="oo-stats-card-head">
         <div className="oo-stats-card-title">Token 活动</div>
-        <Segmented
-          className="oo-seg"
-          size="small"
-          value={mode}
-          onChange={setMode}
-          options={[
-            { label: "每日", value: "day" },
-            { label: "每周", value: "week" },
-            { label: "每月", value: "month" },
-          ]}
-        />
+        <span className="oo-channel-activity-note">近一年 · 逐日用量</span>
       </div>
       <div className="oo-channel-activity-meta">
         <span>{view.rangeLabel}</span>
         <span>UTC+8</span>
       </div>
-      {mode === "month" ? (
-        <div className="oo-channel-activity-weekdays" aria-hidden="true">
-          {["一", "二", "三", "四", "五", "六", "日"].map((day) => <span key={day}>{day}</span>)}
-        </div>
-      ) : null}
-      <div className="oo-channel-activity-grid" style={{ gridTemplateColumns: `repeat(${view.columns}, var(--activity-cell-size))` }}>
-        {Array.from({ length: view.leading }, (_, i) => <span key={`padding-${i}`} aria-hidden="true" />)}
-        {view.cells.map((cell) => (
-          <div className="oo-channel-activity-slot" key={cell.key}>
-            <Tooltip title={tip(cell)} trigger={["hover", "focus"]}>
-              <button type="button" className={`oo-channel-activity-cell lv${cell.level}${cell.future ? " is-future" : ""}`} aria-label={tip(cell)} />
-            </Tooltip>
+      <div className="oo-channel-activity-scroll" ref={scrollRef} tabIndex={0} aria-label="近一年 Token 活动，可横向滚动查看日期">
+        <div className="oo-channel-activity-calendar" style={{ minWidth: view.columns * 15 + 29 }}>
+          <div className="oo-channel-activity-months" style={{ gridTemplateColumns: `repeat(${view.columns}, minmax(0, 1fr))` }} aria-hidden="true">
+            {view.months.map((month) => <span key={`${month.year}-${month.label}`} style={{ gridColumn: `${month.column} / span 2` }}>{month.label}</span>)}
           </div>
-        ))}
+          <div className="oo-channel-activity-body">
+            <div className="oo-channel-activity-weekdays" aria-hidden="true">
+              <span style={{ gridRow: 1 }}>一</span>
+              <span style={{ gridRow: 3 }}>三</span>
+              <span style={{ gridRow: 5 }}>五</span>
+            </div>
+            <div className="oo-channel-activity-grid" style={{ gridTemplateColumns: `repeat(${view.columns}, minmax(0, 1fr))` }}>
+              {view.slots.map((cell, index) => cell ? (
+                <Tooltip key={cell.key} title={tip(cell)} trigger={["hover", "focus"]}>
+                  <button type="button" className={`oo-channel-activity-cell lv${cell.level}`} aria-label={tip(cell)} />
+                </Tooltip>
+              ) : <span key={`padding-${index}`} className="oo-channel-activity-padding" aria-hidden="true" />)}
+            </div>
+          </div>
+        </div>
       </div>
       <div className="oo-channel-activity-foot">
         <span>{fmtFull(view.tokens)} tokens · {view.calls} 次调用</span>
@@ -4027,9 +4028,9 @@ export default function AdminChannelsPage() {
               <StatCard label="最长连续天数" value={`${statsStreaks.longest} 天`} />
             </div>
 
+            <TokenActivity byDay={statsData.byDay} generatedAt={statsData.generatedAt} />
             <div className="oo-stats-layout">
               <div className="oo-stats-layout-data">
-                <TokenActivity byHour={statsData.byHour} generatedAt={statsData.generatedAt} />
                 <div className="oo-stats-trend-block">
                   <TokenTrend
                     byDay={statsData.byDay}

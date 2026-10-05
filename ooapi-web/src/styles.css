@@ -1467,6 +1467,7 @@ h1, h2, h3, h4 {
   flex-direction: column;
 }
 .oo-stats-modal .oo-stats-cards { flex: none; }
+.oo-stats-modal .oo-channel-activity { flex: none; }
 .oo-stats-layout {
   flex: 1;
   min-height: 0;
@@ -1521,6 +1522,11 @@ h1, h2, h3, h4 {
   overflow-y: auto;
   overflow-x: hidden;
   padding-inline-end: 4px;
+}
+@media (max-height: 600px) and (min-width: 761px) {
+  /* 很矮的窗口先滚动总览，不能让年度图把下面的两栏压到零高度。 */
+  .oo-stats-modal .ant-modal-body { display: block; overflow-y: auto; }
+  .oo-stats-layout { height: 320px; }
 }
 @media (max-width: 760px) {
   .oo-stats-modal .ant-modal-body { display: block; overflow-y: auto; }
@@ -1706,7 +1712,6 @@ h1, h2, h3, h4 {
 }
 
 .oo-channel-activity {
-  --activity-cell-size: 12px;
   --activity-cell-gap: 3px;
   padding: 12px;
 }
@@ -1725,35 +1730,60 @@ h1, h2, h3, h4 {
   color: var(--ink-3);
 }
 .oo-channel-activity-meta { margin-bottom: 8px; }
+.oo-channel-activity-note { font-size: 11px; color: var(--ink-3); }
+.oo-channel-activity-scroll {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 3px 0;
+  scrollbar-width: thin;
+}
+.oo-channel-activity-scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.oo-channel-activity-calendar { width: 100%; }
+.oo-channel-activity-months {
+  display: grid;
+  gap: var(--activity-cell-gap);
+  margin-left: 32px;
+  margin-bottom: 4px;
+  color: var(--ink-3);
+  font-size: 11px;
+}
+.oo-channel-activity-months span { white-space: nowrap; grid-row: 1; }
+.oo-channel-activity-body {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+}
 .oo-channel-activity-grid {
   display: grid;
-  grid-auto-flow: row;
-  /* 方格像贡献图一样紧邻，不能按卡片宽度均分，否则会被拉成稀疏的大日历。 */
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, minmax(0, 1fr));
   gap: var(--activity-cell-gap);
-  width: max-content;
+  width: 100%;
 }
 .oo-channel-activity-weekdays {
   display: grid;
-  grid-template-columns: repeat(7, var(--activity-cell-size));
+  grid-template-rows: repeat(7, minmax(0, 1fr));
   gap: var(--activity-cell-gap);
-  width: max-content;
-  margin-bottom: 4px;
   color: var(--ink-3);
-  text-align: center;
   font-size: 11px;
-}
-.oo-channel-activity-slot {
-  display: flex;
-  flex-direction: column;
+  /* 手机方格只有 12px，星期文字不能用正文行高把整张七行矩阵撑松。 */
+  line-height: 1;
+  min-height: 0;
   align-items: center;
+}
+.oo-channel-activity-cell,
+.oo-channel-activity-padding {
+  display: block;
+  width: 100%;
   min-width: 0;
+  aspect-ratio: 1;
+  padding: 0;
 }
 .oo-channel-activity-cell {
-  display: block;
-  flex: none;
-  width: var(--activity-cell-size);
-  height: var(--activity-cell-size);
-  padding: 0;
   border: 1px solid var(--line);
   border-radius: 2px;
   background: var(--line-soft);
@@ -1763,7 +1793,6 @@ h1, h2, h3, h4 {
 .oo-channel-activity-cell.lv2 { background: color-mix(in srgb, var(--green) 50%, var(--surface)); }
 .oo-channel-activity-cell.lv3 { background: color-mix(in srgb, var(--green) 74%, var(--surface)); }
 .oo-channel-activity-cell.lv4 { background: var(--green); }
-.oo-channel-activity-cell.is-future { opacity: 0.35; }
 button.oo-channel-activity-cell:hover { filter: brightness(1.15); }
 button.oo-channel-activity-cell:focus-visible {
   outline: 2px solid var(--accent);
@@ -1776,7 +1805,7 @@ button.oo-channel-activity-cell:focus-visible {
   gap: var(--sp-1);
   white-space: nowrap;
 }
-.oo-channel-activity-scale .oo-channel-activity-cell { width: 11px; height: 11px; }
+.oo-channel-activity-scale .oo-channel-activity-cell { width: 11px; height: 11px; flex: none; }
 .oo-channel-activity-empty {
   margin-top: var(--sp-2);
   font-size: 11px;
