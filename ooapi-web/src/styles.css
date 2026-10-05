@@ -1705,8 +1705,14 @@ h1, h2, h3, h4 {
   font-weight: 550;
 }
 
+.oo-channel-activity {
+  --activity-cell-size: 12px;
+  --activity-cell-gap: 3px;
+  padding: 12px;
+}
 .oo-channel-activity .oo-stats-card-head {
   flex-wrap: wrap;
+  margin-bottom: 8px;
 }
 .oo-channel-activity-meta,
 .oo-channel-activity-foot {
@@ -1718,18 +1724,20 @@ h1, h2, h3, h4 {
   font-size: 11px;
   color: var(--ink-3);
 }
-.oo-channel-activity-meta { margin-bottom: var(--sp-3); }
+.oo-channel-activity-meta { margin-bottom: 8px; }
 .oo-channel-activity-grid {
   display: grid;
   grid-auto-flow: row;
-  gap: var(--sp-3) var(--sp-1);
-  width: 100%;
+  /* 方格像贡献图一样紧邻，不能按卡片宽度均分，否则会被拉成稀疏的大日历。 */
+  gap: var(--activity-cell-gap);
+  width: max-content;
 }
 .oo-channel-activity-weekdays {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: var(--sp-1);
-  margin-bottom: var(--sp-2);
+  grid-template-columns: repeat(7, var(--activity-cell-size));
+  gap: var(--activity-cell-gap);
+  width: max-content;
+  margin-bottom: 4px;
   color: var(--ink-3);
   text-align: center;
   font-size: 11px;
@@ -1739,16 +1747,15 @@ h1, h2, h3, h4 {
   flex-direction: column;
   align-items: center;
   min-width: 0;
-  gap: var(--sp-1);
 }
 .oo-channel-activity-cell {
   display: block;
   flex: none;
-  width: 16px;
-  height: 16px;
+  width: var(--activity-cell-size);
+  height: var(--activity-cell-size);
   padding: 0;
   border: 1px solid var(--line);
-  border-radius: 3px;
+  border-radius: 2px;
   background: var(--line-soft);
   transition: filter 100ms ease;
 }
@@ -1762,14 +1769,7 @@ button.oo-channel-activity-cell:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.oo-channel-activity-label {
-  font-size: 11px;
-  color: var(--ink-3);
-  white-space: nowrap;
-  line-height: 1.3;
-  font-variant-numeric: tabular-nums;
-}
-.oo-channel-activity-foot { margin-top: var(--sp-4); }
+.oo-channel-activity-foot { margin-top: 8px; }
 .oo-channel-activity-scale {
   display: flex;
   align-items: center;

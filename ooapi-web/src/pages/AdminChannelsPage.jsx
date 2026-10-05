@@ -439,15 +439,13 @@ function TokenActivity({ byHour = [], generatedAt }) {
           {["一", "二", "三", "四", "五", "六", "日"].map((day) => <span key={day}>{day}</span>)}
         </div>
       ) : null}
-      <div className="oo-channel-activity-grid" style={{ gridTemplateColumns: `repeat(${view.columns}, minmax(0, 1fr))` }}>
+      <div className="oo-channel-activity-grid" style={{ gridTemplateColumns: `repeat(${view.columns}, var(--activity-cell-size))` }}>
         {Array.from({ length: view.leading }, (_, i) => <span key={`padding-${i}`} aria-hidden="true" />)}
         {view.cells.map((cell) => (
           <div className="oo-channel-activity-slot" key={cell.key}>
             <Tooltip title={tip(cell)} trigger={["hover", "focus"]}>
               <button type="button" className={`oo-channel-activity-cell lv${cell.level}${cell.future ? " is-future" : ""}`} aria-label={tip(cell)} />
             </Tooltip>
-            <span className="oo-channel-activity-label">{mode === "day" ? cell.label : cell.label.slice(-2)}</span>
-            {mode === "week" ? <span className="oo-channel-activity-label">{cell.weekday}</span> : null}
           </div>
         ))}
       </div>

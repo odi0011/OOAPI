@@ -50,10 +50,13 @@ try {
         const r = el.getBoundingClientRect();
         return { x: r.x, y: r.y, width: r.width, height: r.height };
       }));
-      check(dimensions.every((r) => Math.abs(r.width - r.height) < 0.1 && r.width >= 15), `${mode} 格子是正方形`);
+      check(dimensions.every((r) => Math.abs(r.width - 12) < 0.1 && Math.abs(r.height - 12) < 0.1), `${mode} 格子固定12px正方形`);
       check(dimensions.every((r) => r.x >= 0 && r.x + r.width <= width + 1), `${width} ${mode} 每个格子在视口内`);
-      const css = await activity.locator(".oo-channel-activity-grid").evaluate((el) => ({ columns: getComputedStyle(el).gridTemplateColumns.split(" ").length, rowGap: parseFloat(getComputedStyle(el).rowGap), width: el.clientWidth, overflow: el.scrollWidth }));
-      check(css.columns === columns && css.rowGap >= 8 && css.overflow <= css.width + 1, `${width} ${mode} 上下间距 >=8px 且网格不溢出 ${JSON.stringify(css)}`);
+      const css = await activity.locator(".oo-channel-activity-grid").evaluate((el) => ({ columns: getComputedStyle(el).gridTemplateColumns.split(" ").length, rowGap: parseFloat(getComputedStyle(el).rowGap), columnGap: parseFloat(getComputedStyle(el).columnGap), width: el.clientWidth, overflow: el.scrollWidth }));
+      check(css.columns === columns && css.rowGap === 3 && css.columnGap === 3 && css.width <= 105 && css.overflow <= css.width + 1, `${width} ${mode} 固定列宽与3px横纵间距、总宽<=105px ${JSON.stringify(css)}`);
+      const physicalRows = [...new Set(dimensions.map((r) => r.y))].sort((a, b) => a - b);
+      check(physicalRows.every((y, i) => !i || Math.abs(y - physicalRows[i - 1] - 15) < 0.1), `${mode} 实际上下格距3px，不靠标签垫高`);
+      check(await activity.locator(".oo-channel-activity-label").count() === 0, "每格日期与时段仅在悬浮和无障碍标签显示");
       check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${width} ${mode} 页面不横向溢出`);
       const target = cells.first();
       await target.scrollIntoViewIfNeeded();
@@ -84,8 +87,16 @@ try {
       if (mode === "每月") {
         check(await activity.locator(".oo-channel-activity-weekdays span").allTextContents().then((labels) => labels.join("") === "一二三四五六日"), "月视图星期头周一至周日");
         check(await activity.locator(".oo-channel-activity-grid > span[aria-hidden]").count() === 6, "月视图日期按星期对齐");
+        const weekHead = await activity.locator(".oo-channel-activity-weekdays").evaluate((el) => ({ width: el.clientWidth, gap: parseFloat(getComputedStyle(el).columnGap), columns: getComputedStyle(el).gridTemplateColumns.split(" ") }));
+        check(weekHead.width <= 105 && weekHead.gap === 3 && weekHead.columns.length === 7 && weekHead.columns.every((v) => parseFloat(v) === 12), "星期标题也使用固定12px列和3px间距，与格子对齐");
+        const activityHeight = (await activity.boundingBox()).height;
+        const maxActivityHeight = width < 760 ? 270 : 220; // 窄屏保留控件触控高度与汇总自然换行。
+        check(activityHeight <= maxActivityHeight, `${width} ${theme} 月活动卡高度<=${maxActivityHeight}px（实际${activityHeight}px）`);
       }
-      if (output) await page.screenshot({ path: path.join(output, `channel-activity-${width}-${theme}-${mode}.png`), fullPage: true });
+      if (output) {
+        await page.screenshot({ path: path.join(output, `channel-activity-${width}-${theme}-${mode}.png`), fullPage: true });
+        await activity.screenshot({ path: path.join(output, `activity-card-${width}-${theme}-${mode}.png`) });
+      }
     }
     await activity.getByText("每日", { exact: true }).click();
     check(await activity.locator("button.is-future").count() === 10, "北京13:30之后10个未来小时单独标记");
@@ -102,7 +113,7 @@ try {
         data.scrollTop = data.scrollHeight;
         return { data: getComputedStyle(data).overflowY, recent: getComputedStyle(recent).overflowY, leftScroll: data.scrollTop, recentScroll: recent.scrollTop, leftScrollbar: getComputedStyle(data).scrollbarWidth };
       });
-      check(scrolls.data === "auto" && scrolls.leftScroll > 0 && scrolls.leftScrollbar === "none" && scrolls.recentScroll === 0, "720px桌面左侧独立滚动且隐藏滚动条，不联动右侧");
+      check(scrolls.data === "auto" && scrolls.leftScrollbar === "none" && scrolls.recentScroll === 0, "720px桌面左侧保留独立滚动且隐藏滚动条，不联动右侧");
       const shortClose = await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).boundingBox();
       check(shortClose && shortClose.y >= 0 && shortClose.y + shortClose.height <= 720, "720px桌面滚动后关闭按钮在视口内");
       if (output) await page.screenshot({ path: path.join(output, "channel-activity-1440-720-light.png"), fullPage: true });
@@ -114,6 +125,13 @@ try {
         return { after: data.scrollTop, before, right: recent.scrollTop, overflow: getComputedStyle(recent).overflowY };
       });
       check(rightScroll.right > 0 && rightScroll.after === rightScroll.before && rightScroll.overflow === "auto", "430px短窗口右侧记录独立滚动，不联动左侧");
+      const leftScroll = await page.locator(".oo-stats-layout").evaluate((el) => {
+        const data = el.querySelector(".oo-stats-layout-data"), recent = el.querySelector(".oo-stats-recent");
+        const before = recent.scrollTop;
+        data.scrollTop = data.scrollHeight;
+        return { after: recent.scrollTop, before, left: data.scrollTop };
+      });
+      check(leftScroll.left > 0 && leftScroll.after === leftScroll.before, "430px短窗口左侧内容独立滚动，不联动右侧");
       if (output) await page.screenshot({ path: path.join(output, "channel-activity-1440-430-light.png"), fullPage: true });
       await page.setViewportSize({ width, height: 1000 });
     }
