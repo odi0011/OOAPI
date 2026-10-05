@@ -99,7 +99,8 @@
 .ui-chat2 .bui-composer-bar .is-reasoning>.bui-selbtn {background:var(--inset);border-radius:8px;}
 .ui-chat2 .bui-composer-bar .is-key {max-width:160px;}
 .ui-chat2 .bui-composer-bar .is-key>.bui-selbtn {width:100%;}
-.ui-chat2 .bui-composer-bar .is-key>.bui-upmenu.is-model {max-width:min(300px,calc(100vw - 24px));}
+/* 密钥菜单只承载名称、分组和勾选状态，不需要沿用模型菜单的 300px 宽度。 */
+.ui-chat2 .bui-composer-bar .is-key>.bui-upmenu.is-model {width:190px;max-width:min(190px,calc(100vw - 24px));}
 .ui-chat2 .bui-composer-spacer {display:block;flex:1;}
 .ui-chat2 .bui-modelwrap>.bui-upmenu.is-reasoning {left:0;right:auto;width:150px;}
 .ui-chat2 .bui-modelwrap.is-model-select>.bui-upmenu {max-width:min(300px,calc(100vw - 100px));}
