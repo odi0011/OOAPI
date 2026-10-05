@@ -1461,13 +1461,20 @@ h1, h2, h3, h4 {
 }
 .oo-stats-layout-data {
   min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   align-items: start;
 }
+.oo-stats-layout-data > * {
+  width: 100%;
+  min-width: 0;
+}
 .oo-stats-layout-data .oo-stats-card {
-  margin-bottom: 12px;
+  margin-bottom: 0;
+}
+.oo-stats-trend-block {
+  min-width: 0;
 }
 .oo-stats-layout-recent {
   min-width: 0;
@@ -1490,9 +1497,6 @@ h1, h2, h3, h4 {
 }
 @media (max-width: 760px) {
   .oo-stats-layout {
-    grid-template-columns: 1fr;
-  }
-  .oo-stats-layout-data {
     grid-template-columns: 1fr;
   }
   .oo-stats-layout-recent {

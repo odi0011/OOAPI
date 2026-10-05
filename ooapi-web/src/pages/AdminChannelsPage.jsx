@@ -4069,7 +4069,8 @@ export default function AdminChannelsPage() {
         open={statsOpen}
         onCancel={() => setStatsOpen(false)}
         footer={null}
-        width={880}
+        className="oo-stats-modal"
+        width={1180}
         destroyOnClose
       >
         {statsBusy ? (
@@ -4092,12 +4093,14 @@ export default function AdminChannelsPage() {
             <div className="oo-stats-layout">
               <div className="oo-stats-layout-data">
                 <TokenActivity byDay={statsData.byDay} />
-                <TokenTrend
-                  byDay={statsData.byDay}
-                  series={statsData.series || []}
-                  range={trendRange}
-                  onRangeChange={setTrendRange}
-                />
+                <div className="oo-stats-trend-block">
+                  <TokenTrend
+                    byDay={statsData.byDay}
+                    series={statsData.series || []}
+                    range={trendRange}
+                    onRangeChange={setTrendRange}
+                  />
+                </div>
               </div>
               <div className="oo-stats-layout-recent">
                 <div className="oo-stats-card-head">
