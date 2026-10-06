@@ -21,6 +21,11 @@ export const DEFAULT_UNITS_PER_OD = 10000;
 export function apiEndpoint(raw, origin = window.location.origin) {
   try {
     const url = new URL(String(raw || "/v1").trim(), origin);
+    // 旧部署可能仍保存着 IP + HTTP。HTTPS 域名页面不能把用户引回
+    // 不安全的公网地址，公开接入示例应始终跟随当前站点来源。
+    if (String(origin).startsWith("https:") && url.protocol !== "https:") {
+      return String(origin).replace(/\/+$/, "") + "/v1";
+    }
     if (["http:", "https:"].includes(url.protocol)) return url.href.replace(/\/+$/, "");
   } catch { /* 无效的站点配置使用当前站点的标准网关路径 */ }
   return origin + "/v1";
