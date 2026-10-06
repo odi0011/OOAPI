@@ -1,4 +1,4 @@
-import { Badge as ArcBadge } from "../components/arc/badge/badge";
+import StatCard from "../components/StatCard";
 import { Card as ArcPanel } from "../components/arc/card/card";
 import { Button as ActionButton } from "../components/arc/index";
 import OdAmount, { OdText } from "../components/OdAmount";
@@ -329,13 +329,13 @@ export default function LogPage() {
     {
       title: "Tokens",
       dataIndex: "prompt_tokens",
-      width: 164,
+      width: 180,
       render: (v, r) => <TokenCell promptTokens={v} completionTokens={r.completion_tokens} cacheTokens={r.cache_tokens} />,
     },
     {
       title: "耗时",
       dataIndex: "elapsed_ms",
-      width: 112,
+      width: 140,
       sorter: (a, b) => (a.elapsed_ms || 0) - (b.elapsed_ms || 0),
       render: (v, r) => <DurationCell firstTokenMs={r.first_token_ms} elapsedMs={v} />,
     },
@@ -487,34 +487,15 @@ export default function LogPage() {
           需要看图表分析时点「分析」展开（与渠道统计弹窗同一套视觉规范）。 */}
       {visibility.usage_summary && summary ? (
         <div className="oo-stats-strip">
-          <ArcBadge size="sm" tone="neutral" title="区间调用次数">
-            调用 <b className="oo-num">{summary.calls}</b>
-          </ArcBadge>
-          {summary.errors > 0 ? <ArcBadge size="sm" tone="neutral" style={{ color: "var(--red)" }} title="失败调用，部分已产生用量的调用仍按实际用量计费">错误 <b className="oo-num">{summary.errors}</b></ArcBadge> : null}
-          {summary.stopped > 0 ? <ArcBadge size="sm" tone="neutral" title="用户停止的调用">已停止 <b className="oo-num">{summary.stopped}</b></ArcBadge> : null}
-          <ArcBadge size="sm" tone="neutral" title="区间消耗">
-            消耗 <OdAmount quota={summary.units} perUnit={perUnit} digits={4} />
-          </ArcBadge>
-          <ArcBadge size="sm" tone="neutral" title={`提示 ${summary.prompt_tokens} / 补全 ${summary.completion_tokens}`}>
-            Tokens <b className="oo-num">{summary.prompt_tokens + summary.completion_tokens}</b>
-          </ArcBadge>
-          <ArcBadge
-            size="sm" tone={summary.cache_rate >= 50 ? "success" : "neutral"}
-            title={`命中 ${summary.cache_tokens} / 输入 ${summary.prompt_tokens}`}
-          >
-            缓存 <b className="oo-num">{summary.cache_rate}%</b>
-          </ArcBadge>
-          <ArcBadge size="sm" tone="neutral" title="流式首个增量到达的平均耗时">
-            首Token <b className="oo-num">{ms(summary.avg_first_token)}</b>
-          </ArcBadge>
-          <ArcBadge size="sm" tone="neutral" title="端到端平均耗时">
-            耗时 <b className="oo-num">{ms(summary.avg_elapsed)}</b>
-          </ArcBadge>
-          {summary.uncached_tokens ? (
-            <ArcBadge size="sm" tone="neutral" title="未命中缓存的输入 token">
-              未命中 <b className="oo-num">{summary.uncached_tokens}</b>
-            </ArcBadge>
-          ) : null}
+          <StatCard label="调用" value={summary.calls} hint="区间调用次数" />
+          {summary.errors > 0 ? <StatCard label="错误" value={summary.errors} tone="danger" hint="失败调用，部分已产生用量的调用仍按实际用量计费" /> : null}
+          {summary.stopped > 0 ? <StatCard label="已停止" value={summary.stopped} hint="用户停止的调用" /> : null}
+          <StatCard label="消耗" value={<OdAmount quota={summary.units} perUnit={perUnit} digits={4} />} hint="区间消耗" />
+          <StatCard label="Tokens" value={summary.prompt_tokens + summary.completion_tokens} hint={`提示 ${summary.prompt_tokens} / 补全 ${summary.completion_tokens}`} />
+          <StatCard label="缓存" value={summary.cache_rate} suffix="%" tone={summary.cache_rate >= 50 ? "success" : undefined} hint={`命中 ${summary.cache_tokens} / 输入 ${summary.prompt_tokens}`} />
+          <StatCard label="首Token" value={ms(summary.avg_first_token)} hint="流式首个增量到达的平均耗时" />
+          <StatCard label="耗时" value={ms(summary.avg_elapsed)} hint="端到端平均耗时" />
+          {summary.uncached_tokens ? <StatCard label="未命中" value={summary.uncached_tokens} hint="未命中缓存的输入 token" /> : null}
           <ActionButton size="small" type="default"
             htmlType="button"
 
@@ -539,7 +520,7 @@ export default function LogPage() {
         />
       ) : null}
 
-      <ArcPanel className="oo-panel">
+      <ArcPanel className="oo-panel oo-table-panel">
         {loadError ? (
           <Alert
             type="error"

@@ -82,10 +82,10 @@ export default function AdminGroupsPage() {
 
   // 账号候选项 = 全部渠道（分组**可以跨厂商**）。
   const channelOptions = useMemo(() => {
-    const list = vendorFilter ? channels.filter((c) => c.type === vendorFilter) : channels;
-    return list.map((c) => ({
+    return channels.map((c) => ({
       value: c.id,
       label: `${c.name}${c.account ? ` · ${c.account}` : ""} · ${c.typeName || c.type || ""}`,
+      hidden: Boolean(vendorFilter && c.type !== vendorFilter),
     }));
   }, [channels, vendorFilter]);
 
@@ -175,7 +175,7 @@ export default function AdminGroupsPage() {
               {v}
             </span>
             {v === "default" ? (
-              <ArcBadge size="sm" tone="info" style={{ fontSize: 10.5, height: 16, lineHeight: "16px", padding: "0 4px" }}>
+              <ArcBadge size="sm" tone="info">
                 默认
               </ArcBadge>
             ) : null}
@@ -241,7 +241,7 @@ export default function AdminGroupsPage() {
             <span style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "default" }}>
               <ModelLabel model={list[0]} size={13} channelTypes={modelSourceVendors(list[0], groupModelSources.get(g.id))} />
               {list.length > 1 ? (
-                <ArcBadge size="sm" tone="neutral" style={{ fontSize: 10.5, height: 16, lineHeight: "16px", padding: "0 4px" }}>
+                <ArcBadge size="sm" tone="neutral">
                   +{list.length - 1}
                 </ArcBadge>
               ) : null}
@@ -311,7 +311,7 @@ export default function AdminGroupsPage() {
         }
       />
 
-      <ArcPanel className="oo-panel">
+      <ArcPanel className="oo-panel oo-table-panel">
         {loadError ? (
           <Alert
             type="error"
@@ -421,7 +421,8 @@ export default function AdminGroupsPage() {
               }}
               options={channelOptions}
               optionFilterProp="label"
-              optionRender={(opt) => <span style={{ display: "flex", alignItems: "center", gap: 6 }}><VendorIcon type={channels.find((c) => Number(c.id) === Number(opt.value))?.type} size={14} />{opt.label}</span>}
+              optionRender={(opt) => <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}><VendorIcon type={channels.find((c) => Number(c.id) === Number(opt.value))?.type} size={14} /><span className="oo-truncate">{opt.label}</span></span>}
+              labelRender={(opt) => <span style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0, maxWidth: "100%" }}><VendorIcon type={channels.find((c) => Number(c.id) === Number(opt.value))?.type} size={12} /><span className="oo-truncate">{channels.find((c) => Number(c.id) === Number(opt.value))?.name || opt.label}</span></span>}
               maxTagCount={6}
             />
           </Form.Item>

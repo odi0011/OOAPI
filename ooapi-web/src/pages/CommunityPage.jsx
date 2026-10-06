@@ -446,9 +446,9 @@ export default function CommunityPage() {
                 {hotPosts.map((p, i) => (
                   <li key={p.id}>
                     <ActionButton type="text" htmlType="button" onClick={() => navigate(`/community/${p.id}`)}>
-                      <span className={`oo-hot-rank${i < 3 ? " is-top" : ""}`}>{i + 1}</span>
-                      <span className="oo-truncate">{p.title}</span>
-                      <span className="oo-hot-count oo-num">{fmtCompact(p.like_count || 0)}</span>
+                      <span className={`oo-hot-rank${i < 3 ? " is-top" : ""}`} aria-label={`第 ${i + 1} 名`}>{i + 1}</span>
+                      <span className="oo-truncate" title={p.title}>{p.title}</span>
+                      <span className="oo-hot-count oo-num" aria-label={`${p.like_count || 0} 个赞`}>{fmtCompact(p.like_count || 0)}</span>
                     </ActionButton>
                   </li>
                 ))}

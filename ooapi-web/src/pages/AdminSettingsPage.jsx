@@ -8,14 +8,15 @@ import { Card } from "../components/arc/card/card";
 // 现在全站设置项的字段定义只写一遍，三处自动一致。
 //
 // 分组：站点 / 外观 / 认证 / 计费 / 用户 / 安全 / 网关 / 邮件 / 备份（+ 更新）
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {   useSearchParams } from "react-router-dom";
 import {
   Form, Input, Button, Switch, InputNumber, App as ArcApp, Tabs, Typography, Alert, Spin, Select, Tooltip,
  } from "../components/arc/index";
 import {
-  SettingOutlined, DollarOutlined, SafetyCertificateOutlined, SaveOutlined, CloudDownloadOutlined,
-  BgColorsOutlined, LockOutlined, ApiOutlined, MailOutlined, DatabaseOutlined, UserOutlined, CheckCircleOutlined,
+  SettingOutlined, DollarOutlined, SafetyCertificateOutlined, CloudDownloadOutlined,
+  BgColorsOutlined, LockOutlined, ApiOutlined, MailOutlined, DatabaseOutlined, UserOutlined,
  } from "../components/arc/icons";
 import { API } from "../services/api";
 import AgentRoutingSettings, { routingValue } from "../components/AgentRoutingSettings";
@@ -231,12 +232,31 @@ const SUPER_OPTION_FALLBACK = [
   "backup_enabled", "backup_interval_hours", "backup_keep", "backup_dir",
 ];
 
+// 控件会把未设置的文本显示为空串、数字显示为空值；比较相同的显示语义，
+// 避免仅聚焦/清空空字段就误报修改。结构化设置按值比较，不依赖对象引用。
+function settingValue(name, value) {
+  const spec = F[name];
+  if (spec.type === "visibility") return normalizeVisibility(value);
+  if (spec.type === "agent-rules") return routingValue(value);
+  if (spec.bool) return Boolean(value);
+  if (spec.type === "number") return value == null || value === "" ? "" : Number(value);
+  return String(value ?? "");
+}
+
+function sameSettingValue(a, b) {
+  if (Object.is(a, b)) return true;
+  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((key) => Object.prototype.hasOwnProperty.call(b, key) && sameSettingValue(a[key], b[key]));
+}
+
 function useSettingsForm() {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saveState, setSaveState] = useState({ kind: "", text: "" });
+  const [savedValues, setSavedValues] = useState(null);
   const [superOnly, setSuperOnly] = useState([]);
   const { message } = ArcApp.useApp();
   const { refreshStatus, user, status } = useApp();
@@ -260,6 +280,11 @@ function useSettingsForm() {
         norm[k] = v === "" || v === null || v === undefined ? undefined : spec.od ? odOf(v, unitsPerOd(status)) : Number(v);
       }
       form.setFieldsValue(norm);
+      // Keep a clean snapshot for the Arc settings discard action.  The form
+      // adapter intentionally separates current values from its initial
+      // values, so loading must update both snapshots together.
+      form.initialize(norm);
+      setSavedValues(norm);
       setSaveState({ kind: "", text: "" });
     } catch (e) {
       setError(e.message || "无法加载设置");
@@ -305,17 +330,22 @@ function useSettingsForm() {
       await API.put("/option/", payload);
       // 改站点名/外观默认值后必须刷新全局 status，否则全站展示仍用旧值
       await refreshStatus();
+      // 下次放弃修改须回到本次保存值，而不是页面第一次加载的旧值。
+      form.initialize(values);
+      setSavedValues(values);
       setSaveState({ kind: "saved", text: "已保存" });
       message.success("设置已保存");
+      return true;
     } catch (e) {
       setSaveState({ kind: "error", text: e.message || "保存失败，请重试" });
       message.error(e.message);
+      return false;
     } finally {
       setSaving(false);
     }
   };
 
-  return { form, loading, saving, error, superOnly, saveState, setSaveState, load, save };
+  return { form, loading, saving, error, superOnly, savedValues, saveState, setSaveState, load, save };
 }
 
 function Field({ spec, name, locked = false, ...controlProps }) {
@@ -363,16 +393,44 @@ function SettingsField({ name, spec, locked, busy }) {
 
 function SettingsTab({ group }) {
   const s = useSettingsForm();
+  const tabRef = useRef(null);
+  const [actionPosition, setActionPosition] = useState({ left: "50%", maxWidth: "calc(100vw - 32px)" });
+  const reducedMotion = useReducedMotion();
+  const formVersion = useSyncExternalStore(s.form.subscribe, s.form.snapshot);
   useEffect(() => {
     s.load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const fields = useMemo(() => Object.entries(F).filter(([, v]) => v.g === group), [group]);
   const sections = SECTIONS[group] || [];
-  const editable = fields.some(([key, spec]) => !s.superOnly.includes(key) && !spec.disabled);
+  const changedCount = useMemo(() => {
+    if (!s.savedValues) return 0;
+    return fields.filter(([key, spec]) => !s.superOnly.includes(key) && !spec.disabled && !sameSettingValue(settingValue(key, s.form.getFieldValue(key)), settingValue(key, s.savedValues[key]))).length;
+  }, [fields, s.form, s.savedValues, s.superOnly, formVersion]);
   const label = TABS.find((item) => item.key === group)?.label;
+  useEffect(() => {
+    const tab = tabRef.current;
+    if (!tab) return undefined;
+    const alignActions = () => {
+      const { left, width } = tab.getBoundingClientRect();
+      setActionPosition({ left: left + width / 2, maxWidth: Math.max(0, width - 24) });
+    };
+    alignActions();
+    // 居中跟随内容区，侧栏折叠或窄屏切换时也不会偏向整个浏览器中央。
+    const observer = new ResizeObserver(alignActions);
+    observer.observe(tab);
+    window.addEventListener("resize", alignActions);
+    return () => { observer.disconnect(); window.removeEventListener("resize", alignActions); };
+  }, []);
+  const finish = async (values) => {
+    if (changedCount) await s.save(values);
+  };
+  const discard = () => {
+    s.form.resetFields();
+    s.setSaveState({ kind: "", text: "" });
+  };
   return (
-    <div className="oo-admin-settings-tab">
+    <div className={`oo-admin-settings-tab${changedCount > 0 ? " oo-admin-settings-tab--has-unsaved" : ""}`} ref={tabRef}>
       {s.error ? (
         <Alert
           type="error"
@@ -388,8 +446,8 @@ function SettingsTab({ group }) {
             form={s.form}
             className="oo-admin-settings-form"
             layout="vertical"
-            onFinish={s.save}
-            onValuesChange={() => s.setSaveState({ kind: "dirty", text: "有未保存的修改" })}
+            onFinish={finish}
+            onValuesChange={() => s.setSaveState({ kind: "", text: "" })}
             disabled={s.loading || Boolean(s.error) || s.saving}
             requiredMark={false}
           >
@@ -399,14 +457,27 @@ function SettingsTab({ group }) {
                 {section.visibility ? <Form.Item name="user_data_visibility" className="oo-admin-visibility-field"><Field spec={F.user_data_visibility} name="user_data_visibility" locked={s.superOnly.includes("user_data_visibility")} disabled={s.loading || Boolean(s.error) || s.saving} /></Form.Item> : section.fields.map((key) => <SettingsField key={key} name={key} spec={F[key]} locked={s.superOnly.includes(key)} busy={s.loading || Boolean(s.error) || s.saving} />)}
               </div>
             </Card>)}
-            <div className="oo-admin-settings-actions">
-              <div className={`oo-admin-settings-save-state${s.saveState.kind ? ` oo-admin-settings-save-state--${s.saveState.kind}` : ""}`} role="status" aria-live="polite">
-                {s.saveState.kind === "saved" ? <CheckCircleOutlined /> : null}{s.saveState.text || (!editable ? "当前账号仅可查看此标签" : `${label}设置`)}
-              </div>
-              <Button type="primary" htmlType="submit" aria-label={`保存${label}设置`} loading={s.saving} disabled={!editable} icon={<SaveOutlined />}>
-                保存{label}设置
-              </Button>
-            </div>
+            <AnimatePresence initial={false}>
+              {changedCount > 0 && !s.loading && !s.error ? <motion.div
+                key="unsaved-settings"
+                className="oo-admin-settings-actions"
+                style={{ ...actionPosition, x: "-50%" }}
+                initial={{ opacity: 0, y: reducedMotion ? 0 : 20, scale: reducedMotion ? 1 : 0.94 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: reducedMotion ? 0 : 14, scale: reducedMotion ? 1 : 0.96 }}
+                transition={reducedMotion ? { duration: 0.1 } : { type: "spring", stiffness: 420, damping: 26, mass: 0.7 }}
+              >
+                <div className={`oo-admin-settings-save-state${s.saveState.kind === "error" ? " oo-admin-settings-save-state--error" : ""}`} role="status" aria-live="polite">
+                  {s.saveState.kind === "error" ? s.saveState.text : `${changedCount} 项修改未保存`}
+                </div>
+                <div className="oo-admin-settings-action-buttons">
+                  <Button type="text" size="small" onClick={discard} disabled={s.saving}>放弃修改</Button>
+                  <Button type="primary" size="small" htmlType="submit" aria-label={`保存${label}设置`} loading={s.saving}>
+                    保存修改
+                  </Button>
+                </div>
+              </motion.div> : null}
+            </AnimatePresence>
           </Form>
         </Spin>
     </div>

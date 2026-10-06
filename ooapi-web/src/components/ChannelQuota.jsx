@@ -10,7 +10,7 @@ import OdAmount, { OdText } from "./OdAmount";
 //   · 百分比取整显示（88%），悬浮才给精确值与重置时间，列表里不堆字；
 //   · 颜色按用量分档：<70% 主色、70-90% 橙、>90% 红，一眼看出快用完的账号。
 import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
-import {   Button, Tooltip  } from "./arc/index";
+import {   Button, Tooltip, Popover  } from "./arc/index";
 import { ApiOutlined, DatabaseOutlined, ThunderboltOutlined  } from "./arc/icons";
 import { quotaNumber } from "./quota-order.js";
 
@@ -493,7 +493,7 @@ export function QuotaInline({ quota, stats }) {
                   <WindowRow w={w} index={i} showScope={multiScope} compact />
                 </div>
                 {needReserve ? (
-                  <Tooltip title={collapsedTip}>
+                  <Popover content={collapsedTip} trigger={["hover", "click"]} overlayClassName="oo-info-popover oo-quota-popover">
                     {/* 用 <button> 而不是 <span>：黑盒测试指出这个 `+N` 看着能点但点了没反应
                         （纯 span + Tooltip 只能悬浮）。用真实按钮至少符合可访问性预期，
                         键盘也能聚焦；点一下同样展开悬浮内容（Tooltip 默认 click 不触发，
@@ -517,7 +517,7 @@ export function QuotaInline({ quota, stats }) {
                     >
                       +{collapsedWins.length}
                     </ActionButton>
-                  </Tooltip>
+                  </Popover>
                 ) : null}
               </div>
             );
@@ -629,19 +629,21 @@ function InfoRow({ chips }) {
         </span>
       ))}
       {hidden.length ? (
-        <Tooltip
-          title={
+        <Popover
+          content={
             <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 180 }}>
               {hidden.map((x) => (
                 <div key={x.key}>{x.node}</div>
               ))}
             </div>
           }
+          trigger={["hover", "click"]}
+          overlayClassName="oo-info-popover oo-quota-popover"
         >
           <ArcBadge size="sm" tone="neutral" style={{ fontSize: 11, flexShrink: 0, whiteSpace: "nowrap" }}>
             +{hidden.length}
           </ArcBadge>
-        </Tooltip>
+        </Popover>
       ) : null}
 
       {/* 不可见测量层：只为取自然宽度，不参与布局、也不响应鼠标。

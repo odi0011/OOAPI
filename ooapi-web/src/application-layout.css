@@ -40,7 +40,7 @@
 }
 .oo-brand-name {
   font-size: var(--fs-base);
-  font-weight: 600;
+  font-weight: 550;
   letter-spacing: var(--ls-title);
   white-space: nowrap;
   overflow: hidden;
@@ -62,7 +62,7 @@
 .oo-nav-group + .oo-nav-group { margin-top: 16px; }
 .oo-nav-label {
   padding: 0 8px 6px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--fs-label);
   font-weight: 400;
   letter-spacing: 0;
@@ -82,6 +82,7 @@
   color: var(--ink-2);
   font-size: var(--fs-base);
   font-weight: 450;
+  font-family: var(--font-sans);
   letter-spacing: var(--ls-body);
   cursor: pointer;
   white-space: nowrap;
@@ -96,7 +97,7 @@
 .oo-nav-item.is-active {
   background: var(--accent-tint);
   color: var(--accent-ink);
-  font-weight: 550;
+  font-weight: 500;
 }
 .oo-nav-item:focus-visible,
 .ui-chat2 button:focus-visible {
@@ -196,6 +197,7 @@
   white-space: nowrap;
 }
 .oo-content {
+  box-sizing: border-box;
   padding: 24px;
   max-width: 100%;
   width: 100%;
@@ -465,21 +467,23 @@
   gap: 6px;
   margin-bottom: 12px;
 }
+/* 统计标签直接采用 Arc Badge 的尺寸、背景与圆角；只连接标签/数值结构，
+   不把 small 标签拉高或覆盖组件内的行高，避免留白比例失衡。 */
 .oo-stat-card .oo-stat-card-num {
   display: inline-flex;
   align-items: center;
   gap: 3px;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: inherit;
+  font-weight: inherit;
   line-height: inherit;
-  color: var(--ink);
+  color: var(--foreground);
   min-width: 0;
 }
-.oo-stat-card-value { min-width: 0; overflow-wrap: anywhere; }
+.oo-stat-card-value { display: inline-flex; align-items: center; min-width: 0; }
 .oo-stat-card-suffix { display: inline-flex; align-items: center; font-size: inherit; color: var(--ink-3); }
-.oo-stat-card-label { margin: 0; color: var(--ink-3); font-size: inherit; white-space: nowrap; }
+.oo-stat-card-label { margin: 0; color: var(--text-muted); white-space: nowrap; }
 .oo-stats-card {
   border: 1px solid var(--line);
   background: var(--surface);
@@ -1121,6 +1125,13 @@ button.oo-channel-activity-cell:focus-visible {
 }
 .oo-channel-add-modal {
   max-width: calc(100vw - 32px);
+  height: min(780px, calc(100dvh - 48px));
+}
+.oo-channel-add-modal .arc-modal-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 .oo-channel-add-layout {
   display: grid;
@@ -1133,10 +1144,12 @@ button.oo-channel-activity-cell:focus-visible {
   overflow: hidden;
 }
 .oo-channel-add-providers {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   padding-right: 18px;
   border-right: 1px solid var(--line);
-  overflow-y: auto;
+  overflow: hidden;
   min-height: 0;
 }
 .oo-channel-add-config {
@@ -1145,13 +1158,15 @@ button.oo-channel-activity-cell:focus-visible {
   overflow-y: auto;
   overflow-x: hidden;
   min-height: 0;
+  overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
 .oo-channel-add-step {
+  flex: none;
   margin: 0 0 10px;
   color: var(--ink);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
 }
 .oo-channel-add-empty {
   display: flex;
@@ -1174,19 +1189,23 @@ button.oo-channel-activity-cell:focus-visible {
   background: var(--field);
   color: var(--ink-3);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
 }
 .oo-provider-picker {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 8px;
   box-sizing: border-box;
   padding: 6px 12px 10px 6px;
   overflow-y: auto;
   min-height: 0;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 .oo-provider-picker__item {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 11px;
   width: 100%;
@@ -1392,22 +1411,21 @@ button.oo-channel-activity-cell:focus-visible {
   .oo-uptime-bar { width: 3px; }
   .oo-channel-add-layout {
     grid-template-columns: 1fr;
-    grid-template-rows: auto;
+    grid-template-rows: minmax(112px, .35fr) minmax(0, .65fr);
     gap: 14px;
-    overflow: visible;
+    overflow: hidden;
   }
   .oo-channel-add-providers {
     padding-right: 0;
     border-right: 0;
-    overflow-y: visible;
+    border-bottom: 1px solid var(--line);
+    overflow: hidden;
   }
   .oo-channel-add-config {
-    max-height: none;
-    overflow: visible;
+    overflow-y: auto;
     padding-right: 12px;
   }
   .oo-provider-picker {
-    max-height: 250px;
     overflow-y: auto;
   }
 }
@@ -2527,12 +2545,14 @@ html[data-theme="dark"] .oo-theme-switch-thumb { background: var(--hover-2); box
   top: calc(var(--header-h) + var(--sp-4));
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 3px;
   max-height: calc(100dvh - var(--header-h) - var(--sp-8));
   overflow-y: auto;
+  min-width: 0;
+  padding: 0 2px;
 }
 .oo-topic-rail-title {
-  padding: 2px 10px 8px;
+  padding: 2px 10px 7px;
   font-family: var(--font-mono);
   font-size: var(--fs-label);
   text-transform: uppercase;
@@ -2554,14 +2574,34 @@ html[data-theme="dark"] .oo-theme-switch-thumb { background: var(--hover-2); box
   text-align: left;
   cursor: pointer;
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  min-width: 0;
+  overflow: hidden;
+  justify-content: flex-start;
 }
 .oo-topic-item:hover { background: var(--hover); color: var(--ink); }
 .oo-topic-item.is-active { background: var(--accent-tint); color: var(--accent-ink); font-weight: 550; }
 .oo-topic-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.oo-topic-item > .oo-truncate { flex: 1; min-width: 0; }
-.oo-topic-icon { width: 18px; flex-shrink: 0; text-align: center; font-size: 13px; color: var(--ink-3); }
-.oo-topic-item.is-active .oo-topic-icon { color: inherit; }
-.oo-topic-count { font-size: 11px; color: var(--ink-3); font-family: var(--font-mono); flex-shrink: 0; }
+/* Arc Button puts children in labelSlot > labelContent > labelPhase. The
+   intermediate spans must also shrink or a long topic name pushes its count
+   out of the rail despite the ellipsis on the text itself. */
+.oo-topic-item > span:first-child {
+  min-width: 0;
+  width: auto !important;
+  flex: 1 1 auto;
+  overflow: hidden;
+  justify-content: flex-start;
+}
+.oo-topic-item > span:first-child > span,
+.oo-topic-item > span:first-child > span > span {
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.oo-topic-item .oo-topic-ico { flex: 0 0 20px; }
+.oo-topic-item .oo-truncate { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oo-topic-item .oo-topic-count { flex: 0 0 auto; margin-left: auto; }
+.oo-topic-count { font-size: 11px; color: var(--ink-3); font-family: var(--font-mono); }
 .oo-topic-chips { display: none; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
 .oo-topic-chips::-webkit-scrollbar { display: none; }
 .oo-topic-chips .oo-topic-item {
@@ -2649,6 +2689,7 @@ html[data-theme="dark"] .oo-theme-switch-thumb { background: var(--hover-2); box
   align-items: center;
   gap: 8px;
   width: 100%;
+  min-height: 32px;
   padding: 6px 4px;
   border: 0;
   border-radius: var(--r-xs);
@@ -2658,12 +2699,28 @@ html[data-theme="dark"] .oo-theme-switch-thumb { background: var(--hover-2); box
   color: var(--ink);
   text-align: left;
   cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
 }
 .oo-hot-list button:hover { background: var(--hover); }
-.oo-hot-list .oo-truncate { flex: 1; min-width: 0; }
-.oo-hot-rank { width: 16px; flex-shrink: 0; font-size: 12px; color: var(--ink-3); font-family: var(--font-mono); text-align: center; }
+.oo-hot-list button > span:first-child {
+  min-width: 0;
+  width: auto !important;
+  flex: 1 1 auto;
+  overflow: hidden;
+  justify-content: flex-start;
+}
+.oo-hot-list button > span:first-child > span,
+.oo-hot-list button > span:first-child > span > span {
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.oo-hot-list .oo-truncate { flex: 1 1 auto; min-width: 0; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oo-hot-rank { width: 20px; flex: 0 0 20px; font-size: 12px; color: var(--ink-3); font-family: var(--font-mono); text-align: center; }
 .oo-hot-rank.is-top { color: var(--accent-ink); font-weight: 600; }
-.oo-hot-count { font-size: 11px; color: var(--ink-3); flex-shrink: 0; }
+.oo-hot-count { font-size: 11px; color: var(--ink-3); flex: 0 0 auto; margin-left: auto; white-space: nowrap; }
 @media (max-width: 1279px) {
   .oo-read-shell.oo-community-shell { grid-template-columns: minmax(0, 1fr) minmax(260px, 300px); }
   .oo-topic-rail { display: none; }
@@ -2676,6 +2733,17 @@ html[data-theme="dark"] .oo-theme-switch-thumb { background: var(--hover-2); box
   .oo-community-search { width: 100%; }
   .oo-community-toolbar .oo-toolbar-spacer { display: none; }
 }
+
+/* 社区三栏在窄桌面上必须各自允许收缩；否则右侧热榜的长标题会把整个页面
+   撑出横向滚动条。热榜标题也要使用真正的省略，而不是让按钮的 nowrap 溢出卡片。 */
+.oo-read-shell.oo-community-shell,
+.oo-read-shell.oo-community-shell > *,
+.oo-read-aside,
+.oo-aside-card { min-width: 0; }
+.oo-read-shell.oo-community-shell { max-width: 100%; }
+.oo-read-aside { overflow: hidden; }
+.oo-read-aside .oo-aside-card { overflow: hidden; }
+.oo-hot-list li + li { margin-top: 2px; }
 .oo-mention-pop {
   position: relative;
   margin-top: 6px;
@@ -2710,6 +2778,34 @@ html[data-theme="dark"] .oo-theme-switch-thumb { background: var(--hover-2); box
 .oo-log-status-label--stopped { color: var(--orange); }
 .oo-log-billing { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 3px 7px; min-width: 0; line-height: 1.35; }
 .oo-log-billing-muted { color: var(--ink-3); font-size: 11px; }
+.oo-token-cell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 8px;
+  min-width: 148px;
+  line-height: 1.3;
+}
+.oo-token-main { display: grid; gap: 2px; min-width: 0; }
+.oo-token-row {
+  display: grid;
+  grid-template-columns: 14px 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.oo-token-row b { min-width: 0; color: var(--ink-2); font-weight: 400; font-variant-numeric: tabular-nums; text-align: right; }
+.oo-token-row svg { width: 13px; height: 13px; }
+.oo-token-input { color: var(--accent); }
+.oo-token-output { color: var(--token-output); }
+.oo-token-cache-icon { color: var(--token-cache); }
+.oo-token-info { grid-column: 2; grid-row: 1; align-self: center; color: var(--ink-3); }
+.oo-duration-cell { display: grid; gap: 2px; min-width: 104px; line-height: 1.35; }
+.oo-duration-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 4px; align-items: baseline; font-size: 11px; }
+.oo-duration-row > span:first-child { color: var(--ink-3); white-space: nowrap; }
+.oo-duration-value { color: var(--ink-2); font-weight: 400; font-variant-numeric: tabular-nums; }
 html[data-theme="dark"] .oo-vendor-icon--mono { filter: invert(0.88); }
 .oo-model-origin { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; width: fit-content; padding: 1px 7px; border-radius: 999px; font-size: 11px; color: var(--ink-3); background: var(--inset); }
 .log-plain-text {max-height:340px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;padding:10px 12px;border-radius:var(--r-sm);background:var(--inset);color:var(--ink-2);font-family:inherit;font-size:12px;line-height:1.75;}
@@ -2718,3 +2814,16 @@ html[data-theme="dark"] .oo-vendor-icon--mono { filter: invert(0.88); }
 .oo-endpoint-row>small { flex:0 0 26px;color:var(--ink-3);font-size:11px; }
 .oo-endpoint-row>span { min-width:0;overflow-wrap:anywhere;white-space:normal;font-family:var(--font-mono); }
 .oo-reasoning-level { font-size:12px;overflow-wrap:anywhere; }
+/* 使用记录与看板中的多行审计字段保留稳定的上下呼吸空间。 */
+.oo-endpoints { display:grid; min-width:0; gap:4px; padding-block:2px; }
+.oo-endpoint-row { display:grid; grid-template-columns:32px minmax(0,1fr); align-items:baseline; min-width:0; gap:7px; line-height:1.4; }
+.oo-endpoint-row>small { color:var(--ink-3); font-size:10px; white-space:nowrap; }
+.oo-endpoint-row>span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.oo-billing-trigger { min-width:0; max-width:100%; padding-inline:6px !important; }.oo-billing-trigger .oo-billing-amount { max-width:100%; }
+.oo-billing-sheet[data-side="bottom"] .arc-drawer-body { width:min(720px,100%); margin:0 auto; }
+/* Body text uses 400; headings and emphasis add just one weight step. Keep
+   this consistent for the sidebar font and for dialogs rendered in a portal. */
+.oo-shell :is(h1, h2, h3, h4, b, strong),
+.arc-modal :is(h1, h2, h3, h4, b, strong),
+.arc-drawer :is(h1, h2, h3, h4, b, strong) { font-weight:500; }
+.oo-page-title, .oo-profile-name, .oo-community-post-title { font-weight:500; }

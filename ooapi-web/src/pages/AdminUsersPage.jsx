@@ -285,7 +285,7 @@ export default function AdminUsersPage() {
         <StatCard label="累计消费" value={loadError ? "—" : <OdAmount quota={totalUsed} perUnit={perUnit} />} hint="本页统计" />
       </div>
 
-      <ArcPanel className="oo-panel">
+      <ArcPanel className="oo-panel oo-table-panel">
         {loadError ? (
           <Alert
             type="error"

@@ -24,6 +24,27 @@
   overflow: hidden;
   padding: 0;
 }
+.oo-model-config-button {
+  min-width: 76px;
+  min-height: 32px;
+  padding-inline: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: var(--r-btn, 8px);
+  background: color-mix(in srgb, var(--accent-tint) 42%, var(--surface));
+  color: var(--accent-ink);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 500;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.oo-model-config-button:hover {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  background: var(--accent-tint);
+  transform: translateY(-1px);
+}
+.oo-model-config-button:active { transform: translateY(0); }
+.oo-model-config-button svg { width: 14px; height: 14px; }
 .oo-model-management-panel-head {
   display: flex;
   align-items: flex-start;
@@ -47,10 +68,12 @@
   display: grid;
   grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(130px, 1fr));
   gap: 10px;
-  padding: 12px 20px;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+  padding: 14px 16px;
+  margin: 4px 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card, 12px);
   background: var(--inset);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface) 70%, transparent);
 }
 .oo-model-main,
 .oo-model-source {

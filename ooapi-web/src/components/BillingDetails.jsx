@@ -1,6 +1,6 @@
 import OdAmount from "./OdAmount";
-import React, { useRef, useState } from "react";
-import {  Button, Table, Grid, Popover, Typography  } from "./arc/index";
+import React, { useState } from "react";
+import {  Button, Table, Drawer, Typography  } from "./arc/index";
 import { fmtOd, odOf } from "../services/format";
 import "./billing.css";
 
@@ -37,7 +37,7 @@ function ChannelQuote({ quote }) {
 }
 
 /** 只展示服务端保存的账单，不根据当前模型价或旧 SKU 价格重新算费。 */
-export function BillingDetails({ record, isAdmin = false, perUnit = 10000, compactView = false }) {
+export function BillingDetails({ record, isAdmin = false, perUnit = 10000, compactView = false, hideTitle = false }) {
   const bill = record?.billing_details?.version === 1 ? record.billing_details : null;
   const quotes = (Array.isArray(bill?.calls) ? bill.calls : []).map(c => c?.channel_quote).filter(Boolean);
   const sameQuote = quotes.length === Number(bill?.call_count) && quotes.every(q => q.status === "available" && q.provider === quotes[0]?.provider && q.model === quotes[0]?.model && JSON.stringify(q.price) === JSON.stringify(quotes[0]?.price));
@@ -47,7 +47,7 @@ export function BillingDetails({ record, isAdmin = false, perUnit = 10000, compa
   const raw = finite(bill?.raw_cost_od), base = finite(bill?.base_cost_od);
   const rounding = finite(bill?.pre_rate_rounding_units) !== null ? Number(bill.pre_rate_rounding_units) !== 0 : raw !== null && base !== null && Math.abs(raw - base) > 0.000000001;
   return <div className={`oo-billing-details${compactView ? " oo-billing-details--compact" : ""}`}>
-    <div className="oo-billing-heading"><strong>计费明细</strong></div>
+    {!hideTitle ? <div className="oo-billing-heading"><strong>计费明细</strong></div> : null}
     {bill ? <>
       <Table size="small" pagination={false} rowKey="key" dataSource={rows.map(([key,label])=>({key,label,...bill.components?.[key]}))} columns={[
         {title:"类别",dataIndex:"label",width:80},
@@ -81,15 +81,20 @@ export function BillingDetails({ record, isAdmin = false, perUnit = 10000, compa
 /** 真正的按钮保证触屏与键盘可用，事件留在计费入口，不误开整行详情。 */
 export function BillingAmount({ record, isAdmin = false, perUnit = 10000 }) {
   const [open, setOpen] = useState(false);
-  const screens = Grid.useBreakpoint();
-  const popupContent = useRef(null);
   const known = record?.billing_known !== false;
   const quota = finite(record?.quota) ?? 0;
   const emptyFailure = quota === 0 && ["error", "stopped"].includes(record?.status);
-  // 触屏会合成鼠标事件，窄屏只由点击开关；键盘用 Enter/空格打开，避免焦点与点击互相切换。
-  return <Popover content={<div ref={popupContent} onClick={(event) => event.stopPropagation()} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") setOpen(false); }}><BillingDetails record={record} isAdmin={isAdmin} perUnit={perUnit} compactView /></div>} trigger={screens.md ? ["hover", "click"] : ["click"]} open={open} onOpenChange={setOpen} rootClassName="oo-billing-popover" placement="top" arrow={false} align={{ offset: [0, 0] }}>
-    <Button type="text" size="small" className="oo-billing-trigger" aria-label="查看计费明细" aria-expanded={open} onBlur={(event) => { if (!popupContent.current?.contains(event.relatedTarget)) setOpen(false); }} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") setOpen(false); if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setOpen(true); } }}>
+  // 计费明细是整行详情之外的第二层信息：只在明确点击时打开 Bottom sheet，
+  // 避免鼠标扫过表格就弹层，也避免点击计费时触发行详情。
+  // Portal 仍沿 React 树冒泡，拦截层要包含整个抽屉，关闭按钮与遮罩也不能触发行详情。
+  return <span onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+    <Button type="text" size="small" className="oo-billing-trigger" aria-label="查看计费明细" aria-expanded={open}
+      onClick={(event) => { event.stopPropagation(); setOpen(true); }}
+      onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") setOpen(false); if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setOpen(true); } }}>
       {!known ? <span className="oo-log-billing-muted">费用待核查</span> : emptyFailure ? <span className="oo-log-billing-muted">未计费</span> : <OdAmount quota={quota} perUnit={perUnit} digits={4} className="oo-billing-amount" />}
     </Button>
-  </Popover>;
+    <Drawer title="计费明细" open={open} placement="bottom" width="100%" className="oo-billing-sheet" onClose={() => setOpen(false)}>
+      <BillingDetails record={record} isAdmin={isAdmin} perUnit={perUnit} hideTitle />
+    </Drawer>
+  </span>;
 }

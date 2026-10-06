@@ -5,12 +5,6 @@ import { ArrowDownOutlined, ArrowUpOutlined, InboxOutlined, InfoCircleOutlined  
 
 const count = (v) => Math.max(0, Math.round(Number(v) || 0));
 const full = (v) => count(v).toLocaleString("en-US");
-const compact = (v) => {
-  const n = count(v);
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(1).replace(/\.0$/, "")}K`;
-  return full(n);
-};
 
 export function formatDuration(value) {
   if (value == null || value === "" || !Number.isFinite(Number(value)) || Number(value) < 0) return "—";
@@ -31,8 +25,8 @@ function durationColor(value) {
 export function DurationCell({ firstTokenMs = null, elapsedMs = null }) {
   return (
     <span className="oo-duration-cell" aria-label={`首字 ${formatDuration(firstTokenMs)}，总耗时 ${formatDuration(elapsedMs)}`}>
-      <span className="oo-duration-row"><span>首字</span><b style={{ color: durationColor(firstTokenMs) }}>{formatDuration(firstTokenMs)}</b></span>
-      <span className="oo-duration-row"><span>总耗时</span><b style={{ color: durationColor(elapsedMs) }}>{formatDuration(elapsedMs)}</b></span>
+      <span className="oo-duration-row"><span>首字</span><span className="oo-duration-value" style={{ color: durationColor(firstTokenMs) }}>{formatDuration(firstTokenMs)}</span></span>
+      <span className="oo-duration-row"><span>总耗时</span><span className="oo-duration-value" style={{ color: durationColor(elapsedMs) }}>{formatDuration(elapsedMs)}</span></span>
     </span>
   );
 }
@@ -54,10 +48,10 @@ export function TokenCell({ promptTokens = 0, completionTokens = 0, cacheTokens 
   return (
     <span className="oo-token-cell">
       <span className="oo-token-main">
-        <span><ArrowDownOutlined className="oo-token-input" aria-label="输入" /><b>{full(input)}</b></span>
-        <span><ArrowUpOutlined className="oo-token-output" aria-label="输出" /><b>{full(output)}</b></span>
+        <span className="oo-token-row"><ArrowDownOutlined className="oo-token-input" aria-label="输入" /><span>输入</span><b>{full(input)}</b></span>
+        <span className="oo-token-row"><ArrowUpOutlined className="oo-token-output" aria-label="输出" /><span>输出</span><b>{full(output)}</b></span>
+        <span className="oo-token-row"><InboxOutlined className="oo-token-cache-icon" aria-label="缓存" /><span>缓存</span><b>{full(cache)}</b></span>
       </span>
-      {cache > 0 ? <span className="oo-token-cache" title={`缓存读取 ${full(cache)} Token（已包含在输入中）`}><InboxOutlined />{compact(cache)}</span> : null}
       <Tooltip title={detail} trigger={["hover", "focus", "click"]}>
         <ActionButton type="text" htmlType="button" className="oo-token-info" aria-label="查看 Token 明细" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}><InfoCircleOutlined /></ActionButton>
       </Tooltip>

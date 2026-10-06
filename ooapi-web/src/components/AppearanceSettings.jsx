@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { motionTokens } from "./arc/lib/motion-tokens";
 import {   Alert, App as ArcApp, Button, ColorPicker, Input, Segmented, Select, Skeleton, Switch, Tag  } from "./arc/index";
-import { CheckOutlined, SaveOutlined, UndoOutlined  } from "./arc/icons";
+import { CheckOutlined } from "./arc/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import { useTheme } from "../theme/ThemeContext";
@@ -44,6 +46,7 @@ function WallpaperField({ mode, value, disabled, onChange }) {
 }
 
 export default function AppearanceSettings() {
+  const reducedMotion = useReducedMotion();
   const { refreshStatus, user } = useApp();
   const { message } = ArcApp.useApp();
   const { previewAppearance, setSiteAppearance } = useTheme();
@@ -106,6 +109,16 @@ export default function AppearanceSettings() {
       </div>
       <aside className="oo-site-appearance-preview" aria-label="外观预览"><div className="oo-site-appearance-preview-title">实时预览</div><div className="oo-site-appearance-preview-window"><div className="oo-site-appearance-preview-bar"><i /><i /><i /></div><div className="oo-site-appearance-preview-content"><h3>工作台</h3><div className="oo-site-appearance-sample-card"><span>可用余额</span><strong>128.50 <OdCoin /></strong><Tag color="success">运行正常</Tag></div><Input placeholder="搜索模型" aria-label="预览搜索模型" /><div className="oo-site-appearance-preview-buttons"><Button type="primary">主要按钮</Button><Button>次要按钮</Button></div><div className="oo-site-appearance-sample-message">帮我整理今天的使用情况</div><p>可以，我会先查询你的调用记录。</p></div></div></aside>
     </div>
-    <div className="oo-site-appearance-save"><span>{dirty ? "有未保存的外观调整" : "当前为站点已保存的外观"}</span><Button icon={<UndoOutlined />} disabled={!dirty || busy} onClick={() => { setDraft(saved); setError(""); }}>撤销修改</Button><Button type="primary" icon={<SaveOutlined />} disabled={!dirty} loading={busy} onClick={save}>保存外观</Button></div>
+    <AnimatePresence initial={false}>
+      {dirty ? <motion.div className="oo-site-appearance-save"
+        initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 20, scale: .94 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 14, scale: .96 }}
+        transition={reducedMotion ? { duration: motionTokens.duration.instant } : motionTokens.spring.morph}>
+        <span role="status">有未保存的外观调整</span>
+        <Button type="text" disabled={busy} onClick={() => { setDraft(saved); setError(""); }}>放弃修改</Button>
+        <Button type="primary" loading={busy} onClick={save}>保存外观</Button>
+      </motion.div> : null}
+    </AnimatePresence>
   </div>;
 }

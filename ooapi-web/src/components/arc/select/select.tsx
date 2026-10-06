@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useId, useState } from "react";
-import type { ComponentPropsWithoutRef } from "react";
+import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { Variants } from "motion/react";
@@ -16,7 +16,7 @@ export interface SelectProps extends Omit<ComponentPropsWithoutRef<typeof Select
   id?: string;
   className?: string;
   onCloseAutoFocus?: ComponentPropsWithoutRef<typeof SelectPrimitive.Content>["onCloseAutoFocus"];
-  options: { value: string; label: string; disabled?: boolean }[];
+  options: { value: string; label: ReactNode; selectedLabel?: ReactNode; searchText?: string; disabled?: boolean }[];
 }
 
 /** The shown value rolls in the direction of the list: a later option rises from below, an earlier one drops from above. */
@@ -39,7 +39,7 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(function Select
   const [uncontrolledValue, setUncontrolledValue] = useState(rootProps.defaultValue ?? "");
   const currentValue = rootProps.value ?? uncontrolledValue;
   const index = options.findIndex((option) => option.value === currentValue);
-  const shown = currentValue ? options[index]?.label ?? "" : placeholder;
+  const shown = currentValue ? options[index]?.selectedLabel ?? options[index]?.label ?? "" : placeholder;
   const [previousIndex, setPreviousIndex] = useState(index);
   const [direction, setDirection] = useState(1);
   if (previousIndex !== index) { setPreviousIndex(index); setDirection(index > previousIndex ? 1 : -1); }
@@ -73,7 +73,7 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(function Select
             </SelectPrimitive.ScrollUpButton>
             <SelectPrimitive.Viewport className={styles.viewport}>
               {options.map((option) => (
-                <SelectPrimitive.Item key={option.value} value={option.value} disabled={option.disabled} className={styles.item}>
+                <SelectPrimitive.Item key={option.value} value={option.value} textValue={option.searchText} disabled={option.disabled} className={styles.item}>
                   <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
                   <SelectPrimitive.ItemIndicator className={styles.indicator}>
                     <Check size={16} strokeWidth={1.75} aria-hidden="true" />

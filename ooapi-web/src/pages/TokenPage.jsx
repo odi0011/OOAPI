@@ -361,7 +361,7 @@ export default function TokenPage() {
           if (!g) {
             return (
               <Tooltip title="该密钥未绑定分组，调用会被拒绝（403）。点「编辑」给它选一个分组即可恢复。">
-                <ArcBadge size="sm" tone="neutral" style={{ color: "var(--pill-red-ink)", background: "var(--pill-red-tint)" }}>
+                <ArcBadge size="sm" tone="danger">
                   未绑定 · 不可用
                 </ArcBadge>
               </Tooltip>
@@ -444,7 +444,7 @@ export default function TokenPage() {
         }
       />
 
-      <ArcPanel className="oo-panel">
+      <ArcPanel className="oo-panel oo-table-panel">
         {loadError ? (
           <Alert
             type="error"

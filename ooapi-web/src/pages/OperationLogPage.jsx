@@ -179,7 +179,7 @@ export default function OperationLogPage() {
         }
       />
 
-      <ArcPanel className="oo-panel">
+      <ArcPanel className="oo-panel oo-table-panel">
         {loadError ? (
           <Alert
             type="error"

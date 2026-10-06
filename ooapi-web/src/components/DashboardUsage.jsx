@@ -1,7 +1,6 @@
-import { Button as ActionButton } from "./arc/index";
 import React, { useMemo, useState } from "react";
 import {   Button, Empty, Grid, Segmented, Table, Tag, Tooltip  } from "./arc/index";
-import { ArrowRightOutlined, InfoCircleOutlined  } from "./arc/icons";
+import { ArrowRightOutlined } from "./arc/icons";
 import { ChartCard, Legend, LineChart, SERIES_COLORS, fmtCompact } from "./Charts";
 import OdAmount from "./OdAmount";
 import UserAvatar from "./UserAvatar";
@@ -33,7 +32,7 @@ function Comparison({ current, previous }) {
 }
 
 function Metric({ label, value, current, previous, hint, note, tone }) {
-  return <StatCard className="oo-dashboard-metric" label={<>{label}<ActionButton type="text" htmlType="button" className="oo-dashboard-info" aria-label={`${label}统计口径`}><InfoCircleOutlined /></ActionButton></>} value={value} tone={tone}
+  return <StatCard className="oo-dashboard-metric" label={label} value={value} tone={tone}
     hint={hint} foot={note || <Comparison current={current} previous={previous} />} />;
 }
 
@@ -128,8 +127,8 @@ export function RecentUsageTable({ rows = [], perUnit, admin = false, onMore }) 
       ...(admin ? [{ title: "用户", width: 160, render: (_, record) => <UserAvatar user={{ ...record, id: record.user_id }} size={24} showName /> }] : []),
       { title: "模型", width: 220, render: (_, record) => <DashboardModel record={record} /> },
       { title: "结果", dataIndex: "status", width: 90, render: (value, record) => { const [label, color] = RESULT[value] || (value ? ["其他状态", "default"] : Number(record.type) === 2 ? RESULT.success : RESULT.error); return <Tag color={color}>{label}</Tag>; } },
-      { title: "首字 / 总耗时", width: 130, render: (_, record) => <DurationCell firstTokenMs={record.first_token_ms} elapsedMs={record.elapsed_ms} /> },
-      { title: "Tokens", width: 180, render: (_, record) => <TokenCell promptTokens={record.prompt_tokens} completionTokens={record.completion_tokens} cacheTokens={record.cache_tokens} /> },
+      { title: "首字 / 总耗时", width: 140, render: (_, record) => <DurationCell firstTokenMs={record.first_token_ms} elapsedMs={record.elapsed_ms} /> },
+      { title: "Tokens", width: 190, render: (_, record) => <TokenCell promptTokens={record.prompt_tokens} completionTokens={record.completion_tokens} cacheTokens={record.cache_tokens} /> },
       { title: "消费", dataIndex: "units", width: 120, align: "right", render: (value) => <OdAmount quota={value} perUnit={perUnit} digits={4} /> },
     ]} />
   </ChartCard>;

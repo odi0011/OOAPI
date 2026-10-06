@@ -2,6 +2,7 @@
 
 import { animate, AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Check, ChevronDown, Search, X } from "lucide-react";
+import * as PopoverPrimitive from "@radix-ui/react-popover";
 import {
   forwardRef,
   useEffect,
@@ -11,7 +12,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { InputHTMLAttributes, KeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
+import type { ComponentPropsWithoutRef, InputHTMLAttributes, KeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { motionTokens } from "../lib/motion-tokens";
 import styles from "./combobox.module.css";
 
@@ -31,6 +32,8 @@ export interface ComboboxProps
   defaultValue?: string;
   onValueChange?: (value: string) => void;
   onSearch?: (query: string) => void;
+  onOpenChange?: (open: boolean) => void;
+  onCloseAutoFocus?: ComponentPropsWithoutRef<typeof PopoverPrimitive.Content>["onCloseAutoFocus"];
   filterOption?: boolean | ((query: string, option: ComboboxOption) => boolean);
   description?: string;
   placeholder?: string;
@@ -60,6 +63,8 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(function Com
     defaultValue = "",
     onValueChange,
     onSearch,
+    onOpenChange,
+    onCloseAutoFocus,
     filterOption,
     description,
     placeholder = "Search or select…",
@@ -130,23 +135,14 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(function Com
     }
   }, [activeIndex, filteredOptions, open]);
 
-  useEffect(() => {
-    const handlePointerDown = (event: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
-        setOpen(false);
-        setQuery("");
-      }
-    };
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, []);
+  const changeOpen = (next: boolean) => { setOpen(next); onOpenChange?.(next); if (!next) setQuery(""); };
 
   const choose = (option: ComboboxOption) => {
     if (option.disabled) return;
     setUncontrolledValue(option.value);
     onValueChange?.(option.value);
     setQuery("");
-    setOpen(false);
+    changeOpen(false);
     inputRef.current?.focus();
   };
 
@@ -155,13 +151,13 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(function Com
     setUncontrolledValue("");
     onValueChange?.("");
     setQuery("");
-    setOpen(true);
+    changeOpen(true);
     inputRef.current?.focus();
   };
 
   const openMenu = () => {
     if (disabled) return;
-    setOpen(true);
+    changeOpen(true);
     setQuery("");
     setActiveIndex(-1);
   };
@@ -191,8 +187,7 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(function Com
     if (event.key === "Escape" && open) {
       event.preventDefault();
       event.stopPropagation();
-      setOpen(false);
-      setQuery("");
+      changeOpen(false);
       return;
     }
   };
@@ -201,9 +196,9 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(function Com
   const activeOption = activeIndex >= 0 ? filteredOptions[activeIndex] : undefined;
 
   return (
-    <div ref={rootRef} data-arc-select-open={open || undefined} className={styles.field} onKeyDownCapture={event => { if (event.key === "Escape" && open) { event.preventDefault(); event.stopPropagation(); setOpen(false); setQuery(""); inputRef.current?.focus(); } }}>
+    <PopoverPrimitive.Root open={open} onOpenChange={changeOpen}><div ref={rootRef} data-arc-select-open={open || undefined} className={styles.field} onKeyDownCapture={event => { if (event.key === "Escape" && open) { event.preventDefault(); event.stopPropagation(); changeOpen(false); inputRef.current?.focus(); } }}>
       <label htmlFor={controlId}>{label}</label>
-      <div className={[styles.control, open ? styles.open : "", disabled ? styles.disabled : "", className ?? ""].filter(Boolean).join(" ")}>
+      <PopoverPrimitive.Anchor asChild><div className={[styles.control, open ? styles.open : "", disabled ? styles.disabled : "", className ?? ""].filter(Boolean).join(" ")}>
         <Search className={styles.searchIcon} size={16} strokeWidth={1.75} aria-hidden="true" />
         <input
           {...inputProps}
@@ -228,7 +223,7 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(function Com
           onChange={(event) => {
             setQuery(event.target.value);
             onSearch?.(event.target.value);
-            setOpen(true);
+            changeOpen(true);
             setActiveIndex(-1);
           }}
           onKeyDown={handleKeyDown}
@@ -251,11 +246,12 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(function Com
           )}
         </AnimatePresence>
         <ChevronDown className={styles.chevron} size={16} strokeWidth={1.75} aria-hidden="true" />
-      </div>
+      </div></PopoverPrimitive.Anchor>
       {description && <span id={hintId} className={styles.hint}>{description}</span>}
       <AnimatePresence initial={false}>
         {open && (
-          <motion.div
+          <PopoverPrimitive.Portal forceMount><PopoverPrimitive.Content asChild forceMount align="start" sideOffset={8} collisionPadding={12} onOpenAutoFocus={event => event.preventDefault()} onCloseAutoFocus={event => { event.preventDefault(); onCloseAutoFocus?.(event); }} onInteractOutside={event => { if (rootRef.current?.contains(event.target as Node)) event.preventDefault(); }} onEscapeKeyDown={event => { event.preventDefault(); event.stopPropagation(); changeOpen(false); inputRef.current?.focus(); }}><motion.div
+            data-arc-select-open
             className={styles.popover}
             initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1, transition: reduceMotion ? { duration: motionTokens.duration.instant } : { ...motionTokens.spring.snappy, opacity: { duration: motionTokens.duration.fast, ease: [...motionTokens.ease.enter] } } }}
@@ -263,7 +259,7 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(function Com
             role="presentation"
           >
             <AutoHeight reduceMotion={reduceMotion}>
-            <div id={listboxId} className={styles.listbox} role="listbox" aria-label={`${label} options`}>
+            <div id={listboxId} className={styles.listbox} role="listbox" aria-label={inputProps["aria-label"] || `${label} options`}>
               {filteredOptions.length ? filteredOptions.map((option, index) => (
                 <div
                   key={option.value}
@@ -285,10 +281,10 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(function Com
               )) : <motion.div className={styles.empty} role="status" initial={reduceMotion ? false : { opacity: 0, y: 4, filter: `blur(${motionTokens.blur.soft}px)` }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} transition={{ duration: motionTokens.duration.standard, ease: [...motionTokens.ease.enter] }}>{emptyMessage}</motion.div>}
             </div>
             </AutoHeight>
-          </motion.div>
+          </motion.div></PopoverPrimitive.Content></PopoverPrimitive.Portal>
         )}
       </AnimatePresence>
-    </div>
+    </div></PopoverPrimitive.Root>
   );
 });
 

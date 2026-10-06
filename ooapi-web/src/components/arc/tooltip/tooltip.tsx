@@ -10,7 +10,8 @@ import styles from "./tooltip.module.css";
 export interface TooltipProps {
   content: ReactNode;
   children: ReactElement;
-  side?: "top" | "bottom";
+  side?: "top" | "bottom" | "left" | "right";
+  disabled?: boolean;
 }
 
 const DELAY = 250;
@@ -56,18 +57,20 @@ function TooltipText({ text }: { text: string }) {
   </motion.span>;
 }
 
-export function Tooltip({ content, children, side = "top" }: TooltipProps) {
+export function Tooltip({ content, children, side = "top", disabled = false }: TooltipProps) {
   const isWarm = useSyncExternalStore(warmth.subscribe, warmth.get, () => false);
   // Controlled so the instant flag lands in the same render that mounts the content (Radix reports uncontrolled changes a frame late).
   const [open, setOpen] = useState(false);
   const [instant, setInstant] = useState(false);
+  // 省略提示只切换可见性，保留触发节点，避免尺寸观察器因重挂载失去当前标签。
+  useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
   useEffect(() => {
     if (!open) return;
     warmth.opened();
     return warmth.closed;
   }, [open]);
   return <TooltipPrimitive.Provider delayDuration={DELAY} skipDelayDuration={0}>
-    <TooltipPrimitive.Root open={open} delayDuration={isWarm ? 0 : DELAY} onOpenChange={next => { if (next) setInstant(warmth.get()); setOpen(next); }}>
+    <TooltipPrimitive.Root open={!disabled && open} delayDuration={isWarm ? 0 : DELAY} onOpenChange={next => { if (next && !disabled) setInstant(warmth.get()); setOpen(!disabled && next); }}>
       <TooltipPrimitive.Trigger asChild>{children}</TooltipPrimitive.Trigger>
       <TooltipPrimitive.Portal>
         <TooltipPrimitive.Content className={styles.tooltip} data-instant={instant || undefined} side={side} sideOffset={8} collisionPadding={12}>

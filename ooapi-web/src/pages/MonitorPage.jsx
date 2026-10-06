@@ -1,4 +1,3 @@
-import { Badge as ArcBadge } from "../components/arc/badge/badge";
 import { Card as ArcPanel } from "../components/arc/card/card";
 import OdAmount from "../components/OdAmount";
 // 运维监控：进程实时指标与数据库历史用量分开展示，告警保留独立操作区。
@@ -384,15 +383,13 @@ function AlertPanel({ data, onReload }) {
       </div>
 
       <div className="oo-stats-strip">
-        <ArcBadge size="sm" tone="neutral">规则 <b>{rules.length}</b></ArcBadge>
-        <ArcBadge size="sm" tone="neutral">告警中 <b style={{ color: events.stat?.firing ? "var(--red)" : undefined }}>{events.stat?.firing ?? 0}</b></ArcBadge>
-        <ArcBadge size="sm" tone="neutral">近7天恢复 <b>{events.stat?.resolved ?? 0}</b></ArcBadge>
-        <ArcBadge size="sm" tone="neutral">P0 <b>{events.stat?.p0 ?? 0}</b></ArcBadge>
-        <ArcBadge size="sm" tone="neutral">P1 <b>{events.stat?.p1 ?? 0}</b></ArcBadge>
+        <StatCard label="规则" value={rules.length} />
+        <StatCard label="告警中" value={events.stat?.firing ?? 0} tone={events.stat?.firing ? "danger" : undefined} />
+        <StatCard label="近7天恢复" value={events.stat?.resolved ?? 0} />
+        <StatCard label="P0" value={events.stat?.p0 ?? 0} />
+        <StatCard label="P1" value={events.stat?.p1 ?? 0} />
         {(events.notify || []).map((n) => (
-          <ArcBadge size="sm" tone="neutral" key={n.channel}>
-            {n.channel === "email" ? "邮件" : "Webhook"}投递 <b style={{ color: n.failed ? "var(--red)" : undefined }}>{n.total - n.failed}/{n.total}</b>
-          </ArcBadge>
+          <StatCard key={n.channel} label={`${n.channel === "email" ? "邮件" : "Webhook"}投递`} value={`${n.total - n.failed}/${n.total}`} tone={n.failed ? "danger" : undefined} />
         ))}
       </div>
 

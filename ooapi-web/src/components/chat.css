@@ -2,6 +2,8 @@
   display: flex;
   height: calc(100dvh - var(--header-h) - 48px);
   min-height: 520px;
+  min-width: 0;
+  max-width: 100%;
   gap: 12px;
   color: var(--ink);
 }
@@ -12,7 +14,9 @@
   min-width: 0;
   border-radius: var(--r-window);
   background: var(--page);
-  overflow: visible;
+  /* 消息区是独立的 flex 画布；让异常长的会话标题/内容只在内部收缩，
+     不把全局页面撑出第二条横向滚动条。浮层由 portal 渲染，不依赖 visible。 */
+  overflow: hidden;
 }
 .bui-shelf-empty {
   padding: 14px 10px;
@@ -66,6 +70,8 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 .ui-chat2-title h1 {
   margin: 0;
@@ -76,6 +82,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+  flex: 0 1 auto;
 }
 .ui-chat2-title .meta {
   display: flex;
@@ -84,8 +92,11 @@
   font-size: var(--fs-label);
   color: var(--ink-3);
   white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.ui-chat2-head-actions { display: flex; align-items: center; gap: 6px; }
+.ui-chat2-head-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .ui-chat2-iconbtn {
   display: flex;
   align-items: center;
@@ -262,6 +273,27 @@
 .bui-palette-row .nm { flex-shrink: 0; font-size: 11px; color: var(--ink-3); font-family: var(--font-mono); }
 .bui-palette-empty { padding: 18px 12px; font-size: var(--fs-micro); color: var(--ink-3); text-align: center; }
 .ui-chat2 .is-shelf-toggle { display: none; }
+
+/* 侧栏宽度固定，必须让 Arc 的动画文字层参与收缩，否则长标题会把行菜单挤出当前行。 */
+.arc-chat-shelf-group .arc-chat-shelf-action { top: 1px; right: 0; }
+.arc-chat-shelf-collapse > div > div > h3 > button { padding-right: 36px; }
+.arc-chat-shelf-collapse > div > div > h3 > button > span:first-child { min-width: 0; }
+.arc-chat-session { min-width: 0; margin: 3px 0; }
+.arc-chat-session > .arc-tooltip-anchor,
+.arc-chat-session > button { display: flex; flex: 1 1 auto; min-width: 0; }
+.arc-chat-session > .arc-tooltip-anchor > button,
+.arc-chat-session > button { width: 100%; min-width: 0; justify-content: flex-start; overflow: hidden; }
+.arc-chat-session > .arc-tooltip-anchor > button > span:first-child,
+.arc-chat-session > button > span:first-child { width: 100% !important; min-width: 0; flex: 1 1 auto; overflow: hidden; justify-content: flex-start; }
+.arc-chat-session > .arc-tooltip-anchor > button > span:first-child > span,
+.arc-chat-session > button > span:first-child > span,
+.arc-chat-session > .arc-tooltip-anchor > button > span:first-child > span > span,
+.arc-chat-session > button > span:first-child > span > span { width: 100%; min-width: 0; max-width: 100%; flex: 1 1 auto; overflow: hidden; }
+.arc-chat-label-shell { display: block; min-width: 0; max-width: 100%; flex: 1 1 auto; overflow: hidden; }
+.arc-chat-label { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arc-chat-session-actions { display: flex; flex: 0 0 32px; align-items: center; justify-content: flex-end; min-width: 32px; }
+.arc-chat-session-actions > button { width: 32px; min-width: 32px; min-height: 32px; padding: 0; justify-content: center; }
+.arc-chat-shelf .arc-chat-session + .arc-chat-session { margin-top: 5px; }
 @media (max-width: 1023px) {
   .ui-chat2 { position: relative; }
   .ui-chat2 .is-shelf-toggle { display: flex; }

@@ -7,7 +7,7 @@ import CodeBlock from "../components/CodeBlock";
 import OdAmount from "../components/OdAmount";
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
-  Table, Space, Typography, Input, Popconfirm, Modal, Form, Select, Switch,
+  Table, Space, Typography, Input, Popconfirm, Popover, Modal, Form, Select, Switch,
   InputNumber, App as ArcApp, Tooltip, Row, Col, Alert, Radio, Button, Spin, Pagination, Segmented, Avatar,
  } from "../components/arc/index";
 import {
@@ -1884,8 +1884,8 @@ export default function AdminChannelsPage() {
           return <Text type="secondary" style={{ fontSize: 12 }}>未探测</Text>;
         }
         return (
-          <Tooltip
-            title={
+          <Popover
+            content={
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <div style={{ fontSize: 11, color: "var(--tooltip-muted)" }}>
                   {probed.length ? `上游实际可用：${probed.length} 个` : `共 ${own.length} 个`}
@@ -1910,12 +1910,14 @@ export default function AdminChannelsPage() {
                 })}
               </div>
             }
+            trigger={["hover", "click"]}
+            overlayClassName="oo-info-popover oo-model-list-popover"
           >
             <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap", overflow: "hidden" }}>
               {merged.slice(0, 2).map((m) => <ModelLabel key={m} model={channelPublicModel(r, m)} size={14} channelType={r.type} />)}
               {merged.length > 2 ? <ArcBadge size="sm" tone="neutral">+{merged.length - 2}</ArcBadge> : null}
             </span>
-          </Tooltip>
+          </Popover>
         );
       },
     },
@@ -2391,16 +2393,10 @@ export default function AdminChannelsPage() {
         title="渠道管理"
         tags={
           <>
-            <ArcBadge size="sm" tone="neutral" title="渠道总数">渠道 {statsError ? "—" : stats?.total ?? items.length}</ArcBadge>
-            <ArcBadge size="sm" tone="neutral" style={statsError || !(stats?.enabled > 0) ? undefined : { color: "var(--green)" }} title="已启用">
-              启用 {statsError ? "—" : stats?.enabled ?? 0}
-            </ArcBadge>
-            <ArcBadge size="sm" tone="neutral" style={!statsError && (stats?.cooling ?? 0) > 0 ? { color: "var(--orange)" } : undefined} title="冷却中（自动恢复）">
-              冷却 {statsError ? "—" : stats?.cooling ?? 0}
-            </ArcBadge>
-            <ArcBadge size="sm" tone="neutral" title="全部渠道合计的可用模型数">
-              模型 {loadError ? "—" : new Set(items.flatMap((x) => x.models || [])).size}
-            </ArcBadge>
+            <StatCard label="渠道" value={statsError ? "—" : stats?.total ?? items.length} hint="渠道总数" />
+            <StatCard label="启用" value={statsError ? "—" : stats?.enabled ?? 0} tone={!statsError && stats?.enabled > 0 ? "success" : undefined} hint="已启用" />
+            <StatCard label="冷却" value={statsError ? "—" : stats?.cooling ?? 0} tone={!statsError && (stats?.cooling ?? 0) > 0 ? "warning" : undefined} hint="冷却中（自动恢复）" />
+            <StatCard label="模型" value={loadError ? "—" : new Set(items.flatMap((x) => x.models || [])).size} hint="全部渠道合计的可用模型数" />
           </>
         }
         extra={
@@ -2490,12 +2486,14 @@ export default function AdminChannelsPage() {
                   </ArcBadge>
                 </div>
                 <div className="oo-channel-card-models">
-                  <Tooltip
-                    title={
+                  <Popover
+                    content={
                       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                         {(r.models || []).map((m) => <ModelLabel key={m} model={m} size={13} channelType={r.type} />)}
                       </div>
                     }
+                    trigger={["hover", "click"]}
+                    overlayClassName="oo-info-popover oo-model-list-popover"
                   >
                     <span style={{ display: "flex", gap: 8, alignItems: "center", overflow: "hidden" }}>
                       {(r.models || []).length ? (
@@ -2507,7 +2505,7 @@ export default function AdminChannelsPage() {
                         <ArcBadge size="sm" tone="neutral">{r.typeName} 全部</ArcBadge>
                       )}
                     </span>
-                  </Tooltip>
+                  </Popover>
                 </div>
                 <div className="oo-channel-card-foot">
                   <UptimeBars calls={r.recent} count={16} onCopy={copyCallResult} />
@@ -2526,7 +2524,7 @@ export default function AdminChannelsPage() {
           />
         </ArcPanel>
       ) : (
-        <ArcPanel className="oo-panel">
+        <ArcPanel className="oo-panel oo-table-panel">
           {loadError ? (
             <Alert
               type="error"

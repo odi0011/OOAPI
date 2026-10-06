@@ -7,15 +7,16 @@ import { Popover as ArcPopover, PopoverTrigger, PopoverContent } from "./popover
 import { DropdownMenu } from "./dropdown-menu/dropdown-menu";
 import { ToastStackProvider, ToastStack, useToastStack } from "./toast-stack/toast-stack";
 
-export function Tooltip({ title, children, placement, trigger, ...props }) { if (!title) return children; if (trigger === "click" || Array.isArray(trigger) && trigger.includes("click")) return <Popover content={title} placement={placement} trigger={trigger}>{children}</Popover>; return <ArcTooltip content={title} side={placement?.startsWith("bottom") ? "bottom" : "top"}><span {...props} className="arc-tooltip-anchor" tabIndex={0}>{children}</span></ArcTooltip>; }
-export function Popover({ title, content, children, open, onOpenChange, placement, trigger, overlayClassName, rootClassName, overlayStyle }) {
+export function Tooltip({ title, children, placement, trigger, disabled = false, ...props }) { if (!title) return children; if (trigger === "click" || Array.isArray(trigger) && trigger.includes("click")) return <Popover content={title} placement={placement} trigger={trigger} disabled={disabled}>{children}</Popover>; const side = placement?.includes("left") ? "left" : placement?.includes("right") ? "right" : placement?.startsWith("bottom") ? "bottom" : "top"; return <ArcTooltip content={title} side={side} disabled={disabled}><span {...props} className="arc-tooltip-anchor" tabIndex={0}>{children}</span></ArcTooltip>; }
+export function Popover({ title, content, children, open, onOpenChange, placement, trigger, overlayClassName, rootClassName, overlayStyle, disabled = false }) {
   const [local, set] = useState(false); const hover = !trigger || trigger === "hover" || Array.isArray(trigger) && trigger.includes("hover");
   const timer = useRef();
   useEffect(() => () => clearTimeout(timer.current), []);
-  const change = v => { set(v); onOpenChange?.(v); };
+  useEffect(() => { if (disabled) { clearTimeout(timer.current); set(false); } }, [disabled]);
+  const change = v => { const next = !disabled && v; set(next); onOpenChange?.(next); };
   const enter = () => { clearTimeout(timer.current); if (hover) change(true); };
   const leave = () => { if (hover) timer.current = setTimeout(() => change(false), 180); };
-  return <ArcPopover open={open ?? local} onOpenChange={change}><PopoverTrigger asChild><span className="arc-tooltip-anchor" tabIndex={0} onMouseEnter={enter} onMouseLeave={leave}>{children}</span></PopoverTrigger><PopoverContent className={overlayClassName || rootClassName} style={overlayStyle} side={placement?.includes("left") ? "left" : placement?.includes("right") ? "right" : placement?.startsWith("top") ? "top" : "bottom"} onMouseEnter={enter} onMouseLeave={leave}>{title && <strong>{title}</strong>}{content}</PopoverContent></ArcPopover>;
+  return <ArcPopover open={!disabled && (open ?? local)} onOpenChange={change}><PopoverTrigger asChild><span className="arc-tooltip-anchor" tabIndex={0} onMouseEnter={enter} onMouseLeave={leave}>{children}</span></PopoverTrigger><PopoverContent className={overlayClassName || rootClassName} style={overlayStyle} side={placement?.includes("left") ? "left" : placement?.includes("right") ? "right" : placement?.startsWith("top") ? "top" : "bottom"} onMouseEnter={enter} onMouseLeave={leave}>{title && <strong>{title}</strong>}{content}</PopoverContent></ArcPopover>;
 }
 export function Modal({ open, title, children, onCancel, onOk, footer, confirmLoading, okText = "确定", cancelText = "取消", width = 560, className = "", styles, style, maskClosable = true, keyboard = true, closable = true, okButtonProps, cancelButtonProps, afterClose, afterOpenChange, ...props }) {
   const callbacks = useRef({ afterClose, afterOpenChange }); callbacks.current = { afterClose, afterOpenChange };
