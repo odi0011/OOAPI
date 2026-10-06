@@ -28,12 +28,28 @@ router.get(
 router.get(
   "/status",
   asyncHandler(async (req, res) => {
-    return ok(res, { repo: REPO_URL, stamp: await currentStamp() });
+    return ok(res, {
+      repo: REPO_URL,
+      stamp: await currentStamp(),
+      task: task
+        ? {
+            id: task.id,
+            state: task.state,
+            startedAt: task.startedAt,
+            updatedAt: task.updatedAt,
+            steps: task.steps,
+            commit: task.commit || "",
+            error: task.error || "",
+          }
+        : null,
+    });
   })
 );
 
-// 防重复触发：同一时间只允许一个更新任务
+// 更新是长任务：请求只负责启动，状态由 /status 轮询读取。
+// 进程重启后内存任务会消失，前端会用版本戳确认最终结果。
 let running = false;
+let task = null;
 
 router.post(
   "/apply",
@@ -41,33 +57,39 @@ router.post(
   asyncHandler(async (req, res) => {
     if (running) return fail(res, "已有更新任务正在执行，请稍候");
     running = true;
+    const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    task = { id, state: "running", startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), steps: [], commit: "", error: "" };
 
-    const collected = [];
-    try {
-      // 注意：performUpdate 内部若触发重启会杀掉本进程，
-      // 所以这里不 await 它的重启阶段——它自己会先返回结果。
-      const result = await performUpdate((s) => collected.push(s));
-      await writeLog({
-        req,
-        user: req.user,
-        type: result.ok ? LOG_TYPE.MANAGE : LOG_TYPE.ERROR,
-        content: `在线更新${result.ok ? "成功" : "失败"}：${result.commit || ""}`,
-        detail: JSON.stringify({ steps: collected, backup: result.backup }).slice(0, 2000),
+    const collected = task.steps;
+    const updateTask = (patch) => {
+      if (!task || task.id !== id) return;
+      Object.assign(task, patch, { updatedAt: new Date().toISOString() });
+    };
+    // 不把构建/迁移挂在 HTTP 请求上：代理和浏览器可以立即得到任务 ID，
+    // 服务重启前的最后一段状态仍会写入内存日志。
+    void performUpdate((s) => collected.push(s))
+      .then(async (result) => {
+        updateTask({
+          state: result.ok ? "completed" : "failed",
+          commit: result.commit || "",
+          error: result.ok ? "" : result.error || "更新失败",
+        });
+        await writeLog({
+          req,
+          user: req.user,
+          type: result.ok ? LOG_TYPE.MANAGE : LOG_TYPE.ERROR,
+          content: `在线更新${result.ok ? "成功" : "失败"}：${result.commit || ""}`,
+          detail: JSON.stringify({ steps: collected, backup: result.backup }).slice(0, 2000),
+        }).catch(() => {});
+        running = false;
+      })
+      .catch((e) => {
+        updateTask({ state: "failed", error: e.message || "更新失败" });
+        running = false;
       });
-      if (!result.ok) return fail(res, result.error || "更新失败", 500);
-      return ok(
-        res,
-        {
-          commit: result.commit,
-          backup: result.backup,
-          frontendBuilt: result.frontendBuilt,
-          steps: collected,
-        },
-        "更新完成，服务即将重启"
-      );
-    } finally {
-      running = false;
-    }
+
+    res.status(202);
+    return ok(res, { taskId: id, state: "running", steps: collected }, "更新任务已启动，请等待状态确认");
   })
 );
 

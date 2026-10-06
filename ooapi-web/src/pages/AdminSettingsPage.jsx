@@ -547,10 +547,10 @@ function UpdateTab() {
       if (cancelPollRef.current === stop) cancelPollRef.current = null;
     };
     const timeout = () => {
-      if (finished || attempts < 40) return;
+      if (finished || attempts < 1200) return;
       stop();
       setApplying(false);
-      setError("尚未确认更新完成，请刷新检查版本");
+      setError("更新超过 60 分钟仍未确认完成，请检查服务器日志");
     };
     timerId = setInterval(async () => {
       // 状态请求可能跨过多个轮询间隔；完成或离开页面后忽略迟到响应。
@@ -560,8 +560,15 @@ function UpdateTab() {
       try {
         const r = await API.get("/update/status", { timeoutMs: 15_000 });
         if (finished) return;
+        if (Array.isArray(r?.task?.steps)) setSteps(r.task.steps);
+        if (r?.task?.state === "failed") {
+          stop();
+          setApplying(false);
+          setError(r.task.error || "更新失败，请查看最后一步状态");
+          return;
+        }
         const currentCommit = r?.stamp?.commit;
-        if ((targetCommit && currentCommit === targetCommit) || r?.done === true) {
+        if ((targetCommit && currentCommit === targetCommit) || r?.task?.state === "completed" || r?.done === true) {
           stop();
           setApplying(false);
           message.success("更新完成，服务已就绪");
@@ -590,7 +597,7 @@ function UpdateTab() {
         setError("");
         setSteps([]);
         try {
-          const res = await API.post("/update/apply", undefined, { timeoutMs: 300_000 });
+          const res = await API.post("/update/apply", undefined, { timeoutMs: 30_000 });
           if (Array.isArray(res?.steps)) {
             setSteps(res.steps);
           }

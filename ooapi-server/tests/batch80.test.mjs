@@ -154,7 +154,7 @@ console.log("\n=== ④ 管理角色与父帖评论权限（真实 HTTP，数据�
   const lastApplyLayer = applyLayer[applyLayer.length - 1];
   const originalApply = lastApplyLayer.handle;
   let updateCalls = 0;
-  lastApplyLayer.handle = (req, res) => { updateCalls++; res.json({ success: true }); };
+  lastApplyLayer.handle = (req, res) => { updateCalls++; res.status(202).json({ success: true }); };
   const app = express();
   app.use(express.json());
   app.use("/api/users", userRoutes);
@@ -185,7 +185,7 @@ console.log("\n=== ④ 管理角色与父帖评论权限（真实 HTTP，数据�
     ck("超管仍能签发管理员身份", (await call("POST", "/api/users/5/token", 2, {})).status === 200);
     ck("超管仍能删除其他管理员", (await call("DELETE", "/api/users/5", 2)).status === 200 && !users.some((u) => u.id === 5));
     ck("普通管理员在线更新被拒绝", (await call("POST", "/api/update/apply", 1, {})).status === 403 && updateCalls === 0);
-    ck("超管在线更新仍可通过鉴权", (await call("POST", "/api/update/apply", 2, {})).status === 200 && updateCalls === 1);
+    ck("超管在线更新仍可通过鉴权", (await call("POST", "/api/update/apply", 2, {})).status === 202 && updateCalls === 1);
     const adminOptions = await call("GET", "/api/option", 1);
     const superOptions = await call("GET", "/api/option", 2);
     ck("管理员设置响应带不可编辑字段", adminOptions.data?.is_super === false && adminOptions.data?.super_only?.includes("smtp_pass"));
