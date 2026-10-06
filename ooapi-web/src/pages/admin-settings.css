@@ -9,6 +9,7 @@
 .oo-admin-setting-control { min-width:0; }
 .oo-admin-setting-row--switch { grid-template-columns:minmax(0,1fr) auto; align-items:center; padding:8px 0; }
 .oo-admin-setting-row--switch .oo-admin-setting-control { justify-self:end; }
+.oo-admin-setting-row--switch .oo-admin-setting-hint { grid-column:1 / -1; min-width:0; }
 .oo-admin-setting-row--number .oo-admin-setting-control { max-width:220px; }
 .oo-admin-fixed-currency { display:flex; align-items:center; gap:12px; }
 .oo-admin-visibility { display:flex; flex-direction:column; gap:16px; }

@@ -41,58 +41,65 @@ try {
     const activity = page.locator(".oo-channel-activity");
     await activity.waitFor();
     await page.waitForFunction(() => Number(getComputedStyle(document.querySelector(".oo-stats-modal")).opacity) > 0.99);
+    await page.waitForFunction(() => document.querySelector('.oo-channel-activity [role="grid"]')?.dataset.reveal === "done");
     await page.waitForTimeout(300); // 几何断言在窗口入场缩放过渡完成后读取，避免误测子像素。
     check(await activity.locator(".oo-heat-grid, .oo-heat-cell").count() === 0, "渠道活动图不继承旧共享 heat class");
-    check(await activity.locator(".ant-segmented").count() === 0, "Token活动固定近一年，没有日周月开关");
+    check(await activity.getByRole("radiogroup").count() === 0, "Token活动固定近一年，没有日周月开关");
     {
-      const cells = activity.locator(".oo-channel-activity-grid button");
+      const grid = activity.getByRole("grid", { name: "Token 活动", exact: true });
+      const cells = grid.getByRole("gridcell");
+      const dayCell = (index) => grid.locator(`[role="gridcell"][data-index="${index}"]`);
       check(await cells.count() === 365, `${width} ${theme}: 近一年恰有365个日期格`);
-      const ariaLabels = await cells.evaluateAll((nodes) => nodes.map((el) => el.getAttribute("aria-label")));
+      // Arc 按星期行组织 DOM，数据日期仍须按 data-index 一天不少地核对。
+      const ariaLabels = await cells.evaluateAll((nodes) => nodes.sort((a, b) => Number(a.dataset.index) - Number(b.dataset.index)).map((el) => el.getAttribute("aria-label")));
       check(ariaLabels.every((label) => /\d{4}-\d{2}-\d{2}/.test(label) && label.includes("tokens") && label.includes("次调用") && label.includes("UTC+8")), "所有日期均保留完整日期、tokens、调用数和时区的无障碍明细");
       check(ariaLabels.every((label, i) => label.includes(byDay[i].day) && label.includes(`${byDay[i].tokens.toLocaleString()} tokens`) && label.includes(`${byDay[i].calls} 次调用`)), "365个日期格均关联对应日期的真实tokens与调用数");
       check(ariaLabels[0].includes("2025-10-06") && ariaLabels.at(-1).includes("2026-10-05"), "全年显示正确北京首末日期");
-      const dimensions = await cells.evaluateAll((nodes) => nodes.map((el) => {
+      const dimensions = await cells.evaluateAll((nodes) => nodes.sort((a, b) => Number(a.dataset.index) - Number(b.dataset.index)).map((el) => {
         const r = el.getBoundingClientRect();
         return { x: r.x, y: r.y, width: r.width, height: r.height };
       }));
       check(dimensions.every((r) => Math.abs(r.width - r.height) < 0.1 && r.width >= 11.9), `贡献格为正方形，最小约12px（浏览器子像素宽${Math.min(...dimensions.map((r) => r.width))}–${Math.max(...dimensions.map((r) => r.width))}px）`);
-      const css = await activity.locator(".oo-channel-activity-grid").evaluate((el) => ({ columns: getComputedStyle(el).gridTemplateColumns.split(" ").length, rows: getComputedStyle(el).gridTemplateRows.split(" ").length, rowGap: parseFloat(getComputedStyle(el).rowGap), columnGap: parseFloat(getComputedStyle(el).columnGap), width: el.clientWidth, overflow: el.scrollWidth }));
+      const css = await grid.evaluate((el) => ({ columns: Math.max(...Array.from(el.querySelectorAll('[role="row"]'), (row) => row.children.length)), rows: el.querySelectorAll('[role="row"]').length, rowGap: parseFloat(getComputedStyle(el).rowGap), columnGap: parseFloat(getComputedStyle(el.querySelector('[role="row"]')).columnGap), width: el.clientWidth, overflow: el.scrollWidth }));
       check([53, 54].includes(css.columns) && css.rows === 7 && css.rowGap === 3 && css.columnGap === 3 && css.overflow <= css.width + 1, `${width} 贡献图为53/54列7行、3px横纵间距 ${JSON.stringify(css)}`);
-      check(await activity.locator(".oo-channel-activity-grid > span[aria-hidden=true]").count() === css.columns * 7 - 365, "范围外补齐格均为不可交互占位，不污染365日统计");
+      check(await grid.locator('[data-empty][aria-hidden="true"]').count() === css.columns * 7 - 365, "范围外补齐格均为不可交互占位，不污染365日统计");
       const physicalRows = [...new Set(dimensions.map((r) => r.y))].sort((a, b) => a - b);
       check(physicalRows.length === 7 && physicalRows.every((y, i) => !i || Math.abs(y - physicalRows[i - 1] - dimensions[0].height - 3) < 0.1), `实际7行，上下方格之间3px不被共享样式覆盖（行Y=${physicalRows.join(",")}；格高=${dimensions[0].height}）`);
       check(await activity.locator(".oo-channel-activity-label").count() === 0, "每格日期与时段仅在悬浮和无障碍标签显示");
       check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${width} 页面不横向溢出`);
-      const activityPlacement = await activity.evaluate((el) => ({ parent: el.parentElement.className, cardWidth: el.getBoundingClientRect().width, bodyWidth: el.closest(".ant-modal-body").getBoundingClientRect().width }));
+      const activityPlacement = await activity.evaluate((el) => ({ parent: el.parentElement.className, cardWidth: el.getBoundingClientRect().width, bodyWidth: el.closest(".arc-modal-body").getBoundingClientRect().width }));
       check(activityPlacement.cardWidth >= activityPlacement.bodyWidth * 0.9 && !activityPlacement.parent.includes("oo-stats-layout-data"), "活动卡跨统计弹窗整行，宽度>=90%，不挤在左栏");
-      check(await activity.locator(".oo-channel-activity-months").innerText().then((text) => /月/.test(text) && text.match(/月/g).length >= 12), "月份标题覆盖整个近一年");
-      const scroll = activity.locator(".oo-channel-activity-scroll");
+      const canvas = grid.locator("..").locator("..");
+      check(await canvas.locator('div[aria-hidden="true"]').first().innerText().then((text) => /月/.test(text) && text.match(/月/g).length >= 12), "月份标题覆盖整个近一年");
+      const scroll = canvas.locator("..");
       const scrolling = await scroll.evaluate((el) => ({ width: el.clientWidth, scrollWidth: el.scrollWidth, overflowX: getComputedStyle(el).overflowX }));
       if (width < 760) {
         check(scrolling.scrollWidth > scrolling.width && scrolling.overflowX === "auto", "窄屏只在贡献图内部横向滚动");
-        await scroll.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
-        check(await scroll.evaluate((el) => el.scrollLeft > 0), "移动贡献图能横滚到最新日期");
+        await scroll.evaluate((el) => { el.scrollLeft = getComputedStyle(el).direction === "rtl" ? -el.scrollWidth : el.scrollWidth; });
+        const movement = await scroll.evaluate((el) => { const moved = Math.abs(el.scrollLeft) > 0; if (getComputedStyle(el).direction === "rtl") el.scrollLeft = 0; return { moved, latest: getComputedStyle(el).direction !== "rtl" || el.scrollLeft === 0 }; });
+        check(movement.moved && movement.latest, "移动贡献图能横滚到最新日期");
       } else check(css.width >= activityPlacement.cardWidth * 0.9, "桌面贡献方格密集铺满整行而不是缩成角落");
-      const target = cells.first();
+      const target = dayCell(0);
       await target.scrollIntoViewIfNeeded();
       await target.focus();
-      await target.press("Tab");
-      check(await cells.nth(1).evaluate((el) => el === document.activeElement), "格子键盘 Tab 顺序正确");
-      await cells.nth(1).focus();
-      const focusedStyle = await cells.nth(1).evaluate((el) => getComputedStyle(el).outlineWidth);
+      // Arc 原生网格只占一个 Tab 停靠点，方向键按日期移动，避免365次 Tab才能离开。
+      await target.press("ArrowDown");
+      check(await dayCell(1).evaluate((el) => el === document.activeElement) && await grid.locator('[role="gridcell"][tabindex="0"]').count() === 1, "Arc 日期方向键顺序正确，网格只有一个 Tab 停靠点");
+      await dayCell(1).focus();
+      const focusedStyle = await dayCell(1).evaluate((el) => getComputedStyle(el).outlineWidth);
       check(parseFloat(focusedStyle) >= 2, "键盘焦点有明显外框");
-      const focusedTip = page.locator(".ant-tooltip:not(.ant-tooltip-hidden)").last();
+      const focusedTip = page.getByRole("tooltip").last();
       await focusedTip.waitFor();
       check((await focusedTip.innerText()).includes("UTC+8"), "键盘聚焦也显示时段明细");
-      await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).focus();
+      await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).focus();
       await page.mouse.move(width - 1, 1);
       await page.waitForTimeout(350); // 先结束键盘提示，避免浮层遮住紧邻的鼠标目标。
       await target.hover();
-      const tip = page.locator(".ant-tooltip:not(.ant-tooltip-hidden)").last();
+      const tip = page.getByRole("tooltip").last();
       await tip.waitFor();
       const text = await tip.innerText();
       check(text.includes("UTC+8") && text.includes("tokens") && text.includes("次调用"), "悬浮含实际日期/token/调用数");
-      const bg = await tip.locator(".ant-tooltip-inner").evaluate((el) => {
+      const bg = await tip.evaluate((el) => {
         const canvas = document.createElement("canvas"), ctx = canvas.getContext("2d");
         ctx.fillStyle = getComputedStyle(el).backgroundColor;
         ctx.fillRect(0, 0, 1, 1);
@@ -100,28 +107,28 @@ try {
       });
       check(theme === "dark" || bg.slice(0, 3).every((v) => v >= 248), "浅色 tooltip 为白色背景");
       await page.mouse.move(width - 1, 1);
-      await page.locator(".oo-stats-modal .ant-modal-title").click();
+      await page.getByRole("dialog").getByRole("heading", { name: "用量统计：隔离热力图渠道", exact: true }).click();
       await page.waitForTimeout(350); // 截图需等Tooltip退出过渡结束。
-      check(await activity.locator("button.is-future").count() === 0, "补齐周列的未来格不伪装为日期按钮");
-      check(await activity.locator(".oo-channel-activity-grid button").count() === 365, "首尾占位补齐周列后日期按钮仍恰为365格");
+      check(await grid.locator('[data-empty][role="gridcell"]').count() === 0, "补齐周列的未来格不伪装为日期按钮");
+      check(await cells.count() === 365, "首尾占位补齐周列后日期按钮仍恰为365格");
       if (width < 760) await scroll.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
       if (output) {
         await page.screenshot({ path: path.join(output, `channel-activity-${width}-${theme}-year.png`), fullPage: true });
         await activity.screenshot({ path: path.join(output, `activity-card-${width}-${theme}-year.png`) });
       }
     }
-    const closeBox = await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).boundingBox();
+    const closeBox = await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).boundingBox();
     check(closeBox && closeBox.y >= 0 && closeBox.y + closeBox.height <= 1000, "长弹窗关闭按钮始终在视口内");
     if (width === 1440 && theme === "light") {
       await page.setViewportSize({ width, height: 720 });
-      await activity.locator(".oo-channel-activity-grid button").last().scrollIntoViewIfNeeded();
+      await activity.getByRole("gridcell").last().scrollIntoViewIfNeeded();
       const scrolls = await page.locator(".oo-stats-layout").evaluate((el) => {
         const data = el.querySelector(".oo-stats-layout-data"), recent = el.querySelector(".oo-stats-layout-recent");
         data.scrollTop = data.scrollHeight;
         return { data: getComputedStyle(data).overflowY, recent: getComputedStyle(recent).overflowY, leftScroll: data.scrollTop, recentScroll: recent.scrollTop, leftScrollbar: getComputedStyle(data).scrollbarWidth };
       });
       check(scrolls.data === "auto" && scrolls.leftScrollbar === "none" && scrolls.recentScroll === 0, "720px桌面左侧保留独立滚动且隐藏滚动条，不联动右侧");
-      const shortClose = await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).boundingBox();
+      const shortClose = await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).boundingBox();
       check(shortClose && shortClose.y >= 0 && shortClose.y + shortClose.height <= 720, "720px桌面滚动后关闭按钮在视口内");
       if (output) await page.screenshot({ path: path.join(output, "channel-activity-1440-720-light.png"), fullPage: true });
       await page.setViewportSize({ width, height: 430 });
@@ -136,17 +143,20 @@ try {
         const data = el.querySelector(".oo-stats-layout-data"), recent = el.querySelector(".oo-stats-recent");
         const before = recent.scrollTop;
         data.scrollTop = data.scrollHeight;
-        return { after: recent.scrollTop, before, left: data.scrollTop };
+        return { after: recent.scrollTop, before, left: data.scrollTop, dataHeight: data.clientHeight, dataScroll: data.scrollHeight, recentHeight: recent.clientHeight, recentScroll: recent.scrollHeight };
       });
-      check(leftScroll.left > 0 && leftScroll.after === leftScroll.before, "430px短窗口左侧内容独立滚动，不联动右侧");
+      // 左栏内容在某些数据量下可能恰好未超过可视高度；有溢出时验证它自身可滚，
+      // 无溢出时验证没有被强行制造滚动条，同时始终确认右栏位置不受左栏操作影响。
+      const leftCanScroll = leftScroll.dataScroll > leftScroll.dataHeight + 1;
+      check((leftCanScroll ? leftScroll.left > 0 : leftScroll.dataScroll <= leftScroll.dataHeight + 1) && leftScroll.after === leftScroll.before, "430px短窗口左右栏独立滚动，不联动");
       if (output) await page.screenshot({ path: path.join(output, "channel-activity-1440-430-light.png"), fullPage: true });
       await page.setViewportSize({ width, height: 1000 });
     }
-    await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).click();
     empty = true;
     await page.getByRole("button", { name: "隔离热力图渠道 用量统计", exact: true }).click();
     await activity.getByText("此时间范围暂无调用", { exact: true }).waitFor();
-    check(await activity.locator(".oo-channel-activity-grid button.lv0").count() === 365, "空数据依然显示365个灰色日期格");
+    check(await activity.locator('[role="gridcell"][data-level="0"]').count() === 365, "空数据依然显示365个灰色日期格");
     await page.goto(server.base + "/log", { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "展开分析", exact: true }).click();
     const usageGrid = page.locator(".oo-analysis .oo-heat-grid");

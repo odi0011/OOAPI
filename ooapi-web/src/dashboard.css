@@ -8,6 +8,9 @@
 .oo-dashboard .oo-kpi-foot { min-height: 20px; }
 .oo-dashboard .oo-panel, .oo-dashboard .oo-chart-card { box-shadow: none; border: 1px solid var(--line); }
 .oo-dashboard .oo-chart-card { padding: 20px; border-radius: var(--r-card); }
+/* Arc Card 自带内容留白，旧看板卡的外层 padding 不能再叠加一次。 */
+.oo-dashboard article.oo-chart-card { padding:0; }
+.oo-chart-card .oo-service-overview { padding:16px 0 0; }
 .oo-dashboard .oo-chart-card-head { margin-bottom: 22px; gap: 12px; flex-wrap: wrap; }
 .oo-dashboard .oo-chart-card-note { white-space: normal; margin-top: 5px; }
 .oo-dashboard .oo-chart-card-title { font-size: 14px; }
@@ -34,6 +37,7 @@
 .oo-usage-dashboard .oo-page-head { align-items: center; }
 .oo-dashboard-monitor-link { font-size: 12px; white-space: nowrap; }
 .oo-dashboard-toolbar { display: flex; gap: 18px; padding: 12px 16px; align-items: center; }
+.oo-dashboard article.oo-dashboard-toolbar { border: 0; border-radius: 0; box-shadow: none; padding: 0; }
 .oo-dashboard-toolbar > label { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
 .oo-dashboard-toolbar > label > span, .oo-dashboard-range > span { color: var(--ink-3); font-size: 12px; white-space: nowrap; }
 .oo-dashboard-range { display: flex; align-items: center; gap: 12px; }

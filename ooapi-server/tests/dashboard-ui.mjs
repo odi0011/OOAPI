@@ -55,6 +55,20 @@ async function overflow(page, name) {
   check(kpi.length === 4 && kpi.every((el) => el.scroll <= el.width + 1), name + "：四项关键数字完整显示，没有溢出或裁切 " + JSON.stringify(kpi));
 }
 
+// Arc 表格保留语义化 tbody；横滚属于 table 的直接父层，而不是 table 本身。
+async function tableScroll(table) {
+  return table.evaluate((element) => {
+    const scroller = element.parentElement;
+    scroller.scrollLeft = scroller.scrollWidth;
+    const result = { width: scroller.clientWidth, scrollWidth: scroller.scrollWidth, scrollLeft: scroller.scrollLeft, overflowX: getComputedStyle(scroller).overflowX };
+    scroller.scrollLeft = 0;
+    return result;
+  });
+}
+
+const modelNames = (models) => models.locator(".oo-dashboard-model > .arc-tooltip-anchor [data-model-name]").evaluateAll((labels) => labels.map((label) => label.dataset.modelName));
+const activeAudience = (audience) => audience.locator('[role="tabpanel"][data-state="active"]');
+
 try {
   if (process.env.DASHBOARD_CASE !== "channels") {
   // 同源样本先自验，避免用互相矛盾的假数据掩盖真正的呈现问题。
@@ -79,82 +93,83 @@ try {
     check(role === "admin" || !queries.some((query) => query.path === "/api/dashboard/filters"), name + "：普通用户不请求管理员过滤目录");
     const trend = page.locator(".oo-dashboard-main-chart"), models = page.locator(".oo-dashboard-model-table"), recent = page.locator(".oo-dashboard-recent");
     check(await trend.count() === 1 && await models.count() === 1 && await recent.count() === 1, name + "：趋势、模型表、最近记录都有明确区块");
-    check(await models.locator(".ant-table").count() === 1, name + "：模型用量以可排序表格展示");
-    check(await recent.locator(".ant-table").count() === 1, name + "：最近调用保持完整表格");
+    check(await models.locator(".arc-data-table").count() === 1, name + "：模型用量以可排序表格展示");
+    check(await recent.locator(".arc-data-table").count() === 1, name + "：最近调用保持完整表格");
     check((await recent.innerText()).includes("首") || (await recent.innerText()).includes("耗时"), name + "：最近调用带首字与耗时信息");
     check(await recent.locator(".oo-model-label, .model-label").count() > 0 || await recent.locator("img").count() > 0, name + "：最近调用有模型标识");
     if (role === "admin") {
-      check(await page.locator(".oo-dashboard-channels .ant-table").count() === 1, name + "：管理员渠道表现有独立表格");
-      const avatar = recent.locator(".ant-table-tbody td:nth-child(2) img");
+      const toolbar = await page.locator(".oo-dashboard-toolbar").evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { border: parseFloat(style.borderTopWidth), padding: parseFloat(style.paddingTop) };
+      });
+      check(toolbar.border === 0 && toolbar.padding === 0, name + "：筛选区不再套方形外框或重复内边距 " + JSON.stringify(toolbar));
+      check(await page.locator(".oo-dashboard-channels .arc-data-table").count() === 1, name + "：管理员渠道表现有独立表格");
+      const avatar = recent.locator("tbody td:nth-child(2) img");
       check(await avatar.count() > 0, name + "：管理员最近调用使用真实头像字段");
       check(await avatar.evaluateAll((images) => images.every((image) => image.complete && image.naturalWidth > 0)), name + "：用户头像成功加载");
-      const currentUserImages = recent.locator(".ant-table-tbody tr").filter({ hasText: "林同学" }).locator("td:nth-child(2) img");
+      const currentUserImages = recent.locator("tbody tr").filter({ hasText: "林同学" }).locator("td:nth-child(2) img");
       check(await currentUserImages.count() > 0 && await currentUserImages.evaluateAll((images) => images.every((image) => image.getAttribute("src").includes("v=current-profile"))), name + "：当前用户历史调用头像实时使用最新资料版本，不能被日志ID或旧URL覆盖");
-      check(await page.locator(".oo-dashboard-audience .ant-collapse-item-active").count() === 0, name + "：用户与密钥分析默认折叠，避免拉长看板");
+      check(await page.locator('.oo-dashboard-audience [aria-expanded="true"]').count() === 0, name + "：用户与密钥分析默认折叠，避免拉长看板");
     } else check(await page.locator(".oo-dashboard-channels").count() === 0, name + "：个人看板不展示全站渠道数据");
     if (width <= 1165) {
-      const tableScroll = await recent.locator(".ant-table-content").evaluate((element) => {
-        element.scrollLeft = element.scrollWidth;
-        const result = { width: element.clientWidth, scrollWidth: element.scrollWidth, scrollLeft: element.scrollLeft, overflowX: getComputedStyle(element).overflowX };
-        element.scrollLeft = 0;
-        return result;
-      });
-      check(tableScroll.scrollWidth > tableScroll.width && tableScroll.scrollLeft > 0 && tableScroll.overflowX === "auto", name + "：宽表只能在自身内部横滚，最后消费列可达 " + JSON.stringify(tableScroll));
+      const scroll = await tableScroll(recent.locator("table"));
+      check(scroll.scrollWidth > scroll.width && scroll.scrollLeft > 0 && scroll.overflowX === "auto", name + "：宽表只能在自身内部横滚，最后消费列可达 " + JSON.stringify(scroll));
     }
     if (width >= 1165) {
       const chartBox = await trend.boundingBox(), dashboardBox = await page.locator(".oo-dashboard").boundingBox();
       check(chartBox.width >= dashboardBox.width * 0.58, name + "：主趋势拥有至少58%可用宽度");
       check(chartBox.height <= 440, name + "：主趋势没有巨大的空白高度");
       const composition = await page.locator(".oo-dashboard-composition").evaluate((element) => {
-        const body = element.querySelector(".oo-chart-card-body"), section = element.querySelector(".oo-dashboard-breakdown");
-        return { innerWidth: body.getBoundingClientRect().width, contentWidth: section.getBoundingClientRect().width };
+        const body = element.querySelector("[data-arc-card-content]"), section = element.querySelector(".oo-dashboard-breakdown");
+        const style = getComputedStyle(body);
+        return { innerWidth: body.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), contentWidth: section.getBoundingClientRect().width };
       });
       check(composition.contentWidth >= composition.innerWidth * 0.9, name + "：用量构成内容撑满自身面板，没有被max-content挤成半栏 " + JSON.stringify(composition));
     }
     await screenshot(page, name);
     if (width === 1440 && theme === "light") {
       check(await recent.locator(".oo-model-origin").count() > 0, name + "：实际上游SKU映射用↳独立一行显示");
-      check(await recent.locator(".ant-table-tbody .ant-table-row").count() === 8, name + "：最近调用明确限制为8条，不拉长整个页面");
+      check(await recent.locator("tbody > tr").count() === 8, name + "：最近调用明确限制为8条，不拉长整个页面");
       if (role === "admin") check((await recent.innerText()).includes("0.0001"), name + "：非零微量消费保留四位小数，不显示成0");
-      const modelNames = new Set();
+      const seenModels = new Set();
       for (let index = 1; index <= 3; index++) {
-        if (index > 1) await models.getByTitle(String(index), { exact: true }).click();
-        const names = await models.locator(".oo-dashboard-model > span:first-child").allTextContents();
-        names.forEach((model) => modelNames.add(model.trim()));
+        if (index > 1) await models.getByRole("button", { name: `Page ${index}`, exact: true }).click();
+        (await modelNames(models)).forEach((model) => seenModels.add(model));
       }
-      check(modelNames.size === 14, name + "：14个模型均可翻页查看，不提前丢弃排行尾部");
-      await models.getByTitle("1", { exact: true }).click();
+      check(seenModels.size === 14 && expectedData.top_models.every((record) => seenModels.has(record.model)), name + "：14个模型均可翻页查看，不提前丢弃排行尾部");
+      await models.getByRole("button", { name: "Page 1", exact: true }).click();
       await models.getByText("按消费", { exact: true }).click();
-      check((await models.locator(".oo-dashboard-model > span:first-child").first().innerText()).trim() === expectedData.top_models[0].model, name + "：按消费切换实际排序，最高消费模型排第一");
+      check((await modelNames(models))[0] === expectedData.top_models[0].model, name + "：按消费切换实际排序，最高消费模型排第一");
       await trend.getByText("Token", { exact: true }).click();
-      check(await trend.locator(".oo-trend-legend-item").allTextContents().then((labels) => ["未缓存输入", "缓存读取", "输出"].every((label) => labels.some((text) => text.includes(label)))), name + "：Token趋势三项互不重叠且图例完整");
+      check(await trend.locator(".arc-chart-legend > span").allTextContents().then((labels) => ["未缓存输入", "缓存读取", "输出"].every((label) => labels.some((text) => text.includes(label)))), name + "：Token趋势三项互不重叠且图例完整");
       await trend.getByText("消费", { exact: true }).click();
-      check(await trend.locator(".oo-trend-legend-item").count() === 0, name + "：消费趋势只显示金额量纲，不与调用同轴");
+      check(await trend.locator(".arc-chart-legend > span").allTextContents().then((labels) => labels.length === 1 && labels[0] === "消费金额"), name + "：消费趋势只显示金额量纲，不与调用同轴");
       await trend.getByText("调用", { exact: true }).click();
-      check(await trend.locator(".oo-trend-legend-item").allTextContents().then((labels) => labels.some((text) => text.includes("全部调用")) && labels.some((text) => text.includes("失败调用"))), name + "：调用趋势包含全部和失败曲线");
+      check(await trend.locator(".arc-chart-legend > span").allTextContents().then((labels) => labels.some((text) => text.includes("全部调用")) && labels.some((text) => text.includes("失败调用"))), name + "：调用趋势包含全部和失败曲线");
       const rowCounts = await page.getByRole("region", { name: "请求结果", exact: true }).locator("dd > span").allTextContents();
       check(rowCounts.length === 4 && rowCounts.reduce((sum, value) => sum + Number(value.replaceAll(",", "")), 0) === expectedData.totals.calls, name + "：可见结果构成分项精确合计全部调用");
       const tokenCounts = await page.getByRole("region", { name: "Token 构成", exact: true }).locator("dd > span").allTextContents();
       check(tokenCounts.length === 3 && tokenCounts.reduce((sum, value) => sum + Number(value.replaceAll(",", "")), 0) === expectedData.totals.total_tokens, name + "：可见Token构成缓存不会重复相加");
-      const info = page.getByRole("button", { name: "调用次数统计口径", exact: true });
+      const info = page.locator(".oo-dashboard-metric").filter({ has: page.getByText("调用次数", { exact: true }) });
       await info.hover();
-      const tip = page.locator(".ant-tooltip:not(.ant-tooltip-hidden)").last();
+      const tip = page.getByRole("tooltip");
       await tip.waitFor();
       check((await tip.innerText()).includes("主动停止") && (await tip.innerText()).includes("只计一次"), name + "：统计口径可直接悬浮查询");
-      const background = await tip.locator(".ant-tooltip-inner").evaluate((element) => {
+      const colors = await tip.evaluate((element) => {
         const canvas = document.createElement("canvas"), context = canvas.getContext("2d");
-        context.fillStyle = getComputedStyle(element).backgroundColor;
-        context.fillRect(0, 0, 1, 1);
-        return Array.from(context.getImageData(0, 0, 1, 1).data);
+        const pixel = (color) => { context.clearRect(0, 0, 1, 1); context.fillStyle = color; context.fillRect(0, 0, 1, 1); return Array.from(context.getImageData(0, 0, 1, 1).data); };
+        const style = getComputedStyle(element);
+        const token = getComputedStyle(document.documentElement);
+        return { background: pixel(style.backgroundColor), foreground: pixel(style.color), expectedBackground: pixel(token.getPropertyValue("--foreground")), expectedForeground: pixel(token.getPropertyValue("--background")) };
       });
-      check(background.slice(0, 3).every((component) => component >= 248), name + "：浅色主题统计口径tooltip是统一白底");
+      check(colors.background.every((component, index) => component === colors.expectedBackground[index]) && colors.foreground.every((component, index) => component === colors.expectedForeground[index]), name + "：统计口径气泡遵循 Arc 逆色主题，正文与背景使用同一套 token " + JSON.stringify(colors));
       await page.mouse.move(width - 1, 1);
       if (role === "admin") {
         const audience = page.locator(".oo-dashboard-audience");
         await audience.getByText("用户与密钥分析", { exact: true }).click();
-        check(await audience.locator(".oo-rank-row").count() === 4, "展开分析后展示当前范围4个活跃用户");
+        check(await activeAudience(audience).locator("tbody > tr").count() === 4, "展开分析后展示当前范围4个活跃用户");
         await audience.getByRole("tab", { name: "密钥", exact: true }).click();
-        check(await audience.locator(".ant-tabs-tabpane-active .oo-rank-row").count() === 8, "密钥标签展示当前范围8个真实Key，而非复用用户列表");
+        check(await activeAudience(audience).locator("tbody > tr").count() === 8, "密钥标签展示当前范围8个真实Key，而非复用用户列表");
         await audience.getByText("用户与密钥分析", { exact: true }).click();
       }
     }
@@ -186,18 +201,18 @@ try {
 
   { // 首次接口失败不能伪造零数据；重试应恢复到真实样本。
     const { ctx, page, control, errors } = await open({ fail: true });
-    check(await page.locator(".ant-alert").count() > 0, "初次接口失败显示正文错误说明");
+    check(await page.getByRole("alert").count() > 0, "初次接口失败显示正文错误说明");
     check(await page.locator(".oo-dashboard-metric").count() === 0, "未加载成功前不显示伪造零指标");
     await screenshot(page, "dashboard-initial-failure");
     control.fail = false;
     await page.getByRole("button", { name: /^重\s*试$/ }).click();
     await page.locator(".oo-dashboard-metric").first().waitFor();
-    check(await page.locator(".ant-alert-error").count() === 0, "重试成功移除错误状态");
+    check(await page.getByRole("alert").count() === 0, "重试成功移除错误状态");
     control.fail = true;
     await page.getByRole("button", { name: /刷新.*看板/ }).click();
-    await page.locator(".ant-alert-error").waitFor();
+    await page.getByRole("alert").waitFor();
     check(await page.locator(".oo-dashboard-metric").count() === 4, "刷新失败保留上一次成功数字");
-    check(await page.locator(".ant-alert-error").innerText().then((text) => /上次|保留/.test(text)), "保留数据明确说明可能过期");
+    check(await page.getByRole("alert").innerText().then((text) => /上次|保留/.test(text)), "保留数据明确说明可能过期");
     check(errors.length === 0, "失败和重试无页面异常");
     await screenshot(page, "dashboard-refresh-failure");
     await ctx.close();
@@ -232,9 +247,9 @@ try {
 
   { // 管理员换用户时必须清除旧用户密钥，目录与数据分别验证。
     const { ctx, page, control, queries, errors } = await open();
-    const visibleOptions = page.locator(".ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option-content");
-    const userSelect = page.locator(".oo-dashboard-toolbar label").filter({ has: page.getByRole("combobox", { name: "筛选用户", exact: true }) }).locator(".ant-select-selector");
-    const tokenSelect = page.locator(".oo-dashboard-toolbar label").filter({ has: page.getByRole("combobox", { name: "筛选密钥", exact: true }) }).locator(".ant-select-selector");
+    const visibleOptions = page.getByRole("option");
+    const userSelect = page.getByRole("combobox", { name: "筛选用户", exact: true });
+    const tokenSelect = page.getByRole("combobox", { name: "筛选密钥", exact: true });
     await userSelect.click();
     await visibleOptions.filter({ hasText: /^林同学$/ }).click();
     await page.waitForTimeout(200);
@@ -255,9 +270,9 @@ try {
     control.fail = true;
     await userSelect.click();
     await visibleOptions.filter({ hasText: /^运营账号的较长显示名称$/ }).click();
-    await page.locator(".ant-alert-error").waitFor();
+    await page.getByRole("alert").waitFor();
     check(await page.locator(".oo-dashboard-context").innerText().then((text) => text.includes("研发团队") && !text.includes("运营账号")), "筛选失败保留旧数据时，范围身份仍标旧用户，不冒充新用户统计");
-    check(await page.locator(".oo-page-head .ant-tag").innerText() === "筛选用量", "已筛选数据刷新失败仍保留对应身份标签");
+    check(await page.locator(".oo-page-head .oo-page-tags").innerText() === "筛选用量", "已筛选数据刷新失败仍保留对应身份标签");
     await page.getByText("7 天", { exact: true }).click();
     await page.waitForTimeout(200);
     const kept = dashboardData(new URLSearchParams("range=30d&user_id=13"));
@@ -268,7 +283,7 @@ try {
 
   {
     const { ctx, page, errors } = await open({ unknownStatus: true });
-    const first = page.locator(".oo-dashboard-recent .ant-table-tbody .ant-table-row").first();
+    const first = page.locator(".oo-dashboard-recent tbody > tr").first();
     check((await first.innerText()).includes("其他状态") && !(await first.innerText()).includes("成功"), "未知非空状态不能借消费日志type2猜作成功");
     const expected = dashboardData(new URLSearchParams("range=30d"), { unknownStatus: true });
     const visibleResults = await page.getByRole("region", { name: "请求结果", exact: true }).locator("dd > span").allTextContents();
@@ -285,7 +300,7 @@ try {
     const audience = page.locator(".oo-dashboard-audience");
     await audience.getByText("用户与密钥分析", { exact: true }).click();
     const percentages = async (rows) => {
-      const displayed = await audience.locator(".ant-tabs-tabpane-active .oo-rank-pct").allTextContents();
+      const displayed = await activeAudience(audience).locator("tbody > tr td:last-child").allTextContents();
       check(displayed.length === 2, "只返回两项时榜单展示对应两行");
       check(displayed.every((text, index) => Math.abs(parseFloat(text) - rows[index].units / expected.totals.units * 100) <= 0.51), "截断排行仍以区间全量消费为占比分母");
       check(displayed.reduce((sum, text) => sum + parseFloat(text), 0) < 90, "两项不被重新归一化成100%，不伪造全量覆盖");
@@ -305,22 +320,17 @@ try {
     for (const width of [1440, 390]) {
       const { ctx, page, errors, rejected } = await open({ width, manyChannels: true });
       const channelCard = page.locator(".oo-dashboard-channels");
-      check(await channelCard.locator(".ant-table-tbody .ant-table-row").count() === 6, `${width}px渠道页每页6行，不拉长卡片`);
+      check(await channelCard.locator("tbody > tr").count() === 6, `${width}px渠道页每页6行，不拉长卡片`);
       const seen = new Set();
       for (let pageIndex = 1; pageIndex <= 3; pageIndex++) {
-        if (pageIndex > 1) await channelCard.getByTitle(String(pageIndex), { exact: true }).click();
+        if (pageIndex > 1) await channelCard.getByRole("button", { name: `Page ${pageIndex}`, exact: true }).click();
         (await channelCard.locator(".oo-dashboard-channel b").allTextContents()).forEach((name) => seen.add(name.trim()));
       }
       check(seen.size === 16 && expected.by_channel.every((channel) => seen.has(channel.name)), `${width}px可完整翻页查看全部16渠道，不截掉Top12之后的数据`);
-      check(await channelCard.locator(".ant-table-tbody .ant-table-row").count() === 4, `${width}px末页恰为剩余4渠道`);
+      check(await channelCard.locator("tbody > tr").count() === 4, `${width}px末页恰为剩余4渠道`);
       if (width === 390) {
-        const scroll = await channelCard.locator(".ant-table-content").evaluate((element) => {
-          element.scrollLeft = element.scrollWidth;
-          const result = { width: element.clientWidth, scrollWidth: element.scrollWidth, left: element.scrollLeft, overflowX: getComputedStyle(element).overflowX };
-          element.scrollLeft = 0;
-          return result;
-        });
-        check(scroll.scrollWidth > scroll.width && scroll.left > 0 && scroll.overflowX === "auto", "手机渠道卡能内部横滚到费用列 " + JSON.stringify(scroll));
+        const scroll = await tableScroll(channelCard.locator("table"));
+        check(scroll.scrollWidth > scroll.width && scroll.scrollLeft > 0 && scroll.overflowX === "auto", "手机渠道卡能内部横滚到费用列 " + JSON.stringify(scroll));
       }
       check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${width}px渠道翻页与内部滚动不导致外层横向溢出`);
       check(errors.length === 0, `${width}px渠道分页无运行期错误`);

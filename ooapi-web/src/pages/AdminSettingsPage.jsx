@@ -383,11 +383,15 @@ function VisibilityFields({ value, onChange, disabled }) {
 
 function SettingsField({ name, spec, locked, busy }) {
   const inputId = `system-setting-${name}`;
+  const isSwitch = spec.type === "switch";
+  const hint = spec.type === "password" ? "保持原值可保留凭据；清空后保存会删除。" : spec.hint;
   return <div className={`oo-admin-setting-row oo-admin-setting-row--${spec.type}`}>
     <div className="oo-admin-setting-label"><label htmlFor={inputId}>{spec.label}</label>{locked ? <Tooltip title="仅超级管理员可修改"><LockOutlined aria-label="仅超级管理员可修改" /></Tooltip> : null}</div>
-    <Form.Item name={name} className="oo-admin-setting-control" valuePropName={spec.type === "switch" ? "checked" : "value"} extra={spec.type === "password" ? "保持原值可保留凭据；清空后保存会删除。" : spec.hint} rules={spec.od ? [{ required: true, message: "请填写额度，无额度请填 0" }] : undefined}>
+    <Form.Item name={name} className="oo-admin-setting-control" valuePropName={isSwitch ? "checked" : "value"} extra={isSwitch ? undefined : hint} rules={spec.od ? [{ required: true, message: "请填写额度，无额度请填 0" }] : undefined}>
       <Field id={inputId} aria-label={spec.label} spec={spec} name={name} locked={locked} disabled={busy} />
     </Form.Item>
+    {/* 开关说明占整行，不能撑宽右侧控件列而把左侧标题挤成竖排。 */}
+    {isSwitch && hint ? <div className="oo-admin-setting-hint oo-admin-settings-note">{hint}</div> : null}
   </div>;
 }
 

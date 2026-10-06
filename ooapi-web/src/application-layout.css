@@ -495,15 +495,19 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 10px;
 }
 .oo-stats-card-title {
   font-size: 13.5px;
   font-weight: 550;
+  white-space: nowrap;
 }
 .oo-channel-activity {
   --activity-cell-gap: 3px;
+  --heatmap-cell-min: 12px;
+  --heatmap-cell-max: 20px;
   padding: 12px;
 }
 .oo-channel-activity .oo-stats-card-head {
@@ -1376,6 +1380,7 @@ button.oo-channel-activity-cell:focus-visible {
   border-bottom: 1px solid var(--line);
 }
 .oo-toolbar--plain { border-bottom: 0; padding: 0; }
+.oo-media-list-toolbar { padding-bottom: 12px; }
 .oo-toolbar-spacer { flex: 1; }
 .oo-section-title {
   font-size: var(--fs-body);
@@ -2827,3 +2832,4 @@ html[data-theme="dark"] .oo-vendor-icon--mono { filter: invert(0.88); }
 .arc-modal :is(h1, h2, h3, h4, b, strong),
 .arc-drawer :is(h1, h2, h3, h4, b, strong) { font-weight:500; }
 .oo-page-title, .oo-profile-name, .oo-community-post-title { font-weight:500; }
+.studio :is(h1, h2, h3, h4, b, strong), .studio-text-link { font-weight:500; }

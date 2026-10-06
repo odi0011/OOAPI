@@ -5,7 +5,7 @@ import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { motionTokens } from "../lib/motion-tokens";
 import styles from "./segmented-control.module.css";
 
-export interface Segment { value: string; label: string; /** Optional content after the label, such as a badge. */ accessory?: ReactNode; }
+export interface Segment { value: string; label?: ReactNode; icon?: ReactNode; title?: string; ariaLabel?: string; /** Optional content after the label, such as a badge. */ accessory?: ReactNode; }
 export interface SegmentedControlProps {
   options: Segment[];
   value: string;
@@ -64,9 +64,9 @@ export default function SegmentedControl({ options, value, onValueChange, label,
 
   return <div className={`${styles.root} ${className ?? ""}`} role="group" aria-label={label}>
     <LayoutGroup id={id}><motion.div ref={track} layoutScroll className={styles.track}>
-      {options.map((option, index) => <button key={option.value} id={`${id}-${option.value}`} className={styles.button} type="button" data-value={option.value} aria-pressed={value === option.value} tabIndex={index === selectedIndex ? 0 : -1} onClick={() => onValueChange(option.value)} onKeyDown={onKeyDown} onPointerEnter={onOptionIntent ? () => onOptionIntent(option.value) : undefined} onFocus={onOptionIntent ? () => onOptionIntent(option.value) : undefined}>
+      {options.map((option, index) => <button key={option.value} id={`${id}-${option.value}`} className={styles.button} type="button" data-value={option.value} title={option.title} aria-label={option.ariaLabel || (!option.label ? option.title : undefined)} aria-pressed={value === option.value} tabIndex={index === selectedIndex ? 0 : -1} onClick={() => onValueChange(option.value)} onKeyDown={onKeyDown} onPointerEnter={onOptionIntent ? () => onOptionIntent(option.value) : undefined} onFocus={onOptionIntent ? () => onOptionIntent(option.value) : undefined}>
         {value === option.value && <motion.span className={styles.selection} layoutId="selection" layoutDependency={value} transition={reduced ? { duration: 0 } : motionTokens.spring.morph} aria-hidden="true" />}
-        <span className={styles.label}>{option.label}{option.accessory}</span>
+        <span className={styles.label}>{option.icon && <span aria-hidden="true">{option.icon}</span>}{option.label}{option.accessory}</span>
       </button>)}
     </motion.div></LayoutGroup>
   </div>;

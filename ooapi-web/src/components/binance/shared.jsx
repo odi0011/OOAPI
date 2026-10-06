@@ -29,7 +29,7 @@ export function StatusTag({ value }) {
   return <Tag color={color}>{labels[value] || value}</Tag>;
 }
 export function Panel({ title, extra, children, flush = false }) {
-  return <section className="oo-panel">
+  return <section className={`oo-panel${flush ? " oo-table-panel" : ""}`}>
     {title && <div className="oo-panel-head"><span className="oo-panel-title">{title}</span>{extra}</div>}
     <div className={`oo-panel-body${flush ? " oo-panel-body--flush" : ""}`}>{children}</div>
   </section>;

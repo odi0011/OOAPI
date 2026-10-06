@@ -541,8 +541,8 @@ export default function MediaPage() {
         </ArcPanel>
       ) : null}
 
-      <ArcPanel className="oo-panel">
-        <div className="oo-toolbar">
+      <ArcPanel className={`oo-panel${view === "list" ? " oo-table-panel" : ""}`}>
+        <div className={`oo-toolbar${view === "list" ? " oo-toolbar--plain oo-media-list-toolbar" : ""}`}>
           <Input.Search
             placeholder="搜索文件名"
             allowClear

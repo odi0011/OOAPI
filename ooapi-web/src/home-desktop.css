@@ -21,7 +21,7 @@
 .studio-shortcuts a { position: relative; isolation: isolate; width: 94px; min-height: 66px; display: flex; align-items: center; flex-direction: column; gap: 8px; color: #fff; text-shadow: 0 1px 3px #253044cc,0 0 8px #25304466; border: 0; padding: 6px; background: transparent; }
 .studio-shortcuts a::before { content: ''; position: absolute; z-index: -1; pointer-events: none; width: 61px; height: 57px; top: -2px; left: calc(50% - 30.5px); border-radius: 50%; background: radial-gradient(ellipse,color-mix(in srgb,var(--accent) 62%,white) 0%,color-mix(in srgb,var(--accent) 42%,transparent) 40%,transparent 72%); filter: blur(11px); opacity: 0; transform: scale(.65); transition: opacity .35s,transform .65s var(--studio-spring); }
 .studio-shortcuts a > span { position: relative; font-size: 31px; line-height: 1; color: #fff; filter: drop-shadow(0 1px 0 #768091) drop-shadow(0 2px 0 #657080) drop-shadow(0 4px 3px #23324a70); transition: transform .6s var(--studio-spring),filter .35s; }
-.studio-shortcuts a > span svg { stroke: #fff; stroke-width: 8; paint-order: stroke; }
+.studio-shortcuts a > span svg { stroke: currentColor; stroke-width: 1.75; }
 .studio-shortcuts b { font-size: 12px; font-weight: 500; }
 .studio-shortcuts a:hover,.studio-shortcuts a:focus-visible { color: #fff; background: transparent; }
 .studio-shortcuts a:hover::before,.studio-shortcuts a:focus-visible::before { opacity: 1; transform: scale(1.3); }

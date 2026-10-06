@@ -63,6 +63,12 @@ body { margin: 0; }
 }
 *::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--text-muted) 64%, transparent); background-clip: padding-box; }
 *::-webkit-scrollbar-corner { background: transparent; }
+/* 保存后的提示可能还在显示，此时再次修改也要能点到底部保存条。
+   提示仍采用 Arc 的底部堆叠，只在动作条出现时为它留出空间。 */
+body:has(.oo-admin-settings-actions, .oo-site-appearance-save) .arc-toast-stack { bottom: 96px; }
+@media (max-width: 640px) {
+  body:has(.oo-site-appearance-save) .arc-toast-stack { bottom: 136px; }
+}
 button, input, textarea, select { font: inherit; }
 .arc-control-fieldset { min-width:0; margin:0; padding:0; border:0; }
 @media (pointer:coarse) { :root { --control-height-sm:2.5rem; } .oo-header button { min-width:40px; } }
@@ -71,12 +77,14 @@ button, input, textarea, select { font: inherit; }
 .arc-layout > .arc-layout { flex-direction: column; }
 .arc-sider { display: flex; flex-direction: column; min-height: 100vh; border-right: 1px solid var(--border); }
 .arc-inline { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
-.arc-row { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); }
-.arc-col { grid-column: span var(--col-span); min-width: 0; }
-@media (min-width: 576px) { .arc-col { grid-column: span var(--col-sm); } }
-@media (min-width: 768px) { .arc-col { grid-column: span var(--col-md); } }
-@media (min-width: 992px) { .arc-col { grid-column: span var(--col-lg); } }
-@media (max-width: 575px) { .arc-col { grid-column: 1 / -1; } }
+/* 栅格间距属于可见列，不能给24条轨道各加一次：手机上23个gap
+   就会超过整张表单的宽度。列宽按占比扣除实际列间距，xs也参与计算。 */
+.arc-row { display: flex; flex-wrap: wrap; min-width: 0; column-gap: var(--row-column-gap, 16px); row-gap: var(--row-row-gap, 16px); }
+.arc-col { --col-current: var(--col-xs); flex: 0 0 calc((100% + var(--row-column-gap, 16px)) * var(--col-current) / 24 - var(--row-column-gap, 16px)); min-width: 0; }
+@media (min-width: 576px) { .arc-col { --col-current: var(--col-sm); } }
+@media (min-width: 768px) { .arc-col { --col-current: var(--col-md); } }
+@media (min-width: 992px) { .arc-col { --col-current: var(--col-lg); } }
+@media (min-width: 1200px) { .arc-col { --col-current: var(--col-xl); } }
 .arc-tooltip-anchor { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; vertical-align: middle; }
 .arc-input-wrap, .arc-select-wrap, .arc-textarea-wrap { position: relative; min-width: 0; width: 100%; }
 .arc-input-wrap > div, .arc-textarea-wrap > div, .arc-select-wrap > div { min-width: 0; width: 100%; }
@@ -169,8 +177,18 @@ button, input, textarea, select { font: inherit; }
 .oo-profile-page .oo-profile-section {width:100%;max-width:none;}
 article.oo-panel,article.oo-chart-card {padding:0;border-radius:var(--radius-panel);box-shadow:none;}
 article.oo-panel > [data-arc-card-content],article.oo-chart-card > [data-arc-card-content] {min-width:0;}
-article.oo-table-panel { border:0; border-radius:0; background:transparent; }
+.oo-table-panel { border:0; border-radius:0; background:transparent; }
 article.oo-table-panel > [data-arc-card-content] { padding:0; }
+.oo-table-panel > .oo-panel-head { padding:0 0 12px; border-bottom:0; }
+.oo-table-panel > .arc-data-table + .arc-data-table { margin-top:16px; }
+.oo-table-panel .oo-panel-body--flush { padding:0; }
+/* 表格已有完整外框；图表卡承载纯表格时只保留标题和内容间距。 */
+article.oo-chart-card:has(> [data-arc-card-content] > .arc-data-table),
+.oo-dashboard article.oo-chart-card:has(> [data-arc-card-content] > .arc-data-table),
+.oo-dashboard article.oo-table-panel { border:0; border-radius:0; background:transparent; padding:0; box-shadow:none; }
+article.oo-chart-card:has(> [data-arc-card-content] > .arc-data-table) > [data-arc-card-content] { padding:0; }
+article.oo-chart-card > [data-arc-card-content] > .arc-data-table { margin-top:12px; }
+.oo-chart-card > [data-arc-card-content] > div:first-child { flex-wrap:wrap; row-gap:12px; }
 article.oo-dashboard-toolbar > [data-arc-card-content] {display:flex;align-items:center;gap:20px;flex-wrap:wrap;width:100%;}
 .oo-dashboard-toolbar label {display:flex;align-items:center;gap:10px;flex:1;min-width:180px;}.oo-dashboard-toolbar label > .arc-select-wrap {flex:1;}
 /* Filters are page controls, not a second hero card. Keep the Arc fields

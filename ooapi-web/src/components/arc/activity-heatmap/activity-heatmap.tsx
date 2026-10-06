@@ -13,6 +13,12 @@ export interface ActivityDay {
   count: number;
 }
 
+export interface ActivityDayDetails {
+  primary?: string;
+  secondary?: string;
+  ariaLabel?: string;
+}
+
 /**
  * A contribution style calendar: one square per day, weeks as columns, with four accent tints for how busy a day was.
  * Use it when rhythm, streaks, and quiet weeks matter more than exact comparisons; use a bar chart when the exact
@@ -37,6 +43,10 @@ export interface ActivityHeatmapProps {
   actions?: ReactNode;
   /** Formatting locale. Fixed by default so server and client render the same labels. */
   locale?: string;
+  /** Business details for a day, without replacing the calendar's keyboard or motion behavior. */
+  dayDetails?: (day: ActivityDay) => ActivityDayDetails;
+  /** Optional explanation when every day in the range is empty; the calendar remains visible. */
+  emptyMessage?: string;
   className?: string;
 }
 
@@ -154,7 +164,7 @@ function RiseText({ text, reduced, children }: { text: string; reduced: boolean;
   </span>;
 }
 
-export function ActivityHeatmap({ days, label, period, unit: unitProp = CONTRIBUTIONS, thresholds, weekStartsOn = 0, selectedDate = null, onSelectDate, actions, locale = "en-US", className }: ActivityHeatmapProps) {
+export function ActivityHeatmap({ days, label, period, unit: unitProp = CONTRIBUTIONS, thresholds, weekStartsOn = 0, selectedDate = null, onSelectDate, actions, locale = "en-US", dayDetails, emptyMessage, className }: ActivityHeatmapProps) {
   const reduced = useReducedMotionSafe();
   const id = useId();
   // Keyed by its words, so an inline unit object does not rebuild every cell on each render.
@@ -165,7 +175,8 @@ export function ActivityHeatmap({ days, label, period, unit: unitProp = CONTRIBU
   const scrollerRef = useRef<HTMLDivElement>(null);
   const ringRef = useRef<HTMLSpanElement>(null);
   const measureRef = useRef<HTMLSpanElement>(null);
-  const inView = useInView(plotRef, { once: true, amount: .35 });
+  // 窄屏日历比视口宽，观察整个绘图区会让可见比例永远达不到阈值，格子停在隐藏态。
+  const inView = useInView(scrollerRef, { once: true, amount: .35 });
 
   const model = useMemo(() => buildModel(days, weekStartsOn, thresholds, locale), [days, weekStartsOn, thresholds, locale]);
   const formats = useMemo(() => ({
@@ -216,7 +227,8 @@ export function ActivityHeatmap({ days, label, period, unit: unitProp = CONTRIBU
   function contentFor(index: number, anchor: HTMLElement): Tip {
     const count = model.counts[index];
     const date = new Date(model.start + index * DAY);
-    return { key: `day-${toIso(date.getTime())}`, primary: count ? `${formats.number.format(count)} ${noun(count, unit)}` : `No ${unit.other}`, secondary: formats.short.format(date), value: count, anchor };
+    const details = dayDetails?.({ date: toIso(date.getTime()), count });
+    return { key: `day-${toIso(date.getTime())}`, primary: details?.primary ?? (count ? `${formats.number.format(count)} ${noun(count, unit)}` : `No ${unit.other}`), secondary: details?.secondary ?? formats.short.format(date), value: count, anchor };
   }
   const [a, b, c] = model.thresholds;
   const ranges = [`no ${unit.other}`, a === 1 ? `1 ${unit.one}` : `1 to ${a} ${unit.other}`, `${a + 1} to ${b} ${unit.other}`, `${b + 1} to ${c} ${unit.other}`, `${c + 1} or more ${unit.other}`];
@@ -334,11 +346,14 @@ export function ActivityHeatmap({ days, label, period, unit: unitProp = CONTRIBU
       if (!inRange) return <span key={col} className={styles.cell} data-empty="" style={wave} aria-hidden="true" />;
       const count = model.counts[index];
       const date = new Date(model.start + index * DAY);
+      const isoDate = toIso(date.getTime());
+      const details = dayDetails?.({ date: isoDate, count });
       return <span key={col} role="gridcell" className={styles.cell} style={wave} data-index={index} data-level={model.levels[index]} tabIndex={index === tabIndexDay ? 0 : -1}
-        aria-selected={onSelectDate ? index === selectedIndex : undefined} aria-label={`${count ? formats.number.format(count) : "No"} ${noun(count, unit)}, ${formats.long.format(date)}`}
+        aria-selected={onSelectDate ? index === selectedIndex : undefined} aria-label={details?.ariaLabel ?? `${count ? formats.number.format(count) : "No"} ${noun(count, unit)}, ${formats.long.format(date)}`}
+        aria-describedby={open && tip?.key === `day-${isoDate}` ? `${id}-tip` : undefined}
         onClick={() => onSelectDate?.(toIso(date.getTime()))} />;
     })}
-  </div>), [model, step, maxDiagonal, tabIndexDay, selectedIndex, formats, unit, onSelectDate]);
+  </div>), [model, step, maxDiagonal, tabIndexDay, selectedIndex, formats, unit, onSelectDate, dayDetails, open, tip, id]);
 
   const weekdayLabels = useMemo(() => Array.from({ length: 7 }, (_, row) => {
     const weekday = (row + weekStartsOn) % 7;
@@ -396,8 +411,11 @@ export function ActivityHeatmap({ days, label, period, unit: unitProp = CONTRIBU
       </span>
     </div>
 
-    <motion.div className={styles.tip} style={{ x: tipX, y: tipY }} aria-hidden="true">
-      <motion.div className={styles.bubble} style={{ x: "-50%" }} initial={false} animate={open && tip ? { opacity: 1, scale: 1 } : { opacity: 0, scale: reduced ? 1 : .96 }}
+    {model.total === 0 && emptyMessage && <p className={styles.empty} role="status">{emptyMessage}</p>}
+
+    {/* 明细同时服务鼠标与键盘：不能让可见提示继承 aria-hidden 而从读屏树消失。 */}
+    <motion.div className={styles.tip} style={{ x: tipX, y: tipY }}>
+      <motion.div id={`${id}-tip`} role="tooltip" aria-hidden={!open || !tip} className={styles.bubble} style={{ x: "-50%" }} initial={false} animate={open && tip ? { opacity: 1, scale: 1 } : { opacity: 0, scale: reduced ? 1 : .96 }}
         transition={reduced ? { duration: open ? motionTokens.duration.fast : motionTokens.duration.instant } : open ? { ...motionTokens.spring.snappy, opacity: { duration: motionTokens.duration.fast, ease: enter } } : { duration: motionTokens.duration.instant, ease: standard }}>
         <motion.span className={styles.tipBody} style={{ width: tipWidth }}>
           <span ref={measureRef} className={styles.tipMeasure}><span className={styles.tipPrimary}>{tip?.primary}</span><span className={styles.tipSecondary}>{tip?.secondary}</span></span>

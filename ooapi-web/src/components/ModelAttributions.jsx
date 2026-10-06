@@ -32,7 +32,7 @@ export default function ModelAttributions({ revision, onChange }) {
       setEditing(null); message.success("价格已保存"); await refresh();
     } catch(e) { message.error(e.message); }
   };
-  return <section className="oo-panel">
+  return <section className="oo-panel oo-table-panel">
     <div className="oo-panel-head"><span className="oo-panel-title">模型归属 <Tag color={data.count ? "warning" : "success"}>{data.count || 0} 个待定价</Tag></span><Button size="small" onClick={load} loading={loading}>刷新</Button></div>
     {error ? <Alert type="error" showIcon message={error} /> : null}
     {data.models.some(row => /^\d+-auto$/.test(row.model)) ? <Alert type="info" showIcon message="auto 按渠道独立配置" description="编号-auto 只调用对应编号的渠道。请分别设置价格，并在「参数与能力」中配置；未定价前不会开放调用。" style={{ marginBottom: 12 }} /> : null}

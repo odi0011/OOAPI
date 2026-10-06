@@ -62,7 +62,7 @@ function AppServices({ children }) {
     }) };
     return { message, notification, modal };
   }, [toasts]);
-  return <AppContext.Provider value={services}>{children}<ToastStack label="操作提示"/>{dialogs.map(d => <ConfirmDialog key={d.id} record={d} remove={result => { setDialogs(all => all.filter(x => x.id !== d.id)); d.resolve(result); }}/>)}</AppContext.Provider>;
+  return <AppContext.Provider value={services}>{children}<ToastStack label="操作提示" className="arc-toast-stack"/>{dialogs.map(d => <ConfirmDialog key={d.id} record={d} remove={result => { setDialogs(all => all.filter(x => x.id !== d.id)); d.resolve(result); }}/>)}</AppContext.Provider>;
 }
 function ConfirmDialog({ record: { opts }, remove }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState("");

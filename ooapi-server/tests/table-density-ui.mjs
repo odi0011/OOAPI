@@ -55,7 +55,7 @@ try {
       const stats = await page.locator(".oo-stat-card").evaluateAll(nodes => nodes.map(node => ({ height: node.getBoundingClientRect().height, display: getComputedStyle(node).display })));
       check(stats.every(stat => stat.height <= 28 && ["flex", "inline-flex"].includes(stat.display)), `${route} ${width}: 统计使用小标签 ${JSON.stringify(stats)}`);
       if (["/log", "/operation-log", "/admin/community"].includes(route)) {
-        const names = await page.locator(".ant-table-cell .oo-user-label > .oo-truncate").evaluateAll(nodes => nodes.map(node => ({ text: node.textContent, title: node.title, overflow: node.scrollWidth > node.clientWidth, ellipsis: getComputedStyle(node).textOverflow })));
+        const names = await page.locator(".arc-data-table td .oo-user-label > .oo-truncate").evaluateAll(nodes => nodes.map(node => ({ text: node.textContent, title: node.title, overflow: node.scrollWidth > node.clientWidth, ellipsis: getComputedStyle(node).textOverflow })));
         check(names.length > 0 && names.every(name => name.overflow && name.ellipsis === "ellipsis" && name.title === name.text), `${route}: 长用户名称必须省略并保留全名`);
       }
       if (route === "/admin/pricing") {
@@ -64,7 +64,7 @@ try {
           for (const header of ["上下文", "最大输出", "推理", "输入 / 输出", "价格 / 百万 Token"]) check(await table.getByRole("columnheader", { name: header, exact: true }).count() === 1, `模型独立列 ${header}`);
         } else {
           check(await table.locator(".oo-model-mobile-row").count() === 3, "手机各模型采用完整信息行");
-          check(await table.locator(".ant-table-content").evaluate(node => node.scrollWidth <= node.clientWidth + 1), "手机模型列表不需要横向滚动");
+          check(await table.locator("table").evaluate(node => node.parentElement.scrollWidth <= node.parentElement.clientWidth + 1), "手机模型列表不需要横向滚动");
         }
         check(!(await page.locator("body").innerText()).includes("每个模型的价格与参数能力"), "删除冗余说明");
         const lines = await table.locator(".oo-model-price-matrix").first().locator(".oo-model-price-label").evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().top));
@@ -73,14 +73,14 @@ try {
         check(values.join(" ").includes("0.15") && values.join(" ").includes("0.003"), "闲时价格与峰时并排可见");
         check(await table.getByRole("columnheader", { name: "≥ 128K", exact: true }).count() === 1 && (await table.locator(".oo-model-price-matrix").nth(1).innerText()).includes("37.5"), "长上下文档位与基础价格并排可见");
         await table.getByRole("button", { name: /配\s*置/ }).first().click();
-        await page.locator(".oo-model-config-drawer .ant-drawer-body").waitFor();
+        await page.locator(".oo-model-config-drawer .arc-drawer-body").waitFor();
         check(Number(await page.locator("#price_input").inputValue()) === .3, "价格表单保留既有值");
         check(await page.getByRole("link", { name: "厂商文档" }).count() === 1, "厂商文档仍可访问");
-        await page.locator(".ant-drawer-close").click();
+        await page.locator(".oo-model-config-drawer").getByRole("button", { name: "关闭", exact: true }).click();
         await page.locator(".oo-model-config-drawer").waitFor({ state: "hidden" });
       }
       if (output && ["/admin/pricing", "/log", "/admin/users", "/console", "/admin/monitor"].includes(route)) {
-        await page.locator(".ant-table-content").evaluateAll(nodes => nodes.forEach(node => { node.scrollLeft = 0; }));
+        await page.locator(".arc-data-table table").evaluateAll(nodes => nodes.forEach(node => { node.parentElement.scrollLeft = 0; }));
         await page.screenshot({ path: path.join(output, `${route.replaceAll("/", "-").slice(1)}-${width}-${theme}.png`), fullPage: true });
       }
       check(errors.length === 0, `${route}: 无浏览器运行错误 ${errors.join(",")}`);

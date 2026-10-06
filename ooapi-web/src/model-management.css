@@ -151,6 +151,31 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+.oo-model-config-drawer > div:first-child > div:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.oo-model-config-drawer > div:first-child > div:first-child > div:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.oo-model-drawer-title-prefix {
+  flex: 0 0 auto;
+  color: var(--ink-3);
+  font-weight: 400;
+}
+.oo-model-drawer-title > .oo-model-label,
+.oo-model-drawer-title > span:last-child,
+.oo-model-drawer-title [data-model-name] {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .oo-model-drawer-meta {
   display: grid;

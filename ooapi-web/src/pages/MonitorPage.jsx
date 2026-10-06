@@ -332,7 +332,7 @@ function AlertPanel({ data, onReload }) {
   ];
 
   return (
-    <ArcPanel className="oo-panel" style={{ padding: 14, marginTop: 12 }}>
+    <ArcPanel className="oo-panel oo-table-panel" style={{ marginTop: 12 }}>
       {loadError && <AntAlert type="error" showIcon message="告警数据更新失败" description={loadError} action={<Button size="small" onClick={load}>重试</Button>} style={{ marginBottom: 16 }} />}
       <div className="oo-stats-card-head oo-monitor-alert-head" style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -529,7 +529,7 @@ export default function MonitorPage() {
 
   return <div className="oo-page oo-dashboard oo-monitor">
     <PageHeader title="运维监控" tags={<Tag color={liveOk ? "success" : "default"}>{liveOk ? "实时连接" : interval ? "快照轮询" : "手动快照"}</Tag>} extra={<><Segmented size="small" value={interval} options={REFRESH_OPTIONS} onChange={setIntervalMs} /><Button icon={<ReloadOutlined />} loading={loading} onClick={() => load()} aria-label="刷新监控" /></>} />
-    <div className="oo-dashboard-context"><span>{data ? "进程运行 " + fmtDuration(proc.uptimeSec) + " · " + sys.hostname + " · " + proc.platform : "正在读取系统与网关状态"}</span><span>{snapshotAt ? "快照 " + new Date(snapshotAt).toLocaleTimeString("zh-CN", { hour12: false }) : ""}</span></div>
+    <div className="oo-dashboard-context"><span>{data ? "进程运行 " + (proc.uptimeSec == null ? "—" : fmtDuration(proc.uptimeSec)) + " · " + (sys.hostname || "主机信息暂无") + " · " + (proc.platform || "平台信息暂无") : "正在读取系统与网关状态"}</span><span>{snapshotAt ? "快照 " + new Date(snapshotAt).toLocaleTimeString("zh-CN", { hour12: false }) : ""}</span></div>
     {error && <AntAlert type="error" showIcon message={data ? "快照更新失败，当前显示上次采样" : "监控数据加载失败"} description={error} action={<Button size="small" onClick={() => load()}>重试</Button>} />}
     <div className="oo-monitor-tabs"><Segmented block value={activeTab} onChange={setActiveTab} options={[{ value: "overview", label: "运行概览" }, { value: "infra", label: "系统资源" }, { value: "traffic", label: "渠道与流量" }, { value: "alerts", label: "告警中心" }]} /></div>
     {!data ? loading && <div className="oo-dashboard-loading"><Spin /></div> : <>

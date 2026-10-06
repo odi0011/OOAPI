@@ -360,8 +360,8 @@ export default function AdminCommunityPage() {
         </div>
       ) : null}
 
-      <ArcPanel className="oo-panel">
-        <div className="oo-toolbar">
+      <ArcPanel className="oo-panel oo-table-panel">
+        <div className="oo-toolbar oo-toolbar--plain" style={{ paddingBottom: 12 }}>
           <Segmented
             value={tab}
             onChange={(v) => { setTab(v); setPage(1); }}

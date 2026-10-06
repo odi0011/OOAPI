@@ -14,7 +14,8 @@
 
 /* The scroller starts at its right edge on narrow screens (the most recent weeks) without script, through its writing direction. */
 .scroller { direction: rtl; overflow-x: auto; overflow-y: hidden; margin: -6px; padding: 6px; overscroll-behavior-x: contain; scrollbar-color: var(--border-strong) transparent; scrollbar-width: thin; }
-.canvas { --gap: 3px; --label: 30px; --cell: clamp(9px, calc((100cqi - var(--label) - var(--gap) * 53) / 53), 15px); --step: calc(var(--cell) + var(--gap)); direction: ltr; display: grid; width: max-content; grid-template-columns: var(--label) auto; grid-template-rows: auto auto; column-gap: var(--gap); row-gap: var(--space-2); }
+/* 以实际周数均分容器；业务卡可提高最小格宽，窄屏由内部滚动承接。 */
+.canvas { --gap: 3px; --label: 30px; --cell: clamp(var(--heatmap-cell-min, 9px), calc((100cqi - var(--label) - var(--gap) * (var(--weeks) - 1)) / var(--weeks)), var(--heatmap-cell-max, 15px)); --step: calc(var(--cell) + var(--gap)); direction: ltr; display: grid; width: max-content; grid-template-columns: var(--label) auto; grid-template-rows: auto auto; column-gap: var(--gap); row-gap: var(--space-2); }
 .months { position: relative; grid-row: 1; grid-column: 2; height: 1rem; color: var(--text-muted); font-size: var(--text-xs); line-height: 1rem; }
 /* Month labels glide to their new week when a range starts on a different weekday. */
 .month { position: absolute; top: 0; left: 0; white-space: nowrap; transform: translateX(calc(var(--col) * var(--step))); transition: transform var(--duration-spring) var(--ease-spring); }
@@ -27,6 +28,7 @@
 
 /* One square per day. The wave delay rides a custom property so a reveal and a recolor sweep the same diagonal. */
 .cell { --delay: var(--wave); display: block; width: var(--cell); height: var(--cell); flex: none; border-radius: calc(var(--cell) * .28); background: var(--level-0); outline: 1.5px solid transparent; outline-offset: 1px; cursor: default; -webkit-tap-highlight-color: transparent; transition: background-color 320ms var(--ease-standard) var(--delay), transform var(--duration-spring) var(--ease-spring) var(--delay), opacity var(--duration-fast) var(--ease-standard); }
+.cell:focus-visible { outline: 2px solid var(--accent); }
 .grid[data-direction="back"] .cell { --delay: var(--wave-back); }
 .cell[data-level="1"] { background: var(--level-1); }
 .cell[data-level="2"] { background: var(--level-2); }
@@ -65,13 +67,14 @@
 
 /* One bubble for the whole grid. The outer layer glides between cells; the bubble fades and scales from its tail. */
 .tip { position: absolute; z-index: 5; top: 0; left: 0; width: 0; height: 0; pointer-events: none; }
-.bubble { position: absolute; bottom: 8px; left: 0; display: block; padding: 7px 12px 8px; border: 1px solid color-mix(in oklab, var(--background) 14%, var(--foreground)); border-radius: var(--radius-control); background: var(--foreground); color: var(--background); box-shadow: var(--shadow-raised); transform-origin: 50% 100%; will-change: transform, opacity; }
+.bubble { position: absolute; bottom: 8px; left: 0; display: block; padding: 7px 12px 8px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-raised); color: var(--foreground); box-shadow: var(--shadow-raised); transform-origin: 50% 100%; will-change: transform, opacity; }
 .tipBody { position: relative; display: block; overflow: clip; overflow-clip-margin: 8px; }
 .tipMeasure { position: absolute; top: 0; left: 0; display: grid; width: max-content; visibility: hidden; }
 .tipLines { display: grid; width: max-content; }
 .tipMeasure > span, .tipLines > span { white-space: nowrap; }
 .tipPrimary { font-size: var(--text-sm); font-weight: 500; line-height: 1.3; font-variant-numeric: tabular-nums; }
-.tipSecondary { color: color-mix(in oklab, var(--background) 68%, var(--foreground)); font-size: var(--text-xs); line-height: 1.35; }
+.tipSecondary { color: var(--text-muted); font-size: var(--text-xs); line-height: 1.35; }
+.empty { margin: 0; color: var(--text-muted); font-size: var(--text-xs); line-height: var(--leading-body); }
 
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 

@@ -85,16 +85,18 @@ try {
     const open = page.getByRole("button", { name: /添加渠道/ });
     await open.waitFor();
     const dialog = page.getByRole("dialog");
+    // Arc 表单不依赖旧组件的隐式 #token ID；主凭据始终是配置区第一个文本域。
+    const credential = dialog.locator("textarea").first();
     const choose = async (type) => {
       const provider = providers.find((p) => p.key === type);
       await dialog.getByRole("button", { name: "选择厂商 " + provider.name, exact: true }).click();
-      await dialog.locator("#token").waitFor();
+      await credential.waitFor();
     };
     for (const type of Object.keys(inputs)) {
       await open.click();
       await choose(type);
-      assert.equal(await dialog.locator("#token").inputValue(), "", "重开弹窗不得继承前一家 Cookie");
-      await dialog.locator("#token").fill(inputs[type]);
+      assert.equal(await credential.inputValue(), "", "重开弹窗不得继承前一家 Cookie");
+      await credential.fill(inputs[type]);
       const before = calls.length;
       await dialog.getByRole("button", { name: /^添\s*加$/ }).click();
       await dialog.waitFor({ state: "hidden" });
@@ -109,17 +111,17 @@ try {
     await dialog.getByRole("button", { name: /^添\s*加$/ }).click();
     await dialog.getByText("请先按上面的清单取到值再粘贴", { exact: true }).waitFor();
     assert.equal(calls.length, before, "空凭据不应提交");
-    await dialog.locator("#token").fill(inputs.stepfun);
+    await credential.fill(inputs.stepfun);
     await choose("mimo");
-    assert.equal(await dialog.locator("#token").inputValue(), "", "切换厂商必须清除 Cookie");
+    assert.equal(await credential.inputValue(), "", "切换厂商必须清除 Cookie");
     await choose("stepfun");
-    await dialog.locator("#token").fill(inputs.stepfun);
+    await credential.fill(inputs.stepfun);
     rejectNext = true;
     await dialog.getByRole("button", { name: /^添\s*加$/ }).click();
     await page.getByText("隔离测试：登录态失效", { exact: true }).waitFor();
-    assert.equal(await dialog.locator("#token").inputValue(), inputs.stepfun, "请求失败后应保留输入供修正");
-    await dialog.locator("#token").scrollIntoViewIfNeeded();
-    const box = await dialog.locator("#token").boundingBox();
+    assert.equal(await credential.inputValue(), inputs.stepfun, "请求失败后应保留输入供修正");
+    await credential.scrollIntoViewIfNeeded();
+    const box = await credential.boundingBox();
     assert.ok(box.x >= 0 && box.x + box.width <= width + 1, "输入框应在可视区域内");
     if (process.env.SCREENSHOT_DIR) {
       await mkdir(process.env.SCREENSHOT_DIR, { recursive: true });

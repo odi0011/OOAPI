@@ -85,7 +85,9 @@ function Item({ name, label, rules, children, valuePropName = "value", getValueF
     } });
   }
   content = <FieldContext.Provider value={{ label, id, error }}>{content}</FieldContext.Provider>;
-  if (noStyle) return content;
+  // noStyle 只省略字段布局，校验失败仍要给用户反馈；凭据等嵌套字段
+  // 若直接返回输入框，会出现点击提交没有任何可见响应的情况。
+  if (noStyle) return <>{content}{error && <div id={`${id}-error`} className="arc-form-error" role="alert">{error}</div>}</>;
   return <div className={`arc-form-item ${className}`} style={style} hidden={hidden}>
     {label != null && <label htmlFor={id} className="arc-form-label">{label}{(required || rules?.some(r => r.required)) && <span aria-hidden="true"> *</span>}{tooltip && <span title={typeof tooltip === "string" ? tooltip : undefined}> ⓘ</span>}</label>}
     {content}{(error || help) && <div id={`${id}-error`} className={error ? "arc-form-error" : "arc-form-hint"} role={error ? "alert" : undefined}>{error || help}</div>}{extra && <div className="arc-form-hint">{extra}</div>}

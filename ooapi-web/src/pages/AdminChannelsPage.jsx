@@ -408,8 +408,24 @@ function smoothPath(rawPts) {
  * 图形铺满卡片，窄屏在图内滚动；不再把年度活动切成几个稀疏的小日历。
  */
 function TokenActivity({ byDay = [], generatedAt }) {
- const view = useMemo(() => channelActivityCalendar(byDay, generatedAt), [byDay, generatedAt]);
- return <ActivityHeatmap className="oo-stats-card oo-channel-activity" days={view.slots.filter(Boolean).map(c=>({date:c.date,count:c.tokens}))} label="Token 活动" period="近一年 · UTC+8" unit={{one:"Token",other:"Tokens"}} weekStartsOn={1} locale="zh-CN"/>;
+  const view = useMemo(() => channelActivityCalendar(byDay, generatedAt), [byDay, generatedAt]);
+  const activity = useMemo(() => {
+    const slots = view.slots.filter(Boolean);
+    const details = new Map(slots.map((day) => [day.date, day]));
+    // Arc 负责日历与动画，业务明细保留调用次数和计费日界，避免换组件时丢掉信息。
+    return {
+      days: slots.map((day) => ({ date: day.date, count: day.tokens })),
+      dayDetails: ({ date, count }) => {
+        const calls = details.get(date)?.calls || 0;
+        return {
+          primary: `${fmtFull(count)} tokens`,
+          secondary: `${date} · ${fmtFull(calls)} 次调用 · UTC+8`,
+          ariaLabel: `${date} · ${fmtFull(count)} tokens · ${fmtFull(calls)} 次调用 · UTC+8`,
+        };
+      },
+    };
+  }, [view]);
+  return <ActivityHeatmap className="oo-stats-card oo-channel-activity" days={activity.days} dayDetails={activity.dayDetails} emptyMessage="此时间范围暂无调用" label="Token 活动" period="近一年 · UTC+8" unit={{ one: "Token", other: "Tokens" }} weekStartsOn={1} locale="zh-CN" />;
 }
 
 /**
