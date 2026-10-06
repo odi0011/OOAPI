@@ -54,19 +54,17 @@ try {
     const self = await selfResponse.json();
     assert.ok(selfResponse.ok && self.success !== false && self.data?.id === user.id && self.data?.username === username,
       "Candidate HTTP authentication must identify the exact isolated fixture user before any API write");
-    const projectA = await api("/projects", { method: "POST", body: { name: `资料项目 ${suffix}` } });
-    const projectB = await api("/projects", { method: "POST", body: { name: `学习项目 ${suffix}` } });
-    const seed = async (title, projectId = "", archived = false) => {
-      const session = await api("/sessions", { method: "POST", body: { projectId } });
+    const seed = async (title, archived = false) => {
+      const session = await api("/sessions", { method: "POST", body: {} });
       await api(`/sessions/${session.id}`, { method: "PUT", body: { title } });
       if (archived) await api("/sessions/batch", { method: "POST", body: { ids: [session.id], action: "archive" } });
-      return { ...session, title, project_id: projectId, archived };
+      return { ...session, title, archived };
     };
     const standalone = await seed(`独立笔记 ${suffix}`);
-    const childA = await seed(`项目资料 ${suffix}`, projectA.id);
-    const childB = await seed(`学习笔记 ${suffix}`, projectB.id);
-    const archived = await seed(`归档记录 ${suffix}`, projectB.id, true);
-    const preservedText = `项目中的原始正文 ${suffix}`;
+    const childA = await seed(`资料笔记 ${suffix}`);
+    const childB = await seed(`学习笔记 ${suffix}`);
+    const archived = await seed(`归档记录 ${suffix}`, true);
+    const preservedText = `保留的原始正文 ${suffix}`;
     await pool.query("INSERT INTO chat_messages (session_id, user_id, seq, role, parts, created_time) VALUES (?, ?, 1, 'user', ?, ?)",
       [childA.id, user.id, JSON.stringify([{ id: "sidebar-original", type: "text", text: preservedText }]), Math.floor(Date.now() / 1000)]);
     await pool.query("UPDATE chat_sessions SET message_count = 1 WHERE id = ? AND user_id = ?", [childA.id, user.id]);
@@ -95,14 +93,7 @@ try {
       // 可点击不等于抽屉入场结束，截图必须等到真实不透明，避免误判为背景穿透。
       await page.waitForFunction(() => Number(getComputedStyle(document.querySelector(".bui-shelf")).opacity) >= 0.999);
     };
-    const project = id => shelf.locator(`[data-project-id="${id}"]`);
     const row = id => shelf.locator(`[data-session-id="${id}"]`);
-    const standaloneGroup = () => shelf.locator(".ui-chat2-standalone");
-    const expand = async target => {
-      await openShelf();
-      const toggle = project(target.id).getByRole("button", { name: `项目：${target.name}`, exact: true });
-      if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
-    };
     const menu = async label => {
       // AntD 子菜单单独挂在 body 下；同时覆盖主菜单和子菜单，仍按可见业务文字定位。
       const item = page.locator(".ant-dropdown:visible, .ant-dropdown-menu-submenu-popup:visible").getByText(label, { exact: true });
@@ -131,99 +122,67 @@ try {
     await page.goto(`${BASE}/chat?s=${childA.id}`);
     await page.getByText(preservedText, { exact: true }).waitFor();
     await openShelf();
-    check(await project(projectA.id).getByRole("button", { name: `项目：${projectA.name}`, exact: true }).getAttribute("aria-expanded") === "true", "URL-selected project's conversations are expanded");
-    check(await project(projectA.id).locator(`[data-session-id="${childA.id}"]`).count() === 1, "Project conversation is nested under its project");
-    check(await standaloneGroup().locator(`[data-session-id="${standalone.id}"]`).count() === 1 && !await standaloneGroup().locator(`[data-session-id="${childA.id}"]`).count(), "Standalone group excludes project conversations");
-    await expand(projectB);
-    check(await project(projectB.id).locator(`[data-session-id="${childB.id}"]`).count() === 1 && !await row(archived.id).count(), "Active projects show active conversations and hide archived ones");
-    const toggleA = project(projectA.id).getByRole("button", { name: `项目：${projectA.name}`, exact: true });
-    await toggleA.click();
-    await eventually(() => Promise.resolve(row(childA.id).isVisible()).then(visible => !visible), "Project collapse hides its child conversations");
-    await toggleA.click();
-
+    check(await row(childA.id).count() === 1 && await row(childB.id).count() === 1 && await row(standalone.id).count() === 1, "All active conversations share one list");
+    check(!await row(archived.id).count(), "Active list excludes archived conversations");
+    check(!await shelf.getByRole("button", { name: /项目/ }).count(), "No project controls remain");
     const globalNew = await createFrom(shelf.getByRole("button", { name: "新建对话", exact: true }));
-    check(!globalNew.body.projectId && !globalNew.session.project_id, "Global new conversation stays standalone while a project is selected");
+    check(!Object.hasOwn(globalNew.body, "projectId") && !Object.hasOwn(globalNew.session, "project_id"), "New conversation has no project binding");
     await openShelf();
-    await eventually(async () => (await shelf.locator(".bui-shelf-tabs button").first().innerText()).replace(/\s/g, "") === `对话${(await api("/sessions")).counts.active}`, "Global new conversation immediately updates the active count");
-    await eventually(() => Promise.resolve(standaloneGroup().locator(`[data-session-id="${globalNew.session.id}"]`).count()).then(count => count === 1), "New standalone conversation appears outside project folders");
-    const projectNew = await createFrom(project(projectA.id).getByRole("button", { name: `在项目中新建对话：${projectA.name}`, exact: true }));
-    check(projectNew.body.projectId === projectA.id && projectNew.session.project_id === projectA.id, "Project plus creates a conversation in that exact project");
-    await openShelf();
-    await eventually(async () => (await shelf.locator(".bui-shelf-tabs button").first().innerText()).replace(/\s/g, "") === `对话${(await api("/sessions")).counts.active}`, "Project new conversation immediately updates the active count");
-    await eventually(() => Promise.resolve(project(projectA.id).locator(`[data-session-id="${projectNew.session.id}"]`).count()).then(count => count === 1), "Project plus keeps the new conversation nested");
-
-    await sessionMenu(standalone);
-    await menu("重命名对话");
+    await eventually(async () => (await shelf.locator(".bui-shelf-tabs button").first().innerText()).replace(/\s/g, "") === `对话${(await api("/sessions")).counts.active}`, "New conversation updates the active count");
+    await eventually(async () => await row(globalNew.session.id).count() === 1, "New conversation appears once");
+    await sessionMenu(standalone); await menu("重命名对话");
     const nameDialog = page.getByRole("dialog", { name: "重命名对话", exact: true });
-    standalone.title = `独立笔记已更名 ${suffix}`;
+    standalone.title = `笔记已更名 ${suffix}`;
     await nameDialog.getByLabel("对话名称", { exact: true }).fill(standalone.title);
     await nameDialog.getByRole("button", { name: /保\s*存$/ }).click();
     await nameDialog.waitFor({ state: "hidden" });
-    check((await api(`/sessions/${standalone.id}`)).session.title === standalone.title, "Conversation rename persists on the server");
-    await project(projectB.id).getByRole("button", { name: `项目：${projectB.name}`, exact: true }).click();
-    await sessionMenu(standalone); await menu("移动到项目"); await menu(projectB.name);
-    await eventually(async () => (await api(`/sessions/${standalone.id}`)).session.project_id === projectB.id, "Moving a conversation persists its project ownership");
-    check(await project(projectB.id).getByRole("button", { name: `项目：${projectB.name}`, exact: true }).getAttribute("aria-expanded") === "true", "Moving a conversation automatically expands the destination project");
-    await expand(projectB);
-    await eventually(async () => await project(projectB.id).locator(`[data-session-id="${standalone.id}"]`).count() === 1 && !await standaloneGroup().locator(`[data-session-id="${standalone.id}"]`).count(), "Moved conversation appears once in its destination");
-    await sessionMenu(standalone); await menu("移动到项目"); await menu("独立对话");
-    await eventually(async () => !(await api(`/sessions/${standalone.id}`)).session.project_id, "Moving out returns the conversation to standalone");
-
-    await expand(projectA); await sessionMenu(childA); await menu("归档");
-    await eventually(async () => Boolean((await api(`/sessions/${childA.id}`)).session.archived), "Archive persists and preserves the selected conversation");
-    await eventually(() => Promise.resolve(row(childA.id).count()).then(count => count === 0), "Archived conversation leaves the active tree");
+    check((await api(`/sessions/${standalone.id}`)).session.title === standalone.title, "Rename persists on the server");
+    await sessionMenu(childA); await menu("归档");
+    await eventually(async () => (await api(`/sessions/${childA.id}`)).session.archived, "Archive persists");
+    await eventually(async () => await row(childA.id).count() === 0, "Archived conversation leaves active list");
     await openShelf(); await shelf.locator(".bui-shelf-tabs").getByRole("button", { name: /^已归档/ }).click();
-    await expand(projectA);
-    await eventually(() => Promise.resolve(project(projectA.id).locator(`[data-session-id="${childA.id}"]`).count()).then(count => count === 1), "Archived conversation retains its project folder");
+    await eventually(async () => await row(childA.id).count() === 1, "Archived conversation appears in archive list");
     await select(childA);
-    check(await page.getByText(preservedText, { exact: true }).isVisible(), "Archived conversation still displays its original messages");
+    check(await page.getByText(preservedText, { exact: true }).isVisible(), "Archive preserves message history");
     await sessionMenu(childA); await menu("取消归档");
-    await eventually(async () => !(await api(`/sessions/${childA.id}`)).session.archived, "Recovering a conversation preserves project ownership and messages");
+    await eventually(async () => !(await api(`/sessions/${childA.id}`)).session.archived, "Unarchive persists");
     await openShelf(); await shelf.locator(".bui-shelf-tabs").getByRole("button", { name: /^对话/ }).click();
-
-    await shelf.getByRole("button", { name: "新建项目", exact: true }).click();
-    const projectDialog = page.getByRole("dialog", { name: "新建项目", exact: true }), createdProjectName = `空项目 ${suffix}`;
-    await projectDialog.getByLabel("项目名称", { exact: true }).fill(createdProjectName);
-    await projectDialog.getByRole("button", { name: /创\s*建$/ }).click(); await projectDialog.waitFor({ state: "hidden" });
-    check((await api("/projects")).projects.some(item => item.name === createdProjectName), "Project creation persists through the sidebar form");
-
     await select(childB); await openShelf();
     await shelf.getByRole("button", { name: "命令面板", exact: true }).click();
     const palette = page.getByRole("dialog", { name: "命令面板", exact: true });
     await palette.getByRole("textbox", { name: "搜索会话或操作", exact: true }).fill(childA.title);
-    await eventually(() => Promise.resolve(palette.locator(".bui-palette-row").count()).then(count => count === 1), "Command search finds the conversation across project folders");
+    await eventually(async () => await palette.locator(".bui-palette-row").count() === 1, "Command search finds conversation");
     await palette.getByRole("textbox", { name: "搜索会话或操作", exact: true }).press("Enter");
-    await palette.waitFor({ state: "hidden" }); await openShelf();
-    check(new URL(page.url()).searchParams.get("s") === childA.id && await toggleA.getAttribute("aria-expanded") === "true", "Keyboard search opens the conversation and expands its project");
+    await palette.waitFor({ state: "hidden" });
+    check(new URL(page.url()).searchParams.get("s") === childA.id, "Keyboard search opens conversation");
     await page.keyboard.press("Control+k");
     await palette.getByRole("textbox", { name: "搜索会话或操作", exact: true }).fill("新建对话");
     const commandNew = await createFrom(palette.locator(".bui-palette-row"));
-    check(!commandNew.body.projectId && !commandNew.session.project_id, "Command new conversation also stays standalone");
-
-    await openShelf(); await expand(projectA);
-    const preserved = (await api("/sessions?archived=all")).sessions.filter(item => item.project_id === projectA.id);
-    const originalMessages = (await api(`/sessions/${childA.id}`)).messages;
-    await shelf.getByRole("button", { name: `项目更多操作：${projectA.name}`, exact: true }).click(); await menu("删除项目");
-    const confirmation = page.getByRole("dialog").filter({ hasText: "删除这个项目？" });
-    await confirmation.getByRole("button", { name: /删\s*除$/ }).click(); await confirmation.waitFor({ state: "hidden" });
-    await eventually(async () => !(await api("/projects")).projects.some(item => item.id === projectA.id), "Deleting the project removes only its folder");
-    for (const retained of preserved) check(!(await api(`/sessions/${retained.id}`)).session.project_id, "Deleted project's conversations survive as standalone");
-    assert.deepEqual((await api(`/sessions/${childA.id}`)).messages, originalMessages, "Deleting a project must preserve every message field"); checks++;
+    check(!Object.hasOwn(commandNew.body, "projectId"), "Command creates conversation without project binding");
+    await sessionMenu(standalone); await menu("置顶");
+    await eventually(async () => (await api(`/sessions/${standalone.id}`)).session.pinned, "Pin persists on the server");
     await openShelf();
-    await eventually(() => Promise.resolve(standaloneGroup().locator(`[data-session-id="${childA.id}"]`).count()).then(count => count === 1), "Preserved conversation appears in standalone group after project deletion");
-    await select(childA); check(await page.getByText(preservedText, { exact: true }).isVisible(), "Original message remains readable after project deletion");
-
+    await shelf.getByRole("button", { name: "多选", exact: true }).click();
+    await row(childB.id).getByRole("checkbox").check();
+    await shelf.locator(".bui-shelf-batch").getByRole("button", { name: "归档", exact: true }).click();
+    await eventually(async () => (await api(`/sessions/${childB.id}`)).session.archived, "Batch archive remains functional");
+    await shelf.getByRole("button", { name: "退出多选", exact: true }).click();
+    await select(childA);
+    check(await page.getByText(preservedText, { exact: true }).isVisible(), "Original message remains readable");
+    check(!requests.includes("/api/chat/projects"), "Page never requests retired project API");
     await page.getByRole("button", { name: "会话设定", exact: true }).click();
     const settings = page.locator(".ui-chat2-settings.ant-drawer-open");
     await settings.getByRole("button", { name: /取\s*消$/ }).waitFor();
     check(!await settings.getByText(/任务预算|最多执行步数|最长运行时间|最多模型调用/).count(), "Session settings expose no removed task budget controls");
     await settings.getByRole("button", { name: /取\s*消$/ }).click();
+    await settings.waitFor({ state: "hidden" });
     check(!await page.getByRole("button", { name: /本地工作区|任务工作台|下载本地运行器|任务编排/ }).count(), "Chat exposes no removed runner or workbench controls");
     check(!requests.some(endpoint => endpoint.startsWith("/api/local-workspaces") || /^\/api\/chat\/sessions\/[^/]+\/work$/.test(endpoint)), "Ordinary sidebar never requests removed workspace or workbench APIs");
     check(!requests.includes("/api/chat/run"), "Sidebar review never invokes a model");
     check(errors.length === 0, `Sidebar has no browser runtime errors: ${errors.join("; ")}`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "Sidebar interactions fit the mobile viewport");
     await openShelf();
+    await page.locator(".ant-message-notice").waitFor({ state: "hidden" }).catch(async () => { await page.waitForFunction(() => !document.querySelector(".ant-message-notice")); });
     if (output) await page.screenshot({ path: path.join(output, `${name}.png`), fullPage: true });
     console.log(`ok sidebar ${name}: ${checks - before} checks (real isolated HTTP)`);
     await context.close();
@@ -239,7 +198,7 @@ try {
   if (browser) await browser.close();
   // fixture 用户专属清理：不会读取或删除站内已有用户的会话。
   for (const user of fixtures) {
-    for (const table of ["chat_messages", "chat_agent_tasks", "chat_agent_runs", "chat_sessions", "chat_projects"]) await pool.query(`DELETE FROM ${table} WHERE user_id = ?`, [user.id]);
+    for (const table of ["chat_messages", "chat_agent_tasks", "chat_agent_runs", "chat_sessions"]) await pool.query(`DELETE FROM ${table} WHERE user_id = ?`, [user.id]);
     await pool.query("DELETE FROM users WHERE id = ? AND username = ?", [user.id, user.username]);
   }
   await pool.end();

@@ -78,16 +78,12 @@ delete_room|DELETE|/api/chatroom/rooms/:id|删除或解散聊天会话
 announcement|PUT|/api/chatroom/rooms/:id/announcement|修改群公告|announcement
 rename|PUT|/api/chatroom/rooms/:id/name|修改群名称|name
 `);
-group("workspace", "对话与项目", 1, `
-sessions|GET|/api/chat/sessions|查找自己的 AI 对话||q limit archived projectId
+group("workspace", "对话", 1, `
+sessions|GET|/api/chat/sessions|查找自己的 AI 对话||q limit archived
 session|GET|/api/chat/sessions/:id|阅读自己的 AI 对话
-projects|GET|/api/chat/projects|查看对话项目
-create_project|POST|/api/chat/projects|新建对话项目|name remark
-edit_project|PUT|/api/chat/projects/:id|修改对话项目|name remark
-delete_project|DELETE|/api/chat/projects/:id|删除对话项目
-create|POST|/api/chat/sessions|新建 AI 对话|model settings projectId
+create|POST|/api/chat/sessions|新建 AI 对话|model settings
 edit|PUT|/api/chat/sessions/:id|修改 AI 对话标题或设置|title model settings todo
-batch|POST|/api/chat/sessions/batch|批量归档、恢复、置顶、移动或删除 AI 对话|ids action projectId||action=archive、unarchive、pin、unpin、move、delete；不能修改当前正在执行工具的对话。
+batch|POST|/api/chat/sessions/batch|批量归档、恢复、置顶或删除 AI 对话|ids action||action=archive、unarchive、pin、unpin、delete；不能修改当前正在执行工具的对话。
 delete|DELETE|/api/chat/sessions/:id|删除 AI 对话
 rewind|POST|/api/chat/sessions/:id/rewind|回退指定 AI 对话|fromSeq
 running|GET|/api/chat/sessions/:id/running|查看 AI 对话执行状态

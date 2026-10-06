@@ -218,7 +218,6 @@ const TABLES = [
     title VARCHAR(120) NOT NULL DEFAULT '',
     agent VARCHAR(32) NOT NULL DEFAULT 'general' COMMENT '智能体 id',
     model VARCHAR(128) NOT NULL DEFAULT '',
-    project_id VARCHAR(32) NOT NULL DEFAULT '' COMMENT '所属项目（空=未归类）',
     archived TINYINT NOT NULL DEFAULT 0 COMMENT '1=已归档',
     pinned TINYINT NOT NULL DEFAULT 0 COMMENT '1=置顶',
     settings TEXT COMMENT 'JSON：{thinking,search,tools,maxSteps,instructions}',
@@ -265,18 +264,6 @@ const TABLES = [
     updated_at BIGINT NOT NULL DEFAULT 0,
     INDEX idx_agent_tasks_run (user_id, session_id, run_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-  // 对话项目（ChatGPT 式的「项目」概念）：把会话归档到一个项目下便于分类。
-  // 项目只是组织手段，不影响计费与路由；一个会话最多属于一个项目（可随时移出）。
-  `CREATE TABLE IF NOT EXISTS chat_projects (
-    id VARCHAR(32) NOT NULL PRIMARY KEY COMMENT '项目 id（短随机串）',
-    user_id INT NOT NULL,
-    name VARCHAR(64) NOT NULL DEFAULT '',
-    remark VARCHAR(255) NOT NULL DEFAULT '',
-    created_time BIGINT NOT NULL DEFAULT 0,
-    updated_time BIGINT NOT NULL DEFAULT 0,
-    INDEX idx_chat_projects_user (user_id, updated_time)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-
   `CREATE TABLE IF NOT EXISTS chat_messages (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     session_id VARCHAR(32) NOT NULL,
@@ -733,7 +720,6 @@ const COLUMN_MIGRATIONS = [
   { table: "model_prices", column: "price_tiers", ddl: "TEXT" },
   { table: "channel_groups", column: "rate", ddl: "DECIMAL(10,4) NOT NULL DEFAULT 1" },
   { table: "channel_groups", column: "models", ddl: "TEXT" },
-  { table: "chat_sessions", column: "project_id", ddl: "VARCHAR(32) NOT NULL DEFAULT ''" },
   { table: "chat_sessions", column: "archived", ddl: "TINYINT NOT NULL DEFAULT 0" },
   { table: "chat_sessions", column: "pinned", ddl: "TINYINT NOT NULL DEFAULT 0" },
 ];
@@ -960,11 +946,20 @@ async function columnExists(table, column) {
   return rows[0].c > 0;
 }
 
+/** 下线对话项目，只移除分类元数据；会话、消息、计费与运行进度原样保留。 */
+export async function retireChatProjects() {
+  if (await columnExists("chat_sessions", "project_id")) {
+    await pool.query("ALTER TABLE chat_sessions DROP COLUMN project_id");
+  }
+  await pool.query("DROP TABLE IF EXISTS chat_projects");
+}
+
 export async function migrate() {
   for (const sql of TABLES) await pool.query(sql);
   const hadGroupRate = await columnExists("channel_groups", "rate");
   await ensureColumns();
   await ensureIndexes();
+  await retireChatProjects();
   // 修复进度公示已下线：只清其专属状态，不碰其他系统设置或历史使用记录。
   await pool.query("DELETE FROM options WHERE key_str = ?", ["buildlog_state"]);
   await ensureColumnTypes();

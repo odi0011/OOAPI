@@ -33,8 +33,6 @@ import {
   SearchOutlined,
   EllipsisOutlined,
   ClockCircleOutlined,
-  FolderOutlined,
-  RightOutlined,
 } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { API, getToken } from "../services/api";
@@ -301,9 +299,8 @@ function CommandPalette({ open, sessions, onClose, onPick, onNew }) {
 function NameDialog({ dialog, saving, error, onClose, onSave }) {
   const [form] = Form.useForm();
   const inputRef = useRef(null);
-  const project = dialog?.kind !== "session";
-  const label = project ? "项目名称" : "对话名称";
-  const maxLength = project ? 64 : 60;
+  const label = "对话名称";
+  const maxLength = 60;
   useEffect(() => {
     if (dialog) {
       form.resetFields();
@@ -313,8 +310,8 @@ function NameDialog({ dialog, saving, error, onClose, onSave }) {
   return (
     <Modal
       open={Boolean(dialog)}
-      title={dialog?.kind === "create-project" ? "新建项目" : project ? "重命名项目" : "重命名对话"}
-      okText={dialog?.kind === "create-project" ? "创建" : "保存"}
+      title="重命名对话"
+      okText="保存"
       cancelText="取消"
       confirmLoading={saving}
       cancelButtonProps={{ disabled: saving }}
@@ -327,13 +324,12 @@ function NameDialog({ dialog, saving, error, onClose, onSave }) {
       forceRender
     >
       {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} /> : null}
-      {dialog?.kind === "create-project" ? <p className="ui-chat2-project-description">项目用于整理相关对话，当前不会绑定或读取本机文件夹。</p> : null}
       <Form form={form} layout="vertical" requiredMark={false} onFinish={onSave} disabled={saving}>
         <Form.Item name="name" label={label} rules={[
           { required: true, whitespace: true, message: `请输入${label}` },
           { max: maxLength, message: `${label}最多 ${maxLength} 个字符` },
         ]}>
-          <Input ref={inputRef} maxLength={maxLength} showCount placeholder={project ? "例如：工作、学习" : "给这个对话起个名字"} />
+          <Input ref={inputRef} maxLength={maxLength} showCount placeholder="给这个对话起个名字" />
         </Form.Item>
       </Form>
     </Modal>
@@ -434,11 +430,8 @@ export default function ChatPage() {
   const [metaError, setMetaError] = useState("");
   const [metaLoading, setMetaLoading] = useState(true);
   const [sessions, setSessions] = useState([]);
-  const [projects, setProjects] = useState([]);
-  const [counts, setCounts] = useState({ active: 0, archived: 0, byProject: {} });
-  // 项目展开独立于会话视图，不能用项目筛选覆盖普通对话列表。
+  const [counts, setCounts] = useState({ active: 0, archived: 0 });
   const [view, setView] = useState("active");
-  const [expandedProjects, setExpandedProjects] = useState(() => new Set());
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
   const [session, setSession] = useState(null);
@@ -574,16 +567,12 @@ export default function ChatPage() {
       const gen = ++sessionListGenRef.current;
       try {
         // 服务端分别限量，归档记录不能挤掉正常对话；另一视图的缓存供命令面板使用。
-        const [data, proj] = await Promise.all([
-          chatApi.listSessions({ archived: nextView === "archived" ? "true" : "false" }),
-          chatApi.listProjects(),
-        ]);
+        const data = await chatApi.listSessions({ archived: nextView === "archived" ? "true" : "false" });
         // 旧视图的响应不得覆盖当前列表；null 区分「已作废」与「确实没有会话」。
         if (gen !== sessionListGenRef.current || nextView !== viewRef.current) return null;
         const fresh = data.sessions || [], freshIds = new Set(fresh.map((item) => item.id));
         setSessions((prev) => [...prev.filter((item) => !freshIds.has(item.id) && Boolean(item.archived) !== (nextView === "archived")), ...fresh]);
-        setCounts(data.counts || { active: 0, archived: 0, byProject: {} });
-        setProjects(proj.projects || []);
+        setCounts(data.counts || { active: 0, archived: 0 });
         return data.sessions || [];
       } catch (e) {
         if (gen === sessionListGenRef.current && nextView === viewRef.current) {
@@ -597,7 +586,7 @@ export default function ChatPage() {
 
   /* 元信息只在挂载时加载一次；会话列表随视图变化；卸载时才中止流。
      三者分开写：如果都挂在 [loadMeta, loadSessions] 的 effect 上，
-     切换「已归档/项目」视图会触发 cleanup，把正在接收的流误杀。 */
+     切换「已归档」视图会触发 cleanup，把正在接收的流误杀。 */
   useEffect(() => {
     // 带上次用的密钥一起加载。
     //
@@ -639,7 +628,6 @@ export default function ChatPage() {
         const nextView = data.session?.archived ? "archived" : "active";
         const changedView = viewRef.current !== nextView;
         viewRef.current = nextView; setView(nextView); setSelected(new Set());
-        if (data.session?.project_id) setExpandedProjects((prev) => new Set(prev).add(data.session.project_id));
         setSessions((prev) => prev.some((item) => item.id === id) ? prev.map((item) => item.id === id ? data.session : item) : [data.session, ...prev]);
         if (changedView) loadSessions(nextView);
         setSession(data.session);
@@ -839,7 +827,7 @@ export default function ChatPage() {
     observeRun(current.id, genRef.current, aiKey, { beforeMessages, request: { sessionId: current.id, resume: true, keyId, model: current.model, settings: current.settings } });
   }, [observeRun, updateBusy, keyId, loadingSession]);
 
-  /* ---------- 侧栏：项目 / 归档 / 批量 ---------- */
+  /* ---------- 侧栏：归档 / 批量 ---------- */
   const switchView = useCallback(
     (next) => {
       // 首屏由 boot 加载，切视图只在这里加载一次，避免再被依赖 view 的 effect 重复触发。
@@ -876,12 +864,12 @@ export default function ChatPage() {
   );
 
   const batchAction = useCallback(
-    async (action, projectId) => {
+    async (action) => {
       const ids = [...selected];
       if (!ids.length) return;
       try {
-        const r = await chatApi.batch(ids, action, projectId);
-        const label = { archive: "归档", unarchive: "取消归档", delete: "删除", move: "移动", pin: "置顶", unpin: "取消置顶" }[action] || "操作";
+        const r = await chatApi.batch(ids, action);
+        const label = { archive: "归档", unarchive: "取消归档", delete: "删除", pin: "置顶", unpin: "取消置顶" }[action] || "操作";
         toast.success(`已${label} ${r.affected} 个对话`);
         const stillThere = !ids.includes(sessionRef.current?.id) || action === "pin" || action === "unpin";
         setSelected(new Set());
@@ -909,38 +897,27 @@ export default function ChatPage() {
     });
   }, []);
 
-  const openNameDialog = useCallback((kind, item) => {
+  const openNameDialog = useCallback((item) => {
     if (nameBusyRef.current) return;
     setNameError("");
-    setNameDialog({ kind, id: item?.id, name: item?.name || item?.title || "" });
+    setNameDialog({ id: item.id, name: item.title || "" });
   }, []);
-
-  const createProject = useCallback(() => openNameDialog("create-project"), [openNameDialog]);
 
   const saveName = useCallback(async ({ name: rawName }) => {
     if (!nameDialog || nameBusyRef.current) return;
     const name = String(rawName || "").trim();
-    const maxLength = nameDialog.kind === "session" ? 60 : 64;
+    const maxLength = 60;
     if (!name || name.length > maxLength) return;
     nameBusyRef.current = true;
     setSavingName(true);
     setNameError("");
     try {
-      if (nameDialog.kind === "create-project") {
-        const project = await chatApi.createProject({ name });
-        setProjects((prev) => [project, ...prev]);
-        setExpandedProjects((prev) => new Set(prev).add(project.id));
-      } else if (nameDialog.kind === "project") {
-        const project = await chatApi.updateProject(nameDialog.id, { name });
-        setProjects((prev) => prev.map((p) => p.id === nameDialog.id ? { ...p, name: project.name || name } : p));
-      } else {
-        const next = await chatApi.patchSession(nameDialog.id, { title: name });
-        const title = next.title || name;
-        setSessions((prev) => prev.map((s) => s.id === nameDialog.id ? { ...s, title } : s));
-        setSession((prev) => prev?.id === nameDialog.id ? { ...prev, title } : prev);
-      }
+      const next = await chatApi.patchSession(nameDialog.id, { title: name });
+      const title = next.title || name;
+      setSessions((prev) => prev.map((s) => s.id === nameDialog.id ? { ...s, title } : s));
+      setSession((prev) => prev?.id === nameDialog.id ? { ...prev, title } : prev);
       setNameDialog(null);
-      toast.success(nameDialog.kind === "create-project" ? "项目已创建" : "名称已保存");
+      toast.success("名称已保存");
     } catch (e) {
       // 成功前不改列表名称：失败时既不需要猜回滚值，也能保留弹窗里的输入。
       setNameError(e.message || "保存失败，请重试");
@@ -949,24 +926,6 @@ export default function ChatPage() {
       setSavingName(false);
     }
   }, [nameDialog, toast]);
-
-  const deleteProject = useCallback(
-    async (id) => {
-      try {
-        await chatApi.deleteProject(id);
-        setProjects((prev) => prev.filter((p) => p.id !== id));
-        setExpandedProjects((prev) => { const next = new Set(prev); next.delete(id); return next; });
-        setSession((prev) => prev?.project_id === id ? { ...prev, project_id: "" } : prev);
-        toast.success("项目已删除，其中的对话已移到独立对话。");
-        loadSessions();
-        return true;
-      } catch (e) {
-        toast.error(e.message || "删除项目失败");
-        return false;
-      }
-    },
-    [loadSessions, toast]
-  );
 
   /* 首屏：优先打开 URL 里的会话，否则用最近一条，都没有就新建 */
   const bootRef = useRef(false);
@@ -1028,7 +987,7 @@ export default function ChatPage() {
   };
 
   /* ---------- 会话列表操作 ---------- */
-  const newSession = useCallback(async (projectId = "") => {
+  const newSession = useCallback(async () => {
     if (busyRef.current) return;
     const gen = ++genRef.current;
     sessionListGenRef.current += 1;
@@ -1039,15 +998,13 @@ export default function ChatPage() {
         agent: sessionRef.current?.agent || meta?.defaults?.agent || "general",
         model: sessionRef.current?.model || models.find((m) => !m.deprecated)?.id || "",
         settings: sessionRef.current?.settings || {},
-        projectId: typeof projectId === "string" ? projectId : "",
       });
       if (genRef.current !== gen) return;
       setSessions((prev) => [created, ...prev]);
-      setCounts((prev) => ({ ...prev, active: prev.active + 1, byProject: { ...prev.byProject, [created.project_id || ""]: (prev.byProject[created.project_id || ""] || 0) + 1 } }));
+      setCounts((prev) => ({ ...prev, active: prev.active + 1 }));
       const changedView = viewRef.current !== "active";
       viewRef.current = "active"; setView("active"); setSelected(new Set());
       if (changedView) loadSessions("active");
-      if (created.project_id) setExpandedProjects((prev) => new Set(prev).add(created.project_id));
       setLongRun(null); setConnectionError("");
       setSession(created);
       setMsgs([]);
@@ -1107,17 +1064,15 @@ export default function ChatPage() {
     [loadSessions, openSession, setParams, toast]
   );
 
-  const sessionAction = useCallback(async (item, action, projectId) => {
+  const sessionAction = useCallback(async (item, action) => {
     if (shelfPendingRef.current) return;
     shelfPendingRef.current = item.id;
     setShelfPending(item.id);
     try {
-      await chatApi.batch([item.id], action, projectId);
+      await chatApi.batch([item.id], action);
       const patch = action === "pin" || action === "unpin" ? { pinned: action === "pin" }
-        : action === "archive" || action === "unarchive" ? { archived: action === "archive" }
-        : { project_id: projectId || "" };
+        : { archived: action === "archive" };
       setSession((prev) => prev?.id === item.id ? { ...prev, ...patch } : prev);
-      if (action === "move" && projectId) setExpandedProjects((prev) => new Set(prev).add(projectId));
       const list = await loadSessions();
       if (list && sessionRef.current?.id === item.id && !list.some((s) => s.id === item.id)) {
         if (list[0]) openSession(list[0].id);
@@ -1127,7 +1082,7 @@ export default function ChatPage() {
           setParams({}, { replace: true });
         }
       }
-      toast.success({ pin: "已置顶", unpin: "已取消置顶", archive: "已归档", unarchive: "已取消归档", move: "已移动" }[action]);
+      toast.success({ pin: "已置顶", unpin: "已取消置顶", archive: "已归档", unarchive: "已取消归档" }[action]);
     } catch (e) {
       toast.error(e.message || "操作失败");
     } finally {
@@ -1412,29 +1367,16 @@ export default function ChatPage() {
     const wantArchived = view === "archived";
     return sessions.filter((item) => Boolean(item.archived) === wantArchived);
   }, [sessions, view]);
-  const projectSessions = useMemo(() => {
-    const map = new Map(projects.map((project) => [String(project.id), []]));
-    visibleSessions.forEach((item) => { if (item.project_id && map.has(String(item.project_id))) map.get(String(item.project_id)).push(item); });
-    return map;
-  }, [projects, visibleSessions]);
-  // 归档视图只展示确实含有归档对话的项目；否则项目标题会在切换归档后留下
-  // 空壳，用户会误以为项目本身也被归档了。进行中视图保留空项目，方便从项目行新建对话。
-  const visibleProjects = useMemo(
-    () => view === "archived" ? projects.filter((project) => (projectSessions.get(String(project.id)) || []).length > 0) : projects,
-    [projects, projectSessions, view]
-  );
-  const standaloneSessions = useMemo(() => visibleSessions.filter((item) => !item.project_id), [visibleSessions]);
-  const renderSession = (s, nested = false) => <div key={s.id} data-session-id={s.id}>{selectMode ? (
-    <div key={s.id} className={`bui-shelf-pick ${nested ? "is-nested" : ""}`}>
+  const renderSession = (s) => <div key={s.id} data-session-id={s.id}>{selectMode ? (
+    <div key={s.id} className="bui-shelf-pick">
       <Checkbox checked={selected.has(s.id)} onChange={() => toggleSelect(s.id)}><span className="tx">{s.title}</span>{s.pinned ? <span className="hn">置顶</span> : null}</Checkbox>
     </div>
   ) : (
     <ShelfItem key={s.id} active={s.id === session?.id} label={s.title} icon={s.pinned ? <PushpinOutlined /> : null} onClick={() => { openSession(s.id); setShelfOpen(false); }} actions={
       <Dropdown autoFocus trigger={["click"]} disabled={Boolean(shelfPending)} menu={{ triggerSubMenuAction: "click", items: [
-        { key: "rename", label: "重命名对话", icon: <EditOutlined />, onClick: () => openNameDialog("session", s) },
+        { key: "rename", label: "重命名对话", icon: <EditOutlined />, onClick: () => openNameDialog(s) },
         { key: "pin", label: s.pinned ? "取消置顶" : "置顶", icon: <PushpinOutlined />, onClick: () => sessionAction(s, s.pinned ? "unpin" : "pin") },
         { key: "archive", label: s.archived ? "取消归档" : "归档", icon: <InboxOutlined />, onClick: () => sessionAction(s, s.archived ? "unarchive" : "archive") },
-        { key: "move", label: "移动到项目", children: [{ key: "move-none", label: "独立对话", onClick: () => sessionAction(s, "move", "") }, ...projects.map((p) => ({ key: `move-${p.id}`, label: <span className="ui-chat2-menu-name">{p.name}</span>, onClick: () => sessionAction(s, "move", p.id) }))] },
         { type: "divider" },
         { key: "delete", label: "删除对话", icon: <DeleteOutlined />, danger: true, onClick: async () => { await modal.confirm({ title: "删除这个对话？", content: "消息与统计一并删除，无法恢复。", okText: "删除", cancelText: "取消", okButtonProps: { danger: true }, onOk: async () => { if (!await deleteSession(s.id)) throw new Error("删除失败，请重试"); } }); } },
       ] }}><Button type="text" className="bui-shelf-act" icon={<EllipsisOutlined />} loading={shelfPending === s.id} disabled={Boolean(shelfPending)} aria-label={`对话更多操作：${s.title}`} /></Dropdown>
@@ -1449,7 +1391,7 @@ export default function ChatPage() {
         // 移动端：点空白处收起（桌面端常驻）
       >
         <div className="ui-chat2-shelf-toolbar">
-        <button type="button" className="bui-shelf-new" aria-label="新建对话" onClick={() => newSession("")} disabled={busy}>
+        <button type="button" className="bui-shelf-new" aria-label="新建对话" onClick={() => newSession()} disabled={busy}>
           <span className="ic">
             <PlusOutlined />
           </span>
@@ -1480,56 +1422,16 @@ export default function ChatPage() {
           </button>
         </div>
 
-        {/* 项目分组：项目内会话嵌套显示，独立对话保持单独列表。 */}
+        <div className="ui-chat2-sessions">
         <ShelfGroup
-          title="项目"
-          defaultOpen
-          action={
-            <Tooltip title="新建项目"><Button type="text" className="bui-shelf-act" aria-label="新建项目" icon={<PlusOutlined />} onClick={createProject} /></Tooltip>
-          }
-        >
-          {visibleProjects.length ? (
-            visibleProjects.map((p) => (
-              <div key={p.id} className={`ui-chat2-project ${session?.project_id === p.id ? "is-current" : ""}`} data-project-id={p.id}>
-                <div className="ui-chat2-project-head">
-                  <button type="button" className="ui-chat2-project-toggle" aria-label={`项目：${p.name}`} aria-expanded={expandedProjects.has(p.id)}
-                    onClick={() => setExpandedProjects((prev) => { const next = new Set(prev); next.has(p.id) ? next.delete(p.id) : next.add(p.id); return next; })}>
-                    <RightOutlined className="ui-chat2-project-chevron" /><FolderOutlined />
-                    <span className="ui-chat2-project-name">{p.name}</span>
-                    <small>{(projectSessions.get(String(p.id)) || []).length}</small>
-                  </button>
-                  <Tooltip title="在项目中新建对话"><Button type="text" className="bui-shelf-act" aria-label={`在项目中新建对话：${p.name}`} icon={<PlusOutlined />} disabled={busy} onClick={() => newSession(p.id)} /></Tooltip>
-                  <Dropdown autoFocus trigger={["click"]} menu={{ items: [
-                    { key: "rename", label: "重命名项目", icon: <EditOutlined />, onClick: () => openNameDialog("project", p) },
-                    { key: "delete", label: "删除项目", icon: <DeleteOutlined />, danger: true, onClick: async () => { await modal.confirm({
-                      title: "删除这个项目？", content: "项目里的对话会移到独立对话，保留全部消息。", okText: "删除", cancelText: "取消", okButtonProps: { danger: true },
-                      onOk: async () => { if (!await deleteProject(p.id)) throw new Error("删除项目失败，请重试"); },
-                    }); } },
-                  ] }}>
-                    <Button type="text" className="bui-shelf-act" icon={<EllipsisOutlined />} aria-label={`项目更多操作：${p.name}`} />
-                  </Dropdown>
-                </div>
-                {expandedProjects.has(p.id) ? <div className="ui-chat2-project-children">
-                  {(projectSessions.get(String(p.id)) || []).length ? (projectSessions.get(String(p.id)) || []).map((item) => renderSession(item, true)) : <div className="bui-shelf-empty">{view === "archived" ? "项目里还没有归档的对话。" : "项目里还没有对话，点上面的加号开始。"}</div>}
-                </div> : null}
-              </div>
-            ))
-          ) : (
-            <div className="bui-shelf-empty">{view === "archived" ? "还没有归档的项目。" : "还没有项目。用项目把对话分类，例如「工作」「学习」。"}</div>
-          )}
-        </ShelfGroup>
-
-        {/* 独立对话只显示没有所属项目的会话；批量操作同样可选项目内的会话。 */}
-        <div className="ui-chat2-standalone">
-        <ShelfGroup
-          title={<>{view === "archived" ? "已归档" : "最近"}<span className="ui-chat2-standalone-count">{standaloneSessions.length}</span></>}
+          title={<>{view === "archived" ? "已归档" : "最近"}<span className="ui-chat2-sessions-count">{visibleSessions.length}</span></>}
           action={
             visibleSessions.length ? (
               <button
                 type="button"
                 className={`bui-shelf-act ${selectMode ? "is-on" : ""}`}
                 aria-label={selectMode ? "退出多选" : "多选"}
-                title={selectMode ? "退出多选" : "多选：批量归档 / 删除 / 移动到项目"}
+                title={selectMode ? "退出多选" : "多选：批量归档 / 删除"}
                 onClick={() => {
                   setSelectMode((v) => !v);
                   setSelected(new Set());
@@ -1553,19 +1455,6 @@ export default function ChatPage() {
                     归档
                   </button>
                 )}
-                {projects.length ? (
-                  <Dropdown
-                    autoFocus
-                    trigger={["click"]}
-                    menu={{
-                      items: [{ key: "none", label: "独立对话", onClick: () => batchAction("move", "") }, ...projects.map((p) => ({ key: p.id, label: <span className="ui-chat2-menu-name">{p.name}</span>, onClick: () => batchAction("move", p.id) }))],
-                    }}
-                  >
-                    <button type="button" title="移动到项目">
-                      移动
-                    </button>
-                  </Dropdown>
-                ) : null}
                 <Popconfirm
                   title={`删除选中的 ${selected.size} 个对话？`}
                   description="消息与统计一并删除，无法恢复。"
@@ -1581,11 +1470,11 @@ export default function ChatPage() {
             </div>
           ) : null}
 
-          {standaloneSessions.length ? (
-            standaloneSessions.map((s) => renderSession(s))
+          {visibleSessions.length ? (
+            visibleSessions.map((s) => renderSession(s))
           ) : (
             <div className="bui-shelf-empty">
-              {view === "archived" ? "还没有归档的对话。" : "还没有直接对话，点上面「新建对话」开始。"}
+              {view === "archived" ? "还没有归档的对话。" : "还没有对话，点上面「新建对话」开始。"}
             </div>
           )}
         </ShelfGroup>
@@ -1615,7 +1504,6 @@ export default function ChatPage() {
             </button>
             <h1>{session?.title || "对话"}</h1>
             <div className="meta">
-              <span className="ui-chat2-session-location">{projects.find((project) => project.id === session?.project_id)?.name || "独立对话"}</span>
               <span>{msgs.length} 条消息</span>
               {visibility.usage_records && sessionCost ? (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>

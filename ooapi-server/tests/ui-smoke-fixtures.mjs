@@ -40,7 +40,6 @@ export function smokeFixtureData(pathname) {
   if (["/api/channel/", "/api/channel/providers", "/api/channel/groups", "/api/channel/devices/vendors", "/api/token/", "/api/token/groups", "/api/pricing/", "/api/pricing/pending", "/api/pricing/catalog-pending", "/api/community/topics", "/api/chatroom/online", "/api/friends", "/api/friends/requests", "/api/monitor/alert/rules", "/api/monitor/alert/events"].includes(pathname)) return [];
   if (pathname === "/api/channel/stats") return { total: 0, enabled: 0, disabled: 0, byType: {} };
   if (pathname === "/api/chat/sessions") return { sessions: [], counts: { active: 0, archived: 0 } };
-  if (pathname === "/api/chat/projects") return { projects: [] };
   if (pathname === "/api/chat/models") return { models: [], groups: [], tokens: [] };
   if (pathname === "/api/chatroom/rooms") return { ...emptyList, rooms: [] };
   if (pathname === "/api/pricing/public") return { models: [], vendors: [], groups: [] };

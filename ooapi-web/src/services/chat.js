@@ -8,7 +8,7 @@ import { streamPost, streamGet } from "./stream";
 export const chatApi = {
   // keyId：按某个密钥的能力算可用模型（分组模型 ∩ 密钥白名单）；0 = 账户默认分组
   meta: (keyId) => API.get("/chat/meta", { params: keyId ? { keyId } : {} }),
-  listSessions: ({ q, archived, projectId } = {}) => API.get("/chat/sessions", { params: { q, archived, projectId } }),
+  listSessions: ({ q, archived } = {}) => API.get("/chat/sessions", { params: { q, archived } }),
   createSession: (body) => API.post("/chat/sessions", body),
   getSession: (id) => API.get(`/chat/sessions/${encodeURIComponent(id)}`),
   patchSession: (id, body) => API.put(`/chat/sessions/${encodeURIComponent(id)}`, body),
@@ -24,13 +24,8 @@ export const chatApi = {
   pause: (id) => API.post(`/chat/sessions/${encodeURIComponent(id)}/pause`),
   workMessage: (id, message, taskId) => API.post(`/chat/sessions/${encodeURIComponent(id)}/message`, { message, ...(taskId ? { taskId } : {}) }),
   cancelTask: (id, taskId) => API.post(`/chat/sessions/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}/cancel`),
-  // 项目
-  listProjects: () => API.get("/chat/projects"),
-  createProject: (body) => API.post("/chat/projects", body),
-  updateProject: (id, body) => API.put(`/chat/projects/${encodeURIComponent(id)}`, body),
-  deleteProject: (id) => API.del(`/chat/projects/${encodeURIComponent(id)}`),
-  // 批量：archive/unarchive/pin/unpin/delete/move
-  batch: (ids, action, projectId) => API.post("/chat/sessions/batch", { ids, action, projectId }),
+  // 批量：archive/unarchive/pin/unpin/delete
+  batch: (ids, action) => API.post("/chat/sessions/batch", { ids, action }),
 };
 
 /**

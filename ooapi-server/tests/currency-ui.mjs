@@ -79,7 +79,7 @@ try {
   }
   // 对话正文将币名渲染成图标；代码和复制源文本保持原样。
   const session = { id: 'currency-fixture', title: '金额渲染验收', model: 'deepseek-flash', agent: 'general', settings: {}, todo: [], cost: 0.001, message_count: 1 };
-  await p.route('**/api/chat/sessions?*', route => route.fulfill({ json: { success: true, data: { sessions: [session], counts: { active: 1, archived: 0, byProject: {} } } } }));
+  await p.route('**/api/chat/sessions?*', route => route.fulfill({ json: { success: true, data: { sessions: [session], counts: { active: 1, archived: 0 } } } }));
   await p.route('**/api/chat/sessions/currency-fixture', route => route.fulfill({ json: { success: true, data: { session, messages: [{ id: 1, seq: 1, role: 'assistant', status: 'success', cost: 0.001, tokens: { prompt: 10, completion: 10 }, parts: [{ id: 'text', type: 'text', text: '余额 **10 OD币**，消费 0.0001 OD。\n\n```txt\n10 OD币\n```' }, { id: 'account', type: 'tool', tool: 'account', name: '我的账号', status: 'done', args: { action: 'overview' }, output: '余额：10 OD币' }] }] } } }));
   await p.route('**/api/chat/sessions/currency-fixture/running', route => route.fulfill({ json: { success: true, data: { running: false } } }));
   await p.goto(base + '/chat?s=currency-fixture', { waitUntil: 'networkidle' });

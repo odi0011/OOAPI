@@ -285,7 +285,6 @@ router.delete(
       await conn.beginTransaction();
       await conn.query("DELETE FROM chat_messages WHERE user_id = ?", [id]).catch(() => {});
       await conn.query("DELETE FROM chat_sessions WHERE user_id = ?", [id]);
-      await conn.query("DELETE FROM chat_projects WHERE user_id = ?", [id]);
       await conn.query("DELETE FROM tokens WHERE user_id = ?", [id]);
       await conn.query("DELETE FROM users WHERE id = ?", [id]);
       await conn.commit();

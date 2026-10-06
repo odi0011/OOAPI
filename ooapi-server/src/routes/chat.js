@@ -47,10 +47,6 @@ import {
   createSession,
   listSessions,
   sessionCounts,
-  listProjects,
-  createProject,
-  updateProject,
-  deleteProject,
   batchSessions,
   getSession,
   getSessionMessages,
@@ -511,67 +507,26 @@ router.get(
   "/sessions",
   authRequired,
   asyncHandler(async (req, res) => {
-    const { q, limit, archived, projectId } = req.query;
+    const { q, limit, archived } = req.query;
     const [sessions, counts] = await Promise.all([
-      listSessions(req.user.id, { q, limit, archived, projectId }),
+      listSessions(req.user.id, { q, limit, archived }),
       sessionCounts(req.user.id),
     ]);
     return ok(res, { sessions, counts });
   })
 );
 
-// ---------- 项目（ChatGPT 式分类；只做组织，不影响计费与路由）----------
-router.get(
-  "/projects",
-  authRequired,
-  asyncHandler(async (req, res) => {
-    return ok(res, { projects: await listProjects(req.user.id) });
-  })
-);
-
-router.post(
-  "/projects",
-  authRequired,
-  asyncHandler(async (req, res) => {
-    const { name = "", remark = "" } = req.body || {};
-    return ok(res, await createProject({ userId: req.user.id, name, remark }));
-  })
-);
-
-router.put(
-  "/projects/:id",
-  authRequired,
-  asyncHandler(async (req, res) => {
-    const { name, remark } = req.body || {};
-    const project = await updateProject(req.user.id, req.params.id, { name, remark });
-    if (!project) return fail(res, "项目不存在", 404);
-    return ok(res, project);
-  })
-);
-
-// 删除项目不删会话：项目下的对话会退回「未归类」，避免误删聊天记录
-router.delete(
-  "/projects/:id",
-  authRequired,
-  asyncHandler(async (req, res) => {
-    const okDel = await deleteProject(req.user.id, req.params.id);
-    if (!okDel) return fail(res, "项目不存在", 404);
-    return ok(res, { id: req.params.id });
-  })
-);
-
-// ---------- 批量操作（侧栏多选：归档/删除/移动项目/置顶）----------
+// ---------- 批量操作（侧栏多选：归档/删除/置顶）----------
 router.post(
   "/sessions/batch",
   authRequired,
   asyncHandler(async (req, res) => {
-    const { ids = [], action, projectId = "" } = req.body || {};
+    const { ids = [], action } = req.body || {};
     if (!Array.isArray(ids) || !ids.length) return fail(res, "请先选择会话");
     try {
-      const result = await batchSessions({ userId: req.user.id, ids, action, projectId });
+      const result = await batchSessions({ userId: req.user.id, ids, action });
       return ok(res, result);
     } catch (e) {
-      if (e.code === "NO_PROJECT") return fail(res, "项目不存在", 404);
       if (e.code === "BAD_ACTION") return fail(res, "不支持的批量操作");
       throw e;
     }
@@ -583,9 +538,9 @@ router.post(
   authRequired,
   asyncHandler(async (req, res) => {
     if (!getBoolOption("chat_enabled")) return fail(res, "站内对话功能已关闭", 403);
-    const { agent = "general", model = "", settings = {}, projectId = "" } = req.body || {};
+    const { agent = "general", model = "", settings = {} } = req.body || {};
     if (!findAgent(agent)) return fail(res, "智能体不存在");
-    const session = await createSession({ userId: req.user.id, agent, model, settings, projectId });
+    const session = await createSession({ userId: req.user.id, agent, model, settings });
     return ok(res, session);
   })
 );

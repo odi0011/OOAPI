@@ -135,8 +135,7 @@ async function installFixtures(context, state, violations) {
     else if (pathname === "/api/pricing/pending") data = { count: 0, items: [] };
     else if (pathname.endsWith("/unread")) data = { total: 0, count: 0 };
     else if (pathname === "/api/chat/meta") data = { models: state.models, vendors: vendors.map((vendor) => ({ vendor, vendorName: vendor, models: state.models.filter((m) => m.vendor === vendor) })), keys: [{ id: 81, name: "Fixture token", group_name: "Source matrix", status: 1, usable: true }], active_key_id: 81, defaults: { agent: "general" }, agents: [{ id: "general", name: "通用助手" }] };
-    else if (pathname === "/api/chat/sessions") data = { sessions: [state.session], counts: { active: 1, archived: 0, byProject: {} } };
-    else if (pathname === "/api/chat/projects") data = { projects: [] };
+    else if (pathname === "/api/chat/sessions") data = { sessions: [state.session], counts: { active: 1, archived: 0 } };
     else if (pathname === `/api/chat/sessions/${state.session.id}`) data = { session: state.session, messages: [] };
     else if (pathname === `/api/chat/sessions/${state.session.id}/running`) data = { running: false };
     else { violations.push(`Unconfigured read ${pathname}`); await route.fulfill({ status: 404, json: { success: false, message: "No fixture for this read" } }); return; }

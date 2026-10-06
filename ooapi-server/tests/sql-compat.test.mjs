@@ -311,6 +311,11 @@ await t("社区：帖子最后回复时间回填（UPDATE ... JOIN 聚合子查�
   )
 );
 
+await t("对话：按归档状态统计所有会话", () => exec(
+  "SELECT archived, COUNT(*) AS c FROM chat_sessions WHERE user_id = ? GROUP BY archived",
+  [-1]
+));
+
 connection.release();
 await pool.end().catch(() => {});
 console.log(`\n${passed} 通过 / ${failed} 失败${skipped ? ` / ${skipped} 跳过` : ""}`);
