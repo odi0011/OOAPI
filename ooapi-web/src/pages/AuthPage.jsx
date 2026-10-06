@@ -1,6 +1,6 @@
 import React, { useRef, useState } from "react";
-import { Form, Input, Button, App as AntApp, Alert, Modal, Spin } from "antd";
-import { ArrowRightOutlined, LockOutlined, MailOutlined, KeyOutlined, UserOutlined } from "@ant-design/icons";
+import {   Form, Input, Button, App as ArcApp, Alert, Modal, Spin  } from "../components/arc/index";
+import { ArrowRightOutlined, LockOutlined, MailOutlined, KeyOutlined, UserOutlined  } from "../components/arc/icons";
 import { useNavigate, useLocation, Navigate, Link } from "react-router-dom";
 import { useApp } from "../context/AppContext";
 import { StudioPage, StudioHeader, StudioFooter, useStudioMotion } from "../components/StudioUI";
@@ -8,7 +8,7 @@ import AuthShowcase from "../components/AuthShowcase";
 
 export default function AuthPage() {
   const { user, status, login, register, loading, refreshStatus } = useApp();
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const motion = useStudioMotion();

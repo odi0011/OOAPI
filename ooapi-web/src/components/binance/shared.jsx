@@ -1,5 +1,5 @@
 import React from "react";
-import { Empty, Tag } from "antd";
+import {  Empty, Tag  } from "../arc/index";
 import { API } from "../../services/api";
 import StatCard from "../StatCard";
 

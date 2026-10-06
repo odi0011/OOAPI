@@ -1,6 +1,7 @@
+import { Button as ActionButton } from "./arc/index";
 import React, { useMemo, useState } from "react";
-import { Button, Empty, Grid, Segmented, Table, Tag, Tooltip } from "antd";
-import { ArrowRightOutlined, InfoCircleOutlined } from "@ant-design/icons";
+import {   Button, Empty, Grid, Segmented, Table, Tag, Tooltip  } from "./arc/index";
+import { ArrowRightOutlined, InfoCircleOutlined  } from "./arc/icons";
 import { ChartCard, Legend, LineChart, SERIES_COLORS, fmtCompact } from "./Charts";
 import OdAmount from "./OdAmount";
 import UserAvatar from "./UserAvatar";
@@ -32,7 +33,7 @@ function Comparison({ current, previous }) {
 }
 
 function Metric({ label, value, current, previous, hint, note, tone }) {
-  return <StatCard className="oo-dashboard-metric" label={<>{label}<button type="button" className="oo-dashboard-info" aria-label={`${label}统计口径`}><InfoCircleOutlined /></button></>} value={value} tone={tone}
+  return <StatCard className="oo-dashboard-metric" label={<>{label}<ActionButton type="text" htmlType="button" className="oo-dashboard-info" aria-label={`${label}统计口径`}><InfoCircleOutlined /></ActionButton></>} value={value} tone={tone}
     hint={hint} foot={note || <Comparison current={current} previous={previous} />} />;
 }
 

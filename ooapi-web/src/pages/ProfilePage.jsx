@@ -1,8 +1,9 @@
+import { Card } from "../components/arc/card/card";
 import React, { useEffect, useState } from "react";
 import {
-  Form, Input, Button, Tabs, App as AntApp, Space, Typography,
-} from "antd";
-import { UserOutlined, LockOutlined } from "@ant-design/icons";
+  Form, Input, Button, Tabs, App as ArcApp, Space, Typography,
+ } from "../components/arc/index";
+import { UserOutlined, LockOutlined  } from "../components/arc/icons";
 import { useApp } from "../context/AppContext";
 import { API } from "../services/api";
 import PageHeader from "../components/PageHeader";
@@ -17,25 +18,11 @@ const { Text } = Typography;
 
 // 面板铺满内容区（曾限宽 560px，宽屏下右侧空出一半以上）。
 // 表单本身用下面的 .oo-form-grid 自适应多列，不靠外层限宽来控制行长。
-function Section({ title, desc, children, className, style }) {
-  return (
-    <div className={`oo-panel${className ? ` ${className}` : ""}`} style={style}>
-      <div className="oo-panel-head">
-        <div>
-          <div className="oo-panel-title">{title}</div>
-          {desc ? (
-            <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 2 }}>{desc}</div>
-          ) : null}
-        </div>
-      </div>
-      <div className="oo-panel-body">{children}</div>
-    </div>
-  );
-}
+function Section({ title, desc, children, className, style }) { return <Card title={title} description={desc} className={className} style={style}>{children}</Card>; }
 
 function ProfileTab() {
   const { user, refreshUser, status } = useApp();
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const [form] = Form.useForm();
   const [busy, setBusy] = useState(false);
   const [avatarOpen, setAvatarOpen] = useState(false);
@@ -73,7 +60,7 @@ function ProfileTab() {
   const visibility = userDataVisibility(status, user);
 
   return (
-    <Space direction="vertical" size={16} style={{ width: "100%" }}>
+    <Space direction="vertical" align="stretch" size={16} style={{ width: "100%" }}>
       <div className="oo-stats-cards">
         {visibility.balance ? <StatCard
           label="剩余额度"
@@ -149,7 +136,7 @@ function ProfileTab() {
 }
 
 function PasswordTab() {
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const [form] = Form.useForm();
   const [busy, setBusy] = useState(false);
 

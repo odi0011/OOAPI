@@ -1,6 +1,6 @@
 import OdAmount from "./OdAmount";
 import React from "react";
-import { Tooltip } from "antd";
+import {  Tooltip  } from "./arc/index";
 import { ModelLabel } from "./VendorIcon";
 
 export default function ModelPricingLabel({ model, vendor, tiers, size = 15 }) {

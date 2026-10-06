@@ -1,3 +1,4 @@
+import { Button as ActionButton } from "./arc/index";
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import ChatMascot from "./ChatMascot";
 import { OdText } from "./OdAmount";
@@ -51,9 +52,9 @@ function ExecutionPill({ part, active, open, hidden, layout, onOpen, onCollapsed
       onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) onOpen(false); }}
       onTransitionEnd={e => { if (e.target === e.currentTarget && e.propertyName === "width" && !open) onCollapsed(); }}
       onKeyDown={e => { if (e.key === "Escape") { onOpen(false); e.stopPropagation(); } }}>
-      <button type="button" className="execution-pill-toggle" aria-expanded={open} aria-controls={detailId} onClick={() => { setVisited(true); onOpen(!open, stepRef.current); }}>
+      <ActionButton type="text" htmlType="button" className="execution-pill-toggle" aria-expanded={open} aria-controls={detailId} onClick={() => { setVisited(true); onOpen(!open, stepRef.current); }}>
         <ChatMascot state={state} gesture={capsuleGesture(part)}/><span className="execution-pill-label">{label}</span>{previewContent}
-      </button>
+      </ActionButton>
       <div id={detailId} className={`execution-detail ${open ? "is-open" : ""}`} inert={!open ? "" : undefined}><div>{visited && (thought ? <p className="execution-thought">{part.text || "正在整理思路…"}</p> : <>
         <div className="execution-task"><span>{part.type === "compaction" ? "整理上下文" : toolName(part)}</span>{summary && <p>{summary}</p>}</div>
         <div className="trajectory-output"><OdText>{part.output || part.text || (active ? "乐乐正在忙，稍等一下下～" : "这一步已结束")}</OdText></div>

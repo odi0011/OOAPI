@@ -1,3 +1,4 @@
+import { Badge as ArcBadge } from "./arc/badge/badge";
 // 厂商图标 —— 统一使用品牌资源或用户指定素材
 // ---------------------------------------------------------------------------
 // 资源来源（均为官方或权威收录，非手绘）：
@@ -17,8 +18,8 @@
 //   <ModelLabel model="deepseek-flash" channelType="opencode" />  实际来源
 //   <ModelLabel model="deepseek-flash" catalog />                原厂价格目录
 import React from "react";
-import { Tooltip } from "antd";
-import { TeamOutlined, ApiOutlined } from "@ant-design/icons";
+import {   Tooltip  } from "./arc/index";
+import { TeamOutlined, ApiOutlined  } from "./arc/icons";
 import { normalizeSourceVendors } from "../services/model-sources";
 import BrandLogo from "./BrandLogo";
 
@@ -471,12 +472,12 @@ export function GroupTag({ name, meta, size = 13, className, style }) {
     // 前者是「这条记录缺一个归属、需要补」，后者听起来像一个正常的池子。
     return (
       <Tooltip title="该记录没有绑定分组（历史数据）。密钥必须归属某个分组，请在编辑里补上。">
-        <span
-          className={`bui-chip bui-chip--muted ${className || ""}`}
+        <ArcBadge
+          size="sm" tone="neutral" className={`${className || ""}`}
           style={{ fontSize: 12, height: 22, lineHeight: "22px", padding: "0 6px", ...style }}
         >
           未分组
-        </span>
+        </ArcBadge>
       </Tooltip>
     );
   }
@@ -502,8 +503,8 @@ export function GroupTag({ name, meta, size = 13, className, style }) {
 
   return (
     <Tooltip title={tip}>
-      <span
-        className={`bui-chip ${className || ""}`}
+      <ArcBadge
+        size="sm" tone="neutral" className={`${className || ""}`}
         style={{
           display: "inline-flex",
           alignItems: "center",
@@ -519,7 +520,7 @@ export function GroupTag({ name, meta, size = 13, className, style }) {
       >
         {icon}
         <span className="oo-truncate" style={{ maxWidth: 120 }}>{n}</span>
-      </span>
+      </ArcBadge>
     </Tooltip>
   );
 }

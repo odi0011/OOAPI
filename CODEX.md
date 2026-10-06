@@ -14,7 +14,7 @@
 |---|---|
 | 项目 | OOAPI —— 大模型 API 网关（对外 OpenAI / Anthropic / Responses 三种兼容协议） |
 | 后端 | `ooapi-server/` · Node 18+ · Express 4 · MySQL(mysql2) · JWT |
-| 前端 | `ooapi-web/` · React 18 · Vite 5 · Ant Design 5 |
+| 前端 | `ooapi-web/` · React 19 · Vite 5 · Arc UI 免费组件 |
 | 计费 | **1 OD币 = 1 美元**，10,000 单位 = 1 OD币；只能走 `services/pricing.js` |
 
 **不可破的四条线**：
@@ -22,7 +22,7 @@
 1. 只推 `main`（不建 `master` 或其他长期分支）。
 2. 不提交 `.env` / `.jwt-secret` / `.admin-password` / `data/`；不把真实 Key、Cookie、密码
    写进代码、日志、错误信息、测试或文档。
-3. 零新依赖（后端仅 express / mysql2 / jsonwebtoken / bcryptjs / cors / dotenv / playwright）。
+3. 零新依赖（后端仅 express / mysql2 / jsonwebtoken / bcryptjs / cors / dotenv / playwright）；用户已授权的前端 Arc 迁移依赖见 `AI协作.md` 2.1.1。
 4. 不新建协作文档 —— 一切记进 `AI协作.md`。
 
 ---

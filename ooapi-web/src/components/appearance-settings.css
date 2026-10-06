@@ -7,12 +7,9 @@
 .oo-site-appearance-section h3 { font-size:14px; margin:0 0 14px; }
 .oo-site-appearance-row { display:grid; grid-template-columns:120px minmax(0,1fr); gap:18px; align-items:center; padding:12px 0; }
 .oo-site-appearance-label { color:var(--ink-2); }
-.oo-site-appearance-row .ant-select { width:220px; max-width:100%; }
 .oo-site-appearance-colors { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
-.oo-site-appearance-swatch.ant-btn { width:26px; min-width:26px; height:26px; padding:0; border-radius:50%; color:white; border:2px solid transparent; }
 .oo-site-appearance-swatch[aria-pressed="true"] { outline:2px solid var(--ink-3); outline-offset:2px; }
 .oo-site-appearance-backgrounds { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
-.oo-site-appearance-backgrounds .ant-btn { height:auto; display:flex; flex-direction:column; gap:8px; padding:8px; font-size:12px; }
 .oo-site-appearance-backgrounds .is-selected { border-color:var(--accent); color:var(--accent); background:var(--accent-tint); }
 .oo-site-appearance-backgrounds i { display:block; height:26px; width:100%; border-radius:4px; background:var(--page); }
 .oo-site-appearance-backgrounds [data-pattern="blueprint"] { background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px); background-size:8px 8px; }
@@ -44,7 +41,6 @@
 .oo-wallpaper-preview img[hidden] { display:none; }
 .oo-wallpaper-preview > span { font-size:12px; color:var(--ink-3); padding:20px; text-align:center; }
 .oo-wallpaper-field-footer { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:8px; min-height:24px; font-size:11px; color:var(--ink-3); }
-.oo-wallpaper-field-footer .ant-btn { font-size:11px; padding-inline:0; }
 @media(max-width:640px) { .oo-wallpaper-fields { grid-template-columns:minmax(0,1fr); } }
 @media(max-width:1100px) { .oo-site-appearance-grid { grid-template-columns:minmax(0,1fr); } .oo-site-appearance-preview { display:none; } }
 @media(max-width:640px) { .oo-site-appearance-section { padding:16px; } .oo-site-appearance-row { grid-template-columns:minmax(0,1fr); gap:10px; } .oo-site-appearance-save { flex-wrap:wrap; } .oo-site-appearance-save > span { width:100%; } .oo-site-appearance-heading { align-items:flex-start; } }

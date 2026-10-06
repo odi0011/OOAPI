@@ -28,6 +28,7 @@ import { spawnSync } from "node:child_process";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, "..");
 const read = (p) => readFileSync(path.join(root, p), "utf8");
+const readWeb = (p) => readFileSync(path.join(root, "..", "ooapi-web", "src", p), "utf8");
 
 let pass = 0;
 let fail = 0;
@@ -46,6 +47,36 @@ const ck = (c, m) => {
 };
 // 只看**代码**，不看成句的注释：修复说明里会引用旧写法，那是解释不是实现
 const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+// 测试独立换算 CSS OKLCH → sRGB，以便测实际对比度，不依赖已移除的 UI 库转换器。
+function oklchRgb(value) {
+  const parts = value.match(/^oklch\(\s*([\d.]+)(%)?\s+([\d.]+)\s+([\d.-]+)\s*\)$/);
+  ck(parts, `不支持的对比度测试色值：${value}`);
+  const lightness = Number(parts[1]) / (parts[2] ? 100 : 1);
+  const chroma = Number(parts[3]), angle = Number(parts[4]) * Math.PI / 180;
+  const a = chroma * Math.cos(angle), b = chroma * Math.sin(angle);
+  const l = (lightness + .3963377774 * a + .2158037573 * b) ** 3;
+  const m = (lightness - .1055613458 * a - .0638541728 * b) ** 3;
+  const s = (lightness - .0894841775 * a - 1.291485548 * b) ** 3;
+  return [4.0767416621 * l - 3.3077115913 * m + .2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - .3413193965 * s,
+    -.0041960863 * l - .7034186147 * m + 1.707614701 * s]
+    .map(v => Math.max(0, Math.min(1, v <= .0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - .055)) * 255);
+}
+// Arc 直接用 CSS 色彩 token，锁定最终可读性。
+function arcDarkRgb(token) {
+  const css = readWeb("components/arc/foundation.css");
+  const dark = css.match(/:root\[data-theme="dark"\]\s*\{([^}]+)\}/)?.[1] || "";
+  const value = dark.match(new RegExp(`--${token}:\\s*([^;]+);`))?.[1];
+  ck(value, `暗色 ${token} 未定义`);
+  return oklchRgb(value);
+}
+const composite = (front, back, opacity) => front.map((v, i) => v * opacity + back[i] * (1 - opacity));
+function contrast(a, b) {
+  const luminance = rgb => rgb.map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
+    .reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+  const values = [luminance(a), luminance(b)].sort((x, y) => x - y);
+  return (values[1] + .05) / (values[0] + .05);
+}
 
 const gateway = read("src/routes/gateway.js");
 const gatewayCode = stripComments(gateway);
@@ -283,53 +314,35 @@ t("网关兜底返回 JSON 404 并列出支持的端点", () => {
 
 /* ============ ⑭ 暗色空状态插画可见 ============ */
 console.log("\n=== ⑭ 暗色空状态插画（Mia：对比度 1.1:1）===");
-t("Empty 插画的填充 token 写在**全局**层且转成 hex", () => {
-  const web = readFileSync(path.join(root, "..", "ooapi-web", "src", "theme", "ThemeContext.jsx"), "utf8");
-  const presets = readFileSync(path.join(root, "..", "ooapi-web", "src", "theme", "presets.js"), "utf8");
-  // ① 必须在全局 token 层：插画读的是 useToken()，写进 components.Empty 不生效
-  //    （我第一版就写在那里，实测插画仍是 rgb(20,20,20)）
-  //
-  // 用行首锚定 `\n      components: {` 定位全局 token 块的结束 ——
-  // `web.indexOf("components:")` 会先命中注释里那句 "写在 components: {...} 里不会生效"，
-  // 把分界点算到 92 行（注释），于是误判「没写在全局层」。
-  const compIdx = web.search(/\n\s{4,}components:\s*\{/);
-  ck(compIdx > 0, "没找到 components 配置块");
-  const globalPart = web.slice(0, compIdx);
-  ck(/colorFill: oklchToHex\(s\.line\)/.test(globalPart),
-    "colorFill 没写在全局 token 层（组件层覆盖对插画无效）");
-  ck(/colorFillQuaternary: oklchToHex\(s\.field\)/.test(globalPart), "colorFillQuaternary 没写在全局层");
-  // ② 必须转 hex：AntD 的颜色合成库不认 oklch，解析失败退化成纯黑
-  ck(/export function oklchToHex/.test(presets), "没有 oklchToHex 转换器");
-  ck(!/colorFill: s\.line\b/.test(web), "colorFill 直接给了 oklch（AntD 会算成纯黑）");
-});
-
-t("oklchToHex 转换数值正确（手算对照）", () => {
-  const presets = readFileSync(path.join(root, "..", "ooapi-web", "src", "theme", "presets.js"), "utf8");
-  const body = presets.match(/export function oklchToHex[\s\S]*?\n\}/)[0].replace("export function", "function");
-  const fn = new Function(`${body}; return oklchToHex;`)();
-  const cases = [
-    ["oklch(30.8% 0.006 258.354)", "#2e3033"],
-    ["oklch(27.8% 0.006 258.354)", "#27282b"],
-    ["oklch(29.3% 0.006 271.223)", "#2b2c2f"],
-    ["oklch(94.6% 0.003 264.542)", "#ecedef"],
-  ];
-  for (const [input, want] of cases) {
-    ck(fn(input) === want, `${input} → ${fn(input)}（期望 ${want}）`);
-  }
-  ck(fn("#abcdef") === "#abcdef", "非 oklch 输入应原样返回");
+t("Arc 空状态图标读取暗色 token，图形对比度至少 3:1", () => {
+  const css = readWeb("components/arc/empty-state/empty-state.module.css");
+  const icon = css.match(/\.icon\s*\{([^}]+)\}/)?.[1] || "";
+  ck(/color:\s*var\(--text-secondary\)/.test(icon), "空状态图标没有读取主题文字色");
+  ck(/background:\s*var\(--surface-muted\)/.test(icon), "空状态图标底色没有读取主题表面色");
+  ck(contrast(arcDarkRgb("text-secondary"), arcDarkRgb("surface-muted")) >= 3, "暗色空状态图标对比度不足 3:1");
 });
 
 /* ============ ⑮ 手机端触控目标 ============ */
 console.log("\n=== ⑮ 触控目标（Mia：26×26 容易点错）===");
 t("窄屏放大了图标按钮/分段控件/分页的命中区域", () => {
-  const css = readFileSync(path.join(root, "..", "ooapi-web", "src", "styles.css"), "utf8");
-  ck(/pointer: coarse/.test(css), "没有针对触屏的媒体查询");
-  ck(/\.oo-header \.ant-btn \{ min-width: 40px/.test(css), "顶栏按钮没放大");
-  ck(/\.ant-pagination-item/.test(css), "分页没放大");
+  const foundation = readWeb("components/arc/foundation.css");
+  const application = readWeb("components/arc/application.css");
+  const button = readWeb("components/arc/button/button.module.css");
+  const pagination = readWeb("components/arc/pagination/pagination.module.css");
+  const segmented = readWeb("components/arc/segmented-control/segmented-control.module.css");
+  // Arc 的所有紧凑控件共用尺寸 token。继续锁定触屏至少 40px，不能因换库降回 36px。
+  const coarse = (foundation + application).match(/@media\s*\([^)]*pointer:\s*coarse[^)]*\)[^{]*\{[\s\S]*?--control-height-sm:\s*([\d.]+)(px|rem)/);
+  ck(coarse && Number(coarse[1]) * (coarse[2] === "rem" ? 16 : 1) >= 40, "触屏紧凑控件的命中高度不足 40px");
+  ck(/min-height:\s*var\(--control-height-md\)/.test(button), "图标按钮没有使用统一控件高度");
+  ck(/\.oo-header\s+button\s*\{[^}]*min-width:\s*(?:40px|2\.5rem)/.test(application + foundation), "顶栏图标按钮命中宽度不足 40px");
+  ck(/width:\s*var\(--control-height-sm\)/.test(pagination) && /height:\s*var\(--control-height-sm\)/.test(pagination), "分页没有使用触屏尺寸 token");
+  ck(/min-height:\s*var\(--control-height-sm\)/.test(segmented), "分段控件没有使用触屏尺寸 token");
 });
 t("聊天附件缩略图放大到 36px", () => {
-  const css = readFileSync(path.join(root, "..", "ooapi-web", "src", "components", "beautifului.css"), "utf8");
-  ck(/\.bui-chip-file img \{[\s\S]{0,90}width: 36px/.test(css), "缩略图没放大（贴多张图认不出）");
+  const composer = readWeb("components/PromptBar.jsx");
+  const image = composer.match(/<img\s+src=\{c\.src\}[^>]*>/)?.[0] || "";
+  const size = name => Number(image.match(new RegExp(`${name}=["'](\\d+)["']`))?.[1] || 0);
+  ck(size("width") >= 36 && size("height") >= 36, "缩略图不足 36px（贴多张图认不出）");
 });
 
 /* ============ ⑯ 信息流摘要不再漏 Markdown 标记 ============ */
@@ -509,7 +522,7 @@ t("对话页短会话不再强制滚到底（手机欢迎语被切）", () => {
   ck(/el\.scrollTop = 0/.test(cp), "装得下时没有归零（会把顶部内容顶出视野）");
 });
 t("折叠评论框的提示文字单行省略（手机上会挤成 3 行压住图标）", () => {
-  const css = readFileSync(path.join(root, "..", "ooapi-web", "src", "styles.css"), "utf8");
+  const css = readWeb("application-layout.css");
   // 注意文件里有**两条**同名前缀规则：一条是 `.oo-comment-collapsed-bar .oo-comment-input-pill > span:first-child`
   //（只管颜色），另一条才是独立的省略规则。取最后一条。
   const marker = "\n.oo-comment-input-pill > span:first-child {";
@@ -569,9 +582,19 @@ t("头像上传上限与服务端一致（不再各写一个数）", () => {
   ck(/maxUploadBytes/.test(au), "没有从服务端读上限");
   ck(/await maxUploadBytes\(\)/.test(au), "读了上限却没 await（会拿到 Promise 比较大小）");
 });
-t("暗色禁用态文字有显式 token（对比度 1.8:1 → 3:1+）", () => {
-  const th = readFileSync(path.join(root, "..", "ooapi-web", "src", "theme", "ThemeContext.jsx"), "utf8");
-  ck(/colorTextDisabled: s\.ink3/.test(th), "没有显式指定 colorTextDisabled（会落到 AntD 暗色默认的极低对比）");
+t("Arc 暗色禁用态输入文字对比度保持 3:1+", () => {
+  for (const [name, selector] of [["input", "input"], ["textarea", "control"]]) {
+    const css = readWeb(`components/arc/${name}/${name}.module.css`);
+    const base = css.match(new RegExp(`\\.${selector}\\s*\\{([^}]+)\\}`))?.[1] || "";
+    const disabled = css.match(new RegExp(`\\.${selector}:disabled\\s*\\{([^}]+)\\}`))?.[1] || "";
+    ck(/color:\s*var\(--foreground\)/.test(base), `${name} 没有读取主题文字色`);
+    ck(/background:\s*var\(--surface-muted\)/.test(disabled), `${name} 禁用底色未使用主题 token`);
+    const opacity = Number(disabled.match(/opacity:\s*([\d.]+)/)?.[1] ?? 1);
+    const under = arcDarkRgb("surface");
+    const ink = composite(arcDarkRgb("foreground"), under, opacity);
+    const background = composite(arcDarkRgb("surface-muted"), under, opacity);
+    ck(contrast(ink, background) >= 3, `${name} 暗色禁用文字对比度不足 3:1`);
+  }
 });
 t("令牌额度列精度自适应（0.002 不再显示成 0.00）", () => {
   const tp = readFileSync(path.join(root, "..", "ooapi-web", "src", "pages", "TokenPage.jsx"), "utf8");
@@ -663,11 +686,13 @@ t("评论框有 @ 联想，且补全用用户名（昵称 @ 不生效）", () =>
   ck(/chatroom\/users/.test(pd), "没有复用已有的用户搜索接口");
 });
 t("好友申请弹窗的字数计数器不压内容", () => {
-  const mp = readFileSync(path.join(root, "..", "ooapi-web", "src", "pages", "MessagesPage.jsx"), "utf8");
-  const css = readFileSync(path.join(root, "..", "ooapi-web", "src", "styles.css"), "utf8");
-  // 人格实测量到重叠
-  ck(/oo-count-textarea/.test(mp), "没有给该文本域加避让类名");
-  ck(/padding-bottom: 22px/.test(css), "没有给计数器留出底部空间");
+  const mp = readWeb("pages/MessagesPage.jsx");
+  const controls = readWeb("components/arc/controls.jsx");
+  const css = readWeb("components/arc/application.css");
+  ck(/showCount/.test(mp), "好友申请的字数计数丢失");
+  // 计数已移到 Arc Textarea 后方的独立文档流，不再依赖给绝对定位计数器留 22px。
+  ck(/<Textarea\b[\s\S]*?\/>\s*\{showCount && <small>/.test(controls), "计数器没有放在文本域外的独立文档流");
+  ck(!/\.arc-textarea-wrap[^{}]*small[^{}]*\{[^}]*position:\s*(?:absolute|fixed)/.test(css), "计数器又变成覆盖输入内容的绝对定位");
 });
 
 t("MediaPage 的钩子声明顺序（TDZ：引用在声明之前会白屏）", () => {

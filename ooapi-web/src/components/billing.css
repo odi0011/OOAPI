@@ -1,7 +1,4 @@
-.oo-billing-trigger.ant-btn { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 3px; color: var(--ink); font-size: 12px; font-weight: 550; }
-.oo-billing-trigger.ant-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .oo-billing-amount { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-.oo-billing-popover .ant-popover-inner { padding: 12px; }
 .oo-billing-details { min-width: 0; max-width: 100%; font-size: 12px; line-height: 1.5; color: var(--ink); container: billing / inline-size; overflow-wrap: anywhere; }
 .oo-billing-details--compact { width: min(460px, calc(100vw - 48px)); max-height: min(75vh, 640px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .oo-billing-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
@@ -35,12 +32,8 @@
 .oo-billing-prices b { margin-left: 2px; font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }
 .oo-billing-sku { margin-top: 5px; color: var(--ink-3); font-size: 10px; overflow-wrap: anywhere; }
 .oo-billing-sku > span { margin-left: 4px; font-family: var(--font-mono); }
-.oo-billing-channel .ant-typography { display: inline-block; margin-top: 6px; font-size: 11px; }
-.oo-billing-calls .ant-collapse-header { padding: 10px 0 0 !important; font-size: 11px; }
-.oo-billing-calls .ant-collapse-content-box { padding: 8px 0 0 !important; }
 .oo-billing-call + .oo-billing-call { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .oo-log-billing-detail { padding: 12px; margin-bottom: 16px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); }
-/* 窄浮层改成纵向账单，不通过裁掉金额或横向滚动掩盖溢出。 */
 @container billing (max-width: 380px) {
   .oo-billing-breakdown, .oo-billing-breakdown tbody { display: block; }
   .oo-billing-breakdown colgroup, .oo-billing-breakdown thead { display: none; }

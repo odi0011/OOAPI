@@ -1,13 +1,3 @@
-/* ============================================================================
-   消息中心（私聊 + 群聊 + 好友）—— 第 79 批
-   ----------------------------------------------------------------------------
-   · 只用设计令牌（surface / ink / line / accent / sp 间距 / r 圆角 系列变量），
-     明暗主题与外观设置（圆角/密度/字号）自动跟随；
-   · 「我的」气泡底色 = 主题色混 18% 黑：用户可以自定义主题色（比如琥珀），
-     纯主题色配白字在浅色系上对比度只有 ~3:1，混深后稳定在 4.5:1 以上；
-   · 视口锁定：外壳高度 = 内容区高度，各栏自己滚动，输入框永远可见。
-   ============================================================================ */
-
 :root {
   --im-mine: color-mix(in oklch, var(--accent) 82%, black);
   --im-mine-ink: #fff;
@@ -19,8 +9,6 @@ html[data-theme="dark"] {
   --im-mine: color-mix(in oklch, var(--accent) 70%, black);
   --im-stage: var(--canvas);
 }
-
-/* ---------- 外壳 ---------- */
 .oo-im {
   flex: 1;
   min-height: 0;
@@ -38,8 +26,6 @@ html[data-theme="dark"] {
 .oo-im-main { background: var(--im-stage); position: relative; }
 .oo-im-aside { border-left: 1px solid var(--line); background: var(--surface); overflow-y: auto; }
 .oo-im-mobile-only { display: none !important; }
-
-/* ---------- 左栏 ---------- */
 .oo-im-side-head {
   display: flex;
   flex-direction: column;
@@ -96,7 +82,6 @@ html[data-theme="dark"] {
 .oo-im-chip:hover { background: var(--hover); color: var(--ink); }
 .oo-im-chip.is-active { background: var(--accent-tint); color: var(--accent-ink); font-weight: 550; }
 .oo-im-side-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0 var(--sp-3); }
-
 .oo-im-list { list-style: none; margin: 0; padding: 0; }
 .oo-im-group-label {
   padding: 12px 16px 4px;
@@ -105,8 +90,6 @@ html[data-theme="dark"] {
   text-transform: uppercase;
   color: var(--ink-3);
 }
-
-/* 列表行：会话 / 好友 / 新的朋友 共用 */
 .oo-im-row {
   --ring: var(--surface);
   position: relative;
@@ -164,7 +147,6 @@ html[data-theme="dark"] {
   font-family: var(--font-mono);
 }
 .oo-im-chevron { color: var(--ink-3); font-size: 11px; }
-
 .oo-im-row--contact { padding: 0; gap: 0; cursor: default; }
 .oo-im-row-main {
   flex: 1;
@@ -185,7 +167,6 @@ html[data-theme="dark"] {
 .oo-im-row--contact:hover .oo-im-row-action,
 .oo-im-row--contact:focus-within .oo-im-row-action { opacity: 1; }
 @media (hover: none) { .oo-im-row-action { opacity: 1; } }
-
 .oo-im-row--requests { margin-bottom: 4px; }
 .oo-im-req-icon {
   width: 36px;
@@ -199,7 +180,6 @@ html[data-theme="dark"] {
   font-size: 16px;
   flex-shrink: 0;
 }
-
 .oo-im-empty-hint { padding: 36px 20px; text-align: center; }
 .oo-im-empty-title { font-size: var(--fs-body); font-weight: 550; color: var(--ink-2); }
 .oo-im-empty-desc { font-size: 12px; color: var(--ink-3); margin-top: 4px; line-height: 1.6; }
@@ -236,10 +216,7 @@ html[data-theme="dark"] {
 }
 .oo-im-icon-btn:hover { background: var(--hover); color: var(--ink); }
 .oo-im-icon-btn:disabled { opacity: 0.45; cursor: default; background: transparent; }
-
-/* ---------- 头像 ---------- */
 .oo-im-avatar { position: relative; display: inline-flex; flex-shrink: 0; }
-/* 只画「在线」的绿点：离线再画一个灰点只会让每一行都多一个噪点 */
 .oo-im-dot {
   position: absolute;
   right: -1px;
@@ -270,8 +247,6 @@ html[data-theme="dark"] .oo-im-group-avatar {
   color: hsl(var(--hue) 70% 82%);
 }
 .oo-im-avatar-btn { border: 0; padding: 0; background: none; cursor: pointer; border-radius: 50%; line-height: 0; }
-
-/* ---------- 聊天区 ---------- */
 .oo-im-chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .oo-im-chat-head {
   --ring: var(--surface);
@@ -306,7 +281,6 @@ html[data-theme="dark"] .oo-im-group-avatar {
 .oo-im-chat-sub.is-on { color: var(--green); }
 .oo-im-chat-actions { display: flex; align-items: center; gap: 2px; }
 .oo-im-chat-actions .is-on { color: var(--accent-ink); background: var(--accent-tint); }
-
 .oo-im-announce {
   display: flex;
   align-items: center;
@@ -322,9 +296,6 @@ html[data-theme="dark"] .oo-im-group-avatar {
   text-align: left;
   cursor: pointer;
 }
-.oo-im-announce .anticon { color: var(--orange); flex-shrink: 0; }
-
-/* 消息流 */
 .oo-im-stream-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
 .oo-im-stream { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .oo-im-stream-inner {
@@ -357,7 +328,6 @@ html[data-theme="dark"] .oo-im-group-avatar {
   color: var(--ink-3);
   font-size: 11.5px;
 }
-
 .oo-im-msg { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; }
 .oo-im-msg.is-continued { margin-top: 3px; }
 .oo-im-msg.is-mine { justify-content: flex-end; }
@@ -380,8 +350,6 @@ html[data-theme="dark"] .oo-im-group-avatar {
 .oo-im-msg:hover .oo-im-msg-tools,
 .oo-im-msg:focus-within .oo-im-msg-tools { opacity: 1; }
 @media (hover: none) { .oo-im-msg-tools .oo-im-icon-btn { display: none; } .oo-im-msg-tools { opacity: 1; } }
-
-/* 气泡 */
 .oo-im-bubble {
   --bubble-bg: var(--surface);
   min-width: 0;
@@ -410,7 +378,6 @@ html[data-theme="dark"] .oo-im-group-avatar {
   font-size: 12.5px;
 }
 .oo-im-bubble.is-media { padding: 4px; background: transparent; box-shadow: none; }
-
 .oo-im-bubble .bui-prose { font-size: inherit; line-height: inherit; color: inherit; }
 .oo-im-bubble .bui-prose p { margin: 0 0 6px; }
 .oo-im-bubble .bui-prose > :first-child { margin-top: 0; }
@@ -428,10 +395,8 @@ html[data-theme="dark"] .oo-im-group-avatar {
   border-color: color-mix(in srgb, currentColor 28%, transparent);
   color: inherit;
 }
-/* 代码块保持普通配色（读代码要稳定的背景，不跟着气泡变色） */
 .oo-im-bubble .oo-code-block { color: var(--ink); margin: 6px 0; }
 .oo-im-bubble.is-mine .oo-code-block { border-color: transparent; }
-
 .oo-im-clamp { max-height: 240px; }
 .oo-im-more {
   display: block;
@@ -447,21 +412,8 @@ html[data-theme="dark"] .oo-im-group-avatar {
   text-underline-offset: 3px;
   cursor: pointer;
 }
-
 .oo-im-media { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .oo-im-bubble .bui-prose + .oo-im-media { margin-top: 8px; }
-.oo-im-media .ant-image { display: block; }
-.oo-im-media .ant-image-img {
-  display: block;
-  max-width: min(280px, 60vw);
-  max-height: 280px;
-  border-radius: 12px;
-  object-fit: cover;
-  cursor: zoom-in;
-  background: var(--field);
-}
-.oo-im-media.is-multi .ant-image-img { width: 132px; height: 132px; }
-
 .oo-im-msg-fail {
   display: flex;
   align-items: center;
@@ -481,7 +433,6 @@ html[data-theme="dark"] .oo-im-group-avatar {
   align-items: center;
   gap: 3px;
 }
-
 .oo-im-jump {
   position: absolute;
   left: 50%;
@@ -515,8 +466,6 @@ html[data-theme="dark"] .oo-im-group-avatar {
   pointer-events: none;
 }
 .oo-im-uploading { text-align: center; font-size: 12px; color: var(--ink-3); padding: 2px 0; background: var(--im-stage); }
-
-/* 输入框 */
 .oo-im-composer { padding: 0 var(--sp-4) var(--sp-3); background: var(--im-stage); }
 .oo-im-composer-box {
   max-width: 920px;
@@ -528,14 +477,6 @@ html[data-theme="dark"] .oo-im-group-avatar {
 }
 .oo-im-composer-box:focus-within { box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent); }
 .oo-im-composer-box.is-disabled { opacity: 0.6; }
-.oo-im-composer-box textarea.ant-input {
-  padding: 10px 14px 4px !important;
-  font-size: var(--fs-body);
-  line-height: 1.6;
-  resize: none;
-  background: transparent !important;
-  box-shadow: none !important;
-}
 .oo-im-composer-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px 8px 8px; }
 .oo-im-composer-tools { display: flex; align-items: center; gap: 2px; }
 .oo-im-composer-send { display: flex; align-items: center; gap: 10px; }
@@ -553,8 +494,6 @@ html[data-theme="dark"] .oo-im-group-avatar {
   cursor: pointer;
 }
 .oo-im-emoji-grid button:hover { background: var(--hover); }
-
-/* ---------- 资料栏 / 名片 ---------- */
 .oo-im-info { display: flex; flex-direction: column; min-height: 100%; }
 .oo-im-info-head { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: var(--sp-5) var(--sp-4) var(--sp-4); text-align: center; }
 .oo-im-info-block { padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--line-soft); }
@@ -594,7 +533,6 @@ html[data-theme="dark"] .oo-im-group-avatar {
 .oo-im-member:hover .oo-im-member-kick,
 .oo-im-member:focus-within .oo-im-member-kick { opacity: 1; }
 .oo-im-info-foot { display: flex; flex-direction: column; gap: 8px; padding: var(--sp-3) var(--sp-4) var(--sp-4); border-top: 1px solid var(--line-soft); }
-
 .oo-im-person { --ring: var(--surface); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: var(--sp-5) var(--sp-4); text-align: center; }
 .oo-im-person.is-compact { padding: var(--sp-5) var(--sp-3) var(--sp-4); }
 .oo-im-person .oo-im-dot { min-width: 13px; min-height: 13px; box-shadow: 0 0 0 3px var(--ring); }
@@ -611,9 +549,6 @@ html[data-theme="dark"] .oo-im-group-avatar {
 .oo-im-person-sub { font-size: 12.5px; color: var(--ink-3); }
 .oo-im-person-bio { font-size: 13px; color: var(--ink-2); line-height: 1.6; max-width: 320px; margin-top: 4px; min-height: 1.6em; word-break: break-word; }
 .oo-im-person-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: var(--sp-3); }
-.ant-modal .oo-im-person { padding: var(--sp-3) 0 0; --ring: var(--surface); }
-
-/* ---------- 主区里的整页视图（新的朋友 / 名片） ---------- */
 .oo-im-page { flex: 1; min-height: 0; overflow-y: auto; }
 .oo-im-page-head {
   display: flex;
@@ -636,8 +571,6 @@ html[data-theme="dark"] .oo-im-group-avatar {
 .oo-im-req-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .oo-im-req-msg { font-size: 12.5px; color: var(--ink-2); line-height: 1.5; word-break: break-word; }
 .oo-im-req-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-
-/* 空状态 */
 .oo-im-stage-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-2); padding: var(--sp-8) var(--sp-5); text-align: center; }
 .oo-im-stage-icon {
   width: 64px;
@@ -674,19 +607,14 @@ html[data-theme="dark"] .oo-im-group-avatar {
 }
 .oo-im-stage-online-list button:hover { background: var(--hover); --ring: var(--hover); }
 .oo-im-stage-online-list .oo-truncate { max-width: 100%; }
-
-/* 弹窗表单 */
 .oo-im-form { display: flex; flex-direction: column; gap: 6px; }
 .oo-im-form label { font-size: 13px; color: var(--ink-3); margin-top: 8px; }
 .oo-im-form label:first-child { margin-top: 0; }
 .oo-im-form-hint { margin: 10px 0 0; font-size: 12px; color: var(--ink-3); }
 .oo-im-pick-opt { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
-
-/* ---------- 响应式 ---------- */
 @media (max-width: 1279px) {
   :root { --im-side-w: 280px; }
 }
-/* 移动端：路由级主从堆叠 —— /messages 只显示列表，进入会话/名片后只显示主区 */
 @media (max-width: 767px) {
   .oo-im { grid-template-columns: minmax(0, 1fr); }
   .oo-im .oo-im-main { display: none; }

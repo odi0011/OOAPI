@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Alert, App as AntApp, Badge, Button, Checkbox, Col, Form, Input, InputNumber, Modal, Popconfirm, Row, Select, Space, Switch, Table, Tabs } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import {   Alert, App as ArcApp, Badge, Button, Checkbox, Col, Form, Input, InputNumber, Modal, Popconfirm, Row, Select, Space, Switch, Table, Tabs  } from "../arc/index";
+import { PlusOutlined  } from "../arc/icons";
 import { binanceApi, date, EnvTag, Panel, positive, required } from "./shared";
 
 function Accounts({ accounts, act, busy }) {
@@ -90,7 +90,7 @@ function Risk({ accountId, act, busy }) {
 }
 
 function Connection({ act, busy }) {
-  const { modal } = AntApp.useApp();
+  const { modal } = ArcApp.useApp();
   const [form] = Form.useForm();
   const [error, setError] = useState("");
   const [ready, setReady] = useState(false);

@@ -1,3 +1,5 @@
+import { Card as ArcPanel } from "../components/arc/card/card";
+import { Button as ActionButton } from "../components/arc/index";
 // 社区管理（管理员）—— 话题 / 内容审核 / 计数修复
 // ---------------------------------------------------------------------------
 // 这一页对应「管理员侧更细颗粒度的设定与管理」：
@@ -6,15 +8,15 @@
 //   · 计数修复：帖子/评论/点赞的计数是冗余字段，极端并发下可能漂移，
 //     提供一键重算（不假设它永远准确，但提供修复手段）。
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import {   useNavigate } from "react-router-dom";
 import {
-  Button, Table, Tag, Space, App as AntApp, Modal, Form, Input, InputNumber, Switch,
+  Button, Table, Tag, Space, App as ArcApp, Modal, Form, Input, InputNumber, Switch,
   Alert, Popconfirm, Tooltip, Empty, Segmented, Select,
-} from "antd";
+ } from "../components/arc/index";
 import {
   PlusOutlined, ReloadOutlined, EditOutlined, EyeOutlined, EyeInvisibleOutlined,
   PushpinOutlined, DeleteOutlined, CalculatorOutlined, TagsOutlined, UndoOutlined, UploadOutlined,
-} from "@ant-design/icons";
+ } from "../components/arc/icons";
 import TopicIcon, { TOPIC_ICONS } from "../components/TopicIcon";
 import { API } from "../services/api";
 import useLatest from "../hooks/useLatest";
@@ -30,8 +32,8 @@ function IconGrid({ value, onChange }) {
     <div className="oo-icon-grid" role="radiogroup" aria-label="内置图标">
       {TOPIC_ICONS.map((x) => (
         <Tooltip key={x.key} title={x.label} mouseEnterDelay={0.3}>
-          <button
-            type="button"
+          <ActionButton type="text"
+            htmlType="button"
             role="radio"
             aria-checked={value === x.key}
             aria-label={x.label}
@@ -39,7 +41,7 @@ function IconGrid({ value, onChange }) {
             onClick={() => onChange?.(value === x.key ? "" : x.key)}
           >
             <TopicIcon icon={x.key} size={28} />
-          </button>
+          </ActionButton>
         </Tooltip>
       ))}
     </div>
@@ -48,7 +50,7 @@ function IconGrid({ value, onChange }) {
 
 export default function AdminCommunityPage() {
   const navigate = useNavigate();
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const { begin, isLatest } = useLatest();
 
   const [tab, setTab] = useState("posts");
@@ -358,7 +360,7 @@ export default function AdminCommunityPage() {
         </div>
       ) : null}
 
-      <div className="oo-panel">
+      <ArcPanel className="oo-panel">
         <div className="oo-toolbar">
           <Segmented
             value={tab}
@@ -488,7 +490,7 @@ export default function AdminCommunityPage() {
             locale={{ emptyText: <Empty description="还没有话题，先建一个" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
           />
         )}
-      </div>
+      </ArcPanel>
 
       <Modal
         title={editingTopic ? "编辑话题" : "新建话题"}

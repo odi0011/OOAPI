@@ -1,3 +1,5 @@
+import { Badge as ArcBadge } from "../components/arc/badge/badge";
+import { Card as ArcPanel } from "../components/arc/card/card";
 // 媒体库 —— 统一文件存储的前端入口
 // ---------------------------------------------------------------------------
 // 为什么要这个页面：媒体库建好后端只是「存得下」，用户看不见也管不了。
@@ -12,16 +14,16 @@
 //     前端自己禁用会让用户以为坏了；管理员额外给「强制删除」，
 //     因为清理违规内容时确实需要绕过引用保护。
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import {   useSearchParams } from "react-router-dom";
 import {
-  Button, Table, Tag, Space, Typography, App as AntApp, Popconfirm, Tooltip, Empty,
+  Button, Table, Tag, Space, Typography, App as ArcApp, Popconfirm, Tooltip, Empty,
   Alert, Input, Select, Segmented, Image, Drawer, Descriptions, Pagination, Modal,
-} from "antd";
+ } from "../components/arc/index";
 import {
   ReloadOutlined, AppstoreOutlined, UnorderedListOutlined, DeleteOutlined,
   DownloadOutlined, EditOutlined, PictureOutlined, FileOutlined, SearchOutlined,
   ClearOutlined, UserOutlined, EyeOutlined, UploadOutlined,
-} from "@ant-design/icons";
+ } from "../components/arc/icons";
 import { API } from "../services/api";
 import { fmtDate } from "../services/format";
 import { useApp } from "../context/AppContext";
@@ -81,7 +83,7 @@ const STATUS_OPTIONS = [
 ];
 
 export default function MediaPage() {
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const { user } = useApp();
   const isAdmin = user?.role >= 100;
   const { begin, isLatest } = useLatest();
@@ -386,7 +388,7 @@ export default function MediaPage() {
       render: (n) =>
         n > 0 ? (
           <Tooltip title={`被 ${n} 处内容引用，需先删除对应内容`}>
-            <span className="bui-chip">{n} 处</span>
+            <ArcBadge size="sm" tone="neutral">{n} 处</ArcBadge>
           </Tooltip>
         ) : (
           <Text type="secondary" style={{ fontSize: 12 }}>未引用</Text>
@@ -517,7 +519,7 @@ export default function MediaPage() {
 
       {/* 配额进度条：只在有配额时出现，超 70% 变橙、超 90% 变红 */}
       {quotaPct !== null ? (
-        <div className="oo-panel" style={{ padding: "12px 14px" }}>
+        <ArcPanel className="oo-panel" style={{ padding: "12px 14px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
             <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
               存储配额（{scopeLabel}）
@@ -536,10 +538,10 @@ export default function MediaPage() {
               }}
             />
           </div>
-        </div>
+        </ArcPanel>
       ) : null}
 
-      <div className="oo-panel">
+      <ArcPanel className="oo-panel">
         <div className="oo-toolbar">
           <Input.Search
             placeholder="搜索文件名"
@@ -666,7 +668,7 @@ export default function MediaPage() {
             />
           </div>
         ) : null}
-      </div>
+      </ArcPanel>
 
       {/* 详情抽屉：完整元信息 + 强制删除入口（管理员） */}
       <Drawer title="文件详情" open={Boolean(detail)} onClose={() => setDetail(null)} width={520} destroyOnClose>

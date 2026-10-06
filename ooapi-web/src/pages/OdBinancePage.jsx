@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, App as AntApp, Button, Select, Space, Tabs } from "antd";
-import { ReloadOutlined } from "@ant-design/icons";
+import {   Alert, App as ArcApp, Button, Select, Space, Tabs  } from "../components/arc/index";
+import { ReloadOutlined  } from "../components/arc/icons";
 import { useSearchParams } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import { binanceApi, EnvTag } from "../components/binance/shared";
@@ -15,7 +15,7 @@ const views = ["overview", "positions", "strategies", "backtests", "orders", "se
 const empty = { accounts: [], positions: [], strategies: [], orders: [], curve: [], summary: null, status: null };
 
 export default function OdBinancePage() {
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const [params, setParams] = useSearchParams();
   const tab = views.includes(params.get("view")) ? params.get("view") : "overview";
   const requestedAccount = Number(params.get("account")) || 0;

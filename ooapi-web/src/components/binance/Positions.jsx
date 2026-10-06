@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Alert, Button, Checkbox, Col, Form, Input, InputNumber, Modal, Row, Select, Space, Table, Tag } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import {   Alert, Button, Checkbox, Col, Form, Input, InputNumber, Modal, Row, Select, Space, Table, Tag  } from "../arc/index";
+import { PlusOutlined  } from "../arc/icons";
 import { binanceApi, money, price, Panel, Pnl, positionsOptions, positive, required, symbolRule, envLabels, newOrderRequestId } from "./shared";
 
 export default function Positions({ positions, account, act, busy }) {

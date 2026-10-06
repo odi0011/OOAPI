@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { Alert, App as AntApp, Button, ColorPicker, Input, Segmented, Select, Skeleton, Switch, Tag } from "antd";
-import { CheckOutlined, SaveOutlined, UndoOutlined } from "@ant-design/icons";
+import {   Alert, App as ArcApp, Button, ColorPicker, Input, Segmented, Select, Skeleton, Switch, Tag  } from "./arc/index";
+import { CheckOutlined, SaveOutlined, UndoOutlined  } from "./arc/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import { useTheme } from "../theme/ThemeContext";
@@ -45,7 +45,7 @@ function WallpaperField({ mode, value, disabled, onChange }) {
 
 export default function AppearanceSettings() {
   const { refreshStatus, user } = useApp();
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const { previewAppearance, setSiteAppearance } = useTheme();
   const [saved, setSaved] = useState(null);
   const [draft, setDraft] = useState(null);

@@ -1,9 +1,11 @@
+import { Badge as ArcBadge } from "../components/arc/badge/badge";
+import { Card as ArcPanel } from "../components/arc/card/card";
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import {
   Table, Button, Space, Input, Popconfirm, Modal, Form, Select,
-  InputNumber, App as AntApp, Typography, Alert, Tooltip,
-} from "antd";
-import { ReloadOutlined, PlusOutlined, SearchOutlined, ApiOutlined } from "@ant-design/icons";
+  InputNumber, App as ArcApp, Typography, Alert, Tooltip,
+ } from "../components/arc/index";
+import { ReloadOutlined, PlusOutlined, SearchOutlined, ApiOutlined  } from "../components/arc/icons";
 import { API } from "../services/api";
 import PageHeader from "../components/PageHeader";
 import { modelSourceMap, modelSourceVendors } from "../services/model-sources";
@@ -18,7 +20,7 @@ const { Text } = Typography;
  *   · 用户创建密钥时只能选分组，可用模型完全由分组决定。
  */
 export default function AdminGroupsPage() {
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const [groups, setGroups] = useState([]);
   const [providers, setProviders] = useState([]);
   const [channels, setChannels] = useState([]);
@@ -173,9 +175,9 @@ export default function AdminGroupsPage() {
               {v}
             </span>
             {v === "default" ? (
-              <span className="bui-chip bui-chip--accent" style={{ fontSize: 10.5, height: 16, lineHeight: "16px", padding: "0 4px" }}>
+              <ArcBadge size="sm" tone="info" style={{ fontSize: 10.5, height: 16, lineHeight: "16px", padding: "0 4px" }}>
                 默认
-              </span>
+              </ArcBadge>
             ) : null}
           </div>
           {g.remark ? (
@@ -193,7 +195,7 @@ export default function AdminGroupsPage() {
         const icons = iconsOfGroup(g);
         const names = icons.map((x) => providers.find((p) => p.key === x)?.name || x);
         if (!icons.length) {
-          return <span className="bui-chip bui-chip--muted" style={{ fontSize: 11 }}>未关联厂商</span>;
+          return <ArcBadge size="sm" tone="neutral" style={{ fontSize: 11 }}>未关联厂商</ArcBadge>;
         }
         return (
           <Tooltip title={`成员厂商：${names.join("、")}`}>
@@ -219,9 +221,9 @@ export default function AdminGroupsPage() {
         if (!list || !list.length) {
           return (
             <Tooltip title="未限制模型：该分组的密钥可直接使用关联渠道支持的全部模型">
-              <span className="bui-chip bui-chip--muted" style={{ fontSize: 11.5, cursor: "default" }}>
+              <ArcBadge size="sm" tone="neutral" style={{ fontSize: 11.5, cursor: "default" }}>
                 全部模型（不限）
-              </span>
+              </ArcBadge>
             </Tooltip>
           );
         }
@@ -239,9 +241,9 @@ export default function AdminGroupsPage() {
             <span style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "default" }}>
               <ModelLabel model={list[0]} size={13} channelTypes={modelSourceVendors(list[0], groupModelSources.get(g.id))} />
               {list.length > 1 ? (
-                <span className="bui-chip" style={{ fontSize: 10.5, height: 16, lineHeight: "16px", padding: "0 4px" }}>
+                <ArcBadge size="sm" tone="neutral" style={{ fontSize: 10.5, height: 16, lineHeight: "16px", padding: "0 4px" }}>
                   +{list.length - 1}
-                </span>
+                </ArcBadge>
               ) : null}
             </span>
           </Tooltip>
@@ -268,10 +270,10 @@ export default function AdminGroupsPage() {
           : `关联 ${count} 个渠道`;
         return (
           <Tooltip title={tip}>
-            <span className="bui-chip" style={{ fontSize: 11.5, cursor: "default" }}>
+            <ArcBadge size="sm" tone="neutral" style={{ fontSize: 11.5, cursor: "default" }}>
               <ApiOutlined style={{ fontSize: 11, color: "var(--ink-3)" }} />
               <span>{count} 个渠道</span>
-            </span>
+            </ArcBadge>
           </Tooltip>
         );
       },
@@ -309,7 +311,7 @@ export default function AdminGroupsPage() {
         }
       />
 
-      <div className="oo-panel">
+      <ArcPanel className="oo-panel">
         {loadError ? (
           <Alert
             type="error"
@@ -343,7 +345,7 @@ export default function AdminGroupsPage() {
           scroll={{ x: 900 }}
           pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 个分组` }}
         />
-      </div>
+      </ArcPanel>
 
 
       <Modal
@@ -353,7 +355,7 @@ export default function AdminGroupsPage() {
         onCancel={() => setOpen(false)}
         confirmLoading={busy}
         // destroyOnClose 会在关闭时卸载表单，而 useForm 实例还在 —— 重新打开前
-        // 表单尚未挂载，setFieldsValue 找不到目标，antd 会警告
+        // 表单挂载前也要保留字段值，避免重新打开时丢失草稿
         // "Instance created by useForm is not connected to any Form element"，
         // 且表单值可能不生效。改为 forceRender + 关闭时手动 resetFields（openCreate/openEdit 已做）。
         forceRender

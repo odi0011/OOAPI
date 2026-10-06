@@ -11,12 +11,9 @@
 .ui-chat2 .ui-chat2-composer-inner { position:relative;max-width:796px;margin:auto; }
 .ui-chat2 .ui-chat2-welcome { padding:32px 0; }
 .ui-chat2 .ui-chat2-welcome h2 { font-weight:550;letter-spacing:-.035em; }
-.ui-chat2 .bui-suggests { gap:12px;margin-top:28px; }
-.ui-chat2 .bui-suggest { background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg,16px);box-shadow:none; }
 .agent-trajectory { margin:0 0 20px;color:var(--ink-2);font-size:13px; }
 .agent-trajectory-toggle { display:flex;align-items:center;gap:9px;max-width:100%;padding:5px 0;border:0;background:none;color:inherit;cursor:pointer;text-align:left; }
 .agent-trajectory-toggle>small { color:var(--ink-3);font-size:11px; }
-.agent-trajectory-toggle .anticon:last-child { font-size:10px; }
 .agent-trajectory-list { list-style:none!important;padding:4px 0 0 18px!important;margin:12px 0 0 10px!important;border-left:1px solid var(--line); }
 .agent-trajectory-list>li { position:relative;padding:3px 0 16px 10px;min-width:0; }
 .trajectory-dot { position:absolute;left:-23px;top:10px;width:7px;height:7px;border-radius:50%;background:var(--ink-3);border:2px solid var(--page);box-sizing:content-box; }
@@ -31,13 +28,6 @@
 @keyframes chat-breathe { 0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)} }
 @media(max-width:700px) { .ui-chat2 .ui-chat2-thread-inner { padding:20px 16px 36px; }.ui-chat2 .ui-msg-ai .prose { font-size:14px; }.ui-chat2 .ui-msg { margin-bottom:28px; }.ui-chat2 .ui-chat2-composer { padding-top:26px; }.agent-trajectory-toggle>small { font-size:10px; }.message-chart { padding:10px; } }
 @media(prefers-reduced-motion:reduce) { .chat-mascot,.chat-mascot *,.chat-response-wait span { animation:none!important;transition:none!important; }.ui-msg * { scroll-behavior:auto!important; } }
-@media(max-width:700px) {
-  .ui-chat2 .bui-composer-bar .bui-modelwrap { flex:1;min-width:0; }
-  .ui-chat2 .bui-composer-bar .bui-selbtn { min-width:0;max-width:100%;padding:0 5px; }
-  .ui-chat2 .bui-composer-spacer { display:none; }
-  .ui-chat2 .bui-composer-bar .bui-cbtn,.ui-chat2 .bui-attachwrap { flex-shrink:0; }
-}
-/* 乐乐执行胶囊与输入框交互：颜色跟随主题，动画可由系统关闭。 */
 .agent-trajectory {display:flex;flex-direction:column;gap:9px;margin:0 0 18px;min-width:0;}
 .execution-step {min-width:0;max-width:100%;}
 .execution-pill {display:block;width:max-content;max-width:100%;padding:4px 12px;border:1px solid var(--line);border-radius:24px;color:var(--ink-2);background:var(--surface);cursor:pointer;text-align:left;overflow:hidden;animation:lele-unfold .55s cubic-bezier(.2,1.35,.4,1);}
@@ -55,19 +45,15 @@
 .lele-sparks i {position:absolute;left:4px;top:9px;width:3px;height:3px;border-radius:50%;background:var(--accent);animation:lele-particle 1.8s ease-out infinite;}
 .lele-sparks i:nth-child(2) {left:10px;animation-delay:.6s;background:var(--orange);}.lele-sparks i:nth-child(3) {left:0;animation-delay:1.2s;background:var(--green);}
 .ui-chat2-composer-inner {isolation:isolate;}
-.ui-chat2 .bui-composer {position:relative;z-index:2;background:var(--surface);}
 @keyframes lele-unfold {from{opacity:0;transform:scaleX(.8) translateY(5px)}to{opacity:1;transform:none}}
 @keyframes lele-wave {to{transform:translateY(-9px) rotate(-16deg)}}
 @keyframes lele-preview {0%,100%{opacity:.55}50%{opacity:1}}
 @keyframes lele-particle {0%{opacity:0;transform:translateY(7px) scale(.4)}35%{opacity:.9}100%{opacity:0;transform:translateY(-10px) scale(1.2)}}
 @media(max-width:700px) {.execution-pill-preview{max-width:16ch;}.execution-pill-label{font-size:11px;}.ui-chat2 .ui-chat2-composer{padding-top:46px;}}
 @media(prefers-reduced-motion:reduce) {.execution-pill,.execution-pill *,.execution-detail,.tool-approval,.chat-mascot *{animation:none!important;transition:none!important;}}
-
-/* 独立测量自然宽度：测量层不跟随胶囊的过渡尺寸。 */
 .ui-chat2 .ui-chat2-thread-inner {width:100%;box-sizing:border-box;}
 .ui-chat2 .ui-msg-ai {min-width:0;}
 .ui-chat2 .ui-chat2-composer-foot {padding-top:24px;}
-.ui-chat2 .bui-promptbar {position:relative;}
 .agent-trajectory:empty {display:none;}
 .execution-step {position:relative;}
 .execution-measure {position:absolute;visibility:hidden;pointer-events:none;display:inline-flex;align-items:center;gap:8px;width:max-content;max-width:100%;padding:4px 12px 4px 7px;box-sizing:border-box;border:1px solid transparent;}
@@ -91,33 +77,8 @@
 .lele-sparks i {left:4px;top:12px;width:2px;height:2px;animation-duration:2s;}
 .lele-sparks i:nth-child(2) {left:auto;right:3px;top:17px;animation-delay:.65s;}
 .lele-sparks i:nth-child(3) {left:50%;top:5px;animation-delay:1.3s;}
-/* 锚点负责位置，猫负责动作；切换前缩回边缘，不横穿输入内容。 */
-.ui-chat2 .bui-composer-bar .bui-modelwrap {min-width:0;flex:0 1 auto;}
-.ui-chat2 .bui-composer-bar .is-model-select {max-width:280px;}
-.ui-chat2 .bui-composer-bar .bui-selbtn {min-width:0;max-width:100%;}
-.ui-chat2 .bui-composer-bar .is-reasoning {flex:0 0 auto;max-width:110px;}
-.ui-chat2 .bui-composer-bar .is-reasoning>.bui-selbtn {background:var(--inset);border-radius:8px;}
-.ui-chat2 .bui-composer-bar .is-key {max-width:160px;}
-.ui-chat2 .bui-composer-bar .is-key>.bui-selbtn {width:100%;}
-/* 密钥菜单只承载名称、分组和勾选状态，不需要沿用模型菜单的 300px 宽度。 */
-.ui-chat2 .bui-composer-bar .is-key>.bui-upmenu.is-model {width:190px;max-width:min(190px,calc(100vw - 24px));}
-.ui-chat2 .bui-composer-spacer {display:block;flex:1;}
-.ui-chat2 .bui-modelwrap>.bui-upmenu.is-reasoning {left:0;right:auto;width:150px;}
-.ui-chat2 .bui-modelwrap.is-model-select>.bui-upmenu {max-width:min(300px,calc(100vw - 100px));}
-.ui-chat2 .bui-cbtn,.ui-chat2 .bui-attachwrap {flex-shrink:0;}
 @keyframes lele-enter {from{transform:translateY(3px) scale(.97)}to{transform:none}}
-@media(max-width:700px) {
-  .ui-chat2 .bui-composer-bar .is-model-select {flex:0 1 auto;max-width:45%;}
-  .ui-chat2 .bui-composer-bar .bui-selbtn {padding:0 4px;gap:4px;}
-  /* 密钥按钮不能只剩图标：保留短名称和箭头，空间不足时由 nm2 自然省略。 */
-  .ui-chat2 .bui-composer-bar .is-key>.bui-selbtn .nm2 {display:block;max-width:8ch;}
-  .ui-chat2 .bui-composer-bar .is-key>.bui-selbtn .caret {display:flex;}
-  .ui-chat2 .bui-modelwrap>.bui-upmenu.is-reasoning {left:auto;right:0;}
-
-}
 @media(prefers-reduced-motion:reduce) {.execution-pill,.execution-pill *,.execution-detail,.lele-perch-anchor{animation:none!important;transition:none!important;}}
-
-/* 执行记录按步骤横向流动，长内容在胶囊里收短，详情仍在点击后向下展开。 */
 .agent-trajectory { flex-direction:row; flex-wrap:wrap; align-items:flex-start; column-gap:9px; row-gap:8px; }
 .execution-step { flex:0 1 auto; max-width:min(100%,680px); }
 .execution-pill { max-width:100%; }
@@ -140,11 +101,9 @@
 .execution-step[data-execution-tool="binance"] .execution-pill {border-color:color-mix(in srgb,var(--orange) 25%,var(--line));background:color-mix(in srgb,var(--orange) 4%,var(--surface));}
 .execution-step.is-failed .execution-pill {border-color:var(--red);background:color-mix(in srgb,var(--red) 5%,var(--surface));}
 @media(max-width:700px) { .agent-trajectory { column-gap:6px; row-gap:7px; }.execution-step{max-width:100%;}.execution-pill-preview{max-width:20ch;} }
-
 .execution-step[hidden] {display:none;}
 .execution-step.is-focused {flex:0 0 100%;max-width:100%;}
 .ui-chat2-shelf-toolbar {display:flex;align-items:center;gap:4px;margin-bottom:8px;}
-.ui-chat2-shelf-toolbar .bui-shelf-new {flex:1;min-width:0;margin:0;}
 .ui-chat2-shelf-toolbar .ui-chat2-iconbtn {flex-shrink:0;}
 .ui-chat2-thread-wrap {position:relative;display:flex;flex:1;min-height:0;min-width:0;}
 .ui-chat2-thread-wrap>.ui-chat2-thread {width:100%;min-width:0;}
@@ -159,8 +118,6 @@
 .conversation-rail-preview strong {display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .conversation-rail-preview p {margin:3px 0 0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;opacity:.65;overflow-wrap:anywhere;}
 @media(max-width:700px) {.conversation-rail,.conversation-rail button{width:12px;}.conversation-rail button.is-current span{width:11px;}.conversation-rail button:hover span{width:10px;}}
-
-/* 各方法使用原有身体分组摆出自己的动作，完成时保留这一姿态与工作道具。 */
 .execution-pill .chat-mascot {animation:none;--cap-head:translate(0,0);--cap-left:translate(0,0);--cap-right:translate(0,0);--cap-body:translate(0,0);--cap-tail:rotate(-10deg);}
 .execution-pill .chat-mascot .cat-cranium {animation:none;transform:var(--cap-head);transform-origin:16px 19px;}
 .execution-pill .chat-mascot .cat-body {animation:none;transform:var(--cap-body);transform-origin:16px 29px;}
@@ -189,7 +146,6 @@
 .execution-step.is-running .chat-mascot .cat-paw-right {animation:capsule-paw-work 2.4s ease-in-out infinite;}
 @keyframes capsule-head-work {0%,100%{transform:var(--cap-head)}50%{transform:var(--cap-head) translateY(-1px)}}
 @keyframes capsule-paw-work {0%,100%{transform:var(--cap-right)}50%{transform:var(--cap-right) translateY(-2px)}}
-
 .ui-chat2-sessions-count {margin-left:7px;color:var(--ink-3);font-size:11px;font-variant-numeric:tabular-nums;}
 .agent-work-state-notice {margin:8px 16px;}
 .ui-chat2-resume-actions {display:flex;gap:6px;flex-wrap:wrap;}

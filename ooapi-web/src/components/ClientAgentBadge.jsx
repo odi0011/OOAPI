@@ -1,6 +1,6 @@
 import React from "react";
-import { Tooltip } from "antd";
-import { RobotOutlined } from "@ant-design/icons";
+import {   Tooltip  } from "./arc/index";
+import { RobotOutlined  } from "./arc/icons";
 import agents from "../../../ooapi-server/src/services/client-agents.json";
 import "./client-agent.css";
 import { reasoningLabel, requestedReasoningLabel } from "../services/reasoning-display";

@@ -1,5 +1,5 @@
 .oo-client-agent { display:inline-flex;align-items:center;gap:5px;align-self:flex-start;max-width:100%;min-height:22px;padding:2px 8px;border:1px solid var(--line);border-radius:var(--r-pill,999px);background:var(--surface);color:var(--ink-2);font-size:11px;line-height:16px;white-space:nowrap; }
-.oo-client-agent img,.oo-client-agent>.anticon { width:14px;height:14px;flex:0 0 14px;object-fit:contain; }
+.oo-client-agent img { width:14px;height:14px;flex:0 0 14px;object-fit:contain; }
 .oo-client-agent>span:last-child { overflow:hidden;text-overflow:ellipsis; }
 .oo-reasoning-audit { display:inline;line-height:1.65;overflow-wrap:anywhere; }
 .oo-reasoning-actual { color:inherit;font-weight:400; }
@@ -15,7 +15,6 @@
 .oo-agent-rule-order { flex:1;color:var(--ink-3);font-size:11px; }
 .oo-agent-rule-grid { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--sp-3); }
 .oo-agent-rule-grid>label { display:flex;flex-direction:column;gap:6px;min-width:0;font-size:12px;color:var(--ink-2); }
-.oo-agent-rule-grid .ant-select,.oo-agent-rule-grid .ant-input-number { width:100%;min-width:0; }
 .oo-admin-setting-row--agent-rules { display:block!important; }
 .oo-admin-setting-row--agent-rules .oo-admin-setting-control { width:100%;max-width:none; }
 @media(max-width:640px) { .oo-agent-rule-grid { grid-template-columns:minmax(0,1fr); } }

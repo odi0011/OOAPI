@@ -1,3 +1,5 @@
+import { Card as ArcPanel } from "../components/arc/card/card";
+import { Button as ActionButton } from "../components/arc/index";
 // 个人主页 —— 统一路由 /u/:id
 // ---------------------------------------------------------------------------
 // 设计依据（Gemini 评审意见，第 3 点）：
@@ -14,12 +16,12 @@
 //
 // ③ 骨架属 A 类（标准工作台流式）：通栏卡片堆叠 + 原生纵向滚动。
 import React, { useCallback, useEffect, useState } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
-import { Button, Tabs, Typography, Empty, Skeleton, App as AntApp, Tag, Tooltip, Modal, Input } from "antd";
+import {   useParams, useNavigate, Link } from "react-router-dom";
+import { Button, Tabs, Typography, Empty, Skeleton, App as ArcApp, Tag, Tooltip, Modal, Input  } from "../components/arc/index";
 import {
   UserAddOutlined, MessageOutlined, EditOutlined, KeyOutlined, ReloadOutlined,
   EnvironmentOutlined, LinkOutlined, ClockCircleOutlined, CheckOutlined, UsergroupAddOutlined,
-} from "@ant-design/icons";
+ } from "../components/arc/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
@@ -43,16 +45,16 @@ function StatsStrip({ stats, onJump }) {
   return (
     <div className="oo-stats-strip">
       {items.map((it) => (
-        <button
+        <ActionButton type="text"
           key={it.key}
-          type="button"
-          className="bui-chip"
+          htmlType="button"
+          size="small"
           style={{ cursor: onJump ? "pointer" : "default", border: 0 }}
           onClick={() => onJump?.(it.key)}
           title={`查看${it.label}`}
         >
           {it.label} <b>{it.value ?? 0}</b>
-        </button>
+        </ActionButton>
       ))}
     </div>
   );
@@ -61,7 +63,7 @@ function StatsStrip({ stats, onJump }) {
 export default function ProfileViewPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const { user: me } = useApp();
   // **两个独立令牌**：主数据与 Tab 列表是两条并行请求。
   // 共用一个 useLatest 时，同一轮里 load() 拿 token 1、loadTab() 拿 token 2，
@@ -230,9 +232,9 @@ export default function ProfileViewPage() {
   if (loading && !data) {
     return (
       <div className="oo-page">
-        <div className="oo-panel" style={{ padding: 20 }}>
+        <ArcPanel className="oo-panel" style={{ padding: 20 }}>
           <Skeleton avatar active paragraph={{ rows: 3 }} />
-        </div>
+        </ArcPanel>
       </div>
     );
   }
@@ -241,9 +243,9 @@ export default function ProfileViewPage() {
     return (
       <div className="oo-page">
         <PageHeader title="个人主页" />
-        <div className="oo-panel" style={{ padding: "48px 20px" }}>
+        <ArcPanel className="oo-panel" style={{ padding: "48px 20px" }}>
           <Empty description="用户不存在或已停用" />
-        </div>
+        </ArcPanel>
       </div>
     );
   }
@@ -310,7 +312,7 @@ export default function ProfileViewPage() {
       </Modal>
 
       {/* 头部资料 + 统计条：统计内嵌在此处，紧贴身份信息，不抢占内容区 */}
-      <div className="oo-panel" style={{ padding: "16px 18px" }}>
+      <ArcPanel className="oo-panel" style={{ padding: "16px 18px" }}>
         <div className="oo-profile-head">
           <UserAvatar user={{ ...data, avatar_url: data?.avatar_url }} size={72} />
           <div style={{ minWidth: 0, flex: 1 }}>
@@ -350,7 +352,7 @@ export default function ProfileViewPage() {
             />
           </div>
         </div>
-      </div>
+      </ArcPanel>
 
       {/* 仅自己可见：用量概览（公开主页不显示余额/调用量） */}
       {isSelf && stats.usage ? (
@@ -366,7 +368,7 @@ export default function ProfileViewPage() {
         </div>
       ) : null}
 
-      <div className="oo-panel">
+      <ArcPanel className="oo-panel">
         <Tabs
           activeKey={tab}
           onChange={setTab}
@@ -392,7 +394,7 @@ export default function ProfileViewPage() {
             />
           )}
         </div>
-      </div>
+      </ArcPanel>
     </div>
   );
 }

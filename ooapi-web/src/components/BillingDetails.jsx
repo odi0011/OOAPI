@@ -1,6 +1,6 @@
 import OdAmount from "./OdAmount";
 import React, { useRef, useState } from "react";
-import { Button, Grid, Popover, Typography } from "antd";
+import {  Button, Table, Grid, Popover, Typography  } from "./arc/index";
 import { fmtOd, odOf } from "../services/format";
 import "./billing.css";
 
@@ -49,14 +49,12 @@ export function BillingDetails({ record, isAdmin = false, perUnit = 10000, compa
   return <div className={`oo-billing-details${compactView ? " oo-billing-details--compact" : ""}`}>
     <div className="oo-billing-heading"><strong>计费明细</strong></div>
     {bill ? <>
-      <table className="oo-billing-breakdown">
-        <colgroup><col style={{width:"17%"}}/><col style={{width:"19%"}}/><col style={{width:"26%"}}/><col style={{width:"38%"}}/></colgroup>
-        <thead><tr><th>类别</th><th>Token</th><th>单价 / 百万</th><th>费用</th></tr></thead>
-        <tbody>{rows.map(([key, label]) => {
-          const item = bill.components?.[key];
-          return <tr key={key}><th scope="row">{label}</th><td data-label="Token">{finite(item?.tokens) === null ? "—" : Number(item.tokens).toLocaleString()}</td><td data-label="单价 / 百万">{item?.mixed ? "多档" : <OdAmount>{compact(item?.unit_price)}</OdAmount>}</td><td data-label="费用">{odText(item?.cost_od, perUnit)}</td></tr>;
-        })}</tbody>
-      </table>
+      <Table size="small" pagination={false} rowKey="key" dataSource={rows.map(([key,label])=>({key,label,...bill.components?.[key]}))} columns={[
+        {title:"类别",dataIndex:"label",width:80},
+        {title:"Token",dataIndex:"tokens",align:"right",render:v=>finite(v)===null?"—":Number(v).toLocaleString()},
+        {title:"单价 / 百万",key:"price",align:"right",render:(_,item)=>item.mixed?"多档":<OdAmount>{compact(item.unit_price)}</OdAmount>},
+        {title:"费用",dataIndex:"cost_od",align:"right",render:v=>odText(v,perUnit)},
+      ]}/>
       {bill.price_mode === "mixed" ? <div className="oo-billing-mixed">
         <div className="oo-billing-section-title">本次实际单价 <span>每百万 Token</span></div>
         {rows.map(([key, label]) => <div key={key}><span>{label}</span><b>{bill.platform_unit_prices?.[key]?.length ? bill.platform_unit_prices[key].map((value, index) => <React.Fragment key={index}>{index ? " / " : ""}<OdAmount>{compact(value)}</OdAmount></React.Fragment>) : "未保存"}</b></div>)}

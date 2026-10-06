@@ -1,5 +1,5 @@
 import React from "react";
-import { Badge, Button, Progress, Table } from "antd";
+import {  Badge, Button, Progress, Table  } from "../arc/index";
 import { LineChart, SERIES_COLORS } from "../Charts";
 import { Blank, money, price, Panel, Pnl, Stats, StatusTag } from "./shared";
 

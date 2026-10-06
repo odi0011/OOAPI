@@ -1,4 +1,3 @@
-/* 出入场用 translate，重心用 transform，hover 用部位的 rotate：三者可以同时平滑变化。 */
 .lele-perch-anchor:not(.is-fragment):not(.pose-leap):not(.pose-transfer):not(.pose-drop).phase-enter .lele-edge-actor {animation:lele-arrive .86s var(--lele-ease) both;}
 .lele-perch-anchor:not(.is-fragment).phase-exit .lele-edge-actor {animation:lele-retreat .36s ease-in both;}
 .lele-perch-anchor.phase-enter .lele-edge-grip {animation:lele-grip-arrive .86s var(--lele-ease) both;}
@@ -19,8 +18,6 @@
 .lele-perch-anchor.pose-knead .lele-edge-grip i:last-child {animation-delay:-.65s;}
 .lele-perch-anchor.pose-paws .lele-edge-grip i {animation:lele-paw-hello 6.4s .9s ease-in-out infinite;}
 .lele-perch-anchor.pose-paws .lele-edge-grip i:last-child {animation-delay:1.2s;}
-
-/* 躺下先卸力，再收爪；不把坐姿图片旋转成倒立的猫。 */
 .lele-perch-anchor:is(.pose-sleep,.pose-curl,.pose-zzz) .lele-edge-actor {--rest-y:3px;--rest-angle:12deg;--rest-sx:1.02;--rest-sy:.94;}
 .lele-perch-anchor:is(.pose-sleep,.pose-curl,.pose-zzz) .cat-cranium {rotate:-6deg;translate:0 1px;animation:lele-sleep-head 6s ease-in-out infinite;}
 .lele-perch-anchor:is(.pose-sleep,.pose-curl,.pose-zzz) .cat-paws {transform:translateY(-1px) scaleX(.94);transform-origin:16px 26px;}
@@ -33,8 +30,6 @@
 .lele-perch-anchor.pose-loaf .cat-paws {transform:translateY(-2px) scaleX(.85);transform-origin:16px 26px;}
 .lele-perch-anchor.pose-loaf .cat-cranium {translate:0 1px;}
 .lele-perch-anchor.pose-drowsy .cat-cranium {animation:lele-drowsy-head 7s ease-in-out infinite;}
-
-/* 每个小动作留出停顿：舔一下、洗两下、停下来看看，再进入下一轮。 */
 .lele-perch-anchor.pose-lick .cat-paw-left {animation:lele-paw-lick 5.8s ease-in-out infinite;}
 .lele-perch-anchor.pose-lick .cat-cranium {animation:lele-lick-head 5.8s ease-in-out infinite;}
 .lele-perch-anchor.pose-wash .cat-paw-right {animation:lele-paw-wash 6.6s ease-in-out infinite;}
@@ -55,15 +50,12 @@
 .lele-perch-anchor.pose-walk .cat-paw-right {animation:lele-walk-paw 2.8s 1.1s ease-in-out 1 reverse;}
 .lele-perch-anchor.pose-annoyed .cat-cranium {rotate:4deg;translate:0 1px;}
 .lele-perch-anchor.pose-pop .cat-body {animation:lele-greet-body 1.2s ease-in-out both;}
-
-/* 身体不离开原位置，抚摸只叠加歪头和轻轻眯眼；快速划过不触发。 */
 .lele-perch-anchor.is-hovered:not(.is-fragment):not(.pose-leap):not(.pose-transfer):not(.pose-drop) .cat-cranium {rotate:-5deg;translate:0 -.5px;}
 .lele-perch-anchor.is-hovered:not(.is-fragment) .cat-eyes {scale:1 .68;}
 .lele-perch-anchor.is-hovered:not(.is-fragment) .cat-pupils {translate:0 -.3px;}
 .lele-perch-anchor.is-questioning .lele-edge-actor {transition:transform .6s var(--lele-ease);}
 .lele-perch-anchor.is-questioning .cat-cranium {animation:lele-head-idle 6.8s ease-in-out infinite;}
 .lele-speech,.lele-speech-tail {transition-timing-function:var(--lele-ease);transition-duration:.52s;}
-
 @keyframes lele-arrive {0%{translate:0 62px}55%{translate:0 -2px}74%{translate:0 1px}100%{translate:0 0}}
 @keyframes lele-retreat {0%{translate:0 0}22%{translate:0 -2px}100%{translate:0 64px}}
 @keyframes lele-grip-arrive {0%,18%{scale:1 0;translate:0 -3px}54%{scale:1 1.08;translate:0 0}100%{scale:1;translate:0 0}}

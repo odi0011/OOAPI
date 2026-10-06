@@ -1,4 +1,3 @@
-/* 行走方向由头、身体、脚步和尾巴共同变化；不旋转整张正脸冒充转身。 */
 .lele-perch-anchor:is(.pose-chase,.pose-spin) .lele-edge-viewport {height:86px;width:110px;left:-26px;}
 .lele-perch-anchor:is(.pose-chase,.pose-spin) .lele-edge-actor {left:26px;bottom:-4px;--rest-y:0px;animation:none;transform:none;}
 .lele-perch-anchor:is(.pose-chase,.pose-spin) .chat-mascot {--turn-time:5.8s;--turn-count:1;}
@@ -20,8 +19,6 @@
 @keyframes lele-step-right {0%,8%,90%,100%{transform:none}18%{transform:translate(1px,0)}30%{transform:translate(2px,-2px) rotate(-12deg)}43%{transform:translate(-2px,0)}53%{transform:translate(-5px,-2px) rotate(12deg)}66%{transform:translate(-4px,0)}78%{transform:translate(-2px,-1px)}}
 @keyframes lele-turn-tail {0%,8%,90%,100%{transform:none}20%{transform:translate(-1px,-2px) rotate(-35deg)}43%{transform:translate(-10px,-3px) rotate(-55deg)}60%{transform:translate(-16px,-1px) rotate(-20deg)}74%{transform:translate(-6px,-2px) rotate(15deg)}}
 @keyframes lele-turn-shadow {23%,70%{transform:scaleX(.7)}43%{transform:scaleX(.9)}}
-
-/* 上沿是脚掌的落脚面。空中和站定保持相同完整身体及层级，不在落地帧切换半身裁剪。 */
 .lele-perch-anchor:is(.pose-leap,.pose-transfer,.pose-drop) {z-index:30;}
 .lele-perch-anchor:is(.pose-leap,.pose-transfer,.pose-drop) .lele-edge-viewport {height:84px;overflow:visible;contain:none;clip-path:inset(-1000px -1000px calc(-1 * var(--edge-floor,0px)) -1000px);}
 .lele-perch-anchor:is(.pose-leap,.pose-transfer,.pose-drop) .lele-edge-actor {bottom:-4px;--rest-y:0px;--rest-angle:0deg;transform:none;}

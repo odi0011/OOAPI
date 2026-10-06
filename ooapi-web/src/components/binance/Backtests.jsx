@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Alert, Button, Col, Form, InputNumber, Row, Select, Table } from "antd";
+import {  Alert, Button, Col, Form, InputNumber, Row, Select, Table  } from "../arc/index";
 import { LineChart, SERIES_COLORS } from "../Charts";
 import { binanceApi, date, money, Panel, Pnl, positive, required, Stats } from "./shared";
 

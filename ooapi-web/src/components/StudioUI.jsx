@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { Button, Dropdown, Input, Modal } from "antd";
-import { ArrowLeftOutlined, ArrowRightOutlined, PauseOutlined, CaretRightOutlined, SearchOutlined, DownOutlined } from "@ant-design/icons";
+import {   Link, useNavigate } from "react-router-dom";
+import { Button, Dropdown, Input, Modal  } from "./arc/index";
+import { ArrowLeftOutlined, ArrowRightOutlined, PauseOutlined, CaretRightOutlined, SearchOutlined, DownOutlined  } from "./arc/icons";
 import ThemeSwitch from "./ThemeSwitch";
 import BrandLogo from "./BrandLogo";
 import "../studio.css";

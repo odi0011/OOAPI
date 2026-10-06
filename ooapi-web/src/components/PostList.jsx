@@ -1,3 +1,4 @@
+import { Button as ActionButton } from "./arc/index";
 // 帖子列表项 —— 社区大厅与个人主页共用（第 80 批重排）
 // ---------------------------------------------------------------------------
 // 仍然是**单列列表式**（不用卡片瀑布流：开发者社区的长标题、日志、代码片段在卡片里会折行破碎）。
@@ -15,8 +16,8 @@
 //   ④ 只有发帖时间，看不出「这帖刚有人回复」—— 讨论区最重要的活跃信号缺失。
 // 三条硬规则保留：摘要 2 行截断；多图只给 3 张微缩图 + N；阅读流由标题主导。
 import React from "react";
-import { Tag, Skeleton, Empty, Tooltip } from "antd";
-import { LikeOutlined, EyeOutlined, PushpinFilled, PictureOutlined } from "@ant-design/icons";
+import {   Tag, Skeleton, Empty, Tooltip  } from "./arc/index";
+import { LikeOutlined, EyeOutlined, PushpinFilled, PictureOutlined  } from "./arc/icons";
 import { Link } from "react-router-dom";
 import UserAvatar from "./UserAvatar";
 import TopicIcon from "./TopicIcon";
@@ -117,8 +118,8 @@ export default function PostList({ items = [], loading, empty = "还没有帖子
 
               <div className="oo-post-meta">
                 {p.topic ? (
-                  <button
-                    type="button"
+                  <ActionButton type="text"
+                    htmlType="button"
                     className="oo-post-topic"
                     onClick={(e) => {
                       if (!onTopic) return;
@@ -129,7 +130,7 @@ export default function PostList({ items = [], loading, empty = "还没有帖子
                   >
                     <TopicIcon icon={p.topic_icon} imageUrl={p.topic_image_url} size={14} plain />
                     {p.topic}
-                  </button>
+                  </ActionButton>
                 ) : null}
                 {p.author ? <span className="oo-post-author">{p.author.display_name || p.author.username}</span> : null}
                 <span title={fmtDate(p.created_time, "YYYY-MM-DD HH:mm")}>{relTime(p.created_time)}</span>

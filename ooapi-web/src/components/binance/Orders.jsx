@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Alert, Button, Input, Popconfirm, Space, Table, Tabs, Tag } from "antd";
+import {  Alert, Button, Input, Popconfirm, Space, Table, Tabs, Tag  } from "../arc/index";
 import { binanceApi, date, EnvTag, price, Panel, Pnl, StatusTag } from "./shared";
 
 export default function Orders({ orders, accountId, act, busy }) {

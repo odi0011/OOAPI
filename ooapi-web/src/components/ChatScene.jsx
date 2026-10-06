@@ -1,3 +1,4 @@
+import { Button as ActionButton } from "./arc/index";
 import React, { useEffect, useRef, useState } from "react";
 import ChatMascot from "./ChatMascot";
 import "./chat-scene.css";
@@ -29,7 +30,7 @@ export default function ChatScene({ loading = false, onStart }) {
     <div className="lele-scene-content">
       <div className="lele-scene-stage">
         <span className="lele-scene-orbit" aria-hidden="true" />
-        {loading ? <span className="lele-scene-character"><ChatMascot state="loading" /></span> : <button className="lele-scene-character" type="button" aria-label="和乐乐打个招呼" onClick={greet}><ChatMascot state={greeted ? "success" : "idle"} /></button>}
+        {loading ? <span className="lele-scene-character"><ChatMascot state="loading" /></span> : <ActionButton type="text" className="lele-scene-character" htmlType="button" aria-label="和乐乐打个招呼" onClick={greet}><ChatMascot state={greeted ? "success" : "idle"} /></ActionButton>}
         {!loading && <span className="lele-scene-hello" aria-live="polite">{greeted ? "在呢～" : ""}</span>}
         {loading && <span className="lele-scene-trail" aria-hidden="true"><i/><i/><i/></span>}
       </div>

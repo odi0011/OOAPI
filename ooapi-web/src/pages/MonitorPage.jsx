@@ -1,14 +1,16 @@
+import { Badge as ArcBadge } from "../components/arc/badge/badge";
+import { Card as ArcPanel } from "../components/arc/card/card";
 import OdAmount from "../components/OdAmount";
 // 运维监控：进程实时指标与数据库历史用量分开展示，告警保留独立操作区。
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  App as AntApp, Segmented, Spin, Empty, Table, Tag, Button, Modal, Form,
+  App as ArcApp, Segmented, Spin, Empty, Table, Tag, Button, Modal, Form,
   Input, InputNumber, Select, Switch, Space, Popconfirm, Badge, Alert as AntAlert, Divider,
-} from "antd";
+ } from "../components/arc/index";
 import {
   ReloadOutlined, AlertOutlined, PlusOutlined,
   DeleteOutlined, EditOutlined, ExperimentOutlined, BellOutlined,
-} from "@ant-design/icons";
+ } from "../components/arc/icons";
 import { API } from "../services/api";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
@@ -66,7 +68,7 @@ const SEV_COLOR = { P0: "red", P1: "orange", P2: "gold", P3: "default" };
 // 告警规则编辑
 // ---------------------------------------------------------------------------
 function RuleModal({ open, rule, metrics, operators, severities, onClose, onSaved }) {
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
 
@@ -199,7 +201,7 @@ function RuleModal({ open, rule, metrics, operators, severities, onClose, onSave
 // 告警面板：规则 + 事件 + 维护窗口
 // ---------------------------------------------------------------------------
 function AlertPanel({ data, onReload }) {
-  const { message, modal } = AntApp.useApp();
+  const { message, modal } = ArcApp.useApp();
   const [rules, setRules] = useState([]);
   const [events, setEvents] = useState({ list: [], stat: {}, notify: [] });
   const [meta, setMeta] = useState({ metrics: [], operators: [], severities: [] });
@@ -331,7 +333,7 @@ function AlertPanel({ data, onReload }) {
   ];
 
   return (
-    <div className="oo-panel" style={{ padding: 14, marginTop: 12 }}>
+    <ArcPanel className="oo-panel" style={{ padding: 14, marginTop: 12 }}>
       {loadError && <AntAlert type="error" showIcon message="告警数据更新失败" description={loadError} action={<Button size="small" onClick={load}>重试</Button>} style={{ marginBottom: 16 }} />}
       <div className="oo-stats-card-head oo-monitor-alert-head" style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -382,15 +384,15 @@ function AlertPanel({ data, onReload }) {
       </div>
 
       <div className="oo-stats-strip">
-        <span className="bui-chip">规则 <b>{rules.length}</b></span>
-        <span className="bui-chip">告警中 <b style={{ color: events.stat?.firing ? "var(--red)" : undefined }}>{events.stat?.firing ?? 0}</b></span>
-        <span className="bui-chip">近7天恢复 <b>{events.stat?.resolved ?? 0}</b></span>
-        <span className="bui-chip">P0 <b>{events.stat?.p0 ?? 0}</b></span>
-        <span className="bui-chip">P1 <b>{events.stat?.p1 ?? 0}</b></span>
+        <ArcBadge size="sm" tone="neutral">规则 <b>{rules.length}</b></ArcBadge>
+        <ArcBadge size="sm" tone="neutral">告警中 <b style={{ color: events.stat?.firing ? "var(--red)" : undefined }}>{events.stat?.firing ?? 0}</b></ArcBadge>
+        <ArcBadge size="sm" tone="neutral">近7天恢复 <b>{events.stat?.resolved ?? 0}</b></ArcBadge>
+        <ArcBadge size="sm" tone="neutral">P0 <b>{events.stat?.p0 ?? 0}</b></ArcBadge>
+        <ArcBadge size="sm" tone="neutral">P1 <b>{events.stat?.p1 ?? 0}</b></ArcBadge>
         {(events.notify || []).map((n) => (
-          <span className="bui-chip" key={n.channel}>
+          <ArcBadge size="sm" tone="neutral" key={n.channel}>
             {n.channel === "email" ? "邮件" : "Webhook"}投递 <b style={{ color: n.failed ? "var(--red)" : undefined }}>{n.total - n.failed}/{n.total}</b>
-          </span>
+          </ArcBadge>
         ))}
       </div>
 
@@ -420,7 +422,7 @@ function AlertPanel({ data, onReload }) {
         onClose={() => setRuleModal({ open: false, rule: null })}
         onSaved={load}
       />
-    </div>
+    </ArcPanel>
   );
 }
 
@@ -433,10 +435,10 @@ const msText = (v) => v == null ? "—" : v >= 1000 ? (v / 1000).toFixed(2) + " 
 
 function MonitorHealth({ health, diagnosis }) {
   const tone = HEALTH_TONE[health?.level] || HEALTH_TONE.idle;
-  return <section className="oo-panel oo-monitor-health">
+  return <ArcPanel className="oo-panel oo-monitor-health">
     <div className="oo-monitor-score"><span>运行健康度</span><strong style={{ color: tone.color }}>{health?.score ?? "—"}<small>{tone.text}</small></strong><small>{health?.hasTraffic ? "业务 " + (health.parts?.business ?? "—") + " · 基础设施 " + (health.parts?.infra ?? "—") : "暂无足够流量，业务评分仅供参考"}</small></div>
     <div className="oo-monitor-diagnosis">{(diagnosis || []).map((d, i) => <div key={i}><h3 style={{ color: d.severity === "critical" ? "var(--red)" : d.severity === "warning" ? "var(--orange)" : "var(--ink)" }}>{d.title}</h3><p>{d.impact}</p><p>建议：{d.advice}</p></div>)}{!diagnosis?.length && <p>本次采样未发现需要处理的问题。</p>}</div>
-  </section>;
+  </ArcPanel>;
 }
 
 export default function MonitorPage() {

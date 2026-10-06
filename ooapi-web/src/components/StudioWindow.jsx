@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Button } from "antd";
-import { CloseOutlined, ExpandOutlined, CompressOutlined } from "@ant-design/icons";
+import {   Button  } from "./arc/index";
+import { CloseOutlined, ExpandOutlined, CompressOutlined  } from "./arc/icons";
 import BrandLogo from "./BrandLogo";
 
 // 窗口只管理桌面交互；内部仍是正常页面链接和滚动容器。

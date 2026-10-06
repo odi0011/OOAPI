@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Layout, Avatar, Dropdown, Grid, Drawer, Button } from "antd";
+import { Breadcrumb } from "./arc/breadcrumb/breadcrumb";
+import {   Layout, Avatar, Dropdown, Grid, Drawer, Button  } from "./arc/index";
 import {
   HomeOutlined,
   DashboardOutlined,
@@ -24,7 +25,7 @@ import {
   ThunderboltOutlined,
   BellOutlined,
   BgColorsOutlined,
-} from "@ant-design/icons";
+ } from "./arc/icons";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";
 import { userDataVisibility } from "../services/visibility";
@@ -349,15 +350,7 @@ export default function MainLayout() {
               title={isMobile ? "打开导航" : collapsed ? "展开侧边栏" : "收起侧边栏"}
               onClick={() => (isMobile ? setDrawer(true) : setCollapsed(!collapsed))}
             />
-            <div className="oo-crumb">
-              {crumb.slice(0, -1).map((t) => (
-                <React.Fragment key={t}>
-                  <span>{t}</span>
-                  <span className="oo-crumb-sep">/</span>
-                </React.Fragment>
-              ))}
-              <span className="oo-crumb-current">{crumb[crumb.length - 1] || ""}</span>
-            </div>
+            <Breadcrumb ariaLabel="当前位置" items={crumb.map(label => ({ label }))} />
           </div>
 
           <div className="oo-header-right">

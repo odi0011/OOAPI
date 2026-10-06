@@ -8,7 +8,7 @@
 //
 // 流程：选文件 → 读入内存 → 显示预览与缩放滑杆 → 确认后导出 → 交给父组件上传。
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Modal, Slider, Button, Space, App as AntApp, Spin } from "antd";
+import {  Modal, Slider, Button, Space, App as ArcApp, Spin  } from "./arc/index";
 import { API } from "../services/api";
 
 const MAX_OUT = 512; // 输出边长上限（正方形）
@@ -87,7 +87,7 @@ async function maxUploadBytes() {
 }
 
 export default function AvatarUploader({ open, onClose, onDone }) {
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const fileRef = useRef(null);
   const imgRef = useRef(null);
   const [preview, setPreview] = useState("");

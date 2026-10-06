@@ -1,5 +1,6 @@
+import { Button as ActionButton } from "./arc/index";
 import React, { useEffect, useMemo, useState } from "react";
-import { Tooltip } from "antd";
+import {  Tooltip  } from "./arc/index";
 
 const textOf = message => (message?.parts || []).filter(p => p.type === "text").map(p => p.text || "").join(" ").replace(/\s+/g, " ").trim();
 
@@ -39,7 +40,7 @@ export default function ConversationRail({ messages, threadRef, onNavigate }) {
   };
   return <nav className="conversation-rail" aria-label="对话消息导航">
     {turns.map((turn, i) => <Tooltip key={turn.index} placement="right" trigger={["hover", "focus"]} mouseEnterDelay={.12} title={<div className="conversation-rail-preview"><strong>{turn.prompt}</strong>{turn.answer && <p>{turn.answer}</p>}</div>}>
-      <button type="button" className={turn.index === active ? "is-current" : ""} aria-current={turn.index === active ? "step" : undefined} aria-label={`第 ${i + 1} 轮：${turn.prompt.slice(0, 65)}`} onClick={() => jump(turn.index)}><span/></button>
+      <ActionButton type="text" htmlType="button" className={turn.index === active ? "is-current" : ""} aria-current={turn.index === active ? "step" : undefined} aria-label={`第 ${i + 1} 轮：${turn.prompt.slice(0, 65)}`} onClick={() => jump(turn.index)}><span/></ActionButton>
     </Tooltip>)}
   </nav>;
 }

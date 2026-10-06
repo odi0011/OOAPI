@@ -1,3 +1,4 @@
+import { Button as ActionButton } from "./arc/index";
 import OdAmount from "./OdAmount";
 // 使用记录页的图表分析区
 // ---------------------------------------------------------------------------
@@ -11,7 +12,7 @@ import OdAmount from "./OdAmount";
 //   ③ 模型消费趋势（Top 5 多折线）与时段热点（7 天 × 24 小时）；
 //   ④ 模型消费排行与模型调用占比（环形图）。
 import React, { useState } from "react";
-import { Spin, Empty } from "antd";
+import {  Spin, Empty  } from "./arc/index";
 import { LineChart, RankBar, Legend, Donut, ChartCard, SERIES_COLORS, fmtCompact } from "./Charts";
 import { odOf } from "../services/format";
 
@@ -79,9 +80,9 @@ export default function UsageAnalysis({ byDay = [], byModel = [], modelSeries = 
       <div className="oo-panel" style={{ padding: 16 }}>
         <div style={{ color: "var(--red)", fontSize: 13 }}>{error}</div>
         {onRefresh ? (
-          <button type="button" className="bui-btn" style={{ marginTop: 8 }} onClick={onRefresh}>
+          <ActionButton size="small" type="default" htmlType="button"  style={{ marginTop: 8 }} onClick={onRefresh}>
             重试
-          </button>
+          </ActionButton>
         ) : null}
       </div>
     );

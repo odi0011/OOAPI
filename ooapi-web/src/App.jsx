@@ -1,6 +1,6 @@
 import React from "react";
-import { Routes, Route, Navigate, useLocation } from "react-router-dom";
-import { Alert, Button, Spin } from "antd";
+import {  Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { Alert, Button, Spin  } from "./components/arc/index";
 import MainLayout from "./components/MainLayout";
 import ErrorBoundary from "./components/ErrorBoundary";
 import HomePage from "./pages/HomePage";

@@ -29,8 +29,6 @@ button.lele-scene-character:active .chat-mascot { transform: translateY(0) scale
 .lele-scene.is-loading .lele-scene-art { opacity: .55; }
 .lele-scene.is-loading .lele-scene-stage { transform: scale(.72); margin-bottom: -10px; }
 .lele-scene.is-loading .lele-scene-character {animation:none;}
-
-
 .lele-scene-loading { margin: 0; color: var(--ink-3); font-size: 12px; line-height: 1.8; }
 .lele-scene-loading>span { animation: lele-preview 1.4s infinite; }
 .lele-scene-trail { position: absolute; left: 5px; bottom: 42px; display: flex; gap: 5px; }
@@ -44,6 +42,5 @@ button.lele-scene-character:active .chat-mascot { transform: translateY(0) scale
 .lele-scene[data-motion="off"] * { animation-play-state: paused !important; }
 @media (max-width: 700px), (max-height: 650px) { .lele-scene { min-height: 250px; }.lele-scene-stage { transform: scale(.85); margin-bottom: 0; }.lele-scene-caption { font-size: 12px; } }
 @media (prefers-reduced-motion: reduce) { .lele-scene *, .lele-scene *::before, .lele-scene *::after { animation: none !important; transition: none !important; } }
-
 @keyframes lele-scene-greet {0%,100%{transform:none}20%{transform:translateY(2px) scale(1.02,.97)}48%{transform:translateY(-6px)}72%{transform:translateY(1px) scale(1.02,.98)}88%{transform:translateY(-.5px)}}
 @media(prefers-reduced-motion:reduce) {button.lele-scene-character:is(:hover,:active) .chat-mascot {transform:none;filter:none;}}

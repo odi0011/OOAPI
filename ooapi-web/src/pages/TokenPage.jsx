@@ -1,12 +1,14 @@
+import { Badge as ArcBadge } from "../components/arc/badge/badge";
+import { Card as ArcPanel } from "../components/arc/card/card";
 import OdAmount from "../components/OdAmount";
-import { OdCoin } from "../components/OdCoin";
+import {   OdCoin } from "../components/OdCoin";
 import React, { useEffect, useState, useCallback } from "react";
 import {
   Button, Table, Modal, Form, Input, Switch, InputNumber, DatePicker,
-  Select, Tag, Space, Typography, App as AntApp, Popconfirm, Tooltip, Empty,
+  Select, Tag, Space, Typography, App as ArcApp, Popconfirm, Tooltip, Empty,
   Alert, Grid,
-} from "antd";
-import { PlusOutlined, CopyOutlined, ReloadOutlined, KeyOutlined } from "@ant-design/icons";
+ } from "../components/arc/index";
+import { PlusOutlined, CopyOutlined, ReloadOutlined, KeyOutlined  } from "../components/arc/icons";
 import dayjs from "dayjs";
 import { API } from "../services/api";
 import { copyText, fmtDate, odOf, unitsPerOd } from "../services/format";
@@ -20,7 +22,7 @@ import { modelSourceVendors } from "../services/model-sources";
 const { Text } = Typography;
 
 export default function TokenPage() {
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const { status, user } = useApp();
   const visibility = userDataVisibility(status, user);
   const [items, setItems] = useState([]);
@@ -252,7 +254,7 @@ export default function TokenPage() {
   const screens = Grid.useBreakpoint();
   const isNarrow = !screens.md; // < 768px
   // 各列在手机上的宽度（与下面 columns 的 width 表达式保持一致，否则 scroll.x
-  // 与真实列宽之和对不上，AntD 会按比例压缩每一列，反而更容易截断）。
+  // 与真实列宽之和对不上，表格会按比例压缩每一列，反而更容易截断）。
   //
   // 窄屏下密钥列只留「复制按钮」的宽度（56px）——这是量出来的结论，不是拍脑袋：
   // 手机视口 390px、可滚动区只有 370px，而「名称」150 + 固定的「操作」180
@@ -359,9 +361,9 @@ export default function TokenPage() {
           if (!g) {
             return (
               <Tooltip title="该密钥未绑定分组，调用会被拒绝（403）。点「编辑」给它选一个分组即可恢复。">
-                <span className="bui-chip" style={{ color: "var(--pill-red-ink)", background: "var(--pill-red-tint)" }}>
+                <ArcBadge size="sm" tone="neutral" style={{ color: "var(--pill-red-ink)", background: "var(--pill-red-tint)" }}>
                   未绑定 · 不可用
-                </span>
+                </ArcBadge>
               </Tooltip>
             );
           }
@@ -391,7 +393,7 @@ export default function TokenPage() {
             >
               <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                 <ModelLabel model={list[0]} channelTypes={modelSourceVendors(list[0], meta?.model_vendors)} size={13} />
-                {list.length > 1 ? <span className="bui-chip">+{list.length - 1}</span> : null}
+                {list.length > 1 ? <ArcBadge size="sm" tone="neutral">+{list.length - 1}</ArcBadge> : null}
               </span>
             </Tooltip>
           );
@@ -442,7 +444,7 @@ export default function TokenPage() {
         }
       />
 
-      <div className="oo-panel">
+      <ArcPanel className="oo-panel">
         {loadError ? (
           <Alert
             type="error"
@@ -475,7 +477,7 @@ export default function TokenPage() {
             ),
           }}
         />
-      </div>
+      </ArcPanel>
 
       <Modal
         title={editing ? "编辑令牌" : "创建令牌"}

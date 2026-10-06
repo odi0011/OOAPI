@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Alert, App as AntApp, Button, Checkbox, Col, Form, Input, InputNumber, Modal, Row, Select, Space, Table } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import {   Alert, App as ArcApp, Button, Checkbox, Col, Form, Input, InputNumber, Modal, Row, Select, Space, Table  } from "../arc/index";
+import { PlusOutlined  } from "../arc/icons";
 import { binanceApi, date, Panel, Pnl, positionsOptions, positive, required, StatusTag, symbolRule } from "./shared";
 
 export default function Strategies({ strategies, account, accountId, act, busy }) {
-  const { modal } = AntApp.useApp();
+  const { modal } = ArcApp.useApp();
   const [editing, setEditing] = useState(null);
   const [open, setOpen] = useState(false);
   const [logStrategy, setLogStrategy] = useState(null);

@@ -11,7 +11,7 @@
 > **分支约束（强制）**：仓库**只使用 `main` 一个分支**。禁止新建/推送 `master` 或其他长期分支；
 > 临时分支用完即删。提交永远只推到 `origin/main`。
 
-最后更新：2026-09-20
+最后更新：2026-10-06
 
 ---
 
@@ -36,7 +36,7 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
 | 层 | 技术 | 目录 |
 |---|---|---|
 | 后端 | Node.js 18+ · Express 4 · MySQL（mysql2）· JWT | `ooapi-server/` |
-| 前端 | React 18 · Vite 5 · Ant Design 5 | `ooapi-web/` |
+| 前端 | React 19 · Vite 5 · Arc UI 免费 registry 组件（MIT） | `ooapi-web/` |
 | 上游适配 | 网页版反代（Playwright）+ OpenAI 兼容 API | `ooapi-server/src/services/upstream/` |
 
 ### 1.1 后端关键模块地图
@@ -91,12 +91,14 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
 | `src/services/format.js` | 唯一金额/时间格式出口 | 金额必须用 `fmtOd/odOf/unitsPerOd`，禁止各页自行除以 10000 |
 | `src/services/stream.js` | SSE 客户端 | JSON 解析与业务回调异常分开处理 |
 | `src/context/AppContext.jsx` | 全局状态：status/user | 监听 401 广播 |
-| `src/styles.css` | 设计令牌 + `oo-*` 组件类 | 新页面复用 `oo-panel/oo-kv/oo-bar/oo-table`，颜色只用 CSS 变量 |
+| `src/components/arc/` | Arc 官方免费组件源码、CSS Modules 与业务接口适配 | 基础控件直接使用 registry 源码；`index.jsx`、`controls.jsx`、`forms.jsx`、`data.jsx`、`overlays.jsx` 连接现有字段/事件/分页契约，不能只模仿外观；保留 MIT `LICENSE` |
+| `src/components/arc/foundation.css` + `src/theme/tokens.css` | Arc 设计令牌与站点语义变量映射 | 字体由后台外观统一控制；默认站酷快乐体，不得被组件库默认字体覆盖 |
+| `src/application-layout.css` + `src/components/arc/application.css` | 页面布局与必要业务组合 | 只保留产品布局/契约适配，不重建旧组件皮肤；新增基础控件优先使用 Arc，移除的 `styles.css`、`beautifului.*` 不得复建 |
 | `src/components/Markdown.jsx` | 模型输出渲染 | 链接必须过 `safeHref` 协议白名单 |
-| `src/pages/*` | 业务页 | 页面结构统一：`PageHeader` + `oo-panel`；表单校验必须 catch |
+| `src/pages/*` | 业务页 | 使用 Arc Card / Table / Form 等组合页面；保留原有权限、字段、筛选、操作与校验语义；首页布局不变，表单校验必须 catch |
 | `src/pages/ChatPage.jsx` + `services/chat.js` | **对话页**（第 16 批重构） | 会话/消息/设定全部来自服务端；运行一轮走 `/api/chat/run`（SSE，事件见 services/chat.js 注释）；消息按 parts 渲染 |
-| `src/components/beautifului-chat.jsx` + `chat.css` | 对话页原语（Shelf/ToolChips/Notice/TodoPanel/OrchestrationBar） | 与 `beautifului.*` 同一来源（MIT），只把 Tailwind 换成本项目 OKLCH token；改动请同步两处 token |
-| `src/components/Charts.jsx` | **全站图表唯一入口**（第 34 批） | `LineChart/BarChart/RankBar/Sparkline/Legend` + `SERIES_COLORS`；新页面画图必须复用，禁止自写 SVG 与配色。规范见 2.5 |
+| `src/components/ChatParts.jsx` + `PromptBar.jsx` | Arc 控件组合的会话侧栏、通知、任务与输入区 | 仅保留对话状态、输入法、附件、模型/推理选择等业务行为；Markdown、流式消息与乐乐需要的专用布局不伪装成通用组件 |
+| `src/components/Charts.jsx` | **全站图表唯一入口** | 适配 Arc LineChart / BarChart / DonutChart / Sparkline 等真实源码；业务数据、颜色、数字格式共用，禁止另写同类 SVG 图表。规范见 2.5 |
 | `src/components/ChannelQuota.jsx` | 渠道额度展示（sub2api 风） | 窗口标签（5h/7d/30d）由接口返回的 `limit_window_seconds` 推导，**不要硬编码**；颜色分档 <70 绿 / 70-90 橙 / >90 红 |
 | `src/components/ModelPicker.jsx` | 模型范围选择器 | 「从上游获取模型」调 `/channel/:id/upstream-models`；空选 = 该厂商全部模型（与后端语义一致） |
 | `src/pages/MonitorPage.jsx` | **运维监控 + 告警中心**（第 34 批） | 数据来自 `/api/monitor/snapshot`（轮询）与 `/api/monitor/stream`（SSE 实时）；告警规则/事件内嵌在页面内，不用弹窗 |
@@ -105,7 +107,7 @@ OOAPI 是大模型 API 网关与分发平台：对外提供 OpenAI 兼容接口�
 | `src/pages/GamesPage.jsx` | **Playground**（第 37 批） | 六款联机对战共用一套对战框架，差异由引擎 `meta.render/click` 决定（`grid-stone`/`xiangqi`/`battleship`/`column`）。视觉是 Terminal Arcade（只用设计系统变量，无卡通色）；**键盘仅在棋盘获焦时接管**；`?room=` 支持分享链接 |
 | `src/pages/ProfileViewPage.jsx` | **个人主页**（第 37 批） | 恒为 `/u/:id`，靠 `is_self` 切换主操作（自己=编辑资料；别人=关注+私信）。统计内嵌一行 `.oo-stats-strip`（不是 4 张大卡），点击就地切换列表 |
 | `src/pages/AdminDashboardPage.jsx` | **平台看板**（第 37 批） | 与个人看板 `/console` **物理分离**（权限边界靠路由守卫而不是前端 if）；关注点是渠道延迟/全站吞吐/谁在刷 |
-| `src/pages/AppearancePage.jsx` + `theme/presets.js` | **外观设置**（第 37 批） | **即时热注入**：onChange 直接 `setProperty` 到根样式，没有「保存后刷新」。背景只有 4 个受控几何预设（透明度锁 3%~6%、颜色绑定 `var(--line)`），避免自由壁纸毁掉对比度。`applyAppearance` 是唯一入口 |
+| `src/components/AppearanceSettings.jsx` + `theme/ThemeContext.jsx` + `theme/presets.js` | **后台外观设置** | 管理员草稿即时预览，保存后作为站点默认值下发；字体默认站酷快乐体，可选系统/衬线字体，正文和标题统一跟随。`applyAppearance` 是唯一注入入口；个人明暗偏好与站点字体配置分开 |
 | `src/pages/AdminCommunityPage.jsx` | **社区管理**（第 37 批） | 话题 CRUD（停用比删除温和：历史帖仍可读）+ 内容审核（隐藏可恢复、置顶）+ 计数重算入口 |
 
 ### 1.3 线上测试环境（2026-09-17 起）
@@ -198,7 +200,7 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 | `upstream/oauth-login.js` | 订阅渠道交互式登录（Google 已支持） | 手动粘贴回调地址是设计取舍（官方 redirect_uri 指向用户本机 localhost）；state 必须校验；缺 refresh_token 直接拒绝 |
 | `upstream/glm.js` 的 `patch_model` | 渠道级开关：是否向上游注入 model | 默认关（保守）；无论开关如何都要核对 `lastBody.model` 并在不一致时告警 —— 计费按用户选的模型算 |
 | `components/ArtifactPreview.jsx` | 产出物预览（HTML/SVG/React 沙盒运行） | **绝不能加 `allow-same-origin`**；保留 CSP `connect-src 'none'`；默认不渲染 |
-| `components/PromptBar.jsx` | 输入栏（独立于 `beautifului.jsx`） | 尺寸取自组件库官网实测值；`styles.css` 里**不要**再写 `.bui-composer*` 同名规则（曾覆盖导致样式不一致） |
+| `components/PromptBar.jsx` | Arc 控件组合的输入栏 | 保留附件、输入法、键盘发送、模型/推理/密钥选择及乐乐锚点；禁止恢复旧 `.bui-composer*` 覆盖样式；附件预览与触屏目标须保持可辨认/可点击尺寸 |
 
 **数据流**：`POST /api/chat/run` → 落库用户消息 → `runHarness`（每步一次上游调用，按渠道原生协议或 `<tool_result>` 回传工具结果）→
 逐次调用 `splitTokens` 求和后按 `pricing.js` 计费 → 助手消息（parts JSON）落库 → 更新会话 `todo` 与统计。
@@ -268,11 +270,18 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
    - 展示：前端只用 `fmtOd / odOf / unitsPerOd`；
    - 禁止：新增汇率换算、其他币名（`$`、¥）、各页自行除/乘 10000。
 2. **注释用中文，解释「为什么」而不是「是什么」**；保留已有踩坑注释，不要删。
-3. **不引入新依赖**：后端只用 `express / mysql2 / jsonwebtoken / bcryptjs / cors / dotenv / playwright`；
-   前端只用 `react / react-dom / react-router-dom / antd / dayjs / @ant-design/icons`。
-   确需新增时，必须在本文档「依赖决策」记录理由。
+3. **依赖控制**：后端仍只用 `express / mysql2 / jsonwebtoken / bcryptjs / cors / dotenv / playwright`，未经用户授权不新增依赖。
+   **2026-10-06 用户明确授权的前端例外**：全站迁移到 Arc 免费 registry 真实源码，允许其所需的 React 19、Motion、Lucide 与 Radix primitives；移除 `antd / @ant-design/icons`，不并存第二套通用 UI 库。
+   现有 `react-router-dom / dayjs / @fontsource/noto-sans-sc` 按产品用途保留；本例外不授权引入其他无关依赖。后续新增依赖必须取得授权并在本文档记录理由。
 4. 不提交 `.env`、`.jwt-secret`、`data/`、任何真实密钥/账号/cookie。
 5. 不在日志或错误信息里输出 API Key、cookie、密码。
+
+#### 2.1.1 依赖决策：Arc UI 免费组件（2026-10-06）
+
+- 用户要求直接使用 [Arc](https://uiarc.dev/) 的免费组件并移除旧 UI 库；不是仅参考截图重写样式。按 [官方安装方式](https://uiarc.dev/docs/installation) 获取 registry 源码，组件落在 `ooapi-web/src/components/arc/`，保留官方 CSS Modules、交互实现和 [MIT 许可](https://uiarc.dev/license)。不安装或复制 Pro 内容。
+- React / React DOM 升至 19；新增 `motion`、`lucide-react` 与 Arc 使用的 `@radix-ui/react-accordion / checkbox / dialog / dropdown-menu / popover / select / switch / tabs / tooltip`。原因是官方组件的动画、图标和可访问交互依赖；具体版本以 `package.json` 与锁文件为准。
+- 业务适配只负责已有数据与事件契约，例如表单校验、清空数值、分页/排序/勾选、复杂选项和折叠详情；不得以改依赖名的方式保留旧 AntD 实现。未引用的下载组件、演示/临时脚本和旧皮肤清理后不入库。
+- 正式回归测试属于产品维护资产，保留并随真实组件契约调整，不因迁移或清理要求删掉门禁。字体沿用默认站酷快乐体；站点字体项由后台外观设置管理。
 
 ### 2.2 后端
 
@@ -316,15 +325,14 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 3. 表单弹窗：`openEdit/openCreate` 必须先 `resetFields()` 再 `setFieldsValue`；
    `await form.validateFields()` 必须 try/catch 包住。
 4. 列表页并发请求要做竞态防护（建议封装 `useLatest` 或在 `load` 里比对请求序号）。
-5. 颜色只用 `styles.css` 的 CSS 变量（`--surface/--ink/--accent/--line/...`）；
-   间距用 `--sp-*`；圆角用 `--r-*`。禁止硬编码十六进制颜色（渐变除外）。
-6. 新增页面：`PageHeader` 标题 + 说明；主体用 `oo-panel`；表格用 `oo-table`；
-   空状态给出引导文案。
-7. **输入与提示统一 Ant Design**（2026-10-01 用户明确要求）：应用交互禁止使用浏览器
-   `prompt / alert / confirm`（含裸调用），可见输入使用 AntD Input / Form / Checkbox / Switch 等；
-   弹窗与确认使用 Modal / Drawer / Popconfirm，消息提示使用 `App.useApp()` 跟随主题。
-   文件上传的底层 file input 和剪贴板兼容节点保持隐藏，入口用 AntD Button / Upload。
+5. 基础视觉采用 Arc `foundation.css` 与组件 CSS Modules；业务颜色、间距、圆角使用 `theme/tokens.css` 映射后的语义变量，不另建硬编码皮肤。
+6. 新增页面使用 Arc 的卡片、表格、筛选、表单与空状态组合，保持信息密度和省略规范。首页仅替换共用组件、保留布局；对话/Markdown/乐乐等专用布局保留必要代码，交付时说明特殊项。
+7. **输入与提示统一 Arc**（2026-10-06 用户新要求替代旧 Ant Design 约定）：应用交互禁止使用浏览器
+   `prompt / alert / confirm`（含裸调用），可见输入使用 Arc Input / Textarea / Checkbox / Switch 等；
+   弹窗与确认、悬浮提示和消息使用 Arc Dialog / Drawer / Popover / Tooltip / Toast stack，通过业务适配保持现有调用契约。
+   文件上传的底层 file input 和剪贴板兼容节点保持隐藏，入口用 Arc Button / File dropzone。
    hook 确认窗需要在异步失败后保留重试时，使用 `await modal.confirm(...)`，显示错误后拒绝 onOk；非 await 模式会把拒绝再次抛为未处理异常。
+8. **字体不可随换库改默认**：站酷快乐体为站点默认；后台外观的字体选择须影响正文、标题和控件，并可预览、保存与刷新恢复。代码/标识符仍使用代码字体；不得在 Arc 组件中写死其他 UI 字体覆盖站点设置。
 
 ### 2.4 UI/UX 重构规范（进行中）
 
@@ -335,10 +343,10 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
   - 错误提示统一 `message.error(e.message)`，禁止空 catch；
   - 危险操作（删除、更新、清空）必须二次确认。
 - 视觉统一（进行中）：
-  - 所有页面标题、卡片、表格、表单间距参照 `ConsolePage`/`TokenPage`；
+  - 页面、复杂表单与设置布局参照 Arc 官方免费示例的层级、间距、hover/click 与移动端交互，保留原业务功能；
   - 状态色只用语义变量：成功 `--green`、警告 `--orange`、失败 `--red`、主色 `--accent`；
   - 图标尺寸：正文 13-14，卡片 16，页头 18；
-  - 移动端断点用 antd `Grid.useBreakpoint()`，不要写死 `window.innerWidth`。
+  - 移动端使用 Arc 适配层 `Grid.useBreakpoint()` 或响应式 CSS，不写死读取 `window.innerWidth`；触屏紧凑控件目标至少 40px。
 
 ### 2.5 数据展示规范（强制 · 全站统一）
 
@@ -348,7 +356,7 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 
 **① 所有页面汇总统一为使用记录的小标签**（2026-10-06 用户最新要求）
 
-- 列表、看板、运维、资料、媒体、通知、社区管理、渠道用量和交易页面，统一复用 `StatCard` 与 `.oo-stats-strip` / `.bui-chip`；旧 `.oo-stats-cards` 保留兼容但同样按小标签排版。
+- 列表、看板、运维、资料、媒体、通知、社区管理、渠道用量和交易页面，统一复用 `StatCard`（Arc Badge）与 `.oo-stats-strip`；不恢复旧 `.bui-chip` 或统计大卡皮肤。
 - 标签与数值同一行，约 24px 高、12px 字号、6px 间距，自动换行，按内容宽度显示；不再拉伸成独占一列的统计方块。
 - 数值、单位与金额保留完整精度；环比、口径、资源占用细节等收进可通过悬浮或键盘聚焦查看的提示。
 - 颜色仅标记数值含义，主题变量、金额组件及统计口径保持统一；`.oo-stats-card` 是承载图表/调用记录的面板，不是汇总标签。
@@ -364,7 +372,7 @@ sub2api 导出（`accounts[]`）、CPA `auths/*.json`（`type=codex/claude/antig
 
 | 需求 | 组件 | 约定 |
 |---|---|---|
-| 时间趋势（单/多序列） | `<LineChart series={...} />` | 平滑曲线（Catmull-Rom→贝塞尔）、区域填充、悬浮十字线 + tooltip |
+| 时间趋势（单/多序列） | `<LineChart series={...} />` | 业务序列交给 Arc LineChart，使用官方绘制与悬浮交互 |
 | 多序列必须配 `<Legend />` | 否则不知道哪条线是什么 | — |
 | 分布对比（延迟直方图、状态码分布） | `<BarChart bars={...} />` | 纵向柱，最多显示 10 档 |
 | 排行榜（模型/渠道/用户/厂商/表体积） | `<RankBar items={...} />` | 横向条 + 数值，与渠道用量统计弹窗同款 |
@@ -691,6 +699,8 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 ---
 
 ## 3. 待办清单（按优先级）
+
+- [ ] **2026-10-06 全站 Arc 免费组件迁移与发布验收**：按用户要求替换 AntD/旧 UI 原语，首页布局保持，默认站酷快乐体并提供后台字体选择；Claude Code 图标透明底。完成全页面、复杂表单、明暗/窄屏和 hover/click 视觉审查，核对功能未减少，清理旧皮肤及非项目临时测试/示例，保留正式测试。最终构建/UI/业务回归和特殊布局清单待本轮验证后补记；先推 GitHub main，再走既有在线更新，不得把本地完成当作线上已生效。
 
 - [x] **2026-10-06 全站表格密度与汇总统一**：删除模型管理冗余说明，拆分能力列、价格纵排且时段/阈值并排对照；使用记录用户列160px、推理115px，共用头像名称约束与省略号修复，管理/媒体/交易/归属表格长名称补齐；汇总按小标签统一，视觉与浏览器专项见本日变更记录。
 
@@ -1577,6 +1587,17 @@ bundle 换了也不会换，XHR 照常刷新数据，**页面静静地是旧版*
 ---
 
 ## 5. 变更记录
+
+### 2026-10-06 — Arc 免费组件迁移、默认字体保留与旧 UI 清理
+
+- **授权与依赖决策**：用户明确要求整个前端直接使用 Arc 免费组件，移除 AntD 和其他旧通用 UI 实现，首页保持原布局。本轮引入官方 registry 源码与 CSS Modules（MIT），React/React DOM 19、Motion、Lucide 和对应 Radix primitives 用于运行这些真实组件；详细边界见 2.1.1。后端依赖约束不变，没有引入 Pro 组件。
+- **实现范围**：页面和业务组件改接 Arc 的基础控件、表单、卡片、表格、弹窗/抽屉、消息、图表与活动热力图。业务适配保留已有校验、清空数值、复杂选项、多选新增模型、排序/分页/选择/展开行等契约，不能用“换外观”掩盖功能减少。旧 AntD 依赖、Beautiful UI 原语及被替代的皮肤移除；旧 CSS 只抽取必要的产品布局，未引用的组件和临时产物继续按清单清理。
+- **字体与图标**：按用户追加要求，站点默认继续使用站酷快乐体，后台外观提供界面字体选择（站酷快乐体/系统/衬线），标题、正文与控件统一跟随预览和保存值，代码字体保持独立。Claude Code 图标移除黑底、保留透明边缘；最终实际徽标的明暗视觉验证纳入本轮验收。
+- **专用布局与功能边界**：对话流式 parts、Markdown/代码/产出物安全预览、乐乐动作和锚点仍需业务专用实现，周边控件使用 Arc；首页布局不变。这些特殊项将在交付时明确列出，不宣称其为 Arc 官方整页模板。JEV 决策模型仍只保留先前调研，未经用户确认不修改协议或交互。
+- **测试与清理边界**：保留正式回归与发布门禁。Agent 展示测试的 mock 切换到 Arc 引用；历史人格测试中旧 CSS/AntD token 断言改为真实 Arc 的触屏尺寸、附件预览、省略、计数器文档流及暗色对比度检查，保留原缺陷防护目的。非项目候选副本、临时截图/演示、旧生成过程产物与一次性脚本不进入交付；产品静态资源和用户源素材不得凭目录名误删。
+- **验收**：前端生产构建通过；最终候选 26/26 路由 ui-smoke 通过（隔离 API，无真实数据库/上游写入）。12 个桌面入口和 5 个 390px 入口截图复核，默认字体均为站酷快乐体、无整页横向溢出及 pageerror；另以有数据夹具验证模型空价/零价/必填、推理等级、用户排序/长名省略/切换草稿、渠道表单、日志全字段与默认折叠、对话 IME/命令/换行/附件/模型及密钥焦点、远程和自定义搜索、嵌套菜单 Escape，检查暗色及手机。全套 npm test 通过；清理后 Agent 组件 4 项及未定义符号 7 项复验通过。额外历史 persona-r1 为 76 通过/5 失败，失败是旧首页常量、日志字段、粘贴函数、图片草稿和旧定价侧栏的静态源码假设漂移，未将其记为全绿。
+- **清理**：移除旧 UI 包、旧原语、183 个无引用 CSS 选择器与旧通用皮肤；53 处旧标签改为真实 Arc Badge。历史候选目录、截图/示例、生成过程源文件及一次性脚本移出仓库，正式测试及生产资源保留。永久批量删除被自动审批拦截后采用仓库外临时目录可恢复暂存。
+- **发布约束**：待本次提交推至 origin/main 并核对远端 SHA 后，通过已有管理员会话触发在线更新；发布结果随后补记。不修改线上 .env、管理员口令，不带入原有无关 pricing.js 改动。
 
 ### 2026-10-06 — 移除对话项目，保留历史会话；JEV 仅调研
 

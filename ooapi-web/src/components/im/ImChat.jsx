@@ -1,10 +1,11 @@
+import { Button as ActionButton } from "../arc/index";
 // 消息中心右侧聊天区：顶栏 / 消息流 / 输入框
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Button, Dropdown, Image, Input, Popover, Spin, Tooltip } from "antd";
+import {   Button, Dropdown, Image, Input, Popover, Spin, Tooltip  } from "../arc/index";
 import {
   ArrowLeftOutlined, SendOutlined, SmileOutlined, PictureOutlined, CodeOutlined, MoreOutlined,
   CopyOutlined, UndoOutlined, DownOutlined, InfoCircleOutlined, ReloadOutlined, DeleteOutlined,
-} from "@ant-design/icons";
+ } from "../arc/icons";
 import UserAvatar from "../UserAvatar";
 import Markdown from "../Markdown";
 import { buildRows, fmtClock, nameOf, RoomAvatar, RECALL_WINDOW_SEC, MAX_TEXT } from "./im-utils";
@@ -15,13 +16,13 @@ export function ChatHeader({ room, subtitle, online, onBack, infoOpen, onToggleI
   return (
     <header className="oo-im-chat-head">
       <Button type="text" className="oo-im-mobile-only" icon={<ArrowLeftOutlined />} aria-label="返回会话列表" onClick={onBack} />
-      <button type="button" className="oo-im-chat-id" onClick={onToggleInfo} aria-label="查看会话资料">
+      <ActionButton type="text" htmlType="button" className="oo-im-chat-id" onClick={onToggleInfo} aria-label="查看会话资料">
         <RoomAvatar room={room} size={34} online={online} />
         <span style={{ minWidth: 0 }}>
           <span className="oo-im-chat-title oo-truncate">{room?.title || room?.name || "会话"}</span>
           <span className={`oo-im-chat-sub${online ? " is-on" : ""}`}>{subtitle}</span>
         </span>
-      </button>
+      </ActionButton>
       <div className="oo-im-chat-actions">
         <Tooltip title={infoOpen ? "收起资料栏" : room?.type === "single" ? "对方资料" : "群资料与成员"}>
           <Button type="text" icon={<InfoCircleOutlined />} aria-pressed={infoOpen} aria-label="资料栏" onClick={onToggleInfo} className={infoOpen ? "is-on" : ""} />
@@ -62,9 +63,9 @@ function Bubble({ m, mine, onRecall, onCopy, onRetry, onDiscard }) {
                 </div>
               ) : null}
               {long ? (
-                <button type="button" className="oo-im-more" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}>
+                <ActionButton type="text" htmlType="button" className="oo-im-more" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}>
                   {expanded ? "收起" : `展开全文（${text.length} 字）`}
-                </button>
+                </ActionButton>
               ) : null}
               {media.length ? (
                 <div className={`oo-im-media${media.length > 1 ? " is-multi" : ""}`}>
@@ -81,18 +82,18 @@ function Bubble({ m, mine, onRecall, onCopy, onRetry, onDiscard }) {
         <div className="oo-im-msg-tools">
           <span className="oo-im-msg-time">{m.pending ? "发送中" : fmtClock(m.created_time)}</span>
           {!recalled && m.content ? (
-            <Tooltip title="复制"><button type="button" className="oo-im-icon-btn" aria-label="复制" onClick={() => onCopy(m)}><CopyOutlined /></button></Tooltip>
+            <Tooltip title="复制"><ActionButton type="text" htmlType="button" className="oo-im-icon-btn" aria-label="复制" onClick={() => onCopy(m)}><CopyOutlined /></ActionButton></Tooltip>
           ) : null}
           {canRecall ? (
-            <Tooltip title="撤回（2 分钟内）"><button type="button" className="oo-im-icon-btn" aria-label="撤回" onClick={() => onRecall(m)}><UndoOutlined /></button></Tooltip>
+            <Tooltip title="撤回（2 分钟内）"><ActionButton type="text" htmlType="button" className="oo-im-icon-btn" aria-label="撤回" onClick={() => onRecall(m)}><UndoOutlined /></ActionButton></Tooltip>
           ) : null}
         </div>
       </div>
       {m.failed ? (
         <div className="oo-im-msg-fail" role="alert">
           发送失败{m.error ? `：${m.error}` : ""}
-          <button type="button" onClick={() => onRetry(m)}><ReloadOutlined /> 重试</button>
-          <button type="button" onClick={() => onDiscard(m)}><DeleteOutlined /> 删除</button>
+          <ActionButton type="text" htmlType="button" onClick={() => onRetry(m)}><ReloadOutlined /> 重试</ActionButton>
+          <ActionButton type="text" htmlType="button" onClick={() => onDiscard(m)}><DeleteOutlined /> 删除</ActionButton>
         </div>
       ) : null}
     </>
@@ -197,9 +198,9 @@ export function MessageList({ roomId, roomType, msgs, loading, hasMore, loadingM
             <>
               <div className="oo-im-stream-top">
                 {hasMore ? (
-                  <button type="button" className="oo-im-link-btn" onClick={() => { snap.current.height = scrollRef.current?.scrollHeight || 0; onLoadMore(); }} disabled={loadingMore}>
+                  <ActionButton type="text" htmlType="button" className="oo-im-link-btn" onClick={() => { snap.current.height = scrollRef.current?.scrollHeight || 0; onLoadMore(); }} disabled={loadingMore}>
                     {loadingMore ? "加载中…" : "查看更早的消息"}
-                  </button>
+                  </ActionButton>
                 ) : msgs.length ? (
                   <span>没有更早的消息了</span>
                 ) : null}
@@ -216,9 +217,9 @@ export function MessageList({ roomId, roomType, msgs, loading, hasMore, loadingM
                     {!mine ? (
                       <div className="oo-im-msg-avatar">
                         {showHead ? (
-                          <button type="button" className="oo-im-avatar-btn" onClick={() => onUserClick(m.author || { id: m.user_id })} aria-label={`查看 ${nameOf(m.author)} 的资料`}>
+                          <ActionButton type="text" htmlType="button" className="oo-im-avatar-btn" onClick={() => onUserClick(m.author || { id: m.user_id })} aria-label={`查看 ${nameOf(m.author)} 的资料`}>
                             <UserAvatar user={m.author} size={34} />
-                          </button>
+                          </ActionButton>
                         ) : null}
                       </div>
                     ) : null}
@@ -234,9 +235,9 @@ export function MessageList({ roomId, roomType, msgs, loading, hasMore, loadingM
         </div>
       </div>
       {unseen ? (
-        <button type="button" className="oo-im-jump" onClick={() => toBottom(true)}>
+        <ActionButton type="text" htmlType="button" className="oo-im-jump" onClick={() => toBottom(true)}>
           <DownOutlined /> {unseen} 条新消息
-        </button>
+        </ActionButton>
       ) : null}
       {dragging ? <div className="oo-im-drop">松开发送图片</div> : null}
     </div>
@@ -252,7 +253,7 @@ export function Composer({ roomId, value, onChange, onSend, onFile, sending, dis
   const fileRef = useRef(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
 
-  const el = () => taRef.current?.resizableTextArea?.textArea || null;
+  const el = () => taRef.current || null;
 
   useEffect(() => {
     // 切换会话后把焦点放回输入框（桌面端）；触屏设备不抢焦点，否则会弹键盘挡住消息
@@ -312,17 +313,17 @@ export function Composer({ roomId, value, onChange, onSend, onFile, sending, dis
               content={
                 <div className="oo-im-emoji-grid">
                   {EMOJI.map((e) => (
-                    <button key={e} type="button" onClick={() => { insert(e); setEmojiOpen(false); }} aria-label={e}>{e}</button>
+                    <ActionButton type="text" key={e} htmlType="button" onClick={() => { insert(e); setEmojiOpen(false); }} aria-label={e}>{e}</ActionButton>
                   ))}
                 </div>
               }
             >
-              <Tooltip title="表情"><button type="button" className="oo-im-icon-btn" aria-label="表情" disabled={disabled}><SmileOutlined /></button></Tooltip>
+              <Tooltip title="表情"><ActionButton type="text" htmlType="button" className="oo-im-icon-btn" aria-label="表情" disabled={disabled}><SmileOutlined /></ActionButton></Tooltip>
             </Popover>
             <Tooltip title="图片（也可以直接粘贴或拖进来）">
-              <button type="button" className="oo-im-icon-btn" aria-label="发送图片" disabled={disabled} onClick={() => fileRef.current?.click()}>
+              <ActionButton type="text" htmlType="button" className="oo-im-icon-btn" aria-label="发送图片" disabled={disabled} onClick={() => fileRef.current?.click()}>
                 <PictureOutlined />
-              </button>
+              </ActionButton>
             </Tooltip>
             <input
               ref={fileRef}
@@ -336,9 +337,9 @@ export function Composer({ roomId, value, onChange, onSend, onFile, sending, dis
               }}
             />
             <Tooltip title="代码块">
-              <button type="button" className="oo-im-icon-btn" aria-label="插入代码块" disabled={disabled} onClick={() => insert("\n```\n\n```\n")}>
+              <ActionButton type="text" htmlType="button" className="oo-im-icon-btn" aria-label="插入代码块" disabled={disabled} onClick={() => insert("\n```\n\n```\n")}>
                 <CodeOutlined />
-              </button>
+              </ActionButton>
             </Tooltip>
           </div>
           <div className="oo-im-composer-send">

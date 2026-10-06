@@ -1,8 +1,9 @@
+import { Card as ArcPanel } from "../components/arc/card/card";
 import OdAmount, { OdText } from "../components/OdAmount";
 import LogDiagnosticDetails from "../components/LogDiagnosticDetails";
 import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { Table, Tag, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions } from "antd";
-import { ReloadOutlined, HistoryOutlined } from "@ant-design/icons";
+import {   Table, Tag, Input, Select, Button, Alert, App as ArcApp, Tooltip, Drawer, Descriptions  } from "../components/arc/index";
+import { ReloadOutlined, HistoryOutlined  } from "../components/arc/icons";
 import { API } from "../services/api";
 import { fmtDate, unitsPerOd } from "../services/format";
 import { useApp } from "../context/AppContext";
@@ -33,7 +34,7 @@ const RANGE_OPTIONS = [
 
 export default function OperationLogPage() {
   const { user } = useApp();
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const isAdmin = Number(user?.role) >= 100;
   const perUnit = unitsPerOd(null);
 
@@ -178,7 +179,7 @@ export default function OperationLogPage() {
         }
       />
 
-      <div className="oo-panel">
+      <ArcPanel className="oo-panel">
         {loadError ? (
           <Alert
             type="error"
@@ -230,7 +231,7 @@ export default function OperationLogPage() {
             },
           }}
         />
-      </div>
+      </ArcPanel>
 
       <Drawer title="操作详情" open={Boolean(detail)} onClose={() => setDetail(null)} width={520} destroyOnClose>
         {detail ? (

@@ -21,7 +21,7 @@ function component(name, extra = {}) {
   const code = transformSync(source, { loader: "jsx", format: "cjs", target: "node18" }).code;
   const module = { exports: {} };
   const dependencies = {
-    react: React, antd: controls, "@ant-design/icons": { RobotOutlined: icon, ArrowUpOutlined: icon, DeleteOutlined: icon, PlusOutlined: icon },
+    react: React, "./arc/index": controls, "./arc/icons": { RobotOutlined: icon, ArrowUpOutlined: icon, DeleteOutlined: icon, PlusOutlined: icon },
     "../../../ooapi-server/src/services/error-codes.js": { errorInfo },
     "../../../ooapi-server/src/services/client-agents.json": agents,
     "../services/reasoning-display": { reasoningLabel: value => value, requestedReasoningLabel: value => value },

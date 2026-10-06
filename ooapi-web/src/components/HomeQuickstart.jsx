@@ -1,8 +1,8 @@
 import CodeBlock from "./CodeBlock";
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { App as AntApp, Button, Segmented } from 'antd';
-import { ArrowRightOutlined, CheckOutlined, CodeOutlined, CopyOutlined, KeyOutlined, LinkOutlined } from '@ant-design/icons';
+import {   Link } from 'react-router-dom';
+import { App as ArcApp, Button, Segmented  } from "./arc/index";
+import { ArrowRightOutlined, CheckOutlined, CodeOutlined, CopyOutlined, KeyOutlined, LinkOutlined  } from "./arc/icons";
 import BrandLogo, { BrandName } from './BrandLogo';
 import { copyText } from '../services/format';
 import './home-quickstart.css';
@@ -27,7 +27,7 @@ function example(step, language, endpoint) {
 export default function HomeQuickstart({ endpoint, docs }) {
   const [step, setStep] = useState(2);
   const [language, setLanguage] = useState('Python');
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const command = example(step, language, endpoint);
   const current = STEPS[step];
   const copy = async (text) => { try { await copyText(text); message.success({ key: 'quickstart-copy', content: '已复制' }); } catch { message.error({ key: 'quickstart-copy', content: '复制失败，请手动选择代码' }); } };

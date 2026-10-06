@@ -1,3 +1,5 @@
+import { Card as ArcPanel } from "../components/arc/card/card";
+import { Button as ActionButton } from "../components/arc/index";
 // 社区大厅 —— 话题导轨 + 信息流 + 侧栏（第 79 批改版）
 // ---------------------------------------------------------------------------
 // 频道体系下线后，社区是站内唯一的公共讨论区，所以话题从下拉框升级成常驻导轨：
@@ -6,15 +8,15 @@
 // 列表本身是单列列表式（见 components/PostList），不是卡片瀑布流。
 // 顶部的「发帖提示条」是低门槛入口：点开即发帖弹窗，已选话题会预填。
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import {   useNavigate, useSearchParams } from "react-router-dom";
 import {
-  Button, Select, Input, Segmented, Tag, App as AntApp, Tooltip, Alert, Modal, Form, Upload,
-} from "antd";
+  Button, Select, Input, Segmented, Tag, App as ArcApp, Tooltip, Alert, Modal, Form, Upload,
+ } from "../components/arc/index";
 import {
   PlusOutlined, ReloadOutlined, FireOutlined, ClockCircleOutlined,
   TagsOutlined, NotificationOutlined, PictureOutlined, DeleteOutlined, MessageOutlined, CommentOutlined,
   ArrowRightOutlined, CloseOutlined,
-} from "@ant-design/icons";
+ } from "../components/arc/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
@@ -27,7 +29,7 @@ import RichTextEditor from "../components/RichTextEditor";
 
 export default function CommunityPage() {
   const navigate = useNavigate();
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const { user, status } = useApp();
   const { begin, isLatest } = useLatest();
   const [params, setParams] = useSearchParams();
@@ -253,9 +255,9 @@ export default function CommunityPage() {
   const topicButton = (t) => {
     const active = t ? topicId === t.id : !topicId;
     return (
-      <button
+      <ActionButton type="text"
         key={t ? t.id : "all"}
-        type="button"
+        htmlType="button"
         className={`oo-topic-item${active ? " is-active" : ""}`}
         aria-pressed={active}
         onClick={() => patchParams({ topic_id: t ? t.id : "" })}
@@ -267,7 +269,7 @@ export default function CommunityPage() {
         )}
         <span className="oo-truncate">{t ? t.name : "全部话题"}</span>
         <span className="oo-topic-count">{t ? t.post_count : topicTotal}</span>
-      </button>
+      </ActionButton>
     );
   };
 
@@ -295,8 +297,8 @@ export default function CommunityPage() {
         <div className="oo-community-feed">
           {showAnnounce ? (
             <section className="oo-community-notice" aria-label="社区公告">
-              <button
-                type="button"
+              <ActionButton type="text"
+                htmlType="button"
                 className="oo-community-notice-open"
                 aria-label="查看社区公告全文"
                 onClick={() => setAnnounceOpen(true)}
@@ -307,25 +309,25 @@ export default function CommunityPage() {
                   <span className="oo-community-notice-preview">{announce}</span>
                 </span>
                 <ArrowRightOutlined className="oo-community-notice-arrow" aria-hidden="true" />
-              </button>
+              </ActionButton>
               <Tooltip title="关闭本条公告">
                 <Button type="text" icon={<CloseOutlined />} aria-label="关闭本条公告" onClick={closeAnnounce} />
               </Tooltip>
             </section>
           ) : null}
 
-          <button type="button" className="oo-compose-prompt" onClick={openComposer}>
+          <ActionButton type="text" htmlType="button" className="oo-compose-prompt" onClick={openComposer}>
             <UserAvatar user={user} size={34} />
             <span>分享经验、提问或发一段代码……{activeTopic ? `（发到「${activeTopic.name}」）` : ""}</span>
             <span className="oo-compose-prompt-icons" aria-hidden="true"><PictureOutlined /></span>
-          </button>
+          </ActionButton>
 
           <div className="oo-topic-chips" role="group" aria-label="话题">
             {topicButton(null)}
             {topics.map(topicButton)}
           </div>
 
-          <div className="oo-panel">
+          <ArcPanel className="oo-panel">
             <div className="oo-toolbar oo-community-toolbar">
               <Segmented
                 value={feed}
@@ -360,7 +362,7 @@ export default function CommunityPage() {
             {keyword ? (
               <div className="oo-community-filter-note">
                 搜索「{keyword}」共 {posts.total} 条
-                <button type="button" className="oo-link-btn" onClick={() => { setKeyword(""); setPage(1); }}>清除</button>
+                <ActionButton type="text" htmlType="button" className="oo-link-btn" onClick={() => { setKeyword(""); setPage(1); }}>清除</ActionButton>
               </div>
             ) : null}
 
@@ -407,7 +409,7 @@ export default function CommunityPage() {
                 <Button size="small" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>下一页</Button>
               </div>
             ) : null}
-          </div>
+          </ArcPanel>
         </div>
 
         <aside className="oo-read-aside">
@@ -426,10 +428,10 @@ export default function CommunityPage() {
                 ["收藏", summary?.favorites, () => patchParams({ feed: "favorited" })],
                 ["关注", summary?.following, () => patchParams({ feed: "following" })],
               ].map(([label, value, onClick]) => (
-                <button key={label} type="button" onClick={onClick}>
+                <ActionButton type="text" key={label} htmlType="button" onClick={onClick}>
                   <b className="oo-num">{value ?? "—"}</b>
                   <span>{label}</span>
-                </button>
+                </ActionButton>
               ))}
             </div>
             <Button block icon={<MessageOutlined />} onClick={() => navigate("/messages")}>私聊与群聊</Button>
@@ -443,11 +445,11 @@ export default function CommunityPage() {
               <ol className="oo-hot-list">
                 {hotPosts.map((p, i) => (
                   <li key={p.id}>
-                    <button type="button" onClick={() => navigate(`/community/${p.id}`)}>
+                    <ActionButton type="text" htmlType="button" onClick={() => navigate(`/community/${p.id}`)}>
                       <span className={`oo-hot-rank${i < 3 ? " is-top" : ""}`}>{i + 1}</span>
                       <span className="oo-truncate">{p.title}</span>
                       <span className="oo-hot-count oo-num">{fmtCompact(p.like_count || 0)}</span>
-                    </button>
+                    </ActionButton>
                   </li>
                 ))}
               </ol>

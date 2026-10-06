@@ -17,7 +17,7 @@ OOAPI —— 大模型 API 网关与分发平台。对外提供三种兼容协�
 | 包 | 技术栈 | 负责 |
 |---|---|---|
 | `ooapi-server/` | Node 18+ · Express 4 · MySQL(mysql2) · JWT | 后端 API + 对外网关 `/v1` |
-| `ooapi-web/` | React 18 · Vite 5 · Ant Design 5 | 用户端 + 管理台 |
+| `ooapi-web/` | React 19 · Vite 5 · Arc UI 免费组件 | 用户端 + 管理台 |
 
 ---
 
@@ -28,7 +28,7 @@ OOAPI —— 大模型 API 网关与分发平台。对外提供三种兼容协�
    任何真实 API Key / Cookie / 账号密码 / JWT 都不得写进代码、日志、错误信息、测试或文档。
 3. **不要改 `ADMIN_PASSWORD`**，不要动线上 `.env`。
 4. **零新依赖**。后端只允许：`express` `mysql2` `jsonwebtoken` `bcryptjs` `cors` `dotenv` `playwright`；
-   前端只允许现有依赖。要加依赖先问人。
+   前端只允许现有依赖；用户已授权 Arc 免费组件所需的 React 19 / Motion / Lucide / Radix 迁移，见 `AI协作.md` 2.1.1。其他新依赖先问人。
 5. **只允许一个协作文档**：`AI协作.md`。不要再建同类文档
    （本文件 + `CLAUDE.md`/`CODEX.md`/`README.md` 是工具入口与说明书，属例外，见 AI协作.md 的说明）。
 6. **币制只有一条规则**：`1 OD币 = 1 美元`，10,000 单位 = 1 OD币。
@@ -62,7 +62,7 @@ OOAPI —— 大模型 API 网关与分发平台。对外提供三种兼容协�
 | 页面 | `pages/*.jsx` |
 | 公共组件 | `components/*.jsx` |
 | 主题 / 调色板 | `theme/ThemeContext.jsx`、`theme/presets.js` |
-| 全局样式 | `styles.css`、`components/beautifului.css` |
+| 全局样式 | `components/arc/foundation.css`、`theme/tokens.css`、`components/arc/application.css`；业务布局 `application-layout.css` |
 
 ---
 

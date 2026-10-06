@@ -1,3 +1,4 @@
+import { Card as ArcPanel } from "../components/arc/card/card";
 // 通知中心 —— 社区互动提醒（评论/回复/点赞/收藏/关注）
 // ---------------------------------------------------------------------------
 // 设计取舍：
@@ -7,12 +8,12 @@
 //     用户分不清「回谁的话」和「处理什么动态」。
 //   · 列表用紧凑行（头像 26px + 一行文案 + 相对时间），一屏能看十几条。
 import React, { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Button, Segmented, Empty, Skeleton, App as AntApp, Tag, Tooltip, Alert } from "antd";
+import {   useNavigate } from "react-router-dom";
+import { Button, Segmented, Empty, Skeleton, App as ArcApp, Tag, Tooltip, Alert  } from "../components/arc/index";
 import {
   ReloadOutlined, CheckOutlined, DeleteOutlined, MessageOutlined, LikeOutlined,
   StarOutlined, UserAddOutlined, CommentOutlined,
-} from "@ant-design/icons";
+ } from "../components/arc/icons";
 import { API } from "../services/api";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
@@ -32,7 +33,7 @@ const TYPE_ICON = {
 
 export default function NotificationsPage() {
   const navigate = useNavigate();
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const { begin, isLatest } = useLatest();
 
   const [items, setItems] = useState([]);
@@ -130,7 +131,7 @@ export default function NotificationsPage() {
         <StatCard label="通知总数" value={total} suffix="条" hint={filter === "unread" ? "当前筛选：仅未读" : "含已读"} />
       </div>
 
-      <div className="oo-panel">
+      <ArcPanel className="oo-panel">
         <div className="oo-toolbar">
           <Segmented
             value={filter}
@@ -216,7 +217,7 @@ export default function NotificationsPage() {
             ))}
           </div>
         )}
-      </div>
+      </ArcPanel>
     </div>
   );
 }

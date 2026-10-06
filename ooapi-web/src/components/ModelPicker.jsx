@@ -5,8 +5,8 @@
 // 2. 「全选」与「清空」合二为一：根据当前选中状态智能切换（未全选时显示「全选全部」，全选后显示「清空所选」）；
 // 3. 友好清洗上游报错（提炼 token_revoked / 401 等常见异常，杜绝倾倒原始 JSON）。
 import React, { useEffect, useMemo, useState, useRef } from "react";
-import { Select, Button, Space, Tooltip, Tag, App as AntApp, Alert, Segmented } from "antd";
-import { CloudDownloadOutlined, CheckSquareOutlined, ClearOutlined } from "@ant-design/icons";
+import {   Select, Button, Space, Tooltip, Tag, App as ArcApp, Alert, Segmented  } from "./arc/index";
+import { CloudDownloadOutlined, CheckSquareOutlined, ClearOutlined  } from "./arc/icons";
 import { API } from "../services/api";
 import { ModelLabel } from "./VendorIcon";
 
@@ -55,7 +55,7 @@ export default function ModelPicker({
   disabled = false,
   extra,
 }) {
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const [options, setOptions] = useState([]);
   const [source, setSource] = useState("");
   const [note, setNote] = useState("");
@@ -332,7 +332,7 @@ export default function ModelPicker({
         optionRender={(opt) => <ModelLabel model={opt.value} size={14} channelType={providerKey} />}
         labelRender={(opt) => <ModelLabel model={opt.value} size={12} channelType={providerKey} />}
         // tags 模式下下拉里会出现「输入的内容 + 回车」的候选项，这里过滤掉纯输入项，
-        // 避免它和真实模型名混在一起（antd 用 __rc_select__ 之类的伪选项标记）
+        // 避免它和真实模型名混在一起（选择器可能使用内部占位标记）
         filterOption={(input, opt) => String(opt?.value || "").toLowerCase().includes(String(input || "").toLowerCase())}
         maxTagCount={8}
         maxTagPlaceholder={(omitted) => `+${omitted.length}`}

@@ -1,6 +1,6 @@
 import OdAmount from "../components/OdAmount";
 import React, { useCallback, useEffect, useState } from "react";
-import { Table, Input, Tag, Alert, App as AntApp } from "antd";
+import {  Table, Input, Tag, Alert, App as ArcApp  } from "../components/arc/index";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import PageHeader from "../components/PageHeader";
@@ -12,7 +12,7 @@ import { userDataVisibility } from "../services/visibility";
 export default function PricingPage() {
   const { status, user } = useApp();
   const allowed = userDataVisibility(status, user).pricing;
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [denied, setDenied] = useState(false);

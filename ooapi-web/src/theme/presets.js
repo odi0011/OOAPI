@@ -1,11 +1,11 @@
 // ============================================================================
-// 设计令牌 —— 严格对齐 beautifului.dev（从运行时计算样式提取）
-// 单一事实来源：本文件的令牌与 styles.css 中的 CSS 变量必须保持同构
+// 站点外观令牌，与 Arc foundation 的语义变量衔接。
+// 外观预设由本文件维护，CSS 基础映射见 theme/tokens.css。
 // 说明：JS 只注入「规范令牌」（--page/--surface/--ink/--accent …），
-//      styles.css 中的 --oo-* 是它们的别名，旧页面因此自动继承新视觉。
+//      theme/tokens.css 的业务别名同步继承这些变量。
 // ============================================================================
 
-// 强调色预设：默认取 beautifului 的 accent（oklch(62.6% .205 254.947) ≈ #4a72e8）
+// 站点强调色预设。
 export const PRIMARY_PRESETS = [
   { key: "blue", label: "经典蓝", color: "#3b6ef5" },
   { key: "indigo", label: "靛青", color: "#5b5bd6" },
@@ -19,59 +19,11 @@ export const PRIMARY_PRESETS = [
 
 export const DEFAULT_PRIMARY = "#3b6ef5";
 
-// 语义色（与 beautifului 的 green/orange/red 对应，明暗各一套）
-export const SEMANTIC = {
-  light: { success: "oklch(60.3% 0.155 150.883)", warning: "oklch(68.9% 0.179 49.902)", danger: "oklch(62.1% 0.192 23.042)", info: "oklch(62.6% 0.205 254.947)" },
-  dark: { success: "oklch(70.5% 0.154 153.814)", warning: "oklch(74.6% 0.156 55.642)", danger: "oklch(66.6% 0.18 21.433)", info: "oklch(68% 0.173 253.301)" },
-};
 
-// 表面令牌：与 styles.css 的 :root / [data-theme=dark] 严格同构
-export const SURFACES = {
-  light: {
-    page: "oklch(98.5% 0.001 286.376)",
-    canvas: "oklch(96.1% 0.002 247.84)",
-    surface: "oklch(100% 0 0)",
-    inset: "oklch(97.9% 0.002 247.839)",
-    hover: "oklch(97% 0.002 247.839)",
-    hover2: "oklch(93.3% 0.003 247.86)",
-    field: "oklch(96.1% 0.001 286.375)",
-    ink: "oklch(24.7% 0.006 258.361)",
-    ink2: "oklch(50.6% 0.01 264.477)",
-    ink3: "oklch(69.5% 0.009 264.505)",
-    line: "oklch(94.6% 0.003 264.542)",
-    lineStrong: "oklch(91.2% 0.005 258.326)",
-    lineSoft: "oklch(96.6% 0.002 264.542)",
-    accentTint: "oklch(96% 0.019 252.878)",
-    tooltipBg: "oklch(100% 0 0)",
-    tooltipFg: "oklch(24.7% 0.006 258.361)",
-    shadowCard: "0 0 0 1px oklch(94.6% 0.003 264.542), 0 1px 2px oklch(0% 0 0 / 0.06)",
-    shadowRaised: "0 0 0 1px oklch(94.6% 0.003 264.542), 0 2px 8px oklch(0% 0 0 / 0.08)",
-    shadowOverlay: "0 0 0 1px oklch(94.6% 0.003 264.542), 0 8px 28px oklch(0% 0 0 / 0.12)",
-  },
-  dark: {
-    page: "oklch(20.9% 0.004 264.477)",
-    canvas: "oklch(23.1% 0.004 264.487)",
-    surface: "oklch(26% 0.006 271.191)",
-    inset: "oklch(24.3% 0.004 264.492)",
-    hover: "oklch(28.9% 0.006 271.22)",
-    hover2: "oklch(31.8% 0.007 274.747)",
-    field: "oklch(29.3% 0.006 271.223)",
-    ink: "oklch(96.4% 0.002 247.839)",
-    ink2: "oklch(73.1% 0.008 260.731)",
-    ink3: "oklch(54.1% 0.01 264.484)",
-    line: "oklch(30.8% 0.006 258.354)",
-    lineStrong: "oklch(35.6% 0.007 264.474)",
-    lineSoft: "oklch(27.8% 0.006 258.354)",
-    accentTint: "oklch(68% 0.173 253.301 / 0.16)",
-    tooltipBg: "oklch(26% 0.006 271.191)",
-    tooltipFg: "oklch(96.4% 0.002 247.839)",
-    shadowCard: "0 0 0 1px oklch(100% 0 0 / 0.11), 0 1px 2px oklch(0% 0 0 / 0.2), 0 2px 6px oklch(0% 0 0 / 0.2)",
-    shadowRaised: "0 0 0 1px oklch(100% 0 0 / 0.13), 0 2px 10px oklch(0% 0 0 / 0.22)",
-    shadowOverlay: "0 0 0 1px oklch(100% 0 0 / 0.15), 0 8px 28px oklch(0% 0 0 / 0.34)",
-  },
-};
 
-// 把主色换算成 OKLCH 近似值（保持与 beautifului 同色域观感）
+
+
+// 把主色换算成 OKLCH 近似值（用于生成明暗主题色）
 export function hexToOklch(hex) {
   const h = String(hex).replace("#", "");
   const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
@@ -109,89 +61,21 @@ export function primaryVars(hex, resolved) {
   };
 }
 
-// 把令牌写入 CSS 变量（只写规范名，--oo-* 别名在 styles.css 中自动跟随）
+// 把令牌写入 CSS 变量（只写规范名，--oo-* 别名在 theme/tokens.css 中自动跟随）
 export function applyCssVars(resolved, primary) {
-  const s = SURFACES[resolved] || SURFACES.light;
-  const r = document.documentElement;
-
-  r.dataset.theme = resolved;
-  r.style.colorScheme = resolved;
-
-  const set = (k, v) => r.style.setProperty(k, v);
-
-  set("--page", s.page);
-  set("--canvas", s.canvas);
-  set("--surface", s.surface);
-  set("--inset", s.inset);
-  set("--hover", s.hover);
-  set("--hover-2", s.hover2);
-  set("--field", s.field);
-  set("--ink", s.ink);
-  set("--ink-2", s.ink2);
-  set("--ink-3", s.ink3);
-  set("--line", s.line);
-  set("--line-strong", s.lineStrong);
-  set("--line-soft", s.lineSoft);
-  set("--tooltip-bg", s.tooltipBg);
-  set("--tooltip-fg", s.tooltipFg);
-  set("--shadow-card", s.shadowCard);
-  set("--shadow-raised", s.shadowRaised);
-  set("--shadow-overlay", s.shadowOverlay);
-
+  const root = document.documentElement;
+  root.dataset.theme = resolved;
+  root.style.colorScheme = resolved;
   const pv = primaryVars(primary, resolved);
-  set("--accent", pv.accent);
-  set("--accent-ink", pv.accentInk);
-  set("--accent-tint", pv.accentTint);
+  root.style.setProperty("--accent", pv.accent);
+  root.style.setProperty("--accent-strong", pv.accentInk);
+  root.style.setProperty("--accent-subtle", pv.accentTint);
+  root.style.setProperty("--control-on", pv.accentInk);
 }
 
-/**
- * oklch 字符串 → sRGB hex。
- *
- * 为什么需要：AntD 内部用 `@ant-design/fast-color` 做颜色合成，而它**不认 oklch**
- * （解析失败会退化成纯黑）。我们的调色板全是 oklch（品牌色支持运行时切换，
- * oklch 的感知均匀性正是为此），于是凡是要交给 AntD 参与计算的 token
- * 都必须先转成 hex。
- *
- * 实测踩到的具体后果：空状态插画（Empty.PRESENTED_IMAGE_SIMPLE）的填充色由
- * `new FastColor(colorFill).onBackground(colorBgContainer).toHexString()` 算出，
- * 传 oklch 进去得到 `rgb(0,0,0)` —— 暗色面板上对比度 1.15:1（几乎不可见），
- * 亮色下是纯黑实心方块。
- *
- * 按 CSS Color 4 标准矩阵实现（oklch → oklab → linear sRGB → sRGB）。
- * 输入形如 "oklch(30.8% 0.006 258.354)"；非 oklch 输入原样返回。
- */
-export function oklchToHex(value) {
-  const str = String(value || "").trim();
-  const m = str.match(/^oklch\(\s*([\d.]+)%?\s+([\d.]+)\s+([\d.]+)/i);
-  if (!m) return str;
-  const L = Number(m[1]) / 100;
-  const C = Number(m[2]);
-  const h = (Number(m[3]) * Math.PI) / 180;
-  const a = C * Math.cos(h);
-  const b = C * Math.sin(h);
-  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
-  const mm = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
-  const s = (L - 0.0894841775 * a - 1.2914855480 * b) ** 3;
-  const lin = [
-    4.0767416621 * l - 3.3077115913 * mm + 0.2309699292 * s,
-    -1.2684380046 * l + 2.6097574011 * mm - 0.3413193965 * s,
-    -0.0041960863 * l - 0.7034186147 * mm + 1.7076147010 * s,
-  ];
-  const to255 = (x) => {
-    const c = Math.max(0, Math.min(1, x));
-    const g = c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
-    return Math.round(Math.max(0, Math.min(1, g)) * 255);
-  };
-  return "#" + lin.map((x) => to255(x).toString(16).padStart(2, "0")).join("");
-}
 
-// 派生半透明色（用于 antd 的选中底色等）
-export function tint(hex, alpha) {
-  const h = String(hex).replace("#", "");
-  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
-  const num = parseInt(full, 16);
-  return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${alpha})`;
-}
+
+
 
 // ============================================================================
 // 外观四件套：背景底纹 / 圆角 / 密度 / 正文字号
@@ -218,9 +102,7 @@ export const RADIUS_PRESETS = [
   { key: "round", label: "圆润", r: { window: "20px", card: "14px", btn: "10px", chip: "8px", xs: "6px" } },
 ];
 
-// control / cell 是交给 AntD 的控件高度与表格单元格内边距（ThemeContext 读取）。
-// 「紧凑」是站点默认档，取值与改版前 ConfigProvider 里写死的一致（30 / 10·12），
-// 否则没动过外观的用户会看到全站按钮、表格一起变样。
+// 控件高度与表格内边距预设，紧凑为站点默认密度。
 export const DENSITY_PRESETS = [
   {
     key: "compact",
@@ -429,6 +311,8 @@ export function applyAppearance(opt = {}) {
   if (opt.fontFamily !== undefined) {
     const font = FONT_FAMILIES.find((f) => f.key === opt.fontFamily) || FONT_FAMILIES[1];
     set("--font-sans", font.css);
+    set("--font-body", font.css);
+    set("--font-display", font.css);
     set("--font-mono", "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace");
     r.dataset.fontFamily = font.key;
   }
@@ -456,6 +340,9 @@ export function applyAppearance(opt = {}) {
     set("--r-btn", preset.r.btn);
     set("--r-chip", preset.r.chip);
     set("--r-xs", preset.r.xs);
+    set("--radius-control", opt.radius === "default" ? "1.125rem" : preset.r.btn);
+    set("--radius-panel", opt.radius === "default" ? "1.625rem" : preset.r.card);
+    set("--radius-surface", opt.radius === "default" ? "2.125rem" : preset.r.window);
     // styles.css 里 --r-sm/--r-md 是旧别名（部分组件在用），必须一起更新，
     // 否则「直角」模式下仍有组件是圆角（视觉不统一）
     set("--r-sm", preset.r.chip);
@@ -473,6 +360,7 @@ export function applyAppearance(opt = {}) {
     // 只改正文基准：标题走 em/rem 相对值，不必逐个调（逐个调必然漏几处）
     const px = Math.min(16, Math.max(12, Number(opt.fontSize) || 14));
     set("--fs-body", `${px}px`);
+    set("--text-sm", `${px}px`);
     set("--fs-desc", `${Math.max(11, px - 1.5)}px`);
     r.dataset.fontSize = String(px);
   }
@@ -482,6 +370,8 @@ export function applyAppearance(opt = {}) {
     const pv = primaryVars(String(opt.accent), opt.resolved || r.dataset.theme || "light");
     set("--accent", pv.accent);
     set("--accent-ink", pv.accentInk);
-    set("--accent-tint", pv.accentTint);
+    set("--accent-subtle", pv.accentTint);
+    set("--accent-strong", pv.accentInk);
+    set("--control-on", pv.accentInk);
   }
 }

@@ -1,7 +1,8 @@
+import { Card as ArcPanel } from "../components/arc/card/card";
 import React, { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { Alert, App as AntApp, Button, Collapse, Empty, Segmented, Select, Skeleton, Table, Tabs, Tag } from "antd";
-import { ArrowRightOutlined, ReloadOutlined } from "@ant-design/icons";
+import {   Link, useNavigate } from "react-router-dom";
+import { Alert, App as ArcApp, Button, Collapse, Empty, Segmented, Select, Skeleton, Table, Tabs, Tag  } from "../components/arc/index";
+import { ArrowRightOutlined, ReloadOutlined  } from "../components/arc/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
@@ -19,7 +20,7 @@ const RANGES = [{ value: "7d", label: "7 天" }, { value: "30d", label: "30 天"
 
 export default function AdminDashboardPage() {
   const navigate = useNavigate();
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const { status } = useApp();
   const { begin, isLatest } = useLatest();
   const [userId, setUserId] = useState(null), [tokenId, setTokenId] = useState(null);
@@ -56,15 +57,15 @@ export default function AdminDashboardPage() {
 
   return <div className="oo-page oo-dashboard oo-usage-dashboard">
     <PageHeader title="数据看板" tags={<Tag>{scope ? scope.kind === "filtered" ? "筛选用量" : "全站用量" : userId || tokenId ? "筛选用量" : "全站用量"}</Tag>} extra={<><Link className="oo-dashboard-monitor-link" to="/admin/monitor">运维监控 <ArrowRightOutlined /></Link><Button icon={<ReloadOutlined />} loading={loading} onClick={load} aria-label="刷新数据看板" /></>} />
-    <section className="oo-panel oo-dashboard-toolbar" aria-label="看板筛选">
+    <ArcPanel className="oo-panel oo-dashboard-toolbar" aria-label="看板筛选">
       <label><span>用户</span><Select allowClear showSearch optionFilterProp="label" placeholder="全部用户" aria-label="筛选用户" value={userId} onChange={(value) => { setUserId(value); setTokenId(null); }} options={(filters.users || []).map((item) => ({ value: item.id, label: item.display_name || item.username }))} /></label>
       <label><span>密钥</span><Select allowClear showSearch loading={filterLoading} disabled={filterLoading || !!filterError} optionFilterProp="label" placeholder="全部密钥" aria-label="筛选密钥" value={tokenId} onChange={setTokenId} options={(filters.tokens || []).map((item) => ({ value: item.id, label: `${item.name} · ${item.owner}` }))} /></label>
       <div className="oo-dashboard-range"><span>时间范围</span><Segmented aria-label="看板时间范围" value={range} options={RANGES} onChange={setRange} /></div>
-    </section>
+    </ArcPanel>
     {filterError ? <Alert showIcon type="warning" message="筛选选项加载失败" description={filterError} action={<Button size="small" onClick={() => setFilterRevision((revision) => revision + 1)}>重试</Button>} /> : null}
     <DashboardPeriod data={data} loading={loading} error={error} updatedAt={updatedAt} fallbackDays={parseInt(range, 10)} scopeLabel={data ? scopeLabel : undefined} />
     {error ? <Alert showIcon type="error" message={data ? "更新失败，当前保留上次成功的数据" : "数据看板加载失败"} description={error} action={<Button size="small" onClick={load} loading={loading}>重试</Button>} /> : null}
-    {!data ? loading && <div className="oo-panel oo-dashboard-loading"><Skeleton active paragraph={{ rows: 8 }} /></div> : <>
+    {!data ? loading && <ArcPanel className="oo-panel oo-dashboard-loading"><Skeleton active paragraph={{ rows: 8 }} /></ArcPanel> : <>
       <DashboardOverview data={data} perUnit={perUnit} admin />
       <div className="oo-dashboard-detail-grid">
         <ModelUsageTable rows={data.top_models || []} totals={totals} perUnit={perUnit} />

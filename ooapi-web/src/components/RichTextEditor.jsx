@@ -1,3 +1,4 @@
+import { Button as ActionButton } from "./arc/index";
 // 现代轻量富文本 / Markdown 编辑器 (RichTextEditor)
 // ---------------------------------------------------------------------------
 // 核心能力：
@@ -7,13 +8,13 @@
 // 4. 强大的剪贴板与拖拽支持：在编辑框内直接 Ctrl+V 粘贴截图或拖拽图片，自动上传到媒体库并在光标处插入图片 Markdown；
 // 5. 快捷键拦截：Ctrl+B / Cmd+B (加粗)、Ctrl+I / Cmd+I (斜体)、Tab 缩进等。
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { App as AntApp, Input, Tooltip, Popover, Space, Dropdown, Spin } from "antd";
+import {   App as ArcApp, Input, Tooltip, Popover, Space, Dropdown, Spin  } from "./arc/index";
 import {
   BoldOutlined, ItalicOutlined, StrikethroughOutlined,
   CodeOutlined, LinkOutlined, PictureOutlined, SmileOutlined,
   UnorderedListOutlined, OrderedListOutlined,
   EyeOutlined, EditOutlined, ColumnWidthOutlined,
-} from "@ant-design/icons";
+ } from "./arc/icons";
 import Markdown from "./Markdown";
 import { API } from "../services/api";
 
@@ -35,10 +36,10 @@ export default function RichTextEditor({
   onMediaUploaded, // 可选回调：上传成功后将媒体对象 { id, url, name } 回传给表单
   onUploadingChange, // 可选回调：编辑器内是否还有图片在上传（发布守卫要用，见下方注释）
 }) {
-  const { message: antMessage } = AntApp.useApp();
+  const { message: antMessage } = ArcApp.useApp();
   const textareaRef = useRef(null);
   const setTextareaRef = useCallback((instance) => {
-    textareaRef.current = instance?.resizableTextArea?.textArea || null;
+    textareaRef.current = instance || null;
   }, []);
   const fileInputRef = useRef(null);
   const [mode, setMode] = useState("write"); // 'write' | 'split' | 'preview'
@@ -215,127 +216,127 @@ export default function RichTextEditor({
       <div className="oo-rich-toolbar">
         <Space size={2} wrap>
           <Tooltip title="加粗 (Ctrl+B)">
-            <button
-              type="button"
+            <ActionButton type="text"
+              htmlType="button"
               className="oo-editor-btn"
               onClick={() => replaceSelection("**", "**", "粗体")}
               disabled={disabled}
             >
               <BoldOutlined />
-            </button>
+            </ActionButton>
           </Tooltip>
 
           <Tooltip title="斜体 (Ctrl+I)">
-            <button
-              type="button"
+            <ActionButton type="text"
+              htmlType="button"
               className="oo-editor-btn"
               onClick={() => replaceSelection("*", "*", "斜体")}
               disabled={disabled}
             >
               <ItalicOutlined />
-            </button>
+            </ActionButton>
           </Tooltip>
 
           <Tooltip title="删除线">
-            <button
-              type="button"
+            <ActionButton type="text"
+              htmlType="button"
               className="oo-editor-btn"
               onClick={() => replaceSelection("~~", "~~", "删除线")}
               disabled={disabled}
             >
               <StrikethroughOutlined />
-            </button>
+            </ActionButton>
           </Tooltip>
 
           <div className="oo-editor-divider" />
 
           <Dropdown menu={{ items: headingItems }} trigger={["click"]}>
-            <button type="button" className="oo-editor-btn oo-editor-text-btn" disabled={disabled}>
+            <ActionButton type="text" htmlType="button" className="oo-editor-btn oo-editor-text-btn" disabled={disabled}>
               标题 <span style={{ fontSize: 10, marginLeft: 2 }}>▼</span>
-            </button>
+            </ActionButton>
           </Dropdown>
 
           <Tooltip title="引用文本">
-            <button
-              type="button"
+            <ActionButton type="text"
+              htmlType="button"
               className="oo-editor-btn oo-editor-text-btn"
               onClick={() => insertLinePrefix("> ")}
               disabled={disabled}
             >
               引用
-            </button>
+            </ActionButton>
           </Tooltip>
 
           <div className="oo-editor-divider" />
 
           <Tooltip title="行内代码">
-            <button
-              type="button"
+            <ActionButton type="text"
+              htmlType="button"
               className="oo-editor-btn"
               onClick={() => replaceSelection("`", "`", "code")}
               disabled={disabled}
             >
               <CodeOutlined />
-            </button>
+            </ActionButton>
           </Tooltip>
 
           <Tooltip title="代码块">
-            <button
-              type="button"
+            <ActionButton type="text"
+              htmlType="button"
               className="oo-editor-btn oo-editor-text-btn"
               onClick={() => replaceSelection("\n```javascript\n", "\n```\n", "// 请输入代码")}
               disabled={disabled}
             >
               代码块
-            </button>
+            </ActionButton>
           </Tooltip>
 
           <div className="oo-editor-divider" />
 
           <Tooltip title="无序列表">
-            <button
-              type="button"
+            <ActionButton type="text"
+              htmlType="button"
               className="oo-editor-btn"
               onClick={() => insertLinePrefix("- ")}
               disabled={disabled}
             >
               <UnorderedListOutlined />
-            </button>
+            </ActionButton>
           </Tooltip>
 
           <Tooltip title="有序列表">
-            <button
-              type="button"
+            <ActionButton type="text"
+              htmlType="button"
               className="oo-editor-btn"
               onClick={() => insertLinePrefix("1. ")}
               disabled={disabled}
             >
               <OrderedListOutlined />
-            </button>
+            </ActionButton>
           </Tooltip>
 
           <div className="oo-editor-divider" />
 
           <Tooltip title="插入链接">
-            <button
-              type="button"
+            <ActionButton type="text"
+              htmlType="button"
               className="oo-editor-btn"
               onClick={() => replaceSelection("[", "](https://example.com)", "链接文本")}
               disabled={disabled}
             >
               <LinkOutlined />
-            </button>
+            </ActionButton>
           </Tooltip>
 
           <Tooltip title="插入图片（可直接粘贴截图）">
-            <button
-              type="button"
+            <ActionButton type="text"
+              htmlType="button"
               className="oo-editor-btn"
               onClick={() => fileInputRef.current?.click()}
               disabled={disabled || uploading}
             >
               <PictureOutlined />
-            </button>
+            </ActionButton>
           </Tooltip>
           <input
             ref={fileInputRef}
@@ -365,20 +366,20 @@ export default function RichTextEditor({
             }
             trigger="click"
           >
-            <button type="button" className="oo-editor-btn" disabled={disabled} title="插入表情">
+            <ActionButton type="text" htmlType="button" className="oo-editor-btn" disabled={disabled} title="插入表情">
               <SmileOutlined />
-            </button>
+            </ActionButton>
           </Popover>
 
           <Tooltip title="分割线">
-            <button
-              type="button"
+            <ActionButton type="text"
+              htmlType="button"
               className="oo-editor-btn oo-editor-text-btn"
               onClick={() => replaceSelection("\n---\n", "", "")}
               disabled={disabled}
             >
               ---
-            </button>
+            </ActionButton>
           </Tooltip>
         </Space>
 
@@ -391,31 +392,31 @@ export default function RichTextEditor({
           )}
           <Space size={2}>
             <Tooltip title="编辑视图">
-              <button
-                type="button"
+              <ActionButton type="text"
+                htmlType="button"
                 className={`oo-editor-mode-btn ${mode === "write" ? "is-active" : ""}`}
                 onClick={() => setMode("write")}
               >
                 <EditOutlined /> 编写
-              </button>
+              </ActionButton>
             </Tooltip>
             <Tooltip title="分屏对照预览">
-              <button
-                type="button"
+              <ActionButton type="text"
+                htmlType="button"
                 className={`oo-editor-mode-btn is-desktop-only ${mode === "split" ? "is-active" : ""}`}
                 onClick={() => setMode("split")}
               >
                 <ColumnWidthOutlined /> 分屏
-              </button>
+              </ActionButton>
             </Tooltip>
             <Tooltip title="实时预览">
-              <button
-                type="button"
+              <ActionButton type="text"
+                htmlType="button"
                 className={`oo-editor-mode-btn ${mode === "preview" ? "is-active" : ""}`}
                 onClick={() => setMode("preview")}
               >
                 <EyeOutlined /> 预览
-              </button>
+              </ActionButton>
             </Tooltip>
           </Space>
         </div>

@@ -1,3 +1,4 @@
+import { Button as ActionButton } from "../components/arc/index";
 // 消息中心：私聊 + 群聊 + 好友（第 79 批重构）
 // ---------------------------------------------------------------------------
 // 频道体系（服务器 + 子频道）已下线：公共讨论交给社区帖子，这里只做「人与人」的即时沟通。
@@ -13,12 +14,12 @@
 //   · SSE 断线自动重连（指数退避），重连后按 since_id 补齐断线期间的消息；
 //   · 已读/收到消息时通知导航栏刷新红点（不用等 60s 轮询）。
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { App as AntApp, Button, Drawer, Dropdown, Empty, Form, Grid, Input, Modal, Segmented, Select, Tooltip } from "antd";
+import {   useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { App as ArcApp, Button, Drawer, Dropdown, Empty, Form, Grid, Input, Modal, Segmented, Select, Tooltip  } from "../components/arc/index";
 import {
   PlusOutlined, SearchOutlined, UserAddOutlined, UsergroupAddOutlined, EditOutlined, SoundOutlined, LogoutOutlined,
   DeleteOutlined, HomeOutlined, DisconnectOutlined,
-} from "@ant-design/icons";
+ } from "../components/arc/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
@@ -52,7 +53,7 @@ export default function MessagesPage() {
   const { roomId } = useParams();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
-  const { message: toast, modal } = AntApp.useApp();
+  const { message: toast, modal } = ArcApp.useApp();
   const { user: me } = useApp();
   const { begin, isLatest } = useLatest();
   const screens = Grid.useBreakpoint();
@@ -689,7 +690,7 @@ export default function MessagesPage() {
     return undefined;
   };
 
-  // await 开启 AntD 确认弹窗的失败重试模式，接口拒绝时保留弹窗且不产生未处理异常。
+  // await 开启确认弹窗的失败重试模式，接口拒绝时保留弹窗且不产生未处理异常。
   const leaveRoom = async () => {
     const single = room?.type === "single";
     await modal.confirm({
@@ -852,10 +853,10 @@ export default function MessagesPage() {
           menuItems={menuItems}
         />
         {room?.type !== "single" && room?.announcement ? (
-          <button type="button" className="oo-im-announce" onClick={() => (wide && !infoPref ? toggleInfo() : !wide ? setInfoDrawer(true) : null)}>
+          <ActionButton type="text" htmlType="button" className="oo-im-announce" onClick={() => (wide && !infoPref ? toggleInfo() : !wide ? setInfoDrawer(true) : null)}>
             <SoundOutlined />
             <span className="oo-truncate">{room.announcement}</span>
-          </button>
+          </ActionButton>
         ) : null}
         <MessageList
           roomId={activeRoomId}
@@ -949,9 +950,9 @@ export default function MessagesPage() {
                 ["unread", `未读${unreadTotal ? ` ${unreadTotal}` : ""}`],
                 ["group", "群聊"],
               ].map(([k, label]) => (
-                <button key={k} type="button" className={`oo-im-chip${filter === k ? " is-active" : ""}`} aria-pressed={filter === k} onClick={() => setFilter(k)}>
+                <ActionButton type="text" key={k} htmlType="button" className={`oo-im-chip${filter === k ? " is-active" : ""}`} aria-pressed={filter === k} onClick={() => setFilter(k)}>
                   {label}
-                </button>
+                </ActionButton>
               ))}
             </div>
           ) : null}

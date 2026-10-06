@@ -1,8 +1,11 @@
+import { Descriptions } from "../components/arc/index";
+import { Badge as ArcBadge } from "../components/arc/badge/badge";
+import { Card as ArcPanel } from "../components/arc/card/card";
 import ModelAttributions from "../components/ModelAttributions";
 import OdAmount from "../components/OdAmount";
 import React, { useCallback, useEffect, useState } from "react";
-import { Table, Input, Select, App as AntApp, Typography, Modal, Upload, Alert, Space, Button, Popconfirm, Tag, Tooltip, Checkbox, Row, Col } from "antd";
-import { ReloadOutlined, SearchOutlined, DollarOutlined, UploadOutlined, ClearOutlined, CloudDownloadOutlined, ApartmentOutlined, QuestionCircleOutlined } from "@ant-design/icons";
+import {   Table, Input, Select, App as ArcApp, Typography, Modal, Upload, Alert, Space, Button, Popconfirm, Tag, Tooltip, Checkbox, Row, Col  } from "../components/arc/index";
+import { ReloadOutlined, SearchOutlined, DollarOutlined, UploadOutlined, ClearOutlined, CloudDownloadOutlined, ApartmentOutlined, QuestionCircleOutlined  } from "../components/arc/icons";
 import { API } from "../services/api";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
@@ -70,7 +73,7 @@ const importTemplate = {
 };
 
 export default function AdminPricingPage({ refreshKey = 0 }) {
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const [items, setItems] = useState([]);
   const [catalogPending, setCatalogPending] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -121,7 +124,7 @@ export default function AdminPricingPage({ refreshKey = 0 }) {
       title: "渠道类型",
       dataIndex: "channel_type",
       width: 130,
-      render: (v) => <span className="bui-chip">{TYPE_LABEL[v] || v || "—"}</span>,
+      render: (v) => <ArcBadge size="sm" tone="neutral">{TYPE_LABEL[v] || v || "—"}</ArcBadge>,
     },
     {
       title: priceTitle("输入"),
@@ -187,7 +190,7 @@ export default function AdminPricingPage({ refreshKey = 0 }) {
               </div>
             }
           >
-            <span className="bui-chip bui-chip--green" style={{ fontSize: 11.5 }}>峰谷价</span>
+            <ArcBadge size="sm" tone="success" style={{ fontSize: 11.5 }}>峰谷价</ArcBadge>
           </Tooltip>
         ) : (
           <Text type="secondary" style={{ fontSize: 12 }}>—</Text>
@@ -371,7 +374,7 @@ export default function AdminPricingPage({ refreshKey = 0 }) {
           「该怎么处理」，点开就是具体模型清单（带渠道名），每条还能直接跳去定价表改价。 */}
       <ModelAttributions revision={items} onChange={load} />
 
-      <div className="oo-panel">
+      <ArcPanel className="oo-panel">
         {loadError ? (
           <Alert
             type="error"
@@ -414,36 +417,21 @@ export default function AdminPricingPage({ refreshKey = 0 }) {
           scroll={{ x: 980 }}
           pagination={{ pageSize: 30, showSizeChanger: true, showTotal: (t) => `共 ${t} 个模型` }}
         />
-      </div>
+      </ArcPanel>
 
-      <div className="oo-panel">
+      <ArcPanel className="oo-panel">
         <div className="oo-panel-head">
           <span className="oo-panel-title">计费说明</span>
         </div>
         <div className="oo-panel-body">
-          <div className="bui-kv">
-            <span className="bui-kv-k">币制</span>
-            <span className="bui-kv-v">最小计费单位 <OdAmount>0.0001</OdAmount></span>
-          </div>
-          <div className="bui-kv">
-            <span className="bui-kv-k">计费公式</span>
-            <span className="bui-kv-v" style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
-              (输入 token × 输入价 + 输出 token × 输出价 + 缓存命中 × 缓存价) ÷ 1,000,000
-            </span>
-          </div>
-          <div className="bui-kv">
-            <span className="bui-kv-k">数据来源</span>
-            <span className="bui-kv-v">
-              每条来源写在「价格来源」列（官方定价页地址）；
-              禁止填写「同上」等无意义说明。
-            </span>
-          </div>
-          <div className="bui-kv">
-            <span className="bui-kv-k">DeepSeek</span>
-            <span className="bui-kv-v">已配置闲时价的模型按请求发起时刻匹配峰谷时段；未配置闲时价时按基准价计费。具体价格与时段见表格</span>
-          </div>
+          <Descriptions items={[
+            { label: "币制", children: <>最小计费单位 <OdAmount>0.0001</OdAmount></> },
+            { label: "计费公式", children: <code>(输入 token × 输入价 + 输出 token × 输出价 + 缓存命中 × 缓存价) ÷ 1,000,000</code> },
+            { label: "数据来源", children: "每条来源写在价格来源列（官方定价页地址），禁止填写同上等无意义说明。" },
+            { label: "DeepSeek", children: "已配置闲时价的模型按请求发起时刻匹配峰谷时段；未配置闲时价时按基准价计费。具体价格与时段见表格。" },
+          ]}/>
         </div>
-      </div>
+      </ArcPanel>
 
       <Modal
         title="上传文件更新定价"

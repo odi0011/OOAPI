@@ -1,5 +1,5 @@
 import React from "react";
-import { Tooltip } from "antd";
+import {  Tooltip, Tag  } from "./arc/index";
 
 const TONE = { success: "var(--green)", warning: "var(--orange)", danger: "var(--red)" };
 
@@ -7,12 +7,12 @@ const TONE = { success: "var(--green)", warning: "var(--orange)", danger: "var(-
 // 保留旧组件签名，使资料、媒体、管理台与交易页面使用同一套密度。
 export default function StatCard({ label, value, suffix, hint, hintInline, tone, foot, className = "" }) {
   const tips = [hint, hintInline, foot].filter(Boolean);
-  const card = <span className={`bui-chip oo-stat-card ${className}`} tabIndex={tips.length ? 0 : undefined}>
+  const card = <Tag className={`oo-stat-card ${className}`} tabIndex={tips.length ? 0 : undefined}>
     <span className="oo-stat-card-label">{label}</span>
     <b className="oo-stat-card-num" style={tone ? { color: TONE[tone] } : undefined}>
       <span className="oo-stat-card-value">{value}</span>
       {suffix ? <span className="oo-stat-card-suffix">{suffix}</span> : null}
     </b>
-  </span>;
+  </Tag>;
   return tips.length ? <Tooltip trigger={["hover", "focus"]} title={<div>{tips.map((tip, index) => <div key={index}>{tip}</div>)}</div>}>{card}</Tooltip> : card;
 }

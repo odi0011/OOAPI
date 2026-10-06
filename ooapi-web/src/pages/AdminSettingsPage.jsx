@@ -1,3 +1,5 @@
+import { Card as ArcPanel } from "../components/arc/card/card";
+import { Card } from "../components/arc/card/card";
 // 系统设置 —— 配置驱动
 // ---------------------------------------------------------------------------
 // 为什么改成配置驱动（原先是 5 个手写 Tab 组件）：设置项已经增长到 90+，
@@ -7,14 +9,14 @@
 //
 // 分组：站点 / 外观 / 认证 / 计费 / 用户 / 安全 / 网关 / 邮件 / 备份（+ 更新）
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import {   useSearchParams } from "react-router-dom";
 import {
-  Form, Input, Button, Switch, InputNumber, App as AntApp, Tabs, Typography, Alert, Spin, Select, Tooltip,
-} from "antd";
+  Form, Input, Button, Switch, InputNumber, App as ArcApp, Tabs, Typography, Alert, Spin, Select, Tooltip,
+ } from "../components/arc/index";
 import {
   SettingOutlined, DollarOutlined, SafetyCertificateOutlined, SaveOutlined, CloudDownloadOutlined,
   BgColorsOutlined, LockOutlined, ApiOutlined, MailOutlined, DatabaseOutlined, UserOutlined, CheckCircleOutlined,
-} from "@ant-design/icons";
+ } from "../components/arc/icons";
 import { API } from "../services/api";
 import AgentRoutingSettings, { routingValue } from "../components/AgentRoutingSettings";
 import { odOf, unitsPerOd } from "../services/format";
@@ -236,7 +238,7 @@ function useSettingsForm() {
   const [error, setError] = useState("");
   const [saveState, setSaveState] = useState({ kind: "", text: "" });
   const [superOnly, setSuperOnly] = useState([]);
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const { refreshStatus, user, status } = useApp();
 
   const load = async () => {
@@ -391,13 +393,12 @@ function SettingsTab({ group }) {
             disabled={s.loading || Boolean(s.error) || s.saving}
             requiredMark={false}
           >
-            {sections.map((section) => <section className="oo-panel oo-admin-settings-section" key={section.title}>
-              <div className="oo-admin-settings-section-head"><h2>{section.title}</h2></div>
+            {sections.map((section) => <Card title={section.title} className="oo-admin-settings-section" key={section.title}>
               <div className="oo-admin-settings-section-body">
                 {section.fixedCurrency ? <div className="oo-admin-fixed-currency"><OdCoin size={36} /><div><strong>OD币</strong></div></div> : null}
                 {section.visibility ? <Form.Item name="user_data_visibility" className="oo-admin-visibility-field"><Field spec={F.user_data_visibility} name="user_data_visibility" locked={s.superOnly.includes("user_data_visibility")} disabled={s.loading || Boolean(s.error) || s.saving} /></Form.Item> : section.fields.map((key) => <SettingsField key={key} name={key} spec={F[key]} locked={s.superOnly.includes(key)} busy={s.loading || Boolean(s.error) || s.saving} />)}
               </div>
-            </section>)}
+            </Card>)}
             <div className="oo-admin-settings-actions">
               <div className={`oo-admin-settings-save-state${s.saveState.kind ? ` oo-admin-settings-save-state--${s.saveState.kind}` : ""}`} role="status" aria-live="polite">
                 {s.saveState.kind === "saved" ? <CheckCircleOutlined /> : null}{s.saveState.text || (!editable ? "当前账号仅可查看此标签" : `${label}设置`)}
@@ -414,7 +415,7 @@ function SettingsTab({ group }) {
 
 /* ============================ 在线更新 ============================ */
 function UpdateTab() {
-  const { message, modal } = AntApp.useApp();
+  const { message, modal } = ArcApp.useApp();
   const { user } = useApp();
   const isSuper = Number(user?.role) >= 1000;
   const [info, setInfo] = useState(null);
@@ -528,7 +529,7 @@ function UpdateTab() {
   };
 
   return (
-    <div className="oo-panel oo-admin-update">
+    <ArcPanel className="oo-panel oo-admin-update">
       <div className="oo-panel-body">
         {error ? (
           <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} />
@@ -569,7 +570,7 @@ function UpdateTab() {
           ) : null}
         </div>
       </div>
-    </div>
+    </ArcPanel>
   );
 }
 

@@ -1,10 +1,15 @@
+import { Badge as ArcBadge } from "../components/arc/badge/badge";
+import { Card as ArcPanel } from "../components/arc/card/card";
+import { Button as ActionButton } from "../components/arc/index";
+import { ActivityHeatmap } from "../components/arc/activity-heatmap/activity-heatmap";
+import { LineChart as UsageLineChart } from "../components/Charts";
 import CodeBlock from "../components/CodeBlock";
 import OdAmount from "../components/OdAmount";
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
   Table, Space, Typography, Input, Popconfirm, Modal, Form, Select, Switch,
-  InputNumber, App as AntApp, Tooltip, Row, Col, Alert, Radio, Button, Spin, Pagination, Segmented, Avatar,
-} from "antd";
+  InputNumber, App as ArcApp, Tooltip, Row, Col, Alert, Radio, Button, Spin, Pagination, Segmented, Avatar,
+ } from "../components/arc/index";
 import {
   PlusOutlined, ReloadOutlined, ThunderboltOutlined, DeleteOutlined, EditOutlined,
   UndoOutlined, KeyOutlined, LoginOutlined, GlobalOutlined,
@@ -12,7 +17,7 @@ import {
   ExclamationCircleOutlined, DashboardOutlined, LinkOutlined, CopyOutlined, UploadOutlined,
   // 额度列的「上游 429，预计恢复时间」提示行用它（时钟语义）
   ClockCircleOutlined,
-} from "@ant-design/icons";
+ } from "../components/arc/icons";
 import { API } from "../services/api";
 import { channelPublicModel } from "../services/model-sources";
 import { channelActivityCalendar } from "../services/channel-activity";
@@ -98,7 +103,7 @@ function UptimeTip({ c }) {
 
 // 模型多选标签：左侧带厂商图标（编辑/新增渠道共用）
 const modelTagRender = (vendor) => ({ label, closable, onClose }) => (
-  <span className="bui-chip" style={{ marginInlineEnd: 4, display: "inline-flex", alignItems: "center", gap: 4, maxWidth: 190 }}>
+  <ArcBadge size="sm" tone="neutral" style={{ marginInlineEnd: 4, display: "inline-flex", alignItems: "center", gap: 4, maxWidth: 190 }}>
     <VendorIcon type={vendor} size={13} />
     <span className="oo-truncate">{label}</span>
     {closable ? (
@@ -111,7 +116,7 @@ const modelTagRender = (vendor) => ({ label, closable, onClose }) => (
         ×
       </span>
     ) : null}
-  </span>
+  </ArcBadge>
 );
 
 // 下拉选项同样带厂商图标
@@ -172,11 +177,11 @@ function UptimeBars({ calls = [], count = 20, onCopy }) {
  * 自动暂停（status=3，检测失败或用户调用出错时由后端写入）也能点 ——
  * 那正是最需要「修好后一键启用」的场景。
  */
-// 状态沿用原来的启停逻辑，控件与全站统一使用 AntD Switch。
+// 状态沿用原来的启停逻辑，控件与全站统一使用 Arc Switch。
 function ChannelSwitch({ checked, disabled, onToggle, title }) {
   return (
     <Tooltip
-      // 状态含义与自动暂停原因是多行，antd 默认会把换行折叠成空格 ——
+      // 状态含义与自动暂停原因是多行，默认行内排版会把换行折叠成空格 ——
       // 用 pre-line 的容器保住分行（否则「冷却至 …」「原因：…」会挤成一坨）
       title={<span style={{ whiteSpace: "pre-line" }}>{title}</span>}
     >
@@ -403,57 +408,8 @@ function smoothPath(rawPts) {
  * 图形铺满卡片，窄屏在图内滚动；不再把年度活动切成几个稀疏的小日历。
  */
 function TokenActivity({ byDay = [], generatedAt }) {
-  const view = useMemo(() => channelActivityCalendar(byDay, generatedAt), [byDay, generatedAt]);
-  const scrollRef = useRef(null);
-  useEffect(() => {
-    // 手机打开时先看到最近日期；桌面没有横向溢出时自然保持完整一年的视图。
-    const scroll = scrollRef.current;
-    if (scroll) scroll.scrollLeft = scroll.scrollWidth;
-  }, [view]);
-  const tip = (cell) => `${cell.date} · ${fmtFull(cell.tokens)} tokens · ${cell.calls} 次调用（UTC+8）`;
-
-  return (
-    <div className="oo-stats-card oo-channel-activity">
-      <div className="oo-stats-card-head">
-        <div className="oo-stats-card-title">Token 活动</div>
-        <span className="oo-channel-activity-note">近一年 · 逐日用量</span>
-      </div>
-      <div className="oo-channel-activity-meta">
-        <span>{view.rangeLabel}</span>
-        <span>UTC+8</span>
-      </div>
-      <div className="oo-channel-activity-scroll" ref={scrollRef} tabIndex={0} aria-label="近一年 Token 活动，可横向滚动查看日期">
-        <div className="oo-channel-activity-calendar" style={{ minWidth: view.columns * 15 + 29 }}>
-          <div className="oo-channel-activity-months" style={{ gridTemplateColumns: `repeat(${view.columns}, minmax(0, 1fr))` }} aria-hidden="true">
-            {view.months.map((month) => <span key={`${month.year}-${month.label}`} style={{ gridColumn: `${month.column} / span 2` }}>{month.label}</span>)}
-          </div>
-          <div className="oo-channel-activity-body">
-            <div className="oo-channel-activity-weekdays" aria-hidden="true">
-              <span style={{ gridRow: 1 }}>一</span>
-              <span style={{ gridRow: 3 }}>三</span>
-              <span style={{ gridRow: 5 }}>五</span>
-            </div>
-            <div className="oo-channel-activity-grid" style={{ gridTemplateColumns: `repeat(${view.columns}, minmax(0, 1fr))` }}>
-              {view.slots.map((cell, index) => cell ? (
-                <Tooltip key={cell.key} title={tip(cell)} trigger={["hover", "focus"]}>
-                  <button type="button" className={`oo-channel-activity-cell lv${cell.level}`} aria-label={tip(cell)} />
-                </Tooltip>
-              ) : <span key={`padding-${index}`} className="oo-channel-activity-padding" aria-hidden="true" />)}
-            </div>
-          </div>
-        </div>
-      </div>
-      <div className="oo-channel-activity-foot">
-        <span>{fmtFull(view.tokens)} tokens · {view.calls} 次调用</span>
-        <span className="oo-channel-activity-scale">
-          少
-          {[0, 1, 2, 3, 4].map((level) => <i key={level} className={`oo-channel-activity-cell lv${level}`} />)}
-          多
-        </span>
-      </div>
-      {!view.calls ? <div className="oo-channel-activity-empty">此时间范围暂无调用</div> : null}
-    </div>
-  );
+ const view = useMemo(() => channelActivityCalendar(byDay, generatedAt), [byDay, generatedAt]);
+ return <ActivityHeatmap className="oo-stats-card oo-channel-activity" days={view.slots.filter(Boolean).map(c=>({date:c.date,count:c.tokens}))} label="Token 活动" period="近一年 · UTC+8" unit={{one:"Token",other:"Tokens"}} weekStartsOn={1} locale="zh-CN"/>;
 }
 
 /**
@@ -461,152 +417,8 @@ function TokenActivity({ byDay = [], generatedAt }) {
  * 时间范围与顶部「时间范围」开关联动（7 / 30 / 90 天）。
  */
 function TokenTrend({ byDay = [], series = [], range, onRangeChange }) {
-  const n = Math.max(1, Math.min(range, byDay.length));
-  const days = byDay.slice(-n);
-  const W = 780;
-  const H = 210;
-  const PAD = { l: 46, r: 12, t: 12, b: 26 };
-  const plotW = W - PAD.l - PAD.r;
-  const plotH = H - PAD.t - PAD.b;
-
-  const lines = useMemo(
-    () =>
-      series
-        .map((s, i) => ({
-          model: s.model,
-          color: SERIES_COLORS[i % SERIES_COLORS.length],
-          values: (s.values || []).slice(-n),
-        }))
-        .filter((s) => s.values.some((v) => v > 0)),
-    [series, n]
-  );
-
-  const max = useMemo(() => {
-    let m = 0;
-    for (const s of lines) for (const v of s.values) if (v > m) m = v;
-    return m || 1;
-  }, [lines]);
-
-  const x = (i) => PAD.l + (i * plotW) / Math.max(1, n - 1);
-  const y = (v) => PAD.t + (1 - v / max) * plotH;
-
-  const [hover, setHover] = useState(null);
-  const onMove = (e) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    if (!rect.width) return;
-    const xv = ((e.clientX - rect.left) / rect.width) * W;
-    const idx = Math.round(((xv - PAD.l) / plotW) * Math.max(1, n - 1));
-    setHover(Math.max(0, Math.min(n - 1, idx)));
-  };
-
-  const yTicks = [0, 0.25, 0.5, 0.75, 1];
-  const xTickStep = Math.max(1, Math.ceil(n / 6));
-  const hoverDay = hover !== null ? days[hover] : null;
-  const hoverRows = hoverDay
-    ? lines
-        .map((s) => ({ model: s.model, color: s.color, v: s.values[hover] || 0 }))
-        .filter((r) => r.v > 0)
-        .sort((a, b) => b.v - a.v)
-    : [];
-
-  return (
-    <>
-      <div className="oo-stats-card-head">
-        <div className="oo-stats-card-title">时间范围</div>
-        <Segmented
-          className="oo-seg"
-          size="small"
-          value={range}
-          onChange={onRangeChange}
-          options={[
-            { label: "近 7 日", value: 7 },
-            { label: "近 30 日", value: 30 },
-            { label: "近 90 日", value: 90 },
-          ]}
-        />
-      </div>
-      <div className="oo-stats-card">
-        <div className="oo-stats-card-head">
-          <div className="oo-stats-card-title">每日 Token 趋势图</div>
-        </div>
-        {!lines.length ? (
-          <div className="oo-trend-empty">近 {n} 天暂无 Token 消耗记录（统计从功能上线后开始累计）</div>
-        ) : (
-          <>
-            <div className="oo-trend-legend">
-              {lines.map((s) => (
-                <span className="oo-trend-legend-item" key={s.model}>
-                  <i style={{ background: s.color }} />
-                  <span className="oo-truncate">{s.model}</span>
-                </span>
-              ))}
-            </div>
-            <div className="oo-trend-wrap">
-              {hoverDay && hoverRows.length ? (
-                <div className="oo-trend-tip" style={{ left: `clamp(70px, ${(x(hover) / W) * 100}%, calc(100% - 70px))` }}>
-                  <div className="oo-trend-tip-date">{hoverDay.day}</div>
-                  {hoverRows.slice(0, 7).map((r) => (
-                    <div className="oo-trend-tip-row" key={r.model}>
-                      <i style={{ background: r.color }} />
-                      <span className="oo-truncate" style={{ maxWidth: 150 }}>{r.model}</span>
-                      <span>{fmtCompact(r.v)}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              <svg
-                viewBox={`0 0 ${W} ${H}`}
-                width="100%"
-                height={H}
-                role="img"
-                aria-label="每日 Token 趋势图"
-                onMouseMove={onMove}
-                onMouseLeave={() => setHover(null)}
-              >
-                {yTicks.map((f) => (
-                  <g key={f}>
-                    <line
-                      x1={PAD.l} x2={W - PAD.r}
-                      y1={PAD.t + (1 - f) * plotH} y2={PAD.t + (1 - f) * plotH}
-                      stroke="var(--line-soft)" strokeDasharray={f === 0 ? "0" : "3 4"}
-                    />
-                    <text x={PAD.l - 8} y={PAD.t + (1 - f) * plotH + 3.5} textAnchor="end" fontSize="10" fill="var(--ink-3)">
-                      {fmtCompact(max * f)}
-                    </text>
-                  </g>
-                ))}
-                {days.map((d, i) =>
-                  i % xTickStep === 0 || i === n - 1 ? (
-                    <text key={d.day} x={x(i)} y={H - 8} textAnchor="middle" fontSize="10" fill="var(--ink-3)">
-                      {d.day.slice(5)}
-                    </text>
-                  ) : null
-                )}
-                {lines.map((s) => (
-                  <path
-                    key={s.model}
-                    d={smoothPath(s.values.map((v, i) => [x(i).toFixed(2), y(v).toFixed(2)]))}
-                    fill="none"
-                    stroke={s.color}
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                  />
-                ))}
-                {hover !== null ? (
-                  <line x1={x(hover)} x2={x(hover)} y1={PAD.t} y2={PAD.t + plotH} stroke="var(--line-strong)" strokeDasharray="3 3" />
-                ) : null}
-                {hover !== null
-                  ? lines.map((s) => (
-                      <circle key={s.model} cx={x(hover)} cy={y(s.values[hover] || 0)} r="3" fill="var(--surface)" stroke={s.color} strokeWidth="1.6" />
-                    ))
-                  : null}
-              </svg>
-            </div>
-          </>
-        )}
-      </div>
-    </>
-  );
+ const days = byDay.slice(-range);
+ return <><div className="oo-stats-card-head"><strong>时间范围</strong><Segmented value={range} onChange={onRangeChange} options={[{label:"近 7 日",value:7},{label:"近 30 日",value:30},{label:"近 90 日",value:90}]}/></div><div className="oo-stats-card"><UsageLineChart height={210} series={series.map((s,i)=>({name:s.model,color:SERIES_COLORS[i%SERIES_COLORS.length],values:(s.values||[]).slice(-range).map((y,n)=>({x:days[n]?.day||days[n]?.date||n,y}))}))}/></div></>;
 }
 
 /**
@@ -741,7 +553,7 @@ function ProviderPicker({ providers, activeKey, onPick }) {
 }
 
 export default function AdminChannelsPage() {
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   // status 提供 units_per_od 等站点配置：额度单位换算要它（不要自己写死 10000）
   const { status } = useApp();
 
@@ -1253,7 +1065,7 @@ export default function AdminChannelsPage() {
     try {
       v = await addForm.validateFields();
     } catch {
-      return; // 校验未通过：antd 已在表单上标红
+      return; // 校验未通过：表单已显示字段错误
     }
 
     setAddSubmitting(true);
@@ -2101,7 +1913,7 @@ export default function AdminChannelsPage() {
           >
             <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap", overflow: "hidden" }}>
               {merged.slice(0, 2).map((m) => <ModelLabel key={m} model={channelPublicModel(r, m)} size={14} channelType={r.type} />)}
-              {merged.length > 2 ? <span className="bui-chip">+{merged.length - 2}</span> : null}
+              {merged.length > 2 ? <ArcBadge size="sm" tone="neutral">+{merged.length - 2}</ArcBadge> : null}
             </span>
           </Tooltip>
         );
@@ -2153,14 +1965,14 @@ export default function AdminChannelsPage() {
       width: 126,
       render: (_, r) => {
         if (!r.has_credential) {
-          return <span className="bui-chip bui-chip--orange"><InfoCircleOutlined /> 未配置</span>;
+          return <ArcBadge size="sm" tone="warning"><InfoCircleOutlined /> 未配置</ArcBadge>;
         }
         const isApi = Boolean(r.isApiKey);
         return (
-          <span className="bui-chip" title={r.methodLabel}>
+          <ArcBadge size="sm" tone="neutral" title={r.methodLabel}>
             {isApi ? <KeyOutlined /> : <LoginOutlined />}
             {isApi ? (r.key_count > 1 ? `${r.key_count} 个 Key` : "Key") : "账号"}
-          </span>
+          </ArcBadge>
         );
       },
     },
@@ -2516,50 +2328,50 @@ export default function AdminChannelsPage() {
           AUTH/401/403/失效/过期 判定），或渠道处于禁用/冷却中。 */}
       {r.canRecover !== false && !r.isApiKey && (r.needsRelogin || r.status !== 1 || r.cooling) ? (
         <Tooltip title={r.needsRelogin ? "凭据可能失效：点此重新登录 / 找回" : "重新登录 / 找回凭据"}>
-          <button
-            className="bui-icon-btn"
+          <ActionButton size="small" type="text"
+
             style={r.needsRelogin ? { color: "var(--red)" } : undefined}
             aria-label={`${r.name} 重新登录`}
             onClick={() => openRelogin(r)}
             disabled={Boolean(actionBusyId) || testingId === r.id}
           >
             <SafetyCertificateOutlined />
-          </button>
+          </ActionButton>
         </Tooltip>
       ) : null}
       {/* 注：这里原有「浏览器登录」按钮（服务器浏览器里打开登录页）。
           该链路已整体删除 —— 这类渠道改用「重新登录」里的
           「本机浏览器登录 + 粘贴凭据」，不占服务器资源。 */}
       <Tooltip title="测试">
-        <button className="bui-icon-btn" aria-label={`${r.name} 测试`} onClick={() => doTest(r)} disabled={Boolean(actionBusyId) || batchTesting || testingId === r.id} aria-busy={testingId === r.id || testingIds.has(r.id)}>
+        <ActionButton size="small" type="text"  aria-label={`${r.name} 测试`} onClick={() => doTest(r)} disabled={Boolean(actionBusyId) || batchTesting || testingId === r.id} aria-busy={testingId === r.id || testingIds.has(r.id)}>
           {testingId === r.id || testingIds.has(r.id) ? <Spin size="small" /> : <ThunderboltOutlined />}
-        </button>
+        </ActionButton>
       </Tooltip>
       {r.cooling ? (
         <Tooltip title="恢复">
-          <button className="bui-icon-btn" aria-label={`${r.name} 恢复`} onClick={() => doReset(r)} disabled={Boolean(actionBusyId) || testingId === r.id} aria-busy={actionBusyId === r.id}>
+          <ActionButton size="small" type="text"  aria-label={`${r.name} 恢复`} onClick={() => doReset(r)} disabled={Boolean(actionBusyId) || testingId === r.id} aria-busy={actionBusyId === r.id}>
             {actionBusyId === r.id ? <Spin size="small" /> : <UndoOutlined />}
-          </button>
+          </ActionButton>
         </Tooltip>
       ) : null}
       {/* 查额度已移到「额度」列（点未查询的格子即查），不再占用操作栏 —— 操作栏留给高频动作 */}
       <Tooltip title="用量统计">
-        <button
-          className="bui-icon-btn"
+        <ActionButton size="small" type="text"
+
           aria-label={`${r.name} 用量统计`}
           onClick={() => openStats(r)}
         >
           <BarChartOutlined />
-        </button>
+        </ActionButton>
       </Tooltip>
       <Tooltip title="编辑">
-        <button className="bui-icon-btn" aria-label={`${r.name} 编辑`} onClick={() => openEdit(r)} disabled={Boolean(actionBusyId) || testingId === r.id}><EditOutlined /></button>
+        <ActionButton size="small" type="text"  aria-label={`${r.name} 编辑`} onClick={() => openEdit(r)} disabled={Boolean(actionBusyId) || testingId === r.id}><EditOutlined /></ActionButton>
       </Tooltip>
       <Popconfirm title={`确认删除「${r.name}」？`} onConfirm={() => doDelete(r)}>
         <Tooltip title="删除">
-          <button className="bui-icon-btn" aria-label={`${r.name} 删除`} disabled={Boolean(actionBusyId) || testingId === r.id} aria-busy={actionBusyId === r.id} style={{ color: "var(--red)" }}>
+          <ActionButton size="small" type="text"  aria-label={`${r.name} 删除`} disabled={Boolean(actionBusyId) || testingId === r.id} aria-busy={actionBusyId === r.id} style={{ color: "var(--red)" }}>
             {actionBusyId === r.id ? <Spin size="small" /> : <DeleteOutlined />}
-          </button>
+          </ActionButton>
         </Tooltip>
       </Popconfirm>
     </Space>
@@ -2579,16 +2391,16 @@ export default function AdminChannelsPage() {
         title="渠道管理"
         tags={
           <>
-            <span className="bui-chip" title="渠道总数">渠道 {statsError ? "—" : stats?.total ?? items.length}</span>
-            <span className="bui-chip" style={statsError || !(stats?.enabled > 0) ? undefined : { color: "var(--green)" }} title="已启用">
+            <ArcBadge size="sm" tone="neutral" title="渠道总数">渠道 {statsError ? "—" : stats?.total ?? items.length}</ArcBadge>
+            <ArcBadge size="sm" tone="neutral" style={statsError || !(stats?.enabled > 0) ? undefined : { color: "var(--green)" }} title="已启用">
               启用 {statsError ? "—" : stats?.enabled ?? 0}
-            </span>
-            <span className="bui-chip" style={!statsError && (stats?.cooling ?? 0) > 0 ? { color: "var(--orange)" } : undefined} title="冷却中（自动恢复）">
+            </ArcBadge>
+            <ArcBadge size="sm" tone="neutral" style={!statsError && (stats?.cooling ?? 0) > 0 ? { color: "var(--orange)" } : undefined} title="冷却中（自动恢复）">
               冷却 {statsError ? "—" : stats?.cooling ?? 0}
-            </span>
-            <span className="bui-chip" title="全部渠道合计的可用模型数">
+            </ArcBadge>
+            <ArcBadge size="sm" tone="neutral" title="全部渠道合计的可用模型数">
               模型 {loadError ? "—" : new Set(items.flatMap((x) => x.models || [])).size}
-            </span>
+            </ArcBadge>
           </>
         }
         extra={
@@ -2607,9 +2419,9 @@ export default function AdminChannelsPage() {
               options={providers.map((p) => ({ value: p.key, label: p.name }))}
             />
             <Tooltip title={viewMode === "grid" ? "切换为列表形态" : "切换为宫格形态"}>
-              <button className="bui-icon-btn" aria-label="切换列表 / 宫格形态" onClick={toggleView}>
+              <ActionButton size="small" type="text"  aria-label="切换列表 / 宫格形态" onClick={toggleView}>
                 {viewMode === "grid" ? <UnorderedListOutlined /> : <AppstoreOutlined />}
-              </button>
+              </ActionButton>
             </Tooltip>
             {selectedKeys.length ? (
               <>
@@ -2618,33 +2430,33 @@ export default function AdminChannelsPage() {
                   title={`确认批量启用 ${selectedKeys.length} 个渠道？`}
                   onConfirm={() => doBatch("enable")}
                 >
-                  <button className="bui-btn" disabled={batchBusy}>批量启用</button>
+                  <ActionButton size="small" type="default"  disabled={batchBusy}>批量启用</ActionButton>
                 </Popconfirm>
                 <Popconfirm
                   title={`确认批量禁用 ${selectedKeys.length} 个渠道？`}
                   description="禁用后这些渠道会立即退出调度"
                   onConfirm={() => doBatch("disable")}
                 >
-                  <button className="bui-btn" disabled={batchBusy}>批量禁用</button>
+                  <ActionButton size="small" type="default"  disabled={batchBusy}>批量禁用</ActionButton>
                 </Popconfirm>
-                <button className="bui-btn" onClick={() => setBatchOpen(true)} disabled={batchBusy}>批量修改</button>
-                <button className="bui-btn" onClick={doBatchTest} disabled={batchTesting || batchBusy || Boolean(testingId)}>
+                <ActionButton size="small" type="default"  onClick={() => setBatchOpen(true)} disabled={batchBusy}>批量修改</ActionButton>
+                <ActionButton size="small" type="default"  onClick={doBatchTest} disabled={batchTesting || batchBusy || Boolean(testingId)}>
                   {batchTesting ? <Spin size="small" style={{ marginInlineEnd: 6 }} /> : null}批量检测
-                </button>
+                </ActionButton>
                 <Popconfirm title={`确认批量删除 ${selectedKeys.length} 个渠道？`} onConfirm={() => doBatch("delete")}>
-                  <button className="bui-btn" style={{ color: "var(--red)" }} disabled={batchBusy}>批量删除</button>
+                  <ActionButton size="small" type="default"  style={{ color: "var(--red)" }} disabled={batchBusy}>批量删除</ActionButton>
                 </Popconfirm>
               </>
             ) : null}
-            <button className="bui-btn" onClick={load}><ReloadOutlined /> 刷新</button>
-            <button className="bui-btn" onClick={openImport}>导入凭据</button>
-            <button className="bui-btn bui-btn--primary" onClick={openAdd}><PlusOutlined /> 添加渠道</button>
+            <ActionButton size="small" type="default"  onClick={load}><ReloadOutlined /> 刷新</ActionButton>
+            <ActionButton size="small" type="default"  onClick={openImport}>导入凭据</ActionButton>
+            <ActionButton size="small" type="primary"  onClick={openAdd}><PlusOutlined /> 添加渠道</ActionButton>
           </>
         }
       />
 
       {viewMode === "grid" ? (
-        <div className="oo-panel">
+        <ArcPanel className="oo-panel">
           {loadError ? (
             <Alert
               type="error"
@@ -2669,13 +2481,13 @@ export default function AdminChannelsPage() {
                   <StatusCell r={r} onToggle={doToggleStatus} busy={actionBusyId === r.id} />
                 </div>
                 <div className="oo-channel-card-meta">
-                  <span className="bui-chip">{r.typeName}</span>
-                  <span className="bui-chip" title={r.methodLabel}>
+                  <ArcBadge size="sm" tone="neutral">{r.typeName}</ArcBadge>
+                  <ArcBadge size="sm" tone="neutral" title={r.methodLabel}>
                     {r.isApiKey ? (r.key_count > 1 ? `${r.key_count} 个 Key` : "Key") : "账号"}
-                  </span>
-                  <span className="bui-chip" title={(r.groups || []).join("、")}>
+                  </ArcBadge>
+                  <ArcBadge size="sm" tone="neutral" title={(r.groups || []).join("、")}>
                     {Array.isArray(r.groups) && r.groups.length ? r.groups[0] : "未分组"}
-                  </span>
+                  </ArcBadge>
                 </div>
                 <div className="oo-channel-card-models">
                   <Tooltip
@@ -2689,10 +2501,10 @@ export default function AdminChannelsPage() {
                       {(r.models || []).length ? (
                         <>
                           {(r.models || []).slice(0, 3).map((m) => <ModelLabel key={m} model={m} size={14} channelType={r.type} />)}
-                          {(r.models?.length || 0) > 3 ? <span className="bui-chip">+{r.models.length - 3}</span> : null}
+                          {(r.models?.length || 0) > 3 ? <ArcBadge size="sm" tone="neutral">+{r.models.length - 3}</ArcBadge> : null}
                         </>
                       ) : (
-                        <span className="bui-chip">{r.typeName} 全部</span>
+                        <ArcBadge size="sm" tone="neutral">{r.typeName} 全部</ArcBadge>
                       )}
                     </span>
                   </Tooltip>
@@ -2712,9 +2524,9 @@ export default function AdminChannelsPage() {
             showSizeChanger={false}
             style={{ marginTop: 12, textAlign: "right" }}
           />
-        </div>
+        </ArcPanel>
       ) : (
-        <div className="oo-panel">
+        <ArcPanel className="oo-panel">
           {loadError ? (
             <Alert
               type="error"
@@ -2735,7 +2547,7 @@ export default function AdminChannelsPage() {
             rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
             pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (t) => `共 ${t} 个渠道` }}
           />
-        </div>
+        </ArcPanel>
       )}
 
       {/* ============ 添加渠道（中心弹窗）============ */}
@@ -2858,7 +2670,7 @@ export default function AdminChannelsPage() {
                       ) : addMode === "paste" ? (
                         <>
                           {/* 网页反代渠道的登录：**只用本机浏览器**（服务器浏览器那条路已整体删除）。
-                              
+
                               演进（用户三轮反馈，最终落在「删掉」）：
                                 ① 「所有快捷登录你都是做的内置浏览器？这不是给服务器徒增压力吗」
                                 ② 「本机浏览器应该是直接唤起用户当前浏览器的一个小窗啊，
@@ -2867,7 +2679,7 @@ export default function AdminChannelsPage() {
                                     内存和性能，这个逼玩意可以直接删了啊，根本用不着啊。」
                               于是现在是：点按钮 → 弹出一个浏览器小窗 → 按面板里的分步指引
                               登录并复制一次凭据。零服务器开销。
-                              
+
                               为什么仍需「复制一次」而不能全自动：浏览器同源策略禁止读取
                               **其他站点**的 localStorage/cookie，任何网站都做不到。
                               真正能全自动的只有 OAuth 回调类（走「粘贴回调」那条路，
@@ -3646,7 +3458,7 @@ export default function AdminChannelsPage() {
               return null;
             }}
           </Form.Item>
-          <button className="bui-btn bui-btn--primary" type="submit">执行</button>
+          <ActionButton size="small" type="primary"  htmlType="submit">执行</ActionButton>
         </Form>
       </Modal>
 
@@ -3730,12 +3542,12 @@ export default function AdminChannelsPage() {
           <Space direction="vertical" style={{ width: "100%" }} size={10}>
             {reloginInfo ? (
               <div className="oo-kv" style={{ fontSize: 12 }}>
-                <span className="bui-chip">{reloginInfo.typeName}</span>
-                <span className="bui-chip">{reloginInfo.methodLabel}</span>
-                {reloginInfo.account ? <span className="bui-chip">账号 {reloginInfo.account}</span> : null}
-                {reloginInfo.planType ? <span className="bui-chip">订阅 {reloginInfo.planType}</span> : null}
+                <ArcBadge size="sm" tone="neutral">{reloginInfo.typeName}</ArcBadge>
+                <ArcBadge size="sm" tone="neutral">{reloginInfo.methodLabel}</ArcBadge>
+                {reloginInfo.account ? <ArcBadge size="sm" tone="neutral">账号 {reloginInfo.account}</ArcBadge> : null}
+                {reloginInfo.planType ? <ArcBadge size="sm" tone="neutral">订阅 {reloginInfo.planType}</ArcBadge> : null}
                 {reloginInfo.needsRelogin ? (
-                  <span className="bui-chip bui-chip--orange"><ExclamationCircleOutlined /> 需要重新登录</span>
+                  <ArcBadge size="sm" tone="warning"><ExclamationCircleOutlined /> 需要重新登录</ArcBadge>
                 ) : null}
               </div>
             ) : null}
@@ -4060,21 +3872,21 @@ export default function AdminChannelsPage() {
                   <span className="oo-stats-recent-src">
                     {c.u ? (
                       <Tooltip title={`${c.u.n || "用户"}${c.u.e ? ` · ${c.u.e}` : ""}（点击复制）`}>
-                        <button type="button" className="bui-user-tag" onClick={() => copyUserContact(c.u)}>
+                        <ActionButton type="text" htmlType="button" size="small" onClick={() => copyUserContact(c.u)}>
                           <Avatar size={16} src={c.u.a || undefined} style={{ background: "var(--accent)", fontSize: 10 }}>
                             {String(c.u.n || "?").slice(0, 1)}
                           </Avatar>
                           <span className="oo-truncate" style={{ maxWidth: 46 }}>{shortUser(c.u.n)}</span>
-                        </button>
+                        </ActionButton>
                       </Tooltip>
                     ) : c.k === "auto" ? (
-                      <span className="bui-chip">定时</span>
+                      <ArcBadge size="sm" tone="neutral">定时</ArcBadge>
                     ) : c.k === "test" ? (
-                      <span className="bui-chip">测试</span>
+                      <ArcBadge size="sm" tone="neutral">测试</ArcBadge>
                     ) : c.k === "chat" ? (
-                      <span className="bui-chip">对话</span>
+                      <ArcBadge size="sm" tone="neutral">对话</ArcBadge>
                     ) : (
-                      <span className="bui-chip" style={{ opacity: 0.6 }}>其他</span>
+                      <ArcBadge size="sm" tone="neutral" style={{ opacity: 0.6 }}>其他</ArcBadge>
                     )}
                   </span>
                   <span style={{ width: 150, minWidth: 0, display: "flex", flexDirection: "column", gap: 1, fontSize: 11.5 }}>

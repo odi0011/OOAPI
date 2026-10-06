@@ -1,5 +1,5 @@
 import React from "react";
-import { Button, Result, Typography } from "antd";
+import {  Button, Result, Typography  } from "./arc/index";
 
 const { Paragraph, Text } = Typography;
 

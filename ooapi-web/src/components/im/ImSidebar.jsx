@@ -1,7 +1,8 @@
+import { Button as ActionButton } from "../arc/index";
 // 消息中心左栏：会话列表 / 联系人（两个 Tab 共用一个搜索框）
 import React, { useMemo } from "react";
-import { Skeleton, Tooltip } from "antd";
-import { MessageOutlined, UserAddOutlined, RightOutlined, TeamOutlined } from "@ant-design/icons";
+import {   Skeleton, Tooltip  } from "../arc/index";
+import { MessageOutlined, UserAddOutlined, RightOutlined, TeamOutlined  } from "../arc/icons";
 import { RoomAvatar, PresenceAvatar, fmtListTime, nameOf } from "./im-utils";
 
 const match = (kw, ...fields) => {
@@ -39,8 +40,8 @@ export function RoomList({ rooms, loading, activeId, online, kw, filter, onOpen,
         desc="从联系人发起私聊，或建一个群聊把大家拉进来"
         action={
           <div className="oo-im-empty-actions">
-            <button type="button" className="oo-im-link-btn" onClick={onFindPeople}><UserAddOutlined /> 添加好友</button>
-            <button type="button" className="oo-im-link-btn" onClick={onCreateGroup}><TeamOutlined /> 创建群聊</button>
+            <ActionButton type="text" htmlType="button" className="oo-im-link-btn" onClick={onFindPeople}><UserAddOutlined /> 添加好友</ActionButton>
+            <ActionButton type="text" htmlType="button" className="oo-im-link-btn" onClick={onCreateGroup}><TeamOutlined /> 创建群聊</ActionButton>
           </div>
         }
       />
@@ -55,7 +56,7 @@ export function RoomList({ rooms, loading, activeId, online, kw, filter, onOpen,
         const active = r.id === activeId;
         return (
           <li key={r.id} role="option" aria-selected={active}>
-            <button type="button" className={`oo-im-row${active ? " is-active" : ""}`} onClick={() => onOpen(r)}>
+            <ActionButton type="text" htmlType="button" className={`oo-im-row${active ? " is-active" : ""}`} onClick={() => onOpen(r)}>
               <RoomAvatar room={r} size={40} online={peerOnline} />
               <span className="oo-im-row-body">
                 <span className="oo-im-row-top">
@@ -68,7 +69,7 @@ export function RoomList({ rooms, loading, activeId, online, kw, filter, onOpen,
                   {r.unread ? <span className="oo-im-unread">{r.unread > 99 ? "99+" : r.unread}</span> : null}
                 </span>
               </span>
-            </button>
+            </ActionButton>
           </li>
         );
       })}
@@ -86,7 +87,7 @@ export function ContactList({ friends, loading, online, pending, kw, activeFrien
   const row = (f) => (
     <li key={f.id}>
       <div className={`oo-im-row oo-im-row--contact${activeFriendId === f.id ? " is-active" : ""}`}>
-        <button type="button" className="oo-im-row-main" onClick={() => onOpenFriend(f)} onDoubleClick={() => onChat(f)}>
+        <ActionButton type="text" htmlType="button" className="oo-im-row-main" onClick={() => onOpenFriend(f)} onDoubleClick={() => onChat(f)}>
           <PresenceAvatar user={f} size={36} online={online.has(f.id)} />
           <span className="oo-im-row-body">
             <span className="oo-im-row-title oo-truncate">
@@ -95,11 +96,11 @@ export function ContactList({ friends, loading, online, pending, kw, activeFrien
             </span>
             <span className="oo-im-row-preview oo-truncate">{f.bio || `@${f.username}`}</span>
           </span>
-        </button>
+        </ActionButton>
         <Tooltip title="发消息">
-          <button type="button" className="oo-im-icon-btn oo-im-row-action" aria-label={`给 ${nameOf(f)} 发消息`} onClick={() => onChat(f)}>
+          <ActionButton type="text" htmlType="button" className="oo-im-icon-btn oo-im-row-action" aria-label={`给 ${nameOf(f)} 发消息`} onClick={() => onChat(f)}>
             <MessageOutlined />
-          </button>
+          </ActionButton>
         </Tooltip>
       </div>
     </li>
@@ -107,14 +108,14 @@ export function ContactList({ friends, loading, online, pending, kw, activeFrien
 
   return (
     <div>
-      <button type="button" className={`oo-im-row oo-im-row--requests${requestsActive ? " is-active" : ""}`} onClick={onOpenRequests}>
+      <ActionButton type="text" htmlType="button" className={`oo-im-row oo-im-row--requests${requestsActive ? " is-active" : ""}`} onClick={onOpenRequests}>
         <span className="oo-im-req-icon"><UserAddOutlined /></span>
         <span className="oo-im-row-body">
           <span className="oo-im-row-title">新的朋友</span>
           <span className="oo-im-row-preview">{pending ? `${pending} 条好友申请待处理` : "好友申请与记录"}</span>
         </span>
         {pending ? <span className="oo-im-unread">{pending}</span> : <RightOutlined className="oo-im-chevron" />}
-      </button>
+      </ActionButton>
 
       {loading && !friends.length ? (
         <div style={{ padding: 14 }}><Skeleton avatar active paragraph={{ rows: 1 }} /></div>
@@ -122,7 +123,7 @@ export function ContactList({ friends, loading, online, pending, kw, activeFrien
         <EmptyHint
           title="还没有好友"
           desc="搜用户名添加好友；在社区帖子或个人主页里也能直接加"
-          action={<button type="button" className="oo-im-link-btn" onClick={onFindPeople}><UserAddOutlined /> 添加好友</button>}
+          action={<ActionButton type="text" htmlType="button" className="oo-im-link-btn" onClick={onFindPeople}><UserAddOutlined /> 添加好友</ActionButton>}
         />
       ) : (
         <>

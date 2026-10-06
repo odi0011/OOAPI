@@ -1,3 +1,5 @@
+import { Card as ArcPanel } from "../components/arc/card/card";
+import { Button as ActionButton } from "../components/arc/index";
 // 帖子详情 —— 正文 + 扁平二级评论 + 点赞/收藏/关注
 // ---------------------------------------------------------------------------
 // 评论为何强制「扁平二级」（Gemini 第 9.2 点）：
@@ -6,15 +8,15 @@
 //   所以：所有子评论平铺在一级评论内，缩进**恒为 1 级**，
 //   上下文靠行首内嵌「@被回复者」标明（数据库里由 reply_to_user_id 承载）。
 import React, { useCallback, useEffect, useState } from "react";
-import { useNavigate, useParams, Link } from "react-router-dom";
+import {   useNavigate, useParams, Link } from "react-router-dom";
 import {
-  Button, Input, Space, Tag, Skeleton, Empty, App as AntApp, Popconfirm, Tooltip, Divider, Image, Modal, Upload, Popover,
-} from "antd";
+  Button, Input, Space, Tag, Skeleton, Empty, App as ArcApp, Popconfirm, Tooltip, Divider, Image, Modal, Upload, Popover,
+ } from "../components/arc/index";
 import {
   LikeOutlined, LikeFilled, StarOutlined, StarFilled, UserAddOutlined, MessageOutlined,
   DeleteOutlined, EditOutlined, EyeOutlined, EyeInvisibleOutlined, PushpinOutlined, ArrowLeftOutlined,
   PictureOutlined, CloseOutlined, SmileOutlined, CodeOutlined, UndoOutlined,
-} from "@ant-design/icons";
+ } from "../components/arc/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
@@ -30,7 +32,7 @@ import { fmtDate } from "../services/format";
 export default function PostDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const { user: me } = useApp();
   // **两个独立的竞态令牌**（同一个会让其中一个恒被自己作废）：
   // 帖子与评论是两条并行请求，各自被重试/刷新独立触发。共用一个 useLatest 时，
@@ -271,9 +273,9 @@ export default function PostDetailPage() {
   if (loading && !post) {
     return (
       <div className="oo-page">
-        <div className="oo-panel" style={{ padding: 20 }}>
+        <ArcPanel className="oo-panel" style={{ padding: 20 }}>
           <Skeleton active paragraph={{ rows: 5 }} />
-        </div>
+        </ArcPanel>
       </div>
     );
   }
@@ -282,12 +284,12 @@ export default function PostDetailPage() {
     return (
       <div className="oo-page">
         <PageHeader title="帖子" />
-        <div className="oo-panel" style={{ padding: "48px 20px" }}>
+        <ArcPanel className="oo-panel" style={{ padding: "48px 20px" }}>
           <Empty description="帖子不存在或已被删除" />
           <div style={{ textAlign: "center", marginTop: 12 }}>
             <Button onClick={() => navigate("/community")}>返回社区</Button>
           </div>
-        </div>
+        </ArcPanel>
       </div>
     );
   }
@@ -389,7 +391,7 @@ export default function PostDetailPage() {
       <div className="oo-read-shell">
         <div>
           {/* 正文 */}
-          <div className="oo-panel" style={{ marginBottom: "var(--sp-3)" }}>
+          <ArcPanel className="oo-panel" style={{ marginBottom: "var(--sp-3)" }}>
             <div style={{ padding: "14px 16px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <Link to={`/u/${post?.author?.id}`} style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "inherit" }}>
@@ -478,10 +480,10 @@ export default function PostDetailPage() {
                 </span>
               </Space>
             </div>
-          </div>
+          </ArcPanel>
 
           {/* 评论区 */}
-          <div className="oo-panel">
+          <ArcPanel className="oo-panel">
             <div style={{ padding: "16px 18px" }}>
               <div className="oo-section-title" style={{ marginBottom: 12 }}>
                 评论 {post?.comment_count || 0}
@@ -595,8 +597,8 @@ export default function PostDetailPage() {
                         {mention.open && mention.items.length ? (
                           <div className="oo-mention-pop">
                             {mention.items.map((u) => (
-                              <button
-                                type="button"
+                              <ActionButton type="text"
+                                htmlType="button"
                                 key={u.id}
                                 className="oo-mention-item"
                                 onMouseDown={(e) => {
@@ -618,7 +620,7 @@ export default function PostDetailPage() {
                                 {u.display_name ? (
                                   <span className="oo-mention-nick">{u.display_name}</span>
                                 ) : null}
-                              </button>
+                              </ActionButton>
                             ))}
                           </div>
                         ) : null}
@@ -633,8 +635,8 @@ export default function PostDetailPage() {
                                   alt={m.name}
                                   style={{ width: 58, height: 58, objectFit: "cover", borderRadius: 6, border: "1px solid var(--line)" }}
                                 />
-                                <button
-                                  type="button"
+                                <ActionButton type="text"
+                                  htmlType="button"
                                   aria-label="移除图片"
                                   onClick={() => setCMedia((prev) => prev.filter((x) => x.id !== m.id))}
                                   style={{
@@ -644,7 +646,7 @@ export default function PostDetailPage() {
                                   }}
                                 >
                                   <CloseOutlined />
-                                </button>
+                                </ActionButton>
                               </div>
                             ))}
                           </div>
@@ -763,7 +765,7 @@ export default function PostDetailPage() {
                 </div>
               )}
             </div>
-          </div>
+          </ArcPanel>
         </div>
 
         <aside className="oo-read-aside">
@@ -808,7 +810,7 @@ export default function PostDetailPage() {
 
 /** 单条评论：一级评论 + 其下平铺的回复（缩进恒为 1 级） */
 function CommentItem({ comment, me, isAdmin, onReply, onChanged, children = [] }) {
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const [liked, setLiked] = useState(Boolean(comment.liked));
   const [likes, setLikes] = useState(Number(comment.like_count) || 0);
   const [busy, setBusy] = useState(false);
@@ -860,7 +862,7 @@ function CommentItem({ comment, me, isAdmin, onReply, onChanged, children = [] }
             <Markdown text={comment.content || ""} />
           </div>
           {/* 评论附图：小尺寸缩略图（评论是次要内容，不该用帖子那种大图占满屏），
-              点开用 antd Image 的预览看大图 */}
+              点开图片预览查看大图 */}
           {Array.isArray(comment.media) && comment.media.length ? (
             <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
               {comment.media.map((m) => (

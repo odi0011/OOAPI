@@ -1,3 +1,4 @@
+import { Table, Collapse } from "./arc/index";
 import React from "react";
 import { LineChart, BarChart, RankBar, Legend, SERIES_COLORS } from "./Charts";
 import CodeBlock from "./CodeBlock";
@@ -21,6 +22,6 @@ export default function MessageChart({ source }) {
   return <figure className="message-chart">
     <figcaption>{data.title}</figcaption>
     {data.type === "line" ? <><LineChart series={series}/><Legend series={series}/></> : data.series.map((s) => <div key={s.name}><span className="message-chart-series">{s.name}</span>{data.type === "rank" ? <RankBar items={s.values.map((value, i) => ({ name: data.labels[i], value }))} limit={60}/> : <BarChart bars={s.values.map((value, i) => ({ label: data.labels[i], value }))}/>}</div>)}
-    <details><summary>查看数据</summary><div className="md-table-scroll"><table className="md-table"><thead><tr><th>项目</th>{data.series.map((s, i) => <th key={i}>{s.name}</th>)}</tr></thead><tbody>{data.labels.map((label, i) => <tr key={i}><td>{label}</td>{data.series.map((s, j) => <td key={j}>{s.values[i]}</td>)}</tr>)}</tbody></table></div></details>
+    <Collapse items={[{key:"data",label:"查看数据",children:<Table pagination={false} rowKey="index" columns={[{title:"项目",dataIndex:"label"},...data.series.map((s,i)=>({title:s.name,dataIndex:String(i),align:"right"}))]} dataSource={data.labels.map((label,index)=>({index,label,...Object.fromEntries(data.series.map((s,i)=>[String(i),s.values[index]]))}))}/>}]} />
   </figure>;
 }

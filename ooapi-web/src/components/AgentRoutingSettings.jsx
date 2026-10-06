@@ -1,6 +1,6 @@
 import React from "react";
-import { Alert, Button, InputNumber, Select, Switch } from "antd";
-import { ArrowUpOutlined, DeleteOutlined, PlusOutlined } from "@ant-design/icons";
+import {   Alert, Button, InputNumber, Select, Switch  } from "./arc/index";
+import { ArrowUpOutlined, DeleteOutlined, PlusOutlined  } from "./arc/icons";
 import ClientAgentBadge, { CLIENT_AGENTS } from "./ClientAgentBadge";
 
 const reasoningOptions = [

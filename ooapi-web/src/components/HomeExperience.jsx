@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { Button, Empty, Tag } from "antd";
-import { ApiOutlined, ArrowRightOutlined, CheckOutlined, CodeOutlined, KeyOutlined, PlayCircleOutlined, ReloadOutlined } from "@ant-design/icons";
+import {   Button, Empty, Tag  } from "./arc/index";
+import { ApiOutlined, ArrowRightOutlined, CheckOutlined, CodeOutlined, KeyOutlined, PlayCircleOutlined, ReloadOutlined  } from "./arc/icons";
 import { VendorIcon } from "./VendorIcon";
 import { StudioCat } from "./StudioUI";
 import BrandLogo, { BrandName } from "./BrandLogo";

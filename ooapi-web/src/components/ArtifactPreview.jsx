@@ -1,3 +1,4 @@
+import { Button as ActionButton, Card, Segmented, Modal } from "./arc/index";
 import CodeBlock from "./CodeBlock";
 // 产出物预览（Artifact）
 // ---------------------------------------------------------------------------
@@ -109,56 +110,21 @@ export function ArtifactPreview({ lang, code }) {
   };
 
   return (
-    <div className={`bui-artifact ${mode === "preview" ? "is-preview" : ""}`}>
-      <div className="bui-artifact-bar">
-        <span className="tag">{LABELS[String(lang || "").toLowerCase()] || "代码"}</span>
-        <div className="tabs">
-          <button type="button" className={mode === "code" ? "is-on" : ""} onClick={() => setMode("code")}>
-            代码
-          </button>
-          <button type="button" className={mode === "preview" ? "is-on" : ""} onClick={() => setMode("preview")}>
-            预览
-          </button>
-        </div>
-        <div className="acts">
-          {mode === "preview" ? (
-            <button type="button" onClick={() => setFull(true)} title="放大预览">
-              放大
-            </button>
-          ) : null}
-          <button type="button" onClick={copy} title="复制代码">
-            复制
-          </button>
-        </div>
+    <Card title={LABELS[String(lang || "").toLowerCase()] || "代码"} headerAction={
+      <div className="arc-inline">
+        <Segmented value={mode} onChange={setMode} options={[{ value: "code", label: "代码" }, { value: "preview", label: "预览" }]}/>
+        {mode === "preview" && <ActionButton size="small" onClick={() => setFull(true)}>放大</ActionButton>}
+        <ActionButton size="small" onClick={copy}>复制</ActionButton>
       </div>
-
+    }>
       {mode === "preview" ? (
-        <iframe
-          ref={frameRef}
-          className="bui-artifact-frame"
-          title="产出物预览"
-          // 只给 allow-scripts：不给 allow-same-origin，脚本无法触碰本站数据
-          sandbox="allow-scripts"
-          srcDoc={doc}
-          referrerPolicy="no-referrer"
-        />
-      ) : (
-        <CodeBlock lang={lang} code={code}/>
-      )}
-
-      {full ? (
-        <div className="bui-artifact-full" role="dialog" aria-label="产出物全屏预览" onMouseDown={() => setFull(false)}>
-          <div className="box" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="head">
-              <span>{LABELS[String(lang || "").toLowerCase()] || "预览"}</span>
-              <button type="button" onClick={() => setFull(false)} aria-label="关闭">
-                ✕
-              </button>
-            </div>
-            <iframe title="产出物全屏预览" sandbox="allow-scripts" srcDoc={doc} referrerPolicy="no-referrer" />
-          </div>
-        </div>
-      ) : null}
-    </div>
+        <iframe ref={frameRef} title="产出物预览" style={{ width: "100%", height: 460, border: 0, background: "#fff" }}
+          // 保留沙盒隔离：只执行脚本，不授予同源或导航权限。
+          sandbox="allow-scripts" srcDoc={doc} referrerPolicy="no-referrer" />
+      ) : <CodeBlock lang={lang} code={code}/>}
+      <Modal open={full} onCancel={() => setFull(false)} footer={null} width="90vw" title={LABELS[String(lang || "").toLowerCase()] || "预览"}>
+        <iframe title="产出物全屏预览" sandbox="allow-scripts" srcDoc={full ? doc : ""} referrerPolicy="no-referrer" style={{ width: "100%", height: "75dvh", border: 0, background: "#fff" }}/>
+      </Modal>
+    </Card>
   );
 }

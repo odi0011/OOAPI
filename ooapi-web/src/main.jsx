@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter } from "react-router-dom";
-import { App as AntApp } from "antd";
+import {  BrowserRouter } from "react-router-dom";
+import { App as ArcApp  } from "./components/arc/index";
 import dayjs from "dayjs";
 import "dayjs/locale/zh-cn";
 import { ThemeProvider } from "./theme/ThemeContext";
@@ -9,10 +9,12 @@ import { bootAppearance } from "./theme/presets";
 import { AppProvider } from "./context/AppContext";
 import App from "./App";
 // 站酷快乐体从 public/fonts 本地加载，首次打开也不依赖字体 CDN。
-import "./styles.css";
+import "./application-layout.css";
+import "./components/arc/foundation.css";
+import "./theme/tokens.css";
+import "./components/arc/application.css";
 
-// antd 的日期组件（rc-picker）直接用 dayjs 取星期/周首日，不注册中文 locale
-// 会显示英文缩写且周首日为周日
+// 日期格式与周首日统一使用中文地区设置，Arc 日期控件和业务日期保持一致。
 dayjs.locale("zh-cn");
 
 // 背景底纹层：必须在 React 挂载前就存在于 DOM 里，
@@ -35,13 +37,13 @@ try {
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <ThemeProvider>
-      <AntApp>
+      <ArcApp>
         <BrowserRouter>
           <AppProvider>
             <App />
           </AppProvider>
         </BrowserRouter>
-      </AntApp>
+      </ArcApp>
     </ThemeProvider>
   </React.StrictMode>
 );

@@ -1,3 +1,4 @@
+import { Button as ActionButton } from "../components/arc/index";
 import AgentTrajectory from "../components/AgentTrajectory";
 import ConversationRail from "../components/ConversationRail";
 import ChatScene from "../components/ChatScene";
@@ -12,11 +13,11 @@ import OdAmount from "../components/OdAmount";
 // 用户反馈「不需要给用户提供智能体、功能开关的选项」。助手拿全部工具、自己判断要不要用。
 // 数据全部来自服务端：会话与设定落库（chat_sessions），消息落库（chat_messages），
 // 刷新页面不丢；本页只负责渲染与把用户操作发回服务端。
-import { userDataVisibility } from "../services/visibility";
+import {   userDataVisibility } from "../services/visibility";
 import { hasReasoningText } from "../services/reasoning-display";
 import { chatErrorDetails, chatErrorPart } from "../services/chat-error-display";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { App as AntApp, Alert, Button, Checkbox, Drawer, Dropdown, Form, Input, Modal, Popconfirm, Tooltip, Radio } from "antd";
+import { App as ArcApp, Alert, Button, Checkbox, Drawer, Dropdown, Form, Input, Modal, Popconfirm, Tooltip, Radio, Segmented  } from "../components/arc/index";
 import {
   CopyOutlined,
   SelectOutlined,
@@ -33,7 +34,7 @@ import {
   SearchOutlined,
   EllipsisOutlined,
   ClockCircleOutlined,
-} from "@ant-design/icons";
+ } from "../components/arc/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { API, getToken } from "../services/api";
 
@@ -49,7 +50,7 @@ import { useApp } from "../context/AppContext";
 import Markdown from "../components/Markdown";
 import { formatDuration } from "../components/UsageCells";
 import { copyText, fmtOd, unitsPerOd } from "../services/format";
-import { StreamingText } from "../components/beautifului";
+import { StreamingText } from "../components/ChatParts";
 import PromptBar from "../components/PromptBar";
 import {
   Shelf,
@@ -57,7 +58,7 @@ import {
   ShelfItem,
   Notice,
   TodoPanel,
-} from "../components/beautifului-chat";
+} from "../components/ChatParts";
 import "../components/chat.css";
 import "../components/chat-workspace.css";
 
@@ -421,7 +422,7 @@ function SettingsSheet({ open, onClose, session, settings, onSettings, saving, q
 export default function ChatPage() {
   const { user, status, refreshUser } = useApp();
   const visibility = userDataVisibility(status, user);
-  const { message: toast, modal } = AntApp.useApp();
+  const { message: toast, modal } = ArcApp.useApp();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const requestedSession = params.get("s") || "";
@@ -1379,7 +1380,7 @@ export default function ChatPage() {
         { key: "archive", label: s.archived ? "取消归档" : "归档", icon: <InboxOutlined />, onClick: () => sessionAction(s, s.archived ? "unarchive" : "archive") },
         { type: "divider" },
         { key: "delete", label: "删除对话", icon: <DeleteOutlined />, danger: true, onClick: async () => { await modal.confirm({ title: "删除这个对话？", content: "消息与统计一并删除，无法恢复。", okText: "删除", cancelText: "取消", okButtonProps: { danger: true }, onOk: async () => { if (!await deleteSession(s.id)) throw new Error("删除失败，请重试"); } }); } },
-      ] }}><Button type="text" className="bui-shelf-act" icon={<EllipsisOutlined />} loading={shelfPending === s.id} disabled={Boolean(shelfPending)} aria-label={`对话更多操作：${s.title}`} /></Dropdown>
+      ] }}><Button type="text" size="small" icon={<EllipsisOutlined />} loading={shelfPending === s.id} disabled={Boolean(shelfPending)} aria-label={`对话更多操作：${s.title}`} /></Dropdown>
     } />
   )}</div>;
 
@@ -1391,45 +1392,31 @@ export default function ChatPage() {
         // 移动端：点空白处收起（桌面端常驻）
       >
         <div className="ui-chat2-shelf-toolbar">
-        <button type="button" className="bui-shelf-new" aria-label="新建对话" onClick={() => newSession()} disabled={busy}>
+        <ActionButton type="primary" htmlType="button" block aria-label="新建对话" onClick={() => newSession()} disabled={busy}>
           <span className="ic">
             <PlusOutlined />
           </span>
           新建对话
-        </button>
+        </ActionButton>
         <Tooltip title="命令面板（Ctrl/⌘ + K）">
-          <button type="button" className="ui-chat2-iconbtn" aria-label="命令面板" onClick={() => { setShelfOpen(false); setPaletteOpen(true); }}><SearchOutlined /></button>
+          <ActionButton type="text" htmlType="button" className="ui-chat2-iconbtn" aria-label="命令面板" onClick={() => { setShelfOpen(false); setPaletteOpen(true); }}><SearchOutlined /></ActionButton>
         </Tooltip>
         </div>
 
         {/* 视图切换：进行中 / 已归档 */}
-        <div className="bui-shelf-tabs">
-          <button
-            type="button"
-            className={`bui-shelf-tab ${view === "active" ? "is-on" : ""}`}
-            onClick={() => switchView("active")}
-          >
-            对话
-            {counts.active ? <span className="ct">{counts.active}</span> : null}
-          </button>
-          <button
-            type="button"
-            className={`bui-shelf-tab ${view === "archived" ? "is-on" : ""}`}
-            onClick={() => switchView("archived")}
-          >
-            已归档
-            {counts.archived ? <span className="ct">{counts.archived}</span> : null}
-          </button>
-        </div>
+        <Segmented block value={view} onChange={switchView} options={[
+          { value: "active", label: `对话${counts.active ? ` ${counts.active}` : ""}` },
+          { value: "archived", label: `已归档${counts.archived ? ` ${counts.archived}` : ""}` },
+        ]}/>
 
         <div className="ui-chat2-sessions">
         <ShelfGroup
           title={<>{view === "archived" ? "已归档" : "最近"}<span className="ui-chat2-sessions-count">{visibleSessions.length}</span></>}
           action={
             visibleSessions.length ? (
-              <button
-                type="button"
-                className={`bui-shelf-act ${selectMode ? "is-on" : ""}`}
+              <ActionButton type="text"
+                htmlType="button"
+                size="small" aria-pressed={selectMode}
                 aria-label={selectMode ? "退出多选" : "多选"}
                 title={selectMode ? "退出多选" : "多选：批量归档 / 删除"}
                 onClick={() => {
@@ -1438,7 +1425,7 @@ export default function ChatPage() {
                 }}
               >
                 <SelectOutlined />
-              </button>
+              </ActionButton>
             ) : null
           }
         >
@@ -1447,13 +1434,13 @@ export default function ChatPage() {
               <span>已选 {selected.size} 个</span>
               <div className="acts">
                 {view === "archived" ? (
-                  <button type="button" onClick={() => batchAction("unarchive")} title="取消归档">
+                  <ActionButton type="text" htmlType="button" onClick={() => batchAction("unarchive")} title="取消归档">
                     取消归档
-                  </button>
+                  </ActionButton>
                 ) : (
-                  <button type="button" onClick={() => batchAction("archive")} title="归档">
+                  <ActionButton type="text" htmlType="button" onClick={() => batchAction("archive")} title="归档">
                     归档
-                  </button>
+                  </ActionButton>
                 )}
                 <Popconfirm
                   title={`删除选中的 ${selected.size} 个对话？`}
@@ -1462,9 +1449,9 @@ export default function ChatPage() {
                   cancelText="取消"
                   onConfirm={() => batchAction("delete")}
                 >
-                  <button type="button" className="is-danger" title="删除">
+                  <ActionButton type="text" htmlType="button" danger title="删除">
                     删除
-                  </button>
+                  </ActionButton>
                 </Popconfirm>
               </div>
             </div>
@@ -1493,15 +1480,15 @@ export default function ChatPage() {
       <div className="ui-chat2-main">
         <header className="ui-chat2-head">
           <div className="ui-chat2-title">
-            <button
-              type="button"
+            <ActionButton type="text"
+              htmlType="button"
               className="ui-chat2-iconbtn is-shelf-toggle"
               aria-label="会话列表"
               aria-expanded={shelfOpen}
               onClick={() => setShelfOpen((v) => !v)}
             >
               <MenuOutlined />
-            </button>
+            </ActionButton>
             <h1>{session?.title || "对话"}</h1>
             <div className="meta">
               <span>{msgs.length} 条消息</span>
@@ -1514,9 +1501,9 @@ export default function ChatPage() {
           </div>
           <div className="ui-chat2-head-actions">
             <Tooltip title="会话设定">
-              <button type="button" className="ui-chat2-iconbtn" aria-label="会话设定" onClick={() => setSheetOpen(true)}>
+              <ActionButton type="text" htmlType="button" className="ui-chat2-iconbtn" aria-label="会话设定" onClick={() => setSheetOpen(true)}>
                 <SettingOutlined />
-              </button>
+              </ActionButton>
             </Tooltip>
           </div>
         </header>
@@ -1630,9 +1617,9 @@ export default function ChatPage() {
             外层透明，提示文字贴在输入框正下方，不占额外整条背景。 */}
         <div className="ui-chat2-composer">
           {away && msgs.length > 3 ? (
-            <button type="button" className="ui-chat2-jump" onClick={scrollToEnd}>
+            <ActionButton type="text" htmlType="button" className="ui-chat2-jump" onClick={scrollToEnd}>
               <ArrowDownOutlined /> 回到最新
-            </button>
+            </ActionButton>
           ) : null}
 
           <div className="ui-chat2-composer-inner">

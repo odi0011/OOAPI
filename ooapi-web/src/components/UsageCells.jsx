@@ -1,6 +1,7 @@
+import { Button as ActionButton } from "./arc/index";
 import React from "react";
-import { Tooltip } from "antd";
-import { ArrowDownOutlined, ArrowUpOutlined, InboxOutlined, InfoCircleOutlined } from "@ant-design/icons";
+import {   Tooltip  } from "./arc/index";
+import { ArrowDownOutlined, ArrowUpOutlined, InboxOutlined, InfoCircleOutlined  } from "./arc/icons";
 
 const count = (v) => Math.max(0, Math.round(Number(v) || 0));
 const full = (v) => count(v).toLocaleString("en-US");
@@ -58,7 +59,7 @@ export function TokenCell({ promptTokens = 0, completionTokens = 0, cacheTokens 
       </span>
       {cache > 0 ? <span className="oo-token-cache" title={`缓存读取 ${full(cache)} Token（已包含在输入中）`}><InboxOutlined />{compact(cache)}</span> : null}
       <Tooltip title={detail} trigger={["hover", "focus", "click"]}>
-        <button type="button" className="oo-token-info" aria-label="查看 Token 明细" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}><InfoCircleOutlined /></button>
+        <ActionButton type="text" htmlType="button" className="oo-token-info" aria-label="查看 Token 明细" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}><InfoCircleOutlined /></ActionButton>
       </Tooltip>
     </span>
   );

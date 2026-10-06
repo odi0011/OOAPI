@@ -1,10 +1,13 @@
+import { Badge as ArcBadge } from "../components/arc/badge/badge";
+import { Card as ArcPanel } from "../components/arc/card/card";
+import { Button as ActionButton } from "../components/arc/index";
 import OdAmount, { OdText } from "../components/OdAmount";
 import ClientAgentBadge from "../components/ClientAgentBadge";
 import LogDiagnosticDetails, { ErrorCodeText } from "../components/LogDiagnosticDetails";
-import { reasoningLabel, requestedReasoningLabel } from "../services/reasoning-display";
+import {   reasoningLabel, requestedReasoningLabel } from "../services/reasoning-display";
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { Table, Input, Select, Button, Alert, App as AntApp, Tooltip, Drawer, Descriptions, Space, Typography } from "antd";
-import { ReloadOutlined, FileTextOutlined } from "@ant-design/icons";
+import { Table, Input, Select, Button, Alert, App as ArcApp, Tooltip, Drawer, Descriptions, Space, Typography  } from "../components/arc/index";
+import { ReloadOutlined, FileTextOutlined  } from "../components/arc/icons";
 import { API } from "../services/api";
 import { fmtDate, unitsPerOd, CURRENCY_NAME } from "../services/format";
 import { useApp } from "../context/AppContext";
@@ -84,7 +87,7 @@ const RANGE_OPTIONS = [
  */
 export default function LogPage() {
   const { user, status } = useApp();
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const isAdmin = Number(user?.role) >= 100;
   const visibility = userDataVisibility(status, user);
   const perUnit = unitsPerOd(status);
@@ -484,42 +487,42 @@ export default function LogPage() {
           需要看图表分析时点「分析」展开（与渠道统计弹窗同一套视觉规范）。 */}
       {visibility.usage_summary && summary ? (
         <div className="oo-stats-strip">
-          <span className="bui-chip" title="区间调用次数">
+          <ArcBadge size="sm" tone="neutral" title="区间调用次数">
             调用 <b className="oo-num">{summary.calls}</b>
-          </span>
-          {summary.errors > 0 ? <span className="bui-chip" style={{ color: "var(--red)" }} title="失败调用，部分已产生用量的调用仍按实际用量计费">错误 <b className="oo-num">{summary.errors}</b></span> : null}
-          {summary.stopped > 0 ? <span className="bui-chip" title="用户停止的调用">已停止 <b className="oo-num">{summary.stopped}</b></span> : null}
-          <span className="bui-chip" title="区间消耗">
+          </ArcBadge>
+          {summary.errors > 0 ? <ArcBadge size="sm" tone="neutral" style={{ color: "var(--red)" }} title="失败调用，部分已产生用量的调用仍按实际用量计费">错误 <b className="oo-num">{summary.errors}</b></ArcBadge> : null}
+          {summary.stopped > 0 ? <ArcBadge size="sm" tone="neutral" title="用户停止的调用">已停止 <b className="oo-num">{summary.stopped}</b></ArcBadge> : null}
+          <ArcBadge size="sm" tone="neutral" title="区间消耗">
             消耗 <OdAmount quota={summary.units} perUnit={perUnit} digits={4} />
-          </span>
-          <span className="bui-chip" title={`提示 ${summary.prompt_tokens} / 补全 ${summary.completion_tokens}`}>
+          </ArcBadge>
+          <ArcBadge size="sm" tone="neutral" title={`提示 ${summary.prompt_tokens} / 补全 ${summary.completion_tokens}`}>
             Tokens <b className="oo-num">{summary.prompt_tokens + summary.completion_tokens}</b>
-          </span>
-          <span
-            className={`bui-chip${summary.cache_rate >= 50 ? " bui-chip--green" : ""}`}
+          </ArcBadge>
+          <ArcBadge
+            size="sm" tone={summary.cache_rate >= 50 ? "success" : "neutral"}
             title={`命中 ${summary.cache_tokens} / 输入 ${summary.prompt_tokens}`}
           >
             缓存 <b className="oo-num">{summary.cache_rate}%</b>
-          </span>
-          <span className="bui-chip" title="流式首个增量到达的平均耗时">
+          </ArcBadge>
+          <ArcBadge size="sm" tone="neutral" title="流式首个增量到达的平均耗时">
             首Token <b className="oo-num">{ms(summary.avg_first_token)}</b>
-          </span>
-          <span className="bui-chip" title="端到端平均耗时">
+          </ArcBadge>
+          <ArcBadge size="sm" tone="neutral" title="端到端平均耗时">
             耗时 <b className="oo-num">{ms(summary.avg_elapsed)}</b>
-          </span>
+          </ArcBadge>
           {summary.uncached_tokens ? (
-            <span className="bui-chip" title="未命中缓存的输入 token">
+            <ArcBadge size="sm" tone="neutral" title="未命中缓存的输入 token">
               未命中 <b className="oo-num">{summary.uncached_tokens}</b>
-            </span>
+            </ArcBadge>
           ) : null}
-          <button
-            type="button"
-            className="bui-btn"
+          <ActionButton size="small" type="default"
+            htmlType="button"
+
             style={{ marginLeft: "auto" }}
             onClick={() => setAnalysisOpen((v) => !v)}
           >
             {analysisOpen ? "收起分析" : "展开分析"}
-          </button>
+          </ActionButton>
         </div>
       ) : null}
 
@@ -536,7 +539,7 @@ export default function LogPage() {
         />
       ) : null}
 
-      <div className="oo-panel">
+      <ArcPanel className="oo-panel">
         {loadError ? (
           <Alert
             type="error"
@@ -588,7 +591,7 @@ export default function LogPage() {
             //
             // 人格实测（团队负责人，10 人一天几百条）：「使用记录分页 20 条/页，
             // 对账要翻很多页；在没有导出的前提下更难受。」
-            // AntD 默认档位是 10/20/50/100，20 是默认值 —— 她要的是
+            // 分页默认档位是 10/20/50/100，20 是默认值 —— 她要的是
             // 「一屏能看更多」，所以把档位摆在明面上、上限提到 200。
             pageSizeOptions: [20, 50, 100, 200],
             showTotal: (t) => `共 ${t} 条`,
@@ -598,7 +601,7 @@ export default function LogPage() {
             },
           }}
         />
-      </div>
+      </ArcPanel>
 
       {/* 详情抽屉：完整信息（普通用户看不到渠道 / 原始 UA / 成本细节） */}
       <Drawer

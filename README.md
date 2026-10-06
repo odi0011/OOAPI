@@ -50,7 +50,7 @@
 | 层 | 技术 |
 |---|---|
 | 后端 | Node.js 18+ · Express · MySQL（mysql2）· JWT |
-| 前端 | React 18 · Vite · Ant Design |
+| 前端 | React 19 · Vite · [Arc UI 免费组件](https://uiarc.dev/) |
 | 部署 | systemd + nginx（建议） |
 
 ## 目录结构

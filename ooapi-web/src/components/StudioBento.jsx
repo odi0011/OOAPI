@@ -1,7 +1,7 @@
 import OdAmount from "./OdAmount";
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { ApiOutlined, ArrowRightOutlined, CheckOutlined, CodeOutlined, KeyOutlined, MessageOutlined, ThunderboltOutlined, SyncOutlined } from '@ant-design/icons';
+import {  Link } from 'react-router-dom';
+import { ApiOutlined, ArrowRightOutlined, CheckOutlined, CodeOutlined, KeyOutlined, MessageOutlined, ThunderboltOutlined, SyncOutlined  } from "./arc/icons";
 import '../studio-bento.css';
 import BrandLogo, { BrandName } from './BrandLogo';
 

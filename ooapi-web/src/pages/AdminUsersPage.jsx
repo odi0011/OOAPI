@@ -1,9 +1,10 @@
+import { Card as ArcPanel } from "../components/arc/card/card";
 import React, { useEffect, useState, useCallback } from "react";
 import {
   Table, Button, Space, Tag, Input, Popconfirm, Modal, Form,
-  Select, InputNumber, App as AntApp, Typography, Alert,
-} from "antd";
-import { ReloadOutlined, TeamOutlined, SearchOutlined } from "@ant-design/icons";
+  Select, InputNumber, App as ArcApp, Typography, Alert,
+ } from "../components/arc/index";
+import { ReloadOutlined, TeamOutlined, SearchOutlined  } from "../components/arc/icons";
 import { API } from "../services/api";
 import { useApp } from "../context/AppContext";
 import { fmtDate, unitsPerOd } from "../services/format";
@@ -18,7 +19,7 @@ const { Text } = Typography;
 
 export default function AdminUsersPage() {
   const { status, user: me, refreshUser } = useApp();
-  const { message } = AntApp.useApp();
+  const { message } = ArcApp.useApp();
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -74,7 +75,7 @@ export default function AdminUsersPage() {
     try {
       v = await form.validateFields();
     } catch {
-      return; // 校验未通过：antd 已在表单上标红，无需打扰
+      return; // 校验未通过：表单已显示字段错误，无需打扰
     }
     setActing(true);
     try {
@@ -181,13 +182,9 @@ export default function AdminUsersPage() {
       width: 88,
       render: (s) =>
         s === 1 ? (
-          <span className="oo-flex oo-gap-2" style={{ fontSize: 13 }}>
-            <span className="bui-dot bui-dot--ok" /> 启用
-          </span>
+          <Tag color="success">启用</Tag>
         ) : (
-          <span className="oo-flex oo-gap-2" style={{ fontSize: 13, color: "var(--ink-3)" }}>
-            <span className="bui-dot bui-dot--err" /> 禁用
-          </span>
+          <Tag color="error">禁用</Tag>
         ),
     },
     {
@@ -213,7 +210,7 @@ export default function AdminUsersPage() {
     { title: "注册时间", dataIndex: "created_time", width: 156, render: (v) => <span className="oo-num">{fmtDate(v)}</span> },
     {
       title: "操作",
-      width: 190,
+      width: 250,
       fixed: "right",
       render: (_, u) => (
         <Space size={2}>
@@ -288,7 +285,7 @@ export default function AdminUsersPage() {
         <StatCard label="累计消费" value={loadError ? "—" : <OdAmount quota={totalUsed} perUnit={perUnit} />} hint="本页统计" />
       </div>
 
-      <div className="oo-panel">
+      <ArcPanel className="oo-panel">
         {loadError ? (
           <Alert
             type="error"
@@ -318,7 +315,7 @@ export default function AdminUsersPage() {
             },
           }}
         />
-      </div>
+      </ArcPanel>
 
       <Modal
         className="oo-users-edit-modal"

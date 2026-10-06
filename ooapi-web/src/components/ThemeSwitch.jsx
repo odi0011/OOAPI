@@ -1,8 +1,8 @@
 import React, { useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
-import { Button } from 'antd';
+import {  flushSync } from 'react-dom';
+import { ThemeSwitch as ArcThemeSwitch } from "./arc/theme-switch/theme-switch";
 import { useTheme } from '../theme/ThemeContext';
-import './theme-switch.css';
+
 
 export default function ThemeSwitch() {
   const { resolved, setColorMode, previewing } = useTheme();
@@ -39,10 +39,5 @@ export default function ThemeSwitch() {
     } catch { setColorMode(next); }
     finally { pending.current = false; setSwitching(false); }
   };
-  return <Button type="text" className={`oo-theme-toggle-switch${dark ? ' is-dark' : ''}${switching ? ' is-switching' : ''}`}
-    aria-label={dark ? '切换至亮色主题' : '切换至暗色主题'} aria-pressed={dark} title={dark ? '切换至亮色主题' : '切换至暗色主题'} onClick={toggle}>
-    <span className="oo-theme-toggle-track" aria-hidden="true"><i className="oo-theme-toggle-star star-one"/><i className="oo-theme-toggle-star star-two"/><i className="oo-theme-toggle-star star-three"/>
-      <span className="oo-theme-toggle-thumb"><svg viewBox="0 0 24 24" className="oo-theme-toggle-sun"><circle cx="12" cy="12" r="4"/><path d="M12 1v3m0 16v3M1 12h3m16 0h3M4.2 4.2l2.1 2.1m11.4 11.4 2.1 2.1M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg><svg viewBox="0 0 24 24" className="oo-theme-toggle-moon"><path d="M19.8 15.3A8.4 8.4 0 0 1 8.7 4.2 8.5 8.5 0 1 0 19.8 15.3Z"/></svg></span>
-    </span>
-  </Button>;
+  return <ArcThemeSwitch theme={resolved} iconOnly variant="reveal" label={dark ? "切换至亮色主题" : "切换至暗色主题"} onThemeChange={(_,__,trigger) => toggle({ currentTarget: trigger })}/>;
 }

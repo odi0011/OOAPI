@@ -1,3 +1,5 @@
+import { Badge as ArcBadge } from "./arc/badge/badge";
+import { Button as ActionButton } from "./arc/index";
 import OdAmount, { OdText } from "./OdAmount";
 // 账号额度展示 —— 渠道列表 / 详情共用
 // ---------------------------------------------------------------------------
@@ -8,8 +10,8 @@ import OdAmount, { OdText } from "./OdAmount";
 //   · 百分比取整显示（88%），悬浮才给精确值与重置时间，列表里不堆字；
 //   · 颜色按用量分档：<70% 主色、70-90% 橙、>90% 红，一眼看出快用完的账号。
 import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Button, Tooltip } from "antd";
-import { ApiOutlined, DatabaseOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import {   Button, Tooltip  } from "./arc/index";
+import { ApiOutlined, DatabaseOutlined, ThunderboltOutlined  } from "./arc/icons";
 import { quotaNumber } from "./quota-order.js";
 
 /** 把秒数转成 sub2api 那样的短标签：18000→5h、604800→7d、2592000→30d */
@@ -494,13 +496,13 @@ export function QuotaInline({ quota, stats }) {
                   <Tooltip title={collapsedTip}>
                     {/* 用 <button> 而不是 <span>：黑盒测试指出这个 `+N` 看着能点但点了没反应
                         （纯 span + Tooltip 只能悬浮）。用真实按钮至少符合可访问性预期，
-                        键盘也能聚焦；点一下同样展开悬浮内容（antd Tooltip 默认 click 不触发，
+                        键盘也能聚焦；点一下同样展开悬浮内容（Tooltip 默认 click 不触发，
                         所以这里显式给出 cursor:pointer 与可聚焦语义）。
                         注意样式必须保持「不折行、不被压窄」——它是「还有多少条」的指示器，
                         折行或压成两行就认不出是同一个 badge（用户明确要求）。 */}
-                    <button
-                      type="button"
-                      className="bui-chip"
+                    <ActionButton type="text"
+                      htmlType="button"
+                      size="small"
                       aria-label={`还有 ${collapsedWins.length} 个额度窗口，悬浮查看`}
                       style={{
                         fontSize: 11,
@@ -514,7 +516,7 @@ export function QuotaInline({ quota, stats }) {
                       }}
                     >
                       +{collapsedWins.length}
-                    </button>
+                    </ActionButton>
                   </Tooltip>
                 ) : null}
               </div>
@@ -597,7 +599,7 @@ function InfoRow({ chips }) {
     return () => ro.disconnect();
   }, [keys, layoutKey]);
 
-  // 表格初次渲染时列宽可能还是 0（antd 在测量阶段），下一帧量一次
+  // 表格初次渲染时列宽可能还是 0（容器仍在测量阶段），下一帧量一次
   useLayoutEffect(() => {
     const id = requestAnimationFrame(() => setLayoutKey((v) => `${v}.`));
     return () => cancelAnimationFrame(id);
@@ -636,9 +638,9 @@ function InfoRow({ chips }) {
             </div>
           }
         >
-          <span className="bui-chip" style={{ fontSize: 11, flexShrink: 0, whiteSpace: "nowrap" }}>
+          <ArcBadge size="sm" tone="neutral" style={{ fontSize: 11, flexShrink: 0, whiteSpace: "nowrap" }}>
             +{hidden.length}
-          </span>
+          </ArcBadge>
         </Tooltip>
       ) : null}
 
@@ -667,9 +669,9 @@ function InfoRow({ chips }) {
             <InfoPill tone={x.tone}>{x.node}</InfoPill>
           </span>
         ))}
-        <span ref={overflowRef} className="bui-chip" style={{ fontSize: 11, whiteSpace: "nowrap" }}>
+        <ArcBadge ref={overflowRef} size="sm" tone="neutral" style={{ fontSize: 11, whiteSpace: "nowrap" }}>
           +{total}
-        </span>
+        </ArcBadge>
       </div>
     </div>
   );
@@ -734,8 +736,8 @@ export default function QuotaPanel({ quota, loading, onRefresh, error }) {
       {quota.notice ? <div style={{ fontSize: 12, color: "var(--ink-3)" }}>{quota.notice}</div> : null}
       {quota.plan || quota.limitReached ? (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {quota.plan ? <span className="bui-chip">套餐 {quota.plan}</span> : null}
-          {quota.limitReached ? <span className="bui-chip bui-chip--orange">已达限额</span> : null}
+          {quota.plan ? <ArcBadge size="sm" tone="neutral">套餐 {quota.plan}</ArcBadge> : null}
+          {quota.limitReached ? <ArcBadge size="sm" tone="warning">已达限额</ArcBadge> : null}
         </div>
       ) : null}
       {wins.length ? (

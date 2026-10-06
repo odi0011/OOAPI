@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { PauseOutlined, CaretRightOutlined } from '@ant-design/icons';
+import {  PauseOutlined, CaretRightOutlined  } from "./arc/icons";
 const SCENES=[
  {pose:'wave',action:'hop',text:'喵～'},
  {pose:'key',action:'sway',text:'记得保管好应用令牌。'},

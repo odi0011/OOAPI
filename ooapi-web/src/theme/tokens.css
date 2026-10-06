@@ -1,0 +1,25 @@
+/* 平台的业务色与度量引用 Arc foundation；这里不再定义第二套控件主题。 */
+@font-face {font-family:"ZCOOL KuaiLe";src:url("/fonts/zcool-kuaile.woff2") format("woff2");font-style:normal;font-weight:400;font-display:swap;}
+:root {
+ --font-body:"ZCOOL KuaiLe","Microsoft YaHei",sans-serif;--font-display:var(--font-body);
+ --page:var(--background);--canvas:var(--surface-muted);--inset:var(--surface-muted);--hover:var(--surface-muted);--hover-2:var(--border-subtle);--field:var(--surface-muted);
+ --ink:var(--foreground);--ink-2:var(--text-secondary);--ink-3:var(--text-muted);--line:var(--border);--line-strong:var(--border-strong);--line-soft:var(--border-subtle);--grid-line:var(--border-subtle);
+ --accent-ink:var(--accent-strong);--accent-tint:var(--accent-subtle);--green:var(--success);--red:var(--danger);--orange:var(--warning);--green-bar:#39bd76;
+ --green-tint:color-mix(in srgb,var(--success) 10%,transparent);--orange-tint:color-mix(in srgb,var(--warning) 10%,transparent);--red-tint:color-mix(in srgb,var(--danger) 10%,transparent);
+ --token-output:#8b5cf6;--token-cache:#0891b2;--tooltip-bg:var(--surface-raised);--tooltip-fg:var(--foreground);--tooltip-muted:var(--text-secondary);--tooltip-border:var(--border);
+ --shadow-hairline:0 0 0 1px var(--border);--shadow-btn:var(--shadow-resting);--shadow-card:var(--shadow-resting);--shadow-overlay:var(--shadow-floating);
+ --r-window:var(--radius-surface);--r-card:var(--radius-panel);--r-btn:var(--radius-control);--r-chip:6px;--r-sm:6px;--r-md:var(--radius-control);--r-xs:4px;--r-full:9999px;
+ --sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;--sp-5:20px;--sp-6:24px;--sp-8:32px;--sp-10:40px;
+ --fs-label:11px;--fs-pill:12px;--fs-micro:12px;--fs-desc:13px;--fs-body:14px;--fs-base:14px;--fs-lg:15px;--fs-xl:18px;--fs-2xl:24px;--fs-3xl:30px;
+ --ls-body:var(--tracking-body);--ls-title:var(--tracking-display);--ls-tight:-.02em;
+ --sider-w:232px;--sider-w-collapsed:64px;--header-h:64px;--content-max:100%;
+ --font-sans:var(--font-body);--font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--ease:var(--ease-standard);--dur:var(--duration-fast);
+ --oo-primary:var(--accent);--oo-bg-app:var(--page);--oo-bg-surface:var(--surface);--oo-bg-elevated:var(--surface-raised);--oo-bg-subtle:var(--inset);--oo-bg-sider:var(--surface);--oo-bg-code:var(--canvas);
+ --oo-border:var(--line);--oo-border-strong:var(--line-strong);--oo-divider:var(--line-soft);--oo-text:var(--ink);--oo-text-secondary:var(--ink-2);--oo-text-muted:var(--ink-3);--oo-text-disabled:var(--ink-3);--oo-glow:var(--accent-tint);
+ --oo-shadow-sm:var(--shadow-resting);--oo-shadow-md:var(--shadow-raised);--oo-r-xs:var(--r-xs);--oo-r-sm:var(--r-chip);--oo-r-md:var(--r-btn);--oo-r-lg:var(--r-card);--oo-r-xl:var(--r-window);--oo-r-full:9999px;
+ --oo-font:var(--font-sans);--oo-font-mono:var(--font-mono);--oo-fs-xs:var(--fs-micro);--oo-fs-sm:var(--fs-body);--oo-fs-base:var(--fs-base);--oo-fs-lg:var(--fs-xl);--oo-fs-xl:var(--fs-2xl);--oo-fs-2xl:var(--fs-3xl);--oo-sider-w:var(--sider-w);--oo-header-h:var(--header-h);--oo-content-max:var(--content-max);--oo-ease:var(--ease);--oo-dur:var(--dur);
+ --pill-indigo-ink:#6366f1;--pill-emerald-ink:var(--success);--pill-sky-ink:#0284c7;--pill-amber-ink:var(--warning);--pill-red-ink:var(--danger);--pill-gray-ink:var(--text-secondary);--pill-track:var(--border);
+ --pill-indigo-tint:color-mix(in srgb,var(--pill-indigo-ink) 12%,transparent);--pill-emerald-tint:var(--green-tint);--pill-sky-tint:color-mix(in srgb,var(--pill-sky-ink) 12%,transparent);--pill-amber-tint:var(--orange-tint);--pill-red-tint:var(--red-tint);--pill-gray-tint:var(--surface-muted);
+ --pill-indigo-bar:var(--pill-indigo-ink);--pill-emerald-bar:var(--pill-emerald-ink);--pill-sky-bar:var(--pill-sky-ink);--pill-amber-bar:var(--pill-amber-ink);--pill-red-bar:var(--pill-red-ink);--pill-gray-bar:var(--text-muted);
+}
+* {box-sizing:border-box;}html,body,#root {height:100%;}body {font-family:var(--font-body);font-size:var(--fs-body);line-height:1.5;background:var(--background);color:var(--foreground);-webkit-font-smoothing:antialiased;}h1,h2,h3,h4 {color:var(--foreground);font-family:var(--font-display);font-weight:600;letter-spacing:var(--tracking-display);}a {color:inherit;text-decoration:none;}a:hover {color:var(--accent-strong);} .oo-mono,.oo-num {font-family:var(--font-mono);font-variant-numeric:tabular-nums;}.oo-muted {color:var(--text-muted);}

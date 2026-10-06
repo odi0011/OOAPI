@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { Button } from "antd";
+import {  Button  } from "./arc/index";
 import ChatMascot from "./ChatMascot";
 import "./composer-companion.css";
 import "./lele-locomotion.css";

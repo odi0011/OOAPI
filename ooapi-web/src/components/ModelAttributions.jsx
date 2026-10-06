@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Alert, App, Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag } from "antd";
+import {  Alert, App, Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag  } from "./arc/index";
 import { API } from "../services/api";
 import { ModelLabel } from "./VendorIcon";
 import OdAmount from "./OdAmount";

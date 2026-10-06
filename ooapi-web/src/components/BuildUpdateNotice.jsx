@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { App as AntApp, Button } from "antd";
-import { ReloadOutlined } from "@ant-design/icons";
+import {   App as ArcApp, Button  } from "./arc/index";
+import { ReloadOutlined  } from "./arc/icons";
 import { useApp } from "../context/AppContext";
 
 function loadedBuildId() {
@@ -31,7 +31,7 @@ const reload = () => window.location.reload();
 
 export default function BuildUpdateNotice() {
   const { status, refreshStatus } = useApp();
-  const { notification } = AntApp.useApp();
+  const { notification } = ArcApp.useApp();
   const seen = useRef("");
   useEffect(() => {
     const onFocus = () => refreshStatus();

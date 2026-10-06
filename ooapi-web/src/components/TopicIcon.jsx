@@ -3,7 +3,7 @@
 // 用户原话：「不要拿 emoji 啊，要么就给社区分类加一个 img 标签……两者都可选也行」。
 // emoji 的问题：各系统字形不同（Windows 上是扁平黑白、Mac 上是彩色）、大小对不齐、
 // 与站内线性图标风格冲突。这里两种来源：
-//   · icon：内置 key → AntD 线性图标（key 白名单与后端 routes/community.js#TOPIC_ICON_KEYS 一致）
+//   · icon：内置 key → Lucide 线性图标（key 白名单与后端 routes/community.js#TOPIC_ICON_KEYS 一致）
 //   · image_url：管理员上传的图片（优先）
 // 颜色按 key 派生一个固定色相，同一个话题在任何页面颜色都一样。
 import React, { useState } from "react";
@@ -12,7 +12,7 @@ import {
   NotificationOutlined, RocketOutlined, BookOutlined, ToolOutlined, CodeOutlined, RobotOutlined,
   CloudServerOutlined, PictureOutlined, QuestionCircleOutlined, StarOutlined, FireOutlined,
   TeamOutlined, SafetyOutlined, GiftOutlined, TagOutlined,
-} from "@ant-design/icons";
+ } from "./arc/icons";
 
 export const TOPIC_ICONS = [
   { key: "chat", label: "讨论", icon: <MessageOutlined />, hue: 220 },

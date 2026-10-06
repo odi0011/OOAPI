@@ -1,12 +1,13 @@
+import { Button as ActionButton } from "../arc/index";
 // 消息中心的资料面板：个人名片 / 群资料 / 好友申请 / 空状态 / 成员选择器
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { App as AntApp, Button, Empty, Input, Modal, Select, Skeleton, Tag, Tooltip } from "antd";
+import {   useNavigate } from "react-router-dom";
+import { App as ArcApp, Button, Empty, Input, Modal, Select, Skeleton, Tag, Tooltip  } from "../arc/index";
 import {
   MessageOutlined, UserAddOutlined, EditOutlined, HomeOutlined, DeleteOutlined, CheckOutlined, CloseOutlined,
   UsergroupAddOutlined, LogoutOutlined, SoundOutlined, CrownOutlined, SafetyOutlined, SearchOutlined, UserDeleteOutlined,
   ArrowLeftOutlined, TeamOutlined, ClockCircleOutlined,
-} from "@ant-design/icons";
+ } from "../arc/icons";
 import { API } from "../../services/api";
 import UserAvatar from "../UserAvatar";
 import { PresenceAvatar, GroupAvatar, nameOf, fmtListTime } from "./im-utils";
@@ -17,7 +18,7 @@ import { PresenceAvatar, GroupAvatar, nameOf, fmtListTime } from "./im-utils";
  * 通讯录三个入口打开时状态各不相同（原实现在群成员名片里对好友也显示「加好友」）。
  */
 export function PersonCard({ user, me, online, compact = false, onChat, onAddFriend, onChanged }) {
-  const { message, modal } = AntApp.useApp();
+  const { message, modal } = ArcApp.useApp();
   const navigate = useNavigate();
   const [rel, setRel] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -177,7 +178,7 @@ export function GroupInfo({ room, me, online, onMemberClick, onInvite, onEditAnn
         <div className="oo-im-person-name">
           {room?.title}
           {isManager ? (
-            <Tooltip title="修改群名"><button type="button" className="oo-im-icon-btn" onClick={onRename} aria-label="修改群名"><EditOutlined /></button></Tooltip>
+            <Tooltip title="修改群名"><ActionButton type="text" htmlType="button" className="oo-im-icon-btn" onClick={onRename} aria-label="修改群名"><EditOutlined /></ActionButton></Tooltip>
           ) : null}
         </div>
         <div className="oo-im-person-sub">{room?.members?.length || 0} 位成员 · {onlineCount} 人在线</div>
@@ -186,7 +187,7 @@ export function GroupInfo({ room, me, online, onMemberClick, onInvite, onEditAnn
       <div className="oo-im-info-block">
         <div className="oo-im-info-label">
           <span><SoundOutlined /> 群公告</span>
-          {isManager ? <button type="button" className="oo-im-link-btn" onClick={onEditAnnouncement}>{room?.announcement ? "编辑" : "发布"}</button> : null}
+          {isManager ? <ActionButton type="text" htmlType="button" className="oo-im-link-btn" onClick={onEditAnnouncement}>{room?.announcement ? "编辑" : "发布"}</ActionButton> : null}
         </div>
         <div className={`oo-im-announce-text${room?.announcement ? "" : " is-empty"}`}>{room?.announcement || "暂无公告"}</div>
       </div>
@@ -194,7 +195,7 @@ export function GroupInfo({ room, me, online, onMemberClick, onInvite, onEditAnn
       <div className="oo-im-info-block oo-im-info-members">
         <div className="oo-im-info-label">
           <span><TeamOutlined /> 成员</span>
-          <button type="button" className="oo-im-link-btn" onClick={onInvite}><UsergroupAddOutlined /> 邀请</button>
+          <ActionButton type="text" htmlType="button" className="oo-im-link-btn" onClick={onInvite}><UsergroupAddOutlined /> 邀请</ActionButton>
         </div>
         {(room?.members?.length || 0) > 8 ? (
           <Input size="small" allowClear prefix={<SearchOutlined style={{ color: "var(--ink-3)" }} />} placeholder="搜索成员" value={kw} onChange={(e) => setKw(e.target.value)} style={{ marginBottom: 6 }} />
@@ -202,17 +203,17 @@ export function GroupInfo({ room, me, online, onMemberClick, onInvite, onEditAnn
         <ul className="oo-im-list">
           {members.map((m) => (
             <li key={m.id} className="oo-im-member">
-              <button type="button" className="oo-im-member-main" onClick={() => onMemberClick(m)}>
+              <ActionButton type="text" htmlType="button" className="oo-im-member-main" onClick={() => onMemberClick(m)}>
                 <PresenceAvatar user={m} size={28} online={m.online} />
                 <span className="oo-truncate">{m.display_name || m.username}{m.id === me?.id ? "（我）" : ""}</span>
                 {m.role === "owner" ? <CrownOutlined className="oo-im-role is-owner" aria-label="群主" /> : null}
                 {m.role === "admin" ? <SafetyOutlined className="oo-im-role" aria-label="管理员" /> : null}
-              </button>
+              </ActionButton>
               {isManager && m.id !== me?.id && m.role !== "owner" ? (
                 <Tooltip title="移出群聊">
-                  <button type="button" className="oo-im-icon-btn oo-im-member-kick" onClick={() => onKick(m)} aria-label={`将 ${m.display_name || m.username} 移出群聊`}>
+                  <ActionButton type="text" htmlType="button" className="oo-im-icon-btn oo-im-member-kick" onClick={() => onKick(m)} aria-label={`将 ${m.display_name || m.username} 移出群聊`}>
                     <UserDeleteOutlined />
-                  </button>
+                  </ActionButton>
                 </Tooltip>
               ) : null}
             </li>
@@ -265,9 +266,9 @@ export function RequestsView({ requests, onBack, onHandle, onWithdraw, onOpenUse
             <ul className="oo-im-req-list">
               {requests.incoming.map((r) => (
                 <li key={r.id} className="oo-im-req">
-                  <button type="button" className="oo-im-avatar-btn" onClick={() => onOpenUser({ id: r.from_user_id, username: r.username, display_name: r.display_name, avatar_url: r.avatar_url })}>
+                  <ActionButton type="text" htmlType="button" className="oo-im-avatar-btn" onClick={() => onOpenUser({ id: r.from_user_id, username: r.username, display_name: r.display_name, avatar_url: r.avatar_url })}>
                     <PresenceAvatar user={{ id: r.from_user_id, username: r.username, display_name: r.display_name, avatar_url: r.avatar_url }} size={42} online={r.online} />
-                  </button>
+                  </ActionButton>
                   <div className="oo-im-req-body">
                     <div className="oo-im-row-title">{r.display_name || r.username} <span className="oo-im-row-sub">@{r.username}</span></div>
                     <div className="oo-im-req-msg">{r.message || "对方没有填写验证消息"}</div>
@@ -329,10 +330,10 @@ export function EmptyStage({ friends, online, onAddFriend, onCreateGroup, onChat
           <div className="oo-im-group-label">在线好友</div>
           <div className="oo-im-stage-online-list">
             {onlineFriends.map((f) => (
-              <button key={f.id} type="button" onClick={() => onChat(f)} title={`给 ${nameOf(f)} 发消息`}>
+              <ActionButton type="text" key={f.id} htmlType="button" onClick={() => onChat(f)} title={`给 ${nameOf(f)} 发消息`}>
                 <PresenceAvatar user={f} size={40} online />
                 <span className="oo-truncate">{nameOf(f)}</span>
-              </button>
+              </ActionButton>
             ))}
           </div>
         </div>
