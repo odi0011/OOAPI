@@ -45,6 +45,7 @@ export function smokeFixtureData(pathname) {
   if (pathname === "/api/chatroom/rooms") return { ...emptyList, rooms: [] };
   if (pathname === "/api/pricing/public") return { models: [], vendors: [], groups: [] };
   if (pathname === "/api/pricing/capabilities") return { items: [], presets: [], reasoningParameters: [] };
+  if (pathname === "/api/pricing/attribution") return { models: [], aliases: [], count: 0 };
   if (pathname === "/api/log/usage/summary") return { calls: 0, units: 0, prompt_tokens: 0, completion_tokens: 0, cache_tokens: 0, cache_rate: 0, avg_first_token: 0, avg_elapsed: 0, errors: 0, stopped: 0 };
   if (pathname === "/api/log/usage/filters") return { models: [], tokens: [], groups: [] };
   if (pathname === "/api/dashboard/filters") return { users: [], tokens: [], groups: [] };

@@ -14,6 +14,7 @@ export default function ModelAttributions({ revision, onChange }) {
     setLoading(true);
     try {
       const [next, all] = await Promise.all([API.get("/pricing/attribution"), API.get("/pricing/")]);
+      if (!Array.isArray(next?.models) || !Array.isArray(next?.aliases) || !Array.isArray(all)) throw new Error("模型归属数据不完整，请刷新重试");
       setData(next); setPrices(all); setError("");
     } catch(e) { setError(e.message); } finally { setLoading(false); }
   }, []);
@@ -37,15 +38,15 @@ export default function ModelAttributions({ revision, onChange }) {
     {data.models.some(row => /^\d+-auto$/.test(row.model)) ? <Alert type="info" showIcon message="auto 按渠道独立配置" description="编号-auto 只调用对应编号的渠道。请分别设置价格，并在「参数与能力」中配置；未定价前不会开放调用。" style={{ marginBottom: 12 }} /> : null}
     <Table className="oo-table" rowKey="model" size="small" loading={loading} dataSource={data.models} scroll={{ x: 850 }} pagination={{ pageSize: 8 }} locale={{ emptyText: "渠道型号均已定价" }} columns={[
       { title: "渠道型号", width: 250, render: (_, row) => <ModelLabel model={row.model} channelType={row.type} /> },
-      { title: "渠道", width: 150, render: (_, row) => row.channels.map(c => c.name).join("、") },
+      { title: "渠道", width: 150, ellipsis: true, render: (_, row) => row.channels.map(c => c.name).join("、") },
       { title: "比对归属", render: (_, row) => /^(\d+-auto|auto|default|latest)$/.test(row.model.split("/").pop()) ? <span style={{ color: "var(--ink-2)" }}>动态路由，请单独定价</span> : <Select style={{ width: "100%" }} allowClear showSearch optionFilterProp="label" placeholder={row.candidates.length ? `建议比对 ${row.candidates[0].model}` : "选择已定价模型"} value={targets[row.model]} onChange={v => setTargets(prev => ({ ...prev, [row.model]: v }))} options={[...row.candidates.map(p => p.model), ...prices.map(p => p.model)].filter((m,i,a) => a.indexOf(m) === i && m !== row.model && !/^(\d+-auto|auto|default|latest)$/.test(m.split("/").pop())).map(model => ({ value: model, label: model }))} /> },
       { title: "操作", width: 175, render: (_, row) => <Space size={4}>
         <Popconfirm title="确认同一模型？" description={<div>同名渠道型号将统一使用目标模型的名称、图标和单价。<div>{row.model} → {targets[row.model]}</div>{(() => { const p = prices.find(p => p.model === targets[row.model]); return p ? <span>输入 <OdAmount>{p.input_price}</OdAmount> / 输出 <OdAmount>{p.output_price}</OdAmount></span> : null; })()}</div>} onConfirm={() => confirm(row)} disabled={!targets[row.model]}><Button size="small" type="link" disabled={!targets[row.model]}>确认归属</Button></Popconfirm>
         <Button size="small" type="link" onClick={() => { form.resetFields(); setEditing(row); }}>单独定价</Button>
       </Space> },
     ]} />
-    {data.aliases.length ? <Table className="oo-table" rowKey="alias" size="small" dataSource={data.aliases} pagination={{ pageSize: 5 }} columns={[
-      { title: "已确认的渠道型号", dataIndex: "alias" }, { title: "计费模型", dataIndex: "model" },
+    {data.aliases.length ? <Table className="oo-table" rowKey="alias" size="small" dataSource={data.aliases} scroll={{ x: 605 }} pagination={{ pageSize: 5 }} columns={[
+      { title: "已确认的渠道型号", dataIndex: "alias", width: 260, ellipsis: true }, { title: "计费模型", dataIndex: "model", width: 260, ellipsis: true },
       { title: "操作", width: 85, render: (_, row) => <Popconfirm title="撤销此归属？" description="没有独立价格的型号将立即停止对用户开放。" onConfirm={async () => { try { await API.del("/pricing/attribution", { body: { alias: row.alias } }); await refresh(); } catch(e) { message.error(e.message); } }}><Button type="link" size="small">撤销</Button></Popconfirm> },
     ]} /> : null}
     <Modal title={`模型定价：${editing?.model || ""}`} open={Boolean(editing)} onCancel={() => setEditing(null)} onOk={savePrice} okText="保存价格" destroyOnClose>

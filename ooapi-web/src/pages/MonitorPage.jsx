@@ -11,6 +11,7 @@ import {
 } from "@ant-design/icons";
 import { API } from "../services/api";
 import PageHeader from "../components/PageHeader";
+import StatCard from "../components/StatCard";
 import { LineChart, BarChart, RankBar, Legend, ChartCard, KpiCard, SERIES_COLORS, fmtCompact } from "../components/Charts";
 import { useApp } from "../context/AppContext";
 import useLatest from "../hooks/useLatest";
@@ -45,30 +46,11 @@ function usageColor(pct) {
   return "var(--green)";
 }
 
-/** 资源卡：标题 + 大字数值 + 进度条 + 副标题（可选 sparkline） */
+// 资源汇总采用相同小标签，进度及详细资源信息留在悬浮中。
 function ResourceCard({ label, value, percent, foot, extra, spark }) {
-  return (
-    <div className="oo-panel" style={{ padding: 14 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-        <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{label}</span>
-        {extra}
-      </div>
-      <div className="oo-num" style={{ fontSize: 22, fontWeight: 600, lineHeight: 1.2, marginTop: 2 }}>{value}</div>
-      {percent != null && Number.isFinite(Number(percent)) ? (
-        <div style={{ height: 5, borderRadius: 3, background: "var(--inset)", overflow: "hidden", margin: "8px 0 6px" }}>
-          <div
-            style={{
-              width: `${Math.max(0, Math.min(100, Number(percent)))}%`,
-              height: "100%",
-              background: usageColor(percent),
-            }}
-          />
-        </div>
-      ) : null}
-      {spark ? <div style={{ margin: "2px 0 4px" }}>{spark}</div> : null}
-      {foot ? <div style={{ fontSize: 11.5, color: "var(--ink-3)" }}>{foot}</div> : null}
-    </div>
-  );
+  const known = percent != null && Number.isFinite(Number(percent));
+  return <StatCard label={label} value={value} tone={known && percent >= 90 ? "danger" : known && percent >= 70 ? "warning" : undefined}
+    foot={<>{foot}{extra}{known ? <div className="oo-bar" style={{ marginTop: 6 }}><div style={{ width: `${Math.max(0, Math.min(100, Number(percent)))}%`, height: "100%", background: usageColor(percent) }} /></div> : null}{spark}</>} />;
 }
 
 const HEALTH_TONE = {
@@ -553,7 +535,7 @@ export default function MonitorPage() {
     <div className="oo-monitor-tabs"><Segmented block value={activeTab} onChange={setActiveTab} options={[{ value: "overview", label: "运行概览" }, { value: "infra", label: "系统资源" }, { value: "traffic", label: "渠道与流量" }, { value: "alerts", label: "告警中心" }]} /></div>
     {!data ? loading && <div className="oo-dashboard-loading"><Spin /></div> : <>
       {activeTab === "overview" && <div className="oo-monitor-view">
-        <div className="oo-kpi-grid">
+        <div className="oo-stats-strip">
           <KpiCard label="请求吞吐 QPS" value={rt.qps?.current ?? "—"} unit="请求/s" hint="当前分钟请求数 ÷ 60" />
           <KpiCard label="Token 吞吐 TPS" value={fmtCompact(rt.tps?.current || 0)} unit="Token/s" hint="当前分钟 Token 数 ÷ 60" />
           <KpiCard label="当前在途" value={rt.inFlight ?? "—"} unit="个请求" hint={"本进程峰值 " + (g.peakInFlight ?? 0)} />
@@ -574,7 +556,7 @@ export default function MonitorPage() {
         </div>
       </div>}
       {activeTab === "infra" && <div className="oo-monitor-view">
-        <div className="oo-monitor-resource-grid">
+        <div className="oo-stats-strip">
           <ResourceCard label="系统 CPU" value={sys.cpuPercent == null ? "采样中" : percentText(sys.cpuPercent)} percent={sys.cpuPercent} foot={(sys.cpuCount ?? 0) + " 核 · " + (sys.loadavg ? "负载 " + sys.loadavg.join(" / ") : "当前平台不提供系统负载")} />
           <ResourceCard label="进程 CPU" value={proc.cpu ? percentText(proc.cpu.percentOfMachine) : "采样中"} percent={proc.cpu?.percentOfMachine} foot="占整机 CPU 的比例" />
           <ResourceCard label="系统内存" value={percentText(sys.usedMemPercent)} percent={sys.usedMemPercent} foot={fmtBytes(sys.totalMemBytes - sys.freeMemBytes) + " / " + fmtBytes(sys.totalMemBytes)} />
@@ -593,7 +575,7 @@ export default function MonitorPage() {
       {activeTab === "traffic" && <div className="oo-monitor-view">
         <ChartCard title="渠道运行状态" note={"在途 " + (channels.inflight ?? 0) + " · 冷却 " + (channels.cooling ?? 0) + " · 启用 " + (channels.enabled ?? 0)}>
           <Table className="oo-table" rowKey="channelId" size="small" pagination={{ pageSize: 10, hideOnSinglePage: true }} scroll={{ x: 880 }} dataSource={channels.list || []} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚未配置渠道" /> }} columns={[
-            { title: "渠道", dataIndex: "name", render: (v, r) => <span className="oo-dashboard-channel"><VendorIcon type={r.type} size={24} /><span><b>{v}</b><small>#{r.channelId}</small></span></span> },
+            { title: "渠道", dataIndex: "name", width: 190, render: (v, r) => <span className="oo-dashboard-channel"><VendorIcon type={r.type} size={24} /><span style={{ minWidth: 0 }}><b className="oo-truncate" title={v} style={{ display: "block" }}>{v}</b><small>#{r.channelId}</small></span></span> },
             { title: "状态", dataIndex: "status", width: 90, render: (v, r) => <Tag color={r.coolingDown ? "warning" : v === 1 ? "success" : "default"}>{r.coolingDown ? "冷却中" : v === 1 ? "启用" : "停用"}</Tag> },
             { title: "在途", dataIndex: "inflight", width: 75, align: "right" }, { title: "排队", dataIndex: "queued", width: 75, align: "right" },
             { title: "剩余冷却", dataIndex: "cooldownRemainSec", width: 100, render: (v) => v ? Math.ceil(v) + " 秒" : "—" },

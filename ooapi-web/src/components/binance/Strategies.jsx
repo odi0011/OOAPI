@@ -51,7 +51,7 @@ export default function Strategies({ strategies, account, accountId, act, busy }
     } catch { /* act 已显示错误 */ }
   };
   const columns = [
-    { title: "策略", dataIndex: "name", width: 180 },
+    { title: "策略", dataIndex: "name", width: 180, ellipsis: true },
     { title: "交易对", dataIndex: "symbol" },
     { title: "周期", dataIndex: "timeframe" },
     { title: "类型", dataIndex: "strategyType", render: (value) => value === "rsi" ? "RSI" : "均线交叉" },

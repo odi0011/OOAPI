@@ -96,18 +96,30 @@
   white-space: nowrap;
 }
 
-.oo-model-price-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  color: var(--ink-2);
-  font-size: 11px;
-}
-
-.oo-model-price-summary b {
-  color: var(--ink);
-  font-weight: 600;
-}
+.oo-model-price-cell { display: grid; gap: 4px; justify-items: start; }
+.oo-model-price-matrix { display: grid; gap: 3px 14px; align-items: center; font-size: 12px; line-height: 20px; }
+.oo-model-price-line { display: contents; }
+.oo-model-price-heading { color: var(--ink-2); font-size: 11px; text-align: right; white-space: nowrap; }
+.oo-model-price-heading:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.oo-model-price-label { color: var(--ink-3); }
+.oo-model-price-value { color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
+.oo-model-price-more.ant-btn { padding: 0; height: auto; font-size: 11px; }
+.oo-model-price-all { display: grid; gap: 12px; max-width: min(420px, 80vw); }
+.oo-model-price-all > div { display: grid; gap: 5px; }
+.oo-model-price-all > div > b { font-size: 12px; color: var(--ink-2); }
+.oo-model-mobile-row { display: grid; gap: 14px; padding: 4px 0; }
+.oo-model-mobile-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.oo-model-mobile-head .oo-model-main { flex: 1; }
+.oo-model-mobile-head .ant-btn { flex: none; }
+.oo-model-mobile-specs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; margin: 0; }
+.oo-model-mobile-specs dt { font-size: 11px; color: var(--ink-3); }
+.oo-model-mobile-specs dd { margin: 2px 0 0; font-size: 12px; color: var(--ink); overflow-wrap: anywhere; }
+.oo-model-mobile-price { display: grid; gap: 6px; border-top: 1px solid var(--line); padding-top: 10px; }
+.oo-model-mobile-price > span:first-child { font-size: 11px; color: var(--ink-3); }
+.oo-model-modalities { display: grid; gap: 4px; color: var(--ink-3); font-size: 11px; }
+.oo-model-modalities b { color: var(--ink-2); font-weight: 400; }
+.oo-model-reasoning { font-size: 11px; overflow-wrap: anywhere; }
+.oo-model-source > .ant-tag { width: fit-content; }
 
 .oo-model-unset {
   color: var(--orange);
@@ -342,6 +354,13 @@
   .oo-model-help-grid {
     grid-template-columns: 1fr;
   }
+
+  .oo-model-management-panel .ant-table-wrapper { padding: 0 12px 12px; }
+  .oo-model-management-panel .ant-table-cell { padding: 14px 0; }
+  .oo-model-management-panel-head { flex-direction: row; align-items: center; padding: 14px 12px; }
+  .oo-model-management-panel-head h2 { font-size: 15px; }
+  .oo-model-management-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 12px; gap: 8px; }
+  .oo-model-management-filters > .ant-input-affix-wrapper { grid-column: 1 / -1; }
 
   .oo-model-presets > div:first-child,
   .oo-model-form-section-title {

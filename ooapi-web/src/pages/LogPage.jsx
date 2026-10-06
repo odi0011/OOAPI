@@ -258,7 +258,7 @@ export default function LogPage() {
           {
             title: "用户",
             dataIndex: "username",
-            width: 115,
+            width: 160,
             render: (v, r) => <UserAvatar user={{ ...r, id: r.user_id, username: v }} size={22} showName />,
           },
         ]
@@ -282,7 +282,7 @@ export default function LogPage() {
         ),
     },
     {
-      title: "推理强度", dataIndex: "reasoning_effort", width: 175,
+      title: "推理强度", dataIndex: "reasoning_effort", width: 115,
       render: (_, record) => <ReasoningCell record={record} />,
     },
     {

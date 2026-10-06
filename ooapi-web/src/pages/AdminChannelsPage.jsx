@@ -20,6 +20,7 @@ import { useApp } from "../context/AppContext";
 import { fmtDate, copyText, odOf, unitsPerOd } from "../services/format";
 import useLatest from "../hooks/useLatest";
 import PageHeader from "../components/PageHeader";
+import StatCard from "../components/StatCard";
 import { VendorIcon, ModelLabel, GroupVendorIcons, GroupTag } from "../components/VendorIcon";
 import ModelPicker from "../components/ModelPicker";
 import { DurationCell } from "../components/UsageCells";
@@ -375,14 +376,6 @@ function computeStreaks(byDay = []) {
   return { current, longest };
 }
 
-function StatCard({ label, value, hint }) {
-  return (
-    <div className="oo-stat-card" title={hint || undefined}>
-      <div className="oo-stat-card-num">{value}</div>
-      <div className="oo-stat-card-label">{label}</div>
-    </div>
-  );
-}
 
 // 平滑折线路径（Catmull-Rom → 三次贝塞尔）
 function smoothPath(rawPts) {

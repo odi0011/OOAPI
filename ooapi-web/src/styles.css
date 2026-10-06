@@ -1059,7 +1059,8 @@ h1, h2, h3, h4 {
 .oo-nav::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .oo-brand:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .oo-od-amount { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; vertical-align: baseline; }
-.oo-user-identity { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.oo-user-identity { display: flex; align-items: center; gap: 9px; min-width: 0; max-width: 100%; }
+.ant-table-cell .oo-user-label { width: 100%; }
 
 .oo-nav-group + .oo-nav-group { margin-top: 16px; }
 
@@ -1589,106 +1590,44 @@ h1, h2, h3, h4 {
 /* ---------------------------------------------------------------------------
    用量统计弹窗 v2：统计卡 + Token 活动热力图 + 每日趋势折线
    --------------------------------------------------------------------------- */
-.oo-stats-cards {
-  display: grid;
-  /* 铺满整行：卡片数少时（媒体库 4 张、个人设置 3 张）也必须占满宽度，
-     否则右侧留一大片空白，看着就是「这页没做全宽」（用户实测反馈）。
-     曾用 minmax(118px, 200px) + justify-content:start 想避免「薄片」，
-     结果从「卡片被拉长」变成「卡片挤在左边」—— 两个问题里留白更刺眼。
-     现在的取法：列数自适应、每列等分（1fr），卡片内部数值左对齐；
-     大屏单卡宽一些是正常的仪表盘密度，不留白才是关键。
-     窄屏靠 minmax 下限（148px）自动减少列数。 */
-  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-/* 紧凑统计条：列表页的汇总用一行小标签，不用大卡片（列表页主体是表格，
-   统计只做辅助；大卡片会把表格挤到首屏之外）。与 oo-stats-cards 是两种
-   场景，按「页面主体是表格还是统计」二选一，不要混用。 */
-.oo-stats-strip {
+/* 所有页面汇总共用使用记录的小标签密度，自动换行，不拉伸为卡片。 */
+.oo-stats-cards, .oo-stats-strip {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 12px;
 }
-.oo-stats-strip .bui-chip {
-  font-size: 12px;
+.oo-stats-strip .bui-chip { font-size: 12px; gap: 4px; }
+.oo-stats-strip .bui-chip b { font-weight: 600; color: var(--ink); }
+.oo-stat-card.bui-chip {
+  display: inline-flex;
+  align-items: center;
   gap: 4px;
-}
-.oo-stats-strip .bui-chip b {
-  font-weight: 600;
-  color: var(--ink);
-}
-
-/* 统计卡（全站唯一形态）：「数值在上、标签在下」的紧凑卡，单卡约 58px 高。
-   ---------------------------------------------------------------------------
-   为什么是这个形态（不要再改回带图标的三行大卡）：
-     旧版 `.oo-stat` 是「图标行 + 大数值 + foot 说明」三行、约 110px 高，
-     一行 4 张就吃掉首屏 1/6，把真正要看的内容（表格/图表）挤出视野。
-     渠道管理页与用量统计弹窗一直用的是这种紧凑形态，现在统一到这一种。
-   补充信息走 Tooltip（不占高度）；确需常显的用 .oo-stat-card-hint，克制使用。 */
-.oo-stat-card {
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border: 0;
+  background: var(--field);
   border-radius: var(--r-sm);
-  padding: 8px 11px;
+  padding: 3px 7px;
   min-width: 0;
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 18px;
 }
-
-/* 数值区：flex + wrap，让「数字」与「单位」在窄屏下能分行，
-   而不是把数字截断成 `200.00 0…`。
-   实测来源：黑盒测试在 390×844 视口截图，余额卡显示为 `200.00 0…`
-   （`.oo-stat-card-num` 原先是 nowrap + ellipsis，单位被吃掉一半）。 */
-.oo-stat-card-num {
+.oo-stat-card .oo-stat-card-num {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 19px;
-  font-weight: 600;
-  line-height: 1.2;
-  letter-spacing: -0.01em;
-  color: var(--ink);
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 4px;
-  min-width: 0;
-}
-
-/* 数字本身：超长时缩字号（手机上 19→16px）而不是直接溢出 */
-.oo-stat-card-value {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.oo-stat-card-suffix {
-  font-family: var(--font-sans);
   font-size: 12px;
-  font-weight: 450;
-  color: var(--ink-3);
-  /* 单位是短字符串：宁可换行也不截断 */
-  flex: 0 0 auto;
-  white-space: nowrap;
+  font-weight: 600;
+  line-height: inherit;
+  color: var(--ink);
+  min-width: 0;
 }
-
-.oo-stat-card-label {
-  margin-top: 1px;
-  font-size: 11.5px;
-  color: var(--ink-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.oo-stat-card-hint {
-  margin-top: 2px;
-  font-size: 10.5px;
-  color: var(--ink-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+.oo-stat-card-value { min-width: 0; overflow-wrap: anywhere; }
+.oo-stat-card-suffix { display: inline-flex; align-items: center; font-size: inherit; color: var(--ink-3); }
+.oo-stat-card-label { margin: 0; color: var(--ink-3); font-size: inherit; white-space: nowrap; }
 
 .oo-stats-card {
   border: 1px solid var(--line);
@@ -3013,6 +2952,8 @@ button.oo-channel-activity-cell:focus-visible {
 .oo-mt-6 { margin-top: 24px; }
 .oo-grow { flex: 1; min-width: 0; }
 .oo-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 表格内文本必须先限制可用宽度，才能产生省略号；不能用单元格硬裁切。 */
+.ant-table-cell .oo-truncate { min-width: 0; max-width: 100%; }
 .oo-scroll { max-height: 380px; overflow: auto; }
 
 /* 响应式栅格 */

@@ -224,15 +224,16 @@ export default function AdminCommunityPage() {
     {
       title: "帖子",
       dataIndex: "title",
+      width: 320,
       render: (_, r) => (
         <div style={{ minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             {r.is_pinned ? <Tag color="orange">置顶</Tag> : null}
             {Number(r.status) === 3 ? <Tag color="orange">已隐藏</Tag> : null}
             {Number(r.status) === 2 ? <Tag color="red">已删除</Tag> : null}
-            <span className="oo-truncate" style={{ fontWeight: 500, fontSize: 13 }}>{r.title}</span>
+            <span title={r.title} className="oo-truncate" style={{ minWidth: 0, fontWeight: 500, fontSize: 13 }}>{r.title}</span>
           </div>
-          <div className="oo-truncate" style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 2 }}>
+          <div title={r.summary} className="oo-truncate" style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 2 }}>
             {r.summary || ""}
           </div>
         </div>
@@ -402,7 +403,8 @@ export default function AdminCommunityPage() {
             loading={loading}
             columns={columns}
             dataSource={posts.items}
-            scroll={{ x: 900 }}
+            tableLayout="fixed"
+            scroll={{ x: columns.reduce((total, column) => total + (column.width || 0), 0) }}
             pagination={{
               current: page,
               pageSize: 20,

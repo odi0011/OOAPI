@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, App, Button, Checkbox, Collapse, Drawer, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip } from "antd";
-import { ClearOutlined, CloudDownloadOutlined, DollarOutlined, InfoCircleOutlined, LinkOutlined, ReloadOutlined, SearchOutlined, SettingOutlined, UploadOutlined } from "@ant-design/icons";
+import { Alert, App, Button, Checkbox, Collapse, Drawer, Form, Grid, Input, InputNumber, Modal, Popconfirm, Popover, Select, Space, Table, Tag, Tooltip } from "antd";
+import { ClearOutlined, CloudDownloadOutlined, DollarOutlined, LinkOutlined, ReloadOutlined, SearchOutlined, SettingOutlined, UploadOutlined } from "@ant-design/icons";
 import { API } from "../services/api";
 import PageHeader from "../components/PageHeader";
 import { ModelLabel } from "../components/VendorIcon";
@@ -43,25 +43,30 @@ function PriceRules({ price }) {
   if (!price) return null;
   let rule = price.offpeakRule;
   if (typeof rule === "string") { try { rule = JSON.parse(rule); } catch { rule = null; } }
-  const amount = value => value == null ? "沿用基准" : <><OdAmount>{value}</OdAmount> <OdCoin size={11} /></>;
+  const amount = value => value == null ? "沿用基准" : <OdAmount size={11}>{value}</OdAmount>;
   return <div className="oo-model-price-rules">
     {(price.tiers || []).map((tier, index) => <div key={`${tier.from || tier.minInputTokens}-${index}`}><b>{tier.from ? `${String(tier.from).slice(0, 10)} 起` : `输入 ≥ ${count(tier.minInputTokens)} Token`}</b><span>输入 {amount(tier.input)} · 输出 {amount(tier.output)} · 缓存 {amount(tier.cache)}</span></div>)}
     {rule ? <><div><b>峰时</b><span>UTC{Number(rule.offset) >= 0 ? "+" : ""}{rule.offset || 0} · 周{(rule.days || [1, 2, 3, 4, 5]).join("/")} · {(rule.peak || []).map(window => window.join("–")).join("、")}</span></div><div><b>闲时</b><span>输入 {amount(price.offpeakInput)} · 输出 {amount(price.offpeakOutput)} · 缓存 {amount(price.offpeakCache)}</span></div></> : null}
   </div>;
 }
 
-function capabilitySummary(row) {
-  const parts = [];
-  if (row.contextWindow) parts.push(`上下文 ${count(row.contextWindow)}`);
-  if (row.maxOutputTokens) parts.push(`输出 ${count(row.maxOutputTokens)}`);
-  if (row.reasoning?.levels?.length) parts.push(`推理 ${row.reasoning.levels.join(" / ")}`);
-  return parts.length ? parts : ["能力待核实"];
+function PriceMatrix({ bands }) {
+  return <div className="oo-model-price-matrix" role="table" aria-label="模型单价" style={{ gridTemplateColumns: `34px repeat(${bands.length}, minmax(70px, max-content))` }}>
+    {bands.length > 1 ? <div role="row" className="oo-model-price-line"><span role="columnheader" />{bands.map((band, index) => <Tooltip key={index} title={band.description} trigger={["hover", "focus"]}><span className="oo-model-price-heading" role="columnheader" tabIndex={0}>{band.label}</span></Tooltip>)}</div> : null}
+    {priceFields.map(([key, label]) => <div key={key} role="row" className="oo-model-price-line"><span className="oo-model-price-label" role="rowheader">{key === "cache" ? "缓存" : label}</span>{bands.map((band, index) => <span className="oo-model-price-value" role="cell" key={index}><OdAmount size={11}>{band.price[key] == null ? "—" : String(Number(band.price[key]))}</OdAmount></span>)}</div>)}
+  </div>;
 }
 
-function priceSummary(price) {
-  if (!price) return null;
-  const amount = value => value == null ? "—" : Number(value).toFixed(4);
-  return <div className="oo-model-price-summary"><span>输入 <b>{amount(price.input ?? price.input_price)}</b></span><span>输出 <b>{amount(price.output ?? price.output_price)}</b></span><span>缓存 <b>{amount(price.cache ?? price.cache_price ?? 0)}</b></span>{hasPriceRules(price) ? <Tag color="green">分时/分档</Tag> : null}</div>;
+function PriceSummary({ price }) {
+  let rule = price.offpeakRule;
+  if (typeof rule === "string") { try { rule = JSON.parse(rule); } catch { rule = null; } }
+  const bands = [{ label: rule ? "峰时" : "基础", description: rule ? <PriceRules price={{ ...price, tiers: [] }} /> : "基准价格；附加档位满足条件时覆盖", price }];
+  if (rule) bands.push({ label: "闲时", description: "峰时以外的时段", price: { input: price.offpeakInput ?? price.input, output: price.offpeakOutput ?? price.output, cache: price.offpeakCache ?? price.cache } });
+  for (const tier of price.tiers || []) {
+    const tokens = Number(tier.minInputTokens);
+    bands.push({ label: tier.from ? String(tier.from).slice(5, 10) + " 起" : `≥ ${tokens && tokens % 1000 === 0 ? tokens / 1000 + "K" : count(tier.minInputTokens)}`, description: tier.from ? `${tier.from} 起生效` : `输入 ≥ ${count(tier.minInputTokens)} Token`, price: Object.fromEntries(priceFields.map(([key]) => [key, tier[key] ?? price[key]])) });
+  }
+  return <div className="oo-model-price-cell"><PriceMatrix bands={bands.slice(0, 2)} />{bands.length > 2 ? <Popover trigger={["hover", "click"]} content={<div className="oo-model-price-all">{bands.map((band, index) => <div key={index}><b>{band.description}</b><PriceMatrix bands={[band]} /></div>)}</div>}><Button type="link" size="small" className="oo-model-price-more">查看全部 {bands.length} 档</Button></Popover> : null}</div>;
 }
 
 function PriceSource({ row, price }) {
@@ -83,6 +88,8 @@ export default function ModelManagementPage() {
   const [importOpen, setImportOpen] = useState(false), [importText, setImportText] = useState(""), [importResult, setImportResult] = useState(null), [importing, setImporting] = useState(false);
   const [overwrite, setOverwrite] = useState(false), [syncing, setSyncing] = useState(false), [cleaning, setCleaning] = useState(false);
   const levels = Form.useWatch("levels", form) || [];
+  const screens = Grid.useBreakpoint();
+  const compact = !screens.md;
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -152,27 +159,36 @@ export default function ModelManagementPage() {
   const syncUpstream = async () => { setSyncing(true); try { const result = await API.post("/pricing/sync-upstream", { overwrite }); message.success(`已同步 ${result.fetched || 0} 条价目`); setRevision(value => value + 1); } catch (e) { message.error(e.message || "同步失败"); } finally { setSyncing(false); } };
 
   const columns = [
-    { title: "模型", dataIndex: "model", width: 240, render: (value, row) => <div className="oo-model-main"><ModelLabel model={value} channelType={row.vendor || row.pricing?.channel_type} /><small>{TYPE_LABEL[row.vendor] || row.vendor || "未知厂商"}</small></div> },
-    { title: "类型", dataIndex: "category", width: 85, render: value => <Tag>{categories[value] || value || "待核实"}</Tag> },
-    { title: "参数能力", width: 255, render: (_, row) => <div className="oo-model-capability-summary">{capabilitySummary(row).map(value => <span key={value}>{value}</span>)}<div>{(row.inputTypes || []).map(value => <Tag key={value}>{types[value] || value}</Tag>)}</div></div> },
-    { title: "价格 / 百万 Token", width: 270, render: (_, row) => row.pricing ? priceSummary(row.pricing) : <span className="oo-model-unset">尚未配置价格</span> },
-    { title: "来源与状态", width: 210, render: (_, row) => <PriceSource row={row} price={row.pricing} /> },
-    { title: "", width: 88, fixed: "right", render: (_, row) => <Button type="primary" ghost size="small" icon={<SettingOutlined />} loading={opening === row.model} disabled={Boolean(opening) && opening !== row.model} onClick={() => edit(row)}>配置</Button> },
+    { title: "模型", dataIndex: "model", width: compact ? 132 : 235, render: (value, row) => <div className="oo-model-main"><ModelLabel model={value} channelType={row.vendor || row.pricing?.channel_type} /><small title={TYPE_LABEL[row.vendor] || row.vendor}>{TYPE_LABEL[row.vendor] || row.vendor || "未知厂商"}</small></div> },
+    { title: "类型", dataIndex: "category", width: 80, responsive: ["md"], render: value => <Tag>{categories[value] || value || "待核实"}</Tag> },
+    { title: "上下文", dataIndex: "contextWindow", width: 115, responsive: ["md"], render: value => <span className="oo-num">{count(value)}</span> },
+    { title: "最大输出", dataIndex: "maxOutputTokens", width: 115, responsive: ["md"], render: value => <span className="oo-num">{count(value)}</span> },
+    { title: "推理", width: 125, responsive: ["md"], render: (_, row) => <span className="oo-model-reasoning">{row.reasoning?.levels?.length ? row.reasoning.levels.join(" / ") : "—"}</span> },
+    { title: "输入 / 输出", width: 140, responsive: ["md"], render: (_, row) => <div className="oo-model-modalities"><span>入 <b>{(row.inputTypes || []).map(value => types[value] || value).join(" · ") || "待核实"}</b></span><span>出 <b>{(row.outputTypes || []).map(value => types[value] || value).join(" · ") || "待核实"}</b></span></div> },
+    { title: "价格 / 百万 Token", width: 240, render: (_, row) => row.pricing ? <PriceSummary price={row.pricing} /> : <span className="oo-model-unset">尚未配置价格</span> },
+    { title: "来源与状态", width: 185, responsive: ["md"], render: (_, row) => <PriceSource row={row} price={row.pricing} /> },
+    { title: "", width: compact ? 72 : 88, fixed: "right", render: (_, row) => <Button type="primary" ghost size="small" icon={<SettingOutlined />} loading={opening === row.model} disabled={Boolean(opening) && opening !== row.model} onClick={() => edit(row)}>配置</Button> },
   ];
+
+  const compactColumns = [{ key: "model", render: (_, row) => <div className="oo-model-mobile-row">
+    <div className="oo-model-mobile-head"><div className="oo-model-main"><ModelLabel model={row.model} channelType={row.vendor || row.pricing?.channel_type} /><small>{TYPE_LABEL[row.vendor] || row.vendor || "未知厂商"} · {categories[row.category] || "待核实"}</small></div><Button size="small" icon={<SettingOutlined />} loading={opening === row.model} disabled={Boolean(opening) && opening !== row.model} onClick={() => edit(row)}>配置</Button></div>
+    <dl className="oo-model-mobile-specs"><div><dt>上下文</dt><dd>{count(row.contextWindow)}</dd></div><div><dt>最大输出</dt><dd>{count(row.maxOutputTokens)}</dd></div><div><dt>推理</dt><dd>{row.reasoning?.levels?.join(" / ") || "—"}</dd></div><div><dt>输入 / 输出</dt><dd>{(row.inputTypes || []).map(value => types[value] || value).join(" · ") || "—"} / {(row.outputTypes || []).map(value => types[value] || value).join(" · ") || "—"}</dd></div></dl>
+    <div className="oo-model-mobile-price"><span>价格 / 百万 Token</span>{row.pricing ? <PriceSummary price={row.pricing} /> : <span className="oo-model-unset">尚未配置价格</span>}</div>
+    <PriceSource row={row} price={row.pricing} />
+  </div> }];
 
   return <div className="oo-page oo-model-management">
     <PageHeader title="模型管理" tags={<Tag>{rows.length} 个模型</Tag>} extra={<Space wrap size={6}><Button icon={<UploadOutlined />} onClick={openImport}>导入价格</Button><Popconfirm title="从上游同步价目表？" description={overwrite ? "将覆盖已有管理员价格。" : "仅补齐尚未配置的价格。"} onConfirm={syncUpstream} okText="开始同步" cancelText="取消"><Button icon={<CloudDownloadOutlined />} loading={syncing}>同步价目</Button></Popconfirm><Tooltip title="开启后同步会覆盖手动价格"><Checkbox checked={overwrite} onChange={event => setOverwrite(event.target.checked)}>覆盖已有价</Checkbox></Tooltip><Popconfirm title="清理无效定价？" description="删除模型登记表中不存在的价格记录。" onConfirm={prune} okText="清理" cancelText="取消"><Button danger icon={<ClearOutlined />} loading={cleaning}>清理无效数据</Button></Popconfirm><Button icon={<ReloadOutlined />} loading={loading} onClick={() => setRevision(value => value + 1)} aria-label="刷新模型管理" /></Space>} />
-    <div className="oo-model-management-intro"><div><b>模型配置</b><span>价格、计费规则、上下文限制和参数能力统一维护。打开模型即可一次完成配置。</span></div><span className="oo-model-management-note"><DollarOutlined /> 价格单位：OD币 / 百万 Token · 1 OD币 = 1 美元</span></div>
-    <div className="oo-stats-cards oo-model-management-stats"><StatCard label="平台模型" value={loading ? "—" : rows.length} suffix="个" hint="渠道登记并可配置的模型" /><StatCard label="已配置价格" value={loading ? "—" : configured} suffix="个" hint="已有输入、输出和缓存价格的模型" /><StatCard label="待处理" value={loading ? "—" : pendingCount} suffix="个" hint="尚未设置价格或等待归属确认的模型" /><StatCard label="厂商类型" value={loading ? "—" : vendors.length} suffix="类" hint="当前模型覆盖的渠道厂商类型" /><StatCard label="最低输入价" value={loading ? "—" : cheapest ? Number(cheapest.pricing.input).toFixed(4) : "—"} suffix={<OdCoin size={12} muted />} hint={cheapest ? `对应模型：${cheapest.model}` : "暂无已配置价格"} /><StatCard label="统一币制" value={<OdCoin size={22} />} hint="1 OD币 = 1 美元" /></div>
+    <div className="oo-stats-cards oo-model-management-stats"><StatCard label="平台模型" value={loading ? "—" : rows.length} suffix="个" hint="渠道登记并可配置的模型" /><StatCard label="已配置价格" value={loading ? "—" : configured} suffix="个" hint="已有输入、输出和缓存价格的模型" /><StatCard label="待处理" value={loading ? "—" : pendingCount} suffix="个" hint="尚未设置价格或等待归属确认的模型" /><StatCard label="厂商类型" value={loading ? "—" : vendors.length} suffix="类" hint="当前模型覆盖的渠道厂商类型" /><StatCard label="最低输入价" value={loading ? "—" : cheapest ? Number(cheapest.pricing.input).toFixed(4) : "—"} suffix={<OdCoin size={12} muted />} hint={cheapest ? `对应模型：${cheapest.model}` : "暂无已配置价格"} /></div>
     {error ? <Alert type="error" showIcon message="模型配置加载失败" description={error} action={<Button size="small" onClick={() => setRevision(value => value + 1)}>重试</Button>} /> : null}
     {visibleCatalogPending.length ? <Alert type="info" showIcon message={`有 ${visibleCatalogPending.length} 个官方型号等待定价`} description={<Space wrap size={[4, 4]}>{visibleCatalogPending.map(item => <Tooltip key={item.model} title={item.source}><Tag>{item.model}</Tag></Tooltip>)}</Space>} /> : null}
     <section className="oo-panel oo-model-management-panel">
-      <div className="oo-model-management-panel-head"><div><h2>全部模型</h2><p>每个模型的价格与参数能力在同一行管理，点击配置可查看完整规格。</p></div><span>{filtered.length} / {rows.length}</span></div>
+      <div className="oo-model-management-panel-head"><h2>全部模型</h2><span>{filtered.length} / {rows.length}</span></div>
       <div className="oo-model-management-filters"><Input allowClear prefix={<SearchOutlined />} placeholder="搜索模型、厂商或价格来源" aria-label="搜索模型配置" value={query} onChange={event => setQuery(event.target.value)} /><Select allowClear placeholder="全部类型" aria-label="筛选模型类型" value={category || undefined} onChange={value => setCategory(value || "")} options={optionMap(categories)} /><Select allowClear placeholder="全部厂商" aria-label="筛选模型厂商" value={vendor || undefined} onChange={value => setVendor(value || "")} options={vendors.map(value => ({ value, label: TYPE_LABEL[value] || value }))} /><Select allowClear placeholder="价格状态" aria-label="筛选价格状态" value={priceStatus || undefined} onChange={value => setPriceStatus(value || "")} options={[{ value: "priced", label: "已配置价格" }, { value: "unpriced", label: "待配置价格" }]} /></div>
-      <Table className="oo-table" rowKey="model" loading={loading} dataSource={filtered} columns={columns} scroll={{ x: 1140 }} pagination={{ pageSize: 20, showSizeChanger: true, showTotal: total => `共 ${total} 个模型` }} locale={{ emptyText: query || category || vendor || priceStatus ? "没有匹配的模型" : "暂无模型" }} />
+      <Table className="oo-table" rowKey="model" tableLayout="fixed" loading={loading} dataSource={filtered} showHeader={!compact} columns={compact ? compactColumns : columns} scroll={compact ? undefined : { x: columns.reduce((total, column) => total + column.width, 0) }} pagination={{ pageSize: 20, showSizeChanger: true, showTotal: total => `共 ${total} 个模型` }} locale={{ emptyText: query || category || vendor || priceStatus ? "没有匹配的模型" : "暂无模型" }} />
     </section>
     <ModelAttributions revision={revision} onChange={() => setRevision(value => value + 1)} />
-    <section className="oo-panel oo-model-management-help"><div className="oo-panel-head"><span className="oo-panel-title">价格与计费说明</span><Tooltip title="价格与模型能力现在在同一配置抽屉中维护"><InfoCircleOutlined /></Tooltip></div><div className="oo-model-help-grid"><div><b>计算方式</b><span>(输入 Token × 输入价 + 输出 Token × 输出价 + 缓存命中 × 缓存价) ÷ 1,000,000</span></div><div><b>分时价格</b><span>已有峰谷或分档规则的模型会在配置抽屉中保留并显示，切换预设时可选择替换。</span></div><div><b>价格来源</b><span>每条价格保留官方来源或管理员配置依据，模型能力来源可从配置抽屉打开厂商文档。</span></div></div></section>
+    <section className="oo-panel oo-model-management-help"><div className="oo-panel-head"><span className="oo-panel-title">价格与计费说明</span></div><div className="oo-model-help-grid"><div><b>计算方式</b><span>(输入 Token × 输入价 + 输出 Token × 输出价 + 缓存命中 × 缓存价) ÷ 1,000,000</span></div><div><b>分时价格</b><span>已有峰谷或分档规则的模型会在配置抽屉中保留并显示，切换预设时可选择替换。</span></div><div><b>价格来源</b><span>每条价格保留官方来源或管理员配置依据，模型能力来源可从配置抽屉打开厂商文档。</span></div></div></section>
     <Drawer className="oo-model-config-drawer" title={editing ? <span className="oo-model-drawer-title"><ModelLabel model={editing.model} channelType={editing.vendor} /><span>配置 {editing.model}</span></span> : "模型配置"} open={Boolean(editing)} onClose={() => !saving && setEditing(null)} width="min(720px,100vw)" forceRender footer={<Space><Button disabled={saving} onClick={() => setEditing(null)}>取消</Button><Button type="primary" loading={saving} onClick={save}>保存配置</Button></Space>}>
       {editing ? <>
         <div className="oo-model-drawer-meta"><div><span>模型类型</span><b>{categories[editing.category] || editing.category || "待核实"}</b></div><div><span>开发厂商</span><b>{TYPE_LABEL[editing.vendor] || editing.vendor || "待核实"}</b></div>{editing.documentationUrl ? <a href={editing.documentationUrl} target="_blank" rel="noopener noreferrer"><LinkOutlined /> 厂商文档</a> : null}</div>
@@ -180,7 +196,7 @@ export default function ModelManagementPage() {
         <Form form={form} layout="vertical" disabled={saving} onValuesChange={() => setSelectedPreset("")}>
           <div className="oo-model-form-section"><div className="oo-model-form-section-title"><span><DollarOutlined /> 价格与计费</span><small>每百万 Token · OD币</small></div><div className="oo-model-price-fields">{priceFields.map(([key, label]) => <Form.Item key={key} name={`price_${key}`} label={label} rules={[({ getFieldValue }) => ({ validator(_, value) { const required = Boolean(editing?.pricing || pricePreset) || priceFields.some(([field]) => getFieldValue(`price_${field}`) != null); return !required || (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100000) ? Promise.resolve() : Promise.reject(new Error("请填写 0–100000 的价格")); } })]}><InputNumber id={`price_${key}`} min={0} max={100000} precision={6} placeholder="未配置" style={{ width: "100%" }} /></Form.Item>)}</div>{pricingRules && hasPriceRules(pricingRules) ? <><Form.Item name="keepRules" valuePropName="checked"><Checkbox>保留已有分档与分时价格</Checkbox></Form.Item><Collapse size="small" items={[{ key: "rules", label: "查看当前分档与分时规则", children: <PriceRules price={pricingRules} /> }]} /></> : <span className="oo-model-form-hint">缓存价为 0 时沿用输入价；切换价格预设会按预设更新附加规则。</span>}</div>
           <div className="oo-model-form-section"><div className="oo-model-form-section-title"><span><SettingOutlined /> 参数与能力</span><small>对话界面和网关按这里的能力显示</small></div><Form.Item name="category" label="模型类型"><Select options={optionMap(categories)} /></Form.Item><div className="oo-model-form-grid">{[["contextWindow", "上下文窗口"], ["maxOutputTokens", "最大输出 tokens"]].map(([name, label]) => <Form.Item key={name} name={name} label={label}><InputNumber min={1} max={10000000} precision={0} placeholder="未核实" style={{ width: "100%" }} /></Form.Item>)}</div><Form.Item name="inputTypes" label="原生输入类型"><Select mode="multiple" options={optionMap(types)} /></Form.Item><Form.Item name="outputTypes" label="输出类型"><Select mode="multiple" options={optionMap(types)} /></Form.Item><div className="oo-model-form-grid">{Object.entries(flags).map(([name, label]) => <Form.Item key={name} name={name} label={label}><Select options={tri} /></Form.Item>)}</div></div>
-          <div className="oo-model-form-section"><div className="oo-model-form-section-title"><span>推理参数</span><small>决策模型分类保留现有配置，具体对话方案后续讨论</small></div><Form.Item name="levels" label="自定义推理等级"><Select mode="tags" placeholder="如 low、medium、high" tokenSeparators={[",", " "]} /></Form.Item><div className="oo-model-form-grid"><Form.Item name="defaultLevel" label="默认思考强度"><Select allowClear options={levels.map(value => ({ value, label: value }))} /></Form.Item><Form.Item name="parameter" label="推理参数映射"><Select options={reasoningParameters.map(value => ({ value, label: value || "跟随上游默认" }))} /></Form.Item></div><Form.Item name="values" label="等级与参数值（JSON）"><Input.TextArea autoSize={{ minRows: 3, maxRows: 8 }} spellCheck={false} /></Form.Item><Form.Item name="notes" label="能力说明"><Input.TextArea maxLength={1200} autoSize={{ minRows: 2, maxRows: 5 }} /></Form.Item></div>
+          <div className="oo-model-form-section"><div className="oo-model-form-section-title"><span>推理参数</span></div><Form.Item name="levels" label="自定义推理等级"><Select mode="tags" placeholder="如 low、medium、high" tokenSeparators={[",", " "]} /></Form.Item><div className="oo-model-form-grid"><Form.Item name="defaultLevel" label="默认思考强度"><Select allowClear options={levels.map(value => ({ value, label: value }))} /></Form.Item><Form.Item name="parameter" label="推理参数映射"><Select options={reasoningParameters.map(value => ({ value, label: value || "跟随上游默认" }))} /></Form.Item></div><Form.Item name="values" label="等级与参数值（JSON）"><Input.TextArea autoSize={{ minRows: 3, maxRows: 8 }} spellCheck={false} /></Form.Item><Form.Item name="notes" label="能力说明"><Input.TextArea maxLength={1200} autoSize={{ minRows: 2, maxRows: 5 }} /></Form.Item></div>
         </Form>
         <div className="oo-model-drawer-sources">{(editing.sources || []).map((source, index) => <p key={`${source.url}-${index}`}><a href={source.url} target="_blank" rel="noopener noreferrer">{source.scope || "官方来源"}</a> · {source.checkedAt}{source.model ? ` · ${source.model}` : ""}</p>)}</div>
       </> : null}

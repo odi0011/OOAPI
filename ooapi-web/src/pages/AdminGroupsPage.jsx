@@ -169,7 +169,7 @@ export default function AdminGroupsPage() {
       render: (v, g) => (
         <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontWeight: 600, fontSize: 13, color: "var(--ink)" }} className="oo-truncate">
+            <span title={v} style={{ minWidth: 0, fontWeight: 600, fontSize: 13, color: "var(--ink)" }} className="oo-truncate">
               {v}
             </span>
             {v === "default" ? (

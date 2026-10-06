@@ -4,6 +4,7 @@ import { ArrowRightOutlined, InfoCircleOutlined } from "@ant-design/icons";
 import { ChartCard, Legend, LineChart, SERIES_COLORS, fmtCompact } from "./Charts";
 import OdAmount from "./OdAmount";
 import UserAvatar from "./UserAvatar";
+import StatCard from "./StatCard";
 import { ModelLabel } from "./VendorIcon";
 import { DurationCell, TokenCell, formatDuration } from "./UsageCells";
 import { fmtOd } from "../services/format";
@@ -31,11 +32,8 @@ function Comparison({ current, previous }) {
 }
 
 function Metric({ label, value, current, previous, hint, note, tone }) {
-  return <section className="oo-stat-card oo-dashboard-metric" aria-label={label}>
-    <div className="oo-stat-card-label">{label}<Tooltip title={hint} trigger={["hover", "focus"]}><button type="button" className="oo-dashboard-info" aria-label={`${label}统计口径`}><InfoCircleOutlined /></button></Tooltip></div>
-    <div className={`oo-stat-card-num${tone ? ` is-${tone}` : ""}`}>{value}</div>
-    <div className="oo-dashboard-metric-foot">{note || <Comparison current={current} previous={previous} />}</div>
-  </section>;
+  return <StatCard className="oo-dashboard-metric" label={<>{label}<button type="button" className="oo-dashboard-info" aria-label={`${label}统计口径`}><InfoCircleOutlined /></button></>} value={value} tone={tone}
+    hint={hint} foot={note || <Comparison current={current} previous={previous} />} />;
 }
 
 export function DashboardOverview({ data, perUnit, admin = false }) {
@@ -68,7 +66,7 @@ export function DashboardOverview({ data, perUnit, admin = false }) {
   return <>
     <div className="oo-stats-cards oo-dashboard-metrics" aria-label="区间用量总览">
       <Metric label="调用次数" value={<>{fmtCompact(calls)}<small>次</small></>} current={calls} previous={previous.calls} hint="所选区间的全部使用记录，成功、失败、主动停止及部分完成均只计一次。上期为相邻的等长日期区间，本期包含未结束的今日。" />
-      <Metric label="消费金额" value={<OdAmount quota={totals.units} perUnit={perUnit} digits={4} size={17} />} current={totals.units} previous={previous.units} hint="所选区间使用记录的实际扣费总额，包含已产生用量的部分完成或停止请求；与使用记录的计费金额一致。" />
+      <Metric label="消费金额" value={<OdAmount quota={totals.units} perUnit={perUnit} digits={4} size={12} />} current={totals.units} previous={previous.units} hint="所选区间使用记录的实际扣费总额，包含已产生用量的部分完成或停止请求；与使用记录的计费金额一致。" />
       <Metric label="Token 用量" value={fmtCompact(totalTokens)} current={totalTokens} previous={previous.tokens} hint={`总量 = 输入 + 输出，缓存读取已含在输入中。精确总量 ${full(totalTokens)}；输入 ${full(prompt)}，输出 ${full(output)}，缓存读取 ${full(cache)}。`} />
       <Metric label="请求成功率" value={successRate == null ? "—" : <>{successRate}<small>%</small></>} note={calls > 0 ? `${full(successes)} 次成功 / ${full(calls)} 次调用` : "所选区间暂无请求样本"} tone={successRate != null && successRate < 95 ? "warning" : undefined} hint="成功使用记录 / 全部调用；主动停止、失败及部分完成单列展示。这是所选区间的调用结果，不是实时 SLA。无样本时不显示 0% 或 100%。" />
     </div>
@@ -124,9 +122,9 @@ export function ModelUsageTable({ rows = [], totals = {}, perUnit }) {
 
 export function RecentUsageTable({ rows = [], perUnit, admin = false, onMore }) {
   return <ChartCard title="最近调用" className="oo-dashboard-recent" note="所选范围内的最新 8 条 · 北京时间" extra={<Button type="text" size="small" onClick={onMore}>全部使用记录 <ArrowRightOutlined /></Button>}>
-    <Table className="oo-table" aria-label="最近调用明细" rowKey="id" size="small" pagination={false} dataSource={rows} scroll={{ x: admin ? 1000 : 870 }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="所选区间暂无调用记录" /> }} columns={[
+    <Table className="oo-table" aria-label="最近调用明细" rowKey="id" size="small" pagination={false} dataSource={rows} scroll={{ x: admin ? 1030 : 870 }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="所选区间暂无调用记录" /> }} columns={[
       { title: "时间", dataIndex: "created_at", width: 130, render: (value) => Number(value) > 0 ? new Date((Number(value) + 28800) * 1000).toISOString().slice(5, 19).replace("T", " ") : "—" },
-      ...(admin ? [{ title: "用户", width: 130, render: (_, record) => <UserAvatar user={{ ...record, id: record.user_id }} size={24} showName /> }] : []),
+      ...(admin ? [{ title: "用户", width: 160, render: (_, record) => <UserAvatar user={{ ...record, id: record.user_id }} size={24} showName /> }] : []),
       { title: "模型", width: 220, render: (_, record) => <DashboardModel record={record} /> },
       { title: "结果", dataIndex: "status", width: 90, render: (value, record) => { const [label, color] = RESULT[value] || (value ? ["其他状态", "default"] : Number(record.type) === 2 ? RESULT.success : RESULT.error); return <Tag color={color}>{label}</Tag>; } },
       { title: "首字 / 总耗时", width: 130, render: (_, record) => <DurationCell firstTokenMs={record.first_token_ms} elapsedMs={record.elapsed_ms} /> },

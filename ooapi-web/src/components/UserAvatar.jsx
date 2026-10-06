@@ -94,9 +94,9 @@ export default function UserAvatar({ user, size = 24, showName = false, nameClas
 
   if (!showName) return box;
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+    <span className="oo-user-label" style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0, maxWidth: "100%" }}>
       {box}
-      <span className={`oo-truncate ${nameClass}`} style={{ minWidth: 0 }}>{name || "未知用户"}</span>
+      <span className={`oo-truncate ${nameClass}`} title={name || "未知用户"} style={{ minWidth: 0, display: "block", flex: "1 1 auto" }}>{name || "未知用户"}</span>
     </span>
   );
 }

@@ -159,10 +159,10 @@ export default function AdminUsersPage() {
       render: (v, r) => (
         <div className="oo-user-identity">
           <UserAvatar user={r} size={30} />
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 560 }}>{r.display_name || v}</div>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div className="oo-truncate" title={r.display_name || v} style={{ fontWeight: 560 }}>{r.display_name || v}</div>
             {r.display_name && r.display_name !== v ? (
-              <div style={{ fontSize: 12, color: "var(--ink-3)" }}>{v}</div>
+              <div className="oo-truncate" title={v} style={{ fontSize: 12, color: "var(--ink-3)" }}>{v}</div>
             ) : null}
           </div>
         </div>

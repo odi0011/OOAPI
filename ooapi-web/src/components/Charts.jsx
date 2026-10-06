@@ -13,6 +13,7 @@
 //   · 调色板改为与主题协调的一组（首色跟随主题色），明暗主题下都有足够对比。
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Empty } from "antd";
+import StatCard from "./StatCard";
 
 /**
  * 容器实测宽度（带 ResizeObserver + 防抖）。
@@ -485,7 +486,7 @@ export function Sparkline({ values = [], color = "var(--accent)", width = 120, h
 }
 
 /**
- * 看板 KPI 卡：标签 / 大数值 / 环比变化 / 迷你趋势。
+ * 看板 KPI 汇总：标签与数值同一行，环比与迷你趋势保留在悬浮中。
  * 环比规则：上期为 0 时不给百分比（「+∞%」没有意义），只写「上期无数据」；
  * inverse=true 表示「越低越好」（错误数、耗时），涨是红色。
  */
@@ -503,26 +504,8 @@ export function KpiCard({ label, value, unit, current, previous, inverse = false
       delta = { text: Number(current) > 0 ? "上期无数据" : "—", cls: "is-flat" };
     }
   }
-  return (
-    <div className="oo-kpi" title={hint}>
-      <div className="oo-kpi-label">{label}</div>
-      <div className="oo-kpi-main">
-        <span className={`oo-kpi-value${tone ? ` is-${tone}` : ""}`}>{value}</span>
-        {unit ? <span className="oo-kpi-unit">{unit}</span> : null}
-      </div>
-      <div className="oo-kpi-foot">
-        {delta ? (
-          <span className={`oo-kpi-delta ${delta.cls}`}>
-            {delta.text}
-            {delta.cls !== "is-flat" || delta.text.endsWith("%") ? <em>较上期</em> : null}
-          </span>
-        ) : hint ? (
-          <span className="oo-kpi-hint">{hint}</span>
-        ) : null}
-        {spark?.length > 1 ? <Sparkline values={spark} width={84} height={24} color={tone === "danger" ? "var(--red)" : "var(--accent)"} /> : null}
-      </div>
-    </div>
-  );
+  return <StatCard label={label} value={value} suffix={unit} tone={tone} hint={hint}
+    foot={<>{delta ? <span className={`oo-kpi-delta ${delta.cls}`}>{delta.text} 较上期</span> : null}{spark?.length > 1 ? <Sparkline values={spark} width={84} height={24} color={tone === "danger" ? "var(--red)" : "var(--accent)"} /> : null}</>} />;
 }
 
 /** 图表卡片（标题 + 说明 + 右侧操作）。full = 跨满整行 */

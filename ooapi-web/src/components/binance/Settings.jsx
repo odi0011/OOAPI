@@ -28,7 +28,7 @@ function Accounts({ accounts, act, busy }) {
   return <>
     <Panel title="账户" extra={<Button aria-label="添加账户" type="primary" icon={<PlusOutlined />} onClick={() => show()}>添加账户</Button>} flush>
       <Table className="oo-table" rowKey="id" size="small" dataSource={accounts} pagination={false} scroll={{ x: 850 }} columns={[
-        { title: "账户", dataIndex: "name" },
+        { title: "账户", dataIndex: "name", width: 180, ellipsis: true },
         { title: "环境", dataIndex: "environment", render: (value) => <EnvTag value={value} /> },
         { title: "状态", dataIndex: "active", render: (value) => <Badge status={value ? "success" : "default"} text={value ? "已启用" : "已停用"} /> },
         { title: "最近同步", dataIndex: "last_sync_at", render: date },

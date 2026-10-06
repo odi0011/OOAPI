@@ -1,6 +1,7 @@
 import React from "react";
 import { Empty, Tag } from "antd";
 import { API } from "../../services/api";
+import StatCard from "../StatCard";
 
 export const binanceApi = {
   get: (path) => API.get(`/binance${path}`, { timeoutMs: 65000 }),
@@ -37,9 +38,7 @@ export function Blank({ text = "暂无数据", action }) {
   return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={text}>{action}</Empty>;
 }
 export function Stats({ items }) {
-  return <div className="oo-stats-cards">{items.map((item) => <div className="oo-stat-card" key={item.label}>
-    <div className="oo-stat-card-label">{item.label}</div><div className="oo-stat-card-num">{item.value}</div>
-  </div>)}</div>;
+  return <div className="oo-stats-strip">{items.map((item) => <StatCard key={item.label} {...item} />)}</div>;
 }
 export const symbolRule = { pattern: /^[A-Z0-9]{5,20}$/, message: "请输入有效交易对，例如 BTCUSDT" };
 export const required = { required: true, message: "请填写此项" };

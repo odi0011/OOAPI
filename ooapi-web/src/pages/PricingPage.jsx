@@ -58,6 +58,7 @@ export default function PricingPage() {
     {
       title: "模型",
       dataIndex: "model",
+      width: 250,
       render: (v, r) => <ModelPricingLabel model={v} vendor={r.vendor} tiers={r.tiers} size={14} />,
     },
     {
@@ -123,7 +124,8 @@ export default function PricingPage() {
         size="small"
         columns={columns}
         dataSource={rows}
-        scroll={{ x: 700 }}
+        tableLayout="fixed"
+        scroll={{ x: columns.reduce((total, column) => total + column.width, 0) }}
         pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (t) => `共 ${t} 个模型` }}
       />
     </div>

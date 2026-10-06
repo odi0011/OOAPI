@@ -354,8 +354,8 @@ export default function MediaPage() {
               <FileOutlined style={{ fontSize: 16 }} />
             </span>
           )}
-          <div style={{ minWidth: 0 }}>
-            <div className="oo-truncate" style={{ fontWeight: 500 }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div title={r.orig_name} className="oo-truncate" style={{ fontWeight: 500 }}>
               {r.orig_name || <Text type="secondary">未命名 · #{r.id}</Text>}
             </div>
             <div className="oo-truncate" style={{ fontSize: 12, color: "var(--ink-3)" }}>

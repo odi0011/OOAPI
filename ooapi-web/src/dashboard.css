@@ -44,15 +44,10 @@
 .oo-dashboard-range { display: flex; align-items: center; gap: 12px; }
 .oo-usage-dashboard .oo-dashboard-context { margin-top: -4px; font-size: 11px; }
 .oo-dashboard-period-note { color: var(--ink-3); margin-left: 12px; }
-.oo-usage-dashboard .oo-dashboard-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; }
-.oo-dashboard-metric { display: flex; flex-direction: column; gap: 10px; padding: 14px 17px; border-radius: var(--r-card); }
-.oo-dashboard-metric .oo-stat-card-label { display: flex; gap: 7px; align-items: center; color: var(--ink-2); margin: 0; overflow: visible; }
-.oo-dashboard-info { padding: 0; border: 0; background: transparent; color: var(--ink-3); cursor: help; display: inline-flex; font-size: 11px; }
-.oo-dashboard-info:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
-.oo-dashboard-metric .oo-stat-card-num { font-size: clamp(24px, 2.1vw, 30px); font-weight: 550; min-height: 34px; line-height: 1.1; overflow-wrap: anywhere; }
-.oo-dashboard-metric .oo-stat-card-num small { font-family: var(--font-sans); color: var(--ink-3); font-size: 12px; font-weight: 400; margin-left: 2px; }
-.oo-dashboard-metric .oo-stat-card-num.is-warning { color: var(--orange); }
-.oo-dashboard-metric-foot { color: var(--ink-3); font-size: 11px; line-height: 1.5; min-height: 17px; }
+.oo-usage-dashboard .oo-dashboard-metrics { margin: 0; }
+.oo-dashboard-info { padding: 0; margin-left: 4px; border: 0; background: transparent; color: var(--ink-3); cursor: help; display: inline-flex; font-size: 10px; }
+.oo-dashboard-info:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.oo-dashboard-metric small { font-size: inherit; font-weight: 400; color: var(--ink-3); margin-left: 2px; }
 .oo-dashboard-summary { display: flex; gap: 12px 24px; flex-wrap: wrap; font-size: 11px; color: var(--ink-3); margin-top: -3px; }
 .oo-dashboard-summary > span { display: inline-flex; align-items: baseline; gap: 7px; }
 .oo-dashboard-summary b { color: var(--ink-2); font-size: 12px; font-weight: 450; font-variant-numeric: tabular-nums; }
@@ -115,12 +110,6 @@
   .oo-dashboard-toolbar > label { flex-basis: 100%; }
   .oo-dashboard-toolbar > label > span { width: 26px; }
   .oo-dashboard-range { margin-top: 3px; }
-  .oo-usage-dashboard .oo-dashboard-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  .oo-dashboard-metric { padding: 12px; gap: 8px; }
-  .oo-dashboard-metric .oo-stat-card-num { font-size: 23px; min-height: 29px; }
-  .oo-dashboard-metric .oo-stat-card-num .oo-od-amount { gap: 3px; font-size: inherit; }
-  .oo-dashboard-metric .oo-stat-card-num .oo-od-amount svg { width: 13px; height: 13px; }
-  .oo-dashboard-metric-foot { font-size: 10px; }
   .oo-dashboard-summary { gap: 8px 16px; }
   .oo-dashboard-period-note { margin-left: 7px; }
   .oo-usage-dashboard .oo-chart-card { padding: 14px 12px; }
