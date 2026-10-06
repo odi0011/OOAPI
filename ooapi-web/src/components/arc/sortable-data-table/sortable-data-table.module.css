@@ -68,47 +68,47 @@
 }
 
 @media (max-width: 620px) {
-  .scroller { overflow: visible; }
+  .scroller:not([data-horizontal]) { overflow: visible; }
   .band { display: none; }
-  .table { display: block; width: 100%; min-width: 0; max-width: 100%; }
-  .table thead { display: block; }
+  .table:not([data-horizontal]) { display: block; width: 100%; min-width: 0; max-width: 100%; }
+  .table:not([data-horizontal]) thead { display: block; }
   /* The header becomes a strip of sort controls, so sorting stays one tap away on a phone. */
-  .table thead tr { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
-  .table thead tr::-webkit-scrollbar { display: none; }
-  .table th { display: block; flex: none; height: auto; border: 0; padding: 0; background: transparent; }
+  .table:not([data-horizontal]) thead tr { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+  .table:not([data-horizontal]) thead tr::-webkit-scrollbar { display: none; }
+  .table:not([data-horizontal]) th { display: block; flex: none; height: auto; border: 0; padding: 0; background: transparent; }
   /* Select all stays pinned while the sort controls scroll beneath it. */
-  .table th.selectCell { position: sticky; left: calc(-1 * var(--space-2)); z-index: 1; width: 40px; margin-left: calc(-1 * var(--space-2)); padding: 0 0 0 var(--space-3); background: var(--surface); }
-  .table th.selectCell .selectHit { height: 32px; }
+  .table:not([data-horizontal]) th.selectCell { position: sticky; left: calc(-1 * var(--space-2)); z-index: 1; width: 40px; margin-left: calc(-1 * var(--space-2)); padding: 0 0 0 var(--space-3); background: var(--surface); }
+  .table:not([data-horizontal]) th.selectCell .selectHit { height: 32px; }
   /* Once the strip scrolls, a fade off the pinned cell hides the word sliding under it. */
-  .table th.selectCell::after { position: absolute; top: 0; bottom: 0; left: 100%; width: 36px; background: linear-gradient(to right, var(--surface) 45%, transparent); content: ""; opacity: 0; pointer-events: none; animation: stripFade linear both; animation-timeline: scroll(nearest inline); animation-range: 0 24px; }
-  .table th .sortButton, .table[data-selectable] th[data-primary] .sortButton { width: auto; height: 32px; border-radius: var(--radius-control); padding: 0 10px; transition: background-color var(--duration-standard) var(--ease-standard), color var(--duration-standard) var(--ease-standard); }
-  .table th[data-sorted] .sortButton { background: var(--surface-muted); }
-  .table th[data-numeric] .sortInner { flex-direction: row; }
+  .table:not([data-horizontal]) th.selectCell::after { position: absolute; top: 0; bottom: 0; left: 100%; width: 36px; background: linear-gradient(to right, var(--surface) 45%, transparent); content: ""; opacity: 0; pointer-events: none; animation: stripFade linear both; animation-timeline: scroll(nearest inline); animation-range: 0 24px; }
+  .table:not([data-horizontal]) th .sortButton, .table:not([data-horizontal])[data-selectable] th[data-primary] .sortButton { width: auto; height: 32px; border-radius: var(--radius-control); padding: 0 10px; transition: background-color var(--duration-standard) var(--ease-standard), color var(--duration-standard) var(--ease-standard); }
+  .table:not([data-horizontal]) th[data-sorted] .sortButton { background: var(--surface-muted); }
+  .table:not([data-horizontal]) th[data-numeric] .sortInner { flex-direction: row; }
   .sortButton:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
   .sortButton:focus-visible .sortInner { outline: none; }
-  .table tbody { display: block; width: 100%; }
+  .table:not([data-horizontal]) tbody { display: block; width: 100%; }
   /* Rows fold into two lines: the first column with its number, then the remaining details. */
-  .table tbody tr { --row-fill: var(--surface); position: relative; display: flex; width: 100%; min-height: 64px; box-sizing: border-box; flex-wrap: wrap; align-items: baseline; align-content: center; gap: 2px var(--space-2); padding: 10px var(--space-4); border-bottom: 1px solid var(--border-subtle); background-color: var(--row-fill); transition: background-color var(--duration-standard) var(--ease-standard); }
-  .table tbody tr::after { order: 1; flex-basis: 100%; content: ""; }
-  .table[data-selectable] tbody tr { padding-left: 44px; }
-  .table[data-selectable] tbody tr[data-selected] { --row-fill: color-mix(in oklab, var(--accent) 8%, var(--surface)); }
-  .table tbody tr:last-child { border-bottom: 0; }
-  .table td { order: 2; display: block; min-width: 0; height: auto; border: 0; padding: 0; background: transparent; color: var(--text-secondary); font-size: var(--text-xs); text-align: left; }
-  .table[data-selectable] td[data-primary]:not([data-sortable]) { padding-left: 0; }
-  .table td[data-primary] { order: 0; flex: 1 1 0; color: var(--foreground); font-size: var(--text-sm); font-weight: 500; }
-  .table td[data-numeric]:not([data-primary]) { order: 0; flex: none; margin-left: auto; padding-left: var(--space-2); color: var(--foreground); font-size: var(--text-sm); }
-  .table td[data-numeric] ~ td[data-numeric] { order: 2; margin-left: 0; padding-left: 0; color: var(--text-secondary); font-size: var(--text-xs); }
+  .table:not([data-horizontal]) tbody tr { --row-fill: var(--surface); position: relative; display: flex; width: 100%; min-height: 64px; box-sizing: border-box; flex-wrap: wrap; align-items: baseline; align-content: center; gap: 2px var(--space-2); padding: 10px var(--space-4); border-bottom: 1px solid var(--border-subtle); background-color: var(--row-fill); transition: background-color var(--duration-standard) var(--ease-standard); }
+  .table:not([data-horizontal]) tbody tr::after { order: 1; flex-basis: 100%; content: ""; }
+  .table:not([data-horizontal])[data-selectable] tbody tr { padding-left: 44px; }
+  .table:not([data-horizontal])[data-selectable] tbody tr[data-selected] { --row-fill: color-mix(in oklab, var(--accent) 8%, var(--surface)); }
+  .table:not([data-horizontal]) tbody tr:last-child { border-bottom: 0; }
+  .table:not([data-horizontal]) td { order: 2; display: block; min-width: 0; height: auto; border: 0; padding: 0; background: transparent; color: var(--text-secondary); font-size: var(--text-xs); text-align: left; }
+  .table:not([data-horizontal])[data-selectable] td[data-primary]:not([data-sortable]) { padding-left: 0; }
+  .table:not([data-horizontal]) td[data-primary] { order: 0; flex: 1 1 0; color: var(--foreground); font-size: var(--text-sm); font-weight: 500; }
+  .table:not([data-horizontal]) td[data-numeric]:not([data-primary]) { order: 0; flex: none; margin-left: auto; padding-left: var(--space-2); color: var(--foreground); font-size: var(--text-sm); }
+  .table:not([data-horizontal]) td[data-numeric] ~ td[data-numeric] { order: 2; margin-left: 0; padding-left: 0; color: var(--text-secondary); font-size: var(--text-xs); }
   /* The sorted value lifts to full contrast, echoing the tinted column on wider screens. */
-  .table td[data-sorted]:not([data-primary]) { color: var(--foreground); }
-  .table td.selectCell { position: absolute; top: 0; bottom: 0; left: var(--space-1); display: flex; width: 36px; align-items: center; padding: 0; }
-  .table td.selectCell .selectHit { justify-content: center; }
-  .table .empty { flex: 1 0 100%; height: auto !important; padding: var(--space-6) 0; }
-  .table[data-selectable] tbody tr:has(.empty) { padding-left: var(--space-4); }
+  .table:not([data-horizontal]) td[data-sorted]:not([data-primary]) { color: var(--foreground); }
+  .table:not([data-horizontal]) td.selectCell { position: absolute; top: 0; bottom: 0; left: var(--space-1); display: flex; width: 36px; align-items: center; padding: 0; }
+  .table:not([data-horizontal]) td.selectCell .selectHit { justify-content: center; }
+  .table:not([data-horizontal]) .empty { flex: 1 0 100%; height: auto !important; padding: var(--space-6) 0; }
+  .table:not([data-horizontal])[data-selectable] tbody tr:has(.empty) { padding-left: var(--space-4); }
 }
 @media (max-width: 620px) and (hover: hover) and (pointer: fine) {
-  .table tbody tr:hover { --row-fill: color-mix(in oklab, var(--foreground) 3%, var(--surface)); }
-  .table[data-selectable] tbody tr[data-selected]:hover { --row-fill: color-mix(in oklab, var(--accent) 11%, var(--surface)); }
-  .table tbody tr:hover td { background: transparent; }
+  .table:not([data-horizontal]) tbody tr:hover { --row-fill: color-mix(in oklab, var(--foreground) 3%, var(--surface)); }
+  .table:not([data-horizontal])[data-selectable] tbody tr[data-selected]:hover { --row-fill: color-mix(in oklab, var(--accent) 11%, var(--surface)); }
+  .table:not([data-horizontal]) tbody tr:hover td { background: transparent; }
 }
 
 @media (prefers-reduced-motion: reduce) {

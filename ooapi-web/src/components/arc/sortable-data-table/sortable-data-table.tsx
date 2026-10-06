@@ -275,9 +275,9 @@ export function SortableDataTable<T extends Record<string, unknown>>({ rows, col
   }
 
   return <div className={styles.wrapper} onKeyDown={onKeyDown}>
-    <div className={styles.scroller} style={{ maxHeight }}>
+    <div className={styles.scroller} style={{ maxHeight }} data-horizontal={minWidth != null || undefined}>
       {band ? <span className={styles.band} style={{ left: band.left, width: band.width }} aria-hidden="true" /> : null}
-      <table style={{ minWidth }} ref={tableRef} role="table" className={styles.table} data-fixed={widths ? "" : undefined} data-selectable={selectable || undefined}>
+      <table style={{ minWidth }} ref={tableRef} role="table" className={styles.table} data-horizontal={minWidth != null || undefined} data-fixed={widths ? "" : undefined} data-selectable={selectable || undefined}>
         <caption>{caption}</caption>
         <colgroup>
           {selectable ? <col className={styles.selectCol} /> : null}

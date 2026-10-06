@@ -35,6 +35,8 @@ export interface ColorPickerProps {
   maxSwatches?: number;
   defaultFormat?: ColorFormat;
   className?: string;
+  disabled?: boolean;
+  disabledAlpha?: boolean;
 }
 
 export type Hsva = { h: number; s: number; v: number; a: number };
@@ -239,18 +241,18 @@ const newId = () => `swatch-${Date.now().toString(36)}-${swatchCount++}`;
 
 export function ColorPicker({
   value, defaultValue = "#2F6BFF", onValueChange, background = "#FFFFFF", label = "Color", swatches: swatchesProp, defaultSwatches, onSwatchesChange,
-  maxSwatches = 7, defaultFormat = "hex", className,
+  maxSwatches = 7, defaultFormat = "hex", className, disabled = false, disabledAlpha = false,
 }: ColorPickerProps) {
   const uid = useId().replace(/[^a-zA-Z0-9-]/g, "");
   const hydrated = useHydrated();
   const reduced = !!useReducedMotion() && hydrated;
   const canPick = useEyeDropper();
 
-  const [hsva, setHsva] = useState<Hsva>(() => parseColor(value ?? defaultValue) ?? { h: 220, s: .8, v: 1, a: 1 });
+  const [hsva, setHsva] = useState<Hsva>(() => { const initial = parseColor(value ?? defaultValue) ?? { h: 220, s: .8, v: 1, a: 1 }; return disabledAlpha ? { ...initial, a: 1 } : initial; });
   const [synced, setSynced] = useState(value);
   if (value !== undefined && value !== synced) {
     setSynced(value);
-    if (value.toUpperCase() !== toHex(hsva)) { const next = parseColor(value, hsva.h); if (next) setHsva(next); }
+    if (value.toUpperCase() !== toHex(hsva)) { const next = parseColor(value, hsva.h); if (next) setHsva(disabledAlpha ? { ...next, a: 1 } : next); }
   }
   const [ownSwatches, setOwnSwatches] = useState<ColorSwatch[]>(defaultSwatches ?? []);
   const swatches = swatchesProp ?? ownSwatches;
@@ -284,6 +286,8 @@ export function ColorPicker({
   const text = format(hsva, kind);
 
   function commit(next: Hsva) {
+    if (disabled) return;
+    if (disabledAlpha) next = { ...next, a: 1 };
     setHsva(next);
     const nextHex = toHex(next);
     if (nextHex !== hex) onValueChange?.(nextHex);
@@ -434,7 +438,7 @@ export function ColorPicker({
   const style = { "--picker-color": css, "--picker-opaque": opaque, "--picker-hue": pure, "--picker-bg": background } as CSSProperties;
 
   return <div ref={rootRef} className={[styles.root, className].filter(Boolean).join(" ")} style={style}>
-    <button ref={triggerRef} type="button" className={styles.trigger} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? `${uid}-panel` : undefined}
+    <button ref={triggerRef} type="button" disabled={disabled} className={styles.trigger} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? `${uid}-panel` : undefined}
       onClick={() => open ? hide() : show()}>
       <Chip color={css} />
       <span className={styles.triggerText}><span className={styles.name}>{label}</span><span className={styles.hex}>{hex}</span></span>
@@ -467,8 +471,8 @@ export function ColorPicker({
 
           <Slider label="Hue" value={hsva.h} valueText={`${Math.round(hsva.h)} degrees`} max={360} unit={1} className={styles.hue} reduced={reduced} fill={pure}
             onChange={h => commit({ ...hsva, h: clamp(h, 0, 359.9) })} active={active === "hue"} onActive={on => setActive(on ? "hue" : null)} />
-          <Slider label="Opacity" value={hsva.a * 100} valueText={`${Math.round(hsva.a * 100)}%`} max={100} unit={1} className={styles.alpha} reduced={reduced} fill={css}
-            onChange={a => commit({ ...hsva, a: clamp(a / 100) })} active={active === "alpha"} onActive={on => setActive(on ? "alpha" : null)} />
+          {!disabledAlpha && <Slider label="Opacity" value={hsva.a * 100} valueText={`${Math.round(hsva.a * 100)}%`} max={100} unit={1} className={styles.alpha} reduced={reduced} fill={css}
+            onChange={a => commit({ ...hsva, a: clamp(a / 100) })} active={active === "alpha"} onActive={on => setActive(on ? "alpha" : null)} />}
 
           <motion.div className={styles.field} data-invalid={invalid || undefined} style={{ x: fieldX }}>
             <button type="button" className={styles.format} onClick={cycleFormat} aria-label={`Format: ${formatNames[kind]}. Switch format`}>

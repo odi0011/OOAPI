@@ -70,7 +70,7 @@ Radio.Group = function RadioControls({ options, children, value, defaultValue, o
   return <RadioGroup {...props} label="" disabled={disabled} options={opts.map(o => ({ ...o, value: String(o.value) }))} value={String(current ?? "")} onValueChange={v => update(opts.find(o => String(o.value) === v)?.value ?? v)}/>;
 };
 export function Slider({ onChange, tooltip, marks, ...props }) { return <ArcSlider {...props} label="" marks={marks ? Object.entries(marks).map(([value, label]) => ({ value: Number(value), label })) : undefined} onValueChange={onChange}/>; }
-export function ColorPicker({ onChange, onChangeComplete, value, disabled, ...props }) { return <fieldset className="arc-control-fieldset" disabled={disabled}><ArcColorPicker value={typeof value === "string" ? value : value?.toHexString?.()} label="颜色" onValueChange={hex => { const color = { toHexString: () => hex }; onChange?.(color, hex); onChangeComplete?.(color); }}/></fieldset>; }
+export function ColorPicker({ onChange, onChangeComplete, value, disabled, ...props }) { return <fieldset className="arc-control-fieldset" disabled={disabled}><ArcColorPicker disabled={disabled} disabledAlpha={props.disabledAlpha} value={typeof value === "string" ? value : value?.toHexString?.()} label="颜色" onValueChange={hex => { const color = { toHexString: () => hex }; onChange?.(color, hex); onChangeComplete?.(color); }}/></fieldset>; }
 export function DatePicker({ value, defaultValue, onChange, showTime, style, className = "", disabled, placeholder = "选择日期", ...props }) {
   const field = useContext(FieldContext);
   const [current, update] = useValue(value, defaultValue, onChange);
