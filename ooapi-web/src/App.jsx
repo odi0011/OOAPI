@@ -16,7 +16,6 @@ import AdminUsersPage from "./pages/AdminUsersPage";
 import AdminSettingsPage from "./pages/AdminSettingsPage";
 import AdminChannelsPage from "./pages/AdminChannelsPage";
 import AdminGroupsPage from "./pages/AdminGroupsPage";
-import AdminPricingPage from "./pages/AdminPricingPage";
 import ModelManagementPage from "./pages/ModelManagementPage";
 import MonitorPage from "./pages/MonitorPage";
 import ProfileViewPage from "./pages/ProfileViewPage";

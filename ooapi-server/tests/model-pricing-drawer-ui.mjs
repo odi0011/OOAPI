@@ -18,9 +18,9 @@ try{
  await page.addInitScript(t=>{localStorage.setItem('ooapi-token',t);localStorage.setItem('ooapi-color-mode','light');},token);
  page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.method()==='PUT'&&r.url().endsWith('/pricing/capabilities'))writes.push(r.postDataJSON());});
  await page.goto(base+'/admin/pricing',{waitUntil:'networkidle'});
- const open=async()=>{await page.getByRole('searchbox',{name:'搜索模型能力'}).fill('3-auto');await page.locator('.ant-table-row').filter({hasText:'3-auto'}).getByRole('button',{name:/配\s*置/}).click();await page.locator('.ant-drawer-open').waitFor();};
+ const open=async()=>{await page.getByRole('searchbox',{name:'搜索模型配置'}).fill('3-auto');await page.locator('.ant-table-row').filter({hasText:'3-auto'}).getByRole('button',{name:/配\s*置/}).click();await page.locator('.ant-drawer-open').waitFor();};
  const drawer=page.locator('.ant-drawer-content');
- const save=async()=>{try {const [response]=await Promise.all([page.waitForResponse(r=>r.request().method()==='PUT'&&r.url().endsWith('/pricing/capabilities')),drawer.getByRole('button',{name:/^保\s*存$/}).click()]);assert(response.ok(),`Save failed ${response.status()}: ${(await response.json()).message}`);await page.locator('.ant-drawer-open').waitFor({state:'hidden'});}catch(error){console.log('Form errors:',await drawer.locator('.ant-form-item-explain-error').allTextContents(),'Messages:',await page.locator('.ant-message').allTextContents(),'Runtime:',errors,'Saves:',writes.length);await page.screenshot({path:'/var/tmp/ooapi-price-failure.png'});throw error;}};
+ const save=async()=>{try {const [response]=await Promise.all([page.waitForResponse(r=>r.request().method()==='PUT'&&r.url().endsWith('/pricing/capabilities')),drawer.getByRole('button',{name:/^保\s*存配置$/}).click()]);assert(response.ok(),`Save failed ${response.status()}: ${(await response.json()).message}`);await page.locator('.ant-drawer-open').waitFor({state:'hidden'});}catch(error){console.log('Form errors:',await drawer.locator('.ant-form-item-explain-error').allTextContents(),'Messages:',await page.locator('.ant-message').allTextContents(),'Runtime:',errors,'Saves:',writes.length);await page.screenshot({path:'/var/tmp/ooapi-price-failure.png'});throw error;}};
  await open();
  for(const p of catalog.presets){
   await drawer.getByRole('button',{name:p.label,exact:true}).click();
@@ -33,19 +33,17 @@ try{
  console.log('PASS five presets fill capabilities/prices; cancelling changes neither');
  await open();await drawer.getByRole('button',{name:'DeepSeek Flash',exact:true}).click();
  await drawer.locator('#price_input').fill('0.456789');await drawer.getByLabel('上下文窗口',{exact:true}).fill('900000');
- await drawer.getByText('查看分档与分时价格',{exact:true}).click();await page.screenshot({path:'/var/tmp/ooapi-price-desktop.png'});
+ await drawer.getByText('查看当前分档与分时规则',{exact:true}).click();await page.screenshot({path:'/var/tmp/ooapi-price-desktop.png'});
  await save();let stored=await current();assert.equal(stored.contextWindow,900000);assert.equal(stored.pricing.input,0.456789);assert.equal(stored.pricing.offpeakInput,0.15);assert.equal(stored.pricing.type,'kiro');
  const [[priceRow]]=await pool.query('SELECT input_price, channel_type FROM model_prices WHERE model=?',['3-auto']);assert.equal(Number(priceRow.input_price),0.456789);assert.equal(priceRow.channel_type,'kiro');
  const pending=await api('/pricing/pending');assert(!JSON.stringify(pending).includes('3-auto'));
- await page.getByRole('tab',{name:'价格与计费',exact:true}).click();await page.getByPlaceholder('搜索模型',{exact:true}).fill('3-auto');await page.getByPlaceholder('搜索模型',{exact:true}).press('Enter');
- await page.locator('.ant-tabs-tabpane-active .ant-table-row').filter({hasText:'3-auto'}).waitFor();
- await page.getByRole('tab',{name:'参数与能力',exact:true}).click();await open();assert.equal(Number(await drawer.locator('#price_input').inputValue()),0.456789);
+ await open();assert.equal(Number(await drawer.locator('#price_input').inputValue()),0.456789);
  await drawer.locator('#price_input').fill('0.5');await save();stored=await current();assert.equal(stored.pricing.input,0.5);assert.equal(stored.pricing.offpeakInput,0.15);
  console.log('PASS manual override saved at six decimals; correct model/vendor; reopening and pricing tab refresh; existing rules retained');
  for(const id of ['gemini-3.8-flash','gpt-6.1-sol','claude-opus-5-5']){
   const p=catalog.presets.find(p=>p.model===id);await open();await drawer.getByRole('button',{name:p.label,exact:true}).click();await save();stored=await current();assert.deepEqual(stored.pricing.tiers,p.pricing.tiers);assert.equal(stored.pricing.offpeakRule,'');assert.equal(stored.pricing.input,p.pricing.input);
  }
- await open();await drawer.getByRole('button',{name:'GPT 6 Astra',exact:true}).click();await drawer.getByRole('checkbox',{name:'启用分档与分时价格'}).uncheck();await save();assert.deepEqual((await current()).pricing.tiers,[]);
+ await open();await drawer.getByRole('button',{name:'GPT 6 Astra',exact:true}).click();await drawer.getByRole('checkbox',{name:'保留已有分档与分时价格'}).uncheck();await save();assert.deepEqual((await current()).pricing.tiers,[]);
  console.log('PASS switching presets replaces stale tiers/time schedules/offpeak rules; rules can be disabled');
  stored=await current();
  for(const price of [{input:-1,output:1,cache:0},{input:1,output:null,cache:0},{input:1,output:1,cache:0,presetModel:'missing'}]){

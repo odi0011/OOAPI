@@ -1,0 +1,361 @@
+.oo-model-management {
+  display: grid;
+  gap: 14px;
+}
+
+.oo-model-management-intro {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.oo-model-management-intro > div {
+  display: grid;
+  gap: 4px;
+}
+
+.oo-model-management-note {
+  color: var(--ink-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.oo-model-management-stats {
+  margin: 0;
+}
+
+.oo-model-management-panel {
+  overflow: hidden;
+  padding: 0;
+}
+
+.oo-model-management-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 10px;
+}
+
+.oo-model-management-panel-head > div {
+  display: grid;
+  gap: 4px;
+}
+
+.oo-model-management-panel-head h2 {
+  margin: 0;
+}
+
+.oo-model-management-panel-head p {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.oo-model-management-filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(130px, 1fr));
+  gap: 10px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--inset);
+}
+
+.oo-model-management-panel .ant-table-wrapper {
+  padding: 0 20px 16px;
+}
+
+.oo-model-main,
+.oo-model-source {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.oo-model-main small,
+.oo-model-source-text {
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oo-model-capability-summary {
+  display: grid;
+  gap: 4px;
+  color: var(--ink-2);
+  font-size: 11px;
+}
+
+.oo-model-capability-summary span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oo-model-price-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  color: var(--ink-2);
+  font-size: 11px;
+}
+
+.oo-model-price-summary b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.oo-model-unset {
+  color: var(--orange);
+  font-size: 12px;
+}
+
+.oo-model-management-help {
+  display: grid;
+  gap: 0;
+  padding: 0 20px 18px;
+}
+
+.oo-model-management-help .oo-panel-head {
+  margin: 0 -20px 14px;
+}
+
+.oo-model-help-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.oo-model-help-grid > div {
+  display: grid;
+  gap: 4px;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.oo-model-help-grid b {
+  color: var(--ink);
+}
+
+.oo-model-drawer-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.oo-model-config-drawer .ant-drawer-body {
+  background: var(--surface);
+}
+
+.oo-model-drawer-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--inset);
+}
+
+.oo-model-drawer-meta > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.oo-model-drawer-meta small {
+  color: var(--ink-3);
+  font-size: 11px;
+}
+
+.oo-model-drawer-meta strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oo-model-presets {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--inset);
+}
+
+.oo-model-presets-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.oo-model-presets-header small {
+  color: var(--ink-3);
+  font-size: 11px;
+}
+
+.oo-model-form-section {
+  display: grid;
+  gap: 12px;
+  padding: 18px 0 2px;
+  border-top: 1px solid var(--line);
+}
+
+.oo-model-form-section h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.oo-model-form-section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.oo-model-form-section-title > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.oo-model-form-section-title small,
+.oo-model-form-hint,
+.oo-model-presets > div:first-child span,
+.oo-model-preset-status,
+.oo-model-drawer-meta span,
+.oo-model-drawer-sources {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.oo-model-presets > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.oo-model-preset-status {
+  color: var(--accent);
+}
+
+.oo-model-drawer-sources {
+  display: grid;
+  gap: 4px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.oo-model-drawer-sources p {
+  margin: 0;
+}
+
+.oo-model-import-result {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.oo-model-form-section > p {
+  margin: -5px 0 0;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.oo-model-price-fields,
+.oo-model-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.oo-model-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.oo-model-price-rules {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--inset);
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.oo-model-price-rules > div {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.oo-model-price-rules span {
+  color: var(--ink-3);
+}
+
+.oo-model-file-button {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+}
+
+.oo-model-file-button input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+@media (max-width: 1100px) {
+  .oo-model-management-filters {
+    grid-template-columns: minmax(180px, 2fr) repeat(2, minmax(130px, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .oo-model-management-intro,
+  .oo-model-management-panel-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .oo-model-management-note {
+    white-space: normal;
+  }
+
+  .oo-model-management-filters,
+  .oo-model-price-fields,
+  .oo-model-form-grid,
+  .oo-model-help-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .oo-model-presets > div:first-child,
+  .oo-model-form-section-title {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .oo-model-drawer-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .oo-model-price-rules > div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
