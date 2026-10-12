@@ -73,11 +73,23 @@ func TestBoostHandlerAuthAndRateLimit(t *testing.T) {
 	if err := json.Unmarshal(events.Body.Bytes(), &rows); err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0]["symbol"] != "XRPUSDT" || rows[0]["side"] != "long" || rows[0]["action"] != "skip" || rows[0]["msg"] != "boost_wait" {
+	var started, skip map[string]any
+	for _, row := range rows {
+		switch row["action"] {
+		case "boost_start":
+			started = row
+		case "skip":
+			skip = row
+		}
+	}
+	if started == nil || started["msg"] == "" {
+		t.Fatalf("missing boost_start %#v", rows)
+	}
+	if skip == nil || skip["symbol"] != "XRPUSDT" || skip["side"] != "long" || skip["msg"] != "boost_wait" {
 		t.Fatalf("rows %#v", rows)
 	}
-	if rows[0]["score"] != float64(4) || rows[0]["winrate"] != 0.62 {
-		t.Fatalf("score row %#v", rows[0])
+	if skip["score"] != float64(4) || skip["winrate"] != 0.62 {
+		t.Fatalf("score row %#v", skip)
 	}
 }
 

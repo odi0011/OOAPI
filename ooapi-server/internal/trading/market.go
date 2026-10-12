@@ -77,6 +77,10 @@ func (c *USDMClient) USDTBalance() (wallet, available float64, err error) {
 
 // LoadCandles 按时间窗口分页拉取已收盘 K 线。
 func LoadCandles(mode, symbol, interval string, since, now time.Time) ([]Candle, error) {
+	return loadCandles(mode, symbol, interval, since, now, false)
+}
+
+func loadCandles(mode, symbol, interval string, since, now time.Time, includeOpen bool) ([]Candle, error) {
 	client := PublicClient(mode)
 	tf := TimeframeDuration(interval)
 	var all []Candle
@@ -99,7 +103,17 @@ func LoadCandles(mode, symbol, interval string, since, now time.Time) ([]Candle,
 			break
 		}
 	}
-	return ClosedCandles(now, tf, all), nil
+	return scanCandles(now, tf, all, includeOpen), nil
+}
+
+// scanCandles 平时丢掉未收盘的最后一根。实盘加速时保留，分数才能跟着正在走的这根变。
+func scanCandles(now time.Time, tf time.Duration, candles []Candle, includeOpen bool) []Candle {
+	if includeOpen {
+		out := make([]Candle, len(candles))
+		copy(out, candles)
+		return out
+	}
+	return ClosedCandles(now, tf, candles)
 }
 
 func parseCandles(body []byte) ([]Candle, error) {

@@ -494,13 +494,20 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 		return e.Snapshot(), withReason(ErrBlocked, reason)
 	}
 	// 同一根已收盘 K 线只决定一次开仓。平仓检查不走这里，止损止盈仍会在持仓步里触发。
-	if key := barKey(in.Candles); key != "" && key == e.lastBarKey {
+	// 加速窗口内同一根未收盘 K 线的价格还在变，不能靠 bar key 把后续扫描吃掉。
+	if key := barKey(in.Candles); key != "" && key == e.lastBarKey && !e.boosting(in) {
 		return e.Snapshot(), nil
 	}
 	if !e.running {
 		return e.Snapshot(), ErrNotRunning
 	}
 	wr := signalWinRate(in, e.lastBacktest)
+	candSide, candScore := "", 0
+	if e.boosting(in) {
+		if got, sc, serr := ScoreTrend(e.cfg, in.Candles, in.Higher); serr == nil {
+			candSide, candScore = string(got), sc
+		}
+	}
 	noted := false
 	noteBoost := func(passes bool) {
 		if noted || !e.boosting(in) {
@@ -509,7 +516,19 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 		noted = true
 		boostState.note(e.cfg.ID, wr, passes)
 	}
-	defer noteBoost(false)
+	defer func() {
+		if !e.boosting(in) {
+			return
+		}
+		noteBoost(false)
+		boostState.consider(boostCand{
+			symbol: e.cfg.Symbol,
+			side:   candSide,
+			score:  candScore,
+			need:   e.cfg.Normalize().MinScore,
+			reason: e.lastReason,
+		})
+	}()
 	side, signal, err := e.entrySide(in)
 	if err != nil {
 		return e.failed(err.Error())
