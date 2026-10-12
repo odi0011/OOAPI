@@ -114,10 +114,9 @@ export default function App() {
                   }
                 />
 
-                {/* 交易策略：跟系统设置同一道 option:edit。
-                    读写 /api/trading/strategies，不下单。 */}
+                {/* 策略在系统设置的交易分组里。读写策略，可启动引擎，不下单门闩。 */}
                 <Route
-                  path="/admin/trading"
+                  path="/admin/system/strategy"
                   element={
                     <RequireAuth permission={Perm.OptionEdit}>
                       <AdminTrading />
@@ -125,15 +124,18 @@ export default function App() {
                   }
                 />
 
-                {/* 交易所密钥：用户自绑，登录即可。明文只经 reveal。 */}
+                {/* 账户：交易所 API 绑定。登录即可。明文只经 reveal。 */}
                 <Route
-                  path="/admin/exchange-keys"
+                  path="/admin/system/account"
                   element={
                     <RequireAuth>
                       <AdminExchangeKeys />
                     </RequireAuth>
                   }
                 />
+
+                <Route path="/admin/trading" element={<Navigate to="/admin/system/strategy" replace />} />
+                <Route path="/admin/exchange-keys" element={<Navigate to="/admin/system/account" replace />} />
 
                 {/* 个人中心 */}
                 <Route

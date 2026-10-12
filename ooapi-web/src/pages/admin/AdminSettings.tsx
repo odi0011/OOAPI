@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/arc/button/button";
-import { SearchField } from "@/components/arc/search-field/search-field";
 import AdminLayout from "@/components/admin/AdminLayout";
 import { useAppearance } from "@/contexts/AppearanceContext";
 import { ApiRequestError, apiRequest } from "@/lib/api";
@@ -13,7 +12,9 @@ import AuthSection from "./sections/AuthSection";
 import BillingSection from "./sections/BillingSection";
 import GatewaySection from "./sections/GatewaySection";
 import RegistrationSection from "./sections/RegistrationSection";
+import SettingsRail from "./SettingsRail";
 import SiteSection from "./sections/SiteSection";
+import { SETTINGS_SECTIONS } from "./settingsNav";
 import styles from "./AdminSettings.module.css";
 
 /** 设置页的完整配置，与后端 SiteSettings 结构一致。 */
@@ -33,26 +34,12 @@ export interface SiteSettings {
   request_timeout_ms: number;
 }
 
-interface Section {
-  key: string;
-  label: string;
-  /** 分区下的条目名，用于搜索命中与跳转。 */
-  entries: string[];
-}
-
 /**
  * 分区导航。
- * 「登录与注册」与其余分区同处一页 —— 它本来就是站点配置的一部分，
- * 单独开页面会让管理员在几处之间来回找。
+ * 「登录与注册」与其余分区同处一页。
+ * 「交易」分组在 SettingsRail 里，和这些分区同级，子页是策略与账户。
  */
-const SECTIONS: Section[] = [
-  { key: "appearance", label: "外观", entries: ["站点字体", "明暗模式", "主题色", "布局密度"] },
-  { key: "site", label: "站点", entries: ["站点名称", "Logo", "接口地址", "站点地址"] },
-  { key: "registration", label: "注册与登录", entries: ["开放注册", "密码登录", "新用户赠送额度"] },
-  { key: "auth", label: "第三方与邮件", entries: ["Google", "GitHub", "SMTP", "邮箱验证码"] },
-  { key: "billing", label: "计费", entries: ["货币名称", "额度单位"] },
-  { key: "gateway", label: "网关", entries: ["请求超时"] },
-];
+const SECTIONS = SETTINGS_SECTIONS;
 
 export default function AdminSettings() {
   const [settings, setSettings] = useState<SiteSettings | null>(null);
@@ -63,7 +50,6 @@ export default function AdminSettings() {
   const action = useAsyncGuard();
   const [sensitiveDirty, setSensitiveDirty] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
   const [active, setActive] = useState("appearance");
   const [dirty, setDirty] = useState(false);
   const appearanceCtx = useAppearance();
@@ -185,14 +171,6 @@ export default function AdminSettings() {
     }
   }
 
-  const matches = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return SECTIONS;
-    return SECTIONS.filter(
-      (s) => s.label.toLowerCase().includes(q) || s.entries.some((e) => e.toLowerCase().includes(q)),
-    );
-  }, [query]);
-
   function jumpTo(key: string) {
     setActive(key);
     sectionRefs.current[key]?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -241,24 +219,7 @@ export default function AdminSettings() {
 
         <div className={styles.layout}>
           {/* 左侧分区导航 */}
-          <nav className={styles.rail} aria-label="设置分区">
-            <SearchField label="搜索设置" value={query} onValueChange={setQuery} placeholder="搜索设置项" />
-
-            <ul className={styles.railList}>
-              {matches.map((s) => (
-                <li key={s.key}>
-                  <button
-                    type="button"
-                    className={active === s.key ? `${styles.railItem} ${styles.railItemActive}` : styles.railItem}
-                    onClick={() => jumpTo(s.key)}
-                  >
-                    {s.label}
-                  </button>
-                </li>
-              ))}
-              {matches.length === 0 && <li className={styles.railEmpty}>没有匹配的设置项</li>}
-            </ul>
-          </nav>
+          <SettingsRail current="settings" activeSection={active} onJumpSection={jumpTo} />
 
           {/* 右侧表单区 */}
           <div className={styles.formArea} inert={action.busy}>
