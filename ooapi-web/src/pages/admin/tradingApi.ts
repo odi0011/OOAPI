@@ -166,9 +166,9 @@ export async function deleteStrategy(id: number): Promise<void> {
 }
 
 /**
- * 引擎状态。字段与 trading.Snapshot 一致。
- * testnetGreen 只读展示，本页不会去打开它，也不调用 /api/trading/engine/testnet-green。
- * 仓位只有方向、数量和三档价格；标记价、未实现盈亏、保证金不在这里。
+ * 引擎状态。testnetGreen 只读展示。
+ * 本页不调用 /api/trading/engine/testnet-green，也不打开 TRADING_TESTNET_GREEN。
+ * 当日和本会话累计都在这份快照里，用 realizedNetwork 标明当前侧。
  */
 export interface EngineState {
   strategyId: number;
@@ -179,6 +179,8 @@ export interface EngineState {
   takeProfitPrice?: number;
   qty?: number;
   dayRealizedUsdt?: number;
+  cumulativeRealizedUsdt?: number;
+  realizedNetwork?: string;
   halted?: boolean;
   lastError?: string;
   mode?: string;
@@ -186,78 +188,100 @@ export interface EngineState {
   running?: boolean;
   lastAction?: string;
   lastReason?: string;
+  symbol?: string;
+  leverage?: number;
+  marginMode?: string;
+  timeframe?: string;
+  exchangeKeyId?: number;
+  exchangeKeyLabel?: string;
+  exchangeKeyNetwork?: string;
 }
 
-/**
- * K 线预留。OOO 补行情前不要调用，页面只展示空态。
- * 预期：items[].openTime/open/high/low/close，可选 markPrice。
- */
-export const MARKET_CANDLES_PATH = "/api/trading/market/candles";
-
-export interface MarketCandle {
+export interface EngineKline {
   openTime: string;
   open: number;
   high: number;
   low: number;
   close: number;
-  volume?: number;
 }
 
-export interface MarketCandlesResponse {
-  symbol?: string;
-  timeframe?: string;
-  markPrice?: number;
-  items?: MarketCandle[] | null;
+export interface EngineLevels {
+  entryPrice?: number;
+  stopPrice?: number;
+  takeProfitPrice?: number;
 }
 
-export async function listMarketCandles(query: { symbol: string; timeframe: string }): Promise<MarketCandlesResponse> {
-  const params = new URLSearchParams({ symbol: query.symbol, timeframe: query.timeframe });
-  return apiRequest<MarketCandlesResponse>(`${MARKET_CANDLES_PATH}?${params.toString()}`);
+/** GET /api/trading/engine/market?strategyId=&limit= */
+export interface EngineMarket {
+  strategyId: number;
+  symbol: string;
+  timeframe: string;
+  limit: number;
+  markPrice: number;
+  klines: EngineKline[];
+  levels?: EngineLevels;
 }
 
-/**
- * 委托预留。OOO 补挂单前不要调用。
- * 预期 items：入场 entry、止损 stop、止盈 take_profit，algo 标明条件单。
- */
-export const OPEN_ORDERS_PATH = "/api/trading/orders";
-
-export interface TradingOrder {
-  id?: string;
-  kind: "entry" | "stop" | "take_profit" | (string & {});
-  status: string;
+/** GET /api/trading/engine/position?strategyId= 。open 为 false 时没有数量。 */
+export interface EnginePosition {
+  strategyId: number;
+  symbol: string;
+  network: string;
+  open: boolean;
   side?: string;
-  price?: number;
   qty?: number;
-  algo?: boolean;
+  entryPrice?: number;
+  markPrice?: number;
+  unrealizedPnl?: number;
+  leverage?: number;
+  margin?: number;
+  marginMode?: string;
 }
 
-export async function listOpenOrders(strategyId: number): Promise<TradingOrder[]> {
-  const data = await apiRequest<{ items?: TradingOrder[] | null }>(`${OPEN_ORDERS_PATH}?strategyId=${strategyId}`);
-  return data.items ?? [];
+/** kind 用 takeProfit，不用 take_profit。条件单看 source=algo。 */
+export interface EngineOrder {
+  id?: string;
+  source: string;
+  kind: string;
+  symbol?: string;
+  side?: string;
+  type?: string;
+  status?: string;
+  price?: number;
+  stopPrice?: number;
+  qty?: number;
+  reduceOnly?: boolean;
+  closePosition?: boolean;
 }
 
-/**
- * 累计盈亏预留。当日已实现先用引擎 state.dayRealizedUsdt。
- * 预期按 testnet / live 分开给 dayRealizedUsdt 与 cumulativeRealizedUsdt。
- */
-export const PNL_PATH = "/api/trading/pnl";
-
-export interface ModePnl {
-  dayRealizedUsdt?: number;
-  cumulativeRealizedUsdt?: number;
-}
-
-export interface TradingPnl {
-  testnet?: ModePnl;
-  live?: ModePnl;
-}
-
-export async function getTradingPnl(strategyId: number): Promise<TradingPnl> {
-  return apiRequest<TradingPnl>(`${PNL_PATH}?strategyId=${strategyId}`);
+/** GET /api/trading/engine/orders?strategyId= 。empty 为 true 即无挂单。 */
+export interface EngineOrders {
+  strategyId: number;
+  symbol: string;
+  network: string;
+  items: EngineOrder[];
+  empty: boolean;
 }
 
 export async function getEngineState(strategyId: number): Promise<EngineState> {
   return apiRequest<EngineState>(`/api/trading/engine/state?strategyId=${strategyId}`);
+}
+
+export async function getEngineMarket(strategyId: number, limit = 100): Promise<EngineMarket> {
+  const data = await apiRequest<EngineMarket>(
+    `/api/trading/engine/market?strategyId=${strategyId}&limit=${limit}`,
+  );
+  return { ...data, klines: data.klines ?? [] };
+}
+
+export async function getEnginePosition(strategyId: number): Promise<EnginePosition> {
+  return apiRequest<EnginePosition>(`/api/trading/engine/position?strategyId=${strategyId}`);
+}
+
+export async function getEngineOrders(strategyId: number): Promise<EngineOrders> {
+  const data = await apiRequest<EngineOrders>(`/api/trading/engine/orders?strategyId=${strategyId}`);
+  const items = data.items ?? [];
+  return { ...data, items, empty: data.empty ?? items.length === 0 };
 }
 
 /** 启动检查。需要账户权益。不下单，也不打开测网全绿门闩。 */

@@ -1,25 +1,35 @@
 import { Button } from "@/components/arc/button/button";
 
 import styles from "./TradingDesk.module.css";
-import {
-  MARKET_CANDLES_PATH,
-  OPEN_ORDERS_PATH,
-  PNL_PATH,
-  type MarketCandle,
-  type TradingOrder,
-} from "./tradingApi";
+import type { EngineKline, EngineMarket, EngineOrders, EnginePosition } from "./tradingApi";
 import {
   buildDeskStatus,
+  formatAmount,
   levelText,
+  orderKindText,
+  orderPriceText,
+  orderSideText,
+  orderSourceText,
   pnlBoard,
   positionView,
   type EngineSlice,
 } from "./tradingDeskView";
 
+export interface DeskReadErrors {
+  state?: string;
+  market?: string;
+  position?: string;
+  orders?: string;
+}
+
 interface TradingDeskProps {
   engine: EngineSlice | null;
-  /** 首屏还在拉策略时，状态条先标明正在读取，避免把空快照说成 Idle。 */
+  market: EngineMarket | null;
+  position: EnginePosition | null;
+  orders: EngineOrders | null;
+  /** 首屏还在拉策略时，状态条先标明正在读取。 */
   loading?: boolean;
+  readErrors?: DeskReadErrors;
   symbol?: string;
   leverage?: number;
   marginMode?: string;
@@ -29,43 +39,35 @@ interface TradingDeskProps {
   /** 用户关掉的那条 lastError。引擎换了一条新错误会再显示。只影响本页，不请求后端。 */
   dismissedError?: string;
   onDismissError?: () => void;
-  /**
-   * K 线预留。接入后把 listMarketCandles 的结果传进来。
-   * 不传时保持空态，本组件不会自己请求。
-   */
-  candles?: MarketCandle[] | null;
-  markPrice?: number | null;
-  /**
-   * 委托预留。接入后把 listOpenOrders 的结果传进来。
-   * null 表示接口还没接，空数组表示接口确认没有挂单。两种都显示「无挂单」。
-   */
-  orders?: TradingOrder[] | null;
 }
 
 export default function TradingDesk({
   engine,
+  market,
+  position,
+  orders,
   loading = false,
+  readErrors,
   symbol,
   leverage,
   marginMode,
-  timeframe = "5m",
+  timeframe,
   mode,
   accountLabel,
   dismissedError = "",
   onDismissError,
-  candles = null,
-  markPrice = null,
-  orders = null,
 }: TradingDeskProps) {
-  const status = buildDeskStatus({ engine, symbol, leverage, marginMode, accountLabel, mode });
-  const position = positionView(engine, leverage);
-  const pnl = pnlBoard(engine, mode);
+  const status = buildDeskStatus({ engine, symbol, leverage, marginMode, accountLabel, mode, timeframe });
+  const held = positionView(position);
+  const pnl = pnlBoard(engine);
   const showError = status.lastError.length > 0 && status.lastError !== dismissedError;
   const stateText = loading && !engine ? "正在读取" : status.stateText;
+  const chartTimeframe = market?.timeframe || status.timeframe;
+  const hasLevels = market?.levels != null;
 
   return (
     <div className={styles.desk}>
-      <dl className={styles.statusBar} aria-label="策略状态" data-engine-state={engine?.state ?? "Idle"} data-testnet-green={engine?.testnetGreen ? "on" : "off"}>
+      <dl className={styles.statusBar} aria-label="策略状态" data-engine-state={engine?.state ?? "Idle"} data-testnet-green={engine?.testnetGreen ? "on" : "off"} data-realized-network={engine?.realizedNetwork ?? ""}>
         <StatusItem label="状态" value={stateText} />
         <StatusItem label="环境" value={status.modeText} />
         <StatusItem label="测网全绿" value={status.testnetGreenText} />
@@ -74,6 +76,7 @@ export default function TradingDesk({
         <StatusItem label="保证金模式" value={status.marginModeText} />
         <StatusItem label="账户" value={status.accountLabel} />
       </dl>
+      {readErrors?.state ? <p className={styles.readError}>{readErrors.state}</p> : null}
 
       {showError && (
         <div className={styles.errorBar} role="alert">
@@ -87,70 +90,73 @@ export default function TradingDesk({
       <section className={styles.panel} aria-label="K线">
         <header className={styles.panelHead}>
           <h2>K 线</h2>
-          <p>周期 {timeframe}。收盘价和标记价等行情接口，入场、止损、止盈有仓时直接用引擎快照。</p>
+          <p>周期 {chartTimeframe}。蜡烛和标记价来自行情。有仓时画出 levels 里的入场、止损、止盈。</p>
         </header>
         <CandleChart
-          timeframe={timeframe}
-          candles={candles}
-          markPrice={markPrice}
-          open={position.open}
-          entry={position.entryPrice}
-          stop={position.stopPrice}
-          take={position.takeProfitPrice}
+          timeframe={chartTimeframe}
+          market={market}
+          loading={loading}
+          error={readErrors?.market}
+          hasLevels={hasLevels}
         />
       </section>
 
       <section className={styles.panel} aria-label="持仓">
         <header className={styles.panelHead}>
           <h2>持仓</h2>
-          <p>方向、数量、开仓均价来自引擎 state。标记价、未实现盈亏、保证金等持仓明细接口。</p>
+          <p>方向、数量、开仓均价、标记价、未实现盈亏、杠杆和保证金。</p>
         </header>
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>方向</th>
-                <th>数量</th>
-                <th>开仓均价</th>
-                <th>标记价</th>
-                <th>未实现盈亏</th>
-                <th>杠杆</th>
-                <th>保证金</th>
-              </tr>
-            </thead>
-            <tbody>
-              {position.open ? (
+        {position == null ? (
+          <p className={styles.emptyTitle}>{readErrors?.position ?? (loading ? "正在读取持仓…" : "先保存策略后再看持仓。")}</p>
+        ) : (
+          <div className={styles.tableWrap}>
+            <table className={styles.table}>
+              <thead>
                 <tr>
-                  <td>{position.side}</td>
-                  <td>{position.qty}</td>
-                  <td>{position.entry}</td>
-                  <td className={styles.pending}>{position.mark}</td>
-                  <td className={styles.pending}>{position.unrealized}</td>
-                  <td>{position.leverage}</td>
-                  <td className={styles.pending}>{position.margin}</td>
+                  <th>方向</th>
+                  <th>数量</th>
+                  <th>开仓均价</th>
+                  <th>标记价</th>
+                  <th>未实现盈亏</th>
+                  <th>杠杆</th>
+                  <th>保证金</th>
                 </tr>
-              ) : (
-                <tr>
-                  <td colSpan={7} className={styles.emptyCell}>当前无持仓</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {held.open ? (
+                  <tr>
+                    <td>{held.side}</td>
+                    <td>{held.qty}</td>
+                    <td>{held.entry}</td>
+                    <td>{held.mark}</td>
+                    <td>{held.unrealized}</td>
+                    <td>{held.leverage}</td>
+                    <td>{held.margin}</td>
+                  </tr>
+                ) : (
+                  <tr>
+                    <td colSpan={7} className={styles.emptyCell}>当前无持仓</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {position != null && readErrors?.position ? <p className={styles.readError}>{readErrors.position}</p> : null}
       </section>
 
       <section className={styles.panel} aria-label="委托">
         <header className={styles.panelHead}>
           <h2>委托</h2>
-          <p>入场单，以及止损、止盈（algo）。</p>
+          <p>入场单，以及止损、止盈。条件单来源是 algo。</p>
         </header>
-        <OrdersTable orders={orders} />
+        <OrdersTable orders={orders} loading={loading} error={readErrors?.orders} />
       </section>
 
       <section className={styles.panel} aria-label="已实现盈亏">
         <header className={styles.panelHead}>
           <h2>已实现盈亏</h2>
-          <p>当日已实现来自 state.dayRealizedUsdt，只填当前环境那一列。累计等 {PNL_PATH}。</p>
+          <p>当日和本会话累计都在引擎 state 里，只标 realizedNetwork 这一侧。本会话累计不是跨天永久账本。另一侧保持「—」。</p>
         </header>
         <div className={styles.tableWrap}>
           <table className={styles.table}>
@@ -168,9 +174,9 @@ export default function TradingDesk({
                 <td>{pnl.liveDay}</td>
               </tr>
               <tr>
-                <th scope="row">累计已实现</th>
-                <td className={styles.pending}>{pnl.testnetCumulative}</td>
-                <td className={styles.pending}>{pnl.liveCumulative}</td>
+                <th scope="row">本会话累计</th>
+                <td>{pnl.testnetCumulative}</td>
+                <td>{pnl.liveCumulative}</td>
               </tr>
             </tbody>
           </table>
@@ -191,53 +197,58 @@ function StatusItem({ label, value }: { label: string; value: string }) {
 
 function CandleChart({
   timeframe,
-  candles,
-  markPrice,
-  open,
-  entry,
-  stop,
-  take,
+  market,
+  loading,
+  error,
+  hasLevels,
 }: {
   timeframe: string;
-  candles: MarketCandle[] | null;
-  markPrice: number | null;
-  open: boolean;
-  entry?: number;
-  stop?: number;
-  take?: number;
+  market: EngineMarket | null;
+  loading: boolean;
+  error?: string;
+  hasLevels: boolean;
 }) {
-  const series = candles ?? [];
+  const klines = market?.klines ?? [];
+  const mark = market?.markPrice;
   return (
     <div className={styles.chart}>
-      {series.length > 0 ? (
-        <CandleSvg candles={series} markPrice={markPrice} entry={entry} stop={stop} take={take} />
+      {market == null ? (
+        <div className={styles.chartEmpty}>
+          <p className={styles.chartTitle}>{timeframe}</p>
+          <p>{error ?? (loading ? "正在读取 K 线…" : "先保存策略后再看 K 线。")}</p>
+        </div>
+      ) : klines.length > 0 ? (
+        <CandleSvg
+          candles={klines}
+          markPrice={mark}
+          entry={market.levels?.entryPrice}
+          stop={market.levels?.stopPrice}
+          take={market.levels?.takeProfitPrice}
+        />
       ) : (
         <div className={styles.chartEmpty}>
-          <p className={styles.chartTitle}>{timeframe} · 尚无 K 线</p>
-          <p>
-            预留 {MARKET_CANDLES_PATH}。接入后传入 openTime、open、high、low、close，这里改画蜡烛和收盘价。
-            现在不请求这条路由。
-          </p>
+          <p className={styles.chartTitle}>{timeframe} · 暂无 K 线</p>
         </div>
       )}
       <dl className={styles.levels}>
         <div>
           <dt>标记价</dt>
-          <dd>{markPrice != null && markPrice > 0 ? markPrice : "待行情接口"}</dd>
+          <dd>{mark != null && mark > 0 ? formatAmount(mark) : "—"}</dd>
         </div>
         <div>
           <dt>入场</dt>
-          <dd>{levelText(entry, open)}</dd>
+          <dd>{levelText(market?.levels?.entryPrice, hasLevels)}</dd>
         </div>
         <div>
           <dt>止损</dt>
-          <dd>{levelText(stop, open)}</dd>
+          <dd>{levelText(market?.levels?.stopPrice, hasLevels)}</dd>
         </div>
         <div>
           <dt>止盈</dt>
-          <dd>{levelText(take, open)}</dd>
+          <dd>{levelText(market?.levels?.takeProfitPrice, hasLevels)}</dd>
         </div>
       </dl>
+      {market != null && error ? <p className={styles.readError}>{error}</p> : null}
     </div>
   );
 }
@@ -249,8 +260,8 @@ function CandleSvg({
   stop,
   take,
 }: {
-  candles: MarketCandle[];
-  markPrice: number | null;
+  candles: EngineKline[];
+  markPrice?: number;
   entry?: number;
   stop?: number;
   take?: number;
@@ -326,52 +337,55 @@ function LevelLine({
   );
 }
 
-function OrdersTable({ orders }: { orders: TradingOrder[] | null }) {
-  if (orders == null || orders.length === 0) {
+function OrdersTable({
+  orders,
+  loading,
+  error,
+}: {
+  orders: EngineOrders | null;
+  loading: boolean;
+  error?: string;
+}) {
+  if (orders == null) {
+    return <p className={styles.emptyTitle}>{error ?? (loading ? "正在读取委托…" : "先保存策略后再看委托。")}</p>;
+  }
+  if (orders.empty || orders.items.length === 0) {
     return (
-      <div className={styles.emptyBlock}>
+      <>
         <p className={styles.emptyTitle}>无挂单</p>
-        <p>
-          预留 {OPEN_ORDERS_PATH}。接入后展示入场单和止损、止盈的状态、方向、价格、数量，以及是否为 algo。
-          现在不请求这条路由。
-        </p>
-      </div>
+        {error ? <p className={styles.readError}>{error}</p> : null}
+      </>
     );
   }
-
   return (
-    <div className={styles.tableWrap}>
-      <table className={styles.table}>
-        <thead>
-          <tr>
-            <th>类型</th>
-            <th>状态</th>
-            <th>方向</th>
-            <th>价格</th>
-            <th>数量</th>
-            <th>algo</th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((order, index) => (
-            <tr key={order.id || `${order.kind}-${index}`}>
-              <td>{orderKindText(order.kind)}</td>
-              <td>{order.status || "—"}</td>
-              <td>{order.side || "—"}</td>
-              <td>{order.price ?? "—"}</td>
-              <td>{order.qty ?? "—"}</td>
-              <td>{order.algo ? "是" : "否"}</td>
+    <>
+      <div className={styles.tableWrap}>
+        <table className={styles.table}>
+          <thead>
+            <tr>
+              <th>类型</th>
+              <th>来源</th>
+              <th>状态</th>
+              <th>方向</th>
+              <th>价格</th>
+              <th>数量</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {orders.items.map((order, index) => (
+              <tr key={order.id || `${order.kind}-${order.source}-${index}`}>
+                <td>{orderKindText(order.kind)}</td>
+                <td>{orderSourceText(order.source)}</td>
+                <td>{order.status || "—"}</td>
+                <td>{orderSideText(order.side)}</td>
+                <td>{orderPriceText(order)}</td>
+                <td>{formatAmount(order.qty)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {error ? <p className={styles.readError}>{error}</p> : null}
+    </>
   );
-}
-
-function orderKindText(kind: TradingOrder["kind"]): string {
-  if (kind === "entry") return "入场";
-  if (kind === "stop") return "止损";
-  if (kind === "take_profit") return "止盈";
-  return kind;
 }

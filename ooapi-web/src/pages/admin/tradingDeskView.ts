@@ -1,24 +1,34 @@
 /**
- * 交易台展示模型。
- *
- * 已上线、本页会读的只有 GET /api/trading/engine/state，加上策略和账户列表。
- * state 能填：引擎 state、mode、testnetGreen、lastError、仓位方向/数量/开仓价/止损/止盈、当日已实现。
- * 标记价、未实现盈亏、保证金、委托、K 线、累计已实现不在这份快照里。
- * 那些格子保留字段名，值写「待接口」，不编数字。
+ * 交易台展示。数字只来自只读接口：
+ * state、market.klines、position、orders。
+ * 盈亏用 realizedNetwork 标当前侧，另一侧保持「—」，不写成 0。
  */
 
 export interface EngineSlice {
   state?: string;
-  side?: string;
-  qty?: number;
-  entryPrice?: number;
-  stopPrice?: number;
-  takeProfitPrice?: number;
-  dayRealizedUsdt?: number;
-  lastError?: string;
   mode?: string;
   testnetGreen?: boolean;
   running?: boolean;
+  lastError?: string;
+  symbol?: string;
+  leverage?: number;
+  marginMode?: string;
+  timeframe?: string;
+  exchangeKeyLabel?: string;
+  dayRealizedUsdt?: number;
+  cumulativeRealizedUsdt?: number;
+  realizedNetwork?: string;
+}
+
+export interface PositionSlice {
+  open?: boolean;
+  side?: string;
+  qty?: number;
+  entryPrice?: number;
+  markPrice?: number;
+  unrealizedPnl?: number;
+  leverage?: number;
+  margin?: number;
 }
 
 const STATE_LABEL: Record<string, string> = {
@@ -38,12 +48,6 @@ export function formatAmount(value: number | undefined): string {
   return value.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 }
 
-/** 价格 0 视为快照没带这个字段（Go 的 omitempty）。 */
-export function formatPrice(value: number | undefined): string {
-  if (value == null || !Number.isFinite(value) || value <= 0) return "—";
-  return formatAmount(value);
-}
-
 export function engineStateText(state: string | undefined, running: boolean | undefined): string {
   const name = state && state.trim() ? state.trim() : "Idle";
   const label = STATE_LABEL[name] ?? name;
@@ -54,7 +58,7 @@ export function engineStateText(state: string | undefined, running: boolean | un
 export function modeText(mode: string | undefined): string {
   if (mode === "live") return "live 实盘";
   if (mode === "testnet") return "testnet 测网";
-  return "testnet 测网";
+  return mode && mode.trim() ? mode : "—";
 }
 
 export function testnetGreenText(open: boolean | undefined): "开" | "关" {
@@ -63,13 +67,43 @@ export function testnetGreenText(open: boolean | undefined): "开" | "关" {
 
 export function marginModeText(mode: string | undefined): string {
   if (mode === "cross") return "全仓";
-  return "逐仓";
+  if (mode === "isolated") return "逐仓";
+  return mode && mode.trim() ? mode : "—";
 }
 
 export function sideText(side: string | undefined): string {
   if (side === "long") return "多";
   if (side === "short") return "空";
   if (side && side.trim()) return side;
+  return "—";
+}
+
+export function orderSideText(side: string | undefined): string {
+  const value = side?.trim().toLowerCase() ?? "";
+  if (value === "buy") return "买";
+  if (value === "sell") return "卖";
+  if (value === "long") return "多";
+  if (value === "short") return "空";
+  return value || "—";
+}
+
+export function orderKindText(kind: string | undefined): string {
+  if (kind === "entry") return "入场";
+  if (kind === "stop") return "止损";
+  if (kind === "takeProfit") return "止盈";
+  if (kind === "exit") return "出场";
+  return kind && kind.trim() ? kind : "—";
+}
+
+export function orderSourceText(source: string | undefined): string {
+  if (source === "order") return "普通";
+  if (source === "algo") return "条件单";
+  return source && source.trim() ? source : "—";
+}
+
+export function orderPriceText(order: { price?: number; stopPrice?: number }): string {
+  if (order.price != null && order.price > 0) return formatAmount(order.price);
+  if (order.stopPrice != null && order.stopPrice > 0) return formatAmount(order.stopPrice);
   return "—";
 }
 
@@ -82,6 +116,7 @@ export interface DeskStatus {
   marginModeText: string;
   accountLabel: string;
   lastError: string;
+  timeframe: string;
 }
 
 export function buildDeskStatus(input: {
@@ -91,19 +126,24 @@ export function buildDeskStatus(input: {
   marginMode?: string;
   accountLabel?: string;
   mode?: string;
+  timeframe?: string;
 }): DeskStatus {
   const engine = input.engine;
   const mode = engine?.mode || input.mode;
-  const leverage = input.leverage;
+  const leverage = engine?.leverage ?? input.leverage;
+  const account = engine
+    ? (engine.exchangeKeyLabel?.trim() || "未绑定")
+    : (input.accountLabel?.trim() || "未绑定");
   return {
     stateText: engineStateText(engine?.state, engine?.running),
     modeText: modeText(mode),
     testnetGreenText: testnetGreenText(engine?.testnetGreen),
-    symbol: input.symbol && input.symbol.trim() ? input.symbol : "XRPUSDT",
+    symbol: engine?.symbol?.trim() || input.symbol?.trim() || "XRPUSDT",
     leverageText: leverage != null && Number.isFinite(leverage) ? `${leverage} 倍` : "—",
-    marginModeText: marginModeText(input.marginMode),
-    accountLabel: input.accountLabel && input.accountLabel.trim() ? input.accountLabel : "未绑定",
+    marginModeText: marginModeText(engine?.marginMode || input.marginMode),
+    accountLabel: account,
     lastError: engine?.lastError?.trim() ?? "",
+    timeframe: engine?.timeframe?.trim() || input.timeframe?.trim() || "—",
   };
 }
 
@@ -112,23 +152,14 @@ export interface PositionView {
   side: string;
   qty: string;
   entry: string;
-  /** 快照没有标记价。 */
   mark: string;
-  /** 快照没有未实现盈亏。 */
   unrealized: string;
   leverage: string;
-  /** 快照没有占用保证金。 */
   margin: string;
-  entryPrice?: number;
-  stopPrice?: number;
-  takeProfitPrice?: number;
 }
 
-export function positionView(engine: EngineSlice | null, leverage: number | undefined): PositionView {
-  const qty = engine?.qty ?? 0;
-  const side = engine?.side?.trim() ?? "";
-  const open = side.length > 0 || qty > 0;
-  if (!open) {
+export function positionView(position: PositionSlice | null): PositionView {
+  if (!position || position.open !== true) {
     return {
       open: false,
       side: "—",
@@ -142,50 +173,45 @@ export function positionView(engine: EngineSlice | null, leverage: number | unde
   }
   return {
     open: true,
-    side: sideText(side),
-    qty: formatAmount(qty),
-    entry: formatPrice(engine?.entryPrice),
-    mark: "待接口",
-    unrealized: "待接口",
-    leverage: leverage != null && Number.isFinite(leverage) ? `${leverage} 倍` : "—",
-    margin: "待接口",
-    entryPrice: engine?.entryPrice,
-    stopPrice: engine?.stopPrice,
-    takeProfitPrice: engine?.takeProfitPrice,
+    side: sideText(position.side),
+    qty: formatAmount(position.qty),
+    entry: formatAmount(position.entryPrice),
+    mark: formatAmount(position.markPrice),
+    unrealized: formatAmount(position.unrealizedPnl),
+    leverage: position.leverage != null && Number.isFinite(position.leverage) ? `${position.leverage} 倍` : "—",
+    margin: formatAmount(position.margin),
   };
 }
 
 export interface PnlBoard {
-  /** 有引擎快照时，当日已实现只填当前 mode 那一列。另一列保持「—」，不当成 0。 */
   testnetDay: string;
   liveDay: string;
   testnetCumulative: string;
   liveCumulative: string;
 }
 
-export function pnlBoard(engine: EngineSlice | null, fallbackMode: string | undefined): PnlBoard {
-  const pending = "待接口";
-  if (!engine) {
-    return {
-      testnetDay: "—",
-      liveDay: "—",
-      testnetCumulative: pending,
-      liveCumulative: pending,
-    };
-  }
-  const mode = engine.mode || fallbackMode;
+const BLANK_PNL: PnlBoard = {
+  testnetDay: "—",
+  liveDay: "—",
+  testnetCumulative: "—",
+  liveCumulative: "—",
+};
+
+/** 只把当日和本会话累计写进 realizedNetwork 那一列。另一列保持「—」。 */
+export function pnlBoard(engine: EngineSlice | null): PnlBoard {
+  if (!engine) return BLANK_PNL;
+  const network = engine.realizedNetwork;
+  if (network !== "testnet" && network !== "live") return BLANK_PNL;
   const day = engine.dayRealizedUsdt == null ? "—" : formatAmount(engine.dayRealizedUsdt);
-  const testnet = mode === "testnet";
-  const live = mode === "live";
-  return {
-    testnetDay: testnet ? day : "—",
-    liveDay: live ? day : "—",
-    testnetCumulative: pending,
-    liveCumulative: pending,
-  };
+  const cumulative = engine.cumulativeRealizedUsdt == null ? "—" : formatAmount(engine.cumulativeRealizedUsdt);
+  if (network === "testnet") {
+    return { testnetDay: day, liveDay: "—", testnetCumulative: cumulative, liveCumulative: "—" };
+  }
+  return { testnetDay: "—", liveDay: day, testnetCumulative: "—", liveCumulative: cumulative };
 }
 
-export function levelText(value: number | undefined, open: boolean): string {
-  if (!open) return "无仓";
-  return formatPrice(value);
+/** 没有 levels 表示无仓。有 levels 时按接口数字显示，0 也显示。 */
+export function levelText(value: number | undefined, hasLevels: boolean): string {
+  if (!hasLevels) return "无仓";
+  return formatAmount(value);
 }

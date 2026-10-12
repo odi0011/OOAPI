@@ -188,8 +188,9 @@
   color: var(--text-secondary);
 }
 
-.note {
-  margin: 0;
+.readError {
+  margin: var(--space-2) 0 0;
   font-size: var(--text-xs);
-  color: var(--text-secondary);
+  line-height: var(--leading-body);
+  color: var(--danger, #d94a3d);
 }

@@ -14,7 +14,7 @@ import sectionStyles from "./sections/Section.module.css";
 import settingsStyles from "./AdminSettings.module.css";
 import styles from "./AdminTrading.module.css";
 import SettingsRail from "./SettingsRail";
-import TradingDesk from "./TradingDesk";
+import TradingDesk, { type DeskReadErrors } from "./TradingDesk";
 import { ACCOUNT_PATH } from "./settingsNav";
 import {
   TIMEFRAMES,
@@ -23,6 +23,9 @@ import {
   createStrategy,
   deleteStrategy,
   discardLegacyStrategyDraft,
+  getEngineMarket,
+  getEngineOrders,
+  getEnginePosition,
   getEngineState,
   listExchangeKeys,
   listStrategies,
@@ -30,6 +33,9 @@ import {
   startEngine,
   stepEngine,
   updateStrategy,
+  type EngineMarket,
+  type EngineOrders,
+  type EnginePosition,
   type EngineState,
   type ExchangeKey,
   type Strategy,
@@ -179,6 +185,10 @@ export default function AdminTrading() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [saved, setSaved] = useState<Strategy | null>(null);
   const [engine, setEngine] = useState<EngineState | null>(null);
+  const [market, setMarket] = useState<EngineMarket | null>(null);
+  const [position, setPosition] = useState<EnginePosition | null>(null);
+  const [orders, setOrders] = useState<EngineOrders | null>(null);
+  const [readErrors, setReadErrors] = useState<DeskReadErrors>({});
   const [dismissedError, setDismissedError] = useState("");
   const [equity, setEquity] = useState(100);
   const [engineBusy, setEngineBusy] = useState<"start" | "step" | null>(null);
@@ -200,16 +210,39 @@ export default function AdminTrading() {
     setDraft(draftFromStrategy(current));
   }, []);
 
-  const refreshEngine = useCallback(async (id: number | null) => {
+  const refreshDesk = useCallback(async (id: number | null) => {
     if (id == null) {
       setEngine(null);
+      setMarket(null);
+      setPosition(null);
+      setOrders(null);
+      setReadErrors({});
       return;
     }
-    try {
-      setEngine(await getEngineState(id));
-    } catch (err) {
-      if (err instanceof ApiRequestError && err.status === 404) setEngine(null);
+    const [state, marketRes, positionRes, ordersRes] = await Promise.allSettled([
+      getEngineState(id),
+      getEngineMarket(id),
+      getEnginePosition(id),
+      getEngineOrders(id),
+    ]);
+    if (state.status === "rejected" && state.reason instanceof ApiRequestError && state.reason.status === 404) {
+      setEngine(null);
+      setMarket(null);
+      setPosition(null);
+      setOrders(null);
+      setReadErrors({});
+      return;
     }
+    const nextErrors: DeskReadErrors = {};
+    if (state.status === "fulfilled") setEngine(state.value);
+    else nextErrors.state = errorText(state.reason, "读取状态失败");
+    if (marketRes.status === "fulfilled") setMarket(marketRes.value);
+    else nextErrors.market = errorText(marketRes.reason, "读取 K 线失败");
+    if (positionRes.status === "fulfilled") setPosition(positionRes.value);
+    else nextErrors.position = errorText(positionRes.reason, "读取持仓失败");
+    if (ordersRes.status === "fulfilled") setOrders(ordersRes.value);
+    else nextErrors.orders = errorText(ordersRes.reason, "读取委托失败");
+    setReadErrors(nextErrors);
   }, []);
 
   const load = useCallback(async () => {
@@ -219,13 +252,13 @@ export default function AdminTrading() {
     try {
       const [strategies, keyItems] = await Promise.all([listStrategies(), listExchangeKeys()]);
       applyLoaded(strategies, keyItems);
-      await refreshEngine(strategies[0]?.id ?? null);
+      await refreshDesk(strategies[0]?.id ?? null);
     } catch (err) {
       setLoadError(errorText(err, "加载策略失败"));
     } finally {
       setLoading(false);
     }
-  }, [applyLoaded, refreshEngine]);
+  }, [applyLoaded, refreshDesk]);
 
   useEffect(() => {
     void load();
@@ -235,10 +268,10 @@ export default function AdminTrading() {
     if (strategyId == null) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState === "hidden") return;
-      void refreshEngine(strategyId);
+      void refreshDesk(strategyId);
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [strategyId, refreshEngine]);
+  }, [strategyId, refreshDesk]);
 
   const activeKeys = keys.filter((key) => !key.revoked);
   const selectedKey = activeKeys.find((key) => key.id === draft.exchangeKeyId) ?? null;
@@ -278,7 +311,7 @@ export default function AdminTrading() {
       setSaved(saved);
       setWarnings(saved.warnings ?? []);
       setDraft(draftFromStrategy(saved));
-      await refreshEngine(saved.id);
+      await refreshDesk(saved.id);
       if (saved.mode === "live") {
         notify.success("实盘配置已保存", "引擎须测网全绿才会真下单。这次只写入了配置。");
       } else {
@@ -309,6 +342,7 @@ export default function AdminTrading() {
         : await stepEngine(strategyId);
       setEngine(next);
       notify.success(kind === "start" ? "引擎已启动" : "已推进一次", `当前状态 ${next.state}`);
+      void refreshDesk(strategyId);
     } catch (err) {
       notify.error(kind === "start" ? "启动失败" : "推进失败", errorText(err, "请稍后再试"));
     } finally {
@@ -325,7 +359,7 @@ export default function AdminTrading() {
       notify.success("策略已删除");
       const [strategies, keyItems] = await Promise.all([listStrategies(), listExchangeKeys()]);
       applyLoaded(strategies, keyItems);
-      await refreshEngine(strategies[0]?.id ?? null);
+      await refreshDesk(strategies[0]?.id ?? null);
     } catch (err) {
       notify.error("删除失败", errorText(err, "请稍后再试"));
     } finally {
@@ -376,7 +410,11 @@ export default function AdminTrading() {
           <div className={settingsStyles.formArea}>
             <TradingDesk
               engine={engine}
+              market={market}
+              position={position}
+              orders={orders}
               loading={loading}
+              readErrors={readErrors}
               symbol={saved?.symbol ?? draft.symbol}
               leverage={saved?.leverage ?? draft.leverage}
               marginMode={saved?.marginMode ?? draft.marginMode}
