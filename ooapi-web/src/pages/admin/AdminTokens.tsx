@@ -57,6 +57,10 @@ interface Draft {
   unlimited: boolean;
   quota: number;
   models: string;
+  /** 为真时不传有效期，后端按永不过期保存。 */
+  neverExpires: boolean;
+  /** datetime-local 的值，仅在不勾选永不过期时提交。 */
+  expiredAt: string;
 }
 
 const EMPTY_DRAFT: Draft = {
@@ -65,7 +69,14 @@ const EMPTY_DRAFT: Draft = {
   unlimited: true,
   quota: 0,
   models: "",
+  neverExpires: true,
+  expiredAt: "",
 };
+
+/** 与后端 IsValidAPIKeyShape 一致：sk- 加 48 位十六进制。打码串含 *，过不了。 */
+function isCallableKey(key: string): boolean {
+  return /^sk-[0-9a-f]{48}$/.test(key);
+}
 
 export default function AdminTokens() {
   const { can, user } = useAuth();
@@ -88,8 +99,10 @@ export default function AdminTokens() {
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [saving, setSaving] = useState(false);
 
-  /** 新建成功后展示一次完整密钥 —— 之后列表只给打码版本。 */
-  const [revealed, setRevealed] = useState<string | null>(null);
+  /** 新建或点过「显示」后展示完整密钥。列表本身始终是打码串。 */
+  const [revealed, setRevealed] = useState<{ id: number; apiKey: string } | null>(null);
+  /** 本页已经通过 /reveal（或刚创建）确认过的密钥。未确认前复制按钮禁用。 */
+  const [revealedIds, setRevealedIds] = useState<ReadonlySet<number>>(() => new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -128,6 +141,8 @@ export default function AdminTokens() {
       unlimited: t.unlimited_quota,
       quota: t.quota,
       models: t.models.join(", "),
+      neverExpires: !t.expired_at,
+      expiredAt: toDatetimeLocal(t.expired_at),
     });
     setDialogOpen(true);
   }
@@ -139,6 +154,20 @@ export default function AdminTokens() {
   );
 
   async function save() {
+    let expiredAt = "";
+    if (!editing && !draft.neverExpires) {
+      const when = new Date(draft.expiredAt);
+      if (!draft.expiredAt || Number.isNaN(when.getTime())) {
+        notify.error("请填写有效期");
+        return;
+      }
+      if (when.getTime() <= Date.now()) {
+        notify.error("有效期不能早于当前时间");
+        return;
+      }
+      expiredAt = when.toISOString();
+    }
+
     if (!action.acquire()) return;
     setSaving(true);
 
@@ -162,7 +191,7 @@ export default function AdminTokens() {
         });
         notify.success("密钥已更新");
       } else {
-        const created = await apiRequest<{ api_key: string; name: string }>("/api/token/", {
+        const created = await apiRequest<{ id: number; api_key: string; name: string }>("/api/token/", {
           method: "POST",
           body: {
             name: draft.name,
@@ -170,11 +199,18 @@ export default function AdminTokens() {
             unlimited_quota: draft.unlimited,
             quota: draft.unlimited ? 0 : draft.quota,
             models,
+            // 空字符串表示永不过期，与后端 tokenRequest.expired_at 一致。
+            expired_at: expiredAt,
           },
         });
-        // 完整密钥只在创建时返回一次，这里弹出来让用户立刻复制走。
-        setRevealed(created.api_key);
-        notify.success("密钥已创建", "请立即复制并妥善保存完整密钥");
+        const key = (created.api_key ?? "").trim();
+        if (!isCallableKey(key)) {
+          notify.error("密钥已创建，但返回值不是可调用的完整密钥");
+        } else {
+          setRevealedIds((prev) => new Set(prev).add(created.id));
+          setRevealed({ id: created.id, apiKey: key });
+          notify.success("密钥已创建", "请立即复制并妥善保存完整密钥");
+        }
       }
       setDialogOpen(false);
       await load();
@@ -217,11 +253,21 @@ export default function AdminTokens() {
     }
   }
 
+  function rememberRevealed(id: number) {
+    setRevealedIds((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }
+
   async function reveal(t: TokenItem) {
     if (!action.acquire()) return;
     try {
-      const r = await apiRequest<{ api_key: string }>(`/api/token/${t.id}/reveal`);
-      setRevealed(r.api_key);
+      const key = await fetchPlainKey(t.id);
+      rememberRevealed(t.id);
+      setRevealed({ id: t.id, apiKey: key });
     } catch (err) {
       notify.error("读取密钥失败", err instanceof ApiRequestError ? err.message : undefined);
     } finally {
@@ -229,12 +275,25 @@ export default function AdminTokens() {
     }
   }
 
-  async function copy(text: string) {
+  /**
+   * 复制必须先打 /reveal，再把返回的明文写入剪贴板。
+   * 列表上的 api_key 是打码串，不能直接复制。未 reveal 过的密钥按钮是禁用的。
+   */
+  async function copyToken(id: number) {
+    if (!revealedIds.has(id) || !action.acquire()) return;
     try {
-      await navigator.clipboard.writeText(text);
-      notify.success("已复制到剪贴板");
-    } catch {
-      notify.error("复制失败，请手动选中复制");
+      const key = await fetchPlainKey(id);
+      try {
+        await navigator.clipboard.writeText(key);
+        notify.success("已复制到剪贴板");
+      } catch {
+        setRevealed({ id, apiKey: key });
+        notify.error("复制失败", "完整密钥已显示，请手动选中复制");
+      }
+    } catch (err) {
+      notify.error("复制失败", err instanceof ApiRequestError ? err.message : undefined);
+    } finally {
+      action.release();
     }
   }
 
@@ -329,11 +388,18 @@ export default function AdminTokens() {
                   </div>
 
                   <div className={styles.keyRow}>
-                    <code className={styles.key}>{t.api_key}</code>
+                    <code className={styles.key} onCopy={(event) => event.preventDefault()}>{t.api_key}</code>
                     <button type="button" className={styles.miniBtn} onClick={() => void reveal(t)} disabled={action.busy || loading}>
                       显示
                     </button>
-                    <button type="button" className={styles.miniBtn} onClick={() => void copy(t.api_key)}>
+                    <button
+                      type="button"
+                      className={styles.miniBtn}
+                      onClick={() => void copyToken(t.id)}
+                      disabled={!revealedIds.has(t.id) || action.busy || loading}
+                      aria-label={revealedIds.has(t.id) ? "复制完整密钥" : "请先显示完整密钥后再复制"}
+                      title={revealedIds.has(t.id) ? "复制完整密钥" : "请先显示完整密钥"}
+                    >
                       复制
                     </button>
                   </div>
@@ -448,6 +514,27 @@ export default function AdminTokens() {
               onChange={(e) => setDraft({ ...draft, models: e.target.value })}
               description="只能填该分组允许的模型，填了范围外的会被拒绝"
             />
+
+            <div className={styles.switchRow}>
+              <Switch
+                label={draft.neverExpires ? "永不过期" : "设置有效期"}
+                checked={draft.neverExpires}
+                disabled={editing !== null}
+                onCheckedChange={(neverExpires) => setDraft({ ...draft, neverExpires })}
+              />
+            </div>
+            {editing && <p className={styles.groupHint}>有效期在创建时设定，之后不能修改。</p>}
+
+            {!draft.neverExpires && (
+              <Input
+                label="到期时间"
+                type="datetime-local"
+                value={draft.expiredAt}
+                disabled={editing !== null}
+                onChange={(e) => setDraft({ ...draft, expiredAt: e.target.value })}
+                description="到期后该密钥不能再调用接口"
+              />
+            )}
           </div>
 
           <div className={styles.dialogActions}>
@@ -465,11 +552,11 @@ export default function AdminTokens() {
       <Dialog open={revealed !== null} onOpenChange={(open) => !open && setRevealed(null)}>
         <DialogContent
           title="请立即复制密钥"
-          description="完整密钥只显示这一次，关闭后列表里只会看到打码版本。"
+          description="列表里只显示打码版本。复制会重新读取完整密钥，可直接作为 Bearer 调用 /v1。"
         >
-          <code className={styles.revealedKey}>{revealed}</code>
+          <code className={styles.revealedKey}>{revealed?.apiKey}</code>
           <div className={styles.dialogActions}>
-            <Button variant="secondary" size="sm" onClick={() => revealed && void copy(revealed)}>
+            <Button variant="secondary" size="sm" disabled={action.busy} onClick={() => revealed && void copyToken(revealed.id)}>
               复制
             </Button>
             <Button variant="primary" size="sm" onClick={() => setRevealed(null)}>
@@ -495,4 +582,23 @@ function formatOd(units: number, unitsPerUnit: number): string {
 function formatExpiry(raw: string): string {
   if (!raw) return "永不过期";
   return raw.replace("T", " ").slice(0, 16);
+}
+
+/** 把后端的 RFC3339 / DATETIME 收成 datetime-local 需要的本地时间。 */
+function toDatetimeLocal(raw: string): string {
+  if (!raw) return "";
+  const parsed = new Date(raw.includes("T") ? raw : raw.replace(" ", "T"));
+  if (Number.isNaN(parsed.getTime())) return raw.slice(0, 16);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+}
+
+/** 向 /reveal 要明文。打码串直接拒绝，避免写进剪贴板。 */
+async function fetchPlainKey(id: number): Promise<string> {
+  const r = await apiRequest<{ api_key: string }>(`/api/token/${id}/reveal`);
+  const key = (r.api_key ?? "").trim();
+  if (!isCallableKey(key)) {
+    throw new ApiRequestError("返回的不是可调用的完整密钥", "masked_key", 0);
+  }
+  return key;
 }

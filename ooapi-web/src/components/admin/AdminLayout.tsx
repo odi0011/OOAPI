@@ -12,6 +12,7 @@ import { AdminSidebar, ADMIN_NAV } from "@/components/admin/AdminSidebar";
 import { useNotifications } from "@/components/admin/useNotifications";
 import { useAppearance } from "@/contexts/AppearanceContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { Perm } from "@/lib/permissions";
 
 import styles from "./AdminLayout.module.css";
 
@@ -176,7 +177,10 @@ export default function AdminLayout({ crumbs, actions, children }: AdminLayoutPr
               showTheme={false}
               items={[
                 { label: "个人中心", onSelect: () => navigate("/admin/profile") },
-                { label: "系统设置", onSelect: () => navigate("/admin/system") },
+                // 与侧边栏同一条权限：没有 option:edit 就不出现，避免点进去被路由拦住。
+                ...(can(Perm.OptionEdit)
+                  ? [{ label: "系统设置", onSelect: () => navigate("/admin/system") }]
+                  : []),
                 { label: "返回前台", onSelect: () => { window.location.href = "/"; } },
               ]}
               onSignOut={() => void logout().then(() => { window.location.href = "/"; })}
