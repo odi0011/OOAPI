@@ -52,6 +52,7 @@ type Snapshot struct {
 	Side            Side    `json:"side,omitempty"`
 	EntryPrice      float64 `json:"entryPrice,omitempty"`
 	StopPrice       float64 `json:"stopPrice,omitempty"`
+	LiqPrice        float64 `json:"liqPrice,omitempty"`
 	TakeProfitPrice float64 `json:"takeProfitPrice,omitempty"`
 	Qty             float64 `json:"qty,omitempty"`
 	DayRealized     float64 `json:"dayRealizedUsdt"`
@@ -84,6 +85,7 @@ type position struct {
 	Entry float64
 	Stop  float64
 	Take  float64
+	Liq   float64
 }
 
 // Engine 把信号、风控和状态机串起来。调用方一次只推进一个线程。
@@ -98,6 +100,9 @@ type Engine struct {
 	lastError   string
 	lastAction  string
 	lastReason  string
+	lastEntry   float64
+	lastStop    float64
+	lastLiq     float64
 	lastBarKey  string
 	rFraction   float64
 	minNotional float64
@@ -146,11 +151,22 @@ func (e *Engine) Audit() []string {
 }
 
 func (e *Engine) Snapshot() Snapshot {
+	entry, stop, liq := e.pos.Entry, e.pos.Stop, e.pos.Liq
+	if entry <= 0 {
+		entry = e.lastEntry
+	}
+	if stop <= 0 {
+		stop = e.lastStop
+	}
+	if liq <= 0 {
+		liq = e.lastLiq
+	}
 	return Snapshot{
 		State:              e.State(),
 		Side:               e.pos.Side,
-		EntryPrice:         e.pos.Entry,
-		StopPrice:          e.pos.Stop,
+		EntryPrice:         entry,
+		StopPrice:          stop,
+		LiqPrice:           liq,
 		TakeProfitPrice:    e.pos.Take,
 		Qty:                e.pos.Qty,
 		DayRealized:        e.ledger.Realized,
@@ -315,6 +331,7 @@ func (e *Engine) Start(in StartInput) error {
 	if err := e.m.Transition(Event{Kind: EventStartOK, Reason: "start"}); err != nil {
 		return err
 	}
+	e.forgetPlan()
 	e.running = true
 	e.note("armed", "start")
 	return nil
@@ -340,7 +357,7 @@ func (e *Engine) Stop(in StepInput) error {
 		}
 		return nil
 	case StateError:
-		e.cancelAndFlatten()
+		e.cancelAndFlatten("error_flatten")
 		e.clearPos()
 		return e.m.Transition(Event{Kind: EventStop, Reason: "operator_stop"})
 	case StateBlocked, StateArmed:
@@ -449,6 +466,13 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 		}
 		return e.Snapshot(), err
 	}
+	stop, _, liq, err := e.quoteProtection(side, price)
+	if err != nil {
+		return e.Snapshot(), e.fail(err.Error())
+	}
+	if !StopWithinLiquidation(side, price, stop, liq) {
+		return e.blockStop(price, stop, liq)
+	}
 	if err := e.authorize(); err != nil {
 		return e.Snapshot(), err
 	}
@@ -493,15 +517,23 @@ func (e *Engine) acceptFill(fill Fill) (Snapshot, error) {
 	if err := e.m.Transition(Event{Kind: EventEntryFilled, Reason: "filled"}); err != nil {
 		return e.Snapshot(), e.fail(err.Error())
 	}
-	oneR := fill.Price * e.rFraction
-	stop, take, err := ProtectionPrices(fill.Side, fill.Price, oneR, e.cfg.StopR, e.cfg.TakeProfitR)
+	stop, take, liq, err := e.quoteProtection(fill.Side, fill.Price)
 	if err != nil {
 		return e.Snapshot(), e.fail(err.Error())
 	}
-	if err := e.ex.PlaceProtection(Protection{Symbol: e.cfg.Symbol, Stop: stop, Take: take, Side: fill.Side}); err != nil {
-		return e.Snapshot(), e.fail(err.Error())
+	e.rememberPlan(fill.Price, stop, liq)
+	if !StopWithinLiquidation(fill.Side, fill.Price, stop, liq) {
+		e.pos = position{Side: fill.Side, Qty: fill.Qty, Entry: fill.Price, Stop: stop, Take: take, Liq: liq}
+		e.log.Printf("[trading] %s entry=%.8f stop=%.8f liq=%.8f", ReasonStopBeyondLiquidation, fill.Price, stop, liq)
+		return e.Snapshot(), e.fail(ReasonStopBeyondLiquidation)
 	}
-	e.pos = position{Side: fill.Side, Qty: fill.Qty, Entry: fill.Price, Stop: stop, Take: take}
+	if err := e.ex.PlaceProtection(Protection{Symbol: e.cfg.Symbol, Stop: stop, Take: take, Side: fill.Side}); err != nil {
+		e.pos = position{Side: fill.Side, Qty: fill.Qty, Entry: fill.Price, Stop: stop, Take: take, Liq: liq}
+		e.log.Printf("[trading] %s: %v stop=%.8f liq=%.8f", ReasonProtectiveOrdersFailed, err, stop, liq)
+		return e.Snapshot(), e.fail(ReasonProtectiveOrdersFailed)
+	}
+	e.pos = position{Side: fill.Side, Qty: fill.Qty, Entry: fill.Price, Stop: stop, Take: take, Liq: liq}
+	e.log.Printf("[trading] entry %s entry=%.8f stop=%.8f liq=%.8f", fill.Side, fill.Price, stop, liq)
 	e.note("entry", string(fill.Side))
 	return e.Snapshot(), nil
 }
@@ -615,6 +647,7 @@ func (e *Engine) finishExit(in StepInput, reason string, price ...float64) (Snap
 	pnl := RealizedPnL(e.pos.Side, e.pos.Entry, fill.Price, e.pos.Qty)
 	halted := e.ledger.Add(pnl, e.cfg.DailyLossPct)
 	e.clearPos()
+	e.forgetPlan()
 	if halted {
 		if err := e.m.Transition(Event{Kind: EventDailyHalt, Reason: "daily_loss"}); err != nil {
 			return e.Snapshot(), err
@@ -635,7 +668,7 @@ func (e *Engine) finishExit(in StepInput, reason string, price ...float64) (Snap
 	return e.Snapshot(), nil
 }
 
-func (e *Engine) cancelAndFlatten() {
+func (e *Engine) cancelAndFlatten(reason string) {
 	if e.ex == nil || e.cfg.Symbol == "" {
 		return
 	}
@@ -649,13 +682,21 @@ func (e *Engine) cancelAndFlatten() {
 		price = e.pos.Entry
 	}
 	if price <= 0 {
+		price = e.lastEntry
+	}
+	if price <= 0 {
 		return
 	}
-	_, _ = e.ex.Close(CloseOrder{Symbol: e.cfg.Symbol, Price: price, Reason: "error_flatten"})
+	if reason == "" {
+		reason = "error_flatten"
+	}
+	if _, err := e.ex.Close(CloseOrder{Symbol: e.cfg.Symbol, Price: price, Reason: reason}); err != nil {
+		e.log.Printf("[trading] flatten %s failed: %v", reason, err)
+	}
 }
 
 func (e *Engine) fail(reason string) error {
-	e.cancelAndFlatten()
+	e.cancelAndFlatten(reason)
 	e.running = false
 	e.clearPos()
 	e.lastError = reason
@@ -673,6 +714,57 @@ func (e *Engine) fail(reason string) error {
 }
 
 func (e *Engine) clearPos() { e.pos = position{} }
+
+func (e *Engine) rememberPlan(entry, stop, liq float64) {
+	e.lastEntry = entry
+	e.lastStop = stop
+	e.lastLiq = liq
+}
+
+func (e *Engine) forgetPlan() {
+	e.lastEntry = 0
+	e.lastStop = 0
+	e.lastLiq = 0
+}
+
+// quoteProtection 用入场价的固定比例算 1R，再换成止损、止盈和逐仓强平价。
+// 1R = entry * DefaultRFraction（默认 0.8%）。止损距离 = stopR * 1R。
+func (e *Engine) quoteProtection(side Side, entry float64) (stop, take, liq float64, err error) {
+	oneR := entry * e.rFraction
+	stop, take, err = ProtectionPrices(side, entry, oneR, e.cfg.StopR, e.cfg.TakeProfitR)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	liq, err = IsolatedLiqPrice(side, entry, e.cfg.Leverage, e.maintMarginRate())
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return stop, take, liq, nil
+}
+
+func (e *Engine) maintMarginRate() float64 {
+	type lookup interface {
+		MaintMarginRate(symbol string, leverage int) (float64, bool)
+	}
+	if src, ok := e.ex.(lookup); ok {
+		if rate, ok := src.MaintMarginRate(e.cfg.Symbol, e.cfg.Leverage); ok && rate > 0 && rate < 1 {
+			return rate
+		}
+	}
+	return DefaultMaintMarginRate
+}
+
+func (e *Engine) blockStop(entry, stop, liq float64) (Snapshot, error) {
+	e.rememberPlan(entry, stop, liq)
+	e.note("blocked", ReasonStopBeyondLiquidation)
+	line := fmt.Sprintf("%s entry=%.8f stop=%.8f liq=%.8f", ReasonStopBeyondLiquidation, entry, stop, liq)
+	e.audit = append(e.audit, line)
+	e.log.Printf("[trading] %s", line)
+	if err := e.m.Transition(Event{Kind: EventStartBlocked, Reason: ReasonStopBeyondLiquidation}); err != nil {
+		return e.Snapshot(), err
+	}
+	return e.Snapshot(), withReason(ErrBlocked, ReasonStopBeyondLiquidation)
+}
 
 // SeedPositionForTest 写入内存持仓和参考价，方便交易台读入场、止损、止盈。
 // 只给测试用，不访问交易所，也不会发单。

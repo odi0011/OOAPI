@@ -2,19 +2,22 @@ package handlers
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"math"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"ooapi/internal/trading"
 )
 
 // 策略字段与验收表 / 前端壳一致：
 // symbol, leverage, marginMode, emaFast, emaSlow, timeframe,
 // stopR, takeProfitR, dailyLossPct, maxMarginUsdt, exchangeKeyId, mode.
 //
-// 省略的字段在创建时用首发默认值。v1 只接受 XRPUSDT、逐仓、杠杆不超过 3。
+// 省略的字段在创建时用首发默认值。v1 只接受 XRPUSDT、逐仓、杠杆不超过 trading.MaxLeverage。
 // mode=live 允许写入，并在响应里警告：运行时必须测网全绿，由策略引擎强制，本接口不下单。
 
 const (
@@ -471,8 +474,8 @@ func validateStrategy(rec strategyRecord, missingKey bool) *tradingError {
 	if rec.MarginMode != strategyMarginMode {
 		return &tradingError{http.StatusBadRequest, "v1 只允许逐仓（isolated）", "invalid_margin_mode"}
 	}
-	if rec.Leverage < 1 || rec.Leverage > 3 {
-		return &tradingError{http.StatusBadRequest, "杠杆必须是 1 到 3 的整数", "invalid_leverage"}
+	if rec.Leverage < 1 || rec.Leverage > trading.MaxLeverage {
+		return &tradingError{http.StatusBadRequest, fmt.Sprintf("杠杆必须是 1 到 %d 的整数", trading.MaxLeverage), "invalid_leverage"}
 	}
 	if _, ok := strategyTimeframes[rec.Timeframe]; !ok {
 		return &tradingError{http.StatusBadRequest, "K 线周期只支持 1m、3m、5m、15m", "invalid_timeframe"}
@@ -483,8 +486,8 @@ func validateStrategy(rec strategyRecord, missingKey bool) *tradingError {
 	if !validRisk(rec.StopR, 20) || !validRisk(rec.TakeProfitR, 20) {
 		return &tradingError{http.StatusBadRequest, "止损和止盈要大于 0 且不超过 20", "invalid_risk"}
 	}
-	if !validRisk(rec.DailyLossPct, 100) {
-		return &tradingError{http.StatusBadRequest, "日亏停机阈值要大于 0 且不超过 100", "invalid_risk"}
+	if !validRisk(rec.DailyLossPct, trading.DailyLossOffPct) {
+		return &tradingError{http.StatusBadRequest, fmt.Sprintf("日亏停机阈值要大于 0 且不超过 %g", float64(trading.DailyLossOffPct)), "invalid_risk"}
 	}
 	if !validRisk(rec.MaxMarginUsdt, 1_000_000) {
 		return &tradingError{http.StatusBadRequest, "单笔保证金上限要大于 0", "invalid_risk"}
