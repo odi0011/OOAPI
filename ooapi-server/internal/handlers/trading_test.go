@@ -414,10 +414,50 @@ func TestRunningXRPRejectsSecondStrategy(t *testing.T) {
 	if dup.Code != http.StatusConflict || tradingCode(t, dup) != "symbol_in_use" {
 		t.Fatalf("dup create = %d %s", dup.Code, dup.Body.String())
 	}
-	other := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+	symbols := []string{"DOGEUSDT", "SOLUSDT", "ETHUSDT"}
+	for _, symbol := range symbols {
+		created := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+			fmt.Sprintf(`{"exchangeKeyId": %d, "symbol": %q, "entryMode": "trend"}`, keyID, symbol), owner, "")
+		if created.Code != http.StatusOK || tradingData(t, created)["symbol"] != symbol {
+			t.Fatalf("create %s = %d %s", symbol, created.Code, created.Body.String())
+		}
+		id := int64(tradingData(t, created)["id"].(float64))
+		started := callTrading(t, StartTradingEngine, http.MethodPost, "/api/trading/engine/start", fmt.Sprintf(`{
+			"strategyId": %d,
+			"equityUsdt": 20
+		}`, id), owner, "")
+		if started.Code != http.StatusOK || tradingData(t, started)["running"] != true {
+			t.Fatalf("start %s = %d %s", symbol, started.Code, started.Body.String())
+		}
+	}
+	listed := callTrading(t, ListTradingEngines, http.MethodGet, "/api/trading/engines", "", owner, "")
+	items := tradingItems(t, listed)
+	if len(items) != 4 {
+		t.Fatalf("engines = %d %s", len(items), listed.Body.String())
+	}
+	seen := map[string]bool{}
+	for _, raw := range items {
+		item := raw.(map[string]any)
+		seen[item["symbol"].(string)] = true
+	}
+	for _, symbol := range append([]string{"XRPUSDT"}, symbols...) {
+		if !seen[symbol] {
+			t.Fatalf("missing %s in %v", symbol, seen)
+		}
+	}
+	totals := tradingData(t, listed)["totals"].(map[string]any)
+	if totals["engines"] != float64(4) || totals["openPositions"] != float64(0) {
+		t.Fatalf("totals %+v", totals)
+	}
+	dupDog := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
 		fmt.Sprintf(`{"exchangeKeyId": %d, "symbol": "DOGEUSDT"}`, keyID), owner, "")
-	if other.Code != http.StatusBadRequest || tradingCode(t, other) != "invalid_symbol" {
-		t.Fatalf("other symbol = %d %s", other.Code, other.Body.String())
+	if dupDog.Code != http.StatusConflict || tradingCode(t, dupDog) != "symbol_in_use" {
+		t.Fatalf("second doge = %d %s", dupDog.Code, dupDog.Body.String())
+	}
+	bad := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+		fmt.Sprintf(`{"exchangeKeyId": %d, "symbol": "BTCUSD"}`, keyID), owner, "")
+	if bad.Code != http.StatusBadRequest || tradingCode(t, bad) != "invalid_symbol" {
+		t.Fatalf("bad symbol = %d %s", bad.Code, bad.Body.String())
 	}
 }
 

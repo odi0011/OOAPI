@@ -17,7 +17,7 @@ import (
 // symbol, leverage, marginMode, emaFast, emaSlow, timeframe,
 // stopR, takeProfitR, dailyLossPct, maxMarginUsdt, exchangeKeyId, mode.
 //
-// 省略的字段在创建时用首发默认值。交易对是 USDT 永续，逐仓，杠杆不超过 trading.MaxLeverage。
+// 省略的字段在创建时用首发默认值。交易对是币安 USDT 永续（默认 XRPUSDT），逐仓，杠杆不超过 trading.MaxLeverage。
 // entryMode 新建默认 trend；库列默认 cross，已有行不会被迁移改掉。
 // mode=live 允许写入，并在响应里警告：运行时必须测网全绿，由策略引擎强制，本接口不下单。
 
@@ -560,8 +560,8 @@ func applyStrategyWrite(base strategyRecord, in strategyWrite, creating bool) (s
 }
 
 func validateStrategy(rec strategyRecord, missingKey bool) *tradingError {
-	if rec.Symbol != strategySymbol {
-		return &tradingError{http.StatusBadRequest, "v1 交易对只支持 XRPUSDT", "invalid_symbol"}
+	if !trading.AllowedSymbol(rec.Symbol) {
+		return &tradingError{http.StatusBadRequest, "交易对必须是 USDT 永续代码，例如 XRPUSDT、DOGEUSDT", "invalid_symbol"}
 	}
 	if rec.MarginMode != strategyMarginMode {
 		return &tradingError{http.StatusBadRequest, "v1 只允许逐仓（isolated）", "invalid_margin_mode"}
