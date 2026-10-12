@@ -307,6 +307,7 @@ var schemaStatements = []string{
 		entry_mode       VARCHAR(16)     NOT NULL DEFAULT 'cross',
 		min_score        INT             NOT NULL DEFAULT 4,
 		min_win_rate     DECIMAL(8,4)    NOT NULL DEFAULT 0.5000,
+		min_trades       INT             NOT NULL DEFAULT 30,
 		running          TINYINT         NOT NULL DEFAULT 0,
 		created_at       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -413,6 +414,7 @@ var columnMigrations = map[string][]columnDef{
 		{"entry_mode", "VARCHAR(16) NOT NULL DEFAULT 'cross'"},
 		{"min_score", "INT NOT NULL DEFAULT 4"},
 		{"min_win_rate", "DECIMAL(8,4) NOT NULL DEFAULT 0.5000"},
+		{"min_trades", "INT NOT NULL DEFAULT 30"},
 		{"running", "TINYINT NOT NULL DEFAULT 0"},
 	},
 	"logs": {

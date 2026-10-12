@@ -264,6 +264,7 @@ func strategyConfig(row strategyRow) trading.Config {
 		EntryMode:     rec.EntryMode,
 		MinScore:      rec.MinScore,
 		MinWinRate:    rec.MinWinRate,
+		MinTrades:     rec.MinTrades,
 	}.Normalize()
 }
 

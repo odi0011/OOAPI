@@ -481,6 +481,7 @@ func assertStrategyDefaults(t *testing.T, view map[string]any) {
 		{"entryMode", trading.EntryModeTrend},
 		{"minScore", float64(trading.DefaultMinScore)},
 		{"minWinRate", trading.DefaultMinWinRate},
+		{"minTrades", float64(trading.DefaultMinTrades)},
 	}
 	for _, check := range checks {
 		got := view[check.key]
@@ -771,12 +772,13 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 				DailyLossPct: tradingArgFloat(vals[9]), MaxMarginUsdt: tradingArgFloat(vals[10]),
 				ExchangeKeyID: tradingArgInt(vals[11]), Mode: tradingArgString(vals[12]),
 				EntryMode: tradingArgString(vals[13]), MinScore: int(tradingArgInt(vals[14])),
-				MinWinRate: tradingArgFloat(vals[15]), Running: tradingArgInt(vals[16]) == 1,
+				MinWinRate: tradingArgFloat(vals[15]), MinTrades: int(tradingArgInt(vals[16])),
+				Running: tradingArgInt(vals[17]) == 1,
 			},
 		}
 		return tradingTestResult{id, 1}, nil
 	case normTradingSQL(strategyUpdateSQL):
-		id, userID := tradingArgInt(vals[15]), tradingArgInt(vals[16])
+		id, userID := tradingArgInt(vals[16]), tradingArgInt(vals[17])
 		row := d.strategies[id]
 		if row == nil || row.userID != userID {
 			return tradingTestResult{0, 0}, nil
@@ -790,7 +792,8 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 			DailyLossPct: tradingArgFloat(vals[8]), MaxMarginUsdt: tradingArgFloat(vals[9]),
 			ExchangeKeyID: tradingArgInt(vals[10]), Mode: tradingArgString(vals[11]),
 			EntryMode: tradingArgString(vals[12]), MinScore: int(tradingArgInt(vals[13])),
-			MinWinRate: tradingArgFloat(vals[14]), Running: running,
+			MinWinRate: tradingArgFloat(vals[14]), MinTrades: int(tradingArgInt(vals[15])),
+			Running: running,
 		}
 		row.updatedAt = d.stampLocked()
 		return tradingTestResult{0, 1}, nil
@@ -897,7 +900,7 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 	cols := []string{
 		"id", "symbol", "leverage", "margin_mode", "ema_fast", "ema_slow", "timeframe",
 		"stop_r", "take_profit_r", "daily_loss_pct", "max_margin_usdt", "exchange_key_id", "mode",
-		"entry_mode", "min_score", "min_win_rate", "running",
+		"entry_mode", "min_score", "min_win_rate", "min_trades", "running",
 		"created_at", "updated_at", "network", "status", "label",
 	}
 	type pair struct {
@@ -935,7 +938,7 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 		values = append(values, []driver.Value{
 			row.id, rec.Symbol, int64(rec.Leverage), rec.MarginMode, int64(rec.EmaFast), int64(rec.EmaSlow), rec.Timeframe,
 			rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
-			rec.EntryMode, int64(rec.MinScore), rec.MinWinRate, running,
+			rec.EntryMode, int64(rec.MinScore), rec.MinWinRate, int64(rec.MinTrades), running,
 			row.createdAt, row.updatedAt, network, status, label,
 		})
 	}
