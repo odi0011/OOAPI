@@ -14,8 +14,7 @@ import sectionStyles from "./sections/Section.module.css";
 import settingsStyles from "./AdminSettings.module.css";
 import styles from "./AdminTrading.module.css";
 import SettingsRail from "./SettingsRail";
-import TradingDesk, { type DeskReadErrors } from "./TradingDesk";
-import { ACCOUNT_PATH } from "./settingsNav";
+import { ACCOUNT_PATH, DASHBOARD_PATH } from "./settingsNav";
 import {
   TIMEFRAMES,
   DEFAULT_EXCHANGE_KEY_ID,
@@ -23,9 +22,6 @@ import {
   createStrategy,
   deleteStrategy,
   discardLegacyStrategyDraft,
-  getEngineMarket,
-  getEngineOrders,
-  getEnginePosition,
   getEngineState,
   listExchangeKeys,
   listStrategies,
@@ -33,9 +29,6 @@ import {
   startEngine,
   stepEngine,
   updateStrategy,
-  type EngineMarket,
-  type EngineOrders,
-  type EnginePosition,
   type EngineState,
   type ExchangeKey,
   type Strategy,
@@ -56,7 +49,8 @@ import {
  *
  * 列表按 updatedAt 倒序，页面只编辑 items[0]。没有记录时 POST，已有则 PATCH。
  * mode=live 可以保存；引擎必须测网全绿才会真下单。
- * 本页可以启动和推进，但不会打开测网全绿门闩。
+ * 本页只放配置，可以启动和推进，但不会打开测网全绿门闩。
+ * 行情、持仓、委托和盈亏在侧栏「交易 → 数据看板」。
  */
 
 interface StrategyDraft {
@@ -164,12 +158,6 @@ function errorText(err: unknown, fallback: string): string {
   return err instanceof ApiRequestError ? err.message : fallback;
 }
 
-function accountLabel(key: ExchangeKey | null): string {
-  if (!key) return "未绑定";
-  const name = key.label.trim() || `账户 #${key.id}`;
-  return key.revoked ? `${name}（已作废）` : name;
-}
-
 export default function AdminTrading() {
   const notify = useNotify();
   const action = useAsyncGuard();
@@ -183,13 +171,7 @@ export default function AdminTrading() {
   const [saving, setSaving] = useState(false);
   const [liveGate, setLiveGate] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [saved, setSaved] = useState<Strategy | null>(null);
   const [engine, setEngine] = useState<EngineState | null>(null);
-  const [market, setMarket] = useState<EngineMarket | null>(null);
-  const [position, setPosition] = useState<EnginePosition | null>(null);
-  const [orders, setOrders] = useState<EngineOrders | null>(null);
-  const [readErrors, setReadErrors] = useState<DeskReadErrors>({});
-  const [dismissedError, setDismissedError] = useState("");
   const [equity, setEquity] = useState(100);
   const [engineBusy, setEngineBusy] = useState<"start" | "step" | null>(null);
 
@@ -199,50 +181,29 @@ export default function AdminTrading() {
     setExtraCount(Math.max(0, items.length - 1));
     if (!current) {
       setStrategyId(null);
-      setSaved(null);
       setWarnings([]);
       setDraft(DEFAULT_DRAFT);
       return;
     }
     setStrategyId(current.id);
-    setSaved(current);
     setWarnings(current.warnings ?? []);
     setDraft(draftFromStrategy(current));
   }, []);
 
-  const refreshDesk = useCallback(async (id: number | null) => {
+  const refreshEngine = useCallback(async (id: number | null) => {
     if (id == null) {
       setEngine(null);
-      setMarket(null);
-      setPosition(null);
-      setOrders(null);
-      setReadErrors({});
       return;
     }
-    const [state, marketRes, positionRes, ordersRes] = await Promise.allSettled([
-      getEngineState(id),
-      getEngineMarket(id),
-      getEnginePosition(id),
-      getEngineOrders(id),
-    ]);
-    if (state.status === "rejected" && state.reason instanceof ApiRequestError && state.reason.status === 404) {
-      setEngine(null);
-      setMarket(null);
-      setPosition(null);
-      setOrders(null);
-      setReadErrors({});
-      return;
+    try {
+      setEngine(await getEngineState(id));
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 404) {
+        setEngine(null);
+        return;
+      }
+      // 配置页不靠状态条撑着。读失败就留上次的状态，保存和启动仍可用。
     }
-    const nextErrors: DeskReadErrors = {};
-    if (state.status === "fulfilled") setEngine(state.value);
-    else nextErrors.state = errorText(state.reason, "读取状态失败");
-    if (marketRes.status === "fulfilled") setMarket(marketRes.value);
-    else nextErrors.market = errorText(marketRes.reason, "读取 K 线失败");
-    if (positionRes.status === "fulfilled") setPosition(positionRes.value);
-    else nextErrors.position = errorText(positionRes.reason, "读取持仓失败");
-    if (ordersRes.status === "fulfilled") setOrders(ordersRes.value);
-    else nextErrors.orders = errorText(ordersRes.reason, "读取委托失败");
-    setReadErrors(nextErrors);
   }, []);
 
   const load = useCallback(async () => {
@@ -252,13 +213,13 @@ export default function AdminTrading() {
     try {
       const [strategies, keyItems] = await Promise.all([listStrategies(), listExchangeKeys()]);
       applyLoaded(strategies, keyItems);
-      await refreshDesk(strategies[0]?.id ?? null);
+      await refreshEngine(strategies[0]?.id ?? null);
     } catch (err) {
       setLoadError(errorText(err, "加载策略失败"));
     } finally {
       setLoading(false);
     }
-  }, [applyLoaded, refreshDesk]);
+  }, [applyLoaded, refreshEngine]);
 
   useEffect(() => {
     void load();
@@ -268,10 +229,10 @@ export default function AdminTrading() {
     if (strategyId == null) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState === "hidden") return;
-      void refreshDesk(strategyId);
+      void refreshEngine(strategyId);
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [strategyId, refreshDesk]);
+  }, [strategyId, refreshEngine]);
 
   const activeKeys = keys.filter((key) => !key.revoked);
   const selectedKey = activeKeys.find((key) => key.id === draft.exchangeKeyId) ?? null;
@@ -308,10 +269,9 @@ export default function AdminTrading() {
         ? await createStrategy(body)
         : await updateStrategy(strategyId, body);
       setStrategyId(saved.id);
-      setSaved(saved);
       setWarnings(saved.warnings ?? []);
       setDraft(draftFromStrategy(saved));
-      await refreshDesk(saved.id);
+      await refreshEngine(saved.id);
       if (saved.mode === "live") {
         notify.success("实盘配置已保存", "引擎须测网全绿才会真下单。这次只写入了配置。");
       } else {
@@ -342,7 +302,7 @@ export default function AdminTrading() {
         : await stepEngine(strategyId);
       setEngine(next);
       notify.success(kind === "start" ? "引擎已启动" : "已推进一次", `当前状态 ${next.state}`);
-      void refreshDesk(strategyId);
+      void refreshEngine(strategyId);
     } catch (err) {
       notify.error(kind === "start" ? "启动失败" : "推进失败", errorText(err, "请稍后再试"));
     } finally {
@@ -359,7 +319,7 @@ export default function AdminTrading() {
       notify.success("策略已删除");
       const [strategies, keyItems] = await Promise.all([listStrategies(), listExchangeKeys()]);
       applyLoaded(strategies, keyItems);
-      await refreshDesk(strategies[0]?.id ?? null);
+      await refreshEngine(strategies[0]?.id ?? null);
     } catch (err) {
       notify.error("删除失败", errorText(err, "请稍后再试"));
     } finally {
@@ -400,7 +360,8 @@ export default function AdminTrading() {
           <div>
             <h1 className={styles.title}>策略</h1>
             <p className={styles.lead}>
-              首发只做 XRPUSDT 的短周期 EMA 趋势，逐仓，杠杆不超过 3 倍。每单都要填止损和止盈。上面是运行台，下面是配置。
+              首发只做 XRPUSDT 的短周期 EMA 趋势，逐仓，杠杆不超过 3 倍。每单都要填止损和止盈。
+              行情在<Link to={DASHBOARD_PATH}>交易 → 数据看板</Link>，交易所密钥在<Link to={ACCOUNT_PATH}>交易 → 账户</Link>。
             </p>
           </div>
         </header>
@@ -408,23 +369,6 @@ export default function AdminTrading() {
         <div className={settingsStyles.layout}>
           <SettingsRail current="strategy" />
           <div className={settingsStyles.formArea}>
-            <TradingDesk
-              engine={engine}
-              market={market}
-              position={position}
-              orders={orders}
-              loading={loading}
-              readErrors={readErrors}
-              symbol={saved?.symbol ?? draft.symbol}
-              leverage={saved?.leverage ?? draft.leverage}
-              marginMode={saved?.marginMode ?? draft.marginMode}
-              timeframe={saved?.timeframe ?? draft.timeframe}
-              mode={saved?.mode ?? draft.mode}
-              accountLabel={accountLabel(saved ? keys.find((key) => key.id === saved.exchangeKeyId) ?? null : selectedKey)}
-              dismissedError={dismissedError}
-              onDismissError={() => setDismissedError(engine?.lastError?.trim() ?? "")}
-            />
-
         {loading ? (
           <p className={styles.status}>正在读取策略…</p>
         ) : loadError ? (

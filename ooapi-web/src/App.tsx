@@ -16,6 +16,7 @@ import AdminDashboard from "@/pages/admin/AdminDashboard";
 import AdminChannels from "@/pages/admin/AdminChannels";
 import AdminExchangeKeys from "@/pages/admin/AdminExchangeKeys";
 import AdminTrading from "@/pages/admin/AdminTrading";
+import AdminTradingDashboard from "@/pages/admin/AdminTradingDashboard";
 import AdminLogs from "@/pages/admin/AdminLogs";
 import AdminMedia from "@/pages/admin/AdminMedia";
 import AdminOperationLogs from "@/pages/admin/AdminOperationLogs";
@@ -114,7 +115,7 @@ export default function App() {
                   }
                 />
 
-                {/* 策略在系统设置的交易分组里。读写策略，可启动引擎，不下单门闩。 */}
+                {/* 策略配置留在系统设置。只改配置，交易台不在这一页。 */}
                 <Route
                   path="/admin/system/strategy"
                   element={
@@ -124,9 +125,19 @@ export default function App() {
                   }
                 />
 
+                {/* 交易台：状态、K 线、持仓、委托、盈亏。只读，走 option:edit。 */}
+                <Route
+                  path="/admin/trading/dashboard"
+                  element={
+                    <RequireAuth permission={Perm.OptionEdit}>
+                      <AdminTradingDashboard />
+                    </RequireAuth>
+                  }
+                />
+
                 {/* 账户：交易所 API 绑定。登录即可。明文只经 reveal。 */}
                 <Route
-                  path="/admin/system/account"
+                  path="/admin/trading/account"
                   element={
                     <RequireAuth>
                       <AdminExchangeKeys />
@@ -134,8 +145,9 @@ export default function App() {
                   }
                 />
 
-                <Route path="/admin/trading" element={<Navigate to="/admin/system/strategy" replace />} />
-                <Route path="/admin/exchange-keys" element={<Navigate to="/admin/system/account" replace />} />
+                <Route path="/admin/trading" element={<Navigate to="/admin/trading/dashboard" replace />} />
+                <Route path="/admin/system/account" element={<Navigate to="/admin/trading/account" replace />} />
+                <Route path="/admin/exchange-keys" element={<Navigate to="/admin/trading/account" replace />} />
 
                 {/* 个人中心 */}
                 <Route

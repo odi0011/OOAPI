@@ -1,3 +1,37 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.pageHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.pageTitle {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.pageLead {
+  margin: 4px 0 0;
+  max-width: 72ch;
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+  color: var(--text-secondary);
+}
+
+.pageLead a {
+  margin: 0 0.2em;
+  color: var(--accent-strong, var(--accent));
+}
+
 .desk {
   display: flex;
   flex-direction: column;
@@ -98,13 +132,17 @@
   color: var(--text-secondary);
 }
 
-.svg {
-  display: block;
+.chartHost {
   width: 100%;
-  height: auto;
+  height: 420px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-control);
-  background: var(--surface-muted);
+  overflow: hidden;
+  background: #ffffff;
+}
+
+:root[data-theme="dark"] .chartHost {
+  background: #131722;
 }
 
 .levels {

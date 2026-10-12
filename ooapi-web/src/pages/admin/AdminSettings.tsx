@@ -37,7 +37,7 @@ export interface SiteSettings {
 /**
  * 分区导航。
  * 「登录与注册」与其余分区同处一页。
- * 「交易」分组在 SettingsRail 里，和这些分区同级，子页是策略与账户。
+ * 策略是同级的配置页。设置里没有「交易」分组，也没有账户。
  */
 const SECTIONS = SETTINGS_SECTIONS;
 

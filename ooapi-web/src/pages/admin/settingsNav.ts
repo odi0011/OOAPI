@@ -1,6 +1,7 @@
 /**
  * 系统设置左侧分区。
- * 「交易」与外观、站点同级，子项是策略和账户，不再占侧栏一级。
+ * 策略配置留在这里，和外观、站点同级，不再套「交易」分组。
+ * 数据看板和账户在侧栏「交易」下，不进设置。
  */
 
 export interface SettingsSection {
@@ -19,30 +20,14 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
 ];
 
 export const STRATEGY_PATH = "/admin/system/strategy";
-export const ACCOUNT_PATH = "/admin/system/account";
+export const DASHBOARD_PATH = "/admin/trading/dashboard";
+export const ACCOUNT_PATH = "/admin/trading/account";
 
-export interface TradingNavItem {
-  key: "strategy" | "account";
-  label: string;
-  href: string;
-  entries: string[];
-  requiredPermission?: "option:edit";
-}
-
-export const TRADING_GROUP_LABEL = "交易";
-
-export const TRADING_NAV: TradingNavItem[] = [
-  {
-    key: "strategy",
-    label: "策略",
-    href: STRATEGY_PATH,
-    entries: ["策略", "状态", "K线", "持仓", "委托", "盈亏"],
-    requiredPermission: "option:edit",
-  },
-  {
-    key: "account",
-    label: "账户",
-    href: ACCOUNT_PATH,
-    entries: ["账户", "API Key", "测网", "实盘", "绑定"],
-  },
-];
+/** 系统设置里的策略页。只放配置，不放行情和账户。 */
+export const STRATEGY_NAV = {
+  key: "strategy",
+  label: "策略",
+  href: STRATEGY_PATH,
+  entries: ["策略", "杠杆", "止损", "止盈", "EMA", "逐仓", "测网", "实盘"],
+  requiredPermission: "option:edit" as const,
+};
