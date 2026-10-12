@@ -94,7 +94,7 @@ async function decodeImage(file: File): Promise<DecodedImage> {
  * multipart 请求。
  *
  * apiRequest 会为带 body 的请求强制 JSON Content-Type，不能用于 FormData；
- * 因此这里直接用 fetch + localStorage 里的令牌，并保持与 apiRequest 相同的
+ * 因此这里直接用 fetch（登录态走 cookie），并保持与 apiRequest 相同的
  * {success,data,error} 解包与错误约定（同源相对路径，与 apiRequest 一致）。
  */
 export default function AvatarUploader({ open, onClose, onDone, currentAvatar, userName }: AvatarUploaderProps) {

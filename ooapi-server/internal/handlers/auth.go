@@ -13,6 +13,7 @@ import (
 	"ooapi/internal/auth"
 	"ooapi/internal/authz"
 	"ooapi/internal/db"
+	"ooapi/internal/middleware"
 	"ooapi/internal/services"
 )
 
@@ -37,6 +38,10 @@ func Register(c *gin.Context) {
 	}
 
 	username := authz.NormalizeUsername(req.Username)
+	if err := services.AllowAuthAttempt(c.ClientIP(), username, strings.TrimSpace(req.Email)); err != nil {
+		fail(c, http.StatusTooManyRequests, err.Error(), "rate_limited")
+		return
+	}
 	if err := authz.ValidateUsername(username); err != nil {
 		fail(c, http.StatusBadRequest, err.Error(), "invalid_username")
 		return
@@ -111,7 +116,7 @@ func Register(c *gin.Context) {
 	}
 
 	uid, _ := res.LastInsertId()
-	token, err := auth.Issue(services.JWTSecret(), uid, username, defaultRole)
+	token, err := issueSessionToken(uid, username, defaultRole)
 	if err != nil {
 		log.Printf("[register] 签发令牌失败: %v", err)
 		fail(c, http.StatusInternalServerError, "注册成功但登录失败，请手动登录", "server_error")
@@ -122,7 +127,6 @@ func Register(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"token": token,
 			"user": gin.H{
 				"id":         uid,
 				"username":   username,
@@ -159,16 +163,20 @@ func Login(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "请填写用户名与密码", "bad_request")
 		return
 	}
+	if err := services.AllowAuthAttempt(c.ClientIP(), username); err != nil {
+		fail(c, http.StatusTooManyRequests, err.Error(), "rate_limited")
+		return
+	}
 
 	var (
-		id       int64
-		hash     string
-		role     int
-		status   int
-		quota    int64
-		group    string
-		display  string
-		email    string
+		id      int64
+		hash    string
+		role    int
+		status  int
+		quota   int64
+		group   string
+		display string
+		email   string
 	)
 	err := db.DB.QueryRow(
 		`SELECT id, password_hash, role, status, quota, group_name, display_name, email
@@ -198,7 +206,7 @@ func Login(c *gin.Context) {
 	}
 
 	r := authz.ParseRole(role)
-	token, err := auth.Issue(services.JWTSecret(), id, username, role)
+	token, err := issueSessionToken(id, username, role)
 	if err != nil {
 		log.Printf("[login] 签发令牌失败: %v", err)
 		fail(c, http.StatusInternalServerError, "登录失败，请稍后重试", "server_error")
@@ -217,7 +225,6 @@ func Login(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"token": token,
 			"user": gin.H{
 				"id":           id,
 				"username":     username,
@@ -233,10 +240,21 @@ func Login(c *gin.Context) {
 	})
 }
 
-// Logout 清除 cookie。
-// JWT 无状态，服务端无法单方面吊销；真正的失效靠短有效期与改密后重新签发。
+// Logout 作废当前会话并清除 cookie。
+// 会话版本加一之后，同一用户尚未过期的 Bearer（包括浏览器 localStorage 里的旧令牌）立即失效。
 func Logout(c *gin.Context) {
-	c.SetCookie("ooapi_token", "", -1, "/", "", true, true)
+	if raw := middleware.ExtractToken(c); raw != "" {
+		if claims, err := auth.Parse(services.JWTSecret(), raw); err == nil && claims.UserID > 0 {
+			// 只作废「仍然有效」的会话。过期令牌再来退出不能把用户刚签发的新会话一起踢掉。
+			if _, err := db.DB.Exec(
+				`UPDATE users SET session_version = session_version + 1 WHERE id = ? AND session_version = ?`,
+				claims.UserID, claims.SessionVersion,
+			); err != nil {
+				log.Printf("[logout] 作废会话失败: %v", err)
+			}
+		}
+	}
+	clearAuthCookie(c)
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
@@ -256,29 +274,57 @@ func Me(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"id":           user.ID,
-			"username":     user.Username,
-			"display_name": user.DisplayName,
-			"email":        user.Email,
-			"role":         int(role),
-			"role_name":    role.Name(),
-			"quota":        user.Quota,
-			"used_quota":   user.UsedQuota,
-			"group_name":   user.GroupName,
-			"permissions":  authz.PermissionsOf(role),
-			"created_at":   user.CreatedAt,
+			"id":            user.ID,
+			"username":      user.Username,
+			"display_name":  user.DisplayName,
+			"email":         user.Email,
+			"role":          int(role),
+			"role_name":     role.Name(),
+			"quota":         user.Quota,
+			"used_quota":    user.UsedQuota,
+			"group_name":    user.GroupName,
+			"permissions":   authz.PermissionsOf(role),
+			"created_at":    user.CreatedAt,
 			"last_login_at": user.LastLoginAt,
-			"avatar_url":   user.AvatarURL,
+			"avatar_url":    user.AvatarURL,
 		},
 	})
 }
 
-// setAuthCookie 写 HttpOnly cookie。
-// 前端也可用响应里的 token 走 Authorization 头；cookie 是为了刷新后仍保持登录。
+// issueSessionToken 按用户当前的 session_version 签发令牌。
+func issueSessionToken(userID int64, username string, role int) (string, error) {
+	var ver int
+	if err := db.DB.QueryRow(`SELECT session_version FROM users WHERE id = ?`, userID).Scan(&ver); err != nil {
+		return "", err
+	}
+	return auth.Issue(services.JWTSecret(), userID, username, role, ver)
+}
+
+// requestIsHTTPS 识别直连 TLS 与 nginx 反代后的 HTTPS。
+// X-Forwarded-Proto 可能是逗号分隔的多跳列表，以最靠近客户端的第一段为准。
+func requestIsHTTPS(c *gin.Context) bool {
+	if c.Request != nil && c.Request.TLS != nil {
+		return true
+	}
+	proto := c.GetHeader("X-Forwarded-Proto")
+	if proto == "" {
+		return false
+	}
+	first := strings.TrimSpace(strings.Split(proto, ",")[0])
+	return strings.EqualFold(first, "https")
+}
+
+// setAuthCookie 写 HttpOnly + SameSite=Lax 的会话 cookie。
+// 令牌不再交给前端脚本保存；HTTPS（含反代）下同时带 Secure。
 func setAuthCookie(c *gin.Context, token string) {
-	secure := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
+	c.SetSameSite(http.SameSiteLaxMode)
 	maxAge := int(auth.AccessTokenTTL.Seconds())
-	c.SetCookie("ooapi_token", token, maxAge, "/", "", secure, true)
+	c.SetCookie("ooapi_token", token, maxAge, "/", "", requestIsHTTPS(c), true)
+}
+
+func clearAuthCookie(c *gin.Context) {
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("ooapi_token", "", -1, "/", "", requestIsHTTPS(c), true)
 }
 
 func isDuplicateKey(err error) bool {

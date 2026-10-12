@@ -252,26 +252,8 @@ func AdminStats(c *gin.Context) {
 		scopeName = "global"
 	}
 
-	/*
-		账号明细按能力点收口。
-
-		路由只要求登录（普通用户也需要「我的用量」看板），所以这里必须自己判：
-		没有 channel:view 的人不该看到账号名、优先级、冷却状态，
-		尤其是 last_error —— 它常包含上游地址与拨号错误的原始文本，
-		属于基础设施信息。
-
-		普通用户仍会看到自己调用过的账号名与成功率：那是他自己请求的记录，
-		但错误详情与调度参数不给他。
-	*/
-	if !authz.Can(role, authz.PermChannelView) {
-		for i := range channels {
-			channels[i].Priority = 0
-			channels[i].Weight = 0
-			channels[i].CooldownUntil = ""
-			channels[i].LastError = ""
-			channels[i].TTFTMs = 0
-		}
-	}
+	// 没有 channel:view 的人看不到上游账号身份，也看不到没被自己用过的账号。
+	channels = presentChannels(channels, authz.Can(role, authz.PermChannelView))
 
 	ok(c, gin.H{
 		"scope":        scopeName,
@@ -300,7 +282,12 @@ func AdminStats(c *gin.Context) {
 // 只有具备 user:view 的角色才会拿到用户下拉 —— 普通用户看自己的看板，
 // 不需要也不能枚举全站用户。
 func DashboardFilters(c *gin.Context) {
+	user, okUser := currentUser(c)
 	role, _ := currentRole(c)
+	if !okUser {
+		fail(c, http.StatusUnauthorized, "未登录", "unauthorized")
+		return
+	}
 
 	users := []gin.H{}
 	if authz.Can(role, authz.PermUserView) {
@@ -323,9 +310,14 @@ func DashboardFilters(c *gin.Context) {
 	}
 
 	tokens := []gin.H{}
-	rows, err := queryRows(
-		`SELECT id, name, user_id FROM tokens ORDER BY id DESC LIMIT 500`,
-	)
+	tokenQuery := `SELECT id, name, user_id FROM tokens WHERE user_id = ? ORDER BY id DESC LIMIT 500`
+	tokenArgs := []any{user.ID}
+	// 全站密钥名只给能看全部日志的角色。普通用户只看到自己的。
+	if authz.Can(role, authz.PermLogViewAll) {
+		tokenQuery = `SELECT id, name, user_id FROM tokens ORDER BY id DESC LIMIT 500`
+		tokenArgs = nil
+	}
+	rows, err := queryRows(tokenQuery, tokenArgs...)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -440,7 +432,7 @@ func computeSummary(scope statScope, since, until time.Time) statsSummary {
 
 	var (
 		requests, failed, promptTokens, completionTokens, cachedTokens int64
-		cost, avgLatency, avgFirstToken                                  float64
+		cost, avgLatency, avgFirstToken                                float64
 	)
 	err := db.DB.QueryRow(
 		`SELECT COUNT(*),
@@ -606,6 +598,32 @@ func computeLatencySamples(scope statScope, start time.Time) map[int64][]int {
 			values[i], values[j] = values[j], values[i]
 		}
 		out[id] = values
+	}
+	return out
+}
+
+// presentChannels 按身份裁剪账号行。
+// 没有 channel:view 时不返回名称、厂商、状态，也不列出零调用的上游账号，
+// 避免看板变成一份全站账号目录。
+func presentChannels(rows []statsChannelRow, canView bool) []statsChannelRow {
+	if canView {
+		return rows
+	}
+	out := make([]statsChannelRow, 0, len(rows))
+	for _, row := range rows {
+		if row.Requests == 0 && row.Failed == 0 {
+			continue
+		}
+		row.ID = int64(len(out) + 1)
+		row.Name = "账号"
+		row.Vendor = ""
+		row.Status = 0
+		row.Priority = 0
+		row.Weight = 0
+		row.CooldownUntil = ""
+		row.LastError = ""
+		row.TTFTMs = 0
+		out = append(out, row)
 	}
 	return out
 }

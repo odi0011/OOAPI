@@ -2,16 +2,15 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { useAuth } from "@/contexts/AuthContext";
-import { setStoredToken } from "@/lib/api";
+import { clearStoredToken } from "@/lib/api";
 
 import styles from "./OAuthCallback.module.css";
 
 /**
  * 三方登录回调页。
  *
- * 后端在回调里完成账号匹配与令牌签发，然后用 fragment 把令牌带到这里。
- * 令牌放 fragment（#）而不是 query 的理由：fragment 不会进服务端日志、
- * 不会出现在 Referer 头里，泄露面明显更小。
+ * 后端在回调里完成账号匹配，并把会话写进 HttpOnly cookie。
+ * 地址栏不再携带令牌。
  */
 export default function OAuthCallback() {
   const { refresh } = useAuth();
@@ -30,16 +29,9 @@ export default function OAuthCallback() {
       return;
     }
 
-    const token = params.get("token");
-    if (!token) {
-      setError("登录回调缺少令牌，请重新登录");
-      return;
-    }
-
-    // 立即清掉地址栏里的令牌，避免它留在浏览器历史里。
+    // 清掉地址栏（以及历史页面可能留下的 JWT）。会话在 cookie 里。
     window.history.replaceState(null, "", "/auth/callback");
-
-    setStoredToken(token);
+    clearStoredToken();
 
     const next = params.get("next") || "/admin";
     const isNew = params.get("new") === "1";

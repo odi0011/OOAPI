@@ -28,6 +28,7 @@ func main() {
 	if err := services.EnsureDefaultAdmin(cfg.AdminUsername, cfg.AdminPassword); err != nil {
 		log.Printf("[init] 初始化管理员失败（不影响启动）: %v", err)
 	}
+	services.MigratePlaintextSecrets()
 
 	r := router.Setup(cfg)
 

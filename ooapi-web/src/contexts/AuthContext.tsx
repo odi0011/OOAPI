@@ -11,7 +11,6 @@ import {
 import {
   apiRequest,
   clearStoredToken,
-  setStoredToken,
 } from "@/lib/api";
 import { can as canFn, type AuthUser, type Permission } from "@/lib/permissions";
 
@@ -34,7 +33,6 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 interface AuthResponse {
-  token: string;
   user: AuthUser;
 }
 
@@ -76,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: "POST",
       body: { username, password },
     });
-    setStoredToken(res.token);
+    clearStoredToken();
     setUser(res.user);
     return res.user;
   }, []);
@@ -87,7 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         method: "POST",
         body: input,
       });
-      setStoredToken(res.token);
+      clearStoredToken();
       setUser(res.user);
       return res.user;
     },
