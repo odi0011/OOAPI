@@ -25,6 +25,8 @@ type accountSnap struct {
 	Wallet         float64
 	Available      float64
 	Known          bool
+	Equity         float64
+	EquityKnown    bool
 	Positions      []KeyPosition
 	PositionsKnown bool
 }
@@ -120,7 +122,10 @@ func (h *Hub) Step(userID, strategyID int64, cfg Config, in StepInput, secrets S
 	}
 	if in.WalletKnown {
 		h.noteAccountLocked(cfg.ExchangeKeyID, in.Wallet, in.Available)
-		if in.Wallet <= BalanceFloorUSDT {
+	}
+	if in.EquityKnown {
+		h.noteEquityLocked(cfg.ExchangeKeyID, in.AccountEquity)
+		if in.AccountEquity <= BalanceFloorUSDT {
 			h.haltKeyLocked(cfg.ExchangeKeyID, ReasonBalanceFloor)
 			eng := h.engines[sessionKey(userID, strategyID)]
 			if eng == nil || !eng.Busy() {
@@ -294,7 +299,7 @@ func (h *Hub) prepare(userID, strategyID int64, cfg Config, secrets SecretOpener
 		return eng, err
 	}
 	if eng == nil {
-		eng = NewEngine(cfg, ex, nil)
+		eng = NewEngine(cfg, ex, StdLogger())
 		h.engines[key] = eng
 	} else {
 		if err := eng.UpdateConfig(cfg); err != nil {
@@ -326,6 +331,19 @@ func (h *Hub) noteAccountLocked(keyID int64, wallet, available float64) {
 	snap.Wallet = wallet
 	snap.Available = available
 	snap.Known = true
+	h.accounts[keyID] = snap
+}
+
+func (h *Hub) noteEquityLocked(keyID int64, equity float64) {
+	if keyID <= 0 {
+		return
+	}
+	if h.accounts == nil {
+		h.accounts = map[int64]accountSnap{}
+	}
+	snap := h.accounts[keyID]
+	snap.Equity = equity
+	snap.EquityKnown = true
 	h.accounts[keyID] = snap
 }
 
@@ -372,7 +390,7 @@ func (h *Hub) symbolTakenLocked(cfg Config, strategyID int64) bool {
 // 组合保证金只认这把密钥的 positionRisk，不认内存里的旧仓，也不认没在跑的策略。
 // 正在判断的这台引擎也不从账本里扣除：交易所上还开着的仓都要占额度。
 func (h *Hub) entrySkipLocked(cfg Config, _ *Engine) string {
-	if acc, ok := h.accounts[cfg.ExchangeKeyID]; ok && acc.Known && acc.Wallet <= BalanceFloorUSDT {
+	if acc, ok := h.accounts[cfg.ExchangeKeyID]; ok && acc.EquityKnown && acc.Equity <= BalanceFloorUSDT {
 		return ReasonBalanceFloor
 	}
 	var positions []KeyPosition

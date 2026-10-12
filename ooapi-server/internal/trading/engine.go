@@ -24,6 +24,9 @@ type stdLog struct{}
 
 func (stdLog) Printf(format string, args ...any) { log.Printf(format, args...) }
 
+// StdLogger 把引擎审计写进进程日志。Hub 用它，避免保护单失败被丢掉。
+func StdLogger() Logger { return stdLog{} }
+
 // Candle 是一根已收盘 K 线。信号用收盘价；trend 模式还看成交量。
 type Candle struct {
 	OpenTime time.Time `json:"openTime"`
@@ -55,10 +58,13 @@ type StepInput struct {
 	Backtest *BacktestSummary `json:"-"`
 	// SkipReason 由 Hub 在共享锁里算完组合约束后填入，只拦截开仓。
 	SkipReason string `json:"-"`
-	// Wallet / Available 是同一把密钥的账户余额。WalletKnown 为真才参与停机。
+	// Wallet / Available 是同一把密钥的钱包余额。暂停线用它，0.5U 停机不用它。
 	Wallet      float64 `json:"-"`
 	Available   float64 `json:"-"`
 	WalletKnown bool    `json:"-"`
+	// AccountEquity 是钱包余额加全部持仓的未实现盈亏。EquityKnown 为真才参与 0.5U 停机。
+	AccountEquity float64 `json:"-"`
+	EquityKnown   bool    `json:"-"`
 	// Positions 是这把密钥的 positionRisk 快照，只含仍有持仓量的合约。
 	// PositionsKnown 为真才参与组合保证金；空切片表示交易所已经确认空仓。
 	Positions      []KeyPosition `json:"-"`
@@ -140,6 +146,10 @@ type Engine struct {
 	lossStreak   int
 	pausedReason string
 	onPause      func(reason string)
+	// startedAt 是本次武装的时间。币安已实现盈亏从这里往后加总。
+	startedAt time.Time
+	// lastDetail 是最近一次交易所错误原文，写进事件 msg，不替代机器可读的 LastReason。
+	lastDetail string
 }
 
 func NewEngine(cfg Config, ex Exchange, logger Logger) *Engine {
@@ -376,6 +386,7 @@ func (e *Engine) Start(in StartInput) error {
 	}
 	if e.State() == StateArmed {
 		e.running = true
+		e.markStarted(now)
 		e.note("armed", "already")
 		return nil
 	}
@@ -384,8 +395,16 @@ func (e *Engine) Start(in StartInput) error {
 	}
 	e.forgetPlan()
 	e.running = true
+	e.markStarted(now)
 	e.note("armed", "start")
 	return nil
+}
+
+func (e *Engine) markStarted(now time.Time) {
+	if e == nil || !e.startedAt.IsZero() {
+		return
+	}
+	e.startedAt = now.UTC()
 }
 
 func (e *Engine) enterHalt() {
@@ -441,10 +460,16 @@ func (e *Engine) Stop(in StepInput) error {
 
 // Step 推进一次。测网撮合在同一次调用里完成成交；同一根 K 线不会连着反手。
 func (e *Engine) Step(in StepInput) (snap Snapshot, err error) {
+	if e != nil {
+		e.lastDetail = ""
+	}
 	defer func() {
-		if e != nil {
-			e.recordTick(in, snap, err)
+		if e == nil {
+			return
 		}
+		e.captureIncome(at(in.Now))
+		snap = e.Snapshot()
+		e.recordTick(in, snap, err)
 	}()
 	if err = e.gate(); err != nil {
 		snap = e.Snapshot()
@@ -717,14 +742,15 @@ func (e *Engine) acceptFill(fill Fill) (Snapshot, error) {
 		return e.failed(err.Error())
 	}
 	e.rememberPlan(fill.Price, stop, liq)
-	if !StopWithinLiquidation(fill.Side, fill.Price, stop, liq) {
+	if err := e.ensureProtection(fill.Side, fill.Price, stop, take, liq); err != nil {
 		e.pos = position{Side: fill.Side, Qty: fill.Qty, Entry: fill.Price, Stop: stop, Take: take, Liq: liq}
-		e.log.Printf("[trading] %s entry=%.8f stop=%.8f liq=%.8f", ReasonStopBeyondLiquidation, fill.Price, stop, liq)
-		return e.failed(ReasonStopBeyondLiquidation)
-	}
-	if err := e.ex.PlaceProtection(Protection{Symbol: e.cfg.Symbol, Stop: stop, Take: take, Side: fill.Side}); err != nil {
-		e.pos = position{Side: fill.Side, Qty: fill.Qty, Entry: fill.Price, Stop: stop, Take: take, Liq: liq}
+		if errors.Is(err, ErrBlocked) {
+			e.log.Printf("[trading] %s entry=%.8f stop=%.8f liq=%.8f", ReasonStopBeyondLiquidation, fill.Price, stop, liq)
+			log.Printf("[trading] %s entry=%.8f stop=%.8f liq=%.8f", ReasonStopBeyondLiquidation, fill.Price, stop, liq)
+			return e.failed(ReasonStopBeyondLiquidation)
+		}
 		e.log.Printf("[trading] %s: %v stop=%.8f liq=%.8f", ReasonProtectiveOrdersFailed, err, stop, liq)
+		log.Printf("[trading] %s: %v stop=%.8f liq=%.8f", ReasonProtectiveOrdersFailed, err, stop, liq)
 		return e.failed(ReasonProtectiveOrdersFailed)
 	}
 	e.pos = position{Side: fill.Side, Qty: fill.Qty, Entry: fill.Price, Stop: stop, Take: take, Liq: liq}
@@ -900,7 +926,9 @@ func (e *Engine) cancelAndFlatten(reason string) {
 	}
 	if _, err := e.ex.Close(CloseOrder{Symbol: e.cfg.Symbol, Price: price, Reason: reason}); err != nil {
 		e.log.Printf("[trading] flatten %s failed: %v", reason, err)
+		log.Printf("[trading] flatten %s failed: %v", reason, err)
 	}
+	e.captureIncome(time.Now().UTC())
 }
 
 // failed 先落错误状态，再拍快照。同一条 return 里先拍快照会丢掉停机后的状态。
@@ -914,10 +942,18 @@ func (e *Engine) fail(reason string) error {
 	e.running = false
 	e.clearPos()
 	e.lastError = reason
+	detail := strings.TrimSpace(e.lastDetail)
 	line := fmt.Sprintf("error: %s; open orders canceled; auto-reopen suppressed", reason)
+	if detail != "" {
+		line = fmt.Sprintf("error: %s: %s; open orders canceled; auto-reopen suppressed", reason, detail)
+	}
 	e.audit = append(e.audit, line)
 	e.log.Printf("[trading] %s", line)
+	log.Printf("[trading] %s", line)
 	e.note("error", reason)
+	if e.cfg.ID > 0 {
+		boostState.noteFlattened(e.cfg.ID, reason)
+	}
 	if e.State() == StateError {
 		return ErrNoAutoReopen
 	}
@@ -1023,6 +1059,61 @@ func (e *Engine) lossLimit() int {
 
 func (e *Engine) pauseBalance() float64 {
 	return e.cfg.balancePauseLine()
+}
+
+// protectionAttempts 是止损止盈挂单失败后的总次数。中间失败不平仓。
+const protectionAttempts = 3
+
+// protectionRetryGap 是两次保护单尝试之间的间隔。测试可以改成 0。
+var protectionRetryGap = 300 * time.Millisecond
+
+// ensureProtection 每次尝试前都确认止损仍在强平价之前，并且只补缺的那一腿。
+// 三次都失败才把错误交回去，由调用方先撤掉已挂上的那一腿再平仓。
+func (e *Engine) ensureProtection(side Side, entry, stop, take, liq float64) error {
+	var last error
+	for attempt := 1; attempt <= protectionAttempts; attempt++ {
+		if !StopWithinLiquidation(side, entry, stop, liq) {
+			return withReason(ErrBlocked, ReasonStopBeyondLiquidation)
+		}
+		err := e.ex.PlaceProtection(Protection{Symbol: e.cfg.Symbol, Stop: stop, Take: take, Side: side})
+		if err == nil {
+			e.lastDetail = ""
+			return nil
+		}
+		last = err
+		e.lastDetail = err.Error()
+		e.log.Printf("[trading] protection %s attempt %d/%d: %v", e.cfg.Symbol, attempt, protectionAttempts, err)
+		log.Printf("[trading] protection %s attempt %d/%d: %v", e.cfg.Symbol, attempt, protectionAttempts, err)
+		if attempt < protectionAttempts {
+			time.Sleep(protectionRetryGap)
+		}
+	}
+	return last
+}
+
+// captureIncome 用币安账单覆盖当日和累计已实现。账单含手续费和资金费，
+// 也含这台引擎没有自己开过的仓。读失败或还没入账时保留本地数字。
+func (e *Engine) captureIncome(now time.Time) {
+	if e == nil || e.ex == nil || e.startedAt.IsZero() || strings.TrimSpace(e.cfg.Symbol) == "" {
+		return
+	}
+	src, ok := e.ex.(interface {
+		RealizedIncome(symbol string, since, now time.Time) (day, cumulative float64, err error)
+		CredentialsReady() bool
+	})
+	if !ok || !src.CredentialsReady() {
+		return
+	}
+	day, cumulative, err := src.RealizedIncome(e.cfg.Symbol, e.startedAt, now)
+	if err != nil {
+		log.Printf("[trading] income %s: %v", e.cfg.Symbol, err)
+		return
+	}
+	if day == 0 && cumulative == 0 && (e.ledger.Realized != 0 || e.ledger.Cumulative != 0) {
+		return
+	}
+	e.ledger.Realized = day
+	e.ledger.Cumulative = cumulative
 }
 
 func (e *Engine) holdIfPaused(in StepInput) (Snapshot, bool, error) {
@@ -1174,16 +1265,24 @@ func (e *Engine) recordTick(in StepInput, snap Snapshot, err error) {
 		side = string(snap.Side)
 	}
 	msg := snap.LastReason
+	if detail := strings.TrimSpace(e.lastDetail); detail != "" {
+		if msg != "" {
+			msg += ": "
+		}
+		msg += detail
+	}
 	if err != nil && msg == "" {
 		msg = err.Error()
 	}
 	AddEvent(DetectionEvent{
-		TS:      at(in.Now),
-		Symbol:  e.cfg.Symbol,
-		Side:    side,
-		Score:   score,
-		WinRate: signalWinRate(in, e.lastBacktest),
-		Action:  snap.LastAction,
-		Msg:     msg,
+		TS:                 at(in.Now),
+		Symbol:             e.cfg.Symbol,
+		Side:               side,
+		Score:              score,
+		WinRate:            signalWinRate(in, e.lastBacktest),
+		Action:             snap.LastAction,
+		Msg:                msg,
+		DayRealized:        snap.DayRealized,
+		CumulativeRealized: snap.CumulativeRealized,
 	})
 }

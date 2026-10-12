@@ -18,13 +18,16 @@ type RunSpec struct {
 
 // Market 是推进一根 K 线时从交易所读到的公开数据和账户余额。
 type Market struct {
-	Candles        []Candle
-	Higher         []Candle
-	Mark           float64
-	MinNotional    float64
-	Wallet         float64
-	Available      float64
-	WalletKnown    bool
+	Candles     []Candle
+	Higher      []Candle
+	Mark        float64
+	MinNotional float64
+	Wallet      float64
+	Available   float64
+	WalletKnown bool
+	// Equity 是钱包余额加全部持仓未实现盈亏。EquityKnown 为假时不开新仓。
+	Equity         float64
+	EquityKnown    bool
 	Positions      []KeyPosition
 	PositionsKnown bool
 }
@@ -260,9 +263,10 @@ func (r *Runner) runOnce(ctx context.Context, spec RunSpec) {
 		log.Printf("[trading] runner strategy %d market: %v", spec.Config.ID, err)
 		return
 	}
-	if mkt.WalletKnown && mkt.Wallet <= BalanceFloorUSDT {
+	if mkt.EquityKnown && mkt.Equity <= BalanceFloorUSDT {
 		_, _ = r.step(spec, StepInput{
-			Now: now, Wallet: mkt.Wallet, Available: mkt.Available, WalletKnown: true,
+			Now: now, Wallet: mkt.Wallet, Available: mkt.Available, WalletKnown: mkt.WalletKnown,
+			AccountEquity: mkt.Equity, EquityKnown: true,
 		})
 		r.stopSpec(spec.Config.ID)
 		return
@@ -286,8 +290,13 @@ func (r *Runner) runOnce(ctx context.Context, spec RunSpec) {
 		Wallet:         mkt.Wallet,
 		Available:      mkt.Available,
 		WalletKnown:    mkt.WalletKnown,
+		AccountEquity:  mkt.Equity,
+		EquityKnown:    mkt.EquityKnown,
 		Positions:      mkt.Positions,
 		PositionsKnown: mkt.PositionsKnown,
+	}
+	if !mkt.EquityKnown && in.SkipReason == "" {
+		in.SkipReason = ReasonEquityUnknown
 	}
 	if sum, ok := r.backtest(spec.Config, mkt, now); ok {
 		in.Backtest = &sum
@@ -325,14 +334,18 @@ func (r *Runner) ensureStarted(spec RunSpec, mkt Market) error {
 			return nil
 		}
 	}
-	if !mkt.WalletKnown || mkt.Wallet <= 0 {
+	if !mkt.EquityKnown || mkt.Equity <= BalanceFloorUSDT {
 		return invalid("还没有读到账户权益")
+	}
+	capital := mkt.Wallet
+	if capital <= 0 {
+		capital = mkt.Equity
 	}
 	_, err := r.hub.Start(spec.UserID, spec.Config.ID, spec.Config, StartInput{
 		Now:            r.now(),
 		FundingRate:    0,
 		LiqDistancePct: -1,
-		EquityUSDT:     mkt.Wallet,
+		EquityUSDT:     capital,
 	}, spec.Secrets)
 	return err
 }
@@ -392,10 +405,14 @@ func defaultMarket(cfg Config, secrets SecretOpener, now time.Time) (Market, err
 	if secrets != nil {
 		if creds, err := secrets(); err == nil {
 			if err := client.UseCredentials(creds); err == nil {
-				if wallet, available, err := client.USDTBalance(); err == nil {
-					mkt.Wallet = wallet
-					mkt.Available = available
+				if eq, err := client.ReadEquity(); err != nil {
+					log.Printf("[trading] runner strategy %d equity: %v", cfg.ID, err)
+				} else {
+					mkt.Wallet = eq.Wallet
+					mkt.Available = eq.Available
 					mkt.WalletKnown = true
+					mkt.Equity = eq.Equity
+					mkt.EquityKnown = true
 				}
 				positions, err := client.AccountPositions()
 				if err != nil {
