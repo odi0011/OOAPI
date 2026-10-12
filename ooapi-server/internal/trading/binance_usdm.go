@@ -1,6 +1,7 @@
 package trading
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"net/url"
@@ -263,18 +265,6 @@ func (c *USDMClient) PlaceProtection(req Protection) error {
 			return invalid("空单的止损必须高于入场价，止盈必须低于入场价")
 		}
 	}
-	open, err := c.openAlgoOrders(req.Symbol)
-	if err != nil {
-		return err
-	}
-	if hasType(algoTypes(open), "STOP_MARKET") && hasType(algoTypes(open), "TAKE_PROFIT_MARKET") {
-		return nil
-	}
-	if len(open) > 0 {
-		if err := c.CancelOpen(req.Symbol); err != nil {
-			return err
-		}
-	}
 	hedge, err := c.hedge()
 	if err != nil {
 		return err
@@ -284,21 +274,133 @@ func (c *USDMClient) PlaceProtection(req Protection) error {
 		posSide = positionSide(side)
 	}
 	exit := oppositeSide(side)
-	// 止损和止盈都要确认挂上。任一张失败都把错误交回去，由引擎立刻用只减仓市价单平仓。
-	if err := c.conditional(req.Symbol, exit, posSide, "STOP_MARKET", stop, raw.tickRaw); err != nil {
-		return err
-	}
-	if err := c.conditional(req.Symbol, exit, posSide, "TAKE_PROFIT_MARKET", take, raw.tickRaw); err != nil {
-		return err
-	}
-	open, err = c.openAlgoOrders(req.Symbol)
+	open, err := c.openAlgoOrders(req.Symbol)
 	if err != nil {
 		return err
 	}
-	if !hasType(algoTypes(open), "STOP_MARKET") || !hasType(algoTypes(open), "TAKE_PROFIT_MARKET") {
-		return invalid("保护单没有在测网挂上")
+	// 价格、方向、closePosition 都对得上的那一腿直接沿用，避免刚挂上的单还没出现在列表里时再挂一套。
+	// 触发价差超过一个 tick 的旧单先撤再挂，止盈留下的止损不能套到新仓上。
+	ackedStop, err := c.ensureLeg(req.Symbol, exit, posSide, "STOP_MARKET", stop, rules.TickSize, raw.tickRaw, open)
+	if err != nil {
+		return err
 	}
-	return nil
+	ackedTake, err := c.ensureLeg(req.Symbol, exit, posSide, "TAKE_PROFIT_MARKET", take, rules.TickSize, raw.tickRaw, open)
+	if err != nil {
+		return err
+	}
+	return c.confirmProtection(req.Symbol, exit, posSide, stop, take, rules.TickSize, ackedStop, ackedTake)
+}
+
+// ensureLeg 复用触发价落在一个 tick 内、且平仓语义一致的条件单。
+// 同一合约、同一持仓方向上对不上的止损或止盈先撤掉，再补一张新的。
+func (c *USDMClient) ensureLeg(symbol, exit, posSide, orderType string, price, tick float64, tickRaw string, open []algoOrder) (bool, error) {
+	kept := false
+	for _, order := range open {
+		if !sameProtectionLeg(order, symbol, posSide, orderType) {
+			continue
+		}
+		if !kept && legFits(order, exit, price, tick) {
+			kept = true
+			continue
+		}
+		if err := c.cancelAlgo(order.AlgoID); err != nil {
+			return false, err
+		}
+	}
+	if kept {
+		return true, nil
+	}
+	id, err := c.conditional(symbol, exit, posSide, orderType, price, tickRaw)
+	if err != nil {
+		return false, err
+	}
+	if id <= 0 {
+		return false, invalid("保护单没有返回 algoId")
+	}
+	return true, nil
+}
+
+// protectionConfirmWait 是挂单回执已经成功、但条件单列表还没跟上时的复查窗口。
+const protectionConfirmWait = 2 * time.Second
+
+// protectionConfirmGap 是两次复查 openAlgoOrders 的间隔。
+const protectionConfirmGap = 200 * time.Millisecond
+
+// confirmProtection 先等挂单响应，再读 openAlgoOrders。
+// 列表会晚于回执出现。两边都拿到了 algoId 时，空列表不算失败，也不再补单。
+// 列表里的单必须触发价仍在一个 tick 内，旧价的止损不能把确认提前放行。
+func (c *USDMClient) confirmProtection(symbol, exit, posSide string, stop, take, tick float64, ackedStop, ackedTake bool) error {
+	deadline := time.Now().Add(protectionConfirmWait)
+	for {
+		open, err := c.openAlgoOrders(symbol)
+		if err != nil {
+			return err
+		}
+		hasStop := hasMatchingLeg(open, symbol, exit, posSide, "STOP_MARKET", stop, tick)
+		hasTake := hasMatchingLeg(open, symbol, exit, posSide, "TAKE_PROFIT_MARKET", take, tick)
+		if hasStop && hasTake {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			if ackedStop && ackedTake {
+				return nil
+			}
+			return invalid("保护单没有在测网挂上")
+		}
+		time.Sleep(protectionConfirmGap)
+	}
+}
+
+func hasMatchingLeg(orders []algoOrder, symbol, exit, posSide, orderType string, price, tick float64) bool {
+	for _, order := range orders {
+		if sameProtectionLeg(order, symbol, posSide, orderType) && legFits(order, exit, price, tick) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameProtectionLeg(order algoOrder, symbol, posSide, orderType string) bool {
+	if order.Symbol != "" && symbol != "" && !strings.EqualFold(order.Symbol, symbol) {
+		return false
+	}
+	if order.kind() != orderType {
+		return false
+	}
+	return legMatches(order, posSide)
+}
+
+// legFits 要求 closePosition 平仓、方向一致，并且触发价落在新价格的一个 tick 以内。
+func legFits(order algoOrder, exitSide string, price, tick float64) bool {
+	if !order.ClosePosition {
+		return false
+	}
+	if exitSide != "" && order.Side != "" && !strings.EqualFold(order.Side, exitSide) {
+		return false
+	}
+	trigger := float64(order.TriggerPrice)
+	if trigger <= 0 {
+		trigger = float64(order.StopPrice)
+	}
+	return priceWithinTick(trigger, price, tick)
+}
+
+func priceWithinTick(got, want, tick float64) bool {
+	if got <= 0 || want <= 0 {
+		return false
+	}
+	slack := tick
+	if slack < 0 {
+		slack = 0
+	}
+	return math.Abs(got-want) <= slack+1e-8
+}
+
+func legMatches(order algoOrder, posSide string) bool {
+	if posSide == "" {
+		return true
+	}
+	return strings.EqualFold(order.PositionSide, posSide)
 }
 
 func (c *USDMClient) Close(req CloseOrder) (Fill, error) {
@@ -434,7 +536,7 @@ func (c *USDMClient) Position(symbol string) (Position, error) {
 // conditional 把止损或止盈挂到 Algo Order。
 // 测网对经典 POST /fapi/v1/order 的 STOP_MARKET、TAKE_PROFIT_MARKET 返回 -4120。
 // closePosition 会平掉整个仓位，不能和 quantity、reduceOnly 一起发。
-func (c *USDMClient) conditional(symbol, side, posSide, orderType string, price float64, tickRaw string) error {
+func (c *USDMClient) conditional(symbol, side, posSide, orderType string, price float64, tickRaw string) (int64, error) {
 	params := url.Values{}
 	params.Set("algoType", "CONDITIONAL")
 	params.Set("symbol", symbol)
@@ -446,8 +548,26 @@ func (c *USDMClient) conditional(symbol, side, posSide, orderType string, price 
 	if posSide != "" {
 		params.Set("positionSide", posSide)
 	}
-	_, err := c.signed(http.MethodPost, "/fapi/v1/algoOrder", params)
-	return err
+	body, err := c.signed(http.MethodPost, "/fapi/v1/algoOrder", params)
+	if err != nil {
+		return 0, err
+	}
+	return parseAlgoAck(body)
+}
+
+func parseAlgoAck(body []byte) (int64, error) {
+	var resp struct {
+		AlgoID flexNum `json:"algoId"`
+		Code   int     `json:"code"`
+		Msg    string  `json:"msg"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return 0, &ExchangeError{Status: 200, Msg: "algo ack", Body: string(body)}
+	}
+	if resp.AlgoID <= 0 {
+		return 0, &ExchangeError{Status: 200, Code: resp.Code, Msg: resp.Msg, Body: string(body)}
+	}
+	return int64(resp.AlgoID), nil
 }
 
 func (c *USDMClient) setIsolated(symbol string) error {
@@ -494,10 +614,34 @@ func (c *USDMClient) hedge() (bool, error) {
 }
 
 type algoOrder struct {
-	AlgoID    int64  `json:"algoId"`
-	Symbol    string `json:"symbol"`
-	OrderType string `json:"orderType"`
-	Type      string `json:"type"`
+	AlgoID        int64    `json:"algoId"`
+	Symbol        string   `json:"symbol"`
+	OrderType     string   `json:"orderType"`
+	Type          string   `json:"type"`
+	Side          string   `json:"side"`
+	PositionSide  string   `json:"positionSide"`
+	TriggerPrice  flexNum  `json:"triggerPrice"`
+	StopPrice     flexNum  `json:"stopPrice"`
+	ClosePosition flexBool `json:"closePosition"`
+}
+
+// flexBool 同时接受币安返回的 true 和 "true"。
+type flexBool bool
+
+func (b *flexBool) UnmarshalJSON(data []byte) error {
+	if b == nil {
+		return errors.New("nil")
+	}
+	text := strings.Trim(strings.TrimSpace(string(data)), `"`)
+	switch strings.ToLower(text) {
+	case "true", "1":
+		*b = true
+	case "false", "0", "null", "":
+		*b = false
+	default:
+		return fmt.Errorf("closePosition %s", data)
+	}
+	return nil
 }
 
 func (o algoOrder) kind() string {
@@ -512,8 +656,8 @@ func (c *USDMClient) openAlgoOrders(symbol string) ([]algoOrder, error) {
 	if err != nil {
 		return nil, err
 	}
-	var rows []algoOrder
-	if err := json.Unmarshal(body, &rows); err != nil {
+	rows, err := parseAlgoOrderList(body)
+	if err != nil {
 		return nil, err
 	}
 	out := make([]algoOrder, 0, len(rows))
@@ -535,14 +679,45 @@ func (c *USDMClient) cancelAlgoOrders(symbol string) error {
 		if order.AlgoID == 0 {
 			continue
 		}
-		_, err := c.signed(http.MethodDelete, "/fapi/v1/algoOrder", url.Values{
-			"algoId": {strconv.FormatInt(order.AlgoID, 10)},
-		})
-		if err != nil && !errors.Is(err, errNoOpenOrder) {
+		if err := c.cancelAlgo(order.AlgoID); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (c *USDMClient) cancelAlgo(id int64) error {
+	if id == 0 {
+		return invalid("条件单缺少 algoId")
+	}
+	_, err := c.signed(http.MethodDelete, "/fapi/v1/algoOrder", url.Values{
+		"algoId": {strconv.FormatInt(id, 10)},
+	})
+	if err != nil && !errors.Is(err, errNoOpenOrder) {
+		return err
+	}
+	return nil
+}
+
+func parseAlgoOrderList(body []byte) ([]algoOrder, error) {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 || string(body) == "null" {
+		return nil, nil
+	}
+	if body[0] == '{' {
+		var wrap struct {
+			Orders []algoOrder `json:"orders"`
+		}
+		if err := json.Unmarshal(body, &wrap); err != nil {
+			return nil, err
+		}
+		return wrap.Orders, nil
+	}
+	var rows []algoOrder
+	if err := json.Unmarshal(body, &rows); err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func algoTypes(orders []algoOrder) []string {
@@ -720,6 +895,26 @@ var (
 	errNoOpenOrder     = errors.New("no open order")
 )
 
+// ExchangeError 保留币安错误的 HTTP 状态、错误码、msg 和原始响应。
+// 引擎把它写进事件流和进程日志，不丢字段。
+type ExchangeError struct {
+	Status int
+	Code   int
+	Msg    string
+	Body   string
+}
+
+func (e *ExchangeError) Error() string {
+	if e == nil {
+		return ""
+	}
+	body := e.Body
+	if len(body) > 2048 {
+		body = body[:2048]
+	}
+	return fmt.Sprintf("binance status=%d code=%d msg=%s body=%s", e.Status, e.Code, e.Msg, body)
+}
+
 func interpretBinance(status int, body []byte) ([]byte, error) {
 	var probe struct {
 		Code int    `json:"code"`
@@ -732,11 +927,10 @@ func interpretBinance(status int, body []byte) ([]byte, error) {
 	case -2011:
 		return body, errNoOpenOrder
 	}
-	if probe.Code < 0 {
-		return nil, fmt.Errorf("币安测网 %d：%s", probe.Code, probe.Msg)
-	}
-	if status >= 300 {
-		return nil, fmt.Errorf("币安测网 HTTP %d", status)
+	if probe.Code < 0 || status >= 300 {
+		err := &ExchangeError{Status: status, Code: probe.Code, Msg: probe.Msg, Body: string(body)}
+		log.Printf("[trading] %s", err.Error())
+		return nil, err
 	}
 	return body, nil
 }

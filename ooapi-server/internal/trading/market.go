@@ -75,6 +75,104 @@ func (c *USDMClient) USDTBalance() (wallet, available float64, err error) {
 	return 0, 0, invalid("账户里没有 USDT 余额")
 }
 
+// AccountEquity 是钱包余额加上全部持仓的未实现盈亏。
+type AccountEquity struct {
+	Wallet     float64
+	Available  float64
+	Unrealized float64
+	Equity     float64
+}
+
+// ReadEquity 优先读 /fapi/v2/account 的 totalWalletBalance + totalUnrealizedProfit。
+// 账户接口失败时，用 USDT 钱包余额加上 positionRisk 里每一笔未实现盈亏。
+func (c *USDMClient) ReadEquity() (AccountEquity, error) {
+	body, err := c.signed(http.MethodGet, "/fapi/v2/account", nil)
+	if err == nil {
+		eq, perr := parseAccountEquity(body)
+		if perr == nil {
+			return eq, nil
+		}
+		err = perr
+	}
+	wallet, available, werr := c.USDTBalance()
+	riskBody, rerr := c.signed(http.MethodGet, "/fapi/v2/positionRisk", nil)
+	if werr != nil || rerr != nil {
+		if err != nil {
+			return AccountEquity{}, err
+		}
+		if werr != nil {
+			return AccountEquity{}, werr
+		}
+		return AccountEquity{}, rerr
+	}
+	unrealized, perr := parseUnrealizedSum(riskBody)
+	if perr != nil {
+		return AccountEquity{}, perr
+	}
+	return AccountEquity{
+		Wallet:     wallet,
+		Available:  available,
+		Unrealized: unrealized,
+		Equity:     wallet + unrealized,
+	}, nil
+}
+
+func parseAccountEquity(body []byte) (AccountEquity, error) {
+	var resp struct {
+		TotalWalletBalance    string `json:"totalWalletBalance"`
+		TotalUnrealizedProfit string `json:"totalUnrealizedProfit"`
+		AvailableBalance      string `json:"availableBalance"`
+		Assets                []struct {
+			Asset            string `json:"asset"`
+			WalletBalance    string `json:"walletBalance"`
+			UnrealizedProfit string `json:"unrealizedProfit"`
+			AvailableBalance string `json:"availableBalance"`
+		} `json:"assets"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return AccountEquity{}, errors.New("账户权益无法解析")
+	}
+	if strings.TrimSpace(resp.TotalWalletBalance) == "" && strings.TrimSpace(resp.TotalUnrealizedProfit) == "" {
+		return AccountEquity{}, errors.New("账户权益缺少 totalWalletBalance")
+	}
+	wallet := parseNum(resp.TotalWalletBalance)
+	unrealized := parseNum(resp.TotalUnrealizedProfit)
+	available := parseNum(resp.AvailableBalance)
+	if available == 0 {
+		for _, asset := range resp.Assets {
+			if strings.EqualFold(asset.Asset, "USDT") {
+				available = parseNum(asset.AvailableBalance)
+				break
+			}
+		}
+	}
+	return AccountEquity{
+		Wallet:     wallet,
+		Available:  available,
+		Unrealized: unrealized,
+		Equity:     wallet + unrealized,
+	}, nil
+}
+
+func parseUnrealizedSum(body []byte) (float64, error) {
+	rows, err := decodeRiskRows(body)
+	if err != nil {
+		return 0, errors.New("持仓盈亏无法解析")
+	}
+	var sum float64
+	for _, row := range rows {
+		if float64(row.PositionAmt) == 0 {
+			continue
+		}
+		upl := float64(row.UnRealizedProfit)
+		if upl == 0 {
+			upl = float64(row.UnrealizedProfit)
+		}
+		sum += upl
+	}
+	return sum, nil
+}
+
 // LoadCandles 按时间窗口分页拉取已收盘 K 线。
 func LoadCandles(mode, symbol, interval string, since, now time.Time) ([]Candle, error) {
 	return loadCandles(mode, symbol, interval, since, now, false)
