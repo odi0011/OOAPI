@@ -47,6 +47,37 @@ func ScoreTrend(cfg Config, candles, higher []Candle) (Side, int, error) {
 	return side, score, nil
 }
 
+// TrendDirection 是加速候选的方向。分数仍由 ScoreTrend 计算。
+// 快慢线没拉开到门槛时，只要快线在慢线上方就做多，下方就做空，方便窗口结束时强制开仓。
+func TrendDirection(cfg Config, candles, higher []Candle) (Side, int, error) {
+	side, score, err := ScoreTrend(cfg, candles, higher)
+	if err != nil || side != "" {
+		return side, score, err
+	}
+	cfg = cfg.Normalize()
+	closes := closesOf(candles)
+	if len(closes) < cfg.EmaSlow+1 {
+		return "", score, nil
+	}
+	fast, err := EMA(closes, cfg.EmaFast)
+	if err != nil {
+		return "", score, err
+	}
+	slow, err := EMA(closes, cfg.EmaSlow)
+	if err != nil {
+		return "", score, err
+	}
+	i := len(closes) - 1
+	switch {
+	case fast[i] > slow[i]:
+		return SideLong, score, nil
+	case fast[i] < slow[i]:
+		return SideShort, score, nil
+	default:
+		return "", score, nil
+	}
+}
+
 func rsiAllows(side Side, rsi, longMin, longMax, shortMin, shortMax float64) bool {
 	switch side {
 	case SideLong:

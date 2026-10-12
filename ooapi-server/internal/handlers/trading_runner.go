@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"ooapi/internal/trading"
 )
@@ -70,6 +71,16 @@ func stopStrategyRunner(strategyID int64) {
 	strategyRunner.Remove(strategyID)
 }
 
+// reloadStrategyConfig 把保存后的参数写进正在跑的引擎和调度循环，不重启。
+func reloadStrategyConfig(userID int64, row strategyRow) {
+	cfg := strategyConfig(row)
+	cfg.Revision = time.Now().UnixNano()
+	spec := specFromRow(userID, row)
+	spec.Config = cfg
+	strategyRunner.Reload(spec)
+	trading.DefaultHub().ApplyConfig(userID, row.ID, cfg)
+}
+
 func specFromRow(userID int64, row strategyRow) trading.RunSpec {
 	return trading.RunSpec{
 		UserID:  userID,
@@ -110,6 +121,7 @@ func scanStrategyUser(s scanner, userID *int64) (strategyRow, error) {
 		status  sql.NullInt64
 		label   sql.NullString
 		running int
+		gamble  int
 	)
 	err := s.Scan(
 		userID,
@@ -120,7 +132,8 @@ func scanStrategyUser(s scanner, userID *int64) (strategyRow, error) {
 		&row.Record.EntryMode, &row.Record.MinScore, &row.Record.MinWinRate, &row.Record.MinTrades,
 		&row.Record.MaxMarginPerTradeUsdt, &row.Record.MaxConsecutiveLosses, &row.Record.PauseBalanceUsdt, &row.Record.PauseReason,
 		&row.Record.MaxOpenPositions,
-		&row.Record.RSILongMin, &row.Record.RSILongMax, &row.Record.RSIShortMin, &row.Record.RSIShortMax, &running,
+		&row.Record.RSILongMin, &row.Record.RSILongMax, &row.Record.RSIShortMin, &row.Record.RSIShortMax,
+		&gamble, &row.Record.ScalpTpPct, &row.Record.ScalpSlPct, &running,
 		&row.CreatedAt, &row.UpdatedAt,
 		&network, &status, &label,
 	)
@@ -137,6 +150,7 @@ func scanStrategyUser(s scanner, userID *int64) (strategyRow, error) {
 		row.ExchangeKeyLabel = label.String
 	}
 	row.ExchangeKeyActive = status.Valid && status.Int64 == exchangeKeyActive
+	row.Record.GambleMode = gamble == 1
 	row.Record.Running = running == 1
 	return row, nil
 }

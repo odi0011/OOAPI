@@ -16,6 +16,9 @@ const (
 	BoostWindow = 2 * time.Minute
 	// BoostScanInterval 是加速期间实盘调度的扫描间隔，短于 K 线收盘。
 	BoostScanInterval = 5 * time.Second
+	// BoostForceAfter 是窗口里还没有任何信号达到 minScore 时强制开仓的时刻。
+	// 窗口共 120 秒，约 110 秒时开仓，保证这一次扫描仍落在窗口内。
+	BoostForceAfter = 110 * time.Second
 	// EventCapacity 是检测事件环形缓冲的容量。
 	EventCapacity = 200
 )
@@ -96,25 +99,35 @@ type boostSeen struct {
 	passes  bool
 }
 
-// boostCand 是加速窗口里见过的最好候选，用来在窗口结束时说明为什么没开仓。
+// boostCand 是加速窗口里的一名候选。
+// 排序先看策略回测胜率，再看分数；方向来自当前 EMA 趋势。
+// 达到 minScore 可以立刻开；到 BoostForceAfter 仍没有人达到时，强制开胜率最高的那个。
 type boostCand struct {
-	symbol string
-	side   string
-	score  int
-	need   int
-	reason string
+	id      int64
+	symbol  string
+	side    string
+	score   int
+	need    int
+	winrate float64
+	reason  string
+	passes  bool
+	clears  bool
+	blocked bool
+	forced  bool
 }
 
 type boostGate struct {
-	mu         sync.Mutex
-	until      time.Time
-	started    time.Time
-	opened     bool
-	endEmitted bool
-	bestSet    bool
-	best       boostCand
-	pending    int64
-	seen       map[int64]boostSeen
+	mu            sync.Mutex
+	until         time.Time
+	started       time.Time
+	opened        bool
+	endEmitted    bool
+	bestSet       bool
+	best          boostCand
+	pending       int64
+	pendingForced bool
+	seen          map[int64]boostSeen
+	cands         map[int64]boostCand
 }
 
 // boostSignal 把「加速已打开」广播给正在睡到下一根 K 线收盘的调度循环。
@@ -170,7 +183,9 @@ func (b *boostGate) reset() {
 	b.bestSet = false
 	b.best = boostCand{}
 	b.pending = 0
+	b.pendingForced = false
 	b.seen = map[int64]boostSeen{}
+	b.cands = map[int64]boostCand{}
 }
 
 // GrantBoost 打开两分钟加速窗口。窗口还没结束时返回 limited，不延长截止时间。
@@ -203,7 +218,9 @@ func (b *boostGate) grant(now time.Time) (time.Time, bool) {
 	b.bestSet = false
 	b.best = boostCand{}
 	b.pending = 0
+	b.pendingForced = false
 	b.seen = map[int64]boostSeen{}
+	b.cands = map[int64]boostCand{}
 	return b.until, false
 }
 
@@ -234,18 +251,43 @@ func (b *boostGate) note(id int64, winrate float64, passes bool) {
 	b.seen[id] = boostSeen{winrate: winrate, passes: passes}
 }
 
-// consider 记住窗口内分数最高的候选。分数相同则留先看到的那个。
+// consider 记住一名候选。窗口结束说明用分数最高的那条；开仓排序在 pickLocked。
 func (b *boostGate) consider(c boostCand) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if c.id > 0 {
+		if b.cands == nil {
+			b.cands = map[int64]boostCand{}
+		}
+		b.cands[c.id] = c
+	}
 	if !b.bestSet || c.score > b.best.score {
 		b.best = c
 		b.bestSet = true
 	}
 }
 
-// allow 在加速窗口内只放行预测胜率最高、且通过阈值的那一个信号。
-// peers 里的实盘策略都报告过一次之后才开仓；过了一个扫描间隔仍有人没报告，就用已经看到的最高胜率。
+// block 把这名候选从本轮可开仓名单里拿掉，例如该币已经有仓或止损会越过强平价。
+func (b *boostGate) block(id int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.cands == nil {
+		return
+	}
+	c := b.cands[id]
+	c.blocked = true
+	c.passes = false
+	b.cands[id] = c
+	if seen, ok := b.seen[id]; ok {
+		seen.passes = false
+		b.seen[id] = seen
+	}
+}
+
+// allow 在加速窗口内只放行一名候选。
+// 有人达到 minScore 时立刻开胜率最高且达标的那个；否则等到 BoostForceAfter，强制开胜率最高的候选。
+// 胜率相同看分数，再相同看更小的策略 ID。
+// peers 都报告过一次之后才开仓；过了一个扫描间隔仍有人没报告，就用已经看到的结果。
 func (b *boostGate) allow(id int64, peers []int64, now time.Time) (bool, string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -259,15 +301,68 @@ func (b *boostGate) allow(id int64, peers []int64, now time.Time) (bool, string)
 	if b.pending != 0 && b.pending != id {
 		return false, ReasonBoostWait
 	}
-	best, ok := b.bestPassing()
-	if !ok || best != id {
+	best, ok := b.pickLocked(now)
+	if !ok || best.id != id {
 		return false, ReasonBoostWait
 	}
 	if !b.peersSeen(peers) && now.Sub(b.started) < BoostScanInterval {
 		return false, ReasonBoostWait
 	}
 	b.pending = id
+	b.pendingForced = best.forced
 	return true, ""
+}
+
+// openingForced 表示这次放行是窗口后段的强制开仓，而不是分数已经达标。
+func (b *boostGate) openingForced(id int64) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.pending == id && b.pendingForced
+}
+
+func (b *boostGate) pickLocked(now time.Time) (boostCand, bool) {
+	force := !b.started.IsZero() && !now.Before(b.started.Add(BoostForceAfter))
+	if len(b.cands) == 0 {
+		id, ok := b.bestPassing()
+		if !ok {
+			return boostCand{}, false
+		}
+		return boostCand{id: id, winrate: b.seen[id].winrate, passes: true, clears: true}, true
+	}
+	var clearing, overall boostCand
+	hasClear, hasOverall := false, false
+	for _, c := range b.cands {
+		if c.id <= 0 || !c.passes || c.blocked || strings.TrimSpace(c.side) == "" {
+			continue
+		}
+		if !hasOverall || betterCand(c, overall) {
+			overall = c
+			hasOverall = true
+		}
+		if c.clears && (!hasClear || betterCand(c, clearing)) {
+			clearing = c
+			hasClear = true
+		}
+	}
+	if hasClear {
+		clearing.forced = false
+		return clearing, true
+	}
+	if force && hasOverall {
+		overall.forced = true
+		return overall, true
+	}
+	return boostCand{}, false
+}
+
+func betterCand(a, b boostCand) bool {
+	if a.winrate != b.winrate {
+		return a.winrate > b.winrate
+	}
+	if a.score != b.score {
+		return a.score > b.score
+	}
+	return a.id < b.id
 }
 
 func (b *boostGate) bestPassing() (int64, bool) {
@@ -313,6 +408,7 @@ func (b *boostGate) release(id int64) {
 	defer b.mu.Unlock()
 	if b.pending == id {
 		b.pending = 0
+		b.pendingForced = false
 	}
 }
 

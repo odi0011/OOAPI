@@ -2,6 +2,7 @@ package trading
 
 import (
 	"errors"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -78,7 +79,7 @@ func TestLiveBoostShortensScanAndPicksHighestWinRate(t *testing.T) {
 		t.Fatalf("low %+v entries=%d err=%v", snap, lowPaper.Entries, err)
 	}
 	snap, err = high.Step(highIn)
-	if err != nil || snap.State != StateInPosition || highPaper.Entries != 1 {
+	if err != nil || snap.State != StateInPosition || highPaper.Entries != 1 || snap.LastAction != "boost_entry" {
 		t.Fatalf("high %+v entries=%d err=%v", snap, highPaper.Entries, err)
 	}
 	snap, err = low.Step(lowIn)
@@ -488,6 +489,259 @@ func TestBoostReevaluatesSameBarAfterRoundTrip(t *testing.T) {
 	}
 }
 
+func TestBoostForcesEntryAtWindowEndWhenScoreBelowMin(t *testing.T) {
+	ResetTestnetGreen()
+	SetTestnetGreen(true)
+	ResetBoostForTest()
+	t.Cleanup(func() {
+		ResetTestnetGreen()
+		ResetBoostForTest()
+	})
+	now := time.Date(2026, 10, 12, 16, 0, 0, 0, time.UTC)
+	GrantBoost(now)
+	candles := candlesUntil(t, CrossGolden)
+	price := candles[len(candles)-1].Close
+	lowPaper := NewPaper()
+	highPaper := NewPaper()
+	low := liveTrendEngine(t, 1, "XRPUSDT", lowPaper, now)
+	high := liveTrendEngine(t, 2, "DOGEUSDT", highPaper, now)
+	lowScore, _, err := ScoreTrend(low.cfg, candles, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, score, err := ScoreTrend(low.cfg, candles, nil); err != nil || score >= low.cfg.Normalize().MinScore {
+		t.Fatalf("fixture score %d side %s err=%v", score, lowScore, err)
+	}
+	peers := []int64{1, 2}
+	lowIn := passingStep(now, candles, price, 0.6)
+	lowIn.LivePeerIDs = peers
+	highIn := passingStep(now, candles, price, 0.91)
+	highIn.LivePeerIDs = peers
+
+	snap, err := low.Step(lowIn)
+	if err != nil || lowPaper.Entries != 0 || snap.LastReason != ReasonBoostWait {
+		t.Fatalf("early low %+v entries=%d err=%v", snap, lowPaper.Entries, err)
+	}
+	snap, err = high.Step(highIn)
+	if err != nil || highPaper.Entries != 0 || snap.LastReason != ReasonBoostWait {
+		t.Fatalf("early high %+v entries=%d err=%v", snap, highPaper.Entries, err)
+	}
+
+	later := now.Add(BoostForceAfter)
+	lowIn.Now = later
+	highIn.Now = later
+	snap, err = low.Step(lowIn)
+	if err != nil || lowPaper.Entries != 0 || snap.LastReason != ReasonBoostWait {
+		t.Fatalf("force low %+v entries=%d err=%v", snap, lowPaper.Entries, err)
+	}
+	snap, err = high.Step(highIn)
+	if err != nil || snap.State != StateInPosition || highPaper.Entries != 1 || snap.LastAction != "boost_forced" {
+		t.Fatalf("force high %+v entries=%d err=%v", snap, highPaper.Entries, err)
+	}
+	if snap.Side != SideLong && snap.Side != SideShort {
+		t.Fatalf("side %s", snap.Side)
+	}
+	found := false
+	for _, ev := range RecentEvents() {
+		if ev.Action == "boost_forced" && ev.Symbol == "DOGEUSDT" && ev.Side == string(snap.Side) && ev.WinRate == 0.91 && strings.Contains(ev.Msg, "score") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("events %+v", RecentEvents())
+	}
+	snap, err = low.Step(lowIn)
+	if err != nil || lowPaper.Entries != 0 || snap.LastReason != ReasonBoostFilled {
+		t.Fatalf("second %+v entries=%d err=%v", snap, lowPaper.Entries, err)
+	}
+}
+
+func TestBoostForceSkipsBacktestGateWhenGamble(t *testing.T) {
+	ResetTestnetGreen()
+	SetTestnetGreen(true)
+	ResetBoostForTest()
+	t.Cleanup(func() {
+		ResetTestnetGreen()
+		ResetBoostForTest()
+	})
+	now := time.Date(2026, 10, 12, 16, 30, 0, 0, time.UTC)
+	GrantBoost(now)
+	candles := candlesUntil(t, CrossGolden)
+	price := candles[len(candles)-1].Close
+	paper := NewPaper()
+	eng := liveTrendEngine(t, 8, "DOGEUSDT", paper, now)
+	eng.cfg.GambleMode = true
+	eng.cfg.ScalpTpPct = 0.001
+	eng.cfg.ScalpSlPct = 0.003
+	in := passingStep(now, candles, price, 0.1)
+	in.Backtest.Trades = 1
+	in.Backtest.NetR = -1
+	in.LivePeerIDs = []int64{8}
+	snap, err := eng.Step(in)
+	if err != nil || paper.Entries != 0 {
+		t.Fatalf("early %+v entries=%d err=%v", snap, paper.Entries, err)
+	}
+	in.Now = now.Add(BoostForceAfter)
+	snap, err = eng.Step(in)
+	if err != nil || snap.State != StateInPosition || paper.Entries != 1 || snap.LastAction != "boost_forced" {
+		t.Fatalf("forced %+v entries=%d err=%v", snap, paper.Entries, err)
+	}
+	entry := snap.EntryPrice
+	if snap.Side == SideLong {
+		if math.Abs(snap.StopPrice-entry*(1-0.003)) > 1e-8 {
+			t.Fatalf("stop %v entry %v", snap.StopPrice, entry)
+		}
+		if math.Abs(snap.TakeProfitPrice-entry*(1+MinScalpTpPct)) > 1e-8 {
+			t.Fatalf("take %v entry %v", snap.TakeProfitPrice, entry)
+		}
+	} else if snap.Side == SideShort {
+		if math.Abs(snap.StopPrice-entry*(1+0.003)) > 1e-8 || math.Abs(snap.TakeProfitPrice-entry*(1-MinScalpTpPct)) > 1e-8 {
+			t.Fatalf("short stop %v take %v entry %v", snap.StopPrice, snap.TakeProfitPrice, entry)
+		}
+	} else {
+		t.Fatalf("side %s", snap.Side)
+	}
+	if !StopWithinLiquidation(snap.Side, entry, snap.StopPrice, snap.LiqPrice) {
+		t.Fatalf("stop beyond liq %+v", snap)
+	}
+}
+
+func TestBoostForceStillRejectsStopBeyondLiquidation(t *testing.T) {
+	ResetTestnetGreen()
+	SetTestnetGreen(true)
+	ResetBoostForTest()
+	t.Cleanup(func() {
+		ResetTestnetGreen()
+		ResetBoostForTest()
+	})
+	now := time.Date(2026, 10, 12, 17, 0, 0, 0, time.UTC)
+	GrantBoost(now)
+	candles := candlesUntil(t, CrossGolden)
+	price := candles[len(candles)-1].Close
+	paper := NewPaper()
+	eng := liveTrendEngine(t, 9, "XRPUSDT", paper, now)
+	eng.cfg.GambleMode = true
+	eng.cfg.Leverage = MaxLeverage
+	eng.cfg.ScalpSlPct = 0.2
+	eng.cfg.ScalpTpPct = DefaultScalpPct
+	in := passingStep(now, candles, price, 0.2)
+	in.Backtest.Trades = 1
+	in.Backtest.NetR = -1
+	in.LivePeerIDs = []int64{9}
+	in.Now = now.Add(BoostForceAfter)
+	snap, err := eng.Step(in)
+	if !errors.Is(err, ErrBlocked) || paper.Entries != 0 || snap.LastReason != ReasonStopBeyondLiquidation {
+		t.Fatalf("snap %+v entries=%d err=%v", snap, paper.Entries, err)
+	}
+}
+
+func TestBoostForceSkipsCoinThatAlreadyHasPosition(t *testing.T) {
+	ResetTestnetGreen()
+	SetTestnetGreen(true)
+	ResetBoostForTest()
+	t.Cleanup(func() {
+		ResetTestnetGreen()
+		ResetBoostForTest()
+	})
+	now := time.Date(2026, 10, 12, 17, 30, 0, 0, time.UTC)
+	GrantBoost(now)
+	candles := candlesUntil(t, CrossGolden)
+	price := candles[len(candles)-1].Close
+	heldPaper := NewPaper()
+	openPaper := NewPaper()
+	held := liveTrendEngine(t, 3, "XRPUSDT", heldPaper, now)
+	other := liveTrendEngine(t, 4, "DOGEUSDT", openPaper, now)
+	peers := []int64{3, 4}
+	heldIn := passingStep(now, candles, price, 0.95)
+	heldIn.LivePeerIDs = peers
+	heldIn.PositionsKnown = true
+	heldIn.Positions = []KeyPosition{{Symbol: "XRPUSDT", Qty: 10, Entry: price, Leverage: 3}}
+	otherIn := passingStep(now, candles, price, 0.7)
+	otherIn.LivePeerIDs = peers
+	later := now.Add(BoostForceAfter)
+	heldIn.Now = later
+	otherIn.Now = later
+	// 先各报告一次，强制时刻再按胜率挑。胜率更高的 XRP 已有仓，应该改开 DOGE。
+	if _, err := held.Step(passingStep(now, candles, price, 0.95)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.Step(passingStep(now, candles, price, 0.7)); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := held.Step(heldIn)
+	if err != nil || heldPaper.Entries != 0 || snap.LastReason != ReasonSymbolHeld {
+		t.Fatalf("held %+v entries=%d err=%v", snap, heldPaper.Entries, err)
+	}
+	snap, err = other.Step(otherIn)
+	if err != nil || snap.State != StateInPosition || openPaper.Entries != 1 || snap.LastAction != "boost_forced" {
+		t.Fatalf("other %+v entries=%d err=%v", snap, openPaper.Entries, err)
+	}
+	if openPaper.Entries != 1 || heldPaper.Entries != 0 {
+		t.Fatalf("held %d other %d", heldPaper.Entries, openPaper.Entries)
+	}
+}
+
+func TestApplyConfigHotReloadsWithoutRestart(t *testing.T) {
+	h := NewHub()
+	cfg := testConfig()
+	cfg.ID = 15
+	cfg.MinScore = 4
+	now := time.Date(2026, 10, 12, 18, 0, 0, 0, time.UTC)
+	eng := withSecrets(NewEngine(cfg, NewPaper(), DiscardLogger()))
+	if err := eng.Start(calmStart(now, 20)); err != nil {
+		t.Fatal(err)
+	}
+	h.PutForTest(1, cfg.ID, eng)
+	next := cfg
+	next.MinScore = 2
+	next.GambleMode = true
+	next.ScalpSlPct = 0.004
+	next.ScalpTpPct = 0.001
+	next.Revision = 10
+	h.ApplyConfig(1, cfg.ID, next)
+	got, ok := h.Config(1, cfg.ID)
+	if !ok || got.MinScore != 2 || !got.GambleMode || got.ScalpSlPct != 0.004 || got.ScalpTpPct != 0.001 {
+		t.Fatalf("%+v ok=%v", got, ok)
+	}
+	if eng.State() != StateArmed || !eng.running {
+		t.Fatalf("state %s running %v", eng.State(), eng.running)
+	}
+	stale := next
+	stale.MinScore = 4
+	stale.GambleMode = false
+	stale.Revision = 9
+	h.ApplyConfig(1, cfg.ID, stale)
+	got, _ = h.Config(1, cfg.ID)
+	if got.MinScore != 2 || !got.GambleMode {
+		t.Fatalf("stale %+v", got)
+	}
+}
+
+func TestRunnerReloadReplacesSpecWithoutNewLoop(t *testing.T) {
+	r := NewRunner(NewHub())
+	cfg := testConfig()
+	cfg.ID = 16
+	cfg.MinScore = 4
+	r.SetMarket(func(Config, SecretOpener, time.Time) (Market, error) {
+		return Market{Wallet: 20, Available: 20, WalletKnown: true, Mark: 1}, nil
+	})
+	r.SetStep(func(RunSpec, StepInput) (Snapshot, error) {
+		return Snapshot{LastAction: "skip"}, nil
+	})
+	r.Start()
+	r.Ensure(RunSpec{UserID: 1, Config: cfg})
+	t.Cleanup(func() { r.Remove(cfg.ID) })
+	next := cfg
+	next.MinScore = 1
+	next.GambleMode = true
+	next.Revision = 3
+	r.Reload(RunSpec{UserID: 1, Config: next})
+	got := r.liveSpec(RunSpec{Config: cfg})
+	if got.Config.MinScore != 1 || !got.Config.GambleMode || got.Config.Revision != 3 {
+		t.Fatalf("%+v", got.Config)
+	}
+}
+
 func waitRunnerTicks(t *testing.T, mu *sync.Mutex, ticks *[]time.Time, n int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -504,6 +758,18 @@ func waitRunnerTicks(t *testing.T, mu *sync.Mutex, ticks *[]time.Time, n int) {
 	got := len(*ticks)
 	mu.Unlock()
 	t.Fatalf("ticks %d want %d", got, n)
+}
+
+func liveTrendEngine(t *testing.T, id int64, symbol string, paper *Paper, now time.Time) *Engine {
+	t.Helper()
+	eng := liveBoostEngine(t, id, symbol, paper, now)
+	eng.cfg.EntryMode = EntryModeTrend
+	eng.cfg.MinScore = DefaultMinScore
+	eng.cfg.RSILongMin = 99
+	eng.cfg.RSILongMax = 100
+	eng.cfg.RSIShortMin = 0
+	eng.cfg.RSIShortMax = 1
+	return eng
 }
 
 func liveBoostEngine(t *testing.T, id int64, symbol string, paper *Paper, now time.Time) *Engine {
