@@ -109,6 +109,56 @@ func TestEntryRecordSurvivesInStateOrdersAndEvents(t *testing.T) {
 	}
 }
 
+func TestStrategyConfigCarriesCreatedAt(t *testing.T) {
+	cfg := strategyConfig(strategyRow{ID: 2, CreatedAt: "2026-10-01 05:15:00", Record: defaultStrategy()})
+	want := time.Date(2026, 10, 1, 5, 15, 0, 0, time.UTC)
+	if !cfg.CreatedAt.Equal(want) || cfg.ID != 2 {
+		t.Fatalf("created %s id %d", cfg.CreatedAt, cfg.ID)
+	}
+}
+
+func TestDBOpenEntryReviseAndClose(t *testing.T) {
+	useTradingDB(t)
+	trading.ResetForTest()
+	t.Cleanup(trading.ResetForTest)
+	trading.SetEntryLog(dbEntryLog{})
+	t.Cleanup(func() { trading.SetEntryLog(nil) })
+
+	opened := time.Date(2026, 10, 12, 5, 15, 0, 0, time.UTC)
+	id, err := trading.SaveEntry(trading.EntryRecord{
+		UserID: 1, StrategyID: 2, Symbol: "DOGEUSDT", Side: "short",
+		EntryPrice: 0.08417, Qty: 399, OpenedAt: opened,
+	})
+	if err != nil || id == 0 {
+		t.Fatal(err)
+	}
+	rows, err := trading.OpenEntries(1, 2)
+	if err != nil || len(rows) != 1 || rows[0].EntryPrice != 0.08417 || !rows[0].ClosedAt.IsZero() {
+		t.Fatalf("open %+v err=%v", rows, err)
+	}
+	if err := trading.ReviseOpenEntry(id, 0.08404, 400); err != nil {
+		t.Fatal(err)
+	}
+	closed := opened.Add(26 * time.Minute)
+	if err := trading.CloseEntry(id, 1, 2, "DOGEUSDT", "short", trading.ExitFill{
+		Price: 0.0838, Qty: 400, Realized: 0.092, Reason: trading.ReasonExchangeFlat, ClosedAt: closed,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	left, err := trading.OpenEntries(1, 2)
+	if err != nil || len(left) != 0 {
+		t.Fatalf("still open %+v err=%v", left, err)
+	}
+	listed, err := trading.ListEntries(1, 2, 5)
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("listed %+v err=%v", listed, err)
+	}
+	row := listed[0]
+	if row.EntryPrice != 0.08404 || row.Qty != 400 || row.ExitPrice != 0.0838 || row.RealizedUSDT != 0.092 || !row.ClosedAt.Equal(closed) {
+		t.Fatalf("stored %+v", row)
+	}
+}
+
 func jsonContainsEntry(body string) bool {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(body), &payload); err != nil {

@@ -36,6 +36,17 @@ WHERE user_id = ? AND strategy_id = ? AND symbol = ? AND side = ? AND closed_at 
 ORDER BY opened_at DESC, id DESC
 LIMIT 1`
 
+const entryReviseSQL = `
+UPDATE trading_entries
+SET entry_price = ?, qty = ?
+WHERE id = ? AND closed_at IS NULL`
+
+const entryOpenSQL = `
+SELECT ` + entrySelectCols + `
+FROM trading_entries
+WHERE user_id = ? AND strategy_id = ? AND closed_at IS NULL
+ORDER BY opened_at ASC, id ASC`
+
 const entryListSQL = `
 SELECT ` + entrySelectCols + `
 FROM trading_entries
@@ -71,6 +82,21 @@ func (dbEntryLog) Save(rec trading.EntryRecord) (int64, error) {
 		return 0, err
 	}
 	return id, nil
+}
+
+func (dbEntryLog) ReviseOpen(id int64, price, qty float64) error {
+	if db.DB == nil {
+		return sql.ErrConnDone
+	}
+	if id <= 0 || price <= 0 || qty <= 0 {
+		return nil
+	}
+	_, err := db.DB.Exec(entryReviseSQL, price, qty, id)
+	return err
+}
+
+func (dbEntryLog) Open(userID, strategyID int64) ([]trading.EntryRecord, error) {
+	return queryEntries(entryOpenSQL, userID, strategyID)
 }
 
 func (dbEntryLog) Close(id, userID, strategyID int64, symbol, side string, exit trading.ExitFill) error {

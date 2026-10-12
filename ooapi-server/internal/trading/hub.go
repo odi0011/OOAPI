@@ -81,6 +81,20 @@ func (h *Hub) ClearPause(userID, strategyID int64) {
 	}
 }
 
+// boundExchange 返回这台引擎正在用的交易所客户端。没有引擎时为 nil。
+func (h *Hub) boundExchange(userID, strategyID int64) Exchange {
+	if h == nil {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	eng := h.engines[sessionKey(userID, strategyID)]
+	if eng == nil {
+		return nil
+	}
+	return eng.ex
+}
+
 func (h *Hub) SetRunHook(fn RunHook) {
 	if h == nil {
 		return
