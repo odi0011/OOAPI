@@ -111,7 +111,7 @@ func scanStrategyUser(s scanner, userID *int64) (strategyRow, error) {
 		&row.Record.EmaFast, &row.Record.EmaSlow, &row.Record.Timeframe,
 		&row.Record.StopR, &row.Record.TakeProfitR, &row.Record.DailyLossPct, &row.Record.MaxMarginUsdt,
 		&row.Record.ExchangeKeyID, &row.Record.Mode,
-		&row.Record.EntryMode, &row.Record.MinScore, &row.Record.MinWinRate, &running,
+		&row.Record.EntryMode, &row.Record.MinScore, &row.Record.MinWinRate, &row.Record.MinTrades, &running,
 		&row.CreatedAt, &row.UpdatedAt,
 		&network, &status, &label,
 	)
