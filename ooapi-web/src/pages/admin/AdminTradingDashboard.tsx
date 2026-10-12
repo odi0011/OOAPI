@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Button } from "@/components/arc/button/button";
@@ -6,7 +6,13 @@ import AdminLayout from "@/components/admin/AdminLayout";
 import { ApiRequestError } from "@/lib/api";
 
 import styles from "./TradingDesk.module.css";
+import EngineOverview from "./EngineOverview";
 import TradingDesk, { type DeskReadErrors } from "./TradingDesk";
+import {
+  mapEnginesPayload,
+  resolveSelectedStrategyId,
+  type TradingEnginesSnapshot,
+} from "./engineOverview";
 import { ACCOUNT_PATH, STRATEGY_PATH } from "./settingsNav";
 import {
   getEngineMarket,
@@ -14,6 +20,7 @@ import {
   getEnginePosition,
   getEngineState,
   listStrategies,
+  listTradingEngines,
   type EngineMarket,
   type EngineOrders,
   type EnginePosition,
@@ -22,9 +29,12 @@ import {
 } from "./tradingApi";
 
 /**
- * 交易数据看板。只读：状态、K 线、持仓、委托、本会话盈亏。
+ * 交易数据看板。只读：多品种一览，以及选中引擎的状态、K 线、持仓、委托、本会话盈亏。
+ * /api/trading/engines 404 或失败时，仍按原来的第一份策略展示，不留白页。
  * 不改策略，不绑定账户，不调用测网全绿接口。
  */
+
+const ENGINE_POLL_MS = 5000;
 
 function errorText(err: unknown, fallback: string): string {
   return err instanceof ApiRequestError ? err.message : fallback;
@@ -32,6 +42,9 @@ function errorText(err: unknown, fallback: string): string {
 
 export default function AdminTradingDashboard() {
   const [strategy, setStrategy] = useState<Strategy | null>(null);
+  const [overview, setOverview] = useState<TradingEnginesSnapshot | null>(null);
+  const [multi, setMulti] = useState(false);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [engine, setEngine] = useState<EngineState | null>(null);
   const [market, setMarket] = useState<EngineMarket | null>(null);
   const [position, setPosition] = useState<EnginePosition | null>(null);
@@ -40,8 +53,15 @@ export default function AdminTradingDashboard() {
   const [dismissedError, setDismissedError] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  const strategiesRef = useRef<Strategy[]>([]);
+  const chosenRef = useRef<number | null>(null);
+  const overviewGen = useRef(0);
+  const deskGen = useRef(0);
 
   const refreshDesk = useCallback(async (id: number | null) => {
+    const gen = ++deskGen.current;
     if (id == null) {
       setEngine(null);
       setMarket(null);
@@ -56,6 +76,7 @@ export default function AdminTradingDashboard() {
       getEnginePosition(id),
       getEngineOrders(id),
     ]);
+    if (gen !== deskGen.current) return;
     if (state.status === "rejected" && state.reason instanceof ApiRequestError && state.reason.status === 404) {
       setEngine(null);
       setMarket(null);
@@ -76,34 +97,75 @@ export default function AdminTradingDashboard() {
     setReadErrors(nextErrors);
   }, []);
 
+  const applySnapshot = useCallback((nextMulti: boolean, snapshot: TradingEnginesSnapshot | null) => {
+    const fallbackStrategyId = strategiesRef.current[0]?.id ?? null;
+    const id = resolveSelectedStrategyId({
+      multi: nextMulti,
+      engines: snapshot?.engines ?? [],
+      current: chosenRef.current,
+      fallbackStrategyId,
+    });
+    if (nextMulti) chosenRef.current = id;
+    setSelectedId(id);
+    setMulti(nextMulti);
+    setOverview(nextMulti ? snapshot : null);
+    setStrategy(strategiesRef.current.find((item) => item.id === id) ?? null);
+    return id;
+  }, []);
+
+  const refreshOverview = useCallback(async () => {
+    const gen = ++overviewGen.current;
+    let nextMulti = false;
+    let snapshot: TradingEnginesSnapshot | null = null;
+    try {
+      snapshot = mapEnginesPayload(await listTradingEngines());
+      nextMulti = true;
+    } catch {
+      nextMulti = false;
+      snapshot = null;
+    }
+    if (gen !== overviewGen.current) return;
+    const id = applySnapshot(nextMulti, snapshot);
+    await refreshDesk(id);
+  }, [applySnapshot, refreshDesk]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
       const items = await listStrategies();
-      const current = items[0] ?? null;
-      setStrategy(current);
-      await refreshDesk(current?.id ?? null);
+      strategiesRef.current = items;
+      await refreshOverview();
+      setLoaded(true);
     } catch (err) {
       setLoadError(errorText(err, "加载数据看板失败"));
     } finally {
       setLoading(false);
     }
-  }, [refreshDesk]);
+  }, [refreshOverview]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   useEffect(() => {
-    const id = strategy?.id;
-    if (id == null) return;
+    if (!loaded) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState === "hidden") return;
-      void refreshDesk(id);
-    }, 5000);
+      void refreshOverview();
+    }, ENGINE_POLL_MS);
     return () => window.clearInterval(timer);
-  }, [refreshDesk, strategy?.id]);
+  }, [loaded, refreshOverview]);
+
+  const selectEngine = (strategyId: number) => {
+    chosenRef.current = strategyId;
+    setSelectedId(strategyId);
+    setStrategy(strategiesRef.current.find((item) => item.id === strategyId) ?? null);
+    setDismissedError("");
+    void refreshDesk(strategyId);
+  };
+
+  const selectedSummary = overview?.engines.find((item) => item.strategyId === selectedId);
 
   return (
     <AdminLayout
@@ -136,6 +198,10 @@ export default function AdminTradingDashboard() {
           </p>
         ) : null}
 
+        {multi && overview ? (
+          <EngineOverview snapshot={overview} selectedId={selectedId} onSelect={selectEngine} />
+        ) : null}
+
         <TradingDesk
           engine={engine}
           market={market}
@@ -143,7 +209,7 @@ export default function AdminTradingDashboard() {
           orders={orders}
           loading={loading}
           readErrors={readErrors}
-          symbol={strategy?.symbol}
+          symbol={strategy?.symbol || selectedSummary?.symbol}
           leverage={strategy?.leverage}
           marginMode={strategy?.marginMode}
           timeframe={strategy?.timeframe}
