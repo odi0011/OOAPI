@@ -27,6 +27,9 @@ func runnerDisabled() bool {
 // TRADING_RUNNER=0 时不启动，只留手工 /api/trading/engine/step。
 func StartTradingRunner() {
 	installEntryLog()
+	installOrderBook()
+	strategyRunner.SetEntriesPaused(loadPauseEntries)
+	strategyRunner.SetPauseBalance(loadPauseBalance)
 	if runnerDisabled() {
 		log.Printf("[trading] 进程内调度已关闭（TRADING_RUNNER）")
 		return
@@ -117,12 +120,13 @@ func loadRunningSpecs() ([]trading.RunSpec, error) {
 
 func scanStrategyUser(s scanner, userID *int64) (strategyRow, error) {
 	var (
-		row     strategyRow
-		network sql.NullString
-		status  sql.NullInt64
-		label   sql.NullString
-		running int
-		gamble  int
+		row          strategyRow
+		network      sql.NullString
+		status       sql.NullInt64
+		label        sql.NullString
+		running      int
+		gamble       int
+		pauseEntries int
 	)
 	err := s.Scan(
 		userID,
@@ -132,6 +136,7 @@ func scanStrategyUser(s scanner, userID *int64) (strategyRow, error) {
 		&row.Record.ExchangeKeyID, &row.Record.Mode,
 		&row.Record.EntryMode, &row.Record.MinScore, &row.Record.MinWinRate, &row.Record.MinTrades,
 		&row.Record.MaxMarginPerTradeUsdt, &row.Record.MaxConsecutiveLosses, &row.Record.PauseBalanceUsdt, &row.Record.PauseReason,
+		&pauseEntries,
 		&row.Record.MaxOpenPositions,
 		&row.Record.RSILongMin, &row.Record.RSILongMax, &row.Record.RSIShortMin, &row.Record.RSIShortMax,
 		&gamble, &row.Record.ScalpTpPct, &row.Record.ScalpSlPct, &running,
@@ -153,5 +158,24 @@ func scanStrategyUser(s scanner, userID *int64) (strategyRow, error) {
 	row.ExchangeKeyActive = status.Valid && status.Int64 == exchangeKeyActive
 	row.Record.GambleMode = gamble == 1
 	row.Record.Running = running == 1
+	row.Record.PauseEntries = pauseEntries != 0
 	return row, nil
+}
+
+func loadPauseEntries(id int64) (bool, error) {
+	var flag int
+	err := queryRow(`SELECT pause_entries FROM trading_strategies WHERE id = ?`, id).Scan(&flag)
+	if err != nil {
+		return false, err
+	}
+	return flag != 0, nil
+}
+
+func loadPauseBalance(id int64) (float64, error) {
+	var line float64
+	err := queryRow(`SELECT pause_balance_usdt FROM trading_strategies WHERE id = ?`, id).Scan(&line)
+	if err != nil {
+		return 0, err
+	}
+	return line, nil
 }

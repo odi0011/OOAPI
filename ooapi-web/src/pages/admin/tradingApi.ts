@@ -65,6 +65,8 @@ export interface Strategy {
   stopR: number;
   takeProfitR: number;
   dailyLossPct: number;
+  /** 钱包余额暂停线，单位 USDT。不能低于 0.5。 */
+  pauseBalanceUsdt?: number;
   maxMarginUsdt: number;
   exchangeKeyId: number;
   mode: TradingNetwork;
@@ -78,6 +80,8 @@ export interface Strategy {
   exchangeKeyActive: boolean;
   exchangeKeyNetwork?: string;
   warnings?: string[];
+  /** 暂停新开仓。与暂停余额无关。 */
+  pauseEntries?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -94,6 +98,8 @@ export interface StrategyWrite {
   stopR: number;
   takeProfitR: number;
   dailyLossPct: number;
+  /** 钱包余额暂停线，单位 USDT。不能低于 0.5。 */
+  pauseBalanceUsdt: number;
   maxMarginUsdt: number;
   exchangeKeyId: number;
   mode: TradingNetwork;
@@ -188,6 +194,23 @@ export async function deleteStrategy(id: number): Promise<void> {
   await apiRequest(`/api/trading/strategies/${id}`, { method: "DELETE" });
 }
 
+export interface PauseEntriesState {
+  strategyId: number;
+  pauseEntries: boolean;
+}
+
+/** 立刻暂停或恢复新开仓。已有仓和止损止盈不动，也不改 pauseBalanceUsdt。 */
+export async function getPauseEntries(strategyId: number): Promise<PauseEntriesState> {
+  return apiRequest<PauseEntriesState>(`/api/trading/strategies/${strategyId}/pause-entries`);
+}
+
+export async function setPauseEntries(strategyId: number, pauseEntries: boolean): Promise<PauseEntriesState> {
+  return apiRequest<PauseEntriesState>(`/api/trading/strategies/${strategyId}/pause-entries`, {
+    method: "POST",
+    body: { pauseEntries },
+  });
+}
+
 /**
  * 引擎状态。testnetGreen 只读展示。
  * 本页不调用 /api/trading/engine/testnet-green，也不打开 TRADING_TESTNET_GREEN。
@@ -209,6 +232,7 @@ export interface EngineState {
   mode?: string;
   testnetGreen?: boolean;
   running?: boolean;
+  pauseEntries?: boolean;
   lastAction?: string;
   lastReason?: string;
   symbol?: string;

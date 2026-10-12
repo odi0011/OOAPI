@@ -107,9 +107,10 @@ const bare = mapEnginesPayload([
 ]);
 assertEqual(bare.engines[0]?.realizedToday, 0.2, "bare array and realizedPnlToday");
 
-const single = mapEnginesPayload({ strategyId: 4, symbol: "SOLUSDT", todayRealizedPnl: "3" });
+const single = mapEnginesPayload({ strategyId: 4, symbol: "SOLUSDT", todayRealizedPnl: "3", pauseEntries: true });
 assertEqual(single.engines[0]?.strategyId, 4, "single object becomes one engine");
 assertEqual(single.engines[0]?.realizedToday, 3, "todayRealizedPnl alias");
+assertEqual(single.engines[0]?.pauseEntries, true, "pause entries flag");
 
 const wrapped = mapEnginesPayload({
   success: true,
@@ -134,6 +135,7 @@ assertEqual(card.winRate, "62.5%", "ratio win rate");
 assertEqual(card.trades, "12", "trade count truncates");
 assertEqual(card.netR, "1.50 R", "net R");
 assertEqual(card.expectancy, "0.50 R", "expectancy");
+assertEqual(card.pauseEntries, false, "pause defaults off");
 
 const shortCard = formatEngineCard(mixed.engines[1]!);
 assertEqual(shortCard.side, "空", "short side");
@@ -155,6 +157,7 @@ const emptyCard = formatEngineCard({
   realizedToday: null,
   lastReason: "",
   lastBacktest: null,
+  pauseEntries: false,
 });
 assertEqual(emptyCard.symbol, "—", "missing symbol");
 assertEqual(emptyCard.state, "—", "missing state");

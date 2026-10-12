@@ -18,6 +18,57 @@ const IncomeRefresh = 45 * time.Second
 // shanghaiLoc 是 Asia/Shanghai，无夏令时，固定 UTC+8。
 var shanghaiLoc = time.FixedZone("Asia/Shanghai", 8*60*60)
 
+// shanghai 与 shanghaiLoc 是同一个时区，测试和汇总都用它。
+var shanghai = shanghaiLoc
+
+// IncomeEvent 是币安 /fapi/v1/income 的一行。
+type IncomeEvent struct {
+	Symbol     string
+	IncomeType string
+	Income     float64
+	Time       time.Time
+}
+
+// ShanghaiDayStart 返回 now 所在 Asia/Shanghai 自然日的 0 点。
+func ShanghaiDayStart(now time.Time) time.Time {
+	return shanghaiDayStart(now)
+}
+
+// SumSymbolIncome 把该交易对的 REALIZED_PNL、COMMISSION、FUNDING_FEE 加总。
+// day 从上海当日 0 点（不早于 since）到 now，cumulative 从 since 到 now。两端都含。
+func SumSymbolIncome(rows []IncomeEvent, symbol string, since, now time.Time) (day, cumulative float64) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	since = since.UTC()
+	now = now.UTC()
+	if symbol == "" || since.IsZero() {
+		return 0, 0
+	}
+	if now.Before(since) {
+		now = since
+	}
+	dayStart := shanghaiDayStart(now)
+	if since.After(dayStart) {
+		dayStart = since
+	}
+	for _, row := range rows {
+		if !incomeTypes[strings.ToUpper(strings.TrimSpace(row.IncomeType))] {
+			continue
+		}
+		if row.Symbol != "" && !strings.EqualFold(row.Symbol, symbol) {
+			continue
+		}
+		when := row.Time.UTC()
+		if when.Before(since) || when.After(now) {
+			continue
+		}
+		cumulative += row.Income
+		if !when.Before(dayStart) {
+			day += row.Income
+		}
+	}
+	return day, cumulative
+}
+
 // incomeTypes 是净已实现要加总的账单类型。转入转出不计入。
 var incomeTypes = map[string]bool{
 	"REALIZED_PNL": true,
@@ -44,41 +95,41 @@ func (c *USDMClient) CredentialsReady() bool {
 
 // RealizedIncome 汇总 since 之后该交易对的已实现盈亏、手续费和资金费。
 // day 只含 now 所在 Asia/Shanghai 自然日（且不早于 since）的合计，cumulative 含 since 之后的全部。
-// since 用策略创建时间，不用本次进程的启动时间。
+// since 用策略创建时间，不用本次进程的启动时间。转入转出不计入。
 func (c *USDMClient) RealizedIncome(symbol string, since, now time.Time) (day, cumulative float64, err error) {
+	rows, err := c.IncomeHistory(symbol, since, now)
+	if err != nil {
+		return 0, 0, err
+	}
+	day, cumulative = SumSymbolIncome(rows, symbol, since, now)
+	return day, cumulative, nil
+}
+
+// IncomeHistory 读 since 到 now 的账单。调用方自己决定哪些类型入账。
+func (c *USDMClient) IncomeHistory(symbol string, since, now time.Time) ([]IncomeEvent, error) {
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
 	since = since.UTC()
 	now = now.UTC()
 	if symbol == "" || since.IsZero() {
-		return 0, 0, invalid("缺少收益起点")
+		return nil, invalid("缺少收益起点")
 	}
 	if now.Before(since) {
 		now = since
 	}
 	rows, err := c.incomeRows(symbol, since, now)
 	if err != nil {
-		return 0, 0, err
+		return nil, err
 	}
-	dayStart := shanghaiDayStart(now)
-	if since.After(dayStart) {
-		dayStart = since
-	}
-	for _, row := range rows {
-		if !incomeTypes[row.IncomeType] {
-			continue
-		}
-		if row.Symbol != "" && !strings.EqualFold(row.Symbol, symbol) {
-			continue
-		}
-		if row.Time.Before(since) {
-			continue
-		}
-		cumulative += row.Income
-		if !row.Time.Before(dayStart) {
-			day += row.Income
+	out := make([]IncomeEvent, len(rows))
+	for i, row := range rows {
+		out[i] = IncomeEvent{
+			Symbol:     row.Symbol,
+			IncomeType: row.IncomeType,
+			Income:     row.Income,
+			Time:       row.Time,
 		}
 	}
-	return day, cumulative, nil
+	return out, nil
 }
 
 // IncomeParts 是一笔持仓期间账单里要计入净已实现的三项。转入转出不在里面。

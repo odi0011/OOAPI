@@ -68,9 +68,9 @@ const (
 	DefaultMaxMarginPerTradeUSDT = 0
 	// DefaultMaxConsecutiveLosses 是新建策略的连亏暂停次数。0 表示关闭。
 	DefaultMaxConsecutiveLosses = 0
-	// DefaultPauseBalanceUSDT 是新建策略的余额暂停线。0 表示关闭。
-	// 账户权益跌破 BalanceFloorUSDT 时仍然停掉该密钥下的全部引擎。
-	DefaultPauseBalanceUSDT = 0
+	// DefaultPauseBalanceUSDT 是新建策略的余额暂停线，也是这道线的下限。
+	// 低于 BalanceFloorUSDT 的值会被接口拒绝。账户权益跌到地板时仍然停掉该密钥下的全部引擎。
+	DefaultPauseBalanceUSDT = 0.5
 
 	// TrendGapFraction 是快慢线至少要拉开的距离，按价格的 0.05% 计。
 	TrendGapFraction = 0.0005
@@ -92,6 +92,8 @@ const (
 	ReasonSymbolHeld          = "symbol_has_position"
 	// ReasonExchangeFlat 表示仓位已在交易所被条件单打平，引擎这才跟着回到待命。
 	ReasonExchangeFlat = "exchange_flat"
+	// ReasonEntriesPaused 表示策略关掉了新开仓。已有仓和止损止盈保持不动。
+	ReasonEntriesPaused = "entries_paused"
 
 	// DefaultScalpPct 是赌一把模式下止损和止盈相对入场价的默认距离（0.3%）。
 	DefaultScalpPct = 0.003
@@ -140,13 +142,16 @@ type Config struct {
 	MaxMarginPerTradeUsdt float64 `json:"maxMarginPerTradeUsdt,omitempty"`
 	// MaxConsecutiveLosses 连亏达到次数后暂停。0 表示策略不启用，再看环境变量。
 	MaxConsecutiveLosses int `json:"maxConsecutiveLosses,omitempty"`
-	// PauseBalanceUsdt 余额跌破后暂停。0 表示策略不启用。
-	// 这道暂停与 BalanceFloorUSDT 停机是两回事，停机线不能被这里关掉。
+	// PauseBalanceUsdt 是钱包余额暂停线。引擎每一拍读库里的最新值，不用重启。
+	// 合法值从 BalanceFloorUSDT 起。0 只留给还没写过这道线的旧行，新的保存不能再写成 0。
 	PauseBalanceUsdt float64 `json:"pauseBalanceUsdt,omitempty"`
 	// MaxOpenPositions 是同一把密钥下同时持仓的上限。0 表示策略不限制。
 	MaxOpenPositions int `json:"maxOpenPositions,omitempty"`
 	// PauseReason 非空表示已自动暂停，重启不会恢复。
 	PauseReason string `json:"pauseReason,omitempty"`
+	// PauseEntries 为真时本拍不开新仓。与 PauseBalanceUsdt 无关，已有仓和保护单保持原样。
+	// 引擎每一拍用库里的值覆盖内存，不靠重启。
+	PauseEntries bool `json:"pauseEntries,omitempty"`
 	// RSI 多空允许区间。两端都为 0 时用 50–70 / 30–50。
 	RSILongMin  float64 `json:"rsiLongMin,omitempty"`
 	RSILongMax  float64 `json:"rsiLongMax,omitempty"`
@@ -279,6 +284,9 @@ func (c Config) Validate() error {
 	}
 	if c.PauseBalanceUsdt < 0 || c.PauseBalanceUsdt > 1_000_000 {
 		return invalid("暂停余额要在 0 到 1000000 之间")
+	}
+	if c.PauseBalanceUsdt > 0 && c.PauseBalanceUsdt < BalanceFloorUSDT {
+		return invalid("暂停余额不能低于 0.5")
 	}
 	if c.MaxOpenPositions < 0 || c.MaxOpenPositions > 10000 {
 		return invalid("同时持仓上限要在 0 到 10000 之间")

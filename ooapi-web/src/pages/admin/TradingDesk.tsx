@@ -1,4 +1,5 @@
 import { Button } from "@/components/arc/button/button";
+import Switch from "@/components/arc/switch/switch";
 
 import LightweightCandleChart from "./LightweightCandleChart";
 import styles from "./TradingDesk.module.css";
@@ -45,6 +46,9 @@ interface TradingDeskProps {
   /** 用户关掉的那条 lastError。引擎换了一条新错误会再显示。只影响本页，不请求后端。 */
   dismissedError?: string;
   onDismissError?: () => void;
+  /** 立刻切换暂停新开仓。不传时只展示当前状态。 */
+  onTogglePauseEntries?: (paused: boolean) => void;
+  pauseBusy?: boolean;
 }
 
 export default function TradingDesk({
@@ -62,6 +66,8 @@ export default function TradingDesk({
   accountLabel,
   dismissedError = "",
   onDismissError,
+  onTogglePauseEntries,
+  pauseBusy = false,
 }: TradingDeskProps) {
   const status = buildDeskStatus({ engine, symbol, leverage, marginMode, accountLabel, mode, timeframe });
   const held = positionView(position);
@@ -83,6 +89,21 @@ export default function TradingDesk({
         <StatusItem label="保证金模式" value={status.marginModeText} />
         <StatusItem label="账户" value={status.accountLabel} />
         <StatusItem label="回测期望" value={formatExpectancyR(engine?.lastBacktest?.expectancyR)} />
+        <div className={styles.statusItem}>
+          <dt>新开仓</dt>
+          <dd>
+            {onTogglePauseEntries ? (
+              <Switch
+                label={status.pauseEntriesText}
+                checked={status.pauseEntries}
+                disabled={pauseBusy}
+                onCheckedChange={onTogglePauseEntries}
+              />
+            ) : (
+              status.pauseEntriesText
+            )}
+          </dd>
+        </div>
       </dl>
       {readErrors?.state ? <p className={styles.readError}>{readErrors.state}</p> : null}
 
@@ -167,7 +188,7 @@ export default function TradingDesk({
       <section className={styles.panel} aria-label="已实现盈亏">
         <header className={styles.panelHead}>
           <h2>已实现盈亏</h2>
-          <p>当日和本会话累计都在引擎 state 里，只标 realizedNetwork 这一侧。本会话累计不是跨天永久账本。另一侧保持「—」。</p>
+          <p>当日从上海时间 0 点算到现在，累计从策略创建算起，都直接来自币安账单。只标 realizedNetwork 这一侧，另一侧保持「—」。</p>
         </header>
         <div className={styles.tableWrap}>
           <table className={styles.table}>

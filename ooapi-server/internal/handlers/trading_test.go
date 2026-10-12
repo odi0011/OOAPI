@@ -571,6 +571,7 @@ func assertStrategyDefaults(t *testing.T, view map[string]any) {
 		{"maxMarginPerTradeUsdt", float64(trading.DefaultMaxMarginPerTradeUSDT)},
 		{"maxConsecutiveLosses", float64(trading.DefaultMaxConsecutiveLosses)},
 		{"pauseBalanceUsdt", float64(trading.DefaultPauseBalanceUSDT)},
+		{"pauseEntries", false},
 		{"maxOpenPositions", float64(0)},
 		{"rsiLongMin", 50.0},
 		{"rsiLongMax", 70.0},
@@ -829,6 +830,13 @@ func tradingArgTime(v any) time.Time {
 	}
 }
 
+func pauseEntriesValue(paused bool) int64 {
+	if paused {
+		return 1
+	}
+	return 0
+}
+
 func tradingArgFloat(v any) float64 {
 	switch n := v.(type) {
 	case float64:
@@ -955,6 +963,15 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 		}
 		row.rec.Running = false
 		row.rec.PauseReason = tradingArgString(vals[0])
+		row.updatedAt = d.stampLocked()
+		return tradingTestResult{0, 1}, nil
+	case normTradingSQL(strategyPauseEntriesSQL):
+		id, userID := tradingArgInt(vals[1]), tradingArgInt(vals[2])
+		row := d.strategies[id]
+		if row == nil || row.userID != userID {
+			return tradingTestResult{0, 0}, nil
+		}
+		row.rec.PauseEntries = tradingArgInt(vals[0]) != 0
 		row.updatedAt = d.stampLocked()
 		return tradingTestResult{0, 1}, nil
 	case normTradingSQL(strategyClearPauseSQL):
@@ -1108,7 +1125,7 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 		"id", "symbol", "leverage", "margin_mode", "ema_fast", "ema_slow", "timeframe",
 		"stop_r", "take_profit_r", "daily_loss_pct", "max_margin_usdt", "exchange_key_id", "mode",
 		"entry_mode", "min_score", "min_win_rate", "min_trades",
-		"max_margin_per_trade_usdt", "max_consecutive_losses", "pause_balance_usdt", "pause_reason",
+		"max_margin_per_trade_usdt", "max_consecutive_losses", "pause_balance_usdt", "pause_reason", "pause_entries",
 		"max_open_positions",
 		"rsi_long_min", "rsi_long_max", "rsi_short_min", "rsi_short_max",
 		"gamble_mode", "scalp_tp_pct", "scalp_sl_pct", "running",
@@ -1154,7 +1171,7 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 			row.id, rec.Symbol, int64(rec.Leverage), rec.MarginMode, int64(rec.EmaFast), int64(rec.EmaSlow), rec.Timeframe,
 			rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
 			rec.EntryMode, int64(rec.MinScore), rec.MinWinRate, int64(rec.MinTrades),
-			rec.MaxMarginPerTradeUsdt, int64(rec.MaxConsecutiveLosses), rec.PauseBalanceUsdt, rec.PauseReason,
+			rec.MaxMarginPerTradeUsdt, int64(rec.MaxConsecutiveLosses), rec.PauseBalanceUsdt, rec.PauseReason, pauseEntriesValue(rec.PauseEntries),
 			int64(rec.MaxOpenPositions),
 			rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax,
 			gamble, rec.ScalpTpPct, rec.ScalpSlPct, running,
@@ -1251,5 +1268,89 @@ func sortDesc(ids []int64) {
 				ids[i], ids[j] = ids[j], ids[i]
 			}
 		}
+	}
+}
+
+func TestPauseEntriesSwitchDoesNotUseBalanceLine(t *testing.T) {
+	useTradingDB(t)
+	trading.ResetForTest()
+	t.Cleanup(trading.ResetForTest)
+	owner := tradingUser(11)
+	keyRec := callTrading(t, CreateExchangeKey, http.MethodPost, "/api/trading/exchange-keys", `{
+		"label": "测网",
+		"network": "testnet",
+		"apiKey": "`+testAPIKey+`",
+		"apiSecret": "`+testAPISecret+`"
+	}`, owner, "")
+	keyID := int64(tradingData(t, keyRec)["id"].(float64))
+	created := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+		fmt.Sprintf(`{"exchangeKeyId": %d, "pauseBalanceUsdt": 1.5}`, keyID), owner, "")
+	if created.Code != http.StatusOK {
+		t.Fatalf("create = %d %s", created.Code, created.Body.String())
+	}
+	view := tradingData(t, created)
+	id := int64(view["id"].(float64))
+	if view["pauseEntries"] != false || view["pauseBalanceUsdt"] != 1.5 {
+		t.Fatalf("defaults %#v", view)
+	}
+	got := tradingData(t, callTrading(t, GetStrategyPauseEntries, http.MethodGet, "/api/trading/strategies/"+fmt.Sprint(id)+"/pause-entries", "", owner, fmt.Sprint(id)))
+	if got["pauseEntries"] != false || got["strategyId"] != float64(id) {
+		t.Fatalf("get %#v", got)
+	}
+	started := callTrading(t, StartTradingEngine, http.MethodPost, "/api/trading/engine/start",
+		fmt.Sprintf(`{"strategyId": %d, "equityUsdt": 2}`, id), owner, "")
+	if started.Code != http.StatusOK {
+		t.Fatalf("start = %d %s", started.Code, started.Body.String())
+	}
+	posted := tradingData(t, callTrading(t, PostStrategyPauseEntries, http.MethodPost, "/api/trading/strategies/"+fmt.Sprint(id)+"/pause-entries",
+		`{"pauseEntries": true}`, owner, fmt.Sprint(id)))
+	if posted["pauseEntries"] != true {
+		t.Fatalf("post %#v", posted)
+	}
+	again := tradingData(t, callTrading(t, GetTradingStrategy, http.MethodGet, "/api/trading/strategies/"+fmt.Sprint(id), "", owner, fmt.Sprint(id)))
+	if again["pauseEntries"] != true || again["pauseBalanceUsdt"] != 1.5 {
+		t.Fatalf("saved %#v", again)
+	}
+	snap, okSnap := trading.DefaultHub().State(owner.ID, id)
+	if !okSnap || !snap.PauseEntries || snap.State != trading.StateArmed {
+		t.Fatalf("live snap %+v ok=%v", snap, okSnap)
+	}
+	cfg, okCfg := trading.DefaultHub().Config(owner.ID, id)
+	if !okCfg || !cfg.PauseEntries || cfg.PauseBalanceUsdt != 1.5 {
+		t.Fatalf("config %+v ok=%v", cfg, okCfg)
+	}
+}
+
+func TestPauseBalanceRejectsBelowFloor(t *testing.T) {
+	useTradingDB(t)
+	owner := tradingUser(12)
+	keyRec := callTrading(t, CreateExchangeKey, http.MethodPost, "/api/trading/exchange-keys", `{
+		"label": "测网",
+		"network": "testnet",
+		"apiKey": "`+testAPIKey+`",
+		"apiSecret": "`+testAPISecret+`"
+	}`, owner, "")
+	keyID := int64(tradingData(t, keyRec)["id"].(float64))
+	for _, raw := range []string{"0", "0.49"} {
+		rec := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+			fmt.Sprintf(`{"exchangeKeyId": %d, "pauseBalanceUsdt": %s}`, keyID, raw), owner, "")
+		if rec.Code != http.StatusBadRequest || tradingCode(t, rec) != "pauseBalanceUsdt" {
+			t.Fatalf("create %s = %d %s", raw, rec.Code, rec.Body.String())
+		}
+	}
+	created := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+		fmt.Sprintf(`{"exchangeKeyId": %d, "pauseBalanceUsdt": 0.5}`, keyID), owner, "")
+	if created.Code != http.StatusOK {
+		t.Fatalf("create floor = %d %s", created.Code, created.Body.String())
+	}
+	id := int64(tradingData(t, created)["id"].(float64))
+	updated := callTrading(t, UpdateTradingStrategy, http.MethodPatch, "/api/trading/strategies/"+fmt.Sprint(id),
+		`{"pauseBalanceUsdt": 0.4}`, owner, fmt.Sprint(id))
+	if updated.Code != http.StatusBadRequest || tradingCode(t, updated) != "pauseBalanceUsdt" {
+		t.Fatalf("patch = %d %s", updated.Code, updated.Body.String())
+	}
+	kept := tradingData(t, callTrading(t, GetTradingStrategy, http.MethodGet, "/api/trading/strategies/"+fmt.Sprint(id), "", owner, fmt.Sprint(id)))
+	if kept["pauseBalanceUsdt"] != 0.5 {
+		t.Fatalf("kept %#v", kept["pauseBalanceUsdt"])
 	}
 }
