@@ -442,7 +442,7 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 	}
 	cross, err := e.cross(in.Candles)
 	if err != nil {
-		return e.Snapshot(), e.fail(err.Error())
+		return e.failed(err.Error())
 	}
 	if cross == CrossNone {
 		e.note("none", "no cross")
@@ -455,7 +455,7 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 	side := SideForCross(cross)
 	price := mark(in)
 	if price <= 0 {
-		return e.Snapshot(), e.fail("mark price is required")
+		return e.failed("mark price is required")
 	}
 	qty, err := e.entryQty(price)
 	if err != nil {
@@ -468,7 +468,7 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 	}
 	stop, _, liq, err := e.quoteProtection(side, price)
 	if err != nil {
-		return e.Snapshot(), e.fail(err.Error())
+		return e.failed(err.Error())
 	}
 	if !StopWithinLiquidation(side, price, stop, liq) {
 		return e.blockStop(price, stop, liq)
@@ -488,7 +488,7 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 		MarginMode: e.cfg.MarginMode,
 	})
 	if err != nil {
-		return e.Snapshot(), e.fail(err.Error())
+		return e.failed(err.Error())
 	}
 	e.lastBarKey = barKey(in.Candles)
 	if fill.Status != StatusFilled {
@@ -504,7 +504,7 @@ func (e *Engine) stepEntry(in StepInput) (Snapshot, error) {
 	}
 	pos, err := e.ex.Position(e.cfg.Symbol)
 	if err != nil {
-		return e.Snapshot(), e.fail(err.Error())
+		return e.failed(err.Error())
 	}
 	if !pos.Open {
 		e.note("entry", "waiting")
@@ -515,22 +515,22 @@ func (e *Engine) stepEntry(in StepInput) (Snapshot, error) {
 
 func (e *Engine) acceptFill(fill Fill) (Snapshot, error) {
 	if err := e.m.Transition(Event{Kind: EventEntryFilled, Reason: "filled"}); err != nil {
-		return e.Snapshot(), e.fail(err.Error())
+		return e.failed(err.Error())
 	}
 	stop, take, liq, err := e.quoteProtection(fill.Side, fill.Price)
 	if err != nil {
-		return e.Snapshot(), e.fail(err.Error())
+		return e.failed(err.Error())
 	}
 	e.rememberPlan(fill.Price, stop, liq)
 	if !StopWithinLiquidation(fill.Side, fill.Price, stop, liq) {
 		e.pos = position{Side: fill.Side, Qty: fill.Qty, Entry: fill.Price, Stop: stop, Take: take, Liq: liq}
 		e.log.Printf("[trading] %s entry=%.8f stop=%.8f liq=%.8f", ReasonStopBeyondLiquidation, fill.Price, stop, liq)
-		return e.Snapshot(), e.fail(ReasonStopBeyondLiquidation)
+		return e.failed(ReasonStopBeyondLiquidation)
 	}
 	if err := e.ex.PlaceProtection(Protection{Symbol: e.cfg.Symbol, Stop: stop, Take: take, Side: fill.Side}); err != nil {
 		e.pos = position{Side: fill.Side, Qty: fill.Qty, Entry: fill.Price, Stop: stop, Take: take, Liq: liq}
 		e.log.Printf("[trading] %s: %v stop=%.8f liq=%.8f", ReasonProtectiveOrdersFailed, err, stop, liq)
-		return e.Snapshot(), e.fail(ReasonProtectiveOrdersFailed)
+		return e.failed(ReasonProtectiveOrdersFailed)
 	}
 	e.pos = position{Side: fill.Side, Qty: fill.Qty, Entry: fill.Price, Stop: stop, Take: take, Liq: liq}
 	e.log.Printf("[trading] entry %s entry=%.8f stop=%.8f liq=%.8f", fill.Side, fill.Price, stop, liq)
@@ -560,11 +560,11 @@ func (e *Engine) stepPosition(in StepInput) (Snapshot, error) {
 	}
 	price := mark(in)
 	if price <= 0 {
-		return e.Snapshot(), e.fail("mark price is required")
+		return e.failed("mark price is required")
 	}
 	cross, err := e.cross(in.Candles)
 	if err != nil {
-		return e.Snapshot(), e.fail(err.Error())
+		return e.failed(err.Error())
 	}
 	exit, reason, fillPrice := e.exitSignal(price, cross)
 	if !exit {
@@ -631,18 +631,18 @@ func (e *Engine) finishExit(in StepInput, reason string, price ...float64) (Snap
 	}
 	if e.State() == StateInPosition {
 		if err := e.m.Transition(Event{Kind: EventExitSignal, Reason: reason}); err != nil {
-			return e.Snapshot(), e.fail(err.Error())
+			return e.failed(err.Error())
 		}
 	}
 	if e.State() != StateExitSubmitted {
-		return e.Snapshot(), e.fail("exit is not in progress")
+		return e.failed("exit is not in progress")
 	}
 	fill, err := e.ex.Close(CloseOrder{Symbol: e.cfg.Symbol, Price: fillPrice, Reason: reason})
 	if err != nil {
-		return e.Snapshot(), e.fail(err.Error())
+		return e.failed(err.Error())
 	}
 	if err := e.m.Transition(Event{Kind: EventExitFilled, Reason: reason}); err != nil {
-		return e.Snapshot(), e.fail(err.Error())
+		return e.failed(err.Error())
 	}
 	pnl := RealizedPnL(e.pos.Side, e.pos.Entry, fill.Price, e.pos.Qty)
 	halted := e.ledger.Add(pnl, e.cfg.DailyLossPct)
@@ -693,6 +693,12 @@ func (e *Engine) cancelAndFlatten(reason string) {
 	if _, err := e.ex.Close(CloseOrder{Symbol: e.cfg.Symbol, Price: price, Reason: reason}); err != nil {
 		e.log.Printf("[trading] flatten %s failed: %v", reason, err)
 	}
+}
+
+// failed 先落错误状态，再拍快照。同一条 return 里先拍快照会丢掉停机后的状态。
+func (e *Engine) failed(reason string) (Snapshot, error) {
+	err := e.fail(reason)
+	return e.Snapshot(), err
 }
 
 func (e *Engine) fail(reason string) error {
