@@ -50,6 +50,8 @@ type Runner struct {
 	specs      map[int64]RunSpec
 	cache      map[int64]backtestCache
 	boostEvery time.Duration
+	// flatGap 是测试用的空仓核对间隔。0 表示用 FlatReconcileInterval。
+	flatGap time.Duration
 }
 
 func NewRunner(hub *Hub) *Runner {
@@ -90,6 +92,13 @@ func (r *Runner) SetStep(fn func(spec RunSpec, in StepInput) (Snapshot, error)) 
 func (r *Runner) SetBoostEvery(d time.Duration) {
 	r.mu.Lock()
 	r.boostEvery = d
+	r.mu.Unlock()
+}
+
+// SetFlatEvery 只给测试缩短持仓期间的空仓核对间隔。0 表示用 FlatReconcileInterval。
+func (r *Runner) SetFlatEvery(d time.Duration) {
+	r.mu.Lock()
+	r.flatGap = d
 	r.mu.Unlock()
 }
 
@@ -229,20 +238,73 @@ func (r *Runner) loop(ctx context.Context, spec RunSpec) {
 		notify := boostPing.C()
 		wait := r.nextWait(spec.Config.Timeframe, live)
 		timer := time.NewTimer(wait)
+		// 持仓时另开一只短时钟。止盈可以在 K 线中间成交，不能等到下一根收盘才发现已经空仓。
+		var recTimer *time.Timer
+		var recC <-chan time.Time
+		if gap := r.flatEvery(); gap > 0 && r.holding(spec) {
+			recTimer = time.NewTimer(gap)
+			recC = recTimer.C
+		}
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+			stopTimer(recTimer)
 			return
 		case <-timer.C:
+			stopTimer(recTimer)
 			spec = r.liveSpec(spec)
 			r.runOnce(ctx, spec)
 		case <-notify:
 			timer.Stop()
+			stopTimer(recTimer)
 			spec = r.liveSpec(spec)
 			if live && BoostActive(r.now()) {
 				r.runOnce(ctx, spec)
 			}
+		case <-recC:
+			timer.Stop()
+			spec = r.liveSpec(spec)
+			r.reconcileOnce(ctx, spec)
 		}
+	}
+}
+
+func stopTimer(t *time.Timer) {
+	if t == nil {
+		return
+	}
+	if !t.Stop() {
+		select {
+		case <-t.C:
+		default:
+		}
+	}
+}
+
+func (r *Runner) flatEvery() time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.flatGap > 0 {
+		return r.flatGap
+	}
+	return FlatReconcileInterval
+}
+
+func (r *Runner) holding(spec RunSpec) bool {
+	if r == nil || r.hub == nil {
+		return false
+	}
+	snap, ok := r.hub.State(spec.UserID, spec.Config.ID)
+	return ok && snap.State == StateInPosition
+}
+
+func (r *Runner) reconcileOnce(ctx context.Context, spec RunSpec) {
+	if ctx.Err() != nil || r == nil || r.hub == nil {
+		return
+	}
+	spec = r.liveSpec(spec)
+	if _, err := r.hub.ReconcileFlat(spec.UserID, spec.Config.ID, r.now(), spec.Secrets); err != nil {
+		log.Printf("[trading] runner strategy %d reconcile: %v", spec.Config.ID, err)
 	}
 }
 
