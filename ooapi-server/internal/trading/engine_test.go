@@ -63,8 +63,8 @@ func TestPaperGoldenCrossTakeProfitDoesNotReenterSameBar(t *testing.T) {
 	if snap.State != StateArmed || snap.Qty != 0 || snap.Side != "" {
 		t.Fatalf("after tp %+v", snap)
 	}
-	if snap.DayRealized <= 0 {
-		t.Fatalf("tp should realize profit, got %v", snap.DayRealized)
+	if snap.DayRealized <= 0 || snap.CumulativeRealized != snap.DayRealized {
+		t.Fatalf("tp should realize profit, got day %v cumulative %v", snap.DayRealized, snap.CumulativeRealized)
 	}
 	trace = eng.Trace()
 	for _, want := range []State{StateExitSubmitted, StateSettled, StateIdle, StateArmed} {
@@ -144,7 +144,7 @@ func TestStopLossHaltsUntilNextUTCDay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap.State != StateDailyHalt || !snap.Halted || snap.DayRealized >= 0 {
+	if snap.State != StateDailyHalt || !snap.Halted || snap.DayRealized >= 0 || snap.CumulativeRealized != snap.DayRealized {
 		t.Fatalf("halt %+v", snap)
 	}
 	if err := eng.Start(calmStart(now.Add(time.Hour), 1)); !errors.Is(err, ErrDailyHalt) {
@@ -156,8 +156,40 @@ func TestStopLossHaltsUntilNextUTCDay(t *testing.T) {
 	if err := eng.Start(calmStart(now.Add(24*time.Hour), 1)); err != nil {
 		t.Fatal(err)
 	}
-	if eng.State() != StateArmed || eng.Snapshot().Halted {
-		t.Fatalf("next day %+v", eng.Snapshot())
+	next := eng.Snapshot()
+	if eng.State() != StateArmed || next.Halted || next.DayRealized != 0 || next.CumulativeRealized >= 0 {
+		t.Fatalf("next day %+v", next)
+	}
+}
+
+func TestRestoreKeepsCumulativeRealized(t *testing.T) {
+	eng := withSecrets(NewEngine(testConfig(), NewPaper(), DiscardLogger()))
+	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	if err := eng.Start(calmStart(now, 2)); err != nil {
+		t.Fatal(err)
+	}
+	candles := candlesUntil(t, CrossGolden)
+	snap, err := eng.Step(stepAt(now, candles, candles[len(candles)-1].Close, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eng.Step(stepAt(now, candles, snap.TakeProfitPrice+0.0001, 2)); err != nil {
+		t.Fatal(err)
+	}
+	rt := eng.Runtime()
+	if rt.Cumulative <= 0 || rt.Cumulative != rt.Realized {
+		t.Fatalf("runtime %+v", rt)
+	}
+	restored := NewEngine(testConfig(), NewPaper(), DiscardLogger())
+	restored.Restore(rt)
+	got := restored.Snapshot()
+	if got.DayRealized != rt.Realized || got.CumulativeRealized != rt.Cumulative {
+		t.Fatalf("restored %+v runtime %+v", got, rt)
+	}
+	legacy := NewEngine(testConfig(), NewPaper(), DiscardLogger())
+	legacy.Restore(Runtime{State: StateIdle, Realized: -0.2, Capital: 2, Day: now})
+	if legacy.Snapshot().CumulativeRealized != -0.2 || legacy.Snapshot().DayRealized != -0.2 {
+		t.Fatalf("legacy %+v", legacy.Snapshot())
 	}
 }
 

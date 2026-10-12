@@ -18,7 +18,7 @@ import (
 )
 
 // 引擎读已上线的 trading_strategies / exchange_keys，不另存一份配置。
-// 密钥只在发单或平仓时解开。测网撮合在内存里完成；实盘默认被门闩挡住。
+// 密钥只在发单、平仓或交易台签名读盘时解开。测网撮合在内存里完成；实盘默认被门闩挡住。
 
 type engineRequest struct {
 	StrategyID     *int64           `json:"strategyId"`
@@ -36,7 +36,15 @@ type testnetGreenRequest struct {
 
 type engineStateView struct {
 	trading.Snapshot
-	StrategyID int64 `json:"strategyId"`
+	StrategyID         int64  `json:"strategyId"`
+	Symbol             string `json:"symbol"`
+	Leverage           int    `json:"leverage"`
+	MarginMode         string `json:"marginMode"`
+	Timeframe          string `json:"timeframe"`
+	ExchangeKeyID      int64  `json:"exchangeKeyId"`
+	ExchangeKeyLabel   string `json:"exchangeKeyLabel"`
+	ExchangeKeyNetwork string `json:"exchangeKeyNetwork,omitempty"`
+	RealizedNetwork    string `json:"realizedNetwork"`
 }
 
 // GetTradingEngineState 返回当前用户某条策略的内存状态。没有会话时是 Idle。
@@ -50,11 +58,11 @@ func GetTradingEngineState(c *gin.Context) {
 		writeEngineErr(c, terr)
 		return
 	}
-	view := idleEngineView(row)
 	if snap, found := trading.DefaultHub().State(user.ID, row.ID); found {
-		view.Snapshot = snap
+		ok(c, bindEngineView(row, snap, true))
+		return
 	}
-	ok(c, view)
+	ok(c, bindEngineView(row, trading.Snapshot{}, false))
 }
 
 // StartTradingEngine 按最新策略（或指定 id）做启动检查，进入 Armed，不下单。
@@ -138,7 +146,7 @@ func runEngine(c *gin.Context, action engineAction) {
 		writeEngineErr(c, err)
 		return
 	}
-	ok(c, engineStateView{Snapshot: snap, StrategyID: row.ID})
+	ok(c, bindEngineView(row, snap, true))
 }
 
 func bindEngineRequest(c *gin.Context) (engineRequest, bool) {
@@ -308,15 +316,40 @@ func liqDistance(v *float64) float64 {
 	return *v
 }
 
-func idleEngineView(row strategyRow) engineStateView {
-	return engineStateView{
-		StrategyID: row.ID,
-		Snapshot: trading.Snapshot{
-			State:        trading.StateIdle,
-			Mode:         row.Record.Mode,
-			TestnetGreen: trading.TestnetGreen(),
-		},
+func bindEngineView(row strategyRow, snap trading.Snapshot, hasSession bool) engineStateView {
+	if !hasSession {
+		snap = trading.Snapshot{
+			State: trading.StateIdle,
+			Mode:  row.Record.Mode,
+		}
 	}
+	if snap.Mode == "" {
+		snap.Mode = row.Record.Mode
+	}
+	snap.TestnetGreen = trading.TestnetGreen()
+	return engineStateView{
+		Snapshot:           snap,
+		StrategyID:         row.ID,
+		Symbol:             row.Record.Symbol,
+		Leverage:           row.Record.Leverage,
+		MarginMode:         row.Record.MarginMode,
+		Timeframe:          row.Record.Timeframe,
+		ExchangeKeyID:      row.Record.ExchangeKeyID,
+		ExchangeKeyLabel:   row.ExchangeKeyLabel,
+		ExchangeKeyNetwork: row.ExchangeKeyNetwork,
+		RealizedNetwork:    realizedNetwork(row, snap, hasSession),
+	}
+}
+
+// 有会话时按引擎 mode 标注盈亏来源；否则用账户 network，再退回策略 mode。
+func realizedNetwork(row strategyRow, snap trading.Snapshot, hasSession bool) string {
+	if hasSession && snap.Mode != "" {
+		return snap.Mode
+	}
+	if row.ExchangeKeyNetwork != "" {
+		return row.ExchangeKeyNetwork
+	}
+	return row.Record.Mode
 }
 
 func writeEngineErr(c *gin.Context, err error) {

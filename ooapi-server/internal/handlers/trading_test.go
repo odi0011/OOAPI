@@ -706,7 +706,7 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 	cols := []string{
 		"id", "symbol", "leverage", "margin_mode", "ema_fast", "ema_slow", "timeframe",
 		"stop_r", "take_profit_r", "daily_loss_pct", "max_margin_usdt", "exchange_key_id", "mode",
-		"created_at", "updated_at", "network", "status",
+		"created_at", "updated_at", "network", "status", "label",
 	}
 	type pair struct {
 		id      int64
@@ -729,16 +729,17 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 	var values [][]driver.Value
 	for _, item := range order {
 		row := d.strategies[item.id]
-		var network, status any
+		var network, status, label any
 		if key := d.keys[row.rec.ExchangeKeyID]; key != nil && key.userID == row.userID {
 			network = key.network
 			status = int64(key.status)
+			label = key.label
 		}
 		rec := row.rec
 		values = append(values, []driver.Value{
 			row.id, rec.Symbol, int64(rec.Leverage), rec.MarginMode, int64(rec.EmaFast), int64(rec.EmaSlow), rec.Timeframe,
 			rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
-			row.createdAt, row.updatedAt, network, status,
+			row.createdAt, row.updatedAt, network, status, label,
 		})
 	}
 	return &tradingTestRows{columns: cols, values: values}

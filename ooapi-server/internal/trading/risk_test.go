@@ -88,7 +88,7 @@ func TestLedgerResetsOnNextUTCDay(t *testing.T) {
 	var book Ledger
 	day := time.Date(2026, 10, 12, 22, 0, 0, 0, time.UTC)
 	book.Roll(day, 2)
-	if !book.Add(-0.08, 4) || !book.Halted {
+	if !book.Add(-0.08, 4) || !book.Halted || book.Cumulative != -0.08 {
 		t.Fatal("expected halt")
 	}
 	book.Roll(day.Add(30*time.Minute), 9)
@@ -97,7 +97,7 @@ func TestLedgerResetsOnNextUTCDay(t *testing.T) {
 	}
 	next := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
 	book.Roll(next, 2)
-	if book.Halted || book.Realized != 0 || !book.Day.Equal(next) {
+	if book.Halted || book.Realized != 0 || book.Cumulative != -0.08 || !book.Day.Equal(next) {
 		t.Fatalf("next UTC day should clear the halt: %+v", book)
 	}
 }
