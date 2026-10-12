@@ -232,3 +232,90 @@
   line-height: var(--leading-body);
   color: var(--danger, #d94a3d);
 }
+
+.overviewTotals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+}
+
+.overviewTotals div {
+  min-width: 92px;
+}
+
+.overviewTotals dt {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.overviewTotals dd {
+  margin: 2px 0 0;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.engineRow,
+.engineSelected {
+  cursor: pointer;
+}
+
+.engineRow:hover td,
+.engineRow:hover th {
+  background: var(--surface-muted);
+}
+
+.engineSelected td,
+.engineSelected th,
+.engineSelected:hover td,
+.engineSelected:hover th {
+  background: color-mix(in oklab, var(--accent) 12%, var(--surface));
+}
+
+.engineRow:focus-visible,
+.engineSelected:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.overviewEmpty {
+  margin-top: var(--space-3);
+}
+
+.pnlUp,
+.table td.pnlUp,
+.overviewTotals .pnlUp {
+  color: var(--success, #1a7f4b);
+}
+
+.pnlDown,
+.table td.pnlDown,
+.overviewTotals .pnlDown {
+  color: var(--danger, #d94a3d);
+}
+
+.sideLong,
+.table td.sideLong {
+  color: var(--success, #1a7f4b);
+  font-weight: 500;
+}
+
+.sideShort,
+.table td.sideShort {
+  color: var(--danger, #d94a3d);
+  font-weight: 500;
+}
+
+.table td.reasonCell {
+  white-space: normal;
+  min-width: 12ch;
+  max-width: 32ch;
+  overflow-wrap: anywhere;
+}
