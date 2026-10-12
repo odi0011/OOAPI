@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -34,7 +35,22 @@ type EntryRecord struct {
 	EntryPrice float64   `json:"entryPrice"`
 	Qty        float64   `json:"qty"`
 	OpenedAt   time.Time `json:"openedAt"`
+	// 出场在仓位被交易所打平后补上。ClosedAt 为零表示还没平。
+	ExitPrice    float64   `json:"exitPrice,omitempty"`
+	ExitQty      float64   `json:"exitQty,omitempty"`
+	RealizedUSDT float64   `json:"realizedUsdt,omitempty"`
+	ExitReason   string    `json:"exitReason,omitempty"`
+	ClosedAt     time.Time `json:"closedAt,omitempty"`
 	EntryStamp
+}
+
+// ExitFill 是一笔开仓记录的出场。Realized 用币安账单的净已实现，不用标记价估算。
+type ExitFill struct {
+	Price    float64
+	Qty      float64
+	Realized float64
+	Reason   string
+	ClosedAt time.Time
 }
 
 // PositionOneRUSDT 是这笔仓位的 1R 金额，口径与回测 netR 的分母相同：
@@ -74,7 +90,8 @@ func (rec EntryRecord) Event() DetectionEvent {
 
 // EntryLog 保存开仓记录。内存实现只活在本进程；数据库实现负责重启后的历史。
 type EntryLog interface {
-	Save(EntryRecord) error
+	Save(EntryRecord) (int64, error)
+	Close(id, userID, strategyID int64, symbol, side string, exit ExitFill) error
 	List(userID, strategyID int64, limit int) ([]EntryRecord, error)
 	Recent(limit int) ([]EntryRecord, error)
 }
@@ -89,15 +106,63 @@ func newMemoryEntryLog() *memoryEntryLog {
 	return &memoryEntryLog{}
 }
 
-func (m *memoryEntryLog) Save(rec EntryRecord) error {
+func (m *memoryEntryLog) Save(rec EntryRecord) (int64, error) {
 	if m == nil {
-		return nil
+		return 0, nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.next++
 	rec.ID = m.next
 	m.rows = append(m.rows, rec)
+	return rec.ID, nil
+}
+
+func (m *memoryEntryLog) Close(id, userID, strategyID int64, symbol, side string, exit ExitFill) error {
+	if m == nil {
+		return nil
+	}
+	if exit.ClosedAt.IsZero() {
+		exit.ClosedAt = time.Now().UTC()
+	}
+	exit.ClosedAt = exit.ClosedAt.UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	apply := func(rec *EntryRecord) {
+		rec.ExitPrice = exit.Price
+		rec.ExitQty = exit.Qty
+		rec.RealizedUSDT = exit.Realized
+		rec.ExitReason = exit.Reason
+		rec.ClosedAt = exit.ClosedAt
+	}
+	if id > 0 {
+		for i := range m.rows {
+			if m.rows[i].ID == id {
+				apply(&m.rows[i])
+				return nil
+			}
+		}
+	}
+	for i := len(m.rows) - 1; i >= 0; i-- {
+		row := &m.rows[i]
+		if userID != 0 && row.UserID != userID {
+			continue
+		}
+		if strategyID != 0 && row.StrategyID != strategyID {
+			continue
+		}
+		if symbol != "" && !strings.EqualFold(row.Symbol, symbol) {
+			continue
+		}
+		if side != "" && !strings.EqualFold(row.Side, side) {
+			continue
+		}
+		if !row.ClosedAt.IsZero() {
+			continue
+		}
+		apply(row)
+		return nil
+	}
 	return nil
 }
 
@@ -183,10 +248,20 @@ func resetEntriesForTest() {
 	}
 }
 
-// SaveEntry 写入一笔开仓。写失败只记日志，不改变是否开仓。
-func SaveEntry(rec EntryRecord) error {
-	if err := currentEntryLog().Save(rec); err != nil {
+// SaveEntry 写入一笔开仓。写失败只记日志，不改变是否开仓。返回值是行号，没有写上时为 0。
+func SaveEntry(rec EntryRecord) (int64, error) {
+	id, err := currentEntryLog().Save(rec)
+	if err != nil {
 		log.Printf("[trading] 保存开仓记录失败: %v", err)
+		return 0, err
+	}
+	return id, nil
+}
+
+// CloseEntry 给一笔开仓补上出场。写失败只记日志，不改变引擎是否回到待命。
+func CloseEntry(id, userID, strategyID int64, symbol, side string, exit ExitFill) error {
+	if err := currentEntryLog().Close(id, userID, strategyID, symbol, side, exit); err != nil {
+		log.Printf("[trading] 保存平仓记录失败: %v", err)
 		return err
 	}
 	return nil

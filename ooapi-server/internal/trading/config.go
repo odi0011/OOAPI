@@ -90,6 +90,8 @@ const (
 	ReasonBoostWait           = "boost_wait"
 	ReasonBoostFilled         = "boost_filled"
 	ReasonSymbolHeld          = "symbol_has_position"
+	// ReasonExchangeFlat 表示仓位已在交易所被条件单打平，引擎这才跟着回到待命。
+	ReasonExchangeFlat = "exchange_flat"
 
 	// DefaultScalpPct 是赌一把模式下止损和止盈相对入场价的默认距离（0.3%）。
 	DefaultScalpPct = 0.003
