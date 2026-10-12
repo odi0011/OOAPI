@@ -191,11 +191,11 @@ func (c *USDMClient) PlaceProtection(req Protection) error {
 			return invalid("空单的止损必须高于入场价，止盈必须低于入场价")
 		}
 	}
-	open, err := c.openOrders(req.Symbol)
+	open, err := c.openAlgoOrders(req.Symbol)
 	if err != nil {
 		return err
 	}
-	if hasType(open, "STOP_MARKET") && hasType(open, "TAKE_PROFIT_MARKET") {
+	if hasType(algoTypes(open), "STOP_MARKET") && hasType(algoTypes(open), "TAKE_PROFIT_MARKET") {
 		return nil
 	}
 	if len(open) > 0 {
@@ -211,7 +211,6 @@ func (c *USDMClient) PlaceProtection(req Protection) error {
 	if hedge {
 		posSide = positionSide(side)
 	}
-	// closePosition 会平掉整个仓位。币安不允许它和 reduceOnly、quantity 同时出现。
 	exit := oppositeSide(side)
 	if err := c.conditional(req.Symbol, exit, posSide, "STOP_MARKET", stop, raw.tickRaw); err != nil {
 		return err
@@ -219,11 +218,11 @@ func (c *USDMClient) PlaceProtection(req Protection) error {
 	if err := c.conditional(req.Symbol, exit, posSide, "TAKE_PROFIT_MARKET", take, raw.tickRaw); err != nil {
 		return err
 	}
-	open, err = c.openOrders(req.Symbol)
+	open, err = c.openAlgoOrders(req.Symbol)
 	if err != nil {
 		return err
 	}
-	if !hasType(open, "STOP_MARKET") || !hasType(open, "TAKE_PROFIT_MARKET") {
+	if !hasType(algoTypes(open), "STOP_MARKET") || !hasType(algoTypes(open), "TAKE_PROFIT_MARKET") {
 		return invalid("保护单没有在测网挂上")
 	}
 	return nil
@@ -281,15 +280,17 @@ func (c *USDMClient) Close(req CloseOrder) (Fill, error) {
 	return fillFromOrder(resp, pos.Side, req.Price, qty), nil
 }
 
+// CancelOpen 撤掉该合约的普通挂单，再按 algoId 撤掉条件单。
+// 条件单不出现在 allOpenOrders 里。
 func (c *USDMClient) CancelOpen(symbol string) error {
 	if err := c.guard(); err != nil {
 		return err
 	}
 	_, err := c.signed(http.MethodDelete, "/fapi/v1/allOpenOrders", url.Values{"symbol": {symbol}})
-	if err == nil || errors.Is(err, errNoOpenOrder) {
-		return nil
+	if err != nil && !errors.Is(err, errNoOpenOrder) {
+		return err
 	}
-	return err
+	return c.cancelAlgoOrders(symbol)
 }
 
 func (c *USDMClient) Position(symbol string) (Position, error) {
@@ -337,18 +338,22 @@ func (c *USDMClient) Position(symbol string) (Position, error) {
 	return Position{}, nil
 }
 
+// conditional 把止损或止盈挂到 Algo Order。
+// 测网对经典 POST /fapi/v1/order 的 STOP_MARKET、TAKE_PROFIT_MARKET 返回 -4120。
+// closePosition 会平掉整个仓位，不能和 quantity、reduceOnly 一起发。
 func (c *USDMClient) conditional(symbol, side, posSide, orderType string, price float64, tickRaw string) error {
 	params := url.Values{}
+	params.Set("algoType", "CONDITIONAL")
 	params.Set("symbol", symbol)
 	params.Set("side", side)
 	params.Set("type", orderType)
-	params.Set("stopPrice", formatStep(price, 0, tickRaw))
+	params.Set("triggerPrice", formatStep(price, 0, tickRaw))
 	params.Set("closePosition", "true")
 	params.Set("workingType", "MARK_PRICE")
 	if posSide != "" {
 		params.Set("positionSide", posSide)
 	}
-	_, err := c.signed(http.MethodPost, "/fapi/v1/order", params)
+	_, err := c.signed(http.MethodPost, "/fapi/v1/algoOrder", params)
 	return err
 }
 
@@ -395,22 +400,66 @@ func (c *USDMClient) hedge() (bool, error) {
 	return resp.Dual, nil
 }
 
-func (c *USDMClient) openOrders(symbol string) ([]string, error) {
-	body, err := c.signed(http.MethodGet, "/fapi/v1/openOrders", url.Values{"symbol": {symbol}})
+type algoOrder struct {
+	AlgoID    int64  `json:"algoId"`
+	Symbol    string `json:"symbol"`
+	OrderType string `json:"orderType"`
+	Type      string `json:"type"`
+}
+
+func (o algoOrder) kind() string {
+	if o.OrderType != "" {
+		return o.OrderType
+	}
+	return o.Type
+}
+
+func (c *USDMClient) openAlgoOrders(symbol string) ([]algoOrder, error) {
+	body, err := c.signed(http.MethodGet, "/fapi/v1/openAlgoOrders", url.Values{"symbol": {symbol}})
 	if err != nil {
 		return nil, err
 	}
-	var rows []struct {
-		Type string `json:"type"`
-	}
+	var rows []algoOrder
 	if err := json.Unmarshal(body, &rows); err != nil {
 		return nil, err
 	}
-	out := make([]string, 0, len(rows))
+	out := make([]algoOrder, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, row.Type)
+		if row.Symbol != "" && !strings.EqualFold(row.Symbol, symbol) {
+			continue
+		}
+		out = append(out, row)
 	}
 	return out, nil
+}
+
+func (c *USDMClient) cancelAlgoOrders(symbol string) error {
+	orders, err := c.openAlgoOrders(symbol)
+	if err != nil {
+		return err
+	}
+	for _, order := range orders {
+		if order.AlgoID == 0 {
+			continue
+		}
+		_, err := c.signed(http.MethodDelete, "/fapi/v1/algoOrder", url.Values{
+			"algoId": {strconv.FormatInt(order.AlgoID, 10)},
+		})
+		if err != nil && !errors.Is(err, errNoOpenOrder) {
+			return err
+		}
+	}
+	return nil
+}
+
+func algoTypes(orders []algoOrder) []string {
+	out := make([]string, 0, len(orders))
+	for _, order := range orders {
+		if kind := order.kind(); kind != "" {
+			out = append(out, kind)
+		}
+	}
+	return out
 }
 
 func (c *USDMClient) rulesFor(symbol string) (MarketRules, symbolRules, error) {
