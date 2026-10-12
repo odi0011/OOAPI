@@ -32,6 +32,7 @@ type Hub struct {
 	engines  map[string]*Engine
 	accounts map[int64]accountSnap
 	onRun    RunHook
+	onPause  func(strategyID int64, reason string)
 }
 
 func NewHub() *Hub {
@@ -50,6 +51,29 @@ func ResetForTest() {
 }
 
 // SetRunHook 注册运行标记回调。测试和进程启动都会换 Hub，回调要重新挂上。
+// SetPauseHook 在单条策略自动暂停时回调。实现只许写库，不能再进 Hub。
+func (h *Hub) SetPauseHook(fn func(strategyID int64, reason string)) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.onPause = fn
+	h.mu.Unlock()
+}
+
+// ClearPause 清掉内存里的暂停标记，供手动 resume 之后再 Start。
+func (h *Hub) ClearPause(userID, strategyID int64) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	eng := h.engines[sessionKey(userID, strategyID)]
+	if eng != nil {
+		eng.ClearPause()
+	}
+}
+
 func (h *Hub) SetRunHook(fn RunHook) {
 	if h == nil {
 		return
@@ -238,6 +262,12 @@ func (h *Hub) prepare(userID, strategyID int64, cfg Config, secrets SecretOpener
 	}
 	eng.cfg.ID = strategyID
 	eng.SetSecrets(secrets)
+	sid := strategyID
+	eng.SetPauseHook(func(reason string) {
+		if h.onPause != nil && sid > 0 {
+			h.onPause(sid, reason)
+		}
+	})
 	return eng, nil
 }
 

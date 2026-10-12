@@ -29,6 +29,12 @@ func StartTradingRunner() {
 		log.Printf("[trading] 进程内调度已关闭（TRADING_RUNNER）")
 		return
 	}
+	trading.DefaultHub().SetPauseHook(func(id int64, reason string) {
+		if err := setStrategyPaused(id, reason); err != nil {
+			log.Printf("[trading] 记下暂停原因失败 id=%d: %v", id, err)
+		}
+		strategyRunner.Remove(id)
+	})
 	trading.DefaultHub().SetRunHook(func(id int64, running bool) {
 		if err := setStrategyRunning(id, 0, running); err != nil {
 			log.Printf("[trading] 同步运行标记失败 id=%d: %v", id, err)
@@ -76,7 +82,7 @@ const runningStrategiesSQL = `
 SELECT s.user_id, ` + strategySelectCols + `
 FROM trading_strategies s
 LEFT JOIN exchange_keys k ON k.id = s.exchange_key_id AND k.user_id = s.user_id
-WHERE s.running = 1
+WHERE s.running = 1 AND s.pause_reason = ''
 ORDER BY s.id`
 
 func loadRunningSpecs() ([]trading.RunSpec, error) {
@@ -111,7 +117,9 @@ func scanStrategyUser(s scanner, userID *int64) (strategyRow, error) {
 		&row.Record.EmaFast, &row.Record.EmaSlow, &row.Record.Timeframe,
 		&row.Record.StopR, &row.Record.TakeProfitR, &row.Record.DailyLossPct, &row.Record.MaxMarginUsdt,
 		&row.Record.ExchangeKeyID, &row.Record.Mode,
-		&row.Record.EntryMode, &row.Record.MinScore, &row.Record.MinWinRate, &row.Record.MinTrades, &running,
+		&row.Record.EntryMode, &row.Record.MinScore, &row.Record.MinWinRate, &row.Record.MinTrades,
+		&row.Record.MaxMarginPerTradeUsdt, &row.Record.MaxConsecutiveLosses, &row.Record.PauseBalanceUsdt, &row.Record.PauseReason,
+		&row.Record.RSILongMin, &row.Record.RSILongMax, &row.Record.RSIShortMin, &row.Record.RSIShortMax, &running,
 		&row.CreatedAt, &row.UpdatedAt,
 		&network, &status, &label,
 	)

@@ -1,6 +1,9 @@
 package trading
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // BacktestSummary 是引擎和列表接口上挂的最近一次回测。
 type BacktestSummary struct {
@@ -39,17 +42,23 @@ func (r BacktestResult) Summary(at time.Time) BacktestSummary {
 	return BacktestSummary{WinRate: r.WinRate, Trades: r.TradeCount, NetR: r.NetR, At: at}
 }
 
-// BacktestGate 是开仓前的回测门。minWinRate 为 0 时整道门关闭。
+// BacktestGate 是开仓前的回测门。测网 minWinRate 为 0 时整道门关闭。
+// 实盘不允许用 minWinRate<=0 跳过胜率校验，至少要到 DefaultMinWinRate。
 // 打开后要同时满足胜率、样本笔数和扣费后的净 R。
 func BacktestGate(cfg Config, sum *BacktestSummary) string {
-	if cfg.MinWinRate <= 0 {
+	live := strings.EqualFold(cfg.Mode, ModeLive)
+	floor := cfg.MinWinRate
+	if live && floor < DefaultMinWinRate {
+		floor = DefaultMinWinRate
+	}
+	if !live && floor <= 0 {
 		return ""
 	}
-	if sum == nil || sum.WinRate+1e-12 < cfg.MinWinRate {
+	if sum == nil || sum.WinRate+1e-12 < floor {
 		return ReasonWinRateBelow
 	}
 	need := cfg.MinTrades
-	if need <= 0 {
+	if need <= 0 || (live && need < DefaultMinTrades) {
 		need = DefaultMinTrades
 	}
 	if sum.Trades < need {
