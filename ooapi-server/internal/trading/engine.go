@@ -59,6 +59,9 @@ type StepInput struct {
 	Wallet      float64 `json:"-"`
 	Available   float64 `json:"-"`
 	WalletKnown bool    `json:"-"`
+	// LivePeerIDs 是加速窗口里仍在武装、可以开仓的实盘策略（含自己）。
+	// 为空时加速门只比较已经报告过的信号。
+	LivePeerIDs []int64 `json:"-"`
 }
 
 // Snapshot 是对外展示的运行状态。
@@ -420,9 +423,15 @@ func (e *Engine) Stop(in StepInput) error {
 }
 
 // Step 推进一次。测网撮合在同一次调用里完成成交；同一根 K 线不会连着反手。
-func (e *Engine) Step(in StepInput) (Snapshot, error) {
-	if err := e.gate(); err != nil {
-		return e.Snapshot(), err
+func (e *Engine) Step(in StepInput) (snap Snapshot, err error) {
+	defer func() {
+		if e != nil {
+			e.recordTick(in, snap, err)
+		}
+	}()
+	if err = e.gate(); err != nil {
+		snap = e.Snapshot()
+		return snap, err
 	}
 	if e.State() == StateError {
 		return e.Snapshot(), ErrNoAutoReopen
@@ -487,6 +496,16 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 	if !e.running {
 		return e.Snapshot(), ErrNotRunning
 	}
+	wr := signalWinRate(in, e.lastBacktest)
+	noted := false
+	noteBoost := func(passes bool) {
+		if noted || !e.boosting(in) {
+			return
+		}
+		noted = true
+		boostState.note(e.cfg.ID, wr, passes)
+	}
+	defer noteBoost(false)
 	side, signal, err := e.entrySide(in)
 	if err != nil {
 		return e.failed(err.Error())
@@ -533,10 +552,28 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 	if !StopWithinLiquidation(side, price, stop, liq) {
 		return e.blockStop(price, stop, liq)
 	}
+	reserved := false
+	if e.boosting(in) {
+		noteBoost(true)
+		allow, reason := boostState.allow(e.cfg.ID, in.LivePeerIDs, at(in.Now))
+		if !allow {
+			e.note("skip", reason)
+			return e.Snapshot(), nil
+		}
+		reserved = true
+	}
+	releaseBoost := func() {
+		if reserved {
+			boostState.release(e.cfg.ID)
+			reserved = false
+		}
+	}
 	if err := e.authorize(); err != nil {
+		releaseBoost()
 		return e.Snapshot(), err
 	}
 	if err := e.m.Transition(Event{Kind: EventEntrySignal, Reason: signal}); err != nil {
+		releaseBoost()
 		return e.Snapshot(), err
 	}
 	fill, err := e.ex.PlaceEntry(EntryOrder{
@@ -548,7 +585,12 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 		MarginMode: e.cfg.MarginMode,
 	})
 	if err != nil {
+		releaseBoost()
 		return e.failed(err.Error())
+	}
+	if reserved {
+		boostState.commit(e.cfg.ID)
+		reserved = false
 	}
 	e.lastBarKey = barKey(in.Candles)
 	if fill.Status != StatusFilled {
@@ -729,7 +771,7 @@ func (e *Engine) finishExit(in StepInput, reason string, price ...float64) (Snap
 		e.note("pause", e.pausedReason)
 		return e.Snapshot(), nil
 	}
-	if e.lossStreak >= e.lossLimit() {
+	if limit := e.lossLimit(); limit > 0 && e.lossStreak >= limit {
 		return e.applyPause(ReasonConsecutiveLosses), nil
 	}
 	if e.running {
@@ -880,28 +922,22 @@ func (e *Engine) ClearPause() {
 
 func (e *Engine) marginBudget() float64 {
 	budget := e.cfg.MaxMarginUsdt
-	if cap := e.cfg.MaxMarginPerTradeUsdt; cap > 0 && cap < budget {
+	if cap := e.cfg.marginCap(); cap > 0 && cap < budget {
 		budget = cap
 	}
 	return budget
 }
 
 func (e *Engine) lossLimit() int {
-	if e.cfg.MaxConsecutiveLosses > 0 {
-		return e.cfg.MaxConsecutiveLosses
-	}
-	return DefaultMaxConsecutiveLosses
+	return e.cfg.lossPauseCount()
 }
 
 func (e *Engine) pauseBalance() float64 {
-	if e.cfg.PauseBalanceUsdt > 0 {
-		return e.cfg.PauseBalanceUsdt
-	}
-	return DefaultPauseBalanceUSDT
+	return e.cfg.balancePauseLine()
 }
 
 func (e *Engine) holdIfPaused(in StepInput) (Snapshot, bool, error) {
-	if e.pausedReason == "" && in.WalletKnown && in.Wallet > BalanceFloorUSDT && in.Wallet < e.pauseBalance() {
+	if limit := e.pauseBalance(); e.pausedReason == "" && limit > 0 && in.WalletKnown && in.Wallet > BalanceFloorUSDT && in.Wallet < limit {
 		e.applyPause(ReasonBalanceBelowPause)
 	}
 	if e.pausedReason == "" {
@@ -1032,4 +1068,41 @@ func barKey(candles []Candle) string {
 		return ""
 	}
 	return strconv.FormatInt(candles[len(candles)-1].OpenTime.UTC().UnixNano(), 10)
+}
+
+func (e *Engine) boosting(in StepInput) bool {
+	return e != nil && strings.EqualFold(e.cfg.Mode, ModeLive) && BoostActive(at(in.Now))
+}
+
+func signalWinRate(in StepInput, last *BacktestSummary) float64 {
+	if in.Backtest != nil {
+		return in.Backtest.WinRate
+	}
+	if last != nil {
+		return last.WinRate
+	}
+	return 0
+}
+
+func (e *Engine) recordTick(in StepInput, snap Snapshot, err error) {
+	side, score := "", 0
+	if got, sc, serr := ScoreTrend(e.cfg, in.Candles, in.Higher); serr == nil {
+		side, score = string(got), sc
+	}
+	if side == "" && snap.Side != "" {
+		side = string(snap.Side)
+	}
+	msg := snap.LastReason
+	if err != nil && msg == "" {
+		msg = err.Error()
+	}
+	AddEvent(DetectionEvent{
+		TS:      at(in.Now),
+		Symbol:  e.cfg.Symbol,
+		Side:    side,
+		Score:   score,
+		WinRate: signalWinRate(in, e.lastBacktest),
+		Action:  snap.LastAction,
+		Msg:     msg,
+	})
 }

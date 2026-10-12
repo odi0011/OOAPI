@@ -343,10 +343,27 @@ func TestPortfolioLimitAndBalanceFloorShareTheHubLock(t *testing.T) {
 	h.PutForTest(1, 2, second)
 	h.SetAccount(cfg.ExchangeKeyID, 100, 100)
 
-	third := cfg
-	third.ID = 3
-	if got := h.EntrySkip(third); got != ReasonPortfolioLimit {
-		t.Fatalf("two positions: %s", got)
+	thirdPos := cfg
+	thirdPos.ID = 3
+	thirdEng := withSecrets(NewEngine(thirdPos, NewPaper(), DiscardLogger()))
+	if err := thirdEng.Start(calmStart(now, 20)); err != nil {
+		t.Fatal(err)
+	}
+	thirdEng.SeedPositionForTest(SideLong, 10, 1, 0.9, 1.2)
+	h.PutForTest(1, 3, thirdEng)
+	fourth := cfg
+	fourth.ID = 4
+	if got := h.EntrySkip(fourth); got != "" {
+		t.Fatalf("open positions are not capped by default: %s", got)
+	}
+	fourth.MaxOpenPositions = 2
+	if got := h.EntrySkip(fourth); got != ReasonPortfolioLimit {
+		t.Fatalf("configured cap: %s", got)
+	}
+	fourth.MaxOpenPositions = 0
+	t.Setenv(EnvMaxOpenPositions, "2")
+	if got := h.EntrySkip(fourth); got != ReasonPortfolioLimit {
+		t.Fatalf("env cap: %s", got)
 	}
 
 	h2 := NewHub()

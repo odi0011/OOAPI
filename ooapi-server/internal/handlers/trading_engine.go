@@ -304,6 +304,7 @@ func strategyConfig(row strategyRow) trading.Config {
 		MaxMarginPerTradeUsdt: rec.MaxMarginPerTradeUsdt,
 		MaxConsecutiveLosses:  rec.MaxConsecutiveLosses,
 		PauseBalanceUsdt:      rec.PauseBalanceUsdt,
+		MaxOpenPositions:      rec.MaxOpenPositions,
 		PauseReason:           rec.PauseReason,
 		RSILongMin:            rec.RSILongMin,
 		RSILongMax:            rec.RSILongMax,

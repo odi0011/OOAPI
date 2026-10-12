@@ -163,11 +163,7 @@ func (r *Runner) loop(ctx context.Context, spec RunSpec) {
 	}()
 	r.runOnce(ctx, spec)
 	for {
-		tf := TimeframeDuration(spec.Config.Timeframe)
-		wait := NextBarClose(r.now(), tf).Sub(r.now())
-		if wait < time.Second {
-			wait = time.Second
-		}
+		wait := scanWait(r.now(), spec.Config.Timeframe, strings.EqualFold(spec.Config.Mode, ModeLive))
 		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
