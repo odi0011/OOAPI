@@ -30,6 +30,8 @@ const (
 	EventDailyHalt    EventKind = "daily_halt"
 	EventNextUTCDay   EventKind = "next_utc_day"
 	EventFail         EventKind = "fail"
+	// EventEntryRejected 表示开仓单被拒绝且没有成交。从 EntrySubmitted 回到 Armed。
+	EventEntryRejected EventKind = "entry_rejected"
 )
 
 // Event 是一次状态迁移。Reason 只用于审计，不参与选边。
@@ -53,9 +55,10 @@ var transitions = map[State]map[EventKind]State{
 		EventFail:         StateError,
 	},
 	StateEntrySubmitted: {
-		EventEntryFilled: StateInPosition,
-		EventFail:        StateError,
-		EventStop:        StateIdle,
+		EventEntryFilled:   StateInPosition,
+		EventEntryRejected: StateArmed,
+		EventFail:          StateError,
+		EventStop:          StateIdle,
 	},
 	StateInPosition: {
 		EventExitSignal: StateExitSubmitted,

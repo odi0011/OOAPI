@@ -59,6 +59,7 @@ func (r BacktestResult) Summary(at time.Time) BacktestSummary {
 // 实盘不允许用 minWinRate<=0 跳过胜率校验，至少要到 DefaultMinWinRate。
 // 打开后要同时满足胜率、样本笔数和扣费后的净 R。
 // GambleMode 整道门跳过。止损仍须在强平价之前，与这道门无关。
+// 手续费后的期望是另一道门（ResolveTakeProfit）。GambleMode、加速开仓和强制开仓都不能跳过它。
 func BacktestGate(cfg Config, sum *BacktestSummary) string {
 	if cfg.GambleMode {
 		return ""

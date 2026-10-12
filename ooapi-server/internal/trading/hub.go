@@ -447,6 +447,9 @@ func (h *Hub) entrySkipLocked(cfg Config, _ *Engine) string {
 		return ReasonPortfolioLimit
 	}
 	planned := plannedMargin(cfg)
+	if acc, ok := h.accounts[cfg.ExchangeKeyID]; ok && acc.Known {
+		planned = marginForBalance(cfg, acc.Available, true, TakerFeeRate)
+	}
 	if cfg.MaxMarginUsdt > 0 && margin+planned > cfg.MaxMarginUsdt+1e-9 {
 		return ReasonPortfolioLimit
 	}

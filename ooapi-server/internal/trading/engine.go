@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -186,6 +187,9 @@ type Engine struct {
 	incomeOK     bool
 	// lastDetail 是最近一次交易所错误原文，写进事件 msg，不替代机器可读的 LastReason。
 	lastDetail string
+	// feeReady 记下本进程已经用过的往返手续费，避免每根 K 线都打 commissionRate。
+	feeReady bool
+	feeRound RoundTripFees
 }
 
 func NewEngine(cfg Config, ex Exchange, logger Logger) *Engine {
@@ -636,6 +640,13 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 		}
 		gateReason = BacktestGate(e.cfg, sum)
 	}
+	// 期望门不随 GambleMode 关掉。加速和强制开仓共用这条 gateReason，
+	// 胜率盖不住手续费时它们也不会被放行。
+	if gateReason == "" {
+		if reason := e.tpExpectancyReason(); reason != "" {
+			gateReason = reason
+		}
+	}
 	need := e.cfg.Normalize().MinScore
 	score := emaScore
 	if !boosting {
@@ -698,17 +709,26 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 	if price <= 0 {
 		return e.failed("mark price is required")
 	}
-	qty, err := e.entryQty(price)
+	qty, err := e.entryQty(price, in)
 	if err != nil {
-		if errors.Is(err, ErrNotionalBelowMin) {
+		if errors.Is(err, ErrNotionalBelowMin) || errors.Is(err, errInsufficientMargin) {
 			blockBoost()
-			e.note("skip", ReasonBelowMinNotional)
+			reason := ReasonBelowMinNotional
+			if errors.Is(err, errInsufficientMargin) {
+				reason = ReasonInsufficientMargin
+			}
+			e.note("skip", reason)
 			return e.Snapshot(), nil
 		}
 		return e.Snapshot(), err
 	}
 	stop, _, liq, err := e.quoteProtection(openSide, price)
 	if err != nil {
+		if errors.Is(err, errNegativeExpectancy) {
+			blockBoost()
+			e.note("skip", ReasonNegativeExpectancy)
+			return e.Snapshot(), nil
+		}
 		return e.failed(err.Error())
 	}
 	if !StopWithinLiquidation(openSide, price, stop, liq) {
@@ -759,6 +779,9 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 	if err != nil {
 		e.clearStagedEntry()
 		releaseBoost()
+		if marginRejected(err) {
+			return e.rejectUnfilledEntry(err)
+		}
 		return e.failed(err.Error())
 	}
 	if reserved {
@@ -1137,6 +1160,7 @@ func (e *Engine) forgetPlan() {
 // quoteProtection 用入场价的固定比例算 1R，再换成止损、止盈和逐仓强平价。
 // 1R = entry * DefaultRFraction（默认 0.8%）。止损距离 = stopR * 1R。
 // 赌一把模式改用相对入场价的剥头皮距离，止盈不会低于 MinScalpTpPct。
+// 有回测样本时，止盈再放到让手续费后期望为正的距离，但不超过 ExpectancyTpCapR。
 func (e *Engine) quoteProtection(side Side, entry float64) (stop, take, liq float64, err error) {
 	stop, take, err = stopTake(e.cfg, side, entry)
 	if err != nil {
@@ -1145,6 +1169,17 @@ func (e *Engine) quoteProtection(side Side, entry float64) (stop, take, liq floa
 	liq, err = IsolatedLiqPrice(side, entry, e.cfg.Leverage, e.maintMarginRate())
 	if err != nil {
 		return 0, 0, 0, err
+	}
+	if entry <= 0 {
+		return stop, take, liq, nil
+	}
+	dist, reason := e.adjustTakeDistance(math.Abs(stop-entry)/entry, math.Abs(take-entry)/entry)
+	if reason != "" {
+		return 0, 0, 0, errNegativeExpectancy
+	}
+	take = takeFromDistance(side, entry, dist)
+	if take <= 0 {
+		return 0, 0, 0, invalid("止盈价计算后不是正数")
 	}
 	return stop, take, liq, nil
 }
@@ -1413,7 +1448,7 @@ func (e *Engine) applyPause(reason string) Snapshot {
 	return e.Snapshot()
 }
 
-func (e *Engine) entryQty(price float64) (float64, error) {
+func (e *Engine) entryQty(price float64, in StepInput) (float64, error) {
 	minNotional := e.minNotional
 	var step, minQty float64
 	if info, ok := e.ex.(interface {
@@ -1428,15 +1463,59 @@ func (e *Engine) entryQty(price float64) (float64, error) {
 		}
 		step, minQty = rules.StepSize, rules.MinQty
 	}
-	_, _, qty, err := SizePosition(e.marginBudget(), e.cfg.Leverage, price, minNotional)
+	configured := plannedMargin(e.cfg)
+	budget := marginForBalance(e.cfg, in.Available, in.WalletKnown, TakerFeeRate)
+	shrunk := in.WalletKnown && budget+1e-9 < configured
+	if budget <= 0 {
+		if shrunk {
+			return 0, errInsufficientMargin
+		}
+		return 0, withReason(ErrNotionalBelowMin, ReasonBelowMinNotional)
+	}
+	_, _, qty, err := SizePosition(budget, e.cfg.Leverage, price, minNotional)
 	if err != nil {
+		if errors.Is(err, ErrNotionalBelowMin) && shrunk {
+			return 0, errInsufficientMargin
+		}
 		return 0, err
 	}
 	qty = AlignQuantity(qty, step, minQty)
 	if qty <= 0 || qty*price+1e-9 < minNotional {
-		return 0, withReason(ErrNotionalBelowMin, "notional_below_minimum")
+		if shrunk {
+			return 0, errInsufficientMargin
+		}
+		return 0, withReason(ErrNotionalBelowMin, ReasonBelowMinNotional)
 	}
 	return qty, nil
+}
+
+// rejectUnfilledEntry 处理开仓被拒绝、交易所没有成交的情况。
+// -2019 不再把引擎打进 Error：记下原因，回到 Armed，下一根 K 线可以再试。
+func (e *Engine) rejectUnfilledEntry(err error) (Snapshot, error) {
+	detail := ""
+	if err != nil {
+		detail = err.Error()
+	}
+	e.lastDetail = detail
+	line := "entry rejected, nothing filled, back to armed"
+	if detail != "" {
+		line = line + ": " + detail
+	}
+	e.audit = append(e.audit, line)
+	e.log.Printf("[trading] %s", line)
+	log.Printf("[trading] %s", line)
+	if e.State() == StateEntrySubmitted {
+		if moveErr := e.m.Transition(Event{Kind: EventEntryRejected, Reason: ReasonInsufficientMargin}); moveErr != nil {
+			return e.failed(moveErr.Error())
+		}
+	}
+	e.note("skip", ReasonInsufficientMargin)
+	return e.Snapshot(), nil
+}
+
+func marginRejected(err error) bool {
+	var ex *ExchangeError
+	return errors.As(err, &ex) && ex != nil && ex.Code == -2019
 }
 
 func (e *Engine) entrySide(in StepInput) (Side, string, error) {
