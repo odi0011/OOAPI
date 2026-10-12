@@ -16,6 +16,9 @@ type Claims struct {
 	UserID   int64  `json:"uid"`
 	Username string `json:"usr"`
 	Role     int    `json:"rol"`
+	// SessionVersion 与 users.session_version 对齐。
+	// 改密或退出登录会把库里的版本加一，旧令牌（含 localStorage 里的 Bearer）立刻失效。
+	SessionVersion int `json:"ver"`
 	jwt.RegisteredClaims
 }
 
@@ -29,13 +32,14 @@ var (
 	ErrTokenExpired = errors.New("令牌已过期")
 )
 
-// Issue 签发访问令牌。
-func Issue(secret string, userID int64, username string, role int) (string, error) {
+// Issue 签发访问令牌。sessionVersion 必须是该用户当前的 session_version。
+func Issue(secret string, userID int64, username string, role, sessionVersion int) (string, error) {
 	now := time.Now()
 	claims := Claims{
-		UserID:   userID,
-		Username: username,
-		Role:     role,
+		UserID:         userID,
+		Username:       username,
+		Role:           role,
+		SessionVersion: sessionVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    "ooapi",
 			Subject:   strconv.FormatInt(userID, 10),
@@ -75,4 +79,9 @@ func Parse(secret, raw string) (*Claims, error) {
 		return nil, ErrTokenInvalid
 	}
 	return claims, nil
+}
+
+// MatchesSession 判断令牌是否仍对应当前会话版本。
+func (c *Claims) MatchesSession(version int) bool {
+	return c != nil && c.SessionVersion == version
 }

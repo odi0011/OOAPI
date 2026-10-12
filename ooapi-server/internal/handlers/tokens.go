@@ -88,7 +88,12 @@ func ListMyTokens(c *gin.Context) {
 		}
 		// 列表里密钥打码：展示完整密钥没有必要，徒增泄露面。
 		// 需要完整值时走「查看密钥」接口（记录操作日志）。
-		t.APIKey = auth.MaskAPIKey(apiKey)
+		// 库里是密文，先还原再打码，避免把密文尾部当成密钥提示。
+		plainKey, openErr := services.OpenTokenKey(apiKey)
+		if openErr != nil {
+			plainKey = ""
+		}
+		t.APIKey = auth.MaskAPIKey(plainKey)
 		t.Models = splitModelList(models.String)
 		if expiredAt.Valid {
 			t.ExpiredAt = expiredAt.String
@@ -128,8 +133,14 @@ func RevealMyToken(c *gin.Context) {
 		return
 	}
 
+	plainKey, openErr := services.OpenTokenKey(apiKey)
+	if openErr != nil || plainKey == "" {
+		fail(c, http.StatusInternalServerError, "读取密钥失败", "server_error")
+		return
+	}
+
 	log.Printf("[token] 用户 %s 查看了密钥 id=%s 的完整值", user.Username, c.Param("id"))
-	ok(c, gin.H{"api_key": apiKey})
+	ok(c, gin.H{"api_key": plainKey})
 }
 
 // CreateMyToken 创建密钥。
@@ -245,11 +256,18 @@ func CreateMyToken(c *gin.Context) {
 		return
 	}
 
+	storedKey, keyHash, err := services.SealTokenKey(apiKey)
+	if err != nil {
+		log.Printf("[token] 加密密钥失败: %v", err)
+		fail(c, http.StatusInternalServerError, "创建密钥失败", "server_error")
+		return
+	}
+
 	res, err := exec(
-		`INSERT INTO tokens (user_id, name, api_key, status, quota, unlimited_quota,
+		`INSERT INTO tokens (user_id, name, api_key, key_hash, status, quota, unlimited_quota,
 		                    group_name, models, expired_at)
-		 VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)`,
-		user.ID, name, apiKey, quota, unlimited, group.Name, strings.Join(models, ","), expiredAt,
+		 VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+		user.ID, name, storedKey, keyHash, quota, unlimited, group.Name, strings.Join(models, ","), expiredAt,
 	)
 	if err != nil {
 		log.Printf("[token] 插入失败: %v", err)
@@ -271,12 +289,12 @@ func CreateMyToken(c *gin.Context) {
 		但回查能保证返回值与库中真实状态一致（例如触发器改写过的字段）。
 	*/
 	var (
-		gotName     string
-		gotKey      string
-		gotGroup    string
-		gotCreated  string
-		gotUnlimit  bool
-		gotQuota    int64
+		gotName    string
+		gotKey     string
+		gotGroup   string
+		gotCreated string
+		gotUnlimit bool
+		gotQuota   int64
 	)
 	err = db.DB.QueryRow(
 		`SELECT name, api_key, group_name, unlimited_quota, quota, created_at
@@ -285,6 +303,8 @@ func CreateMyToken(c *gin.Context) {
 	if err != nil {
 		// 回查失败不影响创建结果，用已知值返回
 		gotName, gotKey, gotGroup, gotUnlimit, gotQuota = name, apiKey, group.Name, unlimited, quota
+	} else if plain, openErr := services.OpenTokenKey(gotKey); openErr == nil && plain != "" {
+		gotKey = plain
 	}
 
 	log.Printf("[token] 用户 %s 创建密钥「%s」分组 %s 无限额度=%v", user.Username, gotName, gotGroup, gotUnlimit)

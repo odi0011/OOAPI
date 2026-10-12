@@ -27,8 +27,21 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"ooapi/internal/netguard"
 	"ooapi/internal/services"
 )
+
+// allowLoopbackUpstream 让等待室测试能打到本机 httptest 上游。
+// 生产默认仍拒绝回环；这里只在该测试期间打开，并清掉可能缓存的拒绝结果。
+func allowLoopbackUpstream(t *testing.T) {
+	t.Helper()
+	netguard.SetAllowLoopbackForTest(true)
+	netguard.ClearCache()
+	t.Cleanup(func() {
+		netguard.SetAllowLoopbackForTest(false)
+		netguard.ClearCache()
+	})
+}
 
 // ---------- 测试脚手架 ----------
 
@@ -328,6 +341,7 @@ func joinChunks(chunks [][]byte) []byte {
 func TestHoldRecoversWhenChannelComesBack(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	shrinkingHoldTimings(t)
+	allowLoopbackUpstream(t)
 
 	// 上游：账号一恢复就返回一个正常的 chat 流（含 usage 与 [DONE]）。
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -600,6 +614,7 @@ func TestNonStreamWaitsSilentlyThenFails(t *testing.T) {
 */
 func TestUpstreamStreamSurvivesOpenReturn(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	allowLoopbackUpstream(t)
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
