@@ -42,6 +42,9 @@ export interface EngineBacktestWire {
   trade_count?: number | string | null;
   netR?: number | string | null;
   net_r?: number | string | null;
+  expectancyR?: number | string | null;
+  expectancy_r?: number | string | null;
+  expectancy?: number | string | null;
 }
 
 /**
@@ -101,6 +104,7 @@ export interface EngineBacktestSummary {
   winRate: number | null;
   trades: number | null;
   netR: number | null;
+  expectancyR: number | null;
 }
 
 export interface TradingEngineSummary {
@@ -156,6 +160,7 @@ export interface EngineCardView {
   winRate: string;
   trades: string;
   netR: string;
+  expectancy: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -220,6 +225,7 @@ function readBacktest(entry: Record<string, unknown>): EngineBacktestSummary | n
     winRate: finiteNumber(raw.winRate ?? raw.win_rate),
     trades: finiteInt(raw.trades ?? raw.tradeCount ?? raw.trade_count),
     netR: finiteNumber(raw.netR ?? raw.net_r),
+    expectancyR: finiteNumber(raw.expectancyR ?? raw.expectancy_r ?? raw.expectancy),
   };
 }
 
@@ -329,6 +335,12 @@ export function formatNetR(value: number | null | undefined): string {
   return `${formatAmount(value)} R`;
 }
 
+/** 每笔期望，单位是 R。缺数显示「—」，0 仍显示。 */
+export function formatExpectancyR(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return `${formatAmount(value)} R`;
+}
+
 export function formatTrades(value: number | null | undefined): string {
   return formatCount(value);
 }
@@ -366,6 +378,7 @@ export function formatEngineCard(engine: TradingEngineSummary): EngineCardView {
     winRate: formatWinRate(backtest?.winRate),
     trades: formatTrades(backtest?.trades),
     netR: formatNetR(backtest?.netR),
+    expectancy: formatExpectancyR(backtest?.expectancyR),
   };
 }
 

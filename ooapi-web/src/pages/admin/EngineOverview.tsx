@@ -59,6 +59,7 @@ export default function EngineOverview({ snapshot, selectedId, onSelect }: Engin
                 <th>回测胜率</th>
                 <th>回测笔数</th>
                 <th>回测净R</th>
+                <th>回测期望</th>
               </tr>
             </thead>
             <tbody>
@@ -120,6 +121,7 @@ function EngineRow({
       <td>{card.winRate}</td>
       <td>{card.trades}</td>
       <td>{card.netR}</td>
+      <td>{card.expectancy}</td>
     </tr>
   );
 }

@@ -88,6 +88,8 @@ type DeskOrder struct {
 	Qty           float64 `json:"qty,omitempty"`
 	ReduceOnly    bool    `json:"reduceOnly,omitempty"`
 	ClosePosition bool    `json:"closePosition,omitempty"`
+	// Entry 是这张入场单对应的开仓快照。止损止盈不带。
+	Entry *EntryStamp `json:"entry,omitempty"`
 }
 
 // DeskBook 是交易台读取行情和账户的边界。只读客户端和测试假交易所都实现它。

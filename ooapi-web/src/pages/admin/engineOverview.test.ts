@@ -4,6 +4,7 @@ import {
   finiteNumber,
   formatEngineCard,
   formatEngineTotals,
+  formatExpectancyR,
   formatNetR,
   formatWinRate,
   isOpenEngine,
@@ -49,7 +50,7 @@ const mixed = mapEnginesPayload({
       unrealizedPnl: -0.25,
       dayRealizedUsdt: 1.25,
       lastReason: " 回踩 ",
-      lastBacktest: { winRate: 0.625, trades: "12.9", netR: 1.5 },
+      lastBacktest: { winRate: 0.625, trades: "12.9", netR: 1.5, expectancyR: "0.5" },
     },
     {
       strategyId: 8,
@@ -69,8 +70,8 @@ assertEqual(mixed.engines.map((engine) => engine.strategyId), [7, 8], "string id
 assertEqual(mixed.engines[0]?.symbol, "BTCUSDT", "symbol trimmed");
 assertEqual(mixed.engines[0]?.realizedToday, 1.25, "dayRealizedUsdt fills realizedToday");
 assertEqual(mixed.engines[1]?.realizedToday, null, "explicit null realizedToday does not use the alias");
-assertEqual(mixed.engines[0]?.lastBacktest, { winRate: 0.625, trades: 12, netR: 1.5 }, "backtest fields");
-assertEqual(mixed.engines[1]?.lastBacktest, { winRate: 62, trades: 3, netR: -0.4 }, "backtest alias keys");
+assertEqual(mixed.engines[0]?.lastBacktest, { winRate: 0.625, trades: 12, netR: 1.5, expectancyR: 0.5 }, "backtest fields");
+assertEqual(mixed.engines[1]?.lastBacktest, { winRate: 62, trades: 3, netR: -0.4, expectancyR: null }, "backtest alias keys");
 assertEqual(mixed.engines[0]?.qty, 2, "qty string");
 assertEqual(mixed.engines[0]?.lastReason, "回踩", "reason trimmed");
 assertEqual(mixed.totals, { unrealizedPnl: 1.75, realizedToday: 1.25, openPositions: 1 }, "computed totals");
@@ -132,12 +133,14 @@ assertEqual(card.lastReason, "回踩", "reason");
 assertEqual(card.winRate, "62.5%", "ratio win rate");
 assertEqual(card.trades, "12", "trade count truncates");
 assertEqual(card.netR, "1.50 R", "net R");
+assertEqual(card.expectancy, "0.50 R", "expectancy");
 
 const shortCard = formatEngineCard(mixed.engines[1]!);
 assertEqual(shortCard.side, "空", "short side");
 assertEqual(shortCard.sideTone, "short", "short tone");
 assertEqual(shortCard.winRate, "62.0%", "percent win rate stays percent");
 assertEqual(shortCard.netR, "-0.40 R", "negative net R");
+assertEqual(shortCard.expectancy, "—", "missing expectancy");
 assertEqual(shortCard.realizedToday, "—", "null realized formats as dash");
 
 const emptyCard = formatEngineCard({
@@ -162,6 +165,8 @@ assertEqual(emptyCard.lastReason, "—", "missing reason");
 assertEqual(emptyCard.winRate, "—", "missing win rate");
 assertEqual(emptyCard.trades, "—", "missing trades");
 assertEqual(emptyCard.netR, "—", "missing net R");
+assertEqual(emptyCard.expectancy, "—", "missing expectancy");
+assertEqual(formatExpectancyR(0), "0.00 R", "zero expectancy is shown");
 assertEqual(emptyCard.unrealizedTone, "flat", "missing pnl is flat");
 
 assertEqual(formatEngineTotals(mixed.totals).unrealized, "1.75", "totals unrealized text");

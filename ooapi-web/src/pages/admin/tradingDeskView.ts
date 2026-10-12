@@ -18,6 +18,28 @@ export interface EngineSlice {
   dayRealizedUsdt?: number;
   cumulativeRealizedUsdt?: number;
   realizedNetwork?: string;
+  lastBacktest?: {
+    winRate?: number | null;
+    trades?: number | null;
+    netR?: number | null;
+    expectancyR?: number | null;
+  } | null;
+  entry?: TradeEntrySlice | null;
+}
+
+/** 开仓记录。缺字段时展示层显示「—」，不把缺数当成 0。 */
+export interface TradeEntrySlice {
+  side?: string;
+  openedAt?: string;
+  score?: number | null;
+  minScore?: number | null;
+  boost?: boolean;
+  forced?: boolean;
+  winRate?: number | null;
+  trades?: number | null;
+  netR?: number | null;
+  expectancyR?: number | null;
+  expectancyUsdt?: number | null;
 }
 
 export interface PositionSlice {
@@ -208,6 +230,17 @@ export function pnlBoard(engine: EngineSlice | null): PnlBoard {
     return { testnetDay: day, liveDay: "—", testnetCumulative: cumulative, liveCumulative: "—" };
   }
   return { testnetDay: "—", liveDay: day, testnetCumulative: "—", liveCumulative: cumulative };
+}
+
+export function yesNo(value: boolean | undefined): string {
+  if (value == null) return "—";
+  return value ? "是" : "否";
+}
+
+export function entryScoreText(entry: TradeEntrySlice | null | undefined): string {
+  if (!entry || entry.score == null || entry.minScore == null) return "—";
+  if (!Number.isFinite(entry.score) || !Number.isFinite(entry.minScore)) return "—";
+  return `${entry.score}/${entry.minScore}`;
 }
 
 /** 没有 levels 表示无仓。有 levels 时按接口数字显示，0 也显示。 */
