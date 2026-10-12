@@ -144,8 +144,25 @@ func TestTradingStrategyCRUDValidationAndLiveWarning(t *testing.T) {
 	}
 
 	if rec := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
-		fmt.Sprintf(`{"exchangeKeyId": %d, "leverage": 4}`, keyID), owner, ""); rec.Code != http.StatusBadRequest || tradingCode(t, rec) != "invalid_leverage" {
+		fmt.Sprintf(`{"exchangeKeyId": %d, "leverage": %d}`, keyID, trading.MaxLeverage+1), owner, ""); rec.Code != http.StatusBadRequest || tradingCode(t, rec) != "invalid_leverage" {
 		t.Fatalf("leverage = %d %s", rec.Code, rec.Body.String())
+	}
+	accepted := callTrading(t, UpdateTradingStrategy, http.MethodPatch, "/api/trading/strategies/1",
+		fmt.Sprintf(`{"leverage": %d, "dailyLossPct": %g}`, trading.MaxLeverage, float64(trading.DailyLossOffPct)), owner, fmt.Sprint(strategyID))
+	if accepted.Code != http.StatusOK {
+		t.Fatalf("cap save = %d %s", accepted.Code, accepted.Body.String())
+	}
+	capped := tradingData(t, accepted)
+	if capped["leverage"] != float64(trading.MaxLeverage) || capped["dailyLossPct"] != float64(trading.DailyLossOffPct) || capped["marginMode"] != strategyMarginMode {
+		t.Fatalf("capped = %#v", capped)
+	}
+	if rec := callTrading(t, UpdateTradingStrategy, http.MethodPatch, "/api/trading/strategies/1",
+		`{"dailyLossPct": 100.01}`, owner, fmt.Sprint(strategyID)); tradingCode(t, rec) != "invalid_risk" {
+		t.Fatalf("daily loss = %s", rec.Body.String())
+	}
+	if rec := callTrading(t, UpdateTradingStrategy, http.MethodPatch, "/api/trading/strategies/1",
+		`{"marginMode": "cross", "leverage": 20}`, owner, fmt.Sprint(strategyID)); tradingCode(t, rec) != "invalid_margin_mode" {
+		t.Fatalf("cross at 20x = %s", rec.Body.String())
 	}
 	if rec := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
 		fmt.Sprintf(`{"exchangeKeyId": %d, "marginMode": "cross"}`, keyID), owner, ""); tradingCode(t, rec) != "invalid_margin_mode" {
