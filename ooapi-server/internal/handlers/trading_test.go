@@ -515,7 +515,8 @@ func assertStrategyDefaults(t *testing.T, view map[string]any) {
 		{"minTrades", float64(trading.DefaultMinTrades)},
 		{"maxMarginPerTradeUsdt", float64(trading.DefaultMaxMarginPerTradeUSDT)},
 		{"maxConsecutiveLosses", float64(trading.DefaultMaxConsecutiveLosses)},
-		{"pauseBalanceUsdt", trading.DefaultPauseBalanceUSDT},
+		{"pauseBalanceUsdt", float64(trading.DefaultPauseBalanceUSDT)},
+		{"maxOpenPositions", float64(0)},
 		{"rsiLongMin", 50.0},
 		{"rsiLongMax", 70.0},
 		{"rsiShortMin", 30.0},
@@ -813,14 +814,15 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 				MinWinRate: tradingArgFloat(vals[15]), MinTrades: int(tradingArgInt(vals[16])),
 				MaxMarginPerTradeUsdt: tradingArgFloat(vals[17]), MaxConsecutiveLosses: int(tradingArgInt(vals[18])),
 				PauseBalanceUsdt: tradingArgFloat(vals[19]), PauseReason: tradingArgString(vals[20]),
-				RSILongMin: tradingArgFloat(vals[21]), RSILongMax: tradingArgFloat(vals[22]),
-				RSIShortMin: tradingArgFloat(vals[23]), RSIShortMax: tradingArgFloat(vals[24]),
-				Running: tradingArgInt(vals[25]) == 1,
+				MaxOpenPositions: int(tradingArgInt(vals[21])),
+				RSILongMin:       tradingArgFloat(vals[22]), RSILongMax: tradingArgFloat(vals[23]),
+				RSIShortMin: tradingArgFloat(vals[24]), RSIShortMax: tradingArgFloat(vals[25]),
+				Running: tradingArgInt(vals[26]) == 1,
 			},
 		}
 		return tradingTestResult{id, 1}, nil
 	case normTradingSQL(strategyUpdateSQL):
-		id, userID := tradingArgInt(vals[24]), tradingArgInt(vals[25])
+		id, userID := tradingArgInt(vals[25]), tradingArgInt(vals[26])
 		row := d.strategies[id]
 		if row == nil || row.userID != userID {
 			return tradingTestResult{0, 0}, nil
@@ -837,8 +839,9 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 			MinWinRate: tradingArgFloat(vals[14]), MinTrades: int(tradingArgInt(vals[15])),
 			MaxMarginPerTradeUsdt: tradingArgFloat(vals[16]), MaxConsecutiveLosses: int(tradingArgInt(vals[17])),
 			PauseBalanceUsdt: tradingArgFloat(vals[18]), PauseReason: tradingArgString(vals[19]),
-			RSILongMin: tradingArgFloat(vals[20]), RSILongMax: tradingArgFloat(vals[21]),
-			RSIShortMin: tradingArgFloat(vals[22]), RSIShortMax: tradingArgFloat(vals[23]),
+			MaxOpenPositions: int(tradingArgInt(vals[20])),
+			RSILongMin:       tradingArgFloat(vals[21]), RSILongMax: tradingArgFloat(vals[22]),
+			RSIShortMin: tradingArgFloat(vals[23]), RSIShortMax: tradingArgFloat(vals[24]),
 			Running: running,
 		}
 		row.updatedAt = d.stampLocked()
@@ -967,6 +970,7 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 		"stop_r", "take_profit_r", "daily_loss_pct", "max_margin_usdt", "exchange_key_id", "mode",
 		"entry_mode", "min_score", "min_win_rate", "min_trades",
 		"max_margin_per_trade_usdt", "max_consecutive_losses", "pause_balance_usdt", "pause_reason",
+		"max_open_positions",
 		"rsi_long_min", "rsi_long_max", "rsi_short_min", "rsi_short_max", "running",
 		"created_at", "updated_at", "network", "status", "label",
 	}
@@ -1007,6 +1011,7 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 			rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
 			rec.EntryMode, int64(rec.MinScore), rec.MinWinRate, int64(rec.MinTrades),
 			rec.MaxMarginPerTradeUsdt, int64(rec.MaxConsecutiveLosses), rec.PauseBalanceUsdt, rec.PauseReason,
+			int64(rec.MaxOpenPositions),
 			rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax, running,
 			row.createdAt, row.updatedAt, network, status, label,
 		})

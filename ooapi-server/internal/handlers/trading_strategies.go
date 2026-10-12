@@ -47,6 +47,7 @@ s.id, s.symbol, s.leverage, s.margin_mode, s.ema_fast, s.ema_slow, s.timeframe,
 s.stop_r, s.take_profit_r, s.daily_loss_pct, s.max_margin_usdt, s.exchange_key_id, s.mode,
 s.entry_mode, s.min_score, s.min_win_rate, s.min_trades,
 s.max_margin_per_trade_usdt, s.max_consecutive_losses, s.pause_balance_usdt, s.pause_reason,
+s.max_open_positions,
 s.rsi_long_min, s.rsi_long_max, s.rsi_short_min, s.rsi_short_max, s.running,
 s.created_at, s.updated_at, k.network, k.status, k.label`
 
@@ -56,8 +57,9 @@ INSERT INTO trading_strategies (
 	stop_r, take_profit_r, daily_loss_pct, max_margin_usdt, exchange_key_id, mode,
 	entry_mode, min_score, min_win_rate, min_trades,
 	max_margin_per_trade_usdt, max_consecutive_losses, pause_balance_usdt, pause_reason,
+	max_open_positions,
 	rsi_long_min, rsi_long_max, rsi_short_min, rsi_short_max, running
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const strategyListSQL = `
 SELECT ` + strategySelectCols + `
@@ -78,6 +80,7 @@ SET symbol = ?, leverage = ?, margin_mode = ?, ema_fast = ?, ema_slow = ?, timef
 	stop_r = ?, take_profit_r = ?, daily_loss_pct = ?, max_margin_usdt = ?,
 	exchange_key_id = ?, mode = ?, entry_mode = ?, min_score = ?, min_win_rate = ?, min_trades = ?,
 	max_margin_per_trade_usdt = ?, max_consecutive_losses = ?, pause_balance_usdt = ?, pause_reason = ?,
+	max_open_positions = ?,
 	rsi_long_min = ?, rsi_long_max = ?, rsi_short_min = ?, rsi_short_max = ?
 WHERE id = ? AND user_id = ?`
 
@@ -121,6 +124,7 @@ type strategyWrite struct {
 	MaxMarginPerTradeUsdt *float64 `json:"maxMarginPerTradeUsdt"`
 	MaxConsecutiveLosses  *int     `json:"maxConsecutiveLosses"`
 	PauseBalanceUsdt      *float64 `json:"pauseBalanceUsdt"`
+	MaxOpenPositions      *int     `json:"maxOpenPositions"`
 	RSILongMin            *float64 `json:"rsiLongMin"`
 	RSILongMax            *float64 `json:"rsiLongMax"`
 	RSIShortMin           *float64 `json:"rsiShortMin"`
@@ -148,6 +152,7 @@ type strategyRecord struct {
 	MaxConsecutiveLosses  int
 	PauseBalanceUsdt      float64
 	PauseReason           string
+	MaxOpenPositions      int
 	RSILongMin            float64
 	RSILongMax            float64
 	RSIShortMin           float64
@@ -177,6 +182,7 @@ type strategyView struct {
 	MaxConsecutiveLosses  int      `json:"maxConsecutiveLosses"`
 	PauseBalanceUsdt      float64  `json:"pauseBalanceUsdt"`
 	PauseReason           string   `json:"pauseReason,omitempty"`
+	MaxOpenPositions      int      `json:"maxOpenPositions"`
 	RSILongMin            float64  `json:"rsiLongMin"`
 	RSILongMax            float64  `json:"rsiLongMax"`
 	RSIShortMin           float64  `json:"rsiShortMin"`
@@ -219,6 +225,7 @@ func defaultStrategy() strategyRecord {
 		MaxMarginPerTradeUsdt: trading.DefaultMaxMarginPerTradeUSDT,
 		MaxConsecutiveLosses:  trading.DefaultMaxConsecutiveLosses,
 		PauseBalanceUsdt:      trading.DefaultPauseBalanceUSDT,
+		MaxOpenPositions:      0,
 		RSILongMin:            50,
 		RSILongMax:            70,
 		RSIShortMin:           30,
@@ -250,6 +257,7 @@ func (row strategyRow) view() strategyView {
 		MaxConsecutiveLosses:  rec.MaxConsecutiveLosses,
 		PauseBalanceUsdt:      rec.PauseBalanceUsdt,
 		PauseReason:           rec.PauseReason,
+		MaxOpenPositions:      rec.MaxOpenPositions,
 		RSILongMin:            rec.RSILongMin,
 		RSILongMax:            rec.RSILongMax,
 		RSIShortMin:           rec.RSIShortMin,
@@ -363,6 +371,7 @@ func CreateTradingStrategy(c *gin.Context) {
 		rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
 		rec.EntryMode, rec.MinScore, rec.MinWinRate, rec.MinTrades,
 		rec.MaxMarginPerTradeUsdt, rec.MaxConsecutiveLosses, rec.PauseBalanceUsdt, rec.PauseReason,
+		rec.MaxOpenPositions,
 		rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax, 0,
 	)
 	if err != nil {
@@ -431,6 +440,7 @@ func UpdateTradingStrategy(c *gin.Context) {
 		rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
 		rec.EntryMode, rec.MinScore, rec.MinWinRate, rec.MinTrades,
 		rec.MaxMarginPerTradeUsdt, rec.MaxConsecutiveLosses, rec.PauseBalanceUsdt, rec.PauseReason,
+		rec.MaxOpenPositions,
 		rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax,
 		id, user.ID,
 	)
@@ -499,6 +509,7 @@ func scanStrategy(s scanner) (strategyRow, error) {
 		&row.Record.ExchangeKeyID, &row.Record.Mode,
 		&row.Record.EntryMode, &row.Record.MinScore, &row.Record.MinWinRate, &row.Record.MinTrades,
 		&row.Record.MaxMarginPerTradeUsdt, &row.Record.MaxConsecutiveLosses, &row.Record.PauseBalanceUsdt, &row.Record.PauseReason,
+		&row.Record.MaxOpenPositions,
 		&row.Record.RSILongMin, &row.Record.RSILongMax, &row.Record.RSIShortMin, &row.Record.RSIShortMax, &running,
 		&row.CreatedAt, &row.UpdatedAt,
 		&network, &status, &label,
@@ -636,6 +647,9 @@ func applyStrategyWrite(base strategyRecord, in strategyWrite, creating bool) (s
 	if in.PauseBalanceUsdt != nil {
 		out.PauseBalanceUsdt = round4(*in.PauseBalanceUsdt)
 	}
+	if in.MaxOpenPositions != nil {
+		out.MaxOpenPositions = *in.MaxOpenPositions
+	}
 	if in.RSILongMin != nil {
 		out.RSILongMin = round4(*in.RSILongMin)
 	}
@@ -703,14 +717,17 @@ func validateStrategy(rec strategyRecord, missingKey bool) *tradingError {
 	if rec.Mode == networkLive && rec.MinTrades < trading.DefaultMinTrades {
 		return &tradingError{http.StatusBadRequest, "实盘 minTrades 不能低于 30", "minTrades"}
 	}
-	if rec.MaxMarginPerTradeUsdt <= 0 || rec.MaxMarginPerTradeUsdt > 1_000_000 {
-		return &tradingError{http.StatusBadRequest, "单笔保证金上限要大于 0", "maxMarginPerTradeUsdt"}
+	if rec.MaxMarginPerTradeUsdt < 0 || rec.MaxMarginPerTradeUsdt > 1_000_000 {
+		return &tradingError{http.StatusBadRequest, "单笔保证金上限要在 0 到 1000000 之间，0 表示关闭", "maxMarginPerTradeUsdt"}
 	}
-	if rec.MaxConsecutiveLosses < 1 || rec.MaxConsecutiveLosses > 1000 {
-		return &tradingError{http.StatusBadRequest, "连亏暂停次数要在 1 到 1000 之间", "maxConsecutiveLosses"}
+	if rec.MaxConsecutiveLosses < 0 || rec.MaxConsecutiveLosses > 1000 {
+		return &tradingError{http.StatusBadRequest, "连亏暂停次数要在 0 到 1000 之间，0 表示关闭", "maxConsecutiveLosses"}
 	}
-	if rec.PauseBalanceUsdt <= 0 || rec.PauseBalanceUsdt > 1_000_000 {
-		return &tradingError{http.StatusBadRequest, "暂停余额要大于 0", "pauseBalanceUsdt"}
+	if rec.PauseBalanceUsdt < 0 || rec.PauseBalanceUsdt > 1_000_000 {
+		return &tradingError{http.StatusBadRequest, "暂停余额要在 0 到 1000000 之间，0 表示关闭", "pauseBalanceUsdt"}
+	}
+	if rec.MaxOpenPositions < 0 || rec.MaxOpenPositions > 10000 {
+		return &tradingError{http.StatusBadRequest, "同时持仓上限要在 0 到 10000 之间，0 表示关闭", "maxOpenPositions"}
 	}
 	if rec.RSILongMin < 0 || rec.RSILongMax > 100 || rec.RSILongMin >= rec.RSILongMax {
 		return &tradingError{http.StatusBadRequest, "做多 RSI 区间要落在 0 到 100，且下限小于上限", "rsiLongMin"}
