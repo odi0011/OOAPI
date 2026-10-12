@@ -204,6 +204,7 @@ func TestBoostDoesNotBypassBalanceFloor(t *testing.T) {
 
 	snap, err := h.Step(1, 32, heldCfg, StepInput{
 		Now: now, MarkPrice: 1, WalletKnown: true, Wallet: BalanceFloorUSDT, Available: BalanceFloorUSDT,
+		EquityKnown: true, AccountEquity: BalanceFloorUSDT,
 	}, held.secrets)
 	if err != nil {
 		t.Fatal(err)

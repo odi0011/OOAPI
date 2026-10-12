@@ -24,14 +24,17 @@ const (
 )
 
 // DetectionEvent 是一次引擎推进记下的检测结果。
+// 当日和累计已实现与状态接口同一来源，面板事件流直接读这两个字段。
 type DetectionEvent struct {
-	TS      time.Time `json:"ts"`
-	Symbol  string    `json:"symbol"`
-	Side    string    `json:"side"`
-	Score   int       `json:"score"`
-	WinRate float64   `json:"winrate"`
-	Action  string    `json:"action"`
-	Msg     string    `json:"msg"`
+	TS                 time.Time `json:"ts"`
+	Symbol             string    `json:"symbol"`
+	Side               string    `json:"side"`
+	Score              int       `json:"score"`
+	WinRate            float64   `json:"winrate"`
+	Action             string    `json:"action"`
+	Msg                string    `json:"msg"`
+	DayRealized        float64   `json:"dayRealizedUsdt"`
+	CumulativeRealized float64   `json:"cumulativeRealizedUsdt"`
 }
 
 type eventRing struct {
@@ -126,6 +129,7 @@ type boostGate struct {
 	best          boostCand
 	pending       int64
 	pendingForced bool
+	flatReason    string
 	seen          map[int64]boostSeen
 	cands         map[int64]boostCand
 }
@@ -184,6 +188,7 @@ func (b *boostGate) reset() {
 	b.best = boostCand{}
 	b.pending = 0
 	b.pendingForced = false
+	b.flatReason = ""
 	b.seen = map[int64]boostSeen{}
 	b.cands = map[int64]boostCand{}
 }
@@ -219,6 +224,7 @@ func (b *boostGate) grant(now time.Time) (time.Time, bool) {
 	b.best = boostCand{}
 	b.pending = 0
 	b.pendingForced = false
+	b.flatReason = ""
 	b.seen = map[int64]boostSeen{}
 	b.cands = map[int64]boostCand{}
 	return b.until, false
@@ -403,6 +409,23 @@ func (b *boostGate) commit(id int64) {
 	}
 }
 
+// noteFlattened 记下加速窗口里已开的仓随后被平掉的原因。窗口结束说明会带上它。
+func (b *boostGate) noteFlattened(id int64, reason string) {
+	if b == nil || id <= 0 {
+		return
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.opened {
+		return
+	}
+	b.flatReason = reason
+}
+
 func (b *boostGate) release(id int64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -486,6 +509,9 @@ func (b *boostGate) takeEnd(now time.Time) (DetectionEvent, bool) {
 }
 
 func (b *boostGate) endMsgLocked() string {
+	if b.opened && strings.TrimSpace(b.flatReason) != "" {
+		return "opened then flattened (" + strings.TrimSpace(b.flatReason) + ")"
+	}
 	if b.opened {
 		return "position opened"
 	}
