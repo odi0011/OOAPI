@@ -396,7 +396,7 @@ func TestPortfolioLimitAndBalanceFloorShareTheHubLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	floor.PutForTest(7, 9, otherEng)
-	snap, err := floor.Step(7, 8, cfg, StepInput{WalletKnown: true, Wallet: 0.4, Available: 0.2}, eng.secrets)
+	snap, err := floor.Step(7, 8, cfg, StepInput{WalletKnown: true, Wallet: 0.4, Available: 0.2, EquityKnown: true, AccountEquity: 0.4}, eng.secrets)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +438,7 @@ func TestRunnerBalanceFloorStopsSpec(t *testing.T) {
 	var steps int
 	var stopped int64
 	r.SetMarket(func(Config, SecretOpener, time.Time) (Market, error) {
-		return Market{Wallet: 0.4, Available: 0.4, WalletKnown: true}, nil
+		return Market{Wallet: 0.4, Available: 0.4, WalletKnown: true, Equity: 0.4, EquityKnown: true}, nil
 	})
 	r.SetStep(func(RunSpec, StepInput) (Snapshot, error) {
 		steps++

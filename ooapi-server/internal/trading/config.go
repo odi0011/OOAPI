@@ -69,7 +69,7 @@ const (
 	// DefaultMaxConsecutiveLosses 是新建策略的连亏暂停次数。0 表示关闭。
 	DefaultMaxConsecutiveLosses = 0
 	// DefaultPauseBalanceUSDT 是新建策略的余额暂停线。0 表示关闭。
-	// 钱包余额跌破 BalanceFloorUSDT 时仍然停掉该密钥下的全部引擎。
+	// 账户权益跌破 BalanceFloorUSDT 时仍然停掉该密钥下的全部引擎。
 	DefaultPauseBalanceUSDT = 0
 
 	// TrendGapFraction 是快慢线至少要拉开的距离，按价格的 0.05% 计。
@@ -84,6 +84,7 @@ const (
 	ReasonNetRNotPositive     = "netr_not_positive"
 	ReasonPortfolioLimit      = "portfolio_limit"
 	ReasonBalanceFloor        = "balance_floor"
+	ReasonEquityUnknown       = "equity_unknown"
 	ReasonConsecutiveLosses   = "consecutive_losses"
 	ReasonBalanceBelowPause   = "balance_below_pause"
 	ReasonBoostWait           = "boost_wait"
@@ -99,7 +100,8 @@ const (
 	// MaxMarginFraction 不再作为开仓门。大约 2U 的账户上，可用余额的 80% 低于
 	// 策略的组合保证金上限，空仓也会被判超。开仓门用 MaxMarginUsdt 作为这把密钥的总额上限。
 	MaxMarginFraction = 0.80
-	// BalanceFloorUSDT 是账户钱包余额的停机线。触及后该密钥下的引擎全部停止。
+	// BalanceFloorUSDT 是账户权益的停机线。权益 = 钱包余额 + 全部持仓未实现盈亏。
+	// 触及后该密钥下的引擎全部停止。读不到权益时不开新仓。
 	// 同时持仓笔数没有硬编码上限；需要时用策略字段或 OOAPI_MAX_OPEN_POSITIONS 打开。
 	BalanceFloorUSDT = 0.5
 

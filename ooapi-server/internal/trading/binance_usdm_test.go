@@ -135,6 +135,9 @@ func TestEngineBlocksWhenStepSizeBreaksMinNotional(t *testing.T) {
 }
 
 func TestEngineFlattensWhenTakeProfitFails(t *testing.T) {
+	prev := protectionRetryGap
+	protectionRetryGap = 0
+	t.Cleanup(func() { protectionRetryGap = prev })
 	fake := newBinanceFake(t, "0.1", "0.1", "0.0001", "5")
 	fake.failTake = true
 	server := httptest.NewServer(fake)
@@ -164,17 +167,30 @@ func TestEngineFlattensWhenTakeProfitFails(t *testing.T) {
 	if fake.pos != 0 {
 		t.Fatalf("position left open: %v", fake.pos)
 	}
-	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET") != 1 {
-		t.Fatalf("protection calls %#v", fake.snapshot())
+	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET") != protectionAttempts {
+		t.Fatalf("protection calls stop=%d take=%d", fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET"), fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET"))
 	}
 	reduces := 0
+	canceledStop := false
 	for _, call := range fake.snapshot() {
+		if call.method == http.MethodDelete && call.path == "/fapi/v1/algoOrder" {
+			canceledStop = true
+		}
 		if call.method == http.MethodPost && call.path == "/fapi/v1/order" && call.values.Get("reduceOnly") == "true" && call.values.Get("type") == "MARKET" {
+			if !canceledStop {
+				t.Fatal("flatten reduced before the placed stop was canceled")
+			}
 			reduces++
 		}
 	}
 	if reduces != 1 {
 		t.Fatalf("reduce-only closes = %d", reduces)
+	}
+	fake.mu.Lock()
+	left := len(fake.algos)
+	fake.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("orphan algo orders %d", left)
 	}
 }
 
@@ -343,29 +359,32 @@ type recordedCall struct {
 }
 
 type binanceFake struct {
-	t        *testing.T
-	apiKey   string
-	secret   string
-	step     string
-	minQty   string
-	tick     string
-	minNot   string
-	mu       sync.Mutex
-	calls    []recordedCall
-	pos      float64
-	entry    float64
-	posSide  string
-	dual     bool
-	algos    []fakeAlgo
-	algoSeq  int64
-	pending  float64
-	queried  bool
-	failTake bool
+	t               *testing.T
+	apiKey          string
+	secret          string
+	step            string
+	minQty          string
+	tick            string
+	minNot          string
+	mu              sync.Mutex
+	calls           []recordedCall
+	pos             float64
+	entry           float64
+	posSide         string
+	dual            bool
+	algos           []fakeAlgo
+	algoSeq         int64
+	pending         float64
+	queried         bool
+	failTake        bool
+	emptyAfterPlace int
+	income          string
 }
 
 type fakeAlgo struct {
-	id   int64
-	kind string
+	id      int64
+	kind    string
+	posSide string
 }
 
 func newBinanceFake(t *testing.T, step, minQty, tick, minNotional string) *binanceFake {
@@ -412,7 +431,18 @@ func (f *binanceFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/fapi/v1/openOrders":
 		_, _ = io.WriteString(w, `[]`)
 	case "/fapi/v1/openAlgoOrders":
+		if f.emptyAfterPlace > 0 && len(f.algos) > 0 {
+			f.emptyAfterPlace--
+			_, _ = io.WriteString(w, `[]`)
+			break
+		}
 		_, _ = io.WriteString(w, f.algoOrdersJSON())
+	case "/fapi/v1/income":
+		if f.income == "" {
+			_, _ = io.WriteString(w, `[]`)
+			break
+		}
+		_, _ = io.WriteString(w, f.income)
 	case "/fapi/v1/allOpenOrders":
 		_, _ = io.WriteString(w, `{"code":200,"msg":"The operation of cancel all open order is done."}`)
 	default:
@@ -503,7 +533,7 @@ func (f *binanceFake) algo(w http.ResponseWriter, method string, values url.Valu
 			f.t.Errorf("one-way algo sent positionSide %#v", values)
 		}
 		f.algoSeq++
-		f.algos = append(f.algos, fakeAlgo{id: f.algoSeq, kind: values.Get("type")})
+		f.algos = append(f.algos, fakeAlgo{id: f.algoSeq, kind: values.Get("type"), posSide: values.Get("positionSide")})
 		_, _ = io.WriteString(w, `{"algoId":`+strconv.FormatInt(f.algoSeq, 10)+`,"algoStatus":"NEW","orderType":"`+values.Get("type")+`"}`)
 	default:
 		f.t.Errorf("algo type %#v", values)
@@ -555,7 +585,11 @@ func (f *binanceFake) positionJSON() string {
 func (f *binanceFake) algoOrdersJSON() string {
 	items := make([]string, 0, len(f.algos))
 	for _, order := range f.algos {
-		items = append(items, `{"algoId":`+strconv.FormatInt(order.id, 10)+`,"symbol":"XRPUSDT","orderType":"`+order.kind+`","algoStatus":"NEW"}`)
+		side := ""
+		if order.posSide != "" {
+			side = `,"positionSide":"` + order.posSide + `"`
+		}
+		items = append(items, `{"algoId":`+strconv.FormatInt(order.id, 10)+`,"symbol":"XRPUSDT","orderType":"`+order.kind+`","algoStatus":"NEW"`+side+`}`)
 	}
 	return "[" + strings.Join(items, ",") + "]"
 }
