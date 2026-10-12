@@ -30,6 +30,13 @@ func TestProtectionPricesLongAndShort(t *testing.T) {
 	near(t, take, 1.85)
 }
 
+func TestAlignQuantityFloorsToStep(t *testing.T) {
+	near(t, AlignQuantity(10.27, 0.1, 0.1), 10.2)
+	if AlignQuantity(0.4, 1, 1) != 0 {
+		t.Fatal("expected qty below the step to be rejected")
+	}
+}
+
 func TestProtectionPricesRejectsNonPositive(t *testing.T) {
 	if _, _, err := ProtectionPrices(SideLong, 0.05, 0.1, 1, 1.5); err == nil {
 		t.Fatal("expected stop below zero to fail")

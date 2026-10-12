@@ -20,11 +20,12 @@ type EntryOrder struct {
 	MarginMode string
 }
 
-// Protection 是持仓上的止损和止盈。引擎自己盯价格，交易所侧只记账。
+// Protection 是持仓上的止损和止盈。测网会把它做成条件单。
 type Protection struct {
 	Symbol string
 	Stop   float64
 	Take   float64
+	Side   Side
 }
 
 // CloseOrder 是平仓请求。
@@ -52,7 +53,7 @@ type Position struct {
 }
 
 // Exchange 是策略引擎和交易所之间的边界。
-// 测网用 Paper；实盘用不会发单的 LiveStub。测试可以塞入自己的实现。
+// Paper 只给状态机单测。测网实单在 USDMClient。实盘用不会发单的 LiveStub。
 type Exchange interface {
 	PlaceEntry(req EntryOrder) (Fill, error)
 	PlaceProtection(req Protection) error
@@ -194,25 +195,14 @@ func (s *LiveStub) Position(symbol string) (Position, error) {
 	return Position{}, nil
 }
 
-// USDT-M 合约地址。测网客户端不会拨号；实盘桩同样不拨号。
+// USDT-M 合约地址。测网客户端只访问测试网；实盘桩不拨号。
 const (
 	BinanceUSDMTestnetBase = "https://testnet.binancefuture.com"
 	BinanceUSDMLiveBase    = "https://fapi.binance.com"
 )
 
-// USDMTestnet 是币安 USDT-M 测网路径。撮合在内存里完成，方便单测跑完整策略。
-type USDMTestnet struct {
-	*Paper
-}
-
-func NewUSDMTestnet() *USDMTestnet {
-	return &USDMTestnet{Paper: NewPaper()}
-}
-
-func (u *USDMTestnet) BaseURL() string { return BinanceUSDMTestnetBase }
-
 // NewExchange 按策略 mode 选择客户端。
-// 测网走 USDT-M 测网撮合。实盘在门闩关闭时直接拒绝，打开后也只给不会发单的桩。
+// 测网走币安 USDT-M 测试网。实盘在门闩关闭时直接拒绝，打开后也只给不会发单的桩。
 func NewExchange(cfg Config) (Exchange, error) {
 	switch cfg.Mode {
 	case ModeTestnet:

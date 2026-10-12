@@ -9,6 +9,8 @@ import (
 type Credentials struct {
 	APIKey    string
 	APISecret string
+	// Network 必须是 testnet，测网客户端才会收下这把密钥。
+	Network string
 }
 
 // SecretOpener 只在发单或管理挂单时调用，启动和空转不会调用。

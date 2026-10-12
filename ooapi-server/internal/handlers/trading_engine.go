@@ -258,7 +258,7 @@ func exchangeSecretOpener(userID int64, row strategyRow) trading.SecretOpener {
 		if err != nil {
 			return trading.Credentials{}, err
 		}
-		if stored.Network != mode {
+		if stored.Network != networkTestnet || stored.Network != mode {
 			return trading.Credentials{}, trading.ErrKeyNotUsable
 		}
 		apiKey, err := services.OpenExchangeSecret(stored.APIKey)
@@ -269,7 +269,7 @@ func exchangeSecretOpener(userID int64, row strategyRow) trading.SecretOpener {
 		if err != nil {
 			return trading.Credentials{}, trading.ErrKeyNotUsable
 		}
-		return trading.Credentials{APIKey: apiKey, APISecret: apiSecret}, nil
+		return trading.Credentials{APIKey: apiKey, APISecret: apiSecret, Network: stored.Network}, nil
 	}
 }
 
