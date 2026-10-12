@@ -130,6 +130,8 @@ func Setup(cfg *config.Config) *gin.Engine {
 		{
 			strategies.GET("", handlers.ListTradingStrategies)
 			strategies.POST("", handlers.CreateTradingStrategy)
+			strategies.GET("/:id/pause-entries", handlers.GetStrategyPauseEntries)
+			strategies.POST("/:id/pause-entries", handlers.PostStrategyPauseEntries)
 			strategies.GET("/:id", handlers.GetTradingStrategy)
 			strategies.PATCH("/:id", handlers.UpdateTradingStrategy)
 			strategies.DELETE("/:id", handlers.DeleteTradingStrategy)

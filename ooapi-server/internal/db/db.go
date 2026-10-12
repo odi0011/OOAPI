@@ -86,13 +86,13 @@ type columnDef struct {
 	definition string
 }
 
-// relaxTradingRiskDefaults 把可选风控的列默认值改成关闭。
-// 已有行保持原值；新建且未写这些列的行不再带上 1U、连亏 3 次或 1.5U 暂停。
+// relaxTradingRiskDefaults 把单笔保证金和连亏次数的默认值改成关闭。
+// 余额暂停线的默认值是 0.5，与权益停机地板相同。已有行保持原值。
 func relaxTradingRiskDefaults() error {
 	stmts := []string{
 		"ALTER TABLE trading_strategies MODIFY COLUMN max_margin_per_trade_usdt DECIMAL(20,6) NOT NULL DEFAULT 0",
 		"ALTER TABLE trading_strategies MODIFY COLUMN max_consecutive_losses INT NOT NULL DEFAULT 0",
-		"ALTER TABLE trading_strategies MODIFY COLUMN pause_balance_usdt DECIMAL(20,6) NOT NULL DEFAULT 0",
+		"ALTER TABLE trading_strategies MODIFY COLUMN pause_balance_usdt DECIMAL(20,6) NOT NULL DEFAULT 0.5",
 	}
 	for _, stmt := range stmts {
 		if _, err := DB.Exec(stmt); err != nil {

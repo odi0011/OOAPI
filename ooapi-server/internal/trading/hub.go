@@ -68,6 +68,20 @@ func (h *Hub) SetPauseHook(fn func(strategyID int64, reason string)) {
 	h.mu.Unlock()
 }
 
+// SetPauseEntries 立刻改内存里的新开仓开关。下一拍以及持仓中的这一拍都认它。
+func (h *Hub) SetPauseEntries(userID, strategyID int64, paused bool) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	eng := h.engines[sessionKey(userID, strategyID)]
+	if eng == nil {
+		return
+	}
+	eng.cfg.PauseEntries = paused
+}
+
 // ClearPause 清掉内存里的暂停标记，供手动 resume 之后再 Start。
 func (h *Hub) ClearPause(userID, strategyID int64) {
 	if h == nil {
@@ -155,6 +169,8 @@ func (h *Hub) Step(userID, strategyID int64, cfg Config, in StepInput, secrets S
 	if eng == nil {
 		return Snapshot{}, ErrNotRunning
 	}
+	// 每一拍都吃进暂停开仓、余额暂停线和创建时间，持仓中也生效，不等重启。
+	eng.noteLiveFlags(cfg)
 	if !eng.Busy() {
 		if err := eng.UpdateConfig(cfg); err != nil {
 			return eng.Snapshot(), err

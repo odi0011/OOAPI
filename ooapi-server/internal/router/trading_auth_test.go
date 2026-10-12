@@ -43,6 +43,8 @@ func TestTradingRoutesRequireAuthAndStrategyPermission(t *testing.T) {
 		{http.MethodDelete, "/api/trading/exchange-keys/1"},
 		{http.MethodGet, "/api/trading/strategies"},
 		{http.MethodPost, "/api/trading/strategies"},
+		{http.MethodGet, "/api/trading/strategies/1/pause-entries"},
+		{http.MethodPost, "/api/trading/strategies/1/pause-entries"},
 		{http.MethodPatch, "/api/trading/strategies/1"},
 		{http.MethodDelete, "/api/trading/strategies/1"},
 		{http.MethodGet, "/api/trading/engine/state"},

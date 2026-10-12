@@ -21,6 +21,7 @@ import {
   getEngineState,
   listStrategies,
   listTradingEngines,
+  setPauseEntries,
   type EngineMarket,
   type EngineOrders,
   type EnginePosition,
@@ -29,9 +30,9 @@ import {
 } from "./tradingApi";
 
 /**
- * 交易数据看板。只读：多品种一览，以及选中引擎的状态、K 线、持仓、委托、本会话盈亏。
+ * 交易数据看板。多品种一览，以及选中引擎的状态、K 线、持仓、委托和已实现盈亏。
+ * 暂停新开仓会立刻写入策略。其余配置不在这里改，也不调用测网全绿接口。
  * /api/trading/engines 404 或失败时，仍按原来的第一份策略展示，不留白页。
- * 不改策略，不绑定账户，不调用测网全绿接口。
  */
 
 const ENGINE_POLL_MS = 5000;
@@ -54,6 +55,7 @@ export default function AdminTradingDashboard() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [pauseBusyId, setPauseBusyId] = useState<number | null>(null);
 
   const strategiesRef = useRef<Strategy[]>([]);
   const chosenRef = useRef<number | null>(null);
@@ -167,6 +169,28 @@ export default function AdminTradingDashboard() {
 
   const selectedSummary = overview?.engines.find((item) => item.strategyId === selectedId);
 
+  const togglePause = async (strategyId: number, paused: boolean) => {
+    setPauseBusyId(strategyId);
+    try {
+      const saved = await setPauseEntries(strategyId, paused);
+      setEngine((current) => (current && current.strategyId === strategyId ? { ...current, pauseEntries: saved.pauseEntries } : current));
+      setOverview((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          engines: current.engines.map((item) =>
+            item.strategyId === strategyId ? { ...item, pauseEntries: saved.pauseEntries } : item,
+          ),
+        };
+      });
+      setStrategy((current) => (current && current.id === strategyId ? { ...current, pauseEntries: saved.pauseEntries } : current));
+    } catch (err) {
+      setLoadError(errorText(err, "更新暂停开仓失败"));
+    } finally {
+      setPauseBusyId(null);
+    }
+  };
+
   return (
     <AdminLayout
       crumbs={[
@@ -199,7 +223,13 @@ export default function AdminTradingDashboard() {
         ) : null}
 
         {multi && overview ? (
-          <EngineOverview snapshot={overview} selectedId={selectedId} onSelect={selectEngine} />
+          <EngineOverview
+            snapshot={overview}
+            selectedId={selectedId}
+            onSelect={selectEngine}
+            pauseBusyId={pauseBusyId}
+            onTogglePause={(strategyId, paused) => void togglePause(strategyId, paused)}
+          />
         ) : null}
 
         <TradingDesk
@@ -216,6 +246,10 @@ export default function AdminTradingDashboard() {
           mode={strategy?.mode}
           dismissedError={dismissedError}
           onDismissError={() => setDismissedError(engine?.lastError?.trim() ?? "")}
+          pauseBusy={selectedId != null && pauseBusyId === selectedId}
+          onTogglePauseEntries={
+            selectedId == null ? undefined : (paused) => void togglePause(selectedId, paused)
+          }
         />
       </div>
     </AdminLayout>

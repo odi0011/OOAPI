@@ -51,10 +51,14 @@ func (c Config) lossPauseCount() int {
 }
 
 func (c Config) balancePauseLine() float64 {
-	if c.PauseBalanceUsdt > 0 {
-		return c.PauseBalanceUsdt
+	line := c.PauseBalanceUsdt
+	if line <= 0 {
+		line = envPositiveFloat(EnvPauseBalanceUSDT)
 	}
-	return envPositiveFloat(EnvPauseBalanceUSDT)
+	if line > 0 && line < BalanceFloorUSDT {
+		return BalanceFloorUSDT
+	}
+	return line
 }
 
 func envPositiveInt(key string) int {

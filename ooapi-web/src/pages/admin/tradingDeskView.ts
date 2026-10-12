@@ -9,6 +9,7 @@ export interface EngineSlice {
   mode?: string;
   testnetGreen?: boolean;
   running?: boolean;
+  pauseEntries?: boolean;
   lastError?: string;
   symbol?: string;
   leverage?: number;
@@ -139,6 +140,8 @@ export interface DeskStatus {
   accountLabel: string;
   lastError: string;
   timeframe: string;
+  pauseEntries: boolean;
+  pauseEntriesText: string;
 }
 
 export function buildDeskStatus(input: {
@@ -166,6 +169,8 @@ export function buildDeskStatus(input: {
     accountLabel: account,
     lastError: engine?.lastError?.trim() ?? "",
     timeframe: engine?.timeframe?.trim() || input.timeframe?.trim() || "—",
+    pauseEntries: engine?.pauseEntries === true,
+    pauseEntriesText: engine?.pauseEntries === true ? "已暂停" : "允许",
   };
 }
 
