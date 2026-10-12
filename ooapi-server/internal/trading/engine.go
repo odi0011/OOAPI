@@ -497,8 +497,8 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 		if sum == nil {
 			sum = e.lastBacktest
 		}
-		if sum == nil || sum.WinRate+1e-12 < e.cfg.MinWinRate {
-			e.note("skip", ReasonWinRateBelow)
+		if reason := BacktestGate(e.cfg, sum); reason != "" {
+			e.note("skip", reason)
 			return e.Snapshot(), nil
 		}
 	}
