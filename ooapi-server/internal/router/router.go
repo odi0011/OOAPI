@@ -80,6 +80,10 @@ func Setup(cfg *config.Config) *gin.Engine {
 			它默认请求 `{base_url}/api/pricing`。
 		*/
 		api.GET("/pricing", handlers.AdminPricing)
+
+		// 实盘加速和检测事件使用 OOAPI_BOOST_TOKEN，不走登录 JWT。
+		api.POST("/trading/engine/boost", handlers.PostTradingEngineBoost)
+		api.GET("/trading/engine/events", handlers.GetTradingEngineEvents)
 	}
 
 	// sub2api 的倍率声明在 /v1 下（按 key 维度，需要鉴权）

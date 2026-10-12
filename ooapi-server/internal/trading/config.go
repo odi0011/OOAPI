@@ -63,12 +63,14 @@ const (
 	DefaultMinWinRate = 0.5
 	// DefaultMinTrades 是这道门要求的最少样本笔数。
 	DefaultMinTrades = 30
-	// DefaultMaxMarginPerTradeUSDT 是单笔开仓保证金上限。
-	DefaultMaxMarginPerTradeUSDT = 1
-	// DefaultMaxConsecutiveLosses 连亏达到这个次数就自动暂停。
-	DefaultMaxConsecutiveLosses = 3
-	// DefaultPauseBalanceUSDT 是自动暂停的余额线。0.5U 停机仍然单独生效。
-	DefaultPauseBalanceUSDT = 1.5
+	// DefaultMaxMarginPerTradeUSDT 是新建策略的单笔保证金上限。
+	// 0 表示关闭，不再额外收紧 MaxMarginUsdt。环境变量可以再打开。
+	DefaultMaxMarginPerTradeUSDT = 0
+	// DefaultMaxConsecutiveLosses 是新建策略的连亏暂停次数。0 表示关闭。
+	DefaultMaxConsecutiveLosses = 0
+	// DefaultPauseBalanceUSDT 是新建策略的余额暂停线。0 表示关闭。
+	// 钱包余额跌破 BalanceFloorUSDT 时仍然停掉该密钥下的全部引擎。
+	DefaultPauseBalanceUSDT = 0
 
 	// TrendGapFraction 是快慢线至少要拉开的距离，按价格的 0.05% 计。
 	TrendGapFraction = 0.0005
@@ -84,12 +86,13 @@ const (
 	ReasonBalanceFloor        = "balance_floor"
 	ReasonConsecutiveLosses   = "consecutive_losses"
 	ReasonBalanceBelowPause   = "balance_below_pause"
+	ReasonBoostWait           = "boost_wait"
+	ReasonBoostFilled         = "boost_filled"
 
-	// MaxOpenPositions 是同一把交易所密钥下同时持仓的上限。
-	MaxOpenPositions = 2
 	// MaxMarginFraction 是已用保证金相对可用余额的上限。
 	MaxMarginFraction = 0.80
-	// BalanceFloorUSDT 是账户钱包余额的停机线。触及后该密钥下的引擎全部停止开仓。
+	// BalanceFloorUSDT 是账户钱包余额的停机线。触及后该密钥下的引擎全部停止。
+	// 同时持仓笔数没有硬编码上限；需要时用策略字段或 OOAPI_MAX_OPEN_POSITIONS 打开。
 	BalanceFloorUSDT = 0.5
 
 	// TakerFeeRate 与 SlippageRate 都按单边名义价值计，回测开平各算一次。
@@ -121,12 +124,15 @@ type Config struct {
 	MinWinRate float64 `json:"minWinRate,omitempty"`
 	// MinTrades 是回测样本笔数下限。0 在开仓门里按 DefaultMinTrades。
 	MinTrades int `json:"minTrades,omitempty"`
-	// MaxMarginPerTradeUsdt 是单笔开仓保证金上限。0 表示不额外收紧 MaxMarginUsdt。
+	// MaxMarginPerTradeUsdt 是单笔开仓保证金上限。0 表示策略不收紧，再看环境变量。
 	MaxMarginPerTradeUsdt float64 `json:"maxMarginPerTradeUsdt,omitempty"`
-	// MaxConsecutiveLosses 连亏达到次数后暂停。0 按 DefaultMaxConsecutiveLosses。
+	// MaxConsecutiveLosses 连亏达到次数后暂停。0 表示策略不启用，再看环境变量。
 	MaxConsecutiveLosses int `json:"maxConsecutiveLosses,omitempty"`
-	// PauseBalanceUsdt 余额跌破后暂停。0 按 DefaultPauseBalanceUSDT。
+	// PauseBalanceUsdt 余额跌破后暂停。0 表示策略不启用。
+	// 这道暂停与 BalanceFloorUSDT 停机是两回事，停机线不能被这里关掉。
 	PauseBalanceUsdt float64 `json:"pauseBalanceUsdt,omitempty"`
+	// MaxOpenPositions 是同一把密钥下同时持仓的上限。0 表示策略不限制。
+	MaxOpenPositions int `json:"maxOpenPositions,omitempty"`
 	// PauseReason 非空表示已自动暂停，重启不会恢复。
 	PauseReason string `json:"pauseReason,omitempty"`
 	// RSI 多空允许区间。两端都为 0 时用 50–70 / 30–50。
@@ -247,6 +253,9 @@ func (c Config) Validate() error {
 	}
 	if c.PauseBalanceUsdt < 0 || c.PauseBalanceUsdt > 1_000_000 {
 		return invalid("暂停余额要在 0 到 1000000 之间")
+	}
+	if c.MaxOpenPositions < 0 || c.MaxOpenPositions > 10000 {
+		return invalid("同时持仓上限要在 0 到 10000 之间")
 	}
 	if err := validRSIPair(c.RSILongMin, c.RSILongMax); err != nil {
 		return err
