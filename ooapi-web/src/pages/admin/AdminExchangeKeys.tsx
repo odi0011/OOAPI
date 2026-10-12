@@ -13,7 +13,9 @@ import { ApiRequestError } from "@/lib/api";
 import { useAsyncGuard, useNotify } from "@/lib/useNotify";
 
 import tokenStyles from "./AdminTokens.module.css";
+import settingsStyles from "./AdminSettings.module.css";
 import styles from "./AdminExchangeKeys.module.css";
+import SettingsRail from "./SettingsRail";
 import {
   createExchangeKey,
   discardLegacyStrategyDraft,
@@ -82,7 +84,7 @@ export default function AdminExchangeKeys() {
     try {
       setItems(await listExchangeKeys());
     } catch (err) {
-      setLoadError(errorText(err, "加载交易所密钥失败"));
+      setLoadError(errorText(err, "加载账户失败"));
     } finally {
       setLoading(false);
     }
@@ -139,9 +141,9 @@ export default function AdminExchangeKeys() {
         const plain = await revealExchangeKey(created.id);
         rememberRevealed(created.id);
         setRevealed({ id: created.id, ...plain });
-        notify.success("密钥已绑定", "请立即复制，并确认这把密钥已关闭提现权限");
+        notify.success("账户已绑定", "请立即复制，并确认这把 API Key 已关闭提现权限");
       } catch (err) {
-        notify.error("密钥已保存，但没能读出明文", errorText(err, "请在列表里点「显示」"));
+        notify.error("账户已保存，但没能读出明文", errorText(err, "请在列表里点「显示」"));
       }
     } catch (err) {
       notify.error("绑定失败", errorText(err, "请稍后再试"));
@@ -158,7 +160,7 @@ export default function AdminExchangeKeys() {
       rememberRevealed(item.id);
       setRevealed({ id: item.id, ...plain });
     } catch (err) {
-      notify.error("读取密钥失败", errorText(err, "请稍后再试"));
+      notify.error("读取凭证失败", errorText(err, "请稍后再试"));
     } finally {
       action.release();
     }
@@ -178,7 +180,7 @@ export default function AdminExchangeKeys() {
         notify.success("已复制到剪贴板");
       } catch {
         setRevealed({ id, ...plain });
-        notify.error("复制失败", "完整密钥已显示，请手动选中复制");
+        notify.error("复制失败", "完整凭证已显示，请手动选中复制");
       }
     } catch (err) {
       notify.error("复制失败", errorText(err, "请稍后再试"));
@@ -193,7 +195,7 @@ export default function AdminExchangeKeys() {
       const next = await revokeExchangeKey(item.id);
       setItems((prev) => prev.map((row) => (row.id === item.id ? next : row)));
       if (revealed?.id === item.id) setRevealed(null);
-      notify.success(`已作废密钥「${item.label || "未命名"}」`);
+      notify.success(`已作废账户「${item.label || "未命名"}」`);
     } catch (err) {
       notify.error("作废失败", errorText(err, "请稍后再试"));
     } finally {
@@ -203,28 +205,35 @@ export default function AdminExchangeKeys() {
 
   return (
     <AdminLayout
-      crumbs={[{ label: "后台", href: "/admin" }, { label: "交易所密钥" }]}
+      crumbs={[
+        { label: "后台", href: "/admin" },
+        { label: "系统设置", href: "/admin/system" },
+        { label: "账户" },
+      ]}
       actions={
         <Button variant="primary" size="sm" onClick={openCreate} disabled={action.busy || loading}>
-          绑定密钥
+          绑定账户
         </Button>
       }
     >
-      <div className={tokenStyles.page}>
+      <div className={settingsStyles.page}>
         <header className={tokenStyles.head}>
           <div>
-            <h1 className={tokenStyles.title}>交易所密钥</h1>
+            <h1 className={tokenStyles.title}>账户</h1>
             <p className={styles.lead}>
-              自己绑定币安 USDT 合约的 API Key。测网和实盘可以各留一把，互不覆盖。
+              绑定币安 USDT 合约的 API。测网和实盘可以各留一个，互不覆盖。列表只显示打码，明文只经 reveal。
             </p>
           </div>
         </header>
 
+        <div className={settingsStyles.layout}>
+          <SettingsRail current="account" />
+          <div className={settingsStyles.formArea}>
         <div className={tokenStyles.notice}>
           <strong>到交易所关掉提现后再绑</strong>
           <p>
             旧 Key 先在交易所侧作废，重新创建一把，并关掉提现权限，只留合约交易需要的权限。
-            回到这里自绑时，已有的密钥不会自动作废。不再使用的，在本页长按作废。这里不会代你发起提现。
+            回到这里自绑时，已有的账户不会自动作废。不再使用的，在本页长按作废。这里不会代你发起提现。
           </p>
         </div>
 
@@ -241,11 +250,11 @@ export default function AdminExchangeKeys() {
         ) : items.length === 0 ? (
           <div className={tokenStyles.empty}>
             <EmptyState
-              title="还没有交易所密钥"
+              title="还没有账户"
               description="先在交易所作废旧 Key，重建并关闭提现后再绑定。列表保持打码，点显示后才能复制。"
               action={
                 <Button variant="primary" size="sm" onClick={openCreate} disabled={action.busy}>
-                  绑定密钥
+                  绑定账户
                 </Button>
               }
             />
@@ -311,12 +320,14 @@ export default function AdminExchangeKeys() {
             })}
           </div>
         )}
+          </div>
+        </div>
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={(next) => { if (!action.busy) setDialogOpen(next); }}>
         <DialogContent
-          title="绑定交易所密钥"
-          description="旧 Key 先在交易所侧作废。重建一把、关掉提现，再填到这里。已有的密钥不会被这次绑定覆盖。"
+          title="绑定账户"
+          description="旧 Key 先在交易所侧作废。重建一把、关掉提现，再填到这里。已有的账户不会被这次绑定覆盖。"
         >
           <div className={tokenStyles.form} inert={action.busy}>
             <Input
@@ -329,7 +340,7 @@ export default function AdminExchangeKeys() {
             <div className={styles.networkRow}>
               <span className={styles.networkLabel}>网络</span>
               <SegmentedControl
-                label="密钥网络"
+                label="账户网络"
                 value={draft.network}
                 onValueChange={(network) => {
                   if (network === "testnet" || network === "live") setDraft({ ...draft, network });
@@ -339,7 +350,7 @@ export default function AdminExchangeKeys() {
                   { value: "live", label: "实盘" },
                 ]}
               />
-              <p className={styles.networkHint}>测网和实盘分开保存，可以同时留着。策略环境跟这把密钥不一致时会提示，仍可保存。</p>
+              <p className={styles.networkHint}>测网和实盘分开保存，可以同时留着。策略环境和这个账户不一致时会提示，仍可保存。</p>
             </div>
             <PasswordField
               label="API Key"
@@ -355,7 +366,7 @@ export default function AdminExchangeKeys() {
               spellCheck={false}
               value={draft.apiSecret}
               onChange={(e) => setDraft({ ...draft, apiSecret: e.target.value })}
-              description="请确认这把密钥没有提现权限。"
+              description="请确认这把 API Key 没有提现权限。"
             />
             <div className={tokenStyles.switchRow}>
               <Switch
@@ -378,7 +389,7 @@ export default function AdminExchangeKeys() {
 
       <Dialog open={revealed !== null} onOpenChange={(open) => !open && setRevealed(null)}>
         <DialogContent
-          title="请立即复制密钥"
+          title="请立即复制"
           description="完整内容来自一次 reveal。列表保持打码，未显示前不能复制。复制会再向服务器读取明文。"
         >
           {revealed && (
@@ -437,7 +448,7 @@ function SecretRow({
         className={`${tokenStyles.miniBtn} ${styles.copyBtn}`}
         disabled={!revealed || busy}
         aria-label={revealed ? `复制完整${label}` : `请先显示完整${label}后再复制`}
-        title={revealed ? `复制完整${label}` : "请先显示完整密钥"}
+        title={revealed ? `复制完整${label}` : "请先显示后再复制"}
         onClick={onCopy}
       >
         复制

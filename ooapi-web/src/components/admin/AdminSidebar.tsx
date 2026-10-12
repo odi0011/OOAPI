@@ -3,12 +3,10 @@ import { Link, useLocation } from "react-router-dom";
 import {
   Activity,
   BarChart3,
-  ChartCandlestick,
   FileText,
   FolderOpen,
   History,
   KeyRound,
-  KeySquare,
   Layers,
   LayoutDashboard,
   Route,
@@ -99,19 +97,9 @@ export const ADMIN_NAV: AdminNavGroup[] = [
     ],
   },
   {
-    key: "trading",
-    label: "交易",
-    // 还没有独立的交易权限点。策略是配置，先跟系统设置同一道 option:edit。
-    // 交易所密钥是用户自绑，口径对齐「密钥管理」：登录即可。
-    items: [
-      { key: "trading", label: "策略配置", icon: <ChartCandlestick size={18} strokeWidth={1.75} />, href: "/admin/trading", requiredPermission: "option:edit" },
-      { key: "exchange-keys", label: "交易所密钥", icon: <KeySquare size={18} strokeWidth={1.75} />, href: "/admin/exchange-keys" },
-    ],
-  },
-  {
     key: "system",
     label: "系统",
-    // 登录与注册是系统设置里的一个分区，不单独占入口。
+    // 策略和账户在系统设置的「交易」分组里，不单独占侧栏一级。
     items: [
       { key: "system", label: "系统设置", icon: <Settings size={18} strokeWidth={1.75} />, href: "/admin/system", requiredPermission: "option:edit" },
     ],
@@ -166,7 +154,9 @@ export function AdminSidebar({ collapsed, can }: AdminSidebarProps) {
                   if (itemHash) {
                     active = location.pathname === itemPath && currentHash === itemHash;
                   } else if (itemPath === "/admin/system") {
-                    active = location.pathname === itemPath && !currentHash;
+                    active =
+                      location.pathname === "/admin/system" ||
+                      location.pathname.startsWith("/admin/system/");
                   } else {
                     active =
                       location.pathname === itemPath ||

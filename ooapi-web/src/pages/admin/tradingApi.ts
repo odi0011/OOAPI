@@ -138,7 +138,7 @@ export async function revealExchangeKey(id: number): Promise<ExchangeKeyPlain> {
   const apiKey = (data.apiKey ?? "").trim();
   const apiSecret = (data.apiSecret ?? "").trim();
   if (!isPlainExchangeSecret(apiKey) || !isPlainExchangeSecret(apiSecret)) {
-    throw new ApiRequestError("返回的不是完整密钥", "masked_key", 0);
+    throw new ApiRequestError("返回的不是完整凭证", "masked_key", 0);
   }
   return { apiKey, apiSecret };
 }
@@ -165,11 +165,19 @@ export async function deleteStrategy(id: number): Promise<void> {
   await apiRequest(`/api/trading/strategies/${id}`, { method: "DELETE" });
 }
 
-/** 引擎状态。testnetGreen 只读展示，本页不会去打开它。 */
+/**
+ * 引擎状态。字段与 trading.Snapshot 一致。
+ * testnetGreen 只读展示，本页不会去打开它，也不调用 /api/trading/engine/testnet-green。
+ * 仓位只有方向、数量和三档价格；标记价、未实现盈亏、保证金不在这里。
+ */
 export interface EngineState {
   strategyId: number;
   state: string;
   side?: string;
+  entryPrice?: number;
+  stopPrice?: number;
+  takeProfitPrice?: number;
+  qty?: number;
   dayRealizedUsdt?: number;
   halted?: boolean;
   lastError?: string;
@@ -178,6 +186,74 @@ export interface EngineState {
   running?: boolean;
   lastAction?: string;
   lastReason?: string;
+}
+
+/**
+ * K 线预留。OOO 补行情前不要调用，页面只展示空态。
+ * 预期：items[].openTime/open/high/low/close，可选 markPrice。
+ */
+export const MARKET_CANDLES_PATH = "/api/trading/market/candles";
+
+export interface MarketCandle {
+  openTime: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+}
+
+export interface MarketCandlesResponse {
+  symbol?: string;
+  timeframe?: string;
+  markPrice?: number;
+  items?: MarketCandle[] | null;
+}
+
+export async function listMarketCandles(query: { symbol: string; timeframe: string }): Promise<MarketCandlesResponse> {
+  const params = new URLSearchParams({ symbol: query.symbol, timeframe: query.timeframe });
+  return apiRequest<MarketCandlesResponse>(`${MARKET_CANDLES_PATH}?${params.toString()}`);
+}
+
+/**
+ * 委托预留。OOO 补挂单前不要调用。
+ * 预期 items：入场 entry、止损 stop、止盈 take_profit，algo 标明条件单。
+ */
+export const OPEN_ORDERS_PATH = "/api/trading/orders";
+
+export interface TradingOrder {
+  id?: string;
+  kind: "entry" | "stop" | "take_profit" | (string & {});
+  status: string;
+  side?: string;
+  price?: number;
+  qty?: number;
+  algo?: boolean;
+}
+
+export async function listOpenOrders(strategyId: number): Promise<TradingOrder[]> {
+  const data = await apiRequest<{ items?: TradingOrder[] | null }>(`${OPEN_ORDERS_PATH}?strategyId=${strategyId}`);
+  return data.items ?? [];
+}
+
+/**
+ * 累计盈亏预留。当日已实现先用引擎 state.dayRealizedUsdt。
+ * 预期按 testnet / live 分开给 dayRealizedUsdt 与 cumulativeRealizedUsdt。
+ */
+export const PNL_PATH = "/api/trading/pnl";
+
+export interface ModePnl {
+  dayRealizedUsdt?: number;
+  cumulativeRealizedUsdt?: number;
+}
+
+export interface TradingPnl {
+  testnet?: ModePnl;
+  live?: ModePnl;
+}
+
+export async function getTradingPnl(strategyId: number): Promise<TradingPnl> {
+  return apiRequest<TradingPnl>(`${PNL_PATH}?strategyId=${strategyId}`);
 }
 
 export async function getEngineState(strategyId: number): Promise<EngineState> {

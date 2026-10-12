@@ -11,7 +11,11 @@ import { ApiRequestError } from "@/lib/api";
 import { useAsyncGuard, useNotify } from "@/lib/useNotify";
 
 import sectionStyles from "./sections/Section.module.css";
+import settingsStyles from "./AdminSettings.module.css";
 import styles from "./AdminTrading.module.css";
+import SettingsRail from "./SettingsRail";
+import TradingDesk from "./TradingDesk";
+import { ACCOUNT_PATH } from "./settingsNav";
 import {
   TIMEFRAMES,
   DEFAULT_EXCHANGE_KEY_ID,
@@ -146,12 +150,18 @@ function validate(draft: StrategyDraft, keys: ExchangeKey[]): string | null {
   if (draft.emaFast >= draft.emaSlow) return "快线周期要小于慢线";
   if (draft.mode !== "testnet" && draft.mode !== "live") return "环境只能是测网或实盘";
   const bound = keys.some((key) => key.id === draft.exchangeKeyId && !key.revoked);
-  if (!bound) return "请先绑定一把未作废的交易所密钥";
+  if (!bound) return "请先绑定一个未作废的账户";
   return null;
 }
 
 function errorText(err: unknown, fallback: string): string {
   return err instanceof ApiRequestError ? err.message : fallback;
+}
+
+function accountLabel(key: ExchangeKey | null): string {
+  if (!key) return "未绑定";
+  const name = key.label.trim() || `账户 #${key.id}`;
+  return key.revoked ? `${name}（已作废）` : name;
 }
 
 export default function AdminTrading() {
@@ -167,7 +177,9 @@ export default function AdminTrading() {
   const [saving, setSaving] = useState(false);
   const [liveGate, setLiveGate] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [saved, setSaved] = useState<Strategy | null>(null);
   const [engine, setEngine] = useState<EngineState | null>(null);
+  const [dismissedError, setDismissedError] = useState("");
   const [equity, setEquity] = useState(100);
   const [engineBusy, setEngineBusy] = useState<"start" | "step" | null>(null);
 
@@ -177,11 +189,13 @@ export default function AdminTrading() {
     setExtraCount(Math.max(0, items.length - 1));
     if (!current) {
       setStrategyId(null);
+      setSaved(null);
       setWarnings([]);
       setDraft(DEFAULT_DRAFT);
       return;
     }
     setStrategyId(current.id);
+    setSaved(current);
     setWarnings(current.warnings ?? []);
     setDraft(draftFromStrategy(current));
   }, []);
@@ -194,11 +208,7 @@ export default function AdminTrading() {
     try {
       setEngine(await getEngineState(id));
     } catch (err) {
-      if (err instanceof ApiRequestError && err.status === 404) {
-        setEngine(null);
-        return;
-      }
-      setEngine(null);
+      if (err instanceof ApiRequestError && err.status === 404) setEngine(null);
     }
   }, []);
 
@@ -220,6 +230,15 @@ export default function AdminTrading() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (strategyId == null) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      void refreshEngine(strategyId);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [strategyId, refreshEngine]);
 
   const activeKeys = keys.filter((key) => !key.revoked);
   const selectedKey = activeKeys.find((key) => key.id === draft.exchangeKeyId) ?? null;
@@ -256,6 +275,7 @@ export default function AdminTrading() {
         ? await createStrategy(body)
         : await updateStrategy(strategyId, body);
       setStrategyId(saved.id);
+      setSaved(saved);
       setWarnings(saved.warnings ?? []);
       setDraft(draftFromStrategy(saved));
       await refreshEngine(saved.id);
@@ -318,7 +338,11 @@ export default function AdminTrading() {
 
   return (
     <AdminLayout
-      crumbs={[{ label: "后台", href: "/admin" }, { label: "策略配置" }]}
+      crumbs={[
+        { label: "后台", href: "/admin" },
+        { label: "系统设置", href: "/admin/system" },
+        { label: "策略" },
+      ]}
       actions={
         <>
           {strategyId != null && (
@@ -337,15 +361,31 @@ export default function AdminTrading() {
         </>
       }
     >
-      <div className={styles.page}>
+      <div className={settingsStyles.page}>
         <header className={styles.head}>
           <div>
-            <h1 className={styles.title}>策略配置</h1>
+            <h1 className={styles.title}>策略</h1>
             <p className={styles.lead}>
-              首发只做 XRPUSDT 的短周期 EMA 趋势，逐仓，杠杆不超过 3 倍。每单都要填止损和止盈。
+              首发只做 XRPUSDT 的短周期 EMA 趋势，逐仓，杠杆不超过 3 倍。每单都要填止损和止盈。上面是运行台，下面是配置。
             </p>
           </div>
         </header>
+
+        <div className={settingsStyles.layout}>
+          <SettingsRail current="strategy" />
+          <div className={settingsStyles.formArea}>
+            <TradingDesk
+              engine={engine}
+              loading={loading}
+              symbol={saved?.symbol ?? draft.symbol}
+              leverage={saved?.leverage ?? draft.leverage}
+              marginMode={saved?.marginMode ?? draft.marginMode}
+              timeframe={saved?.timeframe ?? draft.timeframe}
+              mode={saved?.mode ?? draft.mode}
+              accountLabel={accountLabel(saved ? keys.find((key) => key.id === saved.exchangeKeyId) ?? null : selectedKey)}
+              dismissedError={dismissedError}
+              onDismissError={() => setDismissedError(engine?.lastError?.trim() ?? "")}
+            />
 
         {loading ? (
           <p className={styles.status}>正在读取策略…</p>
@@ -626,15 +666,15 @@ export default function AdminTrading() {
 
                 <div className={sectionStyles.row} data-field="exchangeKeyId">
                   <div className={sectionStyles.rowText}>
-                    <strong>交易所密钥</strong>
-                    <p>只用还没作废的那一把。作废的旧 Key 不会出现在这里。</p>
+                    <strong>账户</strong>
+                    <p>只用还没作废的那一个。作废的旧账户不会出现在这里。</p>
                   </div>
                   <div className={sectionStyles.rowControl}>
                     <Select
                       hideLabel
-                      label="交易所密钥"
+                      label="账户"
                       value={selectedKey ? String(selectedKey.id) : ""}
-                      placeholder="请先绑定密钥"
+                      placeholder="请先绑定账户"
                       options={activeKeys.map((key) => ({
                         value: String(key.id),
                         label: `${key.label || "未命名"} · ${networkLabel(key.network)}`,
@@ -647,14 +687,14 @@ export default function AdminTrading() {
                     />
                     <p className={styles.keyHint}>
                       {activeKeys.length === 0
-                        ? `当前没有可使用的密钥。未改选择时按密钥 ${DEFAULT_EXCHANGE_KEY_ID} 保存。`
-                        : "作废的旧 Key 不会出现在这里。"}
+                        ? `当前没有可使用的账户。未改选择时按账户 ${DEFAULT_EXCHANGE_KEY_ID} 保存。`
+                        : "作废的旧账户不会出现在这里。"}
                       {draft.exchangeKeyId === DEFAULT_EXCHANGE_KEY_ID && !selectedKey
-                        ? ` 默认是密钥 ${DEFAULT_EXCHANGE_KEY_ID}。`
+                        ? ` 默认是账户 ${DEFAULT_EXCHANGE_KEY_ID}。`
                         : ""}
-                      {savedKey?.revoked ? " 当前保存的密钥已作废，请重新选择。" : ""}
-                      {mismatch ? " 这把密钥的网络和当前环境不一致，可以保存，运行前请改成同一边。" : ""}
-                      <Link to="/admin/exchange-keys">去绑定</Link>
+                      {savedKey?.revoked ? " 当前保存的账户已作废，请重新选择。" : ""}
+                      {mismatch ? " 这个账户的网络和当前环境不一致，可以保存，运行前请改成同一边。" : ""}
+                      <Link to={ACCOUNT_PATH}>去绑定</Link>
                     </p>
                   </div>
                 </div>
@@ -703,7 +743,6 @@ export default function AdminTrading() {
                   ? "先保存策略，再启动。默认环境是测网。"
                   : `状态 ${engine?.state ?? "Idle"}。测网全绿门闩${engine?.testnetGreen ? "已打开" : "关着"}，本页不会去开它。`}
               </p>
-              {engine?.lastError ? <p className={styles.warning}>{engine.lastError}</p> : null}
               {engine?.lastAction ? (
                 <p className={styles.keyHint}>
                   最近动作 {engine.lastAction}
@@ -713,6 +752,8 @@ export default function AdminTrading() {
             </section>
           </>
         )}
+          </div>
+        </div>
       </div>
 
       <Dialog open={liveGate} onOpenChange={setLiveGate}>
@@ -735,7 +776,7 @@ export default function AdminTrading() {
       <Dialog open={deleteOpen} onOpenChange={(next) => { if (!action.busy) setDeleteOpen(next); }}>
         <DialogContent
           title="删除这条策略"
-          description="只删除最近更新的这一条。交易所密钥不会一起作废。"
+          description="只删除最近更新的这一条。账户不会一起作废。"
         >
           <p className={styles.gateCopy}>删除后页面会再读一次列表。如果还有更早的策略，会接着编辑那一条。</p>
           <div className={styles.dialogActions}>
