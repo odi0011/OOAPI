@@ -18,13 +18,15 @@ type RunSpec struct {
 
 // Market 是推进一根 K 线时从交易所读到的公开数据和账户余额。
 type Market struct {
-	Candles     []Candle
-	Higher      []Candle
-	Mark        float64
-	MinNotional float64
-	Wallet      float64
-	Available   float64
-	WalletKnown bool
+	Candles        []Candle
+	Higher         []Candle
+	Mark           float64
+	MinNotional    float64
+	Wallet         float64
+	Available      float64
+	WalletKnown    bool
+	Positions      []KeyPosition
+	PositionsKnown bool
 }
 
 // MarketFunc 读取行情。测试可以换成固定数据。
@@ -211,6 +213,8 @@ func (r *Runner) runOnce(ctx context.Context, spec RunSpec) {
 		Wallet:         mkt.Wallet,
 		Available:      mkt.Available,
 		WalletKnown:    mkt.WalletKnown,
+		Positions:      mkt.Positions,
+		PositionsKnown: mkt.PositionsKnown,
 	}
 	if sum, ok := r.backtest(spec.Config, mkt, now); ok {
 		in.Backtest = &sum
@@ -316,6 +320,12 @@ func defaultMarket(cfg Config, secrets SecretOpener, now time.Time) (Market, err
 					mkt.Available = available
 					mkt.WalletKnown = true
 				}
+				positions, err := client.AccountPositions()
+				if err != nil {
+					return Market{}, err
+				}
+				mkt.Positions = positions
+				mkt.PositionsKnown = true
 			}
 		}
 	}

@@ -328,29 +328,19 @@ func TestPortfolioLimitAndBalanceFloorShareTheHubLock(t *testing.T) {
 	h := NewHub()
 	cfg := testConfig()
 	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
-	first := withSecrets(NewEngine(cfg, NewPaper(), DiscardLogger()))
-	if err := first.Start(calmStart(now, 20)); err != nil {
-		t.Fatal(err)
-	}
-	first.SeedPositionForTest(SideLong, 10, 1, 0.9, 1.2)
-	h.PutForTest(1, 1, first)
-	secondCfg := cfg
-	second := withSecrets(NewEngine(secondCfg, NewPaper(), DiscardLogger()))
-	if err := second.Start(calmStart(now, 20)); err != nil {
-		t.Fatal(err)
-	}
-	second.SeedPositionForTest(SideShort, 10, 1, 1.1, 0.8)
-	h.PutForTest(1, 2, second)
+	// 笔数只数 positionRisk。内存里多出来的旧仓不占名额，保证金为 0 时也不碰到总额上限。
 	h.SetAccount(cfg.ExchangeKeyID, 100, 100)
-
-	thirdPos := cfg
-	thirdPos.ID = 3
-	thirdEng := withSecrets(NewEngine(thirdPos, NewPaper(), DiscardLogger()))
-	if err := thirdEng.Start(calmStart(now, 20)); err != nil {
+	h.SetPositions(cfg.ExchangeKeyID, []KeyPosition{
+		{Symbol: "XRPUSDT", Qty: 1},
+		{Symbol: "DOGEUSDT", Qty: 1},
+		{Symbol: "BTCUSDT", Qty: 1},
+	})
+	stale := withSecrets(NewEngine(cfg, NewPaper(), DiscardLogger()))
+	if err := stale.Start(calmStart(now, 20)); err != nil {
 		t.Fatal(err)
 	}
-	thirdEng.SeedPositionForTest(SideLong, 10, 1, 0.9, 1.2)
-	h.PutForTest(1, 3, thirdEng)
+	stale.SeedPositionForTest(SideShort, 1000, 1, 1.1, 0.8)
+	h.PutForTest(1, 99, stale)
 	fourth := cfg
 	fourth.ID = 4
 	if got := h.EntrySkip(fourth); got != "" {
@@ -367,19 +357,22 @@ func TestPortfolioLimitAndBalanceFloorShareTheHubLock(t *testing.T) {
 	}
 
 	h2 := NewHub()
-	wide := withSecrets(NewEngine(cfg, NewPaper(), DiscardLogger()))
-	if err := wide.Start(calmStart(now, 20)); err != nil {
-		t.Fatal(err)
-	}
-	wide.SeedPositionForTest(SideLong, 1000, 1, 0.9, 1.2)
-	h2.PutForTest(1, 1, wide)
-	h2.SetAccount(cfg.ExchangeKeyID, 100, 100)
+	h2.SetAccount(cfg.ExchangeKeyID, 2.06, 2.06)
+	// 20 倍名义价值是 20，初始保证金是 1。总额上限 1.7，单笔 1，已用 1 再加 1 会超。
+	h2.SetPositions(cfg.ExchangeKeyID, []KeyPosition{
+		{Symbol: "XRPUSDT", Qty: 20, Entry: 1, Leverage: 20},
+	})
 	one := cfg
 	one.ID = 4
+	one.MaxMarginUsdt = 1.7
+	one.MaxMarginPerTradeUsdt = 1
+	one.Leverage = 20
 	if got := h2.EntrySkip(one); got != ReasonPortfolioLimit {
 		t.Fatalf("margin cap: %s", got)
 	}
-	h2.SetAccount(cfg.ExchangeKeyID, 10000, 10000)
+	h2.SetPositions(cfg.ExchangeKeyID, []KeyPosition{
+		{Symbol: "XRPUSDT", Qty: 10, Entry: 1, Leverage: 20},
+	})
 	if got := h2.EntrySkip(one); got != "" {
 		t.Fatalf("room: %s", got)
 	}

@@ -366,6 +366,26 @@ func (c *USDMClient) CancelOpen(symbol string) error {
 	return c.cancelAlgoOrders(symbol)
 }
 
+// AccountPositions 读这把密钥下全部合约的 positionRisk，不按交易对过滤。
+// 已平仓的行（持仓量为 0）不会出现在结果里。
+func (c *USDMClient) AccountPositions() ([]KeyPosition, error) {
+	if err := c.guard(); err != nil {
+		return nil, err
+	}
+	body, err := c.signed(http.MethodGet, "/fapi/v2/positionRisk", nil)
+	if err != nil {
+		return nil, err
+	}
+	positions, err := parseAccountPositions(body)
+	if err != nil {
+		return nil, errors.New("持仓数据无法解析")
+	}
+	if positions == nil {
+		positions = []KeyPosition{}
+	}
+	return positions, nil
+}
+
 func (c *USDMClient) Position(symbol string) (Position, error) {
 	if err := c.guard(); err != nil {
 		return Position{}, err

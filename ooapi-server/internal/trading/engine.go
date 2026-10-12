@@ -55,10 +55,14 @@ type StepInput struct {
 	Backtest *BacktestSummary `json:"-"`
 	// SkipReason 由 Hub 在共享锁里算完组合约束后填入，只拦截开仓。
 	SkipReason string `json:"-"`
-	// Wallet / Available 是同一把密钥的账户余额。WalletKnown 为真才参与停机和仓位上限。
+	// Wallet / Available 是同一把密钥的账户余额。WalletKnown 为真才参与停机。
 	Wallet      float64 `json:"-"`
 	Available   float64 `json:"-"`
 	WalletKnown bool    `json:"-"`
+	// Positions 是这把密钥的 positionRisk 快照，只含仍有持仓量的合约。
+	// PositionsKnown 为真才参与组合保证金；空切片表示交易所已经确认空仓。
+	Positions      []KeyPosition `json:"-"`
+	PositionsKnown bool          `json:"-"`
 	// LivePeerIDs 是加速窗口里仍在武装、可以开仓的实盘策略（含自己）。
 	// 为空时加速门只比较已经报告过的信号。
 	LivePeerIDs []int64 `json:"-"`
@@ -921,11 +925,7 @@ func (e *Engine) ClearPause() {
 }
 
 func (e *Engine) marginBudget() float64 {
-	budget := e.cfg.MaxMarginUsdt
-	if cap := e.cfg.marginCap(); cap > 0 && cap < budget {
-		budget = cap
-	}
-	return budget
+	return plannedMargin(e.cfg)
 }
 
 func (e *Engine) lossLimit() int {
@@ -1028,14 +1028,6 @@ func (e *Engine) unrealized(mark float64) float64 {
 		return 0
 	}
 	return RealizedPnL(e.pos.Side, e.pos.Entry, mark, e.pos.Qty)
-}
-
-// marginInUse 是当前持仓占用的保证金。Hub 在共享锁里汇总同一密钥下的仓位。
-func (e *Engine) marginInUse() float64 {
-	if e == nil || !e.Busy() || e.pos.Qty <= 0 || e.pos.Entry <= 0 || e.cfg.Leverage < 1 {
-		return 0
-	}
-	return e.pos.Qty * e.pos.Entry / float64(e.cfg.Leverage)
 }
 
 func (e *Engine) cross(candles []Candle) (Cross, error) {
