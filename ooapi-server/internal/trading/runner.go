@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"strings"
 	"sync"
 	"time"
 )
@@ -123,9 +124,10 @@ func (r *Runner) Remove(strategyID int64) {
 func (r *Runner) Sync(specs []RunSpec) {
 	want := map[int64]RunSpec{}
 	for _, spec := range specs {
-		if spec.Config.ID > 0 {
-			want[spec.Config.ID] = spec
+		if spec.Config.ID <= 0 || strings.TrimSpace(spec.Config.PauseReason) != "" {
+			continue
 		}
+		want[spec.Config.ID] = spec
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -223,7 +225,8 @@ func (r *Runner) runOnce(ctx context.Context, spec RunSpec) {
 	if err != nil {
 		log.Printf("[trading] runner strategy %d step: %v", spec.Config.ID, err)
 	}
-	if snap.LastReason == ReasonBalanceFloor {
+	switch snap.LastReason {
+	case ReasonBalanceFloor, ReasonConsecutiveLosses, ReasonBalanceBelowPause:
 		r.stopSpec(spec.Config.ID)
 	}
 }

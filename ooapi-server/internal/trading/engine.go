@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -79,6 +80,7 @@ type Snapshot struct {
 	Running            bool             `json:"running"`
 	LastAction         string           `json:"lastAction,omitempty"`
 	LastReason         string           `json:"lastReason,omitempty"`
+	PauseReason        string           `json:"pauseReason,omitempty"`
 	MarkPrice          float64          `json:"markPrice,omitempty"`
 	UnrealizedPnl      float64          `json:"unrealizedPnl,omitempty"`
 	LastBacktest       *BacktestSummary `json:"lastBacktest,omitempty"`
@@ -128,6 +130,9 @@ type Engine struct {
 	audit        []string
 	secrets      SecretOpener
 	secretOpens  int
+	lossStreak   int
+	pausedReason string
+	onPause      func(reason string)
 }
 
 func NewEngine(cfg Config, ex Exchange, logger Logger) *Engine {
@@ -197,6 +202,7 @@ func (e *Engine) Snapshot() Snapshot {
 		Running:            e.running,
 		LastAction:         e.lastAction,
 		LastReason:         e.lastReason,
+		PauseReason:        e.pausedReason,
 		MarkPrice:          e.lastMark,
 		UnrealizedPnl:      e.unrealized(e.lastMark),
 		LastBacktest:       e.lastBacktest,
@@ -332,6 +338,9 @@ func (e *Engine) Start(in StartInput) error {
 			return err
 		}
 	}
+	if e.pausedReason != "" {
+		return ErrPaused
+	}
 	if e.Busy() {
 		return ErrAlreadyRunning
 	}
@@ -440,6 +449,9 @@ func (e *Engine) Step(in StepInput) (Snapshot, error) {
 		e.note("idle", "utc day rolled")
 		return e.Snapshot(), nil
 	}
+	if snap, stop, err := e.holdIfPaused(in); stop {
+		return snap, err
+	}
 	switch e.State() {
 	case StateArmed:
 		if e.ledger.Halted {
@@ -488,17 +500,17 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 		return e.Snapshot(), nil
 	}
 	floor := e.floorNotional(in)
-	if e.cfg.Leverage > 0 && e.cfg.MaxMarginUsdt*float64(e.cfg.Leverage)+1e-9 < floor {
+	if e.cfg.Leverage > 0 && e.marginBudget()*float64(e.cfg.Leverage)+1e-9 < floor {
 		e.note("skip", ReasonBelowMinNotional)
 		return e.Snapshot(), nil
 	}
-	if e.cfg.MinWinRate > 0 {
+	if e.cfg.MinWinRate > 0 || strings.EqualFold(e.cfg.Mode, ModeLive) {
 		sum := in.Backtest
 		if sum == nil {
 			sum = e.lastBacktest
 		}
-		if sum == nil || sum.WinRate+1e-12 < e.cfg.MinWinRate {
-			e.note("skip", ReasonWinRateBelow)
+		if reason := BacktestGate(e.cfg, sum); reason != "" {
+			e.note("skip", reason)
 			return e.Snapshot(), nil
 		}
 	}
@@ -707,7 +719,19 @@ func (e *Engine) finishExit(in StepInput, reason string, price ...float64) (Snap
 		return e.Snapshot(), err
 	}
 	e.markBar(in)
+	if pnl < 0 {
+		e.lossStreak++
+	} else if pnl > 0 {
+		e.lossStreak = 0
+	}
 	e.note("exit", reason)
+	if e.pausedReason != "" {
+		e.note("pause", e.pausedReason)
+		return e.Snapshot(), nil
+	}
+	if e.lossStreak >= e.lossLimit() {
+		return e.applyPause(ReasonConsecutiveLosses), nil
+	}
 	if e.running {
 		if err := e.m.Transition(Event{Kind: EventStartOK, Reason: "rearm"}); err != nil {
 			return e.Snapshot(), err
@@ -837,6 +861,81 @@ func (e *Engine) syncsPosition() bool {
 	return ok && syncer.SyncsPosition()
 }
 
+// SetPauseHook 在自动暂停时回调。实现只许写库，不能再进 Hub。
+func (e *Engine) SetPauseHook(fn func(reason string)) {
+	if e == nil {
+		return
+	}
+	e.onPause = fn
+}
+
+// ClearPause 供手动 resume 清掉暂停，允许再次 Start。
+func (e *Engine) ClearPause() {
+	if e == nil {
+		return
+	}
+	e.pausedReason = ""
+	e.lossStreak = 0
+}
+
+func (e *Engine) marginBudget() float64 {
+	budget := e.cfg.MaxMarginUsdt
+	if cap := e.cfg.MaxMarginPerTradeUsdt; cap > 0 && cap < budget {
+		budget = cap
+	}
+	return budget
+}
+
+func (e *Engine) lossLimit() int {
+	if e.cfg.MaxConsecutiveLosses > 0 {
+		return e.cfg.MaxConsecutiveLosses
+	}
+	return DefaultMaxConsecutiveLosses
+}
+
+func (e *Engine) pauseBalance() float64 {
+	if e.cfg.PauseBalanceUsdt > 0 {
+		return e.cfg.PauseBalanceUsdt
+	}
+	return DefaultPauseBalanceUSDT
+}
+
+func (e *Engine) holdIfPaused(in StepInput) (Snapshot, bool, error) {
+	if e.pausedReason == "" && in.WalletKnown && in.Wallet > BalanceFloorUSDT && in.Wallet < e.pauseBalance() {
+		e.applyPause(ReasonBalanceBelowPause)
+	}
+	if e.pausedReason == "" {
+		return Snapshot{}, false, nil
+	}
+	e.note("pause", e.pausedReason)
+	switch e.State() {
+	case StateInPosition:
+		snap, err := e.stepPosition(in)
+		return snap, true, err
+	case StateExitSubmitted:
+		snap, err := e.finishExit(in, e.pausedReason)
+		return snap, true, err
+	default:
+		return e.Snapshot(), true, nil
+	}
+}
+
+func (e *Engine) applyPause(reason string) Snapshot {
+	first := e.pausedReason == ""
+	if first {
+		e.pausedReason = reason
+		e.running = false
+		if e.State() == StateArmed || e.State() == StateBlocked {
+			_ = e.m.Transition(Event{Kind: EventStop, Reason: reason})
+		}
+	}
+	e.note("pause", e.pausedReason)
+	if first && e.onPause != nil {
+		e.onPause(e.pausedReason)
+	}
+	return e.Snapshot()
+}
+
 func (e *Engine) entryQty(price float64) (float64, error) {
 	minNotional := e.minNotional
 	var step, minQty float64
@@ -852,7 +951,7 @@ func (e *Engine) entryQty(price float64) (float64, error) {
 		}
 		step, minQty = rules.StepSize, rules.MinQty
 	}
-	_, _, qty, err := SizePosition(e.cfg.MaxMarginUsdt, e.cfg.Leverage, price, minNotional)
+	_, _, qty, err := SizePosition(e.marginBudget(), e.cfg.Leverage, price, minNotional)
 	if err != nil {
 		return 0, err
 	}

@@ -1,6 +1,9 @@
 package trading
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // BacktestSummary 是引擎和列表接口上挂的最近一次回测。
 type BacktestSummary struct {
@@ -37,6 +40,63 @@ type BacktestResult struct {
 
 func (r BacktestResult) Summary(at time.Time) BacktestSummary {
 	return BacktestSummary{WinRate: r.WinRate, Trades: r.TradeCount, NetR: r.NetR, At: at}
+}
+
+// BacktestGate 是开仓前的回测门。测网 minWinRate 为 0 时整道门关闭。
+// 实盘不允许用 minWinRate<=0 跳过胜率校验，至少要到 DefaultMinWinRate。
+// 打开后要同时满足胜率、样本笔数和扣费后的净 R。
+func BacktestGate(cfg Config, sum *BacktestSummary) string {
+	live := strings.EqualFold(cfg.Mode, ModeLive)
+	floor := cfg.MinWinRate
+	if live && floor < DefaultMinWinRate {
+		floor = DefaultMinWinRate
+	}
+	if !live && floor <= 0 {
+		return ""
+	}
+	if sum == nil || sum.WinRate+1e-12 < floor {
+		return ReasonWinRateBelow
+	}
+	need := cfg.MinTrades
+	if need <= 0 || (live && need < DefaultMinTrades) {
+		need = DefaultMinTrades
+	}
+	if sum.Trades < need {
+		return ReasonInsufficientSamples
+	}
+	if sum.NetR <= 0 {
+		return ReasonNetRNotPositive
+	}
+	return ""
+}
+
+// WindowStats 统计开仓时间落在 [from, until) 的回测成交。胜负按扣费后的净 R。
+func WindowStats(trades []BacktestTrade, from, until time.Time) BacktestSummary {
+	var sum BacktestSummary
+	wins := 0
+	for _, trade := range trades {
+		if trade.OpenedAt.Before(from) || !trade.OpenedAt.Before(until) {
+			continue
+		}
+		sum.Trades++
+		sum.NetR += trade.NetR
+		if trade.NetR > 0 {
+			wins++
+		}
+	}
+	if sum.Trades > 0 {
+		sum.WinRate = float64(wins) / float64(sum.Trades)
+	}
+	return sum
+}
+
+// SweepPass 标出一组参数是否同时通过样本内三道门，并且后一段净 R 为正。
+func SweepPass(inSample, outSample BacktestSummary) bool {
+	cfg := Config{MinWinRate: DefaultMinWinRate, MinTrades: DefaultMinTrades}
+	if BacktestGate(cfg, &inSample) != "" {
+		return false
+	}
+	return outSample.NetR > 0
 }
 
 // Backtest 用与引擎相同的开平规则重放 K 线。

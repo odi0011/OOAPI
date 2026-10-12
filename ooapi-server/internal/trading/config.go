@@ -61,6 +61,14 @@ const (
 	DefaultMinScore = 4
 	// DefaultMinWinRate 是允许开仓的近期回测胜率下限。0 表示关闭这道门。
 	DefaultMinWinRate = 0.5
+	// DefaultMinTrades 是这道门要求的最少样本笔数。
+	DefaultMinTrades = 30
+	// DefaultMaxMarginPerTradeUSDT 是单笔开仓保证金上限。
+	DefaultMaxMarginPerTradeUSDT = 1
+	// DefaultMaxConsecutiveLosses 连亏达到这个次数就自动暂停。
+	DefaultMaxConsecutiveLosses = 3
+	// DefaultPauseBalanceUSDT 是自动暂停的余额线。0.5U 停机仍然单独生效。
+	DefaultPauseBalanceUSDT = 1.5
 
 	// TrendGapFraction 是快慢线至少要拉开的距离，按价格的 0.05% 计。
 	TrendGapFraction = 0.0005
@@ -68,10 +76,14 @@ const (
 	VolumeLookback   = 20
 	HigherTimeframe  = "15m"
 
-	ReasonBelowMinNotional = "below_min_notional"
-	ReasonWinRateBelow     = "winrate_below_threshold"
-	ReasonPortfolioLimit   = "portfolio_limit"
-	ReasonBalanceFloor     = "balance_floor"
+	ReasonBelowMinNotional    = "below_min_notional"
+	ReasonWinRateBelow        = "winrate_below_threshold"
+	ReasonInsufficientSamples = "insufficient_samples"
+	ReasonNetRNotPositive     = "netr_not_positive"
+	ReasonPortfolioLimit      = "portfolio_limit"
+	ReasonBalanceFloor        = "balance_floor"
+	ReasonConsecutiveLosses   = "consecutive_losses"
+	ReasonBalanceBelowPause   = "balance_below_pause"
 
 	// MaxOpenPositions 是同一把交易所密钥下同时持仓的上限。
 	MaxOpenPositions = 2
@@ -107,6 +119,21 @@ type Config struct {
 	EntryMode  string  `json:"entryMode,omitempty"`
 	MinScore   int     `json:"minScore,omitempty"`
 	MinWinRate float64 `json:"minWinRate,omitempty"`
+	// MinTrades 是回测样本笔数下限。0 在开仓门里按 DefaultMinTrades。
+	MinTrades int `json:"minTrades,omitempty"`
+	// MaxMarginPerTradeUsdt 是单笔开仓保证金上限。0 表示不额外收紧 MaxMarginUsdt。
+	MaxMarginPerTradeUsdt float64 `json:"maxMarginPerTradeUsdt,omitempty"`
+	// MaxConsecutiveLosses 连亏达到次数后暂停。0 按 DefaultMaxConsecutiveLosses。
+	MaxConsecutiveLosses int `json:"maxConsecutiveLosses,omitempty"`
+	// PauseBalanceUsdt 余额跌破后暂停。0 按 DefaultPauseBalanceUSDT。
+	PauseBalanceUsdt float64 `json:"pauseBalanceUsdt,omitempty"`
+	// PauseReason 非空表示已自动暂停，重启不会恢复。
+	PauseReason string `json:"pauseReason,omitempty"`
+	// RSI 多空允许区间。两端都为 0 时用 50–70 / 30–50。
+	RSILongMin  float64 `json:"rsiLongMin,omitempty"`
+	RSILongMax  float64 `json:"rsiLongMax,omitempty"`
+	RSIShortMin float64 `json:"rsiShortMin,omitempty"`
+	RSIShortMax float64 `json:"rsiShortMax,omitempty"`
 }
 
 func DefaultConfig() Config {
@@ -170,8 +197,8 @@ func invalidLeverage() error {
 // Validate 与策略接口对齐：USDT 永续、逐仓、杠杆不超过 MaxLeverage。
 func (c Config) Validate() error {
 	c = c.Normalize()
-	if c.Symbol != SymbolXRPUSDT {
-		return invalid("v1 交易对只支持 XRPUSDT")
+	if !AllowedSymbol(c.Symbol) {
+		return invalid("交易对必须是 USDT 永续代码，例如 XRPUSDT、DOGEUSDT")
 	}
 	if c.MarginMode != MarginIsolated {
 		return invalid("v1 只允许逐仓（isolated）")
@@ -209,5 +236,46 @@ func (c Config) Validate() error {
 	if c.MinWinRate < 0 || c.MinWinRate > 1 {
 		return invalid("minWinRate 要在 0 到 1 之间")
 	}
+	if c.MinTrades < 0 || c.MinTrades > 10000 {
+		return invalid("minTrades 要在 0 到 10000 之间")
+	}
+	if c.MaxMarginPerTradeUsdt < 0 || c.MaxMarginPerTradeUsdt > 1_000_000 {
+		return invalid("单笔保证金上限要在 0 到 1000000 之间")
+	}
+	if c.MaxConsecutiveLosses < 0 || c.MaxConsecutiveLosses > 1000 {
+		return invalid("连亏暂停次数要在 0 到 1000 之间")
+	}
+	if c.PauseBalanceUsdt < 0 || c.PauseBalanceUsdt > 1_000_000 {
+		return invalid("暂停余额要在 0 到 1000000 之间")
+	}
+	if err := validRSIPair(c.RSILongMin, c.RSILongMax); err != nil {
+		return err
+	}
+	if err := validRSIPair(c.RSIShortMin, c.RSIShortMax); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validRSIPair(min, max float64) error {
+	if min == 0 && max == 0 {
+		return nil
+	}
+	if min < 0 || max > 100 || min >= max {
+		return invalid("RSI 区间要落在 0 到 100，且下限小于上限")
+	}
+	return nil
+}
+
+// rsiBand 是 trend 打分用的 RSI 区间。未设置时保持原来的 50–70 / 30–50。
+func (c Config) rsiBand() (longMin, longMax, shortMin, shortMax float64) {
+	longMin, longMax = 50, 70
+	shortMin, shortMax = 30, 50
+	if c.RSILongMax > c.RSILongMin {
+		longMin, longMax = c.RSILongMin, c.RSILongMax
+	}
+	if c.RSIShortMax > c.RSIShortMin {
+		shortMin, shortMax = c.RSIShortMin, c.RSIShortMax
+	}
+	return longMin, longMax, shortMin, shortMax
 }
