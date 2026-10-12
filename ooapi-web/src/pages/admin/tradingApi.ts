@@ -272,6 +272,14 @@ export interface EngineOrders {
   empty: boolean;
 }
 
+/**
+ * 多品种引擎一览。后端还没接上时会 404，调用方要回退到单引擎，不能把看板打白。
+ * 不改已有的 /api/trading/engine/{state,market,position,orders}。
+ */
+export async function listTradingEngines(): Promise<unknown> {
+  return apiRequest<unknown>("/api/trading/engines");
+}
+
 export async function getEngineState(strategyId: number): Promise<EngineState> {
   return apiRequest<EngineState>(`/api/trading/engine/state?strategyId=${strategyId}`);
 }
