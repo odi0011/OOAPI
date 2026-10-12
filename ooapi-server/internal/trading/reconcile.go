@@ -9,7 +9,7 @@ import (
 )
 
 // FlatReconcileInterval 是持仓期间向币安核对 positionRisk 的间隔。
-// TAKE_PROFIT_MARKET 可以在两根 K 线之间成交。调度器平时睡到下一根收盘，
+// 止损或止盈可以在两根 K 线之间成交。调度器平时睡到下一根收盘，
 // 这段间隔让空仓核对不依赖那根 K 线，也不会改开仓、加速或风控门。
 const FlatReconcileInterval = 8 * time.Second
 

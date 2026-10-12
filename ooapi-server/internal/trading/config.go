@@ -94,12 +94,25 @@ const (
 	ReasonExchangeFlat = "exchange_flat"
 	// ReasonEntriesPaused 表示策略关掉了新开仓。已有仓和止损止盈保持不动。
 	ReasonEntriesPaused = "entries_paused"
+	// ReasonNegativeExpectancy 表示在回测胜率下，止盈放到允许上限后期望仍不为正。
+	// 加速开仓和强制开仓同样记这个原因并跳过，不会只把止损挂上。
+	ReasonNegativeExpectancy = "negative_expectancy"
+	// ReasonInsufficientMargin 表示按可用余额缩过保证金后，名义价值仍低于交易所下限，
+	// 或者开仓被币安以 -2019 拒绝且没有任何成交。引擎留在 Armed。
+	ReasonInsufficientMargin = "insufficient_margin"
 
 	// DefaultScalpPct 是赌一把模式下止损和止盈相对入场价的默认距离（0.3%）。
 	DefaultScalpPct = 0.003
 	// MinScalpTpPct 是止盈距离下限（0.15%）。手续费往返约 0.1%，再留一点滑点。
-	// 配置更小时下单仍按这个距离抬上去。
+	// 配置更小时下单仍按这个距离抬上去。期望门可以在这个下限之上再放宽，但不会低于它。
 	MinScalpTpPct = 0.0015
+	// ExpectancyTpCapR 是为了让手续费后的期望为正，止盈最多放到几 R。
+	// 1R = DefaultRFraction。再远就不在回测能支持的范围里，信号直接跳过。
+	ExpectancyTpCapR = 3
+	// MarginAvailableFraction 是可用余额里拿来当保证金的比例。
+	MarginAvailableFraction = 0.95
+	// MarginBalanceBufferUSDT 是扣掉开仓 taker 手续费后再留的一点余额，避免刚好打满 availableBalance。
+	MarginBalanceBufferUSDT = 0.02
 
 	// MaxMarginFraction 不再作为开仓门。大约 2U 的账户上，可用余额的 80% 低于
 	// 策略的组合保证金上限，空仓也会被判超。开仓门用 MaxMarginUsdt 作为这把密钥的总额上限。
@@ -110,7 +123,10 @@ const (
 	BalanceFloorUSDT = 0.5
 
 	// TakerFeeRate 与 SlippageRate 都按单边名义价值计，回测开平各算一次。
-	TakerFeeRate  = 0.0005
+	// 读不到 commissionRate 时，期望门和开仓保证金估算也用它。
+	TakerFeeRate = 0.0005
+	// MakerFeeRate 是读不到 commissionRate 时的 maker 费率。止盈按 maker 出场。
+	MakerFeeRate  = 0.0002
 	SlippageRate  = 0.0002
 	BacktestEvery = 3 * time.Hour
 )
@@ -157,11 +173,14 @@ type Config struct {
 	RSILongMax  float64 `json:"rsiLongMax,omitempty"`
 	RSIShortMin float64 `json:"rsiShortMin,omitempty"`
 	RSIShortMax float64 `json:"rsiShortMax,omitempty"`
-	// GambleMode 打开后跳过回测胜率门。minScore 仍按配置（1–4）。
-	// 加速强制开仓同样不再要求回测门。止损止盈改用剥头皮距离。
+	// GambleMode 打开后跳过回测胜率、样本和净 R 这道门。minScore 仍按配置（1–4）。
+	// 加速强制开仓同样不再要求那道回测门。止损止盈改用剥头皮距离。
+	// 手续费后的期望门不在豁免里：普通开仓、加速开仓和强制开仓都要让
+	// EV = p*(tpDist-feeWin)-(1-p)*(slDist+feeLoss) > 0，否则 lastReason=negative_expectancy。
 	GambleMode bool `json:"gambleMode,omitempty"`
 	// ScalpTpPct / ScalpSlPct 是赌一把模式相对入场价的止盈、止损距离。
 	// 0 表示用 DefaultScalpPct。止盈执行时不会低于 MinScalpTpPct。
+	// 期望门可以在这个距离之上放宽，上限是 ExpectancyTpCapR，不会把它改小。
 	ScalpTpPct float64 `json:"scalpTpPct,omitempty"`
 	ScalpSlPct float64 `json:"scalpSlPct,omitempty"`
 	// Revision 是热更新序号。更新的配置不会被更旧的调度快照盖掉。不入库。
