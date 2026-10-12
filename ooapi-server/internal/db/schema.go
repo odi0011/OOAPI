@@ -304,6 +304,10 @@ var schemaStatements = []string{
 		max_margin_usdt  DECIMAL(20,6)   NOT NULL DEFAULT 1.7,
 		exchange_key_id  BIGINT UNSIGNED NOT NULL,
 		mode             VARCHAR(16)     NOT NULL DEFAULT 'testnet',
+		entry_mode       VARCHAR(16)     NOT NULL DEFAULT 'cross',
+		min_score        INT             NOT NULL DEFAULT 4,
+		min_win_rate     DECIMAL(8,4)    NOT NULL DEFAULT 0.5000,
+		running          TINYINT         NOT NULL DEFAULT 0,
 		created_at       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 		PRIMARY KEY (id),
@@ -403,6 +407,13 @@ var columnMigrations = map[string][]columnDef{
 		// 长上下文计费档位（JSON 数组）。老库补列后为 NULL：
 		// 空档位 = 只有基础价，既有计费行为不变。
 		{"context_tiers", "TEXT NULL AFTER cached_price"},
+	},
+	"trading_strategies": {
+		// 已有行保持 cross。新策略由接口写成 trend。
+		{"entry_mode", "VARCHAR(16) NOT NULL DEFAULT 'cross'"},
+		{"min_score", "INT NOT NULL DEFAULT 4"},
+		{"min_win_rate", "DECIMAL(8,4) NOT NULL DEFAULT 0.5000"},
+		{"running", "TINYINT NOT NULL DEFAULT 0"},
 	},
 	"logs": {
 		{"user_agent", "VARCHAR(512) NOT NULL DEFAULT '' AFTER ip"},

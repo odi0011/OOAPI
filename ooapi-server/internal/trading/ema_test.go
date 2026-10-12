@@ -48,14 +48,6 @@ func TestGoldenAndDeathCross(t *testing.T) {
 	}
 }
 
-func closesOf(candles []Candle) []float64 {
-	out := make([]float64, len(candles))
-	for i, c := range candles {
-		out[i] = c.Close
-	}
-	return out
-}
-
 func candlesUntil(t *testing.T, want Cross) []Candle {
 	t.Helper()
 	price := 1.0

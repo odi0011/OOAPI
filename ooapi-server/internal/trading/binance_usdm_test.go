@@ -123,12 +123,9 @@ func TestEngineBlocksWhenStepSizeBreaksMinNotional(t *testing.T) {
 		t.Fatal(err)
 	}
 	candles := candlesUntil(t, CrossGolden)
-	_, err := eng.Step(stepAt(now, candles, candles[len(candles)-1].Close, 2))
-	if !errors.Is(err, ErrNotionalBelowMin) {
-		t.Fatal(err)
-	}
-	if eng.State() != StateBlocked || eng.SecretOpens() != 0 {
-		t.Fatalf("state %s opens %d", eng.State(), eng.SecretOpens())
+	snap, err := eng.Step(stepAt(now, candles, candles[len(candles)-1].Close, 2))
+	if err != nil || snap.LastReason != ReasonBelowMinNotional || snap.State != StateArmed || eng.SecretOpens() != 0 {
+		t.Fatalf("snap %+v state %s opens %d err=%v", snap, eng.State(), eng.SecretOpens(), err)
 	}
 	for _, call := range fake.snapshot() {
 		if call.path != "/fapi/v1/exchangeInfo" {
