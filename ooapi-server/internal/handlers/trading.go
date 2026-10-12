@@ -13,7 +13,8 @@ import (
 )
 
 // 自动交易的配置在 trading_keys.go / trading_strategies.go，状态机在 trading_engine.go。
-// 密钥加密落库，明文只在发单时解开。mode=live 可以保存，实盘发单仍要测网全绿。
+// 交易台只读在 trading_desk.go。密钥加密落库，明文只在 reveal、发单或签名读盘时解开。
+// mode=live 可以保存，实盘发单仍要测网全绿。
 
 type tradingError struct {
 	Status  int

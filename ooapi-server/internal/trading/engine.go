@@ -55,23 +55,27 @@ type Snapshot struct {
 	TakeProfitPrice float64 `json:"takeProfitPrice,omitempty"`
 	Qty             float64 `json:"qty,omitempty"`
 	DayRealized     float64 `json:"dayRealizedUsdt"`
-	Halted          bool    `json:"halted"`
-	LastError       string  `json:"lastError,omitempty"`
-	Mode            string  `json:"mode"`
-	TestnetGreen    bool    `json:"testnetGreen"`
-	Running         bool    `json:"running"`
-	LastAction      string  `json:"lastAction,omitempty"`
-	LastReason      string  `json:"lastReason,omitempty"`
+	// CumulativeRealized 与当日盈亏同一来源，日切后当日归零、累计保留。没有会话时为 0，不另造数。
+	CumulativeRealized float64 `json:"cumulativeRealizedUsdt"`
+	Halted             bool    `json:"halted"`
+	LastError          string  `json:"lastError,omitempty"`
+	Mode               string  `json:"mode"`
+	TestnetGreen       bool    `json:"testnetGreen"`
+	Running            bool    `json:"running"`
+	LastAction         string  `json:"lastAction,omitempty"`
+	LastReason         string  `json:"lastReason,omitempty"`
 }
 
 // Runtime 是可以跨进程恢复的风险状态。不保存持仓，避免重启后自动重开。
+// Cumulative 是会话累计已实现；旧数据没有该字段时，恢复逻辑用当日已实现兜底。
 type Runtime struct {
-	State     State
-	Day       time.Time
-	Capital   float64
-	Realized  float64
-	Halted    bool
-	LastError string
+	State      State
+	Day        time.Time
+	Capital    float64
+	Realized   float64
+	Cumulative float64
+	Halted     bool
+	LastError  string
 }
 
 type position struct {
@@ -143,20 +147,21 @@ func (e *Engine) Audit() []string {
 
 func (e *Engine) Snapshot() Snapshot {
 	return Snapshot{
-		State:           e.State(),
-		Side:            e.pos.Side,
-		EntryPrice:      e.pos.Entry,
-		StopPrice:       e.pos.Stop,
-		TakeProfitPrice: e.pos.Take,
-		Qty:             e.pos.Qty,
-		DayRealized:     e.ledger.Realized,
-		Halted:          e.ledger.Halted || e.State() == StateDailyHalt,
-		LastError:       e.lastError,
-		Mode:            e.cfg.Mode,
-		TestnetGreen:    TestnetGreen(),
-		Running:         e.running,
-		LastAction:      e.lastAction,
-		LastReason:      e.lastReason,
+		State:              e.State(),
+		Side:               e.pos.Side,
+		EntryPrice:         e.pos.Entry,
+		StopPrice:          e.pos.Stop,
+		TakeProfitPrice:    e.pos.Take,
+		Qty:                e.pos.Qty,
+		DayRealized:        e.ledger.Realized,
+		CumulativeRealized: e.ledger.Cumulative,
+		Halted:             e.ledger.Halted || e.State() == StateDailyHalt,
+		LastError:          e.lastError,
+		Mode:               e.cfg.Mode,
+		TestnetGreen:       TestnetGreen(),
+		Running:            e.running,
+		LastAction:         e.lastAction,
+		LastReason:         e.lastReason,
 	}
 }
 
@@ -164,22 +169,28 @@ func (e *Engine) Trace() []State { return e.m.Trace() }
 
 func (e *Engine) Runtime() Runtime {
 	return Runtime{
-		State:     e.State(),
-		Day:       e.ledger.Day,
-		Capital:   e.ledger.Capital,
-		Realized:  e.ledger.Realized,
-		Halted:    e.ledger.Halted,
-		LastError: e.lastError,
+		State:      e.State(),
+		Day:        e.ledger.Day,
+		Capital:    e.ledger.Capital,
+		Realized:   e.ledger.Realized,
+		Cumulative: e.ledger.Cumulative,
+		Halted:     e.ledger.Halted,
+		LastError:  e.lastError,
 	}
 }
 
 // Restore 只恢复停机和错误，不恢复持仓。重启后的在途交易记为 Error，等待人工 Stop。
 func (e *Engine) Restore(rt Runtime) {
+	cumulative := rt.Cumulative
+	if cumulative == 0 {
+		cumulative = rt.Realized
+	}
 	e.ledger = Ledger{
-		Day:      rt.Day,
-		Capital:  rt.Capital,
-		Realized: rt.Realized,
-		Halted:   rt.Halted,
+		Day:        rt.Day,
+		Capital:    rt.Capital,
+		Realized:   rt.Realized,
+		Cumulative: cumulative,
+		Halted:     rt.Halted,
 	}
 	e.lastError = rt.LastError
 	switch {
@@ -662,6 +673,17 @@ func (e *Engine) fail(reason string) error {
 }
 
 func (e *Engine) clearPos() { e.pos = position{} }
+
+// SeedPositionForTest 写入内存持仓和参考价，方便交易台读入场、止损、止盈。
+// 只给测试用，不访问交易所，也不会发单。
+func (e *Engine) SeedPositionForTest(side Side, qty, entry, stop, take float64) {
+	if e == nil {
+		return
+	}
+	e.pos = position{Side: side, Qty: qty, Entry: entry, Stop: stop, Take: take}
+	e.running = true
+	e.m.Restore(StateInPosition, "test position")
+}
 
 func (e *Engine) syncsPosition() bool {
 	syncer, ok := e.ex.(interface{ SyncsPosition() bool })
