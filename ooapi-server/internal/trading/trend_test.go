@@ -234,6 +234,44 @@ func TestPortfolioLimitAndBalanceFloorShareTheHubLock(t *testing.T) {
 	}
 }
 
+func TestHubRunsDistinctSymbolsTogether(t *testing.T) {
+	h := NewHub()
+	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	secrets := func() (Credentials, error) {
+		return Credentials{APIKey: "test-api-key-0123", APISecret: "test-api-secret-0123"}, nil
+	}
+	for i, symbol := range []string{"XRPUSDT", "DOGEUSDT", "SOLUSDT", "ETHUSDT"} {
+		cfg := testConfig()
+		cfg.Symbol = symbol
+		if _, err := h.Start(1, int64(i+1), cfg, calmStart(now, 20), secrets); err != nil {
+			t.Fatalf("start %s: %v", symbol, err)
+		}
+	}
+	if got := len(h.Sessions(1)); got != 4 {
+		t.Fatalf("sessions=%d", got)
+	}
+	cfg := testConfig()
+	cfg.Symbol = "DOGEUSDT"
+	if _, err := h.Start(1, 9, cfg, calmStart(now, 20), secrets); !errors.Is(err, ErrSymbolInUse) {
+		t.Fatalf("duplicate doge err=%v", err)
+	}
+}
+
+func TestConfigAcceptsUsdtPerps(t *testing.T) {
+	for _, symbol := range []string{"XRPUSDT", "DOGEUSDT", "SOLUSDT", "ETHUSDT"} {
+		cfg := testConfig()
+		cfg.Symbol = symbol
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("%s: %v", symbol, err)
+		}
+	}
+	cfg := testConfig()
+	cfg.Symbol = "BTCUSD"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("non-usdt symbol")
+	}
+}
+
 func TestHubOneRunningStrategyPerKeyAndSymbol(t *testing.T) {
 	h := NewHub()
 	cfg := testConfig()

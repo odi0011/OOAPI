@@ -170,8 +170,8 @@ func invalidLeverage() error {
 // Validate 与策略接口对齐：USDT 永续、逐仓、杠杆不超过 MaxLeverage。
 func (c Config) Validate() error {
 	c = c.Normalize()
-	if c.Symbol != SymbolXRPUSDT {
-		return invalid("v1 交易对只支持 XRPUSDT")
+	if !AllowedSymbol(c.Symbol) {
+		return invalid("交易对必须是 USDT 永续代码，例如 XRPUSDT、DOGEUSDT")
 	}
 	if c.MarginMode != MarginIsolated {
 		return invalid("v1 只允许逐仓（isolated）")
