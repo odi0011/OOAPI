@@ -416,8 +416,79 @@ func TestRunningXRPRejectsSecondStrategy(t *testing.T) {
 	}
 	other := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
 		fmt.Sprintf(`{"exchangeKeyId": %d, "symbol": "DOGEUSDT"}`, keyID), owner, "")
-	if other.Code != http.StatusBadRequest || tradingCode(t, other) != "invalid_symbol" {
-		t.Fatalf("other symbol = %d %s", other.Code, other.Body.String())
+	if other.Code != http.StatusOK || tradingData(t, other)["symbol"] != "DOGEUSDT" {
+		t.Fatalf("doge = %d %s", other.Code, other.Body.String())
+	}
+	bad := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+		fmt.Sprintf(`{"exchangeKeyId": %d, "symbol": "BTCUSD"}`, keyID), owner, "")
+	if bad.Code != http.StatusBadRequest || tradingCode(t, bad) != "invalid_symbol" {
+		t.Fatalf("bad symbol = %d %s", bad.Code, bad.Body.String())
+	}
+}
+
+func TestLiveRejectsWeakWinRateAndSampleSize(t *testing.T) {
+	useTradingDB(t)
+	owner := tradingUser(41)
+	keyRec := callTrading(t, CreateExchangeKey, http.MethodPost, "/api/trading/exchange-keys", `{
+		"label": "实盘",
+		"network": "live",
+		"apiKey": "`+testAPIKey+`",
+		"apiSecret": "`+testAPISecret+`"
+	}`, owner, "")
+	keyID := int64(tradingData(t, keyRec)["id"].(float64))
+	win := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+		fmt.Sprintf(`{"exchangeKeyId": %d, "mode": "live", "minWinRate": 0}`, keyID), owner, "")
+	if win.Code != http.StatusBadRequest || tradingCode(t, win) != "minWinRate" {
+		t.Fatalf("win rate = %d %s", win.Code, win.Body.String())
+	}
+	trades := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+		fmt.Sprintf(`{"exchangeKeyId": %d, "mode": "live", "minTrades": 1}`, keyID), owner, "")
+	if trades.Code != http.StatusBadRequest || tradingCode(t, trades) != "minTrades" {
+		t.Fatalf("trades = %d %s", trades.Code, trades.Body.String())
+	}
+}
+
+func TestDOGEStrategyAcceptsPlannerParams(t *testing.T) {
+	useTradingDB(t)
+	owner := tradingUser(42)
+	keyRec := callTrading(t, CreateExchangeKey, http.MethodPost, "/api/trading/exchange-keys", `{
+		"label": "测网",
+		"network": "testnet",
+		"apiKey": "`+testAPIKey+`",
+		"apiSecret": "`+testAPISecret+`"
+	}`, owner, "")
+	keyID := int64(tradingData(t, keyRec)["id"].(float64))
+	body := fmt.Sprintf(`{
+		"symbol": "DOGEUSDT",
+		"exchangeKeyId": %d,
+		"timeframe": "15m",
+		"emaFast": 12,
+		"emaSlow": 26,
+		"takeProfitR": 1,
+		"rsiLongMin": 40,
+		"rsiLongMax": 80,
+		"rsiShortMin": 20,
+		"rsiShortMax": 60,
+		"minScore": 4,
+		"leverage": 20,
+		"marginMode": "isolated",
+		"entryMode": "trend"
+	}`, keyID)
+	rec := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies", body, owner, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create = %d %s", rec.Code, rec.Body.String())
+	}
+	view := tradingData(t, rec)
+	checks := map[string]any{
+		"symbol": "DOGEUSDT", "timeframe": "15m", "emaFast": float64(12), "emaSlow": float64(26),
+		"takeProfitR": float64(1), "rsiLongMin": float64(40), "rsiLongMax": float64(80),
+		"rsiShortMin": float64(20), "rsiShortMax": float64(60), "minScore": float64(4),
+		"leverage": float64(20), "marginMode": "isolated", "entryMode": "trend",
+	}
+	for key, want := range checks {
+		if view[key] != want {
+			t.Fatalf("%s = %v want %v", key, view[key], want)
+		}
 	}
 }
 
@@ -441,6 +512,14 @@ func assertStrategyDefaults(t *testing.T, view map[string]any) {
 		{"entryMode", trading.EntryModeTrend},
 		{"minScore", float64(trading.DefaultMinScore)},
 		{"minWinRate", trading.DefaultMinWinRate},
+		{"minTrades", float64(trading.DefaultMinTrades)},
+		{"maxMarginPerTradeUsdt", float64(trading.DefaultMaxMarginPerTradeUSDT)},
+		{"maxConsecutiveLosses", float64(trading.DefaultMaxConsecutiveLosses)},
+		{"pauseBalanceUsdt", trading.DefaultPauseBalanceUSDT},
+		{"rsiLongMin", 50.0},
+		{"rsiLongMax", 70.0},
+		{"rsiShortMin", 30.0},
+		{"rsiShortMax", 50.0},
 	}
 	for _, check := range checks {
 		got := view[check.key]
@@ -731,12 +810,17 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 				DailyLossPct: tradingArgFloat(vals[9]), MaxMarginUsdt: tradingArgFloat(vals[10]),
 				ExchangeKeyID: tradingArgInt(vals[11]), Mode: tradingArgString(vals[12]),
 				EntryMode: tradingArgString(vals[13]), MinScore: int(tradingArgInt(vals[14])),
-				MinWinRate: tradingArgFloat(vals[15]), Running: tradingArgInt(vals[16]) == 1,
+				MinWinRate: tradingArgFloat(vals[15]), MinTrades: int(tradingArgInt(vals[16])),
+				MaxMarginPerTradeUsdt: tradingArgFloat(vals[17]), MaxConsecutiveLosses: int(tradingArgInt(vals[18])),
+				PauseBalanceUsdt: tradingArgFloat(vals[19]), PauseReason: tradingArgString(vals[20]),
+				RSILongMin: tradingArgFloat(vals[21]), RSILongMax: tradingArgFloat(vals[22]),
+				RSIShortMin: tradingArgFloat(vals[23]), RSIShortMax: tradingArgFloat(vals[24]),
+				Running: tradingArgInt(vals[25]) == 1,
 			},
 		}
 		return tradingTestResult{id, 1}, nil
 	case normTradingSQL(strategyUpdateSQL):
-		id, userID := tradingArgInt(vals[15]), tradingArgInt(vals[16])
+		id, userID := tradingArgInt(vals[24]), tradingArgInt(vals[25])
 		row := d.strategies[id]
 		if row == nil || row.userID != userID {
 			return tradingTestResult{0, 0}, nil
@@ -750,7 +834,12 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 			DailyLossPct: tradingArgFloat(vals[8]), MaxMarginUsdt: tradingArgFloat(vals[9]),
 			ExchangeKeyID: tradingArgInt(vals[10]), Mode: tradingArgString(vals[11]),
 			EntryMode: tradingArgString(vals[12]), MinScore: int(tradingArgInt(vals[13])),
-			MinWinRate: tradingArgFloat(vals[14]), Running: running,
+			MinWinRate: tradingArgFloat(vals[14]), MinTrades: int(tradingArgInt(vals[15])),
+			MaxMarginPerTradeUsdt: tradingArgFloat(vals[16]), MaxConsecutiveLosses: int(tradingArgInt(vals[17])),
+			PauseBalanceUsdt: tradingArgFloat(vals[18]), PauseReason: tradingArgString(vals[19]),
+			RSILongMin: tradingArgFloat(vals[20]), RSILongMax: tradingArgFloat(vals[21]),
+			RSIShortMin: tradingArgFloat(vals[22]), RSIShortMax: tradingArgFloat(vals[23]),
+			Running: running,
 		}
 		row.updatedAt = d.stampLocked()
 		return tradingTestResult{0, 1}, nil
@@ -770,6 +859,25 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 			return tradingTestResult{0, 0}, nil
 		}
 		row.rec.Running = tradingArgInt(vals[0]) == 1
+		row.updatedAt = d.stampLocked()
+		return tradingTestResult{0, 1}, nil
+	case normTradingSQL(strategyPauseByIDSQL):
+		id := tradingArgInt(vals[1])
+		row := d.strategies[id]
+		if row == nil {
+			return tradingTestResult{0, 0}, nil
+		}
+		row.rec.Running = false
+		row.rec.PauseReason = tradingArgString(vals[0])
+		row.updatedAt = d.stampLocked()
+		return tradingTestResult{0, 1}, nil
+	case normTradingSQL(strategyClearPauseSQL):
+		id, userID := tradingArgInt(vals[0]), tradingArgInt(vals[1])
+		row := d.strategies[id]
+		if row == nil || row.userID != userID {
+			return tradingTestResult{0, 0}, nil
+		}
+		row.rec.PauseReason = ""
 		row.updatedAt = d.stampLocked()
 		return tradingTestResult{0, 1}, nil
 	case normTradingSQL(strategyDeleteSQL):
@@ -857,7 +965,9 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 	cols := []string{
 		"id", "symbol", "leverage", "margin_mode", "ema_fast", "ema_slow", "timeframe",
 		"stop_r", "take_profit_r", "daily_loss_pct", "max_margin_usdt", "exchange_key_id", "mode",
-		"entry_mode", "min_score", "min_win_rate", "running",
+		"entry_mode", "min_score", "min_win_rate", "min_trades",
+		"max_margin_per_trade_usdt", "max_consecutive_losses", "pause_balance_usdt", "pause_reason",
+		"rsi_long_min", "rsi_long_max", "rsi_short_min", "rsi_short_max", "running",
 		"created_at", "updated_at", "network", "status", "label",
 	}
 	type pair struct {
@@ -895,7 +1005,9 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 		values = append(values, []driver.Value{
 			row.id, rec.Symbol, int64(rec.Leverage), rec.MarginMode, int64(rec.EmaFast), int64(rec.EmaSlow), rec.Timeframe,
 			rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
-			rec.EntryMode, int64(rec.MinScore), rec.MinWinRate, running,
+			rec.EntryMode, int64(rec.MinScore), rec.MinWinRate, int64(rec.MinTrades),
+			rec.MaxMarginPerTradeUsdt, int64(rec.MaxConsecutiveLosses), rec.PauseBalanceUsdt, rec.PauseReason,
+			rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax, running,
 			row.createdAt, row.updatedAt, network, status, label,
 		})
 	}

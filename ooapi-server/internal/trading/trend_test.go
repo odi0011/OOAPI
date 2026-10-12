@@ -3,6 +3,7 @@ package trading
 import (
 	"context"
 	"errors"
+	"math"
 	"os"
 	"testing"
 	"time"
@@ -112,10 +113,176 @@ func TestWinRateGateSkipsUntilBacktestPasses(t *testing.T) {
 	if err != nil || snap.LastReason != ReasonWinRateBelow || paper.Entries != 0 {
 		t.Fatalf("blocked %+v entries=%d err=%v", snap, paper.Entries, err)
 	}
-	in.Backtest = &BacktestSummary{WinRate: 0.5, Trades: 8, NetR: 1}
+	in.Backtest = &BacktestSummary{WinRate: 0.5, Trades: DefaultMinTrades, NetR: 1}
 	snap, err = eng.Step(in)
 	if err != nil || snap.Side != SideLong || paper.Entries != 1 {
 		t.Fatalf("pass %+v entries=%d err=%v", snap, paper.Entries, err)
+	}
+}
+
+func TestWindowStatsAndSweepPass(t *testing.T) {
+	base := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+	trades := []BacktestTrade{
+		{OpenedAt: base.Add(24 * time.Hour), NetR: 1},
+		{OpenedAt: base.Add(6 * 24 * time.Hour), NetR: -0.5},
+	}
+	in := WindowStats(trades, base, base.Add(5*24*time.Hour))
+	out := WindowStats(trades, base.Add(5*24*time.Hour), base.Add(8*24*time.Hour))
+	if in.Trades != 1 || in.WinRate != 1 || in.NetR != 1 || out.Trades != 1 || out.NetR != -0.5 {
+		t.Fatalf("in %+v out %+v", in, out)
+	}
+	if SweepPass(BacktestSummary{WinRate: 1, Trades: 8, NetR: 4}, BacktestSummary{NetR: 1}) {
+		t.Fatal("8 trades passed the sweep flag")
+	}
+	good := BacktestSummary{WinRate: 0.5, Trades: DefaultMinTrades, NetR: 0.2}
+	if !SweepPass(good, BacktestSummary{NetR: 0.1}) {
+		t.Fatal("expected pass")
+	}
+	if SweepPass(good, BacktestSummary{NetR: 0}) {
+		t.Fatal("flat out-of-sample passed")
+	}
+}
+
+func TestLiveBacktestGateKeepsWinRateFloor(t *testing.T) {
+	cfg := testConfig()
+	cfg.Mode = ModeLive
+	cfg.MinWinRate = 0
+	cfg.MinTrades = 1
+	if got := BacktestGate(cfg, &BacktestSummary{WinRate: 1, Trades: 8, NetR: 3}); got != ReasonInsufficientSamples {
+		t.Fatalf("samples %s", got)
+	}
+	if got := BacktestGate(cfg, &BacktestSummary{WinRate: 0.2, Trades: 40, NetR: 1}); got != ReasonWinRateBelow {
+		t.Fatalf("win rate %s", got)
+	}
+	if got := BacktestGate(cfg, nil); got != ReasonWinRateBelow {
+		t.Fatalf("missing %s", got)
+	}
+}
+
+func TestMarginPerTradeCapsEntry(t *testing.T) {
+	cfg := testConfig()
+	cfg.EntryMode = EntryModeTrend
+	cfg.MinScore = 1
+	cfg.DailyLossPct = DailyLossOffPct
+	cfg.Leverage = 20
+	cfg.MaxMarginUsdt = 10
+	cfg.MaxMarginPerTradeUsdt = 1
+	candles := appendBar(candlesUntil(t, CrossGolden), 1.001)
+	price := candles[len(candles)-1].Close
+	eng := withSecrets(NewEngine(cfg, NewPaper(), DiscardLogger()))
+	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	if err := eng.Start(calmStart(now, 50)); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := eng.Step(stepAt(now, candles, price, 50))
+	if err != nil || snap.State != StateInPosition {
+		t.Fatalf("entry %+v err=%v", snap, err)
+	}
+	_, _, want, err := SizePosition(1, 20, price, MinNotionalUSDT)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(snap.Qty-want) > 1e-9 {
+		t.Fatalf("qty=%v want=%v", snap.Qty, want)
+	}
+}
+
+func TestConsecutiveLossesPauseAndStayPaused(t *testing.T) {
+	cfg := testConfig()
+	cfg.EntryMode = EntryModeTrend
+	cfg.MinScore = 1
+	cfg.DailyLossPct = DailyLossOffPct
+	cfg.MaxConsecutiveLosses = 3
+	paper := NewPaper()
+	eng := withSecrets(NewEngine(cfg, paper, DiscardLogger()))
+	var saved string
+	eng.SetPauseHook(func(reason string) { saved = reason })
+	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	if err := eng.Start(calmStart(now, 50)); err != nil {
+		t.Fatal(err)
+	}
+	candles := appendBar(candlesUntil(t, CrossGolden), 1.001)
+	var snap Snapshot
+	for i := 0; i < 3; i++ {
+		if i > 0 {
+			candles = appendBar(candles, 1.001)
+		}
+		var err error
+		snap, err = eng.Step(stepAt(now, candles, candles[len(candles)-1].Close, 50))
+		if err != nil || snap.State != StateInPosition {
+			t.Fatalf("entry %d %+v err=%v", i, snap, err)
+		}
+		snap, err = eng.Step(stepAt(now, candles, snap.StopPrice, 50))
+		if err != nil {
+			t.Fatalf("exit %d %v", i, err)
+		}
+	}
+	if snap.LastReason != ReasonConsecutiveLosses || snap.PauseReason != ReasonConsecutiveLosses || snap.Running || snap.State != StateIdle {
+		t.Fatalf("pause %+v", snap)
+	}
+	if saved != ReasonConsecutiveLosses || paper.Entries != 3 {
+		t.Fatalf("saved=%s entries=%d", saved, paper.Entries)
+	}
+	runner := NewRunner(NewHub())
+	runner.Start()
+	cfg.ID = 4
+	cfg.PauseReason = ReasonConsecutiveLosses
+	runner.Sync([]RunSpec{{UserID: 1, Config: cfg}})
+	if _, ok := runner.hub.State(1, 4); ok {
+		t.Fatal("paused strategy resumed")
+	}
+}
+
+func TestBalanceBelowPauseStopsEngine(t *testing.T) {
+	cfg := testConfig()
+	cfg.PauseBalanceUsdt = 1.5
+	eng := withSecrets(NewEngine(cfg, NewPaper(), DiscardLogger()))
+	var saved string
+	eng.SetPauseHook(func(reason string) { saved = reason })
+	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	if err := eng.Start(calmStart(now, 20)); err != nil {
+		t.Fatal(err)
+	}
+	in := stepAt(now, nil, 1, 20)
+	in.WalletKnown = true
+	in.Wallet = 1.2
+	in.Available = 1.2
+	snap, err := eng.Step(in)
+	if err != nil || snap.LastReason != ReasonBalanceBelowPause || snap.PauseReason != ReasonBalanceBelowPause || snap.Running {
+		t.Fatalf("pause %+v err=%v saved=%s", snap, err, saved)
+	}
+	if saved != ReasonBalanceBelowPause {
+		t.Fatalf("saved %s", saved)
+	}
+	if err := eng.Start(calmStart(now, 20)); !errors.Is(err, ErrPaused) {
+		t.Fatalf("start while paused err=%v", err)
+	}
+	eng.ClearPause()
+	if err := eng.Start(calmStart(now, 20)); err != nil {
+		t.Fatalf("resume %v", err)
+	}
+}
+
+func TestEightTradesBlockedDespiteHighWinRate(t *testing.T) {
+	cfg := testConfig()
+	cfg.MinWinRate = 0.5
+	paper := NewPaper()
+	eng := withSecrets(NewEngine(cfg, paper, DiscardLogger()))
+	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	if err := eng.Start(calmStart(now, 20)); err != nil {
+		t.Fatal(err)
+	}
+	candles := candlesUntil(t, CrossGolden)
+	in := stepAt(now, candles, candles[len(candles)-1].Close, 20)
+	in.Backtest = &BacktestSummary{WinRate: 1, Trades: 8, NetR: 4}
+	snap, err := eng.Step(in)
+	if err != nil || snap.LastReason != ReasonInsufficientSamples || paper.Entries != 0 || snap.State != StateArmed {
+		t.Fatalf("samples %+v entries=%d err=%v", snap, paper.Entries, err)
+	}
+	in.Backtest = &BacktestSummary{WinRate: 1, Trades: DefaultMinTrades, NetR: 0}
+	snap, err = eng.Step(in)
+	if err != nil || snap.LastReason != ReasonNetRNotPositive || paper.Entries != 0 {
+		t.Fatalf("netR %+v entries=%d err=%v", snap, paper.Entries, err)
 	}
 }
 

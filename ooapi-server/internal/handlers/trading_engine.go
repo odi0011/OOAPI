@@ -73,6 +73,42 @@ func StartTradingEngine(c *gin.Context) {
 		if err != nil {
 			return trading.Snapshot{}, err
 		}
+		if row.Record.PauseReason != "" {
+			return trading.Snapshot{}, &tradingError{Status: http.StatusConflict, Message: "策略已自动暂停，请先手动恢复", Code: "paused"}
+		}
+		if taken, terr := runningSymbolTaken(userID, row.Record.ExchangeKeyID, row.Record.Symbol, row.ID); terr != nil {
+			return trading.Snapshot{}, terr
+		} else if taken {
+			return trading.Snapshot{}, trading.ErrSymbolInUse
+		}
+		snap, err := trading.DefaultHub().Start(userID, row.ID, strategyConfig(row), trading.StartInput{
+			Now:            when,
+			FundingRate:    req.FundingRate,
+			LiqDistancePct: liqDistance(req.LiqDistancePct),
+			EquityUSDT:     req.EquityUSDT,
+		}, secrets)
+		if err == nil {
+			if dbErr := setStrategyRunning(row.ID, userID, true); dbErr != nil {
+				log.Printf("[trading] 记下运行标记失败: %v", dbErr)
+			}
+			ensureStrategyRunner(userID, row)
+		}
+		return snap, err
+	})
+}
+
+// ResumeTradingEngine 清掉自动暂停后按启动流程重新武装。重启不会自己做这件事。
+func ResumeTradingEngine(c *gin.Context) {
+	runEngine(c, func(userID int64, row strategyRow, req engineRequest, secrets trading.SecretOpener) (trading.Snapshot, error) {
+		if err := clearStrategyPause(row.ID, userID); err != nil {
+			return trading.Snapshot{}, err
+		}
+		row.Record.PauseReason = ""
+		trading.DefaultHub().ClearPause(userID, row.ID)
+		when, err := parseEngineTime(req.Now)
+		if err != nil {
+			return trading.Snapshot{}, err
+		}
 		if taken, terr := runningSymbolTaken(userID, row.Record.ExchangeKeyID, row.Record.Symbol, row.ID); terr != nil {
 			return trading.Snapshot{}, terr
 		} else if taken {
@@ -248,22 +284,31 @@ func loadNewestStrategy(userID int64) (strategyRow, error) {
 func strategyConfig(row strategyRow) trading.Config {
 	rec := row.Record
 	return trading.Config{
-		ID:            row.ID,
-		Symbol:        rec.Symbol,
-		Leverage:      rec.Leverage,
-		MarginMode:    rec.MarginMode,
-		EmaFast:       rec.EmaFast,
-		EmaSlow:       rec.EmaSlow,
-		Timeframe:     rec.Timeframe,
-		StopR:         rec.StopR,
-		TakeProfitR:   rec.TakeProfitR,
-		DailyLossPct:  rec.DailyLossPct,
-		MaxMarginUsdt: rec.MaxMarginUsdt,
-		ExchangeKeyID: rec.ExchangeKeyID,
-		Mode:          rec.Mode,
-		EntryMode:     rec.EntryMode,
-		MinScore:      rec.MinScore,
-		MinWinRate:    rec.MinWinRate,
+		ID:                    row.ID,
+		Symbol:                rec.Symbol,
+		Leverage:              rec.Leverage,
+		MarginMode:            rec.MarginMode,
+		EmaFast:               rec.EmaFast,
+		EmaSlow:               rec.EmaSlow,
+		Timeframe:             rec.Timeframe,
+		StopR:                 rec.StopR,
+		TakeProfitR:           rec.TakeProfitR,
+		DailyLossPct:          rec.DailyLossPct,
+		MaxMarginUsdt:         rec.MaxMarginUsdt,
+		ExchangeKeyID:         rec.ExchangeKeyID,
+		Mode:                  rec.Mode,
+		EntryMode:             rec.EntryMode,
+		MinScore:              rec.MinScore,
+		MinWinRate:            rec.MinWinRate,
+		MinTrades:             rec.MinTrades,
+		MaxMarginPerTradeUsdt: rec.MaxMarginPerTradeUsdt,
+		MaxConsecutiveLosses:  rec.MaxConsecutiveLosses,
+		PauseBalanceUsdt:      rec.PauseBalanceUsdt,
+		PauseReason:           rec.PauseReason,
+		RSILongMin:            rec.RSILongMin,
+		RSILongMax:            rec.RSILongMax,
+		RSIShortMin:           rec.RSIShortMin,
+		RSIShortMax:           rec.RSIShortMax,
 	}.Normalize()
 }
 
@@ -417,6 +462,8 @@ func writeEngineErr(c *gin.Context, err error) {
 		fail(c, http.StatusBadRequest, "交易所密钥不可用", "exchange_key_required")
 	case errors.Is(err, trading.ErrSymbolInUse):
 		fail(c, http.StatusConflict, "同一交易所密钥下该交易对已有运行中的策略", "symbol_in_use")
+	case errors.Is(err, trading.ErrPaused):
+		fail(c, http.StatusConflict, "策略已自动暂停，请先手动恢复", "paused")
 	case errors.Is(err, trading.ErrNotConfigured):
 		fail(c, http.StatusBadRequest, "策略还没配置", "not_configured")
 	case errors.Is(err, trading.ErrBadMode):
