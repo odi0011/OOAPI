@@ -50,6 +50,7 @@ func TestTradingRoutesRequireAuthAndStrategyPermission(t *testing.T) {
 		{http.MethodGet, "/api/trading/engine/position"},
 		{http.MethodGet, "/api/trading/engine/orders"},
 		{http.MethodPost, "/api/trading/engine/start"},
+		{http.MethodPost, "/api/trading/engine/resume"},
 		{http.MethodPost, "/api/trading/engine/stop"},
 		{http.MethodPost, "/api/trading/engine/step"},
 		{http.MethodPost, "/api/trading/engine/testnet-green"},

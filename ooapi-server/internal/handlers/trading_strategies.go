@@ -45,15 +45,19 @@ var strategyTimeframes = map[string]struct{}{
 const strategySelectCols = `
 s.id, s.symbol, s.leverage, s.margin_mode, s.ema_fast, s.ema_slow, s.timeframe,
 s.stop_r, s.take_profit_r, s.daily_loss_pct, s.max_margin_usdt, s.exchange_key_id, s.mode,
-s.entry_mode, s.min_score, s.min_win_rate, s.min_trades, s.running,
+s.entry_mode, s.min_score, s.min_win_rate, s.min_trades,
+s.max_margin_per_trade_usdt, s.max_consecutive_losses, s.pause_balance_usdt, s.pause_reason,
+s.rsi_long_min, s.rsi_long_max, s.rsi_short_min, s.rsi_short_max, s.running,
 s.created_at, s.updated_at, k.network, k.status, k.label`
 
 const strategyInsertSQL = `
 INSERT INTO trading_strategies (
 	user_id, symbol, leverage, margin_mode, ema_fast, ema_slow, timeframe,
 	stop_r, take_profit_r, daily_loss_pct, max_margin_usdt, exchange_key_id, mode,
-	entry_mode, min_score, min_win_rate, min_trades, running
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	entry_mode, min_score, min_win_rate, min_trades,
+	max_margin_per_trade_usdt, max_consecutive_losses, pause_balance_usdt, pause_reason,
+	rsi_long_min, rsi_long_max, rsi_short_min, rsi_short_max, running
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const strategyListSQL = `
 SELECT ` + strategySelectCols + `
@@ -72,7 +76,9 @@ const strategyUpdateSQL = `
 UPDATE trading_strategies
 SET symbol = ?, leverage = ?, margin_mode = ?, ema_fast = ?, ema_slow = ?, timeframe = ?,
 	stop_r = ?, take_profit_r = ?, daily_loss_pct = ?, max_margin_usdt = ?,
-	exchange_key_id = ?, mode = ?, entry_mode = ?, min_score = ?, min_win_rate = ?, min_trades = ?
+	exchange_key_id = ?, mode = ?, entry_mode = ?, min_score = ?, min_win_rate = ?, min_trades = ?,
+	max_margin_per_trade_usdt = ?, max_consecutive_losses = ?, pause_balance_usdt = ?, pause_reason = ?,
+	rsi_long_min = ?, rsi_long_max = ?, rsi_short_min = ?, rsi_short_max = ?
 WHERE id = ? AND user_id = ?`
 
 const strategyRunningSQL = `
@@ -80,6 +86,12 @@ UPDATE trading_strategies SET running = ? WHERE id = ? AND user_id = ?`
 
 const strategyRunningByIDSQL = `
 UPDATE trading_strategies SET running = ? WHERE id = ?`
+
+const strategyPauseByIDSQL = `
+UPDATE trading_strategies SET running = 0, pause_reason = ? WHERE id = ?`
+
+const strategyClearPauseSQL = `
+UPDATE trading_strategies SET pause_reason = '' WHERE id = ? AND user_id = ?`
 
 const strategyRunningDupSQL = `
 SELECT s.id FROM trading_strategies s
@@ -90,68 +102,91 @@ const strategyDeleteSQL = `
 DELETE FROM trading_strategies WHERE id = ? AND user_id = ?`
 
 type strategyWrite struct {
-	Symbol        *string  `json:"symbol"`
-	Leverage      *int     `json:"leverage"`
-	MarginMode    *string  `json:"marginMode"`
-	EmaFast       *int     `json:"emaFast"`
-	EmaSlow       *int     `json:"emaSlow"`
-	Timeframe     *string  `json:"timeframe"`
-	StopR         *float64 `json:"stopR"`
-	TakeProfitR   *float64 `json:"takeProfitR"`
-	DailyLossPct  *float64 `json:"dailyLossPct"`
-	MaxMarginUsdt *float64 `json:"maxMarginUsdt"`
-	ExchangeKeyID *int64   `json:"exchangeKeyId"`
-	Mode          *string  `json:"mode"`
-	EntryMode     *string  `json:"entryMode"`
-	MinScore      *int     `json:"minScore"`
-	MinWinRate    *float64 `json:"minWinRate"`
-	MinTrades     *int     `json:"minTrades"`
+	Symbol                *string  `json:"symbol"`
+	Leverage              *int     `json:"leverage"`
+	MarginMode            *string  `json:"marginMode"`
+	EmaFast               *int     `json:"emaFast"`
+	EmaSlow               *int     `json:"emaSlow"`
+	Timeframe             *string  `json:"timeframe"`
+	StopR                 *float64 `json:"stopR"`
+	TakeProfitR           *float64 `json:"takeProfitR"`
+	DailyLossPct          *float64 `json:"dailyLossPct"`
+	MaxMarginUsdt         *float64 `json:"maxMarginUsdt"`
+	ExchangeKeyID         *int64   `json:"exchangeKeyId"`
+	Mode                  *string  `json:"mode"`
+	EntryMode             *string  `json:"entryMode"`
+	MinScore              *int     `json:"minScore"`
+	MinWinRate            *float64 `json:"minWinRate"`
+	MinTrades             *int     `json:"minTrades"`
+	MaxMarginPerTradeUsdt *float64 `json:"maxMarginPerTradeUsdt"`
+	MaxConsecutiveLosses  *int     `json:"maxConsecutiveLosses"`
+	PauseBalanceUsdt      *float64 `json:"pauseBalanceUsdt"`
+	RSILongMin            *float64 `json:"rsiLongMin"`
+	RSILongMax            *float64 `json:"rsiLongMax"`
+	RSIShortMin           *float64 `json:"rsiShortMin"`
+	RSIShortMax           *float64 `json:"rsiShortMax"`
 }
 
 type strategyRecord struct {
-	Symbol        string
-	Leverage      int
-	MarginMode    string
-	EmaFast       int
-	EmaSlow       int
-	Timeframe     string
-	StopR         float64
-	TakeProfitR   float64
-	DailyLossPct  float64
-	MaxMarginUsdt float64
-	ExchangeKeyID int64
-	Mode          string
-	EntryMode     string
-	MinScore      int
-	MinWinRate    float64
-	MinTrades     int
-	Running       bool
+	Symbol                string
+	Leverage              int
+	MarginMode            string
+	EmaFast               int
+	EmaSlow               int
+	Timeframe             string
+	StopR                 float64
+	TakeProfitR           float64
+	DailyLossPct          float64
+	MaxMarginUsdt         float64
+	ExchangeKeyID         int64
+	Mode                  string
+	EntryMode             string
+	MinScore              int
+	MinWinRate            float64
+	MinTrades             int
+	MaxMarginPerTradeUsdt float64
+	MaxConsecutiveLosses  int
+	PauseBalanceUsdt      float64
+	PauseReason           string
+	RSILongMin            float64
+	RSILongMax            float64
+	RSIShortMin           float64
+	RSIShortMax           float64
+	Running               bool
 }
 
 type strategyView struct {
-	ID                 int64    `json:"id"`
-	Symbol             string   `json:"symbol"`
-	Leverage           int      `json:"leverage"`
-	MarginMode         string   `json:"marginMode"`
-	EmaFast            int      `json:"emaFast"`
-	EmaSlow            int      `json:"emaSlow"`
-	Timeframe          string   `json:"timeframe"`
-	StopR              float64  `json:"stopR"`
-	TakeProfitR        float64  `json:"takeProfitR"`
-	DailyLossPct       float64  `json:"dailyLossPct"`
-	MaxMarginUsdt      float64  `json:"maxMarginUsdt"`
-	ExchangeKeyID      int64    `json:"exchangeKeyId"`
-	Mode               string   `json:"mode"`
-	EntryMode          string   `json:"entryMode"`
-	MinScore           int      `json:"minScore"`
-	MinWinRate         float64  `json:"minWinRate"`
-	MinTrades          int      `json:"minTrades"`
-	Running            bool     `json:"running"`
-	ExchangeKeyActive  bool     `json:"exchangeKeyActive"`
-	ExchangeKeyNetwork string   `json:"exchangeKeyNetwork,omitempty"`
-	Warnings           []string `json:"warnings"`
-	CreatedAt          string   `json:"createdAt"`
-	UpdatedAt          string   `json:"updatedAt"`
+	ID                    int64    `json:"id"`
+	Symbol                string   `json:"symbol"`
+	Leverage              int      `json:"leverage"`
+	MarginMode            string   `json:"marginMode"`
+	EmaFast               int      `json:"emaFast"`
+	EmaSlow               int      `json:"emaSlow"`
+	Timeframe             string   `json:"timeframe"`
+	StopR                 float64  `json:"stopR"`
+	TakeProfitR           float64  `json:"takeProfitR"`
+	DailyLossPct          float64  `json:"dailyLossPct"`
+	MaxMarginUsdt         float64  `json:"maxMarginUsdt"`
+	ExchangeKeyID         int64    `json:"exchangeKeyId"`
+	Mode                  string   `json:"mode"`
+	EntryMode             string   `json:"entryMode"`
+	MinScore              int      `json:"minScore"`
+	MinWinRate            float64  `json:"minWinRate"`
+	MinTrades             int      `json:"minTrades"`
+	MaxMarginPerTradeUsdt float64  `json:"maxMarginPerTradeUsdt"`
+	MaxConsecutiveLosses  int      `json:"maxConsecutiveLosses"`
+	PauseBalanceUsdt      float64  `json:"pauseBalanceUsdt"`
+	PauseReason           string   `json:"pauseReason,omitempty"`
+	RSILongMin            float64  `json:"rsiLongMin"`
+	RSILongMax            float64  `json:"rsiLongMax"`
+	RSIShortMin           float64  `json:"rsiShortMin"`
+	RSIShortMax           float64  `json:"rsiShortMax"`
+	Running               bool     `json:"running"`
+	ExchangeKeyActive     bool     `json:"exchangeKeyActive"`
+	ExchangeKeyNetwork    string   `json:"exchangeKeyNetwork,omitempty"`
+	Warnings              []string `json:"warnings"`
+	CreatedAt             string   `json:"createdAt"`
+	UpdatedAt             string   `json:"updatedAt"`
 }
 
 type strategyRow struct {
@@ -166,50 +201,65 @@ type strategyRow struct {
 
 func defaultStrategy() strategyRecord {
 	return strategyRecord{
-		Symbol:        strategySymbol,
-		Leverage:      defaultLeverage,
-		MarginMode:    strategyMarginMode,
-		EmaFast:       defaultEmaFast,
-		EmaSlow:       defaultEmaSlow,
-		Timeframe:     defaultTimeframe,
-		StopR:         defaultStopR,
-		TakeProfitR:   defaultTakeProfitR,
-		DailyLossPct:  defaultDailyLossPct,
-		MaxMarginUsdt: defaultMaxMarginUsdt,
-		Mode:          networkTestnet,
-		EntryMode:     trading.EntryModeTrend,
-		MinScore:      trading.DefaultMinScore,
-		MinWinRate:    trading.DefaultMinWinRate,
-		MinTrades:     trading.DefaultMinTrades,
+		Symbol:                strategySymbol,
+		Leverage:              defaultLeverage,
+		MarginMode:            strategyMarginMode,
+		EmaFast:               defaultEmaFast,
+		EmaSlow:               defaultEmaSlow,
+		Timeframe:             defaultTimeframe,
+		StopR:                 defaultStopR,
+		TakeProfitR:           defaultTakeProfitR,
+		DailyLossPct:          defaultDailyLossPct,
+		MaxMarginUsdt:         defaultMaxMarginUsdt,
+		Mode:                  networkTestnet,
+		EntryMode:             trading.EntryModeTrend,
+		MinScore:              trading.DefaultMinScore,
+		MinWinRate:            trading.DefaultMinWinRate,
+		MinTrades:             trading.DefaultMinTrades,
+		MaxMarginPerTradeUsdt: trading.DefaultMaxMarginPerTradeUSDT,
+		MaxConsecutiveLosses:  trading.DefaultMaxConsecutiveLosses,
+		PauseBalanceUsdt:      trading.DefaultPauseBalanceUSDT,
+		RSILongMin:            50,
+		RSILongMax:            70,
+		RSIShortMin:           30,
+		RSIShortMax:           50,
 	}
 }
 
 func (row strategyRow) view() strategyView {
 	rec := row.Record
 	return strategyView{
-		ID:                 row.ID,
-		Symbol:             rec.Symbol,
-		Leverage:           rec.Leverage,
-		MarginMode:         rec.MarginMode,
-		EmaFast:            rec.EmaFast,
-		EmaSlow:            rec.EmaSlow,
-		Timeframe:          rec.Timeframe,
-		StopR:              rec.StopR,
-		TakeProfitR:        rec.TakeProfitR,
-		DailyLossPct:       rec.DailyLossPct,
-		MaxMarginUsdt:      rec.MaxMarginUsdt,
-		ExchangeKeyID:      rec.ExchangeKeyID,
-		Mode:               rec.Mode,
-		EntryMode:          rec.EntryMode,
-		MinScore:           rec.MinScore,
-		MinWinRate:         rec.MinWinRate,
-		MinTrades:          rec.MinTrades,
-		Running:            rec.Running,
-		ExchangeKeyActive:  row.ExchangeKeyActive,
-		ExchangeKeyNetwork: row.ExchangeKeyNetwork,
-		Warnings:           strategyWarnings(rec.Mode, row.ExchangeKeyNetwork, row.ExchangeKeyActive),
-		CreatedAt:          row.CreatedAt,
-		UpdatedAt:          row.UpdatedAt,
+		ID:                    row.ID,
+		Symbol:                rec.Symbol,
+		Leverage:              rec.Leverage,
+		MarginMode:            rec.MarginMode,
+		EmaFast:               rec.EmaFast,
+		EmaSlow:               rec.EmaSlow,
+		Timeframe:             rec.Timeframe,
+		StopR:                 rec.StopR,
+		TakeProfitR:           rec.TakeProfitR,
+		DailyLossPct:          rec.DailyLossPct,
+		MaxMarginUsdt:         rec.MaxMarginUsdt,
+		ExchangeKeyID:         rec.ExchangeKeyID,
+		Mode:                  rec.Mode,
+		EntryMode:             rec.EntryMode,
+		MinScore:              rec.MinScore,
+		MinWinRate:            rec.MinWinRate,
+		MinTrades:             rec.MinTrades,
+		MaxMarginPerTradeUsdt: rec.MaxMarginPerTradeUsdt,
+		MaxConsecutiveLosses:  rec.MaxConsecutiveLosses,
+		PauseBalanceUsdt:      rec.PauseBalanceUsdt,
+		PauseReason:           rec.PauseReason,
+		RSILongMin:            rec.RSILongMin,
+		RSILongMax:            rec.RSILongMax,
+		RSIShortMin:           rec.RSIShortMin,
+		RSIShortMax:           rec.RSIShortMax,
+		Running:               rec.Running,
+		ExchangeKeyActive:     row.ExchangeKeyActive,
+		ExchangeKeyNetwork:    row.ExchangeKeyNetwork,
+		Warnings:              strategyWarnings(rec.Mode, row.ExchangeKeyNetwork, row.ExchangeKeyActive),
+		CreatedAt:             row.CreatedAt,
+		UpdatedAt:             row.UpdatedAt,
 	}
 }
 
@@ -311,7 +361,9 @@ func CreateTradingStrategy(c *gin.Context) {
 	res, err := exec(strategyInsertSQL,
 		user.ID, rec.Symbol, rec.Leverage, rec.MarginMode, rec.EmaFast, rec.EmaSlow, rec.Timeframe,
 		rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
-		rec.EntryMode, rec.MinScore, rec.MinWinRate, rec.MinTrades, 0,
+		rec.EntryMode, rec.MinScore, rec.MinWinRate, rec.MinTrades,
+		rec.MaxMarginPerTradeUsdt, rec.MaxConsecutiveLosses, rec.PauseBalanceUsdt, rec.PauseReason,
+		rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax, 0,
 	)
 	if err != nil {
 		log.Printf("[trading] 写入策略失败: %v", err)
@@ -378,6 +430,8 @@ func UpdateTradingStrategy(c *gin.Context) {
 		rec.Symbol, rec.Leverage, rec.MarginMode, rec.EmaFast, rec.EmaSlow, rec.Timeframe,
 		rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
 		rec.EntryMode, rec.MinScore, rec.MinWinRate, rec.MinTrades,
+		rec.MaxMarginPerTradeUsdt, rec.MaxConsecutiveLosses, rec.PauseBalanceUsdt, rec.PauseReason,
+		rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax,
 		id, user.ID,
 	)
 	if err != nil {
@@ -443,7 +497,9 @@ func scanStrategy(s scanner) (strategyRow, error) {
 		&row.Record.EmaFast, &row.Record.EmaSlow, &row.Record.Timeframe,
 		&row.Record.StopR, &row.Record.TakeProfitR, &row.Record.DailyLossPct, &row.Record.MaxMarginUsdt,
 		&row.Record.ExchangeKeyID, &row.Record.Mode,
-		&row.Record.EntryMode, &row.Record.MinScore, &row.Record.MinWinRate, &row.Record.MinTrades, &running,
+		&row.Record.EntryMode, &row.Record.MinScore, &row.Record.MinWinRate, &row.Record.MinTrades,
+		&row.Record.MaxMarginPerTradeUsdt, &row.Record.MaxConsecutiveLosses, &row.Record.PauseBalanceUsdt, &row.Record.PauseReason,
+		&row.Record.RSILongMin, &row.Record.RSILongMax, &row.Record.RSIShortMin, &row.Record.RSIShortMax, &running,
 		&row.CreatedAt, &row.UpdatedAt,
 		&network, &status, &label,
 	)
@@ -459,6 +515,16 @@ func scanStrategy(s scanner) (strategyRow, error) {
 	row.ExchangeKeyActive = status.Valid && status.Int64 == exchangeKeyActive
 	row.Record.Running = running == 1
 	return row, nil
+}
+
+func setStrategyPaused(id int64, reason string) error {
+	_, err := exec(strategyPauseByIDSQL, reason, id)
+	return err
+}
+
+func clearStrategyPause(id, userID int64) error {
+	_, err := exec(strategyClearPauseSQL, id, userID)
+	return err
 }
 
 func setStrategyRunning(id, userID int64, running bool) error {
@@ -561,6 +627,27 @@ func applyStrategyWrite(base strategyRecord, in strategyWrite, creating bool) (s
 	if in.MinTrades != nil {
 		out.MinTrades = *in.MinTrades
 	}
+	if in.MaxMarginPerTradeUsdt != nil {
+		out.MaxMarginPerTradeUsdt = round4(*in.MaxMarginPerTradeUsdt)
+	}
+	if in.MaxConsecutiveLosses != nil {
+		out.MaxConsecutiveLosses = *in.MaxConsecutiveLosses
+	}
+	if in.PauseBalanceUsdt != nil {
+		out.PauseBalanceUsdt = round4(*in.PauseBalanceUsdt)
+	}
+	if in.RSILongMin != nil {
+		out.RSILongMin = round4(*in.RSILongMin)
+	}
+	if in.RSILongMax != nil {
+		out.RSILongMax = round4(*in.RSILongMax)
+	}
+	if in.RSIShortMin != nil {
+		out.RSIShortMin = round4(*in.RSIShortMin)
+	}
+	if in.RSIShortMax != nil {
+		out.RSIShortMax = round4(*in.RSIShortMax)
+	}
 	if err := validateStrategy(out, creating && in.ExchangeKeyID == nil); err != nil {
 		return strategyRecord{}, err
 	}
@@ -568,8 +655,8 @@ func applyStrategyWrite(base strategyRecord, in strategyWrite, creating bool) (s
 }
 
 func validateStrategy(rec strategyRecord, missingKey bool) *tradingError {
-	if rec.Symbol != strategySymbol {
-		return &tradingError{http.StatusBadRequest, "v1 交易对只支持 XRPUSDT", "invalid_symbol"}
+	if !trading.AllowedSymbol(rec.Symbol) {
+		return &tradingError{http.StatusBadRequest, "交易对必须是 USDT 永续代码，例如 XRPUSDT、DOGEUSDT", "invalid_symbol"}
 	}
 	if rec.MarginMode != strategyMarginMode {
 		return &tradingError{http.StatusBadRequest, "v1 只允许逐仓（isolated）", "invalid_margin_mode"}
@@ -609,6 +696,27 @@ func validateStrategy(rec strategyRecord, missingKey bool) *tradingError {
 	}
 	if rec.MinTrades < 1 || rec.MinTrades > 10000 {
 		return &tradingError{http.StatusBadRequest, "minTrades 要在 1 到 10000 之间", "invalid_min_trades"}
+	}
+	if rec.Mode == networkLive && rec.MinWinRate < trading.DefaultMinWinRate {
+		return &tradingError{http.StatusBadRequest, "实盘 minWinRate 不能低于 0.5", "minWinRate"}
+	}
+	if rec.Mode == networkLive && rec.MinTrades < trading.DefaultMinTrades {
+		return &tradingError{http.StatusBadRequest, "实盘 minTrades 不能低于 30", "minTrades"}
+	}
+	if rec.MaxMarginPerTradeUsdt <= 0 || rec.MaxMarginPerTradeUsdt > 1_000_000 {
+		return &tradingError{http.StatusBadRequest, "单笔保证金上限要大于 0", "maxMarginPerTradeUsdt"}
+	}
+	if rec.MaxConsecutiveLosses < 1 || rec.MaxConsecutiveLosses > 1000 {
+		return &tradingError{http.StatusBadRequest, "连亏暂停次数要在 1 到 1000 之间", "maxConsecutiveLosses"}
+	}
+	if rec.PauseBalanceUsdt <= 0 || rec.PauseBalanceUsdt > 1_000_000 {
+		return &tradingError{http.StatusBadRequest, "暂停余额要大于 0", "pauseBalanceUsdt"}
+	}
+	if rec.RSILongMin < 0 || rec.RSILongMax > 100 || rec.RSILongMin >= rec.RSILongMax {
+		return &tradingError{http.StatusBadRequest, "做多 RSI 区间要落在 0 到 100，且下限小于上限", "rsiLongMin"}
+	}
+	if rec.RSIShortMin < 0 || rec.RSIShortMax > 100 || rec.RSIShortMin >= rec.RSIShortMax {
+		return &tradingError{http.StatusBadRequest, "做空 RSI 区间要落在 0 到 100，且下限小于上限", "rsiShortMin"}
 	}
 	return nil
 }

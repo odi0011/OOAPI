@@ -20,6 +20,7 @@ var (
 	ErrBadMode               = errors.New("mode must be testnet or live")
 	ErrNotionalBelowMin      = errors.New("notional below exchange minimum")
 	ErrSymbolInUse           = errors.New("symbol already running on this exchange key")
+	ErrPaused                = errors.New("strategy is paused until a manual resume")
 )
 
 // ValidationError 是配置字段不合法。接口层把它映射成 400。

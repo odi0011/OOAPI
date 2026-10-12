@@ -140,6 +140,7 @@ func Setup(cfg *config.Config) *gin.Engine {
 			engineAPI.GET("/position", handlers.GetTradingPosition)
 			engineAPI.GET("/orders", handlers.GetTradingOrders)
 			engineAPI.POST("/start", handlers.StartTradingEngine)
+			engineAPI.POST("/resume", handlers.ResumeTradingEngine)
 			engineAPI.POST("/stop", handlers.StopTradingEngine)
 			engineAPI.POST("/step", handlers.StepTradingEngine)
 			engineAPI.POST("/testnet-green", handlers.SetTradingTestnetGreen)
