@@ -35,6 +35,8 @@ type DetectionEvent struct {
 	Msg                string    `json:"msg"`
 	DayRealized        float64   `json:"dayRealizedUsdt"`
 	CumulativeRealized float64   `json:"cumulativeRealizedUsdt"`
+	// Entry 只出现在开仓那一条上，带上当时的分数、门槛、加速标记和回测期望。
+	Entry *EntryStamp `json:"entry,omitempty"`
 }
 
 type eventRing struct {

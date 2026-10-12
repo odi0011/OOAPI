@@ -1,5 +1,6 @@
 import {
   buildDeskStatus,
+  entryScoreText,
   engineStateText,
   levelText,
   orderKindText,
@@ -17,6 +18,9 @@ function assertEqual(actual: unknown, expected: unknown, message: string) {
   }
 }
 
+assertEqual(entryScoreText({ score: 2, minScore: 4 }), "2/4", "score over min");
+assertEqual(entryScoreText({ score: 0, minScore: 4 }), "0/4", "zero score is still a score");
+assertEqual(entryScoreText(undefined), "—", "missing entry");
 assertEqual(engineStateText("Armed", true), "Armed 待命 · 运行中", "armed running");
 assertEqual(engineStateText(undefined, false), "Idle 空闲 · 未运行", "missing state");
 assertEqual(testnetGreenText(false), "关", "gate closed");

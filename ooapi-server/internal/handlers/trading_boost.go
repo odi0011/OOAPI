@@ -31,7 +31,7 @@ func GetTradingEngineEvents(c *gin.Context) {
 	if !allowBoostToken(c) {
 		return
 	}
-	c.JSON(http.StatusOK, trading.RecentEvents())
+	c.JSON(http.StatusOK, trading.EventsWithEntries())
 }
 
 func allowBoostToken(c *gin.Context) bool {
