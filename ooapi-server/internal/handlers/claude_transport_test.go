@@ -342,10 +342,15 @@ func TestClaudeTransportStreamConversionIncludesCacheUsage(t *testing.T) {
 	if !strings.HasSuffix(text, "data: [DONE]\n\n") {
 		t.Fatalf("missing [DONE]: %q", text)
 	}
-	// prompt_tokens = input_tokens(100) + cache_read(30) + cache_creation(20)
+	// prompt_tokens = input(100) + cache_read(30) + cache_creation(20)
+	// cached_tokens 只记命中，写入留在未缓存输入里，避免缓存被计两次。
 	usage := claudeLastUsageFrame(t, text)
 	if usage["prompt_tokens"] != float64(150) || usage["completion_tokens"] != float64(7) || usage["total_tokens"] != float64(157) {
 		t.Fatalf("usage frame %#v", usage)
+	}
+	details, _ := usage["prompt_tokens_details"].(map[string]any)
+	if details == nil || details["cached_tokens"] != float64(30) {
+		t.Fatalf("cache read must be reported once in prompt_tokens_details, got %#v", usage)
 	}
 }
 
@@ -387,6 +392,10 @@ func TestClaudeTransportNonStreamAggregates(t *testing.T) {
 	}
 	if out.Usage["prompt_tokens"] != float64(150) || out.Usage["total_tokens"] != float64(157) {
 		t.Fatalf("aggregated usage %#v", out.Usage)
+	}
+	details, _ := out.Usage["prompt_tokens_details"].(map[string]any)
+	if details == nil || details["cached_tokens"] != float64(30) {
+		t.Fatalf("aggregated cache tokens %#v", out.Usage)
 	}
 }
 

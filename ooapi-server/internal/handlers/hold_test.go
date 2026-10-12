@@ -91,7 +91,7 @@ func channelRows(cooldownUntil time.Time) *callerTestRows {
 // modelMap 是「上游名 → 官方名」的映射（options 表里的 model_map: 项），
 // 给出它才能模拟真实场景：渠道声明上游叫法（deepseek-v4.1-flash），
 // 而客户端用官方名（deepseek-flash）调用。
-func installChannelsQuery(t *testing.T, rows *callerTestRows, modelMap map[string]string) {
+func installChannelsQuery(t *testing.T, rows *callerTestRows, modelMap map[string]string) *callerTestDriver {
 	t.Helper()
 	services.MarkChannelsDirty()
 	services.InvalidateModelMap()
@@ -109,7 +109,14 @@ func installChannelsQuery(t *testing.T, rows *callerTestRows, modelMap map[strin
 			}
 			return out, nil
 		}
-		// 其余查询（价格等）一律返回空，等价于「查不到」。
+		if strings.Contains(q, "FROM model_prices") {
+			// 调用入口会拒绝没有可用定价的模型，并在转发前预扣。
+			// 等待室测试打的是 deepseek-flash，给它一行可用价格。
+			return &callerTestRows{
+				columns: []string{"model", "input_price", "output_price", "cached_price", "context_tiers"},
+				values:  [][]driver.Value{{"deepseek-flash", float64(1), float64(2), float64(0.1), ""}},
+			}, nil
+		}
 		return &callerTestRows{columns: []string{"model", "input_price", "output_price", "cached_price", "context_tiers"}}, nil
 	}
 	useCallerTestDB(t, d)
@@ -117,6 +124,7 @@ func installChannelsQuery(t *testing.T, rows *callerTestRows, modelMap map[strin
 		services.MarkChannelsDirty()
 		services.InvalidateModelMap()
 	})
+	return d
 }
 
 // ---------- 分类规则 ----------
