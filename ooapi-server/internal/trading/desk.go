@@ -540,6 +540,7 @@ type rawDeskOrder struct {
 	Quantity      flexNum `json:"quantity"`
 	ReduceOnly    bool    `json:"reduceOnly"`
 	ClosePosition bool    `json:"closePosition"`
+	TimeInForce   string  `json:"timeInForce"`
 }
 
 func parseOpenOrders(body []byte) ([]DeskOrder, error) {
@@ -614,7 +615,7 @@ func (row rawDeskOrder) deskOrder(source string) DeskOrder {
 	return DeskOrder{
 		ID:            formatID(float64(id)),
 		Source:        source,
-		Kind:          orderKind(kindType, row.ReduceOnly, row.ClosePosition),
+		Kind:          orderKind(kindType, row.ReduceOnly, row.ClosePosition, row.TimeInForce),
 		Symbol:        strings.ToUpper(row.Symbol),
 		Side:          strings.ToLower(row.Side),
 		Type:          strings.ToUpper(kindType),
@@ -627,13 +628,16 @@ func (row rawDeskOrder) deskOrder(source string) DeskOrder {
 	}
 }
 
-func orderKind(orderType string, reduceOnly, closePosition bool) string {
+func orderKind(orderType string, reduceOnly, closePosition bool, tif string) string {
 	switch strings.ToUpper(orderType) {
 	case "STOP", "STOP_MARKET", "STOP_LOSS", "STOP_LOSS_LIMIT":
 		return OrderKindStop
 	case "TAKE_PROFIT", "TAKE_PROFIT_MARKET", "TAKE_PROFIT_LIMIT":
 		return OrderKindTake
 	default:
+		if strings.EqualFold(tif, "GTX") {
+			return OrderKindTake
+		}
 		if reduceOnly || closePosition {
 			return OrderKindExit
 		}

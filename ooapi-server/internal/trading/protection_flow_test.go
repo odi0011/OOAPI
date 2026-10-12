@@ -29,7 +29,7 @@ func TestProtectionAckDoesNotDuplicateWhenListIsEmpty(t *testing.T) {
 	if err := client.PlaceProtection(Protection{Symbol: SymbolXRPUSDT, Side: SideLong, Stop: 1.4, Take: 1.6}); err != nil {
 		t.Fatal(err)
 	}
-	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET") != 1 {
+	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || fake.count("POST", "/fapi/v1/order", "LIMIT") != 1 {
 		t.Fatalf("duplicated protection %#v", fake.snapshot())
 	}
 	if fake.emptyAfterPlace != 0 {
@@ -93,8 +93,8 @@ func TestStaleStopIsReplacedOnEntry(t *testing.T) {
 	if math.Abs(posted-snap.StopPrice) > parseNum(fake.tick) {
 		t.Fatalf("posted %s engine stop %v", newStop, snap.StopPrice)
 	}
-	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET") != 1 {
-		t.Fatalf("protection posts stop=%d take=%d", fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET"), fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET"))
+	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || fake.count("POST", "/fapi/v1/order", "LIMIT") != 1 {
+		t.Fatalf("protection posts stop=%d take=%d", fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET"), fake.count("POST", "/fapi/v1/order", "LIMIT"))
 	}
 	fake.mu.Lock()
 	var stops []fakeAlgo
@@ -112,7 +112,7 @@ func TestStaleStopIsReplacedOnEntry(t *testing.T) {
 	if err != nil || held.State != StateInPosition {
 		t.Fatalf("hold %+v err=%v", held, err)
 	}
-	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET") != 1 {
+	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || fake.count("POST", "/fapi/v1/order", "LIMIT") != 1 {
 		t.Fatal("holding the new position placed a second protection set")
 	}
 }
@@ -140,18 +140,16 @@ func TestStopWithinOneTickIsReused(t *testing.T) {
 	if fake.count("DELETE", "/fapi/v1/algoOrder", "") != 0 {
 		t.Fatal("a stop within one tick was canceled")
 	}
-	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 0 || fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET") != 1 {
-		t.Fatalf("stop posts=%d take posts=%d", fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET"), fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET"))
+	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 0 || fake.count("POST", "/fapi/v1/order", "LIMIT") != 1 {
+		t.Fatalf("stop posts=%d take posts=%d", fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET"), fake.count("POST", "/fapi/v1/order", "LIMIT"))
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if len(fake.algos) != 2 {
+	if len(fake.algos) != 1 || fake.algos[0].id != 3 || !fake.algos[0].closePos {
 		t.Fatalf("algos %+v", fake.algos)
 	}
-	for _, order := range fake.algos {
-		if order.kind == "STOP_MARKET" && order.id != 3 {
-			t.Fatalf("replacement stop %+v", order)
-		}
+	if len(fake.limits) != 1 || !fake.limits[0].reduceOnly || fake.limits[0].price == "" {
+		t.Fatalf("limits %+v", fake.limits)
 	}
 }
 
@@ -226,6 +224,7 @@ func TestEnsureProtectionKeepsStopBeforeLiquidation(t *testing.T) {
 
 func TestHedgeShortAlgoParamsRoundToTick(t *testing.T) {
 	var posts []url.Values
+	var takes []url.Values
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		q := r.URL.Query()
@@ -250,9 +249,22 @@ func TestHedgeShortAlgoParamsRoundToTick(t *testing.T) {
 				items = append(items, `{"algoId":`+strconv.Itoa(i+1)+`,"symbol":"DOGEUSDT","orderType":"`+post.Get("type")+`","side":"`+post.Get("side")+`","positionSide":"`+post.Get("positionSide")+`","triggerPrice":"`+post.Get("triggerPrice")+`","closePosition":true}`)
 			}
 			_, _ = io.WriteString(w, `[`+strings.Join(items, ",")+`]`)
+		case "/fapi/v1/openOrders":
+			if len(takes) == 0 {
+				_, _ = io.WriteString(w, `[]`)
+				return
+			}
+			items := make([]string, 0, len(takes))
+			for i, post := range takes {
+				items = append(items, `{"orderId":`+strconv.Itoa(i+1)+`,"symbol":"DOGEUSDT","type":"LIMIT","timeInForce":"GTX","side":"`+post.Get("side")+`","positionSide":"`+post.Get("positionSide")+`","price":"`+post.Get("price")+`","origQty":"`+post.Get("quantity")+`","executedQty":"0","reduceOnly":false}`)
+			}
+			_, _ = io.WriteString(w, `[`+strings.Join(items, ",")+`]`)
 		case "/fapi/v1/algoOrder":
 			posts = append(posts, cloneValues(q))
 			_, _ = io.WriteString(w, `{"algoId":`+strconv.Itoa(len(posts))+`,"algoStatus":"NEW"}`)
+		case "/fapi/v1/order":
+			takes = append(takes, cloneValues(q))
+			_, _ = io.WriteString(w, `{"orderId":`+strconv.Itoa(len(takes))+`,"status":"NEW"}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -265,34 +277,22 @@ func TestHedgeShortAlgoParamsRoundToTick(t *testing.T) {
 	if err := client.PlaceProtection(Protection{Symbol: "DOGEUSDT", Side: SideShort, Stop: 0.085903, Take: 0.084007}); err != nil {
 		t.Fatal(err)
 	}
-	if len(posts) != 2 {
-		t.Fatalf("posts %d", len(posts))
+	if len(posts) != 1 || len(takes) != 1 {
+		t.Fatalf("stops %d takes %d", len(posts), len(takes))
 	}
-	sawStop, sawTake := false, false
-	for _, post := range posts {
-		if post.Get("algoType") != "CONDITIONAL" || post.Get("side") != "BUY" || post.Get("positionSide") != "SHORT" || post.Get("closePosition") != "true" || post.Get("workingType") != "MARK_PRICE" {
-			t.Fatalf("params %#v", post)
-		}
-		if post.Get("quantity") != "" || post.Get("reduceOnly") != "" {
-			t.Fatalf("quantity %#v", post)
-		}
-		switch post.Get("type") {
-		case "STOP_MARKET":
-			sawStop = true
-			if post.Get("triggerPrice") != "0.08590" {
-				t.Fatalf("stop tick %#v", post)
-			}
-		case "TAKE_PROFIT_MARKET":
-			sawTake = true
-			if post.Get("triggerPrice") != "0.08401" {
-				t.Fatalf("take tick %#v", post)
-			}
-		default:
-			t.Fatalf("type %#v", post)
-		}
+	stop := posts[0]
+	if stop.Get("algoType") != "CONDITIONAL" || stop.Get("type") != "STOP_MARKET" || stop.Get("side") != "BUY" || stop.Get("positionSide") != "SHORT" || stop.Get("closePosition") != "true" || stop.Get("workingType") != "MARK_PRICE" {
+		t.Fatalf("stop %#v", stop)
 	}
-	if !sawStop || !sawTake {
-		t.Fatalf("stop %v take %v", sawStop, sawTake)
+	if stop.Get("quantity") != "" || stop.Get("reduceOnly") != "" || stop.Get("triggerPrice") != "0.08590" {
+		t.Fatalf("stop tick %#v", stop)
+	}
+	take := takes[0]
+	if take.Get("type") != "LIMIT" || take.Get("timeInForce") != "GTX" || take.Get("side") != "BUY" || take.Get("positionSide") != "SHORT" || take.Get("reduceOnly") != "" || take.Get("closePosition") != "" {
+		t.Fatalf("take %#v", take)
+	}
+	if take.Get("price") != "0.08401" || take.Get("quantity") != "399" {
+		t.Fatalf("take tick %#v", take)
 	}
 }
 

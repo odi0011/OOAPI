@@ -44,6 +44,12 @@ type USDMClient struct {
 	brackets map[string][]LeverageBracket
 	dual     *bool
 	readOnly bool
+	fees     map[string]commissionQuote
+}
+
+type commissionQuote struct {
+	maker float64
+	taker float64
 }
 
 func NewUSDMTestnet() *USDMClient {
@@ -266,13 +272,21 @@ func (c *USDMClient) PlaceProtection(req Protection) error {
 	if err != nil {
 		return err
 	}
-	// 价格、方向、closePosition 都对得上的那一腿直接沿用，避免刚挂上的单还没出现在列表里时再挂一套。
-	// 触发价差超过一个 tick 的旧单先撤再挂，止盈留下的止损不能套到新仓上。
+	// 止损仍是 closePosition 的 STOP_MARKET，部分止盈之后剩下的数量也由它盖住。
+	// 止盈改成 GTX 限价，数量等于当时的持仓量。GTX 被拒或挂不上都算止盈没挂上，调用方重试，不能只留止损。
 	ackedStop, err := c.ensureLeg(req.Symbol, exit, posSide, "STOP_MARKET", stop, rules.TickSize, raw.tickRaw, open)
 	if err != nil {
 		return err
 	}
-	ackedTake, err := c.ensureLeg(req.Symbol, exit, posSide, "TAKE_PROFIT_MARKET", take, rules.TickSize, raw.tickRaw, open)
+	qty := AlignQuantity(pos.Qty, rules.StepSize, rules.MinQty)
+	if qty <= 0 {
+		return invalid("持仓数量无法按步长挂止盈")
+	}
+	limits, err := c.openOrders(req.Symbol)
+	if err != nil {
+		return err
+	}
+	ackedTake, err := c.ensureMakerTake(req.Symbol, exit, posSide, take, qty, rules, raw, limits)
 	if err != nil {
 		return err
 	}
@@ -314,9 +328,9 @@ const protectionConfirmWait = 2 * time.Second
 // protectionConfirmGap 是两次复查 openAlgoOrders 的间隔。
 const protectionConfirmGap = 200 * time.Millisecond
 
-// confirmProtection 先等挂单响应，再读 openAlgoOrders。
-// 列表会晚于回执出现。两边都拿到了 algoId 时，空列表不算失败，也不再补单。
-// 列表里的单必须触发价仍在一个 tick 内，旧价的止损不能把确认提前放行。
+// confirmProtection 先等挂单响应，再读 openAlgoOrders 和 openOrders。
+// 列表会晚于回执出现。止损和止盈都拿到回执时，空列表不算失败，也不再补单。
+// 止损必须仍是 closePosition，止盈必须是同一价格的 GTX 限价。只有止损不算挂上。
 func (c *USDMClient) confirmProtection(symbol, exit, posSide string, stop, take, tick float64, ackedStop, ackedTake bool) error {
 	deadline := time.Now().Add(protectionConfirmWait)
 	for {
@@ -324,8 +338,12 @@ func (c *USDMClient) confirmProtection(symbol, exit, posSide string, stop, take,
 		if err != nil {
 			return err
 		}
+		limits, err := c.openOrders(symbol)
+		if err != nil {
+			return err
+		}
 		hasStop := hasMatchingLeg(open, symbol, exit, posSide, "STOP_MARKET", stop, tick)
-		hasTake := hasMatchingLeg(open, symbol, exit, posSide, "TAKE_PROFIT_MARKET", take, tick)
+		hasTake := hasMakerTake(limits, symbol, exit, posSide, take, tick)
 		if hasStop && hasTake {
 			return nil
 		}
@@ -337,6 +355,106 @@ func (c *USDMClient) confirmProtection(symbol, exit, posSide string, stop, take,
 		}
 		time.Sleep(protectionConfirmGap)
 	}
+}
+
+// ensureMakerTake 复用价格和剩余数量都对得上的 GTX 限价止盈。
+// 对不上的先撤再挂。GTX 会立刻吃单时币安直接拒绝，这里把错误交回去，不改成市价。
+func (c *USDMClient) ensureMakerTake(symbol, exit, posSide string, price, qty float64, rules MarketRules, raw symbolRules, open []bookOrder) (bool, error) {
+	kept := false
+	for _, order := range open {
+		if !makerTakeMatches(order, symbol, exit, posSide) {
+			continue
+		}
+		if !kept && takeFits(order, price, rules.TickSize, qty, rules.StepSize) {
+			kept = true
+			continue
+		}
+		if err := c.cancelOrder(symbol, order.OrderID); err != nil {
+			return false, err
+		}
+	}
+	if kept {
+		return true, nil
+	}
+	id, err := c.placeMakerTake(symbol, exit, posSide, price, qty, raw)
+	if err != nil {
+		return false, err
+	}
+	if id <= 0 {
+		return false, invalid("止盈单没有返回 orderId")
+	}
+	return true, nil
+}
+
+func (c *USDMClient) placeMakerTake(symbol, exit, posSide string, price, qty float64, raw symbolRules) (int64, error) {
+	params := url.Values{}
+	params.Set("symbol", symbol)
+	params.Set("side", exit)
+	params.Set("type", "LIMIT")
+	params.Set("timeInForce", "GTX")
+	params.Set("quantity", formatStep(qty, raw.StepSize, raw.stepRaw))
+	params.Set("price", formatStep(price, 0, raw.tickRaw))
+	params.Set("newOrderRespType", "RESULT")
+	if posSide != "" {
+		params.Set("positionSide", posSide)
+	} else {
+		params.Set("reduceOnly", "true")
+	}
+	body, err := c.signed(http.MethodPost, "/fapi/v1/order", params)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := decodeOrder(body)
+	if err != nil {
+		return 0, err
+	}
+	if resp.OrderID <= 0 {
+		return 0, invalid("止盈单没有返回 orderId")
+	}
+	return resp.OrderID, nil
+}
+
+func hasMakerTake(orders []bookOrder, symbol, exit, posSide string, price, tick float64) bool {
+	for _, order := range orders {
+		if makerTakeMatches(order, symbol, exit, posSide) && priceWithinTick(order.Price, price, tick) {
+			return true
+		}
+	}
+	return false
+}
+
+func makerTakeMatches(order bookOrder, symbol, exit, posSide string) bool {
+	if order.Symbol != "" && symbol != "" && !strings.EqualFold(order.Symbol, symbol) {
+		return false
+	}
+	if !strings.EqualFold(order.Type, "LIMIT") || !strings.EqualFold(order.TimeInForce, "GTX") {
+		return false
+	}
+	if exit != "" && order.Side != "" && !strings.EqualFold(order.Side, exit) {
+		return false
+	}
+	if posSide != "" {
+		return strings.EqualFold(order.PositionSide, posSide)
+	}
+	if order.PositionSide != "" && !strings.EqualFold(order.PositionSide, "BOTH") {
+		return false
+	}
+	return order.ReduceOnly
+}
+
+func takeFits(order bookOrder, price, tick, qty, step float64) bool {
+	if !priceWithinTick(order.Price, price, tick) {
+		return false
+	}
+	return qtyWithinStep(order.remaining(), qty, step)
+}
+
+func qtyWithinStep(got, want, step float64) bool {
+	slack := step
+	if slack <= 0 {
+		slack = 1e-8
+	}
+	return math.Abs(got-want) <= slack+1e-8
 }
 
 func hasMatchingLeg(orders []algoOrder, symbol, exit, posSide, orderType string, price, tick float64) bool {
@@ -624,7 +742,175 @@ func (c *USDMClient) CancelProtective(symbol string, side Side) ([]int64, error)
 		}
 		canceled = append(canceled, order.AlgoID)
 	}
+	limits, err := c.openOrders(symbol)
+	if err != nil {
+		return canceled, err
+	}
+	exit := oppositeSide(side)
+	for _, order := range limits {
+		if !makerTakeMatches(order, symbol, exit, posSide) || order.OrderID == 0 {
+			continue
+		}
+		if err := c.cancelOrder(symbol, order.OrderID); err != nil {
+			return canceled, err
+		}
+		canceled = append(canceled, order.OrderID)
+	}
 	return canceled, nil
+}
+
+type bookOrder struct {
+	OrderID      int64
+	Symbol       string
+	Side         string
+	PositionSide string
+	Type         string
+	TimeInForce  string
+	Price        float64
+	OrigQty      float64
+	ExecutedQty  float64
+	ReduceOnly   bool
+}
+
+func (o bookOrder) remaining() float64 {
+	rem := o.OrigQty - o.ExecutedQty
+	if rem < 0 {
+		return 0
+	}
+	return rem
+}
+
+func (c *USDMClient) openOrders(symbol string) ([]bookOrder, error) {
+	body, err := c.signed(http.MethodGet, "/fapi/v1/openOrders", url.Values{"symbol": {symbol}})
+	if err != nil {
+		return nil, err
+	}
+	rows, err := parseBookOrders(body)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]bookOrder, 0, len(rows))
+	for _, row := range rows {
+		if row.Symbol != "" && symbol != "" && !strings.EqualFold(row.Symbol, symbol) {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+type rawBookOrder struct {
+	OrderID      flexNum  `json:"orderId"`
+	Symbol       string   `json:"symbol"`
+	Side         string   `json:"side"`
+	PositionSide string   `json:"positionSide"`
+	Type         string   `json:"type"`
+	TimeInForce  string   `json:"timeInForce"`
+	Price        flexNum  `json:"price"`
+	OrigQty      flexNum  `json:"origQty"`
+	ExecutedQty  flexNum  `json:"executedQty"`
+	ReduceOnly   flexBool `json:"reduceOnly"`
+}
+
+func parseBookOrders(body []byte) ([]bookOrder, error) {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 || string(body) == "null" {
+		return nil, nil
+	}
+	var raw []rawBookOrder
+	if body[0] == '{' {
+		var wrap struct {
+			Orders []rawBookOrder `json:"orders"`
+		}
+		if err := json.Unmarshal(body, &wrap); err != nil {
+			return nil, err
+		}
+		raw = wrap.Orders
+	} else if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, err
+	}
+	out := make([]bookOrder, 0, len(raw))
+	for _, row := range raw {
+		out = append(out, bookOrder{
+			OrderID:      int64(row.OrderID),
+			Symbol:       strings.ToUpper(strings.TrimSpace(row.Symbol)),
+			Side:         strings.ToUpper(strings.TrimSpace(row.Side)),
+			PositionSide: strings.ToUpper(strings.TrimSpace(row.PositionSide)),
+			Type:         strings.ToUpper(strings.TrimSpace(row.Type)),
+			TimeInForce:  strings.ToUpper(strings.TrimSpace(row.TimeInForce)),
+			Price:        float64(row.Price),
+			OrigQty:      float64(row.OrigQty),
+			ExecutedQty:  float64(row.ExecutedQty),
+			ReduceOnly:   bool(row.ReduceOnly),
+		})
+	}
+	return out, nil
+}
+
+func (c *USDMClient) cancelOrder(symbol string, id int64) error {
+	if id == 0 {
+		return invalid("止盈单缺少 orderId")
+	}
+	_, err := c.signed(http.MethodDelete, "/fapi/v1/order", url.Values{
+		"symbol":  {symbol},
+		"orderId": {strconv.FormatInt(id, 10)},
+	})
+	if err != nil && !errors.Is(err, errNoOpenOrder) {
+		return err
+	}
+	return nil
+}
+
+// CommissionRates 读取该合约的 maker/taker。成功后缓存在客户端上。
+func (c *USDMClient) CommissionRates(symbol string) (float64, float64, error) {
+	if err := c.guard(); err != nil {
+		return 0, 0, err
+	}
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return 0, 0, invalid("缺少交易对")
+	}
+	c.mu.Lock()
+	if c.fees != nil {
+		if row, ok := c.fees[symbol]; ok {
+			c.mu.Unlock()
+			return row.maker, row.taker, nil
+		}
+	}
+	c.mu.Unlock()
+	body, err := c.signed(http.MethodGet, "/fapi/v1/commissionRate", url.Values{"symbol": {symbol}})
+	if err != nil {
+		return 0, 0, err
+	}
+	maker, taker, err := parseCommissionRates(body)
+	if err != nil {
+		return 0, 0, err
+	}
+	c.mu.Lock()
+	if c.fees == nil {
+		c.fees = map[string]commissionQuote{}
+	}
+	c.fees[symbol] = commissionQuote{maker: maker, taker: taker}
+	c.mu.Unlock()
+	return maker, taker, nil
+}
+
+func parseCommissionRates(body []byte) (float64, float64, error) {
+	var resp struct {
+		Maker *flexNum `json:"makerCommissionRate"`
+		Taker *flexNum `json:"takerCommissionRate"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return 0, 0, errors.New("手续费数据无法解析")
+	}
+	if resp.Maker == nil || resp.Taker == nil {
+		return 0, 0, invalid("手续费回报缺少 commissionRate")
+	}
+	maker, taker := float64(*resp.Maker), float64(*resp.Taker)
+	if maker < 0 || taker < 0 || maker > 0.05 || taker > 0.05 {
+		return 0, 0, invalid("手续费回报不合理")
+	}
+	return maker, taker, nil
 }
 
 func protectiveAlgo(kind string) bool {
@@ -789,8 +1075,8 @@ func parseUserTrades(body []byte) ([]userTrade, error) {
 	return out, nil
 }
 
-// conditional 把止损或止盈挂到 Algo Order。
-// 测网对经典 POST /fapi/v1/order 的 STOP_MARKET、TAKE_PROFIT_MARKET 返回 -4120。
+// conditional 把止损挂到 Algo Order。止盈不走这里，改用 GTX 限价。
+// 测网对经典 POST /fapi/v1/order 的 STOP_MARKET 返回 -4120。
 // closePosition 会平掉整个仓位，不能和 quantity、reduceOnly 一起发。
 func (c *USDMClient) conditional(symbol, side, posSide, orderType string, price float64, tickRaw string) (int64, error) {
 	params := url.Values{}

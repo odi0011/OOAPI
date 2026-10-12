@@ -587,7 +587,7 @@ func TestBoostForceSkipsBacktestGateWhenGamble(t *testing.T) {
 	eng.cfg.GambleMode = true
 	eng.cfg.ScalpTpPct = 0.001
 	eng.cfg.ScalpSlPct = 0.003
-	in := passingStep(now, candles, price, 0.1)
+	in := passingStep(now, candles, price, 0.95)
 	in.Backtest.Trades = 1
 	in.Backtest.NetR = -1
 	in.LivePeerIDs = []int64{8}
@@ -638,7 +638,7 @@ func TestBoostForceStillRejectsStopBeyondLiquidation(t *testing.T) {
 	eng.cfg.Leverage = MaxLeverage
 	eng.cfg.ScalpSlPct = 0.2
 	eng.cfg.ScalpTpPct = DefaultScalpPct
-	in := passingStep(now, candles, price, 0.2)
+	in := passingStep(now, candles, price, 0.99)
 	in.Backtest.Trades = 1
 	in.Backtest.NetR = -1
 	in.LivePeerIDs = []int64{9}

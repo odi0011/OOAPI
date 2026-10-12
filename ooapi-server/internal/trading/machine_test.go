@@ -82,6 +82,18 @@ func TestErrorDoesNotAutoReopen(t *testing.T) {
 	}
 }
 
+func TestEntryRejectedReturnsToArmed(t *testing.T) {
+	m := NewMachine()
+	mustMove(t, m, Event{Kind: EventStartOK}, StateArmed)
+	mustMove(t, m, Event{Kind: EventEntrySignal}, StateEntrySubmitted)
+	mustMove(t, m, Event{Kind: EventEntryRejected, Reason: ReasonInsufficientMargin}, StateArmed)
+	if m.Reason != ReasonInsufficientMargin {
+		t.Fatalf("reason %s", m.Reason)
+	}
+	mustMove(t, m, Event{Kind: EventEntrySignal}, StateEntrySubmitted)
+	mustMove(t, m, Event{Kind: EventFail, Reason: "rejected"}, StateError)
+}
+
 func TestIllegalTransitionLeavesState(t *testing.T) {
 	m := NewMachine()
 	err := m.Transition(Event{Kind: EventEntryFilled})
