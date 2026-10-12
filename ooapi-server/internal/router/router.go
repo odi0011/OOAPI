@@ -131,6 +131,8 @@ func Setup(cfg *config.Config) *gin.Engine {
 			strategies.DELETE("/:id", handlers.DeleteTradingStrategy)
 		}
 
+		user.GET("/trading/backtest", middleware.RequirePermission(authz.PermOptionEdit), handlers.GetTradingBacktest)
+
 		engineAPI := user.Group("/trading/engine", middleware.RequirePermission(authz.PermOptionEdit))
 		{
 			engineAPI.GET("/state", handlers.GetTradingEngineState)

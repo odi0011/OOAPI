@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 )
 
@@ -22,10 +23,11 @@ type stdLog struct{}
 
 func (stdLog) Printf(format string, args ...any) { log.Printf(format, args...) }
 
-// Candle 是一根已收盘的 5 分钟 K 线。信号只用收盘价。
+// Candle 是一根已收盘 K 线。信号用收盘价；trend 模式还看成交量。
 type Candle struct {
 	OpenTime time.Time `json:"openTime"`
 	Close    float64   `json:"close"`
+	Volume   float64   `json:"volume,omitempty"`
 }
 
 // StartInput 是启动时能看到的账户与市场环境。
@@ -44,6 +46,18 @@ type StepInput struct {
 	FundingRate    float64
 	LiqDistancePct float64
 	EquityUSDT     float64
+	// Higher 是已经收盘的高周期 K 线（trend 模式用 15m）。
+	Higher []Candle `json:"higherCandles,omitempty"`
+	// MinNotional 来自交易所 filters。0 时用默认 5 USDT 做预检，真正下单仍走 Rules。
+	MinNotional float64 `json:"-"`
+	// Backtest 是最近一次回测。有值且低于策略 minWinRate 时不开新仓。
+	Backtest *BacktestSummary `json:"-"`
+	// SkipReason 由 Hub 在共享锁里算完组合约束后填入，只拦截开仓。
+	SkipReason string `json:"-"`
+	// Wallet / Available 是同一把密钥的账户余额。WalletKnown 为真才参与停机和仓位上限。
+	Wallet      float64 `json:"-"`
+	Available   float64 `json:"-"`
+	WalletKnown bool    `json:"-"`
 }
 
 // Snapshot 是对外展示的运行状态。
@@ -57,14 +71,17 @@ type Snapshot struct {
 	Qty             float64 `json:"qty,omitempty"`
 	DayRealized     float64 `json:"dayRealizedUsdt"`
 	// CumulativeRealized 与当日盈亏同一来源，日切后当日归零、累计保留。没有会话时为 0，不另造数。
-	CumulativeRealized float64 `json:"cumulativeRealizedUsdt"`
-	Halted             bool    `json:"halted"`
-	LastError          string  `json:"lastError,omitempty"`
-	Mode               string  `json:"mode"`
-	TestnetGreen       bool    `json:"testnetGreen"`
-	Running            bool    `json:"running"`
-	LastAction         string  `json:"lastAction,omitempty"`
-	LastReason         string  `json:"lastReason,omitempty"`
+	CumulativeRealized float64          `json:"cumulativeRealizedUsdt"`
+	Halted             bool             `json:"halted"`
+	LastError          string           `json:"lastError,omitempty"`
+	Mode               string           `json:"mode"`
+	TestnetGreen       bool             `json:"testnetGreen"`
+	Running            bool             `json:"running"`
+	LastAction         string           `json:"lastAction,omitempty"`
+	LastReason         string           `json:"lastReason,omitempty"`
+	MarkPrice          float64          `json:"markPrice,omitempty"`
+	UnrealizedPnl      float64          `json:"unrealizedPnl,omitempty"`
+	LastBacktest       *BacktestSummary `json:"lastBacktest,omitempty"`
 }
 
 // Runtime 是可以跨进程恢复的风险状态。不保存持仓，避免重启后自动重开。
@@ -90,25 +107,27 @@ type position struct {
 
 // Engine 把信号、风控和状态机串起来。调用方一次只推进一个线程。
 type Engine struct {
-	cfg         Config
-	ex          Exchange
-	log         Logger
-	m           *Machine
-	ledger      Ledger
-	pos         position
-	running     bool
-	lastError   string
-	lastAction  string
-	lastReason  string
-	lastEntry   float64
-	lastStop    float64
-	lastLiq     float64
-	lastBarKey  string
-	rFraction   float64
-	minNotional float64
-	audit       []string
-	secrets     SecretOpener
-	secretOpens int
+	cfg          Config
+	ex           Exchange
+	log          Logger
+	m            *Machine
+	ledger       Ledger
+	pos          position
+	running      bool
+	lastError    string
+	lastAction   string
+	lastReason   string
+	lastEntry    float64
+	lastStop     float64
+	lastLiq      float64
+	lastBarKey   string
+	lastMark     float64
+	lastBacktest *BacktestSummary
+	rFraction    float64
+	minNotional  float64
+	audit        []string
+	secrets      SecretOpener
+	secretOpens  int
 }
 
 func NewEngine(cfg Config, ex Exchange, logger Logger) *Engine {
@@ -178,6 +197,9 @@ func (e *Engine) Snapshot() Snapshot {
 		Running:            e.running,
 		LastAction:         e.lastAction,
 		LastReason:         e.lastReason,
+		MarkPrice:          e.lastMark,
+		UnrealizedPnl:      e.unrealized(e.lastMark),
+		LastBacktest:       e.lastBacktest,
 	}
 }
 
@@ -396,6 +418,12 @@ func (e *Engine) Step(in StepInput) (Snapshot, error) {
 	if e.State() == StateError {
 		return e.Snapshot(), ErrNoAutoReopen
 	}
+	if in.Backtest != nil {
+		e.rememberBacktest(*in.Backtest)
+	}
+	if price := mark(in); price > 0 {
+		e.lastMark = price
+	}
 	now := at(in.Now)
 	if in.EquityUSDT > 0 {
 		e.ledger.Roll(now, in.EquityUSDT)
@@ -440,19 +468,40 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 		}
 		return e.Snapshot(), withReason(ErrBlocked, reason)
 	}
-	cross, err := e.cross(in.Candles)
+	// 同一根已收盘 K 线只决定一次开仓。平仓检查不走这里，止损止盈仍会在持仓步里触发。
+	if key := barKey(in.Candles); key != "" && key == e.lastBarKey {
+		return e.Snapshot(), nil
+	}
+	if !e.running {
+		return e.Snapshot(), ErrNotRunning
+	}
+	side, signal, err := e.entrySide(in)
 	if err != nil {
 		return e.failed(err.Error())
 	}
-	if cross == CrossNone {
-		e.note("none", "no cross")
+	if side == "" {
+		e.note("none", signal)
 		return e.Snapshot(), nil
 	}
-	if key := barKey(in.Candles); key != "" && key == e.lastBarKey {
-		e.note("none", "same bar")
+	if in.SkipReason != "" {
+		e.note("skip", in.SkipReason)
 		return e.Snapshot(), nil
 	}
-	side := SideForCross(cross)
+	floor := e.floorNotional(in)
+	if e.cfg.Leverage > 0 && e.cfg.MaxMarginUsdt*float64(e.cfg.Leverage)+1e-9 < floor {
+		e.note("skip", ReasonBelowMinNotional)
+		return e.Snapshot(), nil
+	}
+	if e.cfg.MinWinRate > 0 {
+		sum := in.Backtest
+		if sum == nil {
+			sum = e.lastBacktest
+		}
+		if sum == nil || sum.WinRate+1e-12 < e.cfg.MinWinRate {
+			e.note("skip", ReasonWinRateBelow)
+			return e.Snapshot(), nil
+		}
+	}
 	price := mark(in)
 	if price <= 0 {
 		return e.failed("mark price is required")
@@ -460,9 +509,8 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 	qty, err := e.entryQty(price)
 	if err != nil {
 		if errors.Is(err, ErrNotionalBelowMin) {
-			e.note("blocked", "notional_below_minimum")
-			_ = e.m.Transition(Event{Kind: EventStartBlocked, Reason: "notional_below_minimum"})
-			return e.Snapshot(), err
+			e.note("skip", ReasonBelowMinNotional)
+			return e.Snapshot(), nil
 		}
 		return e.Snapshot(), err
 	}
@@ -476,7 +524,7 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 	if err := e.authorize(); err != nil {
 		return e.Snapshot(), err
 	}
-	if err := e.m.Transition(Event{Kind: EventEntrySignal, Reason: string(cross)}); err != nil {
+	if err := e.m.Transition(Event{Kind: EventEntrySignal, Reason: signal}); err != nil {
 		return e.Snapshot(), err
 	}
 	fill, err := e.ex.PlaceEntry(EntryOrder{
@@ -658,6 +706,7 @@ func (e *Engine) finishExit(in StepInput, reason string, price ...float64) (Snap
 	if err := e.m.Transition(Event{Kind: EventBooked, Reason: reason}); err != nil {
 		return e.Snapshot(), err
 	}
+	e.markBar(in)
 	e.note("exit", reason)
 	if e.running {
 		if err := e.m.Transition(Event{Kind: EventStartOK, Reason: "rearm"}); err != nil {
@@ -814,6 +863,46 @@ func (e *Engine) entryQty(price float64) (float64, error) {
 	return qty, nil
 }
 
+func (e *Engine) entrySide(in StepInput) (Side, string, error) {
+	return entrySide(e.cfg, in.Candles, in.Higher)
+}
+
+func (e *Engine) floorNotional(in StepInput) float64 {
+	if in.MinNotional > 0 {
+		return in.MinNotional
+	}
+	if e.minNotional > 0 {
+		return e.minNotional
+	}
+	return MinNotionalUSDT
+}
+
+func (e *Engine) rememberBacktest(sum BacktestSummary) {
+	copied := sum
+	e.lastBacktest = &copied
+}
+
+func (e *Engine) markBar(in StepInput) {
+	if key := barKey(in.Candles); key != "" {
+		e.lastBarKey = key
+	}
+}
+
+func (e *Engine) unrealized(mark float64) float64 {
+	if e.pos.Qty <= 0 || e.pos.Entry <= 0 || mark <= 0 || e.pos.Side == "" {
+		return 0
+	}
+	return RealizedPnL(e.pos.Side, e.pos.Entry, mark, e.pos.Qty)
+}
+
+// marginInUse 是当前持仓占用的保证金。Hub 在共享锁里汇总同一密钥下的仓位。
+func (e *Engine) marginInUse() float64 {
+	if e == nil || !e.Busy() || e.pos.Qty <= 0 || e.pos.Entry <= 0 || e.cfg.Leverage < 1 {
+		return 0
+	}
+	return e.pos.Qty * e.pos.Entry / float64(e.cfg.Leverage)
+}
+
 func (e *Engine) cross(candles []Candle) (Cross, error) {
 	closes := make([]float64, len(candles))
 	for i, c := range candles {
@@ -840,9 +929,8 @@ func mark(in StepInput) float64 {
 }
 
 func barKey(candles []Candle) string {
-	if len(candles) == 0 {
+	if len(candles) == 0 || candles[len(candles)-1].OpenTime.IsZero() {
 		return ""
 	}
-	last := candles[len(candles)-1]
-	return fmt.Sprintf("%d|%d|%.8f", len(candles), last.OpenTime.UTC().UnixNano(), last.Close)
+	return strconv.FormatInt(candles[len(candles)-1].OpenTime.UTC().UnixNano(), 10)
 }

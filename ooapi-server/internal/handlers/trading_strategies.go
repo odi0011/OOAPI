@@ -17,7 +17,8 @@ import (
 // symbol, leverage, marginMode, emaFast, emaSlow, timeframe,
 // stopR, takeProfitR, dailyLossPct, maxMarginUsdt, exchangeKeyId, mode.
 //
-// 省略的字段在创建时用首发默认值。v1 只接受 XRPUSDT、逐仓、杠杆不超过 trading.MaxLeverage。
+// 省略的字段在创建时用首发默认值。交易对是 USDT 永续，逐仓，杠杆不超过 trading.MaxLeverage。
+// entryMode 新建默认 trend；库列默认 cross，已有行不会被迁移改掉。
 // mode=live 允许写入，并在响应里警告：运行时必须测网全绿，由策略引擎强制，本接口不下单。
 
 const (
@@ -44,13 +45,15 @@ var strategyTimeframes = map[string]struct{}{
 const strategySelectCols = `
 s.id, s.symbol, s.leverage, s.margin_mode, s.ema_fast, s.ema_slow, s.timeframe,
 s.stop_r, s.take_profit_r, s.daily_loss_pct, s.max_margin_usdt, s.exchange_key_id, s.mode,
+s.entry_mode, s.min_score, s.min_win_rate, s.running,
 s.created_at, s.updated_at, k.network, k.status, k.label`
 
 const strategyInsertSQL = `
 INSERT INTO trading_strategies (
 	user_id, symbol, leverage, margin_mode, ema_fast, ema_slow, timeframe,
-	stop_r, take_profit_r, daily_loss_pct, max_margin_usdt, exchange_key_id, mode
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	stop_r, take_profit_r, daily_loss_pct, max_margin_usdt, exchange_key_id, mode,
+	entry_mode, min_score, min_win_rate, running
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const strategyListSQL = `
 SELECT ` + strategySelectCols + `
@@ -69,8 +72,19 @@ const strategyUpdateSQL = `
 UPDATE trading_strategies
 SET symbol = ?, leverage = ?, margin_mode = ?, ema_fast = ?, ema_slow = ?, timeframe = ?,
 	stop_r = ?, take_profit_r = ?, daily_loss_pct = ?, max_margin_usdt = ?,
-	exchange_key_id = ?, mode = ?
+	exchange_key_id = ?, mode = ?, entry_mode = ?, min_score = ?, min_win_rate = ?
 WHERE id = ? AND user_id = ?`
+
+const strategyRunningSQL = `
+UPDATE trading_strategies SET running = ? WHERE id = ? AND user_id = ?`
+
+const strategyRunningByIDSQL = `
+UPDATE trading_strategies SET running = ? WHERE id = ?`
+
+const strategyRunningDupSQL = `
+SELECT s.id FROM trading_strategies s
+WHERE s.user_id = ? AND s.exchange_key_id = ? AND s.symbol = ? AND s.running = 1 AND s.id <> ?
+LIMIT 1`
 
 const strategyDeleteSQL = `
 DELETE FROM trading_strategies WHERE id = ? AND user_id = ?`
@@ -88,6 +102,9 @@ type strategyWrite struct {
 	MaxMarginUsdt *float64 `json:"maxMarginUsdt"`
 	ExchangeKeyID *int64   `json:"exchangeKeyId"`
 	Mode          *string  `json:"mode"`
+	EntryMode     *string  `json:"entryMode"`
+	MinScore      *int     `json:"minScore"`
+	MinWinRate    *float64 `json:"minWinRate"`
 }
 
 type strategyRecord struct {
@@ -103,6 +120,10 @@ type strategyRecord struct {
 	MaxMarginUsdt float64
 	ExchangeKeyID int64
 	Mode          string
+	EntryMode     string
+	MinScore      int
+	MinWinRate    float64
+	Running       bool
 }
 
 type strategyView struct {
@@ -119,6 +140,10 @@ type strategyView struct {
 	MaxMarginUsdt      float64  `json:"maxMarginUsdt"`
 	ExchangeKeyID      int64    `json:"exchangeKeyId"`
 	Mode               string   `json:"mode"`
+	EntryMode          string   `json:"entryMode"`
+	MinScore           int      `json:"minScore"`
+	MinWinRate         float64  `json:"minWinRate"`
+	Running            bool     `json:"running"`
 	ExchangeKeyActive  bool     `json:"exchangeKeyActive"`
 	ExchangeKeyNetwork string   `json:"exchangeKeyNetwork,omitempty"`
 	Warnings           []string `json:"warnings"`
@@ -149,6 +174,9 @@ func defaultStrategy() strategyRecord {
 		DailyLossPct:  defaultDailyLossPct,
 		MaxMarginUsdt: defaultMaxMarginUsdt,
 		Mode:          networkTestnet,
+		EntryMode:     trading.EntryModeTrend,
+		MinScore:      trading.DefaultMinScore,
+		MinWinRate:    trading.DefaultMinWinRate,
 	}
 }
 
@@ -168,6 +196,10 @@ func (row strategyRow) view() strategyView {
 		MaxMarginUsdt:      rec.MaxMarginUsdt,
 		ExchangeKeyID:      rec.ExchangeKeyID,
 		Mode:               rec.Mode,
+		EntryMode:          rec.EntryMode,
+		MinScore:           rec.MinScore,
+		MinWinRate:         rec.MinWinRate,
+		Running:            rec.Running,
 		ExchangeKeyActive:  row.ExchangeKeyActive,
 		ExchangeKeyNetwork: row.ExchangeKeyNetwork,
 		Warnings:           strategyWarnings(rec.Mode, row.ExchangeKeyNetwork, row.ExchangeKeyActive),
@@ -264,9 +296,17 @@ func CreateTradingStrategy(c *gin.Context) {
 		writeTradingError(c, fieldErr)
 		return
 	}
+	if taken, fieldErr := runningSymbolTaken(user.ID, rec.ExchangeKeyID, rec.Symbol, 0); fieldErr != nil {
+		writeTradingError(c, fieldErr)
+		return
+	} else if taken {
+		fail(c, http.StatusConflict, "同一交易所密钥下该交易对已有运行中的策略", "symbol_in_use")
+		return
+	}
 	res, err := exec(strategyInsertSQL,
 		user.ID, rec.Symbol, rec.Leverage, rec.MarginMode, rec.EmaFast, rec.EmaSlow, rec.Timeframe,
 		rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
+		rec.EntryMode, rec.MinScore, rec.MinWinRate, 0,
 	)
 	if err != nil {
 		log.Printf("[trading] 写入策略失败: %v", err)
@@ -322,9 +362,17 @@ func UpdateTradingStrategy(c *gin.Context) {
 		writeTradingError(c, fieldErr)
 		return
 	}
+	if taken, fieldErr := runningSymbolTaken(user.ID, rec.ExchangeKeyID, rec.Symbol, id); fieldErr != nil {
+		writeTradingError(c, fieldErr)
+		return
+	} else if taken {
+		fail(c, http.StatusConflict, "同一交易所密钥下该交易对已有运行中的策略", "symbol_in_use")
+		return
+	}
 	res, err := exec(strategyUpdateSQL,
 		rec.Symbol, rec.Leverage, rec.MarginMode, rec.EmaFast, rec.EmaSlow, rec.Timeframe,
 		rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
+		rec.EntryMode, rec.MinScore, rec.MinWinRate,
 		id, user.ID,
 	)
 	if err != nil {
@@ -368,6 +416,7 @@ func DeleteTradingStrategy(c *gin.Context) {
 		fail(c, http.StatusNotFound, "策略不存在", "not_found")
 		return
 	}
+	stopStrategyRunner(id)
 	log.Printf("[trading] 用户 %s 删除策略 id=%d", user.Username, id)
 	ok(c, gin.H{"id": id, "deleted": true})
 }
@@ -383,11 +432,14 @@ func scanStrategy(s scanner) (strategyRow, error) {
 		status  sql.NullInt64
 		label   sql.NullString
 	)
+	var running int
 	err := s.Scan(
 		&row.ID, &row.Record.Symbol, &row.Record.Leverage, &row.Record.MarginMode,
 		&row.Record.EmaFast, &row.Record.EmaSlow, &row.Record.Timeframe,
 		&row.Record.StopR, &row.Record.TakeProfitR, &row.Record.DailyLossPct, &row.Record.MaxMarginUsdt,
-		&row.Record.ExchangeKeyID, &row.Record.Mode, &row.CreatedAt, &row.UpdatedAt,
+		&row.Record.ExchangeKeyID, &row.Record.Mode,
+		&row.Record.EntryMode, &row.Record.MinScore, &row.Record.MinWinRate, &running,
+		&row.CreatedAt, &row.UpdatedAt,
 		&network, &status, &label,
 	)
 	if err != nil {
@@ -400,7 +452,38 @@ func scanStrategy(s scanner) (strategyRow, error) {
 		row.ExchangeKeyLabel = label.String
 	}
 	row.ExchangeKeyActive = status.Valid && status.Int64 == exchangeKeyActive
+	row.Record.Running = running == 1
 	return row, nil
+}
+
+func setStrategyRunning(id, userID int64, running bool) error {
+	flag := 0
+	if running {
+		flag = 1
+	}
+	if userID > 0 {
+		_, err := exec(strategyRunningSQL, flag, id, userID)
+		return err
+	}
+	_, err := exec(strategyRunningByIDSQL, flag, id)
+	return err
+}
+
+func runningSymbolTaken(userID, keyID int64, symbol string, exceptID int64) (bool, *tradingError) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if trading.DefaultHub().SymbolRunning(keyID, symbol, exceptID) {
+		return true, nil
+	}
+	var id int64
+	err := queryRow(strategyRunningDupSQL, userID, keyID, symbol, exceptID).Scan(&id)
+	if isNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		log.Printf("[trading] 检查重复交易对失败: %v", err)
+		return false, &tradingError{http.StatusInternalServerError, "检查策略失败", "server_error"}
+	}
+	return id > 0, nil
 }
 
 func ensureSelectableKey(userID, keyID int64) *tradingError {
@@ -461,6 +544,15 @@ func applyStrategyWrite(base strategyRecord, in strategyWrite, creating bool) (s
 	if in.Mode != nil {
 		out.Mode = strings.ToLower(strings.TrimSpace(*in.Mode))
 	}
+	if in.EntryMode != nil {
+		out.EntryMode = strings.ToLower(strings.TrimSpace(*in.EntryMode))
+	}
+	if in.MinScore != nil {
+		out.MinScore = *in.MinScore
+	}
+	if in.MinWinRate != nil {
+		out.MinWinRate = round4(*in.MinWinRate)
+	}
 	if err := validateStrategy(out, creating && in.ExchangeKeyID == nil); err != nil {
 		return strategyRecord{}, err
 	}
@@ -497,6 +589,15 @@ func validateStrategy(rec strategyRecord, missingKey bool) *tradingError {
 	}
 	if missingKey || rec.ExchangeKeyID <= 0 {
 		return &tradingError{http.StatusBadRequest, "请先绑定一把未作废的交易所密钥", "exchange_key_required"}
+	}
+	if rec.EntryMode != trading.EntryModeCross && rec.EntryMode != trading.EntryModeTrend {
+		return &tradingError{http.StatusBadRequest, "entryMode 只能是 cross 或 trend", "invalid_entry_mode"}
+	}
+	if rec.MinScore < 1 || rec.MinScore > trading.DefaultMinScore {
+		return &tradingError{http.StatusBadRequest, "minScore 要在 1 到 4 之间", "invalid_score"}
+	}
+	if rec.MinWinRate < 0 || rec.MinWinRate > 1 {
+		return &tradingError{http.StatusBadRequest, "minWinRate 要在 0 到 1 之间", "invalid_win_rate"}
 	}
 	return nil
 }

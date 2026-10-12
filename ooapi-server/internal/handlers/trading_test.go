@@ -369,6 +369,58 @@ func TestExchangeSecretOpenerAcceptsMatchingLiveKey(t *testing.T) {
 	}
 }
 
+func TestRunningXRPRejectsSecondStrategy(t *testing.T) {
+	useTradingDB(t)
+	trading.ResetForTest()
+	t.Cleanup(trading.ResetForTest)
+	owner := tradingUser(31)
+	keyRec := callTrading(t, CreateExchangeKey, http.MethodPost, "/api/trading/exchange-keys", `{
+		"label": "测网",
+		"network": "testnet",
+		"apiKey": "`+testAPIKey+`",
+		"apiSecret": "`+testAPISecret+`"
+	}`, owner, "")
+	keyID := int64(tradingData(t, keyRec)["id"].(float64))
+	first := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+		fmt.Sprintf(`{"exchangeKeyId": %d, "entryMode": "trend"}`, keyID), owner, "")
+	if first.Code != http.StatusOK || tradingData(t, first)["entryMode"] != "trend" || tradingData(t, first)["symbol"] != "XRPUSDT" {
+		t.Fatalf("create = %d %s", first.Code, first.Body.String())
+	}
+	firstID := int64(tradingData(t, first)["id"].(float64))
+	second := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+		fmt.Sprintf(`{"exchangeKeyId": %d, "entryMode": "cross"}`, keyID), owner, "")
+	if second.Code != http.StatusOK || tradingData(t, second)["entryMode"] != "cross" {
+		t.Fatalf("second = %d %s", second.Code, second.Body.String())
+	}
+	secondID := int64(tradingData(t, second)["id"].(float64))
+	started := callTrading(t, StartTradingEngine, http.MethodPost, "/api/trading/engine/start", fmt.Sprintf(`{
+		"strategyId": %d,
+		"equityUsdt": 20,
+		"fundingRate": 0.0001,
+		"now": "2026-10-12T00:00:00Z"
+	}`, firstID), owner, "")
+	if started.Code != http.StatusOK || tradingData(t, started)["running"] != true {
+		t.Fatalf("start = %d %s", started.Code, started.Body.String())
+	}
+	dupStart := callTrading(t, StartTradingEngine, http.MethodPost, "/api/trading/engine/start", fmt.Sprintf(`{
+		"strategyId": %d,
+		"equityUsdt": 20
+	}`, secondID), owner, "")
+	if dupStart.Code != http.StatusConflict || tradingCode(t, dupStart) != "symbol_in_use" {
+		t.Fatalf("second start = %d %s", dupStart.Code, dupStart.Body.String())
+	}
+	dup := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+		fmt.Sprintf(`{"exchangeKeyId": %d}`, keyID), owner, "")
+	if dup.Code != http.StatusConflict || tradingCode(t, dup) != "symbol_in_use" {
+		t.Fatalf("dup create = %d %s", dup.Code, dup.Body.String())
+	}
+	other := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+		fmt.Sprintf(`{"exchangeKeyId": %d, "symbol": "DOGEUSDT"}`, keyID), owner, "")
+	if other.Code != http.StatusBadRequest || tradingCode(t, other) != "invalid_symbol" {
+		t.Fatalf("other symbol = %d %s", other.Code, other.Body.String())
+	}
+}
+
 func assertStrategyDefaults(t *testing.T, view map[string]any) {
 	t.Helper()
 	checks := []struct {
@@ -386,6 +438,9 @@ func assertStrategyDefaults(t *testing.T, view map[string]any) {
 		{"dailyLossPct", float64(defaultDailyLossPct)},
 		{"maxMarginUsdt", defaultMaxMarginUsdt},
 		{"mode", networkTestnet},
+		{"entryMode", trading.EntryModeTrend},
+		{"minScore", float64(trading.DefaultMinScore)},
+		{"minWinRate", trading.DefaultMinWinRate},
 	}
 	for _, check := range checks {
 		got := view[check.key]
@@ -675,15 +730,18 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 				StopR: tradingArgFloat(vals[7]), TakeProfitR: tradingArgFloat(vals[8]),
 				DailyLossPct: tradingArgFloat(vals[9]), MaxMarginUsdt: tradingArgFloat(vals[10]),
 				ExchangeKeyID: tradingArgInt(vals[11]), Mode: tradingArgString(vals[12]),
+				EntryMode: tradingArgString(vals[13]), MinScore: int(tradingArgInt(vals[14])),
+				MinWinRate: tradingArgFloat(vals[15]), Running: tradingArgInt(vals[16]) == 1,
 			},
 		}
 		return tradingTestResult{id, 1}, nil
 	case normTradingSQL(strategyUpdateSQL):
-		id, userID := tradingArgInt(vals[12]), tradingArgInt(vals[13])
+		id, userID := tradingArgInt(vals[15]), tradingArgInt(vals[16])
 		row := d.strategies[id]
 		if row == nil || row.userID != userID {
 			return tradingTestResult{0, 0}, nil
 		}
+		running := row.rec.Running
 		row.rec = strategyRecord{
 			Symbol: tradingArgString(vals[0]), Leverage: int(tradingArgInt(vals[1])),
 			MarginMode: tradingArgString(vals[2]), EmaFast: int(tradingArgInt(vals[3])),
@@ -691,7 +749,27 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 			StopR: tradingArgFloat(vals[6]), TakeProfitR: tradingArgFloat(vals[7]),
 			DailyLossPct: tradingArgFloat(vals[8]), MaxMarginUsdt: tradingArgFloat(vals[9]),
 			ExchangeKeyID: tradingArgInt(vals[10]), Mode: tradingArgString(vals[11]),
+			EntryMode: tradingArgString(vals[12]), MinScore: int(tradingArgInt(vals[13])),
+			MinWinRate: tradingArgFloat(vals[14]), Running: running,
 		}
+		row.updatedAt = d.stampLocked()
+		return tradingTestResult{0, 1}, nil
+	case normTradingSQL(strategyRunningSQL):
+		id, userID := tradingArgInt(vals[1]), tradingArgInt(vals[2])
+		row := d.strategies[id]
+		if row == nil || row.userID != userID {
+			return tradingTestResult{0, 0}, nil
+		}
+		row.rec.Running = tradingArgInt(vals[0]) == 1
+		row.updatedAt = d.stampLocked()
+		return tradingTestResult{0, 1}, nil
+	case normTradingSQL(strategyRunningByIDSQL):
+		id := tradingArgInt(vals[1])
+		row := d.strategies[id]
+		if row == nil {
+			return tradingTestResult{0, 0}, nil
+		}
+		row.rec.Running = tradingArgInt(vals[0]) == 1
 		row.updatedAt = d.stampLocked()
 		return tradingTestResult{0, 1}, nil
 	case normTradingSQL(strategyDeleteSQL):
@@ -723,6 +801,8 @@ func (c *tradingTestConn) QueryContext(_ context.Context, q string, args []drive
 		return d.strategyRows(tradingArgInt(vals[0]), 0), nil
 	case normTradingSQL(strategyByIDSQL):
 		return d.strategyRows(tradingArgInt(vals[1]), tradingArgInt(vals[0])), nil
+	case normTradingSQL(strategyRunningDupSQL):
+		return d.runningDup(tradingArgInt(vals[0]), tradingArgInt(vals[1]), tradingArgString(vals[2]), tradingArgInt(vals[3])), nil
 	default:
 		return nil, fmt.Errorf("unexpected query: %s", normTradingSQL(q))
 	}
@@ -777,6 +857,7 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 	cols := []string{
 		"id", "symbol", "leverage", "margin_mode", "ema_fast", "ema_slow", "timeframe",
 		"stop_r", "take_profit_r", "daily_loss_pct", "max_margin_usdt", "exchange_key_id", "mode",
+		"entry_mode", "min_score", "min_win_rate", "running",
 		"created_at", "updated_at", "network", "status", "label",
 	}
 	type pair struct {
@@ -807,11 +888,29 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 			label = key.label
 		}
 		rec := row.rec
+		running := int64(0)
+		if rec.Running {
+			running = 1
+		}
 		values = append(values, []driver.Value{
 			row.id, rec.Symbol, int64(rec.Leverage), rec.MarginMode, int64(rec.EmaFast), int64(rec.EmaSlow), rec.Timeframe,
 			rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
+			rec.EntryMode, int64(rec.MinScore), rec.MinWinRate, running,
 			row.createdAt, row.updatedAt, network, status, label,
 		})
+	}
+	return &tradingTestRows{columns: cols, values: values}
+}
+
+func (d *tradingTestDriver) runningDup(userID, keyID int64, symbol string, exceptID int64) driver.Rows {
+	cols := []string{"id"}
+	var values [][]driver.Value
+	for _, row := range d.strategies {
+		if row.userID != userID || row.rec.ExchangeKeyID != keyID || row.rec.Symbol != symbol || !row.rec.Running || row.id == exceptID {
+			continue
+		}
+		values = append(values, []driver.Value{row.id})
+		break
 	}
 	return &tradingTestRows{columns: cols, values: values}
 }
