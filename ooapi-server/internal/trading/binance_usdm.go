@@ -489,6 +489,16 @@ func (c *USDMClient) AccountPositions() ([]KeyPosition, error) {
 }
 
 func (c *USDMClient) Position(symbol string) (Position, error) {
+	return c.position(symbol, "")
+}
+
+// PositionSide 只看 symbol 上这一个持仓方向。双向持仓里另一边还有数量时，本边归零也是空仓。
+// positionAmt 同时接受字符串和数字。双向持仓的空单数量可以是正数，方向看 positionSide。
+func (c *USDMClient) PositionSide(symbol string, side Side) (Position, error) {
+	return c.position(symbol, side)
+}
+
+func (c *USDMClient) position(symbol string, want Side) (Position, error) {
 	if err := c.guard(); err != nil {
 		return Position{}, err
 	}
@@ -496,41 +506,232 @@ func (c *USDMClient) Position(symbol string) (Position, error) {
 	if err != nil {
 		return Position{}, err
 	}
-	var rows []struct {
-		Symbol       string `json:"symbol"`
-		PositionAmt  string `json:"positionAmt"`
-		EntryPrice   string `json:"entryPrice"`
-		PositionSide string `json:"positionSide"`
-	}
-	if err := json.Unmarshal(body, &rows); err != nil {
+	rows, err := decodeRiskRows(body)
+	if err != nil {
 		return Position{}, err
 	}
-	for _, row := range rows {
-		if row.Symbol != "" && !strings.EqualFold(row.Symbol, symbol) {
+	return positionFromRisk(symbol, want, rows), nil
+}
+
+// positionFromRisk 从 positionRisk 里挑出要看的那一行。
+// want 为空时沿用旧行为：返回该合约第一笔非零持仓。
+// want 有方向时只认这一边。单向持仓的 positionSide 是 BOTH，空单数量为负；双向持仓用 LONG/SHORT，数量经常是绝对值。
+func positionFromRisk(symbol string, want Side, rows []riskRow) Position {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	var chosen *riskRow
+	for i := range rows {
+		row := &rows[i]
+		if row.Symbol != "" && symbol != "" && !strings.EqualFold(row.Symbol, symbol) {
 			continue
 		}
-		amt, err := strconv.ParseFloat(row.PositionAmt, 64)
-		if err != nil || amt == 0 {
+		if !riskRowMatchesSide(row, want) {
 			continue
 		}
-		entry, _ := strconv.ParseFloat(row.EntryPrice, 64)
-		side := SideLong
-		switch strings.ToUpper(row.PositionSide) {
-		case "SHORT":
-			side = SideShort
-		case "LONG":
-			side = SideLong
-		default:
-			if amt < 0 {
-				side = SideShort
+		if want == "" && float64(row.PositionAmt) == 0 {
+			continue
+		}
+		chosen = row
+		break
+	}
+	if chosen == nil {
+		return Position{}
+	}
+	amt := float64(chosen.PositionAmt)
+	if amt == 0 {
+		return Position{}
+	}
+	side := sideFromRisk(chosen.PositionSide, amt)
+	if want != "" && side != want {
+		return Position{}
+	}
+	if amt < 0 {
+		amt = -amt
+	}
+	return Position{Open: true, Side: side, Qty: amt, Entry: float64(chosen.EntryPrice)}
+}
+
+func riskRowMatchesSide(row *riskRow, want Side) bool {
+	if row == nil || want == "" {
+		return row != nil
+	}
+	ps := strings.ToUpper(strings.TrimSpace(row.PositionSide))
+	amt := float64(row.PositionAmt)
+	switch want {
+	case SideShort:
+		if ps == "SHORT" {
+			return true
+		}
+		if ps == "LONG" {
+			return false
+		}
+		return amt <= 0
+	case SideLong:
+		if ps == "LONG" {
+			return true
+		}
+		if ps == "SHORT" {
+			return false
+		}
+		return amt >= 0
+	default:
+		return true
+	}
+}
+
+func sideFromRisk(positionSide string, amt float64) Side {
+	switch strings.ToUpper(strings.TrimSpace(positionSide)) {
+	case "SHORT":
+		return SideShort
+	case "LONG":
+		return SideLong
+	default:
+		if amt < 0 {
+			return SideShort
+		}
+		return SideLong
+	}
+}
+
+// CancelProtective 撤掉该合约、该持仓方向上还挂着的止损和止盈条件单。
+// 双向持仓只撤 positionSide 对得上的那一腿，避免拆掉另一边的保护单。
+// 单向持仓的条件单没有 LONG/SHORT，撤该合约上全部保护单。
+func (c *USDMClient) CancelProtective(symbol string, side Side) ([]int64, error) {
+	if err := c.guard(); err != nil {
+		return nil, err
+	}
+	orders, err := c.openAlgoOrders(symbol)
+	if err != nil {
+		return nil, err
+	}
+	hedge, err := c.hedge()
+	if err != nil {
+		return nil, err
+	}
+	posSide := ""
+	if hedge {
+		posSide = positionSide(side)
+	}
+	var canceled []int64
+	for _, order := range orders {
+		if !protectiveAlgo(order.kind()) {
+			continue
+		}
+		if posSide != "" && !strings.EqualFold(order.PositionSide, posSide) {
+			continue
+		}
+		if order.AlgoID == 0 {
+			continue
+		}
+		if err := c.cancelAlgo(order.AlgoID); err != nil {
+			return canceled, err
+		}
+		canceled = append(canceled, order.AlgoID)
+	}
+	return canceled, nil
+}
+
+func protectiveAlgo(kind string) bool {
+	switch kind {
+	case "STOP_MARKET", "TAKE_PROFIT_MARKET", "STOP", "TAKE_PROFIT":
+		return true
+	default:
+		return false
+	}
+}
+
+// ClosingFill 把开仓之后、平掉这一方向的成交合成一个出场价和数量。
+// 空单的平仓成交是 BUY，多单是 SELL。开仓那一笔已实现盈亏为 0，不拿来当出场价。
+func (c *USDMClient) ClosingFill(symbol string, side Side, since, now time.Time) (price, qty float64, ok bool, err error) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	since = since.UTC()
+	now = now.UTC()
+	if symbol == "" || since.IsZero() {
+		return 0, 0, false, invalid("缺少成交起点")
+	}
+	if now.Before(since) {
+		now = since
+	}
+	q := url.Values{}
+	q.Set("symbol", symbol)
+	q.Set("startTime", strconv.FormatInt(since.UnixMilli(), 10))
+	q.Set("endTime", strconv.FormatInt(now.UnixMilli(), 10))
+	q.Set("limit", "1000")
+	body, err := c.signed(http.MethodGet, "/fapi/v1/userTrades", q)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	trades, err := parseUserTrades(body)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	wantPos := positionSide(side)
+	wantOrder := oppositeSide(side)
+	var qtySum, quote float64
+	for _, tr := range trades {
+		if tr.Symbol != "" && !strings.EqualFold(tr.Symbol, symbol) {
+			continue
+		}
+		if tr.Time.Before(since) || tr.Time.After(now) {
+			continue
+		}
+		ps := strings.ToUpper(strings.TrimSpace(tr.PositionSide))
+		if ps == "LONG" || ps == "SHORT" {
+			if ps != wantPos {
+				continue
 			}
 		}
-		if amt < 0 {
-			amt = -amt
+		if !strings.EqualFold(tr.Side, wantOrder) {
+			continue
 		}
-		return Position{Open: true, Side: side, Qty: amt, Entry: entry}, nil
+		if tr.Qty <= 0 || tr.Price <= 0 {
+			continue
+		}
+		qtySum += tr.Qty
+		quote += tr.Price * tr.Qty
 	}
-	return Position{}, nil
+	if qtySum <= 0 {
+		return 0, 0, false, nil
+	}
+	return quote / qtySum, qtySum, true, nil
+}
+
+type userTrade struct {
+	Symbol       string
+	Side         string
+	PositionSide string
+	Price        float64
+	Qty          float64
+	Time         time.Time
+}
+
+func parseUserTrades(body []byte) ([]userTrade, error) {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 || string(body) == "null" {
+		return nil, nil
+	}
+	var raw []struct {
+		Symbol       string  `json:"symbol"`
+		Side         string  `json:"side"`
+		PositionSide string  `json:"positionSide"`
+		Price        flexNum `json:"price"`
+		Qty          flexNum `json:"qty"`
+		Time         flexNum `json:"time"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, errors.New("成交数据无法解析")
+	}
+	out := make([]userTrade, 0, len(raw))
+	for _, row := range raw {
+		out = append(out, userTrade{
+			Symbol:       strings.ToUpper(strings.TrimSpace(row.Symbol)),
+			Side:         strings.ToUpper(strings.TrimSpace(row.Side)),
+			PositionSide: strings.ToUpper(strings.TrimSpace(row.PositionSide)),
+			Price:        float64(row.Price),
+			Qty:          float64(row.Qty),
+			Time:         time.UnixMilli(int64(row.Time)).UTC(),
+		})
+	}
+	return out, nil
 }
 
 // conditional 把止损或止盈挂到 Algo Order。

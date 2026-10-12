@@ -995,6 +995,23 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 		rec.OneRUSDT = tradingArgFloat(vals[13])
 		d.entries = append(d.entries, storedEntry{id: id, rec: rec})
 		return tradingTestResult{id, 1}, nil
+	case normTradingSQL(entryCloseSQL):
+		id := tradingArgInt(vals[5])
+		userID := tradingArgInt(vals[6])
+		strategyID := tradingArgInt(vals[7])
+		for i := range d.entries {
+			rec := &d.entries[i].rec
+			if d.entries[i].id != id || rec.UserID != userID || rec.StrategyID != strategyID || !rec.ClosedAt.IsZero() {
+				continue
+			}
+			rec.ExitPrice = tradingArgFloat(vals[0])
+			rec.ExitQty = tradingArgFloat(vals[1])
+			rec.RealizedUSDT = tradingArgFloat(vals[2])
+			rec.ExitReason = tradingArgString(vals[3])
+			rec.ClosedAt = tradingArgTime(vals[4])
+			return tradingTestResult{0, 1}, nil
+		}
+		return tradingTestResult{0, 0}, nil
 	default:
 		return nil, fmt.Errorf("unexpected exec: %s", normTradingSQL(q))
 	}
@@ -1137,7 +1154,7 @@ func (d *tradingTestDriver) entryRows(userID, strategyID int64, limit int) drive
 	cols := []string{
 		"id", "user_id", "strategy_id", "symbol", "side", "score", "min_score", "boost", "forced",
 		"win_rate", "trade_count", "net_r", "expectancy_r", "expectancy_usdt", "one_r_usdt",
-		"entry_price", "qty", "opened_at",
+		"entry_price", "qty", "opened_at", "exit_price", "exit_qty", "realized_usdt", "exit_reason", "closed_at",
 	}
 	rows := append([]storedEntry(nil), d.entries...)
 	for i := 0; i < len(rows); i++ {
@@ -1160,11 +1177,16 @@ func (d *tradingTestDriver) entryRows(userID, strategyID int64, limit int) drive
 		if rec.Forced {
 			forced = 1
 		}
+		var closed any
+		if !rec.ClosedAt.IsZero() {
+			closed = rec.ClosedAt
+		}
 		values = append(values, []driver.Value{
 			row.id, rec.UserID, rec.StrategyID, rec.Symbol, rec.Side,
 			int64(rec.Score), int64(rec.MinScore), boost, forced,
 			rec.WinRate, int64(rec.Trades), rec.NetR, rec.ExpectancyR, rec.ExpectancyUSDT, rec.OneRUSDT,
 			rec.EntryPrice, rec.Qty, rec.OpenedAt,
+			rec.ExitPrice, rec.ExitQty, rec.RealizedUSDT, rec.ExitReason, closed,
 		})
 		if limit > 0 && len(values) >= limit {
 			break

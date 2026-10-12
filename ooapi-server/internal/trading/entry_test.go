@@ -93,7 +93,7 @@ func TestEntryHistoryDoesNotDuplicateALiveEvent(t *testing.T) {
 		UserID: 1, StrategyID: 2, Symbol: "XRPUSDT", Side: "long", OpenedAt: opened,
 		EntryStamp: EntryStamp{Score: 4, MinScore: 4, WinRate: 0.5, Trades: 30, NetR: 3, ExpectancyR: 0.1},
 	}
-	if err := SaveEntry(rec); err != nil {
+	if _, err := SaveEntry(rec); err != nil {
 		t.Fatal(err)
 	}
 	AddEvent(rec.Event())

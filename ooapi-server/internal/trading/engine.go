@@ -114,12 +114,13 @@ type Runtime struct {
 }
 
 type position struct {
-	Side  Side
-	Qty   float64
-	Entry float64
-	Stop  float64
-	Take  float64
-	Liq   float64
+	Side     Side
+	Qty      float64
+	Entry    float64
+	Stop     float64
+	Take     float64
+	Liq      float64
+	OpenedAt time.Time
 }
 
 // entryDraft 是提交开仓时先记下的分数和回测。成交后才写成开仓记录。
@@ -156,6 +157,10 @@ type Engine struct {
 	justOpened   *EntryStamp
 	stepAt       time.Time
 	userID       int64
+	// openEntryID 是这笔持仓在 trading_entries 里的行。平仓时用它补上出场。
+	openEntryID int64
+	// closedSide 是刚平掉的方向。快照清掉持仓后，事件仍要写明是哪一边。
+	closedSide   Side
 	rFraction    float64
 	minNotional  float64
 	audit        []string
@@ -806,23 +811,23 @@ func (e *Engine) acceptFill(fill Fill) (Snapshot, error) {
 }
 
 func (e *Engine) stepPosition(in StepInput) (Snapshot, error) {
+	// 止盈条件单可以在两根 K 线之间成交。收盘时这里再核对一次。
+	// 调度器在持仓期间另外按 FlatReconcileInterval 调用 ReconcileFlat，
+	// 不把空仓发现推迟到下一根收盘。
 	if e.syncsPosition() {
 		if err := e.authorize(); err != nil {
 			return e.Snapshot(), err
 		}
-		pos, err := e.ex.Position(e.cfg.Symbol)
+		pos, err := e.livePosition()
 		if err != nil {
 			return e.Snapshot(), err
 		}
 		if !pos.Open {
-			return e.finishExit(in, "exchange_flat", mark(in))
+			return e.finishExchangeFlat(in)
 		}
 		e.pos.Qty = pos.Qty
 		if pos.Entry > 0 {
 			e.pos.Entry = pos.Entry
-		}
-		if pos.Side != "" {
-			e.pos.Side = pos.Side
 		}
 	}
 	price := mark(in)
@@ -1012,6 +1017,7 @@ func (e *Engine) fail(reason string) error {
 func (e *Engine) clearPos() {
 	e.pos = position{}
 	e.openEntry = nil
+	e.openEntryID = 0
 }
 
 func (e *Engine) rememberPlan(entry, stop, liq float64) {
@@ -1264,7 +1270,17 @@ func (e *Engine) clearStagedEntry() {
 
 // commitEntry 在保护单挂上之后写下开仓记录。写库失败不改变持仓。
 func (e *Engine) commitEntry(fill Fill) {
-	if e == nil || !e.pendingEntry.set {
+	if e == nil {
+		return
+	}
+	opened := e.stepAt
+	if opened.IsZero() {
+		opened = time.Now().UTC()
+	}
+	if e.pos.OpenedAt.IsZero() {
+		e.pos.OpenedAt = opened
+	}
+	if !e.pendingEntry.set {
 		return
 	}
 	draft := e.pendingEntry
@@ -1291,10 +1307,6 @@ func (e *Engine) commitEntry(fill Fill) {
 		stamp.Trades = 0
 		stamp.NetR = 0
 	}
-	opened := e.stepAt
-	if opened.IsZero() {
-		opened = time.Now().UTC()
-	}
 	e.openEntry = &stamp
 	copied := stamp
 	e.justOpened = &copied
@@ -1305,16 +1317,17 @@ func (e *Engine) commitEntry(fill Fill) {
 		}
 		e.note(action, fmt.Sprintf("score %d/%d", draft.score, draft.minScore))
 	}
-	_ = SaveEntry(EntryRecord{
+	id, _ := SaveEntry(EntryRecord{
 		UserID:     e.userID,
 		StrategyID: e.cfg.ID,
 		Symbol:     e.cfg.Symbol,
 		Side:       string(fill.Side),
 		EntryPrice: fill.Price,
 		Qty:        fill.Qty,
-		OpenedAt:   opened,
+		OpenedAt:   e.pos.OpenedAt,
 		EntryStamp: stamp,
 	})
+	e.openEntryID = id
 }
 
 func (e *Engine) markBar(in StepInput) {
@@ -1378,7 +1391,10 @@ func signalWinRate(in StepInput, last *BacktestSummary) float64 {
 
 func (e *Engine) recordTick(in StepInput, snap Snapshot, err error) {
 	side, score := "", 0
-	if got, sc, serr := ScoreTrend(e.cfg, in.Candles, in.Higher); serr == nil {
+	if e.closedSide != "" {
+		side = string(e.closedSide)
+		e.closedSide = ""
+	} else if got, sc, serr := ScoreTrend(e.cfg, in.Candles, in.Higher); serr == nil {
 		side, score = string(got), sc
 	}
 	if side == "" && snap.Side != "" {
