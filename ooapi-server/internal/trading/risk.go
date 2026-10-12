@@ -45,7 +45,7 @@ func SizePosition(maxMargin float64, leverage int, price, minNotional float64) (
 		return 0, 0, 0, invalid("保证金、价格和最小名义价值都必须大于 0")
 	}
 	if leverage < 1 || leverage > MaxLeverage {
-		return 0, 0, 0, invalid("杠杆必须是 1 到 3 的整数")
+		return 0, 0, 0, invalidLeverage()
 	}
 	margin = maxMargin
 	notional = margin * float64(leverage)
@@ -73,10 +73,70 @@ func AlignQuantity(qty, step, minQty float64) float64 {
 	return qty
 }
 
+// IsolatedLiqPrice 估算逐仓强平价。
+// 多单：entry * (1 - 1/leverage + maintMarginRate)
+// 空单：entry * (1 + 1/leverage - maintMarginRate)
+// maintMarginRate <= 0 时用 DefaultMaintMarginRate。
+func IsolatedLiqPrice(side Side, entry float64, leverage int, maintMarginRate float64) (float64, error) {
+	if entry <= 0 || leverage < 1 {
+		return 0, invalid("入场价和杠杆都必须大于 0")
+	}
+	if maintMarginRate <= 0 {
+		maintMarginRate = DefaultMaintMarginRate
+	}
+	if maintMarginRate >= 1 {
+		return 0, invalid("维持保证金率必须小于 1")
+	}
+	inv := 1 / float64(leverage)
+	var liq float64
+	switch side {
+	case SideLong:
+		liq = entry * (1 - inv + maintMarginRate)
+	case SideShort:
+		liq = entry * (1 + inv - maintMarginRate)
+	default:
+		return 0, invalid("持仓方向只能是 long 或 short")
+	}
+	if liq <= 0 {
+		return 0, invalid("强平价计算后不是正数")
+	}
+	return liq, nil
+}
+
+// StopWithinLiquidation 要求止损严格落在入场价和强平价之间，
+// 并且止损距离严格小于强平距离的 MaxStopToLiqFraction。
+func StopWithinLiquidation(side Side, entry, stop, liq float64) bool {
+	if entry <= 0 || stop <= 0 || liq <= 0 {
+		return false
+	}
+	var stopDist, liqDist float64
+	switch side {
+	case SideLong:
+		if !(liq < stop && stop < entry) {
+			return false
+		}
+		stopDist = entry - stop
+		liqDist = entry - liq
+	case SideShort:
+		if !(entry < stop && stop < liq) {
+			return false
+		}
+		stopDist = stop - entry
+		liqDist = liq - entry
+	default:
+		return false
+	}
+	if liqDist <= 0 {
+		return false
+	}
+	return stopDist < MaxStopToLiqFraction*liqDist
+}
+
 // DailyHaltBreached 判断当日净已实现盈亏是否触及日亏上限。
 // dailyLossPct 是百分数：4 表示资本的 4%。盈利会抵消亏损。
+// dailyLossPct >= DailyLossOffPct 时视为关闭停机，本函数返回 false，调用方仍会走到这里。
 func DailyHaltBreached(capital, realizedNet, dailyLossPct float64) bool {
-	if capital <= 0 || dailyLossPct <= 0 {
+	if capital <= 0 || dailyLossPct <= 0 || dailyLossPct >= DailyLossOffPct {
 		return false
 	}
 	loss := -realizedNet

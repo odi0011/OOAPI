@@ -61,8 +61,11 @@ func TestSizePositionRespectsMinNotional(t *testing.T) {
 	near(t, margin, 1.7)
 	near(t, notional, 5.1)
 	near(t, qty, 10.2)
-	if _, _, _, err := SizePosition(1.8, 4, 1, MinNotionalUSDT); err == nil {
-		t.Fatal("leverage above 3 must fail")
+	if _, _, _, err := SizePosition(1.8, MaxLeverage+1, 1, MinNotionalUSDT); err == nil {
+		t.Fatal("leverage above the cap must fail")
+	}
+	if _, notional, _, err := SizePosition(1.8, MaxLeverage, 1, MinNotionalUSDT); err != nil || notional != 1.8*float64(MaxLeverage) {
+		t.Fatalf("cap leverage notional=%v err=%v", notional, err)
 	}
 }
 
@@ -102,6 +105,67 @@ func TestLedgerResetsOnNextUTCDay(t *testing.T) {
 	}
 }
 
+func TestDailyHaltOffWhenPctIs100(t *testing.T) {
+	if DailyHaltBreached(2, -3, DailyLossOffPct) {
+		t.Fatal("100 disables the breaker even past a full loss")
+	}
+	if !DailyHaltBreached(2, -2, DailyLossOffPct-0.01) {
+		t.Fatal("just under 100 still halts")
+	}
+	var book Ledger
+	book.Roll(time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC), 2)
+	if book.Add(-3, DailyLossOffPct) || book.Halted {
+		t.Fatal("ledger must keep the path and not halt at 100")
+	}
+}
+
+func TestXRP20xStopVersusLiquidation(t *testing.T) {
+	const entry = 1.405
+	longLiq, err := IsolatedLiqPrice(SideLong, entry, 20, DefaultMaintMarginRate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shortLiq, err := IsolatedLiqPrice(SideShort, entry, 20, DefaultMaintMarginRate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	near(t, longLiq, entry*(1-1.0/20+DefaultMaintMarginRate))
+	near(t, shortLiq, entry*(1+1.0/20-DefaultMaintMarginRate))
+
+	oneR := entry * DefaultRFraction
+	stop, _, err := ProtectionPrices(SideLong, entry, oneR, DefaultStopR, DefaultTakeProfitR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	liqDist := entry - longLiq
+	stopDist := entry - stop
+	if !StopWithinLiquidation(SideLong, entry, stop, longLiq) {
+		t.Fatalf("1R stop %v liq %v should sit inside 80%% of %v", stop, longLiq, liqDist)
+	}
+	if !(stopDist < MaxStopToLiqFraction*liqDist) || stopDist/liqDist > 0.2 {
+		t.Fatalf("stopDist %v liqDist %v ratio %v", stopDist, liqDist, stopDist/liqDist)
+	}
+
+	edge := entry - MaxStopToLiqFraction*liqDist
+	if StopWithinLiquidation(SideLong, entry, edge, longLiq) {
+		t.Fatal("stop at 80% of liquidation distance must be refused")
+	}
+	if !StopWithinLiquidation(SideLong, entry, edge+1e-6, longLiq) {
+		t.Fatal("stop inside 80% of liquidation distance must pass")
+	}
+	if StopWithinLiquidation(SideLong, entry, longLiq, longLiq) {
+		t.Fatal("stop on the liquidation price must be refused")
+	}
+
+	shortStop, _, err := ProtectionPrices(SideShort, entry, oneR, DefaultStopR, DefaultTakeProfitR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !StopWithinLiquidation(SideShort, entry, shortStop, shortLiq) {
+		t.Fatalf("short stop %v liq %v", shortStop, shortLiq)
+	}
+}
+
 func TestStartBlockedFundingAndLiquidation(t *testing.T) {
 	if blocked, reason := StartBlocked(0.0001, -1); blocked {
 		t.Fatalf("calm market blocked: %s", reason)
@@ -126,9 +190,20 @@ func TestConfigRejectsUnlockedStrategy(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	cfg.Leverage = 4
+	cfg.Leverage = MaxLeverage
+	cfg.DailyLossPct = DailyLossOffPct
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Leverage = MaxLeverage + 1
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("leverage 4")
+		t.Fatal("leverage above cap")
+	}
+	cfg = DefaultConfig()
+	cfg.ExchangeKeyID = 1
+	cfg.DailyLossPct = DailyLossOffPct + 0.01
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("daily loss above 100")
 	}
 	cfg = DefaultConfig()
 	cfg.ExchangeKeyID = 1

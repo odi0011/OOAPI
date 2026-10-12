@@ -39,6 +39,7 @@ type USDMClient struct {
 	mu       sync.Mutex
 	creds    Credentials
 	rules    map[string]symbolRules
+	brackets map[string][]LeverageBracket
 	dual     *bool
 	readOnly bool
 }
@@ -94,6 +95,63 @@ func (c *USDMClient) acceptsNetwork(network string) bool {
 	}
 }
 
+// LeverageBracket 是已拉到的杠杆档位。InitialLeverage 是该档允许的最大杠杆。
+type LeverageBracket struct {
+	InitialLeverage int
+	MaintMarginRate float64
+}
+
+// StoreLeverageBrackets 记下已经拉到的档位。开仓前的强平估算会用它，没有记录时用默认维持保证金率。
+func (c *USDMClient) StoreLeverageBrackets(symbol string, rows []LeverageBracket) {
+	if c == nil {
+		return
+	}
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	copied := append([]LeverageBracket(nil), rows...)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.brackets == nil {
+		c.brackets = map[string][]LeverageBracket{}
+	}
+	c.brackets[symbol] = copied
+}
+
+// MaintMarginRate 返回已拉到的档位里，仍允许该杠杆的最紧一档的维持保证金率。
+// 没有档位时 ok 为 false，调用方改用 DefaultMaintMarginRate。
+func (c *USDMClient) MaintMarginRate(symbol string, leverage int) (float64, bool) {
+	if c == nil || leverage < 1 {
+		return 0, false
+	}
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	c.mu.Lock()
+	rows := append([]LeverageBracket(nil), c.brackets[symbol]...)
+	c.mu.Unlock()
+	if len(rows) == 0 {
+		return 0, false
+	}
+	best := -1
+	for i, row := range rows {
+		if row.MaintMarginRate <= 0 || row.InitialLeverage < leverage {
+			continue
+		}
+		if best < 0 || row.InitialLeverage < rows[best].InitialLeverage {
+			best = i
+		}
+	}
+	if best < 0 {
+		best = 0
+		for i, row := range rows {
+			if row.MaintMarginRate > rows[best].MaintMarginRate {
+				best = i
+			}
+		}
+	}
+	if rows[best].MaintMarginRate <= 0 {
+		return 0, false
+	}
+	return rows[best].MaintMarginRate, true
+}
+
 func (c *USDMClient) Rules(symbol string) (MarketRules, error) {
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
 	c.mu.Lock()
@@ -117,7 +175,7 @@ func (c *USDMClient) PlaceEntry(req EntryOrder) (Fill, error) {
 		return Fill{}, err
 	}
 	if req.MarginMode != MarginIsolated || req.Leverage < 1 || req.Leverage > MaxLeverage {
-		return Fill{}, invalid("测网只接受逐仓且杠杆不超过 3")
+		return Fill{}, invalid(fmt.Sprintf("测网只接受逐仓且杠杆不超过 %d", MaxLeverage))
 	}
 	if req.Side != SideLong && req.Side != SideShort {
 		return Fill{}, invalid("开仓方向只能是 long 或 short")
@@ -226,6 +284,7 @@ func (c *USDMClient) PlaceProtection(req Protection) error {
 		posSide = positionSide(side)
 	}
 	exit := oppositeSide(side)
+	// 止损和止盈都要确认挂上。任一张失败都把错误交回去，由引擎立刻用只减仓市价单平仓。
 	if err := c.conditional(req.Symbol, exit, posSide, "STOP_MARKET", stop, raw.tickRaw); err != nil {
 		return err
 	}

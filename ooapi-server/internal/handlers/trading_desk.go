@@ -29,6 +29,7 @@ var newDeskBook = trading.NewDeskBook
 type deskLevels struct {
 	EntryPrice      float64 `json:"entryPrice,omitempty"`
 	StopPrice       float64 `json:"stopPrice,omitempty"`
+	LiqPrice        float64 `json:"liqPrice,omitempty"`
 	TakeProfitPrice float64 `json:"takeProfitPrice,omitempty"`
 }
 
@@ -242,15 +243,17 @@ func deskPriceLevels(c *gin.Context, strategyID int64) *deskLevels {
 		return nil
 	}
 	inPos := snap.Qty > 0 || snap.State == trading.StateInPosition || snap.State == trading.StateExitSubmitted
-	if !inPos {
+	planned := snap.StopPrice > 0 || snap.LiqPrice > 0
+	if !inPos && !planned {
 		return nil
 	}
-	if snap.EntryPrice <= 0 && snap.StopPrice <= 0 && snap.TakeProfitPrice <= 0 {
+	if snap.EntryPrice <= 0 && snap.StopPrice <= 0 && snap.TakeProfitPrice <= 0 && snap.LiqPrice <= 0 {
 		return nil
 	}
 	return &deskLevels{
 		EntryPrice:      snap.EntryPrice,
 		StopPrice:       snap.StopPrice,
+		LiqPrice:        snap.LiqPrice,
 		TakeProfitPrice: snap.TakeProfitPrice,
 	}
 }

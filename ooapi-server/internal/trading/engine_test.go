@@ -2,6 +2,7 @@ package trading
 
 import (
 	"errors"
+	"math"
 	"testing"
 	"time"
 )
@@ -264,6 +265,142 @@ func TestNewExchangeReturnsLiveUSDMClientWhenGateOpens(t *testing.T) {
 	if NewUSDMTestnet().BaseURL() != BinanceUSDMTestnetBase {
 		t.Fatal("testnet base url")
 	}
+}
+
+func TestEngineOpens20xWhenStopSitsInsideLiquidation(t *testing.T) {
+	paper := NewPaper()
+	cfg := testConfig()
+	cfg.Leverage = MaxLeverage
+	cfg.DailyLossPct = DailyLossOffPct
+	eng := withSecrets(NewEngine(cfg, paper, DiscardLogger()))
+	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	if err := eng.Start(calmStart(now, 2)); err != nil {
+		t.Fatal(err)
+	}
+	candles := candlesUntil(t, CrossGolden)
+	price := candles[len(candles)-1].Close
+	snap, err := eng.Step(stepAt(now, candles, price, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.State != StateInPosition || snap.Side != SideLong || paper.Leverage != MaxLeverage || paper.MarginMode != MarginIsolated {
+		t.Fatalf("20x entry %+v leverage=%d margin=%s", snap, paper.Leverage, paper.MarginMode)
+	}
+	if snap.StopPrice <= 0 || snap.LiqPrice <= 0 || !(snap.LiqPrice < snap.StopPrice && snap.StopPrice < snap.EntryPrice) {
+		t.Fatalf("prices %+v", snap)
+	}
+	if !StopWithinLiquidation(SideLong, snap.EntryPrice, snap.StopPrice, snap.LiqPrice) {
+		t.Fatalf("guard let a bad stop through %+v", snap)
+	}
+	wantLiq := snap.EntryPrice * (1 - 1/float64(MaxLeverage) + DefaultMaintMarginRate)
+	if math.Abs(snap.LiqPrice-wantLiq) > 1e-9 {
+		t.Fatalf("liq %v want %v", snap.LiqPrice, wantLiq)
+	}
+}
+
+func TestEngineRefusesStopBeyondLiquidation(t *testing.T) {
+	paper := NewPaper()
+	cfg := testConfig()
+	cfg.Leverage = MaxLeverage
+	cfg.StopR = 20
+	eng := withSecrets(NewEngine(cfg, paper, DiscardLogger()))
+	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	if err := eng.Start(calmStart(now, 2)); err != nil {
+		t.Fatal(err)
+	}
+	candles := candlesUntil(t, CrossGolden)
+	snap, err := eng.Step(stepAt(now, candles, candles[len(candles)-1].Close, 2))
+	if !errors.Is(err, ErrBlocked) {
+		t.Fatal(err)
+	}
+	var reason *ReasonError
+	if !errors.As(err, &reason) || reason.Reason != ReasonStopBeyondLiquidation {
+		t.Fatalf("reason %#v err=%v", reason, err)
+	}
+	if snap.State != StateBlocked || snap.LastReason != ReasonStopBeyondLiquidation || paper.Entries != 0 || eng.SecretOpens() != 0 {
+		t.Fatalf("opened anyway %+v entries=%d opens=%d", snap, paper.Entries, eng.SecretOpens())
+	}
+	if snap.StopPrice <= 0 || snap.LiqPrice <= 0 || snap.EntryPrice <= 0 {
+		t.Fatalf("missing prices %+v", snap)
+	}
+	if StopWithinLiquidation(SideLong, snap.EntryPrice, snap.StopPrice, snap.LiqPrice) {
+		t.Fatalf("refused a stop that was inside liquidation %+v", snap)
+	}
+}
+
+func TestFetchedBracketTightensLiquidation(t *testing.T) {
+	paper := NewPaper()
+	ex := bracketPaper{Paper: paper, rate: 0.045}
+	cfg := testConfig()
+	cfg.Leverage = MaxLeverage
+	eng := withSecrets(NewEngine(cfg, ex, DiscardLogger()))
+	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	if err := eng.Start(calmStart(now, 2)); err != nil {
+		t.Fatal(err)
+	}
+	candles := candlesUntil(t, CrossGolden)
+	snap, err := eng.Step(stepAt(now, candles, candles[len(candles)-1].Close, 2))
+	if !errors.Is(err, ErrBlocked) || snap.LastReason != ReasonStopBeyondLiquidation || paper.Entries != 0 {
+		t.Fatalf("bracket rate should pull liquidation inside the stop: %+v err=%v entries=%d", snap, err, paper.Entries)
+	}
+	want := snap.EntryPrice * (1 - 1/float64(MaxLeverage) + ex.rate)
+	if math.Abs(snap.LiqPrice-want) > 1e-9 {
+		t.Fatalf("liq %v want %v", snap.LiqPrice, want)
+	}
+}
+
+type failProtect struct {
+	*Paper
+	closes int
+	reason string
+}
+
+func (f *failProtect) PlaceProtection(Protection) error {
+	return errors.New("take profit rejected")
+}
+
+func (f *failProtect) Close(req CloseOrder) (Fill, error) {
+	f.closes++
+	f.reason = req.Reason
+	return f.Paper.Close(req)
+}
+
+func TestProtectiveOrderFailureFlattens(t *testing.T) {
+	paper := NewPaper()
+	ex := &failProtect{Paper: paper}
+	eng := withSecrets(NewEngine(testConfig(), ex, DiscardLogger()))
+	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	if err := eng.Start(calmStart(now, 2)); err != nil {
+		t.Fatal(err)
+	}
+	candles := candlesUntil(t, CrossGolden)
+	snap, err := eng.Step(stepAt(now, candles, candles[len(candles)-1].Close, 2))
+	if !errors.Is(err, ErrNoAutoReopen) {
+		t.Fatal(err)
+	}
+	var reason *ReasonError
+	if !errors.As(err, &reason) || reason.Reason != ReasonProtectiveOrdersFailed {
+		t.Fatalf("reason %#v err=%v", reason, err)
+	}
+	pos, posErr := paper.Position(SymbolXRPUSDT)
+	if posErr != nil || pos.Open || ex.closes != 1 || ex.reason != ReasonProtectiveOrdersFailed {
+		t.Fatalf("flat=%v closes=%d reason=%s err=%v", pos, ex.closes, ex.reason, posErr)
+	}
+	if snap.State != StateError || snap.LastReason != ReasonProtectiveOrdersFailed || snap.StopPrice <= 0 || snap.LiqPrice <= 0 {
+		t.Fatalf("snap %+v", snap)
+	}
+}
+
+type bracketPaper struct {
+	*Paper
+	rate float64
+}
+
+func (b bracketPaper) MaintMarginRate(string, int) (float64, bool) {
+	if b.rate <= 0 {
+		return 0, false
+	}
+	return b.rate, true
 }
 
 func stepAt(now time.Time, candles []Candle, mark, equity float64) StepInput {
