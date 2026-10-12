@@ -113,9 +113,8 @@ func Setup(cfg *config.Config) *gin.Engine {
 		user.PUT("/token/:id", handlers.UpdateMyToken)
 		user.DELETE("/token/:id", handlers.DeleteMyToken)
 
-		// 自动交易配置。只存密钥与策略，不下单、不算信号。
-		// 交易所密钥是用户自己的资源，按 user_id 归属，口径对齐密钥管理。
-		// 策略是站点配置，走 option:edit（与前端壳同一道门），行仍归属当前用户。
+		// 自动交易。密钥按 user_id 归属；策略与引擎走 option:edit。
+		// 引擎读已有的策略和密钥，测网在内存撮合，实盘默认不下单。
 		user.GET("/trading/exchange-keys", handlers.ListExchangeKeys)
 		user.POST("/trading/exchange-keys", handlers.CreateExchangeKey)
 		user.POST("/trading/exchange-keys/:id/reveal", handlers.RevealExchangeKey)
@@ -129,6 +128,15 @@ func Setup(cfg *config.Config) *gin.Engine {
 			strategies.GET("/:id", handlers.GetTradingStrategy)
 			strategies.PATCH("/:id", handlers.UpdateTradingStrategy)
 			strategies.DELETE("/:id", handlers.DeleteTradingStrategy)
+		}
+
+		engineAPI := user.Group("/trading/engine", middleware.RequirePermission(authz.PermOptionEdit))
+		{
+			engineAPI.GET("/state", handlers.GetTradingEngineState)
+			engineAPI.POST("/start", handlers.StartTradingEngine)
+			engineAPI.POST("/stop", handlers.StopTradingEngine)
+			engineAPI.POST("/step", handlers.StepTradingEngine)
+			engineAPI.POST("/testnet-green", handlers.SetTradingTestnetGreen)
 		}
 
 		// 使用记录与操作日志：所有登录用户可访问。
