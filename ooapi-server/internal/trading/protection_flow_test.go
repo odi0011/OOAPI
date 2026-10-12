@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -33,6 +34,124 @@ func TestProtectionAckDoesNotDuplicateWhenListIsEmpty(t *testing.T) {
 	}
 	if fake.emptyAfterPlace != 0 {
 		t.Fatal("verification did not re-read open algo orders")
+	}
+}
+
+func TestStaleStopIsReplacedOnEntry(t *testing.T) {
+	fake := newBinanceFake(t, "0.1", "0.1", "0.0001", "5")
+	fake.algos = []fakeAlgo{{
+		id: 7, kind: "STOP_MARKET", side: "SELL", trigger: "0.5000", closePos: true,
+	}}
+	fake.algoSeq = 7
+	server := httptest.NewServer(fake)
+	defer server.Close()
+
+	client := NewUSDMClient(server.URL)
+	eng := NewEngine(testConfig(), client, DiscardLogger())
+	eng.SetSecrets(func() (Credentials, error) {
+		return Credentials{APIKey: fake.apiKey, APISecret: fake.secret, Network: ModeTestnet}, nil
+	})
+	now := time.Date(2026, 10, 12, 7, 0, 0, 0, time.UTC)
+	if err := eng.Start(calmStart(now, 2)); err != nil {
+		t.Fatal(err)
+	}
+	candles := candlesUntil(t, CrossGolden)
+	snap, err := eng.Step(stepAt(now, candles, candles[len(candles)-1].Close, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.State != StateInPosition || snap.Side != SideLong {
+		t.Fatalf("after entry %+v", snap)
+	}
+	if !StopWithinLiquidation(snap.Side, snap.EntryPrice, snap.StopPrice, snap.LiqPrice) {
+		t.Fatalf("new stop is not before liquidation %+v", snap)
+	}
+
+	canceled := false
+	newStop := ""
+	for _, call := range fake.snapshot() {
+		if call.method == http.MethodDelete && call.path == "/fapi/v1/algoOrder" && call.values.Get("algoId") == "7" {
+			canceled = true
+		}
+		if call.method == http.MethodPost && call.path == "/fapi/v1/algoOrder" && call.values.Get("type") == "STOP_MARKET" {
+			if !canceled {
+				t.Fatal("fresh stop was posted before the stale stop was canceled")
+			}
+			if call.values.Get("closePosition") != "true" || call.values.Get("side") != "SELL" {
+				t.Fatalf("fresh stop %#v", call.values)
+			}
+			newStop = call.values.Get("triggerPrice")
+		}
+	}
+	if newStop == "" || newStop == "0.5000" {
+		t.Fatalf("replacement trigger %q", newStop)
+	}
+	posted := parseNum(newStop)
+	if math.Abs(posted-0.5) <= parseNum(fake.tick) {
+		t.Fatalf("replacement trigger %s is still the stale price", newStop)
+	}
+	if math.Abs(posted-snap.StopPrice) > parseNum(fake.tick) {
+		t.Fatalf("posted %s engine stop %v", newStop, snap.StopPrice)
+	}
+	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET") != 1 {
+		t.Fatalf("protection posts stop=%d take=%d", fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET"), fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET"))
+	}
+	fake.mu.Lock()
+	var stops []fakeAlgo
+	for _, order := range fake.algos {
+		if order.kind == "STOP_MARKET" {
+			stops = append(stops, order)
+		}
+	}
+	fake.mu.Unlock()
+	if len(stops) != 1 || stops[0].id == 7 || stops[0].trigger != newStop || !stops[0].closePos {
+		t.Fatalf("open stops %+v", stops)
+	}
+
+	held, err := eng.Step(stepAt(now.Add(time.Minute), candles, snap.EntryPrice, 2))
+	if err != nil || held.State != StateInPosition {
+		t.Fatalf("hold %+v err=%v", held, err)
+	}
+	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET") != 1 {
+		t.Fatal("holding the new position placed a second protection set")
+	}
+}
+
+func TestStopWithinOneTickIsReused(t *testing.T) {
+	fake := newBinanceFake(t, "0.1", "0.1", "0.0001", "5")
+	fake.pos = 10
+	fake.entry = 1.5
+	tick := parseNum(fake.tick)
+	stop := roundToTick(1.4, tick)
+	fake.algos = []fakeAlgo{{
+		id: 3, kind: "STOP_MARKET", side: "SELL",
+		trigger: formatStep(stop+tick, 0, fake.tick), closePos: true,
+	}}
+	fake.algoSeq = 3
+	server := httptest.NewServer(fake)
+	defer server.Close()
+	client := NewUSDMClient(server.URL)
+	if err := client.UseCredentials(Credentials{APIKey: fake.apiKey, APISecret: fake.secret, Network: ModeTestnet}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.PlaceProtection(Protection{Symbol: SymbolXRPUSDT, Side: SideLong, Stop: stop, Take: 1.6}); err != nil {
+		t.Fatal(err)
+	}
+	if fake.count("DELETE", "/fapi/v1/algoOrder", "") != 0 {
+		t.Fatal("a stop within one tick was canceled")
+	}
+	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 0 || fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET") != 1 {
+		t.Fatalf("stop posts=%d take posts=%d", fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET"), fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET"))
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.algos) != 2 {
+		t.Fatalf("algos %+v", fake.algos)
+	}
+	for _, order := range fake.algos {
+		if order.kind == "STOP_MARKET" && order.id != 3 {
+			t.Fatalf("replacement stop %+v", order)
+		}
 	}
 }
 
@@ -128,7 +247,7 @@ func TestHedgeShortAlgoParamsRoundToTick(t *testing.T) {
 			}
 			items := make([]string, 0, len(posts))
 			for i, post := range posts {
-				items = append(items, `{"algoId":`+strconv.Itoa(i+1)+`,"symbol":"DOGEUSDT","orderType":"`+post.Get("type")+`","positionSide":"`+post.Get("positionSide")+`"}`)
+				items = append(items, `{"algoId":`+strconv.Itoa(i+1)+`,"symbol":"DOGEUSDT","orderType":"`+post.Get("type")+`","side":"`+post.Get("side")+`","positionSide":"`+post.Get("positionSide")+`","triggerPrice":"`+post.Get("triggerPrice")+`","closePosition":true}`)
 			}
 			_, _ = io.WriteString(w, `[`+strings.Join(items, ",")+`]`)
 		case "/fapi/v1/algoOrder":
