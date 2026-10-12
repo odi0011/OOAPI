@@ -90,6 +90,16 @@ func (h *Hub) Stop(userID, strategyID int64, in StepInput, secrets SecretOpener)
 	return eng.Snapshot(), err
 }
 
+// PutForTest 把一台引擎放进内存表，供交易台读取快照。只给测试用。
+func (h *Hub) PutForTest(userID, strategyID int64, eng *Engine) {
+	if h == nil || eng == nil {
+		return
+	}
+	h.mu.Lock()
+	h.engines[sessionKey(userID, strategyID)] = eng
+	h.mu.Unlock()
+}
+
 func (h *Hub) State(userID, strategyID int64) (Snapshot, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

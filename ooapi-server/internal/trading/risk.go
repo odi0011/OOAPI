@@ -102,11 +102,13 @@ func StartBlocked(fundingRate, liqDistancePct float64) (bool, string) {
 }
 
 // Ledger 记录一个 UTC 日的已实现盈亏。资本取当日第一次见到的权益。
+// Cumulative 是本会话累计已实现，日切只清零 Realized，不把历史盈亏抹掉。
 type Ledger struct {
-	Day      time.Time
-	Capital  float64
-	Realized float64
-	Halted   bool
+	Day        time.Time
+	Capital    float64
+	Realized   float64
+	Cumulative float64
+	Halted     bool
 }
 
 func utcDay(t time.Time) time.Time {
@@ -126,9 +128,10 @@ func (l *Ledger) Roll(now time.Time, equity float64) {
 	l.Halted = false
 }
 
-// Add 计入一笔已实现盈亏。返回值表示这次记账之后是否处于停机。
+// Add 计入一笔已实现盈亏。当日和累计一起加。返回值表示这次记账之后是否处于停机。
 func (l *Ledger) Add(pnl, dailyLossPct float64) bool {
 	l.Realized += pnl
+	l.Cumulative += pnl
 	if DailyHaltBreached(l.Capital, l.Realized, dailyLossPct) {
 		l.Halted = true
 	}

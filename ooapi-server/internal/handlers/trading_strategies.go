@@ -41,7 +41,7 @@ var strategyTimeframes = map[string]struct{}{
 const strategySelectCols = `
 s.id, s.symbol, s.leverage, s.margin_mode, s.ema_fast, s.ema_slow, s.timeframe,
 s.stop_r, s.take_profit_r, s.daily_loss_pct, s.max_margin_usdt, s.exchange_key_id, s.mode,
-s.created_at, s.updated_at, k.network, k.status`
+s.created_at, s.updated_at, k.network, k.status, k.label`
 
 const strategyInsertSQL = `
 INSERT INTO trading_strategies (
@@ -129,6 +129,7 @@ type strategyRow struct {
 	CreatedAt          string
 	UpdatedAt          string
 	ExchangeKeyNetwork string
+	ExchangeKeyLabel   string
 	ExchangeKeyActive  bool
 }
 
@@ -377,19 +378,23 @@ func scanStrategy(s scanner) (strategyRow, error) {
 		row     strategyRow
 		network sql.NullString
 		status  sql.NullInt64
+		label   sql.NullString
 	)
 	err := s.Scan(
 		&row.ID, &row.Record.Symbol, &row.Record.Leverage, &row.Record.MarginMode,
 		&row.Record.EmaFast, &row.Record.EmaSlow, &row.Record.Timeframe,
 		&row.Record.StopR, &row.Record.TakeProfitR, &row.Record.DailyLossPct, &row.Record.MaxMarginUsdt,
 		&row.Record.ExchangeKeyID, &row.Record.Mode, &row.CreatedAt, &row.UpdatedAt,
-		&network, &status,
+		&network, &status, &label,
 	)
 	if err != nil {
 		return strategyRow{}, err
 	}
 	if network.Valid {
 		row.ExchangeKeyNetwork = network.String
+	}
+	if label.Valid {
+		row.ExchangeKeyLabel = label.String
 	}
 	row.ExchangeKeyActive = status.Valid && status.Int64 == exchangeKeyActive
 	return row, nil

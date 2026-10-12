@@ -115,6 +115,7 @@ func Setup(cfg *config.Config) *gin.Engine {
 
 		// 自动交易。密钥按 user_id 归属；策略与引擎走 option:edit。
 		// 引擎读已有的策略和密钥，测网在内存撮合，实盘默认不下单。
+		// 行情、持仓、委托只读，不打开发单门闩。
 		user.GET("/trading/exchange-keys", handlers.ListExchangeKeys)
 		user.POST("/trading/exchange-keys", handlers.CreateExchangeKey)
 		user.POST("/trading/exchange-keys/:id/reveal", handlers.RevealExchangeKey)
@@ -133,6 +134,9 @@ func Setup(cfg *config.Config) *gin.Engine {
 		engineAPI := user.Group("/trading/engine", middleware.RequirePermission(authz.PermOptionEdit))
 		{
 			engineAPI.GET("/state", handlers.GetTradingEngineState)
+			engineAPI.GET("/market", handlers.GetTradingMarket)
+			engineAPI.GET("/position", handlers.GetTradingPosition)
+			engineAPI.GET("/orders", handlers.GetTradingOrders)
 			engineAPI.POST("/start", handlers.StartTradingEngine)
 			engineAPI.POST("/stop", handlers.StopTradingEngine)
 			engineAPI.POST("/step", handlers.StepTradingEngine)

@@ -32,14 +32,16 @@ type symbolRules struct {
 }
 
 // USDMClient 向币安 USDT-M 测试网发单。默认主机是 testnet.binancefuture.com。
-// 实盘主机直接拒绝，不会拨号。密钥只接受 network=testnet。
+// 实盘主机在发单路径上直接拒绝，不会拨号。密钥只接受 network=testnet。
+// readOnly 为真时只允许 GET：交易台用它读行情、持仓和挂单，实盘主机也只开这一条只读路径。
 type USDMClient struct {
-	base  string
-	http  *http.Client
-	mu    sync.Mutex
-	creds Credentials
-	rules map[string]symbolRules
-	dual  *bool
+	base     string
+	http     *http.Client
+	mu       sync.Mutex
+	creds    Credentials
+	rules    map[string]symbolRules
+	dual     *bool
+	readOnly bool
 }
 
 func NewUSDMTestnet() *USDMClient {
@@ -484,6 +486,9 @@ func (c *USDMClient) fetchRules(symbol string) (symbolRules, error) {
 }
 
 func (c *USDMClient) guard() error {
+	if c != nil && c.readOnly {
+		return ErrLiveTransportDisabled
+	}
 	if err := c.validateBase(); err != nil {
 		return err
 	}
@@ -504,6 +509,12 @@ func (c *USDMClient) validateBase() error {
 	host := strings.ToLower(u.Hostname())
 	if host == "testnet.binancefuture.com" {
 		return nil
+	}
+	if host == "fapi.binance.com" {
+		if c.readOnly {
+			return nil
+		}
+		return ErrLiveTransportDisabled
 	}
 	if strings.Contains(host, "binance") {
 		return ErrLiveTransportDisabled
@@ -526,6 +537,9 @@ func (c *USDMClient) signed(method, path string, params url.Values) ([]byte, err
 }
 
 func (c *USDMClient) do(method, path string, params url.Values, creds Credentials) ([]byte, error) {
+	if c != nil && c.readOnly && method != http.MethodGet {
+		return nil, ErrLiveTransportDisabled
+	}
 	if err := c.validateBase(); err != nil {
 		return nil, err
 	}
