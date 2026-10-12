@@ -4,7 +4,7 @@
 
 项目：OOAPI —— 大模型 API 网关与分发平台
 线上：`https://ooapi.space` / `https://apidoc.cloud`
-服务器：`root@210.126.235.109`（宝塔面板 + nginx + systemd）
+服务器：`root@154.36.184.56`（Debian 12 + nginx + MySQL 5.7 + systemd）
 
 ---
 
@@ -724,7 +724,6 @@ Arc UI 有大量硬编码英文界面文案（placeholder、aria-label、内部�
 
 ```
 OOAPI/
-├── AGENTS.md / CLAUDE.md / CODEX.md   # AI 助手入口（历史遗留）
 ├── ai协作.md                          # ← 本文件
 ├── logo.jpg
 ├── scripts/install-arc.py             # Arc UI 组件安装脚本
@@ -1571,11 +1570,51 @@ remote:     —— Google OAuth Client Secret ——— upstream_login.go:130
 - `deploy-server.sh` 加了检查：缺失时提示但不阻止部署
   （只影响 Google 一键登录这一个功能）。
 
-**顺带说明仓库结构**：`odi0011/OOAPI` 里原本是**同一产品的 Node 版本**
-与一份无关的 `ooapi-binance`（Python）。这次推送把 `ooapi-server` /
-`ooapi-web` 替换成 Go 重写版，但：
+**仓库结构**：`odi0011/OOAPI` 里原本是**同一产品的 Node 版本**
+与一份无关的 `ooapi-binance`（Python）。
 
-- `ooapi-binance` 与 VNC / binance 相关脚本**原样保留**（不是我们的东西）；
-- 原项目的协作文档改名保留为 `AI协作-原项目笔记.md`（6167 行，有参考价值）；
-- 旧版本代码全部留在 git 历史里（需要时可随时回看），
-  本次提交的删除项只有被替换的 `ooapi-server/` 与 `ooapi-web/`。
+按「原项目的东西一样都不留」的要求，随后做了彻底清理：
+`ooapi-binance`、VNC / binance 相关脚本、`AGENTS.md` / `CLAUDE.md` / `CODEX.md`
+以及原项目那份协作文档全部删除，README 也重写为匹配 Go 版的内容。
+旧版本代码只留在 git 历史里（需要时可回看，工作区里已无残留）。
+
+### 清掉仓库里原项目的全部残留
+
+用户要求：**原项目的东西一样都不要留**。上一轮推送时我出于「可能还有参考价值」
+保留了 `ooapi-binance`、原项目文档与几个无关脚本 —— 现在按用户要求全部删除。
+
+**删除清单**：
+
+| 项 | 说明 | 数量 |
+| --- | --- | --- |
+| `AGENTS.md` / `CLAUDE.md` / `CODEX.md` | 原项目的 AI 助手入口 | 3 个文件 |
+| `AI协作-原项目笔记.md` | 原项目那份 6167 行协作文档 | 1 个文件 |
+| `ooapi-binance/` | 无关的 Python 交易程序 | 24 个文件 |
+| `scripts/` 里的无关脚本 | VNC 安装/修复、binance 启停、本地启动 | 6 个文件 |
+
+**怎么确认「删干净了」**：不是凭印象挑文件，而是**逐字节比对**新旧两棵树 ——
+`git ls-tree -r` 取两份文件清单与 blob 哈希，找出「与原有仓库完全相同」的 58 个文件，
+再逐个归类：
+
+- **原项目内容** → 删除（上表）；
+- **Arc UI 第三方组件**（`ooapi-web/src/components/arc/**`）→ 保留。
+  它们在两边哈希相同，因为新前端**就是这个组件库的副本**（Arc UI 是
+  copy-source 模式），不是原项目的代码；
+- **`LICENSE` / `.gitattributes`** → 保留（仓库级配置，与具体实现无关）。
+
+**README 重写**：原 README 描述的是 Node 版（`npm install`、`vendor/`、
+`migrate*.mjs`、`src/routes/`），与 Go 版结构完全不符。重写为匹配实际的
+目录结构、构建方式（本地交叉编译）、配置项（含 `ADMIN_USERNAME` 与
+Google OAuth 变量）与部署要点（nginx 三项 SSE 必需配置）。
+新文档里也不再提「原项目」——那是本仓库之外的事。
+
+**`logo.jpg` 保留**：它是站点自己的品牌图标（侧栏、登录页、首页、看板都在用，
+`/logo.jpg` 线上正在服务），删掉会让全站图标 404。它与原项目哈希相同只是因为
+图标沿用了同一个文件 —— 但它是**这个站点的资源**，不是「原项目的代码」。
+
+**`ai协作.md` 保留并修正**：这是我们自己的协作文档（不是原项目那份），
+顺手更新了里面过时的服务器地址（`210.126.235.109` → `154.36.184.56`）
+与项目结构图里已删除的入口文件。
+
+**验证**：删除后 `go build ./...`、`go test ./...`、`tsc -b --noEmit` 全部通过 ——
+确认删掉的文件没有任何一处被引用。
