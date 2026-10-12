@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Credentials 是下单瞬间解开的交易所密钥。不得写入日志或策略响应。
@@ -175,6 +176,40 @@ func (h *Hub) Stop(userID, strategyID int64, in StepInput, secrets SecretOpener)
 		h.onRun(eng.cfg.ID, false)
 	}
 	return eng.Snapshot(), err
+}
+
+// ApplyConfig 把刚保存的策略写进正在跑的引擎，不重启、不平仓。
+// 已挂上的止损止盈保持原价；下一笔开仓用新参数。
+func (h *Hub) ApplyConfig(userID, strategyID int64, cfg Config) {
+	if h == nil || strategyID <= 0 {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	eng := h.engines[sessionKey(userID, strategyID)]
+	if eng == nil {
+		return
+	}
+	cfg = cfg.Normalize()
+	cfg.ID = strategyID
+	if cfg.Revision == 0 {
+		cfg.Revision = time.Now().UnixNano()
+	}
+	_ = eng.storeConfig(cfg)
+}
+
+// Config 返回内存里的策略参数。没有这台引擎时 ok 为 false。
+func (h *Hub) Config(userID, strategyID int64) (Config, bool) {
+	if h == nil {
+		return Config{}, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	eng := h.engines[sessionKey(userID, strategyID)]
+	if eng == nil {
+		return Config{}, false
+	}
+	return eng.cfg, true
 }
 
 // PutForTest 把一台引擎放进内存表，供交易台读取快照。只给测试用。
