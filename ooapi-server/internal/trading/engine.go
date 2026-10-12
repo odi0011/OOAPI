@@ -87,18 +87,20 @@ type Snapshot struct {
 	DayRealized float64 `json:"dayRealizedUsdt"`
 	// CumulativeRealized 与当日同一来源，从策略创建时间起算。日切后当日归零、累计保留。
 	// 重启后重新向币安读取，不靠进程内逐笔账本。
-	CumulativeRealized float64          `json:"cumulativeRealizedUsdt"`
-	Halted             bool             `json:"halted"`
-	LastError          string           `json:"lastError,omitempty"`
-	Mode               string           `json:"mode"`
-	TestnetGreen       bool             `json:"testnetGreen"`
-	Running            bool             `json:"running"`
-	LastAction         string           `json:"lastAction,omitempty"`
-	LastReason         string           `json:"lastReason,omitempty"`
-	PauseReason        string           `json:"pauseReason,omitempty"`
-	MarkPrice          float64          `json:"markPrice,omitempty"`
-	UnrealizedPnl      float64          `json:"unrealizedPnl,omitempty"`
-	LastBacktest       *BacktestSummary `json:"lastBacktest,omitempty"`
+	CumulativeRealized float64 `json:"cumulativeRealizedUsdt"`
+	Halted             bool    `json:"halted"`
+	LastError          string  `json:"lastError,omitempty"`
+	Mode               string  `json:"mode"`
+	TestnetGreen       bool    `json:"testnetGreen"`
+	Running            bool    `json:"running"`
+	LastAction         string  `json:"lastAction,omitempty"`
+	LastReason         string  `json:"lastReason,omitempty"`
+	PauseReason        string  `json:"pauseReason,omitempty"`
+	// PauseEntries 为真时这一拍不会开新仓。已有仓和止损止盈不受影响。
+	PauseEntries  bool             `json:"pauseEntries"`
+	MarkPrice     float64          `json:"markPrice,omitempty"`
+	UnrealizedPnl float64          `json:"unrealizedPnl,omitempty"`
+	LastBacktest  *BacktestSummary `json:"lastBacktest,omitempty"`
 	// Entry 是当前持仓开仓时记下的分数和回测。平仓后清空，历史仍在开仓日志里。
 	Entry *EntryStamp `json:"entry,omitempty"`
 }
@@ -138,11 +140,13 @@ type entryDraft struct {
 
 // Engine 把信号、风控和状态机串起来。调用方一次只推进一个线程。
 type Engine struct {
-	cfg          Config
-	ex           Exchange
-	log          Logger
-	m            *Machine
-	ledger       Ledger
+	cfg    Config
+	ex     Exchange
+	log    Logger
+	m      *Machine
+	ledger Ledger
+	// incomeBooked 为真时当日和累计已实现来自币安账单，日亏停机看上海当日这一个数。
+	incomeBooked bool
 	pos          position
 	running      bool
 	lastError    string
@@ -252,6 +256,7 @@ func (e *Engine) Snapshot() Snapshot {
 		LastAction:         e.lastAction,
 		LastReason:         e.lastReason,
 		PauseReason:        e.pausedReason,
+		PauseEntries:       e.cfg.PauseEntries,
 		MarkPrice:          e.lastMark,
 		UnrealizedPnl:      e.unrealized(e.lastMark),
 		LastBacktest:       e.lastBacktest,
@@ -529,7 +534,7 @@ func (e *Engine) Step(in StepInput) (snap Snapshot, err error) {
 		if e == nil {
 			return
 		}
-		e.captureIncome(at(in.Now))
+		e.syncExchangeBooks(at(in.Now))
 		snap = e.Snapshot()
 		e.recordTick(in, snap, err)
 	}()
@@ -552,6 +557,8 @@ func (e *Engine) Step(in StepInput) (snap Snapshot, err error) {
 	} else if !e.ledger.Day.IsZero() {
 		e.ledger.Roll(now, e.ledger.Capital)
 	}
+	// 先对上上海当日账单，再决定能不能开仓。重启后的内存计数不参与这道判断。
+	e.syncExchangeBooks(now)
 	if e.State() == StateDailyHalt && !e.ledger.Halted {
 		if err := e.m.Transition(Event{Kind: EventNextUTCDay, Reason: "utc day rolled"}); err != nil {
 			return e.Snapshot(), err
@@ -586,6 +593,11 @@ func (e *Engine) Step(in StepInput) (snap Snapshot, err error) {
 }
 
 func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
+	// 暂停新开仓只挡这一拍的开仓。不撤保护单，不平已有仓，对账仍在 Step 的收尾里跑。
+	if e.cfg.PauseEntries {
+		e.note("pause_entries", ReasonEntriesPaused)
+		return e.Snapshot(), nil
+	}
 	if blocked, reason := StartBlocked(in.FundingRate, in.LiqDistancePct); blocked {
 		e.note("blocked", reason)
 		if err := e.m.Transition(Event{Kind: EventStartBlocked, Reason: reason}); err != nil {
@@ -836,6 +848,10 @@ func (e *Engine) acceptFill(fill Fill) (Snapshot, error) {
 }
 
 func (e *Engine) stepPosition(in StepInput) (Snapshot, error) {
+	// 暂停新开仓时不补保护单，也不按信号平仓。交易所已经空仓时仍走对账。
+	if e.cfg.PauseEntries {
+		return e.holdPausedPosition(in)
+	}
 	// 止盈条件单可以在两根 K 线之间成交。收盘时这里再核对一次。
 	// 调度器在持仓期间另外按 FlatReconcileInterval 调用 ReconcileFlat，
 	// 不把空仓发现推迟到下一根收盘。
@@ -879,6 +895,65 @@ func (e *Engine) stepPosition(in StepInput) (Snapshot, error) {
 		e.lastBarKey = barKey(in.Candles)
 	}
 	return e.finishExit(in, reason, fillPrice)
+}
+
+// holdPausedPosition 只观察持仓。不补保护单，不按信号平仓，避免碰到已挂的止损止盈。
+// 交易所已经空仓时只改本地状态，不发撤单。
+func (e *Engine) holdPausedPosition(in StepInput) (Snapshot, error) {
+	if e.syncsPosition() {
+		if err := e.authorize(); err != nil {
+			return e.Snapshot(), err
+		}
+		pos, err := e.livePosition()
+		if err != nil {
+			return e.Snapshot(), err
+		}
+		if !pos.Open {
+			if _, ok := e.ex.(interface {
+				CancelProtective(symbol string, side Side) ([]int64, error)
+			}); ok {
+				return e.finishExchangeFlat(in)
+			}
+			return e.settleWithoutOrders(in, ReasonExchangeFlat)
+		}
+		e.pos.Qty = pos.Qty
+		if pos.Entry > 0 {
+			e.pos.Entry = pos.Entry
+		}
+		if pos.Side != "" {
+			e.pos.Side = pos.Side
+		}
+	}
+	e.note("pause_entries", ReasonEntriesPaused)
+	return e.Snapshot(), nil
+}
+
+// settleWithoutOrders 在交易所已经空仓时结束本地持仓，不调用平仓和撤单。
+func (e *Engine) settleWithoutOrders(in StepInput, reason string) (Snapshot, error) {
+	if e.State() == StateInPosition {
+		if err := e.m.Transition(Event{Kind: EventExitSignal, Reason: reason}); err != nil {
+			return e.failed(err.Error())
+		}
+	}
+	if e.State() != StateExitSubmitted {
+		return e.failed("exit is not in progress")
+	}
+	if err := e.m.Transition(Event{Kind: EventExitFilled, Reason: reason}); err != nil {
+		return e.failed(err.Error())
+	}
+	e.clearPos()
+	e.forgetPlan()
+	if err := e.m.Transition(Event{Kind: EventBooked, Reason: reason}); err != nil {
+		return e.Snapshot(), err
+	}
+	e.markBar(in)
+	e.note("flat", reason)
+	if e.running {
+		if err := e.m.Transition(Event{Kind: EventStartOK, Reason: "rearm"}); err != nil {
+			return e.Snapshot(), err
+		}
+	}
+	return e.Snapshot(), nil
 }
 
 func (e *Engine) exitSignal(price float64, cross Cross) (bool, string, float64) {
@@ -942,14 +1017,16 @@ func (e *Engine) finishExit(in StepInput, reason string, price ...float64) (Snap
 		return e.failed(err.Error())
 	}
 	pnl := RealizedPnL(e.pos.Side, e.pos.Entry, fill.Price, e.pos.Qty)
-	halted := e.ledger.Add(pnl, e.cfg.DailyLossPct)
+	var halted bool
+	if e.incomeBooked {
+		halted = e.ledger.Halted || DailyHaltBreached(e.ledger.Capital, e.ledger.Realized, e.cfg.DailyLossPct)
+	} else {
+		halted = e.ledger.Add(pnl, e.cfg.DailyLossPct)
+	}
 	e.clearPos()
 	e.forgetPlan()
 	if halted {
-		if err := e.m.Transition(Event{Kind: EventDailyHalt, Reason: "daily_loss"}); err != nil {
-			return e.Snapshot(), err
-		}
-		e.note("halt", reason)
+		e.enterHalt()
 		return e.Snapshot(), nil
 	}
 	if err := e.m.Transition(Event{Kind: EventBooked, Reason: reason}); err != nil {
@@ -1004,7 +1081,7 @@ func (e *Engine) cancelAndFlatten(reason string) {
 		e.log.Printf("[trading] flatten %s failed: %v", reason, err)
 		log.Printf("[trading] flatten %s failed: %v", reason, err)
 	}
-	e.captureIncome(time.Now().UTC())
+	e.syncExchangeBooks(time.Now().UTC())
 }
 
 // failed 先落错误状态，再拍快照。同一条 return 里先拍快照会丢掉停机后的状态。
@@ -1171,8 +1248,26 @@ func (e *Engine) ensureProtection(side Side, entry, stop, take, liq float64) err
 	return last
 }
 
-// captureIncome 用币安账单覆盖当日和累计已实现。账单含手续费和资金费。
+// noteLiveFlags 每一拍都写进暂停开仓、余额暂停线和创建时间。持仓期间也能改，不碰已挂的止损止盈。
+func (e *Engine) noteLiveFlags(cfg Config) {
+	if e == nil {
+		return
+	}
+	e.cfg.PauseEntries = cfg.PauseEntries
+	e.cfg.PauseBalanceUsdt = cfg.PauseBalanceUsdt
+	if !cfg.CreatedAt.IsZero() {
+		e.cfg.CreatedAt = cfg.CreatedAt.UTC()
+	}
+}
+
+// syncExchangeBooks 与 captureIncome 是同一条对账。Step 的收尾和开仓前都走它。
+func (e *Engine) syncExchangeBooks(now time.Time) {
+	e.captureIncome(now)
+}
+
+// captureIncome 用币安账单覆盖当日和累计已实现，并把每张 orderId 对成一行。
 // 当日从 Asia/Shanghai 0 点起，累计从策略创建时间起。读失败时保留上一份成功的结果。
+// 日亏停机看这份上海当日数字，不看重启后清零的内存计数。
 func (e *Engine) captureIncome(now time.Time) {
 	if e == nil || e.ex == nil || strings.TrimSpace(e.cfg.Symbol) == "" {
 		return
@@ -1182,22 +1277,16 @@ func (e *Engine) captureIncome(now time.Time) {
 		return
 	}
 	now = at(now)
-	src, ok := e.ex.(interface {
-		RealizedIncome(symbol string, since, now time.Time) (day, cumulative float64, err error)
-		CredentialsReady() bool
-	})
-	if !ok || !src.CredentialsReady() {
-		return
-	}
 	symbol := strings.ToUpper(strings.TrimSpace(e.cfg.Symbol))
 	if e.incomeOK && e.incomeSince.Equal(since) && e.incomeSymbol == symbol && !now.Before(e.incomeAt) && now.Sub(e.incomeAt) < IncomeRefresh {
 		e.ledger.Realized = e.incomeDay
 		e.ledger.Cumulative = e.incomeCum
+		e.incomeBooked = true
+		e.applyIncomeHalt()
 		return
 	}
-	day, cumulative, err := src.RealizedIncome(e.cfg.Symbol, since, now)
-	if err != nil {
-		log.Printf("[trading] income %s: %v", e.cfg.Symbol, err)
+	day, cumulative, events, ok := e.readIncome(symbol, since, now)
+	if !ok {
 		return
 	}
 	e.incomeOK = true
@@ -1208,6 +1297,84 @@ func (e *Engine) captureIncome(now time.Time) {
 	e.incomeCum = cumulative
 	e.ledger.Realized = day
 	e.ledger.Cumulative = cumulative
+	e.incomeBooked = true
+	e.applyIncomeHalt()
+	e.bookOrderRows(events, since, now)
+}
+
+func (e *Engine) readIncome(symbol string, since, now time.Time) (day, cumulative float64, events []IncomeEvent, ok bool) {
+	if hist, ready := e.ex.(interface {
+		IncomeHistory(symbol string, since, now time.Time) ([]IncomeEvent, error)
+		CredentialsReady() bool
+	}); ready && hist.CredentialsReady() {
+		rows, err := hist.IncomeHistory(symbol, since, now)
+		if err != nil {
+			log.Printf("[trading] income %s: %v", symbol, err)
+			return 0, 0, nil, false
+		}
+		day, cumulative = SumSymbolIncome(rows, symbol, since, now)
+		return day, cumulative, rows, true
+	}
+	src, ready := e.ex.(interface {
+		RealizedIncome(symbol string, since, now time.Time) (day, cumulative float64, err error)
+		CredentialsReady() bool
+	})
+	if !ready || !src.CredentialsReady() {
+		return 0, 0, nil, false
+	}
+	day, cumulative, err := src.RealizedIncome(symbol, since, now)
+	if err != nil {
+		log.Printf("[trading] income %s: %v", symbol, err)
+		return 0, 0, nil, false
+	}
+	return day, cumulative, nil, true
+}
+
+func (e *Engine) bookOrderRows(events []IncomeEvent, since, now time.Time) {
+	src, ok := e.ex.(interface {
+		UserTrades(symbol string, since, now time.Time) ([]UserTrade, error)
+		CredentialsReady() bool
+	})
+	if !ok || !src.CredentialsReady() {
+		return
+	}
+	trades, err := src.UserTrades(e.cfg.Symbol, since, now)
+	if err != nil {
+		log.Printf("[trading] userTrades %s: %v", e.cfg.Symbol, err)
+		return
+	}
+	rows := BuildOrderRows(trades, events, e.lastMark)
+	for i := range rows {
+		if rows[i].Symbol == "" {
+			rows[i].Symbol = e.cfg.Symbol
+		}
+	}
+	book := currentOrderBook()
+	if book == nil || e.userID <= 0 || e.cfg.ID <= 0 || len(rows) == 0 {
+		return
+	}
+	if err := book.Upsert(e.userID, e.cfg.ID, rows); err != nil {
+		log.Printf("[trading] order book %s: %v", e.cfg.Symbol, err)
+	}
+}
+
+// applyIncomeHalt 用上海当日的币安净已实现决定日亏停机。
+// 对账平仓后停机原因写成 daily_loss，不再留着 exchange_flat。
+func (e *Engine) applyIncomeHalt() {
+	if e == nil || !e.incomeBooked {
+		return
+	}
+	if !DailyHaltBreached(e.ledger.Capital, e.ledger.Realized, e.cfg.DailyLossPct) {
+		e.ledger.Halted = false
+		return
+	}
+	e.ledger.Halted = true
+	switch e.State() {
+	case StateInPosition, StateEntrySubmitted, StateExitSubmitted, StateError:
+		return
+	default:
+		e.enterHalt()
+	}
 }
 
 func (e *Engine) holdIfPaused(in StepInput) (Snapshot, bool, error) {

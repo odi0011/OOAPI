@@ -24,6 +24,7 @@ import {
   deleteStrategy,
   discardLegacyStrategyDraft,
   getEngineState,
+  setPauseEntries,
   listExchangeKeys,
   listStrategies,
   networkLabel,
@@ -70,6 +71,7 @@ interface StrategyDraft {
   stopR: number;
   takeProfitR: number;
   dailyLossPct: number;
+  pauseBalanceUsdt: number;
   maxMarginUsdt: number;
   exchangeKeyId: number | null;
   mode: TradingNetwork;
@@ -92,6 +94,7 @@ const DEFAULT_DRAFT: StrategyDraft = {
   stopR: 1,
   takeProfitR: 1.5,
   dailyLossPct: 4,
+  pauseBalanceUsdt: 0.5,
   maxMarginUsdt: 1.7,
   exchangeKeyId: DEFAULT_EXCHANGE_KEY_ID,
   mode: DEFAULT_STRATEGY_MODE,
@@ -131,6 +134,7 @@ function draftFromStrategy(item: Strategy): StrategyDraft {
     stopR: clamp(item.stopR, 0.1, 20, DEFAULT_DRAFT.stopR),
     takeProfitR: clamp(item.takeProfitR, 0.1, 20, DEFAULT_DRAFT.takeProfitR),
     dailyLossPct: clamp(item.dailyLossPct, 0.1, 100, DEFAULT_DRAFT.dailyLossPct),
+    pauseBalanceUsdt: typeof item.pauseBalanceUsdt === "number" ? item.pauseBalanceUsdt : DEFAULT_DRAFT.pauseBalanceUsdt,
     maxMarginUsdt: clamp(item.maxMarginUsdt, 0.1, 100, DEFAULT_DRAFT.maxMarginUsdt),
     exchangeKeyId: item.exchangeKeyId > 0 ? item.exchangeKeyId : DEFAULT_EXCHANGE_KEY_ID,
     mode: item.mode === "live" ? "live" : DEFAULT_STRATEGY_MODE,
@@ -158,6 +162,7 @@ function toWrite(draft: StrategyDraft): StrategyWrite {
     stopR: round4(draft.stopR),
     takeProfitR: round4(draft.takeProfitR),
     dailyLossPct: round4(draft.dailyLossPct),
+    pauseBalanceUsdt: round4(draft.pauseBalanceUsdt),
     maxMarginUsdt: round4(draft.maxMarginUsdt),
     exchangeKeyId: draft.exchangeKeyId ?? DEFAULT_EXCHANGE_KEY_ID,
     mode: draft.mode === "live" ? "live" : DEFAULT_STRATEGY_MODE,
@@ -177,6 +182,7 @@ function validate(draft: StrategyDraft, keys: ExchangeKey[]): string | null {
   if (leverageError) return leverageError;
   if (draft.stopR <= 0 || draft.takeProfitR <= 0) return "每单止损和止盈都必填";
   if (draft.dailyLossPct <= 0 || draft.dailyLossPct > 100) return "日亏停机阈值要大于 0";
+  if (!(draft.pauseBalanceUsdt >= 0.5) || draft.pauseBalanceUsdt > 1_000_000) return "暂停余额不能低于 0.5";
   if (draft.maxMarginUsdt <= 0) return "单笔保证金上限要大于 0";
   if (draft.emaFast >= draft.emaSlow) return "快线周期要小于慢线";
   if (draft.minScore < 1 || draft.minScore > 4) return "分数门槛要在 1 到 4";
@@ -213,6 +219,8 @@ export default function AdminTrading() {
   const [engine, setEngine] = useState<EngineState | null>(null);
   const [equity, setEquity] = useState(100);
   const [engineBusy, setEngineBusy] = useState<"start" | "step" | null>(null);
+  const [pauseEntries, setPauseFlag] = useState(false);
+  const [pauseBusy, setPauseBusy] = useState(false);
 
   const applyLoaded = useCallback((items: Strategy[], keyItems: ExchangeKey[]) => {
     setKeys(keyItems);
@@ -221,11 +229,13 @@ export default function AdminTrading() {
     if (!current) {
       setStrategyId(null);
       setWarnings([]);
+      setPauseFlag(false);
       setDraft(DEFAULT_DRAFT);
       return;
     }
     setStrategyId(current.id);
     setWarnings(current.warnings ?? []);
+    setPauseFlag(current.pauseEntries === true);
     setDraft(draftFromStrategy(current));
   }, []);
 
@@ -235,7 +245,9 @@ export default function AdminTrading() {
       return;
     }
     try {
-      setEngine(await getEngineState(id));
+      const next = await getEngineState(id);
+      setEngine(next);
+      if (typeof next.pauseEntries === "boolean") setPauseFlag(next.pauseEntries);
     } catch (err) {
       if (err instanceof ApiRequestError && err.status === 404) {
         setEngine(null);
@@ -347,6 +359,23 @@ export default function AdminTrading() {
     } finally {
       setEngineBusy(null);
       action.release();
+    }
+  }
+
+  async function togglePause(next: boolean) {
+    if (strategyId == null) return;
+    setPauseBusy(true);
+    setPauseFlag(next);
+    try {
+      const saved = await setPauseEntries(strategyId, next);
+      setPauseFlag(saved.pauseEntries);
+      setEngine((current) => (current ? { ...current, pauseEntries: saved.pauseEntries } : current));
+      notify.success(saved.pauseEntries ? "已暂停新开仓" : "已恢复新开仓", "已有仓和止损止盈保持不动。");
+    } catch (err) {
+      setPauseFlag(!next);
+      notify.error("更新暂停开仓失败", errorText(err, "请稍后再试"));
+    } finally {
+      setPauseBusy(false);
     }
   }
 
@@ -795,6 +824,25 @@ export default function AdminTrading() {
                   </div>
                 </div>
 
+                <div className={sectionStyles.row} data-field="pauseBalanceUsdt">
+                  <div className={sectionStyles.rowText}>
+                    <strong>余额暂停线</strong>
+                    <p>钱包余额低于这条线时，下一拍暂停该策略，不用重启。最低 0.5 USDT，默认 0.5。权益落到 0.5 以下仍会停掉这把密钥下的全部引擎。</p>
+                  </div>
+                  <div className={sectionStyles.rowControl}>
+                    <NumberField
+                      hideLabel
+                      label="余额暂停线"
+                      suffix=" USDT"
+                      value={draft.pauseBalanceUsdt}
+                      min={0.5}
+                      max={1_000_000}
+                      step={0.1}
+                      onValueChange={(pauseBalanceUsdt) => patch({ pauseBalanceUsdt })}
+                    />
+                  </div>
+                </div>
+
                 <div className={sectionStyles.row} data-field="exchangeKeyId">
                   <div className={sectionStyles.rowText}>
                     <strong>账户</strong>
@@ -869,7 +917,16 @@ export default function AdminTrading() {
                   推进一次
                 </Button>
               </div>
-              <p className={styles.envNote} data-engine-state={engine?.state ?? "Idle"} data-testnet-green={engine?.testnetGreen ? "on" : "off"}>
+              <div className={styles.engineActions} data-field="pauseEntries">
+                <Switch
+                  label={pauseEntries ? "新开仓已暂停" : "允许新开仓"}
+                  checked={pauseEntries}
+                  disabled={strategyId == null || pauseBusy}
+                  onCheckedChange={(next) => void togglePause(next)}
+                />
+                <p className={styles.keyHint}>只停止新开仓。已有仓和它的止损止盈保持不动，对账继续。这不是余额暂停线。</p>
+              </div>
+              <p className={styles.envNote} data-engine-state={engine?.state ?? "Idle"} data-testnet-green={engine?.testnetGreen ? "on" : "off"} data-pause-entries={pauseEntries ? "on" : "off"}>
                 {strategyId == null
                   ? "先保存策略，再启动。默认环境是测网。"
                   : `状态 ${engine?.state ?? "Idle"}。测网全绿门闩${engine?.testnetGreen ? "已打开" : "关着"}，本页不会去开它。`}

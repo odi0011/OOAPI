@@ -66,6 +66,13 @@ assertEqual(fromState.accountLabel, "测网主号", "label comes from state");
 assertEqual(fromState.leverageText, "2 倍", "leverage comes from state");
 assertEqual(fromState.testnetGreenText, "开", "green from state");
 assertEqual(fromState.stateText, "Armed 待命 · 运行中", "armed from state");
+assertEqual(fromState.pauseEntriesText, "允许", "entries stay open");
+
+const paused = buildDeskStatus({
+  engine: { state: "InPosition", running: true, pauseEntries: true },
+});
+assertEqual(paused.pauseEntries, true, "pause flag");
+assertEqual(paused.pauseEntriesText, "已暂停", "pause label");
 
 const flat = positionView({ open: false });
 assertEqual(flat.open, false, "flat is closed");

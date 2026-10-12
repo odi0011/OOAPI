@@ -209,10 +209,7 @@ func (e *Engine) bookExchangeFlat(in StepInput, book flatBook, canceled []int64)
 	e.clearPos()
 	e.forgetPlan()
 	if halted {
-		if err := e.m.Transition(Event{Kind: EventDailyHalt, Reason: "daily_loss"}); err != nil {
-			return e.Snapshot(), err
-		}
-		e.note("halt", reason)
+		e.enterHalt()
 		return e.Snapshot(), nil
 	}
 	if err := e.m.Transition(Event{Kind: EventBooked, Reason: reason}); err != nil {

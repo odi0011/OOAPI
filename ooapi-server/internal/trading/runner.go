@@ -39,17 +39,21 @@ type MarketFunc func(cfg Config, secrets SecretOpener, now time.Time) (Market, e
 // Runner 为每条 running 策略起一个循环，在 K 线收盘后调用与手工 step 相同的逻辑。
 // 实盘加速窗口内改为大约每 BoostScanInterval 推进一次，并改用正在走的那根 K 线。
 type Runner struct {
-	hub        *Hub
-	now        func() time.Time
-	market     MarketFunc
-	step       func(spec RunSpec, in StepInput) (Snapshot, error)
-	mu         sync.Mutex
-	started    bool
-	onStop     func(strategyID int64)
-	jobs       map[int64]context.CancelFunc
-	specs      map[int64]RunSpec
-	cache      map[int64]backtestCache
-	boostEvery time.Duration
+	hub     *Hub
+	now     func() time.Time
+	market  MarketFunc
+	step    func(spec RunSpec, in StepInput) (Snapshot, error)
+	mu      sync.Mutex
+	started bool
+	onStop  func(strategyID int64)
+	// entriesPaused 每一拍从库里读暂停新开仓。读失败时沿用内存里的值。
+	entriesPaused func(strategyID int64) (bool, error)
+	// pauseBalance 每一拍从库里读余额暂停线。读失败时沿用内存里的值。
+	pauseBalance func(strategyID int64) (float64, error)
+	jobs         map[int64]context.CancelFunc
+	specs        map[int64]RunSpec
+	cache        map[int64]backtestCache
+	boostEvery   time.Duration
 	// flatGap 是测试用的空仓核对间隔。0 表示用 FlatReconcileInterval。
 	flatGap time.Duration
 	// bookGap 是测试用的开仓回补间隔。0 表示用 EntryBookInterval。
@@ -108,6 +112,20 @@ func (r *Runner) SetFlatEvery(d time.Duration) {
 func (r *Runner) SetBookEvery(d time.Duration) {
 	r.mu.Lock()
 	r.bookGap = d
+	r.mu.Unlock()
+}
+
+// SetEntriesPaused 安装每一拍读取「暂停新开仓」的函数。
+func (r *Runner) SetEntriesPaused(fn func(strategyID int64) (bool, error)) {
+	r.mu.Lock()
+	r.entriesPaused = fn
+	r.mu.Unlock()
+}
+
+// SetPauseBalance 安装每一拍读取余额暂停线的函数。保存后下一拍生效，不用重启循环。
+func (r *Runner) SetPauseBalance(fn func(strategyID int64) (float64, error)) {
+	r.mu.Lock()
+	r.pauseBalance = fn
 	r.mu.Unlock()
 }
 
@@ -423,6 +441,8 @@ func (r *Runner) runOnce(ctx context.Context, spec RunSpec) {
 		return
 	}
 	spec = r.liveSpec(spec)
+	spec.Config.PauseEntries = r.readEntriesPaused(spec)
+	spec.Config.PauseBalanceUsdt = r.readPauseBalance(spec)
 	now := r.now()
 	mkt, err := r.market(spec.Config, spec.Secrets, now)
 	if err != nil {
@@ -477,6 +497,64 @@ func (r *Runner) runOnce(ctx context.Context, spec RunSpec) {
 	case ReasonBalanceFloor, ReasonConsecutiveLosses, ReasonBalanceBelowPause:
 		r.stopSpec(spec.Config.ID)
 	}
+}
+
+func (r *Runner) readEntriesPaused(spec RunSpec) bool {
+	r.mu.Lock()
+	fn := r.entriesPaused
+	r.mu.Unlock()
+	if fn == nil || spec.Config.ID <= 0 {
+		return spec.Config.PauseEntries
+	}
+	paused, err := fn(spec.Config.ID)
+	if err != nil {
+		log.Printf("[trading] runner strategy %d pause entries: %v", spec.Config.ID, err)
+		return spec.Config.PauseEntries
+	}
+	r.rememberEntriesPaused(spec.Config.ID, paused)
+	return paused
+}
+
+func (r *Runner) readPauseBalance(spec RunSpec) float64 {
+	r.mu.Lock()
+	fn := r.pauseBalance
+	r.mu.Unlock()
+	if fn == nil || spec.Config.ID <= 0 {
+		return spec.Config.PauseBalanceUsdt
+	}
+	line, err := fn(spec.Config.ID)
+	if err != nil {
+		log.Printf("[trading] runner strategy %d pause balance: %v", spec.Config.ID, err)
+		return spec.Config.PauseBalanceUsdt
+	}
+	if line > 0 && line < BalanceFloorUSDT {
+		line = BalanceFloorUSDT
+	}
+	r.rememberPauseBalance(spec.Config.ID, line)
+	return line
+}
+
+func (r *Runner) rememberPauseBalance(id int64, line float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cur, ok := r.specs[id]
+	if !ok {
+		return
+	}
+	cur.Config.PauseBalanceUsdt = line
+	r.specs[id] = cur
+}
+
+// rememberEntriesPaused 记下最近一次读库成功的开关。下一拍读失败时 liveSpec 仍带着它。
+func (r *Runner) rememberEntriesPaused(id int64, paused bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cur, ok := r.specs[id]
+	if !ok {
+		return
+	}
+	cur.Config.PauseEntries = paused
+	r.specs[id] = cur
 }
 
 func (r *Runner) stopSpec(strategyID int64) {
