@@ -14,6 +14,8 @@ import Register from "@/pages/Register";
 import AdminAnalytics from "@/pages/admin/AdminAnalytics";
 import AdminDashboard from "@/pages/admin/AdminDashboard";
 import AdminChannels from "@/pages/admin/AdminChannels";
+import AdminExchangeKeys from "@/pages/admin/AdminExchangeKeys";
+import AdminTrading from "@/pages/admin/AdminTrading";
 import AdminLogs from "@/pages/admin/AdminLogs";
 import AdminMedia from "@/pages/admin/AdminMedia";
 import AdminOperationLogs from "@/pages/admin/AdminOperationLogs";
@@ -108,6 +110,27 @@ export default function App() {
                   element={
                     <RequireAuth>
                       <AdminTokens />
+                    </RequireAuth>
+                  }
+                />
+
+                {/* 交易策略壳：配置页，先跟系统设置同一道 option:edit。
+                    测网/实盘与表单都还没接后端字段。 */}
+                <Route
+                  path="/admin/trading"
+                  element={
+                    <RequireAuth permission={Perm.OptionEdit}>
+                      <AdminTrading />
+                    </RequireAuth>
+                  }
+                />
+
+                {/* 交易所密钥：用户自绑，登录即可，口径对齐密钥管理。 */}
+                <Route
+                  path="/admin/exchange-keys"
+                  element={
+                    <RequireAuth>
+                      <AdminExchangeKeys />
                     </RequireAuth>
                   }
                 />

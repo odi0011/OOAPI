@@ -1,0 +1,51 @@
+/* 列表、对话框和打码条复用密钥管理页的样式。
+   这里只补这一页多出来的说明，以及「未 reveal 不可复制」。 */
+
+.lead {
+  margin: 4px 0 0;
+  max-width: 720px;
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+  color: var(--text-secondary);
+}
+
+.sessionNote {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+  color: var(--text-muted);
+}
+
+.fieldLabel {
+  flex: none;
+  min-width: 4.5em;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+button.copyBtn:disabled,
+button.copyBtn:disabled:hover {
+  border-color: var(--border);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.secretBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.secretBlock + .secretBlock {
+  margin-top: var(--space-4);
+}
+
+.secretLabel {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.dialogActions {
+  flex-wrap: wrap;
+}

@@ -3,10 +3,12 @@ import { Link, useLocation } from "react-router-dom";
 import {
   Activity,
   BarChart3,
+  ChartCandlestick,
   FileText,
   FolderOpen,
   History,
   KeyRound,
+  KeySquare,
   Layers,
   LayoutDashboard,
   Route,
@@ -94,6 +96,16 @@ export const ADMIN_NAV: AdminNavGroup[] = [
     items: [
       { key: "profile", label: "个人中心", icon: <UserRound size={18} strokeWidth={1.75} />, href: "/admin/profile" },
       { key: "my-tokens", label: "密钥管理", icon: <KeyRound size={18} strokeWidth={1.75} />, href: "/admin/tokens" },
+    ],
+  },
+  {
+    key: "trading",
+    label: "交易",
+    // 还没有独立的交易权限点。策略是配置，先跟系统设置同一道 option:edit。
+    // 交易所密钥是用户自绑，口径对齐「密钥管理」：登录即可。
+    items: [
+      { key: "trading", label: "策略配置", icon: <ChartCandlestick size={18} strokeWidth={1.75} />, href: "/admin/trading", requiredPermission: "option:edit" },
+      { key: "exchange-keys", label: "交易所密钥", icon: <KeySquare size={18} strokeWidth={1.75} />, href: "/admin/exchange-keys" },
     ],
   },
   {
