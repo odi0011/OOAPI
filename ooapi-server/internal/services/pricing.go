@@ -181,9 +181,39 @@ func PriceOf(model string) (ModelPrice, bool) {
 	return p, true
 }
 
+// PromptCostTokens 把「含缓存的总输入」拆成按输入价计的部分和按缓存价计的部分。
+//
+// OpenAI / 本站日志的 prompt_tokens 已经包含缓存命中。缓存 token 只按
+// cached_price 计一次，必须从输入里扣掉，不能再按输入价加一遍。
+// cached 大于 prompt（上报把缓存放在总输入之外）时，输入部分记 0，
+// 缓存仍按自身数量计一次，避免出现负数或再叠加。
+func PromptCostTokens(promptTokens, cachedTokens int) (input, cached int) {
+	if promptTokens < 0 {
+		promptTokens = 0
+	}
+	if cachedTokens < 0 {
+		cachedTokens = 0
+	}
+	if cachedTokens > promptTokens {
+		return 0, cachedTokens
+	}
+	return promptTokens - cachedTokens, cachedTokens
+}
+
+// CostExpression 是一次调用的未取整成本（货币，不是额度单位）。
+//
+// 调用方需要先按 PriceForTokens 选好档位。缓存 token 只进入缓存价这一项。
+func CostExpression(promptTokens, completionTokens, cachedTokens int, price ModelPrice) float64 {
+	input, cached := PromptCostTokens(promptTokens, cachedTokens)
+	return float64(input)/1e6*price.InputPrice +
+		float64(completionTokens)/1e6*price.OutputPrice +
+		float64(cached)/1e6*price.CachedPrice
+}
+
 // CalcQuota 计算一次调用的额度消耗（单位）。
 //
-// 公式：(提示tokens/1e6 × 输入价 + 补全tokens/1e6 × 输出价 + 缓存tokens/1e6 × 缓存价) × unitsPerOD
+// 公式：(未缓存输入/1e6 × 输入价 + 补全/1e6 × 输出价 + 缓存/1e6 × 缓存价) × unitsPerOD
+// 未缓存输入 = prompt_tokens − cached_tokens（prompt 含缓存时）。
 // 结果为向上取整，单次最低 1 单位 —— 避免极小调用记成 0 导致免费刷量。
 //
 // 输入 token 数会先经过 PriceForTokens 选定长上下文档位：
@@ -194,15 +224,68 @@ func CalcQuota(promptTokens, completionTokens, cachedTokens int, price ModelPric
 	}
 	price = PriceForTokens(price, promptTokens)
 
-	raw := float64(promptTokens)/1e6*price.InputPrice +
-		float64(completionTokens)/1e6*price.OutputPrice +
-		float64(cachedTokens)/1e6*price.CachedPrice
-
-	quota := int64(math.Ceil(raw * float64(unitsPerOD)))
+	quota := int64(math.Ceil(CostExpression(promptTokens, completionTokens, cachedTokens, price) * float64(unitsPerOD)))
 	if quota < 1 {
 		quota = 1
 	}
 	return quota
+}
+
+// LookupBillablePrice 解析出本次调用真正可用的定价。
+//
+// 顺序：显式映射 → 官方 id（注册表别名）→ 原名。命中一行还不够：
+// 官方模型若三个单价都是 0，且不是注册表里标明的免费模型，视为没有可用定价
+// （不能按 0 元放行）。非官方名字上管理员显式保存的 0 价行仍然有效。
+func LookupBillablePrice(model string) (ModelPrice, bool) {
+	var names []string
+	add := func(name string) {
+		key := normalizeModelKey(name)
+		if key == "" {
+			return
+		}
+		for _, existing := range names {
+			if existing == key {
+				return
+			}
+		}
+		names = append(names, key)
+	}
+	resolved := ResolveModelForPricing(model, HasPrice)
+	add(resolved)
+	add(CanonicalModelName(model))
+	add(CanonicalModelName(resolved))
+	add(model)
+
+	for _, name := range names {
+		price, ok := PriceOf(name)
+		if !ok || !priceRowUsable(price) {
+			continue
+		}
+		return price, true
+	}
+	return ModelPrice{}, false
+}
+
+// priceRowUsable 判断一条已存在的定价能不能用来扣费。
+func priceRowUsable(price ModelPrice) bool {
+	if pricedComponents(price.InputPrice, price.OutputPrice, price.CachedPrice) {
+		return true
+	}
+	for _, tier := range price.ContextTiers {
+		if pricedComponents(tier.InputPrice, tier.OutputPrice, tier.CachedPrice) {
+			return true
+		}
+	}
+	real, isReal := LookupRealModel(price.Model)
+	if !isReal {
+		// 注册表之外的名字：管理员保存过这一行，0 价是显式选择。
+		return true
+	}
+	return isFreeModel(real)
+}
+
+func pricedComponents(input, output, cached float64) bool {
+	return input > 0 || output > 0 || cached > 0
 }
 
 // HasPrice 判断某个模型名是否配了定价。
