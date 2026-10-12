@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { ArrowUp } from "lucide-react";
 import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion, type Transition, type Variants } from "motion/react";
@@ -12,9 +12,7 @@ export type SortState = { key: string; direction: SortDirection };
 
 export type DataColumn<T> = {
   key: string;
-  label: ReactNode;
-  fixed?: boolean | "left" | "right";
-  className?: string;
+  label: string;
   sortable?: boolean;
   render?: (value: unknown, row: T) => ReactNode;
   /** Right-aligns the column with tabular numerals. Detected when every value is a number. */
@@ -28,13 +26,7 @@ export type SortableDataTableProps<T extends Record<string, unknown>> = {
   columns: DataColumn<T>[];
   rowKey: keyof T | ((row: T) => string);
   caption?: string;
-  emptyMessage?: ReactNode;
-  manualSort?: boolean;
-  onRow?: (row: T, index: number) => React.HTMLAttributes<HTMLTableRowElement>;
-  rowClassName?: string | ((row: T, index: number) => string);
-  minWidth?: number | string;
-  maxHeight?: number | string;
-  expandedRow?: (row: T, index: number) => ReactNode;
+  emptyMessage?: string;
   /** Sort applied on the first render. */
   defaultSort?: SortState;
   onSortChange?: (sort: SortState) => void;
@@ -131,7 +123,7 @@ function SelectBox({ checked, mixed = false, label, nav, reduced, onToggle, inpu
   </label>;
 }
 
-export function SortableDataTable<T extends Record<string, unknown>>({ rows, columns, rowKey, caption = "Data table", emptyMessage = "No rows to show", defaultSort, onSortChange, selectable = false, selectedKeys, defaultSelectedKeys, onSelectionChange, manualSort, onRow, rowClassName, minWidth, maxHeight, expandedRow, itemName = { one: "row", other: "rows" } }: SortableDataTableProps<T>) {
+export function SortableDataTable<T extends Record<string, unknown>>({ rows, columns, rowKey, caption = "Data table", emptyMessage = "No rows to show", defaultSort, onSortChange, selectable = false, selectedKeys, defaultSelectedKeys, onSelectionChange, itemName = { one: "row", other: "rows" } }: SortableDataTableProps<T>) {
   const reduced = useReducedMotion() ?? false;
   const tableRef = useRef<HTMLTableElement>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
@@ -142,7 +134,7 @@ export function SortableDataTable<T extends Record<string, unknown>>({ rows, col
   const selection = useMemo(() => new Set(selectedKeys ?? internalSelection), [internalSelection, selectedKeys]);
 
   const sortedRows = useMemo(() => {
-    if (manualSort || !sort) return rows;
+    if (!sort) return rows;
     return rows.map((row, index) => ({ row, index })).sort((a, b) => {
       const left = comparable(a.row[sort.key]);
       const right = comparable(b.row[sort.key]);
@@ -151,7 +143,7 @@ export function SortableDataTable<T extends Record<string, unknown>>({ rows, col
       const result = typeof left === "number" && typeof right === "number" ? left - right : collator.compare(String(left), String(right));
       return (sort.direction === "asc" ? result : -result) || a.index - b.index;
     }).map(entry => entry.row);
-  }, [rows, sort, manualSort]);
+  }, [rows, sort]);
 
   const numeric = useMemo(() => new Set(columns.filter(column => column.numeric ?? (rows.some(row => typeof row[column.key] === "number") && rows.every(row => typeof row[column.key] === "number" || isEmpty(row[column.key])))).map(column => column.key)), [columns, rows]);
   const getRowKey = (row: T) => String(typeof rowKey === "function" ? rowKey(row) : row[rowKey]);
@@ -209,7 +201,7 @@ export function SortableDataTable<T extends Record<string, unknown>>({ rows, col
   }, [reduced, sort?.key, widths]);
 
   const shownCount = selectedCount || keys.length;
-  const noun = selectedCount ? "项已选" : keys.length === 1 ? itemName.one : itemName.other;
+  const noun = selectedCount ? "selected" : keys.length === 1 ? itemName.one : itemName.other;
   const [lastCount, setLastCount] = useState(shownCount);
   const [countDirection, setCountDirection] = useState(1);
   if (shownCount !== lastCount) { setLastCount(shownCount); setCountDirection(shownCount > lastCount ? 1 : -1); }
@@ -222,7 +214,7 @@ export function SortableDataTable<T extends Record<string, unknown>>({ rows, col
   }
 
   function commit(next: Set<string>) {
-    const list = [...next];
+    const list = keys.filter(key => next.has(key));
     if (selectedKeys === undefined) setInternalSelection(list);
     onSelectionChange?.(list);
     setAnnouncement(list.length ? `${list.length} of ${keys.length} selected` : "Selection cleared");
@@ -275,20 +267,20 @@ export function SortableDataTable<T extends Record<string, unknown>>({ rows, col
   }
 
   return <div className={styles.wrapper} onKeyDown={onKeyDown}>
-    <div className={styles.scroller} style={{ maxHeight }} data-horizontal={minWidth != null || undefined}>
+    <div className={styles.scroller}>
       {band ? <span className={styles.band} style={{ left: band.left, width: band.width }} aria-hidden="true" /> : null}
-      <table style={{ minWidth }} ref={tableRef} role="table" className={styles.table} data-horizontal={minWidth != null || undefined} data-fixed={widths ? "" : undefined} data-selectable={selectable || undefined}>
+      <table ref={tableRef} role="table" className={styles.table} data-fixed={widths ? "" : undefined} data-selectable={selectable || undefined}>
         <caption>{caption}</caption>
         <colgroup>
           {selectable ? <col className={styles.selectCol} /> : null}
           {columns.map((column, index) => <col key={column.key} style={{ width: column.width !== undefined ? (typeof column.width === "number" ? `${column.width}px` : column.width) : widths && index > 0 ? `${widths[column.key]}%` : undefined }} />)}
         </colgroup>
         <thead role="rowgroup"><tr role="row">
-          {selectable ? <th scope="col" role="columnheader" className={styles.selectCell}><SelectBox inputRef={selectAllRef} checked={allSelected} mixed={selectedCount > 0 && !allSelected} label="选择全部" nav="head" reduced={reduced} onToggle={() => { const next = new Set(selection); keys.forEach(key => allSelected ? next.delete(key) : next.add(key)); commit(next); }} /></th> : null}
+          {selectable ? <th scope="col" role="columnheader" className={styles.selectCell}><SelectBox inputRef={selectAllRef} checked={allSelected} mixed={selectedCount > 0 && !allSelected} label="Select all rows" nav="head" reduced={reduced} onToggle={() => commit(allSelected ? new Set() : new Set(keys))} /></th> : null}
           {columns.map((column, index) => {
             const active = sort?.key === column.key;
             const sortable = column.sortable !== false;
-            return <th key={column.key} scope="col" role="columnheader" className={column.className} data-fixed-side={column.fixed === true ? "left" : column.fixed || undefined} data-key={column.key} data-primary={index === 0 || undefined} data-sorted={active || undefined} data-numeric={numeric.has(column.key) || undefined} data-sortable={sortable || undefined} aria-sort={!sortable ? undefined : active ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}>
+            return <th key={column.key} scope="col" role="columnheader" data-key={column.key} data-primary={index === 0 || undefined} data-sorted={active || undefined} data-numeric={numeric.has(column.key) || undefined} data-sortable={sortable || undefined} aria-sort={!sortable ? undefined : active ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}>
               {sortable ? <button className={styles.sortButton} type="button" data-nav="head" onClick={() => sortBy(column)} aria-label={`Sort by ${column.label}${active ? `, currently ${sort.direction === "asc" ? "ascending" : "descending"}` : ""}`}>
                 <span className={styles.sortInner}><span>{column.label}</span><SortGlyph active={active} descending={active && sort.direction === "desc"} reduced={reduced} /></span>
               </button> : column.label}
@@ -296,12 +288,12 @@ export function SortableDataTable<T extends Record<string, unknown>>({ rows, col
           })}
         </tr></thead>
         <tbody role="rowgroup">{sortedRows.length ? sortedRows.map((row, index) => {
-          const key = keys[index];
+          const key = keys[index]!;
           const selected = selectable && selection.has(key);
-          return <Fragment key={key}><motion.tr role="row" layout={reduced ? false : "position"} layoutDependency={order} transition={motionTokens.spring.smooth} data-selected={selected || undefined} className={typeof rowClassName === "function" ? rowClassName(row, index) : rowClassName} {...onRow?.(row, index)} onClick={event => { onRowClick(event, key); onRow?.(row, index)?.onClick?.(event); }} onMouseDown={event => { if (selectable && event.shiftKey) event.preventDefault(); }}>
-            {selectable ? <td role="cell" className={styles.selectCell}><SelectBox checked={selected} label={`Select ${String(row[columns[0]?.key] ?? key)}`} nav="row" reduced={reduced} onToggle={extend => toggleRow(key, extend)} /></td> : null}
-            {columns.map((column, columnIndex) => <td key={column.key} role="cell" className={column.className} data-fixed-side={column.fixed === true ? "left" : column.fixed || undefined} data-label={typeof column.label === "string" ? column.label : undefined} data-primary={columnIndex === 0 || undefined} data-sorted={sort?.key === column.key || undefined} data-numeric={numeric.has(column.key) || undefined}>{column.render ? column.render(row[column.key], row) : String(row[column.key] ?? "–")}</td>)}
-          </motion.tr>{expandedRow?.(row, index) != null && <tr><td colSpan={columns.length + (selectable ? 1 : 0)}>{expandedRow(row, index)}</td></tr>}</Fragment>;
+          return <motion.tr key={key} role="row" layout={reduced ? false : "position"} layoutDependency={order} transition={motionTokens.spring.smooth} data-selected={selected || undefined} onClick={event => onRowClick(event, key)} onMouseDown={event => { if (selectable && event.shiftKey) event.preventDefault(); }}>
+            {selectable ? <td role="cell" className={styles.selectCell}><SelectBox checked={selected} label={`Select ${String(row[columns[0]?.key as string] ?? key)}`} nav="row" reduced={reduced} onToggle={extend => toggleRow(key, extend)} /></td> : null}
+            {columns.map((column, columnIndex) => <td key={column.key} role="cell" data-label={column.label} data-primary={columnIndex === 0 || undefined} data-sorted={sort?.key === column.key || undefined} data-numeric={numeric.has(column.key) || undefined}>{column.render ? column.render(row[column.key], row) : String(row[column.key] ?? "–")}</td>)}
+          </motion.tr>;
         }) : <tr role="row"><td role="cell" className={styles.empty} colSpan={columns.length + (selectable ? 1 : 0)}>{emptyMessage}</td></tr>}</tbody>
       </table>
     </div>
@@ -311,7 +303,7 @@ export function SortableDataTable<T extends Record<string, unknown>>({ rows, col
         <Swap className={styles.number} value={String(shownCount)} direction={countDirection} reduced={reduced} />
         <Swap value={noun} direction={selectedCount ? 1 : -1} reduced={reduced} />
       </span>
-      <AnimatePresence initial={false}>{selectedCount ? <motion.button key="clear" type="button" className={styles.clear} data-clear="" onClick={clearSelection} initial={reduced ? { opacity: 0 } : { opacity: 0, scale: .96, filter: blur(motionTokens.blur.soft) }} animate={{ opacity: 1, scale: 1, filter: blur(0) }} exit={reduced ? { opacity: 0, transition: instant } : { opacity: 0, scale: .98, filter: blur(motionTokens.blur.subtle), transition: leave }} transition={reduced ? instant : enter} whileTap={reduced ? undefined : { scale: .97, transition: { duration: motionTokens.duration.instant } }}>清空选择</motion.button> : null}</AnimatePresence>
+      <AnimatePresence initial={false}>{selectedCount ? <motion.button key="clear" type="button" className={styles.clear} data-clear="" onClick={clearSelection} initial={reduced ? { opacity: 0 } : { opacity: 0, scale: .96, filter: blur(motionTokens.blur.soft) }} animate={{ opacity: 1, scale: 1, filter: blur(0) }} exit={reduced ? { opacity: 0, transition: instant } : { opacity: 0, scale: .98, filter: blur(motionTokens.blur.subtle), transition: leave }} transition={reduced ? instant : enter} whileTap={reduced ? undefined : { scale: .97, transition: { duration: motionTokens.duration.instant } }}>取消选择</motion.button> : null}</AnimatePresence>
     </div> : null}
     <p className={styles.srOnly} role="status">{announcement}</p>
   </div>;

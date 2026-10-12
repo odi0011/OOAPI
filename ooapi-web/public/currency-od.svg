@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <title>OD 币</title>
+  <defs>
+    <!-- 币面光照：光源在左上 -->
+    <linearGradient id="rimGrad" x1="20%" y1="15%" x2="80%" y2="85%">
+      <stop offset="0%" stop-color="#FFC84A" />
+      <stop offset="45%" stop-color="#F29B20" />
+      <stop offset="100%" stop-color="#B86000" />
+    </linearGradient>
+    <!-- 边缘高光 -->
+    <linearGradient id="bevelLight" x1="25%" y1="20%" x2="75%" y2="80%">
+      <stop offset="0%" stop-color="#FFE58F" stop-opacity="0.8" />
+      <stop offset="50%" stop-color="#F39C12" stop-opacity="0" />
+      <stop offset="100%" stop-color="#8A4500" stop-opacity="0.5" />
+    </linearGradient>
+    <!-- 凹陷币面 -->
+    <radialGradient id="innerFaceGrad" cx="38%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#FFAE34" />
+      <stop offset="55%" stop-color="#F19518" />
+      <stop offset="90%" stop-color="#D77602" />
+      <stop offset="100%" stop-color="#BE6200" />
+    </radialGradient>
+    <!-- 立体胶囊：竖向 -->
+    <linearGradient id="pillV" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="25%" stop-color="#FAFAFA" />
+      <stop offset="70%" stop-color="#ECECEC" />
+      <stop offset="100%" stop-color="#D0D0D0" />
+    </linearGradient>
+    <!-- 立体胶囊：横向 -->
+    <linearGradient id="pillH" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="30%" stop-color="#FDFDFD" />
+      <stop offset="75%" stop-color="#ECECEC" />
+      <stop offset="100%" stop-color="#CECECE" />
+    </linearGradient>
+    <filter id="coinShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="16" flood-color="#733600" flood-opacity="0.35" />
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#552400" flood-opacity="0.2" />
+    </filter>
+    <filter id="pillShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="3" dy="7" stdDeviation="5" flood-color="#7A3900" flood-opacity="0.4" />
+      <feDropShadow dx="1" dy="3" stdDeviation="2.5" flood-color="#5E2B00" flood-opacity="0.25" />
+    </filter>
+    <filter id="recessShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feOffset dx="3" dy="6" />
+      <feGaussianBlur stdDeviation="7" result="offset-blur" />
+      <feComposite operator="out" in="SourceGraphic" in2="offset-blur" result="inverse" />
+      <feFlood flood-color="#6E3100" flood-opacity="0.55" result="color" />
+      <feComposite operator="in" in="color" in2="inverse" result="shadow" />
+      <feComposite operator="over" in="shadow" in2="SourceGraphic" />
+    </filter>
+  </defs>
+
+  <!-- ================= 币身 ================= -->
+  <g id="coinBody" filter="url(#coinShadow)">
+    <circle cx="256" cy="256" r="215" fill="url(#rimGrad)" />
+    <circle cx="256" cy="256" r="215" fill="url(#bevelLight)" />
+    <!-- 下沉过渡到内壁 -->
+    <circle cx="256" cy="256" r="169" fill="#B65E00" opacity="0.6" />
+    <circle cx="256" cy="256" r="167" fill="#8F4600" opacity="0.4" />
+    <!-- 凹陷底面 -->
+    <circle cx="256" cy="256" r="165" fill="url(#innerFaceGrad)" filter="url(#recessShadow)" />
+    <!-- 底面环境光反射 -->
+    <ellipse cx="225" cy="195" rx="110" ry="65" fill="#FFEAA5" opacity="0.28" />
+  </g>
+
+  <!-- ================= 立体胶囊字母 OD ================= -->
+  <g id="OD-Letters" filter="url(#pillShadow)">
+    <!-- ---------- 字母 O ---------- -->
+    <!-- 顶部横胶囊 -->
+    <g id="O-top">
+      <rect x="166" y="172" width="68" height="32" rx="16" fill="url(#pillH)" />
+      <path d="M 178 176 L 222 176 C 226 176 228 178 228 181 C 228 184 226 186 222 186 L 178 186 C 174 186 172 184 172 181 C 172 178 174 176 178 176 Z" fill="#FFFFFF" opacity="0.75" />
+    </g>
+    <!-- 底部横胶囊 -->
+    <g id="O-bottom">
+      <rect x="166" y="308" width="68" height="32" rx="16" fill="url(#pillH)" />
+      <path d="M 178 312 L 222 312 C 226 312 228 314 228 316 C 228 318 226 320 222 320 L 178 320 C 174 320 172 318 172 316 C 172 314 174 312 178 312 Z" fill="#FFFFFF" opacity="0.5" />
+    </g>
+    <!-- 左侧竖胶囊 -->
+    <g id="O-left">
+      <rect x="148" y="196" width="32" height="120" rx="16" fill="url(#pillV)" />
+      <rect x="152" y="206" width="7" height="100" rx="3.5" fill="#FFFFFF" opacity="0.8" />
+    </g>
+    <!-- 右侧竖胶囊 -->
+    <g id="O-right">
+      <rect x="220" y="196" width="32" height="120" rx="16" fill="url(#pillV)" />
+      <rect x="224" y="206" width="7" height="100" rx="3.5" fill="#FFFFFF" opacity="0.75" />
+    </g>
+
+    <!-- ---------- 字母 D ---------- -->
+    <!--
+      D 由四段胶囊拼成，与 O 使用同一套笔画宽度（32px）：
+        左竖柱（通高）   x 278–310, y 172–340
+        上横臂           x 294–382, y 172–204
+        右竖柱（略短）   x 350–382, y 196–316
+        下横臂           x 294–382, y 308–340
+      横臂右缘与右竖柱右缘对齐于 382，整体宽度与 O 一致（104px）。
+    -->
+    <!-- 左竖柱 -->
+    <g id="D-left">
+      <rect x="278" y="172" width="32" height="168" rx="16" fill="url(#pillV)" />
+      <rect x="282" y="184" width="7" height="144" rx="3.5" fill="#FFFFFF" opacity="0.8" />
+    </g>
+    <!-- 上横臂 -->
+    <g id="D-top">
+      <rect x="294" y="172" width="88" height="32" rx="16" fill="url(#pillH)" />
+      <path d="M 306 176 L 362 176 C 368 176 372 178 372 181 C 372 184 368 186 362 186 L 306 186 C 300 186 296 184 296 181 C 296 178 300 176 306 176 Z" fill="#FFFFFF" opacity="0.72" />
+    </g>
+    <!-- 下横臂 -->
+    <g id="D-bottom">
+      <rect x="294" y="308" width="88" height="32" rx="16" fill="url(#pillH)" />
+      <path d="M 306 312 L 362 312 C 368 312 372 314 372 316 C 372 318 368 320 362 320 L 306 320 C 300 320 296 318 296 316 C 296 314 300 312 306 312 Z" fill="#FFFFFF" opacity="0.5" />
+    </g>
+    <!-- 右竖柱 -->
+    <g id="D-right">
+      <rect x="350" y="196" width="32" height="120" rx="16" fill="url(#pillV)" />
+      <rect x="354" y="206" width="7" height="100" rx="3.5" fill="#FFFFFF" opacity="0.75" />
+    </g>
+  </g>
+</svg>

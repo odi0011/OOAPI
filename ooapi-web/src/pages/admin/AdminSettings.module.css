@@ -1,0 +1,222 @@
+/* 设置页版式：左侧分区导航 + 右侧表单区。
+   整体按「紧凑」设计，一屏内展示更多设置项。 */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.lead {
+  margin: 4px 0 0;
+  max-width: 720px;
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+  color: var(--text-secondary);
+}
+
+.loading {
+  padding: var(--space-10) 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.ok,
+.err {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+}
+
+.ok {
+  color: var(--success, #1a7f4b);
+  background: color-mix(in oklab, var(--success, #1a7f4b) 10%, transparent);
+}
+
+.err {
+  color: var(--danger, #d94a3d);
+  background: color-mix(in oklab, var(--danger, #d94a3d) 10%, transparent);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 两栏布局 ---------- */
+
+.layout {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+/* 导航吸附在滚动区顶部，滚动长表单时仍可见 */
+.rail {
+  position: sticky;
+  top: 64px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.railList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.railItem {
+  width: 100%;
+  min-height: 30px;
+  padding: 0 var(--space-2);
+
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+
+  text-align: left;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+
+  transition: background-color var(--duration-fast, 140ms) var(--ease-standard, ease),
+    color var(--duration-fast, 140ms) var(--ease-standard, ease);
+}
+
+.railItem:hover {
+  background: var(--surface-muted);
+  color: var(--foreground);
+}
+
+.railItemActive,
+.railItemActive:hover {
+  background: var(--accent-subtle);
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.railEmpty {
+  padding: var(--space-2);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ---------- 表单区 ---------- */
+
+.formArea {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* 每个分区是一张卡片；滚动定位时留出顶栏高度的余量 */
+.section {
+  padding: var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  scroll-margin-top: 64px;
+}
+
+/* ---------- 未保存提示浮窗 ----------
+   只在有改动时出现，固定在右下角、宽度自适应内容，
+   不占满整行 —— 全宽横条会把表单压得上移，且暗示整页都在等保存。 */
+
+.floatBar {
+  position: fixed;
+  right: var(--space-6);
+  bottom: var(--space-6);
+  z-index: 20;
+
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-floating);
+
+  animation: floatIn 180ms var(--ease-standard, ease);
+}
+
+.floatText {
+  font-size: var(--text-xs);
+  color: var(--warning, #b8791a);
+  white-space: nowrap;
+}
+
+@keyframes floatIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .floatBar {
+    animation: none;
+  }
+}
+
+/* ---------- 响应式 ---------- */
+
+@media (max-width: 1000px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-5);
+  }
+
+  /* 窄屏把分区导航收成横向一排 */
+  .rail {
+    position: static;
+  }
+
+  .railList {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .railItem {
+    width: auto;
+    padding: 0 var(--space-4);
+    border: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 640px) {
+  .section {
+    padding: var(--space-4);
+  }
+
+  .floatBar {
+    right: var(--space-4);
+    bottom: var(--space-4);
+    left: var(--space-4);
+    justify-content: space-between;
+  }
+}

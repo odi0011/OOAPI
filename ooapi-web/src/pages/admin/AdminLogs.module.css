@@ -1,0 +1,584 @@
+/* 使用记录页 —— 与操作日志页共用同一套密度与间距规范。 */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+/* ---------- 筛选条 ---------- */
+
+.toolbar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+}
+
+.toolbar > * {
+  min-width: 0;
+}
+
+.range { width: 128px; }
+.model { width: 178px; }
+.status { width: 128px; }
+.token { width: 150px; }
+.channel { width: 150px; }
+
+.search {
+  width: min(232px, 100%);
+}
+
+.search > * {
+  width: 100%;
+}
+
+/* ---------- 汇总标签条 ----------
+   这一页的主体是记录表，统计只做辅助：紧凑小标签，不用大卡片。 */
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 104px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+.statLabel {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.statValue {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.statHint {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat[data-tone="danger"] .statValue { color: var(--danger); }
+.stat[data-tone="warning"] .statValue { color: var(--warning); }
+.stat[data-tone="success"] .statValue { color: var(--success); }
+
+/* ---------- 加载 / 错误 / 空态 ---------- */
+
+.loading {
+  margin: 0;
+  padding: 28px 0;
+  color: var(--text-muted);
+  text-align: center;
+  font-size: var(--text-xs);
+}
+
+.error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in oklab, var(--danger) 30%, var(--border));
+  border-radius: var(--radius-control);
+  background: color-mix(in oklab, var(--danger) 7%, var(--surface));
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+
+.errorText {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.error > button {
+  flex: none;
+  margin-left: auto;
+}
+
+.empty {
+  padding: var(--space-8) var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+/* ---------- 表格 ---------- */
+
+.table {
+  min-width: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.table[data-loading] {
+  opacity: 0.55;
+}
+
+.table tbody tr {
+  cursor: pointer;
+}
+
+/* 单元格：上下各留 10px，三行指标不再顶到行边框；横向与表头排序按钮（--space-4）对齐。
+   窄屏下表会折成卡片式行，内边距由组件自己控制，这里不覆盖。 */
+@media (min-width: 621px) {
+  .table tbody td {
+    padding: 10px var(--space-4);
+  }
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 单元格 ---------- */
+
+.timeCell {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.timeClock {
+  color: var(--foreground);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.timeDate {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.userCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.userText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.userName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.userHandle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.modelCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.modelIcon {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+}
+
+.modelFallback {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.modelName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.billingCell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.amount {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+/* Tokens / 耗时：两三个小行，标签与数值分开，纵向扫读可比。 */
+.metricCell {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.metricRow {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  line-height: 1.35;
+}
+
+/* 带图标的行给标签列多一点宽度，图标与数字同一基线中线对齐。 */
+.metricRow[data-icon] {
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 6px;
+}
+
+.metricLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.metricIcon {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.metricValue {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.metricValue[data-tone="success"] { color: var(--success); }
+.metricValue[data-tone="warning"] { color: var(--warning); }
+.metricValue[data-tone="danger"] { color: var(--danger); }
+.metricValue[data-muted] { color: var(--text-muted); }
+
+.truncate {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.callerCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  border-radius: var(--radius-control);
+}
+
+.callerCell:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.callerMark {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+}
+
+.callerFallback {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.callerName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+/* ---------- 详情：Bottom sheet 正文 ---------- */
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* 正文只做布局，滚动由 Bottom sheet 自己的 body 承担。 */
+.sheetScroll {
+  min-height: 0;
+}
+
+.sheetContent {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-right: 2px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.sectionNote {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.sectionError {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+/* 计费明细表：类别 / Token / 单价 / 费用，右三列数字右对齐。 */
+.billTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.billTable th {
+  padding: 0 0 6px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 400;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.billTable td {
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--border-subtle);
+  white-space: nowrap;
+}
+
+.billTable tfoot td {
+  border-bottom: 0;
+  border-top: 1px solid var(--border);
+  font-weight: 500;
+}
+
+.billTable th + th,
+.billTable td + td {
+  padding-left: 10px;
+}
+
+.billTable .billNum {
+  text-align: right;
+}
+
+.billSummary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.billSummaryRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.billSummaryLabel {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.billSummaryValue {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 原文块：固定上限高度的等宽小文本框，超出由 Arc ScrollArea 内部滚动。 */
+.textBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.textLabel {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.textScroll {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+}
+
+.textContent {
+  margin: 0;
+  padding: 8px 10px;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.textEmpty {
+  margin: 0;
+  padding: 12px 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+/* 请求信息：沿用详情行网格。 */
+.detailList {
+  display: flex;
+  flex-direction: column;
+}
+
+.detailRow {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 7px 0;
+  border-bottom: 1px dashed var(--border-subtle);
+}
+
+.detailRow:last-child {
+  border-bottom: 0;
+}
+
+.detailLabel {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.detailValue {
+  min-width: 0;
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.modelBlock {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.modelMapping {
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.breakdown {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.breakdownTotal {
+  font-weight: 500;
+}
+
+.durationLine {
+  font-variant-numeric: tabular-nums;
+}
+
+.durationLine [data-tone="success"] { color: var(--success); }
+.durationLine [data-tone="warning"] { color: var(--warning); }
+.durationLine [data-tone="danger"] { color: var(--danger); }
+
+.failText {
+  color: var(--danger);
+}
+
+@media (max-width: 720px) {
+  .range,
+  .status,
+  .token,
+  .channel {
+    width: calc(50% - 6px);
+  }
+
+  .model {
+    width: 100%;
+  }
+
+  .search {
+    width: 100%;
+  }
+
+  .detailRow {
+    grid-template-columns: 84px minmax(0, 1fr);
+  }
+}

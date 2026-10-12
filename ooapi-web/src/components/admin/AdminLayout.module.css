@@ -1,0 +1,214 @@
+/* 后台外壳样式。
+   配色一律使用主题色的衍生色（--accent / --accent-subtle / --accent-strong），
+   站点有主题系统，管理界面同样跟着变号，而不是固定灰白。 */
+
+.shell {
+  display: grid;
+  /* 侧边栏 224px：容得下 13px 中文字号与版本号标签 */
+  grid-template-columns: 224px minmax(0, 1fr);
+  min-height: 100vh;
+  background: var(--background);
+  color: var(--foreground);
+  transition: grid-template-columns 180ms var(--ease-standard, ease);
+
+  /* 防止任何子元素撑出横向滚动条 —— 之前整页可左右滑动就是这个原因 */
+  overflow-x: clip;
+}
+
+/* 侧边栏折叠后只留 60px 的图标条 */
+.shellCollapsed {
+  grid-template-columns: 60px minmax(0, 1fr);
+}
+
+/* ---------- 右侧主区 ---------- */
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* 关键：网格子项默认 min-width:auto 会被内容撑开，导致整页横向滚动 */
+  overflow-x: clip;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+
+  min-height: 52px;
+  padding: var(--space-2) var(--space-5);
+
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklab, var(--background) 88%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.topbarLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.topbarRight {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+/* ---------- 顶栏图标按钮 ---------- */
+
+.iconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+
+  width: 30px;
+  height: 30px;
+  padding: 0;
+
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+
+  transition: background-color 140ms var(--ease-standard, ease),
+    color 140ms var(--ease-standard, ease);
+}
+
+/* 悬停用主题色的淡派生 */
+.iconBtn:hover {
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+  color: var(--accent-strong, var(--accent));
+}
+
+/* ---------- 搜索按钮 ---------- */
+
+.searchBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+
+  height: 36px;
+  padding: 0 8px 0 12px;
+
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+
+  transition: border-color 140ms var(--ease-standard, ease),
+    color 140ms var(--ease-standard, ease);
+}
+
+.searchBtn:hover {
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
+  color: var(--text-secondary);
+}
+
+.searchText {
+  line-height: 1;
+}
+
+.kbd {
+  display: inline-flex;
+  align-items: center;
+
+  padding: 2px 5px;
+  border-radius: 5px;
+
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+  line-height: 1;
+
+  color: var(--text-muted);
+  background: var(--surface-muted);
+}
+
+/* 顶栏里的主题开关：包一层做尺寸与对齐 */
+.themeSlot {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+/* ---------- 内容区 ---------- */
+
+.content {
+  flex: 1;
+  min-width: 0;
+  /* 同理：内容里的表格、图表宽度按容器算，不撑破布局 */
+  overflow-x: clip;
+  padding: var(--space-5) var(--space-5) var(--space-10);
+}
+
+/* ---------- 命令面板遮罩 ---------- */
+
+.paletteOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+}
+
+/* 遮罩放按钮层，点空白处关闭 */
+.paletteBackdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background: color-mix(in oklab, var(--foreground) 22%, transparent);
+  backdrop-filter: blur(3px);
+  cursor: default;
+}
+
+.paletteBox {
+  position: relative;
+  z-index: 1;
+  width: min(560px, calc(100vw - 48px));
+}
+
+/* ---------- 响应式 ---------- */
+
+@media (max-width: 1080px) {
+  .searchText,
+  .kbd {
+    display: none;
+  }
+
+  .searchBtn {
+    width: 30px;
+    padding: 0;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 860px) {
+  /* 窄屏侧边栏收成 60px 图标条，把宽度让给内容 */
+  .shell,
+  .shellCollapsed {
+    grid-template-columns: 60px minmax(0, 1fr);
+  }
+
+  .content {
+    padding: var(--space-4) var(--space-4) var(--space-10);
+  }
+
+  .topbar {
+    padding: var(--space-2) var(--space-4);
+  }
+}

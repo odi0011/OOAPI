@@ -1,0 +1,208 @@
+/* 登录与注册分区。密钥输入默认收起，逐个展开，避免 7 个平台一次铺开 14 个输入框。 */
+
+.loading {
+  padding: var(--space-6) 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.ok,
+.err {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+}
+
+.ok {
+  color: var(--success, #1a7f4b);
+  background: color-mix(in oklab, var(--success, #1a7f4b) 10%, transparent);
+}
+
+.err {
+  color: var(--danger, #d94a3d);
+  background: color-mix(in oklab, var(--danger, #d94a3d) 10%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.block {
+  padding: var(--space-4) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.block:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.blockTitle {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.blockHint {
+  margin: calc(var(--space-2) * -1) 0 var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* ---------- 平台列表 ---------- */
+
+.providerList {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.provider {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.provider:first-child {
+  border-top: none;
+}
+
+.providerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 42px;
+}
+
+/* 整行可点：点名称展开密钥输入 */
+.providerToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+
+  padding: var(--space-1) 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: var(--foreground);
+}
+
+.providerToggle strong {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.chevron {
+  display: inline-block;
+  width: 14px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-muted);
+  transition: transform 150ms var(--ease-standard, ease);
+}
+
+.chevron[data-open] {
+  transform: rotate(90deg);
+}
+
+.providerBody {
+  padding: 0 0 var(--space-4) 22px;
+}
+
+/* ---------- 表单排布 ---------- */
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.grid2 + .grid2 {
+  margin-top: var(--space-3);
+}
+
+.callback {
+  margin: var(--space-3) 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.callback code {
+  display: inline-block;
+  margin-left: var(--space-2);
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--surface-muted);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 开关与测试 ---------- */
+
+.switches {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.checkRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+  cursor: pointer;
+}
+
+.checkRow input {
+  margin-top: 2px;
+  flex: none;
+}
+
+.testRow {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.testRow > *:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---------- 分区底部（独立保存） ---------- */
+
+.sectionFoot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.footHint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+@media (max-width: 720px) {
+  .grid2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .providerBody {
+    padding-left: 0;
+  }
+
+  .testRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

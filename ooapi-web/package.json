@@ -1,16 +1,28 @@
 {
-  "name": "ooapi-web",
-  "version": "0.1.0",
+  "name": "web",
   "private": true,
-  "description": "OOAPI 前端：React + Arc UI 免费组件",
+  "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fontsource/liu-jian-mao-cao": "^5.3.0",
+    "@fontsource/long-cang": "^5.3.0",
+    "@fontsource/ma-shan-zheng": "^5.3.1",
     "@fontsource/noto-sans-sc": "^5.3.0",
+    "@fontsource/noto-serif-sc": "^5.3.0",
+    "@fontsource/source-serif-4": "^5.3.0",
+    "@fontsource/zcool-kuaile": "^5.3.0",
+    "@fontsource/zcool-qingke-huangyou": "^5.3.0",
+    "@fontsource/zcool-xiaowei": "^5.3.0",
+    "@fontsource/zhi-mang-xing": "^5.3.0",
     "@radix-ui/react-accordion": "^1.2.21",
     "@radix-ui/react-checkbox": "^1.3.12",
     "@radix-ui/react-dialog": "^1.2.0",
@@ -20,15 +32,19 @@
     "@radix-ui/react-switch": "^1.3.8",
     "@radix-ui/react-tabs": "^1.1.22",
     "@radix-ui/react-tooltip": "^1.3.0",
-    "dayjs": "^1.11.13",
     "lucide-react": "^1.52.0",
     "motion": "^14.0.0",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "react-router-dom": "^6.28.0"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.4"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.3",
-    "vite": "^5.4.10"
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "oxlint": "^1.81.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0"
   }
 }

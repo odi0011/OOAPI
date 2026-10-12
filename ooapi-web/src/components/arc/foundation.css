@@ -38,7 +38,8 @@
   --control-on-subtle: color-mix(in oklab, var(--control-on) 10%, transparent);
   /* Slider fills. Same as --control-on except neutral dark, where a mid grey keeps the white thumb distinct. */
   --control-fill: var(--control-on);
-  /* Product decision: no focus rings anywhere. Kept as a token so existing rules resolve to nothing. */
+  /* Pointer focus draws no ring (product decision). --focus-ring is the halo a few fields drew for any input method, so it stays transparent.
+     Keyboard focus uses the outline at the end of this file; tune it with --focus-outline, --focus-outline-width and --focus-outline-offset. */
   --focus-ring: transparent;
   --success: oklch(49% .19 150);
   --warning: oklch(58% .18 75);
@@ -60,8 +61,17 @@
   --space-1: .25rem; --space-2: .5rem; --space-3: .75rem; --space-4: 1rem;
   --space-5: 1.25rem; --space-6: 1.5rem; --space-8: 2rem; --space-10: 2.5rem;
   --space-12: 3rem; --space-16: 4rem; --space-20: 5rem; --space-24: 6rem;
-  --radius-control: 1.125rem; --radius-panel: 1.625rem; --radius-surface: 2.125rem; --radius-pill: 9999px;
-  --control-height-sm: 2.25rem; --control-height-md: 2.75rem; --control-height-lg: 3.125rem;
+  /*
+    OOAPI 是后台数据密集型界面，控件按「桌面紧凑」标定，不是触屏尺寸。
+
+    组件库默认的 44px / 36px 是移动优先的触屏规格：一屏里放三四个筛选控件
+    就被撑满，表格上方的工具条占了整屏高度。这里统一下调到 36 / 32 / 42，
+    圆角按同比例收缩（36px 高度配 14px 圆角，比例与原来的 44/18 一致），
+    视觉语言不变、只是整体小一号。所有表单控件、按钮、标签页都读这三个令牌，
+    因此一处修改全站生效。
+  */
+  --radius-control: .875rem; --radius-panel: 1.625rem; --radius-surface: 2.125rem; --radius-pill: 9999px;
+  --control-height-sm: 2rem; --control-height-md: 2.25rem; --control-height-lg: 2.625rem;
   --font-display: var(--font-geist, "Geist Variable"), sans-serif;
   --font-body: var(--font-inter, "Inter Variable"), sans-serif;
   --text-xs: .75rem; --text-sm: .875rem; --text-base: 1rem; --text-lg: 1.125rem;
@@ -175,5 +185,17 @@
   }
 }
 
-/* No focus rings or outlines for any input method (product decision). */
-:is(*:focus, *:focus-visible, *:focus-within) { outline: none !important; }
+/* Focus. Pointer focus never draws a ring (product decision). Keyboard focus (:focus-visible) draws a subtle accent outline, so keyboard users
+   can always see where they are (WCAG 2.4.7). Left out of the outline: text fields, which match :focus-visible on a mouse click too and show
+   focus with their border and caret; menu items and listbox options, whose highlight fill marks the keyboard position; and tabindex="-1"
+   targets (dialog panels, regions) that only receive focus from script.
+   Tune it on :root or any element, no !important needed:
+     --focus-outline           color (default: the accent, softened); set transparent to hide it
+     --focus-outline-width     default 2px
+     --focus-outline-offset    default 2px; components inside clipped containers set a negative offset */
+:focus:not(:focus-visible),
+:is(input:not([type="button"], [type="checkbox"], [type="color"], [type="file"], [type="image"], [type="radio"], [type="range"], [type="reset"], [type="submit"]), textarea, [contenteditable]:not([contenteditable="false"]), [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="option"], [tabindex="-1"]):focus { outline: none !important; }
+:focus-visible:not(input:not([type="button"], [type="checkbox"], [type="color"], [type="file"], [type="image"], [type="radio"], [type="range"], [type="reset"], [type="submit"]), textarea, [contenteditable]:not([contenteditable="false"]), [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="option"], [tabindex="-1"]) {
+  outline: var(--focus-outline-width, 2px) solid var(--focus-outline, color-mix(in oklab, var(--accent-strong) 72%, transparent)) !important;
+  outline-offset: var(--focus-outline-offset, 2px) !important;
+}

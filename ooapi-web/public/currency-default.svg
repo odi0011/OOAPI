@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <title>货币单位</title>
+  <!--
+    默认货币图标：一枚立体金币，币面中央有凸起的圆台。
+
+    刻意不写字母 —— 货币名称由管理员在设置里配置、可随时改名，
+    图标若固定字母，改名后就会自相矛盾。
+  -->
+  <defs>
+    <!-- 外圈：光源在左上，从高光渐变到暗边 -->
+    <linearGradient id="rimGrad" x1="18%" y1="12%" x2="82%" y2="88%">
+      <stop offset="0%" stop-color="#FFC93C" />
+      <stop offset="42%" stop-color="#F0A018" />
+      <stop offset="100%" stop-color="#B85D00" />
+    </linearGradient>
+
+    <!-- 边缘补光：左上亮、右下暗 -->
+    <linearGradient id="bevelLight" x1="22%" y1="18%" x2="78%" y2="82%">
+      <stop offset="0%" stop-color="#FFE89B" stop-opacity="0.85" />
+      <stop offset="45%" stop-color="#F39C12" stop-opacity="0" />
+      <stop offset="100%" stop-color="#7A3C00" stop-opacity="0.55" />
+    </linearGradient>
+
+    <!-- 凹陷币面：径向渐变模拟球面 -->
+    <radialGradient id="innerFace" cx="36%" cy="32%" r="68%">
+      <stop offset="0%" stop-color="#FFB43C" />
+      <stop offset="52%" stop-color="#F09718" />
+      <stop offset="88%" stop-color="#D27603" />
+      <stop offset="100%" stop-color="#B85E00" />
+    </radialGradient>
+
+    <!-- 中央圆台：比币面更亮一档，形成凸起 -->
+    <radialGradient id="bossGrad" cx="34%" cy="28%" r="70%">
+      <stop offset="0%" stop-color="#FFD979" />
+      <stop offset="58%" stop-color="#F5A628" />
+      <stop offset="100%" stop-color="#CA6F06" />
+    </radialGradient>
+
+    <filter id="coinShadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="16" stdDeviation="15" flood-color="#6B3200" flood-opacity="0.32" />
+      <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#4E2200" flood-opacity="0.18" />
+    </filter>
+
+    <!-- 圆台的凸起阴影：向右下偏移，与左上光源相反 -->
+    <filter id="bossShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="2" dy="5" stdDeviation="6" flood-color="#7A3900" flood-opacity="0.34" />
+    </filter>
+
+    <!-- 凹陷内壁：内侧上方压暗，模拟厚度 -->
+    <filter id="recessShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feOffset dx="3" dy="7" />
+      <feGaussianBlur stdDeviation="8" result="offset-blur" />
+      <feComposite operator="out" in="SourceGraphic" in2="offset-blur" result="inverse" />
+      <feFlood flood-color="#6E3100" flood-opacity="0.55" result="color" />
+      <feComposite operator="in" in="color" in2="inverse" result="shadow" />
+      <feComposite operator="over" in="shadow" in2="SourceGraphic" />
+    </filter>
+  </defs>
+
+  <g id="coin" filter="url(#coinShadow)">
+    <!-- 币身外圈 -->
+    <circle cx="256" cy="256" r="215" fill="url(#rimGrad)" />
+    <circle cx="256" cy="256" r="215" fill="url(#bevelLight)" />
+
+    <!-- 外圈到内壁的台阶 -->
+    <circle cx="256" cy="256" r="170" fill="#B85E00" opacity="0.55" />
+    <circle cx="256" cy="256" r="167" fill="#8E4500" opacity="0.42" />
+
+    <!-- 凹陷底面 -->
+    <circle cx="256" cy="256" r="165" fill="url(#innerFace)" filter="url(#recessShadow)" />
+
+    <!-- 底面的环境光反射（左上） -->
+    <ellipse cx="222" cy="190" rx="112" ry="66" fill="#FFEDB0" opacity="0.26" />
+
+    <!-- 中央凸起圆台 -->
+    <g filter="url(#bossShadow)">
+      <circle cx="256" cy="256" r="92" fill="url(#bossGrad)" />
+      <!-- 圆台左上高光 -->
+      <ellipse cx="224" cy="218" rx="48" ry="31" fill="#FFF4D4" opacity="0.4" />
+      <!-- 圆台右下边缘的暗收 -->
+      <ellipse cx="292" cy="300" rx="52" ry="30" fill="#9C4C00" opacity="0.14" />
+    </g>
+  </g>
+</svg>

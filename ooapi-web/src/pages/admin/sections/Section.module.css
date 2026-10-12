@@ -1,0 +1,186 @@
+/* 设置页分区的统一版式：左侧说明文字、右侧控件。
+   这种「标签 — 描述 — 控件」的行结构是设置类界面的标准排布。
+
+   关键约束：右侧控件区**不强制拉满整行宽度**。
+   单选组、开关、色板这类控件按其自然宽度渲染，只有文本输入才占满列宽 ——
+   把「舒适/紧凑」这种两个字的选择项拉成一整行是明显的版面浪费。
+*/
+
+.sectionHead {
+  margin-bottom: var(--space-4);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.sectionLead {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+  color: var(--text-secondary);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: grid;
+  /* 左列固定、右列自适应但不强制占满：内容窄时整行仍紧凑 */
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.rowText strong {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.rowText p {
+  margin: 2px 0 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+  color: var(--text-secondary);
+}
+
+/*
+  控件容器：宽度按内容收缩。
+  max-width 兜住极端情况，避免超长文案把行撑开。
+*/
+.rowControl {
+  min-width: 0;
+  max-width: 480px;
+  justify-self: start;
+  width: 100%;
+}
+
+/* 单选组、开关、色板这类「选择式」控件不该占满整行 */
+.rowControlInline {
+  min-width: 0;
+  justify-self: start;
+}
+
+/* ---------- 主题色选择器 ---------- */
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+
+  transition: border-color var(--duration-fast, 140ms) var(--ease-standard, ease),
+    color var(--duration-fast, 140ms) var(--ease-standard, ease);
+}
+
+.swatch:hover {
+  border-color: var(--border-strong);
+  color: var(--foreground);
+}
+
+/* 当前选中：加粗边框 + 前景色文字，不依赖颜色本身传达状态 */
+.swatchActive,
+.swatchActive:hover {
+  border-color: var(--foreground);
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.swatchDot {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.12);
+}
+
+/* ---------- 效果预览行 ---------- */
+
+.previewRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+
+  margin-top: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--border);
+}
+
+.previewLabel {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.previewValue {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.previewNote {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+@media (max-width: 860px) {
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+
+  .rowControl {
+    max-width: none;
+  }
+}
+
+/* 字体预览：用选中字体渲染一行，管理员不必保存后回前台确认 */
+.fontPreview {
+  margin: var(--space-2) 0 0;
+  padding: 8px 10px;
+
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

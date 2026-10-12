@@ -1,0 +1,395 @@
+/* 用户管理页：紧凑统计条 + Arc SortableDataTable。
+   旧版是「大圆弧卡片堆」，信息密度低且操作按钮被压得过小；
+   这里回到表格 + 紧凑 chips 的版式。 */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+/* ---------- 统计条：4 个紧凑 chip，一行放不下时换行 ---------- */
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+
+  padding: 7px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+.chipLabel {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.chipValue {
+  font-size: var(--text-base);
+  font-weight: 550;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+
+.chipHint {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.chip[data-tone="danger"] .chipValue {
+  color: var(--danger);
+}
+
+/* ---------- 工具栏 ---------- */
+
+.toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.toolbar > :first-child {
+  width: min(300px, 100%);
+}
+
+.toolbar > button {
+  margin-bottom: 1px;
+}
+
+.count {
+  margin-left: auto;
+  align-self: center;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 表格 ---------- */
+
+.table {
+  min-width: 0;
+}
+
+.table table {
+  min-width: 1150px;
+}
+
+/* 单元格留出上下 10px：两行身份（头像 + 名字）不会贴到分隔线上 */
+.table td {
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 编辑对话框头部的用户身份条：头像 + 名称，与表格里的用户列同一套信息 */
+.editIdentity {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 10px;
+  min-width: 0;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.editIdentityText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.editIdentityText strong {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editIdentityText span {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.identityText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.identityText strong {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.username {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.email {
+  display: block;
+  max-width: 175px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.time {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* 金额后跟货币图标 */
+.amount {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.amountQuiet {
+  color: var(--text-muted);
+}
+
+/* ---------- 行内操作 ----------
+   按钮用组件库 sm 尺寸的默认字号与内边距（旧的 11px/28px 会造成文字出框）。 */
+
+.rowActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* 操作按钮不参与收缩、标签不换行 —— 窄列下中文字也整行显示，不会被裁掉半截。 */
+.rowActions button,
+.rowActions a {
+  flex: none;
+  white-space: nowrap;
+}
+
+.selfNote {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ---------- 分页 ---------- */
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* ---------- 加载 / 错误 / 空态 ---------- */
+
+.loading {
+  padding: var(--space-8) 0;
+  color: var(--text-muted);
+  text-align: center;
+  font-size: var(--text-xs);
+}
+
+.err {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  background: color-mix(in oklab, var(--danger) 8%, var(--surface));
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+
+.emptyCard {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  padding: var(--space-6) 0;
+}
+
+/* ---------- 对话框 ---------- */
+
+/* 编辑对话框：高度超出视口时由内部 ScrollArea 滚动，对话框本体不出现原生滚动条 */
+.editDialog {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - var(--space-8));
+  max-height: calc(100dvh - var(--space-8));
+  overflow: hidden;
+}
+
+.dialogBody {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* flex-basis auto：内容超出时才收缩（收缩量落在滚动区），页头不会被压扁 */
+.editBody {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dialogScroll {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  padding: 3px 12px 6px 0;
+}
+
+/* 额度对话框：数字字段 + 当前余额 */
+.quotaGrid {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto;
+  align-items: end;
+  gap: 16px;
+}
+
+.quotaGrid > :first-child {
+  --number-field-width: 100%;
+  min-width: 0;
+}
+
+.balance {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+
+  padding: 9px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+}
+
+.balanceLabel {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.balance strong {
+  font-size: var(--text-sm);
+  font-weight: 550;
+}
+
+.dialogActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: none;
+  gap: 10px;
+
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.confirmText {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.confirmText strong {
+  color: var(--foreground);
+  font-weight: 550;
+}
+
+.warnText {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  background: color-mix(in oklab, var(--danger) 8%, var(--surface));
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+}
+
+@media (max-width: 760px) {
+  .table table {
+    min-width: 0;
+  }
+
+  .table td {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+
+  .count {
+    margin-left: 0;
+  }
+
+  .quotaGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .email {
+    max-width: none;
+  }
+}
+
+/* 620px 以下表格切换为卡片式行（组件内置），单元格改回按行留白 */
+@media (max-width: 620px) {
+  .table td {
+    padding: 4px 0;
+  }
+}

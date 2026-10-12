@@ -1,0 +1,96 @@
+/* The screen fills its container like a viewport. Bars share one height, so the stage center and the ring center stay the same point. */
+.screen { --bar: 64px; container: login-centered / inline-size; position: relative; isolation: isolate; display: grid; grid-template-rows: var(--bar) minmax(0, 1fr) var(--bar); width: 100%; min-width: 0; min-height: 640px; justify-self: stretch; align-self: stretch; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--background); color: var(--foreground); font-family: var(--font-body); letter-spacing: var(--tracking-body); }
+.fullScreen { min-height: 100dvh; border: 0; border-radius: 0; }
+
+/* Quiet line backdrop. The mask only fades the outer rings into the canvas; nothing here is filled. */
+.backdrop { position: absolute; inset: 0; z-index: -1; pointer-events: none; -webkit-mask-image: radial-gradient(ellipse 72% 78% at 50% 50%, #000 38%, transparent 100%); mask-image: radial-gradient(ellipse 72% 78% at 50% 50%, #000 38%, transparent 100%); }
+.lines { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.ring, .axis { fill: none; stroke: var(--border-subtle); stroke-width: 1; }
+.ring { transform: translate(calc(var(--dx, 0px) * var(--k, 1)), calc(var(--dy, 0px) * var(--k, 1))); }
+.ringMajor { stroke: var(--border); }
+.axis { transform: translate(var(--dx, 0px), var(--dy, 0px)); }
+
+.bar, .foot { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--space-4); padding: 0 var(--space-6); }
+.mark { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--text-base); font-weight: 500; line-height: 1; }
+.switch { display: inline-flex; min-width: 0; align-items: center; gap: var(--space-1); margin: 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-body); white-space: nowrap; }
+.switchPrompt { position: relative; display: inline-grid; justify-items: end; }
+.switchPrompt > span, .switchButton > span { grid-area: 1 / 1; }
+.switchButton { position: relative; display: inline-grid; min-height: var(--control-height-sm); align-items: center; justify-items: center; border: 0; border-radius: var(--radius-pill); padding: 0 var(--space-3); background: none; color: var(--foreground); font: inherit; font-weight: 500; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard); }
+.switchButton:active { background: var(--surface-muted); }
+
+.stage { display: grid; min-width: 0; place-items: center; padding: var(--space-6) var(--space-4); }
+.card { width: min(100%, 420px); min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface); box-shadow: var(--shadow-resting); }
+/* Clips the leaving step while the height glides; steps carry their own padding. */
+.viewport { overflow: hidden; }
+.track { position: relative; }
+.step { display: grid; min-width: 0; padding: var(--space-8); }
+
+.heading { display: grid; gap: var(--space-2); margin-bottom: var(--space-6); }
+.heading h2 { margin: 0; font-family: var(--font-display); font-size: var(--text-3xl); font-weight: 400; letter-spacing: var(--tracking-display); line-height: var(--leading-display); text-wrap: balance; }
+.heading p { margin: 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-body); text-wrap: pretty; }
+.address { color: var(--foreground); overflow-wrap: anywhere; }
+
+.actions, .form { display: grid; gap: var(--space-3); }
+.form { gap: var(--space-4); }
+.wide { width: 100%; }
+/* Rings leave the fingerprint while the device is asked. They sit in the label, so they take the button's text color. */
+.pulse { position: relative; display: inline-grid; place-items: center; }
+.pulseRing { position: absolute; inset: -2px; border: 1.5px solid currentColor; border-radius: var(--radius-pill); pointer-events: none; }
+
+.divider { display: flex; align-items: center; gap: var(--space-3); margin: var(--space-5) 0; color: var(--text-muted); font-size: var(--text-xs); line-height: 1; }
+.divider::before, .divider::after { flex: 1; height: 1px; background: var(--border); content: ""; }
+.sso { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
+.sso .ssoButton { min-width: 0; padding-inline: var(--space-2); }
+
+.textButton { position: relative; display: inline-flex; min-height: var(--control-height-sm); align-items: center; justify-self: center; gap: var(--space-2); margin: var(--space-4) 0 calc(var(--space-2) * -1); border: 0; border-radius: var(--radius-pill); padding: 0 var(--space-3); background: none; color: var(--text-secondary); font: inherit; font-size: var(--text-sm); font-weight: 500; line-height: var(--leading-body); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard); }
+.textButton:active:not([aria-disabled="true"]) { color: var(--foreground); background: var(--surface-muted); }
+.textButton[aria-disabled="true"] { color: var(--text-muted); font-weight: 400; cursor: default; }
+.inlineButton { border: 0; border-radius: 4px; padding: 0; background: none; color: var(--foreground); font: inherit; font-weight: 500; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; cursor: pointer; transition: text-decoration-color var(--duration-fast) var(--ease-standard); }
+.resendLabel { display: inline-flex; align-items: baseline; gap: .3em; white-space: nowrap; }
+.time { display: inline-flex; font-variant-numeric: tabular-nums; }
+.timeColumn { position: relative; display: inline-flex; justify-content: center; }
+.timeColumn > span { display: inline-block; }
+
+.success { display: block; width: 48px; height: 48px; margin-bottom: var(--space-6); overflow: visible; color: var(--success); }
+.details { display: grid; margin: calc(var(--space-2) * -1) 0 var(--space-6); border-top: 1px solid var(--border); padding: 0; }
+.details div { display: flex; justify-content: space-between; gap: var(--space-4); border-bottom: 1px solid var(--border); padding: var(--space-3) 0; font-size: var(--text-sm); line-height: var(--leading-body); }
+.details dt { color: var(--text-secondary); }
+.details dd { margin: 0; text-align: right; }
+
+.foot { color: var(--text-muted); font-size: var(--text-xs); line-height: var(--leading-body); }
+.status { position: relative; display: block; min-width: 0; flex: 1; }
+.status > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legal { display: flex; flex: none; gap: var(--space-1); }
+.legal a { display: inline-flex; min-height: 32px; align-items: center; border-radius: var(--radius-pill); padding: 0 var(--space-2); color: var(--text-secondary); text-decoration: none; transition: color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard); }
+.legal a:active { color: var(--foreground); }
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@media (hover: hover) and (pointer: fine) {
+  .switchButton:hover { background: var(--surface-muted); }
+  .textButton:not([aria-disabled="true"]):hover { color: var(--foreground); background: var(--surface-muted); }
+  .inlineButton:hover { text-decoration-color: currentColor; }
+  .legal a:hover { color: var(--foreground); background: var(--surface-muted); }
+}
+
+@container login-centered (max-width: 520px) {
+  .bar, .foot { padding-inline: var(--space-4); }
+  .stage { padding: var(--space-4); }
+  .card { border-radius: var(--radius-panel); }
+  .step { padding: var(--space-6); }
+}
+@container login-centered (max-width: 400px) {
+  .stage { padding-inline: var(--space-3); }
+  .step { padding-inline: var(--space-5); }
+  .heading h2 { font-size: var(--text-2xl); }
+  .sso .ssoButton { gap: 6px; padding-inline: var(--space-1); font-size: var(--text-xs); }
+  .switchButton { padding-inline: var(--space-2); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .switchButton, .textButton, .inlineButton, .legal a { transition: none; }
+  .ring, .axis { transform: none; }
+}
+/* The product mark takes the accent: the one spot of color before a person signs in. */
+.mark svg { color: var(--accent); }
+
+/* 表单级错误提示（登录失败、第三方未接入等），与 signup-form 的同名样式保持一致 */
+.submitError { margin: 0; color: var(--danger); font-size: var(--text-xs); line-height: var(--leading-body); }

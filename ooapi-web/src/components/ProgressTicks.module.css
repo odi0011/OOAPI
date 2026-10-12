@@ -1,0 +1,189 @@
+/* ── 进度刻度（来自 Bencho，MIT · bencho.dev/licence）─────────
+   组件依赖的设计令牌全部在这里映射到本项目的对应物，定义在组件根上、
+   不外泄。只有本组件用到的值才在这里，避免污染全局。
+
+   映射原则：Bencho 的 ink/ground 就是本项目的 foreground/background，
+   pane 就是 surface，ok 就是 success。 */
+
+.root {
+  /* ── 墨色三级 ─────────────────────────────────────────── */
+  --ink: var(--foreground);
+  --ink-3: var(--text-secondary);
+  --ink-4: var(--text-muted);
+
+  /* rgba() 需要三段裸数字，oklch 变量拼不进去，因此这里给字面量。
+     取值等于 --foreground 的 sRGB 等价物：
+       浅色 oklch(15% 0 0) ≈ 11,11,11 ／ 深色 oklch(96% 0 0) ≈ 242,242,242
+     深色下的覆盖见文件末尾的 :global 规则。 */
+  --ink-rgb: 11, 11, 11;
+
+  /* ── 面板 ─────────────────────────────────────────────── */
+  --pane: var(--surface);
+  --pane-edge: var(--border);
+
+  /* ── 强调 ─────────────────────────────────────────────── */
+  --ok: var(--success);
+
+  /* ── 字体：本项目没有 mono/num 专用令牌，用正文族 + 等宽数字 ── */
+  --font-ui: var(--font-body);
+  --font-num: var(--font-body);
+  --font-mono: var(--font-body);
+
+  /* ── 玻璃参数 ───────────────────────────────────────────
+     本项目是平面设计语言，没有玻璃面板。把模糊、饱和、亮度全部置为
+     中性，backdrop-filter 就等于不生效，surface 仍是实心填充。 */
+  --g-blur: 0px;
+  --g-sat: 100%;
+  --g-bright: 100%;
+
+  /* 侧光边缘与投影：平面语言不需要，置零 */
+  --g-edge-hi: 0;
+  --g-edge-lo: 0;
+  --g-edge-far: 0;
+  --g-spec: 0;
+  --g-lift: 0;
+  --g-shadow: none;
+  --shadow-rgb: 0, 0, 0;
+
+  /* ── 深色面板 ─────────────────────────────────────────── */
+  --solid: var(--foreground);
+  --solid-ink: var(--background);
+
+  position: relative;
+  background: var(--pane);
+  -webkit-backdrop-filter: blur(var(--g-blur)) saturate(var(--g-sat)) brightness(var(--g-bright));
+  backdrop-filter: blur(var(--g-blur)) saturate(var(--g-sat)) brightness(var(--g-bright));
+  color: var(--ink);
+  border-radius: var(--radius-panel);
+  /* 12px，与卡片内的间距同值。组件内的留白和组件之间的距离原本是
+     两个数字在做同一件事，统一成一个数，节奏就能从页面延续进组件。 */
+  padding: 12px;
+  overflow: hidden;
+  isolation: isolate;
+  font-family: var(--font-ui);
+}
+
+/* 组件的描边沿用本项目的细边语言（Bencho 用 ::before 画玻璃亮边，
+   平面面板只需要一条 hairline）。 */
+.root::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid transparent;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.root[data-tone="dark"] {
+  --ink: var(--solid-ink);
+  --ink-3: color-mix(in oklab, var(--solid-ink) 45%, transparent);
+  --ink-rgb: 244, 243, 241;
+  background: var(--solid);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.root[data-tone="dark"]::before {
+  display: none;
+}
+
+/* ── 刻度 ─────────────────────────────────────────────────── */
+
+/* 整块就是刻度。刻度上方是那个它们拼不出来的数字，
+   字号大到成为你第一眼读到的东西。 */
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+/* 用正文族而不是等宽 —— 等宽在这里唯一的作用是数字变化时不跳动，
+   而 tabular-nums 在比例字体里同样能做到；等宽的代价是一个读数看起来
+   像控制台输出，而同一个块里的其它字都是正文字体。 */
+.figure {
+  font-family: var(--font-ui);
+  font-size: 34px;
+  line-height: 1;
+  letter-spacing: -0.035em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 单位只有三分之一的字重 —— 百分比是一个读数，不是「一个数加一个词」 */
+.figure i {
+  font-style: normal;
+  font-size: 16px;
+  margin-left: 2px;
+  opacity: 0.35;
+}
+
+/* 只在拖动时出现。它占着自己的位置而不是插入后把整行挤开 ——
+   一个每次移动指针都把数字顶偏的读数，比没有读数更糟。 */
+.delta {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  color: var(--ink-4);
+  opacity: 0;
+  transition: opacity 140ms ease, color 140ms ease;
+  font-variant-numeric: tabular-nums;
+}
+
+.delta[data-show="true"] {
+  opacity: 1;
+}
+
+.delta[data-up="true"] {
+  color: var(--ok);
+}
+
+/* 补充读数推到行的最右端 */
+.caption {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+}
+
+.tickRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 84px;
+  /* ── pan-y，且刻意不用 none ──────────────────────────────
+     擦除是横向的，纵向留给浏览器：从这一行开始向下划的手指是在滚动
+     页面，把那个手势抢走会把用户困在一块他只是路过的组件上。
+     用 none 就会这样。横向归我们，纵向归他们。 */
+  touch-action: pan-y;
+}
+
+/* 刻度是墨色的两档浓淡，而不是两档白 —— 面板是浅色底，
+   整个组件的配色都对着浅底选过。 */
+.tick {
+  flex: 1;
+  background: rgba(var(--ink-rgb), 0.16);
+  border-radius: 2px;
+  transition: background 160ms ease, height 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  cursor: crosshair;
+}
+
+.tick[data-on="true"] {
+  background: var(--ink);
+}
+
+.tick[data-cursor="true"] {
+  background: var(--ok);
+}
+
+/* 深色主题下 oklch 变量无法拼进 rgba()，这里给字面量覆盖 */
+:global(:root[data-theme="dark"]) .root {
+  --ink-rgb: 242, 242, 242;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tick {
+    transition: background 160ms ease;
+  }
+}

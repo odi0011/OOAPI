@@ -1,0 +1,239 @@
+.page { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.title { margin: 0; font-size: var(--text-2xl); font-weight: 500; }
+.toolbar { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.toolbar > :first-child { width: min(300px, 100%); }
+.toolbar > :nth-child(2) { width: 205px; }
+.total { margin-left: auto; align-self: center; color: var(--text-muted); font-size: var(--text-xs); }
+.loading { padding: 24px; text-align: center; color: var(--text-muted); }
+.err { margin: 0; padding: 10px 12px; border-radius: var(--radius-control); background: color-mix(in oklab, var(--danger) 8%, var(--surface)); color: var(--danger); font-size: var(--text-sm); }
+.table { min-width: 0; }
+.table table { min-width: 1120px; }
+.table td { padding-top: 10px; padding-bottom: 10px; font-size: 12px; }
+.identity { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.identity > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.identity strong { font-weight: 500; overflow-wrap: anywhere; }
+.identity > div > span { color: var(--text-muted); font-size: 11px; }
+.endpoint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 155px; font-family: var(--font-body); }
+.stack { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.stack small, .muted { color: var(--text-muted); font-size: var(--text-xs); }
+.credential { color: var(--text-muted); font-family: var(--font-body); font-size: 11px; }
+.modelList { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-width: 180px; border: 0; background: transparent; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.modelList:hover { color: var(--accent-strong); }
+.rowActions { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.rowActions > button { min-height: 28px; padding-inline: 7px; font-size: 11px; }
+/*
+  行内异常详情：折叠用组件库 Accordion（size="sm"），不再用原生 details 的三角号。
+*/
+.rowError { width: 100%; color: var(--danger); font-size: 11px; }
+.rowErrorText { max-width: 165px; margin: 0; overflow-wrap: anywhere; line-height: 1.5; }
+.pagination { display: flex; justify-content: space-between; align-items: center; font-size: var(--text-xs); color: var(--text-muted); }
+.wideDialog { width: min(100vw - 32px, 960px); height: min(780px, calc(100dvh - 32px)); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; overflow: hidden; }
+.dialogBody { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; padding: 18px 20px 14px; }
+/*
+  两栏编辑器：左栏（厂商列表 / 用量面板）与右栏（表单）。
+
+  grid-template-rows 把行高钉死为容器高度：不加这一条时行高由「较高一栏的内容」
+  撑开，右栏越长整个网格越高，右栏自己的 ScrollArea 就永远不会滚动（内容被
+  .editor 的 overflow:hidden 裁掉、滚不到）。钉住后两栏等高，
+  右栏超出即在栏内滚动，左栏（高度基准）始终完整可见。
+*/
+.editor { display: grid; grid-template-columns: 235px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 22px; flex: 1; min-height: 0; overflow: hidden; }
+.providerPicker { display: flex; flex-direction: column; gap: 12px; border-right: 1px solid var(--border); padding-right: 18px; min-width: 0; min-height: 0; }
+.providerScroll, .formScroll { min-height: 0; flex: 1; }
+.providers { display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 3px 12px 6px 0; }
+.providers button { justify-content: flex-start; min-height: 34px; }
+/*
+  Button 的标签槽默认居中，超宽时两侧均匀溢出 —— 长厂商名（WorkBuddy / CodeBuddy）
+  会把图标往左推出几像素，与相邻行的图标对不齐。
+  这里改成左对齐 + 可收缩 + 溢出裁掉，文字截断而图标位置固定。
+*/
+.providers button > span { min-width: 0; justify-content: flex-start; overflow: hidden; }
+.providers button > span > span { min-width: 0; flex: 0 1 auto; }
+.providers button > span > span > span { min-width: 0; overflow: hidden; }
+/*
+  右内边距要容得下滚动条（11px）+ 一点间隙，否则滚动条会紧贴输入框右缘
+  （实测 14px 的间距只剩 2px，看起来像贴着输入框）；左内边距给 InlineEdit 的
+  悬浮背景留出空间 —— 它自带 margin-inline-start: -9px，
+  没有左内边距时背景左半边会被滚动区裁掉。
+*/
+.form { min-width: 0; padding: 3px 22px 12px 10px; }
+.dialogBody > .dialogActions { margin-top: 14px; flex: none; }
+.form fieldset { display: flex; flex-direction: column; gap: 14px; border: 0; padding: 0; margin: 0; min-width: 0; }
+.providerHeading { color: var(--foreground); font-size: 15px; font-weight: 500; }
+/* 设备账号：左 40% 授权状态、右 60% 配置。列宽用 fr 而不是固定像素，
+   窄屏下落成单列（见下方媒体查询）。 */
+.deviceSplit { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 18px; align-items: stretch; min-width: 0; }
+/* 左栏是渐变面板：撑满整栏高度，与右侧多行内容等高 */
+.deviceAside { display: flex; flex-direction: column; min-width: 0; }
+.deviceAside > * { flex: 1; min-height: 0; }
+/* 右栏：行式控件，标签在左、控件在右 */
+.deviceForm { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+/*
+  分组卡片：外圈一条边框，行与行之间一条细分隔线，值统一贴右缘。
+
+  标签列固定宽度让三行标签左缘成一条竖线；控件列右对齐（justify-self: end），
+  这样「所属分组 / 优先级 / 权重」的值在视觉上排成一列，扫读时不必左右找。
+  分隔线画在每一行的下边框上、去掉最后一行的，避免卡片底部多一条线。
+*/
+.configGroup {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  overflow: hidden;
+}
+.configRow {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 46px;
+  padding: 7px 12px;
+  min-width: 0;
+}
+.configRow + .configRow { border-top: 1px solid var(--border-subtle, var(--border)); }
+.configLabel { color: var(--text-secondary); font-size: var(--text-sm); font-weight: 500; white-space: nowrap; }
+/* 值贴右缘：与卡片右侧内边距对齐成一列 */
+.configRow > :last-child { justify-self: end; min-width: 0; }
+/* 数字控件在值列里保持自然宽度，不要被拉满 */
+.configRow > :last-child > * { --nf-width: 132px; }
+@media (max-width: 720px) { .deviceSplit { grid-template-columns: minmax(0, 1fr); } }
+
+/* 账号名就地编辑：占据配置区首行，点击铅笔即可改名 */
+/* 账号名一行：厂商图标固定在最左，名字是可就地编辑的标题 */
+.nameRow { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.nameRow :global(h3) { margin: 0; font-size: 15px; font-weight: 500; }
+/* 接入方式：标签页自带选中态，标签文字与其它字段标签对齐 */
+.connectionTabs { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.fieldLabel { color: var(--foreground); font-size: var(--text-sm); font-weight: 500; }
+/* 支持的模型：标题与「从上游获取」链接同一行，链接靠右 */
+.modelsField { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+/* flex-start + 中间 spacer：标题/拉取链接靠左成组，批量操作被推到最右 */
+.modelsHead { display: flex; align-items: center; justify-content: flex-start; gap: 10px; flex-wrap: wrap; min-width: 0; }
+/* 把批量操作推到最右侧（标题与拉取链接靠左成组） */
+.modelsSpacer { flex: 1 1 auto; min-width: 8px; }
+/* 批量操作：极轻的小按钮，视觉上不抢标题与输入区（参考 FilterToolbar 的清空按钮） */
+.modelsTools { display: flex; align-items: center; gap: 2px; flex: none; }
+.toolAction {
+  min-height: 24px;
+  border: 0;
+  border-radius: var(--radius-control);
+  padding: 0 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+.toolAction:hover { background: var(--surface-muted); color: var(--foreground); }
+.toolAction[data-active] { background: var(--accent-subtle); color: var(--accent-strong, var(--accent)); }
+.toolDanger { color: var(--danger); }
+.toolDanger:hover { background: color-mix(in oklab, var(--danger) 10%, transparent); color: var(--danger); }
+
+/* 链接式操作：比整行按钮轻，跟字段标题同一行的次要动作 */
+.linkAction {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent-strong, var(--accent));
+  font: inherit;
+  font-size: var(--text-xs);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.linkAction:hover:not(:disabled) { color: var(--accent); }
+.linkAction:disabled { color: var(--text-muted); text-decoration: none; cursor: not-allowed; }
+.grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); align-items: start; gap: 14px; }
+.numbers { display: flex; gap: 12px; min-width: 0; }
+.numbers > * { --nf-width: 125px; min-width: 0; width: 125px; }
+.hint { margin: 0; font-size: var(--text-xs); color: var(--text-muted); line-height: 1.6; }
+.modelPreview { display: flex; flex-wrap: wrap; gap: 8px 12px; max-height: 95px; overflow: auto; font-size: 11px; }
+.modelPreview > * { max-width: 245px; }
+
+/*
+  高级配置的内容区：两块带边框的分组（调度与限额 / 计费与外发）。
+  分组卡片沿用 .configGroup / .configRow（标签在左、值贴右、行间分隔线），
+  与上方「所属分组 / 优先级 / 权重」保持同一种视觉语言。
+*/
+.advancedBody { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.advancedGroupTitle { margin: 0; color: var(--text-muted); font-size: var(--text-xs); font-weight: 500; }
+/* 数字控件占满值列但内容靠右：控件贴右缘，说明文字也收在右侧一列里 */
+/* 文本输入占满值列：输入框右缘与卡片内边距对齐；标签退到读屏里（行式布局的标签在左列） */
+.rowText { position: relative; width: 100%; min-width: 0; }
+.rowText label { position: absolute; width: 1px; height: 1px; margin: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.dialogActions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+/*
+  保存前置条件提示：「至少添加一个支持的模型」讲的是模型字段本身的问题，
+  所以贴在 TagInput 下方。放到弹窗底部会与所指的对象脱节 ——
+  用户看到红字却不知道在说哪个控件。
+*/
+.modelsHint { margin: 6px 0 0; color: var(--danger); font-size: var(--text-xs); line-height: 1.5; }
+/* 模型清单：滚动交给 BottomSheet 自己的 body（带拖拽协调），这里只排布。 */
+.fullModels { display: flex; flex-direction: column; gap: 12px; font-size: var(--text-sm); }
+.confirmText { color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.7; }
+
+/* ---------- 模型绑定（别名 → 真实模型）---------- */
+
+/*
+  整行全宽。
+
+  原来的问题：下拉挂在窄行的右端，而 MorphSelect 的浮层宽度是固定值
+  （340px），左端超出容器就被裁掉 —— 用户看到的是「左边被切了」。
+  这里改成：容器占满整行，别名与选择器各占一栏，
+  浮层宽度也不再挤在一行的剩余空间里算。
+*/
+.bindField {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-panel);
+  background: var(--surface-muted);
+}
+.bindIntro { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+/*
+  每行：左「上游模型名」→ 右「选择真实模型」。
+
+  列宽用 minmax(0, …) 而不是固定像素：别名可能很长
+  （deepseek-v4.1-flash-sg 这种），固定宽度会让它溢出；
+  minmax(0,·) 允许收缩并把溢出交给 text-overflow 处理。
+*/
+.bindList { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.bindRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1.2fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+/* 左栏：别名。名字由 ModelMark 渲染（含图标），这里只约束溢出 ——
+   长别名（deepseek-v4.1-flash-sg 这类）截断而不是撑破格子。 */
+.bindAlias {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.bindAlias > * { min-width: 0; }
+.bindArrow { color: var(--text-muted); text-align: center; font-size: var(--text-sm); }
+/* 选择器容器：占满右栏，让 MorphSelect 的触发按钮撑到整栏宽 */
+.bindPicker { min-width: 0; display: flex; }
+.bindPicker > * { flex: 1; min-width: 0; }
+
+@media (max-width: 720px) {
+  /* 窄屏：别名与选择器叠成两行，避免把两者都压得不可读 */
+  .bindRow { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .bindArrow { display: none; }
+}
+@media (max-width: 620px) { .table table { min-width: 0; } .table td { padding-top: 3px; padding-bottom: 3px; } }
+@media (max-width: 720px) { .editor { grid-template-columns: 1fr; grid-template-rows: 170px minmax(0, 1fr); gap: 14px; } .providerPicker { border-right: 0; padding-right: 0; } .grid2 { grid-template-columns: 1fr; } .total { margin-left: 0; } }

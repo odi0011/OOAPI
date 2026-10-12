@@ -1,0 +1,115 @@
+/*
+  全部模型总览：厂商分组 → 模型 → 账号/价格/能力。
+
+  层次用「缩进 + 分隔线」表达，不用嵌套卡片：三层卡片叠起来会
+  在窄屏上缩掉大量横向空间，而模型名本身就不短。
+*/
+
+.wrap { display: flex; flex-direction: column; gap: 14px; }
+
+/* ---------- 未定价提醒 ---------- */
+
+.alert {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 13px 15px;
+  border: 1px solid color-mix(in oklab, var(--warning) 45%, transparent);
+  border-radius: var(--radius-control);
+  background: color-mix(in oklab, var(--warning) 8%, transparent);
+}
+.alert strong { font-size: var(--text-sm); font-weight: 500; }
+.alert p { margin: 0; color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.6; }
+
+/* ---------- 工具条 ---------- */
+
+.toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.toolbar > :first-child { flex: 0 1 260px; min-width: 180px; }
+
+/* ---------- 模型表（替代原来的手风琴） ----------
+
+   一行一个模型：密度优先。手风琴把厂商占满整行，缩进后模型名没多少横向空间，
+   而这一屏的用途是「扫一遍找出没配价的」—— 需要的是密度而不是层次。 */
+
+.tableWrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  overflow: auto;
+}
+.table { width: 100%; border-collapse: collapse; font-size: var(--text-xs); }
+.table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+.table tbody td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.table tbody tr:last-child td { border-bottom: 0; }
+@media (hover: hover) and (pointer: fine) {
+  .table tbody tr:not(.bindRow):hover td { background: var(--surface-muted); }
+}
+/* 未定价的行左侧加一条强调色，扫一眼就能定位 */
+.table tbody tr[data-unpriced] td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+.cellModel { display: flex; align-items: center; gap: 7px; min-width: 200px; }
+.modelName { font-family: var(--font-mono, monospace); overflow-wrap: anywhere; }
+.cellChannels { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; max-width: 260px; }
+.cellPrice { white-space: nowrap; }
+.cellWindow { white-space: nowrap; }
+.cellActions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.actionsHead { text-align: right; }
+
+/* 绑定面板：同表内展开，不跳页 */
+.bindRow td { background: var(--surface-muted); }
+.bindPanel { display: flex; flex-direction: column; gap: 10px; padding: 4px 0; }
+.bindHead { display: flex; flex-direction: column; gap: 3px; }
+.bindHead strong { font-size: var(--text-xs); font-weight: 500; }
+.bindControls { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.bindControls > :first-child { flex: 0 1 320px; min-width: 220px; }
+
+.srOnly {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.priceTag, .suggestTag, .missingTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.priceTag { color: var(--success); background: color-mix(in oklab, var(--success) 12%, transparent); }
+.suggestTag { color: var(--accent-strong); background: var(--accent-subtle); }
+.missingTag { color: var(--danger); background: color-mix(in oklab, var(--danger) 12%, transparent); }
+.followTag { margin-left: 6px; color: var(--text-muted); font-size: 10.5px; white-space: nowrap; }
+
+.channelChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.channelChip[data-off] { opacity: .6; }
+
+.muted { color: var(--text-muted); font-size: var(--text-xs); margin: 0; }
+.err { margin: 0; color: var(--danger); font-size: var(--text-xs); }

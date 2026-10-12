@@ -1,0 +1,111 @@
+/* 登录与注册页 —— 全部使用 Arc UI 组件库的原生外观。
+   这里只补一个与 SignupForm 视觉一致的卡片外壳，配色与圆角都取自 foundation.css 的令牌，
+   不引入任何自定义风格。 */
+
+.page {
+  min-height: 100vh;
+  padding: var(--space-16) var(--space-4);
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* 与 SignupForm 的卡片外观保持一致：细边框 + 大圆角 + 极浅投影 */
+.card {
+  width: 100%;
+  max-width: 460px;
+
+  padding: var(--space-8);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-surface);
+  box-shadow: var(--shadow-raised);
+}
+
+/* Arc 的 SignupForm 自带卡片，这里只限制宽度 */
+.signupWrap {
+  width: 100%;
+  max-width: 460px;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+.heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-6);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--foreground);
+}
+
+.subtitle {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.wide {
+  width: 100%;
+  margin-top: var(--space-2);
+}
+
+.submitError {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--danger, #d94a3d);
+}
+
+.switch {
+  margin: var(--space-6) 0 0;
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.switch a {
+  color: var(--foreground);
+  text-decoration: underline;
+}
+
+.footer {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.footer a {
+  color: var(--foreground);
+  text-decoration: underline;
+}
+
+@media (max-width: 520px) {
+  .page {
+    padding: var(--space-8) var(--space-4);
+    justify-content: flex-start;
+  }
+
+  .card {
+    padding: var(--space-6);
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "source": "https://github.com/odi0011/OOAPI",
+  "revision": "66c13425e5d4bcb2aa05ac65a3c22ba579aa03e2",
+  "files": [
+    "deepseek.png",
+    "zhipu.svg",
+    "qwen.png",
+    "kimi.png",
+    "doubao.png",
+    "mimo.png",
+    "minimax.png",
+    "stepfun.png",
+    "ark.png",
+    "workbuddy.svg",
+    "qoder.svg",
+    "opencode.png",
+    "cline.png",
+    "trae.png",
+    "cursor.png",
+    "kiro.png",
+    "siliconflow.ico",
+    "typesafe.png",
+    "longcat.png",
+    "chutes.png",
+    "nvidia.png",
+    "cerebras.png",
+    "hunyuan.png",
+    "meta.png"
+  ],
+  "usage": "Brand identification only; original vendor attribution in src/components/VendorIcon.jsx"
+}

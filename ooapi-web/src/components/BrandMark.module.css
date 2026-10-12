@@ -1,0 +1,8 @@
+.mark { display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; vertical-align: middle; font-family: var(--font-body); }
+/* 图标固定不参与收缩：名字再长也只截断文字，图标始终贴左不被顶出去 */
+.mark img, .mark svg { width: 17px; height: 17px; object-fit: contain; flex: none; }
+.model, .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:global(:root[data-theme="dark"]) .mark img[src$="openai.svg"],
+:global(:root[data-theme="dark"]) .mark img[src$="claude.svg"],
+:global(:root[data-theme="dark"]) .mark img[src$="grok.svg"],
+:global(:root[data-theme="dark"]) .mark img[src$="openrouter.svg"] { filter: invert(1); }

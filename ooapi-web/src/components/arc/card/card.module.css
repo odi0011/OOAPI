@@ -49,6 +49,3 @@
 @media (prefers-reduced-motion: reduce) {
   .card, .close { transition-duration: var(--duration-instant); }
 }
-.heading { display:flex; align-items:center; justify-content:space-between; gap:1rem; min-width:0; }
-.heading h3:empty { display:none; }
-.heading:empty { display:none; }

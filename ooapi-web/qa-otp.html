@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body><div id="qa-root"></div><script type="module">
+import React, { useState } from "react";
+import { createRoot } from "react-dom/client";
+import { LoginCentered } from "/src/components/arc/blocks/login-centered/login-centered.tsx";
+import "/src/components/arc/foundation.css";
+import "/src/styles/global.css";
+function Harness() {
+  const [calls,setCalls]=useState(0);
+  const [signedIn,setSignedIn]=useState(false);
+  return React.createElement(React.Fragment,null,
+    React.createElement(LoginCentered,{
+      fullScreen:true,passwordEnabled:false,emailCodeEnabled:true,oauthProviders:[],
+      onSendEmailCode:async()=>{},
+      onEmailCodeLogin:async(email,code)=>{
+        setCalls(value=>value+1);
+        await new Promise(resolve=>setTimeout(resolve,350));
+        if(code!=="654321") throw new Error("验证码不正确");
+      },
+      onSignedIn:()=>setSignedIn(true),
+    }),
+    React.createElement("output",{"data-testid":"qa-auth-state",style:{position:"fixed",bottom:5,left:5,fontSize:11,zIndex:10}},JSON.stringify({calls,signedIn})),
+  );
+}
+createRoot(document.getElementById("qa-root")).render(React.createElement(Harness));
+</script></body></html>

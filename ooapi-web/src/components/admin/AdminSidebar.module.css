@@ -1,0 +1,294 @@
+/* 后台侧边栏。宽 224px，可折叠成 60px 的图标条。
+   配色使用主题色的衍生色，跟随站点的外观设置。 */
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+
+  display: flex;
+  flex-direction: column;
+
+  padding: var(--space-4) var(--space-3);
+  border-right: 1px solid var(--border);
+  /* 侧边栏底色比内容区略沉一档，形成层次；用主题色的极淡派生而不是灰 */
+  background: color-mix(in oklab, var(--accent) 4%, var(--surface));
+
+  transition: width 180ms var(--ease-standard, ease);
+}
+
+/* ---------- 品牌区 ---------- */
+
+.brand {
+  display: flex;
+  align-items: center;
+  /* 两端对齐：logo+站名靠左，版本徽标靠右 */
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 6px var(--space-5);
+  text-decoration: none;
+}
+
+.brandIdentity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.collapsed .brand {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.brandMark {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: var(--radius-pill);
+  object-fit: cover;
+  display: block;
+  /* 主题色描边，让圆形标记与整体配色咬合 */
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 28%, transparent);
+}
+
+.brandTitle {
+  font-size: var(--text-lg);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--foreground);
+  line-height: 1.1;
+}
+
+/*
+  版本徽标：毛玻璃胶囊 + 悬停时旋转的十字光点。
+
+  原型是玻璃拟态（backdrop-filter 模糊 + 半透明描边 + 内外两层高光）。
+  这里用主题令牌着色，避免写死白色在浅色底上糊成一片：
+  内层用 accent 淡底，::before 再叠一层更淡的底与阴影，做出厚度。
+*/
+.brandVersion {
+  position: relative;
+  /* 自成层叠上下文：否则 ::before 的 z-index:-1 会退到侧边栏底色之后，整条外圈看不见 */
+  isolation: isolate;
+  flex: none;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in oklab, var(--accent) 26%, var(--border));
+  border-radius: var(--radius-pill);
+  box-shadow: 0 2px 4px color-mix(in oklab, var(--foreground) 10%, transparent);
+
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  user-select: none;
+
+  color: var(--accent-strong, var(--accent));
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+  /* 前缀版本写在前面：压缩器会保留最后一条同义声明，
+     顺序写反会让无前缀的 backdrop-filter 被删掉（实测过）。 */
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+/* 外层玻璃：比内层大 1px 的描边与更柔的底，模拟原型的 ::before 层次 */
+.brandVersion::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -1px;
+  border: 1px solid color-mix(in oklab, var(--accent) 16%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in oklab, var(--accent) 6%, transparent);
+  box-shadow: 0 8px 24px color-mix(in oklab, var(--foreground) 12%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+/* 十字光点：用两条渐变细线交叉，默认静止在右上角 */
+.brandSpark {
+  position: absolute;
+  top: -9px;
+  right: -1px;
+  width: 18px;
+  height: 18px;
+  transform: rotate(-20deg);
+  filter: blur(0.4px);
+  pointer-events: none;
+}
+
+.brandSpark::before,
+.brandSpark::after {
+  content: "";
+  position: absolute;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in oklab, var(--accent) 70%, white),
+    transparent
+  );
+}
+
+.brandSpark::before {
+  left: 50%;
+  width: 1px;
+  height: 100%;
+}
+
+.brandSpark::after {
+  top: 50%;
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(
+    to left,
+    transparent,
+    color-mix(in oklab, var(--accent) 70%, white),
+    transparent
+  );
+}
+
+/* 悬停时两条线各自转半圈并放大，回正后复位 */
+.brandVersion:hover .brandSpark::before,
+.brandVersion:hover .brandSpark::after {
+  animation: brandSparkSpin 3s ease-in-out;
+}
+
+@keyframes brandSparkSpin {
+  0% { transform: rotate(0deg) scale(1); }
+  50% { transform: rotate(180deg) scale(1.8); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+
+/* 尊重「减少动态效果」：不转，但保留十字光点 */
+@media (prefers-reduced-motion: reduce) {
+  .brandVersion:hover .brandSpark::before,
+  .brandVersion:hover .brandSpark::after { animation: none; }
+}
+
+/* ---------- 导航 ---------- */
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-height: 0;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* 分组标题：比条目更小更淡，形成层级的第一层 */
+.groupLabel {
+  margin: 0 0 2px;
+  padding: 0 8px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 条目：13px 字号，与内容区的 12–13px 正文同级，
+   之前用 12px 而内容区标题偏大，左侧显得过轻。 */
+.item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  min-height: 34px;
+  padding: 0 8px;
+  border-radius: var(--radius-control);
+
+  font-size: 13px;
+  /* 未选中态用次要文字色，而不是更淡的灰 */
+  color: var(--text-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+
+  transition: background-color 140ms var(--ease-standard, ease),
+    color 140ms var(--ease-standard, ease);
+}
+
+/* 悬停用主题色的极淡派生 —— 站点有主题系统，不该是灰白 */
+.item:hover {
+  background: color-mix(in oklab, var(--accent) 8%, transparent);
+  color: var(--accent-strong, var(--accent));
+}
+
+/*
+	当前页。
+
+	选中态必须比悬停更实一档，否则「鼠标停在哪」和「我在哪一页」
+	看起来是同一件事 —— 用户移开鼠标后就找不到自己了。
+	用实心浅底 + 加重文字色，与悬停的极淡背景区分开。
+*/
+.itemActive {
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  color: var(--accent-strong, var(--accent));
+  font-weight: 500;
+}
+
+/* 悬停时不要盖掉选中态：选中的项被悬停，底色应当再深一点而不是变浅 */
+.itemActive:hover {
+  background: color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+.itemIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: currentColor;
+}
+
+.itemLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- 折叠态 ---------- */
+
+/* 折叠后只留图标，条目变成方形按钮 */
+.collapsed .item {
+  justify-content: center;
+  padding: 0;
+  width: 36px;
+  margin: 0 auto;
+}
+
+.collapsed .group,
+.collapsed .list {
+  align-items: center;
+  width: 100%;
+}
+
+/* 折叠后分组标题消失，用一条细线保留分组的分隔感 */
+.collapsed .group + .group {
+  padding-top: var(--space-4);
+  border-top: 1px solid color-mix(in oklab, var(--accent) 12%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar {
+    transition: none;
+  }
+}

@@ -1,0 +1,151 @@
+/*
+  未授权面板：内容正居中（水平 + 垂直），底纹是一层很轻的斜向流光。
+
+  外层负责「占位 + 居中」：撑满所在栏（height:100%）并 flex 居中；
+  内层 .panelInner 按内容自然排布并居中文字。这样无论面板里是一行按钮
+  还是「标题 + 字段 + 按钮」，都落在正中心，而不是靠上。
+*/
+.panel {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  min-height: 220px;
+  min-width: 0;
+  padding: 20px 16px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+  font-size: var(--text-sm);
+}
+/* 斜向流光：极低对比度，只在静止面板上缓慢平移，不抢内容的注意力 */
+.panelSheen {
+  position: absolute;
+  inset: -40% -20%;
+  z-index: -1;
+  background:
+    linear-gradient(115deg, transparent 42%, color-mix(in oklab, var(--accent) 9%, transparent) 50%, transparent 58%);
+  background-size: 220% 220%;
+  animation: panelSheen 14s var(--ease-standard, ease-in-out) infinite;
+}
+@keyframes panelSheen {
+  0% { background-position: 130% 0%; }
+  100% { background-position: -30% 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .panelSheen { animation: none; } }
+
+/* 内层：按内容排布，整体居中 */
+.panelInner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-width: 0;
+  text-align: center;
+}
+/* 内层的字段网格仍要占满宽度（否则输入框会缩成一行文字那么宽） */
+.panelInner .fields, .panelInner .fieldRow { width: 100%; }
+.panel p { margin: 0; color: var(--text-secondary); line-height: 1.5; overflow-wrap: anywhere; }
+.title { color: var(--foreground); font-weight: 600; }
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 9px; width: 100%; min-width: 0; }
+.fields > * { min-width: 0; }
+.fieldRow { width: 100%; min-width: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.code { font-weight: 500; letter-spacing: .12em; user-select: all; }
+.link { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; color: var(--accent-strong); overflow-wrap: anywhere; }
+.note { color: var(--text-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
+
+/* ---------- 授权成功：渐变面板 ----------
+
+   背景由外部渐变引擎（@/vendor/feral-gradient，Citron 配方）绘制，
+   这里只负责排版与内容可读性。旧的 CSS 关键帧渐变已移除。 */
+
+/* 整块就是渐变面板：不套灰色容器，边缘不会露出多余的一圈灰。
+   它现在住在弹窗左栏（约 40% 宽、窄而高），所以用 height:100% 撑满那一栏，
+   内容居中；min-height 兜住内容只有一两行时的最小体量。 */
+.granted {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 220px;
+  padding: 24px 18px;
+  overflow: hidden;
+  border-radius: var(--radius-control);
+  background: #26483d; /* 引擎加载完成前的兜底底色（配方首色） */
+  color: #fff;
+  text-align: center;
+}
+
+/* 引擎画布：铺满整块面板，圆角跟随容器 */
+.grantedBg { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; }
+
+/* 配方两端有很浅的米色（#F2EDCC），压一层薄暗角让白字在任何一帧都读得清 */
+.grantedScrim { position: absolute; inset: 0; background: rgb(6 24 18 / .42); }
+
+.grantedContent {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+/* 渐变面上的次要操作：半透明白边框，浅底/深底上都看得见 */
+.grantedAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 5px 12px;
+  border: 1px solid oklch(100% 0 0 / .34);
+  border-radius: var(--radius-pill, 9999px);
+  background: oklch(100% 0 0 / .14);
+  color: #fff;
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard);
+}
+
+.grantedAction:hover:not(:disabled) { background: oklch(100% 0 0 / .24); border-color: oklch(100% 0 0 / .5); }
+.grantedAction:disabled { opacity: .5; cursor: not-allowed; }
+
+.grantedBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border: 1px solid oklch(100% 0 0 / .28);
+  border-radius: var(--radius-pill, 9999px);
+  background: oklch(100% 0 0 / .14);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: .04em;
+  backdrop-filter: blur(4px);
+}
+
+.grantedTitle { font-size: var(--text-sm); font-weight: 500; }
+
+.grantedMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 100%;
+  color: oklch(100% 0 0 / .72);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}

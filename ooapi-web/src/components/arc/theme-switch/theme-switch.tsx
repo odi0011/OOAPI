@@ -74,7 +74,7 @@ export function ThemeSwitch({ theme, variant = "reveal", onThemeChange, label, i
       onClick={event => onThemeChange(next, variant, event.currentTarget)}
     >
       <span className={styles.iconWrap}><ThemeIcon theme={theme} reduced={reduced} settled={settled} /></span>
-      {!iconOnly && <span className={styles.label}>Switch theme</span>}
+      {!iconOnly && <span className={styles.label}>切换主题</span>}
     </Button>
   );
 }

@@ -1,0 +1,368 @@
+/* 分组管理页 */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.loading {
+  padding: var(--space-8) 0;
+  color: var(--text-muted);
+  text-align: center;
+  font-size: var(--text-xs);
+}
+
+.ok,
+.err {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-control);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.ok {
+  color: var(--success, #1a7f4b);
+  background: color-mix(in oklab, var(--success, #1a7f4b) 10%, transparent);
+}
+
+.err {
+  color: var(--danger, #d94a3d);
+  background: color-mix(in oklab, var(--danger, #d94a3d) 10%, transparent);
+}
+
+.empty {
+  padding: var(--space-10) var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+/* ---------- 分组卡片 ---------- */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--space-3);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.cardHead {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cardTitleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.cardName {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+/* 倍率标签：非 1 倍时用主题色强调，一眼看出这个分组不是原价 */
+.rateTag {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+
+  color: var(--accent-strong, var(--accent));
+  background: var(--accent-subtle);
+}
+
+.cardRemark {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+}
+
+.fieldLabel {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.modelTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 7px;
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+}
+
+.modelTagName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+}
+
+.moreTag {
+  align-self: center;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.unlimited {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.cardActions {
+  display: flex;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ---------- 表单 ---------- */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.dialogActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+
+/* ---------- 白名单编辑（弹窗内） ----------
+
+   从「一个逗号分隔的输入框」改成可视列表：白名单是路由的第一道门，
+   手打模型名既容易拼错、也看不出还差哪个；拼错的后果是静默的 403。
+   列表用网格排（一行多个），因为白名单动辄十几二十个，
+   单列会把弹窗拉到很长。 */
+
+.wideDialog {
+  width: min(100vw - 32px, 760px);
+  max-height: min(86vh, 900px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.dialogBody {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 基础字段：分组名与倍率并排，备注占满一行 */
+.basics {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 200px);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.basics > :last-child {
+  grid-column: 1 / -1;
+}
+
+.allowTab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+}
+
+.addRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+/* 白名单容器：内嵌边框，内容再多也在框内滚动 */
+.allowBox {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.allowEmpty {
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+}
+
+.allowGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.allowItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 7px 8px 7px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.allowName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* 不在模型目录里的名字（上游新出的或拼错的）——要能一眼看出来 */
+.staleTag {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in oklab, var(--warning) 18%, transparent);
+  color: var(--warning);
+  font-size: 10px;
+}
+
+.removeModel {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .removeModel:hover { color: var(--danger); }
+}
+
+/* 折叠条：列表长时收起，只留一行摘要（选中的不受影响） */
+.collapseToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.collapseToggle svg {
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.collapseToggle svg[data-open] {
+  transform: rotate(180deg);
+}
+
+/* 同步操作：一排小按钮 */
+.syncActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.syncBtn {
+  padding: 5px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .syncBtn:hover { border-color: var(--accent); color: var(--foreground); }
+}
+
+.syncDanger {
+  color: var(--danger);
+  border-color: color-mix(in oklab, var(--danger) 40%, transparent);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .syncDanger:hover { border-color: var(--danger); color: var(--danger); }
+}
+
+@media (max-width: 560px) {
+  .basics { grid-template-columns: minmax(0, 1fr); }
+  .allowGrid { grid-template-columns: minmax(0, 1fr); max-height: 260px; }
+}

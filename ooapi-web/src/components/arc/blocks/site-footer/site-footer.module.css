@@ -1,0 +1,75 @@
+.footer { --footer-pad: var(--space-6); position: relative; container: site-footer / inline-size; overflow: hidden; border-top: 1px solid var(--border); padding: var(--space-12) var(--footer-pad) var(--space-6); background: var(--background); color: var(--foreground); font-family: var(--font-body); letter-spacing: var(--tracking-body); }
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: var(--space-12); }
+.intro { display: grid; align-content: start; gap: var(--space-3); min-width: 0; }
+.brandRow { display: inline-flex; align-items: center; gap: var(--space-2); }
+.brandMark { width: 22px; height: 22px; flex: none; color: var(--foreground); }
+.brand { border: 0; padding: 0; background: none; color: var(--foreground); font: inherit; font-size: var(--text-base); font-weight: 500; text-decoration: none; cursor: pointer; }
+.tagline { max-width: 320px; margin: 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-body); }
+
+.columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-6); }
+.column h2 { margin: 0 0 var(--space-3); font-size: var(--text-sm); font-weight: 500; }
+.column ul, .inline { margin: 0; padding: 0; list-style: none; }
+.column ul { display: grid; gap: var(--space-2); }
+.link { display: inline-flex; align-items: center; gap: 3px; border: 0; padding: 2px 0; background: none; color: var(--text-secondary); font: inherit; font-size: var(--text-sm); text-align: left; text-decoration: none; cursor: pointer; transition: color var(--duration-fast) var(--ease-standard); }
+.link:active, .link:focus-visible { color: var(--foreground); }
+.external { color: var(--text-muted); transition: transform var(--duration-fast) var(--ease-standard); }
+@media (hover: hover) and (pointer: fine) {
+  .link:hover { color: var(--foreground); }
+  .link:hover .external { transform: translate(1px, -1px); }
+}
+
+/* Newsletter: input and button share one shell; the shell carries validation state with its border only. */
+.newsletter { display: grid; gap: var(--space-2); max-width: 400px; margin-top: var(--space-5); }
+.newsletterTitle { margin: 0; font-size: var(--text-sm); font-weight: 500; }
+.newsletterRow { display: flex; height: var(--control-height-md); align-items: center; gap: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-control); padding: 3px 3px 3px var(--space-4); background: var(--surface); transition: border-color var(--duration-fast) var(--ease-standard); }
+.newsletterRow:focus-within { border-color: var(--border-strong); }
+.newsletterRow[data-invalid] { border-color: var(--danger); }
+.newsletterInput { width: 100%; min-width: 0; flex: 1; border: 0; padding: 0; background: none; color: var(--foreground); font: inherit; font-size: var(--text-sm); }
+.newsletterInput::placeholder { color: var(--text-muted); }
+.newsletterRow[data-done] .newsletterInput { color: var(--text-secondary); }
+.newsletterButton { flex: none; border-radius: calc(var(--radius-control) - 3px); }
+.messageSlot { position: relative; min-height: 20px; }
+.message { margin: 0; color: var(--text-muted); font-size: var(--text-xs); line-height: 20px; }
+.message[data-tone="error"] { color: var(--danger); }
+.message[data-tone="success"] { color: var(--success); }
+
+.bottom { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3) var(--space-6); margin-top: var(--space-12); border-top: 1px solid var(--border-subtle); padding-top: var(--space-5); }
+.bottomStart, .bottomEnd { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-5); }
+.inline { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-4); }
+.copyright { color: var(--text-muted); font-size: var(--text-sm); }
+.status { display: inline-flex; align-items: center; gap: var(--space-2); border: 0; padding: 2px 0; background: none; color: var(--text-secondary); font: inherit; font-size: var(--text-sm); text-decoration: none; cursor: pointer; }
+.statusDot { --tone: var(--success); width: 7px; height: 7px; border-radius: 50%; background: var(--tone); box-shadow: 0 0 0 3px color-mix(in oklab, var(--tone) 18%, transparent); }
+.status[data-tone="warning"] .statusDot { --tone: var(--warning); }
+.status[data-tone="danger"] .statusDot { --tone: var(--danger); }
+@media (hover: hover) and (pointer: fine) { .status:hover { color: var(--foreground); } }
+
+/* Minimal: two quiet rows. */
+.minimal { padding-block: var(--space-8) var(--space-6); }
+.minimalRow { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3) var(--space-6); }
+.minimalRow + .minimalRow { margin-top: var(--space-6); border-top: 1px solid var(--border-subtle); padding-top: var(--space-5); }
+
+/* Logo: the arch closes the page, cropped by the bottom edge and fading out in the brand gradient. */
+.logo { padding-bottom: 0; }
+.markStage { margin: var(--space-10) calc(var(--footer-pad) * -1) 0; -webkit-mask-image: linear-gradient(to bottom, #000 18%, transparent 96%); mask-image: linear-gradient(to bottom, #000 18%, transparent 96%); pointer-events: none; }
+.bigMark { display: block; width: 100%; height: auto; }
+
+@container site-footer (max-width: 760px) {
+  .top { grid-template-columns: minmax(0, 1fr); gap: var(--space-10); }
+}
+@container site-footer (max-width: 520px) {
+  .columns { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-8) var(--space-4); }
+  .newsletter { max-width: none; }
+  .bottom { flex-direction: column; align-items: flex-start; }
+}
+
+.preview { display: grid; width: 100%; justify-items: center; gap: var(--space-4); }
+.frame { width: 100%; overflow: hidden; border: 1px solid var(--border); border-radius: 20px; background: var(--background); }
+.frameBody { overflow: hidden; }
+.frame .footer { border-top: 0; }
+.previewNote { min-height: 20px; margin: 0; color: var(--text-muted); font-size: var(--text-xs); }
+
+@media (prefers-reduced-motion: reduce) {
+  .link, .external, .newsletterRow { transition: none; }
+}

@@ -1,0 +1,272 @@
+/* 运行状态页 */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.stamp {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.refresh {
+  height: 30px;
+  padding: 0 12px;
+
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+
+  transition: border-color 140ms var(--ease-standard, ease),
+    color 140ms var(--ease-standard, ease);
+}
+
+.refresh:hover {
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
+  color: var(--accent-strong, var(--accent));
+}
+
+.loading {
+  padding: var(--space-10) 0;
+  color: var(--text-muted);
+  text-align: center;
+  font-size: var(--text-xs);
+}
+
+.err {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-control);
+  font-size: var(--text-xs);
+  color: var(--danger, #d94a3d);
+  background: color-mix(in oklab, var(--danger, #d94a3d) 10%, transparent);
+}
+
+/* ---------- 总体健康 ----------
+   四张状态卡：正常时用主题色，异常时用红色，一眼看出有没有问题 */
+
+.healthRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3);
+}
+
+.healthCard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+/* 正常时左侧一道绿色竖条，异常时红色 —— 不依赖文字颜色单传达状态 */
+.healthCard[data-ok] {
+  border-left: 2px solid var(--success, #1a7f4b);
+}
+
+.healthLabel {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.healthValue {
+  font-size: var(--text-2xl);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.healthValue small {
+  font-size: var(--text-sm);
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.healthNote {
+  font-size: 11px;
+  color: var(--warning, #b8791a);
+}
+
+.healthError {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--danger, #d94a3d);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 卡片 ---------- */
+
+.card {
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.cardTitle {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+
+.statGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-3);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3);
+
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+}
+
+.statValue {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+
+  font-size: var(--text-xl);
+  font-weight: 500;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 有失败时数值转红，提示需要关注 */
+.statValue[data-warn] {
+  color: var(--warning, #b8791a);
+}
+
+.statLabel {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* 仪表盘居中，尺寸收一档 */
+.gaugeWrap {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.gaugeWrap > * {
+  max-width: 180px;
+}
+
+/* ---------- 表规模 ---------- */
+
+.tables {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tableRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.tableRow:last-child {
+  border-bottom: none;
+}
+
+.tableName {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--foreground);
+}
+
+.tableCode {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.tableCount {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.note {
+  margin: var(--space-4) 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+/* 无调用时的成功率占位：与 Gauge 同高，避免卡片高度跳动 */
+.gaugeEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 132px;
+}
+
+.gaugeEmptyValue {
+  font-size: 2rem;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--text-muted);
+}
+
+.gaugeEmptyLabel {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.gaugeEmptyNote {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* 零渠道：既不是「正常」也不该只是中性灰，给一档警示 */
+.healthCard[data-warn] {
+  border-color: color-mix(in oklab, var(--warning, #b8791a) 32%, var(--border));
+}
+
+.healthCard[data-warn] .healthValue {
+  color: var(--warning, #b8791a);
+}

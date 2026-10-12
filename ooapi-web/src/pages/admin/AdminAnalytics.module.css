@@ -1,0 +1,354 @@
+/* 消费分析页 */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.headMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.sub {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.loading,
+.error {
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.error {
+  border-color: color-mix(in oklab, var(--danger) 35%, var(--border));
+  color: var(--danger);
+}
+
+.emptyCard {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  padding: var(--space-6) 0;
+}
+
+/* ---------- 核心指标 ---------- */
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.moneyCard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.moneyTop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.moneyIcon {
+  color: var(--text-muted);
+}
+
+.moneyLabel {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.moneyChange {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-strong, var(--accent));
+}
+
+.moneyValue {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.moneyNumber {
+  font-size: var(--text-2xl);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.moneyContext {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.cacheNote {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle, var(--surface));
+
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.cacheNote svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+/* ---------- 卡片通用 ---------- */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+
+  min-width: 0;
+}
+
+.cardHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.cardNote {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.chartGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.chartBox {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  min-width: 0;
+}
+
+.chartCaption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.chartValue {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.rowHalf,
+.rowSplit {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.rowHalf {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* 左树图偏窄、右表格要放四列，给表格更多宽度 */
+.rowSplit {
+  grid-template-columns: minmax(0, 4fr) minmax(0, 6fr);
+}
+
+/* ---------- 模型表格 ---------- */
+
+.modelCell {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.vendorMark {
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.modelName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.costCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: flex-end;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 用户排行 ---------- */
+
+.rankList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rankItem {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 9em) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+
+  padding: 6px 4px;
+  border-radius: var(--radius-control);
+
+  font-size: var(--text-sm);
+}
+
+.rankItem:hover {
+  background: var(--surface-subtle, color-mix(in oklab, var(--foreground) 3%, transparent));
+}
+
+.rankIndex {
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.rankName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rankBar {
+  display: block;
+  height: 5px;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
+  overflow: hidden;
+}
+
+.rankBarFill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  opacity: 0.85;
+}
+
+.rankRequests {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rankCost {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---------- 脚注 ---------- */
+
+.footNote {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin: 0;
+
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.footTrend {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* ---------- 自适应 ---------- */
+
+@media (max-width: 1280px) {
+  .metricGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .rowSplit {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .chartGrid,
+  .rowHalf {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

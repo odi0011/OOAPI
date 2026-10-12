@@ -46,12 +46,12 @@ export function Pagination({ page, pageCount, onPageChange, label = "Pagination"
   }, [currentPage, start, safePageCount, reduced, markX, markY]);
 
   if (!safePageCount) return <nav className={styles.nav} aria-label={label} />;
-  return <nav ref={navRef} className={styles.nav} aria-label={label}><button type="button" className={styles.step} onClick={() => onPageChange(currentPage - 1)} disabled={currentPage <= 1} aria-label="Previous page"><NavArrowLeft width={16} height={16} aria-hidden="true" /></button>
+  return <nav ref={navRef} className={styles.nav} aria-label={label}><button type="button" className={styles.step} onClick={() => onPageChange(currentPage - 1)} disabled={currentPage <= 1} aria-label="上一页"><NavArrowLeft width={16} height={16} aria-hidden="true" /></button>
     <motion.span aria-hidden="true" className={styles.mark} style={{ x: markX, y: markY }} />
     <AnimatePresence mode="popLayout" initial={false} custom={shift}>
       {visible.map(number => <motion.button type="button" key={number} onClick={() => onPageChange(number)} aria-label={`Page ${number}`} aria-current={currentPage === number ? "page" : undefined}
         layout={reduced ? false : "position"} layoutDependency={start} custom={shift} variants={slide} initial={reduced ? false : "enter"} animate="center" exit={reduced ? undefined : "exit"}
         transition={reduced ? { duration: 0 } : { x: motionTokens.spring.smooth, layout: motionTokens.spring.smooth, opacity: { duration: motionTokens.duration.standard, ease: [...motionTokens.ease.enter] } }}>{number}</motion.button>)}
     </AnimatePresence>
-    <button type="button" className={styles.step} onClick={() => onPageChange(currentPage + 1)} disabled={currentPage >= safePageCount} aria-label="Next page"><NavArrowRight width={16} height={16} aria-hidden="true" /></button></nav>;
+    <button type="button" className={styles.step} onClick={() => onPageChange(currentPage + 1)} disabled={currentPage >= safePageCount} aria-label="下一页"><NavArrowRight width={16} height={16} aria-hidden="true" /></button></nav>;
 }

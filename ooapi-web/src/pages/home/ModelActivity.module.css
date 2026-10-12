@@ -1,0 +1,63 @@
+.panel {
+  min-width: 0;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  color: var(--foreground);
+  background: var(--surface);
+  font-family: var(--font-body), "Microsoft YaHei", sans-serif;
+}
+.heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.heading h3 { margin: 0; font-size: 16px; font-weight: 500; letter-spacing: -.02em; }
+.heading > span { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.controls { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 17px; }
+.controls > div:first-child { --control-height-sm: 27px; --text-sm: 12px; }
+.controls > div:last-child { display: flex; gap: 1px; }
+.controls > div:last-child button { width: 29px; min-height: 29px; padding: 0; }
+.raceList { display: flex; flex-direction: column; gap: 17px; padding: 0; margin: 24px 0; list-style: none; }
+.raceList li { display: flex; align-items: center; gap: 10px; }
+.rank { width: 10px; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.raceList img { width: 22px; height: 22px; object-fit: contain; flex-shrink: 0; }
+.barRow { flex: 1; min-width: 0; }
+.barRow > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.barRow > div:first-child > span { color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
+.barRow strong { color: var(--foreground); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.track { width: 100%; margin-top: 6px; height: 6px; background: var(--surface-muted); border-radius: 4px; overflow: hidden; }
+.track > span { display: block; height: 100%; border-radius: inherit; }
+.timeline { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 10px; }
+.timeline input { appearance: none; width: 100%; min-width: 0; height: 3px; border: 0; background: var(--border); border-radius: var(--radius-pill); cursor: pointer; }
+.timeline input::-webkit-slider-thumb { appearance: none; width: 10px; height: 10px; border: 2px solid var(--surface); border-radius: var(--radius-pill); background: var(--foreground); box-shadow: 0 0 0 1px var(--border-strong); }
+.timeline input::-moz-range-thumb { width: 8px; height: 8px; border: 2px solid var(--surface); border-radius: var(--radius-pill); background: var(--foreground); }
+.panelFooter { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-top: 18px; padding-top: 13px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 11px; }
+.panelFooter strong { color: var(--foreground); font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.panelFooter small { color: var(--text-muted); font-size: 10px; font-weight: 400; }
+.funnelSummary { display: flex; align-items: baseline; gap: 12px; margin-top: 15px; }
+.funnelSummary > strong { font-family: var(--font-display); font-size: 33px; font-weight: 500; letter-spacing: -.04em; line-height: 1.2; }
+.funnelSummary small { margin-left: 3px; font-size: 16px; font-weight: 400; color: var(--text-muted); }
+.funnelSummary > span { color: var(--text-muted); font-size: 11px; }
+.funnelBody { display: grid; grid-template-columns: 1.2fr 1fr; align-items: center; gap: 10px; min-height: 233px; margin-top: 11px; }
+.funnelBody svg { display: block; width: 100%; height: auto; }
+.funnelBody svg text { font: 13px var(--font-body), sans-serif; }
+.funnelBody svg path { transition: fill 240ms var(--ease-standard); }
+.stageList { display: flex; flex-direction: column; gap: 7px; }
+.stageList button { display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 8px; row-gap: 2px; padding: 5px 8px; min-height: 42px; border: 0; border-radius: 9px; background: transparent; color: var(--text-secondary); text-align: left; cursor: pointer; font-family: inherit; }
+.stageList button:hover, .stageList button[aria-pressed="true"] { background: var(--surface-muted); }
+.stageList button > span { font-size: 10px; }
+.stageList strong { font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.stageList small { grid-column: 1 / -1; color: var(--text-muted); font-size: 9px; }
+.funnelDetail { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--text-muted); font-size: 11px; min-height: 23px; }
+:global(:root[data-theme="dark"]) .raceList img { filter: brightness(0) invert(1); }
+@media (max-width: 760px) { .panel { padding: 22px 20px; } }
+@media (max-width: 420px) {
+  .panel { padding: 21px 16px; }
+  .heading h3 { font-size: 15px; }
+  .controls > div:first-child button { padding-inline: 10px; }
+  .raceList li { gap: 8px; }
+  .raceList img { width: 20px; height: 20px; }
+  .barRow > div:first-child > span { font-size: 10px; }
+  .barRow strong { font-size: 11px; }
+  .funnelBody { grid-template-columns: 1.15fr 1fr; gap: 3px; min-height: 207px; }
+  .stageList button { column-gap: 3px; padding-inline: 5px; }
+  .stageList strong { font-size: 10px; }
+}
+@media (prefers-reduced-motion: reduce) { .funnelBody svg path { transition: none; } }

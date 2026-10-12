@@ -1,0 +1,99 @@
+/* 全站只复位与补齐字体；视觉令牌由 Arc foundation.css 提供。 */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  /* 防止任何子元素把页面撑出横向滚动条 */
+  overflow-x: clip;
+}
+
+body {
+  /* --site-font 由 AppearanceProvider 写在 <html> 上，取值来自管理员的字体设置。
+     回退链保证字体未加载时中文仍能正常显示。 */
+  font-family: var(--site-font, var(--font-body)), "Noto Sans SC", "Noto Sans CJK SC",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/*
+  字重上限。
+
+  站内使用的中文字体笔画偏粗，再叠加 600/700 会糊成一团 ——
+  尤其在小字号下几乎连成一块。因此全站把粗体压到 500。
+
+  需要更强层级时用字号与颜色区分，不要用字重。
+*/
+b,
+strong,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+th {
+  font-weight: 500;
+}
+
+/* 原生控件不会默认继承 body 字体，Portal 与 SVG 标签也需共享站点字体。 */
+button,
+input,
+select,
+textarea,
+option,
+code,
+pre,
+kbd,
+samp,
+svg text,
+[role="dialog"],
+[role="menu"],
+[role="listbox"] {
+  font-family: var(--site-font, var(--font-body));
+}
+
+button,
+input,
+select,
+textarea {
+  font-size: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* 原生页面、表格和文本框使用与 Arc ScrollArea 相同的细圆角滚动条。 */
+:root { --scrollbar-thumb: color-mix(in oklab, var(--foreground) 30%, transparent); --scrollbar-thumb-hover: color-mix(in oklab, var(--foreground) 46%, transparent); }
+* { scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { border-radius: var(--radius-pill, 999px); background: var(--scrollbar-thumb); }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* 锚点跳转时留出吸顶导航的高度 */
+[id] {
+  scroll-margin-top: 96px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

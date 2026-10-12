@@ -1,0 +1,9 @@
+/* 货币图标：与文字基线对齐，不参与文本选择 */
+
+.icon {
+  display: inline-block;
+  vertical-align: -0.14em;
+  object-fit: contain;
+  user-select: none;
+  flex: none;
+}

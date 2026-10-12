@@ -1,0 +1,188 @@
+/*
+  模型配置面板：左侧已配置列表 / 中间编辑区 / 右侧上游名映射。
+
+  三栏而不是上下堆叠：映射表与单模型编辑之间没有先后关系，
+  并排能让管理员一边看列表一边改参数（改完立刻在同屏看到效果）。
+  窄屏落成单列（见底部媒体查询）。
+*/
+
+.wrap { display: flex; flex-direction: column; gap: 16px; }
+
+/* ---------- 未定价提醒 ---------- */
+
+.alert {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in oklab, var(--warning) 45%, transparent);
+  border-radius: var(--radius-control);
+  background: color-mix(in oklab, var(--warning) 8%, transparent);
+}
+.alert strong { font-size: var(--text-sm); font-weight: 500; }
+.alert p { margin: 0; color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.6; }
+.alertList { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.alertChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--foreground);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-standard);
+}
+@media (hover: hover) and (pointer: fine) { .alertChip:hover { border-color: var(--accent); } }
+
+/* ---------- 三栏 ---------- */
+
+.columns {
+  display: grid;
+  grid-template-columns: minmax(200px, 240px) minmax(0, 1fr) minmax(260px, 320px);
+  gap: 18px;
+  align-items: start;
+}
+
+/* ---------- 左侧列表 ---------- */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  position: sticky;
+  top: 0;
+}
+.listHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.listTitle, .editorTitle { margin: 0; font-size: var(--text-sm); font-weight: 500; }
+.listBody { display: flex; flex-direction: column; gap: 2px; max-height: 60vh; overflow-y: auto; }
+.listRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+.listRow[data-active] { border-color: var(--border-strong); background: var(--surface-muted); }
+@media (hover: hover) and (pointer: fine) { .listRow:hover { background: var(--surface-muted); } }
+.listName {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--foreground);
+  font: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.listMeta { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 11px; }
+
+/* ---------- 中间编辑区 ---------- */
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+.editorHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.editorBody { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.row { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.row > :first-child { flex: 1 1 220px; min-width: 0; }
+.presetRow { display: flex; align-items: center; gap: 8px; flex: 0 1 auto; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+
+/* 类型多选：chip 按钮，选中态用强调色描边 */
+.typesRow { display: flex; flex-direction: column; gap: 6px; }
+.typesRow > .fieldLabel { font-size: var(--text-xs); }
+.fieldLabel { color: var(--text-muted); font-size: var(--text-xs); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  padding: 4px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
+}
+.chip[data-on] { border-color: var(--accent); background: var(--accent-subtle); color: var(--accent-strong); }
+@media (hover: hover) and (pointer: fine) { .chip:hover { border-color: var(--foreground); } }
+
+/* 三态能力项：四列自适应 */
+.triRow { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.triCell { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+
+/* ---------- 推理映射 ---------- */
+
+.reasoningBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+}
+.reasoningHead { display: flex; flex-direction: column; gap: 3px; }
+.blockTitle { margin: 0; font-size: var(--text-xs); font-weight: 500; }
+.blockHint { margin: 0; color: var(--text-muted); font-size: 11px; line-height: 1.6; }
+.blockHint code { font-family: var(--font-mono, monospace); font-size: 10.5px; }
+.levelValues { display: flex; flex-direction: column; gap: 6px; }
+.levelRow { display: grid; grid-template-columns: 72px 14px minmax(0, 1fr); gap: 6px; align-items: center; }
+.levelName { color: var(--text-secondary); font-size: var(--text-xs); font-family: var(--font-mono, monospace); }
+
+.editorActions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
+
+/* ---------- 右侧映射表 ---------- */
+
+.mapPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+.mapRows { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow-y: auto; }
+.mapRow { display: grid; grid-template-columns: minmax(0, 1fr) 14px minmax(0, 1fr) 26px; gap: 6px; align-items: center; }
+.mapRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-standard);
+}
+@media (hover: hover) and (pointer: fine) { .mapRemove:hover { color: var(--danger); } }
+.mapActions { display: flex; gap: 8px; }
+
+.muted { color: var(--text-muted); font-size: var(--text-xs); margin: 0; }
+.err { margin: 0; color: var(--danger); font-size: var(--text-xs); }
+
+/* 窄屏：三栏落成单列，列表不再吸顶 */
+@media (max-width: 1100px) {
+  .columns { grid-template-columns: 1fr; }
+  .list { position: static; }
+  .listBody, .mapRows { max-height: none; }
+}

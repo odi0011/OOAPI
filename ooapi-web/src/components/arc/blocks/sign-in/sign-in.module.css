@@ -1,0 +1,73 @@
+.signIn { container: sign-in / inline-size; width: min(100%, 432px); min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface); color: var(--foreground); font-family: var(--font-body); letter-spacing: var(--tracking-body); }
+/* Clips the leaving step while the height glides. Steps carry their own padding, so focus rings never reach the clip. */
+.viewport { overflow: hidden; }
+/* The leaving step pops out against this box. */
+.track { position: relative; }
+.step { display: grid; min-width: 0; padding: var(--space-8); }
+
+.heading { display: grid; gap: var(--space-2); margin-bottom: var(--space-6); }
+.heading h2 { margin: 0; font-family: var(--font-display); font-size: var(--text-3xl); font-weight: 400; letter-spacing: var(--tracking-display); line-height: var(--leading-display); text-wrap: balance; outline: none; }
+.heading p { margin: 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-body); text-wrap: pretty; }
+.heading .email { overflow-wrap: anywhere; }
+
+.form { display: grid; gap: var(--space-4); }
+/* No gap inside: a closing suggestion row would otherwise leave a gap behind until it unmounts. */
+.fieldGroup { display: grid; min-width: 0; }
+.wide { width: 100%; }
+.suggestion { overflow: hidden; }
+.suggestion p { margin: 0; padding: var(--space-2) 0 var(--space-1); color: var(--text-secondary); font-size: var(--text-xs); line-height: var(--leading-body); overflow-wrap: anywhere; }
+.textButton { border: 0; border-radius: 4px; padding: 0; background: none; color: var(--foreground); font: inherit; font-weight: 500; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; cursor: pointer; transition: text-decoration-color var(--duration-fast) var(--ease-standard); }
+
+.divider { display: flex; align-items: center; gap: var(--space-3); margin: var(--space-5) 0; color: var(--text-muted); font-size: var(--text-xs); line-height: 1; }
+.divider::before, .divider::after { flex: 1; height: 1px; background: var(--border); content: ""; }
+.alternatives { display: grid; gap: var(--space-2); }
+.sso { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
+.sso .ssoButton { min-width: 0; padding-inline: var(--space-2); }
+.providerMark { flex: none; }
+
+/* The account being signed in to. Its avatar is the one that grows into the signed in state. */
+.identity { display: flex; min-width: 0; align-items: center; gap: var(--space-3); margin-bottom: var(--space-6); border: 1px solid var(--border); border-radius: var(--radius-control); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); }
+.identityEmail { flex: 1; min-width: 0; font-size: var(--text-sm); line-height: var(--leading-body); overflow-wrap: anywhere; }
+.identity > button { flex: none; }
+.avatarMover { position: relative; z-index: 1; display: inline-flex; flex: none; }
+.avatarSmall { width: 32px; height: 32px; font-size: var(--text-xs); }
+.avatarLarge { position: absolute; inset: 4px; font-size: var(--text-2xl); }
+/* Both steps render the large photo and size it here, so the morph never waits on a second image. */
+.avatarMover .avatarFill { width: 100%; height: 100%; font-size: inherit; }
+
+.resend { position: relative; display: inline-flex; min-height: var(--control-height-sm); align-items: center; justify-self: start; margin: var(--space-3) 0 calc(var(--space-2) * -1) calc(var(--space-2) * -1); border: 0; border-radius: var(--radius-pill); padding: 0 var(--space-2); background: none; color: var(--foreground); font: inherit; font-size: var(--text-sm); font-weight: 500; line-height: var(--leading-body); cursor: pointer; transition: color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard); }
+.resend[aria-disabled="true"] { color: var(--text-muted); font-weight: 400; cursor: default; }
+.resendLabel { display: inline-flex; align-items: baseline; gap: .3em; white-space: nowrap; }
+.time { display: inline-flex; font-variant-numeric: tabular-nums; }
+.timeColumn { position: relative; display: inline-flex; justify-content: center; }
+.timeColumn > span { display: inline-block; }
+
+.avatarStage { position: relative; width: 96px; height: 96px; margin: 0 0 var(--space-6) -4px; }
+.ring { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; color: var(--success); transform: rotate(-90deg); }
+.badge { position: absolute; right: 2px; bottom: 4px; z-index: 2; display: grid; width: 26px; height: 26px; place-items: center; border: 2px solid var(--surface); border-radius: var(--radius-pill); background: var(--success); color: var(--surface); }
+.details { display: grid; margin: 0 0 var(--space-6); border-top: 1px solid var(--border); padding: 0; }
+.details div { display: flex; justify-content: space-between; gap: var(--space-4); border-bottom: 1px solid var(--border); padding: var(--space-3) 0; font-size: var(--text-sm); line-height: var(--leading-body); }
+.details dt { color: var(--text-secondary); }
+.details dd { margin: 0; text-align: right; }
+
+.footer { display: flex; min-height: 48px; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-1) var(--space-4); border-top: 1px solid var(--border); padding: var(--space-3) var(--space-8); color: var(--text-muted); font-size: var(--text-xs); line-height: var(--leading-body); }
+.status { position: relative; display: block; min-width: 0; flex: 1 1 12rem; }
+.switch { color: var(--text-secondary); white-space: nowrap; }
+.switch .textButton { text-decoration-color: transparent; }
+.status > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@media (hover: hover) and (pointer: fine) {
+  .textButton:hover { text-decoration-color: currentColor; }
+  .resend:not([aria-disabled="true"]):hover { background: var(--surface-muted); }
+}
+
+@container sign-in (max-width: 380px) {
+  .step { padding: var(--space-6) var(--space-5); }
+  .heading h2 { font-size: var(--text-2xl); }
+  .identity { gap: var(--space-2); padding-left: var(--space-2); }
+  .sso .ssoButton { gap: 6px; font-size: var(--text-xs); }
+  .footer { padding-inline: var(--space-5); }
+}
+@media (max-width: 480px) { .signIn { border-radius: var(--radius-panel); } }
+@media (prefers-reduced-motion: reduce) { .textButton, .resend { transition: none; } }

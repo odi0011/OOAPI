@@ -1,10 +1,9 @@
 "use client";
 import { useEffect, useId, useLayoutEffect, useRef } from "react";
-import type { FieldsetHTMLAttributes, ReactNode } from "react";
 import { animate, motion, useReducedMotion } from "motion/react";
 import { motionTokens } from "../lib/motion-tokens";
 import styles from "./radio-group.module.css";
-export interface RadioGroupProps extends Omit<FieldsetHTMLAttributes<HTMLFieldSetElement>, "onChange"> { label: string; options: { value: string; label: ReactNode; description?: string; disabled?: boolean }[]; value: string; onValueChange: (value: string) => void; name?: string }
+export interface RadioGroupProps { label: string; options: { value: string; label: string; description?: string }[]; value: string; onValueChange: (value: string) => void; name?: string }
 
 /** Sizes the highlight to the chosen row. A new choice glides on the morph spring; the first paint and resizes place it at once. */
 function place(highlight: HTMLElement | null, row: HTMLElement | null | undefined, at: { current: string }, glide: boolean) {
@@ -21,7 +20,7 @@ function place(highlight: HTMLElement | null, row: HTMLElement | null | undefine
 }
 
 /** One highlight travels to the chosen row while the new dot springs in and the old one shrinks away, so a change reads as a single physical move. Arrow keys take the same path. Rows and text never resize. */
-export function RadioGroup({ label, options, value, onValueChange, name, disabled, className, ...props }: RadioGroupProps) {
+export function RadioGroup({ label, options, value, onValueChange, name }: RadioGroupProps) {
   const id = useId();
   const reduced = useReducedMotion();
   const listRef = useRef<HTMLDivElement>(null);
@@ -42,10 +41,10 @@ export function RadioGroup({ label, options, value, onValueChange, name, disable
     observer.observe(list); rows.current.forEach(row => row && observer.observe(row));
     return () => observer.disconnect();
   }, [options.length]);
-  return <fieldset {...props} disabled={disabled} className={[styles.group, className].filter(Boolean).join(" ")}><legend>{label}</legend><div ref={listRef} className={styles.options}>
+  return <fieldset className={styles.group}><legend>{label}</legend><div ref={listRef} className={styles.options}>
     <span ref={highlightRef} className={styles.highlight} aria-hidden="true" />
     {options.map((option, index) => { const checked = value === option.value; return <label className={styles.option} key={option.value} ref={node => { rows.current[index] = node; }}>
-      <input type="radio" name={name ?? id} value={option.value} checked={checked} disabled={option.disabled} onChange={() => onValueChange(option.value)}/>
+      <input type="radio" name={name ?? id} value={option.value} checked={checked} onChange={() => onValueChange(option.value)}/>
       <span className={styles.mark} aria-hidden="true"><motion.span className={styles.dot} initial={false} animate={checked ? { scale: 1, opacity: 1 } : { scale: .4, opacity: 0 }} transition={reduced ? { duration: 0 } : { ...motionTokens.spring.snappy, opacity: { duration: checked ? motionTokens.duration.fast : motionTokens.duration.instant } }}/></span>
       <span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
     </label>; })}

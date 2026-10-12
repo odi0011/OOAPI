@@ -1,5 +1,10 @@
-.field { display: grid; gap: var(--space-2); min-width: 0; }
+.field { display: grid; gap: var(--space-2); min-width: 0; font-family: var(--font-body); }
+.optionIcon { display: inline-flex; align-items: center; flex: none; margin-right: 7px; }
+.optionIcon img, .optionIcon svg { width: 17px; height: 17px; object-fit: contain; }
+.content { font-family: var(--font-body); }
 .field label { font-size: var(--text-sm); font-weight: 500; }
+/* hideLabel：标签只留给读屏（行式布局的标签在左侧，不必重复一行） */
+.field[data-hide-label] label:first-child { position: absolute; width: 1px; height: 1px; margin: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* The trigger anchors the floating menu. Radix opens on pointerdown and measures this box, so it never scales: press feedback is color only. */
 .trigger { position: relative; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); width: 100%; min-height: var(--control-height-md); border: 1px solid var(--border); border-radius: var(--radius-control); padding: 0 var(--space-3); background: var(--surface); color: var(--foreground); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; transition: border-color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard); }
 @media (hover: hover) and (pointer: fine) { .trigger:hover:not([data-disabled]) { border-color: var(--border-strong); background: var(--surface-muted); } }
@@ -20,7 +25,10 @@
 .content[data-side="right"] { --menu-x: -6px; --menu-y: 0px; }
 .content[data-state="closed"] { animation: select-out var(--duration-instant) var(--ease-standard) both; }
 .viewport { padding: 2px 0; }
-.item { position: relative; display: flex; align-items: center; min-height: 36px; border-radius: calc(var(--radius-control) - 4px); padding: 0 34px 0 11px; color: var(--foreground); font-size: var(--text-sm); cursor: default; outline: none; user-select: none; transition: background-color var(--duration-instant) var(--ease-standard), color var(--duration-instant) var(--ease-standard); }
+.item { position: relative; display: flex; align-items: center; min-height: 32px; border-radius: calc(var(--radius-control) - 4px); padding: 0 34px 0 11px; color: var(--foreground); font-size: var(--text-sm); cursor: default; outline: none; user-select: none; transition: background-color var(--duration-instant) var(--ease-standard), color var(--duration-instant) var(--ease-standard); }
+/* 超长选项省略号截断，不折行：折行会让条目高低不一，菜单看起来在抖。
+   图标与选中标记固定不参与收缩，因此截断只发生在文字上。 */
+.itemText { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item[data-highlighted] { background: var(--surface-muted); }
 .item[data-disabled] { opacity: .45; }
 .indicator { position: absolute; right: 10px; display: inline-flex; align-items: center; color: var(--foreground); animation: indicator-in var(--duration-standard) var(--ease-enter) 40ms both; }

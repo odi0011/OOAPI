@@ -170,7 +170,7 @@ function useReducedMotionSafe() {
   return !!useReducedMotion() && hydrated;
 }
 
-export function DonutChart({ data, label, unit = "", formatValue = value => grouped.format(value), totalLabel = "Total", size = 208, thickness = 24, groupBelow = .04, maxSegments = 6, otherLabel = "Other", activeKey, defaultActiveKey = null, onActiveChange, hiddenKeys, defaultHiddenKeys, onHiddenKeysChange, legendAction = "toggle", legend = true, emptyLabel = "No data yet", ref, className }: DonutChartProps) {
+export function DonutChart({ data, label, unit = "", formatValue = value => grouped.format(value), totalLabel = "合计", size = 208, thickness = 24, groupBelow = .04, maxSegments = 6, otherLabel = "其他", activeKey, defaultActiveKey = null, onActiveChange, hiddenKeys, defaultHiddenKeys, onHiddenKeysChange, legendAction = "toggle", legend = true, emptyLabel = "暂无数据", ref, className }: DonutChartProps) {
   const reduced = useReducedMotionSafe();
   const figure = useRef<HTMLElement>(null);
   useImperativeHandle(ref, () => figure.current as HTMLElement);
@@ -363,7 +363,7 @@ export function DonutChart({ data, label, unit = "", formatValue = value => grou
     const next = step(event.key, index < 0 ? (event.key.endsWith("Up") || event.key.endsWith("Left") ? 0 : -1) : index, visible.length);
     if (next === undefined) return;
     event.preventDefault();
-    const item = visible[(next + visible.length) % visible.length];
+    const item = visible[(next + visible.length) % visible.length]!;
     setPreview(item.key);
     setAnnouncement(describe(item));
   };
@@ -417,7 +417,7 @@ export function DonutChart({ data, label, unit = "", formatValue = value => grou
     <p className={styles.srOnly} aria-live="polite">{announcement}</p>
     {total > 0 && <table className={styles.srOnly}>
       <caption>{label}</caption>
-      <thead><tr><th scope="col">Segment</th><th scope="col">Value</th><th scope="col">Share</th></tr></thead>
+      <thead><tr><th scope="col">分段</th><th scope="col">数值</th><th scope="col">占比</th></tr></thead>
       <tbody>{visible.flatMap(item => item.members ? item.members.map(member => ({ key: member.key, label: `${member.label} (${otherLabel})`, value: member.value })) : [item]).map(item => <tr key={item.key}><th scope="row">{item.label}</th><td>{format(item.value)}</td><td>{shareText(item.value / total)}</td></tr>)}</tbody>
     </table>}
   </figure>;

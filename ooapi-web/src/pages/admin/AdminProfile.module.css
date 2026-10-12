@@ -1,0 +1,247 @@
+/* 个人中心：身份头部 + 紧凑统计条 + 资料 / 安全 / 绑定 三个标签页 */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+/* ---------- 身份头部 ---------- */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+
+  /* 与下方表单同宽：身份信息就一小块，拉满整行既浪费又把操作按钮推到屏幕最右 */
+  max-width: 560px;
+  padding: var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.nameRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.name {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 550;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.handle {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.headerActions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.link {
+  font-size: var(--text-xs);
+  color: var(--accent-strong, var(--accent));
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ---------- 紧凑统计条 ---------- */
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  /* 与头部、表单同处一列，页面读起来是一条 560px 的纵向版面 */
+  max-width: 560px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+
+  padding: 7px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+.chipLabel {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.chipValue {
+  font-size: var(--text-base);
+  font-weight: 550;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 金额与货币图标同行 */
+.amount {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ---------- 标签页内容 ---------- */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 560px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.fieldError {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--danger, #d94a3d);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-control);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--success, #1a7f4b);
+  background: color-mix(in oklab, var(--success, #1a7f4b) 10%, transparent);
+}
+
+.errorBox {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-control);
+  background: color-mix(in oklab, var(--danger, #d94a3d) 10%, transparent);
+}
+
+.errorText {
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--danger, #d94a3d);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 三方绑定 ---------- */
+
+.bindings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.binding {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+}
+
+.bindingIcon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
+.bindingText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.bindingText strong {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.bindingText span {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+@media (max-width: 620px) {
+  .header {
+    align-items: flex-start;
+  }
+
+  .headerActions {
+    align-items: flex-start;
+    width: 100%;
+  }
+}

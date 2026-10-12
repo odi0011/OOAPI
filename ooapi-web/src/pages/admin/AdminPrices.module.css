@@ -1,0 +1,232 @@
+/* 模型定价页：以表格为主体，支持行内编辑 */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.unitNote {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.ok,
+.err {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-control);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.ok {
+  color: var(--success, #1a7f4b);
+  background: color-mix(in oklab, var(--success, #1a7f4b) 10%, transparent);
+}
+
+.err {
+  color: var(--danger, #d94a3d);
+  background: color-mix(in oklab, var(--danger, #d94a3d) 10%, transparent);
+}
+
+.loading {
+  padding: var(--space-8) 0;
+  color: var(--text-muted);
+  text-align: center;
+  font-size: var(--text-xs);
+}
+
+/* ---------- 新增区 ---------- */
+
+.addCard {
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.addTitle {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+/* 四个输入 + 按钮排成一行；窄屏自动换行 */
+.addRow {
+  display: grid;
+  grid-template-columns: minmax(200px, 1.4fr) repeat(3, minmax(90px, 0.7fr)) auto;
+  gap: var(--space-3);
+  align-items: end;
+}
+
+.addHint {
+  margin: var(--space-3) 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+/* ---------- 工具条 ---------- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.toolbar > *:first-child {
+  max-width: 260px;
+}
+
+.count {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 表格 ---------- */
+
+.table {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.thead,
+.row {
+  display: grid;
+  grid-template-columns: minmax(200px, 2fr) repeat(3, minmax(80px, 1fr)) minmax(150px, auto);
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+}
+
+.thead {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-muted);
+
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.row {
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--text-xs);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+/* 编辑中的行用主题色淡底标记，一眼看出哪一行在改 */
+.rowEditing {
+  background: var(--accent-subtle);
+}
+
+.modelCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.vendorMark {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+}
+
+.modelName {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--text-xs);
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 数值列右对齐 + 等宽数字，便于纵向比较价格 */
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* 行内编辑的输入框：与单元格同高，去掉多余装饰 */
+.cellInput {
+  width: 100%;
+  padding: 5px 8px;
+
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--text-xs);
+  color: var(--foreground);
+  text-align: right;
+}
+
+.cellInput:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.empty {
+  padding: var(--space-10) var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+@media (max-width: 900px) {
+  .addRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .thead,
+  .row {
+    grid-template-columns: minmax(140px, 1.5fr) repeat(3, minmax(70px, 1fr));
+  }
+
+  /* 窄屏把操作列折到下一行 */
+  .thead .actions {
+    display: none;
+  }
+
+  .row .actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}

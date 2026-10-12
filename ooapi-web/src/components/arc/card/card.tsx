@@ -14,7 +14,6 @@ export interface CardProps extends HTMLAttributes<HTMLElement> {
   description?: string;
   media?: ReactNode;
   action?: ReactNode;
-  headerAction?: ReactNode;
   /** A small leading visual for the footer, such as the owner's avatar. */
   avatar?: ReactNode;
   /** Who the card belongs to, such as the owner's name. */
@@ -75,7 +74,7 @@ function px(node: Element, value: string) {
   return value.trim().endsWith("rem") ? amount * parseFloat(getComputedStyle(node.ownerDocument.documentElement).fontSize) : amount;
 }
 
-export function Card({ title, description, media, action, headerAction, avatar, meta, status, details, open: openProp, defaultOpen = false, onOpenChange, children, className, style, ...props }: CardProps) {
+export function Card({ title, description, media, action, avatar, meta, status, details, open: openProp, defaultOpen = false, onOpenChange, children, className, style, ...props }: CardProps) {
   const reduced = useReducedMotion() ?? false;
   const group = useId();
   const cardRef = useRef<HTMLElement>(null);
@@ -140,17 +139,17 @@ export function Card({ title, description, media, action, headerAction, avatar, 
     {...(props as HTMLMotionProps<"article">)}
     ref={cardRef}
     className={[styles.card, className].filter(Boolean).join(" ")}
-    style={{ overflow: media ? undefined : "visible", isolation: media ? undefined : "auto", ...style, borderRadius: geometry.card ?? style?.borderRadius }}
+    style={{ ...style, borderRadius: geometry.card ?? style?.borderRadius }}
     data-hover={hovered || undefined}
-    whileHover={reduced || !details && !media ? undefined : { y: -2 }}
-    onHoverStart={() => { if (details || media) setHovered(true); }}
+    whileHover={reduced ? undefined : { y: -2 }}
+    onHoverStart={() => setHovered(true)}
     onHoverEnd={() => setHovered(false)}
     {...shared("card", "card")}
     transition={{ default: spring.snappy, layout: settle }}
   >
     {media ? <motion.div className={styles.media} {...shared("media", "card")}><motion.div className={styles.zoom} initial={false} animate={{ scale: hovered && !reduced ? ZOOM : 1 }} transition={hovered ? zoomIn : zoomOut}>{media}</motion.div></motion.div> : null}
-    <div className={styles.content} data-arc-card-content="">
-      <div className={styles.heading}><motion.h3 className={styles.title} {...shared("title", "card")}>{details ? <Dialog.Trigger asChild><button type="button" className={styles.trigger}>{title}</button></Dialog.Trigger> : title}</motion.h3>{headerAction}</div>
+    <div className={styles.content}>
+      <motion.h3 className={styles.title} {...shared("title", "card")}>{details ? <Dialog.Trigger asChild><button type="button" className={styles.trigger}>{title}</button></Dialog.Trigger> : title}</motion.h3>
       {description ? <motion.p ref={descriptionRef} className={styles.description} {...shared("description", "card", "position")}>{description}</motion.p> : null}
       {children}
       {footer("card")}
@@ -182,7 +181,7 @@ export function Card({ title, description, media, action, headerAction, avatar, 
               } : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0, transition: fade }, transition: fade })}
             >
               {media ? <motion.div className={styles.media} {...shared("media", "panel")}><motion.div className={styles.zoom} initial={{ scale: hovered && !reduced ? ZOOM : 1 }} animate={{ scale: 1 }} transition={grow}>{media}</motion.div></motion.div> : null}
-              <motion.span className={styles.closeSlot} initial={reduced ? { opacity: 0 } : { opacity: 0, scale: .9 }} animate={returning ? { opacity: 0, scale: .9 } : { opacity: 1, scale: 1 }} transition={returning ? fade : reduced ? fade : closeIn}><Dialog.Close asChild><motion.button type="button" className={styles.close} aria-label="Close quick look" whileTap={reduced ? undefined : { scale: .94 }} transition={spring.snappy}><X width={16} height={16} strokeWidth={1.75} aria-hidden="true" /></motion.button></Dialog.Close></motion.span>
+              <motion.span className={styles.closeSlot} initial={reduced ? { opacity: 0 } : { opacity: 0, scale: .9 }} animate={returning ? { opacity: 0, scale: .9 } : { opacity: 1, scale: 1 }} transition={returning ? fade : reduced ? fade : closeIn}><Dialog.Close asChild><motion.button type="button" className={styles.close} aria-label="关闭快速查看" whileTap={reduced ? undefined : { scale: .94 }} transition={spring.snappy}><X width={16} height={16} strokeWidth={1.75} aria-hidden="true" /></motion.button></Dialog.Close></motion.span>
               <div className={styles.content}>
                 <Dialog.Title asChild><motion.h2 className={styles.title} {...shared("title", "panel")}>{title}</motion.h2></Dialog.Title>
                 {description ? <Dialog.Description asChild><motion.p className={styles.description} {...shared("description", "panel", "position")}>{description}</motion.p></Dialog.Description> : null}

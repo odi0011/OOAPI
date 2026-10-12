@@ -13,8 +13,8 @@ export interface AccordionItem { title: string; content: ReactNode; }
 export interface AccordionProps {
   items: AccordionItem[];
   defaultOpen?: number;
-  /** "lg" suits page-level FAQs: questions at the large text size, answers at body size. */
-  size?: "md" | "lg";
+  /** "lg" suits page-level FAQs (large question, body-size answer); "sm" is for dense inline use such as a table cell. */
+  size?: "sm" | "md" | "lg";
 }
 
 /** Height follows the content on a spring that never overshoots; closed panels leave the accessibility tree once they finish collapsing. */
@@ -39,7 +39,7 @@ export function Accordion({ items, defaultOpen = 0, size = "md" }: AccordionProp
   const initialValue = defaultOpen >= 0 && defaultOpen < items.length ? String(defaultOpen) : "";
   const [openValue, setOpenValue] = useState(initialValue);
   const reduced = useReducedMotion();
-  return <AccordionPrimitive.Root className={[styles.accordion, size === "lg" ? styles.lg : ""].filter(Boolean).join(" ")} type="single" collapsible value={openValue} onValueChange={setOpenValue}>
+  return <AccordionPrimitive.Root className={[styles.accordion, size === "lg" ? styles.lg : size === "sm" ? styles.sm : ""].filter(Boolean).join(" ")} type="single" collapsible value={openValue} onValueChange={setOpenValue}>
     {items.map((item, index) => { const open = openValue === String(index); return <AccordionPrimitive.Item className={styles.item} value={String(index)} key={`${item.title}-${index}`}>
       <AccordionPrimitive.Header className={styles.header}>
         <AccordionPrimitive.Trigger className={styles.trigger}>

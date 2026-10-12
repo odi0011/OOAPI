@@ -1,0 +1,69 @@
+/* The dim follows the sheet's position in JS; only its color lives here. */
+.overlay { position: fixed; inset: 0; z-index: 50; background: oklch(16% 0 0 / .34); }
+:global(:root[data-theme="dark"]) .overlay { background: oklch(0% 0 0 / .52); }
+/* While it leaves, nothing underneath is blocked and the sheet cannot be grabbed again.
+   Radix sets pointer-events: auto inline on the overlay, so only !important lets a click reach the trigger and reverse the exit. */
+.overlay[data-state="closed"], .sheet[data-state="closed"] { pointer-events: none !important; }
+
+/* The sheet is as tall as its largest detent plus a hidden extension below the fold; detents are translateY offsets from there. */
+.sheet {
+  position: fixed;
+  z-index: 51;
+  right: 0;
+  bottom: calc(var(--sheet-extension) * -1);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 36rem);
+  height: calc(var(--sheet-max) * 100vh + var(--sheet-extension));
+  height: calc(var(--sheet-max) * 100dvh + var(--sheet-extension));
+  margin-inline: auto;
+  overflow: hidden;
+  padding-bottom: calc(var(--sheet-extension) + env(safe-area-inset-bottom, 0px));
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: var(--radius-surface) var(--radius-surface) 0 0;
+  background: var(--surface-raised);
+  color: var(--foreground);
+  box-shadow: var(--shadow-floating);
+  font-family: var(--font-body);
+  letter-spacing: var(--tracking-body);
+  outline: none;
+  will-change: transform;
+}
+
+/* The whole header is the handle, so a drag can start anywhere above the content. */
+.header { position: relative; flex: none; padding: var(--space-2) var(--space-5) var(--space-4); cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.sheet[data-dragging] .header { cursor: grabbing; }
+/* A hairline appears only once the content scrolls under the header. */
+.header::after { position: absolute; right: 0; bottom: 0; left: 0; height: 1px; background: var(--border); content: ""; opacity: 0; transition: opacity var(--duration-fast) var(--ease-standard); }
+.sheet[data-scrolled] .header::after { opacity: 1; }
+
+.grabber { display: flex; width: 3.5rem; height: 1.25rem; align-items: center; justify-content: center; margin: 0 auto var(--space-1); padding: 0; border: 0; border-radius: var(--radius-pill); background: transparent; cursor: inherit; -webkit-tap-highlight-color: transparent; }
+.grabberBar { width: 2.25rem; height: 5px; border-radius: var(--radius-pill); background: var(--border-strong); transition: background-color var(--duration-fast) var(--ease-standard); }
+@media (hover: hover) and (pointer: fine) { .grabber:hover .grabberBar { background: var(--text-muted); } }
+.sheet[data-dragging] .grabberBar { background: var(--text-muted); }
+
+.headRow { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
+.headText { min-width: 0; }
+.title { margin: 0; font-family: var(--font-body); font-size: var(--text-lg); font-weight: 500; letter-spacing: var(--tracking-body); line-height: var(--leading-body); }
+.description { margin: 2px 0 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-body); }
+
+.close { display: grid; flex: none; width: 2rem; height: 2rem; place-items: center; margin-top: -2px; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface-muted); color: var(--text-secondary); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard); }
+@media (hover: hover) and (pointer: fine) { .close:hover { color: var(--foreground); border-color: var(--border-strong); } }
+.close:active { color: var(--foreground); }
+
+/* The content scrolls only at the tallest detent; below it, a drag or scroll opens the sheet first. */
+.body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: var(--space-1) var(--space-5) var(--space-6); overscroll-behavior: contain; scrollbar-width: thin; touch-action: pan-y; font-size: var(--text-sm); line-height: var(--leading-body); }
+.sheet:not([data-expanded]) .body { overflow: hidden; touch-action: none; }
+
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@media (max-width: 40rem) {
+  .header { padding-inline: var(--space-4); }
+  .body { padding-inline: var(--space-4); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .header::after, .grabberBar, .close { transition: none; }
+}

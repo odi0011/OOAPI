@@ -1,0 +1,11 @@
+/* ZPix 像素体（MIT · github.com/SolidZORO/zpix-pixel-font）
+   点阵字体，只适合 12px 及其整数倍；
+   非整数倍缩放会出现点阵错位，因此用 image-rendering 提示浏览器不做平滑。 */
+
+@font-face {
+  font-family: "Zpix";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/zpix.woff2") format("woff2");
+}

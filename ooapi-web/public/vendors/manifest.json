@@ -1,0 +1,157 @@
+{
+  "anthropic": {
+    "title": "Anthropic",
+    "hex": "#191919",
+    "file": "anthropic.svg"
+  },
+  "claude": {
+    "title": "Claude",
+    "hex": "#D97757",
+    "file": "claude.svg"
+  },
+  "google": {
+    "title": "Google",
+    "hex": "#4285F4",
+    "file": "google.svg"
+  },
+  "gemini": {
+    "title": "Google Gemini",
+    "hex": "#8E75B2",
+    "file": "gemini.svg"
+  },
+  "deepseek": {
+    "title": "DeepSeek",
+    "hex": "#5786FE",
+    "file": "deepseek.svg"
+  },
+  "moonshot": {
+    "title": "Moonshot AI",
+    "hex": "#000000",
+    "file": "moonshot.svg"
+  },
+  "mistral": {
+    "title": "Mistral AI",
+    "hex": "#FA520F",
+    "file": "mistral.svg"
+  },
+  "meta": {
+    "title": "Meta",
+    "hex": "#0467DF",
+    "file": "meta.svg"
+  },
+  "nvidia": {
+    "title": "NVIDIA",
+    "hex": "#76B900",
+    "file": "nvidia.svg"
+  },
+  "ollama": {
+    "title": "Ollama",
+    "hex": "#000000",
+    "file": "ollama.svg"
+  },
+  "huggingface": {
+    "title": "Hugging Face",
+    "hex": "#FFD21E",
+    "file": "huggingface.svg"
+  },
+  "qwen": {
+    "title": "QWen",
+    "hex": "#6950EF",
+    "file": "qwen.svg"
+  },
+  "baidu": {
+    "title": "Baidu",
+    "hex": "#2932E1",
+    "file": "baidu.svg"
+  },
+  "bytedance": {
+    "title": "ByteDance",
+    "hex": "#3C8CFF",
+    "file": "bytedance.svg"
+  },
+  "minimax": {
+    "title": "MiniMax",
+    "hex": "#E73562",
+    "file": "minimax.svg"
+  },
+  "openrouter": {
+    "title": "OpenRouter",
+    "hex": "#94A3B8",
+    "file": "openrouter.svg"
+  },
+  "replicate": {
+    "title": "Replicate",
+    "hex": "#000000",
+    "file": "replicate.svg"
+  },
+  "perplexity": {
+    "title": "Perplexity",
+    "hex": "#1FB8CD",
+    "file": "perplexity.svg"
+  },
+  "alibaba": {
+    "title": "Alibaba Cloud",
+    "hex": "#FF6A00",
+    "file": "alibaba.svg"
+  },
+  "qq": {
+    "title": "QQ",
+    "hex": "#1EBAFC",
+    "file": "qq.svg"
+  },
+  "wechat": {
+    "title": "WeChat",
+    "hex": "#07C160",
+    "file": "wechat.svg"
+  },
+  "github": {
+    "title": "GitHub",
+    "hex": "#181717",
+    "file": "github.svg"
+  },
+  "gitlab": {
+    "title": "GitLab",
+    "hex": "#FC6D26",
+    "file": "gitlab.svg"
+  },
+  "gitee": {
+    "title": "Gitee",
+    "hex": "#C71D23",
+    "file": "gitee.svg"
+  },
+  "discord": {
+    "title": "Discord",
+    "hex": "#5865F2",
+    "file": "discord.svg"
+  },
+  "x": {
+    "title": "X",
+    "hex": "#000000",
+    "file": "x.svg"
+  },
+  "openai": {
+    "title": "OpenAI",
+    "hex": "#412991",
+    "file": "openai.svg"
+  },
+  "microsoft": {
+    "title": "Microsoft",
+    "hex": "#5E5E5E",
+    "file": "microsoft.svg"
+  },
+  "zhipu": {
+    "title": "智谱 GLM",
+    "hex": "#3859FF",
+    "file": "zhipu.svg"
+  },
+  "xai": {
+    "title": "xAI Grok",
+    "hex": "#000000",
+    "file": "xai.svg"
+  },
+  "cohere": {
+    "title": "Cohere",
+    "hex": "#39594D",
+    "file": "cohere.svg"
+  }
+}

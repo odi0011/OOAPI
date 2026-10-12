@@ -1,0 +1,64 @@
+/* Same card, spacing, and control heights as the sign in variants, so the family reads as one flow. */
+.block { container: signup / inline-size; width: min(100%, 432px); min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface); color: var(--foreground); font-family: var(--font-body); letter-spacing: var(--tracking-body); }
+.viewport { overflow: hidden; }
+.track { position: relative; }
+.step { display: grid; min-width: 0; padding: var(--space-8); }
+
+.heading { display: grid; gap: var(--space-2); margin-bottom: var(--space-6); }
+.heading h2 { margin: 0; font-family: var(--font-display); font-size: var(--text-3xl); font-weight: 400; letter-spacing: var(--tracking-display); line-height: var(--leading-display); text-wrap: balance; outline: none; }
+.heading p { margin: 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-body); text-wrap: pretty; }
+.address { color: var(--foreground); overflow-wrap: anywhere; }
+
+.sso { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
+.sso .ssoButton { min-width: 0; padding-inline: var(--space-2); }
+.providerMark { flex: none; }
+.divider { display: flex; align-items: center; gap: var(--space-3); margin: var(--space-5) 0; color: var(--text-muted); font-size: var(--text-xs); line-height: 1; }
+.divider::before, .divider::after { flex: 1; height: 1px; background: var(--border); content: ""; }
+
+.form { display: grid; gap: var(--space-4); }
+.wide { width: 100%; }
+.passwordGroup { display: grid; min-width: 0; }
+/* One stable row under the password: the words change in place and the meter fills beside them. */
+.feedback { display: flex; min-height: 18px; align-items: center; justify-content: space-between; gap: var(--space-3); margin-top: var(--space-2); font-size: var(--text-xs); line-height: var(--leading-body); }
+.feedbackText { position: relative; min-width: 0; flex: 1; color: var(--text-muted); }
+.feedbackText > span { display: block; }
+.feedbackText[data-error] { color: var(--danger); }
+.meter { display: flex; flex: none; gap: 3px; }
+.meter span { width: 20px; height: 3px; border-radius: var(--radius-pill); background: var(--border); transition: background-color var(--duration-fast) var(--ease-standard); }
+.meter span[data-on] { background: var(--accent); }
+.meter[data-level="1"] span[data-on] { background: var(--danger); }
+.meter[data-level="2"] span[data-on] { background: var(--warning); }
+.meter[data-level="4"] span[data-on] { background: var(--success); }
+
+/* The checkbox keeps a full size hit area; pull it out so the square lines up with the fields. */
+.updates { margin: calc(var(--space-2) * -1) 0 calc(var(--space-2) * -1) calc((var(--control-height-md) - 18px) / -2); }
+.row { overflow: hidden; }
+.submitError { margin: 0; color: var(--danger); font-size: var(--text-xs); line-height: var(--leading-body); }
+.legal { margin: var(--space-4) 0 0; color: var(--text-muted); font-size: var(--text-xs); line-height: var(--leading-body); text-wrap: pretty; }
+.textButton { border: 0; padding: 0; background: none; color: var(--text-secondary); font: inherit; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; cursor: pointer; transition: color var(--duration-fast) var(--ease-standard), text-decoration-color var(--duration-fast) var(--ease-standard); }
+
+.success { display: block; width: 48px; height: 48px; margin-bottom: var(--space-6); overflow: visible; color: var(--success); }
+.details { display: grid; margin: 0 0 var(--space-6); border-top: 1px solid var(--border); padding: 0; }
+.details div { display: flex; justify-content: space-between; gap: var(--space-4); border-bottom: 1px solid var(--border); padding: var(--space-3) 0; font-size: var(--text-sm); line-height: var(--leading-body); }
+.details dt { color: var(--text-secondary); }
+.details dd { margin: 0; text-align: right; }
+
+.footer { display: flex; min-height: 48px; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-1) var(--space-4); border-top: 1px solid var(--border); padding: var(--space-3) var(--space-8); color: var(--text-muted); font-size: var(--text-xs); line-height: var(--leading-body); }
+.status { position: relative; display: block; min-width: 0; flex: 1 1 12rem; }
+.status > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.switch { color: var(--text-secondary); white-space: nowrap; }
+.switch .textButton { color: var(--foreground); font-weight: 500; text-decoration-color: transparent; }
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@media (hover: hover) and (pointer: fine) {
+  .textButton:hover { color: var(--foreground); text-decoration-color: currentColor; }
+}
+@container signup (max-width: 380px) {
+  .step { padding: var(--space-6) var(--space-5); }
+  .heading h2 { font-size: var(--text-2xl); }
+  .sso .ssoButton { gap: 6px; font-size: var(--text-xs); }
+  .footer { padding-inline: var(--space-5); }
+  .meter span { width: 14px; }
+}
+@media (max-width: 480px) { .block { border-radius: var(--radius-panel); } }
+@media (prefers-reduced-motion: reduce) { .meter span, .textButton { transition: none; } }

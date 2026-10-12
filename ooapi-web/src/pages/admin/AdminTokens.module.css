@@ -1,0 +1,328 @@
+/* 密钥管理页。与其余后台页面同一套令牌与紧凑密度。 */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.balance {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.loading,
+.ok,
+.err,
+.notice,
+.reconcile {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-control);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.loading {
+  padding: var(--space-8) 0;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.ok {
+  color: var(--success, #1a7f4b);
+  background: color-mix(in oklab, var(--success, #1a7f4b) 10%, transparent);
+}
+
+.err {
+  color: var(--danger, #d94a3d);
+  background: color-mix(in oklab, var(--danger, #d94a3d) 10%, transparent);
+  overflow-wrap: anywhere;
+}
+
+/* 没有分组时的提示：这不是错误，但会阻塞建密钥 */
+.notice {
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+}
+
+.notice strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.notice p {
+  margin: 0;
+}
+
+/* 对账提示：解释「为什么现存密钥之和小于账号用量」 */
+.reconcile {
+  border: 1px solid color-mix(in oklab, var(--accent) 32%, var(--border));
+  background: var(--accent-subtle);
+  color: var(--text-secondary);
+}
+
+.reconcile strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--foreground);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  padding: var(--space-10) var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+/* ---------- 密钥列表 ---------- */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.itemMain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  flex: 1;
+}
+
+.itemHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.itemName {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+/* 标签统一用主题色淡底，保持与侧边栏选中态同一套语言 */
+.groupTag,
+.unlimitedTag,
+.limitTag,
+.offTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.groupTag {
+  color: var(--accent-strong, var(--accent));
+  background: var(--accent-subtle);
+}
+
+.unlimitedTag {
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+}
+
+.limitTag {
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+}
+
+.offTag {
+  color: var(--danger, #d94a3d);
+  background: color-mix(in oklab, var(--danger, #d94a3d) 10%, transparent);
+}
+
+.keyRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.key {
+  padding: 4px 10px;
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.miniBtn {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+
+  transition: border-color 140ms var(--ease-standard, ease),
+    color 140ms var(--ease-standard, ease);
+}
+
+.miniBtn:hover {
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
+  color: var(--accent-strong, var(--accent));
+}
+
+/* 元信息用四列网格，窄屏自动降列 */
+.meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.meta div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.meta dt {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.meta dd {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px 9px;
+  flex-wrap: wrap;
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemActions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+
+/* ---------- 表单 ---------- */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.switchRow {
+  display: flex;
+  align-items: center;
+}
+
+.groupHint {
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+
+  font-size: var(--text-xs);
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.groupHint span {
+  color: var(--text-muted);
+}
+
+.dialogActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.revealedKey {
+  display: block;
+  padding: var(--space-4);
+  border: 1px dashed color-mix(in oklab, var(--accent) 45%, var(--border));
+  border-radius: var(--radius-control);
+  background: var(--accent-subtle);
+
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--text-sm);
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* ---------- 响应式 ---------- */
+
+@media (max-width: 960px) {
+  .meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .item {
+    flex-direction: column;
+  }
+
+  .itemActions {
+    flex-direction: row;
+    width: 100%;
+  }
+
+  .meta {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

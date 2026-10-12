@@ -11,5 +11,12 @@
 .lg .trigger { min-height: 76px; gap: var(--space-8); padding-block: var(--space-5); font-size: var(--text-lg); letter-spacing: var(--tracking-body); }
 .lg .panel { font-size: var(--text-base); line-height: 1.65; }
 .lg .panelInner { max-width: 62ch; padding: 0 var(--space-12) var(--space-6) 0; }
+/* "sm": dense inline use（表格单元格、配置行）——触发行不抬高所在行的高度。 */
+.accordion.sm { border-top: 0; }
+.sm .item { border-bottom: 0; }
+.sm .trigger { min-height: 0; gap: var(--space-2); padding: 3px 0; font-size: var(--text-xs); }
+.sm .trigger svg { width: 13px; height: 13px; }
+.sm .panel { font-size: var(--text-xs); }
+.sm .panelInner { padding: 0 var(--space-2) var(--space-2) 0; }
 @media (max-width: 520px) { .lg .trigger { min-height: 68px; font-size: var(--text-base); } .lg .panel { font-size: var(--text-sm); } .lg .panelInner { padding-right: var(--space-6); } }
 @media (prefers-reduced-motion: reduce) { .trigger, .icon { transition: none; } }
