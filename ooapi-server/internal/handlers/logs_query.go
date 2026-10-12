@@ -174,8 +174,8 @@ func escapeLike(s string) string {
 
 // usageBilling 是账单快照的计算辅助，让前端不必自己套公式。
 //
-// 注意：本站计费公式里 prompt_tokens 是「含缓存命中」的总输入，
-// 缓存另按 cached_tokens 单独计价（与部分实现「从输入里扣缓存」不同）。
+// 注意：本站计费公式里 prompt_tokens 是「含缓存命中」的总输入。
+// 缓存命中只按 cached_price 计一次，并从输入 token 里扣掉，不再叠加输入价。
 // 这里原样回放当时写入的快照值，只附带换算比例，不做任何重算。
 type usageBilling struct {
 	InputPrice  float64 `json:"input_price"`

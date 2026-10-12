@@ -3,7 +3,10 @@ package handlers
 import (
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
+	"io"
 	"math"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -123,12 +126,13 @@ func TestSettleBillingSnapshotCaptured(t *testing.T) {
 		t.Fatalf("group_rate = %v, want 1.5", got)
 	}
 
-	// 与 CalcQuota 对拍：raw_cost 是取整前的表达式 × unitsPerUnit。
+	// 与 CalcQuota 对拍：缓存 500 已含在 prompt 1000 里，只按缓存价计一次。
+	// 未缓存输入 500×2 + 补全 2000×4 + 缓存 500×0.5 = 92.5 额度单位，向上取整 93。
 	price := services.ModelPrice{Model: "upstream-model", InputPrice: 2, OutputPrice: 4, CachedPrice: 0.5}
-	wantRaw := (1000.0/1e6*2 + 2000.0/1e6*4 + 500.0/1e6*0.5) * float64(services.DefaultUnitsPerOD)
+	wantRaw := (500.0/1e6*2 + 2000.0/1e6*4 + 500.0/1e6*0.5) * float64(services.DefaultUnitsPerOD)
 	wantBase := services.CalcQuota(1000, 2000, 500, price, services.DefaultUnitsPerOD)
-	if wantBase != 103 {
-		t.Fatalf("fixture math changed: CalcQuota = %d, want 103", wantBase)
+	if wantBase != 93 {
+		t.Fatalf("fixture math changed: CalcQuota = %d, want 93", wantBase)
 	}
 	if got, ok := ex.args[15].Value.(int64); !ok || got != wantBase {
 		t.Fatalf("base_quota = %v, want %d", ex.args[15].Value, wantBase)
@@ -140,8 +144,8 @@ func TestSettleBillingSnapshotCaptured(t *testing.T) {
 	if got, ok := ex.args[17].Value.(int64); !ok || got != wantQuota {
 		t.Fatalf("quota = %v, want %d", ex.args[17].Value, wantQuota)
 	}
-	if wantQuota != 155 {
-		t.Fatalf("fixture rate math changed: quota = %d, want 155", wantQuota)
+	if wantQuota != 140 {
+		t.Fatalf("fixture rate math changed: quota = %d, want 140", wantQuota)
 	}
 	if got := ex.args[22].Value; got != "用户问题" {
 		t.Fatalf("input_text = %v", got)
@@ -213,8 +217,11 @@ func TestSettleUnpricedModelKeepsZeroSnapshot(t *testing.T) {
 	token := &apiToken{ID: 1, UserID: 1}
 	ch := &services.UpstreamChannel{ID: 1, Name: "up"}
 
-	settle(c, token, nil, ch, "no-price-model", makeCachedUsage(500, 500, 0),
+	err := settle(c, token, nil, ch, "no-price-model", makeCachedUsage(500, 500, 0),
 		time.Now(), 0, LogTypeCall, "", billingSnapshot{RequestedModel: "no-price-model"})
+	if !errors.Is(err, errModelNotPriced) {
+		t.Fatalf("unpriced official-style call must fail settlement, got %v", err)
+	}
 
 	ex := findLogInsert(t, d)
 	if got, ok := ex.args[15].Value.(int64); !ok || got != 0 {
@@ -233,6 +240,216 @@ func TestSettleUnpricedModelKeepsZeroSnapshot(t *testing.T) {
 		if strings.Contains(e.query, "SET used_quota") {
 			t.Fatalf("unpriced call must not charge: %s", e.query)
 		}
+	}
+}
+
+func TestSettleChannelFailWithUsageStillCharges(t *testing.T) {
+	d := &callerTestDriver{}
+	d.query = priceRowsFor(t, "m", 3, 15, 0.3)
+	useCallerTestDB(t, d)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	token := &apiToken{ID: 1, UserID: 1}
+	ch := &services.UpstreamChannel{ID: 1, Name: "up"}
+
+	// prompt 已含 30 个缓存命中。中断日志类型不能跳过结算。
+	err := settle(c, token, &services.Group{Rate: 1}, ch, "m",
+		makeCachedUsage(150, 7, 30), time.Now(), 0, LogTypeChannelFail, "流式传输中断",
+		billingSnapshot{RequestedModel: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := findLogInsert(t, d)
+	if got := ex.args[3].Value; got != int64(LogTypeChannelFail) && got != LogTypeChannelFail {
+		t.Fatalf("log type = %v, want channel fail", got)
+	}
+	price := services.ModelPrice{InputPrice: 3, OutputPrice: 15, CachedPrice: 0.3}
+	want := services.CalcQuota(150, 7, 30, price, services.DefaultUnitsPerOD)
+	// (120×3 + 7×15 + 30×0.3) / 1e6 × 10000 = 4.74 → 5。旧公式会把缓存再加一遍。
+	if want != 5 {
+		t.Fatalf("formula drift: CalcQuota = %d, want 5", want)
+	}
+	if got, ok := ex.args[17].Value.(int64); !ok || got != want {
+		t.Fatalf("quota = %v, want %d", ex.args[17].Value, want)
+	}
+	var charged bool
+	for _, e := range d.execs {
+		if strings.Contains(e.query, "UPDATE tokens SET used_quota = used_quota + ?") {
+			charged = true
+			if got := e.args[0].Value; got != want {
+				t.Fatalf("charged %v, want %d", got, want)
+			}
+		}
+	}
+	if !charged {
+		t.Fatal("interrupted stream with known usage was not charged")
+	}
+}
+
+func TestSettleChannelFailWithoutUsageDoesNotCharge(t *testing.T) {
+	d := &callerTestDriver{}
+	d.query = priceRowsFor(t, "m", 3, 15, 0.3)
+	useCallerTestDB(t, d)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	err := settle(c, &apiToken{ID: 1, UserID: 1}, &services.Group{Rate: 1},
+		&services.UpstreamChannel{ID: 1, Name: "up"}, "m", upstreamUsage{},
+		time.Now(), 0, LogTypeChannelFail, "boom", billingSnapshot{RequestedModel: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range d.execs {
+		if strings.Contains(e.query, "SET used_quota = used_quota +") {
+			t.Fatalf("empty failure must not charge: %s", e.query)
+		}
+	}
+}
+
+func TestSettleChargeFailureRollsBackAndReturnsError(t *testing.T) {
+	d := &callerTestDriver{}
+	d.query = priceRowsFor(t, "m", 3, 15, 0)
+	// 驱动在第 N 次之后失败。把已发生次数预置成阈值，第一次加扣就会失败。
+	d.failUserDebitAfter = 1
+	d.userDebits = 1
+	useCallerTestDB(t, d)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	err := settle(c, &apiToken{ID: 1, UserID: 1}, &services.Group{Rate: 1},
+		&services.UpstreamChannel{ID: 1, Name: "up"}, "m", makeCachedUsage(1000, 1000, 0),
+		time.Now(), 0, LogTypeCall, "", billingSnapshot{RequestedModel: "m"})
+	if !errors.Is(err, errUserQuota) {
+		t.Fatalf("expected quota error, got %v", err)
+	}
+	committed := false
+	rolled := false
+	for _, e := range d.execs {
+		if e.query == "COMMIT" {
+			committed = true
+		}
+		if e.query == "ROLLBACK" {
+			rolled = true
+		}
+		if strings.Contains(e.query, "INSERT INTO logs") {
+			t.Fatal("failed settlement must not insert a log")
+		}
+	}
+	if committed || !rolled {
+		t.Fatalf("commit=%v rollback=%v, want rollback only", committed, rolled)
+	}
+}
+
+func TestCallUpstreamOmitsBodyWhenSettlementFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"id":"c1","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"SECRET_COMPLETION"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100000,"completion_tokens":100000,"total_tokens":200000}}`)
+	}))
+	defer upstream.Close()
+
+	rows := channelRows(time.Time{})
+	rows.values[0][3] = upstream.URL + "/v1"
+	d := installChannelsQuery(t, rows, nil)
+	// 第一次用户加扣是预扣，放行；结算补差（第二次）失败。
+	d.failUserDebitAfter = 1
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	token := &apiToken{ID: 1, UserID: 1, GroupName: "ds-flash", UserStatus: 1, Status: 1, UserQuota: 1, UserUsedQuota: 0}
+	group := &services.Group{Name: "ds-flash", Rate: 1}
+	body := []byte(`{"model":"deepseek-flash","messages":[{"role":"user","content":"hi"}]}`)
+
+	call, ok := callUpstream(c.Request.Context(), c, token, group, "deepseek-flash", body, time.Now(), writeOpenAIError)
+	if ok || call != nil {
+		t.Fatal("settlement failure must not return a completion")
+	}
+	out := rec.Body.String()
+	if strings.Contains(out, "SECRET_COMPLETION") || strings.Contains(out, "chat.completion") {
+		t.Fatalf("successful completion body leaked: %s", out)
+	}
+	if !strings.Contains(out, "insufficient_quota") {
+		t.Fatalf("expected insufficient_quota, got %s", out)
+	}
+	if rec.Code == http.StatusOK {
+		t.Fatalf("status = 200, body %s", out)
+	}
+}
+
+func TestLookupBillablePriceUsesCanonicalAndRejectsUnusable(t *testing.T) {
+	d := &callerTestDriver{}
+	d.query = func(q string, args []driver.NamedValue) (driver.Rows, error) {
+		if !strings.Contains(q, "FROM model_prices") {
+			return &callerTestRows{columns: []string{"k", "v"}}, nil
+		}
+		model := ""
+		if len(args) > 0 {
+			model, _ = args[0].Value.(string)
+		}
+		cols := []string{"model", "input_price", "output_price", "cached_price", "context_tiers"}
+		switch model {
+		case "claude-sonnet-4-5":
+			return &callerTestRows{columns: cols, values: [][]driver.Value{{model, float64(3), float64(15), float64(0.3), ""}}}, nil
+		case "space-bunny-free":
+			return &callerTestRows{columns: cols, values: [][]driver.Value{{model, float64(0), float64(0), float64(0), ""}}}, nil
+		case "claude-haiku-4-5":
+			// 官方模型被写成全 0，且不是免费模型：不可用。
+			return &callerTestRows{columns: cols, values: [][]driver.Value{{model, float64(0), float64(0), float64(0), ""}}}, nil
+		default:
+			return &callerTestRows{columns: cols}, nil
+		}
+	}
+	useCallerTestDB(t, d)
+	services.InvalidateModelMap()
+
+	if _, ok := services.LookupBillablePrice("claude-sonnet-4.5"); !ok {
+		t.Fatal("alias of a priced official model must resolve to that price")
+	}
+	if _, ok := services.LookupBillablePrice("space-bunny-free"); !ok {
+		t.Fatal("explicit free model with a zero price row must stay callable")
+	}
+	if _, ok := services.LookupBillablePrice("claude-haiku-4-5"); ok {
+		t.Fatal("official model with an all-zero price row must not be usable")
+	}
+	if _, ok := services.LookupBillablePrice("claude-opus-5-5"); ok {
+		t.Fatal("official model with no price row must not be usable")
+	}
+}
+
+func TestCheckAccessRejectsUnpricedOfficialModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	d := &callerTestDriver{}
+	d.query = func(q string, args []driver.NamedValue) (driver.Rows, error) {
+		if strings.Contains(q, "FROM channel_groups") {
+			return &callerTestRows{
+				columns: []string{"id", "name", "remark", "rate", "models", "created_at", "updated_at"},
+				values: [][]driver.Value{{
+					int64(1), "billing-gate", "", float64(1), nil, time.Now(), time.Now(),
+				}},
+			}, nil
+		}
+		if strings.Contains(q, "FROM model_prices") {
+			return &callerTestRows{columns: []string{"model", "input_price", "output_price", "cached_price", "context_tiers"}}, nil
+		}
+		return &callerTestRows{columns: []string{"k", "v"}}, nil
+	}
+	useCallerTestDB(t, d)
+	services.InvalidateModelMap()
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	token := &apiToken{
+		ID: 1, UserID: 1, Status: 1, UserStatus: 1, GroupName: "billing-gate",
+		UserQuota: 100, UserUsedQuota: 0, Unlimited: true,
+	}
+	if _, ok := checkAccess(c, token, "claude-sonnet-4-5", writeOpenAIError); ok {
+		t.Fatal("unpriced official model must be rejected")
+	}
+	if !strings.Contains(rec.Body.String(), "model_not_priced") {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
 

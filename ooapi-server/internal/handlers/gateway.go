@@ -102,9 +102,27 @@ type upstreamUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
-	PromptDetails    *struct {
+	// CachedTokens 是少数上游（如 Antigravity）放在 usage 顶层的缓存命中数。
+	// OpenAI 口径放在 prompt_tokens_details；两者同时出现时以 details 为准。
+	CachedTokens  int `json:"cached_tokens,omitempty"`
+	PromptDetails *struct {
 		CachedTokens int `json:"cached_tokens"`
 	} `json:"prompt_tokens_details"`
+}
+
+// cachedTokenCount 返回本次用量里的缓存命中 token。
+// prompt_tokens 已经包含这部分，结算时不能再按输入价加一遍。
+func (u upstreamUsage) cachedTokenCount() int {
+	if u.PromptDetails != nil && u.PromptDetails.CachedTokens > 0 {
+		return u.PromptDetails.CachedTokens
+	}
+	if u.CachedTokens > 0 {
+		return u.CachedTokens
+	}
+	if u.PromptDetails != nil {
+		return u.PromptDetails.CachedTokens
+	}
+	return 0
 }
 
 // forwardJSON 非流式转发。
@@ -730,6 +748,49 @@ func forwardOpenedStream(
 		}
 	}
 
+	snapshot.OutputText = capturedOutput.text()
+
+	logType := LogTypeCall
+	errMsg := ""
+	switch {
+	case readErr != nil && !clientGone && !clientAborted():
+		// 上游中途断开：内容不完整，算账号失败。
+		// 已经知道的用量仍然结算 —— 不能因为日志类型是渠道失败就跳过扣费。
+		services.MarkChannelFailure(ch.ID, readErr.Error())
+		log.Printf("[gateway] 账号「%s」流式传输中断: %v", ch.Name, readErr)
+		logType = LogTypeChannelFail
+		errMsg = "流式传输中断：" + readErr.Error()
+	case clientGone || clientAborted():
+		// 客户端主动断开：这不是账号的问题，不能标记失败、更不能进冷却。
+		// 已经产生的用量照常计费（用户确实消耗了 token），
+		// 但账号状态保持干净 —— 否则「用户按一下 Esc」就能把自己唯一的账号打进小黑屋。
+		log.Printf("[gateway] 客户端中断了流式请求（账号「%s」不受影响）", ch.Name)
+	default:
+		services.MarkChannelSuccess(ch.ID)
+	}
+
+	if err := settle(c, token, group, ch, model, usage, start, firstTokenMs(), logType, errMsg, snapshot); err != nil {
+		log.Printf("[gateway] 结算失败: %v", err)
+		// 内容已经交给客户端时留下预扣，避免这段输出变成免费的。
+		// 还没产出内容则把预扣留给调用方退回。
+		if !firstTokenAt.IsZero() || clientGone {
+			clearBillingHold(c)
+		}
+		if !clientGone && translator != nil {
+			msg := "结算失败，本次调用未完成"
+			if errors.Is(err, errModelNotPriced) {
+				msg = err.Error()
+			}
+			for _, chunk := range translator.FinishError(msg) {
+				if !write(chunk) {
+					break
+				}
+			}
+		}
+		return true
+	}
+
+	// 结算成功之后才发协议收尾。结算失败不能以正常结束收场。
 	if !clientGone {
 		for _, chunk := range translator.Finish(usage) {
 			if !write(chunk) {
@@ -737,31 +798,6 @@ func forwardOpenedStream(
 			}
 		}
 	}
-
-	if readErr != nil && !clientGone && !clientAborted() {
-		// 上游中途断开：内容不完整，算账号失败。
-		// 已经交付的那部分用量仍然计费 —— 用户确实用到了。
-		services.MarkChannelFailure(ch.ID, readErr.Error())
-		log.Printf("[gateway] 账号「%s」流式传输中断: %v", ch.Name, readErr)
-		snapshot.OutputText = capturedOutput.text()
-		settle(c, token, group, ch, model, usage, start, firstTokenMs(), LogTypeChannelFail,
-			"流式传输中断："+readErr.Error(), snapshot)
-		return true
-	}
-
-	if clientGone || clientAborted() {
-		// 客户端主动断开：这不是账号的问题，不能标记失败、更不能进冷却。
-		// 已经产生的用量照常计费（用户确实消耗了 token），
-		// 但账号状态保持干净 —— 否则「用户按一下 Esc」就能把自己唯一的账号打进小黑屋。
-		log.Printf("[gateway] 客户端中断了流式请求（账号「%s」不受影响）", ch.Name)
-		snapshot.OutputText = capturedOutput.text()
-		settle(c, token, group, ch, model, usage, start, firstTokenMs(), LogTypeCall, "", snapshot)
-		return true
-	}
-
-	services.MarkChannelSuccess(ch.ID)
-	snapshot.OutputText = capturedOutput.text()
-	settle(c, token, group, ch, model, usage, start, firstTokenMs(), LogTypeCall, "", snapshot)
 	return true
 }
 
@@ -1124,7 +1160,7 @@ func settle(
 	logType int,
 	errMsg string,
 	snap ...billingSnapshot,
-) {
+) error {
 	latency := int(time.Since(start).Milliseconds())
 
 	// 首字耗时：流式由调用方测出；非流式（没有流可测）等价于总耗时。
@@ -1157,10 +1193,7 @@ func settle(
 	}
 	pricingModel = services.ResolveModelForPricing(pricingModel, services.HasPrice)
 
-	cachedTokens := 0
-	if usage.PromptDetails != nil {
-		cachedTokens = usage.PromptDetails.CachedTokens
-	}
+	cachedTokens := usage.cachedTokenCount()
 
 	// group_rate 为 0 表示「未记录」；正常倍率 1 存 1。
 	// group 为空只影响快照与倍率，按原价（ApplyGroupRate 对 0 回退 1）结算。
@@ -1190,8 +1223,9 @@ func settle(
 		baseQuota int64
 		rawCost   float64
 		price     services.ModelPrice
+		priced    bool
 	)
-	if p, ok := services.PriceOf(pricingModel); ok {
+	if p, ok := services.LookupBillablePrice(pricingModel); ok {
 		/*
 			长上下文计价：按本次请求的输入 token 数选档。
 
@@ -1199,15 +1233,16 @@ func settle(
 			日志里固化的 input_price / output_price / cached_price 也必须是
 			档位价 —— 否则事后按基础价复核会对不上账。
 		*/
+		priced = true
+		if p.Model != "" {
+			pricingModel = p.Model
+		}
 		price = services.PriceForTokens(p, usage.PromptTokens)
 		unitsPerUnit := services.GetCurrency().UnitsPerUnit
-		// raw_cost 是「未取整的额度表达式」的固化：与 CalcQuota 同一套公式、
-		// 同一个换算比例，只是不做 ceil —— 事后能算出取整前的真实成本。
-		// 注意：这里只记录，不参与扣费，计费口径一个字都没改。
+		// raw_cost 是「未取整的额度表达式」的固化：与 CalcQuota / CostExpression
+		// 同一套公式（缓存 token 只计一次），只是不做 ceil。
 		rawCost = roundCostUnits(
-			float64(usage.PromptTokens)/1e6*price.InputPrice+
-				float64(billableCompletionTokens)/1e6*price.OutputPrice+
-				float64(cachedTokens)/1e6*price.CachedPrice,
+			services.CostExpression(usage.PromptTokens, billableCompletionTokens, cachedTokens, price),
 			unitsPerUnit,
 		)
 		// 传当前配置的「1 单位货币 = 多少额度单位」。
@@ -1217,33 +1252,6 @@ func settle(
 			unitsPerUnit)
 		// 分组倍率在标准价之后再乘，这样「改了倍率」的效果和用户预期一致。
 		quota = services.ApplyGroupRate(baseQuota, groupRate)
-	}
-
-	// 扣费。这里用条件更新防止并发下超额：
-	// 只有「当前已用 + 本次 <= 额度上限」时才写入成功。
-	//
-	// 只有成功调用才扣费：失败也可能带着已产生的 usage 进来
-	// （比如流式传到一半断开），那种情况下不该按完整用量收钱。
-	if logType == LogTypeCall && quota > 0 {
-		if err := chargeToken(token, quota); err != nil {
-			log.Printf("[gateway] 扣减密钥额度失败: %v", err)
-		}
-		if err := chargeUser(token.UserID, quota); err != nil {
-			log.Printf("[gateway] 扣减用户额度失败: %v", err)
-		}
-	}
-
-	/*
-		只更新最近使用时间。
-
-		额度已经在上面由 chargeToken 扣过了 —— 这里若再写一次
-		used_quota = used_quota + ?，用户会被收两倍费用。
-		（这是实测发现的：应扣 2700 单位，实际扣了 5400。）
-	*/
-	if _, err := db.DB.Exec(
-		"UPDATE tokens SET accessed_at = NOW() WHERE id = ?", token.ID,
-	); err != nil {
-		log.Printf("[gateway] 更新密钥访问时间失败: %v", err)
 	}
 
 	detail := fmt.Sprintf("账号=%s", ch.Name)
@@ -1261,7 +1269,76 @@ func settle(
 	promptText, promptCut := truncateLogText(snapshot.PromptText, logTextLimit)
 	outputText, outputCut := truncateLogText(snapshot.OutputText, logTextLimit)
 
-	if _, err := db.DB.Exec(
+	/*
+		扣费与写日志在同一个事务里。
+
+		密钥与账号分开两次 UPDATE 时，一次成功一次失败会把账做歪，
+		而失败只打日志、响应仍是成功补全。这里任一条件更新失败就整单回滚，
+		调用方不得再返回成功的补全体。
+
+		预扣（reserveBilling）已经占住一笔额度。本事务只补差额或退回多扣的部分，
+		净额等于本次 quota。没有产生可计费用量的失败（额度本就是 0）会把预扣退回。
+
+		流式中断只要已经知道 token / 费用，就按同样规则扣，不因为日志类型是
+		渠道失败而跳过。没有用量的失败仍然不扣（避免把「没跑起来」收成 1 单位保底）。
+	*/
+	hold := billingHoldAmount(c)
+	usageKnown := usage.PromptTokens > 0 || usage.CompletionTokens > 0 || cachedTokens > 0
+	shouldCharge := priced && quota > 0 && (logType == LogTypeCall || usageKnown)
+
+	tx, err := db.DB.Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	accountedHold := false
+	if shouldCharge {
+		delta := quota - hold
+		if delta > 0 {
+			if err := chargeTokenExec(tx, token, delta); err != nil {
+				return err
+			}
+			if err := chargeUserExec(tx, token.UserID, delta); err != nil {
+				return err
+			}
+		} else if delta < 0 {
+			if err := creditTokenExec(tx, token, -delta); err != nil {
+				return err
+			}
+			if err := creditUserExec(tx, token.UserID, -delta); err != nil {
+				return err
+			}
+		}
+		accountedHold = true
+	} else if hold > 0 {
+		if err := creditTokenExec(tx, token, hold); err != nil {
+			return err
+		}
+		if err := creditUserExec(tx, token.UserID, hold); err != nil {
+			return err
+		}
+		accountedHold = true
+	}
+
+	/*
+		只更新最近使用时间。
+
+		额度已经由上面的条件更新扣过了 —— 这里若再写一次
+		used_quota = used_quota + ?，用户会被收两倍费用。
+		（这是实测发现的：应扣 2700 单位，实际扣了 5400。）
+	*/
+	if _, err := tx.Exec(
+		"UPDATE tokens SET accessed_at = NOW() WHERE id = ?", token.ID,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
 		`INSERT INTO logs (user_id, token_id, channel_id, type, model,
 		                   requested_model, upstream_model, pricing_model,
 		                   prompt_tokens, completion_tokens, cached_tokens,
@@ -1281,8 +1358,19 @@ func settle(
 		inputCut || promptCut || outputCut,
 		token.UserAgent, token.CallerClient,
 	); err != nil {
-		log.Printf("[gateway] 写入调用日志失败: %v", err)
+		return err
 	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	if accountedHold || hold == 0 {
+		clearBillingHold(c)
+	}
+	if !priced && logType == LogTypeCall {
+		return newUnpricedModelError(pricingModel)
+	}
+	return nil
 }
 
 // ---------- 调用内容快照 ----------
@@ -1637,12 +1725,170 @@ func logAllChannelsFailed(
 	}
 }
 
-// chargeToken 扣减密钥额度。
+// 额度不足与未定价是结算失败的两种原因，调用方据此决定错误码。
+var (
+	errTokenQuota     = errors.New("密钥额度不足")
+	errUserQuota      = errors.New("账号余额不足")
+	errModelNotPriced = errors.New("model not priced")
+)
+
+type unpricedModelError struct{ Model string }
+
+func newUnpricedModelError(model string) error {
+	return unpricedModelError{Model: model}
+}
+
+func (e unpricedModelError) Error() string {
+	return "模型「" + e.Model + "」尚未配置可用价格，无法调用。请先在后台「模型定价」中配置，未定价的模型不能按 0 元计费。"
+}
+
+func (e unpricedModelError) Unwrap() error { return errModelNotPriced }
+
+// ctxBillingHoldKey 是本次请求已经预扣的额度（单位）。
+const ctxBillingHoldKey = "ooapi.billing_hold"
+
+func billingHoldAmount(c *gin.Context) int64 {
+	if c == nil {
+		return 0
+	}
+	v, ok := c.Get(ctxBillingHoldKey)
+	if !ok {
+		return 0
+	}
+	n, _ := v.(int64)
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+func setBillingHold(c *gin.Context, amount int64) {
+	if c == nil {
+		return
+	}
+	if amount < 0 {
+		amount = 0
+	}
+	c.Set(ctxBillingHoldKey, amount)
+}
+
+func clearBillingHold(c *gin.Context) { setBillingHold(c, 0) }
+
+// reserveBilling 在上游调用前按估算输入成本预扣。
+//
+// 并发请求各自做条件更新，余额不够覆盖这笔预扣的后来者会失败，
+// 不会都带着「余额 > 0」去上游把额度花穿。最终结算再把预扣调整成实际用量。
+func reserveBilling(c *gin.Context, token *apiToken, group *services.Group, model string, body []byte) error {
+	price, ok := services.LookupBillablePrice(model)
+	if !ok {
+		return newUnpricedModelError(model)
+	}
+	amount := holdQuota(group, price, body)
+	if amount < 1 {
+		amount = 1
+	}
+	if err := debitQuota(token, amount); err != nil {
+		return err
+	}
+	setBillingHold(c, amount)
+	return nil
+}
+
+// holdQuota 用请求正文估算的输入 token 预扣一笔至少为 1 的额度。
+func holdQuota(group *services.Group, price services.ModelPrice, body []byte) int64 {
+	prompt := estimateTokens(extractPromptText(body))
+	if prompt < 1 {
+		prompt = estimateTokens(string(body))
+	}
+	units := services.GetCurrency().UnitsPerUnit
+	base := services.CalcQuota(prompt, 0, 0, price, units)
+	rate := 0.0
+	if group != nil {
+		rate = group.Rate
+	}
+	return services.ApplyGroupRate(base, rate)
+}
+
+// releaseBillingHold 退回尚未被结算吃掉的预扣。调用失败且没有交付结果时使用。
+func releaseBillingHold(c *gin.Context, token *apiToken) {
+	amount := billingHoldAmount(c)
+	clearBillingHold(c)
+	if amount <= 0 || token == nil {
+		return
+	}
+	if err := creditQuota(token, amount); err != nil {
+		log.Printf("[gateway] 退回预扣额度失败: %v", err)
+	}
+}
+
+func debitQuota(token *apiToken, amount int64) error {
+	if amount <= 0 {
+		return nil
+	}
+	tx, err := db.DB.Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if err := chargeTokenExec(tx, token, amount); err != nil {
+		return err
+	}
+	if err := chargeUserExec(tx, token.UserID, amount); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+func creditQuota(token *apiToken, amount int64) error {
+	if amount <= 0 {
+		return nil
+	}
+	tx, err := db.DB.Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if err := creditTokenExec(tx, token, amount); err != nil {
+		return err
+	}
+	if err := creditUserExec(tx, token.UserID, amount); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+// queryExec 让扣费语句既能跑在连接上，也能跑在事务里。
+type queryExec interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// chargeTokenExec 扣减密钥额度。
 //
 // 条件更新：`used_quota + 本次 <= quota`。
 // 这样并发请求不会把额度扣成负数 —— 数据库层面保证原子性，
 // 不需要额外的锁。
-func chargeToken(t *apiToken, quota int64) error {
+func chargeTokenExec(ex queryExec, t *apiToken, quota int64) error {
+	if quota <= 0 {
+		return nil
+	}
 	/*
 		不限额度也要照常累加 used_quota。
 
@@ -1656,7 +1902,7 @@ func chargeToken(t *apiToken, quota int64) error {
 		下面的 SQL 已经用 (unlimited_quota = 1 OR ...) 处理了额度上限，
 		不限额度时它天然不会拦住写入，因此不需要在这里提前返回。
 	*/
-	res, err := db.DB.Exec(
+	res, err := ex.Exec(
 		`UPDATE tokens SET used_quota = used_quota + ?
 		 WHERE id = ? AND (unlimited_quota = 1 OR used_quota + ? <= quota)`,
 		quota, t.ID, quota,
@@ -1665,14 +1911,17 @@ func chargeToken(t *apiToken, quota int64) error {
 		return err
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
-		return errors.New("密钥额度不足")
+		return errTokenQuota
 	}
 	return nil
 }
 
-// chargeUser 扣减账号额度。
-func chargeUser(userID, quota int64) error {
-	res, err := db.DB.Exec(
+// chargeUserExec 扣减账号额度。
+func chargeUserExec(ex queryExec, userID, quota int64) error {
+	if quota <= 0 {
+		return nil
+	}
+	res, err := ex.Exec(
 		`UPDATE users SET used_quota = used_quota + ?
 		 WHERE id = ? AND used_quota + ? <= quota`,
 		quota, userID, quota,
@@ -1681,7 +1930,41 @@ func chargeUser(userID, quota int64) error {
 		return err
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
-		return errors.New("账号余额不足")
+		return errUserQuota
+	}
+	return nil
+}
+
+func creditTokenExec(ex queryExec, t *apiToken, quota int64) error {
+	if quota <= 0 {
+		return nil
+	}
+	res, err := ex.Exec(
+		`UPDATE tokens SET used_quota = used_quota - ? WHERE id = ? AND used_quota >= ?`,
+		quota, t.ID, quota,
+	)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return errTokenQuota
+	}
+	return nil
+}
+
+func creditUserExec(ex queryExec, userID, quota int64) error {
+	if quota <= 0 {
+		return nil
+	}
+	res, err := ex.Exec(
+		`UPDATE users SET used_quota = used_quota - ? WHERE id = ? AND used_quota >= ?`,
+		quota, userID, quota,
+	)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return errUserQuota
 	}
 	return nil
 }
