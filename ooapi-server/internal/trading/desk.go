@@ -35,6 +35,32 @@ type DeskCandle struct {
 	Close    float64   `json:"close"`
 }
 
+// KeyPosition 是一把交易所密钥的 positionRisk 里仍开着的仓。
+// 保证金是初始保证金（名义价值 / 杠杆），不是名义价值，也不是含浮盈的逐仓保证金。
+type KeyPosition struct {
+	Symbol   string
+	Side     Side
+	Qty      float64
+	Entry    float64
+	Leverage int
+	Margin   float64
+}
+
+// InitialMargin 用数量、开仓价和该仓杠杆计算初始保证金。
+// 数量为 0 的已平仓行不占额度。没有杠杆时才退回解析时记下的保证金。
+func (p KeyPosition) InitialMargin() float64 {
+	if p.Qty <= 0 {
+		return 0
+	}
+	if p.Entry > 0 && p.Leverage >= 1 {
+		return p.Qty * p.Entry / float64(p.Leverage)
+	}
+	if p.Margin > 0 {
+		return p.Margin
+	}
+	return 0
+}
+
 // RiskView 是 positionRisk 里交易台要画的持仓。Open 为假表示空仓。
 type RiskView struct {
 	Open          bool
@@ -347,6 +373,7 @@ type riskRow struct {
 	Leverage              flexNum `json:"leverage"`
 	IsolatedMargin        flexNum `json:"isolatedMargin"`
 	PositionInitialMargin flexNum `json:"positionInitialMargin"`
+	Notional              flexNum `json:"notional"`
 	MarginType            string  `json:"marginType"`
 	PositionSide          string  `json:"positionSide"`
 }
@@ -410,6 +437,70 @@ func parsePositionRisk(symbol string, body []byte) (RiskView, error) {
 		Margin:        margin,
 		MarginMode:    normalizeMargin(best.MarginType),
 	}, nil
+}
+
+// parseAccountPositions 读整把密钥的 positionRisk。持仓量为 0 的行是已平仓，
+// 即使还留着开仓价或逐仓保证金也不计入。
+func parseAccountPositions(body []byte) ([]KeyPosition, error) {
+	rows, err := decodeRiskRows(body)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]KeyPosition, 0)
+	for i := range rows {
+		pos, ok := keyPositionFromRow(rows[i])
+		if !ok {
+			continue
+		}
+		out = append(out, pos)
+	}
+	return out, nil
+}
+
+func keyPositionFromRow(row riskRow) (KeyPosition, bool) {
+	amt := float64(row.PositionAmt)
+	if amt == 0 {
+		return KeyPosition{}, false
+	}
+	side := SideLong
+	switch strings.ToUpper(row.PositionSide) {
+	case "SHORT":
+		side = SideShort
+	case "LONG":
+		side = SideLong
+	default:
+		if amt < 0 {
+			side = SideShort
+		}
+	}
+	if amt < 0 {
+		amt = -amt
+	}
+	lev := int(row.Leverage)
+	entry := float64(row.EntryPrice)
+	margin := 0.0
+	switch {
+	case entry > 0 && lev >= 1:
+		margin = amt * entry / float64(lev)
+	case row.Notional != 0 && lev >= 1:
+		notional := float64(row.Notional)
+		if notional < 0 {
+			notional = -notional
+		}
+		margin = notional / float64(lev)
+	case row.PositionInitialMargin > 0:
+		margin = float64(row.PositionInitialMargin)
+	case row.IsolatedMargin > 0:
+		margin = float64(row.IsolatedMargin)
+	}
+	return KeyPosition{
+		Symbol:   strings.ToUpper(strings.TrimSpace(row.Symbol)),
+		Side:     side,
+		Qty:      amt,
+		Entry:    entry,
+		Leverage: lev,
+		Margin:   margin,
+	}, true
 }
 
 func decodeRiskRows(body []byte) ([]riskRow, error) {

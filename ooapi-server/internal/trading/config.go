@@ -89,7 +89,8 @@ const (
 	ReasonBoostWait           = "boost_wait"
 	ReasonBoostFilled         = "boost_filled"
 
-	// MaxMarginFraction 是已用保证金相对可用余额的上限。
+	// MaxMarginFraction 不再作为开仓门。大约 2U 的账户上，可用余额的 80% 低于
+	// 策略的组合保证金上限，空仓也会被判超。开仓门用 MaxMarginUsdt 作为这把密钥的总额上限。
 	MaxMarginFraction = 0.80
 	// BalanceFloorUSDT 是账户钱包余额的停机线。触及后该密钥下的引擎全部停止。
 	// 同时持仓笔数没有硬编码上限；需要时用策略字段或 OOAPI_MAX_OPEN_POSITIONS 打开。

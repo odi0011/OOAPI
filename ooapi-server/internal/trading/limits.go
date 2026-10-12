@@ -30,6 +30,19 @@ func (c Config) marginCap() float64 {
 	return envPositiveFloat(EnvMaxMarginPerTradeUSDT)
 }
 
+// plannedMargin 是下一张开仓单实际占用的保证金。
+// 单笔上限更小时用单笔上限，否则用组合上限本身。不能再把组合上限加进已用保证金。
+func plannedMargin(cfg Config) float64 {
+	budget := cfg.MaxMarginUsdt
+	if cap := cfg.marginCap(); cap > 0 && cap < budget {
+		budget = cap
+	}
+	if budget < 0 {
+		return 0
+	}
+	return budget
+}
+
 func (c Config) lossPauseCount() int {
 	if c.MaxConsecutiveLosses > 0 {
 		return c.MaxConsecutiveLosses
