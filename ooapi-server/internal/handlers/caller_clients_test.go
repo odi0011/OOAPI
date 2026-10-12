@@ -106,6 +106,10 @@ func TestSanitizeCallerUserAgent(t *testing.T) {
 type callerTestDriver struct {
 	execs []callerTestExec
 	query func(string, []driver.NamedValue) (driver.Rows, error)
+	// failUserDebitAfter 让第 N 次之后的账号加扣失败（RowsAffected=0）。
+	// 0 表示从不失败。用来覆盖「预扣成功、结算补差失败」的路径。
+	failUserDebitAfter int
+	userDebits         int
 }
 type callerTestExec struct {
 	query string
@@ -122,12 +126,34 @@ func (c *callerTestConn) Prepare(string) (driver.Stmt, error) {
 	return nil, fmt.Errorf("unexpected Prepare")
 }
 func (c *callerTestConn) Close() error { return nil }
-func (c *callerTestConn) Begin() (driver.Tx, error) {
-	return nil, fmt.Errorf("unexpected Begin")
+func (c *callerTestConn) Begin() (driver.Tx, error) { return c.beginTx() }
+func (c *callerTestConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
+	return c.beginTx()
+}
+func (c *callerTestConn) beginTx() (driver.Tx, error) {
+	c.d.execs = append(c.d.execs, callerTestExec{query: "BEGIN"})
+	return &callerTestTx{c: c}, nil
 }
 func (c *callerTestConn) ExecContext(_ context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
 	c.d.execs = append(c.d.execs, callerTestExec{q, append([]driver.NamedValue(nil), args...)})
+	if strings.Contains(q, "UPDATE users SET used_quota = used_quota +") {
+		c.d.userDebits++
+		if c.d.failUserDebitAfter > 0 && c.d.userDebits > c.d.failUserDebitAfter {
+			return driver.RowsAffected(0), nil
+		}
+	}
 	return driver.RowsAffected(1), nil
+}
+
+type callerTestTx struct{ c *callerTestConn }
+
+func (t *callerTestTx) Commit() error {
+	t.c.d.execs = append(t.c.d.execs, callerTestExec{query: "COMMIT"})
+	return nil
+}
+func (t *callerTestTx) Rollback() error {
+	t.c.d.execs = append(t.c.d.execs, callerTestExec{query: "ROLLBACK"})
+	return nil
 }
 func (c *callerTestConn) QueryContext(_ context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
 	if c.d.query != nil {

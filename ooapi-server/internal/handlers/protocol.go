@@ -252,6 +252,18 @@ func writeOpenAIError(c *gin.Context, status int, message, code string) {
 	})
 }
 
+// writeBillingError 把结算 / 预扣失败写成对应协议的错误，且不附带成功补全体。
+func writeBillingError(c *gin.Context, writeErr errWriterFunc, err error) {
+	switch {
+	case errors.Is(err, errModelNotPriced):
+		writeErr(c, http.StatusForbidden, err.Error(), "model_not_priced")
+	case errors.Is(err, errTokenQuota), errors.Is(err, errUserQuota):
+		writeErr(c, http.StatusForbidden, "账号余额不足，无法完成本次调用", "insufficient_quota")
+	default:
+		writeErr(c, http.StatusInternalServerError, "结算失败，本次调用未完成", "billing_failed")
+	}
+}
+
 // writeAnthropicError 按 Anthropic 的错误格式返回。
 // Claude Code 读的是 error.type / error.message 这一层。
 func writeAnthropicError(c *gin.Context, status int, message, code string) {
@@ -340,6 +352,12 @@ func checkAccess(c *gin.Context, token *apiToken, model string, writeErr errWrit
 		return nil, false
 	}
 
+	// 官方模型没有可用定价时必须拒绝。放行会在结算时按 0 计费。
+	if _, ok := services.LookupBillablePrice(model); !ok {
+		writeErr(c, http.StatusForbidden, newUnpricedModelError(model).Error(), "model_not_priced")
+		return nil, false
+	}
+
 	// 模型白名单：令牌级与分组级都要满足
 	if len(token.Models) > 0 && !modelInList(token.Models, model) {
 		writeErr(c, http.StatusForbidden,
@@ -376,6 +394,12 @@ func callUpstream(
 		输入/提示原文也不含提示语 —— 日志里出现的应当只有用户真实说的话。
 	*/
 	body = stripHoldNotices(body)
+
+	if err := reserveBilling(c, token, group, model, body); err != nil {
+		writeBillingError(c, writeErr, err)
+		return nil, false
+	}
+	defer releaseBillingHold(c, token)
 
 	excluded := map[int64]struct{}{}
 	var lastErr error
@@ -450,7 +474,11 @@ func callUpstream(
 		// 前端显示「—」—— 把总耗时冒充首字会误导排障。
 		snapshot := billingSnapshotFor(c, model, body)
 		snapshot.OutputText = outputTextFromChatResponse(respBody)
-		settle(c, token, group, ch, model, usage, start, 0, LogTypeCall, "", snapshot)
+		if err := settle(c, token, group, ch, model, usage, start, 0, LogTypeCall, "", snapshot); err != nil {
+			log.Printf("[gateway] 结算失败: %v", err)
+			writeBillingError(c, writeErr, err)
+			return nil, false
+		}
 		return &upstreamCall{Body: respBody, Usage: usage, Channel: ch, Group: group}, true
 	}
 
@@ -471,7 +499,11 @@ func callUpstream(
 		if body, usage, ch, ok := retrySilently(ctx, c, token, group, model, body, start, callerClient, lastErr); ok {
 			snapshot := billingSnapshotFor(c, model, body)
 			snapshot.OutputText = outputTextFromChatResponse(body)
-			settle(c, token, group, ch, model, usage, start, 0, LogTypeCall, "", snapshot)
+			if err := settle(c, token, group, ch, model, usage, start, 0, LogTypeCall, "", snapshot); err != nil {
+				log.Printf("[gateway] 结算失败: %v", err)
+				writeBillingError(c, writeErr, err)
+				return nil, false
+			}
 			return &upstreamCall{Body: body, Usage: usage, Channel: ch, Group: group}, true
 		}
 	}
@@ -619,6 +651,12 @@ func relayUpstream(
 ) bool {
 	// 与 callUpstream 同一处理：把等待提示语从上下文里剥掉。
 	body = stripHoldNotices(body)
+
+	if err := reserveBilling(c, token, group, model, body); err != nil {
+		writeBillingError(c, writeErr, err)
+		return false
+	}
+	defer releaseBillingHold(c, token)
 
 	excluded := map[int64]struct{}{}
 	var lastErr error

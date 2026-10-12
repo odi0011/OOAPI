@@ -585,10 +585,14 @@ func newClaudeSSEStream(upstream io.ReadCloser, model string) io.ReadCloser {
 /*
 claudeStreamToChat 在 anthropicStreamToChat 之上补记 prompt 缓存用量。
 
-官方 usage 把输入拆成三份：input_tokens、cache_read_input_tokens（命中缓存）
-与 cache_creation_input_tokens（写入缓存）。通用转换器只读 input_tokens，
-直接透传会让计费与下游 usage 少算缓存部分，因此这里在 message_start 时记下
-两个缓存字段，并在最后的 usage 分块上补齐（prompt / total 同步相加）。
+官方 usage 把输入拆成三份：input_tokens（未缓存）、cache_read_input_tokens
+（命中缓存）与 cache_creation_input_tokens（写入缓存）。通用转换器只读
+input_tokens。这里把三份都并进 prompt_tokens（与 OpenAI「总输入含缓存」
+同一口径），但只把 cache_read 放进 prompt_tokens_details.cached_tokens。
+
+结算公式是「(prompt − cached) × 输入价 + cached × 缓存价」：
+缓存命中只按缓存价计一次；缓存写入留在未缓存输入里，按输入价计一次。
+若把 cache_read 再叠加进输入价，或写入也当成缓存折扣，两种协议的账单会对不上。
 */
 type claudeStreamToChat struct {
 	*anthropicStreamToChat
@@ -608,8 +612,8 @@ func (s *claudeStreamToChat) Convert(line []byte) []byte {
 	}
 	out := s.anthropicStreamToChat.Convert(line)
 	if eventType == "message_stop" && len(out) > 0 {
-		if extra := s.cacheRead + s.cacheCreation; extra > 0 {
-			out = claudeAddCacheUsage(out, extra)
+		if s.cacheRead > 0 || s.cacheCreation > 0 {
+			out = claudeAddCacheUsage(out, s.cacheRead, s.cacheCreation)
 		}
 	}
 	return out
@@ -621,6 +625,11 @@ func (s *claudeStreamToChat) Usage() upstreamUsage {
 	extra := s.cacheRead + s.cacheCreation
 	usage.PromptTokens += extra
 	usage.TotalTokens += extra
+	if s.cacheRead > 0 {
+		usage.PromptDetails = &struct {
+			CachedTokens int `json:"cached_tokens"`
+		}{CachedTokens: s.cacheRead}
+	}
 	return usage
 }
 
@@ -652,8 +661,11 @@ func claudeSSEEnvelope(line []byte) (string, int, int) {
 	return env.Type, 0, 0
 }
 
-// claudeAddCacheUsage 把缓存部分的 token 加进最终 usage 分块。
-func claudeAddCacheUsage(chunk []byte, extra int) []byte {
+// claudeAddCacheUsage 把缓存用量补进最终 usage 分块。
+//
+// prompt / total 加上命中与写入（总输入）。cached_tokens 只记命中，
+// 与 Usage() 以及结算公式使用的 prompt_tokens_details 一致。
+func claudeAddCacheUsage(chunk []byte, cacheRead, cacheCreation int) []byte {
 	trimmed := bytes.TrimSpace(chunk)
 	if !bytes.HasPrefix(trimmed, []byte("data:")) {
 		return chunk
@@ -667,11 +679,21 @@ func claudeAddCacheUsage(chunk []byte, extra int) []byte {
 	if !ok {
 		return chunk
 	}
+	extra := cacheRead + cacheCreation
 	if prompt, ok := usage["prompt_tokens"].(float64); ok {
 		usage["prompt_tokens"] = prompt + float64(extra)
 	}
 	if total, ok := usage["total_tokens"].(float64); ok {
 		usage["total_tokens"] = total + float64(extra)
+	}
+	if cacheRead > 0 {
+		details, _ := usage["prompt_tokens_details"].(map[string]any)
+		if details == nil {
+			details = map[string]any{}
+		}
+		already, _ := details["cached_tokens"].(float64)
+		details["cached_tokens"] = already + float64(cacheRead)
+		usage["prompt_tokens_details"] = details
 	}
 	body, err := json.Marshal(parsed)
 	if err != nil {
