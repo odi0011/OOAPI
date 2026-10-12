@@ -762,7 +762,7 @@ func loadChannels() ([]*UpstreamChannel, error) {
 		// 上游密钥支持多把（换行分隔），调度时取第一把。
 		// 多把轮询留待网关需要抗单 key 限流时再实现。
 		if apiKey.Valid {
-			for _, k := range strings.Split(apiKey.String, "\n") {
+			for _, k := range strings.Split(OpenChannelAPIKey(apiKey.String), "\n") {
 				if v := strings.TrimSpace(k); v != "" {
 					ch.APIKeys = append(ch.APIKeys, v)
 				}

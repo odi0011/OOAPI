@@ -34,9 +34,10 @@ interface RequestOptions {
 /**
  * 统一请求封装。
  *
- * 两点约定：
- *   - 令牌同时通过 cookie 与 localStorage 保存，请求头优先，便于将来跨域部署。
- *   - 任何非 2xx 都抛出 ApiRequestError，调用方只需 try/catch，不用判断状态码。
+ * 登录态只走 HttpOnly cookie（credentials: include）。
+ * 不再把 JWT 放进 localStorage，也不再附带 Authorization，
+ * 避免脚本能读到令牌、退出或改密后旧 Bearer 仍被发出去。
+ * 任何非 2xx 都抛出 ApiRequestError，调用方只需 try/catch，不用判断状态码。
  */
 export async function apiRequest<T>(
   path: string,
@@ -50,11 +51,6 @@ export async function apiRequest<T>(
   const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
   if (body !== undefined && !isFormData) {
     headers["Content-Type"] = "application/json";
-  }
-
-  const stored = getStoredToken();
-  if (stored) {
-    headers.Authorization = `Bearer ${stored}`;
   }
 
   let res: Response;
@@ -102,6 +98,9 @@ export async function apiRequest<T>(
 // ---------- 令牌本地存储 ----------
 
 const TOKEN_KEY = "ooapi_token";
+
+// 启动时清掉历史页面留下的 JWT。会话改由 cookie 承担，留着会被旧逻辑继续使用。
+clearStoredToken();
 
 export function getStoredToken(): string | null {
   try {

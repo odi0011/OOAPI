@@ -24,6 +24,7 @@ import (
 
 	"ooapi/internal/auth"
 	"ooapi/internal/db"
+	"ooapi/internal/netguard"
 	"ooapi/internal/services"
 )
 
@@ -986,7 +987,8 @@ func authenticateAPIKey(c *gin.Context) (*apiToken, error) {
 		        t.group_name, t.models, t.expired_at, u.quota, u.used_quota, u.status
 		 FROM tokens t
 		 JOIN users u ON u.id = t.user_id
-		 WHERE t.api_key = ?`, raw,
+		 WHERE t.key_hash = ? OR (t.key_hash = '' AND t.api_key = ?)`,
+		services.TokenKeyHash(raw), raw,
 	).Scan(&t.ID, &t.UserID, &t.APIKey, &t.Status, &t.Quota, &t.Unlimited, &t.UsedQuota,
 		&t.GroupName, &modelsRaw, &expiredAt, &t.UserQuota, &t.UserUsedQuota, &t.UserStatus)
 
@@ -998,6 +1000,8 @@ func authenticateAPIKey(c *gin.Context) (*apiToken, error) {
 		return nil, errors.New("鉴权失败，请稍后重试")
 	}
 
+	// 结构里留明文，避免后续日志或比较误用密文。鉴权已经用摘要对上了。
+	t.APIKey = raw
 	t.UserAgent = sanitizeCallerUserAgent(c.GetHeader("User-Agent"))
 	t.CallerClient = callerClientFromUserAgent(t.UserAgent)
 	t.Models = splitModelList(modelsRaw.String)
@@ -1691,7 +1695,9 @@ func chargeUser(userID, quota int64) error {
 var upstreamClient = &http.Client{
 	// 不设整体超时：流式响应可能持续很久。
 	// 超时由每个请求的 context 控制（600 秒）。
-	Timeout: 0,
+	Timeout:       0,
+	CheckRedirect: netguard.CheckRedirect,
+	Transport:     netguard.PublicTransport(),
 }
 
 func setUpstreamHeaders(req *http.Request, apiKey string, ch *services.UpstreamChannel) {
