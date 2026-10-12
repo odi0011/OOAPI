@@ -267,6 +267,49 @@ var schemaStatements = []string{
 		KEY idx_refs_object (ref_type, ref_id, is_live),
 		KEY idx_refs_media (media_id, is_live)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+	// 用户自绑的交易所 API Key（v1 只接受币安 USDT 合约）。
+	// api_key 与 api_secret 以 AES-GCM 落库（enc:v1:），与用户密钥、渠道密钥同一条路径。
+	// status 1 = 可用，0 = 已作废；作废后策略不能再选它。
+	`CREATE TABLE IF NOT EXISTS exchange_keys (
+		id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+		user_id     BIGINT UNSIGNED NOT NULL,
+		label       VARCHAR(64)     NOT NULL DEFAULT '',
+		exchange    VARCHAR(32)     NOT NULL DEFAULT 'binance_usdm',
+		network     VARCHAR(16)     NOT NULL DEFAULT 'testnet',
+		api_key     TEXT            NOT NULL,
+		api_secret  TEXT            NOT NULL,
+		status      TINYINT         NOT NULL DEFAULT 1,
+		revoked_at  DATETIME        NULL,
+		created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		PRIMARY KEY (id),
+		KEY idx_exchange_keys_user (user_id, status)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+	// 自动交易策略配置。v1 只保存短周期 EMA 的参数，不下单、不计算信号。
+	// JSON 字段名与验收表一致。mode=live 允许保存，是否真下单由策略引擎按测网全绿强制。
+	`CREATE TABLE IF NOT EXISTS trading_strategies (
+		id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+		user_id          BIGINT UNSIGNED NOT NULL,
+		symbol           VARCHAR(32)     NOT NULL DEFAULT 'XRPUSDT',
+		leverage         INT             NOT NULL DEFAULT 3,
+		margin_mode      VARCHAR(16)     NOT NULL DEFAULT 'isolated',
+		ema_fast         INT             NOT NULL DEFAULT 9,
+		ema_slow         INT             NOT NULL DEFAULT 21,
+		timeframe        VARCHAR(8)      NOT NULL DEFAULT '5m',
+		stop_r           DECIMAL(12,4)   NOT NULL DEFAULT 1,
+		take_profit_r    DECIMAL(12,4)   NOT NULL DEFAULT 1.5,
+		daily_loss_pct   DECIMAL(12,4)   NOT NULL DEFAULT 4,
+		max_margin_usdt  DECIMAL(20,6)   NOT NULL DEFAULT 1.7,
+		exchange_key_id  BIGINT UNSIGNED NOT NULL,
+		mode             VARCHAR(16)     NOT NULL DEFAULT 'testnet',
+		created_at       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		PRIMARY KEY (id),
+		KEY idx_trading_strategies_user (user_id, updated_at),
+		KEY idx_trading_strategies_key (exchange_key_id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 }
 
 // columnMigrations 给已存在的表补列。
