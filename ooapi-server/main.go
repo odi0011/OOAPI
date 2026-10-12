@@ -30,6 +30,8 @@ func main() {
 	}
 	services.MigratePlaintextSecrets()
 
+	handlers.StartTradingRunner()
+
 	r := router.Setup(cfg)
 
 	addr := "127.0.0.1:" + cfg.Port
