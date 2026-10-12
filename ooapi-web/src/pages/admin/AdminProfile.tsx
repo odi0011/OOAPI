@@ -14,7 +14,7 @@ import AdminLayout from "@/components/admin/AdminLayout";
 import CurrencyIcon from "@/components/CurrencyIcon";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatAmount, useCurrency } from "@/contexts/CurrencyContext";
-import { ApiRequestError, apiRequest } from "@/lib/api";
+import { ApiRequestError, apiRequest, clearStoredToken } from "@/lib/api";
 import { useAsyncGuard, useNotify } from "@/lib/useNotify";
 import { vendorIconUrl, vendorLabel } from "@/lib/vendorIcons";
 
@@ -177,7 +177,8 @@ export default function AdminProfile() {
       setOldPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      // 改密后服务端会清 cookie，需要重新登录
+      // 服务端已作废会话并清 cookie，这里把历史 JWT 一并丢掉。
+      clearStoredToken();
       notify.success("密码已修改", "请重新登录");
     } catch (err) {
       notify.error("修改失败", err instanceof ApiRequestError ? err.message : undefined);

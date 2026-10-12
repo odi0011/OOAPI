@@ -214,13 +214,16 @@ func ChangePassword(c *gin.Context) {
 		return
 	}
 
-	if _, err := db.DB.Exec("UPDATE users SET password_hash = ? WHERE id = ?", newHash, user.ID); err != nil {
+	if _, err := db.DB.Exec(
+		"UPDATE users SET password_hash = ?, session_version = session_version + 1 WHERE id = ?",
+		newHash, user.ID,
+	); err != nil {
 		log.Printf("[profile] 修改密码失败: %v", err)
 		fail(c, http.StatusInternalServerError, "操作失败，请稍后重试", "server_error")
 		return
 	}
 
-	// 改密后清 cookie，强制重新登录。
-	c.SetCookie("ooapi_token", "", -1, "/", "", true, true)
+	// 改密后抬高会话版本并清 cookie，旧 Bearer 与旧 cookie 一起失效。
+	clearAuthCookie(c)
 	ok(c, gin.H{"message": "密码已修改，请重新登录"})
 }

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	utls "github.com/refraction-networking/utls"
+
+	"ooapi/internal/netguard"
 )
 
 /*
@@ -156,7 +158,7 @@ var tlsFingerprintTransports = struct {
 
 // tlsDialer 抽象出实际拨号，测试可替换。
 var tlsDialer = func(ctx context.Context, network, addr string, cfg *tls.Config, profile utls.ClientHelloID) (net.Conn, error) {
-	raw, err := (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext(ctx, network, addr)
+	raw, err := netguard.DialPublic(ctx, network, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -202,11 +204,8 @@ func TLSFingerprintTransport(profile TLSProfile) *http.Transport {
 	}
 
 	rt := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           netguard.DialPublic,
 		ForceAttemptHTTP2:     false,
 		MaxIdleConns:          100,
 		IdleConnTimeout:       90 * time.Second,

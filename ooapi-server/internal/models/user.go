@@ -25,6 +25,8 @@ type User struct {
 	// 自定义头像指向 /api/media/avatar/<uid>?v=<mediaID>（带版本号便于长缓存），
 	// 未上传时为空串或三方登录带回的外链，前端用姓名首字母兜底。
 	AvatarURL string `json:"avatar_url,omitempty"`
+	// SessionVersion 不进任何 JSON：它只用于作废已签发的登录令牌。
+	SessionVersion int `json:"-"`
 }
 
 // Public 返回可安全对外展示的字段集合。
