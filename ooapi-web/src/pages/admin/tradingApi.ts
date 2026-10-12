@@ -68,6 +68,13 @@ export interface Strategy {
   maxMarginUsdt: number;
   exchangeKeyId: number;
   mode: TradingNetwork;
+  minScore: number;
+  minWinRate: number;
+  minTrades: number;
+  gambleMode: boolean;
+  /** 相对入场价的比例。0.003 表示 0.3%。 */
+  scalpTpPct: number;
+  scalpSlPct: number;
   exchangeKeyActive: boolean;
   exchangeKeyNetwork?: string;
   warnings?: string[];
@@ -90,6 +97,13 @@ export interface StrategyWrite {
   maxMarginUsdt: number;
   exchangeKeyId: number;
   mode: TradingNetwork;
+  minScore: number;
+  minWinRate: number;
+  minTrades: number;
+  gambleMode: boolean;
+  /** 相对入场价的比例。0.003 表示 0.3%。 */
+  scalpTpPct: number;
+  scalpSlPct: number;
 }
 
 export function networkLabel(network: string): string {

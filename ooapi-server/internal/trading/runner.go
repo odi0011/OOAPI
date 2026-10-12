@@ -43,6 +43,7 @@ type Runner struct {
 	started    bool
 	onStop     func(strategyID int64)
 	jobs       map[int64]context.CancelFunc
+	specs      map[int64]RunSpec
 	cache      map[int64]BacktestSummary
 	boostEvery time.Duration
 }
@@ -55,6 +56,7 @@ func NewRunner(hub *Hub) *Runner {
 		hub:   hub,
 		now:   func() time.Time { return time.Now().UTC() },
 		jobs:  map[int64]context.CancelFunc{},
+		specs: map[int64]RunSpec{},
 		cache: map[int64]BacktestSummary{},
 	}
 	r.market = defaultMarket
@@ -125,10 +127,29 @@ func (r *Runner) Remove(strategyID int64) {
 	r.mu.Lock()
 	cancel := r.jobs[strategyID]
 	delete(r.jobs, strategyID)
+	delete(r.specs, strategyID)
+	delete(r.cache, strategyID)
 	r.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
+}
+
+// Reload 换成最新策略参数，不取消正在跑的循环。下一拍以及之后的推进都用新配置。
+func (r *Runner) Reload(spec RunSpec) {
+	if r == nil || spec.Config.ID <= 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.jobs[spec.Config.ID]; !ok {
+		return
+	}
+	if r.specs == nil {
+		r.specs = map[int64]RunSpec{}
+	}
+	r.specs[spec.Config.ID] = spec
+	delete(r.cache, spec.Config.ID)
 }
 
 // Sync 让循环集合和当前 running 策略对齐。
@@ -154,6 +175,11 @@ func (r *Runner) Sync(specs []RunSpec) {
 	}
 	for id, spec := range want {
 		if _, ok := r.jobs[id]; ok {
+			if r.specs == nil {
+				r.specs = map[int64]RunSpec{}
+			}
+			r.specs[id] = spec
+			delete(r.cache, id)
 			continue
 		}
 		r.launchLocked(spec)
@@ -161,9 +187,22 @@ func (r *Runner) Sync(specs []RunSpec) {
 }
 
 func (r *Runner) launchLocked(spec RunSpec) {
+	if r.specs == nil {
+		r.specs = map[int64]RunSpec{}
+	}
+	r.specs[spec.Config.ID] = spec
 	ctx, cancel := context.WithCancel(context.Background())
 	r.jobs[spec.Config.ID] = cancel
 	go r.loop(ctx, spec)
+}
+
+func (r *Runner) liveSpec(spec RunSpec) RunSpec {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if next, ok := r.specs[spec.Config.ID]; ok {
+		return next
+	}
+	return spec
 }
 
 func (r *Runner) loop(ctx context.Context, spec RunSpec) {
@@ -172,11 +211,13 @@ func (r *Runner) loop(ctx context.Context, spec RunSpec) {
 			log.Printf("[trading] runner strategy %d panic: %v", spec.Config.ID, rec)
 		}
 	}()
+	spec = r.liveSpec(spec)
 	r.runOnce(ctx, spec)
 	for {
 		if ctx.Err() != nil {
 			return
 		}
+		spec = r.liveSpec(spec)
 		// 窗口在睡眠期间结束时，下一次醒来先把 boost_end 写进事件流。
 		emitBoostEnd(r.now())
 		live := strings.EqualFold(spec.Config.Mode, ModeLive)
@@ -189,9 +230,11 @@ func (r *Runner) loop(ctx context.Context, spec RunSpec) {
 			timer.Stop()
 			return
 		case <-timer.C:
+			spec = r.liveSpec(spec)
 			r.runOnce(ctx, spec)
 		case <-notify:
 			timer.Stop()
+			spec = r.liveSpec(spec)
 			if live && BoostActive(r.now()) {
 				r.runOnce(ctx, spec)
 			}
@@ -210,6 +253,7 @@ func (r *Runner) runOnce(ctx context.Context, spec RunSpec) {
 	if ctx.Err() != nil {
 		return
 	}
+	spec = r.liveSpec(spec)
 	now := r.now()
 	mkt, err := r.market(spec.Config, spec.Secrets, now)
 	if err != nil {

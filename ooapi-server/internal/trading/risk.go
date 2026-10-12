@@ -38,6 +38,43 @@ func ProtectionPrices(side Side, entry, oneR, stopR, takeProfitR float64) (stop,
 	return stop, take, nil
 }
 
+// ScalpProtection 按入场价的百分比计算止损和止盈。
+// 止盈距离低于 MinScalpTpPct 时抬到该下限，用来盖住往返手续费和滑点。
+func ScalpProtection(side Side, entry, slPct, tpPct float64) (stop, take float64, err error) {
+	if entry <= 0 || slPct <= 0 || tpPct <= 0 {
+		return 0, 0, invalid("入场价和剥头皮止损止盈比例都必须大于 0")
+	}
+	if tpPct < MinScalpTpPct {
+		tpPct = MinScalpTpPct
+	}
+	switch side {
+	case SideLong:
+		stop = entry * (1 - slPct)
+		take = entry * (1 + tpPct)
+	case SideShort:
+		stop = entry * (1 + slPct)
+		take = entry * (1 - tpPct)
+	default:
+		return 0, 0, invalid("持仓方向只能是 long 或 short")
+	}
+	if stop <= 0 || take <= 0 {
+		return 0, 0, invalid("止损或止盈价计算后不是正数")
+	}
+	return stop, take, nil
+}
+
+// scalpPcts 把 0 当成默认 0.3%。调用方仍要在止盈上执行 MinScalpTpPct。
+func (c Config) scalpPcts() (sl, tp float64) {
+	sl, tp = c.ScalpSlPct, c.ScalpTpPct
+	if sl <= 0 {
+		sl = DefaultScalpPct
+	}
+	if tp <= 0 {
+		tp = DefaultScalpPct
+	}
+	return sl, tp
+}
+
 // SizePosition 用保证金上限和杠杆计算数量。
 // 名义价值低于交易所下限时拒绝，不会为了凑够下限而突破保证金上限。
 func SizePosition(maxMargin float64, leverage int, price, minNotional float64) (margin, notional, qty float64, err error) {

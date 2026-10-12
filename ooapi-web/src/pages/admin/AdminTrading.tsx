@@ -6,6 +6,7 @@ import { Dialog, DialogContent } from "@/components/arc/dialog/dialog";
 import { NumberField } from "@/components/arc/number-field/number-field";
 import { Select } from "@/components/arc/select/select";
 import SegmentedControl from "@/components/arc/segmented-control/segmented-control";
+import Switch from "@/components/arc/switch/switch";
 import AdminLayout from "@/components/admin/AdminLayout";
 import { ApiRequestError } from "@/lib/api";
 import { useAsyncGuard, useNotify } from "@/lib/useNotify";
@@ -72,6 +73,13 @@ interface StrategyDraft {
   maxMarginUsdt: number;
   exchangeKeyId: number | null;
   mode: TradingNetwork;
+  minScore: number;
+  minWinRate: number;
+  minTrades: number;
+  gambleMode: boolean;
+  /** 表单里用百分数。0.3 表示 0.3%，保存时换成 0.003。 */
+  scalpTpPct: number;
+  scalpSlPct: number;
 }
 
 const DEFAULT_DRAFT: StrategyDraft = {
@@ -87,6 +95,12 @@ const DEFAULT_DRAFT: StrategyDraft = {
   maxMarginUsdt: 1.7,
   exchangeKeyId: DEFAULT_EXCHANGE_KEY_ID,
   mode: DEFAULT_STRATEGY_MODE,
+  minScore: 4,
+  minWinRate: 0.5,
+  minTrades: 30,
+  gambleMode: false,
+  scalpTpPct: 0.3,
+  scalpSlPct: 0.3,
 };
 
 /** 可切换，但除 EMA 外都先禁用。类型不入库，接口没有这个字段。 */
@@ -120,6 +134,12 @@ function draftFromStrategy(item: Strategy): StrategyDraft {
     maxMarginUsdt: clamp(item.maxMarginUsdt, 0.1, 100, DEFAULT_DRAFT.maxMarginUsdt),
     exchangeKeyId: item.exchangeKeyId > 0 ? item.exchangeKeyId : DEFAULT_EXCHANGE_KEY_ID,
     mode: item.mode === "live" ? "live" : DEFAULT_STRATEGY_MODE,
+    minScore: clamp(Math.round(item.minScore), 1, 4, DEFAULT_DRAFT.minScore),
+    minWinRate: clamp(item.minWinRate, 0, 1, DEFAULT_DRAFT.minWinRate),
+    minTrades: clamp(Math.round(item.minTrades), 1, 10000, DEFAULT_DRAFT.minTrades),
+    gambleMode: item.gambleMode === true,
+    scalpTpPct: clamp((item.scalpTpPct > 0 ? item.scalpTpPct : 0.003) * 100, 0.01, 20, DEFAULT_DRAFT.scalpTpPct),
+    scalpSlPct: clamp((item.scalpSlPct > 0 ? item.scalpSlPct : 0.003) * 100, 0.01, 20, DEFAULT_DRAFT.scalpSlPct),
   };
 }
 
@@ -141,6 +161,12 @@ function toWrite(draft: StrategyDraft): StrategyWrite {
     maxMarginUsdt: round4(draft.maxMarginUsdt),
     exchangeKeyId: draft.exchangeKeyId ?? DEFAULT_EXCHANGE_KEY_ID,
     mode: draft.mode === "live" ? "live" : DEFAULT_STRATEGY_MODE,
+    minScore: Math.round(draft.minScore),
+    minWinRate: round4(draft.minWinRate),
+    minTrades: Math.round(draft.minTrades),
+    gambleMode: draft.gambleMode,
+    scalpTpPct: round4(draft.scalpTpPct / 100),
+    scalpSlPct: round4(draft.scalpSlPct / 100),
   };
 }
 
@@ -153,6 +179,14 @@ function validate(draft: StrategyDraft, keys: ExchangeKey[]): string | null {
   if (draft.dailyLossPct <= 0 || draft.dailyLossPct > 100) return "日亏停机阈值要大于 0";
   if (draft.maxMarginUsdt <= 0) return "单笔保证金上限要大于 0";
   if (draft.emaFast >= draft.emaSlow) return "快线周期要小于慢线";
+  if (draft.minScore < 1 || draft.minScore > 4) return "分数门槛要在 1 到 4";
+  if (draft.minWinRate < 0 || draft.minWinRate > 1) return "胜率门槛要在 0 到 1";
+  if (draft.minTrades < 1 || draft.minTrades > 10000) return "样本笔数要在 1 到 10000";
+  if (draft.mode === "live" && !draft.gambleMode && draft.minWinRate < 0.5) return "实盘胜率门槛不能低于 0.5";
+  if (draft.mode === "live" && !draft.gambleMode && draft.minTrades < 30) return "实盘样本笔数不能低于 30";
+  if (draft.scalpTpPct <= 0 || draft.scalpTpPct > 20 || draft.scalpSlPct <= 0 || draft.scalpSlPct > 20) {
+    return "剥头皮止损和止盈要大于 0 且不超过 20%";
+  }
   if (draft.mode !== "testnet" && draft.mode !== "live") return "环境只能是测网或实盘";
   const bound = keys.some((key) => key.id === draft.exchangeKeyId && !key.revoked);
   if (!bound) return "请先绑定一个未作废的账户";
@@ -611,6 +645,114 @@ export default function AdminTrading() {
                       max={20}
                       step={0.1}
                       onValueChange={(takeProfitR) => patch({ takeProfitR })}
+                    />
+                  </div>
+                </div>
+
+                <div className={sectionStyles.row} data-field="minScore">
+                  <div className={sectionStyles.rowText}>
+                    <strong>分数门槛</strong>
+                    <p>1 到 4。普通开仓要达到这个分数。加速窗口里达标会马上开，到点仍不达标就按当时趋势强制开一笔。</p>
+                  </div>
+                  <div className={sectionStyles.rowControl}>
+                    <NumberField
+                      hideLabel
+                      label="分数门槛"
+                      suffix=" 分"
+                      value={draft.minScore}
+                      min={1}
+                      max={4}
+                      step={1}
+                      onValueChange={(minScore) => patch({ minScore: Math.round(minScore) })}
+                    />
+                  </div>
+                </div>
+
+                <div className={sectionStyles.row} data-field="gambleMode">
+                  <div className={sectionStyles.rowText}>
+                    <strong>赌一把</strong>
+                    <p>打开后不再用回测胜率、样本笔数和净 R 拦开仓。分数门槛仍按上面的设置。止损止盈改用下面的剥头皮距离。默认关闭。</p>
+                  </div>
+                  <div className={sectionStyles.rowControl}>
+                    <Switch
+                      label={draft.gambleMode ? "已打开" : "关闭"}
+                      checked={draft.gambleMode}
+                      onCheckedChange={(gambleMode) => patch({ gambleMode })}
+                    />
+                  </div>
+                </div>
+
+                <div className={sectionStyles.row} data-field="minWinRate">
+                  <div className={sectionStyles.rowText}>
+                    <strong>胜率门槛</strong>
+                    <p>策略回测胜率下限。实盘未开赌一把时不能低于 0.5。赌一把打开后这道门不生效。</p>
+                  </div>
+                  <div className={sectionStyles.rowControl}>
+                    <NumberField
+                      hideLabel
+                      label="胜率门槛"
+                      value={draft.minWinRate}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      onValueChange={(minWinRate) => patch({ minWinRate })}
+                    />
+                  </div>
+                </div>
+
+                <div className={sectionStyles.row} data-field="minTrades">
+                  <div className={sectionStyles.rowText}>
+                    <strong>样本笔数</strong>
+                    <p>回测至少要有这么多笔。实盘未开赌一把时不能低于 30。</p>
+                  </div>
+                  <div className={sectionStyles.rowControl}>
+                    <NumberField
+                      hideLabel
+                      label="样本笔数"
+                      suffix=" 笔"
+                      value={draft.minTrades}
+                      min={1}
+                      max={10000}
+                      step={1}
+                      onValueChange={(minTrades) => patch({ minTrades: Math.round(minTrades) })}
+                    />
+                  </div>
+                </div>
+
+                <div className={sectionStyles.row} data-field="scalpTpPct">
+                  <div className={sectionStyles.rowText}>
+                    <strong>剥头皮止盈</strong>
+                    <p>赌一把时按入场价的这个百分比挂止盈，默认 0.3%。低于 0.15% 时下单会抬到 0.15%，用来盖住手续费和滑点。</p>
+                  </div>
+                  <div className={sectionStyles.rowControl}>
+                    <NumberField
+                      hideLabel
+                      label="剥头皮止盈"
+                      suffix=" %"
+                      value={draft.scalpTpPct}
+                      min={0.01}
+                      max={20}
+                      step={0.01}
+                      onValueChange={(scalpTpPct) => patch({ scalpTpPct })}
+                    />
+                  </div>
+                </div>
+
+                <div className={sectionStyles.row} data-field="scalpSlPct">
+                  <div className={sectionStyles.rowText}>
+                    <strong>剥头皮止损</strong>
+                    <p>赌一把时按入场价的这个百分比挂止损，默认 0.3%。止损仍然必须落在强平价之前。</p>
+                  </div>
+                  <div className={sectionStyles.rowControl}>
+                    <NumberField
+                      hideLabel
+                      label="剥头皮止损"
+                      suffix=" %"
+                      value={draft.scalpSlPct}
+                      min={0.01}
+                      max={20}
+                      step={0.01}
+                      onValueChange={(scalpSlPct) => patch({ scalpSlPct })}
                     />
                   </div>
                 </div>
