@@ -83,8 +83,10 @@ type Snapshot struct {
 	LiqPrice        float64 `json:"liqPrice,omitempty"`
 	TakeProfitPrice float64 `json:"takeProfitPrice,omitempty"`
 	Qty             float64 `json:"qty,omitempty"`
-	DayRealized     float64 `json:"dayRealizedUsdt"`
-	// CumulativeRealized 与当日盈亏同一来源，日切后当日归零、累计保留。没有会话时为 0，不另造数。
+	// DayRealized 来自币安 income（已实现、手续费、资金费），按 Asia/Shanghai 自然日。
+	DayRealized float64 `json:"dayRealizedUsdt"`
+	// CumulativeRealized 与当日同一来源，从策略创建时间起算。日切后当日归零、累计保留。
+	// 重启后重新向币安读取，不靠进程内逐笔账本。
 	CumulativeRealized float64          `json:"cumulativeRealizedUsdt"`
 	Halted             bool             `json:"halted"`
 	LastError          string           `json:"lastError,omitempty"`
@@ -169,8 +171,15 @@ type Engine struct {
 	lossStreak   int
 	pausedReason string
 	onPause      func(reason string)
-	// startedAt 是本次武装的时间。币安已实现盈亏从这里往后加总。
+	// startedAt 是本次武装的时间。策略没有创建时间时，累计已实现才退回到这里。
 	startedAt time.Time
+	// incomeAt 是上一份币安账单的读取时间。IncomeRefresh 之内不再请求。
+	incomeAt     time.Time
+	incomeSince  time.Time
+	incomeSymbol string
+	incomeDay    float64
+	incomeCum    float64
+	incomeOK     bool
 	// lastDetail 是最近一次交易所错误原文，写进事件 msg，不替代机器可读的 LastReason。
 	lastDetail string
 }
@@ -320,8 +329,24 @@ func (e *Engine) storeConfig(cfg Config) error {
 	if e.cfg.Revision > 0 && (cfg.Revision == 0 || cfg.Revision < e.cfg.Revision) {
 		return nil
 	}
+	if cfg.CreatedAt.IsZero() {
+		cfg.CreatedAt = e.cfg.CreatedAt
+	}
 	e.cfg = cfg
+	if !e.incomeSince.IsZero() && !e.incomeSince.Equal(e.incomeSinceTime()) {
+		e.incomeOK = false
+	}
 	return nil
+}
+
+func (e *Engine) incomeSinceTime() time.Time {
+	if e == nil {
+		return time.Time{}
+	}
+	if !e.cfg.CreatedAt.IsZero() {
+		return e.cfg.CreatedAt.UTC()
+	}
+	return e.startedAt
 }
 
 func (e *Engine) UseExchange(ex Exchange) error {
@@ -1146,12 +1171,17 @@ func (e *Engine) ensureProtection(side Side, entry, stop, take, liq float64) err
 	return last
 }
 
-// captureIncome 用币安账单覆盖当日和累计已实现。账单含手续费和资金费，
-// 也含这台引擎没有自己开过的仓。读失败或还没入账时保留本地数字。
+// captureIncome 用币安账单覆盖当日和累计已实现。账单含手续费和资金费。
+// 当日从 Asia/Shanghai 0 点起，累计从策略创建时间起。读失败时保留上一份成功的结果。
 func (e *Engine) captureIncome(now time.Time) {
-	if e == nil || e.ex == nil || e.startedAt.IsZero() || strings.TrimSpace(e.cfg.Symbol) == "" {
+	if e == nil || e.ex == nil || strings.TrimSpace(e.cfg.Symbol) == "" {
 		return
 	}
+	since := e.incomeSinceTime()
+	if since.IsZero() {
+		return
+	}
+	now = at(now)
 	src, ok := e.ex.(interface {
 		RealizedIncome(symbol string, since, now time.Time) (day, cumulative float64, err error)
 		CredentialsReady() bool
@@ -1159,14 +1189,23 @@ func (e *Engine) captureIncome(now time.Time) {
 	if !ok || !src.CredentialsReady() {
 		return
 	}
-	day, cumulative, err := src.RealizedIncome(e.cfg.Symbol, e.startedAt, now)
+	symbol := strings.ToUpper(strings.TrimSpace(e.cfg.Symbol))
+	if e.incomeOK && e.incomeSince.Equal(since) && e.incomeSymbol == symbol && !now.Before(e.incomeAt) && now.Sub(e.incomeAt) < IncomeRefresh {
+		e.ledger.Realized = e.incomeDay
+		e.ledger.Cumulative = e.incomeCum
+		return
+	}
+	day, cumulative, err := src.RealizedIncome(e.cfg.Symbol, since, now)
 	if err != nil {
 		log.Printf("[trading] income %s: %v", e.cfg.Symbol, err)
 		return
 	}
-	if day == 0 && cumulative == 0 && (e.ledger.Realized != 0 || e.ledger.Cumulative != 0) {
-		return
-	}
+	e.incomeOK = true
+	e.incomeAt = now
+	e.incomeSince = since
+	e.incomeSymbol = symbol
+	e.incomeDay = day
+	e.incomeCum = cumulative
 	e.ledger.Realized = day
 	e.ledger.Cumulative = cumulative
 }

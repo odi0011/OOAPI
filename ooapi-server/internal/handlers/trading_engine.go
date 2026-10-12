@@ -314,7 +314,22 @@ func strategyConfig(row strategyRow) trading.Config {
 		GambleMode:            rec.GambleMode,
 		ScalpTpPct:            rec.ScalpTpPct,
 		ScalpSlPct:            rec.ScalpSlPct,
+		CreatedAt:             parseTradingTime(row.CreatedAt),
 	}.Normalize()
+}
+
+func parseTradingTime(raw string) time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}
+	}
+	layouts := []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05", "2006-01-02T15:04:05"}
+	for _, layout := range layouts {
+		if ts, err := time.ParseInLocation(layout, raw, time.UTC); err == nil {
+			return ts.UTC()
+		}
+	}
+	return time.Time{}
 }
 
 func ensureEngineKey(row strategyRow) *tradingError {

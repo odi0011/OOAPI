@@ -161,6 +161,8 @@ type Config struct {
 	ScalpSlPct float64 `json:"scalpSlPct,omitempty"`
 	// Revision 是热更新序号。更新的配置不会被更旧的调度快照盖掉。不入库。
 	Revision int64 `json:"-"`
+	// CreatedAt 是策略创建时间。累计已实现从这里起算，进程重启后仍用它。
+	CreatedAt time.Time `json:"-"`
 }
 
 func DefaultConfig() Config {
