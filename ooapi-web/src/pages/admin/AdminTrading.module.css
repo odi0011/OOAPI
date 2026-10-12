@@ -135,6 +135,13 @@
   color: var(--text-secondary);
 }
 
+.engineActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
 .dialogActions {
   display: flex;
   align-items: center;

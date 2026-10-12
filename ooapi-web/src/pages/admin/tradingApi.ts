@@ -24,6 +24,10 @@ export type Timeframe = "1m" | "3m" | "5m" | "15m";
 
 export const TIMEFRAMES: readonly Timeframe[] = ["1m", "3m", "5m", "15m"];
 
+/** 没有读到策略时的首发默认：测网，交易所密钥 1。 */
+export const DEFAULT_STRATEGY_MODE: TradingNetwork = "testnet";
+export const DEFAULT_EXCHANGE_KEY_ID = 1;
+
 export interface ExchangeKey {
   id: number;
   label: string;
@@ -159,4 +163,45 @@ export async function updateStrategy(id: number, body: StrategyWrite): Promise<S
 
 export async function deleteStrategy(id: number): Promise<void> {
   await apiRequest(`/api/trading/strategies/${id}`, { method: "DELETE" });
+}
+
+/** 引擎状态。testnetGreen 只读展示，本页不会去打开它。 */
+export interface EngineState {
+  strategyId: number;
+  state: string;
+  side?: string;
+  dayRealizedUsdt?: number;
+  halted?: boolean;
+  lastError?: string;
+  mode?: string;
+  testnetGreen?: boolean;
+  running?: boolean;
+  lastAction?: string;
+  lastReason?: string;
+}
+
+export async function getEngineState(strategyId: number): Promise<EngineState> {
+  return apiRequest<EngineState>(`/api/trading/engine/state?strategyId=${strategyId}`);
+}
+
+/** 启动检查。需要账户权益。不下单，也不打开测网全绿门闩。 */
+export async function startEngine(input: { strategyId: number; equityUsdt: number }): Promise<EngineState> {
+  return apiRequest<EngineState>("/api/trading/engine/start", {
+    method: "POST",
+    body: {
+      strategyId: input.strategyId,
+      equityUsdt: input.equityUsdt,
+    },
+  });
+}
+
+/**
+ * 推进一次。不附带 K 线和标记价时，引擎只空转，不会因为这一下单。
+ * 不调用 /api/trading/engine/testnet-green。
+ */
+export async function stepEngine(strategyId: number): Promise<EngineState> {
+  return apiRequest<EngineState>("/api/trading/engine/step", {
+    method: "POST",
+    body: { strategyId },
+  });
 }

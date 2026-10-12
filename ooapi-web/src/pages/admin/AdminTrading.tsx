@@ -14,13 +14,19 @@ import sectionStyles from "./sections/Section.module.css";
 import styles from "./AdminTrading.module.css";
 import {
   TIMEFRAMES,
+  DEFAULT_EXCHANGE_KEY_ID,
+  DEFAULT_STRATEGY_MODE,
   createStrategy,
   deleteStrategy,
   discardLegacyStrategyDraft,
+  getEngineState,
   listExchangeKeys,
   listStrategies,
   networkLabel,
+  startEngine,
+  stepEngine,
   updateStrategy,
+  type EngineState,
   type ExchangeKey,
   type Strategy,
   type StrategyWrite,
@@ -39,7 +45,8 @@ import {
  * stopR, takeProfitR, dailyLossPct, maxMarginUsdt, exchangeKeyId, mode.
  *
  * 列表按 updatedAt 倒序，页面只编辑 items[0]。没有记录时 POST，已有则 PATCH。
- * mode=live 可以保存；引擎必须测网全绿才会真下单，本页只写配置。
+ * mode=live 可以保存；引擎必须测网全绿才会真下单。
+ * 本页可以启动和推进，但不会打开测网全绿门闩。
  */
 
 interface StrategyDraft {
@@ -68,8 +75,8 @@ const DEFAULT_DRAFT: StrategyDraft = {
   takeProfitR: 1.5,
   dailyLossPct: 4,
   maxMarginUsdt: 1.7,
-  exchangeKeyId: null,
-  mode: "testnet",
+  exchangeKeyId: DEFAULT_EXCHANGE_KEY_ID,
+  mode: DEFAULT_STRATEGY_MODE,
 };
 
 /** 可切换，但除 EMA 外都先禁用。类型不入库，接口没有这个字段。 */
@@ -101,8 +108,8 @@ function draftFromStrategy(item: Strategy): StrategyDraft {
     takeProfitR: clamp(item.takeProfitR, 0.1, 20, DEFAULT_DRAFT.takeProfitR),
     dailyLossPct: clamp(item.dailyLossPct, 0.1, 100, DEFAULT_DRAFT.dailyLossPct),
     maxMarginUsdt: clamp(item.maxMarginUsdt, 0.1, 100, DEFAULT_DRAFT.maxMarginUsdt),
-    exchangeKeyId: item.exchangeKeyId > 0 ? item.exchangeKeyId : null,
-    mode: item.mode === "live" ? "live" : "testnet",
+    exchangeKeyId: item.exchangeKeyId > 0 ? item.exchangeKeyId : DEFAULT_EXCHANGE_KEY_ID,
+    mode: item.mode === "live" ? "live" : DEFAULT_STRATEGY_MODE,
   };
 }
 
@@ -122,8 +129,8 @@ function toWrite(draft: StrategyDraft): StrategyWrite {
     takeProfitR: round4(draft.takeProfitR),
     dailyLossPct: round4(draft.dailyLossPct),
     maxMarginUsdt: round4(draft.maxMarginUsdt),
-    exchangeKeyId: draft.exchangeKeyId ?? 0,
-    mode: draft.mode,
+    exchangeKeyId: draft.exchangeKeyId ?? DEFAULT_EXCHANGE_KEY_ID,
+    mode: draft.mode === "live" ? "live" : DEFAULT_STRATEGY_MODE,
   };
 }
 
@@ -160,6 +167,9 @@ export default function AdminTrading() {
   const [saving, setSaving] = useState(false);
   const [liveGate, setLiveGate] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [engine, setEngine] = useState<EngineState | null>(null);
+  const [equity, setEquity] = useState(100);
+  const [engineBusy, setEngineBusy] = useState<"start" | "step" | null>(null);
 
   const applyLoaded = useCallback((items: Strategy[], keyItems: ExchangeKey[]) => {
     setKeys(keyItems);
@@ -176,6 +186,22 @@ export default function AdminTrading() {
     setDraft(draftFromStrategy(current));
   }, []);
 
+  const refreshEngine = useCallback(async (id: number | null) => {
+    if (id == null) {
+      setEngine(null);
+      return;
+    }
+    try {
+      setEngine(await getEngineState(id));
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 404) {
+        setEngine(null);
+        return;
+      }
+      setEngine(null);
+    }
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
@@ -183,12 +209,13 @@ export default function AdminTrading() {
     try {
       const [strategies, keyItems] = await Promise.all([listStrategies(), listExchangeKeys()]);
       applyLoaded(strategies, keyItems);
+      await refreshEngine(strategies[0]?.id ?? null);
     } catch (err) {
       setLoadError(errorText(err, "加载策略失败"));
     } finally {
       setLoading(false);
     }
-  }, [applyLoaded]);
+  }, [applyLoaded, refreshEngine]);
 
   useEffect(() => {
     void load();
@@ -231,6 +258,7 @@ export default function AdminTrading() {
       setStrategyId(saved.id);
       setWarnings(saved.warnings ?? []);
       setDraft(draftFromStrategy(saved));
+      await refreshEngine(saved.id);
       if (saved.mode === "live") {
         notify.success("实盘配置已保存", "引擎须测网全绿才会真下单。这次只写入了配置。");
       } else {
@@ -244,6 +272,31 @@ export default function AdminTrading() {
     }
   }
 
+  async function runEngine(kind: "start" | "step") {
+    if (strategyId == null) {
+      notify.error("请先保存策略");
+      return;
+    }
+    if (kind === "start" && !(equity > 0)) {
+      notify.error("启动需要账户权益");
+      return;
+    }
+    if (!action.acquire()) return;
+    setEngineBusy(kind);
+    try {
+      const next = kind === "start"
+        ? await startEngine({ strategyId, equityUsdt: equity })
+        : await stepEngine(strategyId);
+      setEngine(next);
+      notify.success(kind === "start" ? "引擎已启动" : "已推进一次", `当前状态 ${next.state}`);
+    } catch (err) {
+      notify.error(kind === "start" ? "启动失败" : "推进失败", errorText(err, "请稍后再试"));
+    } finally {
+      setEngineBusy(null);
+      action.release();
+    }
+  }
+
   async function remove() {
     if (strategyId == null || !action.acquire()) return;
     try {
@@ -252,6 +305,7 @@ export default function AdminTrading() {
       notify.success("策略已删除");
       const [strategies, keyItems] = await Promise.all([listStrategies(), listExchangeKeys()]);
       applyLoaded(strategies, keyItems);
+      await refreshEngine(strategies[0]?.id ?? null);
     } catch (err) {
       notify.error("删除失败", errorText(err, "请稍后再试"));
     } finally {
@@ -587,12 +641,17 @@ export default function AdminTrading() {
                       }))}
                       onValueChange={(value) => {
                         const id = Number(value);
-                        patch({ exchangeKeyId: Number.isInteger(id) && id > 0 ? id : null });
+                        if (Number.isInteger(id) && id > 0) patch({ exchangeKeyId: id });
                       }}
                       disabled={activeKeys.length === 0}
                     />
                     <p className={styles.keyHint}>
-                      {activeKeys.length === 0 ? "当前没有可使用的密钥。" : "作废的旧 Key 不会出现在这里。"}
+                      {activeKeys.length === 0
+                        ? `当前没有可使用的密钥。未改选择时按密钥 ${DEFAULT_EXCHANGE_KEY_ID} 保存。`
+                        : "作废的旧 Key 不会出现在这里。"}
+                      {draft.exchangeKeyId === DEFAULT_EXCHANGE_KEY_ID && !selectedKey
+                        ? ` 默认是密钥 ${DEFAULT_EXCHANGE_KEY_ID}。`
+                        : ""}
                       {savedKey?.revoked ? " 当前保存的密钥已作废，请重新选择。" : ""}
                       {mismatch ? " 这把密钥的网络和当前环境不一致，可以保存，运行前请改成同一边。" : ""}
                       <Link to="/admin/exchange-keys">去绑定</Link>
@@ -600,6 +659,57 @@ export default function AdminTrading() {
                   </div>
                 </div>
               </div>
+            </section>
+
+            <section className={styles.block}>
+              <header className={sectionStyles.sectionHead}>
+                <h2 className={sectionStyles.sectionTitle}>策略引擎</h2>
+                <p className={sectionStyles.sectionLead}>
+                  启动和推进需要登录，并走 option:edit。本页不调用测网全绿接口，也不打开 TRADING_TESTNET_GREEN。
+                  推进一次不附带 K 线；没有交叉就不会下单。
+                </p>
+              </header>
+              <div className={styles.engineActions}>
+                <NumberField
+                  label="账户权益"
+                  suffix=" USDT"
+                  value={equity}
+                  min={0.1}
+                  max={1_000_000}
+                  step={1}
+                  onValueChange={setEquity}
+                />
+                <Button
+                  variant="primary"
+                  size="sm"
+                  loading={engineBusy === "start"}
+                  disabled={strategyId == null || action.busy}
+                  onClick={() => void runEngine("start")}
+                >
+                  启动
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  loading={engineBusy === "step"}
+                  disabled={strategyId == null || action.busy}
+                  onClick={() => void runEngine("step")}
+                >
+                  推进一次
+                </Button>
+              </div>
+              <p className={styles.envNote} data-engine-state={engine?.state ?? "Idle"} data-testnet-green={engine?.testnetGreen ? "on" : "off"}>
+                {strategyId == null
+                  ? "先保存策略，再启动。默认环境是测网。"
+                  : `状态 ${engine?.state ?? "Idle"}。测网全绿门闩${engine?.testnetGreen ? "已打开" : "关着"}，本页不会去开它。`}
+              </p>
+              {engine?.lastError ? <p className={styles.warning}>{engine.lastError}</p> : null}
+              {engine?.lastAction ? (
+                <p className={styles.keyHint}>
+                  最近动作 {engine.lastAction}
+                  {engine.lastReason ? ` · ${engine.lastReason}` : ""}
+                </p>
+              ) : null}
             </section>
           </>
         )}
