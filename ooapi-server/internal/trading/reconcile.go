@@ -64,10 +64,11 @@ func (e *Engine) livePosition() (Position, error) {
 }
 
 type flatBook struct {
-	parts IncomeParts
-	price float64
-	qty   float64
-	ready bool
+	parts    IncomeParts
+	price    float64
+	qty      float64
+	closedAt time.Time
+	ready    bool
 }
 
 // finishExchangeFlat 处理交易所已经空仓、引擎还停在 InPosition 的情况。
@@ -131,21 +132,37 @@ func (e *Engine) readFlatBook(since, now time.Time) (flatBook, error) {
 	if err != nil {
 		return book, err
 	}
-	fills, ok := e.ex.(interface {
-		ClosingFill(symbol string, side Side, since, now time.Time) (price, qty float64, ok bool, err error)
-	})
-	if !ok {
-		return book, invalid("交易所没有成交明细")
-	}
-	price, qty, found, err := fills.ClosingFill(e.cfg.Symbol, e.pos.Side, since, now)
+	price, qty, closedAt, found, err := e.closingLeg(since, now)
 	if err != nil {
 		return book, err
 	}
 	book.parts = parts
 	book.price = price
 	book.qty = qty
+	book.closedAt = closedAt
 	book.ready = parts.Rows > 0 && found && price > 0 && qty > 0
 	return book, nil
+}
+
+// closingLeg 出场价和数量用来自 userTrades 的止损/止盈成交。有成交时间时用它，不用标记价。
+func (e *Engine) closingLeg(since, now time.Time) (price, qty float64, closedAt time.Time, found bool, err error) {
+	if timed, ok := e.ex.(interface {
+		ClosingTrade(symbol string, side Side, since, now time.Time) (TradeLeg, bool, error)
+	}); ok {
+		leg, okFill, err := timed.ClosingTrade(e.cfg.Symbol, e.pos.Side, since, now)
+		if err != nil || !okFill {
+			return 0, 0, time.Time{}, false, err
+		}
+		return leg.Price, leg.Qty, leg.Time, leg.Price > 0 && leg.Qty > 0, nil
+	}
+	fills, ok := e.ex.(interface {
+		ClosingFill(symbol string, side Side, since, now time.Time) (price, qty float64, ok bool, err error)
+	})
+	if !ok {
+		return 0, 0, time.Time{}, false, invalid("交易所没有成交明细")
+	}
+	price, qty, found, err = fills.ClosingFill(e.cfg.Symbol, e.pos.Side, since, now)
+	return price, qty, time.Time{}, found, err
 }
 
 func (e *Engine) bookExchangeFlat(in StepInput, book flatBook, canceled []int64) (Snapshot, error) {
@@ -172,12 +189,16 @@ func (e *Engine) bookExchangeFlat(in StepInput, book flatBook, canceled []int64)
 	strategyID := e.cfg.ID
 	symbol := e.cfg.Symbol
 	tradeNet := book.parts.Net()
+	closedAt := book.closedAt
+	if closedAt.IsZero() {
+		closedAt = now
+	}
 	_ = CloseEntry(entryID, userID, strategyID, symbol, string(side), ExitFill{
 		Price:    book.price,
 		Qty:      book.qty,
 		Realized: tradeNet,
 		Reason:   reason,
-		ClosedAt: now,
+		ClosedAt: closedAt,
 	})
 	e.captureIncome(now)
 	halted := DailyHaltBreached(e.ledger.Capital, e.ledger.Realized, e.cfg.DailyLossPct)

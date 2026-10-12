@@ -3,6 +3,7 @@ package trading
 import (
 	"fmt"
 	"sync"
+	"time"
 )
 
 const (
@@ -36,12 +37,15 @@ type CloseOrder struct {
 }
 
 // Fill 是一次成交回报。
+// FromExchange 为真表示价格和数量来自订单均价或 userTrades，不是下单时带上的标记价。
 type Fill struct {
-	OrderID string
-	Price   float64
-	Qty     float64
-	Status  string
-	Side    Side
+	OrderID      string
+	Price        float64
+	Qty          float64
+	Status       string
+	Side         Side
+	At           time.Time
+	FromExchange bool
 }
 
 // Position 是当前合约持仓。Open 为假表示空仓。

@@ -52,6 +52,8 @@ type Runner struct {
 	boostEvery time.Duration
 	// flatGap 是测试用的空仓核对间隔。0 表示用 FlatReconcileInterval。
 	flatGap time.Duration
+	// bookGap 是测试用的开仓回补间隔。0 表示用 EntryBookInterval。
+	bookGap time.Duration
 }
 
 func NewRunner(hub *Hub) *Runner {
@@ -99,6 +101,13 @@ func (r *Runner) SetBoostEvery(d time.Duration) {
 func (r *Runner) SetFlatEvery(d time.Duration) {
 	r.mu.Lock()
 	r.flatGap = d
+	r.mu.Unlock()
+}
+
+// SetBookEvery 只给测试缩短开仓回补间隔。0 表示用 EntryBookInterval。
+func (r *Runner) SetBookEvery(d time.Duration) {
+	r.mu.Lock()
+	r.bookGap = d
 	r.mu.Unlock()
 }
 
@@ -225,6 +234,7 @@ func (r *Runner) loop(ctx context.Context, spec RunSpec) {
 		}
 	}()
 	spec = r.liveSpec(spec)
+	r.bookEntries(ctx, spec)
 	r.runOnce(ctx, spec)
 	for {
 		if ctx.Err() != nil {
@@ -245,26 +255,41 @@ func (r *Runner) loop(ctx context.Context, spec RunSpec) {
 			recTimer = time.NewTimer(gap)
 			recC = recTimer.C
 		}
+		var bookTimer *time.Timer
+		var bookC <-chan time.Time
+		if gap := r.bookEvery(); gap > 0 {
+			bookTimer = time.NewTimer(gap)
+			bookC = bookTimer.C
+		}
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			stopTimer(recTimer)
+			stopTimer(bookTimer)
 			return
 		case <-timer.C:
 			stopTimer(recTimer)
+			stopTimer(bookTimer)
 			spec = r.liveSpec(spec)
 			r.runOnce(ctx, spec)
 		case <-notify:
 			timer.Stop()
 			stopTimer(recTimer)
+			stopTimer(bookTimer)
 			spec = r.liveSpec(spec)
 			if live && BoostActive(r.now()) {
 				r.runOnce(ctx, spec)
 			}
 		case <-recC:
 			timer.Stop()
+			stopTimer(bookTimer)
 			spec = r.liveSpec(spec)
 			r.reconcileOnce(ctx, spec)
+		case <-bookC:
+			timer.Stop()
+			stopTimer(recTimer)
+			spec = r.liveSpec(spec)
+			r.bookEntries(ctx, spec)
 		}
 	}
 }
@@ -288,6 +313,84 @@ func (r *Runner) flatEvery() time.Duration {
 		return r.flatGap
 	}
 	return FlatReconcileInterval
+}
+
+func (r *Runner) bookEvery() time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.bookGap > 0 {
+		return r.bookGap
+	}
+	return EntryBookInterval
+}
+
+// bookEntries 补上交易所已经打平、库里却还开着的记录。
+// 没有未平记录时不访问交易所。引擎是否还停在 InPosition 不影响这里。
+func (r *Runner) bookEntries(ctx context.Context, spec RunSpec) {
+	if ctx.Err() != nil || r == nil || spec.Config.ID <= 0 {
+		return
+	}
+	spec = r.liveSpec(spec)
+	rows, err := OpenEntries(spec.UserID, spec.Config.ID)
+	if err != nil {
+		log.Printf("[trading] runner strategy %d entries: %v", spec.Config.ID, err)
+		return
+	}
+	if len(rows) == 0 {
+		return
+	}
+	src := r.entryBook(spec)
+	if src == nil {
+		log.Printf("[trading] runner strategy %d entries: no exchange book", spec.Config.ID)
+		return
+	}
+	n, err := CloseFlatEntries(src, rows, r.now())
+	if err != nil {
+		log.Printf("[trading] runner strategy %d book: %v", spec.Config.ID, err)
+		return
+	}
+	if n > 0 {
+		log.Printf("[trading] runner strategy %d booked %d flat entries", spec.Config.ID, n)
+	}
+}
+
+func (r *Runner) entryBook(spec RunSpec) EntryBook {
+	var creds Credentials
+	have := false
+	if spec.Secrets != nil {
+		if got, err := spec.Secrets(); err == nil {
+			creds = got
+			have = true
+		}
+	}
+	if r.hub != nil {
+		if ex := r.hub.boundExchange(spec.UserID, spec.Config.ID); ex != nil {
+			if have {
+				if sink, ok := ex.(interface{ UseCredentials(Credentials) error }); ok {
+					_ = sink.UseCredentials(creds)
+				}
+			}
+			if book, ok := ex.(EntryBook); ok && exchangeReady(ex) {
+				return book
+			}
+		}
+	}
+	if !have {
+		return nil
+	}
+	client := PublicClient(spec.Config.Mode)
+	if err := client.UseCredentials(creds); err != nil {
+		return nil
+	}
+	return client
+}
+
+func exchangeReady(ex Exchange) bool {
+	ready, ok := ex.(interface{ CredentialsReady() bool })
+	if !ok {
+		return true
+	}
+	return ready.CredentialsReady()
 }
 
 func (r *Runner) holding(spec RunSpec) bool {

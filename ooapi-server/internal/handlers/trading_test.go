@@ -995,6 +995,18 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 		rec.OneRUSDT = tradingArgFloat(vals[13])
 		d.entries = append(d.entries, storedEntry{id: id, rec: rec})
 		return tradingTestResult{id, 1}, nil
+	case normTradingSQL(entryReviseSQL):
+		id := tradingArgInt(vals[2])
+		for i := range d.entries {
+			rec := &d.entries[i].rec
+			if d.entries[i].id != id || !rec.ClosedAt.IsZero() {
+				continue
+			}
+			rec.EntryPrice = tradingArgFloat(vals[0])
+			rec.Qty = tradingArgFloat(vals[1])
+			return tradingTestResult{0, 1}, nil
+		}
+		return tradingTestResult{0, 0}, nil
 	case normTradingSQL(entryCloseSQL):
 		id := tradingArgInt(vals[5])
 		userID := tradingArgInt(vals[6])
@@ -1037,6 +1049,8 @@ func (c *tradingTestConn) QueryContext(_ context.Context, q string, args []drive
 		return d.runningDup(tradingArgInt(vals[0]), tradingArgInt(vals[1]), tradingArgString(vals[2]), tradingArgInt(vals[3])), nil
 	case normTradingSQL(entryListSQL):
 		return d.entryRows(tradingArgInt(vals[0]), tradingArgInt(vals[1]), int(tradingArgInt(vals[2]))), nil
+	case normTradingSQL(entryOpenSQL):
+		return d.entryOpenRows(tradingArgInt(vals[0]), tradingArgInt(vals[1])), nil
 	case normTradingSQL(entryRecentSQL):
 		return d.entryRows(0, 0, int(tradingArgInt(vals[0]))), nil
 	default:
@@ -1193,6 +1207,28 @@ func (d *tradingTestDriver) entryRows(userID, strategyID int64, limit int) drive
 		}
 	}
 	return &tradingTestRows{columns: cols, values: values}
+}
+
+func (d *tradingTestDriver) entryOpenRows(userID, strategyID int64) driver.Rows {
+	rows := d.entryRows(userID, strategyID, 0).(*tradingTestRows)
+	var open [][]driver.Value
+	for _, row := range rows.values {
+		if row[len(row)-1] != nil {
+			continue
+		}
+		open = append(open, row)
+	}
+	for i := 0; i < len(open); i++ {
+		for j := i + 1; j < len(open); j++ {
+			ai, _ := open[i][17].(time.Time)
+			aj, _ := open[j][17].(time.Time)
+			if aj.Before(ai) || (aj.Equal(ai) && open[j][0].(int64) < open[i][0].(int64)) {
+				open[i], open[j] = open[j], open[i]
+			}
+		}
+	}
+	rows.values = open
+	return rows
 }
 
 func (d *tradingTestDriver) runningDup(userID, keyID int64, symbol string, exceptID int64) driver.Rows {
