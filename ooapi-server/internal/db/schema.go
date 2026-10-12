@@ -21,6 +21,7 @@ var schemaStatements = []string{
 		created_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 		last_login_at DATETIME        NULL,
+		session_version INT           NOT NULL DEFAULT 0,
 		avatar_url    VARCHAR(512)    NOT NULL DEFAULT '',
 		avatar_media_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
 		bio           VARCHAR(255)    NOT NULL DEFAULT '',
@@ -35,7 +36,8 @@ var schemaStatements = []string{
 		id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 		user_id     BIGINT UNSIGNED NOT NULL,
 		name        VARCHAR(64)     NOT NULL DEFAULT '',
-		api_key     VARCHAR(128)    NOT NULL,
+		api_key     VARCHAR(191)    NOT NULL,
+		key_hash    CHAR(64)        NOT NULL DEFAULT '',
 		status      TINYINT         NOT NULL DEFAULT 1,
 		quota       BIGINT          NOT NULL DEFAULT -1,
 		used_quota  BIGINT          NOT NULL DEFAULT 0,
@@ -53,7 +55,7 @@ var schemaStatements = []string{
 		name          VARCHAR(128)    NOT NULL DEFAULT '',
 		vendor        VARCHAR(64)     NOT NULL DEFAULT 'custom',
 		base_url      VARCHAR(255)    NOT NULL DEFAULT '',
-		api_key       VARCHAR(512)    NOT NULL DEFAULT '',
+		api_key       TEXT            NOT NULL,
 		method        VARCHAR(32)     NOT NULL DEFAULT 'api',
 		auth_credential MEDIUMTEXT    NULL,
 		auth_expires_at BIGINT        NOT NULL DEFAULT 0,
@@ -286,8 +288,11 @@ var columnMigrations = map[string][]columnDef{
 		{"bio", "VARCHAR(255) NOT NULL DEFAULT '' AFTER avatar_media_id"},
 		{"website", "VARCHAR(255) NOT NULL DEFAULT '' AFTER bio"},
 		{"location", "VARCHAR(64) NOT NULL DEFAULT '' AFTER website"},
+		// 会话版本：改密与退出登录时加一，使已签发的 JWT 立即失效。
+		{"session_version", "INT NOT NULL DEFAULT 0"},
 	},
 	"tokens": {
+		{"key_hash", "CHAR(64) NOT NULL DEFAULT ''"},
 		{"group_name", "VARCHAR(64) NOT NULL DEFAULT '' AFTER used_quota"},
 		{"models", "TEXT NULL AFTER group_name"},
 		// 不限额度与「额度为 0」是两件事：前者跟随账号余额，后者是明确的零额度。

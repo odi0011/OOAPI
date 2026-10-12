@@ -96,9 +96,10 @@ func proxyTransportFor(proxyURL string) (http.RoundTripper, error) {
 	if base, ok := http.DefaultTransport.(*http.Transport); ok && base != nil {
 		clone := base.Clone()
 		clone.Proxy = http.ProxyURL(parsed)
+		clone.DialContext = netguard.DialPublic
 		dial = clone
 	} else {
-		dial = &http.Transport{Proxy: http.ProxyURL(parsed)}
+		dial = &http.Transport{Proxy: http.ProxyURL(parsed), DialContext: netguard.DialPublic}
 	}
 
 	/*
@@ -143,11 +144,15 @@ func doChannelRequest(req *http.Request, proxyURL string, fallback *http.Client)
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectPrivateUpstream(req); err != nil {
+		return nil, err
+	}
 	if rt == nil {
 		return fallback.Do(req)
 	}
 	// Timeout 0：流式响应可能持续很久，超时统一由请求 context 控制。
-	return (&http.Client{Transport: rt}).Do(req)
+	// 重定向单独再验：不能跟着 302 走进内网或云元数据地址。
+	return (&http.Client{Transport: rt, CheckRedirect: netguard.CheckRedirect}).Do(req)
 }
 
 // doUpstreamRequest 按账号的 proxy_url 与 tls_fingerprint 选择出口并执行请求。
@@ -160,6 +165,9 @@ func doChannelRequest(req *http.Request, proxyURL string, fallback *http.Client)
 // 标记失败并换下一个候选，不会退化成直连。ch 为 nil 或两项都没配时
 // 走共享的 upstreamClient，行为与从前完全一致。
 func doUpstreamRequest(req *http.Request, ch *services.UpstreamChannel) (*http.Response, error) {
+	if err := rejectPrivateUpstream(req); err != nil {
+		return nil, newUpstreamError(0, "上游地址不可用："+err.Error(), true)
+	}
 	proxyURL := ""
 	fingerprint := services.TLSProfileOff
 	if ch != nil {
@@ -184,7 +192,7 @@ func doUpstreamRequest(req *http.Request, ch *services.UpstreamChannel) (*http.R
 
 	if rt := services.TLSFingerprintTransport(fingerprint); rt != nil {
 		// Timeout 0：流式响应可能持续很久，超时统一由请求 context 控制。
-		return (&http.Client{Transport: rt}).Do(req)
+		return (&http.Client{Transport: rt, CheckRedirect: netguard.CheckRedirect}).Do(req)
 	}
 	return upstreamClient.Do(req)
 }
@@ -197,6 +205,16 @@ func upstreamRequestError(err error) *upstreamError {
 		return ue
 	}
 	return newUpstreamError(0, "无法连接上游："+err.Error(), true)
+}
+
+// rejectPrivateUpstream 在真正拨号前再跑一次 netguard。
+// 账号地址在保存时验过，但转发当下 DNS 可能已经指向内网。
+func rejectPrivateUpstream(req *http.Request) error {
+	if req == nil || req.URL == nil || req.URL.Host == "" {
+		return nil
+	}
+	_, err := netguard.AssertPublicURL(req.URL.String())
+	return err
 }
 
 /*

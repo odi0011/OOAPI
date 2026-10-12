@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 
 import { FileDropzone, type FileDropzoneItem } from "@/components/arc/file-dropzone/file-dropzone";
-import { ApiRequestError, getStoredToken } from "@/lib/api";
+import { ApiRequestError } from "@/lib/api";
 
 import styles from "./IconUpload.module.css";
 
@@ -55,9 +55,7 @@ export default function IconUpload({
         const xhr = new XMLHttpRequest();
         xhr.open("POST", "/api/admin/upload/icon");
 
-        // 认证头与 apiRequest 保持一致；cookie 也带上。
-        const token = getStoredToken();
-        if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+        // 登录态在 HttpOnly cookie 里，不从脚本读取令牌。
         xhr.withCredentials = true;
 
         xhr.upload.onprogress = (event) => {

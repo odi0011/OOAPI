@@ -193,7 +193,7 @@ func useCallerTestDB(t *testing.T, d *callerTestDriver) {
 func TestCallerMetadataCapturedFromIncomingUAOnly(t *testing.T) {
 	d := &callerTestDriver{}
 	d.query = func(q string, _ []driver.NamedValue) (driver.Rows, error) {
-		if !strings.Contains(q, "WHERE t.api_key = ?") {
+		if !strings.Contains(q, "t.key_hash = ?") || !strings.Contains(q, "t.api_key = ?") {
 			t.Fatalf("unexpected authentication query: %s", q)
 		}
 		columns := make([]string, 13)
