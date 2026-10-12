@@ -6,9 +6,11 @@ import { EmptyState } from "@/components/arc/empty-state/empty-state";
 import HoldToConfirm from "@/components/arc/hold-to-confirm/hold-to-confirm";
 import { Input } from "@/components/arc/input/input";
 import { PasswordField } from "@/components/arc/password-field/password-field";
+import Switch from "@/components/arc/switch/switch";
 import AdminLayout from "@/components/admin/AdminLayout";
 import { useAsyncGuard, useNotify } from "@/lib/useNotify";
 
+import { bindExchangeKey, removeExchangeKey, useExchangeKeys, type ExchangeKey } from "./exchangeKeyStore";
 import tokenStyles from "./AdminTokens.module.css";
 import styles from "./AdminExchangeKeys.module.css";
 
@@ -18,19 +20,9 @@ import styles from "./AdminExchangeKeys.module.css";
  * 列表打码、reveal 后才能复制，口径对齐密钥管理：
  * 未显示完整内容时，复制按钮不可用，也不复制打码串。
  *
- * TODO(trading): 后端还没有交易所密钥字段。
- * 数据只留在当前会话的内存里，不写 localStorage，不打计费或跨域接口。
- * 接通后改为 /api/trading/exchange-keys，reveal 走单独接口。
+ * 再绑一把时，本会话里的旧 Key 全部作废。
+ * 交易所侧要先作废旧 Key、重建并关掉提现，再回到这里自绑。
  */
-
-interface ExchangeKey {
-  id: string;
-  name: string;
-  exchange: "binance";
-  apiKey: string;
-  apiSecret: string;
-  createdAt: string;
-}
 
 interface Draft {
   name: string;
@@ -46,11 +38,6 @@ function maskSecret(value: string): string {
   return `${text.slice(0, 4)}••••••••${text.slice(-4)}`;
 }
 
-function newId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
-  return `k-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
 function formatTime(raw: string): string {
   return raw.replace("T", " ").slice(0, 16);
 }
@@ -59,9 +46,10 @@ export default function AdminExchangeKeys() {
   const notify = useNotify();
   const action = useAsyncGuard();
 
-  const [items, setItems] = useState<ExchangeKey[]>([]);
+  const items = useExchangeKeys();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [rebuildAck, setRebuildAck] = useState(false);
   const [saving, setSaving] = useState(false);
   const [revealed, setRevealed] = useState<ExchangeKey | null>(null);
   /** 点过列表上的「显示」之后，才允许从列表复制完整密钥。 */
@@ -80,6 +68,7 @@ export default function AdminExchangeKeys() {
 
   function openCreate() {
     setDraft(EMPTY_DRAFT);
+    setRebuildAck(false);
     setDialogOpen(true);
   }
 
@@ -93,24 +82,31 @@ export default function AdminExchangeKeys() {
       action.release();
       return;
     }
+    if (!rebuildAck) {
+      notify.error("请先确认旧 Key 已作废", "重建并关闭提现之后，再勾选确认");
+      action.release();
+      return;
+    }
 
     setSaving(true);
     try {
-      const item: ExchangeKey = {
-        id: newId(),
+      const hadPrevious = items.some((row) => !row.revoked);
+      const item = bindExchangeKey({
         name,
         exchange: "binance",
         apiKey,
         apiSecret,
-        createdAt: new Date().toISOString(),
-      };
-      setItems((prev) => [item, ...prev]);
+      });
       setDialogOpen(false);
       setDraft(EMPTY_DRAFT);
+      setRebuildAck(false);
       // 创建弹窗本身就是那一次完整展示，弹窗里可以复制。
       // 列表仍打码，复制按钮要等用户再点「显示」才放开。
       setRevealed(item);
-      notify.success("密钥已创建", "请立即复制，并确认交易所已关闭提现权限");
+      notify.success(
+        hadPrevious ? "新密钥已绑定，旧 Key 已作废" : "密钥已绑定",
+        "请立即复制，并确认这把密钥已关闭提现权限",
+      );
     } finally {
       setSaving(false);
       action.release();
@@ -120,7 +116,7 @@ export default function AdminExchangeKeys() {
   function remove(item: ExchangeKey) {
     if (deletedIds[item.id] || !action.acquire()) return;
     setDeletedIds((prev) => ({ ...prev, [item.id]: true }));
-    setItems((prev) => prev.filter((row) => row.id !== item.id));
+    removeExchangeKey(item.id);
     setRevealedIds((prev) => {
       const next = new Set(prev);
       next.delete(item.id);
@@ -162,16 +158,16 @@ export default function AdminExchangeKeys() {
           <div>
             <h1 className={tokenStyles.title}>交易所密钥</h1>
             <p className={styles.lead}>
-              自己绑定币安 USDT 合约的 API Key。请先在交易所关掉提现权限，只留合约交易需要的权限。
+              自己绑定币安 USDT 合约的 API Key。旧 Key 先作废，重建并关掉提现之后再自绑。
             </p>
           </div>
         </header>
 
         <div className={tokenStyles.notice}>
-          <strong>关闭提现权限</strong>
+          <strong>旧 Key 作废后再绑</strong>
           <p>
-            密钥若带提现权限，泄露后可以直接转走资金。创建前到交易所把提现关掉。
-            本页只做绑定壳，不会代你发起提现。
+            到交易所把旧 Key 作废，重新创建一把，并关掉提现权限，只留合约交易需要的权限。
+            然后再回到这里自绑。本页再绑一把时，之前的 Key 也会标成已作废。这里不会代你发起提现。
           </p>
         </div>
 
@@ -183,7 +179,7 @@ export default function AdminExchangeKeys() {
           <div className={tokenStyles.empty}>
             <EmptyState
               title="还没有交易所密钥"
-              description="绑定一把已关闭提现权限的币安 API Key。列表保持打码，点显示后才能复制。"
+              description="先在交易所作废旧 Key，重建并关闭提现后再绑定。列表保持打码，点显示后才能复制。"
               action={
                 <Button variant="primary" size="sm" onClick={openCreate} disabled={action.busy}>
                   绑定密钥
@@ -202,6 +198,7 @@ export default function AdminExchangeKeys() {
                       <strong className={tokenStyles.itemName}>{item.name}</strong>
                       <span className={tokenStyles.groupTag}>币安</span>
                       <span className={tokenStyles.unlimitedTag}>USDT 合约</span>
+                      {item.revoked && <span className={tokenStyles.offTag}>已作废</span>}
                     </div>
 
                     <SecretRow
@@ -255,7 +252,7 @@ export default function AdminExchangeKeys() {
       <Dialog open={dialogOpen} onOpenChange={(next) => { if (!action.busy) setDialogOpen(next); }}>
         <DialogContent
           title="绑定交易所密钥"
-          description="首发只绑定币安 USDT 合约。创建前请到交易所关闭提现权限。"
+          description="旧 Key 先作废。重建一把、关掉提现，再填到这里。再绑时，本页已有的 Key 也会作废。"
         >
           <div className={tokenStyles.form} inert={action.busy}>
             <Input
@@ -281,12 +278,19 @@ export default function AdminExchangeKeys() {
               onChange={(e) => setDraft({ ...draft, apiSecret: e.target.value })}
               description="请确认这把密钥没有提现权限。"
             />
+            <div className={tokenStyles.switchRow}>
+              <Switch
+                label="这是重建后的新 Key，且已关闭提现"
+                checked={rebuildAck}
+                onCheckedChange={setRebuildAck}
+              />
+            </div>
           </div>
           <div className={`${tokenStyles.dialogActions} ${styles.dialogActions}`}>
             <Button variant="secondary" size="sm" onClick={() => setDialogOpen(false)} disabled={action.busy}>
               取消
             </Button>
-            <Button variant="primary" size="sm" loading={saving} disabled={action.busy} onClick={create}>
+            <Button variant="primary" size="sm" loading={saving} disabled={action.busy || !rebuildAck} onClick={create}>
               创建
             </Button>
           </div>
