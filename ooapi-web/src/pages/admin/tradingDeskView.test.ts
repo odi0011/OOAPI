@@ -35,6 +35,9 @@ assertEqual(idle.stateText, "Idle 空闲 · 未运行", "idle status");
 assertEqual(idle.modeText, "testnet 测网", "testnet mode");
 assertEqual(idle.testnetGreenText, "关", "green default");
 assertEqual(idle.leverageText, "3 倍", "leverage");
+
+const twenty = buildDeskStatus({ engine: null, leverage: 20 });
+assertEqual(twenty.leverageText, "20 倍", "leverage 20 is shown as stored");
 assertEqual(idle.marginModeText, "逐仓", "isolated");
 assertEqual(idle.accountLabel, "币安测网", "account");
 assertEqual(idle.timeframe, "5m", "timeframe fallback");
@@ -81,6 +84,18 @@ assertEqual(held.mark, "0.58", "mark");
 assertEqual(held.unrealized, "-0.16", "unrealized pnl");
 assertEqual(held.margin, "1.60", "margin");
 assertEqual(held.leverage, "3 倍", "position leverage");
+
+const heldTwenty = positionView({
+  open: true,
+  side: "long",
+  qty: 1,
+  entryPrice: 1.4,
+  markPrice: 1.41,
+  unrealizedPnl: 0.01,
+  leverage: 20,
+  margin: 1,
+});
+assertEqual(heldTwenty.leverage, "20 倍", "position leverage 20 is shown as stored");
 
 assertEqual(levelText(0.5, true), "0.50", "stop level");
 assertEqual(levelText(undefined, false), "无仓", "no levels means flat");
