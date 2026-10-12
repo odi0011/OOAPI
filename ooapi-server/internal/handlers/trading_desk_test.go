@@ -315,7 +315,7 @@ func TestTradingDeskLiveReadDoesNotOpenOrderGate(t *testing.T) {
 	if body["open"] != false || body["network"] != "live" || book.network != trading.ModeLive || book.opened != 1 {
 		t.Fatalf("live position %#v opened=%d network=%s", body, book.opened, book.network)
 	}
-	if pos.Body.String() != "" && (contains(pos.Body.String(), liveKey) || contains(pos.Body.String(), liveSecret) || contains(pos.Body.String(), "enc:v1:")) {
+	if pos.Body.String() != "" && (strings.Contains(pos.Body.String(), liveKey) || strings.Contains(pos.Body.String(), liveSecret) || strings.Contains(pos.Body.String(), "enc:v1:")) {
 		t.Fatalf("live read leaked secret: %s", pos.Body.String())
 	}
 	market := callTrading(t, GetTradingMarket, http.MethodGet, "/api/trading/engine/market?strategyId="+formatID(strategyID), "", owner, "")
@@ -351,7 +351,7 @@ func TestTradingDeskExchangeFailureStaysGeneric(t *testing.T) {
 	if rec.Code != http.StatusBadGateway || tradingCode(t, rec) != "exchange_unavailable" {
 		t.Fatalf("failure = %d %s", rec.Code, rec.Body.String())
 	}
-	if contains(rec.Body.String(), "signature") || contains(rec.Body.String(), "https://") || contains(rec.Body.String(), testAPISecret) {
+	if strings.Contains(rec.Body.String(), "signature") || strings.Contains(rec.Body.String(), "https://") || strings.Contains(rec.Body.String(), testAPISecret) {
 		t.Fatalf("failure body leaked: %s", rec.Body.String())
 	}
 }
@@ -370,8 +370,4 @@ func near(got any, want float64) bool {
 		diff = -diff
 	}
 	return diff < 1e-9
-}
-
-func contains(s, sub string) bool {
-	return strings.Contains(s, sub)
 }
