@@ -9,7 +9,7 @@ import (
 type Credentials struct {
 	APIKey    string
 	APISecret string
-	// Network 必须是 testnet，测网客户端才会收下这把密钥。
+	// Network 必须与客户端主机一致：testnet 或 live。
 	Network string
 }
 

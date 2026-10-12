@@ -75,7 +75,7 @@ type DeskBook interface {
 }
 
 // NewDeskBook 按策略 mode 打开只读客户端。测网和实盘都只发 GET。
-// 实盘下单仍走 LiveStub，并且要测网全绿；这里不打开那道门。
+// 实盘下单要另走 NewExchange，并且测网门闩必须已经打开。这里不打开那道门。
 func NewDeskBook(network string) (DeskBook, error) {
 	network = strings.ToLower(strings.TrimSpace(network))
 	var base string
