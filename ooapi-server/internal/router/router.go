@@ -113,6 +113,24 @@ func Setup(cfg *config.Config) *gin.Engine {
 		user.PUT("/token/:id", handlers.UpdateMyToken)
 		user.DELETE("/token/:id", handlers.DeleteMyToken)
 
+		// 自动交易配置。只存密钥与策略，不下单、不算信号。
+		// 交易所密钥是用户自己的资源，按 user_id 归属，口径对齐密钥管理。
+		// 策略是站点配置，走 option:edit（与前端壳同一道门），行仍归属当前用户。
+		user.GET("/trading/exchange-keys", handlers.ListExchangeKeys)
+		user.POST("/trading/exchange-keys", handlers.CreateExchangeKey)
+		user.POST("/trading/exchange-keys/:id/reveal", handlers.RevealExchangeKey)
+		user.POST("/trading/exchange-keys/:id/revoke", handlers.RevokeExchangeKey)
+		user.DELETE("/trading/exchange-keys/:id", handlers.RevokeExchangeKey)
+
+		strategies := user.Group("/trading/strategies", middleware.RequirePermission(authz.PermOptionEdit))
+		{
+			strategies.GET("", handlers.ListTradingStrategies)
+			strategies.POST("", handlers.CreateTradingStrategy)
+			strategies.GET("/:id", handlers.GetTradingStrategy)
+			strategies.PATCH("/:id", handlers.UpdateTradingStrategy)
+			strategies.DELETE("/:id", handlers.DeleteTradingStrategy)
+		}
+
 		// 使用记录与操作日志：所有登录用户可访问。
 		// 数据归属在 handler 内强制 —— 有 log:view_all 的看全站，
 		// 其余人只能看到自己的记录。

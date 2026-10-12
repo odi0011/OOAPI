@@ -67,6 +67,39 @@ func SealChannelAPIKey(raw string) (string, error) {
 	return strings.Join(out, "\n"), nil
 }
 
+// SealExchangeSecret 加密交易所 API Key 或 Secret。
+// 与用户密钥、渠道密钥同一条 AES-GCM 路径，密文带 enc:v1: 前缀。
+func SealExchangeSecret(plain string) (string, error) {
+	plain = strings.TrimSpace(plain)
+	if plain == "" {
+		return "", errors.New("空密钥")
+	}
+	return cryptoutil.Encrypt(JWTSecret(), plain)
+}
+
+// OpenExchangeSecret 还原交易所密钥。解密失败或结果仍是密文时返回错误，
+// 调用方不得把密文当成明文展示。没有 enc:v1: 前缀的历史值原样返回。
+func OpenExchangeSecret(stored string) (string, error) {
+	plain, err := cryptoutil.Decrypt(JWTSecret(), strings.TrimSpace(stored))
+	if err != nil {
+		return "", err
+	}
+	plain = strings.TrimSpace(plain)
+	if plain == "" || cryptoutil.IsEncrypted(plain) {
+		return "", errors.New("空密钥")
+	}
+	return plain, nil
+}
+
+// MaskExchangeSecret 先还原再打码。还原失败时返回空串，避免把密文尾部当成提示。
+func MaskExchangeSecret(stored string) string {
+	plain, err := OpenExchangeSecret(stored)
+	if err != nil {
+		return ""
+	}
+	return cryptoutil.MaskSecret(plain)
+}
+
 // OpenChannelAPIKey 还原渠道密钥。解密失败的行丢掉，绝不把密文当密钥发出去。
 func OpenChannelAPIKey(stored string) string {
 	lines := splitKeyLines(stored)
