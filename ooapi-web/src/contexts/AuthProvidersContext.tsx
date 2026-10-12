@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
 import { apiRequest } from "@/lib/api";
+import { isRegisterExplicitlyEnabled } from "@/lib/registerGate";
 
 /** 已启用（管理员配好了密钥）的三方平台。 */
 export interface OAuthProvider {
@@ -14,13 +15,10 @@ export interface AuthProviders {
   password_enabled: boolean;
   /**
    * 是否开放注册。
-   * 后端只有一个选项 password_register_enabled：
-   * 这个接口把它叫 register_enabled，/api/status 叫 password_register_enabled。
-   * 入口和 /register 门禁只认这里，不再另读 status 字段，避免两套开关各说各话。
+   * 只在 /api/settings/public 成功返回且 register_enabled === true 时为真。
+   * 加载中、失败、字段缺失，以及仅有 password_register_enabled，都保持关闭。
    */
   register_enabled: boolean;
-  /** providers 接口已结束（成功或失败）。未结束前按关闭处理，避免注册入口先闪出来。 */
-  ready: boolean;
 }
 
 // 默认全部关闭。后端未就绪或请求失败时，
@@ -30,7 +28,6 @@ const DEFAULT: AuthProviders = {
   email_code_enabled: false,
   password_enabled: true,
   register_enabled: false,
-  ready: false,
 };
 
 const AuthProvidersContext = createContext<AuthProviders>(DEFAULT);
@@ -49,21 +46,39 @@ export function AuthProvidersProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let alive = true;
-    apiRequest<AuthProviders>("/api/auth/providers")
+    apiRequest<AuthProviders>("/api/auth/providers", { cache: "no-store" })
       .then((data) => {
         if (!alive) return;
-        setProviders({
+        // 不读取这里的 register_enabled。它只是 password_register_enabled 的别名，
+        // 不能单独把注册入口打开，也不能在 public settings 还没到时先闪出表单。
+        setProviders((prev) => ({
+          ...prev,
           oauth: Array.isArray(data.oauth) ? data.oauth : [],
           email_code_enabled: !!data.email_code_enabled,
           password_enabled: data.password_enabled !== false,
-          register_enabled: !!data.register_enabled,
-          ready: true,
-        });
+        }));
+      })
+      .catch(() => {
+        /* 登录方式拉不到就保持默认。注册开关不在这个请求上决定。 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    apiRequest<unknown>("/api/settings/public", { cache: "no-store" })
+      .then((data) => {
+        if (!alive) return;
+        setProviders((prev) => ({
+          ...prev,
+          register_enabled: isRegisterExplicitlyEnabled(data),
+        }));
       })
       .catch(() => {
         if (!alive) return;
-        // 拉不到开关时保持关闭，但要结束等待，否则 /register 会一直停在加载。
-        setProviders((prev) => ({ ...prev, ready: true }));
+        setProviders((prev) => ({ ...prev, register_enabled: false }));
       });
     return () => {
       alive = false;

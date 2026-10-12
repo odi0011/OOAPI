@@ -88,8 +88,8 @@ export default function Home() {
   const name = status?.system_name || "OOAPI";
   const logo = status?.logo || "/logo.jpg";
   const endpoint = status?.api_endpoint || "https://ooapi.space/v1";
-  // 注册入口只认 register_enabled。status 里的 password_register_enabled 是同一选项的另一个名字，不拿来决定跳转。
-  const startPath = user ? "/dashboard" : providers.register_enabled ? "/register" : "/login";
+  // 没拿到明确的 register_enabled 之前去登录，不把人送进注册表单。
+  const startPath = user ? "/dashboard" : providers.register_enabled === true ? "/register" : "/login";
   const visibleModels = MODEL_CATALOG.filter((model) => (vendor === "全部" || model.vendor === vendor) && (model.name + model.vendor + model.description).toLowerCase().includes(query.trim().toLowerCase()));
   const chartPoints = period === "7" ? HISTORY.slice(-7) : HISTORY;
   const count = chartPoints.reduce((sum, point) => sum + point.value, 0);

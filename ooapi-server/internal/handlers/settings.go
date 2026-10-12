@@ -259,6 +259,10 @@ func AdminUpdateSettings(c *gin.Context) {
 // 只包含展示所需字段，不含任何敏感信息。
 func PublicSettings(c *gin.Context) {
 	cur := services.GetCurrency()
+	// 与 password_register_enabled 同源，但前端门禁只认 register_enabled 这个字段名。
+	// 缺字段或请求失败时前端必须保持关闭，不能拿另一个字段回落成开放。
+	registerEnabled := services.GetBoolOption("password_register_enabled", false)
+	c.Header("Cache-Control", "no-store")
 
 	ok(c, gin.H{
 		"system_name":               services.GetOption("system_name", "OOAPI"),
@@ -268,7 +272,8 @@ func PublicSettings(c *gin.Context) {
 		"currency_icon":             cur.Icon,
 		"currency_rate":             cur.Rate,
 		"units_per_od":              cur.UnitsPerUnit,
-		"password_register_enabled": services.GetBoolOption("password_register_enabled", false),
+		"register_enabled":          registerEnabled,
+		"password_register_enabled": registerEnabled,
 		"password_login_enabled":    services.GetBoolOption("password_login_enabled", true),
 		// 外观对全站生效，匿名访客也要拿到。
 		"appearance": services.PublicAppearance(),
