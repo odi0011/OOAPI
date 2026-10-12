@@ -2,8 +2,6 @@ package trading
 
 import (
 	"errors"
-	"os"
-	"strings"
 	"testing"
 	"time"
 )
@@ -233,7 +231,7 @@ func TestLiveGateRefusesUntilTestnetGreen(t *testing.T) {
 	}
 }
 
-func TestLiveStubDoesNotSendOrdersAfterGateOpens(t *testing.T) {
+func TestNewExchangeReturnsLiveUSDMClientWhenGateOpens(t *testing.T) {
 	ResetTestnetGreen()
 	SetTestnetGreen(true)
 	t.Cleanup(ResetTestnetGreen)
@@ -243,43 +241,25 @@ func TestLiveStubDoesNotSendOrdersAfterGateOpens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stub, ok := ex.(*LiveStub)
+	client, ok := ex.(*USDMClient)
 	if !ok {
 		t.Fatalf("exchange %T", ex)
 	}
-	eng := withSecrets(NewEngine(cfg, stub, DiscardLogger()))
-	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
-	if err := eng.Start(calmStart(now, 2)); err != nil {
+	if client.BaseURL() != BinanceUSDMLiveBase || client.readOnly {
+		t.Fatalf("base %s readOnly %v", client.BaseURL(), client.readOnly)
+	}
+	if err := client.UseCredentials(Credentials{
+		APIKey: "live-key-0123456789", APISecret: "live-secret-0123456789", Network: ModeLive,
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if stub.Entries != 0 || eng.SecretOpens() != 0 {
-		t.Fatalf("start placed or revealed entries=%d opens=%d", stub.Entries, eng.SecretOpens())
+	if err := client.guard(); err != nil {
+		t.Fatalf("live guard: %v", err)
 	}
-	candles := candlesUntil(t, CrossGolden)
-	_, err = eng.Step(stepAt(now, candles, candles[len(candles)-1].Close, 2))
-	if !errors.Is(err, ErrNoAutoReopen) {
-		t.Fatal(err)
-	}
-	snap := eng.Snapshot()
-	if snap.State != StateError || stub.Entries != 1 || stub.Cancels < 1 || eng.SecretOpens() != 1 {
-		t.Fatalf("snap=%+v entries=%d cancels=%d opens=%d", snap, stub.Entries, stub.Cancels, eng.SecretOpens())
-	}
-	if !strings.Contains(snap.LastError, "orders are not sent") {
-		t.Fatalf("last error %q", snap.LastError)
-	}
-	audit := eng.Audit()
-	if len(audit) != 1 || !strings.Contains(audit[0], "auto-reopen suppressed") || !strings.Contains(audit[0], "canceled") {
-		t.Fatalf("audit %v", audit)
-	}
-	if _, err := eng.Step(stepAt(now, candles, candles[len(candles)-1].Close, 2)); !errors.Is(err, ErrNoAutoReopen) {
-		t.Fatal(err)
-	}
-	if stub.Entries != 1 || eng.SecretOpens() != 1 {
-		t.Fatalf("auto reopened entries=%d opens=%d", stub.Entries, eng.SecretOpens())
-	}
-	src := mustRead(t, "exchange.go")
-	if strings.Contains(src, "net/http") || strings.Contains(src, "http.Client") || strings.Contains(src, "Dial") {
-		t.Fatal("live exchange file looks like it can dial")
+	if err := client.UseCredentials(Credentials{
+		APIKey: "test-key-0123456789", APISecret: "test-secret-0123456789", Network: ModeTestnet,
+	}); !errors.Is(err, ErrKeyNotUsable) {
+		t.Fatalf("testnet key on live client err=%v", err)
 	}
 	if NewUSDMTestnet().BaseURL() != BinanceUSDMTestnetBase {
 		t.Fatal("testnet base url")
@@ -304,13 +284,4 @@ func hasState(trace []State, want State) bool {
 		}
 	}
 	return false
-}
-
-func mustRead(t *testing.T, name string) string {
-	t.Helper()
-	b, err := os.ReadFile(name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(b)
 }

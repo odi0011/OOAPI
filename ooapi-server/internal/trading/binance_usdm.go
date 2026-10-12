@@ -31,9 +31,8 @@ type symbolRules struct {
 	tickRaw string
 }
 
-// USDMClient 向币安 USDT-M 测试网发单。默认主机是 testnet.binancefuture.com。
-// 实盘主机在发单路径上直接拒绝，不会拨号。密钥只接受 network=testnet。
-// readOnly 为真时只允许 GET：交易台用它读行情、持仓和挂单，实盘主机也只开这一条只读路径。
+// USDMClient 向币安 USDT-M 发单。测网主机是 testnet.binancefuture.com，实盘主机是 fapi.binance.com。
+// 密钥 network 必须和主机一致。readOnly 为真时只允许 GET：交易台用它读行情、持仓和挂单。
 type USDMClient struct {
 	base     string
 	http     *http.Client
@@ -71,15 +70,28 @@ func (c *USDMClient) BaseURL() string {
 // SyncsPosition 表示持仓和挂单以交易所回报为准，而不是本地记账。
 func (c *USDMClient) SyncsPosition() bool { return true }
 
-// UseCredentials 只收下测试网密钥。调用发生在发单或同步持仓之前。
+// UseCredentials 收下与当前主机匹配的密钥。调用发生在发单或同步持仓之前。
 func (c *USDMClient) UseCredentials(creds Credentials) error {
-	if creds.Network != ModeTestnet || creds.APIKey == "" || creds.APISecret == "" {
+	if creds.APIKey == "" || creds.APISecret == "" || !c.acceptsNetwork(creds.Network) {
 		return ErrKeyNotUsable
 	}
 	c.mu.Lock()
 	c.creds = creds
 	c.mu.Unlock()
 	return nil
+}
+
+// acceptsNetwork 要求密钥 network 和主机一致。
+// 测试网主机只收 testnet，fapi.binance.com 只收 live。单测用的非币安主机仍只收 testnet。
+func (c *USDMClient) acceptsNetwork(network string) bool {
+	switch c.baseNetwork() {
+	case ModeLive:
+		return network == ModeLive
+	case ModeTestnet:
+		return network == ModeTestnet
+	default:
+		return network == ModeTestnet
+	}
 }
 
 func (c *USDMClient) Rules(symbol string) (MarketRules, error) {
@@ -544,7 +556,7 @@ func (c *USDMClient) guard() error {
 	c.mu.Lock()
 	creds := c.creds
 	c.mu.Unlock()
-	if creds.Network != ModeTestnet || creds.APIKey == "" || creds.APISecret == "" {
+	if creds.APIKey == "" || creds.APISecret == "" || !c.acceptsNetwork(creds.Network) {
 		return ErrKeyNotUsable
 	}
 	return nil
@@ -556,14 +568,8 @@ func (c *USDMClient) validateBase() error {
 		return invalid("测网地址不正确")
 	}
 	host := strings.ToLower(u.Hostname())
-	if host == "testnet.binancefuture.com" {
+	if host == "testnet.binancefuture.com" || host == "fapi.binance.com" {
 		return nil
-	}
-	if host == "fapi.binance.com" {
-		if c.readOnly {
-			return nil
-		}
-		return ErrLiveTransportDisabled
 	}
 	if strings.Contains(host, "binance") {
 		return ErrLiveTransportDisabled
