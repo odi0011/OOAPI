@@ -218,6 +218,34 @@ export interface EngineState {
   exchangeKeyId?: number;
   exchangeKeyLabel?: string;
   exchangeKeyNetwork?: string;
+  lastBacktest?: {
+    winRate?: number;
+    trades?: number;
+    netR?: number;
+    expectancyR?: number;
+  } | null;
+  entry?: TradeEntry | null;
+  entries?: TradeEntry[];
+}
+
+/** 一笔开仓当时的分数、门槛、是否加速，以及匹配的回测期望。 */
+export interface TradeEntry {
+  strategyId?: number;
+  symbol?: string;
+  side?: string;
+  entryPrice?: number;
+  qty?: number;
+  openedAt?: string;
+  score: number;
+  minScore: number;
+  boost: boolean;
+  forced: boolean;
+  winRate: number;
+  trades: number;
+  netR: number;
+  expectancyR: number;
+  expectancyUsdt: number;
+  oneRUsdt: number;
 }
 
 export interface EngineKline {
@@ -275,6 +303,7 @@ export interface EngineOrder {
   qty?: number;
   reduceOnly?: boolean;
   closePosition?: boolean;
+  entry?: TradeEntry | null;
 }
 
 /** GET /api/trading/engine/orders?strategyId= 。empty 为 true 即无挂单。 */
@@ -284,6 +313,7 @@ export interface EngineOrders {
   network: string;
   items: EngineOrder[];
   empty: boolean;
+  entries?: TradeEntry[];
 }
 
 /**
@@ -312,7 +342,7 @@ export async function getEnginePosition(strategyId: number): Promise<EnginePosit
 export async function getEngineOrders(strategyId: number): Promise<EngineOrders> {
   const data = await apiRequest<EngineOrders>(`/api/trading/engine/orders?strategyId=${strategyId}`);
   const items = data.items ?? [];
-  return { ...data, items, empty: data.empty ?? items.length === 0 };
+  return { ...data, items, entries: data.entries ?? [], empty: data.empty ?? items.length === 0 };
 }
 
 /** 启动检查。需要账户权益。不下单，也不打开测网全绿门闩。 */

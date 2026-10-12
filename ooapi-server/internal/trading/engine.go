@@ -97,6 +97,8 @@ type Snapshot struct {
 	MarkPrice          float64          `json:"markPrice,omitempty"`
 	UnrealizedPnl      float64          `json:"unrealizedPnl,omitempty"`
 	LastBacktest       *BacktestSummary `json:"lastBacktest,omitempty"`
+	// Entry 是当前持仓开仓时记下的分数和回测。平仓后清空，历史仍在开仓日志里。
+	Entry *EntryStamp `json:"entry,omitempty"`
 }
 
 // Runtime 是可以跨进程恢复的风险状态。不保存持仓，避免重启后自动重开。
@@ -120,6 +122,17 @@ type position struct {
 	Liq   float64
 }
 
+// entryDraft 是提交开仓时先记下的分数和回测。成交后才写成开仓记录。
+type entryDraft struct {
+	set      bool
+	score    int
+	minScore int
+	boost    bool
+	forced   bool
+	sum      BacktestSummary
+	hasSum   bool
+}
+
 // Engine 把信号、风控和状态机串起来。调用方一次只推进一个线程。
 type Engine struct {
 	cfg          Config
@@ -138,6 +151,11 @@ type Engine struct {
 	lastBarKey   string
 	lastMark     float64
 	lastBacktest *BacktestSummary
+	openEntry    *EntryStamp
+	pendingEntry entryDraft
+	justOpened   *EntryStamp
+	stepAt       time.Time
+	userID       int64
 	rFraction    float64
 	minNotional  float64
 	audit        []string
@@ -223,7 +241,16 @@ func (e *Engine) Snapshot() Snapshot {
 		MarkPrice:          e.lastMark,
 		UnrealizedPnl:      e.unrealized(e.lastMark),
 		LastBacktest:       e.lastBacktest,
+		Entry:              e.openEntry,
 	}
+}
+
+// SetUser 记下这台引擎属于哪个用户，开仓记录按它归档。
+func (e *Engine) SetUser(id int64) {
+	if e == nil {
+		return
+	}
+	e.userID = id
 }
 
 func (e *Engine) Trace() []State { return e.m.Trace() }
@@ -443,13 +470,16 @@ func (e *Engine) Stop(in StepInput) error {
 		}
 		if !pos.Open {
 			_ = e.ex.CancelOpen(e.cfg.Symbol)
+			e.clearStagedEntry()
 			e.clearPos()
 			return e.m.Transition(Event{Kind: EventStop, Reason: "operator_stop"})
 		}
 		if err := e.m.Transition(Event{Kind: EventEntryFilled, Reason: "filled before stop"}); err != nil {
+			e.clearStagedEntry()
 			return e.fail(err.Error())
 		}
 		e.pos = position{Side: pos.Side, Qty: pos.Qty, Entry: pos.Entry}
+		e.commitEntry(Fill{Status: StatusFilled, Price: pos.Entry, Qty: pos.Qty, Side: pos.Side})
 		return e.flatten(in, "operator_stop")
 	case StateInPosition, StateExitSubmitted:
 		return e.flatten(in, "operator_stop")
@@ -462,6 +492,8 @@ func (e *Engine) Stop(in StepInput) error {
 func (e *Engine) Step(in StepInput) (snap Snapshot, err error) {
 	if e != nil {
 		e.lastDetail = ""
+		e.justOpened = nil
+		e.stepAt = at(in.Now)
 	}
 	defer func() {
 		if e == nil {
@@ -563,6 +595,12 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 		gateReason = BacktestGate(e.cfg, sum)
 	}
 	need := e.cfg.Normalize().MinScore
+	score := emaScore
+	if !boosting {
+		if _, sc, serr := ScoreTrend(e.cfg, in.Candles, in.Higher); serr == nil {
+			score = sc
+		}
+	}
 	openSide := side
 	if boosting && openSide == "" {
 		openSide = emaSide
@@ -651,6 +689,7 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 			signal = "boost_entry"
 		}
 	}
+	e.stageEntry(in, score, need, boosting, forced)
 	releaseBoost := func() {
 		if reserved {
 			boostState.release(e.cfg.ID)
@@ -658,10 +697,12 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 		}
 	}
 	if err := e.authorize(); err != nil {
+		e.clearStagedEntry()
 		releaseBoost()
 		return e.Snapshot(), err
 	}
 	if err := e.m.Transition(Event{Kind: EventEntrySignal, Reason: signal}); err != nil {
+		e.clearStagedEntry()
 		releaseBoost()
 		return e.Snapshot(), err
 	}
@@ -674,6 +715,7 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 		MarginMode: e.cfg.MarginMode,
 	})
 	if err != nil {
+		e.clearStagedEntry()
 		releaseBoost()
 		return e.failed(err.Error())
 	}
@@ -682,7 +724,7 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 		reserved = false
 	}
 	e.lastBarKey = barKey(in.Candles)
-	return e.finishEntry(fill, boosting, forced, wr, emaScore, need)
+	return e.finishEntry(fill, boosting, forced, wr, score, need)
 }
 
 func (e *Engine) finishEntry(fill Fill, boosting, forced bool, wr float64, score, need int) (Snapshot, error) {
@@ -735,15 +777,18 @@ func (e *Engine) stepEntry(in StepInput) (Snapshot, error) {
 
 func (e *Engine) acceptFill(fill Fill) (Snapshot, error) {
 	if err := e.m.Transition(Event{Kind: EventEntryFilled, Reason: "filled"}); err != nil {
+		e.clearStagedEntry()
 		return e.failed(err.Error())
 	}
 	stop, take, liq, err := e.quoteProtection(fill.Side, fill.Price)
 	if err != nil {
+		e.clearStagedEntry()
 		return e.failed(err.Error())
 	}
 	e.rememberPlan(fill.Price, stop, liq)
 	if err := e.ensureProtection(fill.Side, fill.Price, stop, take, liq); err != nil {
 		e.pos = position{Side: fill.Side, Qty: fill.Qty, Entry: fill.Price, Stop: stop, Take: take, Liq: liq}
+		e.clearStagedEntry()
 		if errors.Is(err, ErrBlocked) {
 			e.log.Printf("[trading] %s entry=%.8f stop=%.8f liq=%.8f", ReasonStopBeyondLiquidation, fill.Price, stop, liq)
 			log.Printf("[trading] %s entry=%.8f stop=%.8f liq=%.8f", ReasonStopBeyondLiquidation, fill.Price, stop, liq)
@@ -756,6 +801,7 @@ func (e *Engine) acceptFill(fill Fill) (Snapshot, error) {
 	e.pos = position{Side: fill.Side, Qty: fill.Qty, Entry: fill.Price, Stop: stop, Take: take, Liq: liq}
 	e.log.Printf("[trading] entry %s entry=%.8f stop=%.8f liq=%.8f", fill.Side, fill.Price, stop, liq)
 	e.note("entry", string(fill.Side))
+	e.commitEntry(fill)
 	return e.Snapshot(), nil
 }
 
@@ -963,7 +1009,10 @@ func (e *Engine) fail(reason string) error {
 	return withReason(ErrNoAutoReopen, reason)
 }
 
-func (e *Engine) clearPos() { e.pos = position{} }
+func (e *Engine) clearPos() {
+	e.pos = position{}
+	e.openEntry = nil
+}
 
 func (e *Engine) rememberPlan(entry, stop, liq float64) {
 	e.lastEntry = entry
@@ -1193,8 +1242,79 @@ func (e *Engine) floorNotional(in StepInput) float64 {
 }
 
 func (e *Engine) rememberBacktest(sum BacktestSummary) {
-	copied := sum
+	copied := sum.WithExpectancy()
 	e.lastBacktest = &copied
+}
+
+func (e *Engine) stageEntry(in StepInput, score, minScore int, boost, forced bool) {
+	draft := entryDraft{set: true, score: score, minScore: minScore, boost: boost, forced: forced}
+	if in.Backtest != nil {
+		draft.sum = in.Backtest.WithExpectancy()
+		draft.hasSum = true
+	} else if e.lastBacktest != nil {
+		draft.sum = e.lastBacktest.WithExpectancy()
+		draft.hasSum = true
+	}
+	e.pendingEntry = draft
+}
+
+func (e *Engine) clearStagedEntry() {
+	e.pendingEntry = entryDraft{}
+}
+
+// commitEntry 在保护单挂上之后写下开仓记录。写库失败不改变持仓。
+func (e *Engine) commitEntry(fill Fill) {
+	if e == nil || !e.pendingEntry.set {
+		return
+	}
+	draft := e.pendingEntry
+	e.pendingEntry = entryDraft{}
+	oneR := PositionOneRUSDT(fill.Price, fill.Qty, e.cfg.StopR)
+	expR := 0.0
+	if draft.hasSum {
+		expR = draft.sum.ExpectancyR
+	}
+	stamp := EntryStamp{
+		Score:          draft.score,
+		MinScore:       draft.minScore,
+		Boost:          draft.boost,
+		Forced:         draft.forced,
+		WinRate:        draft.sum.WinRate,
+		Trades:         draft.sum.Trades,
+		NetR:           draft.sum.NetR,
+		ExpectancyR:    expR,
+		OneRUSDT:       oneR,
+		ExpectancyUSDT: expR * oneR,
+	}
+	if !draft.hasSum {
+		stamp.WinRate = 0
+		stamp.Trades = 0
+		stamp.NetR = 0
+	}
+	opened := e.stepAt
+	if opened.IsZero() {
+		opened = time.Now().UTC()
+	}
+	e.openEntry = &stamp
+	copied := stamp
+	e.justOpened = &copied
+	if draft.boost && (e.lastAction == "entry" || e.lastAction == "") {
+		action := "boost_entry"
+		if draft.forced {
+			action = "boost_forced"
+		}
+		e.note(action, fmt.Sprintf("score %d/%d", draft.score, draft.minScore))
+	}
+	_ = SaveEntry(EntryRecord{
+		UserID:     e.userID,
+		StrategyID: e.cfg.ID,
+		Symbol:     e.cfg.Symbol,
+		Side:       string(fill.Side),
+		EntryPrice: fill.Price,
+		Qty:        fill.Qty,
+		OpenedAt:   opened,
+		EntryStamp: stamp,
+	})
 }
 
 func (e *Engine) markBar(in StepInput) {
@@ -1274,7 +1394,7 @@ func (e *Engine) recordTick(in StepInput, snap Snapshot, err error) {
 	if err != nil && msg == "" {
 		msg = err.Error()
 	}
-	AddEvent(DetectionEvent{
+	ev := DetectionEvent{
 		TS:                 at(in.Now),
 		Symbol:             e.cfg.Symbol,
 		Side:               side,
@@ -1284,5 +1404,12 @@ func (e *Engine) recordTick(in StepInput, snap Snapshot, err error) {
 		Msg:                msg,
 		DayRealized:        snap.DayRealized,
 		CumulativeRealized: snap.CumulativeRealized,
-	})
+	}
+	if e.justOpened != nil && (snap.LastAction == "entry" || snap.LastAction == "boost_entry" || snap.LastAction == "boost_forced") {
+		ev.Entry = e.justOpened
+		ev.Score = e.justOpened.Score
+		ev.WinRate = e.justOpened.WinRate
+	}
+	e.justOpened = nil
+	AddEvent(ev)
 }

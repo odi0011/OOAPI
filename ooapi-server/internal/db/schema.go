@@ -327,6 +327,33 @@ var schemaStatements = []string{
 		KEY idx_trading_strategies_user (user_id, updated_at),
 		KEY idx_trading_strategies_key (exchange_key_id)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+	// 每一笔开仓当时的分数、门槛、是否加速，以及该策略配置的回测统计。
+	// 进程重启后事件环会空，历史从这张表读回来。
+	`CREATE TABLE IF NOT EXISTS trading_entries (
+		id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+		user_id          BIGINT UNSIGNED NOT NULL,
+		strategy_id      BIGINT UNSIGNED NOT NULL,
+		symbol           VARCHAR(32)     NOT NULL,
+		side             VARCHAR(8)      NOT NULL DEFAULT '',
+		score            INT             NOT NULL DEFAULT 0,
+		min_score        INT             NOT NULL DEFAULT 0,
+		boost            TINYINT         NOT NULL DEFAULT 0,
+		forced           TINYINT         NOT NULL DEFAULT 0,
+		win_rate         DECIMAL(12,6)   NOT NULL DEFAULT 0,
+		trade_count      INT             NOT NULL DEFAULT 0,
+		net_r            DECIMAL(20,8)   NOT NULL DEFAULT 0,
+		expectancy_r     DECIMAL(20,8)   NOT NULL DEFAULT 0,
+		expectancy_usdt  DECIMAL(20,8)   NOT NULL DEFAULT 0,
+		one_r_usdt       DECIMAL(20,8)   NOT NULL DEFAULT 0,
+		entry_price      DECIMAL(20,8)   NOT NULL DEFAULT 0,
+		qty              DECIMAL(20,8)   NOT NULL DEFAULT 0,
+		opened_at        DATETIME        NOT NULL,
+		created_at       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (id),
+		KEY idx_trading_entries_strategy (user_id, strategy_id, opened_at),
+		KEY idx_trading_entries_opened (opened_at)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 }
 
 // columnMigrations 给已存在的表补列。
@@ -440,6 +467,25 @@ var columnMigrations = map[string][]columnDef{
 		{"scalp_tp_pct", "DECIMAL(8,6) NOT NULL DEFAULT 0.003000"},
 		{"scalp_sl_pct", "DECIMAL(8,6) NOT NULL DEFAULT 0.003000"},
 		{"running", "TINYINT NOT NULL DEFAULT 0"},
+	},
+	"trading_entries": {
+		{"user_id", "BIGINT UNSIGNED NOT NULL DEFAULT 0"},
+		{"strategy_id", "BIGINT UNSIGNED NOT NULL DEFAULT 0"},
+		{"symbol", "VARCHAR(32) NOT NULL DEFAULT ''"},
+		{"side", "VARCHAR(8) NOT NULL DEFAULT ''"},
+		{"score", "INT NOT NULL DEFAULT 0"},
+		{"min_score", "INT NOT NULL DEFAULT 0"},
+		{"boost", "TINYINT NOT NULL DEFAULT 0"},
+		{"forced", "TINYINT NOT NULL DEFAULT 0"},
+		{"win_rate", "DECIMAL(12,6) NOT NULL DEFAULT 0"},
+		{"trade_count", "INT NOT NULL DEFAULT 0"},
+		{"net_r", "DECIMAL(20,8) NOT NULL DEFAULT 0"},
+		{"expectancy_r", "DECIMAL(20,8) NOT NULL DEFAULT 0"},
+		{"expectancy_usdt", "DECIMAL(20,8) NOT NULL DEFAULT 0"},
+		{"one_r_usdt", "DECIMAL(20,8) NOT NULL DEFAULT 0"},
+		{"entry_price", "DECIMAL(20,8) NOT NULL DEFAULT 0"},
+		{"qty", "DECIMAL(20,8) NOT NULL DEFAULT 0"},
+		{"opened_at", "DATETIME NULL"},
 	},
 	"logs": {
 		{"user_agent", "VARCHAR(512) NOT NULL DEFAULT '' AFTER ip"},

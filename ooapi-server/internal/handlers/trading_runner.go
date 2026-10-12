@@ -26,6 +26,7 @@ func runnerDisabled() bool {
 // StartTradingRunner 恢复数据库里 running=1 的策略，并在每根 K 线收盘后推进。
 // TRADING_RUNNER=0 时不启动，只留手工 /api/trading/engine/step。
 func StartTradingRunner() {
+	installEntryLog()
 	if runnerDisabled() {
 		log.Printf("[trading] 进程内调度已关闭（TRADING_RUNNER）")
 		return

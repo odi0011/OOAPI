@@ -2,9 +2,11 @@ import { Button } from "@/components/arc/button/button";
 
 import LightweightCandleChart from "./LightweightCandleChart";
 import styles from "./TradingDesk.module.css";
-import type { EngineMarket, EngineOrders, EnginePosition } from "./tradingApi";
+import { formatExpectancyR, formatNetR, formatWinRate } from "./engineOverview";
+import type { EngineMarket, EngineOrders, EnginePosition, TradeEntry } from "./tradingApi";
 import {
   buildDeskStatus,
+  entryScoreText,
   formatAmount,
   levelText,
   orderKindText,
@@ -13,7 +15,10 @@ import {
   orderSourceText,
   pnlBoard,
   positionView,
+  sideText,
+  yesNo,
   type EngineSlice,
+  type TradeEntrySlice,
 } from "./tradingDeskView";
 
 export interface DeskReadErrors {
@@ -77,6 +82,7 @@ export default function TradingDesk({
         <StatusItem label="杠杆" value={status.leverageText} />
         <StatusItem label="保证金模式" value={status.marginModeText} />
         <StatusItem label="账户" value={status.accountLabel} />
+        <StatusItem label="回测期望" value={formatExpectancyR(engine?.lastBacktest?.expectancyR)} />
       </dl>
       {readErrors?.state ? <p className={styles.readError}>{readErrors.state}</p> : null}
 
@@ -146,6 +152,7 @@ export default function TradingDesk({
           </div>
         )}
         {position != null && readErrors?.position ? <p className={styles.readError}>{readErrors.position}</p> : null}
+        {engine?.entry ? <OpenEntryNote entry={engine.entry} /> : null}
       </section>
 
       <section className={styles.panel} aria-label="委托">
@@ -154,6 +161,7 @@ export default function TradingDesk({
           <p>入场单，以及止损、止盈。条件单来源是 algo。</p>
         </header>
         <OrdersTable orders={orders} loading={loading} error={readErrors?.orders} />
+        <EntriesTable entries={orders?.entries} />
       </section>
 
       <section className={styles.panel} aria-label="已实现盈亏">
@@ -187,6 +195,72 @@ export default function TradingDesk({
       </section>
     </div>
   );
+}
+
+function OpenEntryNote({ entry }: { entry: TradeEntrySlice }) {
+  return (
+    <p className={styles.pageLead}>
+      本笔开仓 {entryScoreText(entry)}，加速 {yesNo(entry.boost)}，强制 {yesNo(entry.forced)}，回测期望{" "}
+      {formatExpectancyR(entry.expectancyR)}（{formatAmount(entry.expectancyUsdt ?? undefined)} USDT）
+    </p>
+  );
+}
+
+function EntriesTable({ entries }: { entries?: TradeEntry[] | null }) {
+  if (entries == null) return null;
+  return (
+    <div>
+      <header className={styles.panelHead}>
+        <h2>开仓记录</h2>
+        <p>每笔开仓当时的分数、门槛、是否加速或强制，以及该策略配置的回测胜率、笔数、净 R 和每笔期望。重启后仍在。</p>
+      </header>
+      {entries.length === 0 ? (
+        <p className={styles.emptyTitle}>还没有开仓记录</p>
+      ) : (
+        <div className={styles.tableWrap}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>方向</th>
+                <th>分数</th>
+                <th>加速</th>
+                <th>强制</th>
+                <th>胜率</th>
+                <th>笔数</th>
+                <th>净R</th>
+                <th>期望R</th>
+                <th>期望USDT</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((entry, index) => (
+                <tr key={`${entry.openedAt ?? "open"}-${entry.symbol ?? ""}-${index}`}>
+                  <td>{formatOpened(entry.openedAt)}</td>
+                  <td>{sideText(entry.side)}</td>
+                  <td>{entryScoreText(entry)}</td>
+                  <td>{yesNo(entry.boost)}</td>
+                  <td>{yesNo(entry.forced)}</td>
+                  <td>{formatWinRate(entry.winRate)}</td>
+                  <td>{entry.trades}</td>
+                  <td>{formatNetR(entry.netR)}</td>
+                  <td>{formatExpectancyR(entry.expectancyR)}</td>
+                  <td>{formatAmount(entry.expectancyUsdt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatOpened(value: string | undefined): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("zh-CN", { hour12: false });
 }
 
 function StatusItem({ label, value }: { label: string; value: string }) {

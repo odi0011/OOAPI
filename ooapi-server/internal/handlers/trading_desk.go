@@ -150,12 +150,23 @@ func GetTradingOrders(c *gin.Context) {
 	items := make([]trading.DeskOrder, 0, len(orders)+len(algos))
 	items = append(items, orders...)
 	items = append(items, algos...)
+	entries := strategyEntries(user.ID, row.ID)
+	if snap, found := trading.DefaultHub().State(user.ID, row.ID); found && snap.Entry != nil {
+		for i := range items {
+			if items[i].Kind != trading.OrderKindEntry {
+				continue
+			}
+			stamp := *snap.Entry
+			items[i].Entry = &stamp
+		}
+	}
 	ok(c, gin.H{
 		"strategyId": row.ID,
 		"symbol":     symbol,
 		"network":    row.Record.Mode,
 		"items":      items,
 		"empty":      len(items) == 0,
+		"entries":    entries,
 	})
 }
 
