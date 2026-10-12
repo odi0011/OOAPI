@@ -175,8 +175,8 @@ export function LoginCentered({
   emailCodeEnabled = false,
   oauthProviders = [],
   fullScreen = false,
-  termsHref = "#terms",
-  privacyHref = "#privacy",
+  termsHref,
+  privacyHref,
   className,
 }: LoginCenteredProps) {
   const reduce = !!useReducedMotion();
@@ -347,6 +347,11 @@ export function LoginCentered({
     };
   }
 
+  // #terms / #privacy 这类锚点没有对应文档，点了只会改状态栏文案。
+  // 没有真实地址就不渲染，避免空链。
+  const termsLink = documentHref(termsHref);
+  const privacyLink = documentHref(privacyHref);
+
   const showOAuth = oauthProviders.length > 0;
   // 「或」分隔线只在上下都有内容时才画。
   const showDivider = showOAuth && (passwordEnabled || emailCodeEnabled);
@@ -368,10 +373,10 @@ export function LoginCentered({
           <img src="/logo.jpg" alt="" width={20} height={20} style={{ borderRadius: 9999, objectFit: "cover", display: "block" }} />
           OOAPI
         </span>
-        <p className={styles.switch}>
+        {onSignUp && <p className={styles.switch}>
           <span className={styles.switchPrompt}>还没有账号？</span>
           <button type="button" className={styles.switchButton} onClick={onSignUp}>立即注册</button>
-        </p>
+        </p>}
       </header>
 
       <div className={styles.stage}>
@@ -476,10 +481,10 @@ export function LoginCentered({
       <footer className={styles.foot}>
         <p className={styles.srOnly} role="status" aria-live="polite">{status}</p>
         <span className={styles.status} aria-hidden="true"><AnimatePresence mode="popLayout" initial={false}><motion.span key={status} {...swap(reduce)}>{status}</motion.span></AnimatePresence></span>
-        <nav className={styles.legal} aria-label="Legal">
-          <a href={termsHref} onClick={openLegal(termsHref, "服务条款")}>服务条款</a>
-          <a href={privacyHref} onClick={openLegal(privacyHref, "隐私政策")}>隐私政策</a>
-        </nav>
+        {(termsLink || privacyLink) && <nav className={styles.legal} aria-label="Legal">
+          {termsLink && <a href={termsLink} onClick={openLegal(termsLink, "服务条款")}>服务条款</a>}
+          {privacyLink && <a href={privacyLink} onClick={openLegal(privacyLink, "隐私政策")}>隐私政策</a>}
+        </nav>}
       </footer>
 
       {noMethodAvailable && (
@@ -489,6 +494,13 @@ export function LoginCentered({
       )}
     </section>
   );
+}
+
+/** 只接受能打开的文档地址。空串和 #hash 都视为没有文档。 */
+function documentHref(href?: string): string {
+  const trimmed = href?.trim() ?? "";
+  if (!trimmed || trimmed.startsWith("#")) return "";
+  return trimmed;
 }
 
 export default LoginCentered;

@@ -12,7 +12,15 @@ export interface AuthProviders {
   oauth: OAuthProvider[];
   email_code_enabled: boolean;
   password_enabled: boolean;
+  /**
+   * 是否开放注册。
+   * 后端只有一个选项 password_register_enabled：
+   * 这个接口把它叫 register_enabled，/api/status 叫 password_register_enabled。
+   * 入口和 /register 门禁只认这里，不再另读 status 字段，避免两套开关各说各话。
+   */
   register_enabled: boolean;
+  /** providers 接口已结束（成功或失败）。未结束前按关闭处理，避免注册入口先闪出来。 */
+  ready: boolean;
 }
 
 // 默认全部关闭。后端未就绪或请求失败时，
@@ -22,6 +30,7 @@ const DEFAULT: AuthProviders = {
   email_code_enabled: false,
   password_enabled: true,
   register_enabled: false,
+  ready: false,
 };
 
 const AuthProvidersContext = createContext<AuthProviders>(DEFAULT);
@@ -48,10 +57,13 @@ export function AuthProvidersProvider({ children }: { children: ReactNode }) {
           email_code_enabled: !!data.email_code_enabled,
           password_enabled: data.password_enabled !== false,
           register_enabled: !!data.register_enabled,
+          ready: true,
         });
       })
       .catch(() => {
-        /* 保持默认（全关），不阻塞页面渲染 */
+        if (!alive) return;
+        // 拉不到开关时保持关闭，但要结束等待，否则 /register 会一直停在加载。
+        setProviders((prev) => ({ ...prev, ready: true }));
       });
     return () => {
       alive = false;
