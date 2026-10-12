@@ -382,9 +382,12 @@ type binanceFake struct {
 }
 
 type fakeAlgo struct {
-	id      int64
-	kind    string
-	posSide string
+	id       int64
+	kind     string
+	posSide  string
+	side     string
+	trigger  string
+	closePos bool
 }
 
 func newBinanceFake(t *testing.T, step, minQty, tick, minNotional string) *binanceFake {
@@ -533,7 +536,10 @@ func (f *binanceFake) algo(w http.ResponseWriter, method string, values url.Valu
 			f.t.Errorf("one-way algo sent positionSide %#v", values)
 		}
 		f.algoSeq++
-		f.algos = append(f.algos, fakeAlgo{id: f.algoSeq, kind: values.Get("type"), posSide: values.Get("positionSide")})
+		f.algos = append(f.algos, fakeAlgo{
+			id: f.algoSeq, kind: values.Get("type"), posSide: values.Get("positionSide"),
+			side: values.Get("side"), trigger: values.Get("triggerPrice"), closePos: values.Get("closePosition") == "true",
+		})
 		_, _ = io.WriteString(w, `{"algoId":`+strconv.FormatInt(f.algoSeq, 10)+`,"algoStatus":"NEW","orderType":"`+values.Get("type")+`"}`)
 	default:
 		f.t.Errorf("algo type %#v", values)
@@ -585,11 +591,21 @@ func (f *binanceFake) positionJSON() string {
 func (f *binanceFake) algoOrdersJSON() string {
 	items := make([]string, 0, len(f.algos))
 	for _, order := range f.algos {
-		side := ""
+		extra := ""
 		if order.posSide != "" {
-			side = `,"positionSide":"` + order.posSide + `"`
+			extra += `,"positionSide":"` + order.posSide + `"`
 		}
-		items = append(items, `{"algoId":`+strconv.FormatInt(order.id, 10)+`,"symbol":"XRPUSDT","orderType":"`+order.kind+`","algoStatus":"NEW"`+side+`}`)
+		if order.side != "" {
+			extra += `,"side":"` + order.side + `"`
+		}
+		if order.trigger != "" {
+			extra += `,"triggerPrice":"` + order.trigger + `"`
+		}
+		closePos := "false"
+		if order.closePos {
+			closePos = "true"
+		}
+		items = append(items, `{"algoId":`+strconv.FormatInt(order.id, 10)+`,"symbol":"XRPUSDT","orderType":"`+order.kind+`","algoStatus":"NEW","closePosition":`+closePos+extra+`}`)
 	}
 	return "[" + strings.Join(items, ",") + "]"
 }

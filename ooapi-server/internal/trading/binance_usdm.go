@@ -278,30 +278,46 @@ func (c *USDMClient) PlaceProtection(req Protection) error {
 	if err != nil {
 		return err
 	}
-	hasStop, hasTake := protectionLegs(open, posSide)
-	ackedStop, ackedTake := hasStop, hasTake
-	// 只补缺的那一腿。已经挂上的止损或止盈留着，避免重试时打出第二套。
-	if !hasStop {
-		id, err := c.conditional(req.Symbol, exit, posSide, "STOP_MARKET", stop, raw.tickRaw)
-		if err != nil {
-			return err
-		}
-		if id <= 0 {
-			return invalid("止损没有返回 algoId")
-		}
-		ackedStop = true
+	// 价格、方向、closePosition 都对得上的那一腿直接沿用，避免刚挂上的单还没出现在列表里时再挂一套。
+	// 触发价差超过一个 tick 的旧单先撤再挂，止盈留下的止损不能套到新仓上。
+	ackedStop, err := c.ensureLeg(req.Symbol, exit, posSide, "STOP_MARKET", stop, rules.TickSize, raw.tickRaw, open)
+	if err != nil {
+		return err
 	}
-	if !hasTake {
-		id, err := c.conditional(req.Symbol, exit, posSide, "TAKE_PROFIT_MARKET", take, raw.tickRaw)
-		if err != nil {
-			return err
-		}
-		if id <= 0 {
-			return invalid("止盈没有返回 algoId")
-		}
-		ackedTake = true
+	ackedTake, err := c.ensureLeg(req.Symbol, exit, posSide, "TAKE_PROFIT_MARKET", take, rules.TickSize, raw.tickRaw, open)
+	if err != nil {
+		return err
 	}
-	return c.confirmProtection(req.Symbol, posSide, ackedStop, ackedTake)
+	return c.confirmProtection(req.Symbol, exit, posSide, stop, take, rules.TickSize, ackedStop, ackedTake)
+}
+
+// ensureLeg 复用触发价落在一个 tick 内、且平仓语义一致的条件单。
+// 同一合约、同一持仓方向上对不上的止损或止盈先撤掉，再补一张新的。
+func (c *USDMClient) ensureLeg(symbol, exit, posSide, orderType string, price, tick float64, tickRaw string, open []algoOrder) (bool, error) {
+	kept := false
+	for _, order := range open {
+		if !sameProtectionLeg(order, symbol, posSide, orderType) {
+			continue
+		}
+		if !kept && legFits(order, exit, price, tick) {
+			kept = true
+			continue
+		}
+		if err := c.cancelAlgo(order.AlgoID); err != nil {
+			return false, err
+		}
+	}
+	if kept {
+		return true, nil
+	}
+	id, err := c.conditional(symbol, exit, posSide, orderType, price, tickRaw)
+	if err != nil {
+		return false, err
+	}
+	if id <= 0 {
+		return false, invalid("保护单没有返回 algoId")
+	}
+	return true, nil
 }
 
 // protectionConfirmWait 是挂单回执已经成功、但条件单列表还没跟上时的复查窗口。
@@ -312,14 +328,16 @@ const protectionConfirmGap = 200 * time.Millisecond
 
 // confirmProtection 先等挂单响应，再读 openAlgoOrders。
 // 列表会晚于回执出现。两边都拿到了 algoId 时，空列表不算失败，也不再补单。
-func (c *USDMClient) confirmProtection(symbol, posSide string, ackedStop, ackedTake bool) error {
+// 列表里的单必须触发价仍在一个 tick 内，旧价的止损不能把确认提前放行。
+func (c *USDMClient) confirmProtection(symbol, exit, posSide string, stop, take, tick float64, ackedStop, ackedTake bool) error {
 	deadline := time.Now().Add(protectionConfirmWait)
 	for {
 		open, err := c.openAlgoOrders(symbol)
 		if err != nil {
 			return err
 		}
-		hasStop, hasTake := protectionLegs(open, posSide)
+		hasStop := hasMatchingLeg(open, symbol, exit, posSide, "STOP_MARKET", stop, tick)
+		hasTake := hasMatchingLeg(open, symbol, exit, posSide, "TAKE_PROFIT_MARKET", take, tick)
 		if hasStop && hasTake {
 			return nil
 		}
@@ -333,19 +351,49 @@ func (c *USDMClient) confirmProtection(symbol, posSide string, ackedStop, ackedT
 	}
 }
 
-func protectionLegs(orders []algoOrder, posSide string) (stop, take bool) {
+func hasMatchingLeg(orders []algoOrder, symbol, exit, posSide, orderType string, price, tick float64) bool {
 	for _, order := range orders {
-		if !legMatches(order, posSide) {
-			continue
-		}
-		switch order.kind() {
-		case "STOP_MARKET":
-			stop = true
-		case "TAKE_PROFIT_MARKET":
-			take = true
+		if sameProtectionLeg(order, symbol, posSide, orderType) && legFits(order, exit, price, tick) {
+			return true
 		}
 	}
-	return stop, take
+	return false
+}
+
+func sameProtectionLeg(order algoOrder, symbol, posSide, orderType string) bool {
+	if order.Symbol != "" && symbol != "" && !strings.EqualFold(order.Symbol, symbol) {
+		return false
+	}
+	if order.kind() != orderType {
+		return false
+	}
+	return legMatches(order, posSide)
+}
+
+// legFits 要求 closePosition 平仓、方向一致，并且触发价落在新价格的一个 tick 以内。
+func legFits(order algoOrder, exitSide string, price, tick float64) bool {
+	if !order.ClosePosition {
+		return false
+	}
+	if exitSide != "" && order.Side != "" && !strings.EqualFold(order.Side, exitSide) {
+		return false
+	}
+	trigger := float64(order.TriggerPrice)
+	if trigger <= 0 {
+		trigger = float64(order.StopPrice)
+	}
+	return priceWithinTick(trigger, price, tick)
+}
+
+func priceWithinTick(got, want, tick float64) bool {
+	if got <= 0 || want <= 0 {
+		return false
+	}
+	slack := tick
+	if slack < 0 {
+		slack = 0
+	}
+	return math.Abs(got-want) <= slack+1e-8
 }
 
 func legMatches(order algoOrder, posSide string) bool {
@@ -566,11 +614,34 @@ func (c *USDMClient) hedge() (bool, error) {
 }
 
 type algoOrder struct {
-	AlgoID       int64  `json:"algoId"`
-	Symbol       string `json:"symbol"`
-	OrderType    string `json:"orderType"`
-	Type         string `json:"type"`
-	PositionSide string `json:"positionSide"`
+	AlgoID        int64    `json:"algoId"`
+	Symbol        string   `json:"symbol"`
+	OrderType     string   `json:"orderType"`
+	Type          string   `json:"type"`
+	Side          string   `json:"side"`
+	PositionSide  string   `json:"positionSide"`
+	TriggerPrice  flexNum  `json:"triggerPrice"`
+	StopPrice     flexNum  `json:"stopPrice"`
+	ClosePosition flexBool `json:"closePosition"`
+}
+
+// flexBool 同时接受币安返回的 true 和 "true"。
+type flexBool bool
+
+func (b *flexBool) UnmarshalJSON(data []byte) error {
+	if b == nil {
+		return errors.New("nil")
+	}
+	text := strings.Trim(strings.TrimSpace(string(data)), `"`)
+	switch strings.ToLower(text) {
+	case "true", "1":
+		*b = true
+	case "false", "0", "null", "":
+		*b = false
+	default:
+		return fmt.Errorf("closePosition %s", data)
+	}
+	return nil
 }
 
 func (o algoOrder) kind() string {
@@ -608,12 +679,22 @@ func (c *USDMClient) cancelAlgoOrders(symbol string) error {
 		if order.AlgoID == 0 {
 			continue
 		}
-		_, err := c.signed(http.MethodDelete, "/fapi/v1/algoOrder", url.Values{
-			"algoId": {strconv.FormatInt(order.AlgoID, 10)},
-		})
-		if err != nil && !errors.Is(err, errNoOpenOrder) {
+		if err := c.cancelAlgo(order.AlgoID); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (c *USDMClient) cancelAlgo(id int64) error {
+	if id == 0 {
+		return invalid("条件单缺少 algoId")
+	}
+	_, err := c.signed(http.MethodDelete, "/fapi/v1/algoOrder", url.Values{
+		"algoId": {strconv.FormatInt(id, 10)},
+	})
+	if err != nil && !errors.Is(err, errNoOpenOrder) {
+		return err
 	}
 	return nil
 }
