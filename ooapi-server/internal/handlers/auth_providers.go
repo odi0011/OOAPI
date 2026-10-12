@@ -12,6 +12,7 @@ import (
 // 前端只需要知道显示哪些按钮、跳哪个地址。
 func PublicAuthProviders(c *gin.Context) {
 	baseURL := requestBaseURL(c)
+	c.Header("Cache-Control", "no-store")
 
 	ok(c, gin.H{
 		"oauth":              services.EnabledOAuthProviders(baseURL),
