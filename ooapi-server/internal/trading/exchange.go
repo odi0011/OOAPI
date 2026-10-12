@@ -53,7 +53,7 @@ type Position struct {
 }
 
 // Exchange 是策略引擎和交易所之间的边界。
-// Paper 只给状态机单测。测网实单在 USDMClient。实盘用不会发单的 LiveStub。
+// Paper 只给状态机单测。测网和已开门闩的实盘都走 USDMClient，主机不同。
 type Exchange interface {
 	PlaceEntry(req EntryOrder) (Fill, error)
 	PlaceProtection(req Protection) error
@@ -195,14 +195,14 @@ func (s *LiveStub) Position(symbol string) (Position, error) {
 	return Position{}, nil
 }
 
-// USDT-M 合约地址。测网客户端只访问测试网；实盘桩不拨号。
+// USDT-M 合约地址。测网和实盘共用同一套 REST，只是主机不同。
 const (
 	BinanceUSDMTestnetBase = "https://testnet.binancefuture.com"
 	BinanceUSDMLiveBase    = "https://fapi.binance.com"
 )
 
 // NewExchange 按策略 mode 选择客户端。
-// 测网走币安 USDT-M 测试网。实盘在门闩关闭时直接拒绝，打开后也只给不会发单的桩。
+// 测网走币安 USDT-M 测试网。实盘在门闩关闭时直接拒绝；打开后用实盘主机发单。
 func NewExchange(cfg Config) (Exchange, error) {
 	switch cfg.Mode {
 	case ModeTestnet:
@@ -211,7 +211,7 @@ func NewExchange(cfg Config) (Exchange, error) {
 		if !TestnetGreen() {
 			return nil, ErrLiveGateClosed
 		}
-		return NewLiveStub(), nil
+		return NewUSDMClient(BinanceUSDMLiveBase), nil
 	default:
 		return nil, ErrBadMode
 	}

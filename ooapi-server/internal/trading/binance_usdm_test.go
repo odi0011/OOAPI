@@ -137,25 +137,33 @@ func TestEngineBlocksWhenStepSizeBreaksMinNotional(t *testing.T) {
 	}
 }
 
-func TestUSDMClientRefusesLiveHostAndLiveKey(t *testing.T) {
+func TestUSDMClientMatchesKeyNetworkToHost(t *testing.T) {
 	dialed := false
 	client := NewUSDMClient(BinanceUSDMLiveBase)
 	client.http.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
 		dialed = true
 		return nil, errors.New("dialed")
 	})
-	if err := client.UseCredentials(Credentials{APIKey: "live-key-0123456789", APISecret: "live-secret-0123456789", Network: ModeLive}); !errors.Is(err, ErrKeyNotUsable) {
-		t.Fatal(err)
+	if err := client.UseCredentials(Credentials{APIKey: "test-key-0123456789", APISecret: "test-secret-0123456789", Network: ModeTestnet}); !errors.Is(err, ErrKeyNotUsable) {
+		t.Fatalf("testnet key on live host err=%v", err)
 	}
-	if err := client.UseCredentials(Credentials{APIKey: "test-key-0123456789", APISecret: "test-secret-0123456789", Network: ModeTestnet}); err != nil {
+	if err := client.UseCredentials(Credentials{APIKey: "live-key-0123456789", APISecret: "live-secret-0123456789", Network: ModeLive}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := client.PlaceEntry(EntryOrder{Symbol: SymbolXRPUSDT, Side: SideLong, Qty: 10, Price: 1, Leverage: 3, MarginMode: MarginIsolated})
-	if !errors.Is(err, ErrLiveTransportDisabled) || dialed {
+	if errors.Is(err, ErrLiveTransportDisabled) || errors.Is(err, ErrKeyNotUsable) || !dialed {
 		t.Fatalf("err=%v dialed=%v", err, dialed)
 	}
-	if NewUSDMTestnet().BaseURL() != BinanceUSDMTestnetBase {
+
+	testnet := NewUSDMTestnet()
+	if testnet.BaseURL() != BinanceUSDMTestnetBase {
 		t.Fatal("default base")
+	}
+	if err := testnet.UseCredentials(Credentials{APIKey: "live-key-0123456789", APISecret: "live-secret-0123456789", Network: ModeLive}); !errors.Is(err, ErrKeyNotUsable) {
+		t.Fatalf("live key on testnet host err=%v", err)
+	}
+	if err := testnet.UseCredentials(Credentials{APIKey: "test-key-0123456789", APISecret: "test-secret-0123456789", Network: ModeTestnet}); err != nil {
+		t.Fatal(err)
 	}
 }
 

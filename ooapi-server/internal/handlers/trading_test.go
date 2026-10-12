@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -295,6 +296,59 @@ func TestTradingEngineUsesNewestStrategyAndHidesSecrets(t *testing.T) {
 	}
 	if strings.Contains(refused.Body.String(), "live-api-secret") {
 		t.Fatal("live refusal leaked secret")
+	}
+}
+
+func TestExchangeSecretOpenerAcceptsMatchingLiveKey(t *testing.T) {
+	useTradingDB(t)
+	owner := tradingUser(21)
+	const apiKey = "live-api-key-0123456789"
+	const apiSecret = "live-api-secret-abcdef9876"
+	created := callTrading(t, CreateExchangeKey, http.MethodPost, "/api/trading/exchange-keys", `{
+		"label": "实盘",
+		"network": "live",
+		"apiKey": "`+apiKey+`",
+		"apiSecret": "`+apiSecret+`"
+	}`, owner, "")
+	if created.Code != http.StatusOK {
+		t.Fatalf("create live key = %d %s", created.Code, created.Body.String())
+	}
+	keyID := int64(tradingData(t, created)["id"].(float64))
+	row := strategyRow{Record: strategyRecord{ExchangeKeyID: keyID, Mode: networkLive}}
+	creds, err := exchangeSecretOpener(owner.ID, row)()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creds.APIKey != apiKey || creds.APISecret != apiSecret || creds.Network != networkLive {
+		t.Fatalf("live creds network=%q key=%q", creds.Network, creds.APIKey)
+	}
+
+	row.Record.Mode = networkTestnet
+	if _, err := exchangeSecretOpener(owner.ID, row)(); !errors.Is(err, trading.ErrKeyNotUsable) {
+		t.Fatalf("live key on testnet strategy err=%v", err)
+	}
+
+	testnetKey := callTrading(t, CreateExchangeKey, http.MethodPost, "/api/trading/exchange-keys", `{
+		"label": "测网",
+		"network": "testnet",
+		"apiKey": "`+testAPIKey+`",
+		"apiSecret": "`+testAPISecret+`"
+	}`, owner, "")
+	if testnetKey.Code != http.StatusOK {
+		t.Fatalf("create testnet key = %d %s", testnetKey.Code, testnetKey.Body.String())
+	}
+	testnetID := int64(tradingData(t, testnetKey)["id"].(float64))
+	row = strategyRow{Record: strategyRecord{ExchangeKeyID: testnetID, Mode: networkLive}}
+	if _, err := exchangeSecretOpener(owner.ID, row)(); !errors.Is(err, trading.ErrKeyNotUsable) {
+		t.Fatalf("testnet key on live strategy err=%v", err)
+	}
+	row.Record.Mode = networkTestnet
+	creds, err = exchangeSecretOpener(owner.ID, row)()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creds.APIKey != testAPIKey || creds.APISecret != testAPISecret || creds.Network != networkTestnet {
+		t.Fatalf("testnet creds network=%q", creds.Network)
 	}
 }
 
