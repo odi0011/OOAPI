@@ -1,6 +1,7 @@
 package trading
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -236,6 +237,11 @@ func (e *Engine) authorize() error {
 	if creds.APIKey == "" || creds.APISecret == "" {
 		return invalid("交易所密钥是空的")
 	}
+	if sink, ok := e.ex.(interface{ UseCredentials(Credentials) error }); ok {
+		if err := sink.UseCredentials(creds); err != nil {
+			return err
+		}
+	}
 	e.secretOpens++
 	return nil
 }
@@ -423,10 +429,13 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 	if price <= 0 {
 		return e.Snapshot(), e.fail("mark price is required")
 	}
-	_, _, qty, err := SizePosition(e.cfg.MaxMarginUsdt, e.cfg.Leverage, price, e.minNotional)
+	qty, err := e.entryQty(price)
 	if err != nil {
-		e.note("blocked", "notional_below_minimum")
-		_ = e.m.Transition(Event{Kind: EventStartBlocked, Reason: "notional_below_minimum"})
+		if errors.Is(err, ErrNotionalBelowMin) {
+			e.note("blocked", "notional_below_minimum")
+			_ = e.m.Transition(Event{Kind: EventStartBlocked, Reason: "notional_below_minimum"})
+			return e.Snapshot(), err
+		}
 		return e.Snapshot(), err
 	}
 	if err := e.authorize(); err != nil {
@@ -455,6 +464,9 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 }
 
 func (e *Engine) stepEntry(in StepInput) (Snapshot, error) {
+	if err := e.authorize(); err != nil {
+		return e.Snapshot(), err
+	}
 	pos, err := e.ex.Position(e.cfg.Symbol)
 	if err != nil {
 		return e.Snapshot(), e.fail(err.Error())
@@ -462,9 +474,6 @@ func (e *Engine) stepEntry(in StepInput) (Snapshot, error) {
 	if !pos.Open {
 		e.note("entry", "waiting")
 		return e.Snapshot(), nil
-	}
-	if err := e.authorize(); err != nil {
-		return e.Snapshot(), err
 	}
 	return e.acceptFill(Fill{Status: StatusFilled, Price: pos.Entry, Qty: pos.Qty, Side: pos.Side})
 }
@@ -478,7 +487,7 @@ func (e *Engine) acceptFill(fill Fill) (Snapshot, error) {
 	if err != nil {
 		return e.Snapshot(), e.fail(err.Error())
 	}
-	if err := e.ex.PlaceProtection(Protection{Symbol: e.cfg.Symbol, Stop: stop, Take: take}); err != nil {
+	if err := e.ex.PlaceProtection(Protection{Symbol: e.cfg.Symbol, Stop: stop, Take: take, Side: fill.Side}); err != nil {
 		return e.Snapshot(), e.fail(err.Error())
 	}
 	e.pos = position{Side: fill.Side, Qty: fill.Qty, Entry: fill.Price, Stop: stop, Take: take}
@@ -487,6 +496,25 @@ func (e *Engine) acceptFill(fill Fill) (Snapshot, error) {
 }
 
 func (e *Engine) stepPosition(in StepInput) (Snapshot, error) {
+	if e.syncsPosition() {
+		if err := e.authorize(); err != nil {
+			return e.Snapshot(), err
+		}
+		pos, err := e.ex.Position(e.cfg.Symbol)
+		if err != nil {
+			return e.Snapshot(), err
+		}
+		if !pos.Open {
+			return e.finishExit(in, "exchange_flat", mark(in))
+		}
+		e.pos.Qty = pos.Qty
+		if pos.Entry > 0 {
+			e.pos.Entry = pos.Entry
+		}
+		if pos.Side != "" {
+			e.pos.Side = pos.Side
+		}
+	}
 	price := mark(in)
 	if price <= 0 {
 		return e.Snapshot(), e.fail("mark price is required")
@@ -497,6 +525,13 @@ func (e *Engine) stepPosition(in StepInput) (Snapshot, error) {
 	}
 	exit, reason, fillPrice := e.exitSignal(price, cross)
 	if !exit {
+		if e.syncsPosition() && e.pos.Stop > 0 && e.pos.Take > 0 {
+			if err := e.ex.PlaceProtection(Protection{
+				Symbol: e.cfg.Symbol, Stop: e.pos.Stop, Take: e.pos.Take, Side: e.pos.Side,
+			}); err != nil {
+				return e.Snapshot(), err
+			}
+		}
 		e.note("hold", string(e.pos.Side))
 		return e.Snapshot(), nil
 	}
@@ -627,6 +662,37 @@ func (e *Engine) fail(reason string) error {
 }
 
 func (e *Engine) clearPos() { e.pos = position{} }
+
+func (e *Engine) syncsPosition() bool {
+	syncer, ok := e.ex.(interface{ SyncsPosition() bool })
+	return ok && syncer.SyncsPosition()
+}
+
+func (e *Engine) entryQty(price float64) (float64, error) {
+	minNotional := e.minNotional
+	var step, minQty float64
+	if info, ok := e.ex.(interface {
+		Rules(symbol string) (MarketRules, error)
+	}); ok {
+		rules, err := info.Rules(e.cfg.Symbol)
+		if err != nil {
+			return 0, err
+		}
+		if rules.MinNotional > 0 {
+			minNotional = rules.MinNotional
+		}
+		step, minQty = rules.StepSize, rules.MinQty
+	}
+	_, _, qty, err := SizePosition(e.cfg.MaxMarginUsdt, e.cfg.Leverage, price, minNotional)
+	if err != nil {
+		return 0, err
+	}
+	qty = AlignQuantity(qty, step, minQty)
+	if qty <= 0 || qty*price+1e-9 < minNotional {
+		return 0, withReason(ErrNotionalBelowMin, "notional_below_minimum")
+	}
+	return qty, nil
+}
 
 func (e *Engine) cross(candles []Candle) (Cross, error) {
 	closes := make([]float64, len(candles))

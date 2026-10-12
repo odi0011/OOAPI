@@ -1,6 +1,9 @@
 package trading
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 // Side 是持仓方向。空字符串表示空仓。
 type Side string
@@ -54,6 +57,20 @@ func SizePosition(maxMargin float64, leverage int, price, minNotional float64) (
 		return 0, 0, 0, invalid("计算出的数量不是正数")
 	}
 	return margin, notional, qty, nil
+}
+
+// AlignQuantity 按交易所步长向下取整。取整后不够最小数量时返回 0，调用方按名义价值不足拒绝。
+func AlignQuantity(qty, step, minQty float64) float64 {
+	if qty <= 0 {
+		return 0
+	}
+	if step > 0 {
+		qty = math.Floor((qty/step)+1e-9) * step
+	}
+	if qty <= 0 || (minQty > 0 && qty+1e-12 < minQty) {
+		return 0
+	}
+	return qty
 }
 
 // DailyHaltBreached 判断当日净已实现盈亏是否触及日亏上限。
