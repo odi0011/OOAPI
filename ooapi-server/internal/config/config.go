@@ -26,6 +26,12 @@ type Config struct {
 	AdminUsername string
 	AdminPassword string
 	WebDir        string
+	// CORSOrigins 是允许携带凭据的跨域来源（CORS_ORIGINS，逗号分隔的完整 Origin）。
+	// 未配置时不反射任意 Origin；仅在开发默认下放行本机回环地址。
+	CORSOrigins []string
+	// CORSAllowLocalhost 为真时，额外允许 http(s)://localhost、127.0.0.1、::1（任意端口）。
+	// 显式列表已配置且未设置 CORS_ALLOW_LOCALHOST 时默认为假。
+	CORSAllowLocalhost bool
 }
 
 func Load() *Config {
@@ -35,16 +41,18 @@ func Load() *Config {
 	}
 
 	c := &Config{
-		Port:          getenv("PORT", "3001"),
-		DBHost:        getenv("DB_HOST", "127.0.0.1"),
-		DBPort:        getenv("DB_PORT", "3306"),
-		DBUser:        getenv("DB_USER", "ooapi"),
-		DBPassword:    os.Getenv("DB_PASSWORD"),
-		DBName:        getenv("DB_NAME", "ooapi"),
-		JWTSecret:     os.Getenv("JWT_SECRET"),
-		AdminUsername: getenv("ADMIN_USERNAME", "root"),
-		AdminPassword: os.Getenv("ADMIN_PASSWORD"),
-		WebDir:        getenv("WEB_DIR", "./web"),
+		Port:               getenv("PORT", "3001"),
+		DBHost:             getenv("DB_HOST", "127.0.0.1"),
+		DBPort:             getenv("DB_PORT", "3306"),
+		DBUser:             getenv("DB_USER", "ooapi"),
+		DBPassword:         os.Getenv("DB_PASSWORD"),
+		DBName:             getenv("DB_NAME", "ooapi"),
+		JWTSecret:          os.Getenv("JWT_SECRET"),
+		AdminUsername:      getenv("ADMIN_USERNAME", "root"),
+		AdminPassword:      os.Getenv("ADMIN_PASSWORD"),
+		WebDir:             getenv("WEB_DIR", "./web"),
+		CORSOrigins:        splitCSV(os.Getenv("CORS_ORIGINS")),
+		CORSAllowLocalhost: corsAllowLocalhost(os.Getenv("CORS_ORIGINS"), os.Getenv("CORS_ALLOW_LOCALHOST")),
 	}
 
 	if c.JWTSecret == "" {
@@ -61,6 +69,30 @@ func (c *Config) DSN() string {
 		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=Local&collation=utf8mb4_unicode_ci",
 		c.DBUser, c.DBPassword, c.DBHost, c.DBPort, c.DBName,
 	)
+}
+
+func splitCSV(raw string) []string {
+	out := []string{}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+// corsAllowLocalhost 决定是否额外放行本机 Origin。
+// 显式 true/false 优先；否则只有「还没配允许列表」的开发环境才放行。
+func corsAllowLocalhost(origins, flag string) bool {
+	switch strings.ToLower(strings.TrimSpace(flag)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return strings.TrimSpace(origins) == ""
+	}
 }
 
 func getenv(key, fallback string) string {

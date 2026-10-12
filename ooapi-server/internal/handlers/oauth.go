@@ -11,7 +11,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"ooapi/internal/auth"
 	"ooapi/internal/authz"
 	"ooapi/internal/db"
 	"ooapi/internal/models"
@@ -163,7 +162,7 @@ func OAuthCallback(c *gin.Context) {
 	}
 
 	role := authz.ParseRole(user.Role)
-	token, err := auth.Issue(services.JWTSecret(), user.ID, user.Username, user.Role)
+	token, err := issueSessionToken(user.ID, user.Username, user.Role)
 	if err != nil {
 		log.Printf("[oauth] 签发令牌失败: %v", err)
 		redirectAuthError(c, "登录失败，请重试")
@@ -182,9 +181,8 @@ func OAuthCallback(c *gin.Context) {
 
 	log.Printf("[oauth] %s 用户 %s（%s）登录成功，新用户=%v", providerKey, user.Username, role.Name(), isNew)
 
-	// 回到前端回调页，由它写入本地令牌并跳转。
-	// 令牌放在 fragment（#）里而不是 query：fragment 不会进服务器日志与 Referer。
-	target := "/auth/callback#token=" + token + "&new=" + boolFlag(isNew)
+	// 会话只放在 HttpOnly cookie 里。回调页不再从地址栏读取令牌。
+	target := "/auth/callback#new=" + boolFlag(isNew)
 	if redirectTo != "" && redirectTo != "/" {
 		target += "&next=" + strings.ReplaceAll(redirectTo, "&", "%26")
 	}

@@ -421,6 +421,13 @@ func AdminCreateChannel(c *gin.Context) {
 		tlsFingerprint = parsed
 	}
 
+	sealedChannelKey, err := services.SealChannelAPIKey(strings.TrimSpace(req.APIKey))
+	if err != nil {
+		log.Printf("[channel] 加密密钥失败: %v", err)
+		fail(c, http.StatusInternalServerError, "创建账号失败", "server_error")
+		return
+	}
+
 	res, err := exec(
 		`INSERT INTO channels (name, vendor, base_url, api_key, models, group_name, headers, model_paths,
 		                       model_bindings,
@@ -428,7 +435,7 @@ func AdminCreateChannel(c *gin.Context) {
 		                       priority, weight, concurrency, min_gap_ms, max_per_min, status)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(req.Name), strings.TrimSpace(req.Vendor), strings.TrimSpace(req.BaseURL),
-		strings.TrimSpace(req.APIKey), strings.Join(normalizeModelList(req.Models), ","),
+		sealedChannelKey, strings.Join(normalizeModelList(req.Models), ","),
 		optionalGroupName(req.GroupName), normalizeHeaders(req.Headers), normalizeModelPaths(req.ModelPaths),
 		requestBindingsRaw(req.ModelBindings),
 		contextBilling, namespace, remark, requireCaller, proxyURL, string(tlsFingerprint),
@@ -554,7 +561,13 @@ func AdminUpdateChannel(c *gin.Context) {
 		updates["base_url"] = v
 	}
 	if v := strings.TrimSpace(req.APIKey); v != "" {
-		updates["api_key"] = v
+		sealed, sealErr := services.SealChannelAPIKey(v)
+		if sealErr != nil {
+			log.Printf("[channel] 加密密钥失败: %v", sealErr)
+			fail(c, http.StatusInternalServerError, "更新账号失败", "server_error")
+			return
+		}
+		updates["api_key"] = sealed
 	}
 	if req.Models != nil {
 		updates["models"] = strings.Join(normalizeModelList(req.Models), ",")
@@ -752,6 +765,7 @@ func AdminTestChannel(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "读取账号配置失败", "server_error")
 		return
 	}
+	apiKey = services.OpenChannelAPIKey(apiKey)
 
 	probeModel := firstModel(modelsRaw)
 	if marker := services.DeviceCredentialMarker(ch.Method, id); marker != "" {
@@ -886,6 +900,7 @@ func AdminFetchModels(c *gin.Context) {
 			"SELECT base_url, api_key, COALESCE(headers, ''), COALESCE(proxy_url, '') FROM channels WHERE id = ?", req.ID,
 		).Scan(&dbBase, &dbKey, &dbHeaders, &dbProxy)
 		if err == nil {
+			dbKey = services.OpenChannelAPIKey(dbKey)
 			if key == "" {
 				key = strings.Split(dbKey, "\n")[0]
 			}
@@ -1143,7 +1158,11 @@ func fetchUpstreamModelsWithProxy(baseURL, apiKey, headers, proxyURL string) ([]
 	return out, nil
 }
 
-var probeClient = &http.Client{Timeout: 35 * time.Second}
+var probeClient = &http.Client{
+	Timeout:       35 * time.Second,
+	CheckRedirect: netguard.CheckRedirect,
+	Transport:     netguard.PublicTransport(),
+}
 
 // ---------- 辅助 ----------
 
@@ -1462,9 +1481,13 @@ func scanChannel(s interface{ Scan(...any) error }) (*Channel, error) {
 	// 密钥只回「是否已配置」与末四位，绝不回明文。
 	// 设备授权渠道的 api_key 是内部标识（ooapi-*-channel-{id}），不是密钥，
 	// 不能当作「已配置密钥」展示给前端。
-	if apiKey.Valid && apiKey.String != "" && !services.IsDeviceCredentialMarker(apiKey.String) {
+	plainKey := ""
+	if apiKey.Valid {
+		plainKey = services.OpenChannelAPIKey(apiKey.String)
+	}
+	if plainKey != "" && !services.IsDeviceCredentialMarker(plainKey) {
 		ch.HasKey = true
-		ch.KeyHint = keyHint(apiKey.String)
+		ch.KeyHint = keyHint(plainKey)
 	}
 	if ch.Method == "api" {
 		ch.HasCredential = ch.HasKey

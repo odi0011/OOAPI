@@ -3,6 +3,7 @@ package router
 import (
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +20,7 @@ func Setup(cfg *config.Config) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery(), corsMiddleware())
+	r.Use(gin.Logger(), gin.Recovery(), corsMiddleware(cfg))
 
 	r.MaxMultipartMemory = 32 << 20
 
@@ -323,15 +324,27 @@ func Setup(cfg *config.Config) *gin.Engine {
 	return r
 }
 
-// corsMiddleware 允许跨域调试。
-// 生产环境前端由本服务托管，这里主要服务本地开发。
-func corsMiddleware() gin.HandlerFunc {
+// corsMiddleware 只对允许列表里的 Origin 反射，并带上凭据。
+// 未列入的来源得不到 Access-Control-Allow-Origin，浏览器会丢掉带 cookie 的跨域响应。
+func corsMiddleware(cfg *config.Config) gin.HandlerFunc {
+	allow := map[string]struct{}{}
+	allowLocal := false
+	if cfg != nil {
+		allowLocal = cfg.CORSAllowLocalhost
+		for _, origin := range cfg.CORSOrigins {
+			origin = strings.TrimSpace(origin)
+			if origin != "" {
+				allow[origin] = struct{}{}
+			}
+		}
+	}
 	return func(c *gin.Context) {
-		origin := c.GetHeader("Origin")
-		if origin != "" {
+		origin := strings.TrimSpace(c.GetHeader("Origin"))
+		if origin != "" && originPermitted(origin, allow, allowLocal) {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Access-Control-Allow-Credentials", "true")
-			c.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
+			c.Header("Vary", "Origin")
+			c.Header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
 			c.Header("Access-Control-Allow-Headers", "Authorization,Content-Type,X-Requested-With")
 		}
 		if c.Request.Method == http.MethodOptions {
@@ -340,6 +353,24 @@ func corsMiddleware() gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+func originPermitted(origin string, allow map[string]struct{}, allowLocal bool) bool {
+	if _, ok := allow[origin]; ok {
+		return true
+	}
+	if !allowLocal {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 // registerSPA 托管前端构建产物。

@@ -10,7 +10,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"ooapi/internal/auth"
 	"ooapi/internal/authz"
 	"ooapi/internal/db"
 	"ooapi/internal/models"
@@ -82,6 +81,10 @@ func LoginWithEmailCode(c *gin.Context) {
 		fail(c, http.StatusBadRequest, err.Error(), "invalid_email")
 		return
 	}
+	if err := services.AllowAuthAttempt(c.ClientIP(), email); err != nil {
+		fail(c, http.StatusTooManyRequests, err.Error(), "rate_limited")
+		return
+	}
 
 	if err := services.VerifyLoginCode(email, req.Code); err != nil {
 		switch {
@@ -143,7 +146,7 @@ func LoginWithEmailCode(c *gin.Context) {
 		return
 	}
 
-	token, err := auth.Issue(services.JWTSecret(), id, username, role)
+	token, err := issueSessionToken(id, username, role)
 	if err != nil {
 		log.Printf("[emailcode] 签发令牌失败: %v", err)
 		fail(c, http.StatusInternalServerError, "登录失败，请稍后重试", "server_error")
@@ -160,13 +163,12 @@ func LoginWithEmailCode(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"token": token,
 			"is_new": isNew,
 			"user": gin.H{
-				"id":       id,
-				"username": username,
-				"email":    email,
-				"role":     role,
+				"id":        id,
+				"username":  username,
+				"email":     email,
+				"role":      role,
 				"role_name": authz.ParseRole(role).Name(),
 			},
 		},
