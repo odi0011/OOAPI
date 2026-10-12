@@ -73,6 +73,9 @@ func migrate() error {
 	if err := ensureIndex("tokens", "idx_tokens_key_hash", "CREATE INDEX idx_tokens_key_hash ON tokens (key_hash)"); err != nil {
 		return err
 	}
+	if err := relaxTradingRiskDefaults(); err != nil {
+		return err
+	}
 
 	log.Printf("[db] 表结构与列已就绪")
 	return nil
@@ -81,6 +84,22 @@ func migrate() error {
 type columnDef struct {
 	name       string
 	definition string
+}
+
+// relaxTradingRiskDefaults 把可选风控的列默认值改成关闭。
+// 已有行保持原值；新建且未写这些列的行不再带上 1U、连亏 3 次或 1.5U 暂停。
+func relaxTradingRiskDefaults() error {
+	stmts := []string{
+		"ALTER TABLE trading_strategies MODIFY COLUMN max_margin_per_trade_usdt DECIMAL(20,6) NOT NULL DEFAULT 0",
+		"ALTER TABLE trading_strategies MODIFY COLUMN max_consecutive_losses INT NOT NULL DEFAULT 0",
+		"ALTER TABLE trading_strategies MODIFY COLUMN pause_balance_usdt DECIMAL(20,6) NOT NULL DEFAULT 0",
+	}
+	for _, stmt := range stmts {
+		if _, err := DB.Exec(stmt); err != nil {
+			return fmt.Errorf("放宽策略风控默认值失败: %w", err)
+		}
+	}
+	return nil
 }
 
 func ensureColumn(table, name, definition string) error {

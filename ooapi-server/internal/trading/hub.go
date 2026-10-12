@@ -48,6 +48,7 @@ func DefaultHub() *Hub { return defaultHub }
 func ResetForTest() {
 	defaultHub = NewHub()
 	ResetTestnetGreen()
+	ResetBoostForTest()
 }
 
 // SetRunHook 注册运行标记回调。测试和进程启动都会换 Hub，回调要重新挂上。
@@ -141,6 +142,9 @@ func (h *Hub) Step(userID, strategyID int64, cfg Config, in StepInput, secrets S
 		}
 		if in.SkipReason == "" {
 			in.SkipReason = h.entrySkipLocked(cfg, eng)
+		}
+		if strings.EqualFold(cfg.Mode, ModeLive) {
+			in.LivePeerIDs = h.liveArmedIDsLocked()
 		}
 	}
 	eng.SetSecrets(secrets)
@@ -311,7 +315,7 @@ func (h *Hub) entrySkipLocked(cfg Config, self *Engine) string {
 		open++
 		margin += eng.marginInUse()
 	}
-	if open >= MaxOpenPositions {
+	if limit := cfg.OpenPositionLimit(); limit > 0 && open >= limit {
 		return ReasonPortfolioLimit
 	}
 	if acc, ok := h.accounts[cfg.ExchangeKeyID]; ok && acc.Known {
@@ -320,6 +324,21 @@ func (h *Hub) entrySkipLocked(cfg Config, self *Engine) string {
 		}
 	}
 	return ""
+}
+
+// liveArmedIDsLocked 收集仍在武装、可以开新仓的实盘策略。必须在 h.mu 下调用。
+func (h *Hub) liveArmedIDsLocked() []int64 {
+	ids := make([]int64, 0)
+	for _, eng := range h.engines {
+		if eng == nil || !eng.running || eng.cfg.ID <= 0 {
+			continue
+		}
+		if !strings.EqualFold(eng.cfg.Mode, ModeLive) || eng.State() != StateArmed {
+			continue
+		}
+		ids = append(ids, eng.cfg.ID)
+	}
+	return ids
 }
 
 func (h *Hub) haltKeyLocked(keyID int64, reason string) {
