@@ -289,7 +289,6 @@ export function SignupForm({ onSubmit, serverError, onProvider, providers = [] }
                   </AnimatePresence>
                   <Button className={styles.wide} type="submit" loading={busy === "form"}>创建账号</Button>
                 </form>
-                <p className={styles.legal}>注册即表示同意 <button type="button" className={styles.textButton} onClick={() => setStatus("服务条款将在应用内打开")}>服务条款</button> 与 <button type="button" className={styles.textButton} onClick={() => setStatus("隐私政策将在应用内打开")}>隐私政策</button>。</p>
               </motion.div>
             ) : (
               <motion.div key="done" className={styles.step} custom={custom} variants={stepMotion} initial="enter" animate="center" exit="exit">
