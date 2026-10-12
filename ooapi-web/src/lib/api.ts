@@ -29,6 +29,8 @@ interface RequestOptions {
   body?: unknown;
   /** 带上登录 cookie；默认开启，同源请求无需关心。 */
   withCredentials?: boolean;
+  /** 注册开关等不能沿用浏览器缓存的请求传 no-store。 */
+  cache?: RequestCache;
 }
 
 /**
@@ -43,7 +45,7 @@ export async function apiRequest<T>(
   path: string,
   options: RequestOptions = {},
 ): Promise<T> {
-  const { method = "GET", body, withCredentials = true } = options;
+  const { method = "GET", body, withCredentials = true, cache } = options;
 
   const headers: Record<string, string> = {};
   // FormData 必须让浏览器自己带 boundary 的 Content-Type；
@@ -58,6 +60,7 @@ export async function apiRequest<T>(
     res = await fetch(path, {
       method,
       headers,
+      cache,
       credentials: withCredentials ? "include" : "same-origin",
       body: body === undefined ? undefined : isFormData ? (body as FormData) : JSON.stringify(body),
     });

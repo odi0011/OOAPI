@@ -47,7 +47,7 @@ export default function Login() {
         await refresh();
       }}
       onOAuth={(providerKey) => gotoOAuth(providerKey, next)}
-      onSignUp={providers.register_enabled ? () => navigate("/register") : undefined}
+      onSignUp={providers.register_enabled === true ? () => navigate("/register") : undefined}
       onSignedIn={() => navigate(next, { replace: true })}
     />
   );
