@@ -693,12 +693,18 @@ type tradingStrategyRow struct {
 	updatedAt string
 }
 
+type storedEntry struct {
+	id  int64
+	rec trading.EntryRecord
+}
+
 type tradingTestDriver struct {
 	mu         sync.Mutex
 	seq        int64
 	clock      int
 	keys       map[int64]*tradingKeyRow
 	strategies map[int64]*tradingStrategyRow
+	entries    []storedEntry
 }
 
 func (d *tradingTestDriver) key(id int64) *tradingKeyRow {
@@ -805,6 +811,21 @@ func tradingArgString(v any) string {
 		return string(s)
 	default:
 		return fmt.Sprint(s)
+	}
+}
+
+func tradingArgTime(v any) time.Time {
+	switch t := v.(type) {
+	case time.Time:
+		return t
+	case string:
+		parsed, err := time.Parse(time.RFC3339, t)
+		if err != nil {
+			parsed, _ = time.Parse("2006-01-02 15:04:05", t)
+		}
+		return parsed
+	default:
+		return time.Time{}
 	}
 }
 
@@ -953,6 +974,27 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 		}
 		delete(d.strategies, id)
 		return tradingTestResult{0, 1}, nil
+	case normTradingSQL(entryInsertSQL):
+		id := d.seq + 1
+		d.seq = id
+		opened := tradingArgTime(vals[16])
+		rec := trading.EntryRecord{
+			ID: id, UserID: tradingArgInt(vals[0]), StrategyID: tradingArgInt(vals[1]),
+			Symbol: tradingArgString(vals[2]), Side: tradingArgString(vals[3]),
+			OpenedAt: opened, EntryPrice: tradingArgFloat(vals[14]), Qty: tradingArgFloat(vals[15]),
+		}
+		rec.Score = int(tradingArgInt(vals[4]))
+		rec.MinScore = int(tradingArgInt(vals[5]))
+		rec.Boost = tradingArgInt(vals[6]) != 0
+		rec.Forced = tradingArgInt(vals[7]) != 0
+		rec.WinRate = tradingArgFloat(vals[8])
+		rec.Trades = int(tradingArgInt(vals[9]))
+		rec.NetR = tradingArgFloat(vals[10])
+		rec.ExpectancyR = tradingArgFloat(vals[11])
+		rec.ExpectancyUSDT = tradingArgFloat(vals[12])
+		rec.OneRUSDT = tradingArgFloat(vals[13])
+		d.entries = append(d.entries, storedEntry{id: id, rec: rec})
+		return tradingTestResult{id, 1}, nil
 	default:
 		return nil, fmt.Errorf("unexpected exec: %s", normTradingSQL(q))
 	}
@@ -976,6 +1018,10 @@ func (c *tradingTestConn) QueryContext(_ context.Context, q string, args []drive
 		return d.strategyRows(tradingArgInt(vals[1]), tradingArgInt(vals[0])), nil
 	case normTradingSQL(strategyRunningDupSQL):
 		return d.runningDup(tradingArgInt(vals[0]), tradingArgInt(vals[1]), tradingArgString(vals[2]), tradingArgInt(vals[3])), nil
+	case normTradingSQL(entryListSQL):
+		return d.entryRows(tradingArgInt(vals[0]), tradingArgInt(vals[1]), int(tradingArgInt(vals[2]))), nil
+	case normTradingSQL(entryRecentSQL):
+		return d.entryRows(0, 0, int(tradingArgInt(vals[0]))), nil
 	default:
 		return nil, fmt.Errorf("unexpected query: %s", normTradingSQL(q))
 	}
@@ -1083,6 +1129,46 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 			gamble, rec.ScalpTpPct, rec.ScalpSlPct, running,
 			row.createdAt, row.updatedAt, network, status, label,
 		})
+	}
+	return &tradingTestRows{columns: cols, values: values}
+}
+
+func (d *tradingTestDriver) entryRows(userID, strategyID int64, limit int) driver.Rows {
+	cols := []string{
+		"id", "user_id", "strategy_id", "symbol", "side", "score", "min_score", "boost", "forced",
+		"win_rate", "trade_count", "net_r", "expectancy_r", "expectancy_usdt", "one_r_usdt",
+		"entry_price", "qty", "opened_at",
+	}
+	rows := append([]storedEntry(nil), d.entries...)
+	for i := 0; i < len(rows); i++ {
+		for j := i + 1; j < len(rows); j++ {
+			if rows[j].rec.OpenedAt.After(rows[i].rec.OpenedAt) || (rows[j].rec.OpenedAt.Equal(rows[i].rec.OpenedAt) && rows[j].id > rows[i].id) {
+				rows[i], rows[j] = rows[j], rows[i]
+			}
+		}
+	}
+	var values [][]driver.Value
+	for _, row := range rows {
+		rec := row.rec
+		if userID != 0 && (rec.UserID != userID || rec.StrategyID != strategyID) {
+			continue
+		}
+		boost, forced := int64(0), int64(0)
+		if rec.Boost {
+			boost = 1
+		}
+		if rec.Forced {
+			forced = 1
+		}
+		values = append(values, []driver.Value{
+			row.id, rec.UserID, rec.StrategyID, rec.Symbol, rec.Side,
+			int64(rec.Score), int64(rec.MinScore), boost, forced,
+			rec.WinRate, int64(rec.Trades), rec.NetR, rec.ExpectancyR, rec.ExpectancyUSDT, rec.OneRUSDT,
+			rec.EntryPrice, rec.Qty, rec.OpenedAt,
+		})
+		if limit > 0 && len(values) >= limit {
+			break
+		}
 	}
 	return &tradingTestRows{columns: cols, values: values}
 }

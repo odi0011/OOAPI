@@ -3,6 +3,7 @@ package trading
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -47,7 +48,7 @@ type Runner struct {
 	onStop     func(strategyID int64)
 	jobs       map[int64]context.CancelFunc
 	specs      map[int64]RunSpec
-	cache      map[int64]BacktestSummary
+	cache      map[int64]backtestCache
 	boostEvery time.Duration
 }
 
@@ -60,7 +61,7 @@ func NewRunner(hub *Hub) *Runner {
 		now:   func() time.Time { return time.Now().UTC() },
 		jobs:  map[int64]context.CancelFunc{},
 		specs: map[int64]RunSpec{},
-		cache: map[int64]BacktestSummary{},
+		cache: map[int64]backtestCache{},
 	}
 	r.market = defaultMarket
 	r.step = r.hubStep
@@ -350,30 +351,67 @@ func (r *Runner) ensureStarted(spec RunSpec, mkt Market) error {
 	return err
 }
 
+// backtestCache 记下上次回测和它吃过的已收盘数据。
+// 同一批已收盘 K 线在 BacktestEvery 内直接复用，避免加速扫描改写胜率。
+// 新 K 线收盘或行情变了就重算，不再只在引擎启动时算一次。
+type backtestCache struct {
+	Sum BacktestSummary
+	Key string
+}
+
 func (r *Runner) backtest(cfg Config, mkt Market, now time.Time) (BacktestSummary, bool) {
 	cfg = cfg.Normalize()
-	r.mu.Lock()
-	cached, ok := r.cache[cfg.ID]
-	r.mu.Unlock()
-	if ok && !cached.At.IsZero() && now.Sub(cached.At) < BacktestEvery {
-		return cached, true
-	}
 	// 信号可以用未收盘 K 线，回测门仍只吃已收盘的，避免加速扫描改写胜率。
 	candles := ClosedCandles(now, TimeframeDuration(cfg.Timeframe), mkt.Candles)
 	higher := ClosedCandles(now, TimeframeDuration(HigherTimeframe), mkt.Higher)
+	key := backtestDataKey(cfg, candles, higher)
+	r.mu.Lock()
+	cached, ok := r.cache[cfg.ID]
+	r.mu.Unlock()
+	fresh := ok && !cached.Sum.At.IsZero() && now.Sub(cached.Sum.At) < BacktestEvery
+	if fresh && (len(candles) == 0 || cached.Key == key) {
+		return cached.Sum, true
+	}
 	if len(candles) == 0 {
 		return BacktestSummary{}, false
 	}
 	res, err := Backtest(cfg, candles, higher)
 	if err != nil {
 		log.Printf("[trading] runner strategy %d backtest: %v", cfg.ID, err)
+		// 窗口内算失败时沿用上一份成功的结果，避免一次计算错误把开仓门改成空回测。
+		if fresh {
+			return cached.Sum, true
+		}
 		return BacktestSummary{}, false
 	}
 	sum := res.Summary(now)
 	r.mu.Lock()
-	r.cache[cfg.ID] = sum
+	r.cache[cfg.ID] = backtestCache{Sum: sum, Key: key}
 	r.mu.Unlock()
 	return sum, true
+}
+
+// backtestDataKey 把策略配置和已收盘 K 线收成一个键。
+// 键变了说明来了新数据，或策略参数变了，回测要重算。
+func backtestDataKey(cfg Config, candles, higher []Candle) string {
+	cfg = cfg.Normalize()
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s|%s|%s|%d|%d|%d|%.6f|%.6f|%d|%t|%.6f|%.6f|%.4f|%.4f|%.4f|%.4f",
+		cfg.Symbol, cfg.Timeframe, cfg.EntryMode, cfg.Leverage, cfg.EmaFast, cfg.EmaSlow,
+		cfg.StopR, cfg.TakeProfitR, cfg.MinScore, cfg.GambleMode, cfg.ScalpTpPct, cfg.ScalpSlPct,
+		cfg.RSILongMin, cfg.RSILongMax, cfg.RSIShortMin, cfg.RSIShortMax)
+	writeCandleKey(&b, "c", candles)
+	writeCandleKey(&b, "h", higher)
+	return b.String()
+}
+
+func writeCandleKey(b *strings.Builder, label string, candles []Candle) {
+	fmt.Fprintf(b, "|%s:%d", label, len(candles))
+	if len(candles) == 0 {
+		return
+	}
+	last := candles[len(candles)-1]
+	fmt.Fprintf(b, ":%d:%.8f", last.OpenTime.UTC().UnixNano(), last.Close)
 }
 
 func (r *Runner) hubStep(spec RunSpec, in StepInput) (Snapshot, error) {

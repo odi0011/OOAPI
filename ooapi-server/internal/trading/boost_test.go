@@ -542,9 +542,22 @@ func TestBoostForcesEntryAtWindowEndWhenScoreBelowMin(t *testing.T) {
 	if snap.Side != SideLong && snap.Side != SideShort {
 		t.Fatalf("side %s", snap.Side)
 	}
+	if snap.Entry == nil || !snap.Entry.Forced || !snap.Entry.Boost || snap.Entry.MinScore != high.cfg.Normalize().MinScore {
+		t.Fatalf("forced stamp %+v", snap.Entry)
+	}
+	if snap.Entry.Score >= snap.Entry.MinScore {
+		t.Fatalf("forced score should stay below min: %+v", snap.Entry)
+	}
+	if snap.Entry.Trades != DefaultMinTrades || snap.Entry.WinRate != 0.91 || snap.Entry.NetR != 1 {
+		t.Fatalf("forced backtest %+v", snap.Entry)
+	}
+	wantExp := 1 / float64(DefaultMinTrades)
+	if math.Abs(snap.Entry.ExpectancyR-wantExp) > 1e-9 || snap.Entry.OneRUSDT <= 0 || math.Abs(snap.Entry.ExpectancyUSDT-wantExp*snap.Entry.OneRUSDT) > 1e-9 {
+		t.Fatalf("expectancy %+v", snap.Entry)
+	}
 	found := false
 	for _, ev := range RecentEvents() {
-		if ev.Action == "boost_forced" && ev.Symbol == "DOGEUSDT" && ev.Side == string(snap.Side) && ev.WinRate == 0.91 && strings.Contains(ev.Msg, "score") {
+		if ev.Action == "boost_forced" && ev.Symbol == "DOGEUSDT" && ev.Side == string(snap.Side) && ev.WinRate == 0.91 && strings.Contains(ev.Msg, "score") && ev.Entry != nil && ev.Entry.Forced && ev.Entry.MinScore == snap.Entry.MinScore {
 			found = true
 		}
 	}

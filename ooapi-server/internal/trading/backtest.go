@@ -6,11 +6,23 @@ import (
 )
 
 // BacktestSummary 是引擎和列表接口上挂的最近一次回测。
+// ExpectancyR 是每笔期望，等于净 R / 笔数。没有样本时为 0。
 type BacktestSummary struct {
-	WinRate float64   `json:"winRate"`
-	Trades  int       `json:"trades"`
-	NetR    float64   `json:"netR"`
-	At      time.Time `json:"at,omitempty"`
+	WinRate     float64   `json:"winRate"`
+	Trades      int       `json:"trades"`
+	NetR        float64   `json:"netR"`
+	ExpectancyR float64   `json:"expectancyR"`
+	At          time.Time `json:"at,omitempty"`
+}
+
+// WithExpectancy 用净 R 和笔数填上每笔期望。已有的期望值会被这个口径盖掉。
+func (s BacktestSummary) WithExpectancy() BacktestSummary {
+	if s.Trades > 0 {
+		s.ExpectancyR = s.NetR / float64(s.Trades)
+	} else {
+		s.ExpectancyR = 0
+	}
+	return s
 }
 
 // BacktestTrade 是一笔按实盘同一套开平规则复盘的交易，盈亏已扣手续费和滑点。
@@ -26,20 +38,21 @@ type BacktestTrade struct {
 
 // BacktestResult 是一段 K 线的复盘结果。
 type BacktestResult struct {
-	Symbol     string          `json:"symbol"`
-	Timeframe  string          `json:"timeframe"`
-	Days       int             `json:"days"`
-	Trades     []BacktestTrade `json:"trades"`
-	TradeCount int             `json:"tradeCount"`
-	Wins       int             `json:"wins"`
-	WinRate    float64         `json:"winRate"`
-	NetR       float64         `json:"netR"`
-	TakerFee   float64         `json:"takerFee"`
-	Slippage   float64         `json:"slippage"`
+	Symbol      string          `json:"symbol"`
+	Timeframe   string          `json:"timeframe"`
+	Days        int             `json:"days"`
+	Trades      []BacktestTrade `json:"trades"`
+	TradeCount  int             `json:"tradeCount"`
+	Wins        int             `json:"wins"`
+	WinRate     float64         `json:"winRate"`
+	NetR        float64         `json:"netR"`
+	ExpectancyR float64         `json:"expectancyR"`
+	TakerFee    float64         `json:"takerFee"`
+	Slippage    float64         `json:"slippage"`
 }
 
 func (r BacktestResult) Summary(at time.Time) BacktestSummary {
-	return BacktestSummary{WinRate: r.WinRate, Trades: r.TradeCount, NetR: r.NetR, At: at}
+	return BacktestSummary{WinRate: r.WinRate, Trades: r.TradeCount, NetR: r.NetR, ExpectancyR: r.ExpectancyR, At: at}.WithExpectancy()
 }
 
 // BacktestGate 是开仓前的回测门。测网 minWinRate 为 0 时整道门关闭。
@@ -91,7 +104,7 @@ func WindowStats(trades []BacktestTrade, from, until time.Time) BacktestSummary 
 	if sum.Trades > 0 {
 		sum.WinRate = float64(wins) / float64(sum.Trades)
 	}
-	return sum
+	return sum.WithExpectancy()
 }
 
 // SweepPass 标出一组参数是否同时通过样本内三道门，并且后一段净 R 为正。
@@ -189,6 +202,7 @@ func backtest(cfg Config, candles, higher []Candle, fee, slip float64) (Backtest
 	out.TradeCount = len(out.Trades)
 	if out.TradeCount > 0 {
 		out.WinRate = float64(out.Wins) / float64(out.TradeCount)
+		out.ExpectancyR = out.NetR / float64(out.TradeCount)
 	}
 	return out, nil
 }

@@ -54,6 +54,7 @@ func ResetForTest() {
 	defaultHub = NewHub()
 	ResetTestnetGreen()
 	ResetBoostForTest()
+	resetEntriesForTest()
 }
 
 // SetRunHook 注册运行标记回调。测试和进程启动都会换 Hub，回调要重新挂上。
@@ -158,6 +159,7 @@ func (h *Hub) Step(userID, strategyID int64, cfg Config, in StepInput, secrets S
 			in.LivePeerIDs = h.liveArmedIDsLocked()
 		}
 	}
+	eng.SetUser(userID)
 	eng.SetSecrets(secrets)
 	if in.Backtest == nil && cfg.MinWinRate > 0 && len(in.Candles) > cfg.EmaSlow+1 {
 		if res, err := Backtest(cfg, in.Candles, in.Higher); err == nil {
@@ -310,6 +312,7 @@ func (h *Hub) prepare(userID, strategyID int64, cfg Config, secrets SecretOpener
 		}
 	}
 	eng.cfg.ID = strategyID
+	eng.SetUser(userID)
 	eng.SetSecrets(secrets)
 	sid := strategyID
 	eng.SetPauseHook(func(reason string) {
