@@ -46,6 +46,9 @@ func TestTradingRoutesRequireAuthAndStrategyPermission(t *testing.T) {
 		{http.MethodPatch, "/api/trading/strategies/1"},
 		{http.MethodDelete, "/api/trading/strategies/1"},
 		{http.MethodGet, "/api/trading/engine/state"},
+		{http.MethodGet, "/api/trading/engine/market"},
+		{http.MethodGet, "/api/trading/engine/position"},
+		{http.MethodGet, "/api/trading/engine/orders"},
 		{http.MethodPost, "/api/trading/engine/start"},
 		{http.MethodPost, "/api/trading/engine/stop"},
 		{http.MethodPost, "/api/trading/engine/step"},
@@ -72,6 +75,10 @@ func TestTradingRoutesRequireAuthAndStrategyPermission(t *testing.T) {
 	deniedEngine := hitTrading(engine, http.MethodPost, "/api/trading/engine/start", `{}`, userToken)
 	if deniedEngine.Code != http.StatusForbidden {
 		t.Fatalf("user engine start = %d %s", deniedEngine.Code, deniedEngine.Body.String())
+	}
+	deniedDesk := hitTrading(engine, http.MethodGet, "/api/trading/engine/market", ``, userToken)
+	if deniedDesk.Code != http.StatusForbidden {
+		t.Fatalf("user desk market = %d %s", deniedDesk.Code, deniedDesk.Body.String())
 	}
 
 	allowed := hitTrading(engine, http.MethodPost, "/api/trading/strategies", `{}`, rootToken)
