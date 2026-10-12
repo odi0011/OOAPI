@@ -45,15 +45,15 @@ var strategyTimeframes = map[string]struct{}{
 const strategySelectCols = `
 s.id, s.symbol, s.leverage, s.margin_mode, s.ema_fast, s.ema_slow, s.timeframe,
 s.stop_r, s.take_profit_r, s.daily_loss_pct, s.max_margin_usdt, s.exchange_key_id, s.mode,
-s.entry_mode, s.min_score, s.min_win_rate, s.running,
+s.entry_mode, s.min_score, s.min_win_rate, s.min_trades, s.running,
 s.created_at, s.updated_at, k.network, k.status, k.label`
 
 const strategyInsertSQL = `
 INSERT INTO trading_strategies (
 	user_id, symbol, leverage, margin_mode, ema_fast, ema_slow, timeframe,
 	stop_r, take_profit_r, daily_loss_pct, max_margin_usdt, exchange_key_id, mode,
-	entry_mode, min_score, min_win_rate, running
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	entry_mode, min_score, min_win_rate, min_trades, running
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const strategyListSQL = `
 SELECT ` + strategySelectCols + `
@@ -72,7 +72,7 @@ const strategyUpdateSQL = `
 UPDATE trading_strategies
 SET symbol = ?, leverage = ?, margin_mode = ?, ema_fast = ?, ema_slow = ?, timeframe = ?,
 	stop_r = ?, take_profit_r = ?, daily_loss_pct = ?, max_margin_usdt = ?,
-	exchange_key_id = ?, mode = ?, entry_mode = ?, min_score = ?, min_win_rate = ?
+	exchange_key_id = ?, mode = ?, entry_mode = ?, min_score = ?, min_win_rate = ?, min_trades = ?
 WHERE id = ? AND user_id = ?`
 
 const strategyRunningSQL = `
@@ -105,6 +105,7 @@ type strategyWrite struct {
 	EntryMode     *string  `json:"entryMode"`
 	MinScore      *int     `json:"minScore"`
 	MinWinRate    *float64 `json:"minWinRate"`
+	MinTrades     *int     `json:"minTrades"`
 }
 
 type strategyRecord struct {
@@ -123,6 +124,7 @@ type strategyRecord struct {
 	EntryMode     string
 	MinScore      int
 	MinWinRate    float64
+	MinTrades     int
 	Running       bool
 }
 
@@ -143,6 +145,7 @@ type strategyView struct {
 	EntryMode          string   `json:"entryMode"`
 	MinScore           int      `json:"minScore"`
 	MinWinRate         float64  `json:"minWinRate"`
+	MinTrades          int      `json:"minTrades"`
 	Running            bool     `json:"running"`
 	ExchangeKeyActive  bool     `json:"exchangeKeyActive"`
 	ExchangeKeyNetwork string   `json:"exchangeKeyNetwork,omitempty"`
@@ -177,6 +180,7 @@ func defaultStrategy() strategyRecord {
 		EntryMode:     trading.EntryModeTrend,
 		MinScore:      trading.DefaultMinScore,
 		MinWinRate:    trading.DefaultMinWinRate,
+		MinTrades:     trading.DefaultMinTrades,
 	}
 }
 
@@ -199,6 +203,7 @@ func (row strategyRow) view() strategyView {
 		EntryMode:          rec.EntryMode,
 		MinScore:           rec.MinScore,
 		MinWinRate:         rec.MinWinRate,
+		MinTrades:          rec.MinTrades,
 		Running:            rec.Running,
 		ExchangeKeyActive:  row.ExchangeKeyActive,
 		ExchangeKeyNetwork: row.ExchangeKeyNetwork,
@@ -306,7 +311,7 @@ func CreateTradingStrategy(c *gin.Context) {
 	res, err := exec(strategyInsertSQL,
 		user.ID, rec.Symbol, rec.Leverage, rec.MarginMode, rec.EmaFast, rec.EmaSlow, rec.Timeframe,
 		rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
-		rec.EntryMode, rec.MinScore, rec.MinWinRate, 0,
+		rec.EntryMode, rec.MinScore, rec.MinWinRate, rec.MinTrades, 0,
 	)
 	if err != nil {
 		log.Printf("[trading] 写入策略失败: %v", err)
@@ -372,7 +377,7 @@ func UpdateTradingStrategy(c *gin.Context) {
 	res, err := exec(strategyUpdateSQL,
 		rec.Symbol, rec.Leverage, rec.MarginMode, rec.EmaFast, rec.EmaSlow, rec.Timeframe,
 		rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
-		rec.EntryMode, rec.MinScore, rec.MinWinRate,
+		rec.EntryMode, rec.MinScore, rec.MinWinRate, rec.MinTrades,
 		id, user.ID,
 	)
 	if err != nil {
@@ -438,7 +443,7 @@ func scanStrategy(s scanner) (strategyRow, error) {
 		&row.Record.EmaFast, &row.Record.EmaSlow, &row.Record.Timeframe,
 		&row.Record.StopR, &row.Record.TakeProfitR, &row.Record.DailyLossPct, &row.Record.MaxMarginUsdt,
 		&row.Record.ExchangeKeyID, &row.Record.Mode,
-		&row.Record.EntryMode, &row.Record.MinScore, &row.Record.MinWinRate, &running,
+		&row.Record.EntryMode, &row.Record.MinScore, &row.Record.MinWinRate, &row.Record.MinTrades, &running,
 		&row.CreatedAt, &row.UpdatedAt,
 		&network, &status, &label,
 	)
@@ -553,6 +558,9 @@ func applyStrategyWrite(base strategyRecord, in strategyWrite, creating bool) (s
 	if in.MinWinRate != nil {
 		out.MinWinRate = round4(*in.MinWinRate)
 	}
+	if in.MinTrades != nil {
+		out.MinTrades = *in.MinTrades
+	}
 	if err := validateStrategy(out, creating && in.ExchangeKeyID == nil); err != nil {
 		return strategyRecord{}, err
 	}
@@ -598,6 +606,9 @@ func validateStrategy(rec strategyRecord, missingKey bool) *tradingError {
 	}
 	if rec.MinWinRate < 0 || rec.MinWinRate > 1 {
 		return &tradingError{http.StatusBadRequest, "minWinRate 要在 0 到 1 之间", "invalid_win_rate"}
+	}
+	if rec.MinTrades < 1 || rec.MinTrades > 10000 {
+		return &tradingError{http.StatusBadRequest, "minTrades 要在 1 到 10000 之间", "invalid_min_trades"}
 	}
 	return nil
 }
