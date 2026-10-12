@@ -1,6 +1,7 @@
 package router
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -27,7 +28,14 @@ func TestBoostRoutesUseDedicatedBearer(t *testing.T) {
 		t.Fatalf("grant %d %s", granted.Code, granted.Body.String())
 	}
 	events := hitTrading(engine, http.MethodGet, "/api/trading/engine/events", ``, "route-boost-token")
-	if events.Code != http.StatusOK || (events.Body.String() != "[]" && events.Body.String() != "[]\n") {
+	if events.Code != http.StatusOK {
 		t.Fatalf("events %d %s", events.Code, events.Body.String())
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(events.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0]["action"] != "boost_start" {
+		t.Fatalf("events %#v", rows)
 	}
 }
