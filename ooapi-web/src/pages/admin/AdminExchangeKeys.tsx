@@ -15,7 +15,6 @@ import { useAsyncGuard, useNotify } from "@/lib/useNotify";
 import tokenStyles from "./AdminTokens.module.css";
 import settingsStyles from "./AdminSettings.module.css";
 import styles from "./AdminExchangeKeys.module.css";
-import SettingsRail from "./SettingsRail";
 import {
   createExchangeKey,
   discardLegacyStrategyDraft,
@@ -207,7 +206,7 @@ export default function AdminExchangeKeys() {
     <AdminLayout
       crumbs={[
         { label: "后台", href: "/admin" },
-        { label: "系统设置", href: "/admin/system" },
+        { label: "交易" },
         { label: "账户" },
       ]}
       actions={
@@ -226,9 +225,6 @@ export default function AdminExchangeKeys() {
           </div>
         </header>
 
-        <div className={settingsStyles.layout}>
-          <SettingsRail current="account" />
-          <div className={settingsStyles.formArea}>
         <div className={tokenStyles.notice}>
           <strong>到交易所关掉提现后再绑</strong>
           <p>
@@ -320,8 +316,6 @@ export default function AdminExchangeKeys() {
             })}
           </div>
         )}
-          </div>
-        </div>
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={(next) => { if (!action.busy) setDialogOpen(next); }}>

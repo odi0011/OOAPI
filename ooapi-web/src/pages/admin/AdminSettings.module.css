@@ -123,29 +123,6 @@
   color: var(--text-muted);
 }
 
-/* 「交易」与上面的外观、站点同级，策略和账户缩进一档。 */
-.railGroup {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  margin-top: var(--space-3);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border-subtle);
-}
-
-.railGroupLabel {
-  margin: 0;
-  padding: 0 var(--space-2) 2px;
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-
-.railNested {
-  padding-left: 18px;
-}
-
 /* ---------- 表单区 ---------- */
 
 .formArea {

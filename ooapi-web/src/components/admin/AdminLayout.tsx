@@ -9,7 +9,7 @@ import ThemeSwitch from "@/components/arc/theme-switch/theme-switch";
 import Tooltip from "@/components/arc/tooltip/tooltip";
 import UserMenu from "@/components/arc/user-menu/user-menu";
 import { AdminSidebar, ADMIN_NAV } from "@/components/admin/AdminSidebar";
-import { TRADING_NAV } from "@/pages/admin/settingsNav";
+import { STRATEGY_NAV } from "@/pages/admin/settingsNav";
 import { useNotifications } from "@/components/admin/useNotifications";
 import { useAppearance } from "@/contexts/AppearanceContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -80,7 +80,7 @@ export default function AdminLayout({ crumbs, actions, children }: AdminLayoutPr
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  /** 命令面板的条目：侧边栏栏目，加上系统设置里的策略和账户。 */
+  /** 命令面板的条目：侧边栏栏目，加上系统设置里的策略。账户在「交易」分组。 */
   const commands = useMemo<CommandItem[]>(() => {
     const out: CommandItem[] = [];
     for (const group of ADMIN_NAV) {
@@ -90,17 +90,16 @@ export default function AdminLayout({ crumbs, actions, children }: AdminLayoutPr
           id: item.key,
           label: item.label,
           group: group.label ?? "导航",
-          keywords: [item.href],
+          keywords: [item.href, ...(item.keywords ?? [])],
         });
       }
     }
-    for (const item of TRADING_NAV) {
-      if (item.requiredPermission && !can(item.requiredPermission)) continue;
+    if (can(Perm.OptionEdit)) {
       out.push({
-        id: item.key,
-        label: item.label,
+        id: STRATEGY_NAV.key,
+        label: STRATEGY_NAV.label,
         group: "系统设置",
-        keywords: [item.href, "交易", ...item.entries],
+        keywords: [STRATEGY_NAV.href, ...STRATEGY_NAV.entries],
       });
     }
     return out;
@@ -211,9 +210,9 @@ export default function AdminLayout({ crumbs, actions, children }: AdminLayoutPr
               autoFocus
               onSelect={(item) => {
                 setPaletteOpen(false);
-                const target = ADMIN_NAV.flatMap((g) => g.items).find((i) => i.key === item.id)
-                  ?? TRADING_NAV.find((i) => i.key === item.id);
+                const target = ADMIN_NAV.flatMap((g) => g.items).find((i) => i.key === item.id);
                 if (target) navigate(target.href);
+                else if (item.id === STRATEGY_NAV.key) navigate(STRATEGY_NAV.href);
               }}
               onClose={() => setPaletteOpen(false)}
             />

@@ -3,10 +3,12 @@ import { Link, useLocation } from "react-router-dom";
 import {
   Activity,
   BarChart3,
+  ChartCandlestick,
   FileText,
   FolderOpen,
   History,
   KeyRound,
+  Landmark,
   Layers,
   LayoutDashboard,
   Route,
@@ -40,6 +42,8 @@ export interface AdminNavItem {
   href: string;
   /** 有权限才显示；留空表示所有登录用户可见。 */
   requiredPermission?: string;
+  /** 命令面板的额外搜索词。 */
+  keywords?: string[];
 }
 
 export interface AdminNavGroup {
@@ -87,6 +91,29 @@ export const ADMIN_NAV: AdminNavGroup[] = [
     ],
   },
   {
+    key: "trading",
+    label: "交易",
+    // 和「个人 → 个人中心」同一层：分组标题下挂同级入口。
+    // 数据看板是交易台，账户是交易所密钥。策略配置不在这里。
+    items: [
+      {
+        key: "trading-dashboard",
+        label: "数据看板",
+        icon: <ChartCandlestick size={18} strokeWidth={1.75} />,
+        href: "/admin/trading/dashboard",
+        requiredPermission: "option:edit",
+        keywords: ["K线", "持仓", "委托", "盈亏", "交易台", "标记价"],
+      },
+      {
+        key: "trading-account",
+        label: "账户",
+        icon: <Landmark size={18} strokeWidth={1.75} />,
+        href: "/admin/trading/account",
+        keywords: ["API Key", "交易所", "绑定", "测网", "实盘"],
+      },
+    ],
+  },
+  {
     key: "me",
     label: "个人",
     // 个人相关的入口是一个普通分组，不再单独吊在侧边栏底部 ——
@@ -99,7 +126,7 @@ export const ADMIN_NAV: AdminNavGroup[] = [
   {
     key: "system",
     label: "系统",
-    // 策略和账户在系统设置的「交易」分组里，不单独占侧栏一级。
+    // 策略配置在系统设置里。交易台和账户在上面的「交易」分组。
     items: [
       { key: "system", label: "系统设置", icon: <Settings size={18} strokeWidth={1.75} />, href: "/admin/system", requiredPermission: "option:edit" },
     ],
