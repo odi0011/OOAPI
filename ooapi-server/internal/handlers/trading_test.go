@@ -23,6 +23,7 @@ import (
 	"ooapi/internal/middleware"
 	"ooapi/internal/models"
 	"ooapi/internal/services"
+	"ooapi/internal/trading"
 )
 
 const (
@@ -212,6 +213,88 @@ func TestTradingStrategyCRUDValidationAndLiveWarning(t *testing.T) {
 	missing := callTrading(t, GetTradingStrategy, http.MethodGet, "/api/trading/strategies/1", "", owner, fmt.Sprint(strategyID))
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("after delete = %d %s", missing.Code, missing.Body.String())
+	}
+}
+
+func TestTradingEngineUsesNewestStrategyAndHidesSecrets(t *testing.T) {
+	useTradingDB(t)
+	trading.ResetForTest()
+	t.Cleanup(trading.ResetForTest)
+	owner := tradingUser(11)
+
+	missing := callTrading(t, StartTradingEngine, http.MethodPost, "/api/trading/engine/start", `{"equityUsdt":2}`, owner, "")
+	if missing.Code != http.StatusNotFound || tradingCode(t, missing) != "not_found" {
+		t.Fatalf("missing strategy = %d %s", missing.Code, missing.Body.String())
+	}
+
+	keyRec := callTrading(t, CreateExchangeKey, http.MethodPost, "/api/trading/exchange-keys", `{
+		"label": "测网",
+		"network": "testnet",
+		"apiKey": "`+testAPIKey+`",
+		"apiSecret": "`+testAPISecret+`"
+	}`, owner, "")
+	keyID := int64(tradingData(t, keyRec)["id"].(float64))
+	liveKey := callTrading(t, CreateExchangeKey, http.MethodPost, "/api/trading/exchange-keys", `{
+		"label": "实盘",
+		"network": "live",
+		"apiKey": "live-api-key-0123456789",
+		"apiSecret": "live-api-secret-abcdef9876"
+	}`, owner, "")
+	liveKeyID := int64(tradingData(t, liveKey)["id"].(float64))
+
+	older := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+		fmt.Sprintf(`{"exchangeKeyId": %d, "maxMarginUsdt": 1.6}`, keyID), owner, "")
+	olderID := int64(tradingData(t, older)["id"].(float64))
+	newer := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+		fmt.Sprintf(`{"exchangeKeyId": %d}`, keyID), owner, "")
+	newerID := int64(tradingData(t, newer)["id"].(float64))
+
+	started := callTrading(t, StartTradingEngine, http.MethodPost, "/api/trading/engine/start", `{
+		"equityUsdt": 2,
+		"fundingRate": 0.0001,
+		"now": "2026-10-12T00:00:00Z"
+	}`, owner, "")
+	if started.Code != http.StatusOK {
+		t.Fatalf("start = %d %s", started.Code, started.Body.String())
+	}
+	if strings.Contains(started.Body.String(), testAPISecret) || strings.Contains(started.Body.String(), testAPIKey) || strings.Contains(started.Body.String(), "enc:v1:") {
+		t.Fatalf("start leaked secret: %s", started.Body.String())
+	}
+	view := tradingData(t, started)
+	if view["state"] != "Armed" || int64(view["strategyId"].(float64)) != newerID {
+		t.Fatalf("start view = %#v want strategy %d", view, newerID)
+	}
+	assertNoPlainSecret(t, view)
+
+	stepped := callTrading(t, StepTradingEngine, http.MethodPost, "/api/trading/engine/step", `{
+		"equityUsdt": 2,
+		"markPrice": 0.5,
+		"fundingRate": 0.0001,
+		"now": "2026-10-12T00:05:00Z"
+	}`, owner, "")
+	if stepped.Code != http.StatusOK || tradingData(t, stepped)["state"] != "Armed" {
+		t.Fatalf("idle step = %d %s", stepped.Code, stepped.Body.String())
+	}
+	if strings.Contains(stepped.Body.String(), testAPISecret) {
+		t.Fatal("step leaked secret")
+	}
+
+	state := callTrading(t, GetTradingEngineState, http.MethodGet, "/api/trading/engine/state?strategyId="+fmt.Sprint(olderID), "", owner, "")
+	if state.Code != http.StatusOK || tradingData(t, state)["state"] != "Idle" || int64(tradingData(t, state)["strategyId"].(float64)) != olderID {
+		t.Fatalf("older state = %d %s", state.Code, state.Body.String())
+	}
+
+	live := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+		fmt.Sprintf(`{"exchangeKeyId": %d, "mode": "live"}`, liveKeyID), owner, "")
+	if live.Code != http.StatusOK {
+		t.Fatalf("live strategy = %d %s", live.Code, live.Body.String())
+	}
+	refused := callTrading(t, StartTradingEngine, http.MethodPost, "/api/trading/engine/start", `{"equityUsdt":2}`, owner, "")
+	if refused.Code != http.StatusConflict || tradingCode(t, refused) != "live_gate_closed" {
+		t.Fatalf("live start = %d %s", refused.Code, refused.Body.String())
+	}
+	if strings.Contains(refused.Body.String(), "live-api-secret") {
+		t.Fatal("live refusal leaked secret")
 	}
 }
 

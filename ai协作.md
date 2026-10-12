@@ -1642,3 +1642,11 @@ Google OAuth 变量）与部署要点（nginx 三项 SSE 必需配置）。
 免费模型与非官方显式 0 价行仍可调用。调用前预扣估算输入，结算与写日志在同一事务；
 扣费失败回滚，且不返回成功补全体。流式中断在用量已知时照常结算，不因渠道失败日志跳过。
 缓存 token 从输入里扣掉后只按缓存价计一次；Claude 只把 `cache_read` 写入 `cached_tokens`。
+
+### 2026-10-12：测网合约策略引擎（草稿）
+
+策略引擎放在 `ooapi-server/internal/trading`，配置继续用已上线的 `/api/trading/strategies` 与 `/api/trading/exchange-keys`（明文只走 reveal，且只在发单或平仓时解开）。默认 XRPUSDT、EMA(9)/EMA(21)、5m、逐仓不超过 3 倍、止损 1R、止盈 1.5R、日亏 4% 停机。状态机为 Idle → Armed → EntrySubmitted → InPosition → ExitSubmitted → Settled，另有 DailyHalt、Blocked、Error。`mode=testnet` 向币安 USDT-M 测试网发单；`mode=live` 在 `TRADING_TESTNET_GREEN` 或 testnet-green 标记打开前拒绝，打开后也只打到不下单的桩。运行时停机账本只在内存里，进程重启不会自动重开。
+
+### 2026-10-12：测网改为币安 USDT-M 下单
+
+`mode=testnet` 请求 `https://testnet.binancefuture.com`：先设逐仓和不超过 3 倍杠杆，再下 MARKET，并用 `closePosition` 的 STOP_MARKET / TAKE_PROFIT_MARKET 保护。数量和价格按 exchangeInfo 的步长与最小名义价值对齐。持仓和挂单以交易所回报为准。密钥只接受 `network=testnet`，明文仍只在发单或同步时解开。`mode=live` 不发单。
