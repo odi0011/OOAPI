@@ -21,9 +21,11 @@ type SecretOpener func() (Credentials, error)
 type RunHook func(strategyID int64, running bool)
 
 type accountSnap struct {
-	Wallet    float64
-	Available float64
-	Known     bool
+	Wallet         float64
+	Available      float64
+	Known          bool
+	Positions      []KeyPosition
+	PositionsKnown bool
 }
 
 // Hub 按用户和策略 ID 保存多台引擎。组合风控在同一把锁里汇总。
@@ -112,6 +114,9 @@ func (h *Hub) Step(userID, strategyID int64, cfg Config, in StepInput, secrets S
 	defer h.mu.Unlock()
 	cfg = cfg.Normalize()
 	cfg.ID = strategyID
+	if in.PositionsKnown {
+		h.notePositionsLocked(cfg.ExchangeKeyID, in.Positions)
+	}
 	if in.WalletKnown {
 		h.noteAccountLocked(cfg.ExchangeKeyID, in.Wallet, in.Available)
 		if in.Wallet <= BalanceFloorUSDT {
@@ -282,7 +287,34 @@ func (h *Hub) noteAccountLocked(keyID int64, wallet, available float64) {
 	if h.accounts == nil {
 		h.accounts = map[int64]accountSnap{}
 	}
-	h.accounts[keyID] = accountSnap{Wallet: wallet, Available: available, Known: true}
+	snap := h.accounts[keyID]
+	snap.Wallet = wallet
+	snap.Available = available
+	snap.Known = true
+	h.accounts[keyID] = snap
+}
+
+// SetPositions 记下这把密钥最新的 positionRisk。空切片表示交易所确认空仓。
+func (h *Hub) SetPositions(keyID int64, positions []KeyPosition) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.notePositionsLocked(keyID, positions)
+	h.mu.Unlock()
+}
+
+func (h *Hub) notePositionsLocked(keyID int64, positions []KeyPosition) {
+	if keyID <= 0 {
+		return
+	}
+	if h.accounts == nil {
+		h.accounts = map[int64]accountSnap{}
+	}
+	snap := h.accounts[keyID]
+	snap.Positions = append([]KeyPosition(nil), positions...)
+	snap.PositionsKnown = true
+	h.accounts[keyID] = snap
 }
 
 func (h *Hub) symbolTakenLocked(cfg Config, strategyID int64) bool {
@@ -301,29 +333,37 @@ func (h *Hub) symbolTakenLocked(cfg Config, strategyID int64) bool {
 	return false
 }
 
-// entrySkipLocked 必须在 h.mu 下调用，把同一密钥的持仓一次算完。
-func (h *Hub) entrySkipLocked(cfg Config, self *Engine) string {
+// entrySkipLocked 必须在 h.mu 下调用。
+// 组合保证金只认这把密钥的 positionRisk，不认内存里的旧仓，也不认没在跑的策略。
+// 正在判断的这台引擎也不从账本里扣除：交易所上还开着的仓都要占额度。
+func (h *Hub) entrySkipLocked(cfg Config, _ *Engine) string {
 	if acc, ok := h.accounts[cfg.ExchangeKeyID]; ok && acc.Known && acc.Wallet <= BalanceFloorUSDT {
 		return ReasonBalanceFloor
 	}
-	open := 0
-	var margin float64
-	for _, eng := range h.engines {
-		if eng == nil || eng == self || eng.cfg.ExchangeKeyID != cfg.ExchangeKeyID || !eng.Busy() {
-			continue
-		}
-		open++
-		margin += eng.marginInUse()
+	var positions []KeyPosition
+	if acc, ok := h.accounts[cfg.ExchangeKeyID]; ok && acc.PositionsKnown {
+		positions = acc.Positions
 	}
+	open, margin := liveBookMargin(positions)
 	if limit := cfg.OpenPositionLimit(); limit > 0 && open >= limit {
 		return ReasonPortfolioLimit
 	}
-	if acc, ok := h.accounts[cfg.ExchangeKeyID]; ok && acc.Known {
-		if margin+cfg.MaxMarginUsdt > MaxMarginFraction*acc.Available+1e-9 {
-			return ReasonPortfolioLimit
-		}
+	planned := plannedMargin(cfg)
+	if cfg.MaxMarginUsdt > 0 && margin+planned > cfg.MaxMarginUsdt+1e-9 {
+		return ReasonPortfolioLimit
 	}
 	return ""
+}
+
+func liveBookMargin(positions []KeyPosition) (open int, margin float64) {
+	for _, pos := range positions {
+		if pos.Qty <= 0 {
+			continue
+		}
+		open++
+		margin += pos.InitialMargin()
+	}
+	return open, margin
 }
 
 // liveArmedIDsLocked 收集仍在武装、可以开新仓的实盘策略。必须在 h.mu 下调用。
