@@ -204,8 +204,9 @@ func TestReconcileFlatWhenTakeProfitFills(t *testing.T) {
 		t.Fatalf("entries %+v err=%v", rows, err)
 	}
 	row := rows[0]
-	if row.ExitReason != ReasonExchangeFlat || !almostEqual(row.ExitPrice, 1.48) || !almostEqual(row.ExitQty, 10) || !almostEqual(row.RealizedUSDT, 1.20) || row.ClosedAt.IsZero() {
-		t.Fatalf("exit record %+v", row)
+	fillAt := fx.now.Add(time.Minute)
+	if row.ExitReason != ReasonExchangeFlat || !almostEqual(row.ExitPrice, 1.48) || !almostEqual(row.ExitQty, 10) || !almostEqual(row.RealizedUSDT, 1.20) || !row.ClosedAt.Equal(fillAt) {
+		t.Fatalf("exit record %+v want closed %s", row, fillAt)
 	}
 	found := false
 	for _, ev := range RecentEvents() {

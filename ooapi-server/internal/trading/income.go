@@ -12,6 +12,12 @@ import (
 
 const incomeWindow = 7 * 24 * time.Hour
 
+// IncomeRefresh 是向币安重拉已实现盈亏的间隔。两次之间沿用上一份成功的结果。
+const IncomeRefresh = 45 * time.Second
+
+// shanghaiLoc 是 Asia/Shanghai，无夏令时，固定 UTC+8。
+var shanghaiLoc = time.FixedZone("Asia/Shanghai", 8*60*60)
+
 // incomeTypes 是净已实现要加总的账单类型。转入转出不计入。
 var incomeTypes = map[string]bool{
 	"REALIZED_PNL": true,
@@ -37,7 +43,8 @@ func (c *USDMClient) CredentialsReady() bool {
 }
 
 // RealizedIncome 汇总 since 之后该交易对的已实现盈亏、手续费和资金费。
-// day 只含 now 所在 UTC 日（且不早于 since）的合计，cumulative 含 since 之后的全部。
+// day 只含 now 所在 Asia/Shanghai 自然日（且不早于 since）的合计，cumulative 含 since 之后的全部。
+// since 用策略创建时间，不用本次进程的启动时间。
 func (c *USDMClient) RealizedIncome(symbol string, since, now time.Time) (day, cumulative float64, err error) {
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
 	since = since.UTC()
@@ -52,7 +59,7 @@ func (c *USDMClient) RealizedIncome(symbol string, since, now time.Time) (day, c
 	if err != nil {
 		return 0, 0, err
 	}
-	dayStart := utcDay(now)
+	dayStart := shanghaiDayStart(now)
 	if since.After(dayStart) {
 		dayStart = since
 	}
@@ -75,11 +82,13 @@ func (c *USDMClient) RealizedIncome(symbol string, since, now time.Time) (day, c
 }
 
 // IncomeParts 是一笔持仓期间账单里要计入净已实现的三项。转入转出不在里面。
+// HasRealized 表示窗口里已经有 REALIZED_PNL 行，金额可以是 0。
 type IncomeParts struct {
 	RealizedPnL float64
 	Commission  float64
 	FundingFee  float64
 	Rows        int
+	HasRealized bool
 }
 
 // Net 是已实现盈亏、手续费和资金费的合计。
@@ -116,6 +125,7 @@ func (c *USDMClient) IncomeParts(symbol string, since, now time.Time) (IncomePar
 		switch row.IncomeType {
 		case "REALIZED_PNL":
 			parts.RealizedPnL += row.Income
+			parts.HasRealized = true
 		case "COMMISSION":
 			parts.Commission += row.Income
 		case "FUNDING_FEE":
@@ -124,6 +134,15 @@ func (c *USDMClient) IncomeParts(symbol string, since, now time.Time) (IncomePar
 		parts.Rows++
 	}
 	return parts, nil
+}
+
+// shanghaiDayStart 是 t 所在 Asia/Shanghai 自然日的 00:00。
+func shanghaiDayStart(t time.Time) time.Time {
+	if t.IsZero() {
+		t = time.Now()
+	}
+	local := t.In(shanghaiLoc)
+	return time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, shanghaiLoc)
 }
 
 func (c *USDMClient) incomeRows(symbol string, since, now time.Time) ([]incomeRow, error) {

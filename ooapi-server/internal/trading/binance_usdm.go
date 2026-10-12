@@ -217,20 +217,8 @@ func (c *USDMClient) PlaceEntry(req EntryOrder) (Fill, error) {
 	if err != nil {
 		return Fill{}, err
 	}
-	if mapStatus(resp.Status) != StatusFilled && resp.OrderID != 0 {
-		body, err = c.signed(http.MethodGet, "/fapi/v1/order", url.Values{
-			"symbol":  {req.Symbol},
-			"orderId": {strconv.FormatInt(resp.OrderID, 10)},
-		})
-		if err != nil {
-			return Fill{}, err
-		}
-		resp, err = decodeOrder(body)
-		if err != nil {
-			return Fill{}, err
-		}
-	}
-	return fillFromOrder(resp, req.Side, req.Price, qty), nil
+	// 开仓价只认成交均价。标记价只用来算数量，不能写进 trading_entries。
+	return c.settleFill(req.Symbol, resp, req.Side, qty)
 }
 
 func (c *USDMClient) PlaceProtection(req Protection) error {
@@ -452,7 +440,16 @@ func (c *USDMClient) Close(req CloseOrder) (Fill, error) {
 	if err != nil {
 		return Fill{}, err
 	}
-	return fillFromOrder(resp, pos.Side, req.Price, qty), nil
+	fill, err := c.settleFill(req.Symbol, resp, pos.Side, qty)
+	if err != nil {
+		// 平仓单已经发出。均价暂时读不到时，引擎内部的盈亏仍用请求价，账本留给回补。
+		fb := fillFromOrder(resp, pos.Side, req.Price, qty)
+		if fb.Price > 0 && fb.Qty > 0 {
+			return fb, nil
+		}
+		return Fill{}, err
+	}
+	return fill, nil
 }
 
 // CancelOpen 撤掉该合约的普通挂单，再按 algoId 撤掉条件单。
@@ -640,62 +637,104 @@ func protectiveAlgo(kind string) bool {
 }
 
 // ClosingFill 把开仓之后、平掉这一方向的成交合成一个出场价和数量。
-// 空单的平仓成交是 BUY，多单是 SELL。开仓那一笔已实现盈亏为 0，不拿来当出场价。
+// 空单的平仓成交是 BUY，多单是 SELL。开仓那一笔不拿来当出场价。
 func (c *USDMClient) ClosingFill(symbol string, side Side, since, now time.Time) (price, qty float64, ok bool, err error) {
+	leg, ok, err := c.ClosingTrade(symbol, side, since, now)
+	if err != nil || !ok {
+		return 0, 0, false, err
+	}
+	return leg.Price, leg.Qty, true, nil
+}
+
+// ClosingTrade 是止损或止盈的实际成交。Time 取最后一笔的成交时间，不用调度器醒来的时间。
+func (c *USDMClient) ClosingTrade(symbol string, side Side, since, now time.Time) (TradeLeg, bool, error) {
+	fills, err := c.Trades(symbol, since, now)
+	if err != nil {
+		return TradeLeg{}, false, err
+	}
+	leg, ok := closingLeg(fills, symbol, side, since, now)
+	return leg, ok, nil
+}
+
+// Trades 读取 since 到 now 的 userTrades。区间按 7 天切开，和 income 一样。
+func (c *USDMClient) Trades(symbol string, since, now time.Time) ([]UserFill, error) {
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
 	since = since.UTC()
 	now = now.UTC()
 	if symbol == "" || since.IsZero() {
-		return 0, 0, false, invalid("缺少成交起点")
+		return nil, invalid("缺少成交起点")
 	}
 	if now.Before(since) {
 		now = since
 	}
-	q := url.Values{}
-	q.Set("symbol", symbol)
-	q.Set("startTime", strconv.FormatInt(since.UnixMilli(), 10))
-	q.Set("endTime", strconv.FormatInt(now.UnixMilli(), 10))
-	q.Set("limit", "1000")
-	body, err := c.signed(http.MethodGet, "/fapi/v1/userTrades", q)
+	rows, err := c.listUserTrades(symbol, since, now, 0)
 	if err != nil {
-		return 0, 0, false, err
+		return nil, err
 	}
-	trades, err := parseUserTrades(body)
-	if err != nil {
-		return 0, 0, false, err
+	out := make([]UserFill, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.asFill())
 	}
-	wantPos := positionSide(side)
-	wantOrder := oppositeSide(side)
-	var qtySum, quote float64
-	for _, tr := range trades {
-		if tr.Symbol != "" && !strings.EqualFold(tr.Symbol, symbol) {
-			continue
+	return out, nil
+}
+
+func (c *USDMClient) listUserTrades(symbol string, since, now time.Time, orderID int64) ([]userTrade, error) {
+	if orderID > 0 {
+		q := url.Values{}
+		q.Set("symbol", strings.ToUpper(strings.TrimSpace(symbol)))
+		q.Set("orderId", strconv.FormatInt(orderID, 10))
+		q.Set("limit", "1000")
+		body, err := c.signed(http.MethodGet, "/fapi/v1/userTrades", q)
+		if err != nil {
+			return nil, err
 		}
-		if tr.Time.Before(since) || tr.Time.After(now) {
-			continue
+		return parseUserTrades(body)
+	}
+	var all []userTrade
+	for win := since; !win.After(now); {
+		end := win.Add(incomeWindow)
+		if end.After(now) {
+			end = now
 		}
-		ps := strings.ToUpper(strings.TrimSpace(tr.PositionSide))
-		if ps == "LONG" || ps == "SHORT" {
-			if ps != wantPos {
-				continue
+		cursor := win
+		for page := 0; page < 20; page++ {
+			q := url.Values{}
+			q.Set("symbol", symbol)
+			q.Set("startTime", strconv.FormatInt(cursor.UnixMilli(), 10))
+			q.Set("endTime", strconv.FormatInt(end.UnixMilli(), 10))
+			q.Set("limit", "1000")
+			body, err := c.signed(http.MethodGet, "/fapi/v1/userTrades", q)
+			if err != nil {
+				return nil, err
 			}
+			rows, err := parseUserTrades(body)
+			if err != nil {
+				return nil, err
+			}
+			if len(rows) == 0 {
+				break
+			}
+			all = append(all, rows...)
+			if len(rows) < 1000 {
+				break
+			}
+			next := rows[len(rows)-1].Time.Add(time.Millisecond)
+			if !next.After(cursor) {
+				break
+			}
+			cursor = next
 		}
-		if !strings.EqualFold(tr.Side, wantOrder) {
-			continue
+		if !end.Before(now) {
+			break
 		}
-		if tr.Qty <= 0 || tr.Price <= 0 {
-			continue
-		}
-		qtySum += tr.Qty
-		quote += tr.Price * tr.Qty
+		win = end.Add(time.Millisecond)
 	}
-	if qtySum <= 0 {
-		return 0, 0, false, nil
-	}
-	return quote / qtySum, qtySum, true, nil
+	return all, nil
 }
 
 type userTrade struct {
+	ID           int64
+	OrderID      int64
 	Symbol       string
 	Side         string
 	PositionSide string
@@ -704,12 +743,26 @@ type userTrade struct {
 	Time         time.Time
 }
 
+func (t userTrade) asFill() UserFill {
+	return UserFill{
+		Symbol:       t.Symbol,
+		OrderID:      t.OrderID,
+		Side:         t.Side,
+		PositionSide: t.PositionSide,
+		Price:        t.Price,
+		Qty:          t.Qty,
+		Time:         t.Time,
+	}
+}
+
 func parseUserTrades(body []byte) ([]userTrade, error) {
 	body = bytes.TrimSpace(body)
 	if len(body) == 0 || string(body) == "null" {
 		return nil, nil
 	}
 	var raw []struct {
+		ID           flexNum `json:"id"`
+		OrderID      flexNum `json:"orderId"`
 		Symbol       string  `json:"symbol"`
 		Side         string  `json:"side"`
 		PositionSide string  `json:"positionSide"`
@@ -723,6 +776,8 @@ func parseUserTrades(body []byte) ([]userTrade, error) {
 	out := make([]userTrade, 0, len(raw))
 	for _, row := range raw {
 		out = append(out, userTrade{
+			ID:           int64(row.ID),
+			OrderID:      int64(row.OrderID),
 			Symbol:       strings.ToUpper(strings.TrimSpace(row.Symbol)),
 			Side:         strings.ToUpper(strings.TrimSpace(row.Side)),
 			PositionSide: strings.ToUpper(strings.TrimSpace(row.PositionSide)),
@@ -1153,27 +1208,121 @@ func decodeOrder(body []byte) (binanceOrder, error) {
 	return resp, nil
 }
 
-func fillFromOrder(resp binanceOrder, side Side, fallback, qty float64) Fill {
-	price := parseNum(resp.AvgPrice)
-	if price <= 0 {
-		executed := parseNum(resp.ExecutedQty)
-		quote := parseNum(resp.CumQuote)
-		if executed > 0 && quote > 0 {
-			price = quote / executed
+// fillLookupTries 是订单回报没有均价时，改查 userTrades 的次数。第一次不等待。
+var fillLookupTries = 5
+
+// fillLookupGap 是两次 userTrades 查询之间的间隔。测试可以改成 0。
+var fillLookupGap = 200 * time.Millisecond
+
+// settleFill 用订单的 avgPrice 和 executedQty。两者都没有时查这笔 orderId 的 userTrades。
+// 不用调用方传入的标记价。读不到成交就返回错误。
+func (c *USDMClient) settleFill(symbol string, resp binanceOrder, side Side, qty float64) (Fill, error) {
+	if mapStatus(resp.Status) != StatusFilled && resp.OrderID != 0 {
+		body, err := c.signed(http.MethodGet, "/fapi/v1/order", url.Values{
+			"symbol":  {symbol},
+			"orderId": {strconv.FormatInt(resp.OrderID, 10)},
+		})
+		if err != nil {
+			return Fill{}, err
+		}
+		resp, err = decodeOrder(body)
+		if err != nil {
+			return Fill{}, err
 		}
 	}
-	if price <= 0 {
+	fill := fillFromOrder(resp, side, 0, qty)
+	if fill.FromExchange && fill.Price > 0 && fill.Qty > 0 {
+		if fill.Status != StatusFilled {
+			fill.Status = StatusFilled
+		}
+		return fill, nil
+	}
+	if resp.OrderID == 0 {
+		return Fill{}, invalid("成交没有返回均价")
+	}
+	var last error
+	tries := fillLookupTries
+	if tries < 1 {
+		tries = 1
+	}
+	for attempt := 0; attempt < tries; attempt++ {
+		if attempt > 0 && fillLookupGap > 0 {
+			time.Sleep(fillLookupGap)
+		}
+		rows, err := c.listUserTrades(symbol, time.Time{}, time.Time{}, resp.OrderID)
+		if err != nil {
+			last = err
+			continue
+		}
+		got := vwapTrades(rows)
+		if got.Price > 0 && got.Qty > 0 {
+			return Fill{
+				OrderID:      strconv.FormatInt(resp.OrderID, 10),
+				Price:        got.Price,
+				Qty:          got.Qty,
+				Status:       StatusFilled,
+				Side:         side,
+				At:           got.Time,
+				FromExchange: true,
+			}, nil
+		}
+	}
+	if last != nil {
+		return Fill{}, last
+	}
+	return Fill{}, invalid("成交没有返回均价")
+}
+
+func vwapTrades(rows []userTrade) TradeLeg {
+	var qty, quote float64
+	var last time.Time
+	for _, row := range rows {
+		if row.Price <= 0 || row.Qty <= 0 {
+			continue
+		}
+		qty += row.Qty
+		quote += row.Price * row.Qty
+		if last.IsZero() || row.Time.After(last) {
+			last = row.Time
+		}
+	}
+	if qty <= 0 {
+		return TradeLeg{}
+	}
+	return TradeLeg{Price: quote / qty, Qty: qty, Time: last.UTC()}
+}
+
+func fillFromOrder(resp binanceOrder, side Side, fallback, qty float64) Fill {
+	avg := parseNum(resp.AvgPrice)
+	executed := parseNum(resp.ExecutedQty)
+	quote := parseNum(resp.CumQuote)
+	price := 0.0
+	fromExchange := false
+	if avg > 0 && executed > 0 {
+		price = avg
+		qty = executed
+		fromExchange = true
+	} else if executed > 0 && quote > 0 {
+		price = quote / executed
+		qty = executed
+		fromExchange = true
+	} else if fallback > 0 {
 		price = fallback
 	}
-	if filled := parseNum(resp.ExecutedQty); filled > 0 {
-		qty = filled
+	if executed > 0 {
+		qty = executed
+	}
+	status := mapStatus(resp.Status)
+	if fromExchange && status != StatusFilled {
+		status = StatusFilled
 	}
 	return Fill{
-		OrderID: strconv.FormatInt(resp.OrderID, 10),
-		Price:   price,
-		Qty:     qty,
-		Status:  mapStatus(resp.Status),
-		Side:    side,
+		OrderID:      strconv.FormatInt(resp.OrderID, 10),
+		Price:        price,
+		Qty:          qty,
+		Status:       status,
+		Side:         side,
+		FromExchange: fromExchange,
 	}
 }
 

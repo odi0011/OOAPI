@@ -92,6 +92,10 @@ func (rec EntryRecord) Event() DetectionEvent {
 type EntryLog interface {
 	Save(EntryRecord) (int64, error)
 	Close(id, userID, strategyID int64, symbol, side string, exit ExitFill) error
+	// ReviseOpen 把仍未平的开仓价和数量改成实际成交。已平的行不动。
+	ReviseOpen(id int64, price, qty float64) error
+	// Open 返回 closed_at 仍为空的开仓，旧的在前。
+	Open(userID, strategyID int64) ([]EntryRecord, error)
 	List(userID, strategyID int64, limit int) ([]EntryRecord, error)
 	Recent(limit int) ([]EntryRecord, error)
 }
@@ -116,6 +120,45 @@ func (m *memoryEntryLog) Save(rec EntryRecord) (int64, error) {
 	rec.ID = m.next
 	m.rows = append(m.rows, rec)
 	return rec.ID, nil
+}
+
+func (m *memoryEntryLog) ReviseOpen(id int64, price, qty float64) error {
+	if m == nil || id <= 0 || price <= 0 || qty <= 0 {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.rows {
+		if m.rows[i].ID != id || !m.rows[i].ClosedAt.IsZero() {
+			continue
+		}
+		m.rows[i].EntryPrice = price
+		m.rows[i].Qty = qty
+		return nil
+	}
+	return nil
+}
+
+func (m *memoryEntryLog) Open(userID, strategyID int64) ([]EntryRecord, error) {
+	if m == nil {
+		return []EntryRecord{}, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]EntryRecord, 0)
+	for _, row := range m.rows {
+		if !row.ClosedAt.IsZero() || row.UserID != userID || row.StrategyID != strategyID {
+			continue
+		}
+		out = append(out, row)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].OpenedAt.Equal(out[j].OpenedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].OpenedAt.Before(out[j].OpenedAt)
+	})
+	return out, nil
 }
 
 func (m *memoryEntryLog) Close(id, userID, strategyID int64, symbol, side string, exit ExitFill) error {
@@ -256,6 +299,27 @@ func SaveEntry(rec EntryRecord) (int64, error) {
 		return 0, err
 	}
 	return id, nil
+}
+
+// ReviseOpenEntry 用实际成交改正仍开着的入场价和数量。已平的行不改。
+func ReviseOpenEntry(id int64, price, qty float64) error {
+	if err := currentEntryLog().ReviseOpen(id, price, qty); err != nil {
+		log.Printf("[trading] 改正开仓价失败: %v", err)
+		return err
+	}
+	return nil
+}
+
+// OpenEntries 返回某条策略还没写上出场的开仓，旧的在前。
+func OpenEntries(userID, strategyID int64) ([]EntryRecord, error) {
+	rows, err := currentEntryLog().Open(userID, strategyID)
+	if err != nil {
+		return nil, err
+	}
+	if rows == nil {
+		rows = []EntryRecord{}
+	}
+	return rows, nil
 }
 
 // CloseEntry 给一笔开仓补上出场。写失败只记日志，不改变引擎是否回到待命。

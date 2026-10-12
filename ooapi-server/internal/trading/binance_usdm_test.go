@@ -383,6 +383,8 @@ type binanceFake struct {
 	trades          string
 	pendingSide     string
 	pendingPosSide  string
+	// blankAvg 让查单回报的均价和成交额都是 0，逼开仓去读 userTrades。
+	blankAvg bool
 }
 
 type fakeAlgo struct {
@@ -478,6 +480,14 @@ func (f *binanceFake) order(w http.ResponseWriter, method string, values url.Val
 		}
 		if strings.EqualFold(f.pendingSide, "SELL") && f.pos > 0 {
 			f.pos = -f.pos
+		}
+		if f.blankAvg {
+			qty := formatQty(absQty(f.pos))
+			if qty == "" || qty == "0.0" || parseNum(qty) == 0 {
+				qty = formatQty(f.pending)
+			}
+			_, _ = io.WriteString(w, `{"orderId":`+values.Get("orderId")+`,"status":"FILLED","avgPrice":"0","executedQty":"`+qty+`","cumQuote":"0","side":"`+f.pendingSide+`"}`)
+			return
 		}
 		_, _ = io.WriteString(w, f.orderJSON("FILLED", values.Get("orderId"), formatQty(absQty(f.pos))))
 		return
