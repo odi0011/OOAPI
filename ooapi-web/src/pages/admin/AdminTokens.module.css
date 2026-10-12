@@ -192,6 +192,8 @@
   font-size: var(--text-xs);
   color: var(--text-secondary);
   overflow-wrap: anywhere;
+  /* 列表里是打码串，不允许选中后复制走。 */
+  user-select: none;
 }
 
 .miniBtn {
@@ -211,6 +213,16 @@
 .miniBtn:hover {
   border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
   color: var(--accent-strong, var(--accent));
+}
+
+.miniBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.miniBtn:disabled:hover {
+  border-color: var(--border);
+  color: var(--text-secondary);
 }
 
 /* 元信息用四列网格，窄屏自动降列 */
