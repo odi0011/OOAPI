@@ -33,16 +33,18 @@ type Market struct {
 type MarketFunc func(cfg Config, secrets SecretOpener, now time.Time) (Market, error)
 
 // Runner 为每条 running 策略起一个循环，在 K 线收盘后调用与手工 step 相同的逻辑。
+// 实盘加速窗口内改为大约每 BoostScanInterval 推进一次，并改用正在走的那根 K 线。
 type Runner struct {
-	hub     *Hub
-	now     func() time.Time
-	market  MarketFunc
-	step    func(spec RunSpec, in StepInput) (Snapshot, error)
-	mu      sync.Mutex
-	started bool
-	onStop  func(strategyID int64)
-	jobs    map[int64]context.CancelFunc
-	cache   map[int64]BacktestSummary
+	hub        *Hub
+	now        func() time.Time
+	market     MarketFunc
+	step       func(spec RunSpec, in StepInput) (Snapshot, error)
+	mu         sync.Mutex
+	started    bool
+	onStop     func(strategyID int64)
+	jobs       map[int64]context.CancelFunc
+	cache      map[int64]BacktestSummary
+	boostEvery time.Duration
 }
 
 func NewRunner(hub *Hub) *Runner {
@@ -76,6 +78,13 @@ func (r *Runner) SetStep(fn func(spec RunSpec, in StepInput) (Snapshot, error)) 
 	if fn != nil {
 		r.step = fn
 	}
+}
+
+// SetBoostEvery 只给测试缩短加速扫描间隔。0 表示用 BoostScanInterval。
+func (r *Runner) SetBoostEvery(d time.Duration) {
+	r.mu.Lock()
+	r.boostEvery = d
+	r.mu.Unlock()
 }
 
 // SetStop 在余额触底或交易对冲突时把策略标成不再运行。
@@ -165,7 +174,15 @@ func (r *Runner) loop(ctx context.Context, spec RunSpec) {
 	}()
 	r.runOnce(ctx, spec)
 	for {
-		wait := scanWait(r.now(), spec.Config.Timeframe, strings.EqualFold(spec.Config.Mode, ModeLive))
+		if ctx.Err() != nil {
+			return
+		}
+		// 窗口在睡眠期间结束时，下一次醒来先把 boost_end 写进事件流。
+		emitBoostEnd(r.now())
+		live := strings.EqualFold(spec.Config.Mode, ModeLive)
+		// 先订阅再计算等待。加速若赶在两者之间打开，这次拿到的通道会被关掉，select 立刻返回。
+		notify := boostPing.C()
+		wait := r.nextWait(spec.Config.Timeframe, live)
 		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
@@ -173,8 +190,20 @@ func (r *Runner) loop(ctx context.Context, spec RunSpec) {
 			return
 		case <-timer.C:
 			r.runOnce(ctx, spec)
+		case <-notify:
+			timer.Stop()
+			if live && BoostActive(r.now()) {
+				r.runOnce(ctx, spec)
+			}
 		}
 	}
+}
+
+func (r *Runner) nextWait(timeframe string, live bool) time.Duration {
+	r.mu.Lock()
+	every := r.boostEvery
+	r.mu.Unlock()
+	return scanWaitEvery(r.now(), timeframe, live, every)
 }
 
 func (r *Runner) runOnce(ctx context.Context, spec RunSpec) {
@@ -272,10 +301,13 @@ func (r *Runner) backtest(cfg Config, mkt Market, now time.Time) (BacktestSummar
 	if ok && !cached.At.IsZero() && now.Sub(cached.At) < BacktestEvery {
 		return cached, true
 	}
-	if len(mkt.Candles) == 0 {
+	// 信号可以用未收盘 K 线，回测门仍只吃已收盘的，避免加速扫描改写胜率。
+	candles := ClosedCandles(now, TimeframeDuration(cfg.Timeframe), mkt.Candles)
+	higher := ClosedCandles(now, TimeframeDuration(HigherTimeframe), mkt.Higher)
+	if len(candles) == 0 {
 		return BacktestSummary{}, false
 	}
-	res, err := Backtest(cfg, mkt.Candles, mkt.Higher)
+	res, err := Backtest(cfg, candles, higher)
 	if err != nil {
 		log.Printf("[trading] runner strategy %d backtest: %v", cfg.ID, err)
 		return BacktestSummary{}, false
@@ -294,11 +326,12 @@ func (r *Runner) hubStep(spec RunSpec, in StepInput) (Snapshot, error) {
 func defaultMarket(cfg Config, secrets SecretOpener, now time.Time) (Market, error) {
 	cfg = cfg.Normalize()
 	since := now.Add(-9 * 24 * time.Hour)
-	candles, err := LoadCandles(cfg.Mode, cfg.Symbol, cfg.Timeframe, since, now)
+	includeOpen := strings.EqualFold(cfg.Mode, ModeLive) && BoostActive(now)
+	candles, err := loadCandles(cfg.Mode, cfg.Symbol, cfg.Timeframe, since, now, includeOpen)
 	if err != nil {
 		return Market{}, err
 	}
-	higher, err := LoadCandles(cfg.Mode, cfg.Symbol, HigherTimeframe, since, now)
+	higher, err := loadCandles(cfg.Mode, cfg.Symbol, HigherTimeframe, since, now, includeOpen)
 	if err != nil {
 		return Market{}, err
 	}

@@ -3,6 +3,7 @@ package trading
 import (
 	"crypto/sha256"
 	"crypto/subtle"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -95,13 +96,49 @@ type boostSeen struct {
 	passes  bool
 }
 
+// boostCand 是加速窗口里见过的最好候选，用来在窗口结束时说明为什么没开仓。
+type boostCand struct {
+	symbol string
+	side   string
+	score  int
+	need   int
+	reason string
+}
+
 type boostGate struct {
-	mu      sync.Mutex
-	until   time.Time
-	started time.Time
-	opened  bool
-	pending int64
-	seen    map[int64]boostSeen
+	mu         sync.Mutex
+	until      time.Time
+	started    time.Time
+	opened     bool
+	endEmitted bool
+	bestSet    bool
+	best       boostCand
+	pending    int64
+	seen       map[int64]boostSeen
+}
+
+// boostSignal 把「加速已打开」广播给正在睡到下一根 K 线收盘的调度循环。
+// 关掉当前通道再换一条新的，已经在 select 里等的循环会被叫醒，后来的等待拿到新通道。
+type boostSignal struct {
+	mu sync.Mutex
+	ch chan struct{}
+}
+
+func newBoostSignal() *boostSignal {
+	return &boostSignal{ch: make(chan struct{})}
+}
+
+func (s *boostSignal) C() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ch
+}
+
+func (s *boostSignal) ping() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	close(s.ch)
+	s.ch = make(chan struct{})
 }
 
 func newBoostGate() *boostGate {
@@ -111,6 +148,7 @@ func newBoostGate() *boostGate {
 var (
 	boostState = newBoostGate()
 	eventLog   = newEventRing(EventCapacity)
+	boostPing  = newBoostSignal()
 )
 
 // ResetBoostForTest 清掉加速窗口和检测事件，避免测试互相污染。
@@ -128,13 +166,27 @@ func (b *boostGate) reset() {
 	b.until = time.Time{}
 	b.started = time.Time{}
 	b.opened = false
+	b.endEmitted = false
+	b.bestSet = false
+	b.best = boostCand{}
 	b.pending = 0
 	b.seen = map[int64]boostSeen{}
 }
 
 // GrantBoost 打开两分钟加速窗口。窗口还没结束时返回 limited，不延长截止时间。
+// 新窗口会记下 boost_start，并叫醒已经睡到下一根 K 线收盘的实盘调度。
 func GrantBoost(now time.Time) (until time.Time, limited bool) {
-	return boostState.grant(now)
+	until, limited = boostState.grant(now)
+	if limited {
+		return until, true
+	}
+	AddEvent(DetectionEvent{
+		TS:     now.UTC(),
+		Action: "boost_start",
+		Msg:    "live scan every 5s",
+	})
+	boostPing.ping()
+	return until, false
 }
 
 func (b *boostGate) grant(now time.Time) (time.Time, bool) {
@@ -147,6 +199,9 @@ func (b *boostGate) grant(now time.Time) (time.Time, bool) {
 	b.until = now.Add(BoostWindow)
 	b.started = now
 	b.opened = false
+	b.endEmitted = false
+	b.bestSet = false
+	b.best = boostCand{}
 	b.pending = 0
 	b.seen = map[int64]boostSeen{}
 	return b.until, false
@@ -177,6 +232,16 @@ func (b *boostGate) note(id int64, winrate float64, passes bool) {
 		b.seen = map[int64]boostSeen{}
 	}
 	b.seen[id] = boostSeen{winrate: winrate, passes: passes}
+}
+
+// consider 记住窗口内分数最高的候选。分数相同则留先看到的那个。
+func (b *boostGate) consider(c boostCand) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.bestSet || c.score > b.best.score {
+		b.best = c
+		b.bestSet = true
+	}
 }
 
 // allow 在加速窗口内只放行预测胜率最高、且通过阈值的那一个信号。
@@ -274,8 +339,15 @@ func MatchToken(got, want string) bool {
 
 // scanWait 是调度器睡到下一次推进的时长。实盘加速窗口内改为固定短间隔。
 func scanWait(now time.Time, timeframe string, live bool) time.Duration {
+	return scanWaitEvery(now, timeframe, live, BoostScanInterval)
+}
+
+func scanWaitEvery(now time.Time, timeframe string, live bool, boostEvery time.Duration) time.Duration {
+	if boostEvery <= 0 {
+		boostEvery = BoostScanInterval
+	}
 	if live && BoostActive(now) {
-		return BoostScanInterval
+		return boostEvery
 	}
 	tf := TimeframeDuration(timeframe)
 	wait := NextBarClose(now, tf).Sub(now)
@@ -283,4 +355,74 @@ func scanWait(now time.Time, timeframe string, live bool) time.Duration {
 		return time.Second
 	}
 	return wait
+}
+
+// emitBoostEnd 在窗口结束后写一条 boost_end。没有任何信号过门时，msg 带上最高候选分。
+// 多次调用只记第一条。
+func emitBoostEnd(now time.Time) bool {
+	ev, ok := boostState.takeEnd(now)
+	if !ok {
+		return false
+	}
+	AddEvent(ev)
+	return true
+}
+
+func (b *boostGate) takeEnd(now time.Time) (DetectionEvent, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now = now.UTC()
+	if b.until.IsZero() || b.endEmitted || now.Before(b.until) {
+		return DetectionEvent{}, false
+	}
+	b.endEmitted = true
+	ev := DetectionEvent{
+		TS:     now,
+		Action: "boost_end",
+		Msg:    b.endMsgLocked(),
+	}
+	if b.bestSet {
+		ev.Symbol = b.best.symbol
+		ev.Side = b.best.side
+		ev.Score = b.best.score
+	}
+	return ev, true
+}
+
+func (b *boostGate) endMsgLocked() string {
+	if b.opened {
+		return "position opened"
+	}
+	for _, seen := range b.seen {
+		if seen.passes {
+			return "signal cleared thresholds"
+		}
+	}
+	if !b.bestSet {
+		return "no signal cleared thresholds; best score 0"
+	}
+	return formatBoostMiss(b.best)
+}
+
+func formatBoostMiss(c boostCand) string {
+	need := c.need
+	if need <= 0 {
+		need = DefaultMinScore
+	}
+	target := strings.TrimSpace(c.symbol)
+	if side := strings.TrimSpace(c.side); side != "" {
+		if target != "" {
+			target += " " + side
+		} else {
+			target = side
+		}
+	}
+	if target == "" {
+		target = "candidate"
+	}
+	reason := strings.TrimSpace(c.reason)
+	if reason == "" {
+		reason = "below_threshold"
+	}
+	return fmt.Sprintf("no signal cleared thresholds; best %s score %d/%d (%s)", target, c.score, need, reason)
 }
