@@ -28,6 +28,13 @@ export const TIMEFRAMES: readonly Timeframe[] = ["1m", "3m", "5m", "15m"];
 export const DEFAULT_STRATEGY_MODE: TradingNetwork = "testnet";
 export const DEFAULT_EXCHANGE_KEY_ID = 1;
 
+/** 策略杠杆闭区间。与后端 trading.MaxLeverage 对齐，表单校验和读回都用这一对。 */
+export {
+  MAX_STRATEGY_LEVERAGE,
+  MIN_STRATEGY_LEVERAGE,
+  boundStrategyLeverage,
+} from "./strategyLeverage";
+
 export interface ExchangeKey {
   id: number;
   label: string;
@@ -49,6 +56,7 @@ export interface ExchangeKeyPlain {
 export interface Strategy {
   id: number;
   symbol: string;
+  /** 整数，1–MAX_STRATEGY_LEVERAGE（当前 20）。 */
   leverage: number;
   marginMode: string;
   emaFast: number;
@@ -70,6 +78,7 @@ export interface Strategy {
 /** 与后端 strategyWrite 同名。ID 必须是数字，不能是会话里的字符串。 */
 export interface StrategyWrite {
   symbol: "XRPUSDT";
+  /** 整数，1–MAX_STRATEGY_LEVERAGE（当前 20）。 */
   leverage: number;
   marginMode: "isolated";
   emaFast: number;

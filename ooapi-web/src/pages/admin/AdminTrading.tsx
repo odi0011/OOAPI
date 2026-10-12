@@ -36,11 +36,17 @@ import {
   type Timeframe,
   type TradingNetwork,
 } from "./tradingApi";
+import {
+  MAX_STRATEGY_LEVERAGE,
+  MIN_STRATEGY_LEVERAGE,
+  boundStrategyLeverage,
+  strategyLeverageError,
+} from "./strategyLeverage";
 
 /**
  * 自动交易策略。
  *
- * 首发只启用「XRPUSDT + 逐仓 ≤3x + 短周期 EMA」。
+ * 首发只启用「XRPUSDT + 逐仓 ≤20x + 短周期 EMA」。
  * 网格 / 布林 / DCA 先留切换入口，标明「本金够再开」。
  *
  * 持久化字段与验收一致，直接读写 /api/trading/strategies（option:edit）：
@@ -103,7 +109,7 @@ function isTimeframe(value: string): value is Timeframe {
 function draftFromStrategy(item: Strategy): StrategyDraft {
   return {
     symbol: "XRPUSDT",
-    leverage: clamp(Math.round(item.leverage), 1, 3, DEFAULT_DRAFT.leverage),
+    leverage: boundStrategyLeverage(item.leverage, DEFAULT_DRAFT.leverage),
     marginMode: "isolated",
     emaFast: clamp(Math.round(item.emaFast), 2, 50, DEFAULT_DRAFT.emaFast),
     emaSlow: clamp(Math.round(item.emaSlow), 3, 200, DEFAULT_DRAFT.emaSlow),
@@ -141,9 +147,8 @@ function toWrite(draft: StrategyDraft): StrategyWrite {
 function validate(draft: StrategyDraft, keys: ExchangeKey[]): string | null {
   if (draft.symbol !== "XRPUSDT") return "首发交易对只支持 XRPUSDT";
   if (draft.marginMode !== "isolated") return "首发只允许逐仓";
-  if (!Number.isInteger(draft.leverage) || draft.leverage < 1 || draft.leverage > 3) {
-    return "杠杆必须是 1 到 3 的整数";
-  }
+  const leverageError = strategyLeverageError(draft.leverage);
+  if (leverageError) return leverageError;
   if (draft.stopR <= 0 || draft.takeProfitR <= 0) return "每单止损和止盈都必填";
   if (draft.dailyLossPct <= 0 || draft.dailyLossPct > 100) return "日亏停机阈值要大于 0";
   if (draft.maxMarginUsdt <= 0) return "单笔保证金上限要大于 0";
@@ -360,7 +365,7 @@ export default function AdminTrading() {
           <div>
             <h1 className={styles.title}>策略</h1>
             <p className={styles.lead}>
-              首发只做 XRPUSDT 的短周期 EMA 趋势，逐仓，杠杆不超过 3 倍。每单都要填止损和止盈。
+              首发只做 XRPUSDT 的短周期 EMA 趋势，逐仓，杠杆不超过 {MAX_STRATEGY_LEVERAGE} 倍。每单都要填止损和止盈。
               行情在<Link to={DASHBOARD_PATH}>交易 → 数据看板</Link>，交易所密钥在<Link to={ACCOUNT_PATH}>交易 → 账户</Link>。
             </p>
           </div>
@@ -498,7 +503,7 @@ export default function AdminTrading() {
                 <div className={sectionStyles.row} data-field="leverage">
                   <div className={sectionStyles.rowText}>
                     <strong>杠杆</strong>
-                    <p>逐仓，默认 3 倍，最高 3 倍。</p>
+                    <p>逐仓，默认 {DEFAULT_DRAFT.leverage} 倍，最高 {MAX_STRATEGY_LEVERAGE} 倍。</p>
                   </div>
                   <div className={sectionStyles.rowControl}>
                     <NumberField
@@ -506,10 +511,12 @@ export default function AdminTrading() {
                       label="杠杆"
                       suffix=" 倍"
                       value={draft.leverage}
-                      min={1}
-                      max={3}
+                      min={MIN_STRATEGY_LEVERAGE}
+                      max={MAX_STRATEGY_LEVERAGE}
                       step={1}
-                      limitHint={(edge) => (edge === "max" ? "最高 3 倍" : "至少 1 倍")}
+                      limitHint={(edge) =>
+                        edge === "max" ? `最高 ${MAX_STRATEGY_LEVERAGE} 倍` : `至少 ${MIN_STRATEGY_LEVERAGE} 倍`
+                      }
                       onValueChange={(leverage) => patch({ leverage: Math.round(leverage) })}
                     />
                   </div>
