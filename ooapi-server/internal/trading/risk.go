@@ -1,0 +1,127 @@
+package trading
+
+import "time"
+
+// Side 是持仓方向。空字符串表示空仓。
+type Side string
+
+const (
+	SideLong  Side = "long"
+	SideShort Side = "short"
+)
+
+// ProtectionPrices 按 R 计算止损和止盈价。
+// oneR 是 1R 的价格距离；stopR / takeProfitR 是倍数。
+// 多单止损在下方、止盈在上方；空单相反。价格必须保持为正。
+func ProtectionPrices(side Side, entry, oneR, stopR, takeProfitR float64) (stop, take float64, err error) {
+	if entry <= 0 || oneR <= 0 || stopR <= 0 || takeProfitR <= 0 {
+		return 0, 0, invalid("入场价、R 距离、止损倍数和止盈倍数都必须大于 0")
+	}
+	risk := stopR * oneR
+	reward := takeProfitR * oneR
+	switch side {
+	case SideLong:
+		stop = entry - risk
+		take = entry + reward
+	case SideShort:
+		stop = entry + risk
+		take = entry - reward
+	default:
+		return 0, 0, invalid("持仓方向只能是 long 或 short")
+	}
+	if stop <= 0 || take <= 0 {
+		return 0, 0, invalid("止损或止盈价计算后不是正数")
+	}
+	return stop, take, nil
+}
+
+// SizePosition 用保证金上限和杠杆计算数量。
+// 名义价值低于交易所下限时拒绝，不会为了凑够下限而突破保证金上限。
+func SizePosition(maxMargin float64, leverage int, price, minNotional float64) (margin, notional, qty float64, err error) {
+	if maxMargin <= 0 || price <= 0 || minNotional <= 0 {
+		return 0, 0, 0, invalid("保证金、价格和最小名义价值都必须大于 0")
+	}
+	if leverage < 1 || leverage > MaxLeverage {
+		return 0, 0, 0, invalid("杠杆必须是 1 到 3 的整数")
+	}
+	margin = maxMargin
+	notional = margin * float64(leverage)
+	if notional+1e-9 < minNotional {
+		return 0, 0, 0, withReason(ErrNotionalBelowMin, "notional_below_minimum")
+	}
+	qty = notional / price
+	if qty <= 0 {
+		return 0, 0, 0, invalid("计算出的数量不是正数")
+	}
+	return margin, notional, qty, nil
+}
+
+// DailyHaltBreached 判断当日净已实现盈亏是否触及日亏上限。
+// dailyLossPct 是百分数：4 表示资本的 4%。盈利会抵消亏损。
+func DailyHaltBreached(capital, realizedNet, dailyLossPct float64) bool {
+	if capital <= 0 || dailyLossPct <= 0 {
+		return false
+	}
+	loss := -realizedNet
+	if loss < 0 {
+		return false
+	}
+	return loss >= capital*dailyLossPct/100
+}
+
+// StartBlocked 在启动前检查资金费率和强平距离。
+// liqDistancePct < 0 表示没有可测量的持仓，不因强平拦截。
+func StartBlocked(fundingRate, liqDistancePct float64) (bool, string) {
+	if fundingRate < 0 {
+		fundingRate = -fundingRate
+	}
+	if fundingRate >= ExtremeFundingAbs {
+		return true, "funding_extreme"
+	}
+	if liqDistancePct >= 0 && liqDistancePct < MinLiqDistancePct {
+		return true, "liquidation_too_close"
+	}
+	return false, ""
+}
+
+// Ledger 记录一个 UTC 日的已实现盈亏。资本取当日第一次见到的权益。
+type Ledger struct {
+	Day      time.Time
+	Capital  float64
+	Realized float64
+	Halted   bool
+}
+
+func utcDay(t time.Time) time.Time {
+	u := t.UTC()
+	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// Roll 跨过 UTC 日界时清零当日盈亏并解除停机。同一天重复调用不改资本。
+func (l *Ledger) Roll(now time.Time, equity float64) {
+	day := utcDay(now)
+	if !l.Day.IsZero() && l.Day.Equal(day) {
+		return
+	}
+	l.Day = day
+	l.Capital = equity
+	l.Realized = 0
+	l.Halted = false
+}
+
+// Add 计入一笔已实现盈亏。返回值表示这次记账之后是否处于停机。
+func (l *Ledger) Add(pnl, dailyLossPct float64) bool {
+	l.Realized += pnl
+	if DailyHaltBreached(l.Capital, l.Realized, dailyLossPct) {
+		l.Halted = true
+	}
+	return l.Halted
+}
+
+// RealizedPnL 按方向计算平仓盈亏（报价货币）。
+func RealizedPnL(side Side, entry, exit, qty float64) float64 {
+	if side == SideShort {
+		return (entry - exit) * qty
+	}
+	return (exit - entry) * qty
+}

@@ -343,6 +343,7 @@ func TestSettleChargeFailureRollsBackAndReturnsError(t *testing.T) {
 
 func TestCallUpstreamOmitsBodyWhenSettlementFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	allowLoopbackUpstream(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, `{"id":"c1","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"SECRET_COMPLETION"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100000,"completion_tokens":100000,"total_tokens":200000}}`)

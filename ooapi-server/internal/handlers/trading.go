@@ -12,8 +12,8 @@ import (
 	"ooapi/internal/models"
 )
 
-// 自动交易只提供配置接口：交易所密钥加密落库，策略参数可增删改。
-// 信号计算与下单不在这里。mode=live 可以保存，运行时是否允许实盘由策略引擎按测网全绿强制。
+// 自动交易的配置在 trading_keys.go / trading_strategies.go，状态机在 trading_engine.go。
+// 密钥加密落库，明文只在发单时解开。mode=live 可以保存，实盘发单仍要测网全绿。
 
 type tradingError struct {
 	Status  int
