@@ -21,17 +21,9 @@ export default function Register() {
 
   const [serverError, setServerError] = useState<string | null>(null);
 
-  // register_enabled 与 /api/status 的 password_register_enabled 是同一个选项。
-  // 关闭时不渲染表单，直接进这个地址也进不去。
-  if (!providers.ready) {
-    return (
-      <div className={styles.page}>
-        <p className={styles.footer}>正在确认注册是否开放…</p>
-      </div>
-    );
-  }
-
-  if (!providers.register_enabled) {
+  // 未拿到 public settings 的 register_enabled === true 之前（含加载中、失败、字段缺失）
+  // 一律显示关闭，不渲染注册表单。
+  if (providers.register_enabled !== true) {
     return (
       <div className={styles.page}>
         <div className={styles.card}>
