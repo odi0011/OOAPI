@@ -138,7 +138,7 @@ export async function revealExchangeKey(id: number): Promise<ExchangeKeyPlain> {
   const apiKey = (data.apiKey ?? "").trim();
   const apiSecret = (data.apiSecret ?? "").trim();
   if (!isPlainExchangeSecret(apiKey) || !isPlainExchangeSecret(apiSecret)) {
-    throw new ApiRequestError("返回的不是完整密钥", "masked_key", 0);
+    throw new ApiRequestError("返回的不是完整凭证", "masked_key", 0);
   }
   return { apiKey, apiSecret };
 }
@@ -165,12 +165,22 @@ export async function deleteStrategy(id: number): Promise<void> {
   await apiRequest(`/api/trading/strategies/${id}`, { method: "DELETE" });
 }
 
-/** 引擎状态。testnetGreen 只读展示，本页不会去打开它。 */
+/**
+ * 引擎状态。testnetGreen 只读展示。
+ * 本页不调用 /api/trading/engine/testnet-green，也不打开 TRADING_TESTNET_GREEN。
+ * 当日和本会话累计都在这份快照里，用 realizedNetwork 标明当前侧。
+ */
 export interface EngineState {
   strategyId: number;
   state: string;
   side?: string;
+  entryPrice?: number;
+  stopPrice?: number;
+  takeProfitPrice?: number;
+  qty?: number;
   dayRealizedUsdt?: number;
+  cumulativeRealizedUsdt?: number;
+  realizedNetwork?: string;
   halted?: boolean;
   lastError?: string;
   mode?: string;
@@ -178,10 +188,100 @@ export interface EngineState {
   running?: boolean;
   lastAction?: string;
   lastReason?: string;
+  symbol?: string;
+  leverage?: number;
+  marginMode?: string;
+  timeframe?: string;
+  exchangeKeyId?: number;
+  exchangeKeyLabel?: string;
+  exchangeKeyNetwork?: string;
+}
+
+export interface EngineKline {
+  openTime: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+export interface EngineLevels {
+  entryPrice?: number;
+  stopPrice?: number;
+  takeProfitPrice?: number;
+}
+
+/** GET /api/trading/engine/market?strategyId=&limit= */
+export interface EngineMarket {
+  strategyId: number;
+  symbol: string;
+  timeframe: string;
+  limit: number;
+  markPrice: number;
+  klines: EngineKline[];
+  levels?: EngineLevels;
+}
+
+/** GET /api/trading/engine/position?strategyId= 。open 为 false 时没有数量。 */
+export interface EnginePosition {
+  strategyId: number;
+  symbol: string;
+  network: string;
+  open: boolean;
+  side?: string;
+  qty?: number;
+  entryPrice?: number;
+  markPrice?: number;
+  unrealizedPnl?: number;
+  leverage?: number;
+  margin?: number;
+  marginMode?: string;
+}
+
+/** kind 用 takeProfit，不用 take_profit。条件单看 source=algo。 */
+export interface EngineOrder {
+  id?: string;
+  source: string;
+  kind: string;
+  symbol?: string;
+  side?: string;
+  type?: string;
+  status?: string;
+  price?: number;
+  stopPrice?: number;
+  qty?: number;
+  reduceOnly?: boolean;
+  closePosition?: boolean;
+}
+
+/** GET /api/trading/engine/orders?strategyId= 。empty 为 true 即无挂单。 */
+export interface EngineOrders {
+  strategyId: number;
+  symbol: string;
+  network: string;
+  items: EngineOrder[];
+  empty: boolean;
 }
 
 export async function getEngineState(strategyId: number): Promise<EngineState> {
   return apiRequest<EngineState>(`/api/trading/engine/state?strategyId=${strategyId}`);
+}
+
+export async function getEngineMarket(strategyId: number, limit = 100): Promise<EngineMarket> {
+  const data = await apiRequest<EngineMarket>(
+    `/api/trading/engine/market?strategyId=${strategyId}&limit=${limit}`,
+  );
+  return { ...data, klines: data.klines ?? [] };
+}
+
+export async function getEnginePosition(strategyId: number): Promise<EnginePosition> {
+  return apiRequest<EnginePosition>(`/api/trading/engine/position?strategyId=${strategyId}`);
+}
+
+export async function getEngineOrders(strategyId: number): Promise<EngineOrders> {
+  const data = await apiRequest<EngineOrders>(`/api/trading/engine/orders?strategyId=${strategyId}`);
+  const items = data.items ?? [];
+  return { ...data, items, empty: data.empty ?? items.length === 0 };
 }
 
 /** 启动检查。需要账户权益。不下单，也不打开测网全绿门闩。 */

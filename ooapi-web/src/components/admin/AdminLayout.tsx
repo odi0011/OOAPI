@@ -9,6 +9,7 @@ import ThemeSwitch from "@/components/arc/theme-switch/theme-switch";
 import Tooltip from "@/components/arc/tooltip/tooltip";
 import UserMenu from "@/components/arc/user-menu/user-menu";
 import { AdminSidebar, ADMIN_NAV } from "@/components/admin/AdminSidebar";
+import { TRADING_NAV } from "@/pages/admin/settingsNav";
 import { useNotifications } from "@/components/admin/useNotifications";
 import { useAppearance } from "@/contexts/AppearanceContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -79,7 +80,7 @@ export default function AdminLayout({ crumbs, actions, children }: AdminLayoutPr
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  /** 命令面板的条目：由侧边栏栏目生成，天然与导航一致。 */
+  /** 命令面板的条目：侧边栏栏目，加上系统设置里的策略和账户。 */
   const commands = useMemo<CommandItem[]>(() => {
     const out: CommandItem[] = [];
     for (const group of ADMIN_NAV) {
@@ -92,6 +93,15 @@ export default function AdminLayout({ crumbs, actions, children }: AdminLayoutPr
           keywords: [item.href],
         });
       }
+    }
+    for (const item of TRADING_NAV) {
+      if (item.requiredPermission && !can(item.requiredPermission)) continue;
+      out.push({
+        id: item.key,
+        label: item.label,
+        group: "系统设置",
+        keywords: [item.href, "交易", ...item.entries],
+      });
     }
     return out;
   }, [can]);
@@ -201,7 +211,8 @@ export default function AdminLayout({ crumbs, actions, children }: AdminLayoutPr
               autoFocus
               onSelect={(item) => {
                 setPaletteOpen(false);
-                const target = ADMIN_NAV.flatMap((g) => g.items).find((i) => i.key === item.id);
+                const target = ADMIN_NAV.flatMap((g) => g.items).find((i) => i.key === item.id)
+                  ?? TRADING_NAV.find((i) => i.key === item.id);
                 if (target) navigate(target.href);
               }}
               onClose={() => setPaletteOpen(false)}
