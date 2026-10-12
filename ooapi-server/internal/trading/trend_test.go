@@ -112,10 +112,56 @@ func TestWinRateGateSkipsUntilBacktestPasses(t *testing.T) {
 	if err != nil || snap.LastReason != ReasonWinRateBelow || paper.Entries != 0 {
 		t.Fatalf("blocked %+v entries=%d err=%v", snap, paper.Entries, err)
 	}
-	in.Backtest = &BacktestSummary{WinRate: 0.5, Trades: 8, NetR: 1}
+	in.Backtest = &BacktestSummary{WinRate: 0.5, Trades: DefaultMinTrades, NetR: 1}
 	snap, err = eng.Step(in)
 	if err != nil || snap.Side != SideLong || paper.Entries != 1 {
 		t.Fatalf("pass %+v entries=%d err=%v", snap, paper.Entries, err)
+	}
+}
+
+func TestWindowStatsAndSweepPass(t *testing.T) {
+	base := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+	trades := []BacktestTrade{
+		{OpenedAt: base.Add(24 * time.Hour), NetR: 1},
+		{OpenedAt: base.Add(6 * 24 * time.Hour), NetR: -0.5},
+	}
+	in := WindowStats(trades, base, base.Add(5*24*time.Hour))
+	out := WindowStats(trades, base.Add(5*24*time.Hour), base.Add(8*24*time.Hour))
+	if in.Trades != 1 || in.WinRate != 1 || in.NetR != 1 || out.Trades != 1 || out.NetR != -0.5 {
+		t.Fatalf("in %+v out %+v", in, out)
+	}
+	if SweepPass(BacktestSummary{WinRate: 1, Trades: 8, NetR: 4}, BacktestSummary{NetR: 1}) {
+		t.Fatal("8 trades passed the sweep flag")
+	}
+	good := BacktestSummary{WinRate: 0.5, Trades: DefaultMinTrades, NetR: 0.2}
+	if !SweepPass(good, BacktestSummary{NetR: 0.1}) {
+		t.Fatal("expected pass")
+	}
+	if SweepPass(good, BacktestSummary{NetR: 0}) {
+		t.Fatal("flat out-of-sample passed")
+	}
+}
+
+func TestEightTradesBlockedDespiteHighWinRate(t *testing.T) {
+	cfg := testConfig()
+	cfg.MinWinRate = 0.5
+	paper := NewPaper()
+	eng := withSecrets(NewEngine(cfg, paper, DiscardLogger()))
+	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	if err := eng.Start(calmStart(now, 20)); err != nil {
+		t.Fatal(err)
+	}
+	candles := candlesUntil(t, CrossGolden)
+	in := stepAt(now, candles, candles[len(candles)-1].Close, 20)
+	in.Backtest = &BacktestSummary{WinRate: 1, Trades: 8, NetR: 4}
+	snap, err := eng.Step(in)
+	if err != nil || snap.LastReason != ReasonInsufficientSamples || paper.Entries != 0 || snap.State != StateArmed {
+		t.Fatalf("samples %+v entries=%d err=%v", snap, paper.Entries, err)
+	}
+	in.Backtest = &BacktestSummary{WinRate: 1, Trades: DefaultMinTrades, NetR: 0}
+	snap, err = eng.Step(in)
+	if err != nil || snap.LastReason != ReasonNetRNotPositive || paper.Entries != 0 {
+		t.Fatalf("netR %+v entries=%d err=%v", snap, paper.Entries, err)
 	}
 }
 
