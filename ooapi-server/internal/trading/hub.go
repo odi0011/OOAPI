@@ -170,6 +170,18 @@ func (h *Hub) Step(userID, strategyID int64, cfg Config, in StepInput, secrets S
 	return eng.Step(in)
 }
 
+// ReconcileFlat 在持仓期间核对交易所是否已经空仓。不跑开仓信号，也不改风控门。
+func (h *Hub) ReconcileFlat(userID, strategyID int64, now time.Time, secrets SecretOpener) (Snapshot, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	eng := h.engines[sessionKey(userID, strategyID)]
+	if eng == nil {
+		return Snapshot{}, nil
+	}
+	eng.SetSecrets(secrets)
+	return eng.ReconcileFlat(now)
+}
+
 func (h *Hub) Stop(userID, strategyID int64, in StepInput, secrets SecretOpener) (Snapshot, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

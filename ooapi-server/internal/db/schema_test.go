@@ -13,6 +13,7 @@ func TestTradingEntriesMigration(t *testing.T) {
 	want := []string{
 		"score", "min_score", "boost", "forced", "win_rate", "trade_count",
 		"net_r", "expectancy_r", "expectancy_usdt", "one_r_usdt", "opened_at",
+		"exit_price", "exit_qty", "realized_usdt", "exit_reason", "closed_at",
 	}
 	cols := columnMigrations["trading_entries"]
 	for _, name := range want {

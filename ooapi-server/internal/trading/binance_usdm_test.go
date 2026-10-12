@@ -379,6 +379,10 @@ type binanceFake struct {
 	failTake        bool
 	emptyAfterPlace int
 	income          string
+	riskBody        string
+	trades          string
+	pendingSide     string
+	pendingPosSide  string
 }
 
 type fakeAlgo struct {
@@ -430,7 +434,17 @@ func (f *binanceFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/fapi/v1/algoOrder":
 		f.algo(w, r.Method, values)
 	case "/fapi/v2/positionRisk":
+		if f.riskBody != "" {
+			_, _ = io.WriteString(w, f.riskBody)
+			break
+		}
 		_, _ = io.WriteString(w, f.positionJSON())
+	case "/fapi/v1/userTrades":
+		if f.trades == "" {
+			_, _ = io.WriteString(w, `[]`)
+			break
+		}
+		_, _ = io.WriteString(w, f.trades)
 	case "/fapi/v1/openOrders":
 		_, _ = io.WriteString(w, `[]`)
 	case "/fapi/v1/openAlgoOrders":
@@ -459,7 +473,13 @@ func (f *binanceFake) order(w http.ResponseWriter, method string, values url.Val
 		f.queried = true
 		f.pos = f.pending
 		f.entry = 1.5
-		_, _ = io.WriteString(w, f.orderJSON("FILLED", values.Get("orderId"), formatQty(f.pos)))
+		if f.pendingPosSide != "" {
+			f.posSide = f.pendingPosSide
+		}
+		if strings.EqualFold(f.pendingSide, "SELL") && f.pos > 0 {
+			f.pos = -f.pos
+		}
+		_, _ = io.WriteString(w, f.orderJSON("FILLED", values.Get("orderId"), formatQty(absQty(f.pos))))
 		return
 	}
 	switch values.Get("type") {
@@ -470,6 +490,8 @@ func (f *binanceFake) order(w http.ResponseWriter, method string, values url.Val
 			_, _ = io.WriteString(w, f.orderJSON("FILLED", "9", values.Get("quantity")))
 			return
 		}
+		f.pendingSide = values.Get("side")
+		f.pendingPosSide = values.Get("positionSide")
 		if values.Get("closePosition") != "" {
 			f.t.Errorf("entry sent closePosition %#v", values)
 		}
@@ -694,6 +716,13 @@ func mathMod(qty, step float64) float64 {
 
 func formatQty(qty float64) string {
 	return strconv.FormatFloat(qty, 'f', 1, 64)
+}
+
+func absQty(qty float64) float64 {
+	if qty < 0 {
+		return -qty
+	}
+	return qty
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

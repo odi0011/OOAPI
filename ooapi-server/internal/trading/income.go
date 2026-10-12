@@ -74,6 +74,58 @@ func (c *USDMClient) RealizedIncome(symbol string, since, now time.Time) (day, c
 	return day, cumulative, nil
 }
 
+// IncomeParts 是一笔持仓期间账单里要计入净已实现的三项。转入转出不在里面。
+type IncomeParts struct {
+	RealizedPnL float64
+	Commission  float64
+	FundingFee  float64
+	Rows        int
+}
+
+// Net 是已实现盈亏、手续费和资金费的合计。
+func (p IncomeParts) Net() float64 {
+	return p.RealizedPnL + p.Commission + p.FundingFee
+}
+
+// IncomeParts 汇总 since 到 now 该交易对的三项账单。Rows 只数这三项，用来判断成交是否已经入账。
+func (c *USDMClient) IncomeParts(symbol string, since, now time.Time) (IncomeParts, error) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	since = since.UTC()
+	now = now.UTC()
+	if symbol == "" || since.IsZero() {
+		return IncomeParts{}, invalid("缺少收益起点")
+	}
+	if now.Before(since) {
+		now = since
+	}
+	rows, err := c.incomeRows(symbol, since, now)
+	if err != nil {
+		return IncomeParts{}, err
+	}
+	var parts IncomeParts
+	for _, row := range rows {
+		if !incomeTypes[row.IncomeType] {
+			continue
+		}
+		if row.Symbol != "" && !strings.EqualFold(row.Symbol, symbol) {
+			continue
+		}
+		if row.Time.Before(since) || row.Time.After(now) {
+			continue
+		}
+		switch row.IncomeType {
+		case "REALIZED_PNL":
+			parts.RealizedPnL += row.Income
+		case "COMMISSION":
+			parts.Commission += row.Income
+		case "FUNDING_FEE":
+			parts.FundingFee += row.Income
+		}
+		parts.Rows++
+	}
+	return parts, nil
+}
+
 func (c *USDMClient) incomeRows(symbol string, since, now time.Time) ([]incomeRow, error) {
 	var all []incomeRow
 	for win := since; !win.After(now); {

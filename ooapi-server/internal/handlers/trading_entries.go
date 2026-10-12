@@ -22,7 +22,19 @@ INSERT INTO trading_entries (
 const entrySelectCols = `
 id, user_id, strategy_id, symbol, side, score, min_score, boost, forced,
 win_rate, trade_count, net_r, expectancy_r, expectancy_usdt, one_r_usdt,
-entry_price, qty, opened_at`
+entry_price, qty, opened_at, exit_price, exit_qty, realized_usdt, exit_reason, closed_at`
+
+const entryCloseSQL = `
+UPDATE trading_entries
+SET exit_price = ?, exit_qty = ?, realized_usdt = ?, exit_reason = ?, closed_at = ?
+WHERE id = ? AND user_id = ? AND strategy_id = ? AND closed_at IS NULL`
+
+const entryCloseLatestSQL = `
+UPDATE trading_entries
+SET exit_price = ?, exit_qty = ?, realized_usdt = ?, exit_reason = ?, closed_at = ?
+WHERE user_id = ? AND strategy_id = ? AND symbol = ? AND side = ? AND closed_at IS NULL
+ORDER BY opened_at DESC, id DESC
+LIMIT 1`
 
 const entryListSQL = `
 SELECT ` + entrySelectCols + `
@@ -37,19 +49,48 @@ FROM trading_entries
 ORDER BY opened_at DESC, id DESC
 LIMIT ?`
 
-func (dbEntryLog) Save(rec trading.EntryRecord) error {
+func (dbEntryLog) Save(rec trading.EntryRecord) (int64, error) {
 	if db.DB == nil {
-		return sql.ErrConnDone
+		return 0, sql.ErrConnDone
 	}
 	opened := rec.OpenedAt.UTC()
 	if opened.IsZero() {
 		opened = time.Now().UTC()
 	}
-	_, err := db.DB.Exec(entryInsertSQL,
+	res, err := db.DB.Exec(entryInsertSQL,
 		rec.UserID, rec.StrategyID, rec.Symbol, rec.Side, rec.Score, rec.MinScore,
 		boolInt(rec.Boost), boolInt(rec.Forced),
 		rec.WinRate, rec.Trades, rec.NetR, rec.ExpectancyR, rec.ExpectancyUSDT, rec.OneRUSDT,
 		rec.EntryPrice, rec.Qty, opened,
+	)
+	if err != nil {
+		return 0, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func (dbEntryLog) Close(id, userID, strategyID int64, symbol, side string, exit trading.ExitFill) error {
+	if db.DB == nil {
+		return sql.ErrConnDone
+	}
+	closed := exit.ClosedAt.UTC()
+	if closed.IsZero() {
+		closed = time.Now().UTC()
+	}
+	if id > 0 {
+		_, err := db.DB.Exec(entryCloseSQL,
+			exit.Price, exit.Qty, exit.Realized, exit.Reason, closed,
+			id, userID, strategyID,
+		)
+		return err
+	}
+	_, err := db.DB.Exec(entryCloseLatestSQL,
+		exit.Price, exit.Qty, exit.Realized, exit.Reason, closed,
+		userID, strategyID, symbol, side,
 	)
 	return err
 }
@@ -90,16 +131,19 @@ func queryEntries(query string, args ...any) ([]trading.EntryRecord, error) {
 
 func scanEntry(s scanner) (trading.EntryRecord, error) {
 	var (
-		rec    trading.EntryRecord
-		boost  int
-		forced int
-		opened sql.NullTime
+		rec     trading.EntryRecord
+		boost   int
+		forced  int
+		opened  sql.NullTime
+		closed  sql.NullTime
+		exitWhy sql.NullString
 	)
 	err := s.Scan(
 		&rec.ID, &rec.UserID, &rec.StrategyID, &rec.Symbol, &rec.Side,
 		&rec.Score, &rec.MinScore, &boost, &forced,
 		&rec.WinRate, &rec.Trades, &rec.NetR, &rec.ExpectancyR, &rec.ExpectancyUSDT, &rec.OneRUSDT,
 		&rec.EntryPrice, &rec.Qty, &opened,
+		&rec.ExitPrice, &rec.ExitQty, &rec.RealizedUSDT, &exitWhy, &closed,
 	)
 	if err != nil {
 		return trading.EntryRecord{}, err
@@ -108,6 +152,12 @@ func scanEntry(s scanner) (trading.EntryRecord, error) {
 	rec.Forced = forced != 0
 	if opened.Valid {
 		rec.OpenedAt = opened.Time.UTC()
+	}
+	if exitWhy.Valid {
+		rec.ExitReason = exitWhy.String
+	}
+	if closed.Valid {
+		rec.ClosedAt = closed.Time.UTC()
 	}
 	return rec, nil
 }

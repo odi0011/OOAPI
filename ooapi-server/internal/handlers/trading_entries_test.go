@@ -44,7 +44,8 @@ func TestEntryRecordSurvivesInStateOrdersAndEvents(t *testing.T) {
 			OneRUSDT: 0.04, ExpectancyUSDT: 0.02,
 		},
 	}
-	if err := trading.SaveEntry(rec); err != nil {
+	id, err := trading.SaveEntry(rec)
+	if err != nil {
 		t.Fatal(err)
 	}
 	trading.ResetBoostForTest()
@@ -86,6 +87,25 @@ func TestEntryRecordSurvivesInStateOrdersAndEvents(t *testing.T) {
 	}
 	if math.Abs(events[0].Entry.ExpectancyUSDT-0.02) > 1e-9 {
 		t.Fatalf("event expectancy %+v", events[0].Entry)
+	}
+
+	closedAt := opened.Add(time.Minute)
+	if err := trading.CloseEntry(id, owner.ID, strategyID, "XRPUSDT", "long", trading.ExitFill{
+		Price: 0.5, Qty: 10, Realized: 0.25, Reason: trading.ReasonExchangeFlat, ClosedAt: closedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	again := tradingData(t, callTrading(t, GetTradingEngineState, http.MethodGet, "/api/trading/engine/state"+path, "", owner, ""))
+	closedRows, _ := again["entries"].([]any)
+	if len(closedRows) != 1 {
+		t.Fatalf("closed entries %#v", again["entries"])
+	}
+	closed := closedRows[0].(map[string]any)
+	if closed["exitPrice"] != 0.5 || closed["exitQty"] != float64(10) || closed["realizedUsdt"] != 0.25 || closed["exitReason"] != trading.ReasonExchangeFlat {
+		t.Fatalf("exit %#v", closed)
+	}
+	if closed["closedAt"] == nil || closed["closedAt"] == "" {
+		t.Fatalf("closedAt %#v", closed["closedAt"])
 	}
 }
 
