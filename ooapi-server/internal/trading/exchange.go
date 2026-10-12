@@ -81,7 +81,7 @@ func (p *Paper) PlaceEntry(req EntryOrder) (Fill, error) {
 		return Fill{}, invalid("开仓单缺少交易对、数量或价格")
 	}
 	if req.Leverage < 1 || req.Leverage > MaxLeverage || req.MarginMode != MarginIsolated {
-		return Fill{}, invalid("测网撮合只接受逐仓且杠杆不超过 3")
+		return Fill{}, invalid(fmt.Sprintf("测网撮合只接受逐仓且杠杆不超过 %d", MaxLeverage))
 	}
 	if req.Side != SideLong && req.Side != SideShort {
 		return Fill{}, invalid("开仓方向只能是 long 或 short")

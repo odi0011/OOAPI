@@ -137,6 +137,74 @@ func TestEngineBlocksWhenStepSizeBreaksMinNotional(t *testing.T) {
 	}
 }
 
+func TestEngineFlattensWhenTakeProfitFails(t *testing.T) {
+	fake := newBinanceFake(t, "0.1", "0.1", "0.0001", "5")
+	fake.failTake = true
+	server := httptest.NewServer(fake)
+	defer server.Close()
+
+	client := NewUSDMClient(server.URL)
+	eng := NewEngine(testConfig(), client, DiscardLogger())
+	eng.SetSecrets(func() (Credentials, error) {
+		return Credentials{APIKey: fake.apiKey, APISecret: fake.secret, Network: ModeTestnet}, nil
+	})
+	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	if err := eng.Start(calmStart(now, 2)); err != nil {
+		t.Fatal(err)
+	}
+	candles := candlesUntil(t, CrossGolden)
+	snap, err := eng.Step(stepAt(now, candles, candles[len(candles)-1].Close, 2))
+	if !errors.Is(err, ErrNoAutoReopen) {
+		t.Fatal(err)
+	}
+	var reason *ReasonError
+	if !errors.As(err, &reason) || reason.Reason != ReasonProtectiveOrdersFailed {
+		t.Fatalf("reason %#v err=%v", reason, err)
+	}
+	if snap.State != StateError || snap.LastReason != ReasonProtectiveOrdersFailed || snap.StopPrice <= 0 || snap.LiqPrice <= 0 {
+		t.Fatalf("snap %+v", snap)
+	}
+	if fake.pos != 0 {
+		t.Fatalf("position left open: %v", fake.pos)
+	}
+	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET") != 1 {
+		t.Fatalf("protection calls %#v", fake.snapshot())
+	}
+	reduces := 0
+	for _, call := range fake.snapshot() {
+		if call.method == http.MethodPost && call.path == "/fapi/v1/order" && call.values.Get("reduceOnly") == "true" && call.values.Get("type") == "MARKET" {
+			reduces++
+		}
+	}
+	if reduces != 1 {
+		t.Fatalf("reduce-only closes = %d", reduces)
+	}
+}
+
+func TestMaintMarginRateUsesTightestFetchedBracket(t *testing.T) {
+	client := NewUSDMTestnet()
+	if _, ok := client.MaintMarginRate(SymbolXRPUSDT, 20); ok {
+		t.Fatal("missing brackets should not invent a rate")
+	}
+	client.StoreLeverageBrackets("xrpusdt", []LeverageBracket{
+		{InitialLeverage: 75, MaintMarginRate: 0.004},
+		{InitialLeverage: 20, MaintMarginRate: 0.01},
+		{InitialLeverage: 10, MaintMarginRate: 0.025},
+	})
+	rate, ok := client.MaintMarginRate(SymbolXRPUSDT, 20)
+	if !ok || rate != 0.01 {
+		t.Fatalf("20x rate=%v ok=%v", rate, ok)
+	}
+	rate, ok = client.MaintMarginRate(SymbolXRPUSDT, 50)
+	if !ok || rate != 0.004 {
+		t.Fatalf("50x rate=%v ok=%v", rate, ok)
+	}
+	rate, ok = client.MaintMarginRate(SymbolXRPUSDT, 100)
+	if !ok || rate != 0.025 {
+		t.Fatalf("above every bracket rate=%v ok=%v", rate, ok)
+	}
+}
+
 func TestUSDMClientMatchesKeyNetworkToHost(t *testing.T) {
 	dialed := false
 	client := NewUSDMClient(BinanceUSDMLiveBase)
@@ -278,23 +346,24 @@ type recordedCall struct {
 }
 
 type binanceFake struct {
-	t       *testing.T
-	apiKey  string
-	secret  string
-	step    string
-	minQty  string
-	tick    string
-	minNot  string
-	mu      sync.Mutex
-	calls   []recordedCall
-	pos     float64
-	entry   float64
-	posSide string
-	dual    bool
-	algos   []fakeAlgo
-	algoSeq int64
-	pending float64
-	queried bool
+	t        *testing.T
+	apiKey   string
+	secret   string
+	step     string
+	minQty   string
+	tick     string
+	minNot   string
+	mu       sync.Mutex
+	calls    []recordedCall
+	pos      float64
+	entry    float64
+	posSide  string
+	dual     bool
+	algos    []fakeAlgo
+	algoSeq  int64
+	pending  float64
+	queried  bool
+	failTake bool
 }
 
 type fakeAlgo struct {
@@ -330,10 +399,11 @@ func (f *binanceFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = io.WriteString(w, `{"code":-4046,"msg":"No need to change margin type."}`)
 	case "/fapi/v1/leverage":
-		if values.Get("leverage") != "3" {
+		lev, convErr := strconv.Atoi(values.Get("leverage"))
+		if convErr != nil || lev < 1 || lev > MaxLeverage || values.Get("symbol") != SymbolXRPUSDT {
 			f.t.Errorf("leverage %#v", values)
 		}
-		_, _ = io.WriteString(w, `{"symbol":"XRPUSDT","leverage":3}`)
+		_, _ = io.WriteString(w, `{"symbol":"XRPUSDT","leverage":`+strconv.Itoa(lev)+`}`)
 	case "/fapi/v1/positionSide/dual":
 		_, _ = io.WriteString(w, `{"dualSidePosition":`+strconv.FormatBool(f.dual)+`}`)
 	case "/fapi/v1/order":
@@ -422,6 +492,11 @@ func (f *binanceFake) algo(w http.ResponseWriter, method string, values url.Valu
 		}
 		if values.Get("workingType") != "MARK_PRICE" || values.Get("triggerPrice") == "" || values.Get("stopPrice") != "" {
 			f.t.Errorf("trigger %#v", values)
+		}
+		if values.Get("type") == "TAKE_PROFIT_MARKET" && f.failTake {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"code":-2021,"msg":"Order would immediately trigger."}`)
+			return
 		}
 		if f.dual {
 			if values.Get("positionSide") == "" {

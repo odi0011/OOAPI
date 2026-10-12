@@ -1,6 +1,9 @@
 package trading
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // 字段与已上线的 /api/trading/strategies 一致。
 // 策略存在 trading_strategies，密钥存在 exchange_keys；本包不另建配置表。
@@ -25,6 +28,7 @@ const (
 	MinNotionalUSDT = 5.0
 
 	// DefaultRFraction 是 1R 的价格距离，按入场价的比例计。
+	// 止损距离 = stopR × 入场价 × DefaultRFraction。不是 ATR，也不是 K 线高低点。
 	DefaultRFraction = 0.008
 
 	// ExtremeFundingAbs 是拦截开仓的资金费率绝对值（0.10%/次）。
@@ -33,7 +37,20 @@ const (
 	// MinLiqDistancePct 是允许开仓的最小强平距离。负数表示没有持仓。
 	MinLiqDistancePct = 0.015
 
-	MaxLeverage = 3
+	// MaxLeverage 是逐仓杠杆上限。开仓、风控和策略校验只认这一个常量。
+	MaxLeverage = 20
+
+	// DailyLossOffPct 及以上视为关闭日亏停机。校验仍接受该值，停机代码保留。
+	DailyLossOffPct = 100
+
+	// DefaultMaintMarginRate 是还没拉到杠杆档位时用的维持保证金率。
+	DefaultMaintMarginRate = 0.005
+
+	// MaxStopToLiqFraction 要求止损距离严格小于强平距离的这个比例。
+	MaxStopToLiqFraction = 0.8
+
+	ReasonStopBeyondLiquidation  = "stop_beyond_liquidation"
+	ReasonProtectiveOrdersFailed = "protective_orders_failed"
 )
 
 // Config 是从 trading_strategies 读出的一份策略。
@@ -87,7 +104,11 @@ func allowedTimeframe(v string) bool {
 	}
 }
 
-// Validate 与策略接口的 v1 约束对齐：只做 XRPUSDT、逐仓、杠杆不超过 3。
+func invalidLeverage() error {
+	return invalid(fmt.Sprintf("杠杆必须是 1 到 %d 的整数", MaxLeverage))
+}
+
+// Validate 与策略接口的 v1 约束对齐：只做 XRPUSDT、逐仓、杠杆不超过 MaxLeverage。
 func (c Config) Validate() error {
 	c = c.Normalize()
 	if c.Symbol != SymbolXRPUSDT {
@@ -97,7 +118,7 @@ func (c Config) Validate() error {
 		return invalid("v1 只允许逐仓（isolated）")
 	}
 	if c.Leverage < 1 || c.Leverage > MaxLeverage {
-		return invalid("杠杆必须是 1 到 3 的整数")
+		return invalidLeverage()
 	}
 	if !allowedTimeframe(c.Timeframe) {
 		return invalid("K 线周期只支持 1m、3m、5m、15m")
@@ -108,8 +129,8 @@ func (c Config) Validate() error {
 	if c.StopR <= 0 || c.StopR > 20 || c.TakeProfitR <= 0 || c.TakeProfitR > 20 {
 		return invalid("止损和止盈要大于 0 且不超过 20")
 	}
-	if c.DailyLossPct <= 0 || c.DailyLossPct > 100 {
-		return invalid("日亏停机阈值要大于 0 且不超过 100")
+	if c.DailyLossPct <= 0 || c.DailyLossPct > DailyLossOffPct {
+		return invalid(fmt.Sprintf("日亏停机阈值要大于 0 且不超过 %g", float64(DailyLossOffPct)))
 	}
 	if c.MaxMarginUsdt <= 0 || c.MaxMarginUsdt > 1_000_000 {
 		return invalid("单笔保证金上限要大于 0")
