@@ -310,6 +310,9 @@ func strategyConfig(row strategyRow) trading.Config {
 		RSILongMax:            rec.RSILongMax,
 		RSIShortMin:           rec.RSIShortMin,
 		RSIShortMax:           rec.RSIShortMax,
+		GambleMode:            rec.GambleMode,
+		ScalpTpPct:            rec.ScalpTpPct,
+		ScalpSlPct:            rec.ScalpSlPct,
 	}.Normalize()
 }
 

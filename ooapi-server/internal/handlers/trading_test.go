@@ -448,6 +448,61 @@ func TestLiveRejectsWeakWinRateAndSampleSize(t *testing.T) {
 	}
 }
 
+func TestGambleModeStoresOverridesAndReloadsEngine(t *testing.T) {
+	useTradingDB(t)
+	trading.ResetForTest()
+	t.Cleanup(trading.ResetForTest)
+	owner := tradingUser(44)
+	keyRec := callTrading(t, CreateExchangeKey, http.MethodPost, "/api/trading/exchange-keys", `{
+		"label": "实盘",
+		"network": "live",
+		"apiKey": "`+testAPIKey+`",
+		"apiSecret": "`+testAPISecret+`"
+	}`, owner, "")
+	keyID := int64(tradingData(t, keyRec)["id"].(float64))
+	created := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+		fmt.Sprintf(`{"exchangeKeyId": %d, "mode": "live", "gambleMode": true, "minWinRate": 0, "minTrades": 1, "minScore": 2, "scalpTpPct": 0.001, "scalpSlPct": 0.004}`, keyID), owner, "")
+	if created.Code != http.StatusOK {
+		t.Fatalf("create = %d %s", created.Code, created.Body.String())
+	}
+	view := tradingData(t, created)
+	if view["gambleMode"] != true || view["minWinRate"] != float64(0) || view["minTrades"] != float64(1) || view["minScore"] != float64(2) {
+		t.Fatalf("create view %#v", view)
+	}
+	if view["scalpTpPct"] != 0.001 || view["scalpSlPct"] != 0.004 {
+		t.Fatalf("scalp %#v", view)
+	}
+	id := int64(view["id"].(float64))
+	trading.SetTestnetGreen(true)
+	t.Cleanup(trading.ResetTestnetGreen)
+	started := callTrading(t, StartTradingEngine, http.MethodPost, "/api/trading/engine/start", fmt.Sprintf(`{
+		"strategyId": %d,
+		"equityUsdt": 20,
+		"fundingRate": 0.0001,
+		"liqDistancePct": -1
+	}`, id), owner, "")
+	if started.Code != http.StatusOK || tradingData(t, started)["running"] != true {
+		t.Fatalf("start = %d %s", started.Code, started.Body.String())
+	}
+	patched := callTrading(t, UpdateTradingStrategy, http.MethodPatch, "/api/trading/strategies/"+fmt.Sprint(id),
+		`{"minScore": 1, "scalpTpPct": 0.002, "takeProfitR": 1.2, "stopR": 0.8, "timeframe": "15m"}`, owner, fmt.Sprint(id))
+	if patched.Code != http.StatusOK {
+		t.Fatalf("patch = %d %s", patched.Code, patched.Body.String())
+	}
+	body := tradingData(t, patched)
+	if body["minScore"] != float64(1) || body["timeframe"] != "15m" || body["stopR"] != 0.8 || body["takeProfitR"] != 1.2 || body["gambleMode"] != true {
+		t.Fatalf("patch %#v", body)
+	}
+	cfg, ok := trading.DefaultHub().Config(owner.ID, id)
+	if !ok || cfg.MinScore != 1 || !cfg.GambleMode || cfg.Timeframe != "15m" || cfg.StopR != 0.8 || cfg.TakeProfitR != 1.2 || cfg.ScalpTpPct != 0.002 {
+		t.Fatalf("reloaded %+v ok=%v", cfg, ok)
+	}
+	snap, found := trading.DefaultHub().State(owner.ID, id)
+	if !found || !snap.Running || snap.State != trading.StateArmed {
+		t.Fatalf("still running %+v found=%v", snap, found)
+	}
+}
+
 func TestDOGEStrategyAcceptsPlannerParams(t *testing.T) {
 	useTradingDB(t)
 	owner := tradingUser(42)
@@ -521,6 +576,9 @@ func assertStrategyDefaults(t *testing.T, view map[string]any) {
 		{"rsiLongMax", 70.0},
 		{"rsiShortMin", 30.0},
 		{"rsiShortMax", 50.0},
+		{"gambleMode", false},
+		{"scalpTpPct", trading.DefaultScalpPct},
+		{"scalpSlPct", trading.DefaultScalpPct},
 	}
 	for _, check := range checks {
 		got := view[check.key]
@@ -817,12 +875,14 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 				MaxOpenPositions: int(tradingArgInt(vals[21])),
 				RSILongMin:       tradingArgFloat(vals[22]), RSILongMax: tradingArgFloat(vals[23]),
 				RSIShortMin: tradingArgFloat(vals[24]), RSIShortMax: tradingArgFloat(vals[25]),
-				Running: tradingArgInt(vals[26]) == 1,
+				GambleMode: tradingArgInt(vals[26]) == 1,
+				ScalpTpPct: tradingArgFloat(vals[27]), ScalpSlPct: tradingArgFloat(vals[28]),
+				Running: tradingArgInt(vals[29]) == 1,
 			},
 		}
 		return tradingTestResult{id, 1}, nil
 	case normTradingSQL(strategyUpdateSQL):
-		id, userID := tradingArgInt(vals[25]), tradingArgInt(vals[26])
+		id, userID := tradingArgInt(vals[28]), tradingArgInt(vals[29])
 		row := d.strategies[id]
 		if row == nil || row.userID != userID {
 			return tradingTestResult{0, 0}, nil
@@ -842,6 +902,8 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 			MaxOpenPositions: int(tradingArgInt(vals[20])),
 			RSILongMin:       tradingArgFloat(vals[21]), RSILongMax: tradingArgFloat(vals[22]),
 			RSIShortMin: tradingArgFloat(vals[23]), RSIShortMax: tradingArgFloat(vals[24]),
+			GambleMode: tradingArgInt(vals[25]) == 1,
+			ScalpTpPct: tradingArgFloat(vals[26]), ScalpSlPct: tradingArgFloat(vals[27]),
 			Running: running,
 		}
 		row.updatedAt = d.stampLocked()
@@ -971,7 +1033,8 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 		"entry_mode", "min_score", "min_win_rate", "min_trades",
 		"max_margin_per_trade_usdt", "max_consecutive_losses", "pause_balance_usdt", "pause_reason",
 		"max_open_positions",
-		"rsi_long_min", "rsi_long_max", "rsi_short_min", "rsi_short_max", "running",
+		"rsi_long_min", "rsi_long_max", "rsi_short_min", "rsi_short_max",
+		"gamble_mode", "scalp_tp_pct", "scalp_sl_pct", "running",
 		"created_at", "updated_at", "network", "status", "label",
 	}
 	type pair struct {
@@ -1006,13 +1069,18 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 		if rec.Running {
 			running = 1
 		}
+		gamble := int64(0)
+		if rec.GambleMode {
+			gamble = 1
+		}
 		values = append(values, []driver.Value{
 			row.id, rec.Symbol, int64(rec.Leverage), rec.MarginMode, int64(rec.EmaFast), int64(rec.EmaSlow), rec.Timeframe,
 			rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
 			rec.EntryMode, int64(rec.MinScore), rec.MinWinRate, int64(rec.MinTrades),
 			rec.MaxMarginPerTradeUsdt, int64(rec.MaxConsecutiveLosses), rec.PauseBalanceUsdt, rec.PauseReason,
 			int64(rec.MaxOpenPositions),
-			rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax, running,
+			rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax,
+			gamble, rec.ScalpTpPct, rec.ScalpSlPct, running,
 			row.createdAt, row.updatedAt, network, status, label,
 		})
 	}

@@ -48,7 +48,8 @@ s.stop_r, s.take_profit_r, s.daily_loss_pct, s.max_margin_usdt, s.exchange_key_i
 s.entry_mode, s.min_score, s.min_win_rate, s.min_trades,
 s.max_margin_per_trade_usdt, s.max_consecutive_losses, s.pause_balance_usdt, s.pause_reason,
 s.max_open_positions,
-s.rsi_long_min, s.rsi_long_max, s.rsi_short_min, s.rsi_short_max, s.running,
+s.rsi_long_min, s.rsi_long_max, s.rsi_short_min, s.rsi_short_max,
+s.gamble_mode, s.scalp_tp_pct, s.scalp_sl_pct, s.running,
 s.created_at, s.updated_at, k.network, k.status, k.label`
 
 const strategyInsertSQL = `
@@ -58,8 +59,9 @@ INSERT INTO trading_strategies (
 	entry_mode, min_score, min_win_rate, min_trades,
 	max_margin_per_trade_usdt, max_consecutive_losses, pause_balance_usdt, pause_reason,
 	max_open_positions,
-	rsi_long_min, rsi_long_max, rsi_short_min, rsi_short_max, running
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	rsi_long_min, rsi_long_max, rsi_short_min, rsi_short_max,
+	gamble_mode, scalp_tp_pct, scalp_sl_pct, running
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const strategyListSQL = `
 SELECT ` + strategySelectCols + `
@@ -81,7 +83,8 @@ SET symbol = ?, leverage = ?, margin_mode = ?, ema_fast = ?, ema_slow = ?, timef
 	exchange_key_id = ?, mode = ?, entry_mode = ?, min_score = ?, min_win_rate = ?, min_trades = ?,
 	max_margin_per_trade_usdt = ?, max_consecutive_losses = ?, pause_balance_usdt = ?, pause_reason = ?,
 	max_open_positions = ?,
-	rsi_long_min = ?, rsi_long_max = ?, rsi_short_min = ?, rsi_short_max = ?
+	rsi_long_min = ?, rsi_long_max = ?, rsi_short_min = ?, rsi_short_max = ?,
+	gamble_mode = ?, scalp_tp_pct = ?, scalp_sl_pct = ?
 WHERE id = ? AND user_id = ?`
 
 const strategyRunningSQL = `
@@ -129,6 +132,9 @@ type strategyWrite struct {
 	RSILongMax            *float64 `json:"rsiLongMax"`
 	RSIShortMin           *float64 `json:"rsiShortMin"`
 	RSIShortMax           *float64 `json:"rsiShortMax"`
+	GambleMode            *bool    `json:"gambleMode"`
+	ScalpTpPct            *float64 `json:"scalpTpPct"`
+	ScalpSlPct            *float64 `json:"scalpSlPct"`
 }
 
 type strategyRecord struct {
@@ -157,6 +163,9 @@ type strategyRecord struct {
 	RSILongMax            float64
 	RSIShortMin           float64
 	RSIShortMax           float64
+	GambleMode            bool
+	ScalpTpPct            float64
+	ScalpSlPct            float64
 	Running               bool
 }
 
@@ -187,6 +196,9 @@ type strategyView struct {
 	RSILongMax            float64  `json:"rsiLongMax"`
 	RSIShortMin           float64  `json:"rsiShortMin"`
 	RSIShortMax           float64  `json:"rsiShortMax"`
+	GambleMode            bool     `json:"gambleMode"`
+	ScalpTpPct            float64  `json:"scalpTpPct"`
+	ScalpSlPct            float64  `json:"scalpSlPct"`
 	Running               bool     `json:"running"`
 	ExchangeKeyActive     bool     `json:"exchangeKeyActive"`
 	ExchangeKeyNetwork    string   `json:"exchangeKeyNetwork,omitempty"`
@@ -230,6 +242,9 @@ func defaultStrategy() strategyRecord {
 		RSILongMax:            70,
 		RSIShortMin:           30,
 		RSIShortMax:           50,
+		GambleMode:            false,
+		ScalpTpPct:            trading.DefaultScalpPct,
+		ScalpSlPct:            trading.DefaultScalpPct,
 	}
 }
 
@@ -262,6 +277,9 @@ func (row strategyRow) view() strategyView {
 		RSILongMax:            rec.RSILongMax,
 		RSIShortMin:           rec.RSIShortMin,
 		RSIShortMax:           rec.RSIShortMax,
+		GambleMode:            rec.GambleMode,
+		ScalpTpPct:            rec.ScalpTpPct,
+		ScalpSlPct:            rec.ScalpSlPct,
 		Running:               rec.Running,
 		ExchangeKeyActive:     row.ExchangeKeyActive,
 		ExchangeKeyNetwork:    row.ExchangeKeyNetwork,
@@ -372,7 +390,8 @@ func CreateTradingStrategy(c *gin.Context) {
 		rec.EntryMode, rec.MinScore, rec.MinWinRate, rec.MinTrades,
 		rec.MaxMarginPerTradeUsdt, rec.MaxConsecutiveLosses, rec.PauseBalanceUsdt, rec.PauseReason,
 		rec.MaxOpenPositions,
-		rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax, 0,
+		rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax,
+		boolInt(rec.GambleMode), rec.ScalpTpPct, rec.ScalpSlPct, 0,
 	)
 	if err != nil {
 		log.Printf("[trading] 写入策略失败: %v", err)
@@ -442,6 +461,7 @@ func UpdateTradingStrategy(c *gin.Context) {
 		rec.MaxMarginPerTradeUsdt, rec.MaxConsecutiveLosses, rec.PauseBalanceUsdt, rec.PauseReason,
 		rec.MaxOpenPositions,
 		rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax,
+		boolInt(rec.GambleMode), rec.ScalpTpPct, rec.ScalpSlPct,
 		id, user.ID,
 	)
 	if err != nil {
@@ -461,6 +481,7 @@ func UpdateTradingStrategy(c *gin.Context) {
 		return
 	}
 	log.Printf("[trading] 用户 %s 更新策略 id=%d mode=%s", user.Username, id, rec.Mode)
+	reloadStrategyConfig(user.ID, row)
 	ok(c, row.view())
 }
 
@@ -501,7 +522,7 @@ func scanStrategy(s scanner) (strategyRow, error) {
 		status  sql.NullInt64
 		label   sql.NullString
 	)
-	var running int
+	var running, gamble int
 	err := s.Scan(
 		&row.ID, &row.Record.Symbol, &row.Record.Leverage, &row.Record.MarginMode,
 		&row.Record.EmaFast, &row.Record.EmaSlow, &row.Record.Timeframe,
@@ -510,7 +531,8 @@ func scanStrategy(s scanner) (strategyRow, error) {
 		&row.Record.EntryMode, &row.Record.MinScore, &row.Record.MinWinRate, &row.Record.MinTrades,
 		&row.Record.MaxMarginPerTradeUsdt, &row.Record.MaxConsecutiveLosses, &row.Record.PauseBalanceUsdt, &row.Record.PauseReason,
 		&row.Record.MaxOpenPositions,
-		&row.Record.RSILongMin, &row.Record.RSILongMax, &row.Record.RSIShortMin, &row.Record.RSIShortMax, &running,
+		&row.Record.RSILongMin, &row.Record.RSILongMax, &row.Record.RSIShortMin, &row.Record.RSIShortMax,
+		&gamble, &row.Record.ScalpTpPct, &row.Record.ScalpSlPct, &running,
 		&row.CreatedAt, &row.UpdatedAt,
 		&network, &status, &label,
 	)
@@ -524,8 +546,16 @@ func scanStrategy(s scanner) (strategyRow, error) {
 		row.ExchangeKeyLabel = label.String
 	}
 	row.ExchangeKeyActive = status.Valid && status.Int64 == exchangeKeyActive
+	row.Record.GambleMode = gamble == 1
 	row.Record.Running = running == 1
 	return row, nil
+}
+
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 func setStrategyPaused(id int64, reason string) error {
@@ -662,6 +692,21 @@ func applyStrategyWrite(base strategyRecord, in strategyWrite, creating bool) (s
 	if in.RSIShortMax != nil {
 		out.RSIShortMax = round4(*in.RSIShortMax)
 	}
+	if in.GambleMode != nil {
+		out.GambleMode = *in.GambleMode
+	}
+	if in.ScalpTpPct != nil {
+		out.ScalpTpPct = round4(*in.ScalpTpPct)
+	}
+	if in.ScalpSlPct != nil {
+		out.ScalpSlPct = round4(*in.ScalpSlPct)
+	}
+	if out.ScalpTpPct <= 0 {
+		out.ScalpTpPct = trading.DefaultScalpPct
+	}
+	if out.ScalpSlPct <= 0 {
+		out.ScalpSlPct = trading.DefaultScalpPct
+	}
 	if err := validateStrategy(out, creating && in.ExchangeKeyID == nil); err != nil {
 		return strategyRecord{}, err
 	}
@@ -711,10 +756,13 @@ func validateStrategy(rec strategyRecord, missingKey bool) *tradingError {
 	if rec.MinTrades < 1 || rec.MinTrades > 10000 {
 		return &tradingError{http.StatusBadRequest, "minTrades 要在 1 到 10000 之间", "invalid_min_trades"}
 	}
-	if rec.Mode == networkLive && rec.MinWinRate < trading.DefaultMinWinRate {
+	if rec.ScalpTpPct <= 0 || rec.ScalpTpPct > 0.2 || rec.ScalpSlPct <= 0 || rec.ScalpSlPct > 0.2 {
+		return &tradingError{http.StatusBadRequest, "剥头皮止损和止盈要大于 0 且不超过 20%", "scalpPct"}
+	}
+	if rec.Mode == networkLive && !rec.GambleMode && rec.MinWinRate < trading.DefaultMinWinRate {
 		return &tradingError{http.StatusBadRequest, "实盘 minWinRate 不能低于 0.5", "minWinRate"}
 	}
-	if rec.Mode == networkLive && rec.MinTrades < trading.DefaultMinTrades {
+	if rec.Mode == networkLive && !rec.GambleMode && rec.MinTrades < trading.DefaultMinTrades {
 		return &tradingError{http.StatusBadRequest, "实盘 minTrades 不能低于 30", "minTrades"}
 	}
 	if rec.MaxMarginPerTradeUsdt < 0 || rec.MaxMarginPerTradeUsdt > 1_000_000 {

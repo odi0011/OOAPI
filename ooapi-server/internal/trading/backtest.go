@@ -45,7 +45,11 @@ func (r BacktestResult) Summary(at time.Time) BacktestSummary {
 // BacktestGate 是开仓前的回测门。测网 minWinRate 为 0 时整道门关闭。
 // 实盘不允许用 minWinRate<=0 跳过胜率校验，至少要到 DefaultMinWinRate。
 // 打开后要同时满足胜率、样本笔数和扣费后的净 R。
+// GambleMode 整道门跳过。止损仍须在强平价之前，与这道门无关。
 func BacktestGate(cfg Config, sum *BacktestSummary) string {
+	if cfg.GambleMode {
+		return ""
+	}
 	live := strings.EqualFold(cfg.Mode, ModeLive)
 	floor := cfg.MinWinRate
 	if live && floor < DefaultMinWinRate {
@@ -165,7 +169,7 @@ func backtest(cfg Config, candles, higher []Candle, fee, slip float64) (Backtest
 		}
 		rawEntry := bar.Close
 		fill := slipPrice(got, rawEntry, slip, true)
-		stopPx, takePx, err := ProtectionPrices(got, fill, fill*DefaultRFraction, cfg.StopR, cfg.TakeProfitR)
+		stopPx, takePx, err := stopTake(cfg, got, fill)
 		if err != nil {
 			continue
 		}
@@ -187,6 +191,14 @@ func backtest(cfg Config, candles, higher []Candle, fee, slip float64) (Backtest
 		out.WinRate = float64(out.Wins) / float64(out.TradeCount)
 	}
 	return out, nil
+}
+
+func stopTake(cfg Config, side Side, entry float64) (float64, float64, error) {
+	if cfg.GambleMode {
+		sl, tp := cfg.scalpPcts()
+		return ScalpProtection(side, entry, sl, tp)
+	}
+	return ProtectionPrices(side, entry, entry*DefaultRFraction, cfg.StopR, cfg.TakeProfitR)
 }
 
 func entrySide(cfg Config, candles, higher []Candle) (Side, string, error) {

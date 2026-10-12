@@ -265,6 +265,19 @@ func (e *Engine) UpdateConfig(cfg Config) error {
 	if e.Busy() {
 		return ErrConfigLocked
 	}
+	return e.storeConfig(cfg)
+}
+
+// storeConfig 写入策略参数。热更新可以在持仓期间调用，已挂上的止损止盈不改。
+// 序号更旧的快照不会盖掉刚保存的配置。
+func (e *Engine) storeConfig(cfg Config) error {
+	if e == nil {
+		return invalid("缺少引擎")
+	}
+	cfg = cfg.Normalize()
+	if e.cfg.Revision > 0 && (cfg.Revision == 0 || cfg.Revision < e.cfg.Revision) {
+		return nil
+	}
 	e.cfg = cfg
 	return nil
 }
@@ -501,60 +514,80 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 	if !e.running {
 		return e.Snapshot(), ErrNotRunning
 	}
+	boosting := e.boosting(in)
 	wr := signalWinRate(in, e.lastBacktest)
-	candSide, candScore := "", 0
-	if e.boosting(in) {
-		if got, sc, serr := ScoreTrend(e.cfg, in.Candles, in.Higher); serr == nil {
-			candSide, candScore = string(got), sc
+	emaSide := Side("")
+	emaScore := 0
+	if boosting {
+		got, sc, serr := TrendDirection(e.cfg, in.Candles, in.Higher)
+		if serr != nil {
+			return e.failed(serr.Error())
 		}
+		emaSide, emaScore = got, sc
 	}
-	noted := false
-	noteBoost := func(passes bool) {
-		if noted || !e.boosting(in) {
-			return
-		}
-		noted = true
-		boostState.note(e.cfg.ID, wr, passes)
-	}
-	defer func() {
-		if !e.boosting(in) {
-			return
-		}
-		noteBoost(false)
-		boostState.consider(boostCand{
-			symbol: e.cfg.Symbol,
-			side:   candSide,
-			score:  candScore,
-			need:   e.cfg.Normalize().MinScore,
-			reason: e.lastReason,
-		})
-	}()
 	side, signal, err := e.entrySide(in)
 	if err != nil {
 		return e.failed(err.Error())
 	}
-	if side == "" {
+	gateReason := ""
+	if e.cfg.GambleMode || e.cfg.MinWinRate > 0 || strings.EqualFold(e.cfg.Mode, ModeLive) {
+		sum := in.Backtest
+		if sum == nil {
+			sum = e.lastBacktest
+		}
+		gateReason = BacktestGate(e.cfg, sum)
+	}
+	need := e.cfg.Normalize().MinScore
+	openSide := side
+	if boosting && openSide == "" {
+		openSide = emaSide
+	}
+	if boosting {
+		candSide := openSide
+		reason := signal
+		if gateReason != "" {
+			reason = gateReason
+		}
+		eligible := gateReason == "" && candSide != ""
+		boostState.note(e.cfg.ID, wr, eligible)
+		boostState.consider(boostCand{
+			id:      e.cfg.ID,
+			symbol:  e.cfg.Symbol,
+			side:    string(candSide),
+			score:   emaScore,
+			need:    need,
+			winrate: wr,
+			reason:  reason,
+			passes:  eligible,
+			clears:  side != "",
+		})
+	}
+	if openSide == "" {
 		e.note("none", signal)
 		return e.Snapshot(), nil
 	}
+	if in.SkipReason == "" && in.PositionsKnown && symbolHasPosition(e.cfg.Symbol, in.Positions) {
+		in.SkipReason = ReasonSymbolHeld
+	}
+	blockBoost := func() {
+		if boosting {
+			boostState.block(e.cfg.ID)
+		}
+	}
 	if in.SkipReason != "" {
+		blockBoost()
 		e.note("skip", in.SkipReason)
 		return e.Snapshot(), nil
 	}
 	floor := e.floorNotional(in)
 	if e.cfg.Leverage > 0 && e.marginBudget()*float64(e.cfg.Leverage)+1e-9 < floor {
+		blockBoost()
 		e.note("skip", ReasonBelowMinNotional)
 		return e.Snapshot(), nil
 	}
-	if e.cfg.MinWinRate > 0 || strings.EqualFold(e.cfg.Mode, ModeLive) {
-		sum := in.Backtest
-		if sum == nil {
-			sum = e.lastBacktest
-		}
-		if reason := BacktestGate(e.cfg, sum); reason != "" {
-			e.note("skip", reason)
-			return e.Snapshot(), nil
-		}
+	if gateReason != "" {
+		e.note("skip", gateReason)
+		return e.Snapshot(), nil
 	}
 	price := mark(in)
 	if price <= 0 {
@@ -563,27 +596,35 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 	qty, err := e.entryQty(price)
 	if err != nil {
 		if errors.Is(err, ErrNotionalBelowMin) {
+			blockBoost()
 			e.note("skip", ReasonBelowMinNotional)
 			return e.Snapshot(), nil
 		}
 		return e.Snapshot(), err
 	}
-	stop, _, liq, err := e.quoteProtection(side, price)
+	stop, _, liq, err := e.quoteProtection(openSide, price)
 	if err != nil {
 		return e.failed(err.Error())
 	}
-	if !StopWithinLiquidation(side, price, stop, liq) {
+	if !StopWithinLiquidation(openSide, price, stop, liq) {
+		blockBoost()
 		return e.blockStop(price, stop, liq)
 	}
 	reserved := false
-	if e.boosting(in) {
-		noteBoost(true)
+	forced := false
+	if boosting {
 		allow, reason := boostState.allow(e.cfg.ID, in.LivePeerIDs, at(in.Now))
 		if !allow {
 			e.note("skip", reason)
 			return e.Snapshot(), nil
 		}
 		reserved = true
+		forced = boostState.openingForced(e.cfg.ID)
+		if forced {
+			signal = "boost_forced"
+		} else {
+			signal = "boost_entry"
+		}
 	}
 	releaseBoost := func() {
 		if reserved {
@@ -601,7 +642,7 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 	}
 	fill, err := e.ex.PlaceEntry(EntryOrder{
 		Symbol:     e.cfg.Symbol,
-		Side:       side,
+		Side:       openSide,
 		Qty:        qty,
 		Price:      price,
 		Leverage:   e.cfg.Leverage,
@@ -616,11 +657,40 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 		reserved = false
 	}
 	e.lastBarKey = barKey(in.Candles)
+	return e.finishEntry(fill, boosting, forced, wr, emaScore, need)
+}
+
+func (e *Engine) finishEntry(fill Fill, boosting, forced bool, wr float64, score, need int) (Snapshot, error) {
 	if fill.Status != StatusFilled {
 		e.note("entry", "submitted")
+	} else {
+		snap, err := e.acceptFill(fill)
+		if err != nil {
+			return snap, err
+		}
+	}
+	if !boosting {
 		return e.Snapshot(), nil
 	}
-	return e.acceptFill(fill)
+	action := "boost_entry"
+	if forced {
+		action = "boost_forced"
+	}
+	e.note(action, fmt.Sprintf("winrate %.4f score %d/%d", wr, score, need))
+	return e.Snapshot(), nil
+}
+
+func symbolHasPosition(symbol string, positions []KeyPosition) bool {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return false
+	}
+	for _, pos := range positions {
+		if pos.Qty > 0 && strings.EqualFold(pos.Symbol, symbol) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Engine) stepEntry(in StepInput) (Snapshot, error) {
@@ -873,9 +943,9 @@ func (e *Engine) forgetPlan() {
 
 // quoteProtection 用入场价的固定比例算 1R，再换成止损、止盈和逐仓强平价。
 // 1R = entry * DefaultRFraction（默认 0.8%）。止损距离 = stopR * 1R。
+// 赌一把模式改用相对入场价的剥头皮距离，止盈不会低于 MinScalpTpPct。
 func (e *Engine) quoteProtection(side Side, entry float64) (stop, take, liq float64, err error) {
-	oneR := entry * e.rFraction
-	stop, take, err = ProtectionPrices(side, entry, oneR, e.cfg.StopR, e.cfg.TakeProfitR)
+	stop, take, err = stopTake(e.cfg, side, entry)
 	if err != nil {
 		return 0, 0, 0, err
 	}

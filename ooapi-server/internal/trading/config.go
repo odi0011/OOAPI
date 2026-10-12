@@ -88,6 +88,13 @@ const (
 	ReasonBalanceBelowPause   = "balance_below_pause"
 	ReasonBoostWait           = "boost_wait"
 	ReasonBoostFilled         = "boost_filled"
+	ReasonSymbolHeld          = "symbol_has_position"
+
+	// DefaultScalpPct 是赌一把模式下止损和止盈相对入场价的默认距离（0.3%）。
+	DefaultScalpPct = 0.003
+	// MinScalpTpPct 是止盈距离下限（0.15%）。手续费往返约 0.1%，再留一点滑点。
+	// 配置更小时下单仍按这个距离抬上去。
+	MinScalpTpPct = 0.0015
 
 	// MaxMarginFraction 不再作为开仓门。大约 2U 的账户上，可用余额的 80% 低于
 	// 策略的组合保证金上限，空仓也会被判超。开仓门用 MaxMarginUsdt 作为这把密钥的总额上限。
@@ -141,6 +148,15 @@ type Config struct {
 	RSILongMax  float64 `json:"rsiLongMax,omitempty"`
 	RSIShortMin float64 `json:"rsiShortMin,omitempty"`
 	RSIShortMax float64 `json:"rsiShortMax,omitempty"`
+	// GambleMode 打开后跳过回测胜率门。minScore 仍按配置（1–4）。
+	// 加速强制开仓同样不再要求回测门。止损止盈改用剥头皮距离。
+	GambleMode bool `json:"gambleMode,omitempty"`
+	// ScalpTpPct / ScalpSlPct 是赌一把模式相对入场价的止盈、止损距离。
+	// 0 表示用 DefaultScalpPct。止盈执行时不会低于 MinScalpTpPct。
+	ScalpTpPct float64 `json:"scalpTpPct,omitempty"`
+	ScalpSlPct float64 `json:"scalpSlPct,omitempty"`
+	// Revision 是热更新序号。更新的配置不会被更旧的调度快照盖掉。不入库。
+	Revision int64 `json:"-"`
 }
 
 func DefaultConfig() Config {
@@ -239,6 +255,9 @@ func (c Config) Validate() error {
 	}
 	if c.MinScore < 1 || c.MinScore > DefaultMinScore {
 		return invalid("minScore 要在 1 到 4 之间")
+	}
+	if sl, tp := c.scalpPcts(); sl <= 0 || sl > 0.2 || tp <= 0 || tp > 0.2 {
+		return invalid("剥头皮止损和止盈要大于 0 且不超过 20%")
 	}
 	if c.MinWinRate < 0 || c.MinWinRate > 1 {
 		return invalid("minWinRate 要在 0 到 1 之间")
