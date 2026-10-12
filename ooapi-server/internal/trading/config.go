@@ -3,6 +3,8 @@ package trading
 import (
 	"fmt"
 	"strings"
+	"time"
+	"unicode"
 )
 
 // 字段与已上线的 /api/trading/strategies 一致。
@@ -51,6 +53,37 @@ const (
 
 	ReasonStopBeyondLiquidation  = "stop_beyond_liquidation"
 	ReasonProtectiveOrdersFailed = "protective_orders_failed"
+
+	EntryModeCross = "cross"
+	EntryModeTrend = "trend"
+
+	// DefaultMinScore 是 trend 模式的默认及格分。四项信号都要过。
+	DefaultMinScore = 4
+	// DefaultMinWinRate 是允许开仓的近期回测胜率下限。0 表示关闭这道门。
+	DefaultMinWinRate = 0.5
+
+	// TrendGapFraction 是快慢线至少要拉开的距离，按价格的 0.05% 计。
+	TrendGapFraction = 0.0005
+	RSIPeriod        = 14
+	VolumeLookback   = 20
+	HigherTimeframe  = "15m"
+
+	ReasonBelowMinNotional = "below_min_notional"
+	ReasonWinRateBelow     = "winrate_below_threshold"
+	ReasonPortfolioLimit   = "portfolio_limit"
+	ReasonBalanceFloor     = "balance_floor"
+
+	// MaxOpenPositions 是同一把交易所密钥下同时持仓的上限。
+	MaxOpenPositions = 2
+	// MaxMarginFraction 是已用保证金相对可用余额的上限。
+	MaxMarginFraction = 0.80
+	// BalanceFloorUSDT 是账户钱包余额的停机线。触及后该密钥下的引擎全部停止开仓。
+	BalanceFloorUSDT = 0.5
+
+	// TakerFeeRate 与 SlippageRate 都按单边名义价值计，回测开平各算一次。
+	TakerFeeRate  = 0.0005
+	SlippageRate  = 0.0002
+	BacktestEvery = 3 * time.Hour
 )
 
 // Config 是从 trading_strategies 读出的一份策略。
@@ -69,6 +102,11 @@ type Config struct {
 	MaxMarginUsdt float64 `json:"maxMarginUsdt"`
 	ExchangeKeyID int64   `json:"exchangeKeyId"`
 	Mode          string  `json:"mode"`
+	// EntryMode 为 cross（只在交叉那根 K 开仓）或 trend（趋势分数够了就开）。
+	// 空值按 cross 处理，避免旧配置突然改语义。
+	EntryMode  string  `json:"entryMode,omitempty"`
+	MinScore   int     `json:"minScore,omitempty"`
+	MinWinRate float64 `json:"minWinRate,omitempty"`
 }
 
 func DefaultConfig() Config {
@@ -92,7 +130,28 @@ func (c Config) Normalize() Config {
 	c.MarginMode = strings.ToLower(strings.TrimSpace(c.MarginMode))
 	c.Timeframe = strings.TrimSpace(c.Timeframe)
 	c.Mode = strings.ToLower(strings.TrimSpace(c.Mode))
+	c.EntryMode = strings.ToLower(strings.TrimSpace(c.EntryMode))
+	if c.EntryMode == "" {
+		c.EntryMode = EntryModeCross
+	}
+	if c.MinScore <= 0 {
+		c.MinScore = DefaultMinScore
+	}
 	return c
+}
+
+// AllowedSymbol 接受币安 USDT 永续的交易对代码，例如 XRPUSDT、DOGEUSDT。
+func AllowedSymbol(symbol string) bool {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if len(symbol) < 6 || len(symbol) > 24 || !strings.HasSuffix(symbol, "USDT") {
+		return false
+	}
+	for _, r := range symbol {
+		if !unicode.IsDigit(r) && (r < 'A' || r > 'Z') {
+			return false
+		}
+	}
+	return true
 }
 
 func allowedTimeframe(v string) bool {
@@ -108,7 +167,7 @@ func invalidLeverage() error {
 	return invalid(fmt.Sprintf("杠杆必须是 1 到 %d 的整数", MaxLeverage))
 }
 
-// Validate 与策略接口的 v1 约束对齐：只做 XRPUSDT、逐仓、杠杆不超过 MaxLeverage。
+// Validate 与策略接口对齐：USDT 永续、逐仓、杠杆不超过 MaxLeverage。
 func (c Config) Validate() error {
 	c = c.Normalize()
 	if c.Symbol != SymbolXRPUSDT {
@@ -140,6 +199,15 @@ func (c Config) Validate() error {
 	}
 	if c.ExchangeKeyID <= 0 {
 		return invalid("请先绑定一把未作废的交易所密钥")
+	}
+	if c.EntryMode != EntryModeCross && c.EntryMode != EntryModeTrend {
+		return invalid("entryMode 只能是 cross 或 trend")
+	}
+	if c.MinScore < 1 || c.MinScore > DefaultMinScore {
+		return invalid("minScore 要在 1 到 4 之间")
+	}
+	if c.MinWinRate < 0 || c.MinWinRate > 1 {
+		return invalid("minWinRate 要在 0 到 1 之间")
 	}
 	return nil
 }

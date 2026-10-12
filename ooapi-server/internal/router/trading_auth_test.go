@@ -53,6 +53,7 @@ func TestTradingRoutesRequireAuthAndStrategyPermission(t *testing.T) {
 		{http.MethodPost, "/api/trading/engine/stop"},
 		{http.MethodPost, "/api/trading/engine/step"},
 		{http.MethodPost, "/api/trading/engine/testnet-green"},
+		{http.MethodGet, "/api/trading/backtest"},
 	}
 	for _, endpoint := range protected {
 		t.Run(endpoint.method+" "+endpoint.path, func(t *testing.T) {

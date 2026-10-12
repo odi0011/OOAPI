@@ -24,6 +24,7 @@ type engineRequest struct {
 	StrategyID     *int64           `json:"strategyId"`
 	Now            string           `json:"now"`
 	Candles        []trading.Candle `json:"candles"`
+	Higher         []trading.Candle `json:"higherCandles"`
 	MarkPrice      float64          `json:"markPrice"`
 	FundingRate    float64          `json:"fundingRate"`
 	LiqDistancePct *float64         `json:"liqDistancePct"`
@@ -72,12 +73,24 @@ func StartTradingEngine(c *gin.Context) {
 		if err != nil {
 			return trading.Snapshot{}, err
 		}
-		return trading.DefaultHub().Start(userID, row.ID, strategyConfig(row), trading.StartInput{
+		if taken, terr := runningSymbolTaken(userID, row.Record.ExchangeKeyID, row.Record.Symbol, row.ID); terr != nil {
+			return trading.Snapshot{}, terr
+		} else if taken {
+			return trading.Snapshot{}, trading.ErrSymbolInUse
+		}
+		snap, err := trading.DefaultHub().Start(userID, row.ID, strategyConfig(row), trading.StartInput{
 			Now:            when,
 			FundingRate:    req.FundingRate,
 			LiqDistancePct: liqDistance(req.LiqDistancePct),
 			EquityUSDT:     req.EquityUSDT,
 		}, secrets)
+		if err == nil {
+			if dbErr := setStrategyRunning(row.ID, userID, true); dbErr != nil {
+				log.Printf("[trading] 记下运行标记失败: %v", dbErr)
+			}
+			ensureStrategyRunner(userID, row)
+		}
+		return snap, err
 	})
 }
 
@@ -99,7 +112,14 @@ func StopTradingEngine(c *gin.Context) {
 		if err != nil {
 			return trading.Snapshot{}, err
 		}
-		return trading.DefaultHub().Stop(userID, row.ID, in, secrets)
+		snap, err := trading.DefaultHub().Stop(userID, row.ID, in, secrets)
+		if err == nil {
+			if dbErr := setStrategyRunning(row.ID, userID, false); dbErr != nil {
+				log.Printf("[trading] 清除运行标记失败: %v", dbErr)
+			}
+			stopStrategyRunner(row.ID)
+		}
+		return snap, err
 	})
 }
 
@@ -241,6 +261,9 @@ func strategyConfig(row strategyRow) trading.Config {
 		MaxMarginUsdt: rec.MaxMarginUsdt,
 		ExchangeKeyID: rec.ExchangeKeyID,
 		Mode:          rec.Mode,
+		EntryMode:     rec.EntryMode,
+		MinScore:      rec.MinScore,
+		MinWinRate:    rec.MinWinRate,
 	}.Normalize()
 }
 
@@ -289,6 +312,7 @@ func stepInput(req engineRequest) (trading.StepInput, error) {
 	return trading.StepInput{
 		Now:            when,
 		Candles:        req.Candles,
+		Higher:         req.Higher,
 		MarkPrice:      req.MarkPrice,
 		FundingRate:    req.FundingRate,
 		LiqDistancePct: liqDistance(req.LiqDistancePct),
@@ -391,6 +415,8 @@ func writeEngineErr(c *gin.Context, err error) {
 		fail(c, http.StatusBadRequest, "启动需要账户权益", "equity_required")
 	case errors.Is(err, trading.ErrKeyNotUsable):
 		fail(c, http.StatusBadRequest, "交易所密钥不可用", "exchange_key_required")
+	case errors.Is(err, trading.ErrSymbolInUse):
+		fail(c, http.StatusConflict, "同一交易所密钥下该交易对已有运行中的策略", "symbol_in_use")
 	case errors.Is(err, trading.ErrNotConfigured):
 		fail(c, http.StatusBadRequest, "策略还没配置", "not_configured")
 	case errors.Is(err, trading.ErrBadMode):
