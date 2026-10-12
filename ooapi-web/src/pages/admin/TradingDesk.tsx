@@ -1,7 +1,8 @@
 import { Button } from "@/components/arc/button/button";
 
+import LightweightCandleChart from "./LightweightCandleChart";
 import styles from "./TradingDesk.module.css";
-import type { EngineKline, EngineMarket, EngineOrders, EnginePosition } from "./tradingApi";
+import type { EngineMarket, EngineOrders, EnginePosition } from "./tradingApi";
 import {
   buildDeskStatus,
   formatAmount,
@@ -64,6 +65,7 @@ export default function TradingDesk({
   const stateText = loading && !engine ? "正在读取" : status.stateText;
   const chartTimeframe = market?.timeframe || status.timeframe;
   const hasLevels = market?.levels != null;
+  const positionOpen = position == null ? null : position.open === true;
 
   return (
     <div className={styles.desk}>
@@ -98,6 +100,7 @@ export default function TradingDesk({
           loading={loading}
           error={readErrors?.market}
           hasLevels={hasLevels}
+          positionOpen={positionOpen}
         />
       </section>
 
@@ -201,12 +204,14 @@ function CandleChart({
   loading,
   error,
   hasLevels,
+  positionOpen,
 }: {
   timeframe: string;
   market: EngineMarket | null;
   loading: boolean;
   error?: string;
   hasLevels: boolean;
+  positionOpen: boolean | null;
 }) {
   const klines = market?.klines ?? [];
   const mark = market?.markPrice;
@@ -218,12 +223,12 @@ function CandleChart({
           <p>{error ?? (loading ? "正在读取 K 线…" : "先保存策略后再看 K 线。")}</p>
         </div>
       ) : klines.length > 0 ? (
-        <CandleSvg
+        <LightweightCandleChart
+          timeframe={timeframe}
           candles={klines}
           markPrice={mark}
-          entry={market.levels?.entryPrice}
-          stop={market.levels?.stopPrice}
-          take={market.levels?.takeProfitPrice}
+          levels={market.levels}
+          positionOpen={positionOpen}
         />
       ) : (
         <div className={styles.chartEmpty}>
@@ -250,90 +255,6 @@ function CandleChart({
       </dl>
       {market != null && error ? <p className={styles.readError}>{error}</p> : null}
     </div>
-  );
-}
-
-function CandleSvg({
-  candles,
-  markPrice,
-  entry,
-  stop,
-  take,
-}: {
-  candles: EngineKline[];
-  markPrice?: number;
-  entry?: number;
-  stop?: number;
-  take?: number;
-}) {
-  const width = 640;
-  const height = 200;
-  const pad = { l: 52, r: 8, t: 10, b: 8 };
-  const prices = candles.flatMap((candle) => [candle.high, candle.low, candle.open, candle.close]);
-  for (const level of [markPrice, entry, stop, take]) {
-    if (level != null && level > 0) prices.push(level);
-  }
-  let min = Math.min(...prices);
-  let max = Math.max(...prices);
-  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
-  if (min === max) {
-    min -= 1;
-    max += 1;
-  }
-  const span = max - min;
-  const y = (value: number) => pad.t + ((max - value) / span) * (height - pad.t - pad.b);
-  const slot = (width - pad.l - pad.r) / candles.length;
-  const closes = candles.map((candle, index) => {
-    const x = pad.l + slot * index + slot / 2;
-    return `${x},${y(candle.close)}`;
-  }).join(" ");
-
-  return (
-    <svg className={styles.svg} viewBox={`0 0 ${width} ${height}`} role="img" aria-label="收盘价与参考线">
-      {candles.map((candle, index) => {
-        const x = pad.l + slot * index + slot / 2;
-        const bodyWidth = Math.max(2, slot * 0.55);
-        const up = candle.close >= candle.open;
-        const top = y(Math.max(candle.open, candle.close));
-        const bottom = y(Math.min(candle.open, candle.close));
-        const color = up ? "var(--success, #1a7f4b)" : "var(--danger, #d94a3d)";
-        return (
-          <g key={candle.openTime || index}>
-            <line x1={x} x2={x} y1={y(candle.high)} y2={y(candle.low)} stroke={color} strokeWidth="1" />
-            <rect x={x - bodyWidth / 2} y={top} width={bodyWidth} height={Math.max(1, bottom - top)} fill={color} />
-          </g>
-        );
-      })}
-      <polyline fill="none" stroke="var(--accent)" strokeWidth="1.25" points={closes} />
-      <LevelLine y={y} value={entry} label="入场" color="var(--accent)" width={width} padL={pad.l} />
-      <LevelLine y={y} value={stop} label="止损" color="var(--danger, #d94a3d)" width={width} padL={pad.l} />
-      <LevelLine y={y} value={take} label="止盈" color="var(--success, #1a7f4b)" width={width} padL={pad.l} />
-      <LevelLine y={y} value={markPrice} label="标记" color="var(--text-secondary)" width={width} padL={pad.l} />
-    </svg>
-  );
-}
-
-function LevelLine({
-  y,
-  value,
-  label,
-  color,
-  width,
-  padL,
-}: {
-  y: (value: number) => number;
-  value?: number | null;
-  label: string;
-  color: string;
-  width: number;
-  padL: number;
-}) {
-  if (value == null || !(value > 0)) return null;
-  const yy = y(value);
-  return (
-    <line x1={padL} x2={width} y1={yy} y2={yy} stroke={color} strokeDasharray="4 3" strokeWidth="1">
-      <title>{label} {value}</title>
-    </line>
   );
 }
 

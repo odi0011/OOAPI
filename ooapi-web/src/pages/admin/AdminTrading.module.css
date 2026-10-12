@@ -30,6 +30,11 @@
   color: var(--text-secondary);
 }
 
+.lead a {
+  margin: 0 0.2em;
+  color: var(--accent-strong, var(--accent));
+}
+
 .block + .block {
   margin-top: var(--space-2);
   padding-top: var(--space-5);
