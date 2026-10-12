@@ -104,3 +104,30 @@
   color: var(--danger, #d94a3d);
   background: color-mix(in oklab, var(--danger, #d94a3d) 10%, transparent);
 }
+
+.keyHint {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+  color: var(--text-secondary);
+}
+
+.keyHint a {
+  margin-left: 6px;
+  color: var(--accent-strong, var(--accent));
+}
+
+.gateCopy {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+  color: var(--text-secondary);
+}
+
+.dialogActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
