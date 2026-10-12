@@ -61,6 +61,8 @@ const (
 	DefaultMinScore = 4
 	// DefaultMinWinRate 是允许开仓的近期回测胜率下限。0 表示关闭这道门。
 	DefaultMinWinRate = 0.5
+	// DefaultMinTrades 是这道门要求的最少样本笔数。
+	DefaultMinTrades = 30
 
 	// TrendGapFraction 是快慢线至少要拉开的距离，按价格的 0.05% 计。
 	TrendGapFraction = 0.0005
@@ -68,10 +70,12 @@ const (
 	VolumeLookback   = 20
 	HigherTimeframe  = "15m"
 
-	ReasonBelowMinNotional = "below_min_notional"
-	ReasonWinRateBelow     = "winrate_below_threshold"
-	ReasonPortfolioLimit   = "portfolio_limit"
-	ReasonBalanceFloor     = "balance_floor"
+	ReasonBelowMinNotional    = "below_min_notional"
+	ReasonWinRateBelow        = "winrate_below_threshold"
+	ReasonInsufficientSamples = "insufficient_samples"
+	ReasonNetRNotPositive     = "netr_not_positive"
+	ReasonPortfolioLimit      = "portfolio_limit"
+	ReasonBalanceFloor        = "balance_floor"
 
 	// MaxOpenPositions 是同一把交易所密钥下同时持仓的上限。
 	MaxOpenPositions = 2
@@ -107,6 +111,13 @@ type Config struct {
 	EntryMode  string  `json:"entryMode,omitempty"`
 	MinScore   int     `json:"minScore,omitempty"`
 	MinWinRate float64 `json:"minWinRate,omitempty"`
+	// MinTrades 是回测样本笔数下限。0 在开仓门里按 DefaultMinTrades。
+	MinTrades int `json:"minTrades,omitempty"`
+	// RSI 多空允许区间。两端都为 0 时用 50–70 / 30–50。扫描命令会改这四项，策略表不存。
+	RSILongMin  float64 `json:"rsiLongMin,omitempty"`
+	RSILongMax  float64 `json:"rsiLongMax,omitempty"`
+	RSIShortMin float64 `json:"rsiShortMin,omitempty"`
+	RSIShortMax float64 `json:"rsiShortMax,omitempty"`
 }
 
 func DefaultConfig() Config {
@@ -209,5 +220,21 @@ func (c Config) Validate() error {
 	if c.MinWinRate < 0 || c.MinWinRate > 1 {
 		return invalid("minWinRate 要在 0 到 1 之间")
 	}
+	if c.MinTrades < 0 || c.MinTrades > 10000 {
+		return invalid("minTrades 要在 0 到 10000 之间")
+	}
 	return nil
+}
+
+// rsiBand 是 trend 打分用的 RSI 区间。未设置时保持原来的 50–70 / 30–50。
+func (c Config) rsiBand() (longMin, longMax, shortMin, shortMax float64) {
+	longMin, longMax = 50, 70
+	shortMin, shortMax = 30, 50
+	if c.RSILongMax > c.RSILongMin {
+		longMin, longMax = c.RSILongMin, c.RSILongMax
+	}
+	if c.RSIShortMax > c.RSIShortMin {
+		shortMin, shortMax = c.RSIShortMin, c.RSIShortMax
+	}
+	return longMin, longMax, shortMin, shortMax
 }

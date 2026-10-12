@@ -34,7 +34,8 @@ func ScoreTrend(cfg Config, candles, higher []Candle) (Side, int, error) {
 		return "", 0, nil
 	}
 	score := 1
-	if rsi, ok := LastRSI(closes, RSIPeriod); ok && rsiAllows(side, rsi) {
+	longMin, longMax, shortMin, shortMax := cfg.rsiBand()
+	if rsi, ok := LastRSI(closes, RSIPeriod); ok && rsiAllows(side, rsi, longMin, longMax, shortMin, shortMax) {
 		score++
 	}
 	if volumeAbove(candles, VolumeLookback) {
@@ -46,12 +47,12 @@ func ScoreTrend(cfg Config, candles, higher []Candle) (Side, int, error) {
 	return side, score, nil
 }
 
-func rsiAllows(side Side, rsi float64) bool {
+func rsiAllows(side Side, rsi, longMin, longMax, shortMin, shortMax float64) bool {
 	switch side {
 	case SideLong:
-		return rsi >= 50 && rsi <= 70
+		return rsi >= longMin && rsi <= longMax
 	case SideShort:
-		return rsi >= 30 && rsi <= 50
+		return rsi >= shortMin && rsi <= shortMax
 	default:
 		return false
 	}
