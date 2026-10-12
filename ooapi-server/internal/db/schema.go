@@ -310,8 +310,9 @@ var schemaStatements = []string{
 		min_trades       INT             NOT NULL DEFAULT 30,
 		max_margin_per_trade_usdt DECIMAL(20,6) NOT NULL DEFAULT 0,
 		max_consecutive_losses INT      NOT NULL DEFAULT 0,
-		pause_balance_usdt DECIMAL(20,6) NOT NULL DEFAULT 0,
+		pause_balance_usdt DECIMAL(20,6) NOT NULL DEFAULT 0.5,
 		pause_reason     VARCHAR(32)     NOT NULL DEFAULT '',
+		pause_entries    TINYINT         NOT NULL DEFAULT 0,
 		max_open_positions INT          NOT NULL DEFAULT 0,
 		rsi_long_min     DECIMAL(8,2)    NOT NULL DEFAULT 50,
 		rsi_long_max     DECIMAL(8,2)    NOT NULL DEFAULT 70,
@@ -358,6 +359,29 @@ var schemaStatements = []string{
 		PRIMARY KEY (id),
 		KEY idx_trading_entries_strategy (user_id, strategy_id, opened_at),
 		KEY idx_trading_entries_opened (opened_at)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+	// 按币安 orderId 记的开平仓。一张单只一行，均价和手续费来自 userTrades，
+	// 资金费来自 income 的 FUNDING_FEE。不把多张单并成一行，也不用标记价。
+	`CREATE TABLE IF NOT EXISTS trading_orders (
+		id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+		user_id       BIGINT UNSIGNED NOT NULL,
+		strategy_id   BIGINT UNSIGNED NOT NULL,
+		symbol        VARCHAR(32)     NOT NULL,
+		order_id      VARCHAR(64)     NOT NULL,
+		role          VARCHAR(8)      NOT NULL DEFAULT '',
+		side          VARCHAR(8)      NOT NULL DEFAULT '',
+		price         DECIMAL(20,8)   NOT NULL DEFAULT 0,
+		qty           DECIMAL(20,8)   NOT NULL DEFAULT 0,
+		realized_pnl  DECIMAL(20,8)   NOT NULL DEFAULT 0,
+		commission    DECIMAL(20,8)   NOT NULL DEFAULT 0,
+		funding_fee   DECIMAL(20,8)   NOT NULL DEFAULT 0,
+		filled_at     DATETIME        NOT NULL,
+		created_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		PRIMARY KEY (id),
+		UNIQUE KEY uniq_trading_orders_order (strategy_id, order_id),
+		KEY idx_trading_orders_strategy (user_id, strategy_id, filled_at)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 }
 
@@ -461,8 +485,9 @@ var columnMigrations = map[string][]columnDef{
 		{"min_trades", "INT NOT NULL DEFAULT 30"},
 		{"max_margin_per_trade_usdt", "DECIMAL(20,6) NOT NULL DEFAULT 0"},
 		{"max_consecutive_losses", "INT NOT NULL DEFAULT 0"},
-		{"pause_balance_usdt", "DECIMAL(20,6) NOT NULL DEFAULT 0"},
+		{"pause_balance_usdt", "DECIMAL(20,6) NOT NULL DEFAULT 0.5"},
 		{"pause_reason", "VARCHAR(32) NOT NULL DEFAULT ''"},
+		{"pause_entries", "TINYINT NOT NULL DEFAULT 0"},
 		{"max_open_positions", "INT NOT NULL DEFAULT 0"},
 		{"rsi_long_min", "DECIMAL(8,2) NOT NULL DEFAULT 50"},
 		{"rsi_long_max", "DECIMAL(8,2) NOT NULL DEFAULT 70"},
@@ -472,6 +497,20 @@ var columnMigrations = map[string][]columnDef{
 		{"scalp_tp_pct", "DECIMAL(8,6) NOT NULL DEFAULT 0.003000"},
 		{"scalp_sl_pct", "DECIMAL(8,6) NOT NULL DEFAULT 0.003000"},
 		{"running", "TINYINT NOT NULL DEFAULT 0"},
+	},
+	"trading_orders": {
+		{"user_id", "BIGINT UNSIGNED NOT NULL DEFAULT 0"},
+		{"strategy_id", "BIGINT UNSIGNED NOT NULL DEFAULT 0"},
+		{"symbol", "VARCHAR(32) NOT NULL DEFAULT ''"},
+		{"order_id", "VARCHAR(64) NOT NULL DEFAULT ''"},
+		{"role", "VARCHAR(8) NOT NULL DEFAULT ''"},
+		{"side", "VARCHAR(8) NOT NULL DEFAULT ''"},
+		{"price", "DECIMAL(20,8) NOT NULL DEFAULT 0"},
+		{"qty", "DECIMAL(20,8) NOT NULL DEFAULT 0"},
+		{"realized_pnl", "DECIMAL(20,8) NOT NULL DEFAULT 0"},
+		{"commission", "DECIMAL(20,8) NOT NULL DEFAULT 0"},
+		{"funding_fee", "DECIMAL(20,8) NOT NULL DEFAULT 0"},
+		{"filled_at", "DATETIME NULL"},
 	},
 	"trading_entries": {
 		{"user_id", "BIGINT UNSIGNED NOT NULL DEFAULT 0"},

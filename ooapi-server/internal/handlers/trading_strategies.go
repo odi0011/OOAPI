@@ -46,7 +46,7 @@ const strategySelectCols = `
 s.id, s.symbol, s.leverage, s.margin_mode, s.ema_fast, s.ema_slow, s.timeframe,
 s.stop_r, s.take_profit_r, s.daily_loss_pct, s.max_margin_usdt, s.exchange_key_id, s.mode,
 s.entry_mode, s.min_score, s.min_win_rate, s.min_trades,
-s.max_margin_per_trade_usdt, s.max_consecutive_losses, s.pause_balance_usdt, s.pause_reason,
+s.max_margin_per_trade_usdt, s.max_consecutive_losses, s.pause_balance_usdt, s.pause_reason, s.pause_entries,
 s.max_open_positions,
 s.rsi_long_min, s.rsi_long_max, s.rsi_short_min, s.rsi_short_max,
 s.gamble_mode, s.scalp_tp_pct, s.scalp_sl_pct, s.running,
@@ -98,6 +98,9 @@ UPDATE trading_strategies SET running = 0, pause_reason = ? WHERE id = ?`
 
 const strategyClearPauseSQL = `
 UPDATE trading_strategies SET pause_reason = '' WHERE id = ? AND user_id = ?`
+
+const strategyPauseEntriesSQL = `
+UPDATE trading_strategies SET pause_entries = ? WHERE id = ? AND user_id = ?`
 
 const strategyRunningDupSQL = `
 SELECT s.id FROM trading_strategies s
@@ -158,6 +161,7 @@ type strategyRecord struct {
 	MaxConsecutiveLosses  int
 	PauseBalanceUsdt      float64
 	PauseReason           string
+	PauseEntries          bool
 	MaxOpenPositions      int
 	RSILongMin            float64
 	RSILongMax            float64
@@ -191,6 +195,7 @@ type strategyView struct {
 	MaxConsecutiveLosses  int      `json:"maxConsecutiveLosses"`
 	PauseBalanceUsdt      float64  `json:"pauseBalanceUsdt"`
 	PauseReason           string   `json:"pauseReason,omitempty"`
+	PauseEntries          bool     `json:"pauseEntries"`
 	MaxOpenPositions      int      `json:"maxOpenPositions"`
 	RSILongMin            float64  `json:"rsiLongMin"`
 	RSILongMax            float64  `json:"rsiLongMax"`
@@ -272,6 +277,7 @@ func (row strategyRow) view() strategyView {
 		MaxConsecutiveLosses:  rec.MaxConsecutiveLosses,
 		PauseBalanceUsdt:      rec.PauseBalanceUsdt,
 		PauseReason:           rec.PauseReason,
+		PauseEntries:          rec.PauseEntries,
 		MaxOpenPositions:      rec.MaxOpenPositions,
 		RSILongMin:            rec.RSILongMin,
 		RSILongMax:            rec.RSILongMax,
@@ -522,7 +528,7 @@ func scanStrategy(s scanner) (strategyRow, error) {
 		status  sql.NullInt64
 		label   sql.NullString
 	)
-	var running, gamble int
+	var running, gamble, pauseEntries int
 	err := s.Scan(
 		&row.ID, &row.Record.Symbol, &row.Record.Leverage, &row.Record.MarginMode,
 		&row.Record.EmaFast, &row.Record.EmaSlow, &row.Record.Timeframe,
@@ -530,6 +536,7 @@ func scanStrategy(s scanner) (strategyRow, error) {
 		&row.Record.ExchangeKeyID, &row.Record.Mode,
 		&row.Record.EntryMode, &row.Record.MinScore, &row.Record.MinWinRate, &row.Record.MinTrades,
 		&row.Record.MaxMarginPerTradeUsdt, &row.Record.MaxConsecutiveLosses, &row.Record.PauseBalanceUsdt, &row.Record.PauseReason,
+		&pauseEntries,
 		&row.Record.MaxOpenPositions,
 		&row.Record.RSILongMin, &row.Record.RSILongMax, &row.Record.RSIShortMin, &row.Record.RSIShortMax,
 		&gamble, &row.Record.ScalpTpPct, &row.Record.ScalpSlPct, &running,
@@ -548,7 +555,93 @@ func scanStrategy(s scanner) (strategyRow, error) {
 	row.ExchangeKeyActive = status.Valid && status.Int64 == exchangeKeyActive
 	row.Record.GambleMode = gamble == 1
 	row.Record.Running = running == 1
+	row.Record.PauseEntries = pauseEntries != 0
 	return row, nil
+}
+
+type pauseEntriesBody struct {
+	Paused       *bool `json:"paused"`
+	PauseEntries *bool `json:"pauseEntries"`
+}
+
+func pauseEntriesView(id int64, paused bool) gin.H {
+	return gin.H{"strategyId": id, "pauseEntries": paused}
+}
+
+// GetStrategyPauseEntries 读取这条策略是否暂停新开仓。
+func GetStrategyPauseEntries(c *gin.Context) {
+	user, okUser := requireTradingUser(c)
+	if !okUser {
+		return
+	}
+	id, okID := parseTradingID(c)
+	if !okID {
+		return
+	}
+	row, err := loadStrategy(id, user.ID)
+	if isNotFound(err) {
+		fail(c, http.StatusNotFound, "策略不存在", "not_found")
+		return
+	}
+	if err != nil {
+		log.Printf("[trading] 读取暂停开仓失败: %v", err)
+		fail(c, http.StatusInternalServerError, "读取暂停开仓失败", "server_error")
+		return
+	}
+	ok(c, pauseEntriesView(row.ID, row.Record.PauseEntries))
+}
+
+// PostStrategyPauseEntries 立刻把暂停新开仓写入数据库，并通知正在跑的引擎。
+// 已有仓和止损止盈不动。这不是 pauseBalanceUsdt。
+func PostStrategyPauseEntries(c *gin.Context) {
+	user, okUser := requireTradingUser(c)
+	if !okUser {
+		return
+	}
+	id, okID := parseTradingID(c)
+	if !okID {
+		return
+	}
+	var body pauseEntriesBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		fail(c, http.StatusBadRequest, "请求格式不正确", "bad_request")
+		return
+	}
+	paused, okFlag := pauseEntriesFlag(body)
+	if !okFlag {
+		fail(c, http.StatusBadRequest, "请用 pauseEntries 标明是否暂停新开仓", "bad_request")
+		return
+	}
+	current, err := loadStrategy(id, user.ID)
+	if isNotFound(err) {
+		fail(c, http.StatusNotFound, "策略不存在", "not_found")
+		return
+	}
+	if err != nil {
+		log.Printf("[trading] 读取策略失败: %v", err)
+		fail(c, http.StatusInternalServerError, "更新暂停开仓失败", "server_error")
+		return
+	}
+	if _, err := exec(strategyPauseEntriesSQL, boolInt(paused), id, user.ID); err != nil {
+		log.Printf("[trading] 更新暂停开仓失败: %v", err)
+		fail(c, http.StatusInternalServerError, "更新暂停开仓失败", "server_error")
+		return
+	}
+	current.Record.PauseEntries = paused
+	reloadStrategyConfig(user.ID, current)
+	trading.DefaultHub().SetPauseEntries(user.ID, id, paused)
+	log.Printf("[trading] 用户 %s 策略 %d 暂停新开仓=%t", user.Username, id, paused)
+	ok(c, pauseEntriesView(id, paused))
+}
+
+func pauseEntriesFlag(body pauseEntriesBody) (bool, bool) {
+	if body.PauseEntries != nil {
+		return *body.PauseEntries, true
+	}
+	if body.Paused != nil {
+		return *body.Paused, true
+	}
+	return false, false
 }
 
 func boolInt(v bool) int {
@@ -771,8 +864,8 @@ func validateStrategy(rec strategyRecord, missingKey bool) *tradingError {
 	if rec.MaxConsecutiveLosses < 0 || rec.MaxConsecutiveLosses > 1000 {
 		return &tradingError{http.StatusBadRequest, "连亏暂停次数要在 0 到 1000 之间，0 表示关闭", "maxConsecutiveLosses"}
 	}
-	if rec.PauseBalanceUsdt < 0 || rec.PauseBalanceUsdt > 1_000_000 {
-		return &tradingError{http.StatusBadRequest, "暂停余额要在 0 到 1000000 之间，0 表示关闭", "pauseBalanceUsdt"}
+	if rec.PauseBalanceUsdt < trading.BalanceFloorUSDT || rec.PauseBalanceUsdt > 1_000_000 {
+		return &tradingError{http.StatusBadRequest, "暂停余额不能低于 0.5", "pauseBalanceUsdt"}
 	}
 	if rec.MaxOpenPositions < 0 || rec.MaxOpenPositions > 10000 {
 		return &tradingError{http.StatusBadRequest, "同时持仓上限要在 0 到 10000 之间，0 表示关闭", "maxOpenPositions"}

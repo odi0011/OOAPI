@@ -307,6 +307,7 @@ func strategyConfig(row strategyRow) trading.Config {
 		PauseBalanceUsdt:      rec.PauseBalanceUsdt,
 		MaxOpenPositions:      rec.MaxOpenPositions,
 		PauseReason:           rec.PauseReason,
+		PauseEntries:          rec.PauseEntries,
 		RSILongMin:            rec.RSILongMin,
 		RSILongMax:            rec.RSILongMax,
 		RSIShortMin:           rec.RSIShortMin,
@@ -385,6 +386,19 @@ func stepInput(req engineRequest) (trading.StepInput, error) {
 	}, nil
 }
 
+func parseSQLTime(raw string) time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05", "2006-01-02T15:04:05"} {
+		if when, err := time.ParseInLocation(layout, raw, time.UTC); err == nil {
+			return when.UTC()
+		}
+	}
+	return time.Time{}
+}
+
 func parseEngineTime(raw string) (time.Time, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -416,6 +430,7 @@ func bindEngineView(c *gin.Context, row strategyRow, snap trading.Snapshot, hasS
 		snap.Mode = row.Record.Mode
 	}
 	snap.TestnetGreen = trading.TestnetGreen()
+	snap.PauseEntries = row.Record.PauseEntries
 	return engineStateView{
 		Snapshot:           snap,
 		StrategyID:         row.ID,

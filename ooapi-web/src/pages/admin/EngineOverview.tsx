@@ -1,3 +1,5 @@
+import Switch from "@/components/arc/switch/switch";
+
 import styles from "./TradingDesk.module.css";
 import {
   formatEngineCard,
@@ -12,9 +14,11 @@ interface EngineOverviewProps {
   snapshot: TradingEnginesSnapshot;
   selectedId: number | null;
   onSelect: (strategyId: number) => void;
+  onTogglePause?: (strategyId: number, paused: boolean) => void;
+  pauseBusyId?: number | null;
 }
 
-export default function EngineOverview({ snapshot, selectedId, onSelect }: EngineOverviewProps) {
+export default function EngineOverview({ snapshot, selectedId, onSelect, onTogglePause, pauseBusyId = null }: EngineOverviewProps) {
   const totals = formatEngineTotals(snapshot.totals);
   const cards = snapshot.engines.map(formatEngineCard);
 
@@ -60,6 +64,7 @@ export default function EngineOverview({ snapshot, selectedId, onSelect }: Engin
                 <th>回测笔数</th>
                 <th>回测净R</th>
                 <th>回测期望</th>
+                <th>新开仓</th>
               </tr>
             </thead>
             <tbody>
@@ -69,6 +74,8 @@ export default function EngineOverview({ snapshot, selectedId, onSelect }: Engin
                   card={card}
                   selected={card.strategyId != null && card.strategyId === selectedId}
                   onSelect={onSelect}
+                  onTogglePause={onTogglePause}
+                  pauseBusy={card.strategyId != null && card.strategyId === pauseBusyId}
                 />
               ))}
             </tbody>
@@ -83,10 +90,14 @@ function EngineRow({
   card,
   selected,
   onSelect,
+  onTogglePause,
+  pauseBusy,
 }: {
   card: EngineCardView;
   selected: boolean;
   onSelect: (strategyId: number) => void;
+  onTogglePause?: (strategyId: number, paused: boolean) => void;
+  pauseBusy: boolean;
 }) {
   const selectable = card.strategyId != null;
   const select = () => {
@@ -122,6 +133,20 @@ function EngineRow({
       <td>{card.trades}</td>
       <td>{card.netR}</td>
       <td>{card.expectancy}</td>
+      <td
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+      >
+        <Switch
+          label={card.pauseEntries ? "已暂停" : "允许"}
+          checked={card.pauseEntries}
+          disabled={card.strategyId == null || !onTogglePause || pauseBusy}
+          onCheckedChange={(paused) => {
+            if (card.strategyId == null || !onTogglePause) return;
+            onTogglePause(card.strategyId, paused);
+          }}
+        />
+      </td>
     </tr>
   );
 }

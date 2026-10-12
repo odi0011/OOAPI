@@ -1,6 +1,7 @@
 package trading
 
 import (
+	"context"
 	"errors"
 	"math"
 	"testing"
@@ -401,6 +402,375 @@ func (b bracketPaper) MaintMarginRate(string, int) (float64, bool) {
 		return 0, false
 	}
 	return b.rate, true
+}
+
+type bookProbe struct {
+	*Paper
+	trades int
+	income int
+}
+
+func (b *bookProbe) CredentialsReady() bool { return true }
+
+func (b *bookProbe) UserTrades(symbol string, since, now time.Time) ([]UserTrade, error) {
+	b.trades++
+	return []UserTrade{{
+		Symbol: symbol, OrderID: "77", Side: "BUY", PositionSide: "BOTH",
+		Price: 1.5, Qty: 4, Commission: 0.0625, RealizedPnl: 0, Time: since,
+	}}, nil
+}
+
+func (b *bookProbe) IncomeHistory(symbol string, since, now time.Time) ([]IncomeEvent, error) {
+	b.income++
+	return []IncomeEvent{{
+		Symbol: symbol, IncomeType: "COMMISSION", Income: -0.0625, Time: since,
+	}}, nil
+}
+
+type memOrderBook struct {
+	rows []OrderRow
+}
+
+func (m *memOrderBook) Upsert(userID, strategyID int64, rows []OrderRow) error {
+	m.rows = append([]OrderRow(nil), rows...)
+	return nil
+}
+
+func TestPauseEntriesSkipsOpenKeepsPositionAndBackfill(t *testing.T) {
+	paper := NewPaper()
+	probe := &bookProbe{Paper: paper}
+	book := &memOrderBook{}
+	SetOrderBook(book)
+	t.Cleanup(func() { SetOrderBook(nil) })
+	cfg := testConfig()
+	cfg.ID = 9
+	cfg.CreatedAt = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	eng := withSecrets(NewEngine(cfg, probe, DiscardLogger()))
+	eng.SetUser(3)
+	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	if err := eng.Start(calmStart(now, 2)); err != nil {
+		t.Fatal(err)
+	}
+	eng.cfg.PauseEntries = true
+	candles := candlesUntil(t, CrossGolden)
+	mark := candles[len(candles)-1].Close
+	snap, err := eng.Step(stepAt(now, candles, mark, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paper.Entries != 0 || snap.State != StateArmed || !snap.PauseEntries || snap.LastReason != ReasonEntriesPaused {
+		t.Fatalf("paused open entries=%d snap=%+v", paper.Entries, snap)
+	}
+	if probe.trades == 0 || probe.income == 0 || len(book.rows) != 1 || book.rows[0].OrderID != "77" || book.rows[0].Price != 1.5 || book.rows[0].Commission != 0.0625 {
+		t.Fatalf("backfill trades=%d income=%d rows=%+v", probe.trades, probe.income, book.rows)
+	}
+	eng.cfg.PauseEntries = false
+	snap, err = eng.Step(stepAt(now, candles, mark, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paper.Entries != 1 || snap.State != StateInPosition {
+		t.Fatalf("resume entries=%d snap=%+v", paper.Entries, snap)
+	}
+	eng.cfg.PauseEntries = true
+	held := paper.Cancels
+	snap, err = eng.Step(stepAt(now, candles, mark, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pos, posErr := paper.Position(cfg.Symbol)
+	if posErr != nil || !pos.Open || snap.State != StateInPosition || paper.Entries != 1 || paper.Cancels != held {
+		t.Fatalf("held pos=%+v entries=%d cancels=%d snap=%+v err=%v", pos, paper.Entries, paper.Cancels, snap, posErr)
+	}
+}
+
+// countingSync 像实盘一样以交易所持仓为准，并记下保护单、平仓和撤单次数。
+type countingSync struct {
+	*Paper
+	protects int
+	closes   int
+	cancels  int
+	flat     bool
+}
+
+func (c *countingSync) SyncsPosition() bool { return true }
+
+func (c *countingSync) PlaceProtection(req Protection) error {
+	c.protects++
+	return c.Paper.PlaceProtection(req)
+}
+
+func (c *countingSync) Close(req CloseOrder) (Fill, error) {
+	c.closes++
+	return c.Paper.Close(req)
+}
+
+func (c *countingSync) CancelOpen(symbol string) error {
+	c.cancels++
+	return c.Paper.CancelOpen(symbol)
+}
+
+func (c *countingSync) Position(symbol string) (Position, error) {
+	if c.flat {
+		return Position{}, nil
+	}
+	return c.Paper.Position(symbol)
+}
+
+func TestPauseEntriesLeavesProtectiveOrdersUntouched(t *testing.T) {
+	paper := NewPaper()
+	ex := &countingSync{Paper: paper}
+	cfg := testConfig()
+	eng := withSecrets(NewEngine(cfg, ex, DiscardLogger()))
+	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	if err := eng.Start(calmStart(now, 2)); err != nil {
+		t.Fatal(err)
+	}
+	candles := candlesUntil(t, CrossGolden)
+	mark := candles[len(candles)-1].Close
+	snap, err := eng.Step(stepAt(now, candles, mark, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.State != StateInPosition || snap.StopPrice <= 0 || ex.protects == 0 {
+		t.Fatalf("open snap=%+v protects=%d", snap, ex.protects)
+	}
+	protects, closes, cancels := ex.protects, ex.closes, ex.cancels
+	eng.cfg.PauseEntries = true
+	snap, err = eng.Step(stepAt(now, candles, snap.StopPrice-0.01, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pos, posErr := paper.Position(cfg.Symbol)
+	if posErr != nil || !pos.Open || snap.State != StateInPosition || snap.LastReason != ReasonEntriesPaused {
+		t.Fatalf("held pos=%+v snap=%+v err=%v", pos, snap, posErr)
+	}
+	if ex.protects != protects || ex.closes != closes || ex.cancels != cancels {
+		t.Fatalf("orders moved protects=%d closes=%d cancels=%d", ex.protects, ex.closes, ex.cancels)
+	}
+	ex.flat = true
+	snap, err = eng.Step(stepAt(now, candles, mark, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.State != StateArmed || ex.protects != protects || ex.closes != closes || ex.cancels != cancels {
+		t.Fatalf("flat settle snap=%+v protects=%d closes=%d cancels=%d", snap, ex.protects, ex.closes, ex.cancels)
+	}
+}
+
+type incomePaper struct {
+	*Paper
+	events []IncomeEvent
+	flat   bool
+}
+
+func (p *incomePaper) CredentialsReady() bool { return true }
+
+func (p *incomePaper) SyncsPosition() bool { return true }
+
+func (p *incomePaper) IncomeHistory(string, time.Time, time.Time) ([]IncomeEvent, error) {
+	return p.events, nil
+}
+
+func (p *incomePaper) UserTrades(string, time.Time, time.Time) ([]UserTrade, error) {
+	return nil, nil
+}
+
+func (p *incomePaper) Position(symbol string) (Position, error) {
+	if p.flat {
+		return Position{}, nil
+	}
+	return p.Paper.Position(symbol)
+}
+
+func (p *incomePaper) CancelProtective(string, Side) ([]int64, error) {
+	return nil, nil
+}
+
+func (p *incomePaper) IncomeParts(symbol string, since, now time.Time) (IncomeParts, error) {
+	var parts IncomeParts
+	for _, event := range p.events {
+		if event.Symbol != "" && event.Symbol != symbol {
+			continue
+		}
+		if event.Time.Before(since) || event.Time.After(now) {
+			continue
+		}
+		switch event.IncomeType {
+		case "REALIZED_PNL":
+			parts.RealizedPnL += event.Income
+			parts.HasRealized = true
+		case "COMMISSION":
+			parts.Commission += event.Income
+		case "FUNDING_FEE":
+			parts.FundingFee += event.Income
+		default:
+			continue
+		}
+		parts.Rows++
+	}
+	return parts, nil
+}
+
+func (p *incomePaper) ClosingFill(string, Side, time.Time, time.Time) (float64, float64, bool, error) {
+	return 1, 1, true, nil
+}
+
+func TestDailyLossUsesShanghaiIncomeNotRestartedMemory(t *testing.T) {
+	paper := NewPaper()
+	ex := &incomePaper{Paper: paper}
+	now := time.Date(2026, 10, 12, 1, 30, 0, 0, shanghai)
+	midnight := ShanghaiDayStart(now)
+	ex.events = []IncomeEvent{
+		{Symbol: SymbolXRPUSDT, IncomeType: "REALIZED_PNL", Income: -1, Time: midnight.Add(-time.Millisecond)},
+		{Symbol: SymbolXRPUSDT, IncomeType: "COMMISSION", Income: -0.0625, Time: midnight},
+	}
+	cfg := testConfig()
+	cfg.CreatedAt = time.Date(2026, 10, 10, 0, 0, 0, 0, shanghai)
+	eng := withSecrets(NewEngine(cfg, ex, DiscardLogger()))
+	if err := eng.Start(calmStart(now, 2)); err != nil {
+		t.Fatal(err)
+	}
+	candles := candlesUntil(t, CrossGolden)
+	mark := candles[len(candles)-1].Close
+	snap, err := eng.Step(stepAt(now, candles, mark, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Halted || snap.State != StateInPosition || snap.DayRealized != -0.0625 || snap.CumulativeRealized != -1.0625 {
+		t.Fatalf("yesterday loss must stay out of the shanghai day: %+v", snap)
+	}
+	if paper.Entries != 1 {
+		t.Fatalf("entries %d", paper.Entries)
+	}
+
+	restartPaper := NewPaper()
+	restartEx := &incomePaper{Paper: restartPaper, events: []IncomeEvent{
+		{Symbol: SymbolXRPUSDT, IncomeType: "REALIZED_PNL", Income: -1, Time: midnight.Add(-time.Millisecond)},
+		{Symbol: SymbolXRPUSDT, IncomeType: "REALIZED_PNL", Income: -0.125, Time: now},
+	}}
+	restart := withSecrets(NewEngine(cfg, restartEx, DiscardLogger()))
+	if err := restart.Start(calmStart(now, 2)); err != nil {
+		t.Fatal(err)
+	}
+	snap, err = restart.Step(stepAt(now, candles, mark, 2))
+	if err != nil && !errors.Is(err, ErrDailyHalt) {
+		t.Fatal(err)
+	}
+	if snap.State != StateDailyHalt || snap.LastReason != "daily_loss" || snap.DayRealized != -0.125 || snap.CumulativeRealized != -1.125 || restartPaper.Entries != 0 {
+		t.Fatalf("restart halt %+v entries=%d err=%v", snap, restartPaper.Entries, err)
+	}
+}
+
+func TestReconcileFlatHaltReasonIsDailyLoss(t *testing.T) {
+	paper := NewPaper()
+	ex := &incomePaper{Paper: paper}
+	now := time.Date(2026, 10, 12, 1, 30, 0, 0, shanghai)
+	midnight := ShanghaiDayStart(now)
+	ex.events = []IncomeEvent{
+		{Symbol: SymbolXRPUSDT, IncomeType: "COMMISSION", Income: -0.03125, Time: midnight},
+	}
+	cfg := testConfig()
+	cfg.CreatedAt = time.Date(2026, 10, 10, 0, 0, 0, 0, shanghai)
+	eng := withSecrets(NewEngine(cfg, ex, DiscardLogger()))
+	if err := eng.Start(calmStart(now, 1)); err != nil {
+		t.Fatal(err)
+	}
+	candles := candlesUntil(t, CrossGolden)
+	mark := candles[len(candles)-1].Close
+	snap, err := eng.Step(stepAt(now, candles, mark, 1))
+	if err != nil || snap.State != StateInPosition {
+		t.Fatalf("open %+v err=%v", snap, err)
+	}
+	ex.flat = true
+	ex.events = []IncomeEvent{
+		{Symbol: SymbolXRPUSDT, IncomeType: "REALIZED_PNL", Income: -5, Time: midnight.Add(-time.Millisecond)},
+		{Symbol: SymbolXRPUSDT, IncomeType: "REALIZED_PNL", Income: -0.125, Time: now},
+	}
+	later := now.Add(IncomeRefresh + time.Second)
+	snap, err = eng.Step(stepAt(later, candles, snap.StopPrice, 1))
+	if err != nil && !errors.Is(err, ErrDailyHalt) {
+		t.Fatal(err)
+	}
+	if snap.State != StateDailyHalt || snap.LastReason != "daily_loss" || snap.DayRealized != -0.125 || snap.CumulativeRealized != -5.125 {
+		t.Fatalf("reconcile halt %+v err=%v", snap, err)
+	}
+}
+
+func TestPauseBalanceAppliesWhilePositionIsOpen(t *testing.T) {
+	cfg := testConfig()
+	cfg.ID = 8
+	cfg.PauseBalanceUsdt = 0.5
+	paper := NewPaper()
+	eng := withSecrets(NewEngine(cfg, paper, DiscardLogger()))
+	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	if err := eng.Start(calmStart(now, 20)); err != nil {
+		t.Fatal(err)
+	}
+	candles := candlesUntil(t, CrossGolden)
+	mark := candles[len(candles)-1].Close
+	snap, err := eng.Step(stepAt(now, candles, mark, 20))
+	if err != nil || snap.State != StateInPosition {
+		t.Fatalf("open %+v err=%v", snap, err)
+	}
+	held := paper.Cancels
+	next := cfg
+	next.PauseBalanceUsdt = 3
+	eng.noteLiveFlags(next)
+	in := stepAt(now, candles, mark, 20)
+	in.WalletKnown = true
+	in.Wallet = 2
+	in.Available = 2
+	snap, err = eng.Step(in)
+	if err != nil || snap.PauseReason != ReasonBalanceBelowPause || snap.Running || snap.State != StateInPosition {
+		t.Fatalf("live pause %+v err=%v", snap, err)
+	}
+	pos, posErr := paper.Position(cfg.Symbol)
+	if posErr != nil || !pos.Open || paper.Cancels != held {
+		t.Fatalf("position pos=%+v cancels=%d held=%d err=%v", pos, paper.Cancels, held, posErr)
+	}
+}
+
+func TestRunnerReadsPauseBalanceEachTick(t *testing.T) {
+	r := NewRunner(NewHub())
+	cfg := testConfig()
+	cfg.ID = 21
+	cfg.PauseBalanceUsdt = 0.5
+	r.mu.Lock()
+	r.specs[cfg.ID] = RunSpec{UserID: 1, Config: cfg}
+	r.mu.Unlock()
+	var seen float64
+	r.SetMarket(func(Config, SecretOpener, time.Time) (Market, error) {
+		return Market{Wallet: 20, Available: 20, WalletKnown: true, Equity: 20, EquityKnown: true, Mark: 1}, nil
+	})
+	r.SetStep(func(spec RunSpec, _ StepInput) (Snapshot, error) {
+		seen = spec.Config.PauseBalanceUsdt
+		return Snapshot{}, nil
+	})
+	r.SetPauseBalance(func(id int64) (float64, error) {
+		if id != cfg.ID {
+			t.Fatalf("id %d", id)
+		}
+		return 2.5, nil
+	})
+	r.runOnce(context.Background(), RunSpec{UserID: 1, Config: cfg})
+	if seen != 2.5 {
+		t.Fatalf("seen %v", seen)
+	}
+	r.SetPauseBalance(func(int64) (float64, error) {
+		return 0, errors.New("db down")
+	})
+	r.runOnce(context.Background(), RunSpec{UserID: 1, Config: cfg})
+	if seen != 2.5 {
+		t.Fatalf("kept %v", seen)
+	}
+	r.SetPauseBalance(func(int64) (float64, error) {
+		return 0.2, nil
+	})
+	r.runOnce(context.Background(), RunSpec{UserID: 1, Config: cfg})
+	if seen != BalanceFloorUSDT {
+		t.Fatalf("floor %v", seen)
+	}
 }
 
 func stepAt(now time.Time, candles []Candle, mark, equity float64) StepInput {

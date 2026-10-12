@@ -119,6 +119,7 @@ export interface TradingEngineSummary {
   realizedToday: number | null;
   lastReason: string;
   lastBacktest: EngineBacktestSummary | null;
+  pauseEntries: boolean;
 }
 
 export interface TradingEnginesTotals {
@@ -161,6 +162,7 @@ export interface EngineCardView {
   trades: string;
   netR: string;
   expectancy: string;
+  pauseEntries: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -243,7 +245,16 @@ function mapEngine(entry: Record<string, unknown>): TradingEngineSummary {
     realizedToday: realized === undefined ? null : realized,
     lastReason: readText(entry.lastReason),
     lastBacktest: readBacktest(entry),
+    pauseEntries: readPause(entry.pauseEntries ?? entry.pause_entries),
   };
+}
+
+function readPause(value: unknown): boolean {
+  if (value === true) return true;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value !== "string") return false;
+  const text = value.trim().toLowerCase();
+  return text === "1" || text === "true" || text === "yes";
 }
 
 function readEngineRecords(payload: unknown): Record<string, unknown>[] {
@@ -379,6 +390,7 @@ export function formatEngineCard(engine: TradingEngineSummary): EngineCardView {
     trades: formatTrades(backtest?.trades),
     netR: formatNetR(backtest?.netR),
     expectancy: formatExpectancyR(backtest?.expectancyR),
+    pauseEntries: engine.pauseEntries,
   };
 }
 
