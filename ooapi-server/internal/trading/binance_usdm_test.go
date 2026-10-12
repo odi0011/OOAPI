@@ -62,11 +62,11 @@ func TestEngineSendsIsolatedMarketAndProtectionToTestnet(t *testing.T) {
 	if held.State != StateInPosition {
 		t.Fatalf("hold %+v", held)
 	}
-	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET") != 1 {
+	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || fake.count("POST", "/fapi/v1/order", "LIMIT") != 1 {
 		t.Fatalf("protection replaced while holding: %#v", fake.snapshot())
 	}
-	if fake.count("POST", "/fapi/v1/order", "STOP_MARKET") != 0 || fake.count("POST", "/fapi/v1/order", "TAKE_PROFIT_MARKET") != 0 {
-		t.Fatal("conditional order used the classic order endpoint")
+	if fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET") != 0 || fake.count("POST", "/fapi/v1/order", "TAKE_PROFIT_MARKET") != 0 {
+		t.Fatal("take profit still uses a market conditional")
 	}
 
 	closed, err := eng.Step(stepAt(now.Add(2*time.Minute), candles, snap.TakeProfitPrice+0.01, 2))
@@ -88,21 +88,27 @@ func TestEngineSendsIsolatedMarketAndProtectionToTestnet(t *testing.T) {
 			}
 			canceledAlgo = append(canceledAlgo, call.values.Get("algoId"))
 		}
-		if call.method == http.MethodPost && call.path == "/fapi/v1/order" && call.values.Get("reduceOnly") == "true" {
+		if call.method == http.MethodPost && call.path == "/fapi/v1/order" && call.values.Get("reduceOnly") == "true" && call.values.Get("type") == "MARKET" {
 			sawReduce = true
-			if len(canceledAlgo) < 2 {
-				t.Fatal("flatten reduced before algo orders were canceled")
+			if !sawCancel || len(canceledAlgo) < 1 {
+				t.Fatal("flatten reduced before the stop and maker take were canceled")
 			}
-			if call.values.Get("type") != "MARKET" || call.values.Get("side") != "SELL" {
+			if call.values.Get("side") != "SELL" {
 				t.Fatalf("flatten %#v", call.values)
 			}
 		}
 	}
-	if !sawCancel || !sawReduce || len(canceledAlgo) != 2 {
+	if !sawCancel || !sawReduce || len(canceledAlgo) != 1 {
 		t.Fatalf("exit cancel=%v reduce=%v algo=%v", sawCancel, sawReduce, canceledAlgo)
 	}
-	if fake.count("GET", "/fapi/v1/openOrders", "") != 0 {
-		t.Fatal("hung protection was read from openOrders")
+	fake.mu.Lock()
+	leftLimits := len(fake.limits)
+	fake.mu.Unlock()
+	if leftLimits != 0 {
+		t.Fatalf("maker take left open: %d", leftLimits)
+	}
+	if fake.count("GET", "/fapi/v1/openOrders", "") < 1 {
+		t.Fatal("maker take was not read from openOrders")
 	}
 	if fake.count("GET", "/fapi/v1/openAlgoOrders", "") < 1 {
 		t.Fatal("hung protection was not read from openAlgoOrders")
@@ -167,8 +173,17 @@ func TestEngineFlattensWhenTakeProfitFails(t *testing.T) {
 	if fake.pos != 0 {
 		t.Fatalf("position left open: %v", fake.pos)
 	}
-	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET") != protectionAttempts {
-		t.Fatalf("protection calls stop=%d take=%d", fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET"), fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET"))
+	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || fake.count("POST", "/fapi/v1/order", "LIMIT") != protectionAttempts {
+		t.Fatalf("protection calls stop=%d take=%d", fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET"), fake.count("POST", "/fapi/v1/order", "LIMIT"))
+	}
+	gtxRejects := 0
+	for _, call := range fake.snapshot() {
+		if call.method == http.MethodPost && call.path == "/fapi/v1/order" && call.values.Get("timeInForce") == "GTX" {
+			gtxRejects++
+		}
+	}
+	if gtxRejects != protectionAttempts {
+		t.Fatalf("gtx posts %d", gtxRejects)
 	}
 	reduces := 0
 	canceledStop := false
@@ -301,10 +316,17 @@ func TestConditionalOrdersUseAlgoAPI(t *testing.T) {
 	}
 	var stop, take bool
 	for _, call := range fake.snapshot() {
-		if call.method != http.MethodPost || call.path != "/fapi/v1/algoOrder" {
-			if call.path == "/fapi/v1/order" {
-				t.Fatalf("protection touched classic order endpoint %#v", call.values)
+		if call.method == http.MethodPost && call.path == "/fapi/v1/order" && call.values.Get("type") == "LIMIT" {
+			if call.values.Get("timeInForce") != "GTX" || call.values.Get("closePosition") != "" || call.values.Get("reduceOnly") != "" {
+				t.Fatalf("hedge take %#v", call.values)
 			}
+			if call.values.Get("positionSide") != "LONG" || call.values.Get("side") != "SELL" || call.values.Get("quantity") == "" || call.values.Get("price") == "" {
+				t.Fatalf("hedge take params %#v", call.values)
+			}
+			take = true
+			continue
+		}
+		if call.method != http.MethodPost || call.path != "/fapi/v1/algoOrder" {
 			continue
 		}
 		if call.values.Get("algoType") != "CONDITIONAL" || call.values.Get("closePosition") != "true" {
@@ -316,17 +338,13 @@ func TestConditionalOrdersUseAlgoAPI(t *testing.T) {
 		if call.values.Get("positionSide") != "LONG" || call.values.Get("side") != "SELL" || call.values.Get("workingType") != "MARK_PRICE" {
 			t.Fatalf("hedge algo %#v", call.values)
 		}
-		switch call.values.Get("type") {
-		case "STOP_MARKET":
-			stop = true
-		case "TAKE_PROFIT_MARKET":
-			take = true
-		default:
+		if call.values.Get("type") != "STOP_MARKET" {
 			t.Fatalf("algo type %#v", call.values)
 		}
+		stop = true
 	}
 	if !stop || !take {
-		t.Fatal("missing conditional algo orders")
+		t.Fatal("missing stop algo or maker take")
 	}
 	if err := client.CancelOpen(SymbolXRPUSDT); err != nil {
 		t.Fatal(err)
@@ -341,8 +359,14 @@ func TestConditionalOrdersUseAlgoAPI(t *testing.T) {
 			canceled[call.values.Get("algoId")] = true
 		}
 	}
-	if !sawRegular || !canceled["1"] || !canceled["2"] {
+	if !sawRegular || !canceled["1"] || canceled["2"] {
 		t.Fatalf("cancel regular=%v algo=%v", sawRegular, canceled)
+	}
+	fake.mu.Lock()
+	leftLimits := len(fake.limits)
+	fake.mu.Unlock()
+	if leftLimits != 0 {
+		t.Fatalf("maker take left %d", leftLimits)
 	}
 	fake.mu.Lock()
 	left := len(fake.algos)
@@ -377,7 +401,10 @@ type binanceFake struct {
 	pending         float64
 	queried         bool
 	failTake        bool
+	rejectEntry     bool
 	emptyAfterPlace int
+	limits          []fakeLimit
+	orderSeq        int64
 	income          string
 	riskBody        string
 	trades          string
@@ -394,6 +421,17 @@ type fakeAlgo struct {
 	side     string
 	trigger  string
 	closePos bool
+}
+
+type fakeLimit struct {
+	id         int64
+	symbol     string
+	side       string
+	posSide    string
+	price      string
+	orig       string
+	executed   string
+	reduceOnly bool
 }
 
 func newBinanceFake(t *testing.T, step, minQty, tick, minNotional string) *binanceFake {
@@ -448,7 +486,9 @@ func (f *binanceFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = io.WriteString(w, f.trades)
 	case "/fapi/v1/openOrders":
-		_, _ = io.WriteString(w, `[]`)
+		_, _ = io.WriteString(w, f.limitsJSON())
+	case "/fapi/v1/commissionRate":
+		_, _ = io.WriteString(w, `{"symbol":"`+values.Get("symbol")+`","makerCommissionRate":"0.0002","takerCommissionRate":"0.0005"}`)
 	case "/fapi/v1/openAlgoOrders":
 		if f.emptyAfterPlace > 0 && len(f.algos) > 0 {
 			f.emptyAfterPlace--
@@ -463,6 +503,7 @@ func (f *binanceFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = io.WriteString(w, f.income)
 	case "/fapi/v1/allOpenOrders":
+		f.limits = nil
 		_, _ = io.WriteString(w, `{"code":200,"msg":"The operation of cancel all open order is done."}`)
 	default:
 		f.t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
@@ -471,6 +512,26 @@ func (f *binanceFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *binanceFake) order(w http.ResponseWriter, method string, values url.Values) {
+	if method == http.MethodDelete {
+		id := values.Get("orderId")
+		kept := f.limits[:0]
+		found := false
+		for _, order := range f.limits {
+			if strconv.FormatInt(order.id, 10) == id {
+				found = true
+				continue
+			}
+			kept = append(kept, order)
+		}
+		f.limits = kept
+		if !found {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"code":-2011,"msg":"Unknown order sent."}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"orderId":`+id+`,"status":"CANCELED"}`)
+		return
+	}
 	if method == http.MethodGet {
 		f.queried = true
 		f.pos = f.pending
@@ -493,7 +554,14 @@ func (f *binanceFake) order(w http.ResponseWriter, method string, values url.Val
 		return
 	}
 	switch values.Get("type") {
+	case "LIMIT":
+		f.limitOrder(w, values)
 	case "MARKET":
+		if f.rejectEntry {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"code":-2019,"msg":"Margin is insufficient."}`)
+			return
+		}
 		qty := parseNum(values.Get("quantity"))
 		if values.Get("reduceOnly") == "true" {
 			f.pos = 0
@@ -642,6 +710,54 @@ func (f *binanceFake) algoOrdersJSON() string {
 	return "[" + strings.Join(items, ",") + "]"
 }
 
+func (f *binanceFake) limitOrder(w http.ResponseWriter, values url.Values) {
+	if values.Get("timeInForce") != "GTX" || values.Get("closePosition") != "" || values.Get("price") == "" || values.Get("quantity") == "" {
+		f.t.Errorf("maker take %#v", values)
+	}
+	if f.dual {
+		if values.Get("positionSide") == "" || values.Get("reduceOnly") != "" {
+			f.t.Errorf("hedge maker take %#v", values)
+		}
+	} else if values.Get("reduceOnly") != "true" || values.Get("positionSide") != "" {
+		f.t.Errorf("one-way maker take %#v", values)
+	}
+	if f.failTake {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"code":-5022,"msg":"Due to the order could not be executed as maker, the Post Only order will be rejected. The order will not be recorded in the order history"}`)
+		return
+	}
+	f.orderSeq++
+	f.limits = append(f.limits, fakeLimit{
+		id: f.orderSeq, symbol: values.Get("symbol"), side: values.Get("side"), posSide: values.Get("positionSide"),
+		price: values.Get("price"), orig: values.Get("quantity"), executed: "0",
+		reduceOnly: values.Get("reduceOnly") == "true",
+	})
+	_, _ = io.WriteString(w, `{"orderId":`+strconv.FormatInt(f.orderSeq, 10)+`,"status":"NEW","type":"LIMIT","timeInForce":"GTX","price":"`+values.Get("price")+`","origQty":"`+values.Get("quantity")+`","executedQty":"0"}`)
+}
+
+func (f *binanceFake) limitsJSON() string {
+	if len(f.limits) == 0 {
+		return "[]"
+	}
+	items := make([]string, 0, len(f.limits))
+	for _, order := range f.limits {
+		executed := order.executed
+		if executed == "" {
+			executed = "0"
+		}
+		status := "NEW"
+		if parseNum(executed) > 0 {
+			status = "PARTIALLY_FILLED"
+		}
+		reduce := "false"
+		if order.reduceOnly {
+			reduce = "true"
+		}
+		items = append(items, `{"orderId":`+strconv.FormatInt(order.id, 10)+`,"symbol":"`+order.symbol+`","status":"`+status+`","type":"LIMIT","timeInForce":"GTX","side":"`+order.side+`","positionSide":"`+order.posSide+`","price":"`+order.price+`","origQty":"`+order.orig+`","executedQty":"`+executed+`","reduceOnly":`+reduce+`}`)
+	}
+	return "[" + strings.Join(items, ",") + "]"
+}
+
 func (f *binanceFake) orderJSON(status, id, qty string) string {
 	return `{"orderId":` + id + `,"status":"` + status + `","avgPrice":"1.5000","executedQty":"` + qty + `","side":"BUY"}`
 }
@@ -708,8 +824,11 @@ func (f *binanceFake) assertEntrySequence(t *testing.T) {
 	if !sawInfo || !sawMargin || !sawLeverage || !sawQuery || !f.queried {
 		t.Fatalf("sequence info=%v margin=%v leverage=%v query=%v calls=%#v", sawInfo, sawMargin, sawLeverage, sawQuery, f.snapshot())
 	}
-	if f.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || f.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET") != 1 {
+	if f.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || f.count("POST", "/fapi/v1/order", "LIMIT") != 1 {
 		t.Fatal("missing protection orders")
+	}
+	if f.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET") != 0 {
+		t.Fatal("take profit used the algo endpoint")
 	}
 	if f.count("POST", "/fapi/v1/order", "MARKET") < 1 {
 		t.Fatal("market entry left the classic order endpoint")

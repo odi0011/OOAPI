@@ -107,7 +107,7 @@ func enterHedgeShort(t *testing.T) shortFixture {
 	if err != nil || snap.State != StateInPosition || snap.Side != SideShort {
 		t.Fatalf("entry %+v err=%v", snap, err)
 	}
-	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || fake.count("POST", "/fapi/v1/algoOrder", "TAKE_PROFIT_MARKET") != 1 {
+	if fake.count("POST", "/fapi/v1/algoOrder", "STOP_MARKET") != 1 || fake.count("POST", "/fapi/v1/order", "LIMIT") != 1 {
 		t.Fatalf("protection %#v", fake.snapshot())
 	}
 	return shortFixture{eng: eng, fake: fake, cfg: cfg, now: now, later: now.Add(2 * time.Minute), secrets: secrets}
@@ -133,6 +133,14 @@ func flattenShortTakeProfit(t *testing.T, fake *binanceFake, now time.Time) int6
 	fake.algos = append(kept, fakeAlgo{
 		id: 99, kind: "STOP_MARKET", posSide: "LONG", side: "SELL", trigger: "1.0", closePos: true,
 	})
+	keptLimits := make([]fakeLimit, 0, len(fake.limits))
+	for _, order := range fake.limits {
+		if strings.EqualFold(order.posSide, "SHORT") {
+			continue
+		}
+		keptLimits = append(keptLimits, order)
+	}
+	fake.limits = keptLimits
 	fake.riskBody = `[{"symbol":"XRPUSDT","positionAmt":0,"entryPrice":0,"positionSide":"LONG"},{"symbol":"XRPUSDT","positionAmt":0,"entryPrice":1.5,"positionSide":"SHORT"}]`
 	fake.income = `[
 		{"symbol":"XRPUSDT","incomeType":"REALIZED_PNL","income":"1.25","time":` + ms(fillAt) + `},
