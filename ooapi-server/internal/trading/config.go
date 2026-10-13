@@ -57,12 +57,15 @@ const (
 	EntryModeCross = "cross"
 	EntryModeTrend = "trend"
 
-	// DefaultMinScore 是 trend 模式的默认及格分。四项信号都要过。
-	DefaultMinScore = 4
-	// DefaultMinWinRate 是允许开仓的近期回测胜率下限。0 表示关闭这道门。
-	DefaultMinWinRate = 0.5
-	// DefaultMinTrades 是这道门要求的最少样本笔数。
-	DefaultMinTrades = 30
+	// MaxTrendScore 是 trend 打分的满分：EMA 方向、RSI、放量、高周期同向。
+	MaxTrendScore = 4
+	// DefaultMinScore 是 trend 模式的默认及格分。满分仍是 MaxTrendScore，不要求四项都过。
+	DefaultMinScore = 3
+	// DefaultMinWinRate 是新建策略的胜率下限，也是实盘开仓门和保存接口的地板。
+	// 测网写成 0 可以关掉这道门。实盘未开赌一把时不能低于它。
+	DefaultMinWinRate = 0.38
+	// DefaultMinTrades 是新建策略的最少样本笔数，也是实盘开仓门和保存接口的地板。
+	DefaultMinTrades = 10
 	// DefaultMaxMarginPerTradeUSDT 是新建策略的单笔保证金上限。
 	// 0 表示关闭，不再额外收紧 MaxMarginUsdt。环境变量可以再打开。
 	DefaultMaxMarginPerTradeUSDT = 0
@@ -109,7 +112,7 @@ const (
 	MinScalpTpPct = 0.0015
 	// ExpectancyTpCapR 是期望门的默认止盈上限（几 R）。策略可以改，0 表示用这个值。
 	// 1R = 策略的 rFraction，缺省是 DefaultRFraction。再远就不在回测能支持的范围里。
-	ExpectancyTpCapR = 3
+	ExpectancyTpCapR = 4
 	// MarginAvailableFraction 是可用余额里拿来当保证金的比例。
 	MarginAvailableFraction = 0.95
 	// MarginBalanceBufferUSDT 是扣掉开仓 taker 手续费后再留的一点余额，避免刚好打满 availableBalance。
@@ -381,8 +384,8 @@ func (c Config) Validate() error {
 	if c.EntryMode != EntryModeCross && c.EntryMode != EntryModeTrend {
 		return invalid("entryMode 只能是 cross 或 trend")
 	}
-	if c.MinScore < 1 || c.MinScore > DefaultMinScore {
-		return invalid("minScore 要在 1 到 4 之间")
+	if c.MinScore < 1 || c.MinScore > MaxTrendScore {
+		return invalid(fmt.Sprintf("minScore 要在 1 到 %d 之间", MaxTrendScore))
 	}
 	if sl, tp := c.scalpPcts(); sl <= 0 || sl > 0.2 || tp <= 0 || tp > 0.2 {
 		return invalid("剥头皮止损和止盈要大于 0 且不超过 20%")

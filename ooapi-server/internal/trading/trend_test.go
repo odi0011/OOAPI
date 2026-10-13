@@ -148,14 +148,24 @@ func TestLiveBacktestGateKeepsWinRateFloor(t *testing.T) {
 	cfg.Mode = ModeLive
 	cfg.MinWinRate = 0
 	cfg.MinTrades = 1
-	if got := BacktestGate(cfg, &BacktestSummary{WinRate: 1, Trades: 8, NetR: 3}); got != ReasonInsufficientSamples {
+	pass := BacktestSummary{WinRate: DefaultMinWinRate, Trades: DefaultMinTrades, NetR: 0.1}
+	if got := BacktestGate(cfg, &pass); got != "" {
+		t.Fatalf("live floor %g/%d should pass, got %s", DefaultMinWinRate, DefaultMinTrades, got)
+	}
+	if got := BacktestGate(cfg, &BacktestSummary{WinRate: 1, Trades: DefaultMinTrades - 1, NetR: 3}); got != ReasonInsufficientSamples {
 		t.Fatalf("samples %s", got)
 	}
-	if got := BacktestGate(cfg, &BacktestSummary{WinRate: 0.2, Trades: 40, NetR: 1}); got != ReasonWinRateBelow {
+	if got := BacktestGate(cfg, &BacktestSummary{WinRate: DefaultMinWinRate - 0.01, Trades: 40, NetR: 1}); got != ReasonWinRateBelow {
 		t.Fatalf("win rate %s", got)
 	}
 	if got := BacktestGate(cfg, nil); got != ReasonWinRateBelow {
 		t.Fatalf("missing %s", got)
+	}
+	// 策略把门槛设得更高时仍用策略值，不会被默认地板放行。
+	cfg.MinWinRate = 0.6
+	cfg.MinTrades = 20
+	if got := BacktestGate(cfg, &pass); got != ReasonWinRateBelow {
+		t.Fatalf("configured floor %s", got)
 	}
 }
 

@@ -70,9 +70,31 @@ func TestTradingEntriesMigration(t *testing.T) {
 		"pause_balance_usdt DECIMAL(20,6) NOT NULL DEFAULT 0.5",
 		"r_fraction DECIMAL(16,8) NOT NULL DEFAULT 0.00800000",
 		"max_margin_usdt DECIMAL(20,6) NOT NULL DEFAULT 1.7",
+		"min_score INT NOT NULL DEFAULT 3",
+		"min_win_rate DECIMAL(8,4) NOT NULL DEFAULT 0.3800",
+		"min_trades INT NOT NULL DEFAULT 10",
+		"expectancy_tp_cap_r DECIMAL(12,4) NOT NULL DEFAULT 4",
+		"expectancy_gate TINYINT NOT NULL DEFAULT 1",
 	} {
 		if !strings.Contains(alters, needle) {
 			t.Fatalf("production alter missing %s", needle)
+		}
+	}
+	for _, banned := range []string{
+		"DEFAULT 0.5000",
+		"min_trades INT NOT NULL DEFAULT 30",
+		"min_trades       INT             NOT NULL DEFAULT 30",
+		"expectancy_tp_cap_r DECIMAL(12,4) NOT NULL DEFAULT 3",
+		"min_score INT NOT NULL DEFAULT 4",
+		"min_score        INT             NOT NULL DEFAULT 4",
+	} {
+		if strings.Contains(joinedSchema, banned) || strings.Contains(alters, banned) {
+			t.Fatalf("old entry default still present: %s", banned)
+		}
+		for _, col := range columnMigrations["trading_strategies"] {
+			if strings.Contains(col.definition, banned) {
+				t.Fatalf("old entry default still present on %s: %s", col.name, banned)
+			}
 		}
 	}
 	for _, name := range []string{"r_fraction", "expectancy_tp_cap_r", "taker_fee_rate", "maker_fee_rate", "expectancy_gate"} {

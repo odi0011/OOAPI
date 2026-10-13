@@ -903,8 +903,8 @@ func validateStrategy(rec strategyRecord, missingKey bool) *tradingError {
 	if rec.EntryMode != trading.EntryModeCross && rec.EntryMode != trading.EntryModeTrend {
 		return &tradingError{http.StatusBadRequest, "entryMode 只能是 cross 或 trend", "invalid_entry_mode"}
 	}
-	if rec.MinScore < 1 || rec.MinScore > trading.DefaultMinScore {
-		return &tradingError{http.StatusBadRequest, "minScore 要在 1 到 4 之间", "invalid_score"}
+	if rec.MinScore < 1 || rec.MinScore > trading.MaxTrendScore {
+		return &tradingError{http.StatusBadRequest, fmt.Sprintf("minScore 要在 1 到 %d 之间", trading.MaxTrendScore), "invalid_score"}
 	}
 	if rec.MinWinRate < 0 || rec.MinWinRate > 1 {
 		return &tradingError{http.StatusBadRequest, "minWinRate 要在 0 到 1 之间", "invalid_win_rate"}
@@ -916,10 +916,10 @@ func validateStrategy(rec strategyRecord, missingKey bool) *tradingError {
 		return &tradingError{http.StatusBadRequest, "剥头皮止损和止盈要大于 0 且不超过 20%", "scalpPct"}
 	}
 	if rec.Mode == networkLive && !rec.GambleMode && rec.MinWinRate < trading.DefaultMinWinRate {
-		return &tradingError{http.StatusBadRequest, "实盘 minWinRate 不能低于 0.5", "minWinRate"}
+		return &tradingError{http.StatusBadRequest, fmt.Sprintf("实盘 minWinRate 不能低于 %g", trading.DefaultMinWinRate), "minWinRate"}
 	}
 	if rec.Mode == networkLive && !rec.GambleMode && rec.MinTrades < trading.DefaultMinTrades {
-		return &tradingError{http.StatusBadRequest, "实盘 minTrades 不能低于 30", "minTrades"}
+		return &tradingError{http.StatusBadRequest, fmt.Sprintf("实盘 minTrades 不能低于 %d", trading.DefaultMinTrades), "minTrades"}
 	}
 	if rec.MaxMarginPerTradeUsdt < 0 || rec.MaxMarginPerTradeUsdt > 1_000_000 {
 		return &tradingError{http.StatusBadRequest, "单笔保证金上限要在 0 到 1000000 之间，0 表示关闭", "maxMarginPerTradeUsdt"}
