@@ -389,6 +389,123 @@ export async function getEngineOrders(strategyId: number): Promise<EngineOrders>
   return { ...data, items, entries: data.entries ?? [], empty: data.empty ?? items.length === 0 };
 }
 
+/** 权益曲线一点。服务端按约 5 秒采样，默认下发近 2 小时。 */
+export interface EquityPoint {
+  t: number;
+  wallet: number;
+  equity: number;
+  unrealized: number;
+  available: number;
+  marginUsed: number;
+}
+
+/** 持仓开 / 平 / 调仓标记。 */
+export interface EquityMarker {
+  t: number;
+  kind: string;
+  side?: string;
+  symbol?: string;
+}
+
+/** 账户级持仓一行。 */
+export interface PanelPosition {
+  symbol: string;
+  open: boolean;
+  side?: string;
+  qty?: number;
+  entryPrice?: number;
+  markPrice?: number;
+  unrealizedPnl?: number;
+  leverage?: number;
+  margin?: number;
+  marginMode?: string;
+}
+
+/**
+ * GET /api/trading/engine/balance?strategyId=
+ * 钱包、可用、浮盈、保证金占用、今日盈亏与权益曲线。密钥只在服务端签名。
+ */
+export interface EngineBalance {
+  strategyId: number;
+  exchangeKeyId: number;
+  network: string;
+  symbol: string;
+  wallet: number;
+  available: number;
+  unrealized: number;
+  equity: number;
+  marginUsed: number;
+  todayPnl: number;
+  todayRealized: number;
+  todayPct: number;
+  todayBase: number;
+  todaySrc: string;
+  updatedAt: string;
+  history: EquityPoint[];
+  markers: EquityMarker[];
+  positions: PanelPosition[];
+  boostUntil?: string;
+}
+
+export async function getEngineBalance(strategyId: number): Promise<EngineBalance> {
+  const data = await apiRequest<EngineBalance>(`/api/trading/engine/balance?strategyId=${strategyId}`);
+  return {
+    ...data,
+    history: data.history ?? [],
+    markers: data.markers ?? [],
+    positions: data.positions ?? [],
+  };
+}
+
+/** 检测事件。鉴权与加速相同：管理员 JWT 或 OOAPI_BOOST_TOKEN。 */
+export interface DetectionEvent {
+  ts: string;
+  symbol?: string;
+  side?: string;
+  score?: number;
+  winrate?: number;
+  action?: string;
+  msg?: string;
+  dayRealizedUsdt?: number;
+  cumulativeRealizedUsdt?: number;
+}
+
+export async function getEngineEvents(): Promise<DetectionEvent[]> {
+  const data = await apiRequest<DetectionEvent[] | { items?: DetectionEvent[] }>("/api/trading/engine/events");
+  if (Array.isArray(data)) return data;
+  return data.items ?? [];
+}
+
+export interface BoostResult {
+  ok: boolean;
+  until: string;
+  status: number;
+}
+
+/** POST /api/trading/engine/boost。成功与 429 都直接读 body.until（不走统一 error 包）。 */
+export async function postEngineBoost(): Promise<BoostResult> {
+  let res: Response;
+  try {
+    res = await fetch("/api/trading/engine/boost", { method: "POST", credentials: "include" });
+  } catch {
+    throw new ApiRequestError("网络连接失败，请检查网络后重试", "network_error", 0);
+  }
+  let payload: { ok?: boolean; until?: string; error?: { message?: string; code?: string } } = {};
+  try {
+    payload = (await res.json()) as typeof payload;
+  } catch {
+    throw new ApiRequestError("响应解析失败", "parse_error", res.status);
+  }
+  if (res.status === 200 || res.status === 429) {
+    return { ok: payload.ok === true && res.status === 200, until: payload.until ?? "", status: res.status };
+  }
+  throw new ApiRequestError(
+    payload.error?.message ?? `请求失败（${res.status}）`,
+    payload.error?.code ?? "unknown",
+    res.status,
+  );
+}
+
 /** 启动检查。需要账户权益。不下单，也不打开测网全绿门闩。 */
 export async function startEngine(input: { strategyId: number; equityUsdt: number }): Promise<EngineState> {
   return apiRequest<EngineState>("/api/trading/engine/start", {

@@ -92,6 +92,20 @@ type DeskOrder struct {
 	Entry *EntryStamp `json:"entry,omitempty"`
 }
 
+// PanelPosition 是账户级持仓一行，给余额看板用。
+type PanelPosition struct {
+	Symbol        string  `json:"symbol"`
+	Open          bool    `json:"open"`
+	Side          Side    `json:"side,omitempty"`
+	Qty           float64 `json:"qty,omitempty"`
+	EntryPrice    float64 `json:"entryPrice,omitempty"`
+	MarkPrice     float64 `json:"markPrice,omitempty"`
+	UnrealizedPnl float64 `json:"unrealizedPnl,omitempty"`
+	Leverage      int     `json:"leverage,omitempty"`
+	Margin        float64 `json:"margin,omitempty"`
+	MarginMode    string  `json:"marginMode,omitempty"`
+}
+
 // DeskBook 是交易台读取行情和账户的边界。只读客户端和测试假交易所都实现它。
 type DeskBook interface {
 	Klines(symbol, interval string, limit int) ([]DeskCandle, error)
@@ -100,6 +114,14 @@ type DeskBook interface {
 	OpenOrders(symbol string) ([]DeskOrder, error)
 	OpenAlgoOrders(symbol string) ([]DeskOrder, error)
 	UseReadCredentials(Credentials) error
+}
+
+// DeskAccountBook 是余额看板额外需要的账户快照。旧假交易所可以不实现。
+type DeskAccountBook interface {
+	DeskBook
+	ReadEquity() (AccountEquity, error)
+	ListOpenPositions() ([]PanelPosition, error)
+	AccountIncomeHistory(since, now time.Time) ([]IncomeEvent, error)
 }
 
 // NewDeskBook 按策略 mode 打开只读客户端。测网和实盘都只发 GET。
@@ -242,6 +264,53 @@ func (c *USDMClient) OpenOrders(symbol string) ([]DeskOrder, error) {
 // OpenAlgoOrders 读条件单。止损和止盈挂在 algo 服务上时走这里。
 func (c *USDMClient) OpenAlgoOrders(symbol string) ([]DeskOrder, error) {
 	return c.readOrders(OrderSourceAlgo, "/fapi/v1/openAlgoOrders", symbol)
+}
+
+// ListOpenPositions 读整账户仍开着的仓。
+func (c *USDMClient) ListOpenPositions() ([]PanelPosition, error) {
+	body, err := c.signedRead("/fapi/v2/positionRisk", nil)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := decodeRiskRows(body)
+	if err != nil {
+		return nil, errors.New("持仓数据无法解析")
+	}
+	out := make([]PanelPosition, 0)
+	for i := range rows {
+		view, ok := panelPositionFromRow(rows[i])
+		if !ok {
+			continue
+		}
+		out = append(out, view)
+	}
+	if out == nil {
+		out = []PanelPosition{}
+	}
+	return out, nil
+}
+
+func panelPositionFromRow(row riskRow) (PanelPosition, bool) {
+	pos, ok := keyPositionFromRow(row)
+	if !ok {
+		return PanelPosition{}, false
+	}
+	upl := float64(row.UnRealizedProfit)
+	if upl == 0 {
+		upl = float64(row.UnrealizedProfit)
+	}
+	return PanelPosition{
+		Symbol:        pos.Symbol,
+		Open:          true,
+		Side:          pos.Side,
+		Qty:           pos.Qty,
+		EntryPrice:    pos.Entry,
+		MarkPrice:     float64(row.MarkPrice),
+		UnrealizedPnl: upl,
+		Leverage:      pos.Leverage,
+		Margin:        pos.InitialMargin(),
+		MarginMode:    normalizeMargin(row.MarginType),
+	}, true
 }
 
 func (c *USDMClient) readOrders(source, path, symbol string) ([]DeskOrder, error) {

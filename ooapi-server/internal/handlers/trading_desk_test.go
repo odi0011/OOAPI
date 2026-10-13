@@ -13,19 +13,22 @@ import (
 )
 
 type fakeDeskBook struct {
-	mu       sync.Mutex
-	opened   int
-	network  string
-	symbol   string
-	interval string
-	limit    int
-	klines   []trading.DeskCandle
-	mark     float64
-	risk     trading.RiskView
-	orders   []trading.DeskOrder
-	algos    []trading.DeskOrder
-	fail     error
-	modes    []string
+	mu        sync.Mutex
+	opened    int
+	network   string
+	symbol    string
+	interval  string
+	limit     int
+	klines    []trading.DeskCandle
+	mark      float64
+	risk      trading.RiskView
+	orders    []trading.DeskOrder
+	algos     []trading.DeskOrder
+	equity    trading.AccountEquity
+	positions []trading.PanelPosition
+	income    []trading.IncomeEvent
+	fail      error
+	modes     []string
 }
 
 func (f *fakeDeskBook) install(t *testing.T) {
@@ -95,6 +98,44 @@ func (f *fakeDeskBook) UseReadCredentials(creds trading.Credentials) error {
 	f.network = creds.Network
 	f.mu.Unlock()
 	return nil
+}
+
+func (f *fakeDeskBook) ReadEquity() (trading.AccountEquity, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return trading.AccountEquity{}, f.fail
+	}
+	return f.equity, nil
+}
+
+func (f *fakeDeskBook) ListOpenPositions() ([]trading.PanelPosition, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return nil, f.fail
+	}
+	out := append([]trading.PanelPosition{}, f.positions...)
+	if out == nil {
+		out = []trading.PanelPosition{}
+	}
+	return out, nil
+}
+
+func (f *fakeDeskBook) AccountIncomeHistory(since, now time.Time) ([]trading.IncomeEvent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return nil, f.fail
+	}
+	out := make([]trading.IncomeEvent, 0, len(f.income))
+	for _, row := range f.income {
+		if row.Time.Before(since) || row.Time.After(now) {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out, nil
 }
 
 func TestTradingDeskReadsStatusMarketPositionOrdersAndPnL(t *testing.T) {
@@ -353,6 +394,77 @@ func TestTradingDeskExchangeFailureStaysGeneric(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "signature") || strings.Contains(rec.Body.String(), "https://") || strings.Contains(rec.Body.String(), testAPISecret) {
 		t.Fatalf("failure body leaked: %s", rec.Body.String())
+	}
+}
+
+func TestTradingBalanceReturnsEquityTodayPnLAndHistory(t *testing.T) {
+	trading.ResetForTest()
+	trading.ResetEquityHistoryForTest()
+	resetSessionEquityForTest()
+	t.Cleanup(func() {
+		trading.ResetForTest()
+		trading.ResetEquityHistoryForTest()
+		resetSessionEquityForTest()
+	})
+	useTradingDB(t)
+	owner := tradingUser(15)
+	keyRec := callTrading(t, CreateExchangeKey, http.MethodPost, "/api/trading/exchange-keys", `{
+		"label": "主号",
+		"apiKey": "`+testAPIKey+`",
+		"apiSecret": "`+testAPISecret+`"
+	}`, owner, "")
+	keyID := int64(tradingData(t, keyRec)["id"].(float64))
+	created := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+		`{"exchangeKeyId": `+formatID(keyID)+`}`, owner, "")
+	strategyID := int64(tradingData(t, created)["id"].(float64))
+
+	now := time.Now().UTC()
+	day := trading.ShanghaiDayStart(now)
+	book := &fakeDeskBook{
+		equity: trading.AccountEquity{Wallet: 8.4, Available: 7.5, Unrealized: -0.4, Equity: 8.0, MarginUsed: 0.9},
+		positions: []trading.PanelPosition{{
+			Symbol: "DOGEUSDT", Open: true, Side: trading.SideShort, Qty: 100,
+			EntryPrice: 0.2, MarkPrice: 0.204, UnrealizedPnl: -0.4, Leverage: 5, Margin: 4,
+		}},
+		income: []trading.IncomeEvent{
+			{Asset: "USDT", IncomeType: "REALIZED_PNL", Income: -3.0, Time: day.Add(time.Hour)},
+			{Asset: "USDT", IncomeType: "COMMISSION", Income: -0.5, Time: day.Add(2 * time.Hour)},
+			{Asset: "USDT", IncomeType: "FUNDING_FEE", Income: -0.1, Time: day.Add(3 * time.Hour)},
+			{Asset: "USDT", IncomeType: "TRANSFER", Income: 10, Time: day.Add(time.Hour)},
+		},
+	}
+	book.install(t)
+
+	rec := callTrading(t, GetTradingBalance, http.MethodGet, "/api/trading/engine/balance?strategyId="+formatID(strategyID), "", owner, "")
+	view := tradingData(t, rec)
+	assertNoPlainSecret(t, view)
+	if !near(view["wallet"], 8.4) || !near(view["available"], 7.5) || !near(view["unrealized"], -0.4) {
+		t.Fatalf("balance %#v", view)
+	}
+	if !near(view["marginUsed"], 0.9) || !near(view["equity"], 8.0) {
+		t.Fatalf("equity %#v", view)
+	}
+	// trade = -3.6, today = -4.0, base = 8.4 - 6.4 = 2, pct = -200
+	if view["todaySrc"] != "income" || !near(view["todayPnl"], -4.0) || !near(view["todayBase"], 2) {
+		t.Fatalf("today %#v", view)
+	}
+	if !near(view["todayPct"], -200) || !near(view["todayRealized"], -3.6) {
+		t.Fatalf("pct %#v", view)
+	}
+	history, _ := view["history"].([]any)
+	if len(history) < 1 {
+		t.Fatalf("history %#v", view["history"])
+	}
+	markers, _ := view["markers"].([]any)
+	if len(markers) < 1 {
+		t.Fatalf("markers %#v", view["markers"])
+	}
+	positions, _ := view["positions"].([]any)
+	if len(positions) != 1 || positions[0].(map[string]any)["symbol"] != "DOGEUSDT" {
+		t.Fatalf("positions %#v", view["positions"])
+	}
+	if book.opened != 1 {
+		t.Fatalf("opened %d", book.opened)
 	}
 }
 
