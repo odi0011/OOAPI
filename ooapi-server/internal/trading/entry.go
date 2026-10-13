@@ -23,6 +23,11 @@ type EntryStamp struct {
 	ExpectancyR    float64 `json:"expectancyR"`
 	ExpectancyUSDT float64 `json:"expectancyUsdt"`
 	OneRUSDT       float64 `json:"oneRUsdt"`
+	// LiveExpectancy 是放行后的止盈距离上、重算胜率并扣手续费的期望，单位是价格比例。
+	// ExpectancyR 仍是回测净 R / 笔数，不会被这个数盖掉。
+	LiveExpectancy float64 `json:"liveExpectancy"`
+	// TakeProfitDist 是期望门放行后的止盈距离，相对入场价。没放行时为 0。
+	TakeProfitDist float64 `json:"takeProfitDist"`
 }
 
 // EntryRecord 是一笔已经落库的开仓。历史在进程重启后仍能读回来。

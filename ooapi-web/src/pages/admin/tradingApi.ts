@@ -248,6 +248,8 @@ export interface EngineState {
     netR?: number;
     expectancyR?: number;
   } | null;
+  liveExpectancy?: number;
+  takeProfitDist?: number;
   entry?: TradeEntry | null;
   entries?: TradeEntry[];
 }
@@ -270,6 +272,10 @@ export interface TradeEntry {
   expectancyR: number;
   expectancyUsdt: number;
   oneRUsdt: number;
+  /** 放行后止盈距离上重算胜率得到的实盘期望，价格比例。回测期望仍是 expectancyR。 */
+  liveExpectancy?: number;
+  /** 期望门放行后的止盈距离，相对入场价。 */
+  takeProfitDist?: number;
 }
 
 export interface EngineKline {

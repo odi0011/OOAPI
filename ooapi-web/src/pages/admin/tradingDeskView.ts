@@ -25,6 +25,8 @@ export interface EngineSlice {
     netR?: number | null;
     expectancyR?: number | null;
   } | null;
+  liveExpectancy?: number | null;
+  takeProfitDist?: number | null;
   entry?: TradeEntrySlice | null;
 }
 
@@ -41,6 +43,8 @@ export interface TradeEntrySlice {
   netR?: number | null;
   expectancyR?: number | null;
   expectancyUsdt?: number | null;
+  liveExpectancy?: number | null;
+  takeProfitDist?: number | null;
 }
 
 export interface PositionSlice {
@@ -142,6 +146,8 @@ export interface DeskStatus {
   timeframe: string;
   pauseEntries: boolean;
   pauseEntriesText: string;
+  liveExpectancyText: string;
+  takeProfitDistText: string;
 }
 
 export function buildDeskStatus(input: {
@@ -171,7 +177,17 @@ export function buildDeskStatus(input: {
     timeframe: engine?.timeframe?.trim() || input.timeframe?.trim() || "—",
     pauseEntries: engine?.pauseEntries === true,
     pauseEntriesText: engine?.pauseEntries === true ? "已暂停" : "允许",
+    liveExpectancyText: formatPriceFraction(engine?.liveExpectancy),
+    takeProfitDistText: formatPriceFraction(engine?.takeProfitDist),
   };
+}
+
+/** 价格比例。缺数显示「—」，0 仍显示。实盘期望和放行后的止盈距离都用这个口径。 */
+export function formatPriceFraction(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const pct = value * 100;
+  const text = pct.toLocaleString("zh-CN", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  return `${text}%`;
 }
 
 export interface PositionView {

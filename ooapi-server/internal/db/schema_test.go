@@ -12,7 +12,8 @@ func TestTradingEntriesMigration(t *testing.T) {
 	}
 	want := []string{
 		"score", "min_score", "boost", "forced", "win_rate", "trade_count",
-		"net_r", "expectancy_r", "expectancy_usdt", "one_r_usdt", "opened_at",
+		"net_r", "expectancy_r", "expectancy_usdt", "one_r_usdt",
+		"live_expectancy", "take_profit_dist", "opened_at",
 		"exit_price", "exit_qty", "realized_usdt", "exit_reason", "closed_at",
 	}
 	if !strings.Contains(joined, "CREATE TABLE IF NOT EXISTS trading_orders") {
