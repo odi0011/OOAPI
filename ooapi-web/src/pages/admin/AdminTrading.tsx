@@ -44,11 +44,27 @@ import {
   boundStrategyLeverage,
   strategyLeverageError,
 } from "./strategyLeverage";
+import {
+  DEFAULT_EXPECTANCY_TP_CAP_R,
+  DEFAULT_MAKER_FEE_PCT,
+  DEFAULT_ONE_R_PCT,
+  DEFAULT_TAKER_FEE_PCT,
+  strategyDailyLossError,
+  strategyExpectancyCapError,
+  strategyFeePctError,
+  strategyMaxMarginError,
+  strategyMinScoreError,
+  strategyOneRPctError,
+  strategyPauseBalanceError,
+  strategyStopDistanceError,
+  strategyTimeframeError,
+  strategyToggleError,
+} from "./strategyFields";
 
 /**
  * 自动交易策略。
  *
- * 首发只启用「XRPUSDT + 逐仓 ≤20x + 短周期 EMA」。
+ * 首发只启用「XRPUSDT + 逐仓 1–125x + 短周期 EMA」。
  * 网格 / 布林 / DCA 先留切换入口，标明「本金够再开」。
  *
  * 持久化字段与验收一致，直接读写 /api/trading/strategies（option:edit）：
@@ -70,6 +86,13 @@ interface StrategyDraft {
   timeframe: Timeframe;
   stopR: number;
   takeProfitR: number;
+  /** 百分数。0.8 表示 0.8%。 */
+  oneRPct: number;
+  expectancyTpCapR: number;
+  expectancyGate: boolean;
+  /** 百分数。0.05 表示 0.05%。 */
+  takerFeePct: number;
+  makerFeePct: number;
   dailyLossPct: number;
   pauseBalanceUsdt: number;
   maxMarginUsdt: number;
@@ -93,6 +116,11 @@ const DEFAULT_DRAFT: StrategyDraft = {
   timeframe: "5m",
   stopR: 1,
   takeProfitR: 1.5,
+  oneRPct: DEFAULT_ONE_R_PCT,
+  expectancyTpCapR: DEFAULT_EXPECTANCY_TP_CAP_R,
+  expectancyGate: true,
+  takerFeePct: DEFAULT_TAKER_FEE_PCT,
+  makerFeePct: DEFAULT_MAKER_FEE_PCT,
   dailyLossPct: 4,
   pauseBalanceUsdt: 0.5,
   maxMarginUsdt: 1.7,
@@ -133,6 +161,11 @@ function draftFromStrategy(item: Strategy): StrategyDraft {
     timeframe: isTimeframe(item.timeframe) ? item.timeframe : DEFAULT_DRAFT.timeframe,
     stopR: clamp(item.stopR, 0.1, 20, DEFAULT_DRAFT.stopR),
     takeProfitR: clamp(item.takeProfitR, 0.1, 20, DEFAULT_DRAFT.takeProfitR),
+    oneRPct: clamp((item.rFraction > 0 ? item.rFraction : DEFAULT_ONE_R_PCT / 100) * 100, 0.01, 20, DEFAULT_DRAFT.oneRPct),
+    expectancyTpCapR: clamp(item.expectancyTpCapR > 0 ? item.expectancyTpCapR : DEFAULT_EXPECTANCY_TP_CAP_R, 0.1, 20, DEFAULT_DRAFT.expectancyTpCapR),
+    expectancyGate: item.expectancyGate !== false,
+    takerFeePct: clamp((item.takerFeeRate > 0 ? item.takerFeeRate : DEFAULT_TAKER_FEE_PCT / 100) * 100, 0.01, 1, DEFAULT_DRAFT.takerFeePct),
+    makerFeePct: clamp((item.makerFeeRate > 0 ? item.makerFeeRate : DEFAULT_MAKER_FEE_PCT / 100) * 100, 0.01, 1, DEFAULT_DRAFT.makerFeePct),
     dailyLossPct: clamp(item.dailyLossPct, 0.1, 100, DEFAULT_DRAFT.dailyLossPct),
     pauseBalanceUsdt: typeof item.pauseBalanceUsdt === "number" ? item.pauseBalanceUsdt : DEFAULT_DRAFT.pauseBalanceUsdt,
     maxMarginUsdt: clamp(item.maxMarginUsdt, 0.1, 100, DEFAULT_DRAFT.maxMarginUsdt),
@@ -151,6 +184,10 @@ function round4(value: number): number {
   return Math.round(value * 10000) / 10000;
 }
 
+function round8(value: number): number {
+  return Math.round(value * 1e8) / 1e8;
+}
+
 function toWrite(draft: StrategyDraft): StrategyWrite {
   return {
     symbol: "XRPUSDT",
@@ -161,6 +198,11 @@ function toWrite(draft: StrategyDraft): StrategyWrite {
     timeframe: draft.timeframe,
     stopR: round4(draft.stopR),
     takeProfitR: round4(draft.takeProfitR),
+    rFraction: round8(draft.oneRPct / 100),
+    expectancyTpCapR: round4(draft.expectancyTpCapR),
+    takerFeeRate: round8(draft.takerFeePct / 100),
+    makerFeeRate: round8(draft.makerFeePct / 100),
+    expectancyGate: draft.expectancyGate,
     dailyLossPct: round4(draft.dailyLossPct),
     pauseBalanceUsdt: round4(draft.pauseBalanceUsdt),
     maxMarginUsdt: round4(draft.maxMarginUsdt),
@@ -180,12 +222,31 @@ function validate(draft: StrategyDraft, keys: ExchangeKey[]): string | null {
   if (draft.marginMode !== "isolated") return "首发只允许逐仓";
   const leverageError = strategyLeverageError(draft.leverage);
   if (leverageError) return leverageError;
-  if (draft.stopR <= 0 || draft.takeProfitR <= 0) return "每单止损和止盈都必填";
-  if (draft.dailyLossPct <= 0 || draft.dailyLossPct > 100) return "日亏停机阈值要大于 0";
-  if (!(draft.pauseBalanceUsdt >= 0.5) || draft.pauseBalanceUsdt > 1_000_000) return "暂停余额不能低于 0.5";
-  if (draft.maxMarginUsdt <= 0) return "单笔保证金上限要大于 0";
+  const timeframeError = strategyTimeframeError(draft.timeframe);
+  if (timeframeError) return timeframeError;
+  const distanceError = strategyStopDistanceError(draft.stopR, draft.takeProfitR);
+  if (distanceError) return distanceError;
+  const oneRError = strategyOneRPctError(draft.oneRPct);
+  if (oneRError) return oneRError;
+  const capError = strategyExpectancyCapError(draft.expectancyTpCapR);
+  if (capError) return capError;
+  const takerError = strategyFeePctError(draft.takerFeePct, "taker ");
+  if (takerError) return takerError;
+  const makerError = strategyFeePctError(draft.makerFeePct, "maker ");
+  if (makerError) return makerError;
+  const gateError = strategyToggleError(draft.expectancyGate, "期望门");
+  if (gateError) return gateError;
+  const gambleError = strategyToggleError(draft.gambleMode, "赌一把");
+  if (gambleError) return gambleError;
+  const dailyLossError = strategyDailyLossError(draft.dailyLossPct);
+  if (dailyLossError) return dailyLossError;
+  const pauseError = strategyPauseBalanceError(draft.pauseBalanceUsdt);
+  if (pauseError) return pauseError;
+  const marginError = strategyMaxMarginError(draft.maxMarginUsdt);
+  if (marginError) return marginError;
   if (draft.emaFast >= draft.emaSlow) return "快线周期要小于慢线";
-  if (draft.minScore < 1 || draft.minScore > 4) return "分数门槛要在 1 到 4";
+  const scoreError = strategyMinScoreError(draft.minScore);
+  if (scoreError) return scoreError;
   if (draft.minWinRate < 0 || draft.minWinRate > 1) return "胜率门槛要在 0 到 1";
   if (draft.minTrades < 1 || draft.minTrades > 10000) return "样本笔数要在 1 到 10000";
   if (draft.mode === "live" && !draft.gambleMode && draft.minWinRate < 0.5) return "实盘胜率门槛不能低于 0.5";
@@ -428,7 +489,7 @@ export default function AdminTrading() {
           <div>
             <h1 className={styles.title}>策略</h1>
             <p className={styles.lead}>
-              首发只做 XRPUSDT 的短周期 EMA 趋势，逐仓，杠杆不超过 {MAX_STRATEGY_LEVERAGE} 倍。每单都要填止损和止盈。
+              首发只做 XRPUSDT 的短周期 EMA 趋势，逐仓，杠杆 1 到 {MAX_STRATEGY_LEVERAGE} 倍。每单都要填止损和止盈。保存后下一拍生效，不用重启。
               行情在<Link to={DASHBOARD_PATH}>交易 → 数据看板</Link>，交易所密钥在<Link to={ACCOUNT_PATH}>交易 → 账户</Link>。
             </p>
           </div>
@@ -588,7 +649,7 @@ export default function AdminTrading() {
                 <div className={sectionStyles.row} data-field="timeframe">
                   <div className={sectionStyles.rowText}>
                     <strong>K 线周期</strong>
-                    <p>短周期，默认 5 分钟。</p>
+                    <p>可选 1 秒、1 分钟、3 分钟、5 分钟。已保存的 15 分钟策略仍可继续用。</p>
                   </div>
                   <div className={sectionStyles.rowControlInline}>
                     <SegmentedControl
@@ -674,6 +735,96 @@ export default function AdminTrading() {
                       max={20}
                       step={0.1}
                       onValueChange={(takeProfitR) => patch({ takeProfitR })}
+                    />
+                  </div>
+                </div>
+
+                <div className={sectionStyles.row} data-field="oneRPct">
+                  <div className={sectionStyles.rowText}>
+                    <strong>1R 距离</strong>
+                    <p>按入场价的百分比。止损距离 = 止损 R × 1R。生产默认 0.8%。</p>
+                  </div>
+                  <div className={sectionStyles.rowControl}>
+                    <NumberField
+                      hideLabel
+                      label="1R 距离"
+                      suffix=" %"
+                      value={draft.oneRPct}
+                      min={0.01}
+                      max={20}
+                      step={0.1}
+                      onValueChange={(oneRPct) => patch({ oneRPct })}
+                    />
+                  </div>
+                </div>
+
+                <div className={sectionStyles.row} data-field="expectancyTpCapR">
+                  <div className={sectionStyles.rowText}>
+                    <strong>期望止盈上限</strong>
+                    <p>期望门最多把止盈放到这么多 R。默认 3。</p>
+                  </div>
+                  <div className={sectionStyles.rowControl}>
+                    <NumberField
+                      hideLabel
+                      label="期望止盈上限"
+                      suffix=" R"
+                      value={draft.expectancyTpCapR}
+                      min={0.1}
+                      max={20}
+                      step={0.1}
+                      onValueChange={(expectancyTpCapR) => patch({ expectancyTpCapR })}
+                    />
+                  </div>
+                </div>
+
+                <div className={sectionStyles.row} data-field="expectancyGate">
+                  <div className={sectionStyles.rowText}>
+                    <strong>期望门</strong>
+                    <p>打开后，止盈放到上限时期望仍不为正就跳过开仓。赌一把不能单独关掉它。默认打开。</p>
+                  </div>
+                  <div className={sectionStyles.rowControl}>
+                    <Switch
+                      label={draft.expectancyGate ? "已打开" : "关闭"}
+                      checked={draft.expectancyGate}
+                      onCheckedChange={(expectancyGate) => patch({ expectancyGate })}
+                    />
+                  </div>
+                </div>
+
+                <div className={sectionStyles.row} data-field="takerFeePct">
+                  <div className={sectionStyles.rowText}>
+                    <strong>taker 费率回退</strong>
+                    <p>读不到交易所 commissionRate 时用它。默认 0.05%。</p>
+                  </div>
+                  <div className={sectionStyles.rowControl}>
+                    <NumberField
+                      hideLabel
+                      label="taker 费率回退"
+                      suffix=" %"
+                      value={draft.takerFeePct}
+                      min={0.01}
+                      max={1}
+                      step={0.01}
+                      onValueChange={(takerFeePct) => patch({ takerFeePct })}
+                    />
+                  </div>
+                </div>
+
+                <div className={sectionStyles.row} data-field="makerFeePct">
+                  <div className={sectionStyles.rowText}>
+                    <strong>maker 费率回退</strong>
+                    <p>读不到交易所 commissionRate 时用它。止盈按 maker 出场。默认 0.02%。</p>
+                  </div>
+                  <div className={sectionStyles.rowControl}>
+                    <NumberField
+                      hideLabel
+                      label="maker 费率回退"
+                      suffix=" %"
+                      value={draft.makerFeePct}
+                      min={0.01}
+                      max={1}
+                      step={0.01}
+                      onValueChange={(makerFeePct) => patch({ makerFeePct })}
                     />
                   </div>
                 </div>
@@ -789,7 +940,7 @@ export default function AdminTrading() {
                 <div className={sectionStyles.row} data-field="maxMarginUsdt">
                   <div className={sectionStyles.rowText}>
                     <strong>单笔保证金上限</strong>
-                    <p>首发默认约 1.6–1.8 USDT。</p>
+                    <p>默认 1.7 USDT。下一拍开仓按最新值。</p>
                   </div>
                   <div className={sectionStyles.rowControl}>
                     <NumberField
@@ -808,7 +959,7 @@ export default function AdminTrading() {
                 <div className={sectionStyles.row} data-field="dailyLossPct">
                   <div className={sectionStyles.rowText}>
                     <strong>日亏停机阈值</strong>
-                    <p>当天亏损达到权益的这个比例后停止开新仓，默认 4%。</p>
+                    <p>当天亏损达到权益的这个比例后停止开新仓。填 100 表示关闭。默认 4%。</p>
                   </div>
                   <div className={sectionStyles.rowControl}>
                     <NumberField

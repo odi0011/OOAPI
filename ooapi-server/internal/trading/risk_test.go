@@ -207,9 +207,34 @@ func TestConfigRejectsUnlockedStrategy(t *testing.T) {
 	}
 	cfg = DefaultConfig()
 	cfg.ExchangeKeyID = 1
+	cfg.Timeframe = "1s"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
 	cfg.Timeframe = "2m"
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("timeframe")
+	}
+	cfg = DefaultConfig()
+	cfg.ExchangeKeyID = 1
+	cfg.RFraction = 0.21
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("r fraction")
+	}
+	entry := 1.0
+	liq, err := IsolatedLiqPrice(SideLong, entry, MaxLeverage, DefaultMaintMarginRate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop, _, err := ProtectionPrices(SideLong, entry, entry*DefaultRFraction, DefaultStopR, DefaultTakeProfitR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if StopWithinLiquidation(SideLong, entry, stop, liq) {
+		t.Fatal("default 1R stop must not sit before 125x liquidation")
+	}
+	if ReasonStopBeyondLiquidation != "stop_beyond_liquidation" {
+		t.Fatalf("reason %s", ReasonStopBeyondLiquidation)
 	}
 	cfg = DefaultConfig()
 	cfg.ExchangeKeyID = 1

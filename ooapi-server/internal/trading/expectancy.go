@@ -47,8 +47,8 @@ func TradeExpectancy(p, tpDist, slDist float64, fees RoundTripFees) float64 {
 // ResolveTakeProfit 在 [max(base, MinScalpTpPct), cap] 里找让期望严格为正的止盈距离。
 // 回测胜率是在原来的止盈、止损距离上测到的。距离放宽之后先按新障碍重算胜率，再用新胜率算 EV。
 // known 为假表示没有回测样本，只保留原距离和 0.15% 下限，不因期望跳过。
-// 有样本但 ExpectancyTpCapR 以内仍无法让 EV > 0 时返回 negative_expectancy。
-// 普通开仓、加速开仓、强制开仓和 GambleMode 都用这个结果，不能绕开。
+// 有样本但默认上限以内仍无法让 EV > 0 时返回 negative_expectancy。
+// 普通开仓、加速开仓、强制开仓和 GambleMode 都用这个结果。ExpectancyGate 关掉时引擎不调用它。
 func ResolveTakeProfit(p float64, known bool, slDist, baseTp float64, fees RoundTripFees) (float64, string) {
 	dist, _, reason := ResolveLiveTakeProfit(p, known, slDist, baseTp, fees)
 	return dist, reason
@@ -56,7 +56,12 @@ func ResolveTakeProfit(p float64, known bool, slDist, baseTp float64, fees Round
 
 // ResolveLiveTakeProfit 同时给出放行后的止盈距离和该距离上的实盘期望。
 // liveEV 是价格比例，不是回测的 expectancyR。没放行时距离为 0，liveEV 是上限内见到的最高期望（不大于 0）。
+// 这里的上限是默认 ExpectancyTpCapR。引擎开仓改用策略上的 expectancyTpCapR。
 func ResolveLiveTakeProfit(p float64, known bool, slDist, baseTp float64, fees RoundTripFees) (dist, liveEV float64, reason string) {
+	return resolveLiveTakeProfit(p, known, slDist, baseTp, fees, expectancyTpCap(baseTp))
+}
+
+func resolveLiveTakeProfit(p float64, known bool, slDist, baseTp float64, fees RoundTripFees, cap float64) (dist, liveEV float64, reason string) {
 	tp := baseTp
 	if tp < MinScalpTpPct {
 		tp = MinScalpTpPct
@@ -70,7 +75,6 @@ func ResolveLiveTakeProfit(p float64, known bool, slDist, baseTp float64, fees R
 	if p > 1 {
 		p = 1
 	}
-	cap := expectancyTpCap(baseTp)
 	if tp > cap {
 		cap = tp
 	}
@@ -250,7 +254,11 @@ func positiveTpDistance(p, slDist float64, fees RoundTripFees) float64 {
 }
 
 func expectancyTpCap(baseTp float64) float64 {
-	cap := ExpectancyTpCapR * DefaultRFraction
+	return (Config{ExpectancyTpCapR: float64(ExpectancyTpCapR), RFraction: DefaultRFraction}).expectancyCapDistance(baseTp)
+}
+
+func (c Config) expectancyCapDistance(baseTp float64) float64 {
+	cap := c.expectancyCapR() * c.oneRFraction()
 	if baseTp > cap {
 		cap = baseTp
 	}
@@ -274,7 +282,7 @@ func (e *Engine) roundTripFees() RoundTripFees {
 	if e.feeReady {
 		return e.feeRound
 	}
-	maker, taker := MakerFeeRate, TakerFeeRate
+	maker, taker := e.cfg.makerFee(), e.cfg.takerFee()
 	type rates interface {
 		CommissionRates(symbol string) (float64, float64, error)
 	}
@@ -304,8 +312,23 @@ func (e *Engine) tpExpectancyReason() string {
 }
 
 func (e *Engine) adjustTakeDistance(slDist, baseTp float64) (float64, string) {
+	if e != nil && !e.cfg.ExpectancyGate {
+		tp := baseTp
+		if tp < MinScalpTpPct {
+			tp = MinScalpTpPct
+		}
+		e.liveExpectancy = 0
+		e.takeProfitDist = tp
+		return tp, ""
+	}
 	p, known := e.sampleWinRate()
-	dist, live, reason := ResolveLiveTakeProfit(p, known, slDist, baseTp, e.roundTripFees())
+	cap := expectancyTpCap(baseTp)
+	fees := FeesFromRates(MakerFeeRate, TakerFeeRate)
+	if e != nil {
+		cap = e.cfg.expectancyCapDistance(baseTp)
+		fees = e.roundTripFees()
+	}
+	dist, live, reason := resolveLiveTakeProfit(p, known, slDist, baseTp, fees, cap)
 	if e != nil {
 		e.liveExpectancy = live
 		if reason == "" {

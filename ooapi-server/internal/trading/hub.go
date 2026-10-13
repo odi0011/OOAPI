@@ -169,12 +169,12 @@ func (h *Hub) Step(userID, strategyID int64, cfg Config, in StepInput, secrets S
 	if eng == nil {
 		return Snapshot{}, ErrNotRunning
 	}
-	// 每一拍都吃进暂停开仓、余额暂停线和创建时间，持仓中也生效，不等重启。
+	// 每一拍都吃进策略参数。持仓中也写入，已挂上的止损止盈不改价，下一笔开仓用新参数。
 	eng.noteLiveFlags(cfg)
+	if err := eng.storeConfig(cfg); err != nil {
+		return eng.Snapshot(), err
+	}
 	if !eng.Busy() {
-		if err := eng.UpdateConfig(cfg); err != nil {
-			return eng.Snapshot(), err
-		}
 		ex, err := NewExchange(cfg)
 		if err != nil {
 			return eng.Snapshot(), err

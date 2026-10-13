@@ -271,7 +271,7 @@ func TestNewExchangeReturnsLiveUSDMClientWhenGateOpens(t *testing.T) {
 func TestEngineOpens20xWhenStopSitsInsideLiquidation(t *testing.T) {
 	paper := NewPaper()
 	cfg := testConfig()
-	cfg.Leverage = MaxLeverage
+	cfg.Leverage = 20
 	cfg.DailyLossPct = DailyLossOffPct
 	eng := withSecrets(NewEngine(cfg, paper, DiscardLogger()))
 	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
@@ -284,7 +284,7 @@ func TestEngineOpens20xWhenStopSitsInsideLiquidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap.State != StateInPosition || snap.Side != SideLong || paper.Leverage != MaxLeverage || paper.MarginMode != MarginIsolated {
+	if snap.State != StateInPosition || snap.Side != SideLong || paper.Leverage != 20 || paper.MarginMode != MarginIsolated {
 		t.Fatalf("20x entry %+v leverage=%d margin=%s", snap, paper.Leverage, paper.MarginMode)
 	}
 	if snap.StopPrice <= 0 || snap.LiqPrice <= 0 || !(snap.LiqPrice < snap.StopPrice && snap.StopPrice < snap.EntryPrice) {
@@ -293,7 +293,7 @@ func TestEngineOpens20xWhenStopSitsInsideLiquidation(t *testing.T) {
 	if !StopWithinLiquidation(SideLong, snap.EntryPrice, snap.StopPrice, snap.LiqPrice) {
 		t.Fatalf("guard let a bad stop through %+v", snap)
 	}
-	wantLiq := snap.EntryPrice * (1 - 1/float64(MaxLeverage) + DefaultMaintMarginRate)
+	wantLiq := snap.EntryPrice * (1 - 1/float64(20) + DefaultMaintMarginRate)
 	if math.Abs(snap.LiqPrice-wantLiq) > 1e-9 {
 		t.Fatalf("liq %v want %v", snap.LiqPrice, wantLiq)
 	}
@@ -326,6 +326,70 @@ func TestEngineRefusesStopBeyondLiquidation(t *testing.T) {
 	}
 	if StopWithinLiquidation(SideLong, snap.EntryPrice, snap.StopPrice, snap.LiqPrice) {
 		t.Fatalf("refused a stop that was inside liquidation %+v", snap)
+	}
+}
+
+func TestEntryRejectedWhenLiquidationTooCloseForStop(t *testing.T) {
+	paper := NewPaper()
+	cfg := testConfig()
+	cfg.Leverage = MaxLeverage
+	cfg.RFraction = DefaultRFraction
+	cfg.StopR = DefaultStopR
+	cfg.ExpectancyGate = true
+	eng := withSecrets(NewEngine(cfg, paper, DiscardLogger()))
+	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	if err := eng.Start(calmStart(now, 20)); err != nil {
+		t.Fatal(err)
+	}
+	candles := candlesUntil(t, CrossGolden)
+	price := candles[len(candles)-1].Close
+	liq, err := IsolatedLiqPrice(SideLong, price, cfg.Leverage, DefaultMaintMarginRate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop, _, err := ProtectionPrices(SideLong, price, price*cfg.RFraction, cfg.StopR, cfg.TakeProfitR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if StopWithinLiquidation(SideLong, price, stop, liq) {
+		t.Fatal("fixture stop fits before liquidation; pick a tighter bracket")
+	}
+	snap, err := eng.Step(stepAt(now, candles, price, 20))
+	if !errors.Is(err, ErrBlocked) {
+		t.Fatal(err)
+	}
+	var reason *ReasonError
+	if !errors.As(err, &reason) || reason.Reason != ReasonStopBeyondLiquidation {
+		t.Fatalf("reason %#v err=%v", reason, err)
+	}
+	if snap.LastReason != ReasonStopBeyondLiquidation || paper.Entries != 0 || snap.State != StateBlocked {
+		t.Fatalf("opened anyway %+v entries=%d", snap, paper.Entries)
+	}
+}
+
+func TestNextTickUsesSavedRFraction(t *testing.T) {
+	cfg := testConfig()
+	cfg.ExpectancyGate = false
+	eng := withSecrets(NewEngine(cfg, NewPaper(), DiscardLogger()))
+	now := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	if err := eng.Start(calmStart(now, 20)); err != nil {
+		t.Fatal(err)
+	}
+	next := cfg
+	next.RFraction = 0.004
+	next.StopR = 1
+	next.Revision = 3
+	if err := eng.UpdateConfig(next); err != nil {
+		t.Fatal(err)
+	}
+	candles := candlesUntil(t, CrossGolden)
+	snap, err := eng.Step(stepAt(now, candles, candles[len(candles)-1].Close, 20))
+	if err != nil || snap.State != StateInPosition {
+		t.Fatalf("%+v err=%v", snap, err)
+	}
+	dist := math.Abs(snap.EntryPrice-snap.StopPrice) / snap.EntryPrice
+	if math.Abs(dist-0.004) > 1e-6 {
+		t.Fatalf("stop distance %v entry %v stop %v", dist, snap.EntryPrice, snap.StopPrice)
 	}
 }
 

@@ -4,10 +4,10 @@
  */
 
 export const MIN_STRATEGY_LEVERAGE = 1;
-export const MAX_STRATEGY_LEVERAGE = 20;
+export const MAX_STRATEGY_LEVERAGE = 125;
 export const DEFAULT_STRATEGY_LEVERAGE = 3;
 
-/** 把接口读回的杠杆收进 1–20。非数字回到 fallback。 */
+/** 把接口读回的杠杆收进 1–125。非数字回到 fallback。 */
 export function boundStrategyLeverage(value: number, fallback = DEFAULT_STRATEGY_LEVERAGE): number {
   if (!Number.isFinite(value)) return fallback;
   const rounded = Math.round(value);
