@@ -510,6 +510,16 @@ func (e *Engine) Stop(in StepInput) error {
 		e.clearPos()
 		return e.m.Transition(Event{Kind: EventStop, Reason: "operator_stop"})
 	case StateBlocked, StateArmed:
+		// Armed 也可能有交易所孤儿仓（崩溃后未认领）。Stop 时先尝试平掉，不能只撤单。
+		if e.syncsPosition() {
+			if err := e.authorize(); err == nil {
+				if pos, perr := e.ex.Position(e.cfg.Symbol); perr == nil && pos.Open {
+					e.cancelAndFlatten("operator_stop")
+					e.clearPos()
+					return e.m.Transition(Event{Kind: EventStop, Reason: "operator_stop"})
+				}
+			}
+		}
 		if e.ex != nil {
 			_ = e.ex.CancelOpen(e.cfg.Symbol)
 		}
@@ -610,6 +620,19 @@ func (e *Engine) Step(in StepInput) (snap Snapshot, err error) {
 }
 
 func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
+	// 崩溃/重启后交易所可能仍有仓而引擎停在 Armed。优先认领并补挂保护单，
+	// 不受 PauseEntries / barKey 去重影响。依赖 runner 已拉到的 positionRisk。
+	// 仅对 SyncsPosition 的实盘/测网客户端认领；Paper 单测仍走后面的 SkipReason。
+	// 认领后若仍 Armed，继续走 Hub 填好的 SkipReason（如组合保证金上限），不覆盖审计原因。
+	if e.syncsPosition() && in.PositionsKnown && symbolHasPosition(e.cfg.Symbol, in.Positions) {
+		snap, err := e.adoptOrphanPosition()
+		if e.State() == StateInPosition {
+			return snap, err
+		}
+		if err != nil {
+			log.Printf("[trading] ERROR adopt %s: %v; continue armed with skip", e.cfg.Symbol, err)
+		}
+	}
 	// 暂停新开仓只挡这一拍的开仓。不撤保护单，不平已有仓，对账仍在 Step 的收尾里跑。
 	if e.cfg.PauseEntries {
 		e.note("pause_entries", ReasonEntriesPaused)
@@ -695,6 +718,7 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 		e.note("none", signal)
 		return e.Snapshot(), nil
 	}
+	// Paper 与未 sync 的路径：组合层已见持仓时跳过开仓（不认领）。
 	if in.SkipReason == "" && in.PositionsKnown && symbolHasPosition(e.cfg.Symbol, in.Positions) {
 		in.SkipReason = ReasonSymbolHeld
 	}
@@ -782,12 +806,13 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 		return e.Snapshot(), err
 	}
 	fill, err := e.ex.PlaceEntry(EntryOrder{
-		Symbol:     e.cfg.Symbol,
-		Side:       openSide,
-		Qty:        qty,
-		Price:      price,
-		Leverage:   e.cfg.Leverage,
-		MarginMode: e.cfg.MarginMode,
+		Symbol:        e.cfg.Symbol,
+		Side:          openSide,
+		Qty:           qty,
+		Price:         price,
+		Leverage:      e.cfg.Leverage,
+		MarginMode:    e.cfg.MarginMode,
+		ClientOrderID: newClientOrderID("oo-ent-"),
 	})
 	if err != nil {
 		e.clearStagedEntry()
@@ -1275,13 +1300,19 @@ var protectionRetryGap = 300 * time.Millisecond
 
 // ensureProtection 每次尝试前都确认止损仍在强平价之前，并且只补缺的那一腿。
 // 三次都失败才把错误交回去，由调用方先撤掉已挂上的那一腿再平仓。
+// 止损/止盈的 clientOrderId 在重试之间复用，避免回执丢失时重复挂单。
 func (e *Engine) ensureProtection(side Side, entry, stop, take, liq float64) error {
+	stopID := newClientOrderID("oo-sl-")
+	takeID := newClientOrderID("oo-tp-")
 	var last error
 	for attempt := 1; attempt <= protectionAttempts; attempt++ {
 		if !StopWithinLiquidation(side, entry, stop, liq) {
 			return withReason(ErrBlocked, ReasonStopBeyondLiquidation)
 		}
-		err := e.ex.PlaceProtection(Protection{Symbol: e.cfg.Symbol, Stop: stop, Take: take, Side: side})
+		err := e.ex.PlaceProtection(Protection{
+			Symbol: e.cfg.Symbol, Stop: stop, Take: take, Side: side,
+			StopClientID: stopID, TakeClientID: takeID,
+		})
 		if err == nil {
 			e.lastDetail = ""
 			return nil
@@ -1295,6 +1326,73 @@ func (e *Engine) ensureProtection(side Side, entry, stop, take, liq float64) err
 		}
 	}
 	return last
+}
+
+// adoptOrphanPosition 认领交易所已有、引擎却停在 Armed 的孤儿仓。
+// 有保护单则直接接管为 InPosition；没有则补挂；补挂失败则市价平仓并留在 Armed。
+func (e *Engine) adoptOrphanPosition() (Snapshot, error) {
+	if e == nil || e.State() != StateArmed || !e.syncsPosition() {
+		return e.Snapshot(), nil
+	}
+	if err := e.authorize(); err != nil {
+		return e.Snapshot(), err
+	}
+	pos, err := e.ex.Position(e.cfg.Symbol)
+	if err != nil {
+		log.Printf("[trading] ERROR adopt %s position: %v", e.cfg.Symbol, err)
+		return e.Snapshot(), err
+	}
+	if !pos.Open || !(pos.Qty > 0) || pos.Entry <= 0 || (pos.Side != SideLong && pos.Side != SideShort) {
+		return e.Snapshot(), nil
+	}
+	stop, take, liq, err := e.quoteProtection(pos.Side, pos.Entry)
+	if err != nil {
+		log.Printf("[trading] ERROR adopt %s quote protection: %v; flattening orphan", e.cfg.Symbol, err)
+		return e.flattenOrphan(pos, ReasonAdoptFlatten)
+	}
+	if !StopWithinLiquidation(pos.Side, pos.Entry, stop, liq) {
+		log.Printf("[trading] ERROR adopt %s stop beyond liq entry=%.8f stop=%.8f liq=%.8f; flattening",
+			e.cfg.Symbol, pos.Entry, stop, liq)
+		return e.flattenOrphan(pos, ReasonStopBeyondLiquidation)
+	}
+	if err := e.ensureProtection(pos.Side, pos.Entry, stop, take, liq); err != nil {
+		log.Printf("[trading] ERROR adopt %s protection failed: %v; flattening orphan", e.cfg.Symbol, err)
+		return e.flattenOrphan(pos, ReasonProtectiveOrdersFailed)
+	}
+	if err := e.m.Transition(Event{Kind: EventAdopt, Reason: ReasonAdoptPosition}); err != nil {
+		return e.Snapshot(), err
+	}
+	opened := e.cfg.CreatedAt.UTC()
+	if opened.IsZero() {
+		opened = e.startedAt
+	}
+	if opened.IsZero() {
+		opened = time.Now().UTC().Add(-24 * time.Hour)
+	}
+	e.pos = position{Side: pos.Side, Qty: pos.Qty, Entry: pos.Entry, Stop: stop, Take: take, Liq: liq, OpenedAt: opened}
+	e.rememberPlan(pos.Entry, stop, liq)
+	e.note("adopt", ReasonAdoptPosition)
+	e.log.Printf("[trading] adopt %s %s qty=%.8f entry=%.8f stop=%.8f take=%.8f", e.cfg.Symbol, pos.Side, pos.Qty, pos.Entry, stop, take)
+	log.Printf("[trading] adopt %s %s qty=%.8f entry=%.8f stop=%.8f take=%.8f", e.cfg.Symbol, pos.Side, pos.Qty, pos.Entry, stop, take)
+	return e.Snapshot(), nil
+}
+
+func (e *Engine) flattenOrphan(pos Position, reason string) (Snapshot, error) {
+	_, err := e.ex.Close(CloseOrder{
+		Symbol:        e.cfg.Symbol,
+		Price:         pos.Entry,
+		Reason:        reason,
+		ClientOrderID: newClientOrderID("oo-cls-"),
+	})
+	if err != nil {
+		log.Printf("[trading] ERROR adopt flatten %s failed: %v", e.cfg.Symbol, err)
+		e.note("adopt_flatten_failed", reason)
+		return e.Snapshot(), err
+	}
+	e.note("adopt_flatten", reason)
+	e.log.Printf("[trading] adopt flattened orphan %s reason=%s", e.cfg.Symbol, reason)
+	log.Printf("[trading] adopt flattened orphan %s reason=%s", e.cfg.Symbol, reason)
+	return e.Snapshot(), nil
 }
 
 // noteLiveFlags 每一拍都写进暂停开仓、余额暂停线和创建时间。持仓期间也能改，不碰已挂的止损止盈。

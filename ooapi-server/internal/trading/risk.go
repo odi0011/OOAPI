@@ -17,7 +17,7 @@ const (
 // oneR 是 1R 的价格距离；stopR / takeProfitR 是倍数。
 // 多单止损在下方、止盈在上方；空单相反。价格必须保持为正。
 func ProtectionPrices(side Side, entry, oneR, stopR, takeProfitR float64) (stop, take float64, err error) {
-	if entry <= 0 || oneR <= 0 || stopR <= 0 || takeProfitR <= 0 {
+	if !finitePositive(entry) || !finitePositive(oneR) || !finitePositive(stopR) || !finitePositive(takeProfitR) {
 		return 0, 0, invalid("入场价、R 距离、止损倍数和止盈倍数都必须大于 0")
 	}
 	risk := stopR * oneR
@@ -32,7 +32,7 @@ func ProtectionPrices(side Side, entry, oneR, stopR, takeProfitR float64) (stop,
 	default:
 		return 0, 0, invalid("持仓方向只能是 long 或 short")
 	}
-	if stop <= 0 || take <= 0 {
+	if !finitePositive(stop) || !finitePositive(take) {
 		return 0, 0, invalid("止损或止盈价计算后不是正数")
 	}
 	return stop, take, nil
@@ -41,7 +41,7 @@ func ProtectionPrices(side Side, entry, oneR, stopR, takeProfitR float64) (stop,
 // ScalpProtection 按入场价的百分比计算止损和止盈。
 // 止盈距离低于 MinScalpTpPct 时抬到该下限，用来盖住往返手续费和滑点。
 func ScalpProtection(side Side, entry, slPct, tpPct float64) (stop, take float64, err error) {
-	if entry <= 0 || slPct <= 0 || tpPct <= 0 {
+	if !finitePositive(entry) || !finitePositive(slPct) || !finitePositive(tpPct) {
 		return 0, 0, invalid("入场价和剥头皮止损止盈比例都必须大于 0")
 	}
 	if tpPct < MinScalpTpPct {
@@ -57,7 +57,7 @@ func ScalpProtection(side Side, entry, slPct, tpPct float64) (stop, take float64
 	default:
 		return 0, 0, invalid("持仓方向只能是 long 或 short")
 	}
-	if stop <= 0 || take <= 0 {
+	if !finitePositive(stop) || !finitePositive(take) {
 		return 0, 0, invalid("止损或止盈价计算后不是正数")
 	}
 	return stop, take, nil
@@ -66,10 +66,10 @@ func ScalpProtection(side Side, entry, slPct, tpPct float64) (stop, take float64
 // scalpPcts 把 0 当成默认 0.3%。调用方仍要在止盈上执行 MinScalpTpPct。
 func (c Config) scalpPcts() (sl, tp float64) {
 	sl, tp = c.ScalpSlPct, c.ScalpTpPct
-	if sl <= 0 {
+	if !(sl > 0) || math.IsInf(sl, 0) {
 		sl = DefaultScalpPct
 	}
-	if tp <= 0 {
+	if !(tp > 0) || math.IsInf(tp, 0) {
 		tp = DefaultScalpPct
 	}
 	return sl, tp
@@ -78,7 +78,7 @@ func (c Config) scalpPcts() (sl, tp float64) {
 // SizePosition 用保证金上限和杠杆计算数量。
 // 名义价值低于交易所下限时拒绝，不会为了凑够下限而突破保证金上限。
 func SizePosition(maxMargin float64, leverage int, price, minNotional float64) (margin, notional, qty float64, err error) {
-	if maxMargin <= 0 || price <= 0 || minNotional <= 0 {
+	if !finitePositive(maxMargin) || !finitePositive(price) || !finitePositive(minNotional) {
 		return 0, 0, 0, invalid("保证金、价格和最小名义价值都必须大于 0")
 	}
 	if leverage < 1 || leverage > MaxLeverage {
@@ -90,7 +90,7 @@ func SizePosition(maxMargin float64, leverage int, price, minNotional float64) (
 		return 0, 0, 0, withReason(ErrNotionalBelowMin, "notional_below_minimum")
 	}
 	qty = notional / price
-	if qty <= 0 {
+	if !finitePositive(qty) {
 		return 0, 0, 0, invalid("计算出的数量不是正数")
 	}
 	return margin, notional, qty, nil
@@ -98,13 +98,13 @@ func SizePosition(maxMargin float64, leverage int, price, minNotional float64) (
 
 // AlignQuantity 按交易所步长向下取整。取整后不够最小数量时返回 0，调用方按名义价值不足拒绝。
 func AlignQuantity(qty, step, minQty float64) float64 {
-	if qty <= 0 {
+	if !(qty > 0) || math.IsInf(qty, 0) {
 		return 0
 	}
-	if step > 0 {
+	if step > 0 && !math.IsInf(step, 0) {
 		qty = math.Floor((qty/step)+1e-9) * step
 	}
-	if qty <= 0 || (minQty > 0 && qty+1e-12 < minQty) {
+	if !(qty > 0) || (minQty > 0 && qty+1e-12 < minQty) {
 		return 0
 	}
 	return qty
@@ -115,10 +115,10 @@ func AlignQuantity(qty, step, minQty float64) float64 {
 // 空单：entry * (1 + 1/leverage - maintMarginRate)
 // maintMarginRate <= 0 时用 DefaultMaintMarginRate。
 func IsolatedLiqPrice(side Side, entry float64, leverage int, maintMarginRate float64) (float64, error) {
-	if entry <= 0 || leverage < 1 {
+	if !finitePositive(entry) || leverage < 1 {
 		return 0, invalid("入场价和杠杆都必须大于 0")
 	}
-	if maintMarginRate <= 0 {
+	if !(maintMarginRate > 0) || math.IsInf(maintMarginRate, 0) {
 		maintMarginRate = DefaultMaintMarginRate
 	}
 	if maintMarginRate >= 1 {
@@ -134,7 +134,7 @@ func IsolatedLiqPrice(side Side, entry float64, leverage int, maintMarginRate fl
 	default:
 		return 0, invalid("持仓方向只能是 long 或 short")
 	}
-	if liq <= 0 {
+	if !finitePositive(liq) {
 		return 0, invalid("强平价计算后不是正数")
 	}
 	return liq, nil
@@ -143,7 +143,7 @@ func IsolatedLiqPrice(side Side, entry float64, leverage int, maintMarginRate fl
 // StopWithinLiquidation 要求止损严格落在入场价和强平价之间，
 // 并且止损距离严格小于强平距离的 MaxStopToLiqFraction。
 func StopWithinLiquidation(side Side, entry, stop, liq float64) bool {
-	if entry <= 0 || stop <= 0 || liq <= 0 {
+	if !finitePositive(entry) || !finitePositive(stop) || !finitePositive(liq) {
 		return false
 	}
 	var stopDist, liqDist float64
@@ -163,7 +163,7 @@ func StopWithinLiquidation(side Side, entry, stop, liq float64) bool {
 	default:
 		return false
 	}
-	if liqDist <= 0 {
+	if !(liqDist > 0) || math.IsInf(liqDist, 0) {
 		return false
 	}
 	return stopDist < MaxStopToLiqFraction*liqDist
@@ -173,7 +173,10 @@ func StopWithinLiquidation(side Side, entry, stop, liq float64) bool {
 // dailyLossPct 是百分数：4 表示资本的 4%。盈利会抵消亏损。
 // dailyLossPct >= DailyLossOffPct 时视为关闭停机，本函数返回 false，调用方仍会走到这里。
 func DailyHaltBreached(capital, realizedNet, dailyLossPct float64) bool {
-	if capital <= 0 || dailyLossPct <= 0 || dailyLossPct >= DailyLossOffPct {
+	if !finitePositive(capital) || !(dailyLossPct > 0) || math.IsInf(dailyLossPct, 0) || dailyLossPct >= DailyLossOffPct {
+		return false
+	}
+	if math.IsNaN(realizedNet) || math.IsInf(realizedNet, 0) {
 		return false
 	}
 	loss := -realizedNet
@@ -227,6 +230,9 @@ func (l *Ledger) Roll(now time.Time, equity float64) {
 
 // Add 计入一笔已实现盈亏。当日和累计一起加。返回值表示这次记账之后是否处于停机。
 func (l *Ledger) Add(pnl, dailyLossPct float64) bool {
+	if math.IsNaN(pnl) || math.IsInf(pnl, 0) {
+		return l.Halted
+	}
 	l.Realized += pnl
 	l.Cumulative += pnl
 	if DailyHaltBreached(l.Capital, l.Realized, dailyLossPct) {
@@ -237,8 +243,16 @@ func (l *Ledger) Add(pnl, dailyLossPct float64) bool {
 
 // RealizedPnL 按方向计算平仓盈亏（报价货币）。
 func RealizedPnL(side Side, entry, exit, qty float64) float64 {
+	if !finitePositive(entry) || !finitePositive(exit) || !finitePositive(qty) {
+		return 0
+	}
 	if side == SideShort {
 		return (entry - exit) * qty
 	}
 	return (exit - entry) * qty
+}
+
+// finitePositive 要求有限正数。NaN / ±Inf / ≤0 一律拒绝，避免熔断器 fail-open。
+func finitePositive(x float64) bool {
+	return x > 0 && !math.IsInf(x, 0)
 }

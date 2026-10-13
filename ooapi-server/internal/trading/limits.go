@@ -2,6 +2,7 @@ package trading
 
 import (
 	"errors"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -116,7 +117,7 @@ func envPositiveFloat(key string) float64 {
 		return 0
 	}
 	n, err := strconv.ParseFloat(raw, 64)
-	if err != nil || n <= 0 {
+	if err != nil || !(n > 0) || math.IsInf(n, 0) {
 		return 0
 	}
 	return n
