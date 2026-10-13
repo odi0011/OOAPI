@@ -32,6 +32,8 @@ const (
 	EventFail         EventKind = "fail"
 	// EventEntryRejected 表示开仓单被拒绝且没有成交。从 EntrySubmitted 回到 Armed。
 	EventEntryRejected EventKind = "entry_rejected"
+	// EventAdopt 表示认领交易所已有仓位（崩溃/重启后补保护单并接管）。
+	EventAdopt EventKind = "adopt"
 )
 
 // Event 是一次状态迁移。Reason 只用于审计，不参与选边。
@@ -49,6 +51,7 @@ var transitions = map[State]map[EventKind]State{
 	},
 	StateArmed: {
 		EventEntrySignal:  StateEntrySubmitted,
+		EventAdopt:        StateInPosition,
 		EventStop:         StateIdle,
 		EventStartBlocked: StateBlocked,
 		EventDailyHalt:    StateDailyHalt,

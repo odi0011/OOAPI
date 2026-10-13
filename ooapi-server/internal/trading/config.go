@@ -93,6 +93,10 @@ const (
 	ReasonBoostWait           = "boost_wait"
 	ReasonBoostFilled         = "boost_filled"
 	ReasonSymbolHeld          = "symbol_has_position"
+	// ReasonAdoptPosition 表示重启后认领了交易所孤儿仓位并补挂保护单。
+	ReasonAdoptPosition = "adopt_position"
+	// ReasonAdoptFlatten 表示认领失败后市价平掉孤儿仓，避免裸奔。
+	ReasonAdoptFlatten = "adopt_flatten"
 	// ReasonExchangeFlat 表示仓位已在交易所被条件单打平，引擎这才跟着回到待命。
 	ReasonExchangeFlat = "exchange_flat"
 	// ReasonEntriesPaused 表示策略关掉了新开仓。已有仓和止损止盈保持不动。
