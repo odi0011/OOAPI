@@ -212,6 +212,7 @@ func (c *USDMClient) PlaceEntry(req EntryOrder) (Fill, error) {
 	params.Set("type", "MARKET")
 	params.Set("quantity", formatStep(qty, rules.StepSize, raw.stepRaw))
 	params.Set("newOrderRespType", "RESULT")
+	params.Set("newClientOrderId", ensureClientOrderID(req.ClientOrderID, "oo-ent-"))
 	if hedge {
 		params.Set("positionSide", positionSide(req.Side))
 	}
@@ -234,6 +235,8 @@ func (c *USDMClient) PlaceProtection(req Protection) error {
 	if req.Stop <= 0 || req.Take <= 0 {
 		return invalid("保护单价格必须大于 0")
 	}
+	req.StopClientID = ensureClientOrderID(req.StopClientID, "oo-sl-")
+	req.TakeClientID = ensureClientOrderID(req.TakeClientID, "oo-tp-")
 	pos, err := c.Position(req.Symbol)
 	if err != nil {
 		return err
@@ -274,7 +277,7 @@ func (c *USDMClient) PlaceProtection(req Protection) error {
 	}
 	// 止损仍是 closePosition 的 STOP_MARKET，部分止盈之后剩下的数量也由它盖住。
 	// 止盈改成 GTX 限价，数量等于当时的持仓量。GTX 被拒或挂不上都算止盈没挂上，调用方重试，不能只留止损。
-	ackedStop, err := c.ensureLeg(req.Symbol, exit, posSide, "STOP_MARKET", stop, rules.TickSize, raw.tickRaw, open)
+	ackedStop, err := c.ensureLeg(req.Symbol, exit, posSide, "STOP_MARKET", stop, rules.TickSize, raw.tickRaw, open, req.StopClientID)
 	if err != nil {
 		return err
 	}
@@ -286,7 +289,7 @@ func (c *USDMClient) PlaceProtection(req Protection) error {
 	if err != nil {
 		return err
 	}
-	ackedTake, err := c.ensureMakerTake(req.Symbol, exit, posSide, take, qty, rules, raw, limits)
+	ackedTake, err := c.ensureMakerTake(req.Symbol, exit, posSide, take, qty, rules, raw, limits, req.TakeClientID)
 	if err != nil {
 		return err
 	}
@@ -295,7 +298,7 @@ func (c *USDMClient) PlaceProtection(req Protection) error {
 
 // ensureLeg 复用触发价落在一个 tick 内、且平仓语义一致的条件单。
 // 同一合约、同一持仓方向上对不上的止损或止盈先撤掉，再补一张新的。
-func (c *USDMClient) ensureLeg(symbol, exit, posSide, orderType string, price, tick float64, tickRaw string, open []algoOrder) (bool, error) {
+func (c *USDMClient) ensureLeg(symbol, exit, posSide, orderType string, price, tick float64, tickRaw string, open []algoOrder, clientID string) (bool, error) {
 	kept := false
 	for _, order := range open {
 		if !sameProtectionLeg(order, symbol, posSide, orderType) {
@@ -312,7 +315,7 @@ func (c *USDMClient) ensureLeg(symbol, exit, posSide, orderType string, price, t
 	if kept {
 		return true, nil
 	}
-	id, err := c.conditional(symbol, exit, posSide, orderType, price, tickRaw)
+	id, err := c.conditional(symbol, exit, posSide, orderType, price, tickRaw, clientID)
 	if err != nil {
 		return false, err
 	}
@@ -359,7 +362,7 @@ func (c *USDMClient) confirmProtection(symbol, exit, posSide string, stop, take,
 
 // ensureMakerTake 复用价格和剩余数量都对得上的 GTX 限价止盈。
 // 对不上的先撤再挂。GTX 会立刻吃单时币安直接拒绝，这里把错误交回去，不改成市价。
-func (c *USDMClient) ensureMakerTake(symbol, exit, posSide string, price, qty float64, rules MarketRules, raw symbolRules, open []bookOrder) (bool, error) {
+func (c *USDMClient) ensureMakerTake(symbol, exit, posSide string, price, qty float64, rules MarketRules, raw symbolRules, open []bookOrder, clientID string) (bool, error) {
 	kept := false
 	for _, order := range open {
 		if !makerTakeMatches(order, symbol, exit, posSide) {
@@ -376,7 +379,7 @@ func (c *USDMClient) ensureMakerTake(symbol, exit, posSide string, price, qty fl
 	if kept {
 		return true, nil
 	}
-	id, err := c.placeMakerTake(symbol, exit, posSide, price, qty, raw)
+	id, err := c.placeMakerTake(symbol, exit, posSide, price, qty, raw, clientID)
 	if err != nil {
 		return false, err
 	}
@@ -386,7 +389,7 @@ func (c *USDMClient) ensureMakerTake(symbol, exit, posSide string, price, qty fl
 	return true, nil
 }
 
-func (c *USDMClient) placeMakerTake(symbol, exit, posSide string, price, qty float64, raw symbolRules) (int64, error) {
+func (c *USDMClient) placeMakerTake(symbol, exit, posSide string, price, qty float64, raw symbolRules, clientID string) (int64, error) {
 	params := url.Values{}
 	params.Set("symbol", symbol)
 	params.Set("side", exit)
@@ -395,6 +398,7 @@ func (c *USDMClient) placeMakerTake(symbol, exit, posSide string, price, qty flo
 	params.Set("quantity", formatStep(qty, raw.StepSize, raw.stepRaw))
 	params.Set("price", formatStep(price, 0, raw.tickRaw))
 	params.Set("newOrderRespType", "RESULT")
+	params.Set("newClientOrderId", ensureClientOrderID(clientID, "oo-tp-"))
 	if posSide != "" {
 		params.Set("positionSide", posSide)
 	} else {
@@ -545,6 +549,7 @@ func (c *USDMClient) Close(req CloseOrder) (Fill, error) {
 	params.Set("type", "MARKET")
 	params.Set("quantity", formatStep(qty, rules.StepSize, raw.stepRaw))
 	params.Set("newOrderRespType", "RESULT")
+	params.Set("newClientOrderId", ensureClientOrderID(req.ClientOrderID, "oo-cls-"))
 	if hedge {
 		params.Set("positionSide", positionSide(pos.Side))
 	} else {
@@ -1078,7 +1083,7 @@ func parseUserTrades(body []byte) ([]userTrade, error) {
 // conditional 把止损挂到 Algo Order。止盈不走这里，改用 GTX 限价。
 // 测网对经典 POST /fapi/v1/order 的 STOP_MARKET 返回 -4120。
 // closePosition 会平掉整个仓位，不能和 quantity、reduceOnly 一起发。
-func (c *USDMClient) conditional(symbol, side, posSide, orderType string, price float64, tickRaw string) (int64, error) {
+func (c *USDMClient) conditional(symbol, side, posSide, orderType string, price float64, tickRaw, clientID string) (int64, error) {
 	params := url.Values{}
 	params.Set("algoType", "CONDITIONAL")
 	params.Set("symbol", symbol)
@@ -1087,6 +1092,7 @@ func (c *USDMClient) conditional(symbol, side, posSide, orderType string, price 
 	params.Set("triggerPrice", formatStep(price, 0, tickRaw))
 	params.Set("closePosition", "true")
 	params.Set("workingType", "MARK_PRICE")
+	params.Set("clientAlgoId", ensureClientOrderID(clientID, "oo-sl-"))
 	if posSide != "" {
 		params.Set("positionSide", posSide)
 	}
@@ -1385,6 +1391,14 @@ func (c *USDMClient) signed(method, path string, params url.Values) ([]byte, err
 	creds := c.creds
 	c.mu.Unlock()
 	return c.do(method, path, params, creds)
+}
+
+// signedGET 读签名账户。只读客户端走 signedRead，交易客户端仍走 guard。
+func (c *USDMClient) signedGET(path string, params url.Values) ([]byte, error) {
+	if c != nil && c.readOnly {
+		return c.signedRead(path, params)
+	}
+	return c.signed(http.MethodGet, path, params)
 }
 
 func (c *USDMClient) do(method, path string, params url.Values, creds Credentials) ([]byte, error) {

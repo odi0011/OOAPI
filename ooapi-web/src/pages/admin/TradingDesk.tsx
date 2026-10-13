@@ -28,6 +28,7 @@ export interface DeskReadErrors {
   market?: string;
   position?: string;
   orders?: string;
+  balance?: string;
 }
 
 interface TradingDeskProps {

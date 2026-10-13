@@ -19,6 +19,8 @@ type EntryOrder struct {
 	Price      float64
 	Leverage   int
 	MarginMode string
+	// ClientOrderID 是发给交易所的 newClientOrderId。重试必须复用同一值。
+	ClientOrderID string
 }
 
 // Protection 是持仓上的止损和止盈。测网会把它做成条件单。
@@ -27,6 +29,9 @@ type Protection struct {
 	Stop   float64
 	Take   float64
 	Side   Side
+	// StopClientID / TakeClientID 分别是止损 algo 与止盈限价的幂等单号。重试复用。
+	StopClientID string
+	TakeClientID string
 }
 
 // CloseOrder 是平仓请求。
@@ -34,6 +39,8 @@ type CloseOrder struct {
 	Symbol string
 	Price  float64
 	Reason string
+	// ClientOrderID 是平仓市价单的 newClientOrderId。
+	ClientOrderID string
 }
 
 // Fill 是一次成交回报。

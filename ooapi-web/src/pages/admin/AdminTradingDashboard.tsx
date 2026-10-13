@@ -7,6 +7,7 @@ import { ApiRequestError } from "@/lib/api";
 
 import styles from "./TradingDesk.module.css";
 import EngineOverview from "./EngineOverview";
+import LiveBalancePanel from "./LiveBalancePanel";
 import TradingDesk, { type DeskReadErrors } from "./TradingDesk";
 import {
   mapEnginesPayload,
@@ -15,13 +16,18 @@ import {
 } from "./engineOverview";
 import { ACCOUNT_PATH, STRATEGY_PATH } from "./settingsNav";
 import {
+  getEngineBalance,
+  getEngineEvents,
   getEngineMarket,
   getEngineOrders,
   getEnginePosition,
   getEngineState,
   listStrategies,
   listTradingEngines,
+  postEngineBoost,
   setPauseEntries,
+  type DetectionEvent,
+  type EngineBalance,
   type EngineMarket,
   type EngineOrders,
   type EnginePosition,
@@ -30,7 +36,7 @@ import {
 } from "./tradingApi";
 
 /**
- * 交易数据看板。多品种一览，以及选中引擎的状态、K 线、持仓、委托和已实现盈亏。
+ * 交易数据看板。多品种一览，账户实时余额，以及选中引擎的状态、K 线、持仓、委托和已实现盈亏。
  * 暂停新开仓会立刻写入策略。其余配置不在这里改，也不调用测网全绿接口。
  * /api/trading/engines 404 或失败时，仍按原来的第一份策略展示，不留白页。
  */
@@ -50,6 +56,12 @@ export default function AdminTradingDashboard() {
   const [market, setMarket] = useState<EngineMarket | null>(null);
   const [position, setPosition] = useState<EnginePosition | null>(null);
   const [orders, setOrders] = useState<EngineOrders | null>(null);
+  const [balance, setBalance] = useState<EngineBalance | null>(null);
+  const [events, setEvents] = useState<DetectionEvent[]>([]);
+  const [eventsEnabled, setEventsEnabled] = useState(false);
+  const [boostUntil, setBoostUntil] = useState("");
+  const [boostBusy, setBoostBusy] = useState(false);
+  const [boostError, setBoostError] = useState("");
   const [readErrors, setReadErrors] = useState<DeskReadErrors>({});
   const [dismissedError, setDismissedError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -69,14 +81,17 @@ export default function AdminTradingDashboard() {
       setMarket(null);
       setPosition(null);
       setOrders(null);
+      setBalance(null);
       setReadErrors({});
       return;
     }
-    const [state, marketRes, positionRes, ordersRes] = await Promise.allSettled([
+    const [state, marketRes, positionRes, ordersRes, balanceRes, eventsRes] = await Promise.allSettled([
       getEngineState(id),
       getEngineMarket(id, 100),
       getEnginePosition(id),
       getEngineOrders(id),
+      getEngineBalance(id),
+      getEngineEvents(),
     ]);
     if (gen !== deskGen.current) return;
     if (state.status === "rejected" && state.reason instanceof ApiRequestError && state.reason.status === 404) {
@@ -84,6 +99,7 @@ export default function AdminTradingDashboard() {
       setMarket(null);
       setPosition(null);
       setOrders(null);
+      setBalance(null);
       setReadErrors({});
       return;
     }
@@ -96,6 +112,17 @@ export default function AdminTradingDashboard() {
     else nextErrors.position = errorText(positionRes.reason, "读取持仓失败");
     if (ordersRes.status === "fulfilled") setOrders(ordersRes.value);
     else nextErrors.orders = errorText(ordersRes.reason, "读取委托失败");
+    if (balanceRes.status === "fulfilled") {
+      setBalance(balanceRes.value);
+      if (balanceRes.value.boostUntil) setBoostUntil(balanceRes.value.boostUntil);
+    } else nextErrors.balance = errorText(balanceRes.reason, "读取账户余额失败");
+    if (eventsRes.status === "fulfilled") {
+      setEvents(eventsRes.value);
+      setEventsEnabled(true);
+    } else if (eventsRes.reason instanceof ApiRequestError && (eventsRes.reason.status === 401 || eventsRes.reason.status === 403)) {
+      setEventsEnabled(false);
+      setEvents([]);
+    }
     setReadErrors(nextErrors);
   }, []);
 
@@ -191,6 +218,27 @@ export default function AdminTradingDashboard() {
     }
   };
 
+  const triggerBoost = async () => {
+    setBoostBusy(true);
+    setBoostError("");
+    try {
+      const result = await postEngineBoost();
+      if (result.until) setBoostUntil(result.until);
+      if (!result.ok && result.status !== 429) {
+        setBoostError("加速失败");
+      }
+      const nextEvents = await getEngineEvents().catch(() => null);
+      if (nextEvents) {
+        setEvents(nextEvents);
+        setEventsEnabled(true);
+      }
+    } catch (err) {
+      setBoostError(errorText(err, "加速失败"));
+    } finally {
+      setBoostBusy(false);
+    }
+  };
+
   return (
     <AdminLayout
       crumbs={[
@@ -204,7 +252,7 @@ export default function AdminTradingDashboard() {
           <div>
             <h1 className={styles.pageTitle}>数据看板</h1>
             <p className={styles.pageLead}>
-              看状态、K 线、持仓、委托和本会话盈亏。策略配置在
+              看账户余额、权益曲线、状态、K 线、持仓、委托和本会话盈亏。策略配置在
               <Link to={STRATEGY_PATH}>系统设置</Link>
               ，交易所密钥在
               <Link to={ACCOUNT_PATH}>账户</Link>
@@ -231,6 +279,19 @@ export default function AdminTradingDashboard() {
             onTogglePause={(strategyId, paused) => void togglePause(strategyId, paused)}
           />
         ) : null}
+
+        <LiveBalancePanel
+          balance={balance}
+          loading={loading}
+          error={readErrors.balance}
+          orders={orders}
+          events={events}
+          eventsEnabled={eventsEnabled}
+          boostUntil={boostUntil}
+          boostBusy={boostBusy}
+          boostError={boostError}
+          onBoost={() => void triggerBoost()}
+        />
 
         <TradingDesk
           engine={engine}
