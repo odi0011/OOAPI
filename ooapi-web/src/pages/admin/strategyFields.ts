@@ -7,7 +7,11 @@ export const STRATEGY_TIMEFRAMES = ["1s", "1m", "3m", "5m", "15m"] as const;
 export type StrategyTimeframe = (typeof STRATEGY_TIMEFRAMES)[number];
 
 export const DEFAULT_ONE_R_PCT = 0.8;
-export const DEFAULT_EXPECTANCY_TP_CAP_R = 3;
+export const DEFAULT_EXPECTANCY_TP_CAP_R = 4;
+export const DEFAULT_MIN_SCORE = 3;
+export const MAX_TREND_SCORE = 4;
+export const DEFAULT_MIN_WIN_RATE = 0.38;
+export const DEFAULT_MIN_TRADES = 10;
 export const DEFAULT_TAKER_FEE_PCT = 0.05;
 export const DEFAULT_MAKER_FEE_PCT = 0.02;
 
@@ -49,8 +53,20 @@ export function strategyStopDistanceError(stopR: number, takeProfitR: number): s
 }
 
 export function strategyMinScoreError(value: number): string | null {
-  if (!Number.isInteger(value) || value < 1 || value > 4) {
-    return "分数门槛要在 1 到 4";
+  if (!Number.isInteger(value) || value < 1 || value > MAX_TREND_SCORE) {
+    return `分数门槛要在 1 到 ${MAX_TREND_SCORE}`;
+  }
+  return null;
+}
+
+/** 实盘未开赌一把时，胜率和样本不能低于默认地板。测网和赌一把不套这道地板。 */
+export function strategyLiveSampleError(mode: string, gambleMode: boolean, minWinRate: number, minTrades: number): string | null {
+  if (mode !== "live" || gambleMode) return null;
+  if (!(minWinRate >= DEFAULT_MIN_WIN_RATE)) {
+    return `实盘胜率门槛不能低于 ${DEFAULT_MIN_WIN_RATE}`;
+  }
+  if (!(minTrades >= DEFAULT_MIN_TRADES)) {
+    return `实盘样本笔数不能低于 ${DEFAULT_MIN_TRADES}`;
   }
   return null;
 }

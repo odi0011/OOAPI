@@ -56,7 +56,8 @@ func (r BacktestResult) Summary(at time.Time) BacktestSummary {
 }
 
 // BacktestGate 是开仓前的回测门。测网 minWinRate 为 0 时整道门关闭。
-// 实盘不允许用 minWinRate<=0 跳过胜率校验，至少要到 DefaultMinWinRate。
+// 实盘不允许用更低的门槛跳过校验：胜率至少 DefaultMinWinRate（0.38），
+// 样本至少 DefaultMinTrades（10）。策略把门槛设得更高时，用策略上的值。
 // 打开后要同时满足胜率、样本笔数和扣费后的净 R。
 // GambleMode 整道门跳过。止损仍须在强平价之前，与这道门无关。
 // 手续费后的期望是另一道门（ResolveTakeProfit）。GambleMode、加速开仓和强制开仓都不能跳过它。

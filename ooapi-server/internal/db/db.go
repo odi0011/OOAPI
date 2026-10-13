@@ -89,9 +89,10 @@ type columnDef struct {
 	definition string
 }
 
-// productionStrategyDefaultStmts 把列默认值对齐生产 DOGE 策略 2。
-// MODIFY 只改默认值，不改写已有行里的杠杆、日亏和暂停余额。
+// productionStrategyDefaultStmts 改列默认值，不改写已有行。
 // 新列的 DEFAULT 在补列时写到已有行上，所以 1R 必须是 0.008（0.8%）。
+// min_score / min_win_rate / min_trades / expectancy_tp_cap_r 只改默认值。
+// 已有策略（包括生产 DOGE 策略 2）保持库里的旧门槛，要改就走接口。
 func productionStrategyDefaultStmts() []string {
 	return []string{
 		"ALTER TABLE trading_strategies MODIFY COLUMN leverage INT NOT NULL DEFAULT 20",
@@ -100,7 +101,10 @@ func productionStrategyDefaultStmts() []string {
 		"ALTER TABLE trading_strategies MODIFY COLUMN pause_balance_usdt DECIMAL(20,6) NOT NULL DEFAULT 0.5",
 		"ALTER TABLE trading_strategies MODIFY COLUMN max_margin_usdt DECIMAL(20,6) NOT NULL DEFAULT 1.7",
 		"ALTER TABLE trading_strategies MODIFY COLUMN r_fraction DECIMAL(16,8) NOT NULL DEFAULT 0.00800000",
-		"ALTER TABLE trading_strategies MODIFY COLUMN expectancy_tp_cap_r DECIMAL(12,4) NOT NULL DEFAULT 3",
+		"ALTER TABLE trading_strategies MODIFY COLUMN min_score INT NOT NULL DEFAULT 3",
+		"ALTER TABLE trading_strategies MODIFY COLUMN min_win_rate DECIMAL(8,4) NOT NULL DEFAULT 0.3800",
+		"ALTER TABLE trading_strategies MODIFY COLUMN min_trades INT NOT NULL DEFAULT 10",
+		"ALTER TABLE trading_strategies MODIFY COLUMN expectancy_tp_cap_r DECIMAL(12,4) NOT NULL DEFAULT 4",
 		"ALTER TABLE trading_strategies MODIFY COLUMN taker_fee_rate DECIMAL(16,8) NOT NULL DEFAULT 0.00050000",
 		"ALTER TABLE trading_strategies MODIFY COLUMN maker_fee_rate DECIMAL(16,8) NOT NULL DEFAULT 0.00020000",
 		"ALTER TABLE trading_strategies MODIFY COLUMN expectancy_gate TINYINT NOT NULL DEFAULT 1",

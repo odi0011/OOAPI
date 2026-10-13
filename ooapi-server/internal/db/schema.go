@@ -289,8 +289,9 @@ var schemaStatements = []string{
 
 	// 自动交易策略配置。v1 只保存短周期 EMA 的参数，不下单、不计算信号。
 	// JSON 字段名与验收表一致。mode=live 允许保存，是否真下单由策略引擎按测网全绿强制。
-	// 列默认值对齐当前生产 DOGE 策略 2：20 倍逐仓、日亏 100（关闭）、暂停余额 0.5、1R = 0.8%。
-	// 补列只给已有行套这些默认值，不改写已经存下的杠杆和日亏。
+	// 列默认值：20 倍逐仓、日亏 100（关闭）、暂停余额 0.5、1R = 0.8%。
+	// 开仓门槛默认 min_score=3、min_win_rate=0.38、min_trades=10、expectancy_tp_cap_r=4。
+	// MODIFY 只改新行的列默认值。已有策略（包括生产 DOGE 策略 2）保持原值，部署后要改就走接口。
 	`CREATE TABLE IF NOT EXISTS trading_strategies (
 		id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 		user_id          BIGINT UNSIGNED NOT NULL,
@@ -307,9 +308,9 @@ var schemaStatements = []string{
 		exchange_key_id  BIGINT UNSIGNED NOT NULL,
 		mode             VARCHAR(16)     NOT NULL DEFAULT 'testnet',
 		entry_mode       VARCHAR(16)     NOT NULL DEFAULT 'cross',
-		min_score        INT             NOT NULL DEFAULT 4,
-		min_win_rate     DECIMAL(8,4)    NOT NULL DEFAULT 0.5000,
-		min_trades       INT             NOT NULL DEFAULT 30,
+		min_score        INT             NOT NULL DEFAULT 3,
+		min_win_rate     DECIMAL(8,4)    NOT NULL DEFAULT 0.3800,
+		min_trades       INT             NOT NULL DEFAULT 10,
 		max_margin_per_trade_usdt DECIMAL(20,6) NOT NULL DEFAULT 0,
 		max_consecutive_losses INT      NOT NULL DEFAULT 0,
 		pause_balance_usdt DECIMAL(20,6) NOT NULL DEFAULT 0.5,
@@ -324,7 +325,7 @@ var schemaStatements = []string{
 		scalp_tp_pct     DECIMAL(8,6)    NOT NULL DEFAULT 0.003000,
 		scalp_sl_pct     DECIMAL(8,6)    NOT NULL DEFAULT 0.003000,
 		r_fraction       DECIMAL(16,8)   NOT NULL DEFAULT 0.00800000,
-		expectancy_tp_cap_r DECIMAL(12,4) NOT NULL DEFAULT 3,
+		expectancy_tp_cap_r DECIMAL(12,4) NOT NULL DEFAULT 4,
 		taker_fee_rate   DECIMAL(16,8)   NOT NULL DEFAULT 0.00050000,
 		maker_fee_rate   DECIMAL(16,8)   NOT NULL DEFAULT 0.00020000,
 		expectancy_gate  TINYINT         NOT NULL DEFAULT 1,
@@ -489,9 +490,9 @@ var columnMigrations = map[string][]columnDef{
 	"trading_strategies": {
 		// 已有行保持 cross。新策略由接口写成 trend。
 		{"entry_mode", "VARCHAR(16) NOT NULL DEFAULT 'cross'"},
-		{"min_score", "INT NOT NULL DEFAULT 4"},
-		{"min_win_rate", "DECIMAL(8,4) NOT NULL DEFAULT 0.5000"},
-		{"min_trades", "INT NOT NULL DEFAULT 30"},
+		{"min_score", "INT NOT NULL DEFAULT 3"},
+		{"min_win_rate", "DECIMAL(8,4) NOT NULL DEFAULT 0.3800"},
+		{"min_trades", "INT NOT NULL DEFAULT 10"},
 		{"max_margin_per_trade_usdt", "DECIMAL(20,6) NOT NULL DEFAULT 0"},
 		{"max_consecutive_losses", "INT NOT NULL DEFAULT 0"},
 		{"pause_balance_usdt", "DECIMAL(20,6) NOT NULL DEFAULT 0.5"},
@@ -506,7 +507,7 @@ var columnMigrations = map[string][]columnDef{
 		{"scalp_tp_pct", "DECIMAL(8,6) NOT NULL DEFAULT 0.003000"},
 		{"scalp_sl_pct", "DECIMAL(8,6) NOT NULL DEFAULT 0.003000"},
 		{"r_fraction", "DECIMAL(16,8) NOT NULL DEFAULT 0.00800000"},
-		{"expectancy_tp_cap_r", "DECIMAL(12,4) NOT NULL DEFAULT 3"},
+		{"expectancy_tp_cap_r", "DECIMAL(12,4) NOT NULL DEFAULT 4"},
 		{"taker_fee_rate", "DECIMAL(16,8) NOT NULL DEFAULT 0.00050000"},
 		{"maker_fee_rate", "DECIMAL(16,8) NOT NULL DEFAULT 0.00020000"},
 		{"expectancy_gate", "TINYINT NOT NULL DEFAULT 1"},
