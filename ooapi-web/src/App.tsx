@@ -156,7 +156,7 @@ export default function App() {
                   }
                 />
 
-                <Route path="/admin/trading" element={<Navigate to="/admin/trading/dashboard" replace />} />
+                <Route path="/admin/trading" element={<Navigate to="/admin/trading/board" replace />} />
                 <Route path="/admin/system/account" element={<Navigate to="/admin/trading/account" replace />} />
                 <Route path="/admin/exchange-keys" element={<Navigate to="/admin/trading/account" replace />} />
 
