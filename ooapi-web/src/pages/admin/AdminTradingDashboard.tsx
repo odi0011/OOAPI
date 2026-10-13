@@ -290,7 +290,7 @@ export default function AdminTradingDashboard() {
           boostUntil={boostUntil}
           boostBusy={boostBusy}
           boostError={boostError}
-          onBoost={eventsEnabled ? () => void triggerBoost() : undefined}
+          onBoost={() => void triggerBoost()}
         />
 
         <TradingDesk
