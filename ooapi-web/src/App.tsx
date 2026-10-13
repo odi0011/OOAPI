@@ -17,6 +17,7 @@ import AdminChannels from "@/pages/admin/AdminChannels";
 import AdminExchangeKeys from "@/pages/admin/AdminExchangeKeys";
 import AdminTrading from "@/pages/admin/AdminTrading";
 import AdminTradingDashboard from "@/pages/admin/AdminTradingDashboard";
+import TradingBoard from "@/pages/admin/TradingBoard";
 import AdminLogs from "@/pages/admin/AdminLogs";
 import AdminMedia from "@/pages/admin/AdminMedia";
 import AdminOperationLogs from "@/pages/admin/AdminOperationLogs";
@@ -131,6 +132,16 @@ export default function App() {
                   element={
                     <RequireAuth permission={Perm.OptionEdit}>
                       <AdminTradingDashboard />
+                    </RequireAuth>
+                  }
+                />
+
+                {/* 交易数据看板：总余额首屏、K 线仓位融合、参数/历史/决策记录、交易系统。走 option:edit。 */}
+                <Route
+                  path="/admin/trading/board"
+                  element={
+                    <RequireAuth permission={Perm.OptionEdit}>
+                      <TradingBoard />
                     </RequireAuth>
                   }
                 />
