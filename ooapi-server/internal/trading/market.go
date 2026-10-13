@@ -55,7 +55,7 @@ func (c *USDMClient) Candles(symbol, interval string, startMs int64, limit int) 
 
 // USDTBalance 读签名账户里的 USDT 钱包余额和可用余额。
 func (c *USDMClient) USDTBalance() (wallet, available float64, err error) {
-	body, err := c.signed(http.MethodGet, "/fapi/v2/balance", nil)
+	body, err := c.signedGET("/fapi/v2/balance", nil)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -81,12 +81,13 @@ type AccountEquity struct {
 	Available  float64
 	Unrealized float64
 	Equity     float64
+	MarginUsed float64
 }
 
 // ReadEquity 优先读 /fapi/v2/account 的 totalWalletBalance + totalUnrealizedProfit。
 // 账户接口失败时，用 USDT 钱包余额加上 positionRisk 里每一笔未实现盈亏。
 func (c *USDMClient) ReadEquity() (AccountEquity, error) {
-	body, err := c.signed(http.MethodGet, "/fapi/v2/account", nil)
+	body, err := c.signedGET("/fapi/v2/account", nil)
 	if err == nil {
 		eq, perr := parseAccountEquity(body)
 		if perr == nil {
@@ -95,7 +96,7 @@ func (c *USDMClient) ReadEquity() (AccountEquity, error) {
 		err = perr
 	}
 	wallet, available, werr := c.USDTBalance()
-	riskBody, rerr := c.signed(http.MethodGet, "/fapi/v2/positionRisk", nil)
+	riskBody, rerr := c.signedGET("/fapi/v2/positionRisk", nil)
 	if werr != nil || rerr != nil {
 		if err != nil {
 			return AccountEquity{}, err
@@ -109,20 +110,24 @@ func (c *USDMClient) ReadEquity() (AccountEquity, error) {
 	if perr != nil {
 		return AccountEquity{}, perr
 	}
+	margin, _ := parseMarginUsed(riskBody)
 	return AccountEquity{
 		Wallet:     wallet,
 		Available:  available,
 		Unrealized: unrealized,
 		Equity:     wallet + unrealized,
+		MarginUsed: margin,
 	}, nil
 }
 
 func parseAccountEquity(body []byte) (AccountEquity, error) {
 	var resp struct {
-		TotalWalletBalance    string `json:"totalWalletBalance"`
-		TotalUnrealizedProfit string `json:"totalUnrealizedProfit"`
-		AvailableBalance      string `json:"availableBalance"`
-		Assets                []struct {
+		TotalWalletBalance          string `json:"totalWalletBalance"`
+		TotalUnrealizedProfit       string `json:"totalUnrealizedProfit"`
+		AvailableBalance            string `json:"availableBalance"`
+		TotalPositionInitialMargin  string `json:"totalPositionInitialMargin"`
+		TotalInitialMargin          string `json:"totalInitialMargin"`
+		Assets                      []struct {
 			Asset            string `json:"asset"`
 			WalletBalance    string `json:"walletBalance"`
 			UnrealizedProfit string `json:"unrealizedProfit"`
@@ -146,12 +151,33 @@ func parseAccountEquity(body []byte) (AccountEquity, error) {
 			}
 		}
 	}
+	margin := parseNum(resp.TotalPositionInitialMargin)
+	if margin == 0 {
+		margin = parseNum(resp.TotalInitialMargin)
+	}
 	return AccountEquity{
 		Wallet:     wallet,
 		Available:  available,
 		Unrealized: unrealized,
 		Equity:     wallet + unrealized,
+		MarginUsed: margin,
 	}, nil
+}
+
+func parseMarginUsed(body []byte) (float64, error) {
+	rows, err := decodeRiskRows(body)
+	if err != nil {
+		return 0, err
+	}
+	var sum float64
+	for _, row := range rows {
+		pos, ok := keyPositionFromRow(row)
+		if !ok {
+			continue
+		}
+		sum += pos.InitialMargin()
+	}
+	return sum, nil
 }
 
 func parseUnrealizedSum(body []byte) (float64, error) {
