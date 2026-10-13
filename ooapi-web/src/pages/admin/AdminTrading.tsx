@@ -47,11 +47,16 @@ import {
 import {
   DEFAULT_EXPECTANCY_TP_CAP_R,
   DEFAULT_MAKER_FEE_PCT,
+  DEFAULT_MIN_SCORE,
+  DEFAULT_MIN_TRADES,
+  DEFAULT_MIN_WIN_RATE,
   DEFAULT_ONE_R_PCT,
   DEFAULT_TAKER_FEE_PCT,
+  MAX_TREND_SCORE,
   strategyDailyLossError,
   strategyExpectancyCapError,
   strategyFeePctError,
+  strategyLiveSampleError,
   strategyMaxMarginError,
   strategyMinScoreError,
   strategyOneRPctError,
@@ -126,9 +131,9 @@ const DEFAULT_DRAFT: StrategyDraft = {
   maxMarginUsdt: 1.7,
   exchangeKeyId: DEFAULT_EXCHANGE_KEY_ID,
   mode: DEFAULT_STRATEGY_MODE,
-  minScore: 4,
-  minWinRate: 0.5,
-  minTrades: 30,
+  minScore: DEFAULT_MIN_SCORE,
+  minWinRate: DEFAULT_MIN_WIN_RATE,
+  minTrades: DEFAULT_MIN_TRADES,
   gambleMode: false,
   scalpTpPct: 0.3,
   scalpSlPct: 0.3,
@@ -171,7 +176,7 @@ function draftFromStrategy(item: Strategy): StrategyDraft {
     maxMarginUsdt: clamp(item.maxMarginUsdt, 0.1, 100, DEFAULT_DRAFT.maxMarginUsdt),
     exchangeKeyId: item.exchangeKeyId > 0 ? item.exchangeKeyId : DEFAULT_EXCHANGE_KEY_ID,
     mode: item.mode === "live" ? "live" : DEFAULT_STRATEGY_MODE,
-    minScore: clamp(Math.round(item.minScore), 1, 4, DEFAULT_DRAFT.minScore),
+    minScore: clamp(Math.round(item.minScore), 1, MAX_TREND_SCORE, DEFAULT_DRAFT.minScore),
     minWinRate: clamp(item.minWinRate, 0, 1, DEFAULT_DRAFT.minWinRate),
     minTrades: clamp(Math.round(item.minTrades), 1, 10000, DEFAULT_DRAFT.minTrades),
     gambleMode: item.gambleMode === true,
@@ -249,8 +254,8 @@ function validate(draft: StrategyDraft, keys: ExchangeKey[]): string | null {
   if (scoreError) return scoreError;
   if (draft.minWinRate < 0 || draft.minWinRate > 1) return "胜率门槛要在 0 到 1";
   if (draft.minTrades < 1 || draft.minTrades > 10000) return "样本笔数要在 1 到 10000";
-  if (draft.mode === "live" && !draft.gambleMode && draft.minWinRate < 0.5) return "实盘胜率门槛不能低于 0.5";
-  if (draft.mode === "live" && !draft.gambleMode && draft.minTrades < 30) return "实盘样本笔数不能低于 30";
+  const sampleError = strategyLiveSampleError(draft.mode, draft.gambleMode, draft.minWinRate, draft.minTrades);
+  if (sampleError) return sampleError;
   if (draft.scalpTpPct <= 0 || draft.scalpTpPct > 20 || draft.scalpSlPct <= 0 || draft.scalpSlPct > 20) {
     return "剥头皮止损和止盈要大于 0 且不超过 20%";
   }
@@ -761,7 +766,7 @@ export default function AdminTrading() {
                 <div className={sectionStyles.row} data-field="expectancyTpCapR">
                   <div className={sectionStyles.rowText}>
                     <strong>期望止盈上限</strong>
-                    <p>期望门最多把止盈放到这么多 R。默认 3。</p>
+                    <p>期望门最多把止盈放到这么多 R。默认 {DEFAULT_EXPECTANCY_TP_CAP_R}。</p>
                   </div>
                   <div className={sectionStyles.rowControl}>
                     <NumberField
@@ -841,7 +846,7 @@ export default function AdminTrading() {
                       suffix=" 分"
                       value={draft.minScore}
                       min={1}
-                      max={4}
+                      max={MAX_TREND_SCORE}
                       step={1}
                       onValueChange={(minScore) => patch({ minScore: Math.round(minScore) })}
                     />
@@ -865,7 +870,7 @@ export default function AdminTrading() {
                 <div className={sectionStyles.row} data-field="minWinRate">
                   <div className={sectionStyles.rowText}>
                     <strong>胜率门槛</strong>
-                    <p>策略回测胜率下限。实盘未开赌一把时不能低于 0.5。赌一把打开后这道门不生效。</p>
+                    <p>策略回测胜率下限。实盘未开赌一把时不能低于 {DEFAULT_MIN_WIN_RATE}。赌一把打开后这道门不生效。</p>
                   </div>
                   <div className={sectionStyles.rowControl}>
                     <NumberField
@@ -883,7 +888,7 @@ export default function AdminTrading() {
                 <div className={sectionStyles.row} data-field="minTrades">
                   <div className={sectionStyles.rowText}>
                     <strong>样本笔数</strong>
-                    <p>回测至少要有这么多笔。实盘未开赌一把时不能低于 30。</p>
+                    <p>回测至少要有这么多笔。实盘未开赌一把时不能低于 {DEFAULT_MIN_TRADES}。</p>
                   </div>
                   <div className={sectionStyles.rowControl}>
                     <NumberField
