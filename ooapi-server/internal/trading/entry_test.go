@@ -66,7 +66,18 @@ func TestOpenEntryCarriesScoreMinScoreAndBacktest(t *testing.T) {
 		t.Fatalf("usdt %+v one %v", snap.Entry, one)
 	}
 	if snap.LastBacktest == nil || math.Abs(snap.LastBacktest.ExpectancyR-0.5) > 1e-12 {
-		t.Fatalf("live expectancy %+v", snap.LastBacktest)
+		t.Fatalf("backtest expectancy %+v", snap.LastBacktest)
+	}
+	wantDist := DefaultTakeProfitR * DefaultRFraction
+	wantLive := TradeExpectancy(0.6, wantDist, DefaultStopR*DefaultRFraction, FeesFromRates(MakerFeeRate, TakerFeeRate))
+	if !(wantLive > 0) || math.Abs(snap.LiveExpectancy-wantLive) > 1e-9 || math.Abs(snap.TakeProfitDist-wantDist) > 1e-12 {
+		t.Fatalf("engine live %v dist %v want %v %v", snap.LiveExpectancy, snap.TakeProfitDist, wantLive, wantDist)
+	}
+	if math.Abs(snap.Entry.LiveExpectancy-wantLive) > 1e-9 || math.Abs(snap.Entry.TakeProfitDist-wantDist) > 1e-12 {
+		t.Fatalf("stamp live %+v", snap.Entry)
+	}
+	if math.Abs(snap.Entry.ExpectancyR-snap.LiveExpectancy) < 1e-6 {
+		t.Fatalf("live expectancy collapsed into backtest R %+v", snap.Entry)
 	}
 	events := RecentEvents()
 	last := events[len(events)-1]

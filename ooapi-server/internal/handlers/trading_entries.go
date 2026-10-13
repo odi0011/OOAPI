@@ -16,12 +16,14 @@ const entryInsertSQL = `
 INSERT INTO trading_entries (
 	user_id, strategy_id, symbol, side, score, min_score, boost, forced,
 	win_rate, trade_count, net_r, expectancy_r, expectancy_usdt, one_r_usdt,
+	live_expectancy, take_profit_dist,
 	entry_price, qty, opened_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const entrySelectCols = `
 id, user_id, strategy_id, symbol, side, score, min_score, boost, forced,
 win_rate, trade_count, net_r, expectancy_r, expectancy_usdt, one_r_usdt,
+live_expectancy, take_profit_dist,
 entry_price, qty, opened_at, exit_price, exit_qty, realized_usdt, exit_reason, closed_at`
 
 const entryCloseSQL = `
@@ -72,6 +74,7 @@ func (dbEntryLog) Save(rec trading.EntryRecord) (int64, error) {
 		rec.UserID, rec.StrategyID, rec.Symbol, rec.Side, rec.Score, rec.MinScore,
 		boolInt(rec.Boost), boolInt(rec.Forced),
 		rec.WinRate, rec.Trades, rec.NetR, rec.ExpectancyR, rec.ExpectancyUSDT, rec.OneRUSDT,
+		rec.LiveExpectancy, rec.TakeProfitDist,
 		rec.EntryPrice, rec.Qty, opened,
 	)
 	if err != nil {
@@ -168,6 +171,7 @@ func scanEntry(s scanner) (trading.EntryRecord, error) {
 		&rec.ID, &rec.UserID, &rec.StrategyID, &rec.Symbol, &rec.Side,
 		&rec.Score, &rec.MinScore, &boost, &forced,
 		&rec.WinRate, &rec.Trades, &rec.NetR, &rec.ExpectancyR, &rec.ExpectancyUSDT, &rec.OneRUSDT,
+		&rec.LiveExpectancy, &rec.TakeProfitDist,
 		&rec.EntryPrice, &rec.Qty, &opened,
 		&rec.ExitPrice, &rec.ExitQty, &rec.RealizedUSDT, &exitWhy, &closed,
 	)
