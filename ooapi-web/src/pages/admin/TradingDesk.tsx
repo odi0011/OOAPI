@@ -9,6 +9,7 @@ import {
   buildDeskStatus,
   entryScoreText,
   formatAmount,
+  formatPriceFraction,
   levelText,
   orderKindText,
   orderPriceText,
@@ -89,6 +90,8 @@ export default function TradingDesk({
         <StatusItem label="保证金模式" value={status.marginModeText} />
         <StatusItem label="账户" value={status.accountLabel} />
         <StatusItem label="回测期望" value={formatExpectancyR(engine?.lastBacktest?.expectancyR)} />
+        <StatusItem label="实盘期望" value={status.liveExpectancyText} />
+        <StatusItem label="止盈距离" value={status.takeProfitDistText} />
         <div className={styles.statusItem}>
           <dt>新开仓</dt>
           <dd>
@@ -222,7 +225,8 @@ function OpenEntryNote({ entry }: { entry: TradeEntrySlice }) {
   return (
     <p className={styles.pageLead}>
       本笔开仓 {entryScoreText(entry)}，加速 {yesNo(entry.boost)}，强制 {yesNo(entry.forced)}，回测期望{" "}
-      {formatExpectancyR(entry.expectancyR)}（{formatAmount(entry.expectancyUsdt ?? undefined)} USDT）
+      {formatExpectancyR(entry.expectancyR)}（{formatAmount(entry.expectancyUsdt ?? undefined)} USDT），实盘期望{" "}
+      {formatPriceFraction(entry.liveExpectancy)}，止盈距离 {formatPriceFraction(entry.takeProfitDist)}
     </p>
   );
 }
@@ -233,7 +237,7 @@ function EntriesTable({ entries }: { entries?: TradeEntry[] | null }) {
     <div>
       <header className={styles.panelHead}>
         <h2>开仓记录</h2>
-        <p>每笔开仓当时的分数、门槛、是否加速或强制，以及该策略配置的回测胜率、笔数、净 R 和每笔期望。重启后仍在。</p>
+        <p>每笔开仓当时的分数、门槛、是否加速或强制，回测胜率、笔数、净 R 和每笔期望，以及放行后的实盘期望和止盈距离。重启后仍在。</p>
       </header>
       {entries.length === 0 ? (
         <p className={styles.emptyTitle}>还没有开仓记录</p>
@@ -252,6 +256,8 @@ function EntriesTable({ entries }: { entries?: TradeEntry[] | null }) {
                 <th>净R</th>
                 <th>期望R</th>
                 <th>期望USDT</th>
+                <th>实盘期望</th>
+                <th>止盈距离</th>
               </tr>
             </thead>
             <tbody>
@@ -267,6 +273,8 @@ function EntriesTable({ entries }: { entries?: TradeEntry[] | null }) {
                   <td>{formatNetR(entry.netR)}</td>
                   <td>{formatExpectancyR(entry.expectancyR)}</td>
                   <td>{formatAmount(entry.expectancyUsdt)}</td>
+                  <td>{formatPriceFraction(entry.liveExpectancy)}</td>
+                  <td>{formatPriceFraction(entry.takeProfitDist)}</td>
                 </tr>
               ))}
             </tbody>

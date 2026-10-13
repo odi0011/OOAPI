@@ -994,11 +994,11 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 	case normTradingSQL(entryInsertSQL):
 		id := d.seq + 1
 		d.seq = id
-		opened := tradingArgTime(vals[16])
+		opened := tradingArgTime(vals[18])
 		rec := trading.EntryRecord{
 			ID: id, UserID: tradingArgInt(vals[0]), StrategyID: tradingArgInt(vals[1]),
 			Symbol: tradingArgString(vals[2]), Side: tradingArgString(vals[3]),
-			OpenedAt: opened, EntryPrice: tradingArgFloat(vals[14]), Qty: tradingArgFloat(vals[15]),
+			OpenedAt: opened, EntryPrice: tradingArgFloat(vals[16]), Qty: tradingArgFloat(vals[17]),
 		}
 		rec.Score = int(tradingArgInt(vals[4]))
 		rec.MinScore = int(tradingArgInt(vals[5]))
@@ -1010,6 +1010,8 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 		rec.ExpectancyR = tradingArgFloat(vals[11])
 		rec.ExpectancyUSDT = tradingArgFloat(vals[12])
 		rec.OneRUSDT = tradingArgFloat(vals[13])
+		rec.LiveExpectancy = tradingArgFloat(vals[14])
+		rec.TakeProfitDist = tradingArgFloat(vals[15])
 		d.entries = append(d.entries, storedEntry{id: id, rec: rec})
 		return tradingTestResult{id, 1}, nil
 	case normTradingSQL(entryReviseSQL):
@@ -1185,6 +1187,7 @@ func (d *tradingTestDriver) entryRows(userID, strategyID int64, limit int) drive
 	cols := []string{
 		"id", "user_id", "strategy_id", "symbol", "side", "score", "min_score", "boost", "forced",
 		"win_rate", "trade_count", "net_r", "expectancy_r", "expectancy_usdt", "one_r_usdt",
+		"live_expectancy", "take_profit_dist",
 		"entry_price", "qty", "opened_at", "exit_price", "exit_qty", "realized_usdt", "exit_reason", "closed_at",
 	}
 	rows := append([]storedEntry(nil), d.entries...)
@@ -1216,6 +1219,7 @@ func (d *tradingTestDriver) entryRows(userID, strategyID int64, limit int) drive
 			row.id, rec.UserID, rec.StrategyID, rec.Symbol, rec.Side,
 			int64(rec.Score), int64(rec.MinScore), boost, forced,
 			rec.WinRate, int64(rec.Trades), rec.NetR, rec.ExpectancyR, rec.ExpectancyUSDT, rec.OneRUSDT,
+			rec.LiveExpectancy, rec.TakeProfitDist,
 			rec.EntryPrice, rec.Qty, rec.OpenedAt,
 			rec.ExitPrice, rec.ExitQty, rec.RealizedUSDT, rec.ExitReason, closed,
 		})

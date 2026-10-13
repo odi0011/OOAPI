@@ -42,6 +42,7 @@ func TestEntryRecordSurvivesInStateOrdersAndEvents(t *testing.T) {
 			Score: 4, MinScore: 3, Boost: true, Forced: false,
 			WinRate: 0.6, Trades: 10, NetR: 5, ExpectancyR: 0.5,
 			OneRUSDT: 0.04, ExpectancyUSDT: 0.02,
+			LiveExpectancy: 0.00125, TakeProfitDist: 0.0042,
 		},
 	}
 	id, err := trading.SaveEntry(rec)
@@ -62,6 +63,9 @@ func TestEntryRecordSurvivesInStateOrdersAndEvents(t *testing.T) {
 	}
 	if row["winRate"] != 0.6 || row["trades"] != float64(10) || row["netR"] != float64(5) || row["expectancyR"] != 0.5 || row["expectancyUsdt"] != 0.02 {
 		t.Fatalf("stats %#v", row)
+	}
+	if row["liveExpectancy"] != 0.00125 || row["takeProfitDist"] != 0.0042 {
+		t.Fatalf("live gate %#v", row)
 	}
 	if _, ok := row["userId"]; ok {
 		t.Fatalf("user id leaked %#v", row)
@@ -85,8 +89,11 @@ func TestEntryRecordSurvivesInStateOrdersAndEvents(t *testing.T) {
 	if len(events) != 1 || events[0].Entry == nil || !events[0].Entry.Boost || events[0].Entry.Forced || events[0].Action != "boost_entry" {
 		t.Fatalf("restarted events %+v", events)
 	}
-	if math.Abs(events[0].Entry.ExpectancyUSDT-0.02) > 1e-9 {
+	if math.Abs(events[0].Entry.ExpectancyUSDT-0.02) > 1e-9 || math.Abs(events[0].Entry.ExpectancyR-0.5) > 1e-9 {
 		t.Fatalf("event expectancy %+v", events[0].Entry)
+	}
+	if math.Abs(events[0].Entry.LiveExpectancy-0.00125) > 1e-9 || math.Abs(events[0].Entry.TakeProfitDist-0.0042) > 1e-9 {
+		t.Fatalf("event live gate %+v", events[0].Entry)
 	}
 
 	closedAt := opened.Add(time.Minute)

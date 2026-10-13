@@ -25,15 +25,48 @@ func TestFeesAndExpectancyMath(t *testing.T) {
 	if math.Abs(TradeExpectancy(p, zero, sl, fees)) > 1e-12 {
 		t.Fatalf("boundary ev %v", TradeExpectancy(p, zero, sl, fees))
 	}
-	dist, reason := ResolveTakeProfit(p, true, sl, base, fees)
-	if reason != "" || !(dist > base) || dist > expectancyTpCap(base)+1e-12 {
-		t.Fatalf("dist %v reason %s", dist, reason)
+	// 按原胜率放宽能让 EV 为正，但新距离上的胜率更低，期望不再为正，必须跳过。
+	fixed := positiveTpDistance(p, sl, fees)
+	if !(fixed <= expectancyTpCap(base)+1e-12) || !(TradeExpectancy(p, fixed, sl, fees) > 0) {
+		t.Fatalf("constant-p distance %v ev %v", fixed, TradeExpectancy(p, fixed, sl, fees))
 	}
-	if !(TradeExpectancy(p, dist, sl, fees) > 0) {
-		t.Fatalf("widened ev %v dist %v", TradeExpectancy(p, dist, sl, fees), dist)
+	adjusted := WinRateAtDistance(p, base, sl, fixed)
+	if !(adjusted < p) || !(TradeExpectancy(adjusted, fixed, sl, fees) <= 0) {
+		t.Fatalf("recomputed win rate %v ev %v should reject the constant-p widen", adjusted, TradeExpectancy(adjusted, fixed, sl, fees))
 	}
-	if !(dist > zero) {
-		t.Fatalf("slack missing: dist %v zero %v", dist, zero)
+	dist, live, reason := ResolveLiveTakeProfit(p, true, sl, base, fees)
+	if reason != ReasonNegativeExpectancy || dist != 0 || !(live <= 0) {
+		t.Fatalf("53%% dist %v live %v reason %s", dist, live, reason)
+	}
+	if got, gotReason := ResolveTakeProfit(p, true, sl, base, fees); gotReason != ReasonNegativeExpectancy || got != 0 {
+		t.Fatalf("resolve %v %s", got, gotReason)
+	}
+	if !(TradeExpectancy(p, expectancyTpCap(base), sl, fees) > 0) {
+		t.Fatal("cap should still look positive if the win rate is not recomputed")
+	}
+
+	wideP := 0.75
+	if !(TradeExpectancy(wideP, base, sl, fees) < 0) {
+		t.Fatal("75% at the floor should need a widen")
+	}
+	fixedWide := positiveTpDistance(wideP, sl, fees)
+	fixedAdj := WinRateAtDistance(wideP, base, sl, fixedWide)
+	if !(TradeExpectancy(wideP, fixedWide, sl, fees) > 0) || !(TradeExpectancy(fixedAdj, fixedWide, sl, fees) <= 0) {
+		t.Fatalf("fixture fixed %v adj %v ev %v", fixedWide, fixedAdj, TradeExpectancy(fixedAdj, fixedWide, sl, fees))
+	}
+	dist, live, reason = ResolveLiveTakeProfit(wideP, true, sl, base, fees)
+	if reason != "" || !(dist > fixedWide) || dist > expectancyTpCap(base)+1e-12 {
+		t.Fatalf("widened dist %v reason %s cap %v", dist, reason, expectancyTpCap(base))
+	}
+	wp := WinRateAtDistance(wideP, base, sl, dist)
+	if !(wp < wideP) {
+		t.Fatalf("win rate was not recomputed: %v", wp)
+	}
+	if !(live > 0) || math.Abs(live-TradeExpectancy(wp, dist, sl, fees)) > 1e-12 {
+		t.Fatalf("live %v want %v", live, TradeExpectancy(wp, dist, sl, fees))
+	}
+	if math.Abs(WinRateAtDistance(wideP, base, sl, base)-wideP) > 1e-15 {
+		t.Fatal("base distance changed the sample win rate")
 	}
 
 	kept, reason := ResolveTakeProfit(0.9, true, sl, base, fees)
@@ -72,20 +105,22 @@ func TestExpectancyGateWidensOrSkipsEntry(t *testing.T) {
 
 	paper := NewPaper()
 	cfg := testConfig()
+	cfg.ID = 41
 	cfg.GambleMode = true
 	cfg.ScalpSlPct = 0.003
 	cfg.ScalpTpPct = MinScalpTpPct
 	eng := withSecrets(NewEngine(cfg, paper, DiscardLogger()))
+	eng.SetUser(41)
 	if err := eng.Start(calmStart(now, 20)); err != nil {
 		t.Fatal(err)
 	}
 	in := stepAt(now, candles, price, 20)
-	in.Backtest = &BacktestSummary{WinRate: 0.53, Trades: 8, NetR: -1}
+	in.Backtest = &BacktestSummary{WinRate: 0.75, Trades: 8, NetR: -1}
 	snap, err := eng.Step(in)
 	if err != nil || snap.State != StateInPosition || paper.Entries != 1 {
 		t.Fatalf("widen %+v entries=%d err=%v", snap, paper.Entries, err)
 	}
-	wantDist, reason := ResolveTakeProfit(0.53, true, 0.003, MinScalpTpPct, fees)
+	wantDist, wantLive, reason := ResolveLiveTakeProfit(0.75, true, 0.003, MinScalpTpPct, fees)
 	if reason != "" {
 		t.Fatal(reason)
 	}
@@ -99,6 +134,22 @@ func TestExpectancyGateWidensOrSkipsEntry(t *testing.T) {
 	if math.Abs(math.Abs(snap.TakeProfitPrice-snap.EntryPrice)/snap.EntryPrice-MinScalpTpPct) < 1e-8 {
 		t.Fatal("take stayed at the 0.15% floor")
 	}
+	if math.Abs(snap.TakeProfitDist-wantDist) > 1e-12 || math.Abs(snap.LiveExpectancy-wantLive) > 1e-12 || !(snap.LiveExpectancy > 0) {
+		t.Fatalf("engine state dist %v live %v", snap.TakeProfitDist, snap.LiveExpectancy)
+	}
+	if snap.Entry == nil || math.Abs(snap.Entry.TakeProfitDist-wantDist) > 1e-12 || math.Abs(snap.Entry.LiveExpectancy-wantLive) > 1e-12 {
+		t.Fatalf("entry stamp %+v", snap.Entry)
+	}
+	if snap.LastBacktest == nil || math.Abs(snap.Entry.ExpectancyR-snap.LastBacktest.ExpectancyR) > 1e-12 || math.Abs(snap.Entry.ExpectancyR-(-1.0/8)) > 1e-12 {
+		t.Fatalf("backtest expectancy overwritten %+v backtest %+v", snap.Entry, snap.LastBacktest)
+	}
+	if snap.Entry.WinRate != 0.75 {
+		t.Fatalf("sample win rate overwritten %+v", snap.Entry)
+	}
+	rows, err := ListEntries(eng.userID, eng.cfg.ID, 5)
+	if err != nil || len(rows) != 1 || math.Abs(rows[0].LiveExpectancy-wantLive) > 1e-12 || math.Abs(rows[0].TakeProfitDist-wantDist) > 1e-12 || math.Abs(rows[0].ExpectancyR-snap.Entry.ExpectancyR) > 1e-12 {
+		t.Fatalf("saved %+v err=%v", rows, err)
+	}
 
 	skipPaper := NewPaper()
 	skip := withSecrets(NewEngine(cfg, skipPaper, DiscardLogger()))
@@ -106,10 +157,19 @@ func TestExpectancyGateWidensOrSkipsEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad := in
-	bad.Backtest = &BacktestSummary{WinRate: 0.1, Trades: 4, NetR: -1}
+	bad.Backtest = &BacktestSummary{WinRate: 0.53, Trades: 4, NetR: -1}
 	snap, err = skip.Step(bad)
 	if err != nil || skipPaper.Entries != 0 || snap.State != StateArmed || snap.LastReason != ReasonNegativeExpectancy || !snap.Running {
 		t.Fatalf("skip %+v entries=%d err=%v", snap, skipPaper.Entries, err)
+	}
+	if !(TradeExpectancy(0.53, expectancyTpCap(MinScalpTpPct), 0.003, fees) > 0) {
+		t.Fatal("53% would pass if the win rate stayed constant")
+	}
+	if snap.TakeProfitDist != 0 || !(snap.LiveExpectancy <= 0) || snap.Entry != nil {
+		t.Fatalf("skipped state %+v", snap)
+	}
+	if snap.LastBacktest == nil || math.Abs(snap.LastBacktest.ExpectancyR-(-0.25)) > 1e-12 {
+		t.Fatalf("backtest expectancy %+v", snap.LastBacktest)
 	}
 
 	plainPaper := NewPaper()
@@ -132,6 +192,9 @@ func TestExpectancyGateWidensOrSkipsEntry(t *testing.T) {
 	if math.Abs(snap.TakeProfitPrice-floorTake) > 1e-8 {
 		t.Fatalf("floor take %v want %v", snap.TakeProfitPrice, floorTake)
 	}
+	if math.Abs(snap.TakeProfitDist-MinScalpTpPct) > 1e-12 || snap.LiveExpectancy != 0 {
+		t.Fatalf("no-sample state dist %v live %v", snap.TakeProfitDist, snap.LiveExpectancy)
+	}
 }
 
 func TestForcedEntryObeysExpectancyGate(t *testing.T) {
@@ -151,7 +214,7 @@ func TestForcedEntryObeysExpectancyGate(t *testing.T) {
 	eng.cfg.GambleMode = true
 	eng.cfg.ScalpTpPct = MinScalpTpPct
 	eng.cfg.ScalpSlPct = 0.003
-	in := passingStep(now, candles, price, 0.1)
+	in := passingStep(now, candles, price, 0.53)
 	in.Backtest.Trades = 4
 	in.Backtest.NetR = -1
 	in.LivePeerIDs = []int64{11}
@@ -159,10 +222,19 @@ func TestForcedEntryObeysExpectancyGate(t *testing.T) {
 	if err != nil || paper.Entries != 0 || snap.LastReason != ReasonNegativeExpectancy || snap.State != StateArmed {
 		t.Fatalf("early %+v entries=%d err=%v", snap, paper.Entries, err)
 	}
+	if !(TradeExpectancy(0.53, expectancyTpCap(MinScalpTpPct), 0.003, FeesFromRates(MakerFeeRate, TakerFeeRate)) > 0) {
+		t.Fatal("forced fixture would pass a constant win rate")
+	}
 	in.Now = now.Add(BoostForceAfter)
 	snap, err = eng.Step(in)
 	if err != nil || paper.Entries != 0 || snap.LastReason != ReasonNegativeExpectancy || snap.State != StateArmed || !snap.Running {
 		t.Fatalf("forced %+v entries=%d err=%v", snap, paper.Entries, err)
+	}
+	if snap.TakeProfitDist != 0 || !(snap.LiveExpectancy <= 0) {
+		t.Fatalf("forced state %+v", snap)
+	}
+	if snap.LastBacktest == nil || math.Abs(snap.LastBacktest.ExpectancyR-(-0.25)) > 1e-12 {
+		t.Fatalf("forced backtest %+v", snap.LastBacktest)
 	}
 }
 
@@ -197,12 +269,12 @@ func TestCommissionRatesDriveTakeDistance(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := stepAt(now, candles, price, 20)
-	in.Backtest = &BacktestSummary{WinRate: 0.53, Trades: 3, NetR: -1}
+	in.Backtest = &BacktestSummary{WinRate: 0.75, Trades: 3, NetR: -1}
 	snap, err := eng.Step(in)
 	if err != nil || snap.State != StateInPosition || down.calls != 1 {
 		t.Fatalf("fallback %+v calls=%d err=%v", snap, down.calls, err)
 	}
-	fallback, reason := ResolveTakeProfit(0.53, true, 0.003, MinScalpTpPct, FeesFromRates(MakerFeeRate, TakerFeeRate))
+	fallback, reason := ResolveTakeProfit(0.75, true, 0.003, MinScalpTpPct, FeesFromRates(MakerFeeRate, TakerFeeRate))
 	if reason != "" || math.Abs(math.Abs(snap.TakeProfitPrice-price)/price-fallback) > 1e-8 {
 		t.Fatalf("take dist %v want %v", math.Abs(snap.TakeProfitPrice-price)/price, fallback)
 	}
@@ -218,7 +290,7 @@ func TestCommissionRatesDriveTakeDistance(t *testing.T) {
 	if err != nil || snap.State != StateInPosition || cheap.calls != 1 {
 		t.Fatalf("zero fee %+v calls=%d err=%v", snap, cheap.calls, err)
 	}
-	zeroFee, reason := ResolveTakeProfit(0.53, true, 0.003, MinScalpTpPct, FeesFromRates(0, 0))
+	zeroFee, reason := ResolveTakeProfit(0.75, true, 0.003, MinScalpTpPct, FeesFromRates(0, 0))
 	if reason != "" || math.Abs(zeroFee-fallback) < 1e-8 {
 		t.Fatalf("zero-fee distance %v did not differ from fallback %v (%s)", zeroFee, fallback, reason)
 	}

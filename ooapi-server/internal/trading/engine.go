@@ -102,6 +102,11 @@ type Snapshot struct {
 	MarkPrice     float64          `json:"markPrice,omitempty"`
 	UnrealizedPnl float64          `json:"unrealizedPnl,omitempty"`
 	LastBacktest  *BacktestSummary `json:"lastBacktest,omitempty"`
+	// LiveExpectancy 是最近一次期望门算出的实盘期望，单位是价格比例。
+	// 回测每笔期望仍在 LastBacktest.ExpectancyR，两者不是同一个数。
+	LiveExpectancy float64 `json:"liveExpectancy"`
+	// TakeProfitDist 是期望门放行后的止盈距离，相对入场价。没放行时为 0。
+	TakeProfitDist float64 `json:"takeProfitDist"`
 	// Entry 是当前持仓开仓时记下的分数和回测。平仓后清空，历史仍在开仓日志里。
 	Entry *EntryStamp `json:"entry,omitempty"`
 }
@@ -190,6 +195,9 @@ type Engine struct {
 	// feeReady 记下本进程已经用过的往返手续费，避免每根 K 线都打 commissionRate。
 	feeReady bool
 	feeRound RoundTripFees
+	// liveExpectancy / takeProfitDist 是最近一次期望门的结果，写进快照和开仓记录。
+	liveExpectancy float64
+	takeProfitDist float64
 }
 
 func NewEngine(cfg Config, ex Exchange, logger Logger) *Engine {
@@ -264,6 +272,8 @@ func (e *Engine) Snapshot() Snapshot {
 		MarkPrice:          e.lastMark,
 		UnrealizedPnl:      e.unrealized(e.lastMark),
 		LastBacktest:       e.lastBacktest,
+		LiveExpectancy:     e.liveExpectancy,
+		TakeProfitDist:     e.takeProfitDist,
 		Entry:              e.openEntry,
 	}
 }
@@ -1161,6 +1171,7 @@ func (e *Engine) forgetPlan() {
 // 1R = entry * DefaultRFraction（默认 0.8%）。止损距离 = stopR * 1R。
 // 赌一把模式改用相对入场价的剥头皮距离，止盈不会低于 MinScalpTpPct。
 // 有回测样本时，止盈再放到让手续费后期望为正的距离，但不超过 ExpectancyTpCapR。
+// 放宽之后按新的止盈、止损距离重算胜率，期望仍不为正就跳过。
 func (e *Engine) quoteProtection(side Side, entry float64) (stop, take, liq float64, err error) {
 	stop, take, err = stopTake(e.cfg, side, entry)
 	if err != nil {
@@ -1586,6 +1597,8 @@ func (e *Engine) commitEntry(fill Fill) {
 		ExpectancyR:    expR,
 		OneRUSDT:       oneR,
 		ExpectancyUSDT: expR * oneR,
+		LiveExpectancy: e.liveExpectancy,
+		TakeProfitDist: e.takeProfitDist,
 	}
 	if !draft.hasSum {
 		stamp.WinRate = 0
