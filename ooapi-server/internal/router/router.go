@@ -81,9 +81,9 @@ func Setup(cfg *config.Config) *gin.Engine {
 		*/
 		api.GET("/pricing", handlers.AdminPricing)
 
-		// 实盘加速和检测事件使用 OOAPI_BOOST_TOKEN，不走登录 JWT。
-		api.POST("/trading/engine/boost", handlers.PostTradingEngineBoost)
-		api.GET("/trading/engine/events", handlers.GetTradingEngineEvents)
+		// 实盘加速和检测事件：OOAPI_BOOST_TOKEN，或 OptionalAuth 后具备 option:edit 的管理员。
+		api.POST("/trading/engine/boost", optionalAuth, handlers.PostTradingEngineBoost)
+		api.GET("/trading/engine/events", optionalAuth, handlers.GetTradingEngineEvents)
 	}
 
 	// sub2api 的倍率声明在 /v1 下（按 key 维度，需要鉴权）
@@ -145,6 +145,7 @@ func Setup(cfg *config.Config) *gin.Engine {
 			engineAPI.GET("/market", handlers.GetTradingMarket)
 			engineAPI.GET("/position", handlers.GetTradingPosition)
 			engineAPI.GET("/orders", handlers.GetTradingOrders)
+			engineAPI.GET("/balance", handlers.GetTradingBalance)
 			engineAPI.POST("/start", handlers.StartTradingEngine)
 			engineAPI.POST("/resume", handlers.ResumeTradingEngine)
 			engineAPI.POST("/stop", handlers.StopTradingEngine)

@@ -1387,6 +1387,14 @@ func (c *USDMClient) signed(method, path string, params url.Values) ([]byte, err
 	return c.do(method, path, params, creds)
 }
 
+// signedGET 读签名账户。只读客户端走 signedRead，交易客户端仍走 guard。
+func (c *USDMClient) signedGET(path string, params url.Values) ([]byte, error) {
+	if c != nil && c.readOnly {
+		return c.signedRead(path, params)
+	}
+	return c.signed(http.MethodGet, path, params)
+}
+
 func (c *USDMClient) do(method, path string, params url.Values, creds Credentials) ([]byte, error) {
 	if c != nil && c.readOnly && method != http.MethodGet {
 		return nil, ErrLiveTransportDisabled

@@ -3,7 +3,6 @@ package trading
 import (
 	"encoding/json"
 	"errors"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -24,6 +23,7 @@ var shanghai = shanghaiLoc
 // IncomeEvent 是币安 /fapi/v1/income 的一行。
 type IncomeEvent struct {
 	Symbol     string
+	Asset      string
 	IncomeType string
 	Income     float64
 	Time       time.Time
@@ -78,6 +78,7 @@ var incomeTypes = map[string]bool{
 
 type incomeRow struct {
 	Symbol     string
+	Asset      string
 	IncomeType string
 	Income     float64
 	Time       time.Time
@@ -124,12 +125,62 @@ func (c *USDMClient) IncomeHistory(symbol string, since, now time.Time) ([]Incom
 	for i, row := range rows {
 		out[i] = IncomeEvent{
 			Symbol:     row.Symbol,
+			Asset:      row.Asset,
 			IncomeType: row.IncomeType,
 			Income:     row.Income,
 			Time:       row.Time,
 		}
 	}
 	return out, nil
+}
+
+// AccountIncomeHistory 读账户级账单（不带 symbol）。看板今日盈亏用它。
+func (c *USDMClient) AccountIncomeHistory(since, now time.Time) ([]IncomeEvent, error) {
+	since = since.UTC()
+	now = now.UTC()
+	if since.IsZero() {
+		return nil, invalid("缺少收益起点")
+	}
+	if now.Before(since) {
+		now = since
+	}
+	rows, err := c.incomeRows("", since, now)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]IncomeEvent, len(rows))
+	for i, row := range rows {
+		out[i] = IncomeEvent{
+			Symbol:     row.Symbol,
+			Asset:      row.Asset,
+			IncomeType: row.IncomeType,
+			Income:     row.Income,
+			Time:       row.Time,
+		}
+	}
+	return out, nil
+}
+
+// TodayTradePnL 是上海日切后 USDT 的交易盈亏（已实现+手续费+资金费），不含划转。
+// allIncome 含当日全部 USDT 流水（含划转），用来反推日初钱包。
+func TodayTradePnL(rows []IncomeEvent, now time.Time) (tradePnL, allIncome float64) {
+	dayStart := shanghaiDayStart(now)
+	now = now.UTC()
+	for _, row := range rows {
+		asset := strings.ToUpper(strings.TrimSpace(row.Asset))
+		if asset != "" && asset != "USDT" {
+			continue
+		}
+		when := row.Time.UTC()
+		if when.Before(dayStart) || when.After(now) {
+			continue
+		}
+		allIncome += row.Income
+		if incomeTypes[strings.ToUpper(strings.TrimSpace(row.IncomeType))] {
+			tradePnL += row.Income
+		}
+	}
+	return tradePnL, allIncome
 }
 
 // IncomeParts 是一笔持仓期间账单里要计入净已实现的三项。转入转出不在里面。
@@ -206,11 +257,13 @@ func (c *USDMClient) incomeRows(symbol string, since, now time.Time) ([]incomeRo
 		cursor := win
 		for page := 0; page < 20; page++ {
 			q := url.Values{}
-			q.Set("symbol", symbol)
+			if symbol != "" {
+				q.Set("symbol", symbol)
+			}
 			q.Set("startTime", strconv.FormatInt(cursor.UnixMilli(), 10))
 			q.Set("endTime", strconv.FormatInt(end.UnixMilli(), 10))
 			q.Set("limit", "1000")
-			body, err := c.signed(http.MethodGet, "/fapi/v1/income", q)
+			body, err := c.signedGET("/fapi/v1/income", q)
 			if err != nil {
 				return nil, err
 			}
@@ -246,6 +299,7 @@ func parseIncome(body []byte) ([]incomeRow, error) {
 	}
 	var raw []struct {
 		Symbol     string          `json:"symbol"`
+		Asset      string          `json:"asset"`
 		IncomeType string          `json:"incomeType"`
 		Income     json.RawMessage `json:"income"`
 		Time       json.RawMessage `json:"time"`
@@ -265,6 +319,7 @@ func parseIncome(body []byte) ([]incomeRow, error) {
 		}
 		out = append(out, incomeRow{
 			Symbol:     strings.ToUpper(strings.TrimSpace(row.Symbol)),
+			Asset:      strings.ToUpper(strings.TrimSpace(row.Asset)),
 			IncomeType: strings.ToUpper(strings.TrimSpace(row.IncomeType)),
 			Income:     amount,
 			Time:       time.UnixMilli(int64(whenMS)).UTC(),
