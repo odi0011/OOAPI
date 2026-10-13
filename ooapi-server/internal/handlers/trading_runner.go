@@ -120,13 +120,14 @@ func loadRunningSpecs() ([]trading.RunSpec, error) {
 
 func scanStrategyUser(s scanner, userID *int64) (strategyRow, error) {
 	var (
-		row          strategyRow
-		network      sql.NullString
-		status       sql.NullInt64
-		label        sql.NullString
-		running      int
-		gamble       int
-		pauseEntries int
+		row            strategyRow
+		network        sql.NullString
+		status         sql.NullInt64
+		label          sql.NullString
+		running        int
+		gamble         int
+		pauseEntries   int
+		expectancyGate int
 	)
 	err := s.Scan(
 		userID,
@@ -139,7 +140,9 @@ func scanStrategyUser(s scanner, userID *int64) (strategyRow, error) {
 		&pauseEntries,
 		&row.Record.MaxOpenPositions,
 		&row.Record.RSILongMin, &row.Record.RSILongMax, &row.Record.RSIShortMin, &row.Record.RSIShortMax,
-		&gamble, &row.Record.ScalpTpPct, &row.Record.ScalpSlPct, &running,
+		&gamble, &row.Record.ScalpTpPct, &row.Record.ScalpSlPct,
+		&row.Record.RFraction, &row.Record.ExpectancyTpCapR, &row.Record.TakerFeeRate, &row.Record.MakerFeeRate, &expectancyGate,
+		&running,
 		&row.CreatedAt, &row.UpdatedAt,
 		&network, &status, &label,
 	)
@@ -159,6 +162,7 @@ func scanStrategyUser(s scanner, userID *int64) (strategyRow, error) {
 	row.Record.GambleMode = gamble == 1
 	row.Record.Running = running == 1
 	row.Record.PauseEntries = pauseEntries != 0
+	row.Record.ExpectancyGate = expectancyGate != 0
 	return row, nil
 }
 

@@ -40,7 +40,7 @@ const (
 	MinLiqDistancePct = 0.015
 
 	// MaxLeverage 是逐仓杠杆上限。开仓、风控和策略校验只认这一个常量。
-	MaxLeverage = 20
+	MaxLeverage = 125
 
 	// DailyLossOffPct 及以上视为关闭日亏停机。校验仍接受该值，停机代码保留。
 	DailyLossOffPct = 100
@@ -107,8 +107,8 @@ const (
 	// MinScalpTpPct 是止盈距离下限（0.15%）。手续费往返约 0.1%，再留一点滑点。
 	// 配置更小时下单仍按这个距离抬上去。期望门可以在这个下限之上再放宽，但不会低于它。
 	MinScalpTpPct = 0.0015
-	// ExpectancyTpCapR 是为了让手续费后的期望为正，止盈最多放到几 R。
-	// 1R = DefaultRFraction。再远就不在回测能支持的范围里，信号直接跳过。
+	// ExpectancyTpCapR 是期望门的默认止盈上限（几 R）。策略可以改，0 表示用这个值。
+	// 1R = 策略的 rFraction，缺省是 DefaultRFraction。再远就不在回测能支持的范围里。
 	ExpectancyTpCapR = 3
 	// MarginAvailableFraction 是可用余额里拿来当保证金的比例。
 	MarginAvailableFraction = 0.95
@@ -120,8 +120,15 @@ const (
 	MaxMarginFraction = 0.80
 	// BalanceFloorUSDT 是账户权益的停机线。权益 = 钱包余额 + 全部持仓未实现盈亏。
 	// 触及后该密钥下的引擎全部停止。读不到权益时不开新仓。
+	// 这道线不能通过策略接口或页面改低。pauseBalanceUsdt 也不能低于它。
 	// 同时持仓笔数没有硬编码上限；需要时用策略字段或 OOAPI_MAX_OPEN_POSITIONS 打开。
 	BalanceFloorUSDT = 0.5
+
+	// 下面几条不进策略表，接口和页面都不能关掉：
+	// 止损和止盈必须都挂上，否则平仓（ReasonProtectiveOrdersFailed）；
+	// 止损必须在强平价之前（ReasonStopBeyondLiquidation）；
+	// 权益低于 BalanceFloorUSDT 停机；
+	// 同一把密钥的同一个交易对只能有一台引擎（ErrSymbolInUse）。
 
 	// TakerFeeRate 与 SlippageRate 都按单边名义价值计，回测开平各算一次。
 	// 读不到 commissionRate 时，期望门和开仓保证金估算也用它。
@@ -178,8 +185,20 @@ type Config struct {
 	// 加速强制开仓同样不再要求那道回测门。止损止盈改用剥头皮距离。
 	// 手续费后的期望门不在豁免里：普通开仓、加速开仓、强制开仓和赌一把都要让
 	// 放宽后的止盈距离上重算胜率，再算 EV = p*(tpDist-feeWin)-(1-p)*(slDist+feeLoss) > 0。
-	// 否则 lastReason=negative_expectancy。
+	// 否则 lastReason=negative_expectancy。只有 ExpectancyGate 关掉时才跳过这道门。
 	GambleMode bool `json:"gambleMode,omitempty"`
+	// RFraction 是 1R 占入场价的比例。0.008 表示 0.8%。0 表示用 DefaultRFraction。
+	// 止损距离 = stopR × 入场价 × RFraction。下一拍开仓用最新值，不用重启。
+	RFraction float64 `json:"rFraction,omitempty"`
+	// ExpectancyTpCapR 是期望门允许的止盈上限，单位 R。0 表示用包级 ExpectancyTpCapR。
+	ExpectancyTpCapR float64 `json:"expectancyTpCapR,omitempty"`
+	// TakerFeeRate / MakerFeeRate 是读不到 commissionRate 时的费率回退。
+	// 0 表示用包级 TakerFeeRate / MakerFeeRate。交易所返回的费率优先。
+	TakerFeeRate float64 `json:"takerFeeRate,omitempty"`
+	MakerFeeRate float64 `json:"makerFeeRate,omitempty"`
+	// ExpectancyGate 为真时，止盈放到上限后期望仍不为正就跳过开仓。
+	// 缺省必须由调用方写成 true。赌一把不能单独绕开它。
+	ExpectancyGate bool `json:"expectancyGate"`
 	// ScalpTpPct / ScalpSlPct 是赌一把模式相对入场价的止盈、止损距离。
 	// 0 表示用 DefaultScalpPct。止盈执行时不会低于 MinScalpTpPct。
 	// 期望门可以在这个距离之上放宽，上限是 ExpectancyTpCapR，不会把它改小。
@@ -193,17 +212,22 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		Symbol:        SymbolXRPUSDT,
-		Leverage:      DefaultLeverage,
-		MarginMode:    MarginIsolated,
-		EmaFast:       DefaultEmaFast,
-		EmaSlow:       DefaultEmaSlow,
-		Timeframe:     Timeframe5m,
-		StopR:         DefaultStopR,
-		TakeProfitR:   DefaultTakeProfitR,
-		DailyLossPct:  DefaultDailyLossPct,
-		MaxMarginUsdt: DefaultMaxMarginUSDT,
-		Mode:          ModeTestnet,
+		Symbol:           SymbolXRPUSDT,
+		Leverage:         DefaultLeverage,
+		MarginMode:       MarginIsolated,
+		EmaFast:          DefaultEmaFast,
+		EmaSlow:          DefaultEmaSlow,
+		Timeframe:        Timeframe5m,
+		StopR:            DefaultStopR,
+		TakeProfitR:      DefaultTakeProfitR,
+		DailyLossPct:     DefaultDailyLossPct,
+		MaxMarginUsdt:    DefaultMaxMarginUSDT,
+		Mode:             ModeTestnet,
+		RFraction:        DefaultRFraction,
+		ExpectancyTpCapR: float64(ExpectancyTpCapR),
+		TakerFeeRate:     TakerFeeRate,
+		MakerFeeRate:     MakerFeeRate,
+		ExpectancyGate:   true,
 	}
 }
 
@@ -219,7 +243,62 @@ func (c Config) Normalize() Config {
 	if c.MinScore <= 0 {
 		c.MinScore = DefaultMinScore
 	}
+	if c.RFraction <= 0 {
+		c.RFraction = DefaultRFraction
+	}
+	if c.ExpectancyTpCapR <= 0 {
+		c.ExpectancyTpCapR = float64(ExpectancyTpCapR)
+	}
+	if c.TakerFeeRate <= 0 {
+		c.TakerFeeRate = TakerFeeRate
+	}
+	if c.MakerFeeRate <= 0 {
+		c.MakerFeeRate = MakerFeeRate
+	}
+	if c.MaxMarginUsdt <= 0 {
+		c.MaxMarginUsdt = DefaultMaxMarginUSDT
+	}
 	return c
+}
+
+func (c Config) oneRFraction() float64 {
+	if c.RFraction > 0 {
+		return c.RFraction
+	}
+	return DefaultRFraction
+}
+
+func (c Config) takerFee() float64 {
+	if c.TakerFeeRate > 0 {
+		return c.TakerFeeRate
+	}
+	return TakerFeeRate
+}
+
+func (c Config) makerFee() float64 {
+	if c.MakerFeeRate > 0 {
+		return c.MakerFeeRate
+	}
+	return MakerFeeRate
+}
+
+func (c Config) expectancyCapR() float64 {
+	if c.ExpectancyTpCapR > 0 {
+		return c.ExpectancyTpCapR
+	}
+	return float64(ExpectancyTpCapR)
+}
+
+// oneRUSDT 是这笔仓位的 1R 金额：入场价 × 1R 比例 × stopR × 数量。
+func (c Config) oneRUSDT(entry, qty float64) float64 {
+	stopR := c.StopR
+	if stopR <= 0 {
+		stopR = DefaultStopR
+	}
+	if entry <= 0 || qty <= 0 {
+		return 0
+	}
+	return entry * c.oneRFraction() * stopR * qty
 }
 
 // AllowedSymbol 接受币安 USDT 永续的交易对代码，例如 XRPUSDT、DOGEUSDT。
@@ -236,13 +315,21 @@ func AllowedSymbol(symbol string) bool {
 	return true
 }
 
-func allowedTimeframe(v string) bool {
-	switch v {
-	case "1m", "3m", "5m", "15m":
+// SupportedTimeframes 是策略和回测接受的 K 线周期。1s 起，15m 仍留给已保存的策略。
+const SupportedTimeframes = "1s、1m、3m、5m、15m"
+
+// AllowedTimeframe 判断周期是否可以写入策略。
+func AllowedTimeframe(v string) bool {
+	switch strings.TrimSpace(v) {
+	case "1s", "1m", "3m", "5m", "15m":
 		return true
 	default:
 		return false
 	}
+}
+
+func allowedTimeframe(v string) bool {
+	return AllowedTimeframe(v)
 }
 
 func invalidLeverage() error {
@@ -262,7 +349,7 @@ func (c Config) Validate() error {
 		return invalidLeverage()
 	}
 	if !allowedTimeframe(c.Timeframe) {
-		return invalid("K 线周期只支持 1m、3m、5m、15m")
+		return invalid("K 线周期只支持 " + SupportedTimeframes)
 	}
 	if c.EmaFast < 2 || c.EmaFast > 50 || c.EmaSlow < 3 || c.EmaSlow > 200 || c.EmaFast >= c.EmaSlow {
 		return invalid("快线要小于慢线，且落在允许范围内")
@@ -275,6 +362,15 @@ func (c Config) Validate() error {
 	}
 	if c.MaxMarginUsdt <= 0 || c.MaxMarginUsdt > 1_000_000 {
 		return invalid("单笔保证金上限要大于 0")
+	}
+	if c.RFraction <= 0 || c.RFraction > 0.2 {
+		return invalid("1R 比例要大于 0 且不超过 20%")
+	}
+	if c.ExpectancyTpCapR <= 0 || c.ExpectancyTpCapR > 20 {
+		return invalid("期望止盈上限要大于 0 且不超过 20R")
+	}
+	if c.TakerFeeRate <= 0 || c.TakerFeeRate > 0.01 || c.MakerFeeRate <= 0 || c.MakerFeeRate > 0.01 {
+		return invalid("手续费回退要大于 0 且不超过 1%")
 	}
 	if c.Mode != ModeTestnet && c.Mode != ModeLive {
 		return invalid("mode 只能是 testnet 或 live")

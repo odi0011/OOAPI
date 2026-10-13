@@ -315,6 +315,11 @@ func strategyConfig(row strategyRow) trading.Config {
 		GambleMode:            rec.GambleMode,
 		ScalpTpPct:            rec.ScalpTpPct,
 		ScalpSlPct:            rec.ScalpSlPct,
+		RFraction:             rec.RFraction,
+		ExpectancyTpCapR:      rec.ExpectancyTpCapR,
+		TakerFeeRate:          rec.TakerFeeRate,
+		MakerFeeRate:          rec.MakerFeeRate,
+		ExpectancyGate:        rec.ExpectancyGate,
 		CreatedAt:             parseTradingTime(row.CreatedAt),
 	}.Normalize()
 }

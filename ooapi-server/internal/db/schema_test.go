@@ -46,6 +46,46 @@ func TestTradingEntriesMigration(t *testing.T) {
 	if !foundPause {
 		t.Fatal("pause_entries column migration missing")
 	}
+	joinedSchema := strings.Join(schemaStatements, "\n")
+	for _, needle := range []string{
+		"DEFAULT 20",
+		"DEFAULT 100",
+		"DEFAULT 0.5",
+		"DEFAULT 0.00800000",
+		"DEFAULT 1.7",
+		"DEFAULT 0.00050000",
+		"DEFAULT 0.00020000",
+		"expectancy_gate",
+		"DEFAULT 'isolated'",
+		"expectancy_tp_cap_r",
+	} {
+		if !strings.Contains(joinedSchema, needle) {
+			t.Fatalf("schema default missing %s", needle)
+		}
+	}
+	alters := strings.Join(productionStrategyDefaultStmts(), "\n")
+	for _, needle := range []string{
+		"leverage INT NOT NULL DEFAULT 20",
+		"daily_loss_pct DECIMAL(12,4) NOT NULL DEFAULT 100",
+		"pause_balance_usdt DECIMAL(20,6) NOT NULL DEFAULT 0.5",
+		"r_fraction DECIMAL(16,8) NOT NULL DEFAULT 0.00800000",
+		"max_margin_usdt DECIMAL(20,6) NOT NULL DEFAULT 1.7",
+	} {
+		if !strings.Contains(alters, needle) {
+			t.Fatalf("production alter missing %s", needle)
+		}
+	}
+	for _, name := range []string{"r_fraction", "expectancy_tp_cap_r", "taker_fee_rate", "maker_fee_rate", "expectancy_gate"} {
+		found := false
+		for _, col := range columnMigrations["trading_strategies"] {
+			if col.name == name && strings.Contains(col.definition, "DEFAULT") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("trading_strategies column migration missing %s", name)
+		}
+	}
 	cols := columnMigrations["trading_entries"]
 	for _, name := range want {
 		if !strings.Contains(joined, name) {

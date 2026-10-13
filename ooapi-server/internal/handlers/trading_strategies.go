@@ -39,7 +39,7 @@ const (
 )
 
 var strategyTimeframes = map[string]struct{}{
-	"1m": {}, "3m": {}, "5m": {}, "15m": {},
+	"1s": {}, "1m": {}, "3m": {}, "5m": {}, "15m": {},
 }
 
 const strategySelectCols = `
@@ -49,7 +49,9 @@ s.entry_mode, s.min_score, s.min_win_rate, s.min_trades,
 s.max_margin_per_trade_usdt, s.max_consecutive_losses, s.pause_balance_usdt, s.pause_reason, s.pause_entries,
 s.max_open_positions,
 s.rsi_long_min, s.rsi_long_max, s.rsi_short_min, s.rsi_short_max,
-s.gamble_mode, s.scalp_tp_pct, s.scalp_sl_pct, s.running,
+s.gamble_mode, s.scalp_tp_pct, s.scalp_sl_pct,
+s.r_fraction, s.expectancy_tp_cap_r, s.taker_fee_rate, s.maker_fee_rate, s.expectancy_gate,
+s.running,
 s.created_at, s.updated_at, k.network, k.status, k.label`
 
 const strategyInsertSQL = `
@@ -60,8 +62,10 @@ INSERT INTO trading_strategies (
 	max_margin_per_trade_usdt, max_consecutive_losses, pause_balance_usdt, pause_reason,
 	max_open_positions,
 	rsi_long_min, rsi_long_max, rsi_short_min, rsi_short_max,
-	gamble_mode, scalp_tp_pct, scalp_sl_pct, running
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	gamble_mode, scalp_tp_pct, scalp_sl_pct,
+	r_fraction, expectancy_tp_cap_r, taker_fee_rate, maker_fee_rate, expectancy_gate,
+	running
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const strategyListSQL = `
 SELECT ` + strategySelectCols + `
@@ -84,7 +88,8 @@ SET symbol = ?, leverage = ?, margin_mode = ?, ema_fast = ?, ema_slow = ?, timef
 	max_margin_per_trade_usdt = ?, max_consecutive_losses = ?, pause_balance_usdt = ?, pause_reason = ?,
 	max_open_positions = ?,
 	rsi_long_min = ?, rsi_long_max = ?, rsi_short_min = ?, rsi_short_max = ?,
-	gamble_mode = ?, scalp_tp_pct = ?, scalp_sl_pct = ?
+	gamble_mode = ?, scalp_tp_pct = ?, scalp_sl_pct = ?,
+	r_fraction = ?, expectancy_tp_cap_r = ?, taker_fee_rate = ?, maker_fee_rate = ?, expectancy_gate = ?
 WHERE id = ? AND user_id = ?`
 
 const strategyRunningSQL = `
@@ -138,6 +143,11 @@ type strategyWrite struct {
 	GambleMode            *bool    `json:"gambleMode"`
 	ScalpTpPct            *float64 `json:"scalpTpPct"`
 	ScalpSlPct            *float64 `json:"scalpSlPct"`
+	RFraction             *float64 `json:"rFraction"`
+	ExpectancyTpCapR      *float64 `json:"expectancyTpCapR"`
+	TakerFeeRate          *float64 `json:"takerFeeRate"`
+	MakerFeeRate          *float64 `json:"makerFeeRate"`
+	ExpectancyGate        *bool    `json:"expectancyGate"`
 }
 
 type strategyRecord struct {
@@ -170,6 +180,11 @@ type strategyRecord struct {
 	GambleMode            bool
 	ScalpTpPct            float64
 	ScalpSlPct            float64
+	RFraction             float64
+	ExpectancyTpCapR      float64
+	TakerFeeRate          float64
+	MakerFeeRate          float64
+	ExpectancyGate        bool
 	Running               bool
 }
 
@@ -204,6 +219,11 @@ type strategyView struct {
 	GambleMode            bool     `json:"gambleMode"`
 	ScalpTpPct            float64  `json:"scalpTpPct"`
 	ScalpSlPct            float64  `json:"scalpSlPct"`
+	RFraction             float64  `json:"rFraction"`
+	ExpectancyTpCapR      float64  `json:"expectancyTpCapR"`
+	TakerFeeRate          float64  `json:"takerFeeRate"`
+	MakerFeeRate          float64  `json:"makerFeeRate"`
+	ExpectancyGate        bool     `json:"expectancyGate"`
 	Running               bool     `json:"running"`
 	ExchangeKeyActive     bool     `json:"exchangeKeyActive"`
 	ExchangeKeyNetwork    string   `json:"exchangeKeyNetwork,omitempty"`
@@ -250,6 +270,11 @@ func defaultStrategy() strategyRecord {
 		GambleMode:            false,
 		ScalpTpPct:            trading.DefaultScalpPct,
 		ScalpSlPct:            trading.DefaultScalpPct,
+		RFraction:             trading.DefaultRFraction,
+		ExpectancyTpCapR:      float64(trading.ExpectancyTpCapR),
+		TakerFeeRate:          trading.TakerFeeRate,
+		MakerFeeRate:          trading.MakerFeeRate,
+		ExpectancyGate:        true,
 	}
 }
 
@@ -286,6 +311,11 @@ func (row strategyRow) view() strategyView {
 		GambleMode:            rec.GambleMode,
 		ScalpTpPct:            rec.ScalpTpPct,
 		ScalpSlPct:            rec.ScalpSlPct,
+		RFraction:             rec.RFraction,
+		ExpectancyTpCapR:      rec.ExpectancyTpCapR,
+		TakerFeeRate:          rec.TakerFeeRate,
+		MakerFeeRate:          rec.MakerFeeRate,
+		ExpectancyGate:        rec.ExpectancyGate,
 		Running:               rec.Running,
 		ExchangeKeyActive:     row.ExchangeKeyActive,
 		ExchangeKeyNetwork:    row.ExchangeKeyNetwork,
@@ -397,7 +427,9 @@ func CreateTradingStrategy(c *gin.Context) {
 		rec.MaxMarginPerTradeUsdt, rec.MaxConsecutiveLosses, rec.PauseBalanceUsdt, rec.PauseReason,
 		rec.MaxOpenPositions,
 		rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax,
-		boolInt(rec.GambleMode), rec.ScalpTpPct, rec.ScalpSlPct, 0,
+		boolInt(rec.GambleMode), rec.ScalpTpPct, rec.ScalpSlPct,
+		rec.RFraction, rec.ExpectancyTpCapR, rec.TakerFeeRate, rec.MakerFeeRate, boolInt(rec.ExpectancyGate),
+		0,
 	)
 	if err != nil {
 		log.Printf("[trading] 写入策略失败: %v", err)
@@ -468,6 +500,7 @@ func UpdateTradingStrategy(c *gin.Context) {
 		rec.MaxOpenPositions,
 		rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax,
 		boolInt(rec.GambleMode), rec.ScalpTpPct, rec.ScalpSlPct,
+		rec.RFraction, rec.ExpectancyTpCapR, rec.TakerFeeRate, rec.MakerFeeRate, boolInt(rec.ExpectancyGate),
 		id, user.ID,
 	)
 	if err != nil {
@@ -528,7 +561,7 @@ func scanStrategy(s scanner) (strategyRow, error) {
 		status  sql.NullInt64
 		label   sql.NullString
 	)
-	var running, gamble, pauseEntries int
+	var running, gamble, pauseEntries, expectancyGate int
 	err := s.Scan(
 		&row.ID, &row.Record.Symbol, &row.Record.Leverage, &row.Record.MarginMode,
 		&row.Record.EmaFast, &row.Record.EmaSlow, &row.Record.Timeframe,
@@ -539,7 +572,9 @@ func scanStrategy(s scanner) (strategyRow, error) {
 		&pauseEntries,
 		&row.Record.MaxOpenPositions,
 		&row.Record.RSILongMin, &row.Record.RSILongMax, &row.Record.RSIShortMin, &row.Record.RSIShortMax,
-		&gamble, &row.Record.ScalpTpPct, &row.Record.ScalpSlPct, &running,
+		&gamble, &row.Record.ScalpTpPct, &row.Record.ScalpSlPct,
+		&row.Record.RFraction, &row.Record.ExpectancyTpCapR, &row.Record.TakerFeeRate, &row.Record.MakerFeeRate, &expectancyGate,
+		&running,
 		&row.CreatedAt, &row.UpdatedAt,
 		&network, &status, &label,
 	)
@@ -556,6 +591,7 @@ func scanStrategy(s scanner) (strategyRow, error) {
 	row.Record.GambleMode = gamble == 1
 	row.Record.Running = running == 1
 	row.Record.PauseEntries = pauseEntries != 0
+	row.Record.ExpectancyGate = expectancyGate != 0
 	return row, nil
 }
 
@@ -794,6 +830,21 @@ func applyStrategyWrite(base strategyRecord, in strategyWrite, creating bool) (s
 	if in.ScalpSlPct != nil {
 		out.ScalpSlPct = round4(*in.ScalpSlPct)
 	}
+	if in.RFraction != nil {
+		out.RFraction = round8(*in.RFraction)
+	}
+	if in.ExpectancyTpCapR != nil {
+		out.ExpectancyTpCapR = round4(*in.ExpectancyTpCapR)
+	}
+	if in.TakerFeeRate != nil {
+		out.TakerFeeRate = round8(*in.TakerFeeRate)
+	}
+	if in.MakerFeeRate != nil {
+		out.MakerFeeRate = round8(*in.MakerFeeRate)
+	}
+	if in.ExpectancyGate != nil {
+		out.ExpectancyGate = *in.ExpectancyGate
+	}
 	if out.ScalpTpPct <= 0 {
 		out.ScalpTpPct = trading.DefaultScalpPct
 	}
@@ -817,7 +868,7 @@ func validateStrategy(rec strategyRecord, missingKey bool) *tradingError {
 		return &tradingError{http.StatusBadRequest, fmt.Sprintf("杠杆必须是 1 到 %d 的整数", trading.MaxLeverage), "invalid_leverage"}
 	}
 	if _, ok := strategyTimeframes[rec.Timeframe]; !ok {
-		return &tradingError{http.StatusBadRequest, "K 线周期只支持 1m、3m、5m、15m", "invalid_timeframe"}
+		return &tradingError{http.StatusBadRequest, "K 线周期只支持 " + trading.SupportedTimeframes, "invalid_timeframe"}
 	}
 	if rec.EmaFast < 2 || rec.EmaFast > 50 || rec.EmaSlow < 3 || rec.EmaSlow > 200 || rec.EmaFast >= rec.EmaSlow {
 		return &tradingError{http.StatusBadRequest, "快线要小于慢线，且落在允许范围内", "invalid_ema"}
@@ -830,6 +881,18 @@ func validateStrategy(rec strategyRecord, missingKey bool) *tradingError {
 	}
 	if !validRisk(rec.MaxMarginUsdt, 1_000_000) {
 		return &tradingError{http.StatusBadRequest, "单笔保证金上限要大于 0", "invalid_risk"}
+	}
+	if rec.RFraction <= 0 || rec.RFraction > 0.2 {
+		return &tradingError{http.StatusBadRequest, "1R 比例要大于 0 且不超过 20%", "rFraction"}
+	}
+	if rec.ExpectancyTpCapR <= 0 || rec.ExpectancyTpCapR > 20 {
+		return &tradingError{http.StatusBadRequest, "期望止盈上限要大于 0 且不超过 20R", "expectancyTpCapR"}
+	}
+	if rec.TakerFeeRate <= 0 || rec.TakerFeeRate > 0.01 {
+		return &tradingError{http.StatusBadRequest, "taker 手续费回退要大于 0 且不超过 1%", "takerFeeRate"}
+	}
+	if rec.MakerFeeRate <= 0 || rec.MakerFeeRate > 0.01 {
+		return &tradingError{http.StatusBadRequest, "maker 手续费回退要大于 0 且不超过 1%", "makerFeeRate"}
 	}
 	if rec.Mode != networkTestnet && rec.Mode != networkLive {
 		return &tradingError{http.StatusBadRequest, "mode 只能是 testnet 或 live", "invalid_mode"}
@@ -885,4 +948,8 @@ func validRisk(v, max float64) bool {
 
 func round4(v float64) float64 {
 	return math.Round(v*10000) / 10000
+}
+
+func round8(v float64) float64 {
+	return math.Round(v*1e8) / 1e8
 }

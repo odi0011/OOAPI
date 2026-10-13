@@ -120,7 +120,7 @@ func SweepPass(inSample, outSample BacktestSummary) bool {
 // Backtest 用与引擎相同的开平规则重放 K 线。
 // 成交价在信号价上叠加单边滑点，再扣双边 taker 手续费。netR 以扣费后的盈亏除以 1R。
 func Backtest(cfg Config, candles, higher []Candle) (BacktestResult, error) {
-	return backtest(cfg, candles, higher, TakerFeeRate, SlippageRate)
+	return backtest(cfg, candles, higher, cfg.takerFee(), SlippageRate)
 }
 
 func backtest(cfg Config, candles, higher []Candle, fee, slip float64) (BacktestResult, error) {
@@ -213,7 +213,7 @@ func stopTake(cfg Config, side Side, entry float64) (float64, float64, error) {
 		sl, tp := cfg.scalpPcts()
 		return ScalpProtection(side, entry, sl, tp)
 	}
-	return ProtectionPrices(side, entry, entry*DefaultRFraction, cfg.StopR, cfg.TakeProfitR)
+	return ProtectionPrices(side, entry, entry*cfg.oneRFraction(), cfg.StopR, cfg.TakeProfitR)
 }
 
 func entrySide(cfg Config, candles, higher []Candle) (Side, string, error) {
@@ -281,7 +281,7 @@ func settleTrade(side Side, entry, exit, qty, fee float64, cfg Config, opened, c
 	gross := RealizedPnL(side, entry, exit, qty)
 	fees := fee*entry*qty + fee*exit*qty
 	net := gross - fees
-	oneR := entry * DefaultRFraction * cfg.StopR * qty
+	oneR := cfg.oneRUSDT(entry, qty)
 	var r float64
 	if oneR > 0 {
 		r = net / oneR
@@ -318,6 +318,8 @@ func closedHigher(higher []Candle, bar Candle, tf time.Duration) []Candle {
 // TimeframeDuration 把策略周期换成时长。不认识的周期按 5 分钟。
 func TimeframeDuration(tf string) time.Duration {
 	switch tf {
+	case "1s":
+		return time.Second
 	case "1m":
 		return time.Minute
 	case "3m":

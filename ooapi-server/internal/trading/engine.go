@@ -351,6 +351,9 @@ func (e *Engine) storeConfig(cfg Config) error {
 	if cfg.CreatedAt.IsZero() {
 		cfg.CreatedAt = e.cfg.CreatedAt
 	}
+	if cfg.Symbol != e.cfg.Symbol || cfg.TakerFeeRate != e.cfg.TakerFeeRate || cfg.MakerFeeRate != e.cfg.MakerFeeRate {
+		e.feeReady = false
+	}
 	e.cfg = cfg
 	if !e.incomeSince.IsZero() && !e.incomeSince.Equal(e.incomeSinceTime()) {
 		e.incomeOK = false
@@ -1167,10 +1170,10 @@ func (e *Engine) forgetPlan() {
 	e.lastLiq = 0
 }
 
-// quoteProtection 用入场价的固定比例算 1R，再换成止损、止盈和逐仓强平价。
-// 1R = entry * DefaultRFraction（默认 0.8%）。止损距离 = stopR * 1R。
+// quoteProtection 用策略里的 1R 比例算止损、止盈和逐仓强平价。
+// 1R = entry * rFraction（默认 0.8%）。止损距离 = stopR * 1R。
 // 赌一把模式改用相对入场价的剥头皮距离，止盈不会低于 MinScalpTpPct。
-// 有回测样本时，止盈再放到让手续费后期望为正的距离，但不超过 ExpectancyTpCapR。
+// 期望门打开且有回测样本时，止盈再放到让手续费后期望为正的距离，但不超过策略的止盈上限。
 // 放宽之后按新的止盈、止损距离重算胜率，期望仍不为正就跳过。
 func (e *Engine) quoteProtection(side Side, entry float64) (stop, take, liq float64, err error) {
 	stop, take, err = stopTake(e.cfg, side, entry)
@@ -1475,7 +1478,7 @@ func (e *Engine) entryQty(price float64, in StepInput) (float64, error) {
 		step, minQty = rules.StepSize, rules.MinQty
 	}
 	configured := plannedMargin(e.cfg)
-	budget := marginForBalance(e.cfg, in.Available, in.WalletKnown, TakerFeeRate)
+	budget := marginForBalance(e.cfg, in.Available, in.WalletKnown, e.cfg.takerFee())
 	shrunk := in.WalletKnown && budget+1e-9 < configured
 	if budget <= 0 {
 		if shrunk {
@@ -1581,7 +1584,7 @@ func (e *Engine) commitEntry(fill Fill) {
 	}
 	draft := e.pendingEntry
 	e.pendingEntry = entryDraft{}
-	oneR := PositionOneRUSDT(fill.Price, fill.Qty, e.cfg.StopR)
+	oneR := e.cfg.oneRUSDT(fill.Price, fill.Qty)
 	expR := 0.0
 	if draft.hasSum {
 		expR = draft.sum.ExpectancyR

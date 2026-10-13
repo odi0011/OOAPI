@@ -639,10 +639,12 @@ func (r *Runner) backtest(cfg Config, mkt Market, now time.Time) (BacktestSummar
 func backtestDataKey(cfg Config, candles, higher []Candle) string {
 	cfg = cfg.Normalize()
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s|%s|%s|%d|%d|%d|%.6f|%.6f|%d|%t|%.6f|%.6f|%.4f|%.4f|%.4f|%.4f",
+	fmt.Fprintf(&b, "%s|%s|%s|%d|%d|%d|%.6f|%.6f|%d|%t|%.6f|%.6f|%.4f|%.4f|%.4f|%.4f|%.8f|%.4f|%.8f|%.8f|%t|%.6f|%.4f",
 		cfg.Symbol, cfg.Timeframe, cfg.EntryMode, cfg.Leverage, cfg.EmaFast, cfg.EmaSlow,
 		cfg.StopR, cfg.TakeProfitR, cfg.MinScore, cfg.GambleMode, cfg.ScalpTpPct, cfg.ScalpSlPct,
-		cfg.RSILongMin, cfg.RSILongMax, cfg.RSIShortMin, cfg.RSIShortMax)
+		cfg.RSILongMin, cfg.RSILongMax, cfg.RSIShortMin, cfg.RSIShortMax,
+		cfg.oneRFraction(), cfg.expectancyCapR(), cfg.takerFee(), cfg.makerFee(), cfg.ExpectancyGate,
+		cfg.MaxMarginUsdt, cfg.DailyLossPct)
 	writeCandleKey(&b, "c", candles)
 	writeCandleKey(&b, "h", higher)
 	return b.String()
