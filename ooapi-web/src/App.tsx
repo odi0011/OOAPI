@@ -72,7 +72,7 @@ export default function App() {
                   }
                 />
 
-                {/* 系统设置：外观、站点、注册、第三方与邮件、计费、网关。
+                {/* 系统设置：外观、站点、注册、第三方与邮件、计费、网关、更新。
                     登录与注册是其中的一个分区，不再单独占一个侧边栏入口。
                     带 #hash 时页面会滚动到对应分区。需要 option:edit */}
                 <Route
@@ -136,7 +136,7 @@ export default function App() {
                   }
                 />
 
-                {/* 交易数据看板：总余额首屏、K 线仓位融合、参数/历史/决策记录、交易系统。走 option:edit。 */}
+                {/* 交易数据看板：全部品种一张融合图，持仓与决策叠在同一时间轴。走 option:edit。 */}
                 <Route
                   path="/admin/trading/board"
                   element={

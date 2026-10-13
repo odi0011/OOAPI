@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 
 import { Button } from "@/components/arc/button/button";
 import AdminLayout from "@/components/admin/AdminLayout";
@@ -12,6 +13,7 @@ import AuthSection from "./sections/AuthSection";
 import BillingSection from "./sections/BillingSection";
 import GatewaySection from "./sections/GatewaySection";
 import RegistrationSection from "./sections/RegistrationSection";
+import UpdateSection from "./sections/UpdateSection";
 import SettingsRail from "./SettingsRail";
 import SiteSection from "./sections/SiteSection";
 import { SETTINGS_SECTIONS } from "./settingsNav";
@@ -53,6 +55,7 @@ export default function AdminSettings() {
   const [active, setActive] = useState("appearance");
   const [dirty, setDirty] = useState(false);
   const appearanceCtx = useAppearance();
+  const location = useLocation();
 
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
   /** 点击导航后短暂关闭滚动联动，避免平滑滚动途中经过的分区把高亮抢走。 */
@@ -109,18 +112,17 @@ export default function AdminSettings() {
     void load();
   }, []);
 
-  // 支持从侧边栏的 /admin/system#auth 直接跳到对应分区。
+  // 支持 /admin/system#update 这类链接，包括已经停在设置页时再点一次。
   useEffect(() => {
-    const hash = window.location.hash.replace("#", "");
+    const hash = location.hash.replace("#", "");
     if (hash && SECTIONS.some((s) => s.key === hash)) {
-      // 等首屏渲染完成后再滚，否则元素还没挂载。
       const timer = window.setTimeout(() => {
         setActive(hash);
         sectionRefs.current[hash]?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 300);
+      }, loading ? 300 : 0);
       return () => window.clearTimeout(timer);
     }
-  }, [loading]);
+  }, [loading, location.hash]);
 
   /** 局部更新：标记为有未保存修改，保存时提交整个设置对象。 */
   const patch = useMemo(
@@ -275,6 +277,10 @@ export default function AdminSettings() {
                 value={{ request_timeout_ms: settings.request_timeout_ms }}
                 onChange={(v) => patch(v)}
               />
+            </section>
+
+            <section data-section="update" ref={(el) => { sectionRefs.current.update = el; }} className={styles.section}>
+              <UpdateSection />
             </section>
           </div>
         </div>

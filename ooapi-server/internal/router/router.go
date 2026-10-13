@@ -246,6 +246,14 @@ func Setup(cfg *config.Config) *gin.Engine {
 			middleware.RequirePermission(authz.PermOptionEdit),
 			handlers.AdminUpdateSettings,
 		)
+		admin.GET("/system/update",
+			middleware.RequirePermission(authz.PermOptionView),
+			handlers.AdminGetSystemUpdate,
+		)
+		admin.POST("/system/update",
+			middleware.RequirePermission(authz.PermOptionEdit),
+			handlers.AdminPostSystemUpdate,
+		)
 
 		// 图标上传（站点图标、货币图标）。用文件上传而不是让管理员手填地址。
 		admin.POST("/upload/icon",

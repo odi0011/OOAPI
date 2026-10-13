@@ -24,6 +24,8 @@ var optionDefaults = map[string]string{
 	"units_per_od":              "10000",
 	"quota_for_new_user":        "0",
 	"request_timeout_ms":        "600000",
+	// 设置页「更新」。默认关，避免未经确认就改运行中的代码。
+	"system_auto_update": "false",
 	// 站点对外地址，用于拼 OAuth 回调地址。
 	// 留空则按请求头推导，但线上经反代时建议显式配置。
 	"site_base_url": "",
