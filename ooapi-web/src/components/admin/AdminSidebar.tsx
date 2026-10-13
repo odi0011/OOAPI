@@ -105,6 +105,14 @@ export const ADMIN_NAV: AdminNavGroup[] = [
         keywords: ["K线", "持仓", "委托", "盈亏", "交易台", "标记价"],
       },
       {
+        key: "trading-board",
+        label: "交易数据看板",
+        icon: <LayoutDashboard size={18} strokeWidth={1.75} />,
+        href: "/admin/trading/board",
+        requiredPermission: "option:edit",
+        keywords: ["总余额", "币种", "决策模板", "调参", "网格", "机器人", "历史记录"],
+      },
+      {
         key: "trading-account",
         label: "账户",
         icon: <Landmark size={18} strokeWidth={1.75} />,
