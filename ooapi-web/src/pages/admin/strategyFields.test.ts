@@ -2,6 +2,7 @@ import {
   strategyDailyLossError,
   strategyExpectancyCapError,
   strategyFeePctError,
+  strategyLiveSampleError,
   strategyMaxMarginError,
   strategyMinScoreError,
   strategyOneRPctError,
@@ -27,6 +28,7 @@ assertEqual(strategyOneRPctError(0.8), null, "0.8% is the production 1R");
 assertEqual(strategyOneRPctError(0), "1R 比例要大于 0 且不超过 20%", "zero 1R is rejected");
 assertEqual(strategyOneRPctError(20.1), "1R 比例要大于 0 且不超过 20%", "1R above 20% is rejected");
 
+assertEqual(strategyExpectancyCapError(4), null, "cap 4 is the default");
 assertEqual(strategyExpectancyCapError(3), null, "cap 3 is valid");
 assertEqual(strategyExpectancyCapError(0), "期望止盈上限要大于 0 且不超过 20R", "cap 0 is rejected");
 assertEqual(strategyExpectancyCapError(21), "期望止盈上限要大于 0 且不超过 20R", "cap 21 is rejected");
@@ -38,8 +40,14 @@ assertEqual(strategyFeePctError(1.1, "maker "), "maker 手续费回退要大于 
 
 assertEqual(strategyStopDistanceError(1, 1.5), null, "default stop and take are valid");
 assertEqual(strategyStopDistanceError(0, 1), "止损和止盈要大于 0 且不超过 20", "missing stop is rejected");
-assertEqual(strategyMinScoreError(4), null, "score 4 is valid");
+assertEqual(strategyMinScoreError(4), null, "score 4 is the max");
+assertEqual(strategyMinScoreError(3), null, "score 3 is the default");
 assertEqual(strategyMinScoreError(0), "分数门槛要在 1 到 4", "score 0 is rejected");
+assertEqual(strategyLiveSampleError("live", false, 0.38, 10), null, "live 0.38/10 is allowed");
+assertEqual(strategyLiveSampleError("live", false, 0.37, 10), "实盘胜率门槛不能低于 0.38", "live win rate below 0.38 is rejected");
+assertEqual(strategyLiveSampleError("live", false, 0.38, 9), "实盘样本笔数不能低于 10", "live sample below 10 is rejected");
+assertEqual(strategyLiveSampleError("live", true, 0, 1), null, "gamble skips the live floor");
+assertEqual(strategyLiveSampleError("testnet", false, 0, 1), null, "testnet skips the live floor");
 assertEqual(strategyDailyLossError(100), null, "100 turns the daily halt off");
 assertEqual(strategyDailyLossError(100.01), "日亏停机阈值要大于 0 且不超过 100", "above 100 is rejected");
 assertEqual(strategyPauseBalanceError(0.5), null, "floor is valid");

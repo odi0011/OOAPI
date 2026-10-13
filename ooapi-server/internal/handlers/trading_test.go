@@ -437,14 +437,23 @@ func TestLiveRejectsWeakWinRateAndSampleSize(t *testing.T) {
 	}`, owner, "")
 	keyID := int64(tradingData(t, keyRec)["id"].(float64))
 	win := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
-		fmt.Sprintf(`{"exchangeKeyId": %d, "mode": "live", "minWinRate": 0}`, keyID), owner, "")
+		fmt.Sprintf(`{"exchangeKeyId": %d, "mode": "live", "minWinRate": 0.37}`, keyID), owner, "")
 	if win.Code != http.StatusBadRequest || tradingCode(t, win) != "minWinRate" {
 		t.Fatalf("win rate = %d %s", win.Code, win.Body.String())
 	}
 	trades := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
-		fmt.Sprintf(`{"exchangeKeyId": %d, "mode": "live", "minTrades": 1}`, keyID), owner, "")
+		fmt.Sprintf(`{"exchangeKeyId": %d, "mode": "live", "minTrades": 9}`, keyID), owner, "")
 	if trades.Code != http.StatusBadRequest || tradingCode(t, trades) != "minTrades" {
 		t.Fatalf("trades = %d %s", trades.Code, trades.Body.String())
+	}
+	saved := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+		fmt.Sprintf(`{"exchangeKeyId": %d, "mode": "live", "minWinRate": 0.38, "minTrades": 10, "minScore": 4, "expectancyTpCapR": 4}`, keyID), owner, "")
+	if saved.Code != http.StatusOK {
+		t.Fatalf("save 0.38/10 = %d %s", saved.Code, saved.Body.String())
+	}
+	view := tradingData(t, saved)
+	if view["minWinRate"] != 0.38 || view["minTrades"] != float64(10) || view["minScore"] != float64(4) || view["expectancyTpCapR"] != float64(4) || view["expectancyGate"] != true {
+		t.Fatalf("saved floors %#v", view)
 	}
 }
 
