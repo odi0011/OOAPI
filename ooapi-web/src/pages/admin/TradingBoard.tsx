@@ -216,7 +216,7 @@ export default function TradingBoard() {
       crumbs={[
         { label: "后台", href: "/admin" },
         { label: "交易" },
-        { label: "交易数据看板" },
+        { label: "数据看板" },
       ]}
     >
       <div className={styles.page}>
