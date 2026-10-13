@@ -711,10 +711,24 @@ func TestApplyConfigHotReloadsWithoutRestart(t *testing.T) {
 	next.GambleMode = true
 	next.ScalpSlPct = 0.004
 	next.ScalpTpPct = 0.001
+	next.RFraction = 0.004
+	next.ExpectancyTpCapR = 2
+	next.TakerFeeRate = 0.0004
+	next.MakerFeeRate = 0.0001
+	next.ExpectancyGate = false
+	next.MaxMarginUsdt = 1.7
+	next.Leverage = 20
+	next.Timeframe = "1s"
+	next.DailyLossPct = 100
+	next.PauseBalanceUsdt = 0.5
+	next.PauseEntries = true
 	next.Revision = 10
 	h.ApplyConfig(1, cfg.ID, next)
 	got, ok := h.Config(1, cfg.ID)
-	if !ok || got.MinScore != 2 || !got.GambleMode || got.ScalpSlPct != 0.004 || got.ScalpTpPct != 0.001 {
+	if !ok || got.MinScore != 2 || !got.GambleMode || got.ScalpSlPct != 0.004 || got.ScalpTpPct != 0.001 ||
+		got.RFraction != 0.004 || got.ExpectancyTpCapR != 2 || got.TakerFeeRate != 0.0004 || got.MakerFeeRate != 0.0001 ||
+		got.ExpectancyGate || got.MaxMarginUsdt != 1.7 || got.Leverage != 20 || got.Timeframe != "1s" ||
+		got.DailyLossPct != 100 || got.PauseBalanceUsdt != 0.5 || !got.PauseEntries {
 		t.Fatalf("%+v ok=%v", got, ok)
 	}
 	if eng.State() != StateArmed || !eng.running {

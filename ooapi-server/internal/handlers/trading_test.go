@@ -547,6 +547,88 @@ func TestDOGEStrategyAcceptsPlannerParams(t *testing.T) {
 	}
 }
 
+func TestStrategyConfigFieldsRoundTrip(t *testing.T) {
+	useTradingDB(t)
+	owner := tradingUser(43)
+	keyRec := callTrading(t, CreateExchangeKey, http.MethodPost, "/api/trading/exchange-keys", `{
+		"label": "测网",
+		"network": "testnet",
+		"apiKey": "`+testAPIKey+`",
+		"apiSecret": "`+testAPISecret+`"
+	}`, owner, "")
+	keyID := int64(tradingData(t, keyRec)["id"].(float64))
+	body := fmt.Sprintf(`{
+		"symbol": "DOGEUSDT",
+		"exchangeKeyId": %d,
+		"leverage": 125,
+		"timeframe": "1s",
+		"stopR": 0.8,
+		"takeProfitR": 1.2,
+		"dailyLossPct": 100,
+		"maxMarginUsdt": 1.7,
+		"pauseBalanceUsdt": 0.5,
+		"minScore": 2,
+		"gambleMode": true,
+		"expectancyGate": false,
+		"rFraction": 0.008,
+		"expectancyTpCapR": 3,
+		"takerFeeRate": 0.0005,
+		"makerFeeRate": 0.0002
+	}`, keyID)
+	rec := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies", body, owner, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create = %d %s", rec.Code, rec.Body.String())
+	}
+	view := tradingData(t, rec)
+	checks := map[string]any{
+		"leverage": float64(125), "timeframe": "1s", "stopR": 0.8, "takeProfitR": 1.2,
+		"dailyLossPct": float64(100), "maxMarginUsdt": 1.7, "pauseBalanceUsdt": 0.5,
+		"minScore": float64(2), "gambleMode": true, "expectancyGate": false,
+		"rFraction": 0.008, "expectancyTpCapR": float64(3),
+		"takerFeeRate": 0.0005, "makerFeeRate": 0.0002, "marginMode": "isolated",
+	}
+	for key, want := range checks {
+		if view[key] != want {
+			t.Fatalf("%s = %#v want %#v", key, view[key], want)
+		}
+	}
+	id := fmt.Sprint(int64(view["id"].(float64)))
+	rejects := []struct {
+		body string
+		code string
+	}{
+		{`{"leverage": 126}`, "invalid_leverage"},
+		{`{"leverage": 0}`, "invalid_leverage"},
+		{`{"rFraction": 0}`, "rFraction"},
+		{`{"rFraction": 0.21}`, "rFraction"},
+		{`{"pauseBalanceUsdt": 0.4}`, "pauseBalanceUsdt"},
+		{`{"timeframe": "2s"}`, "invalid_timeframe"},
+		{`{"timeframe": "1s"}`, ""},
+		{`{"expectancyTpCapR": 0}`, "expectancyTpCapR"},
+		{`{"expectancyTpCapR": 21}`, "expectancyTpCapR"},
+		{`{"takerFeeRate": 0}`, "takerFeeRate"},
+		{`{"makerFeeRate": 0.02}`, "makerFeeRate"},
+		{`{"maxMarginUsdt": 0}`, "invalid_risk"},
+		{`{"stopR": 0}`, "invalid_risk"},
+		{`{"takeProfitR": 21}`, "invalid_risk"},
+		{`{"minScore": 0}`, "invalid_score"},
+		{`{"dailyLossPct": 100.01}`, "invalid_risk"},
+		{`{"expectancyGate": true}`, ""},
+	}
+	for _, item := range rejects {
+		rec := callTrading(t, UpdateTradingStrategy, http.MethodPatch, "/api/trading/strategies/"+id, item.body, owner, id)
+		if item.code == "" {
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s = %d %s", item.body, rec.Code, rec.Body.String())
+			}
+			continue
+		}
+		if rec.Code != http.StatusBadRequest || tradingCode(t, rec) != item.code {
+			t.Fatalf("%s = %d %s want %s", item.body, rec.Code, rec.Body.String(), item.code)
+		}
+	}
+}
+
 func assertStrategyDefaults(t *testing.T, view map[string]any) {
 	t.Helper()
 	checks := []struct {
@@ -580,6 +662,11 @@ func assertStrategyDefaults(t *testing.T, view map[string]any) {
 		{"gambleMode", false},
 		{"scalpTpPct", trading.DefaultScalpPct},
 		{"scalpSlPct", trading.DefaultScalpPct},
+		{"rFraction", trading.DefaultRFraction},
+		{"expectancyTpCapR", float64(trading.ExpectancyTpCapR)},
+		{"takerFeeRate", trading.TakerFeeRate},
+		{"makerFeeRate", trading.MakerFeeRate},
+		{"expectancyGate", true},
 	}
 	for _, check := range checks {
 		got := view[check.key]
@@ -906,12 +993,15 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 				RSIShortMin: tradingArgFloat(vals[24]), RSIShortMax: tradingArgFloat(vals[25]),
 				GambleMode: tradingArgInt(vals[26]) == 1,
 				ScalpTpPct: tradingArgFloat(vals[27]), ScalpSlPct: tradingArgFloat(vals[28]),
-				Running: tradingArgInt(vals[29]) == 1,
+				RFraction: tradingArgFloat(vals[29]), ExpectancyTpCapR: tradingArgFloat(vals[30]),
+				TakerFeeRate: tradingArgFloat(vals[31]), MakerFeeRate: tradingArgFloat(vals[32]),
+				ExpectancyGate: tradingArgInt(vals[33]) == 1,
+				Running:        tradingArgInt(vals[34]) == 1,
 			},
 		}
 		return tradingTestResult{id, 1}, nil
 	case normTradingSQL(strategyUpdateSQL):
-		id, userID := tradingArgInt(vals[28]), tradingArgInt(vals[29])
+		id, userID := tradingArgInt(vals[33]), tradingArgInt(vals[34])
 		row := d.strategies[id]
 		if row == nil || row.userID != userID {
 			return tradingTestResult{0, 0}, nil
@@ -933,7 +1023,10 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 			RSIShortMin: tradingArgFloat(vals[23]), RSIShortMax: tradingArgFloat(vals[24]),
 			GambleMode: tradingArgInt(vals[25]) == 1,
 			ScalpTpPct: tradingArgFloat(vals[26]), ScalpSlPct: tradingArgFloat(vals[27]),
-			Running: running,
+			RFraction: tradingArgFloat(vals[28]), ExpectancyTpCapR: tradingArgFloat(vals[29]),
+			TakerFeeRate: tradingArgFloat(vals[30]), MakerFeeRate: tradingArgFloat(vals[31]),
+			ExpectancyGate: tradingArgInt(vals[32]) == 1,
+			Running:        running,
 		}
 		row.updatedAt = d.stampLocked()
 		return tradingTestResult{0, 1}, nil
@@ -1130,7 +1223,9 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 		"max_margin_per_trade_usdt", "max_consecutive_losses", "pause_balance_usdt", "pause_reason", "pause_entries",
 		"max_open_positions",
 		"rsi_long_min", "rsi_long_max", "rsi_short_min", "rsi_short_max",
-		"gamble_mode", "scalp_tp_pct", "scalp_sl_pct", "running",
+		"gamble_mode", "scalp_tp_pct", "scalp_sl_pct",
+		"r_fraction", "expectancy_tp_cap_r", "taker_fee_rate", "maker_fee_rate", "expectancy_gate",
+		"running",
 		"created_at", "updated_at", "network", "status", "label",
 	}
 	type pair struct {
@@ -1169,6 +1264,10 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 		if rec.GambleMode {
 			gamble = 1
 		}
+		gate := int64(0)
+		if rec.ExpectancyGate {
+			gate = 1
+		}
 		values = append(values, []driver.Value{
 			row.id, rec.Symbol, int64(rec.Leverage), rec.MarginMode, int64(rec.EmaFast), int64(rec.EmaSlow), rec.Timeframe,
 			rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
@@ -1176,7 +1275,9 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 			rec.MaxMarginPerTradeUsdt, int64(rec.MaxConsecutiveLosses), rec.PauseBalanceUsdt, rec.PauseReason, pauseEntriesValue(rec.PauseEntries),
 			int64(rec.MaxOpenPositions),
 			rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax,
-			gamble, rec.ScalpTpPct, rec.ScalpSlPct, running,
+			gamble, rec.ScalpTpPct, rec.ScalpSlPct,
+			rec.RFraction, rec.ExpectancyTpCapR, rec.TakerFeeRate, rec.MakerFeeRate, gate,
+			running,
 			row.createdAt, row.updatedAt, network, status, label,
 		})
 	}

@@ -20,9 +20,9 @@ export function discardLegacyStrategyDraft(): void {
 }
 
 export type TradingNetwork = "testnet" | "live";
-export type Timeframe = "1m" | "3m" | "5m" | "15m";
+export type Timeframe = "1s" | "1m" | "3m" | "5m" | "15m";
 
-export const TIMEFRAMES: readonly Timeframe[] = ["1m", "3m", "5m", "15m"];
+export const TIMEFRAMES: readonly Timeframe[] = ["1s", "1m", "3m", "5m", "15m"];
 
 /** 没有读到策略时的首发默认：测网，交易所密钥 1。 */
 export const DEFAULT_STRATEGY_MODE: TradingNetwork = "testnet";
@@ -56,7 +56,7 @@ export interface ExchangeKeyPlain {
 export interface Strategy {
   id: number;
   symbol: string;
-  /** 整数，1–MAX_STRATEGY_LEVERAGE（当前 20）。 */
+  /** 整数，1–MAX_STRATEGY_LEVERAGE（当前 125）。 */
   leverage: number;
   marginMode: string;
   emaFast: number;
@@ -64,6 +64,15 @@ export interface Strategy {
   timeframe: string;
   stopR: number;
   takeProfitR: number;
+  /** 1R 占入场价的比例。0.008 表示 0.8%。 */
+  rFraction: number;
+  /** 期望门允许的止盈上限，单位 R。 */
+  expectancyTpCapR: number;
+  /** 读不到交易所费率时的 taker / maker 回退。 */
+  takerFeeRate: number;
+  makerFeeRate: number;
+  /** 为假时不再因手续费后期望不为正而跳过开仓。 */
+  expectancyGate: boolean;
   dailyLossPct: number;
   /** 钱包余额暂停线，单位 USDT。不能低于 0.5。 */
   pauseBalanceUsdt?: number;
@@ -89,7 +98,7 @@ export interface Strategy {
 /** 与后端 strategyWrite 同名。ID 必须是数字，不能是会话里的字符串。 */
 export interface StrategyWrite {
   symbol: "XRPUSDT";
-  /** 整数，1–MAX_STRATEGY_LEVERAGE（当前 20）。 */
+  /** 整数，1–MAX_STRATEGY_LEVERAGE（当前 125）。 */
   leverage: number;
   marginMode: "isolated";
   emaFast: number;
@@ -97,6 +106,11 @@ export interface StrategyWrite {
   timeframe: Timeframe;
   stopR: number;
   takeProfitR: number;
+  rFraction: number;
+  expectancyTpCapR: number;
+  takerFeeRate: number;
+  makerFeeRate: number;
+  expectancyGate: boolean;
   dailyLossPct: number;
   /** 钱包余额暂停线，单位 USDT。不能低于 0.5。 */
   pauseBalanceUsdt: number;

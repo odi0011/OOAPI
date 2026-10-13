@@ -197,6 +197,54 @@ func TestExpectancyGateWidensOrSkipsEntry(t *testing.T) {
 	}
 }
 
+func TestStrategyCapAndGateToggle(t *testing.T) {
+	now := time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC)
+	candles := candlesUntil(t, CrossGolden)
+	price := candles[len(candles)-1].Close
+
+	tight := NewPaper()
+	cfg := testConfig()
+	cfg.GambleMode = true
+	cfg.ScalpSlPct = 0.003
+	cfg.ScalpTpPct = MinScalpTpPct
+	cfg.ExpectancyGate = true
+	cfg.ExpectancyTpCapR = 0.01
+	eng := withSecrets(NewEngine(cfg, tight, DiscardLogger()))
+	if err := eng.Start(calmStart(now, 20)); err != nil {
+		t.Fatal(err)
+	}
+	in := stepAt(now, candles, price, 20)
+	in.Backtest = &BacktestSummary{WinRate: 0.75, Trades: 8, NetR: -1}
+	snap, err := eng.Step(in)
+	if err != nil || tight.Entries != 0 || snap.LastReason != ReasonNegativeExpectancy || snap.State != StateArmed {
+		t.Fatalf("strategy cap %+v entries=%d err=%v", snap, tight.Entries, err)
+	}
+	if _, _, reason := ResolveLiveTakeProfit(0.75, true, 0.003, MinScalpTpPct, FeesFromRates(MakerFeeRate, TakerFeeRate)); reason != "" {
+		t.Fatalf("default cap should still widen, reason %s", reason)
+	}
+
+	open := NewPaper()
+	cfg.ExpectancyGate = false
+	cfg.ExpectancyTpCapR = float64(ExpectancyTpCapR)
+	off := withSecrets(NewEngine(cfg, open, DiscardLogger()))
+	if err := off.Start(calmStart(now.Add(time.Hour), 20)); err != nil {
+		t.Fatal(err)
+	}
+	bad := stepAt(now.Add(time.Hour), candles, price, 20)
+	bad.Backtest = &BacktestSummary{WinRate: 0.53, Trades: 4, NetR: -1}
+	snap, err = off.Step(bad)
+	if err != nil || snap.State != StateInPosition || open.Entries != 1 {
+		t.Fatalf("gate off %+v entries=%d err=%v", snap, open.Entries, err)
+	}
+	floor := price * (1 + MinScalpTpPct)
+	if snap.Side == SideShort {
+		floor = price * (1 - MinScalpTpPct)
+	}
+	if math.Abs(snap.TakeProfitPrice-floor) > 1e-8 || snap.LiveExpectancy != 0 {
+		t.Fatalf("gate off take %v live %v floor %v", snap.TakeProfitPrice, snap.LiveExpectancy, floor)
+	}
+}
+
 func TestForcedEntryObeysExpectancyGate(t *testing.T) {
 	ResetTestnetGreen()
 	SetTestnetGreen(true)
