@@ -1,5 +1,6 @@
 import {
   buildDeskStatus,
+  formatPriceFraction,
   entryScoreText,
   engineStateText,
   levelText,
@@ -45,6 +46,17 @@ assertEqual(twenty.leverageText, "20 倍", "leverage 20 is shown as stored");
 assertEqual(idle.marginModeText, "逐仓", "isolated");
 assertEqual(idle.accountLabel, "币安测网", "account");
 assertEqual(idle.timeframe, "5m", "timeframe fallback");
+assertEqual(idle.liveExpectancyText, "—", "idle has no live expectancy");
+assertEqual(idle.takeProfitDistText, "—", "idle has no take-profit distance");
+assertEqual(formatPriceFraction(0), "0.000%", "zero price fraction is shown");
+assertEqual(formatPriceFraction(0.00032), "0.032%", "live expectancy percent");
+assertEqual(formatPriceFraction(0.012), "1.200%", "take-profit distance percent");
+
+const gated = buildDeskStatus({
+  engine: { liveExpectancy: 0.00032, takeProfitDist: 0.012 },
+});
+assertEqual(gated.liveExpectancyText, "0.032%", "state live expectancy");
+assertEqual(gated.takeProfitDistText, "1.200%", "state take-profit distance");
 
 const fromState = buildDeskStatus({
   engine: {

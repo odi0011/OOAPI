@@ -94,8 +94,9 @@ const (
 	ReasonExchangeFlat = "exchange_flat"
 	// ReasonEntriesPaused 表示策略关掉了新开仓。已有仓和止损止盈保持不动。
 	ReasonEntriesPaused = "entries_paused"
-	// ReasonNegativeExpectancy 表示在回测胜率下，止盈放到允许上限后期望仍不为正。
-	// 加速开仓和强制开仓同样记这个原因并跳过，不会只把止损挂上。
+	// ReasonNegativeExpectancy 表示止盈放到 ExpectancyTpCapR 以内后，
+	// 按新距离重算的胜率仍盖不住手续费，期望不为严格正数。
+	// 加速开仓、强制开仓和赌一把同样记这个原因并跳过，不会只把止损挂上。
 	ReasonNegativeExpectancy = "negative_expectancy"
 	// ReasonInsufficientMargin 表示按可用余额缩过保证金后，名义价值仍低于交易所下限，
 	// 或者开仓被币安以 -2019 拒绝且没有任何成交。引擎留在 Armed。
@@ -175,8 +176,9 @@ type Config struct {
 	RSIShortMax float64 `json:"rsiShortMax,omitempty"`
 	// GambleMode 打开后跳过回测胜率、样本和净 R 这道门。minScore 仍按配置（1–4）。
 	// 加速强制开仓同样不再要求那道回测门。止损止盈改用剥头皮距离。
-	// 手续费后的期望门不在豁免里：普通开仓、加速开仓和强制开仓都要让
-	// EV = p*(tpDist-feeWin)-(1-p)*(slDist+feeLoss) > 0，否则 lastReason=negative_expectancy。
+	// 手续费后的期望门不在豁免里：普通开仓、加速开仓、强制开仓和赌一把都要让
+	// 放宽后的止盈距离上重算胜率，再算 EV = p*(tpDist-feeWin)-(1-p)*(slDist+feeLoss) > 0。
+	// 否则 lastReason=negative_expectancy。
 	GambleMode bool `json:"gambleMode,omitempty"`
 	// ScalpTpPct / ScalpSlPct 是赌一把模式相对入场价的止盈、止损距离。
 	// 0 表示用 DefaultScalpPct。止盈执行时不会低于 MinScalpTpPct。
