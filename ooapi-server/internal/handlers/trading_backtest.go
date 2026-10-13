@@ -26,10 +26,8 @@ func GetTradingBacktest(c *gin.Context) {
 		return
 	}
 	tf := strings.TrimSpace(c.DefaultQuery("timeframe", trading.Timeframe5m))
-	switch tf {
-	case "1m", "3m", "5m", "15m":
-	default:
-		fail(c, http.StatusBadRequest, "K 线周期只支持 1m、3m、5m、15m", "invalid_timeframe")
+	if !trading.AllowedTimeframe(tf) {
+		fail(c, http.StatusBadRequest, "K 线周期只支持 "+trading.SupportedTimeframes, "invalid_timeframe")
 		return
 	}
 	days := 7

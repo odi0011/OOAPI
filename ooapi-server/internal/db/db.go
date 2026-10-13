@@ -76,6 +76,9 @@ func migrate() error {
 	if err := relaxTradingRiskDefaults(); err != nil {
 		return err
 	}
+	if err := alignTradingProductionDefaults(); err != nil {
+		return err
+	}
 
 	log.Printf("[db] 表结构与列已就绪")
 	return nil
@@ -84,6 +87,33 @@ func migrate() error {
 type columnDef struct {
 	name       string
 	definition string
+}
+
+// productionStrategyDefaultStmts 把列默认值对齐生产 DOGE 策略 2。
+// MODIFY 只改默认值，不改写已有行里的杠杆、日亏和暂停余额。
+// 新列的 DEFAULT 在补列时写到已有行上，所以 1R 必须是 0.008（0.8%）。
+func productionStrategyDefaultStmts() []string {
+	return []string{
+		"ALTER TABLE trading_strategies MODIFY COLUMN leverage INT NOT NULL DEFAULT 20",
+		"ALTER TABLE trading_strategies MODIFY COLUMN margin_mode VARCHAR(16) NOT NULL DEFAULT 'isolated'",
+		"ALTER TABLE trading_strategies MODIFY COLUMN daily_loss_pct DECIMAL(12,4) NOT NULL DEFAULT 100",
+		"ALTER TABLE trading_strategies MODIFY COLUMN pause_balance_usdt DECIMAL(20,6) NOT NULL DEFAULT 0.5",
+		"ALTER TABLE trading_strategies MODIFY COLUMN max_margin_usdt DECIMAL(20,6) NOT NULL DEFAULT 1.7",
+		"ALTER TABLE trading_strategies MODIFY COLUMN r_fraction DECIMAL(16,8) NOT NULL DEFAULT 0.00800000",
+		"ALTER TABLE trading_strategies MODIFY COLUMN expectancy_tp_cap_r DECIMAL(12,4) NOT NULL DEFAULT 3",
+		"ALTER TABLE trading_strategies MODIFY COLUMN taker_fee_rate DECIMAL(16,8) NOT NULL DEFAULT 0.00050000",
+		"ALTER TABLE trading_strategies MODIFY COLUMN maker_fee_rate DECIMAL(16,8) NOT NULL DEFAULT 0.00020000",
+		"ALTER TABLE trading_strategies MODIFY COLUMN expectancy_gate TINYINT NOT NULL DEFAULT 1",
+	}
+}
+
+func alignTradingProductionDefaults() error {
+	for _, stmt := range productionStrategyDefaultStmts() {
+		if _, err := DB.Exec(stmt); err != nil {
+			return fmt.Errorf("对齐策略默认值失败: %w", err)
+		}
+	}
+	return nil
 }
 
 // relaxTradingRiskDefaults 把单笔保证金和连亏次数的默认值改成关闭。

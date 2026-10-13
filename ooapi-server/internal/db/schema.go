@@ -289,18 +289,20 @@ var schemaStatements = []string{
 
 	// 自动交易策略配置。v1 只保存短周期 EMA 的参数，不下单、不计算信号。
 	// JSON 字段名与验收表一致。mode=live 允许保存，是否真下单由策略引擎按测网全绿强制。
+	// 列默认值对齐当前生产 DOGE 策略 2：20 倍逐仓、日亏 100（关闭）、暂停余额 0.5、1R = 0.8%。
+	// 补列只给已有行套这些默认值，不改写已经存下的杠杆和日亏。
 	`CREATE TABLE IF NOT EXISTS trading_strategies (
 		id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 		user_id          BIGINT UNSIGNED NOT NULL,
 		symbol           VARCHAR(32)     NOT NULL DEFAULT 'XRPUSDT',
-		leverage         INT             NOT NULL DEFAULT 3,
+		leverage         INT             NOT NULL DEFAULT 20,
 		margin_mode      VARCHAR(16)     NOT NULL DEFAULT 'isolated',
 		ema_fast         INT             NOT NULL DEFAULT 9,
 		ema_slow         INT             NOT NULL DEFAULT 21,
 		timeframe        VARCHAR(8)      NOT NULL DEFAULT '5m',
 		stop_r           DECIMAL(12,4)   NOT NULL DEFAULT 1,
 		take_profit_r    DECIMAL(12,4)   NOT NULL DEFAULT 1.5,
-		daily_loss_pct   DECIMAL(12,4)   NOT NULL DEFAULT 4,
+		daily_loss_pct   DECIMAL(12,4)   NOT NULL DEFAULT 100,
 		max_margin_usdt  DECIMAL(20,6)   NOT NULL DEFAULT 1.7,
 		exchange_key_id  BIGINT UNSIGNED NOT NULL,
 		mode             VARCHAR(16)     NOT NULL DEFAULT 'testnet',
@@ -321,6 +323,11 @@ var schemaStatements = []string{
 		gamble_mode      TINYINT         NOT NULL DEFAULT 0,
 		scalp_tp_pct     DECIMAL(8,6)    NOT NULL DEFAULT 0.003000,
 		scalp_sl_pct     DECIMAL(8,6)    NOT NULL DEFAULT 0.003000,
+		r_fraction       DECIMAL(16,8)   NOT NULL DEFAULT 0.00800000,
+		expectancy_tp_cap_r DECIMAL(12,4) NOT NULL DEFAULT 3,
+		taker_fee_rate   DECIMAL(16,8)   NOT NULL DEFAULT 0.00050000,
+		maker_fee_rate   DECIMAL(16,8)   NOT NULL DEFAULT 0.00020000,
+		expectancy_gate  TINYINT         NOT NULL DEFAULT 1,
 		running          TINYINT         NOT NULL DEFAULT 0,
 		created_at       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -498,6 +505,11 @@ var columnMigrations = map[string][]columnDef{
 		{"gamble_mode", "TINYINT NOT NULL DEFAULT 0"},
 		{"scalp_tp_pct", "DECIMAL(8,6) NOT NULL DEFAULT 0.003000"},
 		{"scalp_sl_pct", "DECIMAL(8,6) NOT NULL DEFAULT 0.003000"},
+		{"r_fraction", "DECIMAL(16,8) NOT NULL DEFAULT 0.00800000"},
+		{"expectancy_tp_cap_r", "DECIMAL(12,4) NOT NULL DEFAULT 3"},
+		{"taker_fee_rate", "DECIMAL(16,8) NOT NULL DEFAULT 0.00050000"},
+		{"maker_fee_rate", "DECIMAL(16,8) NOT NULL DEFAULT 0.00020000"},
+		{"expectancy_gate", "TINYINT NOT NULL DEFAULT 1"},
 		{"running", "TINYINT NOT NULL DEFAULT 0"},
 	},
 	"trading_orders": {
