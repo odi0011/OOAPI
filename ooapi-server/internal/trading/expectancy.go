@@ -62,42 +62,45 @@ func ResolveLiveTakeProfit(p float64, known bool, slDist, baseTp float64, fees R
 }
 
 func resolveLiveTakeProfit(p float64, known bool, slDist, baseTp float64, fees RoundTripFees, cap float64) (dist, liveEV float64, reason string) {
-	tp := baseTp
-	if tp < MinScalpTpPct {
-		tp = MinScalpTpPct
+	// 样本胜率 p 是在观测距离 baseTp 上测到的。漂移反解必须用 baseTp，
+	// 不能先抬到 MinScalpTpPct 再反解，否则障碍几何错位、期望系统性偏乐观。
+	observed := baseTp
+	searchFrom := baseTp
+	if searchFrom < MinScalpTpPct {
+		searchFrom = MinScalpTpPct
 	}
 	if !known {
-		return tp, 0, ""
+		return searchFrom, 0, ""
 	}
-	if !(p > 0) || !(slDist > 0) || math.IsNaN(p) || math.IsNaN(slDist) || math.IsNaN(tp) {
+	if !(p > 0) || !(slDist > 0) || !(observed > 0) || math.IsInf(p, 0) || math.IsInf(slDist, 0) || math.IsInf(observed, 0) {
 		return 0, 0, ReasonNegativeExpectancy
 	}
 	if p > 1 {
 		p = 1
 	}
-	if tp > cap {
-		cap = tp
+	if searchFrom > cap {
+		cap = searchFrom
 	}
-	theta := impliedBarrierTheta(p, tp, slDist)
+	theta := impliedBarrierTheta(p, observed, slDist)
 	evAt := func(d float64) float64 {
-		ev := TradeExpectancy(winRateForTheta(p, theta, tp, slDist, d), d, slDist, fees)
+		ev := TradeExpectancy(winRateForTheta(p, theta, observed, slDist, d), d, slDist, fees)
 		if math.IsNaN(ev) || math.IsInf(ev, 0) {
 			return -1
 		}
 		return ev
 	}
-	baseEV := evAt(tp)
+	baseEV := evAt(searchFrom)
 	if baseEV > 0 {
-		return tp, baseEV, ""
+		return searchFrom, baseEV, ""
 	}
 	bestEV := baseEV
-	if !(cap > tp) {
+	if !(cap > searchFrom) {
 		return 0, bestEV, ReasonNegativeExpectancy
 	}
 	const steps = 256
-	prev := tp
+	prev := searchFrom
 	for i := 1; i <= steps; i++ {
-		d := tp + (cap-tp)*float64(i)/float64(steps)
+		d := searchFrom + (cap-searchFrom)*float64(i)/float64(steps)
 		ev := evAt(d)
 		if ev > bestEV {
 			bestEV = ev

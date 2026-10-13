@@ -140,7 +140,8 @@ func (e *Engine) readFlatBook(since, now time.Time) (flatBook, error) {
 	book.price = price
 	book.qty = qty
 	book.closedAt = closedAt
-	book.ready = parts.Rows > 0 && found && price > 0 && qty > 0
+	// 开仓 COMMISSION 会先入账。没有 REALIZED_PNL 时不关账，与 bookentry.closeFlatEntry 对齐。
+	book.ready = parts.HasRealized && parts.Rows > 0 && found && price > 0 && qty > 0
 	return book, nil
 }
 
