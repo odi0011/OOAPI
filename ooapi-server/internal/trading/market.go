@@ -86,7 +86,29 @@ type AccountEquity struct {
 
 // ReadEquity 优先读 /fapi/v2/account 的 totalWalletBalance + totalUnrealizedProfit。
 // 账户接口失败时，用 USDT 钱包余额加上 positionRisk 里每一笔未实现盈亏。
+//
+// 走账户缓存：看板轮询和引擎暂停线判定都调它，账户接口权重不低，
+// 没有缓存时请求量随「在线人数 × 刷新频率」线性增长。
+// 键里带凭据指纹 —— 权益是账户私有数据，不带会串号。
 func (c *USDMClient) ReadEquity() (AccountEquity, error) {
+	key := marketCacheKey(c.base, "equity", c.credentialFingerprint())
+	value, err := accountCache.get(key, func() (accountCacheValue, error) {
+		eq, err := c.readEquityUncached()
+		if err != nil {
+			return accountCacheValue{}, err
+		}
+		return accountCacheValue{Equity: &eq}, nil
+	})
+	if err != nil {
+		return AccountEquity{}, err
+	}
+	if value.Equity == nil {
+		return AccountEquity{}, errors.New("账户权益无法解析")
+	}
+	return *value.Equity, nil
+}
+
+func (c *USDMClient) readEquityUncached() (AccountEquity, error) {
 	body, err := c.signedGET("/fapi/v2/account", nil)
 	if err == nil {
 		eq, perr := parseAccountEquity(body)

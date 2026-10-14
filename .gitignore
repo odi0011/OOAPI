@@ -28,3 +28,9 @@ ooapi-server-bin
 
 # 用户上传的文件（站点图标、货币图标等）
 uploads/
+
+# 本地专属测试/探测脚本（含凭证）—— 绝不提交
+.workbuddy-ai/
+.tmp-arc/
+outputs/
+.npmrc

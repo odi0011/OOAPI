@@ -164,6 +164,15 @@ var (
 		按交易对缓存会把 A 账号的持仓返回给 B 账号（严重串号）。
 	*/
 	accountCache = newMarketCacheStore[accountCacheValue](accountCacheTTL)
+
+	/*
+		当日账单缓存。
+
+		/fapi/v1/income 的权重是 30（普通行情接口只有 1~5），而看板的
+		「今日盈亏」每轮刷新都要读它。30 秒缓存把这个开销降到 1/30，
+		而当日累计盈亏晚 30 秒对展示没有影响。
+	*/
+	incomeCache = newMarketCacheStore[[]IncomeEvent](30 * time.Second)
 )
 
 // accountCacheValue 是一次签名读的结果。三类读共用一个结构，
@@ -173,6 +182,7 @@ type accountCacheValue struct {
 	BookOrders    []DeskOrder
 	AlgoOrders    []DeskOrder
 	OpenPositions []PanelPosition
+	Equity        *AccountEquity
 }
 
 // marketCacheKey 由主机与请求参数拼成。主机区分测网/实盘。

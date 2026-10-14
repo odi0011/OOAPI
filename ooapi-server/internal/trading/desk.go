@@ -383,27 +383,40 @@ func (c *USDMClient) OpenAlgoOrders(symbol string) ([]DeskOrder, error) {
 }
 
 // ListOpenPositions 读整账户仍开着的仓。
+//
+// 走账户缓存：看板每轮刷新都会调它，键里带凭据指纹 ——
+// 整账户持仓是私有数据，不带指纹会把 A 账号的仓返回给 B 账号。
 func (c *USDMClient) ListOpenPositions() ([]PanelPosition, error) {
-	body, err := c.signedRead("/fapi/v2/positionRisk", nil)
+	key := marketCacheKey(c.base, "positions", c.credentialFingerprint())
+	value, err := accountCache.get(key, func() (accountCacheValue, error) {
+		body, err := c.signedRead("/fapi/v2/positionRisk", nil)
+		if err != nil {
+			return accountCacheValue{}, err
+		}
+		rows, err := decodeRiskRows(body)
+		if err != nil {
+			return accountCacheValue{}, errors.New("持仓数据无法解析")
+		}
+		out := make([]PanelPosition, 0)
+		for i := range rows {
+			view, ok := panelPositionFromRow(rows[i])
+			if !ok {
+				continue
+			}
+			out = append(out, view)
+		}
+		if out == nil {
+			out = []PanelPosition{}
+		}
+		return accountCacheValue{OpenPositions: out}, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	rows, err := decodeRiskRows(body)
-	if err != nil {
-		return nil, errors.New("持仓数据无法解析")
+	if value.OpenPositions == nil {
+		return []PanelPosition{}, nil
 	}
-	out := make([]PanelPosition, 0)
-	for i := range rows {
-		view, ok := panelPositionFromRow(rows[i])
-		if !ok {
-			continue
-		}
-		out = append(out, view)
-	}
-	if out == nil {
-		out = []PanelPosition{}
-	}
-	return out, nil
+	return value.OpenPositions, nil
 }
 
 func panelPositionFromRow(row riskRow) (PanelPosition, bool) {

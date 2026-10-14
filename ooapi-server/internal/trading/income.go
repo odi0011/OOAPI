@@ -135,6 +135,10 @@ func (c *USDMClient) IncomeHistory(symbol string, since, now time.Time) ([]Incom
 }
 
 // AccountIncomeHistory 读账户级账单（不带 symbol）。看板今日盈亏用它。
+//
+// 走 30 秒缓存：账单接口权重是普通行情接口的数倍，而看板每轮刷新都读它；
+// 键含凭据指纹与起点 —— 不同账号、不同窗口的账单不能互相命中。
+// since 是上海日切起点，一天之内稳定；窗口尾部的 30 秒延迟对当日累计展示无影响。
 func (c *USDMClient) AccountIncomeHistory(since, now time.Time) ([]IncomeEvent, error) {
 	since = since.UTC()
 	now = now.UTC()
@@ -144,21 +148,24 @@ func (c *USDMClient) AccountIncomeHistory(since, now time.Time) ([]IncomeEvent, 
 	if now.Before(since) {
 		now = since
 	}
-	rows, err := c.incomeRows("", since, now)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]IncomeEvent, len(rows))
-	for i, row := range rows {
-		out[i] = IncomeEvent{
-			Symbol:     row.Symbol,
-			Asset:      row.Asset,
-			IncomeType: row.IncomeType,
-			Income:     row.Income,
-			Time:       row.Time,
+	key := marketCacheKey(c.base, "income", c.credentialFingerprint(), since.Format(time.RFC3339))
+	return incomeCache.get(key, func() ([]IncomeEvent, error) {
+		rows, err := c.incomeRows("", since, now)
+		if err != nil {
+			return nil, err
 		}
-	}
-	return out, nil
+		out := make([]IncomeEvent, len(rows))
+		for i, row := range rows {
+			out[i] = IncomeEvent{
+				Symbol:     row.Symbol,
+				Asset:      row.Asset,
+				IncomeType: row.IncomeType,
+				Income:     row.Income,
+				Time:       row.Time,
+			}
+		}
+		return out, nil
+	})
 }
 
 // TodayTradePnL 是上海日切后 USDT 的交易盈亏（已实现+手续费+资金费），不含划转。
