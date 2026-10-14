@@ -1,4 +1,4 @@
-/* 交易数据看板。浅色主题，全部读 design token，不写死颜色。 */
+/* 交易数据看板 — UIArc 金融终端与量化分析块风格，读用 design token。 */
 
 .page {
   display: flex;
@@ -12,21 +12,57 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.sectionEyebrow {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 2px;
 }
 
 .pageTitle {
   margin: 0;
   font-size: var(--text-2xl);
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: -0.03em;
 }
 
 .pageLead {
   margin: 4px 0 0;
-  max-width: 72ch;
+  max-width: 82ch;
   font-size: var(--text-xs);
   line-height: var(--leading-body);
   color: var(--text-secondary);
+}
+
+.pageHeadBadges {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.terminalChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.terminalChip strong {
+  color: var(--foreground);
+  font-weight: 600;
 }
 
 .errorBar {
@@ -45,6 +81,28 @@
   margin: 0;
 }
 
+.noticeBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in oklab, var(--success) 35%, transparent);
+  border-radius: var(--radius-control);
+  font-size: var(--text-xs);
+  color: var(--success);
+  background: color-mix(in oklab, var(--success) 10%, transparent);
+}
+
+.noticeCloseBtn {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .panel {
   padding: var(--space-4);
   border: 1px solid var(--border);
@@ -60,12 +118,13 @@
   justify-content: space-between;
   gap: var(--space-3);
   margin-bottom: var(--space-3);
+  flex-wrap: wrap;
 }
 
 .panelTitle {
   margin: 0;
   font-size: var(--text-base);
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: -0.02em;
 }
 
@@ -74,7 +133,7 @@
   font-size: var(--text-xs);
   line-height: var(--leading-body);
   color: var(--text-secondary);
-  max-width: 90ch;
+  max-width: 96ch;
 }
 
 .emptyText {
@@ -85,18 +144,54 @@
   text-align: center;
 }
 
-/* ------------------------------ 币种选择器 ------------------------------ */
+/* ------------------------------ 币种选择器与深度档案 ------------------------------ */
+
+.coinSelectorHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.coinSelectorTitleWrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.coinSelectorActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.profileToggleBtn {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.profileToggleBtn:hover {
+  border-color: var(--border-strong);
+  color: var(--foreground);
+}
 
 .coinList {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(265px, 1fr));
   gap: var(--space-2);
 }
 
 .coinItem {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
+  flex-direction: column;
+  gap: var(--space-2);
   padding: var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
@@ -114,6 +209,14 @@
 .coinItemActive {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
+  background: color-mix(in oklab, var(--accent) 4%, var(--surface));
+}
+
+.coinTopRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
 }
 
 .coinMeta {
@@ -121,12 +224,13 @@
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1;
 }
 
 .coinNameRow {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
   flex-wrap: wrap;
 }
 
@@ -137,22 +241,54 @@
 
 .coinSymbol {
   font-size: 10px;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
+.coinCategoryTag {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
 .coinBadge {
   font-size: 10px;
   font-weight: 600;
-  padding: 1px 8px;
+  padding: 1px 7px;
   border-radius: var(--radius-pill);
   color: var(--accent-strong, var(--accent));
   background: var(--accent-subtle);
 }
 
+.coinBadgeMuted {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  background: var(--surface-muted);
+}
+
+.coinPriceCol {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.coinLivePrice {
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.coinChangeBadge {
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .coinDesc {
+  margin: 0;
   font-size: var(--text-xs);
   line-height: var(--leading-body);
   color: var(--text-secondary);
@@ -162,7 +298,210 @@
   overflow: hidden;
 }
 
-/* ------------------------------ 余额 KPI ------------------------------ */
+.coinBottomRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+  width: 100%;
+}
+
+.coinMiniStats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  flex-wrap: wrap;
+}
+
+.sparkSvg {
+  flex-shrink: 0;
+  overflow: visible;
+}
+
+.assetProfileCard {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(240px, 1fr);
+  gap: var(--space-4);
+}
+
+@media (max-width: 960px) {
+  .assetProfileCard {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.assetProfileMain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.assetProfileHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.assetProfileTitleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.assetTag {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.assetRiskTag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  color: var(--accent-strong, var(--accent));
+  background: var(--accent-subtle);
+}
+
+.assetMechanism {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.assetIntro {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.contractSpecsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+  gap: var(--space-2);
+  margin: 4px 0 0;
+}
+
+.contractSpecsGrid > div {
+  padding: 6px 10px;
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+}
+
+.contractSpecsGrid dt {
+  margin: 0;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.contractSpecsGrid dd {
+  margin: 2px 0 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.assetFactorBox {
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.factorTitle {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.factorList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.factorRow {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.factorLabel {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.factorTrack {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  overflow: hidden;
+}
+
+.factorFill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+}
+
+/* ------------------------------ 余额首屏 KPI ------------------------------ */
+
+.heroTitleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.heroBadge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+}
+
+.heroEngineBadge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+}
+
+.heroEngineBadge[data-active="true"] {
+  color: var(--success);
+  background: color-mix(in oklab, var(--success) 12%, transparent);
+}
+
+.heroRightControls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
 
 .liveDot {
   display: inline-flex;
@@ -184,6 +523,93 @@
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
+}
+
+.balanceHeroBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.balancePrimaryBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: linear-gradient(135deg, var(--surface-muted), var(--surface));
+  flex-wrap: wrap;
+}
+
+.balancePrimaryCol {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.balancePrimaryLabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.balancePrimaryValueRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.balancePrimaryValue {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.balancePrimaryValue small {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.balanceTodayPill {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.balanceSubMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  flex-wrap: wrap;
+}
+
+.balanceCurveCol {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.balanceCurveHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .kpiRow {
@@ -232,23 +658,29 @@
   color: var(--danger, #d94a3d);
 }
 
-/* ------------------------------ 主区：图表 + 右列 ------------------------------ */
+/* ------------------------------ 主区：毫秒级图表 + 右列 ------------------------------ */
 
 .main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr) 360px;
   gap: var(--space-4);
   align-items: start;
 }
 
-@media (max-width: 1080px) {
+@media (max-width: 1120px) {
   .main {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
+.chartHeaderToggles {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .chartWrap {
-  min-height: 380px;
+  min-height: 410px;
   margin-top: var(--space-3);
 }
 
@@ -260,6 +692,226 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+}
+
+/* ------------------------------ 毫秒级行情终端图 (MillisecondMarketChart) ------------------------------ */
+
+.terminalChartRoot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border: 1px solid #1e293b;
+  border-radius: var(--radius-control);
+  background: #090e17;
+  color: #e2e8f0;
+  padding: var(--space-3);
+  overflow: hidden;
+}
+
+.terminalTopBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.terminalTickerLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.terminalLivePriceBlock {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.terminalBigPrice {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.terminalChangePill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(30, 41, 59, 0.85);
+}
+
+.terminalPulseGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+}
+
+.msPulseBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(51, 65, 85, 0.9);
+  background: rgba(15, 23, 42, 0.9);
+  color: #cbd5e1;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.msPulseBadge[data-playing="true"] i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.msTickCounter {
+  font-size: 10px;
+  color: #64748b;
+}
+
+.terminalToolbarRight {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.terminalBtnGroup {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(51, 65, 85, 0.8);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.terminalMiniBtn {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.terminalMiniBtn:hover {
+  color: #f8fafc;
+}
+
+.terminalMiniBtnActive {
+  background: rgba(59, 130, 246, 0.24);
+  color: #60a5fa;
+  font-weight: 600;
+}
+
+.terminalOhlcRibbon {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.75);
+  font-size: 11px;
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+  flex-wrap: wrap;
+}
+
+.ohlcValues {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ohlcTime {
+  color: #cbd5e1;
+  font-weight: 600;
+}
+
+.emafastText {
+  color: #f59e0b;
+}
+
+.emaslowText {
+  color: #60a5fa;
+}
+
+.onChartPosSummary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #e2e8f0;
+}
+
+.posDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #10b981;
+}
+
+.posDot[data-side="short"] {
+  background: #f43f5e;
+}
+
+.terminalCanvasWrap {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.terminalSvg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 340px;
+  user-select: none;
+}
+
+.terminalChartFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: 11px;
+  color: #94a3b8;
+  flex-wrap: wrap;
+}
+
+.terminalLegendRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legendSwatch {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
 }
 
 /* ------------------------------ 持仓卡片 ------------------------------ */
@@ -280,6 +932,7 @@
 .positionCard[data-open="false"] {
   border-style: solid;
   border-color: var(--border-subtle);
+  justify-content: space-between;
 }
 
 .positionEmpty {
@@ -291,11 +944,13 @@
   font-variant-numeric: tabular-nums;
 }
 
-.positionSide[data-side="LONG"] {
+.positionSide[data-side="LONG"],
+.positionSide[data-side="long"] {
   color: var(--success);
 }
 
-.positionSide[data-side="SHORT"] {
+.positionSide[data-side="SHORT"],
+.positionSide[data-side="short"] {
   color: var(--danger, #d94a3d);
 }
 
@@ -307,6 +962,158 @@
 .positionPnl {
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
+}
+
+.simPositionTag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  color: var(--accent-strong, var(--accent));
+  background: var(--accent-subtle);
+  margin-left: auto;
+}
+
+.realPositionTag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  color: var(--success);
+  background: color-mix(in oklab, var(--success) 12%, transparent);
+  margin-left: auto;
+}
+
+.positionActionBtn {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+/* ------------------------------ 快速执行与仓位演练 (QuickTradePanel) ------------------------------ */
+
+.quickTradeBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.quickDirectionRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.dirBtn {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dirBtnLong {
+  border-color: var(--success);
+  color: var(--success);
+  background: color-mix(in oklab, var(--success) 12%, transparent);
+}
+
+.dirBtnShort {
+  border-color: var(--danger, #d94a3d);
+  color: var(--danger, #d94a3d);
+  background: color-mix(in oklab, var(--danger, #d94a3d) 12%, transparent);
+}
+
+.quickTypeTabs,
+.subTabHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: var(--space-2);
+}
+
+.miniTab {
+  padding: 4px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.miniTabActive {
+  border-color: var(--accent);
+  color: var(--accent-strong, var(--accent));
+  background: var(--accent-subtle);
+  font-weight: 600;
+}
+
+.quickFormGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.quickField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.quickFieldFull {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.quickInput {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--foreground);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.quickSummaryList {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin: 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+  font-size: 11px;
+}
+
+.quickSummaryList dt {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.quickSummaryList dd {
+  margin: 2px 0 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.quickBtnRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 /* ------------------------------ 参数面板 ------------------------------ */
@@ -382,14 +1189,38 @@
   font-variant-numeric: tabular-nums;
 }
 
-.table [data-side="LONG"] {
+.sidePill {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.sidePill[data-side="LONG"],
+.sidePill[data-side="long"],
+.table [data-side="LONG"],
+.table [data-side="long"] {
   color: var(--success);
   font-weight: 600;
 }
 
-.table [data-side="SHORT"] {
+.sidePill[data-side="SHORT"],
+.sidePill[data-side="short"],
+.table [data-side="SHORT"],
+.table [data-side="short"] {
   color: var(--danger, #d94a3d);
   font-weight: 600;
+}
+
+.boostMiniTag,
+.orderStatusTag {
+  margin-left: 4px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 9px;
+  background: var(--accent-subtle);
+  color: var(--accent-strong, var(--accent));
 }
 
 .logList {
@@ -398,21 +1229,32 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  max-height: 420px;
+  gap: var(--space-2);
+  max-height: 440px;
   overflow-y: auto;
 }
 
 .logItem {
   display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  padding: var(--space-2) 0;
-  border-bottom: 1px solid var(--border-subtle);
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
   font-size: var(--text-xs);
 }
 
-.logItem:last-child {
-  border-bottom: none;
+.logItemActive {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 6%, var(--surface));
+}
+
+.logItemTop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .logTime {
@@ -422,23 +1264,54 @@
 }
 
 .logAction {
-  font-weight: 600;
+  font-weight: 700;
   white-space: nowrap;
 }
 
 .logMsg {
+  margin: 0;
   color: var(--text-secondary);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
 }
 
-.logScore {
+.logScore,
+.logWinrate {
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.logFactorGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 8px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border-subtle);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.logItemFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.regimeTag {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.locateOnChartBtn {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-strong, var(--accent));
+  cursor: pointer;
 }
 
 /* ------------------------------ 交易系统 ------------------------------ */
@@ -459,14 +1332,14 @@
   letter-spacing: 0.04em;
   padding: 2px 8px;
   border-radius: var(--radius-pill);
-  color: var(--warning, #b97c0f);
-  background: color-mix(in oklab, var(--warning, #b97c0f) 12%, transparent);
+  color: var(--accent-strong, var(--accent));
+  background: var(--accent-subtle);
   white-space: nowrap;
 }
 
 .templateGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: var(--space-3);
 }
 
@@ -482,10 +1355,26 @@
 
 .templateActive {
   border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.templateCardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
 }
 
 .templateName {
   font-size: var(--text-sm);
+}
+
+.templateTag {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
 }
 
 .templateDesc {
@@ -497,9 +1386,13 @@
 }
 
 .templateParams {
-  display: flex;
-  gap: var(--space-3);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
   margin: 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
   font-size: var(--text-xs);
 }
 
@@ -510,6 +1403,7 @@
 
 .templateParams dt {
   margin: 0;
+  font-size: 10px;
   color: var(--text-muted);
 }
 
@@ -519,11 +1413,101 @@
   font-variant-numeric: tabular-nums;
 }
 
+.templateBtnRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tunerHeaderBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.tunerActionBtns {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tunerLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr);
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+  align-items: start;
+}
+
+@media (max-width: 980px) {
+  .tunerLayout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .tunerGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: var(--space-3) var(--space-4);
-  margin-bottom: var(--space-3);
+}
+
+.tunerForecastCard {
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.forecastHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.forecastHead strong {
+  display: block;
+  font-size: var(--text-xs);
+}
+
+.expectancyBadge {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.forecastSvg {
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+}
+
+.forecastMetrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-2);
+  margin: 0;
+  font-size: 11px;
+}
+
+.forecastMetrics dt {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.forecastMetrics dd {
+  margin: 2px 0 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .sliderRow {
@@ -608,7 +1592,8 @@
   gap: var(--space-3);
 }
 
-.automationRow {
+.automationRow,
+.engineLifecycleRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -617,9 +1602,11 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-control);
   background: var(--surface-muted);
+  flex-wrap: wrap;
 }
 
-.automationRow strong {
+.automationRow strong,
+.engineLifecycleInfo strong {
   font-size: var(--text-sm);
 }
 
@@ -627,6 +1614,21 @@
   margin: 4px 0 0;
   font-size: var(--text-xs);
   color: var(--text-secondary);
+}
+
+.engineLifecycleInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.engineLifecycleBtns {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }
 
 .automationMeta {
@@ -655,6 +1657,24 @@
   overflow-wrap: anywhere;
 }
 
+/* ------------------------------ 网格量化工作台 ------------------------------ */
+
+.gridHeaderBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.gridModeTabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .gridForm {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -671,10 +1691,70 @@
 }
 
 .gridHint {
-  margin: var(--space-2) 0 0;
+  margin: var(--space-2) 0;
   font-size: var(--text-xs);
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
+}
+
+.gridWorkbenchFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+  flex-wrap: wrap;
+}
+
+.gridLadderPreview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 240px;
+}
+
+.gridLevelsRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.gridLevelChip {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.gridLevelBuy {
+  color: var(--success);
+  background: color-mix(in oklab, var(--success) 12%, transparent);
+}
+
+.gridLevelSell {
+  color: var(--danger, #d94a3d);
+  background: color-mix(in oklab, var(--danger, #d94a3d) 12%, transparent);
+}
+
+.gridActionBtns {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* ------------------------------ 交易机器人矩阵 ------------------------------ */
+
+.botMatrixWrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
 .botList {
@@ -694,6 +1774,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
   background: var(--surface);
+  flex-wrap: wrap;
 }
 
 .botMeta {
@@ -701,14 +1782,29 @@
   flex-direction: column;
   gap: 2px;
   flex: 1;
-  min-width: 0;
+  min-width: 200px;
+}
+
+.botTitleLine {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .botMeta strong {
   font-size: var(--text-sm);
 }
 
-.botSub {
+.botCategoryPill {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+}
+
+.botSub,
+.botPerfLine {
   font-size: var(--text-xs);
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
@@ -730,4 +1826,329 @@
 .botPaused {
   color: var(--text-muted);
   background: var(--surface-muted);
+}
+
+.botHalted {
+  color: var(--danger, #d94a3d);
+  background: color-mix(in oklab, var(--danger, #d94a3d) 12%, transparent);
+}
+
+.botActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.unconfiguredBotBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.quickBotInitRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.quickInitChip {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--foreground);
+  cursor: pointer;
+}
+
+.quickInitChip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ------------------------------ UIArc 多维分析矩阵 (AnalyticsBlocks) ------------------------------ */
+
+.analyticsSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.analyticsSectionHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.analyticsMetaBadge {
+  font-size: var(--text-xs);
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.analyticsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+@media (max-width: 1080px) {
+  .analyticsGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.analyticsCard {
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  box-shadow: var(--shadow-resting);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.analyticsCardHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.analyticsCardHead h3 {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.analyticsHint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.smallMultiplesGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+@media (max-width: 680px) {
+  .smallMultiplesGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.smallMultipleCell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.smallMultipleActive {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 6%, var(--surface));
+}
+
+.smTop,
+.smFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.smSymbol {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.smSvg {
+  width: 100%;
+  height: 36px;
+}
+
+.waterfallList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.waterfallRow {
+  display: grid;
+  grid-template-columns: 120px 1fr 110px;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.waterfallLabel {
+  color: var(--text-secondary);
+}
+
+.waterfallTrack {
+  height: 10px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  overflow: hidden;
+}
+
+.waterfallBar {
+  height: 100%;
+  border-radius: var(--radius-pill);
+}
+
+.waterfallPos {
+  background: var(--success);
+}
+
+.waterfallNeg {
+  background: var(--danger, #d94a3d);
+}
+
+.waterfallTotal {
+  background: var(--accent);
+}
+
+.waterfallVal {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.varianceList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.varianceItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.varianceMeta {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.varianceMeta span {
+  color: var(--text-secondary);
+}
+
+.varianceTrack {
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  overflow: hidden;
+}
+
+.varianceFill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+}
+
+.varianceSafe {
+  background: var(--success);
+}
+
+.varianceWarn {
+  background: var(--warning, #d97706);
+}
+
+.terrainAndFunnel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+@media (max-width: 680px) {
+  .terrainAndFunnel {
+    grid-template-columns: 1fr;
+  }
+}
+
+.terrainGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.terrainRow {
+  display: grid;
+  grid-template-columns: 36px repeat(6, 1fr);
+  gap: 4px;
+  align-items: center;
+}
+
+.terrainDay {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.terrainCell {
+  height: 14px;
+  border-radius: 3px;
+}
+
+.funnelBox {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.funnelRow {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.funnelLabelRow {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.funnelBarTrack {
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  overflow: hidden;
+}
+
+.funnelBarFill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
 }

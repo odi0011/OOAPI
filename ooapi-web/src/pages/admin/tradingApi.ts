@@ -91,6 +91,11 @@ export interface Strategy {
   warnings?: string[];
   /** 暂停新开仓。与暂停余额无关。 */
   pauseEntries?: boolean;
+  /** 自动暂停原因（如连亏或余额触线）。 */
+  pauseReason?: string;
+  /** 策略是否处于运行状态（后端持久化标记）。 */
+  running?: boolean;
+  entryMode?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -360,12 +365,27 @@ export interface EngineOrders {
   entries?: TradeEntry[];
 }
 
+export type TradingEnginesListEntry =
+  | EngineState
+  | {
+      strategy: Strategy;
+      engine: EngineState;
+    };
+
+export interface TradingEnginesListResponse {
+  engines: TradingEnginesListEntry[];
+  totals?: {
+    realizedToday: number;
+    openPositions: number;
+  };
+}
+
 /**
  * 多品种引擎一览。后端还没接上时会 404，调用方要回退到单引擎，不能把看板打白。
  * 不改已有的 /api/trading/engine/{state,market,position,orders}。
  */
-export async function listTradingEngines(): Promise<unknown> {
-  return apiRequest<unknown>("/api/trading/engines");
+export async function listTradingEngines(): Promise<TradingEnginesListResponse> {
+  return apiRequest<TradingEnginesListResponse>("/api/trading/engines");
 }
 
 export async function getEngineState(strategyId: number): Promise<EngineState> {
@@ -527,3 +547,23 @@ export async function stepEngine(strategyId: number): Promise<EngineState> {
     body: { strategyId },
   });
 }
+
+/** 清除自动暂停原因并重新武装启动引擎。 */
+export async function resumeEngine(input: { strategyId: number; equityUsdt?: number }): Promise<EngineState> {
+  return apiRequest<EngineState>("/api/trading/engine/resume", {
+    method: "POST",
+    body: {
+      strategyId: input.strategyId,
+      equityUsdt: input.equityUsdt ?? 100,
+    },
+  });
+}
+
+/** 停止策略引擎会话并撤销保护挂单。 */
+export async function stopEngine(strategyId: number): Promise<EngineState> {
+  return apiRequest<EngineState>("/api/trading/engine/stop", {
+    method: "POST",
+    body: { strategyId },
+  });
+}
+

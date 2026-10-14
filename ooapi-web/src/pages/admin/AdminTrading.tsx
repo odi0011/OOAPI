@@ -16,6 +16,7 @@ import settingsStyles from "./AdminSettings.module.css";
 import styles from "./AdminTrading.module.css";
 import SettingsRail from "./SettingsRail";
 import { ACCOUNT_PATH, DASHBOARD_PATH } from "./settingsNav";
+import { COINS } from "./tradingBoard/coins";
 import {
   TIMEFRAMES,
   DEFAULT_EXCHANGE_KEY_ID,
@@ -155,8 +156,6 @@ function clamp(value: number, min: number, max: number, fallback: number): numbe
 function isTimeframe(value: string): value is Timeframe {
   return (TIMEFRAMES as readonly string[]).includes(value);
 }
-
-const SYMBOLS = ["XRPUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "BNBUSDT"] as const;
 
 function normalizeSymbol(raw: string | undefined): string {
   const cleaned = (raw ?? "").trim().toUpperCase();
@@ -603,14 +602,17 @@ export default function AdminTrading() {
                 <div className={sectionStyles.row} data-field="symbol">
                   <div className={sectionStyles.rowText}>
                     <strong>交易对</strong>
-                    <p>支持 USDT 永续合约（默认 XRPUSDT）。</p>
+                    <p>支持 USDT 永续合约，列表是主流标的（默认 XRPUSDT）。</p>
                   </div>
                   <div className={sectionStyles.rowControl}>
                     <Select
                       hideLabel
                       label="交易对"
                       value={draft.symbol}
-                      options={ Array.from(new Set([...SYMBOLS, draft.symbol])).map((sym) => ({ value: sym, label: sym })) }
+                      options={Array.from(new Set([...COINS.map((coin) => coin.symbol), draft.symbol])).map((sym) => {
+                        const coin = COINS.find((item) => item.symbol === sym);
+                        return { value: sym, label: coin ? `${coin.symbol} · ${coin.name}` : sym };
+                      })}
                       onValueChange={(symbol) => patch({ symbol: normalizeSymbol(symbol) })}
                     />
                   </div>
