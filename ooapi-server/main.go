@@ -31,6 +31,7 @@ func main() {
 	services.MigratePlaintextSecrets()
 
 	handlers.StartTradingRunner()
+	services.StartSystemAutoUpdate()
 
 	r := router.Setup(cfg)
 

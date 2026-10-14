@@ -7,6 +7,7 @@
  * - ParamPanel：策略核心风控与信号参数概览
  * - HistoryPanel：历史开仓记录 + 活跃保护挂单双视图
  * - DecisionLogPanel：多因子 AI/策略决策记录（支持一键图上定位回放）
+ * 全品种涨跌幅图在 FusedMarketOverview，不替换这里的单品种选择器。
  */
 import { useState } from "react";
 

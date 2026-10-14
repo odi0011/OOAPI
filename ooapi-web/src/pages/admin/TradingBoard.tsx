@@ -57,6 +57,7 @@ import {
   coinInfoOf,
   roundToPrecision,
 } from "./tradingBoard/coins";
+import FusedMarketOverview from "./tradingBoard/FusedMarketOverview";
 import MillisecondMarketChart, {
   type GridOverlaySpec,
   type TickSpeedMs,
@@ -664,7 +665,7 @@ export default function TradingBoard() {
             <span className={styles.sectionEyebrow}>OOAPI QUANTITATIVE TRADING TERMINAL · UIARC ARCHITECTURE</span>
             <h1 className={styles.pageTitle}>交易数据看板</h1>
             <p className={styles.pageLead}>
-              总余额首屏、毫秒级流式 K 线与仓位标记深度融合，多币种资产档案、参数调优、历史与 AI 决策记录同屏联动；下方集成完整交易系统与多维量化归因矩阵。
+              总余额首屏、全品种涨跌幅一张图、毫秒级流式 K 线与仓位标记，多币种资产档案、参数调优、历史与 AI 决策记录同屏联动；下方集成完整交易系统与多维量化归因矩阵。
             </p>
           </div>
           <div className={styles.pageHeadBadges}>
@@ -712,7 +713,10 @@ export default function TradingBoard() {
           creatingSymbol={creatingSymbol}
         />
 
-        {/* 2. 首屏总余额（修复 todayPct 100x 放大 bug，内联净值曲线与 Boost 扫描） */}
+        {/* 2. 全品种涨跌幅叠在同一张图上，单品种毫秒图仍在下方 */}
+        <FusedMarketOverview />
+
+        {/* 3. 首屏总余额（修复 todayPct 100x 放大 bug，内联净值曲线与 Boost 扫描） */}
         <BalanceHero
           coin={coin}
           balance={balance ?? (balanceError ? null : effectiveBalanceInfo.balance)}

@@ -9,7 +9,7 @@ import ThemeSwitch from "@/components/arc/theme-switch/theme-switch";
 import Tooltip from "@/components/arc/tooltip/tooltip";
 import UserMenu from "@/components/arc/user-menu/user-menu";
 import { AdminSidebar, ADMIN_NAV } from "@/components/admin/AdminSidebar";
-import { STRATEGY_NAV } from "@/pages/admin/settingsNav";
+import { SETTINGS_SECTIONS, STRATEGY_NAV } from "@/pages/admin/settingsNav";
 import { useNotifications } from "@/components/admin/useNotifications";
 import { useAppearance } from "@/contexts/AppearanceContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -95,6 +95,14 @@ export default function AdminLayout({ crumbs, actions, children }: AdminLayoutPr
       }
     }
     if (can(Perm.OptionEdit)) {
+      for (const section of SETTINGS_SECTIONS) {
+        out.push({
+          id: `settings-${section.key}`,
+          label: section.label,
+          group: "系统设置",
+          keywords: [`/admin/system#${section.key}`, ...section.entries],
+        });
+      }
       out.push({
         id: STRATEGY_NAV.key,
         label: STRATEGY_NAV.label,
@@ -213,6 +221,7 @@ export default function AdminLayout({ crumbs, actions, children }: AdminLayoutPr
                 const target = ADMIN_NAV.flatMap((g) => g.items).find((i) => i.key === item.id);
                 if (target) navigate(target.href);
                 else if (item.id === STRATEGY_NAV.key) navigate(STRATEGY_NAV.href);
+                else if (item.id.startsWith("settings-")) navigate(`/admin/system#${item.id.slice("settings-".length)}`);
               }}
               onClose={() => setPaletteOpen(false)}
             />

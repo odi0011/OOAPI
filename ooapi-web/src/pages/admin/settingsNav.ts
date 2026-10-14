@@ -17,6 +17,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { key: "auth", label: "第三方与邮件", entries: ["Google", "GitHub", "SMTP", "邮箱验证码"] },
   { key: "billing", label: "计费", entries: ["货币名称", "额度单位"] },
   { key: "gateway", label: "网关", entries: ["请求超时"] },
+  { key: "update", label: "更新", entries: ["更新", "GitHub", "自动更新", "手动更新", "检查更新"] },
 ];
 
 export const STRATEGY_PATH = "/admin/system/strategy";
