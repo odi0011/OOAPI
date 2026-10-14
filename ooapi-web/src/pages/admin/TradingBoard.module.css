@@ -236,7 +236,7 @@
 
 .coinName {
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .coinSymbol {
@@ -254,7 +254,7 @@
 
 .coinBadge {
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 500;
   padding: 1px 7px;
   border-radius: var(--radius-pill);
   color: var(--accent-strong, var(--accent));
@@ -638,7 +638,7 @@
 
 .kpiValue {
   font-size: var(--text-xl);
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
@@ -658,13 +658,112 @@
   color: var(--danger, #d94a3d);
 }
 
-/* ------------------------------ 主区：毫秒级图表 + 右列 ------------------------------ */
+/* ------------------------------ 多币种图表宫格 + 下方毫秒级图表与数据面板 ------------------------------ */
+
+.chartGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  align-items: stretch;
+}
+
+@media (max-width: 1400px) {
+  .chartGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .chartGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.chartCard {
+  --chart-height: 240px;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  min-width: 0;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.chartCard:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-resting);
+}
+
+.chartCardActive {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.chartCardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  min-width: 0;
+}
+
+.chartCardTitleGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.chartCardName {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.chartTimeframeBadge {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.chartCardPriceGroup {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.chartMarkPrice {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+}
+
+.gridChartWrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 240px;
+  margin-top: auto;
+}
 
 .main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
   gap: var(--space-4);
-  align-items: start;
+  align-items: stretch;
 }
 
 @media (max-width: 1120px) {
@@ -686,6 +785,8 @@
 
 .rail {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .railTabs {
@@ -919,10 +1020,10 @@
 .positionCard {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   flex-wrap: wrap;
   padding: var(--space-2) var(--space-3);
-  margin-bottom: var(--space-3);
+  margin-bottom: var(--space-2);
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-control);
   background: var(--surface-muted);
@@ -940,7 +1041,7 @@
 }
 
 .positionSide {
-  font-weight: 700;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1146,7 +1247,7 @@
 .paramItem dd {
   margin: 0;
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
   text-align: right;
@@ -1175,7 +1276,7 @@
 }
 
 .table thead th {
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-muted);
   background: var(--surface-muted);
 }
@@ -1202,7 +1303,7 @@
 .table [data-side="LONG"],
 .table [data-side="long"] {
   color: var(--success);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .sidePill[data-side="SHORT"],
@@ -1210,7 +1311,7 @@
 .table [data-side="SHORT"],
 .table [data-side="short"] {
   color: var(--danger, #d94a3d);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .boostMiniTag,
@@ -1264,7 +1365,7 @@
 }
 
 .logAction {
-  font-weight: 700;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -1328,7 +1429,7 @@
 
 .mockBadge {
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: 0.04em;
   padding: 2px 8px;
   border-radius: var(--radius-pill);
@@ -1409,7 +1510,7 @@
 
 .templateParams dd {
   margin: 0;
-  font-weight: 600;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1812,7 +1913,7 @@
 
 .botStatus {
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: 500;
   padding: 2px 10px;
   border-radius: var(--radius-pill);
   white-space: nowrap;

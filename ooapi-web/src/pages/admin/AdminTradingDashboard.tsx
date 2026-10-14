@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/arc/button/button";
 import AdminLayout from "@/components/admin/AdminLayout";
@@ -8,17 +7,17 @@ import { ApiRequestError } from "@/lib/api";
 import styles from "./TradingDesk.module.css";
 import EngineOverview from "./EngineOverview";
 import LiveBalancePanel from "./LiveBalancePanel";
-import TradingDesk, { type DeskReadErrors } from "./TradingDesk";
+import TradingDesk, { type DeskCoinChartItem, type DeskReadErrors } from "./TradingDesk";
 import {
   mapEnginesPayload,
   resolveSelectedStrategyId,
   type TradingEnginesSnapshot,
 } from "./engineOverview";
-import { ACCOUNT_PATH, STRATEGY_PATH } from "./settingsNav";
 import {
   getEngineBalance,
   getEngineEvents,
   getEngineMarket,
+  getEngineMarketForCoin,
   getEngineOrders,
   getEnginePosition,
   getEngineState,
@@ -34,26 +33,31 @@ import {
   type EngineState,
   type Strategy,
 } from "./tradingApi";
+import { COINS, coinInfoOf } from "./tradingBoard/coins";
 
 /**
- * 交易数据看板。多品种一览，账户实时余额，以及选中引擎的状态、K 线、持仓、委托和已实现盈亏。
+ * 交易数据看板。多品种一览，账户实时余额，以及多币种宫格 K 线、选中引擎的状态、持仓、委托和已实现盈亏。
  * 暂停新开仓会立刻写入策略。其余配置不在这里改，也不调用测网全绿接口。
  * /api/trading/engines 404 或失败时，仍按原来的第一份策略展示，不留白页。
  */
 
 const ENGINE_POLL_MS = 5000;
+const GRID_KLINE_LIMIT = 120;
 
 function errorText(err: unknown, fallback: string): string {
   return err instanceof ApiRequestError ? err.message : fallback;
 }
 
 export default function AdminTradingDashboard() {
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [strategy, setStrategy] = useState<Strategy | null>(null);
   const [overview, setOverview] = useState<TradingEnginesSnapshot | null>(null);
   const [multi, setMulti] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedCoinSymbol, setSelectedCoinSymbol] = useState<string>(COINS[0].symbol);
   const [engine, setEngine] = useState<EngineState | null>(null);
   const [market, setMarket] = useState<EngineMarket | null>(null);
+  const [marketsBySymbol, setMarketsBySymbol] = useState<Record<string, EngineMarket>>({});
   const [position, setPosition] = useState<EnginePosition | null>(null);
   const [orders, setOrders] = useState<EngineOrders | null>(null);
   const [balance, setBalance] = useState<EngineBalance | null>(null);
@@ -74,8 +78,46 @@ export default function AdminTradingDashboard() {
   const overviewGen = useRef(0);
   const deskGen = useRef(0);
 
+  const refreshCoinGridMarkets = useCallback(async (allStrategies: Strategy[]) => {
+    const coinsToFetch = [...COINS];
+    const seen = new Set(coinsToFetch.map((c) => c.symbol));
+    for (const item of allStrategies) {
+      const sym = (item.symbol ?? "").toUpperCase();
+      if (sym && !seen.has(sym)) {
+        seen.add(sym);
+        coinsToFetch.push(coinInfoOf(sym));
+      }
+    }
+    const results = await Promise.all(
+      coinsToFetch.map(async (coinItem) => {
+        const coinStrategy =
+          allStrategies.find((item) => (item.symbol ?? "").toUpperCase() === coinItem.symbol) ?? null;
+        const mktRes = await getEngineMarketForCoin(coinItem.symbol, {
+          strategyId: coinStrategy?.id ?? null,
+          timeframe: coinStrategy?.timeframe ?? "5m",
+          limit: GRID_KLINE_LIMIT,
+        }).then(
+          (value) => ({ status: "fulfilled" as const, value }),
+          (reason: unknown) => ({ status: "rejected" as const, reason }),
+        );
+        return { symbol: coinItem.symbol, mktRes };
+      }),
+    );
+    const nextMarkets: Record<string, EngineMarket> = {};
+    for (const item of results) {
+      if (item.mktRes.status === "fulfilled") {
+        const mkt = item.mktRes.value;
+        if (!mkt.symbol || mkt.symbol.toUpperCase() === item.symbol) {
+          nextMarkets[item.symbol] = mkt;
+        }
+      }
+    }
+    setMarketsBySymbol((prev) => ({ ...prev, ...nextMarkets }));
+  }, []);
+
   const refreshDesk = useCallback(async (id: number | null) => {
     const gen = ++deskGen.current;
+    void refreshCoinGridMarkets(strategiesRef.current);
     if (id == null) {
       setEngine(null);
       setMarket(null);
@@ -106,8 +148,14 @@ export default function AdminTradingDashboard() {
     const nextErrors: DeskReadErrors = {};
     if (state.status === "fulfilled") setEngine(state.value);
     else nextErrors.state = errorText(state.reason, "读取状态失败");
-    if (marketRes.status === "fulfilled") setMarket(marketRes.value);
-    else nextErrors.market = errorText(marketRes.reason, "读取 K 线失败");
+    if (marketRes.status === "fulfilled") {
+      setMarket(marketRes.value);
+      const activeStrat = strategiesRef.current.find((s) => s.id === id);
+      const sym = (marketRes.value.symbol || activeStrat?.symbol || "").toUpperCase();
+      if (sym) {
+        setMarketsBySymbol((prev) => ({ ...prev, [sym]: marketRes.value }));
+      }
+    } else nextErrors.market = errorText(marketRes.reason, "读取 K 线失败");
     if (positionRes.status === "fulfilled") setPosition(positionRes.value);
     else nextErrors.position = errorText(positionRes.reason, "读取持仓失败");
     if (ordersRes.status === "fulfilled") setOrders(ordersRes.value);
@@ -124,7 +172,7 @@ export default function AdminTradingDashboard() {
       setEvents([]);
     }
     setReadErrors(nextErrors);
-  }, []);
+  }, [refreshCoinGridMarkets]);
 
   const applySnapshot = useCallback((nextMulti: boolean, snapshot: TradingEnginesSnapshot | null) => {
     const fallbackStrategyId = strategiesRef.current[0]?.id ?? null;
@@ -138,7 +186,11 @@ export default function AdminTradingDashboard() {
     setSelectedId(id);
     setMulti(nextMulti);
     setOverview(nextMulti ? snapshot : null);
-    setStrategy(strategiesRef.current.find((item) => item.id === id) ?? null);
+    const matched = strategiesRef.current.find((item) => item.id === id) ?? null;
+    setStrategy(matched);
+    if (matched?.symbol) {
+      setSelectedCoinSymbol(matched.symbol.toUpperCase());
+    }
     return id;
   }, []);
 
@@ -164,6 +216,7 @@ export default function AdminTradingDashboard() {
     try {
       const items = await listStrategies();
       strategiesRef.current = items;
+      setStrategies(items);
       await refreshOverview();
       setLoaded(true);
     } catch (err) {
@@ -189,12 +242,49 @@ export default function AdminTradingDashboard() {
   const selectEngine = (strategyId: number) => {
     chosenRef.current = strategyId;
     setSelectedId(strategyId);
-    setStrategy(strategiesRef.current.find((item) => item.id === strategyId) ?? null);
+    const matched = strategiesRef.current.find((item) => item.id === strategyId) ?? null;
+    setStrategy(matched);
+    if (matched?.symbol) {
+      setSelectedCoinSymbol(matched.symbol.toUpperCase());
+    }
     setDismissedError("");
     void refreshDesk(strategyId);
   };
 
   const selectedSummary = overview?.engines.find((item) => item.strategyId === selectedId);
+  const activeSymbol = (strategy?.symbol || selectedSummary?.symbol || selectedCoinSymbol || COINS[0].symbol).toUpperCase();
+
+  const coinCharts = useMemo<DeskCoinChartItem[]>(() => {
+    const list = [...COINS];
+    const seen = new Set(list.map((c) => c.symbol));
+    for (const item of strategies) {
+      const sym = (item.symbol ?? "").toUpperCase();
+      if (sym && !seen.has(sym)) {
+        seen.add(sym);
+        list.push(coinInfoOf(sym));
+      }
+    }
+    return list.map((coinItem) => {
+      const coinStrat = strategies.find((s) => (s.symbol ?? "").toUpperCase() === coinItem.symbol) ?? null;
+      const isSelected = coinItem.symbol === activeSymbol;
+      const mkt = marketsBySymbol[coinItem.symbol] ?? (isSelected ? market : null);
+      return {
+        symbol: coinItem.symbol,
+        name: coinItem.name,
+        timeframe: coinStrat?.timeframe ?? mkt?.timeframe ?? "5m",
+        market: mkt,
+        positionOpen: isSelected ? (position == null ? null : position.open === true) : null,
+        selected: isSelected,
+        strategyId: coinStrat?.id ?? null,
+        onSelect: () => {
+          setSelectedCoinSymbol(coinItem.symbol);
+          if (coinStrat) {
+            selectEngine(coinStrat.id);
+          }
+        },
+      };
+    });
+  }, [strategies, activeSymbol, marketsBySymbol, market, position]);
 
   const togglePause = async (strategyId: number, paused: boolean) => {
     setPauseBusyId(strategyId);
@@ -251,13 +341,6 @@ export default function AdminTradingDashboard() {
         <header className={styles.pageHead}>
           <div>
             <h1 className={styles.pageTitle}>数据看板</h1>
-            <p className={styles.pageLead}>
-              看账户余额、权益曲线、状态、K 线、持仓、委托和本会话盈亏。策略配置在
-              <Link to={STRATEGY_PATH}>系统设置</Link>
-              ，交易所密钥在
-              <Link to={ACCOUNT_PATH}>账户</Link>
-              。
-            </p>
           </div>
         </header>
 
@@ -298,6 +381,7 @@ export default function AdminTradingDashboard() {
           market={market}
           position={position}
           orders={orders}
+          coinCharts={coinCharts}
           loading={loading}
           readErrors={readErrors}
           symbol={strategy?.symbol || selectedSummary?.symbol}

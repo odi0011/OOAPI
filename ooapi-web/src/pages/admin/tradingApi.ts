@@ -399,6 +399,26 @@ export async function getEngineMarket(strategyId: number, limit = 100): Promise<
   return { ...data, klines: data.klines ?? [] };
 }
 
+/**
+ * 按币种（或关联策略 ID）读取 K 线行情，供多币种宫格看板并发拉取。
+ */
+export async function getEngineMarketForCoin(
+  symbol: string,
+  options?: { strategyId?: number | null; timeframe?: string; limit?: number },
+): Promise<EngineMarket> {
+  const limit = options?.limit ?? 120;
+  if (options?.strategyId != null && options.strategyId > 0) {
+    return getEngineMarket(options.strategyId, limit);
+  }
+  const params = new URLSearchParams({
+    symbol: symbol.trim().toUpperCase(),
+    timeframe: options?.timeframe ?? "5m",
+    limit: String(limit),
+  });
+  const data = await apiRequest<EngineMarket>(`/api/trading/engine/market?${params.toString()}`);
+  return { ...data, klines: data.klines ?? [] };
+}
+
 export async function getEnginePosition(strategyId: number): Promise<EnginePosition> {
   return apiRequest<EnginePosition>(`/api/trading/engine/position?strategyId=${strategyId}`);
 }

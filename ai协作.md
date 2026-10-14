@@ -1650,3 +1650,8 @@ Google OAuth 变量）与部署要点（nginx 三项 SSE 必需配置）。
 ### 2026-10-12：测网改为币安 USDT-M 下单
 
 `mode=testnet` 请求 `https://testnet.binancefuture.com`：先设逐仓和不超过 3 倍杠杆，再下 MARKET，并用 `closePosition` 的 STOP_MARKET / TAKE_PROFIT_MARKET 保护。数量和价格按 exchangeInfo 的步长与最小名义价值对齐。持仓和挂单以交易所回报为准。密钥只接受 `network=testnet`，明文仍只在发单或同步时解开。`mode=live` 不发单。
+
+### 2026-10-13：交易-数据看板改为多币种宫格图表
+
+- `/admin/trading/board`（`TradingBoard.tsx` / `TradingBoard.module.css`）：增加多币种响应式宫格（桌面端 3 列、中等屏幕 2 列、移动端 1 列，卡片等高 `--chart-height: 240px`），同时展示全部预设币种及自定义策略币种的 K 线、标记价、持仓与止损/止盈线。点击任意宫格卡片或顶部币种栏均可切换当前选中币种，并联动下方毫秒级行情终端、「交易系统」与「数据面板」。
+- `GET /api/trading/engine/market`（`ooapi-server/internal/handlers/trading_desk.go` + `tradingApi.ts`）：新增按 `?symbol=BTCUSDT&timeframe=5m&limit=120` 直接拉取公开 K 线与标记价的分支（未建策略的币种在看板宫格里也能正常渲染实时 K 线；若当前用户已有对应币种策略则自动附带止损/止盈/入场价位线）。

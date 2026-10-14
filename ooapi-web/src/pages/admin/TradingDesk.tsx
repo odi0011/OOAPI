@@ -31,11 +31,24 @@ export interface DeskReadErrors {
   balance?: string;
 }
 
+export interface DeskCoinChartItem {
+  symbol: string;
+  name: string;
+  timeframe: string;
+  market: EngineMarket | null;
+  positionOpen?: boolean | null;
+  selected?: boolean;
+  strategyId?: number | null;
+  onSelect?: () => void;
+}
+
 interface TradingDeskProps {
   engine: EngineSlice | null;
   market: EngineMarket | null;
   position: EnginePosition | null;
   orders: EngineOrders | null;
+  /** 多币种 K 线宫格列表；传入时将几个币种的图表以宫格形式并排显示。 */
+  coinCharts?: DeskCoinChartItem[];
   /** 首屏还在拉策略时，状态条先标明正在读取。 */
   loading?: boolean;
   readErrors?: DeskReadErrors;
@@ -58,6 +71,7 @@ export default function TradingDesk({
   market,
   position,
   orders,
+  coinCharts,
   loading = false,
   readErrors,
   symbol,
@@ -123,22 +137,63 @@ export default function TradingDesk({
       <section className={styles.panel} aria-label="K线">
         <header className={styles.panelHead}>
           <h2>K 线</h2>
-          <p>周期 {chartTimeframe}。蜡烛和标记价来自行情。有仓时画出 levels 里的入场、止损、止盈。</p>
         </header>
-        <CandleChart
-          timeframe={chartTimeframe}
-          market={market}
-          loading={loading}
-          error={readErrors?.market}
-          hasLevels={hasLevels}
-          positionOpen={positionOpen}
-        />
+        {coinCharts && coinCharts.length > 0 ? (
+          <div className={styles.chartGrid}>
+            {coinCharts.map((item) => {
+              const itemHasLevels = item.market?.levels != null;
+              const selectable = item.onSelect != null;
+              return (
+                <article
+                  key={item.symbol}
+                  className={[
+                    styles.chartGridCard,
+                    selectable ? styles.chartGridCardSelectable : "",
+                    item.selected ? styles.chartGridCardActive : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  onClick={item.onSelect}
+                >
+                  <header className={styles.chartGridHead}>
+                    <div className={styles.chartGridTitle}>
+                      <span>{item.name}</span>
+                      <span className={styles.chartGridSymbol}>{item.symbol}</span>
+                      <span className={styles.chartGridTimeframe}>{item.timeframe}</span>
+                    </div>
+                    <span className={styles.chartGridPrice}>
+                      {item.market?.markPrice != null && item.market.markPrice > 0
+                        ? formatAmount(item.market.markPrice)
+                        : "—"}
+                    </span>
+                  </header>
+                  <CandleChart
+                    timeframe={item.timeframe}
+                    market={item.market}
+                    loading={loading}
+                    error={item.selected ? readErrors?.market : undefined}
+                    hasLevels={itemHasLevels}
+                    positionOpen={item.positionOpen ?? null}
+                  />
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <CandleChart
+            timeframe={chartTimeframe}
+            market={market}
+            loading={loading}
+            error={readErrors?.market}
+            hasLevels={hasLevels}
+            positionOpen={positionOpen}
+          />
+        )}
       </section>
 
       <section className={styles.panel} aria-label="持仓">
         <header className={styles.panelHead}>
           <h2>持仓</h2>
-          <p>方向、数量、开仓均价、标记价、未实现盈亏、杠杆和保证金。</p>
         </header>
         {position == null ? (
           <p className={styles.emptyTitle}>{readErrors?.position ?? (loading ? "正在读取持仓…" : "先保存策略后再看持仓。")}</p>
@@ -183,7 +238,6 @@ export default function TradingDesk({
       <section className={styles.panel} aria-label="委托">
         <header className={styles.panelHead}>
           <h2>委托</h2>
-          <p>入场单，以及止损、止盈。条件单来源是 algo。</p>
         </header>
         <OrdersTable orders={orders} loading={loading} error={readErrors?.orders} />
         <EntriesTable entries={orders?.entries} />
@@ -192,7 +246,6 @@ export default function TradingDesk({
       <section className={styles.panel} aria-label="已实现盈亏">
         <header className={styles.panelHead}>
           <h2>已实现盈亏</h2>
-          <p>当日从上海时间 0 点算到现在，累计从策略创建算起，都直接来自币安账单。只标 realizedNetwork 这一侧，另一侧保持「—」。</p>
         </header>
         <div className={styles.tableWrap}>
           <table className={styles.table}>
@@ -238,7 +291,6 @@ function EntriesTable({ entries }: { entries?: TradeEntry[] | null }) {
     <div>
       <header className={styles.panelHead}>
         <h2>开仓记录</h2>
-        <p>每笔开仓当时的分数、门槛、是否加速或强制，回测胜率、笔数、净 R 和每笔期望，以及放行后的实盘期望和止盈距离。重启后仍在。</p>
       </header>
       {entries.length === 0 ? (
         <p className={styles.emptyTitle}>还没有开仓记录</p>

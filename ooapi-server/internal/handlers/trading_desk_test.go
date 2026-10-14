@@ -483,3 +483,30 @@ func near(got any, want float64) bool {
 	}
 	return diff < 1e-9
 }
+
+func TestTradingMarketBySymbolForBoardGrid(t *testing.T) {
+	trading.ResetForTest()
+	t.Cleanup(trading.ResetForTest)
+	useTradingDB(t)
+
+	owner := tradingUser(21)
+	book := &fakeDeskBook{
+		mark: 62500.5,
+		klines: []trading.DeskCandle{
+			{OpenTime: time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC), Open: 62400, High: 62600, Low: 62350, Close: 62500.5},
+		},
+	}
+	book.install(t)
+
+	rec := callTrading(t, GetTradingMarket, http.MethodGet, "/api/trading/engine/market?symbol=BTCUSDT&timeframe=5m&limit=120", "", owner, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("market by symbol = %d %s", rec.Code, rec.Body.String())
+	}
+	view := tradingData(t, rec)
+	if view["symbol"] != "BTCUSDT" || view["timeframe"] != "5m" || view["limit"] != float64(120) || view["markPrice"] != 62500.5 {
+		t.Fatalf("market by symbol view %#v", view)
+	}
+	if book.symbol != "BTCUSDT" || book.interval != "5m" || book.limit != 120 {
+		t.Fatalf("book query %+v", book)
+	}
+}

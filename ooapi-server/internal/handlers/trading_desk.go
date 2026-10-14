@@ -45,7 +45,12 @@ type deskMarketView struct {
 
 // GetTradingMarket 返回当前策略周期上的公开 K 线和标记价。
 // 引擎内存里有仓时带上入场、止损、止盈，供图上画参考线。
+// 支持按 strategyId 查询，也支持多币种宫格看板按 symbol 直接拉取公开 K 线。
 func GetTradingMarket(c *gin.Context) {
+	if strings.TrimSpace(c.Query("strategyId")) == "" && strings.TrimSpace(c.Query("symbol")) != "" {
+		getTradingMarketBySymbol(c)
+		return
+	}
 	_, row, okRow := deskRow(c)
 	if !okRow {
 		return
@@ -82,6 +87,86 @@ func GetTradingMarket(c *gin.Context) {
 		MarkPrice:  mark,
 		Klines:     klines,
 		Levels:     deskPriceLevels(c, row.ID),
+	})
+}
+
+func getTradingMarketBySymbol(c *gin.Context) {
+	user, okUser := requireTradingUser(c)
+	if !okUser {
+		return
+	}
+	limit, limErr := deskLimit(c)
+	if limErr != nil {
+		writeEngineErr(c, limErr)
+		return
+	}
+	symbol := strings.ToUpper(strings.TrimSpace(c.Query("symbol")))
+	if symbol == "" {
+		fail(c, http.StatusBadRequest, "缺少交易对参数", "bad_request")
+		return
+	}
+	timeframe := strings.TrimSpace(c.Query("timeframe"))
+	if timeframe == "" {
+		timeframe = defaultTimeframe
+	}
+	if _, okTf := strategyTimeframes[timeframe]; !okTf {
+		fail(c, http.StatusBadRequest, "K 线周期只支持 1s、1m、3m、5m、15m", "bad_request")
+		return
+	}
+	mode := strings.ToLower(strings.TrimSpace(c.Query("mode")))
+	if mode != networkTestnet && mode != networkLive {
+		mode = networkTestnet
+	}
+
+	var matchedID int64
+	if rows, err := listUserStrategies(user.ID); err == nil {
+		if len(rows) > 0 && strings.TrimSpace(c.Query("mode")) == "" {
+			mode = rows[0].Record.Mode
+		}
+		for _, r := range rows {
+			if strings.EqualFold(r.Record.Symbol, symbol) {
+				matchedID = r.ID
+				if strings.TrimSpace(c.Query("timeframe")) == "" && r.Record.Timeframe != "" {
+					timeframe = r.Record.Timeframe
+				}
+				if strings.TrimSpace(c.Query("mode")) == "" && r.Record.Mode != "" {
+					mode = r.Record.Mode
+				}
+				break
+			}
+		}
+	}
+
+	book, err := newDeskBook(mode)
+	if err != nil {
+		writeEngineErr(c, err)
+		return
+	}
+	klines, err := book.Klines(symbol, timeframe, limit)
+	if err != nil {
+		writeDeskErr(c, err)
+		return
+	}
+	mark, err := book.MarkPrice(symbol)
+	if err != nil {
+		writeDeskErr(c, err)
+		return
+	}
+	if klines == nil {
+		klines = []trading.DeskCandle{}
+	}
+	var levels *deskLevels
+	if matchedID > 0 {
+		levels = deskPriceLevels(c, matchedID)
+	}
+	ok(c, deskMarketView{
+		StrategyID: matchedID,
+		Symbol:     symbol,
+		Timeframe:  timeframe,
+		Limit:      limit,
+		MarkPrice:  mark,
+		Klines:     klines,
+		Levels:     levels,
 	})
 }
 

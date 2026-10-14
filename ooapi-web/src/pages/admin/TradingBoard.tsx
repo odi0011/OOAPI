@@ -12,6 +12,7 @@ import {
   getEngineBalance,
   getEngineEvents,
   getEngineMarket,
+  getEngineMarketForCoin,
   getEngineOrders,
   getEnginePosition,
   getEngineState,
@@ -36,6 +37,7 @@ import {
   type Strategy,
   type StrategyWrite,
 } from "./tradingApi";
+import LightweightCandleChart from "./LightweightCandleChart";
 import AnalyticsBlocks from "./tradingBoard/AnalyticsBlocks";
 import {
   BalanceHero,
@@ -47,6 +49,7 @@ import {
   QuickTradePanel,
   type SimulatedOrderDraft,
 } from "./tradingBoard/BoardPanels";
+import CoinIcon from "./tradingBoard/CoinIcon";
 import {
   COINS,
   buildActiveOrPreviewPosition,
@@ -77,12 +80,60 @@ import styles from "./TradingBoard.module.css";
 
 /**
  * 交易数据看板（/admin/trading/board）：
- * - 首屏：多币种结构化详情选择器 + 总余额/净值曲线首屏 + 毫秒级行情终端主图（含仓位融合图层） + 右侧快速执行/参数/历史/决策面板
+ * - 首屏：多币种结构化详情选择器 + 总余额/净值曲线首屏 + 多币种宫格 K 线 + 毫秒级行情终端主图（含仓位融合图层） + 右侧快速执行/参数/历史/决策面板
  * - 交易系统：决策模板、决策调参（含期望收益扇形推演与真实后端保存）、自动化与引擎生命周期控制、网格工作台、多币种交易机器人矩阵
  * - 多维分析块：UIArc Small Multiples、净值归因瀑布图、风控预算偏差、信号热力与门控漏斗
  */
 
 const POLL_MS = 5000;
+const GRID_KLINE_LIMIT = 120;
+
+interface BoardCoinFetch {
+  symbol: string;
+  strategyId: number | null;
+  mktRes: PromiseSettledResult<EngineMarket>;
+  stateRes: PromiseSettledResult<EngineState>;
+  posRes: PromiseSettledResult<EnginePosition>;
+}
+
+/** 宫格币种：预设币种，再加上策略里出现的自定义交易对。 */
+function boardCoinsFrom(strategies: Strategy[]) {
+  const list = [...COINS];
+  const seen = new Set(list.map((item) => item.symbol));
+  for (const item of strategies) {
+    const symbol = (item.symbol ?? "").toUpperCase();
+    if (symbol && !seen.has(symbol)) {
+      seen.add(symbol);
+      list.push(coinInfoOf(symbol));
+    }
+  }
+  return list;
+}
+
+async function fetchBoardCoinGrid(allStrategies: Strategy[]): Promise<BoardCoinFetch[]> {
+  return Promise.all(
+    boardCoinsFrom(allStrategies).map(async (coinItem) => {
+      const coinStrategy =
+        allStrategies.find((item) => (item.symbol ?? "").toUpperCase() === coinItem.symbol) ?? null;
+      const [mktRes, stateRes, posRes] = await Promise.allSettled([
+        getEngineMarketForCoin(coinItem.symbol, {
+          strategyId: coinStrategy?.id ?? null,
+          timeframe: coinStrategy?.timeframe ?? "5m",
+          limit: GRID_KLINE_LIMIT,
+        }),
+        coinStrategy ? getEngineState(coinStrategy.id) : Promise.reject(new Error("no_strategy")),
+        coinStrategy ? getEnginePosition(coinStrategy.id) : Promise.reject(new Error("no_strategy")),
+      ]);
+      return {
+        symbol: coinItem.symbol,
+        strategyId: coinStrategy?.id ?? null,
+        mktRes,
+        stateRes,
+        posRes,
+      };
+    }),
+  );
+}
 
 function errorText(err: unknown, fallback: string): string {
   return err instanceof ApiRequestError ? err.message : fallback;
@@ -94,7 +145,9 @@ export default function TradingBoard() {
   const [coinSymbol, setCoinSymbol] = useState<string>(COINS[0]!.symbol);
   const [engine, setEngine] = useState<EngineState | null>(null);
   const [market, setMarket] = useState<EngineMarket | null>(null);
+  const [marketsBySymbol, setMarketsBySymbol] = useState<Record<string, EngineMarket>>({});
   const [position, setPosition] = useState<EnginePosition | null>(null);
+  const [positionsBySymbol, setPositionsBySymbol] = useState<Record<string, EnginePosition>>({});
   const [orders, setOrders] = useState<EngineOrders | null>(null);
   const [balance, setBalance] = useState<EngineBalance | null>(null);
   const [events, setEvents] = useState<DetectionEvent[]>([]);
@@ -161,6 +214,9 @@ export default function TradingBoard() {
     return counts;
   }, [strategies]);
 
+  /** 宫格展示的全部币种：预设币种 + 策略中出现的自定义币种。 */
+  const boardCoins = useMemo(() => boardCoinsFrom(strategies), [strategies]);
+
   /** 当前币种命中的策略：优先同 symbol 的第一条。 */
   const strategy = useMemo(
     () => strategies.find((item) => (item.symbol ?? "").toUpperCase() === coinSymbol) ?? null,
@@ -225,6 +281,7 @@ export default function TradingBoard() {
 
   const refresh = useCallback(async (strategyId: number | null) => {
     const gen = ++genRef.current;
+    const gridPromise = fetchBoardCoinGrid(strategiesRef.current);
     if (strategyId == null) {
       setEngine(null);
       setMarket(null);
@@ -232,46 +289,93 @@ export default function TradingBoard() {
       setOrders(null);
       setBalance(null);
       setBalanceError(undefined);
-      return;
     }
-    const [stateRes, marketRes, positionRes, ordersRes, balanceRes, eventsRes] =
-      await Promise.allSettled([
-        getEngineState(strategyId),
-        getEngineMarket(strategyId, 200),
-        getEnginePosition(strategyId),
-        getEngineOrders(strategyId),
-        getEngineBalance(strategyId),
-        getEngineEvents(),
-      ]);
+    const focusedPromise =
+      strategyId == null
+        ? Promise.resolve(null)
+        : Promise.allSettled([
+            getEngineState(strategyId),
+            getEngineMarket(strategyId, 200),
+            getEnginePosition(strategyId),
+            getEngineOrders(strategyId),
+            getEngineBalance(strategyId),
+            getEngineEvents(),
+          ]);
+    const [coinResults, focused] = await Promise.all([gridPromise, focusedPromise]);
     if (gen !== genRef.current) return;
-    if (stateRes.status === "fulfilled") {
-      setEngine(stateRes.value);
-      setEngines((prev) => new Map(prev).set(strategyId, stateRes.value));
-    }
-    if (marketRes.status === "fulfilled") {
-      setMarket(marketRes.value);
-      if (marketRes.value.markPrice && marketRes.value.markPrice > 0) {
-        const sym = marketRes.value.symbol || coinRef.current;
-        setLivePrices((prev) => ({ ...prev, [sym]: marketRes.value.markPrice! }));
+
+    if (focused) {
+      const [stateRes, marketRes, positionRes, ordersRes, balanceRes, eventsRes] = focused;
+      if (stateRes.status === "fulfilled") {
+        setEngine(stateRes.value);
+        setEngines((prev) => new Map(prev).set(strategyId!, stateRes.value));
+      }
+      if (marketRes.status === "fulfilled") {
+        setMarket(marketRes.value);
+        if (marketRes.value.markPrice && marketRes.value.markPrice > 0) {
+          const sym = marketRes.value.symbol || coinRef.current;
+          setLivePrices((prev) => ({ ...prev, [sym]: marketRes.value.markPrice! }));
+        }
+      }
+      if (positionRes.status === "fulfilled") setPosition(positionRes.value);
+      if (ordersRes.status === "fulfilled") setOrders(ordersRes.value);
+      if (balanceRes.status === "fulfilled") {
+        setBalance(balanceRes.value);
+        setBalanceError(undefined);
+      } else {
+        setBalanceError(errorText(balanceRes.reason, "读取账户余额失败"));
+      }
+      if (eventsRes.status === "fulfilled") {
+        setEvents(eventsRes.value);
+        setEventsEnabled(true);
+      } else if (
+        eventsRes.reason instanceof ApiRequestError &&
+        (eventsRes.reason.status === 401 || eventsRes.reason.status === 403)
+      ) {
+        setEventsEnabled(false);
+        setEvents([]);
       }
     }
-    if (positionRes.status === "fulfilled") setPosition(positionRes.value);
-    if (ordersRes.status === "fulfilled") setOrders(ordersRes.value);
-    if (balanceRes.status === "fulfilled") {
-      setBalance(balanceRes.value);
-      setBalanceError(undefined);
-    } else {
-      setBalanceError(errorText(balanceRes.reason, "读取账户余额失败"));
+
+    const nextMarkets: Record<string, EngineMarket> = {};
+    const nextPositions: Record<string, EnginePosition> = {};
+    const nextEngineStates = new Map<number, EngineState>();
+    const nextPrices: Record<string, number> = {};
+    for (const item of coinResults) {
+      if (item.mktRes.status === "fulfilled") {
+        const mkt = item.mktRes.value;
+        // 按 symbol 查询若回退成了其它币种的策略行情，不覆盖这张卡片。
+        if (!mkt.symbol || mkt.symbol.toUpperCase() === item.symbol) {
+          nextMarkets[item.symbol] = mkt;
+          if (mkt.markPrice > 0) nextPrices[item.symbol] = mkt.markPrice;
+        }
+      }
+      if (item.stateRes.status === "fulfilled" && item.strategyId != null) {
+        nextEngineStates.set(item.strategyId, item.stateRes.value);
+      }
+      if (item.posRes.status === "fulfilled") {
+        nextPositions[item.symbol] = item.posRes.value;
+      }
     }
-    if (eventsRes.status === "fulfilled") {
-      setEvents(eventsRes.value);
-      setEventsEnabled(true);
-    } else if (
-      eventsRes.reason instanceof ApiRequestError &&
-      (eventsRes.reason.status === 401 || eventsRes.reason.status === 403)
-    ) {
-      setEventsEnabled(false);
-      setEvents([]);
+    if (Object.keys(nextMarkets).length > 0) {
+      setMarketsBySymbol((prev) => ({ ...prev, ...nextMarkets }));
+    }
+    if (Object.keys(nextPositions).length > 0) {
+      setPositionsBySymbol((prev) => ({ ...prev, ...nextPositions }));
+    }
+    if (Object.keys(nextPrices).length > 0) {
+      setLivePrices((prev) => ({ ...prev, ...nextPrices }));
+    }
+    if (nextEngineStates.size > 0) {
+      setEngines((prev) => {
+        const merged = new Map(prev);
+        for (const [id, st] of nextEngineStates) merged.set(id, st);
+        if (strategyId != null && focused) {
+          const active = focused[0];
+          if (active.status === "fulfilled") merged.set(strategyId, active.value);
+        }
+        return merged;
+      });
     }
   }, []);
 
@@ -665,7 +769,7 @@ export default function TradingBoard() {
             <span className={styles.sectionEyebrow}>OOAPI QUANTITATIVE TRADING TERMINAL · UIARC ARCHITECTURE</span>
             <h1 className={styles.pageTitle}>交易数据看板</h1>
             <p className={styles.pageLead}>
-              总余额首屏、全品种涨跌幅一张图、毫秒级流式 K 线与仓位标记，多币种资产档案、参数调优、历史与 AI 决策记录同屏联动；下方集成完整交易系统与多维量化归因矩阵。
+              总余额首屏、多币种宫格 K 线、全品种涨跌幅一张图、毫秒级流式 K 线与仓位标记，多币种资产档案、参数调优、历史与 AI 决策记录同屏联动；下方集成完整交易系统与多维量化归因矩阵。
             </p>
           </div>
           <div className={styles.pageHeadBadges}>
@@ -728,6 +832,86 @@ export default function TradingBoard() {
           onTriggerBoost={() => void handleTriggerBoost()}
           boostBusy={boostBusy}
         />
+
+        <section className={styles.panel} aria-label="多币种行情图表">
+          <header className={styles.panelHeadRow}>
+            <div>
+              <h2 className={styles.panelTitle}>多币种行情图表</h2>
+              <p className={styles.panelDesc}>
+                预设币种与自定义策略币种同屏展示 K 线、标记价和持仓参考线。点击卡片切换当前标的，下方行情终端、交易系统与数据面板一起跟着变。
+              </p>
+            </div>
+          </header>
+          <div className={styles.chartGrid}>
+            {boardCoins.map((item) => {
+              const itemStrategy =
+                strategies.find((s) => (s.symbol ?? "").toUpperCase() === item.symbol) ?? null;
+              const itemEngine = itemStrategy ? (engines.get(itemStrategy.id) ?? null) : null;
+              const itemMarket = marketsBySymbol[item.symbol] ?? null;
+              const itemPosition = positionsBySymbol[item.symbol] ?? null;
+              const itemLevels =
+                itemEngine?.state === "InPosition" || itemPosition?.open
+                  ? {
+                      entryPrice: itemPosition?.entryPrice ?? itemEngine?.entryPrice,
+                      stopPrice: itemEngine?.stopPrice,
+                      takeProfitPrice: itemEngine?.takeProfitPrice,
+                    }
+                  : itemMarket?.levels ??
+                    (itemEngine
+                      ? {
+                          entryPrice: itemEngine.entryPrice,
+                          stopPrice: itemEngine.stopPrice,
+                          takeProfitPrice: itemEngine.takeProfitPrice,
+                        }
+                      : undefined);
+              const isSelected = item.symbol === coinSymbol;
+              const timeframeLabel = itemStrategy?.timeframe ?? itemMarket?.timeframe ?? "5m";
+              const markPrice = itemMarket?.markPrice ?? itemPosition?.markPrice;
+
+              return (
+                <article
+                  key={item.symbol}
+                  className={`${styles.chartCard} ${isSelected ? styles.chartCardActive : ""}`}
+                  onClick={() => handleSelectCoin(item.symbol)}
+                >
+                  <header className={styles.chartCardHead}>
+                    <div className={styles.chartCardTitleGroup}>
+                      <CoinIcon icon={item.icon} color={item.color} label={item.name} size={22} />
+                      <strong className={styles.chartCardName}>{item.name}</strong>
+                      <span className={styles.coinSymbol}>{item.symbol}</span>
+                      <span className={styles.chartTimeframeBadge}>{timeframeLabel}</span>
+                    </div>
+                    <div className={styles.chartCardPriceGroup}>
+                      {markPrice != null && markPrice > 0 ? (
+                        <strong className={styles.chartMarkPrice}>
+                          {markPrice.toFixed(item.precision)}
+                        </strong>
+                      ) : (
+                        <span className={styles.coinSymbol}>--</span>
+                      )}
+                    </div>
+                  </header>
+                  <PositionCard position={itemPosition} coin={item} />
+                  <div className={styles.gridChartWrap}>
+                    {itemMarket && itemMarket.klines.length > 0 ? (
+                      <LightweightCandleChart
+                        timeframe={timeframeLabel}
+                        candles={itemMarket.klines}
+                        markPrice={itemMarket.markPrice}
+                        levels={itemLevels}
+                        positionOpen={itemPosition?.open ?? null}
+                      />
+                    ) : (
+                      <p className={styles.emptyText}>
+                        {loading ? "正在读取 K 线…" : "暂无 K 线数据。"}
+                      </p>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
 
         {/* 3. 首屏主工作区：左侧毫秒级行情终端（融合仓位线、止盈止损带、网格线、信号点） + 右侧四维高频控制栏 */}
         <div className={styles.main}>
