@@ -138,6 +138,7 @@ func Setup(cfg *config.Config) *gin.Engine {
 		}
 
 		user.GET("/trading/backtest", middleware.RequirePermission(authz.PermOptionEdit), handlers.GetTradingBacktest)
+		user.GET("/trading/engines", middleware.RequirePermission(authz.PermOptionEdit), handlers.TradingEnginesList)
 
 		engineAPI := user.Group("/trading/engine", middleware.RequirePermission(authz.PermOptionEdit))
 		{
