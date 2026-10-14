@@ -90,8 +90,23 @@ func (e *Engine) finishExchangeFlat(in StepInput) (Snapshot, error) {
 		return e.Snapshot(), err
 	}
 	now := at(in.Now)
+	if e.pos.OpenedAt.IsZero() {
+		if rows, oerr := OpenEntries(e.userID, e.cfg.ID); oerr == nil {
+			for _, row := range rows {
+				if strings.EqualFold(row.Symbol, e.cfg.Symbol) && (e.pos.Side == "" || strings.EqualFold(row.Side, string(e.pos.Side))) {
+					e.openEntryID = row.ID
+					e.pos.OpenedAt = row.OpenedAt.UTC()
+					stamp := row.EntryStamp
+					e.openEntry = &stamp
+					break
+				}
+			}
+		}
+	}
 	since := e.pos.OpenedAt
-	if since.IsZero() {
+	if !since.IsZero() {
+		since = since.Add(-tradeSinceSlack)
+	} else {
 		since = e.startedAt
 	}
 	book, err := e.readFlatBook(since, now)

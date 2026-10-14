@@ -37,6 +37,7 @@ type Protection struct {
 // CloseOrder 是平仓请求。
 type CloseOrder struct {
 	Symbol string
+	Side   Side
 	Price  float64
 	Reason string
 	// ClientOrderID 是平仓市价单的 newClientOrderId。

@@ -216,9 +216,9 @@ func utcDay(t time.Time) time.Time {
 	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-// Roll 跨过 UTC 日界时清零当日盈亏并解除停机。同一天重复调用不改资本。
+// Roll 跨过 Asia/Shanghai 自然日界时清零当日盈亏并解除停机。同一天重复调用不改资本。
 func (l *Ledger) Roll(now time.Time, equity float64) {
-	day := utcDay(now)
+	day := shanghaiDayStart(now)
 	if !l.Day.IsZero() && l.Day.Equal(day) {
 		return
 	}

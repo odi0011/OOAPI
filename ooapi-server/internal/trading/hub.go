@@ -35,13 +35,18 @@ type accountSnap struct {
 type Hub struct {
 	mu       sync.Mutex
 	engines  map[string]*Engine
+	snaps    map[string]Snapshot
 	accounts map[int64]accountSnap
 	onRun    RunHook
 	onPause  func(strategyID int64, reason string)
 }
 
 func NewHub() *Hub {
-	return &Hub{engines: map[string]*Engine{}, accounts: map[int64]accountSnap{}}
+	return &Hub{
+		engines:  map[string]*Engine{},
+		snaps:    map[string]Snapshot{},
+		accounts: map[int64]accountSnap{},
+	}
 }
 
 var defaultHub = NewHub()
@@ -73,13 +78,24 @@ func (h *Hub) SetPauseEntries(userID, strategyID int64, paused bool) {
 	if h == nil {
 		return
 	}
+	key := sessionKey(userID, strategyID)
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	eng := h.engines[sessionKey(userID, strategyID)]
+	eng := h.engines[key]
+	if snap, ok := h.snaps[key]; ok {
+		snap.PauseEntries = paused
+		h.snaps[key] = snap
+	}
+	h.mu.Unlock()
 	if eng == nil {
 		return
 	}
+	eng.mu.Lock()
 	eng.cfg.PauseEntries = paused
+	snap := eng.Snapshot()
+	eng.mu.Unlock()
+	h.mu.Lock()
+	h.snaps[key] = snap
+	h.mu.Unlock()
 }
 
 // ClearPause 清掉内存里的暂停标记，供手动 resume 之后再 Start。
@@ -87,11 +103,18 @@ func (h *Hub) ClearPause(userID, strategyID int64) {
 	if h == nil {
 		return
 	}
+	key := sessionKey(userID, strategyID)
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	eng := h.engines[sessionKey(userID, strategyID)]
+	eng := h.engines[key]
+	h.mu.Unlock()
 	if eng != nil {
+		eng.mu.Lock()
 		eng.ClearPause()
+		snap := eng.Snapshot()
+		eng.mu.Unlock()
+		h.mu.Lock()
+		h.snaps[key] = snap
+		h.mu.Unlock()
 	}
 }
 
@@ -101,11 +124,13 @@ func (h *Hub) boundExchange(userID, strategyID int64) Exchange {
 		return nil
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	eng := h.engines[sessionKey(userID, strategyID)]
+	h.mu.Unlock()
 	if eng == nil {
 		return nil
 	}
+	eng.mu.Lock()
+	defer eng.mu.Unlock()
 	return eng.ex
 }
 
@@ -133,19 +158,28 @@ func (h *Hub) Start(userID, strategyID int64, cfg Config, in StartInput, secrets
 	eng, err := h.prepare(userID, strategyID, cfg, secrets)
 	if err != nil {
 		if eng != nil {
-			return eng.Snapshot(), err
+			eng.mu.Lock()
+			snap := eng.Snapshot()
+			eng.mu.Unlock()
+			h.storeSnapLocked(sessionKey(userID, strategyID), snap)
+			return snap, err
 		}
 		return Snapshot{}, err
 	}
+	eng.mu.Lock()
 	err = eng.Start(in)
-	return eng.Snapshot(), err
+	snap := eng.Snapshot()
+	eng.mu.Unlock()
+	h.storeSnapLocked(sessionKey(userID, strategyID), snap)
+	return snap, err
 }
 
 func (h *Hub) Step(userID, strategyID int64, cfg Config, in StepInput, secrets SecretOpener) (Snapshot, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	key := sessionKey(userID, strategyID)
 	cfg = cfg.Normalize()
 	cfg.ID = strategyID
+
+	h.mu.Lock()
 	if in.PositionsKnown {
 		h.notePositionsLocked(cfg.ExchangeKeyID, in.Positions)
 	}
@@ -156,37 +190,82 @@ func (h *Hub) Step(userID, strategyID int64, cfg Config, in StepInput, secrets S
 		h.noteEquityLocked(cfg.ExchangeKeyID, in.AccountEquity)
 		if in.AccountEquity <= BalanceFloorUSDT {
 			h.haltKeyLocked(cfg.ExchangeKeyID, ReasonBalanceFloor)
-			eng := h.engines[sessionKey(userID, strategyID)]
-			if eng == nil || !eng.Busy() {
-				if eng == nil {
-					return Snapshot{LastReason: ReasonBalanceFloor}, nil
-				}
-				return eng.Snapshot(), nil
+			eng := h.engines[key]
+			if eng == nil {
+				h.mu.Unlock()
+				return Snapshot{LastReason: ReasonBalanceFloor}, nil
 			}
+			snap, hasSnap := h.snaps[key]
+			h.mu.Unlock()
+			eng.mu.Lock()
+			busy := eng.Busy()
+			if !busy {
+				snap = eng.Snapshot()
+				eng.mu.Unlock()
+				h.mu.Lock()
+				h.storeSnapLocked(key, snap)
+				h.mu.Unlock()
+				return snap, nil
+			}
+			eng.mu.Unlock()
+			_ = hasSnap
+		} else {
+			h.mu.Unlock()
 		}
+	} else {
+		h.mu.Unlock()
 	}
-	eng := h.engines[sessionKey(userID, strategyID)]
+
+	h.mu.Lock()
+	eng := h.engines[key]
 	if eng == nil {
+		h.mu.Unlock()
 		return Snapshot{}, ErrNotRunning
 	}
+	skipReason := in.SkipReason
+	if skipReason == "" {
+		skipReason = h.entrySkipLocked(cfg, eng)
+	}
+	var livePeers []int64
+	if strings.EqualFold(cfg.Mode, ModeLive) {
+		livePeers = h.liveArmedIDsLocked()
+	}
+	h.mu.Unlock()
+
+	eng.mu.Lock()
 	// 每一拍都吃进策略参数。持仓中也写入，已挂上的止损止盈不改价，下一笔开仓用新参数。
 	eng.noteLiveFlags(cfg)
 	if err := eng.storeConfig(cfg); err != nil {
-		return eng.Snapshot(), err
+		snap := eng.Snapshot()
+		eng.mu.Unlock()
+		h.mu.Lock()
+		h.storeSnapLocked(key, snap)
+		h.mu.Unlock()
+		return snap, err
 	}
 	if !eng.Busy() {
 		ex, err := NewExchange(cfg)
 		if err != nil {
-			return eng.Snapshot(), err
+			snap := eng.Snapshot()
+			eng.mu.Unlock()
+			h.mu.Lock()
+			h.storeSnapLocked(key, snap)
+			h.mu.Unlock()
+			return snap, err
 		}
 		if err := eng.UseExchange(ex); err != nil {
-			return eng.Snapshot(), err
+			snap := eng.Snapshot()
+			eng.mu.Unlock()
+			h.mu.Lock()
+			h.storeSnapLocked(key, snap)
+			h.mu.Unlock()
+			return snap, err
 		}
 		if in.SkipReason == "" {
-			in.SkipReason = h.entrySkipLocked(cfg, eng)
+			in.SkipReason = skipReason
 		}
 		if strings.EqualFold(cfg.Mode, ModeLive) {
-			in.LivePeerIDs = h.liveArmedIDsLocked()
+			in.LivePeerIDs = livePeers
 		}
 	}
 	eng.SetUser(userID)
@@ -197,34 +276,56 @@ func (h *Hub) Step(userID, strategyID int64, cfg Config, in StepInput, secrets S
 			in.Backtest = &sum
 		}
 	}
-	return eng.Step(in)
+	snap, err := eng.Step(in)
+	eng.mu.Unlock()
+
+	h.mu.Lock()
+	h.storeSnapLocked(key, snap)
+	h.mu.Unlock()
+	return snap, err
 }
 
 // ReconcileFlat 在持仓期间核对交易所是否已经空仓。不跑开仓信号，也不改风控门。
 func (h *Hub) ReconcileFlat(userID, strategyID int64, now time.Time, secrets SecretOpener) (Snapshot, error) {
+	key := sessionKey(userID, strategyID)
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	eng := h.engines[sessionKey(userID, strategyID)]
+	eng := h.engines[key]
+	h.mu.Unlock()
 	if eng == nil {
 		return Snapshot{}, nil
 	}
+	eng.mu.Lock()
 	eng.SetSecrets(secrets)
-	return eng.ReconcileFlat(now)
+	snap, err := eng.ReconcileFlat(now)
+	eng.mu.Unlock()
+	h.mu.Lock()
+	h.storeSnapLocked(key, snap)
+	h.mu.Unlock()
+	return snap, err
 }
 
 func (h *Hub) Stop(userID, strategyID int64, in StepInput, secrets SecretOpener) (Snapshot, error) {
+	key := sessionKey(userID, strategyID)
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	eng := h.engines[sessionKey(userID, strategyID)]
+	eng := h.engines[key]
+	onRun := h.onRun
+	h.mu.Unlock()
 	if eng == nil {
 		return Snapshot{State: StateIdle}, nil
 	}
+	eng.mu.Lock()
 	eng.SetSecrets(secrets)
 	err := eng.Stop(in)
-	if eng.cfg.ID > 0 && h.onRun != nil {
-		h.onRun(eng.cfg.ID, false)
+	sid := eng.cfg.ID
+	snap := eng.Snapshot()
+	eng.mu.Unlock()
+	h.mu.Lock()
+	h.storeSnapLocked(key, snap)
+	h.mu.Unlock()
+	if sid > 0 && onRun != nil {
+		onRun(sid, false)
 	}
-	return eng.Snapshot(), err
+	return snap, err
 }
 
 // ApplyConfig 把刚保存的策略写进正在跑的引擎，不重启、不平仓。
@@ -233,9 +334,10 @@ func (h *Hub) ApplyConfig(userID, strategyID int64, cfg Config) {
 	if h == nil || strategyID <= 0 {
 		return
 	}
+	key := sessionKey(userID, strategyID)
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	eng := h.engines[sessionKey(userID, strategyID)]
+	eng := h.engines[key]
+	h.mu.Unlock()
 	if eng == nil {
 		return
 	}
@@ -244,7 +346,13 @@ func (h *Hub) ApplyConfig(userID, strategyID int64, cfg Config) {
 	if cfg.Revision == 0 {
 		cfg.Revision = time.Now().UnixNano()
 	}
+	eng.mu.Lock()
 	_ = eng.storeConfig(cfg)
+	snap := eng.Snapshot()
+	eng.mu.Unlock()
+	h.mu.Lock()
+	h.storeSnapLocked(key, snap)
+	h.mu.Unlock()
 }
 
 // Config 返回内存里的策略参数。没有这台引擎时 ok 为 false。
@@ -253,11 +361,13 @@ func (h *Hub) Config(userID, strategyID int64) (Config, bool) {
 		return Config{}, false
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	eng := h.engines[sessionKey(userID, strategyID)]
+	h.mu.Unlock()
 	if eng == nil {
 		return Config{}, false
 	}
+	eng.mu.Lock()
+	defer eng.mu.Unlock()
 	return eng.cfg, true
 }
 
@@ -266,9 +376,14 @@ func (h *Hub) PutForTest(userID, strategyID int64, eng *Engine) {
 	if h == nil || eng == nil {
 		return
 	}
-	h.mu.Lock()
+	key := sessionKey(userID, strategyID)
+	eng.mu.Lock()
 	eng.cfg.ID = strategyID
-	h.engines[sessionKey(userID, strategyID)] = eng
+	snap := eng.Snapshot()
+	eng.mu.Unlock()
+	h.mu.Lock()
+	h.engines[key] = eng
+	h.storeSnapLocked(key, snap)
 	h.mu.Unlock()
 }
 
@@ -302,27 +417,79 @@ func (h *Hub) SymbolRunning(keyID int64, symbol string, exceptStrategy int64) bo
 	return h.symbolTakenLocked(Config{ID: exceptStrategy, ExchangeKeyID: keyID, Symbol: symbol}, exceptStrategy)
 }
 
+func (h *Hub) storeSnapLocked(key string, snap Snapshot) {
+	if h.snaps == nil {
+		h.snaps = map[string]Snapshot{}
+	}
+	h.snaps[key] = snap
+}
+
 func (h *Hub) State(userID, strategyID int64) (Snapshot, bool) {
+	key := sessionKey(userID, strategyID)
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	eng := h.engines[sessionKey(userID, strategyID)]
+	eng := h.engines[key]
 	if eng == nil {
+		h.mu.Unlock()
 		return Snapshot{}, false
 	}
-	return eng.Snapshot(), true
+	cached, hasCached := h.snaps[key]
+	h.mu.Unlock()
+	if eng.mu.TryLock() {
+		snap := eng.Snapshot()
+		eng.mu.Unlock()
+		h.mu.Lock()
+		h.storeSnapLocked(key, snap)
+		h.mu.Unlock()
+		return snap, true
+	}
+	if hasCached {
+		cached.TestnetGreen = TestnetGreen()
+		return cached, true
+	}
+	eng.mu.Lock()
+	snap := eng.Snapshot()
+	eng.mu.Unlock()
+	return snap, true
 }
 
 // Sessions 返回某个用户在内存里的全部引擎快照。
 func (h *Hub) Sessions(userID int64) map[int64]Snapshot {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	prefix := fmt.Sprintf("%d:", userID)
-	out := map[int64]Snapshot{}
+	type item struct {
+		key string
+		eng *Engine
+		cached Snapshot
+		hasCached bool
+	}
+	var items []item
 	for key, eng := range h.engines {
 		if !strings.HasPrefix(key, prefix) || eng == nil {
 			continue
 		}
-		out[eng.cfg.ID] = eng.Snapshot()
+		cached, ok := h.snaps[key]
+		items = append(items, item{key: key, eng: eng, cached: cached, hasCached: ok})
+	}
+	h.mu.Unlock()
+	out := map[int64]Snapshot{}
+	for _, it := range items {
+		var id int64
+		if _, err := fmt.Sscanf(it.key, "%d:%d", &userID, &id); err != nil || id <= 0 {
+			continue
+		}
+		if it.eng.mu.TryLock() {
+			snap := it.eng.Snapshot()
+			it.eng.mu.Unlock()
+			out[id] = snap
+		} else if it.hasCached {
+			s := it.cached
+			s.TestnetGreen = TestnetGreen()
+			out[id] = s
+		} else {
+			it.eng.mu.Lock()
+			out[id] = it.eng.Snapshot()
+			it.eng.mu.Unlock()
+		}
 	}
 	return out
 }
@@ -330,13 +497,17 @@ func (h *Hub) Sessions(userID int64) map[int64]Snapshot {
 func (h *Hub) prepare(userID, strategyID int64, cfg Config, secrets SecretOpener) (*Engine, error) {
 	key := sessionKey(userID, strategyID)
 	eng := h.engines[key]
-	if eng != nil && eng.State() == StateError {
-		eng.SetSecrets(secrets)
-		return eng, ErrNoAutoReopen
-	}
-	if eng != nil && eng.Busy() {
-		eng.SetSecrets(secrets)
-		return eng, nil
+	if eng != nil {
+		eng.mu.Lock()
+		defer eng.mu.Unlock()
+		if eng.State() == StateError {
+			eng.SetSecrets(secrets)
+			return eng, ErrNoAutoReopen
+		}
+		if eng.Busy() {
+			eng.SetSecrets(secrets)
+			return eng, nil
+		}
 	}
 	ex, err := NewExchange(cfg)
 	if err != nil {
@@ -420,12 +591,36 @@ func (h *Hub) symbolTakenLocked(cfg Config, strategyID int64) bool {
 	if cfg.ExchangeKeyID <= 0 || symbol == "" {
 		return false
 	}
-	for _, eng := range h.engines {
-		if eng == nil || !eng.running || eng.cfg.ID == strategyID {
+	for key, eng := range h.engines {
+		if eng == nil {
 			continue
 		}
-		if eng.cfg.ExchangeKeyID == cfg.ExchangeKeyID && strings.EqualFold(eng.cfg.Symbol, symbol) {
-			return true
+		if eng.mu.TryLock() {
+			running := eng.running
+			id := eng.cfg.ID
+			keyID := eng.cfg.ExchangeKeyID
+			sym := eng.cfg.Symbol
+			eng.mu.Unlock()
+			if !running || id == strategyID {
+				continue
+			}
+			if keyID == cfg.ExchangeKeyID && strings.EqualFold(sym, symbol) {
+				return true
+			}
+			continue
+		}
+		if snap, ok := h.snaps[key]; ok {
+			if !snap.Running {
+				continue
+			}
+			var uid, sid int64
+			_, _ = fmt.Sscanf(key, "%d:%d", &uid, &sid)
+			if sid == strategyID {
+				continue
+			}
+			if eng.cfg.ExchangeKeyID == cfg.ExchangeKeyID && strings.EqualFold(eng.cfg.Symbol, symbol) {
+				return true
+			}
 		}
 	}
 	return false
@@ -470,32 +665,52 @@ func liveBookMargin(positions []KeyPosition) (open int, margin float64) {
 // liveArmedIDsLocked 收集仍在武装、可以开新仓的实盘策略。必须在 h.mu 下调用。
 func (h *Hub) liveArmedIDsLocked() []int64 {
 	ids := make([]int64, 0)
-	for _, eng := range h.engines {
-		if eng == nil || !eng.running || eng.cfg.ID <= 0 {
+	for key, eng := range h.engines {
+		if eng == nil {
 			continue
 		}
-		if !strings.EqualFold(eng.cfg.Mode, ModeLive) || eng.State() != StateArmed {
+		if eng.mu.TryLock() {
+			ok := eng.running && eng.cfg.ID > 0 && strings.EqualFold(eng.cfg.Mode, ModeLive) && eng.State() == StateArmed
+			id := eng.cfg.ID
+			eng.mu.Unlock()
+			if ok {
+				ids = append(ids, id)
+			}
 			continue
 		}
-		ids = append(ids, eng.cfg.ID)
+		if snap, ok := h.snaps[key]; ok && snap.Running && strings.EqualFold(snap.Mode, ModeLive) && snap.State == StateArmed {
+			var uid, sid int64
+			if _, err := fmt.Sscanf(key, "%d:%d", &uid, &sid); err == nil && sid > 0 {
+				ids = append(ids, sid)
+			}
+		}
 	}
 	return ids
 }
 
 func (h *Hub) haltKeyLocked(keyID int64, reason string) {
 	var ids []int64
-	for _, eng := range h.engines {
-		if eng == nil || eng.cfg.ExchangeKeyID != keyID {
+	for key, eng := range h.engines {
+		if eng == nil {
 			continue
 		}
-		eng.running = false
-		eng.note("stop", reason)
-		switch eng.State() {
-		case StateArmed, StateBlocked:
-			_ = eng.m.Transition(Event{Kind: EventStop, Reason: reason})
-		}
-		if eng.cfg.ID > 0 {
-			ids = append(ids, eng.cfg.ID)
+		if eng.mu.TryLock() {
+			if eng.cfg.ExchangeKeyID != keyID {
+				eng.mu.Unlock()
+				continue
+			}
+			eng.running = false
+			eng.note("stop", reason)
+			switch eng.State() {
+			case StateArmed, StateBlocked:
+				_ = eng.m.Transition(Event{Kind: EventStop, Reason: reason})
+			}
+			if eng.cfg.ID > 0 {
+				ids = append(ids, eng.cfg.ID)
+			}
+			snap := eng.Snapshot()
+			eng.mu.Unlock()
+			h.storeSnapLocked(key, snap)
 		}
 	}
 	if h.onRun != nil {

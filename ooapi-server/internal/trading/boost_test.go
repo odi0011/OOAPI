@@ -818,3 +818,78 @@ func passingStep(now time.Time, candles []Candle, price, winrate float64) StepIn
 	in.Backtest = &BacktestSummary{WinRate: winrate, Trades: DefaultMinTrades, NetR: 1}
 	return in
 }
+
+func TestRunnerWakeInterruptsLongSleep(t *testing.T) {
+	h := NewHub()
+	r := NewRunner(h)
+	cfg := testConfig()
+	cfg.ID = 91
+	cfg.Timeframe = "15m"
+	var mu sync.Mutex
+	var ticks []time.Time
+	r.SetMarket(func(Config, SecretOpener, time.Time) (Market, error) {
+		return Market{Wallet: 20, Available: 20, WalletKnown: true, Equity: 20, EquityKnown: true, Mark: 1}, nil
+	})
+	r.SetStep(func(RunSpec, StepInput) (Snapshot, error) {
+		mu.Lock()
+		ticks = append(ticks, time.Now())
+		mu.Unlock()
+		return Snapshot{State: StateArmed}, nil
+	})
+	r.Start()
+	t.Cleanup(func() { r.Remove(cfg.ID) })
+	r.Ensure(RunSpec{UserID: 1, Config: cfg})
+	waitRunnerTicks(t, &mu, &ticks, 1)
+
+	wokeAt := time.Now()
+	r.Wake(cfg.ID)
+	waitRunnerTicks(t, &mu, &ticks, 2)
+	mu.Lock()
+	elapsed := ticks[1].Sub(wokeAt)
+	mu.Unlock()
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("Wake took %s instead of interrupting sleep immediately", elapsed)
+	}
+}
+
+func TestIntrabarBoostDoesNotReverseOnUnclosedCandle(t *testing.T) {
+	ResetTestnetGreen()
+	SetTestnetGreen(true)
+	ResetBoostForTest()
+	t.Cleanup(func() {
+		ResetTestnetGreen()
+		ResetBoostForTest()
+	})
+	tf := 15 * time.Minute
+	base := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	golden := candlesUntil(t, CrossGolden)
+	for i := range golden {
+		golden[i].OpenTime = base.Add(time.Duration(i-len(golden)) * tf)
+	}
+	now := base.Add(2 * time.Minute)
+	GrantBoost(now)
+
+	paper := NewPaper()
+	eng := liveBoostEngine(t, 92, "XRPUSDT", paper, now)
+	eng.cfg.EntryMode = EntryModeCross
+	price := golden[len(golden)-1].Close
+	in := passingStep(now, golden, price, 0.8)
+	in.LivePeerIDs = []int64{92}
+	snap, err := eng.Step(in)
+	if err != nil || snap.State != StateInPosition || snap.Side != SideLong {
+		t.Fatalf("entry %+v err=%v", snap, err)
+	}
+
+	// Append an unclosed forming bar that dips sharply (creating a death cross if forming bar were used),
+	// while staying above StopPrice so stop_loss does not trigger.
+	forming := append([]Candle(nil), golden...)
+	forming = append(forming, Candle{
+		OpenTime: base,
+		Close:    snap.StopPrice + 0.001,
+	})
+	held, err := eng.Step(stepAt(now.Add(10*time.Second), forming, snap.StopPrice+0.001, 20))
+	if err != nil || held.State != StateInPosition || held.Side != SideLong {
+		t.Fatalf("unclosed forming candle triggered premature exit: %+v err=%v", held, err)
+	}
+}
+

@@ -307,3 +307,106 @@ func TestRunnerReconcilesFlatBeforeCandleClose(t *testing.T) {
 func formatAlgoID(id int64) string {
 	return strconv.FormatInt(id, 10)
 }
+
+func TestSoftwareExitClosesEntryRecord(t *testing.T) {
+	ResetForTest()
+	t.Cleanup(ResetForTest)
+	now := time.Date(2026, 10, 12, 2, 0, 0, 0, time.UTC)
+	cfg := testConfig()
+	cfg.ID = 88
+	paper := NewPaper()
+	eng := withSecrets(NewEngine(cfg, paper, DiscardLogger()))
+	eng.SetUser(7)
+	if err := eng.Start(calmStart(now, 20)); err != nil {
+		t.Fatal(err)
+	}
+	candles := candlesUntil(t, CrossGolden)
+	snap, err := eng.Step(stepAt(now, candles, candles[len(candles)-1].Close, 20))
+	if err != nil || snap.State != StateInPosition || snap.Side != SideLong {
+		t.Fatalf("entry %+v err=%v", snap, err)
+	}
+	openRows, err := OpenEntries(7, cfg.ID)
+	if err != nil || len(openRows) != 1 {
+		t.Fatalf("open entries %+v err=%v", openRows, err)
+	}
+	exitAt := now.Add(5 * time.Minute)
+	exitPrice := snap.TakeProfitPrice + 0.01
+	closedSnap, err := eng.Step(stepAt(exitAt, candles, exitPrice, 20))
+	if err != nil || closedSnap.State != StateArmed {
+		t.Fatalf("exit %+v err=%v", closedSnap, err)
+	}
+	stillOpen, err := OpenEntries(7, cfg.ID)
+	if err != nil || len(stillOpen) != 0 {
+		t.Fatalf("entry should be closed after software take_profit, got %+v err=%v", stillOpen, err)
+	}
+	rows, err := ListEntries(7, cfg.ID, 5)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("entries %+v err=%v", rows, err)
+	}
+	if rows[0].ExitReason != "take_profit" || !rows[0].ClosedAt.Equal(exitAt) || rows[0].ExitPrice <= 0 || rows[0].RealizedUSDT <= 0 {
+		t.Fatalf("closed entry %+v", rows[0])
+	}
+}
+
+func TestRecoverPositionRestoresOpenedAtAndIgnoresEarlierTrades(t *testing.T) {
+	ResetForTest()
+	t.Cleanup(ResetForTest)
+	created := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+	oldTradeAt := created.Add(time.Hour)
+	openedAt := time.Date(2026, 10, 12, 3, 0, 0, 0, time.UTC)
+	fillAt := openedAt.Add(10 * time.Minute)
+
+	fake := newBinanceFake(t, "0.1", "0.1", "0.0001", "5")
+	fake.dual = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	cfg := testConfig()
+	cfg.ID = 89
+	cfg.CreatedAt = created
+	entryID, err := SaveEntry(EntryRecord{
+		UserID: 7, StrategyID: cfg.ID, Symbol: cfg.Symbol, Side: string(SideShort),
+		EntryPrice: 1.5, Qty: 10, OpenedAt: openedAt,
+	})
+	if err != nil || entryID == 0 {
+		t.Fatalf("save entry id=%d err=%v", entryID, err)
+	}
+
+	client := NewUSDMClient(server.URL)
+	eng := NewEngine(cfg, client, DiscardLogger())
+	eng.SetUser(7)
+	eng.SetSecrets(func() (Credentials, error) {
+		return Credentials{APIKey: fake.apiKey, APISecret: fake.secret, Network: ModeTestnet}, nil
+	})
+	if err := eng.Start(calmStart(openedAt, 20)); err != nil {
+		t.Fatal(err)
+	}
+	eng.RecoverPosition(Position{Open: true, Side: SideShort, Qty: 10, Entry: 1.5}, 1.6, 1.4, 2.0, openedAt, entryID, nil)
+
+	fake.mu.Lock()
+	fake.riskBody = `[{"symbol":"XRPUSDT","positionAmt":0,"entryPrice":0,"positionSide":"SHORT"}]`
+	fake.trades = `[
+		{"symbol":"XRPUSDT","side":"BUY","positionSide":"SHORT","price":"1.1000","qty":"99","realizedPnl":"-50","time":` + ms(oldTradeAt) + `},
+		{"symbol":"XRPUSDT","side":"SELL","positionSide":"SHORT","price":"1.5000","qty":"10","realizedPnl":"0","time":` + ms(openedAt) + `},
+		{"symbol":"XRPUSDT","side":"BUY","positionSide":"SHORT","price":"1.4500","qty":"10","realizedPnl":"0.50","time":` + ms(fillAt) + `}
+	]`
+	fake.income = `[
+		{"symbol":"XRPUSDT","incomeType":"REALIZED_PNL","income":"-50","time":` + ms(oldTradeAt) + `},
+		{"symbol":"XRPUSDT","incomeType":"REALIZED_PNL","income":"0.50","time":` + ms(fillAt) + `},
+		{"symbol":"XRPUSDT","incomeType":"COMMISSION","income":"-0.02","time":` + ms(fillAt) + `}
+	]`
+	fake.mu.Unlock()
+
+	snap, err := eng.ReconcileFlat(fillAt.Add(time.Minute))
+	if err != nil || snap.State != StateArmed {
+		t.Fatalf("reconcile %+v err=%v", snap, err)
+	}
+	rows, err := ListEntries(7, cfg.ID, 5)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("entries %+v err=%v", rows, err)
+	}
+	if !almostEqual(rows[0].ExitPrice, 1.45) || !almostEqual(rows[0].ExitQty, 10) || !almostEqual(rows[0].RealizedUSDT, 0.48) {
+		t.Fatalf("recovered entry attributed wrong trade/income: %+v", rows[0])
+	}
+}
+

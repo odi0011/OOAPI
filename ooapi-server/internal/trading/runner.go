@@ -19,13 +19,16 @@ type RunSpec struct {
 
 // Market 是推进一根 K 线时从交易所读到的公开数据和账户余额。
 type Market struct {
-	Candles     []Candle
-	Higher      []Candle
-	Mark        float64
-	MinNotional float64
-	Wallet      float64
-	Available   float64
-	WalletKnown bool
+	Candles          []Candle
+	Higher           []Candle
+	Mark             float64
+	FundingRate      float64
+	LiqDistancePct   float64
+	LiqDistanceKnown bool
+	MinNotional      float64
+	Wallet           float64
+	Available        float64
+	WalletKnown      bool
 	// Equity 是钱包余额加全部持仓未实现盈亏。EquityKnown 为假时不开新仓。
 	Equity         float64
 	EquityKnown    bool
@@ -51,6 +54,7 @@ type Runner struct {
 	// pauseBalance 每一拍从库里读余额暂停线。读失败时沿用内存里的值。
 	pauseBalance func(strategyID int64) (float64, error)
 	jobs         map[int64]context.CancelFunc
+	wakes        map[int64]chan struct{}
 	specs        map[int64]RunSpec
 	cache        map[int64]backtestCache
 	boostEvery   time.Duration
@@ -68,6 +72,7 @@ func NewRunner(hub *Hub) *Runner {
 		hub:   hub,
 		now:   func() time.Time { return time.Now().UTC() },
 		jobs:  map[int64]context.CancelFunc{},
+		wakes: map[int64]chan struct{}{},
 		specs: map[int64]RunSpec{},
 		cache: map[int64]backtestCache{},
 	}
@@ -149,7 +154,7 @@ func (r *Runner) Started() bool {
 	return r.started
 }
 
-// Ensure 在调度器已启动时为这条策略拉起循环。重复调用不会再开一条。
+// Ensure 在调度器已启动时为这条策略拉起循环。重复调用不会再开一条，但会唤醒已有循环。
 func (r *Runner) Ensure(spec RunSpec) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -157,9 +162,38 @@ func (r *Runner) Ensure(spec RunSpec) {
 		return
 	}
 	if _, ok := r.jobs[spec.Config.ID]; ok {
+		if r.specs == nil {
+			r.specs = map[int64]RunSpec{}
+		}
+		r.specs[spec.Config.ID] = spec
+		r.wakeLocked(spec.Config.ID)
 		return
 	}
 	r.launchLocked(spec)
+}
+
+// Wake 立即唤醒某条策略的循环推进一次，不用等到下一根 K 线收盘。
+func (r *Runner) Wake(strategyID int64) {
+	if r == nil || strategyID <= 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.wakeLocked(strategyID)
+}
+
+func (r *Runner) wakeLocked(strategyID int64) {
+	if r.wakes == nil {
+		return
+	}
+	ch, ok := r.wakes[strategyID]
+	if !ok || ch == nil {
+		return
+	}
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
 }
 
 // Remove 停掉某条策略的循环。
@@ -167,6 +201,7 @@ func (r *Runner) Remove(strategyID int64) {
 	r.mu.Lock()
 	cancel := r.jobs[strategyID]
 	delete(r.jobs, strategyID)
+	delete(r.wakes, strategyID)
 	delete(r.specs, strategyID)
 	delete(r.cache, strategyID)
 	r.mu.Unlock()
@@ -190,6 +225,7 @@ func (r *Runner) Reload(spec RunSpec) {
 	}
 	r.specs[spec.Config.ID] = spec
 	delete(r.cache, spec.Config.ID)
+	r.wakeLocked(spec.Config.ID)
 }
 
 // Sync 让循环集合和当前 running 策略对齐。
@@ -212,6 +248,7 @@ func (r *Runner) Sync(specs []RunSpec) {
 		}
 		cancel()
 		delete(r.jobs, id)
+		delete(r.wakes, id)
 	}
 	for id, spec := range want {
 		if _, ok := r.jobs[id]; ok {
@@ -230,10 +267,15 @@ func (r *Runner) launchLocked(spec RunSpec) {
 	if r.specs == nil {
 		r.specs = map[int64]RunSpec{}
 	}
+	if r.wakes == nil {
+		r.wakes = map[int64]chan struct{}{}
+	}
 	r.specs[spec.Config.ID] = spec
+	wakeC := make(chan struct{}, 1)
+	r.wakes[spec.Config.ID] = wakeC
 	ctx, cancel := context.WithCancel(context.Background())
 	r.jobs[spec.Config.ID] = cancel
-	go r.loop(ctx, spec)
+	go r.loop(ctx, spec, wakeC)
 }
 
 func (r *Runner) liveSpec(spec RunSpec) RunSpec {
@@ -245,7 +287,7 @@ func (r *Runner) liveSpec(spec RunSpec) RunSpec {
 	return spec
 }
 
-func (r *Runner) loop(ctx context.Context, spec RunSpec) {
+func (r *Runner) loop(ctx context.Context, spec RunSpec, wakeC <-chan struct{}) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			log.Printf("[trading] runner strategy %d panic: %v", spec.Config.ID, rec)
@@ -285,6 +327,12 @@ func (r *Runner) loop(ctx context.Context, spec RunSpec) {
 			stopTimer(recTimer)
 			stopTimer(bookTimer)
 			return
+		case <-wakeC:
+			timer.Stop()
+			stopTimer(recTimer)
+			stopTimer(bookTimer)
+			spec = r.liveSpec(spec)
+			r.runOnce(ctx, spec)
 		case <-timer.C:
 			stopTimer(recTimer)
 			stopTimer(bookTimer)
@@ -469,9 +517,9 @@ func (r *Runner) runOnce(ctx context.Context, spec RunSpec) {
 		Candles:        mkt.Candles,
 		Higher:         mkt.Higher,
 		MarkPrice:      mkt.Mark,
-		FundingRate:    0,
-		LiqDistancePct: -1,
-		EquityUSDT:     mkt.Wallet,
+		FundingRate:    mkt.FundingRate,
+		LiqDistancePct: marketLiqDistance(mkt),
+		EquityUSDT:     marketEquity(mkt),
 		MinNotional:    mkt.MinNotional,
 		Wallet:         mkt.Wallet,
 		Available:      mkt.Available,
@@ -581,17 +629,31 @@ func (r *Runner) ensureStarted(spec RunSpec, mkt Market) error {
 	if !mkt.EquityKnown || mkt.Equity <= BalanceFloorUSDT {
 		return invalid("还没有读到账户权益")
 	}
-	capital := mkt.Wallet
-	if capital <= 0 {
-		capital = mkt.Equity
-	}
+	capital := marketEquity(mkt)
 	_, err := r.hub.Start(spec.UserID, spec.Config.ID, spec.Config, StartInput{
 		Now:            r.now(),
-		FundingRate:    0,
-		LiqDistancePct: -1,
+		FundingRate:    mkt.FundingRate,
+		LiqDistancePct: marketLiqDistance(mkt),
 		EquityUSDT:     capital,
 	}, spec.Secrets)
 	return err
+}
+
+func marketEquity(mkt Market) float64 {
+	if mkt.EquityKnown && mkt.Equity > 0 {
+		return mkt.Equity
+	}
+	if mkt.Wallet > 0 {
+		return mkt.Wallet
+	}
+	return mkt.Equity
+}
+
+func marketLiqDistance(mkt Market) float64 {
+	if mkt.LiqDistanceKnown {
+		return mkt.LiqDistancePct
+	}
+	return -1
 }
 
 // backtestCache 记下上次回测和它吃过的已收盘数据。
@@ -682,6 +744,10 @@ func defaultMarket(cfg Config, secrets SecretOpener, now time.Time) (Market, err
 		mkt.Mark = candles[n-1].Close
 	}
 	client := PublicClient(cfg.Mode)
+	if markPx, funding, err := client.MarkQuote(cfg.Symbol); err == nil && markPx > 0 {
+		mkt.Mark = markPx
+		mkt.FundingRate = funding
+	}
 	if rules, err := client.Rules(cfg.Symbol); err == nil && rules.MinNotional > 0 {
 		mkt.MinNotional = rules.MinNotional
 	}
@@ -703,6 +769,30 @@ func defaultMarket(cfg Config, secrets SecretOpener, now time.Time) (Market, err
 				}
 				mkt.Positions = positions
 				mkt.PositionsKnown = true
+				if mkt.Mark > 0 {
+					for _, pos := range positions {
+						if !strings.EqualFold(pos.Symbol, cfg.Symbol) || pos.Qty <= 0 || pos.Entry <= 0 {
+							continue
+						}
+						lev := pos.Leverage
+						if lev < 1 {
+							lev = cfg.Leverage
+						}
+						if liq, lerr := IsolatedLiqPrice(pos.Side, pos.Entry, lev, DefaultMaintMarginRate); lerr == nil && liq > 0 {
+							dist := (mkt.Mark - liq) / mkt.Mark
+							if pos.Side == SideShort {
+								dist = (liq - mkt.Mark) / mkt.Mark
+							}
+							if dist < 0 {
+								dist = 0
+							}
+							if !mkt.LiqDistanceKnown || dist < mkt.LiqDistancePct {
+								mkt.LiqDistancePct = dist
+								mkt.LiqDistanceKnown = true
+							}
+						}
+					}
+				}
 			}
 		}
 	}

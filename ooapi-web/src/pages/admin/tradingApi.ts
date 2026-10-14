@@ -97,7 +97,7 @@ export interface Strategy {
 
 /** 与后端 strategyWrite 同名。ID 必须是数字，不能是会话里的字符串。 */
 export interface StrategyWrite {
-  symbol: "XRPUSDT";
+  symbol: string;
   /** 整数，1–MAX_STRATEGY_LEVERAGE（当前 125）。 */
   leverage: number;
   marginMode: "isolated";

@@ -1468,3 +1468,53 @@ func TestPauseBalanceRejectsBelowFloor(t *testing.T) {
 		t.Fatalf("kept %#v", kept["pauseBalanceUsdt"])
 	}
 }
+
+func TestTradingEnginesListAndMultiSymbolBacktest(t *testing.T) {
+	useTradingDB(t)
+	trading.ResetForTest()
+	t.Cleanup(trading.ResetForTest)
+	owner := tradingUser(55)
+	keyRec := callTrading(t, CreateExchangeKey, http.MethodPost, "/api/trading/exchange-keys", `{
+		"label": "测网",
+		"network": "testnet",
+		"apiKey": "`+testAPIKey+`",
+		"apiSecret": "`+testAPISecret+`"
+	}`, owner, "")
+	keyID := int64(tradingData(t, keyRec)["id"].(float64))
+
+	doge := callTrading(t, CreateTradingStrategy, http.MethodPost, "/api/trading/strategies",
+		fmt.Sprintf(`{"exchangeKeyId": %d, "symbol": "DOGEUSDT"}`, keyID), owner, "")
+	if doge.Code != http.StatusOK {
+		t.Fatalf("create DOGE = %d %s", doge.Code, doge.Body.String())
+	}
+	dogeID := int64(tradingData(t, doge)["id"].(float64))
+
+	started := callTrading(t, StartTradingEngine, http.MethodPost, "/api/trading/engine/start",
+		fmt.Sprintf(`{"strategyId": %d, "equityUsdt": 20}`, dogeID), owner, "")
+	if started.Code != http.StatusOK {
+		t.Fatalf("start DOGE = %d %s", started.Code, started.Body.String())
+	}
+
+	enginesRec := callTrading(t, TradingEnginesList, http.MethodGet, "/api/trading/engines", "", owner, "")
+	if enginesRec.Code != http.StatusOK {
+		t.Fatalf("engines list = %d %s", enginesRec.Code, enginesRec.Body.String())
+	}
+	items, ok := tradingData(t, enginesRec)["engines"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("engines items = %#v", tradingData(t, enginesRec)["engines"])
+	}
+	first := items[0].(map[string]any)
+	if int64(first["strategyId"].(float64)) != dogeID || first["symbol"] != "DOGEUSDT" || first["state"] != "Armed" {
+		t.Fatalf("engine item = %#v", first)
+	}
+
+	badSymbol := callTrading(t, GetTradingBacktest, http.MethodGet, "/api/trading/backtest?symbol=INVALID&days=0", "", owner, "")
+	if badSymbol.Code != http.StatusBadRequest || tradingCode(t, badSymbol) != "invalid_symbol" {
+		t.Fatalf("GetTradingBacktest accepted INVALID symbol: %d %s", badSymbol.Code, badSymbol.Body.String())
+	}
+	dogeBacktest := callTrading(t, GetTradingBacktest, http.MethodGet, "/api/trading/backtest?symbol=DOGEUSDT&days=0", "", owner, "")
+	if dogeBacktest.Code != http.StatusBadRequest || tradingCode(t, dogeBacktest) != "bad_request" {
+		t.Fatalf("GetTradingBacktest rejected DOGEUSDT before days check: %d %s", dogeBacktest.Code, dogeBacktest.Body.String())
+	}
+}
+

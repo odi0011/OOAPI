@@ -196,10 +196,7 @@ func (c *USDMClient) PlaceEntry(req EntryOrder) (Fill, error) {
 	if qty <= 0 || req.Price <= 0 || qty*req.Price+1e-9 < rules.MinNotional {
 		return Fill{}, withReason(ErrNotionalBelowMin, "notional_below_minimum")
 	}
-	if err := c.setIsolated(req.Symbol); err != nil {
-		return Fill{}, err
-	}
-	if err := c.setLeverage(req.Symbol, req.Leverage); err != nil {
+	if err := c.ConfigureAccount(req.Symbol, req.Leverage); err != nil {
 		return Fill{}, err
 	}
 	hedge, err := c.hedge()
@@ -237,7 +234,15 @@ func (c *USDMClient) PlaceProtection(req Protection) error {
 	}
 	req.StopClientID = ensureClientOrderID(req.StopClientID, "oo-sl-")
 	req.TakeClientID = ensureClientOrderID(req.TakeClientID, "oo-tp-")
-	pos, err := c.Position(req.Symbol)
+	var (
+		pos Position
+		err error
+	)
+	if req.Side == SideLong || req.Side == SideShort {
+		pos, err = c.PositionSide(req.Symbol, req.Side)
+	} else {
+		pos, err = c.Position(req.Symbol)
+	}
 	if err != nil {
 		return err
 	}
@@ -517,10 +522,26 @@ func (c *USDMClient) Close(req CloseOrder) (Fill, error) {
 	if err := c.guard(); err != nil {
 		return Fill{}, err
 	}
-	if err := c.CancelOpen(req.Symbol); err != nil {
+	hedge, err := c.hedge()
+	if err != nil {
 		return Fill{}, err
 	}
-	pos, err := c.Position(req.Symbol)
+	var pos Position
+	if hedge && (req.Side == SideLong || req.Side == SideShort) {
+		if _, err := c.CancelProtective(req.Symbol, req.Side); err != nil {
+			return Fill{}, err
+		}
+		pos, err = c.PositionSide(req.Symbol, req.Side)
+	} else {
+		if err := c.CancelOpen(req.Symbol); err != nil {
+			return Fill{}, err
+		}
+		if req.Side == SideLong || req.Side == SideShort {
+			pos, err = c.PositionSide(req.Symbol, req.Side)
+		} else {
+			pos, err = c.Position(req.Symbol)
+		}
+	}
 	if err != nil {
 		return Fill{}, err
 	}
@@ -529,7 +550,11 @@ func (c *USDMClient) Close(req CloseOrder) (Fill, error) {
 		if price <= 0 {
 			price = pos.Entry
 		}
-		return Fill{Status: StatusFilled, Price: price, Qty: pos.Qty, Side: pos.Side}, nil
+		side := pos.Side
+		if side == "" {
+			side = req.Side
+		}
+		return Fill{Status: StatusFilled, Price: price, Qty: pos.Qty, Side: side}, nil
 	}
 	rules, raw, err := c.rulesFor(req.Symbol)
 	if err != nil {
@@ -538,10 +563,6 @@ func (c *USDMClient) Close(req CloseOrder) (Fill, error) {
 	qty := AlignQuantity(pos.Qty, rules.StepSize, rules.MinQty)
 	if qty <= 0 {
 		return Fill{}, invalid("持仓数量无法按步长平仓")
-	}
-	hedge, err := c.hedge()
-	if err != nil {
-		return Fill{}, err
 	}
 	params := url.Values{}
 	params.Set("symbol", req.Symbol)
@@ -1116,6 +1137,17 @@ func parseAlgoAck(body []byte) (int64, error) {
 		return 0, &ExchangeError{Status: 200, Code: resp.Code, Msg: resp.Msg, Body: string(body)}
 	}
 	return int64(resp.AlgoID), nil
+}
+
+func (c *USDMClient) ConfigureAccount(symbol string, leverage int) error {
+	if err := c.setIsolated(symbol); err != nil {
+		return err
+	}
+	if err := c.setLeverage(symbol, leverage); err != nil {
+		return err
+	}
+	_, err := c.hedge()
+	return err
 }
 
 func (c *USDMClient) setIsolated(symbol string) error {

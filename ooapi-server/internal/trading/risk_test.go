@@ -89,19 +89,21 @@ func TestDailyHaltThreshold(t *testing.T) {
 
 func TestLedgerResetsOnNextUTCDay(t *testing.T) {
 	var book Ledger
-	day := time.Date(2026, 10, 12, 22, 0, 0, 0, time.UTC)
+	// 2026-10-12 15:00 UTC == 2026-10-12 23:00 Asia/Shanghai
+	day := time.Date(2026, 10, 12, 15, 0, 0, 0, time.UTC)
 	book.Roll(day, 2)
 	if !book.Add(-0.08, 4) || !book.Halted || book.Cumulative != -0.08 {
 		t.Fatal("expected halt")
 	}
 	book.Roll(day.Add(30*time.Minute), 9)
 	if !book.Halted || book.Capital != 2 {
-		t.Fatalf("same UTC day must keep the halt: %+v", book)
+		t.Fatalf("same Shanghai day must keep the halt: %+v", book)
 	}
-	next := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
+	// 2026-10-12 16:00 UTC == 2026-10-13 00:00 Asia/Shanghai
+	next := ShanghaiDayStart(day.Add(2 * time.Hour))
 	book.Roll(next, 2)
 	if book.Halted || book.Realized != 0 || book.Cumulative != -0.08 || !book.Day.Equal(next) {
-		t.Fatalf("next UTC day should clear the halt: %+v", book)
+		t.Fatalf("next Shanghai day should clear the halt: %+v", book)
 	}
 }
 

@@ -67,6 +67,61 @@ func GetTradingEngineState(c *gin.Context) {
 	ok(c, bindEngineView(c, row, trading.Snapshot{}, false))
 }
 
+// TradingEnginesList 返回当前用户全部策略的引擎状态与汇总指标（GET /api/trading/engines）。
+func TradingEnginesList(c *gin.Context) {
+	user, okUser := requireTradingUser(c)
+	if !okUser {
+		return
+	}
+	rows, err := listUserStrategies(user.ID)
+	if err != nil {
+		writeEngineErr(c, err)
+		return
+	}
+	sessions := trading.DefaultHub().Sessions(user.ID)
+	engines := make([]engineStateView, 0, len(rows))
+	var (
+		unrealizedPnl float64
+		realizedToday float64
+		openPositions int
+	)
+	for _, row := range rows {
+		snap, hasSession := sessions[row.ID]
+		view := bindEngineView(c, row, snap, hasSession)
+		engines = append(engines, view)
+		unrealizedPnl += view.UnrealizedPnl
+		realizedToday += view.DayRealized
+		if view.State == trading.StateInPosition || view.Qty > 0 {
+			openPositions++
+		}
+	}
+	ok(c, gin.H{
+		"engines": engines,
+		"totals": gin.H{
+			"unrealizedPnl": unrealizedPnl,
+			"realizedToday": realizedToday,
+			"openPositions": openPositions,
+		},
+	})
+}
+
+func listUserStrategies(userID int64) ([]strategyRow, error) {
+	rows, err := queryRows(strategyListSQL, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]strategyRow, 0)
+	for rows.Next() {
+		row, err := scanStrategy(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
 // StartTradingEngine 按最新策略（或指定 id）做启动检查，进入 Armed，不下单。
 func StartTradingEngine(c *gin.Context) {
 	runEngine(c, func(userID int64, row strategyRow, req engineRequest, secrets trading.SecretOpener) (trading.Snapshot, error) {

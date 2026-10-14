@@ -224,22 +224,28 @@ func (c *USDMClient) Klines(symbol, interval string, limit int) ([]DeskCandle, e
 
 // MarkPrice 读公开标记价。没有有效价格时返回错误，调用方不要用收盘价冒充。
 func (c *USDMClient) MarkPrice(symbol string) (float64, error) {
+	price, _, err := c.MarkQuote(symbol)
+	return price, err
+}
+
+// MarkQuote 读公开标记价与最新资金费率（/fapi/v1/premiumIndex）。
+func (c *USDMClient) MarkQuote(symbol string) (float64, float64, error) {
 	if err := c.readGuard(); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
 	if symbol == "" {
-		return 0, invalid("缺少交易对")
+		return 0, 0, invalid("缺少交易对")
 	}
 	body, err := c.public(http.MethodGet, "/fapi/v1/premiumIndex", url.Values{"symbol": {symbol}})
 	if err != nil {
-		return 0, redactNetErr(err)
+		return 0, 0, redactNetErr(err)
 	}
-	price, err := parseMarkPrice(body)
+	price, funding, err := parseMarkQuote(body)
 	if err != nil {
-		return 0, errors.New("标记价无法解析")
+		return 0, 0, errors.New("标记价无法解析")
 	}
-	return price, nil
+	return price, funding, nil
 }
 
 // PositionRisk 读签名后的持仓。没有仓位时 Open 为假，数量和盈亏留空。
@@ -421,17 +427,24 @@ func parseKlines(body []byte) ([]DeskCandle, error) {
 }
 
 func parseMarkPrice(body []byte) (float64, error) {
+	price, _, err := parseMarkQuote(body)
+	return price, err
+}
+
+func parseMarkQuote(body []byte) (float64, float64, error) {
 	var row struct {
-		MarkPrice string `json:"markPrice"`
+		MarkPrice       string `json:"markPrice"`
+		LastFundingRate string `json:"lastFundingRate"`
 	}
 	if err := json.Unmarshal(body, &row); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	price := parseNum(row.MarkPrice)
 	if price <= 0 {
-		return 0, errors.New("mark")
+		return 0, 0, errors.New("mark")
 	}
-	return price, nil
+	funding := parseNum(row.LastFundingRate)
+	return price, funding, nil
 }
 
 type riskRow struct {

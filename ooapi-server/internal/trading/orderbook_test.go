@@ -181,3 +181,30 @@ func incomeCommission(rows []IncomeEvent, since, now time.Time) float64 {
 	}
 	return sum
 }
+
+func TestBuildOrderRowsClassifiesBreakEvenExit(t *testing.T) {
+	t0 := time.Date(2026, 10, 12, 1, 0, 0, 0, time.UTC)
+	trades := []UserTrade{
+		{Symbol: "XRPUSDT", OrderID: "10", Side: "BUY", PositionSide: "BOTH", Price: 1.5, Qty: 10, Commission: 0.01, RealizedPnl: 0, Time: t0},
+		{Symbol: "XRPUSDT", OrderID: "11", Side: "SELL", PositionSide: "BOTH", Price: 1.5, Qty: 10, Commission: 0.01, RealizedPnl: 0, Time: t0.Add(time.Minute)},
+		{Symbol: "XRPUSDT", OrderID: "12", Side: "SELL", PositionSide: "SHORT", Price: 2.0, Qty: 5, Commission: 0.01, RealizedPnl: 0, Time: t0.Add(2 * time.Minute)},
+		{Symbol: "XRPUSDT", OrderID: "13", Side: "BUY", PositionSide: "SHORT", Price: 2.0, Qty: 5, Commission: 0.01, RealizedPnl: 0, Time: t0.Add(3 * time.Minute)},
+	}
+	rows := BuildOrderRows(trades, nil, 99)
+	if len(rows) != 4 {
+		t.Fatalf("rows len=%d %+v", len(rows), rows)
+	}
+	if rows[0].Role != "entry" || rows[0].Side != "long" {
+		t.Fatalf("row 0 %+v", rows[0])
+	}
+	if rows[1].Role != "exit" || rows[1].Side != "long" {
+		t.Fatalf("break-even one-way close should be exit long, got %+v", rows[1])
+	}
+	if rows[2].Role != "entry" || rows[2].Side != "short" {
+		t.Fatalf("row 2 %+v", rows[2])
+	}
+	if rows[3].Role != "exit" || rows[3].Side != "short" {
+		t.Fatalf("break-even hedge close should be exit short, got %+v", rows[3])
+	}
+}
+

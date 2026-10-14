@@ -7,6 +7,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -146,6 +147,7 @@ type entryDraft struct {
 
 // Engine 把信号、风控和状态机串起来。调用方一次只推进一个线程。
 type Engine struct {
+	mu     sync.Mutex
 	cfg    Config
 	ex     Exchange
 	log    Logger
@@ -196,8 +198,9 @@ type Engine struct {
 	feeReady bool
 	feeRound RoundTripFees
 	// liveExpectancy / takeProfitDist 是最近一次期望门的结果，写进快照和开仓记录。
-	liveExpectancy float64
-	takeProfitDist float64
+	liveExpectancy    float64
+	takeProfitDist    float64
+	ordersSyncedUntil time.Time
 }
 
 func NewEngine(cfg Config, ex Exchange, logger Logger) *Engine {
@@ -250,6 +253,16 @@ func (e *Engine) Snapshot() Snapshot {
 	if liq <= 0 {
 		liq = e.lastLiq
 	}
+	var lastBT *BacktestSummary
+	if e.lastBacktest != nil {
+		copied := *e.lastBacktest
+		lastBT = &copied
+	}
+	var openEnt *EntryStamp
+	if e.openEntry != nil {
+		copied := *e.openEntry
+		openEnt = &copied
+	}
 	return Snapshot{
 		State:              e.State(),
 		Side:               e.pos.Side,
@@ -271,10 +284,10 @@ func (e *Engine) Snapshot() Snapshot {
 		PauseEntries:       e.cfg.PauseEntries,
 		MarkPrice:          e.lastMark,
 		UnrealizedPnl:      e.unrealized(e.lastMark),
-		LastBacktest:       e.lastBacktest,
+		LastBacktest:       lastBT,
 		LiveExpectancy:     e.liveExpectancy,
 		TakeProfitDist:     e.takeProfitDist,
-		Entry:              e.openEntry,
+		Entry:              openEnt,
 	}
 }
 
@@ -936,16 +949,29 @@ func (e *Engine) stepPosition(in StepInput) (Snapshot, error) {
 	if price <= 0 {
 		return e.failed("mark price is required")
 	}
-	cross, err := e.cross(in.Candles)
+	candlesForCross := in.Candles
+	if len(in.Candles) > 0 && !in.Now.IsZero() {
+		if closed := ClosedCandles(at(in.Now), TimeframeDuration(e.cfg.Timeframe), in.Candles); len(closed) >= e.cfg.EmaSlow+2 {
+			candlesForCross = closed
+		}
+	}
+	cross, err := e.cross(candlesForCross)
 	if err != nil {
 		return e.failed(err.Error())
 	}
 	exit, reason, fillPrice := e.exitSignal(price, cross)
+	if exit && reason == "take_profit" && e.boosting(in) && e.syncsPosition() && e.pos.Stop > 0 && e.pos.Take > 0 {
+		// 实盘加速扫描期间，交易所挂有 GTX maker 止盈与 STOP_MARKET 止损时，不用市价 taker 单抢跑止盈挂单。
+		exit = false
+	}
 	if !exit {
 		if e.syncsPosition() && e.pos.Stop > 0 && e.pos.Take > 0 {
 			if err := e.ex.PlaceProtection(Protection{
 				Symbol: e.cfg.Symbol, Stop: e.pos.Stop, Take: e.pos.Take, Side: e.pos.Side,
 			}); err != nil {
+				if postOnlyRejected(err) {
+					return e.finishExit(in, "take_profit", price)
+				}
 				return e.Snapshot(), err
 			}
 		}
@@ -953,9 +979,14 @@ func (e *Engine) stepPosition(in StepInput) (Snapshot, error) {
 		return e.Snapshot(), nil
 	}
 	if cross != CrossNone {
-		e.lastBarKey = barKey(in.Candles)
+		e.lastBarKey = barKey(candlesForCross)
 	}
 	return e.finishExit(in, reason, fillPrice)
+}
+
+func postOnlyRejected(err error) bool {
+	var ex *ExchangeError
+	return errors.As(err, &ex) && ex != nil && ex.Code == -5022
 }
 
 // holdPausedPosition 只观察持仓。不补保护单，不按信号平仓，避免碰到已挂的止损止盈。
@@ -1002,6 +1033,19 @@ func (e *Engine) settleWithoutOrders(in StepInput, reason string) (Snapshot, err
 	if err := e.m.Transition(Event{Kind: EventExitFilled, Reason: reason}); err != nil {
 		return e.failed(err.Error())
 	}
+	exitPx := mark(in)
+	if exitPx <= 0 {
+		exitPx = e.pos.Entry
+	}
+	pnl := RealizedPnL(e.pos.Side, e.pos.Entry, exitPx, e.pos.Qty)
+	e.closedSide = e.pos.Side
+	_ = CloseEntry(e.openEntryID, e.userID, e.cfg.ID, e.cfg.Symbol, string(e.pos.Side), ExitFill{
+		Price:    exitPx,
+		Qty:      e.pos.Qty,
+		Realized: pnl,
+		Reason:   reason,
+		ClosedAt: at(in.Now),
+	})
 	e.clearPos()
 	e.forgetPlan()
 	if err := e.m.Transition(Event{Kind: EventBooked, Reason: reason}); err != nil {
@@ -1070,14 +1114,36 @@ func (e *Engine) finishExit(in StepInput, reason string, price ...float64) (Snap
 	if e.State() != StateExitSubmitted {
 		return e.failed("exit is not in progress")
 	}
-	fill, err := e.ex.Close(CloseOrder{Symbol: e.cfg.Symbol, Price: fillPrice, Reason: reason})
+	fill, err := e.ex.Close(CloseOrder{
+		Symbol:        e.cfg.Symbol,
+		Side:          e.pos.Side,
+		Price:         fillPrice,
+		Reason:        reason,
+		ClientOrderID: newClientOrderID("oo-cls-"),
+	})
 	if err != nil {
 		return e.failed(err.Error())
 	}
 	if err := e.m.Transition(Event{Kind: EventExitFilled, Reason: reason}); err != nil {
 		return e.failed(err.Error())
 	}
-	pnl := RealizedPnL(e.pos.Side, e.pos.Entry, fill.Price, e.pos.Qty)
+	exitQty := fill.Qty
+	if exitQty <= 0 {
+		exitQty = e.pos.Qty
+	}
+	pnl := RealizedPnL(e.pos.Side, e.pos.Entry, fill.Price, exitQty)
+	closedAt := fill.At
+	if closedAt.IsZero() {
+		closedAt = at(in.Now)
+	}
+	e.closedSide = e.pos.Side
+	_ = CloseEntry(e.openEntryID, e.userID, e.cfg.ID, e.cfg.Symbol, string(e.pos.Side), ExitFill{
+		Price:    fill.Price,
+		Qty:      exitQty,
+		Realized: pnl,
+		Reason:   reason,
+		ClosedAt: closedAt,
+	})
 	var halted bool
 	if e.incomeBooked {
 		halted = e.ledger.Halted || DailyHaltBreached(e.ledger.Capital, e.ledger.Realized, e.cfg.DailyLossPct)
@@ -1138,9 +1204,33 @@ func (e *Engine) cancelAndFlatten(reason string) {
 	if reason == "" {
 		reason = "error_flatten"
 	}
-	if _, err := e.ex.Close(CloseOrder{Symbol: e.cfg.Symbol, Price: price, Reason: reason}); err != nil {
+	fill, err := e.ex.Close(CloseOrder{
+		Symbol:        e.cfg.Symbol,
+		Side:          pos.Side,
+		Price:         price,
+		Reason:        reason,
+		ClientOrderID: newClientOrderID("oo-cls-"),
+	})
+	if err != nil {
 		e.log.Printf("[trading] flatten %s failed: %v", reason, err)
 		log.Printf("[trading] flatten %s failed: %v", reason, err)
+	} else {
+		exitPx := fill.Price
+		if exitPx <= 0 {
+			exitPx = price
+		}
+		exitQty := fill.Qty
+		if exitQty <= 0 {
+			exitQty = pos.Qty
+		}
+		pnl := RealizedPnL(pos.Side, pos.Entry, exitPx, exitQty)
+		_ = CloseEntry(e.openEntryID, e.userID, e.cfg.ID, e.cfg.Symbol, string(pos.Side), ExitFill{
+			Price:    exitPx,
+			Qty:      exitQty,
+			Realized: pnl,
+			Reason:   reason,
+			ClosedAt: time.Now().UTC(),
+		})
 	}
 	e.syncExchangeBooks(time.Now().UTC())
 }
@@ -1362,24 +1452,66 @@ func (e *Engine) adoptOrphanPosition() (Snapshot, error) {
 	if err := e.m.Transition(Event{Kind: EventAdopt, Reason: ReasonAdoptPosition}); err != nil {
 		return e.Snapshot(), err
 	}
-	opened := e.cfg.CreatedAt.UTC()
-	if opened.IsZero() {
-		opened = e.startedAt
-	}
-	if opened.IsZero() {
-		opened = time.Now().UTC().Add(-24 * time.Hour)
-	}
-	e.pos = position{Side: pos.Side, Qty: pos.Qty, Entry: pos.Entry, Stop: stop, Take: take, Liq: liq, OpenedAt: opened}
-	e.rememberPlan(pos.Entry, stop, liq)
+	e.RecoverPosition(pos, stop, take, liq, time.Time{}, 0, nil)
 	e.note("adopt", ReasonAdoptPosition)
 	e.log.Printf("[trading] adopt %s %s qty=%.8f entry=%.8f stop=%.8f take=%.8f", e.cfg.Symbol, pos.Side, pos.Qty, pos.Entry, stop, take)
 	log.Printf("[trading] adopt %s %s qty=%.8f entry=%.8f stop=%.8f take=%.8f", e.cfg.Symbol, pos.Side, pos.Qty, pos.Entry, stop, take)
 	return e.Snapshot(), nil
 }
 
+// RecoverPosition 恢复持仓及关联的 trading_entries 开仓时间和记录 ID，不使用策略创建时间充当单笔开仓起点。
+func (e *Engine) RecoverPosition(pos Position, stop, take, liq float64, openedAt time.Time, entryID int64, stamp *EntryStamp) {
+	if e == nil {
+		return
+	}
+	if openedAt.IsZero() && entryID == 0 {
+		if rows, err := OpenEntries(e.userID, e.cfg.ID); err == nil {
+			for _, row := range rows {
+				if strings.EqualFold(row.Symbol, e.cfg.Symbol) && (pos.Side == "" || strings.EqualFold(row.Side, string(pos.Side))) {
+					openedAt = row.OpenedAt.UTC()
+					entryID = row.ID
+					if stamp == nil {
+						s := row.EntryStamp
+						stamp = &s
+					}
+					break
+				}
+			}
+		}
+	}
+	if openedAt.IsZero() {
+		openedAt = e.stepAt
+	}
+	if openedAt.IsZero() {
+		openedAt = e.startedAt
+	}
+	if openedAt.IsZero() {
+		openedAt = time.Now().UTC()
+	}
+	e.pos = position{
+		Side:     pos.Side,
+		Qty:      pos.Qty,
+		Entry:    pos.Entry,
+		Stop:     stop,
+		Take:     take,
+		Liq:      liq,
+		OpenedAt: openedAt.UTC(),
+	}
+	e.openEntryID = entryID
+	if stamp != nil {
+		copied := *stamp
+		e.openEntry = &copied
+	}
+	e.rememberPlan(pos.Entry, stop, liq)
+	if e.State() != StateInPosition {
+		e.m.Restore(StateInPosition, ReasonAdoptPosition)
+	}
+}
+
 func (e *Engine) flattenOrphan(pos Position, reason string) (Snapshot, error) {
 	_, err := e.ex.Close(CloseOrder{
 		Symbol:        e.cfg.Symbol,
+		Side:          pos.Side,
 		Price:         pos.Entry,
 		Reason:        reason,
 		ClientOrderID: newClientOrderID("oo-cls-"),
@@ -1425,7 +1557,9 @@ func (e *Engine) captureIncome(now time.Time) {
 	}
 	now = at(now)
 	symbol := strings.ToUpper(strings.TrimSpace(e.cfg.Symbol))
-	if e.incomeOK && e.incomeSince.Equal(since) && e.incomeSymbol == symbol && !now.Before(e.incomeAt) && now.Sub(e.incomeAt) < IncomeRefresh {
+	if e.incomeOK && e.incomeSince.Equal(since) && e.incomeSymbol == symbol &&
+		ShanghaiDayStart(now).Equal(ShanghaiDayStart(e.incomeAt)) &&
+		!now.Before(e.incomeAt) && now.Sub(e.incomeAt) < IncomeRefresh {
 		e.ledger.Realized = e.incomeDay
 		e.ledger.Cumulative = e.incomeCum
 		e.incomeBooked = true
@@ -1485,7 +1619,14 @@ func (e *Engine) bookOrderRows(events []IncomeEvent, since, now time.Time) {
 	if !ok || !src.CredentialsReady() {
 		return
 	}
-	trades, err := src.UserTrades(e.cfg.Symbol, since, now)
+	tradeSince := since
+	if !e.ordersSyncedUntil.IsZero() {
+		overlap := e.ordersSyncedUntil.Add(-time.Minute)
+		if overlap.After(tradeSince) && !overlap.After(now) {
+			tradeSince = overlap
+		}
+	}
+	trades, err := src.UserTrades(e.cfg.Symbol, tradeSince, now)
 	if err != nil {
 		log.Printf("[trading] userTrades %s: %v", e.cfg.Symbol, err)
 		return
@@ -1498,11 +1639,25 @@ func (e *Engine) bookOrderRows(events []IncomeEvent, since, now time.Time) {
 	}
 	book := currentOrderBook()
 	if book == nil || e.userID <= 0 || e.cfg.ID <= 0 || len(rows) == 0 {
+		if len(trades) == 0 && now.After(e.ordersSyncedUntil) {
+			e.ordersSyncedUntil = now
+		}
 		return
 	}
 	if err := book.Upsert(e.userID, e.cfg.ID, rows); err != nil {
 		log.Printf("[trading] order book %s: %v", e.cfg.Symbol, err)
+		return
 	}
+	latest := e.ordersSyncedUntil
+	for _, r := range rows {
+		if r.FilledAt.After(latest) {
+			latest = r.FilledAt
+		}
+	}
+	if now.After(latest) {
+		latest = now
+	}
+	e.ordersSyncedUntil = latest
 }
 
 // applyIncomeHalt 用上海当日的币安净已实现决定日亏停机。

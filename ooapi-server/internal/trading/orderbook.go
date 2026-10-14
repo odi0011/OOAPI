@@ -88,21 +88,15 @@ func BuildOrderRows(trades []UserTrade, income []IncomeEvent, mark float64) []Or
 		}
 		quote := row.Price
 		row.Price = quote / row.Qty
-		if math.Abs(row.RealizedPnL) < 1e-12 {
-			row.RealizedPnL = 0
-			row.Role = "entry"
-		} else {
-			row.Role = "exit"
-		}
 		rows = append(rows, *row)
 	}
-	rows = applySides(rows, trades)
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].FilledAt.Equal(rows[j].FilledAt) {
 			return rows[i].OrderID < rows[j].OrderID
 		}
 		return rows[i].FilledAt.Before(rows[j].FilledAt)
 	})
+	rows = applySides(rows, trades)
 	attributeFunding(rows, income)
 	return rows
 }
@@ -120,9 +114,28 @@ func applySides(rows []OrderRow, trades []UserTrade) []OrderRow {
 		}
 		hints[id] = hint{side: trade.Side, pos: trade.PositionSide}
 	}
+	openSide := map[string]string{}
 	for i := range rows {
 		got := hints[rows[i].OrderID]
-		rows[i].Side = bookSide(got.side, rows[i].Role, got.pos)
+		sym := rows[i].Symbol
+		if math.Abs(rows[i].RealizedPnL) >= 1e-12 {
+			rows[i].Role = "exit"
+			rows[i].Side = bookSide(got.side, "exit", got.pos)
+			delete(openSide, sym)
+			continue
+		}
+		rows[i].RealizedPnL = 0
+		curSide := openSide[sym]
+		orderSide := strings.ToUpper(strings.TrimSpace(got.side))
+		if (curSide == string(SideLong) && orderSide == "SELL") || (curSide == string(SideShort) && orderSide == "BUY") {
+			rows[i].Role = "exit"
+			rows[i].Side = curSide
+			delete(openSide, sym)
+			continue
+		}
+		rows[i].Role = "entry"
+		rows[i].Side = bookSide(got.side, "entry", got.pos)
+		openSide[sym] = rows[i].Side
 	}
 	return rows
 }

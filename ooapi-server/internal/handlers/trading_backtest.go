@@ -21,8 +21,8 @@ func GetTradingBacktest(c *gin.Context) {
 	if symbol == "" {
 		symbol = trading.SymbolXRPUSDT
 	}
-	if symbol != trading.SymbolXRPUSDT {
-		fail(c, http.StatusBadRequest, "v1 交易对只支持 XRPUSDT", "invalid_symbol")
+	if !trading.AllowedSymbol(symbol) {
+		fail(c, http.StatusBadRequest, "交易对只支持 2–12 位大写字母或数字加 USDT（如 XRPUSDT）", "invalid_symbol")
 		return
 	}
 	tf := strings.TrimSpace(c.DefaultQuery("timeframe", trading.Timeframe5m))

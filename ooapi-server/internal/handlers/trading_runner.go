@@ -81,8 +81,8 @@ func reloadStrategyConfig(userID int64, row strategyRow) {
 	cfg.Revision = time.Now().UnixNano()
 	spec := specFromRow(userID, row)
 	spec.Config = cfg
-	strategyRunner.Reload(spec)
 	trading.DefaultHub().ApplyConfig(userID, row.ID, cfg)
+	strategyRunner.Reload(spec)
 }
 
 func specFromRow(userID int64, row strategyRow) trading.RunSpec {
