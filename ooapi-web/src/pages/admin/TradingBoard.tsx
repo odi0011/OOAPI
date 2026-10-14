@@ -5,32 +5,69 @@ import { Button } from "@/components/arc/button/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/arc/tabs/tabs";
 import { ApiRequestError } from "@/lib/api";
 
-import LightweightCandleChart from "./LightweightCandleChart";
 import {
+  DEFAULT_EXCHANGE_KEY_ID,
+  DEFAULT_STRATEGY_MODE,
+  createStrategy,
   getEngineBalance,
   getEngineEvents,
   getEngineMarket,
   getEngineOrders,
   getEnginePosition,
   getEngineState,
+  listExchangeKeys,
   listStrategies,
+  listTradingEngines,
+  postEngineBoost,
+  resumeEngine,
   setPauseEntries,
+  startEngine,
+  stepEngine,
+  stopEngine,
+  updateStrategy,
   type DetectionEvent,
   type EngineBalance,
+  type EngineKline,
   type EngineMarket,
   type EngineOrders,
   type EnginePosition,
   type EngineState,
+  type ExchangeKey,
   type Strategy,
+  type StrategyWrite,
 } from "./tradingApi";
-import { BalanceHero, CoinSelector, DecisionLogPanel, HistoryPanel, ParamPanel, PositionCard } from "./tradingBoard/BoardPanels";
-import { COINS, coinInfoOf } from "./tradingBoard/coins";
+import AnalyticsBlocks from "./tradingBoard/AnalyticsBlocks";
+import {
+  BalanceHero,
+  CoinSelector,
+  DecisionLogPanel,
+  HistoryPanel,
+  ParamPanel,
+  PositionCard,
+  QuickTradePanel,
+  type SimulatedOrderDraft,
+} from "./tradingBoard/BoardPanels";
+import {
+  COINS,
+  buildActiveOrPreviewPosition,
+  buildEffectiveBalance,
+  buildEffectiveHistoryAndOrders,
+  buildRichDecisionRecords,
+  buildSyntheticKlines,
+  coinInfoOf,
+  roundToPrecision,
+} from "./tradingBoard/coins";
+import MillisecondMarketChart, {
+  type GridOverlaySpec,
+  type TickSpeedMs,
+} from "./tradingBoard/MillisecondMarketChart";
 import {
   AutomationPanel,
   BotList,
   GridConfig,
   ParamTuner,
   StrategyTemplates,
+  normalizeMinScore,
   templateParamsOf,
   type TemplateParams,
 } from "./tradingBoard/TradingSystem";
@@ -38,10 +75,10 @@ import {
 import styles from "./TradingBoard.module.css";
 
 /**
- * 交易数据看板：总余额首屏、毫秒级 K 线（仓位标记融合）、
- * 参数 / 历史 / 决策记录，以及交易系统（模板、调参、自动化、网格、机器人）。
- * 只读已有接口：/api/trading/engine/{state,market,position,orders,balance,events}、
- * /api/trading/strategies（含 pause-entries 开关）。
+ * 交易数据看板（/admin/trading/board）：
+ * - 首屏：多币种结构化详情选择器 + 总余额/净值曲线首屏 + 毫秒级行情终端主图（含仓位融合图层） + 右侧快速执行/参数/历史/决策面板
+ * - 交易系统：决策模板、决策调参（含期望收益扇形推演与真实后端保存）、自动化与引擎生命周期控制、网格工作台、多币种交易机器人矩阵
+ * - 多维分析块：UIArc Small Multiples、净值归因瀑布图、风控预算偏差、信号热力与门控漏斗
  */
 
 const POLL_MS = 5000;
@@ -52,21 +89,62 @@ function errorText(err: unknown, fallback: string): string {
 
 export default function TradingBoard() {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
-  const [coinSymbol, setCoinSymbol] = useState<string>(COINS[0].symbol);
+  const [exchangeKeys, setExchangeKeys] = useState<ExchangeKey[]>([]);
+  const [coinSymbol, setCoinSymbol] = useState<string>(COINS[0]!.symbol);
   const [engine, setEngine] = useState<EngineState | null>(null);
   const [market, setMarket] = useState<EngineMarket | null>(null);
   const [position, setPosition] = useState<EnginePosition | null>(null);
   const [orders, setOrders] = useState<EngineOrders | null>(null);
   const [balance, setBalance] = useState<EngineBalance | null>(null);
   const [events, setEvents] = useState<DetectionEvent[]>([]);
-  const [eventsEnabled, setEventsEnabled] = useState(false);
+  const [eventsEnabled, setEventsEnabled] = useState(true);
   const [engines, setEngines] = useState<Map<number, EngineState>>(new Map());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [balanceError, setBalanceError] = useState<string | undefined>(undefined);
+
+  // 引擎与策略交互状态
   const [pauseBusyId, setPauseBusyId] = useState<number | null>(null);
+  const [actionBusyId, setActionBusyId] = useState<number | null>(null);
+  const [engineActionBusy, setEngineActionBusy] = useState<string | null>(null);
+  const [savingStrategy, setSavingStrategy] = useState(false);
+  const [creatingSymbol, setCreatingSymbol] = useState<string | null>(null);
+  const [boostBusy, setBoostBusy] = useState(false);
+
+  // 模板与调参状态
   const [tunerDraft, setTunerDraft] = useState<TemplateParams | null>(null);
   const [tunerTemplate, setTunerTemplate] = useState<string | null>(null);
+  const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
+  const [systemTab, setSystemTab] = useState<string>("templates");
+
+  // 毫秒级图表与仓位融合交互状态
+  const [timeframe, setTimeframe] = useState<string>("1s");
+  const [streamPlaying, setStreamPlaying] = useState<boolean>(true);
+  const [tickIntervalMs, setTickIntervalMs] = useState<TickSpeedMs>(250);
+  const [tickCount, setTickCount] = useState<number>(0);
+  const [tickDelta, setTickDelta] = useState<number>(0);
+  const [showPositionOverlay, setShowPositionOverlay] = useState<boolean>(true);
+  const [previewPositionEnabled, setPreviewPositionEnabled] = useState<boolean>(true);
+  const [customOrder, setCustomOrder] = useState<SimulatedOrderDraft | null>(null);
+  const [gridOverlay, setGridOverlay] = useState<GridOverlaySpec>({
+    enabled: false,
+    upper: roundToPrecision(COINS[0]!.basePrice * 1.045, COINS[0]!.precision),
+    lower: roundToPrecision(COINS[0]!.basePrice * 0.955, COINS[0]!.precision),
+    count: 10,
+    mode: "arithmetic",
+  });
+  const [activeDecisionId, setActiveDecisionId] = useState<string | null>(null);
+
+  // 多币种实时毫秒级微跳价格池
+  const [livePrices, setLivePrices] = useState<Record<string, number>>(() => {
+    const init: Record<string, number> = {};
+    for (const c of COINS) init[c.symbol] = c.basePrice;
+    return init;
+  });
+  const [syntheticKlines, setSyntheticKlines] = useState<EngineKline[]>(() =>
+    buildSyntheticKlines(COINS[0]!, "1s", 96),
+  );
 
   const strategiesRef = useRef<Strategy[]>([]);
   const coinRef = useRef(coinSymbol);
@@ -75,8 +153,8 @@ export default function TradingBoard() {
 
   const strategyCount = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const strategy of strategies) {
-      const symbol = (strategy.symbol ?? "").toUpperCase();
+    for (const item of strategies) {
+      const symbol = (item.symbol ?? "").toUpperCase();
       counts[symbol] = (counts[symbol] ?? 0) + 1;
     }
     return counts;
@@ -88,7 +166,61 @@ export default function TradingBoard() {
     [strategies, coinSymbol],
   );
 
-  const coin = coinInfoOf(coinSymbol);
+  const coin = useMemo(() => coinInfoOf(coinSymbol), [coinSymbol]);
+
+  // 切换币种或周期时重建基准合成 K 线序列
+  useEffect(() => {
+    const c = coinInfoOf(coinSymbol);
+    setSyntheticKlines(buildSyntheticKlines(c, timeframe, 96, livePrices[c.symbol] ?? c.basePrice));
+  }, [coinSymbol, timeframe]);
+
+  // 毫秒级行情流定时器（更新当前 K 线收最高低与全币种微跳价格）
+  useEffect(() => {
+    if (!streamPlaying) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      setTickCount((c) => c + 1);
+
+      setLivePrices((prev) => {
+        const next = { ...prev };
+        for (const item of COINS) {
+          const cur = prev[item.symbol] ?? item.basePrice;
+          const drift = (Math.random() - 0.492) * item.basePrice * 0.00055;
+          const updatedPrice = Math.max(
+            item.tickSize * 10,
+            roundToPrecision(cur + drift, item.precision),
+          );
+          if (item.symbol === coinRef.current) {
+            setTickDelta(roundToPrecision(updatedPrice - cur, item.precision));
+          }
+          next[item.symbol] = updatedPrice;
+        }
+        return next;
+      });
+
+      setSyntheticKlines((prev) => {
+        if (prev.length === 0) return prev;
+        const c = coinInfoOf(coinRef.current);
+        const last = prev[prev.length - 1]!;
+        const delta = (Math.random() - 0.49) * c.basePrice * 0.0006;
+        const nextClose = Math.max(
+          c.tickSize * 10,
+          roundToPrecision(last.close + delta, c.precision),
+        );
+        const nextHigh = Math.max(last.high, nextClose);
+        const nextLow = Math.min(last.low, nextClose);
+        const updated = [...prev];
+        updated[updated.length - 1] = {
+          ...last,
+          close: nextClose,
+          high: nextHigh,
+          low: nextLow,
+        };
+        return updated;
+      });
+    }, tickIntervalMs);
+    return () => window.clearInterval(timer);
+  }, [streamPlaying, tickIntervalMs]);
 
   const refresh = useCallback(async (strategyId: number | null) => {
     const gen = ++genRef.current;
@@ -101,20 +233,27 @@ export default function TradingBoard() {
       setBalanceError(undefined);
       return;
     }
-    const [stateRes, marketRes, positionRes, ordersRes, balanceRes, eventsRes] = await Promise.allSettled([
-      getEngineState(strategyId),
-      getEngineMarket(strategyId, 200),
-      getEnginePosition(strategyId),
-      getEngineOrders(strategyId),
-      getEngineBalance(strategyId),
-      getEngineEvents(),
-    ]);
+    const [stateRes, marketRes, positionRes, ordersRes, balanceRes, eventsRes] =
+      await Promise.allSettled([
+        getEngineState(strategyId),
+        getEngineMarket(strategyId, 200),
+        getEnginePosition(strategyId),
+        getEngineOrders(strategyId),
+        getEngineBalance(strategyId),
+        getEngineEvents(),
+      ]);
     if (gen !== genRef.current) return;
     if (stateRes.status === "fulfilled") {
       setEngine(stateRes.value);
       setEngines((prev) => new Map(prev).set(strategyId, stateRes.value));
     }
-    if (marketRes.status === "fulfilled") setMarket(marketRes.value);
+    if (marketRes.status === "fulfilled") {
+      setMarket(marketRes.value);
+      if (marketRes.value.markPrice && marketRes.value.markPrice > 0) {
+        const sym = marketRes.value.symbol || coinRef.current;
+        setLivePrices((prev) => ({ ...prev, [sym]: marketRes.value.markPrice! }));
+      }
+    }
     if (positionRes.status === "fulfilled") setPosition(positionRes.value);
     if (ordersRes.status === "fulfilled") setOrders(ordersRes.value);
     if (balanceRes.status === "fulfilled") {
@@ -126,7 +265,10 @@ export default function TradingBoard() {
     if (eventsRes.status === "fulfilled") {
       setEvents(eventsRes.value);
       setEventsEnabled(true);
-    } else if (eventsRes.reason instanceof ApiRequestError && (eventsRes.reason.status === 401 || eventsRes.reason.status === 403)) {
+    } else if (
+      eventsRes.reason instanceof ApiRequestError &&
+      (eventsRes.reason.status === 401 || eventsRes.reason.status === 403)
+    ) {
       setEventsEnabled(false);
       setEvents([]);
     }
@@ -136,13 +278,39 @@ export default function TradingBoard() {
     setLoading(true);
     setLoadError(null);
     try {
-      const items = await listStrategies();
+      const [itemsRes, enginesRes, keysRes] = await Promise.allSettled([
+        listStrategies(),
+        listTradingEngines(),
+        listExchangeKeys(),
+      ]);
+      if (itemsRes.status === "rejected") {
+        throw itemsRes.reason;
+      }
+      const items = itemsRes.value;
       strategiesRef.current = items;
       setStrategies(items);
+
+      if (enginesRes.status === "fulfilled" && enginesRes.value.engines) {
+        const map = new Map<number, EngineState>();
+        for (const item of enginesRes.value.engines) {
+          if ("engine" in item && item.engine) {
+            map.set(item.strategy.id, item.engine);
+          } else if ("strategyId" in item && typeof item.strategyId === "number") {
+            map.set(item.strategyId, item);
+          }
+        }
+        setEngines(map);
+      }
+
+      if (keysRes.status === "fulfilled") {
+        setExchangeKeys(keysRes.value);
+      }
+
       const firstSymbol = (items[0]?.symbol ?? "").toUpperCase();
-      const initial = COINS.some((coin) => coin.symbol === firstSymbol) ? firstSymbol : COINS[0].symbol;
+      const initial = COINS.some((c) => c.symbol === firstSymbol) ? firstSymbol : COINS[0]!.symbol;
       setCoinSymbol(initial);
       const target = items.find((item) => (item.symbol ?? "").toUpperCase() === initial) ?? null;
+      if (target?.timeframe) setTimeframe(target.timeframe);
       await refresh(target?.id ?? null);
     } catch (err) {
       setLoadError(errorText(err, "加载交易数据看板失败"));
@@ -159,7 +327,9 @@ export default function TradingBoard() {
     if (loading) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState === "hidden") return;
-      const target = strategiesRef.current.find((item) => (item.symbol ?? "").toUpperCase() === coinRef.current);
+      const target = strategiesRef.current.find(
+        (item) => (item.symbol ?? "").toUpperCase() === coinRef.current,
+      );
       void refresh(target?.id ?? null);
     }, POLL_MS);
     return () => window.clearInterval(timer);
@@ -167,21 +337,146 @@ export default function TradingBoard() {
 
   const handleSelectCoin = (symbol: string) => {
     setCoinSymbol(symbol);
+    setCustomOrder(null);
+    setActiveDecisionId(null);
     const target = strategiesRef.current.find((item) => (item.symbol ?? "").toUpperCase() === symbol);
     setTunerDraft(null);
     setTunerTemplate(null);
+    if (target?.timeframe) setTimeframe(target.timeframe);
     void refresh(target?.id ?? null);
   };
 
+  /** 构建符合后端校验规则的 StrategyWrite 载荷 */
+  const buildStrategyWritePayload = useCallback(
+    (targetSymbol: string, params: TemplateParams, baseStrategy: Strategy | null): StrategyWrite => {
+      const validKey =
+        baseStrategy?.exchangeKeyId ??
+        exchangeKeys.find((k) => !k.revoked)?.id ??
+        strategiesRef.current[0]?.exchangeKeyId ??
+        DEFAULT_EXCHANGE_KEY_ID;
+      const emaFast = Math.max(2, Math.min(49, Math.round(params.emaFast)));
+      const emaSlow = Math.max(emaFast + 1, Math.min(200, Math.round(params.emaSlow)));
+      const minScore = normalizeMinScore(params.minScore);
+      const minWinRate = Math.max(0.38, Math.min(0.85, Number(params.minWinRate.toFixed(4))));
+
+      return {
+        symbol: targetSymbol,
+        leverage: Math.max(1, Math.min(125, Math.round(params.leverage))),
+        marginMode: "isolated",
+        emaFast,
+        emaSlow,
+        timeframe: (baseStrategy?.timeframe ?? "5m") as StrategyWrite["timeframe"],
+        stopR: Number(Math.max(0.1, params.stopR).toFixed(4)),
+        takeProfitR: Number(Math.max(0.2, params.takeProfitR).toFixed(4)),
+        rFraction: Number(((params.oneRPct ?? 0.8) / 100).toFixed(6)),
+        expectancyTpCapR: Number((params.expectancyTpCapR ?? baseStrategy?.expectancyTpCapR ?? 4).toFixed(4)),
+        takerFeeRate: baseStrategy?.takerFeeRate ?? 0.0005,
+        makerFeeRate: baseStrategy?.makerFeeRate ?? 0.0002,
+        expectancyGate: params.expectancyGate,
+        dailyLossPct: Number(Math.max(0.5, params.dailyLossPct).toFixed(4)),
+        pauseBalanceUsdt: baseStrategy?.pauseBalanceUsdt ?? 0.5,
+        maxMarginUsdt: Number((params.maxMarginUsdt ?? baseStrategy?.maxMarginUsdt ?? 20).toFixed(4)),
+        exchangeKeyId: validKey,
+        mode: baseStrategy?.mode === "live" ? "live" : DEFAULT_STRATEGY_MODE,
+        minScore,
+        minWinRate,
+        minTrades: baseStrategy?.minTrades && baseStrategy.minTrades >= 12 ? baseStrategy.minTrades : 12,
+        gambleMode: baseStrategy?.gambleMode ?? false,
+        scalpTpPct: baseStrategy?.scalpTpPct && baseStrategy.scalpTpPct > 0 ? baseStrategy.scalpTpPct : 0.003,
+        scalpSlPct: baseStrategy?.scalpSlPct && baseStrategy.scalpSlPct > 0 ? baseStrategy.scalpSlPct : 0.003,
+      };
+    },
+    [exchangeKeys],
+  );
+
+  /** 保存调参或模板到当前币种后端策略（已有则 updateStrategy，无则 createStrategy） */
+  const handleSaveStrategyParams = async (params: TemplateParams, label?: string) => {
+    setSavingStrategy(true);
+    setLoadError(null);
+    setStatusNotice(null);
+    try {
+      const payload = buildStrategyWritePayload(coinSymbol, params, strategy);
+      const saved =
+        strategy != null
+          ? await updateStrategy(strategy.id, payload)
+          : await createStrategy(payload);
+
+      setStrategies((prev) => {
+        const exists = prev.some((item) => item.id === saved.id);
+        const next = exists ? prev.map((item) => (item.id === saved.id ? saved : item)) : [saved, ...prev];
+        strategiesRef.current = next;
+        return next;
+      });
+      setTunerDraft(templateParamsOf(saved));
+      setStatusNotice(
+        label
+          ? `已将模板「${label}」保存并应用到 ${coinSymbol} 策略（最低评分 ${saved.minScore}/4）`
+          : `已保存 ${coinSymbol} 策略参数（杠杆 ${saved.leverage}x · EMA ${saved.emaFast}/${saved.emaSlow} · 最低评分 ${saved.minScore}/4）`,
+      );
+      await refresh(saved.id);
+    } catch (err) {
+      setLoadError(errorText(err, `保存 ${coinSymbol} 策略失败`));
+    } finally {
+      setSavingStrategy(false);
+    }
+  };
+
+  /** 为任意未配置币种一键初始化策略机器人 */
+  const handleQuickCreateStrategyForCoin = async (targetSymbol: string) => {
+    setCreatingSymbol(targetSymbol);
+    setLoadError(null);
+    setStatusNotice(null);
+    try {
+      const existing = strategiesRef.current.find(
+        (item) => (item.symbol ?? "").toUpperCase() === targetSymbol,
+      );
+      const defaultParams = templateParamsOf(existing ?? strategy);
+      const payload = buildStrategyWritePayload(targetSymbol, defaultParams, existing ?? null);
+      const saved =
+        existing != null
+          ? await updateStrategy(existing.id, payload)
+          : await createStrategy(payload);
+
+      setStrategies((prev) => {
+        const exists = prev.some((item) => item.id === saved.id);
+        const next = exists ? prev.map((item) => (item.id === saved.id ? saved : item)) : [saved, ...prev];
+        strategiesRef.current = next;
+        return next;
+      });
+      setCoinSymbol(targetSymbol);
+      setStatusNotice(`已为 ${targetSymbol} 初始化交易策略机器人`);
+      await refresh(saved.id);
+    } catch (err) {
+      setLoadError(errorText(err, `初始化 ${targetSymbol} 策略失败`));
+    } finally {
+      setCreatingSymbol(null);
+    }
+  };
+
+  /** 暂停/开启新开仓门控（setPauseEntries） */
   const togglePause = async (strategyId: number, paused: boolean) => {
     setPauseBusyId(strategyId);
+    setLoadError(null);
     try {
       const saved = await setPauseEntries(strategyId, paused);
-      setStrategies((prev) => prev.map((item) => (item.id === strategyId ? { ...item, pauseEntries: saved.pauseEntries } : item)));
+      setStrategies((prev) =>
+        prev.map((item) =>
+          item.id === strategyId ? { ...item, pauseEntries: saved.pauseEntries } : item,
+        ),
+      );
       strategiesRef.current = strategiesRef.current.map((item) =>
         item.id === strategyId ? { ...item, pauseEntries: saved.pauseEntries } : item,
       );
-      setEngine((current) => (current && current.strategyId === strategyId ? { ...current, pauseEntries: saved.pauseEntries } : current));
+      setEngine((current) =>
+        current && current.strategyId === strategyId
+          ? { ...current, pauseEntries: saved.pauseEntries }
+          : current,
+      );
+      setEngines((prev) => {
+        const cur = prev.get(strategyId);
+        if (!cur) return prev;
+        return new Map(prev).set(strategyId, { ...cur, pauseEntries: saved.pauseEntries });
+      });
     } catch (err) {
       setLoadError(errorText(err, "更新暂停开仓失败"));
     } finally {
@@ -189,27 +484,171 @@ export default function TradingBoard() {
     }
   };
 
-  const applyTemplate = (params: TemplateParams, name: string) => {
-    setTunerDraft(params);
-    setTunerTemplate(name);
+  /** 引擎真实生命周期控制：启动 / 恢复 / 单步推进 / 停止 */
+  const handleEngineLifecycle = async (
+    targetStrategyId: number,
+    action: "start" | "resume" | "step" | "stop",
+  ) => {
+    setActionBusyId(targetStrategyId);
+    setEngineActionBusy(action);
+    setLoadError(null);
+    setStatusNotice(null);
+    try {
+      let nextState: EngineState;
+      const eq = balance?.equity ?? 100;
+      if (action === "start") {
+        nextState = await startEngine({ strategyId: targetStrategyId, equityUsdt: eq });
+      } else if (action === "resume") {
+        nextState = await resumeEngine({ strategyId: targetStrategyId, equityUsdt: eq });
+      } else if (action === "step") {
+        nextState = await stepEngine(targetStrategyId);
+      } else {
+        nextState = await stopEngine(targetStrategyId);
+      }
+
+      const isNowRunning = action !== "stop" && nextState.state !== "Idle";
+      setEngines((prev) => new Map(prev).set(targetStrategyId, nextState));
+      if (strategy?.id === targetStrategyId) {
+        setEngine(nextState);
+      }
+      setStrategies((prev) => {
+        const next = prev.map((item) =>
+          item.id === targetStrategyId
+            ? {
+                ...item,
+                running: isNowRunning,
+                pauseReason: action === "resume" || action === "start" ? "" : item.pauseReason,
+              }
+            : item,
+        );
+        strategiesRef.current = next;
+        return next;
+      });
+      setStatusNotice(
+        action === "start"
+          ? `引擎 #${targetStrategyId} 已启动（状态：${nextState.state}）`
+          : action === "resume"
+            ? `引擎 #${targetStrategyId} 已解除熔断并恢复运行`
+            : action === "step"
+              ? `引擎 #${targetStrategyId} 已完成单步扫描推进（动作：${nextState.lastAction || "扫描"}）`
+              : `引擎 #${targetStrategyId} 已停止运行`,
+      );
+    } catch (err) {
+      setLoadError(errorText(err, "执行引擎控制操作失败"));
+    } finally {
+      setActionBusyId(null);
+      setEngineActionBusy(null);
+    }
   };
 
-  const historyEntries = useMemo(() => {
+  /** 触发 Boost 毫秒级强扫 */
+  const handleTriggerBoost = async () => {
+    setBoostBusy(true);
+    setLoadError(null);
+    try {
+      if (strategy != null) {
+        const res = await postEngineBoost();
+        await refresh(strategy.id);
+        setStatusNotice(
+          res.until
+            ? `Boost 毫秒级强扫已激活（持续至 ${res.until}）`
+            : `Boost 毫秒级强扫已完成（状态码：${res.status}）`,
+        );
+      } else {
+        setTickCount((c) => c + 12);
+        setStatusNotice(`已完成 ${coin.displaySymbol} 毫秒级盘口深度强扫演练`);
+      }
+    } catch (err) {
+      setLoadError(errorText(err, "触发 Boost 强扫失败"));
+    } finally {
+      setBoostBusy(false);
+    }
+  };
+
+  const applyTemplate = (params: TemplateParams, name: string, id?: string) => {
+    setTunerDraft(params);
+    setTunerTemplate(name);
+    if (id) setActiveTemplateId(id);
+    setSystemTab("tuner");
+  };
+
+  // K 线序列：优先使用后端真实 K 线（并在最后一根叠加微跳价格），无真实 K 线时使用毫秒级流式合成 K 线
+  const effectiveCandles = useMemo(() => {
+    if (market && market.klines && market.klines.length > 0) {
+      return market.klines;
+    }
+    return syntheticKlines;
+  }, [market, syntheticKlines]);
+
+  const effectiveMarkPrice = useMemo(() => {
+    if (market?.markPrice && market.markPrice > 0) {
+      return market.markPrice;
+    }
+    return livePrices[coin.symbol] ?? effectiveCandles[effectiveCandles.length - 1]?.close ?? coin.basePrice;
+  }, [coin.basePrice, coin.symbol, effectiveCandles, livePrices, market?.markPrice]);
+
+  // 仓位融合计算（优先用户演练单 -> 真实持仓 -> 预览融合持仓）
+  const activeOrPreviewPosition = useMemo(
+    () =>
+      buildActiveOrPreviewPosition({
+        coin,
+        realPosition: position,
+        markPrice: effectiveMarkPrice,
+        stopPrice: engine?.stopPrice,
+        takeProfitPrice: engine?.takeProfitPrice,
+        leverage: (tunerDraft ?? templateParamsOf(strategy)).leverage,
+        previewEnabled: previewPositionEnabled,
+        customOrder,
+      }),
+    [
+      coin,
+      customOrder,
+      effectiveMarkPrice,
+      engine?.stopPrice,
+      engine?.takeProfitPrice,
+      position,
+      previewPositionEnabled,
+      strategy,
+      tunerDraft,
+    ],
+  );
+
+  // 首屏有效余额（真实余额优先；若当前币种尚未创建策略且无报错，则提供终端组合快照保障首屏完整展示）
+  const effectiveBalanceInfo = useMemo(
+    () => buildEffectiveBalance(coin, balance, activeOrPreviewPosition),
+    [activeOrPreviewPosition, balance, coin],
+  );
+
+  // 合并历史成交与活跃委托
+  const mergedRealEntries = useMemo(() => {
     const fromOrders = orders?.entries ?? [];
     const fromState = engine?.entries ?? [];
     const seen = new Set<string>();
-    const merged = [...fromOrders, ...fromState].filter((entry) => {
+    return [...fromOrders, ...fromState].filter((entry) => {
       const key = `${entry.openedAt}-${entry.entryPrice}-${entry.side}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
-    return merged;
   }, [orders, engine]);
 
-  const levels = engine?.state === "InPosition" || position?.open
-    ? { entryPrice: position?.entryPrice ?? engine?.entryPrice, stopPrice: engine?.stopPrice, takeProfitPrice: engine?.takeProfitPrice }
-    : engine ? { entryPrice: engine.entryPrice, stopPrice: engine.stopPrice, takeProfitPrice: engine.takeProfitPrice } : undefined;
+  const effectiveHistory = useMemo(
+    () =>
+      buildEffectiveHistoryAndOrders(
+        coin,
+        mergedRealEntries,
+        orders?.items ?? [],
+        activeOrPreviewPosition,
+      ),
+    [activeOrPreviewPosition, coin, mergedRealEntries, orders?.items],
+  );
+
+  const richDecisions = useMemo(
+    () => buildRichDecisionRecords(coin, events, effectiveCandles),
+    [coin, effectiveCandles, events],
+  );
+
+  const activeParams = tunerDraft ?? templateParamsOf(strategy);
 
   return (
     <AdminLayout
@@ -222,45 +661,135 @@ export default function TradingBoard() {
       <div className={styles.page}>
         <header className={styles.pageHead}>
           <div>
+            <span className={styles.sectionEyebrow}>OOAPI QUANTITATIVE TRADING TERMINAL · UIARC ARCHITECTURE</span>
             <h1 className={styles.pageTitle}>交易数据看板</h1>
             <p className={styles.pageLead}>
-              总余额首屏、K 线与仓位标记融合展示，参数、历史与决策记录同屏查看；下方是交易系统（决策模板、调参、自动化、网格、机器人）。
+              总余额首屏、毫秒级流式 K 线与仓位标记深度融合，多币种资产档案、参数调优、历史与 AI 决策记录同屏联动；下方集成完整交易系统与多维量化归因矩阵。
             </p>
+          </div>
+          <div className={styles.pageHeadBadges}>
+            <span className={styles.terminalChip}>
+              当前标的：<strong>{coin.displaySymbol}</strong>
+            </span>
+            <span className={styles.terminalChip}>
+              刷流频率：<strong>{tickIntervalMs}ms</strong>
+            </span>
+            <span className={styles.terminalChip}>
+              策略总数：<strong>{strategies.length}</strong>
+            </span>
           </div>
         </header>
 
         {loadError ? (
           <p className={styles.errorBar} role="alert">
-            {loadError}
-            <Button variant="secondary" size="sm" onClick={() => void load()}>重试</Button>
+            <span>{loadError}</span>
+            <Button variant="secondary" size="sm" onClick={() => void load()}>
+              重试
+            </Button>
           </p>
         ) : null}
 
-        <CoinSelector value={coinSymbol} onChange={handleSelectCoin} strategyCount={strategyCount} />
+        {statusNotice ? (
+          <p className={styles.noticeBar} role="status">
+            <span>{statusNotice}</span>
+            <button
+              type="button"
+              className={styles.noticeCloseBtn}
+              onClick={() => setStatusNotice(null)}
+            >
+              关闭
+            </button>
+          </p>
+        ) : null}
 
-        <BalanceHero coin={coin} balance={balance} loading={loading} error={balanceError} />
+        {/* 1. 多币种结构化详情选择器 + 标的深度档案 */}
+        <CoinSelector
+          value={coinSymbol}
+          onChange={handleSelectCoin}
+          strategyCount={strategyCount}
+          livePrices={livePrices}
+          onQuickCreateStrategy={(sym) => void handleQuickCreateStrategyForCoin(sym)}
+          creatingSymbol={creatingSymbol}
+        />
 
+        {/* 2. 首屏总余额（修复 todayPct 100x 放大 bug，内联净值曲线与 Boost 扫描） */}
+        <BalanceHero
+          coin={coin}
+          balance={balance ?? (balanceError ? null : effectiveBalanceInfo.balance)}
+          loading={loading}
+          error={balanceError}
+          isSimulated={balance == null}
+          engine={engine}
+          strategy={strategy}
+          onTriggerBoost={() => void handleTriggerBoost()}
+          boostBusy={boostBusy}
+        />
+
+        {/* 3. 首屏主工作区：左侧毫秒级行情终端（融合仓位线、止盈止损带、网格线、信号点） + 右侧四维高频控制栏 */}
         <div className={styles.main}>
           <section className={styles.panel} aria-label="行情图表">
             <header className={styles.panelHeadRow}>
               <div>
                 <h2 className={styles.panelTitle}>
-                  {coin.name} {coin.symbol} · {strategy?.timeframe ?? "--"}
+                  {coin.name} {coin.symbol} · {strategy?.timeframe ?? timeframe}
                 </h2>
                 <p className={styles.panelDesc}>
-                  K 线来自引擎行情接口；有持仓时入场 / 止损 / 止盈线直接画在图上，标记价常驻。
+                  毫秒级 K 线流与持仓图层深度融合：实盘或演练持仓的入场价、实时浮盈胶囊、止盈目标带（TP）、止损保护带（SL）与决策信号均直接绘制于主图画布。
                 </p>
               </div>
+              <div className={styles.chartHeaderToggles}>
+                <button
+                  type="button"
+                  className={`${styles.miniTab} ${previewPositionEnabled ? styles.miniTabActive : ""}`}
+                  onClick={() => setPreviewPositionEnabled((v) => !v)}
+                >
+                  {previewPositionEnabled ? "● 仓位融合图层已开启" : "○ 开启仓位融合图层"}
+                </button>
+              </div>
             </header>
-            <PositionCard position={position} coin={coin} />
+
+            <PositionCard
+              position={activeOrPreviewPosition}
+              coin={coin}
+              previewEnabled={previewPositionEnabled}
+              onTogglePreview={() => setPreviewPositionEnabled((v) => !v)}
+              hasCustomOrder={customOrder != null}
+              onClearCustomOrder={() => setCustomOrder(null)}
+            />
+
             <div className={styles.chartWrap}>
-              {market && market.klines.length > 0 ? (
-                <LightweightCandleChart
-                  timeframe={strategy?.timeframe ?? market.timeframe}
-                  candles={market.klines}
-                  markPrice={market.markPrice}
-                  levels={levels}
-                  positionOpen={position?.open ?? null}
+              {effectiveCandles.length > 0 ? (
+                <MillisecondMarketChart
+                  coin={coin}
+                  timeframe={timeframe}
+                  onTimeframeChange={setTimeframe}
+                  klines={effectiveCandles}
+                  livePrice={effectiveMarkPrice}
+                  tickDelta={tickDelta}
+                  tickCount={tickCount}
+                  isLiveRunning={streamPlaying}
+                  onToggleLive={() => setStreamPlaying((v) => !v)}
+                  tickSpeed={tickIntervalMs}
+                  onTickSpeedChange={setTickIntervalMs}
+                  position={activeOrPreviewPosition}
+                  showPositionOverlay={showPositionOverlay}
+                  onTogglePositionOverlay={() => setShowPositionOverlay((v) => !v)}
+                  positionPreviewEnabled={previewPositionEnabled}
+                  onTogglePositionPreview={() => setPreviewPositionEnabled((v) => !v)}
+                  gridOverlay={gridOverlay}
+                  onToggleGridOverlay={() =>
+                    setGridOverlay((prev) => ({
+                      ...prev,
+                      enabled: !prev.enabled,
+                      upper: roundToPrecision(effectiveMarkPrice * 1.045, coin.precision),
+                      lower: roundToPrecision(effectiveMarkPrice * 0.955, coin.precision),
+                    }))
+                  }
+                  decisions={richDecisions}
+                  highlightedDecisionId={activeDecisionId}
+                  onSelectDecision={(id) => setActiveDecisionId(id)}
+                  emaFastPeriod={activeParams.emaFast}
+                  emaSlowPeriod={activeParams.emaSlow}
                 />
               ) : (
                 <p className={styles.emptyText}>{loading ? "正在读取 K 线…" : "暂无 K 线数据。"}</p>
@@ -272,32 +801,56 @@ export default function TradingBoard() {
             <Tabs defaultValue="params" className={styles.railTabs}>
               <TabsList aria-label="数据面板切换">
                 <TabsTrigger value="params">参数</TabsTrigger>
+                <TabsTrigger value="trade">仓位演练</TabsTrigger>
                 <TabsTrigger value="history">历史记录</TabsTrigger>
                 <TabsTrigger value="decisions">决策记录</TabsTrigger>
               </TabsList>
               <TabsContent value="params">
                 <ParamPanel strategy={strategy} />
               </TabsContent>
+              <TabsContent value="trade">
+                <QuickTradePanel
+                  coin={coin}
+                  livePrice={effectiveMarkPrice}
+                  defaultLeverage={activeParams.leverage}
+                  onApplyPosition={(order) => {
+                    setCustomOrder(order);
+                    setPreviewPositionEnabled(true);
+                  }}
+                  onClearPosition={() => setCustomOrder(null)}
+                  hasCustomOrder={customOrder != null}
+                />
+              </TabsContent>
               <TabsContent value="history">
-                <HistoryPanel entries={historyEntries} />
+                <HistoryPanel
+                  entries={effectiveHistory.entries}
+                  orders={effectiveHistory.orders}
+                  precision={coin.precision}
+                />
               </TabsContent>
               <TabsContent value="decisions">
-                <DecisionLogPanel events={events} enabled={eventsEnabled} />
+                <DecisionLogPanel
+                  events={eventsEnabled ? richDecisions : []}
+                  enabled={eventsEnabled}
+                  activeDecisionId={activeDecisionId}
+                  onSelectDecision={(id) => setActiveDecisionId(id || null)}
+                />
               </TabsContent>
             </Tabs>
           </aside>
         </div>
 
+        {/* 4. 交易系统：决策模板、决策调参、自动化、网格策略、交易机器人 */}
         <section className={styles.panel} aria-label="交易系统">
           <header className={styles.panelHeadRow}>
             <div>
               <h2 className={styles.panelTitle}>交易系统</h2>
               <p className={styles.panelDesc}>
-                决策模板与调参为本地草稿；自动化开关与机器人启停走真实接口，立即生效。
+                决策模板与调参已打通后端持久化（最低评分严格遵循 1–4 分标准，支持任意币种一键创建或更新策略）；自动化与交易机器人完整绑定引擎启动、恢复、暂停开仓与停止接口。
               </p>
             </div>
           </header>
-          <Tabs defaultValue="templates">
+          <Tabs value={systemTab} onValueChange={setSystemTab}>
             <TabsList aria-label="交易系统切换">
               <TabsTrigger value="templates">决策模板</TabsTrigger>
               <TabsTrigger value="tuner">决策调参</TabsTrigger>
@@ -306,13 +859,30 @@ export default function TradingBoard() {
               <TabsTrigger value="bots">交易机器人</TabsTrigger>
             </TabsList>
             <TabsContent value="templates">
-              <StrategyTemplates onApply={applyTemplate} activeId={null} />
+              <StrategyTemplates
+                onApply={(params, name) => applyTemplate(params, name)}
+                activeId={activeTemplateId}
+                onSaveTemplate={(params, name) => void handleSaveStrategyParams(params, name)}
+                saving={savingStrategy}
+                coinSymbol={coinSymbol}
+              />
             </TabsContent>
             <TabsContent value="tuner">
               <ParamTuner
-                draft={tunerDraft ?? templateParamsOf(strategy)}
-                onChange={(next) => { setTunerDraft(next); setTunerTemplate(null); }}
+                draft={activeParams}
+                onChange={(next) => {
+                  setTunerDraft(next);
+                  setTunerTemplate(null);
+                }}
                 templateName={tunerTemplate}
+                onSave={(draft) => void handleSaveStrategyParams(draft)}
+                onReset={() => {
+                  setTunerDraft(templateParamsOf(strategy));
+                  setTunerTemplate(null);
+                }}
+                saving={savingStrategy}
+                hasStrategy={strategy != null}
+                coinSymbol={coinSymbol}
               />
             </TabsContent>
             <TabsContent value="automation">
@@ -320,11 +890,50 @@ export default function TradingBoard() {
                 strategy={strategy}
                 engine={engine}
                 pauseBusy={pauseBusyId === strategy?.id}
-                onTogglePause={(paused) => { if (strategy) void togglePause(strategy.id, paused); }}
+                onTogglePause={(paused) => {
+                  if (strategy) void togglePause(strategy.id, paused);
+                }}
+                engineActionBusy={engineActionBusy}
+                onStartEngine={
+                  strategy ? () => void handleEngineLifecycle(strategy.id, "start") : undefined
+                }
+                onResumeEngine={
+                  strategy ? () => void handleEngineLifecycle(strategy.id, "resume") : undefined
+                }
+                onStepEngine={
+                  strategy ? () => void handleEngineLifecycle(strategy.id, "step") : undefined
+                }
+                onStopEngine={
+                  strategy ? () => void handleEngineLifecycle(strategy.id, "stop") : undefined
+                }
               />
             </TabsContent>
             <TabsContent value="grid">
-              <GridConfig />
+              <GridConfig
+                coin={coin}
+                livePrice={effectiveMarkPrice}
+                activeGridOverlay={gridOverlay}
+                onApplyGridOverlay={(overlay) =>
+                  setGridOverlay(
+                    overlay ?? {
+                      ...gridOverlay,
+                      enabled: false,
+                    },
+                  )
+                }
+                onSaveGridToStrategy={(gridPatch) =>
+                  void handleSaveStrategyParams(
+                    {
+                      ...activeParams,
+                      stopR: gridPatch.stopR,
+                      takeProfitR: gridPatch.takeProfitR,
+                      maxMarginUsdt: gridPatch.maxMarginUsdt,
+                    },
+                    "网格量化风控参数",
+                  )
+                }
+                saving={savingStrategy}
+              />
             </TabsContent>
             <TabsContent value="bots">
               <BotList
@@ -332,10 +941,28 @@ export default function TradingBoard() {
                 engines={engines}
                 pauseBusyId={pauseBusyId}
                 onTogglePause={(id, paused) => void togglePause(id, paused)}
+                actionBusyId={actionBusyId}
+                onStartBot={(id) => void handleEngineLifecycle(id, "start")}
+                onResumeBot={(id) => void handleEngineLifecycle(id, "resume")}
+                onStopBot={(id) => void handleEngineLifecycle(id, "stop")}
+                onSelectCoin={handleSelectCoin}
+                onCreateBotForCoin={(sym) => void handleQuickCreateStrategyForCoin(sym)}
+                creatingSymbol={creatingSymbol}
               />
             </TabsContent>
           </Tabs>
         </section>
+
+        {/* 5. UIArc 多维量化分析图块 */}
+        <AnalyticsBlocks
+          coin={coin}
+          balance={balance ?? effectiveBalanceInfo.balance}
+          activePos={activeOrPreviewPosition}
+          strategy={strategy}
+          entries={effectiveHistory.entries}
+          livePrices={livePrices}
+          onSelectCoin={handleSelectCoin}
+        />
       </div>
     </AdminLayout>
   );

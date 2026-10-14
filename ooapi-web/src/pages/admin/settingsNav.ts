@@ -20,7 +20,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
 ];
 
 export const STRATEGY_PATH = "/admin/system/strategy";
-export const DASHBOARD_PATH = "/admin/trading/dashboard";
+export const DASHBOARD_PATH = "/admin/trading/board";
 export const ACCOUNT_PATH = "/admin/trading/account";
 
 /** 系统设置里的策略页。只放配置，不放行情和账户。 */

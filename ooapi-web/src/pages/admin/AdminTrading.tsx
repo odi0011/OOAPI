@@ -16,6 +16,7 @@ import settingsStyles from "./AdminSettings.module.css";
 import styles from "./AdminTrading.module.css";
 import SettingsRail from "./SettingsRail";
 import { ACCOUNT_PATH, DASHBOARD_PATH } from "./settingsNav";
+import { COINS } from "./tradingBoard/coins";
 import {
   TIMEFRAMES,
   DEFAULT_EXCHANGE_KEY_ID,
@@ -83,7 +84,7 @@ import {
  */
 
 interface StrategyDraft {
-  symbol: "XRPUSDT";
+  symbol: string;
   leverage: number;
   marginMode: "isolated";
   emaFast: number;
@@ -158,7 +159,7 @@ function isTimeframe(value: string): value is Timeframe {
 
 function draftFromStrategy(item: Strategy): StrategyDraft {
   return {
-    symbol: "XRPUSDT",
+    symbol: item.symbol || "XRPUSDT",
     leverage: boundStrategyLeverage(item.leverage, DEFAULT_DRAFT.leverage),
     marginMode: "isolated",
     emaFast: clamp(Math.round(item.emaFast), 2, 50, DEFAULT_DRAFT.emaFast),
@@ -195,7 +196,7 @@ function round8(value: number): number {
 
 function toWrite(draft: StrategyDraft): StrategyWrite {
   return {
-    symbol: "XRPUSDT",
+    symbol: draft.symbol || "XRPUSDT",
     leverage: Math.round(draft.leverage),
     marginMode: "isolated",
     emaFast: Math.round(draft.emaFast),
@@ -223,7 +224,7 @@ function toWrite(draft: StrategyDraft): StrategyWrite {
 }
 
 function validate(draft: StrategyDraft, keys: ExchangeKey[]): string | null {
-  if (draft.symbol !== "XRPUSDT") return "首发交易对只支持 XRPUSDT";
+  if (!/^[A-Z0-9]{2,12}USDT$/.test(draft.symbol)) return "交易对仅支持标准 USDT 永续合约";
   if (draft.marginMode !== "isolated") return "首发只允许逐仓";
   const leverageError = strategyLeverageError(draft.leverage);
   if (leverageError) return leverageError;
@@ -595,15 +596,18 @@ export default function AdminTrading() {
                 <div className={sectionStyles.row} data-field="symbol">
                   <div className={sectionStyles.rowText}>
                     <strong>交易对</strong>
-                    <p>首发固定 XRPUSDT。</p>
+                    <p>支持全量主流 USDT 永续合约标的（首发默认 XRPUSDT）。</p>
                   </div>
                   <div className={sectionStyles.rowControl}>
                     <Select
                       hideLabel
                       label="交易对"
                       value={draft.symbol}
-                      options={[{ value: "XRPUSDT", label: "XRPUSDT" }]}
-                      onValueChange={() => patch({ symbol: "XRPUSDT" })}
+                      options={COINS.map((coin) => ({
+                        value: coin.symbol,
+                        label: `${coin.symbol} · ${coin.name}`,
+                      }))}
+                      onValueChange={(symbol) => patch({ symbol })}
                     />
                   </div>
                 </div>

@@ -67,6 +67,49 @@ func GetTradingEngineState(c *gin.Context) {
 	ok(c, bindEngineView(c, row, trading.Snapshot{}, false))
 }
 
+// TradingEnginesList 列出当前用户所有策略对应的引擎快照与汇总指标。
+func TradingEnginesList(c *gin.Context) {
+	user, okUser := requireTradingUser(c)
+	if !okUser {
+		return
+	}
+	rows, err := queryRows(strategyListSQL, user.ID)
+	if err != nil {
+		log.Printf("[trading] 查询多品种引擎列表失败: %v", err)
+		fail(c, http.StatusInternalServerError, "查询引擎列表失败", "server_error")
+		return
+	}
+	defer rows.Close()
+
+	engines := []engineStateView{}
+	var totalRealized float64
+	var openPositions int
+	for rows.Next() {
+		row, err := scanStrategy(rows)
+		if err != nil {
+			continue
+		}
+		snap, found := trading.DefaultHub().State(user.ID, row.ID)
+		view := bindEngineView(c, row, snap, found)
+		totalRealized += view.DayRealized
+		if view.Qty > 0 || view.State == trading.StateInPosition {
+			openPositions++
+		}
+		engines = append(engines, view)
+	}
+	if err := rows.Err(); err != nil {
+		fail(c, http.StatusInternalServerError, "查询引擎列表失败", "server_error")
+		return
+	}
+	ok(c, gin.H{
+		"engines": engines,
+		"totals": gin.H{
+			"realizedToday": totalRealized,
+			"openPositions": openPositions,
+		},
+	})
+}
+
 // StartTradingEngine 按最新策略（或指定 id）做启动检查，进入 Armed，不下单。
 func StartTradingEngine(c *gin.Context) {
 	runEngine(c, func(userID int64, row strategyRow, req engineRequest, secrets trading.SecretOpener) (trading.Snapshot, error) {
