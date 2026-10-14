@@ -32,8 +32,17 @@ import {
 
 import CoinIcon from "./CoinIcon";
 import { roundToPrecision, type CoinInfo, type EnrichedPosition, type RichDecisionRecord } from "./coins";
-import type { EngineKline } from "../tradingApi";
+import type { EngineQuote, EngineKline } from "../tradingApi";
 import styles from "../TradingBoard.module.css";
+
+/** 成交额紧凑写法（38.6B / 4.1B）——与交易所展示口径一致。 */
+function formatCompact(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "—";
+  if (value >= 1e9) return `${(value / 1e9).toFixed(1)}B`;
+  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
+  if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
+  return value.toFixed(0);
+}
 
 export type ChartMode = "candles" | "replay" | "area";
 export type TickSpeedMs = 100 | 250 | 500 | 1000;
@@ -51,6 +60,8 @@ interface MillisecondMarketChartProps {
   timeframe: string;
   onTimeframeChange: (tf: string) => void;
   klines: readonly EngineKline[];
+  /** 交易所 24h 统计；缺失时相关字段显示「—」而不是编数 */
+  quote?: EngineQuote;
   livePrice: number;
   tickDelta: number;
   tickCount: number;
@@ -105,6 +116,7 @@ export default function MillisecondMarketChart({
   timeframe,
   onTimeframeChange,
   klines,
+  quote,
   livePrice,
   tickDelta,
   tickCount,
@@ -174,36 +186,35 @@ export default function MillisecondMarketChart({
   // Price domain calculation: include visible bars + active position TP/SL/Entry so position lines are always visible on chart!
   const priceDomain = useMemo(() => {
     if (visibleBars.length === 0) {
-      return { min: coin.basePrice * 0.98, max: coin.basePrice * 1.02 };
+      // 没有真实 K 线：返回空域，调用方显示空状态（不再拿硬编码基准价假装）
+      return { min: 0, max: 0 };
     }
     let min = Infinity;
-    let 생각하는Max = -Infinity;
+    let max = -Infinity;
     for (const bar of visibleBars) {
       if (bar.low < min) min = bar.low;
-      if (bar.high > 생각하는Max) 생각하는Max = bar.high;
+      if (bar.high > max) max = bar.high;
     }
     if (showBoll) {
-      for (const u of boll.upper) if (u > 생각하는Max) 생각하는Max = u;
+      for (const u of boll.upper) if (u > max) max = u;
       for (const l of boll.lower) if (l < min) min = l;
     }
+    // 持仓参考线要落在可视范围内，否则用户看不到自己的止损线在哪
     if (showPositionOverlay && position && position.open) {
-      if (position.entryPrice && position.entryPrice > 0) {
-        min = Math.min(min, position.entryPrice);
-        생각하는Max = Math.max(생각하는Max, position.entryPrice);
-      }
-      if (position.stopPrice > 0) {
-        min = Math.min(min, position.stopPrice);
-        생각하는Max = Math.max(생각하는Max, position.stopPrice);
-      }
-      if (position.takeProfitPrice > 0) {
-        min = Math.min(min, position.takeProfitPrice);
-        생각하는Max = Math.max(생각하는Max, position.takeProfitPrice);
+      for (const level of [position.entryPrice, position.stopPrice, position.takeProfitPrice]) {
+        if (level && level > 0) {
+          min = Math.min(min, level);
+          max = Math.max(max, level);
+        }
       }
     }
-    const span = Math.max(coin.tickSize * 12, 생각하는Max - min);
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      return { min: 0, max: 0 };
+    }
+    const span = Math.max(coin.tickSize * 12, max - min);
     const pad = span * 0.14;
-    return { min: Math.max(coin.tickSize, min - pad), max: 생각하는Max + pad };
-  }, [visibleBars, coin.basePrice, coin.tickSize, showBoll, boll, showPositionOverlay, position]);
+    return { min: Math.max(coin.tickSize, min - pad), max: max + pad };
+  }, [visibleBars, coin.tickSize, showBoll, boll, showPositionOverlay, position]);
 
   const W = 920;
   const H = 410;
@@ -282,9 +293,9 @@ export default function MillisecondMarketChart({
   const activeIdx = hoverIdx != null && hoverIdx < visibleBars.length ? hoverIdx : visibleBars.length - 1;
   const activeBar = visibleBars[activeIdx] ?? {
     openTime: new Date().toISOString(),
-    open: coin.open24h,
-    high: coin.high24h,
-    low: coin.low24h,
+    open: quote?.openPrice ?? 0,
+    high: quote?.highPrice ?? 0,
+    low: quote?.lowPrice ?? 0,
     close: livePrice,
   };
   const activeEmaFast = emaFast[activeIdx] ?? livePrice;
@@ -292,8 +303,9 @@ export default function MillisecondMarketChart({
   const activeBollUp = boll.upper[activeIdx] ?? livePrice;
   const activeBollLow = boll.lower[activeIdx] ?? livePrice;
 
-  const dailyChange = livePrice - coin.open24h;
-  const dailyChangePct = coin.open24h > 0 ? (dailyChange / coin.open24h) * 100 : coin.change24hPct;
+  // 24h 涨跌用交易所的值（后端 quote）；没有就不显示
+  const dailyChange = quote ? livePrice - quote.openPrice : 0;
+  const dailyChangePct = quote?.changePercent ?? null;
   const isUpDay = dailyChange >= 0;
 
   const handlePointerMove = (e: PointerEvent<SVGSVGElement>) => {
@@ -391,44 +403,42 @@ export default function MillisecondMarketChart({
             })}
           </div>
           <div className={styles.terminalPriceSubRow}>
-            <span className={isUpDay ? styles.toneUp : styles.toneDown}>
-              {isUpDay ? "+" : ""}
-              {dailyChange.toFixed(coin.precision)} ({isUpDay ? "+" : ""}
-              {dailyChangePct.toFixed(2)}%) 今日
-            </span>
-            <span className={styles.tickCounterBadge}>
-              Tick #{tickCount}
-            </span>
+            {/* 24h 涨跌来自交易所；没有就只显示价格本身 */}
+            {dailyChangePct == null ? (
+              <span>— 24h</span>
+            ) : (
+              <span className={dailyChangePct >= 0 ? styles.toneUp : styles.toneDown}>
+                {dailyChange >= 0 ? "+" : ""}
+                {dailyChange.toFixed(coin.precision)}（{dailyChangePct >= 0 ? "+" : ""}
+                {dailyChangePct.toFixed(2)}%）24h
+              </span>
+            )}
+            <span className={styles.tickCounterBadge}>#{tickCount}</span>
           </div>
         </div>
 
         <dl className={styles.terminalStatGrid}>
           <div>
             <dt>24h 最高</dt>
-            <dd>{Math.max(coin.high24h, livePrice).toFixed(coin.precision)}</dd>
+            <dd>{quote ? Math.max(quote.highPrice, livePrice).toFixed(coin.precision) : "—"}</dd>
           </div>
           <div>
             <dt>24h 最低</dt>
-            <dd>{Math.min(coin.low24h, livePrice).toFixed(coin.precision)}</dd>
+            <dd>{quote ? Math.min(quote.lowPrice, livePrice).toFixed(coin.precision) : "—"}</dd>
           </div>
           <div>
             <dt>24h 成交额</dt>
-            <dd>{coin.volume24h}</dd>
+            <dd>{quote ? formatCompact(quote.quoteVolume) : "—"}</dd>
           </div>
-          <div>
-            <dt>未平仓合约</dt>
-            <dd>{coin.openInterest}</dd>
-          </div>
-          <div>
-            <dt>资金费率</dt>
-            <dd className={coin.fundingRate.startsWith("-") ? styles.toneDown : styles.toneUp}>
-              {coin.fundingRate}
-            </dd>
-          </div>
-          <div>
-            <dt>日内波动率</dt>
-            <dd>{coin.volatility24h.toFixed(1)}%</dd>
-          </div>
+          {/* 资金费率：来自批量标记价接口；没有就不显示这一格 */}
+          {quote?.fundingRate ? (
+            <div>
+              <dt>资金费率</dt>
+              <dd className={quote.fundingRate < 0 ? styles.toneDown : styles.toneUp}>
+                {(quote.fundingRate * 100).toFixed(4)}%
+              </dd>
+            </div>
+          ) : null}
         </dl>
       </div>
 

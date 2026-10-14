@@ -303,6 +303,8 @@ export interface EngineKline {
   high: number;
   low: number;
   close: number;
+  /** 基础资产成交量。缺省时多因子里的「量能」项算不出来。 */
+  volume?: number;
 }
 
 export interface EngineLevels {
@@ -312,6 +314,34 @@ export interface EngineLevels {
 }
 
 /** GET /api/trading/engine/market?strategyId=&limit= */
+/**
+ * 交易所的 24h 统计（涨跌幅、成交量、高低价）。
+ *
+ * 这些数**必须**来自交易所：界面上早先拿实时价除一个写死的旧开盘价，
+ * 页面显示的 -42% 与真实 24 小时波动（±2% 以内）差了二十倍。
+ * 后端可能给不出（接口失败）——那种情况前端不显示，不要用本地常量兜底。
+ */
+export interface EngineQuote {
+  lastPrice: number;
+  openPrice: number;
+  highPrice: number;
+  lowPrice: number;
+  priceChange: number;
+  changePercent: number;
+  quoteVolume: number;
+  /** 最新资金费率（批量标记价顺带返回）。0 表示未取到，界面不显示。 */
+  fundingRate?: number;
+}
+
+/** 多因子画像（每项 0–100），由后端从真实 K 线算出。 */
+export interface EngineFactors {
+  trend: number;
+  momentum: number;
+  volatility: number;
+  meanReversion: number;
+  liquidity: number;
+}
+
 export interface EngineMarket {
   strategyId: number;
   symbol: string;
@@ -320,6 +350,10 @@ export interface EngineMarket {
   markPrice: number;
   klines: EngineKline[];
   levels?: EngineLevels;
+  /** 24h 统计。缺失表示交易所没给，不要编造。 */
+  quote?: EngineQuote;
+  /** 多因子画像。缺失表示样本不足，不要编造。 */
+  factors?: EngineFactors;
 }
 
 /** GET /api/trading/engine/position?strategyId= 。open 为 false 时没有数量。 */

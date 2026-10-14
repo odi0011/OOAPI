@@ -13,14 +13,17 @@ import (
 )
 
 type fakeDeskBook struct {
-	mu        sync.Mutex
-	opened    int
-	network   string
-	symbol    string
-	interval  string
-	limit     int
-	klines    []trading.DeskCandle
-	mark      float64
+	mu       sync.Mutex
+	opened   int
+	network  string
+	symbol   string
+	interval string
+	limit    int
+	klines   []trading.DeskCandle
+	mark     float64
+	// quote 是 24h 统计。零值时接口返回错误 —— 与真实交易所「拿不到行情」一致，
+	// 让「可选数据缺失」这条路径在测试里也被走到。
+	quote     trading.Ticker24h
 	risk      trading.RiskView
 	orders    []trading.DeskOrder
 	algos     []trading.DeskOrder
@@ -60,6 +63,18 @@ func (f *fakeDeskBook) MarkPrice(string) (float64, error) {
 		return 0, f.fail
 	}
 	return f.mark, nil
+}
+
+func (f *fakeDeskBook) Ticker24h(string) (trading.Ticker24h, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return trading.Ticker24h{}, f.fail
+	}
+	if f.quote.LastPrice <= 0 {
+		return trading.Ticker24h{}, errors.New("no quote")
+	}
+	return f.quote, nil
 }
 
 func (f *fakeDeskBook) PositionRisk(string) (trading.RiskView, error) {

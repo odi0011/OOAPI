@@ -11,7 +11,9 @@
  */
 import { useState } from "react";
 
+import { AnimatedCounter } from "@/components/arc/animated-counter/animated-counter";
 import { Button } from "@/components/arc/button/button";
+import { Progress } from "@/components/arc/progress/progress";
 
 import CoinIcon from "./CoinIcon";
 import {
@@ -25,8 +27,10 @@ import {
 import type {
   DetectionEvent,
   EngineBalance,
+  EngineFactors,
   EngineOrder,
   EnginePosition,
+  EngineQuote,
   EngineState,
   Strategy,
   TradeEntry,
@@ -94,35 +98,55 @@ function MiniSparkline({
 interface CoinSelectorProps {
   value: string;
   onChange: (symbol: string) => void;
-  /** 每个币种对应的策略数量（用于展示“有策略”角标） */
+  /** 每个币种对应的策略数量（用于展示「有策略」角标） */
   strategyCount?: Record<string, number>;
-  /** 每个币种的实时跳动价格映射 */
+  /** 每个币种的真实标记价（来自后端；没有就不显示价格，不编） */
   livePrices?: Record<string, number>;
+  /** 每个币种的 24h 统计（真实涨跌幅、成交量） */
+  quotes?: Record<string, EngineQuote | undefined>;
+  /** 每个币种的多因子画像（后端从 K 线算出） */
+  factors?: Record<string, EngineFactors | undefined>;
   /** 快速为当前未配置币种初始化策略 */
   onQuickCreateStrategy?: (symbol: string) => void;
   creatingSymbol?: string | null;
 }
 
+/**
+ * 多币种列表 + 当前标的档案。
+ *
+ * 每个数字都必须有真实来源：
+ *   · 价格 / 涨跌幅 / 24h 量 → 后端 24h 统计（交易所公开接口）
+ *   · 五因子 → 后端按真实 K 线计算
+ * 拿不到的项显示「—」而不是编一个数：交易页上编数字比留白危险得多
+ * （早先这里用写死的基准价与因子，页面上却像实时行情）。
+ */
 export function CoinSelector({
   value,
   onChange,
   strategyCount,
   livePrices,
+  quotes,
+  factors,
   onQuickCreateStrategy,
   creatingSymbol,
 }: CoinSelectorProps) {
   const [showProfile, setShowProfile] = useState(true);
   const activeCoin = coinInfoOf(value);
   const activeCount = strategyCount?.[activeCoin.symbol] ?? 0;
+  const activeQuote = quotes?.[activeCoin.symbol];
+  const activeFactors = factors?.[activeCoin.symbol];
+
+  // 没有数据时统一显示「—」：空着一格比填假数字诚实。
+  const dash = "—";
 
   return (
     <section className={styles.panel} aria-label="币种选择">
-      <div className={styles.coinSelectorHead}>
-        <div className={styles.coinSelectorTitleWrap}>
-          <span className={styles.sectionEyebrow}>MULTI-ASSET WATCHLIST</span>
-          <h2 className={styles.panelTitle}>多币种合约矩阵与标的研究档案</h2>
-        </div>
+      <div className={styles.panelHeadRow}>
+        <h2 className={styles.panelTitle}>多币种</h2>
         <div className={styles.coinSelectorActions}>
+          <Button variant="ghost" size="sm" onClick={() => setShowProfile((prev) => !prev)}>
+            {showProfile ? "收起档案" : "展开档案"}
+          </Button>
           {activeCount === 0 && onQuickCreateStrategy ? (
             <Button
               variant="secondary"
@@ -130,16 +154,9 @@ export function CoinSelector({
               disabled={creatingSymbol === activeCoin.symbol}
               onClick={() => onQuickCreateStrategy(activeCoin.symbol)}
             >
-              {creatingSymbol === activeCoin.symbol ? "正在初始化…" : `+ 为 ${activeCoin.base} 创建策略`}
+              {creatingSymbol === activeCoin.symbol ? "正在初始化…" : `为 ${activeCoin.base} 创建策略`}
             </Button>
           ) : null}
-          <button
-            type="button"
-            className={styles.profileToggleBtn}
-            onClick={() => setShowProfile((prev) => !prev)}
-          >
-            {showProfile ? "收起币种深度档案" : "展开币种深度档案"}
-          </button>
         </div>
       </div>
 
@@ -147,10 +164,11 @@ export function CoinSelector({
         {COINS.map((coin) => {
           const selected = coin.symbol === value;
           const count = strategyCount?.[coin.symbol] ?? 0;
-          const livePrice = livePrices?.[coin.symbol] ?? coin.basePrice;
-          const changePct =
-            coin.open24h > 0 ? ((livePrice - coin.open24h) / coin.open24h) * 100 : coin.change24hPct;
-          const isUp = changePct >= 0;
+          const quote = quotes?.[coin.symbol];
+          const price = livePrices?.[coin.symbol] ?? quote?.lastPrice ?? 0;
+          // 涨跌幅直接取交易所的值：早先拿实时价除本地写死的旧开盘价，差了二十倍。
+          const changePct = quote?.changePercent;
+          const tone = changePct == null ? "" : changePct >= 0 ? styles.toneUp : styles.toneDown;
 
           return (
             <button
@@ -165,34 +183,32 @@ export function CoinSelector({
                 <CoinIcon icon={coin.icon} color={coin.color} label={coin.name} size={32} />
                 <div className={styles.coinMeta}>
                   <span className={styles.coinNameRow}>
-                    <strong className={styles.coinName}>{coin.name}</strong>
+                    <span className={styles.coinName}>{coin.name}</span>
                     <span className={styles.coinSymbol}>{coin.symbol}</span>
                     {count > 0 ? (
                       <span className={styles.coinBadge}>{count} 策略</span>
-                    ) : (
-                      <span className={styles.coinBadgeMuted}>待建</span>
-                    )}
+                    ) : null}
                   </span>
                   <span className={styles.coinCategoryTag}>{coin.category}</span>
                 </div>
                 <div className={styles.coinPriceCol}>
-                  <strong className={styles.coinLivePrice}>{livePrice.toFixed(coin.precision)}</strong>
-                  <span className={`${styles.coinChangeBadge} ${isUp ? styles.toneUp : styles.toneDown}`}>
-                    {isUp ? "+" : ""}
-                    {changePct.toFixed(2)}%
+                  {price > 0 ? (
+                    <span className={styles.coinLivePrice}>
+                      <AnimatedCounter value={price} decimals={coin.precision} />
+                    </span>
+                  ) : (
+                    <span className={styles.coinLivePrice}>{dash}</span>
+                  )}
+                  <span className={`${styles.coinChangeBadge} ${tone}`}>
+                    {changePct == null ? dash : `${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%`}
                   </span>
                 </div>
               </div>
 
-              <p className={styles.coinDesc}>{coin.description}</p>
-
               <div className={styles.coinBottomRow}>
-                <div className={styles.coinMiniStats}>
-                  <span>24h 量 {coin.volume24h}</span>
-                  <span>OI {coin.openInterest}</span>
-                  <span>费率 {coin.fundingRate}</span>
-                </div>
-                <MiniSparkline points={coin.sparkline} positive={isUp} width={68} height={20} />
+                <span className={styles.coinMiniStats}>
+                  24h {quote ? formatQuoteVolume(quote.quoteVolume) : dash}
+                </span>
               </div>
             </button>
           );
@@ -200,85 +216,90 @@ export function CoinSelector({
       </div>
 
       {showProfile ? (
-        <div className={styles.assetProfileCard} aria-label={`${activeCoin.name} 深度档案`}>
+        <div className={styles.assetProfileCard} aria-label={`${activeCoin.name} 档案`}>
           <div className={styles.assetProfileMain}>
             <div className={styles.assetProfileHeader}>
               <CoinIcon icon={activeCoin.icon} color={activeCoin.color} label={activeCoin.name} size={36} />
               <div>
                 <div className={styles.assetProfileTitleRow}>
-                  <strong>
-                    {activeCoin.name}（{activeCoin.displaySymbol}）
-                  </strong>
-                  <span className={styles.assetTag}>{activeCoin.fullName}</span>
-                  <span className={styles.assetRiskTag}>{activeCoin.riskLevel}</span>
+                  <span className={styles.assetProfileName}>
+                    {activeCoin.name}
+                    <span className={styles.coinSymbol}>{activeCoin.displaySymbol}</span>
+                  </span>
                 </div>
-                <p className={styles.assetMechanism}>{activeCoin.mechanism}</p>
+                <p className={styles.assetMechanism}>{activeCoin.category}</p>
               </div>
             </div>
-            <p className={styles.assetIntro}>{activeCoin.introduction}</p>
+            {/* 合约规格来自交易所公开过滤器，不是我们编的 */}
             <dl className={styles.contractSpecsGrid}>
               <div>
-                <dt>最小变动价位 (Tick)</dt>
+                <dt>最小变动价位</dt>
                 <dd>{activeCoin.tickSize} USDT</dd>
               </div>
               <div>
-                <dt>最小下单数量</dt>
+                <dt>最小下单量</dt>
                 <dd>
                   {activeCoin.minOrder} {activeCoin.base}
                 </dd>
               </div>
               <div>
-                <dt>最高支持杠杆</dt>
-                <dd>{activeCoin.maxLeverage}x 逐仓</dd>
+                <dt>最高杠杆</dt>
+                <dd>{activeCoin.maxLeverage}x</dd>
               </div>
               <div>
-                <dt>Maker / Taker 费率</dt>
+                <dt>24h 高 / 低</dt>
                 <dd>
-                  {activeCoin.makerFee} / {activeCoin.takerFee}
+                  {activeQuote
+                    ? `${activeQuote.highPrice.toFixed(activeCoin.precision)} / ${activeQuote.lowPrice.toFixed(activeCoin.precision)}`
+                    : dash}
                 </dd>
-              </div>
-              <div>
-                <dt>市值规模 / 24h 成交</dt>
-                <dd>
-                  {activeCoin.marketCap} / {activeCoin.volume24h}
-                </dd>
-              </div>
-              <div>
-                <dt>日内年化波动率</dt>
-                <dd>{activeCoin.volatility24h.toFixed(1)}%</dd>
               </div>
             </dl>
           </div>
 
+          {/* 五因子：后端按真实 K 线计算；样本不足时不显示分数 */}
           <div className={styles.assetFactorBox}>
-            <span className={styles.factorTitle}>量化五维因子适配画像</span>
-            <div className={styles.factorList}>
-              {[
-                { label: "趋势持续度 (Trend)", val: activeCoin.factors.trend },
-                { label: "动量爆发力 (Momentum)", val: activeCoin.factors.momentum },
-                { label: "盘口深度 (Liquidity)", val: activeCoin.factors.liquidity },
-                { label: "波动率弹性 (Volatility)", val: activeCoin.factors.volatility },
-                { label: "均值回归 (Mean-Rev)", val: activeCoin.factors.meanReversion },
-              ].map((item) => (
-                <div key={item.label} className={styles.factorRow}>
-                  <span className={styles.factorLabel}>
-                    <span>{item.label}</span>
-                    <strong>{item.val}/100</strong>
-                  </span>
-                  <div className={styles.factorTrack}>
-                    <div
-                      className={styles.factorFill}
-                      style={{ width: `${item.val}%`, background: activeCoin.color }}
-                    />
+            <span className={styles.factorTitle}>多因子</span>
+            {activeFactors ? (
+              <div className={styles.factorList}>
+                {factorRows(activeFactors).map((item) => (
+                  <div key={item.label} className={styles.factorRow}>
+                    <span className={styles.factorLabel}>
+                      <span>{item.label}</span>
+                      <span>{item.value}</span>
+                    </span>
+                    <Progress value={item.value} />
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <p className={styles.factorEmpty}>K 线样本不足，暂不评分</p>
+            )}
           </div>
         </div>
       ) : null}
     </section>
   );
+}
+
+/** 24h 成交额的紧凑写法（38.6B / 4.1B / 780M），与交易所口径一致。 */
+function formatQuoteVolume(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "—";
+  if (value >= 1e9) return `${(value / 1e9).toFixed(1)}B`;
+  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
+  if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
+  return value.toFixed(0);
+}
+
+/** 因子行：中文短名（界面文案保持简短，不放英文括注）。 */
+function factorRows(f: EngineFactors): Array<{ label: string; value: number }> {
+  return [
+    { label: "趋势", value: f.trend },
+    { label: "动量", value: f.momentum },
+    { label: "量能", value: f.liquidity },
+    { label: "波动", value: f.volatility },
+    { label: "回归", value: f.meanReversion },
+  ];
 }
 
 /* ---------------------------------- 余额首屏 (First Screen Balance Hero) ---------------------------------- */
@@ -333,10 +354,11 @@ export function BalanceHero({
   const marginRatio =
     balance && balance.equity > 0 ? (balance.marginUsed / balance.equity) * 100 : 0;
 
+  // 净值曲线只画真实历史；没有就空着（早先会回退到编造的 sparkline）
   const equityPoints =
     balance?.history && balance.history.length > 1
       ? balance.history.map((pt) => pt.equity)
-      : coin.sparkline;
+      : [];
 
   const isRunning =
     strategy != null &&
@@ -596,12 +618,17 @@ export function QuickTradePanel({
   const [stopR, setStopR] = useState<number>(1.0);
   const [takeProfitR, setTakeProfitR] = useState<number>(2.5);
 
+  /*
+    入场价：限价单用用户填的价，否则用真实标记价。
+    两者都没有时为 0 —— 界面据此禁用提交，而不是拿一个写死的价顶替
+    （那会让用户在不知情的情况下按一个不存在的价格下单）。
+  */
   const effectiveEntry =
     orderType === "limit" && Number(limitPrice) > 0
       ? Number(limitPrice)
       : livePrice > 0
         ? livePrice
-        : coin.basePrice;
+        : 0;
   const numQty = Math.max(coin.minOrder, Number(qty) || coin.defaultQty);
   const notional = effectiveEntry * numQty;
   const estMargin = notional / Math.max(1, leverage);
@@ -985,16 +1012,8 @@ export function DecisionLogPanel({
               ) : null}
             </div>
 
-            <p className={styles.logMsg}>{event.msg ?? ""}</p>
-
-            {rich.factors ? (
-              <div className={styles.logFactorGrid}>
-                <span>{rich.factors.emaTrend}</span>
-                <span>{rich.factors.rsiMomentum}</span>
-                <span>{rich.factors.volFilter}</span>
-                <span>{rich.factors.expectancyGate}</span>
-              </div>
-            ) : null}
+            {/* 只展示后端事件里真实存在的说明；不再拼编造的因子文案 */}
+            {event.msg ? <p className={styles.logMsg}>{event.msg}</p> : null}
 
             {onSelectDecision ? (
               <div className={styles.logItemFoot}>

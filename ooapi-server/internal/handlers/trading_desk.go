@@ -41,6 +41,29 @@ type deskMarketView struct {
 	MarkPrice  float64              `json:"markPrice"`
 	Klines     []trading.DeskCandle `json:"klines"`
 	Levels     *deskLevels          `json:"levels,omitempty"`
+	/*
+		Quote 是交易所的 24h 统计（真实涨跌幅、成交量、高低价），
+		Factors 是从真实 K 线算出的多因子画像。
+
+		两者都可能缺（接口失败 / 样本不足），前端必须按「没有就不显示」处理 ——
+		早先这两个数字是前端硬编码的，页面上会一直显示 -42% 这种
+		「拿实时价除以几周前的死基准」算出来的假涨跌。
+	*/
+	Quote   *deskQuoteView        `json:"quote,omitempty"`
+	Factors *trading.FactorScores `json:"factors,omitempty"`
+}
+
+// deskQuoteView 是 24h 统计的对外形状（去掉内部字段，保持数值类型）。
+type deskQuoteView struct {
+	LastPrice     float64 `json:"lastPrice"`
+	OpenPrice     float64 `json:"openPrice"`
+	HighPrice     float64 `json:"highPrice"`
+	LowPrice      float64 `json:"lowPrice"`
+	PriceChange   float64 `json:"priceChange"`
+	ChangePercent float64 `json:"changePercent"`
+	QuoteVolume   float64 `json:"quoteVolume"`
+	// FundingRate 是最新资金费率（批量标记价接口顺带返回，不额外花钱）。
+	FundingRate float64 `json:"fundingRate"`
 }
 
 // GetTradingMarket 返回当前策略周期上的公开 K 线和标记价。
@@ -87,7 +110,80 @@ func GetTradingMarket(c *gin.Context) {
 		MarkPrice:  mark,
 		Klines:     klines,
 		Levels:     deskPriceLevels(c, row.ID),
+		Quote:      deskQuoteFor(book, symbol),
+		Factors:    deskFactorsFor(klines),
 	})
+}
+
+/*
+deskQuoteFor 读 24h 统计。失败返回 nil —— 让前端不显示这一项。
+
+为什么不报错：K 线与标记价已经拿到了，页面其余部分可以正常用。
+因为「涨跌幅读不到」就让整屏行情失败，是把可选信息当成了必需项。
+*/
+func deskQuoteFor(book trading.DeskBook, symbol string) *deskQuoteView {
+	if book == nil {
+		return nil
+	}
+	/*
+		优先走**全市场批量**接口，再按交易对查表。
+
+		逐个币种调 ticker/24hr 的权重是 40，8 个币种就是 320；
+		批量端点一次拉全部交易对也是 40 —— 差 8 倍，而看板每 5 秒刷新一轮。
+		实测中逐币查询把服务器 IP 打成了币安 418 封禁。
+	*/
+	if bulk, okBulk := book.(interface {
+		AllTickers() (map[string]trading.Ticker24h, error)
+		AllMarkQuotes() (map[string]trading.MarkQuoteView, error)
+	}); okBulk {
+		if all, errAll := bulk.AllTickers(); errAll == nil {
+			if quote, found := all[strings.ToUpper(symbol)]; found {
+				out := &deskQuoteView{
+					LastPrice:     quote.LastPrice,
+					OpenPrice:     quote.OpenPrice,
+					HighPrice:     quote.HighPrice,
+					LowPrice:      quote.LowPrice,
+					PriceChange:   quote.PriceChange,
+					ChangePercent: quote.ChangePercent,
+					QuoteVolume:   quote.QuoteVolume,
+				}
+				// 资金费率来自同批的标记价接口（已缓存，不会多打一次上游）
+				if marks, errMarks := bulk.AllMarkQuotes(); errMarks == nil {
+					if mv, foundMark := marks[strings.ToUpper(symbol)]; foundMark {
+						out.FundingRate = mv.Funding
+					}
+				}
+				return out
+			}
+			// 批量拿到了但没有这个交易对：说明上游根本没有它，
+			// 不必再去单独查一次（省一次必失败的请求）
+			return nil
+		}
+	}
+	// 批量不可用时退回单币查询（有缓存兜底）
+	quote, err := book.Ticker24h(symbol)
+	if err != nil {
+		log.Printf("[desk] 读取 %s 的 24h 行情失败: %v", symbol, err)
+		return nil
+	}
+	return &deskQuoteView{
+		LastPrice:     quote.LastPrice,
+		OpenPrice:     quote.OpenPrice,
+		HighPrice:     quote.HighPrice,
+		LowPrice:      quote.LowPrice,
+		PriceChange:   quote.PriceChange,
+		ChangePercent: quote.ChangePercent,
+		QuoteVolume:   quote.QuoteVolume,
+	}
+}
+
+// deskFactorsFor 从 K 线算多因子画像。样本不足返回 nil（不显示，不编造）。
+func deskFactorsFor(klines []trading.DeskCandle) *trading.FactorScores {
+	scores, okFactors := trading.ComputeFactorScores(klines)
+	if !okFactors {
+		return nil
+	}
+	return &scores
 }
 
 func getTradingMarketBySymbol(c *gin.Context) {
@@ -167,6 +263,8 @@ func getTradingMarketBySymbol(c *gin.Context) {
 		MarkPrice:  mark,
 		Klines:     klines,
 		Levels:     levels,
+		Quote:      deskQuoteFor(book, symbol),
+		Factors:    deskFactorsFor(klines),
 	})
 }
 

@@ -1415,6 +1415,29 @@ func (c *USDMClient) public(method, path string, params url.Values) ([]byte, err
 	return c.do(method, path, params, Credentials{})
 }
 
+/*
+credentialFingerprint 返回当前凭据的短指纹，用于账户读缓存的键。
+
+**为什么必须有**：账户读（持仓/挂单/权益）是私有数据 —— 缓存键里
+不带凭据指纹就会把 A 账号的持仓返回给 B 账号。这里只取 API Key 的
+哈希前缀（不回传可识别的明文），足以区分不同账号。
+
+未配置凭据时返回 "anon"：那种情况下签名请求本来就会失败，不会进缓存。
+*/
+func (c *USDMClient) credentialFingerprint() string {
+	if c == nil {
+		return "anon"
+	}
+	c.mu.Lock()
+	key := c.creds.APIKey
+	c.mu.Unlock()
+	if strings.TrimSpace(key) == "" {
+		return "anon"
+	}
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:8])
+}
+
 func (c *USDMClient) signed(method, path string, params url.Values) ([]byte, error) {
 	if err := c.guard(); err != nil {
 		return nil, err

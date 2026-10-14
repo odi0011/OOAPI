@@ -5,7 +5,14 @@ import AdminLayout from "@/components/admin/AdminLayout";
 import { ApiRequestError } from "@/lib/api";
 
 import styles from "./TradingDesk.module.css";
-import EngineOverview from "./EngineOverview";
+/*
+  显式写扩展名：目录里同时有 EngineOverview.tsx（本组件）与
+  engineOverview.ts（工具函数），两者只差首字母大小写。
+  在大小写不敏感的文件系统（Windows / macOS）上，`./EngineOverview`
+  会先命中 .ts 那个工具文件，导致「没有默认导出」的编译错误；
+  写全 .tsx 才能两个平台都解析到组件。
+*/
+import EngineOverview from "./EngineOverview.tsx";
 import LiveBalancePanel from "./LiveBalancePanel";
 import TradingDesk, { type DeskCoinChartItem, type DeskReadErrors } from "./TradingDesk";
 import {

@@ -18,18 +18,19 @@
 .sectionEyebrow {
   display: inline-block;
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-muted);
   margin-bottom: 2px;
 }
 
+/* 标题不加粗：层级靠字号与留白建立（用户要求） */
 .pageTitle {
   margin: 0;
   font-size: var(--text-2xl);
-  font-weight: 600;
-  letter-spacing: -0.03em;
+  font-weight: 400;
+  letter-spacing: -0.02em;
 }
 
 .pageLead {
@@ -124,8 +125,8 @@
 .panelTitle {
   margin: 0;
   font-size: var(--text-base);
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-weight: 400;
+  letter-spacing: -0.01em;
 }
 
 .panelDesc {
@@ -429,7 +430,7 @@
 
 .factorTitle {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--text-secondary);
 }
 
@@ -2038,7 +2039,7 @@
 .analyticsCardHead h3 {
   margin: 0;
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: 400;
 }
 
 .analyticsHint {
@@ -2403,4 +2404,70 @@
   .bookStrip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+/* ------------------------------ 交易统计（真实数据） ------------------------------ */
+
+/*
+  统计格：只呈现后端真实计算出来的量。
+  数字用 tabular-nums，等宽对齐才能一眼比较大小。
+*/
+.statGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.statCell {
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+}
+
+.statCell dt {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.statCell dd {
+  margin: 4px 0 0;
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.symbolBreakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.symbolChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.symbolChipCount {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+/* 没有数据时的说明：灰字、不加粗 */
+.analyticsEmpty,
+.factorEmpty {
+  margin: var(--space-3) 0 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: 400;
 }

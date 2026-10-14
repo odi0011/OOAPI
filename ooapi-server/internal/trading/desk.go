@@ -33,6 +33,9 @@ type DeskCandle struct {
 	High     float64   `json:"high"`
 	Low      float64   `json:"low"`
 	Close    float64   `json:"close"`
+	// Volume 是基础资产成交量（币安 klines 第 6 列）。
+	// 多因子画像的「量能」项要用它；不参与下单，缺了也不影响交易。
+	Volume float64 `json:"volume,omitempty"`
 }
 
 // KeyPosition 是一把交易所密钥的 positionRisk 里仍开着的仓。
@@ -110,6 +113,9 @@ type PanelPosition struct {
 type DeskBook interface {
 	Klines(symbol, interval string, limit int) ([]DeskCandle, error)
 	MarkPrice(symbol string) (float64, error)
+	// Ticker24h 读 24h 统计。看板的涨跌幅/成交量只能用交易所的真实值 ——
+	// 早先前端拿实时价除一个写死的旧开盘价，页面显示的是假涨跌。
+	Ticker24h(symbol string) (Ticker24h, error)
 	PositionRisk(symbol string) (RiskView, error)
 	OpenOrders(symbol string) ([]DeskOrder, error)
 	OpenAlgoOrders(symbol string) ([]DeskOrder, error)
@@ -204,28 +210,121 @@ func (c *USDMClient) Klines(symbol, interval string, limit int) ([]DeskCandle, e
 	if limit > deskKlineMax {
 		limit = deskKlineMax
 	}
-	body, err := c.public(http.MethodGet, "/fapi/v1/klines", url.Values{
-		"symbol":   {symbol},
-		"interval": {interval},
-		"limit":    {strconv.Itoa(limit)},
+	/*
+		走共享缓存：看板每轮刷新会对每个币种各拉一次 K 线，
+		全部直连币安会打满权重配额（实测把服务器 IP 打成 418 封禁）。
+		缓存 3 秒，短于页面轮询周期，展示上感觉不到差别。
+	*/
+	key := marketCacheKey(c.base, symbol, interval, strconv.Itoa(limit))
+	return klineCache.get(key, func() ([]DeskCandle, error) {
+		body, err := c.public(http.MethodGet, "/fapi/v1/klines", url.Values{
+			"symbol":   {symbol},
+			"interval": {interval},
+			"limit":    {strconv.Itoa(limit)},
+		})
+		if err != nil {
+			return nil, redactNetErr(err)
+		}
+		bars, err := parseKlines(body)
+		if err != nil {
+			return nil, errors.New("K 线数据无法解析")
+		}
+		if bars == nil {
+			bars = []DeskCandle{}
+		}
+		return bars, nil
 	})
-	if err != nil {
-		return nil, redactNetErr(err)
-	}
-	bars, err := parseKlines(body)
-	if err != nil {
-		return nil, errors.New("K 线数据无法解析")
-	}
-	if bars == nil {
-		bars = []DeskCandle{}
-	}
-	return bars, nil
 }
 
 // MarkPrice 读公开标记价。没有有效价格时返回错误，调用方不要用收盘价冒充。
 func (c *USDMClient) MarkPrice(symbol string) (float64, error) {
-	price, _, err := c.MarkQuote(symbol)
-	return price, err
+	upper := strings.ToUpper(strings.TrimSpace(symbol))
+	if err := c.readGuard(); err != nil {
+		return 0, err
+	}
+	if upper == "" {
+		return 0, invalid("缺少交易对")
+	}
+	// 与 K 线同样走缓存：标记价被高频读取（每轮刷新每币一次）
+	key := marketCacheKey(c.base, upper, "mark")
+	return markPriceCache.get(key, func() (float64, error) {
+		price, _, err := c.MarkQuote(upper)
+		return price, err
+	})
+}
+
+// Ticker24h 是交易所 24 小时统计（公开接口，不需要密钥）。
+//
+// 这些数字**必须**从交易所读：界面上的涨跌幅、成交量、持仓量只有来自同一份
+// 快照才自洽。早先前端把「24h 开盘价」写死在资产档案里当基准，再拿实时价去除 ——
+// 算出来的是「相对几周前某个时刻」的涨跌，页面上却是 -42% 这种数字，
+// 与真实的 24 小时波动（±2% 以内）差了二十倍，属于看起来像真数据的假数据。
+type Ticker24h struct {
+	Symbol        string
+	LastPrice     float64
+	OpenPrice     float64
+	HighPrice     float64
+	LowPrice      float64
+	PriceChange   float64
+	ChangePercent float64
+	QuoteVolume   float64
+	Volume        float64
+}
+
+// Ticker24h 读公开的 24 小时行情统计。
+func (c *USDMClient) Ticker24h(symbol string) (Ticker24h, error) {
+	if err := c.readGuard(); err != nil {
+		return Ticker24h{}, err
+	}
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return Ticker24h{}, invalid("缺少交易对")
+	}
+	// 同样走缓存（24h 涨跌幅本身是分钟级变化的量）
+	key := marketCacheKey(c.base, symbol, "ticker24h")
+	return tickerCache.get(key, func() (Ticker24h, error) {
+		body, err := c.public(http.MethodGet, "/fapi/v1/ticker/24hr", url.Values{"symbol": {symbol}})
+		if err != nil {
+			return Ticker24h{}, redactNetErr(err)
+		}
+		return parseTicker24h(body)
+	})
+}
+
+// parseTicker24h 解析币安 24h 统计。
+//
+// 字段是字符串（币安所有行情接口都这样），且价格类字段可能为空串 ——
+// 空串不能当 0，否则「没有数据」会被画成「价格归零」。
+func parseTicker24h(body []byte) (Ticker24h, error) {
+	var raw struct {
+		Symbol             string `json:"symbol"`
+		LastPrice          string `json:"lastPrice"`
+		OpenPrice          string `json:"openPrice"`
+		HighPrice          string `json:"highPrice"`
+		LowPrice           string `json:"lowPrice"`
+		PriceChange        string `json:"priceChange"`
+		PriceChangePercent string `json:"priceChangePercent"`
+		QuoteVolume        string `json:"quoteVolume"`
+		Volume             string `json:"volume"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return Ticker24h{}, errors.New("24h 行情无法解析")
+	}
+	out := Ticker24h{
+		Symbol:        strings.ToUpper(strings.TrimSpace(raw.Symbol)),
+		LastPrice:     parseNum(raw.LastPrice),
+		OpenPrice:     parseNum(raw.OpenPrice),
+		HighPrice:     parseNum(raw.HighPrice),
+		LowPrice:      parseNum(raw.LowPrice),
+		PriceChange:   parseNum(raw.PriceChange),
+		QuoteVolume:   parseNum(raw.QuoteVolume),
+		Volume:        parseNum(raw.Volume),
+		ChangePercent: parseNum(raw.PriceChangePercent),
+	}
+	if out.LastPrice <= 0 {
+		return Ticker24h{}, errors.New("24h 行情没有有效价格")
+	}
+	return out, nil
 }
 
 // MarkQuote 读公开标记价与最新资金费率（/fapi/v1/premiumIndex）。
@@ -251,15 +350,26 @@ func (c *USDMClient) MarkQuote(symbol string) (float64, float64, error) {
 // PositionRisk 读签名后的持仓。没有仓位时 Open 为假，数量和盈亏留空。
 func (c *USDMClient) PositionRisk(symbol string) (RiskView, error) {
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
-	body, err := c.signedRead("/fapi/v2/positionRisk", url.Values{"symbol": {symbol}})
+	// 走账户缓存：键里带凭据指纹 —— 不带就会把 A 账号的持仓给 B 账号。
+	key := marketCacheKey(c.base, "risk", c.credentialFingerprint(), symbol)
+	value, err := accountCache.get(key, func() (accountCacheValue, error) {
+		body, err := c.signedRead("/fapi/v2/positionRisk", url.Values{"symbol": {symbol}})
+		if err != nil {
+			return accountCacheValue{}, err
+		}
+		view, err := parsePositionRisk(symbol, body)
+		if err != nil {
+			return accountCacheValue{}, errors.New("持仓数据无法解析")
+		}
+		return accountCacheValue{Risk: &view}, nil
+	})
 	if err != nil {
 		return RiskView{}, err
 	}
-	view, err := parsePositionRisk(symbol, body)
-	if err != nil {
+	if value.Risk == nil {
 		return RiskView{}, errors.New("持仓数据无法解析")
 	}
-	return view, nil
+	return *value.Risk, nil
 }
 
 // OpenOrders 读普通挂单，入场单在这里。
@@ -321,24 +431,44 @@ func panelPositionFromRow(row riskRow) (PanelPosition, bool) {
 
 func (c *USDMClient) readOrders(source, path, symbol string) ([]DeskOrder, error) {
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
-	body, err := c.signedRead(path, url.Values{"symbol": {symbol}})
+	// 账户私有数据：缓存键必须带凭据指纹，否则会串号
+	key := marketCacheKey(c.base, "orders", source, c.credentialFingerprint(), symbol)
+	value, err := accountCache.get(key, func() (accountCacheValue, error) {
+		body, err := c.signedRead(path, url.Values{"symbol": {symbol}})
+		if err != nil {
+			return accountCacheValue{}, err
+		}
+		var orders []DeskOrder
+		var parseErr error
+		if source == OrderSourceAlgo {
+			orders, parseErr = parseAlgoOrders(body)
+		} else {
+			orders, parseErr = parseOpenOrders(body)
+		}
+		if parseErr != nil {
+			return accountCacheValue{}, errors.New("委托数据无法解析")
+		}
+		if orders == nil {
+			orders = []DeskOrder{}
+		}
+		if source == OrderSourceAlgo {
+			return accountCacheValue{AlgoOrders: orders}, nil
+		}
+		return accountCacheValue{BookOrders: orders}, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	var orders []DeskOrder
-	var parseErr error
 	if source == OrderSourceAlgo {
-		orders, parseErr = parseAlgoOrders(body)
-	} else {
-		orders, parseErr = parseOpenOrders(body)
+		if value.AlgoOrders == nil {
+			return []DeskOrder{}, nil
+		}
+		return value.AlgoOrders, nil
 	}
-	if parseErr != nil {
-		return nil, errors.New("委托数据无法解析")
+	if value.BookOrders == nil {
+		return []DeskOrder{}, nil
 	}
-	if orders == nil {
-		orders = []DeskOrder{}
-	}
-	return orders, nil
+	return value.BookOrders, nil
 }
 
 func (c *USDMClient) readGuard() error {
@@ -415,12 +545,21 @@ func parseKlines(body []byte) ([]DeskCandle, error) {
 		if err != nil {
 			return nil, err
 		}
+		// 成交量是可选列：老版本上游或测试桩可能只给到收盘价。
+		// 缺列时留 0，不报错 —— 量能因子会因此算不出来，那是如实反映。
+		volume := 0.0
+		if len(row) > 5 {
+			if v, vErr := rawFloat(row[5]); vErr == nil {
+				volume = v
+			}
+		}
 		out = append(out, DeskCandle{
 			OpenTime: time.UnixMilli(int64(openMs)).UTC(),
 			Open:     open,
 			High:     high,
 			Low:      low,
 			Close:    closePx,
+			Volume:   volume,
 		})
 	}
 	return out, nil
@@ -776,4 +915,130 @@ func (n *flexNum) UnmarshalJSON(b []byte) error {
 	}
 	*n = flexNum(v)
 	return nil
+}
+
+/*
+AllTickers 一次拉回全市场 24h 统计（不带 symbol 参数）。
+
+**为什么要批量**：单个币种查 ticker/24hr 的权重是 40；看板有 8 个币种，
+逐个查一轮就是 320 权重。批量端点一次拿回全部 793 个交易对，总权重也是 40 ——
+差 8 倍。实测中这个差别决定了服务器 IP 会不会被币安限流封禁。
+
+返回按交易对（大写）索引的映射，调用方直接查表。
+*/
+func (c *USDMClient) AllTickers() (map[string]Ticker24h, error) {
+	if err := c.readGuard(); err != nil {
+		return nil, err
+	}
+	key := marketCacheKey(c.base, "all-tickers")
+	return bulkTickerCache.get(key, func() (map[string]Ticker24h, error) {
+		body, err := c.public(http.MethodGet, "/fapi/v1/ticker/24hr", nil)
+		if err != nil {
+			return nil, redactNetErr(err)
+		}
+		return parseAllTickers(body)
+	})
+}
+
+// parseAllTickers 解析批量 24h 统计（数组形式，字段为字符串）。
+func parseAllTickers(body []byte) (map[string]Ticker24h, error) {
+	var rows []struct {
+		Symbol             string `json:"symbol"`
+		LastPrice          string `json:"lastPrice"`
+		OpenPrice          string `json:"openPrice"`
+		HighPrice          string `json:"highPrice"`
+		LowPrice           string `json:"lowPrice"`
+		PriceChange        string `json:"priceChange"`
+		PriceChangePercent string `json:"priceChangePercent"`
+		QuoteVolume        string `json:"quoteVolume"`
+		Volume             string `json:"volume"`
+	}
+	if err := json.Unmarshal(body, &rows); err != nil {
+		return nil, errors.New("批量 24h 行情无法解析")
+	}
+	out := make(map[string]Ticker24h, len(rows))
+	for _, row := range rows {
+		symbol := strings.ToUpper(strings.TrimSpace(row.Symbol))
+		if symbol == "" {
+			continue
+		}
+		last := parseNum(row.LastPrice)
+		if last <= 0 {
+			// 没有有效价格的行跳过：宁可不给，也不用 0 冒充
+			continue
+		}
+		out[symbol] = Ticker24h{
+			Symbol:        symbol,
+			LastPrice:     last,
+			OpenPrice:     parseNum(row.OpenPrice),
+			HighPrice:     parseNum(row.HighPrice),
+			LowPrice:      parseNum(row.LowPrice),
+			PriceChange:   parseNum(row.PriceChange),
+			ChangePercent: parseNum(row.PriceChangePercent),
+			QuoteVolume:   parseNum(row.QuoteVolume),
+			Volume:        parseNum(row.Volume),
+		}
+	}
+	return out, nil
+}
+
+/*
+AllMarkQuotes 一次拉回全市场标记价与资金费率。
+
+批量端点（不带 symbol）总量不大且权重固定，比逐币查询省得多。
+返回按交易对（大写）索引的映射。
+*/
+func (c *USDMClient) AllMarkQuotes() (map[string]MarkQuoteView, error) {
+	if err := c.readGuard(); err != nil {
+		return nil, err
+	}
+	key := marketCacheKey(c.base, "all-marks")
+	return bulkMarkCache.get(key, func() (map[string]MarkQuoteView, error) {
+		body, err := c.public(http.MethodGet, "/fapi/v1/premiumIndex", nil)
+		if err != nil {
+			return nil, redactNetErr(err)
+		}
+		return parseAllMarkQuotes(body)
+	})
+}
+
+// parseAllMarkQuotes 解析批量标记价。上游可能返回单对象（带 symbol）或数组。
+func parseAllMarkQuotes(body []byte) (map[string]MarkQuoteView, error) {
+	trimmed := bytes.TrimSpace(body)
+	out := map[string]MarkQuoteView{}
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		var rows []struct {
+			Symbol          string `json:"symbol"`
+			MarkPrice       string `json:"markPrice"`
+			LastFundingRate string `json:"lastFundingRate"`
+		}
+		if err := json.Unmarshal(trimmed, &rows); err != nil {
+			return nil, errors.New("批量标记价无法解析")
+		}
+		for _, row := range rows {
+			symbol := strings.ToUpper(strings.TrimSpace(row.Symbol))
+			price := parseNum(row.MarkPrice)
+			if symbol == "" || price <= 0 {
+				continue
+			}
+			out[symbol] = MarkQuoteView{MarkPrice: price, Funding: parseNum(row.LastFundingRate)}
+		}
+		return out, nil
+	}
+	// 单对象
+	var one struct {
+		Symbol          string `json:"symbol"`
+		MarkPrice       string `json:"markPrice"`
+		LastFundingRate string `json:"lastFundingRate"`
+	}
+	if err := json.Unmarshal(trimmed, &one); err != nil {
+		return nil, errors.New("批量标记价无法解析")
+	}
+	symbol := strings.ToUpper(strings.TrimSpace(one.Symbol))
+	price := parseNum(one.MarkPrice)
+	if symbol == "" || price <= 0 {
+		return out, nil
+	}
+	out[symbol] = MarkQuoteView{MarkPrice: price, Funding: parseNum(one.LastFundingRate)}
+	return out, nil
 }

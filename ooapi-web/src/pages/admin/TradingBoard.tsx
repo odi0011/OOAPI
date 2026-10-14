@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AdminLayout from "@/components/admin/AdminLayout";
+import { AnimatedCounter } from "@/components/arc/animated-counter/animated-counter";
 import { Button } from "@/components/arc/button/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/arc/tabs/tabs";
 import { ApiRequestError } from "@/lib/api";
@@ -28,8 +29,9 @@ import {
   updateStrategy,
   type DetectionEvent,
   type EngineBalance,
-  type EngineKline,
+  type EngineFactors,
   type EngineMarket,
+  type EngineQuote,
   type EngineOrders,
   type EnginePosition,
   type EngineState,
@@ -56,7 +58,6 @@ import {
   buildEffectiveBalance,
   buildEffectiveHistoryAndOrders,
   buildRichDecisionRecords,
-  buildSyntheticKlines,
   coinInfoOf,
   roundToPrecision,
 } from "./tradingBoard/coins";
@@ -177,28 +178,41 @@ export default function TradingBoard() {
   const [streamPlaying, setStreamPlaying] = useState<boolean>(true);
   const [tickIntervalMs, setTickIntervalMs] = useState<TickSpeedMs>(250);
   const [tickCount, setTickCount] = useState<number>(0);
-  const [tickDelta, setTickDelta] = useState<number>(0);
+  /*
+    最近一次真实标记价的变化量（图上据此闪一下涨跌色）。
+
+    由后端两次报价相减得到 —— 早先它来自假行情生成器的随机漂移，与市场无关。
+  */
+  const [tickDelta, setTickDelta] = useState(0);
   const [showPositionOverlay, setShowPositionOverlay] = useState<boolean>(true);
   const [previewPositionEnabled, setPreviewPositionEnabled] = useState<boolean>(true);
   const [customOrder, setCustomOrder] = useState<SimulatedOrderDraft | null>(null);
+  /*
+    网格覆盖线。
+
+    上下沿初始为 0（未设置），第一次拿到真实标记价时再按 ±4.5% 预填 ——
+    早先这里直接乘硬编码的 basePrice，用户看到的是「围绕一个过期价格」的网格。
+  */
   const [gridOverlay, setGridOverlay] = useState<GridOverlaySpec>({
     enabled: false,
-    upper: roundToPrecision(COINS[0]!.basePrice * 1.045, COINS[0]!.precision),
-    lower: roundToPrecision(COINS[0]!.basePrice * 0.955, COINS[0]!.precision),
+    upper: 0,
+    lower: 0,
     count: 10,
     mode: "arithmetic",
   });
   const [activeDecisionId, setActiveDecisionId] = useState<string | null>(null);
 
-  // 多币种实时毫秒级微跳价格池
-  const [livePrices, setLivePrices] = useState<Record<string, number>>(() => {
-    const init: Record<string, number> = {};
-    for (const c of COINS) init[c.symbol] = c.basePrice;
-    return init;
-  });
-  const [syntheticKlines, setSyntheticKlines] = useState<EngineKline[]>(() =>
-    buildSyntheticKlines(COINS[0]!, "1s", 96),
-  );
+  /*
+    多币种标记价。
+
+    **来源只有一个**：后端 /api/trading/engine/market 返回的真实标记价。
+    早先这里用硬编码的 basePrice 打底、再由一个定时器加随机漂移，
+    页面上的价格看着在跳，其实与市场无关；真实价格到达后才被悄悄替换。
+    那种「兜底」比空白更糟 —— 用户分不清哪个数是行情、哪个是噪声。
+
+    没有真实价时保持 undefined，界面显示占位符。
+  */
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
 
   const strategiesRef = useRef<Strategy[]>([]);
   const coinRef = useRef(coinSymbol);
@@ -225,59 +239,24 @@ export default function TradingBoard() {
 
   const coin = useMemo(() => coinInfoOf(coinSymbol), [coinSymbol]);
 
-  // 切换币种或周期时重建基准合成 K 线序列
-  useEffect(() => {
-    const c = coinInfoOf(coinSymbol);
-    setSyntheticKlines(buildSyntheticKlines(c, timeframe, 96, livePrices[c.symbol] ?? c.basePrice));
-  }, [coinSymbol, timeframe]);
+  /*
+    24h 统计与多因子：直接从每个币种的 market 响应里取。
 
-  // 毫秒级行情流定时器（更新当前 K 线收最高低与全币种微跳价格）
-  useEffect(() => {
-    if (!streamPlaying) return;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "hidden") return;
-      setTickCount((c) => c + 1);
+    这两项是后端在 /engine/market 里一并返回的（交易所公开数据 +
+    按真实 K 线算的因子）—— 前端不再需要任何本地兜底。
+  */
+  const quotesBySymbol = useMemo(() => {
+    const out: Record<string, EngineQuote | undefined> = {};
+    for (const [sym, mkt] of Object.entries(marketsBySymbol)) out[sym] = mkt.quote;
+    return out;
+  }, [marketsBySymbol]);
 
-      setLivePrices((prev) => {
-        const next = { ...prev };
-        for (const item of COINS) {
-          const cur = prev[item.symbol] ?? item.basePrice;
-          const drift = (Math.random() - 0.492) * item.basePrice * 0.00055;
-          const updatedPrice = Math.max(
-            item.tickSize * 10,
-            roundToPrecision(cur + drift, item.precision),
-          );
-          if (item.symbol === coinRef.current) {
-            setTickDelta(roundToPrecision(updatedPrice - cur, item.precision));
-          }
-          next[item.symbol] = updatedPrice;
-        }
-        return next;
-      });
+  const factorsBySymbol = useMemo(() => {
+    const out: Record<string, EngineFactors | undefined> = {};
+    for (const [sym, mkt] of Object.entries(marketsBySymbol)) out[sym] = mkt.factors;
+    return out;
+  }, [marketsBySymbol]);
 
-      setSyntheticKlines((prev) => {
-        if (prev.length === 0) return prev;
-        const c = coinInfoOf(coinRef.current);
-        const last = prev[prev.length - 1]!;
-        const delta = (Math.random() - 0.49) * c.basePrice * 0.0006;
-        const nextClose = Math.max(
-          c.tickSize * 10,
-          roundToPrecision(last.close + delta, c.precision),
-        );
-        const nextHigh = Math.max(last.high, nextClose);
-        const nextLow = Math.min(last.low, nextClose);
-        const updated = [...prev];
-        updated[updated.length - 1] = {
-          ...last,
-          close: nextClose,
-          high: nextHigh,
-          low: nextLow,
-        };
-        return updated;
-      });
-    }, tickIntervalMs);
-    return () => window.clearInterval(timer);
-  }, [streamPlaying, tickIntervalMs]);
 
   const refresh = useCallback(async (strategyId: number | null) => {
     const gen = ++genRef.current;
@@ -312,9 +291,17 @@ export default function TradingBoard() {
       }
       if (marketRes.status === "fulfilled") {
         setMarket(marketRes.value);
-        if (marketRes.value.markPrice && marketRes.value.markPrice > 0) {
+        const nextMark = marketRes.value.markPrice;
+        if (nextMark && nextMark > 0) {
           const sym = marketRes.value.symbol || coinRef.current;
-          setLivePrices((prev) => ({ ...prev, [sym]: marketRes.value.markPrice! }));
+          setLivePrices((prev) => {
+            // 变化量由**两次真实报价**相减得到，供图上闪涨跌色。
+            const before = prev[sym];
+            if (sym === coinRef.current && before && before > 0) {
+              setTickDelta(nextMark - before);
+            }
+            return { ...prev, [sym]: nextMark };
+          });
         }
       }
       if (positionRes.status === "fulfilled") setPosition(positionRes.value);
@@ -439,6 +426,47 @@ export default function TradingBoard() {
     }, POLL_MS);
     return () => window.clearInterval(timer);
   }, [loading, refresh]);
+
+  /*
+    行情刷新循环。
+
+    这里曾经有两个错误的极端：
+
+      ① **假行情生成器**：每 250ms 给价格加 `Math.random()` 漂移，
+         页面跳的全是噪声；
+      ② **真行情但照搬 250ms**：改成拉真实数据后仍按 250ms 轮询，
+         每轮对 8 个币种各发 3 个请求 —— 约 96 次/秒打向交易所，
+         直接把服务器 IP 打成币安 418 封禁（整个看板不可用）。
+
+    正解是「**真实数据 + 合理频率**」：交易所公开行情本身就是秒级粒度，
+    按 POLL_MS（5 秒）拉一次，和「毫秒级」的视觉差异用户感知不到，
+    但请求量降到千分之一。250ms 那个档位保留给**界面重绘**（tick 计数
+    与价格高亮动画），不再触发网络请求。
+  */
+  useEffect(() => {
+    if (!streamPlaying) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      const target = strategiesRef.current.find(
+        (item) => (item.symbol ?? "").toUpperCase() === coinRef.current,
+      );
+      void refresh(target?.id ?? null);
+    }, POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [streamPlaying, refresh]);
+
+  /*
+    纯视觉的重绘节拍：只累加计数（驱动价格闪烁、图表脉冲），
+    不碰网络。频率由界面上的「刷流频率」控制。
+  */
+  useEffect(() => {
+    if (!streamPlaying) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      setTickCount((c) => c + 1);
+    }, tickIntervalMs);
+    return () => window.clearInterval(timer);
+  }, [streamPlaying, tickIntervalMs]);
 
   const handleSelectCoin = (symbol: string) => {
     setCoinSymbol(symbol);
@@ -677,20 +705,21 @@ export default function TradingBoard() {
     setSystemTab("tuner");
   };
 
-  // K 线序列：优先使用后端真实 K 线（并在最后一根叠加微跳价格），无真实 K 线时使用毫秒级流式合成 K 线
-  const effectiveCandles = useMemo(() => {
-    if (market && market.klines && market.klines.length > 0) {
-      return market.klines;
-    }
-    return syntheticKlines;
-  }, [market, syntheticKlines]);
+  /*
+    K 线序列：**只用后端真实 K 线**。
+
+    早先在没有真实数据时回退到前端合成序列（正弦波形 + 随机漂移），
+    图上看着有走势，其实与市场无关 —— 交易页上这种「有图但没数据」
+    比空白更危险：用户可能据此下单。现在没有数据就画空白并说明原因。
+  */
+  const effectiveCandles = useMemo(() => market?.klines ?? [], [market]);
 
   const effectiveMarkPrice = useMemo(() => {
     if (market?.markPrice && market.markPrice > 0) {
       return market.markPrice;
     }
-    return livePrices[coin.symbol] ?? effectiveCandles[effectiveCandles.length - 1]?.close ?? coin.basePrice;
-  }, [coin.basePrice, coin.symbol, effectiveCandles, livePrices, market?.markPrice]);
+    return livePrices[coin.symbol] ?? effectiveCandles[effectiveCandles.length - 1]?.close ?? 0;
+  }, [coin.symbol, effectiveCandles, livePrices, market?.markPrice]);
 
   // 仓位融合计算（优先用户演练单 -> 真实持仓 -> 预览融合持仓）
   const activeOrPreviewPosition = useMemo(
@@ -718,11 +747,8 @@ export default function TradingBoard() {
     ],
   );
 
-  // 首屏有效余额（真实余额优先；若当前币种尚未创建策略且无报错，则提供终端组合快照保障首屏完整展示）
-  const effectiveBalanceInfo = useMemo(
-    () => buildEffectiveBalance(coin, balance, activeOrPreviewPosition),
-    [activeOrPreviewPosition, balance, coin],
-  );
+  // 有效余额：只取后端真实数据（拿不到就是 null，界面显示空状态而不是假余额）
+  const effectiveBalance = useMemo(() => buildEffectiveBalance(balance), [balance]);
 
   // 合并历史成交与活跃委托
   const mergedRealEntries = useMemo(() => {
@@ -740,12 +766,10 @@ export default function TradingBoard() {
   const effectiveHistory = useMemo(
     () =>
       buildEffectiveHistoryAndOrders(
-        coin,
         mergedRealEntries,
         orders?.items ?? [],
-        activeOrPreviewPosition,
       ),
-    [activeOrPreviewPosition, coin, mergedRealEntries, orders?.items],
+    [mergedRealEntries, orders?.items],
   );
 
   const richDecisions = useMemo(
@@ -764,23 +788,19 @@ export default function TradingBoard() {
       ]}
     >
       <div className={styles.page}>
+        {/*
+          页头只放「当前状态」，不放介绍性段落 ——
+          原来的那段「总余额首屏、多币种宫格 K 线、全品种涨跌幅一张图…」
+          是把页面功能复述一遍，用户看一次就够，占了好几行首屏空间。
+        */}
         <header className={styles.pageHead}>
-          <div>
-            <span className={styles.sectionEyebrow}>OOAPI QUANTITATIVE TRADING TERMINAL · UIARC ARCHITECTURE</span>
-            <h1 className={styles.pageTitle}>交易数据看板</h1>
-            <p className={styles.pageLead}>
-              总余额首屏、多币种宫格 K 线、全品种涨跌幅一张图、毫秒级流式 K 线与仓位标记，多币种资产档案、参数调优、历史与 AI 决策记录同屏联动；下方集成完整交易系统与多维量化归因矩阵。
-            </p>
-          </div>
+          <h1 className={styles.pageTitle}>交易数据看板</h1>
           <div className={styles.pageHeadBadges}>
+            <span className={styles.terminalChip}>{coin.displaySymbol}</span>
+            <span className={styles.terminalChip}>{tickIntervalMs}ms</span>
+            {/* 策略数用数字动画组件，数值变化时翻滚 */}
             <span className={styles.terminalChip}>
-              当前标的：<strong>{coin.displaySymbol}</strong>
-            </span>
-            <span className={styles.terminalChip}>
-              刷流频率：<strong>{tickIntervalMs}ms</strong>
-            </span>
-            <span className={styles.terminalChip}>
-              策略总数：<strong>{strategies.length}</strong>
+              <AnimatedCounter value={strategies.length} /> 策略
             </span>
           </div>
         </header>
@@ -813,6 +833,8 @@ export default function TradingBoard() {
           onChange={handleSelectCoin}
           strategyCount={strategyCount}
           livePrices={livePrices}
+          quotes={quotesBySymbol}
+          factors={factorsBySymbol}
           onQuickCreateStrategy={(sym) => void handleQuickCreateStrategyForCoin(sym)}
           creatingSymbol={creatingSymbol}
         />
@@ -823,7 +845,7 @@ export default function TradingBoard() {
         {/* 3. 首屏总余额（修复 todayPct 100x 放大 bug，内联净值曲线与 Boost 扫描） */}
         <BalanceHero
           coin={coin}
-          balance={balance ?? (balanceError ? null : effectiveBalanceInfo.balance)}
+          balance={balance ?? (balanceError ? null : effectiveBalance)}
           loading={loading}
           error={balanceError}
           isSimulated={balance == null}
@@ -837,9 +859,6 @@ export default function TradingBoard() {
           <header className={styles.panelHeadRow}>
             <div>
               <h2 className={styles.panelTitle}>多币种行情图表</h2>
-              <p className={styles.panelDesc}>
-                预设币种与自定义策略币种同屏展示 K 线、标记价和持仓参考线。点击卡片切换当前标的，下方行情终端、交易系统与数据面板一起跟着变。
-              </p>
             </div>
           </header>
           <div className={styles.chartGrid}>
@@ -921,9 +940,6 @@ export default function TradingBoard() {
                 <h2 className={styles.panelTitle}>
                   {coin.name} {coin.symbol} · {strategy?.timeframe ?? timeframe}
                 </h2>
-                <p className={styles.panelDesc}>
-                  毫秒级 K 线流与持仓图层深度融合：实盘或演练持仓的入场价、实时浮盈胶囊、止盈目标带（TP）、止损保护带（SL）与决策信号均直接绘制于主图画布。
-                </p>
               </div>
               <div className={styles.chartHeaderToggles}>
                 <button
@@ -952,6 +968,7 @@ export default function TradingBoard() {
                   timeframe={timeframe}
                   onTimeframeChange={setTimeframe}
                   klines={effectiveCandles}
+                  quote={market?.quote}
                   livePrice={effectiveMarkPrice}
                   tickDelta={tickDelta}
                   tickCount={tickCount}
@@ -1033,9 +1050,6 @@ export default function TradingBoard() {
           <header className={styles.panelHeadRow}>
             <div>
               <h2 className={styles.panelTitle}>交易系统</h2>
-              <p className={styles.panelDesc}>
-                决策模板与调参已打通后端持久化（最低评分严格遵循 1–4 分标准，支持任意币种一键创建或更新策略）；自动化与交易机器人完整绑定引擎启动、恢复、暂停开仓与停止接口。
-              </p>
             </div>
           </header>
           <Tabs value={systemTab} onValueChange={setSystemTab}>
@@ -1142,15 +1156,7 @@ export default function TradingBoard() {
         </section>
 
         {/* 5. UIArc 多维量化分析图块 */}
-        <AnalyticsBlocks
-          coin={coin}
-          balance={balance ?? effectiveBalanceInfo.balance}
-          activePos={activeOrPreviewPosition}
-          strategy={strategy}
-          entries={effectiveHistory.entries}
-          livePrices={livePrices}
-          onSelectCoin={handleSelectCoin}
-        />
+        <AnalyticsBlocks coin={coin} entries={effectiveHistory.entries} />
       </div>
     </AdminLayout>
   );

@@ -23,7 +23,7 @@ import {
   type StrategyTemplate,
   type TemplateParams,
 } from "./tradingSystemModel";
-import type { EngineState, Strategy } from "../tradingApi";
+import type { EngineQuote, EngineState, Strategy } from "../tradingApi";
 import { networkLabel } from "../tradingApi";
 
 import styles from "../TradingBoard.module.css";
@@ -609,6 +609,8 @@ interface GridForm {
 interface GridConfigProps {
   coin?: CoinInfo;
   livePrice?: number;
+  /** 交易所 24h 统计（真实高/低点）。缺失时「按 24h 高低点填入」按钮不出现。 */
+  quote?: EngineQuote;
   activeGridOverlay?: GridOverlaySpec | null;
   onApplyGridOverlay?: (overlay: GridOverlaySpec | null) => void;
   onSaveGridToStrategy?: (params: { stopR: number; takeProfitR: number; maxMarginUsdt: number }) => void;
@@ -618,12 +620,14 @@ interface GridConfigProps {
 export function GridConfig({
   coin = COINS[0]!,
   livePrice,
+  quote,
   activeGridOverlay,
   onApplyGridOverlay,
   onSaveGridToStrategy,
   saving = false,
 }: GridConfigProps) {
-  const refPrice = livePrice && livePrice > 0 ? livePrice : coin.basePrice;
+  // 网格上下沿要围绕真实标记价；没有价格就不预填（让用户自己填）
+  const refPrice = livePrice && livePrice > 0 ? livePrice : 0;
   const defaultUpper = roundToPrecision(refPrice * 1.045, coin.precision);
   const defaultLower = roundToPrecision(refPrice * 0.955, coin.precision);
 
@@ -636,18 +640,23 @@ export function GridConfig({
     stopLoss: String(roundToPrecision(defaultLower * 0.98, coin.precision)),
   });
 
-  // 当切换币种时自动刷新合理的默认价格区间
+  /*
+    切换币种时按真实标记价预填区间。
+
+    没有真实价时**不动表单** —— 早先会用写死的基准价填一套上下沿，
+    用户看到的网格是围绕一个过期价格画的。
+  */
   useEffect(() => {
-    const p = coin.basePrice;
-    const up = roundToPrecision(p * 1.045, coin.precision);
-    const low = roundToPrecision(p * 0.955, coin.precision);
+    if (!(livePrice && livePrice > 0)) return;
+    const up = roundToPrecision(livePrice * 1.045, coin.precision);
+    const low = roundToPrecision(livePrice * 0.955, coin.precision);
     setForm((prev) => ({
       ...prev,
       upper: String(up),
       lower: String(low),
       stopLoss: String(roundToPrecision(low * 0.98, coin.precision)),
     }));
-  }, [coin.symbol, coin.basePrice, coin.precision]);
+  }, [coin.symbol, coin.precision, livePrice]);
 
   const set = (patch: Partial<GridForm>) => setForm((prev) => ({ ...prev, ...patch }));
 
@@ -707,19 +716,22 @@ export function GridConfig({
           >
             等比网格 (Geometric)
           </button>
-          <button
-            type="button"
-            className={styles.miniTab}
-            onClick={() => {
-              set({
-                upper: String(roundToPrecision(coin.high24h * 1.005, coin.precision)),
-                lower: String(roundToPrecision(coin.low24h * 0.995, coin.precision)),
-                stopLoss: String(roundToPrecision(coin.low24h * 0.975, coin.precision)),
-              });
-            }}
-          >
-            按 24h 高低点填入
-          </button>
+          {/* 只有在拿到真实 24h 高低点时才提供这个快捷填入 */}
+          {quote ? (
+            <button
+              type="button"
+              className={styles.miniTab}
+              onClick={() => {
+                set({
+                  upper: String(roundToPrecision(quote.highPrice * 1.005, coin.precision)),
+                  lower: String(roundToPrecision(quote.lowPrice * 0.995, coin.precision)),
+                  stopLoss: String(roundToPrecision(quote.lowPrice * 0.975, coin.precision)),
+                });
+              }}
+            >
+              按 24h 高低点填入
+            </button>
+          ) : null}
         </div>
       </div>
 
