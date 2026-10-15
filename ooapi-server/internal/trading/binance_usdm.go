@@ -1463,6 +1463,10 @@ func (c *USDMClient) do(method, path string, params url.Values, creds Credential
 	if err := c.validateBase(); err != nil {
 		return nil, err
 	}
+	// 熔断期间直接返回，不碰网络 —— 对币安来说「封禁期间再发请求」就是续封。
+	if until, blocked := banGate.blockedUntil(c.base); blocked {
+		return nil, &UpstreamBanError{Base: c.base, Until: until}
+	}
 	query := cloneValues(params)
 	if creds.APISecret != "" {
 		query.Set("timestamp", strconv.FormatInt(time.Now().UnixMilli(), 10))
@@ -1498,7 +1502,10 @@ func (c *USDMClient) roundTrip(method, endpoint, apiKey string) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	return interpretBinance(resp.StatusCode, body)
+	out, err := interpretBinance(resp.StatusCode, body)
+	// 418/429 记入熔断：解封前不再发任何请求（见 upstream_gate.go）。
+	c.noteUpstreamBan(resp.StatusCode, body, err)
+	return out, err
 }
 
 var (

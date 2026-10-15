@@ -470,6 +470,12 @@ func writeDeskErr(c *gin.Context, err error) {
 		writeEngineErr(c, err)
 		return
 	}
+	// 熔断期间不逐条刷日志：熔断本身已经记过一条，
+	// 看板每个轮询都打一行会把日志淹掉（真实事故里 7 分钟几万行）。
+	if errors.Is(err, trading.ErrUpstreamBan) {
+		fail(c, http.StatusBadGateway, deskErrText(err), "exchange_banned")
+		return
+	}
 	log.Printf("[trading] 交易台读取失败: %s", deskErrText(err))
 	fail(c, http.StatusBadGateway, "读取交易所失败", "exchange_unavailable")
 }

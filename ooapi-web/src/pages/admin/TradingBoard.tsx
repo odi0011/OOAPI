@@ -415,36 +415,27 @@ export default function TradingBoard() {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    if (loading) return;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "hidden") return;
-      const target = strategiesRef.current.find(
-        (item) => (item.symbol ?? "").toUpperCase() === coinRef.current,
-      );
-      void refresh(target?.id ?? null);
-    }, POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [loading, refresh]);
-
   /*
-    行情刷新循环。
+    行情刷新循环（唯一的一条）。
 
-    这里曾经有两个错误的极端：
+    历史教训，两层：
 
       ① **假行情生成器**：每 250ms 给价格加 `Math.random()` 漂移，
          页面跳的全是噪声；
       ② **真行情但照搬 250ms**：改成拉真实数据后仍按 250ms 轮询，
          每轮对 8 个币种各发 3 个请求 —— 约 96 次/秒打向交易所，
          直接把服务器 IP 打成币安 418 封禁（整个看板不可用）。
+      ③ **两条 5 秒轮询同时跑**：加载完成后这条 effect 与下面那条
+         `streamPlaying` 的 effect 同时生效，请求量直接翻倍 ——
+         这是 2026-10-15 再次把 IP 打进封禁的直接原因。
 
-    正解是「**真实数据 + 合理频率**」：交易所公开行情本身就是秒级粒度，
-    按 POLL_MS（5 秒）拉一次，和「毫秒级」的视觉差异用户感知不到，
-    但请求量降到千分之一。250ms 那个档位保留给**界面重绘**（tick 计数
-    与价格高亮动画），不再触发网络请求。
+    现在只有这一条循环：未加载完不跑、暂停刷流不跑、页面隐藏不跑。
+    POLL_MS（5 秒）与交易所公开行情的粒度匹配，视觉上感知不到差别，
+    请求量却降到 250ms 方案的两千分之一。250ms 那个档位保留给
+    **界面重绘**（tick 计数与价格高亮动画），不再触发网络请求。
   */
   useEffect(() => {
-    if (!streamPlaying) return;
+    if (loading || !streamPlaying) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState === "hidden") return;
       const target = strategiesRef.current.find(
@@ -453,7 +444,7 @@ export default function TradingBoard() {
       void refresh(target?.id ?? null);
     }, POLL_MS);
     return () => window.clearInterval(timer);
-  }, [streamPlaying, refresh]);
+  }, [loading, streamPlaying, refresh]);
 
   /*
     纯视觉的重绘节拍：只累加计数（驱动价格闪烁、图表脉冲），
