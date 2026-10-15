@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"ooapi/internal/authz"
 	"ooapi/internal/db"
 	"ooapi/internal/services"
 )
@@ -194,7 +195,29 @@ func AdminModelCatalog(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "读取模型目录失败", "server_error")
 		return
 	}
-	ok(c, gin.H{"items": items})
+	/*
+		这个接口只要求 pricing:view，而普通用户也持有该能力点（见 authz 里
+		RoleUser 的授予）。账号名/厂商/接入方式属于基础设施信息 —— 别处
+		（统计的 presentChannels、日志查询）都只对有 channel:view 的人展示，
+		这里保持同一口径。否则任意登录用户就能把每个上游账号的
+		id / 名称 / 厂商 / 接入方式 / 启停状态列出来。
+	*/
+	role, _ := currentRole(c)
+	ok(c, gin.H{"items": redactCatalogChannels(items, authz.Can(role, authz.PermChannelView))})
+}
+
+// redactCatalogChannels 对没有 channel:view 的调用者抹掉账号身份，
+// 只保留「这个模型被哪些账号支持」这个事实（数量），与 presentChannels 同口径。
+func redactCatalogChannels(items []services.ModelCatalogEntry, canView bool) []services.ModelCatalogEntry {
+	if canView {
+		return items
+	}
+	for i := range items {
+		for j := range items[i].Channels {
+			items[i].Channels[j] = services.ModelCatalogChannel{ID: int64(j + 1), Name: "账号"}
+		}
+	}
+	return items
 }
 
 // AdminModelFollow 让一个模型「跟随」某个已配置的官模。

@@ -213,9 +213,13 @@ func TLSFingerprintTransport(profile TLSProfile) *http.Transport {
 		ExpectContinueTimeout: 1 * time.Second,
 		// 关键：用 uTLS 完成握手，HTTP 语义仍在标准库手里。
 		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			// 传进来的 cfg 里已经有 ServerName 与证书校验设置（由标准库填好）。
-			cfg := &tls.Config{}
-			return tlsDialer(ctx, network, addr, cfg, hello)
+			// 标准库的 DialTLSContext 签名里没有传入的 cfg，而这个 transport
+			// 也不设 TLSClientConfig，所以这里从空配置起步。
+			// 证书校验没有被关掉：InsecureSkipVerify 默认为 false，
+			// ServerName 由 tlsDialer 按 addr 重算，RootCAs 为空即系统根证书。
+			// 若将来给这个 transport 配上 TLSClientConfig（例如自定义 RootCAs），
+			// 必须在这里把它接上，否则会被静默忽略。
+			return tlsDialer(ctx, network, addr, &tls.Config{}, hello)
 		},
 	}
 	// ForceAttemptHTTP2 保持 false：ALPN 由 uTLS 的指纹决定，
