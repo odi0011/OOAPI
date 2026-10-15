@@ -1,126 +1,26 @@
-.page,
-.page * {
-  font-weight: 400;
-}
+/*
+工作台专有的只有角色盒子那一栏。
+页面骨架（page / pageHead / panel / panelHead / readError）与账户面板
+沿用 TradingDesk.module.css —— 和交易台、数据看板同一套，不另起一套观感。
 
-.page {
-  display: flex;
-  flex-direction: column;
+盒子本身用系统 Card，不在这里重描边框和面；这里只排它们的栏位，
+以及点开后那块原始产物。
+*/
+
+/* 七个角色等宽铺开，窄屏折行而不是横滑 —— 横滑会把后面的角色藏起来。 */
+.roles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
   gap: var(--space-4);
-  min-width: 0;
+  margin-top: var(--space-4);
 }
 
-.controls {
-  display: flex;
-  gap: var(--space-2);
-}
-
-.primary,
-.secondary,
-.node {
+/* 产物是上游原文，只调排版不改内容：等宽、保留换行、长串就地折行。 */
+.artifact {
   margin: 0;
-  border-radius: var(--radius-control, 8px);
-  font: inherit;
-  font-size: var(--text-sm);
-  font-weight: 400;
-  cursor: pointer;
-}
-
-.primary,
-.secondary {
-  padding: var(--space-2) var(--space-3);
-}
-
-.primary {
-  border: 1px solid var(--foreground);
-  background: var(--foreground);
-  color: var(--background);
-}
-
-.secondary,
-.node {
-  border: 1px solid var(--border);
-  background: transparent;
-  color: inherit;
-}
-
-.primary:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
-.flow {
-  display: flex;
-  gap: var(--space-2);
-  overflow-x: auto;
-  min-width: 0;
-  padding-bottom: var(--space-2);
-}
-
-.step {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.arrow {
-  color: var(--text-muted, var(--muted));
-  font-weight: 400;
-}
-
-.node {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
-  width: 9.5rem;
-  min-height: 5.5rem;
-  padding: var(--space-3);
-  text-align: left;
-}
-
-.node[data-status="running"] {
-  border-color: var(--foreground);
-}
-
-.node[data-selected="true"] {
-  outline: 1px solid var(--foreground);
-  outline-offset: 2px;
-}
-
-.role,
-.line {
-  font-weight: 400;
-}
-
-.role {
-  color: var(--text-muted, var(--muted));
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: var(--text-xs);
-}
-
-.line {
-  font-size: var(--text-sm);
-}
-
-.node[data-status="error"] .line {
-  color: var(--danger, #b42318);
-}
-
-.raw {
-  margin: 0;
-  max-width: 40rem;
-  padding: var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg, 12px);
-  font-family: inherit;
-  font-size: var(--text-sm);
-  font-weight: 400;
+  line-height: var(--leading-body);
   white-space: pre-wrap;
-}
-
-.error {
-  margin: 0;
-  color: var(--danger, #b42318);
-  font-size: var(--text-sm);
-  font-weight: 400;
+  overflow-wrap: anywhere;
 }

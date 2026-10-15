@@ -521,8 +521,13 @@ export interface EngineBalance {
   boostUntil?: string;
 }
 
-export async function getEngineBalance(strategyId: number): Promise<EngineBalance> {
-  const data = await apiRequest<EngineBalance>(`/api/trading/engine/balance?strategyId=${strategyId}`);
+/**
+ * 不传 strategyId 时由服务端回落到「最新策略」（loadNewestStrategy）。
+ * 工作台没有绑定的策略，用它读账户；其余页面照旧按策略读。
+ */
+export async function getEngineBalance(strategyId?: number): Promise<EngineBalance> {
+  const query = strategyId != null && strategyId > 0 ? `?strategyId=${strategyId}` : "";
+  const data = await apiRequest<EngineBalance>(`/api/trading/engine/balance${query}`);
   return {
     ...data,
     history: data.history ?? [],

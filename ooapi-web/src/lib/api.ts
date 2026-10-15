@@ -62,6 +62,17 @@ export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): voi
   unauthorizedHandler = handler;
 }
 
+/**
+ * 触发一次会话失效处理。
+ *
+ * 走 apiRequest 的调用点不用管 —— 它自己会调。这个出口是给
+ * 绕过 apiRequest 的请求用的：流式响应要自己读 body，没法套那一层，
+ * 于是 401 也得自己报上来，否则同一个失效在不同页面表现不一致。
+ */
+export function reportUnauthorized(): void {
+  unauthorizedHandler?.();
+}
+
 interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   /** 普通对象会序列化为 JSON；FormData 原样发送（文件上传）。 */
@@ -130,7 +141,7 @@ export async function apiRequest<T>(
     // 回调是同步的、且自身有一次性闸门 —— 轮询并发出的
     // 多个 401 只会触发一次跳转。
     if (res.status === 401 && !isSessionExempt(path)) {
-      unauthorizedHandler?.();
+      reportUnauthorized();
     }
     throw new ApiRequestError(
       err?.message ?? `请求失败（${res.status}）`,
