@@ -1,92 +1,107 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import AdminLayout from "@/components/admin/AdminLayout";
-import { Button } from "@/components/arc/button/button";
 import { apiRequest } from "@/lib/api";
 
 import styles from "./TradingWorkbench.module.css";
 
 /**
- * 交易工作台（/admin/trading/workbench）。
- * 只有一个决策角色：经中转跑一次测试，把模型、允许/拒绝和错误原样显示。
+ * 交易工作台。没有页面标题。
+ * 角色横排，两条测试链把交接摊开。数字只来自这次请求。
  */
 
-interface DecisionResult {
-  model: string;
-  kind: string;
-  allow: boolean | null;
-  decision: string;
-  detail?: string;
+interface Step {
+  role: string;
+  model?: string;
+  artifact?: string;
   error?: string;
 }
 
-function decisionLabel(result: DecisionResult): string {
-  if (result.allow === true) return "允许";
-  if (result.allow === false) return "拒绝";
-  if (result.decision) return result.decision;
-  return "—";
+interface Chain {
+  name: string;
+  steps: Step[];
+}
+
+interface PageData {
+  roles: Step[];
+  chains: Chain[];
+}
+
+function StepCard({ step }: { step: Step }) {
+  return (
+    <article className={styles.role}>
+      <p className={styles.roleName}>{step.role}</p>
+      {step.model ? <p className={styles.model}>{step.model}</p> : null}
+      {step.artifact ? <pre className={styles.artifact}>{step.artifact}</pre> : null}
+      {step.error ? <p className={styles.error}>{step.error}</p> : null}
+      {!step.artifact && !step.error ? <p className={styles.pending}>等待这一步</p> : null}
+    </article>
+  );
 }
 
 export default function TradingWorkbench() {
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<DecisionResult | null>(null);
+  const [data, setData] = useState<PageData | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
 
   async function run() {
     setBusy(true);
     setFailed(null);
     try {
-      const data = await apiRequest<DecisionResult>("/api/trading/workbench/decision", { method: "POST", body: {} });
-      setResult(data);
+      const next = await apiRequest<PageData>("/api/trading/workbench/decision", { method: "POST", body: {} });
+      setData(next);
     } catch (err) {
-      setResult(null);
-      setFailed(err instanceof Error ? err.message : "决策请求失败");
+      setFailed(err instanceof Error ? err.message : "测试链请求失败");
     } finally {
       setBusy(false);
     }
   }
 
+  useEffect(() => {
+    void run();
+  }, []);
+
   return (
     <AdminLayout
       crumbs={[
         { label: "后台", href: "/admin" },
-        { label: "交易" },
-        { label: "工作台" },
+        { label: "交易", href: "/admin/trading" },
       ]}
     >
       <div className={styles.page}>
-        <header className={styles.pageHead}>
-          <h1 className={styles.pageTitle}>工作台</h1>
-        </header>
-        <section className={styles.role} aria-labelledby="workbench-decision">
-          <div className={styles.roleHead}>
-            <h2 id="workbench-decision" className={styles.roleTitle}>决策</h2>
-            <Button type="button" size="sm" loading={busy} onClick={() => void run()}>
-              运行测试决策
-            </Button>
-          </div>
-          {failed && <p className={styles.error}>{failed}</p>}
-          {result && (
-            <dl className={styles.result}>
-              <div>
-                <dt>模型</dt>
-                <dd>{result.model || "—"}</dd>
-              </div>
-              <div>
-                <dt>决策</dt>
-                <dd>
-                  {decisionLabel(result)}
-                  {result.detail ? <span className={styles.detail}>{result.detail}</span> : null}
-                </dd>
-              </div>
-              <div>
-                <dt>错误</dt>
-                <dd>{result.error || "—"}</dd>
-              </div>
-            </dl>
-          )}
-        </section>
+        <button type="button" className={styles.run} disabled={busy} onClick={() => void run()}>
+          {busy ? "正在请求测试盘和中转" : "再跑一次测试链"}
+        </button>
+        {failed ? <p className={styles.error}>{failed}</p> : null}
+        <div className={styles.roles}>
+          {(data?.roles ?? placeholderRoles).map((step) => (
+            <StepCard key={step.role} step={busy && !data ? { ...step, artifact: undefined, error: undefined } : step} />
+          ))}
+        </div>
+        {(data?.chains ?? []).map((chain) => (
+          <section key={chain.name} className={styles.chain} aria-label={chain.name}>
+            <p className={styles.chainName}>{chain.name}</p>
+            <div className={styles.chainSteps}>
+              {chain.steps.map((step, index) => (
+                <div key={chain.name + step.role} className={styles.chainStep}>
+                  {index > 0 ? <span className={styles.arrow}>→</span> : null}
+                  <StepCard step={step} />
+                </div>
+              ))}
+            </div>
+          </section>
+        ))}
       </div>
     </AdminLayout>
   );
 }
+
+const placeholderRoles: Step[] = [
+  { role: "CRAWLER" },
+  { role: "SCAN" },
+  { role: "CHIEF", model: "lfm-2.5-2.6b" },
+  { role: "VET", model: "minimax-m2.5" },
+  { role: "决策", model: "jev-1.13-free" },
+  { role: "RISK" },
+  { role: "FILLS" },
+];

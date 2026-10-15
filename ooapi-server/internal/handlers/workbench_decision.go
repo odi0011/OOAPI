@@ -20,7 +20,7 @@ import (
 让它返回 allow / deny。不编造成功，也不编数字。
 */
 
-const workbenchProbeTimeout = 40 * time.Second
+const workbenchProbeTimeout = 90 * time.Second
 
 type workbenchDecision struct {
 	Model    string `json:"model"`
@@ -31,89 +31,12 @@ type workbenchDecision struct {
 	Error    string `json:"error,omitempty"`
 }
 
-// PostWorkbenchDecision 经网关调度跑一次测试决策。
+// PostWorkbenchDecision 跑工作台上的测试链：扫描、提案、审核、决策，以及测试盘风控和撮合。
 func PostWorkbenchDecision(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), workbenchProbeTimeout)
 	defer cancel()
 
-	result := runWorkbenchDecision(ctx)
-	ok(c, result)
-}
-
-func runWorkbenchDecision(ctx context.Context) workbenchDecision {
-	var failures []string
-	note := func(model string, err error) {
-		if err == nil {
-			return
-		}
-		failures = append(failures, model+": "+err.Error())
-	}
-
-	jevBody, _ := json.Marshal(map[string]any{
-		"model": "jev-1.13-free",
-		"state": "Relay health check. No customer, no payment, and no trade.",
-		"questions": map[string]any{
-			"allow": map[string]any{
-				"type":         "noul",
-				"instructions": "Is this health-check request allowed to proceed?",
-			},
-		},
-	})
-	if raw, err := probeUpstream(ctx, "jev-1.13-free", jevBody); err == nil {
-		parsed := interpretDecisionBody(raw)
-		parsed.Model = "jev-1.13-free"
-		parsed.Kind = "decision"
-		if parsed.Error == "" && (parsed.Allow != nil || parsed.Decision != "") {
-			return parsed
-		}
-		if parsed.Error != "" {
-			note("jev-1.13-free", fmt.Errorf("%s", parsed.Error))
-		}
-	} else {
-		note("jev-1.13-free", err)
-		if ctx.Err() != nil {
-			return workbenchDecision{Model: "jev-1.13-free", Kind: "decision", Error: strings.Join(failures, "；")}
-		}
-	}
-
-	// Jev 不可用时，用实测能答的 Cline 免费模型做同一次允许/拒绝判断。
-	for _, model := range []string{"lfm-2.5-2.6b", "minimax-m2.5"} {
-		if ctx.Err() != nil {
-			failures = append(failures, model+": 决策请求超时")
-			break
-		}
-		body, _ := json.Marshal(map[string]any{
-			"model": model,
-			"messages": []map[string]string{
-				{"role": "system", "content": "Reply with JSON only: {\"allow\":true} or {\"allow\":false}."},
-				{"role": "user", "content": "Health check with no trade and no personal data. Is it allowed to proceed?"},
-			},
-			"max_tokens":  80,
-			"temperature": 0,
-		})
-		raw, err := probeUpstream(ctx, model, body)
-		if err != nil {
-			note(model, err)
-			continue
-		}
-		parsed := interpretDecisionBody(raw)
-		parsed.Model = model
-		parsed.Kind = "chat"
-		if parsed.Error == "" && (parsed.Allow != nil || parsed.Decision != "") {
-			return parsed
-		}
-		if parsed.Error != "" {
-			note(model, fmt.Errorf("%s", parsed.Error))
-		}
-	}
-	if len(failures) == 0 {
-		failures = append(failures, "Jev 免费档和 Cline 免费模型都没有返回可用的决策")
-	}
-	return workbenchDecision{
-		Model: "jev-1.13-free",
-		Kind:  "decision",
-		Error: strings.Join(failures, "；"),
-	}
+	ok(c, runWorkbenchChains(ctx))
 }
 
 func probeUpstream(ctx context.Context, model string, body []byte) ([]byte, error) {
