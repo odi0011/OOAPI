@@ -457,6 +457,7 @@ func AdminCreateChannel(c *gin.Context) {
 	if req.ModelBindings != nil {
 		applyBindingsSideEffects(*req.ModelBindings)
 	}
+	ensureDeclaredRealModels(normalizeModelList(req.Models))
 
 	ch, err := channelByID(id)
 	if err != nil {
@@ -696,6 +697,9 @@ func AdminUpdateChannel(c *gin.Context) {
 	// 与创建同一处理：新绑的别名要连带写入定价与能力参数。
 	if req.ModelBindings != nil {
 		applyBindingsSideEffects(*req.ModelBindings)
+	}
+	if req.Models != nil {
+		ensureDeclaredRealModels(normalizeModelList(req.Models))
 	}
 
 	ch, err := channelByID(id)
@@ -1300,7 +1304,7 @@ func validateModelPaths(raw string) error {
 			return fmt.Errorf("第 %d 行格式不对，应为「协议: 模型模式」，如 messages: claude-*", i+1)
 		}
 		switch strings.ToLower(kind) {
-		case "messages", "anthropic", "responses", "chat", "chat_completions", "openai":
+		case "messages", "anthropic", "responses", "chat", "chat_completions", "openai", "systemone", "decision":
 			// 认得的内置协议名
 		default:
 			if !strings.HasPrefix(kind, "/") {
@@ -1353,6 +1357,25 @@ func applyBindingsSideEffects(bindings map[string]string) {
 	for alias, realID := range bindings {
 		if _, err := services.ApplyRealModel(alias, realID); err != nil {
 			log.Printf("[channel] 为绑定 %s → %s 写入定价/能力失败: %v", alias, realID, err)
+		}
+	}
+}
+
+// ensureDeclaredRealModels 给账号直接声明的真实模型补上还没有的定价。
+//
+// 别名走绑定才会写价。模型本身已经是注册表里的 id 时，以前不会写价，
+// 调用会因「未定价」被拒。已有价格不覆盖，避免冲掉管理员改过的单价。
+func ensureDeclaredRealModels(models []string) {
+	for _, model := range models {
+		real, ok := services.LookupRealModel(model)
+		if !ok {
+			continue
+		}
+		if _, exists := services.PriceOf(real.ID); exists {
+			continue
+		}
+		if _, err := services.ApplyRealModel(model, real.ID); err != nil {
+			log.Printf("[channel] 为真实模型 %s 写入定价/能力失败: %v", real.ID, err)
 		}
 	}
 }

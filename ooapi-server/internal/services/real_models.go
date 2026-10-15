@@ -39,6 +39,10 @@ type RealModel struct {
 	Developer string `json:"developer"`
 	// Label 是人类可读名（界面上显示）。
 	Label string `json:"label"`
+	// Category 是模型种类。空字符串表示对话（chat）。
+	// decision 是 System One 决策模型：不走 chat/completions，
+	// 走 /systemone，请求体是 state + questions。
+	Category string `json:"category,omitempty"`
 	// 官方单价（USD / 百万 token）。0 表示免费或未公布。
 	InputPrice  float64 `json:"input_price"`
 	OutputPrice float64 `json:"output_price"`
@@ -490,6 +494,64 @@ var realModels = []RealModel{
 		Note:   "上游限时免费，定价 0 是正确值。",
 		Source: "https://opencode.ai/docs/zen/",
 	},
+
+	/*
+		OpenCode Zen 把下面这些写成独立模型 id，不是某个已定价型号的另一种拼法。
+
+		不把它们收成「最近的付费模型」：flash 不是 pro，contributor 免费档
+		会把提示词用于训练，隐身型号（big-pickle、cat-jam-free）官方没有公布
+		底层是谁。收成别的 id 会让那个付费模型的流量打到错误的上游上。
+		处理方式和已经在册的 space-bunny-free 一样：各自登记，价格 0。
+	*/
+	{
+		ID: "big-pickle", Developer: "opencode", Label: "Big Pickle（免费）",
+		Note:   "OpenCode 隐身型号，限时免费，定价 0 是正确值。官方未公布底层模型。",
+		Source: "https://opencode.ai/docs/zen/", Verified: true,
+	},
+	{
+		ID: "cat-jam-free", Developer: "opencode", Label: "Cat Jam（免费）",
+		Note:   "OpenCode 隐身型号，限时免费，定价 0 是正确值。官方未公布底层模型。",
+		Source: "https://opencode.ai/docs/zen/", Verified: true,
+	},
+	{
+		ID: "mimo-v2.6-flash-free", Developer: "mimo", Label: "小米 MiMo V2.6 Flash（免费）",
+		Note:   "OpenCode 公布为 MiMo-V2.6-Flash 的限时免费档，不是 mimo-v2.6-pro。定价 0 是正确值。",
+		Source: "https://opencode.ai/docs/zen/", Verified: true,
+	},
+	{
+		ID: "muse-spark-1.3-contributor-free", Developer: "meta", Label: "Muse Spark 1.3 Contributor（免费）",
+		Note:   "Muse Spark 1.3 的贡献者免费档。提示词可能用于训练，因此不并入付费的 muse-spark-1.3。定价 0 是正确值。",
+		Source: "https://opencode.ai/docs/zen/", Verified: true,
+	},
+	{
+		ID: "nemotron-3.5-lightning-free", Developer: "nvidia", Label: "Nemotron 3.5 Lightning（免费）",
+		Note:   "NVIDIA 限时免费档。目录里没有其它 Nemotron，定价 0 是正确值。",
+		Source: "https://opencode.ai/docs/zen/", Verified: true,
+	},
+
+	/* ---------- TypeSafe Jev（System One 决策模型，不是对话模型） ---------- */
+	{
+		ID: "jev-1.13", Developer: "typesafe", Label: "Jev 1.13",
+		Category:   "decision",
+		InputPrice: 0.042, OutputPrice: 0,
+		ContextWindow: 64000,
+		Note:          "System One 决策模型。按输入 token 计费，输出不计费。调用 POST /v1/systemone，不要走 chat/completions。",
+		Source:        "https://opencode.ai/docs/zen/", Verified: true,
+	},
+	{
+		ID: "jev-1.13-free", Developer: "typesafe", Label: "Jev 1.13（免费）",
+		Category:      "decision",
+		ContextWindow: 64000,
+		Note:          "System One 决策模型，上游限时免费，定价 0 是正确值。调用 POST /v1/systemone。",
+		Source:        "https://opencode.ai/docs/zen/", Verified: true,
+	},
+
+	/* Cline 免费档实测可调用。官方 id 带厂商前缀，由账号绑定到这个名字。 */
+	{
+		ID: "lfm-2.5-2.6b", Developer: "liquid", Label: "LFM 2.5 2.6B（免费）",
+		Note:   "Cline 免费档 liquid/lfm-2.5-2.6b:free，定价 0 是正确值。",
+		Source: "https://docs.cline.bot/api/models", Verified: false,
+	},
 }
 
 // realModelIndex 是 ID（含等价写法）→ 条目的索引（小写键）。
@@ -511,6 +573,23 @@ var realModelIndex = func() map[string]RealModel {
 	}
 	return index
 }()
+
+// ModelKind 返回模型种类。注册表里没有单独标明的，都是对话模型。
+//
+// 决策模型不能走 chat/completions：上游要的是 state 和 questions，
+// 硬当成对话发过去只会得到协议错误。
+func ModelKind(model string) string {
+	if real, found := LookupRealModel(model); found {
+		if cat := strings.ToLower(strings.TrimSpace(real.Category)); cat != "" {
+			return cat
+		}
+		return "chat"
+	}
+	if cat := strings.ToLower(strings.TrimSpace(ModelCapabilitiesOf(model).Category)); cat != "" {
+		return cat
+	}
+	return "chat"
+}
 
 // LookupRealModel 按 id 查真实模型（大小写不敏感）。
 func LookupRealModel(id string) (RealModel, bool) {
@@ -644,8 +723,8 @@ ApplyRealModel 把官方定价与能力参数写入（绑定本身由账号保�
 由调用方（AdminBindRealModel）负责更新那个账号的记录。
 这里只做「绑到某个真实模型之后，全局该有的东西」：
 
-  1. 官方定价（按真实模型 id 写进 model_prices）—— 计费要查到价；
-  2. 能力参数（上下文、多模态、推理档位）—— 请求要发对形状。
+ 1. 官方定价（按真实模型 id 写进 model_prices）—— 计费要查到价；
+ 2. 能力参数（上下文、多模态、推理档位）—— 请求要发对形状。
 
 顺带修掉一个过去的隐患：全局映射那种写法会让「账号 A 的 default-model」
 和「账号 B 的 default-model」互相覆盖 —— 两个账号绑到不同模型时，
@@ -689,6 +768,9 @@ func ApplyRealModel(model, realID string) (AppliedRealModel, error) {
 
 	// 能力参数：从注册表生成一份（含推理档位）。
 	caps := defaultCapabilities(target.ID)
+	if cat := strings.ToLower(strings.TrimSpace(target.Category)); cat != "" {
+		caps.Category = cat
+	}
 	caps.ContextWindow = target.ContextWindow
 	caps.MaxOutputTokens = target.MaxOutputTokens
 	types := []string{"text"}

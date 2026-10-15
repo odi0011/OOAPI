@@ -79,6 +79,9 @@ func ChatCompletions(c *gin.Context) {
 		writeOpenAIError(c, http.StatusBadRequest, "缺少 model 参数", "invalid_request_error")
 		return
 	}
+	if rejectDecisionOnChat(c, req.Model, writeOpenAIError) {
+		return
+	}
 
 	group, okAccess := checkAccess(c, token, req.Model, writeOpenAIError)
 	if !okAccess {
@@ -247,25 +250,50 @@ func forwardJSON(ctx context.Context, ch *services.UpstreamChannel, body []byte,
 		raw = converted
 	}
 
+	usage, message, okUsage := usageFromUpstreamBody(raw)
+	if !okUsage {
+		return nil, upstreamUsage{}, newUpstreamError(0, "上游返回错误："+message, true)
+	}
+	return raw, usage, nil
+}
+
+// usageFromUpstreamBody 从上游 JSON 里取出用量。
+//
+// 对话协议用 prompt_tokens / completion_tokens。
+// System One（Jev）用 input_tokens / output_tokens。两边都认，
+// 这样决策调用可以走同一套结算。
+//
+// 第二个返回值在响应体自带 error.message 时是那句错误，ok 为 false。
+func usageFromUpstreamBody(raw []byte) (upstreamUsage, string, bool) {
 	var parsed struct {
-		Usage *upstreamUsage `json:"usage"`
+		Usage *struct {
+			upstreamUsage
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+		} `json:"usage"`
 		Error *struct {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
 	_ = json.Unmarshal(raw, &parsed)
-
-	// 部分中转会返回 200 但内容里带 error，这种情况要按失败处理，
-	// 否则会把错误响应当成成功计费。
 	if parsed.Error != nil && parsed.Error.Message != "" {
-		return nil, upstreamUsage{}, newUpstreamError(0, "上游返回错误："+parsed.Error.Message, true)
+		return upstreamUsage{}, parsed.Error.Message, false
 	}
-
 	usage := upstreamUsage{}
-	if parsed.Usage != nil {
-		usage = *parsed.Usage
+	if parsed.Usage == nil {
+		return usage, "", true
 	}
-	return raw, usage, nil
+	usage = parsed.Usage.upstreamUsage
+	if usage.PromptTokens == 0 && parsed.Usage.InputTokens > 0 {
+		usage.PromptTokens = parsed.Usage.InputTokens
+	}
+	if usage.CompletionTokens == 0 && parsed.Usage.OutputTokens > 0 {
+		usage.CompletionTokens = parsed.Usage.OutputTokens
+	}
+	if usage.TotalTokens == 0 && (usage.PromptTokens > 0 || usage.CompletionTokens > 0) {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	return usage, "", true
 }
 
 // convertUpstreamResponse 把非 chat 协议的上游响应翻回 chat-completions。

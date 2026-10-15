@@ -147,7 +147,7 @@ export default function App() {
                   }
                 />
 
-                {/* 交易工作台：空白页壳，只有标题。走 option:edit。 */}
+                {/* 交易工作台：一个决策角色，经中转跑一次测试。走 option:edit。 */}
                 <Route
                   path="/admin/trading/workbench"
                   element={

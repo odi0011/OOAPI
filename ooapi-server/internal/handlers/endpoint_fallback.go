@@ -133,6 +133,15 @@ func endpointCandidatesFor(channelID int64, model, preferred string) []string {
 	}
 	appendPath(preferred)
 
+	// 决策协议不能退回对话端点。chat 请求体和 systemone 请求体不是同一种东西，
+	// 换过去只会把 state/questions 发给一个不认识它们的接口。
+	if strings.HasSuffix(preferred, "/systemone") {
+		if len(out) > 1 && !strings.HasSuffix(out[0], "/systemone") {
+			out = []string{preferred}
+		}
+		return out
+	}
+
 	// 把「base_url 自带的路径前缀」也考虑进来：
 	// 有的上游是 https://host/openai/v1（带 /v1 段），有的直接是 https://host。
 	// 前缀从 preferred 里剥出来，保证候选路径落在同一个前缀下。

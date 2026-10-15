@@ -126,6 +126,9 @@ func AnthropicMessages(c *gin.Context) {
 		writeAnthropicError(c, http.StatusBadRequest, "缺少 model 参数", "invalid_request_error")
 		return
 	}
+	if rejectDecisionOnChat(c, req.Model, writeAnthropicError) {
+		return
+	}
 
 	model, body, err := buildChatBodyFromAnthropic(&req)
 	if err != nil {

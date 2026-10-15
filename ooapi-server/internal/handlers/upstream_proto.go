@@ -19,6 +19,7 @@ import (
 	https://opencode.ai/zen/go/v1/chat/completions   GLM / Kimi / DeepSeek / MiMo
 	https://opencode.ai/zen/go/v1/messages            Claude / Qwen / MiniMax
 	https://opencode.ai/zen/go/v1/responses           Grok / GPT Luna
+	https://opencode.ai/zen/v1/systemone              Jev（System One 决策）
 
 只管 /chat/completions 的话，一半的模型会直接返回
 ModelProtocolUnsupported —— 实测就是这样发现的。
@@ -35,14 +36,24 @@ ModelProtocolUnsupported —— 实测就是这样发现的。
 //
 // 返回路径后缀，如 "/chat/completions"。
 func upstreamPathForModel(ch *services.UpstreamChannel, model string) string {
+	path := "/chat/completions"
 	if ch != nil {
 		for _, rule := range ch.ModelPaths {
 			if matchModelPattern(rule.Pattern, model) {
-				return rule.Path
+				path = rule.Path
+				break
 			}
 		}
 	}
-	return "/chat/completions"
+	// 决策模型的默认对话规则（chat: *）不能把它送去补全接口。
+	// 管理员若显式写了 systemone 或一条自定义路径，上面的规则已经生效。
+	if services.ModelKind(model) == "decision" {
+		switch path {
+		case "/chat/completions", "/messages", "/responses":
+			return "/systemone"
+		}
+	}
+	return path
 }
 
 // upstreamProtocol 判断某个路径属于哪种协议。
@@ -53,6 +64,8 @@ func upstreamProtocol(path string) string {
 		return "anthropic"
 	case strings.HasSuffix(path, "/responses"):
 		return "responses"
+	case strings.HasSuffix(path, "/systemone"):
+		return "systemone"
 	default:
 		return "openai"
 	}
@@ -78,6 +91,10 @@ func buildUpstreamBody(protocol string, chatBody []byte, model string) ([]byte, 
 		return chatToAnthropicBody(chatBody, model)
 	case "responses":
 		return chatToResponsesBody(chatBody, model)
+	case "systemone":
+		// 决策请求已经是上游要的形状（state + questions）。
+		// 只改模型名，不能补 chat 的推理字段，否则上游会拒。
+		return rewriteBodyModel(chatBody, model), nil
 	default:
 		// chat 协议：先把请求体里的 model 换成上游认的名字，再补推理字段。
 		//

@@ -114,6 +114,9 @@ func Responses(c *gin.Context) {
 		writeOpenAIError(c, http.StatusBadRequest, "缺少 model 参数", "invalid_request_error")
 		return
 	}
+	if rejectDecisionOnChat(c, req.Model, writeOpenAIError) {
+		return
+	}
 	if req.PreviousResponseID != nil && strings.TrimSpace(*req.PreviousResponseID) != "" {
 		// 我们没有实现服务端会话存储（store: true 的续聊）。
 		// 明确报错而不是静默忽略 —— 静默忽略会让模型丢掉全部上下文，

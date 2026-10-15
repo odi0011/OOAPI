@@ -87,7 +87,7 @@ const MODEL_PREFIXES: Array<[string, string]> = [
   ["nemotron", "nvidia"], ["step", "stepfun"], ["mimo", "mimo"], ["jev", "typesafe"],
   ["longcat", "longcat"], ["hunyuan", "hunyuan"], ["hy3", "hunyuan"],
   ["hy4", "hunyuan"], ["hy-", "hunyuan"], ["composer", "cursor"],
-  ["space-bunny", "opencode"], ["big-pickle", "opencode"], ["omen-alpha", "opencode"],
+  ["space-bunny", "opencode"], ["big-pickle", "opencode"], ["cat-jam", "opencode"], ["omen-alpha", "opencode"],
 ];
 
 /** 聚合目录的 vendor/model、~vendor/model 先剥离前缀，API 标识本身不改。 */

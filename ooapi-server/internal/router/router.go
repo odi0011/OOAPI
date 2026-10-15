@@ -137,6 +137,7 @@ func Setup(cfg *config.Config) *gin.Engine {
 			strategies.DELETE("/:id", handlers.DeleteTradingStrategy)
 		}
 
+		user.POST("/trading/workbench/decision", middleware.RequirePermission(authz.PermOptionEdit), handlers.PostWorkbenchDecision)
 		user.GET("/trading/backtest", middleware.RequirePermission(authz.PermOptionEdit), handlers.GetTradingBacktest)
 		user.GET("/trading/engines", middleware.RequirePermission(authz.PermOptionEdit), handlers.TradingEnginesList)
 
@@ -356,6 +357,7 @@ func Setup(cfg *config.Config) *gin.Engine {
 		// 鉴权在 handler 内部用 API Key 完成（不是 JWT），
 		// 因为这里的调用方是外部应用，不是本站登录用户。
 		v1.POST("/chat/completions", handlers.ChatCompletions)
+		v1.POST("/systemone", handlers.SystemOne)
 
 		// 另两种协议：只有外壳不同，内部链路完全一致。
 		//

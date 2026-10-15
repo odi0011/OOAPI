@@ -67,7 +67,7 @@ export const UPSTREAM_PROVIDERS: UpstreamProvider[] = [
   { key: "longcat", connections: [chat("https://api.longcat.chat/openai/v1"), messages("https://api.longcat.chat/anthropic/v1")] },
   { key: "typesafe", connections: [bridge("Jev 外部兼容桥接（非原生 System One）")] },
   { key: "opencode", connections: [
-    { id: "zen", label: "Zen · 按量付费", baseURL: "https://opencode.ai/zen/v1", modelPaths: "messages: claude-*, qwen3*, minimax*\nresponses: grok-*, gpt-*, muse-spark-*\nchat: *" },
+    { id: "zen", label: "Zen · 按量付费", baseURL: "https://opencode.ai/zen/v1", modelPaths: "systemone: jev-*\nmessages: claude-*, qwen3*, minimax*\nresponses: grok-*, gpt-*, muse-spark-*\nchat: *" },
     { id: "go", label: "Go · 订阅套餐", baseURL: "https://opencode.ai/zen/go/v1", headers: "x-opencode-session: {{session}}", modelPaths: "messages: claude-*, qwen3*, minimax*, hy3, hy4*\nresponses: grok-*, gpt-*, muse-spark-*\nchat: *" },
   ] },
   { key: "openrouter", connections: [chat("https://openrouter.ai/api/v1", "聚合 API")] },

@@ -107,6 +107,8 @@ func ParseModelPaths(raw string) []ModelPathRule {
 			path = "/responses"
 		case "chat", "chat_completions", "openai":
 			path = "/chat/completions"
+		case "systemone", "decision":
+			path = "/systemone"
 		default:
 			// 也允许直接写完整路径
 			candidate := strings.TrimSpace(kind)

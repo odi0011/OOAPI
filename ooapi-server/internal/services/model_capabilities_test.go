@@ -362,6 +362,23 @@ func TestRealModelRegistrySanity(t *testing.T) {
 		if model.Verified && model.Source == "" {
 			t.Fatalf("%s marked verified without a source", model.ID)
 		}
+		if model.Category != "" {
+			if _, ok := allowedCategories[model.Category]; !ok {
+				t.Fatalf("%s has unknown category %q", model.ID, model.Category)
+			}
+		}
+	}
+	for _, id := range []string{"jev-1.13", "jev-1.13-free"} {
+		model, ok := LookupRealModel(id)
+		if !ok || model.Category != "decision" {
+			t.Fatalf("%s should be a decision model", id)
+		}
+		if ModelKind(id) != "decision" {
+			t.Fatalf("ModelKind(%s) = %s", id, ModelKind(id))
+		}
+	}
+	if ModelKind("deepseek-flash") != "chat" {
+		t.Fatal("chat model classified as something else")
 	}
 }
 
@@ -438,6 +455,9 @@ func TestApplyRealModelProducesValidCapabilities(t *testing.T) {
 			continue // 免费占位条目，没什么可校验的
 		}
 		caps := defaultCapabilities(model.ID)
+		if model.Category != "" {
+			caps.Category = model.Category
+		}
 		caps.ContextWindow = model.ContextWindow
 		caps.MaxOutputTokens = model.MaxOutputTokens
 		toolCalling := model.ToolCalling
