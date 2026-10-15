@@ -76,30 +76,44 @@ func TestEngineSendsIsolatedMarketAndProtectionToTestnet(t *testing.T) {
 	if closed.State != StateArmed {
 		t.Fatalf("after exit %+v", closed)
 	}
-	var sawCancel, sawReduce bool
+	// 记录三类调用各自第一次出现的次序：撤普通挂单 / 撤条件单 / 减仓市价单。
+	//
+	// 断言的是**先减仓、后撤单**：反过来（先撤保护单再平仓）时，撤单成功、
+	// 市价单却超时或 5xx，仓位就留在交易所上且没有任何止损 —— 而重试路径
+	// 在同一个网络故障下同样打不通。止损是 closePosition 的 STOP_MARKET，
+	// 由交易所随仓位撤销，所以后撤不会留下会反手的挂单。
+	reduceAt, cancelAt, algoAt := -1, -1, -1
 	var canceledAlgo []string
-	for _, call := range fake.snapshot() {
-		if call.method == http.MethodDelete && call.path == "/fapi/v1/allOpenOrders" {
-			sawCancel = true
+	for i, call := range fake.snapshot() {
+		if call.method == http.MethodDelete && call.path == "/fapi/v1/allOpenOrders" && cancelAt < 0 {
+			cancelAt = i
 		}
 		if call.method == http.MethodDelete && call.path == "/fapi/v1/algoOrder" {
 			if call.values.Get("algoId") == "" {
 				t.Fatal("algo cancel missing algoId")
 			}
 			canceledAlgo = append(canceledAlgo, call.values.Get("algoId"))
+			if algoAt < 0 {
+				algoAt = i
+			}
 		}
 		if call.method == http.MethodPost && call.path == "/fapi/v1/order" && call.values.Get("reduceOnly") == "true" && call.values.Get("type") == "MARKET" {
-			sawReduce = true
-			if !sawCancel || len(canceledAlgo) < 1 {
-				t.Fatal("flatten reduced before the stop and maker take were canceled")
+			if reduceAt < 0 {
+				reduceAt = i
 			}
 			if call.values.Get("side") != "SELL" {
 				t.Fatalf("flatten %#v", call.values)
 			}
 		}
 	}
-	if !sawCancel || !sawReduce || len(canceledAlgo) != 1 {
-		t.Fatalf("exit cancel=%v reduce=%v algo=%v", sawCancel, sawReduce, canceledAlgo)
+	if reduceAt < 0 || cancelAt < 0 || algoAt < 0 {
+		t.Fatalf("exit reduce=%d cancel=%d algo=%d", reduceAt, cancelAt, algoAt)
+	}
+	if cancelAt < reduceAt || algoAt < reduceAt {
+		t.Fatalf("撤单发生在减仓之前（cancel=%d algo=%d reduce=%d）—— 平仓一旦失败，仓位会裸奔", cancelAt, algoAt, reduceAt)
+	}
+	if len(canceledAlgo) != 1 {
+		t.Fatalf("条件单撤销次数 = %v", canceledAlgo)
 	}
 	fake.mu.Lock()
 	leftLimits := len(fake.limits)

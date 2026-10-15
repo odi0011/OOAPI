@@ -526,26 +526,33 @@ func (c *USDMClient) Close(req CloseOrder) (Fill, error) {
 	if err != nil {
 		return Fill{}, err
 	}
+	/*
+		顺序很重要：**先读仓位、发平仓单，确认发出去之后才清理残留挂单。**
+
+		反过来（先撤保护单再平仓）留了一个能吃掉整笔保证金的窗口：
+		撤单成功、紧接着的市价单超时或 5xx 时，仓位还在交易所上，
+		而它已经没有任何止损了 —— 引擎的失败路径（failed → cancelAndFlatten）
+		在同一个网络故障下同样打不通，仓位就这么裸露到被强平。
+
+		注意「超时」不等于「没成交」：先发平仓单的时候，即使读不到回执，
+		止损单也还挂在那里；等确认平仓成交后再撤，两种结果都不会裸仓。
+
+		止损是 closePosition 的 STOP_MARKET，仓位一平由交易所自动撤掉，
+		所以「后撤」不会留下会反手的挂单；要清理的只是同一价格的
+		GTX 止盈限价单。清理失败只记日志，不让整次平仓算失败。
+	*/
 	var pos Position
-	if hedge && (req.Side == SideLong || req.Side == SideShort) {
-		if _, err := c.CancelProtective(req.Symbol, req.Side); err != nil {
-			return Fill{}, err
-		}
+	if req.Side == SideLong || req.Side == SideShort {
 		pos, err = c.PositionSide(req.Symbol, req.Side)
 	} else {
-		if err := c.CancelOpen(req.Symbol); err != nil {
-			return Fill{}, err
-		}
-		if req.Side == SideLong || req.Side == SideShort {
-			pos, err = c.PositionSide(req.Symbol, req.Side)
-		} else {
-			pos, err = c.Position(req.Symbol)
-		}
+		pos, err = c.Position(req.Symbol)
 	}
 	if err != nil {
 		return Fill{}, err
 	}
 	if !pos.Open {
+		// 仓位已经没了：顺手把残留挂单清掉，再按「已平」回报。
+		c.cancelLeftoverOrders(hedge, req.Symbol, pos.Side, req.Side)
 		price := req.Price
 		if price <= 0 {
 			price = pos.Entry
@@ -588,12 +595,38 @@ func (c *USDMClient) Close(req CloseOrder) (Fill, error) {
 	if err != nil {
 		// 平仓单已经发出。均价暂时读不到时，引擎内部的盈亏仍用请求价，账本留给回补。
 		fb := fillFromOrder(resp, pos.Side, req.Price, qty)
-		if fb.Price > 0 && fb.Qty > 0 {
-			return fb, nil
+		if fb.Price <= 0 || fb.Qty <= 0 {
+			// 发出去了却读不到成交：不敢在这里清挂单 —— 交给对账去收尾。
+			return Fill{}, err
 		}
-		return Fill{}, err
+		fill = fb
 	}
+	// 平仓单确实发出去了，这时才清残留（止损是 closePosition，随仓位自动撤销）。
+	c.cancelLeftoverOrders(hedge, req.Symbol, pos.Side, req.Side)
 	return fill, nil
+}
+
+/*
+cancelLeftoverOrders 清掉平仓之后还挂在交易所的挂单。
+
+只做收尾、不往上抛错：调用点都已经确认平仓成交，这里失败不该把整次平仓
+判成失败、让引擎去重试。hedge 模式按持仓方向撤，不动反方向的仓位；
+单向模式撤该合约全部挂单。
+*/
+func (c *USDMClient) cancelLeftoverOrders(hedge bool, symbol string, posSide, reqSide Side) {
+	side := reqSide
+	if side != SideLong && side != SideShort {
+		side = posSide
+	}
+	if hedge && (side == SideLong || side == SideShort) {
+		if _, err := c.CancelProtective(symbol, side); err != nil {
+			log.Printf("[trading] 平仓后清理保护单失败 %s %s: %v", symbol, side, err)
+		}
+		return
+	}
+	if err := c.CancelOpen(symbol); err != nil {
+		log.Printf("[trading] 平仓后清理挂单失败 %s: %v", symbol, err)
+	}
 }
 
 // CancelOpen 撤掉该合约的普通挂单，再按 algoId 撤掉条件单。
