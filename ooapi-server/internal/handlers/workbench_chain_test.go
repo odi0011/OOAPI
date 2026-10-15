@@ -7,6 +7,24 @@ import (
 	"ooapi/internal/trading"
 )
 
+func TestSideAndVetoWords(t *testing.T) {
+	side, err := sideFromWord(" Short ")
+	if err != nil || side != "short" {
+		t.Fatalf("side %q %v", side, err)
+	}
+	if _, err := sideFromWord("uncertain"); err == nil {
+		t.Fatal("accepted uncertain")
+	}
+	veto, err := vetoFromWord("pass")
+	if err != nil || veto {
+		t.Fatalf("veto %v %v", veto, err)
+	}
+	veto, err = vetoFromWord("veto")
+	if err != nil || !veto {
+		t.Fatalf("veto word %v %v", veto, err)
+	}
+}
+
 func TestExtractJSONObject(t *testing.T) {
 	raw := extractJSON("```json\n{\"side\":\"long\",\"note\":\"up\"}\n```")
 	if string(raw) != `{"side":"long","note":"up"}` {

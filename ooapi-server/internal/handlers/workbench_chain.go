@@ -51,7 +51,7 @@ func runWorkbenchChains(ctx context.Context) workbenchPage {
 		vet.Error = "未调用：扫描没有标记价"
 		decision.Error = "未调用：扫描没有标记价"
 	} else {
-		chiefArtifact, chiefSide, chiefNote, err := askChief(ctx, scan.Artifact)
+		chiefArtifact, chiefSide, chiefNote, err := askChief(ctx)
 		if err != nil {
 			chief.Error = err.Error()
 			vet.Error = "未调用：没有提案"
@@ -60,7 +60,7 @@ func runWorkbenchChains(ctx context.Context) workbenchPage {
 			chief.Artifact = chiefArtifact
 			side = chiefSide
 			proposalNote = chiefNote
-			vetArtifact, vetoed, reason, err := askVet(ctx, scan.Artifact, chief.Artifact)
+			vetArtifact, vetoed, reason, err := askVet(ctx, chiefSide)
 			if err != nil {
 				vet.Error = err.Error()
 			} else {
@@ -121,49 +121,83 @@ func crawlTestnet(ctx context.Context) (crawler, scan workbenchStep, mark, fundi
 	return crawler, scan, mark, funding, nil
 }
 
-func askChief(ctx context.Context, scan string) (artifact, side, note string, err error) {
-	raw, err := askChat(ctx, chiefUpstream, "Reply with JSON only: {\"side\":\"long\" or \"short\",\"note\":\"one sentence\"}. Do not include a price.",
-		"Paper testnet scan:\n"+scan+"\nPropose a side. The price stays the scanned mark.")
+func askChief(ctx context.Context) (artifact, side, note string, err error) {
+	// 这两个免费模型在长提示或 JSON 要求下会回空正文。短的一词答复是它们实际返回过的形状。
+	word, err := askWord(ctx, chiefUpstream, "Pick long or short.")
 	if err != nil {
 		return "", "", "", err
 	}
-	var parsed struct {
-		Side string `json:"side"`
-		Note string `json:"note"`
+	side, err = sideFromWord(word)
+	if err != nil {
+		return "", "", "", err
 	}
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return "", "", "", fmt.Errorf("提案不是 JSON：%s", truncate(string(raw), 180))
-	}
-	side = strings.ToLower(strings.TrimSpace(parsed.Side))
-	if side != "long" && side != "short" {
-		return "", "", "", fmt.Errorf("提案方向无法使用：%s", truncate(parsed.Side, 80))
-	}
-	note = strings.TrimSpace(parsed.Note)
-	artifact = fmt.Sprintf("symbol %s\nside %s\nnote %s\nmodel %s", workbenchSymbol, side, note, chiefModel)
+	note = word
+	artifact = fmt.Sprintf("symbol %s\nside %s\nreply %s\nmodel %s", workbenchSymbol, side, word, chiefModel)
 	return artifact, side, note, nil
 }
 
-func askVet(ctx context.Context, scan, proposal string) (artifact string, veto bool, reason string, err error) {
-	raw, err := askChat(ctx, vetUpstream, "Reply with JSON only: {\"veto\":true or false,\"reason\":\"one sentence\"}.",
-		"Paper testnet.\n"+scan+"\n"+proposal+"\nShould this proposal be vetoed?")
+func askVet(ctx context.Context, side string) (artifact string, veto bool, reason string, err error) {
+	word, err := askWord(ctx, vetUpstream, "Proposal "+side+". Pick veto or pass.")
 	if err != nil {
 		return "", false, "", err
 	}
-	var parsed struct {
-		Veto   *bool  `json:"veto"`
-		Reason string `json:"reason"`
+	veto, err = vetoFromWord(word)
+	if err != nil {
+		return "", false, "", err
 	}
-	if err := json.Unmarshal(raw, &parsed); err != nil || parsed.Veto == nil {
-		return "", false, "", fmt.Errorf("审核不是 JSON：%s", truncate(string(raw), 180))
-	}
-	reason = strings.TrimSpace(parsed.Reason)
-	veto = *parsed.Veto
+	reason = word
 	label := "不否决"
 	if veto {
 		label = "否决"
 	}
-	artifact = fmt.Sprintf("%s\nreason %s\nmodel %s", label, reason, vetModel)
+	artifact = fmt.Sprintf("%s\nreply %s\nmodel %s", label, word, vetModel)
 	return artifact, veto, reason, nil
+}
+
+func sideFromWord(content string) (string, error) {
+	word := strings.ToLower(strings.Trim(strings.TrimSpace(content), ".!"))
+	switch word {
+	case "long", "short":
+		return word, nil
+	default:
+		return "", fmt.Errorf("提案方向无法使用：%s", truncate(content, 80))
+	}
+}
+
+func vetoFromWord(content string) (bool, error) {
+	word := strings.ToLower(strings.Trim(strings.TrimSpace(content), ".!"))
+	switch word {
+	case "veto":
+		return true, nil
+	case "pass":
+		return false, nil
+	default:
+		return false, fmt.Errorf("审核答复无法使用：%s", truncate(content, 80))
+	}
+}
+
+func askWord(ctx context.Context, model, user string) (string, error) {
+	body, _ := json.Marshal(map[string]any{
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "system", "content": "You answer with one word."},
+			{"role": "user", "content": user},
+		},
+		"max_tokens":  800,
+		"temperature": 0,
+	})
+	raw, err := probeUpstream(ctx, model, body)
+	if err != nil {
+		return "", err
+	}
+	if message := upstreamMessage(raw); message != "" {
+		return "", fmt.Errorf("%s", message)
+	}
+	content := chatContent(raw)
+	if content == "" {
+		return "", fmt.Errorf("模型没有返回正文")
+	}
+	return content, nil
 }
 
 func askDecision(ctx context.Context, state string) workbenchStep {
@@ -215,34 +249,6 @@ func decisionAllow(step workbenchStep) *bool {
 		}
 	}
 	return nil
-}
-
-func askChat(ctx context.Context, model, system, user string) ([]byte, error) {
-	body, _ := json.Marshal(map[string]any{
-		"model": model,
-		"messages": []map[string]string{
-			{"role": "system", "content": system},
-			{"role": "user", "content": user},
-		},
-		"max_tokens":  200,
-		"temperature": 0,
-	})
-	raw, err := probeUpstream(ctx, model, body)
-	if err != nil {
-		return nil, err
-	}
-	if message := upstreamMessage(raw); message != "" {
-		return nil, fmt.Errorf("%s", message)
-	}
-	content := chatContent(raw)
-	if content == "" {
-		return nil, fmt.Errorf("模型没有返回正文")
-	}
-	extracted := extractJSON(content)
-	if extracted == nil {
-		return nil, fmt.Errorf("没有 JSON：%s", truncate(content, 180))
-	}
-	return extracted, nil
 }
 
 func upstreamMessage(raw []byte) string {
