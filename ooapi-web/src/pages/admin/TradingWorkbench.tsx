@@ -1,9 +1,17 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 
 import AdminLayout from "@/components/admin/AdminLayout";
 import Badge, { type BadgeTone } from "@/components/arc/badge/badge";
 import { Button } from "@/components/arc/button/button";
-import { Card } from "@/components/arc/card/card";
 import { ApiRequestError, reportUnauthorized } from "@/lib/api";
 
 import LiveBalancePanel from "./LiveBalancePanel";
@@ -14,10 +22,11 @@ import { getEngineBalance, type EngineBalance } from "./tradingApi";
 /**
  * 交易工作台。
  *
- * 上面是账户额度，下面把这条测试链按角色摊成盒子：抓行情、扫描、提案、
- * 审核、决策，再到风控与撮合。上一轮的结果留在盒子上，点开看这一步的原始产物。
+ * 左边是账户额度，右边把这条测试链摊成一条流水线：抓行情、扫描、提案、
+ * 审核、决策，再到风控与撮合。流水线上能一眼看出跑到第几步，下面那块
+ * 跟着展开当前这一步的模型、结论和原始产物。
  *
- * 流程走 SSE：后端每推进一步就写一条事件，页面据此标出当前在跑哪个角色。
+ * 流程走 SSE：后端每推进一步就写一条事件，页面据此标出正在跑的角色。
  * 因此这里用裸 fetch 而不是 apiRequest —— 流式响应要自己读 body，
  * 套不进那一层统一封装；代价是 401 得自己报上去（见下面的 reportUnauthorized）。
  *
@@ -34,9 +43,9 @@ interface NodeState {
   status: NodeStatus;
   /** 后端给的模型名。本地规则那几步没有模型，这里是空串。 */
   model: string;
-  /** 一句话结论，就是盒子正面显示的那行。 */
+  /** 一句话结论，就是流水线上那行小字。 */
   summary: string;
-  /** 原始产物，点开盒子才看。 */
+  /** 原始产物，展开当前这一步才看。 */
   artifact: string;
 }
 
@@ -64,6 +73,10 @@ function isRole(value: string | undefined): value is RoleName {
   return value !== undefined && (ROLES as readonly string[]).includes(value);
 }
 
+function settled(node: NodeState): boolean {
+  return node.status === "done" || node.status === "error";
+}
+
 function emptyNodes(): Record<RoleName, NodeState> {
   const nodes = {} as Record<RoleName, NodeState>;
   for (const role of ROLES) {
@@ -72,7 +85,7 @@ function emptyNodes(): Record<RoleName, NodeState> {
   return nodes;
 }
 
-/** 一条事件落进对应盒子。未跑到的角色保持原样，不做占位推断。 */
+/** 一条事件落进对应步骤。未跑到的角色保持原样，不做占位推断。 */
 function applyEvent(
   setNodes: Dispatch<SetStateAction<Record<RoleName, NodeState>>>,
   event: StreamEvent,
@@ -104,36 +117,16 @@ function summaryOf(node: NodeState, busy: boolean): string {
 function modelOf(node: NodeState): string | undefined {
   if (node.model) return node.model;
   // 跑完之后仍然没有模型名，说明这一步走的是服务端本地规则（抓行情、扫描、风控、撮合）。
-  if (node.status === "done" || node.status === "error") return "本地规则";
+  if (settled(node)) return "本地规则";
   return undefined;
-}
-
-function RoleCard({ role, node, busy }: { role: RoleName; node: NodeState; busy: boolean }) {
-  const status = STATUS[node.status];
-  return (
-    <Card
-      title={role}
-      description={summaryOf(node, busy)}
-      meta={modelOf(node)}
-      action={
-        <Badge tone={status.tone} size="sm">
-          {status.label}
-        </Badge>
-      }
-      // 没有产物就不展开：空盒子不该能点开一个空面板。
-      details={
-        node.artifact ? (
-          <pre className={styles.artifact}>{node.artifact}</pre>
-        ) : undefined
-      }
-    />
-  );
 }
 
 export default function TradingWorkbench() {
   const [busy, setBusy] = useState(false);
   const [nodes, setNodes] = useState(emptyNodes);
   const [failed, setFailed] = useState<string | null>(null);
+  /** 手动点中的步骤。为空时跟着当前跑的那一步走。 */
+  const [picked, setPicked] = useState<RoleName | null>(null);
   const [balance, setBalance] = useState<EngineBalance | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
   const [balanceError, setBalanceError] = useState<string | undefined>(undefined);
@@ -150,6 +143,7 @@ export default function TradingWorkbench() {
     setBusy(true);
     setFailed(null);
     setNodes(emptyNodes());
+    setPicked(null); // 重新开跑就跟着流程走，不留在上一轮看过的那一步
 
     try {
       const response = await fetch(WORKBENCH_STREAM, {
@@ -225,6 +219,20 @@ export default function TradingWorkbench() {
     };
   }, [loadBalance]);
 
+  const runningRole = useMemo(
+    () => ROLES.find((role) => nodes[role].status === "running") ?? null,
+    [nodes],
+  );
+  const doneCount = useMemo(() => ROLES.filter((role) => settled(nodes[role])).length, [nodes]);
+  // 没人点过就跟着跑：正在跑的那步优先，其次最后跑完的那步。
+  const active = useMemo(() => {
+    if (picked) return picked;
+    if (runningRole) return runningRole;
+    return [...ROLES].reverse().find((role) => settled(nodes[role])) ?? ROLES[0];
+  }, [picked, runningRole, nodes]);
+
+  const activeNode = nodes[active];
+
   return (
     <AdminLayout
       crumbs={[{ label: "后台", href: "/admin" }, { label: "交易" }, { label: "工作台" }]}
@@ -234,8 +242,8 @@ export default function TradingWorkbench() {
           <div>
             <h1 className={deskStyles.pageTitle}>工作台</h1>
             <p className={deskStyles.pageLead}>
-              上面是账户额度，下面把测试链按角色摊开：抓行情、扫描、提案、审核、决策，再到风控与撮合。
-              点开盒子看这一步的原始产物。
+              左边是账户额度，右边跑一轮测试链：抓行情、扫描、提案、审核、决策，再到风控与撮合。
+              点流水线上的任一步，看它这一步的模型、结论和原始产物。
             </p>
           </div>
           <Button
@@ -249,30 +257,91 @@ export default function TradingWorkbench() {
           </Button>
         </header>
 
-        {/* 交易所账户：权益、今日盈亏、钱包/可用/保证金与持仓，与交易台同一块面板 */}
-        <LiveBalancePanel balance={balance} loading={balanceLoading} error={balanceError} />
+        <div className={styles.layout}>
+          {/* 窄栏形态：去掉曲线，权益与明细竖排。交易台那边仍是完整面板。 */}
+          <LiveBalancePanel
+            variant="rail"
+            balance={balance}
+            loading={balanceLoading}
+            error={balanceError}
+          />
 
-        <section className={deskStyles.panel} aria-label="测试链角色">
-          <header className={deskStyles.panelHead}>
-            <h2>测试链角色</h2>
-            <p>
-              七个角色依次交接。CRAWLER、SCAN、RISK、FILLS 是服务端本地规则，其余三步走模型。
-            </p>
-          </header>
+          <section className={deskStyles.panel} aria-label="测试链">
+            <header className={`${deskStyles.panelHead} ${styles.chainHead}`}>
+              <div>
+                <h2>测试链</h2>
+                <p>
+                  CRAWLER、SCAN、RISK、FILLS 是服务端本地规则，其余三步走模型。
+                </p>
+              </div>
+              <p className={styles.progress} data-busy={busy || undefined} role="status">
+                {progressText(busy, doneCount, runningRole)}
+              </p>
+            </header>
 
-          {failed ? (
-            <p className={deskStyles.readError} role="alert">
-              {failed}
-            </p>
-          ) : null}
+            {failed ? (
+              <p className={deskStyles.readError} role="alert">
+                {failed}
+              </p>
+            ) : null}
 
-          <div className={styles.roles}>
-            {ROLES.map((role) => (
-              <RoleCard key={role} role={role} node={nodes[role]} busy={busy} />
-            ))}
-          </div>
-        </section>
+            <div className={styles.pipeline} role="group" aria-label="测试链步骤">
+              {ROLES.map((role, index) => (
+                <Fragment key={role}>
+                  {index > 0 ? (
+                    <span
+                      className={styles.link}
+                      data-done={settled(nodes[ROLES[index - 1]!]) || undefined}
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  <button
+                    type="button"
+                    className={styles.node}
+                    data-active={active === role || undefined}
+                    data-status={nodes[role].status}
+                    aria-pressed={active === role}
+                    onClick={() => setPicked(role)}
+                  >
+                    <span className={styles.nodeHead}>
+                      <span className={styles.nodeIndex}>{index + 1}</span>
+                      <span className={styles.nodeRole}>{role}</span>
+                    </span>
+                    <span className={styles.nodeStatus}>{STATUS[nodes[role].status].label}</span>
+                  </button>
+                </Fragment>
+              ))}
+            </div>
+
+            <article className={styles.detail} aria-label={`${active} 这一步`}>
+              <header className={styles.detailHead}>
+                <h3 className={styles.detailTitle}>{active}</h3>
+                {modelOf(activeNode) ? (
+                  <span className={styles.detailModel}>{modelOf(activeNode)}</span>
+                ) : null}
+                <Badge tone={STATUS[activeNode.status].tone} size="sm">
+                  {STATUS[activeNode.status].label}
+                </Badge>
+              </header>
+              <p className={styles.detailSummary}>{summaryOf(activeNode, busy)}</p>
+              {/* 拦截类的产物常常就只有那一句话，和上面的结论一模一样，不再重复一遍。 */}
+              {activeNode.artifact && activeNode.artifact !== activeNode.summary ? (
+                <pre className={styles.artifact}>{activeNode.artifact}</pre>
+              ) : null}
+              {activeNode.artifact ? null : (
+                <p className={styles.detailEmpty}>这一步还没有产物。</p>
+              )}
+            </article>
+          </section>
+        </div>
       </div>
     </AdminLayout>
   );
+}
+
+function progressText(busy: boolean, done: number, running: RoleName | null): string {
+  if (running) return `${done} / ${ROLES.length} · 正在跑 ${running}`;
+  if (busy) return `${done} / ${ROLES.length} · 收尾中`;
+  if (done === 0) return "尚未运行";
+  return `${done} / ${ROLES.length} 完成`;
 }

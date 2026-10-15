@@ -34,6 +34,12 @@ interface LiveBalancePanelProps {
   boostBusy?: boolean;
   boostError?: string;
   onBoost?: () => void;
+  /**
+   * rail：窄栏里的紧凑形态 —— 去掉曲线，权益与今日盈亏改竖排，
+   * 明细改成一列「名称 / 数值」两栏。工作台左侧用它；
+   * 交易台与数据看板用默认的 full，一个字都不变。
+   */
+  variant?: "full" | "rail";
 }
 
 export default function LiveBalancePanel({
@@ -47,7 +53,9 @@ export default function LiveBalancePanel({
   boostBusy = false,
   boostError,
   onBoost,
+  variant = "full",
 }: LiveBalancePanelProps) {
+  const rail = variant === "rail";
   const countdown = useCountdown(boostUntil);
   const boostDisabled = boostBusy || countdown > 0;
   const protectBySymbol = useMemo(
@@ -58,9 +66,10 @@ export default function LiveBalancePanel({
   return (
     <section className={styles.panel} aria-label="账户余额">
       <header className={styles.panelHead}>
-        <h2>账户余额</h2>
+        <h2>{rail ? "账户" : "账户余额"}</h2>
         <p>
-          钱包、可用、浮盈与保证金占用来自交易所账户。今日盈亏按上海 0 点起算，含已实现、手续费、资金费与当前浮盈，不含划转。曲线默认近 2 小时。
+          钱包、可用、浮盈与保证金占用来自交易所账户。今日盈亏按上海 0 点起算，含已实现、手续费、资金费与当前浮盈，不含划转。
+          {rail ? "" : "曲线默认近 2 小时。"}
         </p>
       </header>
 
@@ -68,7 +77,7 @@ export default function LiveBalancePanel({
         <p className={styles.emptyTitle}>{error ?? (loading ? "正在读取账户余额…" : "先保存策略后再看账户余额。")}</p>
       ) : (
         <>
-          <div className={styles.liveHead}>
+          <div className={rail ? styles.liveHeadRail : styles.liveHead}>
             <div className={styles.liveEquity}>
               <span className={styles.liveEquityLabel}>权益</span>
               <strong className={styles.liveEquityValue}>
@@ -79,7 +88,7 @@ export default function LiveBalancePanel({
             <TodayPill pnl={balance.todayPnl} pct={balance.todayPct} src={balance.todaySrc} />
           </div>
 
-          <dl className={styles.liveMetrics} aria-label="余额明细">
+          <dl className={rail ? styles.liveMetricsRail : styles.liveMetrics} aria-label="余额明细">
             <Metric label="钱包" value={formatAmount(balance.wallet)} />
             <Metric label="可用" value={formatAmount(balance.available)} />
             <Metric label="浮盈" value={formatAmount(balance.unrealized)} tone={pnlTone(balance.unrealized)} />
@@ -87,16 +96,19 @@ export default function LiveBalancePanel({
             <Metric label="今日已实现" value={formatAmount(balance.todayRealized)} tone={pnlTone(balance.todayRealized)} />
           </dl>
 
-          <div className={styles.chart}>
-            {balance.history.length > 0 ? (
-              <LightweightEquityChart points={balance.history} markers={balance.markers} />
-            ) : (
-              <div className={styles.chartEmpty}>
-                <p className={styles.chartTitle}>权益曲线</p>
-                <p>采样会随看板刷新积累，重启服务后从零开始。</p>
-              </div>
-            )}
-          </div>
+          {/* 曲线只在交易台那块摆得下：拉到窄栏里既看不清也占地方。 */}
+          {rail ? null : (
+            <div className={styles.chart}>
+              {balance.history.length > 0 ? (
+                <LightweightEquityChart points={balance.history} markers={balance.markers} />
+              ) : (
+                <div className={styles.chartEmpty}>
+                  <p className={styles.chartTitle}>权益曲线</p>
+                  <p>采样会随看板刷新积累，重启服务后从零开始。</p>
+                </div>
+              )}
+            </div>
+          )}
 
           {(eventsEnabled || onBoost) && (
             <div className={styles.liveStrip}>

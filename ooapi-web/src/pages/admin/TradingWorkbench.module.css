@@ -1,26 +1,232 @@
 /*
-工作台专有的只有角色盒子那一栏。
-页面骨架（page / pageHead / panel / panelHead / readError）与账户面板
-沿用 TradingDesk.module.css —— 和交易台、数据看板同一套，不另起一套观感。
+工作台的骨架：左边账户窄栏，右边测试链。
 
-盒子本身用系统 Card，不在这里重描边框和面；这里只排它们的栏位，
-以及点开后那块原始产物。
+账户面板 / 页面骨架（page、pageHead、panel、panelHead、readError、以及账户
+明细那几行）全部来自 TradingDesk.module.css —— 与交易台、数据看板同一套原子。
+这里只排两边的关系，以及流水线自身。
+
+可选中小卡片的做法（底色 + 悬停 + 选中用 accent 描边）沿用交易台多币种宫格
+的 .chartGridCard / .chartGridCardActive，保证两页点起来手感一致。
 */
 
-/* 七个角色等宽铺开，窄屏折行而不是横滑 —— 横滑会把后面的角色藏起来。 */
-.roles {
+/* 左栏定宽，右栏吃掉剩余宽度。窄屏先收起左栏 —— 账户是背景，不该挤掉链路。
+   17rem 是七步横排还留得住角色名的临界值，再宽 CRAWLER 就要换行了。 */
+.layout {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  grid-template-columns: minmax(0, 17rem) minmax(0, 1fr);
   gap: var(--space-4);
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.chainHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+/* 进度与「跑一轮」同一行的事，用等宽数字免得 3/7 跳动时来回抖。 */
+.progress {
+  flex: none;
+  margin: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.progress[data-busy] {
+  border-color: var(--accent);
+  color: var(--foreground);
+}
+
+/* ---------- 流水线 ---------- */
+
+.pipeline {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
   margin-top: var(--space-4);
+}
+
+/* 连接线：走完的那一段用 accent，让进度沿着链流过去。
+   自绘一条线而不是夹一个 → 字符，是为了它跟节点的垂直中心永远对齐。 */
+.link {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: center;
+  width: var(--space-2);
+  height: 1px;
+  background: var(--border);
+}
+
+.link::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: 0;
+  border-top: 2.5px solid transparent;
+  border-bottom: 2.5px solid transparent;
+  border-left: 4px solid var(--border);
+}
+
+.link[data-done] {
+  background: color-mix(in oklab, var(--accent) 55%, var(--border));
+}
+
+.link[data-done]::after {
+  border-left-color: color-mix(in oklab, var(--accent) 55%, var(--border));
+}
+
+/* 七步等分剩余宽度。步骤是按钮，键盘也能走到。 */
+.node {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.node:hover {
+  border-color: var(--border-strong);
+}
+
+.node:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 选中（或正在跑）的那一步：accent 描边 + 极淡的底色，和宫格卡片一个说法。 */
+.node[data-active],
+.node[data-status="running"] {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 4%, var(--surface));
+}
+
+.node[data-status="error"] {
+  border-color: var(--danger, #d94a3d);
+}
+
+.nodeHead {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+}
+
+.nodeIndex {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 不截断：角色名被省略成「CRAWL…」就分不出是哪个角色了。
+   装不下时宁可折行 —— 七个节点同高，折行也只是这一个变两行。 */
+.nodeRole {
+  color: var(--foreground);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.nodeStatus {
+  color: var(--text-secondary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.node[data-active] .nodeStatus,
+.node[data-status="running"] .nodeStatus {
+  color: var(--foreground);
+}
+
+.node[data-status="error"] .nodeStatus {
+  color: var(--danger, #d94a3d);
+}
+
+/* ---------- 当前这一步 ---------- */
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+}
+
+.detailHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.detailTitle {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+/* 模型名推到中间，徽标落在最右：一眼能分出「哪一步 / 用什么 / 什么状态」。 */
+.detailModel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailSummary {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
 }
 
 /* 产物是上游原文，只调排版不改内容：等宽、保留换行、长串就地折行。 */
 .artifact {
   margin: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
   font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: var(--text-xs);
   line-height: var(--leading-body);
+  color: var(--text-secondary);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.detailEmpty {
+  margin: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
 }
