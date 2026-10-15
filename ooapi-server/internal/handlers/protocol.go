@@ -102,24 +102,7 @@ func proxyTransportFor(proxyURL string) (http.RoundTripper, error) {
 		dial = &http.Transport{Proxy: http.ProxyURL(parsed), DialContext: netguard.DialPublic}
 	}
 
-	/*
-		复刻全部上游装饰器链。顺序必须与各 transport 的 init 一致
-		（初始化按文件名字典序：antigravity → claude → cline → codex →
-		grok → kiro → workbuddy，每个新装饰器都包住「当前」transport，
-		因此最外层是 workbuddy）。
-
-		漏掉任何一层，对应厂商的渠道一旦配了代理，请求会带着内部凭据标识
-		直接打到官方主机上、必然失败 —— 而且只在「配了代理」的账号上复现，
-		极难排查。
-	*/
-	var rt http.RoundTripper = dial
-	rt = &antigravityTransport{base: rt}
-	rt = &claudeOAuthTransport{base: rt}
-	rt = &clineTransport{base: rt}
-	rt = &codexTransport{base: rt}
-	rt = &grokTransport{base: rt}
-	rt = &kiroTransport{base: rt}
-	rt = &workbuddyTransport{base: rt}
+	rt := wrapUpstreamTransports(dial)
 
 	proxyTransportMu.Lock()
 	// 防御性上限：代理地址由管理员配置，正常数量极少；
@@ -134,6 +117,30 @@ func proxyTransportFor(proxyURL string) (http.RoundTripper, error) {
 
 // maxProxyTransports 是代理传输缓存的上限（正常远达不到）。
 const maxProxyTransports = 128
+
+/*
+wrapUpstreamTransports 在 base 外面套上全部上游装饰器链。
+
+顺序必须与各 transport 的 init 一致（初始化按文件名字典序：
+antigravity → claude → cline → codex → grok → kiro → workbuddy，
+每个新装饰器都包住「当前」transport，因此最外层是 workbuddy）。
+
+装饰器的职责是「把内部凭据标识 ooapi-<vendor>-channel-N 换成真实令牌」。
+**只要 base 是自定义出口就必须套这一层** —— 代理出口与 TLS 指纹出口都是。
+少套一层，对应厂商的渠道会把内部标识当令牌打到官方主机上，永远 401，
+而且只在配了代理或指纹的账号上复现，极难排查。
+*/
+func wrapUpstreamTransports(base http.RoundTripper) http.RoundTripper {
+	rt := base
+	rt = &antigravityTransport{base: rt}
+	rt = &claudeOAuthTransport{base: rt}
+	rt = &clineTransport{base: rt}
+	rt = &codexTransport{base: rt}
+	rt = &grokTransport{base: rt}
+	rt = &kiroTransport{base: rt}
+	rt = &workbuddyTransport{base: rt}
+	return rt
+}
 
 // doChannelRequest 按代理地址选择出口并执行请求。
 //
@@ -191,8 +198,19 @@ func doUpstreamRequest(req *http.Request, ch *services.UpstreamChannel) (*http.R
 	}
 
 	if rt := services.TLSFingerprintTransport(fingerprint); rt != nil {
+		/*
+			指纹渲染的是「对官方主机的 TLS 握手形状」，装饰器链负责
+			「把内部凭据标识换成真实令牌」—— 两者必须叠加。
+
+			早先这里直接把裸指纹 transport 当出口，于是带指纹的订阅渠道
+			会把 ooapi-<vendor>-channel-N 当令牌打到官方主机上，永远 401，
+			真实凭据从没用上；而只在「配了指纹」的账号上复现，很难排查。
+		*/
 		// Timeout 0：流式响应可能持续很久，超时统一由请求 context 控制。
-		return (&http.Client{Transport: rt, CheckRedirect: netguard.CheckRedirect}).Do(req)
+		return (&http.Client{
+			Transport:     wrapUpstreamTransports(rt),
+			CheckRedirect: netguard.CheckRedirect,
+		}).Do(req)
 	}
 	return upstreamClient.Do(req)
 }

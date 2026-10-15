@@ -242,7 +242,8 @@ func forwardJSON(ctx context.Context, ch *services.UpstreamChannel, body []byte,
 			message, shouldCooldownOnStatus(firstStatus, firstRaw))
 	}
 	// 非 chat 协议的上游响应要先翻回通用语，后续计费与日志才能统一读字段。
-	if protocol != "openai" {
+	// 订阅渠道的 transport 已经归一过，不能再翻（见 transportNormalizesResponse）。
+	if shouldConvertUpstreamResponse(protocol, ch) {
 		converted, err := convertUpstreamResponse(protocol, raw, upstreamModel)
 		if err != nil {
 			return nil, upstreamUsage{}, newUpstreamError(0, "转换上游响应失败："+err.Error(), false)
@@ -297,6 +298,43 @@ func usageFromUpstreamBody(raw []byte) (upstreamUsage, string, bool) {
 }
 
 // convertUpstreamResponse 把非 chat 协议的上游响应翻回 chat-completions。
+/*
+transportNormalizesResponse 报告该账号的上游适配器是否已经把响应归一成 chat 形状。
+
+Claude 一键登录与 Codex 订阅渠道的 transport 是**双向**转换的：请求方向把 chat
+打成官方的 /messages、/responses，响应方向再打回 chat（见 claude_transport.go
+的 chat() 与 codex_transport.go）。
+
+而这两家的 model_paths 被服务端固定成 /messages、/responses（上游真的只认那两个
+端点），于是 upstreamProtocol() 会报 "anthropic"/"responses"。网关若照这个再翻
+一遍，就是把已经标准化的 chat 响应当 Anthropic 响应解析 —— 拿不到 content、
+正文与工具调用全丢、usage 归零（顺带少计费）。请求方向各 transport 有幂等保护，
+响应方向没有，所以这一层要在这里补。
+
+其余账号配 /messages、/responses 时（例如 Anthropic 兼容的第三方端点），
+上游确实说那个协议，照常转换。
+*/
+func transportNormalizesResponse(ch *services.UpstreamChannel) bool {
+	if ch == nil {
+		return false
+	}
+	switch ch.Method {
+	case services.LoginVendorClaudeOAuth, services.LoginVendorCodex:
+		return true
+	default:
+		return false
+	}
+}
+
+// shouldConvertUpstreamResponse 报告「这一份上游响应还需要翻回通用语吗」。
+// 计费与日志都按 chat 形状读字段，所以凡是没归一过的都要翻。
+func shouldConvertUpstreamResponse(protocol string, ch *services.UpstreamChannel) bool {
+	if protocol == "openai" {
+		return false
+	}
+	return !transportNormalizesResponse(ch)
+}
+
 func convertUpstreamResponse(protocol string, raw []byte, model string) ([]byte, error) {
 	switch protocol {
 	case "anthropic":
@@ -619,8 +657,9 @@ func forwardOpenedStream(
 	defer resp.Body.Close()
 
 	// 非 chat 协议的上游流先转回通用语，下游翻译器永远只面对一种输入格式。
+	// 订阅渠道的 transport 已经归一过，不能再转（见 transportNormalizesResponse）。
 	var upstreamConv upstreamStreamConverter
-	if upstreamProto != "openai" {
+	if shouldConvertUpstreamResponse(upstreamProto, ch) {
 		upstreamConv = newUpstreamStreamConverter(upstreamProto, upstreamModel)
 	}
 

@@ -416,10 +416,18 @@ func round2(v float64) float64 {
 // whereRange 拼出「时间窗 + 数据范围」的公共 WHERE 片段。
 // until 为零值时只限制下界。
 func whereRange(scope statScope, alias string, since, until time.Time) (string, []any) {
-	clause := " AND created_at >= ?"
+	// 时间列也要带别名：最近调用那条查询是 logs l LEFT JOIN users u，
+	// 而 users 也有 created_at —— 写裸列名会被 MySQL 判为歧义
+	// （Error 1052: Column 'created_at' in where clause is ambiguous），
+	// 整个「最近调用」统计恒失败、看板那张表恒为空。
+	col := "created_at"
+	if alias != "" {
+		col = alias + ".created_at"
+	}
+	clause := " AND " + col + " >= ?"
 	args := []any{since.Format("2006-01-02 15:04:05")}
 	if !until.IsZero() {
-		clause += " AND created_at < ?"
+		clause += " AND " + col + " < ?"
 		args = append(args, until.Format("2006-01-02 15:04:05"))
 	}
 	cond, condArgs := scope.cond(alias)

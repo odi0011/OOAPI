@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -36,7 +37,11 @@ func Health(c *gin.Context) {
 		return
 	}
 	if err := db.DB.Ping(); err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "degraded", "db": err.Error()})
+		// 这个接口是匿名可达的。驱动的错误原文里带内网地址、端口与数据库账号
+		// （例如 `dial tcp 127.0.0.1:3306: connect: connection refused`），
+		// 不能回给调用方当配置探测器用。细节进日志，对外只给状态词。
+		log.Printf("[health] 数据库不可用: %v", err)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "degraded", "db": "unavailable"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "db": "ok"})
