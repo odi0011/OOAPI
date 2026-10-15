@@ -435,6 +435,19 @@ func TestTradingBalanceReturnsEquityTodayPnLAndHistory(t *testing.T) {
 
 	now := time.Now().UTC()
 	day := trading.ShanghaiDayStart(now)
+
+	/*
+		事件时间必须落在 [day, now] 之内。
+
+		原来写死 day.Add(1h/2h/3h)，即固定落在上海时间 01:00 / 02:00 / 03:00 ——
+		凌晨跑测试时后面几条还在未来，TodayTradePnL 会把它们排除掉，
+		断言于是随「几点跑」时好时坏（2026-10-16 01:19 实测：一直红）。
+		改成按「今天已经过去的那一段」按比例取样，任何时刻跑都在区间内。
+	*/
+	elapsed := now.Sub(day)
+	at := func(frac float64) time.Time {
+		return day.Add(time.Duration(float64(elapsed) * frac))
+	}
 	book := &fakeDeskBook{
 		equity: trading.AccountEquity{Wallet: 8.4, Available: 7.5, Unrealized: -0.4, Equity: 8.0, MarginUsed: 0.9},
 		positions: []trading.PanelPosition{{
@@ -442,10 +455,10 @@ func TestTradingBalanceReturnsEquityTodayPnLAndHistory(t *testing.T) {
 			EntryPrice: 0.2, MarkPrice: 0.204, UnrealizedPnl: -0.4, Leverage: 5, Margin: 4,
 		}},
 		income: []trading.IncomeEvent{
-			{Asset: "USDT", IncomeType: "REALIZED_PNL", Income: -3.0, Time: day.Add(time.Hour)},
-			{Asset: "USDT", IncomeType: "COMMISSION", Income: -0.5, Time: day.Add(2 * time.Hour)},
-			{Asset: "USDT", IncomeType: "FUNDING_FEE", Income: -0.1, Time: day.Add(3 * time.Hour)},
-			{Asset: "USDT", IncomeType: "TRANSFER", Income: 10, Time: day.Add(time.Hour)},
+			{Asset: "USDT", IncomeType: "REALIZED_PNL", Income: -3.0, Time: at(0.25)},
+			{Asset: "USDT", IncomeType: "COMMISSION", Income: -0.5, Time: at(0.5)},
+			{Asset: "USDT", IncomeType: "FUNDING_FEE", Income: -0.1, Time: at(0.75)},
+			{Asset: "USDT", IncomeType: "TRANSFER", Income: 10, Time: at(0.25)},
 		},
 	}
 	book.install(t)
