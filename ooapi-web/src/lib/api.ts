@@ -23,6 +23,45 @@ export class ApiRequestError extends Error {
   }
 }
 
+// ---------- 会话失效回调 ----------
+
+/**
+ * 这些接口的 401 不是「会话中途失效」，不能触发全局登出跳转：
+ *
+ *   - `/api/auth/me`  —— 启动时未登录访客必然 401，这是正常状态；
+ *   - 登录 / 注册 / 邮箱验证码 —— 401 表示「这次凭据不对」，
+ *     要在表单里就地报错，而不是把人踢去登录页。
+ */
+const SESSION_EXEMPT_PREFIXES = [
+  "/api/auth/login",
+  "/api/auth/register",
+  "/api/auth/me",
+  "/api/auth/logout",
+  "/api/auth/providers",
+  "/api/auth/email/",
+  "/api/auth/oauth/",
+];
+
+function isSessionExempt(path: string): boolean {
+  return SESSION_EXEMPT_PREFIXES.some((prefix) => path.startsWith(prefix));
+}
+
+/**
+ * 会话失效的处理入口。
+ *
+ * 只有最底层的请求封装知道「这次失败是 401」，但清登录态、弹提示、
+ * 跳登录页都要用到 React 树里的路由与 AuthContext —— 这里拿不到。
+ * 所以只留一个注册点，由 AuthProvider 挂载时接上。
+ */
+type UnauthorizedHandler = () => void;
+
+let unauthorizedHandler: UnauthorizedHandler | null = null;
+
+/** 传 null 注销。AuthProvider 卸载时调用，避免持有旧组件的闭包。 */
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
+  unauthorizedHandler = handler;
+}
+
 interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   /** 普通对象会序列化为 JSON；FormData 原样发送（文件上传）。 */
@@ -85,6 +124,14 @@ export async function apiRequest<T>(
   if (!res.ok) {
     const err = (payload as { error?: ApiError } | null)?.error;
     const data = (payload as { data?: unknown } | null)?.data;
+    // 先通知会话失效，再抛异常：
+    // 调用方各自 catch 后可能只把 message 渲染成一行小字，
+    // 光靠它们没人会把用户送回登录页。
+    // 回调是同步的、且自身有一次性闸门 —— 轮询并发出的
+    // 多个 401 只会触发一次跳转。
+    if (res.status === 401 && !isSessionExempt(path)) {
+      unauthorizedHandler?.();
+    }
     throw new ApiRequestError(
       err?.message ?? `请求失败（${res.status}）`,
       err?.code ?? "unknown",
