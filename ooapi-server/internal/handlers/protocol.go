@@ -629,6 +629,16 @@ type streamTranslator interface {
 		用户回到电脑前只看到一句「正在调度」，却不知道请求其实失败了。
 	*/
 	FinishError(message string) [][]byte
+	/*
+		Terminate 把「上游那一侧补的收尾符」交给下游协议决定要不要发。
+
+		上游若不是 chat 协议，它的流转换器会在收尾时补一句 `data: [DONE]`
+		（见 anthropicStreamToChat.Done / responsesStreamToChat.Done）——
+		那是 chat 客户端的终止符。chat 原样发；Anthropic 与 Responses 各有
+		自己的收尾事件（message_stop / response.completed），多收一行裸
+		[DONE] 会被 SDK 当成畸形事件。所以由翻译器决定，不能直写客户端。
+	*/
+	Terminate(raw []byte) [][]byte
 }
 
 // relayUpstream 流式：选账号 → 建连 → 转发；全部失败时按需进等待室。
@@ -754,6 +764,14 @@ func (t *chatPassthrough) Translate(line []byte) [][]byte {
 }
 
 func (t *chatPassthrough) Finish(upstreamUsage) [][]byte { return nil }
+
+// Terminate chat 客户端的终止符就是 [DONE]，上游补的那句原样发出去。
+func (t *chatPassthrough) Terminate(raw []byte) [][]byte {
+	if len(raw) == 0 {
+		return nil
+	}
+	return [][]byte{ensureSSEFrame(raw)}
+}
 
 /*
 FinishError 给 chat 流发一个标准的错误帧，然后 [DONE] 收尾。

@@ -20,6 +20,27 @@ func Setup(cfg *config.Config) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 
 	r := gin.New()
+
+	/*
+		只信任本机反向代理。
+
+		gin 默认把 0.0.0.0/0 与 ::/0 全当作可信代理，于是 c.ClientIP()
+		会去读 X-Forwarded-For 的**最左值**。而 nginx 用的是
+		`$proxy_add_x_forwarded_for`（在客户端自带的 XFF 后面追加真实地址），
+		所以最左值就是调用方自己塞的那个 —— 登录限流按 c.ClientIP() 记账，
+		等于让攻击者自选 IP 桶，密码爆破与审计 IP 同时失效。
+
+		本机回环之外的地址一律不信任：这样 gin 从右往左跳过信任段，
+		取到的是 nginx 追加的 $remote_addr，即真实对端。
+
+		设置失败就退到「不信任任何代理」（ClientIP 取 RemoteAddr），
+		宁可拿到代理地址，也不能悄悄退回「全部信任」。
+	*/
+	if err := r.SetTrustedProxies([]string{"127.0.0.1", "::1"}); err != nil {
+		log.Printf("[router] 设置可信代理失败，退回不信任任何代理: %v", err)
+		_ = r.SetTrustedProxies(nil)
+	}
+
 	r.Use(gin.Logger(), gin.Recovery(), corsMiddleware(cfg))
 
 	r.MaxMultipartMemory = 32 << 20

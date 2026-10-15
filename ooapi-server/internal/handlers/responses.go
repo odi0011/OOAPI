@@ -1014,25 +1014,40 @@ func (t *responsesTranslator) Finish(usage upstreamUsage) [][]byte {
 		})
 	}
 
-	out = append(out, sseEvent("response.completed", map[string]any{
-		"type": "response.completed",
-		"response": map[string]any{
-			"id":         "resp_" + randomHex(16),
-			"object":     "response",
-			"created_at": time.Now().Unix(),
-			"status":     "completed",
-			"model":      t.model,
-			"output":     finalOutput,
-			"usage": map[string]any{
-				"input_tokens":  usage.PromptTokens,
-				"output_tokens": usage.CompletionTokens,
-				"total_tokens":  usage.PromptTokens + usage.CompletionTokens,
-			},
+	/*
+		上游因 max_tokens 截断（finish_reason "length"）时如实报 incomplete。
+
+		以前无论 finish_reason 是什么都写 completed —— Codex 会把半截回答
+		当成完整的一轮，用户看不出内容被截断了。t.finish 一直在收，只是没人读。
+	*/
+	resp := map[string]any{
+		"id":         "resp_" + randomHex(16),
+		"object":     "response",
+		"created_at": time.Now().Unix(),
+		"status":     "completed",
+		"model":      t.model,
+		"output":     finalOutput,
+		"usage": map[string]any{
+			"input_tokens":  usage.PromptTokens,
+			"output_tokens": usage.CompletionTokens,
+			"total_tokens":  usage.PromptTokens + usage.CompletionTokens,
 		},
+	}
+	if t.finish == "length" {
+		resp["status"] = "incomplete"
+		resp["incomplete_details"] = map[string]any{"reason": "max_output_tokens"}
+	}
+	out = append(out, sseEvent("response.completed", map[string]any{
+		"type":     "response.completed",
+		"response": resp,
 	}))
 
 	return out
 }
+
+// Terminate Responses 的收尾事件是 response.completed / response.failed，
+// 不需要 chat 的 [DONE]。
+func (t *responsesTranslator) Terminate([]byte) [][]byte { return nil }
 
 /*
 FinishError 发 Responses 协议的失败收尾事件：response.failed。

@@ -549,15 +549,24 @@ func mapFinishReasonToAnthropic(reason string) string {
 // ---------- 流式翻译（Anthropic 事件流） ----------
 
 // anthropicTranslator 把 chat-completions 的流翻译成 Messages 事件流。
+// 当前开着的块是文本还是工具。文本块与工具块交替出现时靠它判断要不要另起一块。
+const (
+	blockKindText = "text"
+	blockKindTool = "tool"
+)
+
 type anthropicTranslator struct {
 	model string
 
 	started    bool
 	blockOpen  bool
+	blockKind  string
 	blockIndex int
 	// 工具调用块的 index → 是否已开块
 	toolOpen map[int]bool
-	stopped  bool
+	// 上游最后一次给的 finish_reason，用于收尾时决定 stop_reason。
+	finish  string
+	stopped bool
 }
 
 func (t *anthropicTranslator) Start(model string) [][]byte {
@@ -618,15 +627,38 @@ func (t *anthropicTranslator) Translate(line []byte) [][]byte {
 	out := [][]byte{}
 	delta := chunk.Choices[0].Delta
 
-	// 文本块
-	if text, _ := flattenAnyContent(delta.Content); text != "" {
-		if !t.blockOpen {
-			t.blockOpen = true
-			t.blockIndex = 0
-			out = append(out, sseEvent("content_block_start", map[string]any{
-				"type": "content_block_start", "index": t.blockIndex,
-				"content_block": map[string]any{"type": "text", "text": ""},
+	if fr := chunk.Choices[0].FinishReason; fr != "" {
+		t.finish = fr
+	}
+
+	/*
+		开一个新块。Anthropic 要求每块有独立且递增的 index，且上一块必须先
+		content_block_stop。以前只在「文本块收尾」时自增，于是连续两个工具调用
+		会共用同一个 index（甲方 SDK 把第二个工具的参数并进第一个），
+		工具块之后再来文本块又会把 index 重置回 0。
+
+		现在把「开块」收口成一个动作：先关掉还开着的那块，再占用下一个序号。
+		blockIndex 初始为 0，只在关块后自增，所以第一块永远是 0。
+	*/
+	openBlock := func(kind string, start map[string]any) {
+		if t.blockOpen {
+			out = append(out, sseEvent("content_block_stop", map[string]any{
+				"type": "content_block_stop", "index": t.blockIndex,
 			}))
+			t.blockIndex++
+		}
+		t.blockOpen = true
+		t.blockKind = kind
+		out = append(out, sseEvent("content_block_start", map[string]any{
+			"type": "content_block_start", "index": t.blockIndex,
+			"content_block": start,
+		}))
+	}
+
+	// 文本块。已经开着工具块时不能直接往它上面贴文本 —— 得另起一块。
+	if text, _ := flattenAnyContent(delta.Content); text != "" {
+		if !t.blockOpen || t.blockKind != blockKindText {
+			openBlock(blockKindText, map[string]any{"type": "text", "text": ""})
 		}
 		out = append(out, sseEvent("content_block_delta", map[string]any{
 			"type": "content_block_delta", "index": t.blockIndex,
@@ -634,25 +666,14 @@ func (t *anthropicTranslator) Translate(line []byte) [][]byte {
 		}))
 	}
 
-	// 工具调用块
+	// 工具调用块。同一个 OpenAI index 的后续分片复用已开的块，不重开。
 	for _, tc := range delta.ToolCalls {
 		if !t.toolOpen[tc.Index] {
-			// 文本块要先收尾，块序号才能顺下去
-			if t.blockOpen {
-				out = append(out, sseEvent("content_block_stop", map[string]any{
-					"type": "content_block_stop", "index": t.blockIndex,
-				}))
-				t.blockOpen = false
-				t.blockIndex++
-			}
 			t.toolOpen[tc.Index] = true
-			out = append(out, sseEvent("content_block_start", map[string]any{
-				"type": "content_block_start", "index": t.blockIndex,
-				"content_block": map[string]any{
-					"type": "tool_use", "id": firstNonEmpty(tc.ID, "toolu_"+randomHex(12)),
-					"name": tc.Function.Name, "input": map[string]any{},
-				},
-			}))
+			openBlock(blockKindTool, map[string]any{
+				"type": "tool_use", "id": firstNonEmpty(tc.ID, "toolu_"+randomHex(12)),
+				"name": tc.Function.Name, "input": map[string]any{},
+			})
 		}
 		if tc.Function.Arguments != "" {
 			out = append(out, sseEvent("content_block_delta", map[string]any{
@@ -662,10 +683,6 @@ func (t *anthropicTranslator) Translate(line []byte) [][]byte {
 				},
 			}))
 		}
-		// 记录结束原因用的
-		if chunk.Choices[0].FinishReason != "" {
-			_ = chunk.Choices[0].FinishReason
-		}
 	}
 
 	return out
@@ -674,36 +691,48 @@ func (t *anthropicTranslator) Translate(line []byte) [][]byte {
 func (t *anthropicTranslator) Finish(usage upstreamUsage) [][]byte {
 	out := [][]byte{}
 
+	// 收尾只关「当前开着的那一块」。以前再按 toolOpen 逐项关一遍，
+	// 那几个 content_block_stop 用的都是同一个 blockIndex，等于重复关同一块。
 	if t.blockOpen {
 		out = append(out, sseEvent("content_block_stop", map[string]any{
 			"type": "content_block_stop", "index": t.blockIndex,
 		}))
 		t.blockOpen = false
 	}
-	for idx := range t.toolOpen {
-		if t.toolOpen[idx] {
-			out = append(out, sseEvent("content_block_stop", map[string]any{
-				"type": "content_block_stop", "index": t.blockIndex,
-			}))
-			t.toolOpen[idx] = false
-		}
-	}
 
+	/*
+		收尾原因如实上报。
+
+		以前只按「有没有工具调用」二选一，上游因 max_tokens 截断（finish_reason
+		"length"）也会被报成 end_turn —— 客户端把半截回答当成说完了。
+		非流式那边 mapFinishReasonToAnthropic 一直是对的，这里补齐。
+	*/
 	stopReason := "end_turn"
-	if len(t.toolOpen) > 0 {
+	switch {
+	case t.finish == "length":
+		stopReason = "max_tokens"
+	case len(t.toolOpen) > 0:
 		stopReason = "tool_use"
 	}
 
+	// input_tokens 在 message_start 里只能填 0（那时上游还没告诉我们），
+	// 到收尾时才知道，按 Anthropic 现行约定补在最后一条 message_delta 的 usage 上。
 	out = append(out, sseEvent("message_delta", map[string]any{
 		"type":  "message_delta",
 		"delta": map[string]any{"stop_reason": stopReason, "stop_sequence": nil},
-		"usage": map[string]any{"output_tokens": usage.CompletionTokens},
+		"usage": map[string]any{
+			"input_tokens":  usage.PromptTokens,
+			"output_tokens": usage.CompletionTokens,
+		},
 	}))
 	out = append(out, sseEvent("message_stop", map[string]any{"type": "message_stop"}))
 	t.stopped = true
 
 	return out
 }
+
+// Terminate Anthropic 的收尾事件是 message_stop，不需要 chat 的 [DONE]。
+func (t *anthropicTranslator) Terminate([]byte) [][]byte { return nil }
 
 /*
 FinishError 发 Anthropic 协议的流式错误事件：`event: error`。

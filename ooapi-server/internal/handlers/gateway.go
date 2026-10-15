@@ -762,18 +762,15 @@ func forwardOpenedStream(
 		}
 	}
 
-	// 收尾事件（如 Anthropic 的 message_delta / message_stop）。
-	// 客户端断开时不再写，但计费照常。
+	// 用量以上游转换器的统计为准 —— 它读的是上游协议里的真实字段。
+	//
+	// 上游补的终止符（[DONE]）**不在这里发**：它属于「协议收尾」，得排在结算之后，
+	//   - 直写会绕开下游翻译器：Anthropic / Responses 客户端会收到一行裸 [DONE]；
+	//   - 排在结算前会让错误收尾失效：客户端已经读到 [DONE] 就认为这轮结束了，
+	//     后面补发的错误事件会被 SDK 当成流后的多余数据丢掉。
 	if !clientGone && upstreamConv != nil {
-		// 上游转换器在收尾时要补 [DONE]，否则下游会一直等流结束。
-		// 用量也以它的统计为准 —— 它读的是上游协议里的真实字段。
 		if u := upstreamConv.Usage(); u.TotalTokens > 0 {
 			usage = u
-		}
-		if done := upstreamConv.Done(); len(done) > 0 {
-			if !write(done) {
-				clientGone = true
-			}
 		}
 	}
 
@@ -824,6 +821,15 @@ func forwardOpenedStream(
 		for _, chunk := range translator.Finish(usage) {
 			if !write(chunk) {
 				break
+			}
+		}
+		// 上游不是 chat 协议时，它的流转换器会补一句 chat 的 [DONE]。
+		// 要不要发、以什么形状发，交给下游协议决定。
+		if upstreamConv != nil {
+			for _, chunk := range translator.Terminate(upstreamConv.Done()) {
+				if !write(chunk) {
+					break
+				}
 			}
 		}
 	}
