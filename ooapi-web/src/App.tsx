@@ -18,6 +18,7 @@ import AdminExchangeKeys from "@/pages/admin/AdminExchangeKeys";
 import AdminTrading from "@/pages/admin/AdminTrading";
 import AdminTradingDashboard from "@/pages/admin/AdminTradingDashboard";
 import TradingBoard from "@/pages/admin/TradingBoard";
+import TradingWorkbench from "@/pages/admin/TradingWorkbench";
 import AdminLogs from "@/pages/admin/AdminLogs";
 import AdminMedia from "@/pages/admin/AdminMedia";
 import AdminOperationLogs from "@/pages/admin/AdminOperationLogs";
@@ -142,6 +143,16 @@ export default function App() {
                   element={
                     <RequireAuth permission={Perm.OptionEdit}>
                       <TradingBoard />
+                    </RequireAuth>
+                  }
+                />
+
+                {/* 交易工作台：空白页壳，只有标题。走 option:edit。 */}
+                <Route
+                  path="/admin/trading/workbench"
+                  element={
+                    <RequireAuth permission={Perm.OptionEdit}>
+                      <TradingWorkbench />
                     </RequireAuth>
                   }
                 />

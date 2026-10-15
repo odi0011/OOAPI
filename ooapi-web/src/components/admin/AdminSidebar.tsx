@@ -11,6 +11,7 @@ import {
   Landmark,
   Layers,
   LayoutDashboard,
+  LayoutGrid,
   Route,
   Settings,
   UserRound,
@@ -94,8 +95,16 @@ export const ADMIN_NAV: AdminNavGroup[] = [
     key: "trading",
     label: "交易",
     // 和「个人 → 个人中心」同一层：分组标题下挂同级入口。
-    // 数据看板是交易台，账户是交易所密钥。策略配置不在这里。
+    // 工作台是空白页壳。数据看板是交易台，账户是交易所密钥。策略配置不在这里。
     items: [
+      {
+        key: "trading-workbench",
+        label: "工作台",
+        icon: <LayoutGrid size={18} strokeWidth={1.75} />,
+        href: "/admin/trading/workbench",
+        requiredPermission: "option:edit",
+        keywords: ["交易工作台"],
+      },
       {
         key: "trading-dashboard",
         label: "数据看板",
