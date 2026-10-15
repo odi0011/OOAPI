@@ -10,84 +10,108 @@
   min-width: 0;
 }
 
-.run {
-  align-self: flex-start;
+.controls {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.primary,
+.secondary,
+.node {
   margin: 0;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
   border-radius: var(--radius-control, 8px);
-  background: transparent;
-  color: inherit;
   font: inherit;
   font-size: var(--text-sm);
   font-weight: 400;
   cursor: pointer;
 }
 
-.run:disabled {
-  cursor: default;
-  opacity: 0.7;
+.primary,
+.secondary {
+  padding: var(--space-2) var(--space-3);
 }
 
-.roles,
-.chainSteps {
+.primary {
+  border: 1px solid var(--foreground);
+  background: var(--foreground);
+  color: var(--background);
+}
+
+.secondary,
+.node {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+}
+
+.primary:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.flow {
   display: flex;
-  gap: var(--space-3);
+  gap: var(--space-2);
   overflow-x: auto;
   min-width: 0;
+  padding-bottom: var(--space-2);
 }
 
-.chain {
+.step {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: var(--space-2);
-  min-width: 0;
-}
-
-.chainName,
-.roleName,
-.model,
-.pending {
-  margin: 0;
-  font-size: var(--text-sm);
-  font-weight: 400;
-}
-
-.chainName,
-.roleName {
-  color: var(--foreground);
-}
-
-.model,
-.pending {
-  color: var(--text-muted, var(--muted));
-}
-
-.chainStep {
-  display: flex;
-  align-items: stretch;
-  gap: var(--space-3);
 }
 
 .arrow {
-  align-self: center;
   color: var(--text-muted, var(--muted));
+  font-weight: 400;
+}
+
+.node {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  width: 9.5rem;
+  min-height: 5.5rem;
+  padding: var(--space-3);
+  text-align: left;
+}
+
+.node[data-status="running"] {
+  border-color: var(--foreground);
+}
+
+.node[data-selected="true"] {
+  outline: 1px solid var(--foreground);
+  outline-offset: 2px;
+}
+
+.role,
+.line {
   font-weight: 400;
 }
 
 .role {
-  display: flex;
-  flex: 1 0 12rem;
-  flex-direction: column;
-  gap: var(--space-2);
-  max-width: 18rem;
+  color: var(--text-muted, var(--muted));
+  font-size: var(--text-xs);
+}
+
+.line {
+  font-size: var(--text-sm);
+}
+
+.node[data-status="error"] .line {
+  color: var(--danger, #b42318);
+}
+
+.raw {
+  margin: 0;
+  max-width: 40rem;
   padding: var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg, 12px);
-}
-
-.artifact {
-  margin: 0;
   font-family: inherit;
   font-size: var(--text-sm);
   font-weight: 400;
@@ -99,5 +123,4 @@
   color: var(--danger, #b42318);
   font-size: var(--text-sm);
   font-weight: 400;
-  white-space: pre-wrap;
 }

@@ -1,65 +1,102 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import AdminLayout from "@/components/admin/AdminLayout";
-import { apiRequest } from "@/lib/api";
 
 import styles from "./TradingWorkbench.module.css";
 
 /**
  * 交易工作台。没有页面标题。
- * 角色横排，两条测试链把交接摊开。数字只来自这次请求。
+ * 一轮只有一条流程。节点上是一句话，原文要另外打开。
  */
 
-interface Step {
-  role: string;
-  model?: string;
+const ROLES = ["CRAWLER", "SCAN", "CHIEF", "VET", "决策", "RISK", "FILLS"] as const;
+
+type RoleName = (typeof ROLES)[number];
+type NodeStatus = "pending" | "running" | "done" | "error";
+
+interface NodeState {
+  status: NodeStatus;
+  summary: string;
+  artifact: string;
+}
+
+const emptyNodes = (): Record<RoleName, NodeState> => {
+  const nodes = {} as Record<RoleName, NodeState>;
+  for (const role of ROLES) {
+    nodes[role] = { status: "pending", summary: "", artifact: "" };
+  }
+  return nodes;
+};
+
+interface StreamEvent {
+  role?: RoleName;
+  status: NodeStatus | "complete";
+  summary?: string;
   artifact?: string;
-  error?: string;
-}
-
-interface Chain {
-  name: string;
-  steps: Step[];
-}
-
-interface PageData {
-  roles: Step[];
-  chains: Chain[];
-}
-
-function StepCard({ step }: { step: Step }) {
-  return (
-    <article className={styles.role}>
-      <p className={styles.roleName}>{step.role}</p>
-      {step.model ? <p className={styles.model}>{step.model}</p> : null}
-      {step.artifact ? <pre className={styles.artifact}>{step.artifact}</pre> : null}
-      {step.error ? <p className={styles.error}>{step.error}</p> : null}
-      {!step.artifact && !step.error ? <p className={styles.pending}>等待这一步</p> : null}
-    </article>
-  );
 }
 
 export default function TradingWorkbench() {
   const [busy, setBusy] = useState(false);
-  const [data, setData] = useState<PageData | null>(null);
+  const [nodes, setNodes] = useState(emptyNodes);
+  const [selected, setSelected] = useState<RoleName | null>(null);
+  const [showRaw, setShowRaw] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
 
   async function run() {
     setBusy(true);
     setFailed(null);
+    setShowRaw(false);
+    setNodes(emptyNodes());
     try {
-      const next = await apiRequest<PageData>("/api/trading/workbench/decision", { method: "POST", body: {} });
-      setData(next);
-    } catch (err) {
-      setFailed(err instanceof Error ? err.message : "测试链请求失败");
+      const response = await fetch("/api/trading/workbench/decision", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (!response.ok || !response.body) {
+        setFailed("这一轮没有跑起来");
+        return;
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+        for (const part of parts) {
+          const line = part.split("\n").find((item) => item.startsWith("data: "));
+          if (!line) continue;
+          let event: StreamEvent;
+          try {
+            event = JSON.parse(line.slice(6)) as StreamEvent;
+          } catch {
+            continue;
+          }
+          if (event.status === "complete" || !event.role) continue;
+          const role = event.role;
+          setNodes((current) => ({
+            ...current,
+            [role]: {
+              status: event.status === "running" || event.status === "done" || event.status === "error" ? event.status : "pending",
+              summary: event.summary ?? "",
+              artifact: event.artifact ?? current[role].artifact,
+            },
+          }));
+        }
+      }
+    } catch {
+      setFailed("这一轮中断了");
     } finally {
       setBusy(false);
     }
   }
 
-  useEffect(() => {
-    void run();
-  }, []);
+  const selectedNode = selected ? nodes[selected] : null;
+  const rawText = selectedNode?.artifact || selectedNode?.summary || "";
 
   return (
     <AdminLayout
@@ -69,39 +106,51 @@ export default function TradingWorkbench() {
       ]}
     >
       <div className={styles.page}>
-        <button type="button" className={styles.run} disabled={busy} onClick={() => void run()}>
-          {busy ? "正在请求测试盘和中转" : "再跑一次测试链"}
-        </button>
-        {failed ? <p className={styles.error}>{failed}</p> : null}
-        <div className={styles.roles}>
-          {(data?.roles ?? placeholderRoles).map((step) => (
-            <StepCard key={step.role} step={busy && !data ? { ...step, artifact: undefined, error: undefined } : step} />
-          ))}
+        <div className={styles.controls}>
+          <button type="button" className={styles.primary} disabled={busy} onClick={() => void run()}>
+            跑一轮
+          </button>
+          <button
+            type="button"
+            className={styles.secondary}
+            onClick={() => setShowRaw((open) => !open)}
+          >
+            查看产物
+          </button>
         </div>
-        {(data?.chains ?? []).map((chain) => (
-          <section key={chain.name} className={styles.chain} aria-label={chain.name}>
-            <p className={styles.chainName}>{chain.name}</p>
-            <div className={styles.chainSteps}>
-              {chain.steps.map((step, index) => (
-                <div key={chain.name + step.role} className={styles.chainStep}>
-                  {index > 0 ? <span className={styles.arrow}>→</span> : null}
-                  <StepCard step={step} />
-                </div>
-              ))}
-            </div>
-          </section>
-        ))}
+        {failed ? <p className={styles.error}>{failed}</p> : null}
+        <div className={styles.flow}>
+          {ROLES.map((role, index) => {
+            const node = nodes[role];
+            return (
+              <div key={role} className={styles.step}>
+                {index > 0 ? <span className={styles.arrow}>→</span> : null}
+                <button
+                  type="button"
+                  className={styles.node}
+                  data-status={node.status}
+                  data-selected={selected === role ? "true" : "false"}
+                  onClick={() => setSelected(role)}
+                >
+                  <span className={styles.role}>{role}</span>
+                  <span className={styles.line}>{lineFor(node)}</span>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        {showRaw ? (
+          <pre className={styles.raw}>
+            {selected ? (rawText || "这一步还没有产物") : "先点一个节点"}
+          </pre>
+        ) : null}
       </div>
     </AdminLayout>
   );
 }
 
-const placeholderRoles: Step[] = [
-  { role: "CRAWLER" },
-  { role: "SCAN" },
-  { role: "CHIEF", model: "lfm-2.5-2.6b" },
-  { role: "VET", model: "minimax-m2.5" },
-  { role: "决策", model: "jev-1.13-free" },
-  { role: "RISK" },
-  { role: "FILLS" },
-];
+function lineFor(node: NodeState): string {
+  if (node.status === "running") return "进行中";
+  if (node.status === "pending") return "等待";
+  return node.summary || "等待";
+}

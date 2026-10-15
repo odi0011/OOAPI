@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -31,12 +32,35 @@ type workbenchDecision struct {
 	Error    string `json:"error,omitempty"`
 }
 
-// PostWorkbenchDecision 跑工作台上的测试链：扫描、提案、审核、决策，以及测试盘风控和撮合。
+// PostWorkbenchDecision 按步骤推送一轮测试盘流程。
+// 每完成一步写一条 SSE，页面才能标出当前正在跑的节点。
 func PostWorkbenchDecision(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), workbenchProbeTimeout)
 	defer cancel()
 
-	ok(c, runWorkbenchChains(ctx))
+	flusher, okFlush := c.Writer.(http.Flusher)
+	if !okFlush {
+		fail(c, http.StatusInternalServerError, "响应不能分段刷新", "server_error")
+		return
+	}
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	emit := func(ev workbenchEvent) {
+		if ctx.Err() != nil {
+			return
+		}
+		raw, err := json.Marshal(ev)
+		if err != nil {
+			return
+		}
+		_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", raw)
+		flusher.Flush()
+	}
+	runWorkbenchStream(ctx, emit)
+	emit(workbenchEvent{Status: "complete"})
 }
 
 func probeUpstream(ctx context.Context, model string, body []byte) ([]byte, error) {

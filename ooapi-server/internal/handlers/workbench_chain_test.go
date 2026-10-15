@@ -7,6 +7,31 @@ import (
 	"ooapi/internal/trading"
 )
 
+func TestVetPromptCarriesChiefProposal(t *testing.T) {
+	proposal := chiefProposal("short", "Short")
+	prompt := vetPrompt(proposal)
+	if !strings.Contains(prompt, "short XRPUSDT") || !strings.Contains(prompt, "Chief reply: Short") || !strings.Contains(prompt, "Pick veto or pass.") {
+		t.Fatalf("prompt = %s", prompt)
+	}
+	if strings.Contains(prompt, "Proposal short.") {
+		t.Fatal("old ambiguous prompt")
+	}
+}
+
+func TestReadableSentences(t *testing.T) {
+	if priceSentence(1.3079) != "1.31" {
+		t.Fatalf("price %s", priceSentence(1.3079))
+	}
+	if sideSentence("short") != "提案做空" {
+		t.Fatal(sideSentence("short"))
+	}
+	allow := false
+	_, fills := paperRisk(&allow, "short", "Short", "Pass", 1.3079, 0.0001, nil)
+	if fills.Summary != "测试盘未成交，因为决策拒绝" {
+		t.Fatalf("summary %q", fills.Summary)
+	}
+}
+
 func TestSideAndVetoWords(t *testing.T) {
 	side, err := sideFromWord(" Short ")
 	if err != nil || side != "short" {
@@ -41,8 +66,8 @@ func TestPaperRiskDenyDoesNotFill(t *testing.T) {
 	if strings.Contains(fills.Artifact, "order paper-") || fills.Error != "" {
 		t.Fatalf("fill leaked %+v", fills)
 	}
-	if !strings.Contains(fills.Artifact, "没有成交") || !strings.Contains(risk.Artifact, "deny") {
-		t.Fatalf("risk=%q fills=%q", risk.Artifact, fills.Artifact)
+	if !strings.Contains(fills.Summary, "未成交") || !strings.Contains(risk.Artifact, "deny") {
+		t.Fatalf("risk=%q fills=%q", risk.Artifact, fills.Summary)
 	}
 }
 
@@ -60,7 +85,7 @@ func TestPaperRiskAllowRecordsFill(t *testing.T) {
 func TestPaperRiskFundingBlocksBeforeFill(t *testing.T) {
 	allow := true
 	_, fills := paperRisk(&allow, "long", "", "", 1.3, 0.02, nil)
-	if strings.Contains(fills.Artifact, "order paper-") || !strings.Contains(fills.Artifact, "funding_extreme") {
-		t.Fatalf("fills %q", fills.Artifact)
+	if strings.Contains(fills.Artifact, "order paper-") || !strings.Contains(fills.Summary, "资金费率") {
+		t.Fatalf("fills %q", fills.Summary)
 	}
 }

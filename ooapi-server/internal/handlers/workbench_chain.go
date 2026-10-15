@@ -22,103 +22,152 @@ const (
 type workbenchStep struct {
 	Role     string `json:"role"`
 	Model    string `json:"model,omitempty"`
+	Summary  string `json:"summary,omitempty"`
 	Artifact string `json:"artifact,omitempty"`
 	Error    string `json:"error,omitempty"`
 }
 
-type workbenchChain struct {
-	Name  string          `json:"name"`
-	Steps []workbenchStep `json:"steps"`
+type workbenchEvent struct {
+	Role     string `json:"role,omitempty"`
+	Status   string `json:"status"`
+	Summary  string `json:"summary,omitempty"`
+	Artifact string `json:"artifact,omitempty"`
+	Model    string `json:"model,omitempty"`
 }
 
-type workbenchPage struct {
-	Roles  []workbenchStep  `json:"roles"`
-	Chains []workbenchChain `json:"chains"`
-}
+func runWorkbenchStream(ctx context.Context, emit func(workbenchEvent)) {
+	running := func(role, model string) {
+		if ctx.Err() != nil {
+			return
+		}
+		emit(workbenchEvent{Role: role, Status: "running", Model: model})
+	}
+	finish := func(step workbenchStep) {
+		if step.Error != "" {
+			if step.Artifact == "" {
+				step.Artifact = step.Error
+			}
+			if step.Summary == "" {
+				step.Summary = shortChinese(step.Error)
+			}
+			emit(workbenchEvent{Role: step.Role, Status: "error", Summary: step.Summary, Artifact: step.Artifact, Model: step.Model})
+			return
+		}
+		emit(workbenchEvent{Role: step.Role, Status: "done", Summary: step.Summary, Artifact: step.Artifact, Model: step.Model})
+	}
 
-func runWorkbenchChains(ctx context.Context) workbenchPage {
+	running("CRAWLER", "")
 	crawler, scan, mark, funding, scanErr := crawlTestnet(ctx)
-	chief := workbenchStep{Role: "CHIEF", Model: chiefModel}
-	vet := workbenchStep{Role: "VET", Model: vetModel}
-	decision := workbenchStep{Role: "决策", Model: decisionModel}
-	var allow *bool
-	side := ""
-	proposalNote := ""
-	vetoNote := ""
-
+	finish(crawler)
 	if scanErr != nil {
-		chief.Error = "未调用：扫描没有标记价"
-		vet.Error = "未调用：扫描没有标记价"
-		decision.Error = "未调用：扫描没有标记价"
+		if scan.Summary == "" {
+			scan.Summary = "测试盘行情没拿到"
+		}
+		finish(scan)
+		return
+	}
+	running("SCAN", "")
+	finish(scan)
+
+	running("CHIEF", chiefModel)
+	chiefArtifact, side, reply, err := askChief(ctx)
+	chief := workbenchStep{Role: "CHIEF", Model: chiefModel, Artifact: chiefArtifact}
+	if err != nil {
+		chief.Error = err.Error()
+		finish(chief)
+		return
+	}
+	chief.Summary = sideSentence(side)
+	finish(chief)
+
+	proposal := chiefProposal(side, reply)
+	running("VET", vetModel)
+	vetArtifact, vetoed, vetReply, err := askVet(ctx, proposal)
+	vet := workbenchStep{Role: "VET", Model: vetModel, Artifact: vetArtifact}
+	if err != nil {
+		vet.Error = err.Error()
+		vet.Artifact = proposal + "\n" + err.Error()
+		finish(vet)
 	} else {
-		chiefArtifact, chiefSide, chiefNote, err := askChief(ctx)
-		if err != nil {
-			chief.Error = err.Error()
-			vet.Error = "未调用：没有提案"
-			decision.Error = "未调用：没有提案"
+		if vetoed {
+			vet.Summary = "否决"
 		} else {
-			chief.Artifact = chiefArtifact
-			side = chiefSide
-			proposalNote = chiefNote
-			vetArtifact, vetoed, reason, err := askVet(ctx, chiefSide)
-			if err != nil {
-				vet.Error = err.Error()
-			} else {
-				vet.Artifact = vetArtifact
-				vetoNote = reason
-				if vetoed {
-					vetoNote = "veto: " + reason
-				}
-			}
-			state := scan.Artifact + "\n" + chief.Artifact
-			if vet.Error != "" {
-				state += "\nVET error: " + vet.Error
-			} else {
-				state += "\n" + vet.Artifact
-			}
-			decision = askDecision(ctx, state)
-			allow = decisionAllow(decision)
+			vet.Summary = "不否决"
+		}
+		finish(vet)
+	}
+
+	state := proposal
+	if vet.Error != "" {
+		state += "\nVet did not answer: " + vet.Error
+	} else {
+		state += "\n" + vet.Artifact
+	}
+	running("决策", decisionModel)
+	decision := askDecision(ctx, state)
+	if decision.Error == "" {
+		if decisionAllow(decision) != nil && *decisionAllow(decision) {
+			decision.Summary = "决策允许"
+		} else if decisionAllow(decision) != nil {
+			decision.Summary = "决策拒绝"
+		} else {
+			decision.Summary = "决策没有给出允许或拒绝"
+			decision.Error = decision.Summary
 		}
 	}
+	finish(decision)
 
-	risk, fills := paperRisk(allow, side, proposalNote, vetoNote, mark, funding, scanErr)
-	roles := []workbenchStep{crawler, scan, chief, vet, decision, risk, fills}
-	return workbenchPage{
-		Roles: roles,
-		Chains: []workbenchChain{
-			{Name: "Scan → Chief → Vet → 决策", Steps: []workbenchStep{scan, chief, vet, decision}},
-			{Name: "决策 → RISK → FILLS", Steps: []workbenchStep{decision, risk, fills}},
-		},
-	}
+	running("RISK", "")
+	risk, fills := paperRisk(decisionAllow(decision), side, reply, vetReply, mark, funding, nil)
+	finish(risk)
+	running("FILLS", "")
+	finish(fills)
 }
 
 func crawlTestnet(ctx context.Context) (crawler, scan workbenchStep, mark, funding float64, err error) {
-	crawler = workbenchStep{
-		Role:     "CRAWLER",
-		Artifact: "测试盘 GET /fapi/v1/premiumIndex symbol=" + workbenchSymbol,
-	}
+	crawler = workbenchStep{Role: "CRAWLER"}
 	scan = workbenchStep{Role: "SCAN"}
 	if ctx.Err() != nil {
 		err = ctx.Err()
 		crawler.Error = err.Error()
+		crawler.Summary = "这一步超时"
 		scan.Error = err.Error()
+		scan.Summary = "测试盘行情没拿到"
 		return crawler, scan, 0, 0, err
 	}
 	mark, funding, err = trading.PublicClient(trading.ModeTestnet).MarkQuote(workbenchSymbol)
 	if err != nil {
 		crawler.Error = err.Error()
-		scan.Error = "CRAWLER 没有带回测试盘行情：" + err.Error()
+		crawler.Summary = "测试盘行情没拿到"
+		scan.Error = err.Error()
+		scan.Summary = "测试盘行情没拿到"
 		return crawler, scan, 0, 0, err
 	}
 	if !(mark > 0) {
 		err = fmt.Errorf("测试盘标记价不是正数")
 		crawler.Error = err.Error()
+		crawler.Summary = "测试盘行情没拿到"
 		scan.Error = err.Error()
+		scan.Summary = "测试盘行情没拿到"
 		return crawler, scan, 0, 0, err
 	}
-	scan.Artifact = fmt.Sprintf("symbol %s\n标记价 %s\n资金费率 %s\n来源 CRAWLER 测试盘 premiumIndex",
-		workbenchSymbol, formatNum(mark), formatNum(funding))
+	crawler.Summary = "拿到测试盘行情"
+	crawler.Artifact = fmt.Sprintf("symbol %s\nmark %s\nfunding %s", workbenchSymbol, formatNum(mark), formatNum(funding))
+	scan.Summary = fmt.Sprintf("选中 %s，标记价 %s", workbenchSymbol, priceSentence(mark))
+	scan.Artifact = crawler.Artifact
 	return crawler, scan, mark, funding, nil
+}
+
+func chiefProposal(side, reply string) string {
+	action := "short"
+	if side == "long" {
+		action = "long"
+	}
+	return fmt.Sprintf("Chief proposal: %s %s. Chief reply: %s.", action, workbenchSymbol, strings.TrimSpace(reply))
+}
+
+func vetPrompt(proposal string) string {
+	return strings.TrimSpace(proposal) + " Pick veto or pass."
 }
 
 func askChief(ctx context.Context) (artifact, side, note string, err error) {
@@ -132,12 +181,12 @@ func askChief(ctx context.Context) (artifact, side, note string, err error) {
 		return "", "", "", err
 	}
 	note = word
-	artifact = fmt.Sprintf("symbol %s\nside %s\nreply %s\nmodel %s", workbenchSymbol, side, word, chiefModel)
+	artifact = chiefProposal(side, word) + "\nmodel " + chiefModel
 	return artifact, side, note, nil
 }
 
-func askVet(ctx context.Context, side string) (artifact string, veto bool, reason string, err error) {
-	word, err := askWord(ctx, vetUpstream, "Proposal "+side+". Pick veto or pass.")
+func askVet(ctx context.Context, proposal string) (artifact string, veto bool, reason string, err error) {
+	word, err := askWord(ctx, vetUpstream, vetPrompt(proposal))
 	if err != nil {
 		return "", false, "", err
 	}
@@ -150,7 +199,7 @@ func askVet(ctx context.Context, side string) (artifact string, veto bool, reaso
 	if veto {
 		label = "否决"
 	}
-	artifact = fmt.Sprintf("%s\nreply %s\nmodel %s", label, word, vetModel)
+	artifact = proposal + "\n" + label + "\nreply " + word + "\nmodel " + vetModel
 	return artifact, veto, reason, nil
 }
 
@@ -308,8 +357,10 @@ func paperRisk(allow *bool, sideName, proposalNote, vetoNote string, mark, fundi
 	risk = workbenchStep{Role: "RISK"}
 	fills = workbenchStep{Role: "FILLS"}
 	if scanErr != nil {
-		risk.Error = "未运行：没有测试盘行情"
-		fills.Artifact = "没有成交：没有测试盘行情"
+		risk.Error = "没有测试盘行情"
+		risk.Summary = "测试盘行情没拿到"
+		fills.Summary = "测试盘未成交，因为没有行情"
+		fills.Artifact = fills.Summary
 		return risk, fills
 	}
 	cfg := trading.DefaultConfig()
@@ -322,7 +373,9 @@ func paperRisk(allow *bool, sideName, proposalNote, vetoNote string, mark, fundi
 	if blocked, reason := trading.StartBlocked(funding, -1); blocked {
 		lines = append(lines, "拦截 "+reason)
 		risk.Artifact = strings.Join(lines, "\n")
-		fills.Artifact = "没有成交：" + reason
+		risk.Summary = "测试盘拦截，因为" + riskReason(reason)
+		fills.Summary = "测试盘未成交，因为" + riskReason(reason)
+		fills.Artifact = fills.Summary
 		return risk, fills
 	}
 	lines = append(lines, "资金费率未拦截")
@@ -330,7 +383,9 @@ func paperRisk(allow *bool, sideName, proposalNote, vetoNote string, mark, fundi
 	if side != trading.SideLong && side != trading.SideShort {
 		lines = append(lines, "没有方向，不能做风控")
 		risk.Artifact = strings.Join(lines, "\n")
-		fills.Artifact = "没有成交：没有提案方向"
+		risk.Summary = "测试盘没有方向"
+		fills.Summary = "测试盘未成交，因为没有提案方向"
+		fills.Artifact = fills.Summary
 		return risk, fills
 	}
 	lines = append(lines, "方向 "+sideName)
@@ -344,21 +399,27 @@ func paperRisk(allow *bool, sideName, proposalNote, vetoNote string, mark, fundi
 	if err != nil {
 		lines = append(lines, "拦截 "+err.Error())
 		risk.Artifact = strings.Join(lines, "\n")
-		fills.Artifact = "没有成交：" + err.Error()
+		risk.Summary = "测试盘拦截，因为名义价值不够"
+		fills.Summary = "测试盘未成交，因为名义价值不够"
+		fills.Artifact = fills.Summary + "\n" + err.Error()
 		return risk, fills
 	}
 	stop, take, err := trading.ProtectionPrices(side, mark, mark*cfg.RFraction, cfg.StopR, cfg.TakeProfitR)
 	if err != nil {
 		lines = append(lines, "拦截 "+err.Error())
 		risk.Artifact = strings.Join(lines, "\n")
-		fills.Artifact = "没有成交：" + err.Error()
+		risk.Summary = "测试盘拦截，因为止损止盈算不出来"
+		fills.Summary = "测试盘未成交，因为止损止盈算不出来"
+		fills.Artifact = fills.Summary + "\n" + err.Error()
 		return risk, fills
 	}
 	liq, err := trading.IsolatedLiqPrice(side, mark, cfg.Leverage, trading.DefaultMaintMarginRate)
 	if err != nil {
 		lines = append(lines, "拦截 "+err.Error())
 		risk.Artifact = strings.Join(lines, "\n")
-		fills.Artifact = "没有成交：" + err.Error()
+		risk.Summary = "测试盘拦截，因为强平价算不出来"
+		fills.Summary = "测试盘未成交，因为强平价算不出来"
+		fills.Artifact = fills.Summary + "\n" + err.Error()
 		return risk, fills
 	}
 	lines = append(lines,
@@ -371,20 +432,26 @@ func paperRisk(allow *bool, sideName, proposalNote, vetoNote string, mark, fundi
 	if !trading.StopWithinLiquidation(side, mark, stop, liq) {
 		lines = append(lines, "拦截 "+trading.ReasonStopBeyondLiquidation)
 		risk.Artifact = strings.Join(lines, "\n")
-		fills.Artifact = "没有成交：" + trading.ReasonStopBeyondLiquidation
+		risk.Summary = "测试盘拦截，因为止损越过强平"
+		fills.Summary = "测试盘未成交，因为止损越过强平"
+		fills.Artifact = fills.Summary
 		return risk, fills
 	}
 	lines = append(lines, "止损在强平价之前")
 	if allow == nil {
 		lines = append(lines, "拦截：没有决策")
 		risk.Artifact = strings.Join(lines, "\n")
-		fills.Artifact = "没有成交：没有决策"
+		risk.Summary = "测试盘拦截，因为没有决策"
+		fills.Summary = "测试盘未成交，因为没有决策"
+		fills.Artifact = fills.Summary
 		return risk, fills
 	}
 	if !*allow {
 		lines = append(lines, "决策 deny，拦截，未发单")
 		risk.Artifact = strings.Join(lines, "\n")
-		fills.Artifact = "没有成交：决策拒绝"
+		risk.Summary = "测试盘拦截，因为决策拒绝"
+		fills.Summary = "测试盘未成交，因为决策拒绝"
+		fills.Artifact = fills.Summary
 		return risk, fills
 	}
 	fill, err := trading.NewPaper().PlaceEntry(trading.EntryOrder{
@@ -398,14 +465,74 @@ func paperRisk(allow *bool, sideName, proposalNote, vetoNote string, mark, fundi
 	if err != nil {
 		lines = append(lines, "测网撮合拒绝")
 		risk.Artifact = strings.Join(lines, "\n")
+		risk.Summary = "测试盘撮合拒绝"
 		fills.Error = err.Error()
+		fills.Summary = "测试盘未成交，因为撮合拒绝"
+		fills.Artifact = err.Error()
 		return risk, fills
 	}
 	lines = append(lines, "决策 allow，测试盘撮合放行")
 	risk.Artifact = strings.Join(lines, "\n")
+	risk.Summary = "测试盘风控放行"
+	fills.Summary = "测试盘成交，" + sideWord(sideName)
 	fills.Artifact = fmt.Sprintf("order %s\nstatus %s\nside %s\nqty %s\nprice %s",
 		fill.OrderID, fill.Status, fill.Side, formatNum(fill.Qty), formatNum(fill.Price))
 	return risk, fills
+}
+
+func sideWord(side string) string {
+	if side == "long" {
+		return "做多"
+	}
+	if side == "short" {
+		return "做空"
+	}
+	return ""
+}
+
+func sideSentence(side string) string {
+	word := sideWord(side)
+	if word == "" {
+		return "提案没有方向"
+	}
+	return "提案" + word
+}
+
+func priceSentence(mark float64) string {
+	return strconv.FormatFloat(mark, 'f', 2, 64)
+}
+
+func riskReason(reason string) string {
+	switch reason {
+	case "funding_extreme":
+		return "资金费率过高"
+	case trading.ReasonStopBeyondLiquidation:
+		return "止损越过强平"
+	default:
+		return "风控没有通过"
+	}
+}
+
+func shortChinese(message string) string {
+	text := strings.ToLower(message)
+	switch {
+	case strings.Contains(text, "proposal text") || strings.Contains(message, "没收到提案"):
+		return "审核没收到提案"
+	case strings.Contains(message, "方向无法使用"):
+		return "提案说不清方向"
+	case strings.Contains(message, "审核答复无法使用"):
+		return "审核没有说否决还是通过"
+	case strings.Contains(text, "empty response"), strings.Contains(message, "没有返回正文"):
+		return "模型没有回答"
+	case strings.Contains(text, "timeout"), strings.Contains(text, "deadline"), strings.Contains(message, "超时"):
+		return "这一步超时"
+	case strings.Contains(message, "没有可用账号"):
+		return "没有可用模型"
+	case strings.Contains(message, "行情"):
+		return "测试盘行情没拿到"
+	default:
+		return "这一步失败"
+	}
 }
 
 func formatNum(value float64) string {
