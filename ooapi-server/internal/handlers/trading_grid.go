@@ -412,13 +412,13 @@ func CreateGrid(c *gin.Context) {
 		writeTradingError(c, terr)
 		return
 	}
-	if taken, terr2 := gridSymbolTaken(user.ID, cfg.ExchangeKeyID, cfg.Symbol, 0); terr2 != nil {
+	holder, terr2 := gridSymbolConflict(user.ID, cfg.ExchangeKeyID, cfg.Symbol, 0)
+	if terr2 != nil {
 		writeTradingError(c, terr2)
 		return
-	} else if taken {
-		fail(c, http.StatusConflict,
-			"该交易对上已有运行中的网格（网格会撤掉这个交易对上所有挂单，不能和别的策略共用）",
-			"symbol_in_use")
+	}
+	if holder != "" {
+		fail(c, http.StatusConflict, gridConflictMessage(cfg.Symbol, holder), "symbol_in_use")
 		return
 	}
 	res, err := exec(gridInsertSQL, user.ID, cfg.ExchangeKeyID, cfg.Symbol, cfg.Mode,
@@ -478,11 +478,13 @@ func UpdateGrid(c *gin.Context) {
 		writeTradingError(c, terr)
 		return
 	}
-	if taken, terr2 := gridSymbolTaken(user.ID, cfg.ExchangeKeyID, cfg.Symbol, id); terr2 != nil {
+	holder, terr2 := gridSymbolConflict(user.ID, cfg.ExchangeKeyID, cfg.Symbol, id)
+	if terr2 != nil {
 		writeTradingError(c, terr2)
 		return
-	} else if taken {
-		fail(c, http.StatusConflict, "该交易对上已有运行中的网格", "symbol_in_use")
+	}
+	if holder != "" {
+		fail(c, http.StatusConflict, gridConflictMessage(cfg.Symbol, holder), "symbol_in_use")
 		return
 	}
 	if _, err := exec(gridUpdateSQL, cfg.ExchangeKeyID, cfg.Symbol, cfg.Mode,
@@ -563,11 +565,13 @@ func PostGridStart(c *gin.Context) {
 		writeTradingError(c, terr)
 		return
 	}
-	if taken, terr := gridSymbolTaken(user.ID, row.Config.ExchangeKeyID, row.Config.Symbol, id); terr != nil {
+	holder, terr := gridSymbolConflict(user.ID, row.Config.ExchangeKeyID, row.Config.Symbol, id)
+	if terr != nil {
 		writeTradingError(c, terr)
 		return
-	} else if taken {
-		fail(c, http.StatusConflict, "该交易对上已有运行中的网格", "symbol_in_use")
+	}
+	if holder != "" {
+		fail(c, http.StatusConflict, gridConflictMessage(row.Config.Symbol, holder), "symbol_in_use")
 		return
 	}
 	// 先真正建一次引擎：区间、精度、资金门槛的问题要在这里就暴露，
@@ -785,35 +789,55 @@ func applyGridWrite(userID int64, base *gridRow, req gridWrite) (trading.GridCon
 // 网格会撤掉该交易对上**所有**不认识的挂单，所以同一个交易对上
 // 不能同时跑两条网格，也不能和趋势策略共用（趋势策略的止损止盈
 // 会被网格当成"外来挂单"撤掉）。
-func gridSymbolTaken(userID, keyID int64, symbol string, exceptID int64) (bool, *tradingError) {
+/*
+gridSymbolConflict 检查这个交易对能不能给网格用，**并说清是被谁占的**。
+
+占用的来源有两种，界面上必须分别指出来：
+
+  · 另一条运行中的网格 —— 去网格页停掉它；
+  · 一条运行中的**趋势策略** —— 去策略页停掉它。
+
+两者混成一句"已有运行中的网格"，用户会去网格页找一个根本不存在的
+东西，然后开始怀疑数据是不是丢了。而这个冲突是真的：网格启动时会
+撤掉该交易对上**所有**不认识的挂单，而那正是趋势策略的止损止盈。
+
+返回空串表示这个交易对可以给网格用。
+*/
+func gridSymbolConflict(userID, keyID int64, symbol string, exceptID int64) (string, *tradingError) {
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
 	if symbol == "" {
-		return false, &tradingError{Status: http.StatusBadRequest,
+		return "", &tradingError{Status: http.StatusBadRequest,
 			Message: "请选择交易对", Code: "bad_request"}
 	}
-	// 另一条运行中的网格占着这个交易对。
 	var found int64
 	err := queryRow(gridRunningDupSQL, userID, keyID, symbol, exceptID).Scan(&found)
 	switch {
 	case err == nil && found > 0:
-		return true, nil
+		return "网格", nil
 	case err != nil && !errors.Is(err, sql.ErrNoRows):
 		log.Printf("[grid] 检查交易对占用失败: %v", err)
-		return false, &tradingError{Status: http.StatusInternalServerError,
+		return "", &tradingError{Status: http.StatusInternalServerError,
 			Message: "检查交易对失败", Code: "server_error"}
 	}
-	// 一条运行中的**趋势策略**同样占着这个交易对：网格会撤掉该交易对上
-	// 所有不认识的挂单，而趋势策略的止损止盈正挂在上面 —— 共用会让
-	// 网格把别人的保护单撤掉，那是真事故。
 	// exceptID 传 0 而不是网格 ID：那个参数是**策略** ID。
 	// 网格和策略的 ID 各有一套自增，撞号的概率不为零 —— 传网格 ID
 	// 进去，撞上时会把一条正在跑的冲突策略当成"自己"放过去。
 	if taken, terr := runningSymbolTaken(userID, keyID, symbol, 0); terr != nil {
-		return false, terr
+		return "", terr
 	} else if taken {
-		return true, nil
+		return "策略", nil
 	}
-	return false, nil
+	return "", nil
+}
+
+// gridConflictMessage 把冲突来源写成一句能照着做的话。
+func gridConflictMessage(symbol, holder string) string {
+	if holder == "策略" {
+		return symbol + " 上有一条运行中的策略。网格会撤掉这个交易对上所有不认识的挂单，" +
+			"而那正是策略的止损止盈 —— 请先在「策略」页停掉它，再启动网格。"
+	}
+	return symbol + " 上已有一条运行中的网格。同一个交易对不能同时跑两条，" +
+		"请先停掉那一条。"
 }
 
 // formatGridNum 给审计文案用的价格文本。不用 %f —— 那会带一串无意义的 0。
