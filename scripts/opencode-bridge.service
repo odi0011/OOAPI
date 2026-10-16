@@ -1,0 +1,54 @@
+[Unit]
+# OpenCode 桥接服务：承载 opencode.ai 渠道的官方客户端调用。
+#
+# 为什么必须由 systemd 管：网关的桥接层把请求转给这个进程，
+# 它退出后 opencode 渠道会整体不可用。需要自动拉起、开机自启、
+# 并且与网关的生命周期解耦（网关重启不该中断它，反之亦然）。
+Description=OpenCode bridge for OOAPI gateway (opencode serve)
+Documentation=https://opencode.ai/docs/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 只在回环上监听：网关与它同机，不对外暴露。
+# 该进程持有上游 API Key（通过 /auth 写入），暴露到公网等于泄露凭据。
+ExecStart=/opt/ooapi/opencode/opencode serve --port 4096 --hostname 127.0.0.1
+WorkingDirectory=/opt/ooapi/opencode
+
+# ---------------------------------------------------------------------------
+# 权限隔离。
+#
+# 上游的防滥用校验要求请求保持官方默认工具集（请求里禁用工具会被 403），
+# 所以不能在请求层关掉工具。模型理论上可以请求执行 shell / 读写文件 ——
+# 防护靠三层，这里是第一层也是最强的一层：
+#   1. 以专用非 root 用户运行 + 本单元的沙箱（本文件）；
+#   2. opencode 的默认权限效果是「询问」，而桥接从不代答审批
+#      —— 需要授权的工具调用会停在等待状态，不会执行；
+#   3. 只读根文件系统 + 私有 /tmp：即使某个默认放行的工具被诱导执行，
+#      它也只能写这个用户自己的目录，看不到系统其它位置。
+# ---------------------------------------------------------------------------
+User=ooapi-bridge
+Group=ooapi-bridge
+Environment=HOME=/opt/ooapi/opencode
+Environment=XDG_CONFIG_HOME=/opt/ooapi/opencode/.config
+Environment=XDG_DATA_HOME=/opt/ooapi/opencode/.local/share
+Environment=XDG_STATE_HOME=/opt/ooapi/opencode/.local/state
+Environment=OPENCODE_DISABLE_TELEMETRY=1
+Restart=always
+RestartSec=3
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/ooapi/opencode
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+
+[Install]
+WantedBy=multi-user.target

@@ -139,6 +139,17 @@ func forwardJSON(ctx context.Context, ch *services.UpstreamChannel, body []byte,
 	}
 
 	/*
+		OpenCode 官方域的渠道走本机桥接（opencode serve）。
+
+		免费档的客户端校验只认官方客户端进程，直接 HTTP 打上游必然 403
+		（实测见 opencode_bridge.go 顶部）。桥接对调用方完全透明：
+		入参与返回与直连路径同形。
+	*/
+	if services.UsesOpenCodeBridge(ch) {
+		return bridgeForwardJSON(ctx, ch, body, model)
+	}
+
+	/*
 		客户端按官方模型名调用（deepseek-flash），而上游只认它自己的叫法
 		（deepseek-v4.1-flash）—— 先解析出该账号实际该用的名字。
 		协议路由与请求体构造都基于这个名字，否则上游会收到它不认识的 id。
@@ -516,6 +527,12 @@ func openUpstreamStream(
 	upstreamModel := services.UpstreamModelFor(ch, model)
 	if upstreamModel == "" {
 		return nil, newUpstreamError(0, "账号「"+ch.Name+"」不支持模型 "+model, false)
+	}
+
+	// OpenCode 官方域的渠道走本机桥接（理由与非流式路径相同，见 forwardJSON）。
+	// 桥接流已按 chat-completions 合成，下游翻译器无需感知它的存在。
+	if services.UsesOpenCodeBridge(ch) {
+		return openBridgeStream(c, body, upstreamModel, model)
 	}
 
 	/*

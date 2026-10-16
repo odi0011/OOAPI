@@ -42,6 +42,10 @@ type UpstreamChannel struct {
 	// 同一上游按模型分走不同协议时必须有它，否则一半模型会返回
 	// ModelProtocolUnsupported。
 	ModelPaths []ModelPathRule
+	// Bridge 为真时该账号的流量走本机 OpenCode 桥接（opencode serve），
+	// 而不是直接用 HTTP 打上游。识别规则见 UsesOpenCodeBridge ——
+	// OpenCode Zen 免费档的服务端校验只认官方客户端，桥接是唯一可靠路径。
+	Bridge bool
 	// 账号级限流配置（0 = 不限；语义与默认值见 ratelimit.go 顶部说明）。
 	Concurrency int
 	MinGapMs    int

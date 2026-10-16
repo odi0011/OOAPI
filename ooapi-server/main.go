@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"os"
 
 	"ooapi/internal/config"
 	"ooapi/internal/db"
@@ -13,8 +14,17 @@ import (
 func main() {
 	cfg := config.Load()
 
+	// 运维子命令（channel-key 等）在这里处理，处理完即退出 ——
+	// 它们不该拉起 HTTP 服务、交易调度或后台任务。
+	if runMaintenanceCommand(os.Args[1:], cfg) {
+		return
+	}
+
 	// 先把密钥注入 services，后续所有令牌签发与校验都从这里取。
 	services.SetJWTSecret(cfg.JWTSecret)
+
+	// OpenCode 桥接地址可按环境变量覆盖（多实例部署或测试用）。
+	handlers.SetOpenCodeBridgeAddr(os.Getenv("OOAPI_OPENCODE_BRIDGE_ADDR"))
 
 	// 上传目录放在前端构建产物之外：前端每次构建会清空 web/，
 	// 上传的图标若放在里面会被连带删掉。
