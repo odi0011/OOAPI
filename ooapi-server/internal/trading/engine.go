@@ -210,8 +210,17 @@ func NewEngine(cfg Config, ex Exchange, logger Logger) *Engine {
 	if ex == nil {
 		ex = NewPaper()
 	}
+	/*
+		构造时就归一，别指望调用方先做。
+
+		引擎里有几处不变量是**由归一保证**的：现货杠杆必须是 1（否则
+		IsolatedLiqPrice 会按杠杆算出真强平价，而现货根本没有强平）、
+		空 market 必须按合约、EntryMode 空值按 cross。少归一一次，
+		这些不变量就静默失效 —— 而且是那种"跑起来看着正常、出事才知道"
+		的失效。放进构造函数，任何调用点都绕不过去。
+	*/
 	return &Engine{
-		cfg:         cfg,
+		cfg:         cfg.Normalize(),
 		ex:          ex,
 		log:         logger,
 		m:           NewMachine(),
@@ -680,6 +689,20 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 	side, signal, err := e.entrySide(in)
 	if err != nil {
 		return e.failed(err.Error())
+	}
+	/*
+		现货只能做多。
+
+		这里必须**跳过**空头信号，而不是把它翻成买入 —— 翻的话策略会在
+		看跌的位置建立多头，方向和信号完全相反。跳过是诚实的：这一步没有
+		可执行的动作，等下一个信号。
+
+		（放在闸门之前：省掉一次没意义的回测/期望判定，也不让 lastReason
+		被空头信号占着。）
+	*/
+	if e.cfg.IsSpot() && side == SideShort {
+		e.note("skip", ReasonSpotLongOnly)
+		return e.Snapshot(), nil
 	}
 	gateReason := ""
 	if e.cfg.GambleMode || e.cfg.MinWinRate > 0 || strings.EqualFold(e.cfg.Mode, ModeLive) {

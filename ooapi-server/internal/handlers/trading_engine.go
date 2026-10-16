@@ -353,6 +353,7 @@ func strategyConfig(row strategyRow) trading.Config {
 		MaxMarginUsdt:         rec.MaxMarginUsdt,
 		ExchangeKeyID:         rec.ExchangeKeyID,
 		Mode:                  rec.Mode,
+		Market:                rec.Market,
 		EntryMode:             rec.EntryMode,
 		MinScore:              rec.MinScore,
 		MinWinRate:            rec.MinWinRate,

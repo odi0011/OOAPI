@@ -10,11 +10,20 @@ import (
 // 字段与已上线的 /api/trading/strategies 一致。
 // 策略存在 trading_strategies，密钥存在 exchange_keys；本包不另建配置表。
 const (
-	SymbolXRPUSDT       = "XRPUSDT"
-	MarginIsolated      = "isolated"
-	Timeframe5m         = "5m"
-	ModeTestnet         = "testnet"
-	ModeLive            = "live"
+	SymbolXRPUSDT  = "XRPUSDT"
+	MarginIsolated = "isolated"
+	Timeframe5m    = "5m"
+	ModeTestnet    = "testnet"
+	ModeLive       = "live"
+
+	/*
+		Market 是「合约还是现货」这条轴，与 Mode（测网/实盘）**正交** ——
+		四种组合都成立：合约测网、合约实盘、现货测网、现货实盘。
+
+		空串按合约处理：老库补列前读出来的就是空的，不能让它变成"未知市场"。
+	*/
+	MarketFutures       = "futures"
+	MarketSpot          = "spot"
 	ExchangeBinanceUSDM = "binance_usdm"
 
 	DefaultLeverage      = 3
@@ -90,9 +99,11 @@ const (
 	ReasonEquityUnknown       = "equity_unknown"
 	ReasonConsecutiveLosses   = "consecutive_losses"
 	ReasonBalanceBelowPause   = "balance_below_pause"
-	ReasonBoostWait           = "boost_wait"
-	ReasonBoostFilled         = "boost_filled"
-	ReasonSymbolHeld          = "symbol_has_position"
+	// ReasonSpotLongOnly 表示现货策略拿到了做空信号，跳过不开仓。
+	ReasonSpotLongOnly = "spot_long_only"
+	ReasonBoostWait    = "boost_wait"
+	ReasonBoostFilled  = "boost_filled"
+	ReasonSymbolHeld   = "symbol_has_position"
 	// ReasonAdoptPosition 表示重启后认领了交易所孤儿仓位并补挂保护单。
 	ReasonAdoptPosition = "adopt_position"
 	// ReasonAdoptFlatten 表示认领失败后市价平掉孤儿仓，避免裸奔。
@@ -162,6 +173,8 @@ type Config struct {
 	MaxMarginUsdt float64 `json:"maxMarginUsdt"`
 	ExchangeKeyID int64   `json:"exchangeKeyId"`
 	Mode          string  `json:"mode"`
+	// Market 为 futures（默认）或 spot。与 Mode 正交，空值按合约处理。
+	Market string `json:"market,omitempty"`
 	// EntryMode 为 cross（只在交叉那根 K 开仓）或 trend（趋势分数够了就开）。
 	// 空值按 cross 处理，避免旧配置突然改语义。
 	EntryMode  string  `json:"entryMode,omitempty"`
@@ -238,11 +251,33 @@ func DefaultConfig() Config {
 	}
 }
 
+/*
+NormalizeMarket 把 market 归一到 futures / spot。
+
+**空值与未知值都按 futures**：加这个字段之前建的策略读出来是空串，
+它们是合约策略；不能因为多了个字段就让既有策略变成「未知市场」而拒绝启动。
+*/
+func NormalizeMarket(v string) string {
+	if strings.EqualFold(strings.TrimSpace(v), MarketSpot) {
+		return MarketSpot
+	}
+	return MarketFutures
+}
+
+// IsSpot 报告这份配置是否跑在现货上。
+func (c Config) IsSpot() bool { return NormalizeMarket(c.Market) == MarketSpot }
+
 func (c Config) Normalize() Config {
 	c.Symbol = strings.ToUpper(strings.TrimSpace(c.Symbol))
 	c.MarginMode = strings.ToLower(strings.TrimSpace(c.MarginMode))
 	c.Timeframe = strings.TrimSpace(c.Timeframe)
 	c.Mode = strings.ToLower(strings.TrimSpace(c.Mode))
+	c.Market = NormalizeMarket(c.Market)
+	// 现货没有杠杆：把杠杆钉成 1，让 IsolatedLiqPrice 退化成 liq ≈ 0
+	// （于是 StopWithinLiquidation 天然通过），也保证名义 = 保证金。
+	if c.Market == MarketSpot && c.Leverage != 1 {
+		c.Leverage = 1
+	}
 	c.EntryMode = strings.ToLower(strings.TrimSpace(c.EntryMode))
 	if c.EntryMode == "" {
 		c.EntryMode = EntryModeCross

@@ -307,6 +307,7 @@ var schemaStatements = []string{
 		max_margin_usdt  DECIMAL(20,6)   NOT NULL DEFAULT 1.7,
 		exchange_key_id  BIGINT UNSIGNED NOT NULL,
 		mode             VARCHAR(16)     NOT NULL DEFAULT 'testnet',
+		market           VARCHAR(16)     NOT NULL DEFAULT 'futures',
 		entry_mode       VARCHAR(16)     NOT NULL DEFAULT 'cross',
 		min_score        INT             NOT NULL DEFAULT 3,
 		min_win_rate     DECIMAL(8,4)    NOT NULL DEFAULT 0.3800,
@@ -488,6 +489,9 @@ var columnMigrations = map[string][]columnDef{
 		{"context_tiers", "TEXT NULL AFTER cached_price"},
 	},
 	"trading_strategies": {
+		// market 是「合约还是现货」这个轴，与 mode（测网/实盘）正交。
+		// 老库补列后默认 futures：既有策略的行为一个字节都不变。
+		{"market", "VARCHAR(16) NOT NULL DEFAULT 'futures'"},
 		// 已有行保持 cross。新策略由接口写成 trend。
 		{"entry_mode", "VARCHAR(16) NOT NULL DEFAULT 'cross'"},
 		{"min_score", "INT NOT NULL DEFAULT 3"},

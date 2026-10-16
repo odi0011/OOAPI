@@ -44,7 +44,7 @@ var strategyTimeframes = map[string]struct{}{
 
 const strategySelectCols = `
 s.id, s.symbol, s.leverage, s.margin_mode, s.ema_fast, s.ema_slow, s.timeframe,
-s.stop_r, s.take_profit_r, s.daily_loss_pct, s.max_margin_usdt, s.exchange_key_id, s.mode,
+s.stop_r, s.take_profit_r, s.daily_loss_pct, s.max_margin_usdt, s.exchange_key_id, s.mode, s.market,
 s.entry_mode, s.min_score, s.min_win_rate, s.min_trades,
 s.max_margin_per_trade_usdt, s.max_consecutive_losses, s.pause_balance_usdt, s.pause_reason, s.pause_entries,
 s.max_open_positions,
@@ -57,7 +57,7 @@ s.created_at, s.updated_at, k.network, k.status, k.label`
 const strategyInsertSQL = `
 INSERT INTO trading_strategies (
 	user_id, symbol, leverage, margin_mode, ema_fast, ema_slow, timeframe,
-	stop_r, take_profit_r, daily_loss_pct, max_margin_usdt, exchange_key_id, mode,
+	stop_r, take_profit_r, daily_loss_pct, max_margin_usdt, exchange_key_id, mode, market,
 	entry_mode, min_score, min_win_rate, min_trades,
 	max_margin_per_trade_usdt, max_consecutive_losses, pause_balance_usdt, pause_reason,
 	max_open_positions,
@@ -65,7 +65,7 @@ INSERT INTO trading_strategies (
 	gamble_mode, scalp_tp_pct, scalp_sl_pct,
 	r_fraction, expectancy_tp_cap_r, taker_fee_rate, maker_fee_rate, expectancy_gate,
 	running
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const strategyListSQL = `
 SELECT ` + strategySelectCols + `
@@ -84,7 +84,7 @@ const strategyUpdateSQL = `
 UPDATE trading_strategies
 SET symbol = ?, leverage = ?, margin_mode = ?, ema_fast = ?, ema_slow = ?, timeframe = ?,
 	stop_r = ?, take_profit_r = ?, daily_loss_pct = ?, max_margin_usdt = ?,
-	exchange_key_id = ?, mode = ?, entry_mode = ?, min_score = ?, min_win_rate = ?, min_trades = ?,
+	exchange_key_id = ?, mode = ?, market = ?, entry_mode = ?, min_score = ?, min_win_rate = ?, min_trades = ?,
 	max_margin_per_trade_usdt = ?, max_consecutive_losses = ?, pause_balance_usdt = ?, pause_reason = ?,
 	max_open_positions = ?,
 	rsi_long_min = ?, rsi_long_max = ?, rsi_short_min = ?, rsi_short_max = ?,
@@ -128,6 +128,7 @@ type strategyWrite struct {
 	MaxMarginUsdt         *float64 `json:"maxMarginUsdt"`
 	ExchangeKeyID         *int64   `json:"exchangeKeyId"`
 	Mode                  *string  `json:"mode"`
+	Market                *string  `json:"market"`
 	EntryMode             *string  `json:"entryMode"`
 	MinScore              *int     `json:"minScore"`
 	MinWinRate            *float64 `json:"minWinRate"`
@@ -151,18 +152,21 @@ type strategyWrite struct {
 }
 
 type strategyRecord struct {
-	Symbol                string
-	Leverage              int
-	MarginMode            string
-	EmaFast               int
-	EmaSlow               int
-	Timeframe             string
-	StopR                 float64
-	TakeProfitR           float64
-	DailyLossPct          float64
-	MaxMarginUsdt         float64
-	ExchangeKeyID         int64
-	Mode                  string
+	Symbol        string
+	Leverage      int
+	MarginMode    string
+	EmaFast       int
+	EmaSlow       int
+	Timeframe     string
+	StopR         float64
+	TakeProfitR   float64
+	DailyLossPct  float64
+	MaxMarginUsdt float64
+	ExchangeKeyID int64
+	Mode          string
+	// Market 是「合约还是现货」这个轴，与 Mode（测网/实盘）正交。
+	// 空串按合约处理 —— 老库补列前的行读出来就是空的。
+	Market                string
 	EntryMode             string
 	MinScore              int
 	MinWinRate            float64
@@ -189,19 +193,21 @@ type strategyRecord struct {
 }
 
 type strategyView struct {
-	ID                    int64    `json:"id"`
-	Symbol                string   `json:"symbol"`
-	Leverage              int      `json:"leverage"`
-	MarginMode            string   `json:"marginMode"`
-	EmaFast               int      `json:"emaFast"`
-	EmaSlow               int      `json:"emaSlow"`
-	Timeframe             string   `json:"timeframe"`
-	StopR                 float64  `json:"stopR"`
-	TakeProfitR           float64  `json:"takeProfitR"`
-	DailyLossPct          float64  `json:"dailyLossPct"`
-	MaxMarginUsdt         float64  `json:"maxMarginUsdt"`
-	ExchangeKeyID         int64    `json:"exchangeKeyId"`
-	Mode                  string   `json:"mode"`
+	ID            int64   `json:"id"`
+	Symbol        string  `json:"symbol"`
+	Leverage      int     `json:"leverage"`
+	MarginMode    string  `json:"marginMode"`
+	EmaFast       int     `json:"emaFast"`
+	EmaSlow       int     `json:"emaSlow"`
+	Timeframe     string  `json:"timeframe"`
+	StopR         float64 `json:"stopR"`
+	TakeProfitR   float64 `json:"takeProfitR"`
+	DailyLossPct  float64 `json:"dailyLossPct"`
+	MaxMarginUsdt float64 `json:"maxMarginUsdt"`
+	ExchangeKeyID int64   `json:"exchangeKeyId"`
+	Mode          string  `json:"mode"`
+	// Market 是 futures 或 spot。归一过 —— 前端拿到的永远是这两个值之一。
+	Market                string   `json:"market"`
 	EntryMode             string   `json:"entryMode"`
 	MinScore              int      `json:"minScore"`
 	MinWinRate            float64  `json:"minWinRate"`
@@ -294,6 +300,7 @@ func (row strategyRow) view() strategyView {
 		MaxMarginUsdt:         rec.MaxMarginUsdt,
 		ExchangeKeyID:         rec.ExchangeKeyID,
 		Mode:                  rec.Mode,
+		Market:                trading.NormalizeMarket(rec.Market),
 		EntryMode:             rec.EntryMode,
 		MinScore:              rec.MinScore,
 		MinWinRate:            rec.MinWinRate,
@@ -422,7 +429,7 @@ func CreateTradingStrategy(c *gin.Context) {
 	}
 	res, err := exec(strategyInsertSQL,
 		user.ID, rec.Symbol, rec.Leverage, rec.MarginMode, rec.EmaFast, rec.EmaSlow, rec.Timeframe,
-		rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
+		rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode, rec.Market,
 		rec.EntryMode, rec.MinScore, rec.MinWinRate, rec.MinTrades,
 		rec.MaxMarginPerTradeUsdt, rec.MaxConsecutiveLosses, rec.PauseBalanceUsdt, rec.PauseReason,
 		rec.MaxOpenPositions,
@@ -494,7 +501,7 @@ func UpdateTradingStrategy(c *gin.Context) {
 	}
 	res, err := exec(strategyUpdateSQL,
 		rec.Symbol, rec.Leverage, rec.MarginMode, rec.EmaFast, rec.EmaSlow, rec.Timeframe,
-		rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode,
+		rec.StopR, rec.TakeProfitR, rec.DailyLossPct, rec.MaxMarginUsdt, rec.ExchangeKeyID, rec.Mode, rec.Market,
 		rec.EntryMode, rec.MinScore, rec.MinWinRate, rec.MinTrades,
 		rec.MaxMarginPerTradeUsdt, rec.MaxConsecutiveLosses, rec.PauseBalanceUsdt, rec.PauseReason,
 		rec.MaxOpenPositions,
@@ -566,7 +573,7 @@ func scanStrategy(s scanner) (strategyRow, error) {
 		&row.ID, &row.Record.Symbol, &row.Record.Leverage, &row.Record.MarginMode,
 		&row.Record.EmaFast, &row.Record.EmaSlow, &row.Record.Timeframe,
 		&row.Record.StopR, &row.Record.TakeProfitR, &row.Record.DailyLossPct, &row.Record.MaxMarginUsdt,
-		&row.Record.ExchangeKeyID, &row.Record.Mode,
+		&row.Record.ExchangeKeyID, &row.Record.Mode, &row.Record.Market,
 		&row.Record.EntryMode, &row.Record.MinScore, &row.Record.MinWinRate, &row.Record.MinTrades,
 		&row.Record.MaxMarginPerTradeUsdt, &row.Record.MaxConsecutiveLosses, &row.Record.PauseBalanceUsdt, &row.Record.PauseReason,
 		&pauseEntries,
@@ -785,6 +792,9 @@ func applyStrategyWrite(base strategyRecord, in strategyWrite, creating bool) (s
 	if in.Mode != nil {
 		out.Mode = strings.ToLower(strings.TrimSpace(*in.Mode))
 	}
+	if in.Market != nil {
+		out.Market = trading.NormalizeMarket(*in.Market)
+	}
 	if in.EntryMode != nil {
 		out.EntryMode = strings.ToLower(strings.TrimSpace(*in.EntryMode))
 	}
@@ -896,6 +906,13 @@ func validateStrategy(rec strategyRecord, missingKey bool) *tradingError {
 	}
 	if rec.Mode != networkTestnet && rec.Mode != networkLive {
 		return &tradingError{http.StatusBadRequest, "mode 只能是 testnet 或 live", "invalid_mode"}
+	}
+	// market 是「合约还是现货」，与 mode 正交。空值按合约处理（老策略）。
+	// 这里显式拒绝未知取值，而不是让 NormalizeMarket 悄悄兜成 futures ——
+	// 拼错一个词就变成"跑在合约上"，那是要下真单的。
+	if v := strings.TrimSpace(rec.Market); v != "" &&
+		!strings.EqualFold(v, trading.MarketFutures) && !strings.EqualFold(v, trading.MarketSpot) {
+		return &tradingError{http.StatusBadRequest, "market 只能是 futures 或 spot", "invalid_market"}
 	}
 	if missingKey || rec.ExchangeKeyID <= 0 {
 		return &tradingError{http.StatusBadRequest, "请先绑定一把未作废的交易所密钥", "exchange_key_required"}

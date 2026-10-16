@@ -215,7 +215,29 @@ const (
 
 // NewExchange 按策略 mode 选择客户端。
 // 测网走币安 USDT-M 测试网。实盘在门闩关闭时直接拒绝；打开后用实盘主机发单。
+/*
+NewExchange 按「市场 + 网络」两条轴各选一套。
+
+现货与合约是两套主机、两套账本、两套下单语义，所以这里不是给同一个
+客户端换个 base 就完事 —— 现货走 SpotExchange（只做多、无杠杆、
+保护单用 STOP_LOSS_LIMIT）。
+
+实盘门闩（TestnetGreen）对现货同样生效：现货实盘是真钱。
+*/
 func NewExchange(cfg Config) (Exchange, error) {
+	if cfg.IsSpot() {
+		switch cfg.Mode {
+		case ModeTestnet:
+			return NewSpotExchange(ModeTestnet)
+		case ModeLive:
+			if !TestnetGreen() {
+				return nil, ErrLiveGateClosed
+			}
+			return NewSpotExchange(ModeLive)
+		default:
+			return nil, ErrBadMode
+		}
+	}
 	switch cfg.Mode {
 	case ModeTestnet:
 		return NewUSDMTestnet(), nil
