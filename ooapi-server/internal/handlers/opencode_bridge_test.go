@@ -56,59 +56,44 @@ func (f *fakeServe) handler() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"` + id + `"}`))
 	})
-	mux.HandleFunc("/event", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		flusher, _ := w.(http.Flusher)
-		// 等 prompt 到达后回放事件。
-		select {
-		case <-f.promptCh:
-		case <-time.After(3 * time.Second):
-		}
-		f.mu.Lock()
-		events := append([]string(nil), f.events...)
-		// 从回放事件里抽出增量文本，标记「已完成」供 /message 回读。
-		var sb strings.Builder
-		for _, ev := range events {
-			var parsed struct {
-				Type       string `json:"type"`
-				Properties struct {
-					Delta string `json:"delta"`
-					Info  struct {
-						Error *struct {
-							Data struct {
-								Message string `json:"message"`
-							} `json:"data"`
-						} `json:"error"`
-					} `json:"info"`
-				} `json:"properties"`
-			}
-			if json.Unmarshal([]byte(ev), &parsed) == nil {
-				if parsed.Type == "message.part.delta" {
-					sb.WriteString(parsed.Properties.Delta)
-				}
-				if parsed.Properties.Info.Error != nil {
-					f.errMsg = parsed.Properties.Info.Error.Data.Message
-				}
-			}
-		}
-		f.replyTxt = sb.String()
-		f.replied = true
-		f.mu.Unlock()
-		for _, ev := range events {
-			_, _ = w.Write([]byte("data: " + ev + "\n\n"))
-			if flusher != nil {
-				flusher.Flush()
-			}
-		}
-	})
 	mux.HandleFunc("/session/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		switch {
 		case strings.HasSuffix(path, "/prompt_async"):
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			// 从预置事件里抽出增量文本与错误，直接标记「已完成」——
+			// 短轮询实现不再订阅 /event，完成状态全靠 /message 回读。
+			var sb strings.Builder
+			errMsg := ""
 			f.mu.Lock()
 			f.lastBody = body
+			for _, ev := range f.events {
+				var parsed struct {
+					Type       string `json:"type"`
+					Properties struct {
+						Delta string `json:"delta"`
+						Info  struct {
+							Error *struct {
+								Data struct {
+									Message string `json:"message"`
+								} `json:"data"`
+							} `json:"error"`
+						} `json:"info"`
+					} `json:"properties"`
+				}
+				if json.Unmarshal([]byte(ev), &parsed) == nil {
+					if parsed.Type == "message.part.delta" {
+						sb.WriteString(parsed.Properties.Delta)
+					}
+					if parsed.Properties.Info.Error != nil {
+						errMsg = parsed.Properties.Info.Error.Data.Message
+					}
+				}
+			}
+			f.replyTxt = sb.String()
+			f.errMsg = errMsg
+			f.replied = true
 			f.mu.Unlock()
 			select {
 			case f.promptCh <- struct{}{}:
@@ -258,8 +243,10 @@ func TestBridgeStreamProducesChatSSE(t *testing.T) {
 		t.Fatalf("read: %v", err)
 	}
 	text := string(raw)
-	if !strings.Contains(text, `"He"`) || !strings.Contains(text, `"llo"`) {
-		t.Fatalf("流里缺少内容增量:\n%s", text)
+	// 增量可能被合并成更少的帧（轮询取「比上轮多出来的部分」）——
+	// 断言的是「内容完整且按序」，不是「分帧数量」。
+	if !strings.Contains(text, `"Hello"`) {
+		t.Fatalf("流里缺少完整内容增量:\n%s", text)
 	}
 	if !strings.Contains(text, `"finish_reason":"stop"`) {
 		t.Fatalf("流里缺少收尾帧:\n%s", text)

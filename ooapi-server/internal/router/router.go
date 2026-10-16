@@ -416,6 +416,28 @@ func Setup(cfg *config.Config) *gin.Engine {
 		v1.POST("/messages/count_tokens", handlers.AnthropicCountTokens)
 	}
 
+	/*
+		无 /v1 前缀的别名。
+
+		部分客户端与中转项目把端点拼成 /responses、/chat/completions
+		（不带 /v1）—— 实测 sub2api 的端点测试、codex-tui 的某些版本
+		都这么请求。没有这些别名时，请求会落到 SPA 兜底规则上，
+		客户端拿到的是 nginx 的 405 HTML 错误页而不是网关的 JSON，
+		表现为「Responses 端点 405 Not Allowed」，很难联想到是路径问题。
+
+		只做路径映射，不新增任何鉴权或计费语义 —— 同一批 handler。
+	*/
+	alias := r.Group("")
+	{
+		alias.POST("/chat/completions", handlers.ChatCompletions)
+		alias.POST("/responses", handlers.Responses)
+		alias.POST("/responses/compact", handlers.ResponsesCompact)
+		alias.POST("/messages", handlers.AnthropicMessages)
+		alias.POST("/messages/count_tokens", handlers.AnthropicCountTokens)
+		alias.POST("/systemone", handlers.SystemOne)
+		alias.GET("/models", handlers.ListModels)
+	}
+
 	registerSPA(r, cfg.WebDir)
 
 	return r

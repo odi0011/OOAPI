@@ -35,7 +35,6 @@ tool_calls 的 agent 工作负载不适用这条链路。
 */
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -46,7 +45,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -253,37 +251,6 @@ func abortBridgeSession(sessionID string) {
 	resp.Body.Close()
 }
 
-// bridgeEvent 是 serve 事件流里我们关心的字段。
-type bridgeEvent struct {
-	Type       string `json:"type"`
-	Properties struct {
-		SessionID string `json:"sessionID"`
-		Delta     string `json:"delta"`
-		Field     string `json:"field"`
-		Part      struct {
-			Type      string `json:"type"`
-			SessionID string `json:"sessionID"`
-		} `json:"part"`
-		Info struct {
-			Role      string `json:"role"`
-			SessionID string `json:"sessionID"`
-			Error     *struct {
-				Name string `json:"name"`
-				Data struct {
-					Message string `json:"message"`
-				} `json:"data"`
-			} `json:"error"`
-			Tokens struct {
-				Input  int `json:"input"`
-				Output int `json:"output"`
-				Cache  struct {
-					Read int `json:"read"`
-				} `json:"cache"`
-			} `json:"tokens"`
-		} `json:"info"`
-	} `json:"properties"`
-}
-
 // bridgeAttemptResult 是一次尝试的结果。
 type bridgeAttemptResult struct {
 	Text         string
@@ -323,31 +290,6 @@ func bridgeAttempt(
 	//（线上实测一次重试风暴积了 100 个会话）。
 	defer deleteBridgeSession(sessionID)
 
-	// 事件订阅先于发消息：prompt_async 是异步的，反过来会丢掉开头的事件。
-	eventCtx, cancelEvents := context.WithCancel(ctx)
-	defer cancelEvents()
-	eventsReq, err := http.NewRequestWithContext(eventCtx, http.MethodGet, openCodeBridgeAddr+"/event", nil)
-	if err != nil {
-		return bridgeAttemptResult{}, err
-	}
-	eventsReq.Header.Set("Accept", "text/event-stream")
-	eventsResp, err := bridgeHTTP.Do(eventsReq)
-	if err != nil {
-		return bridgeAttemptResult{}, fmt.Errorf("无法订阅桥接事件流：%w", err)
-	}
-	defer eventsResp.Body.Close()
-
-	// 增量从事件流实时送出去（子 goroutine）。
-	deltaCh := make(chan string, 256)
-	var emitted atomic.Bool
-	go readBridgeDeltas(eventsResp.Body, sessionID, func(delta string) {
-		emitted.Store(true)
-		select {
-		case deltaCh <- delta:
-		default:
-		}
-	})
-
 	sendReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		openCodeBridgeAddr+"/session/"+sessionID+"/prompt_async", bytes.NewReader(rawMsg))
 	if err != nil {
@@ -366,53 +308,69 @@ func bridgeAttempt(
 		onAccepted()
 	}
 
-	// 主循环：每秒轮询一次回读；事件增量同时往外送。
+	return bridgePollUntilDone(ctx, sessionID, onDelta)
+}
+
+/*
+bridgePollUntilDone 用短轮询等到会话完成，并把文本增量实时回调出去。
+
+**为什么不用 serve 的事件流（/event）**：早先的实现订阅长连接 SSE 事件。
+三个实测问题把它推翻了：
+
+ 1. **延迟被量化**：完成判定只能等下一个事件，实测所有请求的耗时都是
+    「整秒 + 0.03s」（3.03s / 2.03s / 5.05s）—— 是 1 秒轮询周期的影子；
+ 2. **监听器泄漏**：每次请求订阅一个长连接，serve 的 Node 侧事件监听器
+    不释放（日志里的 MaxListeners 溢出警告），跑得越多越慢；
+ 3. **订阅竞态**：生成可能在订阅生效前就结束（小请求尤甚），
+    idle 事件永远等不到，早先造成过 120 秒卡死。
+
+短轮询直接解决了这三个：250ms 周期、无长连接、无事件依赖。
+增量靠「本轮文本比上轮多出来的部分」算出来 —— 回读是权威数据源。
+*/
+func bridgePollUntilDone(ctx context.Context, sessionID string, onDelta func(string)) (bridgeAttemptResult, error) {
 	ticker := time.NewTicker(bridgePollGap)
 	defer ticker.Stop()
-	var textSent strings.Builder
+
+	var sent strings.Builder
+	emitted := false
+
 	for {
 		select {
-		case delta := <-deltaCh:
-			textSent.WriteString(delta)
-			if onDelta != nil {
-				onDelta(delta)
-			}
-			continue
 		case <-ticker.C:
 		case <-ctx.Done():
 			abortBridgeSession(sessionID)
 			return bridgeAttemptResult{}, ctx.Err()
 		}
-		// 排空增量队列。
-		for {
-			select {
-			case delta := <-deltaCh:
-				textSent.WriteString(delta)
-				if onDelta != nil {
-					onDelta(delta)
-				}
-				continue
-			default:
-			}
-			break
-		}
+
 		text, usage, errText, done, ferr := pollBridgeMessage(ctx, sessionID)
 		if ferr != nil {
 			// 回读失败：serve 可能正在重启。继续轮询，直到超时。
 			continue
 		}
+
+		// 把「已产生但还没送出」的增量发出去。
+		if text != "" && len(text) > sent.Len() && strings.HasPrefix(text, sent.String()) {
+			delta := text[sent.Len():]
+			sent.WriteString(delta)
+			emitted = true
+			if onDelta != nil {
+				onDelta(delta)
+			}
+		}
+
 		if !done {
 			continue
 		}
+
 		result := bridgeAttemptResult{
 			Text:         text,
 			PromptTokens: usage.PromptTokens,
 			OutputTokens: usage.CompletionTokens,
 			CachedTokens: usage.CachedTokens,
-			Emitted:      emitted.Load(),
+			Emitted:      emitted,
 		}
-		if text == "" && textSent.Len() > 0 {
-			result.Text = textSent.String()
+		if result.Text == "" && sent.Len() > 0 {
+			result.Text = sent.String()
 		}
 		if errText != "" {
 			result.UpstreamErr = errors.New(errText)
@@ -421,33 +379,14 @@ func bridgeAttempt(
 	}
 }
 
-// bridgePollGap 是完成判定的回读间隔。
-var bridgePollGap = time.Second
+/*
+bridgePollGap 是完成判定的回读间隔。
 
-// readBridgeDeltas 从事件流里抽本会话的文本增量（忽略其它一切事件）。
-func readBridgeDeltas(body io.Reader, sessionID string, onDelta func(string)) {
-	reader := bufio.NewReaderSize(body, 64<<10)
-	for {
-		line, err := reader.ReadBytes('\n')
-		trimmed := bytes.TrimSpace(line)
-		if bytes.HasPrefix(trimmed, []byte("data:")) {
-			payload := bytes.TrimSpace(bytes.TrimPrefix(trimmed, []byte("data:")))
-			if len(payload) > 0 {
-				var ev bridgeEvent
-				if json.Unmarshal(payload, &ev) == nil &&
-					ev.Type == "message.part.delta" &&
-					ev.Properties.SessionID == sessionID &&
-					ev.Properties.Field == "text" &&
-					ev.Properties.Delta != "" {
-					onDelta(ev.Properties.Delta)
-				}
-			}
-		}
-		if err != nil {
-			return
-		}
-	}
-}
+250ms：本机回环调用，成本极低；它是「最后一个 token 生成完」到
+「网关发现它生成完」之间的最坏延迟 —— 也就是用户感知到的收尾延迟。
+1 秒时实测所有请求耗时都是整秒 + 0.03（量化的影子）。
+*/
+var bridgePollGap = 250 * time.Millisecond
 
 // deleteBridgeSession 删除会话（清理 serve 侧的会话记录）。
 func deleteBridgeSession(sessionID string) {
@@ -499,8 +438,8 @@ func pollBridgeMessage(ctx context.Context, sessionID string) (text string, usag
 	}
 	type message struct {
 		Info struct {
-			Role   string `json:"role"`
-			Error  *struct {
+			Role  string `json:"role"`
+			Error *struct {
 				Data struct {
 					Message string `json:"message"`
 				} `json:"data"`
@@ -734,6 +673,12 @@ func openBridgeStream(
 		finished <- produceErr
 	}()
 
+	/*
+		成功路径把 cancel 交给 openedStream，由读完之后那一方调用 ——
+		这里不能 defer cancel，否则函数一返回就把还在读的流掐断
+		（与 openUpstreamStream 的 kept 模式同一道理，见那里的事故记录）。
+		所有失败路径都显式调用 cancel。
+	*/
 	select {
 	case <-started:
 		// 消息已被 serve 接受，流进入正常转发阶段。
@@ -747,6 +692,7 @@ func openBridgeStream(
 		cancel()
 		return nil, newUpstreamError(0, "OpenCode 桥接服务响应超时（"+openCodeBridgeAddr+"）", true)
 	case <-runCtx.Done():
+		cancel()
 		return nil, newUpstreamError(0, "请求已取消", false)
 	}
 
@@ -765,6 +711,7 @@ bridgeProduceFrames 驱动一次桥接执行并把结果写成 chat-completions 
   - 若增量缺失但回读有文本：整段补一帧
   - 收尾帧（finish_reason=stop，带 usage）
   - data: [DONE]
+
 失败时：错误帧 + [DONE]，并让读取方拿到错误（调用方据此标记渠道失败）。
 */
 func bridgeProduceFrames(
@@ -864,8 +811,8 @@ type bridgeChatChunk struct {
 	Created int64  `json:"created"`
 	Model   string `json:"model"`
 	Choices []struct {
-		Index        int    `json:"index"`
-		Delta        struct {
+		Index int `json:"index"`
+		Delta struct {
 			Role    string `json:"role,omitempty"`
 			Content string `json:"content,omitempty"`
 		} `json:"delta"`
@@ -883,8 +830,8 @@ func bridgeChunk(model, content, role string, finish *string, usage *upstreamUsa
 		Usage:   usage,
 	}
 	choice := struct {
-		Index        int    `json:"index"`
-		Delta        struct {
+		Index int `json:"index"`
+		Delta struct {
 			Role    string `json:"role,omitempty"`
 			Content string `json:"content,omitempty"`
 		} `json:"delta"`
