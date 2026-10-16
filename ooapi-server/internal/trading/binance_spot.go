@@ -44,12 +44,49 @@ func (f *flexFloat) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// SpotBalance 是现货钱包里的一个币种。
+// usdmBaseFor 按网络返回合约主机。现货接口复用它来定位同一把密钥所在的网络 ——
+// 现货主机是固定的，网络只决定这把密钥该配哪台合约主机。
+func usdmBaseFor(network string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(network)) {
+	case ModeTestnet:
+		return BinanceUSDMTestnetBase, nil
+	case ModeLive:
+		return BinanceUSDMLiveBase, nil
+	default:
+		return "", ErrBadMode
+	}
+}
+
+// NewSpotReadClient 打开只读现货客户端：余额读取用它，不下单也不动钱。
+func NewSpotReadClient(network string) (*USDMClient, error) {
+	base, err := usdmBaseFor(network)
+	if err != nil {
+		return nil, err
+	}
+	client := NewUSDMClient(base)
+	client.readOnly = true
+	return client, nil
+}
+
+// NewSpotTransferClient 打开可写现货客户端，**只给钱包划转用**。
+//
+// 与 NewSpotReadClient 的唯一区别是它不是只读的 —— 划转要 POST，
+// 只读客户端会被 doAt 直接拒掉。调用点只许调 Transfer。
+func NewSpotTransferClient(network string) (*USDMClient, error) {
+	base, err := usdmBaseFor(network)
+	if err != nil {
+		return nil, err
+	}
+	return NewUSDMClient(base), nil
+}
+
+// SpotBalance 是现货钱包里的一个币种。带 json tag —— 这个结构体会直接
+// 出现在 API 响应里，没有 tag 的话字段名是大写的。
 type SpotBalance struct {
-	Asset  string
-	Free   float64
-	Locked float64
-	Total  float64
+	Asset  string  `json:"asset"`
+	Free   float64 `json:"free"`
+	Locked float64 `json:"locked"`
+	Total  float64 `json:"total"`
 }
 
 /*

@@ -133,15 +133,9 @@ type DeskAccountBook interface {
 // NewDeskBook 按策略 mode 打开只读客户端。测网和实盘都只发 GET。
 // 实盘下单要另走 NewExchange，并且测网门闩必须已经打开。这里不打开那道门。
 func NewDeskBook(network string) (DeskBook, error) {
-	network = strings.ToLower(strings.TrimSpace(network))
-	var base string
-	switch network {
-	case ModeTestnet:
-		base = BinanceUSDMTestnetBase
-	case ModeLive:
-		base = BinanceUSDMLiveBase
-	default:
-		return nil, ErrBadMode
+	base, err := usdmBaseFor(network)
+	if err != nil {
+		return nil, err
 	}
 	client := NewUSDMClient(base)
 	client.readOnly = true

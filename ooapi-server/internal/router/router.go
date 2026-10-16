@@ -147,6 +147,12 @@ func Setup(cfg *config.Config) *gin.Engine {
 		user.POST("/trading/exchange-keys/:id/revoke", handlers.RevokeExchangeKey)
 		user.DELETE("/trading/exchange-keys/:id", handlers.RevokeExchangeKey)
 
+		// 现货钱包。余额只读，跟着其余只读接口走登录即可。
+		// 划转是动钱的操作，单独挂 option:edit；请求体里没有「划给谁」——
+		// 钱只在当前用户自己绑定的那个交易所账户的两个钱包之间走。
+		user.GET("/trading/spot/balances", handlers.GetSpotBalances)
+		user.POST("/trading/transfer", middleware.RequirePermission(authz.PermOptionEdit), handlers.PostTradingTransfer)
+
 		strategies := user.Group("/trading/strategies", middleware.RequirePermission(authz.PermOptionEdit))
 		{
 			strategies.GET("", handlers.ListTradingStrategies)
