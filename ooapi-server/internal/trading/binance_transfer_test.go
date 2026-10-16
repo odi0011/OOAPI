@@ -60,13 +60,18 @@ func TestTransferMapsDirectionToTheRightEndpointType(t *testing.T) {
 	}{
 		{WalletSpot, WalletFutures, "MAIN_UMFUTURE"},
 		{WalletFutures, WalletSpot, "UMFUTURE_MAIN"},
+		// 资金账户那四个方向同样要能走通 —— 钱经常躺在那里。
+		{WalletSpot, WalletFunding, "MAIN_FUNDING"},
+		{WalletFunding, WalletSpot, "FUNDING_MAIN"},
+		{WalletFutures, WalletFunding, "UMFUTURE_FUNDING"},
+		{WalletFunding, WalletFutures, "FUNDING_UMFUTURE"},
 		// 大小写与空白不该改变方向。
 		{" Spot ", WalletFutures, "MAIN_UMFUTURE"},
 		{"FUTURES", WalletSpot, "UMFUTURE_MAIN"},
 	} {
 		t.Run(tt.from+"→"+tt.to, func(t *testing.T) {
 			c, fake := newTransferClient(t)
-			got, err := c.Transfer(TransferRequest{From: tt.from, Asset: "usdt", Amount: 2})
+			got, err := c.Transfer(TransferRequest{From: tt.from, To: tt.to, Asset: "usdt", Amount: 2})
 			if err != nil {
 				t.Fatalf("划转失败: %v", err)
 			}
@@ -111,7 +116,7 @@ func TestTransferMapsDirectionToTheRightEndpointType(t *testing.T) {
 */
 func TestTransferSignatureCoversTheSentParameters(t *testing.T) {
 	c, fake := newTransferClient(t)
-	if _, err := c.Transfer(TransferRequest{From: WalletSpot, Asset: "USDT", Amount: 1.25}); err != nil {
+	if _, err := c.Transfer(TransferRequest{From: WalletSpot, To: WalletFutures, Asset: "USDT", Amount: 1.25}); err != nil {
 		t.Fatalf("划转失败: %v", err)
 	}
 	sig := fake.query.Get("signature")
@@ -140,13 +145,17 @@ func TestTransferRejectsBadInput(t *testing.T) {
 		name string
 		req  TransferRequest
 	}{
-		{"方向不合法", TransferRequest{From: "wallet", Asset: "USDT", Amount: 1}},
-		{"方向为空", TransferRequest{Asset: "USDT", Amount: 1}},
-		{"资产为空", TransferRequest{From: WalletSpot, Amount: 1}},
-		{"数量为零", TransferRequest{From: WalletSpot, Asset: "USDT", Amount: 0}},
-		{"数量为负", TransferRequest{From: WalletSpot, Asset: "USDT", Amount: -1}},
-		{"数量为 NaN", TransferRequest{From: WalletSpot, Asset: "USDT", Amount: math.NaN()}},
-		{"数量为 Inf", TransferRequest{From: WalletSpot, Asset: "USDT", Amount: math.Inf(1)}},
+		{"起点不合法", TransferRequest{From: "wallet", To: WalletFutures, Asset: "USDT", Amount: 1}},
+		{"起点为空", TransferRequest{To: WalletFutures, Asset: "USDT", Amount: 1}},
+		{"终点为空", TransferRequest{From: WalletSpot, Asset: "USDT", Amount: 1}},
+		{"终点不合法", TransferRequest{From: WalletSpot, To: "储蓄罐", Asset: "USDT", Amount: 1}},
+		// 同钱包互划要拦在本地：币安那边报的错看不懂，而且这种请求没有意义。
+		{"起终点相同", TransferRequest{From: WalletSpot, To: WalletSpot, Asset: "USDT", Amount: 1}},
+		{"资产为空", TransferRequest{From: WalletSpot, To: WalletFutures, Amount: 1}},
+		{"数量为零", TransferRequest{From: WalletSpot, To: WalletFutures, Asset: "USDT", Amount: 0}},
+		{"数量为负", TransferRequest{From: WalletSpot, To: WalletFutures, Asset: "USDT", Amount: -1}},
+		{"数量为 NaN", TransferRequest{From: WalletSpot, To: WalletFutures, Asset: "USDT", Amount: math.NaN()}},
+		{"数量为 Inf", TransferRequest{From: WalletSpot, To: WalletFutures, Asset: "USDT", Amount: math.Inf(1)}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			c, fake := newTransferClient(t)
@@ -199,10 +208,27 @@ func TestTransferRefusesRealBinanceSpotHostOnNonLiveClient(t *testing.T) {
 // 端点常量本身也要守住：MAIN_UMFUTURE / UMFUTURE_MAIN 是币安定的字符串，
 // 改一个字就会划错方向或直接 400。
 func TestTransferTypeConstants(t *testing.T) {
-	if transferSpotToFutures != "MAIN_UMFUTURE" {
-		t.Fatalf("现货→合约的方向常量被改动: %q", transferSpotToFutures)
+	for _, tt := range []struct{ got, want string }{
+		{transferSpotToFutures, "MAIN_UMFUTURE"},
+		{transferFuturesToSpot, "UMFUTURE_MAIN"},
+		{transferSpotToFunding, "MAIN_FUNDING"},
+		{transferFundingToSpot, "FUNDING_MAIN"},
+		{transferFuturesToFunding, "UMFUTURE_FUNDING"},
+		{transferFundingToFutures, "FUNDING_UMFUTURE"},
+	} {
+		if tt.got != tt.want {
+			t.Fatalf("方向常量被改动: %q 期望 %q —— 改一个字就把钱划到对面", tt.got, tt.want)
+		}
 	}
-	if transferFuturesToSpot != "UMFUTURE_MAIN" {
-		t.Fatalf("合约→现货的方向常量被改动: %q", transferFuturesToSpot)
+	// 六个方向一个不少，且没有重复（重复意味着某两个组合走了同一条路）。
+	seen := map[string]string{}
+	for pair, kind := range transferTypes {
+		if prev, dup := seen[kind]; dup {
+			t.Fatalf("%s→%s 与 %s 用了同一个 type %q", pair[0], pair[1], prev, kind)
+		}
+		seen[kind] = pair[0] + "→" + pair[1]
+	}
+	if len(transferTypes) != 6 {
+		t.Fatalf("三个钱包两两组合应恰好 6 个方向，得到 %d", len(transferTypes))
 	}
 }

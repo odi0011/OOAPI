@@ -86,7 +86,8 @@ func GetSpotBalances(c *gin.Context) {
 }
 
 type transferRequest struct {
-	From   string  `json:"from"`   // spot | futures
+	From   string  `json:"from"`   // spot | funding | futures
+	To     string  `json:"to"`     // spot | funding | futures
 	Asset  string  `json:"asset"`  // 例如 USDT
 	Amount float64 `json:"amount"` // 正数
 }
@@ -118,6 +119,7 @@ func PostTradingTransfer(c *gin.Context) {
 	}
 	result, err := client.Transfer(trading.TransferRequest{
 		From:   strings.TrimSpace(req.From),
+		To:     strings.TrimSpace(req.To),
 		Asset:  req.Asset,
 		Amount: req.Amount,
 	})

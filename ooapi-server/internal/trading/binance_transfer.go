@@ -35,21 +35,56 @@ const BinanceSpotLiveBase = "https://api.binance.com"
 // 互不连通，所以现货测网的密钥在合约测网上用不了，反之亦然。
 const BinanceSpotTestnetBase = "https://testnet.binance.vision"
 
-// 钱包方向。
+/*
+钱包。币安有三个，账号里的钱分散在它们里面：
+
+	· spot    现货账户
+	· funding 资金账户 —— P2P 与币安支付的落点。**最容易漏掉的一个**：
+	          它不在 /api/v3/account 里，只看现货会以为钱"不见了"
+	· futures USDT-M 合约账户
+
+三个钱包之间两两可划，共六种方向。
+*/
 const (
 	WalletSpot    = "spot"
+	WalletFunding = "funding"
 	WalletFutures = "futures"
 )
 
-// 币安 universal transfer 的方向常量。写反了会把钱划到对面，所以用常量而不是字符串字面量。
+// 币安 universal transfer 的方向常量。
 const (
-	transferSpotToFutures = "MAIN_UMFUTURE"
-	transferFuturesToSpot = "UMFUTURE_MAIN"
+	transferSpotToFutures    = "MAIN_UMFUTURE"
+	transferFuturesToSpot    = "UMFUTURE_MAIN"
+	transferSpotToFunding    = "MAIN_FUNDING"
+	transferFundingToSpot    = "FUNDING_MAIN"
+	transferFuturesToFunding = "UMFUTURE_FUNDING"
+	transferFundingToFutures = "FUNDING_UMFUTURE"
 )
 
+/*
+transferTypes 是「从哪个钱包到哪个钱包」→ 币安类型常量的表。
+
+写成表而不是 if-else 链，是因为**方向写反就是把钱划到对面**：
+表能一眼核对完六种组合，而且漏掉的组合会直接查不到（报错），
+不会悄悄走成别的方向 —— if-else 的 else 分支很容易写成兜底。
+*/
+var transferTypes = map[[2]string]string{
+	{WalletSpot, WalletFutures}:    transferSpotToFutures,
+	{WalletFutures, WalletSpot}:    transferFuturesToSpot,
+	{WalletSpot, WalletFunding}:    transferSpotToFunding,
+	{WalletFunding, WalletSpot}:    transferFundingToSpot,
+	{WalletFutures, WalletFunding}: transferFuturesToFunding,
+	{WalletFunding, WalletFutures}: transferFundingToFutures,
+}
+
 // TransferRequest 一次划转请求。
+//
+// From 与 To 都要写全 —— 之前只有 From、由方向推导出 To，那是建立在
+// "只有现货与合约两个钱包"的假设上的。加上资金账户之后，同一对起点
+// 有两个可能的终点，必须显式说清去哪儿。
 type TransferRequest struct {
-	From   string  // WalletSpot | WalletFutures
+	From   string  // WalletSpot | WalletFunding | WalletFutures
+	To     string  // WalletSpot | WalletFunding | WalletFutures
 	Asset  string  // 例如 "USDT"
 	Amount float64 // 正数
 }
@@ -77,9 +112,9 @@ func (c *USDMClient) SetSpotBaseForTest(base string) {
 spotTarget 决定这次现货请求打到哪个主机。
 
 取值顺序：
-  1. spotBase（划转与现货余额用的显式出口，测试可以覆盖）；
-  2. 否则，客户端自己的 base —— 现货交易客户端的 base 就是现货主机；
-  3. 再否则，币安现货主机。
+ 1. spotBase（划转与现货余额用的显式出口，测试可以覆盖）；
+ 2. 否则，客户端自己的 base —— 现货交易客户端的 base 就是现货主机；
+ 3. 再否则，币安现货主机。
 
 **网络必须一致**：密钥是按网络配的（testnet 的密钥在实盘主机上必然鉴权失败）。
 目标若是真币安现货主机而客户端网络对不上，就在发请求之前说清楚，
@@ -151,14 +186,19 @@ func (c *USDMClient) Transfer(req TransferRequest) (TransferResult, error) {
 	}
 
 	from := strings.ToLower(strings.TrimSpace(req.From))
-	switch from {
-	case WalletSpot:
-		out.From, out.To = WalletSpot, WalletFutures
-	case WalletFutures:
-		out.From, out.To = WalletFutures, WalletSpot
-	default:
-		return out, invalid("划转方向只能是 spot 或 futures")
+	to := strings.ToLower(strings.TrimSpace(req.To))
+	if to == "" {
+		return out, invalid("划转必须指定目标钱包")
 	}
+	if from == to {
+		return out, invalid("划转的起点和终点不能是同一个钱包")
+	}
+	kind, ok := transferTypes[[2]string{from, to}]
+	if !ok {
+		return out, invalid("不支持的钱包方向：" + from + " → " + to +
+			"（可用：spot / funding / futures 之间的两两组合）")
+	}
+	out.From, out.To = from, to
 	if out.Asset == "" {
 		return out, invalid("划转必须指定资产")
 	}
@@ -166,10 +206,6 @@ func (c *USDMClient) Transfer(req TransferRequest) (TransferResult, error) {
 		return out, invalid("划转数量必须是有限正数")
 	}
 
-	kind := transferSpotToFutures
-	if from == WalletFutures {
-		kind = transferFuturesToSpot
-	}
 	params := url.Values{}
 	params.Set("type", kind)
 	params.Set("asset", out.Asset)

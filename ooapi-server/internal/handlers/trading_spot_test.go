@@ -166,17 +166,22 @@ func TestGetSpotBalancesSurvivesFundingFailure(t *testing.T) {
 // type 常量各写一份、写歪一个。
 func TestPostTradingTransferPassesDirectionThrough(t *testing.T) {
 	for _, tt := range []struct {
-		from, want string
+		from, to, want string
 	}{
-		{"spot", "MAIN_UMFUTURE"},
-		{"futures", "UMFUTURE_MAIN"},
+		{"spot", "futures", "MAIN_UMFUTURE"},
+		{"futures", "spot", "UMFUTURE_MAIN"},
+		// 资金账户那四个方向 —— 钱经常躺在那里，这是最常用的一组。
+		{"funding", "futures", "FUNDING_UMFUTURE"},
+		{"futures", "funding", "UMFUTURE_FUNDING"},
+		{"funding", "spot", "FUNDING_MAIN"},
+		{"spot", "funding", "MAIN_FUNDING"},
 	} {
-		t.Run(tt.from, func(t *testing.T) {
+		t.Run(tt.from+"→"+tt.to, func(t *testing.T) {
 			fake := &spotHandlerFake{body: `{"tranId": 555}`}
 			owner := spotFixture(t, fake)
 
 			rec := callTrading(t, PostTradingTransfer, http.MethodPost, "/api/trading/transfer",
-				`{"from":"`+tt.from+`","asset":"USDT","amount":2.5}`, owner, "")
+				`{"from":"`+tt.from+`","to":"`+tt.to+`","asset":"USDT","amount":2.5}`, owner, "")
 			if rec.Code != http.StatusOK {
 				t.Fatalf("HTTP %d body=%s", rec.Code, rec.Body.String())
 			}
@@ -193,8 +198,8 @@ func TestPostTradingTransferPassesDirectionThrough(t *testing.T) {
 			if data["tranId"] != float64(555) {
 				t.Fatalf("tranId=%v", data["tranId"])
 			}
-			if data["from"] != tt.from {
-				t.Fatalf("回执里的 from 该是请求里的方向: %v", data["from"])
+			if data["from"] != tt.from || data["to"] != tt.to {
+				t.Fatalf("回执里的起终点该与请求一致: from=%v to=%v", data["from"], data["to"])
 			}
 			assertNoPlainSecret(t, data)
 		})
@@ -228,7 +233,7 @@ func TestSpotHandlersRequireUser(t *testing.T) {
 	}
 
 	rec = callTrading(t, PostTradingTransfer, http.MethodPost, "/api/trading/transfer",
-		`{"from":"spot","asset":"USDT","amount":1}`, nil, "")
+		`{"from":"funding","to":"futures","asset":"USDT","amount":1}`, nil, "")
 	if rec.Code == http.StatusOK {
 		t.Fatalf("未登录不该成功: %d", rec.Code)
 	}
