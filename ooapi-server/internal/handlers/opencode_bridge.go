@@ -43,6 +43,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -741,7 +742,7 @@ func openBridgeStream(
 		if err == nil {
 			err = errors.New("桥接流在建立阶段就结束了")
 		}
-		return nil, newUpstreamError(0, "OpenCode 桥接失败："+err.Error(), true)
+		return nil, bridgeUpstreamError(err)
 	case <-time.After(bridgeOpenTimeout):
 		cancel()
 		return nil, newUpstreamError(0, "OpenCode 桥接服务响应超时（"+openCodeBridgeAddr+"）", true)
@@ -828,7 +829,7 @@ func bridgeForwardJSON(
 	}
 	result, err := bridgeExecute(ctx, chatReq, upstreamModel, nil, nil)
 	if err != nil {
-		return nil, upstreamUsage{}, newUpstreamError(0, "OpenCode 桥接失败："+err.Error(), true)
+		return nil, upstreamUsage{}, bridgeUpstreamError(err)
 	}
 	if result.UpstreamErr != nil {
 		return nil, upstreamUsage{}, newUpstreamError(502,
@@ -963,4 +964,176 @@ func truncateText(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+/*
+probeChannelViaBridge 通过本机桥接做连通性测试。
+
+存在的理由：OpenCode 官方域渠道**直连上游必然被客户端校验拒绝（403）**。
+「测试」按钮如果走直连，会把可用的桥接渠道误判成坏账号并自动禁用
+（线上实测踩过：渠道被测试按钮打进了 auto 禁用）。因此桥接渠道的测试
+必须与正式转发走同一条链路 —— 测什么用什么，口径一致。
+
+返回的 Fatal 语义与直连探测对齐：上游明确拒绝 → 值得自动禁用；
+桥接进程不可达 → 环境问题，不自动禁用（重启 serve 即可恢复）。
+*/
+func probeChannelViaBridge(vendor, baseURL, model string) probeResult {
+	start := time.Now()
+	if strings.TrimSpace(model) == "" {
+		model = "deepseek-v4.1-flash-free"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
+	defer cancel()
+
+	// 探测频道只需要 Vendor/BaseURL/Models：UpstreamModelFor 对直接命中的
+	// 模型原样返回，与正式转发对同一个账号的解析一致。
+	probeCh := &services.UpstreamChannel{
+		Name:    "桥接自测",
+		Vendor:  vendor,
+		BaseURL: baseURL,
+		Models:  []string{model},
+	}
+	body, _ := json.Marshal(map[string]any{
+		"model":      model,
+		"messages":   []map[string]string{{"role": "user", "content": "hi"}},
+		"max_tokens": 16,
+		"stream":     false,
+	})
+	raw, _, err := bridgeForwardJSON(ctx, probeCh, body, model)
+	total := int(time.Since(start).Milliseconds())
+	if err != nil {
+		fatal := true
+		if strings.Contains(err.Error(), "无法连接 OpenCode 桥接服务") {
+			// 桥接进程不在：网关侧的环境问题，重启 opencode-bridge 即可。
+			// 把账号标成坏账号会让管理员越修越乱。
+			fatal = false
+		}
+		return probeResult{TotalMs: total, Error: "桥接链路：" + err.Error(), Fatal: fatal}
+	}
+
+	var parsed struct {
+		Model   string `json:"model"`
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal(raw, &parsed) != nil || len(parsed.Choices) == 0 {
+		return probeResult{TotalMs: total, Error: "桥接返回的响应无法解析", Fatal: true}
+	}
+	// 非流式拿不到真实首字耗时，与直连探测同一口径（用总耗时近似）。
+	return probeResult{
+		OK:      true,
+		TTFTMs:  total,
+		TotalMs: total,
+		Reply:   truncate(parsed.Choices[0].Message.Content, 200),
+		Model:   model,
+	}
+}
+
+/*
+bridgeUpstreamModels 从本机 serve 读模型列表。
+
+桥接渠道的「从上游获取模型列表」不能直连上游（同样 403）。
+serve 的 /config/providers 带有官方模型目录（含全部免费与付费条目），
+用它来填表单即可 —— 管理员按需勾选，不需要自己敲模型名。
+*/
+func bridgeUpstreamModels() ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, openCodeBridgeAddr+"/config/providers", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := bridgeHTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("无法连接 OpenCode 桥接服务（%s）：%w", openCodeBridgeAddr, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("桥接服务返回 HTTP %d", resp.StatusCode)
+	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+
+	var parsed struct {
+		Providers []struct {
+			ID     string                     `json:"id"`
+			Models map[string]json.RawMessage `json:"models"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, errors.New("桥接服务返回的模型目录无法解析")
+	}
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, p := range parsed.Providers {
+		if !strings.EqualFold(p.ID, "opencode") {
+			continue
+		}
+		for id := range p.Models {
+			name := strings.TrimSpace(id)
+			if name == "" {
+				continue
+			}
+			if _, dup := seen[name]; dup {
+				continue
+			}
+			seen[name] = struct{}{}
+			out = append(out, name)
+		}
+	}
+	if len(out) == 0 {
+		return nil, errors.New("桥接服务的模型目录为空")
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+/*
+channelVendorForFetch 推断「拉取模型」请求对应的厂商。
+
+请求里可能只带 base_url（新建账号表单还没落库），也可能只带 id
+（编辑已有账号）。桥接识别需要厂商与地址两项，因此：
+  - id > 0 时用库里的厂商（权威）；
+  - 否则按地址推断：opencode.ai 域一律算 opencode（该域下只有这一家）。
+*/
+func channelVendorForFetch(id int64, baseURL string) string {
+	if id > 0 {
+		if ch, err := channelByID(id); err == nil && strings.TrimSpace(ch.Vendor) != "" {
+			return ch.Vendor
+		}
+	}
+	if services.IsOpenCodeUpstreamHost(baseURL) {
+		return "opencode"
+	}
+	return ""
+}
+
+/*
+bridgeUpstreamError 把桥接链路错误分类成上游错误。
+
+**客户端取消不能给账号上冷却**：用户在客户端按 Esc、切换模型或读超时，
+都会让请求 context 取消，进而中止 serve 侧的生成。那不代表账号有问题 ——
+早先统一按「可冷却」处理，实测把好账号打进了小黑屋（日志里
+"OpenCode 桥接失败：context canceled" 后紧跟非流式静默等待）。
+
+分类规则：
+  - context 取消/超时 → 不冷却（是调用方或本机链路的时序问题）；
+  - serve 不可达（进程没起来）→ 不冷却，但返回可读的运维提示
+    （把账号标坏会让管理员去查账号，而真正要修的是 serve 服务）；
+  - 其余（serve 返回 5xx、协议异常等）→ 冷却，值得换账号重试。
+*/
+func bridgeUpstreamError(err error) *upstreamError {
+	if err == nil {
+		return newUpstreamError(0, "OpenCode 桥接失败", false)
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return newUpstreamError(0, "请求已取消或超时（客户端断开/读超时）", false)
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "无法连接 OpenCode 桥接服务") || strings.Contains(msg, "桥接服务响应超时") {
+		return newUpstreamError(0, "OpenCode 桥接服务不可用（请检查 opencode-bridge 服务是否在运行）："+msg, false)
+	}
+	return newUpstreamError(0, "OpenCode 桥接失败："+msg, true)
 }

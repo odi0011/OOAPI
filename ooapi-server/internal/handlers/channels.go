@@ -787,11 +787,37 @@ func AdminTestChannel(c *gin.Context) {
 			probeModel = deviceProbeModel(ch.Method)
 		}
 	}
-	probe := ProbeChannelForMethod(baseURL, apiKey, probeModel, headersRaw, proxyURL, ch.Method)
-	now := time.Now()
+	/*
+		OpenCode 官方域渠道的测试走本机桥接，而不是直连上游。
 
+		直连必然被上游的客户端校验拒绝（403 FreeTierError）——
+		测试按钮会把一个完全可用的渠道判成坏账号并自动禁用
+		（线上实测踩过：渠道 7 被测试按钮打进了 auto 禁用）。
+		桥接渠道的测试必须与正式转发走同一条链路。
+	*/
+	probeCh := &services.UpstreamChannel{Vendor: ch.Vendor, BaseURL: baseURL, Models: []string{probeModel}}
+	if services.UsesOpenCodeBridge(probeCh) {
+		probe := probeChannelViaBridge(ch.Vendor, baseURL, probeModel)
+		now := time.Now()
+		applyChannelProbeResult(c, id, ch, probe, now)
+		return
+	}
+	probe := ProbeChannelForMethod(baseURL, apiKey, probeModel, headersRaw, proxyURL, ch.Method)
+	applyChannelProbeResult(c, id, ch, probe, time.Now())
+}
+
+/*
+applyChannelProbeResult 把一次探测结果写回账号并回应管理端。
+
+抽成函数的原因：桥接渠道与直连渠道的探测方式完全不同（桥接走本机 serve），
+但**结果处理必须逐字一致** —— 两条路径如果在「自动禁用/自动恢复」上有
+分歧，就会出现「同一账号测两次结论不同」这种最难排查的问题。
+
+c 为空时只落库不回应（供后台自检复用）；正常测试传 gin 上下文。
+*/
+func applyChannelProbeResult(c *gin.Context, id int64, ch *Channel, probe probeResult, now time.Time) {
 	if probe.OK {
-		_, err = exec(
+		_, err := exec(
 			`UPDATE channels
 			 SET response_time = ?, ttft_ms = ?, last_test_at = ?, last_error = '', cooldown_until = NULL
 			 WHERE id = ?`,
@@ -814,13 +840,15 @@ func AdminTestChannel(c *gin.Context) {
 		log.Printf("[channel] 账号「%s」测试通过（首Token %dms / 总 %dms）",
 			ch.Name, probe.TTFTMs, probe.TotalMs)
 
-		ok(c, gin.H{
-			"success":  true,
-			"ttft_ms":  probe.TTFTMs,
-			"total_ms": probe.TotalMs,
-			"reply":    probe.Reply,
-			"model":    probe.Model,
-		})
+		if c != nil {
+			ok(c, gin.H{
+				"success":  true,
+				"ttft_ms":  probe.TTFTMs,
+				"total_ms": probe.TotalMs,
+				"reply":    probe.Reply,
+				"model":    probe.Model,
+			})
+		}
 		return
 	}
 
@@ -850,6 +878,9 @@ func AdminTestChannel(c *gin.Context) {
 
 	log.Printf("[channel] 账号「%s」测试失败: %s", ch.Name, probe.Error)
 
+	if c == nil {
+		return
+	}
 	msg := "账号不可用：" + probe.Error
 	if shouldDisable {
 		msg += "（已自动禁用）"
@@ -958,6 +989,23 @@ func AdminFetchModels(c *gin.Context) {
 	// 与创建账号同样的 SSRF 校验 —— 这个接口会真的去请求该地址。
 	if _, err := netguard.AssertPublicURL(base); err != nil {
 		fail(c, http.StatusBadRequest, "接口地址不可用："+err.Error(), "invalid_url")
+		return
+	}
+
+	/*
+		OpenCode 官方域渠道的模型列表从本机桥接读。
+
+		直连上游取列表同样会被客户端校验拒绝（403）——「从上游获取模型列表」
+		会让管理员以为账号有问题。serve 的模型目录（/config/providers）
+		就是官方客户端看到的同一份，用它填表单口径一致。
+	*/
+	if services.UsesOpenCodeBridge(&services.UpstreamChannel{Vendor: channelVendorForFetch(req.ID, base), BaseURL: base}) {
+		models, err := bridgeUpstreamModels()
+		if err != nil {
+			fail(c, http.StatusBadGateway, "从桥接服务读取模型列表失败："+err.Error(), "fetch_failed")
+			return
+		}
+		ok(c, gin.H{"models": models, "count": len(models)})
 		return
 	}
 
