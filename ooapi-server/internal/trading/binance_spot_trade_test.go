@@ -18,6 +18,7 @@ type spotTradeFake struct {
 	calls      []spotCall
 	balances   string
 	orderResp  string
+	cancelBody string
 	cancelCode int // 非 0 时撤单返回这个币安错误码
 }
 
@@ -47,7 +48,11 @@ func (f *spotTradeFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(`{"code":` + strconvItoa(f.cancelCode) + `,"msg":"Unknown order sent."}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{}`))
+		body := f.cancelBody
+		if body == "" {
+			body = `{}`
+		}
+		_, _ = w.Write([]byte(body))
 	case r.URL.Path == "/api/v3/order" && r.Method == http.MethodPost:
 		body := f.orderResp
 		if body == "" {
@@ -334,6 +339,60 @@ func TestParseSpotRulesRejectsNonTradingStatus(t *testing.T) {
 		"filters":[{"filterType":"LOT_SIZE","stepSize":"0.1"}]}]}`)
 	if _, err := parseSpotRules(body, "XRPUSDT"); err == nil {
 		t.Fatal("暂停交易的交易对必须被拒")
+	}
+}
+
+/*
+撤保护单要把**撤掉的订单号**回给引擎。
+
+引擎拿这些 id 写事件（"撤掉了哪几张"），所以只回个 nil 是不够的 ——
+事件里会变成"撤了 0 张"，而实际上撤掉了。
+*/
+func TestSpotCancelProtectiveReturnsCancelledIDs(t *testing.T) {
+	fake := &spotTradeFake{cancelBody: `[{"orderId":11},{"orderId":22}]`}
+	c := newSpotTradeClient(t, fake)
+	ids, err := c.CancelSpotProtective("DOGEUSDT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 || ids[0] != 11 || ids[1] != 22 {
+		t.Fatalf("应回被撤的订单号 [11 22]，得到 %v", ids)
+	}
+}
+
+// 没有挂单（-2011）时回空集合，不是错误 —— 目标是"撤干净"。
+func TestSpotCancelProtectiveNoOrdersIsEmpty(t *testing.T) {
+	fake := &spotTradeFake{cancelCode: -2011}
+	c := newSpotTradeClient(t, fake)
+	ids, err := c.CancelSpotProtective("DOGEUSDT")
+	if err != nil {
+		t.Fatalf("-2011（没有挂单）应视为成功，得到 %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("应回空集合，得到 %v", ids)
+	}
+}
+
+func TestSpotCancelProtectiveSurfacesOtherErrors(t *testing.T) {
+	fake := &spotTradeFake{cancelCode: -1121}
+	c := newSpotTradeClient(t, fake)
+	if _, err := c.CancelSpotProtective("DOGEUSDT"); err == nil {
+		t.Fatal("非 -2011 的错误必须透出")
+	}
+}
+
+// SpotExchange.CancelProtective 忽略方向参数 —— 现货一个交易对只有一个方向。
+func TestSpotExchangeCancelProtectiveIgnoresSide(t *testing.T) {
+	fake := &spotTradeFake{cancelBody: `[{"orderId":7}]`}
+	ex := &SpotExchange{c: newSpotTradeClient(t, fake)}
+	for _, side := range []Side{SideLong, SideShort} {
+		ids, err := ex.CancelProtective("DOGEUSDT", side)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ids) != 1 || ids[0] != 7 {
+			t.Fatalf("side=%s 应撤到同一批单，得到 %v", side, ids)
+		}
 	}
 }
 

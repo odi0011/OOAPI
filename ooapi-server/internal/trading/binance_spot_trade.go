@@ -409,6 +409,42 @@ func (c *USDMClient) CancelSpotOpen(symbol string) error {
 }
 
 /*
+CancelSpotProtective 撤掉该交易对的全部挂单，并把撤掉的订单号回给调用方。
+
+现货没有「持仓方向」这个维度 —— 一个交易对上只会有一个方向，保护单就是
+那些 SELL 挂单，要撤就一起撤。币安的 DELETE /api/v3/openOrders 会返回
+被撤订单的数组，引擎拿这些 id 写事件（"撤掉了哪几张"）。
+
+没有挂单时币安回 -2011，当成功处理：目标是"撤干净"，本来就干净不该算失败。
+*/
+func (c *USDMClient) CancelSpotProtective(symbol string) ([]int64, error) {
+	if c == nil {
+		return nil, invalid("交易所客户端未初始化")
+	}
+	params := url.Values{}
+	params.Set("symbol", strings.ToUpper(strings.TrimSpace(symbol)))
+	body, err := c.signed(http.MethodDelete, "/api/v3/openOrders", params)
+	if err != nil {
+		if errors.Is(err, errNoOpenOrder) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var rows []struct {
+		OrderID int64 `json:"orderId"`
+	}
+	// 解析不出来就当"没撤到东西"，不把一次已经成功的撤销判成失败。
+	_ = json.Unmarshal(body, &rows)
+	out := make([]int64, 0, len(rows))
+	for _, r := range rows {
+		if r.OrderID > 0 {
+			out = append(out, r.OrderID)
+		}
+	}
+	return out, nil
+}
+
+/*
 SpotExchange 把现货方法适配成 Exchange 接口，好让引擎的状态机复用。
 
 为什么要有这层薄壳：引擎认的是 PlaceEntry/Close/Position 这组名字，
@@ -441,6 +477,13 @@ func (s *SpotExchange) PlaceProtection(req Protection) error     { return s.c.Pl
 func (s *SpotExchange) Close(req CloseOrder) (Fill, error)       { return s.c.CloseSpot(req) }
 func (s *SpotExchange) CancelOpen(symbol string) error           { return s.c.CancelSpotOpen(symbol) }
 func (s *SpotExchange) Position(symbol string) (Position, error) { return s.c.SpotPosition(symbol) }
+
+// CancelProtective 撤掉孤儿保护单。引擎在平仓与对账之后调它。
+// 参数里的持仓方向现货用不上 —— 一个交易对上只有一个方向 —— 忽略即可。
+func (s *SpotExchange) CancelProtective(symbol string, _ Side) ([]int64, error) {
+	return s.c.CancelSpotProtective(symbol)
+}
+
 func (s *SpotExchange) Rules(symbol string) (MarketRules, error) {
 	r, err := s.c.spotRulesFor(symbol)
 	return r.MarketRules, err
