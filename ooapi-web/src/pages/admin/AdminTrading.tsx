@@ -38,6 +38,7 @@ import {
   type StrategyWrite,
   type Timeframe,
   type TradingNetwork,
+  type TradingMarket,
 } from "./tradingApi";
 import {
   MAX_STRATEGY_LEVERAGE,
@@ -104,6 +105,8 @@ interface StrategyDraft {
   maxMarginUsdt: number;
   exchangeKeyId: number | null;
   mode: TradingNetwork;
+  /** 合约或现货。与 mode 正交。 */
+  market: TradingMarket;
   minScore: number;
   minWinRate: number;
   minTrades: number;
@@ -132,6 +135,7 @@ const DEFAULT_DRAFT: StrategyDraft = {
   maxMarginUsdt: 1.7,
   exchangeKeyId: DEFAULT_EXCHANGE_KEY_ID,
   mode: DEFAULT_STRATEGY_MODE,
+  market: "futures",
   minScore: DEFAULT_MIN_SCORE,
   minWinRate: DEFAULT_MIN_WIN_RATE,
   minTrades: DEFAULT_MIN_TRADES,
@@ -183,6 +187,8 @@ function draftFromStrategy(item: Strategy): StrategyDraft {
     maxMarginUsdt: clamp(item.maxMarginUsdt, 0.1, 100, DEFAULT_DRAFT.maxMarginUsdt),
     exchangeKeyId: item.exchangeKeyId > 0 ? item.exchangeKeyId : DEFAULT_EXCHANGE_KEY_ID,
     mode: item.mode === "live" ? "live" : DEFAULT_STRATEGY_MODE,
+    // 后端对老策略回的是 "futures"；这里只认 spot，其余一律按合约。
+    market: item.market === "spot" ? "spot" : "futures",
     minScore: clamp(Math.round(item.minScore), 1, MAX_TREND_SCORE, DEFAULT_DRAFT.minScore),
     minWinRate: clamp(item.minWinRate, 0, 1, DEFAULT_DRAFT.minWinRate),
     minTrades: clamp(Math.round(item.minTrades), 1, 10000, DEFAULT_DRAFT.minTrades),
@@ -220,6 +226,7 @@ function toWrite(draft: StrategyDraft): StrategyWrite {
     maxMarginUsdt: round4(draft.maxMarginUsdt),
     exchangeKeyId: draft.exchangeKeyId ?? DEFAULT_EXCHANGE_KEY_ID,
     mode: draft.mode === "live" ? "live" : DEFAULT_STRATEGY_MODE,
+    market: draft.market === "spot" ? "spot" : "futures",
     minScore: Math.round(draft.minScore),
     minWinRate: round4(draft.minWinRate),
     minTrades: Math.round(draft.minTrades),
@@ -372,6 +379,15 @@ export default function AdminTrading() {
       return;
     }
     patch({ mode: "testnet" });
+  }
+
+  function onMarketChange(next: string) {
+    // 现货没有杠杆：切过去时把杠杆显示成 1，别让界面留着一个用不上的 20x。
+    if (next === "spot") {
+      patch({ market: "spot", leverage: 1, marginMode: "isolated" });
+      return;
+    }
+    patch({ market: "futures" });
   }
 
   function confirmLive() {
@@ -529,6 +545,29 @@ export default function AdminTrading() {
                 </p>
               </header>
               <div className={sectionStyles.rows}>
+                {/* 市场排在环境之前 —— 它决定后面哪些字段有意义（现货没有杠杆）。 */}
+                <div className={sectionStyles.row} data-field="market">
+                  <div className={sectionStyles.rowText}>
+                    <strong>合约 / 现货</strong>
+                    <p>现货只能做多、没有杠杆。两条轴可以自由组合：合约测网、现货实盘都行。</p>
+                  </div>
+                  <div className={sectionStyles.rowControl}>
+                    <SegmentedControl
+                      label="交易市场"
+                      value={draft.market}
+                      onValueChange={onMarketChange}
+                      options={[
+                        { value: "futures", label: "合约" },
+                        { value: "spot", label: "现货" },
+                      ]}
+                    />
+                    <p className={styles.envNote} data-market={draft.market}>
+                      {draft.market === "spot"
+                        ? "现货只能做多：做空信号会被跳过，不会反手建多头。杠杆固定为 1，止损用触发价 + 限价的组合单。"
+                        : "合约可多可空，杠杆按下面的设置。保护单是交易所侧的止损单。"}
+                    </p>
+                  </div>
+                </div>
                 <div className={sectionStyles.row} data-field="mode">
                   <div className={sectionStyles.rowText}>
                     <strong>测网 / 实盘</strong>

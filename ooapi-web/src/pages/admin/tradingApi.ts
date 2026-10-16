@@ -79,6 +79,8 @@ export interface Strategy {
   maxMarginUsdt: number;
   exchangeKeyId: number;
   mode: TradingNetwork;
+  /** 合约或现货。缺省（老策略）按合约。 */
+  market?: TradingMarket;
   minScore: number;
   minWinRate: number;
   minTrades: number;
@@ -122,6 +124,8 @@ export interface StrategyWrite {
   maxMarginUsdt: number;
   exchangeKeyId: number;
   mode: TradingNetwork;
+  /** 合约或现货。省略时后端按合约处理。 */
+  market?: TradingMarket;
   minScore: number;
   minWinRate: number;
   minTrades: number;
@@ -129,6 +133,13 @@ export interface StrategyWrite {
   /** 相对入场价的比例。0.003 表示 0.3%。 */
   scalpTpPct: number;
   scalpSlPct: number;
+}
+
+/** 交易市场。与 mode（测网/实盘）正交，四种组合都成立。 */
+export type TradingMarket = "futures" | "spot";
+
+export function marketLabel(market: string): string {
+  return market === "spot" ? "现货" : "合约";
 }
 
 export function networkLabel(network: string): string {

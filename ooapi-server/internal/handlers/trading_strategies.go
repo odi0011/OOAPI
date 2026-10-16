@@ -793,7 +793,18 @@ func applyStrategyWrite(base strategyRecord, in strategyWrite, creating bool) (s
 		out.Mode = strings.ToLower(strings.TrimSpace(*in.Mode))
 	}
 	if in.Market != nil {
-		out.Market = trading.NormalizeMarket(*in.Market)
+		/*
+			先看**原值**再归一。
+
+			归一放在此处之后（函数末尾），如果这里直接 Normalize，未知取值会
+			当场被兜成 futures —— 等 validateStrategy 再去看时原值已经没了，
+			拼错一个词就变成"跑在合约上"，而那是要下真单的。
+		*/
+		raw := strings.TrimSpace(*in.Market)
+		if raw != "" && !strings.EqualFold(raw, trading.MarketFutures) && !strings.EqualFold(raw, trading.MarketSpot) {
+			return out, &tradingError{http.StatusBadRequest, "market 只能是 futures 或 spot", "invalid_market"}
+		}
+		out.Market = trading.NormalizeMarket(raw)
 	}
 	if in.EntryMode != nil {
 		out.EntryMode = strings.ToLower(strings.TrimSpace(*in.EntryMode))
@@ -863,6 +874,17 @@ func applyStrategyWrite(base strategyRecord, in strategyWrite, creating bool) (s
 	}
 	if err := validateStrategy(out, creating && in.ExchangeKeyID == nil); err != nil {
 		return strategyRecord{}, err
+	}
+	/*
+		现货没有杠杆：**落库前**就把杠杆钉成 1。
+
+		引擎侧也会归一（NewEngine 里那次），所以不钉也不会下错单；但库里留着
+		用户填的 20，界面上就会显示"现货 20 倍杠杆" —— 一个不存在的设置，
+		比多写三行更容易误导人。
+	*/
+	out.Market = trading.NormalizeMarket(out.Market)
+	if out.Market == trading.MarketSpot {
+		out.Leverage = 1
 	}
 	return out, nil
 }
