@@ -1,0 +1,474 @@
+/*
+  现货网格页。
+
+  配色和间距一律走主题令牌（--accent / --text-secondary / --space-*），
+  不写死色值 —— 站点有明暗模式和主题色，写死的地方在切主题时会露馅。
+
+  版面约束：编辑器是**左右两栏**，左填参数、右看预览。不拉满整行：
+  预览面板里的每一条都是"标签 + 数值"的短行，拉宽只会让眼睛来回跑。
+*/
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  max-width: 1100px;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.lead {
+  margin: var(--space-1) 0 0;
+  max-width: 62ch;
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+  color: var(--text-secondary);
+}
+
+.muted {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+  color: var(--text-secondary);
+}
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ---------------- 列表卡片 ---------------- */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+}
+
+.cardHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.cardSub {
+  margin: 2px 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.statLabel {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
+.statValue {
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+  阶梯图：一条横向的价格轴，从左（低）到右（高）。
+  方块用等宽 —— 这样"格子数"本身就是区间被切成了几段，一眼能数。
+*/
+.ladder {
+  display: flex;
+  gap: 4px;
+  padding: var(--space-2) 0;
+  overflow-x: auto;
+}
+
+.rung {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: transparent;
+}
+
+/* 挂着买单：说"准备接货"，用中性色而不是警示色。 */
+.rung_buy {
+  border-color: var(--accent);
+  color: var(--accent-strong, var(--accent));
+}
+
+/* 挂着卖单：这些格子里有货等着出手。 */
+.rung_sell {
+  border-color: var(--warning, var(--accent));
+  color: var(--warning, var(--accent-strong, var(--accent)));
+}
+
+/* 已买到、等卖：这一格的钱已经变成了币，压在这里。 */
+.rung_holding {
+  background: var(--accent-subtle, transparent);
+  border-color: var(--accent);
+  color: var(--accent-strong, var(--accent));
+  font-weight: 600;
+}
+
+.rung_empty {
+  opacity: 0.45;
+}
+
+.footnote {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.reason {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--danger, #d94f4f);
+}
+
+.warning {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--warning, #b8860b);
+}
+
+.cardActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* ---------------- 编辑器 ---------------- */
+
+.editor {
+  display: grid;
+  /* 左栏固定、右栏给预览的固定宽度：预览里的每一行都很短，
+     让它跟着窗口变宽只会把数字推得离标签很远。 */
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+@media (max-width: 860px) {
+  .editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+  color: var(--text-secondary);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+}
+
+/* ---------------- 预览面板 ---------------- */
+
+.preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken, var(--surface-raised));
+  position: sticky;
+  top: var(--space-4);
+}
+
+.previewTitle {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.previewMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.blocker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--danger, #d94f4f);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+}
+
+.blocker strong {
+  color: var(--danger, #d94f4f);
+}
+
+.blockerHint {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+/*
+  收益拆解：四行，箭头感靠缩进和负号。
+  最后一行（有效收益）加粗加框 —— 前面三行都是"减去"，只有它是结论。
+*/
+.breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+}
+
+.rowLabel {
+  color: var(--text-secondary);
+}
+
+.rowValue {
+  font-variant-numeric: tabular-nums;
+}
+
+.rowNegative {
+  color: var(--text-secondary);
+}
+
+.rowEmphasis {
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.good {
+  color: var(--success, #2f9e64);
+}
+
+.bad {
+  color: var(--danger, #d94f4f);
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+}
+
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.fact dt {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.fact dd {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- 资金门槛 ---------------- */
+
+.requirement {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.requirementTitle {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.gates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.gate {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+}
+
+.gateOk {
+  border-color: var(--success, #2f9e64);
+}
+
+.gateShort {
+  border-color: var(--danger, #d94f4f);
+}
+
+.gateLabel {
+  color: var(--text-secondary);
+}
+
+.gateAmount {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.gateNote {
+  grid-column: 1 / -1;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.gateFlag {
+  grid-column: 1 / -1;
+}
+
+.gateNote code,
+.gateNote b {
+  font-weight: 600;
+}
+
+.gateNote {
+  font-size: 11px;
+}
+
+/* ---------------- 明细 ---------------- */
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.detailSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.detailTitle {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.holdingList {
+  margin: 0;
+  padding-left: 1.1em;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-secondary);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}

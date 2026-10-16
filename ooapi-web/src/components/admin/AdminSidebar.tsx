@@ -6,6 +6,7 @@ import {
   ChartCandlestick,
   FileText,
   FolderOpen,
+  Grid3x3,
   History,
   KeyRound,
   Landmark,
@@ -112,6 +113,14 @@ export const ADMIN_NAV: AdminNavGroup[] = [
         href: "/admin/trading/board",
         requiredPermission: "option:edit",
         keywords: ["K线", "持仓", "委托", "盈亏", "交易台", "标记价", "总余额", "币种", "决策模板", "调参", "网格", "机器人", "历史记录"],
+      },
+      {
+        key: "trading-grid",
+        label: "网格",
+        icon: <Grid3x3 size={18} strokeWidth={1.75} />,
+        href: "/admin/trading/grid",
+        requiredPermission: "option:edit",
+        keywords: ["网格", "grid", "震荡", "挂单", "现货", "价差"],
       },
       {
         key: "trading-account",

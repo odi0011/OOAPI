@@ -394,6 +394,73 @@ var schemaStatements = []string{
 		UNIQUE KEY uniq_trading_orders_order (strategy_id, order_id),
 		KEY idx_trading_orders_strategy (user_id, strategy_id, filled_at)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+	/*
+		现货网格配置。
+
+		**和 trading_strategies 分开一张表**，不是给它加一列：
+		两者的字段几乎没有交集（网格没有杠杆、没有 EMA、没有止损止盈 R），
+		合在一起会让一半的列对另一半永远是空的，而"这一列到底属不属于
+		这一行"是排查时最容易出错的地方。
+
+		这里只存**配置**，不存运行时状态。每一格还持有多少这种状态，
+		由 trading_grid_fills 的成交历史算出来 —— 单一事实来源，
+		重启之后不会有"内存和库谁说了算"的问题。
+	*/
+	`CREATE TABLE IF NOT EXISTS trading_grids (
+		id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+		user_id          BIGINT UNSIGNED NOT NULL,
+		exchange_key_id  BIGINT UNSIGNED NOT NULL,
+		symbol           VARCHAR(32)     NOT NULL DEFAULT 'DOGEUSDT',
+		mode             VARCHAR(16)     NOT NULL DEFAULT 'testnet',
+		lower_price      DECIMAL(20,10)  NOT NULL DEFAULT 0,
+		upper_price      DECIMAL(20,10)  NOT NULL DEFAULT 0,
+		levels           INT             NOT NULL DEFAULT 8,
+		quote_budget     DECIMAL(20,6)   NOT NULL DEFAULT 0,
+		stop_pct         DECIMAL(8,6)    NOT NULL DEFAULT 0.020000,
+		fee_rate         DECIMAL(16,8)   NOT NULL DEFAULT 0.00100000,
+		running          TINYINT         NOT NULL DEFAULT 0,
+		pause_reason     VARCHAR(64)     NOT NULL DEFAULT '',
+		created_at       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		PRIMARY KEY (id),
+		KEY idx_trading_grids_user (user_id, updated_at),
+		KEY idx_trading_grids_key (exchange_key_id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+	/*
+		网格成交明细。**这里是网格状态的唯一事实来源。**
+
+		为什么不做成"一个格子一行、记当前持有量"：那样每次成交都要
+		去 UPDATE 一行，而成交是交易所结算的、本地只是记账 ——
+		一旦漏掉一次（网络抖、进程被杀），那一行就永远错了，
+		且没有任何东西能把它纠正回来。存明细则是只追加：
+		漏掉一笔可以被下一次对账发现，而且"每一格还持有多少"
+		是能从明细重算出来的。
+
+		level_index 为 -1 表示清仓单（止损 / 上沿止盈），它不属于任何一格。
+	*/
+	`CREATE TABLE IF NOT EXISTS trading_grid_fills (
+		id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+		user_id       BIGINT UNSIGNED NOT NULL,
+		grid_id       BIGINT UNSIGNED NOT NULL,
+		symbol        VARCHAR(32)     NOT NULL DEFAULT '',
+		level_index   INT             NOT NULL DEFAULT -1,
+		side          VARCHAR(8)      NOT NULL DEFAULT '',
+		price         DECIMAL(20,10)  NOT NULL DEFAULT 0,
+		qty           DECIMAL(24,10)  NOT NULL DEFAULT 0,
+		quote         DECIMAL(20,10)  NOT NULL DEFAULT 0,
+		fee_quote     DECIMAL(20,10)  NOT NULL DEFAULT 0,
+		realized_usdt DECIMAL(20,10)  NOT NULL DEFAULT 0,
+		order_id      VARCHAR(64)     NOT NULL DEFAULT '',
+		client_id     VARCHAR(64)     NOT NULL DEFAULT '',
+		fill_source   VARCHAR(16)     NOT NULL DEFAULT '',
+		filled_at     DATETIME        NOT NULL,
+		created_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (id),
+		KEY idx_grid_fills_grid (grid_id, filled_at),
+		KEY idx_grid_fills_order (grid_id, order_id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 }
 
 // columnMigrations 给已存在的表补列。

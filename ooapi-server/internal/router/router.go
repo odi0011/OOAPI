@@ -164,6 +164,25 @@ func Setup(cfg *config.Config) *gin.Engine {
 			strategies.DELETE("/:id", handlers.DeleteTradingStrategy)
 		}
 
+		/*
+			现货网格。与策略分开一组路由：网格没有 leverage / emaFast /
+			stopR 这些字段，混进同一个请求体会造出一半字段永远为空的结构。
+
+			preview 是只读的算数（不保存、不下单），所以挂在登录就能访问；
+			其余全部是 option:edit —— 它们会挂真单、动真钱。
+		*/
+		grids := user.Group("/trading/grids", middleware.RequirePermission(authz.PermOptionEdit))
+		{
+			grids.GET("", handlers.ListGrids)
+			grids.POST("", handlers.CreateGrid)
+			grids.POST("/preview", handlers.PostGridPreview)
+			grids.GET("/:id", handlers.GetGrid)
+			grids.PUT("/:id", handlers.UpdateGrid)
+			grids.DELETE("/:id", handlers.DeleteGrid)
+			grids.POST("/:id/start", handlers.PostGridStart)
+			grids.POST("/:id/stop", handlers.PostGridStop)
+		}
+
 		user.POST("/trading/workbench/decision", middleware.RequirePermission(authz.PermOptionEdit), handlers.PostWorkbenchDecision)
 		user.GET("/trading/backtest", middleware.RequirePermission(authz.PermOptionEdit), handlers.GetTradingBacktest)
 		user.GET("/trading/engines", middleware.RequirePermission(authz.PermOptionEdit), handlers.TradingEnginesList)

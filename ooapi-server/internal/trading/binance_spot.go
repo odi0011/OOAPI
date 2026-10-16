@@ -207,6 +207,55 @@ func parseFundingBalances(body []byte) ([]SpotBalance, error) {
 	return out, nil
 }
 
+/*
+SpotCommissionRates 读现货账户的买卖费率。
+
+**网格必须读它，不能用常量。** 币安现货的费率随 VIP 档位和 BNB 抵扣变化，
+基础档是 0.1%/边、VIP 高一点能到 0.02%。而每格的净收益 =
+每格间距 − 双边手续费 —— 在 2% 的格子上，费率从 0.1% 变成 0.02%
+意味着净收益从 1.8% 变成 1.96%，看着不多；但把方向反过来看：
+拿 0.05%（合约档）去估现货，会把一份**实际亏损**的网格算成盈利的。
+
+/tapi/v3/account 之外的普通账户接口也带 commissionRates，
+用 /api/v3/account 就行 —— 现货余额那一份响应里本来就有，是一次读两用。
+*/
+func (c *USDMClient) SpotCommissionRates() (maker, taker float64, err error) {
+	if c == nil {
+		return 0, 0, invalid("交易所客户端未初始化")
+	}
+	target, err := c.spotTarget()
+	if err != nil {
+		return 0, 0, err
+	}
+	c.mu.Lock()
+	creds := c.creds
+	c.mu.Unlock()
+	if creds.APIKey == "" || creds.APISecret == "" {
+		return 0, 0, ErrKeyNotUsable
+	}
+	params := url.Values{}
+	body, err := c.doAt(target, http.MethodGet, "/api/v3/account", params, creds)
+	if err != nil {
+		return 0, 0, err
+	}
+	var resp struct {
+		CommissionRates struct {
+			Maker string `json:"maker"`
+			Taker string `json:"taker"`
+		} `json:"commissionRates"`
+	}
+	if json.Unmarshal(body, &resp) != nil {
+		return 0, 0, errors.New("现货费率返回无法解析")
+	}
+	maker = parseFloatOr0(resp.CommissionRates.Maker)
+	taker = parseFloatOr0(resp.CommissionRates.Taker)
+	if maker <= 0 && taker <= 0 {
+		// 响应里没有费率（老接口、或权限不同）——不编一个，让调用方用兜底值。
+		return 0, 0, errors.New("现货账户响应里没有费率")
+	}
+	return maker, taker, nil
+}
+
 // parseSpotBalances 从 /api/v3/account 的响应里取出非零余额。
 func parseSpotBalances(body []byte) ([]SpotBalance, error) {
 	var resp struct {

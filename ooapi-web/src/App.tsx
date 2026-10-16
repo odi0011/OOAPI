@@ -18,6 +18,7 @@ import AdminExchangeKeys from "@/pages/admin/AdminExchangeKeys";
 import AdminTrading from "@/pages/admin/AdminTrading";
 import AdminTradingDashboard from "@/pages/admin/AdminTradingDashboard";
 import TradingBoard from "@/pages/admin/TradingBoard";
+import TradingGrid from "@/pages/admin/TradingGrid";
 import TradingWorkbench from "@/pages/admin/TradingWorkbench";
 import AdminLogs from "@/pages/admin/AdminLogs";
 import AdminMedia from "@/pages/admin/AdminMedia";
@@ -153,6 +154,16 @@ export default function App() {
                   element={
                     <RequireAuth permission={Perm.OptionEdit}>
                       <TradingWorkbench />
+                    </RequireAuth>
+                  }
+                />
+
+                {/* 现货网格：在区间里反复低买高卖。挂真单、动真钱，走 option:edit。 */}
+                <Route
+                  path="/admin/trading/grid"
+                  element={
+                    <RequireAuth permission={Perm.OptionEdit}>
+                      <TradingGrid />
                     </RequireAuth>
                   }
                 />
