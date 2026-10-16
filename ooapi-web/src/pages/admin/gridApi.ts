@@ -208,6 +208,15 @@ export interface GridPreviewRequest {
 
 const BASE = "/api/trading/grids";
 
+/*
+ * **body 传对象，不要自己 JSON.stringify。**
+ *
+ * apiRequest 内部会 stringify 一次；这里再 stringify 就把请求体变成了
+ * 一个"装着 JSON 的 JSON 字符串"，服务端 ShouldBindJSON 拿到的是
+ * 字符串字面量而不是对象，回一个看不懂的「请求格式不正确」。
+ * 这种错只有把真实请求抓出来才看得见 —— 浏览器里看起来完全正常。
+ */
+
 export async function listGrids(): Promise<Grid[]> {
   const data = await apiRequest<{ items: Grid[] }>(BASE);
   return data.items ?? [];
@@ -218,11 +227,11 @@ export async function getGrid(id: number): Promise<Grid> {
 }
 
 export async function createGrid(body: GridWrite): Promise<Grid> {
-  return apiRequest<Grid>(BASE, { method: "POST", body: JSON.stringify(body) });
+  return apiRequest<Grid>(BASE, { method: "POST", body });
 }
 
 export async function updateGrid(id: number, body: GridWrite): Promise<Grid> {
-  return apiRequest<Grid>(`${BASE}/${id}`, { method: "PUT", body: JSON.stringify(body) });
+  return apiRequest<Grid>(`${BASE}/${id}`, { method: "PUT", body });
 }
 
 export async function deleteGrid(id: number): Promise<void> {
@@ -244,10 +253,7 @@ export async function stopGrid(id: number): Promise<Grid> {
  * 要多少钱"。这个接口一次把两个问题都答了。
  */
 export async function previewGrid(body: GridPreviewRequest): Promise<GridPreviewResponse> {
-  return apiRequest<GridPreviewResponse>(`${BASE}/preview`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  return apiRequest<GridPreviewResponse>(`${BASE}/preview`, { method: "POST", body });
 }
 
 // 展示层的纯函数在 gridView.ts（那里不 import 任何东西，好让测试直接跑）。

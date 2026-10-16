@@ -90,6 +90,7 @@ export default function TradingGrid() {
   const [editing, setEditing] = useState<Grid | null>(null);
   const [draft, setDraft] = useState<Draft>(DEFAULT_DRAFT);
   const [preview, setPreview] = useState<GridPreviewResponse | null>(null);
+  const [previewError, setPreviewError] = useState("");
   const [previewing, setPreviewing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [detail, setDetail] = useState<Grid | null>(null);
@@ -128,6 +129,7 @@ export default function TradingGrid() {
       mode: (activeKey?.network as TradingNetwork) ?? "testnet",
     });
     setPreview(null);
+    setPreviewError("");
     setEditorOpen(true);
   };
 
@@ -144,6 +146,7 @@ export default function TradingGrid() {
       mode: grid.mode,
     });
     setPreview(null);
+    setPreviewError("");
     setEditorOpen(true);
   };
 
@@ -168,8 +171,22 @@ export default function TradingGrid() {
         exchangeKeyId: draft.exchangeKeyId ?? undefined,
         mode: draft.mode,
       })
-        .then(setPreview)
-        .catch(() => setPreview(null))
+        .then((res) => {
+          setPreview(res);
+          setPreviewError("");
+        })
+        .catch((err) => {
+          /*
+            失败时**必须说出来**，不能悄悄退回占位文案。
+
+            退回占位的话，面板会一直显示"填好参数后这里会显示…"，
+            而用户已经在参数上花了几分钟 —— 他会以为是自己参数没填对，
+            反复调，却始终等不到结果。真实原因（交易对不存在、
+            交易所连不上、密钥网络不匹配）全被吞掉了。
+          */
+          setPreview(null);
+          setPreviewError(err instanceof ApiRequestError ? err.message : "无法计算，请稍后再试");
+        })
         .finally(() => setPreviewing(false));
     }, 400);
     return () => {
@@ -299,6 +316,7 @@ export default function TradingGrid() {
         <DialogContent
           title={editing ? "修改网格" : "新建网格"}
           description="左列填参数，右列实时算出它能不能跑、要多少钱。确认了再保存。"
+          className={styles.dialog}
         >
           <div className={styles.editor}>
             <div className={styles.form}>
@@ -415,7 +433,12 @@ export default function TradingGrid() {
               </div>
             </div>
 
-            <PreviewPanel preview={preview} pending={previewing} budget={draft.quoteBudget} />
+            <PreviewPanel
+              preview={preview}
+              error={previewError}
+              pending={previewing}
+              budget={draft.quoteBudget}
+            />
           </div>
         </DialogContent>
       </Dialog>
@@ -424,6 +447,7 @@ export default function TradingGrid() {
         <DialogContent
           title={detail ? `${detail.symbol} 明细` : "明细"}
           description="逐笔成交来自交易所的 myTrades，手续费是真实值，不是按费率估的。"
+          className={styles.dialog}
         >
           {detail && <GridDetail grid={detail} />}
         </DialogContent>
@@ -447,19 +471,28 @@ export default function TradingGrid() {
  */
 function PreviewPanel({
   preview,
+  error,
   pending,
   budget,
 }: {
   preview: GridPreviewResponse | null;
+  error: string;
   pending: boolean;
   budget: number;
 }) {
   if (!preview) {
     return (
       <aside className={styles.preview}>
-        <p className={styles.muted}>
-          {pending ? "正在计算…" : "填好参数后这里会显示能不能跑、要多少钱。"}
-        </p>
+        {error ? (
+          <div className={styles.blocker}>
+            <strong>算不出来</strong>
+            <p>{error}</p>
+          </div>
+        ) : (
+          <p className={styles.muted}>
+            {pending ? "正在计算…" : "填好参数后这里会显示能不能跑、要多少钱。"}
+          </p>
+        )}
       </aside>
     );
   }
