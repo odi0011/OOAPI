@@ -56,6 +56,37 @@ func (f *fakeServe) handler() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"` + id + `"}`))
 	})
+	// 事件流：每次 prompt 到达后回放一次增量事件。
+	// 桥接的全局订阅器（bridgeEvents）会连到这里并把增量按会话分发。
+	mux.HandleFunc("/event", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		if flusher != nil {
+			flusher.Flush()
+		}
+		select {
+		case <-f.promptCh:
+		case <-r.Context().Done():
+			return
+		case <-time.After(5 * time.Second):
+			return
+		}
+		f.mu.Lock()
+		events := append([]string(nil), f.events...)
+		f.mu.Unlock()
+		for _, ev := range events {
+			_, _ = w.Write([]byte("data: " + ev + "\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+			time.Sleep(2 * time.Millisecond)
+			if r.Context().Err() != nil {
+				return
+			}
+		}
+		// 保持连接（真实 serve 的长连接一直开着），直到客户端断开。
+		<-r.Context().Done()
+	})
 	mux.HandleFunc("/session/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		switch {
@@ -127,7 +158,12 @@ func (f *fakeServe) handler() http.Handler {
 func useFakeServe(t *testing.T, f *fakeServe) {
 	t.Helper()
 	server := httptest.NewServer(f.handler())
-	t.Cleanup(server.Close)
+	// 先断开长连接再关闭：测试桩的事件流会一直挂着等断开，
+	// 直接 Close 会等这些请求结束，形成「Close 等连接、连接等 Close」的死锁。
+	t.Cleanup(func() {
+		server.CloseClientConnections()
+		server.Close()
+	})
 	old := openCodeBridgeAddr
 	SetOpenCodeBridgeAddr(server.URL)
 	t.Cleanup(func() { openCodeBridgeAddr = old })
@@ -243,10 +279,42 @@ func TestBridgeStreamProducesChatSSE(t *testing.T) {
 		t.Fatalf("read: %v", err)
 	}
 	text := string(raw)
-	// 增量可能被合并成更少的帧（轮询取「比上轮多出来的部分」）——
-	// 断言的是「内容完整且按序」，不是「分帧数量」。
-	if !strings.Contains(text, `"Hello"`) {
-		t.Fatalf("流里缺少完整内容增量:\n%s", text)
+	/*
+		内容必须**流式**到达（多个增量帧），而不是结束时一次性给出。
+
+		这是线上实测过的问题：纯轮询 /message 的实现只在生成结束时
+		拿到全文（长度 0 → 全部一次性跳变），下游按「总时长 ÷ token 数」
+		算出 1.7 tok/s 的假慢；真实生成速度是 60 tok/s 量级。
+		这里断言拼合后内容完整，且分帧数 ≥ 2。
+	*/
+	var merged strings.Builder
+	frames := 0
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.HasPrefix(line, "data: ") || strings.Contains(line, "[DONE]") {
+			continue
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &chunk) != nil {
+			continue
+		}
+		for _, c := range chunk.Choices {
+			if c.Delta.Content != "" {
+				merged.WriteString(c.Delta.Content)
+				frames++
+			}
+		}
+	}
+	if merged.String() != "Hello" {
+		t.Fatalf("拼合内容 = %q，want %q\n原始流:\n%s", merged.String(), "Hello", text)
+	}
+	if frames < 2 {
+		t.Fatalf("内容没有流式到达（只有 %d 个增量帧，应当 ≥2）:\n%s", frames, text)
 	}
 	if !strings.Contains(text, `"finish_reason":"stop"`) {
 		t.Fatalf("流里缺少收尾帧:\n%s", text)

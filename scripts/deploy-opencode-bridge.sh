@@ -4,8 +4,8 @@
 # 做五件事：
 #   1. 校验/安装官方 CLI 二进制到 /opt/ooapi/opencode/opencode；
 #   2. 建专用非 root 用户 ooapi-bridge 并把目录交给它（权限隔离第一层）；
-#   3. 写入干净配置：禁止自更新（锁版本），不写任何 tools/permission 覆盖
-#      —— 实测任何工具裁剪都会被上游校验拒绝，见 opencode_bridge.go 头部说明；
+#   3. 写入权限配置：锁版本 + 工具权限（bash/edit 拒绝、read 挡凭据文件）。
+#      每项都经过线上实测 —— 完全禁用工具会被上游 403，见下面的说明；
 #   4. 安装 systemd 服务并启动（自动拉起、开机自启、只监听回环、沙箱）；
 #   5. 首次部署时把 opencode 渠道的 API Key 写入 serve 的 auth.json
 #      （已验证：写入后持久化，重启不丢），并做端到端自检。
@@ -40,19 +40,36 @@ if [ ! -x ./opencode ]; then
 fi
 echo "  版本：$(./opencode --version)"
 
-echo "== 清理旧的工具/权限覆盖配置 =="
+echo "== 写入权限配置（安全边界，逐项实测过）=="
 mkdir -p .config/opencode
 cat > .config/opencode/opencode.jsonc <<'JSONC'
 {
-  // 桥接服务的配置：保持极简。
-  //
-  // 不要在这里写 tools / permission / permissions 覆盖 ——
-  // 实测任何工具裁剪都会触发上游的客户端校验（FreeTierError 403），
-  // 桥接请求必须与官方 CLI 默认形状一致。工具执行的防护走
-  // systemd 沙箱（非 root + 只读根文件系统），见服务单元。
   "$schema": "https://opencode.ai/config.json",
   // 锁版本：自动更新会替换掉当前二进制，跨版本行为差异不可控。
-  "update": "disable"
+  "update": "disable",
+
+  // ---------------------------------------------------------------------
+  // 工具权限。每一项都经过线上实测，改动前请先读这段说明。
+  //
+  // 上游的客户端校验会比对「工具集形状」——完全禁用工具（或禁 read）
+  // 都会 100% 被 403 拒绝。在能通过校验的范围内，下面这三个是最强防护：
+  //
+  //   bash: deny   —— 移除 shell 工具（模型直接看不到它，实测有效）
+  //   edit: deny   —— 同时挡住 write/patch（edit 权限覆盖写类工具）
+  //   read 规则     —— 保留 read 工具形状（否则校验拒绝），
+  //                   但按文件名硬挡凭据文件；实测 read 返回
+  //                   "access to **/auth.json files is denied"
+  //
+  // 三层防护的其余两层：systemd 沙箱（非 root + 只读根文件系统）、
+  // serve 进程只能读自己目录下的数据文件。
+  // ---------------------------------------------------------------------
+  "permission": {
+    "bash": "deny",
+    "edit": "deny",
+    "read": {
+      "**/auth.json": "deny"
+    }
+  }
 }
 JSONC
 

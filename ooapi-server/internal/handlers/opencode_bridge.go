@@ -35,6 +35,7 @@ tool_calls 的 agent 工作负载不适用这条链路。
 */
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -264,17 +265,25 @@ type bridgeAttemptResult struct {
 }
 
 /*
-bridgeAttempt 执行一次完整尝试：建会话 → 订阅事件 → 发消息 → 边收增量边判完成。
+bridgeAttempt 执行一次完整尝试：建会话 → 订阅事件 → 发消息 → 增量边收边发 → 轮询判完成。
 
-**完成判定用轮询回读，不用等 session.idle 事件**：
-serve 的 idle 事件在 busy→idle 时只发一次，而订阅与生成之间存在竞态 ——
-生成可能在订阅生效前就结束（秒级的小请求尤其明显），于是 idle 事件永远
-等不到、读取无限阻塞。线上实测：一次请求卡满 120 秒超时。
+**两条通道各司其职**（这是唯一同时满足三个约束的组合）：
 
-轮询回读（每秒一次）是权威的：assistant 消息带 time.completed 或 error
-即为结束。事件流只负责把增量实时送出去。
+  - **增量走 /event**：实测 /message 只在生成结束时给出全文（长度 0 → 全部
+    一次性跳变，没有中间态），纯轮询会让下游按「总时长 ÷ token 数」算出
+    1.7 tok/s 的假慢 —— 实际生成速度是 60 tok/s 量级。实时增量只能来自
+    事件流（实测 424 个 delta 覆盖整个生成过程）。
+  - **完成判定走轮询回读**：serve 的 idle 事件只发一次，而订阅与生成之间
+    存在竞态 —— 小请求可能在订阅生效前就结束，等 idle 会永久阻塞
+    （线上实测卡满 120 秒）。轮询 /message 的 time.completed / error
+    是权威且无竞态的判据。
 
-onDelta 会把内容增量实时回调；onAccepted 在消息被 serve 接受（204）时回调。
+事件流用**全局单订阅**（bridgeEventHub）而不是每请求一条：早先每请求订阅
+长连接导致 serve 侧的监听器不断累积（MaxListeners 溢出，越跑越慢）。
+全局一条订阅按 sessionID 分发，连接数与请求量无关。
+
+结束时的收尾对账：把轮询拿到的最终全文与已送出的增量比较，
+缺的部分（事件丢失/重连窗口）整段补发，保证客户端拿到的内容完整。
 */
 func bridgeAttempt(
 	ctx context.Context,
@@ -289,6 +298,10 @@ func bridgeAttempt(
 	// 会话用完即删：不清理的话 serve 的会话表会无限增长
 	//（线上实测一次重试风暴积了 100 个会话）。
 	defer deleteBridgeSession(sessionID)
+
+	// 先订阅增量再发消息：反序会丢掉开头的几个 delta。
+	deltaCh := bridgeEvents.subscribe(sessionID)
+	defer bridgeEvents.unsubscribe(sessionID)
 
 	sendReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		openCodeBridgeAddr+"/session/"+sessionID+"/prompt_async", bytes.NewReader(rawMsg))
@@ -308,26 +321,13 @@ func bridgeAttempt(
 		onAccepted()
 	}
 
-	return bridgePollUntilDone(ctx, sessionID, onDelta)
+	return bridgePollUntilDone(ctx, sessionID, deltaCh, onDelta)
 }
 
 /*
-bridgePollUntilDone 用短轮询等到会话完成，并把文本增量实时回调出去。
-
-**为什么不用 serve 的事件流（/event）**：早先的实现订阅长连接 SSE 事件。
-三个实测问题把它推翻了：
-
- 1. **延迟被量化**：完成判定只能等下一个事件，实测所有请求的耗时都是
-    「整秒 + 0.03s」（3.03s / 2.03s / 5.05s）—— 是 1 秒轮询周期的影子；
- 2. **监听器泄漏**：每次请求订阅一个长连接，serve 的 Node 侧事件监听器
-    不释放（日志里的 MaxListeners 溢出警告），跑得越多越慢；
- 3. **订阅竞态**：生成可能在订阅生效前就结束（小请求尤甚），
-    idle 事件永远等不到，早先造成过 120 秒卡死。
-
-短轮询直接解决了这三个：250ms 周期、无长连接、无事件依赖。
-增量靠「本轮文本比上轮多出来的部分」算出来 —— 回读是权威数据源。
+bridgePollUntilDone 等会话完成：增量从事件分发通道实时转发，完成靠轮询判定。
 */
-func bridgePollUntilDone(ctx context.Context, sessionID string, onDelta func(string)) (bridgeAttemptResult, error) {
+func bridgePollUntilDone(ctx context.Context, sessionID string, deltaCh <-chan string, onDelta func(string)) (bridgeAttemptResult, error) {
 	ticker := time.NewTicker(bridgePollGap)
 	defer ticker.Stop()
 
@@ -336,6 +336,14 @@ func bridgePollUntilDone(ctx context.Context, sessionID string, onDelta func(str
 
 	for {
 		select {
+		case delta := <-deltaCh:
+			// 实时增量：立即转发给下游。
+			sent.WriteString(delta)
+			emitted = true
+			if onDelta != nil {
+				onDelta(delta)
+			}
+			continue
 		case <-ticker.C:
 		case <-ctx.Done():
 			abortBridgeSession(sessionID)
@@ -348,18 +356,18 @@ func bridgePollUntilDone(ctx context.Context, sessionID string, onDelta func(str
 			continue
 		}
 
-		// 把「已产生但还没送出」的增量发出去。
-		if text != "" && len(text) > sent.Len() && strings.HasPrefix(text, sent.String()) {
-			delta := text[sent.Len():]
-			sent.WriteString(delta)
-			emitted = true
-			if onDelta != nil {
-				onDelta(delta)
-			}
-		}
-
 		if !done {
 			continue
+		}
+
+		// 收尾对账：轮询的全文是权威版本，补发事件流窗口里可能丢掉的尾巴。
+		if len(text) > sent.Len() && strings.HasPrefix(text, sent.String()) {
+			tail := text[sent.Len():]
+			sent.WriteString(tail)
+			emitted = true
+			if onDelta != nil {
+				onDelta(tail)
+			}
 		}
 
 		result := bridgeAttemptResult{
@@ -402,6 +410,163 @@ func deleteBridgeSession(sessionID string) {
 		return
 	}
 	resp.Body.Close()
+}
+
+/*
+bridgeEventHub 是 serve 事件流的全局单订阅。
+
+**为什么是全局一条而不是每请求一条**：每条订阅都是 serve 侧的一个长连接
+与一组事件监听器；每请求订阅会让监听器随请求量累积（实测 MaxListeners
+溢出告警，越跑越慢）。官方 CLI 本身也只保持一条事件流订阅，按 sessionID
+分发 —— 这里用同一个模型。
+
+连接断开（serve 重启、网络抖动）时自动重连；重连窗口内丢掉的增量由
+收尾对账补上（见 bridgePollUntilDone），内容完整性不受影响。
+*/
+type bridgeEventHub struct {
+	mu   sync.RWMutex
+	subs map[string]chan string
+	// addr 是当前订阅对应的 serve 地址。地址变化（测试切换、部署换端口）
+	// 时旧连接必须放弃并重连 —— 否则订阅会永远挂在已经不存在的实例上。
+	addr string
+	// wake 用来打断正在等待的退避/长读，让新地址立即生效。
+	wake    chan struct{}
+	startMu sync.Mutex
+	started bool
+}
+
+var bridgeEvents = &bridgeEventHub{subs: map[string]chan string{}, wake: make(chan struct{}, 1)}
+
+// subscribe 注册某个会话的增量回调通道。必须在发消息之前调用。
+func (h *bridgeEventHub) subscribe(sessionID string) chan string {
+	ch := make(chan string, 1024)
+	h.mu.Lock()
+	h.subs[sessionID] = ch
+	h.mu.Unlock()
+	h.ensureStarted(openCodeBridgeAddr)
+	return ch
+}
+
+func (h *bridgeEventHub) unsubscribe(sessionID string) {
+	h.mu.Lock()
+	delete(h.subs, sessionID)
+	h.mu.Unlock()
+}
+
+// dispatch 把一条增量投给对应会话；没有订阅者时丢弃（例如重试的旧会话）。
+func (h *bridgeEventHub) dispatch(sessionID, delta string) {
+	h.mu.RLock()
+	ch := h.subs[sessionID]
+	h.mu.RUnlock()
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- delta:
+	default:
+		// 缓冲满说明消费方严重落后（阈值 1024 条，正常不可能）。
+		// 丢弃而不是阻塞：阻塞会让整条事件流停住，影响所有会话。
+	}
+}
+
+// ensureStarted 惰性启动消费循环；地址变化时重启循环并立即重连。
+func (h *bridgeEventHub) ensureStarted(addr string) {
+	h.mu.Lock()
+	changed := h.addr != addr
+	if changed {
+		h.addr = addr
+	}
+	h.mu.Unlock()
+	if changed {
+		// 唤醒正在退避的旧循环，让它用新地址重连。
+		select {
+		case h.wake <- struct{}{}:
+		default:
+		}
+	}
+	h.startMu.Lock()
+	defer h.startMu.Unlock()
+	if h.started {
+		return
+	}
+	h.started = true
+	go h.loop()
+}
+
+// loop 持续消费事件流，断了就重连。
+func (h *bridgeEventHub) loop() {
+	for {
+		if err := h.consume(); err != nil {
+			// 连接断开：短暂退避后重连。这里不打日志 ——
+			// serve 重启期间会反复失败，刷日志没有意义；
+			// 真正影响用户的是增量缺失，而它由收尾对账兜底。
+			select {
+			case <-time.After(2 * time.Second):
+			case <-h.wake:
+				// 地址变了：立刻重连。
+			}
+		}
+	}
+}
+
+// consume 读一条事件流直到出错。返回 nil 时也走重连（防御性）。
+func (h *bridgeEventHub) consume() error {
+	h.mu.RLock()
+	addr := h.addr
+	h.mu.RUnlock()
+	if addr == "" {
+		addr = openCodeBridgeAddr
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, addr+"/event", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := bridgeHTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("事件流订阅失败（HTTP %d）", resp.StatusCode)
+	}
+
+	reader := bufio.NewReaderSize(resp.Body, 64<<10)
+	for {
+		line, err := reader.ReadBytes('\n')
+		trimmed := bytes.TrimSpace(line)
+		if bytes.HasPrefix(trimmed, []byte("data:")) {
+			payload := bytes.TrimSpace(bytes.TrimPrefix(trimmed, []byte("data:")))
+			if len(payload) > 0 {
+				var ev bridgeStreamEvent
+				if json.Unmarshal(payload, &ev) == nil &&
+					ev.Type == "message.part.delta" &&
+					ev.Properties.Field == "text" &&
+					ev.Properties.Delta != "" &&
+					ev.Properties.SessionID != "" {
+					h.dispatch(ev.Properties.SessionID, ev.Properties.Delta)
+				}
+			}
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		}
+	}
+}
+
+// bridgeStreamEvent 是事件流里我们关心的字段（只解增量事件）。
+type bridgeStreamEvent struct {
+	Type       string `json:"type"`
+	Properties struct {
+		SessionID string `json:"sessionID"`
+		Field     string `json:"field"`
+		Delta     string `json:"delta"`
+	} `json:"properties"`
 }
 
 /*
