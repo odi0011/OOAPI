@@ -169,8 +169,8 @@ func TestSpotBalancesRefusesRealBinanceHostOnNonLiveClient(t *testing.T) {
 	if err == nil {
 		t.Fatal("测网客户端不该去打真币安现货主机")
 	}
-	if !strings.Contains(err.Error(), "实盘") {
-		t.Fatalf("拒绝理由要能看懂: %v", err)
+	if !strings.Contains(err.Error(), "不一致") {
+		t.Fatalf("拒绝理由要能看懂（网络不一致）: %v", err)
 	}
 }
 

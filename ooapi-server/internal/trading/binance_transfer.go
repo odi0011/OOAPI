@@ -30,6 +30,11 @@ API Key 需要勾选「统一划转」权限，否则币安返回 -2015
 // BinanceSpotLiveBase 是现货 API 的主机，划转端点在这里。
 const BinanceSpotLiveBase = "https://api.binance.com"
 
+// BinanceSpotTestnetBase 是现货测网。它与合约测网
+// （testnet.binancefuture.com）是**两套独立系统**：各有各的主机、账号与余额，
+// 互不连通，所以现货测网的密钥在合约测网上用不了，反之亦然。
+const BinanceSpotTestnetBase = "https://testnet.binance.vision"
+
 // 钱包方向。
 const (
 	WalletSpot    = "spot"
@@ -71,26 +76,55 @@ func (c *USDMClient) SetSpotBaseForTest(base string) {
 /*
 spotTarget 决定这次现货请求打到哪个主机。
 
-默认是币安现货主机。若目标主机确实是币安（域名里带 binance）而客户端本身
-不是实盘，就拒绝 —— 现货账本与合约账本是两套互不连通的系统，而本客户端
-的密钥是配给合约主机的，拿它去打现货主机只会拿到鉴权失败。
-与其让币安回一个看不懂的错误码，不如在发请求之前就说清楚。
+取值顺序：
+  1. spotBase（划转与现货余额用的显式出口，测试可以覆盖）；
+  2. 否则，客户端自己的 base —— 现货交易客户端的 base 就是现货主机；
+  3. 再否则，币安现货主机。
+
+**网络必须一致**：密钥是按网络配的（testnet 的密钥在实盘主机上必然鉴权失败）。
+目标若是真币安现货主机而客户端网络对不上，就在发请求之前说清楚，
+而不是让币安回一个看不懂的错误码 —— 何况合约测网与现货测网本就是
+两套互不连通的系统，跨过去也没有意义。
+
 非币安主机一律放行：那是单测的 mock。
 */
 func (c *USDMClient) spotTarget() (string, error) {
+	if c == nil {
+		return "", invalid("交易所客户端未初始化")
+	}
 	c.mu.Lock()
-	base := c.spotBase
+	spotBase := c.spotBase
+	ownBase := c.base
 	c.mu.Unlock()
-	base = strings.TrimRight(strings.TrimSpace(base), "/")
+
+	base := strings.TrimRight(strings.TrimSpace(spotBase), "/")
+	if base == "" {
+		own := strings.TrimRight(strings.TrimSpace(ownBase), "/")
+		if u, err := url.Parse(own); err == nil && u.Host != "" {
+			host := u.Hostname()
+			/*
+				两种情况下客户端自己的 base 就是现货出口，直接用它：
+				  · 它本来就是现货主机 —— 现货交易客户端就是这么建的；
+				  · 它不是币安主机 —— 单测的 mock。**这一条不能漏**：
+				    漏了就会回落到真币安现货主机，测试会去打生产（或者在
+				    真正的故障里悄悄换了出口）。
+				只有「客户端在合约主机上、又没显式给现货出口」才回落到币安现货主机。
+			*/
+			if spotHostNetwork(host) != "" || !strings.Contains(strings.ToLower(host), "binance") {
+				base = own
+			}
+		}
+	}
 	if base == "" {
 		base = BinanceSpotLiveBase
 	}
+
 	u, err := url.Parse(base)
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
 		return "", invalid("现货主机地址不正确")
 	}
-	if strings.Contains(strings.ToLower(u.Hostname()), "binance") && c.baseNetwork() != ModeLive {
-		return "", invalid("现货接口只在实盘可用：现货与合约是两套独立账本，测网不连通")
+	if want := spotHostNetwork(u.Hostname()); want != "" && c.baseNetwork() != want {
+		return "", invalid("现货主机与客户端网络不一致：密钥按网络配置，跨网络请求只会鉴权失败")
 	}
 	return base, nil
 }

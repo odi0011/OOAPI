@@ -170,6 +170,19 @@ func (c *USDMClient) UseReadCredentials(creds Credentials) error {
 	return nil
 }
 
+// spotHostNetwork 返回币安现货主机对应的网络；不是现货主机时返回空串。
+// 现货测网（testnet.binance.vision）与合约测网是两套独立系统，各有自己的主机。
+func spotHostNetwork(host string) string {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "api.binance.com":
+		return ModeLive
+	case "testnet.binance.vision":
+		return ModeTestnet
+	default:
+		return ""
+	}
+}
+
 func (c *USDMClient) baseNetwork() string {
 	if c == nil {
 		return ""
@@ -178,14 +191,16 @@ func (c *USDMClient) baseNetwork() string {
 	if err != nil {
 		return ""
 	}
-	switch strings.ToLower(u.Hostname()) {
+	host := strings.ToLower(u.Hostname())
+	switch host {
 	case "fapi.binance.com":
 		return ModeLive
 	case "testnet.binancefuture.com":
 		return ModeTestnet
-	default:
-		return ""
 	}
+	// 现货主机也认：现货客户端（划转 / 现货交易）的 base 就是这些主机，
+	// 不认的话 UseCredentials 会把该网络下合法的密钥判成不可用。
+	return spotHostNetwork(host)
 }
 
 // Klines 读公开 K 线。limit 缺省 100，上限 500。

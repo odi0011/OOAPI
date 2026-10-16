@@ -191,8 +191,8 @@ func TestTransferRefusesRealBinanceSpotHostOnNonLiveClient(t *testing.T) {
 	if err == nil {
 		t.Fatal("测网客户端对真币安现货主机的划转必须被拒")
 	}
-	if !strings.Contains(err.Error(), "实盘") {
-		t.Fatalf("拒绝理由要能看懂，得到: %v", err)
+	if !strings.Contains(err.Error(), "不一致") {
+		t.Fatalf("拒绝理由要能看懂（网络不一致），得到: %v", err)
 	}
 }
 

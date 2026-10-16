@@ -48,6 +48,9 @@ type USDMClient struct {
 	// spotBase 是现货 API 的主机。只有划转用得到它 —— 那个端点在
 	// api.binance.com 上，合约主机没有。空值时按实盘现货主机处理。
 	spotBase string
+	// spotRules 缓存现货的交易对规则（步长/最小名义/基础资产）。
+	// 与合约的 rules 分开存：同一台主机的 filters 形状不一样。
+	spotRules map[string]spotSymbolRules
 }
 
 type commissionQuote struct {
@@ -1438,7 +1441,12 @@ func (c *USDMClient) validateBase() error {
 		return invalid("测网地址不正确")
 	}
 	host := strings.ToLower(u.Hostname())
-	if host == "testnet.binancefuture.com" || host == "fapi.binance.com" {
+	switch host {
+	case "testnet.binancefuture.com", "fapi.binance.com":
+		// 合约主机。
+		return nil
+	case "api.binance.com", "testnet.binance.vision":
+		// 现货主机。划转与现货交易要用它 —— 这两个端点在合约主机上没有。
 		return nil
 	}
 	if strings.Contains(host, "binance") {
