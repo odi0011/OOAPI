@@ -13,15 +13,26 @@ import (
 
 // spotHandlerFake 是 handler 测试用的假现货主机。
 type spotHandlerFake struct {
-	body   string
-	path   string
-	method string
-	query  url.Values
+	body        string // /api/v3/account（现货）
+	fundingBody string // /sapi/v1/asset/get-funding-asset（资金账户）
+	path        string
+	method      string
+	query       url.Values
+	paths       []string
 }
 
 func (f *spotHandlerFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.path, f.method, f.query = r.URL.Path, r.Method, r.URL.Query()
+	f.paths = append(f.paths, r.URL.Path)
 	w.Header().Set("Content-Type", "application/json")
+	if strings.Contains(r.URL.Path, "get-funding-asset") {
+		body := f.fundingBody
+		if body == "" {
+			body = `[]`
+		}
+		_, _ = w.Write([]byte(body))
+		return
+	}
 	_, _ = w.Write([]byte(f.body))
 }
 
@@ -59,41 +70,96 @@ func spotFixture(t *testing.T, fake *spotHandlerFake) *models.User {
 	return owner
 }
 
-func TestGetSpotBalancesReturnsWallet(t *testing.T) {
-	fake := &spotHandlerFake{body: `{"balances":[
-		{"asset":"USDT","free":"12.5","locked":"0"},
-		{"asset":"DOGE","free":"0","locked":"0"}
-	]}`}
+/*
+一次读两个钱包 —— 现货与资金账户。
+
+只看现货会给出**错误的答案**：资金账户是另一个钱包，`/api/v3/account`
+读不到它。"我账户里应该还有 4 刀"那次误判就是这么来的。
+*/
+func TestGetSpotBalancesReadsBothWallets(t *testing.T) {
+	fake := &spotHandlerFake{
+		body: `{"balances":[
+			{"asset":"USDT","free":"12.5","locked":"0"},
+			{"asset":"DOGE","free":"0","locked":"0"}
+		]}`,
+		fundingBody: `[{"asset":"USDT","free":"3.47","locked":"0","freeze":"0","withdrawing":"0"}]`,
+	}
 	owner := spotFixture(t, fake)
 
 	rec := callTrading(t, GetSpotBalances, http.MethodGet, "/api/trading/spot/balances", "", owner, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("HTTP %d body=%s", rec.Code, rec.Body.String())
 	}
-	if fake.path != "/api/v3/account" {
-		t.Fatalf("端点错: %s", fake.path)
-	}
-	if fake.query.Get("omitZeroBalances") != "true" {
-		t.Fatalf("没带 omitZeroBalances: %v", fake.query)
-	}
 	data := tradingData(t, rec)
 	if data["network"] != "testnet" {
 		t.Fatalf("network=%v", data["network"])
 	}
-	balances, _ := data["balances"].([]any)
-	if len(balances) != 1 {
-		t.Fatalf("零余额应被滤掉，得到 %v", data["balances"])
+
+	// 现货：零余额被滤掉，字段名是小写的（没 json tag 会变成 "Asset"）。
+	spot, _ := data["spot"].([]any)
+	if len(spot) != 1 {
+		t.Fatalf("现货零余额应被滤掉，得到 %v", data["spot"])
 	}
-	row, _ := balances[0].(map[string]any)
-	// 字段名必须是小写的 —— 没有 json tag 的话会变成 "Asset"，前端对不上。
+	row, _ := spot[0].(map[string]any)
 	if _, ok := row["asset"]; !ok {
 		t.Fatalf("响应字段名不对: %v", row)
 	}
 	if row["total"] != 12.5 {
-		t.Fatalf("total=%v", row["total"])
+		t.Fatalf("现货 total=%v", row["total"])
 	}
-	// 密钥明文绝不能出现在响应里。
+
+	// 资金账户：钱在这里，必须一起读出来。
+	funding, _ := data["funding"].([]any)
+	if len(funding) != 1 {
+		t.Fatalf("资金账户余额没读出来: %v（只读现货会得出错误的结论）", data["funding"])
+	}
+	frow, _ := funding[0].(map[string]any)
+	if frow["asset"] != "USDT" || frow["total"] != 3.47 {
+		t.Fatalf("资金账户余额不对: %v", frow)
+	}
+	// 两个钱包都要真的被访问过。
+	visited := func(p string) bool {
+		for _, item := range fake.paths {
+			if item == p {
+				return true
+			}
+		}
+		return false
+	}
+	if !visited("/api/v3/account") || !visited("/sapi/v1/asset/get-funding-asset") {
+		t.Fatalf("两个钱包的端点都该被访问: %v", fake.paths)
+	}
 	assertNoPlainSecret(t, data)
+}
+
+/*
+资金账户读失败不拖垮整页：现货读到了就先给现货，把原因写在旁边。
+
+一个钱包读不到（多半是密钥没开对应权限）不该让整个余额页打不开 ——
+那样用户会以为"一个都没有"。
+*/
+func TestGetSpotBalancesSurvivesFundingFailure(t *testing.T) {
+	fake := &spotHandlerFake{
+		body:        `{"balances":[{"asset":"USDT","free":"1","locked":"0"}]}`,
+		fundingBody: `{"code":-2015,"msg":"Invalid API-key, IP, or permissions for action."}`,
+	}
+	owner := spotFixture(t, fake)
+	rec := callTrading(t, GetSpotBalances, http.MethodGet, "/api/trading/spot/balances", "", owner, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("现货读到了就该回 200，得到 %d %s", rec.Code, rec.Body.String())
+	}
+	data := tradingData(t, rec)
+	spot, _ := data["spot"].([]any)
+	if len(spot) != 1 {
+		t.Fatalf("现货余额应照常返回: %v", data["spot"])
+	}
+	if _, ok := data["fundingError"]; !ok {
+		t.Fatal("资金账户读不到时应当写明原因")
+	}
+	funding, _ := data["funding"].([]any)
+	if funding == nil || len(funding) != 0 {
+		t.Fatalf("失败的资金账户应回空数组，得到 %v", data["funding"])
+	}
 }
 
 // 划转把方向原样交给客户端 —— handler 不做二次映射，避免和 trading 包里的

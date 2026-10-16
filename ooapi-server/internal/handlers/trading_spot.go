@@ -34,10 +34,19 @@ var (
 	newSpotTransferClient = trading.NewSpotTransferClient
 )
 
-// GetSpotBalances 读现货钱包的非零余额。
-//
-// 用途之一是**核对划转**：合约钱包和现货钱包是两套账本，划完要看现货
-// 这边是否真到账，而不是只看划转接口回了成功。
+/*
+GetSpotBalances 一次读**现货**与**资金账户**两个钱包。
+
+为什么两个一起读：用户问"我的钱在哪"时，只看现货会给出**错误的答案**——
+资金账户（Funding wallet，P2P 与币安支付的落点）是另一个钱包，
+`/api/v3/account` 读不到它。"我账户里应该还有 4 刀"那次误判就是这么来的。
+
+资金账户读失败**不拖垮整个响应**：现货读到了就先给现货，在 fundingError
+里写明原因（多数是密钥没开对应权限）。一个钱包读不到不该让整页打不开。
+
+用途之一是核对划转：合约、现货、资金是三个钱包，划完要看目标那边
+是否真到账，而不是只看划转接口回了成功。
+*/
 func GetSpotBalances(c *gin.Context) {
 	user, row, okRow := deskRow(c)
 	if !okRow {
@@ -57,16 +66,23 @@ func GetSpotBalances(c *gin.Context) {
 		writeEngineErr(c, err)
 		return
 	}
-	balances, err := client.SpotBalances()
+	spot, err := client.SpotBalances()
 	if err != nil {
 		writeEngineErr(c, err)
 		return
 	}
-	ok(c, gin.H{
+	out := gin.H{
 		"network":       row.Record.Mode,
 		"exchangeKeyId": row.Record.ExchangeKeyID,
-		"balances":      balances,
-	})
+		"spot":          spot,
+		"funding":       []trading.SpotBalance{},
+	}
+	if funding, ferr := client.FundingBalances(); ferr != nil {
+		out["fundingError"] = ferr.Error()
+	} else {
+		out["funding"] = funding
+	}
+	ok(c, out)
 }
 
 type transferRequest struct {

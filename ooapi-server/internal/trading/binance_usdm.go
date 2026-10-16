@@ -1512,7 +1512,10 @@ doAt 与 do 相同，但可以指定出口主机；base 为空时打 c.base。
 而不是笼统按合约主机记。
 */
 func (c *USDMClient) doAt(base, method, path string, params url.Values, creds Credentials) ([]byte, error) {
-	if c != nil && c.readOnly && method != http.MethodGet {
+	// 只读客户端默认只允许 GET。币安有少数接口**只读却要求 POST**
+	// （如资金账户余额 get-funding-asset）—— 只按路径白名单放行，
+	// 不笼统放开 POST：笼统放开等于只读客户端也能下单。
+	if c != nil && c.readOnly && method != http.MethodGet && !readOnlyPostPath(path) {
 		return nil, ErrLiveTransportDisabled
 	}
 	if err := c.validateBase(); err != nil {

@@ -119,6 +119,94 @@ func (c *USDMClient) SpotBalances() ([]SpotBalance, error) {
 	return parseSpotBalances(body)
 }
 
+/*
+readOnlyPostPaths 是「只读、但币安要求 POST」的端点白名单。
+
+列在这里的每一个都必须**只读**。加新条目时要问一句：它会不会动钱或下单？
+会的话就不能加 —— 只读客户端是靠这个白名单挡住写操作的。
+*/
+var readOnlyPostPaths = map[string]struct{}{
+	"/sapi/v1/asset/get-funding-asset": {},
+}
+
+func readOnlyPostPath(path string) bool {
+	_, ok := readOnlyPostPaths[path]
+	return ok
+}
+
+/*
+FundingBalances 读**资金账户**（Funding wallet）的余额。
+
+它和现货账户是**两个钱包**：资金账户是 P2P、币安支付、部分划转的落点，
+`/api/v3/account` 读不到它。只看现货会得出错误的结论 —— 这正是之前
+「我账户里应该还有 4 刀」那次误判的来源：钱在资金账户里，而我只读了现货。
+
+端点 `POST /sapi/v1/asset/get-funding-asset`，注意两点都与现货账户不同：
+
+	· 是 **POST**（不是 GET）；
+	· 返回的是一个**数组**，不是带 `balances` 键的对象。
+
+公开参数可以不传（查全部资产）。
+*/
+func (c *USDMClient) FundingBalances() ([]SpotBalance, error) {
+	if c == nil {
+		return nil, invalid("交易所客户端未初始化")
+	}
+	target, err := c.spotTarget()
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	creds := c.creds
+	c.mu.Unlock()
+	if creds.APIKey == "" || creds.APISecret == "" {
+		return nil, ErrKeyNotUsable
+	}
+	body, err := c.doAt(target, http.MethodPost, "/sapi/v1/asset/get-funding-asset", url.Values{}, creds)
+	if err != nil {
+		return nil, err
+	}
+	return parseFundingBalances(body)
+}
+
+// parseFundingBalances 从资金账户的响应里取出非零余额。
+//
+// 字段比现货多三个：freeze / withdrawing / btcValuation。
+// 前两个仍是用户的钱（只是被冻结或在提现途中），所以计入 total ——
+// 「我还有多少」问的是总额，把冻结的扣掉会给出偏小的答案。
+func parseFundingBalances(body []byte) ([]SpotBalance, error) {
+	var rows []struct {
+		Asset       string    `json:"asset"`
+		Free        flexFloat `json:"free"`
+		Locked      flexFloat `json:"locked"`
+		Freeze      flexFloat `json:"freeze"`
+		Withdrawing flexFloat `json:"withdrawing"`
+	}
+	if json.Unmarshal(body, &rows) != nil {
+		return nil, errors.New("资金账户余额返回无法解析")
+	}
+	out := make([]SpotBalance, 0, len(rows))
+	for _, row := range rows {
+		asset := strings.ToUpper(strings.TrimSpace(row.Asset))
+		if asset == "" {
+			continue
+		}
+		free, locked := float64(row.Free), float64(row.Locked)
+		total := free + locked + float64(row.Freeze) + float64(row.Withdrawing)
+		if total <= 0 {
+			continue
+		}
+		out = append(out, SpotBalance{Asset: asset, Free: free, Locked: locked, Total: total})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Total != out[j].Total {
+			return out[i].Total > out[j].Total
+		}
+		return out[i].Asset < out[j].Asset
+	})
+	return out, nil
+}
+
 // parseSpotBalances 从 /api/v3/account 的响应里取出非零余额。
 func parseSpotBalances(body []byte) ([]SpotBalance, error) {
 	var resp struct {
