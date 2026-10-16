@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -151,6 +152,24 @@ func PostGridPreview(c *gin.Context) {
 	}
 	out["ok"] = true
 	out["plan"] = plan
+	/*
+		现价不在区间里时**仍然 ok**，但要把这件事说出来。
+
+		计划本身是合法的（区间画得对、收益算得出来），只是从当前这个价
+		起跑不了 —— 价格在下沿之下时一张买单都挂不出去。这和"计划不合法"
+		是两回事：前者改的是区间，后者改的是条数或预算。
+
+		放在这里而不是启动时才报，是因为用户在预览阶段就能把区间挪对，
+		不用先保存、再点开始、再被打回来。
+	*/
+	if price > 0 && (price <= plan.Lower || price >= plan.Upper) {
+		out["priceInRange"] = false
+		out["priceWarning"] = fmt.Sprintf(
+			"当前价 %g 不在区间 %g–%g 内，现在启动的话网格一张单都挂不出去。"+
+				"请把区间挪到当前价两侧。", price, plan.Lower, plan.Upper)
+	} else {
+		out["priceInRange"] = true
+	}
 	ok(c, out)
 }
 
@@ -206,7 +225,14 @@ func gridMarketContext(userID, keyID int64, mode, symbol string) (
 	if err != nil {
 		return trading.GridRules{}, 0, mode, 0, engineError(err)
 	}
-	// 费率是账户级数据，要密钥；读不到不是错误，兜底值更保守。
+	/*
+		费率是账户级数据，要密钥；读不到**不是错误**，但也不能原样回 0。
+
+		回 0 的话界面上会显示"单边手续费 0.000%"，而计划里其实用的是
+		兜底值 0.1% —— 显示的和算的不是一个数，用户会照着 0 去理解
+		每格收益。所以在这里就把兜底值填上，让显示、计划、存库三者
+		用同一个数。
+	*/
 	fee := 0.0
 	if keyID > 0 {
 		if opener := gridSecretOpener(userID, keyID, mode); opener != nil {
@@ -216,6 +242,9 @@ func gridMarketContext(userID, keyID int64, mode, symbol string) (
 				}
 			}
 		}
+	}
+	if fee <= 0 {
+		fee = trading.SpotDefaultFeeRate
 	}
 	return rules, price, mode, fee, nil
 }

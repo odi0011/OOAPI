@@ -88,6 +88,9 @@ export interface GridPreviewResponse {
   baseAsset: string;
   quoteAsset: string;
   minNotionalKnown: boolean;
+  /** 现价是否落在区间内。false 时网格起不来（在下沿之下挂不出买单）。 */
+  priceInRange?: boolean;
+  priceWarning?: string;
 }
 
 export interface GridRestingOrder {

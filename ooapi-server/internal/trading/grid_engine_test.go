@@ -3,6 +3,7 @@ package trading
 import (
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -671,8 +672,11 @@ func TestTopLineNeverGetsBuyOrder(t *testing.T) {
 
 // 每一格的买卖数量必须落在交易所步长上 —— 带小数的数量会被币安拒掉。
 func TestOrderQtyAlignsToStep(t *testing.T) {
-	eng, paper, _ := gridFixture(t, 0.09, 50)
-	pump(t, eng, paper, 0.09, time.Now().UTC())
+	// 价格贴着上沿内侧（0.0849）：高于上沿会被 Start 直接拒掉，
+	// 那样这个用例就变成在验证另一件事了。
+	const nearTop = 0.0849
+	eng, paper, _ := gridFixture(t, nearTop, 50)
+	pump(t, eng, paper, nearTop, time.Now().UTC())
 	for _, o := range paperOpenRows(t, paper) {
 		if math.Abs(o.OrigQty-math.Round(o.OrigQty)) > 1e-9 {
 			t.Fatalf("数量 %g 没落到步长 1 上", o.OrigQty)
@@ -806,6 +810,67 @@ func TestLevelViewsReflectEngineState(t *testing.T) {
 	}
 	if got := byIndex[3].State; got != GridLineSell {
 		t.Fatalf("第 3 格应显示挂着卖单，得到 %q", got)
+	}
+}
+
+/*
+价格不在区间里时**拒绝启动**，而不是让它空转。
+
+这是最阴险的一种失败：价格在下沿之下时，所有网格线都在市价之上，
+一张买单都挂不出去；而现货只能做多、手里也没货可卖 —— 于是网格
+"运行"着，盘口上一张单都没有，界面上看起来一切正常。等到有人发现
+的时候，可能已经过去几天了。
+
+价格在上沿之上同样拦：那会立刻触发上沿止盈，等于刚启动就清仓停机。
+*/
+func TestStartRefusesPriceOutsideRange(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		price float64
+	}{
+		{"价格在下沿之下", 0.070},
+		{"价格正好撞上下沿", gridTestLower},
+		{"价格在上沿之上", 0.090},
+		{"价格正好撞上上沿", gridTestUpper},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			paper := NewPaperGrid(gridTestRules(), tt.price, 200)
+			paper.SetFee(0.001)
+			cfg := GridConfig{
+				ID: 1, UserID: 7, ExchangeKeyID: 3,
+				Symbol: gridTestSymbol, Mode: ModeTestnet,
+				Lower: gridTestLower, Upper: gridTestUpper, Levels: 6,
+				QuoteBudget: 22, FeeRate: 0.001,
+			}
+			eng, err := BuildGridEngine(cfg, tt.price, paper, newMemoryGridFillLog(), DiscardLogger())
+			if err != nil {
+				t.Fatalf("构造不该失败（拦的是启动）: %v", err)
+			}
+			startErr := eng.Start(time.Now().UTC())
+			if startErr == nil {
+				t.Fatalf("价格 %g 不在区间 %g–%g 里，启动必须被拒",
+					tt.price, gridTestLower, gridTestUpper)
+			}
+			var re *ReasonError
+			if !errors.As(startErr, &re) || re.Reason != ReasonGridPriceOutOfRange {
+				t.Fatalf("原因应是 %s，得到 %v", ReasonGridPriceOutOfRange, startErr)
+			}
+			// 报错要带上当前价和区间 —— 只说"不在区间内"用户还得自己去对。
+			if !strings.Contains(startErr.Error(), "区间") {
+				t.Fatalf("报错要说清区间，得到: %v", startErr)
+			}
+			if eng.Running() {
+				t.Fatal("被拒之后不该处于运行状态")
+			}
+		})
+	}
+}
+
+// 价格落在区间内时必须能启动 —— 上面那条不能把正常情况一起拦掉。
+func TestStartAcceptsPriceInsideRange(t *testing.T) {
+	eng, _, _ := gridFixture(t, gridTestStart, 50)
+	if !eng.Running() {
+		t.Fatal("价格在区间内时应能启动")
 	}
 }
 

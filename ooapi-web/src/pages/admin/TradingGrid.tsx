@@ -478,6 +478,13 @@ function PreviewPanel({
         </span>
       </div>
 
+      {preview.ok && preview.priceInRange === false && preview.priceWarning && (
+        <div className={styles.notice}>
+          <strong>区间要挪一挪</strong>
+          <p>{preview.priceWarning}</p>
+        </div>
+      )}
+
       {!preview.ok && (
         <div className={styles.blocker}>
           <strong>跑不起来</strong>

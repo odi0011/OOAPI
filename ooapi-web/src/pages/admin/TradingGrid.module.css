@@ -273,6 +273,27 @@
   line-height: var(--leading-body);
 }
 
+/* 计划本身合法、但当前这个价起跑不了：提示而非报错 —— 改区间就行。 */
+.notice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--warning, #b8860b);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+}
+
+.notice strong {
+  color: var(--warning, #b8860b);
+}
+
+.notice p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
 .blocker strong {
   color: var(--danger, #d94f4f);
 }

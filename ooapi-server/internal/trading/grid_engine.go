@@ -407,15 +407,18 @@ func BuildGridEngine(cfg GridConfig, price float64, ex GridExchange, fills GridF
 		fills = newMemoryGridFillLog()
 	}
 	e := &GridEngine{
-		cfg:     cfg,
-		plan:    plan,
-		ex:      ex,
-		log:     logger,
-		fills:   fills,
-		rules:   rules,
-		state:   GridIdle,
-		holds:   map[int]*gridHold{},
-		resting: map[int]*gridResting{},
+		cfg:   cfg,
+		plan:  plan,
+		ex:    ex,
+		log:   logger,
+		fills: fills,
+		rules: rules,
+		state: GridIdle,
+		// 建引擎时的参考价留着，Start 要用它判断这份区间从现在这个价
+		// 起跑得起来 —— 见 Start 里的说明。
+		lastPrice: price,
+		holds:     map[int]*gridHold{},
+		resting:   map[int]*gridResting{},
 	}
 	if err := e.loadHoldings(); err != nil {
 		return nil, err
@@ -521,6 +524,23 @@ func (g *GridEngine) Start(now time.Time) error {
 	}
 	if g.state == GridError {
 		return ErrNoAutoReopen
+	}
+	/*
+		价格必须落在区间内，否则这份网格从第一拍起就什么都不做。
+
+		价格在**下沿之下**时，所有网格线都在市价之上，一张买单都挂不出去
+		（挂出去就是以高于市价的限价买入）。而现货只能做多，手里也没货
+		可卖 —— 于是它会"运行"着，盘口上一张单都没有，界面上看起来
+		一切正常。这种静默的空转比直接报错难查得多。
+
+		价格在**上沿之上**同样拦：那种情况会立刻触发上沿止盈，
+		等于刚启动就清仓停机，用户会以为网格坏了。
+	*/
+	if g.lastPrice > 0 && (g.lastPrice <= g.plan.Lower || g.lastPrice >= g.plan.Upper) {
+		return withReason(invalid(fmt.Sprintf(
+			"当前价 %.8g 不在区间 %g–%g 内，网格起不来（这个区间里一张单都挂不出去）。"+
+				"请把区间挪到当前价两侧，或等价格回到区间里再启动",
+			g.lastPrice, g.plan.Lower, g.plan.Upper)), ReasonGridPriceOutOfRange)
 	}
 	g.state = GridRunning
 	g.running = true
