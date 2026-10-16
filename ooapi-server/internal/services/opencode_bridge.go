@@ -50,7 +50,23 @@ func IsOpenCodeUpstreamHost(baseURL string) bool {
 	return host == "opencode.ai" || strings.HasSuffix(host, ".opencode.ai")
 }
 
-// UsesOpenCodeBridge 报告一个账号是否应走本机 OpenCode 桥接。
+/*
+UsesOpenCodeBridge 报告一个账号是否应走本机 OpenCode 桥接。
+
+**只有 Zen 端点（/zen/v1）需要桥接**：实测 Zen 免费档在服务端做客户端校验，
+非官方客户端一律 403 FreeTierError。
+
+**Go 端点（/zen/go/v1）不桥接**：官方文档明确它面向「OpenCode 与其他
+coding agents」，实测直连无客户端校验，而且比桥接更好：
+
+  - **支持工具调用**：实测 cat-jam-free 的 tool_calls 两轮往返完全正确
+    （桥接做不到 —— serve 的 API 不接受外部工具 schema，
+    导致 Claude Code / Codex 的写文件任务全部静默失败）；
+  - **更快**：实测 357 tok/s（桥接约 190 tok/s）；
+  - **无进程风险**：没有 serve 的 shell 工具执行面。
+
+两者混在同一个 base_url 前缀下（/zen/v1 与 /zen/go/v1），所以按路径区分。
+*/
 func UsesOpenCodeBridge(ch *UpstreamChannel) bool {
 	if ch == nil {
 		return false
@@ -61,5 +77,18 @@ func UsesOpenCodeBridge(ch *UpstreamChannel) bool {
 	if !strings.EqualFold(strings.TrimSpace(ch.Vendor), "opencode") {
 		return false
 	}
-	return IsOpenCodeUpstreamHost(ch.BaseURL)
+	if !IsOpenCodeUpstreamHost(ch.BaseURL) {
+		return false
+	}
+	// Go 端点：直连（支持工具、更快、无校验）。
+	if IsGoEndpoint(ch.BaseURL) {
+		return false
+	}
+	return true
+}
+
+// IsGoEndpoint 判断地址是否指向 OpenCode 的 Go 门面（面向第三方客户端）。
+func IsGoEndpoint(baseURL string) bool {
+	lower := strings.ToLower(strings.TrimSpace(baseURL))
+	return strings.Contains(lower, "/zen/go/") || strings.HasSuffix(lower, "/zen/go")
 }
