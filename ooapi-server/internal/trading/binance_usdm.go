@@ -45,6 +45,9 @@ type USDMClient struct {
 	dual     *bool
 	readOnly bool
 	fees     map[string]commissionQuote
+	// spotBase 是现货 API 的主机。只有划转用得到它 —— 那个端点在
+	// api.binance.com 上，合约主机没有。空值时按实盘现货主机处理。
+	spotBase string
 }
 
 type commissionQuote struct {
@@ -1490,15 +1493,30 @@ func (c *USDMClient) signedGET(path string, params url.Values) ([]byte, error) {
 }
 
 func (c *USDMClient) do(method, path string, params url.Values, creds Credentials) ([]byte, error) {
+	return c.doAt("", method, path, params, creds)
+}
+
+/*
+doAt 与 do 相同，但可以指定出口主机；base 为空时打 c.base。
+
+存在的理由：划转端点在**现货主机**上，合约主机没有它。把出口从调用点传进来，
+比在客户端里散落特例安全 —— 也让熔断按「实际打出去的那个主机」记账，
+而不是笼统按合约主机记。
+*/
+func (c *USDMClient) doAt(base, method, path string, params url.Values, creds Credentials) ([]byte, error) {
 	if c != nil && c.readOnly && method != http.MethodGet {
 		return nil, ErrLiveTransportDisabled
 	}
 	if err := c.validateBase(); err != nil {
 		return nil, err
 	}
+	target := c.base
+	if strings.TrimSpace(base) != "" {
+		target = strings.TrimRight(strings.TrimSpace(base), "/")
+	}
 	// 熔断期间直接返回，不碰网络 —— 对币安来说「封禁期间再发请求」就是续封。
-	if until, blocked := banGate.blockedUntil(c.base); blocked {
-		return nil, &UpstreamBanError{Base: c.base, Until: until}
+	if until, blocked := banGate.blockedUntil(target); blocked {
+		return nil, &UpstreamBanError{Base: target, Until: until}
 	}
 	query := cloneValues(params)
 	if creds.APISecret != "" {
@@ -1508,10 +1526,10 @@ func (c *USDMClient) do(method, path string, params url.Values, creds Credential
 		mac := hmac.New(sha256.New, []byte(creds.APISecret))
 		_, _ = mac.Write([]byte(payload))
 		query = nil
-		endpoint := c.base + path + "?" + payload + "&signature=" + hex.EncodeToString(mac.Sum(nil))
+		endpoint := target + path + "?" + payload + "&signature=" + hex.EncodeToString(mac.Sum(nil))
 		return c.roundTrip(method, endpoint, creds.APIKey)
 	}
-	endpoint := c.base + path
+	endpoint := target + path
 	if encoded := query.Encode(); encoded != "" {
 		endpoint += "?" + encoded
 	}
