@@ -681,6 +681,15 @@ startGrid 建引擎并让它接上调度。**建失败就直接返回错误**。
 等几拍之后发现一个格子都没挂上要好得多。
 */
 func startGrid(spec trading.GridRunSpec) error {
+	/*
+		调用方的意图就是"让它跑起来"。
+
+		DB 里的 running 标记要等引擎建成功之后才写（写早了、建失败，
+		重启时会去恢复一条根本没跑起来的网格）。但传给调度器的 spec
+		必须**现在**就是 Running —— GridRunner.tick 看到 !Running
+		会直接返回，网格于是显示 Running、盘口上却一张单都没有。
+	*/
+	spec.Config.Running = true
 	ex, err := gridExchangeFor(spec.Config)
 	if err != nil {
 		return err
