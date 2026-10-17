@@ -1,0 +1,383 @@
+{
+  "fetch_start_ms": 1772323200000,
+  "fetch_end_ms": 1792248000000,
+  "symbols": [
+    "BTC",
+    "ETH",
+    "SOL",
+    "XRP",
+    "DOGE",
+    "BNB",
+    "ADA",
+    "LINK"
+  ],
+  "venues": [
+    "binance",
+    "bybit",
+    "okx"
+  ],
+  "funding": {
+    "binance_ADA": {
+      "n": 691,
+      "first_ms": 1772323200005,
+      "last_ms": 1792195200000
+    },
+    "binance_BNB": {
+      "n": 691,
+      "first_ms": 1772323200005,
+      "last_ms": 1792195200000
+    },
+    "binance_BTC": {
+      "n": 691,
+      "first_ms": 1772323200005,
+      "last_ms": 1792195200000
+    },
+    "binance_DOGE": {
+      "n": 691,
+      "first_ms": 1772323200005,
+      "last_ms": 1792195200000
+    },
+    "binance_ETH": {
+      "n": 691,
+      "first_ms": 1772323200005,
+      "last_ms": 1792195200000
+    },
+    "binance_LINK": {
+      "n": 691,
+      "first_ms": 1772323200005,
+      "last_ms": 1792195200000
+    },
+    "binance_SOL": {
+      "n": 691,
+      "first_ms": 1772323200005,
+      "last_ms": 1792195200000
+    },
+    "binance_XRP": {
+      "n": 691,
+      "first_ms": 1772323200005,
+      "last_ms": 1792195200000
+    },
+    "bybit_ADA": {
+      "n": 600,
+      "first_ms": 1774944000000,
+      "last_ms": 1792195200000
+    },
+    "bybit_BNB": {
+      "n": 600,
+      "first_ms": 1774944000000,
+      "last_ms": 1792195200000
+    },
+    "bybit_BTC": {
+      "n": 600,
+      "first_ms": 1774944000000,
+      "last_ms": 1792195200000
+    },
+    "bybit_DOGE": {
+      "n": 600,
+      "first_ms": 1774944000000,
+      "last_ms": 1792195200000
+    },
+    "bybit_ETH": {
+      "n": 600,
+      "first_ms": 1774944000000,
+      "last_ms": 1792195200000
+    },
+    "bybit_LINK": {
+      "n": 600,
+      "first_ms": 1774944000000,
+      "last_ms": 1792195200000
+    },
+    "bybit_SOL": {
+      "n": 600,
+      "first_ms": 1774944000000,
+      "last_ms": 1792195200000
+    },
+    "bybit_XRP": {
+      "n": 600,
+      "first_ms": 1774944000000,
+      "last_ms": 1792195200000
+    },
+    "okx_ADA": {
+      "n": 287,
+      "first_ms": 1783958400000,
+      "last_ms": 1792195200000
+    },
+    "okx_BNB": {
+      "n": 287,
+      "first_ms": 1783958400000,
+      "last_ms": 1792195200000
+    },
+    "okx_BTC": {
+      "n": 287,
+      "first_ms": 1783958400000,
+      "last_ms": 1792195200000
+    },
+    "okx_DOGE": {
+      "n": 287,
+      "first_ms": 1783958400000,
+      "last_ms": 1792195200000
+    },
+    "okx_ETH": {
+      "n": 287,
+      "first_ms": 1783958400000,
+      "last_ms": 1792195200000
+    },
+    "okx_LINK": {
+      "n": 287,
+      "first_ms": 1783958400000,
+      "last_ms": 1792195200000
+    },
+    "okx_SOL": {
+      "n": 287,
+      "first_ms": 1783958400000,
+      "last_ms": 1792195200000
+    },
+    "okx_XRP": {
+      "n": 287,
+      "first_ms": 1783958400000,
+      "last_ms": 1792195200000
+    }
+  },
+  "prices": {
+    "binance_ADA_perp_1h": {
+      "n": 4565,
+      "first_ms": 1775779200000,
+      "last_ms": 1792209600000,
+      "path": "binance_ADA_perp_1h.csv"
+    },
+    "binance_BNB_perp_1h": {
+      "n": 4565,
+      "first_ms": 1775779200000,
+      "last_ms": 1792209600000,
+      "path": "binance_BNB_perp_1h.csv"
+    },
+    "binance_BTC_perp_1h": {
+      "n": 4565,
+      "first_ms": 1775779200000,
+      "last_ms": 1792209600000,
+      "path": "binance_BTC_perp_1h.csv"
+    },
+    "binance_DOGE_perp_1h": {
+      "n": 4565,
+      "first_ms": 1775779200000,
+      "last_ms": 1792209600000,
+      "path": "binance_DOGE_perp_1h.csv"
+    },
+    "binance_ETH_perp_1h": {
+      "n": 4565,
+      "first_ms": 1775779200000,
+      "last_ms": 1792209600000,
+      "path": "binance_ETH_perp_1h.csv"
+    },
+    "binance_LINK_perp_1h": {
+      "n": 4565,
+      "first_ms": 1775779200000,
+      "last_ms": 1792209600000,
+      "path": "binance_LINK_perp_1h.csv"
+    },
+    "binance_SOL_perp_1h": {
+      "n": 4565,
+      "first_ms": 1775779200000,
+      "last_ms": 1792209600000,
+      "path": "binance_SOL_perp_1h.csv"
+    },
+    "binance_XRP_perp_1h": {
+      "n": 4565,
+      "first_ms": 1775779200000,
+      "last_ms": 1792209600000,
+      "path": "binance_XRP_perp_1h.csv"
+    },
+    "bybit_ADA_perp_1h": {
+      "n": 5000,
+      "first_ms": 1774213200000,
+      "last_ms": 1792209600000,
+      "path": "bybit_ADA_perp_1h.csv"
+    },
+    "bybit_ADA_spot_1h": {
+      "n": 5000,
+      "first_ms": 1774213200000,
+      "last_ms": 1792209600000,
+      "path": "bybit_ADA_spot_1h.csv"
+    },
+    "bybit_BNB_perp_1h": {
+      "n": 5000,
+      "first_ms": 1774213200000,
+      "last_ms": 1792209600000,
+      "path": "bybit_BNB_perp_1h.csv"
+    },
+    "bybit_BNB_spot_1h": {
+      "n": 5000,
+      "first_ms": 1774213200000,
+      "last_ms": 1792209600000,
+      "path": "bybit_BNB_spot_1h.csv"
+    },
+    "bybit_BTC_perp_1h": {
+      "n": 5000,
+      "first_ms": 1774213200000,
+      "last_ms": 1792209600000,
+      "path": "bybit_BTC_perp_1h.csv"
+    },
+    "bybit_BTC_spot_1h": {
+      "n": 5000,
+      "first_ms": 1774213200000,
+      "last_ms": 1792209600000,
+      "path": "bybit_BTC_spot_1h.csv"
+    },
+    "bybit_DOGE_perp_1h": {
+      "n": 5000,
+      "first_ms": 1774213200000,
+      "last_ms": 1792209600000,
+      "path": "bybit_DOGE_perp_1h.csv"
+    },
+    "bybit_DOGE_spot_1h": {
+      "n": 5000,
+      "first_ms": 1774213200000,
+      "last_ms": 1792209600000,
+      "path": "bybit_DOGE_spot_1h.csv"
+    },
+    "bybit_ETH_perp_1h": {
+      "n": 5000,
+      "first_ms": 1774213200000,
+      "last_ms": 1792209600000,
+      "path": "bybit_ETH_perp_1h.csv"
+    },
+    "bybit_ETH_spot_1h": {
+      "n": 5000,
+      "first_ms": 1774213200000,
+      "last_ms": 1792209600000,
+      "path": "bybit_ETH_spot_1h.csv"
+    },
+    "bybit_LINK_perp_1h": {
+      "n": 5000,
+      "first_ms": 1774213200000,
+      "last_ms": 1792209600000,
+      "path": "bybit_LINK_perp_1h.csv"
+    },
+    "bybit_LINK_spot_1h": {
+      "n": 5000,
+      "first_ms": 1774213200000,
+      "last_ms": 1792209600000,
+      "path": "bybit_LINK_spot_1h.csv"
+    },
+    "bybit_SOL_perp_1h": {
+      "n": 5000,
+      "first_ms": 1774213200000,
+      "last_ms": 1792209600000,
+      "path": "bybit_SOL_perp_1h.csv"
+    },
+    "bybit_SOL_spot_1h": {
+      "n": 5000,
+      "first_ms": 1774213200000,
+      "last_ms": 1792209600000,
+      "path": "bybit_SOL_spot_1h.csv"
+    },
+    "bybit_XRP_perp_1h": {
+      "n": 5000,
+      "first_ms": 1774213200000,
+      "last_ms": 1792209600000,
+      "path": "bybit_XRP_perp_1h.csv"
+    },
+    "bybit_XRP_spot_1h": {
+      "n": 5000,
+      "first_ms": 1774213200000,
+      "last_ms": 1792209600000,
+      "path": "bybit_XRP_spot_1h.csv"
+    },
+    "okx_ADA_perp_1h": {
+      "n": 4600,
+      "first_ms": 1775653200000,
+      "last_ms": 1792209600000,
+      "path": "okx_ADA_perp_1h.csv"
+    },
+    "okx_ADA_spot_1h": {
+      "n": 4600,
+      "first_ms": 1775653200000,
+      "last_ms": 1792209600000,
+      "path": "okx_ADA_spot_1h.csv"
+    },
+    "okx_BNB_perp_1h": {
+      "n": 4600,
+      "first_ms": 1775653200000,
+      "last_ms": 1792209600000,
+      "path": "okx_BNB_perp_1h.csv"
+    },
+    "okx_BNB_spot_1h": {
+      "n": 4600,
+      "first_ms": 1775653200000,
+      "last_ms": 1792209600000,
+      "path": "okx_BNB_spot_1h.csv"
+    },
+    "okx_BTC_perp_1h": {
+      "n": 4600,
+      "first_ms": 1775653200000,
+      "last_ms": 1792209600000,
+      "path": "okx_BTC_perp_1h.csv"
+    },
+    "okx_BTC_spot_1h": {
+      "n": 4600,
+      "first_ms": 1775653200000,
+      "last_ms": 1792209600000,
+      "path": "okx_BTC_spot_1h.csv"
+    },
+    "okx_DOGE_perp_1h": {
+      "n": 4600,
+      "first_ms": 1775653200000,
+      "last_ms": 1792209600000,
+      "path": "okx_DOGE_perp_1h.csv"
+    },
+    "okx_DOGE_spot_1h": {
+      "n": 4600,
+      "first_ms": 1775653200000,
+      "last_ms": 1792209600000,
+      "path": "okx_DOGE_spot_1h.csv"
+    },
+    "okx_ETH_perp_1h": {
+      "n": 4600,
+      "first_ms": 1775653200000,
+      "last_ms": 1792209600000,
+      "path": "okx_ETH_perp_1h.csv"
+    },
+    "okx_ETH_spot_1h": {
+      "n": 4600,
+      "first_ms": 1775653200000,
+      "last_ms": 1792209600000,
+      "path": "okx_ETH_spot_1h.csv"
+    },
+    "okx_LINK_perp_1h": {
+      "n": 4600,
+      "first_ms": 1775653200000,
+      "last_ms": 1792209600000,
+      "path": "okx_LINK_perp_1h.csv"
+    },
+    "okx_LINK_spot_1h": {
+      "n": 4600,
+      "first_ms": 1775653200000,
+      "last_ms": 1792209600000,
+      "path": "okx_LINK_spot_1h.csv"
+    },
+    "okx_SOL_perp_1h": {
+      "n": 4600,
+      "first_ms": 1775653200000,
+      "last_ms": 1792209600000,
+      "path": "okx_SOL_perp_1h.csv"
+    },
+    "okx_SOL_spot_1h": {
+      "n": 4600,
+      "first_ms": 1775653200000,
+      "last_ms": 1792209600000,
+      "path": "okx_SOL_spot_1h.csv"
+    },
+    "okx_XRP_perp_1h": {
+      "n": 4600,
+      "first_ms": 1775653200000,
+      "last_ms": 1792209600000,
+      "path": "okx_XRP_perp_1h.csv"
+    },
+    "okx_XRP_spot_1h": {
+      "n": 4600,
+      "first_ms": 1775653200000,
+      "last_ms": 1792209600000,
+      "path": "okx_XRP_spot_1h.csv"
+    }
+  }
+}
