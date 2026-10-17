@@ -669,6 +669,54 @@ func TestPartialFillBooksFillsThatLandDuringCancel(t *testing.T) {
 }
 
 /*
+查到的还不是终态时，settle 不能记账、也不能删除挂单记录。
+
+OpenOrders 的某一拍快照可能暂时不包含一张仍在撮合的单；如果这时
+QueryOrder 返回 PARTIALLY_FILLED，按快照量入账并删记录，后续成交
+就永远丢了 —— 测试网 WIF 空头第二次停机就是这么来的：平仓单在撤单
+竞态里多成交 25.4 张，交易所 613.3 / 本地 638.7，漂移守卫三拍后清仓。
+*/
+func TestSettleWaitsForFinalStatus(t *testing.T) {
+	eng, paper, _ := gridFixture(t, gridTestStart, 50)
+	now := time.Now().UTC()
+	pump(t, eng, paper, gridTestStart, now)
+
+	rest := eng.resting[2]
+	if rest == nil {
+		t.Fatal("第 2 格应有挂单")
+	}
+	if err := paper.PartialFill(rest.Client, 30); err != nil {
+		t.Fatal(err)
+	}
+	state := SpotOrderState{
+		ClientOrderID: rest.Client, OrderID: rest.OrderID,
+		Side: rest.Side, Price: rest.Price, OrigQty: rest.Qty,
+		ExecutedQty: 10, Status: SpotStatusPartial,
+	}
+	if err := eng.settle(rest, state); err != nil {
+		t.Fatal(err)
+	}
+	if eng.resting[2] == nil {
+		t.Fatal("非终态不能删除挂单记录 —— 这张单还可能继续成交")
+	}
+	if held := eng.HoldingsView()[2]; held != 0 {
+		t.Fatalf("非终态不能入账，得到 %g", held)
+	}
+
+	state.ExecutedQty = 30
+	state.Status = SpotStatusCanceled
+	if err := eng.settle(rest, state); err != nil {
+		t.Fatal(err)
+	}
+	if eng.resting[2] != nil {
+		t.Fatal("终态应删除挂单记录")
+	}
+	if held := eng.HoldingsView()[2]; math.Abs(held-29.97) > 1e-6 {
+		t.Fatalf("终态应按成交 30 入账（扣基础币手续费），得到 %g", held)
+	}
+}
+
+/*
 成交回放里遇到清仓单（level -1）必须把此前持仓清零。
 
 实盘踩过：空头网格因持仓漂移停机，清仓单平掉了 530.7；进程重启后

@@ -951,10 +951,10 @@ outOfRange 判断是否该离场。
 
 两个边界对应两种完全不同的结局，所以原因要分开写：
 
- · 跌破止损价 —— 亏着走。下沿是接货区，跌破它再跌 StopPct 说明
-   行情不是震荡而是单边下跌，网格的假设已经不成立；
- · 涨过上沿 —— 赚着走。区间走完了，手里的货在往上的过程中已经一格一格
-   卖光，这时候停机就是把利润落袋。
+	· 跌破止损价 —— 亏着走。下沿是接货区，跌破它再跌 StopPct 说明
+	  行情不是震荡而是单边下跌，网格的假设已经不成立；
+	· 涨过上沿 —— 赚着走。区间走完了，手里的货在往上的过程中已经一格一格
+	  卖光，这时候停机就是把利润落袋。
 
 上沿这一条**不设条件**：价格到了区间顶，网格已经没有可以挂的卖单了，
 继续留着只会让钱趴在账上不干活。
@@ -1125,20 +1125,35 @@ settle 处理一张已经有最终状态的单。
 盘口上那一格永远空着，网格少一条腿，而界面上看起来一切正常。
 */
 func (g *GridEngine) settle(rest *gridResting, final SpotOrderState) error {
-	delete(g.resting, rest.Level)
-	switch {
-	case final.ExecutedQty > 0:
-		return g.bookFill(rest, final)
-	case final.Status == SpotStatusCanceled || final.Status == SpotStatusExpired ||
-		final.Status == SpotStatusExpiredInMatch || final.Status == SpotStatusRejected:
-		g.log.Printf("[grid] %s 第 %d 格 %s 单%s，下一拍重挂",
+	/*
+		只有**终态**才能记账并删除挂单记录。
+
+		如果查到的还是 NEW / PARTIALLY_FILLED，说明这张单可能只是暂时
+		不在这一拍的 OpenOrders 快照里（撮合与查询之间有延迟），它仍然
+		可能继续成交。此时按当前部分成交量入账并删掉记录，后续成交就
+		永远丢了 —— 测试网 WIF 空头第二次停机就是这么来的：平仓单在
+		撤单竞态里多成交 25.4 张，settle 记了快照量就删了记录，之后
+		交易所 613.3 / 本地 638.7，漂移守卫三拍后清仓。
+
+		保留记录，下一拍再查；只要它回到 OpenOrders，就会走
+		absorbPartial（先撤单、再按终态入账）。
+	*/
+	if !gridOrderFinal(final.Status) {
+		g.log.Printf("[grid] %s 第 %d 格 %s 单状态 %s 尚未终结，下一拍再核对",
 			g.cfg.Symbol, rest.Level, rest.Side, final.Status)
 		return nil
-	default:
-		// 查到了但既没成交也没终结（还在盘口上、或刚被撤）。
-		// 保持"这一格没有挂单"，下一拍按持仓重算要不要补。
-		return nil
 	}
+	delete(g.resting, rest.Level)
+	if final.ExecutedQty > 0 {
+		return g.bookFill(rest, final)
+	}
+	if final.Status == SpotStatusCanceled || final.Status == SpotStatusExpired ||
+		final.Status == SpotStatusExpiredInMatch || final.Status == SpotStatusRejected {
+		g.log.Printf("[grid] %s 第 %d 格 %s 单%s，下一拍重挂",
+			g.cfg.Symbol, rest.Level, rest.Side, final.Status)
+	}
+	// 终态且零成交（例如刚挂上就被撤）：这一格空着，下一拍按持仓重算。
+	return nil
 }
 
 /*

@@ -1190,6 +1190,20 @@ func (c *USDMClient) ConfigureAccount(symbol string, leverage int) error {
 }
 
 func (c *USDMClient) setIsolated(symbol string) error {
+	/*
+		已经是逐仓就不要再发变更请求。
+
+		币安在"有持仓/挂单"时拒绝变更保证金模式，返回的却是
+		-4067「Position side cannot be changed if there exists open
+		orders.」—— 文案说的是持仓方向，实际拒绝的是 marginType。
+		测试网 4 条多头网格在重启后因此每一拍都失败、盘口挂单清零，
+		而账户其实早就是逐仓。
+
+		变更被拒时再确认一次当前模式：如果已经是逐仓，就当成功。
+	*/
+	if mt, err := c.marginTypeFor(symbol); err == nil && strings.EqualFold(mt, "isolated") {
+		return nil
+	}
 	_, err := c.signed(http.MethodPost, "/fapi/v1/marginType", url.Values{
 		"symbol":     {symbol},
 		"marginType": {"ISOLATED"},
@@ -1197,7 +1211,28 @@ func (c *USDMClient) setIsolated(symbol string) error {
 	if err == nil || errors.Is(err, errMarginUnchanged) {
 		return nil
 	}
+	if mt, mtErr := c.marginTypeFor(symbol); mtErr == nil && strings.EqualFold(mt, "isolated") {
+		return nil
+	}
 	return err
+}
+
+// marginTypeFor 读某交易对当前的保证金模式（cross / isolated）。
+func (c *USDMClient) marginTypeFor(symbol string) (string, error) {
+	body, err := c.signed(http.MethodGet, "/fapi/v2/positionRisk", url.Values{"symbol": {symbol}})
+	if err != nil {
+		return "", err
+	}
+	rows, err := decodeRiskRows(body)
+	if err != nil {
+		return "", err
+	}
+	for _, row := range rows {
+		if strings.EqualFold(row.Symbol, symbol) && row.MarginType != "" {
+			return strings.ToLower(strings.TrimSpace(row.MarginType)), nil
+		}
+	}
+	return "", nil
 }
 
 func (c *USDMClient) setLeverage(symbol string, leverage int) error {
