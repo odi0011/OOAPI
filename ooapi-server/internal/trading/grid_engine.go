@@ -903,6 +903,17 @@ func (g *GridEngine) Step(now time.Time, price float64) (GridSnapshot, error) {
 		if stopped {
 			return g.snapshot(), nil
 		}
+		/*
+			漂移还没确认（第 1、2 拍）时**这一拍不挂任何新单**。
+
+			如果交易所已经没仓位、本地还以为有，rebalance 会按"平仓"
+			挂一张买单 —— 在空仓上那张买单就是开多。等确认或恢复再挂，
+			最多错过几秒行情，换的是不会在错误的账上建仓。
+		*/
+		if g.driftTicks > 0 {
+			g.note("drift_wait", "持仓与账本暂不一致，本拍不挂单")
+			return g.snapshot(), nil
+		}
 	}
 
 	/*
