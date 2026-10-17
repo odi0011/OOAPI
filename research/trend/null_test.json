@@ -1,0 +1,46 @@
+{
+  "permutation": {
+    "n_perm": 500,
+    "seed": 20261017,
+    "n_markets": 24,
+    "observed_pass": 0,
+    "observed_max_net_r": 5.180366706124339,
+    "null_pass_mean": 0.0,
+    "null_pass_p50": 0.0,
+    "null_pass_p95": 0.0,
+    "null_pass_max": 0,
+    "p_value_pass_count": 1.0,
+    "null_max_net_mean": -36.78859314685786,
+    "null_max_net_p95": -11.72892729294374,
+    "p_value_max_net": 0.003992015968063872
+  },
+  "rank": {
+    "spearman_n": 216,
+    "spearman_median": 0.7239687056297608,
+    "spearman_mean": 0.6876968009287784,
+    "spearman_positive_share": 1.0,
+    "selected_percentile_median": 0.7873150094814082,
+    "selected_percentile_top25_share": 0.5280373831775701
+  },
+  "selection_rule_sensitivity": [
+    {
+      "rule": "live",
+      "primary_pass": 0,
+      "extended_pass": 0,
+      "insufficient": 0
+    },
+    {
+      "rule": "exp",
+      "primary_pass": 0,
+      "extended_pass": 0,
+      "insufficient": 0
+    },
+    {
+      "rule": "netr",
+      "primary_pass": 0,
+      "extended_pass": 0,
+      "insufficient": 0
+    }
+  ],
+  "elapsed_sec": 982.8578834533691
+}
