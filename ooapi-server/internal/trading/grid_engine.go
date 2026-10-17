@@ -814,12 +814,18 @@ func (g *GridEngine) realizeAgainstCost(qty, price, fee float64) (realized, rema
 		return 0, g.qtyHeld
 	}
 	if g.qtyHeld <= 0 {
-		// 账上没有持仓却发生了平仓成交 —— 说明有外部来源的仓位
-		// （手工开的、别的策略开的）。不假装它有成本。
-		if g.cfg.Direction.Short() {
-			return -(qty*price + fee), 0
-		}
-		return qty*price - fee, 0
+		/*
+			账上没有持仓却发生了平仓成交 —— 这是**账本外**的仓位：
+			手工开的、别的策略开的，或者成交历史缺失。
+
+			既不假装它有成本，也不凭空记一笔盈亏：把整笔平仓金额
+			记成亏损（空头）或盈利（多头），会让界面上出现一笔
+			与网格完全无关的巨额已实现。真实盈亏只有那个外部仓位
+			的主人知道，网格不该替它记账。只记 0，并把这件事说清楚。
+		*/
+		g.log.Printf("[grid] %s 平掉了账本外的 %g@%g（外部仓位或缺失的成交历史），不计已实现",
+			g.cfg.Symbol, qty, price)
+		return 0, 0
 	}
 	avg := g.costBasis / g.qtyHeld
 	sold := qty
