@@ -1655,3 +1655,16 @@ Google OAuth 变量）与部署要点（nginx 三项 SSE 必需配置）。
 
 - `/admin/trading/board`（`TradingBoard.tsx` / `TradingBoard.module.css`）：增加多币种响应式宫格（桌面端 3 列、中等屏幕 2 列、移动端 1 列，卡片等高 `--chart-height: 240px`），同时展示全部预设币种及自定义策略币种的 K 线、标记价、持仓与止损/止盈线。点击任意宫格卡片或顶部币种栏均可切换当前选中币种，并联动下方毫秒级行情终端、「交易系统」与「数据面板」。
 - `GET /api/trading/engine/market`（`ooapi-server/internal/handlers/trading_desk.go` + `tradingApi.ts`）：新增按 `?symbol=BTCUSDT&timeframe=5m&limit=120` 直接拉取公开 K 线与标记价的分支（未建策略的币种在看板宫格里也能正常渲染实时 K 线；若当前用户已有对应币种策略则自动附带止损/止盈/入场价位线）。
+
+### 2026-10-17：合约做空网格（镜像引擎）
+
+- `GridConfig` 增加 `Direction`（long/short）、`Market`（spot/futures）、`Leverage`。做空强制 futures，现货强制 long、杠杆 1；老数据默认 long/spot，行为一个字节不变。
+- `grid_engine.go` 的持仓表、挂单推导、成交入账、已实现盈亏、清仓、出界判定全部按方向镜像：空头 SELL 开仓、BUY 在**下一格**平仓；最下面那条线永不卖；止损在上沿之上、止盈在下沿。`desiredOrders` 里平仓单优先于开仓单（与多头的卖单优先对称）。
+- 计划层 `BuildGridPlan`：预算口径按市场区分 —— 现货是买货的计价币，合约是保证金；名义 = 保证金 × 杠杆。止损价、最坏亏损、开局挂单数（`initialSells`）都按方向计算。合约兜底费率是 maker 0.02%，与现货的 0.1% 刻意分开（GTX 挂单不会吃单）。
+- 新增合约出口 `FuturesGridExchange`（`binance_grid_futures.go`）：GTX(post-only) 限价、reduceOnly（单向）/positionSide（双向）平仓、`positionRisk` 读持仓、`userTrades` 读手续费。首次下单前 `ConfigureAccount` 设逐仓与杠杆。
+- **交易所侧止损**：`GridProtector` 接口。合约网格每一拍确保有一张 `closePosition` 的 `STOP_MARKET`（algoOrder / CONDITIONAL）挂在上沿之外；清仓成功后才撤。进程被杀时软件止损不在，这张单还在。
+- `GridFillLog.Holdings` 加方向参数（内存与 SQL 两套；空头是"卖出加、买入减下一格"）；`trading_grids` 自动补 `direction/market/leverage` 三列。
+- 前端网格页加方向/市场/杠杆；预览显示保证金占用与止盈价；空头的线状态文案改为"卖开 / 买平"。
+- 测试：`grid_short_test.go` 覆盖开局只挂上方卖单、往返、重启从成交流水还原持仓、上破止损、下破止盈、计划镜像、现货做空被拒；`PaperFuturesGrid` 提供内存合约撮合（含 GTX 拒单）。
+- 验证：`go build ./...`、`go test ./...`、`tsc -b` 全绿。
+- 已知边界：资金费未计入已实现盈亏；交易所持仓与本地账本的一致性校验尚未做；合约网格只支持 USDT-M。

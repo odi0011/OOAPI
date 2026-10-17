@@ -102,15 +102,27 @@ Holdings 按线号把每一格还没卖掉的量累加起来。
 第二条是必须的：清仓单把货一次性卖光，如果按线号去减，就会把某一格
 减成负数，而那和事实不符（清仓卖的是所有格凑起来的货）。
 */
-func (m *memoryGridFillLog) Holdings(gridID int64) (map[int]float64, error) {
+func (m *memoryGridFillLog) Holdings(gridID int64, direction GridDirection) (map[int]float64, error) {
 	if m == nil {
 		return map[int]float64{}, nil
 	}
+	short := NormalizeDirection(direction).Short()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := map[int]float64{}
 	for _, row := range m.rows {
 		if row.GridID != gridID || row.Level < 0 {
+			continue
+		}
+		if short {
+			// 空头：SELL 开空落在自己那一格，BUY 平空减的是**下一格**
+			// （买单挂在 i-1，平的是 i 那格的空）。
+			switch row.Side {
+			case SpotSell:
+				out[row.Level] += row.Qty
+			case SpotBuy:
+				out[row.Level+1] -= row.Qty
+			}
 			continue
 		}
 		switch row.Side {
@@ -188,12 +200,12 @@ func GridFillList(gridID int64, limit int) ([]GridFill, error) {
 	return rows, nil
 }
 
-// GridHoldings 返回某条网格每一格还持有的数量。
-func GridHoldings(gridID int64) (map[int]float64, error) {
+// GridHoldings 返回某条网格每一格还持有（多头）或还欠着（空头）的数量。
+func GridHoldings(gridID int64, direction GridDirection) (map[int]float64, error) {
 	if gridID <= 0 {
 		return map[int]float64{}, nil
 	}
-	rows, err := currentGridFillLog().Holdings(gridID)
+	rows, err := currentGridFillLog().Holdings(gridID, direction)
 	if err != nil {
 		return nil, err
 	}

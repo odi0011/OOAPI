@@ -66,6 +66,26 @@ SELECT own_level, SUM(delta) AS qty FROM (
 GROUP BY own_level
 HAVING SUM(delta) > 0.000000001`
 
+/*
+gridHoldingShortSQL 是空头网格的镜像。
+
+空头：SELL 开空落在自己那一格，**BUY 平空减的是下一格**
+（买单挂在 i-1，平的是 i 那格的空）。level_index = -1 的清仓单
+在两边都被 level_index >= 0 排除掉。
+*/
+const gridHoldingShortSQL = `
+SELECT own_level, SUM(delta) AS qty FROM (
+	SELECT level_index AS own_level, qty AS delta
+	FROM trading_grid_fills
+	WHERE grid_id = ? AND side = 'SELL' AND level_index >= 0
+	UNION ALL
+	SELECT level_index + 1 AS own_level, -qty AS delta
+	FROM trading_grid_fills
+	WHERE grid_id = ? AND side = 'BUY' AND level_index >= 0
+) AS t
+GROUP BY own_level
+HAVING SUM(delta) > 0.000000001`
+
 const gridFillSummarySQL = `
 SELECT COUNT(*), COALESCE(SUM(realized_usdt), 0)
 FROM trading_grid_fills
@@ -131,12 +151,16 @@ func (dbGridFillLog) List(gridID int64, limit int) ([]trading.GridFill, error) {
 	return out, rows.Err()
 }
 
-func (dbGridFillLog) Holdings(gridID int64) (map[int]float64, error) {
+func (dbGridFillLog) Holdings(gridID int64, direction trading.GridDirection) (map[int]float64, error) {
 	out := map[int]float64{}
 	if db.DB == nil {
 		return out, nil
 	}
-	rows, err := db.DB.Query(gridHoldingSQL, gridID, gridID)
+	query := gridHoldingSQL
+	if trading.NormalizeDirection(direction).Short() {
+		query = gridHoldingShortSQL
+	}
+	rows, err := db.DB.Query(query, gridID, gridID)
 	if err != nil {
 		return nil, err
 	}
@@ -226,6 +250,7 @@ func strconvFormatID(v int64) string {
 
 const gridSelectCols = `
 g.id, g.user_id, g.exchange_key_id, g.symbol, g.mode,
+g.direction, g.market, g.leverage,
 g.lower_price, g.upper_price, g.levels, g.quote_budget, g.stop_pct, g.fee_rate,
 g.running, g.pause_reason, g.created_at, g.updated_at, k.network, k.status`
 
@@ -249,13 +274,13 @@ ORDER BY g.id ASC`
 
 const gridInsertSQL = `
 INSERT INTO trading_grids (
-	user_id, exchange_key_id, symbol, mode,
+	user_id, exchange_key_id, symbol, mode, direction, market, leverage,
 	lower_price, upper_price, levels, quote_budget, stop_pct, fee_rate, running
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`
 
 const gridUpdateSQL = `
 UPDATE trading_grids
-SET exchange_key_id = ?, symbol = ?, mode = ?,
+SET exchange_key_id = ?, symbol = ?, mode = ?, direction = ?, market = ?, leverage = ?,
 	lower_price = ?, upper_price = ?, levels = ?, quote_budget = ?,
 	stop_pct = ?, fee_rate = ?
 WHERE id = ? AND user_id = ?`
@@ -291,6 +316,7 @@ func scanGrid(s scanner) (gridRow, error) {
 	err := s.Scan(
 		&row.Config.ID, &row.Config.UserID, &row.Config.ExchangeKeyID,
 		&row.Config.Symbol, &row.Config.Mode,
+		&row.Config.Direction, &row.Config.Market, &row.Config.Leverage,
 		&row.Config.Lower, &row.Config.Upper, &row.Config.Levels,
 		&row.Config.QuoteBudget, &row.Config.StopPct, &row.Config.FeeRate,
 		&row.Config.Running, &pause, &created, &updated,

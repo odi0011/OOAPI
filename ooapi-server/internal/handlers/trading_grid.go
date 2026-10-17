@@ -41,6 +41,17 @@ var gridRunner = trading.NewGridRunner(trading.DefaultGridHub())
 // 它是实盘门闩落地的地方（见 trading.GridExchangeFor）。
 var newGridExchange = trading.GridExchangeFor
 
+// newFuturesGridExchange 建一个 USDT-M 合约网格出口。同样留出替换点。
+var newFuturesGridExchange = trading.FuturesGridExchangeFor
+
+// gridExchangeFor 按配置选出口：现货多头走现货，空头/合约走 USDT-M。
+func gridExchangeFor(cfg trading.GridConfig) (trading.GridExchange, error) {
+	if trading.NormalizeGridMarket(cfg.Market) == trading.GridMarketFutures {
+		return newFuturesGridExchange(cfg.Mode, cfg.Direction, cfg.Leverage)
+	}
+	return newGridExchange(cfg.Mode)
+}
+
 // StartGridRunner 恢复数据库里 running=1 的网格。
 // TRADING_RUNNER=0 时不启动，只留手工 step。
 func StartGridRunner() {
@@ -72,6 +83,9 @@ func StartGridRunner() {
 
 type gridPreviewRequest struct {
 	Symbol        string  `json:"symbol"`
+	Direction     string  `json:"direction"`
+	Market        string  `json:"market"`
+	Leverage      int     `json:"leverage"`
 	Lower         float64 `json:"lower"`
 	Upper         float64 `json:"upper"`
 	Levels        int     `json:"levels"`
@@ -99,13 +113,22 @@ func PostGridPreview(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "请求格式不正确", "bad_request")
 		return
 	}
-	rules, price, mode, full, terr := gridMarketContext(user.ID, req.ExchangeKeyID, req.Mode, req.Symbol)
+	shape := trading.GridConfig{
+		Direction: trading.GridDirection(req.Direction),
+		Market:    req.Market,
+		Leverage:  req.Leverage,
+	}.Normalize()
+	rules, price, mode, full, terr := gridMarketContext(user.ID, req.ExchangeKeyID, req.Mode,
+		shape.Market, req.Symbol, shape.Leverage)
 	if terr != nil {
 		writeTradingError(c, terr)
 		return
 	}
 	in := trading.GridInput{
 		Symbol:      strings.ToUpper(strings.TrimSpace(req.Symbol)),
+		Direction:   shape.Direction,
+		Market:      shape.Market,
+		Leverage:    shape.Leverage,
 		Lower:       req.Lower,
 		Upper:       req.Upper,
 		Levels:      req.Levels,
@@ -122,6 +145,9 @@ func PostGridPreview(c *gin.Context) {
 	out := gin.H{
 		"symbol":        in.Symbol,
 		"mode":          mode,
+		"direction":     in.Direction,
+		"market":        in.Market,
+		"leverage":      in.Leverage,
 		"lastPrice":     price,
 		"feeRate":       full,
 		"stepSize":      rules.StepSize,
@@ -192,7 +218,7 @@ gridMarketContext 拿到算计划需要的三样东西：交易对规则、当�
 
 读不到费率时返回 0，由 trading 包用不乐观的兜底值（现货 0.1%）顶上。
 */
-func gridMarketContext(userID, keyID int64, mode, symbol string) (
+func gridMarketContext(userID, keyID int64, mode, market, symbol string, leverage int) (
 	trading.GridRules, float64, string, float64, *tradingError,
 ) {
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
@@ -213,7 +239,7 @@ func gridMarketContext(userID, keyID int64, mode, symbol string) (
 	if mode != trading.ModeTestnet && mode != trading.ModeLive {
 		mode = trading.ModeTestnet
 	}
-	client, err := newGridExchange(mode)
+	client, err := gridExchangeFor(trading.GridConfig{Mode: mode, Market: market, Leverage: leverage})
 	if err != nil {
 		return trading.GridRules{}, 0, mode, 0, engineError(err)
 	}
@@ -244,7 +270,7 @@ func gridMarketContext(userID, keyID int64, mode, symbol string) (
 		}
 	}
 	if fee <= 0 {
-		fee = trading.SpotDefaultFeeRate
+		fee = trading.GridFeeFallback(market)
 	}
 	return rules, price, mode, fee, nil
 }
@@ -273,6 +299,9 @@ type gridWrite struct {
 	Symbol        *string  `json:"symbol"`
 	ExchangeKeyID *int64   `json:"exchangeKeyId"`
 	Mode          *string  `json:"mode"`
+	Direction     *string  `json:"direction"`
+	Market        *string  `json:"market"`
+	Leverage      *int     `json:"leverage"`
 	Lower         *float64 `json:"lower"`
 	Upper         *float64 `json:"upper"`
 	Levels        *int     `json:"levels"`
@@ -293,6 +322,9 @@ func gridView(row gridRow, snap *trading.GridSnapshot) gin.H {
 		"id":            cfg.ID,
 		"symbol":        cfg.Symbol,
 		"mode":          cfg.Mode,
+		"direction":     cfg.Direction,
+		"market":        cfg.Market,
+		"leverage":      cfg.Leverage,
 		"exchangeKeyId": cfg.ExchangeKeyID,
 		"lower":         round8(cfg.Lower),
 		"upper":         round8(cfg.Upper),
@@ -389,7 +421,7 @@ func GetGrid(c *gin.Context) {
 		view["realizedUsdt"] = round8(realized)
 	}
 	// 逐格还持有多少 —— 从成交明细算出来，与引擎用的是同一份数据。
-	if holds, herr := trading.GridHoldings(id); herr == nil {
+	if holds, herr := trading.GridHoldings(id, row.Config.Direction); herr == nil {
 		view["holdings"] = holds
 	}
 	ok(c, view)
@@ -422,6 +454,7 @@ func CreateGrid(c *gin.Context) {
 		return
 	}
 	res, err := exec(gridInsertSQL, user.ID, cfg.ExchangeKeyID, cfg.Symbol, cfg.Mode,
+		cfg.Direction, cfg.Market, cfg.Leverage,
 		cfg.Lower, cfg.Upper, cfg.Levels, cfg.QuoteBudget, cfg.StopPct, cfg.FeeRate)
 	if err != nil {
 		log.Printf("[grid] 写入网格失败: %v", err)
@@ -488,6 +521,7 @@ func UpdateGrid(c *gin.Context) {
 		return
 	}
 	if _, err := exec(gridUpdateSQL, cfg.ExchangeKeyID, cfg.Symbol, cfg.Mode,
+		cfg.Direction, cfg.Market, cfg.Leverage,
 		cfg.Lower, cfg.Upper, cfg.Levels, cfg.QuoteBudget, cfg.StopPct, cfg.FeeRate,
 		id, user.ID); err != nil {
 		log.Printf("[grid] 更新网格失败: %v", err)
@@ -647,7 +681,7 @@ startGrid 建引擎并让它接上调度。**建失败就直接返回错误**。
 等几拍之后发现一个格子都没挂上要好得多。
 */
 func startGrid(spec trading.GridRunSpec) error {
-	ex, err := newGridExchange(spec.Config.Mode)
+	ex, err := gridExchangeFor(spec.Config)
 	if err != nil {
 		return err
 	}
@@ -699,6 +733,7 @@ func applyGridWrite(userID int64, base *gridRow, req gridWrite) (trading.GridCon
 	} else {
 		cfg = trading.GridConfig{
 			Symbol: "DOGEUSDT", Mode: trading.ModeTestnet,
+			Direction: trading.GridLong, Market: trading.GridMarketSpot, Leverage: 1,
 			Levels: gridDefaultLevels,
 		}
 	}
@@ -710,6 +745,31 @@ func applyGridWrite(userID int64, base *gridRow, req gridWrite) (trading.GridCon
 	}
 	if req.Mode != nil {
 		cfg.Mode = strings.ToLower(strings.TrimSpace(*req.Mode))
+	}
+	if req.Direction != nil {
+		switch strings.ToLower(strings.TrimSpace(*req.Direction)) {
+		case string(trading.GridShort):
+			cfg.Direction = trading.GridShort
+		case string(trading.GridLong):
+			cfg.Direction = trading.GridLong
+		default:
+			return cfg, &tradingError{Status: http.StatusBadRequest,
+				Message: "direction 只能是 long 或 short", Code: "bad_request"}
+		}
+	}
+	if req.Market != nil {
+		switch strings.ToLower(strings.TrimSpace(*req.Market)) {
+		case trading.GridMarketFutures:
+			cfg.Market = trading.GridMarketFutures
+		case trading.GridMarketSpot:
+			cfg.Market = trading.GridMarketSpot
+		default:
+			return cfg, &tradingError{Status: http.StatusBadRequest,
+				Message: "market 只能是 spot 或 futures", Code: "bad_request"}
+		}
+	}
+	if req.Leverage != nil {
+		cfg.Leverage = *req.Leverage
 	}
 	if req.Lower != nil {
 		cfg.Lower = *req.Lower
@@ -751,7 +811,8 @@ func applyGridWrite(userID int64, base *gridRow, req gridWrite) (trading.GridCon
 		拿到真实 stepSize / minNotional 才能判断**的问题。放到保存时
 		而不是启动时，用户就不用"点了开始、等几拍、发现没挂上单"。
 	*/
-	rules, price, _, fee, terr := gridMarketContext(userID, cfg.ExchangeKeyID, cfg.Mode, cfg.Symbol)
+	rules, price, _, fee, terr := gridMarketContext(userID, cfg.ExchangeKeyID, cfg.Mode,
+		cfg.Market, cfg.Symbol, cfg.Leverage)
 	if terr != nil {
 		return cfg, terr
 	}
@@ -762,6 +823,9 @@ func applyGridWrite(userID int64, base *gridRow, req gridWrite) (trading.GridCon
 	}
 	_, err := trading.BuildGridPlan(trading.GridInput{
 		Symbol:      cfg.Symbol,
+		Direction:   cfg.Direction,
+		Market:      cfg.Market,
+		Leverage:    cfg.Leverage,
 		Lower:       cfg.Lower,
 		Upper:       cfg.Upper,
 		Levels:      cfg.Levels,

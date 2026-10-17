@@ -1,17 +1,22 @@
 /**
- * 现货网格的接口封装。
+ * 网格的接口封装。
  *
  * 与 tradingApi 分开一个文件，是因为网格的字段和策略**几乎没有交集**：
- * 网格没有 leverage / emaFast / stopR，策略没有 lower / upper / levels。
+ * 网格没有 emaFast / stopR，策略没有 lower / upper / levels。
  * 合在一个模块里，一半的类型对另一半永远是空 —— 那正是排查时最容易
  * 出错的地方。
+ *
+ * 网格有两个方向：long（现货或合约）与 short（必须 USDT-M 合约）。
+ * 两个方向是镜像的：多头在低位买、涨一档卖；空头在高位卖、跌一档买回。
  */
 
 import { apiRequest } from "@/lib/api";
 
-import type { GridLineState, GridRunState } from "./gridView";
+import type { GridDirection, GridLineState, GridMarket, GridRunState } from "./gridView";
 
 import type { TradingNetwork } from "./tradingApi";
+
+export type { GridDirection, GridMarket } from "./gridView";
 
 export interface GridPlanLevel {
   index: number;
@@ -29,13 +34,20 @@ export interface GridPlanLevel {
  */
 export interface GridPlan {
   symbol: string;
+  direction: GridDirection;
+  market: GridMarket;
+  leverage: number;
   lower: number;
   upper: number;
   levels: number;
   spacingPct: number;
   qtyPerLevel: number;
   lines: GridPlanLevel[];
+  /** 现货是买货的计价币，合约是保证金。 */
   quoteNeeded: number;
+  /** 满仓名义。合约 = quoteNeeded × 杠杆。 */
+  notionalNeeded: number;
+  marginPerLevel: number;
   notionalPerLevel: number;
   netProfitPct: number;
   netProfitPerLevel: number;
@@ -46,8 +58,10 @@ export interface GridPlan {
   minNotionalForDust: number;
   worstLossUsdt: number;
   stopPrice: number;
+  takeProfitPrice: number;
   lastPrice: number;
   initialBuys: number;
+  initialSells: number;
 }
 
 /**
@@ -115,11 +129,16 @@ export interface GridSnapshot {
   state: GridRunState;
   running: boolean;
   mode: string;
+  direction: GridDirection;
+  market: GridMarket;
+  leverage: number;
   lower: number;
   upper: number;
   levels: number;
   spacingPct: number;
   stopPrice: number;
+  /** 多头走完上沿 / 空头跌破下沿的那个价。 */
+  takeProfitPrice: number;
   lastPrice?: number;
   qtyPerLevel: number;
   notionalPerLevel: number;
@@ -165,6 +184,9 @@ export interface Grid {
   id: number;
   symbol: string;
   mode: TradingNetwork;
+  direction: GridDirection;
+  market: GridMarket;
+  leverage: number;
   exchangeKeyId: number;
   lower: number;
   upper: number;
@@ -188,6 +210,9 @@ export interface GridWrite {
   symbol?: string;
   exchangeKeyId?: number;
   mode?: TradingNetwork;
+  direction?: GridDirection;
+  market?: GridMarket;
+  leverage?: number;
   lower?: number;
   upper?: number;
   levels?: number;
@@ -197,6 +222,9 @@ export interface GridWrite {
 
 export interface GridPreviewRequest {
   symbol: string;
+  direction?: GridDirection;
+  market?: GridMarket;
+  leverage?: number;
   lower: number;
   upper: number;
   levels: number;

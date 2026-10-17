@@ -13,6 +13,12 @@ export type GridLineState = "buy" | "sell" | "holding" | "empty";
 
 export type GridRunState = "Idle" | "Running" | "Stopped" | "Error";
 
+/** 网格方向。做空只能跑在 USDT-M 合约上。 */
+export type GridDirection = "long" | "short";
+
+/** 网格市场。 */
+export type GridMarket = "spot" | "futures";
+
 export const GRID_LINE_BUY = "buy";
 export const GRID_LINE_SELL = "sell";
 export const GRID_LINE_HOLDING = "holding";
@@ -115,18 +121,26 @@ export function gridReasonLabel(
   }
 }
 
-/** 单条网格线的状态说明。 */
-export function lineStateLabel(state: string): string {
+/** 单条网格线的状态说明。空头网格的"持有"是持有空单。 */
+export function lineStateLabel(state: string, direction: GridDirection = "long"): string {
   switch (state) {
     case GRID_LINE_BUY:
-      return "挂着买单";
+      return direction === "short" ? "挂着买平" : "挂着买单";
     case GRID_LINE_SELL:
-      return "挂着卖单";
+      return direction === "short" ? "挂着卖开" : "挂着卖单";
     case GRID_LINE_HOLDING:
-      return "已买到，等卖";
+      return direction === "short" ? "已卖出，等买回" : "已买到，等卖";
     default:
       return "空着";
   }
+}
+
+export function gridDirectionLabel(direction: GridDirection): string {
+  return direction === "short" ? "做空" : "做多";
+}
+
+export function gridMarketLabel(market: GridMarket): string {
+  return market === "futures" ? "U 本位合约" : "现货";
 }
 
 /**
@@ -144,10 +158,13 @@ export function requirementHint(limitedBy: string): string {
   return "门槛是被**交易所最小名义**顶起来的：加钱或者减少网格线都可以。";
 }
 
-/** 默认参数：一条看得过去的 DOGE 网格。 */
+/** 默认参数：一条看得过去的 DOGE 网格（现货多头）。 */
 export function defaultGridDraft() {
   return {
     symbol: "DOGEUSDT",
+    direction: "long" as GridDirection,
+    market: "spot" as GridMarket,
+    leverage: 3,
     lower: 0.075,
     upper: 0.085,
     levels: 8,
@@ -156,4 +173,16 @@ export function defaultGridDraft() {
     exchangeKeyId: null as number | null,
     mode: "testnet" as "testnet" | "live",
   };
+}
+
+/**
+ * 方向与市场是联动的：做空只能跑合约，现货只能是做多。
+ * 返回规整之后的（方向, 市场）。
+ */
+export function normalizeGridShape(
+  direction: GridDirection,
+  market: GridMarket,
+): { direction: GridDirection; market: GridMarket } {
+  if (direction === "short") return { direction: "short", market: "futures" };
+  return { direction, market };
 }

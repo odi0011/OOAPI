@@ -336,6 +336,11 @@ func limitMakerRejected(err error) bool {
 	if !errors.As(err, &ex) || ex == nil {
 		return false
 	}
+	// 现货的 LIMIT_MAKER 被拒是 -2010；合约的 GTX（post-only）被拒是
+	// -5022。两者语义相同：这张单挂上去会立刻吃单，交易所替我们拒了。
+	if ex.Code == -5022 {
+		return true
+	}
 	if ex.Code != -2010 {
 		return false
 	}

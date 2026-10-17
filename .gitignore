@@ -34,3 +34,6 @@ uploads/
 .tmp-arc/
 outputs/
 .npmrc
+
+# 研究数据（180 天 K 线等大文件，不入库）
+research/data/

@@ -413,6 +413,9 @@ var schemaStatements = []string{
 		exchange_key_id  BIGINT UNSIGNED NOT NULL,
 		symbol           VARCHAR(32)     NOT NULL DEFAULT 'DOGEUSDT',
 		mode             VARCHAR(16)     NOT NULL DEFAULT 'testnet',
+		direction        VARCHAR(8)      NOT NULL DEFAULT 'long',
+		market           VARCHAR(16)     NOT NULL DEFAULT 'spot',
+		leverage         INT             NOT NULL DEFAULT 1,
 		lower_price      DECIMAL(20,10)  NOT NULL DEFAULT 0,
 		upper_price      DECIMAL(20,10)  NOT NULL DEFAULT 0,
 		levels           INT             NOT NULL DEFAULT 8,
@@ -583,6 +586,13 @@ var columnMigrations = map[string][]columnDef{
 		{"maker_fee_rate", "DECIMAL(16,8) NOT NULL DEFAULT 0.00020000"},
 		{"expectancy_gate", "TINYINT NOT NULL DEFAULT 1"},
 		{"running", "TINYINT NOT NULL DEFAULT 0"},
+	},
+	"trading_grids": {
+		// 网格方向与市场。老库补列后默认 long/spot —— 既有网格的行为
+		// 一个字节都不变。做空网格由接口写成 short/futures。
+		{"direction", "VARCHAR(8) NOT NULL DEFAULT 'long'"},
+		{"market", "VARCHAR(16) NOT NULL DEFAULT 'spot'"},
+		{"leverage", "INT NOT NULL DEFAULT 1"},
 	},
 	"trading_orders": {
 		{"user_id", "BIGINT UNSIGNED NOT NULL DEFAULT 0"},

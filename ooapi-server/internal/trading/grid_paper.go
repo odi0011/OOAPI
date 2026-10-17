@@ -219,6 +219,18 @@ func (p *PaperGrid) BaseQty(string) (float64, error) {
 	return p.base, nil
 }
 
+// PositionQty 在纸面现货里就是基础币余额。
+func (p *PaperGrid) PositionQty(string) (float64, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.base, nil
+}
+
+// MarketClose 在纸面现货里就是市价卖出。
+func (p *PaperGrid) MarketClose(symbol string, qty float64, clientID string) (SpotOrderState, error) {
+	return p.MarketSell(symbol, qty, clientID)
+}
+
 /*
 PlaceLimit 挂一张只做 maker 的限价单。
 

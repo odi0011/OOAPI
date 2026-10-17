@@ -17,9 +17,14 @@ import {
   formatPrice,
   formatQty,
   formatUsdt,
+  gridDirectionLabel,
+  gridMarketLabel,
   gridReasonLabel,
   gridStateLabel,
   lineStateLabel,
+  normalizeGridShape,
+  type GridDirection,
+  type GridMarket,
 } from "./gridView";
 import {
   createGrid,
@@ -57,6 +62,9 @@ import styles from "./TradingGrid.module.css";
 
 interface Draft {
   symbol: string;
+  direction: GridDirection;
+  market: GridMarket;
+  leverage: number;
   lower: number;
   upper: number;
   levels: number;
@@ -68,6 +76,9 @@ interface Draft {
 
 const DEFAULT_DRAFT: Draft = {
   symbol: "DOGEUSDT",
+  direction: "long",
+  market: "spot",
+  leverage: 3,
   lower: 0.075,
   upper: 0.085,
   levels: 8,
@@ -137,6 +148,9 @@ export default function TradingGrid() {
     setEditing(grid);
     setDraft({
       symbol: grid.symbol,
+      direction: grid.direction ?? "long",
+      market: grid.market ?? "spot",
+      leverage: grid.leverage ?? 1,
       lower: grid.lower,
       upper: grid.upper,
       levels: grid.levels,
@@ -163,6 +177,9 @@ export default function TradingGrid() {
       setPreviewing(true);
       previewGrid({
         symbol: draft.symbol,
+        direction: draft.direction,
+        market: draft.market,
+        leverage: draft.leverage,
         lower: draft.lower,
         upper: draft.upper,
         levels: draft.levels,
@@ -201,6 +218,9 @@ export default function TradingGrid() {
     }
     const body: GridWrite = {
       symbol: draft.symbol.trim().toUpperCase(),
+      direction: draft.direction,
+      market: draft.market,
+      leverage: draft.leverage,
       lower: draft.lower,
       upper: draft.upper,
       levels: Math.round(draft.levels),
@@ -320,6 +340,51 @@ export default function TradingGrid() {
         >
           <div className={styles.editor}>
             <div className={styles.form}>
+              <div className={styles.pair}>
+                <Select
+                  label="方向"
+                  value={draft.direction}
+                  onValueChange={(v) => {
+                    const shape = normalizeGridShape(v as GridDirection, draft.market);
+                    setDraft((d) => ({ ...d, direction: shape.direction, market: shape.market }));
+                  }}
+                  options={[
+                    { value: "long", label: "做多" },
+                    { value: "short", label: "做空（必须合约）" },
+                  ]}
+                />
+                <Select
+                  label="市场"
+                  value={draft.market}
+                  onValueChange={(v) => {
+                    const market = v as GridMarket;
+                    // 现货没有做空：切到现货时把方向拉回做多。
+                    setDraft((d) => ({
+                      ...d,
+                      market,
+                      direction: market === "spot" ? "long" : d.direction,
+                    }));
+                  }}
+                  options={[
+                    { value: "spot", label: "现货" },
+                    { value: "futures", label: "U 本位合约" },
+                  ]}
+                />
+              </div>
+
+              {draft.market === "futures" && (
+                <NumberField
+                  label="杠杆"
+                  suffix="x"
+                  description="逐仓。做空网格只能跑在合约上；杠杆越高，止损距离相对强平距离越重要。"
+                  value={draft.leverage}
+                  onValueChange={(v) => setDraft((d) => ({ ...d, leverage: Math.round(v) }))}
+                  min={1}
+                  max={125}
+                  step={1}
+                />
+              )}
+
               <div className={styles.field}>
                 <Input
                   label="交易对"
@@ -336,8 +401,8 @@ export default function TradingGrid() {
                   ))}
                 </datalist>
                 <p className={styles.hint}>
-                  只支持 USDT 现货对。步长越细的币越适合小资金 —— DOGE 每格要几美元的货才划得来，
-                  SHIB、PEPE 这类只要一美元。
+                  只支持 USDT 交易对。步长越细的币越适合小资金 —— DOGE 每格要几美元的货才划得来，
+                  SHIB、PEPE 这类只要一美元。合约网格要注意每笔最小名义 5 USDT。
                 </p>
               </div>
 
@@ -373,7 +438,11 @@ export default function TradingGrid() {
               <NumberField
                 label="投入金额"
                 suffix="USDT"
-                description="最坏情况（每条网格线上都持有一格）的占用上限。"
+                description={
+                  draft.market === "futures"
+                    ? "保证金上限。满仓名义 = 投入 × 杠杆。"
+                    : "最坏情况（每条网格线上都持有一格）的占用上限。"
+                }
                 value={draft.quoteBudget}
                 onValueChange={(v) => setDraft((d) => ({ ...d, quoteBudget: v }))}
                 min={1}
@@ -383,7 +452,11 @@ export default function TradingGrid() {
               <NumberField
                 label="止损距离"
                 suffix="%"
-                description="跌破下沿之后再跌这么多就清仓停机。"
+                description={
+                  draft.direction === "short"
+                    ? "涨过上沿之后再涨这么多就买回清仓。"
+                    : "跌破下沿之后再跌这么多就清仓停机。"
+                }
                 value={draft.stopPctPct}
                 onValueChange={(v) => setDraft((d) => ({ ...d, stopPctPct: v }))}
                 min={0.1}
@@ -552,10 +625,23 @@ function PreviewPanel({
           </div>
 
           <dl className={styles.facts}>
+            <Fact
+              label="方向 / 市场"
+              value={`${gridDirectionLabel(plan.direction)} · ${gridMarketLabel(plan.market)}${
+                plan.market === "futures" ? ` · ${plan.leverage}x` : ""
+              }`}
+            />
             <Fact label="每格数量" value={`${formatQty(plan.qtyPerLevel)} ${preview.baseAsset}`} />
             <Fact label="每格名义" value={`${formatUsdt(plan.notionalPerLevel)} USDT`} />
+            {plan.market === "futures" && (
+              <Fact label="每格保证金" value={`${formatUsdt(plan.marginPerLevel)} USDT`} />
+            )}
             <Fact label="每格往返净赚" value={`${formatUsdt(plan.effectiveNetPerLevel, 4)} USDT`} />
-            <Fact label="最坏占用" value={`${formatUsdt(plan.quoteNeeded)} USDT`} />
+            <Fact
+              label={plan.market === "futures" ? "最坏占用保证金" : "最坏占用"}
+              value={`${formatUsdt(plan.quoteNeeded)} USDT`}
+            />
+            <Fact label="止盈价" value={formatPrice(plan.takeProfitPrice)} />
             <Fact label="止损价" value={formatPrice(plan.stopPrice)} />
             <Fact
               label="止损时最坏亏损"
@@ -693,6 +779,9 @@ function GridCard({
         <div>
           <h3 className={styles.cardTitle}>{grid.symbol}</h3>
           <p className={styles.cardSub}>
+            {gridDirectionLabel(grid.direction ?? "long")} ·{" "}
+            {gridMarketLabel(grid.market ?? "spot")}
+            {(grid.market ?? "spot") === "futures" ? ` ${grid.leverage}x` : ""} ·{" "}
             {formatPrice(grid.lower)} – {formatPrice(grid.upper)} · {grid.levels} 条线 ·{" "}
             {networkLabel(grid.mode)}
           </p>
@@ -716,16 +805,21 @@ function GridCard({
             />
             <Stat label="挂单" value={String(snap.resting.length)} />
           </div>
-          <GridLadder lines={snap.lines} />
+          <GridLadder lines={snap.lines} direction={snap.direction} />
           <p className={styles.footnote}>
-            现价 {formatPrice(snap.lastPrice ?? 0)} · 持仓 {formatQty(snap.inventoryQty)} 个
-            {snap.dustQty > 0 && ` · 零头 ${formatQty(snap.dustQty)} 个（小于步长，卖不出）`}
+            现价 {formatPrice(snap.lastPrice ?? 0)} ·{" "}
+            {snap.direction === "short" ? "空头" : "持仓"} {formatQty(snap.inventoryQty)} 个
+            {snap.dustQty > 0 && ` · 零头 ${formatQty(snap.dustQty)} 个（小于步长，平不掉）`}
             {snap.placeFailed > 0 && ` · 这一拍有 ${snap.placeFailed} 格穿价跳过`}
           </p>
         </>
       ) : (
         <p className={styles.muted}>
-          {grid.running ? "等待调度器推进…" : "未运行。启动后会立刻按当前价挂出买单。"}
+          {grid.running
+            ? "等待调度器推进…"
+            : grid.direction === "short"
+              ? "未运行。启动后会立刻按当前价挂出卖单。"
+              : "未运行。启动后会立刻按当前价挂出买单。"}
         </p>
       )}
 
@@ -767,7 +861,7 @@ function GridCard({
  * 已买到等卖 / 空着。这是网格唯一一个"一眼看懂它在干什么"的视图 ——
  * 表格看不出来，而这些方块排在一起就是一条价格轴（从左到右由低到高）。
  */
-function GridLadder({ lines }: { lines: GridLineView[] }) {
+function GridLadder({ lines, direction = "long" }: { lines: GridLineView[]; direction?: GridDirection }) {
   return (
     <div className={styles.ladder} role="img" aria-label="网格各条线的挂单状态，由低到高">
       {lines.map((line) => {
@@ -776,7 +870,7 @@ function GridLadder({ lines }: { lines: GridLineView[] }) {
           <span
             key={line.index}
             className={[styles.rung, stateCls ?? ""].filter(Boolean).join(" ")}
-            title={`${formatPrice(line.price)} · ${lineStateLabel(line.state)}`}
+            title={`${formatPrice(line.price)} · ${lineStateLabel(line.state, direction)}`}
           >
             {line.side === "BUY" ? "买" : line.side === "SELL" ? "卖" : ""}
           </span>

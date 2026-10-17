@@ -106,15 +106,24 @@ QuoteNeeded 是**最坏情况下**需要的计价币：所有网格线上都持�
 （实际占用通常低于它：价格在上沿时只有下沿那些格子持有现货。）
 */
 type GridPlan struct {
-	Symbol      string      `json:"symbol"`
-	Lower       float64     `json:"lower"`
-	Upper       float64     `json:"upper"`
-	Levels      int         `json:"levels"`
-	SpacingPct  float64     `json:"spacingPct"`
-	QtyPerLevel float64     `json:"qtyPerLevel"`
-	Lines       []GridLevel `json:"lines"`
-	// QuoteNeeded 是全部网格线都持有现货时要花掉的计价币（含手续费与滑点）。
+	Symbol      string        `json:"symbol"`
+	Direction   GridDirection `json:"direction"`
+	Market      string        `json:"market"`
+	Leverage    int           `json:"leverage"`
+	Lower       float64       `json:"lower"`
+	Upper       float64       `json:"upper"`
+	Levels      int           `json:"levels"`
+	SpacingPct  float64       `json:"spacingPct"`
+	QtyPerLevel float64       `json:"qtyPerLevel"`
+	Lines       []GridLevel   `json:"lines"`
+	// QuoteNeeded 是这份网格要占用的**资金**：现货是买货的计价币，
+	// 合约是保证金（名义 / 杠杆）。它是"账户里要准备多少钱"的答案。
 	QuoteNeeded float64 `json:"quoteNeeded"`
+	// NotionalNeeded 是满仓时的名义价值。现货与 QuoteNeeded 相同；
+	// 合约等于 QuoteNeeded × 杠杆。
+	NotionalNeeded float64 `json:"notionalNeeded"`
+	// MarginPerLevel 是每一格占用的保证金（合约）；现货恒等于每格名义。
+	MarginPerLevel float64 `json:"marginPerLevel"`
 	// NotionalPerLevel 是最低那一格的每格名义价值 —— 也就是「每格多少钱」。
 	NotionalPerLevel float64 `json:"notionalPerLevel"`
 	// NetProfitPct 是每格往返扣掉双边手续费后的净收益比例。
@@ -124,8 +133,9 @@ type GridPlan struct {
 	// WorstLossUSDT 是止损被打掉时的最坏亏损（计价币）。
 	// 它和 QuoteNeeded 是两个不同的数：QuoteNeeded 是"要占多少钱"，
 	// WorstLossUSDT 是"最坏会亏多少"。
-	WorstLossUSDT float64 `json:"worstLossUsdt"`
-	StopPrice     float64 `json:"stopPrice"`
+	WorstLossUSDT   float64 `json:"worstLossUsdt"`
+	StopPrice       float64 `json:"stopPrice"`
+	TakeProfitPrice float64 `json:"takeProfitPrice"`
 	/*
 		StepDustPct 是**步长零头**吃掉的比例，每完成一次往返吃一次。
 
@@ -159,16 +169,23 @@ type GridPlan struct {
 	LastPrice float64 `json:"lastPrice"`
 	// InitialBuys 是建网那一刻会立刻挂出去的买单条数（价格低于参考价的那几条线）。
 	InitialBuys int `json:"initialBuys"`
+	// InitialSells 是空头网格建网那一刻会立刻挂出去的卖单条数
+	// （价格高于参考价的那几条线）。多头网格为 0。
+	InitialSells int `json:"initialSells"`
 }
 
 // GridInput 是算一份网格计划需要知道的一切。全部是纯输入。
 type GridInput struct {
-	Symbol string
-	Lower  float64
-	Upper  float64
-	Levels int
-	// QuoteBudget 是最多愿意投进去的计价币。计划的资金需求超过它时会报错，
-	// 并给出「最少需要多少」。
+	Symbol    string
+	Direction GridDirection
+	Market    string
+	// Leverage 只对合约网格有意义。现货恒为 1。
+	Leverage int
+	Lower    float64
+	Upper    float64
+	Levels   int
+	// QuoteBudget 是最多愿意投进去的**资金**：现货是买货的计价币，
+	// 合约是保证金。计划的资金需求超过它时会报错，并给出「最少需要多少」。
 	QuoteBudget float64
 	// LastPrice 是建网时的参考价。0 表示不做「哪些线先挂买单」的判断。
 	LastPrice float64
@@ -296,15 +313,30 @@ func BuildGridPlan(in GridInput) (GridPlan, error) {
 		return plan, invalid("缺少交易对")
 	}
 	if !AllowedSymbol(in.Symbol) {
-		return plan, invalid("网格只支持 USDT 现货交易对，例如 DOGEUSDT")
+		return plan, invalid("网格只支持 USDT 交易对，例如 DOGEUSDT")
 	}
-	fee := gridFeeRate(in.FeeRate)
+	direction := NormalizeDirection(in.Direction)
+	market := NormalizeGridMarket(in.Market)
+	leverage := in.Leverage
+	if leverage < 1 {
+		leverage = 1
+	}
+	if leverage > MaxLeverage {
+		leverage = MaxLeverage
+	}
+	if market != GridMarketFutures {
+		leverage = 1
+	}
+	if direction.Short() && market != GridMarketFutures {
+		return plan, invalid("做空网格必须跑在 USDT-M 合约上：现货没有做空")
+	}
+	fee := gridFeeRateFor(market, in.FeeRate)
 	stopPct := in.StopPct
 	if !(stopPct > 0) || math.IsInf(stopPct, 0) {
 		stopPct = GridDefaultStopPct
 	}
 	if stopPct > GridMaxStopPct {
-		return plan, invalid(fmt.Sprintf("止损离下沿不能超过 %g%%", GridMaxStopPct*100))
+		return plan, invalid(fmt.Sprintf("止损距离不能超过 %g%%", GridMaxStopPct*100))
 	}
 	slip := in.SlippagePct
 	if !(slip >= 0) {
@@ -344,30 +376,33 @@ func BuildGridPlan(in GridInput) (GridPlan, error) {
 	*/
 	qtyFloor := minNotional / lines[0]
 	qty := qtyFloor
+	lev := float64(leverage)
+	// 合约网格的预算是保证金，能铺出去的名义是它的 leverage 倍。
+	notionalBudget := in.QuoteBudget * lev
 	if in.QuoteBudget > 0 {
-		qty = in.QuoteBudget / sum
+		qty = notionalBudget / sum
 	}
 	qty = AlignQuantity(qty, in.StepSize, in.MinQty)
 	if qty <= 0 {
 		need := qtyFloor * sum
 		return plan, withReason(invalid(fmt.Sprintf(
-			"资金不够：这个区间最少需要 %.2f USDT（%d 条网格线 × 每格 %.2f USDT），当前 %.2f USDT",
-			need, len(lines), minNotional, in.QuoteBudget)), ReasonGridBudgetTooSmall)
+			"资金不够：这个区间最少需要 %.2f USDT（%d 条网格线 × 每格 %.2f USDT 名义，%d 倍杠杆），当前 %.2f USDT",
+			need/lev, len(lines), minNotional, leverage, in.QuoteBudget)), ReasonGridBudgetTooSmall)
 	}
 	// 兜底：即使 qty 大于 0，也要确认**最低那一格**的名义价值真的过线。
 	// 步长取整可能把它压到线下面去（例如每格 13.9 个 DOGE，步长 1 → 13 个）。
 	if qty*lines[0] < minNotional {
 		needQty := AlignQuantityCeil(qtyFloor, in.StepSize)
 		return plan, withReason(invalid(fmt.Sprintf(
-			"资金不够：每格至少要 %.8g（最低那一格名义 %.2f USDT）才过交易所下限，这个区间最坏要占用 %.2f USDT，当前给了 %.2f USDT",
-			needQty, minNotional, needQty*sum, in.QuoteBudget)), ReasonGridBudgetTooSmall)
+			"资金不够：每格至少要 %.8g（最低那一格名义 %.2f USDT）才过交易所下限，这个区间最坏要占用 %.2f USDT 名义（保证金 %.2f USDT），当前给了 %.2f USDT",
+			needQty, minNotional, needQty*sum, needQty*sum/lev, in.QuoteBudget)), ReasonGridBudgetTooSmall)
 	}
 
 	// 预算上限：最坏情况（每条网格线上都持有一格）不能超过用户给的钱。
-	if in.QuoteBudget > 0 && qty*sum > in.QuoteBudget+1e-9 {
+	if in.QuoteBudget > 0 && qty*sum > notionalBudget+1e-9 {
 		return plan, withReason(invalid(fmt.Sprintf(
-			"资金不够：这份网格最坏要占用 %.2f USDT，当前给了 %.2f USDT",
-			qty*sum, in.QuoteBudget)), ReasonGridBudgetTooSmall)
+			"资金不够：这份网格最坏要占用 %.2f USDT 名义（保证金 %.2f USDT），当前给了 %.2f USDT",
+			qty*sum, qty*sum/lev, in.QuoteBudget)), ReasonGridBudgetTooSmall)
 	}
 
 	levels := make([]GridLevel, len(lines))
@@ -402,12 +437,19 @@ func BuildGridPlan(in GridInput) (GridPlan, error) {
 		所有网格线的均价算。这个数是用户真正在承担的风险敞口，
 		资金需求（QuoteNeeded）说的是另一回事，两个都要露出来。
 	*/
-	stopPrice := lines[0] * (1 - stopPct)
+	stopPrice := StopPriceFor(direction, lines[0], lines[len(lines)-1], stopPct)
+	takeProfitPrice := TakeProfitPriceFor(direction, lines[0], lines[len(lines)-1])
 	avgCost := sum / float64(len(lines))
 	worstLoss := 0.0
 	if finitePositive(avgCost) {
-		exit := stopPrice * (1 - slip)
-		worstLoss = (avgCost - exit) / avgCost * qty * sum
+		if direction.Short() {
+			// 空头：止损在上沿之上，价格涨过止损时满仓浮亏。
+			exit := stopPrice * (1 + slip)
+			worstLoss = (exit - avgCost) / avgCost * qty * sum
+		} else {
+			exit := stopPrice * (1 - slip)
+			worstLoss = (avgCost - exit) / avgCost * qty * sum
+		}
 		if worstLoss < 0 {
 			worstLoss = 0
 		}
@@ -460,25 +502,40 @@ func BuildGridPlan(in GridInput) (GridPlan, error) {
 		minNotionalForDust = dustPerLevel / (netPct * GridMaxDustShare)
 	}
 
-	initialBuys := len(lines)
+	initialBuys, initialSells := 0, 0
 	if in.LastPrice > 0 {
-		initialBuys = 0
 		for _, p := range lines {
+			if direction.Short() {
+				// 空头网格在价格**之上**的线挂卖单。
+				if p > in.LastPrice {
+					initialSells++
+				}
+				continue
+			}
 			if p < in.LastPrice {
 				initialBuys++
 			}
 		}
+	} else if direction.Short() {
+		initialSells = len(lines)
+	} else {
+		initialBuys = len(lines)
 	}
 
 	plan = GridPlan{
 		Symbol:               in.Symbol,
+		Direction:            direction,
+		Market:               market,
+		Leverage:             leverage,
 		Lower:                lines[0],
 		Upper:                lines[len(lines)-1],
 		Levels:               len(lines),
 		SpacingPct:           spacing,
 		QtyPerLevel:          qty,
 		Lines:                levels,
-		QuoteNeeded:          qty * sum,
+		QuoteNeeded:          qty * sum / lev,
+		NotionalNeeded:       qty * sum,
+		MarginPerLevel:       notional / lev,
 		NotionalPerLevel:     notional,
 		NetProfitPct:         netPct,
 		NetProfitPerLevel:    netPerLevel,
@@ -489,8 +546,10 @@ func BuildGridPlan(in GridInput) (GridPlan, error) {
 		MinNotionalForDust:   minNotionalForDust,
 		WorstLossUSDT:        worstLoss,
 		StopPrice:            stopPrice,
+		TakeProfitPrice:      takeProfitPrice,
 		LastPrice:            in.LastPrice,
 		InitialBuys:          initialBuys,
+		InitialSells:         initialSells,
 	}
 	return plan, nil
 }
@@ -679,7 +738,19 @@ func GridRequirementFor(in GridInput) (GridRequirement, error) {
 	for _, p := range lines {
 		sum += p
 	}
-	fee := gridFeeRate(in.FeeRate)
+	market := NormalizeGridMarket(in.Market)
+	leverage := in.Leverage
+	if leverage < 1 {
+		leverage = 1
+	}
+	if leverage > MaxLeverage {
+		leverage = MaxLeverage
+	}
+	if market != GridMarketFutures {
+		leverage = 1
+	}
+	lev := float64(leverage)
+	fee := gridFeeRateFor(market, in.FeeRate)
 	netPct := GridSpacing(lines) - 2*fee
 	if netPct <= 0 {
 		return out, withReason(invalid(fmt.Sprintf(
@@ -728,8 +799,9 @@ func GridRequirementFor(in GridInput) (GridRequirement, error) {
 	perLevelOK := qtyOK * lines[0]
 
 	out = GridRequirement{
-		MinBudget:           qtyMin * sum,
-		ComfortableBudget:   qtyOK * sum,
+		// 合约网格的预算字段是**保证金**：名义 / 杠杆。
+		MinBudget:           qtyMin * sum / lev,
+		ComfortableBudget:   qtyOK * sum / lev,
 		PerLevelNotionalMin: perLevelMin,
 		PerLevelNotionalOK:  perLevelOK,
 		Levels:              len(lines),

@@ -78,6 +78,16 @@ func (s *SpotGridExchange) BaseQty(symbol string) (float64, error) {
 	return s.c.SpotFreeQty(symbol)
 }
 
+// PositionQty 在现货上就是基础币余额。
+func (s *SpotGridExchange) PositionQty(symbol string) (float64, error) {
+	return s.BaseQty(symbol)
+}
+
+// MarketClose 在现货上就是卖出基础币。
+func (s *SpotGridExchange) MarketClose(symbol string, qty float64, clientID string) (SpotOrderState, error) {
+	return s.MarketSell(symbol, qty, clientID)
+}
+
 /*
 Rules 读交易对规则。
 

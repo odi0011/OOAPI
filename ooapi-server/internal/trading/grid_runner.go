@@ -486,7 +486,7 @@ func (r *GridRunner) stop(id int64) {
 
 // defaultBuild 建一台网格引擎。价格由调用方读好。
 func (r *GridRunner) defaultBuild(spec GridRunSpec, price float64) (*GridEngine, error) {
-	ex, err := GridExchangeFor(spec.Config.Mode)
+	ex, err := GridExchangeFactory(spec.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -516,7 +516,7 @@ func defaultGridMarket(cfg GridConfig, secrets SecretOpener, now time.Time) (flo
 	if symbol == "" {
 		return 0, invalid("网格缺少交易对")
 	}
-	client, err := GridExchangeFor(cfg.Mode)
+	client, err := GridExchangeFactory(cfg)
 	if err != nil {
 		return 0, err
 	}

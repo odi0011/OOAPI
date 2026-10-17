@@ -80,7 +80,13 @@ type GridConfig struct {
 	ExchangeKeyID int64     `json:"exchangeKeyId"`
 	Symbol        string    `json:"symbol"`
 	Mode          string    `json:"mode"`
-	Lower         float64   `json:"lower"`
+	// Direction 是 long / short。空值按多头处理（老数据）。
+	Direction GridDirection `json:"direction"`
+	// Market 是 spot / futures。做空网格必须是 futures。
+	Market string `json:"market"`
+	// Leverage 只对合约网格有意义。现货恒为 1。
+	Leverage int     `json:"leverage"`
+	Lower    float64 `json:"lower"`
 	Upper         float64   `json:"upper"`
 	Levels        int       `json:"levels"`
 	QuoteBudget   float64   `json:"quoteBudget"`
@@ -96,7 +102,22 @@ type GridConfig struct {
 func (c GridConfig) Normalize() GridConfig {
 	c.Symbol = strings.ToUpper(strings.TrimSpace(c.Symbol))
 	c.Mode = strings.ToLower(strings.TrimSpace(c.Mode))
-	c.FeeRate = gridFeeRate(c.FeeRate)
+	c.Direction = NormalizeDirection(c.Direction)
+	c.Market = NormalizeGridMarket(c.Market)
+	// 做空必须有合约；反过来，现货网格没有杠杆可言。
+	if c.Direction.Short() {
+		c.Market = GridMarketFutures
+	}
+	if c.Market != GridMarketFutures {
+		c.Leverage = 1
+	}
+	if c.Leverage < 1 {
+		c.Leverage = 1
+	}
+	if c.Leverage > MaxLeverage {
+		c.Leverage = MaxLeverage
+	}
+	c.FeeRate = gridFeeRateFor(c.Market, c.FeeRate)
 	if !(c.StopPct > 0) || c.StopPct > GridMaxStopPct {
 		c.StopPct = GridDefaultStopPct
 	}
@@ -173,7 +194,9 @@ type GridFill struct {
 type GridFillLog interface {
 	Save(GridFill) (int64, error)
 	List(gridID int64, limit int) ([]GridFill, error)
-	Holdings(gridID int64) (map[int]float64, error)
+	// Holdings 按方向还原每一格还没平掉的量。多头是"买入加、卖出减上一格"，
+	// 空头是"卖出加、买入减下一格" —— 两个方向减的都不是自己那一格。
+	Holdings(gridID int64, direction GridDirection) (map[int]float64, error)
 	Summary(gridID int64) (fills int, realized float64, err error)
 }
 
@@ -194,10 +217,15 @@ type GridExchange interface {
 	Cancel(symbol, clientID string) error
 	// Trades 读某张单的成交明细，用来拿真实手续费。
 	Trades(symbol string, orderID int64) ([]GridTrade, error)
-	// MarketSell 市价卖掉指定数量，用于止损/上沿止盈清仓。
+	// MarketSell 市价卖掉指定数量，用于多头止损/上沿止盈清仓。
 	MarketSell(symbol string, qty float64, clientID string) (SpotOrderState, error)
 	// BaseQty 读基础币的余额（free + locked）。清仓时以它为准。
 	BaseQty(symbol string) (float64, error)
+	// PositionQty 读网格当前**持有的数量**（取绝对值）：多头是基础币余额，
+	// 空头是合约持仓量。两个方向都用它来定清仓数量。
+	PositionQty(symbol string) (float64, error)
+	// MarketClose 以市价了结持仓：多头卖出基础币，空头买回合约。
+	MarketClose(symbol string, qty float64, clientID string) (SpotOrderState, error)
 	// Rules 读交易对规则。
 	Rules(symbol string) (GridRules, error)
 	// LastPrice 读最新成交价。调度器在建引擎之前就要用它来算计划，
@@ -211,6 +239,24 @@ type GridExchange interface {
 	// 它是这条边界的一部分而不是某个实现私有：网格的每格收益 =
 	// 间距 − 双边手续费，费率读错一位，一份实际亏损的网格会被算成盈利的。
 	CommissionRate() float64
+}
+
+/*
+GridProtector 是合约网格的**交易所侧保护单**。
+
+为什么必须有它：网格的止损平时靠引擎每一拍判断 outOfRange 再市价平仓。
+进程被杀、机器重启、网络断了 —— 这些时候引擎不在，止损也就不在。
+杠杆仓位不能只有软件止损，所以合约网格在 Start 之后的第一拍就要在交易所
+挂一张 closePosition 的 STOP_MARKET，并在停机时撤掉。
+
+现货网格不实现这个接口：现货没有强平，最坏结果是拿着币。
+*/
+type GridProtector interface {
+	// EnsureProtectionStop 保证交易所上有一张触发价等于 trigger 的
+	// 全平保护单。已存在且价格一致时是幂等的。
+	EnsureProtectionStop(symbol string, trigger float64, clientID string) error
+	// CancelProtectionStops 撤掉该交易对上的全部条件单。
+	CancelProtectionStops(symbol string) error
 }
 
 // gridHold 是某一格上已经买到、还没卖掉的一份。
@@ -242,7 +288,12 @@ type GridSnapshot struct {
 	Levels   int       `json:"levels"`
 	Spacing  float64   `json:"spacingPct"`
 	StopPrice float64  `json:"stopPrice"`
-	LastPrice float64  `json:"lastPrice,omitempty"`
+	// TakeProfitPrice 是多头走完上沿 / 空头跌破下沿的那个价。
+	TakeProfitPrice float64 `json:"takeProfitPrice"`
+	Direction       string  `json:"direction"`
+	Market          string  `json:"market"`
+	Leverage        int     `json:"leverage"`
+	LastPrice       float64 `json:"lastPrice,omitempty"`
 	// QtyPerLevel / NotionalPerLevel 是每一格的规模，界面靠它解释"每天赚多少"。
 	QtyPerLevel      float64 `json:"qtyPerLevel"`
 	NotionalPerLevel float64 `json:"notionalPerLevel"`
@@ -388,6 +439,9 @@ func BuildGridEngine(cfg GridConfig, price float64, ex GridExchange, fills GridF
 	}
 	plan, err := BuildGridPlan(GridInput{
 		Symbol:      cfg.Symbol,
+		Direction:   cfg.Direction,
+		Market:      cfg.Market,
+		Leverage:    cfg.Leverage,
 		Lower:       cfg.Lower,
 		Upper:       cfg.Upper,
 		Levels:      cfg.Levels,
@@ -434,7 +488,7 @@ func (g *GridEngine) loadHoldings() error {
 	if g == nil || g.cfg.ID <= 0 {
 		return nil
 	}
-	holds, err := g.fills.Holdings(g.cfg.ID)
+	holds, err := g.fills.Holdings(g.cfg.ID, g.cfg.Direction)
 	if err != nil {
 		return err
 	}
@@ -576,6 +630,17 @@ func (g *GridEngine) Stop(now time.Time, reason string) error {
 		g.note("stop_failed", reason)
 		return err
 	}
+	/*
+		清仓成功之后撤掉交易所侧保护单。
+
+		顺序不能反：先撤保护再平仓，中间那段时间仓位是裸的；
+		而平仓失败时保留保护单，至少还有一张止损在交易所上。
+	*/
+	if prot, ok := g.ex.(GridProtector); ok && g.cfg.Market == GridMarketFutures {
+		if cerr := prot.CancelProtectionStops(g.cfg.Symbol); cerr != nil {
+			g.log.Printf("[grid] %s 撤掉保护单失败（仓位已平，保护单可能残留）: %v", g.cfg.Symbol, cerr)
+		}
+	}
 	g.state = GridStopped
 	g.closedReason = reason
 	g.note("stop", reason)
@@ -645,12 +710,12 @@ func (g *GridEngine) cancelAll(now time.Time) error {
 	return firstErr
 }
 
-// flatten 市价卖掉手里的全部基础币。
+// flatten 以市价了结全部持仓：多头卖出基础币，空头买回合约。
 func (g *GridEngine) flatten(now time.Time, reason string) error {
 	if g == nil || g.ex == nil {
 		return nil
 	}
-	qty, err := g.ex.BaseQty(g.cfg.Symbol)
+	qty, err := g.ex.PositionQty(g.cfg.Symbol)
 	if err != nil {
 		return err
 	}
@@ -662,7 +727,7 @@ func (g *GridEngine) flatten(now time.Time, reason string) error {
 		g.clearHolds()
 		return nil
 	}
-	state, err := g.ex.MarketSell(g.cfg.Symbol, qty, g.clientID("flat"))
+	state, err := g.ex.MarketClose(g.cfg.Symbol, qty, g.clientID("flat"))
 	if err != nil {
 		return err
 	}
@@ -695,17 +760,20 @@ func (g *GridEngine) flatten(now time.Time, reason string) error {
 		看得到，只是挂不出一张合法的卖单。把它如实记回来，用户才不会
 		看到"已清仓"却在账户里发现还有货。
 	*/
-	if left, lerr := g.ex.BaseQty(g.cfg.Symbol); lerr == nil && left > 0 {
+	if left, lerr := g.ex.PositionQty(g.cfg.Symbol); lerr == nil && left > 0 {
 		g.dustQty = left
 		g.dustCost = left * avgCost
 		g.qtyHeld, g.costBasis = left, left*avgCost
+		if g.cfg.Market == GridMarketFutures {
+			g.log.Printf("[grid] %s 清仓后仍有 %g 张合约持仓未平（不是零头）：请检查", g.cfg.Symbol, left)
+		}
 	}
 	if _, err := g.fills.Save(GridFill{
 		UserID:   g.cfg.UserID,
 		GridID:   g.cfg.ID,
 		Symbol:   g.cfg.Symbol,
 		Level:    -1, // -1 表示清仓单，不属于任何一格
-		Side:     SpotSell,
+		Side:     g.cfg.Direction.CloseSide(),
 		Price:    econ.Price,
 		Qty:      econ.Qty,
 		Quote:    econ.GrossQuote,
@@ -717,7 +785,11 @@ func (g *GridEngine) flatten(now time.Time, reason string) error {
 	}); err != nil {
 		g.log.Printf("[grid] %s 清仓成交落库失败（内存已记，重启后会少这一笔）: %v", g.cfg.Symbol, err)
 	}
-	g.sells++
+	if g.cfg.Direction.Short() {
+		g.buys++
+	} else {
+		g.sells++
+	}
 	g.note("flatten", reason)
 	g.log.Printf("[grid] %s 清仓 %g@%g 已实现 %.6f reason=%s", g.cfg.Symbol, econ.Qty, econ.Price, realized, reason)
 	return nil
@@ -734,18 +806,26 @@ func (g *GridEngine) realizeAgainstCost(qty, price, fee float64) (realized, rema
 	if qty <= 0 || price <= 0 {
 		return 0, g.qtyHeld
 	}
-	proceeds := qty*price - fee
 	if g.qtyHeld <= 0 {
-		// 账上没有持仓却卖出了 —— 说明有外部来源的币（手工买的、别的策略买的）。
-		// 这笔收入全部算已实现，不假装它有成本。
-		return proceeds, 0
+		// 账上没有持仓却发生了平仓成交 —— 说明有外部来源的仓位
+		// （手工开的、别的策略开的）。不假装它有成本。
+		if g.cfg.Direction.Short() {
+			return -(qty*price + fee), 0
+		}
+		return qty*price - fee, 0
 	}
 	avg := g.costBasis / g.qtyHeld
 	sold := qty
 	if sold > g.qtyHeld {
 		sold = g.qtyHeld
 	}
-	realized = proceeds*(sold/qty) - sold*avg
+	if g.cfg.Direction.Short() {
+		// 买回平空：付出 qty*price+fee，冲抵 sold*avg 的入账成本。
+		realized = sold*avg - (qty*price+fee)*(sold/qty)
+	} else {
+		proceeds := qty*price - fee
+		realized = proceeds*(sold/qty) - sold*avg
+	}
 	remaining = g.qtyHeld - sold
 	return realized, remaining
 }
@@ -799,7 +879,21 @@ func (g *GridEngine) Step(now time.Time, price float64) (GridSnapshot, error) {
 		return g.snapshot(), nil
 	}
 
-	// 3. 按当前持仓重算该挂什么，补齐差额。
+	/*
+		3. 合约网格：保证交易所上有一张全平止损。
+
+		放在补挂之前：如果保护单挂不上（权限不够、参数被拒），就不该
+		继续往盘口上铺网格单 —— 杠杆仓位先有安全网，再谈赚价差。
+	*/
+	if prot, ok := g.ex.(GridProtector); ok && g.cfg.Market == GridMarketFutures {
+		if err := prot.EnsureProtectionStop(g.cfg.Symbol, g.plan.StopPrice, g.clientID("prot")); err != nil {
+			g.note("protect_failed", err.Error())
+			g.lastError = err.Error()
+			return g.snapshot(), err
+		}
+	}
+
+	// 4. 按当前持仓重算该挂什么，补齐差额。
 	if err := g.rebalance(now); err != nil {
 		g.note("rebalance_failed", err.Error())
 		g.lastError = err.Error()
@@ -824,6 +918,16 @@ outOfRange 判断是否该离场。
 */
 func (g *GridEngine) outOfRange(price float64) (string, bool) {
 	if price <= 0 {
+		return "", false
+	}
+	if g.cfg.Direction.Short() {
+		// 空头的两个边界是镜像的：向上破止损，向下跌破下沿止盈。
+		if g.plan.StopPrice > 0 && price >= g.plan.StopPrice {
+			return ReasonGridStopLoss, true
+		}
+		if g.plan.TakeProfitPrice > 0 && price <= g.plan.TakeProfitPrice {
+			return ReasonGridTakeProfit, true
+		}
 		return "", false
 	}
 	if g.plan.StopPrice > 0 && price <= g.plan.StopPrice {
@@ -1090,24 +1194,30 @@ func (g *GridEngine) bookFill(rest *gridResting, state SpotOrderState) error {
 		FillSource: econ.Source,
 	}
 
+	openSide := g.cfg.Direction.OpenSide()
+	closeSide := g.cfg.Direction.CloseSide()
 	switch rest.Side {
-	case SpotBuy:
+	case openSide:
 		/*
-			买入：把这一格的持仓坐实，成本价按**含手续费的实际付出**算。
+			开仓：把这一格的持仓坐实，成本价按**含手续费的实际成本**算。
 
-			买方掏出去的钱是毛成交额 grossQuote，但到手的只有 econ.Qty 个
-			（手续费以基础币的形式被扣掉了）。所以单份成本 =
-			grossQuote / 到账数量，比成交价略高一点 —— 手续费就是这样
-			被正确地摊进持仓成本的。若拿成交价当成本，这一格的
-			已实现盈亏会永久性地多算一份手续费。
+			多头：掏出去的是毛成交额，到手的只有 econ.Qty 个（手续费以
+			基础币扣掉），所以单份成本 = grossQuote / 到账数量。
+			空头：收到的是毛成交额减去手续费，单份成本 =
+			(grossQuote - fee) / 数量 —— 手续费就是这样被摊进成本的。
+			若拿成交价当成本，这一格的已实现盈亏会永久性地多算一份手续费。
 
-			取 max(已有, 本次) 而不是累加：同一格理论上只会有一张买单，
+			取 max(已有, 本次) 而不是累加：同一格理论上只会有一张开仓单，
 			但重启认领、重复回执这些情况下累加会凭空多出持仓，
 			而「每格一个单位」是这个引擎全部推理的基础，不能被破坏。
 		*/
 		costPerUnit := econ.Price
 		if econ.Qty > 0 && econ.GrossQuote > 0 {
-			costPerUnit = econ.GrossQuote / econ.Qty
+			if g.cfg.Direction.Short() {
+				costPerUnit = (econ.GrossQuote - econ.FeeQuote) / econ.Qty
+			} else {
+				costPerUnit = econ.GrossQuote / econ.Qty
+			}
 		}
 		held := g.holds[rest.Level]
 		if held == nil {
@@ -1118,33 +1228,43 @@ func (g *GridEngine) bookFill(rest *gridResting, state SpotOrderState) error {
 			held.Qty = econ.Qty
 			held.Price = costPerUnit
 		}
-		g.buys++
-		g.note("buy", fmt.Sprintf("第 %d 格 %g@%g", rest.Level, econ.Qty, econ.Price))
-	case SpotSell:
-		// 卖出：按平均成本算这一笔的已实现盈亏。手续费从收入里扣。
+		if g.cfg.Direction.Short() {
+			g.sells++
+		} else {
+			g.buys++
+		}
+		g.note("open", fmt.Sprintf("第 %d 格 %g@%g", rest.Level, econ.Qty, econ.Price))
+	case closeSide:
+		// 平仓：按平均成本算这一笔的已实现盈亏。手续费从收入里扣
+		// （空头是加在买入成本上，见 realizeAgainstCost）。
 		realized, _ := g.realizeAgainstCost(econ.Qty, econ.Price, econ.FeeQuote)
 		fill.Realized = realized
 		g.realized += realized
-		g.sells++
+		if g.cfg.Direction.Short() {
+			g.buys++
+		} else {
+			g.sells++
+		}
 		g.roundTrips++
 		/*
-			卖掉的是**哪一格**的货：卖单挂在 i+1 上，对应的是 holds[i]。
+			平掉的是**哪一格**：多头卖单挂在 i+1 上，平的是 holds[i]；
+			空头买单挂在 i-1 上，平的是 holds[i]。
 
-			减完之后如果剩下的量已经**卖不出去**（小于一个步长），
+			减完之后如果剩下的量已经**平不掉**（小于一个步长），
 			就把这个单位关掉，剩下那点零头转入 dust。
 
 			不这么做的后果很具体：剩下的 0.986 个 DOGE 会让第 i 格
 			永远处于"已持有"状态，于是永远不再挂买单 —— 那一条网格线
 			从此死掉，而界面上它看起来只是"一直持着货"。
 		*/
-		src := rest.Level - 1
+		src := g.cfg.Direction.ClosedLevel(rest.Level)
 		if held := g.holds[src]; held != nil {
 			held.Qty -= econ.Qty
 			if g.sellableQty(held.Qty) <= 0 {
 				g.closeUnit(src)
 			}
 		}
-		g.note("sell", fmt.Sprintf("第 %d 格 %g@%g", rest.Level, econ.Qty, econ.Price))
+		g.note("close", fmt.Sprintf("第 %d 格 %g@%g", rest.Level, econ.Qty, econ.Price))
 	default:
 		return invalid("网格成交方向只能是 BUY 或 SELL")
 	}
@@ -1261,6 +1381,35 @@ desiredOrders 算出每一格现在应该挂着什么单。
 func (g *GridEngine) desiredOrders() map[int]SpotSide {
 	want := map[int]SpotSide{}
 	lines := g.plan.Lines
+	if g.cfg.Direction.Short() {
+		/*
+			空头是严格镜像：
+
+			 1. 持着空的格 i，在**下面一格 i-1** 挂买平 —— 在 i 买回等于
+			    原价进原价出，白付两次手续费；
+			 2. 没持空的格 i，价格在它之下就挂卖开；
+			 3. 第 0 格永远不卖 —— 它下面没有线可以买回。
+		*/
+		for level := 1; level < len(lines); level++ {
+			if h := g.holds[level]; h != nil && h.Qty > 0 {
+				want[level-1] = SpotBuy
+			}
+		}
+		// 平仓单优先：同一格既能平上一格的空、又能开一张新空时，
+		// 先平仓 —— 手里已经有的仓位必须先了结。
+		for level := 1; level < len(lines); level++ {
+			if _, taken := want[level]; taken {
+				continue
+			}
+			if h := g.holds[level]; h != nil && h.Qty > 0 {
+				continue
+			}
+			if g.lastPrice < lines[level].Buy {
+				want[level] = SpotSell
+			}
+		}
+		return want
+	}
 	// 第一遍：有货的格，在它的上一格挂卖单。
 	for level := 0; level < len(lines)-1; level++ {
 		if h := g.holds[level]; h != nil && h.Qty > 0 {
@@ -1289,10 +1438,12 @@ func (g *GridEngine) place(now time.Time, level int, side SpotSide) error {
 		return invalid(fmt.Sprintf("网格线号 %d 超出范围", level))
 	}
 	price, qty := lines[level].Buy, g.plan.QtyPerLevel
-	if side == SpotSell {
-		// 卖的是**上一格**买到的货，数量以实际持有为准 ——
-		// 按计划数量挂会在部分成交之后卖超过持有，被币安以余额不足拒掉。
-		held := g.holds[level-1]
+	closeSide := g.cfg.Direction.CloseSide()
+	if side == closeSide {
+		// 平的是**相邻那一格**的持仓（多头 i+1 卖 i 的货，空头 i-1 买回 i 的空），
+		// 数量以实际持有为准 —— 按计划数量挂会在部分成交之后平超过持仓，
+		// 被交易所拒掉。
+		held := g.holds[g.cfg.Direction.ClosedLevel(level)]
 		if held == nil || held.Qty <= 0 {
 			return nil
 		}
@@ -1309,12 +1460,24 @@ func (g *GridEngine) place(now time.Time, level int, side SpotSide) error {
 		永远卡在这一格上。正确做法是承认这个零头收不回来了，
 		把它转入 dust，让这一格回到"可以重新买入"的状态。
 	*/
-	if side == SpotSell && g.rules.MinNotional > 0 && qty*price < g.rules.MinNotional {
-		g.log.Printf("[grid] %s 第 %d 格的卖单只有 %g（名义 %.4f），低于交易所下限，转入零头",
-			g.cfg.Symbol, level, qty, qty*price)
-		g.closeUnit(level - 1)
-		g.recount()
-		return nil
+	if side == closeSide && g.rules.MinNotional > 0 && qty*price < g.rules.MinNotional {
+		if g.cfg.Market == GridMarketFutures {
+			/*
+				合约上的持仓不会因为"数量太小"就消失。把这一格当成已平仓，
+				等于把一个真实存在的空头从记账里抹掉 —— 账户上还欠着，
+				引擎却以为已经了结。所以这里不丢弃，仍然去下单：
+				reduceOnly 的平仓单通常不受最小名义限制，就算被拒也只是
+				这一拍失败，下一拍会重试。
+			*/
+			g.log.Printf("[grid] %s 第 %d 格平仓名义 %.4f 低于交易所最小名义 %.4f，仍尝试平仓（合约不丢仓）",
+				g.cfg.Symbol, level, qty*price, g.rules.MinNotional)
+		} else {
+			g.log.Printf("[grid] %s 第 %d 格的平仓单只有 %g（名义 %.4f），低于交易所下限，转入零头",
+				g.cfg.Symbol, level, qty, qty*price)
+			g.closeUnit(g.cfg.Direction.ClosedLevel(level))
+			g.recount()
+			return nil
+		}
 	}
 	client := g.clientID(fmt.Sprintf("L%d", level))
 	state, err := g.ex.PlaceLimit(g.cfg.Symbol, side, qty, price, client)
@@ -1383,6 +1546,10 @@ func (g *GridEngine) snapshot() GridSnapshot {
 		Levels:            g.plan.Levels,
 		Spacing:           g.plan.SpacingPct,
 		StopPrice:         g.plan.StopPrice,
+		TakeProfitPrice:   g.plan.TakeProfitPrice,
+		Direction:         string(g.cfg.Direction),
+		Market:            g.cfg.Market,
+		Leverage:          g.cfg.Leverage,
 		LastPrice:         g.lastPrice,
 		QtyPerLevel:       g.plan.QtyPerLevel,
 		NotionalPerLevel:  g.plan.NotionalPerLevel,
@@ -1403,7 +1570,12 @@ func (g *GridEngine) snapshot() GridSnapshot {
 		PlaceFailed:       g.placeFailed,
 	}
 	if g.qtyHeld > 0 && g.lastPrice > 0 {
-		snap.UnrealizedUSDT = g.qtyHeld*g.lastPrice - g.costBasis
+		if g.cfg.Direction.Short() {
+			// 空头的浮盈 = 入账成本 - 现在买回要花的钱。
+			snap.UnrealizedUSDT = g.costBasis - g.qtyHeld*g.lastPrice
+		} else {
+			snap.UnrealizedUSDT = g.qtyHeld*g.lastPrice - g.costBasis
+		}
 	}
 	for _, rest := range g.restingList() {
 		snap.Resting = append(snap.Resting, GridRestingView{
