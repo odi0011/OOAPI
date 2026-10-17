@@ -79,26 +79,26 @@ const (
 
 // GridConfig 是一条网格的配置。字段与 trading_grids 表一致。
 type GridConfig struct {
-	ID            int64     `json:"id,omitempty"`
-	UserID        int64     `json:"-"`
-	ExchangeKeyID int64     `json:"exchangeKeyId"`
-	Symbol        string    `json:"symbol"`
-	Mode          string    `json:"mode"`
+	ID            int64  `json:"id,omitempty"`
+	UserID        int64  `json:"-"`
+	ExchangeKeyID int64  `json:"exchangeKeyId"`
+	Symbol        string `json:"symbol"`
+	Mode          string `json:"mode"`
 	// Direction 是 long / short。空值按多头处理（老数据）。
 	Direction GridDirection `json:"direction"`
 	// Market 是 spot / futures。做空网格必须是 futures。
 	Market string `json:"market"`
 	// Leverage 只对合约网格有意义。现货恒为 1。
-	Leverage int     `json:"leverage"`
-	Lower    float64 `json:"lower"`
-	Upper         float64   `json:"upper"`
-	Levels        int       `json:"levels"`
-	QuoteBudget   float64   `json:"quoteBudget"`
-	StopPct       float64   `json:"stopPct,omitempty"`
-	FeeRate       float64   `json:"feeRate,omitempty"`
-	Running       bool      `json:"running"`
-	PauseReason   string    `json:"pauseReason,omitempty"`
-	CreatedAt     time.Time `json:"-"`
+	Leverage    int       `json:"leverage"`
+	Lower       float64   `json:"lower"`
+	Upper       float64   `json:"upper"`
+	Levels      int       `json:"levels"`
+	QuoteBudget float64   `json:"quoteBudget"`
+	StopPct     float64   `json:"stopPct,omitempty"`
+	FeeRate     float64   `json:"feeRate,omitempty"`
+	Running     bool      `json:"running"`
+	PauseReason string    `json:"pauseReason,omitempty"`
+	CreatedAt   time.Time `json:"-"`
 }
 
 // Normalize 补齐默认值并规整大小写。与 Config.Normalize 同一个套路：
@@ -173,16 +173,16 @@ type GridTrade struct {
 
 // GridFill 是一笔已经落账的网格成交。
 type GridFill struct {
-	ID       int64     `json:"id,omitempty"`
-	UserID   int64     `json:"-"`
-	GridID   int64     `json:"gridId,omitempty"`
-	Symbol   string    `json:"symbol"`
-	Level    int       `json:"level"`
-	Side     SpotSide  `json:"side"`
-	Price    float64   `json:"price"`
-	Qty      float64   `json:"qty"`
-	Quote    float64   `json:"quote"`
-	FeeQuote float64   `json:"feeQuote"`
+	ID       int64    `json:"id,omitempty"`
+	UserID   int64    `json:"-"`
+	GridID   int64    `json:"gridId,omitempty"`
+	Symbol   string   `json:"symbol"`
+	Level    int      `json:"level"`
+	Side     SpotSide `json:"side"`
+	Price    float64  `json:"price"`
+	Qty      float64  `json:"qty"`
+	Quote    float64  `json:"quote"`
+	FeeQuote float64  `json:"feeQuote"`
 	// Realized 是这笔成交带来的已实现盈亏（计价币），买入时恒为 0。
 	Realized   float64   `json:"realizedUsdt"`
 	OrderID    int64     `json:"orderId,omitempty"`
@@ -282,16 +282,16 @@ type gridResting struct {
 
 // GridSnapshot 是网格对外的运行状态。
 type GridSnapshot struct {
-	ID       int64     `json:"id,omitempty"`
-	Symbol   string    `json:"symbol"`
-	State    GridState `json:"state"`
-	Running  bool      `json:"running"`
-	Mode     string    `json:"mode"`
-	Lower    float64   `json:"lower"`
-	Upper    float64   `json:"upper"`
-	Levels   int       `json:"levels"`
-	Spacing  float64   `json:"spacingPct"`
-	StopPrice float64  `json:"stopPrice"`
+	ID        int64     `json:"id,omitempty"`
+	Symbol    string    `json:"symbol"`
+	State     GridState `json:"state"`
+	Running   bool      `json:"running"`
+	Mode      string    `json:"mode"`
+	Lower     float64   `json:"lower"`
+	Upper     float64   `json:"upper"`
+	Levels    int       `json:"levels"`
+	Spacing   float64   `json:"spacingPct"`
+	StopPrice float64   `json:"stopPrice"`
 	// TakeProfitPrice 是多头走完上沿 / 空头跌破下沿的那个价。
 	TakeProfitPrice float64 `json:"takeProfitPrice"`
 	Direction       string  `json:"direction"`
@@ -299,12 +299,12 @@ type GridSnapshot struct {
 	Leverage        int     `json:"leverage"`
 	LastPrice       float64 `json:"lastPrice,omitempty"`
 	// QtyPerLevel / NotionalPerLevel 是每一格的规模，界面靠它解释"每天赚多少"。
-	QtyPerLevel      float64 `json:"qtyPerLevel"`
-	NotionalPerLevel float64 `json:"notionalPerLevel"`
-	NetProfitPct     float64 `json:"netProfitPct"`
+	QtyPerLevel       float64 `json:"qtyPerLevel"`
+	NotionalPerLevel  float64 `json:"notionalPerLevel"`
+	NetProfitPct      float64 `json:"netProfitPct"`
 	NetProfitPerLevel float64 `json:"netProfitPerLevel"`
-	QuoteNeeded      float64 `json:"quoteNeeded"`
-	WorstLossUSDT    float64 `json:"worstLossUsdt"`
+	QuoteNeeded       float64 `json:"quoteNeeded"`
+	WorstLossUSDT     float64 `json:"worstLossUsdt"`
 	// InventoryQty / InventoryCost 是手里还压着的货，以及它的成本。
 	InventoryQty  float64 `json:"inventoryQty"`
 	InventoryCost float64 `json:"inventoryCost"`
@@ -332,11 +332,11 @@ type GridSnapshot struct {
 
 // GridRestingView 是一张挂单在界面上的样子。
 type GridRestingView struct {
-	Level  int      `json:"level"`
-	Side   SpotSide `json:"side"`
-	Price  float64  `json:"price"`
-	Qty    float64  `json:"qty"`
-	At     time.Time `json:"at"`
+	Level int       `json:"level"`
+	Side  SpotSide  `json:"side"`
+	Price float64   `json:"price"`
+	Qty   float64   `json:"qty"`
+	At    time.Time `json:"at"`
 }
 
 // GridLevelView 是一条网格线的状态。
@@ -366,12 +366,12 @@ GridEngine 是一台网格。
 与 Step 并发 —— 与 Engine 同一条约定。
 */
 type GridEngine struct {
-	mu     sync.Mutex
-	cfg    GridConfig
-	plan   GridPlan
-	ex     GridExchange
-	log    Logger
-	fills  GridFillLog
+	mu    sync.Mutex
+	cfg   GridConfig
+	plan  GridPlan
+	ex    GridExchange
+	log   Logger
+	fills GridFillLog
 	// rules 是交易对规则。卖单数量要按步长向下取整、判断零头能不能单独
 	// 卖出去，都要用它，所以建引擎时就存下来，不在每拍重新拉。
 	rules GridRules
@@ -413,9 +413,9 @@ type GridEngine struct {
 	// driftTicks 是"交易所持仓与本地账本不一致"连续出现的拍数。
 	// 单拍不一致可能是刚成交还没对上账，连续多拍才停机 —— 见 checkPositionDrift。
 	driftTicks int
-	stepAt      time.Time
-	startedAt   time.Time
-	seq         int64
+	stepAt     time.Time
+	startedAt  time.Time
+	seq        int64
 	// closedAtReason 记下停机原因，供 Stop 之后的事件流使用。
 	closedReason string
 }
@@ -1141,17 +1141,52 @@ func (g *GridEngine) settle(rest *gridResting, final SpotOrderState) error {
 	}
 }
 
-// absorbPartial 处理还在盘口上、但已经成交了一部分的单：
-// 先把成交部分入账，再把剩下的撤掉（见文件头「为什么买单一旦有任何成交就立刻撤掉剩下的」）。
+/*
+absorbPartial 处理还在盘口上、但已经成交了一部分的单。
+
+顺序必须是「先撤单、再查终态、最后入账」，不能反过来：
+
+	state 只是撤单**之前**那一刻的快照。撤单请求发出去到交易所真正把
+	单撤掉之间，仍然可能再成交（实盘上常见，测试网也复现了：WIF 空头
+	第 9 格快照 201.2，撤单过程中又成交 25.7，本地少记，随后被持仓
+	漂移守卫连续三拍抓到，整条网格停机清仓）。
+
+先撤单之后，QueryOrder 返回的是这张单的最终成交量；用它入账一次，
+本地持仓就和交易所完全一致。撤单失败或终态还没出来时**不记账、也
+不删除挂单记录**，下一拍再核对 —— 宁可多等一拍，也不能在错误的
+数量上继续挂单。
+*/
 func (g *GridEngine) absorbPartial(rest *gridResting, state SpotOrderState) error {
-	if err := g.bookFill(rest, state); err != nil {
-		return err
-	}
 	if cerr := g.ex.Cancel(g.cfg.Symbol, rest.Client); cerr != nil {
-		g.log.Printf("[grid] %s 撤掉部分成交单 %s 失败: %v", g.cfg.Symbol, rest.Client, cerr)
+		g.log.Printf("[grid] %s 撤掉部分成交单 %s 失败，下一拍重试: %v", g.cfg.Symbol, rest.Client, cerr)
+		return nil
+	}
+	final, ferr := g.ex.QueryOrder(g.cfg.Symbol, rest.Client)
+	if ferr != nil {
+		g.log.Printf("[grid] %s 部分成交单 %s 撤单后查终态失败，下一拍重试: %v", g.cfg.Symbol, rest.Client, ferr)
+		return nil
+	}
+	if !gridOrderFinal(final.Status) {
+		g.log.Printf("[grid] %s 部分成交单 %s 撤单后状态仍为 %s，下一拍再核对", g.cfg.Symbol, rest.Client, final.Status)
+		return nil
+	}
+	if final.ExecutedQty > 0 {
+		if err := g.bookFill(rest, final); err != nil {
+			return err
+		}
 	}
 	delete(g.resting, rest.Level)
 	return nil
+}
+
+// gridOrderFinal 判断订单是否已经不会再有成交。
+func gridOrderFinal(status string) bool {
+	switch status {
+	case SpotStatusFilled, SpotStatusCanceled, SpotStatusExpired,
+		SpotStatusExpiredInMatch, SpotStatusRejected:
+		return true
+	}
+	return false
 }
 
 // gridEconomics 是一张成交单折算出来的账目。用结构体而不是一串返回值：

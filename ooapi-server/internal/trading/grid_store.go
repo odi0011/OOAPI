@@ -110,8 +110,18 @@ func (m *memoryGridFillLog) Holdings(gridID int64, direction GridDirection) (map
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := map[int]float64{}
+	/*
+		按**写入顺序**回放，不能用无序聚合 —— 清仓单（level -1）的语义是
+		"把此前所有格子凑起来的货一起平掉"，只有在它之前的开仓都已入账
+		时才能清零。实盘踩过一次：空头停机清仓后重启，持仓被重建成清仓
+		前的 505，而交易所是空的。
+	*/
 	for _, row := range m.rows {
-		if row.GridID != gridID || row.Level < 0 {
+		if row.GridID != gridID {
+			continue
+		}
+		if row.Level < 0 {
+			out = map[int]float64{}
 			continue
 		}
 		if short {

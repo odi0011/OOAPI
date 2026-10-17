@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -43,48 +44,22 @@ ORDER BY filled_at DESC, id DESC
 LIMIT ?`
 
 /*
-gridHoldingSQL 按线号把还没卖掉的量累加起来。
+gridHoldingsReplaySQL 按**成交顺序**取回全部成交，由 Go 侧回放。
 
-**卖出减的是上一格**（`level_index - 1`），不是它自己那一格。
-卖单挂在 i+1 上，卖的是 i 那格买到的货 —— 这条 SQL 和内存实现
-（memoryGridFillLog.Holdings）必须给出同一个答案，所以它被单独拎出来
-并配了测试：两边不一致的话，重启前后引擎的行为会不一样。
+不用 SQL 聚合，是因为清仓单（level_index = -1）必须按时间处理：
+它平掉的是所有格子凑起来的货，按某一格减会减成负数；而"遇到它就把
+持仓清零"只有在它之前的所有开仓都已入账时才成立。SQL 的 SUM 不带
+顺序，表达不了这件事 —— 实盘已经踩过一次：WIF 空头停机清仓后进程
+重启，持仓被重建成清仓前的 505，交易所却是空的。
 
-level_index = -1 的清仓单不参与：它卖的是所有格子凑起来的货，
-按某一格去减会把它减成负数。
+ORDER BY id 和内存账本的写入顺序一致；同一笔成交的 filled_at 可能
+因为交易所回执时间而乱序，id 才是本地记账的真实顺序。
 */
-const gridHoldingSQL = `
-SELECT own_level, SUM(delta) AS qty FROM (
-	SELECT level_index AS own_level, qty AS delta
-	FROM trading_grid_fills
-	WHERE grid_id = ? AND side = 'BUY' AND level_index >= 0
-	UNION ALL
-	SELECT level_index - 1 AS own_level, -qty AS delta
-	FROM trading_grid_fills
-	WHERE grid_id = ? AND side = 'SELL' AND level_index > 0
-) AS t
-GROUP BY own_level
-HAVING SUM(delta) > 0.000000001`
-
-/*
-gridHoldingShortSQL 是空头网格的镜像。
-
-空头：SELL 开空落在自己那一格，**BUY 平空减的是下一格**
-（买单挂在 i-1，平的是 i 那格的空）。level_index = -1 的清仓单
-在两边都被 level_index >= 0 排除掉。
-*/
-const gridHoldingShortSQL = `
-SELECT own_level, SUM(delta) AS qty FROM (
-	SELECT level_index AS own_level, qty AS delta
-	FROM trading_grid_fills
-	WHERE grid_id = ? AND side = 'SELL' AND level_index >= 0
-	UNION ALL
-	SELECT level_index + 1 AS own_level, -qty AS delta
-	FROM trading_grid_fills
-	WHERE grid_id = ? AND side = 'BUY' AND level_index >= 0
-) AS t
-GROUP BY own_level
-HAVING SUM(delta) > 0.000000001`
+const gridHoldingsReplaySQL = `
+SELECT level_index, side, qty
+FROM trading_grid_fills
+WHERE grid_id = ?
+ORDER BY id`
 
 const gridFillSummarySQL = `
 SELECT COUNT(*), COALESCE(SUM(realized_usdt), 0)
@@ -156,28 +131,51 @@ func (dbGridFillLog) Holdings(gridID int64, direction trading.GridDirection) (ma
 	if db.DB == nil {
 		return out, nil
 	}
-	query := gridHoldingSQL
-	if trading.NormalizeDirection(direction).Short() {
-		query = gridHoldingShortSQL
-	}
-	rows, err := db.DB.Query(query, gridID, gridID)
+	rows, err := db.DB.Query(gridHoldingsReplaySQL, gridID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	short := trading.NormalizeDirection(direction).Short()
 	for rows.Next() {
 		var (
 			level int
+			side  string
 			qty   float64
 		)
-		if err := rows.Scan(&level, &qty); err != nil {
+		if err := rows.Scan(&level, &side, &qty); err != nil {
 			return nil, err
 		}
-		if level >= 0 && qty > 0 {
-			out[level] = qty
+		if level < 0 {
+			// 清仓单：它之前的持仓已经全部平掉，回放到这里清零。
+			out = map[int]float64{}
+			continue
+		}
+		if short {
+			switch trading.SpotSide(side) {
+			case trading.SpotSell:
+				out[level] += qty
+			case trading.SpotBuy:
+				out[level+1] -= qty
+			}
+			continue
+		}
+		switch trading.SpotSide(side) {
+		case trading.SpotBuy:
+			out[level] += qty
+		case trading.SpotSell:
+			out[level-1] -= qty
 		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for level, qty := range out {
+		if qty <= 1e-12 {
+			delete(out, level)
+		}
+	}
+	return out, nil
 }
 
 func (dbGridFillLog) Summary(gridID int64) (int, float64, error) {
@@ -423,8 +421,29 @@ func setGridRunning(id, userID int64, running bool, pauseReason string) error {
 	if db.DB == nil {
 		return sql.ErrConnDone
 	}
-	_, err := db.DB.Exec(gridSetRunningSQL, boolInt(running), pauseReason, id, userID)
-	return err
+	res, err := db.DB.Exec(gridSetRunningSQL, boolInt(running), pauseReason, id, userID)
+	if err != nil {
+		return err
+	}
+	/*
+		UPDATE 带 user_id 条件，传错用户时 MySQL 不会报错，只是 0 行。
+		但 0 行也可能是"值本来就一样"（重复停一条已停的网格），所以
+		只有查不到这条归属时才当成错误。这个区分是必要的：调度器停机
+		回调曾经传 userID=0，更新静默失败，网格自停机后 running 仍是 1，
+		服务重启就把它复活了。
+	*/
+	if n, aerr := res.RowsAffected(); aerr == nil && n == 0 {
+		var exists int
+		if qerr := db.DB.QueryRow(
+			"SELECT COUNT(*) FROM trading_grids WHERE id = ? AND user_id = ?",
+			id, userID).Scan(&exists); qerr != nil {
+			return qerr
+		}
+		if exists == 0 {
+			return fmt.Errorf("网格 %d 不属于用户 %d（或不存在），运行标记未更新", id, userID)
+		}
+	}
+	return nil
 }
 
 // gridFills 读某条网格的成交明细，读失败只记日志并回空 ——

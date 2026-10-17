@@ -60,10 +60,10 @@ func StartGridRunner() {
 		log.Printf("[grid] 进程内调度已关闭（TRADING_RUNNER）")
 		return
 	}
-	gridRunner.SetStop(func(gridID int64) {
-		// 网格自己停机（止损 / 上沿止盈）时把运行标记落库，
+	gridRunner.SetStop(func(gridID, userID int64) {
+		// 网格自己停机（止损 / 上沿止盈 / 持仓漂移）时把运行标记落库，
 		// 否则重启之后它又会自己跑起来，而用户以为已经停了。
-		if err := setGridRunning(gridID, 0, false, ""); err != nil {
+		if err := setGridRunning(gridID, userID, false, ""); err != nil {
 			log.Printf("[grid] 同步运行标记失败 id=%d: %v", gridID, err)
 		}
 	})
@@ -143,18 +143,18 @@ func PostGridPreview(c *gin.Context) {
 	}
 
 	out := gin.H{
-		"symbol":        in.Symbol,
-		"mode":          mode,
-		"direction":     in.Direction,
-		"market":        in.Market,
-		"leverage":      in.Leverage,
-		"lastPrice":     price,
-		"feeRate":       full,
-		"stepSize":      rules.StepSize,
-		"tickSize":      rules.TickSize,
-		"minNotional":   rules.MinNotional,
-		"baseAsset":     rules.BaseAsset,
-		"quoteAsset":    rules.QuoteAsset,
+		"symbol":           in.Symbol,
+		"mode":             mode,
+		"direction":        in.Direction,
+		"market":           in.Market,
+		"leverage":         in.Leverage,
+		"lastPrice":        price,
+		"feeRate":          full,
+		"stepSize":         rules.StepSize,
+		"tickSize":         rules.TickSize,
+		"minNotional":      rules.MinNotional,
+		"baseAsset":        rules.BaseAsset,
+		"quoteAsset":       rules.QuoteAsset,
 		"minNotionalKnown": rules.MinNotional > 0,
 	}
 
@@ -319,24 +319,24 @@ const (
 func gridView(row gridRow, snap *trading.GridSnapshot) gin.H {
 	cfg := row.Config
 	out := gin.H{
-		"id":            cfg.ID,
-		"symbol":        cfg.Symbol,
-		"mode":          cfg.Mode,
-		"direction":     cfg.Direction,
-		"market":        cfg.Market,
-		"leverage":      cfg.Leverage,
-		"exchangeKeyId": cfg.ExchangeKeyID,
-		"lower":         round8(cfg.Lower),
-		"upper":         round8(cfg.Upper),
-		"levels":        cfg.Levels,
-		"quoteBudget":   round8(cfg.QuoteBudget),
-		"stopPct":       round8(cfg.StopPct),
-		"feeRate":       round8(cfg.FeeRate),
-		"running":       cfg.Running,
-		"pauseReason":   cfg.PauseReason,
+		"id":                 cfg.ID,
+		"symbol":             cfg.Symbol,
+		"mode":               cfg.Mode,
+		"direction":          cfg.Direction,
+		"market":             cfg.Market,
+		"leverage":           cfg.Leverage,
+		"exchangeKeyId":      cfg.ExchangeKeyID,
+		"lower":              round8(cfg.Lower),
+		"upper":              round8(cfg.Upper),
+		"levels":             cfg.Levels,
+		"quoteBudget":        round8(cfg.QuoteBudget),
+		"stopPct":            round8(cfg.StopPct),
+		"feeRate":            round8(cfg.FeeRate),
+		"running":            cfg.Running,
+		"pauseReason":        cfg.PauseReason,
 		"exchangeKeyNetwork": row.KeyNetwork,
 		"exchangeKeyActive":  row.KeyStatus == exchangeKeyActive,
-		"warnings":      gridWarnings(cfg.Mode, row.KeyNetwork, row.KeyStatus == exchangeKeyActive),
+		"warnings":           gridWarnings(cfg.Mode, row.KeyNetwork, row.KeyStatus == exchangeKeyActive),
 	}
 	if snap != nil {
 		out["snapshot"] = snap
@@ -717,8 +717,8 @@ func startGrid(spec trading.GridRunSpec) error {
 	if err := trading.DefaultGridHub().Put(eng); err != nil {
 		return err
 	}
-	gridRunner.SetStop(func(gridID int64) {
-		if err := setGridRunning(gridID, 0, false, ""); err != nil {
+	gridRunner.SetStop(func(gridID, userID int64) {
+		if err := setGridRunning(gridID, userID, false, ""); err != nil {
 			log.Printf("[grid] 同步运行标记失败 id=%d: %v", gridID, err)
 		}
 	})

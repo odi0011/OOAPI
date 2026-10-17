@@ -164,7 +164,7 @@ func TestSellFillBuysBackOneLineDown(t *testing.T) {
 	eng, paper, _ := gridFixture(t, gridTestStart, 50)
 	now := time.Now().UTC()
 	pump(t, eng, paper, gridTestStart, now)
-	pump(t, eng, paper, 0.07885, now.Add(time.Minute))  // 买单成交
+	pump(t, eng, paper, 0.07885, now.Add(time.Minute))   // 买单成交
 	pump(t, eng, paper, 0.08084, now.Add(2*time.Minute)) // 卖单成交
 
 	if got := len(eng.HoldingsView()); got != 0 {
@@ -600,6 +600,121 @@ func TestPartialFillBooksExecutedAndCancelsRest(t *testing.T) {
 	// 卖出数量按实际持有量向下取到步长：29.97 → 29。
 	if math.Abs(sell.Qty-29) > 1e-9 {
 		t.Fatalf("卖单数量应按实际持有 29.97 取整到 29，得到 %g", sell.Qty)
+	}
+}
+
+/*
+部分成交的竞态：撤单请求发出去之后、交易所真正撤掉之前，还会再成交。
+
+测试网实盘复现过：WIF 空头第 9 格的快照是 201.2，撤单过程中又成交
+25.7；旧实现按快照入账后就把挂单记录删了，本地永久少记 25.7，
+随后被持仓漂移守卫连续三拍抓到、整条网格停机清仓。
+
+这个测试让纸面交易所在 Cancel 里再成交 5 个，验证入账用的是撤单后的
+终态（35），而不是撤单前的快照（30）。
+*/
+type lateFillPaper struct {
+	*PaperGrid
+	lateQty float64
+	fired   bool
+}
+
+func (p *lateFillPaper) Cancel(symbol, clientID string) error {
+	if !p.fired && p.lateQty > 0 {
+		p.fired = true
+		if err := p.PaperGrid.PartialFill(clientID, p.lateQty); err != nil {
+			return err
+		}
+	}
+	return p.PaperGrid.Cancel(symbol, clientID)
+}
+
+func TestPartialFillBooksFillsThatLandDuringCancel(t *testing.T) {
+	paper := NewPaperGrid(gridTestRules(), gridTestStart, 50)
+	paper.SetFee(0.001)
+	log := newMemoryGridFillLog()
+	ex := &lateFillPaper{PaperGrid: paper, lateQty: 5}
+	cfg := GridConfig{
+		ID: 1, UserID: 7, ExchangeKeyID: 3,
+		Symbol: gridTestSymbol, Mode: ModeTestnet,
+		Lower: gridTestLower, Upper: gridTestUpper, Levels: 6,
+		QuoteBudget: 22, FeeRate: 0.001,
+	}
+	eng, err := BuildGridEngine(cfg, gridTestStart, ex, log, DiscardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := eng.Start(now); err != nil {
+		t.Fatal(err)
+	}
+	pump(t, eng, paper, gridTestStart, now)
+
+	target := eng.resting[2].Client
+	if err := paper.PartialFill(target, 30); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := eng.Step(now.Add(time.Minute), gridTestStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := eng.HoldingsView()[2]
+	want := 35 - 35*0.001
+	if math.Abs(held-want) > 1e-6 {
+		t.Fatalf("撤单过程中成交的 5 个也要入账：期望 %g，得到 %g", want, held)
+	}
+	if snap.State != GridRunning {
+		t.Fatalf("这只是记账竞态，不该停机：state=%s reason=%s", snap.State, snap.LastReason)
+	}
+}
+
+/*
+成交回放里遇到清仓单（level -1）必须把此前持仓清零。
+
+实盘踩过：空头网格因持仓漂移停机，清仓单平掉了 530.7；进程重启后
+按成交历史重建持仓时，旧实现把清仓单过滤掉了（它不属于任何一格），
+于是本地又"持有" 505，而交易所是空的。回放必须按时间顺序，遇到
+清仓单就清零；清零之后新开的仓仍然要能正常重建。
+*/
+func TestHoldingsReplayClearsOnFlatten(t *testing.T) {
+	log := newMemoryGridFillLog()
+	save := func(level int, side SpotSide, qty float64) {
+		t.Helper()
+		if _, err := log.Save(GridFill{
+			GridID: 1, Symbol: gridTestSymbol, Level: level,
+			Side: side, Qty: qty, Price: 1, FilledAt: time.Now().UTC(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	save(8, SpotSell, 303.8)
+	save(9, SpotSell, 201.2)
+	holds, err := log.Holdings(1, GridShort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(holds[8]-303.8) > 1e-9 || math.Abs(holds[9]-201.2) > 1e-9 {
+		t.Fatalf("清仓前的持仓应重建为 303.8/201.2，得到 %v", holds)
+	}
+
+	save(-1, SpotBuy, 530.7)
+	holds, err = log.Holdings(1, GridShort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(holds) != 0 {
+		t.Fatalf("清仓单之后不应再有持仓，得到 %v", holds)
+	}
+
+	// 清仓之后重新开仓：新成交要能正常重建。
+	save(10, SpotSell, 100)
+	holds, err = log.Holdings(1, GridShort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(holds[10]-100) > 1e-9 {
+		t.Fatalf("清仓后的新开仓应重建为 100，得到 %v", holds)
 	}
 }
 

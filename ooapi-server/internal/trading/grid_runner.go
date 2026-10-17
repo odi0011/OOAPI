@@ -224,7 +224,7 @@ type GridRunner struct {
 	wakes    map[int64]chan struct{}
 	specs    map[int64]GridRunSpec
 	interval time.Duration
-	onStop   func(gridID int64)
+	onStop   func(gridID, userID int64)
 }
 
 func NewGridRunner(hub *GridHub) *GridRunner {
@@ -265,7 +265,11 @@ func (r *GridRunner) SetInterval(d time.Duration) {
 }
 
 // SetStop 在网格自己停机时回调（写库用）。实现只许写库，不能再进 Hub。
-func (r *GridRunner) SetStop(fn func(gridID int64)) {
+//
+// 回调必须带 userID：落库的 UPDATE 带用户条件，传 0 会一行都更新不到，
+// 而且不报错 —— 网格自停机后 running 仍是 1，服务一重启它就"复活"，
+// 本地还按旧成交历史重建出已经不存在的持仓（实盘已复现）。
+func (r *GridRunner) SetStop(fn func(gridID, userID int64)) {
 	r.mu.Lock()
 	r.onStop = fn
 	r.mu.Unlock()
@@ -477,9 +481,10 @@ func (r *GridRunner) tick(ctx context.Context, id int64) {
 func (r *GridRunner) stop(id int64) {
 	r.mu.Lock()
 	fn := r.onStop
+	userID := r.specs[id].UserID
 	r.mu.Unlock()
 	if fn != nil {
-		fn(id)
+		fn(id, userID)
 	}
 	r.Remove(id)
 }
@@ -527,7 +532,9 @@ func defaultGridMarket(cfg GridConfig, secrets SecretOpener, now time.Time) (flo
 //
 // 走的是**公开**接口，不需要密钥 —— 读价失败不该和"密钥没配好"混在一起。
 func spotLastPrice(ex GridExchange, symbol string) (float64, error) {
-	type lastPricer interface{ LastPrice(symbol string) (float64, error) }
+	type lastPricer interface {
+		LastPrice(symbol string) (float64, error)
+	}
 	if src, ok := ex.(lastPricer); ok {
 		return src.LastPrice(symbol)
 	}
