@@ -41,3 +41,8 @@ research/*/results*.csv
 research/*/__pycache__/
 research/carry/perp_ext/
 research/carry/funding_ext/
+
+# 内容管线运行时产物
+content/outbox/
+content/state.json
+content/cron.log

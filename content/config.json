@@ -1,0 +1,30 @@
+{
+  "language": "zh",
+  "timezone": "Asia/Shanghai",
+  "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+  "daily_post_hour": 9,
+  "max_posts_per_day": 2,
+  "review_mode": true,
+  "include_positions": true,
+  "disclosure": "以上为个人交易记录与市场观察，不构成投资建议。合约杠杆风险极高，请自行判断。",
+  "banned_phrases": [
+    "保证", "稳赚", "必涨", "必跌", "梭哈", "内幕", "喊单", "带单",
+    "翻倍", "财富自由", "无风险", "稳赢", "包赚", "保本", "躺赚",
+    "目标价"
+  ],
+  "news": {
+    "binance_catalogs": [48, 49, 161],
+    "cointelegraph_rss": "https://cointelegraph.com/rss",
+    "min_score": 3,
+    "dedupe_hours": 24,
+    "max_items": 5
+  },
+  "square": {
+    "script_dir": "content/square-post/scripts",
+    "max_images": 4
+  },
+  "positions_api": {
+    "base": "http://127.0.0.1:3001",
+    "strategy_id": 2
+  }
+}
