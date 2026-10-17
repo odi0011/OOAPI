@@ -46,3 +46,4 @@ research/carry/funding_ext/
 content/outbox/
 content/state.json
 content/cron.log
+__pycache__/
