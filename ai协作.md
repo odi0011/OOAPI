@@ -1668,3 +1668,14 @@ Google OAuth 变量）与部署要点（nginx 三项 SSE 必需配置）。
 - 测试：`grid_short_test.go` 覆盖开局只挂上方卖单、往返、重启从成交流水还原持仓、上破止损、下破止盈、计划镜像、现货做空被拒；`PaperFuturesGrid` 提供内存合约撮合（含 GTX 拒单）。
 - 验证：`go build ./...`、`go test ./...`、`tsc -b` 全绿。
 - 已知边界：资金费未计入已实现盈亏；交易所持仓与本地账本的一致性校验尚未做；合约网格只支持 USDT-M。
+
+### 2026-10-17：做空网格 testnet 端到端冒烟 + 两处修复
+
+在真实币安 USDT-M 测试网上跑通完整链路（建网 → 挂单 → 开仓 → 保护单 → 停机清仓），抓到两个只在真实交易所上才会出现的问题：
+
+1. **启动后不挂单**：`PostGridStart` 先调 `startGrid`、后写 DB 的 `running` 标记，而 `startGrid` 把当时仍是 `false` 的 spec 交给 `GridRunner.Ensure`；`tick` 看到 `!Running` 直接返回。界面显示 Running，盘口一张单都没有。修法：`startGrid` 在构造出口前把 `spec.Config.Running` 置为 true（DB 标记仍在启动成功后写）。
+2. **空仓挂保护单被 -4509**：币安 `closePosition` 条件单要求 TIF=GTE，而 GTE 只在已有持仓时可用。网格在第一次开仓成交前没有可保护对象，空仓挂止损会被拒，`Step` 因此每拍失败、铺不出任何网格单。修法：合约出口先读 `positionRisk`，空仓时只清理可能残留的旧条件单并返回；成交在同一拍 `reconcile` 入账，下一拍挂止损。
+
+实测结果：首拍挂出 4 张 GTX 卖单；手动市价开空后，下一拍自动挂出 `STOP_MARKET closePosition`（触发价 = 上沿 × 1.02）；停机后市价平仓、持仓归零、条件单清空。
+
+另外：`cmd/execute_trade` 仍是绕过 Hub/风控的手工下单工具（硬编码 SOLUSDT、杠杆 10），未纳入本次改动，建议后续删除或加 `TRADING_TESTNET_GREEN` 门闩。
