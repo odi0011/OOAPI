@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AdminLayout from "@/components/admin/AdminLayout";
+import { Accordion } from "@/components/arc/accordion/accordion";
 import { AnimatedCounter } from "@/components/arc/animated-counter/animated-counter";
 import { Button } from "@/components/arc/button/button";
+import { MetricCard } from "@/components/arc/metric-card/metric-card";
+import { Sparkline } from "@/components/arc/sparkline/sparkline";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/arc/tabs/tabs";
 import { ApiRequestError } from "@/lib/api";
 
@@ -39,14 +42,14 @@ import {
   type Strategy,
   type StrategyWrite,
 } from "./tradingApi";
-import LightweightCandleChart from "./LightweightCandleChart";
 import AnalyticsBlocks from "./tradingBoard/AnalyticsBlocks";
 import {
-  BalanceHero,
+  CoinProfile,
   CoinSelector,
   DecisionLogPanel,
   HistoryPanel,
   ParamPanel,
+  MiniSparkline,
   PositionCard,
   QuickTradePanel,
   type SimulatedOrderDraft,
@@ -55,7 +58,6 @@ import CoinIcon from "./tradingBoard/CoinIcon";
 import {
   COINS,
   buildActiveOrPreviewPosition,
-  buildEffectiveBalance,
   buildEffectiveHistoryAndOrders,
   buildRichDecisionRecords,
   coinInfoOf,
@@ -738,9 +740,6 @@ export default function TradingBoard() {
     ],
   );
 
-  // 有效余额：只取后端真实数据（拿不到就是 null，界面显示空状态而不是假余额）
-  const effectiveBalance = useMemo(() => buildEffectiveBalance(balance), [balance]);
-
   // 合并历史成交与活跃委托
   const mergedRealEntries = useMemo(() => {
     const fromOrders = orders?.entries ?? [];
@@ -780,19 +779,37 @@ export default function TradingBoard() {
     >
       <div className={styles.page}>
         {/*
-          页头只放「当前状态」，不放介绍性段落 ——
-          原来的那段「总余额首屏、多币种宫格 K 线、全品种涨跌幅一张图…」
-          是把页面功能复述一遍，用户看一次就够，占了好几行首屏空间。
+          紧凑页头：只放「现在是什么状态」与主操作。
+
+          重构前这里是标题 + 三个状态胶囊，紧接着一整屏的币种大卡与常驻档案——
+          用户要滚过两屏才看到最重要的账户盈亏。现在账户数据在下方 KPI 条里，
+          页头只留一行状态。
         */}
         <header className={styles.pageHead}>
-          <h1 className={styles.pageTitle}>交易数据看板</h1>
-          <div className={styles.pageHeadBadges}>
-            <span className={styles.terminalChip}>{coin.displaySymbol}</span>
-            <span className={styles.terminalChip}>{tickIntervalMs}ms</span>
-            {/* 策略数用数字动画组件，数值变化时翻滚 */}
-            <span className={styles.terminalChip}>
-              <AnimatedCounter value={strategies.length} /> 策略
+          <div className={styles.pageHeadMain}>
+            <h1 className={styles.pageTitle}>交易数据看板</h1>
+            <span className={styles.pageMeta}>
+              <span>{coin.displaySymbol}</span>
+              <span aria-hidden="true">·</span>
+              <span>{tickIntervalMs}ms</span>
+              <span aria-hidden="true">·</span>
+              <span>
+                <AnimatedCounter value={strategies.length} /> 个策略
+              </span>
             </span>
+          </div>
+          <div className={styles.pageHeadActions}>
+            <Button variant="secondary" size="sm" onClick={() => void load()}>
+              刷新
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={boostBusy}
+              onClick={() => void handleTriggerBoost()}
+            >
+              {boostBusy ? "强扫中…" : "Boost 强扫"}
+            </Button>
           </div>
         </header>
 
@@ -818,130 +835,103 @@ export default function TradingBoard() {
           </p>
         ) : null}
 
-        {/* 1. 多币种结构化详情选择器 + 标的深度档案 */}
-        <CoinSelector
-          value={coinSymbol}
-          onChange={handleSelectCoin}
-          strategyCount={strategyCount}
-          livePrices={livePrices}
-          quotes={quotesBySymbol}
-          factors={factorsBySymbol}
-          onQuickCreateStrategy={(sym) => void handleQuickCreateStrategyForCoin(sym)}
-          creatingSymbol={creatingSymbol}
-        />
+        {/*
+          账户 KPI 条。
 
-        {/* 2. 全品种涨跌幅叠在同一张图上，单品种毫秒图仍在下方 */}
-        <FusedMarketOverview />
-
-        {/* 3. 首屏总余额（修复 todayPct 100x 放大 bug，内联净值曲线与 Boost 扫描） */}
-        <BalanceHero
-          coin={coin}
-          balance={balance ?? (balanceError ? null : effectiveBalance)}
-          loading={loading}
-          error={balanceError}
-          isSimulated={balance == null}
-          engine={engine}
-          strategy={strategy}
-          onTriggerBoost={() => void handleTriggerBoost()}
-          boostBusy={boostBusy}
-        />
-
-        <section className={styles.panel} aria-label="多币种行情图表">
-          <header className={styles.panelHeadRow}>
-            <div>
-              <h2 className={styles.panelTitle}>多币种行情图表</h2>
+          全页只有这一处展示账户数字 —— 重构前「全品种一张图」区块里还有一份
+          同样的权益/可用/盈亏，两处口径略有差异时用户无法判断该信哪个。
+        */}
+        {balance ? (
+          <section className={styles.kpiStrip} aria-label="账户概览">
+            <MetricCard
+              label="账户权益"
+              value={balance.equity}
+              suffix="USDT"
+              decimals={3}
+              context={`钱包 ${balance.wallet.toFixed(3)} · 可用 ${balance.available.toFixed(3)}`}
+            />
+            <MetricCard
+              label="今日盈亏"
+              value={balance.todayPnl}
+              suffix="USDT"
+              decimals={3}
+              change={`${balance.todayPct >= 0 ? "+" : ""}${balance.todayPct.toFixed(2)}%`}
+              context={`日初 ${balance.todayBase.toFixed(3)} · 已实现 ${balance.todayRealized.toFixed(3)}`}
+            />
+            <MetricCard
+              label="持仓浮盈"
+              value={balance.unrealized}
+              suffix="USDT"
+              decimals={3}
+              context={
+                balance.positions.filter((item) => item.open).length > 0
+                  ? `${balance.positions.filter((item) => item.open).length} 个持仓`
+                  : "当前空仓"
+              }
+            />
+            <MetricCard
+              label="保证金占用"
+              value={balance.marginUsed}
+              suffix="USDT"
+              decimals={3}
+              context={`保证金率 ${
+                balance.equity > 0
+                  ? ((balance.marginUsed / balance.equity) * 100).toFixed(1)
+                  : "0.0"
+              }%`}
+            />
+            <div className={styles.kpiCurve}>
+              {balance.history.length > 1 ? (
+                <Sparkline
+                  data={balance.history.map((point) => point.equity)}
+                  label="权益曲线"
+                  value={`${balance.equity.toFixed(3)} USDT`}
+                  change={`${balance.todayPct >= 0 ? "+" : ""}${balance.todayPct.toFixed(2)}%`}
+                  tone={balance.todayPct >= 0 ? "success" : "danger"}
+                  width={220}
+                  height={64}
+                />
+              ) : (
+                <p className={styles.kpiCurveEmpty}>权益曲线将在采样后出现</p>
+              )}
             </div>
-          </header>
-          <div className={styles.chartGrid}>
-            {boardCoins.map((item) => {
-              const itemStrategy =
-                strategies.find((s) => (s.symbol ?? "").toUpperCase() === item.symbol) ?? null;
-              const itemEngine = itemStrategy ? (engines.get(itemStrategy.id) ?? null) : null;
-              const itemMarket = marketsBySymbol[item.symbol] ?? null;
-              const itemPosition = positionsBySymbol[item.symbol] ?? null;
-              const itemLevels =
-                itemEngine?.state === "InPosition" || itemPosition?.open
-                  ? {
-                      entryPrice: itemPosition?.entryPrice ?? itemEngine?.entryPrice,
-                      stopPrice: itemEngine?.stopPrice,
-                      takeProfitPrice: itemEngine?.takeProfitPrice,
-                    }
-                  : itemMarket?.levels ??
-                    (itemEngine
-                      ? {
-                          entryPrice: itemEngine.entryPrice,
-                          stopPrice: itemEngine.stopPrice,
-                          takeProfitPrice: itemEngine.takeProfitPrice,
-                        }
-                      : undefined);
-              const isSelected = item.symbol === coinSymbol;
-              const timeframeLabel = itemStrategy?.timeframe ?? itemMarket?.timeframe ?? "5m";
-              const markPrice = itemMarket?.markPrice ?? itemPosition?.markPrice;
+          </section>
+        ) : balanceError ? (
+          <p className={styles.errorBar} role="alert">
+            <span>{balanceError}</span>
+          </p>
+        ) : null}
 
-              return (
-                <article
-                  key={item.symbol}
-                  className={`${styles.chartCard} ${isSelected ? styles.chartCardActive : ""}`}
-                  onClick={() => handleSelectCoin(item.symbol)}
-                >
-                  <header className={styles.chartCardHead}>
-                    <div className={styles.chartCardTitleGroup}>
-                      <CoinIcon icon={item.icon} color={item.color} label={item.name} size={22} />
-                      <strong className={styles.chartCardName}>{item.name}</strong>
-                      <span className={styles.coinSymbol}>{item.symbol}</span>
-                      <span className={styles.chartTimeframeBadge}>{timeframeLabel}</span>
-                    </div>
-                    <div className={styles.chartCardPriceGroup}>
-                      {markPrice != null && markPrice > 0 ? (
-                        <strong className={styles.chartMarkPrice}>
-                          {markPrice.toFixed(item.precision)}
-                        </strong>
-                      ) : (
-                        <span className={styles.coinSymbol}>--</span>
-                      )}
-                    </div>
-                  </header>
-                  <PositionCard position={itemPosition} coin={item} />
-                  <div className={styles.gridChartWrap}>
-                    {itemMarket && itemMarket.klines.length > 0 ? (
-                      <LightweightCandleChart
-                        timeframe={timeframeLabel}
-                        candles={itemMarket.klines}
-                        markPrice={itemMarket.markPrice}
-                        levels={itemLevels}
-                        positionOpen={itemPosition?.open ?? null}
-                      />
-                    ) : (
-                      <p className={styles.emptyText}>
-                        {loading ? "正在读取 K 线…" : "暂无 K 线数据。"}
-                      </p>
-                    )}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </section>
+        {/*
+          主工作区：左侧行情终端，右侧数据栏。
 
-        {/* 3. 首屏主工作区：左侧毫秒级行情终端（融合仓位线、止盈止损带、网格线、信号点） + 右侧四维高频控制栏 */}
+          仓位与成交/决策都在右侧栏的页签里；「币种档案」也放进右侧栏，
+          不再常驻首屏占掉一整屏高度。
+        */}
         <div className={styles.main}>
-          <section className={styles.panel} aria-label="行情图表">
-            <header className={styles.panelHeadRow}>
-              <div>
+          <section className={styles.chartPanel} aria-label="行情图表">
+            <div className={styles.chartPanelTop}>
+              <CoinSelector
+                value={coinSymbol}
+                onChange={handleSelectCoin}
+                strategyCount={strategyCount}
+                livePrices={livePrices}
+                quotes={quotesBySymbol}
+                factors={factorsBySymbol}
+              />
+              <div className={styles.chartPanelHead}>
                 <h2 className={styles.panelTitle}>
                   {coin.name} {coin.symbol} · {strategy?.timeframe ?? timeframe}
                 </h2>
-              </div>
-              <div className={styles.chartHeaderToggles}>
                 <button
                   type="button"
                   className={`${styles.miniTab} ${previewPositionEnabled ? styles.miniTabActive : ""}`}
                   onClick={() => setPreviewPositionEnabled((v) => !v)}
                 >
-                  {previewPositionEnabled ? "● 仓位融合图层已开启" : "○ 开启仓位融合图层"}
+                  {previewPositionEnabled ? "仓位图层已开启" : "开启仓位图层"}
                 </button>
               </div>
-            </header>
+            </div>
 
             <PositionCard
               position={activeOrPreviewPosition}
@@ -998,8 +988,9 @@ export default function TradingBoard() {
               <TabsList aria-label="数据面板切换">
                 <TabsTrigger value="params">参数</TabsTrigger>
                 <TabsTrigger value="trade">仓位演练</TabsTrigger>
-                <TabsTrigger value="history">历史记录</TabsTrigger>
-                <TabsTrigger value="decisions">决策记录</TabsTrigger>
+                <TabsTrigger value="history">历史</TabsTrigger>
+                <TabsTrigger value="decisions">决策</TabsTrigger>
+                <TabsTrigger value="profile">档案</TabsTrigger>
               </TabsList>
               <TabsContent value="params">
                 <ParamPanel strategy={strategy} />
@@ -1032,121 +1023,225 @@ export default function TradingBoard() {
                   onSelectDecision={(id) => setActiveDecisionId(id || null)}
                 />
               </TabsContent>
+              <TabsContent value="profile">
+                <CoinProfile
+                  value={coinSymbol}
+                  strategyCount={strategyCount}
+                  quotes={quotesBySymbol}
+                  factors={factorsBySymbol}
+                  onQuickCreateStrategy={(sym) => void handleQuickCreateStrategyForCoin(sym)}
+                  creatingSymbol={creatingSymbol}
+                />
+              </TabsContent>
             </Tabs>
           </aside>
         </div>
 
-        {/* 4. 交易系统：决策模板、决策调参、自动化、网格策略、交易机器人 */}
-        <section className={styles.panel} aria-label="交易系统">
+        {/*
+          全品种行情：一张归一化叠加图 + 一张紧凑列表。
+
+          重构前这里是 8 张各自独立的 K 线卡片（每张 240px 高，还带仓位卡），
+          加上下方的融合图，光行情部分就超过 3000px。现在列表只保留
+          「一行一个币种」：价格、涨跌幅、持仓、策略数、迷你走势。
+          单币种细节在上面的大图里看。
+        */}
+        <section className={styles.panel} aria-label="全品种行情">
           <header className={styles.panelHeadRow}>
-            <div>
-              <h2 className={styles.panelTitle}>交易系统</h2>
-            </div>
+            <h2 className={styles.panelTitle}>全品种行情</h2>
           </header>
-          <Tabs value={systemTab} onValueChange={setSystemTab}>
-            <TabsList aria-label="交易系统切换">
-              <TabsTrigger value="templates">决策模板</TabsTrigger>
-              <TabsTrigger value="tuner">决策调参</TabsTrigger>
-              <TabsTrigger value="automation">自动化</TabsTrigger>
-              <TabsTrigger value="grid">网格策略</TabsTrigger>
-              <TabsTrigger value="bots">交易机器人</TabsTrigger>
-            </TabsList>
-            <TabsContent value="templates">
-              <StrategyTemplates
-                onApply={(params, name) => applyTemplate(params, name)}
-                activeId={activeTemplateId}
-                onSaveTemplate={(params, name) => void handleSaveStrategyParams(params, name)}
-                saving={savingStrategy}
-                coinSymbol={coinSymbol}
-              />
-            </TabsContent>
-            <TabsContent value="tuner">
-              <ParamTuner
-                draft={activeParams}
-                onChange={(next) => {
-                  setTunerDraft(next);
-                  setTunerTemplate(null);
-                }}
-                templateName={tunerTemplate}
-                onSave={(draft) => void handleSaveStrategyParams(draft)}
-                onReset={() => {
-                  setTunerDraft(templateParamsOf(strategy));
-                  setTunerTemplate(null);
-                }}
-                saving={savingStrategy}
-                hasStrategy={strategy != null}
-                coinSymbol={coinSymbol}
-              />
-            </TabsContent>
-            <TabsContent value="automation">
-              <AutomationPanel
-                strategy={strategy}
-                engine={engine}
-                pauseBusy={pauseBusyId === strategy?.id}
-                onTogglePause={(paused) => {
-                  if (strategy) void togglePause(strategy.id, paused);
-                }}
-                engineActionBusy={engineActionBusy}
-                onStartEngine={
-                  strategy ? () => void handleEngineLifecycle(strategy.id, "start") : undefined
-                }
-                onResumeEngine={
-                  strategy ? () => void handleEngineLifecycle(strategy.id, "resume") : undefined
-                }
-                onStepEngine={
-                  strategy ? () => void handleEngineLifecycle(strategy.id, "step") : undefined
-                }
-                onStopEngine={
-                  strategy ? () => void handleEngineLifecycle(strategy.id, "stop") : undefined
-                }
-              />
-            </TabsContent>
-            <TabsContent value="grid">
-              <GridConfig
-                coin={coin}
-                livePrice={effectiveMarkPrice}
-                activeGridOverlay={gridOverlay}
-                onApplyGridOverlay={(overlay) =>
-                  setGridOverlay(
-                    overlay ?? {
-                      ...gridOverlay,
-                      enabled: false,
-                    },
-                  )
-                }
-                onSaveGridToStrategy={(gridPatch) =>
-                  void handleSaveStrategyParams(
-                    {
-                      ...activeParams,
-                      stopR: gridPatch.stopR,
-                      takeProfitR: gridPatch.takeProfitR,
-                      maxMarginUsdt: gridPatch.maxMarginUsdt,
-                    },
-                    "网格量化风控参数",
-                  )
-                }
-                saving={savingStrategy}
-              />
-            </TabsContent>
-            <TabsContent value="bots">
-              <BotList
-                strategies={strategies}
-                engines={engines}
-                pauseBusyId={pauseBusyId}
-                onTogglePause={(id, paused) => void togglePause(id, paused)}
-                actionBusyId={actionBusyId}
-                onStartBot={(id) => void handleEngineLifecycle(id, "start")}
-                onResumeBot={(id) => void handleEngineLifecycle(id, "resume")}
-                onStopBot={(id) => void handleEngineLifecycle(id, "stop")}
-                onSelectCoin={handleSelectCoin}
-                onCreateBotForCoin={(sym) => void handleQuickCreateStrategyForCoin(sym)}
-                creatingSymbol={creatingSymbol}
-              />
-            </TabsContent>
-          </Tabs>
+          <FusedMarketOverview />
+
+          <div className={styles.marketTable} role="table" aria-label="全部币种">
+            <div className={`${styles.marketRow} ${styles.marketRowHead}`} role="row">
+              <span role="columnheader">币种</span>
+              <span role="columnheader">最新价</span>
+              <span role="columnheader">24h</span>
+              <span role="columnheader">持仓</span>
+              <span role="columnheader">策略</span>
+              <span role="columnheader">走势</span>
+            </div>
+            {boardCoins.map((item) => {
+              const itemQuote = quotesBySymbol[item.symbol];
+              const itemMarket = marketsBySymbol[item.symbol];
+              const itemPosition = positionsBySymbol[item.symbol];
+              const price = livePrices[item.symbol] ?? itemQuote?.lastPrice ?? 0;
+              const changePct = itemQuote?.changePercent;
+              const count = strategyCount[item.symbol] ?? 0;
+              const sparkPoints = (itemMarket?.klines ?? []).map((kline) => kline.close);
+              const active = item.symbol === coinSymbol;
+              return (
+                <button
+                  key={item.symbol}
+                  type="button"
+                  role="row"
+                  className={`${styles.marketRow} ${active ? styles.marketRowActive : ""}`}
+                  onClick={() => handleSelectCoin(item.symbol)}
+                >
+                  <span className={styles.marketCoin} role="cell">
+                    <CoinIcon icon={item.icon} color={item.color} label={item.name} size={20} />
+                    <span className={styles.marketCoinText}>
+                      <strong>{item.base}</strong>
+                      <span className={styles.coinSymbol}>{item.symbol}</span>
+                    </span>
+                  </span>
+                  <span className={styles.marketPrice} role="cell">
+                    {price > 0 ? price.toFixed(item.precision) : "—"}
+                  </span>
+                  <span
+                    role="cell"
+                    className={
+                      changePct == null ? "" : changePct >= 0 ? styles.toneUp : styles.toneDown
+                    }
+                  >
+                    {changePct == null
+                      ? "—"
+                      : `${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%`}
+                  </span>
+                  <span role="cell" className={styles.marketPosition}>
+                    {itemPosition?.open
+                      ? `${itemPosition.side === "short" ? "空" : "多"} ${itemPosition.qty}`
+                      : "—"}
+                  </span>
+                  <span role="cell" className={styles.marketStrategyCount}>
+                    {count > 0 ? count : "—"}
+                  </span>
+                  <span className={styles.marketSpark} role="cell">
+                    {sparkPoints.length > 1 ? (
+                      <MiniSparkline
+                        points={sparkPoints}
+                        positive={(changePct ?? 0) >= 0}
+                        width={88}
+                        height={22}
+                      />
+                    ) : null}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </section>
 
-        {/* 5. UIArc 多维量化分析图块 */}
+        {/*
+          交易系统：策略模板、调参、自动化、网格、机器人。
+
+          这些是「偶尔来改一次」的配置，重构前与行情平级铺在页尾，
+          想改一次参数要滚很久。收进折叠面板，默认收起。
+        */}
+        <section className={styles.panel} aria-label="交易系统">
+          <Accordion
+            defaultOpen={-1}
+            size="md"
+            items={[
+              {
+                title: "交易系统与策略配置",
+                content: (
+                  <Tabs value={systemTab} onValueChange={setSystemTab}>
+                    <TabsList aria-label="交易系统切换">
+                      <TabsTrigger value="templates">决策模板</TabsTrigger>
+                      <TabsTrigger value="tuner">决策调参</TabsTrigger>
+                      <TabsTrigger value="automation">自动化</TabsTrigger>
+                      <TabsTrigger value="grid">网格策略</TabsTrigger>
+                      <TabsTrigger value="bots">交易机器人</TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="templates">
+                      <StrategyTemplates
+                        onApply={(params, name) => applyTemplate(params, name)}
+                        activeId={activeTemplateId}
+                        onSaveTemplate={(params, name) => void handleSaveStrategyParams(params, name)}
+                        saving={savingStrategy}
+                        coinSymbol={coinSymbol}
+                      />
+                    </TabsContent>
+                    <TabsContent value="tuner">
+                      <ParamTuner
+                        draft={activeParams}
+                        onChange={(next) => {
+                          setTunerDraft(next);
+                          setTunerTemplate(null);
+                        }}
+                        templateName={tunerTemplate}
+                        onSave={(draft) => void handleSaveStrategyParams(draft)}
+                        onReset={() => {
+                          setTunerDraft(templateParamsOf(strategy));
+                          setTunerTemplate(null);
+                        }}
+                        saving={savingStrategy}
+                        hasStrategy={strategy != null}
+                        coinSymbol={coinSymbol}
+                      />
+                    </TabsContent>
+                    <TabsContent value="automation">
+                      <AutomationPanel
+                        strategy={strategy}
+                        engine={engine}
+                        pauseBusy={pauseBusyId === strategy?.id}
+                        onTogglePause={(paused) => {
+                          if (strategy) void togglePause(strategy.id, paused);
+                        }}
+                        engineActionBusy={engineActionBusy}
+                        onStartEngine={
+                          strategy ? () => void handleEngineLifecycle(strategy.id, "start") : undefined
+                        }
+                        onResumeEngine={
+                          strategy ? () => void handleEngineLifecycle(strategy.id, "resume") : undefined
+                        }
+                        onStepEngine={
+                          strategy ? () => void handleEngineLifecycle(strategy.id, "step") : undefined
+                        }
+                        onStopEngine={
+                          strategy ? () => void handleEngineLifecycle(strategy.id, "stop") : undefined
+                        }
+                      />
+                    </TabsContent>
+                    <TabsContent value="grid">
+                      <GridConfig
+                        coin={coin}
+                        livePrice={effectiveMarkPrice}
+                        activeGridOverlay={gridOverlay}
+                        onApplyGridOverlay={(overlay) =>
+                          setGridOverlay(
+                            overlay ?? {
+                              ...gridOverlay,
+                              enabled: false,
+                            },
+                          )
+                        }
+                        onSaveGridToStrategy={(gridPatch) =>
+                          void handleSaveStrategyParams(
+                            {
+                              ...activeParams,
+                              stopR: gridPatch.stopR,
+                              takeProfitR: gridPatch.takeProfitR,
+                              maxMarginUsdt: gridPatch.maxMarginUsdt,
+                            },
+                            "网格量化风控参数",
+                          )
+                        }
+                        saving={savingStrategy}
+                      />
+                    </TabsContent>
+                    <TabsContent value="bots">
+                      <BotList
+                        strategies={strategies}
+                        engines={engines}
+                        pauseBusyId={pauseBusyId}
+                        onTogglePause={(id, paused) => void togglePause(id, paused)}
+                        actionBusyId={actionBusyId}
+                        onStartBot={(id) => void handleEngineLifecycle(id, "start")}
+                        onResumeBot={(id) => void handleEngineLifecycle(id, "resume")}
+                        onStopBot={(id) => void handleEngineLifecycle(id, "stop")}
+                        onSelectCoin={handleSelectCoin}
+                        onCreateBotForCoin={(sym) => void handleQuickCreateStrategyForCoin(sym)}
+                        creatingSymbol={creatingSymbol}
+                      />
+                    </TabsContent>
+                  </Tabs>
+                ),
+              },
+            ]}
+          />
+        </section>
+
         <AnalyticsBlocks coin={coin} entries={effectiveHistory.entries} />
       </div>
     </AdminLayout>

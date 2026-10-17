@@ -1,11 +1,12 @@
 import { isRegisterExplicitlyEnabled } from "./registerGate.ts";
+import { describe, expect, it } from "vitest";
 
 function assertEqual(actual: unknown, expected: unknown, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}: ${String(actual)} !== ${String(expected)}`);
-  }
+  expect(actual, message).toEqual(expected);
 }
 
+describe("registerGate", () => {
+  it("既有断言全部通过", () => {
 assertEqual(isRegisterExplicitlyEnabled(undefined), false, "undefined");
 assertEqual(isRegisterExplicitlyEnabled(null), false, "null");
 assertEqual(isRegisterExplicitlyEnabled({}), false, "empty object");
@@ -28,3 +29,6 @@ assertEqual(
   true,
   "explicit true still wins",
 );
+
+  });
+});

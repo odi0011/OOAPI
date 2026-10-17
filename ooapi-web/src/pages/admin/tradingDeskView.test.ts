@@ -12,13 +12,14 @@ import {
   positionView,
   testnetGreenText,
 } from "./tradingDeskView.ts";
+import { describe, expect, it } from "vitest";
 
 function assertEqual(actual: unknown, expected: unknown, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}: ${String(actual)} !== ${String(expected)}`);
-  }
+  expect(actual, message).toEqual(expected);
 }
 
+describe("tradingDeskView", () => {
+  it("既有断言全部通过", () => {
 assertEqual(entryScoreText({ score: 2, minScore: 4 }), "2/4", "score over min");
 assertEqual(entryScoreText({ score: 0, minScore: 4 }), "0/4", "zero score is still a score");
 assertEqual(entryScoreText(undefined), "—", "missing entry");
@@ -158,3 +159,6 @@ assertEqual(orderSourceText("algo"), "条件单", "algo source");
 assertEqual(orderSourceText("order"), "普通", "book source");
 assertEqual(orderSideText("sell"), "卖", "order side");
 assertEqual(orderPriceText({ price: 0, stopPrice: 0.55 }), "0.55", "stop price when limit is zero");
+
+  });
+});

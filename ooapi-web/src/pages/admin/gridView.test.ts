@@ -14,11 +14,10 @@ import {
   lineStateLabel,
   requirementHint,
 } from "./gridView.ts";
+import { describe, expect, it } from "vitest";
 
 function assertEqual<T>(actual: T, expected: T, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}: ${String(actual)} !== ${String(expected)}`);
-  }
+  expect(actual, message).toBe(expected);
 }
 
 /*
@@ -29,6 +28,8 @@ function assertEqual<T>(actual: T, expected: T, message: string) {
 位数太少，相邻的两条网格线会显示成同一个数 —— 用户会以为
 "这个网格画错了，两条线重合了"。
 */
+describe("gridView", () => {
+  it("既有断言全部通过", () => {
 assertEqual(formatPrice(0.08), "0.08000", "DOGE 量级");
 assertEqual(formatPrice(2.1), "2.1000", "XRP 量级");
 assertEqual(formatPrice(65000), "65000.00", "BTC 量级");
@@ -104,3 +105,6 @@ if (!dustHint.includes("精度")) {
 if (!notionalHint.includes("最小名义")) {
   throw new Error(`名义门槛的说明要点名"最小名义"：${notionalHint}`);
 }
+
+  });
+});

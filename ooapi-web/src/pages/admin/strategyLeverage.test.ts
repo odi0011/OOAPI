@@ -3,13 +3,14 @@ import {
   boundStrategyLeverage,
   strategyLeverageError,
 } from "./strategyLeverage.ts";
+import { describe, expect, it } from "vitest";
 
 function assertEqual(actual: unknown, expected: unknown, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}: ${String(actual)} !== ${String(expected)}`);
-  }
+  expect(actual, message).toEqual(expected);
 }
 
+describe("strategyLeverage", () => {
+  it("既有断言全部通过", () => {
 assertEqual(MAX_STRATEGY_LEVERAGE, 125, "backend max is 125");
 assertEqual(boundStrategyLeverage(20), 20, "saved 20 stays 20");
 assertEqual(boundStrategyLeverage(125), 125, "saved 125 stays 125");
@@ -25,3 +26,6 @@ assertEqual(strategyLeverageError(1), null, "1 is valid");
 assertEqual(strategyLeverageError(126), "杠杆必须是 1 到 125 的整数", "126 is rejected");
 assertEqual(strategyLeverageError(0), "杠杆必须是 1 到 125 的整数", "0 is rejected");
 assertEqual(strategyLeverageError(3.5), "杠杆必须是 1 到 125 的整数", "fraction is rejected");
+
+  });
+});

@@ -11,13 +11,14 @@ import {
   strategyTimeframeError,
   strategyToggleError,
 } from "./strategyFields.ts";
+import { describe, expect, it } from "vitest";
 
 function assertEqual(actual: unknown, expected: unknown, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}: ${String(actual)} !== ${String(expected)}`);
-  }
+  expect(actual, message).toEqual(expected);
 }
 
+describe("strategyFields", () => {
+  it("既有断言全部通过", () => {
 assertEqual(strategyTimeframeError("1s"), null, "1s is valid");
 assertEqual(strategyTimeframeError("1m"), null, "1m is valid");
 assertEqual(strategyTimeframeError("3m"), null, "3m is valid");
@@ -56,3 +57,6 @@ assertEqual(strategyMaxMarginError(1.7), null, "1.7 is valid");
 assertEqual(strategyMaxMarginError(0), "单笔保证金上限要大于 0", "zero margin is rejected");
 assertEqual(strategyToggleError(true, "期望门"), null, "gate on is valid");
 assertEqual(strategyToggleError(false, "赌一把"), null, "gamble off is valid");
+
+  });
+});

@@ -24,18 +24,18 @@ import {
   templateParamsOf,
 } from "./tradingSystemModel.ts";
 import type { EngineBalance, EngineQuote, TradeEntry } from "../tradingApi";
+import { describe, expect, it } from "vitest";
 
 function assertEqual(actual: unknown, expected: unknown, message: string) {
-  if (actual !== expected) {
-    throw new Error(`${message}: ${String(actual)} !== ${String(expected)}`);
-  }
+  expect(actual, message).toBe(expected);
 }
 
 function assertTrue(condition: boolean, message: string) {
-  if (!condition) {
-    throw new Error(`Assertion failed: ${message}`);
-  }
+  expect(condition, message).toBe(true);
 }
+
+describe("交易看板数据来源契约", () => {
+  it("币种元数据只含静态信息，不含任何行情字段", () => {
 
 // 1. 币种元数据：只保留「与行情无关」的静态信息
 assertTrue(COINS.length >= 8, "COINS should contain at least 8 coin objects");
@@ -171,3 +171,5 @@ assertEqual(netR, 1.5, "净 R 由真实记录累加得出");
 // 静态类型使用（避免 coin 参数被误删时测试静默通过）
 const _typedCoin: CoinInfo = btc;
 void _typedCoin;
+  });
+});

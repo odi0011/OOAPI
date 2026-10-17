@@ -2,13 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiRequestError } from "@/lib/api";
 
-import { formatAmount, sideText } from "../tradingDeskView";
+import { sideText } from "../tradingDeskView";
 import styles from "../TradingBoard.module.css";
 import CoinIcon from "./CoinIcon";
 import FusedMarketChart from "./FusedMarketChart";
 import { coinInfoOf } from "./coins";
 import {
-  bookTotals,
   chartMarks,
   formatPct,
   formatPrice,
@@ -141,10 +140,6 @@ export default function FusedMarketOverview() {
     return list;
   }, [lanes]);
   const marks = useMemo(() => chartMarks(series, entries, events), [series, entries, events]);
-  const totals = useMemo(
-    () => bookTotals(lanes.flatMap((lane) => (lane.balance ? [lane.balance] : []))),
-    [lanes],
-  );
   const openPositions = useMemo(() => lanes.flatMap((lane) => {
     const position = lane.position;
     if (!position?.open) return [];
@@ -230,34 +225,8 @@ export default function FusedMarketOverview() {
           <p className={styles.emptyText}>{loading ? "正在读取 K 线…" : "暂无可以叠在一起的 K 线。"}</p>
         )}
       </div>
-      <p className={styles.axisNote}>同一交易所账户只计一次，避免多个策略把权益加重复。纵轴单位是涨跌幅，不是价格。</p>
+      <p className={styles.axisNote}>纵轴是涨跌幅（各自从首根收盘起算 0%），不是价格。</p>
 
-      <dl className={styles.bookStrip}>
-        <div>
-          <dt>账户权益</dt>
-          <dd>{totals.accounts > 0 ? `${formatAmount(totals.equity)} USDT` : "--"}</dd>
-        </div>
-        <div>
-          <dt>可用</dt>
-          <dd>{totals.accounts > 0 ? `${formatAmount(totals.available)} USDT` : "--"}</dd>
-        </div>
-        <div>
-          <dt>今日盈亏</dt>
-          <dd className={toneClass(totals.todayPnl)}>
-            {totals.accounts > 0 ? `${totals.todayPnl >= 0 ? "+" : ""}${formatAmount(totals.todayPnl)} USDT` : "--"}
-          </dd>
-        </div>
-        <div>
-          <dt>持仓浮盈</dt>
-          <dd className={toneClass(totals.unrealized)}>
-            {totals.accounts > 0 ? `${totals.unrealized >= 0 ? "+" : ""}${formatAmount(totals.unrealized)} USDT` : "--"}
-          </dd>
-        </div>
-        <div>
-          <dt>占用保证金</dt>
-          <dd>{totals.accounts > 0 ? `${formatAmount(totals.marginUsed)} USDT` : "--"}</dd>
-        </div>
-      </dl>
     </section>
   );
 }

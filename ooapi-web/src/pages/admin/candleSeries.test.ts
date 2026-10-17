@@ -1,13 +1,12 @@
 import { openTimeToUnix, referenceLineSpecs, toCandlePoints } from "./candleSeries.ts";
+import { describe, expect, it } from "vitest";
 
 function assertEqual(actual: unknown, expected: unknown, message: string) {
-  const left = JSON.stringify(actual);
-  const right = JSON.stringify(expected);
-  if (left !== right) {
-    throw new Error(`${message}: ${left} !== ${right}`);
-  }
+  expect(actual, message).toEqual(expected);
 }
 
+describe("candleSeries", () => {
+  it("既有断言全部通过", () => {
 assertEqual(openTimeToUnix("2026-10-12T00:00:00Z"), Date.parse("2026-10-12T00:00:00Z") / 1000, "rfc3339 to unix seconds");
 assertEqual(openTimeToUnix("  "), null, "blank open time");
 assertEqual(openTimeToUnix("not-a-time"), null, "bad open time");
@@ -56,3 +55,6 @@ assertEqual(
   ["mark", "stop", "takeProfit"],
   "zero entry is not a line",
 );
+
+  });
+});

@@ -13,15 +13,14 @@ import {
   resolveSelectedStrategyId,
   sideTone,
 } from "./engineOverview.ts";
+import { describe, expect, it } from "vitest";
 
 function assertEqual(actual: unknown, expected: unknown, message: string) {
-  const left = JSON.stringify(actual);
-  const right = JSON.stringify(expected);
-  if (left !== right) {
-    throw new Error(`${message}: ${left} !== ${right}`);
-  }
+  expect(actual, message).toEqual(expected);
 }
 
+describe("engineOverview", () => {
+  it("既有断言全部通过", () => {
 assertEqual(finiteNumber("1.5"), 1.5, "numeric string");
 assertEqual(finiteNumber("  "), null, "blank string is not zero");
 assertEqual(finiteNumber(Number.NaN), null, "nan");
@@ -216,3 +215,6 @@ assertEqual(
   1,
   "no selectable engine keeps the original strategy",
 );
+
+  });
+});

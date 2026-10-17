@@ -1,11 +1,13 @@
+import { describe, expect, it } from "vitest";
 import type { EngineBalance, EngineMarket } from "../tradingApi.ts";
 import { bookTotals, chartMarks, closeBars, formatPct, fuseMarkets, fuseTimeline, snapTime } from "./fusedSeries.ts";
 
 function assertEqual(actual: unknown, expected: unknown, message: string) {
-  const left = JSON.stringify(actual);
-  const right = JSON.stringify(expected);
-  if (left !== right) throw new Error(`${message}: ${left} !== ${right}`);
+  expect(actual, message).toEqual(expected);
 }
+
+describe("全品种融合曲线", () => {
+  it("归一化、时间对齐与账户合计都按真实数据计算", () => {
 
 const btc: EngineMarket = {
   strategyId: 1,
@@ -108,3 +110,5 @@ function balance(strategyId: number, exchangeKeyId: number, equity: number, toda
 }
 
 console.log("fusedSeries.test.ts ok");
+  });
+});

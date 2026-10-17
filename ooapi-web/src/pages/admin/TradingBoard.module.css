@@ -2350,13 +2350,20 @@
   margin: var(--space-3) 0 0;
 }
 
+/*
+  融合图高度。
+
+  520px 是「主图」的规格，但这里是「多个币种走势概览」：
+  用户看的是相对强弱与方向，不需要逐根 K 线的细节。
+  压到 320px 后，一屏内能同时看到账户 KPI 与全品种概览。
+*/
 .chartStage {
-  min-height: 520px;
+  min-height: 320px;
 }
 
 .fusedHost {
   width: 100%;
-  height: 520px;
+  height: 320px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-control);
   overflow: hidden;
@@ -2470,4 +2477,293 @@
   color: var(--text-muted);
   font-size: var(--text-sm);
   font-weight: 400;
+}
+
+/* ==========================================================================
+   重构后的顶部区域：紧凑页头 + 账户 KPI 条
+   ========================================================================== */
+
+/*
+  页头一行放完「位置 + 状态 + 操作」。
+  重构前这里是三行（标题、三个状态胶囊、操作），首屏被挤到看不见账户数字。
+*/
+.pageHeadMain {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.pageMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pageHeadActions {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/*
+  账户 KPI 条。
+
+  四张等宽卡片 + 一条权益曲线。曲线通过 span 占两列，
+  窄屏时整体退化成两列 / 一列。
+*/
+.kpiStrip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(200px, 1.1fr);
+  gap: var(--space-3);
+  align-items: stretch;
+}
+
+.kpiCurve {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.kpiCurveEmpty {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+/* ==========================================================================
+   币种切换条（原「多币种大卡 + 常驻档案」压缩成一条）
+   ========================================================================== */
+
+.coinStrip {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  padding-bottom: var(--space-1);
+  scrollbar-width: thin;
+}
+
+.coinChip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background var(--duration-fast) var(--ease-standard);
+}
+
+.coinChip:hover {
+  border-color: var(--border-strong);
+}
+
+.coinChipActive {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.coinChipText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  line-height: 1.2;
+}
+
+.coinChipTop {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.coinChipBase {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.coinChipCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.coinChipBottom {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.coinChipPrice {
+  color: var(--text-secondary);
+}
+
+.coinChipChange {
+  color: var(--text-tertiary);
+}
+
+/*
+  行情终端面板：切换条在顶部，标题行在它下面。
+  单独抽出来是因为切换条要贴着面板上沿（不套一层 padding）。
+*/
+.chartPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  min-width: 0;
+}
+
+.chartPanelTop {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.chartPanelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* ==========================================================================
+   全品种行情表（替代原来的 8 张 K 线卡片）
+   ========================================================================== */
+
+.marketTable {
+  display: flex;
+  flex-direction: column;
+  margin-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.marketRow {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.4fr) minmax(90px, 1fr) minmax(70px, 0.8fr) minmax(80px, 0.9fr) 56px 96px;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  text-align: left;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard);
+}
+
+.marketRow:hover {
+  background: var(--surface-muted);
+}
+
+.marketRowActive {
+  background: var(--accent-subtle);
+}
+
+.marketRowHead {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  cursor: default;
+  padding-top: var(--space-1);
+  padding-bottom: var(--space-1);
+}
+
+.marketRowHead:hover {
+  background: transparent;
+}
+
+.marketCoin {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.marketCoinText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.marketCoinText strong {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.marketPrice {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.marketPosition,
+.marketStrategyCount {
+  color: var(--text-tertiary);
+}
+
+.marketSpark {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 1100px) {
+  .kpiStrip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .kpiCurve {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 720px) {
+  .kpiStrip {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .kpiCurve {
+    grid-column: auto;
+  }
+
+  .marketRow {
+    grid-template-columns: minmax(120px, 1.4fr) minmax(80px, 1fr) minmax(64px, 0.8fr);
+  }
+
+  .marketRow > :nth-child(n + 4) {
+    display: none;
+  }
 }
