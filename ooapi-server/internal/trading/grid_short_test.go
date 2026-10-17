@@ -204,6 +204,38 @@ func TestShortGridTakeProfitAtLower(t *testing.T) {
 	}
 }
 
+// 交易所持仓与本地账本分叉（强平 / 人工干预）连续三拍 → 停机清仓。
+func TestShortGridStopsOnPositionDrift(t *testing.T) {
+	eng, paper, _ := shortGridFixture(t, shortTestStart)
+	now := time.Now().UTC()
+
+	shortPump(t, eng, paper, shortTestStart, now)
+	sellPrice := eng.Plan().Lines[3].Buy
+	shortPump(t, eng, paper, sellPrice, now.Add(time.Minute))
+	if paper.Position() >= 0 {
+		t.Fatalf("应先持有空头")
+	}
+
+	// 外部把这个空头平掉（模拟强平或人工干预），本地账本毫不知情。
+	if _, err := paper.MarketClose(shortTestSymbol, 75, "external"); err != nil {
+		t.Fatalf("外部平仓失败: %v", err)
+	}
+	if paper.Position() != 0 {
+		t.Fatalf("外部平仓后交易所持仓应为 0，得到 %g", paper.Position())
+	}
+
+	var snap GridSnapshot
+	for i := 0; i < gridDriftTicks; i++ {
+		snap = shortPump(t, eng, paper, sellPrice, now.Add(time.Duration(2+i)*time.Minute))
+	}
+	if snap.State != GridStopped {
+		t.Fatalf("持仓持续不一致应停机，得到 %s", snap.State)
+	}
+	if snap.LastReason != ReasonGridPositionMismatch {
+		t.Fatalf("停机原因应是 %s，得到 %s", ReasonGridPositionMismatch, snap.LastReason)
+	}
+}
+
 // 计划层：预算按保证金算，名义是它的杠杆倍；止损在上沿之上。
 func TestBuildGridPlanShortMirrorsLong(t *testing.T) {
 	in := GridInput{

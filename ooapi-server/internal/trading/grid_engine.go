@@ -3,6 +3,7 @@ package trading
 import (
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -71,6 +72,9 @@ const (
 	ReasonGridStopLoss      = "grid_stop_loss"
 	ReasonGridTakeProfit    = "grid_take_profit"
 	ReasonGridRebalance     = "grid_rebalance"
+	// ReasonGridPositionMismatch 表示交易所持仓和成交账本对不上。
+	// 杠杆仓位不能带着一本错误的账继续挂单，所以直接停机清仓。
+	ReasonGridPositionMismatch = "grid_position_mismatch"
 )
 
 // GridConfig 是一条网格的配置。字段与 trading_grids 表一致。
@@ -406,6 +410,9 @@ type GridEngine struct {
 	lastAction  string
 	lastReason  string
 	placeFailed int
+	// driftTicks 是"交易所持仓与本地账本不一致"连续出现的拍数。
+	// 单拍不一致可能是刚成交还没对上账，连续多拍才停机 —— 见 checkPositionDrift。
+	driftTicks int
 	stepAt      time.Time
 	startedAt   time.Time
 	seq         int64
@@ -880,6 +887,25 @@ func (g *GridEngine) Step(now time.Time, price float64) (GridSnapshot, error) {
 	}
 
 	/*
+		2.5 合约网格：对一次持仓账。
+
+		交易所持仓和成交账本必须一致。不一致意味着有我们不知道的事情
+		发生了（没认到的成交、强平、人工下单），继续按本地账挂单
+		就是在错误的数字上做决定。连续三拍对不上就停机清仓。
+	*/
+	if g.cfg.Market == GridMarketFutures {
+		stopped, derr := g.checkPositionDrift(now)
+		if derr != nil {
+			g.note("drift_failed", derr.Error())
+			g.lastError = derr.Error()
+			return g.snapshot(), derr
+		}
+		if stopped {
+			return g.snapshot(), nil
+		}
+	}
+
+	/*
 		3. 合约网格：保证交易所上有一张全平止损。
 
 		放在补挂之前：如果保护单挂不上（权限不够、参数被拒），就不该
@@ -937,6 +963,51 @@ func (g *GridEngine) outOfRange(price float64) (string, bool) {
 		return ReasonGridTakeProfit, true
 	}
 	return "", false
+}
+
+// gridDriftTicks 是持仓不一致持续多少拍才停机。留两拍缓冲：
+// 刚成交、回执还没返回时本地账会短暂落后，网络抖动也不该直接停机。
+const gridDriftTicks = 3
+
+/*
+checkPositionDrift 对一次合约持仓的账。
+
+**交易所是唯一事实来源。** 本地账本由成交回执重建，而回执可能丢、
+网络可能断；强平和人工下单则完全不在账本里。任何一种情况都会让
+本地 qtyHeld 和交易所持仓分叉，而在分叉的账上继续挂单，等于用
+错误的库存做决定 —— 对杠杆网格这是不能接受的。
+
+读不到持仓（网络失败）不算漂移：那只会让下一拍再试一次，
+而不是把一条正常的网格误停。
+*/
+func (g *GridEngine) checkPositionDrift(now time.Time) (stopped bool, err error) {
+	if g == nil || g.ex == nil {
+		return false, nil
+	}
+	pos, perr := g.ex.PositionQty(g.cfg.Symbol)
+	if perr != nil {
+		return false, nil
+	}
+	tolerance := g.rules.StepSize
+	if !(tolerance > 0) {
+		tolerance = 1e-9
+	}
+	if math.Abs(pos-g.qtyHeld) <= tolerance+1e-9 {
+		g.driftTicks = 0
+		return false, nil
+	}
+	g.driftTicks++
+	g.log.Printf("[grid] %s 持仓不一致：交易所 %.8g / 本地 %.8g（第 %d 拍）",
+		g.cfg.Symbol, pos, g.qtyHeld, g.driftTicks)
+	if g.driftTicks < gridDriftTicks {
+		return false, nil
+	}
+	g.log.Printf("[grid] %s 持仓连续 %d 拍不一致，停机清仓", g.cfg.Symbol, g.driftTicks)
+	if serr := g.Stop(now, ReasonGridPositionMismatch); serr != nil {
+		return false, serr
+	}
+	g.driftTicks = 0
+	return true, nil
 }
 
 /*
