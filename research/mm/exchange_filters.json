@@ -1,0 +1,22 @@
+{
+  "BTCUSDT": {
+    "tick_size": 0.1,
+    "step_size": 0.001,
+    "min_notional": 50.0
+  },
+  "ETHUSDT": {
+    "tick_size": 0.01,
+    "step_size": 0.001,
+    "min_notional": 20.0
+  },
+  "DOGEUSDT": {
+    "tick_size": 1e-05,
+    "step_size": 1.0,
+    "min_notional": 5.0
+  },
+  "SOLUSDT": {
+    "tick_size": 0.01,
+    "step_size": 0.01,
+    "min_notional": 5.0
+  }
+}

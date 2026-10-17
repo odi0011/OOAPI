@@ -1,0 +1,63 @@
+{
+  "start_ms": 1792212542663,
+  "start_iso_local": "2026-10-17 12:49:02",
+  "seconds_requested": 600,
+  "hz_requested": 1.0,
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "DOGEUSDT"
+  ],
+  "fee_bp_per_side": 2.0,
+  "end_ms": 1792213145372,
+  "n_requests": 3342,
+  "errors": 0,
+  "error_examples": [],
+  "max_used_weight_1m": 655,
+  "trade_id_gaps": {
+    "BTCUSDT": 0,
+    "ETHUSDT": 0,
+    "SOLUSDT": 0,
+    "DOGEUSDT": 0
+  },
+  "rtt_ms": {
+    "bookTicker": {
+      "median": 500.795649990323,
+      "p95": 1618.9721550108513,
+      "n": 1964
+    },
+    "depth": {
+      "median": 479.13885000161827,
+      "p95": 1530.8279349977965,
+      "n": 394
+    },
+    "trades": {
+      "median": 825.8377500023926,
+      "p95": 2027.9452899951136,
+      "n": 984
+    }
+  },
+  "exchange_filters": {
+    "BTCUSDT": {
+      "tick_size": 0.1,
+      "step_size": 0.001,
+      "min_notional": 50.0
+    },
+    "ETHUSDT": {
+      "tick_size": 0.01,
+      "step_size": 0.001,
+      "min_notional": 20.0
+    },
+    "DOGEUSDT": {
+      "tick_size": 1e-05,
+      "step_size": 1.0,
+      "min_notional": 5.0
+    },
+    "SOLUSDT": {
+      "tick_size": 0.01,
+      "step_size": 0.01,
+      "min_notional": 5.0
+    }
+  }
+}

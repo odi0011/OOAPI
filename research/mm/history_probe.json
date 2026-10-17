@@ -1,0 +1,40 @@
+{
+  "data_types": [
+    "data/futures/um/daily/aggTrades/",
+    "data/futures/um/daily/bookDepth/",
+    "data/futures/um/daily/bookTicker/",
+    "data/futures/um/daily/indexPriceKlines/",
+    "data/futures/um/daily/klines/",
+    "data/futures/um/daily/markPriceKlines/",
+    "data/futures/um/daily/metrics/",
+    "data/futures/um/daily/premiumIndexKlines/",
+    "data/futures/um/daily/trades/"
+  ],
+  "availability": {
+    "BTCUSDT": {
+      "2026-10-15": 200,
+      "2025-10-15": 200
+    },
+    "ETHUSDT": {
+      "2026-10-15": 200,
+      "2025-10-15": 200
+    },
+    "SOLUSDT": {
+      "2026-10-15": 200,
+      "2025-10-15": 200
+    },
+    "DOGEUSDT": {
+      "2026-10-15": 200,
+      "2025-10-15": 200
+    }
+  },
+  "bookticker_archive": {
+    "daily_2024-03-30": 200,
+    "daily_2024-03-31": 404,
+    "daily_2024-06-01": 404,
+    "monthly_2024-03": 200,
+    "monthly_2024-04": 200,
+    "monthly_2024-12": 404,
+    "monthly_2026-09": 404
+  }
+}
