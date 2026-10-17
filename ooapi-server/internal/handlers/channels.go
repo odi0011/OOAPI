@@ -795,6 +795,30 @@ func AdminTestChannel(c *gin.Context) {
 		（线上实测踩过：渠道 7 被测试按钮打进了 auto 禁用）。
 		桥接渠道的测试必须与正式转发走同一条链路。
 	*/
+	/*
+		把探测模型解析成「上游认识的名字」。
+
+		probeModel 直接取自账号的 models 列表第一项，而那串**可能**是对外暴露的
+		真实模型名（model_bindings 映射后的 id），不一定是上游认的别名。
+		正式转发会走 services.UpstreamModelFor 做这层解析，测试也必须走同一套 ——
+		否则会出现「绑定配好了、正式调用能通、但点测试永远失败」，
+		而这正是渠道 6 被反复自动禁用的原因。
+
+		绑定表随账号一起取出；解析不出（未配绑定）就沿用原值，
+		与 UpstreamModelFor 的兜底行为一致。
+	*/
+	var bindingsRaw string
+	if err := db.DB.QueryRow("SELECT COALESCE(model_bindings, '') FROM channels WHERE id = ?", id).Scan(&bindingsRaw); err == nil {
+		probeCh := &services.UpstreamChannel{
+			ID:            ch.ID,
+			Models:        declaredModels(modelsRaw),
+			ModelBindings: services.ParseModelBindings(bindingsRaw),
+		}
+		if upstream := services.UpstreamModelFor(probeCh, probeModel); upstream != "" {
+			probeModel = upstream
+		}
+	}
+
 	probeCh := &services.UpstreamChannel{Vendor: ch.Vendor, BaseURL: baseURL, Models: []string{probeModel}}
 	if services.UsesOpenCodeBridge(probeCh) {
 		probe := probeChannelViaBridge(ch.Vendor, baseURL, probeModel)
@@ -1059,10 +1083,21 @@ func ProbeChannelForMethod(baseURL, apiKey, model, headers, proxyURL, method str
 
 	url := strings.TrimRight(strings.TrimSpace(baseURL), "/") + probePathForMethod(method)
 
+	/*
+		max_tokens 用 16 而不是 1。
+
+		探测只需要「一个字」证明链路通，但 1 这个值会踩到部分上游的
+		推理模型：它们必须先输出思考 token，预算被卡成立刻截断，
+		上游直接返回 500「empty response content」——
+		实测 Cline 的 poolside/laguna-s-2.1:free 就是这样，
+		而同一个模型用 16 就正常返回。
+
+		代价只是几十毫秒的生成时间，换来的是「不再把可用模型误判成坏账号」。
+	*/
 	body, _ := json.Marshal(map[string]any{
 		"model":      model,
 		"messages":   []map[string]string{{"role": "user", "content": "hi"}},
-		"max_tokens": 1,
+		"max_tokens": 16,
 		"stream":     false,
 	})
 
@@ -1673,4 +1708,16 @@ func optionalGroupName(v *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*v)
+}
+
+// declaredModels 把账号的 models 列（逗号分隔）拆成切片。
+// 空项与空白项丢掉，与 services 里的解析保持一致。
+func declaredModels(raw string) []string {
+	out := []string{}
+	for _, part := range strings.Split(raw, ",") {
+		if v := strings.TrimSpace(part); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }

@@ -483,6 +483,38 @@ var realModels = []RealModel{
 		Source: "https://opencode.ai/docs/zen/",
 	},
 	{
+		/*
+			Cline（api.cline.bot）上的两个免费模型。
+
+			**为什么在注册表里登记它们**：账号的 models 列表必须写「上游认的名」，
+			而这两个名字是 Cline 自己造的（带 poolside/ xingchen-agi/ 前缀与 :free 后缀），
+			不登记就没有真实模型可绑定 —— 渠道保存会被校验拦住（未绑定会按 0 计费），
+			渠道等于配不起来。
+
+			**定价 0 是正确值**：上游明确标注 :free，不是漏配。
+			注意 Cline 的免费档可能随时下架或限流（实测同批 8 个免费模型里
+			只有这两个返 200，其余是上游 500 / 429），所以 Verified 记为 true
+			只代表「名字与免费属性已核实」，不代表长期可用。
+		*/
+		ID: "poolside-laguna-s-2.1-free", Developer: "poolside", Label: "Poolside Laguna S 2.1（免费）",
+		Aliases:       []string{"poolside/laguna-s-2.1:free"},
+		ContextWindow: 200000, ToolCalling: true,
+		Verified: true,
+		Note:     "Cline 上游免费模型，定价 0 是正确值；上游可能随时调整。",
+		Source:   "https://api.cline.bot/api/v1/models",
+	},
+	{
+		ID: "xingchen-xing4.0-29b-a4b-free", Developer: "xingchen", Label: "星尘 Xing4.0 29B（免费）",
+		Aliases:       []string{"xingchen-agi/xing4.0-29b-a4b:free"},
+		ContextWindow: 128000,
+		// 不声明 Reasoning：它确实会输出 reasoning 字段，但上游没有公开
+		// 可调档位的参数名。注册表的约定是「声明 reasoning 必须给出
+		// ReasoningParameter」，凭空编一个参数名会在下发时被上游拒。
+		Verified: true,
+		Note:     "Cline 上游免费模型，定价 0 是正确值；上游可能随时调整。",
+		Source:   "https://api.cline.bot/api/v1/models",
+	},
+	{
 		ID: "longcat-2.5-preview-free", Developer: "longcat", Label: "LongCat 2.5 预览（免费）",
 		ContextWindow: 200000, Verified: true,
 		Note:   "上游限时免费，定价 0 是正确值。",
