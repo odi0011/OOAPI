@@ -88,9 +88,9 @@ func TestShortGridPlacesSellsOnlyAboveMarket(t *testing.T) {
 	if got := paper.OpenCount(); got != 3 {
 		t.Fatalf("盘口上应有 3 张单，得到 %d", got)
 	}
-	// 合约网格必须在交易所上先有一张保护单，不能只靠软件止损。
-	if got := paper.ProtectionTrigger(); math.Abs(got-eng.Plan().StopPrice) > 1e-9 {
-		t.Fatalf("应在交易所挂出止损 %g，得到 %g", eng.Plan().StopPrice, got)
+	// 还没有持仓时不该有保护单：币安的 closePosition 条件单要求有持仓。
+	if got := paper.ProtectionTrigger(); got != 0 {
+		t.Fatalf("空仓时不该挂保护单，得到触发价 %g", got)
 	}
 }
 
@@ -110,6 +110,10 @@ func TestShortGridRoundTripAndRestart(t *testing.T) {
 	}
 	if h := eng.HoldingsView()[3]; h <= 0 {
 		t.Fatalf("第 3 格应持有空头，得到 %g", h)
+	}
+	// 有持仓之后，同一拍就应该把交易所侧止损挂上。
+	if got := paper.ProtectionTrigger(); math.Abs(got-eng.Plan().StopPrice) > 1e-9 {
+		t.Fatalf("有持仓后应挂出止损 %g，得到 %g", eng.Plan().StopPrice, got)
 	}
 
 	// 价格跌到第 2 条线 → 挂在上面的买单成交，往返完成。

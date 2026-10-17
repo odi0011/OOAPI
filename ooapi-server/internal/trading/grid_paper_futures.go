@@ -308,6 +308,12 @@ func (p *PaperFuturesGrid) EnsureProtectionStop(symbol string, trigger float64, 
 	if trigger <= 0 {
 		return invalid("保护单触发价必须大于 0")
 	}
+	// 与真实交易所一致：没有持仓时 closePosition 条件单会被拒，
+	// 所以空仓时不挂。
+	if p.position == 0 {
+		p.protectTrigger = 0
+		return nil
+	}
 	p.protectTrigger = trigger
 	return nil
 }

@@ -320,6 +320,28 @@ func (f *FuturesGridExchange) EnsureProtectionStop(symbol string, trigger float6
 	if trigger <= 0 {
 		return invalid("保护单触发价必须大于 0")
 	}
+	/*
+		没有持仓时不要挂 closePosition 保护单。
+
+		币安对 closePosition 的条件单要求 TIF=GTE，而 GTE 只在
+		"已有持仓"时可用 —— 空仓时下单会被 -4509 直接拒掉。
+		网格在第一次卖出成交之前本来就没有可保护的对象，跳过即可；
+		成交会在同一拍的 reconcile 里先入账，下一拍就会把止损挂上。
+	*/
+	pos, perr := f.PositionQty(symbol)
+	if perr != nil {
+		return perr
+	}
+	if pos <= 0 {
+		open, oerr := f.c.openAlgoOrders(symbol)
+		if oerr != nil {
+			return oerr
+		}
+		if len(open) > 0 {
+			return f.c.cancelAlgoOrders(symbol)
+		}
+		return nil
+	}
 	open, err := f.c.openAlgoOrders(symbol)
 	if err != nil {
 		return err
