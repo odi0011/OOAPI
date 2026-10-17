@@ -39,3 +39,5 @@ outputs/
 research/data/
 research/*/results*.csv
 research/*/__pycache__/
+research/carry/perp_ext/
+research/carry/funding_ext/
