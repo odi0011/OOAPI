@@ -73,11 +73,37 @@ def daily_text(markets: list[dict], news: list[dict], positions: list[dict],
             f"EMA20 {fmt_price(m['ema20'])} / EMA50 {fmt_price(m['ema50'])} / "
             f"EMA200 {fmt_price(m['ema200'])}，RSI {m['rsi14']:.1f}，ATR {m['atr_pct']:.2f}%。"
         )
+        if m.get("high_24h") and m.get("low_24h"):
+            lines.append(
+                f"24h 高/低：{fmt_price(m['high_24h'])} / {fmt_price(m['low_24h'])}。"
+            )
         rates = "，".join(
             f"{base_asset(x['symbol'])} {fmt_rate(x['funding_rate'])}" for x in markets
         )
         lines.append(f"资金费率：{rates}。")
         lines.append("")
+
+        # 用指标生成 2–3 条事实性观察，避免日报只有数字、没有信息。
+        obs: list[str] = []
+        if m["price"] < m.get("ema200", m["price"]):
+            obs.append("价格仍在 EMA200 下方，中期结构偏弱")
+        elif m["price"] > m.get("ema200", m["price"]):
+            obs.append("价格站上 EMA200，中期结构偏强")
+        if m["rsi14"] >= 70:
+            obs.append(f"1h RSI {m['rsi14']:.1f}，短线偏热")
+        elif m["rsi14"] <= 30:
+            obs.append(f"1h RSI {m['rsi14']:.1f}，短线偏冷")
+        vr = m.get("volume_ratio")
+        if vr is not None and vr < 0.8:
+            obs.append(f"成交量只有 20 根均量的 {vr:.2f} 倍，量能确认不足")
+        if m["funding_rate"] >= 0.0001:
+            obs.append("资金费率偏正，多头略拥挤")
+        elif m["funding_rate"] <= -0.0001:
+            obs.append("资金费率偏负，空头略拥挤")
+        if obs:
+            lines.append("今日观察：")
+            lines.extend(f"· {o}。" for o in obs[:3])
+            lines.append("")
 
     if news:
         top = news[0]
