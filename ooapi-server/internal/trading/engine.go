@@ -858,7 +858,12 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 		e.clearStagedEntry()
 		releaseBoost()
 		if marginRejected(err) {
-			return e.rejectUnfilledEntry(err)
+			return e.rejectUnfilledEntry(err, ReasonInsufficientMargin)
+		}
+		// 均价暂时缺失、但没有本引擎的成交时，不要 cancelAndFlatten：
+		// 那会把同密钥上的手动仓一起平掉，并把引擎卡在 Error。
+		if errors.Is(err, ErrEntryUnfilled) {
+			return e.rejectUnfilledEntry(err, ReasonEntryUnfilled)
 		}
 		return e.failed(err.Error())
 	}
@@ -1834,12 +1839,16 @@ func (e *Engine) entryQty(price float64, in StepInput) (float64, error) {
 	return qty, nil
 }
 
-// rejectUnfilledEntry 处理开仓被拒绝、交易所没有成交的情况。
-// -2019 不再把引擎打进 Error：记下原因，回到 Armed，下一根 K 线可以再试。
-func (e *Engine) rejectUnfilledEntry(err error) (Snapshot, error) {
+// rejectUnfilledEntry 处理开仓没有成交的情况。
+// -2019，以及均价缺失且交易所没有这笔 oo-ent 仓时，都不再把引擎打进 Error：
+// 记下原因，回到 Armed，下一根 K 线可以再试。不撤别人的挂单，也不平别人的仓。
+func (e *Engine) rejectUnfilledEntry(err error, reason string) (Snapshot, error) {
 	detail := ""
 	if err != nil {
 		detail = err.Error()
+	}
+	if reason == "" {
+		reason = ReasonEntryUnfilled
 	}
 	e.lastDetail = detail
 	line := "entry rejected, nothing filled, back to armed"
@@ -1850,11 +1859,11 @@ func (e *Engine) rejectUnfilledEntry(err error) (Snapshot, error) {
 	e.log.Printf("[trading] %s", line)
 	log.Printf("[trading] %s", line)
 	if e.State() == StateEntrySubmitted {
-		if moveErr := e.m.Transition(Event{Kind: EventEntryRejected, Reason: ReasonInsufficientMargin}); moveErr != nil {
+		if moveErr := e.m.Transition(Event{Kind: EventEntryRejected, Reason: reason}); moveErr != nil {
 			return e.failed(moveErr.Error())
 		}
 	}
-	e.note("skip", ReasonInsufficientMargin)
+	e.note("skip", reason)
 	return e.Snapshot(), nil
 }
 

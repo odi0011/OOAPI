@@ -123,6 +123,9 @@ const (
 	// ReasonInsufficientMargin 表示按可用余额缩过保证金后，名义价值仍低于交易所下限，
 	// 或者开仓被币安以 -2019 拒绝且没有任何成交。引擎留在 Armed。
 	ReasonInsufficientMargin = "insufficient_margin"
+	// ReasonEntryUnfilled 表示市价开仓没有回到均价，且交易所上没有这笔 oo-ent 仓。
+	// 引擎回到 Armed，不进 Error，也不平掉同密钥上的手动仓。
+	ReasonEntryUnfilled = "entry_unfilled"
 
 	// DefaultScalpPct 是赌一把模式下止损和止盈相对入场价的默认距离（0.3%）。
 	DefaultScalpPct = 0.003

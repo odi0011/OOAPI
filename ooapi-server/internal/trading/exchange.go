@@ -45,7 +45,7 @@ type CloseOrder struct {
 }
 
 // Fill 是一次成交回报。
-// FromExchange 为真表示价格和数量来自订单均价或 userTrades，不是下单时带上的标记价。
+// FromExchange 为真表示价格和数量来自订单均价、userTrades 或这笔单在交易所上的持仓均价，不是下单时带上的标记价。
 type Fill struct {
 	OrderID      string
 	Price        float64
