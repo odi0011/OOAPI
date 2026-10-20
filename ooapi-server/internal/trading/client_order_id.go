@@ -6,6 +6,18 @@ import (
 	"strings"
 )
 
+// 本引擎自己的单号前缀。只有 oo-ent- 开出来的仓才允许认领、改保护或 oo-cls。
+const (
+	clientPrefixEntry = "oo-ent-"
+	clientPrefixClose = "oo-cls-"
+)
+
+// engineEntryClientID 判断这张单是不是本引擎的开仓单。
+// 网页/App 的 web_usdt_、空单号、止损止盈和平仓单都不是。
+func engineEntryClientID(id string) bool {
+	return strings.HasPrefix(strings.TrimSpace(id), clientPrefixEntry)
+}
+
 // newClientOrderID 生成币安合法的业务幂等单号（≤36，字符集 [.A-Za-z0-9_-]）。
 // 前缀约定：oo-ent- / oo-sl- / oo-tp- / oo-cls-
 func newClientOrderID(prefix string) string {

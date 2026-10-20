@@ -672,6 +672,30 @@ func (c *USDMClient) Position(symbol string) (Position, error) {
 	return c.position(symbol, "")
 }
 
+// EntryClientOrderID 找出当前持仓最近一张开仓单的 clientOrderId。
+// 查不到时返回空串。调用方必须把空串和非 oo-ent- 都当成外来仓，不得平仓。
+func (c *USDMClient) EntryClientOrderID(symbol string, side Side) (string, error) {
+	if err := c.guard(); err != nil {
+		return "", err
+	}
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return "", invalid("缺少交易对")
+	}
+	body, err := c.signedGET("/fapi/v1/allOrders", url.Values{
+		"symbol": {symbol},
+		"limit":  {"100"},
+	})
+	if err != nil {
+		return "", err
+	}
+	orders, err := parseAccountOrders(body)
+	if err != nil {
+		return "", err
+	}
+	return openingClientOrderID(side, orders), nil
+}
+
 // PositionSide 只看 symbol 上这一个持仓方向。双向持仓里另一边还有数量时，本边归零也是空仓。
 // positionAmt 同时接受字符串和数字。双向持仓的空单数量可以是正数，方向看 positionSide。
 func (c *USDMClient) PositionSide(symbol string, side Side) (Position, error) {
@@ -769,6 +793,131 @@ func sideFromRisk(positionSide string, amt float64) Side {
 			return SideShort
 		}
 		return SideLong
+	}
+}
+
+// accountOrder 是 allOrders 里和开仓归属有关的字段。
+type accountOrder struct {
+	ClientOrderID string
+	Side          string
+	PositionSide  string
+	Status        string
+	Type          string
+	ExecutedQty   float64
+	ReduceOnly    bool
+	ClosePosition bool
+	TimeMS        int64
+}
+
+type rawAccountOrder struct {
+	ClientOrderID string   `json:"clientOrderId"`
+	Side          string   `json:"side"`
+	PositionSide  string   `json:"positionSide"`
+	Status        string   `json:"status"`
+	Type          string   `json:"type"`
+	OrigType      string   `json:"origType"`
+	ExecutedQty   flexNum  `json:"executedQty"`
+	ReduceOnly    flexBool `json:"reduceOnly"`
+	ClosePosition flexBool `json:"closePosition"`
+	Time          flexNum  `json:"time"`
+	UpdateTime    flexNum  `json:"updateTime"`
+}
+
+func parseAccountOrders(body []byte) ([]accountOrder, error) {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 || string(body) == "null" {
+		return nil, nil
+	}
+	var raw []rawAccountOrder
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, errors.New("订单数据无法解析")
+	}
+	out := make([]accountOrder, 0, len(raw))
+	for _, row := range raw {
+		when := int64(row.UpdateTime)
+		if int64(row.Time) > when {
+			when = int64(row.Time)
+		}
+		kind := strings.ToUpper(strings.TrimSpace(row.Type))
+		if kind == "" {
+			kind = strings.ToUpper(strings.TrimSpace(row.OrigType))
+		}
+		out = append(out, accountOrder{
+			ClientOrderID: strings.TrimSpace(row.ClientOrderID),
+			Side:          strings.ToUpper(strings.TrimSpace(row.Side)),
+			PositionSide:  strings.ToUpper(strings.TrimSpace(row.PositionSide)),
+			Status:        strings.ToUpper(strings.TrimSpace(row.Status)),
+			Type:          kind,
+			ExecutedQty:   float64(row.ExecutedQty),
+			ReduceOnly:    bool(row.ReduceOnly),
+			ClosePosition: bool(row.ClosePosition),
+			TimeMS:        when,
+		})
+	}
+	return out, nil
+}
+
+// openingClientOrderID 返回仍可能构成当前持仓的最近一张开仓单号。
+// 平仓、只减仓和止损止盈不算开仓。没有开仓单时返回空串。
+func openingClientOrderID(side Side, orders []accountOrder) string {
+	var best int64 = -1
+	var ids []string
+	for _, order := range orders {
+		if !orderOpensSide(side, order) {
+			continue
+		}
+		if order.TimeMS > best {
+			best = order.TimeMS
+			ids = []string{order.ClientOrderID}
+			continue
+		}
+		if order.TimeMS == best {
+			ids = append(ids, order.ClientOrderID)
+		}
+	}
+	if len(ids) == 0 {
+		return ""
+	}
+	for _, id := range ids {
+		if !engineEntryClientID(id) {
+			return id
+		}
+	}
+	return ids[0]
+}
+
+func orderOpensSide(side Side, order accountOrder) bool {
+	if order.ReduceOnly || order.ClosePosition || !(order.ExecutedQty > 0) {
+		return false
+	}
+	switch order.Status {
+	case "", "FILLED", "PARTIALLY_FILLED", "CANCELED", "EXPIRED", "EXPIRED_IN_MATCH":
+	default:
+		return false
+	}
+	switch order.Type {
+	case "STOP", "STOP_MARKET", "TAKE_PROFIT", "TAKE_PROFIT_MARKET", "TRAILING_STOP_MARKET":
+		return false
+	}
+	switch side {
+	case SideLong:
+		if order.PositionSide == "SHORT" {
+			return false
+		}
+		if order.PositionSide == "LONG" {
+			return true
+		}
+		return order.Side == "BUY"
+	case SideShort:
+		if order.PositionSide == "LONG" {
+			return false
+		}
+		if order.PositionSide == "SHORT" {
+			return true
+		}
+		return order.Side == "SELL"
+	default:
+		return false
 	}
 }
 

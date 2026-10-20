@@ -218,7 +218,8 @@ func TestAdoptOrphanPositionHangsProtection(t *testing.T) {
 	protectionRetryGap = 0
 	t.Cleanup(func() { protectionRetryGap = 300 * time.Millisecond })
 	ex := &adoptExchange{
-		Paper: Paper{pos: Position{Open: true, Side: SideLong, Qty: 10, Entry: 1}},
+		Paper:         Paper{pos: Position{Open: true, Side: SideLong, Qty: 10, Entry: 1}},
+		entryClientID: "oo-ent-deadbeefdeadbeef",
 	}
 	ex.Syncs = true
 	cfg := testConfig()
@@ -250,8 +251,9 @@ func TestAdoptOrphanFlattensWhenProtectionFails(t *testing.T) {
 	protectionRetryGap = 0
 	t.Cleanup(func() { protectionRetryGap = 300 * time.Millisecond })
 	ex := &adoptExchange{
-		Paper:    Paper{pos: Position{Open: true, Side: SideLong, Qty: 10, Entry: 1}},
-		failProt: true,
+		Paper:         Paper{pos: Position{Open: true, Side: SideLong, Qty: 10, Entry: 1}},
+		entryClientID: "oo-ent-deadbeefdeadbeef",
+		failProt:      true,
 	}
 	ex.Syncs = true
 	cfg := testConfig()
@@ -276,17 +278,220 @@ func TestAdoptOrphanFlattensWhenProtectionFails(t *testing.T) {
 	if ex.closes < 1 || ex.Paper.pos.Open {
 		t.Fatalf("closes=%d open=%v", ex.closes, ex.Paper.pos.Open)
 	}
+	if !strings.HasPrefix(ex.lastCloseID, "oo-cls-") {
+		t.Fatalf("close id %q", ex.lastCloseID)
+	}
+}
+
+func TestExternalOrphanStopBeyondLiquidationDoesNotClose(t *testing.T) {
+	protectionRetryGap = 0
+	t.Cleanup(func() { protectionRetryGap = 300 * time.Millisecond })
+	const entry = 100000.0
+	cfg := testConfig()
+	cfg.Symbol = "BTCUSDT"
+	cfg.Leverage = 100
+	stop, _, err := stopTake(cfg, SideLong, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	liq, err := IsolatedLiqPrice(SideLong, entry, cfg.Leverage, DefaultMaintMarginRate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if StopWithinLiquidation(SideLong, entry, stop, liq) {
+		t.Fatalf("fixture stop %.8f should sit beyond liq %.8f", stop, liq)
+	}
+	ex := &adoptExchange{
+		Paper:         Paper{pos: Position{Open: true, Side: SideLong, Qty: 0.001, Entry: entry}},
+		entryClientID: "web_usdt_manualbtc01",
+	}
+	ex.Syncs = true
+	eng := NewEngine(cfg, ex, DiscardLogger())
+	eng.SetSecrets(func() (Credentials, error) {
+		return Credentials{APIKey: "k", APISecret: "s", Network: ModeTestnet}, nil
+	})
+	now := time.Now().UTC()
+	if err := eng.Start(calmStart(now, 20)); err != nil {
+		t.Fatal(err)
+	}
+	in := stepAt(now, []Candle{{OpenTime: now, Close: entry}}, entry, 20)
+	in.PositionsKnown = true
+	in.Positions = []KeyPosition{{Symbol: cfg.Symbol, Qty: 0.001, Entry: entry, Leverage: cfg.Leverage}}
+	snap, err := eng.Step(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.State != StateArmed || snap.LastReason != ReasonExternalPosition {
+		t.Fatalf("state %+v", snap)
+	}
+	if ex.closes != 0 || ex.protects != 0 || ex.lastCloseID != "" || !ex.Paper.pos.Open {
+		t.Fatalf("closes=%d protects=%d closeID=%q open=%v", ex.closes, ex.protects, ex.lastCloseID, ex.Paper.pos.Open)
+	}
+	if ex.Paper.pos.Qty != 0.001 || ex.Paper.pos.Entry != entry {
+		t.Fatalf("position mutated %+v", ex.Paper.pos)
+	}
+}
+
+func TestUnknownOrphanIsLeftAlone(t *testing.T) {
+	protectionRetryGap = 0
+	t.Cleanup(func() { protectionRetryGap = 300 * time.Millisecond })
+	cases := []struct {
+		name string
+		id   string
+		err  error
+	}{
+		{name: "empty", id: ""},
+		{name: "lookup", err: invalid("allOrders down")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := testConfig()
+			cfg.Symbol = "BTCUSDT"
+			cfg.Leverage = 100
+			ex := &adoptExchange{
+				Paper:         Paper{pos: Position{Open: true, Side: SideLong, Qty: 0.001, Entry: 100000}},
+				entryClientID: tc.id,
+				originErr:     tc.err,
+			}
+			ex.Syncs = true
+			eng := NewEngine(cfg, ex, DiscardLogger())
+			eng.SetSecrets(func() (Credentials, error) {
+				return Credentials{APIKey: "k", APISecret: "s", Network: ModeTestnet}, nil
+			})
+			now := time.Now().UTC()
+			if err := eng.Start(calmStart(now, 20)); err != nil {
+				t.Fatal(err)
+			}
+			in := stepAt(now, []Candle{{OpenTime: now, Close: 100000}}, 100000, 20)
+			in.PositionsKnown = true
+			in.Positions = []KeyPosition{{Symbol: cfg.Symbol, Qty: 0.001, Entry: 100000, Leverage: cfg.Leverage}}
+			snap, err := eng.Step(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if snap.State != StateArmed || snap.LastReason != ReasonExternalPosition {
+				t.Fatalf("state %+v", snap)
+			}
+			if ex.closes != 0 || ex.protects != 0 || !ex.Paper.pos.Open {
+				t.Fatalf("closes=%d protects=%d open=%v", ex.closes, ex.protects, ex.Paper.pos.Open)
+			}
+		})
+	}
+}
+
+func TestEngineOrphanStopBeyondLiquidationStillFlattens(t *testing.T) {
+	protectionRetryGap = 0
+	t.Cleanup(func() { protectionRetryGap = 300 * time.Millisecond })
+	const entry = 100000.0
+	cfg := testConfig()
+	cfg.Symbol = "BTCUSDT"
+	cfg.Leverage = 100
+	ex := &adoptExchange{
+		Paper:         Paper{pos: Position{Open: true, Side: SideLong, Qty: 0.001, Entry: entry}},
+		entryClientID: "oo-ent-deadbeefdeadbeef",
+	}
+	ex.Syncs = true
+	eng := NewEngine(cfg, ex, DiscardLogger())
+	eng.SetSecrets(func() (Credentials, error) {
+		return Credentials{APIKey: "k", APISecret: "s", Network: ModeTestnet}, nil
+	})
+	now := time.Now().UTC()
+	if err := eng.Start(calmStart(now, 20)); err != nil {
+		t.Fatal(err)
+	}
+	in := stepAt(now, []Candle{{OpenTime: now, Close: entry}}, entry, 20)
+	in.PositionsKnown = true
+	in.Positions = []KeyPosition{{Symbol: cfg.Symbol, Qty: 0.001, Entry: entry, Leverage: cfg.Leverage}}
+	snap, err := eng.Step(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.State != StateArmed {
+		t.Fatalf("state %+v", snap)
+	}
+	if ex.closes != 1 || ex.protects != 0 || ex.Paper.pos.Open || !strings.HasPrefix(ex.lastCloseID, "oo-cls-") || ex.lastCloseReason != ReasonStopBeyondLiquidation {
+		t.Fatalf("closes=%d protects=%d closeID=%q reason=%q open=%v", ex.closes, ex.protects, ex.lastCloseID, ex.lastCloseReason, ex.Paper.pos.Open)
+	}
+}
+
+func TestOpeningClientOrderIDSeparatesWebAndEngine(t *testing.T) {
+	orders := []accountOrder{
+		{ClientOrderID: "oo-ent-old", Side: "BUY", PositionSide: "BOTH", Status: "FILLED", Type: "MARKET", ExecutedQty: 0.001, TimeMS: 10},
+		{ClientOrderID: "oo-sl-stop", Side: "SELL", PositionSide: "BOTH", Status: "FILLED", Type: "STOP_MARKET", ExecutedQty: 0.001, ClosePosition: true, TimeMS: 20},
+		{ClientOrderID: "web_usdt_manualbtc01", Side: "BUY", PositionSide: "BOTH", Status: "FILLED", Type: "MARKET", ExecutedQty: 0.001, TimeMS: 30},
+	}
+	if got := openingClientOrderID(SideLong, orders); got != "web_usdt_manualbtc01" {
+		t.Fatalf("latest opener %q", got)
+	}
+	engine := []accountOrder{
+		{ClientOrderID: "web_usdt_old", Side: "BUY", Status: "FILLED", Type: "MARKET", ExecutedQty: 0.001, TimeMS: 10},
+		{ClientOrderID: "oo-ent-deadbeefdeadbeef", Side: "BUY", Status: "FILLED", Type: "MARKET", ExecutedQty: 0.001, TimeMS: 20},
+		{ClientOrderID: "oo-sl-aaaaaaaaaaaaaaaa", Side: "SELL", Status: "NEW", Type: "STOP_MARKET", ExecutedQty: 0, ClosePosition: true, TimeMS: 30},
+		{ClientOrderID: "oo-tp-bbbbbbbbbbbbbbbb", Side: "SELL", Status: "NEW", Type: "LIMIT", ExecutedQty: 0, ReduceOnly: true, TimeMS: 31},
+		{ClientOrderID: "oo-cls-cccccccccccccccc", Side: "SELL", Status: "CANCELED", Type: "MARKET", ExecutedQty: 0, ReduceOnly: true, TimeMS: 32},
+	}
+	if got := openingClientOrderID(SideLong, engine); got != "oo-ent-deadbeefdeadbeef" {
+		t.Fatalf("engine opener %q", got)
+	}
+	if openingClientOrderID(SideLong, nil) != "" {
+		t.Fatal("empty book should be unknown")
+	}
+	if engineEntryClientID("web_usdt_manualbtc01") || engineEntryClientID("") || engineEntryClientID("oo-sl-aaa") {
+		t.Fatal("non-entry ids counted as engine opens")
+	}
+	if !engineEntryClientID("oo-ent-deadbeefdeadbeef") {
+		t.Fatal("oo-ent- rejected")
+	}
+}
+
+func TestEntryClientOrderIDReadsAllOrders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/fapi/v1/allOrders" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Query().Get("symbol") != "BTCUSDT" {
+			t.Errorf("symbol %q", r.URL.Query().Get("symbol"))
+		}
+		_, _ = w.Write([]byte(`[
+			{"clientOrderId":"oo-ent-old","side":"BUY","positionSide":"BOTH","status":"FILLED","type":"MARKET","executedQty":"0.001","reduceOnly":false,"time":10,"updateTime":10},
+			{"clientOrderId":"web_usdt_manualbtc01","side":"BUY","positionSide":"BOTH","status":"FILLED","type":"MARKET","executedQty":"0.002","reduceOnly":false,"time":20,"updateTime":20}
+		]`))
+	}))
+	defer server.Close()
+	client := NewUSDMClient(server.URL)
+	if err := client.UseCredentials(Credentials{APIKey: "k", APISecret: "s", Network: ModeTestnet}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := client.EntryClientOrderID("BTCUSDT", SideLong)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "web_usdt_manualbtc01" {
+		t.Fatalf("client id %q", got)
+	}
 }
 
 type adoptExchange struct {
 	Paper
-	Syncs    bool
-	protects int
-	closes   int
-	failProt bool
+	Syncs           bool
+	protects        int
+	closes          int
+	failProt        bool
+	entryClientID   string
+	originErr       error
+	lastCloseID     string
+	lastCloseReason string
 }
 
 func (a *adoptExchange) SyncsPosition() bool { return a.Syncs }
+
+func (a *adoptExchange) EntryClientOrderID(string, Side) (string, error) {
+	if a.originErr != nil {
+		return "", a.originErr
+	}
+	return a.entryClientID, nil
+}
 
 func (a *adoptExchange) PlaceProtection(req Protection) error {
 	a.protects++
@@ -298,5 +503,7 @@ func (a *adoptExchange) PlaceProtection(req Protection) error {
 
 func (a *adoptExchange) Close(req CloseOrder) (Fill, error) {
 	a.closes++
+	a.lastCloseID = req.ClientOrderID
+	a.lastCloseReason = req.Reason
 	return a.Paper.Close(req)
 }

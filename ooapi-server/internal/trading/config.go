@@ -104,10 +104,14 @@ const (
 	ReasonBoostWait    = "boost_wait"
 	ReasonBoostFilled  = "boost_filled"
 	ReasonSymbolHeld   = "symbol_has_position"
-	// ReasonAdoptPosition 表示重启后认领了交易所孤儿仓位并补挂保护单。
+	// ReasonAdoptPosition 表示重启后认领了本引擎自己的 oo-ent- 孤儿仓并补挂保护单。
 	ReasonAdoptPosition = "adopt_position"
-	// ReasonAdoptFlatten 表示认领失败后市价平掉孤儿仓，避免裸奔。
+	// ReasonAdoptFlatten 表示本引擎自己的仓认领失败后市价平掉，避免裸奔。
+	// 不是 oo-ent- 开出来的仓不会走这条原因。
 	ReasonAdoptFlatten = "adopt_flatten"
+	// ReasonExternalPosition 表示交易所上的仓不是本引擎的 oo-ent- 开仓。
+	// 引擎留在 Armed，不认领、不改保护单、不市价平仓。
+	ReasonExternalPosition = "external_position"
 	// ReasonExchangeFlat 表示仓位已在交易所被条件单打平，引擎这才跟着回到待命。
 	ReasonExchangeFlat = "exchange_flat"
 	// ReasonEntriesPaused 表示策略关掉了新开仓。已有仓和止损止盈保持不动。
