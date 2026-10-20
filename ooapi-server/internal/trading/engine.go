@@ -642,12 +642,16 @@ func (e *Engine) Step(in StepInput) (snap Snapshot, err error) {
 }
 
 func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
-	// 崩溃/重启后交易所可能仍有仓而引擎停在 Armed。优先认领并补挂保护单，
-	// 不受 PauseEntries / barKey 去重影响。依赖 runner 已拉到的 positionRisk。
-	// 仅对 SyncsPosition 的实盘/测网客户端认领；Paper 单测仍走后面的 SkipReason。
+	// 崩溃/重启后交易所可能仍有仓而引擎停在 Armed。只认领本引擎自己的
+	// oo-ent- 开仓并补挂保护单，不受 PauseEntries / barKey 去重影响。
+	// 网页/App 等非 oo-ent- 仓完全不碰：不认领、不改保护、不平仓，留在 Armed。
+	// 仅对 SyncsPosition 的实盘/测网客户端查询；Paper 单测仍走后面的 SkipReason。
 	// 认领后若仍 Armed，继续走 Hub 填好的 SkipReason（如组合保证金上限），不覆盖审计原因。
 	if e.syncsPosition() && in.PositionsKnown && symbolHasPosition(e.cfg.Symbol, in.Positions) {
 		snap, err := e.adoptOrphanPosition()
+		if errors.Is(err, errLeaveExternal) {
+			return snap, nil
+		}
 		if e.State() == StateInPosition {
 			return snap, err
 		}
@@ -1441,8 +1445,18 @@ func (e *Engine) ensureProtection(side Side, entry, stop, take, liq float64) err
 	return last
 }
 
-// adoptOrphanPosition 认领交易所已有、引擎却停在 Armed 的孤儿仓。
-// 有保护单则直接接管为 InPosition；没有则补挂；补挂失败则市价平仓并留在 Armed。
+// errLeaveExternal 表示这仓不是本引擎开的，调用方应留在 Armed 且不再往下开仓。
+var errLeaveExternal = errors.New("external position left untouched")
+
+// entryOrigin 报告当前持仓开仓单的 clientOrderId。
+// 没有这个能力、查不到、或单号不是 oo-ent- 时，一律当成外来仓。
+type entryOrigin interface {
+	EntryClientOrderID(symbol string, side Side) (string, error)
+}
+
+// adoptOrphanPosition 只认领本引擎自己开的孤儿仓（clientOrderId 前缀 oo-ent-）。
+// 网页/App（web_usdt_）以及任何非 oo-ent- 开仓：不认领、不改保护单、不平仓。
+// 本引擎的仓仍须止损在强平价之前且止损止盈都挂上；做不到才市价平掉自己的仓。
 func (e *Engine) adoptOrphanPosition() (Snapshot, error) {
 	if e == nil || e.State() != StateArmed || !e.syncsPosition() {
 		return e.Snapshot(), nil
@@ -1458,28 +1472,65 @@ func (e *Engine) adoptOrphanPosition() (Snapshot, error) {
 	if !pos.Open || !(pos.Qty > 0) || pos.Entry <= 0 || (pos.Side != SideLong && pos.Side != SideShort) {
 		return e.Snapshot(), nil
 	}
+	clientID, originErr := e.orphanEntryClientID(pos)
+	if originErr != nil || !engineEntryClientID(clientID) {
+		e.skipExternalOrphan(pos, clientID, originErr)
+		return e.Snapshot(), errLeaveExternal
+	}
 	stop, take, liq, err := e.quoteProtection(pos.Side, pos.Entry)
 	if err != nil {
-		log.Printf("[trading] ERROR adopt %s quote protection: %v; flattening orphan", e.cfg.Symbol, err)
-		return e.flattenOrphan(pos, ReasonAdoptFlatten)
+		log.Printf("[trading] ERROR adopt %s quote protection: %v; flattening engine orphan", e.cfg.Symbol, err)
+		return e.flattenOrphan(pos, ReasonAdoptFlatten, clientID)
 	}
 	if !StopWithinLiquidation(pos.Side, pos.Entry, stop, liq) {
-		log.Printf("[trading] ERROR adopt %s stop beyond liq entry=%.8f stop=%.8f liq=%.8f; flattening",
+		log.Printf("[trading] ERROR adopt %s stop beyond liq entry=%.8f stop=%.8f liq=%.8f; flattening engine orphan",
 			e.cfg.Symbol, pos.Entry, stop, liq)
-		return e.flattenOrphan(pos, ReasonStopBeyondLiquidation)
+		return e.flattenOrphan(pos, ReasonStopBeyondLiquidation, clientID)
 	}
 	if err := e.ensureProtection(pos.Side, pos.Entry, stop, take, liq); err != nil {
-		log.Printf("[trading] ERROR adopt %s protection failed: %v; flattening orphan", e.cfg.Symbol, err)
-		return e.flattenOrphan(pos, ReasonProtectiveOrdersFailed)
+		log.Printf("[trading] ERROR adopt %s protection failed: %v; flattening engine orphan", e.cfg.Symbol, err)
+		return e.flattenOrphan(pos, ReasonProtectiveOrdersFailed, clientID)
 	}
 	if err := e.m.Transition(Event{Kind: EventAdopt, Reason: ReasonAdoptPosition}); err != nil {
 		return e.Snapshot(), err
 	}
 	e.RecoverPosition(pos, stop, take, liq, time.Time{}, 0, nil)
 	e.note("adopt", ReasonAdoptPosition)
-	e.log.Printf("[trading] adopt %s %s qty=%.8f entry=%.8f stop=%.8f take=%.8f", e.cfg.Symbol, pos.Side, pos.Qty, pos.Entry, stop, take)
-	log.Printf("[trading] adopt %s %s qty=%.8f entry=%.8f stop=%.8f take=%.8f", e.cfg.Symbol, pos.Side, pos.Qty, pos.Entry, stop, take)
+	e.log.Printf("[trading] adopt %s %s qty=%.8f entry=%.8f stop=%.8f take=%.8f clientOrderId=%s", e.cfg.Symbol, pos.Side, pos.Qty, pos.Entry, stop, take, clientID)
+	log.Printf("[trading] adopt %s %s qty=%.8f entry=%.8f stop=%.8f take=%.8f clientOrderId=%s", e.cfg.Symbol, pos.Side, pos.Qty, pos.Entry, stop, take, clientID)
 	return e.Snapshot(), nil
+}
+
+// orphanEntryClientID 读取开仓单号。交易所不提供这条能力时返回空串，调用方必须放过。
+func (e *Engine) orphanEntryClientID(pos Position) (string, error) {
+	src, ok := e.ex.(entryOrigin)
+	if !ok || e == nil {
+		return "", nil
+	}
+	return src.EntryClientOrderID(e.cfg.Symbol, pos.Side)
+}
+
+// skipExternalOrphan 记下外来仓并留下交易所持仓。不发平仓，不挂保护单。
+func (e *Engine) skipExternalOrphan(pos Position, clientID string, originErr error) {
+	if e == nil {
+		return
+	}
+	if originErr != nil {
+		e.log.Printf("[trading] skip orphan %s %s qty=%.8f entry=%.8f: cannot read entry clientOrderId (%v); leaving exchange position untouched",
+			e.cfg.Symbol, pos.Side, pos.Qty, pos.Entry, originErr)
+		log.Printf("[trading] skip orphan %s %s qty=%.8f entry=%.8f: cannot read entry clientOrderId (%v); leaving exchange position untouched",
+			e.cfg.Symbol, pos.Side, pos.Qty, pos.Entry, originErr)
+	} else {
+		shown := strings.TrimSpace(clientID)
+		if shown == "" {
+			shown = "(none)"
+		}
+		e.log.Printf("[trading] skip external orphan %s %s qty=%.8f entry=%.8f clientOrderId=%s; not an oo-ent- entry, leaving position untouched",
+			e.cfg.Symbol, pos.Side, pos.Qty, pos.Entry, shown)
+		log.Printf("[trading] skip external orphan %s %s qty=%.8f entry=%.8f clientOrderId=%s; not an oo-ent- entry, leaving position untouched",
+			e.cfg.Symbol, pos.Side, pos.Qty, pos.Entry, shown)
+	}
+	e.note("skip_external", ReasonExternalPosition)
 }
 
 // RecoverPosition 恢复持仓及关联的 trading_entries 开仓时间和记录 ID，不使用策略创建时间充当单笔开仓起点。
@@ -1531,13 +1582,17 @@ func (e *Engine) RecoverPosition(pos Position, stop, take, liq float64, openedAt
 	}
 }
 
-func (e *Engine) flattenOrphan(pos Position, reason string) (Snapshot, error) {
+func (e *Engine) flattenOrphan(pos Position, reason, clientID string) (Snapshot, error) {
+	if !engineEntryClientID(clientID) {
+		e.skipExternalOrphan(pos, clientID, nil)
+		return e.Snapshot(), errLeaveExternal
+	}
 	_, err := e.ex.Close(CloseOrder{
 		Symbol:        e.cfg.Symbol,
 		Side:          pos.Side,
 		Price:         pos.Entry,
 		Reason:        reason,
-		ClientOrderID: newClientOrderID("oo-cls-"),
+		ClientOrderID: newClientOrderID(clientPrefixClose),
 	})
 	if err != nil {
 		log.Printf("[trading] ERROR adopt flatten %s failed: %v", e.cfg.Symbol, err)
