@@ -21,6 +21,8 @@ var (
 	ErrNotionalBelowMin      = errors.New("notional below exchange minimum")
 	ErrSymbolInUse           = errors.New("symbol already running on this exchange key")
 	ErrPaused                = errors.New("strategy is paused until a manual resume")
+	// ErrEntryUnfilled 表示开仓单没有成交。调用方应回到 Armed，不要进 Error，也不要平掉别人的仓。
+	ErrEntryUnfilled = errors.New("entry not filled")
 )
 
 // ValidationError 是配置字段不合法。接口层把它映射成 400。

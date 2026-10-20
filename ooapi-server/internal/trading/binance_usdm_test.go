@@ -426,6 +426,24 @@ type binanceFake struct {
 	pendingPosSide  string
 	// blankAvg 让查单回报的均价和成交额都是 0，逼开仓去读 userTrades。
 	blankAvg bool
+	// postFilledBlank 让下单回报本身就是 FILLED 且均价为 0。旧逻辑看到 FILLED 就不会再查单。
+	postFilledBlank bool
+	// avgAfter 大于 0 时，前 avgAfter-1 次查单仍返回空均价，之后才给出成交价。
+	avgAfter  int
+	orderGets int
+	// tradesAfter 大于 0 时，前 tradesAfter 次 userTrades 返回空数组。
+	tradesAfter int
+	tradeHits   int
+	// keepFlat 让查单不要把持仓写成刚下的数量，并继续返回空成交。
+	keepFlat bool
+	// freezePos 让查单不要覆盖测试预设的持仓。
+	freezePos bool
+	// entryPx 大于 0 时，查单写下的持仓均价用它，不再写死 1.5。
+	entryPx float64
+	// echoOwnOrder 让 allOrders 回放这次 oo-ent 的 clientOrderId。
+	echoOwnOrder  bool
+	entryClientID string
+	allOrdersBody string
 }
 
 type fakeAlgo struct {
@@ -494,11 +512,31 @@ func (f *binanceFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = io.WriteString(w, f.positionJSON())
 	case "/fapi/v1/userTrades":
+		f.tradeHits++
+		if f.tradesAfter > 0 && f.tradeHits <= f.tradesAfter {
+			_, _ = io.WriteString(w, `[]`)
+			break
+		}
 		if f.trades == "" {
 			_, _ = io.WriteString(w, `[]`)
 			break
 		}
 		_, _ = io.WriteString(w, f.trades)
+	case "/fapi/v1/allOrders":
+		if f.allOrdersBody != "" {
+			_, _ = io.WriteString(w, f.allOrdersBody)
+			break
+		}
+		if f.echoOwnOrder && engineEntryClientID(f.entryClientID) {
+			qty := formatQty(f.pending)
+			if parseNum(qty) == 0 {
+				qty = formatQty(absQty(f.pos))
+			}
+			side := f.entrySide()
+			_, _ = io.WriteString(w, `[{"clientOrderId":"`+f.entryClientID+`","side":"`+side+`","positionSide":"BOTH","status":"FILLED","type":"MARKET","executedQty":"`+qty+`","reduceOnly":false,"time":20,"updateTime":20}]`)
+			break
+		}
+		_, _ = io.WriteString(w, `[]`)
 	case "/fapi/v1/openOrders":
 		_, _ = io.WriteString(w, f.limitsJSON())
 	case "/fapi/v1/commissionRate":
@@ -548,13 +586,27 @@ func (f *binanceFake) order(w http.ResponseWriter, method string, values url.Val
 	}
 	if method == http.MethodGet {
 		f.queried = true
-		f.pos = f.pending
-		f.entry = 1.5
-		if f.pendingPosSide != "" {
-			f.posSide = f.pendingPosSide
+		f.orderGets++
+		if f.avgAfter > 0 && f.orderGets < f.avgAfter {
+			_, _ = io.WriteString(w, `{"orderId":`+values.Get("orderId")+`,"status":"FILLED","avgPrice":"0","executedQty":"0","cumQuote":"0","side":"`+f.entrySide()+`"}`)
+			return
 		}
-		if strings.EqualFold(f.pendingSide, "SELL") && f.pos > 0 {
-			f.pos = -f.pos
+		if !f.freezePos && !f.keepFlat {
+			f.pos = f.pending
+			f.entry = 1.5
+			if f.entryPx > 0 {
+				f.entry = f.entryPx
+			}
+			if f.pendingPosSide != "" {
+				f.posSide = f.pendingPosSide
+			}
+			if strings.EqualFold(f.pendingSide, "SELL") && f.pos > 0 {
+				f.pos = -f.pos
+			}
+		}
+		if f.keepFlat {
+			_, _ = io.WriteString(w, `{"orderId":`+values.Get("orderId")+`,"status":"FILLED","avgPrice":"0","executedQty":"0","cumQuote":"0","side":"`+f.entrySide()+`"}`)
+			return
 		}
 		if f.blankAvg {
 			qty := formatQty(absQty(f.pos))
@@ -584,10 +636,17 @@ func (f *binanceFake) order(w http.ResponseWriter, method string, values url.Val
 		}
 		f.pendingSide = values.Get("side")
 		f.pendingPosSide = values.Get("positionSide")
+		if id := values.Get("newClientOrderId"); id != "" {
+			f.entryClientID = id
+		}
 		if values.Get("closePosition") != "" {
 			f.t.Errorf("entry sent closePosition %#v", values)
 		}
 		f.pending = qty
+		if f.postFilledBlank {
+			_, _ = io.WriteString(w, `{"orderId":42,"status":"FILLED","avgPrice":"0","executedQty":"0","cumQuote":"0","side":"`+f.entrySide()+`"}`)
+			return
+		}
 		_, _ = io.WriteString(w, `{"orderId":42,"status":"NEW","avgPrice":"0","executedQty":"0","side":"BUY"}`)
 	default:
 		f.t.Errorf("classic order type %#v", values)
@@ -770,6 +829,13 @@ func (f *binanceFake) limitsJSON() string {
 		items = append(items, `{"orderId":`+strconv.FormatInt(order.id, 10)+`,"symbol":"`+order.symbol+`","status":"`+status+`","type":"LIMIT","timeInForce":"GTX","side":"`+order.side+`","positionSide":"`+order.posSide+`","price":"`+order.price+`","origQty":"`+order.orig+`","executedQty":"`+executed+`","reduceOnly":`+reduce+`}`)
 	}
 	return "[" + strings.Join(items, ",") + "]"
+}
+
+func (f *binanceFake) entrySide() string {
+	if f.pendingSide != "" {
+		return f.pendingSide
+	}
+	return "BUY"
 }
 
 func (f *binanceFake) orderJSON(status, id, qty string) string {

@@ -209,13 +209,14 @@ func (c *USDMClient) PlaceEntry(req EntryOrder) (Fill, error) {
 	if err != nil {
 		return Fill{}, err
 	}
+	clientID := ensureClientOrderID(req.ClientOrderID, "oo-ent-")
 	params := url.Values{}
 	params.Set("symbol", req.Symbol)
 	params.Set("side", orderSide(req.Side))
 	params.Set("type", "MARKET")
 	params.Set("quantity", formatStep(qty, rules.StepSize, raw.stepRaw))
 	params.Set("newOrderRespType", "RESULT")
-	params.Set("newClientOrderId", ensureClientOrderID(req.ClientOrderID, "oo-ent-"))
+	params.Set("newClientOrderId", clientID)
 	if hedge {
 		params.Set("positionSide", positionSide(req.Side))
 	}
@@ -227,8 +228,82 @@ func (c *USDMClient) PlaceEntry(req EntryOrder) (Fill, error) {
 	if err != nil {
 		return Fill{}, err
 	}
-	// 开仓价只认成交均价。标记价只用来算数量，不能写进 trading_entries。
-	return c.settleFill(req.Symbol, resp, req.Side, qty)
+	// 开仓价只认成交均价，或这笔 oo-ent 在交易所上的持仓均价。
+	// 标记价只用来算数量，不能写进 trading_entries。
+	return c.finishEntryFill(req.Symbol, resp, req.Side, qty, clientID)
+}
+
+// finishEntryFill 在市价回报还没有均价时继续向交易所要成交。
+// userTrades 和订单查询都空了，但这笔 clientOrderId 已经开出仓位时，用持仓均价。
+// 没有本引擎的仓就撤掉这一张未完成的开仓单，按未成交返回，不把调用方打进 Error。
+// 别人在同一把密钥上的手动仓对不上这个 clientOrderId，不能拿来当成交，也不能在这里平掉。
+func (c *USDMClient) finishEntryFill(symbol string, resp binanceOrder, side Side, qty float64, clientID string) (Fill, error) {
+	fill, err := c.settleFill(symbol, resp, side, qty)
+	if err == nil {
+		return fill, nil
+	}
+	if !missingFillPrice(err) {
+		return Fill{}, err
+	}
+	if got, ok := c.recoverEntryFill(symbol, side, clientID, resp.OrderID, qty); ok {
+		log.Printf("[trading] entry %s %s priced from position entry=%.8f qty=%.8f clientOrderId=%s", symbol, side, got.Price, got.Qty, clientID)
+		return got, nil
+	}
+	// 只撤这一张 oo-ent。撤全挂单会拆掉同一合约上别人的单。
+	if resp.OrderID != 0 {
+		if cerr := c.cancelOrder(symbol, resp.OrderID); cerr != nil {
+			return Fill{}, err
+		}
+	}
+	if got, ok := c.recoverEntryFill(symbol, side, clientID, resp.OrderID, qty); ok {
+		log.Printf("[trading] entry %s %s priced from position entry=%.8f qty=%.8f clientOrderId=%s", symbol, side, got.Price, got.Qty, clientID)
+		return got, nil
+	}
+	return Fill{}, withReason(ErrEntryUnfilled, "成交没有返回均价")
+}
+
+// recoverEntryFill 只在当前持仓的开仓单号就是这次发出的 oo-ent 时，用持仓均价补成交。
+// 查不到单号、单号对不上、或持仓数量大于这张单，都视为不是这笔开仓。
+func (c *USDMClient) recoverEntryFill(symbol string, side Side, clientID string, orderID int64, qty float64) (Fill, bool) {
+	if !engineEntryClientID(clientID) {
+		return Fill{}, false
+	}
+	pos, err := c.PositionSide(symbol, side)
+	if err != nil || !pos.Open || pos.Entry <= 0 || pos.Qty <= 0 || pos.Side != side {
+		return Fill{}, false
+	}
+	opener, err := c.EntryClientOrderID(symbol, side)
+	if err != nil || opener != clientID {
+		return Fill{}, false
+	}
+	if !positionQtyWithinOrder(pos.Qty, qty) {
+		return Fill{}, false
+	}
+	id := ""
+	if orderID != 0 {
+		id = strconv.FormatInt(orderID, 10)
+	}
+	return Fill{
+		OrderID:      id,
+		Price:        pos.Entry,
+		Qty:          pos.Qty,
+		Status:       StatusFilled,
+		Side:         side,
+		FromExchange: true,
+	}, true
+}
+
+// positionQtyWithinOrder 拒绝把一张更大的已有仓当成这次开仓。
+// 部分成交时持仓量可以小于委托量。
+func positionQtyWithinOrder(posQty, orderQty float64) bool {
+	if posQty <= 0 || orderQty <= 0 {
+		return false
+	}
+	slack := orderQty * 1e-6
+	if slack < 1e-8 {
+		slack = 1e-8
+	}
+	return posQty <= orderQty+slack
 }
 
 func (c *USDMClient) PlaceProtection(req Protection) error {
@@ -1816,47 +1891,49 @@ func decodeOrder(body []byte) (binanceOrder, error) {
 	return resp, nil
 }
 
-// fillLookupTries 是订单回报没有均价时，改查 userTrades 的次数。第一次不等待。
-var fillLookupTries = 5
+// fillLookupTries 是订单回报没有均价时，轮询查单和 userTrades 的次数。第一次不等待。
+// RESULT 的市价单可能先回到 FILLED，但 avgPrice / executedQty 仍是 0，userTrades 还要再晚一点。
+var fillLookupTries = 8
 
-// fillLookupGap 是两次 userTrades 查询之间的间隔。测试可以改成 0。
+// fillLookupGap 是两次查询之间的间隔。测试可以改成 0。
 var fillLookupGap = 200 * time.Millisecond
 
-// settleFill 用订单的 avgPrice 和 executedQty。两者都没有时查这笔 orderId 的 userTrades。
-// 不用调用方传入的标记价。读不到成交就返回错误。
+// settleFill 用订单的 avgPrice 和 executedQty。没有的话按间隔重查订单，并查这笔 orderId 的 userTrades。
+// 不用调用方传入的标记价。读不到成交就返回「成交没有返回均价」。
 func (c *USDMClient) settleFill(symbol string, resp binanceOrder, side Side, qty float64) (Fill, error) {
-	if mapStatus(resp.Status) != StatusFilled && resp.OrderID != 0 {
-		body, err := c.signed(http.MethodGet, "/fapi/v1/order", url.Values{
-			"symbol":  {symbol},
-			"orderId": {strconv.FormatInt(resp.OrderID, 10)},
-		})
-		if err != nil {
-			return Fill{}, err
-		}
-		resp, err = decodeOrder(body)
-		if err != nil {
-			return Fill{}, err
-		}
-	}
-	fill := fillFromOrder(resp, side, 0, qty)
-	if fill.FromExchange && fill.Price > 0 && fill.Qty > 0 {
-		if fill.Status != StatusFilled {
-			fill.Status = StatusFilled
-		}
-		return fill, nil
-	}
-	if resp.OrderID == 0 {
-		return Fill{}, invalid("成交没有返回均价")
-	}
-	var last error
 	tries := fillLookupTries
 	if tries < 1 {
 		tries = 1
 	}
+	var last error
+	confirmedBlank := false
 	for attempt := 0; attempt < tries; attempt++ {
 		if attempt > 0 && fillLookupGap > 0 {
 			time.Sleep(fillLookupGap)
 		}
+		// 非 FILLED 立刻重查。已经标成 FILLED 但没有均价时，从第二次开始重查：
+		// 第一跳仍用下单回报，避免多打一次刚写完的空单。
+		refresh := resp.OrderID != 0 && (attempt > 0 || mapStatus(resp.Status) != StatusFilled)
+		if refresh {
+			body, err := c.signed(http.MethodGet, "/fapi/v1/order", url.Values{
+				"symbol":  {symbol},
+				"orderId": {strconv.FormatInt(resp.OrderID, 10)},
+			})
+			if err != nil {
+				last = err
+			} else if next, decErr := decodeOrder(body); decErr != nil {
+				last = decErr
+			} else {
+				resp = next
+			}
+		}
+		if fill, ok := pricedFill(resp, side, qty); ok {
+			return fill, nil
+		}
+		if resp.OrderID == 0 {
+			return Fill{}, invalid("成交没有返回均价")
+		}
+		confirmedBlank = true
 		rows, err := c.listUserTrades(symbol, time.Time{}, time.Time{}, resp.OrderID)
 		if err != nil {
 			last = err
@@ -1875,10 +1952,26 @@ func (c *USDMClient) settleFill(symbol string, resp binanceOrder, side Side, qty
 			}, nil
 		}
 	}
-	if last != nil {
+	if !confirmedBlank && last != nil {
 		return Fill{}, last
 	}
 	return Fill{}, invalid("成交没有返回均价")
+}
+
+func pricedFill(resp binanceOrder, side Side, qty float64) (Fill, bool) {
+	fill := fillFromOrder(resp, side, 0, qty)
+	if fill.FromExchange && fill.Price > 0 && fill.Qty > 0 {
+		if fill.Status != StatusFilled {
+			fill.Status = StatusFilled
+		}
+		return fill, true
+	}
+	return Fill{}, false
+}
+
+func missingFillPrice(err error) bool {
+	var v *ValidationError
+	return errors.As(err, &v) && v != nil && v.Error() == "成交没有返回均价"
 }
 
 func vwapTrades(rows []userTrade) TradeLeg {
