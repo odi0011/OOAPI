@@ -109,6 +109,7 @@ func TestExpectancyGateWidensOrSkipsEntry(t *testing.T) {
 	cfg.GambleMode = true
 	cfg.ScalpSlPct = 0.003
 	cfg.ScalpTpPct = MinScalpTpPct
+	cfg.FeeEdgeMult = 1e-6
 	eng := withSecrets(NewEngine(cfg, paper, DiscardLogger()))
 	eng.SetUser(41)
 	if err := eng.Start(calmStart(now, 20)); err != nil {
@@ -176,6 +177,7 @@ func TestExpectancyGateWidensOrSkipsEntry(t *testing.T) {
 	plainCfg := testConfig()
 	plainCfg.GambleMode = true
 	plainCfg.ScalpTpPct = 0.001
+	plainCfg.FeeEdgeMult = 1e-6
 	plainEng := withSecrets(NewEngine(plainCfg, plainPaper, DiscardLogger()))
 	if err := plainEng.Start(calmStart(now.Add(time.Hour), 20)); err != nil {
 		t.Fatal(err)
@@ -207,6 +209,7 @@ func TestStrategyCapAndGateToggle(t *testing.T) {
 	cfg.GambleMode = true
 	cfg.ScalpSlPct = 0.003
 	cfg.ScalpTpPct = MinScalpTpPct
+	cfg.FeeEdgeMult = 1e-6
 	cfg.ExpectancyGate = true
 	cfg.ExpectancyTpCapR = 0.01
 	eng := withSecrets(NewEngine(cfg, tight, DiscardLogger()))
@@ -310,6 +313,7 @@ func TestCommissionRatesDriveTakeDistance(t *testing.T) {
 	cfg.GambleMode = true
 	cfg.ScalpSlPct = 0.003
 	cfg.ScalpTpPct = MinScalpTpPct
+	cfg.FeeEdgeMult = 1e-6
 
 	down := &ratePaper{Paper: NewPaper(), err: errors.New("commission down")}
 	eng := withSecrets(NewEngine(cfg, down, DiscardLogger()))

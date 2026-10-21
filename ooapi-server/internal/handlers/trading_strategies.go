@@ -51,6 +51,8 @@ s.max_open_positions,
 s.rsi_long_min, s.rsi_long_max, s.rsi_short_min, s.rsi_short_max,
 s.gamble_mode, s.scalp_tp_pct, s.scalp_sl_pct,
 s.r_fraction, s.expectancy_tp_cap_r, s.taker_fee_rate, s.maker_fee_rate, s.expectancy_gate,
+s.reverse_min_hold_bars, s.reverse_min_gap_pct, s.cooldown_bars_after_loss,
+s.sl_noise_mult, s.tp_atr_mult, s.fee_edge_mult,
 s.running,
 s.created_at, s.updated_at, k.network, k.status, k.label`
 
@@ -64,8 +66,10 @@ INSERT INTO trading_strategies (
 	rsi_long_min, rsi_long_max, rsi_short_min, rsi_short_max,
 	gamble_mode, scalp_tp_pct, scalp_sl_pct,
 	r_fraction, expectancy_tp_cap_r, taker_fee_rate, maker_fee_rate, expectancy_gate,
+	reverse_min_hold_bars, reverse_min_gap_pct, cooldown_bars_after_loss,
+	sl_noise_mult, tp_atr_mult, fee_edge_mult,
 	running
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const strategyListSQL = `
 SELECT ` + strategySelectCols + `
@@ -89,7 +93,9 @@ SET symbol = ?, leverage = ?, margin_mode = ?, ema_fast = ?, ema_slow = ?, timef
 	max_open_positions = ?,
 	rsi_long_min = ?, rsi_long_max = ?, rsi_short_min = ?, rsi_short_max = ?,
 	gamble_mode = ?, scalp_tp_pct = ?, scalp_sl_pct = ?,
-	r_fraction = ?, expectancy_tp_cap_r = ?, taker_fee_rate = ?, maker_fee_rate = ?, expectancy_gate = ?
+	r_fraction = ?, expectancy_tp_cap_r = ?, taker_fee_rate = ?, maker_fee_rate = ?, expectancy_gate = ?,
+	reverse_min_hold_bars = ?, reverse_min_gap_pct = ?, cooldown_bars_after_loss = ?,
+	sl_noise_mult = ?, tp_atr_mult = ?, fee_edge_mult = ?
 WHERE id = ? AND user_id = ?`
 
 const strategyRunningSQL = `
@@ -149,6 +155,12 @@ type strategyWrite struct {
 	TakerFeeRate          *float64 `json:"takerFeeRate"`
 	MakerFeeRate          *float64 `json:"makerFeeRate"`
 	ExpectancyGate        *bool    `json:"expectancyGate"`
+	ReverseMinHoldBars    *int     `json:"reverseMinHoldBars"`
+	ReverseMinGapPct      *float64 `json:"reverseMinGapPct"`
+	CooldownBarsAfterLoss *int     `json:"cooldownBarsAfterLoss"`
+	SlNoiseMult           *float64 `json:"slNoiseMult"`
+	TpAtrMult             *float64 `json:"tpAtrMult"`
+	FeeEdgeMult           *float64 `json:"feeEdgeMult"`
 }
 
 type strategyRecord struct {
@@ -189,6 +201,12 @@ type strategyRecord struct {
 	TakerFeeRate          float64
 	MakerFeeRate          float64
 	ExpectancyGate        bool
+	ReverseMinHoldBars    int
+	ReverseMinGapPct      float64
+	CooldownBarsAfterLoss int
+	SlNoiseMult           float64
+	TpAtrMult             float64
+	FeeEdgeMult           float64
 	Running               bool
 }
 
@@ -230,6 +248,12 @@ type strategyView struct {
 	TakerFeeRate          float64  `json:"takerFeeRate"`
 	MakerFeeRate          float64  `json:"makerFeeRate"`
 	ExpectancyGate        bool     `json:"expectancyGate"`
+	ReverseMinHoldBars    int      `json:"reverseMinHoldBars"`
+	ReverseMinGapPct      float64  `json:"reverseMinGapPct"`
+	CooldownBarsAfterLoss int      `json:"cooldownBarsAfterLoss"`
+	SlNoiseMult           float64  `json:"slNoiseMult"`
+	TpAtrMult             float64  `json:"tpAtrMult"`
+	FeeEdgeMult           float64  `json:"feeEdgeMult"`
 	Running               bool     `json:"running"`
 	ExchangeKeyActive     bool     `json:"exchangeKeyActive"`
 	ExchangeKeyNetwork    string   `json:"exchangeKeyNetwork,omitempty"`
@@ -281,6 +305,12 @@ func defaultStrategy() strategyRecord {
 		TakerFeeRate:          trading.TakerFeeRate,
 		MakerFeeRate:          trading.MakerFeeRate,
 		ExpectancyGate:        true,
+		ReverseMinHoldBars:    0,
+		ReverseMinGapPct:      trading.DefaultReverseMinGapPct,
+		CooldownBarsAfterLoss: trading.DefaultCooldownBarsAfterLoss,
+		SlNoiseMult:           trading.DefaultSlNoiseMult,
+		TpAtrMult:             trading.DefaultTpAtrMult,
+		FeeEdgeMult:           trading.DefaultFeeEdgeMult,
 	}
 }
 
@@ -323,6 +353,12 @@ func (row strategyRow) view() strategyView {
 		TakerFeeRate:          rec.TakerFeeRate,
 		MakerFeeRate:          rec.MakerFeeRate,
 		ExpectancyGate:        rec.ExpectancyGate,
+		ReverseMinHoldBars:    rec.ReverseMinHoldBars,
+		ReverseMinGapPct:      rec.ReverseMinGapPct,
+		CooldownBarsAfterLoss: rec.CooldownBarsAfterLoss,
+		SlNoiseMult:           rec.SlNoiseMult,
+		TpAtrMult:             rec.TpAtrMult,
+		FeeEdgeMult:           rec.FeeEdgeMult,
 		Running:               rec.Running,
 		ExchangeKeyActive:     row.ExchangeKeyActive,
 		ExchangeKeyNetwork:    row.ExchangeKeyNetwork,
@@ -436,6 +472,8 @@ func CreateTradingStrategy(c *gin.Context) {
 		rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax,
 		boolInt(rec.GambleMode), rec.ScalpTpPct, rec.ScalpSlPct,
 		rec.RFraction, rec.ExpectancyTpCapR, rec.TakerFeeRate, rec.MakerFeeRate, boolInt(rec.ExpectancyGate),
+		rec.ReverseMinHoldBars, rec.ReverseMinGapPct, rec.CooldownBarsAfterLoss,
+		rec.SlNoiseMult, rec.TpAtrMult, rec.FeeEdgeMult,
 		0,
 	)
 	if err != nil {
@@ -508,6 +546,8 @@ func UpdateTradingStrategy(c *gin.Context) {
 		rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax,
 		boolInt(rec.GambleMode), rec.ScalpTpPct, rec.ScalpSlPct,
 		rec.RFraction, rec.ExpectancyTpCapR, rec.TakerFeeRate, rec.MakerFeeRate, boolInt(rec.ExpectancyGate),
+		rec.ReverseMinHoldBars, rec.ReverseMinGapPct, rec.CooldownBarsAfterLoss,
+		rec.SlNoiseMult, rec.TpAtrMult, rec.FeeEdgeMult,
 		id, user.ID,
 	)
 	if err != nil {
@@ -581,6 +621,8 @@ func scanStrategy(s scanner) (strategyRow, error) {
 		&row.Record.RSILongMin, &row.Record.RSILongMax, &row.Record.RSIShortMin, &row.Record.RSIShortMax,
 		&gamble, &row.Record.ScalpTpPct, &row.Record.ScalpSlPct,
 		&row.Record.RFraction, &row.Record.ExpectancyTpCapR, &row.Record.TakerFeeRate, &row.Record.MakerFeeRate, &expectancyGate,
+		&row.Record.ReverseMinHoldBars, &row.Record.ReverseMinGapPct, &row.Record.CooldownBarsAfterLoss,
+		&row.Record.SlNoiseMult, &row.Record.TpAtrMult, &row.Record.FeeEdgeMult,
 		&running,
 		&row.CreatedAt, &row.UpdatedAt,
 		&network, &status, &label,
@@ -866,11 +908,41 @@ func applyStrategyWrite(base strategyRecord, in strategyWrite, creating bool) (s
 	if in.ExpectancyGate != nil {
 		out.ExpectancyGate = *in.ExpectancyGate
 	}
+	if in.ReverseMinHoldBars != nil {
+		out.ReverseMinHoldBars = *in.ReverseMinHoldBars
+	}
+	if in.ReverseMinGapPct != nil {
+		out.ReverseMinGapPct = round8(*in.ReverseMinGapPct)
+	}
+	if in.CooldownBarsAfterLoss != nil {
+		out.CooldownBarsAfterLoss = *in.CooldownBarsAfterLoss
+	}
+	if in.SlNoiseMult != nil {
+		out.SlNoiseMult = round8(*in.SlNoiseMult)
+	}
+	if in.TpAtrMult != nil {
+		out.TpAtrMult = round8(*in.TpAtrMult)
+	}
+	if in.FeeEdgeMult != nil {
+		out.FeeEdgeMult = round8(*in.FeeEdgeMult)
+	}
 	if out.ScalpTpPct <= 0 {
 		out.ScalpTpPct = trading.DefaultScalpPct
 	}
 	if out.ScalpSlPct <= 0 {
 		out.ScalpSlPct = trading.DefaultScalpPct
+	}
+	if out.ReverseMinGapPct <= 0 {
+		out.ReverseMinGapPct = trading.DefaultReverseMinGapPct
+	}
+	if out.SlNoiseMult <= 0 {
+		out.SlNoiseMult = trading.DefaultSlNoiseMult
+	}
+	if out.TpAtrMult <= 0 {
+		out.TpAtrMult = trading.DefaultTpAtrMult
+	}
+	if out.FeeEdgeMult <= 0 {
+		out.FeeEdgeMult = trading.DefaultFeeEdgeMult
 	}
 	if err := validateStrategy(out, creating && in.ExchangeKeyID == nil); err != nil {
 		return strategyRecord{}, err
@@ -977,6 +1049,18 @@ func validateStrategy(rec strategyRecord, missingKey bool) *tradingError {
 	}
 	if rec.RSIShortMin < 0 || rec.RSIShortMax > 100 || rec.RSIShortMin >= rec.RSIShortMax {
 		return &tradingError{http.StatusBadRequest, "做空 RSI 区间要落在 0 到 100，且下限小于上限", "rsiShortMin"}
+	}
+	if rec.ReverseMinHoldBars < 0 || rec.ReverseMinHoldBars > 10000 {
+		return &tradingError{http.StatusBadRequest, "反向最少持仓 K 线要在 0 到 10000 之间", "reverseMinHoldBars"}
+	}
+	if rec.ReverseMinGapPct <= 0 || rec.ReverseMinGapPct > 0.2 {
+		return &tradingError{http.StatusBadRequest, "反向最小张开要大于 0 且不超过 20%", "reverseMinGapPct"}
+	}
+	if rec.CooldownBarsAfterLoss < 0 || rec.CooldownBarsAfterLoss > 10000 {
+		return &tradingError{http.StatusBadRequest, "亏损冷却 K 线要在 0 到 10000 之间，0 表示关闭", "cooldownBarsAfterLoss"}
+	}
+	if rec.SlNoiseMult <= 0 || rec.SlNoiseMult > 1000 || rec.TpAtrMult <= 0 || rec.TpAtrMult > 1000 || rec.FeeEdgeMult <= 0 || rec.FeeEdgeMult > 1000 {
+		return &tradingError{http.StatusBadRequest, "波动和手续费倍数要大于 0 且不超过 1000", "entryFilterMult"}
 	}
 	return nil
 }

@@ -156,7 +156,8 @@ func backtest(cfg Config, candles, higher []Candle, fee, slip float64) (Backtest
 			if err != nil {
 				return BacktestResult{}, err
 			}
-			exit, reason, raw := backtestExit(side, bar.Close, stop, take, cross)
+			fastEMA, slowEMA, emaOK := emaPair(closesOf(window), cfg.EmaFast, cfg.EmaSlow)
+			exit, reason, raw := backtestExit(cfg, side, bar.Close, stop, take, cross, opened, bar.OpenTime, fastEMA, slowEMA, emaOK)
 			if !exit {
 				continue
 			}
@@ -242,7 +243,7 @@ func entrySide(cfg Config, candles, higher []Candle) (Side, string, error) {
 	return SideForCross(cross), string(cross), nil
 }
 
-func backtestExit(side Side, price, stop, take float64, cross Cross) (bool, string, float64) {
+func backtestExit(cfg Config, side Side, price, stop, take float64, cross Cross, opened, now time.Time, fastEMA, slowEMA float64, emaOK bool) (bool, string, float64) {
 	if side == SideLong {
 		if price <= stop {
 			return true, "stop_loss", stop
@@ -250,7 +251,7 @@ func backtestExit(side Side, price, stop, take float64, cross Cross) (bool, stri
 		if price >= take {
 			return true, "take_profit", take
 		}
-		if cross == CrossDeath {
+		if cross == CrossDeath && allowReverseExit(cfg, side, cross, price, opened, now, fastEMA, slowEMA, emaOK) {
 			return true, "reverse_signal", price
 		}
 		return false, "", 0
@@ -261,7 +262,7 @@ func backtestExit(side Side, price, stop, take float64, cross Cross) (bool, stri
 	if price <= take {
 		return true, "take_profit", take
 	}
-	if cross == CrossGolden {
+	if cross == CrossGolden && allowReverseExit(cfg, side, cross, price, opened, now, fastEMA, slowEMA, emaOK) {
 		return true, "reverse_signal", price
 	}
 	return false, "", 0

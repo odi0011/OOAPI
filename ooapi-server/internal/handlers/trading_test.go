@@ -993,7 +993,7 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 				StopR: tradingArgFloat(vals[7]), TakeProfitR: tradingArgFloat(vals[8]),
 				DailyLossPct: tradingArgFloat(vals[9]), MaxMarginUsdt: tradingArgFloat(vals[10]),
 				ExchangeKeyID: tradingArgInt(vals[11]), Mode: tradingArgString(vals[12]),
-				Market:   tradingArgString(vals[13]),
+				Market:    tradingArgString(vals[13]),
 				EntryMode: tradingArgString(vals[14]), MinScore: int(tradingArgInt(vals[15])),
 				MinWinRate: tradingArgFloat(vals[16]), MinTrades: int(tradingArgInt(vals[17])),
 				MaxMarginPerTradeUsdt: tradingArgFloat(vals[18]), MaxConsecutiveLosses: int(tradingArgInt(vals[19])),
@@ -1005,13 +1005,19 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 				ScalpTpPct: tradingArgFloat(vals[28]), ScalpSlPct: tradingArgFloat(vals[29]),
 				RFraction: tradingArgFloat(vals[30]), ExpectancyTpCapR: tradingArgFloat(vals[31]),
 				TakerFeeRate: tradingArgFloat(vals[32]), MakerFeeRate: tradingArgFloat(vals[33]),
-				ExpectancyGate: tradingArgInt(vals[34]) == 1,
-				Running:        tradingArgInt(vals[35]) == 1,
+				ExpectancyGate:        tradingArgInt(vals[34]) == 1,
+				ReverseMinHoldBars:    int(tradingArgInt(vals[35])),
+				ReverseMinGapPct:      tradingArgFloat(vals[36]),
+				CooldownBarsAfterLoss: int(tradingArgInt(vals[37])),
+				SlNoiseMult:           tradingArgFloat(vals[38]),
+				TpAtrMult:             tradingArgFloat(vals[39]),
+				FeeEdgeMult:           tradingArgFloat(vals[40]),
+				Running:               tradingArgInt(vals[41]) == 1,
 			},
 		}
 		return tradingTestResult{id, 1}, nil
 	case normTradingSQL(strategyUpdateSQL):
-		id, userID := tradingArgInt(vals[34]), tradingArgInt(vals[35])
+		id, userID := tradingArgInt(vals[40]), tradingArgInt(vals[41])
 		row := d.strategies[id]
 		if row == nil || row.userID != userID {
 			return tradingTestResult{0, 0}, nil
@@ -1036,8 +1042,14 @@ func (c *tradingTestConn) ExecContext(_ context.Context, q string, args []driver
 			ScalpTpPct: tradingArgFloat(vals[27]), ScalpSlPct: tradingArgFloat(vals[28]),
 			RFraction: tradingArgFloat(vals[29]), ExpectancyTpCapR: tradingArgFloat(vals[30]),
 			TakerFeeRate: tradingArgFloat(vals[31]), MakerFeeRate: tradingArgFloat(vals[32]),
-			ExpectancyGate: tradingArgInt(vals[33]) == 1,
-			Running:        running,
+			ExpectancyGate:        tradingArgInt(vals[33]) == 1,
+			ReverseMinHoldBars:    int(tradingArgInt(vals[34])),
+			ReverseMinGapPct:      tradingArgFloat(vals[35]),
+			CooldownBarsAfterLoss: int(tradingArgInt(vals[36])),
+			SlNoiseMult:           tradingArgFloat(vals[37]),
+			TpAtrMult:             tradingArgFloat(vals[38]),
+			FeeEdgeMult:           tradingArgFloat(vals[39]),
+			Running:               running,
 		}
 		row.updatedAt = d.stampLocked()
 		return tradingTestResult{0, 1}, nil
@@ -1237,6 +1249,8 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 		"rsi_long_min", "rsi_long_max", "rsi_short_min", "rsi_short_max",
 		"gamble_mode", "scalp_tp_pct", "scalp_sl_pct",
 		"r_fraction", "expectancy_tp_cap_r", "taker_fee_rate", "maker_fee_rate", "expectancy_gate",
+		"reverse_min_hold_bars", "reverse_min_gap_pct", "cooldown_bars_after_loss",
+		"sl_noise_mult", "tp_atr_mult", "fee_edge_mult",
 		"running",
 		"created_at", "updated_at", "network", "status", "label",
 	}
@@ -1290,6 +1304,8 @@ func (d *tradingTestDriver) strategyRows(userID, id int64) driver.Rows {
 			rec.RSILongMin, rec.RSILongMax, rec.RSIShortMin, rec.RSIShortMax,
 			gamble, rec.ScalpTpPct, rec.ScalpSlPct,
 			rec.RFraction, rec.ExpectancyTpCapR, rec.TakerFeeRate, rec.MakerFeeRate, gate,
+			int64(rec.ReverseMinHoldBars), rec.ReverseMinGapPct, int64(rec.CooldownBarsAfterLoss),
+			rec.SlNoiseMult, rec.TpAtrMult, rec.FeeEdgeMult,
 			running,
 			row.createdAt, row.updatedAt, network, status, label,
 		})
@@ -1521,4 +1537,3 @@ func TestTradingEnginesListAndMultiSymbolBacktest(t *testing.T) {
 		t.Fatalf("GetTradingBacktest rejected DOGEUSDT before days check: %d %s", dogeBacktest.Code, dogeBacktest.Body.String())
 	}
 }
-

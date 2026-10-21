@@ -216,6 +216,7 @@ func (e *Engine) bookExchangeFlat(in StepInput, book flatBook, canceled []int64)
 		Reason:   reason,
 		ClosedAt: closedAt,
 	})
+	e.stampLoss(tradeNet, closedAt)
 	e.captureIncome(now)
 	halted := DailyHaltBreached(e.ledger.Capital, e.ledger.Realized, e.cfg.DailyLossPct)
 	if halted {
@@ -232,11 +233,7 @@ func (e *Engine) bookExchangeFlat(in StepInput, book flatBook, canceled []int64)
 		return e.Snapshot(), err
 	}
 	e.markBar(in)
-	if tradeNet < 0 {
-		e.lossStreak++
-	} else if tradeNet > 0 {
-		e.lossStreak = 0
-	}
+	e.noteClosePnL(tradeNet, closedAt)
 	e.note("exit", reason)
 	if e.pausedReason != "" {
 		e.note("pause", e.pausedReason)

@@ -126,6 +126,27 @@ const (
 	// ReasonEntryUnfilled 表示市价开仓没有回到均价，且交易所上没有这笔 oo-ent 仓。
 	// 引擎回到 Armed，不进 Error，也不平掉同密钥上的手动仓。
 	ReasonEntryUnfilled = "entry_unfilled"
+	// ReasonSLInsideNoise 表示止损距离小于波动倍数乘 ATR14%。
+	// 赌一把比的是 scalp_sl_pct。引擎留在 Armed，只跳过这一拍开仓。
+	ReasonSLInsideNoise = "sl_inside_noise"
+	// ReasonTPUnreachable 表示止盈距离大于波动倍数乘 ATR14%，这段行情到不了。
+	ReasonTPUnreachable = "tp_unreachable"
+	// ReasonFeeEdgeTooSmall 表示毛止盈距离小于往返 taker 手续费的倍数。
+	ReasonFeeEdgeTooSmall = "fee_edge_too_small"
+	// ReasonLossCooldown 表示上一笔亏损平仓之后，还没走完冷却 K 线。
+	// 这不是暂停：running 保持为真，pauseEntries 不动。
+	ReasonLossCooldown = "loss_cooldown"
+
+	// DefaultReverseMinGapPct 是反向交叉出场要求的快慢线最小距离，相对价格（0.05%）。
+	DefaultReverseMinGapPct = 0.0005
+	// DefaultCooldownBarsAfterLoss 是亏损平仓后跳过开仓的已收盘 K 线根数。
+	DefaultCooldownBarsAfterLoss = 3
+	// DefaultSlNoiseMult 是「止损落在噪声里」的 ATR 倍数。
+	DefaultSlNoiseMult = 1.2
+	// DefaultTpAtrMult 是「止盈到不了」的 ATR 倍数。
+	DefaultTpAtrMult = 8
+	// DefaultFeeEdgeMult 是毛止盈相对往返 taker 手续费的最小倍数。
+	DefaultFeeEdgeMult = 8
 
 	// DefaultScalpPct 是赌一把模式下止损和止盈相对入场价的默认距离（0.3%）。
 	DefaultScalpPct = 0.003
@@ -231,6 +252,20 @@ type Config struct {
 	// 期望门可以在这个距离之上放宽，上限是 ExpectancyTpCapR，不会把它改小。
 	ScalpTpPct float64 `json:"scalpTpPct,omitempty"`
 	ScalpSlPct float64 `json:"scalpSlPct,omitempty"`
+	// ReverseMinHoldBars 是反向 EMA 交叉至少要拿住的 K 线根数。
+	// 0 保持旧行为：交叉当根就可以反向平仓。持仓时间用 e.pos.OpenedAt。
+	ReverseMinHoldBars int `json:"reverseMinHoldBars,omitempty"`
+	// ReverseMinGapPct 是反向平仓要求的 |快线-慢线|，相对价格，并且要在新方向上。
+	// 0 表示用 DefaultReverseMinGapPct。不够这个距离就留给交易所止损止盈。
+	ReverseMinGapPct float64 `json:"reverseMinGapPct,omitempty"`
+	// CooldownBarsAfterLoss 是亏损平仓后跳过开仓的已收盘 K 线根数。
+	// 0 表示关闭。默认 3。不改 running，也不动 pauseEntries。
+	CooldownBarsAfterLoss int `json:"cooldownBarsAfterLoss,omitempty"`
+	// SlNoiseMult / TpAtrMult / FeeEdgeMult 是入场波动和手续费过滤的倍数。
+	// 0 表示用 DefaultSlNoiseMult（1.2）、DefaultTpAtrMult（8）、DefaultFeeEdgeMult（8）。
+	SlNoiseMult float64 `json:"slNoiseMult,omitempty"`
+	TpAtrMult   float64 `json:"tpAtrMult,omitempty"`
+	FeeEdgeMult float64 `json:"feeEdgeMult,omitempty"`
 	// Revision 是热更新序号。更新的配置不会被更旧的调度快照盖掉。不入库。
 	Revision int64 `json:"-"`
 	// CreatedAt 是策略创建时间。累计已实现从这里起算，进程重启后仍用它。
@@ -239,22 +274,27 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		Symbol:           SymbolXRPUSDT,
-		Leverage:         DefaultLeverage,
-		MarginMode:       MarginIsolated,
-		EmaFast:          DefaultEmaFast,
-		EmaSlow:          DefaultEmaSlow,
-		Timeframe:        Timeframe5m,
-		StopR:            DefaultStopR,
-		TakeProfitR:      DefaultTakeProfitR,
-		DailyLossPct:     DefaultDailyLossPct,
-		MaxMarginUsdt:    DefaultMaxMarginUSDT,
-		Mode:             ModeTestnet,
-		RFraction:        DefaultRFraction,
-		ExpectancyTpCapR: float64(ExpectancyTpCapR),
-		TakerFeeRate:     TakerFeeRate,
-		MakerFeeRate:     MakerFeeRate,
-		ExpectancyGate:   true,
+		Symbol:                SymbolXRPUSDT,
+		Leverage:              DefaultLeverage,
+		MarginMode:            MarginIsolated,
+		EmaFast:               DefaultEmaFast,
+		EmaSlow:               DefaultEmaSlow,
+		Timeframe:             Timeframe5m,
+		StopR:                 DefaultStopR,
+		TakeProfitR:           DefaultTakeProfitR,
+		DailyLossPct:          DefaultDailyLossPct,
+		MaxMarginUsdt:         DefaultMaxMarginUSDT,
+		Mode:                  ModeTestnet,
+		RFraction:             DefaultRFraction,
+		ExpectancyTpCapR:      float64(ExpectancyTpCapR),
+		TakerFeeRate:          TakerFeeRate,
+		MakerFeeRate:          MakerFeeRate,
+		ExpectancyGate:        true,
+		ReverseMinGapPct:      DefaultReverseMinGapPct,
+		CooldownBarsAfterLoss: DefaultCooldownBarsAfterLoss,
+		SlNoiseMult:           DefaultSlNoiseMult,
+		TpAtrMult:             DefaultTpAtrMult,
+		FeeEdgeMult:           DefaultFeeEdgeMult,
 	}
 }
 
@@ -303,6 +343,24 @@ func (c Config) Normalize() Config {
 	}
 	if c.MakerFeeRate <= 0 {
 		c.MakerFeeRate = MakerFeeRate
+	}
+	if c.ReverseMinHoldBars < 0 {
+		c.ReverseMinHoldBars = 0
+	}
+	if c.ReverseMinGapPct <= 0 {
+		c.ReverseMinGapPct = DefaultReverseMinGapPct
+	}
+	if c.CooldownBarsAfterLoss < 0 {
+		c.CooldownBarsAfterLoss = DefaultCooldownBarsAfterLoss
+	}
+	if c.SlNoiseMult <= 0 {
+		c.SlNoiseMult = DefaultSlNoiseMult
+	}
+	if c.TpAtrMult <= 0 {
+		c.TpAtrMult = DefaultTpAtrMult
+	}
+	if c.FeeEdgeMult <= 0 {
+		c.FeeEdgeMult = DefaultFeeEdgeMult
 	}
 	if c.MaxMarginUsdt <= 0 {
 		c.MaxMarginUsdt = DefaultMaxMarginUSDT
@@ -387,6 +445,12 @@ func invalidLeverage() error {
 
 // Validate 与策略接口对齐：USDT 永续、逐仓、杠杆不超过 MaxLeverage。
 func (c Config) Validate() error {
+	if c.ReverseMinHoldBars < 0 || c.ReverseMinHoldBars > 10000 {
+		return invalid("反向最少持仓 K 线要在 0 到 10000 之间")
+	}
+	if c.CooldownBarsAfterLoss < 0 || c.CooldownBarsAfterLoss > 10000 {
+		return invalid("亏损冷却 K 线要在 0 到 10000 之间")
+	}
 	c = c.Normalize()
 	if !AllowedSymbol(c.Symbol) {
 		return invalid("交易对必须是 USDT 永续代码，例如 XRPUSDT、DOGEUSDT")
@@ -462,6 +526,12 @@ func (c Config) Validate() error {
 	}
 	if err := validRSIPair(c.RSIShortMin, c.RSIShortMax); err != nil {
 		return err
+	}
+	if c.ReverseMinGapPct <= 0 || c.ReverseMinGapPct > 0.2 {
+		return invalid("反向最小张开要大于 0 且不超过 20%")
+	}
+	if c.SlNoiseMult <= 0 || c.SlNoiseMult > 1000 || c.TpAtrMult <= 0 || c.TpAtrMult > 1000 || c.FeeEdgeMult <= 0 || c.FeeEdgeMult > 1000 {
+		return invalid("波动和手续费倍数要大于 0 且不超过 1000")
 	}
 	return nil
 }
