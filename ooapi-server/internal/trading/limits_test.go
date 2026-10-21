@@ -10,6 +10,7 @@ func TestOptionalRiskLimitsStayOffByDefault(t *testing.T) {
 	cfg.EntryMode = EntryModeTrend
 	cfg.MinScore = 1
 	cfg.DailyLossPct = DailyLossOffPct
+	cfg.CooldownBarsAfterLoss = 0
 	cfg.Leverage = 20
 	cfg.MaxMarginUsdt = 10
 	if cfg.OpenPositionLimit() != 0 || cfg.marginCap() != 0 || cfg.lossPauseCount() != 0 || cfg.balancePauseLine() != 0 {

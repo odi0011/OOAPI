@@ -202,6 +202,7 @@ func TestConsecutiveLossesPauseAndStayPaused(t *testing.T) {
 	cfg.EntryMode = EntryModeTrend
 	cfg.MinScore = 1
 	cfg.DailyLossPct = DailyLossOffPct
+	cfg.CooldownBarsAfterLoss = 0
 	cfg.MaxConsecutiveLosses = 3
 	paper := NewPaper()
 	eng := withSecrets(NewEngine(cfg, paper, DiscardLogger()))

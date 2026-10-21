@@ -376,6 +376,12 @@ func strategyConfig(row strategyRow) trading.Config {
 		TakerFeeRate:          rec.TakerFeeRate,
 		MakerFeeRate:          rec.MakerFeeRate,
 		ExpectancyGate:        rec.ExpectancyGate,
+		ReverseMinHoldBars:    rec.ReverseMinHoldBars,
+		ReverseMinGapPct:      rec.ReverseMinGapPct,
+		CooldownBarsAfterLoss: rec.CooldownBarsAfterLoss,
+		SlNoiseMult:           rec.SlNoiseMult,
+		TpAtrMult:             rec.TpAtrMult,
+		FeeEdgeMult:           rec.FeeEdgeMult,
 		CreatedAt:             parseTradingTime(row.CreatedAt),
 	}.Normalize()
 }

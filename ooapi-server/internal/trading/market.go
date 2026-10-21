@@ -144,12 +144,12 @@ func (c *USDMClient) readEquityUncached() (AccountEquity, error) {
 
 func parseAccountEquity(body []byte) (AccountEquity, error) {
 	var resp struct {
-		TotalWalletBalance          string `json:"totalWalletBalance"`
-		TotalUnrealizedProfit       string `json:"totalUnrealizedProfit"`
-		AvailableBalance            string `json:"availableBalance"`
-		TotalPositionInitialMargin  string `json:"totalPositionInitialMargin"`
-		TotalInitialMargin          string `json:"totalInitialMargin"`
-		Assets                      []struct {
+		TotalWalletBalance         string `json:"totalWalletBalance"`
+		TotalUnrealizedProfit      string `json:"totalUnrealizedProfit"`
+		AvailableBalance           string `json:"availableBalance"`
+		TotalPositionInitialMargin string `json:"totalPositionInitialMargin"`
+		TotalInitialMargin         string `json:"totalInitialMargin"`
+		Assets                     []struct {
 			Asset            string `json:"asset"`
 			WalletBalance    string `json:"walletBalance"`
 			UnrealizedProfit string `json:"unrealizedProfit"`
@@ -276,6 +276,14 @@ func parseCandles(body []byte) ([]Candle, error) {
 		if err != nil {
 			return nil, err
 		}
+		high, err := rawFloat(row[2])
+		if err != nil {
+			return nil, err
+		}
+		low, err := rawFloat(row[3])
+		if err != nil {
+			return nil, err
+		}
 		closePx, err := rawFloat(row[4])
 		if err != nil {
 			return nil, err
@@ -286,6 +294,8 @@ func parseCandles(body []byte) ([]Candle, error) {
 		}
 		out = append(out, Candle{
 			OpenTime: time.UnixMilli(int64(openMs)).UTC(),
+			High:     high,
+			Low:      low,
 			Close:    closePx,
 			Volume:   vol,
 		})

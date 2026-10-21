@@ -142,6 +142,8 @@ func scanStrategyUser(s scanner, userID *int64) (strategyRow, error) {
 		&row.Record.RSILongMin, &row.Record.RSILongMax, &row.Record.RSIShortMin, &row.Record.RSIShortMax,
 		&gamble, &row.Record.ScalpTpPct, &row.Record.ScalpSlPct,
 		&row.Record.RFraction, &row.Record.ExpectancyTpCapR, &row.Record.TakerFeeRate, &row.Record.MakerFeeRate, &expectancyGate,
+		&row.Record.ReverseMinHoldBars, &row.Record.ReverseMinGapPct, &row.Record.CooldownBarsAfterLoss,
+		&row.Record.SlNoiseMult, &row.Record.TpAtrMult, &row.Record.FeeEdgeMult,
 		&running,
 		&row.CreatedAt, &row.UpdatedAt,
 		&network, &status, &label,

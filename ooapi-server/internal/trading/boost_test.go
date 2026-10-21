@@ -587,6 +587,7 @@ func TestBoostForceSkipsBacktestGateWhenGamble(t *testing.T) {
 	eng.cfg.GambleMode = true
 	eng.cfg.ScalpTpPct = 0.001
 	eng.cfg.ScalpSlPct = 0.003
+	eng.cfg.FeeEdgeMult = 1e-6
 	in := passingStep(now, candles, price, 0.95)
 	in.Backtest.Trades = 1
 	in.Backtest.NetR = -1
@@ -638,6 +639,7 @@ func TestBoostForceStillRejectsStopBeyondLiquidation(t *testing.T) {
 	eng.cfg.Leverage = MaxLeverage
 	eng.cfg.ScalpSlPct = 0.2
 	eng.cfg.ScalpTpPct = DefaultScalpPct
+	eng.cfg.FeeEdgeMult = 1e-6
 	in := passingStep(now, candles, price, 0.99)
 	in.Backtest.Trades = 1
 	in.Backtest.NetR = -1
@@ -892,4 +894,3 @@ func TestIntrabarBoostDoesNotReverseOnUnclosedCandle(t *testing.T) {
 		t.Fatalf("unclosed forming candle triggered premature exit: %+v err=%v", held, err)
 	}
 }
-

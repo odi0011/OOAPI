@@ -32,6 +32,8 @@ func StdLogger() Logger { return stdLog{} }
 // Candle 是一根已收盘 K 线。信号用收盘价；trend 模式还看成交量。
 type Candle struct {
 	OpenTime time.Time `json:"openTime"`
+	High     float64   `json:"high,omitempty"`
+	Low      float64   `json:"low,omitempty"`
 	Close    float64   `json:"close"`
 	Volume   float64   `json:"volume,omitempty"`
 }
@@ -201,6 +203,12 @@ type Engine struct {
 	liveExpectancy    float64
 	takeProfitDist    float64
 	ordersSyncedUntil time.Time
+	// emaFastNow / emaSlowNow 是最近一次交叉计算的快慢线，反向出场用它们量张开。
+	emaFastNow float64
+	emaSlowNow float64
+	emaReady   bool
+	// lastLossAt 是上一笔亏损平仓的时间。冷却只挡开仓，不改 running。
+	lastLossAt time.Time
 }
 
 func NewEngine(cfg Config, ex Exchange, logger Logger) *Engine {
@@ -676,6 +684,11 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 	if key := barKey(in.Candles); key != "" && key == e.lastBarKey && !e.boosting(in) {
 		return e.Snapshot(), nil
 	}
+	// 亏损冷却只跳过开仓。running 保持为真，pauseEntries 不动，已有仓的止损止盈照旧。
+	if reason := e.lossCooldownReason(in.Now); reason != "" {
+		e.note("skip", reason)
+		return e.Snapshot(), nil
+	}
 	if !e.running {
 		return e.Snapshot(), ErrNotRunning
 	}
@@ -720,6 +733,11 @@ func (e *Engine) stepArmed(in StepInput) (Snapshot, error) {
 	// 胜率盖不住手续费时它们也不会被放行。
 	if gateReason == "" {
 		if reason := e.tpExpectancyReason(); reason != "" {
+			gateReason = reason
+		}
+	}
+	if gateReason == "" {
+		if reason := e.entryVolFeeReason(in); reason != "" {
 			gateReason = reason
 		}
 	}
@@ -1069,14 +1087,15 @@ func (e *Engine) settleWithoutOrders(in StepInput, reason string) (Snapshot, err
 	if exitPx <= 0 {
 		exitPx = e.pos.Entry
 	}
-	pnl := RealizedPnL(e.pos.Side, e.pos.Entry, exitPx, e.pos.Qty)
+	pnl := e.netClosePnL(e.pos.Side, e.pos.Entry, exitPx, e.pos.Qty)
 	e.closedSide = e.pos.Side
+	closedAt := at(in.Now)
 	_ = CloseEntry(e.openEntryID, e.userID, e.cfg.ID, e.cfg.Symbol, string(e.pos.Side), ExitFill{
 		Price:    exitPx,
 		Qty:      e.pos.Qty,
 		Realized: pnl,
 		Reason:   reason,
-		ClosedAt: at(in.Now),
+		ClosedAt: closedAt,
 	})
 	e.clearPos()
 	e.forgetPlan()
@@ -1084,6 +1103,7 @@ func (e *Engine) settleWithoutOrders(in StepInput, reason string) (Snapshot, err
 		return e.Snapshot(), err
 	}
 	e.markBar(in)
+	e.noteClosePnL(pnl, closedAt)
 	e.note("flat", reason)
 	if e.running {
 		if err := e.m.Transition(Event{Kind: EventStartOK, Reason: "rearm"}); err != nil {
@@ -1101,7 +1121,7 @@ func (e *Engine) exitSignal(price float64, cross Cross) (bool, string, float64) 
 		if price >= e.pos.Take {
 			return true, "take_profit", e.pos.Take
 		}
-		if cross == CrossDeath {
+		if cross == CrossDeath && e.reverseExitAllowed(price, cross) {
 			return true, "reverse_signal", price
 		}
 		return false, "", 0
@@ -1112,10 +1132,17 @@ func (e *Engine) exitSignal(price float64, cross Cross) (bool, string, float64) 
 	if price <= e.pos.Take {
 		return true, "take_profit", e.pos.Take
 	}
-	if cross == CrossGolden {
+	if cross == CrossGolden && e.reverseExitAllowed(price, cross) {
 		return true, "reverse_signal", price
 	}
 	return false, "", 0
+}
+
+func (e *Engine) reverseExitAllowed(price float64, cross Cross) bool {
+	if e == nil {
+		return false
+	}
+	return allowReverseExit(e.cfg, e.pos.Side, cross, price, e.pos.OpenedAt, e.stepAt, e.emaFastNow, e.emaSlowNow, e.emaReady)
 }
 
 func (e *Engine) flatten(in StepInput, reason string) error {
@@ -1163,7 +1190,7 @@ func (e *Engine) finishExit(in StepInput, reason string, price ...float64) (Snap
 	if exitQty <= 0 {
 		exitQty = e.pos.Qty
 	}
-	pnl := RealizedPnL(e.pos.Side, e.pos.Entry, fill.Price, exitQty)
+	pnl := e.netClosePnL(e.pos.Side, e.pos.Entry, fill.Price, exitQty)
 	closedAt := fill.At
 	if closedAt.IsZero() {
 		closedAt = at(in.Now)
@@ -1176,6 +1203,7 @@ func (e *Engine) finishExit(in StepInput, reason string, price ...float64) (Snap
 		Reason:   reason,
 		ClosedAt: closedAt,
 	})
+	e.stampLoss(pnl, closedAt)
 	var halted bool
 	if e.incomeBooked {
 		halted = e.ledger.Halted || DailyHaltBreached(e.ledger.Capital, e.ledger.Realized, e.cfg.DailyLossPct)
@@ -1192,11 +1220,7 @@ func (e *Engine) finishExit(in StepInput, reason string, price ...float64) (Snap
 		return e.Snapshot(), err
 	}
 	e.markBar(in)
-	if pnl < 0 {
-		e.lossStreak++
-	} else if pnl > 0 {
-		e.lossStreak = 0
-	}
+	e.noteClosePnL(pnl, closedAt)
 	e.note("exit", reason)
 	if e.pausedReason != "" {
 		e.note("pause", e.pausedReason)
@@ -1255,7 +1279,7 @@ func (e *Engine) cancelAndFlatten(reason string) {
 		if exitQty <= 0 {
 			exitQty = pos.Qty
 		}
-		pnl := RealizedPnL(pos.Side, pos.Entry, exitPx, exitQty)
+		pnl := e.netClosePnL(pos.Side, pos.Entry, exitPx, exitQty)
 		_ = CloseEntry(e.openEntryID, e.userID, e.cfg.ID, e.cfg.Symbol, string(pos.Side), ExitFill{
 			Price:    exitPx,
 			Qty:      exitQty,
@@ -1985,11 +2009,76 @@ func (e *Engine) unrealized(mark float64) float64 {
 }
 
 func (e *Engine) cross(candles []Candle) (Cross, error) {
-	closes := make([]float64, len(candles))
-	for i, c := range candles {
-		closes[i] = c.Close
-	}
+	closes := closesOf(candles)
+	fast, slow, ok := emaPair(closes, e.cfg.EmaFast, e.cfg.EmaSlow)
+	e.emaFastNow, e.emaSlowNow, e.emaReady = fast, slow, ok
 	return LastCross(closes, e.cfg.EmaFast, e.cfg.EmaSlow)
+}
+
+func (e *Engine) entryVolFeeReason(in StepInput) string {
+	if e == nil {
+		return ""
+	}
+	fees := e.roundTripFees()
+	return entryVolFeeReason(e.cfg, atrCandles(e.cfg, in), fees.Loss)
+}
+
+func (e *Engine) lossCooldownReason(now time.Time) string {
+	if e == nil || e.lastLossAt.IsZero() {
+		return ""
+	}
+	n := e.cfg.CooldownBarsAfterLoss
+	if n < 0 {
+		n = DefaultCooldownBarsAfterLoss
+	}
+	if n <= 0 {
+		return ""
+	}
+	if closedBarsSince(e.lastLossAt, at(now), TimeframeDuration(e.cfg.Timeframe)) < n {
+		return ReasonLossCooldown
+	}
+	return ""
+}
+
+// stampLoss 记下亏损平仓时间，给开仓冷却用。不改连亏次数，也不停机。
+func (e *Engine) stampLoss(pnl float64, closedAt time.Time) {
+	if e == nil || !(pnl < 0) {
+		return
+	}
+	if closedAt.IsZero() {
+		closedAt = e.stepAt
+	}
+	if closedAt.IsZero() {
+		closedAt = time.Now().UTC()
+	}
+	e.lastLossAt = closedAt.UTC()
+}
+
+// noteClosePnL 记下连亏，并在净盈亏为负时记下冷却起点。
+// 不改 running，也不动 pauseEntries。
+func (e *Engine) noteClosePnL(pnl float64, closedAt time.Time) {
+	if e == nil {
+		return
+	}
+	if pnl < 0 {
+		e.lossStreak++
+		e.stampLoss(pnl, closedAt)
+		return
+	}
+	if pnl > 0 {
+		e.lossStreak = 0
+	}
+}
+
+func (e *Engine) netClosePnL(side Side, entry, exit, qty float64) float64 {
+	taker := TakerFeeRate
+	if e != nil {
+		taker = e.cfg.takerFee()
+		if fees := e.roundTripFees(); fees.Loss > 0 {
+			taker = fees.Loss / 2
+		}
+	}
+	return NetRealized(side, entry, exit, qty, taker)
 }
 
 func at(t time.Time) time.Time {

@@ -378,6 +378,7 @@ func TestNextTickUsesSavedRFraction(t *testing.T) {
 	next := cfg
 	next.RFraction = 0.004
 	next.StopR = 1
+	next.FeeEdgeMult = 1e-6
 	next.Revision = 3
 	if err := eng.UpdateConfig(next); err != nil {
 		t.Fatal(err)
